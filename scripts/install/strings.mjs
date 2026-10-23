@@ -14,8 +14,23 @@ const TABLE = {
   en: {
     installing: 'Installing...',
     dryRun: 'DRY RUN',
-    canceled: 'Installation canceled — nothing was broken; run init again anytime.',
-    canceledShort: 'Installation canceled.',
+    // Every termination that applies nothing names WHERE it stopped and WHAT
+    // the consequence is. `cancelPoints` are stable machine keys: the same key
+    // goes into the on-disk run record, so a re-run can report the point
+    // without parsing prose.
+    cancelPoints: {
+      components: 'component selection',
+      target: 'install location',
+      confirmation: 'pre-install confirmation',
+      review: 'review prompt',
+      interrupt: 'interrupt (Ctrl-C)',
+    },
+    canceledAt: (point) =>
+      `Installation canceled at ${point} — nothing was applied; no files were changed.`,
+    declinedAt: (point) =>
+      `Installation declined at ${point} — nothing was applied; re-run init to review the plan again.`,
+    previousRun: (summary) => `Previous run recorded on disk: ${summary}`,
+    runRecordFailed: (msg) => `Could not write the run record: ${msg}`,
     installFailed: (msg) => `Installation failed: ${msg}`,
     failHintNoMcp:
       '   Run with --no-mcp to skip Python dependencies:\n     npx pantheon-opencode init --no-mcp',
@@ -65,7 +80,6 @@ const TABLE = {
       `the server's tools remain available and no permission prompt is shown. ` +
       `Use "deny" with action "${server}_*" in "permissions", or disable the server in the host MCP config.`,
     v2Migrating: 'Migrating config to V2 native format...',
-    nothingApplied: 'Nothing applied.',
     planOnlyNoYes: 'Plan only — re-run with --yes to apply.',
     driftHeader: 'State changed since preview — aborting before any write:',
     driftAbort: 'No files were written. Re-run to re-review.',
@@ -90,8 +104,19 @@ const TABLE = {
   pt: {
     installing: 'Instalando...',
     dryRun: 'SIMULAÇÃO',
-    canceled: 'Instalação cancelada — nada foi quebrado; rode init de novo quando quiser.',
-    canceledShort: 'Instalação cancelada.',
+    cancelPoints: {
+      components: 'seleção de componentes',
+      target: 'local da instalação',
+      confirmation: 'confirmação antes de instalar',
+      review: 'prompt de revisão',
+      interrupt: 'interrupção (Ctrl-C)',
+    },
+    canceledAt: (point) =>
+      `Instalação cancelada em ${point} — nada foi aplicado; nenhum arquivo foi alterado.`,
+    declinedAt: (point) =>
+      `Instalação recusada em ${point} — nada foi aplicado; rode init de novo para revisar o plano.`,
+    previousRun: (summary) => `Execução anterior registrada em disco: ${summary}`,
+    runRecordFailed: (msg) => `Não foi possível gravar o registro da execução: ${msg}`,
     installFailed: (msg) => `Instalação falhou: ${msg}`,
     failHintNoMcp:
       '   Rode com --no-mcp para pular dependências Python:\n     npx pantheon-opencode init --no-mcp',
@@ -141,7 +166,6 @@ const TABLE = {
       `as tools do servidor continuam disponíveis e nenhum prompt de permissão é exibido. ` +
       `Use "deny" com a action "${server}_*" em "permissions", ou desative o servidor na config de MCP do host.`,
     v2Migrating: 'Migrando config para o formato nativo V2...',
-    nothingApplied: 'Nada foi aplicado.',
     planOnlyNoYes: 'Apenas o plano — rode de novo com --yes para aplicar.',
     driftHeader: 'O estado mudou desde o preview — abortando antes de qualquer escrita:',
     driftAbort: 'Nenhum arquivo foi escrito. Rode de novo para revisar.',

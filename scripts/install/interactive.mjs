@@ -2,6 +2,7 @@
 
 import * as clack from '@clack/prompts'
 import { PROMPT_CANCELED } from './prompt-result.mjs'
+import { strings } from './strings.mjs'
 
 export { PROMPT_CANCELED }
 
@@ -9,9 +10,21 @@ function isTerminal() {
   return Boolean(process.stdin.isTTY && process.stdout.isTTY)
 }
 
-function cancelPrompt(prompts, value) {
+/**
+ * Print the ONE cancel line, naming where the user stopped.
+ *
+ * The point is a stable key from the string table (`cancelPoints`), so the same
+ * identifier can be persisted in the run record without parsing prose.
+ *
+ * @param {typeof clack} prompts
+ * @param {unknown} value a prompt result
+ * @param {string} point stable cancel-point key
+ * @returns {boolean} whether the prompt was canceled
+ */
+function cancelPrompt(prompts, value, point) {
   if (!prompts.isCancel(value)) return false
-  prompts.cancel('Installation canceled.')
+  const S = strings()
+  prompts.cancel(S.canceledAt(S.cancelPoints[point] ?? point))
   return true
 }
 
@@ -28,7 +41,7 @@ export async function promptReview(
 ) {
   if (!isTTY) return false
   const result = await prompts.confirm({ message: planSummary, initialValue: defaultValue })
-  if (cancelPrompt(prompts, result)) return PROMPT_CANCELED
+  if (cancelPrompt(prompts, result, 'review')) return PROMPT_CANCELED
   return result === true
 }
 
@@ -36,7 +49,11 @@ export async function promptReview(
  * Collect interactive setup choices before the installer begins any writes.
  *
  * @param {{ components?: string[], defaultComponents?: string[], noMcp?: boolean, prompts?: typeof clack, isTTY?: boolean }} [options]
- * @returns {Promise<{ components?: Set<string>, target?: string, confirmed?: boolean, canceled?: boolean }>}
+ * @returns {Promise<{ components?: Set<string>, target?: string, confirmed?: boolean, canceled?: boolean, cancelPoint?: string }>}
+ *
+ * `cancelPoint` names the step the user stopped at (`components`, `target`,
+ * `confirmation`), so the caller can print one explainable line and persist the
+ * same stable key in the run record.
  */
 export async function runInteractiveInstall({
   components = [],
@@ -70,12 +87,14 @@ export async function runInteractiveInstall({
     initialValues: [...defaultSet],
     required: false,
   })
-  if (cancelPrompt(prompts, chosen)) return { canceled: true }
+  if (cancelPrompt(prompts, chosen, 'components'))
+    return { canceled: true, cancelPoint: 'components' }
 
   const selectedComponents = new Set(chosen.filter(isAllowed))
   if (selectedComponents.size === 0) {
-    prompts.cancel?.('No components selected. Installation canceled.')
-    return { canceled: true }
+    const S = strings()
+    prompts.cancel?.(S.canceledAt(S.cancelPoints.components))
+    return { canceled: true, cancelPoint: 'components' }
   }
 
   const target = await prompts.select({
@@ -89,13 +108,15 @@ export async function runInteractiveInstall({
       { label: 'Current project', value: 'project', hint: './.opencode (scoped to this project)' },
     ],
   })
-  if (cancelPrompt(prompts, target)) return { canceled: true }
+  if (cancelPrompt(prompts, target, 'target')) return { canceled: true, cancelPoint: 'target' }
 
   const confirmed = await prompts.confirm({
     message: `Install ${selectedComponents.size} component(s) in ${target === 'global' ? 'global config' : 'current project'}?`,
     initialValue: true,
   })
-  if (cancelPrompt(prompts, confirmed)) return { canceled: true }
+  if (cancelPrompt(prompts, confirmed, 'confirmation')) {
+    return { canceled: true, cancelPoint: 'confirmation' }
+  }
 
   return { components: selectedComponents, target, confirmed }
 }

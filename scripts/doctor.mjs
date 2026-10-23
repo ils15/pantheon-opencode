@@ -33,6 +33,7 @@ import { listV2UnsupportedFeatures } from '../src/pantheon/v2-unsupported.mjs'
 import { classifyFileInventory } from './install/file-inventory.mjs'
 import { staleTuiRefs } from './install/plugin.mjs'
 import { readState } from './install/state.mjs'
+import { describePluginOptionsReachability } from './install/v2-capabilities.mjs'
 import { isSupportedNodeVersion, MIN_SUPPORTED_NODE_VERSION } from './node-engine-policy.mjs'
 
 // ---------------------------------------------------------------------------
@@ -1664,17 +1665,19 @@ export function describeV2Reduction({ registered, features }) {
         'Pantheon IS registered on the V2 plugin generation, but the shared ' +
         'unsupported-feature seed is empty, so the reduction cannot be reported. ' +
         "That is a fault in this installation's reporting, not an absence of " +
-        'reduction: the V2 surface still drops the 3 goal tools and the ' +
-        'caller/target delegation matrix.',
+        'reduction: the V2 surface still registers fewer tools than V1 (the three ' +
+        'goal tools are absent), so a clean report would be false.',
     }
   }
   return {
     status: 'reported',
     level: 'warn',
     message:
-      'Pantheon is registered on the V2 plugin generation, which registers 3 tools ' +
-      "(hashline_edit, pantheon_cost, pantheon_model) instead of the V1 surface's 6 plus " +
-      `the BackgroundJobBoard and the caller/target delegation matrix. Unsupported: ${features.join(', ')}`,
+      'Pantheon is registered on the V2 plugin generation: 3 unconditional tools ' +
+      '(hashline_edit, pantheon_cost, pantheon_model) plus the host-dependent ones, and a ' +
+      "real hook/transform surface, against the V1 surface's 6 tools plus the " +
+      'BackgroundJobBoard. Not provided on V2 (static seed — a live host can add runtime ' +
+      `markers on top): ${features.join(', ')}`,
   }
 }
 
@@ -1706,6 +1709,20 @@ export function checkV2UnsupportedFeatures(args) {
   })
   if (verdict.level === 'info') info(verdict.message)
   else warn(verdict.message)
+
+  // Whether the installed entry can receive plugin `options` at all: the host
+  // passes them only from the object form, and `context_pruner` /
+  // `memory_injection` read exactly that bag. A bare-string entry installs fine
+  // and silently leaves both opt-ins unreachable, which is why this reports the
+  // installed shape instead of trusting the installer to have got it right.
+  if (registered) {
+    const plugins = configs.flatMap((cfg) =>
+      Array.isArray(cfg.data?.plugins) ? cfg.data.plugins : [],
+    )
+    const reach = describePluginOptionsReachability(plugins)
+    if (reach.reachable) info(`Plugin options reachable: ${reach.detail}`)
+    else warn(`Plugin options NOT reachable: ${reach.detail}`)
+  }
 
   return verdict.status
 }

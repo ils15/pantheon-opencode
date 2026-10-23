@@ -286,9 +286,17 @@ test('canceling interactive --apply-plan exits 130 and leaves the target unchang
 
     assert.equal(result.sentInput, true, result.stdout)
     assert.equal(result.status, 130, result.stderr || result.stdout)
-    assert.match(result.stdout, /Installation canceled\./)
+    // One message, naming where it stopped (issue #262).
+    assert.match(result.stdout, /Installation canceled at review prompt/)
     assert.equal(readFileSync(sentinel, 'utf8'), 'keep this file\n')
-    assert.deepEqual(readdirSync(target).sort(), before)
+    // The ONLY thing a canceled run may add is its own record: a re-run has to
+    // be able to tell from disk that the previous one was canceled here.
+    assert.deepEqual(readdirSync(target).sort(), [...before, '.pantheon'].sort())
+    const record = JSON.parse(readFileSync(join(target, '.pantheon', 'last-run.json'), 'utf8'))
+    assert.equal(record.status, 'canceled')
+    assert.equal(record.cancel_point, 'review')
+    assert.equal(record.applied, false)
+    assert.match(record.summary, /canceled at review/)
     assert.equal(existsSync(join(target, '.opencode')), false)
     assert.equal(existsSync(join(target, 'opencode.json')), false)
   } finally {
@@ -310,9 +318,14 @@ test('declining interactive --apply-plan exits successfully and leaves the targe
 
     assert.equal(result.sentInput, true, result.stdout)
     assert.equal(result.status, 0, result.stderr || result.stdout)
-    assert.match(result.stdout, /Install declined; no files were written\./)
+    // A decline is not a silent no-op: it names the point and the consequence.
+    assert.match(result.stdout, /Installation declined at review prompt/)
     assert.equal(readFileSync(sentinel, 'utf8'), 'keep this file\n')
-    assert.deepEqual(readdirSync(target).sort(), before)
+    assert.deepEqual(readdirSync(target).sort(), [...before, '.pantheon'].sort())
+    const record = JSON.parse(readFileSync(join(target, '.pantheon', 'last-run.json'), 'utf8'))
+    assert.equal(record.status, 'declined')
+    assert.equal(record.cancel_point, 'review')
+    assert.equal(record.applied, false)
     assert.equal(existsSync(join(target, '.opencode')), false)
     assert.equal(existsSync(join(target, 'opencode.json')), false)
   } finally {

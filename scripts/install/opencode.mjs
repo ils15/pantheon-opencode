@@ -12,15 +12,17 @@
  * scripts/install/opencode-version.mjs). Known V2 beta gaps handled here:
  * top-level `subagent_depth` is migrated to `experimental.subagent_depth`, and
  * the instruction content is consolidated into AGENTS.md, which both versions
- * load. Pass --version v2 to pantheon-init for an informational label; state
- * isolation is handled at runtime via OPENCODE_DB.
+ * load. Pass --version v2 to pantheon-init for an informational label.
+ *
+ * Nothing here isolates host STATE: both generations read one OpenCode store,
+ * and the resolver in scripts/install/opencode-state.mjs (not a literal in this
+ * file) is what the V2 notice reports.
  */
 
 import { createHash } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
-import { listV2UnsupportedFeatures } from '../../src/pantheon/v2-unsupported.mjs'
 import { copyAgentPrompts, writeAgentsMdManaged } from '../build-agents-md.mjs'
 import { backupWarning, createBackupSet, previewBackupSet } from './backup.mjs'
 import {
@@ -49,6 +51,7 @@ import {
 import { componentForInstalledPath, updateFileInventory } from './file-inventory.mjs'
 import { healthCheck } from './health-check.mjs'
 import { detectVersion, runMigrations } from './migrate.mjs'
+import { describeSharedState } from './opencode-state.mjs'
 import { DRY_RUN_PROBE_TIMEOUT_MS, resolveOpenCodeVersion } from './opencode-version.mjs'
 import {
   ACTIONS,
@@ -81,7 +84,11 @@ import {
 } from './shared.mjs'
 import { createInitialState, hasState, readState, setComponentState, writeState } from './state.mjs'
 import { strings } from './strings.mjs'
-
+import {
+  describePluginOptionsReachability,
+  formatV2CapabilityNotice,
+  v2Capabilities,
+} from './v2-capabilities.mjs'
 import { setupVenv, venvPythonPath } from './venv.mjs'
 import { assertNoSymlinkAncestors, assertPathWithin, assertSafeRemoval } from './verify.mjs'
 
@@ -1471,9 +1478,10 @@ async function installPass(
 
   // V1/V2 dual-version awareness (Phase 3): the installer builds a unified
   // config, then applies V2-native migration (migrateV1toV2) when
-  // --opencode-version=v2. V2 normalizes V1 fields in memory (no rewrite) and
-  // isolates its state DB via OPENCODE_DB (~/.local/share/opencode/opencode-v2.db)
-  // with a distinct service port (49375 vs V1's 49374).
+  // --opencode-version=v2. V2 normalizes V1 fields in memory (no rewrite).
+  // Neither generation isolates state: both read the same OpenCode store, so
+  // the V2 notice reports the path an actual resolver returns instead of a
+  // literal, and claims no service port because nothing binds one.
   // Default to 'auto' so a flagless run resolves against the actual host. A
   // hardcoded 'v1' here (or in bin/pantheon-init.mjs) is what shipped the bug:
   // the V1 branch writes .ts file paths that a 2.x host drops from the config.
@@ -1504,24 +1512,23 @@ async function installPass(
   }
   const versionAssumed = dryRun && versionFallback !== null
   if (version === 'v2') {
-    notice(
-      'OpenCode V2 target — shared config; state isolated via OPENCODE_DB ' +
-        '(~/.local/share/opencode/opencode-v2.db), service port 49375',
-    )
-    // Say what the V2 contract does NOT give you, at the moment the user picks
-    // it. The V2 surface is 3 tools (hashline_edit, pantheon_cost,
-    // pantheon_model); V1's is 6 plus the BackgroundJobBoard, the three goal
-    // tools and the caller/target delegation matrix. This list was previously
-    // reachable only through `getUnsupportedFeatures()`, which no production
-    // code called — a user migrating hit the reduction with no warning at all.
-    //
-    // The markers are read from the same seed `getUnsupportedFeatures()` is
-    // built from (src/pantheon/v2-unsupported.mjs), so this notice cannot drift
-    // from what the plugin reports. Advisory: a V2 install is a supported
-    // configuration, not a failure.
-    notice(
-      `V2 plugin generation — reduced surface. Unsupported features: ${listV2UnsupportedFeatures().join(', ')}`,
-    )
+    // The notice states only what this installer actually does and what the
+    // host actually reads. It previously claimed an isolated state database and
+    // a dedicated service port: nothing in this package sets OPENCODE_DB, no
+    // install creates a per-generation file, nothing binds that port, and the
+    // repo's own database consumer documents the opposite
+    // (src/pantheon/cost-command.ts). The path below comes from the shared
+    // resolver, so the sentence cannot drift from the code.
+    notice(`OpenCode V2 target — ${describeSharedState()}`)
+    // Say what the V2 contract gives you AND what it does not, at the moment
+    // the user picks it. "Reduced surface" alone is misleading in both
+    // directions: V2 registers real hooks, transforms and events, and it also
+    // drops the goal tools. The not-registered half is the same SEED
+    // `getUnsupportedFeatures()` is built from (imported, never restated), so
+    // this notice cannot drift from what the plugin reports; the notice says
+    // so, because the live list is a superset that grows at runtime. Advisory:
+    // a V2 install is a supported configuration, not a failure.
+    notice(formatV2CapabilityNotice())
   }
 
   // Interactive mode handling
@@ -1549,13 +1556,25 @@ async function installPass(
     })
 
     if (result.canceled) {
-      notice('Installation canceled.')
-      return { ...stats, applied: false, reason: 'canceled' }
+      // The named point is what makes the message explainable. The interactive
+      // module already printed the single cancel line through the prompt
+      // library's own cancel channel, so printing another one here was the
+      // duplicate the issue reports: the user saw the same sentence twice and
+      // learned nothing about WHERE it stopped.
+      return {
+        ...stats,
+        applied: false,
+        reason: 'canceled',
+        cancelPoint: result.cancelPoint ?? 'components',
+      }
     }
 
     if (!result.confirmed) {
-      notice('Installation canceled.')
-      return { ...stats, applied: false, reason: 'canceled' }
+      // Answering "No" at the pre-install confirmation is not the prompt
+      // library's cancel channel, so nothing was printed yet: this is the one
+      // message, and it names the point.
+      notice(S.canceledAt(S.cancelPoints.confirmation))
+      return { ...stats, applied: false, reason: 'canceled', cancelPoint: 'confirmation' }
     }
 
     // Map target selection to actual path
@@ -1583,6 +1602,25 @@ async function installPass(
   const pantheonConfigPath =
     typeof mergeDevConfigOpt === 'string' ? resolve(mergeDevConfigOpt) : null
   const targetConfigPath = join(target, 'opencode.json')
+  // The installer reads and writes ONLY `opencode.json`, but the V2 host also
+  // loads a sibling `opencode.jsonc` and unions arrays from both. A Pantheon
+  // entry there is invisible to this installer, so a "second config" is a real
+  // ambiguity the user has to resolve — name it instead of leaving the two
+  // files to disagree silently.
+  const siblingJsonc = join(target, 'opencode.jsonc')
+  const configAdvisories = []
+  if (version === 'v2' && existsSync(siblingJsonc)) {
+    configAdvisories.push(
+      `Both ${targetConfigPath} and ${siblingJsonc} exist and an OpenCode V2 host merges ` +
+        'them (scalars from the .jsonc win, arrays are unioned). The installer reads and ' +
+        'writes only opencode.json, so anything plugin-related in the .jsonc — including a ' +
+        'Pantheon entry — is neither seen nor changed by this install. Move those entries ' +
+        'into opencode.json and delete the .jsonc, or edit both by hand.',
+    )
+    // The internal plan pass is not a user-facing report; the apply pass (and a
+    // real --dry-run) prints it once.
+    if (!opts.planOnly) warning(configAdvisories[0])
+  }
   const { config, raw: configRaw } = readJsonConfigWithRaw(targetConfigPath)
   const pantheonConfig =
     pantheonConfigPath !== null && existsSync(pantheonConfigPath)
@@ -1674,12 +1712,19 @@ async function installPass(
           isTTY: opts.deps?.isTTY,
         })
         if (accepted === PROMPT_CANCELED) {
-          notice(S.nothingApplied)
-          return { ...stats, applied: false, reason: 'canceled' }
+          // The real prompt already printed the one cancel line through clack's
+          // own cancel channel. An INJECTED reviewer (tests, other callers)
+          // prints nothing, so this is the single place that guarantees the
+          // message exists exactly once, and it names the point.
+          if (typeof injected === 'function') notice(S.canceledAt(S.cancelPoints.review))
+          return { ...stats, applied: false, reason: 'canceled', cancelPoint: 'review' }
         }
         if (!accepted) {
-          notice(S.nothingApplied)
-          return { ...stats, applied: false, reason: 'declined' }
+          // Answering "No" is not a cancel: it used to reach the caller as a
+          // silent `reason: 'declined'` and exit 0 with "Nothing applied." and
+          // no explanation at all.
+          notice(S.declinedAt(S.cancelPoints.review))
+          return { ...stats, applied: false, reason: 'declined', cancelPoint: 'review' }
         }
       } else {
         notice(S.planOnlyNoYes)
@@ -2433,11 +2478,40 @@ async function installPass(
   }
 
   if (version === 'v2') {
-    // V2 loads the plural `plugins` list. Keep third-party V1 entries in the
-    // legacy list for users who still use them, but never leave a Pantheon V1
-    // entry configured alongside the V2 package export.
+    // V2 loads the plural `plugins` list. A third-party entry in the V1
+    // singular `plugin` list is DEAD on this host: the V2 config reader never
+    // looks at that key, so leaving the entry there silently stopped a plugin
+    // the user configured. Migrating a V1 config is exactly when that happens,
+    // so move those entries into `plugins` (deduplicated) and say so — the
+    // plugin will now load on V2, which is the behaviour the user asked for,
+    // but a V1-API-only plugin may need to be removed by hand.
     if (Array.isArray(config.plugin)) {
+      // Strip Pantheon refs FIRST, exactly as the V1 branch does: a stale V1
+      // .ts path is not a registrable entry on this host and must not be moved.
       config.plugin = removePantheonPluginReferences(config.plugin)
+      const remaining = config.plugin
+      const movedThirdParty = []
+      if (!Array.isArray(config.plugins)) config.plugins = []
+      for (const plugin of remaining) {
+        if (!hasPluginReference(config.plugins, plugin)) {
+          config.plugins.push(deepClone(plugin))
+          movedThirdParty.push(plugin)
+        }
+      }
+      if (movedThirdParty.length > 0) {
+        warning(
+          `V2 host ignores the singular "plugin" key; also registered ${movedThirdParty.length} ` +
+            `third-party entr${movedThirdParty.length === 1 ? 'y' : 'ies'} under "plugins" so ` +
+            `they keep loading: ${movedThirdParty
+              .map((plugin) => (typeof plugin === 'string' ? plugin : JSON.stringify(plugin)))
+              .join(', ')}. Remove any that only support the V1 plugin API.`,
+        )
+      }
+      // Pantheon refs are already gone. An emptied array is not configuration:
+      // drop the dead key entirely so the written config points at the list the
+      // V2 host actually reads. A surviving V1 list is the user's own data and
+      // is left in place (a downgrade still finds it).
+      if (config.plugin.length === 0) delete config.plugin
     }
     if (!Array.isArray(config.plugins)) config.plugins = []
     // Preserve any options already set on the Pantheon V2 entry across the
@@ -2476,11 +2550,26 @@ async function installPass(
     config.plugins = config.plugins.filter(
       (plugin) => pluginReferenceIdentity(plugin) !== pluginReferenceIdentity(resolvedV2),
     )
-    config.plugins.push(
-      existingV2Options === null
-        ? resolvedV2
-        : { package: resolvedV2, options: deepClone(existingV2Options) },
-    )
+    // ALWAYS the object form, even on a fresh install with nothing to preserve.
+    // The host hands a plugin its `options` only from `{ package, options }`,
+    // and the opt-in features (`context_pruner`, `memory_injection`) read
+    // `ctx.options`. Emitting a bare string — which a fresh install used to do —
+    // left those features unreachable for anyone who did not already know the
+    // object syntax from the docs, so the shape (with an empty options bag) is
+    // written from the start and a user's hand-added keys survive a re-run.
+    config.plugins.push({
+      package: resolvedV2,
+      options: existingV2Options === null ? {} : deepClone(existingV2Options),
+    })
+  }
+
+  // Report whether the entry the host will read can actually carry options.
+  // Computed here, from the config this pass is about to write, so it answers
+  // the installed state rather than an assumption.
+  const v2PluginOptions =
+    version === 'v2' ? describePluginOptionsReachability(config.plugins) : null
+  if (v2PluginOptions !== null && !v2PluginOptions.reachable && !opts.planOnly) {
+    warning(`Pantheon V2 plugin options are not reachable: ${v2PluginOptions.detail}`)
   }
 
   if (pantheonConfig !== null) {
@@ -2989,6 +3078,18 @@ async function installPass(
         target,
         openCodeVersion: version,
         versionAssumed,
+        configAdvisories,
+        v2Capabilities: version === 'v2' ? v2Capabilities() : null,
+        pluginOptions: v2PluginOptions,
       }
-    : { ...stats, applied: true, reason: 'applied' }
+    : {
+        ...stats,
+        applied: true,
+        reason: 'applied',
+        target,
+        openCodeVersion: version,
+        configAdvisories,
+        v2Capabilities: version === 'v2' ? v2Capabilities() : null,
+        pluginOptions: v2PluginOptions,
+      }
 }

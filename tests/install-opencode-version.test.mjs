@@ -44,6 +44,13 @@ async function installConfig(existingConfig, version, extra = {}) {
   }
 }
 
+/** The registered Pantheon V2 entry, whatever shape the writer used. */
+function v2EntryOf(config) {
+  return (config.plugins ?? []).find(
+    (entry) => pluginReferenceIdentity(entry) === pluginReferenceIdentity(V2_PLUGIN),
+  )
+}
+
 /** A host probe that reports a fixed `--version` string. */
 const hostSays = (output) => () => output
 /**
@@ -136,7 +143,7 @@ test('v1 preserves config.plugins and third-party paths in config.plugin', async
   assert.ok(config.plugin.includes(join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts')))
 })
 
-test('v2 preserves config.plugin and registers the shipped V2 entrypoint', async () => {
+test('v2 migrates third-party config.plugin entries and registers the shipped V2 entrypoint', async () => {
   const config = await installConfig(
     {
       plugin: ['user-v1-plugin'],
@@ -145,12 +152,16 @@ test('v2 preserves config.plugin and registers the shipped V2 entrypoint', async
     'v2',
   )
 
-  assert.deepEqual(config.plugin, ['user-v1-plugin'])
+  // The V2 host does not read the singular `plugin` key (issue #269): a
+  // third-party entry left there would stop loading silently, so it is also
+  // registered under `plugins`.
   assert.equal(config.plugins[0], 'user-v2-plugin')
-  assert.ok(config.plugins.includes(V2_PLUGIN))
+  assert.ok(config.plugins.includes('user-v1-plugin'), 'the V1 list must not go dead')
+  assert.equal(v2EntryOf(config).package, V2_PLUGIN)
+  assert.deepEqual(v2EntryOf(config).options, {}, 'the entry must be able to carry options')
   assert.ok(!config.plugins.includes(V2_EXPORT))
   assert.ok(!config.plugins.includes(join(ROOT, 'src', 'plugin-v2.ts')))
-  assert.ok(!config.plugins.some((entry) => entry === join(ROOT, 'src', 'plugin.ts')))
+  assert.ok(!config.plugins.some((entry) => pluginReferenceIdentity(entry) === 'src/plugin.ts'))
 })
 
 test('auto selects V2 and V1 during migrations without mixing Pantheon refs', async () => {
@@ -164,8 +175,15 @@ test('auto selects V2 and V1 during migrations without mixing Pantheon refs', as
       },
       'auto',
     )
-    assert.deepEqual(v2.plugin, [THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN, 'third-party-v1'])
-    assert.deepEqual(v2.plugins, ['third-party-v2', V2_PLUGIN])
+    assert.ok(
+      v2.plugins.includes('third-party-v1'),
+      'a V1 third-party entry must be re-registered under the plural key',
+    )
+    assert.ok(
+      v2.plugins.includes('/tmp/vendor/pantheon-opencode/src/plugin.ts'),
+      'the V1 third-party path must be re-registered under the plural key',
+    )
+    assert.deepEqual(v2EntryOf(v2).options, {})
 
     process.env.OPENCODE_VERSION = 'v1'
     const v1 = await installConfig(
@@ -247,8 +265,8 @@ test('default resolution on a 2.x host registers the V2 directory, never .ts fil
 
   assert.deepEqual(
     {
-      hasV2Directory: config.plugins.includes(V2_PLUGIN),
-      tsFilePaths: config.plugin.filter((entry) => entry.endsWith('.ts')).length,
+      hasV2Directory: v2EntryOf(config)?.package === V2_PLUGIN,
+      tsFilePaths: (config.plugin ?? []).filter((entry) => entry.endsWith('.ts')).length,
     },
     { hasV2Directory: true, tsFilePaths: 0 },
   )
@@ -569,8 +587,8 @@ test('a corrupted install is repaired: V2 directory registered, both .ts paths p
     warn: silentWarn,
   })
 
-  assert.ok(config.plugins.includes(V2_PLUGIN), 'the V2 directory must be registered')
+  assert.equal(v2EntryOf(config)?.package, V2_PLUGIN, 'the V2 directory must be registered')
   for (const tsPath of V1_TS_PATHS) {
-    assert.ok(!config.plugin.includes(tsPath), `stale V1 path must be purged: ${tsPath}`)
+    assert.ok(!(config.plugin ?? []).includes(tsPath), `stale V1 path must be purged: ${tsPath}`)
   }
 })

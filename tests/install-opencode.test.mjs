@@ -169,7 +169,12 @@ test('versioned Pantheon package refs are managed during V2 migration', async ()
       'v2',
     )
 
-    assert.deepEqual(config.plugins, [thirdParty, join(ROOT, 'src', 'plugin-v2')])
+    // Always the object form (issue #268): the V2 host passes plugin `options`
+    // only from `{ package, options }`, and the opt-in features read that bag.
+    assert.deepEqual(config.plugins, [
+      thirdParty,
+      { package: join(ROOT, 'src', 'plugin-v2'), options: {} },
+    ])
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
@@ -504,7 +509,12 @@ test('V2 upgrade merges and deduplicates user plugins without overwriting config
     // the beta loader rejects file paths ("must be a directory") and resolves
     // `a/b` shorthands via npm install (NpmInstallFailedError) — never the V1
     // local-file paths, which stay V1-only.
-    assert.deepEqual(config.plugins, [userPlugin, join(ROOT, 'src', 'plugin-v2')])
+    assert.deepEqual(config.plugins, [
+      userPlugin,
+      // The object form is what makes `options` reachable at all; a fresh
+      // install writes it with an empty bag (issue #268).
+      { package: join(ROOT, 'src', 'plugin-v2'), options: {} },
+    ])
     assert.equal(config.theme, 'user-theme')
   } finally {
     rmSync(target, { recursive: true, force: true })
@@ -1269,12 +1279,14 @@ test('V2-only valid context_sandbox options are validated and preserved idempote
   }
 })
 
-test('a V2 plugin entry with no managed option stays a no-op string entry', async () => {
+test('a V2 plugin entry with no managed option stays a no-op EMPTY options bag', async () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-ctxsandbox-none-'))
   try {
     const first = await runInstall(target, null, 'v2')
     const entry = first.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin-v2')
-    assert.equal(entry, join(ROOT, 'src', 'plugin-v2'), 'no options object without legacy input')
+    // The object form is emitted from the start; without legacy input the bag
+    // is empty, so nothing is enabled by installing (issue #268).
+    assert.deepEqual(entry, { package: join(ROOT, 'src', 'plugin-v2'), options: {} })
 
     const second = await runInstall(target, first, 'v2')
     assert.deepEqual(second, first, 'absent legacy + absent V2 options stays idempotent')

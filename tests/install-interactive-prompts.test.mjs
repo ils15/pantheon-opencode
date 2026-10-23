@@ -21,6 +21,10 @@ import { installOpenCode } from '../scripts/install/opencode.mjs'
 
 const CANCEL = Symbol('cancel')
 
+/** The one-line cancel message the installer prints for a given point. */
+const canceledAt = (point) =>
+  `Installation canceled at ${point} — nothing was applied; no files were changed.`
+
 function fakePrompts({ components = ['agents'], target = 'global', confirmed = true } = {}) {
   const calls = []
   return {
@@ -96,9 +100,10 @@ test('interactive prompt cancellation exits before any installer configuration w
     })
     assert.equal(result.applied, false)
     assert.equal(result.reason, 'canceled')
+    assert.equal(result.cancelPoint, 'components', 'the message must name where it stopped')
     assert.deepEqual(prompts.calls, [
       ['intro', 'OpenCode Installer'],
-      ['cancel', 'Installation canceled.'],
+      ['cancel', canceledAt('component selection')],
     ])
     assert.equal(readFileSync(sentinel, 'utf8'), '{"untouched":true}\n')
   } finally {
@@ -119,7 +124,7 @@ test('review prompt preserves cancellation separately from an explicit decline',
   )
   assert.deepEqual(prompts.calls, [
     ['confirm', { message: 'Apply this reviewed plan?', initialValue: false }],
-    ['cancel', 'Installation canceled.'],
+    ['cancel', canceledAt('review prompt')],
   ])
 
   const declinePrompts = fakePrompts({ confirmed: false })

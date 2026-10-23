@@ -11,24 +11,30 @@
  * under BOTH OpenCode V1 (`opencode` 1.18.x) and V2 (`opencode2`, OpenCode 2.x —
  * `opencode2 --version` prints "opencode v2.0.22"; an early 2.x prerelease
  * printed "0.0.0-next-17444", which is history and not a host observation).
- * V2 reads the same config locations and normalizes V1
- * fields in memory — no native V2 conversion. `--version v2` labels the
- * install for the operator; state isolation is a runtime concern
- * (OPENCODE_DB ~/.local/share/opencode/opencode-v2.db, service port 49375).
+ * V2 reads the same config locations and normalizes V1 fields in memory through
+ * migrateV1toV2() (scripts/install/config-migration.mjs), then writes the
+ * V2-native `plugins` list. `--version v2` selects that path.
+ *
+ * State is NOT isolated per generation: both host generations read one OpenCode
+ * store, so this CLI claims neither a separate database nor a service port. The
+ * installer prints the path an actual resolver returns
+ * (scripts/install/opencode-state.mjs).
  */
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { configure as configureUi, tag } from '../scripts/install/cli-ui.mjs'
+import { configure as configureUi, endGaugeLine, tag } from '../scripts/install/cli-ui.mjs'
 import { resolveComponentSelection } from '../scripts/install/component-selection.mjs'
 import { resolveInstallExitCode } from '../scripts/install/exit-codes.mjs'
+import { createInterruptHandler } from '../scripts/install/interrupt.mjs'
 import {
   createPlanArtifact,
   loadPlanArtifact,
   savePlanArtifact,
 } from '../scripts/install/plan-artifact.mjs'
 import { PROMPT_CANCELED } from '../scripts/install/prompt-result.mjs'
+import { buildRunRecord, readRunRecord, writeRunRecord } from '../scripts/install/run-record.mjs'
 import {
   isSupportedNodeVersion,
   unsupportedNodeVersionMessage,
@@ -484,16 +490,79 @@ async function main() {
       process.exit(1)
     }
 
+    // Version info (resolved BEFORE the authorization prompts: every
+    // termination path below has to name its reason from the same table).
+    const version = readVersion()
+    const { strings } = await import('../scripts/install/strings.mjs')
+    const S = strings()
+    // Declared before the authorization prompts so a cancel/decline can record
+    // what the run decided; filled by the apply below.
+    let result = null
+    // Where a run record goes when the installer never reports a target: the
+    // interactive prompts can cancel before a location is chosen. Mirrors the
+    // installer's own default (`~/.config/opencode`), so the record lands next
+    // to the config the next run will read.
+    const fallbackTarget = isProject
+      ? process.cwd()
+      : path.join(os.homedir(), '.config', 'opencode')
+    /**
+     * Persist the one-line record of this run. Bookkeeping is best-effort: a
+     * failure is reported, never fatal, and never changes the exit code.
+     *
+     * @param {{status: string, reason?: string|null, cancelPoint?: string|null, applied: boolean, target?: string}} outcome
+     */
+    const recordRun = (outcome) => {
+      const recordTarget = outcome.target ?? result?.target ?? fallbackTarget
+      const record = buildRunRecord({
+        status: outcome.status,
+        reason: outcome.reason ?? null,
+        cancelPoint: outcome.cancelPoint ?? null,
+        mode: 'apply',
+        applied: outcome.applied,
+        pantheonVersion: version,
+      })
+      const written = writeRunRecord(recordTarget, record)
+      if (!written.written) {
+        console.error(S.runRecordFailed(written.error ?? written.path))
+      }
+    }
+
+    // A previous run that applied nothing is worth one line on the next run:
+    // "canceled at the review prompt" is otherwise a thing the user has to
+    // rediscover. Only non-applied outcomes are surfaced; a normal re-install is
+    // not news.
+    if (!isDryRun && !isJson) {
+      const previous = readRunRecord(reviewedPlan ? reviewedPlan.target.path : fallbackTarget)
+      if (previous !== null && previous.applied === false && previous.status !== 'plan') {
+        console.log(`  ${S.previousRun(previous.summary ?? previous.status)}`)
+      }
+    }
+
     if (reviewedPlan && !autoYes) {
       if (!forceHeadless && process.stdin.isTTY && process.stdout.isTTY) {
         const authorization = await authorizeReviewedPlan(reviewedPlan)
         if (authorization === PROMPT_CANCELED) {
-          console.log('❌ Install canceled; no files were written.')
+          // The prompt already printed the single cancel line, naming the
+          // review point; only the exit code and the record are left.
+          recordRun({
+            status: 'canceled',
+            reason: 'canceled',
+            cancelPoint: 'review',
+            applied: false,
+            target: reviewedPlan.target.path,
+          })
           process.exitCode = 130
           return
         }
         if (!authorization) {
-          console.log('❌ Install declined; no files were written.')
+          console.error(S.declinedAt(S.cancelPoints.review))
+          recordRun({
+            status: 'declined',
+            reason: 'declined',
+            cancelPoint: 'review',
+            applied: false,
+            target: reviewedPlan.target.path,
+          })
           return
         }
       } else {
@@ -502,11 +571,6 @@ async function main() {
       }
       autoYes = true
     }
-
-    // Version info
-    const version = readVersion()
-    const { strings } = await import('../scripts/install/strings.mjs')
-    const S = strings()
 
     const planTimestamp = reviewedPlan?.planned_at ?? new Date().toISOString()
     const stdoutWrite = process.stdout.write
@@ -519,7 +583,29 @@ async function main() {
       }
     }
 
-    let result
+    // Ctrl-C was unhandled anywhere in bin/ or scripts/install/, so an
+    // interrupted install died without printing anything and without leaving a
+    // trace. The handler makes the interrupt behave like every other cancel:
+    // ONE explainable line, a record on disk, and exit 130. The prompt library
+    // consumes Ctrl-C in raw mode while a question is on screen (that path is
+    // the interactive cancel above), so this covers the rest of the run.
+    const onInterrupt = createInterruptHandler({
+      message: S.canceledAt(S.cancelPoints.interrupt),
+      json: isJson,
+      endGaugeLine,
+      onInterrupt: () => {
+        if (!isDryRun) {
+          recordRun({
+            status: 'canceled',
+            reason: 'canceled',
+            cancelPoint: 'interrupt',
+            applied: false,
+          })
+        }
+      },
+    })
+    process.once('SIGINT', onInterrupt)
+
     let installError = null
     try {
       const { installOpenCode } = await import('../scripts/install/opencode.mjs')
@@ -557,14 +643,13 @@ async function main() {
           })}\n`,
         )
         console.error(`❌ Init dry-run failed: ${installError.message}`)
-      } else if (installError?.message === 'Canceled') {
-        console.error(S.canceled)
-        process.exit(130)
       } else {
         console.error(
           `${S.installFailed(installError.message)}\n${S.failHintNoMcp}\n${S.failHintForce}`,
         )
       }
+      // No record for a thrown failure: the error itself is the explanation,
+      // and a run that failed has nothing to remember beyond its message.
       process.exitCode = 1
       return
     }
@@ -624,12 +709,23 @@ async function main() {
           status: 'planned',
           target: result.target,
           open_code_version: result.openCodeVersion,
-          advisories: result.versionAssumed
-            ? [
-                'The OpenCode host generation could not be detected; this plan assumes V1 ' +
-                  'and may diverge from the apply. Pass --opencode-version v1|v2 to pin it.',
-              ]
-            : [],
+          advisories: [
+            ...(result.versionAssumed
+              ? [
+                  'The OpenCode host generation could not be detected; this plan assumes V1 ' +
+                    'and may diverge from the apply. Pass --opencode-version v1|v2 to pin it.',
+                ]
+              : []),
+            // Warnings printed in text mode are suppressed by --quiet, so the
+            // machine-readable plan carries them too (e.g. a sibling
+            // opencode.jsonc the installer neither reads nor writes).
+            ...(result.configAdvisories ?? []),
+          ],
+          // A V2 plan carries the same capability facts the text notice prints:
+          // what the generation registers, what it does not (the static seed),
+          // and whether the written plugin entry can receive `options` at all.
+          v2_capabilities: result.v2Capabilities ?? null,
+          plugin_options: result.pluginOptions ?? null,
           totals,
           mcp_servers: mcpServers,
           mcp_server_count: mcpServers.length,
@@ -650,13 +746,42 @@ async function main() {
     //   130 canceled · 1 failure (thrown above).
     if (result?.applied === false) {
       if (!isDryRun) {
-        if (result.reason === 'canceled') console.error(S.canceled)
+        // The installer already printed the ONE line for this outcome naming
+        // its reason (cancel point / decline / not-authorized). Printing
+        // another here is what made a cancel appear twice on two paths. All
+        // that is left is to make the DECISION survive the terminal.
+        //
+        // Gate refusals (`not-authorized`, `drift`) are deliberately NOT
+        // recorded: those runs are refused before anything is written, and
+        // "an unauthorized run writes nothing" is a guarantee of this
+        // installer, not an accident. They still print their own reason and
+        // their own exit code.
+        if (result.reason === 'canceled' || result.reason === 'declined') {
+          recordRun({
+            status: result.reason,
+            reason: result.reason,
+            cancelPoint: result.cancelPoint ?? null,
+            applied: false,
+            target: result.target,
+          })
+        }
         process.exit(resolveInstallExitCode(result, isDryRun))
       }
       // Dry-run preview: report honestly instead of the "installed!" banner.
       console.log('')
       console.log(`  ${S.dryRunNothingWritten}`)
       return
+    }
+
+    // Applied: record it, so the next run can tell an apply from a cancel or a
+    // decline without reading install-state.json (written only on apply).
+    if (!isDryRun) {
+      recordRun({
+        status: 'applied',
+        reason: 'applied',
+        applied: true,
+        target: result?.target,
+      })
     }
 
     if (runDoctor && !isDryRun) {
