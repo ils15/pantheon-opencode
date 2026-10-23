@@ -212,10 +212,11 @@ child failure is never mistaken for success. No manual retry helper is required.
 ### /cost — pantheon_cost tool (disponivel com o version gate corrigido)
 `pantheon_cost` volta a existir assim que o version gate corrigido estiver
 instalado **e após o usuário re-rodar `init`**: em host 2.x, `auto` resolve
-para `v2` e registra o entry de diretorio `src/plugin-v2`, que expoe
-exatamente 3 tools — `hashline_edit`, `pantheon_cost` e `pantheon_model`
+para `v2` e registra o entry de diretorio `src/plugin-v2`, que expoe 3 tools
+incondicionais — `hashline_edit`, `pantheon_cost` e `pantheon_model` — mais ate 2
+host-gated (`vision_describe`, `pantheon_bounded_read`)
 (ver a distinção de capacidades V1/V2 em `docs/INSTALLATION.md` ->
-"OpenCode V1/V2 — contrato de plugin").
+"OpenCode generation and plugin contract").
 **Caveat**: a tool so reaparece para quem re-rodar `init` depois do fix. O
 `postinstall` nao re-executa `init`, entao ate la o config existente continua
 resolvendo para V1 e a tool segue ausente — nesse estado, tratar `/cost` como
@@ -233,7 +234,7 @@ agora tem default `'auto'` nos dois call sites e no proprio signature, e `auto`
 consulta o host. Precedencia `auto`: flag explicito > `OPENCODE_VERSION` >
 basename `opencode2` > probe `--version` do host (major >= 2 => v2) > soft-fail
 para V1 com warning visivel. Precedencia e criterios do probe estao em
-`docs/INSTALLATION.md` -> "OpenCode V1/V2 — contrato de plugin".
+`docs/INSTALLATION.md` -> "OpenCode generation and plugin contract".
 
 Comportamento da tool — **NAO VERIFICADO em runtime**: em 1.6.0-beta.4 o modulo
 (`src/pantheon/cost-command.ts`) nunca era carregado no processo, e o fix nao foi

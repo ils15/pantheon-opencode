@@ -1,114 +1,78 @@
-# Pantheon Quick Start
+# Quick Start
 
-## What is Pantheon
+The first ten minutes: install, restart, dispatch, and read the first result.
+Installer flags, exit codes, saved plans, backups, and uninstall have their own
+home in [Installation](INSTALLATION.md).
 
-A multi-agent framework for **OpenCode**. It provides 14 specialized agents,
-TDD enforcement, Themis quality gates, and persistent memory MCP. The current
-version is **v1.6.0**, compatible with OpenCode 2.
+## Before you start
 
-## Installation
+You need OpenCode and a supported Node.js. The exact versions and the per-host
+evidence are in [Compatibility](COMPATIBILITY.md). Python is only needed for the
+optional MCP servers.
 
-### Quick install (recommended)
+## 1. Install
+
+From the project where you want to use Pantheon:
 
 ```bash
-# Interactive TTY setup (Clack component/location prompts, then progress display)
 npx pantheon-opencode init
-
-# Headless mode — for CI and scripts (non-interactive apply requires --yes)
-npx pantheon-opencode init --headless --yes
 ```
 
-Flags:
-- `--interactive` — force interactive TUI even if piped
-- `--headless` — force non-interactive (default for CI)
-- `-y` / `--yes` — skip confirmations, use defaults; **required for a non-interactive apply**
-- `--project` — install locally in `./.opencode/`
-- `--no-mcp` — skip Python/MCP setup
+The interactive setup chooses components and a global or project location
+before reviewing the apply. Canceling writes nothing.
 
-### Non-interactive apply requires `--yes`
-
-Without a TTY, `init` prints the plan and **changes nothing** unless `--yes`
-(alias `-y`) is passed. It never prompts and never guesses.
+## 2. Restart OpenCode
 
 ```bash
-npx pantheon-opencode init --headless          # prints the plan, applies nothing
-npx pantheon-opencode init --headless --yes    # applies
-```
-
-Exit codes:
-
-| Code | Meaning |
-|------|---------|
-| `0` | success, or plan-only / declined (nothing applied) |
-| `1` | failure |
-| `2` | apply requested without authorization (non-interactive, no `--yes`) |
-| `3` | drift detected (Phase 4) |
-| `130` | canceled |
-
-For MCP servers (memory, persistence) and TUI plugin:
-
-```bash
-npm run setup
-```
-
-```bash
-# Verify installation
-npm run doctor
-```
-
-### Prerequisites
-
-- **Node.js >=26.4.0** for Pantheon's CLI, installer, and Node-based tooling
-- **OpenCode v1.18.4+**
-- **Python 3.11+** (optional, for MCP servers)
-
-The package's Node floor does not imply a universal OpenCode host runtime:
-official OpenCode V2.0.31 has a Bun runtime path and a separate Node build pinned
-to 26.4.0; no Bun minimum is asserted. `node:sqlite` >=22.5 is a separate
-optional `pantheon_cost` capability threshold, not the package support floor.
-
-
-## Delegated Agents and Background Mode
-
-OpenCode V2 documents the native `subagent` tool. Its availability depends on
-the active host/runtime; check the tools exposed in the current session. A
-foreground call waits for the child result. With `background: true`, the call
-returns immediately, the parent is notified when the child finishes, and the
-response includes a `sessionID` that can be used to continue that child. See
-the [OpenCode V2 tools documentation](https://opencode.ai/v2/docs/tools).
-
-`OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS` is not a universal prerequisite.
-It is an experimental gate for some runtimes and is set by Pantheon's
-`npm run start` launcher; use it only when the target runtime documents and
-requires it. The setting does not make a missing tool available.
-
-```bash
-# Only when the active runtime documents and requires this experimental gate
-export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true
 opencode
 ```
 
-## Highlights
+Restart is required after installing or changing the plugin generation. A
+restart reloads the selected plugin; it is not an automatic resume of delegated
+work.
 
-- **OpenCode-only** — unified, simplified, no multi-platform fragmentation
-- **Global install** — `npx pantheon-opencode init` works from any directory
-- **Delegation waves** — Pantheon's workflow may organize up to 5 agents per
-  wave; this is an organizational policy, not an OpenCode API concurrency guarantee
-- **8 slash commands** — Pantheon workflow, model, audit, vision, and goal tools
-- **Themis 3-layer review** — heuristic scanner + deep review + verification planning
-- **Persistent MCP memory** — SQLite FTS5 (BM25) keyword search, no embeddings
+## 3. Check the install
 
-## Usage
+```bash
+npx pantheon-opencode doctor
+```
 
-| Command | Description |
-|---------|-------------|
-| `/pantheon` | Multi-perspective synthesis (Council) |
-| `/pantheon-audit` | Heuristic and quality/security audit |
-| `/pantheon-consolidate` | Consolidate memory as Mnemosyne |
-| `/pantheon-deepwork` | Multi-phase task with persisted checkpoints |
-| `/pantheon-focus` | Set a conversation-only session goal |
-| `/pantheon-model` | Inspect or configure per-agent models |
-| `/pantheon-optimize` | Project context optimization |
-| `/pantheon-vision` | Vision configuration |
+`doctor` validates the installed package, the plugin registration, the MCP
+servers, and drift between the installed version and the running package. A
+healthy install reports no warning.
 
-Full details: [INSTALLATION.md](INSTALLATION.md) for setup, [ARCHITECTURE.md](ARCHITECTURE.md) for system design.
+## 4. Dispatch your first task
+
+Describe the outcome, not the steps:
+
+```text
+/pantheon Add CSV export to the reports page, including tests and a review.
+```
+
+Or open the dispatch panel to watch delegated work:
+
+```text
+/dispatch
+```
+
+`/dispatch` opens the same delegation tree the sidebar summarizes, with one row
+per child and detail for the selected child. It needs an open session.
+
+## What you should see
+
+- Zeus routes the request. Bounded work goes to one specialist; planning,
+  discovery, and review are added when scope and risk call for them.
+- When a plan is requested, Athena returns it to Zeus, who displays the full
+  plan in the main conversation before asking for approval.
+- Implementation agents return `## subtask_summary`; investigations return
+  structured findings. A child that returns nothing is surfaced as an error,
+  not as a silent success.
+
+## Next steps
+
+- [Installation](INSTALLATION.md) — flags, saved plans, backup, uninstall,
+  reconcile, MCP pins.
+- [OpenCode V2](opencode-v2.md) — sidebar block, `/dispatch` panel, context
+  pruning, memory injection, session goals.
+- [MCP](MCP.md) and [MCP Tools](mcp-tools.md) — servers and tool signatures.
+- [Memory](MEMORY.md) — what is stored, for how long, and when to search.

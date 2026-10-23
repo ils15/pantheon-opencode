@@ -1,193 +1,80 @@
-# Upgrading Pantheon — 1.5.0
+# Upgrading Pantheon
 
 [Português (Brasil)](UPGRADING.pt-BR.md)
 
-> ### ⚠️ Before you upgrade: check the line boundary
->
-> **1.6.x is the last Pantheon line that supports an OpenCode 1.X host.** The
-> 1.6.x line supports OpenCode **1.19.x** (V1 plugin; read-only enforcement
-> measured on `1.19.4` — config-level; the hook does not fire there and the V1
-> probe recorded zero invocations) and OpenCode
-> **2.0.29, 2.0.30 and 2.1.x** (V2 plugin);
-> **OpenCode 2.0.22 is not supported** (the host
-> exposes neither `ctx.permission.assert` nor `worktree_*` /
-> `pantheon_bounded_read`) and **OpenCode 2.0.31 is not supported** (no runtime
-> evidence). Node **>=26.4.0** is the package floor and Python **>=3.11** is
-> required for the optional MCP servers.
->
-> From **1.7 onward** the line drops the V1 contract and targets OpenCode 2
-> only. Upgrading from 1.6.x to 1.7+ therefore crosses a Pantheon support
-> boundary (1.X removed); OpenCode 2 support itself is already present in 1.6.x,
-> including the `2.1.x` line, proved at the floor `2.1.0` and at the newest
-> `2.1.x` patch at freeze (ADR-0014 Amendment 1). The policy, its support
-> matrix and what is verified against which host are in the
-> [README compatibility section](../README.md#compatibility-and-support-policy)
-> and, in more detail, in
-> [INSTALLATION.md](INSTALLATION.md#opencode-v1v2--contrato-de-plugin).
-> Everything below applies to upgrades *within* the 1.6 line.
+This guide covers two moves: **1.5.2 → 1.6.0**, which is an in-line upgrade, and
+**1.6.x → 2.x**, which crosses the Pantheon support boundary. Supported host
+versions and evidence are in [Compatibility](COMPATIBILITY.md); this page
+describes the actions.
 
-Pantheon 1.5.0 formalizes two exclusive OpenCode plugin contracts. Before
-upgrading, choose the contract that matches the OpenCode host you will run:
+## Upgrading from 1.5.2 to 1.6.0
 
-| Selector | Config key | Pantheon entry | Scope |
-|---|---|---|---|
-| `v1` | singular `plugin` | `src/plugin.ts` and the V1 `src/plugins/pantheon-hooks.ts` | Pantheon V1 plugin: 6 tools (`hashline_edit`, the 3 goal tools, `pantheon_cost`, `pantheon_model`), board lifecycle, V1 hooks and implemented compaction path |
-| `v2` | plural `plugins` | `<installed>/src/plugin-v2` directory (`index.ts` re-exports `src/plugin-v2.ts`) | Full V2 plugin: 3 unconditional tools (`hashline_edit`, `pantheon_cost`, `pantheon_model`) plus up to 2 host-dependent ones (`vision_describe` when the host exposes its model catalog, `pantheon_bounded_read` when the host exposes its permission and session APIs), 5 event subscriptions, session hooks (`prompt`, `context`), a read-only-enforcing tool `execute.before` hook, a `permission.evaluate` delegation-matrix hook when the host exposes it, plus configuration transforms |
-
-**Changed in 1.6.0 — the V2 tool surface is 3 unconditional tools, not 6.** The
-three goal
-tools (`pantheon_goal_create`, `pantheon_goal_get`, `pantheon_goal_update`) are
-**not registered on the V2 contract**. The goal loop requires a `GoalStore`, a
-`GoalLoopClient` and a `BackgroundJobBoard`, none of which the V2
-`PluginContext` exposes, and the V1 bridge resolves to `null` outside V1. They
-were previously registered as placeholders that returned an explanatory string —
-but on OpenCode 2.0.x such a tool fails on **every** call with
-`Tool result declared output without an output schema`, so the placeholder never
-ran usefully. They are now absent instead. `getUnsupportedFeatures()` reports
-the gap as the `goal-tools` marker. Use the V1 contract to access the legacy
-goal tools; they do not automatically continue the session in the current build.
-
-### V1 goal tools are deprecated (soft deprecation)
-
-The V1 `pantheon_goal_create`, `pantheon_goal_update`, and `pantheon_goal_get`
-tools remain available with unchanged behavior, but are deprecated: they only
-create, update, and read legacy V1 goal records. A stored goal is not
-automatically continued in the current build. The durable manual goal surface
-is the Persistence MCP `goal_*` tools, available in this branch; this note does
-not announce a release. No tool is removed in this change. Hard removal or a
-structured disabled-build error is deferred to a future release and requires
-explicit human approval.
-
-Two further tools are registered only when the host allows it:
-`vision_describe` when the host exposes its model catalog, and
-`pantheon_bounded_read` when the host exposes its permission and session APIs
-(root Zeus sessions only). The V2 surface is therefore 3 unconditional tools
-plus up to 2 host-dependent ones.
-
-Three further V2 fixes ship alongside it:
-
-- Every V2 tool now declares `output`. The host requires the declaration and
-  the resolved result to agree, in both directions; an undeclared tool fails on
-  100% of calls.
-- The V2 tool `execute.before` hook **enforces read-only sessions** instead of
-  being a no-op. The three V2 tools — including the `hashline_edit` write
-  primitive and `pantheon_model`, which writes `active-preset.json` in project
-  *and* global scope — were reachable from a delegated `apollo`/`gaia` session,
-  because the V1 `tool.execute.before` hook that was meant to deny them lives in
-  `src/plugin.ts`, which is not loaded when only `plugin-v2` is configured. The
-  V2 plugin now instantiates the same `createEnforcementGuard` and denies
-  `edit`, `write`, `bash`, `task`, `hashline_edit` and `pantheon_model` in a
-  read-only session. The host puts the active agent on the `execute.before`
-  event itself, so V2 needs no `chat.params`-equivalent hook to populate the
-  registry.
-- `pantheon_model` on V2 has no interactive wizard (a tool call has no
-  terminal). Pass `action="status"` to read overrides, or `agent` + `model`
-  with `action="set"`.
-
-### V2 delegation and hook behavior
-
-When the host registers the V2 permission hook, V2 enforces the caller/target
-matrix for Pantheon-managed native `subagent` requests
-(`src/plugin-v2.ts:1379-1509`; decision in
-`src/pantheon/v2-delegation-enforce.ts:170-213`). If the host lacks that hook or
-registration fails, the matrix is unavailable and the host remains in control;
-the read-only `execute.before` guard is a separate control and enforces
-read-only sessions, not the matrix (`src/plugin-v2.ts:1138-1176`). Native-only
-resources pass through unchanged to OpenCode; mixed or multi-target requests
-are denied. A Pantheon request is considered only when its session, message and
-tool-call IDs in `permission.evaluate.source` match a short-lived record from
-the host's `tool.execute.before` event. The captured host caller is
-cross-checked against `permission.evaluate.agent`; that field is not trusted by
-itself because `ctx.permission.assert` accepts a caller-supplied agent. The
-session lookup must match the same session ID and have no `parentID`. OpenCode
-v2.0.29's `Session.Info` makes `parentID` optional for roots and populates it
-for children. Missing, stale, replayed or mismatched origin data fails closed.
-Explicit host denies remain final, and malformed or unknown resource data fails
-closed.
-
-The v2.0.29 runtime canary proves both sides: an allowed Zeus→Apollo root
-dispatch creates a child after the permission event, while a matrix-valid
-Athena→Apollo call from an Athena child is denied and creates no grandchild.
-An invalid Athena→Demeter root dispatch is denied without a child or extra
-model request. See
-[`bench/results/f4a-v229-admission-identity-2026-10-14.md`](../bench/results/f4a-v229-admission-identity-2026-10-14.md)
-and reproduce with `bash tests/canary/run-v2-permission-proof.sh`.
-
-V2 `execute.after` runs the completed-result parity chain in this order:
-`task-result-guard` → `context-sandbox` → `read-enhancer`. The `session.prompt`
-and compaction hooks remain registration-only; vision interception and
-compaction context construction remain V1-only.
-
-The installer removes Pantheon entries from both config shapes and writes only
-the selected generation. It does not mix `src/plugin.ts` or
-`src/plugins/pantheon-hooks.ts` with `<installed>/src/plugin-v2`; unrelated
-third-party entries are retained and are not converted.
+Install globally first — `update` refuses local, workspace, and `npx` copies:
 
 ```bash
-# Pin one contract for this OpenCode configuration
+npm install -g pantheon-opencode@beta
+pantheon-opencode update            # npm beta channel + config refresh
+pantheon-opencode update --stable   # stable channel instead
+```
+
+`update` compares the installed version with the npm dist-tag, runs
+`npm install -g pantheon-opencode@<channel>`, then re-runs `init --yes
+--headless` so config merges, the Python venv, and MCP entries match the new
+package. Copy-only artifacts (agents, skills, `AGENTS.md`, commands, MCP
+scripts, code-mode payload) are refreshed by `postinstall` on every `npm
+install`.
+
+After the update:
+
+```bash
+pantheon-opencode doctor
+```
+
+`doctor` warns when the package is newer than the last sync and detects plugin
+version drift when the registered path points into an older
+`node_modules/pantheon-opencode` copy.
+
+If the update is interrupted, run `init` again. Every copy step is
+byte-compare idempotent, and the exact backup set under
+`.pantheon/backups/<timestamp>/` is reversible with
+`pantheon-opencode restore`. Details are in [Installation](INSTALLATION.md).
+
+### What changes in 1.6.0
+
+- **The V2 tool surface is three unconditional tools** — `hashline_edit`,
+  `pantheon_cost`, `pantheon_model` — plus up to two host-dependent ones:
+  `vision_describe` when the host exposes its model catalog, and
+  `pantheon_bounded_read` when the host exposes its permission and session APIs
+  (root Zeus sessions only). It is not six tools.
+- **The three V2 goal tools are not registered.** The goal loop needs a
+  `GoalStore`, a `GoalLoopClient`, and a `BackgroundJobBoard`, none of which the
+  V2 `PluginContext` exposes. The gap is reported as `goal-tools`.
+- **Every V2 tool declares `output`.** OpenCode 2.0.x rejects a tool whose
+  declaration and result disagree.
+- **V2 read-only sessions are enforced.** A delegated `apollo`/`gaia` session is
+  denied `edit`, `write`, `bash`, `task`, `hashline_edit`, and
+  `pantheon_model` by the V2 `execute.before` hook.
+- **Durable manual goals move to the Persistence MCP.** `goal_create`,
+  `goal_get`, `goal_update`, and `goal_done` are Zeus-only and session-scoped.
+  V1 goal tools remain available but deprecated.
+- **Step ceilings are stripped on V2 installs.** `steps` is optional in
+  OpenCode 2; an absent value means no native ceiling. Run the installer once to
+  clear a stale value from a managed agent.
+- **Memory gains a 64 KiB cap and TTL**, and `pantheon_cost` reports USD by
+  agent, model, and session from the models.dev catalog.
+
+### Choosing the generation
+
+```bash
 npx pantheon-opencode init --opencode-version v1
 npx pantheon-opencode init --opencode-version v2
-
-# The default. Reads the generation from the host: explicit
-# OPENCODE_VERSION wins; otherwise an OPENCODE_BIN ending in opencode2
-# selects V2; otherwise the host's own --version decides (major >= 2 => V2).
 npx pantheon-opencode init --opencode-version auto
 ```
 
-`--version v1|v2` remains accepted after `init` as the legacy spelling.
-`auto` is the default and never installs both Pantheon plugin generations.
-
-### Debugging: the host is on the wrong generation
-
-An install that lands on the wrong generation means the gate could not read the
-host, not that it guessed wrong. `auto` falls back to V1 — with one visible
-warning — in exactly three situations:
-
-- **The probe could not run.** `opencode` was not on `PATH`, or
-  `OPENCODE_BIN` pointed somewhere unrunnable. The warning quotes the spawn
-  error. Fix the path, or pass `--opencode-version v2` explicitly.
-- **The banner had no readable version.** Some hosts print a bare build date
-  (`built 2026.10.04`) instead of a version; a date is never read as a major.
-  The warning quotes what the probe returned.
-- **The banner contradicted itself.** Version-like tokens that disagree with no
-  tool name to break the tie, for example `1.18.33 (runtime 2.0.0)`. The
-  warning lists the majors it found. Pass the generation explicitly.
-
-To see what the gate actually reads, run the host binary yourself:
-
-```bash
-opencode --version
-```
-
-The gate prefers the version token that immediately follows the tool name, so
-`node v22.1.0 (opencode 1.18.33)` resolves as a 1.x host and
-`opencode v1.18.33 built 2026.10.04` resolves as 1.x too. If the resolution is
-still not what you expect, `--opencode-version v1|v2` overrides it outright and
-`OPENCODE_VERSION` overrides everything except the explicit flag.
-
-### Updating between beta releases (1.5.0-beta.5+)
-
-1. Stop OpenCode.
-2. Run `npx pantheon-opencode@beta update` (beta channel, the default during
-   1.5.0 prereleases) or `npx pantheon-opencode@beta update --stable`. Always
-   pin `@beta` on npx — plain `npx pantheon-opencode` resolves the `latest`
-   dist-tag (the stable release), which predates the `update` command. The
-   command compares the installed version with the npm dist-tag, installs the
-   newer package globally, and re-runs `init --yes --headless` so config
-   merges, the Python venv and MCP entries match the new package. With a
-   global install, `pantheon-opencode update` (no npx) does the same.
-3. If the update was interrupted, just run `init` again — every copy step is
-   byte-compare idempotent and the config is preserved in an exact backup set
-   (`.pantheon/backups/<timestamp>/`) that `pantheon-opencode restore` reverts.
-   The old `opencode.json.bak` sidecar is gone.
-4. Start OpenCode and optionally confirm with `npx pantheon-opencode doctor`
-   (it compares the installed-version marker against the package and warns on
-   drift).
-
-Copy-only artifacts (agents, skills, AGENTS.md, commands, MCP scripts and the
-code-mode payload) are refreshed automatically by the package postinstall on
-every `npm install`; `init`/`update` is only required for config merges, the
-venv and MCP entries.
+`auto` is the default. `--version v1|v2` remains accepted after `init` as the
+legacy spelling. The resolution order and fallback behavior are documented once
+in [Compatibility](COMPATIBILITY.md#how-the-generation-is-selected). `auto`
+never installs both Pantheon plugin generations.
 
 ### Migration checklist
 
@@ -195,98 +82,71 @@ venv and MCP entries.
 2. Run `init` once with the desired selector (`v1`, `v2`, or `auto`). Do not
    copy a V1 plugin entry into a V2 `plugins` list, or vice versa.
 3. If the TUI is wanted, include the installer `plugins` component. V1 uses
-   `tui.json`; V2 uses its native local-plugin `index.ts` + `tui.ts` entrypoints.
-   Installing the V2 server plugin alone does not install the TUI component.
+   `tui.json`; V2 uses its native local-plugin `index.ts` + `tui.ts`
+   entrypoints. Installing the V2 server plugin alone does not install the TUI.
 4. Inspect the result: V1 Pantheon entries belong in `plugin`; the V2 Pantheon
    entry is the `<installed>/src/plugin-v2` directory in `plugins`.
-5. Restart OpenCode after changing configuration. This restart reloads the
-   selected plugin; it is not an automatic resume of delegated work.
+5. Restart OpenCode after changing configuration.
+6. Run `doctor` and confirm no plugin-version drift remains.
 
-### Runtime differences after the upgrade
+### If the host lands on the wrong generation
+
+An install on the wrong generation means the gate could not read the host; it
+does not mean it guessed. Pass `--opencode-version v2` explicitly, or set
+`OPENCODE_VERSION=v2`. To see what the gate reads, run `opencode --version`.
+
+## Runtime differences after upgrading
 
 - **Delegation:** neither generation registers a Pantheon-specific delegation
-  tool. OpenCode V2 documents the native `subagent` tool; some host/API
-  documentation uses `task()` for child-session dispatch, but that is not a
-  guaranteed root-tool name. Tool availability, signature, and background
-  support remain runtime-dependent.
-  The former `pantheon_delegate`,
-  `pantheon_delegation_read` and `pantheon_delegation_list` tools were removed
-  from the V1 plugin.
-- **V1:** additionally ships `hashline_edit`, the goal/cost/model tools, the
-  BackgroundJobBoard lifecycle, and the hooks explicitly registered for V1.
-- **V2:** `plugin-v2` does not register the BackgroundJobBoard, V1 event/tool
-  hooks, or a Pantheon compaction hook. The native OpenCode V2 `subagent` tool
-  is a host capability, not a Pantheon-specific API.
-- **TUI:** native tasks may be followed only when OpenCode exposes explicit
-  origin, parent/child and status metadata. A missing Markdown report is not
-  enough to classify a child as native.
+  tool. Use the host's native child-session engine — `subagent` in the reported
+  root runtime, `task()` in host/API documentation. The former
+  `pantheon_delegate`, `pantheon_delegation_read`, and `pantheon_delegation_list`
+  tools were removed.
+- **V1:** ships `hashline_edit`, the goal/cost/model tools, the
+  BackgroundJobBoard lifecycle, and the V1 event/tool/compaction hooks.
+- **V2:** does not register the BackgroundJobBoard, V1 event/tool hooks, or a
+  Pantheon V1 compaction hook. It adds the V2 hooks documented in
+  [OpenCode V2](opencode-v2.md).
+- **Recovery:** on restart, old or running V1 board jobs are marked errored;
+  they are not auto-resumed and child work is not restarted automatically. V2
+  adds no automatic resume/restart behavior.
 - **Reports:** `.pantheon/delegations/` Markdown reports are historical V1
-  delegate/board output. They are not a V2 task protocol and are not converted
-  automatically.
-- **Recovery:** V1 compaction carry-forward is available only through its
-  implemented `experimental.session.compacting` path. On restart, old/running
-  V1 board jobs are marked errored; they are not auto-resumed and child work is
-  not restarted automatically. V2 adds no automatic resume/restart behavior.
+  board output, not a V2 task protocol.
 
 Do not describe this upgrade as a V1-to-V2 feature-parity migration. It is a
-choice between a legacy runtime plugin and a narrower configuration adapter.
+choice between a legacy runtime plugin and a narrower, host-native adapter.
 
-## Historical upgrade notes (superseded)
+## Outlook: 1.6.x to 2.x
 
-The following notes describe older releases and are retained for historical
-reference. They are not the active 1.5.0 installation contract.
+From **1.7 onward** Pantheon drops the V1 contract and targets OpenCode 2 only.
+OpenCode 1.X hosts are not supported on 2.x. OpenCode 2 support is already
+present in 1.6.x, so the 2.x change is a removal of the V1 path rather than a
+new host requirement.
 
-### Upgrading to v1.0 (OpenCode-only)
+Prepare for 2.x by:
 
-v1.0 removes all multi-platform support. Pantheon now runs exclusively on OpenCode.
+- moving durable manual goals to the Persistence MCP `goal_*` tools;
+- replacing any reliance on V1 goal tools or the BackgroundJobBoard;
+- confirming the installation is registered through `plugins` with the
+  `<installed>/src/plugin-v2` directory;
+- running `doctor` and the V2 sandbox checks described in
+  [Release Process](RELEASING.md).
 
-### Breaking Changes
-1. **No longer supports**: Claude Code, Cursor, Windsurf, Cline, Continue.dev, VS Code Copilot
-2. **Installation changed**: Use `npx pantheon-opencode init` instead of per-platform scripts
-3. **Background delegation (historical, runtime-specific note)**: Some host
-   versions use `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` as an
-   experimental gate. This is not a universal requirement; follow the active
-   runtime's documentation and tool availability.
-4. **OpenCode-only**: Multi-platform support removed. Use `npx pantheon-opencode init` for setup.
+## Historical upgrade notes
 
-### Migration Steps
-1. Uninstall old platform-specific configs
-2. Run `npx pantheon-opencode init` to install agents globally
-3. Run `npm run setup` for MCP servers + skills + TUI
-4. Only if the active host/runtime documents and requires this experimental
-   setting, set `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` before
-   launch (or use Pantheon's `npm run start` launcher, which sets it). This is
-   not a general migration step.
+These notes are superseded and retained for users coming from older lines.
 
-### Rollback
-For a rollback, use the previous Pantheon release tag that matches your deployment.
+- **v1.0** removed all multi-platform support; Pantheon runs only on OpenCode.
+  Installation moved to `npx pantheon-opencode init`.
+- **v3.19.0** introduced the Memory Persistence Protocol. Its mandatory
+  per-agent recall/store rules are historical: current policy searches only when
+  project history could change the outcome, reuses coordinator results across
+  delegation, and stores at most one reusable top-level outcome when a permitted
+  write tool exists. See [Memory](MEMORY.md).
+- `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` is not a universal
+  prerequisite. It is an experimental gate for some runtimes and is set by
+  Pantheon's `npm run start` launcher; use it only when the runtime documents
+  and requires it.
 
-
-### Historical: upgrading to v3.19.0
-
-> **Historical:** These notes are preserved for users upgrading from legacy versions.
-> New installations should follow [INSTALLATION.md](INSTALLATION.md).
-
-### Memory Persistence Protocol
-Pantheon v3.19.0 introduces the Memory Persistence Protocol — a standardized system for how agents persist and recall memory.
-
-Key changes:
-- All 14 agent files now have a `## 🧠 Memory Protocol` section with mandatory rules
-- Agents must call `memory_recall()` before work (top_k=3, skip if score <0.3)
-- Agents must call `memory_store()` after work (2 lines max, importance 0.4-0.9)
-- Historical claim (superseded): Zeus auto-stores on agent return — this is not a current guarantee and requires a permitted write tool
-- Session-end auto-save runs at session close
-- Memory Bank is updated only at sprint close (importance ≥ 0.6 graduates)
-
-**No manual migration needed.** The protocol is enforced at the agent instruction level.
-
-> **Superseded:** the mandatory per-agent recall/store rules above are historical
-> and are not the current policy. New work searches only when project history is
-> relevant, reuses coordinator results across delegation, and stores only a
-> reusable top-level outcome. A write is conditional on an exposed, permitted
-> tool; the reported Beta 10 Zeus root has `memory_search` but no `memory_store`
-> grant/tool, so it must not claim that it stored a decision. See [MEMORY.md](MEMORY.md).
-
-### Previous historical upgrades
-
-For upgrading from versions before v3.19.0, see the CHANGELOG for version-specific changes.
+For version-by-version detail, see the
+[changelog](https://github.com/ils15/pantheon-opencode/blob/main/CHANGELOG.md).

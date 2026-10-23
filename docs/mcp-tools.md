@@ -2,7 +2,8 @@
 
 Canonical reference for Pantheon agents. Lists every tool across the 5 native MCP servers, with signatures, descriptions, and which agents use them.
 
-> **Agent tip:** Tool names are platform-dependent. See [Platform Naming Conventions](#platform-naming-conventions) below to map these names to your runtime.
+> **Agent tip:** OpenCode exposes an MCP tool as `{server}_{tool}`. See
+> [Naming in OpenCode](#naming-in-opencode) below.
 
 ---
 
@@ -204,7 +205,7 @@ across sessions. Athena and Themis run in child sessions and cannot read Zeus's
 goal; as root they cannot create a goal in their own session because only Zeus
 has `goal_create`. Manual goals do not enable automatic continuation and do not
 replace the V1 `GoalStore`. See
-[Persistence MCP](persistence-mcp.md#manual-session-goals) for details.
+[Memory](MEMORY.md#manual-session-goals) for details.
 
 ---
 
@@ -291,27 +292,59 @@ database. Costs are catalog list prices, not a provider invoice; on V2 the phase
 can be `unknown`; and the `node:sqlite` CLI-fallback path still reports tokens
 only, with the report saying so.
 
+### Cost backend and attribution
+
+`pantheon_cost` prefers a read-only `node:sqlite` connection to the selected
+`opencode.db` (`src/pantheon/cost-command.ts`). When `node:sqlite` is
+unavailable in the host runtime — for example under Bun — the tool falls back to
+spawning `node scripts/cost.mjs` as a read-only subprocess. The fallback
+resolves a real Node binary, `PANTHEON_NODE` first and then `node` on `PATH`,
+verifies that it supports `node:sqlite` (Node >= 22.5), and runs the script with
+an argument array, never through a shell. If neither source resolves, the tool
+returns `status: UNSUPPORTED`. Database failures return a contract status such
+as `UNAVAILABLE` or `CORRUPT_DATA` and include diagnostic detail, including
+captured stderr when available.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PANTHEON_NODE` | `node` from `PATH` | Node >= 22.5 binary used only for the `node:sqlite` capability in the CLI fallback. An explicit path must exist and be executable, otherwise the tool fails fast |
+| `PANTHEON_COST_OFFLINE` | unset | Set to `1` to forbid every network request, including `refreshPricing: true`. The report uses the cached catalog only, an explicit refresh is refused with a `Pricing: REFUSED` notice naming this variable, and no socket is opened |
+| `PANTHEON_COST_DB` | unset | Absolute path to the database, checked before `OPENCODE_DB` |
+| `OPENCODE_DB` | unset | Absolute path to the database, checked before the XDG default |
+
+The database is resolved by path in this order: an explicit `dbPath` from the
+tool caller, `PANTHEON_COST_DB`, `OPENCODE_DB`, then the XDG default
+`opencode.db`. There is no per-version filename in that chain: `opencode-v2.db`
+is not a host 2.x database — it is a name a sandbox gives its own state
+database through `OPENCODE_DB`.
+
+The v1/v2 distinction is the **detected schema**, not the file name. The report
+looks for the `message` and `session_message` tables and reads whichever the
+open database actually holds, because a migrated database carries both families
+at once. `PANTHEON_OPENCODE_VERSION=v1|v2` selects no file: it only narrows an
+already-detected set to one table family, and fails fast when the value is
+invalid or the requested family is not there. A database carrying neither table
+returns `CORRUPT_DATA`; a ledger that exists but yields no readable tokens
+returns `UNSUPPORTED`, never a successful empty report.
+
+The report always includes `## Cost by agent` and adds `## Cost by model` and
+`## Cost by session` tables. A session row covers that session alone; passing
+`session:<id>` sums the root session and its descendants. An unpriced row reads
+`—` and is excluded from the total, which then says `(partial)`.
+
 ---
 
-## Platform Naming Conventions
+## Naming in OpenCode
 
-Each platform exposes MCP tools with different naming. The same tool `memory_recall` from server `pantheon-memory` gets different names:
-
-| Platform | Naming Pattern | Example for `memory_recall` |
-|----------|---------------|-----------------------------|
-| **OpenCode** | `{server}_{tool}` | `pantheon-memory_memory_recall` |
-| **** | `mcp__{server}__{tool}` | `mcp__pantheon-memory__memory_recall` |
-| **** | `<use_mcp_tool>` XML | `<use_mcp_tool><server_name>pantheon-memory</server_name><tool_name>memory_recall</tool_name></use_mcp_tool>` |
-| **** | Original name | `memory_recall` (injected via schema) |
-| **** | Original name | `memory_recall` (injected via schema) |
-| **Continue** | Original name | `memory_recall` (injected via schema) |
-| ** ** | Original name | `memory_recall` (injected via schema) |
+Pantheon runs only on OpenCode, which exposes an MCP tool as
+`{server}_{tool}` — for example `pantheon-memory_memory_recall`. The older
+multi-platform naming examples were removed with multi-platform support in
+v1.0.
 
 > **In the Code Mode `execute` sandbox the visible catalog is a subset, not the
 > registry above.** Resolve a hidden tool by calling `search()` for its exact path
 > and then invoking that path **literally** — passing the whole path string as a
-> single key fails even though `search()` returned it (see **P1-10** in
-> [ROADMAP.md](../ROADMAP.md)).
+> single key fails even though `search()` returned it.
 
 ---
 

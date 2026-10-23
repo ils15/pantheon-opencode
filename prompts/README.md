@@ -1,8 +1,9 @@
 # Prompt Files
 
-Reusable prompt templates for common development workflows. Each prompt specifies a target agent, required tools, and structured instructions.
+Reusable prompt templates for common development workflows. Each prompt
+specifies a target agent, required tools, and structured instructions.
 
-## Available Prompts (11)
+## Available Prompts (10)
 
 | Prompt | Agent | Purpose |
 |---|---|---|
@@ -14,18 +15,32 @@ Reusable prompt templates for common development workflows. Each prompt specifie
 | **focus** | Zeus | Pin a session goal to keep all work aligned with a single objective |
 | **sketch** | Athena | Interview a rough idea into a structured feature spec (3–5 questions) |
 | **subtask** | Zeus | Delegate a bounded child task to a specialist and receive a structured result |
+| **quick-discovery-large-codebase** | Apollo | Fast-path bounded discovery for large codebases (8-minute cap) |
+| **quick-plan-large-feature** | Athena | Fast-path bounded planning for large features (5-minute cap) |
 
 ## Usage
 
-### OpenCode
+Prompt templates are **not** slash commands. OpenCode slash commands live in
+`commands/` and are invoked in chat:
+
+```text
+/pantheon Add CSV export to the reports page, including tests and a review.
+/pantheon-audit Changes in src/auth/
+/pantheon-focus Implement email verification end-to-end with TDD
+/pantheon-deepwork Migrate the billing module
+/pantheon-model status
+/pantheon-optimize
+/pantheon-vision
+/pantheon-consolidate
 ```
-/implement-feature Add user authentication with JWT
-/plan-architecture Design microservice communication layer
-/debug-issue TypeError in user registration flow
-/audit Changes in src/auth/
-/optimize-database Slow query on orders table
-/focus Implement email verification end-to-end with TDD
-/pantheon Should we use Redis or PostgreSQL for session storage?
-/sketch Add a notification system for order shipments
-/subtask @hermes Implement POST /products endpoint
-```
+
+The templates in this directory are loaded by the command or agent that needs
+them; they are not invoked directly by filename. In particular:
+
+- `focus.prompt.md` is used by `/pantheon-focus`.
+- The audit guidance is used by `/pantheon-audit`.
+- `sketch.prompt.md` has **no matching command file**, so it is available as a
+  template only. There is currently no `/sketch` command.
+
+For the full command list, see the commands directory in the repository. For
+agent roles, see `docs/agents/README.md`.

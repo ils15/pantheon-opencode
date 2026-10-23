@@ -1,85 +1,156 @@
+<!-- synced-from: docs/UPGRADING.md @ 7359e4f -->
 # Atualização do Pantheon
 
 [English](UPGRADING.md)
 
-## Atualização para a v1.0 (somente OpenCode)
+Este guia cobre dois movimentos: **1.5.2 → 1.6.0**, uma atualização dentro da
+linha, e **1.6.x → 2.x**, que cruza a fronteira de suporte do Pantheon. As
+versões de host suportadas e a evidência estão em
+[Compatibilidade](COMPATIBILITY.md); esta página descreve as ações.
 
-A v1.0 removeu o suporte a múltiplas plataformas. O Pantheon passou a funcionar
-exclusivamente no OpenCode.
+## Atualizando de 1.5.2 para 1.6.0
 
-### Mudanças incompatíveis
-1. **Não há mais suporte a**: Claude Code, Cursor, Windsurf, Cline, Continue.dev e VS Code Copilot
-2. **Instalação alterada**: use `npx pantheon-opencode init` em vez dos scripts específicos por plataforma
-3. **Delegação em segundo plano (nota histórica, específica do runtime)**:
-   algumas versões do host usam `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true`
-   como gate experimental. Isso não é um requisito universal; consulte a
-   documentação do runtime ativo e verifique as ferramentas disponíveis.
-4. **Somente OpenCode**: o suporte multiplataforma foi removido. Use `npx pantheon-opencode init` para configurar.
+Instale globalmente primeiro — `update` recusa cópias local, workspace e `npx`:
 
-### Atualizando entre betas (1.5.0-beta.5+)
+```bash
+npm install -g pantheon-opencode@beta
+pantheon-opencode update            # canal beta do npm + refresh de config
+pantheon-opencode update --stable   # canal estável
+```
 
-1. Feche o OpenCode.
-2. Rode `npx pantheon-opencode@beta update` (canal beta, o padrão durante os
-   prereleases 1.5.0) ou `npx pantheon-opencode@beta update --stable`. No npx,
-   fixe sempre `@beta` — `npx pantheon-opencode` puro resolve a tag `latest`
-   (o release estável), que é anterior ao comando `update`. O comando compara
-   a versão instalada com o dist-tag do npm, instala o pacote novo
-   globalmente e re-executa `init --yes --headless` para alinhar merge de
-   config, venv e entradas MCP com o pacote novo. Com instalação global,
-   `pantheon-opencode update` (sem npx) faz o mesmo.
-3. Se a atualização for interrompida, rode `init` de novo — cada passo de
-   cópia é idempotente (byte-compare) e o config é preservado num conjunto de
-   backup exato (`.pantheon/backups/<timestamp>/`) que
-   `pantheon-opencode restore` reverte. O sidecar `opencode.json.bak` antigo
-   não existe mais.
-4. Abra o OpenCode e confirme com `npx pantheon-opencode doctor` (ele compara
-   o marker de versão instalada com o pacote e avisa em caso de drift).
+`update` compara a versão instalada com a dist-tag do npm, executa
+`npm install -g pantheon-opencode@<channel>` e roda de novo `init --yes
+--headless` para que merges de config, o venv Python e as entradas MCP
+correspondam ao pacote novo. Artefatos de cópia (agents, skills, `AGENTS.md`,
+commands, scripts MCP, payload code-mode) são atualizados pelo `postinstall` em
+todo `npm install`.
 
-Artefatos de cópia (agents, skills, AGENTS.md, commands, scripts MCP e o
-payload code-mode) são atualizados automaticamente pelo postinstall do
-pacote a cada `npm install`; `init`/`update` só é necessário para merge de
-config, venv e entradas MCP.
+Depois da atualização:
 
-### Etapas de migração
-1. Desinstale as configurações específicas da plataforma antiga
-2. Execute `npx pantheon-opencode init` para instalar os agentes globalmente
-3. Execute `npm run setup` para configurar servidores MCP, skills e TUI
-4. Somente se o host/runtime ativo documentar e exigir essa configuração
-   experimental, defina `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` antes
-   de iniciar (ou use o launcher `npm run start` do Pantheon, que a define).
-   Esta não é uma etapa geral de migração.
+```bash
+pantheon-opencode doctor
+```
 
-### Rollback
-Para fazer rollback, use a tag da versão anterior do Pantheon compatível com sua implantação.
+`doctor` avisa quando o pacote é mais novo que a última sincronização e detecta
+drift de versão do plugin quando o caminho registrado aponta para uma cópia
+antiga em `node_modules/pantheon-opencode`.
 
-## Atualização para a v3.19.0
+Se a atualização for interrompida, rode `init` de novo. Cada passo de cópia é
+idempotente por comparação de bytes, e o conjunto de backup exato em
+`.pantheon/backups/<timestamp>/` é revertido com `pantheon-opencode restore`.
+Detalhes em [Instalação](INSTALLATION.md).
 
-> **Histórico:** estas notas foram preservadas para usuários que atualizam de versões legadas.
-> Novas instalações devem seguir o [INSTALLATION.md](INSTALLATION.md).
+### O que muda na 1.6.0
 
-### Protocolo de Persistência de Memória
+- **A superfície de tools V2 é de três tools incondicionais** — `hashline_edit`,
+  `pantheon_cost`, `pantheon_model` — mais até duas dependentes do host:
+  `vision_describe` quando o host expõe o catálogo de modelos, e
+  `pantheon_bounded_read` quando o host expõe as APIs de permissão e sessão
+  (apenas sessões raiz do Zeus). Não são seis tools.
+- **As três tools de goal do V2 não são registradas.** O loop de goal precisa de
+  `GoalStore`, `GoalLoopClient` e `BackgroundJobBoard`, que o `PluginContext`
+  V2 não expõe. A lacuna é reportada como `goal-tools`.
+- **Toda tool V2 declara `output`.** O OpenCode 2.0.x rejeita uma tool cuja
+  declaração e resultado não concordam.
+- **Sessões read-only do V2 são aplicadas.** Uma sessão delegada de
+  `apollo`/`gaia` recebe `deny` para `edit`, `write`, `bash`, `task`,
+  `hashline_edit` e `pantheon_model` pelo hook `execute.before` do V2.
+- **Goals manuais duráveis passam para o MCP de Persistence.** `goal_create`,
+  `goal_get`, `goal_update` e `goal_done` são exclusivos do Zeus e escopados por
+  sessão. As tools de goal V1 continuam disponíveis, mas depreciadas.
+- **Tetos de passos são removidos em instalações V2.** `steps` é opcional no
+  OpenCode 2; ausente significa nenhum teto nativo. Rode o instalador uma vez
+  para limpar um valor antigo de um agente gerenciado.
+- **A memória ganha cap de 64 KiB e TTL**, e `pantheon_cost` reporta USD por
+  agente, modelo e sessão a partir do catálogo models.dev.
 
-O Pantheon v3.19.0 introduziu o Memory Persistence Protocol — um sistema
-padronizado para persistência e recuperação de memória pelos agentes.
+### Escolhendo a geração
 
-Principais mudanças:
-- Os 14 arquivos de agentes passaram a incluir uma seção `## 🧠 Memory Protocol` com regras obrigatórias
-- Os agentes devem chamar `memory_recall()` antes do trabalho (top_k=3, ignorando resultados abaixo de 0,3)
-- Os agentes devem chamar `memory_store()` depois do trabalho (máximo de 2 linhas, importância de 0,4 a 0,9)
-- Alegação histórica substituída: Zeus armazena automaticamente o retorno dos agentes — isso não é uma garantia atual e exige uma ferramenta de escrita permitida
-- O salvamento automático de sessão é executado no encerramento da sessão
-- O Memory Bank é atualizado apenas no fechamento do sprint (importância ≥ 0,6 é promovida)
+```bash
+npx pantheon-opencode init --opencode-version v1
+npx pantheon-opencode init --opencode-version v2
+npx pantheon-opencode init --opencode-version auto
+```
 
-**Nenhuma migração manual é necessária.** O protocolo é aplicado no nível das instruções dos agentes.
+`auto` é o padrão. `--version v1|v2` continua aceito depois de `init` como a
+grafia legada. A ordem de resolução e o comportamento de fallback estão
+documentados uma única vez em
+[Compatibilidade](COMPATIBILITY.md#how-the-generation-is-selected). `auto` nunca
+instala as duas gerações do plugin Pantheon.
 
-> **Substituído:** as regras históricas de consulta e gravação obrigatórias por
-> agente não são a política atual. Busque somente quando o histórico do projeto
-> for relevante, reutilize o resultado do coordenador nas delegações e grave
-> apenas um resultado reutilizável no nível da tarefa e somente se houver uma
-> ferramenta de escrita exposta e permitida. No runtime Zeus root Beta 10
-> reportado, há `memory_search`, mas não grant/ferramenta `memory_store`; Zeus
-> não deve afirmar que persistiu uma decisão. Veja [MEMORY.md](MEMORY.md).
+### Checklist de migração
 
-### Atualizações anteriores
+1. Pare o OpenCode antes de trocar a geração do plugin.
+2. Rode `init` uma vez com o seletor desejado (`v1`, `v2` ou `auto`). Não copie
+   uma entrada de plugin V1 para uma lista `plugins` V2, nem o contrário.
+3. Se quiser a TUI, inclua o componente `plugins` do instalador. V1 usa
+   `tui.json`; V2 usa os entrypoints nativos `index.ts` + `tui.ts`. Instalar
+   apenas o plugin de servidor V2 não instala a TUI.
+4. Inspecione o resultado: entradas Pantheon V1 ficam em `plugin`; a entrada V2
+   é o diretório `<installed>/src/plugin-v2` em `plugins`.
+5. Reinicie o OpenCode depois de mudar a configuração.
+6. Rode `doctor` e confirme que não resta drift de versão do plugin.
 
-Para atualizar de versões anteriores à v3.19.0, consulte o CHANGELOG para as mudanças específicas de cada versão.
+### Se o host cair na geração errada
+
+Uma instalação na geração errada significa que o gate não conseguiu ler o host;
+não significa que ele adivinhou. Passe `--opencode-version v2`
+explicitamente, ou defina `OPENCODE_VERSION=v2`. Para ver o que o gate lê, rode
+`opencode --version`.
+
+## Diferenças de runtime após a atualização
+
+- **Delegação:** nenhuma geração registra uma tool de delegação específica do
+  Pantheon. Use o motor nativo de sessões filhas do host — `subagent` no runtime
+  raiz relatado, `task()` na documentação de host/API. As antigas
+  `pantheon_delegate`, `pantheon_delegation_read` e `pantheon_delegation_list`
+  foram removidas.
+- **V1:** traz `hashline_edit`, as tools de goal/cost/model, o ciclo de vida do
+  BackgroundJobBoard e os hooks V1 de evento/tool/compaction.
+- **V2:** não registra o BackgroundJobBoard, hooks V1 de evento/tool nem um hook
+  de compaction V1. Ele adiciona os hooks V2 documentados em
+  [OpenCode V2](opencode-v2.md).
+- **Recuperação:** ao reiniciar, jobs antigos ou em execução do board V1 são
+  marcados como erro; não são retomados automaticamente e o trabalho filho não
+  reinicia sozinho. O V2 não adiciona retomada/reinício automático.
+- **Relatórios:** os relatórios Markdown em `.pantheon/delegations/` são saída
+  histórica do board V1, não um protocolo de tarefa V2.
+
+Não descreva esta atualização como uma migração de paridade V1→V2. É uma escolha
+entre um plugin de runtime legado e um adaptador mais estreito, nativo do host.
+
+## Perspectiva: 1.6.x para 2.x
+
+A partir da **1.7**, o Pantheon abandona o contrato V1 e mira apenas o OpenCode
+2. Hosts OpenCode 1.X não são suportados na 2.x. O suporte a OpenCode 2 já
+existe na 1.6.x, então a mudança da 2.x é a remoção do caminho V1, não um novo
+requisito de host.
+
+Prepare-se para a 2.x:
+
+- movendo goals manuais duráveis para as tools `goal_*` do MCP de Persistence;
+- removendo qualquer dependência das tools de goal V1 ou do BackgroundJobBoard;
+- confirmando que a instalação está registrada em `plugins` com o diretório
+  `<installed>/src/plugin-v2`;
+- rodando `doctor` e as checagens de sandbox V2 descritas no
+  [Processo de release](RELEASING.md).
+
+## Notas históricas de atualização
+
+Estas notas estão superadas e são mantidas para quem vem de linhas antigas.
+
+- **v1.0** removeu todo o suporte multiplataforma; o Pantheon roda apenas no
+  OpenCode. A instalação passou a ser `npx pantheon-opencode init`.
+- **v3.19.0** introduziu o Memory Persistence Protocol. As regras obrigatórias
+  de recall/store por agente são históricas: a política atual busca apenas
+  quando o histórico do projeto pode mudar o resultado, reutiliza resultados do
+  coordenador nas delegações e grava no máximo um resultado reutilizável de
+  nível superior quando existe uma tool de escrita permitida. Veja
+  [Memória](MEMORY.md).
+- `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` não é pré-requisito
+  universal. É um gate experimental de alguns runtimes e é definido pelo
+  launcher `npm run start` do Pantheon; use apenas quando o runtime documentar e
+  exigir.
+
+Para detalhe versão a versão, veja o
+[changelog](https://github.com/ils15/pantheon-opencode/blob/main/CHANGELOG.md).

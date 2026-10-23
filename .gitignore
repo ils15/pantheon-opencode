@@ -6,6 +6,8 @@ dist/
 !src/plugins/tui/dist/
 !src/plugins/tui/dist/**
 .venv/
+.venv-docs/
+site/
 .pantheon/*
 # ADR series only: the decision records are versioned, the rest of the
 # memory bank (context, progress logs, task notes, legacy ADRs) stays local.

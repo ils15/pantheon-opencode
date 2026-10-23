@@ -55,11 +55,25 @@ markdown_extensions:
 nav:
   - Home: INDEX.md
   - Getting Started:
-    - Installation: INSTALLATION.md
-    - Quick Start: QUICKSTART.md
+      - Installation: INSTALLATION.md
+      - Quick Start: QUICKSTART.md
+      - Upgrading: UPGRADING.md
+      - Upgrading (Português): UPGRADING.pt-BR.md
+  - Compatibility: COMPATIBILITY.md
   - Architecture: ARCHITECTURE.md
+  - Agents & Skills: agents/README.md
   - Permissions, Gates & Delegation: PERMISSIONS-QUALITY-DELEGATION.md
+  - OpenCode V2: opencode-v2.md
+  - MCP: MCP.md
+  - MCP Tools: mcp-tools.md
+  - Memory: MEMORY.md
   - Platforms: PLATFORMS.md
-  - Release Process: RELEASING.md
+  - Reference:
+      - Model Routing: reference/model-routing.md
+      - Environment Variables: reference/env-vars.md
+      - Code Mode: reference/code-mode.md
+  - Release Process:
+      - Release Process: RELEASING.md
+      - v1.6.0 Release Notes: releases/v1.6.0.md
   - Branch Protection: BRANCH-PROTECTION.md
-  - Upgrade Guide: UPGRADING.md
+  - Contributing: https://github.com/ils15/pantheon-opencode/blob/main/CONTRIBUTING.md

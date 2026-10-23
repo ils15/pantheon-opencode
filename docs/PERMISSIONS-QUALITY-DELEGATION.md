@@ -15,7 +15,7 @@ Three terms are used throughout, with fixed meanings:
 |---|---|
 | **Load-bearing** | Some code path in this repository reads the value and changes behaviour because of it. |
 | **Decorative** | Nothing in this repository reads the value. It documents an intent; changing it changes no behaviour. A decorative layer is not a bug by itself, but a change to it is not a change to the system. |
-| **UNVERIFIED** | A claim this repository cannot settle on its own. Named explicitly, with the evidence that would settle it. See [§5](#5-unverified-and-the-evidence-that-would-settle-it). |
+| **UNVERIFIED** | A claim this repository cannot settle on its own. Named explicitly, with the evidence that would settle it. See [§5](#5-open-questions-and-known-issues). |
 
 **Scope.** Behaviour of the OpenCode host itself is out of scope for verification:
 this repository does not vendor the host's source, and its own ambient type
@@ -31,7 +31,7 @@ rather than guessing.
 2. [Agent permissions: four layers at once](#2-agent-permissions-four-layers-at-once)
 3. [Delegation](#3-delegation)
 4. [Disagreements between layers](#4-disagreements-between-layers)
-5. [Unverified, and the evidence that would settle it](#5-unverified-and-the-evidence-that-would-settle-it)
+5. [Unverified, and the evidence that would settle it](#5-open-questions-and-known-issues)
 
 ---
 
@@ -42,10 +42,10 @@ rather than guessing.
 The reviewer is the agent whose canonical definition is `src/agents/themis.md`. Its
 own file is the authoritative statement of the contract — read it there:
 [IntentGate, the post-delegation check, the three review layers, the quality-gate
-checklist and the four verdicts](../src/agents/themis.md) are all defined in that file
+checklist and the four verdicts](https://github.com/ils15/pantheon-opencode/blob/main/src/agents/themis.md) are all defined in that file
 and are not repeated here.
 
-The shared role summary is carried in [AGENTS.global.md](../AGENTS.global.md)
+The shared role summary is carried in [AGENTS.global.md](https://github.com/ils15/pantheon-opencode/blob/main/AGENTS.global.md)
 (generated — see [§2.7](#27-the-agent-table-in-agentsglobalmd)). The project
 `AGENTS.md` contains repository setup only.
 
@@ -141,7 +141,7 @@ Two non-obvious consequences of this vocabulary:
 
 - **`PASS_WITH_NOTES` is not a soft `BLOCK`.** It is a pass. The decision-tree
   criterion that decides reviewer involvement is phrased in terms of whether output
-  "feeds into" review, not whether review passed — see [§1.4](#14-full-task-versus-subtask-the-decision-that-decides-whether-a-reviewer-exists).
+  "feeds into" review, not whether review passed — see [§1.4](#14-full-task-versus-subtask-a-qualitative-risk-decision).
 - **The reviewer role itself has a separate, harder block, which is enforced.** The
   reviewer is denied `edit` at the permission layer
   (`src/agents/themis.md:10`), so a reviewer physically cannot fix what it finds.
@@ -191,10 +191,10 @@ use, which is not always what the hatch's name suggests.
 | `PANTHEON_TODO_ENFORCER=off` | `src/pantheon/todo-enforcer.ts:80` | Session-level continuation stops. The routing-matrix mirror is explicitly *not* the switch — the env var is (`src/routing.yml:543` says so in a comment). Read once at plugin construction, so it takes effect on the next process start, not mid-session. |
 | `PANTHEON_HOOKS_LOG=1` | `src/pantheon/logger.ts:97`, `src/plugins/pantheon-hooks.ts:192` | Console echo of the file-only log. Does not change enforcement. |
 | `PANTHEON_TOASTS=off` | `src/plugins/pantheon-hooks.ts:76` | TUI notifications suppressed by category. Every suppressed toast is still written to the structured log and the hook log, so the trail stays auditable at any setting. |
-| `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` | documented in [QUICKSTART](../README.md) and [INSTALLATION](INSTALLATION.md) | May enable background child sessions only on host versions that support and document this experimental setting; verify the active runtime rather than treating it as a general prerequisite or guarantee. In the reported Beta 10 Zeus-root inventory, `subagent` was callable but `task_status`/`cancel_task` were not exposed; no tracking or recovery guarantee follows. See [§3.1](#31-two-mechanisms-and-what-each-is-for). |
+| `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` | documented in [QUICKSTART](QUICKSTART.md) and [INSTALLATION](INSTALLATION.md) | May enable background child sessions only on host versions that support and document this experimental setting; verify the active runtime rather than treating it as a general prerequisite or guarantee. In the reported Beta 10 Zeus-root inventory, `subagent` was callable but `task_status`/`cancel_task` were not exposed; no tracking or recovery guarantee follows. See [§3.1](#31-two-mechanisms-and-what-each-is-for). |
 | `--opencode-version v1\|v2`, `OPENCODE_VERSION`, `OPENCODE_BIN` | `scripts/install/opencode-version.mjs:213` | Pins the plugin generation. Precedence is argument, then env var, then an `opencode2` binary basename, then a `--version` probe, then a warned fallback to V1 (`scripts/install/opencode-version.mjs:223`, `scripts/install/opencode-version.mjs:288`). The fallback is the important one: it **warns and writes the V1 contract**, so an unrecognised 2.x host gets V1 plugins rather than none. |
 | `git commit --no-verify` | `.pre-commit-config.yaml:7` | Skips the secret gate. The config comment names this a security violation; nothing in the repo prevents it. |
-| Editing a decorative layer | see [§2.7](#27-a-fifth-copy-the-agent-table-in-agentsmd) | Silently no-ops. This is the failure mode most likely to waste someone's time, because it produces no error. |
+| Editing a decorative layer | see [§2.7](#27-the-agent-table-in-agentsglobalmd) | Silently no-ops. This is the failure mode most likely to waste someone's time, because it produces no error. |
 
 ---
 
@@ -537,7 +537,7 @@ reads there is `permission`, not `mcp_tools`.
 means *no code in this repository reads it*. It does not mean the host ignores it.
 The agent files are installed and referenced by path, so a key the installer never
 copies is still available to whatever the host chooses to parse from an agent
-definition. Whether it is honoured is [UNVERIFIED](#5-unverified-and-the-evidence-that-would-settle-it).
+definition. Whether it is honoured is [UNVERIFIED](#5-open-questions-and-known-issues).
 The distinction matters: the claim is about this repository's read graph, not about
 the host's.
 
@@ -576,7 +576,7 @@ no permission in this repository prevents the call.
 
 ### 2.7 The agent table in `AGENTS.global.md`
 
-The shared role table lives in the generated [global artifact](../AGENTS.global.md),
+The shared role table lives in the generated [global artifact](https://github.com/ils15/pantheon-opencode/blob/main/AGENTS.global.md),
 whose source is the static `GLOBAL_HEADER` string in
 `scripts/build-agents-md.mjs`. It is **not rendered from** `src/agents/*.md`; changing
 an agent's frontmatter or body will not change the table. The build check verifies the
@@ -605,9 +605,9 @@ enforces anything.
 retrieval belong to the host. API/implementation documentation often calls this
 `task()`, but in the user-reported Beta 10 Zeus-root tool inventory the callable
 dispatch was `subagent`; its exact signature and background support depend on
-the active runtime. Pantheon ships no separate root delegation tool. See the
-README ([Delegation](README.md)) and [INSTALLATION](INSTALLATION.md) for the
-terminology distinction. Do not infer a callable root `task()` API from code or
+the active runtime. Pantheon ships no separate root delegation tool. See
+[Delegation](ARCHITECTURE.md#delegation-mechanics) and
+[INSTALLATION](INSTALLATION.md) for the terminology distinction. Do not infer a callable root `task()` API from code or
 documentation about the host engine. **The host mechanism carries delegation.**
 Everything in [§3.2](#32-who-may-delegate-to-whom) concerns its enforcement.
 
@@ -656,7 +656,7 @@ Three layers again, and this time they do not all agree.
 
 | Layer | Says | Enforced by |
 |---|---|---|
-| Frontmatter `permission.task` | Orchestrator: `"*": allow`. `hermes`/`athena`: `"*": deny, apollo: allow`. All others: `"*": deny`. | The host, from the installed config. It reaches the config (verified, [§2.4](#24-layer-3-the-config-the-installer-seeds)), and the host applies the assumed glob semantics — **measured, PASS** on all five hosts: D1 lets `apollo` complete with 1 child session, D2 denies `demeter` with 0 child sessions (`bench/results/p05-permission-matrix-2026-10-22.md:75-76`; [§5](#5-unverified-and-the-evidence-that-would-settle-it) row 5) |
+| Frontmatter `permission.task` | Orchestrator: `"*": allow`. `hermes`/`athena`: `"*": deny, apollo: allow`. All others: `"*": deny`. | The host, from the installed config. It reaches the config (verified, [§2.4](#24-layer-3-the-config-the-installer-seeds)), and the host applies the assumed glob semantics — **measured, PASS** on all five hosts: D1 lets `apollo` complete with 1 child session, D2 denies `demeter` with 0 child sessions (`bench/results/p05-permission-matrix-2026-10-22.md:75-76`; [§5](#5-open-questions-and-known-issues) row 5) |
 | Routing matrix (`agents.<a>.subagent_can_delegate_to`) | Same intent, per agent. Enforced as a consistency invariant by the repo validator (`scripts/validate-routing.mjs:236`) and `can_delegate` by `scripts/validate-routing.mjs:214`. | The validator, not the runtime |
 | Runtime matrix (`isDelegationAllowed`) | Orchestrator → anyone; `athena`/`hermes` → `apollo` only; **everything else denied** (`src/pantheon/delegation-enforce.ts:138`) | **The plugin's tool hook** |
 
@@ -798,7 +798,7 @@ permissions remain in control.
 an allowed Zeus→Apollo root dispatch is admitted, while a matrix-valid
 Athena→Apollo call from a child is denied and creates no grandchild; an invalid
 Athena→Demeter root dispatch is denied without a child or extra model request
-([`bench/results/f4a-v229-admission-identity-2026-10-14.md`](../bench/results/f4a-v229-admission-identity-2026-10-14.md)).
+([`bench/results/f4a-v229-admission-identity-2026-10-14.md`](https://github.com/ils15/pantheon-opencode/blob/main/bench/results/f4a-v229-admission-identity-2026-10-14.md)).
 Reproduce with `bash tests/canary/run-v2-permission-proof.sh`.
 
 **What this means for planning:** on the V2 contract, the restriction "only the
@@ -882,8 +882,8 @@ necessary local context, implements and verifies the change. Do not add a routin
 plan, separate discovery pass, council, or Themis review. Keep applicable planning,
 review, and human-approval gates for broad/material or high-uncertainty work, auth or
 security, data/schema, destructive operations, and user-visible API changes. The
-operational rules are in [`src/agents/zeus.md`](../src/agents/zeus.md) and
-[`src/instructions/zeus-timeout-retry.instructions.md`](../src/instructions/zeus-timeout-retry.instructions.md).
+operational rules are in [`src/agents/zeus.md`](https://github.com/ils15/pantheon-opencode/blob/main/src/agents/zeus.md) and
+[`src/instructions/zeus-timeout-retry.instructions.md`](https://github.com/ils15/pantheon-opencode/blob/main/src/instructions/zeus-timeout-retry.instructions.md).
 Specialist roles remain available on demand; a single task is not evidence to remove
 an agent.
 
@@ -899,93 +899,57 @@ later policy decision, alongside whether the work met its acceptance criteria.
 
 ## 4. Disagreements between layers
 
-Surfaced, not resolved. Each row names the layers and what each one says.
+These are surfaced, not resolved. The load-bearing consequence is noted; the
+layers themselves are described in section 2.
 
-| # | Layers | The disagreement |
-|---|---|---|
-| 1 | `routing.yml` global `permission.task` vs per-agent frontmatter | The routing file declares one global rule, `"*": allow` (`src/routing.yml:578-580`). Every agent's frontmatter declares `"*": deny` except the orchestrator's. The routing layer is decorative ([§2.3](#23-layer-2-routingyml-what-is-read-and-what-is-not)), but it reads as the global default. |
-| 2 | `routing.yml` `background_job_board` vs the shared-board factory | Same values, two sources. The YAML is not read. Changing the YAML silently no-ops. |
-| 3 | `routing.yml` `background_delegation` timeouts vs the instructions-file timeout table | Two independent timeout sources. Neither is code-enforced; the instructions table is the one the model sees. |
-| 4 | `permission:` block vs `tools:` map | Two mechanisms for the same restriction, on the same agents, with no validator comparing them and different failure modes. |
-| 5 | Installer writes `permission` (V1 spelling) vs V2 reads `permissions` | Recorded as known debt in both files and deliberately not fixed. Verified consequence: on the V2 path the installer's value overwrites a user's hand-written `permissions` on a managed agent. |
-| 6 | Translation map vs the action vocabulary the config uses | The table carries only mappings confirmed against a host: `bash` and `task` are renames, `write` is an alias of `edit`, and keys outside the table keep the V1 spelling with no observed host action ([§2.5](#25-layer-4-the-v1v2-translation-map)). Assessed as a lower bound on blast radius. |
-| 7 | `docs/INSTALLATION.md`'s V2 config example vs the migration output | The documented example shows a rule shape keyed on the tool with an allowed-agent list (`docs/INSTALLATION.md:405-410`); the converter emits a shape keyed on an action with a resource and an effect (`convertPermissionsV1toV2`, `scripts/install/config-migration.mjs:415-439`). One of the two is stale. |
-| 8 | `docs/INSTALLATION.md`'s V2 MCP example vs the MCP converter | The example shows the wrapper form; the converter's own comment says the host rejects that wrapper and normalises it away (`convertMcpV1toV2`, `scripts/install/config-migration.mjs:631-634`). The example contradicts the code. |
-| 9 | Routing matrix vs board path | The matrix is enforced on the native path only. The board path enforces a concurrency cap and no permissions ([§3.2](#32-who-may-delegate-to-whom)). |
-| 10 | Internal board concurrency cap vs root dispatch | The board caps mirrored running jobs **per agent** at three (`src/pantheon/shared-board.ts:25`; `getRunningCount(agent)`, `src/pantheon/background-job-board.ts:512`), and drops a mirror above the cap. The root has no board tool in the reported Beta 10 inventory, and active-runtime `subagent` concurrency is host-dependent; the internal cap is neither a root dispatch limit nor a reliable root tracker. Current Zeus instructions do not prescribe fixed-size waves or board tracking. |
-| 11 | Orchestrator's depth rule vs the plugin's depth rule | Two independent depth mechanisms: a key-value counter in the instructions (`src/agents/zeus.md:189`) and a parent-child session hierarchy in the plugin (`src/pantheon/delegation-enforce.ts:353`). The plugin's is the enforced one. |
-| 12 | `AGENTS.global.md` role table vs canonical agent files | Static generator string, not rendered from canonical definitions ([§2.7](#27-the-agent-table-in-agentsglobalmd)). |
-| 13 | Broad coverage report vs focused coverage gates | `npm run coverage` is report-only; Python MCP and V2 plugin coverage each have separate 80% CI gates. |
-| 14 | `permission.mcp.*` as documented vs what the host evaluates | The installer defaults and the docs present `permission.mcp.<server>` as the MCP gate. Measured on the 2.x matrix: the host has no `mcp` action and ignores the raw key; the gate is `<server>_<tool>` with `resource: ["*"]`, and it applies only because the V2 converter rewrites `allow`/`deny` into `<server>_*`. `ask` is not expressible — it hides the tool instead of prompting ([§2.5](#mcp-rules-the-form-the-host-evaluates)). |
+| Disagreement | Consequence |
+|---|---|
+| `routing.yml` global `permission.task` vs per-agent frontmatter | The YAML reads as a global default but is decorative; frontmatter and the installed config carry the rule. |
+| `routing.yml` board settings vs the shared-board factory | Same values, two sources; editing the YAML no-ops. |
+| `routing.yml` timeouts vs the instructions timeout table | Two independent sources; the instructions table is what the model sees. |
+| `permission:` vs `tools:` | Two mechanisms, no validator comparing them, different failure modes. |
+| Installer writes `permission` (V1) vs V2 reads `permissions` | Known debt: on V2 the installer value overwrites a user's hand-written `permissions` on a managed agent. |
+| Translation map vs emitted action vocabulary | Only host-confirmed mappings are carried; keys outside the table keep the V1 spelling. |
+| INSTALLATION's V2 permission example vs the converter | The example is stale; the converter emits `{action, resource, effect}`. |
+| INSTALLATION's V2 MCP example vs the merge | The wrapper form is normalised away by the converter. |
+| Routing matrix vs board path | The matrix is enforced on the native path only. |
+| Board concurrency cap vs root dispatch | The per-agent cap is internal and does not bound root `subagent` concurrency. |
+| Orchestrator depth counter vs session hierarchy | The plugin's parent-child hierarchy is the enforced mechanism. |
+| `AGENTS.global.md` role table vs canonical agents | The table is a generator string, not rendered. |
+| Broad coverage report vs focused gates | The broad report is report-only; Python MCP and V2 plugin have separate 80% gates. |
+| `permission.mcp.*` vs what the host evaluates | The host evaluates `<server>_<tool>`; the V2 converter rewrites allow/deny and drops `ask`. |
 
-**Rows 7 and 8 name stale examples in a document this one does not fix.** Both were
-re-verified for this revision and are still stale as of `80bac52`: the `permissions`
-example (`docs/INSTALLATION.md:405-410`) is keyed on `tool` with an `allow` list, while
-the converter emits `{action, resource, effect}`; and the `mcp.servers` wrapper
-(`docs/INSTALLATION.md:411-416`) is the form the converter's own comment says the host
-rejects (`scripts/install/config-migration.mjs:631-634`). **Correcting them belongs to a
-follow-up that edits `docs/INSTALLATION.md`, not to this document.** Two consequences
-for the reader: do not treat this table as authorisation to edit that file as part of
-reading it, and until the follow-up lands do not treat those two examples as
-authoritative — they are the stale side of a known disagreement, not a specification.
-Row 14 is the one this round did act on: the enforceable MCP form is now stated
-explicitly in `README.md` and `docs/INSTALLATION.md` next to the `permission.mcp.*`
-defaults, without rewriting the two stale examples.
+## 5. Open questions and known issues
 
----
+The permission model's remaining questions are host-side, population-side, or
+product limitations. They are not silently `UNVERIFIED`:
 
-## 5. Unverified claims: classification and the evidence that settles each
+- **Measured and recorded:** action-name coverage, the MCP action form,
+  last-match-wins specificity, and the `permission.task` glob on every matrix
+  host. `2.0.22` is outside the action-name matrix because it lacks the V2
+  surface, not because it failed.
+- **Verifiable in this release:** whether `tools` and `permission` interact by
+  hiding or failing; whether `mcp_tools`, `visible`, `skills`, and
+  `reasoning_effort` are honoured; whether a blocking status tool exists on a
+  given runtime; whether background completion is observable.
+- **Known Issues:** `ask` is not expressible for MCP on 2.x, so the installer
+  warns per server; `hashline_edit` and `vision_describe` have no host
+  permission gate; the number of installed configs affected by the incomplete
+  translation map is covered by remediation, not by a GO gate.
+- **Explicitly not measured:** whether `websearch` is gated. No delivered
+  config emits it; a `permission.evaluate` probe would settle it.
 
-Each item below was previously listed as unverified. None remains silently
-`UNVERIFIED`: every row is either **measured**, **verifiable in this release** with a
-named test/canary, an explicit **Known Issue**, or — in one case — an explicitly
-declared **not measured**. Any *still-open* question that touches P0-5 (permission
-action names or allow/deny order) is a **blocker**, never a Known Issue
-(ADR-0014 Q4); where this round measured the answer, the row records the measurement
-and the item stays subject to its review gate.
-
-| # | Claim | Classification | Resolution |
-|---|---|---|---|
-| 1 | Whether the host honours a `tools:` map entry by hiding the tool or by failing the call, and how `tools` and `permission` interact when both are present | **Verifiable in this release** | Extend `tests/canary/plugin-v2-tool-canary.test.mjs` with one agent declaring both `tools` and `permission`; run on every matrix host (`1.19.x`, `2.0.29`, `2.0.30`, `2.1.x`) and record hide-vs-fail behaviour in the result table. |
-| 2 | Whether the host honours `mcp_tools`, `visible`, `skills` and `reasoning_effort` from agent frontmatter | **Verifiable in this release** | The same config-load canary, one key at a time, on every matrix host: assert the host-emitted config/behaviour rather than inferring from the repo. For `mcp_tools` the answer no longer changes what gates a call: the installer translates it into `<server>_*` / `<server>_<tool>` permission rules at install time ([§2.4](#24-layer-3-the-config-the-installer-seeds)), so the config carries `permission`, never `mcp_tools`. |
-| 3 | Whether a 2.x host recognises the action names the converter emits (`read`, `grep`, `glob`, `task`, `webfetch`, `question`, `skill`, `write`, `mcp`, …) as distinct actions | **Measured — P0-5; recorded** | Every name the product emits was observed and **PASS** on all five action-name hosts (`2.0.29`, `2.0.30`, `2.1.0`, `2.1.2`, `2.1.3`): `read`, `grep`, `glob`, `webfetch`, `question`, `skill`, `shell`, `edit`, `task`→`subagent` — action-name evidence artifact (`evidence/action-names/EVIDENCE.md:16-20`, `:25-26`) plus the `actionCoverage` matrix (`bench/results/p05-permission-matrix-2026-10-22.md:63-65`); no host is an exception. MCP is settled separately: the host evaluates a tool call as `<server>_<tool>` with `resource: ["*"]`; `action: "mcp"` is inert, and the raw `permission.mcp.*` key is rewritten by the converter to `<server>_*` (`allow`/`deny`) or dropped with a warning (`ask`); `<server>_*` with `deny` blocks and with `allow` permits ([§2.5](#mcp-rules-the-form-the-host-evaluates)). `websearch` is the only action name not measured, and no delivered config emits it, so nothing is pending on it (row 10). |
-| 4 | Whether a nested glob deny and its wildcard sibling resolve last-match-wins, first-match-wins, or most-specific-wins | **Measured — P0-5; recorded** | The measured resolution is last-match-wins across all five hosts, and the converter emits least specific first (`*` → glob → literal), so the most specific matching rule wins. A scoped `allow` therefore survives a broader `deny` inside its scope ([§2.5](#25-layer-4-the-v1v2-translation-map)). Remaining caveat: a pre-existing V2 `agents` block is not re-sorted, so on-disk order decides there. |
-| 5 | Whether the host applies the glob semantics the project assumes to a `permission.task` block — i.e. `"*": deny` plus one named allow permits only that one agent | **Measured — P0-5; recorded** (no longer a blocker) | Measured end-to-end on all five hosts: **D1** (`{"*": "deny", "apollo": "allow"}`) lets `apollo` complete with 1 child session and a `subagent/apollo allow` evaluation; **D2** denies `demeter` with `Permission denied: subagent` and 0 child sessions (`bench/results/p05-permission-matrix-2026-10-22.md:75-76`, raw values `:95-96`; the same `✔` at `v2.*.log:25`). The assumed semantics hold, so the row no longer carries blocker status. |
-| 6 | Whether the host exposes a blocking status/wait tool on a given runtime | **Verifiable in this release** | Inspect the active root tool registry on each matrix host and record the presence/schema of `task_status`/`cancel_task`; the result is per-host, not generation-wide. |
-| 7 | Whether a background child's completion is observable on a given host build | **Verifiable in this release** | Probe each matrix build: dispatch a background child and record which completion events fire. |
-| 8 | The number of installed configs actually affected by the incomplete translation map | **Known Issue — accepted, non-blocking** (not one of the 11 P2; separately declared) | No host contract settles the population. Enumerate installed configs during the release field check; the P0-5 remediation requires re-running the installer on every affected config, so the population is covered by remediation rather than by a GO gate. |
-| 9 | Whether `ask` can gate an MCP tool | **Known Issue — accepted, non-blocking, and warned** | It cannot on 2.x: `ask` hides the tool instead of prompting, so it is not the effect it names. The installer keeps the `ask` defaults for V1, emits no rule for them on V2, and prints an explicit "not enforceable" warning per server (`scripts/install/strings.mjs:49-52`). The enforceable alternative is `deny` on `<server>_*`, or disabling the server. |
-| 10 | Whether `websearch` is gated by the permission layer | **UNVERIFIED — not measured** | No measurement was taken in this round. This document neither claims support nor denies it; the evidence that would settle it is a `permission.evaluate` probe for a `websearch` call on every matrix host. |
-
-Rows 1, 2, 6 and 7 have a named test/canary that settles them in this release.
-Rows 3, 4 and 5 now carry measured answers — action-name coverage, MCP action form and
-specificity ordering, and the `permission.task` glob — and are recorded in
-[§2.5](#25-layer-4-the-v1v2-translation-map). **No permission action name is a P0-5
-blocker: the count is zero.** What remains is Known Issues, not blockers: `ask` is not
-expressible for MCP on 2.x, so the installer warns per server instead of silently
-mis-gating (row 9); `hashline_edit` and `vision_describe` have no permission gate at all,
-because the host emits no evaluation for those calls; `websearch` is unmeasured and
-emitted by no delivered config (row 10, the one explicitly unmeasured item, stated as
-such rather than guessed); `2.0.22` is outside the action-name matrix for lack of the V2
-surface rather than by failure; and the pinned SDK type still diverges from the V1
-runtime (`type`/`pattern` vs `permission`/`patterns`). Row 8's population count is the
-remaining Known Issue of scope, covered by remediation rather than by a GO gate.
-
-All ten are host-side, population-side, or product-limitation questions. The one item
-this list previously carried that the repository *can* settle on its own — whether the
-routing validator runs in CI on every change — has been resolved and moved to
-[§1.2](#12-what-the-reviewer-enforces-and-what-it-does-not) as a dated fact: it
-is enforced per pull request, and ungated only for direct pushes to `main`.
-
----
+The full evidence bundle, per-host matrices, and measurement records live in
+`bench/results/` and the release evidence, not in this guide. The three closed
+holes and their fixes are in section 2.
 
 ## See also
 
 Where another document is authoritative, this one defers to it:
 
-- Shared role summary — [AGENTS.global.md](../AGENTS.global.md); canonical capabilities — [`src/agents/`](../src/agents/)
+- Shared role summary — [AGENTS.global.md](https://github.com/ils15/pantheon-opencode/blob/main/AGENTS.global.md); canonical capabilities — [`src/agents/`](https://github.com/ils15/pantheon-opencode/tree/main/src/agents)
 - Reviewer contract, layers, verdicts — the reviewer agent's own file
-- Delegation engine contract and its removal — [README](README.md)
+- Delegation engine contract and its removal — [Architecture](ARCHITECTURE.md#delegation-mechanics)
 - Install, generation pinning, background delegation setup — [INSTALLATION](INSTALLATION.md)
 - Per-generation behaviour differences and the V2 conditional enforcement — [UPGRADING](UPGRADING.md)
 - Design rationale for delegation, sync and memory tiers — [ARCHITECTURE](ARCHITECTURE.md)

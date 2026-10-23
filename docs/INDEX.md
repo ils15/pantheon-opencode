@@ -1,66 +1,66 @@
-# Pantheon Documentation Index
+# Pantheon Documentation
 
-> **A multi-agent orchestration framework** — 14 specialized agents, OpenCode, 20 skills.
+Pantheon is a multi-agent orchestration framework for **OpenCode**: 14
+specialized agents, 20 skills, and one guided workflow from plan to reviewed
+change. This page is the map. Each fact has one home; pages link to it instead
+of repeating it.
 
----
+## Start here
 
-## Quick Navigation
-
-| If you need... | Go here |
+| If you want to… | Read |
 |---|---|
-| **What is Pantheon?** | [README.md](../README.md) |
-| **Quick start / Install** | [INSTALLATION.md](INSTALLATION.md) |
-| **Which platform to pick** | [PLATFORMS.md](PLATFORMS.md) |
-| **What is enforced, and by which layer** | [PERMISSIONS-QUALITY-DELEGATION.md](PERMISSIONS-QUALITY-DELEGATION.md) |
-| **Agent reference** | [AGENTS.global.md](../AGENTS.global.md), [canonical agent files](../src/agents/) |
-| **MCP tiers & tools** | [mcp-tools.md](mcp-tools.md), [mcp-user-guide.md](mcp-user-guide.md) |
-| **Release process** | [RELEASING.md](RELEASING.md) |
-| **Contributing** | [CONTRIBUTING.md](../CONTRIBUTING.md) |
-| **Changelog** | [CHANGELOG.md](../CHANGELOG.md) |
-| **MCP Tool Registry** | [mcp-tools.md](mcp-tools.md) |
-| **MCP User Guide** | [mcp-user-guide.md](mcp-user-guide.md) |
-| **MCP Tiers** | `.pantheon/tiers.json` |
+| Install Pantheon, or review installer flags, backups, and uninstall | [Installation](INSTALLATION.md) |
+| Reach a first result in ten minutes | [Quick Start](QUICKSTART.md) |
+| Move an existing install to 1.6.0, or plan for 1.7+ | [Upgrading](UPGRADING.md) |
+| Know which OpenCode and Node versions are supported | [Compatibility](COMPATIBILITY.md) |
 
----
+## Understand the system
 
-## Architecture at a Glance
+| Topic | Page |
+|---|---|
+| Agent flow, delegation mechanics, and the V1/V2 plugin contract | [Architecture](ARCHITECTURE.md) |
+| The 14 agents and their canonical files | [Agents & Skills](agents/README.md) |
+| Permission layers, quality gates, and delegation rules | [Permissions, Gates & Delegation](PERMISSIONS-QUALITY-DELEGATION.md) |
+| OpenCode V2 behavior: detection, tools, Dispatch, pruning, goals | [OpenCode V2](opencode-v2.md) |
 
-**Pantheon** replaces the single-agent coding trap with **specialized agents**:
-- **Zeus** orchestrates the workflow (plan → implement → review → deploy)
-- **Athena** plans architecture; **Apollo** discovers code; **Hermes/Aphrodite/Demeter/Prometheus** implement
-- **Themis** reviews every phase (mandatory quality gate); **Mnemosyne** documents decisions
-- **Iris** manages GitHub; **Talos** handles hotfixes; **Gaia** analyzes remote sensing
+## Operate
 
-All agents live as **canonical `.agent.md` files** in `src/agents/` and are deployed via the installer.
+| Topic | Page |
+|---|---|
+| MCP setup, entrypoints, allowlists, and pins | [MCP](MCP.md) |
+| Every shipped MCP tool, including `pantheon_cost` | [MCP Tools](mcp-tools.md) |
+| Memory stores, TTL, size caps, and session goals | [Memory](MEMORY.md) |
+| Platform overview (OpenCode-only) | [Platforms](PLATFORMS.md) |
 
----
+## Reference
 
-## Platform Support
+| Topic | Page |
+|---|---|
+| Model routing analysis and per-agent fallbacks | [Model Routing](reference/model-routing.md) |
+| Environment variables that change behavior | [Environment Variables](reference/env-vars.md) |
+| Confined script execution and approval manifests | [Code Mode](reference/code-mode.md) |
 
-Pantheon v1.0 is **OpenCode-only**. See [PLATFORMS.md](PLATFORMS.md) for details.
+## Project
 
----
+| Topic | Page |
+|---|---|
+| Release mechanics, gates, and tags | [Release Process](RELEASING.md) |
+| `main` branch protection | [Branch Protection](BRANCH-PROTECTION.md) |
+| Customer-visible roadmap themes | [Roadmap](https://github.com/ils15/pantheon-opencode/blob/main/ROADMAP.md) |
+| How to contribute, and the documentation rule | [Contributing](https://github.com/ils15/pantheon-opencode/blob/main/CONTRIBUTING.md) |
+| Published changes | [Changelog](https://github.com/ils15/pantheon-opencode/blob/main/CHANGELOG.md) |
 
-## Where to Find What
+## Where things live
 
 | Concern | Location |
 |---|---|
 | Agent definitions (edit here) | `src/agents/*.md` |
-| Shared skills | `skills/<name>/SKILL.md` |
-| Standards & instructions | `instructions/*.instructions.md` |
+| Shared skills | `src/skills/<name>/SKILL.md` |
+| Standards and instructions | `src/instructions/*.instructions.md` |
 | Prompt templates | `prompts/*.prompt.md` |
-| GitHub Actions workflows | `.github/workflows/` |
-| CI/CD hooks | `scripts/hooks/` |
-| MCP tool registry (canonical) | [docs/mcp-tools.md](mcp-tools.md) |
-| MCP user guide (adding custom MCPs) | [docs/mcp-user-guide.md](mcp-user-guide.md) |
-| MCP tiers (none/essential/recommended/full) | `.pantheon/tiers.json` |
+| Slash commands | `commands/*.md` |
+| MCP tool registry (canonical) | `src/mcp/` |
 | Project memory (sprints, decisions) | `.pantheon/memory-bank/` |
-| Plugin manifests | `plugin.json`, `.github/plugin/plugin.json` |
 
----
-
-## Platform Configuration
-
-Pantheon runs exclusively on **OpenCode**.
-
-For installation instructions, see [INSTALLATION.md](INSTALLATION.md).
+Pantheon runs exclusively on OpenCode. Installation instructions are in
+[Installation](INSTALLATION.md).

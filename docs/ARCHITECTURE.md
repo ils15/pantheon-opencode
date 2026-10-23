@@ -1,349 +1,188 @@
-# 🏛️ Pantheon Architecture
+# Architecture
 
-> **Audience:** Developers extending the framework, platform integrators, and anyone who
-> wants to understand why Pantheon works the way it does.
->
-> **Scope:** Architectural rationale and design patterns — not agent behavior or setup.
+**Audience:** developers extending Pantheon and anyone who wants to know how the
+pieces fit. Setup is in [Installation](INSTALLATION.md); user-facing V2 behavior
+is in [OpenCode V2](opencode-v2.md).
 
----
+## Agent flow
 
-## Table of Contents
+Pantheon replaces the single-agent coding loop with a conductor and
+specialists.
 
-1. [Conductor-Delegate Pattern](#1-conductor-delegate-pattern)
-2. [Canonical → Adapter → Sync](#2-canonical--adapter--sync)
-3. [DAG Wave Execution](#3-dag-wave-execution)
-4. [Two-Tier Memory Strategy](#4-two-tier-memory-strategy)
-5. [Platform Adapter Design Pattern](#5-platform-adapter-design-pattern)
-6. [Model Configuration](#6-model-configuration)
-7. [Summary: Why This Architecture](#7-summary-why-this-architecture)
-
----
-
-## 1. Conductor-Delegate Pattern
-
-### Problem
-
-Traditional single-agent coding forces one agent to plan, implement, test, review, and
-document simultaneously. This produces context fragmentation (80%+ on logistics, ~20% on
-reasoning), skipped tests, generic code, and no quality accountability.
-
-### Solution
-
-**Zeus orchestrates but never implements.** Zeus has a `premium` model assignment and
-a restricted tool set (no `edit`). His only job is routing work to the right
-specialist agent at the right time, managing the 3 approval gates, and conserving context.
-
-```
-User Request
-     │
-     ▼
-┌─────────┐
-│  ZEUS   │  Orchestrator — delegates, never edits
-└────┬────┘
-     │
-     ├──► Athena (planning, research)
-     ├──► Hermes (backend, FastAPI)
-     ├──► Aphrodite (frontend, React)
-     ├──► Demeter (database, SQLAlchemy)
-     ├──► Themis (quality gate, mandatory review)
-     └──► ...
+```text
+User request
+    │
+    ▼
+  Zeus ──► Athena (plan) ──► implementation specialists ──► Themis (review)
+    │                              │
+    ├──► Apollo (discovery)        ├──► Hermes (backend)
+    ├──► Iris (GitHub)             ├──► Aphrodite (frontend)
+    ├──► Mnemosyne (memory)        ├──► Demeter (database)
+    └──► Talos (hotfix)            ├──► Prometheus (infrastructure)
+                                   ├──► Hephaestus (AI pipelines)
+                                   ├──► Nyx (observability)
+                                   └──► Gaia (remote sensing, read-only)
 ```
 
-### Why this matters
-
-| Metric | Single Agent | Conductor-Delegate (Pantheon) |
-|--------|-------------|-------------------------------|
-| Reasoning-to-logistics ratio | 10–20% reasoning | 70–80% reasoning |
-| Test coverage | 65–75% | **92%** |
-| TDD enforcement | Optional | **Enforced RED→GREEN→REFACTOR** |
-| Bugs reaching production | 3–5 per feature | **Near zero** |
-| Code review cadence | End of feature | **After every phase** |
-
-The key insight: **specialization beats generalization at every layer.** Hermes knows
-FastAPI async patterns and nothing about React. Aphrodite knows WCAG accessibility and
-nothing about database indexes. Gaia knows remote sensing and nothing about Docker.
-The result is expert-quality code at each layer, assembled by Zeus into a coherent
-feature.
-
-### Delegation decisions
-
-Zeus uses explicit rules to decide whether to delegate or not:
-
-| Agent | Delegate when | Don't delegate when |
-|-------|--------------|---------------------|
-| Athena | Feature >3 components, unknown codebase | Simple single-file change |
-| Apollo | Needs >3 parallel searches | Single known file location |
-| Themis | After any implementation phase | Hotfix (no code change) |
-
----
-
-## 2. Canonical → Adapter → Sync
-
-### Problem (before v3.4.0)
-
-Each platform (OpenCode) had its own agent
-format with different field capabilities, different tool naming conventions, and different
-configuration patterns. A single change required editing 6 files — and they were never quite
-identical. Bugs like `temis_delegate` (missing the "h") propagated across platforms because
-there was no single source of truth.
-
-### Solution
-
-A three-layer architecture:
-
-```
-┌─────────────────────────────────────────────────────┐
-│                  1. CANONICAL                        │
-│  src/agents/*.md — single source of truth          │
-│  Rich YAML frontmatter + full body text              │
-│  Fields: name, description, tools, model, skills,     │
-│          handoffs, permission, hooks, mcpServers,      │
-│          temperature, globs                           │
-└──────────────────────┬──────────────────────────────┘
-                       │ read by
-                       ▼
-┌─────────────────────────────────────────────────────┐
-│                  2. ADAPTER                           │
-│  platform/*/adapter.json — translation rules         │
-│  Defines: include, exclude, transform, toolMap,      │
-│           bodyFilters, handoffStrategy, skillsOutput  │
-│                                                       │
-│  Example (OpenCode adapter):                          │
-│  - Canonical "bash"         │
-│  - Canonical "agent" → "createAndRunTask"             │
-│  - Excluded: handoffs, disable-model-invocation       │
-└──────────────────────┬──────────────────────────────┘
-                       │ consumed by
-                       ▼
-┌─────────────────────────────────────────────────────┐
-│                  3. SYNC ENGINE                       │
-│  scripts/sync-platforms.mjs — generates outputs      │
-│  - Reads canonical agents                            │
-│  - Applies adapter translation rules                 │
-│  - Generates platform-native files                   │
-│  - Validates body tool references                    │
-│  - Deploys skills in platform format                 │
-│  - Reports validation warnings                       │
-└─────────────────────────────────────────────────────┘
-```
-
-### What the sync engine does
-
-- **Parses frontmatter** — Extracts YAML from `---` blocks
-- **Applies adapter rules** — Includes/excludes fields per platform, transforms values
-- **Maps tools** — Converts canonical tool names to platform equivalents (e.g.,
-  `bash` for OpenCode)
-- **Transforms body references** — Rewrites tool references in agent body text to
-  platform-correct equivalents
-- **Deploys skills** — Copies skill files to platform-specific skill directories
-- **Validates** — Checks that every tool mentioned in body text exists in the agent's
-  tool list (catching stale references at sync time, not at runtime)
-- **Reports warnings** — Missing skills, deprecated fields, unmapped tools
-
-### Deduplication
-
-The sync engine uses composite dedup keys (`${tool}:${mapped}`) to correctly handle
-platforms where the same canonical tool maps to different platform tools. This prevents
-false duplicates while ensuring no tool appears twice.
-
-### Real-world impact (v3.4.0)
-
-- **416 files changed** — 119 modified + 297 new skill deployment files
-- **`temis_delegate` fixed** — 11 occurrences across canonical source, generated files,
-  and stale deployment copies
-- **174 skills deployed** — 29 skills × 6 platforms, each in the format their runtime
-  expects
-- **Zero manual platform editing** required for the entire v3.4.0 migration
-
----
-
-## 3. DAG Wave Execution
-
-### Problem
-
-Sequential phase execution (plan → implement backend → implement frontend → review →
-deploy) wastes agent idle time. Backend and frontend have no interdependencies — they
-could execute in parallel.
-
-### Solution
-
-Instead of a flat sequential list, Zeus organizes work into **DAG waves** — groups of
-tasks that have no interdependencies and can execute simultaneously. Waves flow
-sequentially only where dependencies exist.
-
-```
-Wave 1: [demeter: schema] + [apollo: research]        ← parallel (no deps)
-                    │
-Wave 2: [hermes: backend] + [aphrodite: frontend]     ← parallel (both use Wave 1 schema)
-                    │
-Wave 3: [themis: review]                              ← sequential (depends on Waves 1+2)
-                    │
-Wave 4: [prometheus: deploy]                          ← sequential (depends on approval)
-```
-
-### Wave declaration format
-
-When Zeus dispatches a wave, it announces the parallel execution explicitly:
-
-```
-🔀 WAVE 2 — Parallel Execution
-Tasks in this wave (no interdependencies):
-  ├─ @hermes   → POST /reviews endpoint + tests
-  └─ @aphrodite → ReviewCard component with mocked data
-Both execute simultaneously. Wave 3 starts after both complete.
-```
-
-### Benefits
-
-| Aspect | Sequential | DAG Wave |
-|--------|-----------|----------|
-| Total time | Sum of all phases | **Longest path only** |
-| Idle agents | Waiting for previous to finish | **Always busy** |
-| Context reuse | One agent at a time | **Parallel specialized agents** |
-| Risk detection | Late (at integration) | **Early (per wave)** |
-| Feedback loop | End of each phase | **End of each wave** |
-
-### When DAG is not used
-
-- **Simple features** (single implementation agent) — no parallelization needed
-- **Hotfixes** (Talos) — express lane bypasses orchestration entirely
-- **Sequential dependencies** — must chain (e.g., Themis always waits for implementation)
-
----
-
-## 4. Memory and Persistence
-
-Pantheon has distinct context stores; it does not implement OpenCode-style
-`/memories/repo/` or `/memories/session/` stores and does not auto-load facts from
-those paths.
-
-| Store | Lifetime and access | Appropriate use |
-|---|---|---|
-| `pantheon-memory` MCP | Durable SQLite entries with no TTL; read/write through granted `memory_*` tools | Reusable facts and decisions that are worth retaining |
-| `pantheon-persistence` MCP | Separate optional checkpoint/KV database; checkpoint entries may expire | Explicit session/workflow checkpoints and temporary state |
-| `.pantheon/memory-bank/` | Project files in the working tree; read on demand, including through `pantheon://memory-bank/{path}` | Human-reviewed project context, progress records, and ADRs |
-| Skills and instructions | Repository files loaded by the applicable agent/runtime | Reusable procedures and conventions |
-
-These stores are not synchronized. MCP tool availability depends on the active
-agent's grants; Memory namespaces are organizational filters, not access-control
-boundaries. Project Memory Bank resources are read on demand, not automatically
-loaded. See [Memory](MEMORY.md) for the operating policy and
-[MCP tools](mcp-tools.md) for the resource and tool catalogs.
-
----
-
-## 5. Platform Adapter Design Pattern
-
-### Problem
-
-The canonical agent format (`.agent.md` with YAML frontmatter) needs to be translated
-into the platform-specific format that OpenCode expects. A design without abstraction
-would require maintaining parallel copies of every agent.
-
-### Solution
-
-A **platform adapter** is a JSON configuration file
-that defines how to translate the canonical agent format into a platform-specific
-format:
-
-```jsonc
-{
-  "name": "opencode",
-  "outputDir": "agents",
-  "fileExtension": ".md",
-
-  // What frontmatter fields to include/exclude/transform
-  "frontmatter": {
-    "include": ["name", "description", "tools", "skills", "instructions"],
-    "exclude": ["handoffs", "disable-model-invocation", "permission",
-                "hooks", "mcpServers", "temperature", "globs"],
-    "transform": {
-      "tools": { "strategy": "identity" },
-      "model": { "strategy": "omit" }
-    }
-  },
-
-  // Canonical tool name → platform tool name mapping
-  "toolMap": {
-    "grep": "grep",
-    "edit": "edit",
-    "bash": "bash"         // <-- renamed for OpenCode
-  },
-
-  // Body text filters (omit sections that don't apply)
-  "bodyFilters": [
-    { "pattern": " Workflow", "action": "omit-section" }
-  ],
-
-  // Skill deployment configuration
-  "skillsOutputDir": "skills",
-  "deploySkills": true,
-  "handoffStrategy": "exclude",
-  "ensureAgentTool": false
-}
-```
-
-### Adapter fields in detail
-
-| Field | Purpose | Example values |
-|-------|---------|---------------|
-| `frontmatter.include` | Fields to include in output | `["name", "tools", "skills"]` |
-| `frontmatter.exclude` | Fields to strip | `["handoffs", "hooks"]` |
-| `frontmatter.transform` | Field-level transformations | `{tools: {strategy: "map"}}` |
-| `toolMap` | Canonical → platform tool mapping | `"bash": "bash"` |
-| `bodyFilters` | Section-level body text filtering | Omit " Workflow" section |
-| `skillsOutputDir` | Where to deploy skill files | `"skills"` |
-| `deploySkills` | Whether to sync skills | `true` / `false` |
-| `handoffStrategy` | How to handle handoff YAML | `"exclude"` / `"include"` / `"body-only"` |
-| `ensureAgentTool` | Add `agent` tool if missing | `true` / `false` |
-
-### Platform capability matrix
-
-| Feature | OpenCode |
-|---------|:--------:|
-| Parallel subagents | ✅ |
-| Handoff UI | ❌ |
-| Agent hooks | ⚠️ |
-| MCP servers | ✅ |
-| Skills system | ✅ |
-
-### Adapter configuration
-
-The OpenCode adapter defines how canonical agent files are translated into OpenCode's format.
-
----
-
-## 6. Model Configuration
-
-Pantheon does NOT hardcode models by default. Each agent uses your
-platform's account default model.
-
-### Provider prefix
-
-The model ID prefix determines which provider OpenCode uses:
-- `opencode-go/...` → OpenCode Go provider (recommended)
-- `openai/...` → OpenAI provider
-
-### Reference configs
-
-Example model configurations are in `.pantheon/examples/`.
-These are documentation only — not used at runtime.
-
----
-
-## 7. Summary: Why This Architecture
-
-| Decision | Problem it solves | Key benefit |
-|----------|------------------|-------------|
-| **Conductor-Delegate** | Context fragmentation in single-agent coding | 70-80% reasoning, 92% coverage |
-| **Canonical → Adapter → Sync** | Single canonical format, auto-deployed | Change agents once, installer handles the rest |
-| **DAG Wave Execution** | Sequential idle time, slow feedback | Total time = critical path only |
-| **Two-Tier Memory** | Mixed knowledge with wrong access patterns | Facts free, narrative on demand |
-| **Platform Adapter** | OpenCode-specific format requirements | Consistent deployment across environments |
-| **Model Configuration** | Hardcoded model names across subscriptions | Any provider, no config needed |
-
-> **Design philosophy:** Pantheon is configuration, not code. There are zero framework
-> Python/TypeScript source files. The entire system is `.agent.md` (agent definitions),
-> `adapter.json` (translation rules), `.instructions.md` (quality gates), and
-> `SKILL.md` (domain expertise). This makes it trivially extensible — adding an agent is
-> creating a markdown file, not writing a class.
+Zeus orchestrates but never implements. He routes bounded work to one
+specialist and adds planning, discovery, parallel work, and review when scope
+and risk call for them. `/pantheon-deepwork` is the checkpointed workflow for
+heavy multi-phase work. The canonical agent files live in `src/agents/*.md`;
+[Agents & Skills](agents/README.md) indexes them.
+
+The quality gates are qualitative, not file/line thresholds: self-contained work
+stays inline; one bounded specialist task goes to one agent; independent fronts
+may use separate root dispatches. Themis reviews material and sensitive changes
+— auth, security, data/schema, and anything that changes behavior broadly. See
+[Permissions, Gates & Delegation](PERMISSIONS-QUALITY-DELEGATION.md).
+
+## Delegation mechanics
+
+Pantheon delegates through the host's native child-session engine. The callable
+tool is `subagent` in the reported root runtime; host/API documentation calls
+the same mechanism `task()`. Tool availability, background options, and
+completion observability are properties of the active runtime, not of Pantheon.
+The former `pantheon_delegate` tool and the V1 delegation engine were removed.
+
+Every root dispatch carries a concise handoff brief: objective/result, bounded
+scope and acceptance criteria, only the relevant inputs, constraints and safety
+gates, expected deliverable and return format, and verification. Do not copy the
+full conversation or unrelated history.
+
+Return contracts are role-specific:
+
+| Caller | Return format |
+|---|---|
+| Implementation agent | `## subtask_summary` with files, summary, tests, blockers |
+| Investigation (`apollo`) | Structured findings: bullets, paths with line numbers, snippets ≤3 lines |
+| Planner (`athena`) | The complete Markdown plan, never a summary or a pointer |
+| Council specialist | `## specialist_response` |
+
+Delegated work gets at most one retry after an initial transient failure. When
+no completion/status tool is exposed, prefer synchronous dispatch or wait for a
+host notification; do not assume polling, cancellation, job tracking, or
+board-based recovery.
+
+On OpenCode V2, the plugin additionally enforces a caller/target matrix for
+Pantheon-managed `subagent` requests when the host exposes
+`ctx.permission.hook`. It matches the permission source's session, message, and
+tool-call ids to a short-lived record from `tool.execute.before`, then requires
+the host session to have no `parentID`. Missing, stale, replayed, or mismatched
+origins fail closed. If the hook is unavailable, host permissions remain in
+control. The matrix itself is documented in
+[Permissions, Gates & Delegation](PERMISSIONS-QUALITY-DELEGATION.md).
+
+## What each generation registers
+
+The two plugin generations are exclusive. Each installation registers exactly
+one of them.
+
+### V1
+
+Registered under the singular `plugin` key as `src/plugin.ts` plus
+`src/plugins/pantheon-hooks.ts`. The tool map is declared in
+`src/plugin.ts:409-421`:
+
+- `hashline_edit`
+- `pantheon_goal_create`
+- `pantheon_goal_update`
+- `pantheon_goal_get`
+- `pantheon_cost`
+- `pantheon_model`
+
+Six tools. V1 also registers the BackgroundJobBoard lifecycle, V1 event/tool
+hooks, and the V1 compaction path.
+
+### V2
+
+Registered under the plural `plugins` key as the `<installed>/src/plugin-v2`
+directory. `src/plugin-v2/index.ts` re-exports the real entry at
+`src/plugin-v2.ts`. The registration path is `registerV2Tools` in
+`src/plugin-v2.ts:476-519`, fed by `createV2ToolDefinitions` in
+`src/pantheon/v2-tools.ts:437-480`.
+
+Three unconditional tools:
+
+- `hashline_edit` — `src/pantheon/v2-tools.ts:440`
+- `pantheon_cost` — `src/pantheon/v2-tools.ts:452`
+- `pantheon_model` — `src/pantheon/v2-tools.ts:466`
+
+Up to two host-dependent tools:
+
+- `vision_describe` — added only when `ctx.model.list` is a function
+  (`src/plugin-v2.ts:492-495`; definition at `src/pantheon/v2-vision.ts:532`).
+- `pantheon_bounded_read` — added only when the `tool.execute.before` hook
+  registered and the host exposes the permission and session APIs
+  (`src/plugin-v2.ts:1846-1852`; definition at
+  `src/pantheon/v2-bounded-read.ts:451`). Root Zeus sessions only.
+
+The three goal tools are absent from V2 because the goal loop needs V1
+infrastructure the V2 `PluginContext` does not expose. The gap is reported as
+`goal-tools`.
+
+V2 also wires five event subscriptions (`session.created`, `session.idle`,
+`session.deleted`, `session.error`, `session.compacted`), session hooks
+(`prompt`, `context`, `compaction`), a read-only-enforcing `execute.before`
+hook, an `execute.after` chain (`task-result-guard` → `context-sandbox` →
+`read-enhancer`), and a `permission.evaluate` hook when the host exposes it.
+
+## Installer and config model
+
+Canonical sources in `src/` are read by the installer and written into the
+target config. There is no runtime generation step.
+
+- The installer writes `opencode.json`, never `opencode.jsonc`. A host may merge
+  a sibling `.jsonc`; see
+  [Compatibility](COMPATIBILITY.md#config-registration-and-the-hosts-config-merge).
+- It strips Pantheon references from both config shapes before writing the
+  selected generation, so a V1 and a V2 Pantheon plugin never coexist.
+- Third-party plugin and MCP entries are preserved and never converted.
+- A versioned per-file ownership inventory records what the installer owns, so
+  `reconcile` can find stale, unchanged installer files.
+
+The package exposes both contracts as importable exports:
+`pantheon-opencode/plugin` (V1), `pantheon-opencode/plugin-v2` (V2), and
+`pantheon-opencode/v2-bridge` (optional interop). The bridge passes V1
+infrastructure singletons through V2 `ctx.options`; V2 works standalone with
+graceful degradation.
+
+## Memory and context stores
+
+Pantheon has three separate stores, documented once in [Memory](MEMORY.md):
+
+- `pantheon-memory` — durable SQLite entries with FTS5/BM25 keyword search.
+- `pantheon-persistence` — session checkpoints and manual session goals.
+- `.pantheon/memory-bank/` — human-reviewed project files, read on demand.
+
+They are not synchronized. MCP tool availability depends on the active agent's
+grants; namespaces are organizational filters, not access-control boundaries.
+
+## MCP entrypoints
+
+Five local Python stdio servers, declared in `scripts/install-mcp.mjs:74-78`
+and registered at `:196-301`:
+
+| Server | Entrypoint |
+|---|---|
+| `pantheon-resources` | `scripts/mcp_resources.py` |
+| `pantheon-code-mode` | `scripts/code_mode.py` |
+| `pantheon-memory` | `scripts/memory_mcp.py` |
+| `pantheon-persistence` | `scripts/mcp_persistence.py` |
+| `pantheon-vision` | `src/mcp/pantheon_vision.py` |
+
+The entrypoints were renamed away from the shared `*_server.py` token; the
+installer heals stale paths using the mapping in
+`scripts/install/config-migration.mjs:700-706`. Setup and allowlists are in
+[MCP](MCP.md).
+
+## Design principles
+
+- **One home per fact.** The support matrix, installer mechanics, release
+  process, and benchmark evidence each live in exactly one page.
+- **Configuration plus a thin runtime.** Agent behavior lives in Markdown
+  (`src/agents/*.md`, `src/instructions/*.instructions.md`,
+  `src/skills/*/SKILL.md`); the installed plugin supplies orchestration, tools,
+  and guards.
+- **Fail closed on identity and permissions; fail open on presentation.** A
+  malformed permission origin denies the delegation. A malformed compaction
+  payload leaves the message array untouched.

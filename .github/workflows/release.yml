@@ -44,16 +44,17 @@ jobs:
       RECOVERY_TARGET_SHA: ${{ inputs.recovery_target_sha }}
       RECOVERY_PR_NUMBER: ${{ inputs.recovery_pr_number }}
       TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.recovery_target_sha || github.sha }}
-      # The supported host matrix (ADR-0014 A1.2/A1.3). Every row is installed
-      # and exercised. Changing the matrix requires editing this workflow, so
-      # the frozen set is reviewable in the diff; unsupported hosts (2.0.22,
-      # 2.0.31) must not appear and are rejected by the gate.
+      # The measured host evidence for this release. Rows are evidence, not the
+      # boundary of support: every OpenCode 2.x minor is supported. Changing the
+      # set requires editing this workflow, so the frozen evidence is reviewable
+      # in the diff; the known-broken host 2.0.22 must not appear and is
+      # rejected by the gate.
       PANTHEON_RELEASE_MATRIX: >-
         [{"host":"1.19.4","line":"1.19.x","kind":"v1-permission"},
-        {"host":"2.0.29","line":"2.0.x","kind":"sandbox-v2"},
-        {"host":"2.0.30","line":"2.0.x","kind":"sandbox-v2"},
-        {"host":"2.1.0","line":"2.1.x","kind":"sandbox-v2"},
-        {"host":"2.1.3","line":"2.1.x","kind":"sandbox-v2"}]
+        {"host":"2.0.29","line":"2.x","kind":"sandbox-v2"},
+        {"host":"2.0.30","line":"2.x","kind":"sandbox-v2"},
+        {"host":"2.1.0","line":"2.x","kind":"sandbox-v2"},
+        {"host":"2.1.3","line":"2.x","kind":"sandbox-v2"}]
     steps:
       # This is deliberately the first step. In particular, no release
       # mutation can be reached before the recovery inputs are a coherent set.

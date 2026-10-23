@@ -92,8 +92,41 @@ gh api repos/:owner/:repo/branches/main/protection \
 > **Note:** Replace `:owner` with your GitHub username or org (`ils15`) and
 > `:repo` with `pantheon-opencode`. You need `admin` or `write` permissions on
 > the repo to run this command. Run it only after every required check has
-> passed on `main`; see the pre-flight checklist in
-> [`RELEASING.md`](RELEASING.md#mandatory-pre-flight-checklist).
+> passed on `main`; see the pre-flight checklist below.
+
+### MANDATORY pre-flight checklist
+
+If a required check never passes, every push to `main` is locked out, including
+the release pipeline. Confirm all of the following before the `PUT`:
+
+- [ ] **(a)** All six checks exist as workflow jobs: `validate`, `test-suite`,
+      and `plugin-v2-ts-coverage` in `ci.yml`; `commitlint` in
+      `commit-lint.yml`; `security-scan` in `security-scan.yml`; and CodeQL
+      analysis in `codeql.yml`.
+- [ ] **(b)** They all pass on current `main` (or a PR), including the push run
+      on `main`. If any fails, fix the workflow first — never enable protection
+      on a failing check.
+- [ ] **(c)** Only then apply the `PUT`, and verify with
+      `gh api repos/ils15/pantheon-opencode/branches/main/protection`.
+
+### Admin bypass
+
+The command above sets `enforce_admins=true`. If the repository owner needs an
+escape hatch to unblock the release pipeline, set it to `false` initially and
+restore it after two stable releases:
+
+```bash
+gh api -X PATCH repos/ils15/pantheon-opencode/branches/main/protection \
+  -F enforce_admins=true
+```
+
+### Grandfather policy
+
+Commitlint is enforced from this point forward on all new commits (local
+`.husky/commit-msg` hook plus the CI `commitlint` job). Commits before
+2026-08 are grandfathered; they are never rewritten or retroactively linted.
+`git log -15 --format=%s | npx --no commitlint` will list them as violations;
+that output is expected. New commits must follow Conventional Commits.
 
 ---
 
