@@ -134,8 +134,11 @@ keys or tokens already present in your files — it is never printed. Recover wi
 an interrupted apply is recoverable from the backup in the same way.
 To remove Pantheon-managed files, review with
 `pantheon-opencode uninstall --project --dry-run` (or `--global`) before applying
-with `--force`. The opt-in `--purge-data` removes only a verified install-state
-file and never removes recovery backups; see the installation guide for details.
+with `--force`. It also reverts the V2 Context-sidebar negation
+(`-opencode.sidebar.context`) in `cli.json`, removing that file when Pantheon
+created it, so the host's native Context block comes back. The opt-in
+`--purge-data` removes only a verified install-state file and never removes
+recovery backups; see the installation guide for details.
 New installs also record a versioned per-file ownership inventory. Review stale,
 unchanged installer-owned files with `pantheon-opencode reconcile --project --dry-run`
 (or `--global --dry-run`); preview is read-only, and apply requires `--apply --yes` or a
@@ -889,16 +892,67 @@ OpenCode V2 TUI entrypoints; `init` selects the entrypoint and sidebar slot API
 for the host generation in use.
 
 The native V2 sidebar shows the Pantheon version, active preset/source, git
-state (`⎇ <branch>` plus `+N ±N −N` changed-file counts from
-`client.vcs.status`, revalidated on session events with a debounce), a
-`Context` block with thousands-separated tokens, `<percent>% used of <window>`
-(only the percentage is colour-banded) and `$<spent> spent` — same token
-formula as the host, so it stays the only source of that data when the native
-`opencode.sidebar.context` block is disabled — the current agent with its
-resolved model, and running delegations with `agent→model` and elapsed time.
-Everything is added with `append` claims: the native prompt footer keeps its
-own line, and Pantheon only appends `⚡<preset> · ✦<n> ativos` while
-delegations are running.
+state (`⎇ <branch>` plus `+N ±N −N ?N ↑N ↓N` from the git CLI — untracked and
+ahead/behind come from `git status --porcelain` and
+`git rev-list --left-right`, revalidated on session events behind a debounce
+and a 5 s cooldown, with `client.vcs.status` as the fallback when git is
+unavailable), a `Context` block with thousands-separated tokens,
+`<percent>% used of <window>` (four colour stages: blue ≤25%, green ≤50%,
+yellow ≤90%, red above) and
+`$<spent> spent` — same token formula as the host, so it stays the only source
+of that data when the native `opencode.sidebar.context` block is disabled —
+plus a muted `cache <n>% · <n.n> tok/s` line derived from the same message pass
+(one aggregated rate for the current turn, same formula as the host) —
+and one aggregated `Dispatch` block for the whole child set:
+`◈ Dispatch · <n> rodando · $<cost>` (the header sums every child, live and
+finished), one row per live child (`⠸ <agent>·<kind> $<cost> <duration>`,
+newest first, three then `… +N rodando`, the model column only while it fits
+and only on an unclassified row), then
+the finished children rolled up per agent: `✓ <total> · $<sum> · <M> agentes`
+(plus `· <F> falhas` when any child failed), up to three
+`<agent> ×<count>·<kind>  $<sum>` rows and `… +K  $<sum>` beyond, never one row
+per session. The small `·<kind>` suffix says *why* the child exists, glued to
+the label instead of taking a column of its own: `coun`/`plan`/`revw`/`hot`/
+`disc` from an explicit `[council]`/`[plan]`/`[review]`/`[hotfix]`/`[discovery]`
+prefix on the `subagent` description (case-insensitive, and the prefix always
+wins), otherwise from the agent (`athena`→plan, `themis`→revw, `talos`→hot,
+`apollo`→disc, anything else→`oth`); `council` is never inferred from an agent.
+A `~` after the kind marks a child the parent asked to run in the background.
+The classification is correlated exactly through the call's
+`metadata.sessionID` (the result's `<subagent sessionID="…">` tag as fallback)
+in the same transcript pass that feeds the rest of the block; a child with no
+correlatable call shows no kind at all, and an aggregated row shows the kind
+only when every session of the group agrees on it. Every row is a single
+preformatted line, so no number can be squeezed
+out of the narrow pane; the block stays within eight lines and is omitted
+entirely when the session has no child (a failing `family` hides it instead of
+falling back to the root). The former `Skills` and `agentes` blocks were
+removed: the skill index is not read at all, and the per-agent spend now lives
+inside `Dispatch`. Everything is added with `append`
+claims: the native prompt footer keeps its own line, and Pantheon only appends
+`▸<preset> · ✦<n> ativos` while delegations are running.
+
+`/dispatch` (also in the palette as *Pantheon: Dispatch*) opens
+`pantheon.dispatch` in the host's `session.panel` slot: a full-width view of the
+same delegation tree, rendered from the same collector as the sidebar block, so
+a child is never listed twice. The header is
+`◈ Dispatch — <session>` (+ `[fullscreen]`) with the counters of the whole tree
+(`2 rodando · 70 concluídos · 1 falha · $3.59`; a zero counter is omitted) over
+one row per child — `⠋ prometheus   plan   $0.09  14m34s`, running first, then
+most recent activity, with `✓`/`✗`/`○`/`?` for completed/failed/interrupted/
+unknown — and the detail of the selected child (title or spawning description,
+short id, model, in/out/reasoning/cache tokens, kind evidence, parent id; `—`
+for anything the host did not publish). Panels ≥72 columns put the detail beside
+the list, narrower ones stack it under the list and truncate per column. Keys
+are namespaced and bound (`k`/`up`, `j`/`down`, `home`, `end`, `pageup`,
+`pagedown`, `enter`, `f`, `escape`/`q`) and live inside the panel claim, so they
+stay inert while the panel is not focused; the list is paged at ten rows and its
+selection is held by session id. The panel reads only host-cached state (no
+session sync, no child `message.list`, no HTTP) and its 80 ms spinner tick exists
+only while the panel is open with something running. Opening it requires an
+open session — otherwise Pantheon toasts `Abra uma sessão para ver o Dispatch`
+instead of inventing a route. Jumping from a row to the child session is a
+documented TODO: no `session` router destination is verified for a child id.
 
 ## Sandbox validation (V2)
 

@@ -50,9 +50,25 @@ registerHooks({
   },
 })
 
-const { createRoot } = await import('solid-js')
+const { createRoot, createSignal } = await import('solid-js')
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** One live Dispatch row, columns exactly as the view builds them. */
+const toCell = (agent, model, cost, duration) =>
+  `\u280B ${agent.padEnd(12)} ${model.padEnd(7)} ${cost.padStart(5)} ${duration.padStart(5)}`
+
+/** A rendered line that must carry either a money amount or the explicit em
+ *  dash the view uses when the host published no numeric cost. */
+const hasMoney = (line) => /\$|\u2014/.test(line)
+
+/** One context row flattened the way the sidebar renders it. Test-local: the
+ *  plugin derives the string from the row's own cells, so nothing in production
+ *  needs (or exports) this composition. */
+const contextRowText = (row) =>
+  row === null || row === undefined
+    ? null
+    : `${row.lead ?? ''}${row.tail ?? ''}${row.value}${row.suffix ?? ''}`
 
 async function loadV2() {
   return import(pathToFileURL(join(root, 'src/plugins/tui/dist/tui-v2.js')).href)
@@ -206,6 +222,10 @@ function createSidebarHost(options = {}) {
     setChild: (id, child) => children.set(id, child),
     setStatus: (id, status) => statuses.set(id, status),
     setMessages: (id, list) => messages.set(id, list),
+    setFamily: (ids) => {
+      family.length = 0
+      family.push(...ids)
+    },
   }
 }
 
@@ -225,7 +245,7 @@ async function withIsolatedXdg(fn) {
 }
 
 test('preset resolution: env beats file, malformed/none fall back to default', async () => {
-  const { presetFromEnv, resolvePresetForTui } = await loadV2()
+  const { presetFromEnv, resolveActivePresetForTui } = await loadV2()
 
   assert.deepEqual(presetFromEnv({ PANTHEON_MODEL_PRESET: 'max' }), {
     name: 'max',
@@ -242,29 +262,163 @@ test('preset resolution: env beats file, malformed/none fall back to default', a
       mkdirSync(dir, { recursive: true })
 
       // No file → default.
-      assert.deepEqual(await resolvePresetForTui({}, project), { name: null, source: null })
+      assert.deepEqual((await resolveActivePresetForTui({}, project)).info, {
+        name: null,
+        source: null,
+      })
 
       // File wins when env is unset.
       writeFileSync(join(dir, 'active-preset.json'), JSON.stringify({ preset: 'pro' }))
-      assert.deepEqual(await resolvePresetForTui({}, project), { name: 'pro', source: 'file' })
+      assert.deepEqual((await resolveActivePresetForTui({}, project)).info, {
+        name: 'pro',
+        source: 'file',
+      })
 
       // Env still wins over the file.
-      assert.deepEqual(await resolvePresetForTui({ PANTHEON_MODEL_PRESET: 'max' }, project), {
-        name: 'max',
-        source: 'env',
-      })
+      assert.deepEqual(
+        (await resolveActivePresetForTui({ PANTHEON_MODEL_PRESET: 'max' }, project)).info,
+        {
+          name: 'max',
+          source: 'env',
+        },
+      )
 
       // "none" in the file disables the preset.
       writeFileSync(join(dir, 'active-preset.json'), JSON.stringify({ preset: 'none' }))
-      assert.deepEqual(await resolvePresetForTui({}, project), { name: null, source: null })
+      assert.deepEqual((await resolveActivePresetForTui({}, project)).info, {
+        name: null,
+        source: null,
+      })
 
       // Malformed JSON degrades to default rather than throwing.
       writeFileSync(join(dir, 'active-preset.json'), '{ not json')
-      assert.deepEqual(await resolvePresetForTui({}, project), { name: null, source: null })
+      assert.deepEqual((await resolveActivePresetForTui({}, project)).info, {
+        name: null,
+        source: null,
+      })
     } finally {
       rmSync(project, { recursive: true, force: true })
     }
   })
+})
+
+test('header: the self-promo line is gone; the preset row carries the provider', async () => {
+  const { presetHeaderLine } = await loadV2()
+  const source = readFileSync(join(root, 'src/plugins/tui/src/index-v2.tsx'), 'utf8')
+
+  assert.equal(
+    source.includes('OpenCode V2 · plugin TUI ativo'),
+    false,
+    'the static self-promotion line is removed, not reworded',
+  )
+  assert.equal(source.includes('plugin TUI ativo'), false, 'no variant of that line survives')
+
+  assert.equal(presetHeaderLine('go-free', 'opencode'), '▸ go-free · opencode')
+  assert.equal(
+    presetHeaderLine('go-free', null),
+    '▸ go-free',
+    'no provider resolves → the preset alone, never `unknown`',
+  )
+  assert.equal(presetHeaderLine('go-free', ''), '▸ go-free', 'an empty id is treated as absent')
+
+  const longProvider = presetHeaderLine('go-free', 'a-very-long-provider-identifier')
+  assert.ok(longProvider.length <= 34, 'the preset row stays inside 34 columns')
+  assert.ok(
+    longProvider.startsWith('▸ go-free · '),
+    'the provider is cut first, the preset survives',
+  )
+
+  const longPreset = presetHeaderLine('a'.repeat(60), 'opencode')
+  assert.ok(longPreset.length <= 34, 'an oversized preset never wraps the sidebar')
+  assert.equal(longPreset.includes('opencode'), false, 'the provider goes before the preset does')
+})
+
+test('sidebar provider: session model → last assistant → location agent/model → omitted', async () => {
+  const { createSidebarModel } = await loadV2()
+  const now = Date.now()
+  const providerFor = (options = {}) => {
+    const host = createSidebarHost({
+      family: ['ses_root'],
+      children: [
+        [
+          'ses_root',
+          {
+            id: 'ses_root',
+            title: 'root',
+            time: { created: now, updated: now },
+            ...options.session,
+          },
+        ],
+      ],
+      messages: [['ses_root', options.messages ?? []]],
+      agents: options.agents ?? [],
+      models: options.models ?? [],
+    })
+    let model
+    const dispose = createRoot((disposeRoot) => {
+      model = createSidebarModel(host.context, () => 'ses_root')
+      return disposeRoot
+    })
+    try {
+      return model.provider()
+    } finally {
+      dispose()
+    }
+  }
+
+  assert.equal(
+    providerFor({
+      session: { model: { providerID: 'opencode', modelID: 'kimi-k3' } },
+      messages: [
+        { id: 'm1', type: 'assistant', model: { providerID: 'anthropic', modelID: 'opus' } },
+      ],
+    }),
+    'opencode',
+    'the session model wins over the transcript',
+  )
+
+  assert.equal(
+    providerFor({
+      messages: [
+        { id: 'm1', type: 'assistant', model: { providerID: 'anthropic', modelID: 'opus' } },
+        { id: 'm2', type: 'assistant', model: { providerID: 'opencode-go', modelID: 'kimi-k3' } },
+      ],
+    }),
+    'opencode-go',
+    'the newest assistant message wins when the session has no model',
+  )
+
+  assert.equal(
+    providerFor({
+      session: { agent: 'zeus' },
+      agents: [{ id: 'zeus', model: { providerID: 'deepseek', modelID: 'deepseek-v4.1-flash' } }],
+    }),
+    'deepseek',
+    'the agent model from location.agent.list() is the last resort',
+  )
+
+  assert.equal(
+    providerFor({
+      session: { agent: 'zeus' },
+      agents: [{ id: 'zeus', model: 'deepseek/deepseek-v4.1-flash' }],
+      models: [
+        {
+          id: 'deepseek-v4.1-flash',
+          modelID: 'deepseek-v4.1-flash',
+          providerID: 'deepseek',
+        },
+      ],
+    }),
+    'deepseek',
+    'a bare string agent model resolves its provider through location.model.list()',
+  )
+
+  assert.equal(providerFor(), null, 'nothing resolves → omitted, never `unknown`')
+  assert.equal(
+    providerFor({ session: { agent: 'zeus' }, agents: [{ id: 'zeus', model: 'mystery/model' }] }),
+    null,
+    'an unlisted model invents no provider',
+  )
 })
 
 test('delegation view: state from status + outcome, grace window, label fallbacks', async () => {
@@ -283,6 +437,31 @@ test('delegation view: state from status + outcome, grace window, label fallback
     agent: null,
     model: null,
     cost: null,
+    kind: null,
+    kindOrigin: 'unavailable',
+    background: false,
+  })
+
+  // The spawning `subagent` call adds the purpose and the background flag; the
+  // rest of the row is unchanged, so a call can only ever *add* evidence.
+  const classified = toDelegationView(
+    { id: 'ses_call', title: 'scout', agent: 'apollo', time: { created: 1_000, updated: 4_000 } },
+    'running',
+    undefined,
+    { sessionID: 'ses_call', agent: 'apollo', description: '[review] audit', background: true },
+  )
+  assert.deepEqual(classified, {
+    id: 'ses_call',
+    label: 'scout',
+    state: 'running',
+    startedAt: 1_000,
+    updatedAt: 4_000,
+    agent: 'apollo',
+    model: null,
+    cost: null,
+    kind: 'revw',
+    kindOrigin: 'prefix',
+    background: true,
   })
 
   const failed = toDelegationView(
@@ -329,77 +508,12 @@ test('delegation view: state from status + outcome, grace window, label fallback
   assert.equal(untitled.startedAt, null)
 })
 
-test('delegation formatting: tone, marker/spinner, elapsed, ordering, +N', async () => {
-  const {
-    delegationStateTone,
-    delegationRowMarker,
-    spinnerFrame,
-    fmtElapsed,
-    delegationElapsed,
-    orderDelegations,
-    ceilingDelegations,
-  } = await loadV2()
+test('delegation formatting: the shared spinner glyph', async () => {
+  const { spinnerFrame } = await loadV2()
 
-  assert.equal(delegationStateTone('running'), 'warning')
-  assert.equal(delegationStateTone('completed'), 'success')
-  assert.equal(delegationStateTone('failed'), 'error')
-  assert.equal(delegationStateTone('interrupted'), 'warning', 'an aborted job is not a success')
-
-  assert.equal(delegationRowMarker('running', 0), `${spinnerFrame(0)} `)
-  assert.equal(delegationRowMarker('completed'), '\u2713 ')
-  assert.equal(delegationRowMarker('failed'), '\u2715 ')
-  assert.equal(delegationRowMarker('interrupted'), '\u2298 ')
   assert.equal(spinnerFrame(0), '\u280b', 'first spinner frame')
-
-  assert.equal(fmtElapsed(12_000), '12s')
-  assert.equal(fmtElapsed(180_000), '3m')
-  assert.equal(fmtElapsed(3_600_000), '1h')
-  assert.equal(fmtElapsed(2 * 86_400_000), '2d')
-
-  const running = {
-    id: 'r',
-    label: 'r',
-    state: 'running',
-    startedAt: 1_000,
-    updatedAt: 1_000,
-  }
-  assert.equal(delegationElapsed(running, 61_000), '1m')
-
-  const done = {
-    id: 'd',
-    label: 'd',
-    state: 'completed',
-    startedAt: 1_000,
-    updatedAt: 4_000,
-  }
-  assert.equal(delegationElapsed(done, 999_999), '3s', 'terminal rows freeze at updated-started')
-  assert.equal(
-    delegationElapsed({ ...done, updatedAt: null }, 999_999),
-    '\u2014',
-    'a missing timestamp reads as an em dash',
-  )
-
-  const ordered = orderDelegations([
-    { id: 'z', label: 'z', state: 'completed', startedAt: 0, updatedAt: 10 },
-    { id: 'y', label: 'y', state: 'running', startedAt: 0, updatedAt: 5 },
-    { id: 'x', label: 'x', state: 'completed', startedAt: 0, updatedAt: 20 },
-  ])
-  assert.deepEqual(
-    ordered.map((v) => v.id),
-    ['y', 'x', 'z'],
-    'running first, then most recently active',
-  )
-
-  const many = Array.from({ length: 10 }, (_, i) => ({
-    id: `s${i}`,
-    label: `s${i}`,
-    state: 'completed',
-    startedAt: 0,
-    updatedAt: i,
-  }))
-  const capped = ceilingDelegations(many)
-  assert.equal(capped.visible.length, 8)
-  assert.equal(capped.hidden, 2, 'the remainder collapses into "… +N more"')
+  assert.equal(spinnerFrame(-1), spinnerFrame(1), 'a negative frame reads as a positive one')
+  assert.equal(spinnerFrame(10), spinnerFrame(0), 'the frame counter wraps over the glyph list')
 })
 
 test('empty initial state guard (Known Issue) + session id validation', async () => {
@@ -655,11 +769,13 @@ test('createSidebarModel: subscription, toast, spinner and teardown (fake host)'
     assert.equal(model.session()?.title, 'Root')
     assert.equal(model.activeSessionID(), 'ses_root')
 
-    // Only in-flight delegations render; the finished child is filtered out.
+    // Only in-flight children render as individual rows; the finished child is
+    // already aggregated by the same block.
     assert.deepEqual(
-      model.delegations().map((view) => [view.label, view.state]),
-      [['apo-1', 'running']],
+      model.dispatch().running.map((row) => row.id),
+      ['ses_child'],
     )
+    assert.equal(model.dispatch().runningCount, 1)
 
     // Spinner armed only while a child runs.
     await sleep(3 * 80 + 40)
@@ -680,7 +796,8 @@ test('createSidebarModel: subscription, toast, spinner and teardown (fake host)'
       [['apo-1 concluída', 'success', 'ses_child']],
       'one toast on the running→terminal transition',
     )
-    assert.deepEqual(model.delegations(), [], 'a finished delegation leaves the running-only list')
+    assert.equal(model.dispatch().runningCount, 0, 'a finished child leaves the live section')
+    assert.equal(model.dispatch().completedCount, 2, 'both finished children are aggregated')
 
     const frozen = model.frame()
     await sleep(3 * 80 + 40)
@@ -709,7 +826,7 @@ test('createSidebarModel: a host returning no unsubscribe still tears down', asy
     return disposeRoot
   })
 
-  assert.deepEqual(model.delegations(), [])
+  assert.equal(model.dispatch(), null, 'no session id → no Dispatch block')
   assert.doesNotThrow(() => dispose())
   assert.deepEqual(host.unsubscribed, [])
 })
@@ -768,10 +885,13 @@ test('context gauge follows the native token formula, compaction and revert boun
   assert.equal(computeContextUsage([], 10_000), null)
   assert.equal(computeContextUsage([{ id: 'u1', type: 'user' }], 10_000), null)
 
-  assert.equal(contextUsageTone(49), 'success')
-  assert.equal(contextUsageTone(50), 'warning')
-  assert.equal(contextUsageTone(74), 'warning')
-  assert.equal(contextUsageTone(75), 'error')
+  // Four explicit stages: blue → green → yellow → red.
+  assert.equal(contextUsageTone(25), 'info')
+  assert.equal(contextUsageTone(26), 'success')
+  assert.equal(contextUsageTone(50), 'success')
+  assert.equal(contextUsageTone(51), 'warning')
+  assert.equal(contextUsageTone(90), 'warning')
+  assert.equal(contextUsageTone(91), 'error')
 
   assert.equal(formatSpent(0.18), '$0.18')
   assert.equal(formatSpent(0.0423), '$0.04')
@@ -795,8 +915,7 @@ test('context gauge follows the native token formula, compaction and revert boun
 })
 
 test('Context block formats tokens, window, percent and spend like the native block', async () => {
-  const { formatTokenCount, formatContextWindow, formatSpent, contextBlockRows, contextRowText } =
-    await loadV2()
+  const { formatTokenCount, formatContextWindow, formatSpent, contextBlockRows } = await loadV2()
 
   assert.equal(formatTokenCount(55_320), '55,320')
   assert.equal(formatTokenCount(1_000_000), '1,000,000')
@@ -826,7 +945,7 @@ test('Context block formats tokens, window, percent and spend like the native bl
     ['55,320 tokens', `${'\u25B0'.repeat(1)}${'\u25B1'.repeat(11)} 6% of 1.0M`, '$0.18 spent'],
   )
   assert.equal(full?.tokens?.tone, null, 'only the percentage row is toned')
-  assert.equal(full?.percent?.tone, 'success')
+  assert.equal(full?.percent?.tone, 'info', 'a low gauge starts blue')
 
   // Semantic bands live on the percentage row only.
   assert.equal(
@@ -835,11 +954,15 @@ test('Context block formats tokens, window, percent and spend like the native bl
   )
   assert.equal(
     contextBlockRows({ tokens: 1, percent: 50, limit: 1_000_000 }, null)?.percent?.tone,
+    'success',
+  )
+  assert.equal(
+    contextBlockRows({ tokens: 1, percent: 74, limit: 1_000_000 }, null)?.percent?.tone,
     'warning',
   )
   assert.equal(
     contextBlockRows({ tokens: 1, percent: 75, limit: 1_000_000 }, null)?.percent?.tone,
-    'error',
+    'warning',
   )
 
   // Unknown percentage → the percent/window row is omitted, never `undefined%`.
@@ -865,7 +988,6 @@ test('Context gauge: 12 cells, rounded fill, clamped, and no bar without a perce
     contextBar,
     contextBarFilled,
     contextBlockRows,
-    contextRowText,
     CONTEXT_BAR_CELLS,
     CONTEXT_BAR_FILLED_CELL,
     CONTEXT_BAR_EMPTY_CELL,
@@ -915,7 +1037,7 @@ test('Context gauge: 12 cells, rounded fill, clamped, and no bar without a perce
   )
   assert.equal(rows?.percent?.lead, '\u25B0'.repeat(5), 'the filled cells are toned')
   assert.equal(rows?.percent?.tail, '\u25B1'.repeat(7), 'the empty cells are muted')
-  assert.equal(rows?.percent?.tone, 'success')
+  assert.equal(rows?.percent?.tone, 'success', '39% is the green stage')
 
   const full = contextBlockRows({ tokens: 1, percent: 100, limit: 1_000_000 }, null)
   assert.equal(contextRowText(full?.percent ?? null), `${'\u25B0'.repeat(12)} 100% of 1.0M`)
@@ -1202,8 +1324,7 @@ test('git change counts are files per status, with zero terms omitted', async ()
 })
 
 test('sidebar model exposes context, cost, agent→model and full delegation rows', async () => {
-  const { createSidebarModel, delegationSidebarLabel, contextBlockRows, contextRowText } =
-    await loadV2()
+  const { toDelegationView, createSidebarModel, contextBlockRows } = await loadV2()
   const now = Date.now()
 
   await withIsolatedXdg(async () => {
@@ -1310,10 +1431,9 @@ test('sidebar model exposes context, cost, agent→model and full delegation row
         assert.equal(model.preset().name, 'go-fast')
         assert.equal(model.presetOverrides().agents.apollo?.model, 'opencode-go/qwen3.8-max')
 
-        const child = model.delegations()[0]
+        const child = toDelegationView(host.context.data.session.get('ses_child'), 'running', now)
         assert.equal(child.agent, 'apollo')
         assert.equal(child.model, 'gpt-5.6-luna-fast')
-        assert.equal(delegationSidebarLabel(child), 'apo-1 · apollo→gpt-5.6-luna-fast')
       } finally {
         dispose()
       }
@@ -1469,7 +1589,7 @@ test('sidebar model degrades without vcs, messages, models, agent info or cost A
     assert.equal(model.contextUsage(), null, 'no message limit/messages → no gauge')
     assert.equal(model.agentModel(), null)
     assert.equal(model.cost(), 0)
-    assert.deepEqual(model.delegations(), [])
+    assert.equal(model.dispatch(), null, 'a host without family data renders no block')
     assert.equal(footer.running(), 0)
   } finally {
     dispose()
@@ -2218,43 +2338,76 @@ test('spend line: absent client.session.stats hides it without calling or throwi
   }
 })
 
-test('sidebar block order is Context → Git status → Todo → agent → Dispatch', async () => {
+test('sidebar renders Context → Git status → Todo → Dispatch, and no other block', async () => {
+  const { BLOCK_ICONS } = await loadV2()
   const source = readFileSync(join(root, 'src/plugins/tui/src/index-v2.tsx'), 'utf8')
 
   const contextAt = source.indexOf('{/* Context —')
   const gitAt = source.indexOf('{/* Git status —')
   const todoAt = source.indexOf('{/* Todo —')
-  const agentAt = source.indexOf('{/* agente —')
   const dispatchAt = source.indexOf('{/* Dispatch —')
 
-  assert.ok(
-    contextAt > 0 && gitAt > 0 && todoAt > 0 && agentAt > 0 && dispatchAt > 0,
-    'all five blocks exist',
-  )
+  assert.ok(contextAt > 0 && gitAt > 0 && todoAt > 0 && dispatchAt > 0, 'four blocks exist')
   assert.ok(contextAt < gitAt, 'Context renders before Git status')
   assert.ok(gitAt < todoAt, 'Todo renders after Git status')
-  assert.ok(todoAt < agentAt, 'the agent block stays below the reference blocks')
-  assert.ok(agentAt < dispatchAt, 'Dispatch closes the sidebar')
+  assert.ok(todoAt < dispatchAt, 'Dispatch closes the sidebar')
 
-  // Spend is no longer a block of its own: its numbers live inside Context.
-  assert.equal(source.includes("block('spend')"), false, 'the Spend block is gone')
-  assert.equal(/^\s+Spend$/m.test(source), false, 'no bare `Spend` header is rendered')
-  assert.equal(/SidebarBlockKey =[^\n]*'spend'/.test(source), false, 'the key was removed too')
+  // The standalone `agentes` and `Skills` blocks were removed, not hidden: no
+  // header, no label, no block key, no skill source and no skill estimate.
+  assert.equal(source.includes('label="agentes"'), false, 'the `agentes` header is gone')
+  assert.equal(source.includes('label="Skills"'), false, 'the `Skills` header is gone')
+  assert.equal(/block\('agents'\)/.test(source), false, 'no `agents` block key is read')
+  assert.equal(/block\('skills'\)/.test(source), false, 'no `skills` block key is read')
+  assert.equal(
+    /SidebarBlockKey =[^\n]*'agents'/.test(source),
+    false,
+    "SidebarBlockKey no longer carries 'agents'",
+  )
+  assert.equal(
+    /SidebarBlockKey =[^\n]*'skills'/.test(source),
+    false,
+    "SidebarBlockKey no longer carries 'skills'",
+  )
+  assert.equal(source.includes('location.skill'), false, 'the skill collection is no longer read')
+  assert.equal(source.includes('SkillIndexSummary'), false, 'the skill estimate is gone')
+  assert.equal(source.includes('AgentUsageBlock'), false, 'the old agentes rows are gone')
+
+  assert.deepEqual(
+    Object.keys(BLOCK_ICONS),
+    ['context', 'git', 'todo', 'dispatch'],
+    'only the four surviving blocks carry a header glyph',
+  )
+
+  // Spend is not a block (its numbers live inside Context) and the TUI still
+  // never claims the native block: it only ever appends.
+  assert.equal(source.includes("block('spend')"), false, 'the Spend block stays gone')
   assert.match(
     source,
     /contextSpendLine\(model\.spend\(\)\)/,
     'the totals ride on the Context block',
   )
-
   assert.equal(/\n\s+git\n/.test(source), false, 'the old lowercase `git` label is gone')
   assert.ok(source.includes('label="Git status"'), 'the git block label is `Git status`')
   assert.ok(source.includes("'⎇ '"), 'the branch row keeps its ⎇ prefix')
 })
 
-/* ─── Sixth iteration: block spacing + Dispatch ───────────
- * Blocks are separated by exactly one blank line, and the old running-only
- * delegation list is replaced by `Dispatch`: every child of the active session
- * — running or finished — with its agent, model and duration. */
+test('Dispatch is a single block: one header, the live rows and one rollup', async () => {
+  const source = readFileSync(join(root, 'src/plugins/tui/src/index-v2.tsx'), 'utf8')
+
+  assert.equal(
+    (source.match(/label="Dispatch"/g) ?? []).length,
+    1,
+    'exactly one Dispatch header is rendered',
+  )
+  assert.equal(
+    (source.match(/label="agentes"/g) ?? []).length,
+    0,
+    'the duplicated agent list is gone, so the block cannot print the same data twice',
+  )
+  assert.match(source, /label="Dispatch"[\s\S]{0,400}summary=\{dispatchSummary\(\)\}/)
+  assert.match(source, /✓ <total> · \$<soma> · <M> agentes/, 'the summary documents its own shape')
+  assert.equal(source.includes('… +N member'), false, 'no per-session `… +N` list survives')
+})
 
 test('every block header carries one muted single-width glyph; the fixed header has none', async () => {
   const { BLOCK_ICONS } = await loadV2()
@@ -2265,10 +2418,9 @@ test('every block header carries one muted single-width glyph; the fixed header 
       context: '\u25A4',
       git: '\u25C6',
       todo: '\u25BE',
-      agent: '\u25C7',
-      dispatch: '\u2301',
+      dispatch: '\u25C8',
     },
-    '▤ Context · ◆ Git status · ▾ Todo · ◇ agente · ⌁ Dispatch',
+    '▤ Context · ◆ Git status · ▾ Todo · ◈ Dispatch',
   )
   for (const [key, icon] of Object.entries(BLOCK_ICONS)) {
     assert.equal([...icon].length, 1, `${key} uses exactly one codepoint, never a sequence`)
@@ -2286,17 +2438,17 @@ test('every block header carries one muted single-width glyph; the fixed header 
     emoji.lastIndex = 0
     assert.equal(emoji.test(icon), false, `${key} glyph is never measured as wide`)
   }
+
   const source = readFileSync(join(root, 'src/plugins/tui/src/index-v2.tsx'), 'utf8')
-  for (const label of ['Context', 'Git status', 'Todo', 'agente', 'Dispatch']) {
+  for (const label of ['Context', 'Git status', 'Todo', 'Dispatch']) {
     assert.ok(
       source.includes(`label="${label}"`),
       `the ${label} block renders its own labeled header`,
     )
   }
-  const headers = source.match(/<BlockHeader/g) ?? []
-  assert.equal(headers.length, 5, 'exactly five block headers carry a glyph')
+  assert.equal((source.match(/<BlockHeader/g) ?? []).length, 4, 'exactly four block headers')
 
-  // The fixed header (version / OpenCode V2 / preset / session) takes no icon.
+  // The fixed header (version / preset / session) takes no icon.
   const fixedHeader = source.slice(
     source.indexOf('<text fg={text()} attributes={1}>'),
     source.indexOf("block('context')"),
@@ -2306,7 +2458,13 @@ test('every block header carries one muted single-width glyph; the fixed header 
 })
 
 test('Dispatch rows carry the child cost, and the spend totals ride inside Context', async () => {
-  const { createSidebarModel, dispatchRowText, contextSpendLine, resetSpendUnit } = await loadV2()
+  const {
+    createSidebarModel,
+    childAgentRowText,
+    dispatchHeaderSummary,
+    contextSpendLine,
+    resetSpendUnit,
+  } = await loadV2()
   const now = Date.now()
   const { client } = createStatsClient((input) => ({
     range: { from: input.from, to: input.to },
@@ -2336,6 +2494,7 @@ test('Dispatch rows carry the child cost, and the spend totals ride inside Conte
           parentID: 'ses_root',
           agent: 'demeter',
           cost: 0.41,
+          outcome: 'succeeded',
           time: { created: now - 64_000, updated: now - 100 },
         },
       ],
@@ -2345,10 +2504,12 @@ test('Dispatch rows carry the child cost, and the spend totals ride inside Conte
           id: 'ses_c',
           parentID: 'ses_root',
           agent: 'talos',
+          outcome: 'succeeded',
           time: { created: now - 1_000, updated: now - 100 },
         },
       ],
     ],
+    statuses: [['ses_a', 'running']],
     family: ['ses_root', 'ses_a', 'ses_b', 'ses_c'],
   })
 
@@ -2359,21 +2520,41 @@ test('Dispatch rows carry the child cost, and the spend totals ride inside Conte
   })
   try {
     await sleep(40)
-    const rows = model.dispatch().visible.map((view) => dispatchRowText(view, now))
-    const cells = (agent, model, cost, duration) =>
-      `\u25CF ${agent.padEnd(12)} ${model.padEnd(7)} ${cost.padStart(5)} ${duration.padStart(5)}`
-
-    assert.equal(rows.length, 3)
-    assert.equal(rows[0], cells('apollo', 'gpt-5.6', '$0.04', '12.7s'), 'cost + model + duration')
+    const view = model.dispatch()
+    assert.equal(view.runningCount, 1)
+    assert.equal(view.completedCount, 2)
+    assert.equal(view.agentCount, 2, 'two agents own the two finished children')
     assert.equal(
-      rows[1],
-      cells('demeter', '', '$0.41', '1m04s'),
-      'a missing model keeps its column',
+      dispatchHeaderSummary(view.runningCount, view.totalCost),
+      '1 rodando · $0.45',
+      'the header adds the live and the finished spend',
     )
-    assert.equal(rows[2], cells('talos', '', '\u2014', '1.0s'), 'an absent cost is an em dash')
-    for (const row of rows) {
-      assert.ok(row.length <= 34, `a Dispatch row stays within 34 columns (got ${row.length})`)
-    }
+
+    const running = view.running[0]
+    assert.equal(running.id, 'ses_a')
+    const live = toCell('apollo', 'gpt-5.6', '$0.04', '12.7s')
+    assert.equal(running.text, live, 'spinner + agent + model + cost + duration')
+    assert.ok(running.text.length <= 34, 'a live row stays inside 34 columns')
+
+    assert.equal(view.summary, '✓ 2 · $0.41 · 2 agentes')
+    assert.deepEqual(
+      view.agents.map((row) => [row.agent, row.count, hasMoney(childAgentRowText(row))]),
+      [
+        ['demeter', 1, true],
+        ['talos', 1, true],
+      ],
+      'cost descending, and every agent row carries a monetary value',
+    )
+    assert.equal(
+      childAgentRowText(view.agents[0]),
+      `${'demeter'.padEnd(12)} \u00D7${'1'.padStart(3)} ${'$0.41'.padStart(7)}`,
+      'agent 12 · ×count 3 · cost 7',
+    )
+    assert.equal(
+      childAgentRowText(view.agents[1]),
+      `${'talos'.padEnd(12)} \u00D7${'1'.padStart(3)} ${'$0.00'.padStart(7)}`,
+      'a child with no recorded cost still prints $0.00, never a blank column',
+    )
 
     // Spend is a Context line, never a block of its own.
     assert.equal(contextSpendLine(model.spend()), 'hoje $0.42 \u00B7 30d $9.80')
@@ -2389,7 +2570,7 @@ test('Dispatch rows carry the child cost, and the spend totals ride inside Conte
         ['git', true],
         ['dispatch', true],
       ],
-      'Context opens the sidebar without a leading gap and no Spend block follows',
+      'Context opens the sidebar, Dispatch closes it and no removed block leaves a gap',
     )
   } finally {
     dispose()
@@ -2428,39 +2609,43 @@ test('block spacing: one blank line between rendered blocks, never before the fi
     'one blank line sits between the fixed header and the first block',
   )
   assert.equal(
-    (source.match(/<box height=\{1\} \/>/g) ?? []).length,
-    6,
-    'five block spacers plus the one after the fixed header — no duplicates',
+    (
+      source
+        .slice(source.indexOf('function Sidebar('), source.indexOf('/** Keymap layer of the panel'))
+        .match(/<box height=\{1\} \/>/g) ?? []
+    ).length,
+    5,
+    'one slot per block plus the one after the fixed header — no duplicates',
   )
 })
 
-test('Dispatch formatting: markers, tones, three durations, truncation, row width', async () => {
+test('Dispatch formatting: columns, truncation, caps and the money guarantee', async () => {
   const {
-    dispatchMarker,
-    dispatchTone,
+    spinnerFrame,
     formatDispatchDuration,
     dispatchElapsed,
     dispatchAgentText,
     dispatchModelText,
     formatDispatchCost,
-    dispatchRowText,
-    hiddenDispatchText,
+    runningChildRowText,
+    childAgentRowText,
+    hiddenChildAgentsText,
+    completedSummaryText,
+    failedSuffixText,
+    dispatchHeaderSummary,
+    dispatchTotalCost,
     DISPATCH_AGENT_WIDTH,
+    DISPATCH_MIN_AGENT_WIDTH,
     DISPATCH_MODEL_WIDTH,
     DISPATCH_COST_WIDTH,
     DISPATCH_DURATION_WIDTH,
     DISPATCH_MAX_WIDTH,
   } = await loadV2()
 
-  assert.equal(dispatchMarker('running'), '\u25CF', '● for a live child')
-  assert.equal(dispatchMarker('completed'), '\u2713', '✓ for a succeeded child')
-  assert.equal(dispatchMarker('failed'), '\u2717', '✗ for a failed child')
-  assert.equal(dispatchMarker('interrupted'), '\u2212', '− for an interrupted child')
-
-  assert.equal(dispatchTone('running'), 'success', 'live work is the only green row')
-  assert.equal(dispatchTone('failed'), 'error')
-  assert.equal(dispatchTone('completed'), 'muted', 'a finished child recedes')
-  assert.equal(dispatchTone('interrupted'), 'muted', 'an aborted child is not a success')
+  // The spinner is the host's Braille set: ten frames, one cell each.
+  const frames = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((frame) => spinnerFrame(frame))
+  assert.deepEqual(frames.slice(0, 10), ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'])
+  assert.equal(frames[10], '⠋', 'the spinner wraps')
 
   assert.equal(formatDispatchDuration(820), '820ms', 'sub-second keeps its millisecond unit')
   assert.equal(formatDispatchDuration(12_400), '12.4s')
@@ -2485,6 +2670,7 @@ test('Dispatch formatting: markers, tones, three durations, truncation, row widt
     state: 'running',
     agent: 'apollo',
     model: 'gpt-5.6',
+    cost: 0.04,
     startedAt: 1_000,
     updatedAt: 1_000,
   }
@@ -2531,117 +2717,169 @@ test('Dispatch formatting: markers, tones, three durations, truncation, row widt
   assert.equal(formatDispatchCost(undefined), '\u2014')
   assert.equal(formatDispatchCost(Number.NaN), '\u2014')
 
-  // Layout: marker + padded agent + padded model + right-aligned cost + duration.
+  // One live row: spinner + agent 12 + model 7 + cost 5 + duration 5 = 34.
   const cost = (value) => value.padStart(DISPATCH_COST_WIDTH)
   const duration = (value) => value.padStart(DISPATCH_DURATION_WIDTH)
-  assert.equal(cost('$0.04').length, 5)
+  const fullRow = runningChildRowText(running, 13_400)
   assert.equal(
-    dispatchRowText({ ...running, cost: 0.04 }, 13_400),
-    `\u25CF ${'apollo'.padEnd(DISPATCH_AGENT_WIDTH)} ${'gpt-5.6'.padEnd(DISPATCH_MODEL_WIDTH)} ${cost('$0.04')} ${duration('12.4s')}`,
+    fullRow,
+    `\u280B ${'apollo'.padEnd(DISPATCH_AGENT_WIDTH)} ${'gpt-5.6'.padEnd(DISPATCH_MODEL_WIDTH)} ${cost('$0.04')} ${duration('12.4s')}`,
     'the full row is agent + model + cost + duration, columns aligned',
   )
+  assert.equal(fullRow.length, DISPATCH_MAX_WIDTH)
+
+  // A long duration overflows the budget: the model goes first, the cost stays.
+  const sixSeconds = runningChildRowText({ ...running, startedAt: 0 }, 14 * 60_000 + 34_000)
   assert.equal(
-    dispatchRowText({ ...running, cost: 0.04 }, 13_400).length,
-    DISPATCH_MAX_WIDTH,
-    'a full row is exactly the 34-column budget',
+    sixSeconds,
+    `\u280B ${'apollo'.padEnd(DISPATCH_AGENT_WIDTH)} ${cost('$0.04')} ${duration('14m34s')}`,
+    'the model is dropped before the cost',
   )
-  assert.equal(
-    dispatchRowText({ ...running, model: null, cost: 0.41 }, 13_400),
-    `\u25CF ${'apollo'.padEnd(DISPATCH_AGENT_WIDTH)} ${' '.repeat(DISPATCH_MODEL_WIDTH)} ${cost('$0.41')} ${duration('12.4s')}`,
-    'a missing model keeps its column so the numbers stay aligned',
-  )
-  assert.equal(
-    dispatchRowText({ ...running, cost: undefined }, 13_400),
-    `\u25CF ${'apollo'.padEnd(DISPATCH_AGENT_WIDTH)} ${'gpt-5.6'.padEnd(DISPATCH_MODEL_WIDTH)} ${cost('\u2014')} ${duration('12.4s')}`,
-    'an absent cost renders an em dash in its column',
-  )
-  const noModel = dispatchRowText({ ...running, cost: 0.04 }, 13_400, 30)
-  assert.equal(
-    noModel,
-    `\u25CF ${'apollo'.padEnd(DISPATCH_AGENT_WIDTH)} ${cost('$0.04')} ${duration('12.4s')}`,
-    'the model is dropped first when the row would not fit',
-  )
-  const noCost = dispatchRowText({ ...running, cost: 0.04 }, 13_400, 20)
+  assert.equal(hasMoney(sixSeconds), true)
+
+  // A missing cost keeps the em dash, never an empty column.
+  const noCost = runningChildRowText({ ...running, cost: undefined }, 13_400)
   assert.equal(
     noCost,
-    `\u25CF ${'apollo'.padEnd(DISPATCH_AGENT_WIDTH)} ${duration('12.4s')}`,
-    'the cost is dropped only after the model',
-  )
-  assert.ok(
-    dispatchRowText({ ...running, cost: 0.04 }, 13_400, 20).includes('apollo'),
-    'the agent is never cut away to fit the row',
-  )
-  const worst = dispatchRowText(
-    {
-      ...running,
-      agent: 'a'.repeat(20),
-      model: 'm'.repeat(20),
-      cost: 0.0031,
-      state: 'completed',
-      updatedAt: 63_601_000,
-    },
-    0,
-  )
-  assert.ok(
-    worst.length <= DISPATCH_MAX_WIDTH,
-    `the widest row stays within ${DISPATCH_MAX_WIDTH} columns (got ${worst.length})`,
+    `\u280B ${'apollo'.padEnd(DISPATCH_AGENT_WIDTH)} ${'gpt-5.6'.padEnd(DISPATCH_MODEL_WIDTH)} ${cost('\u2014')} ${duration('12.4s')}`,
   )
 
-  assert.equal(hiddenDispatchText(0), null)
-  assert.equal(hiddenDispatchText(2), '\u2026 +2')
-  assert.equal(hiddenDispatchText(Number.NaN), null)
+  // Narrow budgets shrink the agent column, never the cost.
+  const narrow = runningChildRowText(running, 13_400, 0, 24)
+  assert.ok(narrow.length <= 24, `a narrowed row fits 24 columns (got ${narrow.length})`)
+  assert.ok(narrow.includes('$0.04'), 'the cost survives every narrowing')
+  assert.ok(narrow.includes('12.4s'), 'the duration survives too')
+  assert.equal(
+    narrow.slice(2, 2 + DISPATCH_MIN_AGENT_WIDTH),
+    'apollo  ',
+    'the agent column stops at its minimum width',
+  )
+
+  // Rollup rows: agent 12 · ×count 3 · cost 7, cost descending at the block.
+  const groupCell = (agent, count, cash) =>
+    `${agent.padEnd(DISPATCH_AGENT_WIDTH)} \u00D7${String(count).padStart(3)} ${cash.padStart(7)}`
+  assert.equal(
+    childAgentRowText({ agent: 'prometheus', count: 3, cost: 0.21 }),
+    groupCell('prometheus', 3, '$0.21'),
+  )
+  assert.equal(
+    childAgentRowText({ agent: 'iris', count: 1, cost: 0.0051 }),
+    groupCell('iris', 1, '$0.0051'),
+    'the wider sub-cent cost keeps its own column',
+  )
+  assert.equal(
+    childAgentRowText({ agent: 'talos', count: 100, cost: 0 }),
+    groupCell('talos', 100, '$0.00'),
+    'a three-digit count and a zero cost still align',
+  )
+  assert.ok(
+    childAgentRowText({ agent: 'a'.repeat(20), count: 2, cost: 0.01 }).length <= DISPATCH_MAX_WIDTH,
+  )
+  assert.equal(hasMoney(childAgentRowText({ agent: '?', count: 1, cost: 0 })), true)
+  assert.equal(
+    childAgentRowText({ agent: 'a'.repeat(20), count: 2, cost: 0.01 }, 22).includes('$0.01'),
+    true,
+    'the agent shrinks before the cost on a narrow budget',
+  )
+
+  assert.equal(hiddenChildAgentsText(0, 0), null, 'nothing hidden, no line')
+  assert.equal(hiddenChildAgentsText(6, 1.02), '\u2026 +6  $1.02')
+  assert.equal(hiddenChildAgentsText(6, 0), '\u2026 +6  $0.00', 'a zero sum still prints')
+  assert.equal(hiddenChildAgentsText(1, 0.0031), '\u2026 +1  $0.0031')
+
+  assert.equal(completedSummaryText(0, 0, 0), null, 'nothing finished, no summary')
+  assert.equal(completedSummaryText(70, 3.4, 9), '\u2713 70 \u00B7 $3.40 \u00B7 9 agentes')
+  assert.equal(
+    completedSummaryText(3, 0, 1),
+    '\u2713 3',
+    'a zero spend drops the `$` part and a single agent drops `· 1 agente`',
+  )
+  assert.equal(
+    completedSummaryText(2, 0.0031, 2),
+    '\u2713 2 \u00B7 $0.0031 \u00B7 2 agentes',
+    'a sub-cent total keeps four decimals instead of collapsing to $0.00',
+  )
+
+  assert.equal(failedSuffixText(0), null, 'no failure, no suffix')
+  assert.equal(failedSuffixText(1), '1 falha', 'one failure is singular')
+  assert.equal(failedSuffixText(3), '3 falhas')
+
+  assert.equal(dispatchHeaderSummary(2, 0.47), '2 rodando \u00B7 $0.47')
+  assert.equal(dispatchHeaderSummary(0, 0.47), '$0.47', 'no live job, cost only')
+  assert.equal(dispatchHeaderSummary(0, 0), '$0.00', 'a subtree that spent nothing says so')
+  assert.equal(dispatchHeaderSummary(1, null), '1 rodando \u00B7 $0.00')
+  assert.equal(dispatchHeaderSummary(Number.NaN, Number.NaN), '$0.00')
+
+  assert.equal(dispatchTotalCost([running, done]), 0.08, 'live + finished')
+  assert.equal(dispatchTotalCost([{ ...running, cost: undefined }]), 0, 'absent costs count zero')
+  assert.equal(dispatchTotalCost([]), 0)
 })
 
-test('sidebar Dispatch lists running first, then finished children, root excluded', async () => {
-  const { createSidebarModel, dispatchAgentText } = await loadV2()
+test('Dispatch block: running first (newest first), finished grouped by agent, root excluded', async () => {
+  const { createSidebarModel, childAgentRowText, failedSuffixText } = await loadV2()
   const now = Date.now()
   const host = createSidebarHost({
     children: [
       ['ses_root', { id: 'ses_root', agent: 'zeus', time: { created: now, updated: now } }],
       [
-        'ses_a',
+        'ses_old',
         {
-          id: 'ses_a',
+          id: 'ses_old',
           parentID: 'ses_root',
           agent: 'apollo',
-          model: { id: 'gpt-5.6', providerID: 'opencode-go' },
-          time: { created: now - 2_000, updated: now - 1_000 },
+          cost: 0.1,
+          time: { created: now - 20_000, updated: now - 10_000 },
         },
       ],
       [
-        'ses_b',
+        'ses_new',
         {
-          id: 'ses_b',
+          id: 'ses_new',
+          parentID: 'ses_root',
+          agent: 'iris',
+          cost: 0.2,
+          time: { created: now - 5_000, updated: now - 1_000 },
+        },
+      ],
+      [
+        'ses_done_a',
+        {
+          id: 'ses_done_a',
           parentID: 'ses_root',
           agent: 'demeter',
+          cost: 0.3,
           outcome: 'succeeded',
-          time: { created: now - 9_000, updated: now - 5_000 },
+          time: { created: now - 9_000, updated: now - 8_000 },
         },
       ],
       [
-        'ses_c',
+        'ses_done_b',
         {
-          id: 'ses_c',
+          id: 'ses_done_b',
           parentID: 'ses_root',
-          title: 'hotfix',
-          outcome: 'failed',
-          time: { created: now - 9_000, updated: now - 7_000 },
+          agent: 'demeter',
+          cost: 0.2,
+          outcome: 'succeeded',
+          time: { created: now - 7_000, updated: now - 6_000 },
         },
       ],
-      // A grandchild is not a dispatch of this session.
       [
-        'ses_grand',
+        'ses_dead',
         {
-          id: 'ses_grand',
-          parentID: 'ses_a',
-          agent: 'iris',
-          outcome: 'succeeded',
-          time: { created: now, updated: now },
+          id: 'ses_dead',
+          parentID: 'ses_root',
+          agent: 'talos',
+          cost: 0.15,
+          outcome: 'failed',
+          time: { created: now - 4_000, updated: now - 3_000 },
         },
       ],
     ],
-    statuses: [['ses_a', 'running']],
-    family: ['ses_root', 'ses_a', 'ses_b', 'ses_c', 'ses_grand'],
+    statuses: [
+      ['ses_old', 'running'],
+      ['ses_new', 'running'],
+    ],
+    family: ['ses_root', 'ses_old', 'ses_new', 'ses_done_a', 'ses_done_b', 'ses_dead'],
   })
 
   let model
@@ -2649,52 +2887,72 @@ test('sidebar Dispatch lists running first, then finished children, root exclude
     model = createSidebarModel(host.context, () => 'ses_root')
     return disposeRoot
   })
-
   try {
+    await sleep(20)
+    const view = model.dispatch()
     assert.deepEqual(
-      model.dispatch().visible.map((view) => [view.id, view.state]),
+      view.running.map((row) => row.id),
+      ['ses_new', 'ses_old'],
+      'the most recently active live child leads; the root is never a child',
+    )
+    assert.equal(view.runningCount, 2)
+    assert.equal(view.completedCount, 3, 'the failed child counts as finished, not as a row')
+    assert.equal(view.failures, 1)
+    assert.equal(view.agentCount, 2, 'two agents own the three finished children')
+    assert.equal(view.summary, '\u2713 3 \u00B7 $0.65 \u00B7 2 agentes')
+    assert.equal(failedSuffixText(view.failures), '1 falha')
+    assert.deepEqual(
+      view.agents.map((row) => [row.agent, row.count, Number(row.cost.toFixed(2))]),
       [
-        ['ses_a', 'running'],
-        ['ses_b', 'completed'],
-        ['ses_c', 'failed'],
+        ['demeter', 2, 0.5],
+        ['talos', 1, 0.15],
       ],
-      'running first, then by most recent activity; root and grandchild excluded',
+      'finished children are aggregated per agent, never one row per session',
     )
-    assert.equal(model.dispatch().hidden, 0)
+    for (const row of view.agents) assert.equal(hasMoney(childAgentRowText(row)), true)
     assert.equal(
-      dispatchAgentText(model.dispatch().visible[2]),
-      'hotfix',
-      'title stands in for agent',
+      model.dispatch().totalCost.toFixed(2),
+      '0.95',
+      'the header total sums the live and the finished children',
     )
-    assert.deepEqual(
-      model.delegations().map((view) => view.id),
-      ['ses_a'],
-      'the running-only list',
-    )
-    assert.ok(model.liveNow() > 0, 'the live clock is readable for the row durations')
   } finally {
     dispose()
   }
 })
 
-test('sidebar Dispatch caps at 5 rows and reports the remainder as "… +N"', async () => {
-  const { createSidebarModel, hiddenDispatchText, DISPATCH_VISIBLE_CEILING } = await loadV2()
+test('Dispatch caps: 3 live rows plus "… +N rodando", 3 agents plus "… +K  $sum"', async () => {
+  const { createSidebarModel, DISPATCH_RUNNING_CEILING, DISPATCH_AGENT_CEILING } = await loadV2()
   const now = Date.now()
   const children = [['ses_root', { id: 'ses_root', time: { created: now, updated: now } }]]
-  for (let index = 0; index < 7; index += 1) {
+  const statuses = []
+  // Five running children (each with its own agent) and five finished agents.
+  for (let index = 0; index < 5; index += 1) {
     children.push([
-      `ses_${index}`,
+      `ses_live_${index}`,
       {
-        id: `ses_${index}`,
+        id: `ses_live_${index}`,
         parentID: 'ses_root',
-        agent: `agent-${index}`,
+        agent: `live-${index}`,
+        cost: 0.01 * (index + 1),
+        time: { created: now - 2_000, updated: now - index * 100 },
+      },
+    ])
+    statuses.push([`ses_live_${index}`, 'running'])
+    children.push([
+      `ses_done_${index}`,
+      {
+        id: `ses_done_${index}`,
+        parentID: 'ses_root',
+        agent: `done-${index}`,
+        cost: 0.1 * (index + 1),
         outcome: 'succeeded',
-        time: { created: now - 10_000, updated: now - index * 1_000 },
+        time: { created: now - 9_000, updated: now - 5_000 },
       },
     ])
   }
   const host = createSidebarHost({
     children,
+    statuses,
     family: ['ses_root', ...children.slice(1).map(([id]) => id)],
   })
 
@@ -2703,17 +2961,693 @@ test('sidebar Dispatch caps at 5 rows and reports the remainder as "… +N"', as
     model = createSidebarModel(host.context, () => 'ses_root')
     return disposeRoot
   })
-
   try {
-    assert.equal(DISPATCH_VISIBLE_CEILING, 5)
-    assert.equal(model.dispatch().visible.length, 5)
-    assert.equal(model.dispatch().hidden, 2)
-    assert.equal(hiddenDispatchText(model.dispatch().hidden), '\u2026 +2')
+    await sleep(20)
+    const view = model.dispatch()
+    assert.equal(DISPATCH_RUNNING_CEILING, 3)
+    assert.equal(DISPATCH_AGENT_CEILING, 3)
+    assert.equal(view.running.length, 3, 'three live rows render')
+    assert.equal(view.runningHidden, 2, 'the rest collapse into `… +N rodando`')
     assert.deepEqual(
-      model.dispatch().visible.map((view) => view.id),
-      ['ses_0', 'ses_1', 'ses_2', 'ses_3', 'ses_4'],
+      view.running.map((row) => row.id),
+      ['ses_live_0', 'ses_live_1', 'ses_live_2'],
       'the cap keeps the most recently active rows',
     )
+    // Five live rows already cost four lines (three + overflow), so the rollup
+    // yields to keep the block inside eight: one agent row plus its overflow,
+    // which still reports the spend of the agents it hides.
+    assert.equal(view.agents.length, 1, 'the rollup gives up rows before the live section')
+    assert.equal(view.agentsHidden, 4)
+    assert.equal(
+      view.agentsHiddenCost.toFixed(2),
+      '1.00',
+      '0.4 + 0.3 + 0.2 + 0.1 stay summed, not lost',
+    )
+    assert.deepEqual(
+      view.agents.map((row) => row.agent),
+      ['done-4'],
+      'cost descending',
+    )
+    assert.equal(view.summary, '\u2713 5 \u00B7 $1.50 \u00B7 5 agentes')
+    const rendered =
+      1 +
+      view.running.length +
+      (view.runningHidden > 0 ? 1 : 0) +
+      (view.summary === null ? 0 : 1) +
+      view.agents.length +
+      (view.agentsHidden > 0 ? 1 : 0)
+    assert.ok(rendered <= 8, `the block never exceeds eight lines (got ${rendered})`)
+  } finally {
+    dispose()
+  }
+})
+
+/* ─── Dispatch kind ───────────────────────────────────────
+ * The host's own row answers who runs and how much it spent, never why the
+ * child exists. The purpose comes from the parent's own `subagent` call — its
+ * bracketed description prefix first, the spawning agent as the fallback — and a
+ * child that cannot be correlated to a call stays unclassified instead of being
+ * guessed. */
+
+/** One assistant message carrying a single `subagent` call. */
+function subagentMessage(
+  id,
+  { sessionID, agent, description, background, status = 'completed', content } = {},
+) {
+  const input = { agent, description, prompt: 'p' }
+  if (background !== undefined) input.background = background
+  const state = { status, input }
+  if (sessionID !== undefined) state.metadata = { sessionID }
+  if (content !== undefined) state.content = content
+  return {
+    id,
+    type: 'assistant',
+    model: { id: 'm', providerID: 'p' },
+    content: [{ type: 'tool', id: `part-${id}`, name: 'subagent', time: { created: 1 }, state }],
+  }
+}
+
+test('Dispatch kind: the description prefix wins, the agent is only the fallback', async () => {
+  const {
+    classifyDispatchKind,
+    dispatchKindFromPrefix,
+    dispatchKindFromAgent,
+    dispatchKindSuffix,
+  } = await loadV2()
+
+  // Every declared prefix, mapped to its short label.
+  assert.deepEqual(
+    ['[council]', '[plan]', '[review]', '[hotfix]', '[discovery]'].map((prefix) =>
+      classifyDispatchKind({ description: `${prefix} task`, agent: 'aphrodite' }),
+    ),
+    [
+      { kind: 'coun', origin: 'prefix' },
+      { kind: 'plan', origin: 'prefix' },
+      { kind: 'revw', origin: 'prefix' },
+      { kind: 'hot', origin: 'prefix' },
+      { kind: 'disc', origin: 'prefix' },
+    ],
+    'council/plan/review/hotfix/discovery → coun/plan/revw/hot/disc',
+  )
+
+  // Case-insensitive and space-tolerant inside the brackets.
+  assert.equal(dispatchKindFromPrefix('  [REVIEW] audit auth'), 'revw')
+  assert.equal(dispatchKindFromPrefix('[  Council  ] round'), 'coun')
+  assert.equal(dispatchKindFromPrefix('[HotFix] css'), 'hot')
+
+  // The prefix is the declared intent, so it beats the agent it was sent to.
+  assert.deepEqual(
+    classifyDispatchKind({ description: '[discovery] scout the docs', agent: 'themis' }),
+    { kind: 'disc', origin: 'prefix' },
+    'a [discovery] sent to themis is still a discovery',
+  )
+  assert.deepEqual(
+    classifyDispatchKind({ description: '  [council] five specialists', agent: 'zeus' }),
+    { kind: 'coun', origin: 'prefix' },
+  )
+
+  // No prefix → the agent decides.
+  assert.deepEqual(
+    ['athena', 'themis', 'talos', 'apollo'].map((agent) =>
+      classifyDispatchKind({ description: 'no prefix here', agent }),
+    ),
+    [
+      { kind: 'plan', origin: 'agent' },
+      { kind: 'revw', origin: 'agent' },
+      { kind: 'hot', origin: 'agent' },
+      { kind: 'disc', origin: 'agent' },
+    ],
+  )
+
+  // An agent that implies nothing is still a real dispatch: `oth`, never null.
+  assert.deepEqual(classifyDispatchKind({ description: 'build it', agent: 'zeus' }), {
+    kind: 'oth',
+    origin: 'agent',
+  })
+  assert.deepEqual(classifyDispatchKind({ description: '', agent: '' }), {
+    kind: 'oth',
+    origin: 'agent',
+  })
+  assert.deepEqual(classifyDispatchKind({ description: undefined, agent: undefined }), {
+    kind: 'oth',
+    origin: 'agent',
+  })
+
+  // council is a declared convention, never an agent identity.
+  for (const agent of [
+    'athena',
+    'themis',
+    'talos',
+    'apollo',
+    'zeus',
+    'iris',
+    'hermes',
+    'council',
+  ]) {
+    assert.notEqual(
+      classifyDispatchKind({ description: 'plain description', agent }).kind,
+      'coun',
+      `${agent} never implies council on its own`,
+    )
+    assert.equal(
+      dispatchKindFromAgent(agent),
+      agent === 'council' ? null : dispatchKindFromAgent(agent),
+    )
+  }
+
+  // A word that only *looks* like a prefix is not one: the agent still decides.
+  assert.deepEqual(classifyDispatchKind({ description: '[plans] later', agent: 'athena' }), {
+    kind: 'plan',
+    origin: 'agent',
+  })
+  assert.deepEqual(classifyDispatchKind({ description: 'plans [review]', agent: 'athena' }), {
+    kind: 'plan',
+    origin: 'agent',
+  })
+
+  // No call at all is the only `unavailable` outcome — never a guess.
+  assert.deepEqual(classifyDispatchKind(null), { kind: null, origin: 'unavailable' })
+  assert.deepEqual(classifyDispatchKind(undefined), { kind: null, origin: 'unavailable' })
+
+  // Malformed evidence never throws.
+  assert.doesNotThrow(() => classifyDispatchKind({ description: 42, agent: null }))
+  assert.equal(dispatchKindFromPrefix(null), null)
+  assert.equal(dispatchKindFromPrefix({}), null)
+  assert.equal(dispatchKindFromAgent(undefined), null)
+
+  // The suffix glues to a label: `·disc`, `·disc~` in background, '' otherwise.
+  assert.equal(dispatchKindSuffix('disc'), '\u00B7disc')
+  assert.equal(dispatchKindSuffix('disc', true), '\u00B7disc~')
+  assert.equal(dispatchKindSuffix('disc', false), '\u00B7disc')
+  assert.equal(dispatchKindSuffix(null, true), '', 'no kind, no suffix — not even the marker')
+  assert.equal(dispatchKindSuffix(undefined), '')
+})
+
+test('subagent correlation: metadata.sessionID first, content fallback, streaming ignored', async () => {
+  const { collectSubagentCalls } = await loadV2()
+
+  const calls = collectSubagentCalls([
+    subagentMessage('m1', {
+      sessionID: 'ses_disc',
+      agent: 'apollo',
+      description: '[discovery] scout the docs',
+      background: true,
+    }),
+    subagentMessage('m2', { sessionID: 'ses_fg', agent: 'themis', description: '[review] audit' }),
+    subagentMessage('m3', {
+      sessionID: 'ses_explicit_fg',
+      agent: 'talos',
+      description: '[hotfix] css',
+      background: false,
+    }),
+  ])
+  assert.equal(calls.get('ses_disc')?.background, true, 'background: true is carried')
+  assert.equal(calls.get('ses_fg')?.background, false, 'an absent background is not background')
+  assert.equal(calls.get('ses_explicit_fg')?.background, false, 'background: false is carried')
+  assert.deepEqual(
+    [...calls.values()],
+    [
+      {
+        sessionID: 'ses_disc',
+        agent: 'apollo',
+        description: '[discovery] scout the docs',
+        background: true,
+      },
+      { sessionID: 'ses_fg', agent: 'themis', description: '[review] audit', background: false },
+      {
+        sessionID: 'ses_explicit_fg',
+        agent: 'talos',
+        description: '[hotfix] css',
+        background: false,
+      },
+    ],
+    'one entry per correlated child, keyed by its session id',
+  )
+
+  // metadata.sessionID is the exact evidence and wins over the result text.
+  assert.deepEqual(
+    [
+      ...collectSubagentCalls([
+        subagentMessage('m4', {
+          sessionID: 'ses_meta',
+          agent: 'athena',
+          description: '[plan] phases',
+          content: [{ type: 'text', text: '<subagent sessionID="ses_other" state="completed">' }],
+        }),
+      ]).keys(),
+    ],
+    ['ses_meta'],
+  )
+
+  // No metadata: the result tag `<subagent sessionID="…">` is the fallback.
+  assert.deepEqual(
+    [
+      ...collectSubagentCalls([
+        subagentMessage('m5', {
+          agent: 'athena',
+          description: '[plan] phases',
+          content: [
+            { type: 'text', text: 'working' },
+            { type: 'text', text: '<subagent sessionID="ses_content" state="completed">ok' },
+          ],
+        }),
+      ]).keys(),
+    ],
+    ['ses_content'],
+  )
+
+  // A running call whose metadata already names the child still correlates —
+  // that is what classifies a live row. A call with no child yet contributes
+  // nothing.
+  assert.deepEqual(
+    [
+      ...collectSubagentCalls([
+        subagentMessage('m6', { sessionID: 'ses_live', agent: 'apollo', status: 'running' }),
+        subagentMessage('m7', { agent: 'apollo', status: 'running' }),
+      ]).keys(),
+    ],
+    ['ses_live'],
+  )
+
+  // streaming/pending carry their input as partial JSON text: skipped, not parsed.
+  assert.equal(
+    collectSubagentCalls([
+      {
+        id: 'm8',
+        type: 'assistant',
+        content: [
+          {
+            type: 'tool',
+            id: 'part-m8',
+            name: 'subagent',
+            state: {
+              status: 'streaming',
+              input: '{"agent":"apollo","description":"[discovery] sc',
+            },
+          },
+        ],
+      },
+      {
+        id: 'm9',
+        type: 'assistant',
+        content: [
+          {
+            type: 'tool',
+            id: 'part-m9',
+            name: 'subagent',
+            state: { status: 'pending', input: '{"agent":"apollo"' },
+          },
+        ],
+      },
+    ]).size,
+    0,
+    'a partially streamed call has no child to correlate',
+  )
+
+  // Only the host's `subagent` tool counts (it is not `task`).
+  assert.equal(
+    collectSubagentCalls([
+      {
+        id: 'm10',
+        type: 'assistant',
+        content: [
+          {
+            type: 'tool',
+            id: 'part-m10',
+            name: 'task',
+            state: {
+              status: 'completed',
+              input: { agent: 'apollo' },
+              metadata: { sessionID: 'ses_task' },
+            },
+          },
+        ],
+      },
+    ]).size,
+    0,
+    'the V1 `task` tool name is not the V2 dispatch call',
+  )
+
+  // Fail-open on a hostile transcript.
+  assert.equal(collectSubagentCalls(null).size, 0)
+  assert.equal(collectSubagentCalls(undefined).size, 0)
+  assert.equal(collectSubagentCalls([]).size, 0)
+  assert.doesNotThrow(() =>
+    collectSubagentCalls([
+      { id: 'm11', type: 'assistant', content: 'nope' },
+      { id: 'm12', type: 'user' },
+      { id: 'm13', type: 'assistant', content: [null] },
+      { id: 'm14', type: 'assistant', content: [{ type: 'tool', name: 'subagent', state: null }] },
+      {
+        id: 'm15',
+        type: 'assistant',
+        content: [{ type: 'tool', name: 'subagent', state: { status: 'completed' } }],
+      },
+    ]),
+  )
+})
+
+test('Dispatch rows carry the kind glued to the label, and a group only when it is uniform', async () => {
+  const {
+    runningChildRowText,
+    childAgentRowText,
+    collectChildAgentUsage,
+    dispatchKindSuffix,
+    DISPATCH_AGENT_WIDTH,
+    DISPATCH_MAX_WIDTH,
+    DISPATCH_MIN_AGENT_WIDTH,
+  } = await loadV2()
+
+  const running = {
+    id: 'ses_a',
+    label: 'apo-1',
+    state: 'running',
+    agent: 'apollo',
+    model: 'gpt-5.6',
+    cost: 0.04,
+    startedAt: 1_000,
+    updatedAt: 1_000,
+    kind: 'disc',
+    kindOrigin: 'prefix',
+    background: false,
+  }
+  const cost = (value) => value.padStart(5)
+  const duration = (value) => value.padStart(5)
+
+  // The kind is the stronger evidence at this width: it takes the model's
+  // columns, so a classified row is agent·kind + cost + duration.
+  assert.equal(
+    runningChildRowText(running, 13_400),
+    `\u280B apollo\u00B7disc ${cost('$0.04')} ${duration('12.4s')}`,
+    'spinner + agent·kind + cost + duration',
+  )
+  assert.equal(
+    runningChildRowText({ ...running, background: true }, 13_400),
+    `\u280B apollo\u00B7disc~ ${cost('$0.04')} ${duration('12.4s')}`,
+    'the background marker rides the same glued suffix',
+  )
+  assert.equal(
+    runningChildRowText({ ...running, agent: 'prometheus' }, 13_400),
+    `\u280B prometheus\u00B7disc ${cost('$0.04')} ${duration('12.4s')}`,
+    'a wider label keeps the kind in front of the cost',
+  )
+  assert.equal(
+    runningChildRowText({ ...running, kind: null, kindOrigin: 'unavailable' }, 13_400),
+    `\u280B ${'apollo'.padEnd(DISPATCH_AGENT_WIDTH)} ${'gpt-5.6'.padEnd(7)} ${cost('$0.04')} ${duration('12.4s')}`,
+    'an unclassified row is byte-identical to the pre-kind row',
+  )
+
+  // The width budget holds for every combination, model present or not.
+  const kinds = [null, 'coun', 'plan', 'revw', 'hot', 'disc', 'oth']
+  const widths = []
+  for (const kind of kinds) {
+    for (const background of [true, false]) {
+      for (const model of [null, 'gpt-5.6', 'gpt-5.6-luna-fast']) {
+        for (const agent of ['apollo', 'prometheus-with-a-long-name', 'x']) {
+          for (const cash of [0.04, 0.0031, 1234.5, undefined]) {
+            const row = runningChildRowText(
+              { ...running, kind, background, model, agent, cost: cash },
+              13_400,
+            )
+            widths.push(row.length)
+            assert.ok(
+              row.length <= DISPATCH_MAX_WIDTH,
+              `live row fits 34 columns (${row.length}): ${JSON.stringify(row)}`,
+            )
+            assert.ok(row.includes('$') || row.includes('\u2014'), 'the cost never disappears')
+            assert.equal(
+              row.split('\u00B7').length - 1,
+              kind === null ? 0 : kind === 'coun' ? 1 : 1,
+              'the suffix is the only middle dot on the row',
+            )
+          }
+        }
+      }
+    }
+  }
+  assert.ok(Math.max(...widths) <= DISPATCH_MAX_WIDTH)
+
+  // Rollup: same evidence rule per group — all or nothing.
+  const finished = (agent, kind, background) => ({
+    ...running,
+    id: `ses_${agent}_${kind}_${background}`,
+    state: 'completed',
+    updatedAt: 5_000,
+    agent,
+    kind,
+    background,
+  })
+  const uniform = collectChildAgentUsage([
+    finished('aphrodite', 'plan', false),
+    finished('aphrodite', 'plan', false),
+  ])
+  assert.deepEqual(
+    uniform.map(({ agent, count, kind, background }) => ({ agent, count, kind, background })),
+    [{ agent: 'aphrodite', count: 2, kind: 'plan', background: false }],
+    'a group where every session agrees keeps the kind',
+  )
+  assert.equal(
+    childAgentRowText(uniform[0]),
+    `${'aphrodite'.padEnd(DISPATCH_AGENT_WIDTH)} \u00D7${'2'.padStart(3)}\u00B7plan ${'$0.08'.padStart(7)}`,
+    'agent 12 · ×count 3·kind · cost 7',
+  )
+
+  const mixed = collectChildAgentUsage([
+    finished('iris', 'revw', false),
+    finished('iris', 'hot', false),
+  ])
+  assert.equal(mixed[0].kind, null, 'a mixed group has no single purpose')
+  assert.equal(
+    childAgentRowText(mixed[0]).includes('\u00B7'),
+    false,
+    'the mixed group row omits the kind entirely',
+  )
+  assert.equal(
+    childAgentRowText(mixed[0]),
+    `${'iris'.padEnd(DISPATCH_AGENT_WIDTH)} \u00D7${'2'.padStart(3)} ${'$0.08'.padStart(7)}`,
+    'the pre-kind rollup row is unchanged',
+  )
+
+  const uncorrelated = collectChildAgentUsage([finished('hermes', null, false)])
+  assert.equal(uncorrelated[0].kind, null, 'no classification, nothing to show')
+
+  const backgroundGroup = collectChildAgentUsage([
+    finished('apollo', 'disc', true),
+    finished('apollo', 'disc', true),
+  ])
+  assert.deepEqual(
+    [backgroundGroup[0].kind, backgroundGroup[0].background],
+    ['disc', true],
+    'a group that is entirely background keeps the marker',
+  )
+  assert.equal(
+    childAgentRowText(backgroundGroup[0]).includes('\u00B7disc~'),
+    true,
+    'the group marker is `·disc~`',
+  )
+  assert.equal(
+    collectChildAgentUsage([finished('apollo', 'disc', true), finished('apollo', 'disc', false)])[0]
+      .background,
+    false,
+    'a half-background group claims no marker',
+  )
+
+  // The rollup row stays inside the budget for every kind/flag combination.
+  for (const kind of kinds) {
+    for (const background of [true, false]) {
+      for (const count of [1, 8, 100]) {
+        for (const cash of [0, 0.0031, 12.5]) {
+          for (const agent of ['iris', 'a'.repeat(24)]) {
+            const row = childAgentRowText({ agent, count, cost: cash, kind, background })
+            assert.ok(
+              row.length <= DISPATCH_MAX_WIDTH,
+              `rollup row fits 34 columns (${row.length}): ${JSON.stringify(row)}`,
+            )
+            assert.ok(row.includes('$') || row.includes('\u2014'))
+          }
+        }
+      }
+    }
+  }
+  // A narrow budget still shrinks the agent before the kind or the cost; only a
+  // budget too tight even for the minimum column makes the kind yield.
+  const narrow = childAgentRowText(
+    { agent: 'prometheus', count: 8, cost: 0.4, kind: 'plan', background: false },
+    24,
+  )
+  assert.ok(narrow.length <= 24, `a narrowed rollup fits 24 columns (got ${narrow.length})`)
+  assert.ok(narrow.includes('$0.40'), 'the cost survives every narrowing')
+  assert.equal(
+    narrow.includes('\u00B7plan'),
+    false,
+    'the kind yields instead of overflowing the budget',
+  )
+  assert.equal(
+    childAgentRowText(
+      { agent: 'prometheus', count: 8, cost: 0.4, kind: 'plan', background: false },
+      26,
+    ).includes('\u00B7plan'),
+    true,
+    'a budget one character wider keeps the kind',
+  )
+  assert.equal(
+    narrow.slice(0, DISPATCH_MIN_AGENT_WIDTH).includes('\u00B7'),
+    false,
+    'the kind never eats the agent column',
+  )
+  assert.equal(dispatchKindSuffix('plan'), '\u00B7plan')
+})
+
+test('Dispatch kind: the model correlates the parent transcript with its children', async () => {
+  const { createSidebarModel, childAgentRowText, DISPATCH_MAX_WIDTH } = await loadV2()
+  const now = Date.now()
+  const host = createSidebarHost({
+    children: [
+      ['ses_root', { id: 'ses_root', agent: 'zeus', time: { created: now, updated: now } }],
+      [
+        'ses_live',
+        {
+          id: 'ses_live',
+          parentID: 'ses_root',
+          agent: 'apollo',
+          model: { id: 'gpt-5.6', providerID: 'opencode-go' },
+          cost: 0.04,
+          time: { created: now - 12_700, updated: now - 100 },
+        },
+      ],
+      [
+        'ses_plan_a',
+        {
+          id: 'ses_plan_a',
+          parentID: 'ses_root',
+          agent: 'demeter',
+          cost: 0.2,
+          outcome: 'succeeded',
+          time: { created: now - 9_000, updated: now - 8_000 },
+        },
+      ],
+      [
+        'ses_plan_b',
+        {
+          id: 'ses_plan_b',
+          parentID: 'ses_root',
+          agent: 'demeter',
+          cost: 0.1,
+          outcome: 'succeeded',
+          time: { created: now - 7_000, updated: now - 6_000 },
+        },
+      ],
+      [
+        'ses_mixed_a',
+        {
+          id: 'ses_mixed_a',
+          parentID: 'ses_root',
+          agent: 'iris',
+          cost: 0.05,
+          outcome: 'succeeded',
+          time: { created: now - 5_000, updated: now - 4_000 },
+        },
+      ],
+      [
+        'ses_mixed_b',
+        {
+          id: 'ses_mixed_b',
+          parentID: 'ses_root',
+          agent: 'iris',
+          cost: 0.01,
+          outcome: 'succeeded',
+          time: { created: now - 3_000, updated: now - 2_000 },
+        },
+      ],
+      [
+        'ses_unknown',
+        {
+          id: 'ses_unknown',
+          parentID: 'ses_root',
+          agent: 'hermes',
+          cost: 0.01,
+          outcome: 'succeeded',
+          time: { created: now - 1_000, updated: now - 500 },
+        },
+      ],
+    ],
+    statuses: [['ses_live', 'running']],
+    family: [
+      'ses_root',
+      'ses_live',
+      'ses_plan_a',
+      'ses_plan_b',
+      'ses_mixed_a',
+      'ses_mixed_b',
+      'ses_unknown',
+    ],
+    messages: [
+      [
+        'ses_root',
+        [
+          subagentMessage('m1', {
+            sessionID: 'ses_live',
+            agent: 'apollo',
+            description: '[discovery] scout the docs',
+            background: true,
+            status: 'running',
+          }),
+          subagentMessage('m2', {
+            sessionID: 'ses_plan_a',
+            agent: 'demeter',
+            description: '[plan] schema',
+          }),
+          subagentMessage('m3', {
+            sessionID: 'ses_plan_b',
+            agent: 'demeter',
+            description: '[plan] indexes',
+          }),
+          subagentMessage('m4', {
+            sessionID: 'ses_mixed_a',
+            agent: 'iris',
+            description: '[review] pr',
+          }),
+          subagentMessage('m5', {
+            sessionID: 'ses_mixed_b',
+            agent: 'iris',
+            description: '[hotfix] typo',
+          }),
+          // ses_unknown has no call at all: the row stays unclassified.
+        ],
+      ],
+    ],
+  })
+
+  let model
+  const dispose = createRoot((disposeRoot) => {
+    model = createSidebarModel(host.context, () => 'ses_root')
+    return disposeRoot
+  })
+  try {
+    await sleep(40)
+    const view = model.dispatch()
+    const live = view.running[0]
+    assert.equal(live.id, 'ses_live')
+    assert.match(
+      live.text,
+      /apollo\u00B7disc~ \$0\.04 12\.\ds$/,
+      'a live row names its purpose and mode',
+    )
+    assert.ok(live.text.length <= DISPATCH_MAX_WIDTH)
+
+    const rows = view.agents.map((row) => ({ ...row, text: childAgentRowText(row) }))
+    const byAgent = Object.fromEntries(rows.map((row) => [row.agent, row]))
+    assert.equal(
+      byAgent.demeter.kind,
+      'plan',
+      'two [plan] children of one agent aggregate under a single kind',
+    )
+    assert.match(byAgent.demeter.text, /\u00D7\s*2\u00B7plan\s+\$0\.30$/)
+    assert.equal(byAgent.iris.kind, null, 'review + hotfix never collapse into one label')
+    assert.equal(byAgent.iris.text.includes('\u00B7'), false)
+    assert.equal(byAgent.hermes.kind, null, 'a child without a correlatable call is unclassified')
+    assert.equal(byAgent.hermes.text.includes('\u00B7'), false)
+    for (const row of rows) assert.ok(row.text.length <= DISPATCH_MAX_WIDTH)
   } finally {
     dispose()
   }
@@ -2750,6 +3684,7 @@ test('sidebar block list drives the spacers, and absent blocks leave no gap', as
     family: ['ses_root'],
     messages,
     models,
+    costs: [['ses_root', 0.1]],
   })
   let model
   const dispose = createRoot((disposeRoot) => {
@@ -2762,7 +3697,6 @@ test('sidebar block list drives the spacers, and absent blocks leave no gap', as
       [
         ['context', false],
         ['git', true],
-        ['agent', true],
       ],
       'no Spend/Todo/Dispatch without data, and no spacer before the first block',
     )
@@ -2808,6 +3742,7 @@ test('sidebar block list drives the spacers, and absent blocks leave no gap', as
     family: ['ses_root'],
     messages,
     models,
+    costs: [['ses_root', 0.1]],
     vcs: null,
   })
   let bare
@@ -2818,10 +3753,7 @@ test('sidebar block list drives the spacers, and absent blocks leave no gap', as
   try {
     assert.deepEqual(
       bare.blocks().map((entry) => [entry.key, entry.spacer]),
-      [
-        ['context', false],
-        ['agent', true],
-      ],
+      [['context', false]],
       'an absent block is removed from the list instead of leaving an empty gap',
     )
   } finally {
@@ -2846,6 +3778,10 @@ test('sidebar block list drives the spacers, and absent blocks leave no gap', as
     family: ['ses_root', 'ses_child'],
     messages,
     models,
+    costs: [
+      ['ses_root', 0.1],
+      ['ses_child', 0.05],
+    ],
   })
   let withDispatch
   const disposeChild = createRoot((disposeRoot) => {
@@ -2855,8 +3791,8 @@ test('sidebar block list drives the spacers, and absent blocks leave no gap', as
   try {
     assert.deepEqual(
       withDispatch.blocks().map((entry) => entry.key),
-      ['context', 'git', 'agent', 'dispatch'],
-      'Dispatch closes the sidebar, after the agent row',
+      ['context', 'git', 'dispatch'],
+      'Dispatch closes the sidebar, right after the reference blocks',
     )
     assert.equal(withDispatch.blocks().at(-1).spacer, true)
   } finally {
@@ -2864,15 +3800,244 @@ test('sidebar block list drives the spacers, and absent blocks leave no gap', as
   }
 })
 
-test('Dispatch block keeps click-through and adds no replace claim', async () => {
+/* ─── Eleventh iteration: one aggregated `◈ Dispatch` block ─────────────
+ * The duplicated `◇ agentes` block and the `⌗ Skills` block are gone. Dispatch
+ * now carries two sections of its own: one row per live child (newest first,
+ * three plus `… +N rodando`) and one row per *agent* for the finished ones
+ * (`✓ <total> · $<soma> · <M> agentes`, then up to three `×<n>  $<soma>` rows
+ * plus `… +K  $soma`, and `· <F> falhas` when anything failed). Every row is a
+ * single preformatted line, so no column can be squeezed out by the layout —
+ * the regression that made the old `agentes` rows print a bare name. */
+
+test('sidebar model: Dispatch with 71 children never renders a row without money', async () => {
+  const {
+    createSidebarModel,
+    childAgentRowText,
+    runningChildRowText,
+    hiddenChildAgentsText,
+    completedSummaryText,
+    DISPATCH_MAX_WIDTH,
+    DISPATCH_MAX_LINES,
+  } = await loadV2()
+  const now = Date.now()
+  const roster = [
+    'prometheus',
+    'iris',
+    'talos',
+    'apollo',
+    'hermes',
+    'mnemosyne',
+    'aphrodite',
+    'demeter',
+    'themis',
+  ]
+  const children = [
+    ['ses_root', { id: 'ses_root', agent: 'zeus', time: { created: now, updated: now } }],
+  ]
+  const statuses = []
+  for (let index = 0; index < 71; index += 1) {
+    const id = `ses_${String(index).padStart(3, '0')}`
+    const live = index === 0
+    children.push([
+      id,
+      {
+        id,
+        parentID: 'ses_root',
+        agent: roster[index % roster.length],
+        // One live child at $0.09, the rest at $0.05 each: 70 × 0.05 = $3.50.
+        cost: live ? 0.09 : 0.05,
+        time: {
+          created: now - (index + 1) * 60_000,
+          updated: live ? now : now - index * 1_000,
+        },
+        ...(live ? {} : { outcome: 'succeeded' }),
+      },
+    ])
+    if (live) statuses.push([id, 'running'])
+  }
+  const host = createSidebarHost({
+    children,
+    statuses,
+    family: ['ses_root', ...children.slice(1).map(([id]) => id)],
+  })
+
+  let model
+  const dispose = createRoot((disposeRoot) => {
+    model = createSidebarModel(host.context, () => 'ses_root')
+    return disposeRoot
+  })
+  try {
+    await sleep(20)
+    const view = model.dispatch()
+    assert.equal(view.runningCount, 1, 'one live child')
+    assert.equal(view.completedCount, 70, 'seventy finished children')
+    assert.equal(view.agentCount, 9, 'spread over nine agents')
+    assert.equal(view.failures, 0)
+    assert.equal(view.running.length, 1)
+    assert.equal(view.agents.length, 3, 'three rollup rows, not 70 session rows')
+    assert.equal(view.agentsHidden, 6)
+    assert.equal(view.agentsHiddenCost.toFixed(2), '2.30')
+
+    // Aggregation is per agent: ×count and the summed cost, ordered by cost.
+    assert.deepEqual(
+      view.agents.map((row) => [row.agent, row.count, Number(row.cost.toFixed(2))]),
+      [
+        ['aphrodite', 8, 0.4],
+        ['apollo', 8, 0.4],
+        ['demeter', 8, 0.4],
+      ],
+    )
+    assert.equal(view.summary, '\u2713 70 \u00B7 $3.50 \u00B7 9 agentes')
+    assert.equal(view.totalCost.toFixed(2), '3.59', 'live + finished, root excluded')
+
+    // THE regression this iteration guards: no rendered line of the block may
+    // lose its monetary value (the old per-session/multi-column row could).
+    const lines = [
+      ...view.running.map((row) => row.text),
+      view.summary,
+      ...view.agents.map((row) => childAgentRowText(row)),
+      hiddenChildAgentsText(view.agentsHidden, view.agentsHiddenCost),
+    ].filter((line) => typeof line === 'string' && line !== '')
+    assert.equal(lines.length, 6)
+    for (const line of lines) {
+      assert.match(line, /\$|\u2014/, `every rendered line carries money: ${JSON.stringify(line)}`)
+    }
+    for (const row of view.agents) {
+      assert.match(childAgentRowText(row), /\$\d/, 'an agent row always prints a cost')
+      assert.match(childAgentRowText(row), /\u00D7\s*\d/, 'and its session count')
+    }
+    for (const line of lines) {
+      assert.ok(line.length <= DISPATCH_MAX_WIDTH, `line inside ${DISPATCH_MAX_WIDTH}: ${line}`)
+    }
+
+    // Block budget: header + live rows + summary + rollup rows.
+    const rendered =
+      1 +
+      view.running.length +
+      (view.runningHidden > 0 ? 1 : 0) +
+      (view.summary === null ? 0 : 1) +
+      view.agents.length +
+      (view.agentsHidden > 0 ? 1 : 0)
+    assert.ok(rendered <= DISPATCH_MAX_LINES, `the block stays at ${rendered} ≤ 8 lines`)
+
+    // The block is the sidebar's last one, and it is the only place the child
+    // data shows up — no duplicated `agentes` block.
+    assert.deepEqual(
+      model.blocks().map((entry) => entry.key),
+      ['context', 'git', 'dispatch'],
+    )
+    assert.equal(
+      model.blocks().some((entry) => entry.key === 'agents'),
+      false,
+      'the duplicated agent block is gone',
+    )
+
+    // A live row is still a single preformatted line (the layout cannot squeeze
+    // a column out of it): spinner + agent + cost + duration.
+    const liveText = runningChildRowText(
+      {
+        id: 'ses_000',
+        label: 'ses_000',
+        state: 'running',
+        agent: 'prometheus',
+        model: null,
+        cost: 0.09,
+        startedAt: now - 874_000,
+        updatedAt: now,
+      },
+      now,
+    )
+    assert.equal(liveText, '\u280B prometheus   $0.09 14m34s')
+    assert.equal(hasMoney(liveText), true)
+
+    // The summary drops the `$` part when nothing was spent, and `· 1 agente`
+    // when a single agent owns everything.
+    assert.equal(completedSummaryText(70, 0, 1), '\u2713 70')
+  } finally {
+    dispose()
+  }
+})
+
+test('Dispatch: a failing family hides the block instead of inventing a child', async () => {
+  const { createSidebarModel } = await loadV2()
+  const host = createSidebarHost({
+    children: [['ses_root', { id: 'ses_root', agent: 'zeus' }]],
+    family: ['ses_root'],
+    costs: [['ses_root', 0.2]],
+  })
+  host.context.data.session.family = () => {
+    throw new Error('family unavailable')
+  }
+  let model
+  const dispose = createRoot((disposeRoot) => {
+    model = createSidebarModel(host.context, () => 'ses_root')
+    return disposeRoot
+  })
+  try {
+    await sleep(10)
+    assert.equal(model.dispatch(), null, 'no family, no child, no block')
+    assert.equal(
+      model.blocks().some((entry) => entry.key === 'dispatch'),
+      false,
+      'the block (and its spacer) stay out of the sidebar',
+    )
+  } finally {
+    dispose()
+  }
+})
+
+test('Dispatch: a child with no agent lands in the ? bucket', async () => {
+  const { createSidebarModel, childAgentRowText } = await loadV2()
+  const now = Date.now()
+  const host = createSidebarHost({
+    children: [
+      ['ses_root', { id: 'ses_root' }],
+      [
+        'ses_child',
+        {
+          id: 'ses_child',
+          parentID: 'ses_root',
+          cost: 0.1,
+          outcome: 'succeeded',
+          time: { created: now, updated: now },
+        },
+      ],
+    ],
+    family: ['ses_root', 'ses_child'],
+  })
+  let model
+  const dispose = createRoot((disposeRoot) => {
+    model = createSidebarModel(host.context, () => 'ses_root')
+    return disposeRoot
+  })
+  try {
+    await sleep(10)
+    const view = model.dispatch()
+    assert.deepEqual(
+      view.agents.map((row) => row.agent),
+      ['?'],
+      'an agent-less child is bucketed as ?, never as undefined',
+    )
+    assert.equal(childAgentRowText(view.agents[0]).includes('$0.10'), true)
+  } finally {
+    dispose()
+  }
+})
+
+test('Dispatch keeps click-through on live rows and adds no replace claim', async () => {
   const source = readFileSync(join(root, 'src/plugins/tui/src/index-v2.tsx'), 'utf8')
 
   assert.match(
     source,
-    /onMouseDown=\{open\(view\.id\)\}/,
-    'a Dispatch row still navigates to the child session',
+    /onMouseDown=\{open\(row\.id\)\}/,
+    'a live Dispatch row still navigates to the child session',
   )
-  assert.ok(source.includes('Dispatch'), 'the block header is `Dispatch`')
+  assert.equal(
+    /onMouseDown=\{open\([^)]*\)\}[\s\S]{0,200}childAgentRowText/.test(source),
+    false,
+    'the aggregated rollup rows are not click targets (one row, many sessions)',
+  )
+  assert.ok(source.includes('label="Dispatch"'), 'the block header is `Dispatch`')
   assert.equal(
     /\breplace\s*:/.test(source),
     false,
@@ -2893,4 +4058,909 @@ test('Dispatch block keeps click-through and adds no replace claim', async () =>
     false,
     'the TUI entry never writes a file — cli.json included',
   )
+})
+
+test('gauge colors: blue → green → yellow → red, with the bar and the percent sharing one color', async () => {
+  const { contextUsageTone, contextProgressColor, contextBlockRows } = await loadV2()
+
+  const theme = {
+    text: {
+      base: '#111111',
+      feedback: {
+        info: { base: '#61afef' },
+        success: { base: '#98c379' },
+        warning: { base: '#e5c07b' },
+        error: { base: '#e06c75' },
+      },
+    },
+  }
+
+  // Inclusive at the top of each band: 25/26, 50/51 and 90/91 split bands.
+  const bands = [
+    { percent: 0, tone: 'info', color: '#61afef' },
+    { percent: 25, tone: 'info', color: '#61afef' },
+    { percent: 26, tone: 'success', color: '#98c379' },
+    { percent: 50, tone: 'success', color: '#98c379' },
+    { percent: 51, tone: 'warning', color: '#e5c07b' },
+    { percent: 90, tone: 'warning', color: '#e5c07b' },
+    { percent: 91, tone: 'error', color: '#e06c75' },
+    { percent: 100, tone: 'error', color: '#e06c75' },
+  ]
+
+  assert.deepEqual(
+    bands.map(({ percent }) => contextUsageTone(percent)),
+    bands.map(({ tone }) => tone),
+    'each percentage lands in its own band',
+  )
+  assert.deepEqual(
+    bands.map(({ percent }) => contextProgressColor(contextUsageTone(percent), theme)),
+    bands.map(({ color }) => color),
+    'each band resolves to its own feedback token, no literal color',
+  )
+  assert.equal(
+    contextProgressColor('info', { text: { base: '#222222' } }),
+    '#222222',
+    'a theme without feedback tokens falls back to its base text',
+  )
+  assert.equal(
+    contextProgressColor('error', undefined),
+    undefined,
+    'a missing theme yields no color instead of throwing',
+  )
+
+  // The percent row carries exactly one tone, and the view paints the filled
+  // cells and the number with the same resolved color.
+  for (const { percent, tone } of bands) {
+    const row = contextBlockRows({ tokens: 10, percent, limit: 1_000 }, null)?.percent
+    assert.equal(row?.tone, tone, `${percent}% keeps its band on the row`)
+    assert.equal(
+      contextProgressColor(row?.tone ?? 'info', theme),
+      contextProgressColor(contextUsageTone(percent), theme),
+      `${percent}% shares one color between bar and percent`,
+    )
+    assert.ok(row?.lead !== null && row?.value !== undefined)
+  }
+
+  const source = readFileSync(join(root, 'src/plugins/tui/src/index-v2.tsx'), 'utf8')
+  const rowView = source.slice(
+    source.indexOf('function ContextRowView'),
+    source.indexOf('function BlockHeader'),
+  )
+  assert.ok(rowView.length > 0, 'the context row view was located')
+  assert.equal(
+    (rowView.match(/fg=\{props\.fg\}/g) ?? []).length,
+    2,
+    'filled cells and the percent value both read the one `fg` prop',
+  )
+  assert.match(rowView, /fg=\{props\.muted\}>\{tail\(\)\}/, 'the ▱ track stays muted')
+  assert.match(
+    source,
+    /fg=\{gaugeFg\(row\(\)\)\}/,
+    'the percent row resolves its color through the shared stage helper',
+  )
+  const helper = source.slice(
+    source.indexOf('export function contextProgressColor'),
+    source.indexOf('/** The muted extra line under the gauge'),
+  )
+  assert.equal(/#[0-9a-fA-F]{3,8}\b/.test(helper), false, 'the stage helper holds no literal color')
+})
+
+test('Context telemetry: cache hit and turn speed, hidden when unmeasurable', async () => {
+  const {
+    cacheHitPercent,
+    turnTokensPerSecond,
+    contextPerformanceLine,
+    createSidebarModel,
+    resetSpendUnit,
+  } = await loadV2()
+
+  assert.equal(Math.round(cacheHitPercent({ input: 800, cache: { read: 9_200 } })), 92)
+  assert.equal(cacheHitPercent({ input: 0, cache: { read: 0 } }), null, '0/0 has no ratio')
+  assert.equal(cacheHitPercent({ input: 100 }), null, 'no cache read means no ratio')
+  assert.equal(cacheHitPercent({ cache: { read: 100 } }), null, 'no input means no denominator')
+  assert.equal(cacheHitPercent(null), null)
+  assert.equal(cacheHitPercent({ input: Number.NaN, cache: { read: 1 } }), null)
+
+  /* Turn speed mirrors the host's `turnTokensPerSecond`: reasoning joins the
+   * numerator, `completed` never enters, and the division happens once after
+   * the per-step durations are summed. `streamed` is the only clock. */
+  const user = (id) => ({ id, type: 'user' })
+  const turn = (id, tokens, created, streamed, completed = streamed) => ({
+    id,
+    type: 'assistant',
+    tokens,
+    time: { created, streamed, completed },
+  })
+
+  assert.equal(
+    turnTokensPerSecond([user('u1'), turn('a1', { output: 1_000, reasoning: 1_000 }, 0, 2_000)]),
+    1_000,
+    'output + reasoning is the numerator',
+  )
+  assert.equal(
+    turnTokensPerSecond([user('u1'), turn('a1', { output: 400 }, 1_000, 3_000)]),
+    200,
+    'active streaming time is the denominator',
+  )
+
+  const completedIgnored = (completed) =>
+    turnTokensPerSecond([user('u1'), turn('a1', { output: 400 }, 1_000, 3_000, completed)])
+  assert.equal(completedIgnored(3_000), 200, 'completed === streamed')
+  assert.equal(
+    completedIgnored(3_000_000),
+    completedIgnored(3_000),
+    'a huge completed must not move the rate — it is not part of the formula',
+  )
+
+  assert.equal(
+    turnTokensPerSecond([user('u1'), turn('a1', { output: 400 }, 1_000, null, 11_000)]),
+    null,
+    'a step without time.streamed hides the speed instead of falling back to completed',
+  )
+  assert.equal(
+    turnTokensPerSecond([
+      user('u1'),
+      turn('a1', { output: 1_000 }, 0, 1_000),
+      turn('a2', { output: 100 }, 0, 9_000),
+    ]),
+    110,
+    '1,100 tokens over 10 s of active streaming — not the 505.5 mean of the two steps',
+  )
+  assert.equal(
+    turnTokensPerSecond([
+      turn('a0', { output: 9_000 }, 0, 1_000),
+      user('u1'),
+      turn('a1', { output: 400 }, 1_000, 3_000),
+    ]),
+    200,
+    'only the steps of the current turn are aggregated',
+  )
+  assert.equal(
+    turnTokensPerSecond([
+      turn('a0', { output: 9_000 }, 0, 1_000),
+      turn('a1', { output: 400 }, 1_000, 3_000),
+    ]),
+    200,
+    'without a user message only the last step is measurable (degraded, documented)',
+  )
+  assert.equal(
+    turnTokensPerSecond([user('u1'), turn('a1', { output: 0, reasoning: 0 }, 0, 1_000)]),
+    null,
+    'zero output and reasoning has no speed',
+  )
+  assert.equal(
+    turnTokensPerSecond([user('u1'), turn('a1', { output: 420 }, 1_000, 1_000)]),
+    null,
+    'streamed === created is not a measurable speed',
+  )
+  assert.equal(
+    turnTokensPerSecond([user('u1')]),
+    null,
+    'a turn with no assistant step has no speed',
+  )
+  assert.equal(turnTokensPerSecond([]), null)
+  assert.equal(turnTokensPerSecond(null), null)
+
+  assert.equal(
+    contextPerformanceLine({ cacheHit: 92, tokensPerSecond: 42.34 }),
+    'cache 92% · 42.3 tok/s',
+  )
+  assert.equal(contextPerformanceLine({ cacheHit: 92, tokensPerSecond: null }), 'cache 92%')
+  assert.equal(contextPerformanceLine({ cacheHit: null, tokensPerSecond: 42 }), '42.0 tok/s')
+  assert.equal(contextPerformanceLine({ cacheHit: null, tokensPerSecond: 0.04 }), '0.0 tok/s')
+  assert.equal(contextPerformanceLine({ cacheHit: null, tokensPerSecond: null }), null)
+  assert.equal(contextPerformanceLine(null), null)
+
+  const now = Date.now()
+  const message = (id, tokens, time) => ({ id, type: 'assistant', tokens, time })
+  const host = createSidebarHost({
+    children: [['ses_root', { id: 'ses_root' }]],
+    family: ['ses_root'],
+    messages: [
+      [
+        'ses_root',
+        [
+          message(
+            'm1',
+            { input: 800, output: 420, cache: { read: 9_200 } },
+            { created: now - 10_000, streamed: now, completed: now + 5_000 },
+          ),
+        ],
+      ],
+    ],
+  })
+
+  let model
+  const dispose = createRoot((disposeRoot) => {
+    model = createSidebarModel(host.context, () => 'ses_root')
+    return disposeRoot
+  })
+  try {
+    await sleep(20)
+    assert.deepEqual(model.performance(), { cacheHit: 92, tokensPerSecond: 42 })
+    assert.equal(contextPerformanceLine(model.performance()), 'cache 92% · 42.0 tok/s')
+  } finally {
+    dispose()
+  }
+
+  // A zero cache denominator and a step with no `streamed` clock render no line.
+  const hidden = createSidebarHost({
+    children: [['ses_root', { id: 'ses_root' }]],
+    family: ['ses_root'],
+    messages: [
+      [
+        'ses_root',
+        [
+          message(
+            'm1',
+            { input: 0, output: 0, cache: { read: 0 } },
+            { created: now, completed: now },
+          ),
+        ],
+      ],
+    ],
+  })
+  let bare
+  const disposeBare = createRoot((disposeRoot) => {
+    bare = createSidebarModel(hidden.context, () => 'ses_root')
+    return disposeRoot
+  })
+  try {
+    await sleep(20)
+    assert.equal(bare.performance(), null, 'nothing measurable, nothing rendered')
+    assert.equal(contextPerformanceLine(bare.performance()), null)
+  } finally {
+    disposeBare()
+    resetSpendUnit()
+  }
+})
+
+test('Context telemetry: cache hit is independent of the turn being closed', async () => {
+  const { createSidebarModel, contextPerformanceLine, resetSpendUnit } = await loadV2()
+  const now = Date.now()
+  /* 92% cache hit: readable from any assistant that carries `tokens`, whether or
+   * not its turn has a `streamed` clock yet. */
+  const cached = { input: 800, output: 0, cache: { read: 9_200 } }
+
+  const performanceOf = async (messages, session = { id: 'ses_root' }) => {
+    const host = createSidebarHost({
+      children: [['ses_root', session]],
+      family: ['ses_root'],
+      messages: [['ses_root', messages]],
+    })
+    let model
+    const dispose = createRoot((disposeRoot) => {
+      model = createSidebarModel(host.context, () => 'ses_root')
+      return disposeRoot
+    })
+    try {
+      await sleep(20)
+      return { model, host, dispose }
+    } catch (error) {
+      dispose()
+      resetSpendUnit()
+      throw error
+    }
+  }
+
+  const cases = [
+    {
+      name: 'the current turn has no step with tokens yet (streaming placeholder last)',
+      messages: [
+        { id: 'u1', type: 'user' },
+        {
+          id: 'a1',
+          type: 'assistant',
+          tokens: cached,
+          time: { created: now - 1_000, streamed: now },
+        },
+        { id: 'a2', type: 'assistant' },
+      ],
+      expected: { cacheHit: 92, tokensPerSecond: null },
+    },
+    {
+      name: 'the newest step carries tokens but has no streamed clock (mid-stream)',
+      messages: [
+        { id: 'u1', type: 'user' },
+        { id: 'a1', type: 'assistant', tokens: cached, time: { created: now } },
+      ],
+      expected: { cacheHit: 92, tokensPerSecond: null },
+    },
+    {
+      name: 'no clock at all still reports the cache hit',
+      messages: [{ id: 'a1', type: 'assistant', tokens: cached }],
+      expected: { cacheHit: 92, tokensPerSecond: null },
+    },
+  ]
+
+  for (const item of cases) {
+    const { model, dispose } = await performanceOf(item.messages)
+    try {
+      assert.deepEqual(model.performance(), item.expected, item.name)
+      assert.equal(contextPerformanceLine(model.performance()), 'cache 92%', item.name)
+    } finally {
+      dispose()
+    }
+  }
+
+  /* The halves stay independent in the other direction too: a measurable turn
+   * with a zero cache denominator shows only the speed. */
+  const speedOnly = await performanceOf([
+    { id: 'u1', type: 'user' },
+    {
+      id: 'a1',
+      type: 'assistant',
+      tokens: { input: 0, output: 420, cache: { read: 0 } },
+      time: { created: now - 10_000, streamed: now },
+    },
+  ])
+  try {
+    assert.deepEqual(speedOnly.model.performance(), { cacheHit: null, tokensPerSecond: 42 })
+    assert.equal(contextPerformanceLine(speedOnly.model.performance()), '42.0 tok/s')
+  } finally {
+    speedOnly.dispose()
+  }
+
+  /* A reverted-away message must not supply the rate: the window ends at the
+   * revert boundary, exactly like the context gauge. */
+  const reverted = await performanceOf(
+    [
+      { id: 'u1', type: 'user' },
+      { id: 'a1', type: 'assistant', tokens: { input: 100, cache: { read: 900 } } },
+      { id: 'u2', type: 'user' },
+      { id: 'a2', type: 'assistant', tokens: cached },
+    ],
+    { id: 'ses_root', revert: { messageID: 'u2' } },
+  )
+  try {
+    assert.equal(
+      Math.round(reverted.model.performance().cacheHit),
+      90,
+      'the reverted-away assistant no longer feeds the cache hit',
+    )
+  } finally {
+    reverted.dispose()
+  }
+
+  /* A compaction closes the window: nothing before it can feed the rate. */
+  const compacted = await performanceOf([
+    { id: 'a1', type: 'assistant', tokens: cached },
+    { id: 'c1', type: 'compaction' },
+  ])
+  try {
+    assert.equal(compacted.model.performance(), null, 'no usage after the compaction, no line')
+    assert.equal(contextPerformanceLine(compacted.model.performance()), null)
+  } finally {
+    compacted.dispose()
+    resetSpendUnit()
+  }
+
+  /* Reading the line costs no extra `message.list`: both halves ride the one
+   * pass that feeds the gauge. */
+  const counted = createSidebarHost({
+    children: [['ses_root', { id: 'ses_root' }]],
+    family: ['ses_root'],
+    messages: [
+      [
+        'ses_root',
+        [
+          { id: 'u1', type: 'user' },
+          {
+            id: 'a1',
+            type: 'assistant',
+            tokens: cached,
+            time: { created: now - 1_000, streamed: now },
+          },
+        ],
+      ],
+    ],
+  })
+  const calls = []
+  const list = counted.context.data.session.message.list
+  counted.context.data.session.message.list = (id) => {
+    calls.push(id)
+    return list(id)
+  }
+  let countedModel
+  const disposeCounted = createRoot((disposeRoot) => {
+    countedModel = createSidebarModel(counted.context, () => 'ses_root')
+    return disposeRoot
+  })
+  try {
+    await sleep(20)
+    /* The gauge already warms the shared `messages` memo; both telemetry halves
+     * must then read it without touching `message.list` again. */
+    countedModel.contextUsage()
+    const before = calls.length
+    countedModel.performance()
+    countedModel.performance()
+    assert.equal(
+      calls.length,
+      before,
+      "the cache half and the turn half ride the gauge's single message.list pass",
+    )
+  } finally {
+    disposeCounted()
+    resetSpendUnit()
+  }
+})
+
+/** Fake git runner: records every call and answers from `handler`. */
+function fakeGitExec(handler) {
+  const calls = []
+  const exec = async (file, args, options) => {
+    calls.push({ file, args: [...args], options })
+    return handler(args)
+  }
+  return { exec, calls }
+}
+
+test('git CLI parsing: porcelain columns (untracked, rename, conflicts) and ahead/behind', async () => {
+  const {
+    parseGitStatusPorcelain,
+    parseGitAheadBehind,
+    formatGitSnapshot,
+    readGitSnapshot,
+    GIT_CLI_TIMEOUT_MS,
+    GIT_CLI_MAX_BUFFER,
+  } = await loadV2()
+
+  const porcelain = [
+    '?? new.ts',
+    '!! ignored.log',
+    ' M changed.ts',
+    'A  staged-add.ts',
+    'D  staged-del.ts',
+    'R  old.ts -> renamed.ts',
+    'AM both.ts',
+    ' M other.ts',
+  ].join('\n')
+  assert.deepEqual(
+    parseGitStatusPorcelain(porcelain),
+    { added: 2, modified: 3, deleted: 1, untracked: 1 },
+    'XY is read as two columns: ?? untracked, A added, D deleted, M/R modified',
+  )
+  assert.deepEqual(parseGitStatusPorcelain(''), { added: 0, modified: 0, deleted: 0, untracked: 0 })
+  assert.deepEqual(parseGitStatusPorcelain(null), {
+    added: 0,
+    modified: 0,
+    deleted: 0,
+    untracked: 0,
+  })
+
+  assert.deepEqual(
+    parseGitAheadBehind('3\t1\n'),
+    { ahead: 1, behind: 3 },
+    'left is the upstream-only count (behind), right is the HEAD-only count (ahead)',
+  )
+  assert.equal(parseGitAheadBehind(''), null, 'no upstream prints nothing')
+  assert.equal(parseGitAheadBehind('fatal: no upstream configured'), null)
+  assert.equal(parseGitAheadBehind(null), null)
+
+  assert.equal(
+    formatGitSnapshot({
+      changes: { added: 1, modified: 2, deleted: 1, untracked: 2 },
+      ahead: 3,
+      behind: 1,
+    }),
+    '+1 ±2 \u22121 ?2 \u21913 \u21931',
+    'counts then arrows, zero terms omitted',
+  )
+  assert.equal(
+    formatGitSnapshot({
+      changes: { added: 0, modified: 1, deleted: 0, untracked: 0 },
+      ahead: null,
+      behind: null,
+    }),
+    '±1',
+    'no upstream means no arrows at all',
+  )
+  assert.equal(
+    formatGitSnapshot({
+      changes: { added: 0, modified: 0, deleted: 0, untracked: 0 },
+      ahead: 0,
+      behind: 0,
+    }),
+    null,
+    'a clean, in-sync tree renders no row',
+  )
+
+  const { exec, calls } = fakeGitExec((args) =>
+    args[0] === 'status' ? { stdout: '?? a.ts\n' } : { stdout: '0\t2\n' },
+  )
+  const snapshot = await readGitSnapshot('/repo', exec)
+  assert.deepEqual(snapshot, {
+    changes: { added: 0, modified: 0, deleted: 0, untracked: 1 },
+    ahead: 2,
+    behind: 0,
+  })
+  assert.deepEqual(calls[0].args, ['status', '--porcelain=v1', '-uall'])
+  assert.deepEqual(calls[1].args, ['rev-list', '--count', '--left-right', '@{upstream}...HEAD'])
+  assert.deepEqual(calls[0].options, {
+    cwd: '/repo',
+    timeout: GIT_CLI_TIMEOUT_MS,
+    windowsHide: true,
+    maxBuffer: GIT_CLI_MAX_BUFFER,
+  })
+  assert.equal(calls[0].file, 'git')
+
+  // A failing rev-list (no upstream) keeps the counts and drops only the arrows.
+  const withoutUpstream = fakeGitExec((args) => {
+    if (args[0] === 'status') return { stdout: ' M a.ts\n' }
+    throw new Error('fatal: no upstream configured')
+  })
+  assert.deepEqual(await readGitSnapshot('/repo', withoutUpstream.exec), {
+    changes: { added: 0, modified: 1, deleted: 0, untracked: 0 },
+    ahead: null,
+    behind: null,
+  })
+})
+
+test('git CLI is authoritative, falls back to vcs.status, and respects the cooldown', async () => {
+  const { createSidebarModel, gitProbeAllowed, GIT_CLI_DEBOUNCE_MS, GIT_CLI_MIN_INTERVAL_MS } =
+    await loadV2()
+
+  assert.ok(GIT_CLI_DEBOUNCE_MS >= 1_000, 'the CLI revalidation debounce is at least one second')
+  assert.equal(GIT_CLI_MIN_INTERVAL_MS, 5_000, 'cooldown between two probe starts')
+
+  // Pure gate first: in-flight wins, and the cooldown is exclusive.
+  assert.equal(gitProbeAllowed({ now: 0, lastRunAt: null, inFlight: false }), true)
+  assert.equal(gitProbeAllowed({ now: 9_000, lastRunAt: 1_000, inFlight: true }), false)
+  assert.equal(gitProbeAllowed({ now: 5_999, lastRunAt: 1_000, inFlight: false }), false)
+  assert.equal(gitProbeAllowed({ now: 6_000, lastRunAt: 1_000, inFlight: false }), true)
+
+  const vcsPayload = [
+    { file: 'a.ts', status: 'added' },
+    { file: 'b.ts', status: 'deleted' },
+  ]
+  const vcsClient = {
+    vcs: { status: async () => ({ data: vcsPayload }) },
+  }
+  const rootChild = ['ses_root', { id: 'ses_root' }]
+
+  // 1. The CLI answers: its counts (with `?` and the arrows) win over vcs.status.
+  const cli = fakeGitExec((args) =>
+    args[0] === 'status' ? { stdout: '?? new.ts\n M edited.ts\n' } : { stdout: '1\t3\n' },
+  )
+  const cliHost = createSidebarHost({
+    directory: '/repo',
+    client: vcsClient,
+    children: [rootChild],
+    family: ['ses_root'],
+  })
+  let cliModel
+  const disposeCli = createRoot((disposeRoot) => {
+    cliModel = createSidebarModel(cliHost.context, () => 'ses_root', cli.exec)
+    return disposeRoot
+  })
+  try {
+    await sleep(30)
+    assert.equal(cliModel.gitLine(), '±1 ?1 \u21913 \u21931')
+    assert.deepEqual(cliModel.gitCli()?.changes, {
+      added: 0,
+      modified: 1,
+      deleted: 0,
+      untracked: 1,
+    })
+    assert.equal(
+      cli.calls.filter((call) => call.args[0] === 'status').length,
+      1,
+      'exactly one probe at mount — no interval polling',
+    )
+
+    // A burst of session events cannot start a second probe inside the cooldown.
+    cliHost.emit('session.idle')
+    cliHost.emit('session.status')
+    await sleep(GIT_CLI_DEBOUNCE_MS + 80)
+    assert.equal(
+      cli.calls.filter((call) => call.args[0] === 'status').length,
+      1,
+      'the 5 s cooldown suppresses the burst instead of queueing it',
+    )
+    await sleep(400)
+    assert.equal(
+      cli.calls.filter((call) => call.args[0] === 'status').length,
+      1,
+      'nothing re-probes on its own — there is no polling timer',
+    )
+  } finally {
+    disposeCli()
+  }
+
+  // 2. git fails: the vcs.status counts take over (branch-only if it also fails).
+  const broken = fakeGitExec(() => {
+    throw new Error('git: command not found')
+  })
+  const fallbackHost = createSidebarHost({
+    directory: '/repo',
+    client: vcsClient,
+    children: [rootChild],
+    family: ['ses_root'],
+  })
+  let fallbackModel
+  const disposeFallback = createRoot((disposeRoot) => {
+    fallbackModel = createSidebarModel(fallbackHost.context, () => 'ses_root', broken.exec)
+    return disposeRoot
+  })
+  try {
+    await sleep(40)
+    assert.equal(fallbackModel.gitCli(), null, 'git never answered')
+    assert.equal(fallbackModel.gitLine(), '+1 \u22121', 'the protocol fallback renders instead')
+  } finally {
+    disposeFallback()
+  }
+
+  // 3. A clean CLI tree is authoritative: vcs.status must not resurrect a row.
+  const clean = fakeGitExec(() => ({ stdout: '' }))
+  const cleanHost = createSidebarHost({
+    directory: '/repo',
+    client: vcsClient,
+    children: [rootChild],
+    family: ['ses_root'],
+  })
+  let cleanModel
+  const disposeClean = createRoot((disposeRoot) => {
+    cleanModel = createSidebarModel(cleanHost.context, () => 'ses_root', clean.exec)
+    return disposeRoot
+  })
+  try {
+    await sleep(40)
+    assert.notEqual(cleanModel.gitCli(), null, 'the CLI did answer')
+    assert.equal(cleanModel.gitLine(), null, 'a clean tree renders no counts, even with a vcs row')
+  } finally {
+    disposeClean()
+  }
+
+  // 4. Neither source: the block keeps its branch line only.
+  const nothingHost = createSidebarHost({
+    directory: '/repo',
+    client: { vcs: { status: async () => ({ data: vcsPayload }) } },
+    children: [rootChild],
+    family: ['ses_root'],
+    vcs: { branch: { current: 'main' } },
+  })
+  let nothingModel
+  const disposeNothing = createRoot((disposeRoot) => {
+    nothingModel = createSidebarModel(nothingHost.context, () => 'ses_root', broken.exec)
+    return disposeRoot
+  })
+  try {
+    await sleep(40)
+    assert.equal(nothingModel.gitLine(), '+1 \u22121')
+    assert.equal(nothingModel.branch(), 'main')
+  } finally {
+    disposeNothing()
+  }
+})
+
+test('session switch drops the git counts and probes the new tree without the old cooldown', async () => {
+  const { createSidebarModel } = await loadV2()
+
+  let gate = null
+  let release = () => {}
+  const statusCalls = []
+  const exec = async (_file, args) => {
+    if (args[0] === 'status') statusCalls.push(args)
+    if (gate !== null) await gate
+    return args[0] === 'status' ? { stdout: ' M a.ts\n' } : { stdout: '0\t0\n' }
+  }
+
+  const host = createSidebarHost({
+    directory: '/repo',
+    children: [
+      ['ses_a', { id: 'ses_a' }],
+      ['ses_b', { id: 'ses_b' }],
+    ],
+    family: ['ses_a'],
+  })
+  const [sessionID, setSessionID] = createSignal('ses_a')
+  let model
+  const dispose = createRoot((disposeRoot) => {
+    model = createSidebarModel(host.context, () => sessionID(), exec)
+    return disposeRoot
+  })
+
+  try {
+    await sleep(30)
+    assert.deepEqual(model.gitCli()?.changes, {
+      added: 0,
+      modified: 1,
+      deleted: 0,
+      untracked: 0,
+    })
+    assert.equal(statusCalls.length, 1, 'one probe at mount')
+    assert.equal(model.gitLine(), '±1')
+
+    // The next probe hangs on the gate, so the reset is observable before its
+    // result lands.
+    gate = new Promise((resolve) => {
+      release = resolve
+    })
+    setSessionID('ses_b')
+    await sleep(10)
+    assert.equal(model.gitCli(), null, 'the previous session’s CLI counts are dropped')
+    assert.equal(
+      statusCalls.length,
+      2,
+      'the new session probes immediately: the old 5 s cooldown does not apply',
+    )
+
+    release()
+    await sleep(20)
+    assert.deepEqual(
+      model.gitCli()?.changes,
+      { added: 0, modified: 1, deleted: 0, untracked: 0 },
+      'the new session gets its own observation',
+    )
+  } finally {
+    dispose()
+  }
+})
+
+test('session switch drops the observed states, so the new session never toasts a first-sight completion', async () => {
+  const { createSidebarModel } = await loadV2()
+
+  const host = createSidebarHost({
+    children: [
+      ['ses_a', { id: 'ses_a' }],
+      ['ses_b', { id: 'ses_b' }],
+      ['ses_child', { id: 'ses_child', parentID: 'ses_a', label: 'apo-1', agent: 'apollo' }],
+    ],
+    statuses: [['ses_child', 'running']],
+    family: ['ses_a', 'ses_child'],
+  })
+  const [sessionID, setSessionID] = createSignal('ses_a')
+  let model
+  const dispose = createRoot((disposeRoot) => {
+    model = createSidebarModel(host.context, () => sessionID())
+    return disposeRoot
+  })
+
+  try {
+    await sleep(20)
+    assert.equal(model.dispatch()?.runningCount, 1, 'the first session sees the child running')
+    assert.equal(host.toasts.length, 0, 'a first sight of a running child never toasts')
+
+    // The child belongs to the second session now and is already finished. A
+    // stale `running` from ses_a would read as a completion and toast.
+    host.setChild('ses_child', {
+      id: 'ses_child',
+      parentID: 'ses_b',
+      label: 'apo-1',
+      agent: 'apollo',
+      outcome: 'succeeded',
+    })
+    host.setStatus('ses_child', 'idle')
+    host.setFamily(['ses_b', 'ses_child'])
+    setSessionID('ses_b')
+    await sleep(20)
+
+    assert.equal(model.dispatch()?.completedCount, 1, 'the child is listed as finished')
+    assert.deepEqual(host.toasts, [], 'nothing completed in this session, so nothing toasts')
+  } finally {
+    dispose()
+  }
+})
+
+test('Dispatch: native spinner per live row, header summary, frame freeze', async () => {
+  const { createSidebarModel, spinnerFrame, dispatchHeaderSummary, DISPATCH_MAX_WIDTH } =
+    await loadV2()
+
+  // The spinner is the host's Braille set: ten frames, one cell each.
+  const frames = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((frame) => spinnerFrame(frame))
+  assert.deepEqual(frames.slice(0, 10), ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'])
+  assert.equal(frames[10], '⠋', 'the spinner wraps')
+
+  // The header omits the live count when nothing runs and always prints spend.
+  assert.equal(dispatchHeaderSummary(2, 0.47), '2 rodando · $0.47')
+  assert.equal(dispatchHeaderSummary(0, 0.47), '$0.47')
+  assert.equal(dispatchHeaderSummary(0, 0), '$0.00')
+
+  // Model side: the frame advances while a child runs, freezes when it ends.
+  const now = Date.now()
+  const host = createSidebarHost({
+    children: [
+      ['ses_root', { id: 'ses_root' }],
+      [
+        'ses_live',
+        {
+          id: 'ses_live',
+          parentID: 'ses_root',
+          agent: 'apollo',
+          cost: 0.4,
+          time: { created: now, updated: now },
+        },
+      ],
+      [
+        'ses_stop',
+        {
+          id: 'ses_stop',
+          parentID: 'ses_root',
+          agent: 'talos',
+          cost: 0.07,
+          outcome: 'interrupted',
+          time: { created: now - 5_000, updated: now - 1_000 },
+        },
+      ],
+    ],
+    statuses: [['ses_live', 'running']],
+    family: ['ses_root', 'ses_live', 'ses_stop'],
+  })
+  let model
+  const dispose = createRoot((disposeRoot) => {
+    model = createSidebarModel(host.context, () => 'ses_root')
+    return disposeRoot
+  })
+  try {
+    await sleep(3 * 80 + 40)
+    assert.ok(model.frame() > 0, 'the spinner ticks while a dispatch runs')
+    const view = model.dispatch()
+    assert.equal(dispatchHeaderSummary(view.runningCount, view.totalCost), '1 rodando · $0.47')
+    assert.equal(view.running.length, 1, 'only the live child gets a row')
+    assert.equal(view.running[0].text.slice(0, 2), `${spinnerFrame(model.frame())} `)
+    assert.equal(view.running[0].text.length <= DISPATCH_MAX_WIDTH, true)
+    // The interrupted child is finished: counted in the rollup, never its own row.
+    assert.equal(view.completedCount, 1)
+    assert.equal(view.failures, 0, 'an interruption is not a failure')
+    assert.equal(view.summary, '✓ 1 · $0.07')
+
+    host.setStatus('ses_live', 'idle')
+    host.setChild('ses_live', {
+      id: 'ses_live',
+      parentID: 'ses_root',
+      agent: 'apollo',
+      cost: 0.4,
+      outcome: 'succeeded',
+      time: { created: now, updated: now + 10_000 },
+    })
+    host.emit('session.idle')
+    const frozen = model.frame()
+    await sleep(3 * 80 + 40)
+    assert.equal(model.frame(), frozen, 'the tick stops as soon as nothing runs')
+    assert.equal(model.dispatch().runningCount, 0)
+    assert.equal(model.dispatch().summary, '✓ 2 · $0.47 · 2 agentes')
+  } finally {
+    dispose()
+  }
+})
+
+test('new glyphs are one terminal cell and never match emoji-regex', async () => {
+  const {
+    PRESET_MARKER,
+    GIT_ARROW_UP,
+    GIT_ARROW_DOWN,
+    BLOCK_ICONS,
+    spinnerFrame,
+    DISPATCH_DONE_MARKER,
+  } = await loadV2()
+  const emoji = (await import('emoji-regex')).default()
+  const spinner = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((frame) => spinnerFrame(frame))
+
+  const glyphs = {
+    preset: PRESET_MARKER,
+    ahead: GIT_ARROW_UP,
+    behind: GIT_ARROW_DOWN,
+    contextHeader: BLOCK_ICONS.context,
+    gitHeader: BLOCK_ICONS.git,
+    todoHeader: BLOCK_ICONS.todo,
+    dispatchHeader: BLOCK_ICONS.dispatch,
+    done: DISPATCH_DONE_MARKER,
+    ...Object.fromEntries(spinner.map((glyph, index) => [`spinner${index}`, glyph])),
+  }
+
+  for (const [name, glyph] of Object.entries(glyphs)) {
+    assert.equal([...glyph].length, 1, `${name} is exactly one codepoint`)
+    assert.ok(glyph.codePointAt(0) < 0x2e80, `${name} stays out of the wide CJK blocks`)
+    assert.equal(/\uFE0F/.test(glyph), false, `${name} carries no variation selector`)
+    emoji.lastIndex = 0
+    assert.equal(emoji.test(glyph), false, `${name} is never measured as two cells`)
+  }
+
+  const source = readFileSync(join(root, 'src/plugins/tui/src/index-v2.tsx'), 'utf8')
+  assert.equal(source.includes('\u26A1'), false, 'the two-cell preset bolt is gone from the source')
+  assert.match(source, /'⎇ '/, 'the branch row keeps the git glyph')
+  // The aggregated design dropped the tree vocabulary entirely.
+  assert.equal(source.includes('\u251C\u2500'), false, 'no `├─` branch survives')
+  assert.equal(source.includes('\u2514\u2500'), false, 'no `└─` branch survives')
+  assert.equal(source.includes('dispatchRowPrefix'), false, 'the branch helper is gone')
 })

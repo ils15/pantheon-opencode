@@ -273,6 +273,10 @@ function collectInstallBackupEntries(target, componentSet, version, isGlobal) {
         if (resolve(loc) !== resolve(projectTui)) notRevertible.push(loc)
       }
     }
+    // V2's single terminal-client config, which this install also edits (it
+    // cancels the builtin Context sidebar block). Captured so `restore` reverts
+    // it byte-for-byte like every other file we touch.
+    if (version === 'v2' && isGlobal) addFile(join(baseDir, V2_CLI_CONFIG_FILENAME))
   }
   if (componentSet.has('runtime')) {
     const runtimeTarget = isGlobal ? target : join(target, '.opencode')
@@ -820,6 +824,249 @@ export function tuiConfigLocations(target) {
   const xdgTui = join(xdgConfig, 'opencode', 'tui.json')
   const projectTui = join(target, '.opencode', 'tui.json')
   return [...new Set([homeTui, xdgTui, projectTui])]
+}
+
+/**
+ * V2 terminal-client config filename. V2 replaced the layered V1 `tui.json(c)`
+ * files with ONE GLOBAL client config (`~/.config/opencode/cli.json`); there is
+ * no project-local equivalent, so this file only ever lives in a config dir
+ * that is a global host config dir.
+ */
+export const V2_CLI_CONFIG_FILENAME = 'cli.json'
+
+/**
+ * Builtin V2 sidebar plugin that renders the Context block.
+ *
+ * Pantheon's TUI plugin renders its OWN Context block, so leaving the builtin
+ * enabled draws the block twice (nativo + nosso). The host cancels a plugin
+ * through an EXACT `-<id>` entry in the client config's `plugins` array; a
+ * wildcard (`-opencode.sidebar.*`) would also disable the mcp and footer blocks,
+ * so it is never used here.
+ */
+export const CONTEXT_SIDEBAR_NEGATION = '-opencode.sidebar.context'
+
+/**
+ * Bundle the V2 host loads from the copied TUI plugin dir (relative to it).
+ *
+ * The capability check below must read the bytes the host will ACTUALLY load,
+ * i.e. the copy under the config dir — never the in-package build artifact,
+ * which a package upgrade replaces independently of what was deployed.
+ */
+export const TUI_V2_BUNDLE_RELATIVE_PATH = 'dist/tui-v2.js'
+
+/**
+ * Stable marker proving the deployed TUI bundle renders Pantheon's own Context
+ * block.
+ *
+ * It is a named export of the bundle (`export { ..., contextBlockRows, ... }`).
+ * ESM export names are the module's public interface and CANNOT be mangled by
+ * tsdown/rolldown (or any minifier): mangling renames only non-exported
+ * bindings, because consumers resolve exports by name. The bundle also cannot
+ * tree-shake it away — the sidebar imports it, and
+ * `tests/tui-v2-sidebar.test.mjs` imports it from `dist/tui-v2.js`, so a build
+ * that drops the export fails the suite.
+ *
+ * A rebuild that changes the block's user-facing copy or internals keeps the
+ * export; only a rewrite that REMOVES the block drops it — which is exactly
+ * when the builtin Context block must stay enabled.
+ */
+export const CONTEXT_BLOCK_BUNDLE_MARKER = 'contextBlockRows'
+
+/**
+ * Path of the V2 TUI bundle inside an installed config dir.
+ *
+ * @param {string} configDir - OpenCode config directory
+ * @returns {string} absolute path of the copied `dist/tui-v2.js`
+ */
+export function resolveInstalledTuiBundlePath(configDir) {
+  return join(resolveTuiCopyTarget(configDir), TUI_V2_BUNDLE_RELATIVE_PATH)
+}
+
+/**
+ * Pure capability test: does this bundle text provide Pantheon's Context block?
+ *
+ * Deliberately a plain byte scan: the answer must not depend on importing the
+ * bundle (the host API it needs is absent while installing).
+ *
+ * @param {unknown} bundleText - contents of the deployed `dist/tui-v2.js`
+ * @returns {{ ok: boolean, reason: string }} `reason` is empty when `ok`
+ */
+export function bundleProvidesContextBlock(bundleText) {
+  if (typeof bundleText !== 'string') {
+    return { ok: false, reason: 'the TUI bundle could not be read as text' }
+  }
+  if (!new RegExp(`\\b${CONTEXT_BLOCK_BUNDLE_MARKER}\\b`).test(bundleText)) {
+    return {
+      ok: false,
+      reason:
+        `the deployed TUI bundle has no "${CONTEXT_BLOCK_BUNDLE_MARKER}" export, so it ` +
+        'predates the Pantheon Context block',
+    }
+  }
+  return { ok: true, reason: '' }
+}
+
+/**
+ * Inspect the TUI bundle that the host will load for the given config dir.
+ *
+ * A dry run copies nothing, so it evaluates the in-package build artifact
+ * instead (what WOULD be deployed) and only falls back to an existing deployed
+ * copy — a preview must not report a capability failure that the real run
+ * would not have.
+ *
+ * @param {string} configDir - OpenCode config directory
+ * @param {object} [options]
+ * @param {boolean} [options.dryRun=false]
+ * @returns {{ ok: boolean, reason: string, bundlePath: string }}
+ */
+export function inspectContextBlockCapability(configDir, { dryRun = false } = {}) {
+  const installedPath = resolveInstalledTuiBundlePath(configDir)
+  const sourcePath = join(ROOT, 'src', 'plugins', 'tui', TUI_V2_BUNDLE_RELATIVE_PATH)
+  const bundlePath = dryRun && !existsSync(installedPath) ? sourcePath : installedPath
+  let bundleText
+  try {
+    bundleText = readFileSync(bundlePath, 'utf8')
+  } catch (cause) {
+    return {
+      ok: false,
+      bundlePath,
+      reason: `${bundlePath} is missing or unreadable (${cause.code ?? cause.message})`,
+    }
+  }
+  return { ...bundleProvidesContextBlock(bundleText), bundlePath }
+}
+
+/**
+ * Remove {@link CONTEXT_SIDEBAR_NEGATION} from a V2 `plugins` array, preserving
+ * every other entry and its order. Only the EXACT directive is removed: the
+ * host honors nothing else, and a wildcard would also cancel the mcp and
+ * footer blocks.
+ *
+ * Idempotent: an array without the directive is returned untouched.
+ *
+ * @param {unknown} plugins - current `plugins` value (may be absent or invalid)
+ * @returns {{ plugins: unknown[], changed: boolean }}
+ */
+export function withContextSidebarEnabled(plugins) {
+  const current = Array.isArray(plugins) ? plugins : []
+  const next = current.filter((entry) => entry !== CONTEXT_SIDEBAR_NEGATION)
+  return { plugins: next, changed: next.length !== current.length }
+}
+
+/**
+ * Append {@link CONTEXT_SIDEBAR_NEGATION} to a V2 `plugins` array while
+ * preserving every existing entry (plain strings and `{ package, options }`
+ * objects) and their order.
+ *
+ * Idempotent: when the exact directive is already present the array is returned
+ * untouched, so a second `init` never duplicates it.
+ *
+ * @param {unknown} plugins - current `plugins` value (may be absent or invalid)
+ * @returns {{ plugins: unknown[], changed: boolean }}
+ */
+export function withContextSidebarDisabled(plugins) {
+  const current = Array.isArray(plugins) ? plugins : []
+  if (current.includes(CONTEXT_SIDEBAR_NEGATION)) return { plugins: current, changed: false }
+  return { plugins: [...current, CONTEXT_SIDEBAR_NEGATION], changed: true }
+}
+
+/**
+ * Reconcile the builtin Context sidebar block in the V2 terminal-client config
+ * with the deployed TUI bundle.
+ *
+ * Cancelling the builtin block is only safe when the deployed bundle really
+ * draws Pantheon's replacement (see {@link bundleProvidesContextBlock});
+ * negating against a stale bundle removed the Context block from the sidebar
+ * entirely. So the negation tracks the capability on EVERY run:
+ *
+ *   capability present  → add the exact negation (or leave it in place);
+ *   capability absent   → remove a previously written negation, keeping the
+ *                         native readout working, and warn with the reason and
+ *                         the rebuild/redeploy step.
+ *
+ * Only the `plugins` array is merged; the rest of the user's `cli.json` (theme,
+ * session, keybinds, anything else) is preserved verbatim, key order included,
+ * and the write is skipped byte-for-byte when the array is already correct.
+ * A file that cannot be parsed — or whose `plugins` is not an array — is NEVER
+ * overwritten: the caller reports a warning and the install continues, because
+ * clobbering a hand-edited client config is worse than a duplicated block.
+ *
+ * @param {string} configDir - config dir holding cli.json (global config dir)
+ * @param {object} [options]
+ * @param {boolean} [options.dryRun=false]
+ * @param {(change: object) => void} [options.recorder=null] - preview recorder
+ * @param {(message: string) => void} [options.warn] - warning sink
+ * @param {{ ok: boolean, reason: string } | null} [options.capability=null]
+ *   pre-computed verdict (tests/preview); inspected from disk when omitted
+ * @returns {'created'|'removed'|'skipped'|'unverified'|'invalid'|'conflict'}
+ */
+export function applyContextSidebarNegation(
+  configDir,
+  { dryRun = false, recorder = null, warn = warning, capability = null } = {},
+) {
+  const cliConfigPath = join(configDir, V2_CLI_CONFIG_FILENAME)
+  let config = {}
+  let raw = null
+  if (existsSync(cliConfigPath)) {
+    raw = readFileSync(cliConfigPath, 'utf8')
+    try {
+      config = JSON.parse(raw)
+    } catch {
+      warn(
+        `Left ${cliConfigPath} untouched: it is not valid JSON, so the builtin Context ` +
+          'sidebar block stays enabled (it may render twice alongside the Pantheon block).',
+      )
+      return 'invalid'
+    }
+  }
+  if (config === null || typeof config !== 'object' || Array.isArray(config)) {
+    warn(`Left ${cliConfigPath} untouched: expected a JSON object at the top level.`)
+    return 'invalid'
+  }
+  if (config.plugins !== undefined && !Array.isArray(config.plugins)) {
+    // Never replace a value we do not understand: the user may have written it
+    // by hand in a shape a future host accepts.
+    warn(`Left ${cliConfigPath} untouched: its "plugins" value is not an array.`)
+    return 'invalid'
+  }
+
+  // The host only honours the exact directive, so `next` never invents one.
+  const verdict = capability ?? inspectContextBlockCapability(configDir, { dryRun })
+  const next = verdict.ok
+    ? withContextSidebarDisabled(config.plugins)
+    : withContextSidebarEnabled(config.plugins)
+  const removing = !verdict.ok && next.changed
+
+  if (!verdict.ok) {
+    // A silent negation here is the bug this check exists for: the native
+    // readout disappears and nothing replaces it.
+    warn(
+      `Builtin Context sidebar block left ENABLED: ${verdict.reason}. ` +
+        (removing
+          ? `Removed ${CONTEXT_SIDEBAR_NEGATION} from ${cliConfigPath} so the native block ` +
+            'keeps rendering. '
+          : '') +
+        'Rebuild the TUI bundle (npm run build --prefix src/plugins/tui) and redeploy ' +
+        'pantheon-tui, then re-run init to de-duplicate the Context block.',
+    )
+  }
+  if (!next.changed) return verdict.ok ? 'skipped' : 'unverified'
+  config.plugins = next.plugins
+
+  const content = `${JSON.stringify(config, null, 2)}\n`
+  const status = writeConfigWithBackup(cliConfigPath, content, dryRun, {
+    expectedContent: raw,
+    recorder,
+  })
+  if (status === 'conflict') {
+    warn(
+      `Left ${cliConfigPath} untouched: it changed on disk during the install. ` +
+        'Re-run init to disable the builtin Context sidebar block.',
+    )
+    return 'conflict'
+  }
+  if (status !== 'created') return 'skipped'
+  return removing ? 'removed' : 'created'
 }
 
 /**
@@ -1801,6 +2048,27 @@ async function installPass(
     }
     if (tuiStatus === 'created') stats.created++
     else stats.skipped++
+  }
+  // -----------------------------------------------------------------------
+  // 2.9b V2 terminal-client config: cancel the builtin Context sidebar block
+  // -----------------------------------------------------------------------
+  // The directive belongs in the V2 client config, which exists ONLY globally
+  // (V2 has no project-local client config), so a project install must not
+  // create one. Keeping it in the installer is what makes the de-duplication
+  // durable: a hand edit in ~/.config/opencode/cli.json would be lost as soon as
+  // the user re-runs init, and the Context block would render twice again.
+  if (componentSet.has('plugins') && version === 'v2' && isGlobal) {
+    try {
+      const cliStatus = applyContextSidebarNegation(target, { dryRun, recorder })
+      if (cliStatus === 'created') stats.created++
+      else if (cliStatus === 'removed' || cliStatus === 'unverified') stats.warnings++
+      else stats.skipped++
+    } catch (cause) {
+      // A client config we cannot update is not a failed install: the plugin
+      // payload and the host config are already in place.
+      warning(`Could not disable the builtin Context sidebar block: ${cause.message}`)
+      stats.warnings++
+    }
   }
   if (componentSet.has('plugins')) advancePhase()
 

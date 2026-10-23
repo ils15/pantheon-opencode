@@ -86,7 +86,10 @@ npx pantheon-opencode uninstall --project --force
 Sem `--force`, a aplicação pede confirmação em TTY e falha fechada em ambiente
 não interativo. O desinstalador remove apenas itens identificados como do
 Pantheon, preserva symlinks e cria backup dos arquivos regulares que serão
-alterados/removidos; os backups não são apagados pelo uninstall. `--purge-data`
+alterados/removidos; os backups não são apagados pelo uninstall. Em V2 global ele
+também desfaz a negação do Context nativo em `cli.json`, removendo só a diretiva
+`-opencode.sidebar.context` (e o arquivo inteiro quando foi o Pantheon que o
+criou), para o bloco Context nativo voltar a aparecer. `--purge-data`
 é mais restrito: só permite remover `.pantheon/install-state.json` quando for um
 arquivo regular e um estado schema-v2 verificável. Não é uma limpeza geral de
 `.pantheon` nem remove os backups. Primeiro revise com `--dry-run`; para aplicar
@@ -782,6 +785,32 @@ TUI plugins are loaded at process start, so restart OpenCode after each build.
 | OpenCode V1 | `tui.json` → `<configDir>/plugins/pantheon-tui` | installer |
 | OpenCode V2 | local plugin `index.ts` + `tui.ts` under the config plugins directory | installer |
 | V1 development | `<repo>/src/plugins/tui` in project `tui.json` | manual `registerPlugin` (gitignored) |
+
+On V2 the installer also cancels the host's **builtin Context sidebar block**.
+Pantheon's TUI plugin renders its own Context block, so a global V2 install with
+the `plugins` component appends the exact negation `-opencode.sidebar.context`
+(never `-opencode.sidebar.*`, which would also disable the mcp and footer
+blocks) to the single global terminal-client config
+`~/.config/opencode/cli.json`. The merge touches only the `plugins` array: every
+other key, every existing entry (string or `{ package, options }`) and the array
+order are preserved, and a second `init` is a byte-for-byte no-op. The file is
+not patched in place, it is re-serialized with `JSON.stringify(config, null, 2)`
+plus a trailing newline, so keys, values and key order survive but the original
+byte layout does not — custom indentation, spacing and inline formatting are
+normalized, and the file is rewritten only when the `plugins` array actually
+changes. A `cli.json` that is not valid JSON — or whose `plugins` is not an
+array — is never overwritten; the install reports a warning and continues.
+`uninstall` undoes exactly this edit: it removes only that directive (and the
+whole file when Pantheon created it), so the native Context block comes back on.
+
+The negation is **global-only**, and this has a visible consequence for a
+project-scoped V2 install (`--project`): `cli.json` is a single global file with
+no project-local equivalent, so a project install neither creates nor edits it.
+The negation is therefore not applied, the host's native Context block keeps
+rendering, and the Context block can appear **duplicated** (native + Pantheon's).
+To de-duplicate, either run the installer globally, or add
+`"-opencode.sidebar.context"` to the `plugins` array of
+`~/.config/opencode/cli.json` by hand. The V1 path is untouched.
 
 Notes:
 

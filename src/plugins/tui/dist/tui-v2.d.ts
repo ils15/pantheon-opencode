@@ -1,10 +1,16 @@
 import { Accessor } from "solid-js";
-import { Context } from "@opencode/plugin/tui/context";
+import { Context, KeymapLayer, PanelInput } from "@opencode/plugin/tui/context";
 //#region src/index-v2.d.ts
-/** Running delegations rendered before the "… +N more" line (V1 parity). */
-export declare const DELEGATIONS_VISIBLE_CEILING = 8;
 /** Sidebar body shown while the host has not published a session yet. */
 export declare const SIDEBAR_WAITING_LABEL = "Aguardando sessão…";
+/** Marker before the preset label (fixed header, home status, prompt footer).
+ *  `▸` U+25B8 is one cell; the previous bolt (U+26A1) carries
+ *  Emoji_Presentation and is measured as two cells, which misaligned the line. */
+export declare const PRESET_MARKER = "▸";
+/** Git ahead / behind arrows (U+2191 / U+2193), one cell each — the glyphs the
+ *  reference sidebars use for `↑ahead ↓behind`. */
+export declare const GIT_ARROW_UP = "↑";
+export declare const GIT_ARROW_DOWN = "↓";
 /** One event name the host publishes on `data.on` — the OpenCode V2 union. */
 export type SidebarDataEvent = Parameters<Context['data']['on']>[0];
 /** V2 events that refresh the sidebar. V1 also listened to `session.updated`,
@@ -43,8 +49,6 @@ export declare function presetFromEnv(env: Record<string, string | undefined>): 
 /** Resolve the active preset plus its per-agent overrides: env > file > default.
  *  An env-selected preset has no file overrides by construction. */
 export declare function resolveActivePresetForTui(env: Record<string, string | undefined>, cwd: string): Promise<ActivePresetDetail>;
-/** Resolve the active preset for the sidebar: env > file > default. */
-export declare function resolvePresetForTui(env: Record<string, string | undefined>, cwd: string): Promise<PresetInfo>;
 /** `SessionInfo.id` is always a `ses…` handle. Guarded so a placeholder or a
  *  foreign id never reaches the status/navigate APIs. */
 export declare function isValidSessionID(id: unknown): id is string;
@@ -54,6 +58,12 @@ export declare function modelRefID(ref: unknown): string | null;
 /** Short display id: the segment after the last `/` (`opencode-go/kimi-k3` →
  *  `kimi-k3`), truncated so a long id never wraps the sidebar. */
 export declare function shortModelID(ref: unknown, max?: number): string | null;
+/** `providerID` of a model reference, trimmed; null when absent/blank. Derived
+ *  only from what the host already published — never a lookup table. */
+export declare function providerIDFromRef(ref: unknown): string | null;
+/** Provider for a bare-string model reference: match its id (or bare segment)
+ *  in the host model list. Null when the list cannot answer. */
+export declare function providerIDFromModels(models: unknown, ref: unknown): string | null;
 /** Resolve `model.limit.context` for a model reference. Match order: the
  *  provider-qualified id, then the bare id (the host's `id`/`modelID` fields).
  *  Absent/ambiguous models degrade to null so the gauge is simply omitted. */
@@ -65,15 +75,68 @@ export type ContextUsage = {
   percent: number;
   limit: number;
 };
-/** Context usage for a message list. Scope: everything before the revert
- *  boundary (when a revert is active), then after the last compaction. The last
- *  assistant message carrying `tokens` in that window wins. Null when there is
- *  no limit or no such message — the caller then omits the block. */
+/** The part of a transcript that still counts: everything before the revert
+ *  boundary (when a revert is active), then after the last compaction. Both
+ *  derived numbers that read "the last assistant with usage" — the context
+ *  gauge and the cache hit rate — share this window, so a reverted-away or
+ *  compacted-away message can never feed either one. Pure. */
+export declare function transcriptWindow(messages: readonly any[], revertMessageID?: string | null): {
+  start: number;
+  end: number;
+};
+/** Context usage for a message list. Scope: the live window (see
+ *  `transcriptWindow`). The last assistant message carrying `tokens` in that
+ *  window wins. Null when there is no limit or no such message — the caller
+ *  then omits the block. */
 export declare function computeContextUsage(messages: readonly any[], contextLimit: number | null | undefined, revertMessageID?: string | null): ContextUsage | null;
-/** Semantic tone for a context percentage: green < 50%, yellow < 75%, red at
- *  or above 75%. Reuses the delegation tone union so both rows draw from the
- *  same theme tokens. Pure. */
-export declare function contextUsageTone(percent: number): DelegationTone;
+/** Semantic tone for a context percentage, inclusive at the top of each band:
+ *  info (blue) up to 25%, success (green) up to 50%, warning (yellow) up to
+ *  90%, error (red) above it. Four explicit stages, each backed by a feedback
+ *  token, so the gauge follows the active theme. Pure. */
+export declare function contextUsageTone(percent: number): ContextProgressTone;
+/** The gauge's four stages, one per theme feedback token. */
+export type ContextProgressTone = 'info' | 'success' | 'warning' | 'error';
+/** Color for one gauge stage. Filled cells and the percent value both come from
+ *  this one call, so the bar and its number can never disagree. `theme` is the
+ *  host's resolved theme (loosely typed at runtime); a missing token falls back
+ *  to the theme's base text instead of an unstyled cell. Pure. */
+export declare function contextProgressColor(stage: ContextProgressTone, theme: any): any;
+/** The muted extra line under the gauge: `cache 92% · 42.3 tok/s`. Either half
+ *  may be missing (no cache read, no measurable turn); no data at all yields
+ *  null so no empty line is rendered. The speed keeps the host's own one
+ *  decimal and `tok/s` label. Pure. */
+export declare function contextPerformanceLine(performance: ContextPerformance | null | undefined): string | null;
+/** Cache hit rate of one message: `cache.read / (input + cache.read)` as a
+ *  percentage. The denominator must be > 0, otherwise the ratio is meaningless
+ *  (a message that only wrote to the cache has no input to hit). Null when the
+ *  numbers are absent. Pure. */
+export declare function cacheHitPercent(tokens: any): number | null;
+/** The message the cache hit rate comes from: the last assistant of the live
+ *  window (see `transcriptWindow`) that actually carries `tokens`. Later
+ *  messages without usage — a streaming placeholder that the host publishes
+ *  before any step completes, a step that reports no usage — are skipped
+ *  instead of blanking a ratio the previous message already measured. Null
+ *  when nothing in the window has usage. Pure. */
+export declare function lastAssistantWithTokens(messages: readonly any[] | null | undefined, revertMessageID?: string | null): any | null;
+/** Tokens per second of the current turn. Mirrors the host's
+ *  `turnTokensPerSecond` (anomalyco/opencode v2.0.30,
+ *  `packages/tui/src/routes/session/rows.ts`) so the sidebar and the native
+ *  session footer can never disagree: the numerator is `output + reasoning`
+ *  summed over every assistant step of the turn and the denominator is the
+ *  summed active streaming time `max(0, time.streamed - time.created)`, so the
+ *  division happens once, after aggregating — each step weighs by its own
+ *  duration instead of each step voting equally. `completed` is never used; a
+ *  turn with a step that has no `time.streamed` has no measurable speed. The
+ *  turn starts after the last `user` message; with no user message only the
+ *  last assistant step counts (degraded: there is no boundary to group by).
+ *  Pure and fail-open. */
+export declare function turnTokensPerSecond(messages: readonly any[] | null | undefined, position?: number | null): number | null;
+/** Last-message telemetry the Context block renders in muted text. Both halves
+ *  are optional; the block renders no line when neither is available. */
+export type ContextPerformance = {
+  cacheHit: number | null;
+  tokensPerSecond: number | null;
+};
 /** Thousands-separated token total: `55320` → `55,320` (en-US, matching the
  *  native block this one replaces). Null for a missing/invalid value. Pure. */
 export declare function formatTokenCount(tokens: number | null | undefined): string | null;
@@ -109,7 +172,7 @@ export type ContextRow = {
   value: string;
   tail: string | null;
   suffix: string | null;
-  tone: DelegationTone | null;
+  tone: ContextProgressTone | null;
 };
 /** The `Context` block's data rows; null rows are not rendered. */
 export type ContextBlockRows = {
@@ -124,9 +187,6 @@ export type ContextBlockRows = {
  *  unavailable (never `undefined%`). A block with neither tokens nor cost
  *  yields null. Pure. */
 export declare function contextBlockRows(usage: ContextUsage | null, cost: number | null | undefined): ContextBlockRows | null;
-/** Full single-line text of a context row (`55,320 tokens`,
- *  `▰▰▰▰▰▱▱▱▱▱▱▱ 39% of 200K`). Pure. */
-export declare function contextRowText(row: ContextRow | null): string | null;
 /** Models rendered in the Context block before the aggregate `… +N` line. */
 export declare const MODEL_USAGE_VISIBLE_CEILING = 3;
 /** Newest messages read per session — bounds the O(n) walk on long sessions. */
@@ -181,6 +241,11 @@ export declare function modelUsageRowText(row: ModelUsageRow): string;
 /** Muted aggregate line for the models beyond the cap (`… +2  $0.03`). Null
  *  when every model fits. Pure. */
 export declare function hiddenModelUsageText(hidden: number, hiddenCost: number): string | null;
+/** Bucket for a session the host published without an agent id. */
+export declare const UNKNOWN_AGENT = "?";
+/** Agent key of a session or message: the trimmed id when it is a non-empty
+ *  string, else the `?` bucket — never `undefined`. Pure. */
+export declare function agentKey(value: unknown): string;
 export type TodoStatus = 'in_progress' | 'pending' | 'completed' | 'cancelled';
 /** One rendered todo row. `priority` is carried by the tool but not rendered:
  *  the reference block uses a single marker column. */
@@ -234,6 +299,79 @@ export declare function countGitChanges(files: readonly any[] | null | undefined
 /** `+1 ±2 −3` for the file counts; each zero term is omitted, and an empty
  *  change set returns null so the row is not rendered at all. Pure. */
 export declare function formatGitChanges(files: readonly any[] | null | undefined): string | null;
+/** Wall-clock ceiling for one git call. A stuck git (index lock, network
+ *  filesystem) is killed instead of holding the row forever. */
+export declare const GIT_CLI_TIMEOUT_MS = 2000;
+/** Session events arrive in bursts; a git probe is scheduled at most once per
+ *  window instead of once per event. */
+export declare const GIT_CLI_DEBOUNCE_MS = 1000;
+/** Minimum spacing between two probe starts. Five seconds keeps a chatty event
+ *  stream from spawning a git process per step while staying fresh enough to
+ *  show a file appearing mid-turn. */
+export declare const GIT_CLI_MIN_INTERVAL_MS = 5000;
+/** Stdout ceiling for one git call. `status --porcelain=v1 -uall` lists every
+ *  untracked file, so a large worktree easily passes the 1 MB `execFile`
+ *  default — which would reject and silently hand the row back to the
+ *  `vcs.status` fallback. 4 MB is far above a realistic porcelain listing. */
+export declare const GIT_CLI_MAX_BUFFER: number;
+/** One `execFile` call: `(file, args, options) → { stdout }`. Injectable so the
+ *  parsing/gating logic is testable without spawning processes. */
+export type GitExec = (file: string, args: readonly string[], options: {
+  cwd: string;
+  timeout: number;
+  windowsHide: boolean;
+  maxBuffer: number;
+}) => Promise<{
+  stdout: string;
+}>;
+/** Default runner: the promisified `node:child_process.execFile`. A non-zero
+ *  exit (no repository, no upstream) rejects and the caller decides. */
+export declare const defaultGitExec: GitExec;
+/** Files per status from `git status --porcelain=v1 -uall`, including the two
+ *  columns the protocol cannot report. Each line starts with `XY` (index and
+ *  worktree state); a rename prints `R  old -> new`, and `??` / `!!` are
+ *  untracked / ignored. Precedence per file: deleted > added > modified, so
+ *  `AM` counts once as added and `AD` once as deleted. Renames, copies and
+ *  unmerged entries count as modified. Pure. */
+export type GitPorcelainCounts = {
+  added: number;
+  modified: number;
+  deleted: number;
+  untracked: number;
+};
+/** Parse porcelain v1 output into file counts. Empty/malformed output yields
+ *  zero counts (a clean tree), never a throw. Pure. */
+export declare function parseGitStatusPorcelain(output: string | null | undefined): GitPorcelainCounts;
+/** `git rev-list --count --left-right @{upstream}...HEAD` prints two numbers:
+ *  commits only on the upstream (behind) then commits only on HEAD (ahead).
+ *  Null when the output is not that pair — e.g. the command failed because the
+ *  branch has no upstream, in which case the arrows are simply omitted. Pure. */
+export declare function parseGitAheadBehind(output: string | null | undefined): {
+  ahead: number;
+  behind: number;
+} | null;
+/** One git observation: file counts plus the upstream distance (either arrow
+ *  may be unknown when the branch has no upstream). */
+export type GitCliSnapshot = {
+  changes: GitPorcelainCounts;
+  ahead: number | null;
+  behind: number | null;
+};
+/** One probe: `git status --porcelain=v1 -uall` for the counts, then
+ *  `git rev-list --count --left-right @{upstream}...HEAD` for the arrows (a
+ *  failure there only drops the arrows). A status failure rejects — the caller
+ *  then falls back to `client.vcs.status`. */
+export declare function readGitSnapshot(directory: string, exec?: GitExec): Promise<GitCliSnapshot>;
+/** Rendered git row: `+1 ±2 −1 ?2 ↑3 ↓1`, zero terms omitted. Null when the
+ *  tree is clean and in sync, so the block keeps only its branch line. Pure. */
+export declare function formatGitSnapshot(snapshot: GitCliSnapshot | null | undefined): string | null;
+/** Whether a new probe may start. An in-flight probe always wins (no queue), and
+ *  the previous start must be older than the cooldown. Pure. */
+export declare function gitProbeAllowed(state: {
+  now: number;
+  lastRunAt: number | null;
+  inFlight: boolean;
+}, cooldownMs?: number): boolean;
 /** Spend window labels, in render order. */
 export declare const SPEND_TODAY_LABEL = "hoje";
 export declare const SPEND_30D_LABEL = "30d";
@@ -296,12 +434,61 @@ export declare function statsRangeMatches(range: unknown, sent: {
  *  no usable window at all yields null so the line (and not the block) is
  *  dropped. Pure. */
 export declare function contextSpendLine(totals: SpendTotals | null): string | null;
-/** Clamp a free-form label to the sidebar width without wrapping. */
+/** Terminal cells `value` occupies — the unit every column in this plugin is
+ *  measured in. Mirrors the host (that is how `@opentui/core` sizes a text
+ *  run): emoji count as two cells, East Asian Wide/Fullwidth as two, East
+ *  Asian Ambiguous as one, combining marks and variation selectors as none.
+ *  Pure. */
+export declare function cellWidth(value: string): number;
+/** Clamp a free-form label to `max` terminal cells without wrapping. The width
+ *  is measured in display cells, never in UTF-16 code units: a CJK or emoji
+ *  label used to overflow the column it was cut for (`計画の移行` is 5 code
+ *  units but 10 cells, `🚀` is 2 units and 2 cells). Pure. */
 export declare function truncateLabel(value: string, max?: number): string;
-/** `agente→modelo` identity for a delegation row; either half may be absent. */
-export declare function delegationIdentity(view: Pick<DelegationView, 'agent' | 'model'>): string;
-/** Sidebar row body: truncated label plus the agent→model identity. */
-export declare function delegationSidebarLabel(view: DelegationView, max?: number): string;
+/** Right-pad `value` with spaces to exactly `cells` display columns (a wider
+ *  value is truncated first). `padEnd` counts code units, so it under-pads a
+ *  CJK/emoji cell and the next column drifts. Pure. */
+export declare function padCell(value: string, cells: number): string;
+/** Columns the fixed header may use before it would wrap the sidebar. */
+export declare const HEADER_MAX_WIDTH = 34;
+/** Preset row of the fixed header: `▸ <preset> · <provider>`. The provider is
+ *  cut first when the row overflows, so the preset name is never the casualty;
+ *  a missing provider leaves the preset alone (no `unknown` placeholder). */
+export declare function presetHeaderLine(presetName: string, providerID: string | null): string;
+export type DispatchKind = 'coun' | 'plan' | 'revw' | 'hot' | 'disc' | 'oth';
+export type DispatchKindOrigin = 'prefix' | 'agent' | 'unavailable';
+/** One classification plus the evidence that produced it. */
+export type DispatchKindLabel = {
+  kind: DispatchKind | null;
+  origin: DispatchKindOrigin;
+};
+/** Kind declared by a leading `[prefix]` on the description: case-insensitive
+ *  and tolerant of spaces inside the brackets. Null when none is declared. */
+export declare function dispatchKindFromPrefix(description: unknown): DispatchKind | null;
+/** Kind implied by the child's agent, null for an agent that implies none. */
+export declare function dispatchKindFromAgent(agent: unknown): DispatchKind | null;
+/** Classify one dispatch. The description prefix always wins over the agent;
+ *  otherwise the agent decides, and anything else is `oth` (a real dispatch we
+ *  simply cannot name). A missing call is the only `unavailable` outcome. Pure. */
+export declare function classifyDispatchKind(call: {
+  description?: unknown;
+  agent?: unknown;
+} | null | undefined): DispatchKindLabel;
+/** A `subagent` tool call the parent made, as its own transcript records it. */
+export type SubagentCall = {
+  /** Child session id the call created — the correlation key. */
+  sessionID: string;
+  agent: string;
+  description: string;
+  background: boolean;
+};
+/** Correlate the parent transcript's `subagent` calls with the children they
+ *  spawned: child session id → `{ agent, description, background }`. One pass
+ *  over the list the sidebar already holds — no request, no `message.sync` on
+ *  the child. `streaming`/`pending` states carry their input as *partial JSON
+ *  text*, so they are skipped rather than parsed. Fail-open: a malformed part
+ *  contributes nothing. Pure. */
+export declare function collectSubagentCalls(messages: readonly any[] | null | undefined): Map<string, SubagentCall>;
 export type DelegationState = 'running' | 'completed' | 'failed' | 'interrupted';
 export type DelegationTone = 'warning' | 'error' | 'success';
 /** Grace window for a child that has not started yet. V2's `session.status()`
@@ -331,6 +518,13 @@ export type DelegationView = {
   model: string | null;
   /** Real `SessionInfo.cost` for the child, null when the host published none. */
   cost: number | null;
+  /** Why the child exists — see `classifyDispatchKind`. Null when no `subagent`
+   *  call in the parent transcript could be correlated with this child. */
+  kind: DispatchKind | null;
+  /** Which evidence produced `kind`. */
+  kindOrigin: DispatchKindOrigin;
+  /** The parent asked for this child to run in the background. */
+  background: boolean;
 };
 /** Map the host's live session status to a display state. V2 exposes only
  *  `"idle" | "running"` through the TUI context (the client union adds `retry`
@@ -348,38 +542,60 @@ export declare function delegationStateFromStatus(status: string | undefined, ti
  *  so an aborted child never renders the ✓ of a completed one. Returns null for
  *  an absent/unrecognised outcome so the live status decides. Pure. */
 export declare function delegationStateFromOutcome(outcome: unknown): DelegationState | null;
-/** Build a delegation row from a child session + its live status. A terminal
- *  `outcome` wins when present (the only V2 primitive that surfaces a
+/** Build a delegation row from a child session + its live status, plus the
+ *  `subagent` call that spawned it (when the parent transcript had one). A
+ *  terminal `outcome` wins when present (the only V2 primitive that surfaces a
  *  delegation failure/interruption once the status is back to idle); otherwise
- *  the live status decides, with the absent/idle grace window applied. Pure. */
-export declare function toDelegationView(child: any, status: string | undefined, now?: number): DelegationView;
-/** Whole-row tone: red = failed, green = terminal, yellow = in flight. The
- *  glyph stays a redundant channel so the state reads in monochrome. Pure. */
-export declare function delegationStateTone(state: DelegationState): DelegationTone;
+ *  the live status decides, with the absent/idle grace window applied. The
+ *  `call` only ever *adds* the purpose and the background flag — an absent one
+ *  leaves the row fully renderable. Pure. */
+export declare function toDelegationView(child: any, status: string | undefined, now?: number, call?: SubagentCall | null): DelegationView;
 /** Spinner glyph for a frame counter (incremented every ~80ms while any job is
  *  running). Pure. */
 export declare function spinnerFrame(frame: number): string;
-/** Row marker (`<glyph> `): the animated spinner while running, ✓ when done,
- *  ⊘ when interrupted, ✕ on failure. Pure. */
-export declare function delegationRowMarker(state: DelegationState, frame?: number): string;
-/** Compact single-unit elapsed label: "12s"/"3m"/"1h"/"2d". Pure. */
-export declare function fmtElapsed(ms: number): string;
-/** Elapsed label for one row: a running job ticks `now - startedAt`; a terminal
- *  one is fixed at `updatedAt - startedAt` (em dash when a timestamp is
- *  missing). Pure. */
-export declare function delegationElapsed(view: DelegationView, now: number): string;
-/** Live rows first (a running job never falls behind the cap), then by most
- *  recent activity. Pure. */
-export declare function orderDelegations(views: readonly DelegationView[]): DelegationView[];
-/** Cap the panel: at most `maxVisible` rows, the remainder collapsing into the
- *  "… +N more" line. Pure. */
-export declare function ceilingDelegations(views: readonly DelegationView[], maxVisible?: number): {
-  visible: DelegationView[];
-  hidden: number;
+/** Token totals published on `SessionInfo.tokens`, one entry per counter. */
+export type DispatchTokens = {
+  input: number | null;
+  output: number | null;
+  reasoning: number | null;
+  cacheRead: number | null;
+  cacheWrite: number | null;
 };
+/** One child of the dispatch tree: the delegation row plus the fields only the
+ *  panel's detail view needs (`SessionInfo.title`/`parentID`/`tokens` and the
+ *  spawning call's description). */
+export type DispatchEntry = {
+  view: DelegationView;
+  title: string | null;
+  description: string | null;
+  parentID: string | null;
+  tokens: DispatchTokens | null;
+};
+/** Optional inputs of `collectDispatch`: a fixed clock (tests/render ticks) and
+ *  an already-computed `agent` map, so a caller that walked the parent
+ *  transcript anyway never pays for a second walk. */
+export type CollectDispatchOptions = {
+  now?: number;
+  calls?: Map<string, SubagentCall>;
+};
+/** Token counters of a child, null when the host published none of them. Pure. */
+export declare function dispatchTokens(tokens: unknown): DispatchTokens | null;
+/** One child `SessionInfo` + its live status → `DispatchEntry`. The call only
+ *  ever adds the kind and the description; an absent one leaves the entry fully
+ *  renderable. Pure. */
+export declare function toDispatchEntry(child: any, status: string | undefined, now?: number, call?: SubagentCall | null): DispatchEntry;
+/** The delegation tree of `sessionID` — every child `session.family` returns,
+ *  root excluded, each enriched from `session.get`/`session.status` and the
+ *  parent's `subagent` calls. Empty when the family API is unavailable or the
+ *  session id is not a real handle (never falls back to the root). Ordered by
+ *  the shared `compareDelegations`, so callers render the same list in the same
+ *  order. A family that repeats an id yields one row per child: the id is
+ *  deduplicated before the walk, so a duplicate can never double a row or its
+ *  cost. */
+export declare function collectDispatch(context: any, sessionID: string | undefined, options?: CollectDispatchOptions): DispatchEntry[];
 /** Sidebar blocks in render order. Spacing is derived from this list instead of
  *  from the view, so a hidden block can never leave an empty gap behind. */
-export type SidebarBlockKey = 'context' | 'git' | 'todo' | 'agent' | 'dispatch';
+export type SidebarBlockKey = 'context' | 'git' | 'todo' | 'dispatch';
 /** One rendered block: its key, and whether a blank line precedes it. */
 export type SidebarBlock = {
   key: SidebarBlockKey;
@@ -389,8 +605,9 @@ export type SidebarBlock = {
  *  label. The fixed header (version/preset/session) takes none.
  *  Measured as one terminal cell by the host (`@opentui/core` counts
  *  `emoji-regex` matches as two): ▤ U+25A4 (EAW=A), ◆ U+25C6 (A), ▾ U+25BE (N),
- *  ◇ U+25C7 (A), ⌁ U+2301 (N). `☑` U+2611 was rejected for the Todo header
- *  because it matches `emoji-regex` and would occupy two cells. */
+ *  ◈ U+25C8 (A). `☑` U+2611 was rejected for the Todo header because it matches
+ *  `emoji-regex` and would occupy two cells; `⌁` U+2301 (the old Dispatch glyph)
+ *  was replaced by the host's own Notice glyph. */
 export declare const BLOCK_ICONS: Record<SidebarBlockKey, string>;
 /** Tag every block that has content with its spacer: never before the first
  *  (the view puts a single blank line after the fixed header instead), one
@@ -398,11 +615,20 @@ export declare const BLOCK_ICONS: Record<SidebarBlockKey, string>;
  *  stacking spacers, so an absent optional block can never leave a double gap.
  *  Pure. */
 export declare function withBlockSpacers(keys: readonly SidebarBlockKey[]): SidebarBlock[];
-/** Children listed before the "… +N" line. Five keeps the sidebar inside a
- *  short pane while still showing the finished job next to the live one. */
-export declare const DISPATCH_VISIBLE_CEILING = 5;
+/** Live children rendered one row each; the rest collapse into `… +N rodando`. */
+export declare const DISPATCH_RUNNING_CEILING = 3;
+/** Agent rollup rows rendered before the `… +K  $<soma>` line. */
+export declare const DISPATCH_AGENT_CEILING = 3;
+/** Hard cap on the block's rendered rows, header included. The sidebar is
+ *  short; live work is served first, then the finished rollup. */
+export declare const DISPATCH_MAX_LINES = 8;
+/** Marker of the aggregated "finished" section. */
+export declare const DISPATCH_DONE_MARKER = "✓";
 /** Column width of the agent (or of its title/id fallback). */
 export declare const DISPATCH_AGENT_WIDTH = 12;
+/** Narrowest agent column a row may fall back to before the cost is kept whole
+ *  and the label truncates further. */
+export declare const DISPATCH_MIN_AGENT_WIDTH = 8;
 /** Column width of the short model id — the model is dropped before the agent
  *  or the cost so a row always fits. */
 export declare const DISPATCH_MODEL_WIDTH = 7;
@@ -410,16 +636,24 @@ export declare const DISPATCH_MODEL_WIDTH = 7;
 export declare const DISPATCH_COST_WIDTH = 5;
 /** Column width of the duration (`12.7s` / `1m04s` / `820ms`). */
 export declare const DISPATCH_DURATION_WIDTH = 5;
+/** Column width of the `×<count>` cell of an agent rollup row. */
+export declare const DISPATCH_COUNT_WIDTH = 3;
+/** Column width of an agent rollup cost (`$0.0051` still fits). */
+export declare const DISPATCH_GROUP_COST_WIDTH = 7;
 /** Hard column budget for one row — a Dispatch line never wraps:
- *  marker(2) + agent(12) + model(7) + cost(5) + duration(5) + 3 spaces = 34. */
+ *  marker(2) + agent(12) + model(7) + cost(5) + duration(5) + 3 spaces = 34.
+ *  The kind suffix (`·disc`, `·disc~`) is wider evidence than the model, so a
+ *  classified row spends the model's columns first: marker(2) + agent(≤12) +
+ *  suffix(≤6) + cost(5) + duration(5) + 2 spaces ≤ 32, still inside 34. */
 export declare const DISPATCH_MAX_WIDTH = 34;
-export type DispatchTone = 'success' | 'error' | 'muted';
-/** Row marker: ● live, ✓ succeeded, ✗ failed, − interrupted. The glyph is the
- *  redundant channel, so the state still reads in monochrome. Pure. */
-export declare function dispatchMarker(state: DelegationState): string;
-/** Row tone: live work is the block's only accent, a failed child is red, and
- *  every terminal state recedes to muted. Pure. */
-export declare function dispatchTone(state: DelegationState): DispatchTone;
+/** Kind suffix glued to a row's label: `·disc`, `·disc~` for a background run,
+ *  and empty when the child could not be classified (the row then reads exactly
+ *  as before). Pure. */
+export declare function dispatchKindSuffix(kind: DispatchKind | null | undefined, background?: boolean): string;
+/** Header summary: `2 rodando · $3.49`. The live count is omitted when nothing
+ *  runs, and the total spend is always printed (the header only renders while
+ *  the tree has children, so `$0.00` is a real answer). Pure. */
+export declare function dispatchHeaderSummary(running: number | null | undefined, cost: number | null | undefined): string | null;
 /** Compact duration without an internal space: `820` → `820ms`, `12_400` →
  *  `12.4s`, `64_000` → `1m04s`, `3_780_000` → `1h03m`, `172_800_000` → `2d`.
  *  An absent or negative value renders an em dash, never `NaN`s. Pure. */
@@ -437,15 +671,257 @@ export declare function dispatchModelText(view: Pick<DelegationView, 'model'>): 
  *  four below a cent, so `$0.0031` never collapses to `$0.00`), `$0.00` for a
  *  zero cost, and an em dash when the host published no numeric cost. Pure. */
 export declare function formatDispatchCost(cost: number | null | undefined): string;
-/** One Dispatch row, columns aligned:
- *  `<marker> <agent> <model> <cost> <duration>`. The agent and model columns are
- *  padded, the cost and duration right-aligned, and the model column stays
- *  reserved when a child published no model so the numbers line up. When the
- *  row would exceed `max` columns the model is dropped first, then the cost —
- *  the agent is never cut below `DISPATCH_AGENT_WIDTH`. Pure. */
-export declare function dispatchRowText(view: DelegationView, now?: number, max?: number): string;
-/** The "… +N" line for children beyond the cap, null when nothing was cut. Pure. */
-export declare function hiddenDispatchText(hidden: number): string | null;
+/** Total spend of every child (live + finished), `0` when none published a
+ *  numeric cost. Pure. */
+export declare function dispatchTotalCost(views: readonly DelegationView[]): number;
+/** One live child: `⠸ <agent 12>·<kind> <custo> <duração>`, with the model as a
+ *  fourth column only when the row still fits and the child is unclassified —
+ *  the kind is the stronger evidence at this width, so it takes the model's
+ *  columns. The kind rides glued to the label (never a column of its own) and
+ *  disappears with the label's truncation; then the agent column shrinks (never
+ *  below `DISPATCH_MIN_AGENT_WIDTH`); the cost is always present — `$0.00` for a
+ *  zero cost, an em dash for a missing one. Pure. */
+export declare function runningChildRowText(view: DelegationView, now?: number, frame?: number, max?: number): string;
+/** Sessions and spend attributed to one agent in the finished section. `kind`
+ *  is only set when every finished session of the group agrees on it — a mixed
+ *  group carries no single purpose, so the row omits it rather than picking one.
+ *  `background` follows the same rule (all of them background). */
+export type ChildAgentUsage = {
+  agent: string;
+  count: number;
+  cost: number;
+  kind: DispatchKind | null;
+  background: boolean;
+};
+/** Rollup of the finished children by agent: `×count` sessions and the summed
+ *  `SessionInfo.cost`. Failed and interrupted children are included (they are
+ *  finished); running ones are not. The group's kind survives only when the
+ *  whole group agrees, so an aggregate row never claims a purpose it cannot
+ *  prove. Ordered by cost, then count, then name. Pure. */
+export declare function collectChildAgentUsage(views: readonly DelegationView[]): ChildAgentUsage[];
+/** One agent rollup row: `<agent 12> ×<count 3>·<kind> <custo 7>`. The kind is
+ *  glued to the count (the row's only label) and omitted for a mixed group; the
+ *  agent column shrinks (never below the minimum) before the cost, which is
+ *  what the row is for. Pure. */
+export declare function childAgentRowText(row: ChildAgentUsage, max?: number): string;
+/** The `… +K  $<soma>` line for agents beyond the rollup cap. Null when every
+ *  agent fits. Pure. */
+export declare function hiddenChildAgentsText(hidden: number, hiddenCost: number): string | null;
+/** Summary of the finished section: `✓ 70 · $3.40 · 9 agentes`. `· $<soma>` is
+ *  omitted when nothing was spent and `· 1 agente` when a single agent owns
+ *  every finished child; `✓ <total>` always prints. Null when nothing finished.
+ *  Pure. */
+export declare function completedSummaryText(completed: number | null | undefined, cost: number | null | undefined, agents: number | null | undefined): string | null;
+/** The `· <F> falhas` suffix of the finished summary, null when nothing failed.
+ *  Pure. */
+export declare function failedSuffixText(failures: number | null | undefined): string | null;
+/** One rendered live row: its text plus the session it navigates to. */
+export type DispatchRunningLine = {
+  id: string;
+  text: string;
+};
+/** Everything the `Dispatch` block renders, already joined and capped. */
+export type DispatchBlockView = {
+  runningCount: number;
+  completedCount: number;
+  agentCount: number;
+  failures: number;
+  totalCost: number;
+  running: DispatchRunningLine[];
+  runningHidden: number;
+  summary: string | null;
+  agents: ChildAgentUsage[];
+  agentsHidden: number;
+  agentsHiddenCost: number;
+};
+/** Build the whole block from the child set. Null when there is no child, so
+ *  the block (and its spacer) never renders empty. Live work is capped at
+ *  `DISPATCH_RUNNING_CEILING` and the finished rollup at
+ *  `DISPATCH_AGENT_CEILING`, with the rollup giving up rows first to keep the
+ *  block inside `DISPATCH_MAX_LINES`. Pure. */
+export declare function buildDispatchBlock(views: readonly DelegationView[], now?: number, frame?: number, max?: number): DispatchBlockView | null;
+/** Panel content name, registered by the `session.panel` claim and passed to
+ *  `ui.panel.open`. */
+export declare const DISPATCH_PANEL_NAME = "pantheon.dispatch";
+/** Toast shown when `ui.panel.open` refuses (no session route is active). The
+ *  panel only exists inside a session, so there is no alternative route. */
+export declare const DISPATCH_PANEL_TOAST = "Abra uma sessão para ver o Dispatch";
+/** Panel title marker — the same glyph the sidebar block header uses. */
+export declare const DISPATCH_PANEL_HEADER_MARKER = "◈";
+/** Selected-row gutter marker (`▸`, one cell). */
+export declare const DISPATCH_PANEL_SELECTION_MARKER = "▸";
+/** Cells the selection gutter occupies before a row's own text. */
+export declare const DISPATCH_PANEL_SELECTION_GUTTER = 2;
+/** Column of the horizontal rule under the header. */
+export declare const DISPATCH_PANEL_RULE_CHAR = "─";
+/** Em dash for any datum the host did not publish. */
+export declare const DISPATCH_PANEL_DASH = "—";
+/** Body of an empty panel (the claim still renders, the list is just empty). */
+export declare const DISPATCH_PANEL_EMPTY_TEXT = "Nenhuma sessão delegada";
+/** Width at or above which the list and the detail sit side by side. */
+export declare const DISPATCH_PANEL_WIDE_MIN_WIDTH = 72;
+/** Rows the viewport holds; pageup/pagedown move by exactly this many rows. */
+export declare const DISPATCH_PANEL_PAGE_SIZE = 10;
+/** Panel row columns: marker(2) + agent(12) + kind(4) + cost(≥7) + duration(8).
+ *  The cost column is at least this wide; a sub-cent cost widens it per row. */
+export declare const DISPATCH_PANEL_AGENT_WIDTH = 12;
+export declare const DISPATCH_PANEL_MIN_AGENT_WIDTH = 6;
+export declare const DISPATCH_PANEL_KIND_WIDTH = 4;
+export declare const DISPATCH_PANEL_COST_WIDTH = 7;
+export declare const DISPATCH_PANEL_DURATION_WIDTH = 8;
+/** Title column budget (`◈ Dispatch — <sessão>`). */
+export declare const DISPATCH_PANEL_TITLE_WIDTH = 44;
+/** Badge appended to the title while the host presents the panel full screen. */
+export declare const DISPATCH_PANEL_FULLSCREEN_BADGE = "[fullscreen]";
+/** Human labels of a kind's evidence, as the detail line prints them. */
+export declare const DISPATCH_KIND_ORIGIN_LABELS: Readonly<Record<DispatchKindOrigin, string>>;
+/** Entries in row order: live work first, then most recent activity — the same
+ *  comparator the sidebar block uses. Pure. */
+export declare function orderDispatchEntries(entries: readonly DispatchEntry[]): DispatchEntry[];
+/** `◈ Dispatch — <sessão>`, with the session title truncated (never wrapped),
+ *  plus the `[fullscreen]` badge while the host presents the panel full screen.
+ *  An absent title leaves the marker and the name alone. Pure. */
+export declare function dispatchPanelTitle(sessionTitle: string | null | undefined, max?: number, presentation?: string): string;
+/** Header counters: `2 rodando · 70 concluídos · 1 falha · $3.59`. A zero
+ *  counter is omitted (never `0 rodando`); the total spend is printed whenever
+ *  the tree has a child, because `$0.00` is then a real answer. Null for an
+ *  empty tree, so the header renders no counter line at all. Pure. */
+export declare function dispatchPanelHeader(entries: readonly DispatchEntry[] | null | undefined): string | null;
+/** Horizontal rule under the header, clamped to the panel's own width. Pure. */
+export declare function dispatchPanelRule(width: number, max?: number): string;
+/** Row marker: animated spinner while running, `✓` done, `✗` failed, `○`
+ *  cancelled/interrupted, `?` for a state the host never publishes. Every glyph
+ *  is one cell wide and `?` is the only fallback, so an unknown state is visible
+ *  instead of silently rendering as success. Pure. */
+export declare function dispatchPanelMarker(state: DelegationState | string, frame?: number): string;
+/** One padded, truncated cell: an absent/blank value becomes the em dash, and
+ *  the value is cut to the cell's own width (never to the line's length, so one
+ *  long cell cannot squeeze its neighbours out of alignment). Pure. */
+export declare function dispatchPanelCell(value: unknown, width: number): string;
+/** One list row: `⠋ prometheus   plan   $0.09  14m34s`. The agent cell absorbs
+ *  the width difference (down to `DISPATCH_PANEL_MIN_AGENT_WIDTH`), so a narrow
+ *  panel truncates the label rather than the numbers; the cost column grows by
+ *  itself for a sub-cent value so the row never spends more than its budget.
+ *  Pure. */
+export declare function dispatchPanelRowText(entry: DispatchEntry, options?: {
+  now?: number;
+  frame?: number;
+  max?: number;
+}): string;
+/** `ses_ab12cd`, short enough for a detail line. Full id when it already fits. */
+export declare function shortSessionID(id: string | null | undefined, max?: number): string;
+/** Token counters of one child on a single line (`in 1.2K · out 430 · r 120 ·
+ *  cache 8K/1K`), or `tokens —` when the host published none. Pure. */
+export declare function dispatchTokenLine(tokens: DispatchTokens | null | undefined): string;
+/** Detail lines of the selected child: heading (title, else the spawning
+ *  description, else the row label), short id + model, token counters, and the
+ *  kind plus its evidence and the parent id. Two to four lines; `expanded:
+ *  false` keeps only the heading. Every missing datum prints `—`. Pure. */
+export declare function dispatchPanelDetail(entry: DispatchEntry | null | undefined, options?: {
+  expanded?: boolean;
+  max?: number;
+}): string[];
+/** Panel geometry for its input width: wide (≥72) puts the detail in a second
+ *  column, narrow stacks it under the list. `rowWidth` is what a list row may
+ *  spend after the selection gutter. Pure. */
+export type DispatchPanelLayout = {
+  mode: 'wide' | 'narrow';
+  listWidth: number;
+  detailWidth: number;
+  rowWidth: number;
+};
+export declare function dispatchPanelLayout(width: number): DispatchPanelLayout;
+/** Viewport of the list: the page holding the selection, scrolled so the
+ *  selected row stays visible with its predecessors. Bounded, so a 71-child
+ *  tree renders ten rows, never all of them. Pure. */
+export declare function dispatchPanelWindow(total: number, selectedIndex: number, pageSize?: number): {
+  start: number;
+  end: number;
+  size: number;
+};
+/** `1-10 de 71` while the list is longer than one page; null when everything
+ *  fits (and for an empty list), so the footer never pads itself. Pure. */
+export declare function dispatchPanelRangeText(start: number, end: number, total: number): string | null;
+/** One rendered list row, selection resolved by the view against the model's
+ *  selected id. */
+export type DispatchPanelRow = {
+  id: string;
+  state: DelegationState;
+  text: string;
+};
+/** Every entry as a row, ordered by the shared comparator. Pure. */
+export declare function dispatchPanelRows(entries: readonly DispatchEntry[] | null | undefined, options?: {
+  now?: number;
+  frame?: number;
+  max?: number;
+}): DispatchPanelRow[];
+/** Panel action, one per command. */
+export type DispatchPanelAction = 'up' | 'down' | 'home' | 'end' | 'pageup' | 'pagedown' | 'toggle' | 'fullscreen' | 'close';
+/** One namespaced command: stable id, explicit binding, and the action it runs. */
+export type DispatchPanelCommandSpec = {
+  action: DispatchPanelAction;
+  id: string;
+  title: string;
+  bind: string;
+};
+/** The panel's whole keymap, in table order. `bind` is explicit for every
+ *  command (no auto-binding), and every id is namespaced, so a `k`/`q`/`f`
+ *  binding can never collide with the host's own keys. */
+export declare const DISPATCH_PANEL_COMMANDS: readonly DispatchPanelCommandSpec[];
+/** Run one action against the model and the host-owned panel input. Kept apart
+ *  from the keymap so the whole command surface is testable without a renderer.
+ */
+export declare function performDispatchPanelAction(action: DispatchPanelAction, model: Pick<DispatchPanelModel, 'move' | 'first' | 'last' | 'pageUp' | 'pageDown' | 'toggle'>, panel: Pick<PanelInput, 'close' | 'toggleFullscreen'>): void;
+/** Footer: the keys the host reports for each command (`keymap.shortcuts`) with
+ *  an em dash whenever a command has no binding, so the hint can never advertise
+ *  a key that does nothing. Pure. */
+export declare function dispatchPanelFooter(shortcutsOf: (id: string) => readonly string[]): string;
+/** The subset of `PanelInput` the model reads, so tests can drive it with a
+ *  plain object. */
+export type DispatchPanelInput = {
+  readonly name: string;
+  readonly sessionID: string;
+  readonly width: number;
+  readonly presentation?: string;
+};
+/** Open the panel from the command palette / slash command. `ui.panel.open`
+ *  only accepts a `session` route, so a refusal (no session open) is answered
+ *  with a toast — never a fallback route, never a silent no-op. Returns whether
+ *  the panel opened. */
+export declare function openDispatchPanel(context: any): boolean;
+/** Reactive state the panel view renders. Selection is held by session id, so
+ *  it survives list updates; the index is derived (and falls back to the first
+ *  row when the selected child disappears). */
+export type DispatchPanelModel = {
+  entries: Accessor<DispatchEntry[]>;
+  rows: Accessor<DispatchPanelRow[]>;
+  title: Accessor<string>;
+  header: Accessor<string | null>;
+  detail: Accessor<string[]>;
+  layout: Accessor<DispatchPanelLayout>;
+  visible: Accessor<{
+    start: number;
+    rows: DispatchPanelRow[];
+  }>;
+  selectedID: Accessor<string | null>;
+  selectedIndex: Accessor<number>;
+  expanded: Accessor<boolean>;
+  hasRunning: Accessor<boolean>;
+  frame: Accessor<number>;
+  footer: Accessor<string>;
+  move: (delta: number) => void;
+  first: () => void;
+  last: () => void;
+  pageUp: () => void;
+  pageDown: () => void;
+  toggle: () => void;
+};
+/** Model behind the panel. Mounted only while the panel claim renders (the
+ *  `Show` in `session.panel`), so the 80 ms tick it arms exists exactly while
+ *  the panel is open; it also stops on `isOpen()` going false and on dispose.
+ *  It performs no `message.sync`, writes no `session.metadata` and makes no
+ *  request: `collectDispatch` reads only host-cached state. */
+export declare function createDispatchPanelModel(context: any, panel: () => DispatchPanelInput): DispatchPanelModel;
 /** Session ids to eagerly sync at load (deduped, bounded). Pure. */
 export declare function collectWarmupTargets(sessions: readonly any[], limit?: number): string[];
 /** Body a sidebar instance renders when the host has not published a real
@@ -484,24 +960,28 @@ export type SidebarModel = {
   activeSessionID: Accessor<string>;
   session: Accessor<any>;
   branch: Accessor<string | null>;
-  /** `+N ±N −N` file counts from `vcs.status`, null when clean/unavailable. */
+  /** `+N ±N −N` file counts from `vcs.status` (fallback only), null when
+   *  clean/unavailable. */
   gitChanges: Accessor<string | null>;
-  /** Running children only — what the spinner and the accent read. */
-  delegations: Accessor<DelegationView[]>;
-  /** Every child of the active session (running + finished), ordered and
-   *  capped for the `Dispatch` block. */
-  dispatch: Accessor<{
-    visible: DelegationView[];
-    hidden: number;
-  }>;
+  /** The rendered git row: CLI counts with `?untracked ↑ahead ↓behind` when git
+   *  answered, else the `vcs.status` counts, else null. */
+  gitLine: Accessor<string | null>;
+  /** Last successful git CLI observation (counts + upstream distance), null
+   *  while git has never answered. */
+  gitCli: Accessor<GitCliSnapshot | null>;
+  /** Cache hit rate + output speed of the active session's newest messages. */
+  performance: Accessor<ContextPerformance | null>;
+  /** The rendered `Dispatch` block: live rows, the finished rollup and the
+   *  spend totals. Null when the session has no child (block hidden). */
+  dispatch: Accessor<DispatchBlockView | null>;
   /** Blocks that have content, in render order, each tagged with its spacer. */
   blocks: Accessor<SidebarBlock[]>;
   hasRunning: Accessor<boolean>;
   frame: Accessor<number>;
-  /** Fresh clock that advances on the spinner's own tick — the live rows
-   *  measure their duration from it instead of from a second interval. */
-  liveNow: Accessor<number>;
   preset: Accessor<PresetInfo>;
+  /** Provider of the model in use, derived from the session, its transcript or
+   *  the host location; null when nothing resolves (the header omits it). */
+  provider: Accessor<string | null>;
   /** Resolved preset override map (explicit per-agent models). */
   presetOverrides: Accessor<PresetOverrides>;
   /** Family cost in USD (root + delegations), null when the host cannot answer. */
@@ -526,7 +1006,18 @@ export type SidebarModel = {
  *  running-only spinner and the completion-toast effect. `context` stays loosely
  *  typed (the host API only exists at runtime) but the refresh event names are
  *  narrowed to the V2 union at the subscription site. */
-export declare function createSidebarModel(context: any, sessionID: () => string | undefined): SidebarModel;
+export declare function createSidebarModel(context: any, sessionID: () => string | undefined, gitExec?: GitExec): SidebarModel;
+/** One command: runs only while the panel owns the keyboard, and reports
+ *  `false` (the host keeps the key) when it cannot act. `undefined` means the
+ *  key was consumed. */
+export declare function runDispatchPanelCommand(action: DispatchPanelAction, panel: Pick<PanelInput, 'focused' | 'close' | 'toggleFullscreen'>, model: Pick<DispatchPanelModel, 'rows' | 'move' | 'first' | 'last' | 'pageUp' | 'pageDown' | 'toggle'>): false | undefined;
+/** Keymap layer of the panel, as data. It is registered inside the
+ *  `session.panel` claim, but the host mounts the effects of *every* panel
+ *  contribution, so the layer itself is not proof of focus: without `enabled`
+ *  the `j/k/f/q/enter/escape` bindings were consumed while the panel was not
+ *  focused and the composer lost its keys. `enabled` (the documented gate) makes
+ *  the whole layer inert until `panel.focused` is true. Pure. */
+export declare function dispatchPanelKeymapLayer(panel: Pick<PanelInput, 'focused' | 'close' | 'toggleFullscreen'>, model: DispatchPanelModel): KeymapLayer;
 /** Lean footer model: only the preset label and the live delegation count. It
  *  deliberately does not reuse `createSidebarModel` — that model owns the
  *  completion toasts and the spinner, and a second instance would double-toast.

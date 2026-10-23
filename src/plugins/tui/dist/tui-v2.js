@@ -2,7 +2,8 @@ import { createComponent, createElement, createTextNode, effect, insert, insertN
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, onMount } from "solid-js";
+import { execFile } from "node:child_process";
 import { Plugin } from "@opencode/plugin/tui";
 //#region src/index-v2.tsx
 /** @jsxImportSource @opentui/solid */
@@ -10,8 +11,6 @@ const SINGLETON = Symbol.for("pantheon.tui.v2.loaded");
 /** How often the sidebar re-reads .pantheon/active-preset.json (V1 parity) so
 *  `set-tier` changes made while opencode is open show up within ~30s. */
 const PRESET_REFRESH_MS = 3e4;
-/** Running delegations rendered before the "… +N more" line (V1 parity). */
-const DELEGATIONS_VISIBLE_CEILING = 8;
 /** Running-row spinner cadence — matches V1's animation tick. */
 const SPINNER_INTERVAL_MS = 80;
 /** Bounded warm-up: sync at most this many sessions at plugin load. */
@@ -20,6 +19,14 @@ const WARMUP_SESSION_LIMIT = 24;
 const SIDEBAR_WAITING_LABEL = "Aguardando sessão…";
 /** Delegate-completion toast title. */
 const TOAST_TITLE = "Pantheon";
+/** Marker before the preset label (fixed header, home status, prompt footer).
+*  `▸` U+25B8 is one cell; the previous bolt (U+26A1) carries
+*  Emoji_Presentation and is measured as two cells, which misaligned the line. */
+const PRESET_MARKER = "▸";
+/** Git ahead / behind arrows (U+2191 / U+2193), one cell each — the glyphs the
+*  reference sidebars use for `↑ahead ↓behind`. */
+const GIT_ARROW_UP = "↑";
+const GIT_ARROW_DOWN = "↓";
 /** One event name the host publishes on `data.on` — the OpenCode V2 union. */
 /** V2 events that refresh the sidebar. V1 also listened to `session.updated`,
 *  but that name is absent from the OpenCode V2 event union (verified against
@@ -126,10 +133,6 @@ async function resolveActivePresetForTui(env, cwd) {
 		overrides: emptyOverrides()
 	};
 }
-/** Resolve the active preset for the sidebar: env > file > default. */
-async function resolvePresetForTui(env, cwd) {
-	return (await resolveActivePresetForTui(env, cwd)).info;
-}
 /** `SessionInfo.id` is always a `ses…` handle. Guarded so a placeholder or a
 *  foreign id never reaches the status/navigate APIs. */
 function isValidSessionID(id) {
@@ -156,6 +159,30 @@ function shortModelID(ref, max = 24) {
 	const segment = id.slice(id.lastIndexOf("/") + 1);
 	if (segment === "") return null;
 	return segment.length > max ? `${segment.slice(0, Math.max(1, max - 1))}…` : segment;
+}
+/** `providerID` of a model reference, trimmed; null when absent/blank. Derived
+*  only from what the host already published — never a lookup table. */
+function providerIDFromRef(ref) {
+	if (ref === null || typeof ref !== "object") return null;
+	const providerID = ref.providerID;
+	return typeof providerID === "string" && providerID.trim() !== "" ? providerID.trim() : null;
+}
+/** Provider for a bare-string model reference: match its id (or bare segment)
+*  in the host model list. Null when the list cannot answer. */
+function providerIDFromModels(models, ref) {
+	if (!Array.isArray(models)) return null;
+	const id = modelRefID(ref);
+	if (id === null) return null;
+	const segment = id.slice(id.lastIndexOf("/") + 1);
+	for (const model of models) {
+		if (!model || typeof model !== "object") continue;
+		const modelID = typeof model.modelID === "string" ? model.modelID : "";
+		const rowID = typeof model.id === "string" ? model.id : "";
+		if (modelID !== id && rowID !== id && modelID !== segment && rowID !== segment) continue;
+		const providerID = providerIDFromRef(model);
+		if (providerID !== null) return providerID;
+	}
+	return null;
 }
 /** Resolve `model.limit.context` for a model reference. Match order: the
 *  provider-qualified id, then the bare id (the host's `id`/`modelID` fields).
@@ -190,14 +217,12 @@ function messageTokensTotal(tokens) {
 	const cacheWrite = numberOrNull(tokens?.cache?.write) ?? 0;
 	return (numberOrNull(tokens?.input) ?? 0) + (numberOrNull(tokens?.output) ?? 0) + (numberOrNull(tokens?.reasoning) ?? 0) + cacheRead + cacheWrite;
 }
-/** Context usage for a message list. Scope: everything before the revert
-*  boundary (when a revert is active), then after the last compaction. The last
-*  assistant message carrying `tokens` in that window wins. Null when there is
-*  no limit or no such message — the caller then omits the block. */
-function computeContextUsage(messages, contextLimit, revertMessageID) {
-	const limit = numberOrNull(contextLimit);
-	if (limit === null || limit <= 0) return null;
-	if (!Array.isArray(messages) || messages.length === 0) return null;
+/** The part of a transcript that still counts: everything before the revert
+*  boundary (when a revert is active), then after the last compaction. Both
+*  derived numbers that read "the last assistant with usage" — the context
+*  gauge and the cache hit rate — share this window, so a reverted-away or
+*  compacted-away message can never feed either one. Pure. */
+function transcriptWindow(messages, revertMessageID) {
 	let end = messages.length;
 	if (typeof revertMessageID === "string" && revertMessageID !== "") {
 		const boundary = messages.findIndex((message) => message?.id === revertMessageID);
@@ -208,6 +233,20 @@ function computeContextUsage(messages, contextLimit, revertMessageID) {
 		start = index + 1;
 		break;
 	}
+	return {
+		start,
+		end
+	};
+}
+/** Context usage for a message list. Scope: the live window (see
+*  `transcriptWindow`). The last assistant message carrying `tokens` in that
+*  window wins. Null when there is no limit or no such message — the caller
+*  then omits the block. */
+function computeContextUsage(messages, contextLimit, revertMessageID) {
+	const limit = numberOrNull(contextLimit);
+	if (limit === null || limit <= 0) return null;
+	if (!Array.isArray(messages) || messages.length === 0) return null;
+	const { start, end } = transcriptWindow(messages, revertMessageID);
 	for (let index = end - 1; index >= start; index--) {
 		const message = messages[index];
 		if (message?.type !== "assistant" || !message.tokens) continue;
@@ -221,14 +260,108 @@ function computeContextUsage(messages, contextLimit, revertMessageID) {
 	}
 	return null;
 }
-/** Semantic tone for a context percentage: green < 50%, yellow < 75%, red at
-*  or above 75%. Reuses the delegation tone union so both rows draw from the
-*  same theme tokens. Pure. */
+/** Semantic tone for a context percentage, inclusive at the top of each band:
+*  info (blue) up to 25%, success (green) up to 50%, warning (yellow) up to
+*  90%, error (red) above it. Four explicit stages, each backed by a feedback
+*  token, so the gauge follows the active theme. Pure. */
 function contextUsageTone(percent) {
-	if (percent >= 75) return "error";
-	if (percent >= 50) return "warning";
-	return "success";
+	if (percent > 90) return "error";
+	if (percent > 50) return "warning";
+	if (percent > 25) return "success";
+	return "info";
 }
+/** The gauge's four stages, one per theme feedback token. */
+/** Color for one gauge stage. Filled cells and the percent value both come from
+*  this one call, so the bar and its number can never disagree. `theme` is the
+*  host's resolved theme (loosely typed at runtime); a missing token falls back
+*  to the theme's base text instead of an unstyled cell. Pure. */
+function contextProgressColor(stage, theme) {
+	return theme?.text?.feedback?.[stage]?.base ?? theme?.text?.base;
+}
+/** The muted extra line under the gauge: `cache 92% · 42.3 tok/s`. Either half
+*  may be missing (no cache read, no measurable turn); no data at all yields
+*  null so no empty line is rendered. The speed keeps the host's own one
+*  decimal and `tok/s` label. Pure. */
+function contextPerformanceLine(performance) {
+	if (!performance) return null;
+	const parts = [];
+	const cacheHit = numberOrNull(performance.cacheHit);
+	if (cacheHit !== null) parts.push(`cache ${Math.round(cacheHit)}%`);
+	const tokensPerSecond = numberOrNull(performance.tokensPerSecond);
+	if (tokensPerSecond !== null) parts.push(`${tokensPerSecond.toFixed(1)} tok/s`);
+	return parts.length === 0 ? null : parts.join(SPEND_LINE_SEPARATOR);
+}
+/** Cache hit rate of one message: `cache.read / (input + cache.read)` as a
+*  percentage. The denominator must be > 0, otherwise the ratio is meaningless
+*  (a message that only wrote to the cache has no input to hit). Null when the
+*  numbers are absent. Pure. */
+function cacheHitPercent(tokens) {
+	const read = numberOrNull(tokens?.cache?.read);
+	const input = numberOrNull(tokens?.input);
+	if (read === null || input === null) return null;
+	const denominator = input + read;
+	if (!(denominator > 0)) return null;
+	return read / denominator * 100;
+}
+/** The message the cache hit rate comes from: the last assistant of the live
+*  window (see `transcriptWindow`) that actually carries `tokens`. Later
+*  messages without usage — a streaming placeholder that the host publishes
+*  before any step completes, a step that reports no usage — are skipped
+*  instead of blanking a ratio the previous message already measured. Null
+*  when nothing in the window has usage. Pure. */
+function lastAssistantWithTokens(messages, revertMessageID) {
+	if (!Array.isArray(messages) || messages.length === 0) return null;
+	const { start, end } = transcriptWindow(messages, revertMessageID);
+	for (let index = end - 1; index >= start; index--) {
+		const message = messages[index];
+		if (message?.type !== "assistant" || !message.tokens) continue;
+		return message;
+	}
+	return null;
+}
+/** Tokens per second of the current turn. Mirrors the host's
+*  `turnTokensPerSecond` (anomalyco/opencode v2.0.30,
+*  `packages/tui/src/routes/session/rows.ts`) so the sidebar and the native
+*  session footer can never disagree: the numerator is `output + reasoning`
+*  summed over every assistant step of the turn and the denominator is the
+*  summed active streaming time `max(0, time.streamed - time.created)`, so the
+*  division happens once, after aggregating — each step weighs by its own
+*  duration instead of each step voting equally. `completed` is never used; a
+*  turn with a step that has no `time.streamed` has no measurable speed. The
+*  turn starts after the last `user` message; with no user message only the
+*  last assistant step counts (degraded: there is no boundary to group by).
+*  Pure and fail-open. */
+function turnTokensPerSecond(messages, position) {
+	if (!Array.isArray(messages) || messages.length === 0) return null;
+	let anchor = -1;
+	if (typeof position === "number" && Number.isInteger(position) && position >= 0 && position < messages.length) anchor = position;
+	else for (let index = messages.length - 1; index >= 0; index--) if (messages[index]?.type === "assistant") {
+		anchor = index;
+		break;
+	}
+	if (anchor === -1 || messages[anchor]?.type !== "assistant") return null;
+	let start = -1;
+	for (let index = anchor - 1; index >= 0; index--) if (messages[index]?.type === "user") {
+		start = index;
+		break;
+	}
+	const steps = start === -1 ? [messages[anchor]] : messages.slice(start + 1, anchor + 1).filter((item) => item?.type === "assistant");
+	if (steps.length === 0) return null;
+	let output = 0;
+	let duration = 0;
+	for (const step of steps) {
+		output += (numberOrNull(step?.tokens?.output) ?? 0) + (numberOrNull(step?.tokens?.reasoning) ?? 0);
+		const created = numberOrNull(step?.time?.created);
+		const streamed = numberOrNull(step?.time?.streamed);
+		if (created === null || streamed === null) return null;
+		duration += Math.max(0, streamed - created);
+	}
+	if (output <= 0 || duration <= 0) return null;
+	const rate = output / (duration / 1e3);
+	return Number.isFinite(rate) && rate > 0 ? rate : null;
+}
+/** Last-message telemetry the Context block renders in muted text. Both halves
+*  are optional; the block renders no line when neither is available. */
 /** Thousands-separated token total: `55320` → `55,320` (en-US, matching the
 *  native block this one replaces). Null for a missing/invalid value. Pure. */
 function formatTokenCount(tokens) {
@@ -330,12 +463,6 @@ function contextBlockRows(usage, cost) {
 		spent
 	};
 }
-/** Full single-line text of a context row (`55,320 tokens`,
-*  `▰▰▰▰▰▱▱▱▱▱▱▱ 39% of 200K`). Pure. */
-function contextRowText(row) {
-	if (row === null) return null;
-	return `${row.lead ?? ""}${row.tail ?? ""}${row.value}${row.suffix ?? ""}`;
-}
 /** Models rendered in the Context block before the aggregate `… +N` line. */
 const MODEL_USAGE_VISIBLE_CEILING = 3;
 /** Newest messages read per session — bounds the O(n) walk on long sessions. */
@@ -428,6 +555,15 @@ function hiddenModelUsageText(hidden, hiddenCost) {
 	if (!Number.isFinite(hidden) || hidden <= 0) return null;
 	const cost = formatUsageCost(hiddenCost);
 	return cost === null ? `… +${hidden}` : `… +${hidden}  ${cost}`;
+}
+/** Bucket for a session the host published without an agent id. */
+const UNKNOWN_AGENT = "?";
+/** Agent key of a session or message: the trimmed id when it is a non-empty
+*  string, else the `?` bucket — never `undefined`. Pure. */
+function agentKey(value) {
+	if (typeof value !== "string") return "?";
+	const text = value.trim();
+	return text === "" ? "?" : text;
 }
 /** One rendered todo row. `priority` is carried by the tool but not rendered:
 *  the reference block uses a single marker column. */
@@ -554,6 +690,144 @@ function formatGitChanges(files) {
 	if (deleted > 0) parts.push(`\u2212${deleted}`);
 	return parts.length === 0 ? null : parts.join(" ");
 }
+/** Wall-clock ceiling for one git call. A stuck git (index lock, network
+*  filesystem) is killed instead of holding the row forever. */
+const GIT_CLI_TIMEOUT_MS = 2e3;
+/** Session events arrive in bursts; a git probe is scheduled at most once per
+*  window instead of once per event. */
+const GIT_CLI_DEBOUNCE_MS = 1e3;
+/** Minimum spacing between two probe starts. Five seconds keeps a chatty event
+*  stream from spawning a git process per step while staying fresh enough to
+*  show a file appearing mid-turn. */
+const GIT_CLI_MIN_INTERVAL_MS = 5e3;
+/** Stdout ceiling for one git call. `status --porcelain=v1 -uall` lists every
+*  untracked file, so a large worktree easily passes the 1 MB `execFile`
+*  default — which would reject and silently hand the row back to the
+*  `vcs.status` fallback. 4 MB is far above a realistic porcelain listing. */
+const GIT_CLI_MAX_BUFFER = 4194304;
+/** One `execFile` call: `(file, args, options) → { stdout }`. Injectable so the
+*  parsing/gating logic is testable without spawning processes. */
+/** Default runner: the promisified `node:child_process.execFile`. A non-zero
+*  exit (no repository, no upstream) rejects and the caller decides. */
+const defaultGitExec = (file, args, options) => new Promise((resolve, reject) => {
+	execFile(file, [...args], {
+		cwd: options.cwd,
+		timeout: options.timeout,
+		windowsHide: options.windowsHide,
+		maxBuffer: options.maxBuffer
+	}, (error, stdout) => {
+		if (error) reject(error);
+		else resolve({ stdout: typeof stdout === "string" ? stdout : String(stdout ?? "") });
+	});
+});
+/** Files per status from `git status --porcelain=v1 -uall`, including the two
+*  columns the protocol cannot report. Each line starts with `XY` (index and
+*  worktree state); a rename prints `R  old -> new`, and `??` / `!!` are
+*  untracked / ignored. Precedence per file: deleted > added > modified, so
+*  `AM` counts once as added and `AD` once as deleted. Renames, copies and
+*  unmerged entries count as modified. Pure. */
+/** Parse porcelain v1 output into file counts. Empty/malformed output yields
+*  zero counts (a clean tree), never a throw. Pure. */
+function parseGitStatusPorcelain(output) {
+	const counts = {
+		added: 0,
+		modified: 0,
+		deleted: 0,
+		untracked: 0
+	};
+	if (typeof output !== "string" || output === "") return counts;
+	for (const line of output.split("\n")) {
+		if (line.length < 2) continue;
+		const index = line[0];
+		const worktree = line[1];
+		if (index === "!" && worktree === "!") continue;
+		if (index === "?" && worktree === "?") {
+			counts.untracked += 1;
+			continue;
+		}
+		if (index === " " && worktree === " ") continue;
+		if (index === "D" || worktree === "D") counts.deleted += 1;
+		else if (index === "A" || worktree === "A") counts.added += 1;
+		else counts.modified += 1;
+	}
+	return counts;
+}
+/** `git rev-list --count --left-right @{upstream}...HEAD` prints two numbers:
+*  commits only on the upstream (behind) then commits only on HEAD (ahead).
+*  Null when the output is not that pair — e.g. the command failed because the
+*  branch has no upstream, in which case the arrows are simply omitted. Pure. */
+function parseGitAheadBehind(output) {
+	if (typeof output !== "string") return null;
+	const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(output);
+	if (match === null) return null;
+	const behind = Number(match[1]);
+	const ahead = Number(match[2]);
+	if (!Number.isFinite(ahead) || !Number.isFinite(behind)) return null;
+	return {
+		ahead,
+		behind
+	};
+}
+/** One git observation: file counts plus the upstream distance (either arrow
+*  may be unknown when the branch has no upstream). */
+/** One probe: `git status --porcelain=v1 -uall` for the counts, then
+*  `git rev-list --count --left-right @{upstream}...HEAD` for the arrows (a
+*  failure there only drops the arrows). A status failure rejects — the caller
+*  then falls back to `client.vcs.status`. */
+async function readGitSnapshot(directory, exec = defaultGitExec) {
+	const options = {
+		cwd: directory,
+		timeout: GIT_CLI_TIMEOUT_MS,
+		windowsHide: true,
+		maxBuffer: GIT_CLI_MAX_BUFFER
+	};
+	const changes = parseGitStatusPorcelain((await exec("git", [
+		"status",
+		"--porcelain=v1",
+		"-uall"
+	], options))?.stdout);
+	let ahead = null;
+	let behind = null;
+	try {
+		const parsed = parseGitAheadBehind((await exec("git", [
+			"rev-list",
+			"--count",
+			"--left-right",
+			"@{upstream}...HEAD"
+		], options))?.stdout);
+		if (parsed !== null) {
+			ahead = parsed.ahead;
+			behind = parsed.behind;
+		}
+	} catch {}
+	return {
+		changes,
+		ahead,
+		behind
+	};
+}
+/** Rendered git row: `+1 ±2 −1 ?2 ↑3 ↓1`, zero terms omitted. Null when the
+*  tree is clean and in sync, so the block keeps only its branch line. Pure. */
+function formatGitSnapshot(snapshot) {
+	if (!snapshot?.changes) return null;
+	const { added, modified, deleted, untracked } = snapshot.changes;
+	const parts = [];
+	if (added > 0) parts.push(`+${added}`);
+	if (modified > 0) parts.push(`±${modified}`);
+	if (deleted > 0) parts.push(`\u2212${deleted}`);
+	if (untracked > 0) parts.push(`?${untracked}`);
+	if ((snapshot.ahead ?? 0) > 0) parts.push(`↑${snapshot.ahead}`);
+	if ((snapshot.behind ?? 0) > 0) parts.push(`↓${snapshot.behind}`);
+	return parts.length === 0 ? null : parts.join(" ");
+}
+/** Whether a new probe may start. An in-flight probe always wins (no queue), and
+*  the previous start must be older than the cooldown. Pure. */
+function gitProbeAllowed(state, cooldownMs = GIT_CLI_MIN_INTERVAL_MS) {
+	if (state.inFlight) return false;
+	if (state.lastRunAt === null) return true;
+	const elapsed = state.now - state.lastRunAt;
+	return !Number.isFinite(elapsed) || elapsed >= cooldownMs;
+}
 /** Spend window labels, in render order. */
 const SPEND_TODAY_LABEL = "hoje";
 const SPEND_30D_LABEL = "30d";
@@ -651,24 +925,278 @@ function contextSpendLine(totals) {
 	if (thirtyDays !== null) parts.push(`30d ${thirtyDays}`);
 	return parts.length === 0 ? null : parts.join(SPEND_LINE_SEPARATOR);
 }
-/** Clamp a free-form label to the sidebar width without wrapping. */
+/** Grapheme iterator: a cut never splits a surrogate pair, a combining mark
+*  from its base or a ZWJ emoji sequence, so truncation stays cell-exact. */
+const GRAPHEMES = new Intl.Segmenter(void 0, { granularity: "grapheme" });
+/** A grapheme the host draws two cells wide: emoji presentation, an extended
+*  pictograph (a bare `❤` counts too, exactly as the host's `emoji-regex`
+*  does) and a regional-indicator pair (a flag). */
+const EMOJI_GLYPH = /\p{Emoji_Presentation}|\p{Extended_Pictographic}|\p{Regional_Indicator}/u;
+/** VS16 asks for emoji presentation; without it `1` is one cell, with it the
+*  keycap sequence is drawn as one two-cell glyph. */
+const EMOJI_PRESENTATION_SELECTOR = "️";
+/** Unicode default-ignorable code points carry no width of their own. */
+const IGNORABLE_GLYPH = /^\p{Default_Ignorable_Code_Point}$/u;
+/** East Asian Wide/Fullwidth ranges — two cells, never the ambiguous width
+*  (the host measures ambiguous as narrow, so `▸`/`✓`/`—` stay one cell).
+*  Generated from the host's own measurement (`string-width` over every code
+*  point, emoji excluded), so this table can be regenerated verbatim when the
+*  host upgrades its Unicode data instead of being hand-edited. */
+const CELL_WIDE_RANGES = [
+	[4352, 4446],
+	[9001, 9002],
+	[9776, 9783],
+	[9866, 9871],
+	[11904, 11929],
+	[11931, 12019],
+	[12032, 12245],
+	[12272, 12335],
+	[12337, 12348],
+	[12350, 12350],
+	[12353, 12438],
+	[12441, 12543],
+	[12549, 12591],
+	[12593, 12643],
+	[12645, 12686],
+	[12688, 12773],
+	[12783, 12830],
+	[12832, 12871],
+	[12880, 12950],
+	[12952, 12952],
+	[12954, 42124],
+	[42128, 42182],
+	[43360, 43388],
+	[44032, 55203],
+	[63744, 64255],
+	[65040, 65049],
+	[65072, 65106],
+	[65108, 65126],
+	[65128, 65131],
+	[65281, 65376],
+	[65504, 65510],
+	[94176, 94180],
+	[94192, 94198],
+	[94208, 101594],
+	[101631, 101664],
+	[101760, 101874],
+	[101888, 102801],
+	[102816, 102866],
+	[110576, 110579],
+	[110581, 110587],
+	[110589, 110590],
+	[110592, 110888],
+	[110898, 110898],
+	[110928, 110930],
+	[110933, 110933],
+	[110948, 110952],
+	[110960, 111355],
+	[119552, 119638],
+	[119648, 119670],
+	[127488, 127488],
+	[127504, 127513],
+	[127515, 127534],
+	[127536, 127537],
+	[127547, 127547],
+	[127552, 127560],
+	[127584, 127589],
+	[131072, 196605],
+	[196608, 262141]
+];
+/** One code point the terminal draws no cell for: control characters, the
+*  zero-width joiners/marks, combining marks and variation selectors. */
+function isZeroWidthCodePoint(code, glyph) {
+	if (code <= 31 || code >= 127 && code <= 159) return true;
+	if (code >= 8203 && code <= 8207) return true;
+	if (code === 65279) return true;
+	if (code >= 768 && code <= 879) return true;
+	if (code >= 6832 && code <= 6911) return true;
+	if (code >= 7616 && code <= 7679) return true;
+	if (code >= 8400 && code <= 8447) return true;
+	if (code >= 65024 && code <= 65039) return true;
+	if (code >= 65056 && code <= 65071) return true;
+	if (code >= 917760 && code <= 917999) return true;
+	if (code >= 55296 && code <= 57343) return true;
+	return IGNORABLE_GLYPH.test(glyph);
+}
+function isWideCodePoint(code) {
+	for (const [low, high] of CELL_WIDE_RANGES) {
+		if (code < low) return false;
+		if (code <= high) return true;
+	}
+	return false;
+}
+/** Cells one grapheme occupies. */
+function graphemeWidth(segment) {
+	if (EMOJI_GLYPH.test(segment)) return 2;
+	if (segment.length > 1 && segment.includes(EMOJI_PRESENTATION_SELECTOR)) return 2;
+	let width = 0;
+	for (const glyph of segment) {
+		const code = glyph.codePointAt(0) ?? 0;
+		if (isZeroWidthCodePoint(code, glyph)) continue;
+		width += isWideCodePoint(code) ? 2 : 1;
+	}
+	return width;
+}
+/** Terminal cells `value` occupies — the unit every column in this plugin is
+*  measured in. Mirrors the host (that is how `@opentui/core` sizes a text
+*  run): emoji count as two cells, East Asian Wide/Fullwidth as two, East
+*  Asian Ambiguous as one, combining marks and variation selectors as none.
+*  Pure. */
+function cellWidth(value) {
+	let width = 0;
+	for (const { segment } of GRAPHEMES.segment(value)) width += graphemeWidth(segment);
+	return width;
+}
+/** Clamp a free-form label to `max` terminal cells without wrapping. The width
+*  is measured in display cells, never in UTF-16 code units: a CJK or emoji
+*  label used to overflow the column it was cut for (`計画の移行` is 5 code
+*  units but 10 cells, `🚀` is 2 units and 2 cells). Pure. */
 function truncateLabel(value, max = 28) {
 	const text = value.trim();
-	if (text.length <= max) return text;
-	return `${text.slice(0, Math.max(1, max - 1))}…`;
+	const budget = Math.max(1, Math.floor(numberOrNull(max) ?? 1));
+	if (cellWidth(text) <= budget) return text;
+	const ellipsis = "…";
+	const room = budget - cellWidth(ellipsis);
+	let cut = "";
+	let used = 0;
+	for (const { segment } of GRAPHEMES.segment(text)) {
+		const width = cellWidth(segment);
+		if (used + width > room) break;
+		cut += segment;
+		used += width;
+	}
+	return `${cut.replace(/\s+$/, "")}${ellipsis}`;
 }
-/** `agente→modelo` identity for a delegation row; either half may be absent. */
-function delegationIdentity(view) {
-	const agent = view.agent ?? "";
-	const model = view.model ?? "";
-	if (agent !== "" && model !== "") return `${agent}→${model}`;
-	return agent !== "" ? agent : model;
+/** Right-pad `value` with spaces to exactly `cells` display columns (a wider
+*  value is truncated first). `padEnd` counts code units, so it under-pads a
+*  CJK/emoji cell and the next column drifts. Pure. */
+function padCell(value, cells) {
+	const width = Math.max(0, Math.floor(numberOrNull(cells) ?? 0));
+	if (width === 0) return "";
+	const text = truncateLabel(value, width);
+	return `${text}${" ".repeat(Math.max(0, width - cellWidth(text)))}`;
 }
-/** Sidebar row body: truncated label plus the agent→model identity. */
-function delegationSidebarLabel(view, max = 18) {
-	const label = truncateLabel(view.label, max);
-	const identity = delegationIdentity(view);
-	return identity === "" ? label : `${label} · ${identity}`;
+/** Columns the fixed header may use before it would wrap the sidebar. */
+const HEADER_MAX_WIDTH = 34;
+/** Preset row of the fixed header: `▸ <preset> · <provider>`. The provider is
+*  cut first when the row overflows, so the preset name is never the casualty;
+*  a missing provider leaves the preset alone (no `unknown` placeholder). */
+function presetHeaderLine(presetName, providerID) {
+	const base = `▸ ${presetName.trim() === "" ? "default" : presetName.trim()}`;
+	const provider = providerID === null ? "" : providerID.trim();
+	if (provider === "") return truncateLabel(base, 34);
+	const room = 34 - `${base} · `.length;
+	if (room < 2) return truncateLabel(base, 34);
+	return `${base} · ${truncateLabel(provider, room)}`;
+}
+/** One classification plus the evidence that produced it. */
+/** Bracketed description prefix → short label (`[council]` → `coun`). */
+const DISPATCH_PREFIX_KINDS = [
+	["council", "coun"],
+	["discovery", "disc"],
+	["hotfix", "hot"],
+	["plan", "plan"],
+	["review", "revw"]
+];
+/** Agent → kind, consulted only when the description declares no prefix.
+*  `council` is deliberately absent — see the section comment. */
+const DISPATCH_AGENT_KINDS = {
+	apollo: "disc",
+	athena: "plan",
+	talos: "hot",
+	themis: "revw"
+};
+/** Kind declared by a leading `[prefix]` on the description: case-insensitive
+*  and tolerant of spaces inside the brackets. Null when none is declared. */
+function dispatchKindFromPrefix(description) {
+	if (typeof description !== "string") return null;
+	const match = /^\s*\[\s*([a-z]+)\s*\]/i.exec(description);
+	if (match === null) return null;
+	const token = (match[1] ?? "").toLowerCase();
+	for (const [word, kind] of DISPATCH_PREFIX_KINDS) if (word === token) return kind;
+	return null;
+}
+/** Kind implied by the child's agent, null for an agent that implies none. */
+function dispatchKindFromAgent(agent) {
+	if (typeof agent !== "string") return null;
+	return DISPATCH_AGENT_KINDS[agent.trim().toLowerCase()] ?? null;
+}
+/** Classify one dispatch. The description prefix always wins over the agent;
+*  otherwise the agent decides, and anything else is `oth` (a real dispatch we
+*  simply cannot name). A missing call is the only `unavailable` outcome. Pure. */
+function classifyDispatchKind(call) {
+	if (call === null || call === void 0) return {
+		kind: null,
+		origin: "unavailable"
+	};
+	const fromPrefix = dispatchKindFromPrefix(call.description);
+	if (fromPrefix !== null) return {
+		kind: fromPrefix,
+		origin: "prefix"
+	};
+	return {
+		kind: dispatchKindFromAgent(call.agent) ?? "oth",
+		origin: "agent"
+	};
+}
+/** A `subagent` tool call the parent made, as its own transcript records it. */
+/** Host tool that spawns a child (V2 name; it is not `task`). */
+const SUBAGENT_TOOL = "subagent";
+/** The tool result also names its child: `<subagent sessionID="ses_…" …>`. */
+const SUBAGENT_SESSION_PATTERN = /sessionID="([^"]+)"/;
+/** Text of a tool `content` payload, joined; tolerant of the string form. */
+function toolContentText(content) {
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	const chunks = [];
+	for (const part of content) {
+		const text = part?.text;
+		if (typeof text === "string") chunks.push(text);
+	}
+	return chunks.join("\n");
+}
+/** Child session id of one `subagent` call: the exact `metadata.sessionID`
+*  first, then an `output`/`result` id, then the `<subagent sessionID="…">` tag
+*  in the result text. Null when the call has not produced a child yet. */
+function subagentSessionID(state) {
+	const direct = [
+		state?.metadata?.sessionID,
+		state?.output?.sessionID,
+		state?.result?.sessionID
+	];
+	for (const candidate of direct) if (typeof candidate === "string" && candidate !== "") return candidate;
+	return SUBAGENT_SESSION_PATTERN.exec(toolContentText(state?.content))?.[1] ?? null;
+}
+/** Correlate the parent transcript's `subagent` calls with the children they
+*  spawned: child session id → `{ agent, description, background }`. One pass
+*  over the list the sidebar already holds — no request, no `message.sync` on
+*  the child. `streaming`/`pending` states carry their input as *partial JSON
+*  text*, so they are skipped rather than parsed. Fail-open: a malformed part
+*  contributes nothing. Pure. */
+function collectSubagentCalls(messages) {
+	const calls = /* @__PURE__ */ new Map();
+	if (!Array.isArray(messages)) return calls;
+	for (const message of messages) {
+		if (message?.type !== "assistant" || !Array.isArray(message.content)) continue;
+		for (const part of message.content) {
+			if (part?.type !== "tool" || part?.name !== SUBAGENT_TOOL) continue;
+			const state = part.state;
+			if (state === null || typeof state !== "object") continue;
+			if (state.status === "streaming" || state.status === "pending") continue;
+			const sessionID = subagentSessionID(state);
+			if (!isValidSessionID(sessionID)) continue;
+			const input = state.input !== null && typeof state.input === "object" ? state.input : {};
+			const agent = typeof input.agent === "string" ? input.agent : "";
+			const description = typeof input.description === "string" ? input.description : "";
+			calls.set(sessionID, {
+				sessionID,
+				agent,
+				description,
+				background: input.background === true
+			});
+		}
+	}
+	return calls;
 }
 /** Grace window for a child that has not started yet. V2's `session.status()`
 *  returns `idle` both for "created but not started" and for "finished", so an
@@ -713,35 +1241,33 @@ function delegationStateFromOutcome(outcome) {
 		default: return null;
 	}
 }
-/** Build a delegation row from a child session + its live status. A terminal
-*  `outcome` wins when present (the only V2 primitive that surfaces a
+/** Build a delegation row from a child session + its live status, plus the
+*  `subagent` call that spawned it (when the parent transcript had one). A
+*  terminal `outcome` wins when present (the only V2 primitive that surfaces a
 *  delegation failure/interruption once the status is back to idle); otherwise
-*  the live status decides, with the absent/idle grace window applied. Pure. */
-function toDelegationView(child, status, now = Date.now()) {
+*  the live status decides, with the absent/idle grace window applied. The
+*  `call` only ever *adds* the purpose and the background flag — an absent one
+*  leaves the row fully renderable. Pure. */
+function toDelegationView(child, status, now = Date.now(), call) {
 	const id = typeof child?.id === "string" ? child.id : "";
 	const title = typeof child?.title === "string" && child.title !== "" ? child.title : "";
 	const agent = typeof child?.agent === "string" && child.agent !== "" ? child.agent : "";
+	const label = title !== "" ? title : agent !== "" ? agent : id.slice(0, 8);
+	const state = delegationStateFromOutcome(child?.outcome) ?? delegationStateFromStatus(status, child?.time, now);
+	const classification = classifyDispatchKind(call);
 	return {
 		id,
-		label: title !== "" ? title : agent !== "" ? agent : id.slice(0, 8),
-		state: delegationStateFromOutcome(child?.outcome) ?? delegationStateFromStatus(status, child?.time, now),
+		label,
+		state,
 		startedAt: numberOrNull(child?.time?.created),
 		updatedAt: numberOrNull(child?.time?.updated),
 		agent: agent !== "" ? agent : null,
 		model: shortModelID(child?.model),
-		cost: numberOrNull(child?.cost)
+		cost: numberOrNull(child?.cost),
+		kind: classification.kind,
+		kindOrigin: classification.origin,
+		background: call?.background === true
 	};
-}
-const DELEGATION_TONES = {
-	running: "warning",
-	completed: "success",
-	failed: "error",
-	interrupted: "warning"
-};
-/** Whole-row tone: red = failed, green = terminal, yellow = in flight. The
-*  glyph stays a redundant channel so the state reads in monochrome. Pure. */
-function delegationStateTone(state) {
-	return DELEGATION_TONES[state];
 }
 const SPINNER_FRAMES = [
 	"⠋",
@@ -761,53 +1287,102 @@ function spinnerFrame(frame) {
 	const index = Math.abs(Math.floor(frame)) % SPINNER_FRAMES.length;
 	return SPINNER_FRAMES[index] ?? SPINNER_FRAMES[0];
 }
-/** Row marker (`<glyph> `): the animated spinner while running, ✓ when done,
-*  ⊘ when interrupted, ✕ on failure. Pure. */
-function delegationRowMarker(state, frame = 0) {
-	if (state === "running") return `${spinnerFrame(frame)} `;
-	if (state === "failed") return "✕ ";
-	if (state === "interrupted") return "⊘ ";
-	return "✓ ";
+/** Shared order: live work first, then most recent activity. One comparator for
+*  every consumer of the dispatch tree (sidebar block and panel list), so the
+*  two views can never disagree about which child comes first. Pure. */
+function compareDelegations(a, b) {
+	const activeA = a.state === "running" ? 1 : 0;
+	const activeB = b.state === "running" ? 1 : 0;
+	if (activeA !== activeB) return activeB - activeA;
+	return (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
 }
-/** Compact single-unit elapsed label: "12s"/"3m"/"1h"/"2d". Pure. */
-function fmtElapsed(ms) {
-	const total = Math.max(0, Math.floor(ms / 1e3));
-	const days = Math.floor(total / 86400);
-	const hours = Math.floor(total % 86400 / 3600);
-	const minutes = Math.floor(total % 3600 / 60);
-	const seconds = total % 60;
-	if (days > 0) return `${days}d`;
-	if (hours > 0) return `${hours}h`;
-	if (minutes > 0) return `${minutes}m`;
-	return `${seconds}s`;
+/** Token totals published on `SessionInfo.tokens`, one entry per counter. */
+/** One child of the dispatch tree: the delegation row plus the fields only the
+*  panel's detail view needs (`SessionInfo.title`/`parentID`/`tokens` and the
+*  spawning call's description). */
+/** Optional inputs of `collectDispatch`: a fixed clock (tests/render ticks) and
+*  an already-computed `agent` map, so a caller that walked the parent
+*  transcript anyway never pays for a second walk. */
+/** `message.list` of one session, degrades to an empty list. The host's list is
+*  a cached directory read, not a request. */
+function readSessionMessages(context, sessionID) {
+	try {
+		const result = context?.data?.session?.message?.list?.(sessionID);
+		return Array.isArray(result) ? result : [];
+	} catch {
+		return [];
+	}
 }
-/** Elapsed label for one row: a running job ticks `now - startedAt`; a terminal
-*  one is fixed at `updatedAt - startedAt` (em dash when a timestamp is
-*  missing). Pure. */
-function delegationElapsed(view, now) {
-	if (view.state === "running") return view.startedAt === null ? "—" : fmtElapsed(now - view.startedAt);
-	if (view.startedAt !== null && view.updatedAt !== null) return fmtElapsed(view.updatedAt - view.startedAt);
-	return "—";
-}
-/** Live rows first (a running job never falls behind the cap), then by most
-*  recent activity. Pure. */
-function orderDelegations(views) {
-	return [...views].sort((a, b) => {
-		const activeA = a.state === "running" ? 1 : 0;
-		const activeB = b.state === "running" ? 1 : 0;
-		if (activeA !== activeB) return activeB - activeA;
-		return (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
-	});
-}
-/** Cap the panel: at most `maxVisible` rows, the remainder collapsing into the
-*  "… +N more" line. Pure. */
-function ceilingDelegations(views, maxVisible = 8) {
-	const limit = Math.max(0, maxVisible);
-	const visible = views.slice(0, limit);
-	return {
-		visible,
-		hidden: Math.max(0, views.length - visible.length)
+/** Token counters of a child, null when the host published none of them. Pure. */
+function dispatchTokens(tokens) {
+	if (tokens === null || typeof tokens !== "object") return null;
+	const source = tokens;
+	const cache = source.cache !== null && typeof source.cache === "object" ? source.cache : {};
+	const totals = {
+		input: numberOrNull(source.input),
+		output: numberOrNull(source.output),
+		reasoning: numberOrNull(source.reasoning),
+		cacheRead: numberOrNull(cache.read),
+		cacheWrite: numberOrNull(cache.write)
 	};
+	return [
+		totals.input,
+		totals.output,
+		totals.reasoning,
+		totals.cacheRead,
+		totals.cacheWrite
+	].every((value) => value === null) ? null : totals;
+}
+/** One child `SessionInfo` + its live status → `DispatchEntry`. The call only
+*  ever adds the kind and the description; an absent one leaves the entry fully
+*  renderable. Pure. */
+function toDispatchEntry(child, status, now = Date.now(), call) {
+	const title = typeof child?.title === "string" && child.title !== "" ? child.title : null;
+	const parentID = typeof child?.parentID === "string" && child.parentID !== "" ? child.parentID : null;
+	const description = typeof call?.description === "string" && call.description !== "" ? call.description : null;
+	return {
+		view: toDelegationView(child, status, now, call),
+		title,
+		description,
+		parentID,
+		tokens: dispatchTokens(child?.tokens)
+	};
+}
+/** The delegation tree of `sessionID` — every child `session.family` returns,
+*  root excluded, each enriched from `session.get`/`session.status` and the
+*  parent's `subagent` calls. Empty when the family API is unavailable or the
+*  session id is not a real handle (never falls back to the root). Ordered by
+*  the shared `compareDelegations`, so callers render the same list in the same
+*  order. A family that repeats an id yields one row per child: the id is
+*  deduplicated before the walk, so a duplicate can never double a row or its
+*  cost. */
+function collectDispatch(context, sessionID, options = {}) {
+	if (!isValidSessionID(sessionID)) return [];
+	let family = [];
+	try {
+		const result = context?.data?.session?.family?.(sessionID);
+		if (Array.isArray(result)) family = result;
+	} catch {
+		return [];
+	}
+	const now = numberOrNull(options.now) ?? Date.now();
+	const calls = options.calls ?? collectSubagentCalls(readSessionMessages(context, sessionID));
+	const entries = [];
+	const seen = /* @__PURE__ */ new Set();
+	for (const childID of family) {
+		if (childID === sessionID || !isValidSessionID(childID)) continue;
+		if (seen.has(childID)) continue;
+		seen.add(childID);
+		let child;
+		try {
+			child = context.data.session.get(childID);
+		} catch {
+			continue;
+		}
+		if (!child) continue;
+		entries.push(toDispatchEntry(child, sessionStatusOf(context, childID), now, calls.get(childID) ?? null));
+	}
+	return entries.sort((a, b) => compareDelegations(a.view, b.view));
 }
 /** Sidebar blocks in render order. Spacing is derived from this list instead of
 *  from the view, so a hidden block can never leave an empty gap behind. */
@@ -816,14 +1391,14 @@ function ceilingDelegations(views, maxVisible = 8) {
 *  label. The fixed header (version/preset/session) takes none.
 *  Measured as one terminal cell by the host (`@opentui/core` counts
 *  `emoji-regex` matches as two): ▤ U+25A4 (EAW=A), ◆ U+25C6 (A), ▾ U+25BE (N),
-*  ◇ U+25C7 (A), ⌁ U+2301 (N). `☑` U+2611 was rejected for the Todo header
-*  because it matches `emoji-regex` and would occupy two cells. */
+*  ◈ U+25C8 (A). `☑` U+2611 was rejected for the Todo header because it matches
+*  `emoji-regex` and would occupy two cells; `⌁` U+2301 (the old Dispatch glyph)
+*  was replaced by the host's own Notice glyph. */
 const BLOCK_ICONS = {
 	context: "▤",
 	git: "◆",
 	todo: "▾",
-	agent: "◇",
-	dispatch: "⌁"
+	dispatch: "◈"
 };
 /** Tag every block that has content with its spacer: never before the first
 *  (the view puts a single blank line after the fixed header instead), one
@@ -843,11 +1418,20 @@ function withBlockSpacers(keys) {
 	}
 	return blocks;
 }
-/** Children listed before the "… +N" line. Five keeps the sidebar inside a
-*  short pane while still showing the finished job next to the live one. */
-const DISPATCH_VISIBLE_CEILING = 5;
+/** Live children rendered one row each; the rest collapse into `… +N rodando`. */
+const DISPATCH_RUNNING_CEILING = 3;
+/** Agent rollup rows rendered before the `… +K  $<soma>` line. */
+const DISPATCH_AGENT_CEILING = 3;
+/** Hard cap on the block's rendered rows, header included. The sidebar is
+*  short; live work is served first, then the finished rollup. */
+const DISPATCH_MAX_LINES = 8;
+/** Marker of the aggregated "finished" section. */
+const DISPATCH_DONE_MARKER = "✓";
 /** Column width of the agent (or of its title/id fallback). */
 const DISPATCH_AGENT_WIDTH = 12;
+/** Narrowest agent column a row may fall back to before the cost is kept whole
+*  and the label truncates further. */
+const DISPATCH_MIN_AGENT_WIDTH = 8;
 /** Column width of the short model id — the model is dropped before the agent
 *  or the cost so a row always fits. */
 const DISPATCH_MODEL_WIDTH = 7;
@@ -855,23 +1439,38 @@ const DISPATCH_MODEL_WIDTH = 7;
 const DISPATCH_COST_WIDTH = 5;
 /** Column width of the duration (`12.7s` / `1m04s` / `820ms`). */
 const DISPATCH_DURATION_WIDTH = 5;
+/** Column width of the `×<count>` cell of an agent rollup row. */
+const DISPATCH_COUNT_WIDTH = 3;
+/** Column width of an agent rollup cost (`$0.0051` still fits). */
+const DISPATCH_GROUP_COST_WIDTH = 7;
 /** Hard column budget for one row — a Dispatch line never wraps:
-*  marker(2) + agent(12) + model(7) + cost(5) + duration(5) + 3 spaces = 34. */
+*  marker(2) + agent(12) + model(7) + cost(5) + duration(5) + 3 spaces = 34.
+*  The kind suffix (`·disc`, `·disc~`) is wider evidence than the model, so a
+*  classified row spends the model's columns first: marker(2) + agent(≤12) +
+*  suffix(≤6) + cost(5) + duration(5) + 2 spaces ≤ 32, still inside 34. */
 const DISPATCH_MAX_WIDTH = 34;
-/** Row marker: ● live, ✓ succeeded, ✗ failed, − interrupted. The glyph is the
-*  redundant channel, so the state still reads in monochrome. Pure. */
-function dispatchMarker(state) {
-	if (state === "running") return "●";
-	if (state === "failed") return "✗";
-	if (state === "interrupted") return "−";
-	return "✓";
+/** Middle dot used between a label and its kind (`apollo·disc`). */
+const DISPATCH_KIND_SEPARATOR = "·";
+/** Background marker: the parent asked the child to run in the background. */
+const DISPATCH_BACKGROUND_MARKER = "~";
+/** Kind suffix glued to a row's label: `·disc`, `·disc~` for a background run,
+*  and empty when the child could not be classified (the row then reads exactly
+*  as before). Pure. */
+function dispatchKindSuffix(kind, background) {
+	if (kind === null || kind === void 0) return "";
+	const text = `${DISPATCH_KIND_SEPARATOR}${kind}`;
+	return background === true ? `${text}${DISPATCH_BACKGROUND_MARKER}` : text;
 }
-/** Row tone: live work is the block's only accent, a failed child is red, and
-*  every terminal state recedes to muted. Pure. */
-function dispatchTone(state) {
-	if (state === "running") return "success";
-	if (state === "failed") return "error";
-	return "muted";
+/** Header summary: `2 rodando · $3.49`. The live count is omitted when nothing
+*  runs, and the total spend is always printed (the header only renders while
+*  the tree has children, so `$0.00` is a real answer). Pure. */
+function dispatchHeaderSummary(running, cost) {
+	const parts = [];
+	const live = numberOrNull(running) ?? 0;
+	if (live > 0) parts.push(`${Math.round(live)} rodando`);
+	const formatted = formatSpendUSD(numberOrNull(cost) ?? 0);
+	if (formatted !== null) parts.push(formatted);
+	return parts.length === 0 ? null : parts.join(SPEND_LINE_SEPARATOR);
 }
 /** Compact duration without an internal space: `820` → `820ms`, `12_400` →
 *  `12.4s`, `64_000` → `1m04s`, `3_780_000` → `1h03m`, `172_800_000` → `2d`.
@@ -918,32 +1517,670 @@ function dispatchModelText(view) {
 function formatDispatchCost(cost) {
 	return formatUsageCost(cost) ?? "—";
 }
-/** One Dispatch row, columns aligned:
-*  `<marker> <agent> <model> <cost> <duration>`. The agent and model columns are
-*  padded, the cost and duration right-aligned, and the model column stays
-*  reserved when a child published no model so the numbers line up. When the
-*  row would exceed `max` columns the model is dropped first, then the cost —
-*  the agent is never cut below `DISPATCH_AGENT_WIDTH`. Pure. */
-function dispatchRowText(view, now = Date.now(), max = 34) {
-	const marker = `${dispatchMarker(view.state)} `;
-	const agent = dispatchAgentText(view);
-	const duration = dispatchElapsed(view, now);
-	const cost = formatDispatchCost(view.cost);
-	const agentColumn = agent.padEnd(12);
-	const modelColumn = dispatchModelText(view).padEnd(7);
-	const costColumn = cost.padStart(5);
-	const durationColumn = duration.padStart(5);
-	const limit = Math.max(1, max);
-	const full = `${marker}${agentColumn} ${modelColumn} ${costColumn} ${durationColumn}`;
-	if (full.length <= limit) return full;
-	const withoutModel = `${marker}${agentColumn} ${costColumn} ${durationColumn}`;
-	if (withoutModel.length <= limit) return withoutModel;
-	return `${marker}${agentColumn} ${durationColumn}`;
+/** Total spend of every child (live + finished), `0` when none published a
+*  numeric cost. Pure. */
+function dispatchTotalCost(views) {
+	let total = 0;
+	for (const view of views ?? []) {
+		const cost = numberOrNull(view?.cost);
+		if (cost !== null && cost >= 0) total += cost;
+	}
+	return total;
 }
-/** The "… +N" line for children beyond the cap, null when nothing was cut. Pure. */
-function hiddenDispatchText(hidden) {
-	if (!Number.isFinite(hidden) || hidden <= 0) return null;
-	return `\u2026 +${Math.round(hidden)}`;
+/** One live child: `⠸ <agent 12>·<kind> <custo> <duração>`, with the model as a
+*  fourth column only when the row still fits and the child is unclassified —
+*  the kind is the stronger evidence at this width, so it takes the model's
+*  columns. The kind rides glued to the label (never a column of its own) and
+*  disappears with the label's truncation; then the agent column shrinks (never
+*  below `DISPATCH_MIN_AGENT_WIDTH`); the cost is always present — `$0.00` for a
+*  zero cost, an em dash for a missing one. Pure. */
+function runningChildRowText(view, now = Date.now(), frame = 0, max = 34) {
+	const marker = `${spinnerFrame(frame)} `;
+	const duration = dispatchElapsed(view, now).padStart(5);
+	const cost = formatDispatchCost(view.cost).padStart(5);
+	const model = dispatchModelText(view);
+	const suffix = dispatchKindSuffix(view.kind, view.background);
+	const limit = Math.max(1, max);
+	const row = (agentWidth, withModel, withSuffix = true) => {
+		const kind = withSuffix ? suffix : "";
+		const name = dispatchAgentText(view, agentWidth);
+		const cell = kind === "" ? name.padEnd(agentWidth) : `${name}${kind}`;
+		const tail = withModel ? `${model.padEnd(7)} ${cost} ${duration}` : `${cost} ${duration}`;
+		return `${marker}${cell} ${tail}`;
+	};
+	if (model !== "" && suffix === "") {
+		const withModel = row(12, true);
+		if (withModel.length <= limit) return withModel;
+	}
+	const full = row(12, false);
+	if (full.length <= limit) return full;
+	for (let width = 11; width >= 8; width -= 1) {
+		const narrowed = row(width, false);
+		if (narrowed.length <= limit) return narrowed;
+	}
+	if (suffix !== "") return row(8, false, false);
+	return row(8, false);
+}
+/** Sessions and spend attributed to one agent in the finished section. `kind`
+*  is only set when every finished session of the group agrees on it — a mixed
+*  group carries no single purpose, so the row omits it rather than picking one.
+*  `background` follows the same rule (all of them background). */
+/** Rollup of the finished children by agent: `×count` sessions and the summed
+*  `SessionInfo.cost`. Failed and interrupted children are included (they are
+*  finished); running ones are not. The group's kind survives only when the
+*  whole group agrees, so an aggregate row never claims a purpose it cannot
+*  prove. Ordered by cost, then count, then name. Pure. */
+function collectChildAgentUsage(views) {
+	const totals = /* @__PURE__ */ new Map();
+	for (const view of views ?? []) {
+		if (!view || view.state === "running") continue;
+		const agent = agentKey(view.agent);
+		const current = totals.get(agent) ?? {
+			agent,
+			count: 0,
+			cost: 0,
+			kinds: /* @__PURE__ */ new Set(),
+			background: true
+		};
+		current.count += 1;
+		current.kinds.add(view.kind ?? null);
+		if (view.background !== true) current.background = false;
+		const cost = numberOrNull(view.cost);
+		if (cost !== null && cost >= 0) current.cost += cost;
+		totals.set(agent, current);
+	}
+	return [...totals.values()].map((entry) => {
+		const shared = entry.kinds.size === 1 ? [...entry.kinds][0] ?? null : null;
+		return {
+			agent: entry.agent,
+			count: entry.count,
+			cost: entry.cost,
+			kind: shared,
+			background: entry.background
+		};
+	}).sort((a, b) => b.cost - a.cost || b.count - a.count || a.agent.localeCompare(b.agent));
+}
+/** One agent rollup row: `<agent 12> ×<count 3>·<kind> <custo 7>`. The kind is
+*  glued to the count (the row's only label) and omitted for a mixed group; the
+*  agent column shrinks (never below the minimum) before the cost, which is
+*  what the row is for. Pure. */
+function childAgentRowText(row, max = 34) {
+	const suffix = dispatchKindSuffix(row?.kind, row?.background);
+	const count = `\u00D7${String(Math.max(0, Math.round(numberOrNull(row?.count) ?? 0))).padStart(3)}`;
+	const cost = formatDispatchCost(row?.cost).padStart(7);
+	const limit = Math.max(1, max);
+	const text = (agentWidth, withSuffix = true) => {
+		const kind = withSuffix ? suffix : "";
+		return `${truncateLabel(agentKey(row?.agent), agentWidth).padEnd(agentWidth)} ${count}${kind} ${cost}`;
+	};
+	const full = text(12);
+	if (full.length <= limit) return full;
+	for (let width = 11; width >= 8; width -= 1) {
+		const narrowed = text(width);
+		if (narrowed.length <= limit) return narrowed;
+	}
+	if (suffix !== "") return text(8, false);
+	return text(8);
+}
+/** The `… +K  $<soma>` line for agents beyond the rollup cap. Null when every
+*  agent fits. Pure. */
+function hiddenChildAgentsText(hidden, hiddenCost) {
+	const count = numberOrNull(hidden) ?? 0;
+	if (count <= 0) return null;
+	const cost = formatSpendUSD(numberOrNull(hiddenCost) ?? 0);
+	return cost === null ? `\u2026 +${Math.round(count)}` : `\u2026 +${Math.round(count)}  ${cost}`;
+}
+/** Summary of the finished section: `✓ 70 · $3.40 · 9 agentes`. `· $<soma>` is
+*  omitted when nothing was spent and `· 1 agente` when a single agent owns
+*  every finished child; `✓ <total>` always prints. Null when nothing finished.
+*  Pure. */
+function completedSummaryText(completed, cost, agents) {
+	const total = numberOrNull(completed) ?? 0;
+	if (total <= 0) return null;
+	const parts = [`✓ ${Math.round(total)}`];
+	const spend = numberOrNull(cost) ?? 0;
+	if (spend > 0) {
+		const formatted = formatSpendUSD(spend);
+		if (formatted !== null) parts.push(formatted);
+	}
+	const groups = Math.round(numberOrNull(agents) ?? 0);
+	if (groups > 1) parts.push(`${groups} agentes`);
+	return parts.join(SPEND_LINE_SEPARATOR);
+}
+/** The `· <F> falhas` suffix of the finished summary, null when nothing failed.
+*  Pure. */
+function failedSuffixText(failures) {
+	const count = numberOrNull(failures) ?? 0;
+	if (count <= 0) return null;
+	const rounded = Math.round(count);
+	return `${rounded} ${rounded === 1 ? "falha" : "falhas"}`;
+}
+/** One rendered live row: its text plus the session it navigates to. */
+/** Everything the `Dispatch` block renders, already joined and capped. */
+/** Newest activity first, so the live rows that just moved lead the section.
+*  Pure. */
+function lastActivity(view) {
+	return Math.max(numberOrNull(view?.updatedAt) ?? 0, numberOrNull(view?.startedAt) ?? 0);
+}
+/** Build the whole block from the child set. Null when there is no child, so
+*  the block (and its spacer) never renders empty. Live work is capped at
+*  `DISPATCH_RUNNING_CEILING` and the finished rollup at
+*  `DISPATCH_AGENT_CEILING`, with the rollup giving up rows first to keep the
+*  block inside `DISPATCH_MAX_LINES`. Pure. */
+function buildDispatchBlock(views, now = Date.now(), frame = 0, max = 34) {
+	const list = Array.isArray(views) ? views.filter((view) => view && typeof view.id === "string") : [];
+	if (list.length === 0) return null;
+	const running = list.filter((view) => view.state === "running").sort((a, b) => lastActivity(b) - lastActivity(a));
+	const finished = list.filter((view) => view.state !== "running");
+	const groups = collectChildAgentUsage(finished);
+	const finishedCost = groups.reduce((sum, group) => sum + group.cost, 0);
+	const failures = finished.filter((view) => view.state === "failed").length;
+	const totalCost = dispatchTotalCost(list);
+	const runningSlots = Math.min(3, running.length);
+	const runningHidden = running.length - runningSlots;
+	const runningLines = running.map((view) => ({
+		id: view.id,
+		text: runningChildRowText(view, now, frame, max)
+	}));
+	const summary = completedSummaryText(finished.length, finishedCost, groups.length);
+	const runningRows = runningSlots + (runningHidden > 0 ? 1 : 0);
+	const room = Math.max(0, 7 - runningRows - (summary === null ? 0 : 1));
+	const wanted = Math.min(3, groups.length);
+	const agentSlots = groups.length > wanted ? Math.min(wanted, Math.max(0, room - 1)) : Math.min(wanted, room);
+	const visibleAgents = groups.slice(0, agentSlots);
+	const hiddenAgents = groups.slice(agentSlots);
+	return {
+		runningCount: running.length,
+		completedCount: finished.length,
+		agentCount: groups.length,
+		failures,
+		totalCost,
+		running: runningLines.slice(0, runningSlots),
+		runningHidden,
+		summary,
+		agents: visibleAgents,
+		agentsHidden: hiddenAgents.length,
+		agentsHiddenCost: hiddenAgents.reduce((sum, group) => sum + group.cost, 0)
+	};
+}
+/** Panel content name, registered by the `session.panel` claim and passed to
+*  `ui.panel.open`. */
+const DISPATCH_PANEL_NAME = "pantheon.dispatch";
+/** Toast shown when `ui.panel.open` refuses (no session route is active). The
+*  panel only exists inside a session, so there is no alternative route. */
+const DISPATCH_PANEL_TOAST = "Abra uma sessão para ver o Dispatch";
+/** Panel title marker — the same glyph the sidebar block header uses. */
+const DISPATCH_PANEL_HEADER_MARKER = "◈";
+/** Selected-row gutter marker (`▸`, one cell). */
+const DISPATCH_PANEL_SELECTION_MARKER = "▸";
+/** Cells the selection gutter occupies before a row's own text. */
+const DISPATCH_PANEL_SELECTION_GUTTER = 2;
+/** Column of the horizontal rule under the header. */
+const DISPATCH_PANEL_RULE_CHAR = "─";
+/** Em dash for any datum the host did not publish. */
+const DISPATCH_PANEL_DASH = "—";
+/** Body of an empty panel (the claim still renders, the list is just empty). */
+const DISPATCH_PANEL_EMPTY_TEXT = "Nenhuma sessão delegada";
+/** Width at or above which the list and the detail sit side by side. */
+const DISPATCH_PANEL_WIDE_MIN_WIDTH = 72;
+/** Rows the viewport holds; pageup/pagedown move by exactly this many rows. */
+const DISPATCH_PANEL_PAGE_SIZE = 10;
+/** Panel row columns: marker(2) + agent(12) + kind(4) + cost(≥7) + duration(8).
+*  The cost column is at least this wide; a sub-cent cost widens it per row. */
+const DISPATCH_PANEL_AGENT_WIDTH = 12;
+const DISPATCH_PANEL_MIN_AGENT_WIDTH = 6;
+const DISPATCH_PANEL_KIND_WIDTH = 4;
+const DISPATCH_PANEL_COST_WIDTH = 7;
+const DISPATCH_PANEL_DURATION_WIDTH = 8;
+/** Title column budget (`◈ Dispatch — <sessão>`). */
+const DISPATCH_PANEL_TITLE_WIDTH = 44;
+/** Badge appended to the title while the host presents the panel full screen. */
+const DISPATCH_PANEL_FULLSCREEN_BADGE = "[fullscreen]";
+/** Columns a row spends before the agent cell, cost column excluded
+*  (2 marker + 1 + 4 kind + 1 + 8 duration). The cost is measured per row
+*  because `<$0.0001` is one cell wider than `DISPATCH_PANEL_COST_WIDTH`. */
+const DISPATCH_PANEL_ROW_FIXED_WIDTH = 16;
+/** Human labels of a kind's evidence, as the detail line prints them. */
+const DISPATCH_KIND_ORIGIN_LABELS = {
+	prefix: "prefixo",
+	agent: "agente",
+	unavailable: "indisponível"
+};
+/** Entries in row order: live work first, then most recent activity — the same
+*  comparator the sidebar block uses. Pure. */
+function orderDispatchEntries(entries) {
+	return [...entries].sort((a, b) => compareDelegations(a.view, b.view));
+}
+/** `◈ Dispatch — <sessão>`, with the session title truncated (never wrapped),
+*  plus the `[fullscreen]` badge while the host presents the panel full screen.
+*  An absent title leaves the marker and the name alone. Pure. */
+function dispatchPanelTitle(sessionTitle, max = 44, presentation) {
+	const base = `◈ Dispatch`;
+	const badge = presentation === "fullscreen" ? ` ${DISPATCH_PANEL_FULLSCREEN_BADGE}` : "";
+	const title = typeof sessionTitle === "string" ? sessionTitle.trim() : "";
+	if (title === "") return `${base}${badge}`;
+	return `${base} — ${truncateLabel(title, Math.max(4, max))}${badge}`;
+}
+/** Header counters: `2 rodando · 70 concluídos · 1 falha · $3.59`. A zero
+*  counter is omitted (never `0 rodando`); the total spend is printed whenever
+*  the tree has a child, because `$0.00` is then a real answer. Null for an
+*  empty tree, so the header renders no counter line at all. Pure. */
+function dispatchPanelHeader(entries) {
+	const list = Array.isArray(entries) ? entries.filter((entry) => entry?.view) : [];
+	if (list.length === 0) return null;
+	let running = 0;
+	let completed = 0;
+	let failed = 0;
+	for (const entry of list) switch (entry.view.state) {
+		case "running":
+			running += 1;
+			break;
+		case "completed":
+			completed += 1;
+			break;
+		case "failed": failed += 1;
+	}
+	const parts = [];
+	if (running > 0) parts.push(`${running} rodando`);
+	if (completed > 0) parts.push(`${completed} ${completed === 1 ? "concluído" : "concluídos"}`);
+	if (failed > 0) parts.push(`${failed} ${failed === 1 ? "falha" : "falhas"}`);
+	const cost = formatSpendUSD(dispatchTotalCost(list.map((entry) => entry.view)));
+	if (cost !== null) parts.push(cost);
+	return parts.length === 0 ? null : parts.join(SPEND_LINE_SEPARATOR);
+}
+/** Horizontal rule under the header, clamped to the panel's own width. Pure. */
+function dispatchPanelRule(width, max = 200) {
+	const columns = Math.max(0, Math.min(max, Math.floor(numberOrNull(width) ?? 0)));
+	return "─".repeat(columns);
+}
+/** Row marker: animated spinner while running, `✓` done, `✗` failed, `○`
+*  cancelled/interrupted, `?` for a state the host never publishes. Every glyph
+*  is one cell wide and `?` is the only fallback, so an unknown state is visible
+*  instead of silently rendering as success. Pure. */
+function dispatchPanelMarker(state, frame = 0) {
+	switch (state) {
+		case "running": return `${spinnerFrame(frame)} `;
+		case "completed": return "✓ ";
+		case "failed": return "✗ ";
+		case "interrupted": return "○ ";
+		default: return "? ";
+	}
+}
+/** One padded, truncated cell: an absent/blank value becomes the em dash, and
+*  the value is cut to the cell's own width (never to the line's length, so one
+*  long cell cannot squeeze its neighbours out of alignment). Pure. */
+function dispatchPanelCell(value, width) {
+	const cells = Math.max(1, Math.floor(numberOrNull(width) ?? 1));
+	const text = typeof value === "string" ? value.trim() : "";
+	return padCell(text === "" ? "—" : text, cells);
+}
+/** One list row: `⠋ prometheus   plan   $0.09  14m34s`. The agent cell absorbs
+*  the width difference (down to `DISPATCH_PANEL_MIN_AGENT_WIDTH`), so a narrow
+*  panel truncates the label rather than the numbers; the cost column grows by
+*  itself for a sub-cent value so the row never spends more than its budget.
+*  Pure. */
+function dispatchPanelRowText(entry, options = {}) {
+	const view = entry?.view;
+	if (!view) return "";
+	const now = numberOrNull(options.now) ?? Date.now();
+	const frame = numberOrNull(options.frame) ?? 0;
+	const width = Math.floor(numberOrNull(options.max) ?? 35);
+	const costText = formatDispatchCost(view.cost);
+	const costWidth = Math.max(7, cellWidth(costText));
+	const agentWidth = Math.max(6, Math.min(12, width - (DISPATCH_PANEL_ROW_FIXED_WIDTH + costWidth)));
+	return `${dispatchPanelMarker(view.state, frame)}${dispatchPanelCell(dispatchAgentText(view, 12), agentWidth)} ${dispatchPanelCell(view.kind, 4)} ${costText.padStart(costWidth)}${truncateLabel(dispatchElapsed(view, now), 8).padStart(8)}`;
+}
+/** `ses_ab12cd`, short enough for a detail line. Full id when it already fits. */
+function shortSessionID(id, max = 10) {
+	const text = typeof id === "string" ? id.trim() : "";
+	if (text === "") return "—";
+	return text.length <= max ? text : `${text.slice(0, Math.max(1, max - 1))}\u2026`;
+}
+/** Token counters of one child on a single line (`in 1.2K · out 430 · r 120 ·
+*  cache 8K/1K`), or `tokens —` when the host published none. Pure. */
+function dispatchTokenLine(tokens) {
+	if (!tokens) return `tokens —`;
+	const value = (token) => token === null ? "—" : formatContextWindow(token) ?? String(token);
+	return [
+		`in ${value(tokens.input)}`,
+		`out ${value(tokens.output)}`,
+		`r ${value(tokens.reasoning)}`,
+		`cache ${value(tokens.cacheRead)}/${value(tokens.cacheWrite)}`
+	].join(SPEND_LINE_SEPARATOR);
+}
+/** Detail lines of the selected child: heading (title, else the spawning
+*  description, else the row label), short id + model, token counters, and the
+*  kind plus its evidence and the parent id. Two to four lines; `expanded:
+*  false` keeps only the heading. Every missing datum prints `—`. Pure. */
+function dispatchPanelDetail(entry, options = {}) {
+	if (!entry?.view) return ["—"];
+	const max = Math.max(8, Math.floor(numberOrNull(options.max) ?? 60));
+	const view = entry.view;
+	const lines = [truncateLabel(entry.title ?? entry.description ?? (typeof view.label === "string" && view.label !== "" ? view.label : null) ?? view.id, max)];
+	if (options.expanded === false) return lines;
+	lines.push(truncateLabel(`${shortSessionID(view.id)}${SPEND_LINE_SEPARATOR}${view.model ?? "—"}`, max));
+	lines.push(truncateLabel(dispatchTokenLine(entry.tokens), max));
+	const origin = DISPATCH_KIND_ORIGIN_LABELS[view.kindOrigin] ?? DISPATCH_KIND_ORIGIN_LABELS.unavailable;
+	lines.push(truncateLabel(`kind ${view.kind ?? "—"} (${origin})${SPEND_LINE_SEPARATOR}parent ${entry.parentID ?? "—"}`, max));
+	return lines;
+}
+/** Panel geometry for its input width: wide (≥72) puts the detail in a second
+*  column, narrow stacks it under the list. `rowWidth` is what a list row may
+*  spend after the selection gutter. Pure. */
+function dispatchPanelLayout(width) {
+	const columns = Math.max(20, Math.floor(numberOrNull(width) ?? 0));
+	if (columns >= 72) {
+		const listWidth = Math.max(40, Math.min(64, columns - 26));
+		return {
+			mode: "wide",
+			listWidth,
+			detailWidth: Math.max(24, columns - listWidth - 2),
+			rowWidth: listWidth - 2
+		};
+	}
+	return {
+		mode: "narrow",
+		listWidth: columns,
+		detailWidth: columns,
+		rowWidth: columns - 2
+	};
+}
+/** Viewport of the list: the page holding the selection, scrolled so the
+*  selected row stays visible with its predecessors. Bounded, so a 71-child
+*  tree renders ten rows, never all of them. Pure. */
+function dispatchPanelWindow(total, selectedIndex, pageSize = 10) {
+	const count = Math.max(0, Math.floor(numberOrNull(total) ?? 0));
+	const size = Math.max(1, Math.floor(numberOrNull(pageSize) ?? 10));
+	if (count === 0) return {
+		start: 0,
+		end: 0,
+		size
+	};
+	const index = Math.min(count - 1, Math.max(0, Math.floor(numberOrNull(selectedIndex) ?? 0)));
+	const start = Math.min(Math.max(0, index - size + 1), Math.max(0, count - size));
+	return {
+		start,
+		end: Math.min(count, start + size),
+		size
+	};
+}
+/** `1-10 de 71` while the list is longer than one page; null when everything
+*  fits (and for an empty list), so the footer never pads itself. Pure. */
+function dispatchPanelRangeText(start, end, total) {
+	const count = Math.max(0, Math.floor(numberOrNull(total) ?? 0));
+	const first = Math.max(0, Math.floor(numberOrNull(start) ?? 0));
+	const last = Math.min(count, Math.floor(numberOrNull(end) ?? 0));
+	if (count === 0 || first === 0 && last >= count) return null;
+	return `${first + 1}-${last} de ${count}`;
+}
+/** One rendered list row, selection resolved by the view against the model's
+*  selected id. */
+/** Every entry as a row, ordered by the shared comparator. Pure. */
+function dispatchPanelRows(entries, options = {}) {
+	return orderDispatchEntries(Array.isArray(entries) ? entries.filter((entry) => entry?.view && typeof entry.view.id === "string") : []).map((entry) => ({
+		id: entry.view.id,
+		state: entry.view.state,
+		text: dispatchPanelRowText(entry, options)
+	}));
+}
+/** Panel action, one per command. */
+/** One namespaced command: stable id, explicit binding, and the action it runs. */
+/** The panel's whole keymap, in table order. `bind` is explicit for every
+*  command (no auto-binding), and every id is namespaced, so a `k`/`q`/`f`
+*  binding can never collide with the host's own keys. */
+const DISPATCH_PANEL_COMMANDS = [
+	{
+		action: "up",
+		id: "pantheon.dispatch.up",
+		title: "Dispatch: selecionar anterior",
+		bind: "k,up"
+	},
+	{
+		action: "down",
+		id: "pantheon.dispatch.down",
+		title: "Dispatch: selecionar próxima",
+		bind: "j,down"
+	},
+	{
+		action: "home",
+		id: "pantheon.dispatch.home",
+		title: "Dispatch: primeira",
+		bind: "home"
+	},
+	{
+		action: "end",
+		id: "pantheon.dispatch.end",
+		title: "Dispatch: última",
+		bind: "end"
+	},
+	{
+		action: "pageup",
+		id: "pantheon.dispatch.pageup",
+		title: "Dispatch: página acima",
+		bind: "pageup"
+	},
+	{
+		action: "pagedown",
+		id: "pantheon.dispatch.pagedown",
+		title: "Dispatch: página abaixo",
+		bind: "pagedown"
+	},
+	{
+		action: "toggle",
+		id: "pantheon.dispatch.toggle",
+		title: "Dispatch: expandir detalhe",
+		bind: "enter"
+	},
+	{
+		action: "fullscreen",
+		id: "pantheon.dispatch.fullscreen",
+		title: "Dispatch: tela cheia",
+		bind: "f"
+	},
+	{
+		action: "close",
+		id: "pantheon.dispatch.close",
+		title: "Dispatch: fechar",
+		bind: "escape,q"
+	}
+];
+/** Run one action against the model and the host-owned panel input. Kept apart
+*  from the keymap so the whole command surface is testable without a renderer.
+*/
+function performDispatchPanelAction(action, model, panel) {
+	switch (action) {
+		case "up":
+			model.move(-1);
+			return;
+		case "down":
+			model.move(1);
+			return;
+		case "home":
+			model.first();
+			return;
+		case "end":
+			model.last();
+			return;
+		case "pageup":
+			model.pageUp();
+			return;
+		case "pagedown":
+			model.pageDown();
+			return;
+		case "toggle":
+			model.toggle();
+			return;
+		case "fullscreen":
+			panel.toggleFullscreen();
+			return;
+		case "close":
+			panel.close();
+			return;
+		default: return;
+	}
+}
+/** Footer: the keys the host reports for each command (`keymap.shortcuts`) with
+*  an em dash whenever a command has no binding, so the hint can never advertise
+*  a key that does nothing. Pure. */
+function dispatchPanelFooter(shortcutsOf) {
+	const keys = (id) => {
+		let list = [];
+		try {
+			const result = shortcutsOf(id);
+			list = Array.isArray(result) ? result : [];
+		} catch {
+			list = [];
+		}
+		const text = list.map((key) => String(key ?? "").trim()).filter((key) => key !== "").join("/");
+		return text === "" ? "—" : text;
+	};
+	return [
+		`${keys("pantheon.dispatch.up")} ${keys("pantheon.dispatch.down")} mover`,
+		`${keys("pantheon.dispatch.toggle")} detalhe`,
+		`${keys("pantheon.dispatch.fullscreen")} fullscreen`,
+		`${keys("pantheon.dispatch.close")} fechar`
+	].join(SPEND_LINE_SEPARATOR);
+}
+/** The subset of `PanelInput` the model reads, so tests can drive it with a
+*  plain object. */
+/** `keymap.shortcuts` of one command; empty when the keymap is unavailable. */
+function keymapShortcuts(context, id) {
+	try {
+		const list = context?.keymap?.shortcuts?.(id);
+		return Array.isArray(list) ? list : [];
+	} catch {
+		return [];
+	}
+}
+/** Open the panel from the command palette / slash command. `ui.panel.open`
+*  only accepts a `session` route, so a refusal (no session open) is answered
+*  with a toast — never a fallback route, never a silent no-op. Returns whether
+*  the panel opened. */
+function openDispatchPanel(context) {
+	let opened = false;
+	try {
+		opened = context?.ui?.panel?.open?.(DISPATCH_PANEL_NAME) === true;
+	} catch {
+		opened = false;
+	}
+	if (opened) return true;
+	try {
+		context?.ui?.toast?.show?.({
+			message: DISPATCH_PANEL_TOAST,
+			variant: "warning"
+		});
+	} catch {}
+	return false;
+}
+/** Reactive state the panel view renders. Selection is held by session id, so
+*  it survives list updates; the index is derived (and falls back to the first
+*  row when the selected child disappears). */
+/** Model behind the panel. Mounted only while the panel claim renders (the
+*  `Show` in `session.panel`), so the 80 ms tick it arms exists exactly while
+*  the panel is open; it also stops on `isOpen()` going false and on dispose.
+*  It performs no `message.sync`, writes no `session.metadata` and makes no
+*  request: `collectDispatch` reads only host-cached state. */
+function createDispatchPanelModel(context, panel) {
+	const [revision, setRevision] = createSignal(0);
+	const [frame, setFrame] = createSignal(0);
+	const [expanded, setExpanded] = createSignal(true);
+	const [selectedID, setSelectedID] = createSignal(null);
+	const isOpen = () => panel().name === DISPATCH_PANEL_NAME;
+	const activeSessionID = () => {
+		const id = panel().sessionID;
+		return isValidSessionID(id) ? id : "";
+	};
+	const entries = createMemo(() => {
+		revision();
+		if (!isOpen()) return [];
+		return collectDispatch(context, activeSessionID());
+	});
+	const layout = createMemo(() => dispatchPanelLayout(panel().width));
+	const rows = createMemo(() => {
+		const mode = layout();
+		return dispatchPanelRows(entries(), {
+			now: Date.now(),
+			frame: frame(),
+			max: mode.rowWidth
+		});
+	});
+	const selectedIndex = createMemo(() => {
+		const list = rows();
+		if (list.length === 0) return 0;
+		const id = selectedID();
+		if (id === null) return 0;
+		const index = list.findIndex((row) => row.id === id);
+		return index === -1 ? 0 : index;
+	});
+	const selectedIDAccessor = createMemo(() => rows()[selectedIndex()]?.id ?? null);
+	const selectedEntry = createMemo(() => entries()[selectedIndex()] ?? null);
+	const session = createMemo(() => {
+		revision();
+		const id = activeSessionID();
+		if (id === "") return void 0;
+		try {
+			return context.data.session.get(id);
+		} catch {
+			return;
+		}
+	});
+	const title = createMemo(() => dispatchPanelTitle(session()?.title, 44, panel().presentation));
+	const header = createMemo(() => dispatchPanelHeader(entries()));
+	const detail = createMemo(() => dispatchPanelDetail(selectedEntry(), {
+		expanded: expanded(),
+		max: layout().detailWidth
+	}));
+	const visible = createMemo(() => {
+		const list = rows();
+		const window = dispatchPanelWindow(list.length, selectedIndex());
+		return {
+			start: window.start,
+			rows: list.slice(window.start, window.end)
+		};
+	});
+	const hasRunning = createMemo(() => rows().some((row) => row.state === "running"));
+	const footer = createMemo(() => {
+		const list = rows();
+		const window = dispatchPanelWindow(list.length, selectedIndex());
+		const range = dispatchPanelRangeText(window.start, window.end, list.length);
+		const hints = dispatchPanelFooter((id) => keymapShortcuts(context, id));
+		return range === null ? hints : `${range}${SPEND_LINE_SEPARATOR}${hints}`;
+	});
+	const select = (index) => {
+		const list = rows();
+		if (list.length === 0) return;
+		const clamped = Math.min(list.length - 1, Math.max(0, Math.round(index)));
+		setSelectedID(list[clamped]?.id ?? null);
+	};
+	onMount(() => {
+		onCleanup(subscribeSidebarRefresh(context, () => setRevision((value) => value + 1)));
+	});
+	createEffect(() => {
+		if (!isOpen() || !hasRunning()) return;
+		const spinner = setInterval(() => setFrame((value) => value + 1), SPINNER_INTERVAL_MS);
+		onCleanup(() => clearInterval(spinner));
+	});
+	return {
+		entries,
+		rows,
+		title,
+		header,
+		detail,
+		layout,
+		visible,
+		selectedID: selectedIDAccessor,
+		selectedIndex,
+		expanded,
+		hasRunning,
+		frame,
+		footer,
+		move: (delta) => select(selectedIndex() + (numberOrNull(delta) ?? 0)),
+		first: () => select(0),
+		last: () => select(rows().length - 1),
+		pageUp: () => select(selectedIndex() - 10),
+		pageDown: () => select(selectedIndex() + 10),
+		toggle: () => setExpanded((value) => !value)
+	};
 }
 /** Session ids to eagerly sync at load (deduped, bounded). Pure. */
 function collectWarmupTargets(sessions, limit = WARMUP_SESSION_LIMIT) {
@@ -1182,7 +2419,7 @@ function ensureSpendUnit(call) {
 *  running-only spinner and the completion-toast effect. `context` stays loosely
 *  typed (the host API only exists at runtime) but the refresh event names are
 *  narrowed to the V2 union at the subscription site. */
-function createSidebarModel(context, sessionID) {
+function createSidebarModel(context, sessionID, gitExec = defaultGitExec) {
 	const [revision, setRevision] = createSignal(0);
 	const [metricsRevision, setMetricsRevision] = createSignal(0);
 	const [frame, setFrame] = createSignal(0);
@@ -1225,28 +2462,94 @@ function createSidebarModel(context, sessionID) {
 			return null;
 		}
 	});
-	const [gitChanges, setGitChanges] = createSignal(null);
+	const [gitChangesRead, setGitChangesRead] = createSignal({
+		session: activeSessionID(),
+		text: null
+	});
+	const [gitCliRead, setGitCliRead] = createSignal({
+		session: activeSessionID(),
+		snapshot: null
+	});
+	const gitChanges = createMemo(() => {
+		const read = gitChangesRead();
+		return read.session === activeSessionID() ? read.text : null;
+	});
+	const gitCli = createMemo(() => {
+		const read = gitCliRead();
+		return read.session === activeSessionID() ? read.snapshot : null;
+	});
 	let gitRequest = 0;
 	let gitDebounce;
+	let gitProbeDebounce;
+	let gitProbeSessionID = activeSessionID();
+	let gitProbeStartedAt = null;
+	let gitProbeInFlight = false;
+	let disposed = false;
 	const loadGitChanges = async () => {
 		const status = vcsStatusCall(context);
 		if (status === null) return;
+		const session = activeSessionID();
 		const request = ++gitRequest;
 		try {
 			const result = await status({ location: { directory: resolveSidebarCwd(context) } });
-			if (request !== gitRequest) return;
+			if (request !== gitRequest || session !== activeSessionID()) return;
 			const files = Array.isArray(result?.data) ? result.data : Array.isArray(result) ? result : [];
-			setGitChanges(formatGitChanges(files));
+			setGitChangesRead({
+				session,
+				text: formatGitChanges(files)
+			});
 		} catch {}
+	};
+	const runGitProbe = async () => {
+		const session = activeSessionID();
+		if (session !== gitProbeSessionID) {
+			gitProbeSessionID = session;
+			gitProbeStartedAt = null;
+			gitProbeInFlight = false;
+		}
+		if (!gitProbeAllowed({
+			now: Date.now(),
+			lastRunAt: gitProbeStartedAt,
+			inFlight: gitProbeInFlight
+		})) return;
+		gitProbeInFlight = true;
+		gitProbeStartedAt = Date.now();
+		try {
+			const snapshot = await readGitSnapshot(resolveSidebarCwd(context), gitExec);
+			if (!disposed && session === activeSessionID()) setGitCliRead({
+				session,
+				snapshot
+			});
+		} catch {} finally {
+			if (session === gitProbeSessionID) gitProbeInFlight = false;
+		}
 	};
 	const scheduleGitChanges = () => {
 		if (vcsStatusCall(context) === null) return;
+		if (gitCli() !== null) return;
 		if (gitDebounce !== void 0) clearTimeout(gitDebounce);
 		gitDebounce = setTimeout(() => {
 			gitDebounce = void 0;
 			loadGitChanges();
 		}, 400);
 	};
+	const scheduleGitProbe = () => {
+		if (gitProbeDebounce !== void 0) clearTimeout(gitProbeDebounce);
+		gitProbeDebounce = setTimeout(() => {
+			gitProbeDebounce = void 0;
+			runGitProbe();
+		}, GIT_CLI_DEBOUNCE_MS);
+	};
+	const gitLine = createMemo(() => {
+		const snapshot = gitCli();
+		if (snapshot !== null) return formatGitSnapshot(snapshot);
+		return gitChanges();
+	});
+	createEffect(on(activeSessionID, (id) => {
+		if (disposed || id === "") return;
+		runGitProbe();
+		loadGitChanges();
+	}, { defer: true }));
 	const [spend, setSpend] = createSignal(null);
 	let spendTotals = {
 		today: null,
@@ -1323,12 +2626,15 @@ function createSidebarModel(context, sessionID) {
 		const rootID = activeSessionID();
 		const collected = [];
 		let todo = [];
-		for (const id of familySessionIDs()) try {
-			const result = context.data.session.message?.list?.(id);
-			if (!Array.isArray(result)) continue;
-			collected.push(...result.slice(-400));
-			if (id === rootID) todo = latestTodoItems(result) ?? [];
-		} catch {}
+		for (const id of familySessionIDs()) {
+			let list = [];
+			try {
+				const result = context.data.session.message?.list?.(id);
+				if (Array.isArray(result)) list = result;
+			} catch {}
+			collected.push(...list.slice(-400));
+			if (id === rootID) todo = latestTodoItems(list) ?? [];
+		}
 		return {
 			messages: collected,
 			todo
@@ -1404,6 +2710,26 @@ function createSidebarModel(context, sessionID) {
 			overridden: override !== null
 		};
 	});
+	const provider = createMemo(() => {
+		revision();
+		const fromSession = providerIDFromRef(session()?.model);
+		if (fromSession !== null) return fromSession;
+		const list = messages();
+		for (let index = list.length - 1; index >= 0; index -= 1) {
+			const message = list[index];
+			if (message?.type !== "assistant") continue;
+			const fromMessage = providerIDFromRef(message.model);
+			if (fromMessage !== null) return fromMessage;
+		}
+		const { agentRef } = modelRefs();
+		const fromAgent = providerIDFromRef(agentRef);
+		if (fromAgent !== null) return fromAgent;
+		try {
+			return providerIDFromModels(context.data.location?.model?.list?.(location), agentRef);
+		} catch {
+			return null;
+		}
+	});
 	const contextUsage = createMemo(() => {
 		const list = messages();
 		if (list.length === 0) return null;
@@ -1418,47 +2744,58 @@ function createSidebarModel(context, sessionID) {
 		}
 		return computeContextUsage(list, limit, session()?.revert?.messageID);
 	});
-	const allDelegations = createMemo(() => {
+	const cachePerformance = createMemo(() => {
+		const message = lastAssistantWithTokens(messages(), session()?.revert?.messageID);
+		return message === null ? null : cacheHitPercent(message.tokens);
+	});
+	const turnPerformance = createMemo(() => {
+		const list = messages();
+		let anchor = -1;
+		for (let index = list.length - 1; index >= 0; index--) if (list[index]?.type === "assistant") {
+			anchor = index;
+			break;
+		}
+		return anchor === -1 ? null : turnTokensPerSecond(list, anchor);
+	});
+	const performance = createMemo(() => {
+		const cacheHit = cachePerformance();
+		const tokensPerSecond = turnPerformance();
+		if (cacheHit === null && tokensPerSecond === null) return null;
+		return {
+			cacheHit,
+			tokensPerSecond
+		};
+	});
+	const subagentCalls = createMemo(() => collectSubagentCalls(messages()));
+	const dispatchEntries = createMemo(() => {
 		revision();
 		const id = activeSessionID();
 		if (id === "") return [];
-		let family = [];
-		try {
-			const result = context.data.session.family?.(id);
-			if (Array.isArray(result)) family = result;
-		} catch {
-			return [];
-		}
-		const now = Date.now();
-		const views = [];
-		for (const childID of family) {
-			if (childID === id || !isValidSessionID(childID)) continue;
-			const child = context.data.session.get(childID);
-			if (child?.parentID !== id) continue;
-			views.push(toDelegationView(child, sessionStatusOf(context, childID), now));
-		}
-		return orderDelegations(views);
+		return collectDispatch(context, id, {
+			now: Date.now(),
+			calls: subagentCalls()
+		});
 	});
-	const delegations = createMemo(() => allDelegations().filter((view) => view.state === "running"));
-	const hasRunning = createMemo(() => delegations().length > 0);
-	const dispatch = createMemo(() => ceilingDelegations(allDelegations(), 5));
-	const liveNow = createMemo(() => {
+	/** What the sidebar block renders: the collector's rows, nothing else. */
+	const allDelegations = createMemo(() => dispatchEntries().map((entry) => entry.view));
+	const hasRunning = createMemo(() => allDelegations().some((view) => view.state === "running"));
+	const dispatch = createMemo(() => {
 		frame();
-		return Date.now();
+		return buildDispatchBlock(allDelegations(), Date.now(), frame());
 	});
 	const blocks = createMemo(() => {
 		const present = [];
 		if (contextBlockRows(contextUsage(), cost()) !== null || contextSpendLine(spend()) !== null) present.push("context");
-		if (branch() !== null) present.push("git");
+		if (branch() !== null || gitLine() !== null) present.push("git");
 		if (todo().visible.length > 0) present.push("todo");
-		if (agentModel() !== null) present.push("agent");
-		if (dispatch().visible.length > 0) present.push("dispatch");
+		if (dispatch() !== null) present.push("dispatch");
 		return withBlockSpacers(present);
 	});
 	onMount(() => {
 		const unsubscribeAll = subscribeSidebarRefresh(context, () => {
 			refresh();
 			scheduleGitChanges();
+			scheduleGitProbe();
 			scheduleSpend();
 		});
 		const id = activeSessionID();
@@ -1474,6 +2811,7 @@ function createSidebarModel(context, sessionID) {
 			Promise.resolve(context.data.location.vcs.sync(location)).then(refresh);
 		} catch {}
 		loadGitChanges();
+		runGitProbe();
 		loadSpend();
 		createEffect(() => {
 			if (!hasRunning()) return;
@@ -1481,15 +2819,23 @@ function createSidebarModel(context, sessionID) {
 			onCleanup(() => clearInterval(spinner));
 		});
 		onCleanup(() => {
+			disposed = true;
 			if (gitDebounce !== void 0) clearTimeout(gitDebounce);
+			if (gitProbeDebounce !== void 0) clearTimeout(gitProbeDebounce);
 			if (spendDebounce !== void 0) clearTimeout(spendDebounce);
 			if (metricsDebounce !== void 0) clearTimeout(metricsDebounce);
 		});
 		onCleanup(unsubscribeAll);
 	});
+	let observedSessionID = activeSessionID();
 	createEffect(() => {
+		const id = activeSessionID();
 		const views = allDelegations();
-		if (activeSessionID() === "") {
+		if (id !== observedSessionID) {
+			observedSessionID = id;
+			observedStates = /* @__PURE__ */ new Map();
+		}
+		if (id === "") {
 			observedStates = /* @__PURE__ */ new Map();
 			return;
 		}
@@ -1506,13 +2852,15 @@ function createSidebarModel(context, sessionID) {
 		session,
 		branch,
 		gitChanges,
-		delegations,
+		gitLine,
+		gitCli,
+		performance,
 		dispatch,
 		blocks,
 		hasRunning,
 		frame,
-		liveNow,
 		preset,
+		provider,
 		presetOverrides,
 		cost,
 		modelUsage,
@@ -1569,7 +2917,9 @@ function ContextRowView(props) {
 	})();
 }
 /** Block title: a muted single-width glyph, then the bold label. The fixed
-*  header at the top of the sidebar deliberately renders no icon. */
+*  header at the top of the sidebar deliberately renders no icon. `summary` is
+*  the muted tail some blocks carry (`· 2 rodando · $0.47`), so the header
+*  stays one line. */
 function BlockHeader(props) {
 	return (() => {
 		var _el$6 = createElement("box"), _el$7 = createElement("text"), _el$8 = createElement("text");
@@ -1579,6 +2929,17 @@ function BlockHeader(props) {
 		insert(_el$7, () => `${props.icon} `);
 		setProp(_el$8, "attributes", 1);
 		insert(_el$8, () => props.label);
+		insert(_el$6, createComponent(Show, {
+			get when() {
+				return props.summary;
+			},
+			children: (summary) => (() => {
+				var _el$9 = createElement("text");
+				insert(_el$9, () => `${SPEND_LINE_SEPARATOR}${summary()}`);
+				effect((_$p) => setProp(_el$9, "fg", props.muted, _$p));
+				return _el$9;
+			})()
+		}), null);
 		effect((_p$) => {
 			var _v$ = props.muted, _v$2 = props.fg;
 			_v$ !== _p$.e && (_p$.e = setProp(_el$7, "fg", _v$, _p$.e));
@@ -1605,79 +2966,48 @@ function Sidebar(props) {
 	const open = (sessionID) => () => navigateToSession(context.ui?.router, sessionID);
 	const block = (key) => model.blocks().find((entry) => entry.key === key);
 	const spacer = (key) => block(key)?.spacer === true;
-	const dispatchFg = (state) => {
-		const rowTone = dispatchTone(state);
-		return rowTone === "muted" ? muted() : tone(rowTone);
-	};
 	const usageRows = () => modelUsageRows(model.modelUsage().visible);
 	const usageHidden = () => hiddenModelUsageText(model.modelUsage().hidden, model.modelUsage().hiddenCost);
 	const contextRows = () => contextBlockRows(model.contextUsage(), model.cost());
 	const spendLine = () => contextSpendLine(model.spend());
+	const performanceLine = () => contextPerformanceLine(model.performance());
+	const gaugeFg = (row) => contextProgressColor(row.tone ?? "warning", context.theme);
+	const dispatchView = () => model.dispatch();
+	const dispatchSummary = () => {
+		const view = dispatchView();
+		return view === null ? null : dispatchHeaderSummary(view.runningCount, view.totalCost);
+	};
+	const failedSuffix = () => failedSuffixText(dispatchView()?.failures);
 	return (() => {
-		var _el$9 = createElement("box"), _el$0 = createElement("text"), _el$1 = createElement("text");
-		insertNode(_el$9, _el$0);
-		insertNode(_el$9, _el$1);
-		setProp(_el$9, "flexDirection", "column");
-		setProp(_el$9, "width", "100%");
-		setProp(_el$9, "padding", 1);
-		setProp(_el$0, "attributes", 1);
-		insert(_el$0, `Pantheon v1.6.0`);
-		insertNode(_el$1, createTextNode(`OpenCode V2 · plugin TUI ativo`));
-		insert(_el$9, createComponent(Show, {
-			get when() {
-				return model.preset().name;
-			},
-			get fallback() {
-				return (() => {
-					var _el$24 = createElement("text");
-					insertNode(_el$24, createTextNode(`⚡ Preset: default`));
-					effect((_$p) => setProp(_el$24, "fg", muted(), _$p));
-					return _el$24;
-				})();
-			},
-			children: (name) => (() => {
-				var _el$26 = createElement("box"), _el$27 = createElement("text"), _el$29 = createElement("text"), _el$30 = createElement("text");
-				insertNode(_el$26, _el$27);
-				insertNode(_el$26, _el$29);
-				insertNode(_el$26, _el$30);
-				setProp(_el$26, "flexDirection", "row");
-				insertNode(_el$27, createTextNode(`⚡ Preset: `));
-				insert(_el$29, name);
-				insert(_el$30, () => ` (${model.preset().source ?? ""})`);
-				effect((_p$) => {
-					var _v$5 = muted(), _v$6 = text(), _v$7 = muted();
-					_v$5 !== _p$.e && (_p$.e = setProp(_el$27, "fg", _v$5, _p$.e));
-					_v$6 !== _p$.t && (_p$.t = setProp(_el$29, "fg", _v$6, _p$.t));
-					_v$7 !== _p$.a && (_p$.a = setProp(_el$30, "fg", _v$7, _p$.a));
-					return _p$;
-				}, {
-					e: void 0,
-					t: void 0,
-					a: void 0
-				});
-				return _el$26;
-			})()
-		}), null);
-		insert(_el$9, createComponent(Show, {
+		var _el$0 = createElement("box"), _el$1 = createElement("text"), _el$10 = createElement("text");
+		insertNode(_el$0, _el$1);
+		insertNode(_el$0, _el$10);
+		setProp(_el$0, "flexDirection", "column");
+		setProp(_el$0, "width", "100%");
+		setProp(_el$0, "padding", 1);
+		setProp(_el$1, "attributes", 1);
+		insert(_el$1, `Pantheon v1.6.0`);
+		insert(_el$10, () => presetHeaderLine(model.preset().name ?? "", model.provider()));
+		insert(_el$0, createComponent(Show, {
 			get when() {
 				return memo(() => model.activeSessionID() !== "")() && model.session();
 			},
 			get fallback() {
 				return (() => {
-					var _el$31 = createElement("text");
-					insert(_el$31, () => sidebarPlaceholder(props.sessionID));
-					effect((_$p) => setProp(_el$31, "fg", muted(), _$p));
-					return _el$31;
+					var _el$21 = createElement("text");
+					insert(_el$21, () => sidebarPlaceholder(props.sessionID));
+					effect((_$p) => setProp(_el$21, "fg", muted(), _$p));
+					return _el$21;
 				})();
 			},
 			children: (current) => (() => {
-				var _el$32 = createElement("text");
-				insert(_el$32, () => `Sessão: ${truncateLabel(current().title || current().id)}`);
-				effect((_$p) => setProp(_el$32, "fg", text(), _$p));
-				return _el$32;
+				var _el$22 = createElement("text");
+				insert(_el$22, () => `Sessão: ${truncateLabel(current().title || current().id)}`);
+				effect((_$p) => setProp(_el$22, "fg", text(), _$p));
+				return _el$22;
 			})()
 		}), null);
-		insert(_el$9, createComponent(Show, {
+		insert(_el$0, createComponent(Show, {
 			get when() {
 				return model.blocks().length > 0;
 			},
@@ -1687,7 +3017,7 @@ function Sidebar(props) {
 				return _el$11;
 			}
 		}), null);
-		insert(_el$9, createComponent(Show, {
+		insert(_el$0, createComponent(Show, {
 			get when() {
 				return block("context");
 			},
@@ -1721,9 +3051,9 @@ function Sidebar(props) {
 						return contextRows();
 					},
 					children: (rows) => (() => {
-						var _el$33 = createElement("box");
-						setProp(_el$33, "flexDirection", "column");
-						insert(_el$33, createComponent(Show, {
+						var _el$23 = createElement("box");
+						setProp(_el$23, "flexDirection", "column");
+						insert(_el$23, createComponent(Show, {
 							get when() {
 								return rows().tokens;
 							},
@@ -1739,7 +3069,7 @@ function Sidebar(props) {
 								}
 							})
 						}), null);
-						insert(_el$33, createComponent(Show, {
+						insert(_el$23, createComponent(Show, {
 							get when() {
 								return rows().percent;
 							},
@@ -1748,14 +3078,14 @@ function Sidebar(props) {
 									return row();
 								},
 								get fg() {
-									return tone(row().tone ?? "success");
+									return gaugeFg(row());
 								},
 								get muted() {
 									return muted();
 								}
 							})
 						}), null);
-						insert(_el$33, createComponent(Show, {
+						insert(_el$23, createComponent(Show, {
 							get when() {
 								return rows().spent;
 							},
@@ -1771,45 +3101,56 @@ function Sidebar(props) {
 								}
 							})
 						}), null);
-						insert(_el$33, createComponent(For, {
+						insert(_el$23, createComponent(For, {
 							get each() {
 								return usageRows();
 							},
 							children: (row) => (() => {
-								var _el$34 = createElement("box"), _el$35 = createElement("text"), _el$36 = createElement("text"), _el$37 = createElement("text");
-								insertNode(_el$34, _el$35);
-								insertNode(_el$34, _el$36);
-								insertNode(_el$34, _el$37);
-								setProp(_el$34, "flexDirection", "row");
-								insert(_el$35, () => row.model.padEnd(12));
-								insert(_el$36, () => `  ${row.tokens.padStart(6)}`);
-								insert(_el$37, () => `  ${row.cost.padStart(8)}`);
+								var _el$24 = createElement("box"), _el$25 = createElement("text"), _el$26 = createElement("text"), _el$27 = createElement("text");
+								insertNode(_el$24, _el$25);
+								insertNode(_el$24, _el$26);
+								insertNode(_el$24, _el$27);
+								setProp(_el$24, "flexDirection", "row");
+								insert(_el$25, () => row.model.padEnd(12));
+								insert(_el$26, () => `  ${row.tokens.padStart(6)}`);
+								insert(_el$27, () => `  ${row.cost.padStart(8)}`);
 								effect((_p$) => {
-									var _v$8 = muted(), _v$9 = text(), _v$0 = text();
-									_v$8 !== _p$.e && (_p$.e = setProp(_el$35, "fg", _v$8, _p$.e));
-									_v$9 !== _p$.t && (_p$.t = setProp(_el$36, "fg", _v$9, _p$.t));
-									_v$0 !== _p$.a && (_p$.a = setProp(_el$37, "fg", _v$0, _p$.a));
+									var _v$5 = muted(), _v$6 = text(), _v$7 = text();
+									_v$5 !== _p$.e && (_p$.e = setProp(_el$25, "fg", _v$5, _p$.e));
+									_v$6 !== _p$.t && (_p$.t = setProp(_el$26, "fg", _v$6, _p$.t));
+									_v$7 !== _p$.a && (_p$.a = setProp(_el$27, "fg", _v$7, _p$.a));
 									return _p$;
 								}, {
 									e: void 0,
 									t: void 0,
 									a: void 0
 								});
-								return _el$34;
+								return _el$24;
 							})()
 						}), null);
-						insert(_el$33, createComponent(Show, {
+						insert(_el$23, createComponent(Show, {
 							get when() {
 								return usageHidden();
 							},
 							children: (line) => (() => {
-								var _el$38 = createElement("text");
-								insert(_el$38, line);
-								effect((_$p) => setProp(_el$38, "fg", muted(), _$p));
-								return _el$38;
+								var _el$28 = createElement("text");
+								insert(_el$28, line);
+								effect((_$p) => setProp(_el$28, "fg", muted(), _$p));
+								return _el$28;
 							})()
 						}), null);
-						return _el$33;
+						return _el$23;
+					})()
+				}), null);
+				insert(_el$12, createComponent(Show, {
+					get when() {
+						return performanceLine();
+					},
+					children: (line) => (() => {
+						var _el$29 = createElement("text");
+						insert(_el$29, line);
+						effect((_$p) => setProp(_el$29, "fg", muted(), _$p));
+						return _el$29;
 					})()
 				}), null);
 				insert(_el$12, createComponent(Show, {
@@ -1817,16 +3158,16 @@ function Sidebar(props) {
 						return spendLine();
 					},
 					children: (line) => (() => {
-						var _el$39 = createElement("text");
-						insert(_el$39, line);
-						effect((_$p) => setProp(_el$39, "fg", muted(), _$p));
-						return _el$39;
+						var _el$30 = createElement("text");
+						insert(_el$30, line);
+						effect((_$p) => setProp(_el$30, "fg", muted(), _$p));
+						return _el$30;
 					})()
 				}), null);
 				return _el$12;
 			}
 		}), null);
-		insert(_el$9, createComponent(Show, {
+		insert(_el$0, createComponent(Show, {
 			get when() {
 				return block("git");
 			},
@@ -1843,58 +3184,56 @@ function Sidebar(props) {
 						return _el$15;
 					}
 				}), null);
+				insert(_el$14, createComponent(BlockHeader, {
+					get icon() {
+						return BLOCK_ICONS.git;
+					},
+					label: "Git status",
+					get fg() {
+						return text();
+					},
+					get muted() {
+						return muted();
+					}
+				}), null);
 				insert(_el$14, createComponent(Show, {
 					get when() {
 						return model.branch();
 					},
 					children: (value) => (() => {
-						var _el$40 = createElement("box"), _el$41 = createElement("box"), _el$42 = createElement("text"), _el$44 = createElement("text");
-						insertNode(_el$40, _el$41);
-						setProp(_el$40, "flexDirection", "column");
-						insert(_el$40, createComponent(BlockHeader, {
-							get icon() {
-								return BLOCK_ICONS.git;
-							},
-							label: "Git status",
-							get fg() {
-								return text();
-							},
-							get muted() {
-								return muted();
-							}
-						}), _el$41);
-						insertNode(_el$41, _el$42);
-						insertNode(_el$41, _el$44);
-						setProp(_el$41, "flexDirection", "row");
-						insertNode(_el$42, createTextNode(`⎇ `));
-						insert(_el$44, () => truncateLabel(value(), 32));
-						insert(_el$40, createComponent(Show, {
-							get when() {
-								return model.gitChanges();
-							},
-							children: (changes) => (() => {
-								var _el$45 = createElement("text");
-								insert(_el$45, changes);
-								effect((_$p) => setProp(_el$45, "fg", text(), _$p));
-								return _el$45;
-							})()
-						}), null);
+						var _el$31 = createElement("box"), _el$32 = createElement("text"), _el$34 = createElement("text");
+						insertNode(_el$31, _el$32);
+						insertNode(_el$31, _el$34);
+						setProp(_el$31, "flexDirection", "row");
+						insertNode(_el$32, createTextNode(`⎇ `));
+						insert(_el$34, () => truncateLabel(value(), 32));
 						effect((_p$) => {
-							var _v$1 = muted(), _v$10 = text();
-							_v$1 !== _p$.e && (_p$.e = setProp(_el$42, "fg", _v$1, _p$.e));
-							_v$10 !== _p$.t && (_p$.t = setProp(_el$44, "fg", _v$10, _p$.t));
+							var _v$8 = muted(), _v$9 = text();
+							_v$8 !== _p$.e && (_p$.e = setProp(_el$32, "fg", _v$8, _p$.e));
+							_v$9 !== _p$.t && (_p$.t = setProp(_el$34, "fg", _v$9, _p$.t));
 							return _p$;
 						}, {
 							e: void 0,
 							t: void 0
 						});
-						return _el$40;
+						return _el$31;
+					})()
+				}), null);
+				insert(_el$14, createComponent(Show, {
+					get when() {
+						return model.gitLine();
+					},
+					children: (line) => (() => {
+						var _el$35 = createElement("text");
+						insert(_el$35, line);
+						effect((_$p) => setProp(_el$35, "fg", text(), _$p));
+						return _el$35;
 					})()
 				}), null);
 				return _el$14;
 			}
 		}), null);
-		insert(_el$9, createComponent(Show, {
+		insert(_el$0, createComponent(Show, {
 			get when() {
 				return block("todo");
 			},
@@ -1935,10 +3274,10 @@ function Sidebar(props) {
 								return model.todo().visible;
 							},
 							children: (item) => (() => {
-								var _el$46 = createElement("text");
-								insert(_el$46, () => todoRowText(item));
-								effect((_$p) => setProp(_el$46, "fg", todoFg(item.status), _$p));
-								return _el$46;
+								var _el$36 = createElement("text");
+								insert(_el$36, () => todoRowText(item));
+								effect((_$p) => setProp(_el$36, "fg", todoFg(item.status), _$p));
+								return _el$36;
 							})()
 						}), null);
 						insert(_el$18, createComponent(Show, {
@@ -1946,10 +3285,10 @@ function Sidebar(props) {
 								return hiddenTodoText(model.todo().hidden);
 							},
 							children: (line) => (() => {
-								var _el$47 = createElement("text");
-								insert(_el$47, line);
-								effect((_$p) => setProp(_el$47, "fg", muted(), _$p));
-								return _el$47;
+								var _el$37 = createElement("text");
+								insert(_el$37, line);
+								effect((_$p) => setProp(_el$37, "fg", muted(), _$p));
+								return _el$37;
 							})()
 						}), null);
 						return _el$18;
@@ -1958,16 +3297,16 @@ function Sidebar(props) {
 				return _el$16;
 			}
 		}), null);
-		insert(_el$9, createComponent(Show, {
+		insert(_el$0, createComponent(Show, {
 			get when() {
-				return block("agent");
+				return block("dispatch");
 			},
 			get children() {
 				var _el$19 = createElement("box");
 				setProp(_el$19, "flexDirection", "column");
 				insert(_el$19, createComponent(Show, {
 					get when() {
-						return spacer("agent");
+						return spacer("dispatch");
 					},
 					get children() {
 						var _el$20 = createElement("box");
@@ -1977,129 +3316,366 @@ function Sidebar(props) {
 				}), null);
 				insert(_el$19, createComponent(Show, {
 					get when() {
-						return model.agentModel();
+						return dispatchView();
 					},
-					children: (identity) => (() => {
-						var _el$48 = createElement("box"), _el$49 = createElement("box"), _el$51 = createElement("text");
-						insertNode(_el$48, _el$49);
-						setProp(_el$48, "flexDirection", "column");
-						insert(_el$48, createComponent(BlockHeader, {
-							get icon() {
-								return BLOCK_ICONS.agent;
-							},
-							label: "agente",
-							get fg() {
-								return text();
-							},
-							get muted() {
-								return muted();
-							}
-						}), _el$49);
-						insertNode(_el$49, _el$51);
-						setProp(_el$49, "flexDirection", "row");
-						insert(_el$49, createComponent(Show, {
-							get when() {
-								return identity().agent !== "";
-							},
-							get children() {
-								var _el$50 = createElement("text");
-								insert(_el$50, () => `${identity().agent} → `);
-								effect((_$p) => setProp(_el$50, "fg", muted(), _$p));
-								return _el$50;
-							}
-						}), _el$51);
-						insert(_el$51, () => `${identity().model}${identity().overridden ? "*" : ""}`);
-						effect((_$p) => setProp(_el$51, "fg", text(), _$p));
-						return _el$48;
-					})()
-				}), null);
-				return _el$19;
-			}
-		}), null);
-		insert(_el$9, createComponent(Show, {
-			get when() {
-				return block("dispatch");
-			},
-			get children() {
-				var _el$21 = createElement("box");
-				setProp(_el$21, "flexDirection", "column");
-				insert(_el$21, createComponent(Show, {
-					get when() {
-						return spacer("dispatch");
-					},
-					get children() {
-						var _el$22 = createElement("box");
-						setProp(_el$22, "height", 1);
-						return _el$22;
-					}
-				}), null);
-				insert(_el$21, createComponent(Show, {
-					get when() {
-						return model.dispatch().visible.length > 0;
-					},
-					get children() {
-						var _el$23 = createElement("box");
-						setProp(_el$23, "flexDirection", "column");
-						insert(_el$23, createComponent(BlockHeader, {
+					children: (view) => (() => {
+						var _el$38 = createElement("box");
+						setProp(_el$38, "flexDirection", "column");
+						insert(_el$38, createComponent(BlockHeader, {
 							get icon() {
 								return BLOCK_ICONS.dispatch;
 							},
 							label: "Dispatch",
 							get fg() {
-								return memo(() => !!model.hasRunning())() ? tone("success") : muted();
+								return memo(() => view().runningCount > 0)() ? tone("success") : muted();
 							},
 							get muted() {
 								return muted();
+							},
+							get summary() {
+								return dispatchSummary();
 							}
 						}), null);
-						insert(_el$23, createComponent(For, {
+						insert(_el$38, createComponent(For, {
 							get each() {
-								return model.dispatch().visible;
+								return view().running;
 							},
-							children: (view) => (() => {
-								var _el$52 = createElement("box"), _el$53 = createElement("text");
-								insertNode(_el$52, _el$53);
-								insert(_el$53, () => dispatchRowText(view, model.liveNow()));
+							children: (row) => (() => {
+								var _el$40 = createElement("box"), _el$41 = createElement("text");
+								insertNode(_el$40, _el$41);
+								setProp(_el$40, "flexShrink", 0);
+								insert(_el$41, () => row.text);
 								effect((_p$) => {
-									var _v$11 = open(view.id), _v$12 = dispatchFg(view.state);
-									_v$11 !== _p$.e && (_p$.e = setProp(_el$52, "onMouseDown", _v$11, _p$.e));
-									_v$12 !== _p$.t && (_p$.t = setProp(_el$53, "fg", _v$12, _p$.t));
+									var _v$0 = open(row.id), _v$1 = tone("success");
+									_v$0 !== _p$.e && (_p$.e = setProp(_el$40, "onMouseDown", _v$0, _p$.e));
+									_v$1 !== _p$.t && (_p$.t = setProp(_el$41, "fg", _v$1, _p$.t));
 									return _p$;
 								}, {
 									e: void 0,
 									t: void 0
 								});
-								return _el$52;
+								return _el$40;
 							})()
 						}), null);
-						insert(_el$23, createComponent(Show, {
+						insert(_el$38, createComponent(Show, {
 							get when() {
-								return hiddenDispatchText(model.dispatch().hidden);
+								return view().runningHidden > 0;
+							},
+							get children() {
+								var _el$39 = createElement("text");
+								insert(_el$39, () => `\u2026 +${view().runningHidden} rodando`);
+								effect((_$p) => setProp(_el$39, "fg", muted(), _$p));
+								return _el$39;
+							}
+						}), null);
+						insert(_el$38, createComponent(Show, {
+							get when() {
+								return view().summary;
 							},
 							children: (line) => (() => {
-								var _el$54 = createElement("text");
-								insert(_el$54, line);
-								effect((_$p) => setProp(_el$54, "fg", muted(), _$p));
-								return _el$54;
+								var _el$42 = createElement("box"), _el$43 = createElement("text");
+								insertNode(_el$42, _el$43);
+								setProp(_el$42, "flexDirection", "row");
+								setProp(_el$42, "flexShrink", 0);
+								insert(_el$43, line);
+								insert(_el$42, createComponent(Show, {
+									get when() {
+										return failedSuffix();
+									},
+									children: (suffix) => (() => {
+										var _el$44 = createElement("text");
+										insert(_el$44, () => `${SPEND_LINE_SEPARATOR}${suffix()}`);
+										effect((_$p) => setProp(_el$44, "fg", tone("error"), _$p));
+										return _el$44;
+									})()
+								}), null);
+								effect((_$p) => setProp(_el$43, "fg", muted(), _$p));
+								return _el$42;
 							})()
 						}), null);
-						return _el$23;
-					}
+						insert(_el$38, createComponent(For, {
+							get each() {
+								return view().agents;
+							},
+							children: (row) => (() => {
+								var _el$45 = createElement("text");
+								insert(_el$45, () => childAgentRowText(row));
+								effect((_$p) => setProp(_el$45, "fg", muted(), _$p));
+								return _el$45;
+							})()
+						}), null);
+						insert(_el$38, createComponent(Show, {
+							get when() {
+								return hiddenChildAgentsText(view().agentsHidden, view().agentsHiddenCost);
+							},
+							children: (line) => (() => {
+								var _el$46 = createElement("text");
+								insert(_el$46, line);
+								effect((_$p) => setProp(_el$46, "fg", muted(), _$p));
+								return _el$46;
+							})()
+						}), null);
+						return _el$38;
+					})()
 				}), null);
-				return _el$21;
+				return _el$19;
 			}
 		}), null);
 		effect((_p$) => {
 			var _v$3 = text(), _v$4 = muted();
-			_v$3 !== _p$.e && (_p$.e = setProp(_el$0, "fg", _v$3, _p$.e));
-			_v$4 !== _p$.t && (_p$.t = setProp(_el$1, "fg", _v$4, _p$.t));
+			_v$3 !== _p$.e && (_p$.e = setProp(_el$1, "fg", _v$3, _p$.e));
+			_v$4 !== _p$.t && (_p$.t = setProp(_el$10, "fg", _v$4, _p$.t));
 			return _p$;
 		}, {
 			e: void 0,
 			t: void 0
 		});
-		return _el$9;
+		return _el$0;
 	})();
+}
+/** Panel actions that only make sense with a row selected. A panel over an
+*  empty tree still owns `f`/`escape`, but the navigation keys fall through
+*  instead of being swallowed by a no-op. */
+const DISPATCH_PANEL_ROW_ACTIONS = /* @__PURE__ */ new Set([
+	"up",
+	"down",
+	"home",
+	"end",
+	"pageup",
+	"pagedown",
+	"toggle"
+]);
+/** One command: runs only while the panel owns the keyboard, and reports
+*  `false` (the host keeps the key) when it cannot act. `undefined` means the
+*  key was consumed. */
+function runDispatchPanelCommand(action, panel, model) {
+	if (panel.focused !== true) return false;
+	if (DISPATCH_PANEL_ROW_ACTIONS.has(action) && model.rows().length === 0) return false;
+	performDispatchPanelAction(action, model, panel);
+}
+/** Keymap layer of the panel, as data. It is registered inside the
+*  `session.panel` claim, but the host mounts the effects of *every* panel
+*  contribution, so the layer itself is not proof of focus: without `enabled`
+*  the `j/k/f/q/enter/escape` bindings were consumed while the panel was not
+*  focused and the composer lost its keys. `enabled` (the documented gate) makes
+*  the whole layer inert until `panel.focused` is true. Pure. */
+function dispatchPanelKeymapLayer(panel, model) {
+	const focused = () => panel.focused === true;
+	return {
+		mode: "global",
+		enabled: focused,
+		commands: DISPATCH_PANEL_COMMANDS.map((spec) => ({
+			id: spec.id,
+			title: spec.title,
+			bind: spec.bind,
+			run: () => focused() ? runDispatchPanelCommand(spec.action, panel, model) : false
+		}))
+	};
+}
+/** Keymap layer of the panel. Created inside the `session.panel` claim, so the
+*  host removes it with the panel; it renders nothing. */
+function DispatchPanelKeymap(props) {
+	props.context.keymap.layer(() => dispatchPanelKeymapLayer(props.panel, props.model));
+	return null;
+}
+/** The full-width dispatch panel: header counters, one row per child session,
+*  the detail of the selected child and the key hints. Wide panels put the
+*  detail beside the list; narrow ones stack it under the list and every cell is
+*  truncated to its own column instead of wrapping. */
+function DispatchPanel(props) {
+	const model = createDispatchPanelModel(props.context, () => props.panel);
+	const text = () => props.context.theme.text?.base;
+	const muted = () => props.context.theme.text?.muted ?? text();
+	const tone = (value) => props.context.theme?.text?.feedback?.[value]?.base ?? text();
+	const rowFg = (state) => {
+		if (state === "failed") return tone("error");
+		if (state === "running") return tone("success");
+		if (state === "interrupted") return tone("warning");
+		return text();
+	};
+	const selected = (id) => id === model.selectedID();
+	const rows = () => createComponent(For, {
+		get each() {
+			return model.visible().rows;
+		},
+		children: (row) => (() => {
+			var _el$47 = createElement("box"), _el$48 = createElement("text"), _el$49 = createElement("text");
+			insertNode(_el$47, _el$48);
+			insertNode(_el$47, _el$49);
+			setProp(_el$47, "flexDirection", "row");
+			setProp(_el$47, "flexShrink", 0);
+			insert(_el$48, () => selected(row.id) ? `▸ ` : "  ");
+			insert(_el$49, () => row.text);
+			effect((_p$) => {
+				var _v$10 = selected(row.id) ? text() : muted(), _v$11 = rowFg(row.state), _v$12 = selected(row.id) ? 1 : 0;
+				_v$10 !== _p$.e && (_p$.e = setProp(_el$48, "fg", _v$10, _p$.e));
+				_v$11 !== _p$.t && (_p$.t = setProp(_el$49, "fg", _v$11, _p$.t));
+				_v$12 !== _p$.a && (_p$.a = setProp(_el$49, "attributes", _v$12, _p$.a));
+				return _p$;
+			}, {
+				e: void 0,
+				t: void 0,
+				a: void 0
+			});
+			return _el$47;
+		})()
+	});
+	const detail = () => createComponent(For, {
+		get each() {
+			return model.detail();
+		},
+		children: (line, index) => (() => {
+			var _el$50 = createElement("text");
+			insert(_el$50, line);
+			effect((_$p) => setProp(_el$50, "fg", index() === 0 ? text() : muted(), _$p));
+			return _el$50;
+		})()
+	});
+	const empty = () => (() => {
+		var _el$51 = createElement("text");
+		insertNode(_el$51, createTextNode(`Nenhuma sessão delegada`));
+		effect((_$p) => setProp(_el$51, "fg", muted(), _$p));
+		return _el$51;
+	})();
+	return (() => {
+		var _el$53 = createElement("box"), _el$54 = createElement("text"), _el$55 = createElement("text"), _el$59 = createElement("box"), _el$60 = createElement("text");
+		insertNode(_el$53, _el$54);
+		insertNode(_el$53, _el$55);
+		insertNode(_el$53, _el$59);
+		insertNode(_el$53, _el$60);
+		setProp(_el$53, "flexDirection", "column");
+		setProp(_el$53, "width", "100%");
+		setProp(_el$53, "padding", 1);
+		insert(_el$53, createComponent(DispatchPanelKeymap, {
+			get context() {
+				return props.context;
+			},
+			get panel() {
+				return props.panel;
+			},
+			model
+		}), _el$54);
+		setProp(_el$54, "attributes", 1);
+		insert(_el$54, () => model.title());
+		insert(_el$53, createComponent(Show, {
+			get when() {
+				return model.header();
+			},
+			children: (line) => (() => {
+				var _el$61 = createElement("text");
+				insert(_el$61, line);
+				effect((_$p) => setProp(_el$61, "fg", muted(), _$p));
+				return _el$61;
+			})()
+		}), _el$55);
+		insert(_el$55, () => dispatchPanelRule(props.panel.width - 2));
+		insert(_el$53, createComponent(Show, {
+			get when() {
+				return model.layout().mode === "wide";
+			},
+			get fallback() {
+				return (() => {
+					var _el$62 = createElement("box");
+					setProp(_el$62, "flexDirection", "column");
+					insert(_el$62, createComponent(Show, {
+						get when() {
+							return model.rows().length > 0;
+						},
+						get fallback() {
+							return empty();
+						},
+						get children() {
+							var _el$63 = createElement("box");
+							setProp(_el$63, "flexDirection", "column");
+							insert(_el$63, rows);
+							return _el$63;
+						}
+					}), null);
+					insert(_el$62, createComponent(Show, {
+						get when() {
+							return model.selectedID();
+						},
+						get children() {
+							var _el$64 = createElement("box"), _el$65 = createElement("box");
+							insertNode(_el$64, _el$65);
+							setProp(_el$64, "flexDirection", "column");
+							setProp(_el$65, "height", 1);
+							insert(_el$64, detail, null);
+							return _el$64;
+						}
+					}), null);
+					return _el$62;
+				})();
+			},
+			get children() {
+				var _el$56 = createElement("box"), _el$57 = createElement("box");
+				insertNode(_el$56, _el$57);
+				setProp(_el$56, "flexDirection", "row");
+				setProp(_el$57, "flexDirection", "column");
+				insert(_el$57, createComponent(Show, {
+					get when() {
+						return model.rows().length > 0;
+					},
+					get fallback() {
+						return empty();
+					},
+					get children() {
+						return rows();
+					}
+				}));
+				insert(_el$56, createComponent(Show, {
+					get when() {
+						return model.selectedID();
+					},
+					get children() {
+						var _el$58 = createElement("box");
+						setProp(_el$58, "flexDirection", "column");
+						insert(_el$58, detail);
+						effect((_$p) => setProp(_el$58, "width", model.layout().detailWidth, _$p));
+						return _el$58;
+					}
+				}), null);
+				effect((_$p) => setProp(_el$57, "width", model.layout().listWidth, _$p));
+				return _el$56;
+			}
+		}), _el$59);
+		setProp(_el$59, "height", 1);
+		insert(_el$60, () => model.footer());
+		effect((_p$) => {
+			var _v$13 = text(), _v$14 = muted(), _v$15 = muted();
+			_v$13 !== _p$.e && (_p$.e = setProp(_el$54, "fg", _v$13, _p$.e));
+			_v$14 !== _p$.t && (_p$.t = setProp(_el$55, "fg", _v$14, _p$.t));
+			_v$15 !== _p$.a && (_p$.a = setProp(_el$60, "fg", _v$15, _p$.a));
+			return _p$;
+		}, {
+			e: void 0,
+			t: void 0,
+			a: void 0
+		});
+		return _el$53;
+	})();
+}
+/** App-level command claim: the only way into the panel. It registers the
+*  `pantheon.dispatch.open` command (palette + `/dispatch`) and renders nothing;
+*  the panel itself lives behind its own `session.panel` claim. */
+function DispatchCommandLayer(props) {
+	props.context.keymap.layer(() => ({
+		mode: "global",
+		commands: [{
+			id: "pantheon.dispatch.open",
+			title: "Pantheon: Dispatch",
+			group: "Pantheon",
+			palette: true,
+			slash: {
+				name: "dispatch",
+				aliases: ["pantheon-dispatch"]
+			},
+			run: () => {
+				openDispatchPanel(props.context);
+			}
+		}]
+	}));
+	return null;
 }
 /** Home-screen status contribution. The sidebar slot is session-scoped, so
 *  before the first prompt the sidebar may not mount at all (Known Issue) —
@@ -2108,10 +3684,10 @@ function HomeStatus(props) {
 	const preset = useActivePreset(props.context).preset;
 	const muted = () => props.context.theme?.text?.muted ?? props.context.theme?.text?.base;
 	return (() => {
-		var _el$55 = createElement("text");
-		insert(_el$55, () => `Pantheon v1.6.0${preset().name ? ` ⚡ ${preset().name}` : ""}`);
-		effect((_$p) => setProp(_el$55, "fg", muted(), _$p));
-		return _el$55;
+		var _el$66 = createElement("text");
+		insert(_el$66, () => `Pantheon v1.6.0${preset().name ? ` ▸ ${preset().name}` : ""}`);
+		effect((_$p) => setProp(_el$66, "fg", muted(), _$p));
+		return _el$66;
 	})();
 }
 /** Lean footer model: only the preset label and the live delegation count. It
@@ -2156,7 +3732,7 @@ function createFooterModel(context, sessionID) {
 		running
 	};
 }
-/** Prompt-footer contribution: `⚡<preset> · ✦<n> ativos`, appended next to the
+/** Prompt-footer contribution: `▸<preset> · ✦<n> ativos`, appended next to the
 *  native line (never replacing it) and only while a delegation is running. */
 function PromptFooter(props) {
 	const model = createFooterModel(props.context, () => props.sessionID);
@@ -2166,10 +3742,10 @@ function PromptFooter(props) {
 			return model.running() > 0;
 		},
 		get children() {
-			var _el$56 = createElement("text");
-			insert(_el$56, () => `⚡${model.preset().name ?? "default"} · ✦${model.running()} ativos`);
-			effect((_$p) => setProp(_el$56, "fg", muted(), _$p));
-			return _el$56;
+			var _el$67 = createElement("text");
+			insert(_el$67, () => `▸${model.preset().name ?? "default"} · ✦${model.running()} ativos`);
+			effect((_$p) => setProp(_el$67, "fg", muted(), _$p));
+			return _el$67;
 		}
 	});
 }
@@ -2198,15 +3774,35 @@ const plugin = Plugin.define({
 				sessionID
 			})
 		});
+		const unregisterPanel = context.ui.slot({
+			append: "session.panel",
+			render: (panel) => createComponent(Show, {
+				get when() {
+					return panel.name === DISPATCH_PANEL_NAME;
+				},
+				get children() {
+					return createComponent(DispatchPanel, {
+						context,
+						panel
+					});
+				}
+			})
+		});
+		const unregisterCommands = context.ui.slot({
+			append: "app",
+			render: () => createComponent(DispatchCommandLayer, { context })
+		});
 		return () => {
 			if (typeof unregisterSidebar === "function") unregisterSidebar();
 			if (typeof unregisterHome === "function") unregisterHome();
 			if (typeof unregisterPromptFooter === "function") unregisterPromptFooter();
+			if (typeof unregisterPanel === "function") unregisterPanel();
+			if (typeof unregisterCommands === "function") unregisterCommands();
 			delete globalState[SINGLETON];
 		};
 	}
 });
 //#endregion
-export { BLOCK_ICONS, CONTEXT_BAR_CELLS, CONTEXT_BAR_EMPTY_CELL, CONTEXT_BAR_FILLED_CELL, DELEGATIONS_VISIBLE_CEILING, DELEGATION_CHILD_STATUS_GRACE_MS, DISPATCH_AGENT_WIDTH, DISPATCH_COST_WIDTH, DISPATCH_DURATION_WIDTH, DISPATCH_MAX_WIDTH, DISPATCH_MODEL_WIDTH, DISPATCH_VISIBLE_CEILING, GIT_CHANGES_DEBOUNCE_MS, MODEL_USAGE_COST_WIDTH, MODEL_USAGE_DEBOUNCE_MS, MODEL_USAGE_MESSAGE_LIMIT, MODEL_USAGE_MODEL_WIDTH, MODEL_USAGE_SESSION_LIMIT, MODEL_USAGE_TOKEN_WIDTH, MODEL_USAGE_VISIBLE_CEILING, SIDEBAR_REFRESH_EVENTS, SIDEBAR_WAITING_LABEL, SPEND_30D_LABEL, SPEND_30D_MS, SPEND_LINE_SEPARATOR, SPEND_PROBE_TOLERANCE_MS, SPEND_PROBE_WINDOW_MS, SPEND_REFRESH_DEBOUNCE_MS, SPEND_TODAY_LABEL, TODO_TEXT_WIDTH, TODO_VISIBLE_CEILING, ceilingDelegations, ceilingModelUsage, ceilingTodoItems, collectModelUsage, collectWarmupTargets, computeContextUsage, contextBar, contextBarFilled, contextBlockRows, contextRowText, contextSpendLine, contextUsageTone, countGitChanges, createFooterModel, createSidebarModel, plugin as default, delegationElapsed, delegationIdentity, delegationRowMarker, delegationSidebarLabel, delegationStateFromOutcome, delegationStateFromStatus, delegationStateTone, detectDelegationCompletions, dispatchAgentText, dispatchElapsed, dispatchMarker, dispatchModelText, dispatchRowText, dispatchTone, fmtElapsed, formatContextWindow, formatDispatchCost, formatDispatchDuration, formatGitChanges, formatSpendUSD, formatSpent, formatTokenCount, formatUsageCost, formatUsageTokens, hiddenDispatchText, hiddenModelUsageText, hiddenTodoText, isTodoStatus, isValidSessionID, latestTodoItems, messageTokensTotal, modelRefID, modelUsageRowText, modelUsageRows, navigateToSession, orderDelegations, orderTodoItems, parsePresetOverrides, parseTodoItems, presetFromEnv, resetSpendUnit, resolveActivePresetForTui, resolveContextLimit, resolvePresetForTui, resolvedSpendUnit, shortModelID, sidebarPlaceholder, spendWindows, spinnerFrame, startOfLocalDay, statsCost, statsRangeMatches, toDelegationView, todoRowText, todoTone, truncateLabel, withBlockSpacers };
+export { BLOCK_ICONS, CONTEXT_BAR_CELLS, CONTEXT_BAR_EMPTY_CELL, CONTEXT_BAR_FILLED_CELL, DELEGATION_CHILD_STATUS_GRACE_MS, DISPATCH_AGENT_CEILING, DISPATCH_AGENT_WIDTH, DISPATCH_COST_WIDTH, DISPATCH_COUNT_WIDTH, DISPATCH_DONE_MARKER, DISPATCH_DURATION_WIDTH, DISPATCH_GROUP_COST_WIDTH, DISPATCH_KIND_ORIGIN_LABELS, DISPATCH_MAX_LINES, DISPATCH_MAX_WIDTH, DISPATCH_MIN_AGENT_WIDTH, DISPATCH_MODEL_WIDTH, DISPATCH_PANEL_AGENT_WIDTH, DISPATCH_PANEL_COMMANDS, DISPATCH_PANEL_COST_WIDTH, DISPATCH_PANEL_DASH, DISPATCH_PANEL_DURATION_WIDTH, DISPATCH_PANEL_EMPTY_TEXT, DISPATCH_PANEL_FULLSCREEN_BADGE, DISPATCH_PANEL_HEADER_MARKER, DISPATCH_PANEL_KIND_WIDTH, DISPATCH_PANEL_MIN_AGENT_WIDTH, DISPATCH_PANEL_NAME, DISPATCH_PANEL_PAGE_SIZE, DISPATCH_PANEL_RULE_CHAR, DISPATCH_PANEL_SELECTION_GUTTER, DISPATCH_PANEL_SELECTION_MARKER, DISPATCH_PANEL_TITLE_WIDTH, DISPATCH_PANEL_TOAST, DISPATCH_PANEL_WIDE_MIN_WIDTH, DISPATCH_RUNNING_CEILING, GIT_ARROW_DOWN, GIT_ARROW_UP, GIT_CHANGES_DEBOUNCE_MS, GIT_CLI_DEBOUNCE_MS, GIT_CLI_MAX_BUFFER, GIT_CLI_MIN_INTERVAL_MS, GIT_CLI_TIMEOUT_MS, HEADER_MAX_WIDTH, MODEL_USAGE_COST_WIDTH, MODEL_USAGE_DEBOUNCE_MS, MODEL_USAGE_MESSAGE_LIMIT, MODEL_USAGE_MODEL_WIDTH, MODEL_USAGE_SESSION_LIMIT, MODEL_USAGE_TOKEN_WIDTH, MODEL_USAGE_VISIBLE_CEILING, PRESET_MARKER, SIDEBAR_REFRESH_EVENTS, SIDEBAR_WAITING_LABEL, SPEND_30D_LABEL, SPEND_30D_MS, SPEND_LINE_SEPARATOR, SPEND_PROBE_TOLERANCE_MS, SPEND_PROBE_WINDOW_MS, SPEND_REFRESH_DEBOUNCE_MS, SPEND_TODAY_LABEL, TODO_TEXT_WIDTH, TODO_VISIBLE_CEILING, UNKNOWN_AGENT, agentKey, buildDispatchBlock, cacheHitPercent, ceilingModelUsage, ceilingTodoItems, cellWidth, childAgentRowText, classifyDispatchKind, collectChildAgentUsage, collectDispatch, collectModelUsage, collectSubagentCalls, collectWarmupTargets, completedSummaryText, computeContextUsage, contextBar, contextBarFilled, contextBlockRows, contextPerformanceLine, contextProgressColor, contextSpendLine, contextUsageTone, countGitChanges, createDispatchPanelModel, createFooterModel, createSidebarModel, plugin as default, defaultGitExec, delegationStateFromOutcome, delegationStateFromStatus, detectDelegationCompletions, dispatchAgentText, dispatchElapsed, dispatchHeaderSummary, dispatchKindFromAgent, dispatchKindFromPrefix, dispatchKindSuffix, dispatchModelText, dispatchPanelCell, dispatchPanelDetail, dispatchPanelFooter, dispatchPanelHeader, dispatchPanelKeymapLayer, dispatchPanelLayout, dispatchPanelMarker, dispatchPanelRangeText, dispatchPanelRowText, dispatchPanelRows, dispatchPanelRule, dispatchPanelTitle, dispatchPanelWindow, dispatchTokenLine, dispatchTokens, dispatchTotalCost, failedSuffixText, formatContextWindow, formatDispatchCost, formatDispatchDuration, formatGitChanges, formatGitSnapshot, formatSpendUSD, formatSpent, formatTokenCount, formatUsageCost, formatUsageTokens, gitProbeAllowed, hiddenChildAgentsText, hiddenModelUsageText, hiddenTodoText, isTodoStatus, isValidSessionID, lastAssistantWithTokens, latestTodoItems, messageTokensTotal, modelRefID, modelUsageRowText, modelUsageRows, navigateToSession, openDispatchPanel, orderDispatchEntries, orderTodoItems, padCell, parseGitAheadBehind, parseGitStatusPorcelain, parsePresetOverrides, parseTodoItems, performDispatchPanelAction, presetFromEnv, presetHeaderLine, providerIDFromModels, providerIDFromRef, readGitSnapshot, resetSpendUnit, resolveActivePresetForTui, resolveContextLimit, resolvedSpendUnit, runDispatchPanelCommand, runningChildRowText, shortModelID, shortSessionID, sidebarPlaceholder, spendWindows, spinnerFrame, startOfLocalDay, statsCost, statsRangeMatches, toDelegationView, toDispatchEntry, todoRowText, todoTone, transcriptWindow, truncateLabel, turnTokensPerSecond, withBlockSpacers };
 
 //# sourceMappingURL=tui-v2.js.map

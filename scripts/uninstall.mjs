@@ -7,7 +7,13 @@ import { basename, join, relative, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { isatty } from 'node:tty'
 import { backupWarning, createBackupSet } from './install/backup.mjs'
+import {
+  CONTEXT_SIDEBAR_NEGATION,
+  V2_CLI_CONFIG_FILENAME,
+  withContextSidebarEnabled,
+} from './install/opencode.mjs'
 import { snapshot } from './install/plan.mjs'
+import { writeConfigWithBackup } from './install/shared.mjs'
 import {
   assertNoSymlinkAncestors,
   verifyPathRemoved,
@@ -34,6 +40,10 @@ const OWNERSHIP_MARKER =
   /(?:pantheon-opencode|pantheon[- ]agent system|managed[- ]by[: ]+pantheon|pantheon-(?:resources|memory|persistence|code-mode|tui|hooks))/i
 const stats = { removed: 0, skipped: 0, errors: 0 }
 let touchedPaths = new Set()
+// Paths that survive the uninstall but were REWRITTEN (not removed), so the
+// plan summary can label them UPDATE instead of REMOVE without guessing from
+// the basename.
+let rewrittenPaths = new Set()
 let quietPreview = false
 
 function showHelp() {
@@ -329,6 +339,7 @@ function cleanOpenCodeConfig(target, dryRun, ownedRoot = target, reviewedPaths =
   }
   assertReviewedPath(configPath, reviewedPaths)
   touchedPaths.add(configPath)
+  rewrittenPaths.add(configPath)
   const content = `${JSON.stringify(config, null, 2)}\n`
   if (dryRun) {
     if (!quietPreview) console.log('  ~ Would update opencode.json (remove Pantheon-owned entries)')
@@ -411,6 +422,7 @@ function runUninstallPass(target, dryRun, { purgeData = false, reviewedPaths = n
   }
   const tui = join(configDir, 'tui.json')
   cleanTuiConfig(tui, dryRun, ownedRoot, reviewedPaths)
+  cleanV2CliConfig(configDir, dryRun, ownedRoot, reviewedPaths)
   const agentsMd = join(root, 'AGENTS.md')
   if (isPantheonContent(agentsMd)) removePath(agentsMd, dryRun, ownedRoot, agentsMd, reviewedPaths)
   const scheduledConfigEntries = configInfo?.isDirectory()
@@ -453,6 +465,7 @@ function cleanTuiConfig(path, dryRun, root, reviewedPaths = null) {
   config.plugin = plugin
   assertReviewedPath(path, reviewedPaths)
   touchedPaths.add(path)
+  rewrittenPaths.add(path)
   const content = `${JSON.stringify(config, null, 2)}\n`
   if (dryRun) {
     if (!quietPreview)
@@ -465,11 +478,109 @@ function cleanTuiConfig(path, dryRun, root, reviewedPaths = null) {
   stats.removed += 1
 }
 
+/**
+ * Undo the V2 client-config directive that cancels the builtin Context block.
+ *
+ * `init` (V2, global, `plugins` component) appends
+ * {@link CONTEXT_SIDEBAR_NEGATION} to `<configDir>/cli.json` so Pantheon's TUI
+ * plugin can draw the Context block itself. Leaving that negation behind while
+ * removing the TUI plugin does not just leave a stale entry: it DISABLES the
+ * host's native block with no replacement installed, and `cli.json` is not a
+ * file the remaining cleanup would ever revisit. So uninstall must undo exactly
+ * the same edit install made.
+ *
+ * Mirrors {@link applyContextSidebarNegation} on the write path: only the exact
+ * directive is dropped (`withContextSidebarEnabled`), every other entry — plain
+ * strings and `{ package, options }` objects — and every other key keeps its
+ * order, and the write goes through `writeConfigWithBackup` with the raw text
+ * as `expectedContent`, so a concurrent edit is never clobbered.
+ *
+ * Removal policy:
+ *   - only the negation present → nothing to do, skipped;
+ *   - after the removal `plugins` is empty AND it was the only key → the file
+ *     carries nothing but our directive, so the whole file goes;
+ *   - otherwise the file stays (it is the user's config, possibly with other
+ *     plugins and keys).
+ *
+ * Unparseable JSON — or a `plugins` value that is not an array — is never
+ * touched: warn and continue.
+ *
+ * @param {string} configDir - config dir that holds cli.json
+ * @param {boolean} dryRun - report the action without writing
+ * @param {string} root - target root every removal must stay inside
+ * @param {Set<string>|null} [reviewedPaths] - paths reviewed in the plan
+ */
+function cleanV2CliConfig(configDir, dryRun, root, reviewedPaths = null) {
+  const path = join(configDir, V2_CLI_CONFIG_FILENAME)
+  const info = lstat(path)
+  if (!info?.isFile() || info.isSymbolicLink()) {
+    stats.skipped += 1
+    return
+  }
+  let raw
+  try {
+    raw = readFileSync(path, 'utf8')
+  } catch {
+    stats.skipped += 1
+    return
+  }
+  let config
+  try {
+    config = JSON.parse(raw)
+  } catch {
+    if (!quietPreview) console.warn(`  ⚠️ Left ${path} untouched: it is not valid JSON.`)
+    stats.skipped += 1
+    return
+  }
+  if (!config || typeof config !== 'object' || Array.isArray(config)) {
+    stats.skipped += 1
+    return
+  }
+  if (!Array.isArray(config.plugins)) {
+    stats.skipped += 1
+    return
+  }
+
+  const next = withContextSidebarEnabled(config.plugins)
+  if (!next.changed) {
+    stats.skipped += 1
+    return
+  }
+  assertReviewedPath(path, reviewedPaths)
+
+  // `{ plugins: [] }` and nothing else is the stub this installer created; an
+  // empty leftover would be orphaned by the rest of the uninstall.
+  if (next.plugins.length === 0 && Object.keys(config).length === 1) {
+    removePath(path, dryRun, root, path, reviewedPaths)
+    return
+  }
+
+  config.plugins = next.plugins
+  const content = `${JSON.stringify(config, null, 2)}\n`
+  touchedPaths.add(path)
+  rewrittenPaths.add(path)
+  if (dryRun) {
+    if (!quietPreview)
+      console.log(`  ~ Would update ${V2_CLI_CONFIG_FILENAME} (remove ${CONTEXT_SIDEBAR_NEGATION})`)
+    stats.removed += 1
+    return
+  }
+  const status = writeConfigWithBackup(path, content, dryRun, { expectedContent: raw })
+  if (status === 'conflict') {
+    // Edited under us between the read and the swap: keep the newer bytes.
+    console.warn(`  ⚠️ Left ${path} untouched: it changed during the uninstall.`)
+    stats.skipped += 1
+    return
+  }
+  stats.removed += 1
+}
+
 function resetRunState() {
   stats.removed = 0
   stats.skipped = 0
   stats.errors = 0
   touchedPaths = new Set()
+  rewrittenPaths = new Set()
 }
 
 function collectUninstallPlan(target, options = {}) {
@@ -582,7 +693,7 @@ async function main() {
   for (const path of reviewedPlan.paths) {
     const purge =
       args.purgeData && path === join(resolve(args.target), '.pantheon', 'install-state.json')
-    const update = ['opencode.json', 'tui.json'].includes(basename(path)) && !purge
+    const update = rewrittenPaths.has(path) && !purge
     console.log(`  ${purge ? 'PURGE DATA' : update ? 'UPDATE' : 'REMOVE'} ${path}`)
   }
   if (args.dryRun) {
