@@ -7,8 +7,9 @@
  *      at a real zero, and a cache token that has no rate;
  *   2. price resolution — exact provider/model, provider-less fallback,
  *      unknown and ambiguous models;
- *   3. the report path — an unpriced model reads `—`, is excluded from the
- *      total, and the total says it is partial;
+ *   3. the report path — cost attributed per model and summed onto the agent,
+ *      an unpriced model excluded from both dollar totals with a one-line
+ *      reconciliation, and `—` for a row with nothing priceable;
  *   4. the session view — a root session plus its descendants, excluding an
  *      unrelated session;
  *   5. offline behaviour — cached prices without a network call, a stale cache
@@ -415,6 +416,132 @@ await testAsync(
     }
   },
 )
+
+// ─── Multi-model attribution ───────────────────────────────────────────
+
+/**
+ * One agent can run on several models, and only some of them may be priced.
+ * The row must be the SUM of its priced models (not `—`), the two totals must
+ * agree whenever everything is priced, and `(partial)` must mean exactly one
+ * thing: a contributing model had no catalog price.
+ */
+await testAsync('an agent spanning several models is priced per model and summed', async () => {
+  const pricedRows: FixtureRow[] = [
+    // alpha is $1/Mtok in + $2/Mtok out ⇒ 1M input = $1.00.
+    {
+      sessionId: 'ses_a',
+      agent: 'zeus',
+      provider: 'acme',
+      model: 'alpha',
+      tokens: { input: 1_000_000, output: 0 },
+    },
+    // twin is $5/Mtok in + $5/Mtok out ⇒ 1M output = $5.00.
+    {
+      sessionId: 'ses_a',
+      agent: 'zeus',
+      provider: 'acme',
+      model: 'twin',
+      tokens: { input: 0, output: 1_000_000 },
+    },
+  ]
+  const cases: Array<{
+    name: string
+    rows: FixtureRow[]
+    partial: boolean
+    input: number
+    output: number
+  }> = [
+    {
+      name: 'two priced models',
+      rows: pricedRows,
+      partial: false,
+      input: 1_000_000,
+      output: 1_000_000,
+    },
+    {
+      name: 'two priced models plus an unpriced model',
+      rows: [
+        ...pricedRows,
+        // In no catalog: 20M tokens that must never be priced at zero.
+        {
+          sessionId: 'ses_a',
+          agent: 'zeus',
+          provider: 'ghost-provider',
+          model: 'mystery-model',
+          tokens: { input: 10_000_000, output: 10_000_000 },
+        },
+      ],
+      partial: true,
+      input: 11_000_000,
+      output: 11_000_000,
+    },
+  ]
+
+  for (const testCase of cases) {
+    const dir = freshDir()
+    try {
+      const dbPath = join(dir, 'opencode.db')
+      const cachePath = join(dir, 'prices.json')
+      writeCache(cachePath, Date.now())
+      buildDb(dbPath, [{ id: 'ses_a' }], testCase.rows)
+
+      const output = await commandFor(dbPath, cachePath).pantheon_cost.execute({ days: 7 }, ctx)
+      const total = testCase.input + testCase.output
+      const suffix = testCase.partial ? ' (partial)' : ''
+
+      // Criterion 1: numeric agent cost = the sum of its priced models ($1 + $5).
+      assert.ok(
+        output.includes(
+          `| zeus | unknown | ${testCase.input} | ${testCase.output} | ${total} | $6.00${suffix} |`,
+        ),
+        `${testCase.name}: by-agent row must show the summed cost, got:\n${output}`,
+      )
+
+      // Criterion 2: both totals are the same money for the same tokens.
+      assert.ok(
+        output.includes(
+          `| **Total** | — | **${testCase.input}** | **${testCase.output}** | **${total}** | **$6.00**${suffix} |`,
+        ),
+        `${testCase.name}: by-agent total disagrees with the model sum`,
+      )
+      assert.ok(
+        output.includes(
+          `| **Total** | — | **${testCase.input}** | **${testCase.output}** | **0** | **0** | **$6.00**${suffix} |`,
+        ),
+        `${testCase.name}: by-model total disagrees with the agent sum`,
+      )
+
+      if (testCase.partial) {
+        // The marker now means "a contributing model had no catalog price", and
+        // the excluded tokens are stated once instead of left for the reader.
+        assert.ok(output.includes('Cost reconciliation:'), `${testCase.name}: no reconciliation`)
+        assert.ok(
+          output.includes('20000000 token(s) from 1 unpriced model row(s)'),
+          `${testCase.name}: the excluded tokens must be named`,
+        )
+        assert.ok(
+          output.includes('excluded from both dollar totals'),
+          `${testCase.name}: the exclusion must apply to both totals`,
+        )
+        assert.ok(
+          output.includes('| ghost-provider | mystery-model | 10000000 | 10000000 | 0 | 0 | — |'),
+          `${testCase.name}: the unpriced model must read —`,
+        )
+        // Criterion 4: never priced at 0 — or at the input rate, or at all.
+        assert.ok(!output.includes('$0.00'), `${testCase.name}: an unpriced model read as free`)
+        assert.ok(!output.includes('$20.00'), `${testCase.name}: unpriced tokens were priced`)
+      } else {
+        assert.ok(!output.includes('(partial)'), `${testCase.name}: fully priced report is partial`)
+        assert.ok(
+          !output.includes('Cost reconciliation:'),
+          `${testCase.name}: nothing to reconcile, yet a note was printed`,
+        )
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+})
 
 // ─── 4. Session view ───────────────────────────────────────────────────
 

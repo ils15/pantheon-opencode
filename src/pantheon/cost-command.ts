@@ -63,8 +63,18 @@ export interface CostRow {
   tokensInput: number
   tokensOutput: number
   tokensTotal: number
-  /** USD for this row; absent when any contributing model is unpriced. */
+  /**
+   * USD for this row: the sum of every contributing model's own priced cost.
+   * Absent only when NO contributing model could be priced — a row that mixes
+   * priced and unpriced models keeps its numeric part.
+   */
   costUsd?: number
+  /**
+   * Number of contributing model groups the catalog could not price. Present
+   * only alongside `costUsd`, so the reader can tell a partially priced row
+   * (money shown, some tokens unpriced) from a fully priced one.
+   */
+  unpricedModels?: number
 }
 
 /** One aggregated row per (agent, phase, provider, model). */
@@ -92,7 +102,10 @@ export interface CostSessionRow {
   tokensCacheRead: number
   tokensCacheWrite: number
   tokensTotal: number
+  /** Sum of the priced model rows in this session; absent when none priced. */
   costUsd?: number
+  /** Unpriced model rows folded into this session; present with `costUsd`. */
+  unpricedModels?: number
   unpricedReason?: UnpricedReason
 }
 
@@ -566,8 +579,12 @@ interface SessionAccumulator {
   tokensOutput: number
   tokensCacheRead: number
   tokensCacheWrite: number
-  usd: number | undefined
-  unpriced: boolean
+  /** Priced dollars accumulated; meaningful only when `priced` > 0. */
+  usd: number
+  /** Model rows that produced a price. */
+  priced: number
+  /** Model rows with no usable catalog price. */
+  unpricedModels: number
   reason: UnpricedReason | undefined
 }
 
@@ -729,7 +746,8 @@ function queryWithSqlite(
           tokensCacheRead: 0,
           tokensCacheWrite: 0,
           usd: 0,
-          unpriced: false,
+          priced: 0,
+          unpricedModels: 0,
           reason: undefined,
         }
         sessionAcc.agents.add(agent)
@@ -737,24 +755,26 @@ function queryWithSqlite(
         sessionAcc.tokensOutput += tokens.output
         sessionAcc.tokensCacheRead += tokens.cacheRead
         sessionAcc.tokensCacheWrite += tokens.cacheWrite
-        if ('usd' in priced && sessionAcc.usd !== undefined) {
+        if ('usd' in priced) {
           sessionAcc.usd += priced.usd
+          sessionAcc.priced += 1
         } else {
-          sessionAcc.unpriced = true
-          sessionAcc.usd = undefined
-          sessionAcc.reason = sessionAcc.reason ?? ('reason' in priced ? priced.reason : undefined)
+          sessionAcc.unpricedModels += 1
+          sessionAcc.reason = sessionAcc.reason ?? priced.reason
         }
         sessions.set(sessionId, sessionAcc)
       }
     }
 
     // The by-agent table is derived from the model groups, so every table in
-    // the report is backed by exactly one set of token sums. `costUsd` is the
-    // only added field, and only when every contributing model was priced, so
-    // the historical row shape keeps its old keys.
+    // the report is backed by exactly one set of token sums. Cost is attributed
+    // per model and summed here: a bucket that spans several models is a sum of
+    // its priced models, never `—`, because an ambiguous bucket is not the same
+    // thing as an unknown price. `unpricedModels` records how many contributors
+    // had no catalog price, so `(partial)` keeps a single, honest meaning.
     const byAgentPhase = new Map<
       string,
-      { row: CostRow; usd: number | undefined; unpriced: boolean }
+      { row: CostRow; usd: number; priced: number; unpricedModels: number }
     >()
     for (const acc of models.values()) {
       const key = `${acc.agent}\u0000${acc.phase}`
@@ -767,26 +787,29 @@ function queryWithSqlite(
           tokensTotal: 0,
         },
         usd: 0,
-        unpriced: false,
+        priced: 0,
+        unpricedModels: 0,
       }
       entry.row.tokensInput += acc.tokensInput
       entry.row.tokensOutput += acc.tokensOutput
       entry.row.tokensTotal += acc.tokensInput + acc.tokensOutput
-      if (acc.unpriced || entry.usd === undefined) {
-        entry.unpriced = true
-        entry.usd = undefined
-      } else if (acc.usd !== undefined) {
+      if (acc.usd === undefined) {
+        entry.unpricedModels += 1
+      } else {
         entry.usd += acc.usd
+        entry.priced += 1
       }
       byAgentPhase.set(key, entry)
     }
 
     const rows: CostRow[] = [...byAgentPhase.values()]
-      .map((entry) =>
-        entry.unpriced || entry.usd === undefined
-          ? { ...entry.row }
-          : { ...entry.row, costUsd: entry.usd },
-      )
+      .map(({ row, usd, priced, unpricedModels }) => ({
+        ...row,
+        // Absent cost means "nothing in this row could be priced"; a numeric
+        // cost with `unpricedModels` means "this row is partly priced".
+        ...(priced === 0 ? {} : { costUsd: usd }),
+        ...(priced === 0 || unpricedModels === 0 ? {} : { unpricedModels }),
+      }))
       .sort((a, b) => b.tokensTotal - a.tokensTotal)
 
     const byModel: CostModelRow[] = [...models.values()]
@@ -820,7 +843,10 @@ function queryWithSqlite(
           tokensCacheRead: acc.tokensCacheRead,
           tokensCacheWrite: acc.tokensCacheWrite,
           tokensTotal: acc.tokensInput + acc.tokensOutput,
-          ...(acc.usd === undefined ? {} : { costUsd: acc.usd }),
+          ...(acc.priced === 0 ? {} : { costUsd: acc.usd }),
+          ...(acc.priced === 0 || acc.unpricedModels === 0
+            ? {}
+            : { unpricedModels: acc.unpricedModels }),
           ...(acc.reason === undefined ? {} : { unpricedReason: acc.reason }),
         }
       })
@@ -935,12 +961,25 @@ function formatUsd(usd: number | undefined): string {
  *
  * With no priced row at all the cell is `—`, not `$0.00`: a report that could
  * not price anything has not measured zero spend, and this number is what a
- * tier decision would be made on.
+ * tier decision would be made on. `unpricedRows` counts every row that is not
+ * FULLY priced, including rows whose numeric part is shown but incomplete.
  */
 function totalCostCell(pricedUsd: number, pricedRows: number, unpricedRows: number): string {
   if (pricedRows === 0) return unpricedRows === 0 ? '**$0.00**' : '**—** (nothing priceable)'
   const cell = `**${formatUsd(pricedUsd)}**`
   return unpricedRows === 0 ? cell : `${cell} (partial)`
+}
+
+/**
+ * A per-row cost cell.
+ *
+ * A row that mixed priced and unpriced models shows the money it could account
+ * for, marked `(partial)`: hiding it behind `—` under-reported the total, and
+ * showing it unmarked claimed the row was fully priced.
+ */
+function rowCostCell(usd: number | undefined, unpricedModels: number | undefined): string {
+  const cell = formatUsd(usd)
+  return unpricedModels === undefined || usd === undefined ? cell : `${cell} (partial)`
 }
 
 /** Session rows shown before the tail is summarised. */
@@ -1005,7 +1044,34 @@ function pricingNote(pricing: PricingSnapshot | undefined): string[] {
   return [`${head}.`]
 }
 
-/** Model rows collapsed across agents: one line per provider/model pair. */
+/**
+ * One line that reconciles the two dollar totals.
+ *
+ * Every dollar is attributed per `(agent, model)` and then summed, so a fully
+ * priced report produces the SAME by-agent and by-model totals by construction.
+ * The only legitimate difference is a model with no catalog price: its tokens
+ * remain measured in both token columns and its cost is absent from both dollar
+ * totals. Stating that once is what lets the reader trust the two `(partial)`
+ * numbers instead of having to reconcile them by hand.
+ */
+function reconciliationNote(
+  rows: readonly CostRow[],
+  byModel: readonly CostModelRow[] | undefined,
+): string | undefined {
+  if (byModel === undefined) return undefined
+  const unpriced = byModel.filter((row) => row.costUsd === undefined)
+  if (unpriced.length === 0) return undefined
+  const agentUsd = rows.reduce((sum, row) => sum + (row.costUsd ?? 0), 0)
+  const modelUsd = byModel.reduce((sum, row) => sum + (row.costUsd ?? 0), 0)
+  const totalTokens = byModel.reduce((sum, row) => sum + row.tokensTotal, 0)
+  const unpricedTokens = unpriced.reduce((sum, row) => sum + row.tokensTotal, 0)
+  const totals =
+    Math.abs(agentUsd - modelUsd) < 0.005
+      ? `by-agent and by-model priced totals agree at ${formatUsd(agentUsd)}`
+      : `by-agent ${formatUsd(agentUsd)} and by-model ${formatUsd(modelUsd)} differ by ${formatUsd(Math.abs(agentUsd - modelUsd))}`
+  return `Cost reconciliation: ${totals}; ${unpricedTokens} token(s) from ${unpriced.length} unpriced model row(s) stay in the token columns of both tables and are excluded from both dollar totals (${totalTokens - unpricedTokens} priced token(s) carry the money).`
+}
+
 function modelTotals(byModel: readonly CostModelRow[]): Array<{
   provider: string
   model: string
@@ -1129,14 +1195,16 @@ function renderSessionSection(query: CostQuery, days: number): string[] {
   const hidden = query.bySession.length - shown.length
   const pricedUsd = query.bySession.reduce((sum, row) => sum + (row.costUsd ?? 0), 0)
   const priced = query.bySession.filter((row) => row.costUsd !== undefined).length
-  const unpriced = query.bySession.length - priced
+  const unpriced = query.bySession.filter(
+    (row) => row.costUsd === undefined || (row.unpricedModels ?? 0) > 0,
+  ).length
   const totalCell = totalCostCell(pricedUsd, priced, unpriced)
   lines.push(
     '| Session | Title | Agent | Tokens In | Tokens Out | Cache Read | Cache Write | Tokens Total | Cost (USD) |',
     '|---------|-------|-------|----------:|-----------:|-----------:|------------:|-------------:|-----------:|',
     ...shown.map(
       (row) =>
-        `| ${row.sessionId} | ${shortTitle(row.title)} | ${row.agents.join(', ') || '—'} | ${row.tokensInput} | ${row.tokensOutput} | ${row.tokensCacheRead} | ${row.tokensCacheWrite} | ${row.tokensTotal} | ${formatUsd(row.costUsd)} |`,
+        `| ${row.sessionId} | ${shortTitle(row.title)} | ${row.agents.join(', ') || '—'} | ${row.tokensInput} | ${row.tokensOutput} | ${row.tokensCacheRead} | ${row.tokensCacheWrite} | ${row.tokensTotal} | ${rowCostCell(row.costUsd, row.unpricedModels)} |`,
     ),
     `| **${scope === undefined ? 'Total' : 'Root + descendants'}** | — | — | **${query.bySession.reduce((sum, row) => sum + row.tokensInput, 0)}** | **${query.bySession.reduce((sum, row) => sum + row.tokensOutput, 0)}** | **${query.bySession.reduce((sum, row) => sum + row.tokensCacheRead, 0)}** | **${query.bySession.reduce((sum, row) => sum + row.tokensCacheWrite, 0)}** | **${query.bySession.reduce((sum, row) => sum + row.tokensTotal, 0)}** | ${totalCell} |`,
   )
@@ -1154,12 +1222,14 @@ function renderMarkdown(
 ): string {
   const { rows, coverage } = query
   const header = `## Token and cost usage by agent and phase (last ${days} days)`
+  const reconciliation = reconciliationNote(rows, query.byModel)
   const footer = [
     formatCoverage(coverage, days),
     'Window: rolling 24-hour days from query time (not calendar days or session boundaries).',
     'Aggregation: per agent and phase (phase may be unknown on V2), per model, and per session.',
     'Attribution: a session row covers that session alone; passing session:<id> sums the root session and its descendant sessions.',
-    'Limits: costs are catalog list prices (USD per 1M tokens), not a provider invoice; a row mixing a priced and an unpriced model reads — and is excluded from the totals, because an unknown model is never priced at zero.',
+    'Limits: costs are catalog list prices (USD per 1M tokens), not a provider invoice; a row that mixes priced and unpriced models shows its priced part and is reported as partial, and an unknown model is never priced at zero.',
+    ...(reconciliation === undefined ? [] : [reconciliation]),
     ...pricingNote(pricing),
     `Source: opencode.db (read-only) — table families: ${coverage.sources.join(' + ')} — ${coverage.assistantRows} assistant row(s) scanned`,
   ].join('\n')
@@ -1193,12 +1263,13 @@ function renderMarkdown(
       else {
         acc.usd += r.costUsd
         acc.priced += 1
+        if ((r.unpricedModels ?? 0) > 0) acc.partial += 1
       }
       return acc
     },
-    { tokensInput: 0, tokensOutput: 0, tokensTotal: 0, usd: 0, unpriced: 0, priced: 0 },
+    { tokensInput: 0, tokensOutput: 0, tokensTotal: 0, usd: 0, unpriced: 0, priced: 0, partial: 0 },
   )
-  const totalCost = totalCostCell(total.usd, total.priced, total.unpriced)
+  const totalCost = totalCostCell(total.usd, total.priced, total.unpriced + total.partial)
   const lines = [
     header,
     '',
@@ -1206,7 +1277,7 @@ function renderMarkdown(
     '|-------|-------|----------:|-----------:|-------------:|-----------:|',
     ...rows.map(
       (r) =>
-        `| ${r.agent} | ${r.phase} | ${r.tokensInput} | ${r.tokensOutput} | ${r.tokensTotal} | ${formatUsd(r.costUsd)} |`,
+        `| ${r.agent} | ${r.phase} | ${r.tokensInput} | ${r.tokensOutput} | ${r.tokensTotal} | ${rowCostCell(r.costUsd, r.unpricedModels)} |`,
     ),
     `| **Total** | — | **${total.tokensInput}** | **${total.tokensOutput}** | **${total.tokensTotal}** | ${totalCost} |`,
     '',
