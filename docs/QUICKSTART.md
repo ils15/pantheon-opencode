@@ -59,7 +59,7 @@ npm run doctor
 ### Prerequisites
 
 - **Node.js >=26.4.0** for Pantheon's CLI, installer, and Node-based tooling
-- **OpenCode v1.18.4+**
+- **OpenCode 1.19.x, or 2.0.29 / 2.0.30 / 2.0.31 / 2.1.x** — **2.0.22 is not supported**
 - **Python 3.11+** (optional, for MCP servers)
 
 The package's Node floor does not imply a universal OpenCode host runtime:

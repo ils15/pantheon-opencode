@@ -31,7 +31,7 @@ de planejar o trabalho, avançar, conferir resultados e preservar o contexto
 
 ## Comece em 2 minutos
 
-Requisitos: [OpenCode 1.18.4+](https://opencode.ai/docs/) e Node.js `>=26.4.0` para a CLI, o instalador e as ferramentas Node do Pantheon. Node 22, Node 24 e Node 26.0–26.3 não são compatíveis com esta versão.
+Requisitos: [OpenCode](https://opencode.ai/docs/) **1.19.x**, ou **2.0.29 / 2.0.30 / 2.0.31 / 2.1.x** — **2.0.22 não é suportado** e Node.js `>=26.4.0` para a CLI, o instalador e as ferramentas Node do Pantheon. Node 22, Node 24 e Node 26.0–26.3 não são compatíveis com esta versão.
 
 Com a configuração padrão do npm, versões incompatíveis podem gerar um aviso `EBADENGINE`; o postinstall pula a sincronização Node/config, e a CLI bloqueia a configuração antes de gravar arquivos. Para atualizar sem instalação de sistema, use um gerenciador de Node do usuário: `nvm install 26.4.0 && nvm use 26.4.0`, `fnm install 26.4.0 && fnm use 26.4.0` ou `volta install node@26.4.0`.
 
@@ -112,7 +112,7 @@ falha fechado, sem fallback silencioso. O `doctor` valida o manifest e o
 SHA-256 de cada script sem regenerá-lo.
 
 
-## Novidades da 1.6.0-beta.1
+## Novidades da 1.6.0
 
 - Primeira beta compatível com o contrato de plugin do OpenCode 2.
 - Remoção do pipeline legado de vector-memory, preservando a busca por palavras-
@@ -120,7 +120,7 @@ SHA-256 de cada script sem regenerá-lo.
 - Validações de CI e release fail-closed; `doctor` e o sandbox exclusivo V2
   cobrem o caminho de instalação do OpenCode 2.
 
-## OpenCode V1/V2 — Versão dupla (1.6.0-beta.1)
+## OpenCode V1/V2 — gerações de plugin
 
 Esta é a primeira beta compatível com o OpenCode 2. O Pantheon tem dois contratos de plugin OpenCode **exclusivos**. A configuração
 comum do OpenCode pode ser compartilhada, mas o registro do plugin Pantheon é
@@ -346,7 +346,7 @@ gerenciados que vêm do V1 sobrescrevem, e os seus próprios campos são
 preservados, com a mesma precedência que o instalador já aplica em outros
 pontos. A ordem das chaves não muda o resultado.
 
-## Atualizando entre releases (beta.5+)
+## Atualizando entre releases
 
 Um comando mantém uma instalação existente em dia:
 

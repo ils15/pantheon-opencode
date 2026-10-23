@@ -18,7 +18,7 @@ npm run setup
 npm run doctor
 ```
 
-- Requisitos: **Node.js >=26.4.0** para a CLI/instalador/ferramentas Node do Pantheon, **Python 3.11+** (opcional, MCP servers), e um host da matriz: **OpenCode 1.19.x** (contrato V1) ou **OpenCode 2.0.29 / 2.0.30 / 2.1.x** (contrato V2). **OpenCode 2.0.22 e 2.0.31 não são suportados** — a 2.0.22 não expõe `ctx.permission.assert` nem `worktree_*`/`pantheon_bounded_read`; a 2.0.31 não tem evidência de runtime. Node 22, Node 24 e Node 26.0–26.3 estão fora da matriz.
+- Requisitos: **Node.js >=26.4.0** para a CLI/instalador/ferramentas Node do Pantheon, **Python 3.11+** (opcional, MCP servers), e um host da matriz: **OpenCode 1.19.x** (contrato V1) ou **OpenCode 2.0.29 / 2.0.30 / 2.0.31 / 2.1.x** (contrato V2). **OpenCode 2.0.22 não é suportado** — não expõe `ctx.permission.assert` nem `worktree_*`/`pantheon_bounded_read`. A **2.0.31 é suportada** por decisão do mantenedor, ainda sem linha medida na matriz de permissões. Node 22, Node 24 e Node 26.0–26.3 estão fora da matriz.
 - Com a configuração padrão do npm, versões incompatíveis podem gerar `EBADENGINE` como aviso durante a instalação. O postinstall do Pantheon então pula a sincronização Node/config e permite que o pacote termine de instalar; a CLI bloqueia a configuração com uma mensagem explícita antes de gravar arquivos. `engine-strict=true` pode fazer o próprio npm interromper a instalação. Para atualizar sem instalação global/system-wide, use um gerenciador de Node do usuário:
 
   ```bash
@@ -26,7 +26,7 @@ npm run doctor
   # ou: fnm install 26.4.0 && fnm use 26.4.0
   # ou: volta install node@26.4.0
   ```
-- Isso não pressupõe um runtime Node universal para o host OpenCode: o OpenCode V2.0.31 oficial tem um caminho de runtime Bun e um build Node separado fixado em Node 26.4.0; **2.0.31 não está na matriz suportada desta release**. Nenhum mínimo de Bun é declarado. `node:sqlite` >=22.5 é apenas um limite de capacidade do backend opcional `pantheon_cost`, não o requisito de suporte do pacote.
+- Isso não pressupõe um runtime Node universal para o host OpenCode: o OpenCode V2.0.31 oficial — um host suportado — tem um caminho de runtime Bun e um build Node separado fixado em Node 26.4.0, o que não altera o piso do pacote. Nenhum mínimo de Bun é declarado. `node:sqlite` >=22.5 é apenas um limite de capacidade do backend opcional `pantheon_cost`, não o requisito de suporte do pacote.
 - No resumo de uma configuração interativa em TTY, o instalador recomenda um local persistente externo para futuros worktrees: `<project-parent>/.pantheon-worktrees/<exact-repository-directory-basename>/<task>` (por exemplo, `/home/user/.pantheon-worktrees/My Project/feature-name`). Use o nome exato do diretório do projeto, incluindo espaços; não o normalize como slug. A recomendação é apenas orientação para agentes; o Pantheon não cria worktrees Git nem diretórios automaticamente.
 - A configuração interativa em TTY usa prompts Clack para selecionar componentes, escolher instalação global/projeto e confirmar a revisão antes de aplicar. Cancelar não altera a configuração. `--yes`, `--headless`, `--dry-run` e os caminhos sem TTY mantêm seus comportamentos.
 - Delegação e modo background dependem das ferramentas expostas pela versão/runtime do host. Na sessão Beta 10 reportada, Zeus tinha a ferramenta `subagent`, sem `task_status`/`cancel_task` ou garantia de acompanhamento/recuperação. Verifique o schema e a documentação do runtime; não presuma que `task()` ou background estejam disponíveis. A variável experimental abaixo só se aplica a hosts/versões que a documentem.
@@ -138,8 +138,8 @@ inventário legível, não há limpeza automática.
 
 ## Prerequisites
 
-- **OpenCode 1.19.x**, or **2.0.29 / 2.0.30 / 2.1.x** — [Install OpenCode](https://opencode.ai/docs/). **OpenCode 2.0.22 is not supported** (no `ctx.permission.assert`, no `worktree_*` / `pantheon_bounded_read`); **OpenCode 2.0.31 is not supported** (no runtime evidence).
-- **Node.js >=26.4.0** — for `npx pantheon-opencode init` and Node-based Pantheon tooling (`engines.node` = `>=26.4.0`). Node 22, Node 24, and Node 26.0–26.3 are unsupported. The optional `pantheon_cost` backend separately needs `node:sqlite` (Node >=22.5); this capability threshold does not lower package support. Official OpenCode V2.0.31 (not in this release's supported matrix) has a Bun runtime path and a separate Node build pinned to 26.4.0; no Bun minimum is implied.
+- **OpenCode 1.19.x**, or **2.0.29 / 2.0.30 / 2.0.31 / 2.1.x** — [Install OpenCode](https://opencode.ai/docs/). **OpenCode 2.0.22 is not supported** (no `ctx.permission.assert`, no `worktree_*` / `pantheon_bounded_read`).
+- **Node.js >=26.4.0** — for `npx pantheon-opencode init` and Node-based Pantheon tooling (`engines.node` = `>=26.4.0`). Node 22, Node 24, and Node 26.0–26.3 are unsupported. The optional `pantheon_cost` backend separately needs `node:sqlite` (Node >=22.5); this capability threshold does not lower package support. Official OpenCode V2.0.31 — a supported host — has a Bun runtime path and a separate Node build pinned to 26.4.0; no Bun minimum is implied.
 - **Python 3.11+** — for MCP servers (optional, used by `npm run setup`)
 - **Git** — for version detection in TUI sidebar
 
@@ -248,18 +248,19 @@ JavaScript coverage at all. Python coverage additionally requires
 
 > **OpenCode 1.X support ends after the 1.6 line.** The 1.6.x line supports
 > OpenCode **1.19.x** (V1 plugin; read-only enforcement measured on `1.19.4` on
-> 2026-10-22) and OpenCode **2.0.29, 2.0.30 and 2.1.x** (V2 plugin);
+> 2026-10-22) and OpenCode **2.0.29, 2.0.30, 2.0.31 and 2.1.x** (V2 plugin);
 > **OpenCode 2.0.22 is not
 > supported** (the host exposes neither
-> `ctx.permission.assert` nor `worktree_*` / `pantheon_bounded_read`) and
-> **OpenCode 2.0.31 is not supported** (no runtime evidence). From 1.7 onward
+> `ctx.permission.assert` nor `worktree_*` / `pantheon_bounded_read`), and
+> **OpenCode 2.0.31 is supported** by maintainer decision, without a measured
+> permission-matrix row yet. From 1.7 onward
 > the line drops the V1 contract and targets OpenCode 2 only. Read this before
 > installing or upgrading across the 1.6 → 1.7 boundary.
 
 | Linha Pantheon | OpenCode 1.19.x | OpenCode 2.0.29 / 2.0.30 | OpenCode 2.1.x (`>=2.1.0 <2.2`) | OpenCode 2.0.22 | OpenCode 2.0.31 |
 |---|---|---|---|---|---|
-| **1.6.x** | **Suportado — PASS: enforcement read-only por config.** V1, selecionado automaticamente; medido em `1.19.4`, onde `permission.ask` não dispara e a garantia vem de `bash`/`write`/`edit: deny` + `read: allow` na config | **Suportado — PASS medido.** V2, superfície reduzida; matriz de permissões pós-fix sem nenhuma célula `FAIL` | **Suportado — PASS medido** no piso `2.1.0` e no patch mais novo no congelamento (`2.1.3`). V2 | **Não suportado** — o host não expõe `ctx.permission.assert` nem `worktree_*`/`pantheon_bounded_read` | **Não suportado** — sem evidência de runtime |
-| **1.7 and later** | **Não suportado** — breaking change | **Alvo do trabalho 1.7+** — V2 only | **Alvo do trabalho 1.7+** — V2 only | **Não suportado** | **Não suportado** até haver evidência |
+| **1.6.x** | **Suportado — PASS: enforcement read-only por config.** V1, selecionado automaticamente; medido em `1.19.4`, onde `permission.ask` não dispara e a garantia vem de `bash`/`write`/`edit: deny` + `read: allow` na config | **Suportado — PASS medido.** V2, superfície reduzida; matriz de permissões pós-fix sem nenhuma célula `FAIL` | **Suportado — PASS medido** no piso `2.1.0` e no patch mais novo no congelamento (`2.1.3`). V2 | **Não suportado** — o host não expõe `ctx.permission.assert` nem `worktree_*`/`pantheon_bounded_read` | **Suportado** — V2, por decisão do mantenedor. Sem linha medida: suportado, não `PASS` |
+| **1.7 and later** | **Não suportado** — breaking change | **Alvo do trabalho 1.7+** — V2 only | **Alvo do trabalho 1.7+** — V2 only | **Não suportado** | **Suportado** — V2 only |
 
 As células suportadas da linha 1.6.x são afirmações **por host**, não um
 resultado único: `2.0.29`, `2.0.30` e `2.1.x` têm `PASS` medido pela matriz de

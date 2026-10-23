@@ -35,7 +35,7 @@ way to plan work, make progress, check results, and keep useful project context.
 ## Start in 2 minutes
 
 Requirements: [OpenCode](https://opencode.ai/docs/) **1.19.x**, or
-**2.0.29 / 2.0.30 / 2.1.x** — **2.0.22 and 2.0.31 are not supported**. Node.js
+**2.0.29 / 2.0.30 / 2.0.31 / 2.1.x** — **2.0.22 is not supported**. Node.js
 **>=26.4.0** for the Pantheon CLI, installer, and Node-based tooling (Node 22,
 24, and 26.0–26.3 are outside the matrix); Python **>=3.11** for the optional
 MCP servers. For which OpenCode generation each Pantheon release line supports,
@@ -43,9 +43,10 @@ see [Compatibility and support policy](#compatibility-and-support-policy).
 
 Pantheon declares `engines.node` as `>=26.4.0`; Node 22, Node 24, and Node
 26.0–26.3 are not supported by this release. This package floor does not imply
-that every OpenCode host runs on Node: official OpenCode V2.0.31 (not in this
-release's supported matrix) has a Bun runtime path and a separate Node build
-pinned to Node 26.4.0. No Bun minimum is asserted here. The optional
+that every OpenCode host runs on Node: official OpenCode V2.0.31 — a supported
+host — ships a Bun runtime path and a separate Node build pinned to Node
+26.4.0, so the host runtime you choose does not move Pantheon's package floor.
+No Bun minimum is asserted here. The optional
 `pantheon_cost` SQLite backend has its own capability threshold, `node:sqlite`
 on Node >= 22.5; that feature threshold does not lower Pantheon's package or CLI
 support floor.
@@ -222,11 +223,13 @@ services you choose to use. Check the
 >
 > **Supported hosts for the 1.6.x line:** OpenCode **1.19.x** (V1 plugin;
 > read-only enforcement measured on `1.19.4` on 2026-10-22) and OpenCode
-> **2.0.29, 2.0.30 and 2.1.x** (V2 plugin). **OpenCode 2.0.22 is not supported**:
-> the host does not expose
+> **2.0.29, 2.0.30, 2.0.31 and 2.1.x** (V2 plugin). **OpenCode 2.0.22 is not
+> supported**: the host does not expose
 > `ctx.permission.assert`, nor `worktree_*` / `pantheon_bounded_read`.
-> **OpenCode 2.0.31 is not supported**: there is no runtime evidence for it, and
-> it is not part of the matrix. Node **>=26.4.0** is the single package floor
+> **OpenCode 2.0.31 is supported** by maintainer decision; unlike the other V2
+> cells it has no measured permission-matrix row yet, so treat it as
+> supported-but-unmeasured rather than as a `PASS`. Node **>=26.4.0** is the
+> single package floor
 > (Node 22, 24 and 26.0–26.3 are outside the matrix); Python **>=3.11** is
 > required for the optional MCP servers.
 >
@@ -238,12 +241,13 @@ services you choose to use. Check the
 
 | Pantheon line | OpenCode 1.19.x | OpenCode 2.0.29 / 2.0.30 | OpenCode 2.1.x (`>=2.1.0 <2.2`) | OpenCode 2.0.22 | OpenCode 2.0.31 |
 |---|---|---|---|---|---|
-| **1.6.x** (current line) | **Supported — PASS: config-level read-only enforcement.** V1 plugin contract; measured on `1.19.4`, where `permission.ask` never fires and the guarantee comes from `bash`/`write`/`edit: deny` plus `read: allow` in config | **Supported — PASS measured.** V2 contract; post-fix permission matrix with zero `FAIL` cells | **Supported — PASS measured** at the floor `2.1.0` and at the newest patch at freeze (`2.1.3`). V2 contract | **Not supported.** Host lacks the required V2 API: no `ctx.permission.assert`, no `worktree_*` / `pantheon_bounded_read` | **Not supported.** No runtime evidence |
-| **1.7 and later** | **Not supported.** Breaking change | **Target of the 1.7+ work.** V2 only | **Target of the 1.7+ work.** V2 only | **Not supported** | **Not supported** unless added by evidence |
+| **1.6.x** (current line) | **Supported — PASS: config-level read-only enforcement.** V1 plugin contract; measured on `1.19.4`, where `permission.ask` never fires and the guarantee comes from `bash`/`write`/`edit: deny` plus `read: allow` in config | **Supported — PASS measured.** V2 contract; post-fix permission matrix with zero `FAIL` cells | **Supported — PASS measured** at the floor `2.1.0` and at the newest patch at freeze (`2.1.3`). V2 contract | **Not supported.** Host lacks the required V2 API: no `ctx.permission.assert`, no `worktree_*` / `pantheon_bounded_read` | **Supported** — V2 contract, by maintainer decision. No permission-matrix row yet: supported, not `PASS` |
+| **1.7 and later** | **Not supported.** Breaking change | **Target of the 1.7+ work.** V2 only | **Target of the 1.7+ work.** V2 only | **Not supported** | **Supported** — V2 only |
 
 The supported 1.6.x cells are per-host claims, not one blanket result.
 `2.0.29`, `2.0.30` and `2.1.x` carry a measured `PASS` from the V2 permission
-matrix; `1.19.x` carries a measured `PASS` from a different mechanism —
+matrix; `2.0.31` is supported without one, which is why it is marked supported
+and not `PASS`; `1.19.x` carries a measured `PASS` from a different mechanism —
 **config-level read-only enforcement**, not the `permission.ask` hook, which does
 not fire on that host. A missing row is not a `PASS`, and a `WARN`, `SKIP`,
 `NOT_TESTED` or `AMBIENTAL` result is not a `PASS` either
@@ -253,7 +257,7 @@ the host does not expose `ctx.permission.assert`, so permission-ordering
 behaviour is not observable on it, and it also lacks `worktree_*` and
 `pantheon_bounded_read`; its `PASS` would be a false green. The cells are also
 different contracts: read
-[the plugin contract](#opencode-v1v2--dual-version-160-beta1) for what each
+[the plugin contract](#opencode-v1v2--dual-plugin-generation) for what each
 generation actually registers.
 
 ### Node runtime floor
@@ -567,17 +571,17 @@ shipped runtime dependency of the MCP resources server, not an evaluation
 asset, so it remains packaged.
 
 
-## What's new in 1.6.0-beta.1
+## What's new in 1.6.0
 
-- First beta compatible with the OpenCode 2 plugin contract.
+- First line compatible with the OpenCode 2 plugin contract.
 - Removed the legacy vector-memory pipeline while preserving SQLite FTS5/BM25
   keyword search and the `code_*` codemap tools.
 - CI and release validation are fail-closed; `doctor` checks and the V2-only
   sandbox validator cover the OpenCode 2 installation path.
 
-## OpenCode V1/V2 — Dual Version (1.6.0-beta.1)
+## OpenCode V1/V2 — dual plugin generation
 
-This is the first beta compatible with OpenCode 2. Pantheon has two **exclusive** OpenCode
+This is the first line compatible with OpenCode 2. Pantheon has two **exclusive** OpenCode
 plugin contracts. Ordinary OpenCode
 configuration may be shared, but the Pantheon plugin registration is selected
 per installation; V1 and V2 Pantheon plugins must never be registered together.
@@ -864,13 +868,13 @@ framework-managed fields from the V1 block overwrite, and your own fields are
 preserved, matching the precedence the installer already applies elsewhere.
 Key order does not matter.
 
-## Updating between releases (beta.5+)
+## Updating between releases
 
 > **Read [Compatibility and support policy](#compatibility-and-support-policy)
 > before upgrading across a line boundary.** 1.6.x is the last line that
 > supports an OpenCode 1.X host (**1.19.x**; read-only enforced by config,
 > measured on `1.19.4`); it also supports OpenCode
-> **2.0.29, 2.0.30 and 2.1.x** (2.0.22 and 2.0.31 are not supported). From 1.7
+> **2.0.29, 2.0.30, 2.0.31 and 2.1.x** (2.0.22 is not supported). From 1.7
 > onward the line drops the V1 contract and targets OpenCode 2 only. Within the
 > 1.6 line, `update` is the supported path.
 
@@ -1071,14 +1075,10 @@ The runner defaults to the current stable `@opencode/cli` package and its
 host build. This keeps Pantheon beta testing separate from the OpenCode CLI
 release channel.
 
-"V2" here refers only to the hook canary observed against an OpenCode v2.0.18
-host, where at least one tested hook callback fired; it does not establish
-compatibility with the stable `@opencode/plugin@2.0.18` SDK or full 2.x
-contract. This branch still pins transitional `@opencode-ai/plugin@1.18.30`.
-On hosts where both `opencode` and `opencode2` exist, the latter is typically
-a shim that execs the same binary, so an older side-by-side comparison proved
-nothing about the binary itself. The project is V2-exclusive, so there is a
-single leg.
+"V2" in this section names the host generation, not a measured guarantee. See
+[Compatibility and support policy](#compatibility-and-support-policy) for which
+hosts are supported and on what evidence. The project is V2-exclusive, so there
+is a single leg.
 
 ```bash
 scripts/test-opencode-v2-sandbox.sh --prepare     # tarball + install + init in the sandbox
