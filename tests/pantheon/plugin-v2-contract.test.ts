@@ -110,6 +110,7 @@ async function main(): Promise<void> {
     default: plugin,
     V2_UNSUPPORTED_FEATURES,
     getUnsupportedFeatures,
+    setV2ShellRunnerForTests,
     v2Dispose,
   } = await import('../../src/plugin-v2.ts')
   const pluginSource = await readFile(new URL('../../src/plugin-v2.ts', import.meta.url), 'utf8')
@@ -2244,6 +2245,213 @@ async function main(): Promise<void> {
     })
     assert.ok(denial !== null, 'a `Zeus` agent id must not slip past the exact-match predicate')
     assert.match(denial, /delegate to @apollo/)
+  })
+
+  // ─── V1 parity on V2 (#266) ──────────────────────────────────────────
+  //
+  // Three V1 behaviours ran only from V1's hooks, which a V2-only install never
+  // loads. These drive the handlers `plugin.setup` registered, so deleting the
+  // wiring drops them.
+
+  console.log('\n🧩 V1 Parity Tests (compaction context, vision history, shell hooks)')
+
+  test('the compaction hook appends the V1 compaction-context blocks to payload.system', async () => {
+    const sessionID = 'ses-v2-compaction' // cspell:disable-line
+    let compactionHandler: ((event: unknown) => void | Promise<void>) | undefined
+    await plugin.setup(
+      makeBaseContext({
+        session: {
+          // The enforcer needs the todo listing; that is what makes V1's
+          // `<todo_context>` block constructible on V2 at all.
+          ...idleSessionDomain({
+            todos: [{ content: 'Ship the V2 parity fixes', status: 'in_progress' }],
+          }),
+          hook: async (name: string, handler: (event: unknown) => void | Promise<void>) => {
+            if (name === 'compaction') compactionHandler = handler
+            return { dispose: async () => {} }
+          },
+        },
+      }) as never,
+    )
+    assert.equal(typeof compactionHandler, 'function')
+
+    // The host's compaction payload: the id lives on `session.id`, and the
+    // only text sink is `system`.
+    const payload = {
+      session: { id: sessionID },
+      agent: 'zeus',
+      system: [{ type: 'text', text: 'existing system prompt' }],
+      messages: [],
+    }
+    await compactionHandler?.(payload)
+    const system = payload.system as Array<{ type: string; text: string }>
+    const appended = system.slice(1).map((part) => part.text)
+    assert.ok(
+      appended.some((text) => text.includes('<pantheon-context')),
+      'the preservation directive must be injected — V1 does it from experimental.session.compacting',
+    )
+    assert.ok(
+      appended.some((text) => text.includes('Ship the V2 parity fixes')),
+      'pending todos must reach the summarized context (<todo_context>)',
+    )
+    assert.equal(system[0]?.text, 'existing system prompt', 'the host system prompt is kept')
+  })
+
+  test('the context hook replaces image parts with the V1 placeholder text', async () => {
+    let contextHandler: ((event: unknown) => void | Promise<void>) | undefined
+    await plugin.setup(
+      makeBaseContext({
+        session: {
+          hook: async (name: string, handler: (event: unknown) => void | Promise<void>) => {
+            if (name === 'context') contextHandler = handler
+            return { dispose: async () => {} }
+          },
+        },
+      }) as never,
+    )
+    assert.equal(typeof contextHandler, 'function')
+
+    const payload = {
+      sessionID: 'ses-v2-vision-history',
+      system: [],
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'file',
+              mime: 'image/png',
+              filename: 'shot.png',
+              url: 'data:image/png;base64,AA',
+            },
+            { type: 'text', text: 'keep this text' },
+          ],
+        },
+      ],
+    }
+    await contextHandler?.(payload)
+    const content = (payload.messages[0]?.content ?? []) as Array<{ type: string; text?: string }>
+    assert.equal(content[0]?.type, 'text', 'an image part must not reach a text-only provider')
+    assert.equal(
+      content[0]?.text,
+      'Imagem removida do histórico antes do envio ao provedor textual.',
+      'the placeholder is V1’s, not a V2 invention',
+    )
+    assert.equal(content[1]?.text, 'keep this text', 'non-image parts are untouched')
+  })
+
+  test('execute.before/after run the delegation audit and formatter scripts through registration', async () => {
+    const invocations: Array<{ script: string; payload: Record<string, unknown> }> = []
+    setV2ShellRunnerForTests(async (script, payload) => {
+      invocations.push({ script, payload: payload as Record<string, unknown> })
+      return { code: 0, stdout: '', stderr: '', signal: null, timedOut: false }
+    })
+    try {
+      const captured = await setupCapturingToolHooks()
+      const before = captured.before as (e: unknown) => Promise<void>
+      const after = captured.after as (e: unknown) => Promise<void>
+      await before({
+        tool: 'subagent',
+        sessionID: 'ses-v2-audit',
+        agent: 'zeus',
+        messageID: 'msg_audit',
+        id: 'call_audit',
+        input: { agent: 'apollo' },
+      })
+      const start = invocations.find((call) => call.script === 'on-subagent-delegation-start.sh')
+      assert.ok(start !== undefined, 'the delegation START record must be written on V2')
+      assert.equal(start?.payload.agent_id, 'apollo')
+      assert.equal(typeof start?.payload.delegation_id, 'string')
+
+      await after({
+        tool: 'subagent',
+        sessionID: 'ses-v2-audit',
+        agent: 'zeus',
+        messageID: 'msg_audit',
+        id: 'call_audit',
+        input: { agent: 'apollo' },
+        status: 'completed',
+        result: { output: 'done' },
+      })
+      const stop = invocations.find((call) => call.script === 'on-subagent-delegation-stop.sh')
+      assert.ok(stop !== undefined, 'the delegation STOP record must be written on V2')
+      assert.equal(
+        stop?.payload.delegation_id,
+        start?.payload.delegation_id,
+        'start and stop join on the SAME delegation_id',
+      )
+      assert.equal(stop?.payload.status, 'success')
+      assert.ok(
+        invocations.some((call) => call.script === 'format-multi-language.sh'),
+        'the formatter must run on the V2 after-hook',
+      )
+    } finally {
+      setV2ShellRunnerForTests(null)
+    }
+  })
+
+  test('removing the enforcement from plugin-v2 drops the V2 denial path', async () => {
+    // Structural counterpart to the behavioural tests above: the guard must be
+    // instantiated in THIS module. If it were delegated to a V1 bridge that is
+    // never built, the file would import nothing from delegation-enforce.
+    assert.match(
+      pluginSource,
+      /createEnforcementGuard\(/,
+      'plugin-v2.ts must instantiate the enforcement guard itself',
+    )
+    assert.match(pluginSource, /syncReadOnlySession\(/, 'the registry must be populated in V2')
+    assert.doesNotMatch(
+      pluginSource,
+      /actual enforcement is wired\s+through the V1/,
+      'the false coverage claim about V1 enforcement must be gone',
+    )
+  })
+
+  test('the bootstrap restores Module._extensions[".json"] to its original value', () => {
+    // The ajv shim patches the GLOBAL CommonJS JSON loader. If it survived past
+    // the module-level bootstrap, every later require of a .json file in this
+    // process would read through a test-owned loader — a leak that fails far
+    // from its cause. ORIGINAL_JSON_LOADER is captured above the patch, so
+    // identity comparison is the exact assertion, not an approximation.
+    assert.equal(
+      jsonExtensions._extensions['.json'],
+      ORIGINAL_JSON_LOADER,
+      'the ajv bootstrap must restore the .json loader it patched',
+    )
+    assert.notEqual(
+      jsonExtensions._extensions['.json'],
+      undefined,
+      'sanity: the loader must still be registered, not deleted',
+    )
+  })
+
+  test('ajv is constructed once and the cached validator is one object throughout', () => {
+    assert.ok(
+      validatorUses.length >= 2,
+      `expected the suite to have validated against ajv more than once, saw ${validatorUses.length}`,
+    )
+    // Group recorded uses by schema and assert each schema resolved to exactly
+    // one validator function. Several distinct schemas are fine — they are
+    // different validators by design; the invariant is per-schema identity.
+    const bySchema = new Map<string, Set<ValidateFn>>()
+    for (const use of validatorUses) {
+      const seen = bySchema.get(use.schemaKey) ?? new Set<ValidateFn>()
+      seen.add(use.validate)
+      bySchema.set(use.schemaKey, seen)
+    }
+    for (const [schemaKey, validators] of bySchema) {
+      assert.equal(
+        validators.size,
+        1,
+        `schema ${schemaKey} compiled to ${validators.size} distinct validators; every test must share one`,
+      )
+    }
+    // And a fresh call returns the very object earlier calls recorded.
+    const [first] = validatorUses
+    if (first !== undefined) {
+      const again = compiledValidator(JSON.parse(first.schemaKey) as Record<string, unknown>)
+      assert.equal(again, first.validate, 'compiledValidator must return the cached object')
+    }
   })
 
   // ─── V2 Secret Scan (integration) ─────────────────────────────────────

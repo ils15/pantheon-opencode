@@ -88,6 +88,7 @@ import type {
   ReferenceDraft,
 } from '@opencode-ai/plugin/v2/promise'
 import { define } from '@opencode-ai/plugin/v2/promise'
+import { buildCompactionContext } from './pantheon/compaction-context.ts'
 import {
   CONTEXT_PRUNER_CONFIG_KEYS,
   describeContextPrunerConfigIssues,
@@ -105,6 +106,7 @@ import {
   type ToolExecuteBeforeOutput,
   zeusReadGuard,
 } from './pantheon/delegation-enforce.ts'
+import { GOAL_LOOP_DEFAULTS, GoalStore } from './pantheon/goal-loop.ts'
 import {
   applyMemoryInjection,
   MemoryInjectionCache,
@@ -143,9 +145,11 @@ import {
 } from './pantheon/v2-delegation-enforce.ts'
 import { createV2ExecuteAfter, resolveV2SandboxConfig } from './pantheon/v2-execute-after.ts'
 import { applyV2ModelOverrides, readV2ModelConfiguration } from './pantheon/v2-model-overrides.ts'
+import { createV2ShellHooks, type V2ShellRunner } from './pantheon/v2-shell-hooks.ts'
 import { createV2ToolDefinitions, type V2ToolResult } from './pantheon/v2-tools.ts'
 import { V2_UNSUPPORTED_FEATURE_SEED } from './pantheon/v2-unsupported.mjs'
 import { buildV2VisionPromptContext, type V2VisionRuntime } from './pantheon/v2-vision.ts'
+import { sanitizeVisionHistory } from './pantheon/vision.ts'
 import { type HookPayload, type HookResult, runHook } from './plugins/hook-runner.ts'
 
 // ─── Unsupported Features Registry ───────────────────────────────────────
@@ -238,6 +242,32 @@ function normalizeSystemToParts(system: unknown): unknown[] | null {
     }
   }
   return system
+}
+
+/** Set once, so a payload without a `system` channel warns once per process. */
+let compactionChannelWarned = false
+
+/**
+ * Append text blocks to a hook payload's `system` channel.
+ *
+ * Returns `false` when the payload carries no usable channel (absent, or a
+ * shape that is neither string nor array) — the caller decides whether that is
+ * worth a diagnostic. A bare-string `system` is replaced by its part array on
+ * the payload itself, because the host reads the property, not our copy.
+ *
+ * Used by the V2 compaction hook (#266) to inject the compaction context
+ * blocks V1 pushes into `output.context`.
+ */
+function appendSystemBlocks(
+  target: { system?: unknown } | null | undefined,
+  blocks: readonly string[],
+): boolean {
+  if (target == null || blocks.length === 0) return false
+  const normalized = normalizeSystemToParts(target.system)
+  if (normalized == null) return false
+  if (typeof target.system === 'string') target.system = normalized
+  for (const block of blocks) normalized.push({ type: 'text', text: block } satisfies SystemPart)
+  return true
 }
 
 /**
@@ -942,6 +972,16 @@ function warnContextPrunerConfigOnce(options: unknown): void {
 const memoryInjectionCache = new MemoryInjectionCache()
 
 /**
+ * Empty description cache for {@link sanitizeVisionHistory}.
+ *
+ * V1 fills this from the vision handler (per-part text captured at
+ * `chat.message` time). V2 has no equivalent cache, so the sanitizer falls back
+ * to its own placeholder text for every image part — which is the contract that
+ * matters: an image never reaches the provider as image content.
+ */
+const V2_VISION_HISTORY_TEXT: ReadonlyMap<string, ReadonlyMap<string, string>> = new Map()
+
+/**
  * Register session hooks via V2 ctx.session.hook.
  *
  * The V2 session.hook API (when available) provides:
@@ -1025,6 +1065,24 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
             memoryInjectionCache,
             appendV2HookLog,
           )
+        }
+        // Vision history sanitization (V1
+        // `experimental.chat.messages.transform` parity, #266). Image parts are
+        // replaced with their cached description, or with the same placeholder
+        // V1 uses, BEFORE a text-only provider serializer can turn them into
+        // `image_url` content. The host's `context` payload carries the
+        // provider-bound `messages` array and honors mutations per request, so
+        // this is the same seam V1's transform occupies.
+        //
+        // The description map is empty on V2 by construction: descriptions are
+        // cached by the V1 vision handler, which has no V2 counterpart (V2
+        // materializes the image and asks the model to call `vision_describe`).
+        // Every image part therefore becomes the placeholder — the safety
+        // property V1's transform exists for — never a raw image.
+        try {
+          sanitizeVisionHistory({ messages: ctx.messages }, V2_VISION_HISTORY_TEXT)
+        } catch (error) {
+          logPruneFailureOnce(ctx.sessionID, 'context', error)
         }
         // Opt-in DCP: same engine as the compaction site, but per-request
         // pruning invalidates the prompt cache, so it runs only when
@@ -1484,6 +1542,21 @@ function adaptV2ExecuteBeforeEvent(event: unknown): {
 }
 
 /**
+ * Test seam — override (or, with `null`, restore) the V2 shell-hook runner.
+ *
+ * Exported only for tests/pantheon/plugin-v2-contract.test.ts, which asserts
+ * that the REGISTERED `execute.before`/`execute.after` handlers invoke the
+ * formatter and the delegation audit scripts. Spawning the real scripts would
+ * make the assertion depend on the shell, not on the wiring; the scripts
+ * themselves are covered by tests/pantheon/v2-shell-hooks.test.ts.
+ */
+export function setV2ShellRunnerForTests(runner: V2ShellRunner | null): void {
+  shellRunnerOverride = runner ?? undefined
+}
+
+let shellRunnerOverride: V2ShellRunner | undefined
+
+/**
  * Register tool execution hooks via V2 ctx.tool.hook.
  *
  * The V2 tool.hook API (when available) provides:
@@ -1502,6 +1575,13 @@ async function registerV2ToolHooks(
   if (!toolCtx?.hook) {
     return { registered: false, beforeRegistered: false }
   }
+
+  // V1 shell-hook parity (#266): formatter on every after-event, delegation
+  // audit start/stop. Both scripts are environment-independent, so they are
+  // invoked through the same runner the secret scan uses.
+  const shellHooks = createV2ShellHooks(
+    shellRunnerOverride === undefined ? {} : { run: shellRunnerOverride },
+  )
 
   let registered = false
   let beforeRegistered = false
@@ -1610,6 +1690,10 @@ async function registerV2ToolHooks(
         if (origin !== undefined) {
           writeV2AdmissionProof('tool.execute.before', { ...origin })
         }
+        // Delegation audit START record (#266). Deliberately AFTER every guard
+        // and the secret scan: a denied call must not leave a start record with
+        // no matching stop. The formatter/stop halves run in `execute.after`.
+        await shellHooks.before(event)
       } finally {
         // BENCH instrumentation — observation only; runs on the deny paths too.
         logBenchHookTiming('before', event, benchStartedAt)
@@ -1640,6 +1724,10 @@ async function registerV2ToolHooks(
         subagentOrigins.forget(event)
         boundedReadOrigins?.forget(event)
         await v2ExecuteAfter(event)
+        // Formatter + delegation audit STOP (#266). Awaited for the same
+        // reason V1 awaits it: the log record should exist before the tool
+        // result is surfaced. Failures are swallowed inside the module.
+        await shellHooks.after(event)
       } finally {
         // BENCH instrumentation — observation only; the awaited call means the
         // duration covers the whole parity chain, not just its dispatch.
@@ -1925,7 +2013,11 @@ export const plugin = define({
     // idle of the process. Constructing it here is what makes
     // `resolveBridge()` non-null on a V2 install — before this, the factory
     // and the injector had no production call site at all.
-    installV2Bridge(context)
+    //
+    // The returned enforcer (when the host session domain supports it) is the
+    // single instance: Phase 7 asks it for pending todos and the idle path asks
+    // it to continue, so there are never two.
+    const idleEnforcer = installV2Bridge(context)
 
     // ─── Phase 1: V2 Transforms (isolated per-domain, best-effort) ────
     // Each transform registration is individually wrapped and settled via Promise.allSettled:
@@ -2007,13 +2099,17 @@ export const plugin = define({
     // ─── Phase 7: V2 Compaction Hook (best-effort) ───────────────────
     const compactionCtx = hostDomains(context).session
     if (compactionCtx?.hook) {
+      // File-based goal store, constructed once: the compaction context needs
+      // active goals per session, and the store needs no host API (same
+      // `.pantheon/goals` directory V1 uses).
+      const goalStore = new GoalStore({ dir: '.pantheon/goals' })
       try {
         // 2.0.16 `SessionHooks` key is `compaction` (the migration doc maps
         // `experimental.session.compacting` → `ctx.session.hook("compaction")`).
         // `compacting` is not a valid key: the registry accepts any string and
         // silently drops unknown names, so the old name was a permanent no-op.
         // Proven by the canary's negative control.
-        await compactionCtx.hook('compaction', (event: unknown) => {
+        await compactionCtx.hook('compaction', async (event: unknown) => {
           try {
             // Opt-in lifetime proof for the host-backed hook canary
             // (tests/pantheon/plugin-v2-hook-canary.test.mjs, MODE=real). It is
@@ -2038,11 +2134,68 @@ export const plugin = define({
             // untouched. Apply the rules by default: it only changes what feeds
             // the summary. Never set `input.result`: the model must summarize
             // the pruned history, not be replaced by a canned summary.
-            const payload = event as { sessionID?: unknown; messages?: unknown } | null | undefined
+            //
+            // The host's compaction payload is
+            // `{ session, agent, model, tools, system, messages, … }` — the id
+            // is on `session.id`, NOT top-level `sessionID` (measured against
+            // the 2.1.4 host; both spellings are accepted below).
+            const payload = event as {
+              sessionID?: unknown
+              session?: { id?: unknown }
+              messages?: unknown
+              system?: unknown
+            } | null
+            const sessionID =
+              typeof payload?.sessionID === 'string'
+                ? payload.sessionID
+                : typeof payload?.session?.id === 'string'
+                  ? payload.session.id
+                  : undefined
             const prunerConfig = resolveContextPrunerConfig(context.options)
             const stats = pruneMessages(payload?.messages, prunerConfig, 'compaction')
             logContextPrune(stats)
-            logPruneShapeIssue(stats, payload?.sessionID, 'compaction')
+            logPruneShapeIssue(stats, sessionID, 'compaction')
+
+            // Compaction context (V1 `experimental.session.compacting`
+            // parity, #266). The SAME builder V1 uses — directive +
+            // `<mission_context>` — pushed into the payload's `system` array,
+            // which is the only text sink the V2 compaction hook exposes
+            // (`context` is the session-hook name in V1, not a field here).
+            //
+            // The `<todo_context>` section is present only when the bridge
+            // built a real enforcer (host session domain exposes the todo
+            // listing), and `<tool_ceiling>` has no V2 producer at all — both
+            // reductions are declared in the capability seed instead of
+            // silently missing.
+            const blocks = await buildCompactionContext({
+              ...(sessionID === undefined ? {} : { sessionID }),
+              goals: {
+                // Same gate V1 uses: the goal loop is disabled in this build,
+                // so `<mission_context>` is omitted on both surfaces.
+                enabled: GOAL_LOOP_DEFAULTS.enabled,
+                list: (id: string) => goalStore.list(id),
+              },
+              ...(idleEnforcer === undefined
+                ? {}
+                : {
+                    todos: {
+                      // V1's own source: `TodoEnforcer.listPendingTodos`.
+                      enabled: todoEnforcerEnabledFromEnv(),
+                      list: (id: string) => idleEnforcer.listPendingTodos(id),
+                    },
+                  }),
+            })
+            if (blocks.length > 0 && !appendSystemBlocks(payload, blocks)) {
+              // The payload carried no usable `system`. Diagnostic once per
+              // process: a silent miss here would look like "no goals".
+              if (!compactionChannelWarned) {
+                compactionChannelWarned = true
+                appendV2HookLog(
+                  '[compaction-context] payload.system is not a string or array; ' +
+                    'compaction context could not be injected',
+                )
+              }
+            }
           } catch (error) {
             // Fail-open: any unexpected shape or engine failure must not kill
             // the compaction request. One diagnostic line per session maximum.
