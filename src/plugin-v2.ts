@@ -98,10 +98,12 @@ import {
 } from './pantheon/context-pruner.ts'
 import {
   createEnforcementGuard,
+  normalizeDelegationAgent,
   readOnlyRegistry,
   syncReadOnlySession,
   type ToolExecuteBeforeInput,
   type ToolExecuteBeforeOutput,
+  zeusReadGuard,
 } from './pantheon/delegation-enforce.ts'
 import {
   applyMemoryInjection,
@@ -1316,9 +1318,20 @@ interface V2ToolExecuteBeforeEvent {
  *
  * Omitting all three skips the branch wholesale: the guard only enters it when
  * `options?.isRootSession !== undefined`. `task` is still denied inside a
- * read-only session via the blocked-tool list, so depth-2 holds for
- * apollo/gaia; the caller/target matrix itself is NOT enforced on V2. That is
- * a known gap, not a covered case.
+ * read-only session via the blocked-tool list, so the read-only half of depth-2
+ * holds for apollo/gaia.
+ *
+ * The caller/target half is NOT this guard's job on V2, and that is a division
+ * of labour rather than a gap: V2 delegates through the native `subagent` tool
+ * and its `permission.hook('evaluate')` handler, which calls
+ * `evaluateV2Delegation` — the matrix (zeus → anyone; athena/hermes → apollo)
+ * plus the same depth-2 rule, expressed as "a caller session that carries a
+ * `parentID` is denied". Both are proved in
+ * tests/pantheon/plugin-v2-contract.test.ts and
+ * tests/pantheon/v2-delegation-enforce.test.ts.
+ *
+ * The Zeus read guard is a SEPARATE call in the same `execute.before` handler
+ * (issue #264), fed from the same event `agent`; it is not part of this guard.
  */
 const v2EnforcementGuard = createEnforcementGuard({
   getReadOnlySessions: () => readOnlyRegistry.sessionIDs(),
@@ -1401,6 +1414,22 @@ async function registerV2ToolHooks(
         // and no session→agent map. A non-read-only (or absent) agent revokes the
         // registration, which also covers an in-session agent switch.
         syncReadOnlySession(readOnlyRegistry, input.sessionID, agent)
+        // Zeus read guard (issue #264). V1 wires this from its `chat.params`
+        // session→agent map (`src/plugin.ts`); V2 has no such map because the
+        // host puts the active agent on THIS event, so the guard is fed from
+        // the event's `agent` field — the same identity the read-only
+        // registry above already trusts.
+        //
+        // Fail-closed on casing: `zeusReadGuard` compares the agent with an
+        // exact `!== 'zeus'`, so a host that reports `Zeus` would silently
+        // disable the guard. Normalizing through the shared
+        // `normalizeDelegationAgent` keeps the comparison meaningful without
+        // changing the predicate V1 uses.
+        //
+        // Runs BEFORE the read-only guard, matching V1's chain order. Both
+        // throw to deny; neither is inside the scanner's try/catch, so a
+        // denial keeps propagating to the host.
+        zeusReadGuard(input.tool, output.args, normalizeDelegationAgent(agent))
         // Deliberately OUTSIDE the try/catch below: a read-only denial must keep
         // propagating to the host, not be swallowed as a scanner failure.
         await v2EnforcementGuard(input, output)

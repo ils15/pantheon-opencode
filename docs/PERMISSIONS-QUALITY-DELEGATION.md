@@ -100,7 +100,7 @@ failing-closed gates, but they are not the reviewer:
 | Read-only sessions may not mutate | `tool.execute.before` throws | [`src/pantheon/delegation-enforce.ts:181`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L181) (blocked-tool set), [`src/plugin.ts:101`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts#L101) |
 | A child session may not delegate again | same guard, child-session branch | [`src/pantheon/delegation-enforce.ts:353`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L353) |
 | Caller/target delegation matrix | same guard, `isDelegationAllowed` (V1; V2 uses the permission hook — see [§3.5](#35-per-host-generation-what-you-can-rely-on)) | [`src/pantheon/delegation-enforce.ts:138`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L138) |
-| The orchestrator may not read source | `zeusReadGuard` throws | [`src/pantheon/delegation-enforce.ts:221`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L221) |
+| The orchestrator may not read source | `zeusReadGuard` throws | [`src/pantheon/delegation-enforce.ts:221`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L221), wired on V1 from the `chat.params` agent map ([`src/plugin.ts:482`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts#L482)) and on V2 from the `execute.before` event agent ([`src/plugin-v2.ts`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin-v2.ts)) |
 | Code-mode scripts must be approved | SHA-256 manifest, opt-in | `scripts/install/opencode.mjs:138` |
 | Routing/frontmatter consistency | repo validator script | `scripts/validate-routing.mjs:313` |
 | Secrets | pre-commit gitleaks + CI scan | `.pre-commit-config.yaml:7` |
@@ -797,6 +797,13 @@ conflate:
    `isChild` is `false` for every session, so depth-2 would never fire on a
    genuine child. An unseeded session reports as a *root*, and `true` **passes**
    the root gate ([`src/pantheon/delegation-enforce.ts:109-116`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L109-L116)) — it does not deny.
+
+Neither omission leaves the orchestrator able to read source. The Zeus read
+guard is a **separate call in the same `execute.before` handler**, fed from the
+event's own `agent` field, so `read`/`glob`/`grep` of `src/`, `tests/` or
+`scripts/` by Zeus throws on V2 exactly as on V1 — and V2 denies the
+case-varied `Zeus` identity too, because it normalizes the event agent before
+the exact-match predicate (issue #264).
 
 **Unwired, not impossible.** V2's `session.created` event carries
 `properties.info.parentID`, so live sessions could be seeded in

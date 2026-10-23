@@ -2058,6 +2058,99 @@ async function main(): Promise<void> {
     assert.match(denial ?? '', /READ-ONLY/)
   })
 
+  // ─── Zeus Read Guard (issue #264, integration) ───────────────────────
+  //
+  // Same discipline as the read-only section above: the handler is the one
+  // `plugin.setup` registered, driven with the host's event shape. V1 wires
+  // `zeusReadGuard` from its `chat.params` session→agent map; V2 had no call
+  // site at all, so on a V2-only install Zeus could read `src/` directly while
+  // docs/PERMISSIONS-QUALITY-DELEGATION.md claimed the guard blocks it.
+  // Deleting the call from src/plugin-v2.ts must drop THESE tests.
+
+  console.log('\n🚫 Zeus Read Guard Tests')
+
+  /** Drive the registered handler and return the denial message, if any. */
+  async function readGuardDenial(
+    before: (event: unknown) => void | Promise<void>,
+    event: { tool: string; agent: string; input: Record<string, unknown> },
+  ): Promise<string | null> {
+    try {
+      await before({
+        tool: event.tool,
+        sessionID: 'ses_v2_read_guard',
+        agent: event.agent,
+        messageID: 'msg_read_guard',
+        id: 'call_read_guard',
+        input: event.input,
+      })
+      return null
+    } catch (err: unknown) {
+      return err instanceof Error ? err.message : String(err)
+    }
+  }
+
+  test('Zeus is DENIED a `read` of src/ through the V2 registration path', async () => {
+    const denial = await readGuardDenial(apolloCaptured.before as (e: unknown) => Promise<void>, {
+      tool: 'read',
+      agent: 'zeus',
+      input: { filePath: 'src/plugin-v2.ts' },
+    })
+    assert.ok(denial !== null, 'Zeus must not read source directly on V2 — delegate to @apollo')
+    assert.match(denial, /Zeus cannot read src\/plugin-v2\.ts — delegate to @apollo/)
+  })
+
+  test('Zeus is DENIED `glob` and `grep` of tests/ and scripts/', async () => {
+    for (const [tool, input] of [
+      ['glob', { pattern: 'tests/pantheon/*.test.ts' }],
+      ['grep', { pattern: 'scripts/hooks/scan-secrets.sh' }],
+    ] as const) {
+      const denial = await readGuardDenial(apolloCaptured.before as (e: unknown) => Promise<void>, {
+        tool,
+        agent: 'zeus',
+        input,
+      })
+      assert.ok(denial !== null, `Zeus must not ${tool} over source, tests or scripts`)
+      assert.match(denial, /delegate to @apollo/)
+    }
+  })
+
+  test('the read guard exempts the paths Zeus legitimately reads', async () => {
+    for (const input of [
+      { filePath: 'README.md' },
+      { filePath: 'docs/PERMISSIONS-QUALITY-DELEGATION.md' },
+      { filePath: '.pantheon/routing.yml' },
+      { filePath: '.pantheon/memory-bank/memories/notes.md' },
+    ]) {
+      const denial = await readGuardDenial(apolloCaptured.before as (e: unknown) => Promise<void>, {
+        tool: 'read',
+        agent: 'zeus',
+        input,
+      })
+      assert.equal(denial, null, `Zeus must keep reading ${JSON.stringify(input)}`)
+    }
+  })
+
+  test('the read guard is scoped to Zeus, not a blanket block on reads', async () => {
+    for (const agent of ['apollo', 'demeter', 'hermes', 'talos']) {
+      const denial = await readGuardDenial(apolloCaptured.before as (e: unknown) => Promise<void>, {
+        tool: 'read',
+        agent,
+        input: { filePath: 'src/plugin-v2.ts' },
+      })
+      assert.equal(denial, null, `${agent} must keep reading source directly`)
+    }
+  })
+
+  test('the read guard denies a case-varied Zeus identity (fail-closed on casing)', async () => {
+    const denial = await readGuardDenial(apolloCaptured.before as (e: unknown) => Promise<void>, {
+      tool: 'read',
+      agent: 'Zeus',
+      input: { filePath: 'src/plugin.ts' },
+    })
+    assert.ok(denial !== null, 'a `Zeus` agent id must not slip past the exact-match predicate')
+    assert.match(denial, /delegate to @apollo/)
+  })
+
   test('removing the enforcement from plugin-v2 drops the V2 denial path', async () => {
     // Structural counterpart to the behavioural tests above: the guard must be
     // instantiated in THIS module. If it were delegated to a V1 bridge that is
@@ -2221,10 +2314,14 @@ async function main(): Promise<void> {
   test('an ordinary tool call is NOT denied by the secret scan', async () => {
     // The block must be specific. A scanner that denies everything is as broken
     // as one that denies nothing, and this is the test that says so.
+    //
+    // The path is a markdown file on purpose: the Zeus read guard now runs in
+    // the same handler, and `src/index.ts` would be denied by THAT guard, making
+    // this test pass or fail for a reason that has nothing to do with the scan.
     const denial = await secretScanDenial(
       scanCaptured.before as (e: unknown) => Promise<void>,
       'read',
-      { filePath: 'src/index.ts', content: 'export const answer = 42' },
+      { filePath: 'README.md', content: 'export const answer = 42' },
     )
     assert.equal(denial, null, 'a benign tool call must pass the secret scan')
   })
