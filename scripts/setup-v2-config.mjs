@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -8,10 +9,33 @@ import { migrateV1toV2 } from './install/config-migration.mjs'
 const CONFIG_NAMES = ['opencode.json', 'opencode.jsonc']
 const MCP_SERVER_NAME = /^[a-zA-Z0-9._-]+$/
 const EFFECTS = new Set(['allow', 'ask', 'deny'])
+const GNU_CP = '/usr/bin/cp'
 
-/** Resolve the same global config target used by the existing init installer. */
-export function resolveGlobalConfigDirectory(_env = process.env, home = os.homedir()) {
-  return path.join(home, '.config', 'opencode')
+/** Resolve the same XDG-aware global config target used by the existing init installer. */
+export function resolveGlobalConfigDirectory(env = process.env, home = os.homedir()) {
+  return path.join(env.XDG_CONFIG_HOME || path.join(home, '.config'), 'opencode')
+}
+
+function assertNoSymlinkAncestors(directory, filesystem) {
+  const absolute = path.resolve(directory)
+  const { root } = path.parse(absolute)
+  let current = root
+  for (const segment of absolute.slice(root.length).split(path.sep).filter(Boolean)) {
+    current = path.join(current, segment)
+    let stat
+    try {
+      stat = filesystem.lstatSync(current)
+    } catch (error) {
+      if (error.code === 'ENOENT') return
+      throw new Error(`Cannot safely inspect config directory ancestor ${current}.`)
+    }
+    if (stat.isSymbolicLink()) {
+      throw new Error(`Refusing config directory with symlinked ancestor ${current}.`)
+    }
+    if (!stat.isDirectory()) {
+      throw new Error(`Refusing config directory with non-directory ancestor ${current}.`)
+    }
+  }
 }
 
 function readString(source, cursor) {
@@ -188,8 +212,34 @@ function parseConfig(source, jsonc) {
 
 /** Inspect both global config filenames independently; neither file is canonicalized. */
 export function inspectConfigFiles(configDir, filesystem = fs) {
+  const directoryError = (error) =>
+    CONFIG_NAMES.map((name) => ({
+      name,
+      path: path.join(configDir, name),
+      exists: true,
+      format: name.endsWith('.jsonc') ? 'jsonc' : 'json',
+      directoryError: true,
+      parseError: error.message,
+    }))
+  try {
+    assertNoSymlinkAncestors(configDir, filesystem)
+  } catch (error) {
+    return directoryError(error)
+  }
   return CONFIG_NAMES.map((name) => {
     const filePath = path.join(configDir, name)
+    try {
+      assertNoSymlinkAncestors(configDir, filesystem)
+    } catch (error) {
+      return {
+        name,
+        path: filePath,
+        exists: true,
+        format: name.endsWith('.jsonc') ? 'jsonc' : 'json',
+        directoryError: true,
+        parseError: error.message,
+      }
+    }
     if (!filesystem.existsSync(filePath)) {
       return {
         name,
@@ -209,7 +259,41 @@ export function inspectConfigFiles(configDir, filesystem = fs) {
           'Only regular config files are supported; symbolic links and special files are preview-only.',
       }
     }
+    try {
+      assertNoSymlinkAncestors(configDir, filesystem)
+      const readStat = filesystem.lstatSync(filePath)
+      if (readStat.isSymbolicLink() || !readStat.isFile() || !sameIdentity(readStat, stat)) {
+        return {
+          name,
+          path: filePath,
+          exists: true,
+          format: name.endsWith('.jsonc') ? 'jsonc' : 'json',
+          parseError: 'Config file changed during inspection; preview only.',
+        }
+      }
+    } catch (error) {
+      return {
+        name,
+        path: filePath,
+        exists: true,
+        format: name.endsWith('.jsonc') ? 'jsonc' : 'json',
+        directoryError: true,
+        parseError: error.message,
+      }
+    }
     const content = filesystem.readFileSync(filePath, 'utf8')
+    try {
+      assertNoSymlinkAncestors(configDir, filesystem)
+    } catch (error) {
+      return {
+        name,
+        path: filePath,
+        exists: true,
+        format: name.endsWith('.jsonc') ? 'jsonc' : 'json',
+        directoryError: true,
+        parseError: error.message,
+      }
+    }
     const format = name.endsWith('.jsonc') ? 'jsonc' : 'json'
     try {
       const ast = parseConfig(content, format === 'jsonc')
@@ -218,6 +302,7 @@ export function inspectConfigFiles(configDir, filesystem = fs) {
         path: filePath,
         exists: true,
         format,
+        identity: { dev: stat.dev, ino: stat.ino },
         content,
         config: ast.value,
         ast,
@@ -251,7 +336,7 @@ function getMcpAskEntries(source) {
       .filter(([, effect]) => effect === 'ask')
       .map(([server]) => ({
         id: `${source.id}#mcp:${server}`,
-        label: `MCP server "${server}" (legacy permission.mcp.${server})`,
+        label: `permission.mcp.${server}`,
         server,
         kind: 'legacy',
       }))
@@ -268,7 +353,7 @@ function getMcpAskEntries(source) {
       )
       .map(({ rule, index }) => ({
         id: `${source.id}#mcp:${rule.action}:${rule.resource}:${index}`,
-        label: `MCP action "${rule.action}" resource ${JSON.stringify(rule.resource)}`,
+        label: `permissions[${index}].effect`,
         action: rule.action,
         resource: rule.resource,
         index,
@@ -290,9 +375,7 @@ function validateLegacyPolicy(value) {
         throw new Error('Legacy permission.mcp must be a server-to-effect object.')
       for (const [server, effect] of Object.entries(rule)) {
         if (!MCP_SERVER_NAME.test(server) || !EFFECTS.has(effect)) {
-          throw new Error(
-            `Unsupported MCP permission for ${JSON.stringify(server)}; no policy was changed.`,
-          )
+          throw new Error('Unsupported value in permission.mcp; no policy was changed.')
         }
       }
       continue
@@ -316,9 +399,7 @@ function validateLegacyPolicy(value) {
         const key = `${server}_*\u0000*`
         const previous = seen.get(key)
         if (previous !== undefined && previous !== effect) {
-          throw new Error(
-            `Conflicting permission rules map to MCP action ${JSON.stringify(`${server}_*`)}; choose a policy manually.`,
-          )
+          throw new Error('Conflicting permission.mcp rules need a manual policy choice.')
         }
         seen.set(key, effect)
       }
@@ -330,9 +411,7 @@ function validateLegacyPolicy(value) {
       const key = `${actionName}\u0000${resource}`
       const previous = seen.get(key)
       if (previous !== undefined && previous !== effect) {
-        throw new Error(
-          `Conflicting legacy permission rules map to ${actionName} for ${JSON.stringify(resource)}; choose a policy manually.`,
-        )
+        throw new Error('Conflicting legacy permission rules need a manual policy choice.')
       }
       seen.set(key, effect)
     }
@@ -482,47 +561,10 @@ function editConfig(file, policy) {
   return updated
 }
 
-function formatDiff(name, before, after) {
-  const oldLines = before.replace(/\n$/, '').split('\n')
-  const newLines = after.replace(/\n$/, '').split('\n')
-  let prefix = 0
-  while (
-    prefix < oldLines.length &&
-    prefix < newLines.length &&
-    oldLines[prefix] === newLines[prefix]
-  ) {
-    prefix += 1
-  }
-  let suffix = 0
-  while (
-    suffix < oldLines.length - prefix &&
-    suffix < newLines.length - prefix &&
-    oldLines[oldLines.length - 1 - suffix] === newLines[newLines.length - 1 - suffix]
-  ) {
-    suffix += 1
-  }
-  const oldChanged = oldLines.slice(prefix, oldLines.length - suffix)
-  const newChanged = newLines.slice(prefix, newLines.length - suffix)
-  return [
-    `--- ${name}`,
-    `+++ ${name} (proposed)`,
-    ...oldLines.slice(Math.max(0, prefix - 2), prefix).map((line) => ` ${line}`),
-    ...oldChanged.map((line) => `-${line}`),
-    ...newChanged.map((line) => `+${line}`),
-    ...oldLines
-      .slice(oldLines.length - suffix, oldLines.length - suffix + 2)
-      .map((line) => ` ${line}`),
-  ].join('\n')
-}
-
 function emit(output, text = '') {
   if (typeof output === 'function') output(text)
   else if (typeof output.write === 'function') output.write(`${text}\n`)
   else output.log?.(text)
-}
-
-function describeValue(value) {
-  return JSON.stringify(value)
 }
 
 function printInspection(files, sources, output) {
@@ -536,13 +578,17 @@ function printInspection(files, sources, output) {
       emit(output, `- ${file.name}: not present`)
       continue
     }
+    if (file.directoryError) {
+      emit(output, `- ${file.name}: blocked (${file.parseError})`)
+      continue
+    }
     if (file.parseError) {
       emit(output, `- ${file.name}: cannot safely parse (${file.parseError})`)
       continue
     }
     const relevant = ['permission', 'permissions']
       .filter((key) => Object.hasOwn(file.config, key))
-      .map((key) => `${key}=${describeValue(file.config[key])}`)
+      .map((key) => `${key} policy present`)
     emit(
       output,
       `- ${file.name}: ${relevant.length ? relevant.join('; ') : 'no permission policy keys'}`,
@@ -580,10 +626,13 @@ export async function prepareV2Config({
   filesystem = fs,
 } = {}) {
   const files = inspectConfigFiles(configDir, filesystem)
+  const directoryFailure = files.find((file) => file.directoryError)
   const parseFailure = files.find((file) => file.exists && file.parseError)
   const sources = policySources(files)
   printInspection(files, sources, output)
 
+  if (directoryFailure)
+    return { status: 'blocked', reason: directoryFailure.parseError, changes: [] }
   if (parseFailure)
     return {
       status: 'blocked',
@@ -615,7 +664,10 @@ export async function prepareV2Config({
     try {
       const policy = makeV2Policy(source, {})
       const proposed = editConfig(source.file, policy)
-      emit(output, formatDiff(source.file.name, source.file.content, proposed))
+      emit(
+        output,
+        `Proposed change: ${source.file.name}: permission policy → V2 permissions policy.`,
+      )
       emit(
         output,
         'Preview only: rerun interactively to choose target files and separately confirm apply. No files were changed.',
@@ -683,7 +735,7 @@ export async function prepareV2Config({
       options: sources.map((source) => ({
         value: source.id,
         label: `${source.file.name} → ${source.key}`,
-        hint: describeValue(source.value),
+        hint: 'Select the policy source; raw settings are hidden.',
       })),
     })
     if (prompts.isCancel?.(selected) || !selected) {
@@ -717,6 +769,7 @@ export async function prepareV2Config({
       return { status: 'canceled', changes: [] }
     }
     askChoices[ask.id] = selected
+    emit(output, `MCP policy choice: ${ask.label} → ${selected}.`)
   }
 
   let policy
@@ -732,7 +785,12 @@ export async function prepareV2Config({
     for (const target of targets) {
       const contents = editConfig(target, policy)
       if (contents !== target.content)
-        changes.push({ path: target.path, original: target.content, contents })
+        changes.push({
+          path: target.path,
+          original: target.content,
+          contents,
+          identity: target.identity,
+        })
     }
   } catch (error) {
     emit(output, `Preview blocked: ${error.message}`)
@@ -748,10 +806,10 @@ export async function prepareV2Config({
   }
   for (const change of changes) {
     const name = path.basename(change.path)
-    emit(output, formatDiff(name, change.original, change.contents))
+    emit(output, `Proposed change: ${name}: permission policy → V2 permissions policy.`)
   }
   const accepted = await prompts.confirm({
-    message: `Apply the reviewed changes to ${changes.length} file(s)? Backups will be created beside each file.`,
+    message: `Apply the reviewed policy changes to ${changes.length} file(s)? Backups will be created beside each file.`,
     initialValue: false,
   })
   if (prompts.isCancel?.(accepted) || accepted !== true) {
@@ -772,15 +830,76 @@ export async function prepareV2Config({
   }
 }
 
-function writeAtomic(filesystem, target, contents, mode) {
-  const temp = path.join(
+function temporaryPath(target) {
+  return path.join(
     path.dirname(target),
-    `.${path.basename(target)}.tmp-${process.pid}-${randomBytes(6).toString('hex')}`,
+    `.${path.basename(target)}.tmp-${process.pid}-${randomBytes(12).toString('hex')}`,
   )
+}
+
+function assertMetadataCopySupport(platform) {
+  if (platform !== 'linux') {
+    throw new Error(
+      'Atomic apply is unsupported on this platform because metadata cannot be preserved safely.',
+    )
+  }
+  try {
+    const version = execFileSync(GNU_CP, ['--version'], { encoding: 'utf8', stdio: 'pipe' })
+    if (!version.startsWith('cp (GNU coreutils)')) throw new Error('GNU coreutils cp is required.')
+  } catch (cause) {
+    throw new Error('Atomic apply requires GNU coreutils cp to preserve file metadata safely.', {
+      cause,
+    })
+  }
+}
+
+function copyWithMetadata(source, destination, platform, filesystem = fs) {
+  if (platform !== 'linux') {
+    throw new Error(
+      'Atomic apply is unsupported on this platform because metadata cannot be preserved safely.',
+    )
+  }
+  try {
+    execFileSync(GNU_CP, ['--preserve=all', '--', source, destination], { stdio: 'pipe' })
+  } catch (cause) {
+    try {
+      filesystem.rmSync(destination, { force: true })
+    } catch {
+      // Preserve the metadata-copy failure as the primary error.
+    }
+    throw new Error(
+      'Could not safely preserve config owner, group, ACLs, and extended attributes.',
+      { cause },
+    )
+  }
+}
+
+function restoreMetadata(source, destination, platform) {
+  if (platform !== 'linux') {
+    throw new Error(
+      'Atomic apply is unsupported on this platform because metadata cannot be preserved safely.',
+    )
+  }
+  try {
+    execFileSync(GNU_CP, ['--attributes-only', '--preserve=all', '--', source, destination], {
+      stdio: 'pipe',
+    })
+  } catch (cause) {
+    throw new Error('Could not preserve config owner, group, ACLs, and extended attributes.', {
+      cause,
+    })
+  }
+}
+
+function writeAtomic(filesystem, target, contents, metadataSource, platform) {
+  const temp = temporaryPath(target)
   let descriptor
   try {
-    descriptor = filesystem.openSync(temp, 'wx', mode)
+    copyWithMetadata(metadataSource, temp, platform, filesystem)
+    descriptor = filesystem.openSync(temp, 'r+')
+    filesystem.ftruncateSync(descriptor, 0)
     filesystem.writeFileSync(descriptor, contents, 'utf8')
+    restoreMetadata(metadataSource, temp, platform)
     filesystem.fsyncSync(descriptor)
     filesystem.closeSync(descriptor)
     descriptor = undefined
@@ -792,8 +911,28 @@ function writeAtomic(filesystem, target, contents, mode) {
   return temp
 }
 
+function sameIdentity(stat, identity) {
+  return stat.dev === identity.dev && stat.ino === identity.ino
+}
+
+function assertTargetUnchanged(change, identity, filesystem) {
+  assertNoSymlinkAncestors(path.dirname(change.path), filesystem)
+  const stat = filesystem.lstatSync(change.path)
+  if (stat.isSymbolicLink() || !stat.isFile() || stat.nlink !== 1) {
+    throw new Error(
+      `Refusing to replace non-regular or multiply-linked config file ${change.path}.`,
+    )
+  }
+  if (
+    !sameIdentity(stat, identity) ||
+    filesystem.readFileSync(change.path, 'utf8') !== change.original
+  ) {
+    throw new Error(`Config changed after review (${change.path}); no stale content was written.`)
+  }
+}
+
 /** Back up, stage, and atomically replace reviewed config files, rolling back a partial apply. */
-export function applyConfigChanges(changes, { filesystem = fs } = {}) {
+export function applyConfigChanges(changes, { filesystem = fs, platform = process.platform } = {}) {
   const backups = []
   const staged = []
   const applied = []
@@ -803,26 +942,36 @@ export function applyConfigChanges(changes, { filesystem = fs } = {}) {
     .replaceAll(/[^0-9]/g, '')
     .slice(0, 14)}-${process.pid}`
   try {
+    assertMetadataCopySupport(platform)
+    const identities = new Map()
     for (const change of changes) {
+      assertNoSymlinkAncestors(path.dirname(change.path), filesystem)
       const stat = filesystem.lstatSync(change.path)
-      if (!stat.isFile() || stat.isSymbolicLink()) {
-        throw new Error(`Refusing to replace non-regular config file ${change.path}.`)
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) {
+        throw new Error(
+          `Refusing to replace non-regular or multiply-linked config file ${change.path}.`,
+        )
       }
-      if (filesystem.readFileSync(change.path, 'utf8') !== change.original) {
+      const identity = { dev: stat.dev, ino: stat.ino }
+      if (
+        !sameIdentity(stat, change.identity ?? identity) ||
+        filesystem.readFileSync(change.path, 'utf8') !== change.original
+      ) {
         throw new Error(`Config changed after review (${change.path}); no files were changed.`)
       }
+      identities.set(change.path, identity)
     }
     for (const change of changes) {
-      const stat = filesystem.statSync(change.path)
-      const backupPath = `${change.path}.setup-backup-${stamp}-${randomBytes(3).toString('hex')}`
-      filesystem.copyFileSync(change.path, backupPath, fs.constants.COPYFILE_EXCL)
+      assertTargetUnchanged(change, identities.get(change.path), filesystem)
+      const backupPath = `${change.path}.setup-backup-${stamp}-${randomBytes(6).toString('hex')}`
+      copyWithMetadata(change.path, backupPath, platform, filesystem)
       backups.push({ target: change.path, path: backupPath })
-      filesystem.chmodSync(backupPath, stat.mode & 0o777)
-      const temp = writeAtomic(filesystem, change.path, change.contents, stat.mode & 0o777)
-      staged.push({ ...change, temp, mode: stat.mode & 0o777 })
+      const temp = writeAtomic(filesystem, change.path, change.contents, change.path, platform)
+      staged.push({ ...change, temp, identity: identities.get(change.path) })
     }
     applying = true
     for (const item of staged) {
+      assertTargetUnchanged(item, item.identity, filesystem)
       filesystem.renameSync(item.temp, item.path)
       applied.push(item)
     }
@@ -834,12 +983,9 @@ export function applyConfigChanges(changes, { filesystem = fs } = {}) {
       if (!backup) continue
       let restoreTemp
       try {
-        restoreTemp = writeAtomic(
-          filesystem,
-          item.path,
-          filesystem.readFileSync(backup.path),
-          item.mode,
-        )
+        assertNoSymlinkAncestors(path.dirname(item.path), filesystem)
+        restoreTemp = temporaryPath(item.path)
+        copyWithMetadata(backup.path, restoreTemp, platform, filesystem)
         filesystem.renameSync(restoreTemp, item.path)
       } catch (rollbackError) {
         rollbackFailed = true

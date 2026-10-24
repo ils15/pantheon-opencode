@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { resolveOpenCodeVersion } from './install/opencode-version.mjs'
+import { parseOpenCodeVersion, resolveOpenCodeVersion } from './install/opencode-version.mjs'
 import { prepareV2Config, resolveGlobalConfigDirectory } from './setup-v2-config.mjs'
 
 const INIT_CLI = fileURLToPath(new URL('../bin/pantheon-init.mjs', import.meta.url))
@@ -51,7 +51,8 @@ export async function runSetup({
   const warnings = []
   let generation
   try {
-    generation = resolveOpenCodeVersion('auto', {
+    const requested = parseOpenCodeVersion(args) ?? 'auto'
+    generation = resolveOpenCodeVersion(requested, {
       env,
       warn: (message) => warnings.push(message),
       onFallback: () => {
