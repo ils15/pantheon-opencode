@@ -293,7 +293,10 @@ requires no row per family, reports a family with no row as "supported,
 unmeasured", and fails only when a measured row fails or a known-broken host is
 listed. See [Compatibility](COMPATIBILITY.md) for the support policy and the
 known-broken set. A measured row that cannot run is a failure — the release path
-has no `SKIP`.
+has no `SKIP`. The automatic release matrix exercises four OpenCode 2.x hosts;
+it no longer proves compatibility with OpenCode 1.19.x. The 1.19.x support
+declaration is unchanged; this is a limit of automatic release validation, not a
+change to the support policy.
 
 #### Python test environment (gate a)
 
