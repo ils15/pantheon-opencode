@@ -2329,7 +2329,9 @@ async function main(): Promise<void> {
   mkdirSync(join(guardSymlinkRoot, 'docs'), { recursive: true })
   writeFileSync(join(guardSymlinkRoot, 'src', 'plugin.ts'), 'export const x = 1\n')
   writeFileSync(join(guardSymlinkRoot, 'docs', 'PLAN.md'), '# plan\n')
+  symlinkSync('plugin.ts', join(guardSymlinkRoot, 'src', 'readme.md'))
   symlinkSync('../src', join(guardSymlinkRoot, 'docs', 'link'))
+  symlinkSync('../src/missing.ts', join(guardSymlinkRoot, 'docs', 'broken'))
   symlinkSync('.', join(guardSymlinkRoot, 'docs', 'self'))
   symlinkSync('loop', join(guardSymlinkRoot, 'docs', 'loop'))
   const symlinkCaptured = await setupCapturingToolHooks({
@@ -2340,6 +2342,7 @@ async function main(): Promise<void> {
     const before = symlinkCaptured.before as (e: unknown) => void | Promise<void>
     for (const [tool, input] of [
       ['read', { filePath: 'docs/link/plugin.ts' }],
+      ['read', { filePath: 'src/readme.md' }],
       ['glob', { pattern: 'docs/link/**/*.ts' }],
       ['grep', { path: 'docs/link', pattern: 'TODO' }],
     ] as const) {
@@ -2349,10 +2352,12 @@ async function main(): Promise<void> {
     }
   })
 
-  test('V2 path: a non-existent tail and a symlink loop are denied', async () => {
+  test('V2 path: missing targets, a dangling symlink, and a symlink loop are denied', async () => {
     const before = symlinkCaptured.before as (e: unknown) => void | Promise<void>
     for (const input of [
       { filePath: 'docs/link/missing/nested.ts' },
+      { filePath: 'docs/broken' },
+      { filePath: 'src/not-present.ts' },
       { filePath: 'docs/loop/x.ts' },
     ]) {
       const denial = await readGuardDenial(before, { tool: 'read', agent: 'zeus', input })
@@ -2380,6 +2385,15 @@ async function main(): Promise<void> {
       }),
       null,
       'non-Zeus agents are unaffected',
+    )
+    assert.equal(
+      await readGuardDenial(before, {
+        tool: 'glob',
+        agent: 'zeus',
+        input: { pattern: 'docs/**/*.md' },
+      }),
+      null,
+      'ordinary docs globbing is not blanket-denied',
     )
   })
 

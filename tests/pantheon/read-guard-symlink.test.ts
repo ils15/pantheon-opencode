@@ -51,6 +51,8 @@ async function main(): Promise<void> {
   writeFileSync(join(projectRoot, 'src', 'plugin.ts'), 'export const x = 1\n')
   writeFileSync(join(projectRoot, 'docs', 'PLAN.md'), '# plan\n')
   symlinkSync('../src', join(projectRoot, 'docs', 'link'))
+  symlinkSync('plugin.ts', join(projectRoot, 'src', 'readme.md'))
+  symlinkSync('../src/missing.ts', join(projectRoot, 'docs', 'broken'))
   symlinkSync('.', join(projectRoot, 'docs', 'self'))
   symlinkSync('loop', join(projectRoot, 'docs', 'loop'))
 
@@ -87,6 +89,15 @@ async function main(): Promise<void> {
     assert.equal(resolution.resolved, 'src/missing/nested.ts')
   })
 
+  await test('resolver: a dangling symlink is a resolution failure', () => {
+    assert.equal(resolve('docs/broken').failed, true)
+    assert.equal(resolve('docs/broken').resolved, undefined)
+  })
+
+  await test('resolver: paths beyond 64 components fail closed', () => {
+    assert.equal(resolve(Array.from({ length: 65 }, () => 'x').join('/')).failed, true)
+  })
+
   await test('resolver: an absolute path is resolved too', () => {
     assert.equal(
       resolveGuardPathForCheck(join(projectRoot, 'docs', 'link', 'plugin.ts'), projectRoot)
@@ -113,6 +124,10 @@ async function main(): Promise<void> {
 
   await test('guard: Zeus is denied `read` through a link into src/', () => {
     assert.throws(() => guard('read', { filePath: 'docs/link/plugin.ts' }), /delegate to @apollo/)
+  })
+
+  await test('guard: an allowed suffix on a symlink into source does not bypass resolution', () => {
+    assert.throws(() => guard('read', { filePath: 'src/readme.md' }), /delegate to @apollo/)
   })
 
   await test('guard: Zeus is denied `glob` through a link into src/', () => {
@@ -142,6 +157,11 @@ async function main(): Promise<void> {
 
   await test('guard: an unresolvable path (symlink loop) is denied, not allowed', () => {
     assert.throws(() => guard('read', { filePath: 'docs/loop/x.ts' }), /delegate to @apollo/)
+  })
+
+  await test('guard: a dangling symlink is denied while a missing source path stays denied', () => {
+    assert.throws(() => guard('read', { filePath: 'docs/broken' }), /delegate to @apollo/)
+    assert.throws(() => guard('read', { filePath: 'src/not-present.ts' }), /delegate to @apollo/)
   })
 
   await test('guard: a link to an ALLOWED root is still readable', () => {
@@ -193,10 +213,11 @@ async function main(): Promise<void> {
     }
   }
 
-  await test('V1 path: Zeus is denied read/glob/grep through a link into src/', async () => {
+  await test('V1 path: Zeus is denied symlinks and allowed-suffix aliases into src/', async () => {
     await hooks['chat.params']({ sessionID, agent: 'zeus' })
     for (const [tool, args] of [
       ['read', { filePath: 'docs/link/plugin.ts' }],
+      ['read', { filePath: 'src/readme.md' }],
       ['glob', { pattern: 'docs/link/**/*.ts' }],
       ['grep', { path: 'docs/link', pattern: 'TODO' }],
     ] as const) {
@@ -206,9 +227,11 @@ async function main(): Promise<void> {
     }
   })
 
-  await test('V1 path: a non-existent tail and a symlink loop are denied', async () => {
+  await test('V1 path: a non-existent tail, dangling symlink, and loop are denied', async () => {
     for (const args of [
       { filePath: 'docs/link/missing/nested.ts' },
+      { filePath: 'docs/broken' },
+      { filePath: 'src/not-present.ts' },
       { filePath: 'docs/loop/x.ts' },
     ]) {
       const message = await denial('read', args)
@@ -219,6 +242,7 @@ async function main(): Promise<void> {
 
   await test('V1 path: a link to an allowed root is readable and non-Zeus is unaffected', async () => {
     assert.equal(await denial('read', { filePath: 'docs/self/PLAN.md' }), null)
+    assert.equal(await denial('glob', { pattern: 'docs/**/*.md' }), null)
     await hooks['chat.params']({ sessionID, agent: 'hermes' })
     assert.equal(await denial('read', { filePath: 'docs/link/plugin.ts' }), null)
   })

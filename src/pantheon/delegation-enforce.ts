@@ -296,13 +296,15 @@ function isAllowedPath(value: string): boolean {
  * Every path-bearing argument is checked, and path spellings are normalized
  * first. Both are tightenings: a call Zeus could make before with a
  * `path: 'src'` directory plus a harmless `pattern`, or with `./src/x` /
- * `src\\x`, is now denied.
+ * `src\\x`, is now denied. When a resolver is supplied every target is resolved
+ * before any allowed-extension/filename exception is applied, so the exception
+ * follows the actual target rather than a symlink's spelling.
  *
  * Symlink resolution is NOT part of this predicate: it is pure and synchronous
  * and shared with V1, so a call site that wants it passes `resolvePath` (see
- * `createGuardPathResolver`). When a resolver is supplied it runs only for
- * TARGET paths — a `grep` query is text, not a path — and a resolution
- * FAILURE denies: a read guard fails closed. Without a resolver this function
+ * `createGuardPathResolver`). When a resolver is supplied it runs for every
+ * TARGET path — a `grep` query is text, not a path — and a resolution FAILURE
+ * denies: a read guard fails closed. Without a resolver this function
  * keeps its original string-only semantics exactly, which is what non-Zeus
  * agents and three-argument callers rely on.
  *
@@ -325,16 +327,12 @@ export function zeusReadGuard(
     const deny = () => {
       throw new Error(`Zeus cannot read ${candidate.value} — delegate to @apollo`)
     }
-    if (isDeniedReadPath(normalized, candidate.target)) {
-      if (!isAllowedPath(normalized)) deny()
-      continue
-    }
-    if (!candidate.target || resolvePath === undefined) continue
-    const resolution = resolvePath(candidate.value)
-    if (resolution.failed) deny()
-    const resolved = normalizeGuardPath(resolution.resolved ?? '')
-    if (resolved === '' || !isDeniedReadPath(resolved, true)) continue
-    if (!isAllowedPath(resolved)) deny()
+    const resolution =
+      candidate.target && resolvePath !== undefined ? resolvePath(candidate.value) : undefined
+    if (resolution?.failed) deny()
+    const effectivePath = normalizeGuardPath(resolution?.resolved ?? normalized)
+    if (effectivePath === '' || !isDeniedReadPath(effectivePath, candidate.target)) continue
+    if (!isAllowedPath(effectivePath)) deny()
   }
 }
 

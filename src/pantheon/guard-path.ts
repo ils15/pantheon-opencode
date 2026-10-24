@@ -20,7 +20,7 @@
  *    `failed`: a read guard fails CLOSED, and the guard denies.
  */
 
-import { realpathSync } from 'node:fs'
+import { lstatSync, realpathSync } from 'node:fs'
 import path from 'node:path'
 
 /** One path form prepared for the guard. */
@@ -38,6 +38,8 @@ export interface GuardPathResolution {
 
 /** Errors that mean "this component does not exist", not "resolution failed". */
 const MISSING_CODES: ReadonlySet<string> = new Set(['ENOENT', 'ENOTDIR'])
+/** Bound filesystem component walks; paths beyond this limit fail closed. */
+const MAX_PATH_COMPONENTS = 64
 
 function errorCode(error: unknown): string {
   if (typeof error !== 'object' || error === null || !('code' in error)) return ''
@@ -59,20 +61,27 @@ function isWithin(root: string, target: string): boolean {
 
 /**
  * `realpath` of `absolute`, or of its deepest existing ancestor with the
- * non-existent remainder appended.
+ * non-existent remainder appended. At most 64 components are examined; an
+ * existing dangling symlink or an overlong path fails closed.
  *
  * @returns the resolved absolute path, or `undefined` when resolution failed
  * for a reason other than a missing component.
  */
 function resolveExistingPrefix(absolute: string): string | undefined {
-  let cursor = absolute
+  let cursor = path.resolve(absolute)
+  if (cursor.split(path.sep).filter(Boolean).length > MAX_PATH_COMPONENTS) return undefined
   const remainder: string[] = []
-  for (;;) {
+  for (let walked = 0; walked < MAX_PATH_COMPONENTS; walked++) {
     try {
       const resolved = realpathSync(cursor)
       return remainder.length === 0 ? resolved : path.join(resolved, ...remainder)
     } catch (error) {
       if (!isMissing(error)) return undefined
+      try {
+        if (lstatSync(cursor).isSymbolicLink()) return undefined
+      } catch (lstatError) {
+        if (!isMissing(lstatError)) return undefined
+      }
       const parent = path.dirname(cursor)
       // Reached the filesystem root without resolving: unreachable on a sane
       // system, but a failure must stay a failure (fail closed).
@@ -81,6 +90,7 @@ function resolveExistingPrefix(absolute: string): string | undefined {
       cursor = parent
     }
   }
+  return undefined
 }
 
 /** Normalize a resolved absolute path into the form the guard matches. */

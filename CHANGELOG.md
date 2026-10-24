@@ -9,7 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- The Zeus read guard checks the symlink-resolved form of every read/glob/grep target on V1 and V2, so `docs/link → ../src` can no longer read source; resolution failures deny.
+- Zeus read guard resolves every V1/V2 target before allow exceptions; symlinks into denied roots, dangling links, and resolution failures deny.
+- The pre-execution check does not pin an inode or prevent concurrent filesystem mutation between check and open.
 
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->

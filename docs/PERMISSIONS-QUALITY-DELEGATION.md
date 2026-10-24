@@ -798,25 +798,34 @@ conflate:
    genuine child. An unseeded session reports as a *root*, and `true` **passes**
    the root gate ([`src/pantheon/delegation-enforce.ts:109-116`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L109-L116)) — it does not deny.
 
-Neither omission leaves the orchestrator able to read source. The Zeus read
-guard is a **separate call in the same `execute.before` handler**, fed from the
-event's own `agent` field, so `read`/`glob`/`grep` of `src/`, `tests/` or
-`scripts/` by Zeus throws on V2 exactly as on V1 — and V2 denies the
-case-varied `Zeus` identity too, because it normalizes the event agent before
-the exact-match predicate (issue #264).
+The Zeus read guard is a **separate call in the same `execute.before` handler**,
+fed from the event's own `agent` field, so identifiable `read`/`glob`/`grep`
+targets in `src/`, `tests/` or `scripts/` by Zeus throw on V2 exactly as on V1 —
+and V2 denies the case-varied `Zeus` identity too, because it normalizes the
+event agent before the exact-match predicate (issue #264).
 
 The guard also normalizes the path it is given and checks every path-bearing
 argument, not the first one it finds: `./src/x`, `src\x` and `/repo/src/x` are
 the same source tree as `src/x`, and `grep` with `path: "src"` plus a harmless
-`pattern` no longer slips through on the query. It also checks the
-symlink-resolved form of every TARGET path — `docs/link → ../src` is `src/` —
-including a path that does not exist yet: its deepest existing ancestor is
-resolved and the rest re-appended. Any resolution failure (a symlink loop, for
-example) is a DENIAL, because a read guard fails closed. Resolution lives at the
-CALL SITES (`createGuardPathResolver` in `src/pantheon/guard-path.ts`), not in
-the predicate: `zeusReadGuard` stays pure and synchronous, and both the V1
+`pattern` no longer slips through on the query. Before applying any
+allowed-extension/filename exception, it resolves every TARGET argument and
+checks that resolved form — `docs/link → ../src` is `src/` — including a path
+that does not exist yet: its deepest existing ancestor is resolved and the
+rest re-appended. An existing dangling symlink and any other
+resolution failure (a symlink loop, for example) are DENIALS. Component walks
+are capped at 64; exceeding the cap also denies. Resolution lives at the CALL
+SITES
+(`createGuardPathResolver` in `src/pantheon/guard-path.ts`), not in the
+predicate: `zeusReadGuard` stays pure and synchronous, and both the V1
 (`tool.execute.before`) and V2 (`execute.before`) paths hand it the same
-resolver. The V2-only `pantheon_bounded_read` tool applies the same restriction
+resolver. This is a pre-execution path check, not an inode pin: concurrent
+filesystem mutation between the check and the host opening the target remains
+outside the guarantee. The exposed OpenCode v2.1.4 `glob` tool was checked
+with a safe temporary symlink fixture (`docs/*/**/*.ts` did not return
+`docs/link/target.ts`); it did not traverse symlink directories. Wildcard
+patterns are not expanded by this guard, so that host behavior should be
+re-verified when upgrading OpenCode. The V2-only `pantheon_bounded_read` tool
+applies the same restriction
 to its own targets (`src/`, `tests/`, `scripts/` are refused with
 `PATH_DENIED`) while keeping docs, config, the memory bank and `.pantheon/`
 readable — otherwise a root-Zeus-only tool would be a wider door than the
