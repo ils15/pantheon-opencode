@@ -4,7 +4,9 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 const WORKFLOW = fileURLToPath(new URL('../.github/workflows/release.yml', import.meta.url))
+const RELEASE_GATES = fileURLToPath(new URL('../scripts/release-gates.mjs', import.meta.url))
 const workflow = readFileSync(WORKFLOW, 'utf8')
+const releaseGates = readFileSync(RELEASE_GATES, 'utf8')
 const validate = workflow.slice(workflow.indexOf('  validate:'), workflow.indexOf('  release:'))
 const release = workflow.slice(workflow.indexOf('  release:'))
 const githubTokenMarker = 'GH_TOKEN: $' + '{{ github.token }}'
@@ -36,6 +38,35 @@ test('validation checks out and confirms the exact TARGET_SHA before release cre
   assert.match(validate, /persist-credentials: false/)
   assert.doesNotMatch(validate, /secrets\./)
   assert.doesNotMatch(validate, /(?:NODE_AUTH_TOKEN|NPM_TOKEN|RELEASE_TOKEN):\s*\$\{\{/)
+})
+
+test('release host proof keeps the four V2 rows and all six gates without an automatic V1 row', () => {
+  const matrixMatch = /PANTHEON_RELEASE_MATRIX:\s*>-\s*\n([\s\S]*?)\n {4}steps:/.exec(validate)
+  assert.ok(matrixMatch, 'expected the frozen release host matrix')
+  const matrix = JSON.parse(matrixMatch[1])
+  assert.deepEqual(matrix, [
+    { host: '2.0.29', line: '2.x', kind: 'sandbox-v2' },
+    { host: '2.0.30', line: '2.x', kind: 'sandbox-v2' },
+    { host: '2.1.0', line: '2.x', kind: 'sandbox-v2' },
+    { host: '2.1.3', line: '2.x', kind: 'sandbox-v2' },
+  ])
+
+  const defaultMatrixMatch = /const DEFAULT_MATRIX = \[([\s\S]*?)\n\]/.exec(releaseGates)
+  assert.ok(defaultMatrixMatch, 'expected the release-gate fallback matrix')
+  const defaultMatrix = [
+    ...defaultMatrixMatch[1].matchAll(/\{ host: '([^']+)', line: '([^']+)', kind: '([^']+)' \}/g),
+  ].map(([, host, line, kind]) => ({ host, line, kind }))
+  assert.deepEqual(defaultMatrix, matrix)
+
+  const gates = [...validate.matchAll(/- name: Gate \([a-f]\) ([a-z]+)/g)].map(([, gate]) => gate)
+  assert.deepEqual(gates.sort(), ['changelog', 'host', 'install', 'metadata', 'package', 'tests'])
+  for (const gate of ['tests', 'host', 'install', 'package']) {
+    assert.match(validate, new RegExp(`release-gates\\.mjs ${gate}\\b`))
+  }
+  for (const gate of ['changelog', 'metadata']) {
+    assert.match(validate, new RegExp(`args=\\(${gate}\\b`))
+  }
+  assert.doesNotMatch(validate, /bubblewrap|bwrap/i)
 })
 
 test('validate creates package evidence and enforces one immutable tarball plus metadata checksum', () => {

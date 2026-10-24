@@ -71,7 +71,6 @@ const UNSUPPORTED_HOSTS = new Set(KNOWN_BROKEN_HOSTS)
  * needs to exercise a different host.
  */
 const DEFAULT_MATRIX = [
-  { host: '1.19.4', line: '1.19.x', kind: 'v1-permission' },
   { host: '2.0.29', line: '2.x', kind: 'sandbox-v2' },
   { host: '2.0.30', line: '2.x', kind: 'sandbox-v2' },
   { host: '2.1.0', line: '2.x', kind: 'sandbox-v2' },
