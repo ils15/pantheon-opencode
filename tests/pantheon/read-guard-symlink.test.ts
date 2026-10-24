@@ -17,7 +17,7 @@
  * Run with: npx tsx tests/pantheon/read-guard-symlink.test.ts
  */
 import { strict as assert } from 'node:assert'
-import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { useTmpProjectDir } from './helpers/tmp-dir.ts'
@@ -80,6 +80,42 @@ async function main(): Promise<void> {
     assert.equal(resolve('docs/link/plugin.ts').failed, false)
   })
 
+  await test('resolver: only an existing regular file inside the project is annotated safe', () => {
+    const file = resolve('docs/PLAN.md')
+    assert.equal(file.failed, false)
+    assert.equal(file.resolved, 'docs/PLAN.md')
+    assert.equal(file.isRegularFile, true)
+    assert.equal(file.withinProject, true)
+
+    for (const directory of ['.', projectRoot, '..', '/', process.cwd()]) {
+      const result = resolve(directory)
+      assert.equal(result.failed, false, `${directory} resolves, but is not an allowed grep target`)
+      assert.equal(result.isRegularFile, false, `${directory} is a directory`)
+      assert.equal(result.withinProject, directory === '.' || directory === projectRoot)
+    }
+  })
+
+  await test('resolver: canonical root symlinks and sibling-prefix paths keep correct boundaries', () => {
+    const prefixSibling = mkdtempSync(`${projectRoot}-sibling-`)
+    const rootAlias = `${projectRoot}-alias`
+    try {
+      const siblingResult = resolve(prefixSibling)
+      assert.equal(siblingResult.withinProject, false)
+      assert.equal(siblingResult.isRegularFile, false)
+
+      symlinkSync(projectRoot, rootAlias, 'dir')
+      const resolveThroughAlias = createGuardPathResolver(rootAlias)
+      const aliasFile = resolveThroughAlias('docs/PLAN.md')
+      assert.equal(aliasFile.failed, false)
+      assert.equal(aliasFile.resolved, 'docs/PLAN.md')
+      assert.equal(aliasFile.withinProject, true)
+      assert.equal(aliasFile.isRegularFile, true)
+    } finally {
+      rmSync(rootAlias, { force: true })
+      rmSync(prefixSibling, { recursive: true, force: true })
+    }
+  })
+
   await test('resolver: a link to an allowed root stays inside the project', () => {
     assert.equal(resolve('docs/self/PLAN.md').resolved, 'docs/PLAN.md')
   })
@@ -99,6 +135,12 @@ async function main(): Promise<void> {
   await test('resolver: a dangling symlink is a resolution failure', () => {
     assert.equal(resolve('docs/broken').failed, true)
     assert.equal(resolve('docs/broken').resolved, undefined)
+  })
+
+  await test('resolver: a missing regular-file target is not annotated safe', () => {
+    const result = resolve('docs/not-created.md')
+    assert.equal(result.failed, false)
+    assert.equal(result.isRegularFile, false)
   })
 
   await test('resolver: paths beyond 64 components fail closed', () => {
@@ -176,6 +218,12 @@ async function main(): Promise<void> {
     )
   })
 
+  await test('guard: Zeus grep denies project, ancestor, root, and outside directories', () => {
+    for (const path of ['.', projectRoot, '..', '/', process.cwd()]) {
+      assert.throws(() => guard('grep', { path, pattern: 'TODO' }), /delegate to @apollo/, path)
+    }
+  })
+
   await test('guard: an absolute link target outside the project is denied', () => {
     assert.throws(
       () => guard('read', { filePath: join(projectRoot, 'docs', 'link', 'plugin.ts') }),
@@ -201,7 +249,7 @@ async function main(): Promise<void> {
 
   await test('guard: a link to an ALLOWED root is still readable', () => {
     guard('read', { filePath: 'docs/self/PLAN.md' })
-    guard('grep', { path: 'docs/self', pattern: 'plan' })
+    guard('grep', { path: 'docs/self/PLAN.md', pattern: 'plan' })
   })
 
   await test('guard: a non-Zeus agent is unaffected by symlink resolution', () => {
@@ -276,6 +324,39 @@ async function main(): Promise<void> {
     assert.equal(await denial('glob', { pattern: 'docs/PLAN.md' }), null)
     assert.equal(await denial('read', { filePath: '.pantheon/routing.yml' }), null)
     assert.equal(await denial('read', { filePath: 'memories/notes.md' }), null)
+  })
+
+  await test('V1 path: Zeus grep requires an explicit path and rejects all include filters', async () => {
+    await hooks['chat.params']({ sessionID, agent: 'zeus' })
+    for (const args of [
+      { pattern: 'secret' },
+      { path: '', pattern: 'secret' },
+      { path: '..', pattern: 'secret' },
+      { path: 'docs/PLAN.md', pattern: 'secret', include: 'plugin.ts' },
+    ]) {
+      const message = await denial('grep', args)
+      assert.ok(message !== null, `Zeus grep must deny ${JSON.stringify(args)}`)
+      assert.match(message, /delegate to @apollo/)
+    }
+
+    assert.equal(
+      await denial('grep', { path: 'docs/PLAN.md', pattern: 'secret' }),
+      null,
+      'an exact docs path with an ordinary query remains readable',
+    )
+
+    await hooks['chat.params']({ sessionID, agent: 'hermes' })
+    assert.equal(
+      await denial('grep', { pattern: 'secret' }),
+      null,
+      'non-Zeus grep without a path remains unchanged',
+    )
+    assert.equal(
+      await denial('grep', { path: '..', pattern: 'secret' }),
+      null,
+      'non-Zeus grep with a parent path remains unchanged',
+    )
+    await hooks['chat.params']({ sessionID, agent: 'zeus' })
   })
 
   await test('V1 path: a non-existent tail, dangling symlink, and loop are denied', async () => {

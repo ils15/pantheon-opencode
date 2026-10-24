@@ -20,7 +20,7 @@
  *    `failed`: a read guard fails CLOSED, and the guard denies.
  */
 
-import { lstatSync, realpathSync } from 'node:fs'
+import { lstatSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
 
 /** One path form prepared for the guard. */
@@ -34,6 +34,10 @@ export interface GuardPathResolution {
   resolved?: string
   /** `true` when the path could not be resolved — the guard must DENY. */
   failed: boolean
+  /** Filesystem annotation from the call-site resolver; never computed by the pure guard. */
+  isRegularFile?: boolean
+  /** Whether the canonical target is the project root or one of its descendants. */
+  withinProject?: boolean
 }
 
 /** Errors that mean "this component does not exist", not "resolution failed". */
@@ -101,12 +105,34 @@ function toGuardForm(resolvedAbsolute: string, rootReal: string): string {
   return relative.split(path.sep).join('/')
 }
 
+/** Canonicalize an existing project directory; failure must never broaden access. */
+function canonicalProjectRoot(projectRoot: string): string | undefined {
+  try {
+    const rootReal = realpathSync(path.resolve(projectRoot))
+    return statSync(rootReal).isDirectory() ? rootReal : undefined
+  } catch {
+    return undefined
+  }
+}
+
 function resolveAgainst(rawPath: string, rootReal: string): GuardPathResolution {
   const raw = rawPath.replace(/\\/g, '/')
   const absolute = path.resolve(rootReal, raw)
   const resolvedAbsolute = resolveExistingPrefix(absolute)
   if (resolvedAbsolute === undefined) return { raw, failed: true }
-  return { raw, resolved: toGuardForm(resolvedAbsolute, rootReal), failed: false }
+  let isRegularFile = false
+  try {
+    isRegularFile = statSync(resolvedAbsolute).isFile()
+  } catch (error) {
+    if (!isMissing(error)) return { raw, failed: true }
+  }
+  return {
+    raw,
+    resolved: toGuardForm(resolvedAbsolute, rootReal),
+    failed: false,
+    isRegularFile,
+    withinProject: isWithin(rootReal, resolvedAbsolute),
+  }
 }
 
 /**
@@ -119,10 +145,8 @@ export function resolveGuardPathForCheck(
   rawPath: string,
   projectRoot: string,
 ): GuardPathResolution {
-  return resolveAgainst(
-    rawPath,
-    resolveExistingPrefix(path.resolve(projectRoot)) ?? path.resolve(projectRoot),
-  )
+  const rootReal = canonicalProjectRoot(projectRoot)
+  return rootReal === undefined ? { raw: rawPath, failed: true } : resolveAgainst(rawPath, rootReal)
 }
 
 /**
@@ -132,7 +156,7 @@ export function resolveGuardPathForCheck(
 export function createGuardPathResolver(
   projectRoot: string,
 ): (rawPath: string) => GuardPathResolution {
-  const rootAbsolute = path.resolve(projectRoot)
-  const rootReal = resolveExistingPrefix(rootAbsolute) ?? rootAbsolute
-  return (rawPath) => resolveAgainst(rawPath, rootReal)
+  const rootReal = canonicalProjectRoot(projectRoot)
+  return (rawPath) =>
+    rootReal === undefined ? { raw: rawPath, failed: true } : resolveAgainst(rawPath, rootReal)
 }

@@ -2303,6 +2303,34 @@ async function main(): Promise<void> {
     }
   })
 
+  test('Zeus grep requires an explicit path and rejects all include filters at V2 registration', async () => {
+    const before = apolloCaptured.before as (e: unknown) => Promise<void>
+    for (const input of [
+      { pattern: 'secret' },
+      { path: '', pattern: 'secret' },
+      { path: '..', pattern: 'secret' },
+      { path: 'docs/PLAN.md', pattern: 'secret', include: 'plugin.ts' },
+    ]) {
+      const denial = await readGuardDenial(before, {
+        tool: 'grep',
+        agent: 'zeus',
+        input,
+      })
+      assert.ok(denial !== null, `V2 must deny Zeus grep ${JSON.stringify(input)}`)
+      assert.match(denial, /delegate to @apollo/)
+    }
+
+    assert.equal(
+      await readGuardDenial(before, {
+        tool: 'grep',
+        agent: 'hermes',
+        input: { pattern: 'secret' },
+      }),
+      null,
+      'non-Zeus grep without a path remains unchanged',
+    )
+  })
+
   test('the read guard denies a case-varied Zeus identity (fail-closed on casing)', async () => {
     const denial = await readGuardDenial(apolloCaptured.before as (e: unknown) => Promise<void>, {
       tool: 'read',
@@ -2361,6 +2389,38 @@ async function main(): Promise<void> {
       assert.ok(denial !== null, `Zeus must not ${tool} through docs/link — delegate to @apollo`)
       assert.match(denial, /delegate to @apollo/)
     }
+  })
+
+  test('V2 registered grep: only exact project docs files work for Zeus', async () => {
+    const before = symlinkCaptured.before as (e: unknown) => void | Promise<void>
+    for (const path of ['..', '.', '/', process.cwd(), 'docs/link']) {
+      const denial = await readGuardDenial(before, {
+        tool: 'grep',
+        agent: 'zeus',
+        input: { path, pattern: 'secret' },
+      })
+      assert.ok(denial !== null, `Zeus grep path ${path} must be denied`)
+      assert.match(denial, /delegate to @apollo/)
+    }
+
+    assert.equal(
+      await readGuardDenial(before, {
+        tool: 'grep',
+        agent: 'zeus',
+        input: { path: 'docs/PLAN.md', pattern: 'secret' },
+      }),
+      null,
+      'an exact docs file remains searchable',
+    )
+    assert.equal(
+      await readGuardDenial(before, {
+        tool: 'grep',
+        agent: 'hermes',
+        input: { path: '..', pattern: 'secret' },
+      }),
+      null,
+      'non-Zeus grep paths remain unaffected',
+    )
   })
 
   test('V2 path: Zeus fails closed on wildcard traversal globs but allows exact docs paths', async () => {

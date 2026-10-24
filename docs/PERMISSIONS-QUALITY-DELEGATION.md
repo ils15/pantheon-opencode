@@ -105,6 +105,16 @@ failing-closed gates, but they are not the reviewer:
 | Routing/frontmatter consistency | repo validator script | `scripts/validate-routing.mjs:313` |
 | Secrets | pre-commit gitleaks + CI scan | `.pre-commit-config.yaml:7` |
 
+Zeus' `grep` guard requires an explicit, non-empty `path` resolving to an
+existing regular file within the project root. Directories (including the
+project root, `..`, and paths outside the project), missing paths, and paths
+resolving into `src/`, `tests/`, or `scripts/` are denied; this prevents
+recursive expansion and source reads through symlinks. It rejects every
+`include` filter because the host's relative glob base and basename matching
+semantics are not established. An exact allowed docs file with a normal text
+query (for example, `path: "docs/PLAN.md"`, `pattern: "secret"`) remains
+searchable. Other agents' grep behavior is unchanged.
+
 **One of those is stronger than "repo validator script" suggests — with one hole in it
 (dated fact).** The routing validator runs as a named step inside the `validate` job
 (`.github/workflows/ci.yml:92-93`), and the workflow triggers on `pull_request` against
