@@ -271,10 +271,21 @@ before any release credential is exposed.
 |---|---|---|---|
 | (a) tests | `scripts/release-gates.mjs tests`: pytest + [`src/mcp`](https://github.com/ils15/pantheon-opencode/tree/main/src/mcp) coverage ≥ 80, `test:node`, `test:ts`, `coverage:plugin-v2`, `test:install`; pytest runs in an isolated venv built from [`src/mcp/requirements-mcp.txt`](https://github.com/ils15/pantheon-opencode/blob/main/src/mcp/requirements-mcp.txt) | any suite, coverage threshold, or the mandatory install tier fails; an unsatisfiable or unverified pin set fails the gate | `tests.json` |
 | (b) host compatibility | `scripts/release-gates.mjs host`: each **measured** host installed and exercised in an isolated sandbox; the gate reports a supported family with no row as "supported, unmeasured" instead of failing it | a measured row fails, or a known-broken host is listed | `host.json` |
-| (c) install | `scripts/release-gates.mjs install`: the immutable `.tgz` installed globally, headless init, `validate-sandbox-install.mjs`, and a host-backed tool canary | install, init, source comparison, MCP/doctor checks, or canary fails or skips | `install.json`, `install-canary.log` |
+| (c) install | `scripts/release-gates.mjs install`: the immutable `.tgz` installed globally, headless init, `validate-sandbox-install.mjs`, and a host-backed tool canary on OpenCode 2.0.30 | install, init, source comparison, MCP/doctor checks, or canary fails or skips | `install.json`, `install-canary.log` |
 | (d) package | `scripts/release-gates.mjs package`: SHA-256 recomputed over the same `.tgz`, payload inspected, `package:validate` | the digest, name, version, target SHA, or payload disagree; no second `npm pack` is accepted | `package.json` |
 | (e) changelog | `scripts/release-gates.mjs changelog`: `changelog-extract.mjs` | the `[version]` section is missing or empty; recovery checks the tag instead | `changelog.json`, `changelog.md` |
 | (f) metadata | `scripts/release-gates.mjs metadata`: `version-check.mjs` + `validate-node-engine-policy.mjs` | manifests drift, the channel/version shape is wrong, or the SHA is not 40 hex | `metadata.json` |
+
+The install canary configures the installed package's `src/plugin-v2` directory
+using the installer's object-form `plugins` entry, so imports resolve against the
+installed package's runtime dependencies rather than a checkout shim. A
+preflight turn fails the canary before catalog assertions if the installed plugin
+does not register `hashline_edit` with its output descriptor. The canary then
+checks the Code Mode catalog, a rejected hashline reference (no write), and one
+valid edit limited to a temporary project file. It mocks only the model endpoint
+with a local scripted SSE server. This proves behavior for the installed artifact
+on the gate's OpenCode 2.0.30 host; it does not prove npm publication, the GitHub
+Release workflow, or compatibility with host versions not run by that gate.
 
 The host evidence matrix is declared in `release.yml` (`PANTHEON_RELEASE_MATRIX`)
 and is validated by the gate, not trusted. Support is family-level: the gate

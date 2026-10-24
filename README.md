@@ -163,6 +163,12 @@ in [Architecture](docs/ARCHITECTURE.md) and
 | [Model Routing](docs/reference/model-routing.md) | [Env Vars](docs/reference/env-vars.md) · [Code Mode](docs/reference/code-mode.md) |
 | [Contributing](CONTRIBUTING.md) | [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) |
 
+The release install gate's tool canary loads the installed tarball's V2 plugin
+entry under OpenCode 2.0.30 and verifies `hashline_edit` registration, Code Mode
+visibility, and a bounded edit in an isolated project. It does not prove npm
+publication or compatibility with untested host versions; details are in the
+[release process](docs/RELEASING.md).
+
 ## Status
 
 The manifests in this checkout express the version being prepared, not a

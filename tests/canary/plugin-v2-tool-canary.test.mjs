@@ -10,16 +10,18 @@
  * property of the descriptor the HOST builds, and no hand-written mock context
  * reproduces that build. This is RCA matrix item 6.
  *
- * This file closes that hole: it starts a private `opencode serve`, loads
- * `src/plugin-v2.ts` through the real plugin loader, and drives `hashline_edit`
- * end-to-end — the plugin's own `draft.add`, the host's own input validation,
- * `execute()`, the host's own output-schema validation and the result surface.
+ * This file closes that hole: it starts a private `opencode serve`, loads the
+ * installed artifact's `src/plugin-v2` directory through the same object-form
+ * `plugins` entry the installer writes, and drives `hashline_edit` end-to-end —
+ * the package's own `draft.add`, the host's own input validation, `execute()`,
+ * output-schema validation and result surface.
  *
  * ## What is real here, and what is not
  *
- * Real: plugin loading, `ctx.tool.transform`, `ctx.tool.list()`, the host's tool
- * registry, input validation, `execute()`, the output biconditional, and the
- * tool-result surface. All of that is the host's own code.
+ * Real: loading the installed package entry (with its installed dependencies),
+ * `ctx.tool.transform`, `ctx.tool.list()`, the host's tool registry, input
+ * validation, `execute()`, the output biconditional, and the tool-result
+ * surface. All of that is the host's own code.
  *
  * Mocked: ONLY the model. `@ai-sdk/openai-compatible` is pointed at a local SSE
  * endpoint that replays scripted `execute` (Code Mode) tool calls. A provider is
@@ -27,7 +29,7 @@
  * narrowest substitution that gets there — replacing the host would defeat the
  * purpose of the canary.
  *
- * ## Measured facts this file depends on (opencode 2.0.22, against this repo)
+ * ## Measured facts this file depends on (OpenCode 2.0.30, release install gate)
  *
  *   1. `opencode serve` prints `server listening on <url>` then
  *      `server password <pw>` and answers HTTP 200 in ~250-330 ms. It prints
@@ -38,16 +40,17 @@
  *      built-ins do. They are reachable through the `execute` tool (Code Mode),
  *      whose `tools` global exposes them. Checking plugin tools through the
  *      model's tool surface reports them as nonexistent.
- *   3. `ctx.tool.transform` and `ctx.tool.hook` both exist in 2.0.22, and
+ *   3. `ctx.tool.transform` and `ctx.tool.hook` both exist in 2.0.30, and
  *      `ctx.tool.list()` returns the host-built descriptors.
  *   4. A `ctx.tool.list()` entry for a plugin tool carries an `output` key when
  *      the draft declared one. That is the host's build, not a mock's.
- *   5. `agent.tools:` is `@deprecated` and ignored in 2.0.22. Nothing here
+ *   5. `agent.tools:` is `@deprecated` and ignored in 2.0.30. Nothing here
  *      configures it, so the canary does not depend on it.
- *   6. The host resolves each `plugins` entry to a DIRECTORY holding a real
- *      `index.ts`; a bare file path is rejected. The real plugin is therefore
- *      reached through a one-line re-export shim, exactly like the shipped
- *      `src/plugin-v2/index.ts`.
+ *   6. The installer contract registers an object-form `plugins` entry whose
+ *      `package` is the installed `src/plugin-v2` directory and whose `options`
+ *      is an object. That directory contains the shipped `index.ts` entry;
+ *      this canary configures that installed directory directly, not a checkout
+ *      import or a source-path shim.
  *   7. Plugins load LAZILY: nothing is registered until the first chat turn. A
  *      canary that stopped at server-up would see an empty registry and pass for
  *      the wrong reason.
@@ -76,7 +79,8 @@
  * ## Skips
  *
  * Skipped when no `opencode` binary is available, so `npm test` stays green on a
- * machine without a host. Override with `PANTHEON_TOOL_CANARY_BIN`.
+ * machine without a host. Override with `PANTHEON_TOOL_CANARY_BIN`; the installed
+ * artifact root is supplied through `PANTHEON_TOOL_CANARY_PACKAGE_ROOT`.
  *
  * ## Hermeticity scope
  *
@@ -106,6 +110,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { createServer } from 'node:http'
@@ -113,19 +118,29 @@ import { createServer as createNetServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { after, before, test } from 'node:test'
-import { fileURLToPath } from 'node:url'
 
 // The repo's own V1→V2 translator. The P0-5 matrix probe compares the action
 // names it emits with the ones the host actually evaluates; importing the
 // module keeps the comparison anchored to shipped code instead of a copy.
 import { migrateV1toV2 } from '../../scripts/install/config-migration.mjs'
+import {
+  assertOpenCodeVersion,
+  canarySandboxCleanup,
+  createChildProcessStopper,
+  redactDiagnosticSecret,
+} from './tool-canary-support.mjs'
 
-const here = dirname(fileURLToPath(import.meta.url))
-const REPO_ROOT = resolve(here, '..', '..')
-const REAL_PLUGIN_SRC = join(REPO_ROOT, 'src', 'plugin-v2.ts')
+const PACKAGE_ROOT = process.env.PANTHEON_TOOL_CANARY_PACKAGE_ROOT
+  ? resolve(process.env.PANTHEON_TOOL_CANARY_PACKAGE_ROOT)
+  : null
+const PACKAGE_ENTRY = PACKAGE_ROOT ? join(PACKAGE_ROOT, 'src', 'plugin-v2') : null
+const REAL_PLUGIN_SRC = PACKAGE_ROOT ? join(PACKAGE_ROOT, 'src', 'plugin-v2.ts') : null
+const PACKAGE_JSON_PATH = PACKAGE_ROOT ? join(PACKAGE_ROOT, 'package.json') : null
 
 const BIN = process.env.PANTHEON_TOOL_CANARY_BIN ?? 'opencode'
 const TIMEOUT_MS = Number(process.env.PANTHEON_TOOL_CANARY_TIMEOUT_MS ?? 15000)
+const EXPECTED_HOST = process.env.PANTHEON_TOOL_CANARY_EXPECT_HOST
+const EXPECTED_PACKAGE_VERSION = process.env.PANTHEON_TOOL_CANARY_EXPECT_PACKAGE_VERSION
 
 /**
  * The two strings the host throws when a tool's declared `output` and the value
@@ -175,6 +190,56 @@ const BINARY_AVAILABLE = (() => {
 const skipped = BINARY_AVAILABLE ? false : `opencode binary not found on PATH (${BIN})`
 const subagentAdmissionProbeEnabled = process.env.PANTHEON_TOOL_CANARY_SUBAGENT_ADMISSION === '1'
 
+/** Read and validate the installed package that this host canary exercises. */
+function installedPackageFiles() {
+  if (!PACKAGE_ROOT || !PACKAGE_JSON_PATH || !REAL_PLUGIN_SRC || !PACKAGE_ENTRY) {
+    throw new Error(
+      'PANTHEON_TOOL_CANARY_PACKAGE_ROOT must point to the installed pantheon-opencode package',
+    )
+  }
+  const packageJSON = JSON.parse(readFileSync(PACKAGE_JSON_PATH, 'utf8'))
+  if (packageJSON.name !== 'pantheon-opencode') {
+    throw new Error(`unexpected installed package name at ${PACKAGE_ROOT}: ${packageJSON.name}`)
+  }
+  if (EXPECTED_PACKAGE_VERSION && packageJSON.version !== EXPECTED_PACKAGE_VERSION) {
+    throw new Error(
+      `installed package version ${packageJSON.version} does not match expected ${EXPECTED_PACKAGE_VERSION}`,
+    )
+  }
+  const entryFile = join(PACKAGE_ENTRY, 'index.ts')
+  if (!existsSync(entryFile) || !existsSync(REAL_PLUGIN_SRC)) {
+    throw new Error(
+      `installed V2 package entry is incomplete: expected ${entryFile} and ${REAL_PLUGIN_SRC}`,
+    )
+  }
+  const sdkManifest = join(PACKAGE_ROOT, 'node_modules', '@opencode-ai', 'plugin', 'package.json')
+  if (!existsSync(sdkManifest)) {
+    throw new Error(
+      `installed V2 package dependency is missing: ${sdkManifest}; install the artifact with its runtime dependencies before running the canary`,
+    )
+  }
+  const source = readFileSync(REAL_PLUGIN_SRC, 'utf8')
+  return {
+    packageJSON,
+    source,
+    packageIdentity: {
+      name: packageJSON.name,
+      version: packageJSON.version,
+      root: PACKAGE_ROOT,
+      entry: PACKAGE_ENTRY,
+      entryFile,
+      sourceSHA256: createHash('sha256').update(source).digest('hex'),
+    },
+  }
+}
+
+function assertExpectedHost() {
+  if (EXPECTED_HOST === undefined) return
+  const result = spawnSync(BIN, ['--version'], { encoding: 'utf8' })
+  const output = `${result.stdout ?? ''}${result.stderr ?? ''}`
+  assertOpenCodeVersion({ output, expected: EXPECTED_HOST, status: result.status })
+}
+
 // ─── hashline ref arithmetic (test-side, not host-side) ──────────────────
 
 /** Mirrors `HASHLINE_DICT` in src/pantheon/hashline/xxhash.ts. */
@@ -201,6 +266,7 @@ function hashTag(line, lineNumber) {
 /** Create a self-contained project + config tree. */
 function makeSandbox() {
   const root = mkdtempSync(join(tmpdir(), 'pantheon-tool-canary-'))
+  canarySandboxCleanup.register(root)
   const sandbox = {
     root,
     projectDir: root,
@@ -485,7 +551,24 @@ async function startMockModel(scripts, { emptySubagentResultProbe = false } = {}
       res.end()
     })
   })
-  await new Promise((done) => server.listen(0, '127.0.0.1', done))
+  try {
+    await new Promise((done, fail) => {
+      const onError = (error) => {
+        server.removeListener('listening', onListening)
+        fail(error)
+      }
+      const onListening = () => {
+        server.removeListener('error', onError)
+        done()
+      }
+      server.once('error', onError)
+      server.once('listening', onListening)
+      server.listen(0, '127.0.0.1')
+    })
+  } catch (error) {
+    if (server.listening) await new Promise((done) => server.close(done))
+    throw error
+  }
   return {
     baseURL: `http://127.0.0.1:${server.address().port}/v1`,
     turns: () => turn,
@@ -547,7 +630,7 @@ async function waitFor(probe, timeoutMs, label) {
 /**
  * Start a private `opencode serve` against `sandbox` and return a client.
  *
- * `--standalone` is rejected by 2.0.22 and must not be passed. The exit hook and
+ * `--standalone` is rejected by 2.0.30 and must not be passed. The exit hook and
  * the pid land in the timeout message, so a dead host reports why instead of
  * surfacing an empty stderr slice.
  */
@@ -577,157 +660,226 @@ async function startHost(sandbox) {
     stderr += String(chunk)
   })
 
+  let password
+  const currentPassword = () => password ?? /server password (\S+)/.exec(stdout)?.[1]
+  const sanitizeHostOutput = (value) => redactDiagnosticSecret(value, currentPassword())
+
   let exit = null
   server.on('exit', (code, signal) => {
     exit = `host pid ${server.pid} exited (code=${code} signal=${signal})`
   })
 
   const diagnose = () =>
-    [
-      exit ?? `host pid ${server.pid} is still running`,
-      `stdout=${JSON.stringify(stdout.slice(0, 400))}`,
-      `stderr=${JSON.stringify(stderr.slice(0, 400))}`,
-    ].join('; ')
+    sanitizeHostOutput(
+      [
+        exit ?? `host pid ${server.pid} is still running`,
+        `stdout-tail=${JSON.stringify(sanitizeHostOutput(stdout).slice(-1600))}`,
+        `stderr-tail=${JSON.stringify(sanitizeHostOutput(stderr).slice(-1600))}`,
+      ].join('; '),
+    )
 
-  const password = await waitFor(
-    async () => /server password (\S+)/.exec(stdout)?.[1],
-    TIMEOUT_MS,
-    `opencode serve to print a password (${diagnose()})`,
-  )
-
-  const basic = Buffer.from(`opencode:${password}`).toString('base64')
-  const headers = {
-    authorization: `Basic ${basic}`,
-    'x-opencode-directory': encodeURIComponent(sandbox.projectDir),
-    'content-type': 'application/json',
-  }
-
-  const request = async (method, path, body) => {
-    const response = await fetch(`http://127.0.0.1:${port}${path}`, {
-      method,
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    })
-    const text = await response.text()
-    if (!response.ok) {
-      throw new Error(`${method} ${path} -> HTTP ${response.status}: ${text.slice(0, 400)}`)
-    }
-    return text === '' ? undefined : JSON.parse(text)
-  }
-
-  await waitFor(
-    async () => {
-      try {
-        await request('GET', '/api/session')
-        return true
-      } catch {
-        return false
+  const waitForExit = (timeoutMs) =>
+    new Promise((resolve) => {
+      if (server.exitCode !== null || server.signalCode !== null) {
+        resolve(true)
+        return
       }
-    },
-    TIMEOUT_MS,
-    `opencode serve to become ready (${diagnose()})`,
-  )
+      const onExit = () => {
+        clearTimeout(timer)
+        resolve(true)
+      }
+      const timer = setTimeout(() => {
+        server.removeListener('exit', onExit)
+        resolve(false)
+      }, timeoutMs)
+      timer.unref?.()
+      server.once('exit', onExit)
+    })
 
-  const created = await request('POST', '/api/session', {
-    title: 'pantheon-tool-canary',
-    model: { providerID: 'canary', id: 'canary-model' },
+  const stop = createChildProcessStopper(server, {
+    waitForExit,
+    timeoutMs: 1000,
+    sanitize: sanitizeHostOutput,
   })
 
-  return {
-    port,
-    sessionID: created.data.id,
-    diagnose,
-    request,
-    async createSession(title = 'pantheon-tool-canary-followup') {
-      const session = await request('POST', '/api/session', {
-        title,
-        model: { providerID: 'canary', id: 'canary-model' },
+  try {
+    password = await waitFor(
+      async () => /server password (\S+)/.exec(stdout)?.[1],
+      TIMEOUT_MS,
+      `opencode serve to print a password (${diagnose()})`,
+    )
+
+    const basic = Buffer.from(`opencode:${password}`).toString('base64')
+    const headers = {
+      authorization: `Basic ${basic}`,
+      'x-opencode-directory': encodeURIComponent(sandbox.projectDir),
+      'content-type': 'application/json',
+    }
+
+    const request = async (method, path, body) => {
+      const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
       })
-      return session.data.id
-    },
-    async prompt(text, { agent } = {}) {
-      await request('POST', `/api/session/${created.data.id}/prompt`, {
-        text,
-        ...(agent ? { agent } : {}),
-        model: { providerID: 'canary', id: 'canary-model' },
-      })
-      await request('POST', `/api/experimental/session/${created.data.id}/wait`)
-    },
-    async promptWithPermissionReply(text, reply, agent, sessionID = created.data.id) {
-      const prompt = request('POST', `/api/session/${sessionID}/prompt`, {
-        text,
-        ...(agent ? { agent } : {}),
-        model: { providerID: 'canary', id: 'canary-model' },
-      })
-      const pending = await waitFor(
-        async () => {
-          const result = await request('GET', `/api/session/${sessionID}/permission`)
-          return (result?.data ?? []).find((item) => item.action === 'read')
-        },
-        TIMEOUT_MS,
-        `native read permission request for ${reply}`,
-      ).catch(async (error) => {
-        const transcript = await request('GET', `/api/session/${sessionID}/message`).catch(
-          (cause) => ({ error: String(cause) }),
-        )
-        const rows = Array.isArray(transcript?.data) ? transcript.data : []
-        const summary = rows.slice(0, 5).map((row) => ({
-          type: row.type,
-          agent: row.agent,
-          text: row.text,
-          parts: (row.content ?? []).map((part) => ({
-            type: part.type,
-            name: part.name,
-            status: part.state?.status,
-            error: part.state?.error?.message,
-            text: part.text,
-          })),
-        }))
-        const proof = existsSync(sandbox.permissionProofFile)
-          ? readFileSync(sandbox.permissionProofFile, 'utf8')
-          : ''
+      const text = await response.text()
+      if (!response.ok) {
         throw new Error(
-          `${String(error)}; recentMessages=${JSON.stringify(summary)}; permissionProof=${proof.slice(-4000)}`,
+          sanitizeHostOutput(`${method} ${path} -> HTTP ${response.status}: ${text.slice(0, 400)}`),
         )
+      }
+      return text === '' ? undefined : JSON.parse(text)
+    }
+
+    await waitFor(
+      async () => {
+        try {
+          await request('GET', '/api/session')
+          return true
+        } catch {
+          return false
+        }
+      },
+      TIMEOUT_MS,
+      `opencode serve to become ready (${diagnose()})`,
+    )
+
+    const created = await request('POST', '/api/session', {
+      title: 'pantheon-tool-canary',
+      model: { providerID: 'canary', id: 'canary-model' },
+    })
+
+    return {
+      port,
+      sessionID: created.data.id,
+      diagnose,
+      sanitize: sanitizeHostOutput,
+      request,
+      async createSession(title = 'pantheon-tool-canary-followup') {
+        const session = await request('POST', '/api/session', {
+          title,
+          model: { providerID: 'canary', id: 'canary-model' },
+        })
+        return session.data.id
+      },
+      async prompt(text, { agent } = {}) {
+        await request('POST', `/api/session/${created.data.id}/prompt`, {
+          text,
+          ...(agent ? { agent } : {}),
+          model: { providerID: 'canary', id: 'canary-model' },
+        })
+        await request('POST', `/api/experimental/session/${created.data.id}/wait`)
+      },
+      async promptWithPermissionReply(text, reply, agent, sessionID = created.data.id) {
+        const prompt = request('POST', `/api/session/${sessionID}/prompt`, {
+          text,
+          ...(agent ? { agent } : {}),
+          model: { providerID: 'canary', id: 'canary-model' },
+        })
+        const pending = await waitFor(
+          async () => {
+            const result = await request('GET', `/api/session/${sessionID}/permission`)
+            return (result?.data ?? []).find((item) => item.action === 'read')
+          },
+          TIMEOUT_MS,
+          `native read permission request for ${reply}`,
+        ).catch(async (error) => {
+          const transcript = await request('GET', `/api/session/${sessionID}/message`).catch(
+            (cause) => ({ error: String(cause) }),
+          )
+          const rows = Array.isArray(transcript?.data) ? transcript.data : []
+          const summary = rows.slice(0, 5).map((row) => ({
+            type: row.type,
+            agent: row.agent,
+            text: row.text,
+            parts: (row.content ?? []).map((part) => ({
+              type: part.type,
+              name: part.name,
+              status: part.state?.status,
+              error: part.state?.error?.message,
+              text: part.text,
+            })),
+          }))
+          const proof = existsSync(sandbox.permissionProofFile)
+            ? readFileSync(sandbox.permissionProofFile, 'utf8')
+            : ''
+          throw new Error(
+            `${String(error)}; recentMessages=${JSON.stringify(summary)}; permissionProof=${proof.slice(-4000)}`,
+          )
+        })
+        await request('POST', `/api/session/${sessionID}/permission/${pending.id}/reply`, {
+          decision: reply,
+        })
+        await prompt
+        await request('POST', `/api/experimental/session/${sessionID}/wait`)
+        return pending
+      },
+      async savedPermissions() {
+        return request('GET', '/api/permission/saved')
+      },
+      async transcript() {
+        return JSON.stringify(await request('GET', `/api/session/${created.data.id}/message`))
+      },
+      async sessions() {
+        return request('GET', '/api/session')
+      },
+      async messages(sessionID) {
+        return request('GET', `/api/session/${sessionID}/message`)
+      },
+      stop,
+    }
+  } catch (error) {
+    const diagnostic = diagnose()
+    await stop().catch((stopError) => {
+      throw new Error(sanitizeHostOutput(`${diagnostic}; host stop failed: ${String(stopError)}`), {
+        cause: new Error(sanitizeHostOutput(error)),
       })
-      await request('POST', `/api/session/${sessionID}/permission/${pending.id}/reply`, {
-        decision: reply,
-      })
-      await prompt
-      await request('POST', `/api/experimental/session/${sessionID}/wait`)
-      return pending
-    },
-    async savedPermissions() {
-      return request('GET', '/api/permission/saved')
-    },
-    async transcript() {
-      return JSON.stringify(await request('GET', `/api/session/${created.data.id}/message`))
-    },
-    async sessions() {
-      return request('GET', '/api/session')
-    },
-    async messages(sessionID) {
-      return request('GET', `/api/session/${sessionID}/message`)
-    },
-    stop() {
-      if (server.exitCode === null && server.signalCode === null) server.kill('SIGTERM')
-    },
+    })
+    throw new Error(
+      sanitizeHostOutput(`failed to start OpenCode host: ${String(error)}; ${diagnostic}`),
+      { cause: new Error(sanitizeHostOutput(error)) },
+    )
   }
+}
+
+/** Await every owned resource cleanup while retaining any operation failure. */
+async function cleanupHostAndModel(host, model, operationError = null) {
+  const failures = []
+  try {
+    await host?.stop()
+  } catch (error) {
+    failures.push(error)
+  }
+  try {
+    model?.close()
+  } catch (error) {
+    failures.push(error)
+  }
+  if (failures.length === 0) return
+
+  const sanitize = (value) => (host?.sanitize ? host.sanitize(value) : String(value))
+  const errors = operationError ? [new Error(sanitize(operationError))] : []
+  errors.push(...failures.map((error) => new Error(sanitize(error))))
+  throw new AggregateError(
+    errors,
+    operationError
+      ? 'canary operation failed and resource cleanup also failed'
+      : 'canary resource cleanup failed',
+  )
 }
 
 // ─── plugin wiring ───────────────────────────────────────────────────────
 
 /**
- * Write the plugin tree the host will load.
- *
- * `.opencode/plugins/real` re-exports the plugin under test, so the host loads
- * that file itself through its own loader — no adapter wraps the real `setup`.
- * `.opencode/plugins/probe` registers nothing; it records, from inside the host:
+ * Write the auxiliary plugin tree the host will load. The release path points
+ * directly to the installed package entry; `.opencode/plugins/real` is written
+ * only for mutation/matrix scenarios. `.opencode/plugins/probe` registers no
+ * ordinary tools; it records, from inside the host:
  *
  *   - every key on the real `PluginContext` (this is what proves the four
- *     domains `src/plugin-v2.ts` reaches through a cast DO exist on a live
- *     2.0.22 host, rather than being a fingers-crossed assumption), and
+ *     domains the installed `src/plugin-v2.ts` reaches through a cast DO exist
+ *     on a live 2.0.30 host, rather than being a fingers-crossed assumption), and
  *   - the `ctx.tool.list()` dump, taken on the first `execute.after`, by which
  *     point the real plugin's `tool.transform` has already run.
  */
@@ -736,7 +888,16 @@ function writePlugins(
   pluginSource,
   { permissionProbe = false, permissionAskProbe = false, matrixProbe = false } = {},
 ) {
-  writeFileSync(join(sandbox.projectDir, '.opencode', 'plugins', 'real', 'index.ts'), pluginSource)
+  if (pluginSource !== null) {
+    writeFileSync(
+      join(sandbox.projectDir, '.opencode', 'plugins', 'real', 'index.ts'),
+      pluginSource,
+    )
+    // Mutant/auxiliary local fixtures still import the installed package's
+    // dependency graph. Link only this throwaway project's node_modules so the
+    // imports resolve without copying or mutating the installed package.
+    symlinkSync(join(PACKAGE_ROOT, 'node_modules'), join(sandbox.projectDir, 'node_modules'), 'dir')
+  }
   writeFileSync(
     join(sandbox.projectDir, '.opencode', 'plugins', 'probe', 'index.ts'),
     [
@@ -917,7 +1078,7 @@ function writePlugins(
             '            source: { type: "tool", messageID: toolContext.messageID, id: toolContext.id },',
             '          }',
             '          if (typeof ctx.permission.assert !== "function") {',
-            '            // This case needs an API the host does not expose (2.0.22 has no',
+            '            // This case needs an API the current host does not expose.',
             '            // ctx.permission.assert). The question is unobservable here, so',
             '            // report NOT_APPLICABLE — a TypeError caught below must never be',
             '            // read as a policy "reject".',
@@ -1072,6 +1233,7 @@ function writeProjectConfig(
   sandbox,
   modelBaseURL,
   {
+    pluginEntry = './.opencode/plugins/real',
     permissionProbe = false,
     permissionAskProbe = false,
     boundedReadProbe = false,
@@ -1087,8 +1249,9 @@ function writeProjectConfig(
     JSON.stringify(
       {
         $schema: 'https://opencode.ai/config.json',
-        // Each entry must be a DIRECTORY holding a real index.ts on 2.0.22.
-        plugins: ['./.opencode/plugins/real', './.opencode/plugins/probe'],
+        // The release path uses the installer's object-form entry directly;
+        // local wrappers are reserved for auxiliary mutation/matrix probes.
+        plugins: [pluginEntry, './.opencode/plugins/probe'],
         ...(permissionProbe
           ? {
               policies: [
@@ -1203,13 +1366,14 @@ function writePermissionMatrixConfig(
   )
 }
 
-/** The re-export shim that makes the host load `src/plugin-v2.ts` itself. */
+/** Instrument the installed V2 entry for auxiliary mutation/matrix scenarios. */
 function realPluginShim() {
-  const source = readFileSync(REAL_PLUGIN_SRC, 'utf8')
-  const packageJSON = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8'))
+  const { packageJSON, source } = installedPackageFiles()
+  const entryPath = join(PACKAGE_ENTRY, 'index.ts')
   const identity = {
     packageName: packageJSON.name,
     packageVersion: packageJSON.version,
+    entryPath,
     sourcePath: REAL_PLUGIN_SRC,
     sourceSHA256: createHash('sha256').update(source).digest('hex'),
   }
@@ -1219,7 +1383,7 @@ function realPluginShim() {
   // source; it only records registration plus the event/result before and after
   // that handler runs. This distinguishes a missing hook from an adapter bug.
   return `
-import candidate from ${JSON.stringify(REAL_PLUGIN_SRC)}
+import candidate from ${JSON.stringify(entryPath)}
 import { appendFileSync } from 'node:fs'
 const identity = ${JSON.stringify(identity)}
 const evidenceFile = () => {
@@ -1302,7 +1466,7 @@ export default {
  * sibling modules.
  */
 function mutantPluginShim() {
-  const source = readFileSync(REAL_PLUGIN_SRC, 'utf8')
+  const { source } = installedPackageFiles()
   assert.match(
     source,
     /output: def\.output/,
@@ -1310,7 +1474,7 @@ function mutantPluginShim() {
   )
   const absolute = source.replace(
     /from '(\.\/[^']+)'/g,
-    (_match, rel) => `from ${JSON.stringify(join(REPO_ROOT, 'src', rel))}`,
+    (_match, rel) => `from ${JSON.stringify(join(PACKAGE_ROOT, 'src', rel))}`,
   )
   const mutated = absolute.replace(/^\s*output: def\.output,\n/m, '')
   assert.notEqual(mutated, absolute, 'the mutation did not apply — the canary would prove nothing')
@@ -1333,6 +1497,11 @@ const EMPTY_SUBAGENT_SYSTEM_MARKER = 'PANTHEON-EMPTY-SUBAGENT-CANARY-CHILD'
 const CATALOG_SCRIPT = `
 const found = search({ query: 'hashline' });
 return JSON.stringify({ catalog: found.items.map((item) => item.path) });
+`.trim()
+
+/** A preflight turn that lets the probe confirm plugin setup before discovery. */
+const PREFLIGHT_SCRIPT = `
+return JSON.stringify({ status: 'CANARY-PLUGIN-PREFLIGHT' });
 `.trim()
 
 /** Code Mode script: one call with a ref the file does not have. */
@@ -1468,8 +1637,9 @@ function visionExecuteText(transcript) {
  * the target file can be observed between the two calls.
  */
 async function runCanary(
-  pluginSource,
+  pluginSource = null,
   {
+    requireHashlineTool = true,
     permissionProbe = false,
     permissionAskProbe = false,
     boundedReadProbe = false,
@@ -1486,6 +1656,7 @@ async function runCanary(
     writeFileSync(join(sandbox.projectDir, 'bounded.txt'), TARGET_BODY)
   }
   const scripts = [
+    PREFLIGHT_SCRIPT,
     CATALOG_SCRIPT,
     badRefScript(sandbox.targetFile),
     goodRefScript(sandbox.targetFile),
@@ -1518,26 +1689,65 @@ async function runCanary(
         ]
       : []),
   ]
-  const model = await startMockModel(scripts, { emptySubagentResultProbe })
-  writePlugins(sandbox, pluginSource, {
-    permissionProbe: permissionProbe || boundedReadProbe || boundedReadDenyProbe,
-    permissionAskProbe,
-  })
-  writeProjectConfig(sandbox, model.baseURL, {
-    permissionProbe,
-    permissionAskProbe,
-    boundedReadProbe,
-    boundedReadDenyProbe,
-    subagentAdmissionProbe,
-    emptySubagentResultProbe,
-    subagentCaller,
-    subagentTarget,
-  })
-
-  const observation = { sandbox }
-  const host = await startHost(sandbox)
+  let model
+  let host
+  let observation
+  let operationError = null
   try {
+    model = await startMockModel(scripts, { emptySubagentResultProbe })
+    writePlugins(sandbox, pluginSource, {
+      permissionProbe: permissionProbe || boundedReadProbe || boundedReadDenyProbe,
+      permissionAskProbe,
+    })
+    writeProjectConfig(sandbox, model.baseURL, {
+      pluginEntry:
+        pluginSource === null
+          ? { package: PACKAGE_ENTRY, options: {} }
+          : './.opencode/plugins/real',
+      permissionProbe,
+      permissionAskProbe,
+      boundedReadProbe,
+      boundedReadDenyProbe,
+      subagentAdmissionProbe,
+      emptySubagentResultProbe,
+      subagentCaller,
+      subagentTarget,
+    })
+
+    observation = {
+      sandbox,
+      packageIdentity: installedPackageFiles().packageIdentity,
+      hostVersion: `${spawnSync(BIN, ['--version'], { encoding: 'utf8' }).stdout ?? ''}`.trim(),
+      pluginEntry: pluginSource === null ? PACKAGE_ENTRY : './.opencode/plugins/real',
+    }
+    host = await startHost(sandbox)
     observation.diagnose = () => host.diagnose()
+
+    await host.prompt('run the installed plugin setup preflight')
+    observation.preflightText = executeTexts(await host.transcript()).at(-1) ?? ''
+    const preflight = parseScriptResult(observation.preflightText)
+    if (preflight.status !== 'CANARY-PLUGIN-PREFLIGHT') {
+      throw new Error(
+        `installed-plugin preflight did not complete: ${observation.preflightText}; ${host.diagnose()}`,
+      )
+    }
+    observation.observation = existsSync(sandbox.proofFile)
+      ? JSON.parse(readFileSync(sandbox.proofFile, 'utf8'))
+      : null
+    const toolList = observation.observation?.toolList
+    const hashline = toolList?.find((tool) => tool.name === 'hashline_edit')
+    if (requireHashlineTool && !hashline?.hasOutput) {
+      throw new Error(
+        [
+          `installed V2 plugin failed to load/setup before catalog discovery: ${PACKAGE_ENTRY}`,
+          `installed package=${JSON.stringify(installedPackageFiles().packageIdentity)}`,
+          `ctx.tool.list() names=${JSON.stringify(toolList?.map((tool) => tool.name) ?? [])}`,
+          `hashline_edit descriptor=${JSON.stringify(hashline ?? null)}`,
+          `probe=${JSON.stringify(observation.observation)}`,
+          host.diagnose(),
+        ].join('; '),
+      )
+    }
 
     await host.prompt('report the tools you can reach')
     observation.catalogText = executeTexts(await host.transcript()).at(-1) ?? ''
@@ -1669,7 +1879,7 @@ async function runCanary(
     }
     observation.observation = existsSync(sandbox.proofFile)
       ? JSON.parse(readFileSync(sandbox.proofFile, 'utf8'))
-      : null
+      : observation.observation
     const executeAfterEvidencePath = `${sandbox.proofFile}.execute-after.jsonl`
     observation.executeAfterEvidence = existsSync(executeAfterEvidencePath)
       ? readFileSync(executeAfterEvidencePath, 'utf8')
@@ -1681,11 +1891,40 @@ async function runCanary(
     observation.permissionProof = existsSync(sandbox.permissionProofFile)
       ? readFileSync(sandbox.permissionProofFile, 'utf8')
       : ''
+    return observation
+  } catch (error) {
+    const safeError = host?.sanitize ? host.sanitize(error) : String(error)
+    const evidencePaths = [
+      sandbox.proofFile,
+      sandbox.targetFile,
+      join(sandbox.projectDir, 'bounded.txt'),
+      sandbox.permissionProofFile,
+      sandbox.matrixProofFile,
+      sandbox.mcpLogFile,
+    ]
+    const evidence = evidencePaths.flatMap((path) => {
+      if (!existsSync(path)) return []
+      try {
+        return [`${path}=${readFileSync(path, 'utf8').slice(-4000)}`]
+      } catch (readError) {
+        return [`${path}=<could not preserve evidence: ${String(readError)}>`]
+      }
+    })
+    const diagnostics = [
+      `sandbox=${sandbox.root}`,
+      host ? host.diagnose() : 'host not returned from startup',
+      model
+        ? `mock-model-requests=${JSON.stringify(model.requestSummary())}`
+        : 'mock model not returned from startup',
+      ...evidence,
+    ]
+    operationError = new Error(`tool canary failed: ${safeError}; ${diagnostics.join('; ')}`, {
+      cause: new Error(safeError),
+    })
+    throw operationError
   } finally {
-    host.stop()
-    model.close()
+    await cleanupHostAndModel(host, model, operationError)
   }
-  return observation
 }
 
 // ─── P0-5 permission matrix probes ───────────────────────────────────────
@@ -2103,41 +2342,43 @@ async function runPermissionMatrixScenario({
     defaultAgent,
     mcp: resolvedMcp,
   })
-  const host = await startHost(sandbox)
+  let host
   const observation = { name, sandbox, responses: [] }
-  if (resolvedMcp) {
-    // Evidence, not an assertion: the host's own view of the MCP servers. A
-    // failed connection here is what makes the `mcp` case unobservable, and the
-    // report must say so instead of blaming the permission layer.
-    // The host connects MCP servers asynchronously; a snapshot taken right
-    // after `serve` is ready can legitimately be empty. Wait for the server to
-    // appear (bounded) and say exactly what the host reported either way.
-    observation.mcpStatus = await waitFor(
-      async () => {
-        const status = await host.request('GET', '/api/mcp').catch(() => null)
-        const rows = Array.isArray(status?.data) ? status.data : []
-        // `pending` is the host's startup state; the server tool is not in the
-        // catalog until the connection settles. Gate on a non-pending status so
-        // the MCP scripts are not racing process startup.
-        return rows.length > 0 && rows.every((row) => row?.status?.status !== 'pending')
-          ? status
-          : null
-      },
-      20_000,
-      'the host to finish connecting the canary MCP server',
-    ).catch(async (error) => ({
-      error: String(error),
-      last: await host.request('GET', '/api/mcp').catch((cause) => String(cause)),
-    }))
-  }
-  const readEvents = () =>
-    existsSync(sandbox.matrixProofFile)
-      ? readFileSync(sandbox.matrixProofFile, 'utf8')
-          .split('\n')
-          .filter(Boolean)
-          .map((line) => JSON.parse(line))
-      : []
+  let operationError = null
   try {
+    host = await startHost(sandbox)
+    if (resolvedMcp) {
+      // Evidence, not an assertion: the host's own view of the MCP servers. A
+      // failed connection here is what makes the `mcp` case unobservable, and the
+      // report must say so instead of blaming the permission layer.
+      // The host connects MCP servers asynchronously; a snapshot taken right
+      // after `serve` is ready can legitimately be empty. Wait for the server to
+      // appear (bounded) and say exactly what the host reported either way.
+      observation.mcpStatus = await waitFor(
+        async () => {
+          const status = await host.request('GET', '/api/mcp').catch(() => null)
+          const rows = Array.isArray(status?.data) ? status.data : []
+          // `pending` is the host's startup state; the server tool is not in the
+          // catalog until the connection settles. Gate on a non-pending status so
+          // the MCP scripts are not racing process startup.
+          return rows.length > 0 && rows.every((row) => row?.status?.status !== 'pending')
+            ? status
+            : null
+        },
+        20_000,
+        'the host to finish connecting the canary MCP server',
+      ).catch(async (error) => ({
+        error: host.sanitize(error),
+        last: await host.request('GET', '/api/mcp').catch((cause) => host.sanitize(cause)),
+      }))
+    }
+    const readEvents = () =>
+      existsSync(sandbox.matrixProofFile)
+        ? readFileSync(sandbox.matrixProofFile, 'utf8')
+            .split('\n')
+            .filter(Boolean)
+            .map((line) => JSON.parse(line))
+        : []
     if (awaitPrompt) {
       for (const [index] of steps.entries()) {
         await host.prompt(`${promptLabel ?? 'permission matrix'} ${name} ${index}`)
@@ -2185,9 +2426,12 @@ async function runPermissionMatrixScenario({
         write: existsSync(join(sandbox.projectDir, 'write-ran.txt')),
       }
     }
+  } catch (error) {
+    const safeError = host?.sanitize ? host.sanitize(error) : String(error)
+    operationError = new Error(safeError, { cause: new Error(safeError) })
+    throw operationError
   } finally {
-    host.stop()
-    model.close()
+    await cleanupHostAndModel(host, model, operationError)
   }
   return observation
 }
@@ -2879,6 +3123,7 @@ async function runMcpAskScenario(actionName) {
     mcp: MATRIX_MCP_CONFIG,
   })
   let host
+  let operationError = null
   try {
     host = await startHost(sandbox)
     observation.mcpStatus = await waitFor(
@@ -2891,7 +3136,7 @@ async function runMcpAskScenario(actionName) {
       },
       20_000,
       'the host to finish connecting the canary MCP server',
-    ).catch((error) => ({ error: String(error) }))
+    ).catch((error) => ({ error: host.sanitize(error) }))
     // Warm-up turn, identical to the deny scenarios.
     await host.prompt('mcp ask warmup')
     const running = host.prompt('mcp ask probe').catch(() => {})
@@ -2902,7 +3147,7 @@ async function runMcpAskScenario(actionName) {
       },
       TIMEOUT_MS,
       'a pending ask for the MCP tool',
-    ).catch((error) => ({ error: String(error) }))
+    ).catch((error) => ({ error: host.sanitize(error) }))
     let reply = null
     if (pending?.id) {
       reply = 'reject'
@@ -2943,13 +3188,17 @@ async function runMcpAskScenario(actionName) {
       },
     }
   } catch (error) {
+    operationError = host?.sanitize(error) ?? String(error?.message ?? error)
     return {
       observation: null,
-      summary: { rule, verdict: 'not-measured', error: String(error?.message ?? error) },
+      summary: {
+        rule,
+        verdict: 'not-measured',
+        error: host?.sanitize(error) ?? String(error?.message ?? error),
+      },
     }
   } finally {
-    host?.stop()
-    model.close()
+    await cleanupHostAndModel(host, model, operationError)
   }
 }
 
@@ -3044,7 +3293,12 @@ before(
   async () => {
     rootsBefore = snapshotRealConfigRoots()
     if (skipped) return
-    live = await runCanary(realPluginShim())
+    assertExpectedHost()
+    installedPackageFiles()
+    live = await runCanary()
+    console.log(
+      `[tool-canary] host=${live.hostVersion}; package=${live.packageIdentity.name}@${live.packageIdentity.version}; entry=${live.pluginEntry}; sourceSHA256=${live.packageIdentity.sourceSHA256}`,
+    )
     if (permissionProbeEnabled) {
       permissionLive = await runCanary(realPluginShim(), {
         permissionProbe: true,
@@ -3097,35 +3351,7 @@ before(
 )
 
 after(() => {
-  for (const observation of [
-    live,
-    mutant,
-    permissionLive,
-    permissionAskLive,
-    boundedReadLive,
-    boundedReadDenyLive,
-    identityGapLive,
-    childBoundaryLive,
-    emptyChildLive,
-    permissionMatrix?.scenarios?.actionNames,
-    permissionMatrix?.scenarios?.readOnly,
-    permissionMatrix?.scenarios?.orderNestedFirst,
-    permissionMatrix?.scenarios?.orderWildcardFirst,
-    permissionMatrix?.scenarios?.orderEditNestedFirst,
-    permissionMatrix?.scenarios?.orderEditWildcardFirst,
-    permissionMatrix?.scenarios?.['orderReal:deny-broad-then-allow'],
-    permissionMatrix?.scenarios?.['orderReal:allow-nested-then-deny-broad'],
-    permissionMatrix?.scenarios?.['orderReal:allow-broad-then-deny-nested'],
-    permissionMatrix?.scenarios?.actionCoverage,
-    permissionMatrix?.scenarios?.mcpAllowShape,
-    permissionMatrix?.scenarios?.mcpRuleShape,
-    permissionMatrix?.scenarios?.questionAction,
-    permissionMatrix?.scenarios?.['taskGlob:apollo'],
-    permissionMatrix?.scenarios?.['taskGlob:demeter'],
-    ...Object.values(mcpGating?.observations ?? {}),
-  ]) {
-    if (observation?.sandbox) rmSync(observation.sandbox.root, { recursive: true, force: true })
-  }
+  canarySandboxCleanup.cleanup()
 })
 
 // ─── tests ───────────────────────────────────────────────────────────────
@@ -3148,18 +3374,18 @@ test('the host environment is redirected into the sandbox', () => {
   }
 })
 
-test('the mutation really removes output from draft.add', () => {
+test('the mutation really removes output from draft.add', { skip: skipped }, () => {
   assert.doesNotMatch(mutantPluginShim(), /output: def\.output/)
   assert.match(readFileSync(REAL_PLUGIN_SRC, 'utf8'), /output: def\.output/)
 })
 
 test('the host drove every scripted turn', { skip: skipped }, () => {
   // One `execute` tool call plus one closing message per outer chat turn.
-  assert.equal(live.turns, 8, `the mock model served ${live.turns} turns, expected 8`)
+  assert.equal(live.turns, 10, `the mock model served ${live.turns} turns, expected 10`)
   assert.equal(
     executeTexts(live.transcript).length,
-    4,
-    'the transcript is not the 4 scripted calls',
+    5,
+    'the transcript is not the 5 scripted calls, including setup preflight',
   )
 })
 
@@ -3678,9 +3904,9 @@ test('P0-5 resolution order: both nested/wildcard orders are recorded and the wi
   const nestedControl = matrixDecision(nested?.control)
   const wildcardControl = matrixDecision(wildcard?.control)
 
-  // The host is missing `ctx.permission.assert` (2.0.22): every cell above is a
-  // caught TypeError, not a policy decision. Report NOT_APPLICABLE — a skip, so
-  // it can never be rendered as a pass — instead of classifying a missing API as
+  // If this host does not expose `ctx.permission.assert`, each cell is a caught
+  // TypeError, not a policy decision. Report NOT_APPLICABLE — a skip, so it can
+  // never be rendered as a pass — instead of classifying a missing API as
   // `deny-precedence`.
   const decisions = [nestedProbe, wildcardProbe, nestedControl, wildcardControl].map(
     (decision) => decision?.decision,
@@ -4178,7 +4404,7 @@ test('V2 host replaces a no-text child result with an error and preserves comple
   assert.equal(emptyChildLive.childSessions.length, 1, 'the native child session did not run')
   const expectedSource = readFileSync(REAL_PLUGIN_SRC, 'utf8')
   const sourceSHA256 = createHash('sha256').update(expectedSource).digest('hex')
-  const candidatePackage = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8'))
+  const candidatePackage = installedPackageFiles().packageJSON
   const hookEvidence = emptyChildLive.executeAfterEvidence ?? []
   assert.ok(
     hookEvidence.some(
@@ -4386,6 +4612,28 @@ test('F4A rejects an otherwise allowed dispatch from a child session', {
   )
 })
 
+test('the installed artifact completed setup before catalog discovery', { skip: skipped }, () => {
+  assert.equal(live.packageIdentity.name, 'pantheon-opencode')
+  assert.equal(
+    live.pluginEntry,
+    PACKAGE_ENTRY,
+    'the release canary did not configure the installed entry',
+  )
+  if (EXPECTED_PACKAGE_VERSION) {
+    assert.equal(live.packageIdentity.version, EXPECTED_PACKAGE_VERSION)
+  }
+  assert.equal(
+    parseScriptResult(live.preflightText).status,
+    'CANARY-PLUGIN-PREFLIGHT',
+    `the setup preflight did not complete: ${live.preflightText}`,
+  )
+  const entry = live.observation?.toolList?.find((tool) => tool.name === 'hashline_edit')
+  assert.ok(
+    entry?.hasOutput,
+    `the installed package did not register hashline_edit before catalog discovery: ${JSON.stringify({ package: live.packageIdentity, toolList: live.observation?.toolList, host: live.diagnose() })}`,
+  )
+})
+
 test('hashline_edit is registered and its host-built descriptor carries output', {
   skip: skipped,
 }, () => {
@@ -4528,32 +4776,27 @@ test('the accepted call rewrites exactly the anchored line', { skip: skipped }, 
   )
 })
 
-test('the canary fails when output: def.output is removed from draft.add', {
+test('the canary detects the missing output descriptor on invocation', {
   skip: skipped,
 }, async () => {
-  mutant = await runCanary(mutantPluginShim())
+  mutant = await runCanary(mutantPluginShim(), { requireHashlineTool: false })
   const entry = mutant.observation?.toolList?.find((tool) => tool.name === 'hashline_edit')
   assert.ok(
     entry === undefined || !entry.hasOutput,
     'the mutant still registered hashline_edit WITH an output descriptor — the mutation no longer demonstrates anything',
   )
-  // Each of these mirrors a positive assertion above: with `output` removed the
-  // host drops the tool, so every one of them flips. If any of them still held,
-  // this canary would have shipped green over the original defect.
-  assert.notDeepEqual(
+  // OpenCode 2.0.30 still exposes a tool without `output` in Code Mode, so catalog
+  // absence is not the mutation signal. The descriptor and host invocation
+  // contract must expose the defect instead.
+  assert.deepEqual(
     mutant.catalog,
     live.catalog,
-    'the mutant still exposed hashline_edit through the Code Mode catalog; this canary would not have caught the defect',
+    'the 2.0.30 host changed the mutation catalog behavior; re-evaluate the probe',
   )
-  assert.doesNotMatch(
-    String(mutant.good.result ?? ''),
-    /1 edit\(s\) applied/,
-    'the mutant still applied the edit; this canary would not have caught the defect',
-  )
-  assert.equal(
-    mutant.afterGoodRef,
-    TARGET_BODY,
-    'the mutant still wrote to the file; this canary would not have caught the defect',
+  const mutantOutput = `${mutant.goodText}\n${mutant.transcript}`
+  assert.ok(
+    mutantOutput.includes(NO_OUTPUT_SCHEMA_ERROR) || mutantOutput.includes(MISSING_OUTPUT_ERROR),
+    `the missing output descriptor did not surface the host output-contract failure: ${JSON.stringify({ good: mutant.good, goodText: mutant.goodText, afterGoodRef: mutant.afterGoodRef })}`,
   )
 })
 
