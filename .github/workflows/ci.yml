@@ -136,6 +136,7 @@ jobs:
 
       - name: TUI dist freshness (rebuild must be a no-op)
         run: |
+          npm run typecheck --prefix src/plugins/tui
           npm run build --prefix src/plugins/tui
           # Normalize final newlines to match the pre-commit end-of-file-fixer
           # convention, then fail if the committed dist differs from a fresh

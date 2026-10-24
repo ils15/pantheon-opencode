@@ -75,6 +75,9 @@ see [Quick Start](docs/QUICKSTART.md).
   script execution, and vision.
 - **An optional TUI** with a dispatch sidebar block and a full-width
   `/dispatch` panel.
+  Its V2 server also exposes a foundational `pantheon.quota` status RPC for
+  allowlisted provider authentication; provider quota adapters and visible quota
+  UI are still in progress.
 
 Memory is used selectively: the coordinator searches once only when project
 history could affect a task, then passes relevant results to specialists. Store
