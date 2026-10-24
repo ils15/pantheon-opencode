@@ -2986,7 +2986,7 @@ function Sidebar(props) {
 		setProp(_el$0, "width", "100%");
 		setProp(_el$0, "padding", 1);
 		setProp(_el$1, "attributes", 1);
-		insert(_el$1, `Pantheon v1.6.0`);
+		insert(_el$1, `Pantheon v1.6.1`);
 		insert(_el$10, () => presetHeaderLine(model.preset().name ?? "", model.provider()));
 		insert(_el$0, createComponent(Show, {
 			get when() {
@@ -3685,7 +3685,7 @@ function HomeStatus(props) {
 	const muted = () => props.context.theme?.text?.muted ?? props.context.theme?.text?.base;
 	return (() => {
 		var _el$66 = createElement("text");
-		insert(_el$66, () => `Pantheon v1.6.0${preset().name ? ` ▸ ${preset().name}` : ""}`);
+		insert(_el$66, () => `Pantheon v1.6.1${preset().name ? ` ▸ ${preset().name}` : ""}`);
 		effect((_$p) => setProp(_el$66, "fg", muted(), _$p));
 		return _el$66;
 	})();

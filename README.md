@@ -174,7 +174,7 @@ latest published changes.
 ## What's new
 
 See the [GitHub release](https://github.com/ils15/pantheon-opencode/releases)
-and [CHANGELOG.md](CHANGELOG.md) for the changes in 1.6.0.
+and [CHANGELOG.md](CHANGELOG.md) for the changes in 1.6.1.
 
 ## Contribute
 
