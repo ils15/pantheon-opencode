@@ -9,7 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- Zeus read guard resolves every V1/V2 target before allow exceptions; symlinks into denied roots, dangling links, and resolution failures deny.
+- Zeus read guard resolves V1/V2 targets before policy checks; resolved code roots cannot be exempted by path suffixes or nested `.pantheon/`/`memories/` names, and Zeus globbing now denies wildcard patterns while allowing exact paths.
 - The pre-execution check does not pin an inode or prevent concurrent filesystem mutation between check and open.
 
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will

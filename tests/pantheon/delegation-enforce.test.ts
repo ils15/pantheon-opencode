@@ -284,7 +284,7 @@ async function main() {
   await testAsync('zeus read guard: docs/config targets stay readable', async () => {
     zeusReadGuard('read', { filePath: 'docs/PLAN.md' }, 'zeus')
     zeusReadGuard('read', { filePath: 'pantheon.schema.json' }, 'zeus')
-    zeusReadGuard('glob', { pattern: 'docs/**/*.md' }, 'zeus')
+    zeusReadGuard('glob', { pattern: 'docs/PLAN.md' }, 'zeus')
     zeusReadGuard('grep', { path: 'docs', pattern: 'delegation' }, 'zeus')
   })
 

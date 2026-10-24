@@ -47,10 +47,17 @@ async function main(): Promise<void> {
   // docs/self  → .           (allowed root, still readable)
   // docs/loop  → loop        (resolution failure → fail closed)
   mkdirSync(join(projectRoot, 'src'), { recursive: true })
+  mkdirSync(join(projectRoot, 'src', '.pantheon'), { recursive: true })
+  mkdirSync(join(projectRoot, '.pantheon'), { recursive: true })
+  mkdirSync(join(projectRoot, 'memories'), { recursive: true })
   mkdirSync(join(projectRoot, 'docs'), { recursive: true })
   writeFileSync(join(projectRoot, 'src', 'plugin.ts'), 'export const x = 1\n')
+  writeFileSync(join(projectRoot, 'src', '.pantheon', 'secret.ts'), 'secret\n')
+  writeFileSync(join(projectRoot, '.pantheon', 'routing.yml'), 'routing: true\n')
+  writeFileSync(join(projectRoot, 'memories', 'notes.md'), '# notes\n')
   writeFileSync(join(projectRoot, 'docs', 'PLAN.md'), '# plan\n')
   symlinkSync('../src', join(projectRoot, 'docs', 'link'))
+  symlinkSync('../src/.pantheon/secret.ts', join(projectRoot, 'docs', 'alias'))
   symlinkSync('plugin.ts', join(projectRoot, 'src', 'readme.md'))
   symlinkSync('../src/missing.ts', join(projectRoot, 'docs', 'broken'))
   symlinkSync('.', join(projectRoot, 'docs', 'self'))
@@ -130,8 +137,36 @@ async function main(): Promise<void> {
     assert.throws(() => guard('read', { filePath: 'src/readme.md' }), /delegate to @apollo/)
   })
 
+  await test('guard: nested src/.pantheon is denied while project-root exceptions remain readable', () => {
+    assert.throws(
+      () => guard('read', { filePath: 'src/.pantheon/secret.ts' }),
+      /delegate to @apollo/,
+    )
+    assert.throws(() => guard('read', { filePath: 'docs/alias' }), /delegate to @apollo/)
+    guard('read', { filePath: '.pantheon/routing.yml' })
+    guard('read', { filePath: 'memories/notes.md' })
+  })
+
   await test('guard: Zeus is denied `glob` through a link into src/', () => {
     assert.throws(() => guard('glob', { pattern: 'docs/link/**/*.ts' }), /delegate to @apollo/)
+  })
+
+  await test('guard: glob patterns with wildcard traversal fail closed, docs exact paths remain safe', () => {
+    for (const pattern of ['**/*.ts', '*/*/*.ts', 'docs/*/**/*.ts']) {
+      assert.throws(() => guard('glob', { pattern }), /delegate to @apollo/, pattern)
+    }
+    guard('glob', { pattern: 'docs/PLAN.md' })
+  })
+
+  await test('guard: direct grep/glob path arguments resolve before exceptions', () => {
+    assert.throws(
+      () => guard('grep', { path: 'docs/alias', pattern: 'secret' }),
+      /delegate to @apollo/,
+    )
+    assert.throws(
+      () => guard('glob', { path: 'docs/alias', pattern: 'docs/PLAN.md' }),
+      /delegate to @apollo/,
+    )
   })
 
   await test('guard: Zeus is denied `grep` whose path is a link into src/', () => {
@@ -220,11 +255,27 @@ async function main(): Promise<void> {
       ['read', { filePath: 'src/readme.md' }],
       ['glob', { pattern: 'docs/link/**/*.ts' }],
       ['grep', { path: 'docs/link', pattern: 'TODO' }],
+      ['read', { filePath: 'src/.pantheon/secret.ts' }],
+      ['read', { filePath: 'docs/alias' }],
+      ['grep', { path: 'docs/alias', pattern: 'secret' }],
+      ['glob', { path: 'docs/alias', pattern: 'docs/PLAN.md' }],
     ] as const) {
       const message = await denial(tool, args)
       assert.ok(message !== null, `Zeus must not ${tool} through docs/link — delegate to @apollo`)
       assert.match(message, /delegate to @apollo/)
     }
+  })
+
+  await test('V1 path: wildcard globs fail closed while exact docs paths remain readable', async () => {
+    await hooks['chat.params']({ sessionID, agent: 'zeus' })
+    for (const pattern of ['**/*.ts', '*/*/*.ts', 'docs/*/**/*.ts']) {
+      const message = await denial('glob', { pattern })
+      assert.ok(message !== null, `wildcard glob ${pattern} must be denied`)
+      assert.match(message, /delegate to @apollo/)
+    }
+    assert.equal(await denial('glob', { pattern: 'docs/PLAN.md' }), null)
+    assert.equal(await denial('read', { filePath: '.pantheon/routing.yml' }), null)
+    assert.equal(await denial('read', { filePath: 'memories/notes.md' }), null)
   })
 
   await test('V1 path: a non-existent tail, dangling symlink, and loop are denied', async () => {
@@ -242,7 +293,7 @@ async function main(): Promise<void> {
 
   await test('V1 path: a link to an allowed root is readable and non-Zeus is unaffected', async () => {
     assert.equal(await denial('read', { filePath: 'docs/self/PLAN.md' }), null)
-    assert.equal(await denial('glob', { pattern: 'docs/**/*.md' }), null)
+    assert.equal(await denial('glob', { pattern: 'docs/PLAN.md' }), null)
     await hooks['chat.params']({ sessionID, agent: 'hermes' })
     assert.equal(await denial('read', { filePath: 'docs/link/plugin.ts' }), null)
   })

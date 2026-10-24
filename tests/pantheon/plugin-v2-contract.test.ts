@@ -2326,11 +2326,18 @@ async function main(): Promise<void> {
 
   const guardSymlinkRoot = mkdtempSync(join(tmpdir(), 'pantheon-guard-symlink-'))
   mkdirSync(join(guardSymlinkRoot, 'src'), { recursive: true })
+  mkdirSync(join(guardSymlinkRoot, 'src', '.pantheon'), { recursive: true })
+  mkdirSync(join(guardSymlinkRoot, '.pantheon'), { recursive: true })
+  mkdirSync(join(guardSymlinkRoot, 'memories'), { recursive: true })
   mkdirSync(join(guardSymlinkRoot, 'docs'), { recursive: true })
   writeFileSync(join(guardSymlinkRoot, 'src', 'plugin.ts'), 'export const x = 1\n')
+  writeFileSync(join(guardSymlinkRoot, 'src', '.pantheon', 'secret.ts'), 'secret\n')
+  writeFileSync(join(guardSymlinkRoot, '.pantheon', 'routing.yml'), 'routing: true\n')
+  writeFileSync(join(guardSymlinkRoot, 'memories', 'notes.md'), '# notes\n')
   writeFileSync(join(guardSymlinkRoot, 'docs', 'PLAN.md'), '# plan\n')
   symlinkSync('plugin.ts', join(guardSymlinkRoot, 'src', 'readme.md'))
   symlinkSync('../src', join(guardSymlinkRoot, 'docs', 'link'))
+  symlinkSync('../src/.pantheon/secret.ts', join(guardSymlinkRoot, 'docs', 'alias'))
   symlinkSync('../src/missing.ts', join(guardSymlinkRoot, 'docs', 'broken'))
   symlinkSync('.', join(guardSymlinkRoot, 'docs', 'self'))
   symlinkSync('loop', join(guardSymlinkRoot, 'docs', 'loop'))
@@ -2345,11 +2352,46 @@ async function main(): Promise<void> {
       ['read', { filePath: 'src/readme.md' }],
       ['glob', { pattern: 'docs/link/**/*.ts' }],
       ['grep', { path: 'docs/link', pattern: 'TODO' }],
+      ['read', { filePath: 'src/.pantheon/secret.ts' }],
+      ['read', { filePath: 'docs/alias' }],
+      ['grep', { path: 'docs/alias', pattern: 'secret' }],
+      ['glob', { path: 'docs/alias', pattern: 'docs/PLAN.md' }],
     ] as const) {
       const denial = await readGuardDenial(before, { tool, agent: 'zeus', input })
       assert.ok(denial !== null, `Zeus must not ${tool} through docs/link — delegate to @apollo`)
       assert.match(denial, /delegate to @apollo/)
     }
+  })
+
+  test('V2 path: Zeus fails closed on wildcard traversal globs but allows exact docs paths', async () => {
+    const before = symlinkCaptured.before as (e: unknown) => void | Promise<void>
+    for (const pattern of ['**/*.ts', '*/*/*.ts', 'docs/*/**/*.ts']) {
+      const denial = await readGuardDenial(before, {
+        tool: 'glob',
+        agent: 'zeus',
+        input: { pattern },
+      })
+      assert.ok(denial !== null, `wildcard glob ${pattern} must be denied`)
+      assert.match(denial, /delegate to @apollo/)
+    }
+    for (const input of [
+      { filePath: '.pantheon/routing.yml' },
+      { filePath: 'memories/notes.md' },
+    ]) {
+      assert.equal(
+        await readGuardDenial(before, { tool: 'read', agent: 'zeus', input }),
+        null,
+        `root exception ${JSON.stringify(input)} stays readable`,
+      )
+    }
+    assert.equal(
+      await readGuardDenial(before, {
+        tool: 'glob',
+        agent: 'zeus',
+        input: { pattern: 'docs/PLAN.md' },
+      }),
+      null,
+    )
   })
 
   test('V2 path: missing targets, a dangling symlink, and a symlink loop are denied', async () => {
@@ -2390,7 +2432,7 @@ async function main(): Promise<void> {
       await readGuardDenial(before, {
         tool: 'glob',
         agent: 'zeus',
-        input: { pattern: 'docs/**/*.md' },
+        input: { pattern: 'docs/PLAN.md' },
       }),
       null,
       'ordinary docs globbing is not blanket-denied',

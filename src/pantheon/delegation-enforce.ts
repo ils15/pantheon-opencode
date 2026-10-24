@@ -204,13 +204,6 @@ export const DEFAULT_BLOCKED_TOOLS: ReadonlySet<string> = new Set([
 export const ZEUS_READ_DENY_PATTERNS: ReadonlyArray<RegExp> = [/^src\//, /^tests?\//, /^scripts?\//]
 
 /**
- * Path exceptions that Zeus MAY read even if they match a deny pattern.
- * Markdown files, .pantheon/ configs, and memories/ are operational context
- * that Zeus legitimately needs.
- */
-export const ALLOWED_PATHS: ReadonlyArray<RegExp> = [/\.md$/, /\.pantheon\//, /memories\//]
-
-/**
  * Normalize a tool-supplied path before it meets the deny patterns.
  *
  * The patterns are anchored on `/`, so two spellings of the same source path
@@ -284,21 +277,31 @@ function isDeniedReadPath(candidate: string, target: boolean): boolean {
  */
 export type GuardPathResolver = (rawPath: string) => GuardPathResolution
 
-function isAllowedPath(value: string): boolean {
-  return ALLOWED_PATHS.some((allowed) => allowed.test(value))
+/**
+ * Glob expansion is controlled by the host and its symlink-follow behavior is
+ * not part of this guard's contract. Only exact, non-glob paths are safe to
+ * preflight; fail closed on glob metacharacters rather than infer the host's
+ * expansion semantics.
+ */
+function hasGlobMeta(value: string): boolean {
+  return ['*', '?', '[', ']', '{', '}', '(', ')'].some((meta) => value.includes(meta))
 }
 
 /**
  * Zeus read guard. When the active agent is Zeus, deny read/glob/grep calls
  * that target source code, tests, or scripts — Zeus must delegate those to
- * @apollo. Allowed paths (markdown, .pantheon/, memories/) are exempt.
+ * @apollo. Project-root `.pantheon/` and `memories/` paths and ordinary docs
+ * remain readable because they are outside the denied code roots; they never
+ * exempt a resolved `src/`, `tests/`, or `scripts/` target. Glob patterns with
+ * wildcard metacharacters are rejected conservatively because host expansion
+ * and symlink-follow behavior cannot be safely preflighted here.
  *
  * Every path-bearing argument is checked, and path spellings are normalized
  * first. Both are tightenings: a call Zeus could make before with a
  * `path: 'src'` directory plus a harmless `pattern`, or with `./src/x` /
  * `src\\x`, is now denied. When a resolver is supplied every target is resolved
- * before any allowed-extension/filename exception is applied, so the exception
- * follows the actual target rather than a symlink's spelling.
+ * before any code-root decision, so the original spelling or an allowed suffix
+ * cannot hide a resolved code target.
  *
  * Symlink resolution is NOT part of this predicate: it is pure and synchronous
  * and shared with V1, so a call site that wants it passes `resolvePath` (see
@@ -331,8 +334,12 @@ export function zeusReadGuard(
       candidate.target && resolvePath !== undefined ? resolvePath(candidate.value) : undefined
     if (resolution?.failed) deny()
     const effectivePath = normalizeGuardPath(resolution?.resolved ?? normalized)
-    if (effectivePath === '' || !isDeniedReadPath(effectivePath, candidate.target)) continue
-    if (!isAllowedPath(effectivePath)) deny()
+    if (effectivePath === '') continue
+    // Resolve every direct grep/glob path before any policy decision. Wildcard
+    // expansion itself cannot be safely preflighted using the host's unknown
+    // symlink semantics, so Zeus may glob exact paths only.
+    if (tool === 'glob' && candidate.target && hasGlobMeta(effectivePath)) deny()
+    if (isDeniedReadPath(effectivePath, candidate.target)) deny()
   }
 }
 
