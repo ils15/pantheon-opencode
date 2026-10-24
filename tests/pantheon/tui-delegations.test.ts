@@ -822,7 +822,14 @@ async function main() {
   await testAsync(
     'merge: native task() live rows keep per-call identity and match the child by taskID',
     async () => {
-      const mkNative = (n: number): LiveDelegationEntry => ({
+      // Clock anchor: read ONCE, then hand every fixture call an explicit
+      // timestamp. The fixture never reads the clock, so a millisecond
+      // cannot tick between the two calls and flip the recency sort
+      // (issue #276). The anchor stays inside
+      // NATIVE_LIVE_ALIASLESS_TTL_MS so in-flight native rows survive the
+      // alias-less prune exactly as they do in production.
+      const anchor = Date.now()
+      const mkNative = (n: number, startedAt: number): LiveDelegationEntry => ({
         callID: n === 1 ? 'call_A1b2C3d4e5' : 'call_Z9y8X7w6v5',
         partID: `part_task_${n}`,
         sessionID: 'ses_root',
@@ -832,17 +839,50 @@ async function main() {
         alias: null,
         taskID: null,
         state: 'running',
-        startedAt: Date.now(),
+        startedAt,
         updatedAt: null,
       })
-      const twoNatives = mergeChildDelegationSources([], [mkNative(1), mkNative(2)])
+
+      // Exactly 1 ms apart: production sorts active rows newest-first
+      // (compareDelegationEntries → descending updatedAt ?? startedAt), so
+      // the later call (apollo) leads. The old fixture read Date.now()
+      // twice yet asserted hermes-first, which only held when the two reads
+      // landed in the same millisecond.
+      const oneMsApart = mergeChildDelegationSources(
+        [],
+        [mkNative(1, anchor), mkNative(2, anchor + 1)],
+      )
       assert.equal(
-        twoNatives.length,
+        oneMsApart.length,
         2,
         'per-call identity — natives must not collapse onto one row',
       )
-      assert.equal(delegationRowIdentity(twoNatives[0] as DelegationEntry), 'hermes')
-      assert.equal(delegationRowIdentity(twoNatives[1] as DelegationEntry), 'apollo')
+      assert.deepEqual(
+        oneMsApart.map((e) => delegationRowIdentity(e)),
+        ['apollo', 'hermes'],
+        'newest-first: the call started 1 ms later leads',
+      )
+      assert.deepEqual(
+        oneMsApart.map((e) => e.alias),
+        ['live-call_Z9y', 'live-call_A1b'],
+        'each row keeps its own live-<callID> identity (no collapse, no swap)',
+      )
+
+      // Equal timestamps: the comparator returns 0 and Array#sort is stable
+      // (ES2019), so the tie-break rule is INSERTION ORDER — live entries
+      // are merged in the order given, so the first call (hermes) leads.
+      const tied = mergeChildDelegationSources([], [mkNative(1, anchor), mkNative(2, anchor)])
+      assert.equal(tied.length, 2)
+      assert.deepEqual(
+        tied.map((e) => delegationRowIdentity(e)),
+        ['hermes', 'apollo'],
+        'equal timestamps → stable sort preserves insertion order',
+      )
+      assert.deepEqual(
+        tied.map((e) => e.alias),
+        ['live-call_A1b', 'live-call_Z9y'],
+        'tie-break does not swap identities either',
+      )
 
       const child: DelegationEntry = {
         alias: 'native-at_1',
@@ -850,7 +890,7 @@ async function main() {
         taskID: 'ses_nat_1',
         agent: 'hermes',
         state: 'running',
-        startedAt: 1000,
+        startedAt: anchor - 1,
         updatedAt: null,
         timedOut: false,
         description: 'Nativa',
@@ -858,11 +898,26 @@ async function main() {
       }
       const matched = mergeChildDelegationSources(
         [child],
-        [{ ...mkNative(1), taskID: 'ses_nat_1', startedAt: 1000 }],
+        [{ ...mkNative(1, anchor), taskID: 'ses_nat_1' }],
       )
       assert.equal(matched.length, 1, 'taskID match merges live into the child row')
       assert.equal(matched[0]?.taskID, 'ses_nat_1')
       assert.equal(matched[0]?.source, 'children-only')
+      assert.equal(
+        matched[0]?.alias,
+        'native-at_1',
+        'the child row keeps its own alias — no second live- row',
+      )
+      assert.equal(
+        matched[0]?.startedAt,
+        anchor - 1,
+        'merge keeps the earlier start (Math.min of child and live)',
+      )
+      assert.equal(
+        delegationRowIdentity(matched[0] as DelegationEntry),
+        'hermes',
+        'identity still resolves through the merged row',
+      )
     },
   )
 
