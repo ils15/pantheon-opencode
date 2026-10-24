@@ -467,8 +467,14 @@ function installGate(options) {
   }
 
   const binary = join(root, 'home', '.npm-global', 'bin', 'opencode')
+  const packageRoot = join(root, 'home', '.npm-global', 'lib', 'node_modules', 'pantheon-opencode')
   const canary = run('tool-canary', 'npm', ['run', 'test:tool-canary'], {
-    env: { PANTHEON_TOOL_CANARY_BIN: binary },
+    env: {
+      PANTHEON_TOOL_CANARY_BIN: binary,
+      PANTHEON_TOOL_CANARY_PACKAGE_ROOT: packageRoot,
+      PANTHEON_TOOL_CANARY_EXPECT_HOST: host,
+      PANTHEON_TOOL_CANARY_EXPECT_PACKAGE_VERSION: options.version,
+    },
   })
   // The canary itself skips when no binary is found. In release context that
   // skip is not a PASS, so a skip marker fails the gate.
