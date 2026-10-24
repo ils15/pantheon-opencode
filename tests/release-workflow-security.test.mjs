@@ -41,7 +41,7 @@ test('validation checks out and confirms the exact TARGET_SHA before release cre
 })
 
 test('release host proof keeps the four V2 rows and all six gates without an automatic V1 row', () => {
-  const matrixMatch = /PANTHEON_RELEASE_MATRIX:\s*>-\s*\n([\s\S]*?)\n    steps:/.exec(validate)
+  const matrixMatch = /PANTHEON_RELEASE_MATRIX:\s*>-\s*\n([\s\S]*?)\n {4}steps:/.exec(validate)
   assert.ok(matrixMatch, 'expected the frozen release host matrix')
   const matrix = JSON.parse(matrixMatch[1])
   assert.deepEqual(matrix, [
@@ -54,15 +54,11 @@ test('release host proof keeps the four V2 rows and all six gates without an aut
   const defaultMatrixMatch = /const DEFAULT_MATRIX = \[([\s\S]*?)\n\]/.exec(releaseGates)
   assert.ok(defaultMatrixMatch, 'expected the release-gate fallback matrix')
   const defaultMatrix = [
-    ...defaultMatrixMatch[1].matchAll(
-      /\{ host: '([^']+)', line: '([^']+)', kind: '([^']+)' \}/g,
-    ),
+    ...defaultMatrixMatch[1].matchAll(/\{ host: '([^']+)', line: '([^']+)', kind: '([^']+)' \}/g),
   ].map(([, host, line, kind]) => ({ host, line, kind }))
   assert.deepEqual(defaultMatrix, matrix)
 
-  const gates = [...validate.matchAll(/- name: Gate \([a-f]\) ([a-z]+)/g)].map(
-    ([, gate]) => gate,
-  )
+  const gates = [...validate.matchAll(/- name: Gate \([a-f]\) ([a-z]+)/g)].map(([, gate]) => gate)
   assert.deepEqual(gates.sort(), ['changelog', 'host', 'install', 'metadata', 'package', 'tests'])
   for (const gate of ['tests', 'host', 'install', 'package']) {
     assert.match(validate, new RegExp(`release-gates\\.mjs ${gate}\\b`))
