@@ -123,6 +123,7 @@ import { after, before, test } from 'node:test'
 // names it emits with the ones the host actually evaluates; importing the
 // module keeps the comparison anchored to shipped code instead of a copy.
 import { migrateV1toV2 } from '../../scripts/install/config-migration.mjs'
+import { assertOpenCodeVersion, canarySandboxCleanup } from './tool-canary-support.mjs'
 
 const PACKAGE_ROOT = process.env.PANTHEON_TOOL_CANARY_PACKAGE_ROOT
   ? resolve(process.env.PANTHEON_TOOL_CANARY_PACKAGE_ROOT)
@@ -228,14 +229,10 @@ function installedPackageFiles() {
 }
 
 function assertExpectedHost() {
-  if (!EXPECTED_HOST) return
+  if (EXPECTED_HOST === undefined) return
   const result = spawnSync(BIN, ['--version'], { encoding: 'utf8' })
-  const version = `${result.stdout ?? ''}${result.stderr ?? ''}`.trim()
-  if (result.status !== 0 || !version.includes(EXPECTED_HOST)) {
-    throw new Error(
-      `tool canary expected OpenCode ${EXPECTED_HOST}, got ${JSON.stringify(version)} (status=${result.status})`,
-    )
-  }
+  const output = `${result.stdout ?? ''}${result.stderr ?? ''}`
+  assertOpenCodeVersion({ output, expected: EXPECTED_HOST, status: result.status })
 }
 
 // ─── hashline ref arithmetic (test-side, not host-side) ──────────────────
@@ -264,6 +261,7 @@ function hashTag(line, lineNumber) {
 /** Create a self-contained project + config tree. */
 function makeSandbox() {
   const root = mkdtempSync(join(tmpdir(), 'pantheon-tool-canary-'))
+  canarySandboxCleanup.register(root)
   const sandbox = {
     root,
     projectDir: root,
@@ -548,7 +546,24 @@ async function startMockModel(scripts, { emptySubagentResultProbe = false } = {}
       res.end()
     })
   })
-  await new Promise((done) => server.listen(0, '127.0.0.1', done))
+  try {
+    await new Promise((done, fail) => {
+      const onError = (error) => {
+        server.removeListener('listening', onListening)
+        fail(error)
+      }
+      const onListening = () => {
+        server.removeListener('error', onError)
+        done()
+      }
+      server.once('error', onError)
+      server.once('listening', onListening)
+      server.listen(0, '127.0.0.1')
+    })
+  } catch (error) {
+    if (server.listening) await new Promise((done) => server.close(done))
+    throw error
+  }
   return {
     baseURL: `http://127.0.0.1:${server.address().port}/v1`,
     turns: () => turn,
@@ -652,130 +667,165 @@ async function startHost(sandbox) {
       `stderr-tail=${JSON.stringify(stderr.slice(-1600))}`,
     ].join('; ')
 
-  const password = await waitFor(
-    async () => /server password (\S+)/.exec(stdout)?.[1],
-    TIMEOUT_MS,
-    `opencode serve to print a password (${diagnose()})`,
-  )
-
-  const basic = Buffer.from(`opencode:${password}`).toString('base64')
-  const headers = {
-    authorization: `Basic ${basic}`,
-    'x-opencode-directory': encodeURIComponent(sandbox.projectDir),
-    'content-type': 'application/json',
-  }
-
-  const request = async (method, path, body) => {
-    const response = await fetch(`http://127.0.0.1:${port}${path}`, {
-      method,
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    })
-    const text = await response.text()
-    if (!response.ok) {
-      throw new Error(`${method} ${path} -> HTTP ${response.status}: ${text.slice(0, 400)}`)
-    }
-    return text === '' ? undefined : JSON.parse(text)
-  }
-
-  await waitFor(
-    async () => {
-      try {
-        await request('GET', '/api/session')
-        return true
-      } catch {
-        return false
+  const waitForExit = (timeoutMs) =>
+    new Promise((resolve) => {
+      if (server.exitCode !== null || server.signalCode !== null) {
+        resolve(true)
+        return
       }
-    },
-    TIMEOUT_MS,
-    `opencode serve to become ready (${diagnose()})`,
-  )
+      const onExit = () => {
+        clearTimeout(timer)
+        resolve(true)
+      }
+      const timer = setTimeout(() => {
+        server.removeListener('exit', onExit)
+        resolve(false)
+      }, timeoutMs)
+      timer.unref?.()
+      server.once('exit', onExit)
+    })
 
-  const created = await request('POST', '/api/session', {
-    title: 'pantheon-tool-canary',
-    model: { providerID: 'canary', id: 'canary-model' },
-  })
+  const stop = async () => {
+    if (server.exitCode !== null || server.signalCode !== null) return
+    server.kill('SIGTERM')
+    if (!(await waitForExit(1000)) && server.exitCode === null && server.signalCode === null) {
+      server.kill('SIGKILL')
+      await waitForExit(1000)
+    }
+  }
 
-  return {
-    port,
-    sessionID: created.data.id,
-    diagnose,
-    request,
-    async createSession(title = 'pantheon-tool-canary-followup') {
-      const session = await request('POST', '/api/session', {
-        title,
-        model: { providerID: 'canary', id: 'canary-model' },
+  try {
+    const password = await waitFor(
+      async () => /server password (\S+)/.exec(stdout)?.[1],
+      TIMEOUT_MS,
+      `opencode serve to print a password (${diagnose()})`,
+    )
+
+    const basic = Buffer.from(`opencode:${password}`).toString('base64')
+    const headers = {
+      authorization: `Basic ${basic}`,
+      'x-opencode-directory': encodeURIComponent(sandbox.projectDir),
+      'content-type': 'application/json',
+    }
+
+    const request = async (method, path, body) => {
+      const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
       })
-      return session.data.id
-    },
-    async prompt(text, { agent } = {}) {
-      await request('POST', `/api/session/${created.data.id}/prompt`, {
-        text,
-        ...(agent ? { agent } : {}),
-        model: { providerID: 'canary', id: 'canary-model' },
-      })
-      await request('POST', `/api/experimental/session/${created.data.id}/wait`)
-    },
-    async promptWithPermissionReply(text, reply, agent, sessionID = created.data.id) {
-      const prompt = request('POST', `/api/session/${sessionID}/prompt`, {
-        text,
-        ...(agent ? { agent } : {}),
-        model: { providerID: 'canary', id: 'canary-model' },
-      })
-      const pending = await waitFor(
-        async () => {
-          const result = await request('GET', `/api/session/${sessionID}/permission`)
-          return (result?.data ?? []).find((item) => item.action === 'read')
-        },
-        TIMEOUT_MS,
-        `native read permission request for ${reply}`,
-      ).catch(async (error) => {
-        const transcript = await request('GET', `/api/session/${sessionID}/message`).catch(
-          (cause) => ({ error: String(cause) }),
-        )
-        const rows = Array.isArray(transcript?.data) ? transcript.data : []
-        const summary = rows.slice(0, 5).map((row) => ({
-          type: row.type,
-          agent: row.agent,
-          text: row.text,
-          parts: (row.content ?? []).map((part) => ({
-            type: part.type,
-            name: part.name,
-            status: part.state?.status,
-            error: part.state?.error?.message,
-            text: part.text,
-          })),
-        }))
-        const proof = existsSync(sandbox.permissionProofFile)
-          ? readFileSync(sandbox.permissionProofFile, 'utf8')
-          : ''
-        throw new Error(
-          `${String(error)}; recentMessages=${JSON.stringify(summary)}; permissionProof=${proof.slice(-4000)}`,
-        )
-      })
-      await request('POST', `/api/session/${sessionID}/permission/${pending.id}/reply`, {
-        decision: reply,
-      })
-      await prompt
-      await request('POST', `/api/experimental/session/${sessionID}/wait`)
-      return pending
-    },
-    async savedPermissions() {
-      return request('GET', '/api/permission/saved')
-    },
-    async transcript() {
-      return JSON.stringify(await request('GET', `/api/session/${created.data.id}/message`))
-    },
-    async sessions() {
-      return request('GET', '/api/session')
-    },
-    async messages(sessionID) {
-      return request('GET', `/api/session/${sessionID}/message`)
-    },
-    stop() {
-      if (server.exitCode === null && server.signalCode === null) server.kill('SIGTERM')
-    },
+      const text = await response.text()
+      if (!response.ok) {
+        throw new Error(`${method} ${path} -> HTTP ${response.status}: ${text.slice(0, 400)}`)
+      }
+      return text === '' ? undefined : JSON.parse(text)
+    }
+
+    await waitFor(
+      async () => {
+        try {
+          await request('GET', '/api/session')
+          return true
+        } catch {
+          return false
+        }
+      },
+      TIMEOUT_MS,
+      `opencode serve to become ready (${diagnose()})`,
+    )
+
+    const created = await request('POST', '/api/session', {
+      title: 'pantheon-tool-canary',
+      model: { providerID: 'canary', id: 'canary-model' },
+    })
+
+    return {
+      port,
+      sessionID: created.data.id,
+      diagnose,
+      request,
+      async createSession(title = 'pantheon-tool-canary-followup') {
+        const session = await request('POST', '/api/session', {
+          title,
+          model: { providerID: 'canary', id: 'canary-model' },
+        })
+        return session.data.id
+      },
+      async prompt(text, { agent } = {}) {
+        await request('POST', `/api/session/${created.data.id}/prompt`, {
+          text,
+          ...(agent ? { agent } : {}),
+          model: { providerID: 'canary', id: 'canary-model' },
+        })
+        await request('POST', `/api/experimental/session/${created.data.id}/wait`)
+      },
+      async promptWithPermissionReply(text, reply, agent, sessionID = created.data.id) {
+        const prompt = request('POST', `/api/session/${sessionID}/prompt`, {
+          text,
+          ...(agent ? { agent } : {}),
+          model: { providerID: 'canary', id: 'canary-model' },
+        })
+        const pending = await waitFor(
+          async () => {
+            const result = await request('GET', `/api/session/${sessionID}/permission`)
+            return (result?.data ?? []).find((item) => item.action === 'read')
+          },
+          TIMEOUT_MS,
+          `native read permission request for ${reply}`,
+        ).catch(async (error) => {
+          const transcript = await request('GET', `/api/session/${sessionID}/message`).catch(
+            (cause) => ({ error: String(cause) }),
+          )
+          const rows = Array.isArray(transcript?.data) ? transcript.data : []
+          const summary = rows.slice(0, 5).map((row) => ({
+            type: row.type,
+            agent: row.agent,
+            text: row.text,
+            parts: (row.content ?? []).map((part) => ({
+              type: part.type,
+              name: part.name,
+              status: part.state?.status,
+              error: part.state?.error?.message,
+              text: part.text,
+            })),
+          }))
+          const proof = existsSync(sandbox.permissionProofFile)
+            ? readFileSync(sandbox.permissionProofFile, 'utf8')
+            : ''
+          throw new Error(
+            `${String(error)}; recentMessages=${JSON.stringify(summary)}; permissionProof=${proof.slice(-4000)}`,
+          )
+        })
+        await request('POST', `/api/session/${sessionID}/permission/${pending.id}/reply`, {
+          decision: reply,
+        })
+        await prompt
+        await request('POST', `/api/experimental/session/${sessionID}/wait`)
+        return pending
+      },
+      async savedPermissions() {
+        return request('GET', '/api/permission/saved')
+      },
+      async transcript() {
+        return JSON.stringify(await request('GET', `/api/session/${created.data.id}/message`))
+      },
+      async sessions() {
+        return request('GET', '/api/session')
+      },
+      async messages(sessionID) {
+        return request('GET', `/api/session/${sessionID}/message`)
+      },
+      stop,
+    }
+  } catch (error) {
+    const diagnostic = diagnose()
+    await stop().catch((stopError) => {
+      throw new Error(`${diagnostic}; host stop failed: ${String(stopError)}`, { cause: error })
+    })
+    throw new Error(`failed to start OpenCode host: ${String(error)}; ${diagnostic}`, {
+      cause: error,
+    })
   }
 }
 
@@ -1599,32 +1649,37 @@ async function runCanary(
         ]
       : []),
   ]
-  const model = await startMockModel(scripts, { emptySubagentResultProbe })
-  writePlugins(sandbox, pluginSource, {
-    permissionProbe: permissionProbe || boundedReadProbe || boundedReadDenyProbe,
-    permissionAskProbe,
-  })
-  writeProjectConfig(sandbox, model.baseURL, {
-    pluginEntry:
-      pluginSource === null ? { package: PACKAGE_ENTRY, options: {} } : './.opencode/plugins/real',
-    permissionProbe,
-    permissionAskProbe,
-    boundedReadProbe,
-    boundedReadDenyProbe,
-    subagentAdmissionProbe,
-    emptySubagentResultProbe,
-    subagentCaller,
-    subagentTarget,
-  })
-
-  const observation = {
-    sandbox,
-    packageIdentity: installedPackageFiles().packageIdentity,
-    hostVersion: `${spawnSync(BIN, ['--version'], { encoding: 'utf8' }).stdout ?? ''}`.trim(),
-    pluginEntry: pluginSource === null ? PACKAGE_ENTRY : './.opencode/plugins/real',
-  }
-  const host = await startHost(sandbox)
+  let model
+  let host
+  let observation
   try {
+    model = await startMockModel(scripts, { emptySubagentResultProbe })
+    writePlugins(sandbox, pluginSource, {
+      permissionProbe: permissionProbe || boundedReadProbe || boundedReadDenyProbe,
+      permissionAskProbe,
+    })
+    writeProjectConfig(sandbox, model.baseURL, {
+      pluginEntry:
+        pluginSource === null
+          ? { package: PACKAGE_ENTRY, options: {} }
+          : './.opencode/plugins/real',
+      permissionProbe,
+      permissionAskProbe,
+      boundedReadProbe,
+      boundedReadDenyProbe,
+      subagentAdmissionProbe,
+      emptySubagentResultProbe,
+      subagentCaller,
+      subagentTarget,
+    })
+
+    observation = {
+      sandbox,
+      packageIdentity: installedPackageFiles().packageIdentity,
+      hostVersion: `${spawnSync(BIN, ['--version'], { encoding: 'utf8' }).stdout ?? ''}`.trim(),
+      pluginEntry: pluginSource === null ? PACKAGE_ENTRY : './.opencode/plugins/real',
+    }
+    host = await startHost(sandbox)
     observation.diagnose = () => host.diagnose()
 
     await host.prompt('run the installed plugin setup preflight')
@@ -1795,11 +1850,42 @@ async function runCanary(
     observation.permissionProof = existsSync(sandbox.permissionProofFile)
       ? readFileSync(sandbox.permissionProofFile, 'utf8')
       : ''
+    return observation
+  } catch (error) {
+    const evidencePaths = [
+      sandbox.proofFile,
+      sandbox.targetFile,
+      join(sandbox.projectDir, 'bounded.txt'),
+      sandbox.permissionProofFile,
+      sandbox.matrixProofFile,
+      sandbox.mcpLogFile,
+    ]
+    const evidence = evidencePaths.flatMap((path) => {
+      if (!existsSync(path)) return []
+      try {
+        return [`${path}=${readFileSync(path, 'utf8').slice(-4000)}`]
+      } catch (readError) {
+        return [`${path}=<could not preserve evidence: ${String(readError)}>`]
+      }
+    })
+    const diagnostics = [
+      `sandbox=${sandbox.root}`,
+      host ? host.diagnose() : 'host not returned from startup',
+      model
+        ? `mock-model-requests=${JSON.stringify(model.requestSummary())}`
+        : 'mock model not returned from startup',
+      ...evidence,
+    ]
+    throw new Error(`tool canary failed: ${String(error)}; ${diagnostics.join('; ')}`, {
+      cause: error,
+    })
   } finally {
-    host.stop()
-    model.close()
+    try {
+      await host?.stop()
+    } finally {
+      model?.close()
+    }
   }
-  return observation
 }
 
 // ─── P0-5 permission matrix probes ───────────────────────────────────────
@@ -3216,35 +3302,7 @@ before(
 )
 
 after(() => {
-  for (const observation of [
-    live,
-    mutant,
-    permissionLive,
-    permissionAskLive,
-    boundedReadLive,
-    boundedReadDenyLive,
-    identityGapLive,
-    childBoundaryLive,
-    emptyChildLive,
-    permissionMatrix?.scenarios?.actionNames,
-    permissionMatrix?.scenarios?.readOnly,
-    permissionMatrix?.scenarios?.orderNestedFirst,
-    permissionMatrix?.scenarios?.orderWildcardFirst,
-    permissionMatrix?.scenarios?.orderEditNestedFirst,
-    permissionMatrix?.scenarios?.orderEditWildcardFirst,
-    permissionMatrix?.scenarios?.['orderReal:deny-broad-then-allow'],
-    permissionMatrix?.scenarios?.['orderReal:allow-nested-then-deny-broad'],
-    permissionMatrix?.scenarios?.['orderReal:allow-broad-then-deny-nested'],
-    permissionMatrix?.scenarios?.actionCoverage,
-    permissionMatrix?.scenarios?.mcpAllowShape,
-    permissionMatrix?.scenarios?.mcpRuleShape,
-    permissionMatrix?.scenarios?.questionAction,
-    permissionMatrix?.scenarios?.['taskGlob:apollo'],
-    permissionMatrix?.scenarios?.['taskGlob:demeter'],
-    ...Object.values(mcpGating?.observations ?? {}),
-  ]) {
-    if (observation?.sandbox) rmSync(observation.sandbox.root, { recursive: true, force: true })
-  }
+  canarySandboxCleanup.cleanup()
 })
 
 // ─── tests ───────────────────────────────────────────────────────────────
