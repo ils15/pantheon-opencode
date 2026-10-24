@@ -7,14 +7,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Fixed
-
-- Zeus resolves V1/V2 read targets before policy checks; code roots cannot be exempted by suffixes or nested `.pantheon/`/`memories/` names, and globbing denies wildcards while allowing exact paths.
-- The Zeus read guard checks canonical targets immediately before execution, blocking stable symlink aliases into denied roots and rejecting unresolved paths.
-- It does not pin an inode or make check/open atomic: concurrent workspace writers can race the check. The guard is a policy boundary, not isolation from hostile local processes.
-
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
+
+## [v1.6.1] - 2026-10-24
+
+### Added
+
+- **docs** — Corrected code-mode tool signatures and agent grants, polished 1.6.x docs with translations/evidence links, and fixed the docs-site entry point (#270).
+
+### Changed
+
+- **plugin** — V2 wires the read guard and bridge and restores supported context, image-history, formatter, and delegation-audit behavior (#264–#267).
+- **plugin** — V2 reports host gaps `idle-todo-enforcer`, `todo-restore`, `tool-ceiling`, and `board-transitions` instead of claiming full parity.
+- **install** — V2 notices report the resolved state path and shared V1/V2 state, not database isolation or a service port; capability output distinguishes the static seed and includes it in `--json`.
+- **install** — SIGINT during blocking `spawnSync` may still be swallowed; cancellation is deterministic during awaited phases.
+
+### Fixed
+
+- **plugin** — V1/V2 Zeus read guards normalize paths, resolve symlink targets, deny resolution failures, and align code-root checks with `pantheon_bounded_read` (#282).
+- **plugin** — `pantheon_cost` sums per-model prices for multi-model agents and reconciles partial/unpriced usage with model totals (#260).
+- **install** — Cancel/decline names the stopped step and records the run; Ctrl-C exits 130 during awaited phases (#261, #262).
+- **install** — Fresh V2 installs write options-bearing plugin entries; migration moves only loadable entries and warns about sibling `opencode.jsonc` (#268, #269).
+
+### Security
+
+- **deps** — Patched `zod` 4.6.6, `fastmcp` 4.1.2, `undici` 6.29.1/8.12.3, and `fast-uri` 3.1.9 to clear reported advisories (#275; PR #283).
+- The guard does not pin an inode or make check/open atomic, so concurrent workspace writers can race it; it is a policy boundary, not isolation from hostile local processes.
+
+### Deprecated
+
+### Removed
 
 ## [v1.6.0] - 2026-10-22
 
