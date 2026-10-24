@@ -123,7 +123,12 @@ import { after, before, test } from 'node:test'
 // names it emits with the ones the host actually evaluates; importing the
 // module keeps the comparison anchored to shipped code instead of a copy.
 import { migrateV1toV2 } from '../../scripts/install/config-migration.mjs'
-import { assertOpenCodeVersion, canarySandboxCleanup } from './tool-canary-support.mjs'
+import {
+  assertOpenCodeVersion,
+  canarySandboxCleanup,
+  createChildProcessStopper,
+  redactDiagnosticSecret,
+} from './tool-canary-support.mjs'
 
 const PACKAGE_ROOT = process.env.PANTHEON_TOOL_CANARY_PACKAGE_ROOT
   ? resolve(process.env.PANTHEON_TOOL_CANARY_PACKAGE_ROOT)
@@ -655,17 +660,23 @@ async function startHost(sandbox) {
     stderr += String(chunk)
   })
 
+  let password
+  const currentPassword = () => password ?? /server password (\S+)/.exec(stdout)?.[1]
+  const sanitizeHostOutput = (value) => redactDiagnosticSecret(value, currentPassword())
+
   let exit = null
   server.on('exit', (code, signal) => {
     exit = `host pid ${server.pid} exited (code=${code} signal=${signal})`
   })
 
   const diagnose = () =>
-    [
-      exit ?? `host pid ${server.pid} is still running`,
-      `stdout-tail=${JSON.stringify(stdout.slice(-1600))}`,
-      `stderr-tail=${JSON.stringify(stderr.slice(-1600))}`,
-    ].join('; ')
+    sanitizeHostOutput(
+      [
+        exit ?? `host pid ${server.pid} is still running`,
+        `stdout-tail=${JSON.stringify(sanitizeHostOutput(stdout).slice(-1600))}`,
+        `stderr-tail=${JSON.stringify(sanitizeHostOutput(stderr).slice(-1600))}`,
+      ].join('; '),
+    )
 
   const waitForExit = (timeoutMs) =>
     new Promise((resolve) => {
@@ -685,17 +696,14 @@ async function startHost(sandbox) {
       server.once('exit', onExit)
     })
 
-  const stop = async () => {
-    if (server.exitCode !== null || server.signalCode !== null) return
-    server.kill('SIGTERM')
-    if (!(await waitForExit(1000)) && server.exitCode === null && server.signalCode === null) {
-      server.kill('SIGKILL')
-      await waitForExit(1000)
-    }
-  }
+  const stop = createChildProcessStopper(server, {
+    waitForExit,
+    timeoutMs: 1000,
+    sanitize: sanitizeHostOutput,
+  })
 
   try {
-    const password = await waitFor(
+    password = await waitFor(
       async () => /server password (\S+)/.exec(stdout)?.[1],
       TIMEOUT_MS,
       `opencode serve to print a password (${diagnose()})`,
@@ -717,7 +725,9 @@ async function startHost(sandbox) {
       })
       const text = await response.text()
       if (!response.ok) {
-        throw new Error(`${method} ${path} -> HTTP ${response.status}: ${text.slice(0, 400)}`)
+        throw new Error(
+          sanitizeHostOutput(`${method} ${path} -> HTTP ${response.status}: ${text.slice(0, 400)}`),
+        )
       }
       return text === '' ? undefined : JSON.parse(text)
     }
@@ -744,6 +754,7 @@ async function startHost(sandbox) {
       port,
       sessionID: created.data.id,
       diagnose,
+      sanitize: sanitizeHostOutput,
       request,
       async createSession(title = 'pantheon-tool-canary-followup') {
         const session = await request('POST', '/api/session', {
@@ -821,12 +832,41 @@ async function startHost(sandbox) {
   } catch (error) {
     const diagnostic = diagnose()
     await stop().catch((stopError) => {
-      throw new Error(`${diagnostic}; host stop failed: ${String(stopError)}`, { cause: error })
+      throw new Error(sanitizeHostOutput(`${diagnostic}; host stop failed: ${String(stopError)}`), {
+        cause: new Error(sanitizeHostOutput(error)),
+      })
     })
-    throw new Error(`failed to start OpenCode host: ${String(error)}; ${diagnostic}`, {
-      cause: error,
-    })
+    throw new Error(
+      sanitizeHostOutput(`failed to start OpenCode host: ${String(error)}; ${diagnostic}`),
+      { cause: new Error(sanitizeHostOutput(error)) },
+    )
   }
+}
+
+/** Await every owned resource cleanup while retaining any operation failure. */
+async function cleanupHostAndModel(host, model, operationError = null) {
+  const failures = []
+  try {
+    await host?.stop()
+  } catch (error) {
+    failures.push(error)
+  }
+  try {
+    model?.close()
+  } catch (error) {
+    failures.push(error)
+  }
+  if (failures.length === 0) return
+
+  const sanitize = (value) => (host?.sanitize ? host.sanitize(value) : String(value))
+  const errors = operationError ? [new Error(sanitize(operationError))] : []
+  errors.push(...failures.map((error) => new Error(sanitize(error))))
+  throw new AggregateError(
+    errors,
+    operationError
+      ? 'canary operation failed and resource cleanup also failed'
+      : 'canary resource cleanup failed',
+  )
 }
 
 // ─── plugin wiring ───────────────────────────────────────────────────────
@@ -1652,6 +1692,7 @@ async function runCanary(
   let model
   let host
   let observation
+  let operationError = null
   try {
     model = await startMockModel(scripts, { emptySubagentResultProbe })
     writePlugins(sandbox, pluginSource, {
@@ -1852,6 +1893,7 @@ async function runCanary(
       : ''
     return observation
   } catch (error) {
+    const safeError = host?.sanitize ? host.sanitize(error) : String(error)
     const evidencePaths = [
       sandbox.proofFile,
       sandbox.targetFile,
@@ -1876,15 +1918,12 @@ async function runCanary(
         : 'mock model not returned from startup',
       ...evidence,
     ]
-    throw new Error(`tool canary failed: ${String(error)}; ${diagnostics.join('; ')}`, {
-      cause: error,
+    operationError = new Error(`tool canary failed: ${safeError}; ${diagnostics.join('; ')}`, {
+      cause: new Error(safeError),
     })
+    throw operationError
   } finally {
-    try {
-      await host?.stop()
-    } finally {
-      model?.close()
-    }
+    await cleanupHostAndModel(host, model, operationError)
   }
 }
 
@@ -2303,41 +2342,43 @@ async function runPermissionMatrixScenario({
     defaultAgent,
     mcp: resolvedMcp,
   })
-  const host = await startHost(sandbox)
+  let host
   const observation = { name, sandbox, responses: [] }
-  if (resolvedMcp) {
-    // Evidence, not an assertion: the host's own view of the MCP servers. A
-    // failed connection here is what makes the `mcp` case unobservable, and the
-    // report must say so instead of blaming the permission layer.
-    // The host connects MCP servers asynchronously; a snapshot taken right
-    // after `serve` is ready can legitimately be empty. Wait for the server to
-    // appear (bounded) and say exactly what the host reported either way.
-    observation.mcpStatus = await waitFor(
-      async () => {
-        const status = await host.request('GET', '/api/mcp').catch(() => null)
-        const rows = Array.isArray(status?.data) ? status.data : []
-        // `pending` is the host's startup state; the server tool is not in the
-        // catalog until the connection settles. Gate on a non-pending status so
-        // the MCP scripts are not racing process startup.
-        return rows.length > 0 && rows.every((row) => row?.status?.status !== 'pending')
-          ? status
-          : null
-      },
-      20_000,
-      'the host to finish connecting the canary MCP server',
-    ).catch(async (error) => ({
-      error: String(error),
-      last: await host.request('GET', '/api/mcp').catch((cause) => String(cause)),
-    }))
-  }
-  const readEvents = () =>
-    existsSync(sandbox.matrixProofFile)
-      ? readFileSync(sandbox.matrixProofFile, 'utf8')
-          .split('\n')
-          .filter(Boolean)
-          .map((line) => JSON.parse(line))
-      : []
+  let operationError = null
   try {
+    host = await startHost(sandbox)
+    if (resolvedMcp) {
+      // Evidence, not an assertion: the host's own view of the MCP servers. A
+      // failed connection here is what makes the `mcp` case unobservable, and the
+      // report must say so instead of blaming the permission layer.
+      // The host connects MCP servers asynchronously; a snapshot taken right
+      // after `serve` is ready can legitimately be empty. Wait for the server to
+      // appear (bounded) and say exactly what the host reported either way.
+      observation.mcpStatus = await waitFor(
+        async () => {
+          const status = await host.request('GET', '/api/mcp').catch(() => null)
+          const rows = Array.isArray(status?.data) ? status.data : []
+          // `pending` is the host's startup state; the server tool is not in the
+          // catalog until the connection settles. Gate on a non-pending status so
+          // the MCP scripts are not racing process startup.
+          return rows.length > 0 && rows.every((row) => row?.status?.status !== 'pending')
+            ? status
+            : null
+        },
+        20_000,
+        'the host to finish connecting the canary MCP server',
+      ).catch(async (error) => ({
+        error: host.sanitize(error),
+        last: await host.request('GET', '/api/mcp').catch((cause) => host.sanitize(cause)),
+      }))
+    }
+    const readEvents = () =>
+      existsSync(sandbox.matrixProofFile)
+        ? readFileSync(sandbox.matrixProofFile, 'utf8')
+            .split('\n')
+            .filter(Boolean)
+            .map((line) => JSON.parse(line))
+        : []
     if (awaitPrompt) {
       for (const [index] of steps.entries()) {
         await host.prompt(`${promptLabel ?? 'permission matrix'} ${name} ${index}`)
@@ -2385,9 +2426,12 @@ async function runPermissionMatrixScenario({
         write: existsSync(join(sandbox.projectDir, 'write-ran.txt')),
       }
     }
+  } catch (error) {
+    const safeError = host?.sanitize ? host.sanitize(error) : String(error)
+    operationError = new Error(safeError, { cause: new Error(safeError) })
+    throw operationError
   } finally {
-    host.stop()
-    model.close()
+    await cleanupHostAndModel(host, model, operationError)
   }
   return observation
 }
@@ -3079,6 +3123,7 @@ async function runMcpAskScenario(actionName) {
     mcp: MATRIX_MCP_CONFIG,
   })
   let host
+  let operationError = null
   try {
     host = await startHost(sandbox)
     observation.mcpStatus = await waitFor(
@@ -3091,7 +3136,7 @@ async function runMcpAskScenario(actionName) {
       },
       20_000,
       'the host to finish connecting the canary MCP server',
-    ).catch((error) => ({ error: String(error) }))
+    ).catch((error) => ({ error: host.sanitize(error) }))
     // Warm-up turn, identical to the deny scenarios.
     await host.prompt('mcp ask warmup')
     const running = host.prompt('mcp ask probe').catch(() => {})
@@ -3102,7 +3147,7 @@ async function runMcpAskScenario(actionName) {
       },
       TIMEOUT_MS,
       'a pending ask for the MCP tool',
-    ).catch((error) => ({ error: String(error) }))
+    ).catch((error) => ({ error: host.sanitize(error) }))
     let reply = null
     if (pending?.id) {
       reply = 'reject'
@@ -3143,13 +3188,17 @@ async function runMcpAskScenario(actionName) {
       },
     }
   } catch (error) {
+    operationError = host?.sanitize(error) ?? String(error?.message ?? error)
     return {
       observation: null,
-      summary: { rule, verdict: 'not-measured', error: String(error?.message ?? error) },
+      summary: {
+        rule,
+        verdict: 'not-measured',
+        error: host?.sanitize(error) ?? String(error?.message ?? error),
+      },
     }
   } finally {
-    host?.stop()
-    model.close()
+    await cleanupHostAndModel(host, model, operationError)
   }
 }
 

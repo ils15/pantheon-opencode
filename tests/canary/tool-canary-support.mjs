@@ -39,6 +39,54 @@ export function assertOpenCodeVersion({ output, expected, status }) {
   return actualVersion
 }
 
+/** Replace every exact occurrence of a generated secret, including across lines. */
+export function redactDiagnosticSecret(value, secret) {
+  const text = String(value)
+  if (typeof secret !== 'string' || secret.length === 0) return text
+  return text.split(secret).join('[REDACTED]')
+}
+
+/** Stop only the owned child process, and fail unless its exit is observed. */
+export function createChildProcessStopper(
+  child,
+  { waitForExit, timeoutMs = 1000, sanitize = String } = {},
+) {
+  if (typeof waitForExit !== 'function') {
+    throw new TypeError('waitForExit must be a function')
+  }
+
+  const exited = () => child.exitCode !== null || child.signalCode !== null
+  const wait = async () => {
+    try {
+      await waitForExit(timeoutMs)
+    } catch {
+      // Exit state below is authoritative; a waiter failure must not look like
+      // successful cleanup.
+    }
+  }
+  const signal = (name) => {
+    try {
+      child.kill(name)
+    } catch {
+      // Verify the child state after waiting and fail closed if it is alive.
+    }
+  }
+
+  return async function stopChildProcess() {
+    if (exited()) return
+
+    signal('SIGTERM')
+    await wait()
+    if (exited()) return
+
+    signal('SIGKILL')
+    await wait()
+    if (!exited()) {
+      throw new Error(sanitize(`host pid ${child.pid} remained alive after SIGKILL`))
+    }
+  }
+}
+
 /** Track every canary-owned temp project from creation through test teardown. */
 export function createSandboxCleanupRegistry(remove = rmSync) {
   const roots = new Set()
