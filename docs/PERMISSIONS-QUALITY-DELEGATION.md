@@ -100,20 +100,29 @@ failing-closed gates, but they are not the reviewer:
 | Read-only sessions may not mutate | `tool.execute.before` throws | [`src/pantheon/delegation-enforce.ts:181`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L181) (blocked-tool set), [`src/plugin.ts:101`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts#L101) |
 | A child session may not delegate again | same guard, child-session branch | [`src/pantheon/delegation-enforce.ts:353`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L353) |
 | Caller/target delegation matrix | same guard, `isDelegationAllowed` (V1; V2 uses the permission hook — see [§3.5](#35-per-host-generation-what-you-can-rely-on)) | [`src/pantheon/delegation-enforce.ts:138`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L138) |
-| The orchestrator may not read source | `zeusReadGuard` throws | [`src/pantheon/delegation-enforce.ts:313`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L313), wired on V1 from the `chat.params` agent map ([`src/plugin.ts:502`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts#L502)) and on V2 from the `execute.before` event agent ([`src/plugin-v2.ts`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin-v2.ts)) |
+| The orchestrator's source-read policy denies checked source targets | `zeusReadGuard` throws for denied targets | [`src/pantheon/delegation-enforce.ts:313`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L313), wired on V1 from the `chat.params` agent map ([`src/plugin.ts:502`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts#L502)) and on V2 from the `execute.before` event agent ([`src/plugin-v2.ts`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin-v2.ts)) |
 | Code-mode scripts must be approved | SHA-256 manifest, opt-in | `scripts/install/opencode.mjs:138` |
 | Routing/frontmatter consistency | repo validator script | `scripts/validate-routing.mjs:313` |
 | Secrets | pre-commit gitleaks + CI scan | `.pre-commit-config.yaml:7` |
 
 Zeus' `grep` guard requires an explicit, non-empty `path` resolving to an
-existing regular file within the project root. Directories (including the
-project root, `..`, and paths outside the project), missing paths, and paths
-resolving into `src/`, `tests/`, or `scripts/` are denied; this prevents
-recursive expansion and source reads through symlinks. It rejects every
-`include` filter because the host's relative glob base and basename matching
-semantics are not established. An exact allowed docs file with a normal text
-query (for example, `path: "docs/PLAN.md"`, `pattern: "secret"`) remains
-searchable. Other agents' grep behavior is unchanged.
+existing regular file within the project root. Immediately before the host
+tool executes, it resolves and checks the target: stable symlink aliases into
+`src/`, `tests/`, or `scripts/` are denied, as are unresolved paths,
+directories (including the project root), `..`, and paths outside the
+project. This blocks source reads through stable symlink aliases and prevents
+recursive expansion. It rejects every `include` filter because the host's
+relative glob base and basename matching semantics are not established. An
+exact allowed docs file with a normal text query (for example,
+`path: "docs/PLAN.md"`, `pattern: "secret"`) remains searchable. Other agents'
+grep behavior is unchanged.
+
+This check does not pin an inode or make checking and opening the path atomic:
+the host opens the target after the pre-execution check. A process able to
+mutate the workspace concurrently may replace the path or symlink and race the
+check. Treat this as a policy boundary against ordinary or accidental access,
+not isolation from a hostile local process with workspace write access; it does
+not make symlink source reads impossible under adversarial concurrent mutation.
 
 **One of those is stronger than "repo validator script" suggests — with one hole in it
 (dated fact).** The routing validator runs as a named step inside the `validate` job
@@ -829,8 +838,11 @@ lives at the CALL SITES (`createGuardPathResolver` in
 `src/pantheon/guard-path.ts`), not in the predicate: `zeusReadGuard` stays pure
 and synchronous, and both the V1 (`tool.execute.before`) and V2
 (`execute.before`) paths hand it the same resolver. This is a pre-execution
-path check, not an inode pin: concurrent filesystem mutation between the check
-and the host opening the target remains outside the guarantee.
+path check, not an inode pin or atomic check-and-open: a process with workspace
+write access can race the check by mutating the filesystem before the host opens
+the target. The guard is a policy boundary against ordinary or accidental
+access, not isolation against a hostile local process; adversarial concurrent
+mutation can still enable a symlink source read.
 
 **Conservative glob boundary:** Zeus may glob exact, non-wildcard paths such as
 `docs/PLAN.md`. Any `glob` path or pattern containing `*`, `?`, brackets, braces,
