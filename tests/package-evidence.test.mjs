@@ -93,6 +93,7 @@ function makeFixture() {
     'src/pantheon/v2-bridge.ts',
     'src/plugins/tui/dist/tui.js',
     'src/plugins/tui/dist/server.js',
+    'src/plugins/tui/dist/server-v2.js',
     'bin/pantheon-init.mjs',
     'scripts/doctor.mjs',
     'scripts/node-engine-policy.mjs',
@@ -209,6 +210,7 @@ test('package evidence packs once, validates npm payload, hashes it, and uses lo
     assert.ok(entries.includes('package/src/plugins/tui/package-lock.json'))
     assert.ok(entries.includes('package/src/plugins/tui/dist/tui.js'))
     assert.ok(entries.includes('package/src/plugins/tui/dist/server.js'))
+    assert.ok(entries.includes('package/src/plugins/tui/dist/server-v2.js'))
     assert.equal(readFileSync(join(result.outputDir, 'target-sha'), 'utf8').trim(), TARGET_SHA)
     assert.equal(metadata.lockfilePolicy.rootPackageLockfile, 'omitted-by-npm-pack')
     assert.match(metadata.lockfilePolicy.note, /source evidence/i)
@@ -231,6 +233,23 @@ test('package evidence packs once, validates npm payload, hashes it, and uses lo
     assert.equal(
       metadata.lockfileEvidence[1].publishedSha256,
       metadata.lockfileEvidence[1].sourceSha256,
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('package evidence rejects a tarball missing the V2 server bundle', () => {
+  const root = makeFixture()
+  try {
+    rmSync(join(root, 'package/src/plugins/tui/dist/server-v2.js'))
+
+    const result = runEvidence(root)
+
+    assert.equal(result.status, 1)
+    assert.match(
+      result.stderr,
+      /required package payload is missing: package\/src\/plugins\/tui\/dist\/server-v2\.js/,
     )
   } finally {
     rmSync(root, { recursive: true, force: true })

@@ -100,6 +100,15 @@ export function copyPluginFiles(
         'plugin entrypoint that re-exports a missing bundle. Reinstall pantheon-opencode.',
     )
   }
+  const requiredServerBundle = join(srcDir, 'dist', 'server-v2.js')
+  const serverBundleAvailable = version !== 'v2' || existsSync(requiredServerBundle)
+  if (!serverBundleAvailable) {
+    result.errors++
+    result.problems.push(
+      `TUI server bundle not found in the package: ${requiredServerBundle} — refusing to install a ` +
+        'plugin entrypoint that re-exports a missing bundle. Reinstall pantheon-opencode.',
+    )
+  }
 
   if (!dryRun) {
     assertNoSymlinkAncestors(dstDir)
@@ -166,7 +175,7 @@ export function copyPluginFiles(
 
   const v2ServerEntry = join(srcDir, 'index-v2.ts')
   const v2ServerDestination = join(dstDir, 'index.ts')
-  if (version === 'v2' && existsSync(v2ServerEntry)) {
+  if (version === 'v2' && serverBundleAvailable && existsSync(v2ServerEntry)) {
     const entryStatus = writeIfChanged(
       v2ServerDestination,
       readFileSync(v2ServerEntry, 'utf8'),
