@@ -54,6 +54,14 @@ const { createRoot, createSignal } = await import('solid-js')
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
+async function waitFor(predicate, description, timeoutMs = 1_000) {
+  const deadline = Date.now() + timeoutMs
+  while (!predicate()) {
+    assert.ok(Date.now() < deadline, `Timed out waiting for ${description}`)
+    await sleep(5)
+  }
+}
+
 /** One live Dispatch row, columns exactly as the view builds them. */
 const toCell = (agent, model, cost, duration) =>
   `\u280B ${agent.padEnd(12)} ${model.padEnd(7)} ${cost.padStart(5)} ${duration.padStart(5)}`
@@ -229,17 +237,21 @@ function createSidebarHost(options = {}) {
   }
 }
 
-/** Run `fn` with an isolated XDG_CONFIG_HOME so the active-preset file leg can
- *  never read the developer's real ~/.config candidate. */
-async function withIsolatedXdg(fn) {
-  const previous = process.env.XDG_CONFIG_HOME
+/** Run `fn` with an isolated preset environment so the active-preset file leg
+ *  is independent of the developer's XDG directory and preset override. */
+async function withIsolatedPresetEnvironment(fn) {
+  const previousXdg = process.env.XDG_CONFIG_HOME
+  const previousPreset = process.env.PANTHEON_MODEL_PRESET
   const isolated = mkdtempSync(join(tmpdir(), 'pantheon-xdg-'))
   process.env.XDG_CONFIG_HOME = isolated
+  delete process.env.PANTHEON_MODEL_PRESET
   try {
     return await fn(isolated)
   } finally {
-    if (previous === undefined) delete process.env.XDG_CONFIG_HOME
-    else process.env.XDG_CONFIG_HOME = previous
+    if (previousXdg === undefined) delete process.env.XDG_CONFIG_HOME
+    else process.env.XDG_CONFIG_HOME = previousXdg
+    if (previousPreset === undefined) delete process.env.PANTHEON_MODEL_PRESET
+    else process.env.PANTHEON_MODEL_PRESET = previousPreset
     rmSync(isolated, { recursive: true, force: true })
   }
 }
@@ -255,7 +267,7 @@ test('preset resolution: env beats file, malformed/none fall back to default', a
   assert.deepEqual(presetFromEnv({ PANTHEON_MODEL_PRESET: 'none' }), { name: null, source: null })
   assert.deepEqual(presetFromEnv({ PANTHEON_MODEL_PRESET: '' }), { name: null, source: null })
 
-  await withIsolatedXdg(async () => {
+  await withIsolatedPresetEnvironment(async () => {
     const project = mkdtempSync(join(tmpdir(), 'pantheon-preset-'))
     try {
       const dir = join(project, '.pantheon')
@@ -1327,7 +1339,7 @@ test('sidebar model exposes context, cost, agent→model and full delegation row
   const { toDelegationView, createSidebarModel, contextBlockRows } = await loadV2()
   const now = Date.now()
 
-  await withIsolatedXdg(async () => {
+  await withIsolatedPresetEnvironment(async () => {
     const project = mkdtempSync(join(tmpdir(), 'pantheon-v2-metrics-'))
     try {
       mkdirSync(join(project, '.pantheon'), { recursive: true })
@@ -1406,6 +1418,12 @@ test('sidebar model exposes context, cost, agent→model and full delegation row
 
       try {
         await sleep(20)
+        await waitFor(
+          () =>
+            model.preset().name === 'go-fast' &&
+            model.presetOverrides().agents.apollo?.model === 'opencode-go/qwen3.8-max',
+          'the active preset and overrides',
+        )
         const usage = model.contextUsage()
         assert.deepEqual(usage, { tokens: 78_000, percent: 39, limit: 200_000 })
         assert.equal(model.cost(), 0.0423)
@@ -1446,6 +1464,10 @@ test('sidebar model exposes context, cost, agent→model and full delegation row
       })
       try {
         await sleep(20)
+        await waitFor(
+          () => childModel.presetOverrides().agents.apollo?.model === 'opencode-go/qwen3.8-max',
+          'the child model override',
+        )
         assert.deepEqual(childModel.agentModel(), {
           agent: 'apollo',
           model: 'qwen3.8-max',
