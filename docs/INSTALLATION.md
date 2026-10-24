@@ -20,6 +20,26 @@ npm run doctor
 
 - **Requirements:** **Node.js >=26.4.0** for Pantheon's CLI/installer/Node tooling, **Python 3.11+** (optional, MCP servers), and a supported host: **OpenCode 1.19.x** (V1 contract) or **OpenCode 2.x** (V2 contract).
 - **Known broken:** OpenCode 2.0.22 does not expose `ctx.permission.assert`. Node 22, Node 24, and Node 26.0–26.3 are outside the supported range.
+- `npm run setup` preserves the existing `init --yes` install. After a successful
+  install, it offers an independent V2 config-preparation review only when the
+  existing OpenCode generation detector reports V2. V1 and unresolved host
+  generations do not enter the stage.
+- The V2 stage inspects `~/.config/opencode/opencode.json` and
+  `~/.config/opencode/opencode.jsonc` separately (the existing global init
+  target).
+  V2 layers these files (`.jsonc` scalar values win and arrays are unioned); it
+  never deletes either file or silently selects one. Interactive users select
+  the target file(s), choose a policy source when values conflict, review the
+  proposed diff, and separately confirm apply. Legacy `permission` rules can be
+  prepared as V2 `permissions`; MCP `ask` cannot be enforced by V2, so the user
+  must explicitly choose allow/deny or leave the configuration unchanged.
+- `--yes` authorizes only the existing init flow, never host-config preparation.
+  Headless/CI/non-TTY runs show a read-only preview and never write config, even
+  with `--yes`. JSONC files with comments inside values that would be rewritten
+  are preview-only rather than serialized lossily. Applied files receive
+  same-directory backups and atomic replacements; a partial failure rolls back
+  prior replacements from those backups. See each printed backup path to restore
+  a completed change manually.
 - With npm's default configuration, mismatched versions can emit `EBADENGINE` as a warning during install. Pantheon's postinstall then skips Node/config sync and lets the package finish installing; the CLI blocks configuration with an explicit message before writing files.
 - `engine-strict=true` can make npm itself stop the install. To switch without a global/system-wide install, use a user-managed Node version manager:
 
@@ -35,7 +55,9 @@ npm run doctor
 - The recommendation is guidance for agents only; Pantheon does not create Git worktrees or directories automatically.
 - Interactive TTY configuration uses Clack prompts to select components, choose a global/project install, and confirm the review before applying. Canceling changes nothing.
 - Every path that ends without applying prints exactly one line naming where it stopped (`canceled at the review prompt`, `declined at the review prompt`, `canceled at the install location`, …). Ctrl-C is handled **from the moment the installer starts its work** (after the reviewed-plan authorization, if any) and until the run has been recorded: it prints the same named line, writes the record and exits `130`; the handler is deactivated once the apply is recorded, so a Ctrl-C during the optional post-install `--doctor` cannot rewrite a completed install as canceled. While a prompt is on screen, the prompt library also turns Ctrl-C into that same cancel line. Earlier than that — argument parsing, or loading a saved plan — a Ctrl-C signal ends the process with no Pantheon message, because nothing has been written yet. A cancel, a decline, or an apply is also written to `.pantheon/last-run.json` in the target (status, reason, cancel point, timestamp, version) so a later run can tell what the previous one did; `install-state.json` is still written only by an apply. The two gate refusals are exempt on purpose — a run refused before authorization (`2`) or after drift (`3`) keeps its documented guarantee of writing nothing, and reports itself in its message and exit code. A record that cannot be written is reported as a warning and never changes the exit code.
-- `--yes`, `--headless`, `--dry-run`, and non-TTY paths keep their existing behavior.
+- For `npm run setup`, `--yes` continues to apply only to init; `--headless`, CI,
+  and non-TTY paths keep the init behavior but make the optional V2 config stage
+  preview-only. Direct `npx pantheon-opencode init` behavior is unchanged.
 - Delegation and background mode depend on the tools exposed by the host version/runtime. In the reported Beta 10 session, Zeus had the `subagent` tool, with no `task_status`/`cancel_task` or guarantee of tracking/recovery.
 - Check the runtime's schema and documentation; do not assume `task()` or background are available. The experimental variable below applies only to hosts/versions that document it.
 - 5-minute walkthrough: [QUICKSTART.md](QUICKSTART.md).

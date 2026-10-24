@@ -46,6 +46,13 @@ npx pantheon-opencode init
 opencode
 ```
 
+For the optional full setup flow, run `npm run setup`. It keeps the existing
+`init --yes` install, then offers a separate review-first OpenCode V2 permission
+config stage only when V2 is detected. The stage previews changes and asks for
+an explicit apply confirmation; `--yes` does not authorize host-config edits.
+Headless runs only preview, and V1 runs do not offer this stage. See the
+[installation guide](docs/INSTALLATION.md) for conflict handling and backups.
+
 Then describe the outcome you want:
 
 ```text
