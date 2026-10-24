@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Zeus resolves V1/V2 read targets before policy checks; code roots cannot be exempted by suffixes or nested `.pantheon/`/`memories/` names, and globbing denies wildcards while allowing exact paths.
+- The Zeus read guard checks canonical targets immediately before execution, blocking stable symlink aliases into denied roots and rejecting unresolved paths.
+- It does not pin an inode or make check/open atomic: concurrent workspace writers can race the check. The guard is a policy boundary, not isolation from hostile local processes.
+
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 

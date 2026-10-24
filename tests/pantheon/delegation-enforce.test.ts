@@ -273,19 +273,143 @@ async function main() {
     )
   })
 
+  await testAsync('zeus read guard: grep query text is not treated as a path', async () => {
+    const resolveRegularFile = (raw: string) => ({
+      raw,
+      resolved: raw,
+      failed: false,
+      isRegularFile: true,
+      withinProject: true,
+    })
+    zeusReadGuard('grep', { path: 'docs/PLAN.md', pattern: 'src' }, 'zeus', resolveRegularFile)
+    assert.throws(
+      () =>
+        zeusReadGuard('grep', { path: 'docs', pattern: 'src' }, 'zeus', (raw) => ({
+          raw,
+          resolved: raw,
+          failed: false,
+          isRegularFile: false,
+          withinProject: true,
+        })),
+      /delegate to @apollo/,
+    )
+  })
+
+  await testAsync('zeus read guard: grep denies resolver-annotated directories', async () => {
+    assert.throws(
+      () =>
+        zeusReadGuard('grep', { path: 'docs', pattern: 'secret' }, 'zeus', (raw) => ({
+          raw,
+          resolved: raw,
+          failed: false,
+          isRegularFile: false,
+          withinProject: true,
+        })),
+      /delegate to @apollo/,
+    )
+  })
+
   await testAsync(
-    'zeus read guard: a grep QUERY that merely says "src" is not a read → allowed',
+    'zeus read guard: grep requires an explicit non-empty path before resolution',
     async () => {
-      zeusReadGuard('grep', { pattern: 'src' }, 'zeus')
-      zeusReadGuard('grep', { path: 'docs', pattern: 'src' }, 'zeus')
+      let resolverCalls = 0
+      const resolver = (rawPath: string) => {
+        resolverCalls++
+        return { raw: rawPath, resolved: rawPath, failed: false }
+      }
+      assert.throws(
+        () => zeusReadGuard('grep', { pattern: 'secret' }, 'zeus', resolver),
+        /delegate to @apollo/,
+      )
+      assert.throws(
+        () => zeusReadGuard('grep', { path: '', pattern: 'secret' }, 'zeus', resolver),
+        /delegate to @apollo/,
+      )
+      assert.equal(resolverCalls, 0, 'invalid paths are denied before predicate or resolution')
     },
   )
+
+  await testAsync(
+    'zeus read guard: grep include is denied even with an explicit docs path',
+    async () => {
+      let resolverCalls = 0
+      assert.throws(
+        () =>
+          zeusReadGuard(
+            'grep',
+            { path: 'docs/PLAN.md', pattern: 'secret', include: 'plugin.ts' },
+            'zeus',
+            () => {
+              resolverCalls++
+              return { raw: 'docs/PLAN.md', resolved: 'docs/PLAN.md', failed: false }
+            },
+          ),
+        /delegate to @apollo/,
+      )
+      assert.equal(resolverCalls, 0, 'include is rejected before host path semantics can matter')
+    },
+  )
+
+  await testAsync(
+    'zeus read guard: exact docs grep path and ordinary query are allowed',
+    async () => {
+      assert.throws(
+        () => zeusReadGuard('grep', { path: 'docs/PLAN.md', pattern: 'secret' }, 'zeus'),
+        /delegate to @apollo/,
+        'without resolver evidence a grep target must fail closed',
+      )
+      zeusReadGuard('grep', { path: 'docs/PLAN.md', pattern: 'secret' }, 'zeus', (rawPath) => ({
+        raw: rawPath,
+        resolved: rawPath,
+        failed: false,
+        isRegularFile: true,
+        withinProject: true,
+      }))
+      assert.throws(
+        () =>
+          zeusReadGuard('grep', { path: '.', pattern: 'secret' }, 'zeus', (rawPath) => ({
+            raw: rawPath,
+            resolved: '.',
+            failed: false,
+            isRegularFile: false,
+            withinProject: true,
+          })),
+        /delegate to @apollo/,
+      )
+      assert.throws(
+        () =>
+          zeusReadGuard('grep', { path: 'docs/PLAN.md', pattern: 'secret' }, 'zeus', (rawPath) => ({
+            raw: rawPath,
+            resolved: '',
+            failed: false,
+            isRegularFile: false,
+            withinProject: true,
+          })),
+        /delegate to @apollo/,
+        'an empty resolved target represents an unbounded project-root search',
+      )
+    },
+  )
+
+  await testAsync('zeus read guard: non-Zeus grep without a path stays unaffected', async () => {
+    zeusReadGuard('grep', { pattern: 'secret' }, 'hermes', () => ({ raw: '', failed: true }))
+    zeusReadGuard('grep', { path: '..', pattern: 'secret' }, 'hermes', () => ({
+      raw: '..',
+      failed: true,
+    }))
+  })
 
   await testAsync('zeus read guard: docs/config targets stay readable', async () => {
     zeusReadGuard('read', { filePath: 'docs/PLAN.md' }, 'zeus')
     zeusReadGuard('read', { filePath: 'pantheon.schema.json' }, 'zeus')
-    zeusReadGuard('glob', { pattern: 'docs/**/*.md' }, 'zeus')
-    zeusReadGuard('grep', { path: 'docs', pattern: 'delegation' }, 'zeus')
+    zeusReadGuard('glob', { pattern: 'docs/PLAN.md' }, 'zeus')
+    zeusReadGuard('grep', { path: 'docs/PLAN.md', pattern: 'delegation' }, 'zeus', (raw) => ({
+      raw,
+      resolved: raw,
+      failed: false,
+      isRegularFile: true,
+      withinProject: true,
+    }))
   })
 
   // ═══════════════════════════════════════════════════════════════════════

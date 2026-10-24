@@ -34,6 +34,7 @@
 
 // ─── Types ─────────────────────────────────────────────────────────────
 
+import type { GuardPathResolution } from './guard-path.ts'
 import { isAgentAllowed, type PermissionTaskConfig } from './permission-globs.ts'
 
 /** Why a session is read-only. */
@@ -203,13 +204,6 @@ export const DEFAULT_BLOCKED_TOOLS: ReadonlySet<string> = new Set([
 export const ZEUS_READ_DENY_PATTERNS: ReadonlyArray<RegExp> = [/^src\//, /^tests?\//, /^scripts?\//]
 
 /**
- * Path exceptions that Zeus MAY read even if they match a deny pattern.
- * Markdown files, .pantheon/ configs, and memories/ are operational context
- * that Zeus legitimately needs.
- */
-export const ALLOWED_PATHS: ReadonlyArray<RegExp> = [/\.md$/, /\.pantheon\//, /memories\//]
-
-/**
  * Normalize a tool-supplied path before it meets the deny patterns.
  *
  * The patterns are anchored on `/`, so two spellings of the same source path
@@ -233,11 +227,11 @@ interface GuardCandidate {
 /**
  * Path-bearing arguments of a read/glob/grep call.
  *
- * EVERY one is returned, not just the first: a `grep` call carries its
- * directory in `path` and its query in `pattern`, so inspecting only `pattern`
- * left `path: 'src'` unchecked. `pattern` is a TARGET for `glob` (it is the
- * path pattern) but a QUERY for `grep` (it is the text to search for), so a
- * bare `src` query is not a source read.
+ * EVERY target is returned, not just the first: a `grep` call carries its
+ * directory in `path` and query in `pattern`. `pattern` is a TARGET for `glob`
+ * (it is the path pattern) but a QUERY for `grep` (it is the text to search
+ * for). Zeus' `grep.include` is rejected separately because the host's glob
+ * base and basename-matching semantics are not established.
  */
 function guardPathCandidates(tool: string, args: unknown): GuardCandidate[] {
   if (args === null || typeof args !== 'object') return []
@@ -278,31 +272,111 @@ function isDeniedReadPath(candidate: string, target: boolean): boolean {
 }
 
 /**
+ * Resolve a raw tool path for the guard. Supplied by the call site, never
+ * invoked by the pure predicate unless one is passed.
+ */
+export type GuardPathResolver = (rawPath: string) => GuardPathResolution
+
+/**
+ * Glob expansion is controlled by the host and its symlink-follow behavior is
+ * not part of this guard's contract. Only exact, non-glob paths are safe to
+ * preflight; fail closed on glob metacharacters rather than infer the host's
+ * expansion semantics.
+ */
+function hasGlobMeta(value: string): boolean {
+  return ['*', '?', '[', ']', '{', '}', '(', ')'].some((meta) => value.includes(meta))
+}
+
+/**
  * Zeus read guard. When the active agent is Zeus, deny read/glob/grep calls
  * that target source code, tests, or scripts — Zeus must delegate those to
- * @apollo. Allowed paths (markdown, .pantheon/, memories/) are exempt.
+ * @apollo. Project-root `.pantheon/` and `memories/` paths and ordinary docs
+ * remain readable because they are outside the denied code roots; they never
+ * exempt a resolved `src/`, `tests/`, or `scripts/` target. Glob patterns with
+ * wildcard metacharacters are rejected conservatively because host expansion
+ * and symlink-follow behavior cannot be safely preflighted here.
  *
  * Every path-bearing argument is checked, and path spellings are normalized
  * first. Both are tightenings: a call Zeus could make before with a
  * `path: 'src'` directory plus a harmless `pattern`, or with `./src/x` /
- * `src\\x`, is now denied. Symlink resolution is deliberately NOT attempted:
- * this predicate is pure and synchronous, and resolving links would require
- * filesystem I/O on every tool call.
+ * `src\\x`, is now denied. When a resolver is supplied every target is resolved
+ * before any code-root decision, so the original spelling or an allowed suffix
+ * cannot hide a resolved code target. Zeus grep additionally requires resolver
+ * evidence that its target is a regular file inside the canonical project root.
+ *
+ * Symlink resolution is NOT part of this predicate: it is pure and synchronous
+ * and shared with V1, so a call site that wants it passes `resolvePath` (see
+ * `createGuardPathResolver`). When a resolver is supplied it runs for every
+ * TARGET path — a `grep` query is text, not a path — and a resolution FAILURE
+ * denies: a read guard fails closed. Non-Zeus behavior remains unchanged; Zeus
+ * grep without resolver evidence fails closed.
+ *
+ * Zeus grep requires an explicit, non-empty `path` that resolves to an existing
+ * regular file inside the project root. Directories (including `.` and `..`),
+ * paths outside the project, missing paths, and resolution failures are denied
+ * to prevent recursive or unbounded reads. Every `include` filter is rejected
+ * because host glob semantics are not established. Exact allowed docs files
+ * with ordinary text queries remain searchable.
  *
  * Non-Zeus sessions are never affected.
  *
  * @throws {Error} when Zeus attempts a denied read
  */
-export function zeusReadGuard(tool: string, args: unknown, agent: string | undefined): void {
+export function zeusReadGuard(
+  tool: string,
+  args: unknown,
+  agent: string | undefined,
+  resolvePath?: GuardPathResolver,
+): void {
   if (agent !== 'zeus') return
   if (tool !== 'read' && tool !== 'glob' && tool !== 'grep') return
 
+  if (tool === 'grep') {
+    const record =
+      args !== null && typeof args === 'object' ? (args as Record<string, unknown>) : {}
+    const grepPath = record.path
+    if (typeof grepPath !== 'string' || grepPath.trim() === '') {
+      throw new Error('Zeus cannot grep without an explicit non-empty path — delegate to @apollo')
+    }
+    if (Object.hasOwn(record, 'include')) {
+      throw new Error('Zeus cannot use grep include filters — delegate to @apollo')
+    }
+  }
+
   for (const candidate of guardPathCandidates(tool, args)) {
     const normalized = normalizeGuardPath(candidate.value)
-    if (normalized === '') continue
-    if (!isDeniedReadPath(normalized, candidate.target)) continue
-    if (ALLOWED_PATHS.some((allowed) => allowed.test(normalized))) continue
-    throw new Error(`Zeus cannot read ${candidate.value} — delegate to @apollo`)
+    const deny = () => {
+      throw new Error(`Zeus cannot read ${candidate.value} — delegate to @apollo`)
+    }
+    if (normalized === '') {
+      if (tool === 'grep' && candidate.target) deny()
+      continue
+    }
+    // A project-root spelling is an unbounded grep target, even though it does
+    // not match any individual denied source-root pattern.
+    if (tool === 'grep' && candidate.target && normalized === '.') deny()
+    const resolution =
+      candidate.target && resolvePath !== undefined ? resolvePath(candidate.value) : undefined
+    if (resolution?.failed) deny()
+    if (
+      tool === 'grep' &&
+      candidate.target &&
+      (resolution === undefined ||
+        resolution.isRegularFile !== true ||
+        resolution.withinProject !== true)
+    ) {
+      deny()
+    }
+    const effectivePath = normalizeGuardPath(resolution?.resolved ?? normalized)
+    if (effectivePath === '' || (tool === 'grep' && candidate.target && effectivePath === '.')) {
+      if (tool === 'grep' && candidate.target) deny()
+      continue
+    }
+    // Resolve every direct grep/glob path before any policy decision. Wildcard
+    // expansion itself cannot be safely preflighted using the host's unknown
+    // symlink semantics, so Zeus may glob exact paths only.
+    if (tool === 'glob' && candidate.target && hasGlobMeta(effectivePath)) deny()
+    if (isDeniedReadPath(effectivePath, candidate.target)) deny()
   }
 }
 
