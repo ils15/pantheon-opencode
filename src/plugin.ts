@@ -18,6 +18,7 @@ import {
   zeusReadGuard,
 } from './pantheon/delegation-enforce.ts'
 import { GOAL_LOOP_DEFAULTS, GoalLoop, GoalStore } from './pantheon/goal-loop.ts'
+import { createGuardPathResolver } from './pantheon/guard-path.ts'
 import { createReadEnhancer } from './pantheon/hashline/read-enhancer.ts'
 import { createHashlineEditTool } from './pantheon/hashline/tool.ts'
 import { createIdleDispatcher } from './pantheon/idle-continuation.ts'
@@ -280,6 +281,14 @@ const plugin: Plugin = async (input: PluginInput) => {
   // Runtime TUI version staleness check — warns if the copied TUI plugin
   // is older than the installed package. Runs once, fail-open, no auto-sync.
   checkTuiVersionStaleness((msg) => log.warn(msg))
+  // Symlink resolution for the Zeus read guard (#272). The guard predicate is
+  // pure and synchronous, so the filesystem work happens here instead: one
+  // resolver per plugin instance, rooted at the project directory the host
+  // reported. `docs/link → ../src` must not read `src/` just because the
+  // string path looks harmless.
+  const resolveGuardPath = createGuardPathResolver(
+    input.directory || input.worktree || process.cwd(),
+  )
   const vision = createVisionHandler(input)
   // Wave 1 (PR #46): TODO continuation enforcer for root sessions. The event
   // hook routes `session.idle` events here; an active goal owns the idle
@@ -487,8 +496,10 @@ const plugin: Plugin = async (input: PluginInput) => {
       // read-only enforcement guard (denies mutating tools in read-only
       // sessions), then release-134 Phase 3 rewrites the first
       // post-compaction `todowrite` with the captured todo snapshot. All are
-      // no-ops for non-matching sessions/tools.
-      zeusReadGuard(input.tool, output?.args, sessionAgents.get(input.sessionID))
+      // no-ops for non-matching sessions/tools. The read guard also checks the
+      // SYMLINK-RESOLVED form of every target path (#272), so a link into a
+      // denied root cannot pass on its string spelling.
+      zeusReadGuard(input.tool, output?.args, sessionAgents.get(input.sessionID), resolveGuardPath)
       await enforcementGuard(input, output)
       await commandNormalizer(input, output)
       await todoPreserver.beforeTodoWrite(input, output)

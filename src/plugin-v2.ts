@@ -107,6 +107,7 @@ import {
   zeusReadGuard,
 } from './pantheon/delegation-enforce.ts'
 import { GOAL_LOOP_DEFAULTS, GoalStore } from './pantheon/goal-loop.ts'
+import { createGuardPathResolver } from './pantheon/guard-path.ts'
 import {
   applyMemoryInjection,
   MemoryInjectionCache,
@@ -1612,7 +1613,8 @@ async function registerV2ToolHooks(
   subagentOrigins: V2SubagentOriginRegistry,
   boundedReadOrigins?: V2BoundedReadOriginRegistry,
 ): Promise<{ registered: boolean; beforeRegistered: boolean }> {
-  const toolCtx = hostDomains(context).tool
+  const host = hostDomains(context)
+  const toolCtx = host.tool
 
   if (!toolCtx?.hook) {
     return { registered: false, beforeRegistered: false }
@@ -1625,6 +1627,12 @@ async function registerV2ToolHooks(
     ...(shellRunnerOverride === undefined ? {} : { run: shellRunnerOverride }),
     onUnkeyed: appendV2HookLog,
   })
+
+  // Symlink resolution for the Zeus read guard (#272). The predicate is pure,
+  // so the filesystem work happens at this call site, rooted at the project
+  // directory the host reports. Same mechanism as V1's (src/plugin.ts) so the
+  // two registration paths stay consistent.
+  const resolveGuardPath = createGuardPathResolver(host.location?.directory || process.cwd())
 
   let registered = false
   let beforeRegistered = false
@@ -1663,8 +1671,10 @@ async function registerV2ToolHooks(
         //
         // Runs BEFORE the read-only guard, matching V1's chain order. Both
         // throw to deny; neither is inside the scanner's try/catch, so a
-        // denial keeps propagating to the host.
-        zeusReadGuard(input.tool, output.args, normalizeDelegationAgent(agent))
+        // denial keeps propagating to the host. The resolver is V1's too:
+        // every TARGET path is also checked in its SYMLINK-RESOLVED form
+        // (#272), and a resolution failure denies.
+        zeusReadGuard(input.tool, output.args, normalizeDelegationAgent(agent), resolveGuardPath)
         // Deliberately OUTSIDE the try/catch below: a read-only denial must keep
         // propagating to the host, not be swallowed as a scanner failure.
         await v2EnforcementGuard(input, output)

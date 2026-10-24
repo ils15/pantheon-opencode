@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The Zeus read guard checks the symlink-resolved form of every read/glob/grep target on V1 and V2, so `docs/link → ../src` can no longer read source; resolution failures deny.
+
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 

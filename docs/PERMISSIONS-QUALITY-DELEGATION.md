@@ -100,7 +100,7 @@ failing-closed gates, but they are not the reviewer:
 | Read-only sessions may not mutate | `tool.execute.before` throws | [`src/pantheon/delegation-enforce.ts:181`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L181) (blocked-tool set), [`src/plugin.ts:101`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts#L101) |
 | A child session may not delegate again | same guard, child-session branch | [`src/pantheon/delegation-enforce.ts:353`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L353) |
 | Caller/target delegation matrix | same guard, `isDelegationAllowed` (V1; V2 uses the permission hook — see [§3.5](#35-per-host-generation-what-you-can-rely-on)) | [`src/pantheon/delegation-enforce.ts:138`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L138) |
-| The orchestrator may not read source | `zeusReadGuard` throws | [`src/pantheon/delegation-enforce.ts:221`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L221), wired on V1 from the `chat.params` agent map ([`src/plugin.ts:482`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts#L482)) and on V2 from the `execute.before` event agent ([`src/plugin-v2.ts`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin-v2.ts)) |
+| The orchestrator may not read source | `zeusReadGuard` throws | [`src/pantheon/delegation-enforce.ts:313`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L313), wired on V1 from the `chat.params` agent map ([`src/plugin.ts:502`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts#L502)) and on V2 from the `execute.before` event agent ([`src/plugin-v2.ts`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin-v2.ts)) |
 | Code-mode scripts must be approved | SHA-256 manifest, opt-in | `scripts/install/opencode.mjs:138` |
 | Routing/frontmatter consistency | repo validator script | `scripts/validate-routing.mjs:313` |
 | Secrets | pre-commit gitleaks + CI scan | `.pre-commit-config.yaml:7` |
@@ -808,15 +808,22 @@ the exact-match predicate (issue #264).
 The guard also normalizes the path it is given and checks every path-bearing
 argument, not the first one it finds: `./src/x`, `src\x` and `/repo/src/x` are
 the same source tree as `src/x`, and `grep` with `path: "src"` plus a harmless
-`pattern` no longer slips through on the query. The V2-only
-`pantheon_bounded_read` tool applies the same restriction to its own targets
-(`src/`, `tests/`, `scripts/` are refused with `PATH_DENIED`) while keeping
-docs, config, the memory bank and `.pantheon/` readable — otherwise a
-root-Zeus-only tool would be a wider door than the `read` it replaces.
-Symlinks are **not** resolved by the predicate: it is pure and synchronous, and
-resolving them would add filesystem I/O to every tool call. `bounded_read`
-itself refuses any path or component that is a symlink, and the native `read`
-resolution is the host's.
+`pattern` no longer slips through on the query. It also checks the
+symlink-resolved form of every TARGET path — `docs/link → ../src` is `src/` —
+including a path that does not exist yet: its deepest existing ancestor is
+resolved and the rest re-appended. Any resolution failure (a symlink loop, for
+example) is a DENIAL, because a read guard fails closed. Resolution lives at the
+CALL SITES (`createGuardPathResolver` in `src/pantheon/guard-path.ts`), not in
+the predicate: `zeusReadGuard` stays pure and synchronous, and both the V1
+(`tool.execute.before`) and V2 (`execute.before`) paths hand it the same
+resolver. The V2-only `pantheon_bounded_read` tool applies the same restriction
+to its own targets (`src/`, `tests/`, `scripts/` are refused with
+`PATH_DENIED`) while keeping docs, config, the memory bank and `.pantheon/`
+readable — otherwise a root-Zeus-only tool would be a wider door than the
+`read` it replaces. `bounded_read` additionally refuses any path or component
+that is a symlink; the guard only refuses a target that RESOLVES into a denied
+root, so a link inside `docs/` stays readable and the native `read` resolution
+is still the host's.
 
 **Unwired, not impossible.** V2's `session.created` event carries
 `properties.info.parentID`, so live sessions could be seeded in

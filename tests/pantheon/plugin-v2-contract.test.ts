@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import Module, { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
@@ -2313,6 +2313,76 @@ async function main(): Promise<void> {
     assert.match(denial, /delegate to @apollo/)
   })
 
+  // ─── Zeus Read Guard: symlink escapes (#272, integration) ────────────
+  //
+  // The guard matched the path STRING, so `docs/link → ../src` reached a denied
+  // root after `realpath` and still passed, while `pantheon_bounded_read`
+  // refused the same path. The fix resolves at the CALL SITE (the predicate
+  // stays pure), which is why these drive the registered handler with a
+  // project root that contains REAL symlinks — deleting the resolver argument
+  // from src/plugin-v2.ts must drop THESE tests.
+
+  console.log('\n🔗 Zeus Read Guard Symlink Tests (#272)')
+
+  const guardSymlinkRoot = mkdtempSync(join(tmpdir(), 'pantheon-guard-symlink-'))
+  mkdirSync(join(guardSymlinkRoot, 'src'), { recursive: true })
+  mkdirSync(join(guardSymlinkRoot, 'docs'), { recursive: true })
+  writeFileSync(join(guardSymlinkRoot, 'src', 'plugin.ts'), 'export const x = 1\n')
+  writeFileSync(join(guardSymlinkRoot, 'docs', 'PLAN.md'), '# plan\n')
+  symlinkSync('../src', join(guardSymlinkRoot, 'docs', 'link'))
+  symlinkSync('.', join(guardSymlinkRoot, 'docs', 'self'))
+  symlinkSync('loop', join(guardSymlinkRoot, 'docs', 'loop'))
+  const symlinkCaptured = await setupCapturingToolHooks({
+    location: { directory: guardSymlinkRoot },
+  })
+
+  test('V2 path: Zeus is DENIED read/glob/grep through a link into src/', async () => {
+    const before = symlinkCaptured.before as (e: unknown) => void | Promise<void>
+    for (const [tool, input] of [
+      ['read', { filePath: 'docs/link/plugin.ts' }],
+      ['glob', { pattern: 'docs/link/**/*.ts' }],
+      ['grep', { path: 'docs/link', pattern: 'TODO' }],
+    ] as const) {
+      const denial = await readGuardDenial(before, { tool, agent: 'zeus', input })
+      assert.ok(denial !== null, `Zeus must not ${tool} through docs/link — delegate to @apollo`)
+      assert.match(denial, /delegate to @apollo/)
+    }
+  })
+
+  test('V2 path: a non-existent tail and a symlink loop are denied', async () => {
+    const before = symlinkCaptured.before as (e: unknown) => void | Promise<void>
+    for (const input of [
+      { filePath: 'docs/link/missing/nested.ts' },
+      { filePath: 'docs/loop/x.ts' },
+    ]) {
+      const denial = await readGuardDenial(before, { tool: 'read', agent: 'zeus', input })
+      assert.ok(denial !== null, `${JSON.stringify(input)} must be denied`)
+      assert.match(denial, /delegate to @apollo/)
+    }
+  })
+
+  test('V2 path: a link to an ALLOWED root stays readable and non-Zeus is unaffected', async () => {
+    const before = symlinkCaptured.before as (e: unknown) => void | Promise<void>
+    assert.equal(
+      await readGuardDenial(before, {
+        tool: 'read',
+        agent: 'zeus',
+        input: { filePath: 'docs/self/PLAN.md' },
+      }),
+      null,
+      'a link into docs/ is not a blanket deny',
+    )
+    assert.equal(
+      await readGuardDenial(before, {
+        tool: 'read',
+        agent: 'hermes',
+        input: { filePath: 'docs/link/plugin.ts' },
+      }),
+      null,
+      'non-Zeus agents are unaffected',
+    )
+  })
+
   // ─── V1 parity on V2 (#266) ──────────────────────────────────────────
   //
   // Three V1 behaviours ran only from V1's hooks, which a V2-only install never
@@ -3212,6 +3282,10 @@ async function main(): Promise<void> {
       console.error(`  ❌ ${name}:`, err)
     }
   }
+
+  // The #272 fixture created real symlinks; remove the tree once the tests
+  // that read it have run.
+  rmSync(guardSymlinkRoot, { recursive: true, force: true })
 
   console.log(`\n📊 Results: ${passed} passed, ${failed} failed`)
   console.log(`📋 Unsupported features: ${V2_UNSUPPORTED_FEATURES.join(', ')}`)

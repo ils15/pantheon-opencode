@@ -34,6 +34,7 @@
 
 // ─── Types ─────────────────────────────────────────────────────────────
 
+import type { GuardPathResolution } from './guard-path.ts'
 import { isAgentAllowed, type PermissionTaskConfig } from './permission-globs.ts'
 
 /** Why a session is read-only. */
@@ -278,6 +279,16 @@ function isDeniedReadPath(candidate: string, target: boolean): boolean {
 }
 
 /**
+ * Resolve a raw tool path for the guard. Supplied by the call site, never
+ * invoked by the pure predicate unless one is passed.
+ */
+export type GuardPathResolver = (rawPath: string) => GuardPathResolution
+
+function isAllowedPath(value: string): boolean {
+  return ALLOWED_PATHS.some((allowed) => allowed.test(value))
+}
+
+/**
  * Zeus read guard. When the active agent is Zeus, deny read/glob/grep calls
  * that target source code, tests, or scripts — Zeus must delegate those to
  * @apollo. Allowed paths (markdown, .pantheon/, memories/) are exempt.
@@ -285,24 +296,45 @@ function isDeniedReadPath(candidate: string, target: boolean): boolean {
  * Every path-bearing argument is checked, and path spellings are normalized
  * first. Both are tightenings: a call Zeus could make before with a
  * `path: 'src'` directory plus a harmless `pattern`, or with `./src/x` /
- * `src\\x`, is now denied. Symlink resolution is deliberately NOT attempted:
- * this predicate is pure and synchronous, and resolving links would require
- * filesystem I/O on every tool call.
+ * `src\\x`, is now denied.
+ *
+ * Symlink resolution is NOT part of this predicate: it is pure and synchronous
+ * and shared with V1, so a call site that wants it passes `resolvePath` (see
+ * `createGuardPathResolver`). When a resolver is supplied it runs only for
+ * TARGET paths — a `grep` query is text, not a path — and a resolution
+ * FAILURE denies: a read guard fails closed. Without a resolver this function
+ * keeps its original string-only semantics exactly, which is what non-Zeus
+ * agents and three-argument callers rely on.
  *
  * Non-Zeus sessions are never affected.
  *
  * @throws {Error} when Zeus attempts a denied read
  */
-export function zeusReadGuard(tool: string, args: unknown, agent: string | undefined): void {
+export function zeusReadGuard(
+  tool: string,
+  args: unknown,
+  agent: string | undefined,
+  resolvePath?: GuardPathResolver,
+): void {
   if (agent !== 'zeus') return
   if (tool !== 'read' && tool !== 'glob' && tool !== 'grep') return
 
   for (const candidate of guardPathCandidates(tool, args)) {
     const normalized = normalizeGuardPath(candidate.value)
     if (normalized === '') continue
-    if (!isDeniedReadPath(normalized, candidate.target)) continue
-    if (ALLOWED_PATHS.some((allowed) => allowed.test(normalized))) continue
-    throw new Error(`Zeus cannot read ${candidate.value} — delegate to @apollo`)
+    const deny = () => {
+      throw new Error(`Zeus cannot read ${candidate.value} — delegate to @apollo`)
+    }
+    if (isDeniedReadPath(normalized, candidate.target)) {
+      if (!isAllowedPath(normalized)) deny()
+      continue
+    }
+    if (!candidate.target || resolvePath === undefined) continue
+    const resolution = resolvePath(candidate.value)
+    if (resolution.failed) deny()
+    const resolved = normalizeGuardPath(resolution.resolved ?? '')
+    if (resolved === '' || !isDeniedReadPath(resolved, true)) continue
+    if (!isAllowedPath(resolved)) deny()
   }
 }
 
