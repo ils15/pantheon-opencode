@@ -53,6 +53,25 @@ const V2_EXPORT = 'pantheon-opencode/plugin-v2'
 const V2_LEGACY_FILE = 'src/plugin-v2.ts'
 const THIRD_PARTY_PLUGIN = '/tmp/vendor/src/plugin.ts'
 
+/** Return the package/path referenced by a string or object-form plugin entry. */
+function pluginReference(entry) {
+  return typeof entry === 'string' ? entry : entry?.package
+}
+
+/** Assert that config has one managed V2 entry in the current object contract. */
+function assertManagedV2Plugin(config) {
+  const entries = config.plugins.filter((entry) => pluginReference(entry) === V2_PLUGIN)
+  assert.equal(entries.length, 1, 'V2 plugin must appear exactly once')
+  assert.equal(typeof entries[0], 'object', 'V2 plugin entry must use object form')
+  assert.equal(entries[0].package, V2_PLUGIN, 'V2 plugin package must be the managed directory')
+  assert.ok(
+    entries[0].options !== null &&
+      typeof entries[0].options === 'object' &&
+      !Array.isArray(entries[0].options),
+    'V2 plugin entry must have an options object',
+  )
+}
+
 const COMPONENTS = ['agents', 'skills', 'instructions', 'commands', 'plugins']
 const VERSIONS = ['v1', 'v2']
 
@@ -318,12 +337,10 @@ test('V1 fresh install does NOT include V2 plugin entry in plugin array', async 
   const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v1-no-v2-'))
   try {
     const config = await runInstall(target, 'v1')
-    const hasV2Export = config.plugin.some(
-      (p) =>
-        p === V2_EXPORT ||
-        p === V2_LEGACY_FILE ||
-        p === join(ROOT, 'src', 'plugin-v2.ts') ||
-        p === V2_PLUGIN,
+    const hasV2Export = config.plugin.some((entry) =>
+      [V2_EXPORT, V2_LEGACY_FILE, join(ROOT, 'src', 'plugin-v2.ts'), V2_PLUGIN].includes(
+        pluginReference(entry),
+      ),
     )
     assert.ok(!hasV2Export, 'V1 config must not contain V2 plugin entry')
   } finally {
@@ -525,10 +542,7 @@ test('V2 fresh install produces plugins (plural) as array with managed dir entry
   try {
     const config = await runInstall(target, 'v2')
     assert.ok(Array.isArray(config.plugins), 'config.plugins must be an array')
-    assert.ok(
-      config.plugins.includes(V2_PLUGIN),
-      `V2 plugin dir ${V2_PLUGIN} missing from plugins array: ${JSON.stringify(config.plugins)}`,
-    )
+    assertManagedV2Plugin(config)
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
@@ -538,7 +552,7 @@ test('V2 fresh install registers a directory that carries the loader contract', 
   const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v2-dircontract-'))
   try {
     const config = await runInstall(target, 'v2')
-    assert.ok(config.plugins.includes(V2_PLUGIN), 'V2 plugin entry missing')
+    assertManagedV2Plugin(config)
     assert.ok(
       existsSync(V2_PLUGIN) && statSync(V2_PLUGIN).isDirectory(),
       `entry must be a directory: ${V2_PLUGIN}`,
@@ -842,11 +856,11 @@ test('V2 removes Pantheon V2 refs from plugins before adding the managed entry',
     const config = await runInstall(target, 'v2', {
       plugins: [V2_EXPORT, V2_LEGACY_FILE, V2_PLUGIN, 'other-plugin'],
     })
-    const v2Count = config.plugins.filter((p) => p === V2_PLUGIN).length
-    assert.equal(v2Count, 1, 'V2 plugin must appear exactly once')
-    assert.ok(!config.plugins.includes(V2_EXPORT), 'npm-shorthand ref must migrate')
-    assert.ok(!config.plugins.includes(V2_LEGACY_FILE), 'legacy file ref must migrate')
-    assert.ok(config.plugins.includes('other-plugin'))
+    assertManagedV2Plugin(config)
+    const references = config.plugins.map(pluginReference)
+    assert.ok(!references.includes(V2_EXPORT), 'npm-shorthand ref must migrate')
+    assert.ok(!references.includes(V2_LEGACY_FILE), 'legacy file ref must migrate')
+    assert.ok(references.includes('other-plugin'))
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
@@ -974,7 +988,7 @@ test('V2 after V1 adds V2 config keys (plugins, providers, permissions)', async 
     assert.ok('plugin' in v1Config, 'V1 config must have plugin')
     const v2Config = await runInstall(target, 'v2')
     assert.ok('plugins' in v2Config, 'After V2 overwrite, config must have plugins (plural)')
-    assert.ok(v2Config.plugins.includes(V2_PLUGIN), 'V2 plugin must be present')
+    assertManagedV2Plugin(v2Config)
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
@@ -987,7 +1001,7 @@ test('V1→V2 round-trip adds V2 plugin entry', async () => {
     assert.ok('plugin' in v1Config, 'Must start with V1 config')
     const v2Config = await runInstall(target, 'v2')
     assert.ok('plugins' in v2Config, 'Must have V2 plugins key after V2 install')
-    assert.ok(v2Config.plugins.includes(V2_PLUGIN), 'V2 plugin must be present')
+    assertManagedV2Plugin(v2Config)
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
