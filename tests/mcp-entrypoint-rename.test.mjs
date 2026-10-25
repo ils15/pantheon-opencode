@@ -62,7 +62,7 @@ test('the rename map covers exactly the five collided entrypoints', () => {
   }
 })
 
-test('migrateMcpEntrypointPaths heals command[] and args[] forms, preserving directories', () => {
+test('migrateMcpEntrypointPaths heals only exact managed servers, preserving directories', () => {
   const mcp = {
     'pantheon-resources': {
       type: 'local',
@@ -75,11 +75,16 @@ test('migrateMcpEntrypointPaths heals command[] and args[] forms, preserving dir
       enabled: true,
     },
     // Standalone installer shape: script lives in args[].
-    'hand-edited-key': {
+    'pantheon-persistence': {
       type: 'local',
       command: '/opt/venv/bin/python3',
       args: ['/home/me/.config/opencode/scripts/mcp_persistence_server.py'],
       enabled: true,
+    },
+    // Matching a Pantheon filename is not sufficient ownership evidence.
+    'hand-edited-key': {
+      type: 'local',
+      command: ['/opt/venv/bin/python3', 'scripts/mcp_resources_server.py'],
     },
     // Unrelated third-party server must be untouched.
     'my-own': { command: ['python', 'my_own.py'] },
@@ -91,9 +96,14 @@ test('migrateMcpEntrypointPaths heals command[] and args[] forms, preserving dir
   assert.equal(mcp['pantheon-resources'].command[1], 'scripts/mcp_resources.py')
   assert.equal(mcp['pantheon-code-mode'].command[1], './scripts/code_mode.py')
   assert.equal(
-    mcp['hand-edited-key'].args[0],
+    mcp['pantheon-persistence'].args[0],
     '/home/me/.config/opencode/scripts/mcp_persistence.py',
     'absolute, hand-edited directory prefix is preserved',
+  )
+  assert.equal(
+    mcp['hand-edited-key'].command[1],
+    'scripts/mcp_resources_server.py',
+    'third-party entry with a matching filename is not rewritten',
   )
   assert.deepEqual(mcp['my-own'].command, ['python', 'my_own.py'])
 
@@ -115,18 +125,27 @@ test('applyMcpServerEntries repairs an existing install whose paths resolve to f
 
     // A config as left by a PREVIOUS install: every entry still points at the
     // old `*_server.py` filename.
+    const serverNames = {
+      'mcp_resources_server.py': 'pantheon-resources',
+      'code_mode_server.py': 'pantheon-code-mode',
+      'memory_mcp_server.py': 'pantheon-memory',
+      'mcp_persistence_server.py': 'pantheon-persistence',
+      'pantheon_vision_server.py': 'pantheon-vision',
+    }
     const config = {
-      mcp: Object.fromEntries(
-        OLD_NAMES.map((old, i) => [
-          `pantheon-${i}`,
-          {
-            type: 'local',
-            cwd: runtimeTarget,
-            command: ['/tmp/venv/bin/python3', `scripts/${old}`],
-            enabled: true,
-          },
-        ]),
-      ),
+      mcp: {
+        servers: Object.fromEntries(
+          OLD_NAMES.map((old) => [
+            serverNames[old],
+            {
+              type: 'local',
+              cwd: runtimeTarget,
+              command: ['/tmp/venv/bin/python3', `scripts/${old}`],
+              enabled: true,
+            },
+          ]),
+        ),
+      },
     }
 
     const { healed } = applyMcpServerEntries(config, {
@@ -136,7 +155,7 @@ test('applyMcpServerEntries repairs an existing install whose paths resolve to f
 
     assert.equal(healed, 5, 'all five stale paths rewritten on install')
 
-    const resolved = Object.values(config.mcp).map((entry) => entry.command[1])
+    const resolved = Object.values(config.mcp.servers).map((entry) => entry.command[1])
     for (const rel of resolved) {
       assert.equal(rel.includes('_server.py'), false, `stale path survived: ${rel}`)
       assert.ok(
@@ -146,8 +165,8 @@ test('applyMcpServerEntries repairs an existing install whose paths resolve to f
     }
 
     // And the managed entries were created with the new names.
-    assert.equal(config.mcp['pantheon-resources'].command[1], 'scripts/mcp_resources.py')
-    assert.equal(config.mcp['pantheon-vision'].command[1], 'scripts/pantheon_vision.py')
+    assert.equal(config.mcp.servers['pantheon-resources'].command[1], 'scripts/mcp_resources.py')
+    assert.equal(config.mcp.servers['pantheon-vision'].command[1], 'scripts/pantheon_vision.py')
   } finally {
     rmSync(target, { recursive: true, force: true })
   }

@@ -47,9 +47,19 @@ import {
   mergeContextSandboxBlocks,
   migrateMcpEntrypointPaths,
   migrateV1toV2,
+  validateMcpV1toV2Source,
 } from './config-migration.mjs'
+import { resolveGlobalConfigDirectory } from './config-paths.mjs'
 import { componentForInstalledPath, updateFileInventory } from './file-inventory.mjs'
 import { healthCheck } from './health-check.mjs'
+import {
+  assertMcpGeneratedPermissionsDoNotWeakenExplicitRules,
+  assertMcpPermissionNamesUnambiguous,
+  assertMcpPermissionScopesDoNotAliasConfiguredServers,
+  assertMcpPermissionServerGrantsUnambiguous,
+  mcpPermissionAliases,
+  normalizeMcpPermissionSegment,
+} from './mcp-permissions.mjs'
 import { detectVersion, runMigrations } from './migrate.mjs'
 import { describeSharedState } from './opencode-state.mjs'
 import { DRY_RUN_PROBE_TIMEOUT_MS, resolveOpenCodeVersion } from './opencode-version.mjs'
@@ -393,9 +403,7 @@ const PANTHEON_MCP_SERVER_ENTRIES = Object.freeze([
 /** The managed server names, in write order. */
 const PANTHEON_MCP_SERVERS = Object.freeze(PANTHEON_MCP_SERVER_ENTRIES.map((entry) => entry.name))
 
-function normalizeMcpPermissionSegment(value) {
-  return value.replace(/[^a-zA-Z0-9_]/g, '_')
-}
+export { normalizeMcpPermissionSegment, PANTHEON_MCP_SERVERS }
 
 /**
  * Translate an agent's `mcp_tools` frontmatter into per-tool native
@@ -407,7 +415,7 @@ function normalizeMcpPermissionSegment(value) {
  * @param {Record<string, 'all' | string[]>} mcpTools
  * @returns {Record<string, 'allow' | 'deny'>}
  */
-export function deriveNativeMcpPermissions(mcpTools) {
+export function deriveNativeMcpPermissions(mcpTools, configuredServers = []) {
   if (mcpTools === null || typeof mcpTools !== 'object' || Array.isArray(mcpTools)) {
     throw new TypeError('mcp_tools must be an object keyed by MCP server name')
   }
@@ -427,21 +435,36 @@ export function deriveNativeMcpPermissions(mcpTools) {
     ) {
       throw new TypeError(`mcp_tools.${server} must be "all" or an array of tool names`)
     }
+  }
 
-    const serverAliases = new Set([server, normalizeMcpPermissionSegment(server)])
+  assertMcpPermissionNamesUnambiguous(servers)
+  assertMcpPermissionScopesDoNotAliasConfiguredServers(servers, configuredServers)
+  for (const server of servers) {
+    const tools = Object.hasOwn(mcpTools, server) ? mcpTools[server] : []
+    if (Array.isArray(tools)) assertMcpPermissionNamesUnambiguous(tools)
+  }
+  assertMcpPermissionServerGrantsUnambiguous(
+    [...servers].map((server) => ({
+      server,
+      tools: Object.hasOwn(mcpTools, server) ? mcpTools[server] : [],
+    })),
+  )
+
+  for (const server of servers) {
+    const serverAliases = mcpPermissionAliases(server)
     for (const alias of serverAliases) permissions[`${alias}_*`] = 'deny'
   }
 
   for (const server of servers) {
     const tools = Object.hasOwn(mcpTools, server) ? mcpTools[server] : []
-    const serverAliases = new Set([server, normalizeMcpPermissionSegment(server)])
+    const serverAliases = mcpPermissionAliases(server)
     if (tools === 'all') {
       for (const alias of serverAliases) permissions[`${alias}_*`] = 'allow'
       continue
     }
 
     for (const tool of tools) {
-      const toolAliases = new Set([tool, normalizeMcpPermissionSegment(tool)])
+      const toolAliases = mcpPermissionAliases(tool)
       for (const serverAlias of serverAliases) {
         for (const toolAlias of toolAliases) {
           permissions[`${serverAlias}_${toolAlias}`] = 'allow'
@@ -453,8 +476,25 @@ export function deriveNativeMcpPermissions(mcpTools) {
   return permissions
 }
 
+/** Merge generated MCP grants only when they do not weaken explicit agent policy. */
+export function mergeAgentMcpPermissions(explicit, mcpTools, configuredServers = []) {
+  const generated = deriveNativeMcpPermissions(mcpTools, configuredServers)
+  assertMcpGeneratedPermissionsDoNotWeakenExplicitRules(explicit, generated)
+  return { ...(explicit ?? {}), ...generated }
+}
+
 function deepClone(value) {
   return JSON.parse(JSON.stringify(value))
+}
+
+function configuredMcpServerNames(mcpConfig) {
+  if (mcpConfig === null || typeof mcpConfig !== 'object' || Array.isArray(mcpConfig)) return []
+  const { hasV2ServersMap, legacyServersToggle } = validateMcpV1toV2Source(mcpConfig)
+  return Object.entries(mcpConfig).flatMap(([name, value]) => {
+    if (hasV2ServersMap && name === 'servers') return Object.keys(value)
+    if (legacyServersToggle && name === 'servers') return []
+    return [name]
+  })
 }
 
 /**
@@ -1338,18 +1378,31 @@ export function setupRuntimePhase(
  *   order) — the dry-run preview reports exactly these
  */
 export function applyMcpServerEntries(config, { runtimeTarget, venvPython, version = 'v2' }) {
-  config.mcp = config.mcp || {}
-  // MCP stays a flat named-server map for BOTH V1 and V2: OpenCode 1.18.x has
-  // no `mcp.servers` wrapper and rejects one with "Missing key
-  // mcp.servers.enabled". config-migration.mjs normalizes any legacy
-  // wrapper-shaped entries back to the flat map.
-  const healed = migrateMcpEntrypointPaths(config.mcp)
+  if (version === 'v2') {
+    if (Object.hasOwn(config, 'mcp')) validateMcpV1toV2Source(config.mcp)
+    else config.mcp = {}
+  } else {
+    config.mcp = config.mcp || {}
+  }
+  let serverMap = config.mcp
+  if (version === 'v2') {
+    const { hasV2ServersMap, legacyServersToggle } = validateMcpV1toV2Source(config.mcp)
+    const existingServers = config.mcp.servers
+    if (hasV2ServersMap) {
+      serverMap = existingServers
+    } else {
+      serverMap = { ...config.mcp }
+      if (legacyServersToggle) delete serverMap.servers
+      config.mcp = { servers: serverMap }
+    }
+  }
+  const healed = migrateMcpEntrypointPaths(serverMap)
 
   // Only add if not already configured by user.
   const servers = []
   for (const entry of PANTHEON_MCP_SERVER_ENTRIES) {
-    if (config.mcp[entry.name]) continue
-    config.mcp[entry.name] = {
+    if (serverMap[entry.name]) continue
+    serverMap[entry.name] = {
       type: 'local',
       cwd: runtimeTarget,
       command: [venvPython, entry.script],
@@ -1358,43 +1411,47 @@ export function applyMcpServerEntries(config, { runtimeTarget, venvPython, versi
     servers.push(entry.name)
   }
 
-  // Default MCP permissions.
+  // V1 compatibility defaults. V2 setup converts user `ask` entries only after
+  // explicit review; the inert legacy defaults are not seeded into V2 configs.
   //
-  // WARNING: on OpenCode 2.x, `permission.mcp.<server>` is NOT enforced. The
-  // host evaluates an MCP call as the action `<server>_<tool>` with resources
-  // ["*"]; `permission.mcp.<server>` and `action:"mcp"` are inert (measured on
-  // 2.0.29–2.1.3). These defaults are kept for V1 compatibility, but `ask` does
-  // not prompt and `allow` grants nothing it did not already have — every `ask`
-  // server below is reported to the user as unenforced. The enforceable form is
-  // `{ action: "<server>_*", resource: "*", effect: "deny" }`; `ask` there
-  // HIDES the tool instead of asking, so it is never emitted as a default.
-  config.permission = config.permission || {}
-  config.permission.mcp = config.permission.mcp || {}
-  if (!config.permission.mcp['pantheon-resources']) {
-    config.permission.mcp['pantheon-resources'] = 'allow'
-  }
-  if (!config.permission.mcp['pantheon-code-mode']) {
-    config.permission.mcp['pantheon-code-mode'] = 'ask'
-  }
-  if (!config.permission.mcp['pantheon-memory']) {
-    config.permission.mcp['pantheon-memory'] = 'allow'
-  }
-  if (!config.permission.mcp['pantheon-persistence']) {
-    config.permission.mcp['pantheon-persistence'] = 'allow'
-  }
-  if (!config.permission.mcp['pantheon-vision']) {
-    config.permission.mcp['pantheon-vision'] = 'ask'
+  // Legacy defaults remain V1-only. V2 requires explicit native permissions;
+  // absent a rule, MCP servers remain accessible without a prompt.
+  if (version === 'v1') {
+    config.permission = config.permission || {}
+    config.permission.mcp = config.permission.mcp || {}
+    if (!config.permission.mcp['pantheon-resources']) {
+      config.permission.mcp['pantheon-resources'] = 'allow'
+    }
+    if (!config.permission.mcp['pantheon-code-mode']) {
+      config.permission.mcp['pantheon-code-mode'] = 'ask'
+    }
+    if (!config.permission.mcp['pantheon-memory']) {
+      config.permission.mcp['pantheon-memory'] = 'allow'
+    }
+    if (!config.permission.mcp['pantheon-persistence']) {
+      config.permission.mcp['pantheon-persistence'] = 'allow'
+    }
+    if (!config.permission.mcp['pantheon-vision']) {
+      config.permission.mcp['pantheon-vision'] = 'ask'
+    }
   }
 
   // Report every `ask` entry, whether just seeded or left by a previous
   // install: the config claims a gate the host does not apply. V1's MCP
   // permission semantics were not measured, so the warning is V2-only.
-  const S = strings()
+  const askCount = Object.values(config.permission?.mcp ?? {}).filter(
+    (effect) => effect === 'ask',
+  ).length
   const warnings =
     version === 'v2'
-      ? Object.entries(config.permission.mcp)
-          .filter(([, effect]) => effect === 'ask')
-          .map(([server]) => S.mcpAskNotEnforceable(server))
+      ? [
+          ...(askCount > 0
+            ? [
+                `${askCount} legacy MCP ask rule(s) cannot be enforced; run setup for an explicit policy choice.`,
+              ]
+            : []),
+          'V2 Pantheon MCP servers without an explicit permission rule remain accessible without a prompt.',
+        ]
       : []
 
   return { healed, warnings, servers }
@@ -1490,9 +1547,13 @@ async function installPass(
   components = ['agents', 'skills', 'instructions', 'commands', 'plugins', 'runtime'],
   opts = {},
 ) {
+  if (opts.configPreview !== undefined && opts.configPreview !== null && !dryRun) {
+    throw new Error('A setup config preview is accepted only during a dry run.')
+  }
+
   // Default target if not provided (global ~/.config/opencode)
   if (!target) {
-    target = join(homedir(), '.config', 'opencode')
+    target = resolveGlobalConfigDirectory(process.env)
   }
 
   const componentSet = new Set(
@@ -1711,7 +1772,24 @@ async function installPass(
     // real --dry-run) prints it once.
     if (!opts.planOnly) warning(configAdvisories[0])
   }
-  const { config, raw: configRaw } = readJsonConfigWithRaw(targetConfigPath)
+  const { config: diskConfig, raw: configRaw } = readJsonConfigWithRaw(targetConfigPath)
+  let config = diskConfig
+  if (opts.configPreview !== undefined && opts.configPreview !== null) {
+    try {
+      config = JSON.parse(opts.configPreview)
+      if (config === null || typeof config !== 'object' || Array.isArray(config)) {
+        throw new Error('not an object')
+      }
+    } catch {
+      throw new Error('The setup config preview input is invalid.')
+    }
+  }
+  // Validate the original MCP shape before runtime entries can be seeded or a
+  // flat map can be wrapped. Seeding first can turn malformed nested input into
+  // an apparently valid wrapper and let migration silently discard user data.
+  if (version === 'v2' && Object.hasOwn(config, 'mcp')) {
+    validateMcpV1toV2Source(config.mcp)
+  }
   const pantheonConfig =
     pantheonConfigPath !== null && existsSync(pantheonConfigPath)
       ? readJsonConfig(pantheonConfigPath)
@@ -1780,6 +1858,16 @@ async function installPass(
         target,
         packageRoot: ROOT,
         packageVersion,
+        options: {
+          clean,
+          components: [...components],
+          version,
+          isProject: opts.isProject === true,
+          model: opts.model ?? null,
+          smallModel: opts.smallModel ?? null,
+          preset: opts.preset ?? null,
+          mergeDevConfig: mergeDevConfigOpt,
+        },
         files: planned?.files ?? [],
         snapshots: planned?.snapshots ?? [],
       })
@@ -2408,10 +2496,11 @@ async function installPass(
         agent.permission = JSON.parse(JSON.stringify(fm.permission))
       }
       if (fm.mcp_tools !== undefined) {
-        agent.permission = {
-          ...(agent.permission ?? {}),
-          ...deriveNativeMcpPermissions(fm.mcp_tools),
-        }
+        agent.permission = mergeAgentMcpPermissions(
+          agent.permission,
+          fm.mcp_tools,
+          configuredMcpServersForPolicies,
+        )
       }
 
       config[name] = agent
@@ -2419,6 +2508,8 @@ async function installPass(
     return config
   }
 
+  const configuredMcpServersForPolicies =
+    version === 'v2' ? configuredMcpServerNames(config.mcp) : []
   const canonicalAgentConfig = readAgentConfigFromCanonical()
   const agentSources = getAgentSources(agentPrefix)
 

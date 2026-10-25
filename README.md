@@ -46,12 +46,24 @@ npx pantheon-opencode init
 opencode
 ```
 
-For the optional full setup flow, run `npm run setup`. It keeps the existing
-`init --yes` install, then offers a separate review-first OpenCode V2 permission
-config stage only when V2 is detected. The stage previews changes and asks for
-an explicit apply confirmation; `--yes` does not authorize host-config edits.
-Headless runs only preview, and V1 runs do not offer this stage. See the
-[installation guide](docs/INSTALLATION.md) for conflict handling and backups.
+For the optional full setup flow, run `npm run setup`. On detected OpenCode V2,
+it reviews the global config before installer init: legacy permission rules can
+be migrated after explicit review. Verified Pantheon plugin/MCP entries are
+reported; JSONC entries move only when order and overrides stay safe, otherwise
+the user must choose to keep them in place or abort. Config migration and
+installer changes are preflighted before one final authorization; `--yes` alone
+does not authorize writes. Overlapping MCP wildcard policies that could allow
+  an action after a denial are blocked, and ineffective MCP `ask` rules matching
+configured or installer-seeded servers require an explicit outcome.
+Flat third-party MCP entries in `opencode.jsonc` block V2 setup until manually
+converted to `mcp.servers` or removed; nested third-party servers are preserved.
+Headless/CI/non-TTY runs are preview-only and do not invoke writing init (V1
+included). See the [installation guide](docs/INSTALLATION.md) for layer handling,
+conflict choices, backups, and recovery.
+
+Global `init` and `setup` use `$XDG_CONFIG_HOME/opencode` when
+`XDG_CONFIG_HOME` is absolute; otherwise they use `~/.config/opencode`.
+Relative `XDG_CONFIG_HOME` values are rejected before writes.
 
 Then describe the outcome you want:
 

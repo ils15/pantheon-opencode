@@ -157,6 +157,123 @@ test('V2 project config uses the plural plugin key under isolated HOME/XDG', () 
   }
 })
 
+test('PANTHEON_SETUP_TARGET accepts only the selected global config directory', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'pantheon-init-setup-target-cwd-'))
+  const home = mkdtempSync(join(tmpdir(), 'pantheon-init-setup-target-home-'))
+  const xdg = mkdtempSync(join(tmpdir(), 'pantheon-init-setup-target-xdg-'))
+  const target = join(xdg, 'opencode')
+  try {
+    const accepted = run(
+      ['init', '--headless', '--yes', '--no-mcp', '--components', 'agents', '--version', 'v2'],
+      cwd,
+      {
+        HOME: home,
+        XDG_CONFIG_HOME: xdg,
+        PANTHEON_SETUP_TARGET: target,
+      },
+    )
+    assert.equal(accepted.status, 0, `${accepted.stdout}\n${accepted.stderr}`)
+    assert.ok(existsSync(join(target, 'agents', 'zeus.md')))
+
+    const wrongTarget = join(home, 'wrong-config')
+    const rejected = run(
+      ['init', '--headless', '--yes', '--no-mcp', '--components', 'agents', '--version', 'v2'],
+      cwd,
+      {
+        HOME: home,
+        XDG_CONFIG_HOME: xdg,
+        PANTHEON_SETUP_TARGET: wrongTarget,
+      },
+    )
+    assert.notEqual(rejected.status, 0)
+    assert.match(`${rejected.stdout}\n${rejected.stderr}`, /Invalid setup target/)
+    assert.equal(existsSync(wrongTarget), false)
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+    rmSync(home, { recursive: true, force: true })
+    rmSync(xdg, { recursive: true, force: true })
+  }
+})
+
+test('direct init writes the global install to absolute XDG_CONFIG_HOME', () => {
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-init-direct-xdg-'))
+  const cwd = join(root, 'cwd')
+  const home = join(root, 'home')
+  const xdg = join(root, 'xdg')
+  const target = join(xdg, 'opencode')
+  mkdirSync(cwd)
+  mkdirSync(home)
+  mkdirSync(xdg)
+  try {
+    const result = run(
+      ['init', '--headless', '--yes', '--no-mcp', '--components', 'agents', '--version', 'v2'],
+      cwd,
+      { HOME: home, XDG_CONFIG_HOME: xdg, OPENCODE_VERSION: 'v1' },
+    )
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
+    assert.ok(existsSync(join(target, 'agents', 'zeus.md')))
+    const config = JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8'))
+    assert.ok(
+      Array.isArray(config.plugins),
+      'CLI --version=v2 takes precedence over OPENCODE_VERSION=v1',
+    )
+    assert.equal(config.plugin, undefined)
+    assert.equal(existsSync(join(home, '.config', 'opencode')), false)
+    assert.deepEqual(readdirSync(cwd), [])
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('init rejects relative XDG_CONFIG_HOME before creating config files', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'pantheon-init-relative-xdg-cwd-'))
+  const home = mkdtempSync(join(tmpdir(), 'pantheon-init-relative-xdg-home-'))
+  const relativeConfig = 'relative-config-home'
+  try {
+    const result = run(
+      ['init', '--headless', '--yes', '--no-mcp', '--components', 'agents', '--version', 'v2'],
+      cwd,
+      {
+        HOME: home,
+        XDG_CONFIG_HOME: relativeConfig,
+        OPENCODE_VERSION: 'v2',
+      },
+    )
+    assert.notEqual(result.status, 0)
+    assert.match(`${result.stdout}\n${result.stderr}`, /XDG_CONFIG_HOME must be an absolute path/i)
+    assert.equal(existsSync(join(cwd, relativeConfig)), false)
+    assert.equal(existsSync(join(home, '.config', 'opencode')), false)
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('init rejects an explicit missing --version instead of defaulting to auto', () => {
+  for (const selector of [['--version', '--dry-run'], ['--version=']]) {
+    const root = mkdtempSync(join(tmpdir(), 'pantheon-init-missing-version-'))
+    const cwd = join(root, 'cwd')
+    const home = join(root, 'home')
+    const xdg = join(root, 'xdg')
+    mkdirSync(cwd)
+    mkdirSync(home)
+    mkdirSync(xdg)
+    try {
+      const result = run(
+        ['init', '--project', '--headless', '--no-mcp', '--components', 'agents', ...selector],
+        cwd,
+        { HOME: home, XDG_CONFIG_HOME: xdg, OPENCODE_VERSION: 'v2' },
+      )
+      assert.notEqual(result.status, 0, selector.join(' '))
+      assert.match(`${result.stdout}\n${result.stderr}`, /--version requires a value/i)
+      assert.deepEqual(readdirSync(cwd), [])
+      assert.deepEqual(readdirSync(xdg), [])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  }
+})
+
 test('explicit --components does not add runtime to the CLI install plan', () => {
   const cwd = mkdtempSync(join(tmpdir(), 'pantheon-init-components-scope-'))
   try {
@@ -226,6 +343,40 @@ test('V2 rejects both --preset spellings before writing, while V1 accepts equals
       JSON.parse(readFileSync(join(cwd, '.pantheon', 'active-preset.json'), 'utf8')).preset,
       'anthropic',
     )
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
+test('direct V2 init safely warns and omits an untranslatable V1 MCP ask', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'pantheon-init-v2-mcp-ask-'))
+  try {
+    writeFileSync(
+      join(cwd, 'opencode.json'),
+      JSON.stringify({ permission: { mcp: { research: 'ask' } } }),
+    )
+    const result = run(
+      [
+        'init',
+        '--project',
+        '--headless',
+        '--yes',
+        '--no-mcp',
+        '--components',
+        'agents',
+        '--version',
+        'v2',
+      ],
+      cwd,
+    )
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
+    assert.match(`${result.stdout}\n${result.stderr}`, /MCP ask policy cannot be enforced/i)
+    const config = JSON.parse(readFileSync(join(cwd, 'opencode.json'), 'utf8'))
+    assert.equal(
+      config.permissions.some((rule) => rule.action === 'research_*'),
+      false,
+    )
+    assert.ok(existsSync(join(cwd, 'agents', 'zeus.md')))
   } finally {
     rmSync(cwd, { recursive: true, force: true })
   }
