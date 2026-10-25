@@ -225,10 +225,14 @@ async function main(): Promise<void> {
   assert.equal(selectV2VisionModel({ data: MODELS })?.id, 'mimo-v2.6-flash')
   assert.equal(
     selectV2VisionModel(MODELS, 'anthropic/claude-sonnet')?.id,
-    'mimo-v2.6-flash',
-    'the native Zen transport must not select an unsupported provider',
+    undefined,
+    'an explicit unsupported-provider pin must not be silently substituted',
   )
-  assert.equal(selectV2VisionModel(MODELS, 'opencode-go/text-only')?.id, 'mimo-v2.6-flash')
+  assert.equal(
+    selectV2VisionModel(MODELS, 'opencode-go/text-only'),
+    undefined,
+    'an explicit text-only pin must not be silently substituted',
+  )
   assert.equal(selectV2VisionModel(MODELS.slice(2)), undefined)
   assert.equal(
     selectV2VisionModel({
@@ -300,7 +304,7 @@ async function main(): Promise<void> {
     const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString('base64')
     const result = await tool.execute(
       { path: `data:image/png;base64,${png}`, prompt: 'Descreva esta imagem.' },
-      { sessionID: 'parent-session', directory: '/project' },
+      { sessionID: 'ses_parent_session', directory: '/project' },
     )
 
     assert.equal(tool.name, 'vision_describe')
@@ -309,7 +313,7 @@ async function main(): Promise<void> {
     assert.equal(requestURL, 'https://opencode.ai/zen/go/v1/chat/completions')
     assert.equal(requestAuthorization, 'Bearer canary-key')
     // Zen-only session header: the tool context's sessionID reaches the gateway.
-    assert.equal(requestSession, 'parent-session', 'x-opencode-session sent for Zen')
+    assert.equal(requestSession, 'ses_parent_session', 'x-opencode-session sent for Zen')
     assert.equal(requestBody?.model, 'mimo-v2.6-flash')
     // 2048 (not the former 500): a reasoning model spends max_tokens on
     // reasoning tokens FIRST — 500 truncated EVERY call (content null,
@@ -326,7 +330,10 @@ async function main(): Promise<void> {
     const projectDir = await mkdtemp(join(tmpdir(), 'pantheon-v2-vision-project-'))
     try {
       await writeFile(join(projectDir, 'relative.png'), Buffer.from(png, 'base64'))
-      const relativeResult = await tool.execute({ path: 'relative.png' }, { directory: projectDir })
+      const relativeResult = await tool.execute(
+        { path: 'relative.png' },
+        { sessionID: 'ses_valid123', directory: projectDir },
+      )
       assert.equal(relativeResult.output, 'A imagem mostra uma cena de teste.')
       const relativeMessages = requestBody?.messages as Array<{
         content: Array<Record<string, unknown>>
@@ -344,7 +351,7 @@ async function main(): Promise<void> {
     // mensagem acionável em vez do ENOENT cru.
     const notFound = await tool.execute(
       { path: '/nonexistent/clipboard' },
-      { directory: '/project' },
+      { sessionID: 'ses_valid123', directory: '/project' },
     )
     assert.match(notFound.output, /image file not found/i)
     assert.match(notFound.output, /base64 image data URI/i)
@@ -356,7 +363,7 @@ async function main(): Promise<void> {
     try {
       const rejected = await tool.execute(
         { path: `data:image/png;base64,${png}` },
-        { directory: '/project' },
+        { sessionID: 'ses_valid123', directory: '/project' },
       )
       assert.match(rejected.output, /HTTP 401/)
       assert.match(rejected.output, /Zen gateway/i)
@@ -364,18 +371,49 @@ async function main(): Promise<void> {
       globalThis.fetch = okFetch
     }
 
-    // 400 MissingSessionID → mensagem acionável sobre o header de sessão.
-    globalThis.fetch = (async () => new Response('{}', { status: 400 })) as typeof fetch
+    // Missing/invalid sessions fail before remote image fetch, catalog lookup,
+    // or Zen gateway calls.
+    let imageRequests = 0
+    const imageServer = createServer((_request, response) => {
+      imageRequests += 1
+      response.end('image')
+    })
+    await new Promise<void>((resolve, reject) => {
+      imageServer.once('error', reject)
+      imageServer.listen(0, '127.0.0.1', resolve)
+    })
+    const imageAddress = imageServer.address()
+    assert.ok(imageAddress && typeof imageAddress === 'object')
+    let catalogCalls = 0
+    let zenCalls = 0
+    const guardedTool = createV2VisionTool({
+      model: {
+        list: async () => {
+          catalogCalls += 1
+          return { data: MODELS }
+        },
+      },
+    })
+    globalThis.fetch = (async () => {
+      zenCalls += 1
+      return new Response('{}')
+    }) as typeof fetch
     try {
-      const noSession = await tool.execute(
-        { path: `data:image/png;base64,${png}` },
-        { directory: '/project' },
-      )
-      assert.match(noSession.output, /HTTP 400/)
-      assert.match(noSession.output, /MissingSessionID/)
-      assert.match(noSession.output, /x-opencode-session/)
+      for (const context of [{}, { sessionID: 'not-a-session' }]) {
+        const rejected = await guardedTool.execute(
+          { path: `http://127.0.0.1:${imageAddress.port}/image.png` },
+          context,
+        )
+        assert.match(rejected.output, /valid OpenCode session/i)
+      }
+      assert.equal(imageRequests, 0)
+      assert.equal(catalogCalls, 0)
+      assert.equal(zenCalls, 0)
     } finally {
       globalThis.fetch = okFetch
+      await new Promise<void>((resolve, reject) =>
+        imageServer.close((error) => (error ? reject(error) : resolve())),
+      )
     }
 
     // 403 → free-tier / sem acesso pago é nomeado.
@@ -383,7 +421,7 @@ async function main(): Promise<void> {
     try {
       const denied = await tool.execute(
         { path: `data:image/png;base64,${png}` },
-        { sessionID: 'parent-session', directory: '/project' },
+        { sessionID: 'ses_parent_session', directory: '/project' },
       )
       assert.match(denied.output, /HTTP 403/)
       assert.match(denied.output, /free-tier/)
@@ -405,7 +443,7 @@ async function main(): Promise<void> {
     try {
       const pinnedDenied = await tool.execute(
         { path: `data:image/png;base64,${png}` },
-        { sessionID: 'parent-session', directory: '/project' },
+        { sessionID: 'ses_parent_session', directory: '/project' },
       )
       assert.equal(
         pinnedModel,
@@ -430,7 +468,7 @@ async function main(): Promise<void> {
     try {
       const truncated = await tool.execute(
         { path: `data:image/png;base64,${png}` },
-        { sessionID: 'parent-session', directory: '/project' },
+        { sessionID: 'ses_parent_session', directory: '/project' },
       )
       assert.match(truncated.output, /finish_reason: length/)
       assert.match(truncated.output, /max_tokens/)
@@ -451,7 +489,7 @@ async function main(): Promise<void> {
       process.env.XDG_DATA_HOME = dataHome
       const storedAuthResult = await tool.execute(
         { path: `data:image/png;base64,${png}` },
-        { directory: '/project' },
+        { sessionID: 'ses_valid123', directory: '/project' },
       )
       assert.equal(storedAuthResult.output, 'A imagem mostra uma cena de teste.')
       assert.equal(requestAuthorization, 'Bearer stored-key')
@@ -472,12 +510,72 @@ async function main(): Promise<void> {
     else process.env.PANTHEON_VISION_MODEL = priorVisionModel
   }
 
-  const missingModelTool = createV2VisionTool({
-    model: { list: async () => ({ data: MODELS.slice(2, 3) }) },
-  })
   const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString('base64')
-  const unavailable = await missingModelTool.execute({ path: `data:image/png;base64,${png}` }, {})
-  assert.match(unavailable.output, /no available OpenCode Zen multimodal model/i)
+  const priorHome = process.env.HOME
+  const priorConfigHome = process.env.XDG_CONFIG_HOME
+  const priorModelPreset = process.env.PANTHEON_MODEL_PRESET
+  const priorExplicitVisionModel = process.env.PANTHEON_VISION_MODEL
+  const isolatedHome = await mkdtemp(join(tmpdir(), 'pantheon-v2-vision-prefs-'))
+  process.env.HOME = isolatedHome
+  process.env.XDG_CONFIG_HOME = join(isolatedHome, 'config')
+  delete process.env.PANTHEON_MODEL_PRESET
+  delete process.env.PANTHEON_VISION_MODEL
+  try {
+    const missingModelTool = createV2VisionTool({
+      model: { list: async () => ({ data: MODELS.slice(2, 3) }) },
+    })
+    const unavailable = await missingModelTool.execute(
+      { path: `data:image/png;base64,${png}` },
+      { sessionID: 'ses_valid123', directory: isolatedHome },
+    )
+    assert.match(unavailable.output, /no available OpenCode Zen multimodal model/i)
+  } finally {
+    await rm(isolatedHome, { recursive: true, force: true })
+    if (priorHome === undefined) delete process.env.HOME
+    else process.env.HOME = priorHome
+    if (priorConfigHome === undefined) delete process.env.XDG_CONFIG_HOME
+    else process.env.XDG_CONFIG_HOME = priorConfigHome
+    if (priorModelPreset === undefined) delete process.env.PANTHEON_MODEL_PRESET
+    else process.env.PANTHEON_MODEL_PRESET = priorModelPreset
+    if (priorExplicitVisionModel === undefined) delete process.env.PANTHEON_VISION_MODEL
+    else process.env.PANTHEON_VISION_MODEL = priorExplicitVisionModel
+  }
+
+  const priorPinnedModel = process.env.PANTHEON_VISION_MODEL
+  const priorPinnedApiKey = process.env.PANTHEON_OPENCODE_API_KEY
+  const priorPinnedFetch = globalThis.fetch
+  process.env.PANTHEON_VISION_MODEL = 'anthropic/claude-sonnet'
+  process.env.PANTHEON_OPENCODE_API_KEY = 'test-key'
+  let badPinCatalogCalls = 0
+  let badPinGatewayCalls = 0
+  globalThis.fetch = (async () => {
+    badPinGatewayCalls += 1
+    return new Response('{}')
+  }) as typeof fetch
+  try {
+    const badPinTool = createV2VisionTool({
+      model: {
+        list: async () => {
+          badPinCatalogCalls += 1
+          return { data: MODELS }
+        },
+      },
+    })
+    const badPin = await badPinTool.execute(
+      { path: `data:image/png;base64,${png}` },
+      { sessionID: 'ses_valid123', directory: '/project' },
+    )
+    assert.match(badPin.output, /explicit.*model.*unavailable|pinned.*model.*unavailable/i)
+    assert.match(badPin.output, /update or remove.*model pin|choose.*Zen.*model/i)
+    assert.equal(badPinCatalogCalls, 1)
+    assert.equal(badPinGatewayCalls, 0)
+  } finally {
+    globalThis.fetch = priorPinnedFetch
+    if (priorPinnedModel === undefined) delete process.env.PANTHEON_VISION_MODEL
+    else process.env.PANTHEON_VISION_MODEL = priorPinnedModel
+    if (priorPinnedApiKey === undefined) delete process.env.PANTHEON_OPENCODE_API_KEY
+    else process.env.PANTHEON_OPENCODE_API_KEY = priorPinnedApiKey
+  }
 }
 
 main().catch((error: unknown) => {
