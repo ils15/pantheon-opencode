@@ -669,17 +669,20 @@ if not isinstance(config, dict):
 mcp = config.setdefault("mcp", {})
 if not isinstance(mcp, dict):
     raise SystemExit("V2 config mcp section must be an object")
+servers = mcp.setdefault("servers", {})
+if not isinstance(servers, dict):
+    raise SystemExit("V2 config mcp.servers section must be an object")
 for name, script in managed.items():
-    entry = mcp.get(name) if isinstance(mcp.get(name), dict) else {}
+    entry = servers.get(name) if isinstance(servers.get(name), dict) else {}
     entry.pop("disabled", None)
     entry.update(type="local", cwd=runtime_dir, command=[python_bin, f"scripts/{script}"], enabled=True)
-    mcp[name] = entry
+    servers[name] = entry
 tmp_path = config_path.with_name(config_path.name + ".sandbox-tmp")
 tmp_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
 os.replace(tmp_path, config_path)
 validated = json.loads(config_path.read_text(encoding="utf-8"))
 for name, script in managed.items():
-    entry = validated.get("mcp", {}).get(name)
+    entry = validated.get("mcp", {}).get("servers", {}).get(name)
     expected = {"type": "local", "cwd": runtime_dir, "command": [python_bin, f"scripts/{script}"], "enabled": True}
     if not isinstance(entry, dict) or any(entry.get(key) != value for key, value in expected.items()):
         raise SystemExit(f"stale or invalid paths remain for {name} in {config_path}")
@@ -1194,9 +1197,12 @@ if not isinstance(config, dict):
 mcp = config.setdefault("mcp", {})
 if not isinstance(mcp, dict):
     raise SystemExit("V2 config mcp section must be an object")
+servers = mcp.setdefault("servers", {})
+if not isinstance(servers, dict):
+    raise SystemExit("V2 config mcp.servers section must be an object")
 
 for name, script in managed.items():
-    entry = mcp.get(name)
+    entry = servers.get(name)
     if not isinstance(entry, dict):
         entry = {}
     # Do not retain command/cwd values from the merged config. These are the
@@ -1208,7 +1214,7 @@ for name, script in managed.items():
         command=[python_bin, f"scripts/{script}"],
         enabled=True,
     )
-    mcp[name] = entry
+    servers[name] = entry
 
 tmp_path = config_path.with_name(config_path.name + ".sandbox-tmp")
 try:
@@ -1226,7 +1232,7 @@ try:
 except (OSError, json.JSONDecodeError) as exc:
     raise SystemExit(f"cannot validate rewritten V2 config {config_path}: {exc}")
 for name, script in managed.items():
-    entry = validated.get("mcp", {}).get(name)
+    entry = validated.get("mcp", {}).get("servers", {}).get(name)
     expected = {
         "type": "local",
         "cwd": runtime_dir,

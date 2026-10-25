@@ -13,6 +13,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { migrateV1toV2 } from '../scripts/install/config-migration.mjs'
 
 const ROOT = process.cwd()
 const RUNNER = join(ROOT, 'scripts', 'test-opencode-v2-sandbox.sh')
@@ -118,6 +119,89 @@ test('MCP startup failures retain and print the mcp-list diagnostic output', () 
     (src.match(/cat "\$list_file" >&2 \|\| true/g) ?? []).length,
     2,
     'both failure paths must include the original mcp list response',
+  )
+})
+
+test('sandbox V2 MCP rewriting keeps managed entries under mcp.servers', (t) => {
+  const workDir = mkdtempSync(join(tmpdir(), 'pantheon-sandbox-mcp-'))
+  t.after(() => rmSync(workDir, { recursive: true, force: true }))
+  const sandboxRoot = join(workDir, 'sandbox')
+  const project = join(sandboxRoot, 'project-v2')
+  const runtime = join(project, '.opencode')
+  const python = join(project, '.venv', 'bin', 'python3')
+  const configPath = join(project, 'opencode.json')
+  const defsFile = join(workDir, 'runner-definitions.sh')
+  mkdirSync(join(runtime, 'scripts'), { recursive: true })
+  mkdirSync(join(project, '.venv', 'bin'), { recursive: true })
+  writeFileSync(python, '#!/bin/sh\n', { mode: 0o755 })
+
+  const managed = {
+    'pantheon-code-mode': 'code_mode.py',
+    'pantheon-memory': 'memory_mcp.py',
+    'pantheon-persistence': 'mcp_persistence.py',
+    'pantheon-resources': 'mcp_resources.py',
+    'pantheon-vision': 'pantheon_vision.py',
+  }
+  for (const script of Object.values(managed)) writeFileSync(join(runtime, 'scripts', script), '')
+  const existing = {
+    type: 'local',
+    cwd: '/stale/runtime',
+    command: ['/stale/python', 'scripts/mcp_resources.py'],
+    disabled: true,
+  }
+  writeFileSync(
+    configPath,
+    JSON.stringify({
+      mcp: {
+        servers: {
+          'pantheon-resources': existing,
+          'user-nested': { type: 'remote', url: 'https://nested.example/mcp' },
+        },
+        'user-flat': { type: 'remote', url: 'https://flat.example/mcp' },
+      },
+    }),
+  )
+
+  writeFileSync(defsFile, DEFINITIONS)
+  const rewritten = spawnSync(
+    'bash',
+    ['-c', 'set -euo pipefail\nsource "$RUNNER_DEFS"\nrewrite_v2_mcp_config'],
+    {
+      encoding: 'utf8',
+      env: { ...process.env, RUNNER_DEFS: defsFile, PANTHEON_SANDBOX_ROOT: sandboxRoot },
+    },
+  )
+  assert.equal(rewritten.status, 0, `config rewrite failed:\n${rewritten.stderr}`)
+
+  const config = JSON.parse(readFileSync(configPath, 'utf8'))
+  assert.deepEqual(Object.keys(config.mcp.servers), [
+    'pantheon-resources',
+    'user-nested',
+    'pantheon-code-mode',
+    'pantheon-memory',
+    'pantheon-persistence',
+    'pantheon-vision',
+  ])
+  assert.equal(config.mcp['pantheon-resources'], undefined)
+  assert.deepEqual(config.mcp['user-flat'], {
+    type: 'remote',
+    url: 'https://flat.example/mcp',
+  })
+  assert.deepEqual(config.mcp.servers['pantheon-resources'], {
+    type: 'local',
+    cwd: runtime,
+    command: [python, 'scripts/mcp_resources.py'],
+    enabled: true,
+  })
+  assert.equal(migrateV1toV2(config).mcp.servers['pantheon-resources'].cwd, runtime)
+
+  const generated = generate(join(workDir, 'repo'), join(workDir, 'generated'), defsFile)
+  const generatedSource = readFileSync(generated, 'utf8')
+  assert.match(generatedSource, /servers = mcp\.setdefault\("servers", \{\}\)/)
+  assert.match(generatedSource, /entry = servers\.get\(name\)/)
+  assert.match(
+    generatedSource,
+    /validated\.get\("mcp", \{\}\)\.get\("servers", \{\}\)\.get\(name\)/,
   )
 })
 

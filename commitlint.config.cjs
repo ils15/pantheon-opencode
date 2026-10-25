@@ -33,6 +33,7 @@ module.exports = {
         'agent-flow',
         'skills',
         'scripts',
+        'setup',
         'docs',
         'ci',
         'deps',
