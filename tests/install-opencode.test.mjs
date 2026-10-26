@@ -15,6 +15,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -26,10 +27,12 @@ import { test as nodeTest } from 'node:test'
 import { migrateV1toV2 } from '../scripts/install/config-migration.mjs'
 import {
   applyContextSandboxToV2Plugins,
+  applyMcpServerEntries,
   deriveNativeMcpPermissions,
   installOpenCode,
   isGlobalConfigDir,
   MANAGED_FIELDS,
+  mergeAgentMcpPermissions,
   pluginReferenceIdentity,
   resolveInstalledPlugin,
   resolveTuiCopyTarget,
@@ -81,11 +84,58 @@ test('mcp_tools all and checkpoint allowlists map to V1 and V2 MCP names', () =>
   assert.equal(permissions.pantheon_persistence_context_list, undefined)
 })
 
+test('mcp_tools rejects server names with colliding V2-normalized actions', () => {
+  assert.throws(
+    () => deriveNativeMcpPermissions({ pantheon_resources: ['execute'] }),
+    /collide after OpenCode V2 permission normalization/i,
+  )
+})
+
+test('installer MCP grants reject aliases of configured user servers', () => {
+  assert.throws(
+    () => deriveNativeMcpPermissions({ 'foo-bar': 'all' }, ['foo_bar']),
+    /overlaps a distinct configured server/i,
+  )
+})
+
+test('mcp_tools rejects overlapping server wildcard scopes with conflicting effects', () => {
+  for (const mcpTools of [
+    { foo_bar: [], foo: 'all' },
+    { foo: 'all', foo_bar: [] },
+  ]) {
+    assert.throws(() => deriveNativeMcpPermissions(mcpTools), /overlapping MCP permission scopes/i)
+  }
+
+  assert.doesNotThrow(() => deriveNativeMcpPermissions({ foo_bar: [], foo: [] }))
+  const bothAllowed = deriveNativeMcpPermissions({ foo_bar: 'all', foo: 'all' })
+  assert.equal(bothAllowed['foo_bar_*'], 'allow')
+  assert.equal(bothAllowed['foo_*'], 'allow')
+})
+
+test('mcp_tools rejects a tool grant that overlaps another server wildcard deny', () => {
+  assert.throws(
+    () => deriveNativeMcpPermissions({ foo_bar: ['tool'], foo: [] }),
+    /overlaps a different server deny scope/i,
+  )
+})
+
 test('mcp_tools rejects invalid permission metadata instead of widening access', () => {
   assert.throws(
     () => deriveNativeMcpPermissions({ 'pantheon-memory': true }),
     /must be "all" or an array of tool names/i,
   )
+})
+
+test('generated mcp_tools grants cannot override explicit agent denies or asks', () => {
+  for (const effect of ['deny', 'ask']) {
+    assert.throws(
+      () => mergeAgentMcpPermissions({ foo_bar_tool: effect }, { foo: 'all' }),
+      /overlaps an explicit agent deny or ask/i,
+    )
+  }
+
+  assert.doesNotThrow(() => mergeAgentMcpPermissions({ bar_tool: 'deny' }, { foo: 'all' }))
+  assert.equal(mergeAgentMcpPermissions({}, { foo: 'all' })['foo_*'], 'allow')
 })
 
 test('resolveInstalledPlugin maps the exact relative root plugin into the installed package', () => {
@@ -244,6 +294,26 @@ async function runInstall(target, existingConfig = null, version = 'v1') {
   return JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8'))
 }
 
+function snapshotTree(root) {
+  const snapshot = []
+  const visit = (directory, prefix = '') => {
+    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    )) {
+      const relativePath = prefix ? join(prefix, entry.name) : entry.name
+      const fullPath = join(directory, entry.name)
+      if (entry.isDirectory()) {
+        snapshot.push([relativePath, 'directory'])
+        visit(fullPath, relativePath)
+      } else {
+        snapshot.push([relativePath, 'file', readFileSync(fullPath)])
+      }
+    }
+  }
+  visit(root)
+  return snapshot
+}
+
 test('fresh install registers BOTH pantheon plugins (plugin.ts + pantheon-hooks.ts)', async () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-fresh-'))
   try {
@@ -379,28 +449,286 @@ test('V1 downgrade keeps the legacy plugins key with third-party plugins, preser
   }
 })
 
-test('V2 normalizes the legacy mcp.servers wrapper and preserves user MCP servers', async () => {
+test('V2 drops the exact legacy MCP toggle and preserves user MCP servers in the native map', async () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-mcp-'))
   try {
     const config = await runInstall(
       target,
       {
         mcp: {
-          servers: { enabled: false, customSetting: 'keep' },
+          servers: { enabled: false },
           userServer: { type: 'remote', url: 'https://user.example/mcp', enabled: true },
         },
       },
       'v2',
     )
-    // OpenCode 1.18.x has no mcp.servers wrapper ("Missing key
-    // mcp.servers.enabled"): the legacy wrapper is unwrapped to flat keys and
-    // its non-server scalar entries are dropped.
-    assert.equal(config.mcp.servers, undefined)
-    assert.equal(config.mcp.userServer.url, 'https://user.example/mcp')
-    assert.equal(config.mcp.userServer.enabled, true)
+    assert.deepEqual(Object.keys(config.mcp.servers), ['userServer'])
+    assert.equal(config.mcp.servers.enabled, undefined)
+    assert.equal(config.mcp.servers.userServer.url, 'https://user.example/mcp')
+    assert.equal(config.mcp.servers.userServer.enabled, true)
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
+})
+
+test('V2 install preserves flat user MCP servers beside a nested server map', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-mixed-mcp-'))
+  const flatUser = { type: 'remote', url: 'https://flat.example/mcp', enabled: true }
+  const nestedUser = { type: 'local', command: ['node', 'nested-server.mjs'] }
+  try {
+    const config = await runInstall(
+      target,
+      {
+        mcp: {
+          'flat-user': flatUser,
+          servers: { 'nested-user': nestedUser },
+        },
+      },
+      'v2',
+    )
+    assert.deepEqual(config.mcp.servers['flat-user'], flatUser)
+    assert.deepEqual(config.mcp.servers['nested-user'], nestedUser)
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('V2 installer does not write a normalized legacy MCP grant that aliases a configured server', async (t) => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-mcp-alias-'))
+  const configPath = join(target, 'opencode.json')
+  const original = JSON.stringify(
+    {
+      mcp: {
+        'foo-bar': { type: 'remote', url: 'https://one.example/mcp' },
+        foo_bar: { type: 'remote', url: 'https://two.example/mcp' },
+      },
+      permission: { mcp: { 'foo-bar': 'allow' } },
+    },
+    null,
+    2,
+  )
+  writeFileSync(configPath, original)
+  const before = snapshotTree(target)
+  t.after(() => rmSync(target, { recursive: true, force: true }))
+
+  await assert.rejects(
+    () =>
+      installOpenCode(target, true, false, COMPONENTS, {
+        yes: true,
+        headless: true,
+        version: 'v2',
+      }),
+    /MCP permission scope overlaps a distinct configured server/i,
+  )
+  assert.deepEqual(snapshotTree(target), before)
+})
+
+test('V2 installer checks managed-agent MCP scopes against configured user servers', async (t) => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-agent-mcp-alias-'))
+  const configPath = join(target, 'opencode.json')
+  writeFileSync(
+    configPath,
+    JSON.stringify(
+      {
+        mcp: {
+          pantheon_code_mode_custom: {
+            type: 'remote',
+            url: 'https://user.example/mcp',
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  )
+  const before = snapshotTree(target)
+  t.after(() => rmSync(target, { recursive: true, force: true }))
+
+  await assert.rejects(
+    () =>
+      installOpenCode(target, true, false, COMPONENTS, {
+        yes: true,
+        headless: true,
+        version: 'v2',
+      }),
+    /MCP permission scope overlaps a distinct configured server/i,
+  )
+  assert.deepEqual(snapshotTree(target), before)
+})
+
+test('V2 installer rejects malformed nested MCP before seeding or writing any target files', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-malformed-mcp-'))
+  const configPath = join(target, 'opencode.json')
+  const seed = `${JSON.stringify(
+    {
+      mcp: {
+        servers: {
+          'valid-user': { type: 'remote', url: 'https://valid.example/mcp' },
+          'malformed-user': 'not a server object',
+        },
+      },
+    },
+    null,
+    2,
+  )}\n`
+  mkdirSync(join(target, 'user-data'))
+  writeFileSync(configPath, seed)
+  writeFileSync(join(target, 'user-data', 'sentinel.bin'), Buffer.from([0, 1, 2, 255]))
+  const before = snapshotTree(target)
+
+  try {
+    await assert.rejects(
+      () =>
+        installOpenCode(target, false, false, ['runtime'], {
+          yes: true,
+          headless: true,
+          version: 'v2',
+        }),
+      /malformed or ambiguous nested MCP server map/i,
+    )
+    assert.deepEqual(snapshotTree(target), before, 'all target files and bytes remain unchanged')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('V2 installer rejects array-shaped MCP maps before seeding or writing any target files', async (t) => {
+  for (const [label, mcp] of [
+    ['top-level', [{ type: 'remote', url: 'https://array.example/mcp' }]],
+    ['nested', { servers: [{ type: 'remote', url: 'https://array.example/mcp' }] }],
+  ]) {
+    const target = mkdtempSync(join(tmpdir(), `pantheon-v2-${label}-array-mcp-`))
+    t.after(() => rmSync(target, { recursive: true, force: true }))
+    const configPath = join(target, 'opencode.json')
+    const seed = `${JSON.stringify({ mcp }, null, 2)}\n`
+    mkdirSync(join(target, 'user-data'))
+    writeFileSync(configPath, seed)
+    writeFileSync(join(target, 'user-data', 'sentinel.bin'), Buffer.from([0, 1, 2, 255]))
+    const before = snapshotTree(target)
+
+    await assert.rejects(
+      () =>
+        installOpenCode(target, false, false, ['runtime'], {
+          yes: true,
+          headless: true,
+          version: 'v2',
+        }),
+      /mcp(?:\.servers)? must be an object map/i,
+      `${label} MCP array should fail before install writes`,
+    )
+    assert.deepEqual(
+      snapshotTree(target),
+      before,
+      `${label} MCP array leaves target bytes unchanged`,
+    )
+  }
+})
+
+nodeTest(
+  'V2 init rejects present null and falsy MCP values without changing target bytes',
+  async (t) => {
+    for (const [label, mcp] of [
+      ['null', null],
+      ['false', false],
+      ['zero', 0],
+      ['empty-string', ''],
+    ]) {
+      const target = mkdtempSync(join(tmpdir(), `pantheon-v2-${label}-mcp-`))
+      t.after(() => rmSync(target, { recursive: true, force: true }))
+      const configPath = join(target, 'opencode.json')
+      const seed = `${JSON.stringify({ mcp }, null, 2)}\n`
+      mkdirSync(join(target, 'user-data'))
+      writeFileSync(configPath, seed)
+      writeFileSync(join(target, 'user-data', 'sentinel.bin'), Buffer.from([0, 1, 2, 255]))
+      const before = snapshotTree(target)
+
+      await assert.rejects(
+        () =>
+          installOpenCode(target, false, false, ['runtime'], {
+            yes: true,
+            headless: true,
+            version: 'v2',
+          }),
+        /top-level mcp must be an object map/i,
+        `${label} MCP value should fail before install writes`,
+      )
+      assert.deepEqual(
+        snapshotTree(target),
+        before,
+        `${label} MCP value leaves target bytes unchanged`,
+      )
+    }
+  },
+)
+
+nodeTest('direct V2 init accepts absent MCP and seeds its managed servers', async (t) => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-absent-mcp-'))
+  t.after(() => rmSync(target, { recursive: true, force: true }))
+  const configPath = join(target, 'opencode.json')
+  writeFileSync(configPath, '{"theme":"dark"}\n')
+
+  const result = await installOpenCode(target, true, false, ['runtime'], {
+    yes: true,
+    headless: true,
+    version: 'v2',
+  })
+
+  assert.deepEqual(result.mcpServers, [
+    'pantheon-resources',
+    'pantheon-code-mode',
+    'pantheon-memory',
+    'pantheon-persistence',
+    'pantheon-vision',
+  ])
+  assert.equal(readFileSync(configPath, 'utf8'), '{"theme":"dark"}\n')
+})
+
+test('V2 MCP runtime entries use the native nested named-server map', () => {
+  for (const config of [{}, { mcp: {} }]) {
+    applyMcpServerEntries(config, {
+      runtimeTarget: '/private/runtime',
+      venvPython: '/private/runtime/.venv/bin/python3',
+      version: 'v2',
+    })
+    assert.equal(config.mcp['pantheon-resources'], undefined)
+    assert.ok(config.mcp.servers['pantheon-resources'])
+    assert.ok(config.mcp.servers['pantheon-code-mode'])
+  }
+})
+
+test('V2 MCP seeding rejects malformed source maps without mutating them', () => {
+  const config = {
+    mcp: {
+      servers: {
+        valid: { type: 'remote', url: 'https://valid.example/mcp' },
+        malformed: 'not a server object',
+      },
+    },
+  }
+  const before = structuredClone(config)
+
+  assert.throws(
+    () =>
+      applyMcpServerEntries(config, {
+        runtimeTarget: '/private/runtime',
+        venvPython: '/private/runtime/.venv/bin/python3',
+        version: 'v2',
+      }),
+    /malformed or ambiguous nested MCP server map/i,
+  )
+  assert.deepEqual(config, before)
+})
+
+test('V1 MCP runtime entries remain a flat named-server map', () => {
+  const config = { mcp: {} }
+  applyMcpServerEntries(config, {
+    runtimeTarget: '/private/runtime',
+    venvPython: '/private/runtime/.venv/bin/python3',
+    version: 'v1',
+  })
+  assert.equal(config.mcp.servers, undefined)
+  assert.ok(config.mcp['pantheon-resources'])
+  assert.ok(config.mcp['pantheon-code-mode'])
 })
 
 test('global install uses flat component directories and repairs a legacy V2 config', async () => {
@@ -427,20 +755,24 @@ test('global install uses flat component directories and repairs a legacy V2 con
 
 test('runtime-only install copies executable MCP assets and remains idempotent', async () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-runtime-'))
+  const runtimeDeps = {
+    setupVenv() {},
+    healthCheck: () => ({ passed: [], warnings: [], failed: [] }),
+  }
   try {
     await installOpenCode(target, false, false, ['runtime'], {
       yes: true,
       headless: true,
       version: 'v2',
+      deps: runtimeDeps,
     })
     const runtime = join(target, '.opencode')
     const config = JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8'))
-    // MCP stays a flat named-server map for BOTH versions (no mcp.servers
-    // wrapper — OpenCode 1.18.x rejects it with "Missing key
-    // mcp.servers.enabled").
-    assert.equal(config.mcp.servers, undefined)
-    assert.equal(config.mcp['pantheon-resources'].enabled, true)
-    assert.equal(config.mcp['pantheon-code-mode'].enabled, true)
+    // OpenCode 2 uses the native nested named-server map. V1 stays flat; the
+    // focused V1 assertion above protects that version-specific contract.
+    assert.equal(config.mcp['pantheon-resources'], undefined)
+    assert.equal(config.mcp.servers['pantheon-resources'].enabled, true)
+    assert.equal(config.mcp.servers['pantheon-code-mode'].enabled, true)
     assert.ok(existsSync(join(runtime, 'scripts', 'mcp_resources.py')))
     assert.ok(existsSync(join(runtime, 'requirements-vision.txt')))
     // Code-mode payload is seeded from the packaged .pantheon/code-mode dir
@@ -463,6 +795,7 @@ test('runtime-only install copies executable MCP assets and remains idempotent',
       yes: true,
       headless: true,
       version: 'v2',
+      deps: runtimeDeps,
     })
     assert.equal(readFileSync(join(runtime, 'scripts', 'code_mode.py'), 'utf8'), before)
   } finally {

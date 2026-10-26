@@ -3,9 +3,8 @@
  *
  * Converts opencode.json between:
  * - V1 (object-based): `permission`, `agent`, `provider`, `mcp` with flat keys
- * - V2 (array-based):  `permissions`, `agents`, `providers`; MCP remains the
- *   named top-level server map because OpenCode 1.18.x validates that shape for
- *   both the V1 and V2 installer paths.
+ * - V2 (array-based): `permissions`, `agents`, `providers`, and
+ *   `mcp.servers.<name>` server configuration.
  *
  * Rules:
  * 1. Deep clone before mutating — never modifies input
@@ -15,6 +14,14 @@
  *
  * @module config-migration
  */
+
+import {
+  assertMcpPermissionNamesUnambiguous,
+  assertMcpPermissionScopesDoNotAliasConfiguredServers,
+  assertMcpServerPermissionScopesUnambiguous,
+  mcpServerPermissionActions,
+} from './mcp-permissions.mjs'
+import { opencodeWildcardPatternsOverlap } from './opencode-wildcard.mjs'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -35,10 +42,8 @@ function deepClone(obj) {
  *
  * `write` is an alias of `edit`. Every V2 host measured for P0-5 (2.0.22,
  * 2.0.30, 2.1.0, 2.1.2) evaluates a `write` tool call under the action name
- * `edit`; a rule emitted as `write` is therefore never the rule that decides the
- * call, and `permission.write: deny` would not block a write. Both keys collapse
- * onto `edit`, and a collision is resolved by effect restrictiveness
- * (deny > ask > allow), never by iteration order — see `pushPermission`.
+ * `edit`; rules are mapped to that action while their input order and distinct
+ * entries are preserved because V2 permission evaluation is order-sensitive.
  *
  * Only mappings confirmed against a host belong here: `bash → shell`, `task →
  * subagent`, `read → read` and `write → edit` were observed on 2.0.22/2.0.30/
@@ -58,71 +63,14 @@ const V1_PERMISSION_TO_ACTION = {
   // passthrough unknowns
 }
 
-/**
- * Effect restrictiveness used when two V1 keys collapse onto one V2 action.
- * `deny` is the most restrictive, so a deny from either alias wins.
- */
+/** Effect restrictiveness is used only when V2 rules must collapse into V1 keys. */
 const EFFECT_RESTRICTIVENESS = { allow: 1, ask: 2, deny: 3 }
 
-/**
- * True only for effects this module understands. `Object.hasOwn` is required:
- * an inherited key (`constructor`, `toString`, `__proto__`) is not an effect,
- * and treating it as one would rank it above `deny`.
- */
 function isKnownEffect(effect) {
   return typeof effect === 'string' && Object.hasOwn(EFFECT_RESTRICTIVENESS, effect)
 }
 
-/**
- * Emission order (not restrictiveness rank) for rules that share a specificity.
- * Unknown effects sit after the known non-deny effects and before `deny`, so at
- * equal specificity `deny` is the most restrictive rule and comes last.
- */
-const UNKNOWN_EFFECT_EMISSION_ORDER = 2.5
-
-/** Resource containing any glob metacharacter. */
-const GLOB_PATTERN = /[*?[\]{}]/
-
-function effectEmissionOrder(effect) {
-  return isKnownEffect(effect) ? EFFECT_RESTRICTIVENESS[effect] : UNKNOWN_EFFECT_EMISSION_ORDER
-}
-
-/** 0 = `*`, 1 = glob, 2 = literal resource. */
-function resourceSpecificity(resource) {
-  if (resource === '*') return 0
-  return GLOB_PATTERN.test(resource) ? 1 : 2
-}
-
-/**
- * Canonical order for emitted permission rules.
- *
- * Specificity decides between DIFFERENT resources: the host resolves overlaps
- * with `last-match-wins` (measured), so rules are emitted least specific first
- * (`*` → glob → literal) and the most specific matching rule wins. Only when
- * two rules share a specificity does restrictiveness break the tie
- * (`allow` → `ask` → unknown → `deny`), keeping the more restrictive rule last.
- *
- * Same action+resource is not decided here: `resolveEffects` has already
- * merged those with `deny > ask > allow` and the unknown-effect guard.
- *
- * Code-unit tie-breaks make the output independent of the V1 object's key
- * iteration order.
- */
-function comparePermissions(a, b) {
-  const actionA = String(a.action)
-  const actionB = String(b.action)
-  if (actionA !== actionB) return actionA < actionB ? -1 : 1
-  const resourceA = String(a.resource)
-  const resourceB = String(b.resource)
-  const bySpecificity = resourceSpecificity(resourceA) - resourceSpecificity(resourceB)
-  if (bySpecificity !== 0) return bySpecificity
-  const byEffect = effectEmissionOrder(a.effect) - effectEmissionOrder(b.effect)
-  if (byEffect !== 0) return byEffect
-  if (resourceA === resourceB) return 0
-  return resourceA < resourceB ? -1 : 1
-}
-
-/** A rule the converter can order: an object with string action+resource. */
+/** A structurally valid permission rule, used for redacted malformed-entry counts. */
 function isValidPermissionEntry(entry) {
   return (
     isPlainObject(entry) && typeof entry.action === 'string' && typeof entry.resource === 'string'
@@ -130,137 +78,14 @@ function isValidPermissionEntry(entry) {
 }
 
 /**
- * Report entries that are not rule objects. They cannot be compared, so they
- * are preserved verbatim (never dropped) and excluded from ordering.
+ * Report malformed entries without echoing user-supplied config values.
  */
 function warnInvalidPermissionEntries(entries) {
   const invalid = entries.filter((entry) => !isValidPermissionEntry(entry))
   if (invalid.length === 0) return
   console.warn(
-    `[config-migration] ${invalid.length} malformed permission ${invalid.length === 1 ? 'entry was' : 'entries were'} preserved without sorting: ${JSON.stringify(invalid)}`,
+    `[config-migration] ${invalid.length} malformed permission ${invalid.length === 1 ? 'entry was' : 'entries were'} preserved in order.`,
   )
-}
-
-function sortPermissions(entries) {
-  const valid = entries.filter(isValidPermissionEntry)
-  const invalid = entries.filter((entry) => !isValidPermissionEntry(entry))
-  warnInvalidPermissionEntries(entries)
-  // Malformed entries keep their relative order at the end; they must not crash
-  // the comparator, and dropping them would hide a broken config.
-  return [...valid.sort(comparePermissions), ...invalid]
-}
-
-/**
- * Conservative glob matcher for a literal resource. `**` crosses `/`, `*` and
- * `?` do not; character classes are treated literally, which can only miss a
- * warning — never invent one.
- */
-function globMatchesLiteral(pattern, literal) {
-  if (pattern === '*') return true
-  let source = '^'
-  for (let i = 0; i < pattern.length; i++) {
-    const char = pattern[i]
-    if (char === '*') {
-      if (pattern[i + 1] === '*') {
-        source += '.*'
-        i++
-      } else {
-        source += '[^/]*'
-      }
-    } else if (char === '?') {
-      source += '[^/]'
-    } else {
-      source += char.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')
-    }
-  }
-  return new RegExp(`${source}$`).test(literal)
-}
-
-/** Last matching rule for one action+resource, the way the host decides. */
-function effectiveEffectAt(entries, action, resource) {
-  let effect
-  for (const entry of entries) {
-    if (!isValidPermissionEntry(entry)) continue
-    if (entry.action !== action) continue
-    if (globMatchesLiteral(entry.resource, resource)) effect = entry.effect
-  }
-  return effect
-}
-
-/**
- * Warn when canonical ordering weakens an existing V2 decision.
- *
- * The V2 array is user state; sorting it is only done to make a V1+V2 merge
- * deterministic. If reordering alone turns a `deny` into anything weaker for a
- * resource named in that array, the user must hear about it — the config they
- * installed gated that path before the merge. The warning is informational
- * (the canonical order is still required for determinism), and only fires for
- * deny → non-deny; tightening (allow → deny) is not noise.
- */
-function warnOrderingChangesEffectiveEffect(before, after) {
-  // Probe each distinct resource string. A glob matches its own literal text
-  // (`src/**` matches the probe `src/**`), so this covers every rule's scope
-  // without inventing concrete paths.
-  const probes = new Set()
-  for (const entry of before) {
-    if (isValidPermissionEntry(entry)) probes.add(`${entry.action}\u0000${entry.resource}`)
-  }
-  for (const key of probes) {
-    const [action, resource] = key.split('\u0000')
-    const beforeEffect = effectiveEffectAt(before, action, resource)
-    const afterEffect = effectiveEffectAt(after, action, resource)
-    if (beforeEffect === 'deny' && afterEffect !== 'deny') {
-      console.warn(
-        `[config-migration] reordering the existing V2 permissions changes ${action} "${resource}" from "deny" to "${afterEffect}" under last-match-wins; the canonical order is kept, but the deny no longer applies to that resource`,
-      )
-    }
-  }
-}
-
-/**
- * Warn when a deny loses force under the canonical specificity order.
- *
- * A scoped allow inside a broader deny is also how the V1 format expresses an
- * intentional exception — `src/agents/mnemosyne.md` is the shipping example:
- * `"*": deny` plus `allow` in the memory bank. Warning on every such pair would
- * fire for the product's own templates and train users to ignore the warning,
- * so same-source scoping is treated as intentional and stays silent.
- *
- * The warning is reserved for overrides that cross a source boundary: a deny
- * already persisted in the V2 `permissions` array that an incoming V1 block
- * neutralises in a narrower scope, or the reverse. There the two rules were not
- * written together and the user may not realise the deny no longer applies.
- *
- * Two arbitrary globs share a specificity class, so the effect tie-break puts
- * `deny` last and they cannot relax a deny; no glob-subsumption guess is needed.
- */
-function warnSuppressedPermissions(entries, sourceByEntry) {
-  for (let i = 0; i < entries.length; i++) {
-    const earlier = entries[i]
-    if (!isValidPermissionEntry(earlier) || earlier.effect !== 'deny') continue
-    const earlierResource = String(earlier.resource)
-    const earlierSpecificity = resourceSpecificity(earlierResource)
-    for (let j = i + 1; j < entries.length; j++) {
-      const later = entries[j]
-      if (!isValidPermissionEntry(later)) continue
-      if (later.action !== earlier.action || later.effect === 'deny') continue
-      const laterResource = String(later.resource)
-      if (resourceSpecificity(laterResource) <= earlierSpecificity) continue
-
-      const earlierSource = sourceByEntry?.get(earlier)
-      const laterSource = sourceByEntry?.get(later)
-      if (sourceByEntry && earlierSource === laterSource) continue
-
-      // `*` overlaps everything; a glob only overlaps a literal it matches.
-      if (earlierResource !== '*' && !globMatchesLiteral(earlierResource, laterResource)) continue
-
-      const earlierOrigin = earlierSource ? `, ${earlierSource}` : ''
-      const laterOrigin = laterSource ? `, ${laterSource}` : ''
-      console.warn(
-        `[config-migration] permission rule ${earlier.action} "${earlierResource}" (${earlier.effect}${earlierOrigin}) is overridden for resources matching "${laterResource}" by the later ${later.action} "${laterResource}" (${later.effect}${laterOrigin}) under last-match-wins; the deny does not apply in that scope`,
-      )
-    }
-  }
 }
 
 /**
@@ -273,7 +98,7 @@ function warnSuppressedPermissions(entries, sourceByEntry) {
  *
  * @returns {string} the effect to keep
  */
-function resolveEffects(current, next, label) {
+function resolveEffects(current, next) {
   if (current === next) return current
 
   const currentKnown = isKnownEffect(current)
@@ -281,26 +106,22 @@ function resolveEffects(current, next, label) {
 
   if (!currentKnown && !nextKnown) {
     console.warn(
-      `[config-migration] unrecognized effects for ${label}: "${current}" vs "${next}"; keeping the first "${current}"`,
+      '[config-migration] Unrecognized effects could not be ranked; keeping the first value.',
     )
     return current
   }
   if (currentKnown && !nextKnown) {
-    console.warn(
-      `[config-migration] unrecognized effect "${next}" for ${label} cannot replace the known effect "${current}"; keeping "${current}"`,
-    )
+    console.warn('[config-migration] An unrecognized effect could not replace a known effect.')
     return current
   }
   if (!currentKnown && nextKnown) {
-    console.warn(
-      `[config-migration] unrecognized effect "${current}" for ${label} was replaced by the known effect "${next}"; keeping "${next}"`,
-    )
+    console.warn('[config-migration] A known effect replaced an unrecognized effect.')
     return next
   }
 
   const winner = EFFECT_RESTRICTIVENESS[next] > EFFECT_RESTRICTIVENESS[current] ? next : current
   console.warn(
-    `[config-migration] conflicting effects for ${label}: "${current}" vs "${next}"; keeping the more restrictive "${winner}"`,
+    '[config-migration] Conflicting effects were found; keeping the more restrictive value.',
   )
   return winner
 }
@@ -320,30 +141,9 @@ function setOwn(target, key, value) {
 }
 
 /**
- * Emit one permission entry, merging with an existing entry for the same
- * action+resource instead of appending a contradiction.
- *
- * `index` maps `action\0resource` → position in `result` and is owned by the
- * caller for the duration of one conversion.
- */
-function pushPermission(result, index, action, resource, effect) {
-  const key = `${action}\u0000${resource}`
-  const existing = index.get(key)
-  if (existing === undefined) {
-    index.set(key, result.length)
-    result.push({ action, resource, effect })
-    return
-  }
-  const current = result[existing]
-  if (current.effect === effect) return
-  current.effect = resolveEffects(current.effect, effect, `${action} "${resource}"`)
-}
-
-/**
- * Valid MCP server name. Mirrors `deriveNativeMcpPermissions`
- * (install/opencode.mjs) so the `<server>_*` action emitted here is a name the
- * host can actually produce; `*`, spaces or any other character would create an
- * action no host evaluates — a gate that only looks enforced.
+ * Valid MCP server name. Mirrors the installer validation. The original spelling
+ * preserves V1 compatibility; the shared permission helper also emits the V2
+ * punctuation-normalized alias. Names outside this set cannot be mapped safely.
  */
 const MCP_SERVER_NAME_PATTERN = /^[a-zA-Z0-9._-]+$/
 
@@ -355,8 +155,8 @@ const MCP_SERVER_NAME_PATTERN = /^[a-zA-Z0-9._-]+$/
  * `permission.mcp.<server>`, the action `mcp` and the `resource` field are all
  * inert — passing them through emitted a config that enforced nothing.
  *
- *   deny  → { action: "<server>_*", resource: "*", effect: "deny" }
- *   allow → { action: "<server>_*", resource: "*", effect: "allow" }
+ *   deny/allow → one rule for each V1/original and V2/normalized server alias,
+ *                with action "<server-alias>_*" and resource "*".
  *   ask   → no rule + warning. `ask` on an action rule HIDES the tool instead of
  *           prompting, so translating it would silently remove the tool; that is
  *           not what the user asked for, and it must not be downgraded to deny
@@ -368,34 +168,46 @@ const MCP_SERVER_NAME_PATTERN = /^[a-zA-Z0-9._-]+$/
  * The glob gates every tool of the server and needs no `tools/list` discovery,
  * which is why it is preferred over per-tool `<server>_<tool>` rules.
  */
-function convertMcpPermissions(value, result, index, { suppressAskWarning = false } = {}) {
+function convertMcpPermissions(value, result, provenance, configuredMcpServers) {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    console.warn(
-      `[config-migration] permission.mcp must be an object of server → effect; got ${JSON.stringify(value)}. No MCP rule was emitted.`,
-    )
+    console.warn('[config-migration] permission.mcp is malformed; no MCP rules were emitted.')
     return
   }
+  const validServers = Object.keys(value).filter((server) => MCP_SERVER_NAME_PATTERN.test(server))
+  assertMcpPermissionNamesUnambiguous(validServers)
+  assertMcpPermissionScopesDoNotAliasConfiguredServers(validServers, configuredMcpServers)
+  assertMcpServerPermissionScopesUnambiguous(
+    Object.entries(value)
+      .filter(
+        ([server, effect]) =>
+          MCP_SERVER_NAME_PATTERN.test(server) && (effect === 'allow' || effect === 'deny'),
+      )
+      .map(([server, effect]) => ({ server, effect })),
+  )
   for (const [server, effect] of Object.entries(value)) {
     if (!MCP_SERVER_NAME_PATTERN.test(server)) {
       console.warn(
-        `[config-migration] permission.mcp."${server}" is an invalid MCP server name (expected ${MCP_SERVER_NAME_PATTERN}): no rule was emitted.`,
+        '[config-migration] An MCP permission has an invalid server name; no rule was emitted.',
       )
       continue
     }
     if (effect === 'deny' || effect === 'allow') {
-      pushPermission(result, index, `${server}_*`, '*', effect)
-      continue
-    }
-    if (effect === 'ask') {
-      if (!suppressAskWarning) {
-        console.warn(
-          `[config-migration] permission.mcp."${server}" is "ask", which is not expressible for MCP on OpenCode 2.x: no rule is emitted and the server's tools remain available. Use "deny" (action "${server}_*") to gate them, or disable the server in the host MCP config.`,
-        )
+      for (const action of mcpServerPermissionActions(server)) {
+        const rule = { action, resource: '*', effect }
+        result.push(rule)
+        provenance.push({ rule, sourceAction: 'mcp', sourceKind: 'mcp', sourceName: server })
       }
       continue
     }
+    if (effect === 'ask') {
+      console.warn(
+        '[config-migration] An MCP ask policy cannot be enforced in OpenCode V2; no rule was emitted. ' +
+          'Use `npm run setup` to choose an explicit outcome.',
+      )
+      continue
+    }
     console.warn(
-      `[config-migration] permission.mcp."${server}" has unsupported effect ${JSON.stringify(effect)}; no rule was emitted.`,
+      '[config-migration] An MCP permission has an unsupported effect; no rule was emitted.',
     )
   }
 }
@@ -403,8 +215,8 @@ function convertMcpPermissions(value, result, index, { suppressAskWarning = fals
 /**
  * Convert V1 permission object to V2 permissions array.
  *
- * Rules are emitted in the canonical order from `comparePermissions`, not in
- * the V1 object's key order, because the host is last-match-wins.
+ * Rules are emitted in source insertion order. V2 evaluates permission rules in
+ * array order, so sorting or collapsing distinct rules can change the policy.
  *
  * V1 shape:
  *   { bash: { "git *": "allow" }, edit: "allow", skill: { "*": "allow" }, websearch: "deny" }
@@ -412,30 +224,97 @@ function convertMcpPermissions(value, result, index, { suppressAskWarning = fals
  * V2 shape:
  *   [ { action: "shell", resource: "git *", effect: "allow" }, ... ]
  */
-function convertPermissionsV1toV2(permObj, options = {}) {
+function convertPermissionsV1toV2(permObj, configuredMcpServers = []) {
   const result = []
-  const index = new Map()
+  const provenance = []
   for (const [key, value] of Object.entries(permObj)) {
     // `permission.mcp` is a server map, not an action name: it needs its own
     // translation (see convertMcpPermissions).
     if (key === 'mcp') {
-      convertMcpPermissions(value, result, index, options)
+      convertMcpPermissions(value, result, provenance, configuredMcpServers)
       continue
     }
     const action = Object.hasOwn(V1_PERMISSION_TO_ACTION, key) ? V1_PERMISSION_TO_ACTION[key] : key
     if (typeof value === 'string') {
       // Simple: { edit: "allow" } → [{ action: "edit", resource: "*", effect: "allow" }]
-      pushPermission(result, index, action, '*', value)
+      const rule = { action, resource: '*', effect: value }
+      result.push(rule)
+      provenance.push({ rule, sourceAction: key, sourceKind: 'action', sourceName: key })
     } else if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
       // Nested: { bash: { "git *": "allow" } } → [{ action: "shell", resource: "git *", effect: "allow" }]
       for (const [resource, effect] of Object.entries(value)) {
-        pushPermission(result, index, action, resource, effect)
+        const rule = { action, resource, effect }
+        result.push(rule)
+        provenance.push({ rule, sourceAction: key, sourceKind: 'action', sourceName: key })
       }
     } else {
-      console.warn(`[config-migration] Unexpected permission value for "${key}":`, value)
+      console.warn('[config-migration] An unexpected permission value was preserved by omission.')
     }
   }
-  return sortPermissions(result)
+  assertV1ActionNormalizationDoesNotCollapseSources(provenance)
+  return result
+}
+
+/**
+ * Preserve same-source V1 rule order, but reject only overlaps introduced by
+ * converting distinct V1 action/server identities to intersecting V2 actions.
+ * V1 and V2 both use last-match-wins, so a same-source deny followed by a more
+ * specific allow is intentional and must not be reordered or rejected.
+ */
+function assertV1ActionNormalizationDoesNotCollapseSources(provenance) {
+  const actionPolicies = new Map()
+  for (const source of provenance) {
+    if (source.sourceKind !== 'action') continue
+    const policy = actionPolicies.get(source.sourceAction) ?? []
+    policy.push({ resource: source.rule.resource, effect: source.rule.effect })
+    actionPolicies.set(source.sourceAction, policy)
+  }
+  const identicalActionPolicies = (left, right) => {
+    const leftPolicy = actionPolicies.get(left.sourceAction)
+    const rightPolicy = actionPolicies.get(right.sourceAction)
+    return (
+      leftPolicy !== undefined &&
+      rightPolicy !== undefined &&
+      JSON.stringify(leftPolicy) === JSON.stringify(rightPolicy)
+    )
+  }
+
+  for (let leftIndex = 0; leftIndex < provenance.length; leftIndex += 1) {
+    const left = provenance[leftIndex]
+    for (let rightIndex = leftIndex + 1; rightIndex < provenance.length; rightIndex += 1) {
+      const right = provenance[rightIndex]
+      const distinctMcpServers =
+        left.sourceKind === 'mcp' &&
+        right.sourceKind === 'mcp' &&
+        left.sourceName !== right.sourceName
+      const distinctActions =
+        left.sourceKind === 'action' &&
+        right.sourceKind === 'action' &&
+        left.sourceAction !== right.sourceAction
+      const actionAliasCollision =
+        distinctActions &&
+        !identicalActionPolicies(left, right) &&
+        !opencodeWildcardPatternsOverlap(left.sourceAction, right.sourceAction) &&
+        left.rule.effect !== right.rule.effect &&
+        opencodeWildcardPatternsOverlap(left.rule.action, right.rule.action)
+      const mcpAliasCollision =
+        distinctMcpServers && opencodeWildcardPatternsOverlap(left.rule.action, right.rule.action)
+      const crossKindAliasCollision =
+        left.sourceKind !== right.sourceKind &&
+        !opencodeWildcardPatternsOverlap(left.sourceAction, right.sourceAction) &&
+        left.rule.effect !== right.rule.effect &&
+        opencodeWildcardPatternsOverlap(left.rule.action, right.rule.action)
+
+      if (
+        (actionAliasCollision || mcpAliasCollision || crossKindAliasCollision) &&
+        opencodeWildcardPatternsOverlap(left.rule.resource, right.rule.resource)
+      ) {
+        throw new TypeError(
+          'Distinct V1 permission sources overlap after OpenCode V2 action normalization; migration stopped.',
+        )
+      }
+    }
+  }
 }
 
 /**
@@ -469,11 +348,7 @@ function convertPermissionsV2toV1(permArray) {
       rules = new Map()
       byKey.set(v1Key, rules)
     }
-    const label = `permission "${v1Key}" resource "${resource}"`
-    rules.set(
-      resource,
-      rules.has(resource) ? resolveEffects(rules.get(resource), effect, label) : effect,
-    )
+    rules.set(resource, rules.has(resource) ? resolveEffects(rules.get(resource), effect) : effect)
   }
 
   const result = {}
@@ -620,6 +495,81 @@ function convertProviderV2toV1(_name, config) {
 }
 
 /**
+ * Validate the MCP source shape before any installer seeding can normalize it.
+ * Returns the shape decision consumed by the converter so both paths apply
+ * exactly the same nested-map and legacy-toggle rules.
+ *
+ * @param {unknown} mcpConfig
+ * @returns {{ hasV2ServersMap: boolean, legacyServersToggle: boolean }}
+ */
+export function validateMcpV1toV2Source(mcpConfig) {
+  if (Array.isArray(mcpConfig)) {
+    throw new Error(
+      'Malformed MCP configuration: top-level mcp must be an object map, not an array.',
+    )
+  }
+  if (!isPlainObject(mcpConfig)) {
+    throw new Error('Malformed MCP configuration: top-level mcp must be an object map.')
+  }
+
+  const wrappedServers = mcpConfig.servers
+  if (Array.isArray(wrappedServers)) {
+    throw new Error('Malformed MCP configuration: mcp.servers must be an object map, not an array.')
+  }
+  const legacyServersToggle =
+    isPlainObject(wrappedServers) &&
+    Object.keys(wrappedServers).length === 1 &&
+    typeof wrappedServers.enabled === 'boolean'
+  const looksLikeServerConfig = (value) =>
+    isPlainObject(value) &&
+    (typeof value.type === 'string' ||
+      typeof value.url === 'string' ||
+      typeof value.cwd === 'string' ||
+      Array.isArray(value.command))
+  const nestedServerMap =
+    isPlainObject(wrappedServers) &&
+    (Object.keys(wrappedServers).length === 0 ||
+      Object.values(wrappedServers).every(looksLikeServerConfig))
+  const flatServerNamedServers = looksLikeServerConfig(wrappedServers)
+
+  if (!legacyServersToggle && nestedServerMap && flatServerNamedServers) {
+    throw new Error('Ambiguous mcp.servers value could be a flat server or a nested server map.')
+  }
+
+  const malformedNestedMap =
+    isPlainObject(wrappedServers) &&
+    !legacyServersToggle &&
+    !nestedServerMap &&
+    !flatServerNamedServers
+
+  if (malformedNestedMap) {
+    throw new Error('Malformed or ambiguous nested MCP server map cannot be migrated safely.')
+  }
+
+  const hasV2ServersMap =
+    isPlainObject(wrappedServers) &&
+    !legacyServersToggle &&
+    nestedServerMap &&
+    !flatServerNamedServers
+
+  for (const [name, value] of Object.entries(mcpConfig)) {
+    if (
+      name === 'servers' &&
+      (legacyServersToggle || hasV2ServersMap || looksLikeServerConfig(value))
+    ) {
+      continue
+    }
+    if (!isPlainObject(value)) {
+      throw new Error(
+        'Malformed MCP server entry: every flat server configuration must be an object.',
+      )
+    }
+  }
+
+  return { hasV2ServersMap, legacyServersToggle }
+}
+
+/**
  * Convert V1 MCP config to V2.
  *
  * The server names are arbitrary — a user calls theirs whatever they like, and
@@ -628,26 +578,35 @@ function convertProviderV2toV1(_name, config) {
  * V1: { myserver: { type: "remote", url: "...", enabled: true, timeout: 30000 } }
  * V2 installer output: { myserver: { type: "remote", url: "...", enabled: true } }
  *
- * OpenCode 1.18.18 does not have an `mcp.servers` wrapper. It interprets
- * `servers` as the name of an MCP server and then rejects it with
- * `Missing key mcp.servers.enabled`. Keep MCP in the documented shape and
- * normalize old generated V2 entries back to it.
+ * V2's MCP schema stores named servers under `mcp.servers`; V1's flat map is
+ * wrapped during migration. A pre-existing V2 wrapper is retained in place,
+ * and distinct flat siblings are included rather than silently discarded. A
+ * duplicate name across the two shapes is ambiguous and fails closed.
  */
 function convertMcpV1toV2(mcpConfig) {
-  if (!mcpConfig || typeof mcpConfig !== 'object') return mcpConfig
-
+  const { hasV2ServersMap, legacyServersToggle } = validateMcpV1toV2Source(mcpConfig)
   const servers = {}
-  const source =
-    mcpConfig.servers && typeof mcpConfig.servers === 'object' && !Array.isArray(mcpConfig.servers)
-      ? { ...mcpConfig, ...mcpConfig.servers }
-      : mcpConfig
+  // Expand a nested map exactly where its `servers` property occurred. This
+  // retains the source order relative to flat siblings while still detecting
+  // duplicate names across both shapes below.
+  const source = Object.entries(mcpConfig).flatMap(([name, config]) =>
+    hasV2ServersMap && name === 'servers' ? Object.entries(config) : [[name, config]],
+  )
 
-  for (const [name, serverConfig] of Object.entries(source)) {
-    if (name === 'servers') continue
-    // Installer versions that seeded the legacy wrapper also wrote a boolean
-    // feature toggle (`servers: { enabled: true }`). After unwrapping, that
-    // toggle surfaces as a non-object entry and is not a server; drop it.
-    if (serverConfig === null || typeof serverConfig !== 'object') continue
+  for (const [name, serverConfig] of source) {
+    if (!hasV2ServersMap && name === 'servers' && legacyServersToggle) {
+      // Older installers used mcp.servers.enabled as a feature toggle beside
+      // flat server entries. It is not a named server configuration.
+      continue
+    }
+    if (!isPlainObject(serverConfig)) {
+      throw new Error(
+        'Malformed MCP server entry: every flat server configuration must be an object.',
+      )
+    }
+    if (Object.hasOwn(servers, name)) {
+      throw new Error('Conflicting flat and nested MCP server entries cannot be merged safely.')
+    }
     const srv = { ...serverConfig }
 
     // Normalize legacy V2's disabled flag to OpenCode 1.18.x's enabled flag.
@@ -666,10 +625,10 @@ function convertMcpV1toV2(mcpConfig) {
     // A shorthand inherited-server override is valid only when named directly.
     // Runtime MCP entries always have a complete config, so leave other values
     // untouched and avoid dropping user-owned servers.
-    servers[name] = srv
+    setOwn(servers, name, srv)
   }
 
-  return servers
+  return { servers }
 }
 
 /**
@@ -678,7 +637,7 @@ function convertMcpV1toV2(mcpConfig) {
 function convertMcpV2toV1(mcpConfig) {
   if (!mcpConfig || typeof mcpConfig !== 'object') return mcpConfig
 
-  return convertMcpV1toV2(mcpConfig)
+  return convertMcpV1toV2(mcpConfig)?.servers ?? mcpConfig
 }
 
 // ---------------------------------------------------------------------------
@@ -705,6 +664,15 @@ export const MCP_ENTRYPOINT_RENAMES = Object.freeze({
   'pantheon_vision_server.py': 'pantheon_vision.py',
 })
 
+/** Exact server-to-entrypoint identities written by the installer. */
+export const PANTHEON_MCP_ENTRYPOINTS = Object.freeze({
+  'pantheon-resources': 'mcp_resources.py',
+  'pantheon-code-mode': 'code_mode.py',
+  'pantheon-memory': 'memory_mcp.py',
+  'pantheon-persistence': 'mcp_persistence.py',
+  'pantheon-vision': 'pantheon_vision.py',
+})
+
 /**
  * Rewrite a single path/argument string when its basename is a renamed MCP
  * entrypoint. The directory prefix is preserved verbatim, so both relative
@@ -724,13 +692,10 @@ function renameMcpEntrypointPath(value) {
 }
 
 /**
- * Heal stale MCP entrypoint paths in a flat named-server map, in place.
- *
- * Scans every server — not only the `pantheon-*` keys — because a user who
- * hand-edited their config may have renamed the key while keeping the
- * Pantheon path. Both `command` (installer writes `[python, script]`) and
- * `args` (the standalone installer writes `[script]`) are covered, since
- * which array carries the script differs between installers.
+ * Heal only exact Pantheon MCP server/entrypoint pairs in a flat map, in place.
+ * A matching script basename alone is not ownership evidence. Both `command`
+ * and `args` forms are supported, while other servers and custom entrypoints
+ * remain untouched.
  *
  * @param {object} mcp - the `mcp` map from a config (mutated in place)
  * @returns {number} count of rewritten strings (0 = already current)
@@ -739,13 +704,23 @@ export function migrateMcpEntrypointPaths(mcp) {
   if (!mcp || typeof mcp !== 'object' || Array.isArray(mcp)) return 0
 
   let changed = 0
-  for (const server of Object.values(mcp)) {
+  for (const [name, server] of Object.entries(mcp)) {
     if (!server || typeof server !== 'object') continue
+    const currentEntrypoint = PANTHEON_MCP_ENTRYPOINTS[name]
+    if (!currentEntrypoint) continue
+    const staleEntrypoint = Object.keys(MCP_ENTRYPOINT_RENAMES).find(
+      (oldName) => MCP_ENTRYPOINT_RENAMES[oldName] === currentEntrypoint,
+    )
+    if (!staleEntrypoint) continue
     for (const field of ['command', 'args']) {
       const list = server[field]
       if (!Array.isArray(list)) continue
       for (let i = 0; i < list.length; i++) {
-        const next = renameMcpEntrypointPath(list[i])
+        const value = list[i]
+        if (typeof value !== 'string') continue
+        const slash = Math.max(value.lastIndexOf('/'), value.lastIndexOf('\\'))
+        if (value.slice(slash + 1) !== staleEntrypoint) continue
+        const next = renameMcpEntrypointPath(value)
         if (next !== list[i]) {
           list[i] = next
           changed++
@@ -1000,113 +975,42 @@ export function mergeContextSandboxBlocks(v2Explicit, legacy) {
 // Top-level permissions: V1 `permission` + V2 `permissions` coexistence
 // ---------------------------------------------------------------------------
 
-/**
- * Merge converted V1 rules into an existing V2 permissions array.
- *
- * The V2 array is the base and is never discarded. Incoming rules are appended
- * when their action+resource is new, and merged with `resolveEffects` when they
- * collide, so a deny already on disk cannot be downgraded by a later rule.
- *
- * Entries carry their source while merging so `warnSuppressedPermissions` can
- * distinguish an intentional same-block scope (silent) from a cross-source
- * override that neutralises a persisted deny (warned).
- */
+/** Append converted V1 entries after existing V2 entries without reordering or deduplication. */
 function mergePermissionArrays(base, incoming) {
-  // Ordering is necessary for determinism once V1 rules join the array. Check
-  // whether that reorder alone weakens an existing V2 decision before applying
-  // it, so the change is never silent (B6).
-  const validBase = base.filter(isValidPermissionEntry)
-  warnOrderingChangesEffectiveEffect(validBase, sortPermissions(validBase))
-
-  const sources = new Map()
-  const result = base.map((entry) => {
-    const copy = isPlainObject(entry) ? { ...entry } : entry
-    sources.set(copy, 'V2 permissions')
-    return copy
-  })
-  const index = new Map()
-  result.forEach((entry, position) => {
-    if (
-      isPlainObject(entry) &&
-      typeof entry.action === 'string' &&
-      typeof entry.resource === 'string'
-    ) {
-      index.set(`${entry.action}\u0000${entry.resource}`, position)
-    }
-  })
-
-  for (const entry of incoming) {
-    if (
-      !isPlainObject(entry) ||
-      typeof entry.action !== 'string' ||
-      typeof entry.resource !== 'string'
-    ) {
-      // Preserve a shape we cannot merge rather than dropping the rule.
-      result.push(entry)
-      sources.set(entry, 'V1 permission')
-      continue
-    }
-    const key = `${entry.action}\u0000${entry.resource}`
-    const existing = index.get(key)
-    if (existing === undefined) {
-      const copy = { ...entry }
-      index.set(key, result.length)
-      result.push(copy)
-      sources.set(copy, 'V1 permission')
-      continue
-    }
-    result[existing].effect = resolveEffects(
-      result[existing].effect,
-      entry.effect,
-      `${entry.action} "${entry.resource}"`,
-    )
-  }
-
-  const sorted = sortPermissions(result)
-  warnSuppressedPermissions(sorted, sources)
-  return sorted
+  warnInvalidPermissionEntries(base)
+  return [...base, ...incoming]
 }
 
-/**
- * Servers `applyMcpServerEntries` seeds on every install. Their presence in
- * `mcp` means the install path already ran and reported every `ask` entry via
- * `S.mcpAskNotEnforceable`, so the migration must not repeat it: one warning
- * per server. A standalone migration has no such markers and still warns here.
- */
-const INSTALLER_MCP_SERVERS = Object.freeze([
-  'pantheon-resources',
-  'pantheon-code-mode',
-  'pantheon-memory',
-  'pantheon-persistence',
-  'pantheon-vision',
-])
-
-function isInstallerPrepared(config) {
-  if (!isPlainObject(config) || !isPlainObject(config.mcp)) return false
-  return INSTALLER_MCP_SERVERS.every((server) => Object.hasOwn(config.mcp, server))
+function assertNoConflictingV1AndV2PermissionRules(v2, convertedV1) {
+  const conflicts = convertedV1.some(
+    (legacy) =>
+      isValidPermissionEntry(legacy) &&
+      v2.some(
+        (native) =>
+          isValidPermissionEntry(native) &&
+          legacy.effect !== native.effect &&
+          opencodeWildcardPatternsOverlap(native.action, legacy.action) &&
+          opencodeWildcardPatternsOverlap(native.resource, legacy.resource),
+      ),
+  )
+  if (conflicts) {
+    throw new Error(
+      'Conflicting V1 and native V2 permission rules require an explicit policy choice; migration stopped.',
+    )
+  }
 }
 
 /**
  * Resolve top-level `permission` (V1) and `permissions` (V2) when both exist.
  *
- * Precedence is fixed and does NOT depend on the order the keys appear in the
- * object:
- *   1. the existing V2 `permissions` array is the base (it is the target
- *      format and may already carry rules a previous install wrote);
- *   2. the converted V1 `permission` rules are merged into it;
- *   3. same action+resource conflicts resolve by restrictiveness
- *      (`deny > ask > allow`), and an unrecognized effect never replaces a
- *      known one — see `resolveEffects`.
- *
- * A V2 array with no V1 block is returned VERBATIM: reordering user state can
- * turn a `deny` into an `allow` under last-match-wins (B6), so the pure V2 path
- * never sorts. Ordering is only introduced by the merge, where determinism
- * requires it, and a weakening reorder is reported.
+ * When both shapes exist, the existing V2 array remains first and converted V1
+ * rules are appended in source order. No rule is sorted, deduplicated, or
+ * resolved by an invented restrictiveness policy.
  *
  * @param {object} config - deep-cloned input config
  * @returns {{present: boolean, value: any}}
  */
-function resolveTopLevelPermissions(config) {
+function resolveTopLevelPermissions(config, configuredMcpServers = []) {
   const hasV1 = Object.hasOwn(config, 'permission')
   const hasV2 = Object.hasOwn(config, 'permissions')
   if (!hasV1 && !hasV2) return { present: false, value: undefined }
@@ -1114,11 +1018,8 @@ function resolveTopLevelPermissions(config) {
   const v1 = hasV1 ? config.permission : undefined
   const v2 = hasV2 ? config.permissions : undefined
   const v1IsObject = isPlainObject(v1)
-  const convertOptions = { suppressAskWarning: isInstallerPrepared(config) }
-  const convertedV1 = v1IsObject ? convertPermissionsV1toV2(v1, convertOptions) : undefined
-  // A V1 block that converts to zero rules (`permission: {}`, or only entries
-  // that are not rules) is not a block to merge. Treating it as one used to
-  // reorder a pure V2 array, which can downgrade a deny under last-match-wins.
+  const convertedV1 = v1IsObject ? convertPermissionsV1toV2(v1, configuredMcpServers) : undefined
+  // An empty V1 block adds nothing to an existing V2 array.
   const hasV1Rules = Array.isArray(convertedV1) && convertedV1.length > 0
 
   if (!hasV2) {
@@ -1145,6 +1046,8 @@ function resolveTopLevelPermissions(config) {
   }
   if (!hasV1Rules) return { present: true, value: v2 }
 
+  assertNoConflictingV1AndV2PermissionRules(v2, convertedV1)
+
   console.warn(
     '[config-migration] both "permission" (V1) and "permissions" (V2) are present; merging the V1 rules into the existing V2 array',
   )
@@ -1165,10 +1068,24 @@ function resolveTopLevelPermissions(config) {
  * @param {object} config - V1 config object (not mutated)
  * @returns {object} V2 config object
  */
-export function migrateV1toV2(config) {
+function configuredMcpServerNames(mcpConfig) {
+  if (!isPlainObject(mcpConfig)) return []
+  const { hasV2ServersMap, legacyServersToggle } = validateMcpV1toV2Source(mcpConfig)
+  return Object.entries(mcpConfig).flatMap(([name, value]) => {
+    if (hasV2ServersMap && name === 'servers') return Object.keys(value)
+    if (legacyServersToggle && name === 'servers') return []
+    return [name]
+  })
+}
+
+export function migrateV1toV2(config, { mcpServerNames = [] } = {}) {
   const c = deepClone(config)
+  // JSON cloning omits own properties whose value is undefined. Keep a present
+  // MCP field visible to validation so it cannot be mistaken for absence.
+  if (Object.hasOwn(config, 'mcp') && config.mcp === undefined) c.mcp = undefined
   const result = {}
-  const topLevelPermissions = resolveTopLevelPermissions(c)
+  const allMcpServerNames = [...new Set([...configuredMcpServerNames(c.mcp), ...mcpServerNames])]
+  const topLevelPermissions = resolveTopLevelPermissions(c, allMcpServerNames)
   let permissionsEmitted = false
 
   for (const [key, value] of Object.entries(c)) {
@@ -1184,7 +1101,7 @@ export function migrateV1toV2(config) {
       for (const [agentName, agentConfig] of Object.entries(value)) {
         const ac = { ...agentConfig }
         if (ac.permission && typeof ac.permission === 'object') {
-          ac.permissions = convertPermissionsV1toV2(ac.permission)
+          ac.permissions = convertPermissionsV1toV2(ac.permission, allMcpServerNames)
           delete ac.permission
         }
         agents[agentName] = ac
@@ -1210,7 +1127,7 @@ export function migrateV1toV2(config) {
         providers[renamed] = convertProviderV1toV2(provName, provConfig)
       }
       result.providers = providers
-    } else if (key === 'mcp' && typeof value === 'object' && value !== null) {
+    } else if (key === 'mcp') {
       result.mcp = convertMcpV1toV2(value)
     } else if (v2Key !== key) {
       result[v2Key] = value
