@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import test from 'node:test'
-import { pathToFileURL } from 'node:url'
+import { pathToFileURL, URL } from 'node:url'
 import Ajv from 'ajv'
 
 const serverPath = join(process.cwd(), 'src/plugins/tui/dist/server-v2.js')
@@ -849,14 +849,17 @@ test('remote adapters deduplicate/cache status reads and cap simultaneous reques
     maximumFetches = Math.max(maximumFetches, activeFetches)
     await new Promise((resolve) => setImmediate(resolve))
     activeFetches -= 1
-    if (url.includes('deepseek'))
+    const requestUrl = new URL(String(url))
+    const hostname = requestUrl.hostname
+    if (hostname === 'deepseek.com' || hostname.endsWith('.deepseek.com'))
       return Response.json({
         is_available: true,
         balance_infos: [{ currency: 'USD', total_balance: '1' }],
       })
-    if (url.includes('ollama.com'))
+    if (hostname === 'ollama.com' || hostname.endsWith('.ollama.com'))
       return Response.json({ included: { balance_usd: 1 }, purchased: {} })
-    if (url.includes('openrouter')) return Response.json({ data: { limit: null, usage: 1 } })
+    if (hostname === 'openrouter.ai' || hostname.endsWith('.openrouter.ai'))
+      return Response.json({ data: { limit: null, usage: 1 } })
     return Response.json({ quota: 2, used: 1 })
   }
   t.after(() => {
