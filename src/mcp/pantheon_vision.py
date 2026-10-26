@@ -15,7 +15,6 @@ import json
 import logging
 import mimetypes
 import os
-import re
 import sqlite3
 import struct
 import sys
@@ -71,13 +70,8 @@ OPENCODE_ENDPOINT = "https://opencode.ai/zen/v1/chat/completions"
 # elsewhere.
 SESSION_HEADER = "x-opencode-session"
 _ZEN_ENDPOINT_PREFIX = "https://opencode.ai/zen/"
-# A session id is an opaque OpenCode token. Only the characters real ids use
-# (`ses_...`) plus the separators existing callers already pass are accepted;
-# the length is bounded. Anything else — empty, whitespace, control characters,
-# quotes, CR/LF — is rejected instead of being copied into the header, where a
-# CRLF would split it and let a caller inject extra headers/requests.
-_SESSION_ID_MAX_LENGTH = 128
-_SESSION_ID_PATTERN = re.compile(r"[A-Za-z0-9._:-]+")
+# Keep in sync with src/pantheon/session-guard.ts: OpenCode accepts IDs that
+# start with "ses". Do not add a narrower local format or length constraint.
 _ALLOWED_MIME_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif"}
 _EXTENSION_MIME_TYPES = {
     ".png": "image/png",
@@ -297,22 +291,19 @@ def _is_zen_endpoint(endpoint: str) -> bool:
 
 
 def _validated_session_id(value: object) -> str | None:
-    """Return a session id safe to send in the Zen header, or None.
+    """Return a host-valid session id, following the shared ``ses`` contract."""
+    return value if isinstance(value, str) and value.startswith("ses") else None
 
-    The value arrives from a tool parameter the plugin forwards (a local MCP
-    process is not handed a session id by the host), so it is untrusted input:
-    only a trimmed, bounded, token-shaped value is accepted. An empty or
-    whitespace-only string, a control character, a quote, or an embedded
-    CR/LF yields None so the header is simply omitted — never copied verbatim.
-    """
-    if not isinstance(value, str):
-        return None
-    candidate = value.strip()
-    if not candidate or len(candidate) > _SESSION_ID_MAX_LENGTH:
-        return None
-    if _SESSION_ID_PATTERN.fullmatch(candidate) is None:
-        return None
-    return candidate
+
+def _require_session_id(value: object) -> str:
+    """Return a valid session id or fail before any Zen-bound work."""
+    session_id = _validated_session_id(value)
+    if session_id is None:
+        raise VisionError(
+            "A valid OpenCode session id is required for Zen Vision; "
+            "retry from an active OpenCode session."
+        )
+    return session_id
 
 
 def _strip_provider_prefix(model: str) -> str:
@@ -637,13 +628,11 @@ async def _gateway(
 ) -> str:
     """Send one multimodal request to the selected OpenCode gateway.
 
-    ``session_id`` (when present and valid — see ``_validated_session_id``) is
-    sent as the ``x-opencode-session`` header — and ONLY for a Zen endpoint,
-    which rejects the request with HTTP 400 ``MissingSessionID`` otherwise. An
-    unusable value (empty, whitespace, control characters, CR/LF, quotes) is
-    dropped rather than copied into the header. It is never logged and never
-    sent to a non-Zen host.
+    A valid ``session_id`` is required before auth lookup or POST. It is sent as
+    ``x-opencode-session`` only for a Zen endpoint, and is never logged or sent
+    to a non-Zen host.
     """
+    safe_session_id = _require_session_id(session_id)
     key, endpoint = _resolve_auth()
     if not key:
         # Missing credential is FATAL here (unlike the graceful describe/ocr
@@ -680,8 +669,7 @@ async def _gateway(
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
     }
-    safe_session_id = _validated_session_id(session_id)
-    if safe_session_id is not None and _is_zen_endpoint(endpoint):
+    if _is_zen_endpoint(endpoint):
         headers[SESSION_HEADER] = safe_session_id
     try:
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS) as client:
@@ -786,15 +774,21 @@ async def vision_describe(
     through the tool call because a local MCP process is not handed one by the
     host. It is sent only to a Zen endpoint and never logged.
     """
+    key, _endpoint = _resolve_auth()
+    session = None
+    if key:
+        try:
+            session = _require_session_id(session_id)
+        except Exception as exc:
+            return _error_message(exc)
     try:
         image = await _prepare_input(path)
     except Exception as exc:
         return _error_message(exc)
-    key, _endpoint = _resolve_auth()
     if not key:
         return _local_vision_text(image)
     try:
-        return await _gateway(image, prompt or _DESCRIBE_PROMPT, session_id=session_id)
+        return await _gateway(image, prompt or _DESCRIBE_PROMPT, session_id=session)
     except Exception as exc:
         return _error_message(exc)
 
@@ -807,15 +801,21 @@ async def vision_ocr(path: str, session_id: str | None = None) -> str:
     when no gateway credential is configured. ``session_id`` reaches the Zen
     gateway as the ``x-opencode-session`` header (see ``vision_describe``).
     """
+    key, _endpoint = _resolve_auth()
+    session = None
+    if key:
+        try:
+            session = _require_session_id(session_id)
+        except Exception as exc:
+            return _error_message(exc)
     try:
         image = await _prepare_input(path)
     except Exception as exc:
         return _error_message(exc)
-    key, _endpoint = _resolve_auth()
     if not key:
         return _local_vision_text(image)
     try:
-        return await _gateway(image, _OCR_PROMPT, session_id=session_id)
+        return await _gateway(image, _OCR_PROMPT, session_id=session)
     except Exception as exc:
         return _error_message(exc)
 
@@ -830,9 +830,10 @@ async def vision_analyze(path: str, session_id: str | None = None) -> str:
     (see ``vision_describe``).
     """
     try:
+        session = _require_session_id(session_id)
         image = await _prepare_input(path)
         content = await _gateway(
-            image, _ANALYZE_PROMPT, structured=True, session_id=session_id
+            image, _ANALYZE_PROMPT, structured=True, session_id=session
         )
         parsed = _parse_json_object(content)
         if parsed is None:
