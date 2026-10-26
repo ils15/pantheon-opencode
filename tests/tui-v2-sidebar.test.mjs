@@ -767,6 +767,11 @@ test('packaged plugin registers additive TUI surfaces, warms up eagerly, and dis
 
     const paths = registrations.map((claim) => claim.append)
     assert.ok(paths.includes('sidebar.content'), 'sidebar slot is registered')
+    assert.equal(
+      paths.filter((path) => path === 'sidebar.content').length,
+      1,
+      'quota belongs to the same sidebar composition, not an independently ordered slot',
+    )
     assert.ok(
       paths.includes('home.footer.status'),
       'home footer status guards the pre-prompt state',
@@ -2472,7 +2477,7 @@ test('spend line: absent client.session.stats hides it without calling or throwi
   }
 })
 
-test('sidebar renders Context → Git status → Todo → Dispatch, and no other block', async () => {
+test('sidebar renders Context → Git status → Todo → Dispatch → quota', async () => {
   const { BLOCK_ICONS } = await loadV2()
   const source = readFileSync(join(root, 'src/plugins/tui/src/index-v2.tsx'), 'utf8')
 
@@ -2480,11 +2485,13 @@ test('sidebar renders Context → Git status → Todo → Dispatch, and no other
   const gitAt = source.indexOf('{/* Git status —')
   const todoAt = source.indexOf('{/* Todo —')
   const dispatchAt = source.indexOf('{/* Dispatch —')
+  const quotaAt = source.indexOf('<QuotaSidebarSummary')
 
   assert.ok(contextAt > 0 && gitAt > 0 && todoAt > 0 && dispatchAt > 0, 'four blocks exist')
   assert.ok(contextAt < gitAt, 'Context renders before Git status')
   assert.ok(gitAt < todoAt, 'Todo renders after Git status')
-  assert.ok(todoAt < dispatchAt, 'Dispatch closes the sidebar')
+  assert.ok(todoAt < dispatchAt, 'Dispatch follows Todo')
+  assert.ok(dispatchAt < quotaAt, 'quota follows Dispatch in the same composition')
 
   // The standalone `agentes` and `Skills` blocks were removed, not hidden: no
   // header, no label, no block key, no skill source and no skill estimate.

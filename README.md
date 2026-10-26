@@ -76,7 +76,10 @@ see [Quick Start](docs/QUICKSTART.md).
 - **An optional TUI** with a dispatch sidebar block and a full-width
   `/dispatch` panel. The V2 TUI also provides a quota overview in the
   sidebar/footer and a `/quota` details panel. Quota display is enabled by
-  default; use `E` to disable it or `M` to switch between remaining and used.
+  default; the sidebar keeps Todo and places quota immediately after Dispatch
+  (header/version → Session → Context → Git → Todo → Dispatch → quota).
+  Status stays in the native sidebar footer. Use `E` to disable quota or `M`
+  to switch between remaining and used.
   The installer selects the `plugins` component by default; in interactive setup
   you can change the component selection. A component-scoped install includes
   the TUI only when `plugins` is selected.

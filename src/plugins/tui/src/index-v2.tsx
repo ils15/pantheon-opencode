@@ -8,7 +8,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { Plugin } from '@opencode/plugin/tui'
 import type { Context, KeymapLayer, PanelInput } from '@opencode/plugin/tui/context'
-import type { Accessor } from 'solid-js'
+import type { Accessor, JSX } from 'solid-js'
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from 'solid-js'
 import {
   type ContextProgressTone,
@@ -23,8 +23,13 @@ import {
   MODEL_USAGE_SESSION_LIMIT,
   MODEL_USAGE_VISIBLE_CEILING,
 } from './model-usage-limits'
-import { registerQuotaTui } from './quota-v2'
-import { resolveActiveModelRef, resolveModelContextSnapshot } from './quota-v2-model'
+import { QuotaSidebarSummary, registerQuotaTui } from './quota-v2'
+import {
+  createQuotaRuntime,
+  type QuotaRuntime,
+  resolveActiveModelRef,
+  resolveModelContextSnapshot,
+} from './quota-v2-model'
 
 export type { ContextProgressTone } from './context-gauge'
 export {
@@ -3807,7 +3812,13 @@ function BlockHeader(props: {
   )
 }
 
-function Sidebar(props: { context: any; sessionID?: string }) {
+interface SidebarProps {
+  context: Context
+  sessionID?: string
+  quotaRuntime: QuotaRuntime
+}
+
+function Sidebar(props: SidebarProps): JSX.Element {
   const { context } = props
   const model = createSidebarModel(context, () => props.sessionID)
   const text = () => context.theme.text?.base
@@ -4034,6 +4045,8 @@ function Sidebar(props: { context: any; sessionID?: string }) {
           </Show>
         </box>
       </Show>
+      {/* Keep quota inside this composition: host slots order claims, not our blocks. */}
+      <QuotaSidebarSummary context={context} runtime={props.quotaRuntime} />
     </box>
   )
 }
@@ -4308,12 +4321,13 @@ const plugin = Plugin.define({
     // Eager load/sync at setup so the cache is warm before the slot's first
     // render (Known Issue: empty sidebar before the first prompt).
     warmUpSidebarData(context, location)
-    const unregisterQuotaTui = registerQuotaTui(context)
+    const quotaRuntime = createQuotaRuntime(context)
+    const unregisterQuotaTui = registerQuotaTui(context, quotaRuntime)
 
     const unregisterSidebar = context.ui.slot({
       append: 'sidebar.content',
       render: ({ sessionID }: { sessionID: string }) => (
-        <Sidebar context={context} sessionID={sessionID} />
+        <Sidebar context={context} sessionID={sessionID} quotaRuntime={quotaRuntime} />
       ),
     })
     const unregisterHome = context.ui.slot({

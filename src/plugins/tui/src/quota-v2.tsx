@@ -14,7 +14,6 @@ import { MODEL_USAGE_MESSAGE_LIMIT, MODEL_USAGE_SESSION_LIMIT } from './model-us
 import {
   collectRecentModelUsageRows,
   compactQuotaMetric,
-  createQuotaRuntime,
   type QuotaMetric,
   type QuotaProviderDetail,
   type QuotaRuntime,
@@ -143,12 +142,12 @@ function QuotaSidebarEntryRow(props: {
   )
 }
 
-function QuotaSidebarSummary(props: QuotaSurfaceProps): JSX.Element {
+export function QuotaSidebarSummary(props: QuotaSurfaceProps): JSX.Element {
   const entries = createMemo(() => quotaSidebarEntries(props.runtime.snapshot()))
   const quotaWindowCount = () => entries().filter((entry) => entry.kind === 'quota').length
   return (
     <Show when={props.runtime.preferences().enabled}>
-      <box flexDirection="column">
+      <box flexDirection="column" marginTop={1}>
         <text fg={base(props.context)}>{`${QUOTA_ICON} Pantheon quota`}</text>
         <text fg={muted(props.context)}>
           {quotaSidebarSummary(
@@ -861,17 +860,10 @@ function QuotaCommandLayer(props: QuotaSurfaceProps) {
   return null
 }
 
-/** Register data-only quota summaries, details, preferences, and refresh command. */
-export function registerQuotaTui(context: Context): () => void {
-  const runtime = createQuotaRuntime(context)
+/** Register footer/panel controls and own teardown of the shared sidebar runtime. */
+export function registerQuotaTui(context: Context, runtime: QuotaRuntime): () => void {
   const unregister: Array<() => void> = []
   try {
-    unregister.push(
-      context.ui.slot({
-        append: 'sidebar.content',
-        render: () => <QuotaSidebarSummary context={context} runtime={runtime} />,
-      }),
-    )
     unregister.push(
       context.ui.slot({
         append: 'prompt.footer',

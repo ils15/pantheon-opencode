@@ -834,6 +834,7 @@ function QuotaSidebarSummary(props) {
 			insertNode(_el$9, _el$0);
 			insertNode(_el$9, _el$10);
 			setProp(_el$9, "flexDirection", "column");
+			setProp(_el$9, "marginTop", 1);
 			insertNode(_el$0, createTextNode(`▥ Pantheon quota`));
 			insert(_el$10, () => quotaSidebarSummary(props.runtime.snapshot(), props.runtime.preferences().display, entries()));
 			insert(_el$9, createComponent(Show, {
@@ -1768,18 +1769,10 @@ function QuotaCommandLayer(props) {
 	}));
 	return null;
 }
-/** Register data-only quota summaries, details, preferences, and refresh command. */
-function registerQuotaTui(context) {
-	const runtime = createQuotaRuntime(context);
+/** Register footer/panel controls and own teardown of the shared sidebar runtime. */
+function registerQuotaTui(context, runtime) {
 	const unregister = [];
 	try {
-		unregister.push(context.ui.slot({
-			append: "sidebar.content",
-			render: () => createComponent(QuotaSidebarSummary, {
-				context,
-				runtime
-			})
-		}));
 		unregister.push(context.ui.slot({
 			append: "prompt.footer",
 			render: () => createComponent(QuotaFooterSummary, {
@@ -5181,6 +5174,12 @@ function Sidebar(props) {
 				return _el$19;
 			}
 		}), null);
+		insert(_el$0, createComponent(QuotaSidebarSummary, {
+			context,
+			get runtime() {
+				return props.quotaRuntime;
+			}
+		}), null);
 		effect((_p$) => {
 			var _v$3 = text(), _v$4 = muted();
 			_v$3 !== _p$.e && (_p$.e = setProp(_el$1, "fg", _v$3, _p$.e));
@@ -5516,12 +5515,14 @@ const plugin = Plugin.define({
 		if (globalState[SINGLETON]) return;
 		globalState[SINGLETON] = true;
 		warmUpSidebarData(context, resolveLocation(context));
-		const unregisterQuotaTui = registerQuotaTui(context);
+		const quotaRuntime = createQuotaRuntime(context);
+		const unregisterQuotaTui = registerQuotaTui(context, quotaRuntime);
 		const unregisterSidebar = context.ui.slot({
 			append: "sidebar.content",
 			render: ({ sessionID }) => createComponent(Sidebar, {
 				context,
-				sessionID
+				sessionID,
+				quotaRuntime
 			})
 		});
 		const unregisterHome = context.ui.slot({
