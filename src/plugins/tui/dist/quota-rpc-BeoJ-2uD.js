@@ -338,6 +338,14 @@ const quotaRpc = Rpc.define({
 							"other",
 							"missing"
 						]
+					},
+					error_structure: {
+						type: "string",
+						enum: [
+							"present",
+							"absent",
+							"unavailable"
+						]
 					}
 				},
 				required: ["category"],
@@ -373,4 +381,4 @@ const quotaRpc = Rpc.define({
 //#endregion
 export { quotaRpc as n, QUOTA_PROVIDER_IDS as t };
 
-//# sourceMappingURL=quota-rpc-C05nCleO.js.map
+//# sourceMappingURL=quota-rpc-BeoJ-2uD.js.map

@@ -98,6 +98,47 @@ test('diagnostic categories use safe explanations and discard arbitrary response
   assert.doesNotMatch(JSON.stringify(hostile.alerts), /SECRET/)
 })
 
+test('401 structural metadata is allowlisted, inconclusive, and never exposes upstream details', async () => {
+  for (const [error_structure, explanation] of [
+    ['present', 'erro estruturado presente'],
+    ['absent', 'erro estruturado não detectado'],
+    ['unavailable', 'não foi possível inspecionar'],
+  ]) {
+    const h = harness(() => true, {
+      category: 'unauthorized',
+      status: 401,
+      error_structure,
+      error: { code: 'UPSTREAM_SENTINEL', type: 'UPSTREAM_SENTINEL', message: 'UPSTREAM_SENTINEL' },
+      body: 'UPSTREAM_SENTINEL',
+      raw_response: 'UPSTREAM_SENTINEL',
+      request_id: 'UPSTREAM_SENTINEL',
+      byte_count: 314159,
+    })
+    await h.command.run()
+    const message = h.alerts[0].message
+    assert.ok(message.includes(explanation))
+    assert.match(message, /HTTP 401/)
+    assert.match(message, /cause unknown/)
+    assert.doesNotMatch(message, /UPSTREAM_SENTINEL|314159|key invalid|invalid key/i)
+    assert.equal(h.calls.length, 1)
+  }
+})
+
+test('unexpected structural values and non-401 results retain generic wording', async () => {
+  const generic = harness(() => true, { category: 'unauthorized', status: 401 })
+  await generic.command.run()
+  for (const error_structure of ['UPSTREAM_SENTINEL', '__proto__', 'constructor', null, {}, 42]) {
+    const h = harness(() => true, { category: 'unauthorized', status: 401, error_structure })
+    await h.command.run()
+    assert.equal(h.alerts[0].message, generic.alerts[0].message)
+  }
+  for (const result of [{ category: 'http_error', status: 403 }, { category: 'unauthorized' }]) {
+    const h = harness(() => true, { ...result, error_structure: 'present' })
+    await h.command.run()
+    assert.doesNotMatch(h.alerts[0].message, /erro estruturado/)
+  }
+})
+
 test('malformed optional fields and RPC failures never disclose raw data or claim no request', async () => {
   const h = harness(() => true, { category: 'success', status: 'SECRET', content_type: 'SECRET' })
   await h.command.run()

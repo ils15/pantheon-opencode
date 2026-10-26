@@ -177,6 +177,10 @@ export const quotaRpc = Rpc.define({
             type: 'string',
             enum: ['application/json', 'text/plain', 'text/html', 'other', 'missing'],
           },
+          error_structure: {
+            type: 'string',
+            enum: ['present', 'absent', 'unavailable'],
+          },
         },
         required: ['category'],
         additionalProperties: false,

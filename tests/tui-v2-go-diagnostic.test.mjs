@@ -67,8 +67,8 @@ async function fixture(
     },
   })
   t.after(cleanup)
-  const run = async () => {
-    const result = await handlers.go_key_diagnostic({}, { signal: new AbortController().signal })
+  const run = async (signal = new AbortController().signal) => {
+    const result = await handlers.go_key_diagnostic({}, { signal })
     const validate = new Ajv().compile(definition.methods.go_key_diagnostic.output)
     assert.equal(validate(result), true, JSON.stringify(validate.errors))
     assert.equal(JSON.stringify(result).includes(SECRET), false)
@@ -85,6 +85,7 @@ test('Go diagnostic is idle at initialization, performs one fixed GET, and retur
     category: 'unauthorized',
     status: 401,
     content_type: 'application/json',
+    error_structure: 'present',
   })
   assert.equal(fake.calls.length, 1)
   const [url, options] = fake.calls[0]
@@ -148,7 +149,7 @@ test('network errors are sanitized and never retried', async (t) => {
   assert.equal(fake.calls.length, 1)
 })
 
-test('response body is cancelled without parsing even malformed or secret-bearing data', async (t) => {
+test('non-JSON 401 body is cancelled without reading', async (t) => {
   const fake = await fixture(t)
   let cancelled = false
   globalThis.fetch = async (...args) => {
@@ -156,7 +157,7 @@ test('response body is cancelled without parsing even malformed or secret-bearin
     return {
       status: 401,
       ok: false,
-      headers: new Headers({ 'content-type': 'application/json' }),
+      headers: new Headers({ 'content-type': 'text/plain' }),
       body: {
         cancel: async () => {
           cancelled = true
@@ -173,10 +174,87 @@ test('response body is cancelled without parsing even malformed or secret-bearin
   assert.deepEqual(await fake.run(), {
     category: 'unauthorized',
     status: 401,
-    content_type: 'application/json',
+    content_type: 'text/plain',
+    error_structure: 'unavailable',
   })
   assert.equal(cancelled, true)
   assert.equal(fake.calls.length, 1)
+})
+
+test('401 JSON exposes only bounded top-level error presence', async (t) => {
+  for (const [body, expected] of [
+    [JSON.stringify({ error: { message: SECRET, code: SECRET, type: SECRET } }), 'present'],
+    ['{"error":null}', 'present'],
+    [JSON.stringify({ nested: { error: SECRET } }), 'absent'],
+    ['{}', 'absent'],
+    ['{"error":', 'unavailable'],
+    ['null', 'unavailable'],
+    ['[]', 'unavailable'],
+    [`{}${' '.repeat(4094)}`, 'absent'],
+    [`{}${' '.repeat(4095)}`, 'unavailable'],
+  ]) {
+    await t.test(expected, async (t) => {
+      const fake = await fixture(t)
+      globalThis.fetch = async (...args) => {
+        fake.calls.push(args)
+        return new Response(body, {
+          status: 401,
+          headers: { 'content-type': ' Application/JSON; charset=utf-8' },
+        })
+      }
+      assert.deepEqual(await fake.run(), {
+        category: 'unauthorized',
+        status: 401,
+        content_type: 'application/json',
+        error_structure: expected,
+      })
+      assert.deepEqual(await fake.run(), { category: 'already_used' })
+      assert.equal(fake.calls.length, 1)
+    })
+  }
+})
+
+test('body reader stops and cancels at overflow or unreadable data; never reads non-401 JSON', async (t) => {
+  for (const mode of ['overflow', 'unreadable', 'non-401']) {
+    await t.test(mode, async (t) => {
+      const fake = await fixture(t)
+      let reads = 0
+      let cancelled = 0
+      globalThis.fetch = async (...args) => {
+        fake.calls.push(args)
+        return {
+          status: mode === 'non-401' ? 200 : 401,
+          ok: mode === 'non-401',
+          headers: new Headers({ 'content-type': 'application/json' }),
+          body: {
+            cancel: async () => {
+              cancelled++
+            },
+            getReader() {
+              assert.notEqual(mode, 'non-401')
+              return {
+                async read() {
+                  reads++
+                  if (mode === 'unreadable') throw new Error(SECRET)
+                  assert.ok(reads <= 2)
+                  return { done: false, value: new Uint8Array(reads === 1 ? 4096 : 1) }
+                },
+                cancel: async () => {
+                  cancelled++
+                },
+                releaseLock() {},
+              }
+            },
+          },
+        }
+      }
+      const result = await fake.run()
+      assert.equal(result.error_structure, mode === 'non-401' ? undefined : 'unavailable')
+      assert.equal(reads, mode === 'non-401' ? 0 : mode === 'overflow' ? 2 : 1)
+      assert.equal(cancelled, 1)
+      assert.equal(fake.calls.length, 1)
+    })
+  }
 })
 
 test('request timeout aborts the only fetch and consumes the attempt', async (t) => {
@@ -192,6 +270,40 @@ test('request timeout aborts the only fetch and consumes the attempt', async (t)
   const keepAlive = setInterval(() => {}, 1_000)
   t.after(() => clearInterval(keepAlive))
   assert.deepEqual(await fake.run(), { category: 'timeout' })
+  assert.deepEqual(await fake.run(), { category: 'already_used' })
+  assert.equal(fake.calls.length, 1)
+})
+
+test('abort interrupts a pending body read without surfacing stream errors or retrying', async (t) => {
+  const fake = await fixture(t)
+  const controller = new AbortController()
+  let cancelled = 0
+  globalThis.fetch = async (...args) => {
+    fake.calls.push(args)
+    return {
+      status: 401,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      body: {
+        getReader: () => ({
+          read: () => {
+            queueMicrotask(() => controller.abort(new Error(SECRET)))
+            return new Promise(() => {})
+          },
+          cancel: async () => {
+            cancelled++
+          },
+          releaseLock() {},
+        }),
+      },
+    }
+  }
+  assert.deepEqual(await fake.run(controller.signal), {
+    category: 'unauthorized',
+    status: 401,
+    content_type: 'application/json',
+    error_structure: 'unavailable',
+  })
+  assert.equal(cancelled, 1)
   assert.deepEqual(await fake.run(), { category: 'already_used' })
   assert.equal(fake.calls.length, 1)
 })

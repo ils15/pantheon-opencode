@@ -90,8 +90,12 @@ see [Quick Start](docs/QUICKSTART.md).
   `/quota-go-check` is a separate manual, confirmation-gated diagnostic: one
   GET to `https://opencode.ai/zen/go/v1/usage` with the configured Go API key
   (not OAuth), at most one attempt per plugin runtime. It never refreshes quota,
-  follows redirects, retries, or reads the response body. Results contain only
-  a safe category, optional HTTP status and coarse content type. `success` means
+  follows redirects or retries. Only HTTP 401 bodies are inspected, up to 4096
+  bytes, for an own top-level JSON `error` property; its value is never inspected.
+  Results contain only a safe category, optional HTTP status, coarse content type,
+  and (for 401) whether that structure is present, absent, or unavailable.
+  No error code, type, message, body, request ID, or byte count is displayed;
+  a 401 rejection's cause remains unknown. `success` means
   HTTP success only—not a stable quota contract or parsed quota correctness.
   Require Themis security review before using this diagnostic.
 

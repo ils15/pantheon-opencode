@@ -1,4 +1,4 @@
-import { n as quotaRpc, t as QUOTA_PROVIDER_IDS } from "./quota-rpc-C05nCleO.js";
+import { n as quotaRpc, t as QUOTA_PROVIDER_IDS } from "./quota-rpc-BeoJ-2uD.js";
 import { createComponent, createElement, createTextNode, effect, insert, insertNode, memo, setProp } from "@opentui/solid";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -70,6 +70,11 @@ const EXPLANATIONS = {
 	timeout: "Request timed out; no retry was made.",
 	network_error: "Network error; no retry was made."
 };
+const ERROR_STRUCTURE_EXPLANATIONS = {
+	present: "erro estruturado presente",
+	absent: "erro estruturado não detectado",
+	unavailable: "não foi possível inspecionar"
+};
 /** Treat RPC data as untrusted: only render allowlisted categories and coarse metadata. */
 function resultMessage(value) {
 	if (!value || typeof value !== "object" || !("category" in value)) return "Diagnostic result unavailable. Request outcome unknown; no automatic retry.";
@@ -81,7 +86,7 @@ function resultMessage(value) {
 		"text/html",
 		"other",
 		"missing"
-	].includes(value.content_type) ? ` · content type: ${value.content_type}` : ""}\n${EXPLANATIONS[category]}`;
+	].includes(value.content_type) ? ` · content type: ${value.content_type}` : ""}${category === "unauthorized" && "status" in value && value.status === 401 && "error_structure" in value && typeof value.error_structure === "string" && Object.hasOwn(ERROR_STRUCTURE_EXPLANATIONS, value.error_structure) ? ` · ${ERROR_STRUCTURE_EXPLANATIONS[value.error_structure]}` : ""}\n${EXPLANATIONS[category]}`;
 }
 /** Native keyboard-accessible dialogs; never invoked by quota refresh or panel mounting. */
 function quotaGoCheckCommand(context) {
@@ -99,7 +104,7 @@ function quotaGoCheckCommand(context) {
 			try {
 				if (await context.ui.dialog.confirm({
 					title: "Go API-key diagnostic — send once?",
-					message: "Send one GET to https://opencode.ai/zen/go/v1/usage using the configured Go API key once? OAuth is not used. No request body, redirects, retries, or response-body reading. 5-second timeout. One attempt per plugin runtime, including failed or unavailable-key attempts. This does not refresh quota.",
+					message: "Send one GET to https://opencode.ai/zen/go/v1/usage using the configured Go API key once? OAuth is not used. No request body, redirects, or retries. Only HTTP 401 bodies are inspected (up to 4096 bytes) for a top-level JSON error property; no error values or response details are shown. Rejection cause remains unknown. 5-second timeout. One attempt per plugin runtime, including failed or unavailable-key attempts. This does not refresh quota.",
 					label: {
 						confirm: "Send once",
 						cancel: "Cancel (no request)"

@@ -1,4 +1,4 @@
-import "./quota-rpc-C05nCleO.js";
+import "./quota-rpc-BeoJ-2uD.js";
 import { queryAlibabaTokenPlanUsage } from "./quota-cli.js";
 import { randomUUID } from "node:crypto";
 //#region src/quota-adapters.ts
