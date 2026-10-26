@@ -74,10 +74,26 @@ see [Quick Start](docs/QUICKSTART.md).
 - **5 local MCP servers** for project memory, persistence, resources, confined
   script execution, and vision.
 - **An optional TUI** with a dispatch sidebar block and a full-width
-  `/dispatch` panel.
-  Its V2 server also exposes a foundational `pantheon.quota` status RPC for
-  allowlisted provider authentication; provider quota adapters and visible quota
-  UI are still in progress.
+  `/dispatch` panel. The V2 TUI also provides a quota overview in the
+  sidebar/footer and a `/quota` details panel. Quota display is enabled by
+  default; use `E` to disable it or `M` to switch between remaining and used.
+  The installer selects the `plugins` component by default; in interactive setup
+  you can change the component selection. A component-scoped install includes
+  the TUI only when `plugins` is selected.
+  The V2 quota RPC shows providers only when OpenCode lists an active supported
+  connection and Pantheon can locally resolve a nonblank credential. This is
+  not proof that the provider accepted the credential; failed requests and
+  unsupported adapters can remain visible as unavailable. OpenCode Go currently
+  has no verified public quota contract; see the
+  [quota provider coverage table](docs/tui-v2-quota-providers.md) for limits and
+  troubleshooting.
+  `/quota-go-check` is a separate manual, confirmation-gated diagnostic: one
+  GET to `https://opencode.ai/zen/go/v1/usage` with the configured Go API key
+  (not OAuth), at most one attempt per plugin runtime. It never refreshes quota,
+  follows redirects, retries, or reads the response body. Results contain only
+  a safe category, optional HTTP status and coarse content type. `success` means
+  HTTP success only—not a stable quota contract or parsed quota correctness.
+  Require Themis security review before using this diagnostic.
 
 Vision requests to OpenCode Zen require a valid active session and are rejected
 before image fetching or model-catalog lookup when the session is missing or

@@ -31,6 +31,8 @@ export default defineConfig({
     'tui-v2': 'src/index-v2.tsx',
     server: 'src/server.ts',
     'server-v2': 'src/server-v2.ts',
+    'quota-cli': 'src/quota-cli.ts',
+    'quota-adapters': 'src/quota-adapters.ts',
   },
   format: ['esm'],
   platform: 'node',

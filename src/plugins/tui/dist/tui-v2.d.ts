@@ -1,5 +1,189 @@
 import { Accessor } from "solid-js";
-import { Context, KeymapLayer, PanelInput } from "@opencode/plugin/tui/context";
+import { Context, KeymapCommand, KeymapLayer, PanelInput } from "@opencode/plugin/tui/context";
+//#region src/context-gauge.d.ts
+/** Shared, data-only formatting and visual helpers for compact context gauges. */
+type ContextProgressTone = 'info' | 'success' | 'warning' | 'error';
+export declare const CONTEXT_BAR_CELLS = 12;
+export declare const CONTEXT_BAR_FILLED_CELL = "▰";
+export declare const CONTEXT_BAR_EMPTY_CELL = "▱";
+export declare function contextUsageTone(percent: number): ContextProgressTone;
+export declare function formatTokenCount(tokens: number | null | undefined): string | null;
+export declare function formatContextWindow(limit: number | null | undefined): string | null;
+export declare function contextBarFilled(percent: number, cells?: number): number;
+export declare function contextBar(percent: number | null | undefined, cells?: number): {
+  filled: string;
+  empty: string;
+} | null;
+export declare function formatSpent(cost: number | null | undefined): string | null;
+//#endregion
+//#region src/quota-v2-model.d.ts
+type QuotaDisplay = 'used' | 'remaining';
+type QuotaPreferences = {
+  enabled: boolean;
+  display: QuotaDisplay;
+};
+export declare const DEFAULT_QUOTA_PREFERENCES: QuotaPreferences;
+type QuotaMetric = {
+  kind: 'provider_quota';
+  used: number;
+  remaining: number;
+  unit: string;
+  label?: string;
+  period?: string;
+} | {
+  kind: 'balance';
+  amount: number;
+  currency: string;
+  label?: string;
+  status?: string;
+} | {
+  kind: 'estimate';
+  amount: number;
+  unit: string;
+  label?: string;
+} | {
+  kind: 'key_usage';
+  amount: number;
+  currency: string;
+  label?: string;
+  period?: string;
+} | {
+  kind: 'session_usage';
+  amount: number;
+  unit: string;
+  label?: string;
+} | {
+  kind: 'provider_status';
+  status: 'available' | 'unavailable' | 'active' | 'inactive';
+  label: string;
+};
+type QuotaProviderView = {
+  id: string;
+  label: string;
+  quotaState: 'available' | 'unavailable';
+  message?: string;
+  metrics: QuotaMetric[];
+};
+type QuotaProviderDetail = {
+  id: string;
+  label: string;
+  authentication: 'connected' | 'not_connected' | 'unavailable';
+  state: 'available' | 'needs_setup' | 'unavailable';
+  message?: string;
+  metrics: QuotaMetric[];
+};
+type QuotaSnapshotStatus = 'loading' | 'ready' | 'partial' | 'connected_unavailable' | 'needs_setup' | 'unavailable' | 'stale' | 'disabled';
+type QuotaSnapshot = {
+  status: QuotaSnapshotStatus;
+  providers: QuotaProviderView[];
+  details: QuotaProviderDetail[];
+  updatedAt: number | null;
+};
+type QuotaSidebarEntry = {
+  kind: 'quota';
+  key: string;
+  providerID: string;
+  providerLabel: string;
+  metric: Extract<QuotaMetric, {
+    kind: 'provider_quota';
+  }>;
+  progress: {
+    usedPercent: number;
+    remainingPercent: number;
+  };
+} | {
+  kind: 'status';
+  key: string;
+  providerID: string;
+  providerLabel: string;
+  message: string;
+};
+type ModelContextSnapshot = {
+  tokens: number;
+  percent: number;
+  limit: number;
+};
+type RecentModelUsageRow = {
+  providerID: string | null;
+  modelID: string | null;
+  label: string;
+  tokens: number | null;
+  cost: number | null;
+  context: ModelContextSnapshot | null;
+  active: boolean;
+};
+type CollectRecentModelUsageInput = {
+  activeModel: unknown;
+  activeMessages: readonly unknown[];
+  usageMessages: readonly unknown[];
+  usageSessions?: readonly {
+    messages: readonly unknown[];
+    revertMessageID?: string | null;
+  }[];
+  models: readonly unknown[];
+  revertMessageID?: string | null;
+};
+/** Snapshot for one exact model identity in the bounded active transcript. */
+export declare function resolveModelContextSnapshot(messages: readonly unknown[], modelRef: unknown, models: readonly unknown[], revertMessageID?: string | null): ModelContextSnapshot | null;
+/** Select the pinned chat model before transcript or configured-agent fallbacks. */
+export declare function resolveActiveModelRef(sessionModel: unknown, activeMessages: readonly unknown[], fallbackModel?: unknown): unknown;
+/** Pin the active chat first, then rank two distinct models by summed reported
+ * tokens from the already-cached, bounded session-family messages. */
+export declare function collectRecentModelUsageRows(input: CollectRecentModelUsageInput): RecentModelUsageRow[];
+export declare function normalizeQuotaPreferences(value: unknown): QuotaPreferences;
+export declare function quotaSnapshotStatusLabel(status: QuotaSnapshotStatus): string;
+/** Map the current typed RPC status into a provider-neutral, data-only UI model. */
+export declare function quotaSnapshotFromStatus(response: unknown, now?: number): QuotaSnapshot;
+/** Return complementary whole percentages only when both quota values define a real range. */
+export declare function quotaProgress(metric: Extract<QuotaMetric, {
+  kind: 'provider_quota';
+}>): {
+  usedPercent: number;
+  remainingPercent: number;
+} | undefined;
+/** Connected-provider rows for the compact sidebar; only reported quota windows become gauges. */
+export declare function quotaSidebarEntries(snapshot: QuotaSnapshot): QuotaSidebarEntry[];
+/** Render each measurement with its source/category label; no category is inferred. */
+export declare function formatQuotaMetric(metric: QuotaMetric, display: QuotaDisplay): string | undefined;
+/** Compact one-value summary for the footer; quota display follows the setting. */
+export declare function compactQuotaMetric(metric: QuotaMetric, display: QuotaDisplay): string | undefined;
+type QuotaRuntime = {
+  preferences: () => QuotaPreferences;
+  snapshot: () => QuotaSnapshot;
+  toggleEnabled: () => Promise<void>;
+  toggleDisplay: () => Promise<void>;
+  refresh: () => Promise<void>;
+  dispose: () => void;
+};
+/** One storage-backed source of truth for all quota TUI surfaces. */
+export declare function createQuotaRuntime(context: Pick<Context, 'client' | 'data' | 'location' | 'storage'>): QuotaRuntime;
+//#endregion
+//#region src/go-key-diagnostic-ui.d.ts
+/** Native keyboard-accessible dialogs; never invoked by quota refresh or panel mounting. */
+export declare function quotaGoCheckCommand(context: Pick<Context, 'ui' | 'client' | 'location' | 'data'>): KeymapCommand;
+//#endregion
+//#region src/model-usage-limits.d.ts
+/** Shared bounds for cached recent model-usage aggregation. */
+export declare const MODEL_USAGE_VISIBLE_CEILING = 3;
+export declare const MODEL_USAGE_MESSAGE_LIMIT = 400;
+export declare const MODEL_USAGE_SESSION_LIMIT = 8;
+//#endregion
+//#region src/quota-v2.d.ts
+export declare const QUOTA_PANEL_NAME = "pantheon.quota";
+export declare const QUOTA_OPEN_COMMAND_ID = "pantheon.quota.open";
+export declare const QUOTA_ICON = "▥";
+type QuotaPanelAction = 'toggle-enabled' | 'toggle-display' | 'refresh' | 'close';
+export declare const QUOTA_PANEL_COMMANDS: readonly {
+  action: QuotaPanelAction;
+  id: string;
+  title: string;
+  bind: string;
+}[];
+export declare function runQuotaPanelCommand(action: QuotaPanelAction, panel: Pick<PanelInput, 'focused' | 'close'>, runtime: QuotaRuntime): false | Promise<void> | undefined;
+export declare function quotaPanelKeymapLayer(panel: Pick<PanelInput, 'focused' | 'close'>, runtime: QuotaRuntime): KeymapLayer;
+export declare function quotaOpenCommand(context: Pick<Context, 'ui'>): KeymapCommand;
+export declare function openQuotaPanel(context: Pick<Context, 'ui'>): boolean;
+//#endregion
 //#region src/index-v2.d.ts
 /** Sidebar body shown while the host has not published a session yet. */
 export declare const SIDEBAR_WAITING_LABEL = "Aguardando sessão…";
@@ -89,13 +273,6 @@ export declare function transcriptWindow(messages: readonly any[], revertMessage
  *  window wins. Null when there is no limit or no such message — the caller
  *  then omits the block. */
 export declare function computeContextUsage(messages: readonly any[], contextLimit: number | null | undefined, revertMessageID?: string | null): ContextUsage | null;
-/** Semantic tone for a context percentage, inclusive at the top of each band:
- *  info (blue) up to 25%, success (green) up to 50%, warning (yellow) up to
- *  90%, error (red) above it. Four explicit stages, each backed by a feedback
- *  token, so the gauge follows the active theme. Pure. */
-export declare function contextUsageTone(percent: number): ContextProgressTone;
-/** The gauge's four stages, one per theme feedback token. */
-export type ContextProgressTone = 'info' | 'success' | 'warning' | 'error';
 /** Color for one gauge stage. Filled cells and the percent value both come from
  *  this one call, so the bar and its number can never disagree. `theme` is the
  *  host's resolved theme (loosely typed at runtime); a missing token falls back
@@ -137,33 +314,6 @@ export type ContextPerformance = {
   cacheHit: number | null;
   tokensPerSecond: number | null;
 };
-/** Thousands-separated token total: `55320` → `55,320` (en-US, matching the
- *  native block this one replaces). Null for a missing/invalid value. Pure. */
-export declare function formatTokenCount(tokens: number | null | undefined): string | null;
-/** Context-window label: `1_000_000` → `1.0M`, `200_000` → `200K`,
- *  `128_000` → `128K`, `32_768` → `32K`. Sub-million limits truncate to whole K
- *  so the printed window never overstates the model's capacity. Pure. */
-export declare function formatContextWindow(limit: number | null | undefined): string | null;
-/** Cells in the Context gauge: always rendered in full, so the bar never
- *  changes width between refreshes. With the space, the percent and the
- *  `of <window>` tail (at most 9 columns) the line stays inside 34 columns. */
-export declare const CONTEXT_BAR_CELLS = 12;
-/** Filled cell (U+25B0) and empty cell (U+25B1), both single-width. */
-export declare const CONTEXT_BAR_FILLED_CELL = "▰";
-export declare const CONTEXT_BAR_EMPTY_CELL = "▱";
-/** Filled cells for a percentage: rounded, clamped to `0..cells`, so 0% is an
- *  empty bar and anything at or above 100% is a full one. Pure. */
-export declare function contextBarFilled(percent: number, cells?: number): number;
-/** The gauge split into its toned half (filled cells) and its muted half (empty
- *  cells), so the caller colors each side. Null when the percentage is missing:
- *  the Context block then keeps its tokens + cost rows and renders no bar. Pure. */
-export declare function contextBar(percent: number | null | undefined, cells?: number): {
-  filled: string;
-  empty: string;
-} | null;
-/** USD spent with two decimals (`$0.18`), the native block's format. Null for
- *  a missing/negative value. Pure. */
-export declare function formatSpent(cost: number | null | undefined): string | null;
 /** One rendered context row. `lead` and `tail` carry the gauge bar when the row
  *  has one (`lead` is toned with the value, `tail` is muted), so the 12 cells
  *  stay contiguous while the empty half still reads as background. */
@@ -187,12 +337,6 @@ export type ContextBlockRows = {
  *  unavailable (never `undefined%`). A block with neither tokens nor cost
  *  yields null. Pure. */
 export declare function contextBlockRows(usage: ContextUsage | null, cost: number | null | undefined): ContextBlockRows | null;
-/** Models rendered in the Context block before the aggregate `… +N` line. */
-export declare const MODEL_USAGE_VISIBLE_CEILING = 3;
-/** Newest messages read per session — bounds the O(n) walk on long sessions. */
-export declare const MODEL_USAGE_MESSAGE_LIMIT = 400;
-/** Sessions read per family (root + delegations) for the aggregate. */
-export declare const MODEL_USAGE_SESSION_LIMIT = 8;
 /** Column widths for one model row (labels are muted, numbers right-aligned). */
 export declare const MODEL_USAGE_MODEL_WIDTH = 12;
 export declare const MODEL_USAGE_TOKEN_WIDTH = 6;
@@ -429,10 +573,10 @@ export declare function statsRangeMatches(range: unknown, sent: {
   from: number;
   to: number;
 }, scale: number): boolean;
-/** The `Context` block's last line: both spend windows on one muted row
- *  (`hoje $0.42 · 30d $9.80`). A window without a usable amount is omitted, and
- *  no usable window at all yields null so the line (and not the block) is
- *  dropped. Pure. */
+/** The `Context` block's last line: OpenCode stats source and both spend windows
+ *  on one muted row (`OpenCode · hoje $0.42 · 30d $9.80`). A window without a
+ *  usable amount is omitted, and no usable window at all yields null so the
+ *  line (and not the block) is dropped. Pure. */
 export declare function contextSpendLine(totals: SpendTotals | null): string | null;
 /** Terminal cells `value` occupies — the unit every column in this plugin is
  *  measured in. Mirrors the host (that is how `@opentui/core` sizes a text
@@ -1032,5 +1176,5 @@ declare const plugin: {
   setup(context: Context): (() => void) | undefined;
 };
 //#endregion
-export { plugin as default };
+export { type ContextProgressTone, type QuotaSidebarEntry, plugin as default };
 //# sourceMappingURL=tui-v2.d.ts.map

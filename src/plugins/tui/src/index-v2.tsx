@@ -10,6 +10,65 @@ import { Plugin } from '@opencode/plugin/tui'
 import type { Context, KeymapLayer, PanelInput } from '@opencode/plugin/tui/context'
 import type { Accessor } from 'solid-js'
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from 'solid-js'
+import {
+  type ContextProgressTone,
+  contextBar,
+  contextUsageTone,
+  formatContextWindow,
+  formatSpent,
+  formatTokenCount,
+} from './context-gauge'
+import {
+  MODEL_USAGE_MESSAGE_LIMIT,
+  MODEL_USAGE_SESSION_LIMIT,
+  MODEL_USAGE_VISIBLE_CEILING,
+} from './model-usage-limits'
+import { registerQuotaTui } from './quota-v2'
+import { resolveActiveModelRef, resolveModelContextSnapshot } from './quota-v2-model'
+
+export type { ContextProgressTone } from './context-gauge'
+export {
+  CONTEXT_BAR_CELLS,
+  CONTEXT_BAR_EMPTY_CELL,
+  CONTEXT_BAR_FILLED_CELL,
+  contextBar,
+  contextBarFilled,
+  contextUsageTone,
+  formatContextWindow,
+  formatSpent,
+  formatTokenCount,
+} from './context-gauge'
+export { quotaGoCheckCommand } from './go-key-diagnostic-ui'
+export {
+  MODEL_USAGE_MESSAGE_LIMIT,
+  MODEL_USAGE_SESSION_LIMIT,
+  MODEL_USAGE_VISIBLE_CEILING,
+} from './model-usage-limits'
+
+export {
+  openQuotaPanel,
+  QUOTA_ICON,
+  QUOTA_OPEN_COMMAND_ID,
+  QUOTA_PANEL_COMMANDS,
+  QUOTA_PANEL_NAME,
+  quotaOpenCommand,
+  quotaPanelKeymapLayer,
+  runQuotaPanelCommand,
+} from './quota-v2'
+export type { QuotaSidebarEntry } from './quota-v2-model'
+export {
+  collectRecentModelUsageRows,
+  compactQuotaMetric,
+  createQuotaRuntime,
+  DEFAULT_QUOTA_PREFERENCES,
+  formatQuotaMetric,
+  normalizeQuotaPreferences,
+  quotaProgress,
+  quotaSidebarEntries,
+  quotaSnapshotFromStatus,
+  quotaSnapshotStatusLabel,
+} from './quota-v2-model'
+export { resolveActiveModelRef, resolveModelContextSnapshot }
 
 const SINGLETON = Symbol.for('pantheon.tui.v2.loaded')
 
@@ -320,20 +379,6 @@ export function computeContextUsage(
   return null
 }
 
-/** Semantic tone for a context percentage, inclusive at the top of each band:
- *  info (blue) up to 25%, success (green) up to 50%, warning (yellow) up to
- *  90%, error (red) above it. Four explicit stages, each backed by a feedback
- *  token, so the gauge follows the active theme. Pure. */
-export function contextUsageTone(percent: number): ContextProgressTone {
-  if (percent > 90) return 'error'
-  if (percent > 50) return 'warning'
-  if (percent > 25) return 'success'
-  return 'info'
-}
-
-/** The gauge's four stages, one per theme feedback token. */
-export type ContextProgressTone = 'info' | 'success' | 'warning' | 'error'
-
 /** Color for one gauge stage. Filled cells and the percent value both come from
  *  this one call, so the bar and its number can never disagree. `theme` is the
  *  host's resolved theme (loosely typed at runtime); a missing token falls back
@@ -458,67 +503,6 @@ export function turnTokensPerSecond(
  *  are optional; the block renders no line when neither is available. */
 export type ContextPerformance = { cacheHit: number | null; tokensPerSecond: number | null }
 
-/** Thousands-separated token total: `55320` → `55,320` (en-US, matching the
- *  native block this one replaces). Null for a missing/invalid value. Pure. */
-export function formatTokenCount(tokens: number | null | undefined): string | null {
-  const value = numberOrNull(tokens)
-  if (value === null || value < 0) return null
-  return Math.round(value).toLocaleString('en-US')
-}
-
-/** Context-window label: `1_000_000` → `1.0M`, `200_000` → `200K`,
- *  `128_000` → `128K`, `32_768` → `32K`. Sub-million limits truncate to whole K
- *  so the printed window never overstates the model's capacity. Pure. */
-export function formatContextWindow(limit: number | null | undefined): string | null {
-  const value = numberOrNull(limit)
-  if (value === null || value <= 0) return null
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`
-  if (value >= 1_000) return `${Math.floor(value / 1_000)}K`
-  return `${Math.floor(value)}`
-}
-
-/** Cells in the Context gauge: always rendered in full, so the bar never
- *  changes width between refreshes. With the space, the percent and the
- *  `of <window>` tail (at most 9 columns) the line stays inside 34 columns. */
-export const CONTEXT_BAR_CELLS = 12
-/** Filled cell (U+25B0) and empty cell (U+25B1), both single-width. */
-export const CONTEXT_BAR_FILLED_CELL = '\u25B0'
-export const CONTEXT_BAR_EMPTY_CELL = '\u25B1'
-
-/** Filled cells for a percentage: rounded, clamped to `0..cells`, so 0% is an
- *  empty bar and anything at or above 100% is a full one. Pure. */
-export function contextBarFilled(percent: number, cells = CONTEXT_BAR_CELLS): number {
-  const total = Math.max(1, Math.floor(cells))
-  const filled = Math.round((percent / 100) * total)
-  if (!Number.isFinite(filled)) return 0
-  return Math.min(total, Math.max(0, filled))
-}
-
-/** The gauge split into its toned half (filled cells) and its muted half (empty
- *  cells), so the caller colors each side. Null when the percentage is missing:
- *  the Context block then keeps its tokens + cost rows and renders no bar. Pure. */
-export function contextBar(
-  percent: number | null | undefined,
-  cells = CONTEXT_BAR_CELLS,
-): { filled: string; empty: string } | null {
-  const value = numberOrNull(percent)
-  if (value === null) return null
-  const total = Math.max(1, Math.floor(cells))
-  const filled = contextBarFilled(value, total)
-  return {
-    filled: CONTEXT_BAR_FILLED_CELL.repeat(filled),
-    empty: CONTEXT_BAR_EMPTY_CELL.repeat(total - filled),
-  }
-}
-
-/** USD spent with two decimals (`$0.18`), the native block's format. Null for
- *  a missing/negative value. Pure. */
-export function formatSpent(cost: number | null | undefined): string | null {
-  const value = numberOrNull(cost)
-  if (value === null || value < 0) return null
-  return `$${value.toFixed(2)}`
-}
-
 /** One rendered context row. `lead` and `tail` carry the gauge bar when the row
  *  has one (`lead` is toned with the value, `tail` is muted), so the 12 cells
  *  stay contiguous while the empty half still reads as background. */
@@ -551,7 +535,7 @@ export function contextBlockRows(
   const spent: ContextRow | null =
     spentValue === null
       ? null
-      : { lead: null, value: spentValue, tail: null, suffix: ' spent', tone: null }
+      : { lead: null, value: spentValue, tail: null, suffix: ' gasto na sessão', tone: null }
   if (usage === null) return spent === null ? null : { tokens: null, percent: null, spent }
 
   const tokensValue = formatTokenCount(usage.tokens)
@@ -586,12 +570,6 @@ export function contextBlockRows(
  * a message without `cost` contributes 0 and is omitted (never a guessed
  * price). */
 
-/** Models rendered in the Context block before the aggregate `… +N` line. */
-export const MODEL_USAGE_VISIBLE_CEILING = 3
-/** Newest messages read per session — bounds the O(n) walk on long sessions. */
-export const MODEL_USAGE_MESSAGE_LIMIT = 400
-/** Sessions read per family (root + delegations) for the aggregate. */
-export const MODEL_USAGE_SESSION_LIMIT = 8
 /** Column widths for one model row (labels are muted, numbers right-aligned). */
 export const MODEL_USAGE_MODEL_WIDTH = 12
 export const MODEL_USAGE_TOKEN_WIDTH = 6
@@ -1172,10 +1150,10 @@ export function statsRangeMatches(
   return sameUnit || asMilliseconds
 }
 
-/** The `Context` block's last line: both spend windows on one muted row
- *  (`hoje $0.42 · 30d $9.80`). A window without a usable amount is omitted, and
- *  no usable window at all yields null so the line (and not the block) is
- *  dropped. Pure. */
+/** The `Context` block's last line: OpenCode stats source and both spend windows
+ *  on one muted row (`OpenCode · hoje $0.42 · 30d $9.80`). A window without a
+ *  usable amount is omitted, and no usable window at all yields null so the
+ *  line (and not the block) is dropped. Pure. */
 export function contextSpendLine(totals: SpendTotals | null): string | null {
   if (totals === null) return null
   const parts: string[] = []
@@ -1183,7 +1161,9 @@ export function contextSpendLine(totals: SpendTotals | null): string | null {
   if (today !== null) parts.push(`${SPEND_TODAY_LABEL} ${today}`)
   const thirtyDays = formatSpendUSD(totals.thirtyDays)
   if (thirtyDays !== null) parts.push(`${SPEND_30D_LABEL} ${thirtyDays}`)
-  return parts.length === 0 ? null : parts.join(SPEND_LINE_SEPARATOR)
+  return parts.length === 0
+    ? null
+    : `OpenCode${SPEND_LINE_SEPARATOR}${parts.join(SPEND_LINE_SEPARATOR)}`
 }
 
 /** Grapheme iterator: a cut never splits a surrogate pair, a combining mark
@@ -3595,21 +3575,19 @@ export function createSidebarModel(
   })
 
   const contextUsage = createMemo(() => {
-    const list = messages()
+    const list = messages().slice(-MODEL_USAGE_MESSAGE_LIMIT)
     if (list.length === 0) return null
     const refs = modelRefs()
-    const lastAssistant = [...list]
-      .reverse()
-      .find((message) => message?.type === 'assistant' && message?.model)
-    const ref = lastAssistant?.model ?? refs.sessionRef ?? refs.agentRef ?? refs.override
-    let limit: number | null = null
+    const ref = resolveActiveModelRef(refs.sessionRef, list, refs.agentRef)
+    if (ref === null) return null
+    let models: unknown[] = []
     try {
-      const models = context.data.location?.model?.list?.(location)
-      limit = resolveContextLimit(Array.isArray(models) ? models : [], ref)
+      const result = context.data.location?.model?.list?.(location)
+      if (Array.isArray(result)) models = result
     } catch {
-      limit = null
+      /* Unknown model limits suppress only the context gauge. */
     }
-    return computeContextUsage(list, limit, session()?.revert?.messageID)
+    return resolveModelContextSnapshot(list, ref, models, session()?.revert?.messageID)
   })
 
   // Telemetry that rides on the messages already in hand — no extra request.
@@ -3915,6 +3893,14 @@ function Sidebar(props: { context: any; sessionID?: string }) {
                     numbers right-aligned; the gauge above remains the block's
                     single accent. When no message carries cost this loop is empty
                     and the block keeps its original token/spend rows. */}
+                <Show when={usageRows().length > 0}>
+                  <text fg={muted()}>Sessão · custo reportado</text>
+                  <text fg={muted()}>
+                    {'Modelo'.padEnd(MODEL_USAGE_MODEL_WIDTH) +
+                      '  Tokens'.padStart(8) +
+                      '  USD'.padStart(10)}
+                  </text>
+                </Show>
                 <For each={usageRows()}>
                   {(row: ModelUsageRow) => (
                     <box flexDirection="row">
@@ -4322,6 +4308,7 @@ const plugin = Plugin.define({
     // Eager load/sync at setup so the cache is warm before the slot's first
     // render (Known Issue: empty sidebar before the first prompt).
     warmUpSidebarData(context, location)
+    const unregisterQuotaTui = registerQuotaTui(context)
 
     const unregisterSidebar = context.ui.slot({
       append: 'sidebar.content',
@@ -4364,6 +4351,7 @@ const plugin = Plugin.define({
       if (typeof unregisterPromptFooter === 'function') unregisterPromptFooter()
       if (typeof unregisterPanel === 'function') unregisterPanel()
       if (typeof unregisterCommands === 'function') unregisterCommands()
+      unregisterQuotaTui()
       delete globalState[SINGLETON]
     }
   },

@@ -54,6 +54,31 @@ const { createRoot, createSignal } = await import('solid-js')
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
+function quotaHostServices() {
+  const values = new Map()
+  const createStorage = (key, initial) => {
+    if (!values.has(key)) values.set(key, { ...initial })
+    return values.get(key)
+  }
+  return {
+    storage: {
+      store(key, { initial }) {
+        const value = createStorage(key, initial)
+        return [value, async (mutate) => mutate(value)]
+      },
+      memory(key, { initial }) {
+        const value = createStorage(key, initial)
+        return [value, (mutate) => mutate(value)]
+      },
+    },
+    client: {
+      rpc() {
+        return { status: async () => ({ providers: [] }) }
+      },
+    },
+  }
+}
+
 async function waitFor(predicate, description, timeoutMs = 1_000) {
   const deadline = Date.now() + timeoutMs
   while (!predicate()) {
@@ -433,6 +458,87 @@ test('sidebar provider: session model → last assistant → location agent/mode
   )
 })
 
+test('sidebar Context gauge follows the selected model and only its bounded live snapshots', async () => {
+  const { createSidebarModel } = await loadV2()
+  const selected = { id: 'selected', providerID: 'provider-a' }
+  const other = { id: 'other', providerID: 'provider-b' }
+  const contextFor = ({ session = {}, messages = [], models = [] } = {}) => {
+    const host = createSidebarHost({
+      family: ['ses_root'],
+      children: [['ses_root', { id: 'ses_root', ...session }]],
+      messages: [['ses_root', messages]],
+      models,
+    })
+    let model
+    const dispose = createRoot((disposeRoot) => {
+      model = createSidebarModel(host.context, () => 'ses_root')
+      return disposeRoot
+    })
+    try {
+      return model.contextUsage()
+    } finally {
+      dispose()
+    }
+  }
+
+  const selectedSnapshot = contextFor({
+    session: { model: selected },
+    messages: [
+      { id: 'selected-turn', type: 'assistant', model: selected, tokens: { input: 400 } },
+      { id: 'newer-other-turn', type: 'assistant', model: other, tokens: { input: 900 } },
+    ],
+    models: [
+      { id: selected.id, providerID: selected.providerID, limit: { context: 10_000 } },
+      { id: other.id, providerID: other.providerID, limit: { context: 1_000 } },
+    ],
+  })
+  assert.deepEqual(
+    selectedSnapshot,
+    { tokens: 400, percent: 4, limit: 10_000 },
+    'the selected session model wins over the most recent transcript model',
+  )
+
+  const sameIDOtherProvider = { id: 'selected', providerID: 'provider-b' }
+  assert.equal(
+    contextFor({
+      session: { model: selected },
+      messages: [
+        {
+          id: 'foreign-provider-turn',
+          type: 'assistant',
+          model: sameIDOtherProvider,
+          tokens: { input: 900 },
+        },
+      ],
+      models: [
+        { id: selected.id, providerID: selected.providerID, limit: { context: 10_000 } },
+        { id: selected.id, providerID: sameIDOtherProvider.providerID, limit: { context: 1_000 } },
+      ],
+    }),
+    null,
+    'a snapshot from the same model id under another provider is suppressed',
+  )
+
+  const outsideBound = {
+    id: 'outside-bound',
+    type: 'assistant',
+    model: selected,
+    tokens: { input: 900 },
+  }
+  const insideBound = Array.from({ length: 400 }, (_, index) => ({
+    id: `inside-${index}`,
+    type: 'user',
+  }))
+  assert.equal(
+    contextFor({
+      messages: [outsideBound, ...insideBound],
+      models: [{ id: selected.id, providerID: selected.providerID, limit: { context: 10_000 } }],
+    }),
+    null,
+    'messages older than the 400-message window cannot select a model or supply a snapshot',
+  )
+})
+
 test('delegation view: state from status + outcome, grace window, label fallbacks', async () => {
   const { toDelegationView, delegationStateFromOutcome } = await loadV2()
 
@@ -617,7 +723,7 @@ test('collectWarmupTargets: deduped, validated, bounded', async () => {
   )
 })
 
-test('packaged plugin registers both slots, warms up eagerly, and disposes', async () => {
+test('packaged plugin registers additive TUI surfaces, warms up eagerly, and disposes', async () => {
   const { default: plugin } = await loadV2()
 
   assert.equal(plugin.id, 'pantheon.tui')
@@ -629,6 +735,7 @@ test('packaged plugin registers both slots, warms up eagerly, and disposes', asy
   const calls = { vcsSync: [], sessionSync: [] }
 
   const context = {
+    ...quotaHostServices(),
     location: { directory: project },
     data: {
       location: {
@@ -954,7 +1061,11 @@ test('Context block formats tokens, window, percent and spend like the native bl
       contextRowText(full?.percent ?? null),
       contextRowText(full?.spent ?? null),
     ],
-    ['55,320 tokens', `${'\u25B0'.repeat(1)}${'\u25B1'.repeat(11)} 6% of 1.0M`, '$0.18 spent'],
+    [
+      '55,320 tokens',
+      `${'\u25B0'.repeat(1)}${'\u25B1'.repeat(11)} 6% of 1.0M`,
+      '$0.18 gasto na sessão',
+    ],
   )
   assert.equal(full?.tokens?.tone, null, 'only the percentage row is toned')
   assert.equal(full?.percent?.tone, 'info', 'a low gauge starts blue')
@@ -982,14 +1093,14 @@ test('Context block formats tokens, window, percent and spend like the native bl
   assert.equal(noPercent?.percent, null)
   assert.deepEqual(
     [contextRowText(noPercent?.tokens ?? null), contextRowText(noPercent?.spent ?? null)],
-    ['12,345 tokens', '$1.50 spent'],
+    ['12,345 tokens', '$1.50 gasto na sessão'],
   )
 
   // Empty session: cost only, and nothing at all without a cost.
   assert.deepEqual(contextBlockRows(null, 0.18), {
     tokens: null,
     percent: null,
-    spent: { lead: null, value: '$0.18', tail: null, suffix: ' spent', tone: null },
+    spent: { lead: null, value: '$0.18', tail: null, suffix: ' gasto na sessão', tone: null },
   })
   assert.equal(contextBlockRows(null, null), null)
   assert.equal(contextBlockRows(null, Number.NaN), null)
@@ -1437,7 +1548,7 @@ test('sidebar model exposes context, cost, agent→model and full delegation row
           [
             '78,000 tokens',
             `${'\u25B0'.repeat(5)}${'\u25B1'.repeat(7)} 39% of 200K`,
-            '$0.04 spent',
+            '$0.04 gasto na sessão',
           ],
         )
 
@@ -1656,6 +1767,7 @@ test('prompt footer is additive only and counts running delegations without toas
   const { default: plugin, createFooterModel } = await loadV2()
   const registrations = []
   const context = {
+    ...quotaHostServices(),
     location: { directory: tmpdir() },
     data: {
       location: { default: () => ({ directory: tmpdir() }), vcs: { sync: async () => {} } },
@@ -2085,19 +2197,19 @@ test('spend formatting: $0.00 / $0.42 / $0.0031, never $0.0000 or a negative', a
 
   assert.equal(
     contextSpendLine({ today: 0.42, thirtyDays: 9.8 }),
-    'hoje $0.42 \u00B7 30d $9.80',
+    'OpenCode · hoje $0.42 \u00B7 30d $9.80',
     'both windows share one muted line',
   )
   assert.equal(contextSpendLine(null), null, 'no data, no line')
   assert.equal(contextSpendLine({ today: null, thirtyDays: null }), null)
   assert.equal(
     contextSpendLine({ today: null, thirtyDays: 1.5 }),
-    '30d $1.50',
+    'OpenCode · 30d $1.50',
     'one usable window renders that window only',
   )
   assert.equal(
     contextSpendLine({ today: 0.42, thirtyDays: null }),
-    'hoje $0.42',
+    'OpenCode · hoje $0.42',
     'a partial line never prints a placeholder for the missing window',
   )
 })
@@ -2309,7 +2421,7 @@ test('spend line: a partial failure keeps the last good value of that window', a
       { today: 0.42, thirtyDays: 9.8 },
       'the failed window keeps its previous value; the other window still renders',
     )
-    assert.equal(contextSpendLine(model.spend()), 'hoje $0.42 \u00B7 30d $9.80')
+    assert.equal(contextSpendLine(model.spend()), 'OpenCode · hoje $0.42 \u00B7 30d $9.80')
   } finally {
     dispose()
     resetSpendUnit()
@@ -2431,8 +2543,8 @@ test('Dispatch is a single block: one header, the live rows and one rollup', asy
   assert.equal(source.includes('… +N member'), false, 'no per-session `… +N` list survives')
 })
 
-test('every block header carries one muted single-width glyph; the fixed header has none', async () => {
-  const { BLOCK_ICONS } = await loadV2()
+test('sidebar and quota icons are single-width glyphs; the fixed header has none', async () => {
+  const { BLOCK_ICONS, cellWidth, QUOTA_ICON } = await loadV2()
 
   assert.deepEqual(
     BLOCK_ICONS,
@@ -2453,6 +2565,8 @@ test('every block header carries one muted single-width glyph; the fixed header 
       `${key} carries no variation selector that could widen it`,
     )
   }
+  assert.equal([...QUOTA_ICON].length, 1)
+  assert.equal(cellWidth(QUOTA_ICON), 1)
   // The host measures a `emoji-regex` match as two cells, so no header glyph may
   // match it (☑ U+2611 was the one candidate that did).
   const emoji = (await import('emoji-regex')).default()
@@ -2460,6 +2574,8 @@ test('every block header carries one muted single-width glyph; the fixed header 
     emoji.lastIndex = 0
     assert.equal(emoji.test(icon), false, `${key} glyph is never measured as wide`)
   }
+  emoji.lastIndex = 0
+  assert.equal(emoji.test(QUOTA_ICON), false, 'quota icon is never measured as wide')
 
   const source = readFileSync(join(root, 'src/plugins/tui/src/index-v2.tsx'), 'utf8')
   for (const label of ['Context', 'Git status', 'Todo', 'Dispatch']) {
@@ -2579,7 +2695,7 @@ test('Dispatch rows carry the child cost, and the spend totals ride inside Conte
     )
 
     // Spend is a Context line, never a block of its own.
-    assert.equal(contextSpendLine(model.spend()), 'hoje $0.42 \u00B7 30d $9.80')
+    assert.equal(contextSpendLine(model.spend()), 'OpenCode · hoje $0.42 \u00B7 30d $9.80')
     assert.equal(
       model.blocks().some((entry) => entry.key === 'spend'),
       false,
