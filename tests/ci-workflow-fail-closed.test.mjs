@@ -348,17 +348,19 @@ test('V2 config merge rewrites stale MCP paths to the active sandbox', (t) => {
   writeFileSync(
     config,
     JSON.stringify({
-      mcp: Object.fromEntries(
-        names.map((name) => [
-          name,
-          {
-            type: 'local',
-            cwd: '/old-sandbox/project-v2/.opencode',
-            command: ['/old-sandbox/project-v2/.venv/bin/python3', 'scripts/stale.py'],
-            enabled: true,
-          },
-        ]),
-      ),
+      mcp: {
+        servers: Object.fromEntries(
+          names.map((name) => [
+            name,
+            {
+              type: 'local',
+              cwd: '/old-sandbox/project-v2/.opencode',
+              command: ['/old-sandbox/project-v2/.venv/bin/python3', 'scripts/stale.py'],
+              enabled: true,
+            },
+          ]),
+        ),
+      },
     }),
   )
 
@@ -386,7 +388,7 @@ test('V2 config merge rewrites stale MCP paths to the active sandbox', (t) => {
 
   const rewritten = JSON.parse(readFileSync(config, 'utf8'))
   for (const [name, script] of managed) {
-    const entry = rewritten.mcp[name]
+    const entry = rewritten.mcp.servers[name]
     assert.equal(entry.cwd, runtime)
     assert.deepEqual(entry.command, [python, `scripts/${script}`])
     assert.equal(entry.enabled, true)
