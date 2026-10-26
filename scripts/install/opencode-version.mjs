@@ -11,20 +11,38 @@ const VALID_VERSIONS = new Set(['v1', 'v2', 'auto'])
 
 /** @param {string[]} args @returns {'v1'|'v2'|'auto'|null} */
 export function parseOpenCodeVersion(args) {
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index]
-    if (arg.startsWith('--opencode-version=')) return normalize(arg.split('=', 2)[1])
-    if (arg === '--opencode-version') return normalize(args[index + 1])
-    // --version v1|v2 was supported by 1.4.x. Bare --version remains the
-    // package version command and is deliberately not interpreted here.
-    if (arg.startsWith('--version=')) return normalize(arg.split('=', 2)[1])
-    if (arg === '--version' && args[index + 1]?.startsWith('v')) {
-      // Preserve bare --version/package-version compatibility, while making
-      // unsupported OpenCode selectors (for example v3) fail loudly.
-      return normalize(args[index + 1])
-    }
+  // Match init's selector precedence: modern --version wins over the legacy
+  // alias regardless of argument order. The package-level --version command is
+  // handled before this init selector parser is called.
+  const inlineModern = args.find((arg) => arg.startsWith('--version='))
+  if (inlineModern !== undefined) {
+    const value = inlineModern.slice('--version='.length)
+    if (!value) throw missingVersionValue('--version')
+    return normalize(value)
   }
-  return null
+  const modernIndex = args.indexOf('--version')
+  if (modernIndex >= 0) {
+    const modern = args[modernIndex + 1]
+    if (modern === undefined || modern.startsWith('-')) throw missingVersionValue('--version')
+    return normalize(modern)
+  }
+  const inlineLegacy = args.find((arg) => arg.startsWith('--opencode-version='))
+  if (inlineLegacy !== undefined) {
+    const value = inlineLegacy.slice('--opencode-version='.length)
+    if (!value) throw missingVersionValue('--opencode-version')
+    return normalize(value)
+  }
+  const legacyIndex = args.indexOf('--opencode-version')
+  if (legacyIndex < 0) return null
+  const legacy = args[legacyIndex + 1]
+  if (legacy === undefined || legacy.startsWith('-')) {
+    throw missingVersionValue('--opencode-version')
+  }
+  return normalize(legacy)
+}
+
+function missingVersionValue(flag) {
+  return new Error(`${flag} requires a value: v1, v2, or auto.`)
 }
 
 function normalize(value) {

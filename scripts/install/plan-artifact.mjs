@@ -36,6 +36,11 @@ function hash(value) {
   return createHash('sha256').update(value).digest('hex')
 }
 
+/** Bind an in-memory reviewed plan to the exact JSON payload passed to init. */
+export function planArtifactDigest(artifact) {
+  return hash(JSON.stringify(artifact))
+}
+
 function lstatOrNull(path) {
   try {
     return lstatSync(path)
@@ -471,7 +476,10 @@ export function loadPlanArtifact(path) {
 }
 
 /** Compare current inputs and destinations against a saved reviewed plan. */
-export function findPlanDrift(artifact, { target, packageRoot, packageVersion, files, snapshots }) {
+export function findPlanDrift(
+  artifact,
+  { target, packageRoot, packageVersion, options, files, snapshots },
+) {
   validatePlanArtifact(artifact)
   const root = resolve(target)
   const reasons = []
@@ -485,6 +493,9 @@ export function findPlanDrift(artifact, { target, packageRoot, packageVersion, f
     sourceFingerprint(packageRoot, [artifact.artifact_path]) !== artifact.package.source_fingerprint
   )
     reasons.push('source')
+  if (options !== undefined && JSON.stringify(options) !== JSON.stringify(artifact.options)) {
+    reasons.push('options')
+  }
 
   const currentSnapshots = new Map(snapshots.map((item) => [resolve(item.path), item]))
   for (const operation of artifact.operations) {

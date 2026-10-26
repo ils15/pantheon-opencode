@@ -49,21 +49,81 @@
 #                            sandbox root that overlaps either protected repo.
 #   PANTHEON_SANDBOX_MODEL   Model used by init/prompts
 #                            (default: opencode-go/mimo-v2.5)
+#   PANTHEON_V2_CONFIG       Config file path (must be inside the sandbox root)
+#   PANTHEON_V2_DB           Database path (must be inside the sandbox root)
 #   PANTHEON_PROMPT_TIMEOUT  Per-prompt timeout in seconds (default: 300)
 # Exit codes: 0 = every required check returned explicit PASS,
 #             1 = any failure or untested check (see reports in the sandbox root),
 #             2 = usage error, 3 = sandbox not prepared.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Keep this bootstrap self-contained: do not source, execute, create, chmod, or
+# clean up anything until both the configured root and adjacent helper pass the
+# same basic path checks. The sourced helper repeats these checks for callers.
+BOOTSTRAP_NORMALIZED=""
+bootstrap_normalize_path() {
+  local path="$1" current="/" rest component normalized=""
+  local LC_ALL=C
+
+  [[ "$path" == /* && ! "$path" =~ [[:cntrl:]] ]] || return 1
+  rest="${path#/}"
+  while [[ -n "$rest" ]]; do
+    if [[ "$rest" == */* ]]; then
+      component="${rest%%/*}"
+      rest="${rest#*/}"
+    else
+      component="$rest"
+      rest=""
+    fi
+    case "$component" in
+      '' | .) continue ;;
+      ..) return 1 ;;
+    esac
+    if [[ "$current" == / ]]; then
+      current="/$component"
+    else
+      current="$current/$component"
+    fi
+    [[ ! -L "$current" ]] || return 1
+    normalized="$current"
+  done
+  BOOTSTRAP_NORMALIZED="${normalized:-/}"
+}
+
+bootstrap_fail() {
+  printf '%s\n' 'ERROR: sandbox preflight validation failed.' >&2
+  exit 2
+}
+
+BOOTSTRAP_ROOT="${PANTHEON_SANDBOX_ROOT:-${HOME:-}/pantheon-sandbox}"
+bootstrap_normalize_path "$BOOTSTRAP_ROOT" || bootstrap_fail
+SANDBOX_ROOT="$BOOTSTRAP_NORMALIZED"
+[[ "$SANDBOX_ROOT" != / ]] || bootstrap_fail
+
+BOOTSTRAP_ENTRY="${BASH_SOURCE[0]}"
+if [[ "$BOOTSTRAP_ENTRY" != /* ]]; then
+  BOOTSTRAP_ENTRY="$PWD/$BOOTSTRAP_ENTRY"
+fi
+bootstrap_normalize_path "$BOOTSTRAP_ENTRY" || bootstrap_fail
+BOOTSTRAP_ENTRY="$BOOTSTRAP_NORMALIZED"
+[[ -f "$BOOTSTRAP_ENTRY" && ! -L "$BOOTSTRAP_ENTRY" ]] || bootstrap_fail
+SCRIPT_DIR="${BOOTSTRAP_ENTRY%/*}"
+[[ "${SCRIPT_DIR##*/}" == scripts \
+  && "${BOOTSTRAP_ENTRY##*/}" == test-opencode-v2-sandbox.sh ]] || bootstrap_fail
+
+SANDBOX_ENV_HELPER="$SCRIPT_DIR/sandbox-env.sh"
+bootstrap_normalize_path "$SANDBOX_ENV_HELPER" || bootstrap_fail
+[[ "$BOOTSTRAP_NORMALIZED" == "$SANDBOX_ENV_HELPER" \
+  && -f "$SANDBOX_ENV_HELPER" && ! -L "$SANDBOX_ENV_HELPER" ]] || bootstrap_fail
+
+source "$SANDBOX_ENV_HELPER"
+pantheon_validate_sandbox_root "$SANDBOX_ROOT" || exit 2
 # Derived from this script's own location so the sandbox is always built from
 # the checkout that CONTAINS this harness. It must never be inferred from a
 # sibling directory: a sibling may be a different checkout (or a different
 # branch) with unrelated uncommitted work, and --prepare runs `npm pack` inside
 # it, writing a tarball into that tree.
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-
-SANDBOX_ROOT="${PANTHEON_SANDBOX_ROOT:-$HOME/pantheon-sandbox}"
 SANDBOX_HOME="$SANDBOX_ROOT/home"
 NPM_PREFIX="$SANDBOX_HOME/.npm-global"
 
@@ -137,19 +197,31 @@ sandbox_bin() { # echoes the V2 binary path; rc 1 if missing
 # ── Sandbox environment isolation ─────────────────────────────────────────────
 
 sandbox_env() {
-  export HOME="$SANDBOX_HOME"
-  export PATH="$NPM_PREFIX/bin:$HOME/.config/opencode/.venv/bin:$PATH"
-  export npm_config_prefix="$NPM_PREFIX"
-  export XDG_STATE_HOME="$SANDBOX_HOME/.local/state"
-  # Do not inherit an OpenChamber/developer-machine config selector. The V2
-  # project config is created by prepare_project and is the only config this
-  # gate is allowed to inspect.
-  export OPENCODE_CONFIG_DIR="$(dirname "$V2_CONFIG")"
+  pantheon_validate_sandbox_config_path "$SANDBOX_ROOT" "$V2_CONFIG" || return $?
+  pantheon_validate_sandbox_file_path "$SANDBOX_ROOT" "$V2_DB" || return $?
+  pantheon_sandbox_env \
+    "$SANDBOX_ROOT" \
+    "$SANDBOX_HOME" \
+    "$NPM_PREFIX" \
+    "$SANDBOX_HOME/.config/opencode/.venv" \
+    "$(dirname "$V2_CONFIG")"
   export OPENCODE_DB="$V2_DB"
+  pantheon_validate_sandbox_file_path "$SANDBOX_ROOT" "$OPENCODE_DB" || return $?
   export PANTHEON_V2_PORT="$V2_PORT"
   export PORT="$V2_PORT"
-  unset OPENCODE_CONFIG OPENCODE_CONFIG_CONTENT OPENCODE_CONFIG_PROJECT_DISABLE
+  pantheon_validate_sandbox_path "$SANDBOX_ROOT" || return $?
+  pantheon_validate_sandbox_config_path "$SANDBOX_ROOT" "$V2_CONFIG" || return $?
+  pantheon_validate_sandbox_file_path "$SANDBOX_ROOT" "$V2_DB" || return $?
+  pantheon_validate_sandbox_file_path "$SANDBOX_ROOT" "$OPENCODE_DB" || return $?
+  pantheon_validate_sandbox_path "$(dirname "$V2_DB")" || return $?
+  pantheon_validate_sandbox_path "$(dirname "$V2_SERVICE_STATE")" || return $?
   mkdir -p "$SANDBOX_ROOT" "$(dirname "$V2_DB")" "$(dirname "$V2_SERVICE_STATE")"
+  pantheon_validate_sandbox_path "$SANDBOX_ROOT" || return $?
+  pantheon_validate_sandbox_config_path "$SANDBOX_ROOT" "$V2_CONFIG" || return $?
+  pantheon_validate_sandbox_file_path "$SANDBOX_ROOT" "$V2_DB" || return $?
+  pantheon_validate_sandbox_file_path "$SANDBOX_ROOT" "$OPENCODE_DB" || return $?
+  pantheon_validate_sandbox_path "$(dirname "$V2_DB")" || return $?
+  pantheon_validate_sandbox_path "$(dirname "$V2_SERVICE_STATE")" || return $?
 }
 
 stop_v2_service() {
@@ -157,6 +229,7 @@ stop_v2_service() {
     kill "$V2_SERVER_PID" 2>/dev/null || true
     wait "$V2_SERVER_PID" 2>/dev/null || true
   fi
+  pantheon_validate_sandbox_path "$V2_SERVICE_STATE" || return $?
   rm -f "$V2_SERVICE_STATE"
   V2_SERVER_PID=""
 }
@@ -164,23 +237,22 @@ stop_v2_service() {
 print_v2_diagnostics() {
   printf '%s\n' '--- V2 service registration ---' >&2
   if [ -f "$V2_SERVICE_STATE" ]; then
-    cat "$V2_SERVICE_STATE" >&2 || true
-    printf '\n' >&2
+    printf '%s\n' 'service registration exists (contents omitted)' >&2
   else
-    printf 'missing service registration: %s\n' "$V2_SERVICE_STATE" >&2
+    printf '%s\n' 'service registration is missing' >&2
   fi
   printf '%s\n' '--- V2 service log ---' >&2
   if [ -f "$V2_SERVER_LOG" ]; then
-    tail -200 "$V2_SERVER_LOG" >&2 || true
+    printf '%s\n' 'service log exists (contents omitted)' >&2
   else
-    printf 'missing service log: %s\n' "$V2_SERVER_LOG" >&2
+    printf '%s\n' 'service log is missing' >&2
   fi
-  local runtime_log="$HOME/.local/share/opencode/log/opencode.log"
+  local runtime_log="$LOG_PATH"
   printf '%s\n' '--- OpenCode runtime log ---' >&2
   if [ -f "$runtime_log" ]; then
-    tail -200 "$runtime_log" >&2 || true
+    printf '%s\n' 'runtime log exists (contents omitted)' >&2
   else
-    printf 'missing runtime log: %s\n' "$runtime_log" >&2
+    printf '%s\n' 'runtime log is missing' >&2
   fi
 }
 
@@ -224,8 +296,7 @@ PY
     fi
     sleep 1
   done
-  printf 'Timed out after %ss waiting for V2 service registration matching url=%s pid=%s.\n' \
-    "$V2_HANDSHAKE_TIMEOUT" "$registration_url" "$registration_pid" >&2
+  printf '%s\n' 'ERROR: timed out waiting for V2 service registration.' >&2
   print_v2_diagnostics
   return 1
 }
@@ -291,7 +362,7 @@ PY
 }
 
 wait_for_v2_handshakes() {
-  local runtime_log="$HOME/.local/share/opencode/log/opencode.log"
+  local runtime_log="$LOG_PATH"
   local names=(
     pantheon-code-mode
     pantheon-memory
@@ -337,7 +408,14 @@ wait_for_v2_handshakes() {
 }
 
 start_v2_service() { # binary project
-  local bin="$1" project="$2" ready=0 attempt
+  local bin="$1" project="$2" ready=0 attempt runtime_log
+  # Re-apply the shared environment at the actual direct-CI launch boundary;
+  # do not rely on whichever XDG variables the parent shell inherited.
+  sandbox_env || return $?
+  runtime_log="$LOG_PATH"
+  pantheon_validate_sandbox_config_path "$SANDBOX_ROOT" "$V2_CONFIG" || return $?
+  pantheon_validate_sandbox_file_path "$SANDBOX_ROOT" "$V2_DB" || return $?
+  pantheon_validate_sandbox_file_path "$SANDBOX_ROOT" "$OPENCODE_DB" || return $?
   if [ -n "$V2_SERVER_PID" ] && kill -0 "$V2_SERVER_PID" 2>/dev/null; then
     return 0
   fi
@@ -350,8 +428,16 @@ start_v2_service() { # binary project
     die "dedicated V2 port ${V2_PORT} is already in use; refusing to reuse an unrelated service"
   fi
 
-  rm -f "$V2_SERVER_LOG" "$V2_SERVICE_STATE" "$HOME/.local/share/opencode/log/opencode.log"
-  (cd "$project" && "$bin" serve --hostname "$V2_LOOPBACK_HOST" --port "$V2_PORT" --service) \
+  pantheon_validate_sandbox_path "$project" || return $?
+  pantheon_validate_sandbox_path "$V2_SERVER_LOG" || return $?
+  pantheon_validate_sandbox_path "$V2_SERVICE_STATE" || return $?
+  pantheon_validate_sandbox_path "$runtime_log" || return $?
+  rm -f "$V2_SERVER_LOG" "$V2_SERVICE_STATE" "$runtime_log"
+  (
+    sandbox_env || exit $?
+    cd "$project"
+    exec "$bin" serve --hostname "$V2_LOOPBACK_HOST" --port "$V2_PORT" --service
+  ) \
     >"$V2_SERVER_LOG" 2>&1 &
   V2_SERVER_PID=$!
 
@@ -384,67 +470,174 @@ trap stop_v2_service EXIT
 # ── Gate (b): sandbox run-test.sh with pantheon://agents content validation ──
 
 write_run_test_sh() {
+  local path expected_repo_q
+  pantheon_validate_sandbox_root "$SANDBOX_ROOT" || return $?
+  for path in \
+    "$SANDBOX_ROOT/.repo-dir" \
+    "$SANDBOX_ROOT/sandbox-env.sh" \
+    "$SANDBOX_ROOT/run-test.sh" \
+    "$SANDBOX_ROOT/start-pantheon.sh"; do
+    pantheon_validate_sandbox_path "$path" || return $?
+  done
+
   # Quoted heredoc: the body is emitted verbatim, so nothing inside is expanded
-  # at generation time. REPO_DIR is the one value the body needs, and it is
-  # handed over as its own generated file instead of a placeholder baked into
-  # the shell source: interpolating it meant escaping for TWO languages (sed
-  # replacement text AND the double-quoted shell context it lands in), and only
-  # the first set was escaped — a path containing `$`, a backtick, a backslash
-  # or a quote was silently rewritten or executed by the generated script.
+  # at generation time. Keep the metadata file for format/integrity checking,
+  # but do not trust it as the source selector: the runner below also embeds a
+  # safely quoted expected value and requires the file to match it exactly.
   printf '%s\n' "$REPO_DIR" > "$SANDBOX_ROOT/.repo-dir"
-  cat > "$SANDBOX_ROOT/run-test.sh" <<'RUNTEST'
-#!/usr/bin/env bash
+  cp "$SANDBOX_ENV_HELPER" "$SANDBOX_ROOT/sandbox-env.sh"
+  # Keep a trusted copy of the generated source path in the runner. Bash's %q
+  # emits a shell word (including ANSI-C quoting when needed), so adversarial
+  # path characters cannot become code when this assignment is evaluated.
+  printf -v expected_repo_q '%q' "$REPO_DIR"
+  {
+    printf '%s\n' '#!/usr/bin/env bash'
+    printf 'EXPECTED_REPO_DIR=%s\n' "$expected_repo_q"
+    cat <<'RUNTEST'
 # Generated by pantheon-opencode scripts/test-opencode-v2-sandbox.sh --prepare
 # Validates the global install: the V2 binary, exactly 5 connected MCPs, doctor
 # 0 errors, AND the CONTENT of pantheon://agents (zeus/hermes present).
 set -euo pipefail
 
-SANDBOX_DIR="$(cd "$(dirname "$0")" && pwd)"
+pantheon_launcher_preflight() {
+  local entrypoint="$1" current="/" component helper
+  local -a components
+  local LC_ALL=C
+
+  [[ ! "$entrypoint" =~ [[:cntrl:]] ]] || {
+    printf '%s\n' 'ERROR: sandbox launcher preflight validation failed.' >&2
+    return 2
+  }
+  if [[ "$entrypoint" != /* ]]; then entrypoint="$PWD/$entrypoint"; fi
+  IFS='/' read -r -a components <<< "$entrypoint"
+  for component in "${components[@]}"; do
+    case "$component" in
+      '' | .) continue ;;
+      ..)
+        printf '%s\n' 'ERROR: sandbox launcher preflight validation failed.' >&2
+        return 2
+        ;;
+    esac
+    if [[ "$current" == / ]]; then
+      current="/$component"
+    else
+      current="$current/$component"
+    fi
+    if [[ -L "$current" ]]; then
+      printf '%s\n' 'ERROR: sandbox launcher preflight validation failed.' >&2
+      return 2
+    fi
+  done
+
+  if [[ ! -f "$current" || -L "$current" ]]; then
+    printf '%s\n' 'ERROR: sandbox launcher preflight validation failed.' >&2
+    return 2
+  fi
+  SANDBOX_DIR="${current%/*}"
+  [[ -n "$SANDBOX_DIR" ]] || SANDBOX_DIR=/
+  if [[ "$SANDBOX_DIR" == / ]]; then
+    printf '%s\n' 'ERROR: sandbox launcher preflight validation failed.' >&2
+    return 2
+  fi
+  helper="$SANDBOX_DIR/sandbox-env.sh"
+  if [[ ! -f "$helper" || -L "$helper" ]]; then
+    printf '%s\n' 'ERROR: sandbox launcher preflight validation failed.' >&2
+    return 2
+  fi
+  SANDBOX_ENV_HELPER="$helper"
+}
+
+pantheon_launcher_preflight "$0" || exit $?
+source "$SANDBOX_ENV_HELPER"
+pantheon_validate_sandbox_root "$SANDBOX_DIR" || exit $?
 SANDBOX_HOME="$SANDBOX_DIR/home"
 NPM_PREFIX="$SANDBOX_HOME/.npm-global"
 PANTHEON_GLOBAL="$SANDBOX_HOME/.config/opencode"
 SANDBOX_VENV="$PANTHEON_GLOBAL/.venv"
-# The checkout this harness ran from, written by the generator into the
-# .repo-dir file next to this script. It used to be a placeholder baked into
-# this line and substituted with sed afterwards, but the sandbox lives outside
-# any repo so the value cannot be derived from this file's own location either.
-# Reading a file the generator wrote keeps the path out of the shell source, so
-# no escaping can be wrong. PANTHEON_REPO may still override it; the generator's
-# --reset guard refuses to run when that points inside a repo, so an override
-# can never turn this into a repo-wiping target.
-REPO_DIR="${PANTHEON_REPO:-$(cat "$SANDBOX_DIR/.repo-dir")}"
+V2_CONFIG="${PANTHEON_V2_CONFIG:-$SANDBOX_DIR/project-v2/opencode.json}"
+V2_DB="${PANTHEON_V2_DB:-$SANDBOX_DIR/opencode-v2.db}"
+pantheon_validate_sandbox_config_path "$SANDBOX_DIR" "$V2_CONFIG" || exit $?
+pantheon_validate_sandbox_file_path "$SANDBOX_DIR" "$V2_DB" || exit $?
+# Validate the generated metadata against the trusted path embedded above before
+# using it. Python opens with O_NOFOLLOW and verifies the complete byte stream,
+# avoiding both symlink traversal and shell-read quirks such as ignored NULs.
+# Keep diagnostics value-free: failed opens and validation details are hidden.
+if ! python3 - "$SANDBOX_DIR/.repo-dir" "$EXPECTED_REPO_DIR" 2>/dev/null <<'CHECK_REPO_METADATA'
+import os
+import stat
+import sys
+
+metadata_path, expected_text = sys.argv[1:]
+expected = os.fsencode(expected_text)
+if not os.path.isabs(expected) or any(byte < 0x20 or byte == 0x7f for byte in expected):
+    raise SystemExit(1)
+no_follow = getattr(os, "O_NOFOLLOW", None)
+if no_follow is None:
+    raise SystemExit(1)
+try:
+    if not stat.S_ISREG(os.stat(metadata_path, follow_symlinks=False).st_mode):
+        raise SystemExit(1)
+    descriptor = os.open(metadata_path, os.O_RDONLY | no_follow | os.O_NONBLOCK)
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise SystemExit(1)
+        content = os.read(descriptor, len(expected) + 2)
+        if content != expected + b"\n" or os.read(descriptor, 1):
+            raise SystemExit(1)
+    finally:
+        os.close(descriptor)
+    if not os.path.isdir(os.fsdecode(expected)):
+        raise SystemExit(1)
+except OSError:
+    raise SystemExit(1)
+CHECK_REPO_METADATA
+then
+  printf '%s\n' 'ERROR: sandbox repository metadata validation failed.' >&2
+  exit 2
+fi
+REPO_DIR="${PANTHEON_REPO:-$EXPECTED_REPO_DIR}"
 
 echo "=== Pantheon Sandbox Test (OpenCode V2) ==="
-echo "Sandbox: $SANDBOX_DIR"
-echo "Repo:    $REPO_DIR"
 
-export HOME="$SANDBOX_HOME"
-export PATH="$NPM_PREFIX/bin:$SANDBOX_VENV/bin:$PATH"
-export npm_config_prefix="$NPM_PREFIX"
-export XDG_STATE_HOME="$SANDBOX_HOME/.local/state"
 # The V2 CLI resolves `mcp list` through its service. Keep generated sandbox
 # runs isolated from any config/database/port inherited from the host.
-V2_CONFIG="$SANDBOX_DIR/project-v2/opencode.json"
-V2_DB="${PANTHEON_V2_DB:-$SANDBOX_DIR/opencode-v2.db}"
 V2_PORT="${PANTHEON_V2_PORT:-49376}"
 V2_LOOPBACK_HOST="${PANTHEON_V2_HOST:-127.0.0.1}"
 V2_HANDSHAKE_TIMEOUT="${PANTHEON_V2_HANDSHAKE_TIMEOUT:-60}"
 V2_MCP_LIST_TIMEOUT="${PANTHEON_V2_MCP_LIST_TIMEOUT:-15}"
+pantheon_validate_sandbox_config_path "$SANDBOX_DIR" "$V2_CONFIG" || exit $?
+pantheon_validate_sandbox_file_path "$SANDBOX_DIR" "$V2_DB" || exit $?
+pantheon_sandbox_env \
+  "$SANDBOX_DIR" \
+  "$SANDBOX_HOME" \
+  "$NPM_PREFIX" \
+  "$SANDBOX_VENV" \
+  "$(dirname "$V2_CONFIG")"
+pantheon_validate_sandbox_config_path "$SANDBOX_DIR" "$V2_CONFIG" || exit $?
+pantheon_validate_sandbox_file_path "$SANDBOX_DIR" "$V2_DB" || exit $?
 V2_SERVER_LOG="$SANDBOX_DIR/v2-server.log"
 V2_SERVICE_STATE="$SANDBOX_HOME/.local/state/opencode/service.json"
 V2_SERVER_PID=""
-export OPENCODE_CONFIG_DIR="$(dirname "$V2_CONFIG")"
 export OPENCODE_DB="$V2_DB"
+pantheon_validate_sandbox_file_path "$SANDBOX_DIR" "$OPENCODE_DB" || exit $?
 export PANTHEON_V2_PORT="$V2_PORT"
 export PORT="$V2_PORT"
 unset OPENCODE_CONFIG OPENCODE_CONFIG_CONTENT OPENCODE_CONFIG_PROJECT_DISABLE
+pantheon_validate_sandbox_path "$V2_SERVICE_STATE" || exit $?
+pantheon_validate_sandbox_path "$(dirname "$V2_SERVICE_STATE")" || exit $?
 mkdir -p "$(dirname "$V2_SERVICE_STATE")"
+pantheon_validate_sandbox_config_path "$SANDBOX_DIR" "$V2_CONFIG" || exit $?
+pantheon_validate_sandbox_file_path "$SANDBOX_DIR" "$V2_DB" || exit $?
+pantheon_validate_sandbox_file_path "$SANDBOX_DIR" "$OPENCODE_DB" || exit $?
+pantheon_validate_sandbox_path "$V2_SERVICE_STATE" || exit $?
+pantheon_validate_sandbox_path "$(dirname "$V2_SERVICE_STATE")" || exit $?
 
 stop_v2_service() {
   if [ -n "$V2_SERVER_PID" ] && kill -0 "$V2_SERVER_PID" 2>/dev/null; then
     kill "$V2_SERVER_PID" 2>/dev/null || true
     wait "$V2_SERVER_PID" 2>/dev/null || true
   fi
+  pantheon_validate_sandbox_path "$V2_SERVICE_STATE" || return $?
   rm -f "$V2_SERVICE_STATE"
   V2_SERVER_PID=""
 }
@@ -452,16 +645,24 @@ stop_v2_service() {
 print_v2_diagnostics() {
   printf '%s\n' '--- V2 service registration ---' >&2
   if [ -f "$V2_SERVICE_STATE" ]; then
-    cat "$V2_SERVICE_STATE" >&2 || true
-    printf '\n' >&2
+    printf '%s\n' 'service registration exists (contents omitted)' >&2
   else
-    printf 'missing service registration: %s\n' "$V2_SERVICE_STATE" >&2
+    printf '%s\n' 'service registration is missing' >&2
   fi
   printf '%s\n' '--- V2 service log ---' >&2
-  [ -f "$V2_SERVER_LOG" ] && tail -200 "$V2_SERVER_LOG" >&2 || true
-  local runtime_log="$HOME/.local/share/opencode/log/opencode.log"
+  if [ -f "$V2_SERVER_LOG" ]; then
+    printf '%s\n' 'service log exists (contents omitted)' >&2
+  else
+    printf '%s\n' 'service log is missing' >&2
+  fi
+  local runtime_log
+  runtime_log="$LOG_PATH"
   printf '%s\n' '--- OpenCode runtime log ---' >&2
-  [ -f "$runtime_log" ] && tail -200 "$runtime_log" >&2 || true
+  if [ -f "$runtime_log" ]; then
+    printf '%s\n' 'runtime log exists (contents omitted)' >&2
+  else
+    printf '%s\n' 'runtime log is missing' >&2
+  fi
 }
 
 wait_for_v2_service_registration() {
@@ -502,8 +703,7 @@ PY
     fi
     sleep 1
   done
-  printf 'ERROR: timed out after %ss waiting for V2 service registration matching url=%s pid=%s\n' \
-    "$V2_HANDSHAKE_TIMEOUT" "$registration_url" "$registration_pid" >&2
+  printf '%s\n' 'ERROR: timed out waiting for V2 service registration.' >&2
   print_v2_diagnostics
   return 1
 }
@@ -566,7 +766,10 @@ PY
 }
 
 start_v2_service() {
-  local bin="$1" project="$2" attempt ready=0
+  local bin="$1" project="$2" attempt ready=0 runtime_log
+  pantheon_validate_sandbox_config_path "$SANDBOX_DIR" "$V2_CONFIG" || return $?
+  pantheon_validate_sandbox_file_path "$SANDBOX_DIR" "$V2_DB" || return $?
+  pantheon_validate_sandbox_file_path "$SANDBOX_DIR" "$OPENCODE_DB" || return $?
   if [ -n "$V2_SERVER_PID" ] && kill -0 "$V2_SERVER_PID" 2>/dev/null; then
     return 0
   fi
@@ -575,7 +778,12 @@ start_v2_service() {
     echo "ERROR: dedicated V2 port $V2_PORT is already in use" >&2
     return 1
   fi
-  rm -f "$V2_SERVER_LOG" "$V2_SERVICE_STATE" "$HOME/.local/share/opencode/log/opencode.log"
+  runtime_log="$LOG_PATH"
+  pantheon_validate_sandbox_path "$project" || return $?
+  pantheon_validate_sandbox_path "$V2_SERVER_LOG" || return $?
+  pantheon_validate_sandbox_path "$V2_SERVICE_STATE" || return $?
+  pantheon_validate_sandbox_path "$runtime_log" || return $?
+  rm -f "$V2_SERVER_LOG" "$V2_SERVICE_STATE" "$runtime_log"
   (cd "$project" && "$bin" serve --hostname "$V2_LOOPBACK_HOST" --port "$V2_PORT" --service) \
     >"$V2_SERVER_LOG" 2>&1 &
   V2_SERVER_PID=$!
@@ -603,7 +811,8 @@ start_v2_service() {
 }
 
 wait_for_v2_handshakes() {
-  local runtime_log="$HOME/.local/share/opencode/log/opencode.log"
+  local runtime_log
+  runtime_log="$LOG_PATH"
   local names=(pantheon-code-mode pantheon-memory pantheon-persistence pantheon-resources pantheon-vision)
   local attempt name ready connected_names connected_count
   for attempt in $(seq 1 "$V2_HANDSHAKE_TIMEOUT"); do
@@ -642,8 +851,9 @@ rewrite_v2_mcp_config() {
   local config_path="$V2_CONFIG"
   local runtime_dir="$SANDBOX_DIR/project-v2/.opencode"
   local python_bin="$SANDBOX_DIR/project-v2/.venv/bin/python3"
-  [ -f "$config_path" ] || { echo "ERROR: V2 config was not generated: $config_path" >&2; return 1; }
-  [ -x "$python_bin" ] || { echo "ERROR: V2 MCP Python is missing: $python_bin" >&2; return 1; }
+  pantheon_validate_sandbox_file_path "$SANDBOX_DIR" "$config_path" || return $?
+  [ -f "$config_path" ] || { echo 'ERROR: sandbox config is unavailable.' >&2; return 1; }
+  [ -x "$python_bin" ] || { echo 'ERROR: sandbox MCP runtime is unavailable.' >&2; return 1; }
   CONFIG_PATH="$config_path" RUNTIME_DIR="$runtime_dir" MCP_PYTHON="$python_bin" \
     python3 - <<'PY'
 import json
@@ -662,29 +872,44 @@ managed = {
 }
 try:
     config = json.loads(config_path.read_text(encoding="utf-8"))
-except (OSError, json.JSONDecodeError) as exc:
-    raise SystemExit(f"cannot read V2 config {config_path}: {exc}")
+except (OSError, json.JSONDecodeError):
+    raise SystemExit("ERROR: sandbox config validation failed.") from None
 if not isinstance(config, dict):
-    raise SystemExit(f"V2 config must be an object: {config_path}")
+    raise SystemExit("ERROR: sandbox config validation failed.")
 mcp = config.setdefault("mcp", {})
 if not isinstance(mcp, dict):
-    raise SystemExit("V2 config mcp section must be an object")
+    raise SystemExit("ERROR: sandbox config validation failed.")
+servers = mcp.setdefault("servers", {})
+if not isinstance(servers, dict):
+    raise SystemExit("ERROR: sandbox config validation failed.")
 for name, script in managed.items():
-    entry = mcp.get(name) if isinstance(mcp.get(name), dict) else {}
+    entry = servers.get(name) if isinstance(servers.get(name), dict) else {}
     entry.pop("disabled", None)
     entry.update(type="local", cwd=runtime_dir, command=[python_bin, f"scripts/{script}"], enabled=True)
-    mcp[name] = entry
+    servers[name] = entry
 tmp_path = config_path.with_name(config_path.name + ".sandbox-tmp")
-tmp_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
-os.replace(tmp_path, config_path)
-validated = json.loads(config_path.read_text(encoding="utf-8"))
+try:
+    tmp_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp_path, config_path)
+except OSError:
+    try:
+        tmp_path.unlink()
+    except OSError:
+        pass
+    raise SystemExit("ERROR: sandbox config validation failed.") from None
+try:
+    validated = json.loads(config_path.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError):
+    raise SystemExit("ERROR: sandbox config validation failed.") from None
+if not isinstance(validated, dict):
+    raise SystemExit("ERROR: sandbox config validation failed.")
 for name, script in managed.items():
-    entry = validated.get("mcp", {}).get(name)
+    entry = validated.get("mcp", {}).get("servers", {}).get(name)
     expected = {"type": "local", "cwd": runtime_dir, "command": [python_bin, f"scripts/{script}"], "enabled": True}
     if not isinstance(entry, dict) or any(entry.get(key) != value for key, value in expected.items()):
-        raise SystemExit(f"stale or invalid paths remain for {name} in {config_path}")
+        raise SystemExit("ERROR: sandbox MCP validation failed.")
     if not Path(entry["cwd"]).is_dir() or not Path(entry["command"][0]).is_file() or not (Path(entry["cwd"]) / entry["command"][1]).is_file():
-        raise SystemExit(f"active sandbox path is missing for {name}: {entry}")
+        raise SystemExit("ERROR: sandbox MCP validation failed.")
 PY
 }
 
@@ -724,11 +949,11 @@ check_mcp() { # label binary project
   local label="$1" bin="$2" project="$3" out connected_count rc=0 list_file list_pid
   local final_file final_pid final_rc final_count
   if ! command -v "$bin" >/dev/null 2>&1; then
-    record_status "$label MCP" "FAIL" "binary '$bin' is not installed in the sandbox prefix"
+    record_status "$label MCP" "FAIL" "MCP connectivity check failed"
     return 0
   fi
   if [ ! -d "$project" ]; then
-    record_status "$label MCP" "FAIL" "project directory is missing: $project"
+    record_status "$label MCP" "FAIL" "MCP connectivity check failed"
     return 0
   fi
   if ! start_v2_service "$bin" "$project"; then
@@ -747,9 +972,8 @@ check_mcp() { # label binary project
   if ! wait_for_v2_mcp_registrations "$project/.opencode" "$project/.venv/bin/python3"; then
     kill "$list_pid" 2>/dev/null || true
     wait "$list_pid" 2>/dev/null || true
-    echo "--- mcp list output (preserved at $list_file) ---" >&2
-    cat "$list_file" >&2 || true
-    record_status "$label MCP" "FAIL" "MCP registrations did not match the active sandbox"
+    rm -f "$list_file"
+    record_status "$label MCP" "FAIL" "MCP registration check failed"
     return 0
   fi
   if wait_for_v2_handshakes; then
@@ -757,9 +981,8 @@ check_mcp() { # label binary project
   else
     kill "$list_pid" 2>/dev/null || true
     wait "$list_pid" 2>/dev/null || true
-    echo "--- mcp list output (preserved at $list_file) ---" >&2
-    cat "$list_file" >&2 || true
-    record_status "$label MCP" "FAIL" "MCP handshakes did not become ready after mcp list started"
+    rm -f "$list_file"
+    record_status "$label MCP" "FAIL" "MCP connectivity check failed"
     return 0
   fi
   if wait "$list_pid"; then
@@ -767,7 +990,7 @@ check_mcp() { # label binary project
   else
     rc=$?
   fi
-  out="$(cat "$list_file")"
+  out="$(cat "$list_file" 2>/dev/null || true)"
   rm -f "$list_file"
   connected_count="$(printf '%s' "$out" | grep -Eic '(^|[^[:alnum:]_])connected([^[:alnum:]_]|$)' || true)"
   if [ "$rc" -eq 0 ] && [ "$connected_count" -ne 5 ]; then
@@ -783,16 +1006,15 @@ check_mcp() { # label binary project
     else
       final_rc=$?
     fi
-    out="$(cat "$final_file")"
+    out="$(cat "$final_file" 2>/dev/null || true)"
     rm -f "$final_file"
     if [ "$final_rc" -ne 0 ]; then
       rc="$final_rc"
     fi
   fi
   out="$(printf '%s' "$out" | sed -E $'s/\x1B\\[[0-?]*[ -/]*[@-~]//g')"
-  printf '%s\n' "$out"
   if [ "$rc" -ne 0 ]; then
-    record_status "$label MCP" "FAIL" "mcp list exited $rc (see output above)"
+    record_status "$label MCP" "FAIL" "MCP connectivity check failed"
     return 0
   fi
   connected_count="$(printf '%s' "$out" | grep -Eic '(^|[^[:alnum:]_])connected([^[:alnum:]_]|$)')" || connected_count=0
@@ -805,7 +1027,7 @@ check_mcp() { # label binary project
     && printf '%s' "$out" | grep -Fq 'pantheon-vision'; then
     record_status "$label MCP" "PASS" "exactly 5 connected MCPs"
   else
-    record_status "$label MCP" "FAIL" "expected exactly 5 connected MCPs; found $connected_count or failures reported"
+    record_status "$label MCP" "FAIL" "MCP connectivity check failed"
   fi
 }
 
@@ -823,11 +1045,15 @@ if ! git -C "$REPO_DIR" ls-files --error-unmatch -- "$TGZ" >/dev/null 2>&1; then
 echo "--- Init (headless) ---"
 pantheon-opencode init --headless -y
 rewrite_v2_mcp_config
-node "$REPO_DIR/scripts/validate-sandbox-install.mjs" \
+if ! node "$REPO_DIR/scripts/validate-sandbox-install.mjs" \
   --repo "$REPO_DIR" \
   --install "$NPM_PREFIX/lib/node_modules/pantheon-opencode" \
   --project-config "$V2_CONFIG" \
-  --config "$PANTHEON_GLOBAL/opencode.json"
+  --config "$PANTHEON_GLOBAL/opencode.json" \
+  >/dev/null 2>&1; then
+  echo 'ERROR: sandbox package/config validation failed.' >&2
+  exit 1
+fi
 
 echo "--- MCP Validation ---"
 check_mcp "V2" opencode2 "$SANDBOX_DIR/project-v2"
@@ -850,7 +1076,7 @@ fi
 echo "--- Gate (b): pantheon://agents CONTENT check ---"
 RESOURCES_SRV="$PANTHEON_GLOBAL/scripts/mcp_resources.py"
 if [ ! -f "$RESOURCES_SRV" ]; then
-  record_status "pantheon://agents resource" "FAIL" "resources server not found at $RESOURCES_SRV"
+  record_status "pantheon://agents resource" "FAIL" "resources server is unavailable"
 else
   set +e
   AGENTS_CONTENT="$("$SANDBOX_VENV/bin/python" - "$RESOURCES_SRV" <<'PYEOF'
@@ -889,6 +1115,8 @@ if [ "$FINAL_VERDICT" != "PASS" ]; then
 fi
 echo "Next: open the isolated TUI with: $SANDBOX_DIR/start-pantheon.sh"
 RUNTEST
+  } > "$SANDBOX_ROOT/run-test.sh"
+  pantheon_validate_sandbox_path "$SANDBOX_ROOT/run-test.sh" || return $?
   chmod +x "$SANDBOX_ROOT/run-test.sh"
 
   cat > "$SANDBOX_ROOT/start-pantheon.sh" <<'STARTPANTHEON'
@@ -897,20 +1125,82 @@ RUNTEST
 # Launches the installed OpenCode beta with only this sandbox's HOME/config/db.
 set -euo pipefail
 
-SANDBOX_DIR="$(cd "$(dirname "$0")" && pwd)"
+pantheon_launcher_preflight() {
+  local entrypoint="$1" current="/" component helper
+  local -a components
+  local LC_ALL=C
+
+  [[ ! "$entrypoint" =~ [[:cntrl:]] ]] || {
+    printf '%s\n' 'ERROR: sandbox launcher preflight validation failed.' >&2
+    return 2
+  }
+  if [[ "$entrypoint" != /* ]]; then entrypoint="$PWD/$entrypoint"; fi
+  IFS='/' read -r -a components <<< "$entrypoint"
+  for component in "${components[@]}"; do
+    case "$component" in
+      '' | .) continue ;;
+      ..)
+        printf '%s\n' 'ERROR: sandbox launcher preflight validation failed.' >&2
+        return 2
+        ;;
+    esac
+    if [[ "$current" == / ]]; then
+      current="/$component"
+    else
+      current="$current/$component"
+    fi
+    if [[ -L "$current" ]]; then
+      printf '%s\n' 'ERROR: sandbox launcher preflight validation failed.' >&2
+      return 2
+    fi
+  done
+
+  if [[ ! -f "$current" || -L "$current" ]]; then
+    printf '%s\n' 'ERROR: sandbox launcher preflight validation failed.' >&2
+    return 2
+  fi
+  SANDBOX_DIR="${current%/*}"
+  [[ -n "$SANDBOX_DIR" ]] || SANDBOX_DIR=/
+  if [[ "$SANDBOX_DIR" == / ]]; then
+    printf '%s\n' 'ERROR: sandbox launcher preflight validation failed.' >&2
+    return 2
+  fi
+  helper="$SANDBOX_DIR/sandbox-env.sh"
+  if [[ ! -f "$helper" || -L "$helper" ]]; then
+    printf '%s\n' 'ERROR: sandbox launcher preflight validation failed.' >&2
+    return 2
+  fi
+  SANDBOX_ENV_HELPER="$helper"
+}
+
+pantheon_launcher_preflight "$0" || exit $?
+source "$SANDBOX_ENV_HELPER"
+pantheon_validate_sandbox_root "$SANDBOX_DIR" || exit $?
 SANDBOX_HOME="$SANDBOX_DIR/home"
 NPM_PREFIX="$SANDBOX_HOME/.npm-global"
 SANDBOX_VENV="$SANDBOX_HOME/.config/opencode/.venv"
 V2_PORT="${PANTHEON_V2_PORT:-49376}"
+V2_CONFIG="${PANTHEON_V2_CONFIG:-$SANDBOX_DIR/project-v2/opencode.json}"
+V2_DB="${PANTHEON_V2_DB:-$SANDBOX_DIR/opencode-v2.db}"
+pantheon_validate_sandbox_config_path "$SANDBOX_DIR" "$V2_CONFIG" || exit $?
+pantheon_validate_sandbox_file_path "$SANDBOX_DIR" "$V2_DB" || exit $?
 if [[ ! "$V2_PORT" =~ ^[0-9]{1,5}$ ]]; then
-  echo "ERROR: PANTHEON_V2_PORT must be an integer from 1 through 65535 (got '$V2_PORT')" >&2
+  echo 'ERROR: PANTHEON_V2_PORT must be an integer from 1 through 65535.' >&2
   exit 1
 fi
 V2_PORT=$((10#$V2_PORT))
 if [ "$V2_PORT" -lt 1 ] || [ "$V2_PORT" -gt 65535 ]; then
-  echo "ERROR: PANTHEON_V2_PORT must be an integer from 1 through 65535 (got '$V2_PORT')" >&2
+  echo 'ERROR: PANTHEON_V2_PORT must be an integer from 1 through 65535.' >&2
   exit 1
 fi
+pantheon_sandbox_env \
+  "$SANDBOX_DIR" \
+  "$SANDBOX_HOME" \
+  "$NPM_PREFIX" \
+  "$SANDBOX_VENV" \
+  "$(dirname "$V2_CONFIG")"
+pantheon_validate_sandbox_config_path "$SANDBOX_DIR" "$V2_CONFIG" || exit $?
+pantheon_validate_sandbox_file_path "$SANDBOX_DIR" "$V2_DB" || exit $?
 if ! python3 - "$V2_PORT" "$NPM_PREFIX" <<'CHECKPORT'
 import errno
 import os
@@ -1002,26 +1292,21 @@ then
   exit 1
 fi
 
-export HOME="$SANDBOX_HOME"
-export PATH="$NPM_PREFIX/bin:$SANDBOX_VENV/bin:$PATH"
-export npm_config_prefix="$NPM_PREFIX"
-export XDG_CONFIG_HOME="$SANDBOX_HOME/.config"
-export XDG_CONFIG_DIRS="$SANDBOX_HOME/.config/xdg"
-export XDG_DATA_HOME="$SANDBOX_HOME/.local/share"
-export XDG_DATA_DIRS="$SANDBOX_HOME/.local/share/xdg"
-export XDG_STATE_HOME="$SANDBOX_HOME/.local/state"
-export XDG_CACHE_HOME="$SANDBOX_HOME/.cache"
-export OPENCODE_CONFIG_DIR="$SANDBOX_DIR/project-v2"
-export OPENCODE_DB="${PANTHEON_V2_DB:-$SANDBOX_DIR/opencode-v2.db}"
+export OPENCODE_DB="$V2_DB"
+pantheon_validate_sandbox_file_path "$SANDBOX_DIR" "$OPENCODE_DB" || exit $?
 export PANTHEON_V2_PORT="$V2_PORT"
 export PORT="$PANTHEON_V2_PORT"
 unset OPENCODE_CONFIG OPENCODE_CONFIG_CONTENT OPENCODE_CONFIG_PROJECT_DISABLE \
   OPENCODE_DATA_DIR OPENCODE_STATE_DIR OPENCODE_CACHE_DIR OPENCODE_STORAGE_PATH
 
+pantheon_validate_sandbox_config_path "$SANDBOX_DIR" "$V2_CONFIG" || exit $?
+pantheon_validate_sandbox_file_path "$SANDBOX_DIR" "$V2_DB" || exit $?
+pantheon_validate_sandbox_path "$SANDBOX_DIR/project-v2" || exit $?
 "$NPM_PREFIX/bin/opencode2" service set port "$V2_PORT"
 cd "$SANDBOX_DIR/project-v2"
 exec "$NPM_PREFIX/bin/opencode2" "$@"
 STARTPANTHEON
+  pantheon_validate_sandbox_path "$SANDBOX_ROOT/start-pantheon.sh" || return $?
   chmod +x "$SANDBOX_ROOT/start-pantheon.sh"
 }
 
@@ -1092,26 +1377,26 @@ cmd_reset() {
   # generated script pack a tarball into it.
   local protected canonical_root canonical_home canonical_protected
   canonical_root="$(canonicalize_path "$SANDBOX_ROOT")" \
-    || die "refusing to reset sandbox root that cannot be canonicalized: $SANDBOX_ROOT"
+    || die "refusing to reset unsafe sandbox root"
   canonical_home="$(canonicalize_path "$HOME")" \
-    || die "refusing to reset because HOME cannot be canonicalized: $HOME"
+    || die "refusing to reset unsafe sandbox root"
   [ "$canonical_root" != "/" ] \
-    || die "refusing to reset unsafe sandbox root: $SANDBOX_ROOT (filesystem root)"
+    || die "refusing to reset unsafe sandbox root"
   [ "$canonical_root" != "$canonical_home" ] \
-    || die "refusing to reset unsafe sandbox root: $SANDBOX_ROOT (HOME)"
+    || die "refusing to reset unsafe sandbox root"
   if path_is_same_or_descendant "$canonical_home" "$canonical_root"; then
-    die "refusing to reset unsafe sandbox root: $SANDBOX_ROOT (it is an ancestor of HOME $HOME)"
+    die "refusing to reset unsafe sandbox root"
   fi
 
   for protected in "$REPO_DIR" "${PANTHEON_REPO:-}"; do
     [ -n "$protected" ] || continue
     canonical_protected="$(canonicalize_path "$protected")" \
-      || die "refusing to reset because protected repo path cannot be canonicalized: $protected"
+      || die "refusing to reset unsafe sandbox root"
     if path_is_same_or_descendant "$canonical_root" "$canonical_protected"; then
-      die "refusing to reset unsafe sandbox root: $SANDBOX_ROOT (it is equal to or inside the repo $protected)"
+      die "refusing to reset unsafe sandbox root"
     fi
     if path_is_same_or_descendant "$canonical_protected" "$canonical_root"; then
-      die "refusing to reset unsafe sandbox root: $SANDBOX_ROOT (it is an ancestor of the repo $protected)"
+      die "refusing to reset unsafe sandbox root"
     fi
   done
   log "Resetting sandbox: $SANDBOX_ROOT"
@@ -1123,7 +1408,7 @@ install_binaries() {
   local tgz_path
   if [ -n "$SANDBOX_TARBALL" ]; then
     [ -f "$SANDBOX_TARBALL" ] \
-      || die "PANTHEON_SANDBOX_TARBALL does not exist: $SANDBOX_TARBALL"
+      || die "sandbox package artifact is unavailable"
     tgz_path="$(cd "$(dirname "$SANDBOX_TARBALL")" && pwd)/$(basename "$SANDBOX_TARBALL")"
     log "--- Installing pantheon-opencode (from supplied release tarball) ---"
   else
@@ -1152,7 +1437,7 @@ prepare_project() {
     || die "pantheon-opencode not installed in sandbox prefix — run $0 --prepare first"
   log "--- Regenerating config in $dir ---"
   (cd "$dir" && "$pan" init --project --version "$TARGET_VERSION" --model "$PANTHEON_SANDBOX_MODEL" -y) \
-    || die "init --project --version $TARGET_VERSION failed in $dir"
+    || die "sandbox project initialization failed"
   rewrite_v2_mcp_config
   validate_sandbox_install
 }
@@ -1164,14 +1449,14 @@ prepare_project() {
 rewrite_v2_mcp_config() {
   local runtime_dir="$(project_dir)/.opencode"
   local python_bin="$(project_dir)/.venv/bin/python3"
-  [ -f "$V2_CONFIG" ] || die "V2 config was not generated: $V2_CONFIG"
-  [ -x "$python_bin" ] || die "V2 MCP Python is missing: $python_bin"
+  pantheon_validate_sandbox_config_path "$SANDBOX_ROOT" "$V2_CONFIG" || return $?
+  [ -f "$V2_CONFIG" ] || die "sandbox config is unavailable"
+  [ -x "$python_bin" ] || die "sandbox MCP runtime is unavailable"
 
   CONFIG_PATH="$V2_CONFIG" RUNTIME_DIR="$runtime_dir" MCP_PYTHON="$python_bin" \
     python3 - <<'PY'
 import json
 import os
-import sys
 from pathlib import Path
 
 config_path = Path(os.environ["CONFIG_PATH"])
@@ -1187,16 +1472,19 @@ managed = {
 
 try:
     config = json.loads(config_path.read_text(encoding="utf-8"))
-except (OSError, json.JSONDecodeError) as exc:
-    raise SystemExit(f"cannot read V2 config {config_path}: {exc}")
+except (OSError, json.JSONDecodeError):
+    raise SystemExit("ERROR: sandbox config validation failed.") from None
 if not isinstance(config, dict):
-    raise SystemExit(f"V2 config must be an object: {config_path}")
+    raise SystemExit("ERROR: sandbox config validation failed.")
 mcp = config.setdefault("mcp", {})
 if not isinstance(mcp, dict):
-    raise SystemExit("V2 config mcp section must be an object")
+    raise SystemExit("ERROR: sandbox config validation failed.")
+servers = mcp.setdefault("servers", {})
+if not isinstance(servers, dict):
+    raise SystemExit("ERROR: sandbox config validation failed.")
 
 for name, script in managed.items():
-    entry = mcp.get(name)
+    entry = servers.get(name)
     if not isinstance(entry, dict):
         entry = {}
     # Do not retain command/cwd values from the merged config. These are the
@@ -1208,25 +1496,25 @@ for name, script in managed.items():
         command=[python_bin, f"scripts/{script}"],
         enabled=True,
     )
-    mcp[name] = entry
+    servers[name] = entry
 
 tmp_path = config_path.with_name(config_path.name + ".sandbox-tmp")
 try:
     tmp_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
     os.replace(tmp_path, config_path)
-except OSError as exc:
+except OSError:
     try:
         tmp_path.unlink()
     except OSError:
         pass
-    raise SystemExit(f"cannot rewrite V2 config {config_path}: {exc}")
+    raise SystemExit("ERROR: sandbox config validation failed.") from None
 
 try:
     validated = json.loads(config_path.read_text(encoding="utf-8"))
-except (OSError, json.JSONDecodeError) as exc:
-    raise SystemExit(f"cannot validate rewritten V2 config {config_path}: {exc}")
+except (OSError, json.JSONDecodeError):
+    raise SystemExit("ERROR: sandbox config validation failed.") from None
 for name, script in managed.items():
-    entry = validated.get("mcp", {}).get(name)
+    entry = validated.get("mcp", {}).get("servers", {}).get(name)
     expected = {
         "type": "local",
         "cwd": runtime_dir,
@@ -1234,11 +1522,11 @@ for name, script in managed.items():
         "enabled": True,
     }
     if not isinstance(entry, dict) or any(entry.get(key) != value for key, value in expected.items()):
-        raise SystemExit(f"stale or invalid paths remain for {name} in {config_path}")
+        raise SystemExit("ERROR: sandbox MCP validation failed.")
     if not Path(entry["cwd"]).is_dir() or not Path(entry["command"][0]).is_file():
-        raise SystemExit(f"active sandbox path is missing for {name}: {entry}")
+        raise SystemExit("ERROR: sandbox MCP validation failed.")
     if not (Path(entry["cwd"]) / entry["command"][1]).is_file():
-        raise SystemExit(f"active sandbox MCP script is missing for {name}: {entry}")
+        raise SystemExit("ERROR: sandbox MCP validation failed.")
 PY
 }
 
@@ -1248,13 +1536,16 @@ validate_sandbox_install() {
     --install "$NPM_PREFIX/lib/node_modules/pantheon-opencode" \
     --project-config "$V2_CONFIG" \
     --config "$SANDBOX_HOME/.config/opencode/opencode.json" \
+    >/dev/null 2>&1 \
     || die "sandbox package/config validation failed"
 }
 
 cmd_prepare() {
-  mkdir -p "$SANDBOX_HOME" "$NPM_PREFIX"
-  write_run_test_sh
   sandbox_env
+  pantheon_validate_sandbox_path "$NPM_PREFIX" || die "invalid sandbox path"
+  mkdir -p "$SANDBOX_HOME" "$NPM_PREFIX"
+  pantheon_validate_sandbox_path "$NPM_PREFIX" || die "invalid sandbox path"
+  write_run_test_sh
   install_binaries
   local pan
   pan="$(sandbox_bin_for "pantheon-opencode")" \
@@ -1407,10 +1698,11 @@ run_prompt() { # v idx current_bin — exactly one attempt
 }
 
 check_mcp_list() { # v
-  local v="$1" bin out connected_count rc=0 last_out='' last_rc=0
+  local v="$1" bin out connected_count rc=0
   local list_file list_pid final_file final_pid final_rc
   if ! bin="$(sandbox_bin)"; then
-    record "$v" "mcp-list" "FAIL" "binary not installed in sandbox prefix"
+    printf '%s\n' 'MCP connectivity check failed' >&2
+    record "$v" "mcp-list" "FAIL" "MCP connectivity check failed"
     return 0
   fi
   if ! start_v2_service "$bin" "$(project_dir)"; then
@@ -1428,7 +1720,8 @@ check_mcp_list() { # v
     kill "$list_pid" 2>/dev/null || true
     wait "$list_pid" 2>/dev/null || true
     rm -f "$list_file"
-    record "$v" "mcp-list" "FAIL" "MCP registrations did not match the active sandbox"
+    printf '%s\n' 'MCP registration check failed' >&2
+    record "$v" "mcp-list" "FAIL" "MCP registration check failed"
     return 0
   fi
   if wait_for_v2_handshakes; then
@@ -1437,7 +1730,8 @@ check_mcp_list() { # v
     kill "$list_pid" 2>/dev/null || true
     wait "$list_pid" 2>/dev/null || true
     rm -f "$list_file"
-    record "$v" "mcp-list" "FAIL" "MCP handshakes did not become ready after mcp list started"
+    printf '%s\n' 'MCP connectivity check failed' >&2
+    record "$v" "mcp-list" "FAIL" "MCP connectivity check failed"
     return 0
   fi
   if wait "$list_pid"; then
@@ -1445,7 +1739,7 @@ check_mcp_list() { # v
   else
     rc=$?
   fi
-  out="$(cat "$list_file")"
+  out="$(cat "$list_file" 2>/dev/null || true)"
   rm -f "$list_file"
   connected_count="$(printf '%s' "$out" | grep -Eic '(^|[^[:alnum:]_])connected([^[:alnum:]_]|$)' || true)"
   if [ "$rc" -eq 0 ] && [ "$connected_count" -ne 5 ]; then
@@ -1461,15 +1755,13 @@ check_mcp_list() { # v
     else
       final_rc=$?
     fi
-    out="$(cat "$final_file")"
+    out="$(cat "$final_file" 2>/dev/null || true)"
     rm -f "$final_file"
     if [ "$final_rc" -ne 0 ]; then
       rc="$final_rc"
     fi
   fi
   out="$(printf '%s' "$out" | sed -E $'s/\x1B\\[[0-?]*[ -/]*[@-~]//g')"
-  last_out="$out"
-  last_rc="$rc"
   connected_count="$(printf '%s' "$out" | grep -Eic '(^|[^[:alnum:]_])connected([^[:alnum:]_]|$)' || true)"
   if [ "$rc" -eq 0 ] \
     && [ "$connected_count" -eq 5 ] \
@@ -1479,18 +1771,13 @@ check_mcp_list() { # v
     && printf '%s' "$out" | grep -Fq 'pantheon-persistence' \
     && printf '%s' "$out" | grep -Fq 'pantheon-resources' \
     && printf '%s' "$out" | grep -Fq 'pantheon-vision'; then
-    printf '%s\n' "$out"
     record "$v" "mcp-list" "PASS" "exactly 5 connected MCPs"
     return 0
   fi
 
-  printf '%s\n' '--- mcp list output (last attempt) ---' >&2
-  printf '%s\n' "$last_out" >&2
-  printf 'mcp list exit=%s; connected=%s; expected exactly 5\n' \
-    "$last_rc" "$connected_count" >&2
+  printf '%s\n' 'MCP connectivity check failed' >&2
   print_v2_diagnostics
-  record "$v" "mcp-list" "FAIL" \
-    "expected exactly 5 connected MCPs; last exit $last_rc found $connected_count"
+  record "$v" "mcp-list" "FAIL" "MCP connectivity check failed"
 }
 
 check_doctor() { # v

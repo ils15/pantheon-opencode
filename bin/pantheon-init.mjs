@@ -21,16 +21,18 @@
  * (scripts/install/opencode-state.mjs).
  */
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { configure as configureUi, endGaugeLine, tag } from '../scripts/install/cli-ui.mjs'
 import { resolveComponentSelection } from '../scripts/install/component-selection.mjs'
+import { resolveGlobalConfigDirectory } from '../scripts/install/config-paths.mjs'
 import { resolveInstallExitCode } from '../scripts/install/exit-codes.mjs'
 import { createInterruptHandler } from '../scripts/install/interrupt.mjs'
+import { parseOpenCodeVersion } from '../scripts/install/opencode-version.mjs'
 import {
   createPlanArtifact,
   loadPlanArtifact,
+  planArtifactDigest,
   savePlanArtifact,
 } from '../scripts/install/plan-artifact.mjs'
 import { PROMPT_CANCELED } from '../scripts/install/prompt-result.mjs'
@@ -239,9 +241,7 @@ async function main() {
       }
     }
 
-    const presetDir = isProject
-      ? process.cwd()
-      : path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'opencode')
+    const presetDir = isProject ? process.cwd() : resolveGlobalConfigDirectory(process.env)
     const filePath = path.join(presetDir, '.pantheon', 'active-preset.json')
     const bakPath = path.join(presetDir, '.pantheon', 'active-preset.json.bak')
 
@@ -329,7 +329,24 @@ async function main() {
       }
     }
     const isProject = reviewedPlan ? reviewedPlan.options.isProject : args.includes('--project')
+    const setupTarget = !reviewedPlan ? process.env.PANTHEON_SETUP_TARGET : undefined
+    if (setupTarget !== undefined) {
+      const expectedGlobalTarget = path.resolve(resolveGlobalConfigDirectory(process.env))
+      if (isProject || path.resolve(setupTarget) !== expectedGlobalTarget) {
+        console.error(
+          '❌ Invalid setup target; it must match the selected global OpenCode config directory',
+        )
+        process.exit(1)
+      }
+    }
     const isDryRun = reviewedPlan ? false : args.includes('--dry-run')
+    const setupConfigPreview = args.includes('--setup-config-preview-stdin')
+    const setupPlanJson = args.includes('--setup-plan-json')
+    const setupApprovedPlanInput = args.includes('--setup-approved-plan-stdin')
+    if (setupConfigPreview && !isDryRun) {
+      console.error('❌ Setup config previews are accepted only by init --dry-run')
+      process.exit(1)
+    }
     // --clean is an alias of --force (both wipe component dirs + recreate venv).
     const forceReinstall = reviewedPlan
       ? reviewedPlan.options.clean
@@ -339,6 +356,17 @@ async function main() {
     const forceHeadless = args.includes('--headless')
     let autoYes = args.includes('--yes') || args.includes('-y')
     const isJson = args.includes('--json')
+    if (setupPlanJson && (!isDryRun || !isJson || reviewedPlan)) {
+      console.error('❌ Setup plan output is available only with init --dry-run --json')
+      process.exit(1)
+    }
+    if (
+      setupApprovedPlanInput &&
+      (isDryRun || !autoYes || !forceHeadless || reviewedPlan || setupConfigPreview)
+    ) {
+      console.error('❌ An approved setup plan is accepted only by authorized headless init')
+      process.exit(1)
+    }
     const savePlanIndex = args.indexOf('--save-plan')
     const inlineSavePlan = args.find((arg) => arg.startsWith('--save-plan='))
     const savePlanPath =
@@ -400,6 +428,9 @@ async function main() {
           '--yes',
           '-y',
           '--json',
+          '--setup-config-preview-stdin',
+          '--setup-plan-json',
+          '--setup-approved-plan-stdin',
           '--verbose',
         ].includes(bare)
       ) {
@@ -440,16 +471,7 @@ async function main() {
     // --version v1|v2|auto labels the install target. `auto` resolves the
     // generation from the opencode binary at install time (see
     // scripts/install/opencode-version.mjs). Invalid values fail fast.
-    const versionIndex = args.indexOf('--version')
-    const legacyVersionIndex = args.indexOf('--opencode-version')
-    const inlineVersion = args.find((arg) => arg.startsWith('--opencode-version='))
-    const versionOpt = reviewedPlan
-      ? reviewedPlan.options.version
-      : versionIndex >= 0
-        ? (args[versionIndex + 1] ?? null)
-        : legacyVersionIndex >= 0
-          ? (args[legacyVersionIndex + 1] ?? null)
-          : (inlineVersion?.split('=', 2)[1] ?? null)
+    const versionOpt = reviewedPlan ? reviewedPlan.options.version : parseOpenCodeVersion(args)
     if (
       versionOpt !== null &&
       versionOpt !== 'v1' &&
@@ -502,9 +524,7 @@ async function main() {
     // interactive prompts can cancel before a location is chosen. Mirrors the
     // installer's own default (`~/.config/opencode`), so the record lands next
     // to the config the next run will read.
-    const fallbackTarget = isProject
-      ? process.cwd()
-      : path.join(os.homedir(), '.config', 'opencode')
+    const fallbackTarget = isProject ? process.cwd() : resolveGlobalConfigDirectory(process.env)
     /**
      * Persist the one-line record of this run. Bookkeeping is best-effort: a
      * failure is reported, never fatal, and never changes the exit code.
@@ -608,7 +628,49 @@ async function main() {
     let installError = null
     try {
       const { installOpenCode } = await import('../scripts/install/opencode.mjs')
-      const target = reviewedPlan ? reviewedPlan.target.path : isProject ? process.cwd() : undefined
+      let configPreview = null
+      let setupApprovedPlan = null
+      if (setupConfigPreview) {
+        try {
+          configPreview = fs.readFileSync(0, 'utf8')
+          if (configPreview.length === 0) throw new Error('empty')
+        } catch {
+          throw new Error('The setup config preview input is invalid.')
+        }
+      }
+      if (setupApprovedPlanInput) {
+        try {
+          const envelope = JSON.parse(fs.readFileSync(0, 'utf8'))
+          if (
+            envelope?.schema_version !== 1 ||
+            !envelope.plan ||
+            !Array.isArray(envelope.configPreconditions) ||
+            typeof envelope.digest !== 'string' ||
+            planArtifactDigest(envelope.plan) !== envelope.digest
+          ) {
+            throw new Error('invalid setup plan envelope')
+          }
+          if (envelope.configPreconditions.length > 0) {
+            const { verifyConfigPreconditions } = await import('../scripts/setup-v2-config.mjs')
+            if (
+              !verifyConfigPreconditions(envelope.configPreconditions, {
+                configDir: setupTarget,
+                stage: 'expected',
+              })
+            ) {
+              throw new Error('reviewed config inputs changed')
+            }
+          }
+          setupApprovedPlan = envelope
+        } catch {
+          throw new Error('The approved setup plan or config snapshots are invalid or drifted.')
+        }
+      }
+      const target = reviewedPlan
+        ? reviewedPlan.target.path
+        : isProject
+          ? process.cwd()
+          : setupTarget
       result = await installOpenCode(target, isDryRun, forceReinstall, components, {
         interactive: forceInteractive,
         headless: reviewedPlan ? true : forceHeadless,
@@ -618,12 +680,14 @@ async function main() {
         preset: presetOpt,
         version: versionOpt ?? 'auto',
         mergeDevConfig: mergeDevConfigOpt,
-        expectedPlan: reviewedPlan,
+        expectedPlan: reviewedPlan ?? setupApprovedPlan?.plan ?? null,
+        isProject,
         requestedComponents: requestedComponentsForPrompt,
         noMcp: skipMCP,
         planTimestamp,
         quiet: isJson,
         verbose: args.includes('--verbose') && !isJson,
+        configPreview,
       })
     } catch (err) {
       installError = err
@@ -700,6 +764,26 @@ async function main() {
         if (Object.hasOwn(totals, file.action)) totals[file.action] += 1
       }
       const mcpServers = result.mcpServers ?? []
+      const setupPlan = setupPlanJson
+        ? createPlanArtifact({
+            target: result.target,
+            packageRoot: ROOT,
+            packageVersion: version,
+            plannedAt: planTimestamp,
+            options: {
+              clean: forceReinstall,
+              components,
+              version: result.openCodeVersion,
+              isProject,
+              model: modelOpt,
+              smallModel: smallModelOpt,
+              preset: presetOpt,
+              mergeDevConfig: mergeDevConfigOpt,
+            },
+            files: result.files,
+            snapshots: result.snapshots,
+          })
+        : null
       process.stdout.write(
         `${JSON.stringify({
           schema_version: 1,
@@ -734,6 +818,9 @@ async function main() {
             bytes,
           })),
           saved_plan: savePlanPath ? path.resolve(savePlanPath) : null,
+          ...(setupPlan
+            ? { setup_plan: setupPlan, setup_plan_digest: planArtifactDigest(setupPlan) }
+            : {}),
         })}\n`,
       )
       return
