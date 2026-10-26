@@ -79,6 +79,13 @@ see [Quick Start](docs/QUICKSTART.md).
   allowlisted provider authentication; provider quota adapters and visible quota
   UI are still in progress.
 
+Vision requests to OpenCode Zen require a valid active session and are rejected
+before image fetching or model-catalog lookup when the session is missing or
+invalid. The Python vision MCP keeps its local metadata/OCR fallback when no
+gateway credential is configured. In the V2 plugin, an explicit Vision model
+pin that is unavailable or ineligible returns an actionable error rather than
+silently switching models; remove the pin to use automatic model discovery.
+
 Memory is used selectively: the coordinator searches once only when project
 history could affect a task, then passes relevant results to specialists. Store
 one concise, reusable outcome at task completion when it will matter later;

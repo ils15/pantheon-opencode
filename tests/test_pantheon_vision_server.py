@@ -101,14 +101,17 @@ async def test_data_uri_file_and_http_inputs_are_accepted(
         "data:image/png;base64," + base64.b64encode(PNG_1X1).decode(),
         "https://example.test/image.png",
     ):
-        result = await vision.mcp.call_tool("vision_describe", {"path": source})
+        result = await vision.mcp.call_tool(
+            "vision_describe", {"path": source, "session_id": "ses_valid123"}
+        )
         assert _tool_text(result) == "A description"
 
 
 @pytest.mark.asyncio
 async def test_invalid_missing_and_oversized_inputs_are_friendly(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
     missing = await vision.mcp.call_tool(
         "vision_describe", {"path": str(tmp_path / "missing.png")}
     )
@@ -149,7 +152,8 @@ async def test_auth_store_fallback_and_gateway_request(
     monkeypatch.setattr(vision.httpx, "AsyncClient", FakeClient)
 
     result = await vision.mcp.call_tool(
-        "vision_describe", {"path": "https://example.test/photo.jpg"}
+        "vision_describe",
+        {"path": "https://example.test/photo.jpg", "session_id": "ses_valid123"},
     )
     assert _tool_text(result) == "A description"
     request = FakeClient.last_request
@@ -184,17 +188,52 @@ async def test_session_header_sent_for_zen_endpoint(
 
 
 @pytest.mark.asyncio
-async def test_session_header_absent_without_session_id(
+async def test_missing_session_fails_before_image_or_gateway(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No session id → no header (the MCP never fabricates one)."""
+    """A Zen-bound MCP call without a session fails before image/network work."""
     monkeypatch.setenv("PANTHEON_OPENCODE_API_KEY", "test-key")
     monkeypatch.setattr(vision.httpx, "AsyncClient", FakeClient)
+    prepare_calls = 0
 
-    await vision.mcp.call_tool(
+    async def unexpected_prepare(_path: str) -> vision.ImageInput:
+        nonlocal prepare_calls
+        prepare_calls += 1
+        raise AssertionError("image preparation must not run without a valid session")
+
+    monkeypatch.setattr(vision, "_prepare_input", unexpected_prepare)
+
+    result = await vision.mcp.call_tool(
         "vision_describe", {"path": "https://example.test/photo.jpg"}
     )
-    assert vision.SESSION_HEADER not in FakeClient.last_request["headers"]
+    assert "valid OpenCode session" in _tool_text(result)
+    assert prepare_calls == 0
+    assert FakeClient.last_request == {}
+
+
+@pytest.mark.asyncio
+async def test_invalid_session_fails_before_any_gateway_tool_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Describe, OCR, and analyze reject invalid sessions before image prep/post."""
+    monkeypatch.setenv("PANTHEON_OPENCODE_API_KEY", "test-key")
+    monkeypatch.setattr(vision.httpx, "AsyncClient", FakeClient)
+    prepare_calls = 0
+
+    async def unexpected_prepare(_path: str) -> vision.ImageInput:
+        nonlocal prepare_calls
+        prepare_calls += 1
+        raise AssertionError("image preparation must not run without a valid session")
+
+    monkeypatch.setattr(vision, "_prepare_input", unexpected_prepare)
+    for tool_name in ("vision_describe", "vision_ocr", "vision_analyze"):
+        result = await vision.mcp.call_tool(
+            tool_name,
+            {"path": "https://example.test/photo.jpg", "session_id": "not-a-session"},
+        )
+        assert "valid OpenCode session" in _tool_text(result)
+    assert prepare_calls == 0
+    assert FakeClient.last_request == {}
 
 
 @pytest.mark.asyncio
@@ -212,7 +251,7 @@ async def test_session_header_absent_for_non_zen_endpoint(
 
     await vision.mcp.call_tool(
         "vision_describe",
-        {"path": "https://example.test/photo.jpg", "session_id": "session-secret"},
+        {"path": "https://example.test/photo.jpg", "session_id": "ses_session-secret"},
     )
     assert vision.SESSION_HEADER not in FakeClient.last_request["headers"]
 
@@ -228,18 +267,21 @@ async def test_session_id_is_never_logged(
 
     result = await vision.mcp.call_tool(
         "vision_describe",
-        {"path": "https://example.test/photo.jpg", "session_id": "session-do-not-log"},
+        {
+            "path": "https://example.test/photo.jpg",
+            "session_id": "ses_session-do-not-log",
+        },
     )
     assert "MissingSessionID" in _tool_text(result)
-    assert "session-do-not-log" not in capsys.readouterr().err
+    assert "ses_session-do-not-log" not in capsys.readouterr().err
 
 
-def test_validated_session_id_accepts_tokens_and_rejects_header_injection() -> None:
-    """Only a trimmed, token-shaped, bounded id is accepted for the header."""
+def test_validated_session_id_matches_host_session_contract() -> None:
+    """Vision uses the host's starts-with-ses session id contract verbatim."""
     assert vision._validated_session_id("ses_abc123") == "ses_abc123"
-    assert vision._validated_session_id("  ses_abc123  ") == "ses_abc123"
+    assert vision._validated_session_id("ses") == "ses"
     assert vision._validated_session_id("session-zen") == "session-zen"
-    # Unusable values must be dropped, never copied into a header.
+    # Values rejected by the host's session guard are rejected here as well.
     for bad in [
         None,
         "",
@@ -250,22 +292,17 @@ def test_validated_session_id_accepts_tokens_and_rejects_header_injection() -> N
         "has space",
         "with\tcontrol",
         "ctrl\x00null",
-        "a" * (vision._SESSION_ID_MAX_LENGTH + 1),
+        "wrk_123",
         123,
     ]:
         assert vision._validated_session_id(bad) is None, f"accepted: {bad!r}"
 
 
 @pytest.mark.asyncio
-async def test_malicious_session_id_never_reaches_the_header(
+async def test_invalid_session_ids_never_reach_the_gateway(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A CRLF/quote session id must not leak into the Zen header (no spoofing).
-
-    A raw CRLF would split the header and let the caller inject extra
-    headers/requests; a quote could break the header framing. The value is
-    validated first, so the header is simply omitted.
-    """
+    """Invalid host session ids fail before a request; valid ids are forwarded."""
     monkeypatch.setenv("PANTHEON_OPENCODE_API_KEY", "test-key")
     monkeypatch.setattr(vision.httpx, "AsyncClient", FakeClient)
 
@@ -278,18 +315,14 @@ async def test_malicious_session_id_never_reaches_the_header(
         "ctrl\x00null",
     ]:
         FakeClient.last_request = {}
-        await vision.mcp.call_tool(
+        result = await vision.mcp.call_tool(
             "vision_describe",
             {"path": "https://example.test/photo.jpg", "session_id": malicious},
         )
-        headers = FakeClient.last_request["headers"]
-        assert vision.SESSION_HEADER not in headers, f"header spoofed by {malicious!r}"
-        assert not any(
-            "X-Injected" in key or "X-Injected" in str(value)
-            for key, value in headers.items()
-        ), f"injected header present for {malicious!r}"
+        assert "valid OpenCode session" in _tool_text(result)
+        assert FakeClient.last_request == {}, f"request sent for invalid {malicious!r}"
 
-    # The positive control: a valid token still reaches the Zen header.
+    # Positive control: a host-valid token still reaches the Zen header.
     FakeClient.last_request = {}
     await vision.mcp.call_tool(
         "vision_describe",
@@ -308,14 +341,16 @@ async def test_gateway_status_maps_to_actionable_messages(
 
     FakeClient.response = FakeResponse(status_code=400, content="MissingSessionID")
     missing = await vision.mcp.call_tool(
-        "vision_describe", {"path": "https://example.test/photo.jpg"}
+        "vision_describe",
+        {"path": "https://example.test/photo.jpg", "session_id": "ses_valid123"},
     )
     assert "HTTP 400" in _tool_text(missing)
     assert "MissingSessionID" in _tool_text(missing)
 
     FakeClient.response = FakeResponse(status_code=403, content="free tier")
     denied = await vision.mcp.call_tool(
-        "vision_describe", {"path": "https://example.test/photo.jpg"}
+        "vision_describe",
+        {"path": "https://example.test/photo.jpg", "session_id": "ses_valid123"},
     )
     assert "HTTP 403" in _tool_text(denied)
     assert "free-tier" in _tool_text(denied)
@@ -341,7 +376,8 @@ async def test_empty_response_surfaces_finish_reason(
     FakeClient.response = _EmptyLengthResponse()
 
     result = await vision.mcp.call_tool(
-        "vision_describe", {"path": "https://example.test/photo.jpg"}
+        "vision_describe",
+        {"path": "https://example.test/photo.jpg", "session_id": "ses_valid123"},
     )
     assert "finish_reason: length" in _tool_text(result)
 
@@ -549,7 +585,8 @@ async def test_missing_credential_store_returns_none_and_logs(
 
     # The fatal path logs the paths/env vars tried.
     result = await vision.mcp.call_tool(
-        "vision_analyze", {"path": "https://example.test/photo.jpg"}
+        "vision_analyze",
+        {"path": "https://example.test/photo.jpg", "session_id": "ses_valid123"},
     )
     stderr = capsys.readouterr().err
     assert "No OpenCode credential found" in stderr
@@ -585,7 +622,8 @@ async def test_missing_key_error_names_every_source(
     """The tool error tells the operator which sources were tried."""
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     result = await vision.mcp.call_tool(
-        "vision_describe", {"path": "https://example.test/photo.jpg"}
+        "vision_describe",
+        {"path": "https://example.test/photo.jpg", "session_id": "ses_valid123"},
     )
     message = _tool_text(result)
     assert "PANTHEON_OPENCODE_API_KEY" in message
@@ -646,8 +684,11 @@ async def test_local_fallback_never_invents_a_description(
 
 
 @pytest.mark.asyncio
-async def test_local_fallback_error_when_input_is_invalid() -> None:
+async def test_local_fallback_error_when_input_is_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Unsupported input still fails clearly instead of degrading to metadata."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
     result = await vision.mcp.call_tool(
         "vision_describe", {"path": "data:text/plain;base64,SGk="}
     )
@@ -674,7 +715,8 @@ async def test_ocr_uses_ocr_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PANTHEON_OPENCODE_API_KEY", "test-key")
     monkeypatch.setattr(vision.httpx, "AsyncClient", FakeClient)
     result = await vision.mcp.call_tool(
-        "vision_ocr", {"path": "https://example.test/photo.jpg"}
+        "vision_ocr",
+        {"path": "https://example.test/photo.jpg", "session_id": "ses_valid123"},
     )
     assert _tool_text(result) == "A description"
     prompt = FakeClient.last_request["json"]["messages"][0]["content"][0]["text"]
@@ -694,7 +736,9 @@ async def test_analyze_returns_png_metadata_and_structured_fields(
     )
     monkeypatch.setattr(vision.httpx, "AsyncClient", FakeClient)
 
-    result = await vision.mcp.call_tool("vision_analyze", {"path": str(image)})
+    result = await vision.mcp.call_tool(
+        "vision_analyze", {"path": str(image), "session_id": "ses_valid123"}
+    )
     payload = json.loads(_tool_text(result))
     assert payload["metadata"]["mime"] == "image/png"
     assert payload["metadata"]["size"] == len(PNG_1X1)
@@ -712,7 +756,8 @@ async def test_gateway_500_and_timeout_are_friendly(
     monkeypatch.setattr(vision.httpx, "AsyncClient", FakeClient)
     FakeClient.response = FakeResponse(status_code=500)
     failed = await vision.mcp.call_tool(
-        "vision_describe", {"path": "https://example.test/photo.jpg"}
+        "vision_describe",
+        {"path": "https://example.test/photo.jpg", "session_id": "ses_valid123"},
     )
     assert "gateway" in _tool_text(failed).lower()
 
@@ -722,7 +767,8 @@ async def test_gateway_500_and_timeout_are_friendly(
 
     monkeypatch.setattr(vision.httpx, "AsyncClient", TimeoutClient)
     timed_out = await vision.mcp.call_tool(
-        "vision_describe", {"path": "https://example.test/photo.jpg"}
+        "vision_describe",
+        {"path": "https://example.test/photo.jpg", "session_id": "ses_valid123"},
     )
     assert "timed out" in _tool_text(timed_out).lower()
 
@@ -736,7 +782,8 @@ async def test_key_never_appears_in_tool_response(
     monkeypatch.setattr(vision.httpx, "AsyncClient", FakeClient)
     FakeClient.response = FakeResponse(content=secret)
     result = await vision.mcp.call_tool(
-        "vision_describe", {"path": "https://example.test/photo.jpg"}
+        "vision_describe",
+        {"path": "https://example.test/photo.jpg", "session_id": "ses_valid123"},
     )
     assert secret not in _tool_text(result)
 
@@ -762,7 +809,8 @@ async def test_gateway_error_logs_sanitized_status_and_model(
         content=json.dumps({"error": "Model mimo-v2.5 is not supported"}),
     )
     result = await vision.mcp.call_tool(
-        "vision_describe", {"path": "https://example.test/photo.jpg"}
+        "vision_describe",
+        {"path": "https://example.test/photo.jpg", "session_id": "ses_valid123"},
     )
     assert "gateway" in _tool_text(result).lower()
     stderr = capsys.readouterr().err

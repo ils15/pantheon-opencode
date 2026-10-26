@@ -10,6 +10,7 @@ import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { resolveActivePreset } from './presets.mjs'
+import { isValidSessionId } from './session-guard.ts'
 import {
   describeImagesNative,
   NATIVE_MAX_TOKENS,
@@ -93,10 +94,10 @@ function imageReference(uri: string, mime: string, name: string): string {
  * tool's `prompt`. NOTE: the description cache keys on the full prompt, so the
  * same image asked with a new question gets a fresh describe — same image +
  * same question within the TTL reuses the stored description.
- * `sessionID` (the V2 `prompt` hook event's live session id, when present) is
- * relayed as an MCP `session_id` instruction: the MCP runs in a separate
- * process the host hands no session id to, and the Zen gateway rejects a
- * sessionless call with HTTP 400 `MissingSessionID` (mirrors
+ * `sessionID` (the V2 `prompt` hook event's live session id, when valid under
+ * the host session guard) is relayed as an MCP `session_id` instruction: the
+ * MCP runs in a separate process the host hands no session id to, and the Zen
+ * gateway rejects a sessionless call with HTTP 400 `MissingSessionID` (mirrors
  * `generateInjectionPrompt` on the V1 path).
  * The question and the session id are never logged.
  */
@@ -144,10 +145,9 @@ export function buildV2VisionPromptContext(
   }
   // MCP session relay (see the doc comment above): JSON.stringify quotes the
   // id so it cannot spoof the surrounding instruction layout; never logged.
-  const session = sessionID?.trim()
-  if (session) {
+  if (isValidSessionId(sessionID)) {
     lines.push(
-      `Prefira a ferramenta nativa \`vision_describe\` (ela já repassa a sessão automaticamente). Se usar o MCP pantheon-vision (\`vision_describe\`/\`vision_ocr\`/\`vision_analyze\`), repasse session_id=${JSON.stringify(session)} no parâmetro \`session_id\` — sem ele o gateway Zen rejeita a chamada com MissingSessionID.`,
+      `Prefira a ferramenta nativa \`vision_describe\` (ela já repassa a sessão automaticamente). Se usar o MCP pantheon-vision (\`vision_describe\`/\`vision_ocr\`/\`vision_analyze\`), repasse session_id=${JSON.stringify(sessionID)} no parâmetro \`session_id\` — sem ele o gateway Zen rejeita a chamada com MissingSessionID.`,
     )
   }
   return lines.join('\n')
@@ -241,14 +241,11 @@ function exactModelMatch(models: V2VisionModel[], requested: string): V2VisionMo
 }
 
 /**
- * Select a native transport model. An EXPLICIT pin (`preferred` — the env
- * `PANTHEON_VISION_MODEL`, the config file, or the active preset) ALWAYS wins,
- * even when it names a free-tier model: the pin is the user's decision, so the
- * call surfaces the gateway's HTTP 403 with its actionable message instead of
- * silently substituting a different model. The free-tier exclusion
- * (`-free` suffix / cost ≤ 0) applies ONLY to AUTOMATIC selection — discovery
- * then the Go default — because the direct gateway rejects free-tier models
- * with HTTP 403, so they cannot serve the native describe path unasked.
+ * Select a native transport model. An explicit pin must be eligible for the
+ * native Zen image path or selection fails; it is never silently substituted.
+ * Free-tier exclusion (`-free` suffix / cost ≤ 0) applies only to automatic
+ * discovery, preserving the user's choice when a free model is explicitly
+ * pinned (the gateway can then return its actionable 403).
  */
 export function selectV2VisionModel(
   available: unknown,
@@ -263,8 +260,7 @@ export function selectV2VisionModel(
   )
   const pinned = preferred?.trim()
   if (pinned) {
-    const configured = exactModelMatch(capable, pinned)
-    if (configured) return configured
+    return exactModelMatch(capable, pinned)
   }
   const candidates = capable.filter((model) => !isFreeVisionModel(model))
   const defaultModel = exactModelMatch(candidates, DEFAULT_MODEL)
@@ -314,21 +310,19 @@ async function configuredVisionModel(directory: string): Promise<string | undefi
   return undefined
 }
 
-async function preferredVisionModel(directory: string): Promise<string> {
+async function preferredVisionModel(directory: string): Promise<string | undefined> {
   const envModel = process.env.PANTHEON_VISION_MODEL?.trim()
   if (envModel) return envModel
   const configModel = await configuredVisionModel(directory)
   if (configModel) return configModel
   try {
-    return (
-      resolveActivePreset({
-        env: process.env,
-        candidates: activePresetCandidates(directory),
-        logger: { warn: () => undefined },
-      })?.vision?.model ?? DEFAULT_MODEL
-    )
+    return resolveActivePreset({
+      env: process.env,
+      candidates: activePresetCandidates(directory),
+      logger: { warn: () => undefined },
+    })?.vision?.model
   } catch {
-    return DEFAULT_MODEL
+    return undefined
   }
 }
 
@@ -551,17 +545,28 @@ export function createV2VisionTool(runtime: V2VisionRuntime): V2VisionToolDefini
     },
     output: {},
     execute: async (input, rawContext) => {
-      let stage = 'load image'
+      let stage = 'validate OpenCode session'
       try {
-        const pathValue = typeof input.path === 'string' ? input.path : ''
         const call = (asRecord(rawContext) ?? {}) as V2VisionToolContext
+        if (!isValidSessionId(call.sessionID)) {
+          throw new Error(
+            'a valid OpenCode session id is required; retry this tool from an active OpenCode session',
+          )
+        }
+        const pathValue = typeof input.path === 'string' ? input.path : ''
         const directory = call.directory || process.cwd()
+        stage = 'load image'
         const image = await imageAttachment(pathValue, directory, call.signal)
         stage = 'read model catalog'
         const preferred = await preferredVisionModel(directory)
         const catalog = await runtime.model.list()
         const model = selectV2VisionModel(catalog, preferred)
         if (!model) {
+          if (preferred?.trim()) {
+            throw new Error(
+              `explicitly configured Vision model "${preferred}" is unavailable or ineligible for the native OpenCode Zen image path; update or remove the explicit model pin (PANTHEON_VISION_MODEL, visionModel config, or active preset), or choose an enabled image-capable OpenCode Zen model`,
+            )
+          }
           throw new Error(
             'no available OpenCode Zen multimodal model accepts image input; connect OpenCode Zen and enable an image-capable model',
           )
@@ -586,7 +591,7 @@ export function createV2VisionTool(runtime: V2VisionRuntime): V2VisionToolDefini
         // header ONLY for Zen targets, never to a non-Zen provider.
         const requestTarget: NativeVisionTarget = {
           ...target,
-          ...(call.sessionID ? { sessionID: call.sessionID } : {}),
+          sessionID: call.sessionID,
         }
         let failure: NativeVisionFailure | undefined
         const output = await describeImagesNative(
