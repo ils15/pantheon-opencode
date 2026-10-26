@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import {
   chmodSync,
+  copyFileSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -239,11 +240,19 @@ test('V2 harness isolates config, database, port, and waits for five MCP handsha
     fileURLToPath(new URL('../scripts/test-opencode-v2-sandbox.sh', import.meta.url)),
     'utf8',
   )
-  const configDirExport = 'export OPENCODE_CONFIG_DIR="$(dirname "$V2_CONFIG")"'
+  const envHelper = readFileSync(
+    fileURLToPath(new URL('../scripts/sandbox-env.sh', import.meta.url)),
+    'utf8',
+  )
   assert.equal(
-    harness.split(configDirExport).length - 1,
-    2,
-    'sandbox_env and the generated runner must both use OpenCode 2 config-directory selection',
+    (harness.match(/pantheon_sandbox_env \\\n/g) ?? []).length,
+    3,
+    'direct CI, generated test runner, and interactive launcher must share sandbox environment setup',
+  )
+  assert.match(
+    envHelper,
+    /export OPENCODE_CONFIG_DIR="\$opencode_config_dir"/,
+    'the shared environment helper must select the OpenCode 2 config directory',
   )
   assert.doesNotMatch(
     harness,
@@ -252,27 +261,33 @@ test('V2 harness isolates config, database, port, and waits for five MCP handsha
   )
   assert.equal(
     (
-      harness.match(
+      envHelper.match(
         /unset OPENCODE_CONFIG OPENCODE_CONFIG_CONTENT OPENCODE_CONFIG_PROJECT_DISABLE/g,
       ) ?? []
     ).length,
-    3,
-    'all three sandbox environments must clear inherited OPENCODE_CONFIG contamination',
+    1,
+    'the shared sandbox environment must clear inherited OpenCode selectors',
   )
   assert.doesNotMatch(
-    harness,
+    envHelper,
     /unset OPENCODE_CONFIG_CONTENT OPENCODE_CONFIG_DIR OPENCODE_CONFIG_PROJECT_DISABLE/,
     'the selected config directory must not be unset after it is established',
   )
   assert.match(harness, /export OPENCODE_DB="\$V2_DB"/)
   assert.match(harness, /export PORT="\$V2_PORT"/)
-  assert.match(harness, /export XDG_STATE_HOME="\$SANDBOX_HOME\/\.local\/state"/)
+  assert.match(envHelper, /export XDG_STATE_HOME="\$sandbox_home\/\.local\/state"/)
+  assert.match(envHelper, /export XDG_CONFIG_HOME="\$sandbox_home\/\.config"/)
+  assert.match(envHelper, /export XDG_DATA_HOME="\$HOME\/\.local\/share"/)
+  assert.match(envHelper, /LOG_PATH="\$XDG_DATA_HOME\/opencode\/log\/opencode\.log"/)
+  assert.match(envHelper, /export PANTHEON_HOME="\$XDG_CONFIG_HOME\/opencode"/)
+  assert.match(envHelper, /export TMPDIR="\$sandbox_root\/tmp"/)
   assert.match(
     harness,
     /V2_SERVICE_STATE="\$SANDBOX_HOME\/\.local\/state\/opencode\/service\.json"/,
   )
   assert.match(harness, /message=\\"mcp connected\\"/)
-  assert.match(harness, /expected exactly 5 connected MCPs/)
+  assert.match(harness, /MCP connectivity check failed/)
+  assert.match(harness, /MCP registration check failed/)
   assert.match(harness, /refusing to reuse an unrelated service/)
 })
 
@@ -366,8 +381,24 @@ test('V2 config merge rewrites stale MCP paths to the active sandbox', (t) => {
 
   const defsFile = join(sandboxRoot, 'runner-definitions.sh')
   const cliMarker = harness.indexOf('# ── CLI ─')
+  const bootstrapStart = harness.indexOf('# Keep this bootstrap self-contained')
+  const bootstrapEnd = harness.indexOf('\n# Derived from this script', bootstrapStart)
   assert.ok(cliMarker > 0, 'runner CLI marker must be present')
-  writeFileSync(defsFile, harness.slice(0, cliMarker))
+  assert.ok(bootstrapStart > 0 && bootstrapEnd > bootstrapStart, 'runner preflight must be present')
+  writeFileSync(
+    defsFile,
+    `${harness.slice(0, bootstrapStart)}
+SCRIPT_DIR="$(cd "$(dirname "$DEFS")" && pwd)"
+SANDBOX_ENV_HELPER="$SCRIPT_DIR/sandbox-env.sh"
+source "$SANDBOX_ENV_HELPER"
+SANDBOX_ROOT="\${PANTHEON_SANDBOX_ROOT:-$HOME/pantheon-sandbox}"
+pantheon_validate_sandbox_root "$SANDBOX_ROOT" || exit 2
+${harness.slice(bootstrapEnd + 1, cliMarker)}`,
+  )
+  copyFileSync(
+    fileURLToPath(new URL('../scripts/sandbox-env.sh', import.meta.url)),
+    join(sandboxRoot, 'sandbox-env.sh'),
+  )
   const result = spawnSync(
     'bash',
     [
