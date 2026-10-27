@@ -79,7 +79,13 @@ see [Quick Start](docs/QUICKSTART.md).
   default; the sidebar keeps Todo and places quota immediately after Dispatch
   (header/version → Session → Context → Git → Todo → Dispatch → quota).
   Status stays in the native sidebar footer. Use `E` to disable quota or `M`
-  to switch between remaining and used.
+  to switch between remaining and used. Quota windows show a local countdown only
+  when the provider reports valid reset timing; missing timing is not inferred.
+  After expiry the UI shows “aguardando atualização” until refreshed data arrives.
+  Usage severity uses warning color from 60% consumed and error color above 85%.
+  Session costs, provider balances and selected-key usage retain their distinct
+  labels and reported periods. Long values and states continue onto additional
+  lines within the sidebar's fixed 34-column content budget.
   The installer selects the `plugins` component by default; in interactive setup
   you can change the component selection. A component-scoped install includes
   the TUI only when `plugins` is selected.

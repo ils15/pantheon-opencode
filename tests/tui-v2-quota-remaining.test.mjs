@@ -166,6 +166,7 @@ test('OpenCode Go maps provider-reported rolling, weekly and monthly windows', a
         unit: '%',
         label: '5-hour quota',
         period: 'rolling',
+        resetsAt: Date.parse('2026-10-24T12:00:00Z'),
       },
       {
         kind: 'provider_quota',
@@ -174,6 +175,7 @@ test('OpenCode Go maps provider-reported rolling, weekly and monthly windows', a
         unit: '%',
         label: 'Weekly quota',
         period: 'weekly',
+        resetsAt: Date.parse('2026-10-25T00:00:00Z'),
       },
       {
         kind: 'provider_quota',
@@ -182,10 +184,34 @@ test('OpenCode Go maps provider-reported rolling, weekly and monthly windows', a
         unit: '%',
         label: 'Monthly quota',
         period: 'monthly',
+        resetsAt: Date.parse('2026-11-01T00:00:00Z'),
       },
     ],
   })
   assert.equal(calls.length, 1)
+})
+
+test('OpenCode Go keeps valid quotas when optional reset metadata is missing or invalid', async (t) => {
+  await withFetch(t, async () =>
+    response({
+      usage: {
+        rolling: { status: 'ok', percent: 20 },
+        weekly: { status: 'ok', percent: 30, resetsAt: 'not-a-timestamp' },
+        monthly: { status: 'ok', percent: 40, resetsAt: '2026-11-01T00:00:00Z' },
+      },
+    }),
+  )
+
+  const result = await runQuotaAdapter('opencode-go', TOKEN, new AbortController().signal)
+  assert.equal(result.state, 'available')
+  assert.deepEqual(
+    result.metrics.map(({ used, resetsAt }) => ({ used, resetsAt })),
+    [
+      { used: 20, resetsAt: undefined },
+      { used: 30, resetsAt: undefined },
+      { used: 40, resetsAt: Date.parse('2026-11-01T00:00:00Z') },
+    ],
+  )
 })
 
 test('OpenCode Go failures expose only typed HTTP and transport categories', async (t) => {

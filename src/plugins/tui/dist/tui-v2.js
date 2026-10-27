@@ -1,4 +1,4 @@
-import { n as quotaRpc, t as QUOTA_PROVIDER_IDS } from "./quota-rpc-BeoJ-2uD.js";
+import { n as quotaRpc, t as QUOTA_PROVIDER_IDS } from "./quota-rpc-2qxaOtEa.js";
 import { createComponent, createElement, createTextNode, effect, insert, insertNode, memo, setProp } from "@opentui/solid";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -132,6 +132,58 @@ const DEFAULT_QUOTA_PREFERENCES = {
 	enabled: true,
 	display: "remaining"
 };
+const QUOTA_CLOCK_INTERVAL_MS = 6e4;
+/** Create a shared local clock for countdown displays; it never refreshes quota data. */
+function createQuotaClock(options = {}) {
+	const now = options.now ?? Date.now;
+	const schedule = options.setInterval ?? globalThis.setInterval;
+	const cancel = options.clearInterval ?? globalThis.clearInterval;
+	const listeners = /* @__PURE__ */ new Set();
+	let timer;
+	const notify = () => {
+		const currentTime = now();
+		for (const listener of [...listeners]) listener(currentTime);
+	};
+	return { subscribe(listener) {
+		listeners.add(listener);
+		if (timer === void 0) {
+			timer = schedule(notify, QUOTA_CLOCK_INTERVAL_MS);
+			timer.unref?.();
+		}
+		listener(now());
+		let subscribed = true;
+		return () => {
+			if (!subscribed) return;
+			subscribed = false;
+			listeners.delete(listener);
+			if (listeners.size === 0 && timer !== void 0) {
+				cancel(timer);
+				timer = void 0;
+			}
+		};
+	} };
+}
+/** Module-local clock shared by all countdown consumers in the TUI bundle. */
+const quotaClock = createQuotaClock();
+/** Format a provider-reported reset timestamp using the caller's local clock. */
+function formatQuotaCountdown(resetsAt, now) {
+	if (resetsAt === void 0 || !Number.isFinite(resetsAt) || !Number.isFinite(now)) return;
+	const remainingMs = resetsAt - now;
+	if (remainingMs <= 0) return null;
+	if (remainingMs < 6e4) return "<1m";
+	const remainingMinutes = Math.ceil(remainingMs / 6e4);
+	const days = Math.floor(remainingMinutes / 1440);
+	if (days > 0) {
+		const hours = Math.floor(remainingMinutes % 1440 / 60);
+		return hours > 0 ? `${days}d ${hours}h` : `${days}d`;
+	}
+	const hours = Math.floor(remainingMinutes / 60);
+	if (hours > 0) {
+		const minutes = remainingMinutes % 60;
+		return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+	}
+	return `${remainingMinutes}m`;
+}
 const SETTINGS_KEY = "pantheon.quota.preferences.v1";
 const SNAPSHOT_KEY = "pantheon.quota.live.v1";
 const REFRESH_INTERVAL_MS = 6e4;
@@ -724,6 +776,128 @@ function createQuotaRuntime(context) {
 	return runtime;
 }
 //#endregion
+//#region src/sidebar-width.ts
+const GRAPHEMES = new Intl.Segmenter(void 0, { granularity: "grapheme" });
+/** A grapheme the host draws two cells wide: emoji presentation, an extended
+*  pictograph (a bare `❤` counts too, exactly as the host's `emoji-regex`
+*  does) and a regional-indicator pair (a flag). */
+const EMOJI_GLYPH = /\p{Emoji_Presentation}|\p{Extended_Pictographic}|\p{Regional_Indicator}/u;
+/** VS16 asks for emoji presentation; without it `1` is one cell, with it the
+*  keycap sequence is drawn as one two-cell glyph. */
+const EMOJI_PRESENTATION_SELECTOR = "️";
+/** Unicode default-ignorable code points carry no width of their own. */
+const IGNORABLE_GLYPH = /^\p{Default_Ignorable_Code_Point}$/u;
+/** East Asian Wide/Fullwidth ranges — two cells, never the ambiguous width
+*  (the host measures ambiguous as narrow, so `▸`/`✓`/`—` stay one cell).
+*  Generated from the host's own measurement (`string-width` over every code
+*  point, emoji excluded), so this table can be regenerated verbatim when the
+*  host upgrades its Unicode data instead of being hand-edited. */
+const CELL_WIDE_RANGES = [
+	[4352, 4446],
+	[9001, 9002],
+	[9776, 9783],
+	[9866, 9871],
+	[11904, 11929],
+	[11931, 12019],
+	[12032, 12245],
+	[12272, 12335],
+	[12337, 12348],
+	[12350, 12350],
+	[12353, 12438],
+	[12441, 12543],
+	[12549, 12591],
+	[12593, 12643],
+	[12645, 12686],
+	[12688, 12773],
+	[12783, 12830],
+	[12832, 12871],
+	[12880, 12950],
+	[12952, 12952],
+	[12954, 42124],
+	[42128, 42182],
+	[43360, 43388],
+	[44032, 55203],
+	[63744, 64255],
+	[65040, 65049],
+	[65072, 65106],
+	[65108, 65126],
+	[65128, 65131],
+	[65281, 65376],
+	[65504, 65510],
+	[94176, 94180],
+	[94192, 94198],
+	[94208, 101594],
+	[101631, 101664],
+	[101760, 101874],
+	[101888, 102801],
+	[102816, 102866],
+	[110576, 110579],
+	[110581, 110587],
+	[110589, 110590],
+	[110592, 110888],
+	[110898, 110898],
+	[110928, 110930],
+	[110933, 110933],
+	[110948, 110952],
+	[110960, 111355],
+	[119552, 119638],
+	[119648, 119670],
+	[127488, 127488],
+	[127504, 127513],
+	[127515, 127534],
+	[127536, 127537],
+	[127547, 127547],
+	[127552, 127560],
+	[127584, 127589],
+	[131072, 196605],
+	[196608, 262141]
+];
+/** One code point the terminal draws no cell for: control characters, the
+*  zero-width joiners/marks, combining marks and variation selectors. */
+function isZeroWidthCodePoint(code, glyph) {
+	if (code <= 31 || code >= 127 && code <= 159) return true;
+	if (code >= 8203 && code <= 8207) return true;
+	if (code === 65279) return true;
+	if (code >= 768 && code <= 879) return true;
+	if (code >= 6832 && code <= 6911) return true;
+	if (code >= 7616 && code <= 7679) return true;
+	if (code >= 8400 && code <= 8447) return true;
+	if (code >= 65024 && code <= 65039) return true;
+	if (code >= 65056 && code <= 65071) return true;
+	if (code >= 917760 && code <= 917999) return true;
+	if (code >= 55296 && code <= 57343) return true;
+	return IGNORABLE_GLYPH.test(glyph);
+}
+function isWideCodePoint(code) {
+	for (const [low, high] of CELL_WIDE_RANGES) {
+		if (code < low) return false;
+		if (code <= high) return true;
+	}
+	return false;
+}
+/** Cells one grapheme occupies. */
+function graphemeWidth(segment) {
+	if (EMOJI_GLYPH.test(segment)) return 2;
+	if (segment.length > 1 && segment.includes(EMOJI_PRESENTATION_SELECTOR)) return 2;
+	let width = 0;
+	for (const glyph of segment) {
+		const code = glyph.codePointAt(0) ?? 0;
+		if (isZeroWidthCodePoint(code, glyph)) continue;
+		width += isWideCodePoint(code) ? 2 : 1;
+	}
+	return width;
+}
+/** Terminal cells `value` occupies — the unit every column in this plugin is
+*  measured in. Mirrors the host (that is how `@opentui/core` sizes a text
+*  run): emoji count as two cells, East Asian Wide/Fullwidth as two, East
+*  Asian Ambiguous as one, combining marks and variation selectors as none.
+*  Pure. */
+function cellWidth(value) {
+	let width = 0;
+	for (const { segment } of GRAPHEMES.segment(value)) width += graphemeWidth(segment);
+	return width;
+}
+//#endregion
 //#region src/quota-v2.tsx
 /** @jsxImportSource @opentui/solid */
 const QUOTA_PANEL_NAME = "pantheon.quota";
@@ -745,6 +919,12 @@ function base(context) {
 function muted(context) {
 	return context.theme.text?.muted ?? base(context);
 }
+function quotaUsageTone(usedPercent) {
+	return usedPercent > 85 ? "error" : usedPercent >= 60 ? "warning" : "success";
+}
+function quotaColor(context, usedPercent) {
+	return usedPercent === void 0 ? base(context) : tone(context, quotaUsageTone(usedPercent));
+}
 function tone(context, color) {
 	return context.theme.text?.feedback?.[color]?.base ?? base(context);
 }
@@ -765,113 +945,150 @@ function snapshotSummary(snapshot, display) {
 	if (snapshot.providers[0]?.message) return snapshot.providers[0].message;
 	return "quota indisponível";
 }
-const SIDEBAR_QUOTA_BAR_CELLS = 4;
-function quotaSidebarSummary(snapshot, display, entries) {
-	const windows = entries.filter((entry) => entry.kind === "quota").length;
-	if (windows === 0) return snapshotSummary(snapshot, display);
-	return `${snapshot.status === "ready" ? "quota disponível" : snapshot.status === "partial" ? "parcial" : snapshotSummary(snapshot, display)} · ${windows} ${windows === 1 ? "janela" : "janelas"}`;
-}
-function sidebarFinanceSummary(snapshot, display) {
-	const metric = snapshot.providers.flatMap((provider) => provider.metrics).find((item) => item.kind === "balance" || item.kind === "estimate" || item.kind === "key_usage");
-	return metric ? compactQuotaMetric(metric, display) : void 0;
+function sidebarFinanceEntries(snapshot) {
+	return snapshot.providers.flatMap((provider) => provider.metrics.flatMap((metric) => (metric.kind === "balance" || metric.kind === "estimate" || metric.kind === "key_usage") && metricRow(metric) ? [{
+		providerID: provider.id,
+		metric
+	}] : []));
 }
 function QuotaSidebarEntryRow(props) {
-	if (props.entry.kind === "status") return (() => {
-		var _el$ = createElement("text");
-		insert(_el$, () => clipped(`${props.entry.providerLabel} · ${props.entry.message}`, 32));
-		effect((_$p) => setProp(_el$, "fg", tone(props.context, "warning"), _$p));
-		return _el$;
-	})();
-	const progress = props.entry.progress;
-	const bar = contextBar(progress.usedPercent, SIDEBAR_QUOTA_BAR_CELLS);
-	if (!bar) return (() => {
-		var _el$2 = createElement("text");
-		insert(_el$2, () => props.entry.providerLabel);
-		effect((_$p) => setProp(_el$2, "fg", muted(props.context), _$p));
-		return _el$2;
-	})();
-	const title = props.entry.metric.period?.trim() || props.entry.metric.label?.trim() || "quota";
-	const value = props.display === "remaining" ? `${progress.remainingPercent}% rest.` : `${progress.usedPercent}% uso`;
-	const gaugeTone = quotaWindowTone(props.context, progress);
-	return (() => {
-		var _el$3 = createElement("box"), _el$4 = createElement("text"), _el$5 = createElement("box"), _el$6 = createElement("text"), _el$7 = createElement("text"), _el$8 = createElement("text");
-		insertNode(_el$3, _el$4);
-		insertNode(_el$3, _el$5);
-		setProp(_el$3, "flexDirection", "column");
-		insert(_el$4, () => clipped(`${props.entry.providerLabel} · ${title}`, 32));
-		insertNode(_el$5, _el$6);
-		insertNode(_el$5, _el$7);
-		insertNode(_el$5, _el$8);
-		setProp(_el$5, "flexDirection", "row");
-		setProp(_el$5, "alignItems", "center");
-		setProp(_el$5, "gap", 1);
-		setProp(_el$6, "fg", gaugeTone);
-		insert(_el$6, () => bar.filled);
-		insert(_el$7, () => bar.empty);
-		setProp(_el$8, "fg", gaugeTone);
-		insert(_el$8, value);
-		effect((_p$) => {
-			var _v$ = muted(props.context), _v$2 = muted(props.context);
-			_v$ !== _p$.e && (_p$.e = setProp(_el$4, "fg", _v$, _p$.e));
-			_v$2 !== _p$.t && (_p$.t = setProp(_el$7, "fg", _v$2, _p$.t));
-			return _p$;
-		}, {
-			e: void 0,
-			t: void 0
-		});
-		return _el$3;
-	})();
+	return createComponent(Show, {
+		get when() {
+			return props.entry.kind === "quota";
+		},
+		get fallback() {
+			return createComponent(For, {
+				get each() {
+					return memo(() => props.entry.kind === "status")() ? quotaTextLines(props.entry.message, 34, 2) : [];
+				},
+				children: (line) => (() => {
+					var _el$ = createElement("text");
+					insert(_el$, line);
+					effect((_$p) => setProp(_el$, "fg", muted(props.context), _$p));
+					return _el$;
+				})()
+			});
+		},
+		get children() {
+			return createComponent(For, {
+				get each() {
+					return memo(() => props.entry.kind === "quota")() ? quotaWindowLines(props.entry.metric, props.display, 34, props.now, true) : [];
+				},
+				children: (line) => (() => {
+					var _el$2 = createElement("text");
+					insert(_el$2, line);
+					effect((_$p) => setProp(_el$2, "fg", quotaColor(props.context, props.entry.kind === "quota" ? props.entry.progress.usedPercent : void 0), _$p));
+					return _el$2;
+				})()
+			});
+		}
+	});
 }
 function QuotaSidebarSummary(props) {
 	const entries = createMemo(() => quotaSidebarEntries(props.runtime.snapshot()));
-	const quotaWindowCount = () => entries().filter((entry) => entry.kind === "quota").length;
+	const finance = createMemo(() => sidebarFinanceEntries(props.runtime.snapshot()));
+	const [now, setNow] = createSignal(Date.now());
+	onMount(() => onCleanup(quotaClock.subscribe(setNow)));
 	return createComponent(Show, {
 		get when() {
 			return props.runtime.preferences().enabled;
 		},
 		get children() {
-			var _el$9 = createElement("box"), _el$0 = createElement("text"), _el$10 = createElement("text");
-			insertNode(_el$9, _el$0);
-			insertNode(_el$9, _el$10);
-			setProp(_el$9, "flexDirection", "column");
-			setProp(_el$9, "marginTop", 1);
-			insertNode(_el$0, createTextNode(`▥ Pantheon quota`));
-			insert(_el$10, () => quotaSidebarSummary(props.runtime.snapshot(), props.runtime.preferences().display, entries()));
-			insert(_el$9, createComponent(Show, {
+			var _el$3 = createElement("box"), _el$4 = createElement("text");
+			insertNode(_el$3, _el$4);
+			setProp(_el$3, "flexDirection", "column");
+			setProp(_el$3, "marginTop", 1);
+			insertNode(_el$4, createTextNode(`▥ Pantheon quota`));
+			insert(_el$3, createComponent(Show, {
 				get when() {
-					return memo(() => quotaWindowCount() > 0)() && sidebarFinanceSummary(props.runtime.snapshot(), props.runtime.preferences().display);
+					return props.runtime.snapshot().status !== "ready" || entries().length === 0;
 				},
-				children: (summary) => (() => {
-					var _el$11 = createElement("text");
-					insert(_el$11, () => clipped(summary(), 32));
-					effect((_$p) => setProp(_el$11, "fg", muted(props.context), _$p));
-					return _el$11;
+				get children() {
+					var _el$6 = createElement("text");
+					insert(_el$6, () => quotaSnapshotStatusLabel(props.runtime.snapshot().status));
+					effect((_$p) => setProp(_el$6, "fg", muted(props.context), _$p));
+					return _el$6;
+				}
+			}), null);
+			insert(_el$3, createComponent(For, {
+				get each() {
+					return props.runtime.snapshot().providers;
+				},
+				children: (provider) => (() => {
+					var _el$7 = createElement("box");
+					setProp(_el$7, "flexDirection", "column");
+					insert(_el$7, createComponent(Show, {
+						get when() {
+							return entries().some((entry) => entry.providerID === provider.id) || finance().some((entry) => entry.providerID === provider.id) || provider.metrics.some((metric) => metric.kind === "provider_status");
+						},
+						get children() {
+							return createComponent(For, {
+								get each() {
+									return quotaTextLines(provider.label, 34, 0);
+								},
+								children: (line) => (() => {
+									var _el$8 = createElement("text");
+									insert(_el$8, line);
+									effect((_$p) => setProp(_el$8, "fg", muted(props.context), _$p));
+									return _el$8;
+								})()
+							});
+						}
+					}), null);
+					insert(_el$7, createComponent(For, {
+						get each() {
+							return entries().filter((entry) => entry.providerID === provider.id);
+						},
+						children: (entry) => createComponent(QuotaSidebarEntryRow, {
+							entry,
+							get display() {
+								return props.runtime.preferences().display;
+							},
+							get context() {
+								return props.context;
+							},
+							get now() {
+								return now();
+							}
+						})
+					}), null);
+					insert(_el$7, createComponent(For, {
+						get each() {
+							return provider.metrics.filter((metric) => metric.kind === "provider_status");
+						},
+						children: (metric) => createComponent(For, {
+							get each() {
+								return quotaMetricLines(metric, 34);
+							},
+							children: (line) => (() => {
+								var _el$9 = createElement("text");
+								insert(_el$9, line);
+								effect((_$p) => setProp(_el$9, "fg", muted(props.context), _$p));
+								return _el$9;
+							})()
+						})
+					}), null);
+					insert(_el$7, createComponent(For, {
+						get each() {
+							return finance().filter((entry) => entry.providerID === provider.id);
+						},
+						children: (entry) => createComponent(For, {
+							get each() {
+								return financeMetricLines(entry.metric, 34);
+							},
+							children: (line) => (() => {
+								var _el$0 = createElement("text");
+								insert(_el$0, line);
+								effect((_$p) => setProp(_el$0, "fg", base(props.context), _$p));
+								return _el$0;
+							})()
+						})
+					}), null);
+					return _el$7;
 				})()
 			}), null);
-			insert(_el$9, createComponent(For, {
-				get each() {
-					return entries();
-				},
-				children: (entry) => createComponent(QuotaSidebarEntryRow, {
-					entry,
-					get display() {
-						return props.runtime.preferences().display;
-					},
-					get context() {
-						return props.context;
-					}
-				})
-			}), null);
-			effect((_p$) => {
-				var _v$3 = base(props.context), _v$4 = muted(props.context);
-				_v$3 !== _p$.e && (_p$.e = setProp(_el$0, "fg", _v$3, _p$.e));
-				_v$4 !== _p$.t && (_p$.t = setProp(_el$10, "fg", _v$4, _p$.t));
-				return _p$;
-			}, {
-				e: void 0,
-				t: void 0
-			});
-			return _el$9;
+			effect((_$p) => setProp(_el$4, "fg", base(props.context), _$p));
+			return _el$3;
 		}
 	});
 }
@@ -882,10 +1099,10 @@ function QuotaFooterSummary(props) {
 			return preferences().enabled;
 		},
 		get children() {
-			var _el$12 = createElement("text");
-			insert(_el$12, () => `Quota · ${snapshotSummary(props.runtime.snapshot(), preferences().display)}`);
-			effect((_$p) => setProp(_el$12, "fg", muted(props.context), _$p));
-			return _el$12;
+			var _el$1 = createElement("text");
+			insert(_el$1, () => `Quota · ${snapshotSummary(props.runtime.snapshot(), preferences().display)}`);
+			effect((_$p) => setProp(_el$1, "fg", muted(props.context), _$p));
+			return _el$1;
 		}
 	});
 }
@@ -898,104 +1115,82 @@ function quotaAmount(value, unit) {
 	if (!Number.isFinite(value) || !safeUnit) return void 0;
 	return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value)} ${safeUnit}`;
 }
-function quotaWindowTone(context, progress) {
-	if (progress.usedPercent > 85) return tone(context, "error");
-	if (progress.usedPercent >= 60) return tone(context, "warning");
-	return tone(context, "success");
+/** Wrap on grapheme boundaries, measuring terminal cells rather than code units. */
+function quotaTextLines(text, width, indent) {
+	const max = Number.isFinite(width) ? Math.max(0, Math.floor(width)) : 0;
+	if (max < 1) return [];
+	const padding = " ".repeat(Math.min(Math.max(0, indent), Math.max(0, max - 2)));
+	const lines = [];
+	let line = padding;
+	const segmenter = new Intl.Segmenter();
+	for (const word of text.trim().split(/\s+/)) {
+		if (!word) continue;
+		if (line.trim() && cellWidth(line) + 1 + cellWidth(word) > max) {
+			lines.push(line.trimEnd());
+			line = padding;
+		}
+		if (line.trim()) line += " ";
+		for (const { segment } of segmenter.segment(word)) {
+			const glyphWidth = cellWidth(segment);
+			if (glyphWidth > max) continue;
+			if (cellWidth(line) + glyphWidth > max) {
+				if (line.trim()) lines.push(line.trimEnd());
+				line = glyphWidth + cellWidth(padding) <= max ? padding : "";
+			}
+			line += segment;
+		}
+	}
+	if (line.trim()) lines.push(line.trimEnd());
+	return lines;
+}
+/** Layout uses only a provider-reported reset; a local clock never refreshes data. */
+function quotaWindowLines(metric, display, width, now, sidebarPercent = false) {
+	const title = metric.period?.trim() || metric.label?.trim() || "Quota";
+	const progress = quotaProgress(metric);
+	const amount = sidebarPercent && progress ? `${display === "remaining" ? progress.remainingPercent : progress.usedPercent}%` : quotaAmount(display === "remaining" ? metric.remaining : metric.used, metric.unit);
+	if (!amount) return [];
+	const value = `${amount} ${display === "remaining" ? "rest." : "uso"}`;
+	const countdown = formatQuotaCountdown(metric.resetsAt, now);
+	const reset = countdown === null ? "(aguardando atualização)" : countdown ? `(${countdown})` : void 0;
+	const padded = `  ${title.padEnd(8)} ${value}`;
+	const compact = `  ${title} ${value}`;
+	const prefix = cellWidth(padded) <= width ? padded : compact;
+	const suffix = reset ? ` ${reset}` : "";
+	const bar = progress && (sidebarPercent || metric.unit.trim() === "%") ? contextBar(progress.usedPercent, 4) : void 0;
+	const secondaryAmount = sidebarPercent ? void 0 : quotaAmount(display === "remaining" ? metric.used : metric.remaining, metric.unit);
+	const secondary = secondaryAmount ? quotaTextLines(`${display === "remaining" ? "Usado" : "Restante"} ${secondaryAmount}`, width, 4) : [];
+	if (!sidebarPercent && progress) secondary.push(...quotaTextLines(`${progress.remainingPercent}% restante`, width, 4));
+	if (bar && cellWidth(prefix + suffix) + 5 <= width) return [`${prefix} ${bar.filled}${bar.empty}${suffix}`, ...secondary];
+	if (cellWidth(prefix + suffix) <= width) return [`${prefix}${suffix}`, ...secondary];
+	if (cellWidth(prefix) <= width) return reset ? [
+		prefix,
+		...quotaTextLines(reset, width, 4),
+		...secondary
+	] : [prefix, ...secondary];
+	return [
+		...quotaTextLines(title, width, 2),
+		...quotaTextLines(value, width, 4),
+		...reset ? quotaTextLines(reset, width, 4) : [],
+		...secondary
+	];
 }
 function QuotaWindow(props) {
-	const values = () => {
-		const used = quotaAmount(props.metric.used, props.metric.unit);
-		const remaining = quotaAmount(props.metric.remaining, props.metric.unit);
-		return used && remaining ? {
-			used,
-			remaining,
-			progress: quotaProgress(props.metric)
-		} : void 0;
-	};
-	const title = () => props.metric.period?.trim() || props.metric.label?.trim() || "Quota";
-	const meterWidth = () => Math.max(4, Math.min(14, Math.floor((props.width - 34) / 3)));
-	const primaryValue = () => {
-		const value = values();
-		if (!value) return void 0;
-		return props.display === "remaining" ? `Restante ${value.remaining}` : `Usado ${value.used}`;
-	};
-	const secondaryValue = () => {
-		const value = values();
-		if (!value) return void 0;
-		return props.display === "remaining" ? `Usado ${value.used}` : `Restante ${value.remaining}`;
-	};
-	return createComponent(Show, {
-		get when() {
-			return values();
-		},
-		children: (value) => (() => {
-			var _el$13 = createElement("box"), _el$14 = createElement("box"), _el$15 = createElement("text"), _el$16 = createElement("box"), _el$17 = createElement("text"), _el$18 = createElement("text");
-			insertNode(_el$13, _el$14);
-			insertNode(_el$13, _el$16);
-			setProp(_el$13, "flexDirection", "column");
-			setProp(_el$13, "paddingLeft", 1);
-			insertNode(_el$14, _el$15);
-			setProp(_el$14, "flexDirection", "row");
-			setProp(_el$14, "alignItems", "center");
-			setProp(_el$14, "justifyContent", "space-between");
-			setProp(_el$14, "gap", 1);
-			setProp(_el$14, "width", "100%");
-			insert(_el$15, () => clipped(title(), Math.max(7, props.width * .28)));
-			insert(_el$14, createComponent(Show, {
-				get when() {
-					return value().progress;
-				},
-				children: (progress) => [(() => {
-					var _el$19 = createElement("box"), _el$20 = createElement("text"), _el$21 = createElement("text");
-					insertNode(_el$19, _el$20);
-					insertNode(_el$19, _el$21);
-					setProp(_el$19, "flexDirection", "row");
-					setProp(_el$19, "flexShrink", 0);
-					insert(_el$20, () => "█".repeat(Math.round(progress().usedPercent / 100 * meterWidth())));
-					insert(_el$21, () => "░".repeat(meterWidth() - Math.round(progress().usedPercent / 100 * meterWidth())));
-					effect((_p$) => {
-						var _v$0 = quotaWindowTone(props.context, progress()), _v$1 = muted(props.context);
-						_v$0 !== _p$.e && (_p$.e = setProp(_el$20, "fg", _v$0, _p$.e));
-						_v$1 !== _p$.t && (_p$.t = setProp(_el$21, "fg", _v$1, _p$.t));
-						return _p$;
-					}, {
-						e: void 0,
-						t: void 0
-					});
-					return _el$19;
-				})(), (() => {
-					var _el$22 = createElement("text");
-					insert(_el$22, () => `${progress().remainingPercent}% restante`);
-					effect((_$p) => setProp(_el$22, "fg", quotaWindowTone(props.context, progress()), _$p));
-					return _el$22;
-				})()]
-			}), null);
-			insertNode(_el$16, _el$17);
-			insertNode(_el$16, _el$18);
-			setProp(_el$16, "flexDirection", "row");
-			setProp(_el$16, "justifyContent", "space-between");
-			setProp(_el$16, "gap", 1);
-			insert(_el$17, () => clipped(primaryValue() ?? "", props.width * .48));
-			insert(_el$18, () => clipped(secondaryValue() ?? "", props.width * .48));
-			effect((_p$) => {
-				var _v$5 = muted(props.context), _v$6 = props.display === "remaining" ? base(props.context) : muted(props.context), _v$7 = props.display === "remaining" ? 1 : 0, _v$8 = props.display === "used" ? base(props.context) : muted(props.context), _v$9 = props.display === "used" ? 1 : 0;
-				_v$5 !== _p$.e && (_p$.e = setProp(_el$15, "fg", _v$5, _p$.e));
-				_v$6 !== _p$.t && (_p$.t = setProp(_el$17, "fg", _v$6, _p$.t));
-				_v$7 !== _p$.a && (_p$.a = setProp(_el$17, "attributes", _v$7, _p$.a));
-				_v$8 !== _p$.o && (_p$.o = setProp(_el$18, "fg", _v$8, _p$.o));
-				_v$9 !== _p$.i && (_p$.i = setProp(_el$18, "attributes", _v$9, _p$.i));
-				return _p$;
-			}, {
-				e: void 0,
-				t: void 0,
-				a: void 0,
-				o: void 0,
-				i: void 0
-			});
-			return _el$13;
-		})()
-	});
+	return (() => {
+		var _el$10 = createElement("box");
+		setProp(_el$10, "flexDirection", "column");
+		insert(_el$10, createComponent(For, {
+			get each() {
+				return quotaWindowLines(props.metric, props.display, props.width, props.now);
+			},
+			children: (line) => (() => {
+				var _el$11 = createElement("text");
+				insert(_el$11, line);
+				effect((_$p) => setProp(_el$11, "fg", quotaColor(props.context, quotaProgress(props.metric)?.usedPercent), _$p));
+				return _el$11;
+			})()
+		}));
+		return _el$10;
+	})();
 }
 function metricRow(metric) {
 	const label = (fallback) => metric.label?.trim() || fallback;
@@ -1036,33 +1231,39 @@ function metricRow(metric) {
 		};
 	}
 }
+function financeMetricLines(metric, width) {
+	return quotaMetricLines(metric, width);
+}
+function quotaMetricLines(metric, width) {
+	const row = metricRow(metric);
+	if (!row) return [];
+	const left = `  ${row.label}`;
+	const spaces = width - cellWidth(left) - cellWidth(row.value);
+	if (spaces >= 2) return [`${left}${" ".repeat(spaces)}${row.value}`];
+	return [...quotaTextLines(row.label, width, 2), ...quotaTextLines(row.value, width, 4)];
+}
 function QuotaMetricLine(props) {
 	const row = () => metricRow(props.metric);
 	return createComponent(Show, {
 		get when() {
 			return row();
 		},
-		children: (value) => (() => {
-			var _el$23 = createElement("box"), _el$24 = createElement("text"), _el$25 = createElement("text");
-			insertNode(_el$23, _el$24);
-			insertNode(_el$23, _el$25);
-			setProp(_el$23, "flexDirection", "row");
-			setProp(_el$23, "justifyContent", "space-between");
-			setProp(_el$23, "gap", 1);
-			setProp(_el$23, "paddingLeft", 1);
-			insert(_el$24, () => clipped(value().label, props.width * .48));
-			insert(_el$25, () => clipped(value().value, props.width * .48));
-			effect((_p$) => {
-				var _v$10 = muted(props.context), _v$11 = base(props.context);
-				_v$10 !== _p$.e && (_p$.e = setProp(_el$24, "fg", _v$10, _p$.e));
-				_v$11 !== _p$.t && (_p$.t = setProp(_el$25, "fg", _v$11, _p$.t));
-				return _p$;
-			}, {
-				e: void 0,
-				t: void 0
-			});
-			return _el$23;
-		})()
+		get children() {
+			var _el$12 = createElement("box");
+			setProp(_el$12, "flexDirection", "column");
+			insert(_el$12, createComponent(For, {
+				get each() {
+					return quotaMetricLines(props.metric, props.width);
+				},
+				children: (line) => (() => {
+					var _el$13 = createElement("text");
+					insert(_el$13, line);
+					effect((_$p) => setProp(_el$13, "fg", base(props.context), _$p));
+					return _el$13;
+				})()
+			}));
+			return _el$12;
+		}
 	});
 }
 function providerState(provider) {
@@ -1179,15 +1380,15 @@ function ModelUsageDetails(props) {
 	const contextCells = () => Math.max(4, Math.min(12, Math.floor((props.width - 30) / 2)));
 	const modelLabel = (row) => `${row.providerID ? `${row.providerID}/` : ""}${row.label}`;
 	return (() => {
-		var _el$26 = createElement("box"), _el$27 = createElement("text"), _el$29 = createElement("text");
-		insertNode(_el$26, _el$27);
-		insertNode(_el$26, _el$29);
-		setProp(_el$26, "flexDirection", "column");
-		setProp(_el$26, "paddingTop", 1);
-		insertNode(_el$27, createTextNode(`Modelos em uso`));
-		setProp(_el$27, "attributes", 1);
-		insertNode(_el$29, createTextNode(`Mensagens recentes da sessão ativa e delegações.`));
-		insert(_el$26, createComponent(For, {
+		var _el$14 = createElement("box"), _el$15 = createElement("text"), _el$17 = createElement("text");
+		insertNode(_el$14, _el$15);
+		insertNode(_el$14, _el$17);
+		setProp(_el$14, "flexDirection", "column");
+		setProp(_el$14, "paddingTop", 1);
+		insertNode(_el$15, createTextNode(`Modelos em uso`));
+		setProp(_el$15, "attributes", 1);
+		insertNode(_el$17, createTextNode(`Mensagens recentes da sessão ativa e delegações.`));
+		insert(_el$14, createComponent(For, {
 			get each() {
 				return rows();
 			},
@@ -1197,11 +1398,11 @@ function ModelUsageDetails(props) {
 						return row.active;
 					},
 					get children() {
-						var _el$31 = createElement("text");
-						insertNode(_el$31, createTextNode(`MODELO ATUAL`));
-						setProp(_el$31, "attributes", 1);
-						effect((_$p) => setProp(_el$31, "fg", tone(props.context, "info"), _$p));
-						return _el$31;
+						var _el$19 = createElement("text");
+						insertNode(_el$19, createTextNode(`MODELO ATUAL`));
+						setProp(_el$19, "attributes", 1);
+						effect((_$p) => setProp(_el$19, "fg", tone(props.context, "info"), _$p));
+						return _el$19;
 					}
 				}),
 				createComponent(Show, {
@@ -1209,148 +1410,157 @@ function ModelUsageDetails(props) {
 						return memo(() => !!!row.active)() && index() === 1;
 					},
 					get children() {
-						var _el$33 = createElement("text");
-						insertNode(_el$33, createTextNode(`MAIS USADOS RECENTEMENTE`));
-						setProp(_el$33, "attributes", 1);
-						effect((_$p) => setProp(_el$33, "fg", muted(props.context), _$p));
-						return _el$33;
+						var _el$21 = createElement("text");
+						insertNode(_el$21, createTextNode(`MAIS USADOS RECENTEMENTE`));
+						setProp(_el$21, "attributes", 1);
+						effect((_$p) => setProp(_el$21, "fg", muted(props.context), _$p));
+						return _el$21;
 					}
 				}),
 				(() => {
-					var _el$35 = createElement("box"), _el$36 = createElement("text");
-					insertNode(_el$35, _el$36);
-					setProp(_el$35, "flexDirection", "column");
-					setProp(_el$35, "paddingTop", 1);
-					setProp(_el$35, "paddingLeft", 1);
-					setProp(_el$36, "attributes", 1);
-					insert(_el$36, () => clipped(modelLabel(row), props.width - 2));
-					insert(_el$35, createComponent(Show, {
+					var _el$23 = createElement("box"), _el$24 = createElement("text");
+					insertNode(_el$23, _el$24);
+					setProp(_el$23, "flexDirection", "column");
+					setProp(_el$23, "paddingTop", 1);
+					setProp(_el$23, "paddingLeft", 1);
+					setProp(_el$24, "attributes", 1);
+					insert(_el$24, () => clipped(modelLabel(row), props.width - 2));
+					insert(_el$23, createComponent(Show, {
 						get when() {
 							return row.tokens !== null;
 						},
 						get fallback() {
 							return (() => {
-								var _el$44 = createElement("text");
-								insertNode(_el$44, createTextNode(`dados indisponíveis`));
-								effect((_$p) => setProp(_el$44, "fg", muted(props.context), _$p));
-								return _el$44;
+								var _el$31 = createElement("text");
+								insertNode(_el$31, createTextNode(`dados indisponíveis`));
+								effect((_$p) => setProp(_el$31, "fg", muted(props.context), _$p));
+								return _el$31;
 							})();
 						},
 						get children() {
-							var _el$37 = createElement("box"), _el$38 = createElement("text"), _el$40 = createElement("text");
-							insertNode(_el$37, _el$38);
-							insertNode(_el$37, _el$40);
-							setProp(_el$37, "flexDirection", "row");
-							setProp(_el$37, "justifyContent", "space-between");
-							setProp(_el$37, "gap", 1);
-							insertNode(_el$38, createTextNode(`Tokens nas mensagens recentes`));
-							insert(_el$40, () => `${formatTokenCount(row.tokens) ?? "—"}`);
+							var _el$25 = createElement("box"), _el$26 = createElement("text"), _el$28 = createElement("text");
+							insertNode(_el$25, _el$26);
+							insertNode(_el$25, _el$28);
+							setProp(_el$25, "flexDirection", "row");
+							setProp(_el$25, "justifyContent", "space-between");
+							setProp(_el$25, "gap", 1);
+							insertNode(_el$26, createTextNode(`Tokens nas mensagens recentes`));
+							insert(_el$28, () => `${formatTokenCount(row.tokens) ?? "—"}`);
 							effect((_p$) => {
-								var _v$14 = muted(props.context), _v$15 = base(props.context);
-								_v$14 !== _p$.e && (_p$.e = setProp(_el$38, "fg", _v$14, _p$.e));
-								_v$15 !== _p$.t && (_p$.t = setProp(_el$40, "fg", _v$15, _p$.t));
+								var _v$3 = muted(props.context), _v$4 = base(props.context);
+								_v$3 !== _p$.e && (_p$.e = setProp(_el$26, "fg", _v$3, _p$.e));
+								_v$4 !== _p$.t && (_p$.t = setProp(_el$28, "fg", _v$4, _p$.t));
 								return _p$;
 							}, {
 								e: void 0,
 								t: void 0
 							});
-							return _el$37;
+							return _el$25;
 						}
 					}), null);
-					insert(_el$35, createComponent(Show, {
+					insert(_el$23, createComponent(Show, {
 						get when() {
 							return row.context;
 						},
 						children: (usage) => {
 							const bar = () => contextBar(usage().percent, contextCells());
 							return (() => {
-								var _el$46 = createElement("box"), _el$47 = createElement("box"), _el$48 = createElement("text"), _el$50 = createElement("text"), _el$51 = createElement("box"), _el$52 = createElement("text");
-								insertNode(_el$46, _el$47);
-								insertNode(_el$46, _el$51);
-								setProp(_el$46, "flexDirection", "column");
-								setProp(_el$46, "paddingTop", 1);
-								insertNode(_el$47, _el$48);
-								insertNode(_el$47, _el$50);
-								setProp(_el$47, "flexDirection", "row");
-								setProp(_el$47, "justifyContent", "space-between");
-								setProp(_el$47, "gap", 1);
-								insertNode(_el$48, createTextNode(`Último contexto reportado`));
-								insert(_el$50, () => `${formatTokenCount(usage().tokens) ?? "—"} tokens`);
-								insertNode(_el$51, _el$52);
-								setProp(_el$51, "flexDirection", "row");
-								setProp(_el$51, "gap", 1);
-								insert(_el$51, createComponent(Show, {
+								var _el$33 = createElement("box"), _el$34 = createElement("box"), _el$35 = createElement("text"), _el$37 = createElement("text"), _el$38 = createElement("box"), _el$39 = createElement("text");
+								insertNode(_el$33, _el$34);
+								insertNode(_el$33, _el$38);
+								setProp(_el$33, "flexDirection", "column");
+								setProp(_el$33, "paddingTop", 1);
+								insertNode(_el$34, _el$35);
+								insertNode(_el$34, _el$37);
+								setProp(_el$34, "flexDirection", "row");
+								setProp(_el$34, "justifyContent", "space-between");
+								setProp(_el$34, "gap", 1);
+								insertNode(_el$35, createTextNode(`Último contexto reportado`));
+								insert(_el$37, () => `${formatTokenCount(usage().tokens) ?? "—"} tokens`);
+								insertNode(_el$38, _el$39);
+								setProp(_el$38, "flexDirection", "row");
+								setProp(_el$38, "gap", 1);
+								insert(_el$38, createComponent(Show, {
 									get when() {
 										return bar();
 									},
 									children: (cells) => [(() => {
-										var _el$53 = createElement("text");
-										insert(_el$53, () => cells().filled);
-										effect((_$p) => setProp(_el$53, "fg", contextTone(usage().percent), _$p));
-										return _el$53;
+										var _el$40 = createElement("text");
+										insert(_el$40, () => cells().filled);
+										effect((_$p) => setProp(_el$40, "fg", contextTone(usage().percent), _$p));
+										return _el$40;
 									})(), (() => {
-										var _el$54 = createElement("text");
-										insert(_el$54, () => cells().empty);
-										effect((_$p) => setProp(_el$54, "fg", muted(props.context), _$p));
-										return _el$54;
+										var _el$41 = createElement("text");
+										insert(_el$41, () => cells().empty);
+										effect((_$p) => setProp(_el$41, "fg", muted(props.context), _$p));
+										return _el$41;
 									})()]
-								}), _el$52);
-								insert(_el$52, () => `${usage().percent}% de ${formatContextWindow(usage().limit) ?? "—"}`);
+								}), _el$39);
+								insert(_el$39, () => `${usage().percent}% de ${formatContextWindow(usage().limit) ?? "—"}`);
 								effect((_p$) => {
-									var _v$16 = muted(props.context), _v$17 = contextTone(usage().percent), _v$18 = contextTone(usage().percent);
-									_v$16 !== _p$.e && (_p$.e = setProp(_el$48, "fg", _v$16, _p$.e));
-									_v$17 !== _p$.t && (_p$.t = setProp(_el$50, "fg", _v$17, _p$.t));
-									_v$18 !== _p$.a && (_p$.a = setProp(_el$52, "fg", _v$18, _p$.a));
+									var _v$5 = muted(props.context), _v$6 = contextTone(usage().percent), _v$7 = contextTone(usage().percent);
+									_v$5 !== _p$.e && (_p$.e = setProp(_el$35, "fg", _v$5, _p$.e));
+									_v$6 !== _p$.t && (_p$.t = setProp(_el$37, "fg", _v$6, _p$.t));
+									_v$7 !== _p$.a && (_p$.a = setProp(_el$39, "fg", _v$7, _p$.a));
 									return _p$;
 								}, {
 									e: void 0,
 									t: void 0,
 									a: void 0
 								});
-								return _el$46;
+								return _el$33;
 							})();
 						}
 					}), null);
-					insert(_el$35, createComponent(Show, {
+					insert(_el$23, createComponent(Show, {
 						get when() {
 							return row.cost !== null;
 						},
 						get children() {
-							var _el$41 = createElement("text");
-							insert(_el$41, () => clipped(`Custo reportado · mensagens recentes · ${formatSpent(row.cost) ?? "—"}`, props.width - 2));
-							effect((_$p) => setProp(_el$41, "fg", muted(props.context), _$p));
-							return _el$41;
+							return createComponent(For, {
+								get each() {
+									return quotaTextLines(`Custo reportado · mensagens recentes · ${formatSpent(row.cost) ?? "—"}`, props.width - 2, 0);
+								},
+								children: (line) => (() => {
+									var _el$42 = createElement("text");
+									insert(_el$42, line);
+									effect((_$p) => setProp(_el$42, "fg", muted(props.context), _$p));
+									return _el$42;
+								})()
+							});
 						}
 					}), null);
-					insert(_el$35, createComponent(Show, {
+					insert(_el$23, createComponent(Show, {
 						get when() {
 							return memo(() => row.tokens !== null)() && row.context === null;
 						},
 						get children() {
-							var _el$42 = createElement("text");
-							insertNode(_el$42, createTextNode(`Contexto indisponível`));
-							effect((_$p) => setProp(_el$42, "fg", muted(props.context), _$p));
-							return _el$42;
+							var _el$29 = createElement("text");
+							insertNode(_el$29, createTextNode(`Contexto indisponível`));
+							effect((_$p) => setProp(_el$29, "fg", muted(props.context), _$p));
+							return _el$29;
 						}
 					}), null);
-					effect((_$p) => setProp(_el$36, "fg", base(props.context), _$p));
-					return _el$35;
+					effect((_$p) => setProp(_el$24, "fg", base(props.context), _$p));
+					return _el$23;
 				})()
 			]
 		}), null);
 		effect((_p$) => {
-			var _v$12 = tone(props.context, "info"), _v$13 = muted(props.context);
-			_v$12 !== _p$.e && (_p$.e = setProp(_el$27, "fg", _v$12, _p$.e));
-			_v$13 !== _p$.t && (_p$.t = setProp(_el$29, "fg", _v$13, _p$.t));
+			var _v$ = tone(props.context, "info"), _v$2 = muted(props.context);
+			_v$ !== _p$.e && (_p$.e = setProp(_el$15, "fg", _v$, _p$.e));
+			_v$2 !== _p$.t && (_p$.t = setProp(_el$17, "fg", _v$2, _p$.t));
 			return _p$;
 		}, {
 			e: void 0,
 			t: void 0
 		});
-		return _el$26;
+		return _el$14;
 	})();
 }
 function QuotaProviderDetails(props) {
+	const [now, setNow] = createSignal(Date.now());
+	onMount(() => onCleanup(quotaClock.subscribe(setNow)));
 	const state = () => providerState(props.provider);
 	const quotaMetrics = () => props.provider.metrics.filter((metric) => metric.kind === "provider_quota");
 	const financeMetrics = () => props.provider.metrics.filter((metric) => metric.kind === "balance" || metric.kind === "estimate" || metric.kind === "key_usage");
@@ -1360,73 +1570,47 @@ function QuotaProviderDetails(props) {
 		return message && message !== "status indisponível" && message !== "dados de quota indisponíveis" && message !== "setup necessário" ? message : void 0;
 	};
 	return (() => {
-		var _el$55 = createElement("box"), _el$65 = createElement("text");
-		insertNode(_el$55, _el$65);
-		setProp(_el$55, "flexDirection", "column");
-		setProp(_el$55, "paddingBottom", 1);
-		insert(_el$55, createComponent(Show, {
-			get when() {
-				return props.width >= 58;
+		var _el$43 = createElement("box"), _el$48 = createElement("text");
+		insertNode(_el$43, _el$48);
+		setProp(_el$43, "flexDirection", "column");
+		setProp(_el$43, "paddingBottom", 1);
+		insert(_el$43, createComponent(For, {
+			get each() {
+				return quotaTextLines(props.provider.label, props.width, 0);
 			},
-			get fallback() {
-				return (() => {
-					var _el$66 = createElement("box"), _el$67 = createElement("text"), _el$68 = createElement("text");
-					insertNode(_el$66, _el$67);
-					insertNode(_el$66, _el$68);
-					setProp(_el$66, "flexDirection", "column");
-					setProp(_el$67, "attributes", 1);
-					insert(_el$67, () => clipped(props.provider.label, props.width));
-					insert(_el$68, () => clipped(state().label, props.width));
-					effect((_p$) => {
-						var _v$21 = tone(props.context, "info"), _v$22 = tone(props.context, state().tone);
-						_v$21 !== _p$.e && (_p$.e = setProp(_el$67, "fg", _v$21, _p$.e));
-						_v$22 !== _p$.t && (_p$.t = setProp(_el$68, "fg", _v$22, _p$.t));
-						return _p$;
-					}, {
-						e: void 0,
-						t: void 0
-					});
-					return _el$66;
-				})();
+			children: (line) => (() => {
+				var _el$49 = createElement("text");
+				setProp(_el$49, "attributes", 1);
+				insert(_el$49, line);
+				effect((_$p) => setProp(_el$49, "fg", tone(props.context, "info"), _$p));
+				return _el$49;
+			})()
+		}), _el$48);
+		insert(_el$43, createComponent(For, {
+			get each() {
+				return quotaTextLines(state().label, props.width, 0);
 			},
-			get children() {
-				var _el$56 = createElement("box"), _el$57 = createElement("text"), _el$58 = createElement("text");
-				insertNode(_el$56, _el$57);
-				insertNode(_el$56, _el$58);
-				setProp(_el$56, "flexDirection", "row");
-				setProp(_el$56, "justifyContent", "space-between");
-				setProp(_el$56, "gap", 1);
-				setProp(_el$57, "attributes", 1);
-				insert(_el$57, () => clipped(props.provider.label, props.width * .62));
-				insert(_el$58, () => state().label);
-				effect((_p$) => {
-					var _v$19 = tone(props.context, "info"), _v$20 = tone(props.context, state().tone);
-					_v$19 !== _p$.e && (_p$.e = setProp(_el$57, "fg", _v$19, _p$.e));
-					_v$20 !== _p$.t && (_p$.t = setProp(_el$58, "fg", _v$20, _p$.t));
-					return _p$;
-				}, {
-					e: void 0,
-					t: void 0
-				});
-				return _el$56;
-			}
-		}), _el$65);
-		insert(_el$55, createComponent(Show, {
+			children: (line) => (() => {
+				var _el$50 = createElement("text");
+				insert(_el$50, line);
+				effect((_$p) => setProp(_el$50, "fg", tone(props.context, state().tone), _$p));
+				return _el$50;
+			})()
+		}), _el$48);
+		insert(_el$43, createComponent(Show, {
 			get when() {
 				return quotaMetrics().length > 0;
 			},
 			get children() {
-				return [(() => {
-					var _el$59 = createElement("text");
-					insertNode(_el$59, createTextNode(`JANELAS DE QUOTA`));
-					effect((_$p) => setProp(_el$59, "fg", muted(props.context), _$p));
-					return _el$59;
-				})(), createComponent(For, {
+				return createComponent(For, {
 					get each() {
 						return quotaMetrics();
 					},
 					children: (metric) => createComponent(QuotaWindow, {
 						metric,
+						get now() {
+							return now();
+						},
 						get display() {
 							return props.display;
 						},
@@ -1437,19 +1621,19 @@ function QuotaProviderDetails(props) {
 							return props.context;
 						}
 					})
-				})];
+				});
 			}
-		}), _el$65);
-		insert(_el$55, createComponent(Show, {
+		}), _el$48);
+		insert(_el$43, createComponent(Show, {
 			get when() {
 				return financeMetrics().length > 0;
 			},
 			get children() {
 				return [(() => {
-					var _el$61 = createElement("text");
-					insertNode(_el$61, createTextNode(`GASTOS &amp; SALDO`));
-					effect((_$p) => setProp(_el$61, "fg", muted(props.context), _$p));
-					return _el$61;
+					var _el$44 = createElement("text");
+					insertNode(_el$44, createTextNode(`GASTOS &amp; SALDO`));
+					effect((_$p) => setProp(_el$44, "fg", muted(props.context), _$p));
+					return _el$44;
 				})(), createComponent(For, {
 					get each() {
 						return financeMetrics();
@@ -1465,17 +1649,17 @@ function QuotaProviderDetails(props) {
 					})
 				})];
 			}
-		}), _el$65);
-		insert(_el$55, createComponent(Show, {
+		}), _el$48);
+		insert(_el$43, createComponent(Show, {
 			get when() {
 				return otherMetrics().length > 0;
 			},
 			get children() {
 				return [(() => {
-					var _el$63 = createElement("text");
-					insertNode(_el$63, createTextNode(`OUTRAS MÉTRICAS`));
-					effect((_$p) => setProp(_el$63, "fg", muted(props.context), _$p));
-					return _el$63;
+					var _el$46 = createElement("text");
+					insertNode(_el$46, createTextNode(`OUTRAS MÉTRICAS`));
+					effect((_$p) => setProp(_el$46, "fg", muted(props.context), _$p));
+					return _el$46;
 				})(), createComponent(For, {
 					get each() {
 						return otherMetrics();
@@ -1491,21 +1675,21 @@ function QuotaProviderDetails(props) {
 					})
 				})];
 			}
-		}), _el$65);
-		insert(_el$55, createComponent(Show, {
+		}), _el$48);
+		insert(_el$43, createComponent(Show, {
 			get when() {
 				return safeError();
 			},
 			children: (message) => (() => {
-				var _el$69 = createElement("text");
-				insert(_el$69, () => clipped(`! ${message()}`, props.width - 2));
-				effect((_$p) => setProp(_el$69, "fg", tone(props.context, "warning"), _$p));
-				return _el$69;
+				var _el$51 = createElement("text");
+				insert(_el$51, () => clipped(`! ${message()}`, props.width - 2));
+				effect((_$p) => setProp(_el$51, "fg", tone(props.context, "warning"), _$p));
+				return _el$51;
 			})()
-		}), _el$65);
-		insert(_el$65, () => "─".repeat(Math.max(8, Math.min(32, props.width - 4))));
-		effect((_$p) => setProp(_el$65, "fg", muted(props.context), _$p));
-		return _el$55;
+		}), _el$48);
+		insert(_el$48, () => "─".repeat(Math.max(8, Math.min(32, props.width - 4))));
+		effect((_$p) => setProp(_el$48, "fg", muted(props.context), _$p));
+		return _el$43;
 	})();
 }
 const QUOTA_PANEL_COMMANDS = [
@@ -1607,107 +1791,106 @@ function QuotaPanel(props) {
 		}
 	};
 	return (() => {
-		var _el$70 = createElement("box"), _el$81 = createElement("scrollbox"), _el$82 = createElement("box"), _el$83 = createElement("text"), _el$84 = createElement("text"), _el$85 = createElement("text"), _el$87 = createElement("text");
-		insertNode(_el$70, _el$81);
-		insertNode(_el$70, _el$83);
-		insertNode(_el$70, _el$84);
-		insertNode(_el$70, _el$85);
-		insertNode(_el$70, _el$87);
-		setProp(_el$70, "flexDirection", "column");
-		setProp(_el$70, "width", "100%");
-		setProp(_el$70, "height", "100%");
-		setProp(_el$70, "padding", 1);
-		insert(_el$70, createComponent(Show, {
+		var _el$52 = createElement("box"), _el$63 = createElement("scrollbox"), _el$64 = createElement("box"), _el$65 = createElement("box"), _el$66 = createElement("text"), _el$67 = createElement("text"), _el$68 = createElement("text"), _el$70 = createElement("text");
+		insertNode(_el$52, _el$63);
+		insertNode(_el$52, _el$65);
+		setProp(_el$52, "flexDirection", "column");
+		setProp(_el$52, "width", "100%");
+		setProp(_el$52, "height", "100%");
+		setProp(_el$52, "padding", 1);
+		insert(_el$52, createComponent(Show, {
 			get when() {
 				return props.panel.width >= 54;
 			},
 			get fallback() {
 				return (() => {
-					var _el$89 = createElement("box"), _el$90 = createElement("text"), _el$92 = createElement("text");
-					insertNode(_el$89, _el$90);
-					insertNode(_el$89, _el$92);
-					setProp(_el$89, "flexDirection", "column");
-					insertNode(_el$90, createTextNode(`▥ Pantheon / Quota`));
-					setProp(_el$90, "attributes", 1);
-					insert(_el$92, () => quotaSnapshotStatusLabel(snapshot().status));
+					var _el$72 = createElement("box"), _el$73 = createElement("text"), _el$75 = createElement("text");
+					insertNode(_el$72, _el$73);
+					insertNode(_el$72, _el$75);
+					setProp(_el$72, "flexDirection", "column");
+					insertNode(_el$73, createTextNode(`▥ Pantheon / Quota`));
+					setProp(_el$73, "attributes", 1);
+					insert(_el$75, () => quotaSnapshotStatusLabel(snapshot().status));
 					effect((_p$) => {
-						var _v$32 = tone(props.context, "info"), _v$33 = tone(props.context, snapshotTone());
-						_v$32 !== _p$.e && (_p$.e = setProp(_el$90, "fg", _v$32, _p$.e));
-						_v$33 !== _p$.t && (_p$.t = setProp(_el$92, "fg", _v$33, _p$.t));
+						var _v$15 = tone(props.context, "info"), _v$16 = tone(props.context, snapshotTone());
+						_v$15 !== _p$.e && (_p$.e = setProp(_el$73, "fg", _v$15, _p$.e));
+						_v$16 !== _p$.t && (_p$.t = setProp(_el$75, "fg", _v$16, _p$.t));
 						return _p$;
 					}, {
 						e: void 0,
 						t: void 0
 					});
-					return _el$89;
+					return _el$72;
 				})();
 			},
 			get children() {
-				var _el$71 = createElement("box"), _el$72 = createElement("text"), _el$74 = createElement("text");
-				insertNode(_el$71, _el$72);
-				insertNode(_el$71, _el$74);
-				setProp(_el$71, "flexDirection", "row");
-				setProp(_el$71, "justifyContent", "space-between");
-				setProp(_el$71, "gap", 1);
-				insertNode(_el$72, createTextNode(`▥ Pantheon / Quota`));
-				setProp(_el$72, "attributes", 1);
-				insert(_el$74, () => quotaSnapshotStatusLabel(snapshot().status));
+				var _el$53 = createElement("box"), _el$54 = createElement("text"), _el$56 = createElement("text");
+				insertNode(_el$53, _el$54);
+				insertNode(_el$53, _el$56);
+				setProp(_el$53, "flexDirection", "row");
+				setProp(_el$53, "justifyContent", "space-between");
+				setProp(_el$53, "gap", 1);
+				insertNode(_el$54, createTextNode(`▥ Pantheon / Quota`));
+				setProp(_el$54, "attributes", 1);
+				insert(_el$56, () => quotaSnapshotStatusLabel(snapshot().status));
 				effect((_p$) => {
-					var _v$23 = tone(props.context, "info"), _v$24 = tone(props.context, snapshotTone());
-					_v$23 !== _p$.e && (_p$.e = setProp(_el$72, "fg", _v$23, _p$.e));
-					_v$24 !== _p$.t && (_p$.t = setProp(_el$74, "fg", _v$24, _p$.t));
+					var _v$8 = tone(props.context, "info"), _v$9 = tone(props.context, snapshotTone());
+					_v$8 !== _p$.e && (_p$.e = setProp(_el$54, "fg", _v$8, _p$.e));
+					_v$9 !== _p$.t && (_p$.t = setProp(_el$56, "fg", _v$9, _p$.t));
 					return _p$;
 				}, {
 					e: void 0,
 					t: void 0
 				});
-				return _el$71;
+				return _el$53;
 			}
-		}), _el$81);
-		insert(_el$70, createComponent(Show, {
+		}), _el$63);
+		insert(_el$52, createComponent(Show, {
 			get when() {
 				return memo(() => snapshot().status === "needs_setup")() && snapshot().details.length === 0;
 			},
 			get children() {
-				var _el$75 = createElement("text");
-				insertNode(_el$75, createTextNode(`Nenhum provedor elegível: verifique conexão ativa e credencial local compatível.`));
-				effect((_$p) => setProp(_el$75, "fg", muted(props.context), _$p));
-				return _el$75;
+				var _el$57 = createElement("text");
+				insertNode(_el$57, createTextNode(`Nenhum provedor elegível: verifique conexão ativa e credencial local compatível.`));
+				effect((_$p) => setProp(_el$57, "fg", muted(props.context), _$p));
+				return _el$57;
 			}
-		}), _el$81);
-		insert(_el$70, createComponent(Show, {
+		}), _el$63);
+		insert(_el$52, createComponent(Show, {
 			get when() {
 				return snapshot().status === "unavailable";
 			},
 			get children() {
-				var _el$77 = createElement("text");
-				insertNode(_el$77, createTextNode(`Não foi possível verificar o status da quota.`));
-				effect((_$p) => setProp(_el$77, "fg", muted(props.context), _$p));
-				return _el$77;
+				var _el$59 = createElement("text");
+				insertNode(_el$59, createTextNode(`Não foi possível verificar o status da quota.`));
+				effect((_$p) => setProp(_el$59, "fg", muted(props.context), _$p));
+				return _el$59;
 			}
-		}), _el$81);
-		insert(_el$70, createComponent(Show, {
+		}), _el$63);
+		insert(_el$52, createComponent(Show, {
 			get when() {
 				return snapshot().status === "stale";
 			},
 			get children() {
-				var _el$79 = createElement("text");
-				insertNode(_el$79, createTextNode(`A última resposta continua visível; atualize para tentar novamente.`));
-				effect((_$p) => setProp(_el$79, "fg", muted(props.context), _$p));
-				return _el$79;
+				var _el$61 = createElement("text");
+				insertNode(_el$61, createTextNode(`A última resposta continua visível; atualize para tentar novamente.`));
+				effect((_$p) => setProp(_el$61, "fg", muted(props.context), _$p));
+				return _el$61;
 			}
-		}), _el$81);
-		insertNode(_el$81, _el$82);
-		setProp(_el$81, "flexGrow", 1);
-		setProp(_el$81, "minHeight", 3);
-		setProp(_el$81, "width", "100%");
-		setProp(_el$81, "scrollY", true);
-		setProp(_el$81, "focusable", true);
-		setProp(_el$81, "border", true);
-		setProp(_el$82, "flexDirection", "column");
-		setProp(_el$82, "paddingX", 1);
-		setProp(_el$82, "paddingY", 1);
-		insert(_el$82, createComponent(For, {
+		}), _el$63);
+		insertNode(_el$63, _el$64);
+		setProp(_el$63, "flexGrow", 1);
+		setProp(_el$63, "flexShrink", 1);
+		setProp(_el$63, "flexBasis", 0);
+		setProp(_el$63, "minHeight", 3);
+		setProp(_el$63, "width", "100%");
+		setProp(_el$63, "scrollY", true);
+		setProp(_el$63, "focusable", true);
+		setProp(_el$63, "border", true);
+		setProp(_el$64, "flexDirection", "column");
+		setProp(_el$64, "paddingX", 1);
+		setProp(_el$64, "paddingY", 1);
+		insert(_el$64, createComponent(For, {
 			get each() {
 				return snapshot().details;
 			},
@@ -1724,7 +1907,7 @@ function QuotaPanel(props) {
 				}
 			})
 		}), null);
-		insert(_el$82, createComponent(ModelUsageDetails, {
+		insert(_el$64, createComponent(ModelUsageDetails, {
 			get context() {
 				return props.context;
 			},
@@ -1735,19 +1918,25 @@ function QuotaPanel(props) {
 				return props.panel.width - 6;
 			}
 		}), null);
-		insert(_el$83, () => `Quota ${preferences().enabled ? "ativada" : "desativada"} · exibição: ${preferences().display === "remaining" ? "restante" : "usado"}`);
-		insert(_el$84, () => `E ${preferences().enabled ? "desativar" : "ativar"} · M alternar usado/restante`);
-		insertNode(_el$85, createTextNode(`↑/↓ rolar · R atualizar`));
-		insertNode(_el$87, createTextNode(`Esc/Q fechar`));
+		insertNode(_el$65, _el$66);
+		insertNode(_el$65, _el$67);
+		insertNode(_el$65, _el$68);
+		insertNode(_el$65, _el$70);
+		setProp(_el$65, "flexDirection", "column");
+		setProp(_el$65, "flexShrink", 0);
+		insert(_el$66, () => `Quota ${preferences().enabled ? "ativada" : "desativada"} · exibição: ${preferences().display === "remaining" ? "restante" : "usado"}`);
+		insert(_el$67, () => `E ${preferences().enabled ? "desativar" : "ativar"} · M alternar usado/restante`);
+		insertNode(_el$68, createTextNode(`↑/↓ rolar · R atualizar`));
+		insertNode(_el$70, createTextNode(`Esc/Q fechar`));
 		effect((_p$) => {
-			var _v$25 = props.panel.focused, _v$26 = muted(props.context), _v$27 = tone(props.context, "info"), _v$28 = muted(props.context), _v$29 = muted(props.context), _v$30 = muted(props.context), _v$31 = muted(props.context);
-			_v$25 !== _p$.e && (_p$.e = setProp(_el$81, "focused", _v$25, _p$.e));
-			_v$26 !== _p$.t && (_p$.t = setProp(_el$81, "borderColor", _v$26, _p$.t));
-			_v$27 !== _p$.a && (_p$.a = setProp(_el$81, "focusedBorderColor", _v$27, _p$.a));
-			_v$28 !== _p$.o && (_p$.o = setProp(_el$83, "fg", _v$28, _p$.o));
-			_v$29 !== _p$.i && (_p$.i = setProp(_el$84, "fg", _v$29, _p$.i));
-			_v$30 !== _p$.n && (_p$.n = setProp(_el$85, "fg", _v$30, _p$.n));
-			_v$31 !== _p$.s && (_p$.s = setProp(_el$87, "fg", _v$31, _p$.s));
+			var _v$0 = props.panel.focused, _v$1 = muted(props.context), _v$10 = tone(props.context, "info"), _v$11 = muted(props.context), _v$12 = muted(props.context), _v$13 = muted(props.context), _v$14 = muted(props.context);
+			_v$0 !== _p$.e && (_p$.e = setProp(_el$63, "focused", _v$0, _p$.e));
+			_v$1 !== _p$.t && (_p$.t = setProp(_el$63, "borderColor", _v$1, _p$.t));
+			_v$10 !== _p$.a && (_p$.a = setProp(_el$63, "focusedBorderColor", _v$10, _p$.a));
+			_v$11 !== _p$.o && (_p$.o = setProp(_el$66, "fg", _v$11, _p$.o));
+			_v$12 !== _p$.i && (_p$.i = setProp(_el$67, "fg", _v$12, _p$.i));
+			_v$13 !== _p$.n && (_p$.n = setProp(_el$68, "fg", _v$13, _p$.n));
+			_v$14 !== _p$.s && (_p$.s = setProp(_el$70, "fg", _v$14, _p$.s));
 			return _p$;
 		}, {
 			e: void 0,
@@ -1758,7 +1947,7 @@ function QuotaPanel(props) {
 			n: void 0,
 			s: void 0
 		});
-		return _el$70;
+		return _el$52;
 	})();
 }
 function QuotaCommandLayer(props) {
@@ -2285,6 +2474,30 @@ function modelUsageRows(rows) {
 function modelUsageRowText(row) {
 	return `${row.model.padEnd(12)}  ${row.tokens.padStart(6)}  ${row.cost.padStart(8)}`;
 }
+/** Wrap sidebar text by terminal cells, preserving the complete values. */
+function sidebarTextLines(value) {
+	return quotaTextLines(value, 34, 0);
+}
+/** Align a monetary value when it fits, otherwise preserve it on a new line. */
+function sidebarMoneyLines(label, value) {
+	const gap = 34 - cellWidth(label) - cellWidth(value);
+	return gap >= 1 ? [`${label}${" ".repeat(gap)}${value}`] : [...sidebarTextLines(label), ...sidebarTextLines(value)];
+}
+/** Keep the existing OpenCode periods together when possible. */
+function contextSpendLines(value) {
+	const match = /^(.*\S)\s+(<?\$\S+)$/.exec(value);
+	return match?.[1] && match[2] && cellWidth(value) <= 34 ? sidebarMoneyLines(match[1], match[2]) : sidebarTextLines(value);
+}
+/** Keep ordinary rows aligned; give oversized values their own lines. */
+function modelUsageRowLines(row) {
+	const single = modelUsageRowText(row);
+	if (cellWidth(single) <= 34) return [single];
+	return [
+		...sidebarTextLines(row.model),
+		...sidebarTextLines(`Tokens ${row.tokens}`),
+		...sidebarTextLines(`USD ${row.cost}`)
+	];
+}
 /** Muted aggregate line for the models beyond the cap (`… +2  $0.03`). Null
 *  when every model fits. Pure. */
 function hiddenModelUsageText(hidden, hiddenCost) {
@@ -2663,126 +2876,6 @@ function contextSpendLine(totals) {
 }
 /** Grapheme iterator: a cut never splits a surrogate pair, a combining mark
 *  from its base or a ZWJ emoji sequence, so truncation stays cell-exact. */
-const GRAPHEMES = new Intl.Segmenter(void 0, { granularity: "grapheme" });
-/** A grapheme the host draws two cells wide: emoji presentation, an extended
-*  pictograph (a bare `❤` counts too, exactly as the host's `emoji-regex`
-*  does) and a regional-indicator pair (a flag). */
-const EMOJI_GLYPH = /\p{Emoji_Presentation}|\p{Extended_Pictographic}|\p{Regional_Indicator}/u;
-/** VS16 asks for emoji presentation; without it `1` is one cell, with it the
-*  keycap sequence is drawn as one two-cell glyph. */
-const EMOJI_PRESENTATION_SELECTOR = "️";
-/** Unicode default-ignorable code points carry no width of their own. */
-const IGNORABLE_GLYPH = /^\p{Default_Ignorable_Code_Point}$/u;
-/** East Asian Wide/Fullwidth ranges — two cells, never the ambiguous width
-*  (the host measures ambiguous as narrow, so `▸`/`✓`/`—` stay one cell).
-*  Generated from the host's own measurement (`string-width` over every code
-*  point, emoji excluded), so this table can be regenerated verbatim when the
-*  host upgrades its Unicode data instead of being hand-edited. */
-const CELL_WIDE_RANGES = [
-	[4352, 4446],
-	[9001, 9002],
-	[9776, 9783],
-	[9866, 9871],
-	[11904, 11929],
-	[11931, 12019],
-	[12032, 12245],
-	[12272, 12335],
-	[12337, 12348],
-	[12350, 12350],
-	[12353, 12438],
-	[12441, 12543],
-	[12549, 12591],
-	[12593, 12643],
-	[12645, 12686],
-	[12688, 12773],
-	[12783, 12830],
-	[12832, 12871],
-	[12880, 12950],
-	[12952, 12952],
-	[12954, 42124],
-	[42128, 42182],
-	[43360, 43388],
-	[44032, 55203],
-	[63744, 64255],
-	[65040, 65049],
-	[65072, 65106],
-	[65108, 65126],
-	[65128, 65131],
-	[65281, 65376],
-	[65504, 65510],
-	[94176, 94180],
-	[94192, 94198],
-	[94208, 101594],
-	[101631, 101664],
-	[101760, 101874],
-	[101888, 102801],
-	[102816, 102866],
-	[110576, 110579],
-	[110581, 110587],
-	[110589, 110590],
-	[110592, 110888],
-	[110898, 110898],
-	[110928, 110930],
-	[110933, 110933],
-	[110948, 110952],
-	[110960, 111355],
-	[119552, 119638],
-	[119648, 119670],
-	[127488, 127488],
-	[127504, 127513],
-	[127515, 127534],
-	[127536, 127537],
-	[127547, 127547],
-	[127552, 127560],
-	[127584, 127589],
-	[131072, 196605],
-	[196608, 262141]
-];
-/** One code point the terminal draws no cell for: control characters, the
-*  zero-width joiners/marks, combining marks and variation selectors. */
-function isZeroWidthCodePoint(code, glyph) {
-	if (code <= 31 || code >= 127 && code <= 159) return true;
-	if (code >= 8203 && code <= 8207) return true;
-	if (code === 65279) return true;
-	if (code >= 768 && code <= 879) return true;
-	if (code >= 6832 && code <= 6911) return true;
-	if (code >= 7616 && code <= 7679) return true;
-	if (code >= 8400 && code <= 8447) return true;
-	if (code >= 65024 && code <= 65039) return true;
-	if (code >= 65056 && code <= 65071) return true;
-	if (code >= 917760 && code <= 917999) return true;
-	if (code >= 55296 && code <= 57343) return true;
-	return IGNORABLE_GLYPH.test(glyph);
-}
-function isWideCodePoint(code) {
-	for (const [low, high] of CELL_WIDE_RANGES) {
-		if (code < low) return false;
-		if (code <= high) return true;
-	}
-	return false;
-}
-/** Cells one grapheme occupies. */
-function graphemeWidth(segment) {
-	if (EMOJI_GLYPH.test(segment)) return 2;
-	if (segment.length > 1 && segment.includes(EMOJI_PRESENTATION_SELECTOR)) return 2;
-	let width = 0;
-	for (const glyph of segment) {
-		const code = glyph.codePointAt(0) ?? 0;
-		if (isZeroWidthCodePoint(code, glyph)) continue;
-		width += isWideCodePoint(code) ? 2 : 1;
-	}
-	return width;
-}
-/** Terminal cells `value` occupies — the unit every column in this plugin is
-*  measured in. Mirrors the host (that is how `@opentui/core` sizes a text
-*  run): emoji count as two cells, East Asian Wide/Fullwidth as two, East
-*  Asian Ambiguous as one, combining marks and variation selectors as none.
-*  Pure. */
-function cellWidth(value) {
-	let width = 0;
-	for (const { segment } of GRAPHEMES.segment(value)) width += graphemeWidth(segment);
-	return width;
-}
 /** Clamp a free-form label to `max` terminal cells without wrapping. The width
 *  is measured in display cells, never in UTF-16 code units: a CJK or emoji
 *  label used to overflow the column it was cut for (`計画の移行` is 5 code
@@ -2820,9 +2913,9 @@ const HEADER_MAX_WIDTH = 34;
 function presetHeaderLine(presetName, providerID) {
 	const base = `▸ ${presetName.trim() === "" ? "default" : presetName.trim()}`;
 	const provider = providerID === null ? "" : providerID.trim();
-	if (provider === "") return truncateLabel(base, 34);
-	const room = 34 - `${base} · `.length;
-	if (room < 2) return truncateLabel(base, 34);
+	if (provider === "") return truncateLabel(base, HEADER_MAX_WIDTH);
+	const room = HEADER_MAX_WIDTH - `${base} · `.length;
+	if (room < 2) return truncateLabel(base, HEADER_MAX_WIDTH);
 	return `${base} · ${truncateLabel(provider, room)}`;
 }
 /** One classification plus the evidence that produced it. */
@@ -4609,47 +4702,96 @@ function createSidebarModel(context, sessionID, gitExec = defaultGitExec) {
 *  cells), the value, the muted gauge tail (empty cells) and the muted unit
 *  suffix (`tokens` / `of 200K` / `spent`). */
 function ContextRowView(props) {
-	return (() => {
-		var _el$ = createElement("box"), _el$2 = createElement("text");
-		insertNode(_el$, _el$2);
-		setProp(_el$, "flexDirection", "row");
-		insert(_el$, createComponent(Show, {
-			get when() {
-				return props.row.lead;
-			},
-			children: (lead) => (() => {
-				var _el$3 = createElement("text");
-				insert(_el$3, lead);
-				effect((_$p) => setProp(_el$3, "fg", props.fg, _$p));
+	const fullWidth = () => cellWidth(`${props.row.lead ?? ""}${props.row.tail ?? ""}${props.row.value}${props.row.suffix ?? ""}`);
+	return createComponent(Show, {
+		get when() {
+			return props.row.suffix !== " gasto na sessão";
+		},
+		get fallback() {
+			return (() => {
+				var _el$3 = createElement("box");
+				setProp(_el$3, "flexDirection", "column");
+				insert(_el$3, createComponent(For, {
+					get each() {
+						return sidebarMoneyLines("gasto na sessão", props.row.value);
+					},
+					children: (line) => (() => {
+						var _el$4 = createElement("text");
+						insert(_el$4, line);
+						effect((_$p) => setProp(_el$4, "fg", props.fg, _$p));
+						return _el$4;
+					})()
+				}));
 				return _el$3;
-			})()
-		}), _el$2);
-		insert(_el$, createComponent(Show, {
-			get when() {
-				return props.row.tail;
-			},
-			children: (tail) => (() => {
-				var _el$4 = createElement("text");
-				insert(_el$4, tail);
-				effect((_$p) => setProp(_el$4, "fg", props.muted, _$p));
-				return _el$4;
-			})()
-		}), _el$2);
-		insert(_el$2, () => props.row.value);
-		insert(_el$, createComponent(Show, {
-			get when() {
-				return props.row.suffix;
-			},
-			children: (suffix) => (() => {
-				var _el$5 = createElement("text");
-				insert(_el$5, suffix);
-				effect((_$p) => setProp(_el$5, "fg", props.muted, _$p));
-				return _el$5;
-			})()
-		}), null);
-		effect((_$p) => setProp(_el$2, "fg", props.fg, _$p));
-		return _el$;
-	})();
+			})();
+		},
+		get children() {
+			return createComponent(Show, {
+				get when() {
+					return fullWidth() <= 34;
+				},
+				get fallback() {
+					return (() => {
+						var _el$5 = createElement("box");
+						setProp(_el$5, "flexDirection", "column");
+						insert(_el$5, createComponent(For, {
+							get each() {
+								return sidebarTextLines(`${props.row.value.trim()}${props.row.suffix ?? ""}`);
+							},
+							children: (line) => (() => {
+								var _el$6 = createElement("text");
+								insert(_el$6, line);
+								effect((_$p) => setProp(_el$6, "fg", props.fg, _$p));
+								return _el$6;
+							})()
+						}));
+						return _el$5;
+					})();
+				},
+				get children() {
+					var _el$ = createElement("box"), _el$2 = createElement("text");
+					insertNode(_el$, _el$2);
+					setProp(_el$, "flexDirection", "row");
+					insert(_el$, createComponent(Show, {
+						get when() {
+							return props.row.lead;
+						},
+						children: (lead) => (() => {
+							var _el$7 = createElement("text");
+							insert(_el$7, lead);
+							effect((_$p) => setProp(_el$7, "fg", props.fg, _$p));
+							return _el$7;
+						})()
+					}), _el$2);
+					insert(_el$, createComponent(Show, {
+						get when() {
+							return props.row.tail;
+						},
+						children: (tail) => (() => {
+							var _el$8 = createElement("text");
+							insert(_el$8, tail);
+							effect((_$p) => setProp(_el$8, "fg", props.muted, _$p));
+							return _el$8;
+						})()
+					}), _el$2);
+					insert(_el$2, () => props.row.value);
+					insert(_el$, createComponent(Show, {
+						get when() {
+							return props.row.suffix;
+						},
+						children: (suffix) => (() => {
+							var _el$9 = createElement("text");
+							insert(_el$9, suffix);
+							effect((_$p) => setProp(_el$9, "fg", props.muted, _$p));
+							return _el$9;
+						})()
+					}), null);
+					effect((_$p) => setProp(_el$2, "fg", props.fg, _$p));
+					return _el$;
+				}
+			});
+		}
+	});
 }
 /** Block title: a muted single-width glyph, then the bold label. The fixed
 *  header at the top of the sidebar deliberately renders no icon. `summary` is
@@ -4657,34 +4799,34 @@ function ContextRowView(props) {
 *  stays one line. */
 function BlockHeader(props) {
 	return (() => {
-		var _el$6 = createElement("box"), _el$7 = createElement("text"), _el$8 = createElement("text");
-		insertNode(_el$6, _el$7);
-		insertNode(_el$6, _el$8);
-		setProp(_el$6, "flexDirection", "row");
-		insert(_el$7, () => `${props.icon} `);
-		setProp(_el$8, "attributes", 1);
-		insert(_el$8, () => props.label);
-		insert(_el$6, createComponent(Show, {
+		var _el$0 = createElement("box"), _el$1 = createElement("text"), _el$10 = createElement("text");
+		insertNode(_el$0, _el$1);
+		insertNode(_el$0, _el$10);
+		setProp(_el$0, "flexDirection", "row");
+		insert(_el$1, () => `${props.icon} `);
+		setProp(_el$10, "attributes", 1);
+		insert(_el$10, () => props.label);
+		insert(_el$0, createComponent(Show, {
 			get when() {
 				return props.summary;
 			},
 			children: (summary) => (() => {
-				var _el$9 = createElement("text");
-				insert(_el$9, () => `${SPEND_LINE_SEPARATOR}${summary()}`);
-				effect((_$p) => setProp(_el$9, "fg", props.muted, _$p));
-				return _el$9;
+				var _el$11 = createElement("text");
+				insert(_el$11, () => `${SPEND_LINE_SEPARATOR}${summary()}`);
+				effect((_$p) => setProp(_el$11, "fg", props.muted, _$p));
+				return _el$11;
 			})()
 		}), null);
 		effect((_p$) => {
 			var _v$ = props.muted, _v$2 = props.fg;
-			_v$ !== _p$.e && (_p$.e = setProp(_el$7, "fg", _v$, _p$.e));
-			_v$2 !== _p$.t && (_p$.t = setProp(_el$8, "fg", _v$2, _p$.t));
+			_v$ !== _p$.e && (_p$.e = setProp(_el$1, "fg", _v$, _p$.e));
+			_v$2 !== _p$.t && (_p$.t = setProp(_el$10, "fg", _v$2, _p$.t));
 			return _p$;
 		}, {
 			e: void 0,
 			t: void 0
 		});
-		return _el$6;
+		return _el$0;
 	})();
 }
 function Sidebar(props) {
@@ -4714,62 +4856,62 @@ function Sidebar(props) {
 	};
 	const failedSuffix = () => failedSuffixText(dispatchView()?.failures);
 	return (() => {
-		var _el$0 = createElement("box"), _el$1 = createElement("text"), _el$10 = createElement("text");
-		insertNode(_el$0, _el$1);
-		insertNode(_el$0, _el$10);
-		setProp(_el$0, "flexDirection", "column");
-		setProp(_el$0, "width", "100%");
-		setProp(_el$0, "padding", 1);
-		setProp(_el$1, "attributes", 1);
-		insert(_el$1, `Pantheon v1.6.1`);
-		insert(_el$10, () => presetHeaderLine(model.preset().name ?? "", model.provider()));
-		insert(_el$0, createComponent(Show, {
+		var _el$12 = createElement("box"), _el$13 = createElement("text"), _el$14 = createElement("text");
+		insertNode(_el$12, _el$13);
+		insertNode(_el$12, _el$14);
+		setProp(_el$12, "flexDirection", "column");
+		setProp(_el$12, "width", "100%");
+		setProp(_el$12, "padding", 1);
+		setProp(_el$13, "attributes", 1);
+		insert(_el$13, `Pantheon v1.6.1`);
+		insert(_el$14, () => presetHeaderLine(model.preset().name ?? "", model.provider()));
+		insert(_el$12, createComponent(Show, {
 			get when() {
 				return memo(() => model.activeSessionID() !== "")() && model.session();
 			},
 			get fallback() {
 				return (() => {
-					var _el$21 = createElement("text");
-					insert(_el$21, () => sidebarPlaceholder(props.sessionID));
-					effect((_$p) => setProp(_el$21, "fg", muted(), _$p));
-					return _el$21;
+					var _el$25 = createElement("text");
+					insert(_el$25, () => sidebarPlaceholder(props.sessionID));
+					effect((_$p) => setProp(_el$25, "fg", muted(), _$p));
+					return _el$25;
 				})();
 			},
 			children: (current) => (() => {
-				var _el$22 = createElement("text");
-				insert(_el$22, () => `Sessão: ${truncateLabel(current().title || current().id)}`);
-				effect((_$p) => setProp(_el$22, "fg", text(), _$p));
-				return _el$22;
+				var _el$26 = createElement("text");
+				insert(_el$26, () => `Sessão: ${truncateLabel(current().title || current().id)}`);
+				effect((_$p) => setProp(_el$26, "fg", text(), _$p));
+				return _el$26;
 			})()
 		}), null);
-		insert(_el$0, createComponent(Show, {
+		insert(_el$12, createComponent(Show, {
 			get when() {
 				return model.blocks().length > 0;
 			},
 			get children() {
-				var _el$11 = createElement("box");
-				setProp(_el$11, "height", 1);
-				return _el$11;
+				var _el$15 = createElement("box");
+				setProp(_el$15, "height", 1);
+				return _el$15;
 			}
 		}), null);
-		insert(_el$0, createComponent(Show, {
+		insert(_el$12, createComponent(Show, {
 			get when() {
 				return block("context");
 			},
 			get children() {
-				var _el$12 = createElement("box");
-				setProp(_el$12, "flexDirection", "column");
-				insert(_el$12, createComponent(Show, {
+				var _el$16 = createElement("box");
+				setProp(_el$16, "flexDirection", "column");
+				insert(_el$16, createComponent(Show, {
 					get when() {
 						return spacer("context");
 					},
 					get children() {
-						var _el$13 = createElement("box");
-						setProp(_el$13, "height", 1);
-						return _el$13;
+						var _el$17 = createElement("box");
+						setProp(_el$17, "height", 1);
+						return _el$17;
 					}
 				}), null);
-				insert(_el$12, createComponent(BlockHeader, {
+				insert(_el$16, createComponent(BlockHeader, {
 					get icon() {
 						return BLOCK_ICONS.context;
 					},
@@ -4781,14 +4923,14 @@ function Sidebar(props) {
 						return muted();
 					}
 				}), null);
-				insert(_el$12, createComponent(Show, {
+				insert(_el$16, createComponent(Show, {
 					get when() {
 						return contextRows();
 					},
 					children: (rows) => (() => {
-						var _el$23 = createElement("box");
-						setProp(_el$23, "flexDirection", "column");
-						insert(_el$23, createComponent(Show, {
+						var _el$27 = createElement("box");
+						setProp(_el$27, "flexDirection", "column");
+						insert(_el$27, createComponent(Show, {
 							get when() {
 								return rows().tokens;
 							},
@@ -4804,7 +4946,7 @@ function Sidebar(props) {
 								}
 							})
 						}), null);
-						insert(_el$23, createComponent(Show, {
+						insert(_el$27, createComponent(Show, {
 							get when() {
 								return rows().percent;
 							},
@@ -4820,7 +4962,7 @@ function Sidebar(props) {
 								}
 							})
 						}), null);
-						insert(_el$23, createComponent(Show, {
+						insert(_el$27, createComponent(Show, {
 							get when() {
 								return rows().spent;
 							},
@@ -4836,108 +4978,112 @@ function Sidebar(props) {
 								}
 							})
 						}), null);
-						insert(_el$23, createComponent(Show, {
+						insert(_el$27, createComponent(Show, {
 							get when() {
 								return usageRows().length > 0;
 							},
 							get children() {
 								return [(() => {
-									var _el$24 = createElement("text");
-									insertNode(_el$24, createTextNode(`Sessão · custo reportado`));
-									effect((_$p) => setProp(_el$24, "fg", muted(), _$p));
-									return _el$24;
+									var _el$28 = createElement("text");
+									insertNode(_el$28, createTextNode(`Sessão · custo reportado`));
+									effect((_$p) => setProp(_el$28, "fg", muted(), _$p));
+									return _el$28;
 								})(), (() => {
-									var _el$26 = createElement("text");
-									insertNode(_el$26, createTextNode(`Modelo        Tokens       USD`));
-									effect((_$p) => setProp(_el$26, "fg", muted(), _$p));
-									return _el$26;
+									var _el$30 = createElement("text");
+									insertNode(_el$30, createTextNode(`Modelo        Tokens       USD`));
+									effect((_$p) => setProp(_el$30, "fg", muted(), _$p));
+									return _el$30;
 								})()];
 							}
 						}), null);
-						insert(_el$23, createComponent(For, {
+						insert(_el$27, createComponent(For, {
 							get each() {
 								return usageRows();
 							},
 							children: (row) => (() => {
-								var _el$28 = createElement("box"), _el$29 = createElement("text"), _el$30 = createElement("text"), _el$31 = createElement("text");
-								insertNode(_el$28, _el$29);
-								insertNode(_el$28, _el$30);
-								insertNode(_el$28, _el$31);
-								setProp(_el$28, "flexDirection", "row");
-								insert(_el$29, () => row.model.padEnd(12));
-								insert(_el$30, () => `  ${row.tokens.padStart(6)}`);
-								insert(_el$31, () => `  ${row.cost.padStart(8)}`);
-								effect((_p$) => {
-									var _v$5 = muted(), _v$6 = text(), _v$7 = text();
-									_v$5 !== _p$.e && (_p$.e = setProp(_el$29, "fg", _v$5, _p$.e));
-									_v$6 !== _p$.t && (_p$.t = setProp(_el$30, "fg", _v$6, _p$.t));
-									_v$7 !== _p$.a && (_p$.a = setProp(_el$31, "fg", _v$7, _p$.a));
-									return _p$;
-								}, {
-									e: void 0,
-									t: void 0,
-									a: void 0
-								});
-								return _el$28;
-							})()
-						}), null);
-						insert(_el$23, createComponent(Show, {
-							get when() {
-								return usageHidden();
-							},
-							children: (line) => (() => {
-								var _el$32 = createElement("text");
-								insert(_el$32, line);
-								effect((_$p) => setProp(_el$32, "fg", muted(), _$p));
+								var _el$32 = createElement("box");
+								setProp(_el$32, "flexDirection", "column");
+								insert(_el$32, createComponent(For, {
+									get each() {
+										return modelUsageRowLines(row);
+									},
+									children: (line) => (() => {
+										var _el$33 = createElement("text");
+										insert(_el$33, line);
+										effect((_$p) => setProp(_el$33, "fg", text(), _$p));
+										return _el$33;
+									})()
+								}));
 								return _el$32;
 							})()
 						}), null);
-						return _el$23;
+						insert(_el$27, createComponent(Show, {
+							get when() {
+								return usageHidden();
+							},
+							children: (line) => createComponent(For, {
+								get each() {
+									return sidebarTextLines(line());
+								},
+								children: (part) => (() => {
+									var _el$34 = createElement("text");
+									insert(_el$34, part);
+									effect((_$p) => setProp(_el$34, "fg", muted(), _$p));
+									return _el$34;
+								})()
+							})
+						}), null);
+						return _el$27;
 					})()
 				}), null);
-				insert(_el$12, createComponent(Show, {
+				insert(_el$16, createComponent(Show, {
 					get when() {
 						return performanceLine();
 					},
 					children: (line) => (() => {
-						var _el$33 = createElement("text");
-						insert(_el$33, line);
-						effect((_$p) => setProp(_el$33, "fg", muted(), _$p));
-						return _el$33;
+						var _el$35 = createElement("text");
+						insert(_el$35, line);
+						effect((_$p) => setProp(_el$35, "fg", muted(), _$p));
+						return _el$35;
 					})()
 				}), null);
-				insert(_el$12, createComponent(Show, {
+				insert(_el$16, createComponent(Show, {
 					get when() {
 						return spendLine();
 					},
-					children: (line) => (() => {
-						var _el$34 = createElement("text");
-						insert(_el$34, line);
-						effect((_$p) => setProp(_el$34, "fg", muted(), _$p));
-						return _el$34;
-					})()
+					children: (line) => createComponent(For, {
+						get each() {
+							return contextSpendLines(line());
+						},
+						children: (part) => (() => {
+							var _el$36 = createElement("text");
+							insert(_el$36, part);
+							effect((_$p) => setProp(_el$36, "fg", muted(), _$p));
+							return _el$36;
+						})()
+					})
 				}), null);
-				return _el$12;
+				return _el$16;
 			}
 		}), null);
-		insert(_el$0, createComponent(Show, {
+		insert(_el$12, createComponent(Show, {
 			get when() {
 				return block("git");
 			},
 			get children() {
-				var _el$14 = createElement("box");
-				setProp(_el$14, "flexDirection", "column");
-				insert(_el$14, createComponent(Show, {
+				var _el$18 = createElement("box");
+				setProp(_el$18, "flexDirection", "column");
+				insert(_el$18, createComponent(Show, {
 					get when() {
 						return spacer("git");
 					},
 					get children() {
-						var _el$15 = createElement("box");
-						setProp(_el$15, "height", 1);
-						return _el$15;
+						var _el$19 = createElement("box");
+						setProp(_el$19, "height", 1);
+						return _el$19;
 					}
 				}), null);
-				insert(_el$14, createComponent(BlockHeader, {
+				insert(_el$18, createComponent(BlockHeader, {
 					get icon() {
 						return BLOCK_ICONS.git;
 					},
@@ -4949,68 +5095,68 @@ function Sidebar(props) {
 						return muted();
 					}
 				}), null);
-				insert(_el$14, createComponent(Show, {
+				insert(_el$18, createComponent(Show, {
 					get when() {
 						return model.branch();
 					},
 					children: (value) => (() => {
-						var _el$35 = createElement("box"), _el$36 = createElement("text"), _el$38 = createElement("text");
-						insertNode(_el$35, _el$36);
-						insertNode(_el$35, _el$38);
-						setProp(_el$35, "flexDirection", "row");
-						insertNode(_el$36, createTextNode(`⎇ `));
-						insert(_el$38, () => truncateLabel(value(), 32));
+						var _el$37 = createElement("box"), _el$38 = createElement("text"), _el$40 = createElement("text");
+						insertNode(_el$37, _el$38);
+						insertNode(_el$37, _el$40);
+						setProp(_el$37, "flexDirection", "row");
+						insertNode(_el$38, createTextNode(`⎇ `));
+						insert(_el$40, () => truncateLabel(value(), 32));
 						effect((_p$) => {
-							var _v$8 = muted(), _v$9 = text();
-							_v$8 !== _p$.e && (_p$.e = setProp(_el$36, "fg", _v$8, _p$.e));
-							_v$9 !== _p$.t && (_p$.t = setProp(_el$38, "fg", _v$9, _p$.t));
+							var _v$5 = muted(), _v$6 = text();
+							_v$5 !== _p$.e && (_p$.e = setProp(_el$38, "fg", _v$5, _p$.e));
+							_v$6 !== _p$.t && (_p$.t = setProp(_el$40, "fg", _v$6, _p$.t));
 							return _p$;
 						}, {
 							e: void 0,
 							t: void 0
 						});
-						return _el$35;
+						return _el$37;
 					})()
 				}), null);
-				insert(_el$14, createComponent(Show, {
+				insert(_el$18, createComponent(Show, {
 					get when() {
 						return model.gitLine();
 					},
 					children: (line) => (() => {
-						var _el$39 = createElement("text");
-						insert(_el$39, line);
-						effect((_$p) => setProp(_el$39, "fg", text(), _$p));
-						return _el$39;
+						var _el$41 = createElement("text");
+						insert(_el$41, line);
+						effect((_$p) => setProp(_el$41, "fg", text(), _$p));
+						return _el$41;
 					})()
 				}), null);
-				return _el$14;
+				return _el$18;
 			}
 		}), null);
-		insert(_el$0, createComponent(Show, {
+		insert(_el$12, createComponent(Show, {
 			get when() {
 				return block("todo");
 			},
 			get children() {
-				var _el$16 = createElement("box");
-				setProp(_el$16, "flexDirection", "column");
-				insert(_el$16, createComponent(Show, {
+				var _el$20 = createElement("box");
+				setProp(_el$20, "flexDirection", "column");
+				insert(_el$20, createComponent(Show, {
 					get when() {
 						return spacer("todo");
 					},
 					get children() {
-						var _el$17 = createElement("box");
-						setProp(_el$17, "height", 1);
-						return _el$17;
+						var _el$21 = createElement("box");
+						setProp(_el$21, "height", 1);
+						return _el$21;
 					}
 				}), null);
-				insert(_el$16, createComponent(Show, {
+				insert(_el$20, createComponent(Show, {
 					get when() {
 						return model.todo().visible.length > 0;
 					},
 					get children() {
-						var _el$18 = createElement("box");
-						setProp(_el$18, "flexDirection", "column");
-						insert(_el$18, createComponent(BlockHeader, {
+						var _el$22 = createElement("box");
+						setProp(_el$22, "flexDirection", "column");
+						insert(_el$22, createComponent(BlockHeader, {
 							get icon() {
 								return BLOCK_ICONS.todo;
 							},
@@ -5022,59 +5168,59 @@ function Sidebar(props) {
 								return muted();
 							}
 						}), null);
-						insert(_el$18, createComponent(For, {
+						insert(_el$22, createComponent(For, {
 							get each() {
 								return model.todo().visible;
 							},
 							children: (item) => (() => {
-								var _el$40 = createElement("text");
-								insert(_el$40, () => todoRowText(item));
-								effect((_$p) => setProp(_el$40, "fg", todoFg(item.status), _$p));
-								return _el$40;
+								var _el$42 = createElement("text");
+								insert(_el$42, () => todoRowText(item));
+								effect((_$p) => setProp(_el$42, "fg", todoFg(item.status), _$p));
+								return _el$42;
 							})()
 						}), null);
-						insert(_el$18, createComponent(Show, {
+						insert(_el$22, createComponent(Show, {
 							get when() {
 								return hiddenTodoText(model.todo().hidden);
 							},
 							children: (line) => (() => {
-								var _el$41 = createElement("text");
-								insert(_el$41, line);
-								effect((_$p) => setProp(_el$41, "fg", muted(), _$p));
-								return _el$41;
+								var _el$43 = createElement("text");
+								insert(_el$43, line);
+								effect((_$p) => setProp(_el$43, "fg", muted(), _$p));
+								return _el$43;
 							})()
 						}), null);
-						return _el$18;
+						return _el$22;
 					}
 				}), null);
-				return _el$16;
+				return _el$20;
 			}
 		}), null);
-		insert(_el$0, createComponent(Show, {
+		insert(_el$12, createComponent(Show, {
 			get when() {
 				return block("dispatch");
 			},
 			get children() {
-				var _el$19 = createElement("box");
-				setProp(_el$19, "flexDirection", "column");
-				insert(_el$19, createComponent(Show, {
+				var _el$23 = createElement("box");
+				setProp(_el$23, "flexDirection", "column");
+				insert(_el$23, createComponent(Show, {
 					get when() {
 						return spacer("dispatch");
 					},
 					get children() {
-						var _el$20 = createElement("box");
-						setProp(_el$20, "height", 1);
-						return _el$20;
+						var _el$24 = createElement("box");
+						setProp(_el$24, "height", 1);
+						return _el$24;
 					}
 				}), null);
-				insert(_el$19, createComponent(Show, {
+				insert(_el$23, createComponent(Show, {
 					get when() {
 						return dispatchView();
 					},
 					children: (view) => (() => {
-						var _el$42 = createElement("box");
-						setProp(_el$42, "flexDirection", "column");
-						insert(_el$42, createComponent(BlockHeader, {
+						var _el$44 = createElement("box");
+						setProp(_el$44, "flexDirection", "column");
+						insert(_el$44, createComponent(BlockHeader, {
 							get icon() {
 								return BLOCK_ICONS.dispatch;
 							},
@@ -5089,92 +5235,92 @@ function Sidebar(props) {
 								return dispatchSummary();
 							}
 						}), null);
-						insert(_el$42, createComponent(For, {
+						insert(_el$44, createComponent(For, {
 							get each() {
 								return view().running;
 							},
 							children: (row) => (() => {
-								var _el$44 = createElement("box"), _el$45 = createElement("text");
-								insertNode(_el$44, _el$45);
-								setProp(_el$44, "flexShrink", 0);
-								insert(_el$45, () => row.text);
+								var _el$46 = createElement("box"), _el$47 = createElement("text");
+								insertNode(_el$46, _el$47);
+								setProp(_el$46, "flexShrink", 0);
+								insert(_el$47, () => row.text);
 								effect((_p$) => {
-									var _v$0 = open(row.id), _v$1 = tone("success");
-									_v$0 !== _p$.e && (_p$.e = setProp(_el$44, "onMouseDown", _v$0, _p$.e));
-									_v$1 !== _p$.t && (_p$.t = setProp(_el$45, "fg", _v$1, _p$.t));
+									var _v$7 = open(row.id), _v$8 = tone("success");
+									_v$7 !== _p$.e && (_p$.e = setProp(_el$46, "onMouseDown", _v$7, _p$.e));
+									_v$8 !== _p$.t && (_p$.t = setProp(_el$47, "fg", _v$8, _p$.t));
 									return _p$;
 								}, {
 									e: void 0,
 									t: void 0
 								});
-								return _el$44;
+								return _el$46;
 							})()
 						}), null);
-						insert(_el$42, createComponent(Show, {
+						insert(_el$44, createComponent(Show, {
 							get when() {
 								return view().runningHidden > 0;
 							},
 							get children() {
-								var _el$43 = createElement("text");
-								insert(_el$43, () => `\u2026 +${view().runningHidden} rodando`);
-								effect((_$p) => setProp(_el$43, "fg", muted(), _$p));
-								return _el$43;
+								var _el$45 = createElement("text");
+								insert(_el$45, () => `\u2026 +${view().runningHidden} rodando`);
+								effect((_$p) => setProp(_el$45, "fg", muted(), _$p));
+								return _el$45;
 							}
 						}), null);
-						insert(_el$42, createComponent(Show, {
+						insert(_el$44, createComponent(Show, {
 							get when() {
 								return view().summary;
 							},
 							children: (line) => (() => {
-								var _el$46 = createElement("box"), _el$47 = createElement("text");
-								insertNode(_el$46, _el$47);
-								setProp(_el$46, "flexDirection", "row");
-								setProp(_el$46, "flexShrink", 0);
-								insert(_el$47, line);
-								insert(_el$46, createComponent(Show, {
+								var _el$48 = createElement("box"), _el$49 = createElement("text");
+								insertNode(_el$48, _el$49);
+								setProp(_el$48, "flexDirection", "row");
+								setProp(_el$48, "flexShrink", 0);
+								insert(_el$49, line);
+								insert(_el$48, createComponent(Show, {
 									get when() {
 										return failedSuffix();
 									},
 									children: (suffix) => (() => {
-										var _el$48 = createElement("text");
-										insert(_el$48, () => `${SPEND_LINE_SEPARATOR}${suffix()}`);
-										effect((_$p) => setProp(_el$48, "fg", tone("error"), _$p));
-										return _el$48;
+										var _el$50 = createElement("text");
+										insert(_el$50, () => `${SPEND_LINE_SEPARATOR}${suffix()}`);
+										effect((_$p) => setProp(_el$50, "fg", tone("error"), _$p));
+										return _el$50;
 									})()
 								}), null);
-								effect((_$p) => setProp(_el$47, "fg", muted(), _$p));
-								return _el$46;
+								effect((_$p) => setProp(_el$49, "fg", muted(), _$p));
+								return _el$48;
 							})()
 						}), null);
-						insert(_el$42, createComponent(For, {
+						insert(_el$44, createComponent(For, {
 							get each() {
 								return view().agents;
 							},
 							children: (row) => (() => {
-								var _el$49 = createElement("text");
-								insert(_el$49, () => childAgentRowText(row));
-								effect((_$p) => setProp(_el$49, "fg", muted(), _$p));
-								return _el$49;
+								var _el$51 = createElement("text");
+								insert(_el$51, () => childAgentRowText(row));
+								effect((_$p) => setProp(_el$51, "fg", muted(), _$p));
+								return _el$51;
 							})()
 						}), null);
-						insert(_el$42, createComponent(Show, {
+						insert(_el$44, createComponent(Show, {
 							get when() {
 								return hiddenChildAgentsText(view().agentsHidden, view().agentsHiddenCost);
 							},
 							children: (line) => (() => {
-								var _el$50 = createElement("text");
-								insert(_el$50, line);
-								effect((_$p) => setProp(_el$50, "fg", muted(), _$p));
-								return _el$50;
+								var _el$52 = createElement("text");
+								insert(_el$52, line);
+								effect((_$p) => setProp(_el$52, "fg", muted(), _$p));
+								return _el$52;
 							})()
 						}), null);
-						return _el$42;
+						return _el$44;
 					})()
 				}), null);
-				return _el$19;
+				return _el$23;
 			}
 		}), null);
-		insert(_el$0, createComponent(QuotaSidebarSummary, {
+		insert(_el$12, createComponent(QuotaSidebarSummary, {
 			context,
 			get runtime() {
 				return props.quotaRuntime;
@@ -5182,14 +5328,14 @@ function Sidebar(props) {
 		}), null);
 		effect((_p$) => {
 			var _v$3 = text(), _v$4 = muted();
-			_v$3 !== _p$.e && (_p$.e = setProp(_el$1, "fg", _v$3, _p$.e));
-			_v$4 !== _p$.t && (_p$.t = setProp(_el$10, "fg", _v$4, _p$.t));
+			_v$3 !== _p$.e && (_p$.e = setProp(_el$13, "fg", _v$3, _p$.e));
+			_v$4 !== _p$.t && (_p$.t = setProp(_el$14, "fg", _v$4, _p$.t));
 			return _p$;
 		}, {
 			e: void 0,
 			t: void 0
 		});
-		return _el$0;
+		return _el$12;
 	})();
 }
 /** Panel actions that only make sense with a row selected. A panel over an
@@ -5258,25 +5404,25 @@ function DispatchPanel(props) {
 			return model.visible().rows;
 		},
 		children: (row) => (() => {
-			var _el$51 = createElement("box"), _el$52 = createElement("text"), _el$53 = createElement("text");
-			insertNode(_el$51, _el$52);
-			insertNode(_el$51, _el$53);
-			setProp(_el$51, "flexDirection", "row");
-			setProp(_el$51, "flexShrink", 0);
-			insert(_el$52, () => selected(row.id) ? `▸ ` : "  ");
-			insert(_el$53, () => row.text);
+			var _el$53 = createElement("box"), _el$54 = createElement("text"), _el$55 = createElement("text");
+			insertNode(_el$53, _el$54);
+			insertNode(_el$53, _el$55);
+			setProp(_el$53, "flexDirection", "row");
+			setProp(_el$53, "flexShrink", 0);
+			insert(_el$54, () => selected(row.id) ? `▸ ` : "  ");
+			insert(_el$55, () => row.text);
 			effect((_p$) => {
-				var _v$10 = selected(row.id) ? text() : muted(), _v$11 = rowFg(row.state), _v$12 = selected(row.id) ? 1 : 0;
-				_v$10 !== _p$.e && (_p$.e = setProp(_el$52, "fg", _v$10, _p$.e));
-				_v$11 !== _p$.t && (_p$.t = setProp(_el$53, "fg", _v$11, _p$.t));
-				_v$12 !== _p$.a && (_p$.a = setProp(_el$53, "attributes", _v$12, _p$.a));
+				var _v$9 = selected(row.id) ? text() : muted(), _v$0 = rowFg(row.state), _v$1 = selected(row.id) ? 1 : 0;
+				_v$9 !== _p$.e && (_p$.e = setProp(_el$54, "fg", _v$9, _p$.e));
+				_v$0 !== _p$.t && (_p$.t = setProp(_el$55, "fg", _v$0, _p$.t));
+				_v$1 !== _p$.a && (_p$.a = setProp(_el$55, "attributes", _v$1, _p$.a));
 				return _p$;
 			}, {
 				e: void 0,
 				t: void 0,
 				a: void 0
 			});
-			return _el$51;
+			return _el$53;
 		})()
 	});
 	const detail = () => createComponent(For, {
@@ -5284,28 +5430,28 @@ function DispatchPanel(props) {
 			return model.detail();
 		},
 		children: (line, index) => (() => {
-			var _el$54 = createElement("text");
-			insert(_el$54, line);
-			effect((_$p) => setProp(_el$54, "fg", index() === 0 ? text() : muted(), _$p));
-			return _el$54;
+			var _el$56 = createElement("text");
+			insert(_el$56, line);
+			effect((_$p) => setProp(_el$56, "fg", index() === 0 ? text() : muted(), _$p));
+			return _el$56;
 		})()
 	});
 	const empty = () => (() => {
-		var _el$55 = createElement("text");
-		insertNode(_el$55, createTextNode(`Nenhuma sessão delegada`));
-		effect((_$p) => setProp(_el$55, "fg", muted(), _$p));
-		return _el$55;
+		var _el$57 = createElement("text");
+		insertNode(_el$57, createTextNode(`Nenhuma sessão delegada`));
+		effect((_$p) => setProp(_el$57, "fg", muted(), _$p));
+		return _el$57;
 	})();
 	return (() => {
-		var _el$57 = createElement("box"), _el$58 = createElement("text"), _el$59 = createElement("text"), _el$63 = createElement("box"), _el$64 = createElement("text");
-		insertNode(_el$57, _el$58);
-		insertNode(_el$57, _el$59);
-		insertNode(_el$57, _el$63);
-		insertNode(_el$57, _el$64);
-		setProp(_el$57, "flexDirection", "column");
-		setProp(_el$57, "width", "100%");
-		setProp(_el$57, "padding", 1);
-		insert(_el$57, createComponent(DispatchPanelKeymap, {
+		var _el$59 = createElement("box"), _el$60 = createElement("text"), _el$61 = createElement("text"), _el$65 = createElement("box"), _el$66 = createElement("text");
+		insertNode(_el$59, _el$60);
+		insertNode(_el$59, _el$61);
+		insertNode(_el$59, _el$65);
+		insertNode(_el$59, _el$66);
+		setProp(_el$59, "flexDirection", "column");
+		setProp(_el$59, "width", "100%");
+		setProp(_el$59, "padding", 1);
+		insert(_el$59, createComponent(DispatchPanelKeymap, {
 			get context() {
 				return props.context;
 			},
@@ -5313,30 +5459,30 @@ function DispatchPanel(props) {
 				return props.panel;
 			},
 			model
-		}), _el$58);
-		setProp(_el$58, "attributes", 1);
-		insert(_el$58, () => model.title());
-		insert(_el$57, createComponent(Show, {
+		}), _el$60);
+		setProp(_el$60, "attributes", 1);
+		insert(_el$60, () => model.title());
+		insert(_el$59, createComponent(Show, {
 			get when() {
 				return model.header();
 			},
 			children: (line) => (() => {
-				var _el$65 = createElement("text");
-				insert(_el$65, line);
-				effect((_$p) => setProp(_el$65, "fg", muted(), _$p));
-				return _el$65;
+				var _el$67 = createElement("text");
+				insert(_el$67, line);
+				effect((_$p) => setProp(_el$67, "fg", muted(), _$p));
+				return _el$67;
 			})()
-		}), _el$59);
-		insert(_el$59, () => dispatchPanelRule(props.panel.width - 2));
-		insert(_el$57, createComponent(Show, {
+		}), _el$61);
+		insert(_el$61, () => dispatchPanelRule(props.panel.width - 2));
+		insert(_el$59, createComponent(Show, {
 			get when() {
 				return model.layout().mode === "wide";
 			},
 			get fallback() {
 				return (() => {
-					var _el$66 = createElement("box");
-					setProp(_el$66, "flexDirection", "column");
-					insert(_el$66, createComponent(Show, {
+					var _el$68 = createElement("box");
+					setProp(_el$68, "flexDirection", "column");
+					insert(_el$68, createComponent(Show, {
 						get when() {
 							return model.rows().length > 0;
 						},
@@ -5344,34 +5490,34 @@ function DispatchPanel(props) {
 							return empty();
 						},
 						get children() {
-							var _el$67 = createElement("box");
-							setProp(_el$67, "flexDirection", "column");
-							insert(_el$67, rows);
-							return _el$67;
+							var _el$69 = createElement("box");
+							setProp(_el$69, "flexDirection", "column");
+							insert(_el$69, rows);
+							return _el$69;
 						}
 					}), null);
-					insert(_el$66, createComponent(Show, {
+					insert(_el$68, createComponent(Show, {
 						get when() {
 							return model.selectedID();
 						},
 						get children() {
-							var _el$68 = createElement("box"), _el$69 = createElement("box");
-							insertNode(_el$68, _el$69);
-							setProp(_el$68, "flexDirection", "column");
-							setProp(_el$69, "height", 1);
-							insert(_el$68, detail, null);
-							return _el$68;
+							var _el$70 = createElement("box"), _el$71 = createElement("box");
+							insertNode(_el$70, _el$71);
+							setProp(_el$70, "flexDirection", "column");
+							setProp(_el$71, "height", 1);
+							insert(_el$70, detail, null);
+							return _el$70;
 						}
 					}), null);
-					return _el$66;
+					return _el$68;
 				})();
 			},
 			get children() {
-				var _el$60 = createElement("box"), _el$61 = createElement("box");
-				insertNode(_el$60, _el$61);
-				setProp(_el$60, "flexDirection", "row");
-				setProp(_el$61, "flexDirection", "column");
-				insert(_el$61, createComponent(Show, {
+				var _el$62 = createElement("box"), _el$63 = createElement("box");
+				insertNode(_el$62, _el$63);
+				setProp(_el$62, "flexDirection", "row");
+				setProp(_el$63, "flexDirection", "column");
+				insert(_el$63, createComponent(Show, {
 					get when() {
 						return model.rows().length > 0;
 					},
@@ -5382,36 +5528,36 @@ function DispatchPanel(props) {
 						return rows();
 					}
 				}));
-				insert(_el$60, createComponent(Show, {
+				insert(_el$62, createComponent(Show, {
 					get when() {
 						return model.selectedID();
 					},
 					get children() {
-						var _el$62 = createElement("box");
-						setProp(_el$62, "flexDirection", "column");
-						insert(_el$62, detail);
-						effect((_$p) => setProp(_el$62, "width", model.layout().detailWidth, _$p));
-						return _el$62;
+						var _el$64 = createElement("box");
+						setProp(_el$64, "flexDirection", "column");
+						insert(_el$64, detail);
+						effect((_$p) => setProp(_el$64, "width", model.layout().detailWidth, _$p));
+						return _el$64;
 					}
 				}), null);
-				effect((_$p) => setProp(_el$61, "width", model.layout().listWidth, _$p));
-				return _el$60;
+				effect((_$p) => setProp(_el$63, "width", model.layout().listWidth, _$p));
+				return _el$62;
 			}
-		}), _el$63);
-		setProp(_el$63, "height", 1);
-		insert(_el$64, () => model.footer());
+		}), _el$65);
+		setProp(_el$65, "height", 1);
+		insert(_el$66, () => model.footer());
 		effect((_p$) => {
-			var _v$13 = text(), _v$14 = muted(), _v$15 = muted();
-			_v$13 !== _p$.e && (_p$.e = setProp(_el$58, "fg", _v$13, _p$.e));
-			_v$14 !== _p$.t && (_p$.t = setProp(_el$59, "fg", _v$14, _p$.t));
-			_v$15 !== _p$.a && (_p$.a = setProp(_el$64, "fg", _v$15, _p$.a));
+			var _v$10 = text(), _v$11 = muted(), _v$12 = muted();
+			_v$10 !== _p$.e && (_p$.e = setProp(_el$60, "fg", _v$10, _p$.e));
+			_v$11 !== _p$.t && (_p$.t = setProp(_el$61, "fg", _v$11, _p$.t));
+			_v$12 !== _p$.a && (_p$.a = setProp(_el$66, "fg", _v$12, _p$.a));
 			return _p$;
 		}, {
 			e: void 0,
 			t: void 0,
 			a: void 0
 		});
-		return _el$57;
+		return _el$59;
 	})();
 }
 /** App-level command claim: the only way into the panel. It registers the
@@ -5443,10 +5589,10 @@ function HomeStatus(props) {
 	const preset = useActivePreset(props.context).preset;
 	const muted = () => props.context.theme?.text?.muted ?? props.context.theme?.text?.base;
 	return (() => {
-		var _el$70 = createElement("text");
-		insert(_el$70, () => `Pantheon v1.6.1${preset().name ? ` ▸ ${preset().name}` : ""}`);
-		effect((_$p) => setProp(_el$70, "fg", muted(), _$p));
-		return _el$70;
+		var _el$72 = createElement("text");
+		insert(_el$72, () => `Pantheon v1.6.1${preset().name ? ` ▸ ${preset().name}` : ""}`);
+		effect((_$p) => setProp(_el$72, "fg", muted(), _$p));
+		return _el$72;
 	})();
 }
 /** Lean footer model: only the preset label and the live delegation count. It
@@ -5501,10 +5647,10 @@ function PromptFooter(props) {
 			return model.running() > 0;
 		},
 		get children() {
-			var _el$71 = createElement("text");
-			insert(_el$71, () => `▸${model.preset().name ?? "default"} · ✦${model.running()} ativos`);
-			effect((_$p) => setProp(_el$71, "fg", muted(), _$p));
-			return _el$71;
+			var _el$73 = createElement("text");
+			insert(_el$73, () => `▸${model.preset().name ?? "default"} · ✦${model.running()} ativos`);
+			effect((_$p) => setProp(_el$73, "fg", muted(), _$p));
+			return _el$73;
 		}
 	});
 }
@@ -5566,6 +5712,6 @@ const plugin = Plugin.define({
 	}
 });
 //#endregion
-export { BLOCK_ICONS, CONTEXT_BAR_CELLS, CONTEXT_BAR_EMPTY_CELL, CONTEXT_BAR_FILLED_CELL, DEFAULT_QUOTA_PREFERENCES, DELEGATION_CHILD_STATUS_GRACE_MS, DISPATCH_AGENT_CEILING, DISPATCH_AGENT_WIDTH, DISPATCH_COST_WIDTH, DISPATCH_COUNT_WIDTH, DISPATCH_DONE_MARKER, DISPATCH_DURATION_WIDTH, DISPATCH_GROUP_COST_WIDTH, DISPATCH_KIND_ORIGIN_LABELS, DISPATCH_MAX_LINES, DISPATCH_MAX_WIDTH, DISPATCH_MIN_AGENT_WIDTH, DISPATCH_MODEL_WIDTH, DISPATCH_PANEL_AGENT_WIDTH, DISPATCH_PANEL_COMMANDS, DISPATCH_PANEL_COST_WIDTH, DISPATCH_PANEL_DASH, DISPATCH_PANEL_DURATION_WIDTH, DISPATCH_PANEL_EMPTY_TEXT, DISPATCH_PANEL_FULLSCREEN_BADGE, DISPATCH_PANEL_HEADER_MARKER, DISPATCH_PANEL_KIND_WIDTH, DISPATCH_PANEL_MIN_AGENT_WIDTH, DISPATCH_PANEL_NAME, DISPATCH_PANEL_PAGE_SIZE, DISPATCH_PANEL_RULE_CHAR, DISPATCH_PANEL_SELECTION_GUTTER, DISPATCH_PANEL_SELECTION_MARKER, DISPATCH_PANEL_TITLE_WIDTH, DISPATCH_PANEL_TOAST, DISPATCH_PANEL_WIDE_MIN_WIDTH, DISPATCH_RUNNING_CEILING, GIT_ARROW_DOWN, GIT_ARROW_UP, GIT_CHANGES_DEBOUNCE_MS, GIT_CLI_DEBOUNCE_MS, GIT_CLI_MAX_BUFFER, GIT_CLI_MIN_INTERVAL_MS, GIT_CLI_TIMEOUT_MS, HEADER_MAX_WIDTH, MODEL_USAGE_COST_WIDTH, MODEL_USAGE_DEBOUNCE_MS, MODEL_USAGE_MESSAGE_LIMIT, MODEL_USAGE_MODEL_WIDTH, MODEL_USAGE_SESSION_LIMIT, MODEL_USAGE_TOKEN_WIDTH, MODEL_USAGE_VISIBLE_CEILING, PRESET_MARKER, QUOTA_ICON, QUOTA_OPEN_COMMAND_ID, QUOTA_PANEL_COMMANDS, QUOTA_PANEL_NAME, SIDEBAR_REFRESH_EVENTS, SIDEBAR_WAITING_LABEL, SPEND_30D_LABEL, SPEND_30D_MS, SPEND_LINE_SEPARATOR, SPEND_PROBE_TOLERANCE_MS, SPEND_PROBE_WINDOW_MS, SPEND_REFRESH_DEBOUNCE_MS, SPEND_TODAY_LABEL, TODO_TEXT_WIDTH, TODO_VISIBLE_CEILING, UNKNOWN_AGENT, agentKey, buildDispatchBlock, cacheHitPercent, ceilingModelUsage, ceilingTodoItems, cellWidth, childAgentRowText, classifyDispatchKind, collectChildAgentUsage, collectDispatch, collectModelUsage, collectRecentModelUsageRows, collectSubagentCalls, collectWarmupTargets, compactQuotaMetric, completedSummaryText, computeContextUsage, contextBar, contextBarFilled, contextBlockRows, contextPerformanceLine, contextProgressColor, contextSpendLine, contextUsageTone, countGitChanges, createDispatchPanelModel, createFooterModel, createQuotaRuntime, createSidebarModel, plugin as default, defaultGitExec, delegationStateFromOutcome, delegationStateFromStatus, detectDelegationCompletions, dispatchAgentText, dispatchElapsed, dispatchHeaderSummary, dispatchKindFromAgent, dispatchKindFromPrefix, dispatchKindSuffix, dispatchModelText, dispatchPanelCell, dispatchPanelDetail, dispatchPanelFooter, dispatchPanelHeader, dispatchPanelKeymapLayer, dispatchPanelLayout, dispatchPanelMarker, dispatchPanelRangeText, dispatchPanelRowText, dispatchPanelRows, dispatchPanelRule, dispatchPanelTitle, dispatchPanelWindow, dispatchTokenLine, dispatchTokens, dispatchTotalCost, failedSuffixText, formatContextWindow, formatDispatchCost, formatDispatchDuration, formatGitChanges, formatGitSnapshot, formatQuotaMetric, formatSpendUSD, formatSpent, formatTokenCount, formatUsageCost, formatUsageTokens, gitProbeAllowed, hiddenChildAgentsText, hiddenModelUsageText, hiddenTodoText, isTodoStatus, isValidSessionID, lastAssistantWithTokens, latestTodoItems, messageTokensTotal, modelRefID, modelUsageRowText, modelUsageRows, navigateToSession, normalizeQuotaPreferences, openDispatchPanel, openQuotaPanel, orderDispatchEntries, orderTodoItems, padCell, parseGitAheadBehind, parseGitStatusPorcelain, parsePresetOverrides, parseTodoItems, performDispatchPanelAction, presetFromEnv, presetHeaderLine, providerIDFromModels, providerIDFromRef, quotaGoCheckCommand, quotaOpenCommand, quotaPanelKeymapLayer, quotaProgress, quotaSidebarEntries, quotaSnapshotFromStatus, quotaSnapshotStatusLabel, readGitSnapshot, resetSpendUnit, resolveActiveModelRef, resolveActivePresetForTui, resolveContextLimit, resolveModelContextSnapshot, resolvedSpendUnit, runDispatchPanelCommand, runQuotaPanelCommand, runningChildRowText, shortModelID, shortSessionID, sidebarPlaceholder, spendWindows, spinnerFrame, startOfLocalDay, statsCost, statsRangeMatches, toDelegationView, toDispatchEntry, todoRowText, todoTone, transcriptWindow, truncateLabel, turnTokensPerSecond, withBlockSpacers };
+export { BLOCK_ICONS, CONTEXT_BAR_CELLS, CONTEXT_BAR_EMPTY_CELL, CONTEXT_BAR_FILLED_CELL, DEFAULT_QUOTA_PREFERENCES, DELEGATION_CHILD_STATUS_GRACE_MS, DISPATCH_AGENT_CEILING, DISPATCH_AGENT_WIDTH, DISPATCH_COST_WIDTH, DISPATCH_COUNT_WIDTH, DISPATCH_DONE_MARKER, DISPATCH_DURATION_WIDTH, DISPATCH_GROUP_COST_WIDTH, DISPATCH_KIND_ORIGIN_LABELS, DISPATCH_MAX_LINES, DISPATCH_MAX_WIDTH, DISPATCH_MIN_AGENT_WIDTH, DISPATCH_MODEL_WIDTH, DISPATCH_PANEL_AGENT_WIDTH, DISPATCH_PANEL_COMMANDS, DISPATCH_PANEL_COST_WIDTH, DISPATCH_PANEL_DASH, DISPATCH_PANEL_DURATION_WIDTH, DISPATCH_PANEL_EMPTY_TEXT, DISPATCH_PANEL_FULLSCREEN_BADGE, DISPATCH_PANEL_HEADER_MARKER, DISPATCH_PANEL_KIND_WIDTH, DISPATCH_PANEL_MIN_AGENT_WIDTH, DISPATCH_PANEL_NAME, DISPATCH_PANEL_PAGE_SIZE, DISPATCH_PANEL_RULE_CHAR, DISPATCH_PANEL_SELECTION_GUTTER, DISPATCH_PANEL_SELECTION_MARKER, DISPATCH_PANEL_TITLE_WIDTH, DISPATCH_PANEL_TOAST, DISPATCH_PANEL_WIDE_MIN_WIDTH, DISPATCH_RUNNING_CEILING, GIT_ARROW_DOWN, GIT_ARROW_UP, GIT_CHANGES_DEBOUNCE_MS, GIT_CLI_DEBOUNCE_MS, GIT_CLI_MAX_BUFFER, GIT_CLI_MIN_INTERVAL_MS, GIT_CLI_TIMEOUT_MS, HEADER_MAX_WIDTH, MODEL_USAGE_COST_WIDTH, MODEL_USAGE_DEBOUNCE_MS, MODEL_USAGE_MESSAGE_LIMIT, MODEL_USAGE_MODEL_WIDTH, MODEL_USAGE_SESSION_LIMIT, MODEL_USAGE_TOKEN_WIDTH, MODEL_USAGE_VISIBLE_CEILING, PRESET_MARKER, QUOTA_CLOCK_INTERVAL_MS, QUOTA_ICON, QUOTA_OPEN_COMMAND_ID, QUOTA_PANEL_COMMANDS, QUOTA_PANEL_NAME, SIDEBAR_REFRESH_EVENTS, SIDEBAR_WAITING_LABEL, SPEND_30D_LABEL, SPEND_30D_MS, SPEND_LINE_SEPARATOR, SPEND_PROBE_TOLERANCE_MS, SPEND_PROBE_WINDOW_MS, SPEND_REFRESH_DEBOUNCE_MS, SPEND_TODAY_LABEL, TODO_TEXT_WIDTH, TODO_VISIBLE_CEILING, UNKNOWN_AGENT, agentKey, buildDispatchBlock, cacheHitPercent, ceilingModelUsage, ceilingTodoItems, cellWidth, childAgentRowText, classifyDispatchKind, collectChildAgentUsage, collectDispatch, collectModelUsage, collectRecentModelUsageRows, collectSubagentCalls, collectWarmupTargets, compactQuotaMetric, completedSummaryText, computeContextUsage, contextBar, contextBarFilled, contextBlockRows, contextPerformanceLine, contextProgressColor, contextSpendLine, contextSpendLines, contextUsageTone, countGitChanges, createDispatchPanelModel, createFooterModel, createQuotaClock, createQuotaRuntime, createSidebarModel, plugin as default, defaultGitExec, delegationStateFromOutcome, delegationStateFromStatus, detectDelegationCompletions, dispatchAgentText, dispatchElapsed, dispatchHeaderSummary, dispatchKindFromAgent, dispatchKindFromPrefix, dispatchKindSuffix, dispatchModelText, dispatchPanelCell, dispatchPanelDetail, dispatchPanelFooter, dispatchPanelHeader, dispatchPanelKeymapLayer, dispatchPanelLayout, dispatchPanelMarker, dispatchPanelRangeText, dispatchPanelRowText, dispatchPanelRows, dispatchPanelRule, dispatchPanelTitle, dispatchPanelWindow, dispatchTokenLine, dispatchTokens, dispatchTotalCost, failedSuffixText, financeMetricLines, formatContextWindow, formatDispatchCost, formatDispatchDuration, formatGitChanges, formatGitSnapshot, formatQuotaCountdown, formatQuotaMetric, formatSpendUSD, formatSpent, formatTokenCount, formatUsageCost, formatUsageTokens, gitProbeAllowed, hiddenChildAgentsText, hiddenModelUsageText, hiddenTodoText, isTodoStatus, isValidSessionID, lastAssistantWithTokens, latestTodoItems, messageTokensTotal, modelRefID, modelUsageRowLines, modelUsageRowText, modelUsageRows, navigateToSession, normalizeQuotaPreferences, openDispatchPanel, openQuotaPanel, orderDispatchEntries, orderTodoItems, padCell, parseGitAheadBehind, parseGitStatusPorcelain, parsePresetOverrides, parseTodoItems, performDispatchPanelAction, presetFromEnv, presetHeaderLine, providerIDFromModels, providerIDFromRef, quotaClock, quotaGoCheckCommand, quotaMetricLines, quotaOpenCommand, quotaPanelKeymapLayer, quotaProgress, quotaSidebarEntries, quotaSnapshotFromStatus, quotaSnapshotStatusLabel, quotaTextLines, quotaUsageTone, quotaWindowLines, readGitSnapshot, resetSpendUnit, resolveActiveModelRef, resolveActivePresetForTui, resolveContextLimit, resolveModelContextSnapshot, resolvedSpendUnit, runDispatchPanelCommand, runQuotaPanelCommand, runningChildRowText, shortModelID, shortSessionID, sidebarFinanceEntries, sidebarMoneyLines, sidebarPlaceholder, sidebarTextLines, spendWindows, spinnerFrame, startOfLocalDay, statsCost, statsRangeMatches, toDelegationView, toDispatchEntry, todoRowText, todoTone, transcriptWindow, truncateLabel, turnTokensPerSecond, withBlockSpacers };
 
 //# sourceMappingURL=tui-v2.js.map

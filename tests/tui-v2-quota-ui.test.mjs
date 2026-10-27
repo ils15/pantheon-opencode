@@ -6,6 +6,41 @@ import { pathToFileURL } from 'node:url'
 const bundlePath = join(process.cwd(), 'src/plugins/tui/dist/tui-v2.js')
 const quotaUI = await import(pathToFileURL(bundlePath).href)
 
+test('finance rows retain provider, zero, qualifiers and long values without truncation', () => {
+  const snapshot = {
+    providers: [
+      {
+        id: 'openrouter',
+        label: 'OpenRouter',
+        metrics: [
+          {
+            kind: 'key_usage',
+            label: 'Spend',
+            amount: 14.21,
+            currency: 'USD',
+            period: 'a very long provider reported period',
+          },
+        ],
+      },
+      {
+        id: 'deepseek',
+        label: 'DeepSeek',
+        metrics: [
+          { kind: 'balance', label: 'Saldo', amount: 0, currency: 'USD', status: 'low balance' },
+        ],
+      },
+    ],
+  }
+  const entries = quotaUI.sidebarFinanceEntries(snapshot)
+  const lines = entries.flatMap((entry) => quotaUI.financeMetricLines(entry.metric, 34))
+  const text = lines.join(' ').replace(/\s+/g, ' ')
+  assert.match(text, /14\.21 USD/)
+  assert.match(text, /a very long provider reported period/)
+  assert.match(text, /0 USD.*low balance/)
+  assert.ok(lines.every((line) => line.length <= 34 && !line.includes('…')))
+  assert.deepEqual(quotaUI.sidebarFinanceEntries({ providers: [] }), [])
+})
+
 function status(provider, authentication, reason, state, metrics = [], routeKind) {
   return {
     provider,
@@ -39,6 +74,62 @@ test('quota status includes connected sources and preserves explicit unavailable
     'not_connected',
   )
   assert.equal(typeof view.details.find((provider) => provider.id === 'openai').message, 'string')
+})
+
+test('quota countdown is deterministic at day, hour, minute, sub-minute, and expiry boundaries', () => {
+  const now = 1_800_000_000_000
+  const at = (duration) => quotaUI.formatQuotaCountdown(now + duration, now)
+
+  assert.equal(at(25 * 60 * 60 * 1_000), '1d 1h')
+  assert.equal(at(60 * 60 * 1_000), '1h')
+  assert.equal(at(61 * 60 * 1_000), '1h 1m')
+  assert.equal(at(2 * 60 * 1_000), '2m')
+  assert.equal(at(59 * 1_000), '<1m')
+  assert.equal(at(0), null)
+  assert.equal(at(-1), null)
+  assert.equal(quotaUI.formatQuotaCountdown(Number.NaN, now), undefined)
+  assert.equal(quotaUI.formatQuotaCountdown(undefined, now), undefined)
+  assert.equal(quotaUI.formatQuotaCountdown(now + 59_000, now), '<1m')
+})
+
+test('shared quota clock ticks locally and clears its timer after the last subscriber leaves', () => {
+  let currentTime = 1_000
+  let tick
+  let scheduled = 0
+  let cleared = 0
+  const clock = quotaUI.createQuotaClock({
+    now: () => currentTime,
+    setInterval: (callback, delay) => {
+      assert.equal(delay, 60_000)
+      scheduled += 1
+      tick = callback
+      return scheduled
+    },
+    clearInterval: () => {
+      cleared += 1
+    },
+  })
+  const firstTimes = []
+  const secondTimes = []
+  const unsubscribeFirst = clock.subscribe((time) => firstTimes.push(time))
+  const unsubscribeSecond = clock.subscribe((time) => secondTimes.push(time))
+
+  assert.equal(scheduled, 1)
+  assert.deepEqual(firstTimes, [1_000])
+  assert.deepEqual(secondTimes, [1_000])
+  currentTime += 60_000
+  tick()
+  assert.deepEqual(firstTimes, [1_000, 61_000])
+  assert.deepEqual(secondTimes, [1_000, 61_000])
+
+  unsubscribeFirst()
+  assert.equal(cleared, 0)
+  currentTime += 60_000
+  tick()
+  assert.deepEqual(firstTimes, [1_000, 61_000])
+  assert.deepEqual(secondTimes, [1_000, 61_000, 121_000])
+  unsubscribeSecond()
+  assert.equal(cleared, 1)
 })
 
 test('credential resolution failure is unavailable while an empty eligible list needs setup', () => {
@@ -690,6 +781,25 @@ test('quota runtime shares persisted preferences and stops status calls while di
   t.after(() => runtime.dispose())
   await new Promise((resolve) => setImmediate(resolve))
 
+  let clockNow = 1_000
+  let tickClock
+  const clockTimes = []
+  const localClock = quotaUI.createQuotaClock({
+    now: () => clockNow,
+    setInterval: (tick) => {
+      tickClock = tick
+      return 1
+    },
+    clearInterval: () => {},
+  })
+  const unsubscribeClock = localClock.subscribe((time) => clockTimes.push(time))
+  clockNow += 60_000
+  tickClock()
+  await new Promise((resolve) => setImmediate(resolve))
+  unsubscribeClock()
+  assert.deepEqual(clockTimes, [1_000, 61_000])
+  assert.equal(calls.length, 1, 'a local countdown tick must not request provider status')
+
   assert.equal(definition.id, 'pantheon.quota')
   assert.deepEqual(requestOptions.location, location)
   assert.ok(requestOptions.signal instanceof AbortSignal)
@@ -877,4 +987,109 @@ test('quota slash/palette command opens its details panel and focused actions do
   assert.equal(keymap.enabled(), true)
   await quotaUI.runQuotaPanelCommand('refresh', { focused: true, close() {} }, runtime)
   assert.equal(refreshes, 1)
+})
+
+test('quota window layout respects width, display mode and explicit reset only', () => {
+  const metric = {
+    kind: 'provider_quota',
+    period: '5h',
+    used: 2,
+    remaining: 8,
+    unit: 'requests',
+    resetsAt: 3_600_000,
+  }
+  const wide = quotaUI.quotaWindowLines(metric, 'remaining', 48, 0)
+  assert.match(wide.join(' '), /8 requests/)
+  assert.match(wide.join(' '), /2 requests/)
+  assert.match(wide.join(' '), /80% restante/)
+  assert.match(wide.join(' '), /\(1h\)/)
+  assert.match(quotaUI.quotaWindowLines(metric, 'used', 48, 0).join(' '), /2 requests/)
+  assert.ok(quotaUI.quotaWindowLines(metric, 'remaining', 24, 0).length >= 2)
+  assert.ok(quotaUI.quotaWindowLines(metric, 'remaining', 10, 0).length >= 3)
+  assert.doesNotMatch(
+    quotaUI.quotaWindowLines({ ...metric, resetsAt: undefined }, 'remaining', 48, 0).join(' '),
+    /\(/,
+  )
+  assert.match(
+    quotaUI.quotaWindowLines(metric, 'remaining', 48, 3_600_000).join(' '),
+    /aguardando atualização/,
+  )
+})
+
+test('metric rows align values when possible and preserve long labels and states', () => {
+  const short = quotaUI.quotaMetricLines(
+    { kind: 'balance', label: 'Saldo', amount: 12, currency: 'USD' },
+    34,
+  )
+  assert.equal(short[0], `  Saldo${' '.repeat(21)}12 USD`)
+  for (const metric of [
+    {
+      kind: 'provider_status',
+      label: 'Availability with a very long name',
+      status: 'Unavailable with a long explanation',
+    },
+    {
+      kind: 'session_usage',
+      label: 'Session usage with a long scope',
+      amount: 123456,
+      unit: 'tokens',
+    },
+  ]) {
+    const lines = quotaUI.quotaMetricLines(metric, 34)
+    assert.ok(lines.every((line) => quotaUI.cellWidth(line) <= 34))
+    assert.match(
+      lines.join(' ').replace(/\s+/g, ' '),
+      new RegExp(
+        metric.kind === 'provider_status'
+          ? 'Unavailable with a long explanation'
+          : '123,456 tokens',
+      ),
+    )
+  }
+})
+
+test('quota severity follows consumption and sidebar labels group consecutive provider windows', () => {
+  assert.deepEqual([59, 60, 85, 86].map(quotaUI.quotaUsageTone), [
+    'success',
+    'warning',
+    'warning',
+    'error',
+  ])
+})
+
+test('sidebar text and quota windows fit terminal cells without losing content', () => {
+  const status = 'Credencial local conectada mas dados de quota estão indisponíveis agora'
+  const heading = '提供者🚀'.repeat(12)
+  for (const width of [10, 34]) {
+    for (const text of [status, heading]) {
+      const lines = quotaUI.quotaTextLines(text, width, 2)
+      assert.ok(lines.every((line) => quotaUI.cellWidth(line) <= width))
+      assert.equal(lines.join('').replace(/\s/g, ''), text.replace(/\s/g, ''))
+    }
+    const metric = {
+      kind: 'provider_quota',
+      period: 'Longタイトル'.repeat(5),
+      used: 25,
+      remaining: 75,
+      unit: 'requests',
+      resetsAt: 1000,
+    }
+    const lines = quotaUI.quotaWindowLines(metric, 'remaining', width, 1000, true)
+    assert.ok(lines.every((line) => quotaUI.cellWidth(line) <= width))
+    assert.match(lines.join('').replace(/\s/g, ''), /75%rest\./)
+    assert.match(lines.join('').replace(/\s/g, ''), /aguardandoatualização/)
+    const rawLines = quotaUI.quotaWindowLines(
+      { ...metric, unit: '長い単位'.repeat(8) },
+      'used',
+      width,
+      1000,
+    )
+    assert.ok(rawLines.every((line) => quotaUI.cellWidth(line) <= width))
+    assert.match(rawLines.join('').replace(/\s/g, ''), /25長い単位/)
+    const finance = quotaUI.financeMetricLines(
+      { kind: 'balance', label: heading, amount: 12345, currency: 'USD' },
+      width,
+    )
+    assert.ok(finance.every((line) => quotaUI.cellWidth(line) <= width))
+  }
 })

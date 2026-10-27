@@ -127,6 +127,11 @@ const providerStatusSchema = {
 						period: {
 							type: "string",
 							maxLength: 32
+						},
+						resetsAt: {
+							type: "number",
+							minimum: 0,
+							maximum: 864e13
 						}
 					},
 					required: [
@@ -381,4 +386,4 @@ const quotaRpc = Rpc.define({
 //#endregion
 export { quotaRpc as n, QUOTA_PROVIDER_IDS as t };
 
-//# sourceMappingURL=quota-rpc-BeoJ-2uD.js.map
+//# sourceMappingURL=quota-rpc-2qxaOtEa.js.map

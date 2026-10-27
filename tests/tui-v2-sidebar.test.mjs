@@ -1177,6 +1177,23 @@ test('Context gauge: 12 cells, rounded fill, clamped, and no bar without a perce
   }
 })
 
+test('long Context spend and model amounts fit without losing financial values', async () => {
+  const { cellWidth, contextSpendLine, contextSpendLines, sidebarMoneyLines, modelUsageRowLines } =
+    await loadV2()
+  const spend = contextSpendLine({ today: 123456789012345, thirtyDays: 987654321098765 })
+  const spendLines = contextSpendLines(spend)
+  assert.ok(spendLines.every((line) => cellWidth(line) <= 34))
+  for (const part of ['hoje', '$123456789012345.00', '30d', '$987654321098765.00']) {
+    assert.ok(spendLines.join(' ').includes(part))
+  }
+  const row = { model: 'long-model', tokens: '123456789012345K', cost: '$123456789012345.00' }
+  const lines = modelUsageRowLines(row)
+  assert.ok(lines.every((line) => cellWidth(line) <= 34))
+  for (const part of Object.values(row)) assert.ok(lines.join(' ').includes(part))
+  assert.equal(cellWidth(sidebarMoneyLines('gasto na sessão', '$0.42')[0]), 34)
+  assert.equal(cellWidth(contextSpendLines('OpenCode · hoje $0.42 · 30d $9.80')[0]), 34)
+})
+
 test('model usage sums real message cost/tokens, omits zero cost, caps at 3 + aggregate', async () => {
   const {
     collectModelUsage,
@@ -4272,11 +4289,8 @@ test('gauge colors: blue → green → yellow → red, with the bar and the perc
     source.indexOf('function BlockHeader'),
   )
   assert.ok(rowView.length > 0, 'the context row view was located')
-  assert.equal(
-    (rowView.match(/fg=\{props\.fg\}/g) ?? []).length,
-    2,
-    'filled cells and the percent value both read the one `fg` prop',
-  )
+  assert.match(rowView, /fg=\{props\.fg\}>\{lead\(\)\}/, 'the filled cells use the gauge color')
+  assert.match(rowView, /fg=\{props\.fg\}>\{props\.row\.value\}/, 'the value uses the gauge color')
   assert.match(rowView, /fg=\{props\.muted\}>\{tail\(\)\}/, 'the ▱ track stays muted')
   assert.match(
     source,

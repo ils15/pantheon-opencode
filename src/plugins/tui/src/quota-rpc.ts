@@ -48,6 +48,7 @@ const metricSchema = {
         unit: { type: 'string', minLength: 1, maxLength: 16 },
         label: { type: 'string', minLength: 1, maxLength: 48 },
         period: { type: 'string', maxLength: 32 },
+        resetsAt: { type: 'number', minimum: 0, maximum: 8_640_000_000_000_000 },
       },
       required: ['kind', 'used', 'remaining', 'unit', 'label'],
       additionalProperties: false,

@@ -1,5 +1,17 @@
 # V2 TUI quota provider coverage
 
+Quota windows display a countdown only for valid reset timestamps reported by the
+provider. Missing reset timing is omitted, including for OpenAI responses that do
+not provide it; the UI does not infer a reset from a window label. Once the
+timestamp has passed, “aguardando atualização” remains visible until fresh data
+arrives. The countdown advances using a local clock and does not request provider
+data; the enabled quota runtime refreshes provider status every 60 seconds.
+
+Financial values and provider states wrap onto additional lines as needed. The
+sidebar keeps session costs, balances and selected-key usage distinct, including
+any period or status supplied by the source; a missing period is not inferred.
+The quota detail panel retains both used and remaining amounts.
+
 The V2 quota RPC exposes only providers with a listed active connection using a
 supported auth method and a locally resolved nonblank API key or OAuth access
 token. Catalog-only providers, inactive connections, missing credentials, and

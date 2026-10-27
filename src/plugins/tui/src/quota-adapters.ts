@@ -44,6 +44,7 @@ export type QuotaMetric =
       unit: string
       label: string
       period?: string
+      resetsAt?: number
     }
   | {
       kind: 'balance'
@@ -1058,15 +1059,12 @@ function openCodeGoMetrics(payload: unknown): QuotaMetric[] {
       throw new SafeAdapterError('invalid_response')
     }
     const used = percentage(value.percent)
-    const resetsAt = value.resetsAt
-    if (
-      used === undefined ||
-      typeof resetsAt !== 'string' ||
-      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(resetsAt) ||
-      !Number.isFinite(Date.parse(resetsAt))
-    ) {
-      throw new SafeAdapterError('invalid_response')
-    }
+    if (used === undefined) throw new SafeAdapterError('invalid_response')
+    const resetValue = value.resetsAt
+    const resetsAt =
+      typeof resetValue === 'string' && isValidResetDate(resetValue)
+        ? Date.parse(resetValue)
+        : undefined
     const normalizedUsed = value.status === 'rate-limited' ? 100 : used
     metrics.push({
       kind: 'provider_quota',
@@ -1075,6 +1073,7 @@ function openCodeGoMetrics(payload: unknown): QuotaMetric[] {
       unit: '%',
       label: window.label,
       period: window.key,
+      ...(resetsAt === undefined ? {} : { resetsAt }),
     })
   }
   return metrics
@@ -1086,11 +1085,11 @@ const OPENCODE_GO_KEY_USAGE_HEADERS = {
   'user-agent': 'Pantheon-Quota/1.0',
 } as const
 const OPENCODE_GO_CONSOLE_STATUS_URL = 'https://opencode.ai/console/api/go/status'
-const CONSOLE_RESET_DATE_PATTERN =
+const RESET_DATE_PATTERN =
   /^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
 
-function isValidConsoleResetDate(value: string): boolean {
-  const match = CONSOLE_RESET_DATE_PATTERN.exec(value)
+function isValidResetDate(value: string): boolean {
+  const match = RESET_DATE_PATTERN.exec(value)
   if (!match) return false
 
   const year = Number(match[1])
@@ -1116,7 +1115,6 @@ function openCodeGoConsoleMetrics(payload: unknown): QuotaMetric[] {
   }
 
   const meters = payload.access.meters
-  const fallbackResetsAt = payload.access.endsAt
   const windows = [
     { key: 'fiveHour', label: '5-hour quota', period: 'rolling' },
     { key: 'week', label: 'Weekly quota', period: 'weekly' },
@@ -1130,11 +1128,11 @@ function openCodeGoConsoleMetrics(payload: unknown): QuotaMetric[] {
     const used = finiteAmount(meter.usedMicroCents)
     if (limit === undefined || used === undefined) throw new SafeAdapterError('invalid_response')
 
+    const resetValue = meter.resetsAt
     const resetsAt =
-      typeof meter.resetsAt === 'string' && meter.resetsAt ? meter.resetsAt : fallbackResetsAt
-    if (typeof resetsAt !== 'string' || !isValidConsoleResetDate(resetsAt)) {
-      throw new SafeAdapterError('invalid_response')
-    }
+      typeof resetValue === 'string' && isValidResetDate(resetValue)
+        ? Date.parse(resetValue)
+        : undefined
 
     const usedPercent =
       limit === 0
@@ -1149,6 +1147,7 @@ function openCodeGoConsoleMetrics(payload: unknown): QuotaMetric[] {
       unit: '%',
       label: window.label,
       period: window.period,
+      ...(resetsAt === undefined ? {} : { resetsAt }),
     })
   }
   return metrics

@@ -14,6 +14,7 @@ export type QuotaMetric =
       unit: string
       label?: string
       period?: string
+      resetsAt?: number
     }
   | { kind: 'balance'; amount: number; currency: string; label?: string; status?: string }
   | { kind: 'estimate'; amount: number; unit: string; label?: string }
@@ -57,6 +58,83 @@ export type QuotaSnapshot = {
   providers: QuotaProviderView[]
   details: QuotaProviderDetail[]
   updatedAt: number | null
+}
+
+export const QUOTA_CLOCK_INTERVAL_MS = 60_000
+
+export type QuotaClockOptions = {
+  now?: () => number
+  setInterval?: typeof globalThis.setInterval
+  clearInterval?: typeof globalThis.clearInterval
+}
+
+export type QuotaClock = {
+  subscribe: (listener: (now: number) => void) => () => void
+}
+
+/** Create a shared local clock for countdown displays; it never refreshes quota data. */
+export function createQuotaClock(options: QuotaClockOptions = {}): QuotaClock {
+  const now = options.now ?? Date.now
+  const schedule = options.setInterval ?? globalThis.setInterval
+  const cancel = options.clearInterval ?? globalThis.clearInterval
+  const listeners = new Set<(now: number) => void>()
+  let timer: ReturnType<typeof setInterval> | undefined
+
+  const notify = (): void => {
+    const currentTime = now()
+    for (const listener of [...listeners]) listener(currentTime)
+  }
+
+  return {
+    subscribe(listener): () => void {
+      listeners.add(listener)
+      if (timer === undefined) {
+        timer = schedule(notify, QUOTA_CLOCK_INTERVAL_MS)
+        timer.unref?.()
+      }
+      listener(now())
+
+      let subscribed = true
+      return () => {
+        if (!subscribed) return
+        subscribed = false
+        listeners.delete(listener)
+        if (listeners.size === 0 && timer !== undefined) {
+          cancel(timer)
+          timer = undefined
+        }
+      }
+    },
+  }
+}
+
+/** Module-local clock shared by all countdown consumers in the TUI bundle. */
+export const quotaClock = createQuotaClock()
+
+/** Format a provider-reported reset timestamp using the caller's local clock. */
+export function formatQuotaCountdown(
+  resetsAt: number | undefined,
+  now: number,
+): string | null | undefined {
+  if (resetsAt === undefined || !Number.isFinite(resetsAt) || !Number.isFinite(now)) {
+    return undefined
+  }
+  const remainingMs = resetsAt - now
+  if (remainingMs <= 0) return null
+  if (remainingMs < 60_000) return '<1m'
+
+  const remainingMinutes = Math.ceil(remainingMs / 60_000)
+  const days = Math.floor(remainingMinutes / (24 * 60))
+  if (days > 0) {
+    const hours = Math.floor((remainingMinutes % (24 * 60)) / 60)
+    return hours > 0 ? `${days}d ${hours}h` : `${days}d`
+  }
+  const hours = Math.floor(remainingMinutes / 60)
+  if (hours > 0) {
+    const minutes = remainingMinutes % 60
+    return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`
+  }
+  return `${remainingMinutes}m`
 }
 
 export type QuotaSidebarEntry =

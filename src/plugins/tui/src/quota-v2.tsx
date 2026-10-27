@@ -14,17 +14,20 @@ import { MODEL_USAGE_MESSAGE_LIMIT, MODEL_USAGE_SESSION_LIMIT } from './model-us
 import {
   collectRecentModelUsageRows,
   compactQuotaMetric,
+  formatQuotaCountdown,
   type QuotaMetric,
   type QuotaProviderDetail,
   type QuotaRuntime,
   type QuotaSidebarEntry,
   type QuotaSnapshot,
+  quotaClock,
   quotaProgress,
   quotaSidebarEntries,
   quotaSnapshotStatusLabel,
   type RecentModelUsageRow,
   resolveActiveModelRef,
 } from './quota-v2-model'
+import { cellWidth, SIDEBAR_CONTENT_WIDTH } from './sidebar-width'
 
 export const QUOTA_PANEL_NAME = 'pantheon.quota'
 export const QUOTA_OPEN_COMMAND_ID = 'pantheon.quota.open'
@@ -51,6 +54,14 @@ function muted(context: Context) {
   return context.theme.text?.muted ?? base(context)
 }
 
+export function quotaUsageTone(usedPercent: number): 'success' | 'warning' | 'error' {
+  return usedPercent > 85 ? 'error' : usedPercent >= 60 ? 'warning' : 'success'
+}
+
+function quotaColor(context: Context, usedPercent: number | undefined): string {
+  return usedPercent === undefined ? base(context) : tone(context, quotaUsageTone(usedPercent))
+}
+
 type QuotaTone = 'info' | 'success' | 'warning' | 'error'
 
 function tone(context: Context, color: QuotaTone): string {
@@ -75,102 +86,122 @@ function snapshotSummary(snapshot: QuotaSnapshot, display: 'used' | 'remaining')
   return 'quota indisponível'
 }
 
-const SIDEBAR_QUOTA_BAR_CELLS = 4
+type FinanceMetric = Extract<QuotaMetric, { kind: 'balance' | 'estimate' | 'key_usage' }>
+type FinanceEntry = { providerID: string; metric: FinanceMetric }
 
-function quotaSidebarSummary(
-  snapshot: QuotaSnapshot,
-  display: 'used' | 'remaining',
-  entries: readonly QuotaSidebarEntry[],
-): string {
-  const windows = entries.filter((entry) => entry.kind === 'quota').length
-  if (windows === 0) return snapshotSummary(snapshot, display)
-  const status =
-    snapshot.status === 'ready'
-      ? 'quota disponível'
-      : snapshot.status === 'partial'
-        ? 'parcial'
-        : snapshotSummary(snapshot, display)
-  return `${status} · ${windows} ${windows === 1 ? 'janela' : 'janelas'}`
-}
-
-function sidebarFinanceSummary(
-  snapshot: QuotaSnapshot,
-  display: 'used' | 'remaining',
-): string | undefined {
-  const metric = snapshot.providers
-    .flatMap((provider) => provider.metrics)
-    .find(
-      (item) => item.kind === 'balance' || item.kind === 'estimate' || item.kind === 'key_usage',
-    )
-  return metric ? compactQuotaMetric(metric, display) : undefined
+export function sidebarFinanceEntries(snapshot: QuotaSnapshot): FinanceEntry[] {
+  return snapshot.providers.flatMap((provider) =>
+    provider.metrics.flatMap((metric) =>
+      (metric.kind === 'balance' || metric.kind === 'estimate' || metric.kind === 'key_usage') &&
+      metricRow(metric)
+        ? [{ providerID: provider.id, metric }]
+        : [],
+    ),
+  )
 }
 
 function QuotaSidebarEntryRow(props: {
   entry: QuotaSidebarEntry
   display: 'used' | 'remaining'
   context: Context
+  now: number
 }): JSX.Element {
-  if (props.entry.kind === 'status') {
-    return (
-      <text fg={tone(props.context, 'warning')}>
-        {clipped(`${props.entry.providerLabel} · ${props.entry.message}`, 32)}
-      </text>
-    )
-  }
-
-  const progress = props.entry.progress
-  const bar = contextBar(progress.usedPercent, SIDEBAR_QUOTA_BAR_CELLS)
-  if (!bar) return <text fg={muted(props.context)}>{props.entry.providerLabel}</text>
-  const title = props.entry.metric.period?.trim() || props.entry.metric.label?.trim() || 'quota'
-  const value =
-    props.display === 'remaining'
-      ? `${progress.remainingPercent}% rest.`
-      : `${progress.usedPercent}% uso`
-  const gaugeTone = quotaWindowTone(props.context, progress)
-
   return (
-    <box flexDirection="column">
-      <text fg={muted(props.context)}>
-        {clipped(`${props.entry.providerLabel} · ${title}`, 32)}
-      </text>
-      <box flexDirection="row" alignItems="center" gap={1}>
-        <text fg={gaugeTone}>{bar.filled}</text>
-        <text fg={muted(props.context)}>{bar.empty}</text>
-        <text fg={gaugeTone}>{value}</text>
-      </box>
-    </box>
+    <Show
+      when={props.entry.kind === 'quota'}
+      fallback={
+        <For
+          each={
+            props.entry.kind === 'status'
+              ? quotaTextLines(props.entry.message, SIDEBAR_CONTENT_WIDTH, 2)
+              : []
+          }
+        >
+          {(line) => <text fg={muted(props.context)}>{line}</text>}
+        </For>
+      }
+    >
+      <For
+        each={
+          props.entry.kind === 'quota'
+            ? quotaWindowLines(
+                props.entry.metric,
+                props.display,
+                SIDEBAR_CONTENT_WIDTH,
+                props.now,
+                true,
+              )
+            : []
+        }
+      >
+        {(line) => (
+          <text
+            fg={quotaColor(
+              props.context,
+              props.entry.kind === 'quota' ? props.entry.progress.usedPercent : undefined,
+            )}
+          >
+            {line}
+          </text>
+        )}
+      </For>
+    </Show>
   )
 }
 
 export function QuotaSidebarSummary(props: QuotaSurfaceProps): JSX.Element {
   const entries = createMemo(() => quotaSidebarEntries(props.runtime.snapshot()))
-  const quotaWindowCount = () => entries().filter((entry) => entry.kind === 'quota').length
+  const finance = createMemo(() => sidebarFinanceEntries(props.runtime.snapshot()))
+  const [now, setNow] = createSignal(Date.now())
+  onMount(() => onCleanup(quotaClock.subscribe(setNow)))
   return (
     <Show when={props.runtime.preferences().enabled}>
       <box flexDirection="column" marginTop={1}>
         <text fg={base(props.context)}>{`${QUOTA_ICON} Pantheon quota`}</text>
-        <text fg={muted(props.context)}>
-          {quotaSidebarSummary(
-            props.runtime.snapshot(),
-            props.runtime.preferences().display,
-            entries(),
-          )}
-        </text>
-        <Show
-          when={
-            quotaWindowCount() > 0 &&
-            sidebarFinanceSummary(props.runtime.snapshot(), props.runtime.preferences().display)
-          }
-        >
-          {(summary) => <text fg={muted(props.context)}>{clipped(summary(), 32)}</text>}
+        <Show when={props.runtime.snapshot().status !== 'ready' || entries().length === 0}>
+          <text fg={muted(props.context)}>
+            {quotaSnapshotStatusLabel(props.runtime.snapshot().status)}
+          </text>
         </Show>
-        <For each={entries()}>
-          {(entry) => (
-            <QuotaSidebarEntryRow
-              entry={entry}
-              display={props.runtime.preferences().display}
-              context={props.context}
-            />
+        <For each={props.runtime.snapshot().providers}>
+          {(provider) => (
+            <box flexDirection="column">
+              <Show
+                when={
+                  entries().some((entry) => entry.providerID === provider.id) ||
+                  finance().some((entry) => entry.providerID === provider.id) ||
+                  provider.metrics.some((metric) => metric.kind === 'provider_status')
+                }
+              >
+                <For each={quotaTextLines(provider.label, SIDEBAR_CONTENT_WIDTH, 0)}>
+                  {(line) => <text fg={muted(props.context)}>{line}</text>}
+                </For>
+              </Show>
+              <For each={entries().filter((entry) => entry.providerID === provider.id)}>
+                {(entry) => (
+                  <QuotaSidebarEntryRow
+                    entry={entry}
+                    display={props.runtime.preferences().display}
+                    context={props.context}
+                    now={now()}
+                  />
+                )}
+              </For>
+              <For each={provider.metrics.filter((metric) => metric.kind === 'provider_status')}>
+                {(metric) => (
+                  <For each={quotaMetricLines(metric, SIDEBAR_CONTENT_WIDTH)}>
+                    {(line) => <text fg={muted(props.context)}>{line}</text>}
+                  </For>
+                )}
+              </For>
+              <For each={finance().filter((entry) => entry.providerID === provider.id)}>
+                {(entry) => (
+                  <For each={financeMetricLines(entry.metric, SIDEBAR_CONTENT_WIDTH)}>
+                    {(line) => <text fg={base(props.context)}>{line}</text>}
+                  </For>
+                )}
+              </For>
+            </box>
           )}
         </For>
       </box>
@@ -202,10 +233,89 @@ function quotaAmount(value: number, unit: string): string | undefined {
   return `${new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(value)} ${safeUnit}`
 }
 
-function quotaWindowTone(context: Context, progress: { usedPercent: number }): string {
-  if (progress.usedPercent > 85) return tone(context, 'error')
-  if (progress.usedPercent >= 60) return tone(context, 'warning')
-  return tone(context, 'success')
+/** Wrap on grapheme boundaries, measuring terminal cells rather than code units. */
+export function quotaTextLines(text: string, width: number, indent: number): string[] {
+  const max = Number.isFinite(width) ? Math.max(0, Math.floor(width)) : 0
+  if (max < 1) return []
+  const padding = ' '.repeat(Math.min(Math.max(0, indent), Math.max(0, max - 2)))
+  const lines: string[] = []
+  let line = padding
+  const segmenter = new Intl.Segmenter()
+  for (const word of text.trim().split(/\s+/)) {
+    if (!word) continue
+    if (line.trim() && cellWidth(line) + 1 + cellWidth(word) > max) {
+      lines.push(line.trimEnd())
+      line = padding
+    }
+    if (line.trim()) line += ' '
+    for (const { segment } of segmenter.segment(word)) {
+      const glyphWidth = cellWidth(segment)
+      if (glyphWidth > max) continue
+      if (cellWidth(line) + glyphWidth > max) {
+        if (line.trim()) lines.push(line.trimEnd())
+        line = glyphWidth + cellWidth(padding) <= max ? padding : ''
+      }
+      line += segment
+    }
+  }
+  if (line.trim()) lines.push(line.trimEnd())
+  return lines
+}
+
+/** Layout uses only a provider-reported reset; a local clock never refreshes data. */
+export function quotaWindowLines(
+  metric: QuotaWindowMetric,
+  display: 'used' | 'remaining',
+  width: number,
+  now: number,
+  sidebarPercent = false,
+): string[] {
+  const title = metric.period?.trim() || metric.label?.trim() || 'Quota'
+  const progress = quotaProgress(metric)
+  const amount =
+    sidebarPercent && progress
+      ? `${display === 'remaining' ? progress.remainingPercent : progress.usedPercent}%`
+      : quotaAmount(display === 'remaining' ? metric.remaining : metric.used, metric.unit)
+  if (!amount) return []
+  const value = `${amount} ${display === 'remaining' ? 'rest.' : 'uso'}`
+  const countdown = formatQuotaCountdown(metric.resetsAt, now)
+  const reset =
+    countdown === null ? '(aguardando atualização)' : countdown ? `(${countdown})` : undefined
+  const padded = `  ${title.padEnd(8)} ${value}`
+  const compact = `  ${title} ${value}`
+  const prefix = cellWidth(padded) <= width ? padded : compact
+  const suffix = reset ? ` ${reset}` : ''
+  const bar =
+    progress && (sidebarPercent || metric.unit.trim() === '%')
+      ? contextBar(progress.usedPercent, 4)
+      : undefined
+  const secondaryAmount = sidebarPercent
+    ? undefined
+    : quotaAmount(display === 'remaining' ? metric.used : metric.remaining, metric.unit)
+  const secondary = secondaryAmount
+    ? quotaTextLines(
+        `${display === 'remaining' ? 'Usado' : 'Restante'} ${secondaryAmount}`,
+        width,
+        4,
+      )
+    : []
+  if (!sidebarPercent && progress) {
+    secondary.push(...quotaTextLines(`${progress.remainingPercent}% restante`, width, 4))
+  }
+  if (bar && cellWidth(prefix + suffix) + 5 <= width) {
+    return [`${prefix} ${bar.filled}${bar.empty}${suffix}`, ...secondary]
+  }
+  if (cellWidth(prefix + suffix) <= width) return [`${prefix}${suffix}`, ...secondary]
+  if (cellWidth(prefix) <= width)
+    return reset
+      ? [prefix, ...quotaTextLines(reset, width, 4), ...secondary]
+      : [prefix, ...secondary]
+  return [
+    ...quotaTextLines(title, width, 2),
+    ...quotaTextLines(value, width, 4),
+    ...(reset ? quotaTextLines(reset, width, 4) : []),
+    ...secondary,
+  ]
 }
 
 function QuotaWindow(props: {
@@ -213,78 +323,18 @@ function QuotaWindow(props: {
   display: 'used' | 'remaining'
   width: number
   context: Context
-}) {
-  const values = () => {
-    const used = quotaAmount(props.metric.used, props.metric.unit)
-    const remaining = quotaAmount(props.metric.remaining, props.metric.unit)
-    return used && remaining
-      ? { used, remaining, progress: quotaProgress(props.metric) }
-      : undefined
-  }
-  const title = () => props.metric.period?.trim() || props.metric.label?.trim() || 'Quota'
-  const meterWidth = () => Math.max(4, Math.min(14, Math.floor((props.width - 34) / 3)))
-  const primaryValue = () => {
-    const value = values()
-    if (!value) return undefined
-    return props.display === 'remaining' ? `Restante ${value.remaining}` : `Usado ${value.used}`
-  }
-  const secondaryValue = () => {
-    const value = values()
-    if (!value) return undefined
-    return props.display === 'remaining' ? `Usado ${value.used}` : `Restante ${value.remaining}`
-  }
-
+  now: number
+}): JSX.Element {
   return (
-    <Show when={values()}>
-      {(value) => (
-        <box flexDirection="column" paddingLeft={1}>
-          <box
-            flexDirection="row"
-            alignItems="center"
-            justifyContent="space-between"
-            gap={1}
-            width="100%"
-          >
-            <text fg={muted(props.context)}>
-              {clipped(title(), Math.max(7, props.width * 0.28))}
-            </text>
-            <Show when={value().progress}>
-              {(progress) => (
-                <>
-                  <box flexDirection="row" flexShrink={0}>
-                    <text fg={quotaWindowTone(props.context, progress())}>
-                      {'█'.repeat(Math.round((progress().usedPercent / 100) * meterWidth()))}
-                    </text>
-                    <text fg={muted(props.context)}>
-                      {'░'.repeat(
-                        meterWidth() - Math.round((progress().usedPercent / 100) * meterWidth()),
-                      )}
-                    </text>
-                  </box>
-                  <text fg={quotaWindowTone(props.context, progress())}>
-                    {`${progress().remainingPercent}% restante`}
-                  </text>
-                </>
-              )}
-            </Show>
-          </box>
-          <box flexDirection="row" justifyContent="space-between" gap={1}>
-            <text
-              fg={props.display === 'remaining' ? base(props.context) : muted(props.context)}
-              attributes={props.display === 'remaining' ? 1 : 0}
-            >
-              {clipped(primaryValue() ?? '', props.width * 0.48)}
-            </text>
-            <text
-              fg={props.display === 'used' ? base(props.context) : muted(props.context)}
-              attributes={props.display === 'used' ? 1 : 0}
-            >
-              {clipped(secondaryValue() ?? '', props.width * 0.48)}
-            </text>
-          </box>
-        </box>
-      )}
-    </Show>
+    <box flexDirection="column">
+      <For each={quotaWindowLines(props.metric, props.display, props.width, props.now)}>
+        {(line) => (
+          <text fg={quotaColor(props.context, quotaProgress(props.metric)?.usedPercent)}>
+            {line}
+          </text>
+        )}
+      </For>
+    </box>
   )
 }
 
@@ -329,6 +379,22 @@ function metricRow(
   }
 }
 
+export function financeMetricLines(metric: FinanceMetric, width: number): string[] {
+  return quotaMetricLines(metric, width)
+}
+
+export function quotaMetricLines(
+  metric: Exclude<QuotaMetric, { kind: 'provider_quota' }>,
+  width: number,
+): string[] {
+  const row = metricRow(metric)
+  if (!row) return []
+  const left = `  ${row.label}`
+  const spaces = width - cellWidth(left) - cellWidth(row.value)
+  if (spaces >= 2) return [`${left}${' '.repeat(spaces)}${row.value}`]
+  return [...quotaTextLines(row.label, width, 2), ...quotaTextLines(row.value, width, 4)]
+}
+
 function QuotaMetricLine(props: {
   metric: Exclude<QuotaMetric, { kind: 'provider_quota' }>
   width: number
@@ -337,12 +403,11 @@ function QuotaMetricLine(props: {
   const row = () => metricRow(props.metric)
   return (
     <Show when={row()}>
-      {(value) => (
-        <box flexDirection="row" justifyContent="space-between" gap={1} paddingLeft={1}>
-          <text fg={muted(props.context)}>{clipped(value().label, props.width * 0.48)}</text>
-          <text fg={base(props.context)}>{clipped(value().value, props.width * 0.48)}</text>
-        </box>
-      )}
+      <box flexDirection="column">
+        <For each={quotaMetricLines(props.metric, props.width)}>
+          {(line) => <text fg={base(props.context)}>{line}</text>}
+        </For>
+      </box>
     </Show>
   )
 }
@@ -549,12 +614,15 @@ function ModelUsageDetails(props: { context: Context; sessionID: string; width: 
                 }}
               </Show>
               <Show when={row.cost !== null}>
-                <text fg={muted(props.context)}>
-                  {clipped(
+                <For
+                  each={quotaTextLines(
                     `Custo reportado · mensagens recentes · ${formatSpent(row.cost) ?? '—'}`,
                     props.width - 2,
+                    0,
                   )}
-                </text>
+                >
+                  {(line) => <text fg={muted(props.context)}>{line}</text>}
+                </For>
               </Show>
               <Show when={row.tokens !== null && row.context === null}>
                 <text fg={muted(props.context)}>Contexto indisponível</text>
@@ -573,6 +641,8 @@ function QuotaProviderDetails(props: {
   width: number
   context: Context
 }) {
+  const [now, setNow] = createSignal(Date.now())
+  onMount(() => onCleanup(quotaClock.subscribe(setNow)))
   const state = () => providerState(props.provider)
   const quotaMetrics = () =>
     props.provider.metrics.filter(
@@ -599,32 +669,22 @@ function QuotaProviderDetails(props: {
 
   return (
     <box flexDirection="column" paddingBottom={1}>
-      <Show
-        when={props.width >= 58}
-        fallback={
-          <box flexDirection="column">
-            <text fg={tone(props.context, 'info')} attributes={1}>
-              {clipped(props.provider.label, props.width)}
-            </text>
-            <text fg={tone(props.context, state().tone)}>
-              {clipped(state().label, props.width)}
-            </text>
-          </box>
-        }
-      >
-        <box flexDirection="row" justifyContent="space-between" gap={1}>
+      <For each={quotaTextLines(props.provider.label, props.width, 0)}>
+        {(line) => (
           <text fg={tone(props.context, 'info')} attributes={1}>
-            {clipped(props.provider.label, props.width * 0.62)}
+            {line}
           </text>
-          <text fg={tone(props.context, state().tone)}>{state().label}</text>
-        </box>
-      </Show>
+        )}
+      </For>
+      <For each={quotaTextLines(state().label, props.width, 0)}>
+        {(line) => <text fg={tone(props.context, state().tone)}>{line}</text>}
+      </For>
       <Show when={quotaMetrics().length > 0}>
-        <text fg={muted(props.context)}>JANELAS DE QUOTA</text>
         <For each={quotaMetrics()}>
           {(metric) => (
             <QuotaWindow
               metric={metric}
+              now={now()}
               display={props.display}
               width={props.width}
               context={props.context}
@@ -812,6 +872,8 @@ function QuotaPanel(props: QuotaSurfaceProps & { panel: PanelInput }) {
       </Show>
       <scrollbox
         flexGrow={1}
+        flexShrink={1}
+        flexBasis={0}
         minHeight={3}
         width="100%"
         scrollY
@@ -839,14 +901,16 @@ function QuotaPanel(props: QuotaSurfaceProps & { panel: PanelInput }) {
           />
         </box>
       </scrollbox>
-      <text fg={muted(props.context)}>
-        {`Quota ${preferences().enabled ? 'ativada' : 'desativada'} · exibição: ${preferences().display === 'remaining' ? 'restante' : 'usado'}`}
-      </text>
-      <text
-        fg={muted(props.context)}
-      >{`E ${preferences().enabled ? 'desativar' : 'ativar'} · M alternar usado/restante`}</text>
-      <text fg={muted(props.context)}>↑/↓ rolar · R atualizar</text>
-      <text fg={muted(props.context)}>Esc/Q fechar</text>
+      <box flexDirection="column" flexShrink={0}>
+        <text fg={muted(props.context)}>
+          {`Quota ${preferences().enabled ? 'ativada' : 'desativada'} · exibição: ${preferences().display === 'remaining' ? 'restante' : 'usado'}`}
+        </text>
+        <text
+          fg={muted(props.context)}
+        >{`E ${preferences().enabled ? 'desativar' : 'ativar'} · M alternar usado/restante`}</text>
+        <text fg={muted(props.context)}>↑/↓ rolar · R atualizar</text>
+        <text fg={muted(props.context)}>Esc/Q fechar</text>
+      </box>
     </box>
   )
 }

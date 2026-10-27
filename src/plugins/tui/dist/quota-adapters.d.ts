@@ -26,6 +26,7 @@ export type QuotaMetric = {
   unit: string;
   label: string;
   period?: string;
+  resetsAt?: number;
 } | {
   kind: 'balance';
   amount: number;

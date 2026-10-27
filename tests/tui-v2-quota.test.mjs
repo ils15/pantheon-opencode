@@ -1450,6 +1450,31 @@ test('OpenCode Go accepts the legacy integration alias and trims the selected ke
   assert.equal(calls[0].options.headers['user-agent'], 'Pantheon-Quota/1.0')
   assert.notEqual(calls[0].options.headers['x-opencode-session'], connection.id)
   assert.equal(provider(result, 'opencode-go').state, 'available')
+  assert.deepEqual(
+    provider(result, 'opencode-go').metrics.map((metric) => metric.resetsAt),
+    Array(3).fill(Date.parse('2026-10-26T00:00:00Z')),
+  )
+  const validate = new Ajv().compile(fake.definition.methods.status.output)
+  const replaceFirstGoMetric = (transform) => ({
+    ...result,
+    providers: result.providers.map((item) =>
+      item.provider === 'opencode-go'
+        ? {
+            ...item,
+            metrics: item.metrics.map((metric, index) =>
+              index === 0 ? transform(metric) : metric,
+            ),
+          }
+        : item,
+    ),
+  })
+  assert.equal(validate(replaceFirstGoMetric(({ resetsAt: _resetsAt, ...metric }) => metric)), true)
+  for (const invalidReset of [Infinity, NaN, '2026-10-26T00:00:00Z']) {
+    assert.equal(
+      validate(replaceFirstGoMetric((metric) => ({ ...metric, resetsAt: invalidReset }))),
+      false,
+    )
+  }
   assert.deepEqual(fake.resolveCalls, ['legacy-go-login'])
 })
 
@@ -1523,6 +1548,7 @@ test('OpenCode Go Console OAuth uses only the fixed Console status route and val
       unit: '%',
       label: 'Weekly quota',
       period: 'weekly',
+      resetsAt: Date.parse('2028-02-29T00:00:00+05:30'),
     },
     {
       kind: 'provider_quota',
@@ -1857,24 +1883,6 @@ test('OpenCode Go Console OAuth maps auth, rate-limit, and malformed responses t
       response: Response.json({ access: { meters: { fiveHour: {} } } }),
       reason: 'invalid_response',
     },
-    {
-      name: 'impossible reset calendar date',
-      response: Response.json({
-        access: {
-          endsAt: '2026-03-01T00:00:00Z',
-          meters: {
-            fiveHour: {
-              limitMicroCents: 100000000,
-              usedMicroCents: 25000000,
-              resetsAt: '2026-02-31T00:00:00Z',
-            },
-            week: { limitMicroCents: 100000000, usedMicroCents: 25000000 },
-            month: { limitMicroCents: 100000000, usedMicroCents: 25000000 },
-          },
-        },
-      }),
-      reason: 'invalid_response',
-    },
   ]
   for (const scenario of cases) {
     await t.test(scenario.name, async (subtest) => {
@@ -1908,6 +1916,50 @@ test('OpenCode Go Console OAuth maps auth, rate-limit, and malformed responses t
       assert.equal(JSON.stringify(result).includes(SECRET_SENTINEL), false)
     })
   }
+})
+
+test('OpenCode Go Console OAuth ignores invalid optional reset metadata and never uses access expiry', async (t) => {
+  const connection = credentialConnection('opencode', 'console-go-reset-metadata', 'oauth')
+  const fake = createContext({
+    active: { opencode: connection },
+    list: [connection],
+    credentials: {
+      [connection.id]: { type: 'oauth', methodID: 'device', access: SECRET_SENTINEL },
+    },
+  })
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () =>
+    Response.json({
+      access: {
+        endsAt: '2028-02-29T00:00:00-05:30',
+        meters: {
+          fiveHour: {
+            limitMicroCents: 100000000,
+            usedMicroCents: 25000000,
+            resetsAt: '2026-02-31T00:00:00Z',
+          },
+          week: { limitMicroCents: 100000000, usedMicroCents: 50000000 },
+          month: { limitMicroCents: 100000000, usedMicroCents: 75000000 },
+        },
+      },
+    })
+  t.after(() => {
+    globalThis.fetch = originalFetch
+  })
+  const cleanup = await setup(fake)
+  t.after(cleanup)
+
+  const result = await status(fake)
+  const go = provider(result, 'opencode-go')
+  assert.equal(go.state, 'available')
+  assert.deepEqual(
+    go.metrics.map(({ used, resetsAt }) => ({ used, resetsAt })),
+    [
+      { used: 25, resetsAt: undefined },
+      { used: 50, resetsAt: undefined },
+      { used: 75, resetsAt: undefined },
+    ],
+  )
 })
 
 test('OpenCode Go does not fall back to the legacy key when a listed primary OAuth connection is active', async (t) => {

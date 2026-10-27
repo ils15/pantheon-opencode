@@ -30,6 +30,7 @@ type QuotaMetric = {
   unit: string;
   label?: string;
   period?: string;
+  resetsAt?: number;
 } | {
   kind: 'balance';
   amount: number;
@@ -79,6 +80,21 @@ type QuotaSnapshot = {
   details: QuotaProviderDetail[];
   updatedAt: number | null;
 };
+export declare const QUOTA_CLOCK_INTERVAL_MS = 60000;
+type QuotaClockOptions = {
+  now?: () => number;
+  setInterval?: typeof globalThis.setInterval;
+  clearInterval?: typeof globalThis.clearInterval;
+};
+type QuotaClock = {
+  subscribe: (listener: (now: number) => void) => () => void;
+};
+/** Create a shared local clock for countdown displays; it never refreshes quota data. */
+export declare function createQuotaClock(options?: QuotaClockOptions): QuotaClock;
+/** Module-local clock shared by all countdown consumers in the TUI bundle. */
+export declare const quotaClock: QuotaClock;
+/** Format a provider-reported reset timestamp using the caller's local clock. */
+export declare function formatQuotaCountdown(resetsAt: number | undefined, now: number): string | null | undefined;
 type QuotaSidebarEntry = {
   kind: 'quota';
   key: string;
@@ -172,6 +188,26 @@ export declare const MODEL_USAGE_SESSION_LIMIT = 8;
 export declare const QUOTA_PANEL_NAME = "pantheon.quota";
 export declare const QUOTA_OPEN_COMMAND_ID = "pantheon.quota.open";
 export declare const QUOTA_ICON = "▥";
+export declare function quotaUsageTone(usedPercent: number): 'success' | 'warning' | 'error';
+type FinanceMetric = Extract<QuotaMetric, {
+  kind: 'balance' | 'estimate' | 'key_usage';
+}>;
+type FinanceEntry = {
+  providerID: string;
+  metric: FinanceMetric;
+};
+export declare function sidebarFinanceEntries(snapshot: QuotaSnapshot): FinanceEntry[];
+type QuotaWindowMetric = Extract<QuotaMetric, {
+  kind: 'provider_quota';
+}>;
+/** Wrap on grapheme boundaries, measuring terminal cells rather than code units. */
+export declare function quotaTextLines(text: string, width: number, indent: number): string[];
+/** Layout uses only a provider-reported reset; a local clock never refreshes data. */
+export declare function quotaWindowLines(metric: QuotaWindowMetric, display: 'used' | 'remaining', width: number, now: number, sidebarPercent?: boolean): string[];
+export declare function financeMetricLines(metric: FinanceMetric, width: number): string[];
+export declare function quotaMetricLines(metric: Exclude<QuotaMetric, {
+  kind: 'provider_quota';
+}>, width: number): string[];
 type QuotaPanelAction = 'toggle-enabled' | 'toggle-display' | 'refresh' | 'close';
 export declare const QUOTA_PANEL_COMMANDS: readonly {
   action: QuotaPanelAction;
@@ -183,6 +219,14 @@ export declare function runQuotaPanelCommand(action: QuotaPanelAction, panel: Pi
 export declare function quotaPanelKeymapLayer(panel: Pick<PanelInput, 'focused' | 'close'>, runtime: QuotaRuntime): KeymapLayer;
 export declare function quotaOpenCommand(context: Pick<Context, 'ui'>): KeymapCommand;
 export declare function openQuotaPanel(context: Pick<Context, 'ui'>): boolean;
+//#endregion
+//#region src/sidebar-width.d.ts
+/** Terminal cells `value` occupies — the unit every column in this plugin is
+ *  measured in. Mirrors the host (that is how `@opentui/core` sizes a text
+ *  run): emoji count as two cells, East Asian Wide/Fullwidth as two, East
+ *  Asian Ambiguous as one, combining marks and variation selectors as none.
+ *  Pure. */
+export declare function cellWidth(value: string): number;
 //#endregion
 //#region src/index-v2.d.ts
 /** Sidebar body shown while the host has not published a session yet. */
@@ -382,6 +426,14 @@ export type ModelUsageRow = {
 export declare function modelUsageRows(rows: readonly ModelUsage[]): ModelUsageRow[];
 /** Exact single-line text of a model row, with numbers right-aligned. Pure. */
 export declare function modelUsageRowText(row: ModelUsageRow): string;
+/** Wrap sidebar text by terminal cells, preserving the complete values. */
+export declare function sidebarTextLines(value: string): string[];
+/** Align a monetary value when it fits, otherwise preserve it on a new line. */
+export declare function sidebarMoneyLines(label: string, value: string): string[];
+/** Keep the existing OpenCode periods together when possible. */
+export declare function contextSpendLines(value: string): string[];
+/** Keep ordinary rows aligned; give oversized values their own lines. */
+export declare function modelUsageRowLines(row: ModelUsageRow): string[];
 /** Muted aggregate line for the models beyond the cap (`… +2  $0.03`). Null
  *  when every model fits. Pure. */
 export declare function hiddenModelUsageText(hidden: number, hiddenCost: number): string | null;
@@ -578,12 +630,8 @@ export declare function statsRangeMatches(range: unknown, sent: {
  *  usable amount is omitted, and no usable window at all yields null so the
  *  line (and not the block) is dropped. Pure. */
 export declare function contextSpendLine(totals: SpendTotals | null): string | null;
-/** Terminal cells `value` occupies — the unit every column in this plugin is
- *  measured in. Mirrors the host (that is how `@opentui/core` sizes a text
- *  run): emoji count as two cells, East Asian Wide/Fullwidth as two, East
- *  Asian Ambiguous as one, combining marks and variation selectors as none.
- *  Pure. */
-export declare function cellWidth(value: string): number;
+/** Grapheme iterator: a cut never splits a surrogate pair, a combining mark
+ *  from its base or a ZWJ emoji sequence, so truncation stays cell-exact. */
 /** Clamp a free-form label to `max` terminal cells without wrapping. The width
  *  is measured in display cells, never in UTF-16 code units: a CJK or emoji
  *  label used to overflow the column it was cut for (`計画の移行` is 5 code

@@ -1,4 +1,4 @@
-import "./quota-rpc-BeoJ-2uD.js";
+import "./quota-rpc-2qxaOtEa.js";
 import { queryAlibabaTokenPlanUsage } from "./quota-cli.js";
 import { randomUUID } from "node:crypto";
 //#region src/quota-adapters.ts
@@ -771,8 +771,9 @@ function openCodeGoMetrics(payload) {
 		const value = payload.usage[window.key];
 		if (!isRecord(value) || value.status !== "ok" && value.status !== "rate-limited") throw new SafeAdapterError("invalid_response");
 		const used = percentage(value.percent);
-		const resetsAt = value.resetsAt;
-		if (used === void 0 || typeof resetsAt !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(resetsAt) || !Number.isFinite(Date.parse(resetsAt))) throw new SafeAdapterError("invalid_response");
+		if (used === void 0) throw new SafeAdapterError("invalid_response");
+		const resetValue = value.resetsAt;
+		const resetsAt = typeof resetValue === "string" && isValidResetDate(resetValue) ? Date.parse(resetValue) : void 0;
 		const normalizedUsed = value.status === "rate-limited" ? 100 : used;
 		metrics.push({
 			kind: "provider_quota",
@@ -780,7 +781,8 @@ function openCodeGoMetrics(payload) {
 			remaining: 100 - normalizedUsed,
 			unit: "%",
 			label: window.label,
-			period: window.key
+			period: window.key,
+			...resetsAt === void 0 ? {} : { resetsAt }
 		});
 	}
 	return metrics;
@@ -791,9 +793,9 @@ const OPENCODE_GO_KEY_USAGE_HEADERS = {
 	"user-agent": "Pantheon-Quota/1.0"
 };
 const OPENCODE_GO_CONSOLE_STATUS_URL = "https://opencode.ai/console/api/go/status";
-const CONSOLE_RESET_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
-function isValidConsoleResetDate(value) {
-	const match = CONSOLE_RESET_DATE_PATTERN.exec(value);
+const RESET_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+function isValidResetDate(value) {
+	const match = RESET_DATE_PATTERN.exec(value);
 	if (!match) return false;
 	const year = Number(match[1]);
 	const month = Number(match[2]);
@@ -817,7 +819,6 @@ function isValidConsoleResetDate(value) {
 function openCodeGoConsoleMetrics(payload) {
 	if (!isRecord(payload) || !isRecord(payload.access) || !isRecord(payload.access.meters)) throw new SafeAdapterError("invalid_response");
 	const meters = payload.access.meters;
-	const fallbackResetsAt = payload.access.endsAt;
 	const windows = [
 		{
 			key: "fiveHour",
@@ -842,8 +843,8 @@ function openCodeGoConsoleMetrics(payload) {
 		const limit = finiteAmount(meter.limitMicroCents);
 		const used = finiteAmount(meter.usedMicroCents);
 		if (limit === void 0 || used === void 0) throw new SafeAdapterError("invalid_response");
-		const resetsAt = typeof meter.resetsAt === "string" && meter.resetsAt ? meter.resetsAt : fallbackResetsAt;
-		if (typeof resetsAt !== "string" || !isValidConsoleResetDate(resetsAt)) throw new SafeAdapterError("invalid_response");
+		const resetValue = meter.resetsAt;
+		const resetsAt = typeof resetValue === "string" && isValidResetDate(resetValue) ? Date.parse(resetValue) : void 0;
 		const usedPercent = limit === 0 ? used > 0 ? 100 : 0 : Math.min(100, Math.max(0, Math.round(used / limit * 100)));
 		metrics.push({
 			kind: "provider_quota",
@@ -851,7 +852,8 @@ function openCodeGoConsoleMetrics(payload) {
 			remaining: 100 - usedPercent,
 			unit: "%",
 			label: window.label,
-			period: window.period
+			period: window.period,
+			...resetsAt === void 0 ? {} : { resetsAt }
 		});
 	}
 	return metrics;
