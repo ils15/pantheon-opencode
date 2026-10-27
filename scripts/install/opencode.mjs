@@ -823,6 +823,32 @@ export function deduplicatePluginReferences(refs) {
 }
 
 /**
+ * Register the copied Pantheon TUI plugin in the V2 `plugins` list.
+ *
+ * The OpenCode 2.x host does not load server-side RPC from a local plugin
+ * folder by free discovery — only entries listed in `config.plugins` are
+ * loaded (sandbox probe evidence: no entry → `rpc.unavailable`; with the
+ * entry the host logs `loading plugin id=…/pantheon-tui` and the V2-only
+ * RPC (`pantheon.quota`) answers HTTP 200). Without this registration a
+ * postinstall/sync that re-copies the payload after `init` can never restore
+ * it, so the quota status stays "unavailable".
+ *
+ * Idempotent: an existing entry for the copy (same identity) is not
+ * duplicated; every other entry is preserved. Gated on the copy existing so
+ * an install without the plugins component does not register a dangling
+ * path.
+ *
+ * @param {{ plugins?: unknown }} config - the config object about to be written (mutated)
+ * @param {{ tuiCopyDir: string }} opts - absolute path of the copied plugin directory
+ */
+export function ensureTuiCopyRegistered(config, { tuiCopyDir }) {
+  if (!Array.isArray(config.plugins)) config.plugins = []
+  if (existsSync(tuiCopyDir) && !hasPluginReference(config.plugins, tuiCopyDir)) {
+    config.plugins.push(tuiCopyDir)
+  }
+}
+
+/**
  * Duplicate the V1 top-level `context_sandbox` block into the exact Pantheon V2
  * plugin entry's `options`, converting a plain-string entry into the
  * `{ package, options }` object form the host accepts.
@@ -917,8 +943,9 @@ export function isGlobalConfigDir(target) {
  *
  *   <configDir>/plugins/pantheon-tui      (tui.ts + dist/ + package manifests)
  *
- * V1 registers that copy through tui.json. V2 discovers the local plugin's
- * index.ts + tui.ts pair; the V2 shim re-exports dist/tui-v2.js.
+ * V1 registers that copy through tui.json. V2 loads the copy only through the
+ * `plugins` entry (see ensureTuiCopyRegistered); the V2 shim re-exports
+ * dist/tui-v2.js.
  *
  * @param {string} configDir - OpenCode config directory (target for global
  *   installs, <target>/.opencode for project installs)
@@ -1189,8 +1216,9 @@ export function applyContextSidebarNegation(
 }
 
 /**
- * Sync the Pantheon TUI plugin payload and V1 registration. V2 discovers the
- * copied local-plugin entrypoints and does not use a project tui.json.
+ * Sync the Pantheon TUI plugin payload and V1 registration. V2 does not use a
+ * project tui.json; it loads the copy's server ONLY through the config
+ * `plugins` entry written by ensureTuiCopyRegistered().
  *
  * Contract (single source of truth):
  *   1. ALWAYS copy src/plugins/tui → <configDir>/plugins/pantheon-tui with the
@@ -1201,8 +1229,9 @@ export function applyContextSidebarNegation(
  *      paths, in-package src/plugins/tui dirs, bare plugins/pantheon-tui
  *      copies, and npx paths. A stale ref left in the non-target location
  *      would still be loaded and break the TUI.
- *   3. V1 registers the copied directory in the selected target. V2 relies on
- *      local-plugin discovery and does not write a project tui.json entry.
+ *   3. V1 registers the copied directory in the selected target. V2 does not
+ *      write a project tui.json entry; its `plugins` registration is written
+ *      by the config merge (ensureTuiCopyRegistered).
  *
  * @param {string} target - install target directory
  * @param {object} [opts]
@@ -1265,9 +1294,10 @@ export function syncTuiRegistration(
     })
   }
 
-  // OpenCode V2 discovers local plugins from the config plugins directories;
-  // its TUI plugin API is exposed by the sibling tui.ts entrypoint. V1 still
-  // requires the explicit tui.json registration.
+  // The V2 host loads the copy's server-side RPC only from the config
+  // `plugins` list — ensureTuiCopyRegistered writes that entry during the
+  // config merge, so no tui.json is written here. V1 still requires the
+  // explicit tui.json registration.
   if (version === 'v2') return 'skipped'
 
   // 3. Register the copied directory in the selected target only.
@@ -2756,6 +2786,14 @@ async function installPass(
     config.plugins.push({
       package: resolvedV2,
       options: existingV2Options === null ? {} : deepClone(existingV2Options),
+    })
+
+    // See ensureTuiCopyRegistered: OpenCode 2.x loads server-side RPC of the
+    // copied TUI plugin ONLY through an explicit `plugins` entry.
+    ensureTuiCopyRegistered(config, {
+      tuiCopyDir: isGlobal
+        ? join(target, 'plugins', 'pantheon-tui')
+        : join(target, '.opencode', 'plugins', 'pantheon-tui'),
     })
 
     // A path that LOOKS like a Pantheon V2 entry but is not one this package

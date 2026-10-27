@@ -224,6 +224,10 @@ test('versioned Pantheon package refs are managed during V2 migration', async ()
     assert.deepEqual(config.plugins, [
       thirdParty,
       { package: join(ROOT, 'src', 'plugin-v2'), options: {} },
+      // The copied TUI plugin is registered explicitly: OpenCode 2.x loads its
+      // server RPC only from the `plugins` list (a missing entry leaves the
+      // V2-only pantheon.quota RPC at rpc.unavailable).
+      join(target, '.opencode', 'plugins', 'pantheon-tui'),
     ])
   } finally {
     rmSync(target, { recursive: true, force: true })
@@ -852,6 +856,9 @@ test('V2 upgrade merges and deduplicates user plugins without overwriting config
       // The object form is what makes `options` reachable at all; a fresh
       // install writes it with an empty bag (issue #268).
       { package: join(ROOT, 'src', 'plugin-v2'), options: {} },
+      // The copied TUI plugin: with no explicit entry the OpenCode 2.x host
+      // never loads the copy's server and pantheon.quota reads unavailable.
+      join(target, '.opencode', 'plugins', 'pantheon-tui'),
     ])
     assert.equal(config.theme, 'user-theme')
   } finally {
