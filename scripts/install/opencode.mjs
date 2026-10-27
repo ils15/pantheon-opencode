@@ -864,19 +864,22 @@ export function deduplicatePluginReferences(refs) {
  * postinstall/sync that re-copies the payload after `init` can never restore
  * it, so the quota status stays "unavailable".
  *
- * Idempotent: an existing entry for the copy (same identity) is not
- * duplicated; every other entry is preserved. Gated on the copy existing so
- * an install without the plugins component does not register a dangling
- * path.
+ * Idempotent: the existing entry for the copy (same identity) is retained
+ * and kept after the core plugin, while every other entry stays in place.
+ * Gated on the copy existing so an install without the plugins component does
+ * not register a dangling path.
  *
  * @param {{ plugins?: unknown }} config - the config object about to be written (mutated)
  * @param {{ tuiCopyDir: string }} opts - absolute path of the copied plugin directory
  */
 export function ensureTuiCopyRegistered(config, { tuiCopyDir }) {
   if (!Array.isArray(config.plugins)) config.plugins = []
-  if (existsSync(tuiCopyDir) && !hasPluginReference(config.plugins, tuiCopyDir)) {
-    config.plugins.push(tuiCopyDir)
-  }
+  if (!existsSync(tuiCopyDir)) return
+
+  const identity = pluginReferenceIdentity(tuiCopyDir)
+  const existing = config.plugins.find((entry) => pluginReferenceIdentity(entry) === identity)
+  config.plugins = config.plugins.filter((entry) => pluginReferenceIdentity(entry) !== identity)
+  config.plugins.push(existing ?? tuiCopyDir)
 }
 
 /**
