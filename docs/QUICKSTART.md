@@ -18,8 +18,10 @@ From the project where you want to use Pantheon:
 npx pantheon-opencode init
 ```
 
-The interactive setup chooses components and a global or project location
-before reviewing the apply. Canceling writes nothing.
+The interactive setup lets you choose components and a global or project
+location before reviewing the apply. `plugins` is selected by default and
+installs the optional TUI; for a component-scoped install, include `plugins` to
+install it. Canceling writes nothing.
 
 ## 2. Restart OpenCode
 
@@ -30,6 +32,13 @@ opencode
 Restart is required after installing or changing the plugin generation. A
 restart reloads the selected plugin; it is not an automatic resume of delegated
 work.
+
+With the V2 TUI installed, open a session and run `/quota` to see provider
+details. The compact quota overview is also shown in the sidebar/footer.
+Providers are included only when OpenCode lists an active supported connection
+and Pantheon can resolve a nonblank credential locally. That check does not
+confirm provider-side acceptance; see the
+[quota coverage and troubleshooting notes](tui-v2-quota-providers.md).
 
 ## 3. Check the install
 

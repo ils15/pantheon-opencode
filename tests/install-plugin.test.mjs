@@ -306,6 +306,27 @@ test('copyPluginFiles refuses to write an entrypoint for a missing bundle', () =
   }
 })
 
+test('copyPluginFiles refuses a V2 package missing its server bundle', () => {
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-tui-no-v2-server-bundle-'))
+  const src = join(root, 'src')
+  const dst = join(root, 'dst')
+  try {
+    mkdirSync(join(src, 'dist'), { recursive: true })
+    writeFileSync(join(src, 'dist', 'tui-v2.js'), 'export default () => ({})\n')
+    writeFileSync(join(src, 'package.json'), JSON.stringify({ name: 'pantheon-tui' }))
+    writeFileSync(join(src, 'tui-v2.ts'), "export { default } from './dist/tui-v2.js'\n")
+    writeFileSync(join(src, 'index-v2.ts'), "export { default } from './dist/server-v2.js'\n")
+
+    const result = copyPluginFiles(src, dst, { version: 'v2' })
+
+    assert.equal(result.errors, 1)
+    assert.match(result.problems[0], /server bundle not found/i)
+    assert.equal(existsSync(join(dst, 'index.ts')), false)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('installPlugin reports a missing bundle as an error instead of a partial install', () => {
   const root = mkdtempSync(join(tmpdir(), 'pantheon-tui-nobundle-install-'))
   const src = join(root, 'src')

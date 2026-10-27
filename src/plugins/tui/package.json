@@ -10,7 +10,8 @@
   "exports": {
     "./tui": "./dist/tui.js",
     "./tui-v2": "./dist/tui-v2.js",
-    "./server": "./dist/server.js"
+    "./server": "./dist/server.js",
+    "./server-v2": "./dist/server-v2.js"
   },
   "files": [
     "dist",

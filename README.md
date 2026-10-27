@@ -93,7 +93,45 @@ see [Quick Start](docs/QUICKSTART.md).
 - **5 local MCP servers** for project memory, persistence, resources, confined
   script execution, and vision.
 - **An optional TUI** with a dispatch sidebar block and a full-width
-  `/dispatch` panel.
+  `/dispatch` panel. The V2 TUI also provides a quota overview in the
+  sidebar/footer and a `/quota` details panel. Quota display is enabled by
+  default; the sidebar keeps Todo and places quota immediately after Dispatch
+  (header/version → Session → Context → Git → Todo → Dispatch → quota).
+  Status stays in the native sidebar footer. Use `E` to disable quota or `M`
+  to switch between remaining and used. Quota windows show a local countdown and
+  the provider-reported reset date/time in UTC when valid timing is available;
+  missing timing is not inferred. After expiry the UI shows “aguardando
+  atualização” until refreshed data arrives. Empty quota gauges use a visible
+  track even when no usage is reported.
+  Usage severity uses warning color from 60% consumed and error color above 85%.
+  Session costs, provider balances and selected-key usage retain their distinct
+  labels and reported periods. Long values and states continue onto additional
+  lines within the sidebar's fixed 34-column content budget.
+  The installer selects the `plugins` component by default; in interactive setup
+  you can change the component selection. A component-scoped install includes
+  the TUI only when `plugins` is selected.
+  The V2 quota RPC shows providers only when OpenCode lists an active supported
+  connection and Pantheon can locally resolve a nonblank credential. This is
+  not proof that the provider accepted the credential; failed requests and
+  unsupported adapters can remain visible as unavailable. OpenCode Go checks
+  the selected Console OAuth login first, then uses an active OpenCode Go API
+  key (or its legacy OpenCode key alias) only when the Console request fails; a
+  Console 404 or a successful response without an access object reports no Go
+  subscription and does not fall back.
+  The route contract remains unofficial; see the
+  [quota provider coverage table](docs/tui-v2-quota-providers.md) for limits and
+  troubleshooting.
+  `/quota-go-check` is a separate manual, confirmation-gated diagnostic: one
+  GET to `https://opencode.ai/zen/go/v1/usage` with the configured Go API key
+  (not OAuth), at most one attempt per plugin runtime. It never refreshes quota,
+  follows redirects or retries. Only HTTP 401 bodies are inspected, up to 4096
+  bytes, for an own top-level JSON `error` property; its value is never inspected.
+  Results contain only a safe category, optional HTTP status, coarse content type,
+  and (for 401) whether that structure is present, absent, or unavailable.
+  No error code, type, message, body, request ID, or byte count is displayed;
+  a 401 rejection's cause remains unknown. `success` means
+  HTTP success only—not a stable quota contract or parsed quota correctness.
+  Require Themis security review before using this diagnostic.
 
 Vision requests to OpenCode Zen require a valid active session and are rejected
 before image fetching or model-catalog lookup when the session is missing or

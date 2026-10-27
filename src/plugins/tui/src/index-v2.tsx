@@ -8,8 +8,83 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { Plugin } from '@opencode/plugin/tui'
 import type { Context, KeymapLayer, PanelInput } from '@opencode/plugin/tui/context'
-import type { Accessor } from 'solid-js'
+import type { Accessor, JSX } from 'solid-js'
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from 'solid-js'
+import {
+  type ContextProgressTone,
+  contextBar,
+  contextUsageTone,
+  formatContextWindow,
+  formatSpent,
+  formatTokenCount,
+} from './context-gauge'
+import {
+  MODEL_USAGE_MESSAGE_LIMIT,
+  MODEL_USAGE_SESSION_LIMIT,
+  MODEL_USAGE_VISIBLE_CEILING,
+} from './model-usage-limits'
+import { QuotaSidebarSummary, quotaTextLines, registerQuotaTui } from './quota-v2'
+import {
+  createQuotaRuntime,
+  type QuotaRuntime,
+  resolveActiveModelRef,
+  resolveModelContextSnapshot,
+} from './quota-v2-model'
+import { cellWidth, GRAPHEMES, SIDEBAR_CONTENT_WIDTH } from './sidebar-width'
+
+export type { ContextProgressTone } from './context-gauge'
+export {
+  CONTEXT_BAR_CELLS,
+  CONTEXT_BAR_EMPTY_CELL,
+  CONTEXT_BAR_FILLED_CELL,
+  contextBar,
+  contextBarFilled,
+  contextUsageTone,
+  formatContextWindow,
+  formatSpent,
+  formatTokenCount,
+} from './context-gauge'
+export { quotaGoCheckCommand } from './go-key-diagnostic-ui'
+export {
+  MODEL_USAGE_MESSAGE_LIMIT,
+  MODEL_USAGE_SESSION_LIMIT,
+  MODEL_USAGE_VISIBLE_CEILING,
+} from './model-usage-limits'
+export {
+  financeMetricLines,
+  openQuotaPanel,
+  QUOTA_ICON,
+  QUOTA_OPEN_COMMAND_ID,
+  QUOTA_PANEL_COMMANDS,
+  QUOTA_PANEL_NAME,
+  quotaMetricLines,
+  quotaOpenCommand,
+  quotaPanelKeymapLayer,
+  quotaTextLines,
+  quotaUsageTone,
+  quotaWindowLines,
+  runQuotaPanelCommand,
+  sidebarFinanceEntries,
+} from './quota-v2'
+export type { QuotaSidebarEntry } from './quota-v2-model'
+export {
+  collectRecentModelUsageRows,
+  compactQuotaMetric,
+  createQuotaClock,
+  createQuotaRuntime,
+  DEFAULT_QUOTA_PREFERENCES,
+  formatQuotaCountdown,
+  formatQuotaMetric,
+  normalizeQuotaPreferences,
+  QUOTA_CLOCK_INTERVAL_MS,
+  quotaClock,
+  quotaProgress,
+  quotaSidebarEntries,
+  quotaSnapshotFromStatus,
+  quotaSnapshotStatusLabel,
+} from './quota-v2-model'
+export { cellWidth } from './sidebar-width'
+export { resolveActiveModelRef, resolveModelContextSnapshot }
 
 const SINGLETON = Symbol.for('pantheon.tui.v2.loaded')
 
@@ -320,20 +395,6 @@ export function computeContextUsage(
   return null
 }
 
-/** Semantic tone for a context percentage, inclusive at the top of each band:
- *  info (blue) up to 25%, success (green) up to 50%, warning (yellow) up to
- *  90%, error (red) above it. Four explicit stages, each backed by a feedback
- *  token, so the gauge follows the active theme. Pure. */
-export function contextUsageTone(percent: number): ContextProgressTone {
-  if (percent > 90) return 'error'
-  if (percent > 50) return 'warning'
-  if (percent > 25) return 'success'
-  return 'info'
-}
-
-/** The gauge's four stages, one per theme feedback token. */
-export type ContextProgressTone = 'info' | 'success' | 'warning' | 'error'
-
 /** Color for one gauge stage. Filled cells and the percent value both come from
  *  this one call, so the bar and its number can never disagree. `theme` is the
  *  host's resolved theme (loosely typed at runtime); a missing token falls back
@@ -458,67 +519,6 @@ export function turnTokensPerSecond(
  *  are optional; the block renders no line when neither is available. */
 export type ContextPerformance = { cacheHit: number | null; tokensPerSecond: number | null }
 
-/** Thousands-separated token total: `55320` → `55,320` (en-US, matching the
- *  native block this one replaces). Null for a missing/invalid value. Pure. */
-export function formatTokenCount(tokens: number | null | undefined): string | null {
-  const value = numberOrNull(tokens)
-  if (value === null || value < 0) return null
-  return Math.round(value).toLocaleString('en-US')
-}
-
-/** Context-window label: `1_000_000` → `1.0M`, `200_000` → `200K`,
- *  `128_000` → `128K`, `32_768` → `32K`. Sub-million limits truncate to whole K
- *  so the printed window never overstates the model's capacity. Pure. */
-export function formatContextWindow(limit: number | null | undefined): string | null {
-  const value = numberOrNull(limit)
-  if (value === null || value <= 0) return null
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`
-  if (value >= 1_000) return `${Math.floor(value / 1_000)}K`
-  return `${Math.floor(value)}`
-}
-
-/** Cells in the Context gauge: always rendered in full, so the bar never
- *  changes width between refreshes. With the space, the percent and the
- *  `of <window>` tail (at most 9 columns) the line stays inside 34 columns. */
-export const CONTEXT_BAR_CELLS = 12
-/** Filled cell (U+25B0) and empty cell (U+25B1), both single-width. */
-export const CONTEXT_BAR_FILLED_CELL = '\u25B0'
-export const CONTEXT_BAR_EMPTY_CELL = '\u25B1'
-
-/** Filled cells for a percentage: rounded, clamped to `0..cells`, so 0% is an
- *  empty bar and anything at or above 100% is a full one. Pure. */
-export function contextBarFilled(percent: number, cells = CONTEXT_BAR_CELLS): number {
-  const total = Math.max(1, Math.floor(cells))
-  const filled = Math.round((percent / 100) * total)
-  if (!Number.isFinite(filled)) return 0
-  return Math.min(total, Math.max(0, filled))
-}
-
-/** The gauge split into its toned half (filled cells) and its muted half (empty
- *  cells), so the caller colors each side. Null when the percentage is missing:
- *  the Context block then keeps its tokens + cost rows and renders no bar. Pure. */
-export function contextBar(
-  percent: number | null | undefined,
-  cells = CONTEXT_BAR_CELLS,
-): { filled: string; empty: string } | null {
-  const value = numberOrNull(percent)
-  if (value === null) return null
-  const total = Math.max(1, Math.floor(cells))
-  const filled = contextBarFilled(value, total)
-  return {
-    filled: CONTEXT_BAR_FILLED_CELL.repeat(filled),
-    empty: CONTEXT_BAR_EMPTY_CELL.repeat(total - filled),
-  }
-}
-
-/** USD spent with two decimals (`$0.18`), the native block's format. Null for
- *  a missing/negative value. Pure. */
-export function formatSpent(cost: number | null | undefined): string | null {
-  const value = numberOrNull(cost)
-  if (value === null || value < 0) return null
-  return `$${value.toFixed(2)}`
-}
-
 /** One rendered context row. `lead` and `tail` carry the gauge bar when the row
  *  has one (`lead` is toned with the value, `tail` is muted), so the 12 cells
  *  stay contiguous while the empty half still reads as background. */
@@ -551,7 +551,7 @@ export function contextBlockRows(
   const spent: ContextRow | null =
     spentValue === null
       ? null
-      : { lead: null, value: spentValue, tail: null, suffix: ' spent', tone: null }
+      : { lead: null, value: spentValue, tail: null, suffix: ' gasto na sessão', tone: null }
   if (usage === null) return spent === null ? null : { tokens: null, percent: null, spent }
 
   const tokensValue = formatTokenCount(usage.tokens)
@@ -586,12 +586,6 @@ export function contextBlockRows(
  * a message without `cost` contributes 0 and is omitted (never a guessed
  * price). */
 
-/** Models rendered in the Context block before the aggregate `… +N` line. */
-export const MODEL_USAGE_VISIBLE_CEILING = 3
-/** Newest messages read per session — bounds the O(n) walk on long sessions. */
-export const MODEL_USAGE_MESSAGE_LIMIT = 400
-/** Sessions read per family (root + delegations) for the aggregate. */
-export const MODEL_USAGE_SESSION_LIMIT = 8
 /** Column widths for one model row (labels are muted, numbers right-aligned). */
 export const MODEL_USAGE_MODEL_WIDTH = 12
 export const MODEL_USAGE_TOKEN_WIDTH = 6
@@ -695,6 +689,38 @@ export function modelUsageRows(rows: readonly ModelUsage[]): ModelUsageRow[] {
 /** Exact single-line text of a model row, with numbers right-aligned. Pure. */
 export function modelUsageRowText(row: ModelUsageRow): string {
   return `${row.model.padEnd(MODEL_USAGE_MODEL_WIDTH)}  ${row.tokens.padStart(MODEL_USAGE_TOKEN_WIDTH)}  ${row.cost.padStart(MODEL_USAGE_COST_WIDTH)}`
+}
+
+/** Wrap sidebar text by terminal cells, preserving the complete values. */
+export function sidebarTextLines(value: string): string[] {
+  return quotaTextLines(value, SIDEBAR_CONTENT_WIDTH, 0)
+}
+
+/** Align a monetary value when it fits, otherwise preserve it on a new line. */
+export function sidebarMoneyLines(label: string, value: string): string[] {
+  const gap = SIDEBAR_CONTENT_WIDTH - cellWidth(label) - cellWidth(value)
+  return gap >= 1
+    ? [`${label}${' '.repeat(gap)}${value}`]
+    : [...sidebarTextLines(label), ...sidebarTextLines(value)]
+}
+
+/** Keep the existing OpenCode periods together when possible. */
+export function contextSpendLines(value: string): string[] {
+  const match = /^(.*\S)\s+(<?\$\S+)$/.exec(value)
+  return match?.[1] && match[2] && cellWidth(value) <= SIDEBAR_CONTENT_WIDTH
+    ? sidebarMoneyLines(match[1], match[2])
+    : sidebarTextLines(value)
+}
+
+/** Keep ordinary rows aligned; give oversized values their own lines. */
+export function modelUsageRowLines(row: ModelUsageRow): string[] {
+  const single = modelUsageRowText(row)
+  if (cellWidth(single) <= SIDEBAR_CONTENT_WIDTH) return [single]
+  return [
+    ...sidebarTextLines(row.model),
+    ...sidebarTextLines(`Tokens ${row.tokens}`),
+    ...sidebarTextLines(`USD ${row.cost}`),
+  ]
 }
 
 /** Muted aggregate line for the models beyond the cap (`… +2  $0.03`). Null
@@ -1172,10 +1198,10 @@ export function statsRangeMatches(
   return sameUnit || asMilliseconds
 }
 
-/** The `Context` block's last line: both spend windows on one muted row
- *  (`hoje $0.42 · 30d $9.80`). A window without a usable amount is omitted, and
- *  no usable window at all yields null so the line (and not the block) is
- *  dropped. Pure. */
+/** The `Context` block's last line: OpenCode stats source and both spend windows
+ *  on one muted row (`OpenCode · hoje $0.42 · 30d $9.80`). A window without a
+ *  usable amount is omitted, and no usable window at all yields null so the
+ *  line (and not the block) is dropped. Pure. */
 export function contextSpendLine(totals: SpendTotals | null): string | null {
   if (totals === null) return null
   const parts: string[] = []
@@ -1183,138 +1209,13 @@ export function contextSpendLine(totals: SpendTotals | null): string | null {
   if (today !== null) parts.push(`${SPEND_TODAY_LABEL} ${today}`)
   const thirtyDays = formatSpendUSD(totals.thirtyDays)
   if (thirtyDays !== null) parts.push(`${SPEND_30D_LABEL} ${thirtyDays}`)
-  return parts.length === 0 ? null : parts.join(SPEND_LINE_SEPARATOR)
+  return parts.length === 0
+    ? null
+    : `OpenCode${SPEND_LINE_SEPARATOR}${parts.join(SPEND_LINE_SEPARATOR)}`
 }
 
 /** Grapheme iterator: a cut never splits a surrogate pair, a combining mark
  *  from its base or a ZWJ emoji sequence, so truncation stays cell-exact. */
-const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
-
-/** A grapheme the host draws two cells wide: emoji presentation, an extended
- *  pictograph (a bare `❤` counts too, exactly as the host's `emoji-regex`
- *  does) and a regional-indicator pair (a flag). */
-const EMOJI_GLYPH = /\p{Emoji_Presentation}|\p{Extended_Pictographic}|\p{Regional_Indicator}/u
-/** VS16 asks for emoji presentation; without it `1` is one cell, with it the
- *  keycap sequence is drawn as one two-cell glyph. */
-const EMOJI_PRESENTATION_SELECTOR = '\uFE0F'
-/** Unicode default-ignorable code points carry no width of their own. */
-const IGNORABLE_GLYPH = /^\p{Default_Ignorable_Code_Point}$/u
-/** East Asian Wide/Fullwidth ranges — two cells, never the ambiguous width
- *  (the host measures ambiguous as narrow, so `▸`/`✓`/`—` stay one cell).
- *  Generated from the host's own measurement (`string-width` over every code
- *  point, emoji excluded), so this table can be regenerated verbatim when the
- *  host upgrades its Unicode data instead of being hand-edited. */
-const CELL_WIDE_RANGES: readonly (readonly [number, number])[] = [
-  [0x1100, 0x115e],
-  [0x2329, 0x232a],
-  [0x2630, 0x2637],
-  [0x268a, 0x268f],
-  [0x2e80, 0x2e99],
-  [0x2e9b, 0x2ef3],
-  [0x2f00, 0x2fd5],
-  [0x2ff0, 0x302f],
-  [0x3031, 0x303c],
-  [0x303e, 0x303e],
-  [0x3041, 0x3096],
-  [0x3099, 0x30ff],
-  [0x3105, 0x312f],
-  [0x3131, 0x3163],
-  [0x3165, 0x318e],
-  [0x3190, 0x31e5],
-  [0x31ef, 0x321e],
-  [0x3220, 0x3247],
-  [0x3250, 0x3296],
-  [0x3298, 0x3298],
-  [0x329a, 0xa48c],
-  [0xa490, 0xa4c6],
-  [0xa960, 0xa97c],
-  [0xac00, 0xd7a3],
-  [0xf900, 0xfaff],
-  [0xfe10, 0xfe19],
-  [0xfe30, 0xfe52],
-  [0xfe54, 0xfe66],
-  [0xfe68, 0xfe6b],
-  [0xff01, 0xff60],
-  [0xffe0, 0xffe6],
-  [0x16fe0, 0x16fe4],
-  [0x16ff0, 0x16ff6],
-  [0x17000, 0x18cda],
-  [0x18cff, 0x18d20],
-  [0x18d80, 0x18df2],
-  [0x18e00, 0x19191],
-  [0x191a0, 0x191d2],
-  [0x1aff0, 0x1aff3],
-  [0x1aff5, 0x1affb],
-  [0x1affd, 0x1affe],
-  [0x1b000, 0x1b128],
-  [0x1b132, 0x1b132],
-  [0x1b150, 0x1b152],
-  [0x1b155, 0x1b155],
-  [0x1b164, 0x1b168],
-  [0x1b170, 0x1b2fb],
-  [0x1d300, 0x1d356],
-  [0x1d360, 0x1d376],
-  [0x1f200, 0x1f200],
-  [0x1f210, 0x1f219],
-  [0x1f21b, 0x1f22e],
-  [0x1f230, 0x1f231],
-  [0x1f23b, 0x1f23b],
-  [0x1f240, 0x1f248],
-  [0x1f260, 0x1f265],
-  [0x20000, 0x2fffd],
-  [0x30000, 0x3fffd],
-]
-
-/** One code point the terminal draws no cell for: control characters, the
- *  zero-width joiners/marks, combining marks and variation selectors. */
-function isZeroWidthCodePoint(code: number, glyph: string): boolean {
-  if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return true
-  if (code >= 0x200b && code <= 0x200f) return true
-  if (code === 0xfeff) return true
-  if (code >= 0x300 && code <= 0x36f) return true
-  if (code >= 0x1ab0 && code <= 0x1aff) return true
-  if (code >= 0x1dc0 && code <= 0x1dff) return true
-  if (code >= 0x20d0 && code <= 0x20ff) return true
-  if (code >= 0xfe00 && code <= 0xfe0f) return true
-  if (code >= 0xfe20 && code <= 0xfe2f) return true
-  if (code >= 0xe0100 && code <= 0xe01ef) return true
-  if (code >= 0xd800 && code <= 0xdfff) return true // a lone surrogate
-  return IGNORABLE_GLYPH.test(glyph)
-}
-
-function isWideCodePoint(code: number): boolean {
-  for (const [low, high] of CELL_WIDE_RANGES) {
-    if (code < low) return false
-    if (code <= high) return true
-  }
-  return false
-}
-
-/** Cells one grapheme occupies. */
-function graphemeWidth(segment: string): number {
-  if (EMOJI_GLYPH.test(segment)) return 2
-  // A lone VS16 carries no width; after a base it asks for emoji presentation.
-  if (segment.length > 1 && segment.includes(EMOJI_PRESENTATION_SELECTOR)) return 2
-  let width = 0
-  for (const glyph of segment) {
-    const code = glyph.codePointAt(0) ?? 0
-    if (isZeroWidthCodePoint(code, glyph)) continue
-    width += isWideCodePoint(code) ? 2 : 1
-  }
-  return width
-}
-
-/** Terminal cells `value` occupies — the unit every column in this plugin is
- *  measured in. Mirrors the host (that is how `@opentui/core` sizes a text
- *  run): emoji count as two cells, East Asian Wide/Fullwidth as two, East
- *  Asian Ambiguous as one, combining marks and variation selectors as none.
- *  Pure. */
-export function cellWidth(value: string): number {
-  let width = 0
-  for (const { segment } of GRAPHEMES.segment(value)) width += graphemeWidth(segment)
-  return width
-}
-
 /** Clamp a free-form label to `max` terminal cells without wrapping. The width
  *  is measured in display cells, never in UTF-16 code units: a CJK or emoji
  *  label used to overflow the column it was cut for (`計画の移行` is 5 code
@@ -1347,7 +1248,7 @@ export function padCell(value: string, cells: number): string {
 }
 
 /** Columns the fixed header may use before it would wrap the sidebar. */
-export const HEADER_MAX_WIDTH = 34
+export const HEADER_MAX_WIDTH = SIDEBAR_CONTENT_WIDTH
 
 /** Preset row of the fixed header: `▸ <preset> · <provider>`. The provider is
  *  cut first when the row overflows, so the preset name is never the casualty;
@@ -3595,21 +3496,19 @@ export function createSidebarModel(
   })
 
   const contextUsage = createMemo(() => {
-    const list = messages()
+    const list = messages().slice(-MODEL_USAGE_MESSAGE_LIMIT)
     if (list.length === 0) return null
     const refs = modelRefs()
-    const lastAssistant = [...list]
-      .reverse()
-      .find((message) => message?.type === 'assistant' && message?.model)
-    const ref = lastAssistant?.model ?? refs.sessionRef ?? refs.agentRef ?? refs.override
-    let limit: number | null = null
+    const ref = resolveActiveModelRef(refs.sessionRef, list, refs.agentRef)
+    if (ref === null) return null
+    let models: unknown[] = []
     try {
-      const models = context.data.location?.model?.list?.(location)
-      limit = resolveContextLimit(Array.isArray(models) ? models : [], ref)
+      const result = context.data.location?.model?.list?.(location)
+      if (Array.isArray(result)) models = result
     } catch {
-      limit = null
+      /* Unknown model limits suppress only the context gauge. */
     }
-    return computeContextUsage(list, limit, session()?.revert?.messageID)
+    return resolveModelContextSnapshot(list, ref, models, session()?.revert?.messageID)
   })
 
   // Telemetry that rides on the messages already in hand — no extra request.
@@ -3795,13 +3694,41 @@ export function createSidebarModel(
  *  cells), the value, the muted gauge tail (empty cells) and the muted unit
  *  suffix (`tokens` / `of 200K` / `spent`). */
 function ContextRowView(props: { row: ContextRow; fg: string; muted: string }) {
+  const fullWidth = () =>
+    cellWidth(
+      `${props.row.lead ?? ''}${props.row.tail ?? ''}${props.row.value}${props.row.suffix ?? ''}`,
+    )
   return (
-    <box flexDirection="row">
-      <Show when={props.row.lead}>{(lead) => <text fg={props.fg}>{lead()}</text>}</Show>
-      <Show when={props.row.tail}>{(tail) => <text fg={props.muted}>{tail()}</text>}</Show>
-      <text fg={props.fg}>{props.row.value}</text>
-      <Show when={props.row.suffix}>{(suffix) => <text fg={props.muted}>{suffix()}</text>}</Show>
-    </box>
+    <Show
+      when={props.row.suffix !== ' gasto na sessão'}
+      fallback={
+        <box flexDirection="column">
+          <For each={sidebarMoneyLines('gasto na sessão', props.row.value)}>
+            {(line) => <text fg={props.fg}>{line}</text>}
+          </For>
+        </box>
+      }
+    >
+      <Show
+        when={fullWidth() <= SIDEBAR_CONTENT_WIDTH}
+        fallback={
+          <box flexDirection="column">
+            <For each={sidebarTextLines(`${props.row.value.trim()}${props.row.suffix ?? ''}`)}>
+              {(line) => <text fg={props.fg}>{line}</text>}
+            </For>
+          </box>
+        }
+      >
+        <box flexDirection="row">
+          <Show when={props.row.lead}>{(lead) => <text fg={props.fg}>{lead()}</text>}</Show>
+          <Show when={props.row.tail}>{(tail) => <text fg={props.muted}>{tail()}</text>}</Show>
+          <text fg={props.fg}>{props.row.value}</text>
+          <Show when={props.row.suffix}>
+            {(suffix) => <text fg={props.muted}>{suffix()}</text>}
+          </Show>
+        </box>
+      </Show>
+    </Show>
   )
 }
 
@@ -3829,7 +3756,13 @@ function BlockHeader(props: {
   )
 }
 
-function Sidebar(props: { context: any; sessionID?: string }) {
+interface SidebarProps {
+  context: Context
+  sessionID?: string
+  quotaRuntime: QuotaRuntime
+}
+
+function Sidebar(props: SidebarProps): JSX.Element {
   const { context } = props
   const model = createSidebarModel(context, () => props.sessionID)
   const text = () => context.theme.text?.base
@@ -3915,16 +3848,30 @@ function Sidebar(props: { context: any; sessionID?: string }) {
                     numbers right-aligned; the gauge above remains the block's
                     single accent. When no message carries cost this loop is empty
                     and the block keeps its original token/spend rows. */}
+                <Show when={usageRows().length > 0}>
+                  <text fg={muted()}>Sessão · custo reportado</text>
+                  <text fg={muted()}>
+                    {'Modelo'.padEnd(MODEL_USAGE_MODEL_WIDTH) +
+                      '  Tokens'.padStart(8) +
+                      '  USD'.padStart(10)}
+                  </text>
+                </Show>
                 <For each={usageRows()}>
                   {(row: ModelUsageRow) => (
-                    <box flexDirection="row">
-                      <text fg={muted()}>{row.model.padEnd(MODEL_USAGE_MODEL_WIDTH)}</text>
-                      <text fg={text()}>{`  ${row.tokens.padStart(MODEL_USAGE_TOKEN_WIDTH)}`}</text>
-                      <text fg={text()}>{`  ${row.cost.padStart(MODEL_USAGE_COST_WIDTH)}`}</text>
+                    <box flexDirection="column">
+                      <For each={modelUsageRowLines(row)}>
+                        {(line) => <text fg={text()}>{line}</text>}
+                      </For>
                     </box>
                   )}
                 </For>
-                <Show when={usageHidden()}>{(line) => <text fg={muted()}>{line()}</text>}</Show>
+                <Show when={usageHidden()}>
+                  {(line) => (
+                    <For each={sidebarTextLines(line())}>
+                      {(part) => <text fg={muted()}>{part}</text>}
+                    </For>
+                  )}
+                </Show>
               </box>
             )}
           </Show>
@@ -3934,7 +3881,13 @@ function Sidebar(props: { context: any; sessionID?: string }) {
           <Show when={performanceLine()}>{(line) => <text fg={muted()}>{line()}</text>}</Show>
           {/* Spend, not budget: two local windows on one muted line. Absent
               whenever stats is missing or the from/to unit probe failed. */}
-          <Show when={spendLine()}>{(line) => <text fg={muted()}>{line()}</text>}</Show>
+          <Show when={spendLine()}>
+            {(line) => (
+              <For each={contextSpendLines(line())}>
+                {(part) => <text fg={muted()}>{part}</text>}
+              </For>
+            )}
+          </Show>
         </box>
       </Show>
 
@@ -4048,6 +4001,8 @@ function Sidebar(props: { context: any; sessionID?: string }) {
           </Show>
         </box>
       </Show>
+      {/* Keep quota inside this composition: host slots order claims, not our blocks. */}
+      <QuotaSidebarSummary context={context} runtime={props.quotaRuntime} />
     </box>
   )
 }
@@ -4322,11 +4277,13 @@ const plugin = Plugin.define({
     // Eager load/sync at setup so the cache is warm before the slot's first
     // render (Known Issue: empty sidebar before the first prompt).
     warmUpSidebarData(context, location)
+    const quotaRuntime = createQuotaRuntime(context)
+    const unregisterQuotaTui = registerQuotaTui(context, quotaRuntime)
 
     const unregisterSidebar = context.ui.slot({
       append: 'sidebar.content',
       render: ({ sessionID }: { sessionID: string }) => (
-        <Sidebar context={context} sessionID={sessionID} />
+        <Sidebar context={context} sessionID={sessionID} quotaRuntime={quotaRuntime} />
       ),
     })
     const unregisterHome = context.ui.slot({
@@ -4364,6 +4321,7 @@ const plugin = Plugin.define({
       if (typeof unregisterPromptFooter === 'function') unregisterPromptFooter()
       if (typeof unregisterPanel === 'function') unregisterPanel()
       if (typeof unregisterCommands === 'function') unregisterCommands()
+      unregisterQuotaTui()
       delete globalState[SINGLETON]
     }
   },

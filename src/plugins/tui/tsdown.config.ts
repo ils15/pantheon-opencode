@@ -26,7 +26,14 @@ async function ensureDistArtifactsEndWithNewline(): Promise<void> {
 }
 
 export default defineConfig({
-  entry: { tui: 'src/index.tsx', 'tui-v2': 'src/index-v2.tsx', server: 'src/server.ts' },
+  entry: {
+    tui: 'src/index.tsx',
+    'tui-v2': 'src/index-v2.tsx',
+    server: 'src/server.ts',
+    'server-v2': 'src/server-v2.ts',
+    'quota-cli': 'src/quota-cli.ts',
+    'quota-adapters': 'src/quota-adapters.ts',
+  },
   format: ['esm'],
   platform: 'node',
   outDir: 'dist',
