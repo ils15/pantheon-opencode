@@ -365,7 +365,7 @@ test('V2 quota status deduplicates concurrent resolution and expires its in-memo
   })
   const originalFetch = globalThis.fetch
   globalThis.fetch = async (url) =>
-    url.includes('deepseek')
+    url === 'https://api.deepseek.com/user/balance'
       ? Response.json({
           is_available: true,
           balance_infos: [{ currency: 'USD', total_balance: '1' }],
@@ -1011,10 +1011,13 @@ test('Kilo Gateway reports pass credit quota and uses balance only without a pas
   let noPass = false
   globalThis.fetch = async (url) => {
     calls.push(url)
-    if (noPass && url.includes('getState')) {
+    if (
+      noPass &&
+      url === 'https://app.kilo.ai/api/trpc/kiloPass.getState?batch=1&input=%7B%220%22%3Anull%7D'
+    ) {
       return Response.json([{ result: { data: { json: { subscription: null } } } }])
     }
-    if (url.includes('/profile/balance')) return Response.json({ balance: 3.5 })
+    if (url === 'https://api.kilo.ai/api/profile/balance') return Response.json({ balance: 3.5 })
     return Response.json([
       {
         result: {
@@ -1109,7 +1112,7 @@ test('MiniMax Token Plan uses distinct fixed global and CN routes and count sema
   const calls = []
   globalThis.fetch = async (url) => {
     calls.push(url)
-    const isCn = url.includes('minimaxi.com')
+    const isCn = url === 'https://api.minimaxi.com/v1/token_plan/remains'
     return Response.json({
       base_resp: { status_code: 0, status_msg: 'success' },
       model_remains: [
