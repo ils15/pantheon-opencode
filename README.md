@@ -98,9 +98,11 @@ see [Quick Start](docs/QUICKSTART.md).
   default; the sidebar keeps Todo and places quota immediately after Dispatch
   (header/version → Session → Context → Git → Todo → Dispatch → quota).
   Status stays in the native sidebar footer. Use `E` to disable quota or `M`
-  to switch between remaining and used. Quota windows show a local countdown only
-  when the provider reports valid reset timing; missing timing is not inferred.
-  After expiry the UI shows “aguardando atualização” until refreshed data arrives.
+  to switch between remaining and used. Quota windows show a local countdown and
+  the provider-reported reset date/time in UTC when valid timing is available;
+  missing timing is not inferred. After expiry the UI shows “aguardando
+  atualização” until refreshed data arrives. Empty quota gauges use a visible
+  track even when no usage is reported.
   Usage severity uses warning color from 60% consumed and error color above 85%.
   Session costs, provider balances and selected-key usage retain their distinct
   labels and reported periods. Long values and states continue onto additional
@@ -111,8 +113,12 @@ see [Quick Start](docs/QUICKSTART.md).
   The V2 quota RPC shows providers only when OpenCode lists an active supported
   connection and Pantheon can locally resolve a nonblank credential. This is
   not proof that the provider accepted the credential; failed requests and
-  unsupported adapters can remain visible as unavailable. OpenCode Go currently
-  has no verified public quota contract; see the
+  unsupported adapters can remain visible as unavailable. OpenCode Go checks
+  the selected Console OAuth login first, then uses an active OpenCode Go API
+  key (or its legacy OpenCode key alias) only when the Console request fails; a
+  Console 404 or a successful response without an access object reports no Go
+  subscription and does not fall back.
+  The route contract remains unofficial; see the
   [quota provider coverage table](docs/tui-v2-quota-providers.md) for limits and
   troubleshooting.
   `/quota-go-check` is a separate manual, confirmation-gated diagnostic: one

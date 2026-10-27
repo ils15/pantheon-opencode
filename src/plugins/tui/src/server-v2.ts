@@ -26,6 +26,8 @@ type ResolvedCredential = {
   readonly routeKind?: OpenCodeGoRouteKind
   /** Only adapters receive this secret; blocked sources retain only method status. */
   readonly secret?: string
+  /** OpenCode Go's fixed API-key fallback after its Console OAuth request fails. */
+  readonly fallbackSecret?: string
   /** A tiny, non-secret projection of OAuth metadata required by fixed adapters. */
   readonly adapterContext?: QuotaAdapterContext
 }
@@ -50,6 +52,7 @@ type ProviderStatus = {
     | 'cli_identity_unavailable'
     | 'unsupported_credential_method'
     | 'provider_error'
+    | 'not_subscribed'
     | 'rate_limited'
     | 'unauthorized'
     | 'forbidden'
@@ -148,8 +151,11 @@ function isApprovedOpenCodeConsoleServer(metadata: unknown): boolean {
 function routeKindField(
   provider: QuotaProviderId,
   credential?: ResolvedCredential,
+  effectiveRouteKind?: OpenCodeGoRouteKind,
 ): { route_kind?: OpenCodeGoRouteKind } {
-  return provider === 'opencode-go' ? { route_kind: credential?.routeKind ?? 'none' } : {}
+  return provider === 'opencode-go'
+    ? { route_kind: effectiveRouteKind ?? credential?.routeKind ?? 'none' }
+    : {}
 }
 
 /**
@@ -208,6 +214,106 @@ function createCredentialResolver(context: Context) {
     if (definition.source === 'local-cli') return {}
     try {
       const listedConnections = await listCredentialConnections()
+      if (provider === 'opencode-go') {
+        const activeListed = async (integrationID: string) => {
+          const connections = listedConnections.get(integrationID)
+          if (!connections || connections.size === 0) return undefined
+          const active = await context.integration.connection.active(integrationID)
+          if (active?.type !== 'credential' || !connections.has(`${active.id}\0${active.method}`)) {
+            return undefined
+          }
+          return active
+        }
+
+        let consoleCredential: ResolvedCredential | undefined
+        let unsupportedConsoleLogin = false
+        if (!goKeyOnly) {
+          let activeConsole: Awaited<ReturnType<typeof activeListed>>
+          try {
+            activeConsole = await activeListed('opencode')
+          } catch {
+            // A Console lookup failure must not prevent using a selected Go API key.
+          }
+          if (activeConsole?.method === 'oauth' && activeConsole.status?.status !== 'needs_auth') {
+            try {
+              const resolved = await context.integration.connection.resolve(activeConsole)
+              if (
+                resolved?.type === 'oauth' &&
+                resolved.access.trim().length > 0 &&
+                isOpenCodeConsoleOAuthMethod(resolved.methodID) &&
+                isApprovedOpenCodeConsoleServer(resolved.metadata)
+              ) {
+                const adapterContext = projectAdapterContext(
+                  provider,
+                  resolved.metadata,
+                  resolved.methodID,
+                )
+                if (adapterContext) {
+                  consoleCredential = {
+                    method: 'oauth',
+                    secret: resolved.access.trim(),
+                    routeKind: 'console_oauth',
+                    adapterContext,
+                  }
+                } else {
+                  unsupportedConsoleLogin = true
+                }
+              } else if (resolved?.type === 'oauth') {
+                unsupportedConsoleLogin = true
+              }
+            } catch {
+              // A failed Console sign-in is allowed to fall through to a listed API key.
+            }
+          } else if (activeConsole?.method === 'oauth') {
+            unsupportedConsoleLogin = activeConsole.status?.status !== 'needs_auth'
+          }
+        }
+
+        let activePrimary: Awaited<ReturnType<typeof activeListed>>
+        try {
+          activePrimary = await activeListed('opencode-go')
+        } catch {
+          // An API-key lookup failure must not discard an already resolved Console login.
+        }
+        const unsupportedPrimaryLogin =
+          activePrimary !== undefined && activePrimary.method !== 'key'
+        let apiKey: string | undefined
+        for (const integrationID of ['opencode-go', 'opencode']) {
+          let active: Awaited<ReturnType<typeof activeListed>>
+          try {
+            active =
+              integrationID === 'opencode-go' ? activePrimary : await activeListed(integrationID)
+          } catch {
+            // A failed key lookup does not invalidate another selected credential.
+            continue
+          }
+          if (!active) continue
+          if (goKeyOnly && active.method !== 'key') return {}
+          if (active.method !== 'key' || active.status?.status === 'needs_auth') continue
+          try {
+            const resolved = await context.integration.connection.resolve(active)
+            if (resolved?.type === 'key' && resolved.key.trim().length > 0) {
+              apiKey = resolved.key.trim()
+              break
+            }
+          } catch {
+            // Try the next explicitly selected OpenCode API-key integration.
+          }
+        }
+
+        if (consoleCredential) {
+          return {
+            ...consoleCredential,
+            ...(apiKey ? { fallbackSecret: apiKey } : {}),
+          }
+        }
+        if (apiKey) return { method: 'key', secret: apiKey, routeKind: 'api_key' }
+        if (unsupportedConsoleLogin || unsupportedPrimaryLogin) {
+          return { method: 'unsupported', routeKind: 'unsupported' }
+        }
+        return {}
+      }
+
       const integrationIDs = [
         definition.integrationID,
         ...(definition.fallbackIntegrationIDs ?? []),
@@ -224,13 +330,8 @@ function createCredentialResolver(context: Context) {
         if (!isListedActiveConnection) continue
         // The manual diagnostic must not even resolve an OAuth connection.
         if (goKeyOnly && active.method !== 'key') return {}
-        if (active.status?.status === 'needs_auth') {
-          if (provider === 'opencode-go') return {}
-          continue
-        }
+        if (active.status?.status === 'needs_auth') continue
 
-        const isGoConsoleOAuth =
-          provider === 'opencode-go' && integrationID === 'opencode' && active.method === 'oauth'
         if (active.method !== 'oauth' && active.method !== 'key') {
           continue
         }
@@ -242,41 +343,25 @@ function createCredentialResolver(context: Context) {
           resolved?.type === 'oauth' &&
           resolved.access.trim().length > 0
         ) {
-          const accessToken = provider === 'opencode-go' ? resolved.access.trim() : resolved.access
+          const accessToken = resolved.access
           if (!accessToken) return {}
-          if (provider === 'opencode-go' && !isGoConsoleOAuth) {
-            return { method: 'unsupported', routeKind: 'unsupported' }
-          }
-          if (
-            (provider === 'opencode-go' || provider === 'opencode-zen') &&
-            !isApprovedOpenCodeConsoleServer(resolved.metadata)
-          ) {
-            return {
-              method: 'unsupported',
-              ...(provider === 'opencode-go' ? { routeKind: 'unsupported' as const } : {}),
-            }
+          if (provider === 'opencode-zen' && !isApprovedOpenCodeConsoleServer(resolved.metadata)) {
+            return { method: 'unsupported' }
           }
           const adapterContext = projectAdapterContext(
             provider,
             resolved.metadata,
             resolved.methodID,
           )
-          if (provider === 'opencode-go' && !adapterContext) {
-            return { method: 'unsupported', routeKind: 'unsupported' }
-          }
           return {
             method: 'oauth',
             ...(definition.adapter ? { secret: accessToken } : {}),
-            ...(provider === 'opencode-go' ? { routeKind: 'console_oauth' as const } : {}),
             ...(adapterContext ? { adapterContext } : {}),
           }
         }
         if (active.method === 'key' && resolved?.type === 'key') {
           if (resolved.key.trim().length === 0) return {}
           if (!definition.adapter) return { method: 'key' }
-          if (definition.adapter === 'opencode-go') {
-            return { method: 'key', secret: resolved.key.trim(), routeKind: 'api_key' }
-          }
           if (resolved.key.length > 0) return { method: 'key', secret: resolved.key }
         }
         return {}
@@ -370,7 +455,7 @@ function createAdapterExecutor(
     settled: boolean
     promise: Promise<AdapterOutcome>
   }
-  const cache = new Map<QuotaProviderId, { expiresAt: number; metrics: QuotaMetric[] }>()
+  const cache = new Map<QuotaProviderId, { expiresAt: number; result: AdapterOutcome }>()
   const pending = new Map<QuotaProviderId, PendingAdapter>()
   const cooldown = new Map<QuotaProviderId, number>()
   let activeRequests = 0
@@ -464,6 +549,7 @@ function createAdapterExecutor(
       secret: string | undefined,
       requestSignal: AbortSignal,
       adapterContext?: QuotaAdapterContext,
+      fallbackSecret?: string,
     ) {
       requestSignal.throwIfAborted()
       const now = Date.now()
@@ -472,8 +558,7 @@ function createAdapterExecutor(
         return { reason: 'rate_limited' as const, retryAfterMs: until - now }
       }
       const cached = cache.get(provider)
-      if (cached && cached.expiresAt > now)
-        return { state: 'available' as const, metrics: cached.metrics }
+      if (cached && cached.expiresAt > now) return cached.result
       const existing = pending.get(provider)
       if (existing && !existing.controller.signal.aborted) return subscribe(existing, requestSignal)
       if (existing) pending.delete(provider)
@@ -496,7 +581,14 @@ function createAdapterExecutor(
         .then(async (release) => {
           if (!release) return { reason: 'provider_error' as const }
           try {
-            return await runQuotaAdapter(provider, secret, signal, queryCli, adapterContext)
+            return await runQuotaAdapter(
+              provider,
+              secret,
+              signal,
+              queryCli,
+              adapterContext,
+              fallbackSecret,
+            )
           } finally {
             release()
           }
@@ -505,7 +597,7 @@ function createAdapterExecutor(
           if (generation === startedAtGeneration && !signal.aborted && 'state' in result) {
             cache.set(provider, {
               expiresAt: Date.now() + ADAPTER_CACHE_TTL_MS,
-              metrics: result.metrics,
+              result,
             })
           } else if (
             generation === startedAtGeneration &&
@@ -613,6 +705,7 @@ async function getProviderStatus(
           credential.secret,
           requestSignal,
           credential.adapterContext,
+          credential.fallbackSecret,
         )
         requestSignal.throwIfAborted()
         if (!resolver.isCurrent(credentialGeneration)) {
@@ -635,7 +728,7 @@ async function getProviderStatus(
             authentication: 'connected',
             state: 'available',
             reason: 'none',
-            ...routeKindField(provider, credential),
+            ...routeKindField(provider, credential, result.routeKind),
             metrics: result.metrics,
           }
         }
@@ -646,7 +739,7 @@ async function getProviderStatus(
           authentication: 'connected',
           state: 'unavailable',
           reason: result.reason,
-          ...routeKindField(provider, credential),
+          ...routeKindField(provider, credential, result.routeKind),
           ...(result.retryAfterMs === undefined
             ? {}
             : { retry_after_ms: Math.ceil(result.retryAfterMs) }),

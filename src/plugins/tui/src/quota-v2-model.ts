@@ -550,6 +550,9 @@ function unavailableMessage(reason: string, provider?: string): string | undefin
   if (provider === 'opencode-go' && reason === 'unauthorized') {
     return 'Pedido recusado; uso indisponível. Verifique o Console oficial.'
   }
+  if (provider === 'opencode-go' && reason === 'not_subscribed') {
+    return 'sem assinatura OpenCode Go nesta conta'
+  }
   switch (reason) {
     case 'not_connected':
       return 'setup necessário'

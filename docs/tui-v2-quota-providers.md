@@ -1,11 +1,13 @@
 # V2 TUI quota provider coverage
 
-Quota windows display a countdown only for valid reset timestamps reported by the
-provider. Missing reset timing is omitted, including for OpenAI responses that do
-not provide it; the UI does not infer a reset from a window label. Once the
-timestamp has passed, “aguardando atualização” remains visible until fresh data
-arrives. The countdown advances using a local clock and does not request provider
-data; the enabled quota runtime refreshes provider status every 60 seconds.
+Quota windows display a local countdown and an absolute UTC reset date/time only
+for valid reset timestamps reported by the provider. Missing reset timing is
+omitted, including for OpenAI responses that do not provide it; the UI does not
+infer a reset from a window label. Once the timestamp has passed, “aguardando
+atualização” remains visible without showing a stale date until fresh data arrives.
+The countdown advances using a local clock and does not request provider data; the
+enabled quota runtime refreshes provider status every 60 seconds. Empty quota
+gauges retain a visible track when reported usage is zero.
 
 Financial values and provider states wrap onto additional lines as needed. The
 sidebar keeps session costs, balances and selected-key usage distinct, including
@@ -47,7 +49,7 @@ it is not displayed or invoked. No local CLI identity is inspected.
 | Anthropic / Claude | US personal and business | Provider-reported 5-hour, weekly, and enabled extra-usage windows | Upstream-derived `GET https://api.anthropic.com/api/oauth/usage`; private/unofficial usage route; OAuth only |
 | GitHub Copilot | US personal | Provider-reported premium-interaction quota; no enterprise billing | Upstream-derived `GET https://api.github.com/copilot_internal/user`; private/unofficial route; OAuth only |
 | Google AGY | US personal and business | Provider-reported quota buckets; only queried when selected OAuth metadata supplies a valid project ID | Upstream-derived `POST https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary`; private/unofficial route |
-| OpenCode Go | US personal | A 401 from the API-key adapter is sanitized and its cause is unknown; the existing Console status route is OAuth-only | The existing `/console/api/go/status` route is retained only for the legacy `opencode` OAuth `device` credential. Its contract is uncertain and publicly undocumented. API keys use a separate route and are never sent to this Console route |
+| OpenCode Go | US personal | Console-reported quota first; on Console failure, falls back to the selected API key. Console 404 means no Go subscription; API-key 401 remains inconclusive | Fixed Console OAuth `GET /console/api/go/status` first, then fixed API-key `GET /zen/go/v1/usage`; adapted from the [OpenCode Quota provider guide](https://github.com/slkiser/opencode-quota/blob/main/docs/readme/providers.md#opencode-go). API keys are never sent to the Console route |
 | OpenAI / Codex | US personal and business | Provider-reported ChatGPT quota windows | Upstream-derived `GET https://chatgpt.com/backend-api/wham/usage`; private/unofficial route; selected OAuth method IDs `chatgpt-browser` or `chatgpt-headless` only |
 | OpenCode Zen | US personal and business | Console balance and monthly credit limit when available | Upstream-derived fixed-host Console billing/account and daily-usage routes; private/unofficial routes; OpenCode OAuth only |
 | xAI SuperGrok | US personal and business | Provider-reported billing-period usage; billing route queried only after an active SuperGrok tier is verified | Upstream-derived `GET https://grok.com/rest/subscriptions` and `GET https://cli-chat-proxy.grok.com/v1/billing?format=credits`; private/unofficial routes; OAuth only |
@@ -66,14 +68,24 @@ it is not displayed or invoked. No local CLI identity is inspected.
 | Zhipu Coding Plan | China personal and business/team | Provider-reported coding-plan percentage windows | Upstream-derived `GET https://bigmodel.cn/api/monitor/usage/quota/limit`; API-key auth format; private/unofficial endpoint |
 | Alibaba Personal Token Plan | China personal | Not surfaced by the credential-bound V2 quota RPC | The fixed CLI adapter is not invoked; no local CLI identity is inspected |
 
-OpenCode Go has no verified public quota contract. A 401 response from its
-API-key adapter is reported as unavailable/unauthorized and does not establish
-why the request failed or that a credential is invalid. Separately, the existing
-`/console/api/go/status` route is retained only for the selected legacy
-`opencode` OAuth credential with method ID `device`; its contract is uncertain
-and publicly undocumented. It must never receive API-key credentials and is not
-an authorized API-key workaround. No live Go request was made. For account or
-plan guidance, use OpenCode Console directly.
+OpenCode Go's usage routes are private/unofficial rather than a verified public
+quota contract. Following the [OpenCode Quota provider guide](https://github.com/slkiser/opencode-quota/blob/main/docs/readme/providers.md#opencode-go),
+the adapter first uses a selected, listed `opencode` Console OAuth login with
+method ID `device` at the fixed Console status route. If that request fails, it
+may use an active, listed `opencode-go` API key (then the legacy `opencode`
+API-key login) at the fixed Go usage route. A Console 404 or successful response
+without an `access` object is shown as no Go subscription and stops fallback;
+other Console failures may fall back. A failed API-key connection lookup does
+not discard a usable Console result. API keys are never sent to the Console
+route, and Console OAuth tokens are never sent to the API-key route. A 401 from
+the API-key route remains unavailable/unauthorized with an unknown cause. Only
+OpenCode's selected credential connections are used;
+environment variables, config files, auth databases, and browser stores are not
+read directly. No live Go request was made.
+
+For OpenCode Go reset labels, each valid meter `resetsAt` takes precedence. If
+the monthly meter omits it, a valid `access.endsAt` is used for the monthly
+window only; it is not applied to the 5-hour or weekly windows.
 
 Adapter requests use fixed HTTPS URLs, the provider-specific bearer or raw API
 key auth header, redirect rejection, a 5-second per-request timeout, a 64 KiB response
@@ -91,25 +103,23 @@ The user explicitly authorized HTTPS transmission of matching `ctx.integration`
 credentials to the endpoint families listed above, including Chutes, NanoGPT,
 Kilo Gateway, Synthetic, regional coding-plan providers, and selected OAuth
 usage/billing routes. Authorization does not extend to other hosts, routes, or
-credential sources. OpenCode Go is not part of those upstream-derived API route
-authorizations. Separately, its existing Console status request is retained only
-for legacy `opencode` OAuth `device` credentials; its contract is uncertain and
-publicly undocumented. That decision does not authorize API-key use of the
-Console route.
+credential sources. OpenCode Go is separately adapted from the named public
+reference's Console-first/API-key-fallback behavior, limited to its two fixed
+HTTPS routes and selected OpenCode credential connections. The API key is only
+sent to the Go usage route; OAuth is only sent to the Console route.
 OpenAI is enabled only for the two source-registered Codex OAuth methods listed
 below; Gemini remains disabled because eligibility cannot be established from
 the current integration context. Contracts are mocked in tests only; future
-endpoint changes can make a row unavailable. OpenCode Go's existing Console
-status route is a separate OAuth-only case for the legacy `opencode` `device`
-credential; it is not authorized as an API-key workaround, and API-key
-credentials never reach it.
+endpoint changes can make a row unavailable. OpenCode Go uses its selected
+Console OAuth login before an API-key fallback, as detailed above; all requests
+remain fixture-tested only.
 
 ## Approved matrix and current blockers
 
 `private_endpoint` means a required private/unofficial route lacks explicit
-authorization and remains disabled, except for the separately retained
-OAuth-only Go Console status route described above. The authorized
-upstream-derived routes are labeled private/unofficial; this is not provider
+authorization and remains disabled. The specifically authorized OpenCode Go
+Console/API-key routes and the other upstream-derived routes remain limited to
+their fixed hosts, methods, and credential types; this is not provider
 endorsement and is not consent for another host or method.
 `runtime_accounting_unavailable` means no supported OpenCode runtime-accounting
 API is exposed by the current plugin context. `cli_identity_unavailable` means
@@ -128,7 +138,7 @@ documented usage-only invocation is available.
 | NanoGPT | US | US | Implemented from upstream/private endpoints (above) |
 | Ollama Cloud | US | — | Implemented (above) |
 | OpenAI / Codex | US | US | Implemented only for selected OAuth method IDs `chatgpt-browser` and `chatgpt-headless`; generic OAuth, token-sharing, API keys, and unknown methods are blocked |
-| OpenCode Go | US | — | No verified public quota contract. API-key requests use a separate adapter and a 401 is inconclusive. The existing `/console/api/go/status` route is retained only for legacy `opencode` OAuth `device`; its contract is uncertain and publicly undocumented, and API keys never use it |
+| OpenCode Go | US | — | Console OAuth first, then selected API-key fallback after Console failures except 404 or a successful response without an access object; private/unofficial routes. API-key 401 is inconclusive; API keys are never sent to Console |
 | OpenCode Zen | US | US | Implemented from fixed-host Console billing/account/daily-usage routes using the selected `opencode` OAuth login; no member-policy request |
 | OpenRouter | US | US | Implemented (above) |
 | Synthetic | US | US | Implemented from upstream/private route (above) |
@@ -152,13 +162,7 @@ documented usage-only invocation is available.
   `chatgpt-headless`, matching the OpenCode v2.0.22 provider registrations. It
   blocks generic/unknown OAuth methods, `chatgpt-token-sharing`, and API keys;
   only the approved WHAM usage route is queried.
-- OpenCode Go has no verified public quota contract. A 401 from the current
-  API-key adapter is sanitized; its cause is unknown and it does not prove the
-  credential is invalid. The existing `/console/api/go/status` route is retained
-  only for the legacy `opencode` OAuth credential with method ID `device`; its
-  contract is uncertain and publicly undocumented. API keys must never be sent
-  to that route, which is not an authorized API-key workaround. No live Go
-  request was made. For account or plan status, use OpenCode Console directly.
+- OpenCode Go follows the [OpenCode Quota provider guide](https://github.com/slkiser/opencode-quota/blob/main/docs/readme/providers.md#opencode-go): the selected Console OAuth login is attempted first, with the selected API key used only after a failed Console request other than 404/no subscription. The Console token and API key remain isolated to their respective fixed routes. API-key 401 is sanitized and does not prove the key is invalid. These private routes are fixture-tested; no live Go request was made.
 - Gemini CLI quota is never requested unless Code Assist Standard/Enterprise
   eligibility is proven. The current integration context does not expose that
   proof, so connected Gemini sources are shown unavailable.

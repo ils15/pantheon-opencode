@@ -32,8 +32,8 @@ test('Anthropic OAuth adapter requests only usage and normalizes reported window
     assert.equal(options.headers.authorization, `Bearer ${TOKEN}`)
     assert.equal(options.headers['anthropic-beta'], 'oauth-2025-04-20')
     return response({
-      five_hour: { utilization: 25 },
-      seven_day: { utilization: 60 },
+      five_hour: { utilization: 25, resets_at: '2026-11-01T12:30:00Z' },
+      seven_day: { utilization: 60, resets_at: '2026-11-05T18:45:00Z' },
     })
   })
 
@@ -48,6 +48,7 @@ test('Anthropic OAuth adapter requests only usage and normalizes reported window
         unit: '%',
         label: '5-hour quota',
         period: '5h',
+        resetsAt: Date.parse('2026-11-01T12:30:00Z'),
       },
       {
         kind: 'provider_quota',
@@ -56,6 +57,7 @@ test('Anthropic OAuth adapter requests only usage and normalizes reported window
         unit: '%',
         label: 'Weekly quota',
         period: 'week',
+        resetsAt: Date.parse('2026-11-05T18:45:00Z'),
       },
     ],
   })
@@ -85,6 +87,7 @@ test('Copilot adapter uses the selected OAuth integration for user quota only', 
         unit: 'premium interactions',
         label: 'Copilot user quota',
         period: 'month',
+        resetsAt: Date.parse('2026-11-01T00:00:00Z'),
       },
     ],
   })
@@ -158,6 +161,7 @@ test('OpenCode Go maps provider-reported rolling, weekly and monthly windows', a
   const result = await runQuotaAdapter('opencode-go', TOKEN, new AbortController().signal)
   assert.deepEqual(result, {
     state: 'available',
+    routeKind: 'api_key',
     metrics: [
       {
         kind: 'provider_quota',
@@ -333,6 +337,7 @@ test('quota RPC allows only sanitized failure categories', async (t) => {
     'cli_identity_unavailable',
     'unsupported_credential_method',
     'provider_error',
+    'not_subscribed',
     'rate_limited',
     'unauthorized',
     'forbidden',

@@ -233,6 +233,14 @@ function quotaAmount(value: number, unit: string): string | undefined {
   return `${new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(value)} ${safeUnit}`
 }
 
+function quotaResetDate(resetsAt: number | undefined, now: number): string | undefined {
+  if (resetsAt === undefined || !Number.isFinite(resetsAt) || !Number.isFinite(now))
+    return undefined
+  const date = new Date(resetsAt)
+  if (!Number.isFinite(date.getTime()) || resetsAt <= now) return undefined
+  return `Resets on ${date.toISOString().slice(0, 16).replace('T', ' ')} UTC`
+}
+
 /** Wrap on grapheme boundaries, measuring terminal cells rather than code units. */
 export function quotaTextLines(text: string, width: number, indent: number): string[] {
   const max = Number.isFinite(width) ? Math.max(0, Math.floor(width)) : 0
@@ -281,14 +289,18 @@ export function quotaWindowLines(
   const countdown = formatQuotaCountdown(metric.resetsAt, now)
   const reset =
     countdown === null ? '(aguardando atualização)' : countdown ? `(${countdown})` : undefined
+  const resetDate =
+    countdown !== undefined && countdown !== null ? quotaResetDate(metric.resetsAt, now) : undefined
+  const resetDateLines = resetDate ? quotaTextLines(resetDate, width, 4) : []
   const padded = `  ${title.padEnd(8)} ${value}`
   const compact = `  ${title} ${value}`
   const prefix = cellWidth(padded) <= width ? padded : compact
   const suffix = reset ? ` ${reset}` : ''
-  const bar =
+  const rawBar =
     progress && (sidebarPercent || metric.unit.trim() === '%')
       ? contextBar(progress.usedPercent, 4)
       : undefined
+  const bar = rawBar ? { ...rawBar, empty: '░'.repeat(cellWidth(rawBar.empty)) } : undefined
   const secondaryAmount = sidebarPercent
     ? undefined
     : quotaAmount(display === 'remaining' ? metric.used : metric.remaining, metric.unit)
@@ -303,17 +315,19 @@ export function quotaWindowLines(
     secondary.push(...quotaTextLines(`${progress.remainingPercent}% restante`, width, 4))
   }
   if (bar && cellWidth(prefix + suffix) + 5 <= width) {
-    return [`${prefix} ${bar.filled}${bar.empty}${suffix}`, ...secondary]
+    return [`${prefix} ${bar.filled}${bar.empty}${suffix}`, ...resetDateLines, ...secondary]
   }
-  if (cellWidth(prefix + suffix) <= width) return [`${prefix}${suffix}`, ...secondary]
+  if (cellWidth(prefix + suffix) <= width)
+    return [`${prefix}${suffix}`, ...resetDateLines, ...secondary]
   if (cellWidth(prefix) <= width)
     return reset
-      ? [prefix, ...quotaTextLines(reset, width, 4), ...secondary]
-      : [prefix, ...secondary]
+      ? [prefix, ...quotaTextLines(reset, width, 4), ...resetDateLines, ...secondary]
+      : [prefix, ...resetDateLines, ...secondary]
   return [
     ...quotaTextLines(title, width, 2),
     ...quotaTextLines(value, width, 4),
     ...(reset ? quotaTextLines(reset, width, 4) : []),
+    ...resetDateLines,
     ...secondary,
   ]
 }

@@ -1,4 +1,4 @@
-import { n as quotaRpc, t as QUOTA_PROVIDER_IDS } from "./quota-rpc-2qxaOtEa.js";
+import { n as quotaRpc, t as QUOTA_PROVIDER_IDS } from "./quota-rpc-UL2HuFRJ.js";
 import { createComponent, createElement, createTextNode, effect, insert, insertNode, memo, setProp } from "@opentui/solid";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -429,6 +429,7 @@ function providerStatus(value) {
 }
 function unavailableMessage(reason, provider) {
 	if (provider === "opencode-go" && reason === "unauthorized") return "Pedido recusado; uso indisponível. Verifique o Console oficial.";
+	if (provider === "opencode-go" && reason === "not_subscribed") return "sem assinatura OpenCode Go nesta conta";
 	switch (reason) {
 		case "not_connected": return "setup necessário";
 		case "unsupported": return "fonte de credencial não suportada";
@@ -1115,6 +1116,12 @@ function quotaAmount(value, unit) {
 	if (!Number.isFinite(value) || !safeUnit) return void 0;
 	return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value)} ${safeUnit}`;
 }
+function quotaResetDate(resetsAt, now) {
+	if (resetsAt === void 0 || !Number.isFinite(resetsAt) || !Number.isFinite(now)) return void 0;
+	const date = new Date(resetsAt);
+	if (!Number.isFinite(date.getTime()) || resetsAt <= now) return void 0;
+	return `Resets on ${date.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
 /** Wrap on grapheme boundaries, measuring terminal cells rather than code units. */
 function quotaTextLines(text, width, indent) {
 	const max = Number.isFinite(width) ? Math.max(0, Math.floor(width)) : 0;
@@ -1152,25 +1159,45 @@ function quotaWindowLines(metric, display, width, now, sidebarPercent = false) {
 	const value = `${amount} ${display === "remaining" ? "rest." : "uso"}`;
 	const countdown = formatQuotaCountdown(metric.resetsAt, now);
 	const reset = countdown === null ? "(aguardando atualização)" : countdown ? `(${countdown})` : void 0;
+	const resetDate = countdown !== void 0 && countdown !== null ? quotaResetDate(metric.resetsAt, now) : void 0;
+	const resetDateLines = resetDate ? quotaTextLines(resetDate, width, 4) : [];
 	const padded = `  ${title.padEnd(8)} ${value}`;
 	const compact = `  ${title} ${value}`;
 	const prefix = cellWidth(padded) <= width ? padded : compact;
 	const suffix = reset ? ` ${reset}` : "";
-	const bar = progress && (sidebarPercent || metric.unit.trim() === "%") ? contextBar(progress.usedPercent, 4) : void 0;
+	const rawBar = progress && (sidebarPercent || metric.unit.trim() === "%") ? contextBar(progress.usedPercent, 4) : void 0;
+	const bar = rawBar ? {
+		...rawBar,
+		empty: "░".repeat(cellWidth(rawBar.empty))
+	} : void 0;
 	const secondaryAmount = sidebarPercent ? void 0 : quotaAmount(display === "remaining" ? metric.used : metric.remaining, metric.unit);
 	const secondary = secondaryAmount ? quotaTextLines(`${display === "remaining" ? "Usado" : "Restante"} ${secondaryAmount}`, width, 4) : [];
 	if (!sidebarPercent && progress) secondary.push(...quotaTextLines(`${progress.remainingPercent}% restante`, width, 4));
-	if (bar && cellWidth(prefix + suffix) + 5 <= width) return [`${prefix} ${bar.filled}${bar.empty}${suffix}`, ...secondary];
-	if (cellWidth(prefix + suffix) <= width) return [`${prefix}${suffix}`, ...secondary];
+	if (bar && cellWidth(prefix + suffix) + 5 <= width) return [
+		`${prefix} ${bar.filled}${bar.empty}${suffix}`,
+		...resetDateLines,
+		...secondary
+	];
+	if (cellWidth(prefix + suffix) <= width) return [
+		`${prefix}${suffix}`,
+		...resetDateLines,
+		...secondary
+	];
 	if (cellWidth(prefix) <= width) return reset ? [
 		prefix,
 		...quotaTextLines(reset, width, 4),
+		...resetDateLines,
 		...secondary
-	] : [prefix, ...secondary];
+	] : [
+		prefix,
+		...resetDateLines,
+		...secondary
+	];
 	return [
 		...quotaTextLines(title, width, 2),
 		...quotaTextLines(value, width, 4),
 		...reset ? quotaTextLines(reset, width, 4) : [],
+		...resetDateLines,
 		...secondary
 	];
 }

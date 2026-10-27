@@ -1,4 +1,4 @@
-import "./quota-rpc-2qxaOtEa.js";
+import "./quota-rpc-UL2HuFRJ.js";
 import { queryAlibabaTokenPlanUsage } from "./quota-cli.js";
 import { randomUUID } from "node:crypto";
 //#region src/quota-adapters.ts
@@ -229,10 +229,12 @@ const MAX_AMOUNT = 0xe8d4a51000;
 var SafeAdapterError = class extends Error {
 	reason;
 	retryAfterMs;
-	constructor(reason, retryAfterMs) {
+	httpStatus;
+	constructor(reason, retryAfterMs, httpStatus) {
 		super(reason);
 		this.reason = reason;
 		this.retryAfterMs = retryAfterMs;
+		this.httpStatus = httpStatus;
 	}
 };
 function isRecord(value) {
@@ -329,6 +331,10 @@ async function requestJson(url, secret, shutdownSignal, authStyle = "bearer", op
 		await response.body?.cancel();
 		throw new SafeAdapterError("rate_limited", retryAfterMs(response.headers.get("retry-after")) ?? 3e4);
 	}
+	if (response.status === 404) {
+		await response.body?.cancel();
+		throw new SafeAdapterError("provider_error", void 0, 404);
+	}
 	if (!response.ok) {
 		await response.body?.cancel();
 		throw new SafeAdapterError("provider_error");
@@ -382,13 +388,15 @@ function ollamaMetrics(payload) {
 		if (!isRecord(item)) continue;
 		const remainingPercent = finiteAmount(item.remaining_percent);
 		if (remainingPercent === void 0 || remainingPercent > 100) throw new SafeAdapterError("provider_error");
+		const resetsAt = isoResetAt(item.resets_at);
 		metrics.push({
 			kind: "provider_quota",
 			used: 100 - remainingPercent,
 			remaining: remainingPercent,
 			unit: "%",
 			label: window === "session" ? "Session quota" : "Weekly quota",
-			period: window
+			period: window,
+			...resetsAt === void 0 ? {} : { resetsAt }
 		});
 	}
 	if (metrics.length === 0) throw new SafeAdapterError("provider_error");
@@ -519,12 +527,14 @@ function glmMetrics(payload, provider) {
 		const percentage = finiteAmount(limit.percentage);
 		if (percentage === void 0 || percentage > 100) continue;
 		const label = limit.unit === 3 ? "5-hour coding-plan quota" : limit.unit === 6 ? "Weekly coding-plan quota" : "Coding-plan quota";
+		const resetsAt = epochResetAt(limit.nextResetTime, "milliseconds");
 		metrics.push({
 			kind: "provider_quota",
 			used: percentage,
 			remaining: 100 - percentage,
 			unit: "%",
-			label
+			label,
+			...resetsAt === void 0 ? {} : { resetsAt }
 		});
 	}
 	if (metrics.length === 0) throw new SafeAdapterError("provider_error");
@@ -637,6 +647,14 @@ function percentage(value) {
 	const parsed = finiteAmount(value);
 	return parsed !== void 0 && parsed <= 100 ? parsed : void 0;
 }
+function isoResetAt(value) {
+	return typeof value === "string" && isValidResetDate(value) ? Date.parse(value) : void 0;
+}
+function epochResetAt(value, unit) {
+	if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return void 0;
+	const timestamp = unit === "seconds" ? value * 1e3 : value;
+	return Number.isFinite(new Date(timestamp).getTime()) ? timestamp : void 0;
+}
 function anthropicMetrics(payload) {
 	if (!isRecord(payload)) throw new SafeAdapterError("provider_error");
 	const metrics = [];
@@ -654,13 +672,15 @@ function anthropicMetrics(payload) {
 		if (!isRecord(value)) throw new SafeAdapterError("provider_error");
 		const used = percentage(value.utilization ?? value.used_percentage ?? value.usedPercentage ?? value.used_percent ?? value.usedPercent ?? value.percent_used ?? value.percentUsed);
 		if (used === void 0) throw new SafeAdapterError("provider_error");
+		const resetsAt = isoResetAt(value.resets_at);
 		metrics.push({
 			kind: "provider_quota",
 			used,
 			remaining: 100 - used,
 			unit: "%",
 			label: window.label,
-			period: window.period
+			period: window.period,
+			...resetsAt === void 0 ? {} : { resetsAt }
 		});
 	}
 	const extra = payload.extra_usage;
@@ -690,13 +710,15 @@ function copilotMetrics(payload) {
 	}];
 	const total = finiteAmount(quota.entitlement);
 	const remaining = finiteAmount(quota.quota_remaining ?? quota.remaining);
+	const resetsAt = isoResetAt(payload.quota_reset_date_utc);
 	if (total !== void 0 && total > 0 && remaining !== void 0 && remaining <= total) return [{
 		kind: "provider_quota",
 		used: total - remaining,
 		remaining,
 		unit: "premium interactions",
 		label: "Copilot user quota",
-		period: "month"
+		period: "month",
+		...resetsAt === void 0 ? {} : { resetsAt }
 	}];
 	if (quota.percent_remaining !== void 0) {
 		const percentRemaining = percentage(quota.percent_remaining);
@@ -706,7 +728,8 @@ function copilotMetrics(payload) {
 			remaining: percentRemaining,
 			unit: "%",
 			label: "Copilot user quota",
-			period: "month"
+			period: "month",
+			...resetsAt === void 0 ? {} : { resetsAt }
 		}];
 	}
 	throw new SafeAdapterError("provider_error");
@@ -817,7 +840,12 @@ function isValidResetDate(value) {
 	return month >= 1 && month <= 12 && day >= 1 && maxDay !== void 0 && day <= maxDay && Number.isFinite(Date.parse(value));
 }
 function openCodeGoConsoleMetrics(payload) {
-	if (!isRecord(payload) || !isRecord(payload.access) || !isRecord(payload.access.meters)) throw new SafeAdapterError("invalid_response");
+	if (!isRecord(payload)) throw new SafeAdapterError("invalid_response");
+	if (!Object.hasOwn(payload, "access") || payload.access === null) throw new SafeAdapterError("not_subscribed");
+	if (!isRecord(payload.access)) throw new SafeAdapterError("invalid_response");
+	if (!isRecord(payload.access.meters)) throw new SafeAdapterError("invalid_response");
+	const accessEndsAt = payload.access.endsAt;
+	const monthlyFallbackReset = typeof accessEndsAt === "string" && isValidResetDate(accessEndsAt) ? Date.parse(accessEndsAt) : void 0;
 	const meters = payload.access.meters;
 	const windows = [
 		{
@@ -844,7 +872,7 @@ function openCodeGoConsoleMetrics(payload) {
 		const used = finiteAmount(meter.usedMicroCents);
 		if (limit === void 0 || used === void 0) throw new SafeAdapterError("invalid_response");
 		const resetValue = meter.resetsAt;
-		const resetsAt = typeof resetValue === "string" && isValidResetDate(resetValue) ? Date.parse(resetValue) : void 0;
+		const resetsAt = (typeof resetValue === "string" && isValidResetDate(resetValue) ? Date.parse(resetValue) : void 0) ?? (window.period === "monthly" ? monthlyFallbackReset : void 0);
 		const usedPercent = limit === 0 ? used > 0 ? 100 : 0 : Math.min(100, Math.max(0, Math.round(used / limit * 100)));
 		metrics.push({
 			kind: "provider_quota",
@@ -878,13 +906,15 @@ function openAIMetrics(payload) {
 		if (used === void 0) continue;
 		const period = value.limit_window_seconds === 18e3 ? "5h" : value.limit_window_seconds === 604800 ? "week" : value.limit_window_seconds === 2628e3 ? "month" : window.period;
 		const label = period === "month" ? "Monthly ChatGPT quota" : period === "week" ? "Weekly ChatGPT quota" : window.fallback;
+		const resetsAt = epochResetAt(value.reset_at, "seconds");
 		metrics.push({
 			kind: "provider_quota",
 			used,
 			remaining: 100 - used,
 			unit: "%",
 			label,
-			period
+			period,
+			...resetsAt === void 0 ? {} : { resetsAt }
 		});
 	}
 	if (metrics.length === 0) throw new SafeAdapterError("invalid_response");
@@ -977,7 +1007,7 @@ async function xaiSuperGrokMetrics(secret, shutdownSignal) {
 		period: "billing period"
 	}];
 }
-async function runQuotaAdapter(provider, secret, shutdownSignal, queryCli = queryAlibabaTokenPlanUsage, adapterContext = {}) {
+async function runQuotaAdapter(provider, secret, shutdownSignal, queryCli = queryAlibabaTokenPlanUsage, adapterContext = {}, fallbackSecret) {
 	const definition = QUOTA_PROVIDER_CATALOG[provider];
 	if (!definition.adapter) return { reason: "provider_error" };
 	if (definition.adapter === "openai" && !isOpenAICodexOAuthMethod(adapterContext?.methodID)) return { reason: "eligibility_unverified" };
@@ -1016,9 +1046,41 @@ async function runQuotaAdapter(provider, secret, shutdownSignal, queryCli = quer
 			if (adapterContext?.methodID !== void 0 && !isOpenCodeConsoleOAuthMethod(adapterContext.methodID)) throw new SafeAdapterError("eligibility_unverified");
 			if (isOpenCodeConsoleOAuthMethod(adapterContext?.methodID)) {
 				const headers = adapterContext.orgId ? { "x-org-id": adapterContext.orgId } : {};
-				return available(openCodeGoConsoleMetrics(await requestJson(OPENCODE_GO_CONSOLE_STATUS_URL, secret, shutdownSignal, "bearer", { headers })));
+				try {
+					return {
+						...available(openCodeGoConsoleMetrics(await requestJson(OPENCODE_GO_CONSOLE_STATUS_URL, secret, shutdownSignal, "bearer", { headers }))),
+						routeKind: "console_oauth"
+					};
+				} catch (error) {
+					const failure = error instanceof SafeAdapterError ? error : new SafeAdapterError("provider_error");
+					if (failure.reason === "not_subscribed" || failure.httpStatus === 404) return {
+						reason: "not_subscribed",
+						routeKind: "console_oauth"
+					};
+					if (!fallbackSecret || shutdownSignal.aborted) return {
+						reason: failure.reason,
+						...failure.retryAfterMs === void 0 ? {} : { retryAfterMs: failure.retryAfterMs },
+						routeKind: "console_oauth"
+					};
+				}
+				try {
+					return {
+						...available(openCodeGoMetrics(await requestJson(OPENCODE_GO_KEY_USAGE_URL, fallbackSecret, shutdownSignal, "bearer", { headers: OPENCODE_GO_KEY_USAGE_HEADERS }))),
+						routeKind: "api_key"
+					};
+				} catch (error) {
+					const failure = error instanceof SafeAdapterError ? error : new SafeAdapterError("provider_error");
+					return {
+						reason: failure.reason,
+						...failure.retryAfterMs === void 0 ? {} : { retryAfterMs: failure.retryAfterMs },
+						routeKind: "api_key"
+					};
+				}
 			}
-			return available(openCodeGoMetrics(await requestJson(OPENCODE_GO_KEY_USAGE_URL, secret, shutdownSignal, "bearer", { headers: OPENCODE_GO_KEY_USAGE_HEADERS })));
+			return {
+				...available(openCodeGoMetrics(await requestJson(OPENCODE_GO_KEY_USAGE_URL, secret, shutdownSignal, "bearer", { headers: OPENCODE_GO_KEY_USAGE_HEADERS }))),
+				routeKind: "api_key"
+			};
 		}
 		if (definition.adapter === "openai") return available(openAIMetrics(await requestJson("https://chatgpt.com/backend-api/wham/usage", secret, shutdownSignal, "bearer", { headers: { "user-agent": "OpenCode-Quota-Toast/1.0" } })));
 		if (definition.adapter === "opencode-zen") return available(await openCodeZenMetrics(secret, shutdownSignal, adapterContext));

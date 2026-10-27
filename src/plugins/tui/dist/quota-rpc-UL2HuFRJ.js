@@ -77,6 +77,7 @@ const providerStatusSchema = {
 				"cli_identity_unavailable",
 				"unsupported_credential_method",
 				"provider_error",
+				"not_subscribed",
 				"rate_limited",
 				"unauthorized",
 				"forbidden",
@@ -386,4 +387,4 @@ const quotaRpc = Rpc.define({
 //#endregion
 export { quotaRpc as n, QUOTA_PROVIDER_IDS as t };
 
-//# sourceMappingURL=quota-rpc-2qxaOtEa.js.map
+//# sourceMappingURL=quota-rpc-UL2HuFRJ.js.map

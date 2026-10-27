@@ -54,7 +54,7 @@ export type QuotaMetric = {
   unit: string;
   label: string;
 };
-export type AdapterFailureReason = 'provider_error' | 'rate_limited' | 'unauthorized' | 'forbidden' | 'timeout' | 'network_error' | 'invalid_response' | 'cli_identity_unavailable' | 'eligibility_unverified';
+export type AdapterFailureReason = 'provider_error' | 'not_subscribed' | 'rate_limited' | 'unauthorized' | 'forbidden' | 'timeout' | 'network_error' | 'invalid_response' | 'cli_identity_unavailable' | 'eligibility_unverified';
 export type AdapterFailure = {
   readonly reason: AdapterFailureReason;
   readonly retryAfterMs?: number;
@@ -80,7 +80,10 @@ export declare const QUOTA_PROVIDER_CATALOG: Record<QuotaProviderId, ProviderDef
 export type AdapterResult = {
   readonly state: 'available';
   readonly metrics: QuotaMetric[];
-} | AdapterFailure;
-export declare function runQuotaAdapter(provider: QuotaProviderId, secret: string | undefined, shutdownSignal: AbortSignal, queryCli?: typeof queryAlibabaTokenPlanUsage, adapterContext?: QuotaAdapterContext): Promise<AdapterResult>;
+  readonly routeKind?: 'api_key' | 'console_oauth';
+} | (AdapterFailure & {
+  readonly routeKind?: 'api_key' | 'console_oauth';
+});
+export declare function runQuotaAdapter(provider: QuotaProviderId, secret: string | undefined, shutdownSignal: AbortSignal, queryCli?: typeof queryAlibabaTokenPlanUsage, adapterContext?: QuotaAdapterContext, fallbackSecret?: string): Promise<AdapterResult>;
 //#endregion
 //# sourceMappingURL=quota-adapters.d.ts.map

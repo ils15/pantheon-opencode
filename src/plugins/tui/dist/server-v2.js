@@ -1,4 +1,4 @@
-import { n as quotaRpc, t as QUOTA_PROVIDER_IDS } from "./quota-rpc-2qxaOtEa.js";
+import { n as quotaRpc, t as QUOTA_PROVIDER_IDS } from "./quota-rpc-UL2HuFRJ.js";
 import { queryAlibabaTokenPlanUsage } from "./quota-cli.js";
 import { QUOTA_PROVIDER_CATALOG, isOpenAICodexOAuthMethod, isOpenCodeConsoleOAuthMethod, runQuotaAdapter } from "./quota-adapters.js";
 import { Plugin } from "@opencode/plugin";
@@ -150,8 +150,8 @@ function isApprovedOpenCodeConsoleServer(metadata) {
 	if (url.hostname === "opencode.ai") return path === "/console";
 	return url.hostname === "console.opencode.ai" && (path === "" || path === "/console");
 }
-function routeKindField(provider, credential) {
-	return provider === "opencode-go" ? { route_kind: credential?.routeKind ?? "none" } : {};
+function routeKindField(provider, credential, effectiveRouteKind) {
+	return provider === "opencode-go" ? { route_kind: effectiveRouteKind ?? credential?.routeKind ?? "none" } : {};
 }
 /**
 * Resolve only listed, selected credential connections in the closed provider
@@ -197,6 +197,75 @@ function createCredentialResolver(context) {
 		if (definition.source === "local-cli") return {};
 		try {
 			const listedConnections = await listCredentialConnections();
+			if (provider === "opencode-go") {
+				const activeListed = async (integrationID) => {
+					const connections = listedConnections.get(integrationID);
+					if (!connections || connections.size === 0) return void 0;
+					const active = await context.integration.connection.active(integrationID);
+					if (active?.type !== "credential" || !connections.has(`${active.id}\0${active.method}`)) return;
+					return active;
+				};
+				let consoleCredential;
+				let unsupportedConsoleLogin = false;
+				if (!goKeyOnly) {
+					let activeConsole;
+					try {
+						activeConsole = await activeListed("opencode");
+					} catch {}
+					if (activeConsole?.method === "oauth" && activeConsole.status?.status !== "needs_auth") try {
+						const resolved = await context.integration.connection.resolve(activeConsole);
+						if (resolved?.type === "oauth" && resolved.access.trim().length > 0 && isOpenCodeConsoleOAuthMethod(resolved.methodID) && isApprovedOpenCodeConsoleServer(resolved.metadata)) {
+							const adapterContext = projectAdapterContext(provider, resolved.metadata, resolved.methodID);
+							if (adapterContext) consoleCredential = {
+								method: "oauth",
+								secret: resolved.access.trim(),
+								routeKind: "console_oauth",
+								adapterContext
+							};
+							else unsupportedConsoleLogin = true;
+						} else if (resolved?.type === "oauth") unsupportedConsoleLogin = true;
+					} catch {}
+					else if (activeConsole?.method === "oauth") unsupportedConsoleLogin = activeConsole.status?.status !== "needs_auth";
+				}
+				let activePrimary;
+				try {
+					activePrimary = await activeListed("opencode-go");
+				} catch {}
+				const unsupportedPrimaryLogin = activePrimary !== void 0 && activePrimary.method !== "key";
+				let apiKey;
+				for (const integrationID of ["opencode-go", "opencode"]) {
+					let active;
+					try {
+						active = integrationID === "opencode-go" ? activePrimary : await activeListed(integrationID);
+					} catch {
+						continue;
+					}
+					if (!active) continue;
+					if (goKeyOnly && active.method !== "key") return {};
+					if (active.method !== "key" || active.status?.status === "needs_auth") continue;
+					try {
+						const resolved = await context.integration.connection.resolve(active);
+						if (resolved?.type === "key" && resolved.key.trim().length > 0) {
+							apiKey = resolved.key.trim();
+							break;
+						}
+					} catch {}
+				}
+				if (consoleCredential) return {
+					...consoleCredential,
+					...apiKey ? { fallbackSecret: apiKey } : {}
+				};
+				if (apiKey) return {
+					method: "key",
+					secret: apiKey,
+					routeKind: "api_key"
+				};
+				if (unsupportedConsoleLogin || unsupportedPrimaryLogin) return {
+					method: "unsupported",
+					routeKind: "unsupported"
+				};
+				return {};
+			}
 			const integrationIDs = [definition.integrationID, ...definition.fallbackIntegrationIDs ?? []];
 			for (const integrationID of integrationIDs) {
 				const integrationConnections = listedConnections.get(integrationID);
@@ -205,45 +274,24 @@ function createCredentialResolver(context) {
 				if (active?.type !== "credential") continue;
 				if (!integrationConnections.has(`${active.id}\0${active.method}`)) continue;
 				if (goKeyOnly && active.method !== "key") return {};
-				if (active.status?.status === "needs_auth") {
-					if (provider === "opencode-go") return {};
-					continue;
-				}
-				const isGoConsoleOAuth = provider === "opencode-go" && integrationID === "opencode" && active.method === "oauth";
+				if (active.status?.status === "needs_auth") continue;
 				if (active.method !== "oauth" && active.method !== "key") continue;
 				if (!definition.methods.includes(active.method)) continue;
 				const resolved = await context.integration.connection.resolve(active);
 				if (active.method === "oauth" && resolved?.type === "oauth" && resolved.access.trim().length > 0) {
-					const accessToken = provider === "opencode-go" ? resolved.access.trim() : resolved.access;
+					const accessToken = resolved.access;
 					if (!accessToken) return {};
-					if (provider === "opencode-go" && !isGoConsoleOAuth) return {
-						method: "unsupported",
-						routeKind: "unsupported"
-					};
-					if ((provider === "opencode-go" || provider === "opencode-zen") && !isApprovedOpenCodeConsoleServer(resolved.metadata)) return {
-						method: "unsupported",
-						...provider === "opencode-go" ? { routeKind: "unsupported" } : {}
-					};
+					if (provider === "opencode-zen" && !isApprovedOpenCodeConsoleServer(resolved.metadata)) return { method: "unsupported" };
 					const adapterContext = projectAdapterContext(provider, resolved.metadata, resolved.methodID);
-					if (provider === "opencode-go" && !adapterContext) return {
-						method: "unsupported",
-						routeKind: "unsupported"
-					};
 					return {
 						method: "oauth",
 						...definition.adapter ? { secret: accessToken } : {},
-						...provider === "opencode-go" ? { routeKind: "console_oauth" } : {},
 						...adapterContext ? { adapterContext } : {}
 					};
 				}
 				if (active.method === "key" && resolved?.type === "key") {
 					if (resolved.key.trim().length === 0) return {};
 					if (!definition.adapter) return { method: "key" };
-					if (definition.adapter === "opencode-go") return {
-						method: "key",
-						secret: resolved.key.trim(),
-						routeKind: "api_key"
-					};
 					if (resolved.key.length > 0) return {
 						method: "key",
 						secret: resolved.key
@@ -398,7 +446,7 @@ function createAdapterExecutor(shutdownSignal, queryCli) {
 		});
 	}
 	return {
-		async run(provider, secret, requestSignal, adapterContext) {
+		async run(provider, secret, requestSignal, adapterContext, fallbackSecret) {
 			requestSignal.throwIfAborted();
 			const now = Date.now();
 			const until = cooldown.get(provider);
@@ -407,10 +455,7 @@ function createAdapterExecutor(shutdownSignal, queryCli) {
 				retryAfterMs: until - now
 			};
 			const cached = cache.get(provider);
-			if (cached && cached.expiresAt > now) return {
-				state: "available",
-				metrics: cached.metrics
-			};
+			if (cached && cached.expiresAt > now) return cached.result;
 			const existing = pending.get(provider);
 			if (existing && !existing.controller.signal.aborted) return subscribe(existing, requestSignal);
 			if (existing) pending.delete(provider);
@@ -431,14 +476,14 @@ function createAdapterExecutor(shutdownSignal, queryCli) {
 			entry.promise = acquireRequest(signal).then(async (release) => {
 				if (!release) return { reason: "provider_error" };
 				try {
-					return await runQuotaAdapter(provider, secret, signal, queryCli, adapterContext);
+					return await runQuotaAdapter(provider, secret, signal, queryCli, adapterContext, fallbackSecret);
 				} finally {
 					release();
 				}
 			}).then((result) => {
 				if (generation === startedAtGeneration && !signal.aborted && "state" in result) cache.set(provider, {
 					expiresAt: Date.now() + ADAPTER_CACHE_TTL_MS,
-					metrics: result.metrics
+					result
 				});
 				else if (generation === startedAtGeneration && "reason" in result && result.reason === "rate_limited" && result.retryAfterMs !== void 0) cooldown.set(provider, Date.now() + result.retryAfterMs);
 				return result;
@@ -517,7 +562,7 @@ async function getProviderStatus(resolver, adapters, requestSignal) {
 					...routeKindField(provider, credential),
 					metrics: []
 				};
-				const result = await adapters.run(provider, credential.secret, requestSignal, credential.adapterContext);
+				const result = await adapters.run(provider, credential.secret, requestSignal, credential.adapterContext, credential.fallbackSecret);
 				requestSignal.throwIfAborted();
 				if (!resolver.isCurrent(credentialGeneration)) return {
 					provider,
@@ -536,7 +581,7 @@ async function getProviderStatus(resolver, adapters, requestSignal) {
 					authentication: "connected",
 					state: "available",
 					reason: "none",
-					...routeKindField(provider, credential),
+					...routeKindField(provider, credential, result.routeKind),
 					metrics: result.metrics
 				};
 				return {
@@ -546,7 +591,7 @@ async function getProviderStatus(resolver, adapters, requestSignal) {
 					authentication: "connected",
 					state: "unavailable",
 					reason: result.reason,
-					...routeKindField(provider, credential),
+					...routeKindField(provider, credential, result.routeKind),
 					...result.retryAfterMs === void 0 ? {} : { retry_after_ms: Math.ceil(result.retryAfterMs) },
 					metrics: []
 				};

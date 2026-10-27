@@ -535,6 +535,14 @@ test('OpenCode Go request rejection does not claim the selected key is invalid',
   )
 })
 
+test('OpenCode Go no-subscription state is shown explicitly', () => {
+  const view = quotaUI.quotaSnapshotFromStatus({
+    providers: [status('opencode-go', 'connected', 'not_subscribed', 'unavailable')],
+  })
+
+  assert.equal(view.details[0].message, 'sem assinatura OpenCode Go nesta conta')
+})
+
 test('quota metrics remain distinct and used/remaining selection changes the primary quota value', () => {
   const metric = {
     kind: 'provider_quota',
@@ -1003,6 +1011,16 @@ test('quota window layout respects width, display mode and explicit reset only',
   assert.match(wide.join(' '), /2 requests/)
   assert.match(wide.join(' '), /80% restante/)
   assert.match(wide.join(' '), /\(1h\)/)
+  assert.ok(wide.some((line) => line.includes('Resets on 1970-01-01 01:00 UTC')))
+  const sidebar = quotaUI.quotaWindowLines(
+    { ...metric, unit: '%', used: 20, remaining: 80 },
+    'remaining',
+    34,
+    0,
+    true,
+  )
+  assert.ok(sidebar.some((line) => line.includes('Resets on 1970-01-01 01:00 UTC')))
+  assert.ok(sidebar.every((line) => quotaUI.cellWidth(line) <= 34))
   assert.match(quotaUI.quotaWindowLines(metric, 'used', 48, 0).join(' '), /2 requests/)
   assert.ok(quotaUI.quotaWindowLines(metric, 'remaining', 24, 0).length >= 2)
   assert.ok(quotaUI.quotaWindowLines(metric, 'remaining', 10, 0).length >= 3)
@@ -1010,10 +1028,21 @@ test('quota window layout respects width, display mode and explicit reset only',
     quotaUI.quotaWindowLines({ ...metric, resetsAt: undefined }, 'remaining', 48, 0).join(' '),
     /\(/,
   )
-  assert.match(
-    quotaUI.quotaWindowLines(metric, 'remaining', 48, 3_600_000).join(' '),
-    /aguardando atualização/,
+  assert.doesNotMatch(
+    quotaUI.quotaWindowLines({ ...metric, resetsAt: undefined }, 'remaining', 48, 0).join(' '),
+    /Resets on/,
   )
+  const expired = quotaUI.quotaWindowLines(metric, 'remaining', 48, 3_600_000).join(' ')
+  assert.match(expired, /aguardando atualização/)
+  assert.doesNotMatch(expired, /Resets on/)
+  const emptyGauge = quotaUI.quotaWindowLines(
+    { ...metric, used: 0, remaining: 100, resetsAt: undefined },
+    'remaining',
+    34,
+    0,
+    true,
+  )
+  assert.ok(emptyGauge.some((line) => line.includes('░░░░')))
 })
 
 test('metric rows align values when possible and preserve long labels and states', () => {

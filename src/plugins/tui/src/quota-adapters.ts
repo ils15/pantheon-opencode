@@ -70,6 +70,7 @@ export type QuotaMetric =
 
 export type AdapterFailureReason =
   | 'provider_error'
+  | 'not_subscribed'
   | 'rate_limited'
   | 'unauthorized'
   | 'forbidden'
@@ -349,8 +350,12 @@ export const QUOTA_PROVIDER_CATALOG: Record<QuotaProviderId, ProviderDefinition>
 }
 
 export type AdapterResult =
-  | { readonly state: 'available'; readonly metrics: QuotaMetric[] }
-  | AdapterFailure
+  | {
+      readonly state: 'available'
+      readonly metrics: QuotaMetric[]
+      readonly routeKind?: 'api_key' | 'console_oauth'
+    }
+  | (AdapterFailure & { readonly routeKind?: 'api_key' | 'console_oauth' })
 
 const MAX_RESPONSE_BYTES = 64 * 1024
 const REQUEST_TIMEOUT_MS = 5_000
@@ -360,6 +365,7 @@ class SafeAdapterError extends Error {
   constructor(
     readonly reason: AdapterFailureReason,
     readonly retryAfterMs?: number,
+    readonly httpStatus?: number,
   ) {
     super(reason)
   }
@@ -490,6 +496,10 @@ async function requestJson(
       retryAfterMs(response.headers.get('retry-after')) ?? 30_000,
     )
   }
+  if (response.status === 404) {
+    await response.body?.cancel()
+    throw new SafeAdapterError('provider_error', undefined, 404)
+  }
   if (!response.ok) {
     await response.body?.cancel()
     throw new SafeAdapterError('provider_error')
@@ -556,6 +566,7 @@ function ollamaMetrics(payload: unknown): QuotaMetric[] {
     const remainingPercent = finiteAmount(item.remaining_percent)
     if (remainingPercent === undefined || remainingPercent > 100)
       throw new SafeAdapterError('provider_error')
+    const resetsAt = isoResetAt(item.resets_at)
     metrics.push({
       kind: 'provider_quota',
       used: 100 - remainingPercent,
@@ -563,6 +574,7 @@ function ollamaMetrics(payload: unknown): QuotaMetric[] {
       unit: '%',
       label: window === 'session' ? 'Session quota' : 'Weekly quota',
       period: window,
+      ...(resetsAt === undefined ? {} : { resetsAt }),
     })
   }
   if (metrics.length === 0) throw new SafeAdapterError('provider_error')
@@ -740,12 +752,14 @@ function glmMetrics(payload: unknown, provider: 'zai' | 'zhipu'): QuotaMetric[] 
         : limit.unit === 6
           ? 'Weekly coding-plan quota'
           : 'Coding-plan quota'
+    const resetsAt = epochResetAt(limit.nextResetTime, 'milliseconds')
     metrics.push({
       kind: 'provider_quota',
       used: percentage,
       remaining: 100 - percentage,
       unit: '%',
       label,
+      ...(resetsAt === undefined ? {} : { resetsAt }),
     })
   }
   if (metrics.length === 0) throw new SafeAdapterError('provider_error')
@@ -906,6 +920,16 @@ function percentage(value: unknown): number | undefined {
   return parsed !== undefined && parsed <= 100 ? parsed : undefined
 }
 
+function isoResetAt(value: unknown): number | undefined {
+  return typeof value === 'string' && isValidResetDate(value) ? Date.parse(value) : undefined
+}
+
+function epochResetAt(value: unknown, unit: 'seconds' | 'milliseconds'): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined
+  const timestamp = unit === 'seconds' ? value * 1_000 : value
+  return Number.isFinite(new Date(timestamp).getTime()) ? timestamp : undefined
+}
+
 function anthropicMetrics(payload: unknown): QuotaMetric[] {
   if (!isRecord(payload)) throw new SafeAdapterError('provider_error')
   const metrics: QuotaMetric[] = []
@@ -927,6 +951,7 @@ function anthropicMetrics(payload: unknown): QuotaMetric[] {
         value.percentUsed,
     )
     if (used === undefined) throw new SafeAdapterError('provider_error')
+    const resetsAt = isoResetAt(value.resets_at)
     metrics.push({
       kind: 'provider_quota',
       used,
@@ -934,6 +959,7 @@ function anthropicMetrics(payload: unknown): QuotaMetric[] {
       unit: '%',
       label: window.label,
       period: window.period,
+      ...(resetsAt === undefined ? {} : { resetsAt }),
     })
   }
   const extra = payload.extra_usage
@@ -965,6 +991,7 @@ function copilotMetrics(payload: unknown): QuotaMetric[] {
   }
   const total = finiteAmount(quota.entitlement)
   const remaining = finiteAmount(quota.quota_remaining ?? quota.remaining)
+  const resetsAt = isoResetAt(payload.quota_reset_date_utc)
   if (total !== undefined && total > 0 && remaining !== undefined && remaining <= total) {
     return [
       {
@@ -974,6 +1001,7 @@ function copilotMetrics(payload: unknown): QuotaMetric[] {
         unit: 'premium interactions',
         label: 'Copilot user quota',
         period: 'month',
+        ...(resetsAt === undefined ? {} : { resetsAt }),
       },
     ]
   }
@@ -988,6 +1016,7 @@ function copilotMetrics(payload: unknown): QuotaMetric[] {
           unit: '%',
           label: 'Copilot user quota',
           period: 'month',
+          ...(resetsAt === undefined ? {} : { resetsAt }),
         },
       ]
     }
@@ -1110,10 +1139,20 @@ function isValidResetDate(value: string): boolean {
 }
 
 function openCodeGoConsoleMetrics(payload: unknown): QuotaMetric[] {
-  if (!isRecord(payload) || !isRecord(payload.access) || !isRecord(payload.access.meters)) {
+  if (!isRecord(payload)) {
     throw new SafeAdapterError('invalid_response')
   }
+  if (!Object.hasOwn(payload, 'access') || payload.access === null) {
+    throw new SafeAdapterError('not_subscribed')
+  }
+  if (!isRecord(payload.access)) throw new SafeAdapterError('invalid_response')
+  if (!isRecord(payload.access.meters)) throw new SafeAdapterError('invalid_response')
 
+  const accessEndsAt = payload.access.endsAt
+  const monthlyFallbackReset =
+    typeof accessEndsAt === 'string' && isValidResetDate(accessEndsAt)
+      ? Date.parse(accessEndsAt)
+      : undefined
   const meters = payload.access.meters
   const windows = [
     { key: 'fiveHour', label: '5-hour quota', period: 'rolling' },
@@ -1129,10 +1168,11 @@ function openCodeGoConsoleMetrics(payload: unknown): QuotaMetric[] {
     if (limit === undefined || used === undefined) throw new SafeAdapterError('invalid_response')
 
     const resetValue = meter.resetsAt
-    const resetsAt =
+    const meterReset =
       typeof resetValue === 'string' && isValidResetDate(resetValue)
         ? Date.parse(resetValue)
         : undefined
+    const resetsAt = meterReset ?? (window.period === 'monthly' ? monthlyFallbackReset : undefined)
 
     const usedPercent =
       limit === 0
@@ -1182,6 +1222,7 @@ function openAIMetrics(payload: unknown): QuotaMetric[] {
         : period === 'week'
           ? 'Weekly ChatGPT quota'
           : window.fallback
+    const resetsAt = epochResetAt(value.reset_at, 'seconds')
     metrics.push({
       kind: 'provider_quota',
       used,
@@ -1189,6 +1230,7 @@ function openAIMetrics(payload: unknown): QuotaMetric[] {
       unit: '%',
       label,
       period,
+      ...(resetsAt === undefined ? {} : { resetsAt }),
     })
   }
   if (metrics.length === 0) throw new SafeAdapterError('invalid_response')
@@ -1338,6 +1380,7 @@ export async function runQuotaAdapter(
   shutdownSignal: AbortSignal,
   queryCli: typeof queryAlibabaTokenPlanUsage = queryAlibabaTokenPlanUsage,
   adapterContext: QuotaAdapterContext = {},
+  fallbackSecret?: string,
 ): Promise<AdapterResult> {
   const definition = QUOTA_PROVIDER_CATALOG[provider]
   if (!definition.adapter) return { reason: 'provider_error' }
@@ -1415,14 +1458,48 @@ export async function runQuotaAdapter(
       }
       if (isOpenCodeConsoleOAuthMethod(adapterContext?.methodID)) {
         const headers = adapterContext.orgId ? { 'x-org-id': adapterContext.orgId } : {}
-        const payload = await requestJson(
-          OPENCODE_GO_CONSOLE_STATUS_URL,
-          secret,
-          shutdownSignal,
-          'bearer',
-          { headers },
-        )
-        return available(openCodeGoConsoleMetrics(payload))
+        try {
+          const payload = await requestJson(
+            OPENCODE_GO_CONSOLE_STATUS_URL,
+            secret,
+            shutdownSignal,
+            'bearer',
+            { headers },
+          )
+          return { ...available(openCodeGoConsoleMetrics(payload)), routeKind: 'console_oauth' }
+        } catch (error) {
+          const failure =
+            error instanceof SafeAdapterError ? error : new SafeAdapterError('provider_error')
+          if (failure.reason === 'not_subscribed' || failure.httpStatus === 404) {
+            return { reason: 'not_subscribed', routeKind: 'console_oauth' }
+          }
+          if (!fallbackSecret || shutdownSignal.aborted) {
+            return {
+              reason: failure.reason,
+              ...(failure.retryAfterMs === undefined ? {} : { retryAfterMs: failure.retryAfterMs }),
+              routeKind: 'console_oauth',
+            }
+          }
+        }
+
+        try {
+          const payload = await requestJson(
+            OPENCODE_GO_KEY_USAGE_URL,
+            fallbackSecret,
+            shutdownSignal,
+            'bearer',
+            { headers: OPENCODE_GO_KEY_USAGE_HEADERS },
+          )
+          return { ...available(openCodeGoMetrics(payload)), routeKind: 'api_key' }
+        } catch (error) {
+          const failure =
+            error instanceof SafeAdapterError ? error : new SafeAdapterError('provider_error')
+          return {
+            reason: failure.reason,
+            ...(failure.retryAfterMs === undefined ? {} : { retryAfterMs: failure.retryAfterMs }),
+            routeKind: 'api_key',
+          }
+        }
       }
       const payload = await requestJson(
         OPENCODE_GO_KEY_USAGE_URL,
@@ -1431,7 +1508,7 @@ export async function runQuotaAdapter(
         'bearer',
         { headers: OPENCODE_GO_KEY_USAGE_HEADERS },
       )
-      return available(openCodeGoMetrics(payload))
+      return { ...available(openCodeGoMetrics(payload)), routeKind: 'api_key' }
     }
     if (definition.adapter === 'openai') {
       const payload = await requestJson(
