@@ -2127,6 +2127,16 @@ function syntheticHistoryPart(message: VisionHistoryMessage, text: string): Text
 }
 
 /**
+ * Result of a recursive sanitize pass: the (possibly rebuilt) value plus
+ * whether anything at or below it actually changed. Unchanged subtrees keep
+ * the ORIGINAL value by reference so host-owned instances (objects carrying
+ * methods like `.inline()`, class instances, etc.) are never replaced by
+ * plain-object copies — deep-copying them strips prototypes and crashes the
+ * host when it later calls methods on what should still be its own objects.
+ */
+type SanitizeResult = { value: unknown; changed: boolean }
+
+/**
  * Remove image-bearing parts before a provider serializer can turn them into
  * image_url content. This hook is deliberately synchronous in spirit: it only
  * reuses text cached by chat.message and never calls a vision tool/model.
@@ -2144,9 +2154,20 @@ export function sanitizeVisionHistory(
     const sessionID = historyMessage.info?.sessionID ?? historyMessage.sessionID ?? ''
     if (nativeVisionSessions.has(sessionID)) continue
     const descriptions = sessionVisionText.get(sessionID)
-    const sanitize = (value: unknown, inParts: boolean): unknown => {
-      if (Array.isArray(value)) return value.map((item) => sanitize(item, inParts))
-      if (!value || typeof value !== 'object') return value
+    const sanitize = (value: unknown, inParts: boolean): SanitizeResult => {
+      // Lazily-copied array: the original array is returned by reference
+      // until the first changed child forces a rebuild.
+      if (Array.isArray(value)) {
+        let items: unknown[] | null = null
+        for (let i = 0; i < value.length; i++) {
+          const result = sanitize(value[i], inParts)
+          if (!result.changed && !items) continue
+          items ??= value.slice(0, i)
+          items.push(result.value)
+        }
+        return items ? { value: items, changed: true } : { value, changed: false }
+      }
+      if (!value || typeof value !== 'object') return { value, changed: false }
 
       const raw = value as { type?: unknown; id?: unknown; mime?: unknown }
       const isImageUrl = raw.type === 'image_url'
@@ -2164,18 +2185,30 @@ export function sanitizeVisionHistory(
         const text =
           descriptions?.get(partID) ??
           'Imagem removida do histórico antes do envio ao provedor textual.'
-        return inParts ? syntheticHistoryPart(historyMessage, text) : { type: 'text', text }
+        return {
+          value: inParts ? syntheticHistoryPart(historyMessage, text) : { type: 'text', text },
+          changed: true,
+        }
       }
 
-      const copy: Record<string, unknown> = {}
-      for (const [key, child] of Object.entries(value)) {
-        copy[key] = sanitize(child, key === 'parts')
+      // Lazily-copied object: untouched subtrees keep their original value —
+      // including host class instances and objects with methods — so nothing
+      // loses its prototype unless a nested image part must be replaced.
+      const entries = Object.entries(value)
+      let copy: Record<string, unknown> | null = null
+      for (let i = 0; i < entries.length; i++) {
+        const [key, child] = entries[i] as [string, unknown]
+        const result = sanitize(child, key === 'parts')
+        if (!result.changed && !copy) continue
+        copy ??= Object.fromEntries(entries.slice(0, i))
+        copy[key] = result.value
       }
-      return copy
+      return copy ? { value: copy, changed: true } : { value, changed: false }
     }
 
-    const sanitized = sanitize(historyMessage, false) as VisionHistoryMessage
-    for (const [key, value] of Object.entries(sanitized)) {
+    const sanitized = sanitize(historyMessage, false)
+    if (!sanitized.changed) continue
+    for (const [key, value] of Object.entries(sanitized.value as VisionHistoryMessage)) {
       historyMessage[key] = value
     }
   }
