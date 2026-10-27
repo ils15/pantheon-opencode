@@ -56,7 +56,11 @@ release must be compared against. It runs two scenarios N times each,
 interleaved (non-interactive, one fresh sandbox directory per run), collects
 per-run metrics from `opencode.db` in READ-ONLY mode (tokens root + child
 sessions without double counting, tool calls per name, child-session count) and
-hook timings from the `[bench]` lines the plugin appends to `hooks.log`:
+hook timings from the `[bench]` lines the plugin appends to `hooks.log`. The
+read-only session collector also reports per-tool outcomes, execution duration,
+UTF-8 text-output byte counts, and nested Code Mode MCP/tool names and
+outcomes. It records aggregates only; tool inputs and returned text are not
+copied into benchmark reports:
 
 ```bash
 node bench/bin/bench.mjs            # 5 runs per scenario (A and B), ~1h
@@ -70,7 +74,14 @@ to overwrite an existing result, so the run identity lives in the file name.
 Scenario A performs real web research, so its variance is network-dependent and
 recorded per run.
 
-`reportVersion` remains `3`; token usage fields are unchanged and
+For the built-in paired Scenario B, the run must also create
+`bench-run-B.md` with a Markdown population table naming India, China, and the
+United States. A missing/invalid artifact is runtime-completed but task-ineligible
+and is excluded from performance summaries. Custom prompt files without a
+registered oracle report artifact status as unavailable. This prevents a
+zero-exit process with no deliverable from counting as a successful pair.
+
+`reportVersion` is `4`; token usage fields are unchanged and
 `tokens.sessionBreakdown` is an optional additive field. It belongs to the
 benchmark report in the unpublished `bench/` harness, not to the shipped
 `pantheon_cost` tool. That tool aggregates by agent and phase in V1; V2 reports
@@ -187,6 +198,16 @@ oracle audit, limitations, and per-run data are in
 [`f3a-root-paired-2026-10-14.md`](https://github.com/ils15/pantheon-opencode/blob/main/bench/results/f3a-root-paired-2026-10-14.md)
 and
 [`phase3-root-paired-20261014.json`](https://github.com/ils15/pantheon-opencode/blob/main/bench/results/phase3-root-paired-20261014.json).
+
+### Harness optimization: Vasco task (2026-10-27)
+
+One historical CLI/ACP task pair is not sufficient to establish a transport or
+route winner. The CLI made four `npm test` calls, but their combined shell time
+was only about 5.2 seconds; the ACP active-time record also differs from its
+database session span. Keep route, memory, and compaction behavior unchanged
+until paired measurements resolve those gaps. The full observations and
+limitations are in the
+[Vasco baseline report](https://github.com/ils15/pantheon-opencode/blob/main/bench/results/harness-optimization-vasco-baseline-2026-10-27.md).
 
 ### Bounded workspace reads (F3b)
 

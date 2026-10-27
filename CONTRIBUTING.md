@@ -89,11 +89,28 @@ Other rules:
 
 ## Local checks
 
+For a code change, start with the smallest test that covers the changed
+behavior. Add one focused regression test for a bug fix when existing coverage
+does not already catch it. Expand to broader checks when the change crosses
+layers, affects a strong safety gate or required coverage, or a CI/release gate
+requires it. `npm test` runs the full repository suite; it is not the default
+after every edit. Documentation-only and formatting-only changes do not need
+invented tests.
+
+Examples of focused checks:
+
+```bash
+node --test tests/<focused-test>.test.mjs
+tsx tests/pantheon/<focused-test>.test.ts
+python3 -m pytest -q tests/test_<focused_test>.py
+```
+
 ```bash
 npm run lint          # biome
 npm run typecheck     # tsc --noEmit
-npm test              # test:ci + test:node + test:ts
+npm test              # full test:ci + test:node + test:ts suite; CI/release or broad/high-risk changes
 npm run docs:lint
+npm run skills:lock   # refresh canonical skill content digests
 ```
 
 Tests that require a real install are opt-in via `npm run test:install`.

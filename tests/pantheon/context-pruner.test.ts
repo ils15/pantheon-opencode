@@ -700,6 +700,29 @@ await testAsync('wiring: compaction shape drift logs once per session', async ()
   assert.ok(lines.some((line) => line.includes('malformed: unexpected message shape')))
 })
 
+await testAsync('wiring: compaction logs one bounded no-op reason per session', async () => {
+  const handler = await setupCompaction({})
+  assert.equal(typeof handler, 'function')
+
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-pruner-noop-'))
+  process.chdir(dir)
+  const event = {
+    sessionID: 'ses_pruner_noop_once',
+    messages: [user('private user text'), assistantText('private assistant text')],
+  }
+
+  await handler?.(event)
+  await handler?.(event)
+
+  const log = readFileSync(join(dir, '.pantheon', 'logs', 'hooks.log'), 'utf8')
+  const lines = log
+    .split('\n')
+    .filter((line) => line.includes('[context-pruner] site=compaction skip=no-candidates'))
+  assert.equal(lines.length, 1)
+  assert.match(lines[0] ?? '', /messages=0 parts=0 est_tokens_saved=0/)
+  assert.doesNotMatch(log, /private user text|private assistant text/)
+})
+
 await testAsync(
   'wiring: the registered compaction handler returns a host-valid array',
   async () => {

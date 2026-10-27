@@ -16,8 +16,12 @@ permission:
     "*": deny
 temperature: 0.2
 skills:
-  - git-workflow-and-versioning
   - artifact-management
+  - git-workflow-and-versioning
+  - loop-engineering
+  - reflect
+  - simplify
+  - worktrees
 mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_recall]

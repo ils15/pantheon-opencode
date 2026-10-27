@@ -1,9 +1,6 @@
 ---
 name: agent-coordination
 description: "Multi-agent orchestration with model routing, category delegation, and sprint management. Use for coordinating Pantheon agents."
-context: fork
-globs: []
-alwaysApply: false
 ---
 
 # Agent Coordination

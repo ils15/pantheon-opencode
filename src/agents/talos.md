@@ -12,6 +12,10 @@ permission:
 temperature: 0.3
 skills:
   - incremental-implementation
+  - loop-engineering
+  - reflect
+  - simplify
+  - worktrees
 mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_recall]

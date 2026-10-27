@@ -149,8 +149,8 @@ export function isPantheonV2Reference(ref) {
  * Whether the installed Pantheon V2 entry can receive plugin `options`.
  *
  * The host hands a plugin its `options` only from the OBJECT form
- * (`{ package, options }`); a bare string entry leaves `ctx.options` empty, and
- * `context_pruner` / `memory_injection` read exactly that object. A fresh
+ * (`{ package, options }`); a bare string entry leaves `ctx.options` empty.
+ * `context_pruner` is the remaining opt-in that reads that object. A fresh
  * install that emitted a bare string therefore had no reachable opt-in switch
  * at all — this is the check that reports it after install.
  *
@@ -183,8 +183,7 @@ export function describePluginOptionsReachability(plugins) {
       reachable: true,
       form: 'object',
       detail:
-        'at least one Pantheon V2 entry carries an "options" object, so context_pruner and ' +
-        'memory_injection can be configured there' +
+        'at least one Pantheon V2 entry carries an "options" object, so context_pruner can be configured there' +
         (extra.length === 0
           ? ''
           : `; ${extra.length} other Pantheon entr${extra.length === 1 ? 'y' : 'ies'} in the same list cannot carry options`),
@@ -197,9 +196,9 @@ export function describePluginOptionsReachability(plugins) {
     form: stringOnly ? 'string' : 'object',
     detail: stringOnly
       ? 'the Pantheon V2 entry is a bare string, so the host passes no options and ' +
-        'context_pruner/memory_injection cannot be enabled; the object form ' +
+        'context_pruner cannot be enabled; the object form ' +
         '{"package": …, "options": {…}} makes them reachable'
       : 'the Pantheon V2 entry has no "options" object, so the host passes an empty ' +
-        'options bag and context_pruner/memory_injection stay at their defaults',
+        'options bag and context_pruner stays at its default',
   }
 }

@@ -18,9 +18,13 @@ mcp_tools:
   pantheon-code-mode: [execute_code_script]
 skills:
   - artifact-management
-  - memory-bank
   - context-compression
+  - loop-engineering
+  - memory-bank
+  - reflect
   - session-goal
+  - simplify
+  - worktrees
 permission:
   bash: deny
   read: allow
@@ -73,52 +77,16 @@ If asked to edit code, refuse and redirect to the appropriate implementation age
 ##  TOOLS NOT AVAILABLE
 - bash - forbidden
 
-##  Context Compression Handler (Level 2)
+## Context and Checkpoint Guidance
 
-Mnemosyne executes the expanded compression pipeline. When Zeus delegates compression:
-
-### Compression Pipeline
-1. **Receive**: Zeus sends batch with:
-   - Subtask_summaries with priority scores (CRITICAL/HIGH/MEDIUM/LOW)
-   - Semantic summaries for CRITICAL/HIGH entries
-   - Cross-references to add (endpoints, tables, decisions)
-   - IMPL/REVIEW artifacts to archive
-   - Next phase agent info
-
-2. **Privacy check**: Never store secrets, credentials, or tokens in durable memory. The current `memory_store` handler stores submitted values and metadata; automatic regex scrubbing/redaction is not guaranteed. Omit sensitive content or redact it before storing.
-
-3. **Write ZZ artifact**: Create `.pantheon/memory-bank/.tmp/ZZ-phase{N}-context.md` with:
-   - From/To agent info
-   - Budget allocated/used
-   - CRITICAL entries (expanded 3-line summaries)
-   - HIGH entries (2-line summaries)
-   - MEDIUM entries (1-line table rows)
-   - Cross-references
-
-4. **Update 01-active-context.md**: Append compressed entries to `## Completed Phases` section
-   - CRITICAL: expanded (3 lines + summary)
-   - HIGH: standard (2 lines)
-    - MEDIUM: 1-line | LOW: 0.5-line (filename only)
-   - Apply budget allocation (priority-greedy)
-
-5. **Archive IMPL/REVIEW**: Append to `02-progress-log.md` (same as Level 1)
-
-6. **Update Cross-References**:
-   - Append new entries to `_xref/index.md`
-   - Increment `_xref/_next_id.json`
-
-7. **Optional durable memory**: Only when explicitly requested and the result is reusable across sessions, store one concise top-level decision/fact. Do not index every compressed entry, phase result, or artifact.
-
-8. **Report**: Return the compression summary and any unresolved items; do not report memory-index counts unless an explicit store was requested.
-
-### Write Protocol
-- Atomic write: .tmp → fsync → validate → rename
-- Secret handling: omit or manually redact secrets before durable storage; do not rely on automatic MCP scrubbing.
-
-### Safety
-- NEVER compress ADR notes, active PLAN, NEEDS_REVISION/FAILED reviews
-- NEVER write over existing entries (idempotency by date+phase+agent hash)
-- NEVER delete _xref/ entries (append-only)
+OpenCode's native compaction owns summarizing the active conversation. Do not
+run a second phase-scoring, indexing, or transcript-copy pipeline. Use
+`context_save` only for a concise checkpoint when the user requests one or the
+task is expected to resume in another session; use `context_get` when resuming.
+Keep the objective, current phase, completed work, next step, decisions,
+blockers, and uncertain external outcomes. Do not save routine phase summaries,
+tool logs, transcripts, or secrets. Durable `memory_store` follows the explicit
+request policy below and remains separate from session checkpoints.
 
 ##  Recall Handler (Level 3)
 
@@ -139,7 +107,9 @@ Mnemosyne recalls stored entries with the `memory_search` MCP tool:
 ```
 
 **Integration with compress_context:**
-Do not store each compressed entry automatically. Persist only one concise, reusable outcome when explicitly requested.
+Native OpenCode compaction owns the active conversation. Do not create a Memory
+Bank artifact or durable entry for each compacted phase. Persist a reusable
+outcome only under the explicit memory-store policy.
 
 **Integration with Close sprint:**
 When `Close sprint` is called, do not create a durable-memory copy of temporary artifacts unless explicitly requested.
@@ -157,8 +127,8 @@ Use this only when the user or Zeus explicitly asks to preserve a reusable resul
 
 `pantheon-memory` stores durable SQLite entries with no entry TTL. Its search is
 FTS5/BM25 lexical matching only, with no semantic/vector fallback. Never store
-secrets, credentials, or tokens: the MCP stores submitted values and metadata
-without guaranteed automatic scrubbing.
+secrets, credentials, or tokens: automatic regex scrubbing/redaction is not guaranteed.
+The MCP stores submitted values and metadata.
 
 **Command:** `@mnemosyne Store <concise reusable result>`
 
@@ -172,7 +142,7 @@ without guaranteed automatic scrubbing.
 - Continue through explicitly requested memory-bank tasks
 - Do not start Quick-index or persistence operations automatically
 -  Stop before destructive memory operations (delete, cleanup, compress with force)
-- For context compression pipeline: auto-continue through all 8 steps
+- Native context compaction does not trigger a separate memory workflow
 - For Sprint close: auto-continue through final index → wipe .tmp/ → update progress
 - Partial results OK — memory operations are transactional and safe to interrupt
 

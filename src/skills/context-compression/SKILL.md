@@ -1,9 +1,6 @@
 ---
 name: context-compression
 description: "Use only for an explicit request to compact or preserve context; prefer native OpenCode compaction and minimal resumable checkpoints."
-context: fork
-globs: ["**/01-active-context.md", "**/02-progress-log.md"]
-alwaysApply: false
 ---
 
 # Context and Checkpoint Guidance

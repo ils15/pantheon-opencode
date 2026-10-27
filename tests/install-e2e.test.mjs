@@ -685,6 +685,31 @@ test('V2 agent MCP permissions follow mcp_tools allowlists', async () => {
   }
 })
 
+test('V1 and V2 agents receive only the skills declared in canonical frontmatter', async () => {
+  for (const generation of ['v1', 'v2']) {
+    const target = mkdtempSync(join(tmpdir(), `pantheon-agent-skills-${generation}-`))
+    try {
+      const config = await runInstall(target, generation)
+      const agents = generation === 'v1' ? config.agent : config.agents
+      if (generation === 'v1') {
+        assert.equal(agents.zeus.permission.skill['*'], 'deny')
+        assert.equal(agents.zeus.permission.skill['agent-coordination'], 'allow')
+        assert.equal(agents.zeus.permission.skill.simplify, 'allow')
+        assert.equal(agents.zeus.permission.skill['code-review-checklist'], undefined)
+      } else {
+        const rules = agents.zeus.permissions.filter((rule) => rule.action === 'skill')
+        const effect = (skill) => rules.findLast((rule) => rule.resource === skill)?.effect
+        assert.equal(effect('*'), 'deny')
+        assert.equal(effect('agent-coordination'), 'allow')
+        assert.equal(effect('simplify'), 'allow')
+        assert.equal(effect('code-review-checklist'), undefined)
+      }
+    } finally {
+      rmSync(target, { recursive: true, force: true })
+    }
+  }
+})
+
 test('manual goal tools have exact per-agent grants in generated V1 and V2 configs', async () => {
   const goalTools = ['goal_create', 'goal_get', 'goal_update', 'goal_done']
   const expectedFor = (agent) => {

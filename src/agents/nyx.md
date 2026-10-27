@@ -14,8 +14,12 @@ permission:
     "*": deny
 temperature: 0.1
 skills:
-  - security-hardening
   - auto-continue
+  - loop-engineering
+  - reflect
+  - security-hardening
+  - simplify
+  - worktrees
 mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_search]

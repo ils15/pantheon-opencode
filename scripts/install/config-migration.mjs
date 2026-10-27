@@ -575,8 +575,8 @@ export function validateMcpV1toV2Source(mcpConfig) {
  * The server names are arbitrary — a user calls theirs whatever they like, and
  * which MCP servers exist is entirely their configuration, never ours.
  *
- * V1: { myserver: { type: "remote", url: "...", enabled: true, timeout: 30000 } }
- * V2 installer output: { myserver: { type: "remote", url: "...", enabled: true } }
+ * V1: { myserver: { type: "remote", url: "...", enabled: true } }
+ * V2: { servers: { myserver: { type: "remote", url: "...", disabled: false } } }
  *
  * V2's MCP schema stores named servers under `mcp.servers`; V1's flat map is
  * wrapped during migration. A pre-existing V2 wrapper is retained in place,
@@ -607,13 +607,7 @@ function convertMcpV1toV2(mcpConfig) {
     if (Object.hasOwn(servers, name)) {
       throw new Error('Conflicting flat and nested MCP server entries cannot be merged safely.')
     }
-    const srv = { ...serverConfig }
-
-    // Normalize legacy V2's disabled flag to OpenCode 1.18.x's enabled flag.
-    if ('disabled' in srv) {
-      srv.enabled = !srv.disabled
-      delete srv.disabled
-    }
+    const srv = normalizeMcpServerFlags(serverConfig, 'v2')
 
     // Normalize legacy V2's split timeout to the V1/V2-compatible number.
     if (srv.timeout !== undefined && srv.timeout !== null) {
@@ -632,12 +626,52 @@ function convertMcpV1toV2(mcpConfig) {
 }
 
 /**
+ * Normalize the V1 `enabled` and V2 `disabled` spellings without guessing
+ * when both are present. OpenCode V2 connects configured servers by default;
+ * `disabled: true` is the native opt-out.
+ *
+ * @param {object} serverConfig
+ * @param {'v1' | 'v2'} targetVersion
+ * @returns {object}
+ */
+function normalizeMcpServerFlags(serverConfig, targetVersion) {
+  const srv = { ...serverConfig }
+  const hasEnabled = Object.hasOwn(srv, 'enabled')
+  const hasDisabled = Object.hasOwn(srv, 'disabled')
+  if (hasEnabled && typeof srv.enabled !== 'boolean') {
+    throw new TypeError('MCP server enabled must be a boolean.')
+  }
+  if (hasDisabled && typeof srv.disabled !== 'boolean') {
+    throw new TypeError('MCP server disabled must be a boolean.')
+  }
+  if (hasEnabled && hasDisabled && srv.enabled === srv.disabled) {
+    throw new TypeError('Conflicting MCP enabled and disabled flags.')
+  }
+
+  if (targetVersion === 'v2') {
+    if (hasEnabled) {
+      srv.disabled = !srv.enabled
+      delete srv.enabled
+    }
+  } else if (hasDisabled) {
+    srv.enabled = !srv.disabled
+    delete srv.disabled
+  }
+  return srv
+}
+
+/**
  * Convert V2 MCP config back to V1.
  */
 function convertMcpV2toV1(mcpConfig) {
   if (!mcpConfig || typeof mcpConfig !== 'object') return mcpConfig
-
-  return convertMcpV1toV2(mcpConfig)?.servers ?? mcpConfig
+  const v2Servers = convertMcpV1toV2(mcpConfig)?.servers
+  if (!isPlainObject(v2Servers)) return mcpConfig
+  const servers = {}
+  for (const [name, config] of Object.entries(v2Servers)) {
+    setOwn(servers, name, normalizeMcpServerFlags(config, 'v1'))
+  }
+  return servers
 }
 
 // ---------------------------------------------------------------------------

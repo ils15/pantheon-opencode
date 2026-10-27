@@ -44,3 +44,15 @@ them; they are not invoked directly by filename. In particular:
 
 For the full command list, see the commands directory in the repository. For
 agent roles, see `docs/agents/README.md`.
+
+## Placeholder contract
+
+OpenCode expands `$ARGUMENTS` and positional values such as `$1` in slash
+commands. Those are command-runtime variables; prompt templates do not expand
+`$input`, shell variables, angle-bracket examples, or JSON braces.
+
+Manual prompt-template inputs use `{{UPPER_SNAKE_CASE}}`, for example
+`{{TASK_INPUT}}` or `{{TARGET_AGENT}}`. The command or agent that loads the
+template fills these fields before dispatch. This repository does not perform
+automatic placeholder substitution or escaping, so callers must insert values
+as data and preserve their intended quoting and boundaries.

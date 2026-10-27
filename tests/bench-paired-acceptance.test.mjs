@@ -15,6 +15,7 @@ function candidate(overrides = {}) {
     rootParentId: null,
     childrenCount: 0,
     toolCalls: {},
+    artifact: { status: 'ok' },
     agentRouting: { status: 'ok', sessions: [{ id: 'root', parentId: null, agent: 'talos' }] },
     instructions: {
       status: 'ok',
@@ -35,6 +36,7 @@ test('candidate eligibility requires completed root identity, no parent, no chil
     status: 'eligible',
     checks: {
       runtimeCompleted: true,
+      taskArtifactComplete: true,
       rootAgentMatches: true,
       rootHasNoParent: true,
       doubleInjectionProvenance: true,
@@ -83,6 +85,7 @@ test('routing-parity mode accepts recorded children but requires routing and too
     status: 'eligible',
     checks: {
       runtimeCompleted: true,
+      taskArtifactComplete: true,
       rootAgentMatches: true,
       rootHasNoParent: true,
       doubleInjectionProvenance: true,
@@ -95,6 +98,16 @@ test('routing-parity mode accepts recorded children but requires routing and too
       .status,
     'unavailable',
   )
+})
+
+test('a missing task artifact cannot enter a paired performance summary', () => {
+  const missing = assessPairedRun(candidate({ artifact: { status: 'failed' } }))
+  assert.equal(missing.status, 'ineligible')
+  assert.equal(missing.checks.taskArtifactComplete, false)
+
+  const unavailable = assessPairedRun(candidate({ artifact: { status: 'unavailable' } }))
+  assert.equal(unavailable.status, 'unavailable')
+  assert.equal(unavailable.checks.taskArtifactComplete, null)
 })
 
 test('paired routing parity normalizes session IDs and checks descendant routes and subagent calls', () => {

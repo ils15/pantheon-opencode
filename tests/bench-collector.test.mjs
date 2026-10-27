@@ -377,6 +377,80 @@ test('collectRunMetrics extracts tool calls per name across the whole tree', () 
   })
 })
 
+test('collectRunMetrics reports tool timing, outcome and output size without retaining content', () => {
+  withFixture((dbPath) => {
+    const writable = new DatabaseSync(dbPath)
+    const row = writable.prepare('SELECT data FROM session_message WHERE id = ?').get('m2')
+    const data = JSON.parse(row.data)
+    data.content[0].state = {
+      status: 'completed',
+      content: [{ type: 'text', text: 'OK' }],
+    }
+    data.content[0].time = { ran: 1000, completed: 1060 }
+    data.content[1].state = {
+      status: 'error',
+      content: [{ type: 'text', text: 'not found' }],
+    }
+    data.content[1].time = { ran: 1020, completed: 1030 }
+    data.content.push({
+      type: 'tool',
+      id: 'call_3',
+      name: 'execute',
+      state: {
+        status: 'completed',
+        content: [{ type: 'text', text: 'memory hit' }],
+        metadata: {
+          toolCalls: [
+            {
+              tool: 'pantheon-memory.memory_search',
+              status: 'completed',
+              input: { query: 'SENSITIVE TEST QUERY' },
+            },
+          ],
+        },
+      },
+      time: { ran: 1080, completed: 1180 },
+    })
+    writable
+      .prepare('UPDATE session_message SET data = ? WHERE id = ?')
+      .run(JSON.stringify(data), 'm2')
+    writable.close()
+
+    const db = openReadOnly(dbPath)
+    try {
+      const telemetry = collectRunMetrics(db, 'ses_root').toolTelemetry
+      assert.equal(telemetry.status, 'ok')
+      assert.deepEqual(telemetry.byTool.execute, {
+        calls: 1,
+        completed: 1,
+        failed: 0,
+        executionMs: { median: 100, p80: 100, n: 1 },
+        outputTextBytes: { bytes: 10, samples: 1 },
+      })
+      assert.deepEqual(telemetry.byTool.shell.executionMs, {
+        median: 60,
+        p80: 60,
+        n: 1,
+      })
+      assert.deepEqual(telemetry.byTool.read, {
+        calls: 1,
+        completed: 0,
+        failed: 1,
+        executionMs: { median: 10, p80: 10, n: 1 },
+        outputTextBytes: { bytes: 9, samples: 1 },
+      })
+      assert.deepEqual(telemetry.nestedTools['pantheon-memory.memory_search'], {
+        calls: 1,
+        completed: 1,
+        failed: 0,
+      })
+      assert.equal(JSON.stringify(telemetry).includes('SENSITIVE TEST QUERY'), false)
+    } finally {
+      db.close()
+    }
+  })
+})
+
 test('collectRunMetrics carries the root session outcome and model', () => {
   withFixture((dbPath) => {
     const db = openReadOnly(dbPath)

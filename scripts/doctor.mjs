@@ -1879,10 +1879,10 @@ export function checkV2UnsupportedFeatures(args) {
   else warn(verdict.message)
 
   // Whether the installed entry can receive plugin `options` at all: the host
-  // passes them only from the object form, and `context_pruner` /
-  // `memory_injection` read exactly that bag. A bare-string entry installs fine
-  // and silently leaves both opt-ins unreachable, which is why this reports the
-  // installed shape instead of trusting the installer to have got it right.
+  // passes them only from the object form, and `context_pruner` reads that bag.
+  // A bare-string entry installs fine and silently leaves the opt-in
+  // unreachable, which is why this reports the installed shape instead of
+  // trusting the installer to have got it right.
   if (registered) {
     const plugins = configs.flatMap((cfg) =>
       Array.isArray(cfg.data?.plugins) ? cfg.data.plugins : [],

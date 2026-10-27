@@ -12,11 +12,14 @@ mcp_tools:
   pantheon-code-mode: [execute_code_script]
 temperature: 0.3
 skills:
-  - tdd-with-agents
-  - file-prompts
-  - streaming-patterns
+  - clonedeps
   - git-workflow-and-versioning
   - incremental-implementation
+  - loop-engineering
+  - reflect
+  - simplify
+  - tdd-with-agents
+  - worktrees
 permission:
   bash: allow
   read: allow

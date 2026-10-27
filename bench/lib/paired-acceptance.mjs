@@ -10,6 +10,7 @@ export function assessPairedRun({
   rootParentId,
   childrenCount,
   toolCalls,
+  artifact,
   agentRouting,
   routingParity = false,
   instructions,
@@ -35,6 +36,8 @@ export function assessPairedRun({
     : null
   const checks = {
     runtimeCompleted: completed === true,
+    taskArtifactComplete:
+      artifact?.status === 'ok' ? true : artifact?.status === 'failed' ? false : null,
     rootAgentMatches: rootAvailable ? observedAgent === requestedAgent : null,
     rootHasNoParent: rootAvailable ? rootParentId === null : null,
     doubleInjectionProvenance: d4Matches,

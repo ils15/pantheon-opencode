@@ -82,6 +82,6 @@ per child and detail for the selected child. It needs an open session.
 - [Installation](INSTALLATION.md) — flags, saved plans, backup, uninstall,
   reconcile, MCP pins.
 - [OpenCode V2](opencode-v2.md) — sidebar block, `/dispatch` panel, context
-  pruning, memory injection, session goals.
+  pruning, native compaction, session goals.
 - [MCP](MCP.md) and [MCP Tools](mcp-tools.md) — servers and tool signatures.
 - [Memory](MEMORY.md) — what is stored, for how long, and when to search.

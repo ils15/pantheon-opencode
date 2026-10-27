@@ -9,7 +9,7 @@ tools: ['search']
 
 ## Session Goal
 
-**Goal:** $input
+**Goal:** {{TASK_INPUT}}
 
 ---
 
@@ -25,10 +25,10 @@ tools: ['search']
 ## Goal Format
 
 ```
-GOAL: <What to build>
-SCOPE: <Which layers/modules are in scope>
-SUCCESS CRITERIA: <How we know it's done>
-OUT OF SCOPE: <What to explicitly exclude>
+GOAL: {{WHAT_TO_BUILD}}
+SCOPE: {{SCOPE}}
+SUCCESS CRITERIA: {{SUCCESS_CRITERIA}}
+OUT OF SCOPE: {{OUT_OF_SCOPE}}
 ```
 
 ---

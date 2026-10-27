@@ -108,12 +108,6 @@ import {
 } from './pantheon/delegation-enforce.ts'
 import { GOAL_LOOP_DEFAULTS, GoalStore } from './pantheon/goal-loop.ts'
 import { createGuardPathResolver } from './pantheon/guard-path.ts'
-import {
-  applyMemoryInjection,
-  MemoryInjectionCache,
-  resolveMemoryInjectionConfig,
-  warnInvalidMemoryInjectionConfig,
-} from './pantheon/memory-context.ts'
 import { getSharedBoard } from './pantheon/shared-board.ts'
 import {
   TODO_ENFORCER_DEFAULTS,
@@ -895,7 +889,6 @@ async function onSessionDeleted(event: V2SessionEvent): Promise<void> {
     return
   }
   readOnlyRegistry.unregister(sessionID)
-  memoryInjectionCache.delete(sessionID)
 }
 
 /**
@@ -918,17 +911,35 @@ async function onSessionCompacted(_event: V2SessionEvent): Promise<void> {}
 
 // ─── V2 Session Hooks ───────────────────────────────────────────────────
 
-/**
- * One-line prune stats entry through the existing hooks.log channel only when
- * a pass actually rewrote something. Silent no-ops (below threshold, protected
- * window, already-pruned) stay silent so a compaction does not add noise for
- * every request.
- */
-function logContextPrune(stats: PruneStats): void {
-  if (!stats.changed) return
+/** One entry per no-op reason and session/site; successful passes retain each saving. */
+const pruneSkipSessions = new Set<string>()
+const PRUNE_SKIP_SESSIONS_MAX = 256
+
+function logContextPrune(stats: PruneStats, sessionID: unknown): void {
+  if (stats.changed) {
+    appendV2HookLog(
+      `[context-pruner] site=${stats.site} messages=${stats.messagesTouched} ` +
+        `parts=${stats.partsPruned} est_tokens_saved=${stats.estimatedTokensSaved}`,
+    )
+    return
+  }
+  if (
+    stats.skipReason === null ||
+    stats.skipReason === 'not-array' ||
+    stats.skipReason === 'malformed'
+  ) {
+    return
+  }
+
+  const session = typeof sessionID === 'string' && sessionID !== '' ? sessionID : 'unknown'
+  const key = `${stats.site}:${session}:${stats.skipReason}`
+  if (pruneSkipSessions.has(key)) return
+  if (pruneSkipSessions.size >= PRUNE_SKIP_SESSIONS_MAX) pruneSkipSessions.clear()
+  pruneSkipSessions.add(key)
   appendV2HookLog(
-    `[context-pruner] site=${stats.site} messages=${stats.messagesTouched} ` +
-      `parts=${stats.partsPruned} est_tokens_saved=${stats.estimatedTokensSaved}`,
+    `[context-pruner] site=${stats.site} skip=${stats.skipReason} ` +
+      `messages=${stats.messagesTouched} parts=${stats.partsPruned} ` +
+      `est_tokens_saved=${stats.estimatedTokensSaved}`,
   )
 }
 
@@ -989,17 +1000,6 @@ function warnContextPrunerConfigOnce(options: unknown): void {
   }
 }
 
-// ─── Ambient memory injection (opt-in, V2 context hook) ─────────────────
-
-/**
- * One payload per session, computed on the session's first request. Bounded by
- * `MEMORY_CACHE_MAX_SESSIONS` inside the cache (FIFO), so a long-lived host
- * cannot grow it without limit. The payload is built, rendered and logged by
- * `memory-context.ts`; this module only supplies the hook wiring and the
- * `hooks.log` channel.
- */
-const memoryInjectionCache = new MemoryInjectionCache()
-
 /**
  * Empty description cache for {@link sanitizeVisionHistory}.
  *
@@ -1024,7 +1024,6 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
   // Config validity is independent of hook availability; warn before the early
   // return so a typo is visible even on a host that registers no session hook.
   warnContextPrunerConfigOnce(context.options)
-  warnInvalidMemoryInjectionConfig(context.options, appendV2HookLog)
   const sessionCtx = hostDomains(context).session
 
   if (!sessionCtx?.hook) {
@@ -1036,11 +1035,6 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
   // prompt cache and has no measured cost baseline. The compaction site below
   // applies the rules unconditionally.
   const prunerConfig = resolveContextPrunerConfig(context.options)
-
-  // Ambient memory injection is opt-in and default OFF: with `enabled: false`
-  // this hook adds nothing, so `system` stays byte-identical to the policy-only
-  // output. Resolved here (not per request) for the same reason as the pruner.
-  const memoryConfig = resolveMemoryInjectionConfig(context.options)
 
   let registered = false
 
@@ -1078,23 +1072,6 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
             normalized.push({ type: 'text', text: POLICY } satisfies SystemPart)
           }
         }
-        // Opt-in ambient memory injection: the top-K memories relevant to the
-        // session's first user message, computed once per session and re-added
-        // verbatim on later requests. Deliberately OUTSIDE the block above: with
-        // `enabled: true` and no usable `system` there is nowhere to push, and
-        // the module reports `skip=no-system` once per session instead of the
-        // feature going silently inert. Off by default, so this is the only
-        // thing `enabled: false` skips.
-        if (memoryConfig.enabled) {
-          applyMemoryInjection(
-            normalized ?? ctx.system,
-            ctx.messages,
-            ctx.sessionID,
-            memoryConfig,
-            memoryInjectionCache,
-            appendV2HookLog,
-          )
-        }
         // Vision history sanitization (V1
         // `experimental.chat.messages.transform` parity, #266). Image parts are
         // replaced with their cached description, or with the same placeholder
@@ -1120,7 +1097,7 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
         if (prunerConfig.enabled) {
           try {
             const stats = pruneMessages(ctx.messages, prunerConfig, 'context')
-            logContextPrune(stats)
+            logContextPrune(stats, ctx.sessionID)
             logPruneShapeIssue(stats, ctx.sessionID, 'context')
           } catch (error) {
             logPruneFailureOnce(ctx.sessionID, 'context', error)
@@ -2227,7 +2204,7 @@ export const plugin = define({
                   : undefined
             const prunerConfig = resolveContextPrunerConfig(context.options)
             const stats = pruneMessages(payload?.messages, prunerConfig, 'compaction')
-            logContextPrune(stats)
+            logContextPrune(stats, sessionID)
             logPruneShapeIssue(stats, sessionID, 'compaction')
 
             // Compaction context (V1 `experimental.session.compacting`

@@ -271,6 +271,156 @@ export function collectToolCalls(db, sessionIds) {
   return { status: 'ok', calls: rows.map((r) => ({ name: r.name, count: r.n })) }
 }
 
+function summarizeToolDurations(values) {
+  if (values.length === 0) {
+    return { status: 'unavailable', reason: 'tool execution timestamps are absent' }
+  }
+  const sorted = [...values].sort((a, b) => a - b)
+  const middle = Math.floor(sorted.length / 2)
+  const median =
+    sorted.length % 2 === 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2
+  const p80 = sorted[Math.max(0, Math.ceil(sorted.length * 0.8) - 1)]
+  return { median, p80, n: sorted.length }
+}
+
+function readTextBytes(content) {
+  const texts = []
+  const visit = (value) => {
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item)
+      return
+    }
+    if (value === null || typeof value !== 'object') return
+    if (typeof value.text === 'string') texts.push(value.text)
+  }
+  visit(content)
+  if (texts.length === 0) return null
+  return texts.reduce((total, text) => total + Buffer.byteLength(text, 'utf8'), 0)
+}
+
+function statusCounts(target, status) {
+  target.calls += 1
+  if (status === 'completed') target.completed += 1
+  else if (status === 'error' || status === 'failed') target.failed += 1
+}
+
+function addToolResult(target, part) {
+  const state = part?.state
+  if (!state || typeof state !== 'object') return
+  statusCounts(target, state.status)
+
+  const time = part.time
+  if (
+    Number.isFinite(time?.ran) &&
+    Number.isFinite(time?.completed) &&
+    time.completed >= time.ran
+  ) {
+    target.executionMs.push(time.completed - time.ran)
+  }
+
+  const outputBytes = readTextBytes(state.content)
+  if (outputBytes !== null) {
+    target.outputTextBytes += outputBytes
+    target.outputSamples += 1
+  }
+}
+
+/**
+ * Tool-level outcome, execution-time and text-output-size metrics.
+ *
+ * Tool names and numeric aggregates are retained; inputs and returned text
+ * are never copied into the report. Code Mode's nested MCP/tool names and
+ * outcomes are counted separately when the host exposes them in metadata.
+ */
+export function collectToolTelemetry(db, sessionIds) {
+  const schema = detectSchema(db)
+  if (schema.generation !== 'v2') {
+    return {
+      status: 'unavailable',
+      reason: `tool telemetry reads the V2 session_message ledger only (ledger is ${schema.generation})`,
+    }
+  }
+  if (sessionIds.length === 0) {
+    return { status: 'unavailable', reason: 'no sessions supplied to the tool telemetry collector' }
+  }
+
+  const placeholders = sessionIds.map(() => '?').join(', ')
+  const rows = db
+    .prepare(
+      `SELECT data FROM session_message
+        WHERE session_id IN (${placeholders}) AND type = 'assistant'`,
+    )
+    .all(...sessionIds)
+  const tools = new Map()
+  const nestedTools = new Map()
+
+  const countsFor = (map, name) => {
+    if (!map.has(name)) {
+      map.set(name, {
+        calls: 0,
+        completed: 0,
+        failed: 0,
+        executionMs: [],
+        outputTextBytes: 0,
+        outputSamples: 0,
+      })
+    }
+    return map.get(name)
+  }
+
+  for (const row of rows) {
+    let data
+    try {
+      data = JSON.parse(row.data)
+    } catch {
+      continue
+    }
+    if (!Array.isArray(data?.content)) continue
+    for (const part of data.content) {
+      if (part?.type !== 'tool' || typeof part.name !== 'string' || part.name === '') continue
+      addToolResult(countsFor(tools, part.name), part)
+
+      const nested = part.state?.metadata?.toolCalls
+      if (!Array.isArray(nested)) continue
+      for (const call of nested) {
+        if (typeof call?.tool !== 'string' || call.tool === '') continue
+        statusCounts(countsFor(nestedTools, call.tool), call.status)
+      }
+    }
+  }
+
+  const byTool = Object.fromEntries(
+    [...tools.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([name, value]) => [
+        name,
+        {
+          calls: value.calls,
+          completed: value.completed,
+          failed: value.failed,
+          executionMs: summarizeToolDurations(value.executionMs),
+          outputTextBytes:
+            value.outputSamples === 0
+              ? { status: 'unavailable', reason: 'no text output was exposed for this tool' }
+              : { bytes: value.outputTextBytes, samples: value.outputSamples },
+        },
+      ]),
+  )
+  const nestedSummary = Object.fromEntries(
+    [...nestedTools.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([name, value]) => [
+        name,
+        { calls: value.calls, completed: value.completed, failed: value.failed },
+      ]),
+  )
+
+  if (Object.keys(byTool).length === 0) {
+    return { status: 'unavailable', reason: 'no tool parts were present in assistant messages' }
+  }
+  return { status: 'ok', byTool, nestedTools: nestedSummary }
+}
+
 /**
  * Compose every per-run db metric for one root session.
  *
@@ -286,6 +436,7 @@ export function collectRunMetrics(db, rootId) {
       agentRouting: { status: 'unavailable', reason: tree.reason },
       tokens: { status: 'unavailable', reason: tree.reason },
       toolCalls: { status: 'unavailable', reason: tree.reason },
+      toolTelemetry: { status: 'unavailable', reason: tree.reason },
     }
   }
   const sessionIds = tree.sessions.map((s) => s.id)
@@ -317,6 +468,7 @@ export function collectRunMetrics(db, rootId) {
     agentRouting,
     tokens: collectTokens(db, sessionIds),
     toolCalls,
+    toolTelemetry: collectToolTelemetry(db, sessionIds),
   }
 }
 

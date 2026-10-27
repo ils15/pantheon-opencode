@@ -1,9 +1,6 @@
 ---
 name: artifact-management
 description: "Structured artifacts for planned, multi-phase, or materially risky implementation work."
-context: fork
-globs: []
-alwaysApply: false
 ---
 
 # Artifact Management

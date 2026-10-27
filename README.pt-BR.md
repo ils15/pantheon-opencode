@@ -1,4 +1,4 @@
-<!-- synced-from: README.md @ 7359e4f -->
+<!-- synced-from: README.md @ 0a6a8e2 -->
 # Pantheon
 
 **Uma forma mais clara de trabalhar com OpenCode em projetos de software
@@ -29,10 +29,10 @@ o que importou. Você continua no controle de cada decisão e de cada merge.
 - **Um ponto de partida repetível:** o mesmo setup entre projetos e
   colaboradores.
 - **Você no comando:** o Pantheon apoia seu julgamento; não o substitui.
-- **Coordenação na medida:** trabalho limitado vai para um especialista;
-  planejamento, descoberta, trabalho paralelo e revisão entram quando escopo e
-  risco pedem. `/pantheon-deepwork` continua sendo o fluxo com checkpoints para
-  trabalho pesado em várias fases.
+- **Coordenação na medida:** trabalho delimitado vai para um especialista, que
+  reúne o contexto necessário. Planejamento, descoberta separada, paralelismo e
+  revisão entram quando escopo e risco pedem. `/pantheon-deepwork` continua sendo
+  o fluxo com checkpoints para trabalho pesado em várias fases.
 
 ## Comece em 2 minutos
 
@@ -78,10 +78,11 @@ apenas — `init` → reiniciar → `/dispatch` → primeiro resultado — veja 
 - **Uma TUI opcional**, com bloco de dispatch na sidebar e painel `/dispatch`
   em largura total.
 
-A memória é usada seletivamente: o coordenador busca uma vez apenas quando o
-histórico do projeto pode afetar a tarefa e repassa os resultados relevantes aos
-especialistas. Grave um resultado conciso e reutilizável ao concluir a tarefa
-quando ele for importar depois; resumos rotineiros de filhos ficam no handoff.
+A memória MCP fica disponível para busca explícita: o coordenador consulta o
+histórico uma vez quando ele pode mudar a tarefa e repassa apenas resultados
+úteis. Checkpoints de sessão servem para retomadas entre sessões; memória
+durável só é gravada quando solicitada ou autorizada. A compactação nativa do
+OpenCode resume a conversa atual, sem salvar cada fase em outro MCP.
 Veja [Memória](docs/MEMORY.md).
 
 ## Compatibilidade
@@ -154,6 +155,10 @@ Ideias, relatos de bugs, melhorias de documentação e contribuições de códig
 bem-vindos. Leia o [CONTRIBUTING.md](CONTRIBUTING.md) antes de abrir uma issue ou
 pull request. Esse arquivo também define a regra de documentação: um único lar
 por fato, com uma lista curta de fatos que não devem ser duplicados.
+
+Em mudanças de código, comece pela verificação relevante mais pequena e amplie
+conforme o risco. `npm test` executa a suíte completa do repositório; veja o
+[CONTRIBUTING.md](CONTRIBUTING.md) para saber quando usá-la.
 
 ## Citação e DOI
 

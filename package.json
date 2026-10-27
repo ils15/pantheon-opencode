@@ -20,6 +20,7 @@
     "prepare": "husky",
     "setup": "node scripts/setup.mjs",
     "build:agents-md": "node scripts/build-agents-md.mjs",
+    "skills:lock": "node scripts/update-skills-lock.mjs",
     "setup:lite": "node bin/pantheon-init.mjs init --yes --clean --components agents,skills,instructions",
     "doctor": "node scripts/doctor.mjs",
     "prune": "node scripts/prune.mjs",

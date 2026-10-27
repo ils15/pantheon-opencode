@@ -10,8 +10,13 @@ mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_search, code_query, code_neighbors]
 skills:
-  - spec-driven-development
+  - loop-engineering
   - memory-bank
+  - reflect
+  - simplify
+  - spec-driven-development
+  - verification-planning
+  - worktrees
 permission:
   edit: deny
   hashline_edit: deny

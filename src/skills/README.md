@@ -117,6 +117,10 @@ The `SKILL.md` file contains YAML frontmatter with `name`, `description`, and pl
 - **Agent frontmatter**: Agents declare which skills they use via the `skills:` field in their `.agent.md` frontmatter. The platform uses this to determine relevance.
 - **OpenCode platform**: Skills are listed in the system prompt's `<available_skills>` block. The agent invokes `skill` with the matching name to load the full content.
 
+When editing a skill, run `npm run skills:lock` to refresh its content digest,
+then `node scripts/validate-routing.mjs` to verify the lock, routing catalog,
+agent grants, and skill inventory.
+
 ## Quick Reference Table
 
 | # | Skill Name | Domain | Used By |

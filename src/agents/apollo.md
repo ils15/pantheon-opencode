@@ -19,6 +19,11 @@ permission:
 temperature: 0.1
 skills:
   - auto-continue
+  - codemap
+  - loop-engineering
+  - reflect
+  - simplify
+  - worktrees
 mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_search, code_query, code_neighbors]

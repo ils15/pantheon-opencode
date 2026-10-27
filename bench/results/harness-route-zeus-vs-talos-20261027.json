@@ -1,0 +1,2283 @@
+{
+  "meta": {
+    "kind": "pantheon-bench-baseline",
+    "reportVersion": 3,
+    "createdAt": "2026-10-27T16:44:27.568Z",
+    "gitSha": "0a6a8e2",
+    "gitDirty": true,
+    "gitDiffHash": "288130e3e9220437987bd82ae625a01b2863f5d50c3053c64950f2a37cb70ff1",
+    "opencodeVersion": "opencode v2.2.0",
+    "pluginGeneration": "v2",
+    "pluginRef": "./src/plugin-v2",
+    "hostConfigPath": "$HOME/.config/opencode/opencode.json",
+    "hostConfigUsed": true,
+    "shadowConfigDir": "<benchmark-temp>/shadow-config-candidate",
+    "controlShadowConfigDir": "<benchmark-temp>/shadow-config-control",
+    "modelRequested": "openai/gpt-6-luna",
+    "sandboxRoot": "<benchmark-temp>",
+    "profile": "double-injection",
+    "label": "harness-route-zeus-vs-talos-20261027",
+    "globalAgentsFixture": {
+      "path": "AGENTS.global.md",
+      "bytes": 9205,
+      "sha256": "6b13aea00a22477cc5b153cac84be332a00bd9363e0a16eb92337efd1cc6ffe9"
+    },
+    "projectAgentsFixture": {
+      "path": "AGENTS.md",
+      "bytes": 1766,
+      "sha256": "9624e7018df89edb5d7fca26d43fcdb07519fabe46e1b612a7b355b3815ac75b"
+    },
+    "agentsDirFixture": {
+      "path": "./src/agents",
+      "files": [
+        {
+          "name": "talos",
+          "path": "./src/agents/talos.md",
+          "bytes": 2492,
+          "sha256": "4d6827daa657d1eac484917098c01a2eb20548394f14b4f07968663ff63390ca"
+        },
+        {
+          "name": "zeus",
+          "path": "./src/agents/zeus.md",
+          "bytes": 16178,
+          "sha256": "e56bd0ffb96b923679c244f4ad79d737140eeca65813c98c35be084d3eeb0b5a"
+        }
+      ],
+      "sha256": "00aa9e9d6c30ebc56e6303ba7a0b18d0b3546a57090a9256647ef09e429d4cab"
+    },
+    "controlAgentsDirFixture": {
+      "path": "./src/agents",
+      "files": [
+        {
+          "name": "zeus",
+          "path": "./src/agents/zeus.md",
+          "bytes": 16178,
+          "sha256": "e56bd0ffb96b923679c244f4ad79d737140eeca65813c98c35be084d3eeb0b5a"
+        }
+      ],
+      "sha256": "cacada981a2b60153ffeff7906085823dae509904e6f5fdc0ea34d7ee9700c43"
+    },
+    "skillsDirFixture": {
+      "path": "./src/skills",
+      "files": [
+        {
+          "path": "agent-coordination/SKILL.md",
+          "bytes": 3146,
+          "sha256": "d4bd70c18bc5726ea6784fe0a9c514446ca313e4c3ba4d658a0ff6658001aece"
+        },
+        {
+          "path": "artifact-management/SKILL.md",
+          "bytes": 3735,
+          "sha256": "24dc1ca4660246ef37c3d3a5b246b7f63e3739f0ef741ed0a2e21d9abd3e9165"
+        },
+        {
+          "path": "auto-continue/SKILL.md",
+          "bytes": 10870,
+          "sha256": "3fd4167b2e015510aec428098d27bb15854ba239c4dc7a064177d62e2353af86"
+        },
+        {
+          "path": "clonedeps/SKILL.md",
+          "bytes": 1439,
+          "sha256": "3e0b43cf96da98c83699dc48db3fd58fbfda84b9022bb70d3747875c81c3e124"
+        },
+        {
+          "path": "code-review-checklist/SKILL.md",
+          "bytes": 3926,
+          "sha256": "6445513ab880efdb1005861ae13cb9a215f80b9d260f6278499f60771e07858c"
+        },
+        {
+          "path": "codemap/SKILL.md",
+          "bytes": 1688,
+          "sha256": "d21b3fa66b931b29dcf1ec0f0fcf1ec28514642a9f33f96e4b2901a0be74c72d"
+        },
+        {
+          "path": "context-compression/SKILL.md",
+          "bytes": 2577,
+          "sha256": "346ed8697b8db42cc49403ee3dd38f9b775fe93cb55395d73c81b55cc77442d6"
+        },
+        {
+          "path": "git-workflow-and-versioning/SKILL.md",
+          "bytes": 915,
+          "sha256": "685a94041f1b4ce2a430301f517b89102055696267c369a7e8fb191606659276"
+        },
+        {
+          "path": "incremental-implementation/SKILL.md",
+          "bytes": 888,
+          "sha256": "7065ddb45da3c6b6751de07f290e92e6cb072e949a2e3aaae13ee7762f0a70fc"
+        },
+        {
+          "path": "loop-engineering/SKILL.md",
+          "bytes": 1525,
+          "sha256": "f804e545821b9cca8fe0ec517307ed902446f28c2ca8ff9194c0f987cf7229e3"
+        },
+        {
+          "path": "memory-bank/SKILL.md",
+          "bytes": 6493,
+          "sha256": "28bffa0f18cac99488d21563a544c1ade4319053621a6d846c2d7d623ffd79ba"
+        },
+        {
+          "path": "README.md",
+          "bytes": 6974,
+          "sha256": "4525f4cb0b9e3b679ba9090785e868cceed554aaf9f192caca9b4313b3be2383"
+        },
+        {
+          "path": "reflect/SKILL.md",
+          "bytes": 1402,
+          "sha256": "4c7608c2a55cb8a50ac90fc0e2446bdf25e7914b1748cb7731c311d13c29dfdd"
+        },
+        {
+          "path": "security-hardening/SKILL.md",
+          "bytes": 1176,
+          "sha256": "6d637e122421f7bc3b751f04854ad343a5a5d35249458bc8939233138fd3f20d"
+        },
+        {
+          "path": "session-goal/SKILL.md",
+          "bytes": 4562,
+          "sha256": "08d2e3876e330207eebba065345b51e585d5363b596b7b71132dbf40b077efc4"
+        },
+        {
+          "path": "simplify/SKILL.md",
+          "bytes": 1708,
+          "sha256": "1f3c06f4f856cbc8cdefcfe7fd260ad7382a441d8d9d9162671b17dc33aa6edd"
+        },
+        {
+          "path": "spec-driven-development/SKILL.md",
+          "bytes": 1172,
+          "sha256": "ccfbc0c32116a1d144f5c12a4187c053322ed31625a622a58c59739a57a86743"
+        },
+        {
+          "path": "tdd-with-agents/SKILL.md",
+          "bytes": 6105,
+          "sha256": "9d20607ea34fc3e02c7e3ef5186b103d84196bd9a13aaadd55a44f41339125da"
+        },
+        {
+          "path": "verification-planning/SKILL.md",
+          "bytes": 1522,
+          "sha256": "14186446ef51e1ba2c87b337e8d5f86e566d805156ab21fba2a75f8c4a99df3f"
+        },
+        {
+          "path": "visual-review-pipeline/SKILL.md",
+          "bytes": 7730,
+          "sha256": "f6e65ff75a9325c38e0e9dde8e87f09b873e14e490936ef48aa80201bb68fe10"
+        },
+        {
+          "path": "worktrees/SKILL.md",
+          "bytes": 2682,
+          "sha256": "9cf2b036e90d9ff7c6deb786ad7bab2cb78d6bf39166a67d5cbeafc29f593c6e"
+        }
+      ],
+      "sha256": "14199e6983bd7181072fa0ec4ee7a2825d946c6fabb22ea943724c7ed154ae15"
+    },
+    "promptFixture": null,
+    "protocol": {
+      "runsPerScenario": 5,
+      "scenarios": [
+        "B"
+      ],
+      "interleave": "B starting at B",
+      "runTimeoutMs": 1200000,
+      "standaloneServerPerRun": true,
+      "permissionMode": "--auto (non-interactive auto-approve)",
+      "paired": true,
+      "routingParity": false,
+      "agent": {
+        "control": "zeus",
+        "candidate": "talos"
+      },
+      "armOrder": "control,candidate per pair (C1,K1,…,C5,K5)",
+      "logLevel": "debug (required for the V2 tool-hook registration to complete; protocol constant, equal across phases)",
+      "pluginSelection": "XDG_CONFIG_HOME shadow config dir; repo plugin pinned via plugins[]",
+      "agentsSelection": "control and candidate shadow configs use their respective agent directories; root prompt identities are recorded per arm and per run",
+      "skillsSelection": "shadow-config/skills symlinked to --skills-dir; all source file identities recorded in skillsDirFixture",
+      "metricDb": "$HOME/.local/share/opencode/opencode.db",
+      "isolatedDbPerRun": false,
+      "scenarioAUsesRealWebResearch": true,
+      "profileDescription": "global AGENTS.md + a project AGENTS.md materialized in every run dir"
+    }
+  },
+  "scenarios": {
+    "A": "multi-step (reproduces the ~2x vs Codex CLI)",
+    "B": "one-shot delimitado"
+  },
+  "runs": [
+    {
+      "run": 1,
+      "scenario": "B",
+      "arm": "control",
+      "pair": 1,
+      "scenarioName": "one-shot delimitado",
+      "rootAgentRequested": "zeus",
+      "startedAt": "2026-10-27T16:44:27.728Z",
+      "status": "completed",
+      "failureReason": null,
+      "wallMs": 846478.109125,
+      "exitCode": 0,
+      "timedOut": false,
+      "sessionId": "session-01",
+      "modelRequested": "openai/gpt-6-luna",
+      "rootAgentObserved": "zeus",
+      "rootParentId": null,
+      "agentRouting": {
+        "status": "ok",
+        "sessions": [
+          {
+            "id": "session-01",
+            "parentId": null,
+            "agent": "zeus"
+          },
+          {
+            "id": "session-02",
+            "parentId": "session-01",
+            "agent": "apollo"
+          }
+        ]
+      },
+      "agentPromptFixture": {
+        "name": "zeus",
+        "path": "./src/agents/zeus.md",
+        "bytes": 16178,
+        "sha256": "e56bd0ffb96b923679c244f4ad79d737140eeca65813c98c35be084d3eeb0b5a"
+      },
+      "root": {
+        "status": "ok",
+        "id": "session-01",
+        "parent_id": null,
+        "idle_outcome": "succeeded",
+        "model": "{\"id\":\"gpt-6-luna\",\"providerID\":\"openai\"}",
+        "agent": "zeus",
+        "title": "pantheon-bench-run-01-B-control"
+      },
+      "childrenCount": 1,
+      "tokens": {
+        "status": "ok",
+        "input": 56650,
+        "output": 128513,
+        "reasoning": 145,
+        "cacheRead": 13696,
+        "cacheWrite": 0,
+        "tokenMessages": 6,
+        "assistantMessages": 6,
+        "tokenFieldMessages": {
+          "input": 6,
+          "output": 6,
+          "reasoning": 6,
+          "cacheRead": 6,
+          "cacheWrite": 6
+        },
+        "sessionBreakdown": {
+          "status": "ok",
+          "root": {
+            "sessionId": "session-01",
+            "input": 25510,
+            "output": 128170,
+            "total": 153680
+          },
+          "descendants": {
+            "input": 31140,
+            "output": 343,
+            "total": 31483,
+            "sessionCount": 1
+          },
+          "sessions": [
+            {
+              "sessionId": "session-01",
+              "input": 25510,
+              "output": 128170,
+              "total": 153680
+            },
+            {
+              "sessionId": "session-02",
+              "input": 31140,
+              "output": 343,
+              "total": 31483
+            }
+          ]
+        }
+      },
+      "toolCalls": {
+        "subagent": 2,
+        "websearch": 2
+      },
+      "toolTelemetry": {
+        "status": "ok",
+        "byTool": {
+          "subagent": {
+            "calls": 2,
+            "completed": 1,
+            "failed": 1,
+            "executionMs": {
+              "median": 12286,
+              "p80": 12286,
+              "n": 1
+            },
+            "outputTextBytes": {
+              "bytes": 1118,
+              "samples": 1
+            }
+          },
+          "websearch": {
+            "calls": 2,
+            "completed": 2,
+            "failed": 0,
+            "executionMs": {
+              "median": 1312.5,
+              "p80": 1366,
+              "n": 2
+            },
+            "outputTextBytes": {
+              "bytes": 21384,
+              "samples": 2
+            }
+          }
+        },
+        "nestedTools": {}
+      },
+      "hooks": {
+        "status": "unavailable",
+        "reason": "hooks.log not found in the run sandbox"
+      },
+      "instructions": {
+        "status": "ok",
+        "hash": "e250d5eabde6ed641f518d84f76f6d505141941dfdeb70d462b68943ab036c2e",
+        "entryCount": 2,
+        "totalBytes": 10971,
+        "entries": [
+          {
+            "path": "<benchmark-temp>/shadow-config-control/opencode/AGENTS.md",
+            "bytes": 9205,
+            "sha256": "6b13aea00a22477cc5b153cac84be332a00bd9363e0a16eb92337efd1cc6ffe9"
+          },
+          {
+            "path": "<benchmark-temp>/run-01-B-control/AGENTS.md",
+            "bytes": 1766,
+            "sha256": "9624e7018df89edb5d7fca26d43fcdb07519fabe46e1b612a7b355b3815ac75b"
+          }
+        ]
+      },
+      "firstRequest": {
+        "status": "ok",
+        "input": 11151,
+        "cacheRead": 0,
+        "contextTokens": 11151
+      },
+      "stderrTail": null,
+      "armAcceptance": {
+        "status": "eligible",
+        "checks": {
+          "runtimeCompleted": true,
+          "rootAgentMatches": true,
+          "rootHasNoParent": true,
+          "doubleInjectionProvenance": true
+        }
+      }
+    },
+    {
+      "run": 2,
+      "scenario": "B",
+      "arm": "candidate",
+      "pair": 1,
+      "scenarioName": "one-shot delimitado",
+      "rootAgentRequested": "talos",
+      "startedAt": "2026-10-27T16:58:49.022Z",
+      "status": "completed",
+      "failureReason": null,
+      "wallMs": 7332.458501000074,
+      "exitCode": 0,
+      "timedOut": false,
+      "sessionId": "session-03",
+      "modelRequested": "openai/gpt-6-luna",
+      "rootAgentObserved": "talos",
+      "rootParentId": null,
+      "agentRouting": {
+        "status": "ok",
+        "sessions": [
+          {
+            "id": "session-03",
+            "parentId": null,
+            "agent": "talos"
+          }
+        ]
+      },
+      "agentPromptFixture": {
+        "name": "talos",
+        "path": "./src/agents/talos.md",
+        "bytes": 2492,
+        "sha256": "4d6827daa657d1eac484917098c01a2eb20548394f14b4f07968663ff63390ca"
+      },
+      "root": {
+        "status": "ok",
+        "id": "session-03",
+        "parent_id": null,
+        "idle_outcome": "succeeded",
+        "model": "{\"id\":\"gpt-6-luna\",\"providerID\":\"openai\"}",
+        "agent": "talos",
+        "title": "pantheon-bench-run-02-B-candidate"
+      },
+      "childrenCount": 0,
+      "tokens": {
+        "status": "ok",
+        "input": 8568,
+        "output": 236,
+        "reasoning": 87,
+        "cacheRead": 15488,
+        "cacheWrite": 0,
+        "tokenMessages": 3,
+        "assistantMessages": 3,
+        "tokenFieldMessages": {
+          "input": 3,
+          "output": 3,
+          "reasoning": 3,
+          "cacheRead": 3,
+          "cacheWrite": 3
+        },
+        "sessionBreakdown": {
+          "status": "ok",
+          "root": {
+            "sessionId": "session-03",
+            "input": 8568,
+            "output": 236,
+            "total": 8804
+          },
+          "descendants": {
+            "input": 0,
+            "output": 0,
+            "total": 0,
+            "sessionCount": 0
+          },
+          "sessions": [
+            {
+              "sessionId": "session-03",
+              "input": 8568,
+              "output": 236,
+              "total": 8804
+            }
+          ]
+        }
+      },
+      "toolCalls": {
+        "patch": 1,
+        "read": 1
+      },
+      "toolTelemetry": {
+        "status": "ok",
+        "byTool": {
+          "patch": {
+            "calls": 1,
+            "completed": 1,
+            "failed": 0,
+            "executionMs": {
+              "median": 4,
+              "p80": 4,
+              "n": 1
+            },
+            "outputTextBytes": {
+              "bytes": 54,
+              "samples": 1
+            }
+          },
+          "read": {
+            "calls": 1,
+            "completed": 1,
+            "failed": 0,
+            "executionMs": {
+              "median": 5,
+              "p80": 5,
+              "n": 1
+            },
+            "outputTextBytes": {
+              "bytes": 259,
+              "samples": 1
+            }
+          }
+        },
+        "nestedTools": {}
+      },
+      "hooks": {
+        "status": "unavailable",
+        "reason": "hooks.log not found in the run sandbox"
+      },
+      "instructions": {
+        "status": "ok",
+        "hash": "23f460aeaeae8befeaa41ec296a0c3dffe0d33fb747e9b745c57612613d72932",
+        "entryCount": 2,
+        "totalBytes": 10971,
+        "entries": [
+          {
+            "path": "<benchmark-temp>/shadow-config-candidate/opencode/AGENTS.md",
+            "bytes": 9205,
+            "sha256": "6b13aea00a22477cc5b153cac84be332a00bd9363e0a16eb92337efd1cc6ffe9"
+          },
+          {
+            "path": "<benchmark-temp>/run-02-B-candidate/AGENTS.md",
+            "bytes": 1766,
+            "sha256": "9624e7018df89edb5d7fca26d43fcdb07519fabe46e1b612a7b355b3815ac75b"
+          }
+        ]
+      },
+      "firstRequest": {
+        "status": "ok",
+        "input": 7525,
+        "cacheRead": 0,
+        "contextTokens": 7525
+      },
+      "stderrTail": null,
+      "armAcceptance": {
+        "status": "eligible",
+        "checks": {
+          "runtimeCompleted": true,
+          "rootAgentMatches": true,
+          "rootHasNoParent": true,
+          "doubleInjectionProvenance": true,
+          "hasNoChildren": true,
+          "didNotAttemptSubagent": true
+        }
+      }
+    },
+    {
+      "run": 3,
+      "scenario": "B",
+      "arm": "control",
+      "pair": 2,
+      "scenarioName": "one-shot delimitado",
+      "rootAgentRequested": "zeus",
+      "startedAt": "2026-10-27T16:58:56.356Z",
+      "status": "completed",
+      "failureReason": null,
+      "wallMs": 31324.50478800002,
+      "exitCode": 0,
+      "timedOut": false,
+      "sessionId": "session-04",
+      "modelRequested": "openai/gpt-6-luna",
+      "rootAgentObserved": "zeus",
+      "rootParentId": null,
+      "agentRouting": {
+        "status": "ok",
+        "sessions": [
+          {
+            "id": "session-04",
+            "parentId": null,
+            "agent": "zeus"
+          },
+          {
+            "id": "session-05",
+            "parentId": "session-04",
+            "agent": "athena"
+          },
+          {
+            "id": "session-06",
+            "parentId": "session-04",
+            "agent": "talos"
+          }
+        ]
+      },
+      "agentPromptFixture": {
+        "name": "zeus",
+        "path": "./src/agents/zeus.md",
+        "bytes": 16178,
+        "sha256": "e56bd0ffb96b923679c244f4ad79d737140eeca65813c98c35be084d3eeb0b5a"
+      },
+      "root": {
+        "status": "ok",
+        "id": "session-04",
+        "parent_id": null,
+        "idle_outcome": "succeeded",
+        "model": "{\"id\":\"gpt-6-luna\",\"providerID\":\"openai\"}",
+        "agent": "zeus",
+        "title": "pantheon-bench-run-03-B-control"
+      },
+      "childrenCount": 2,
+      "tokens": {
+        "status": "ok",
+        "input": 47870,
+        "output": 931,
+        "reasoning": 181,
+        "cacheRead": 61824,
+        "cacheWrite": 0,
+        "tokenMessages": 10,
+        "assistantMessages": 10,
+        "tokenFieldMessages": {
+          "input": 10,
+          "output": 10,
+          "reasoning": 10,
+          "cacheRead": 10,
+          "cacheWrite": 10
+        },
+        "sessionBreakdown": {
+          "status": "ok",
+          "root": {
+            "sessionId": "session-04",
+            "input": 14293,
+            "output": 321,
+            "total": 14614
+          },
+          "descendants": {
+            "input": 33577,
+            "output": 610,
+            "total": 34187,
+            "sessionCount": 2
+          },
+          "sessions": [
+            {
+              "sessionId": "session-04",
+              "input": 14293,
+              "output": 321,
+              "total": 14614
+            },
+            {
+              "sessionId": "session-05",
+              "input": 16366,
+              "output": 272,
+              "total": 16638
+            },
+            {
+              "sessionId": "session-06",
+              "input": 17211,
+              "output": 338,
+              "total": 17549
+            }
+          ]
+        }
+      },
+      "toolCalls": {
+        "read": 2,
+        "subagent": 2,
+        "websearch": 2,
+        "patch": 1
+      },
+      "toolTelemetry": {
+        "status": "ok",
+        "byTool": {
+          "patch": {
+            "calls": 1,
+            "completed": 1,
+            "failed": 0,
+            "executionMs": {
+              "median": 4,
+              "p80": 4,
+              "n": 1
+            },
+            "outputTextBytes": {
+              "bytes": 54,
+              "samples": 1
+            }
+          },
+          "read": {
+            "calls": 2,
+            "completed": 1,
+            "failed": 1,
+            "executionMs": {
+              "median": 3,
+              "p80": 3,
+              "n": 2
+            },
+            "outputTextBytes": {
+              "bytes": 512,
+              "samples": 1
+            }
+          },
+          "subagent": {
+            "calls": 2,
+            "completed": 2,
+            "failed": 0,
+            "executionMs": {
+              "median": 10899,
+              "p80": 12844,
+              "n": 2
+            },
+            "outputTextBytes": {
+              "bytes": 1259,
+              "samples": 2
+            }
+          },
+          "websearch": {
+            "calls": 2,
+            "completed": 2,
+            "failed": 0,
+            "executionMs": {
+              "median": 1322.5,
+              "p80": 1370,
+              "n": 2
+            },
+            "outputTextBytes": {
+              "bytes": 21686,
+              "samples": 2
+            }
+          }
+        },
+        "nestedTools": {}
+      },
+      "hooks": {
+        "status": "unavailable",
+        "reason": "hooks.log not found in the run sandbox"
+      },
+      "instructions": {
+        "status": "ok",
+        "hash": "ac9fa3d2aa7f215da8b673ffc8ebb5589bb182d9ef26e756a1c1a3b441f69769",
+        "entryCount": 2,
+        "totalBytes": 10971,
+        "entries": [
+          {
+            "path": "<benchmark-temp>/shadow-config-control/opencode/AGENTS.md",
+            "bytes": 9205,
+            "sha256": "6b13aea00a22477cc5b153cac84be332a00bd9363e0a16eb92337efd1cc6ffe9"
+          },
+          {
+            "path": "<benchmark-temp>/run-03-B-control/AGENTS.md",
+            "bytes": 1766,
+            "sha256": "9624e7018df89edb5d7fca26d43fcdb07519fabe46e1b612a7b355b3815ac75b"
+          }
+        ]
+      },
+      "firstRequest": {
+        "status": "ok",
+        "input": 11151,
+        "cacheRead": 0,
+        "contextTokens": 11151
+      },
+      "stderrTail": null,
+      "armAcceptance": {
+        "status": "eligible",
+        "checks": {
+          "runtimeCompleted": true,
+          "rootAgentMatches": true,
+          "rootHasNoParent": true,
+          "doubleInjectionProvenance": true
+        }
+      }
+    },
+    {
+      "run": 4,
+      "scenario": "B",
+      "arm": "candidate",
+      "pair": 2,
+      "scenarioName": "one-shot delimitado",
+      "rootAgentRequested": "talos",
+      "startedAt": "2026-10-27T16:59:28.234Z",
+      "status": "completed",
+      "failureReason": null,
+      "wallMs": 7948.459259999916,
+      "exitCode": 0,
+      "timedOut": false,
+      "sessionId": "session-07",
+      "modelRequested": "openai/gpt-6-luna",
+      "rootAgentObserved": "talos",
+      "rootParentId": null,
+      "agentRouting": {
+        "status": "ok",
+        "sessions": [
+          {
+            "id": "session-07",
+            "parentId": null,
+            "agent": "talos"
+          }
+        ]
+      },
+      "agentPromptFixture": {
+        "name": "talos",
+        "path": "./src/agents/talos.md",
+        "bytes": 2492,
+        "sha256": "4d6827daa657d1eac484917098c01a2eb20548394f14b4f07968663ff63390ca"
+      },
+      "root": {
+        "status": "ok",
+        "id": "session-07",
+        "parent_id": null,
+        "idle_outcome": "succeeded",
+        "model": "{\"id\":\"gpt-6-luna\",\"providerID\":\"openai\"}",
+        "agent": "talos",
+        "title": "pantheon-bench-run-04-B-candidate"
+      },
+      "childrenCount": 0,
+      "tokens": {
+        "status": "ok",
+        "input": 8741,
+        "output": 229,
+        "reasoning": 0,
+        "cacheRead": 23168,
+        "cacheWrite": 0,
+        "tokenMessages": 4,
+        "assistantMessages": 4,
+        "tokenFieldMessages": {
+          "input": 4,
+          "output": 4,
+          "reasoning": 4,
+          "cacheRead": 4,
+          "cacheWrite": 4
+        },
+        "sessionBreakdown": {
+          "status": "ok",
+          "root": {
+            "sessionId": "session-07",
+            "input": 8741,
+            "output": 229,
+            "total": 8970
+          },
+          "descendants": {
+            "input": 0,
+            "output": 0,
+            "total": 0,
+            "sessionCount": 0
+          },
+          "sessions": [
+            {
+              "sessionId": "session-07",
+              "input": 8741,
+              "output": 229,
+              "total": 8970
+            }
+          ]
+        }
+      },
+      "toolCalls": {
+        "patch": 1,
+        "read": 1,
+        "websearch": 1
+      },
+      "toolTelemetry": {
+        "status": "ok",
+        "byTool": {
+          "patch": {
+            "calls": 1,
+            "completed": 1,
+            "failed": 0,
+            "executionMs": {
+              "median": 4,
+              "p80": 4,
+              "n": 1
+            },
+            "outputTextBytes": {
+              "bytes": 54,
+              "samples": 1
+            }
+          },
+          "read": {
+            "calls": 1,
+            "completed": 1,
+            "failed": 0,
+            "executionMs": {
+              "median": 4,
+              "p80": 4,
+              "n": 1
+            },
+            "outputTextBytes": {
+              "bytes": 189,
+              "samples": 1
+            }
+          },
+          "websearch": {
+            "calls": 1,
+            "completed": 1,
+            "failed": 0,
+            "executionMs": {
+              "median": 974,
+              "p80": 974,
+              "n": 1
+            },
+            "outputTextBytes": {
+              "bytes": 54,
+              "samples": 1
+            }
+          }
+        },
+        "nestedTools": {}
+      },
+      "hooks": {
+        "status": "unavailable",
+        "reason": "hooks.log not found in the run sandbox"
+      },
+      "instructions": {
+        "status": "ok",
+        "hash": "a18d99536d3bb5681d26de0fa609872002c59e3bc4343d38651743ba876da7c2",
+        "entryCount": 2,
+        "totalBytes": 10971,
+        "entries": [
+          {
+            "path": "<benchmark-temp>/shadow-config-candidate/opencode/AGENTS.md",
+            "bytes": 9205,
+            "sha256": "6b13aea00a22477cc5b153cac84be332a00bd9363e0a16eb92337efd1cc6ffe9"
+          },
+          {
+            "path": "<benchmark-temp>/run-04-B-candidate/AGENTS.md",
+            "bytes": 1766,
+            "sha256": "9624e7018df89edb5d7fca26d43fcdb07519fabe46e1b612a7b355b3815ac75b"
+          }
+        ]
+      },
+      "firstRequest": {
+        "status": "ok",
+        "input": 7525,
+        "cacheRead": 0,
+        "contextTokens": 7525
+      },
+      "stderrTail": null,
+      "armAcceptance": {
+        "status": "eligible",
+        "checks": {
+          "runtimeCompleted": true,
+          "rootAgentMatches": true,
+          "rootHasNoParent": true,
+          "doubleInjectionProvenance": true,
+          "hasNoChildren": true,
+          "didNotAttemptSubagent": true
+        }
+      }
+    },
+    {
+      "run": 5,
+      "scenario": "B",
+      "arm": "control",
+      "pair": 3,
+      "scenarioName": "one-shot delimitado",
+      "rootAgentRequested": "zeus",
+      "startedAt": "2026-10-27T16:59:36.184Z",
+      "status": "completed",
+      "failureReason": null,
+      "wallMs": 22644.262086999952,
+      "exitCode": 0,
+      "timedOut": false,
+      "sessionId": "session-08",
+      "modelRequested": "openai/gpt-6-luna",
+      "rootAgentObserved": "zeus",
+      "rootParentId": null,
+      "agentRouting": {
+        "status": "ok",
+        "sessions": [
+          {
+            "id": "session-08",
+            "parentId": null,
+            "agent": "zeus"
+          },
+          {
+            "id": "session-09",
+            "parentId": "session-08",
+            "agent": "apollo"
+          },
+          {
+            "id": "session-10",
+            "parentId": "session-08",
+            "agent": "talos"
+          }
+        ]
+      },
+      "agentPromptFixture": {
+        "name": "zeus",
+        "path": "./src/agents/zeus.md",
+        "bytes": 16178,
+        "sha256": "e56bd0ffb96b923679c244f4ad79d737140eeca65813c98c35be084d3eeb0b5a"
+      },
+      "root": {
+        "status": "ok",
+        "id": "session-08",
+        "parent_id": null,
+        "idle_outcome": "succeeded",
+        "model": "{\"id\":\"gpt-6-luna\",\"providerID\":\"openai\"}",
+        "agent": "zeus",
+        "title": "pantheon-bench-run-05-B-control"
+      },
+      "childrenCount": 2,
+      "tokens": {
+        "status": "ok",
+        "input": 38324,
+        "output": 787,
+        "reasoning": 10,
+        "cacheRead": 55552,
+        "cacheWrite": 0,
+        "tokenMessages": 10,
+        "assistantMessages": 10,
+        "tokenFieldMessages": {
+          "input": 10,
+          "output": 10,
+          "reasoning": 10,
+          "cacheRead": 10,
+          "cacheWrite": 10
+        },
+        "sessionBreakdown": {
+          "status": "ok",
+          "root": {
+            "sessionId": "session-08",
+            "input": 14155,
+            "output": 277,
+            "total": 14432
+          },
+          "descendants": {
+            "input": 24169,
+            "output": 510,
+            "total": 24679,
+            "sessionCount": 2
+          },
+          "sessions": [
+            {
+              "sessionId": "session-08",
+              "input": 14155,
+              "output": 277,
+              "total": 14432
+            },
+            {
+              "sessionId": "session-09",
+              "input": 15470,
+              "output": 238,
+              "total": 15708
+            },
+            {
+              "sessionId": "session-10",
+              "input": 8699,
+              "output": 272,
+              "total": 8971
+            }
+          ]
+        }
+      },
+      "toolCalls": {
+        "subagent": 2,
+        "websearch": 2,
+        "patch": 1,
+        "read": 1,
+        "webfetch": 1
+      },
+      "toolTelemetry": {
+        "status": "ok",
+        "byTool": {
+          "patch": {
+            "calls": 1,
+            "completed": 1,
+            "failed": 0,
+            "executionMs": {
+              "median": 4,
+              "p80": 4,
+              "n": 1
+            },
+            "outputTextBytes": {
+              "bytes": 54,
+              "samples": 1
+            }
+          },
+          "read": {
+            "calls": 1,
+            "completed": 1,
+            "failed": 0,
+            "executionMs": {
+              "median": 4,
+              "p80": 4,
+              "n": 1
+            },
+            "outputTextBytes": {
+              "bytes": 457,
+              "samples": 1
+            }
+          },
+          "subagent": {
+            "calls": 2,
+            "completed": 2,
+            "failed": 0,
+            "executionMs": {
+              "median": 7735,
+              "p80": 9952,
+              "n": 2
+            },
+            "outputTextBytes": {
+              "bytes": 1103,
+              "samples": 2
+            }
+          },
+          "webfetch": {
+            "calls": 1,
+            "completed": 0,
+            "failed": 1,
+            "executionMs": {
+              "median": 1201,
+              "p80": 1201,
+              "n": 1
+            },
+            "outputTextBytes": {
+              "status": "unavailable",
+              "reason": "no text output was exposed for this tool"
+            }
+          },
+          "websearch": {
+            "calls": 2,
+            "completed": 2,
+            "failed": 0,
+            "executionMs": {
+              "median": 535.5,
+              "p80": 830,
+              "n": 2
+            },
+            "outputTextBytes": {
+              "bytes": 108,
+              "samples": 2
+            }
+          }
+        },
+        "nestedTools": {}
+      },
+      "hooks": {
+        "status": "unavailable",
+        "reason": "hooks.log not found in the run sandbox"
+      },
+      "instructions": {
+        "status": "ok",
+        "hash": "1b58564869ecd77a884f91badfe74f3362b3a8cd1a4f3ea31f7beab41a30c216",
+        "entryCount": 2,
+        "totalBytes": 10971,
+        "entries": [
+          {
+            "path": "<benchmark-temp>/shadow-config-control/opencode/AGENTS.md",
+            "bytes": 9205,
+            "sha256": "6b13aea00a22477cc5b153cac84be332a00bd9363e0a16eb92337efd1cc6ffe9"
+          },
+          {
+            "path": "<benchmark-temp>/run-05-B-control/AGENTS.md",
+            "bytes": 1766,
+            "sha256": "9624e7018df89edb5d7fca26d43fcdb07519fabe46e1b612a7b355b3815ac75b"
+          }
+        ]
+      },
+      "firstRequest": {
+        "status": "ok",
+        "input": 11151,
+        "cacheRead": 0,
+        "contextTokens": 11151
+      },
+      "stderrTail": null,
+      "armAcceptance": {
+        "status": "eligible",
+        "checks": {
+          "runtimeCompleted": true,
+          "rootAgentMatches": true,
+          "rootHasNoParent": true,
+          "doubleInjectionProvenance": true
+        }
+      }
+    },
+    {
+      "run": 6,
+      "scenario": "B",
+      "arm": "candidate",
+      "pair": 3,
+      "scenarioName": "one-shot delimitado",
+      "rootAgentRequested": "talos",
+      "startedAt": "2026-10-27T16:59:59.394Z",
+      "status": "completed",
+      "failureReason": null,
+      "wallMs": 7642.944572000066,
+      "exitCode": 0,
+      "timedOut": false,
+      "sessionId": "session-11",
+      "modelRequested": "openai/gpt-6-luna",
+      "rootAgentObserved": "talos",
+      "rootParentId": null,
+      "agentRouting": {
+        "status": "ok",
+        "sessions": [
+          {
+            "id": "session-11",
+            "parentId": null,
+            "agent": "talos"
+          }
+        ]
+      },
+      "agentPromptFixture": {
+        "name": "talos",
+        "path": "./src/agents/talos.md",
+        "bytes": 2492,
+        "sha256": "4d6827daa657d1eac484917098c01a2eb20548394f14b4f07968663ff63390ca"
+      },
+      "root": {
+        "status": "ok",
+        "id": "session-11",
+        "parent_id": null,
+        "idle_outcome": "succeeded",
+        "model": "{\"id\":\"gpt-6-luna\",\"providerID\":\"openai\"}",
+        "agent": "talos",
+        "title": "pantheon-bench-run-06-B-candidate"
+      },
+      "childrenCount": 0,
+      "tokens": {
+        "status": "ok",
+        "input": 16748,
+        "output": 283,
+        "reasoning": 0,
+        "cacheRead": 15360,
+        "cacheWrite": 0,
+        "tokenMessages": 4,
+        "assistantMessages": 4,
+        "tokenFieldMessages": {
+          "input": 4,
+          "output": 4,
+          "reasoning": 4,
+          "cacheRead": 4,
+          "cacheWrite": 4
+        },
+        "sessionBreakdown": {
+          "status": "ok",
+          "root": {
+            "sessionId": "session-11",
+            "input": 16748,
+            "output": 283,
+            "total": 17031
+          },
+          "descendants": {
+            "input": 0,
+            "output": 0,
+            "total": 0,
+            "sessionCount": 0
+          },
+          "sessions": [
+            {
+              "sessionId": "session-11",
+              "input": 16748,
+              "output": 283,
+              "total": 17031
+            }
+          ]
+        }
+      },
+      "toolCalls": {
+        "patch": 1,
+        "read": 1,
+        "shell": 1
+      },
+      "toolTelemetry": {
+        "status": "ok",
+        "byTool": {
+          "patch": {
+            "calls": 1,
+            "completed": 1,
+            "failed": 0,
+            "executionMs": {
+              "median": 4,
+              "p80": 4,
+              "n": 1
+            },
+            "outputTextBytes": {
+              "bytes": 54,
+              "samples": 1
+            }
+          },
+          "read": {
+            "calls": 1,
+            "completed": 1,
+            "failed": 0,
+            "executionMs": {
+              "median": 4,
+              "p80": 4,
+              "n": 1
+            },
+            "outputTextBytes": {
+              "bytes": 233,
+              "samples": 1
+            }
+          },
+          "shell": {
+            "calls": 1,
+            "completed": 0,
+            "failed": 1,
+            "executionMs": {
+              "median": 3,
+              "p80": 3,
+              "n": 1
+            },
+            "outputTextBytes": {
+              "status": "unavailable",
+              "reason": "no text output was exposed for this tool"
+            }
+          }
+        },
+        "nestedTools": {}
+      },
+      "hooks": {
+        "status": "unavailable",
+        "reason": "hooks.log not found in the run sandbox"
+      },
+      "instructions": {
+        "status": "ok",
+        "hash": "5ba939e6e95a07a7025fe8cc6bcecf727468b00ebe23f7deac273e178078007d",
+        "entryCount": 2,
+        "totalBytes": 10971,
+        "entries": [
+          {
+            "path": "<benchmark-temp>/shadow-config-candidate/opencode/AGENTS.md",
+            "bytes": 9205,
+            "sha256": "6b13aea00a22477cc5b153cac84be332a00bd9363e0a16eb92337efd1cc6ffe9"
+          },
+          {
+            "path": "<benchmark-temp>/run-06-B-candidate/AGENTS.md",
+            "bytes": 1766,
+            "sha256": "9624e7018df89edb5d7fca26d43fcdb07519fabe46e1b612a7b355b3815ac75b"
+          }
+        ]
+      },
+      "firstRequest": {
+        "status": "ok",
+        "input": 7525,
+        "cacheRead": 0,
+        "contextTokens": 7525
+      },
+      "stderrTail": null,
+      "armAcceptance": {
+        "status": "eligible",
+        "checks": {
+          "runtimeCompleted": true,
+          "rootAgentMatches": true,
+          "rootHasNoParent": true,
+          "doubleInjectionProvenance": true,
+          "hasNoChildren": true,
+          "didNotAttemptSubagent": true
+        }
+      }
+    },
+    {
+      "run": 7,
+      "scenario": "B",
+      "arm": "control",
+      "pair": 4,
+      "scenarioName": "one-shot delimitado",
+      "rootAgentRequested": "zeus",
+      "startedAt": "2026-10-27T17:00:07.039Z",
+      "status": "completed",
+      "failureReason": null,
+      "wallMs": 24664.418329000007,
+      "exitCode": 0,
+      "timedOut": false,
+      "sessionId": "session-12",
+      "modelRequested": "openai/gpt-6-luna",
+      "rootAgentObserved": "zeus",
+      "rootParentId": null,
+      "agentRouting": {
+        "status": "ok",
+        "sessions": [
+          {
+            "id": "session-12",
+            "parentId": null,
+            "agent": "zeus"
+          },
+          {
+            "id": "session-13",
+            "parentId": "session-12",
+            "agent": "apollo"
+          },
+          {
+            "id": "session-14",
+            "parentId": "session-12",
+            "agent": "talos"
+          }
+        ]
+      },
+      "agentPromptFixture": {
+        "name": "zeus",
+        "path": "./src/agents/zeus.md",
+        "bytes": 16178,
+        "sha256": "e56bd0ffb96b923679c244f4ad79d737140eeca65813c98c35be084d3eeb0b5a"
+      },
+      "root": {
+        "status": "ok",
+        "id": "session-12",
+        "parent_id": null,
+        "idle_outcome": "succeeded",
+        "model": "{\"id\":\"gpt-6-luna\",\"providerID\":\"openai\"}",
+        "agent": "zeus",
+        "title": "pantheon-bench-run-07-B-control"
+      },
+      "childrenCount": 2,
+      "tokens": {
+        "status": "ok",
+        "input": 38371,
+        "output": 713,
+        "reasoning": 78,
+        "cacheRead": 55296,
+        "cacheWrite": 0,
+        "tokenMessages": 10,
+        "assistantMessages": 10,
+        "tokenFieldMessages": {
+          "input": 10,
+          "output": 10,
+          "reasoning": 10,
+          "cacheRead": 10,
+          "cacheWrite": 10
+        },
+        "sessionBreakdown": {
+          "status": "ok",
+          "root": {
+            "sessionId": "session-12",
+            "input": 14175,
+            "output": 259,
+            "total": 14434
+          },
+          "descendants": {
+            "input": 24196,
+            "output": 454,
+            "total": 24650,
+            "sessionCount": 2
+          },
+          "sessions": [
+            {
+              "sessionId": "session-12",
+              "input": 14175,
+              "output": 259,
+              "total": 14434
+            },
+            {
+              "sessionId": "session-13",
+              "input": 15517,
+              "output": 166,
+              "total": 15683
+            },
+            {
+              "sessionId": "session-14",
+              "input": 8679,
+              "output": 288,
+              "total": 8967
+            }
+          ]
+        }
+      },
+      "toolCalls": {
+        "glob": 2,
+        "subagent": 2,
+        "grep": 1,
+        "patch": 1,
+        "read": 1
+      },
+      "toolTelemetry": {
+        "status": "ok",
+        "byTool": {
+          "glob": {
+            "calls": 2,
+            "completed": 2,
+            "failed": 0,
+            "executionMs": {
+              "median": 15,
+              "p80": 22,
+              "n": 2
+            },
+            "outputTextBytes": {
+              "bytes": 120,
+              "samples": 2
+            }
+          },
+          "grep": {
+            "calls": 1,
+            "completed": 1,
+            "failed": 0,
+            "executionMs": {
+              "median": 9,
+              "p80": 9,
+              "n": 1
+            },
+            "outputTextBytes": {
+              "bytes": 16,
+              "samples": 1
+            }
+          },
+          "patch": {
+            "calls": 1,
+            "completed": 1,
+            "failed": 0,
+            "executionMs": {
+              "median": 4,
+              "p80": 4,
+              "n": 1
+            },
+            "outputTextBytes": {
+              "bytes": 54,
+              "samples": 1
+            }
+          },
+          "read": {
+            "calls": 1,
+            "completed": 1,
+            "failed": 0,
+            "executionMs": {
+              "median": 3,
+              "p80": 3,
+              "n": 1
+            },
+            "outputTextBytes": {
+              "bytes": 298,
+              "samples": 1
+            }
+          },
+          "subagent": {
+            "calls": 2,
+            "completed": 2,
+            "failed": 0,
+            "executionMs": {
+              "median": 8494.5,
+              "p80": 8908,
+              "n": 2
+            },
+            "outputTextBytes": {
+              "bytes": 1039,
+              "samples": 2
+            }
+          }
+        },
+        "nestedTools": {}
+      },
+      "hooks": {
+        "status": "unavailable",
+        "reason": "hooks.log not found in the run sandbox"
+      },
+      "instructions": {
+        "status": "ok",
+        "hash": "b020191c09332ca414cf08d43a590c7c04403d5794ec576ea81569c685bc3729",
+        "entryCount": 2,
+        "totalBytes": 10971,
+        "entries": [
+          {
+            "path": "<benchmark-temp>/shadow-config-control/opencode/AGENTS.md",
+            "bytes": 9205,
+            "sha256": "6b13aea00a22477cc5b153cac84be332a00bd9363e0a16eb92337efd1cc6ffe9"
+          },
+          {
+            "path": "<benchmark-temp>/run-07-B-control/AGENTS.md",
+            "bytes": 1766,
+            "sha256": "9624e7018df89edb5d7fca26d43fcdb07519fabe46e1b612a7b355b3815ac75b"
+          }
+        ]
+      },
+      "firstRequest": {
+        "status": "ok",
+        "input": 11151,
+        "cacheRead": 0,
+        "contextTokens": 11151
+      },
+      "stderrTail": null,
+      "armAcceptance": {
+        "status": "eligible",
+        "checks": {
+          "runtimeCompleted": true,
+          "rootAgentMatches": true,
+          "rootHasNoParent": true,
+          "doubleInjectionProvenance": true
+        }
+      }
+    },
+    {
+      "run": 8,
+      "scenario": "B",
+      "arm": "candidate",
+      "pair": 4,
+      "scenarioName": "one-shot delimitado",
+      "rootAgentRequested": "talos",
+      "startedAt": "2026-10-27T17:00:32.256Z",
+      "status": "completed",
+      "failureReason": null,
+      "wallMs": 10559.324366000015,
+      "exitCode": 0,
+      "timedOut": false,
+      "sessionId": "session-15",
+      "modelRequested": "openai/gpt-6-luna",
+      "rootAgentObserved": "talos",
+      "rootParentId": null,
+      "agentRouting": {
+        "status": "ok",
+        "sessions": [
+          {
+            "id": "session-15",
+            "parentId": null,
+            "agent": "talos"
+          }
+        ]
+      },
+      "agentPromptFixture": {
+        "name": "talos",
+        "path": "./src/agents/talos.md",
+        "bytes": 2492,
+        "sha256": "4d6827daa657d1eac484917098c01a2eb20548394f14b4f07968663ff63390ca"
+      },
+      "root": {
+        "status": "ok",
+        "id": "session-15",
+        "parent_id": null,
+        "idle_outcome": "succeeded",
+        "model": "{\"id\":\"gpt-6-luna\",\"providerID\":\"openai\"}",
+        "agent": "talos",
+        "title": "pantheon-bench-run-08-B-candidate"
+      },
+      "childrenCount": 0,
+      "tokens": {
+        "status": "ok",
+        "input": 9256,
+        "output": 247,
+        "reasoning": 0,
+        "cacheRead": 24192,
+        "cacheWrite": 0,
+        "tokenMessages": 4,
+        "assistantMessages": 4,
+        "tokenFieldMessages": {
+          "input": 4,
+          "output": 4,
+          "reasoning": 4,
+          "cacheRead": 4,
+          "cacheWrite": 4
+        },
+        "sessionBreakdown": {
+          "status": "ok",
+          "root": {
+            "sessionId": "session-15",
+            "input": 9256,
+            "output": 247,
+            "total": 9503
+          },
+          "descendants": {
+            "input": 0,
+            "output": 0,
+            "total": 0,
+            "sessionCount": 0
+          },
+          "sessions": [
+            {
+              "sessionId": "session-15",
+              "input": 9256,
+              "output": 247,
+              "total": 9503
+            }
+          ]
+        }
+      },
+      "toolCalls": {
+        "patch": 1,
+        "read": 1,
+        "websearch": 1
+      },
+      "toolTelemetry": {
+        "status": "ok",
+        "byTool": {
+          "patch": {
+            "calls": 1,
+            "completed": 1,
+            "failed": 0,
+            "executionMs": {
+              "median": 4,
+              "p80": 4,
+              "n": 1
+            },
+            "outputTextBytes": {
+              "bytes": 54,
+              "samples": 1
+            }
+          },
+          "read": {
+            "calls": 1,
+            "completed": 1,
+            "failed": 0,
+            "executionMs": {
+              "median": 3,
+              "p80": 3,
+              "n": 1
+            },
+            "outputTextBytes": {
+              "bytes": 216,
+              "samples": 1
+            }
+          },
+          "websearch": {
+            "calls": 1,
+            "completed": 1,
+            "failed": 0,
+            "executionMs": {
+              "median": 2764,
+              "p80": 2764,
+              "n": 1
+            },
+            "outputTextBytes": {
+              "bytes": 1787,
+              "samples": 1
+            }
+          }
+        },
+        "nestedTools": {}
+      },
+      "hooks": {
+        "status": "unavailable",
+        "reason": "hooks.log not found in the run sandbox"
+      },
+      "instructions": {
+        "status": "ok",
+        "hash": "18cd95a0c9e55afe6fb929ee44abf7a3f47e684d48715925bdaecfd0b082ffc9",
+        "entryCount": 2,
+        "totalBytes": 10971,
+        "entries": [
+          {
+            "path": "<benchmark-temp>/shadow-config-candidate/opencode/AGENTS.md",
+            "bytes": 9205,
+            "sha256": "6b13aea00a22477cc5b153cac84be332a00bd9363e0a16eb92337efd1cc6ffe9"
+          },
+          {
+            "path": "<benchmark-temp>/run-08-B-candidate/AGENTS.md",
+            "bytes": 1766,
+            "sha256": "9624e7018df89edb5d7fca26d43fcdb07519fabe46e1b612a7b355b3815ac75b"
+          }
+        ]
+      },
+      "firstRequest": {
+        "status": "ok",
+        "input": 7525,
+        "cacheRead": 0,
+        "contextTokens": 7525
+      },
+      "stderrTail": null,
+      "armAcceptance": {
+        "status": "eligible",
+        "checks": {
+          "runtimeCompleted": true,
+          "rootAgentMatches": true,
+          "rootHasNoParent": true,
+          "doubleInjectionProvenance": true,
+          "hasNoChildren": true,
+          "didNotAttemptSubagent": true
+        }
+      }
+    },
+    {
+      "run": 9,
+      "scenario": "B",
+      "arm": "control",
+      "pair": 5,
+      "scenarioName": "one-shot delimitado",
+      "rootAgentRequested": "zeus",
+      "startedAt": "2026-10-27T17:00:42.817Z",
+      "status": "completed",
+      "failureReason": null,
+      "wallMs": 16257.795646999963,
+      "exitCode": 0,
+      "timedOut": false,
+      "sessionId": "session-16",
+      "modelRequested": "openai/gpt-6-luna",
+      "rootAgentObserved": "zeus",
+      "rootParentId": null,
+      "agentRouting": {
+        "status": "ok",
+        "sessions": [
+          {
+            "id": "session-16",
+            "parentId": null,
+            "agent": "zeus"
+          },
+          {
+            "id": "session-17",
+            "parentId": "session-16",
+            "agent": "talos"
+          }
+        ]
+      },
+      "agentPromptFixture": {
+        "name": "zeus",
+        "path": "./src/agents/zeus.md",
+        "bytes": 16178,
+        "sha256": "e56bd0ffb96b923679c244f4ad79d737140eeca65813c98c35be084d3eeb0b5a"
+      },
+      "root": {
+        "status": "ok",
+        "id": "session-16",
+        "parent_id": null,
+        "idle_outcome": "succeeded",
+        "model": "{\"id\":\"gpt-6-luna\",\"providerID\":\"openai\"}",
+        "agent": "zeus",
+        "title": "pantheon-bench-run-09-B-control"
+      },
+      "childrenCount": 1,
+      "tokens": {
+        "status": "ok",
+        "input": 25568,
+        "output": 558,
+        "reasoning": 0,
+        "cacheRead": 51200,
+        "cacheWrite": 0,
+        "tokenMessages": 7,
+        "assistantMessages": 7,
+        "tokenFieldMessages": {
+          "input": 7,
+          "output": 7,
+          "reasoning": 7,
+          "cacheRead": 7,
+          "cacheWrite": 7
+        },
+        "sessionBreakdown": {
+          "status": "ok",
+          "root": {
+            "sessionId": "session-16",
+            "input": 13802,
+            "output": 155,
+            "total": 13957
+          },
+          "descendants": {
+            "input": 11766,
+            "output": 403,
+            "total": 12169,
+            "sessionCount": 1
+          },
+          "sessions": [
+            {
+              "sessionId": "session-16",
+              "input": 13802,
+              "output": 155,
+              "total": 13957
+            },
+            {
+              "sessionId": "session-17",
+              "input": 11766,
+              "output": 403,
+              "total": 12169
+            }
+          ]
+        }
+      },
+      "toolCalls": {
+        "patch": 1,
+        "read": 1,
+        "shell": 1,
+        "subagent": 1,
+        "websearch": 1
+      },
+      "toolTelemetry": {
+        "status": "ok",
+        "byTool": {
+          "patch": {
+            "calls": 1,
+            "completed": 1,
+            "failed": 0,
+            "executionMs": {
+              "median": 3,
+              "p80": 3,
+              "n": 1
+            },
+            "outputTextBytes": {
+              "bytes": 54,
+              "samples": 1
+            }
+          },
+          "read": {
+            "calls": 1,
+            "completed": 1,
+            "failed": 0,
+            "executionMs": {
+              "median": 4,
+              "p80": 4,
+              "n": 1
+            },
+            "outputTextBytes": {
+              "bytes": 528,
+              "samples": 1
+            }
+          },
+          "shell": {
+            "calls": 1,
+            "completed": 1,
+            "failed": 0,
+            "executionMs": {
+              "median": 38,
+              "p80": 38,
+              "n": 1
+            },
+            "outputTextBytes": {
+              "bytes": 156,
+              "samples": 1
+            }
+          },
+          "subagent": {
+            "calls": 1,
+            "completed": 1,
+            "failed": 0,
+            "executionMs": {
+              "median": 11536,
+              "p80": 11536,
+              "n": 1
+            },
+            "outputTextBytes": {
+              "bytes": 577,
+              "samples": 1
+            }
+          },
+          "websearch": {
+            "calls": 1,
+            "completed": 1,
+            "failed": 0,
+            "executionMs": {
+              "median": 1710,
+              "p80": 1710,
+              "n": 1
+            },
+            "outputTextBytes": {
+              "bytes": 9438,
+              "samples": 1
+            }
+          }
+        },
+        "nestedTools": {}
+      },
+      "hooks": {
+        "status": "unavailable",
+        "reason": "hooks.log not found in the run sandbox"
+      },
+      "instructions": {
+        "status": "ok",
+        "hash": "d9b32c9de00878bdb651a8873385701542191e5f12ad4eac4a9ac5002ef55a9d",
+        "entryCount": 2,
+        "totalBytes": 10971,
+        "entries": [
+          {
+            "path": "<benchmark-temp>/shadow-config-control/opencode/AGENTS.md",
+            "bytes": 9205,
+            "sha256": "6b13aea00a22477cc5b153cac84be332a00bd9363e0a16eb92337efd1cc6ffe9"
+          },
+          {
+            "path": "<benchmark-temp>/run-09-B-control/AGENTS.md",
+            "bytes": 1766,
+            "sha256": "9624e7018df89edb5d7fca26d43fcdb07519fabe46e1b612a7b355b3815ac75b"
+          }
+        ]
+      },
+      "firstRequest": {
+        "status": "ok",
+        "input": 11151,
+        "cacheRead": 0,
+        "contextTokens": 11151
+      },
+      "stderrTail": null,
+      "armAcceptance": {
+        "status": "eligible",
+        "checks": {
+          "runtimeCompleted": true,
+          "rootAgentMatches": true,
+          "rootHasNoParent": true,
+          "doubleInjectionProvenance": true
+        }
+      }
+    },
+    {
+      "run": 10,
+      "scenario": "B",
+      "arm": "candidate",
+      "pair": 5,
+      "scenarioName": "one-shot delimitado",
+      "rootAgentRequested": "talos",
+      "startedAt": "2026-10-27T17:00:59.612Z",
+      "status": "completed",
+      "failureReason": null,
+      "wallMs": 10540.329065999947,
+      "exitCode": 0,
+      "timedOut": false,
+      "sessionId": "session-18",
+      "modelRequested": "openai/gpt-6-luna",
+      "rootAgentObserved": "talos",
+      "rootParentId": null,
+      "agentRouting": {
+        "status": "ok",
+        "sessions": [
+          {
+            "id": "session-18",
+            "parentId": null,
+            "agent": "talos"
+          }
+        ]
+      },
+      "agentPromptFixture": {
+        "name": "talos",
+        "path": "./src/agents/talos.md",
+        "bytes": 2492,
+        "sha256": "4d6827daa657d1eac484917098c01a2eb20548394f14b4f07968663ff63390ca"
+      },
+      "root": {
+        "status": "ok",
+        "id": "session-18",
+        "parent_id": null,
+        "idle_outcome": "succeeded",
+        "model": "{\"id\":\"gpt-6-luna\",\"providerID\":\"openai\"}",
+        "agent": "talos",
+        "title": "pantheon-bench-run-10-B-candidate"
+      },
+      "childrenCount": 0,
+      "tokens": {
+        "status": "ok",
+        "input": 11909,
+        "output": 246,
+        "reasoning": 0,
+        "cacheRead": 29568,
+        "cacheWrite": 0,
+        "tokenMessages": 4,
+        "assistantMessages": 4,
+        "tokenFieldMessages": {
+          "input": 4,
+          "output": 4,
+          "reasoning": 4,
+          "cacheRead": 4,
+          "cacheWrite": 4
+        },
+        "sessionBreakdown": {
+          "status": "ok",
+          "root": {
+            "sessionId": "session-18",
+            "input": 11909,
+            "output": 246,
+            "total": 12155
+          },
+          "descendants": {
+            "input": 0,
+            "output": 0,
+            "total": 0,
+            "sessionCount": 0
+          },
+          "sessions": [
+            {
+              "sessionId": "session-18",
+              "input": 11909,
+              "output": 246,
+              "total": 12155
+            }
+          ]
+        }
+      },
+      "toolCalls": {
+        "patch": 1,
+        "read": 1,
+        "websearch": 1
+      },
+      "toolTelemetry": {
+        "status": "ok",
+        "byTool": {
+          "patch": {
+            "calls": 1,
+            "completed": 1,
+            "failed": 0,
+            "executionMs": {
+              "median": 3,
+              "p80": 3,
+              "n": 1
+            },
+            "outputTextBytes": {
+              "bytes": 54,
+              "samples": 1
+            }
+          },
+          "read": {
+            "calls": 1,
+            "completed": 1,
+            "failed": 0,
+            "executionMs": {
+              "median": 5,
+              "p80": 5,
+              "n": 1
+            },
+            "outputTextBytes": {
+              "bytes": 254,
+              "samples": 1
+            }
+          },
+          "websearch": {
+            "calls": 1,
+            "completed": 1,
+            "failed": 0,
+            "executionMs": {
+              "median": 1151,
+              "p80": 1151,
+              "n": 1
+            },
+            "outputTextBytes": {
+              "bytes": 10361,
+              "samples": 1
+            }
+          }
+        },
+        "nestedTools": {}
+      },
+      "hooks": {
+        "status": "unavailable",
+        "reason": "hooks.log not found in the run sandbox"
+      },
+      "instructions": {
+        "status": "ok",
+        "hash": "3fa92e0b75723bfbe2470ea27687a5005d3b6b11c0fd9817d7ce29a714aa0ede",
+        "entryCount": 2,
+        "totalBytes": 10971,
+        "entries": [
+          {
+            "path": "<benchmark-temp>/shadow-config-candidate/opencode/AGENTS.md",
+            "bytes": 9205,
+            "sha256": "6b13aea00a22477cc5b153cac84be332a00bd9363e0a16eb92337efd1cc6ffe9"
+          },
+          {
+            "path": "<benchmark-temp>/run-10-B-candidate/AGENTS.md",
+            "bytes": 1766,
+            "sha256": "9624e7018df89edb5d7fca26d43fcdb07519fabe46e1b612a7b355b3815ac75b"
+          }
+        ]
+      },
+      "firstRequest": {
+        "status": "ok",
+        "input": 7525,
+        "cacheRead": 0,
+        "contextTokens": 7525
+      },
+      "stderrTail": null,
+      "armAcceptance": {
+        "status": "eligible",
+        "checks": {
+          "runtimeCompleted": true,
+          "rootAgentMatches": true,
+          "rootHasNoParent": true,
+          "doubleInjectionProvenance": true,
+          "hasNoChildren": true,
+          "didNotAttemptSubagent": true
+        }
+      }
+    }
+  ],
+  "summary": null,
+  "summaryByArm": {
+    "control": {
+      "runs": 5,
+      "eligible": 5,
+      "ineligible": 0,
+      "unavailable": 0,
+      "metrics": {
+        "runs": 5,
+        "completed": 5,
+        "failures": 0,
+        "failureReasons": [],
+        "wallMs": {
+          "median": 24664.418329000007,
+          "p80": 31324.50478800002,
+          "n": 5
+        },
+        "tokens": {
+          "status": "ok",
+          "input": 206783,
+          "output": 131502,
+          "cacheRead": 237568,
+          "cacheWrite": 0,
+          "perRunMedianInput": 38371,
+          "perRunMedianOutput": 787,
+          "completeRuns": 5,
+          "completedRuns": 5
+        },
+        "toolCalls": {
+          "subagent": 9,
+          "websearch": 7,
+          "read": 5,
+          "patch": 4,
+          "webfetch": 1,
+          "glob": 2,
+          "grep": 1,
+          "shell": 1
+        },
+        "childrenCount": 2,
+        "perScenario": {
+          "B": {
+            "runs": 5,
+            "completed": 5,
+            "failures": 0,
+            "wallMs": {
+              "median": 24664.418329000007,
+              "p80": 31324.50478800002
+            },
+            "firstRequest": {
+              "status": "ok",
+              "contextTokens": {
+                "median": 11151,
+                "p80": 11151,
+                "n": 5
+              },
+              "input": {
+                "median": 11151,
+                "p80": 11151,
+                "n": 5
+              },
+              "cacheRead": {
+                "median": 0,
+                "p80": 0,
+                "n": 5
+              },
+              "completeRuns": 5,
+              "completedRuns": 5
+            }
+          }
+        }
+      }
+    },
+    "candidate": {
+      "runs": 5,
+      "eligible": 5,
+      "ineligible": 0,
+      "unavailable": 0,
+      "metrics": {
+        "runs": 5,
+        "completed": 5,
+        "failures": 0,
+        "failureReasons": [],
+        "wallMs": {
+          "median": 7948.459259999916,
+          "p80": 10540.329065999947,
+          "n": 5
+        },
+        "tokens": {
+          "status": "ok",
+          "input": 55222,
+          "output": 1241,
+          "cacheRead": 107776,
+          "cacheWrite": 0,
+          "perRunMedianInput": 9256,
+          "perRunMedianOutput": 246,
+          "completeRuns": 5,
+          "completedRuns": 5
+        },
+        "toolCalls": {
+          "patch": 5,
+          "read": 5,
+          "websearch": 3,
+          "shell": 1
+        },
+        "childrenCount": 0,
+        "perScenario": {
+          "B": {
+            "runs": 5,
+            "completed": 5,
+            "failures": 0,
+            "wallMs": {
+              "median": 7948.459259999916,
+              "p80": 10540.329065999947
+            },
+            "firstRequest": {
+              "status": "ok",
+              "contextTokens": {
+                "median": 7525,
+                "p80": 7525,
+                "n": 5
+              },
+              "input": {
+                "median": 7525,
+                "p80": 7525,
+                "n": 5
+              },
+              "cacheRead": {
+                "median": 0,
+                "p80": 0,
+                "n": 5
+              },
+              "completeRuns": 5,
+              "completedRuns": 5
+            }
+          }
+        }
+      }
+    }
+  },
+  "pairRoutingParity": null,
+  "schemaNotes": [
+    "Tokens come from the V2 session_message ledger (assistant rows, data.tokens), the same source as pantheon_cost; cache read/write from data.tokens.cache.",
+    "Child sessions resolved recursively via session_v2.parent_id with a visited set — each session counted once.",
+    "tokens.sessionBreakdown is an optional additive report field: when complete, it gives input, output, and input+output total per unique session plus root/descendant subtotals. These are overlapping views of the existing tokens totals, not extra usage; incomplete fields or a session without assistant usage makes the breakdown unavailable without zero-fill.",
+    "Runs share the global opencode.db (provider credentials live there), but every metric is scoped by the run root sessionID and the db is opened READ-ONLY; no db writes are ever performed.",
+    "Tool calls counted from assistant content parts with type=tool; only the tool NAME is read, never tool inputs.",
+    "Hook timings come from the [bench] lines the V2 plugin appends to .pantheon/logs/hooks.log (instrumentation-only change).",
+    "Per-run `instructions` is the D4 fidelity proof: the identity (path, bytes, sha256) of every instruction file the session actually loaded, read from instruction_state/instruction_blob. Content is never copied into the report.",
+    "Per-run `firstRequest` is the proxy that isolates the injected payload: the first assistant row's tokens.input + tokens.cache.read. Tree-total input is dominated by session-length variance; the payload only lands on the first request.",
+    "Paired root-agent runs use --agents-dir for the candidate and --control-agents-dir for the control (defaults to --agents-dir); root prompt identities are recorded per arm and per run.",
+    "Paired root-agent runs also replace host skills with --skills-dir; every skill fixture file is content-identified in meta.skillsDirFixture.",
+    "When --prompt-file is provided, the paired task text is read once before measurement and its repo-relative path, byte count, and SHA-256 are recorded in meta.promptFixture.",
+    "Paired summary metrics include completed runs only when the requested root matches the observed root, the root has no parent, D4 proves both configured global/project instruction fixtures were loaded, and (for candidates) childrenCount is zero with an available tool ledger showing no subagent attempt. Failed and ineligible runs remain in runs with reasons.",
+    "Artifact correctness is audited outside the timed interval using the pre-registered oracle; armAcceptance does not assert artifact correctness.",
+    "A metric the schema cannot provide is {status:\"unavailable\", reason} — never zero."
+  ]
+}
