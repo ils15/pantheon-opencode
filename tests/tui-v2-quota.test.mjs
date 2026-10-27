@@ -1109,7 +1109,8 @@ test('MiniMax Token Plan uses distinct fixed global and CN routes and count sema
   const calls = []
   globalThis.fetch = async (url) => {
     calls.push(url)
-    const isCn = url.includes('minimaxi.com')
+    const hostname = new URL(String(url)).hostname
+    const isCn = hostname === 'api.minimaxi.com'
     return Response.json({
       base_resp: { status_code: 0, status_msg: 'success' },
       model_remains: [
