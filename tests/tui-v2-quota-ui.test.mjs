@@ -901,10 +901,80 @@ test('quota runtime clears old provider rows after removal and resolver request 
   assert.equal(runtime.snapshot().status, 'needs_setup')
   assert.deepEqual(runtime.snapshot().providers, [])
 
+  const needsSetupUpdatedAt = runtime.snapshot().updatedAt
   await runtime.refresh()
-  assert.equal(runtime.snapshot().status, 'unavailable')
+  // A failed refresh keeps the last valid response (empty eligible list) instead of wiping it.
+  assert.equal(runtime.snapshot().status, 'stale')
   assert.deepEqual(runtime.snapshot().providers, [])
+  assert.equal(runtime.snapshot().updatedAt, needsSetupUpdatedAt)
+  assert.match(String(runtime.snapshot().error ?? ''), /RPC unavailable/i)
   assert.doesNotThrow(() => quotaUI.quotaSnapshotStatusLabel(runtime.snapshot().status))
+})
+
+test('quota runtime preserves the last valid snapshot and logs the cause when the status request fails', async (t) => {
+  const warnings = []
+  const originalWarn = console.warn
+  console.warn = (message) => warnings.push(String(message))
+  t.after(() => {
+    console.warn = originalWarn
+  })
+  const persisted = new Map()
+  const storage = {
+    store(key, { initial }) {
+      if (!persisted.has(key)) persisted.set(key, { ...initial })
+      const value = persisted.get(key)
+      return [value, async (mutate) => mutate(value)]
+    },
+    memory(key, { initial }) {
+      if (!persisted.has(key)) persisted.set(key, { ...initial })
+      const value = persisted.get(key)
+      return [value, (mutate) => mutate(value)]
+    },
+  }
+  let statusCalls = 0
+  const runtime = quotaUI.createQuotaRuntime({
+    storage,
+    location: undefined,
+    data: { location: { default: () => ({ directory: '/workspace' }) } },
+    client: {
+      rpc() {
+        return {
+          async status() {
+            statusCalls += 1
+            if (statusCalls === 1) {
+              return {
+                providers: [
+                  status('deepseek', 'connected', 'none', 'available', [
+                    { kind: 'balance', amount: 1, currency: 'USD', label: 'Balance' },
+                  ]),
+                ],
+              }
+            }
+            throw new Error('HTTP request failed')
+          },
+        }
+      },
+    },
+  })
+  t.after(() => runtime.dispose())
+  await new Promise((resolve) => setImmediate(resolve))
+
+  const healthy = runtime.snapshot()
+  assert.equal(healthy.status, 'ready')
+  assert.equal(healthy.updatedAt === null, false)
+
+  await runtime.refresh()
+
+  const failed = runtime.snapshot()
+  assert.equal(failed.status, 'stale')
+  assert.deepEqual(failed.providers, healthy.providers)
+  assert.deepEqual(failed.details, healthy.details)
+  assert.equal(failed.updatedAt, healthy.updatedAt)
+  assert.match(String(failed.error ?? ''), /HTTP request failed/i)
+  assert.ok(
+    warnings.some((line) => line.includes('[pantheon-tui quota]')),
+    'the failure must be logged with the pantheon quota prefix',
+  )
 })
 
 test('quota runtime discards legacy cached provider cards until the eligible RPC result arrives', (t) => {

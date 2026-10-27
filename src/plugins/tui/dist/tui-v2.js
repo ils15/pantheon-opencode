@@ -461,17 +461,31 @@ function metricIsAvailable(metric) {
 function providerHasAvailableMetrics(provider) {
 	return provider.state === "available" && provider.metrics.some(metricIsAvailable);
 }
-function quotaSnapshotStatusLabel(status) {
+function quotaSnapshotStatusLabel(status, error) {
 	switch (status) {
 		case "loading": return "Buscando status…";
 		case "ready": return "Quota disponível";
 		case "partial": return "Dados parciais";
 		case "connected_unavailable": return "Credencial local · dados indisponíveis";
 		case "needs_setup": return "Nenhum provedor elegível";
-		case "unavailable": return "Status indisponível";
+		case "unavailable": return error !== void 0 ? `Erro: ${error}` : "Status indisponível";
 		case "stale": return "Dados desatualizados";
 		case "disabled": return "Desativado";
 	}
+}
+/**
+* Short, UI-safe summary of a failed status request. OpenCode rejects plugin RPC calls
+* with a plain `{ type, message }` object (not an `Error`), so both shapes are handled;
+* `rpc.unavailable` means no server side registered the quota RPC in this run — the
+* historical "Status indisponível" blind spot.
+*/
+function quotaRpcFaultMessage(error) {
+	const message = error instanceof Error ? error.message : typeof error === "object" && error !== null && "message" in error ? String(error.message) : String(error);
+	const type = typeof error === "object" && error !== null ? error.type : void 0;
+	const cleaned = message.trim().replace(/^Error:\s*/i, "");
+	if (type === "rpc.unavailable" || cleaned === "rpc.unavailable") return "rpc de quota indisponível no servidor";
+	if (cleaned.length === 0) return "erro desconhecido na consulta de quota";
+	return cleaned.length > 80 ? `${cleaned.slice(0, 79)}…` : cleaned;
 }
 /** Map the current typed RPC status into a provider-neutral, data-only UI model. */
 function quotaSnapshotFromStatus(response, now = Date.now()) {
@@ -509,6 +523,7 @@ function quotaSnapshotFromStatus(response, now = Date.now()) {
 			};
 		}),
 		details,
+		...status === "unavailable" && credentialResolutionFailed ? { error: "resolução de credenciais falhou no servidor" } : {},
 		updatedAt: now
 	};
 }
@@ -644,7 +659,8 @@ function createQuotaRuntime(context) {
 		status: snapshot.status,
 		providers: snapshot.providers,
 		details: snapshot.details ?? [],
-		updatedAt: snapshot.updatedAt
+		updatedAt: snapshot.updatedAt,
+		error: snapshot.error
 	});
 	const updateSnapshot = (next) => {
 		setSnapshot((draft) => {
@@ -652,6 +668,7 @@ function createQuotaRuntime(context) {
 			draft.providers = next.providers;
 			draft.details = next.details;
 			draft.updatedAt = next.updatedAt;
+			draft.error = next.error;
 		});
 	};
 	const cancelScheduledRefresh = () => {
@@ -692,13 +709,16 @@ function createQuotaRuntime(context) {
 				location: context.location ?? context.data.location.default()
 			});
 			if (!disposed && version === requestVersion) updateSnapshot(quotaSnapshotFromStatus(response));
-		} catch {
-			if (!disposed && version === requestVersion && !controller.signal.aborted) updateSnapshot({
-				status: "unavailable",
-				providers: [],
-				details: [],
-				updatedAt: null
-			});
+		} catch (error) {
+			if (!disposed && version === requestVersion && !controller.signal.aborted) {
+				const fault = quotaRpcFaultMessage(error);
+				console.warn(`[pantheon-tui quota] status request failed: ${fault}`);
+				updateSnapshot({
+					...previous,
+					status: previous.updatedAt === null ? "unavailable" : "stale",
+					error: fault
+				});
+			}
 		} finally {
 			if (requestController === controller) {
 				requestController = void 0;
@@ -1006,7 +1026,7 @@ function QuotaSidebarSummary(props) {
 				},
 				get children() {
 					var _el$6 = createElement("text");
-					insert(_el$6, () => quotaSnapshotStatusLabel(props.runtime.snapshot().status));
+					insert(_el$6, () => quotaSnapshotStatusLabel(props.runtime.snapshot().status, props.runtime.snapshot().error));
 					effect((_$p) => setProp(_el$6, "fg", muted(props.context), _$p));
 					return _el$6;
 				}
@@ -1818,9 +1838,9 @@ function QuotaPanel(props) {
 		}
 	};
 	return (() => {
-		var _el$52 = createElement("box"), _el$63 = createElement("scrollbox"), _el$64 = createElement("box"), _el$65 = createElement("box"), _el$66 = createElement("text"), _el$67 = createElement("text"), _el$68 = createElement("text"), _el$70 = createElement("text");
-		insertNode(_el$52, _el$63);
-		insertNode(_el$52, _el$65);
+		var _el$52 = createElement("box"), _el$64 = createElement("scrollbox"), _el$65 = createElement("box"), _el$66 = createElement("box"), _el$67 = createElement("text"), _el$68 = createElement("text"), _el$69 = createElement("text"), _el$71 = createElement("text");
+		insertNode(_el$52, _el$64);
+		insertNode(_el$52, _el$66);
 		setProp(_el$52, "flexDirection", "column");
 		setProp(_el$52, "width", "100%");
 		setProp(_el$52, "height", "100%");
@@ -1831,23 +1851,23 @@ function QuotaPanel(props) {
 			},
 			get fallback() {
 				return (() => {
-					var _el$72 = createElement("box"), _el$73 = createElement("text"), _el$75 = createElement("text");
-					insertNode(_el$72, _el$73);
-					insertNode(_el$72, _el$75);
-					setProp(_el$72, "flexDirection", "column");
-					insertNode(_el$73, createTextNode(`▥ Pantheon / Quota`));
-					setProp(_el$73, "attributes", 1);
-					insert(_el$75, () => quotaSnapshotStatusLabel(snapshot().status));
+					var _el$73 = createElement("box"), _el$74 = createElement("text"), _el$76 = createElement("text");
+					insertNode(_el$73, _el$74);
+					insertNode(_el$73, _el$76);
+					setProp(_el$73, "flexDirection", "column");
+					insertNode(_el$74, createTextNode(`▥ Pantheon / Quota`));
+					setProp(_el$74, "attributes", 1);
+					insert(_el$76, () => quotaSnapshotStatusLabel(snapshot().status, snapshot().error));
 					effect((_p$) => {
 						var _v$15 = tone(props.context, "info"), _v$16 = tone(props.context, snapshotTone());
-						_v$15 !== _p$.e && (_p$.e = setProp(_el$73, "fg", _v$15, _p$.e));
-						_v$16 !== _p$.t && (_p$.t = setProp(_el$75, "fg", _v$16, _p$.t));
+						_v$15 !== _p$.e && (_p$.e = setProp(_el$74, "fg", _v$15, _p$.e));
+						_v$16 !== _p$.t && (_p$.t = setProp(_el$76, "fg", _v$16, _p$.t));
 						return _p$;
 					}, {
 						e: void 0,
 						t: void 0
 					});
-					return _el$72;
+					return _el$73;
 				})();
 			},
 			get children() {
@@ -1859,7 +1879,7 @@ function QuotaPanel(props) {
 				setProp(_el$53, "gap", 1);
 				insertNode(_el$54, createTextNode(`▥ Pantheon / Quota`));
 				setProp(_el$54, "attributes", 1);
-				insert(_el$56, () => quotaSnapshotStatusLabel(snapshot().status));
+				insert(_el$56, () => quotaSnapshotStatusLabel(snapshot().status, snapshot().error));
 				effect((_p$) => {
 					var _v$8 = tone(props.context, "info"), _v$9 = tone(props.context, snapshotTone());
 					_v$8 !== _p$.e && (_p$.e = setProp(_el$54, "fg", _v$8, _p$.e));
@@ -1871,53 +1891,64 @@ function QuotaPanel(props) {
 				});
 				return _el$53;
 			}
-		}), _el$63);
+		}), _el$64);
+		insert(_el$52, createComponent(Show, {
+			get when() {
+				return memo(() => snapshot().error !== void 0)() && snapshot().status !== "ready";
+			},
+			get children() {
+				var _el$57 = createElement("text");
+				insert(_el$57, () => `Último erro: ${snapshot().error}`);
+				effect((_$p) => setProp(_el$57, "fg", muted(props.context), _$p));
+				return _el$57;
+			}
+		}), _el$64);
 		insert(_el$52, createComponent(Show, {
 			get when() {
 				return memo(() => snapshot().status === "needs_setup")() && snapshot().details.length === 0;
 			},
 			get children() {
-				var _el$57 = createElement("text");
-				insertNode(_el$57, createTextNode(`Nenhum provedor elegível: verifique conexão ativa e credencial local compatível.`));
-				effect((_$p) => setProp(_el$57, "fg", muted(props.context), _$p));
-				return _el$57;
+				var _el$58 = createElement("text");
+				insertNode(_el$58, createTextNode(`Nenhum provedor elegível: verifique conexão ativa e credencial local compatível.`));
+				effect((_$p) => setProp(_el$58, "fg", muted(props.context), _$p));
+				return _el$58;
 			}
-		}), _el$63);
+		}), _el$64);
 		insert(_el$52, createComponent(Show, {
 			get when() {
 				return snapshot().status === "unavailable";
 			},
 			get children() {
-				var _el$59 = createElement("text");
-				insertNode(_el$59, createTextNode(`Não foi possível verificar o status da quota.`));
-				effect((_$p) => setProp(_el$59, "fg", muted(props.context), _$p));
-				return _el$59;
+				var _el$60 = createElement("text");
+				insertNode(_el$60, createTextNode(`Não foi possível verificar o status da quota.`));
+				effect((_$p) => setProp(_el$60, "fg", muted(props.context), _$p));
+				return _el$60;
 			}
-		}), _el$63);
+		}), _el$64);
 		insert(_el$52, createComponent(Show, {
 			get when() {
 				return snapshot().status === "stale";
 			},
 			get children() {
-				var _el$61 = createElement("text");
-				insertNode(_el$61, createTextNode(`A última resposta continua visível; atualize para tentar novamente.`));
-				effect((_$p) => setProp(_el$61, "fg", muted(props.context), _$p));
-				return _el$61;
+				var _el$62 = createElement("text");
+				insertNode(_el$62, createTextNode(`A última resposta continua visível; atualize para tentar novamente.`));
+				effect((_$p) => setProp(_el$62, "fg", muted(props.context), _$p));
+				return _el$62;
 			}
-		}), _el$63);
-		insertNode(_el$63, _el$64);
-		setProp(_el$63, "flexGrow", 1);
-		setProp(_el$63, "flexShrink", 1);
-		setProp(_el$63, "flexBasis", 0);
-		setProp(_el$63, "minHeight", 3);
-		setProp(_el$63, "width", "100%");
-		setProp(_el$63, "scrollY", true);
-		setProp(_el$63, "focusable", true);
-		setProp(_el$63, "border", true);
-		setProp(_el$64, "flexDirection", "column");
-		setProp(_el$64, "paddingX", 1);
-		setProp(_el$64, "paddingY", 1);
-		insert(_el$64, createComponent(For, {
+		}), _el$64);
+		insertNode(_el$64, _el$65);
+		setProp(_el$64, "flexGrow", 1);
+		setProp(_el$64, "flexShrink", 1);
+		setProp(_el$64, "flexBasis", 0);
+		setProp(_el$64, "minHeight", 3);
+		setProp(_el$64, "width", "100%");
+		setProp(_el$64, "scrollY", true);
+		setProp(_el$64, "focusable", true);
+		setProp(_el$64, "border", true);
+		setProp(_el$65, "flexDirection", "column");
+		setProp(_el$65, "paddingX", 1);
+		setProp(_el$65, "paddingY", 1);
+		insert(_el$65, createComponent(For, {
 			get each() {
 				return snapshot().details;
 			},
@@ -1934,7 +1965,7 @@ function QuotaPanel(props) {
 				}
 			})
 		}), null);
-		insert(_el$64, createComponent(ModelUsageDetails, {
+		insert(_el$65, createComponent(ModelUsageDetails, {
 			get context() {
 				return props.context;
 			},
@@ -1945,25 +1976,25 @@ function QuotaPanel(props) {
 				return props.panel.width - 6;
 			}
 		}), null);
-		insertNode(_el$65, _el$66);
-		insertNode(_el$65, _el$67);
-		insertNode(_el$65, _el$68);
-		insertNode(_el$65, _el$70);
-		setProp(_el$65, "flexDirection", "column");
-		setProp(_el$65, "flexShrink", 0);
-		insert(_el$66, () => `Quota ${preferences().enabled ? "ativada" : "desativada"} · exibição: ${preferences().display === "remaining" ? "restante" : "usado"}`);
-		insert(_el$67, () => `E ${preferences().enabled ? "desativar" : "ativar"} · M alternar usado/restante`);
-		insertNode(_el$68, createTextNode(`↑/↓ rolar · R atualizar`));
-		insertNode(_el$70, createTextNode(`Esc/Q fechar`));
+		insertNode(_el$66, _el$67);
+		insertNode(_el$66, _el$68);
+		insertNode(_el$66, _el$69);
+		insertNode(_el$66, _el$71);
+		setProp(_el$66, "flexDirection", "column");
+		setProp(_el$66, "flexShrink", 0);
+		insert(_el$67, () => `Quota ${preferences().enabled ? "ativada" : "desativada"} · exibição: ${preferences().display === "remaining" ? "restante" : "usado"}`);
+		insert(_el$68, () => `E ${preferences().enabled ? "desativar" : "ativar"} · M alternar usado/restante`);
+		insertNode(_el$69, createTextNode(`↑/↓ rolar · R atualizar`));
+		insertNode(_el$71, createTextNode(`Esc/Q fechar`));
 		effect((_p$) => {
 			var _v$0 = props.panel.focused, _v$1 = muted(props.context), _v$10 = tone(props.context, "info"), _v$11 = muted(props.context), _v$12 = muted(props.context), _v$13 = muted(props.context), _v$14 = muted(props.context);
-			_v$0 !== _p$.e && (_p$.e = setProp(_el$63, "focused", _v$0, _p$.e));
-			_v$1 !== _p$.t && (_p$.t = setProp(_el$63, "borderColor", _v$1, _p$.t));
-			_v$10 !== _p$.a && (_p$.a = setProp(_el$63, "focusedBorderColor", _v$10, _p$.a));
-			_v$11 !== _p$.o && (_p$.o = setProp(_el$66, "fg", _v$11, _p$.o));
-			_v$12 !== _p$.i && (_p$.i = setProp(_el$67, "fg", _v$12, _p$.i));
-			_v$13 !== _p$.n && (_p$.n = setProp(_el$68, "fg", _v$13, _p$.n));
-			_v$14 !== _p$.s && (_p$.s = setProp(_el$70, "fg", _v$14, _p$.s));
+			_v$0 !== _p$.e && (_p$.e = setProp(_el$64, "focused", _v$0, _p$.e));
+			_v$1 !== _p$.t && (_p$.t = setProp(_el$64, "borderColor", _v$1, _p$.t));
+			_v$10 !== _p$.a && (_p$.a = setProp(_el$64, "focusedBorderColor", _v$10, _p$.a));
+			_v$11 !== _p$.o && (_p$.o = setProp(_el$67, "fg", _v$11, _p$.o));
+			_v$12 !== _p$.i && (_p$.i = setProp(_el$68, "fg", _v$12, _p$.i));
+			_v$13 !== _p$.n && (_p$.n = setProp(_el$69, "fg", _v$13, _p$.n));
+			_v$14 !== _p$.s && (_p$.s = setProp(_el$71, "fg", _v$14, _p$.s));
 			return _p$;
 		}, {
 			e: void 0,

@@ -367,8 +367,10 @@ function createCredentialResolver(context: Context) {
         return {}
       }
       return {}
-    } catch {
+    } catch (error) {
       // Host errors may contain identifiers or provider data; never forward them.
+      // The sanitized error alone hides the cause, so keep the original in the server log.
+      console.warn('[pantheon-tui quota] credential resolution failed:', error)
       throw new Error('Credential resolution failed')
     }
   }
@@ -815,6 +817,7 @@ export function createQuotaPlugin(
             getProviderStatus(resolver, adapters, callContext.signal),
         })
       } catch (error) {
+        console.warn('[pantheon-tui quota] quota RPC registration failed:', error)
         eventController.abort()
         shutdownController.abort()
         resolver.dispose()

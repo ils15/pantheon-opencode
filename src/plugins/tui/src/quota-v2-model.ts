@@ -58,6 +58,8 @@ export type QuotaSnapshot = {
   providers: QuotaProviderView[]
   details: QuotaProviderDetail[]
   updatedAt: number | null
+  /** Short diagnostic of the latest transport/RPC failure; absent after a successful refresh. */
+  error?: string | undefined
 }
 
 export const QUOTA_CLOCK_INTERVAL_MS = 60_000
@@ -610,7 +612,10 @@ function providerHasAvailableMetrics(provider: ProviderStatusRecord): boolean {
   return provider.state === 'available' && provider.metrics.some(metricIsAvailable)
 }
 
-export function quotaSnapshotStatusLabel(status: QuotaSnapshotStatus): string {
+export function quotaSnapshotStatusLabel(
+  status: QuotaSnapshotStatus,
+  error?: string | undefined,
+): string {
   switch (status) {
     case 'loading':
       return 'Buscando status…'
@@ -623,12 +628,35 @@ export function quotaSnapshotStatusLabel(status: QuotaSnapshotStatus): string {
     case 'needs_setup':
       return 'Nenhum provedor elegível'
     case 'unavailable':
-      return 'Status indisponível'
+      return error !== undefined ? `Erro: ${error}` : 'Status indisponível'
     case 'stale':
       return 'Dados desatualizados'
     case 'disabled':
       return 'Desativado'
   }
+}
+
+/**
+ * Short, UI-safe summary of a failed status request. OpenCode rejects plugin RPC calls
+ * with a plain `{ type, message }` object (not an `Error`), so both shapes are handled;
+ * `rpc.unavailable` means no server side registered the quota RPC in this run — the
+ * historical "Status indisponível" blind spot.
+ */
+export function quotaRpcFaultMessage(error: unknown): string {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === 'object' && error !== null && 'message' in error
+        ? String((error as { message: unknown }).message)
+        : String(error)
+  const type =
+    typeof error === 'object' && error !== null ? (error as { type?: unknown }).type : undefined
+  const cleaned = message.trim().replace(/^Error:\s*/i, '')
+  if (type === 'rpc.unavailable' || cleaned === 'rpc.unavailable') {
+    return 'rpc de quota indisponível no servidor'
+  }
+  if (cleaned.length === 0) return 'erro desconhecido na consulta de quota'
+  return cleaned.length > 80 ? `${cleaned.slice(0, 79)}…` : cleaned
 }
 
 /** Map the current typed RPC status into a provider-neutral, data-only UI model. */
@@ -699,6 +727,11 @@ export function quotaSnapshotFromStatus(response: unknown, now = Date.now()): Qu
       }
     }),
     details,
+    // A flagged credential-resolution failure is the server's diagnosed cause of an
+    // aggregated unavailable status; surface it instead of a blind "Status indisponível".
+    ...(status === 'unavailable' && credentialResolutionFailed
+      ? { error: 'resolução de credenciais falhou no servidor' }
+      : {}),
     updatedAt: now,
   }
 }
@@ -868,6 +901,7 @@ export function createQuotaRuntime(
     providers: snapshot.providers,
     details: snapshot.details ?? [],
     updatedAt: snapshot.updatedAt,
+    error: snapshot.error,
   })
   const updateSnapshot = (next: QuotaSnapshot): void => {
     setSnapshot((draft) => {
@@ -875,6 +909,7 @@ export function createQuotaRuntime(
       draft.providers = next.providers
       draft.details = next.details
       draft.updatedAt = next.updatedAt
+      draft.error = next.error
     })
   }
 
@@ -920,9 +955,18 @@ export function createQuotaRuntime(
       if (!disposed && version === requestVersion) {
         updateSnapshot(quotaSnapshotFromStatus(response))
       }
-    } catch {
+    } catch (error) {
       if (!disposed && version === requestVersion && !controller.signal.aborted) {
-        updateSnapshot({ status: 'unavailable', providers: [], details: [], updatedAt: null })
+        // A failed refresh keeps the last valid snapshot (providers, details, updatedAt)
+        // instead of wiping it, and records the real cause so the UI never shows a blind
+        // "Status indisponível". Without prior data the status stays unavailable.
+        const fault = quotaRpcFaultMessage(error)
+        console.warn(`[pantheon-tui quota] status request failed: ${fault}`)
+        updateSnapshot({
+          ...previous,
+          status: previous.updatedAt === null ? 'unavailable' : 'stale',
+          error: fault,
+        })
       }
     } finally {
       if (requestController === controller) {

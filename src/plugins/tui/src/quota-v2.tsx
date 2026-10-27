@@ -160,7 +160,10 @@ export function QuotaSidebarSummary(props: QuotaSurfaceProps): JSX.Element {
         <text fg={base(props.context)}>{`${QUOTA_ICON} Pantheon quota`}</text>
         <Show when={props.runtime.snapshot().status !== 'ready' || entries().length === 0}>
           <text fg={muted(props.context)}>
-            {quotaSnapshotStatusLabel(props.runtime.snapshot().status)}
+            {quotaSnapshotStatusLabel(
+              props.runtime.snapshot().status,
+              props.runtime.snapshot().error,
+            )}
           </text>
         </Show>
         <For each={props.runtime.snapshot().providers}>
@@ -857,7 +860,7 @@ function QuotaPanel(props: QuotaSurfaceProps & { panel: PanelInput }) {
               {`${QUOTA_ICON} Pantheon / Quota`}
             </text>
             <text fg={tone(props.context, snapshotTone())}>
-              {quotaSnapshotStatusLabel(snapshot().status)}
+              {quotaSnapshotStatusLabel(snapshot().status, snapshot().error)}
             </text>
           </box>
         }
@@ -867,9 +870,12 @@ function QuotaPanel(props: QuotaSurfaceProps & { panel: PanelInput }) {
             {`${QUOTA_ICON} Pantheon / Quota`}
           </text>
           <text fg={tone(props.context, snapshotTone())}>
-            {quotaSnapshotStatusLabel(snapshot().status)}
+            {quotaSnapshotStatusLabel(snapshot().status, snapshot().error)}
           </text>
         </box>
+      </Show>
+      <Show when={snapshot().error !== undefined && snapshot().status !== 'ready'}>
+        <text fg={muted(props.context)}>{`Último erro: ${snapshot().error}`}</text>
       </Show>
       <Show when={snapshot().status === 'needs_setup' && snapshot().details.length === 0}>
         <text fg={muted(props.context)}>
