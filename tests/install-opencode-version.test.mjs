@@ -105,6 +105,31 @@ test('parses separated version values and rejects invalid values', () => {
     /expected v1, v2, or auto/,
   )
   assert.throws(() => parseOpenCodeVersion(['init', '--version', 'v3']), /expected v1, v2, or auto/)
+  assert.throws(
+    () => parseOpenCodeVersion(['init', '--version', 'banana']),
+    /expected v1, v2, or auto/,
+  )
+  assert.throws(
+    () => parseOpenCodeVersion(['init', '--version=banana']),
+    /expected v1, v2, or auto/,
+  )
+  assert.throws(() => parseOpenCodeVersion(['init', '--version']), /--version requires a value/i)
+})
+
+test('rejects explicit version selectors with missing values', () => {
+  for (const [args, flag] of [
+    [['init', '--version'], '--version'],
+    [['init', '--version', '--dry-run'], '--version'],
+    [['init', '--version='], '--version'],
+    [['init', '--opencode-version'], '--opencode-version'],
+    [['init', '--opencode-version', '--yes'], '--opencode-version'],
+    [['init', '--opencode-version='], '--opencode-version'],
+  ]) {
+    assert.throws(
+      () => parseOpenCodeVersion(args),
+      new RegExp(`${flag.replaceAll('-', '\\-')} requires a value`, 'i'),
+    )
+  }
 })
 
 test('auto resolves an explicit environment or opencode2 binary hint', () => {

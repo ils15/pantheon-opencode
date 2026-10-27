@@ -354,6 +354,150 @@ export function collectMcpConfigs(args) {
   return configs
 }
 
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+/**
+ * Return MCP entries and retain whether each came from the V1 flat map or the
+ * V2 `mcp.servers` map. Nested-map detection is deliberately based on the map
+ * structure, not a partial server-field heuristic: malformed object entries
+ * still remain identifiable as nested entries and can fail closed below.
+ * @param {unknown} mcp
+ * @returns {Map<string, { entry: any, layout: 'v1' | 'v2' }>}
+ */
+function getMcpServerEntryRecords(mcp) {
+  if (!isRecord(mcp)) return new Map()
+
+  const nested = mcp.servers
+  // A V1 server named "servers" is still a server config; otherwise this
+  // wrapper is the V2 map, including maps with malformed/non-object members.
+  // Keeping those malformed members in the V2 layout prevents a bad entry
+  // from making valid neighboring nested servers disappear.
+  const isNestedServerMap = isRecord(nested) && !isValidMcpServerEntry(nested, 'v1')
+  const entries = new Map()
+
+  for (const [name, entry] of Object.entries(mcp)) {
+    if (isNestedServerMap && name === 'servers') continue
+    entries.set(name, { entry, layout: 'v1' })
+  }
+
+  if (isNestedServerMap) {
+    for (const [name, entry] of Object.entries(nested)) {
+      // A nested entry takes precedence over a duplicate V1 flat name, in
+      // agreement with the V2 host's effective configuration.
+      entries.set(name, { entry, layout: 'v2' })
+    }
+  }
+
+  return entries
+}
+
+/**
+ * Return MCP entries from either the V1 flat map or V2's `mcp.servers` map.
+ * When both contain distinct names, keep both; for a duplicate, the nested V2
+ * entry wins because it is the shape the V2 host reads.
+ * @param {unknown} mcp
+ * @returns {Record<string, any>}
+ */
+export function getMcpServerEntries(mcp) {
+  return Object.fromEntries(
+    [...getMcpServerEntryRecords(mcp)]
+      .filter(([, record]) => isRecord(record.entry))
+      .map(([name, record]) => [name, record.entry]),
+  )
+}
+
+function isStringMap(value) {
+  return isRecord(value) && Object.values(value).every((item) => typeof item === 'string')
+}
+
+/**
+ * Validate the timeout field against the OpenCode config generation in use.
+ * V1 MCP entries use a numeric timeout; V2 uses the named startup/catalog/
+ * execution timeout map, whose values are positive integers.
+ * @param {unknown} timeout
+ * @param {'v1' | 'v2'} layout
+ */
+function isValidMcpTimeout(timeout, layout) {
+  if (layout === 'v1') return Number.isFinite(timeout) && timeout >= 0
+  if (!isRecord(timeout)) return false
+
+  const supportedTimeouts = new Set(['startup', 'catalog', 'execution'])
+  return Object.entries(timeout).every(
+    ([name, value]) => supportedTimeouts.has(name) && Number.isInteger(value) && value > 0,
+  )
+}
+
+/**
+ * OpenCode V2 remote MCP servers use Streamable HTTP and require an absolute
+ * HTTP(S) endpoint. Parsing without a base rejects relative URLs.
+ * @param {unknown} value
+ */
+function isAbsoluteRemoteMcpUrl(value) {
+  if (typeof value !== 'string' || value.trim() === '' || value !== value.trim()) return false
+  try {
+    const url = new URL(value)
+    return (
+      (url.protocol === 'http:' || url.protocol === 'https:') &&
+      url.hostname !== '' &&
+      url.username === '' &&
+      url.password === ''
+    )
+  } catch {
+    return false
+  }
+}
+
+/** @param {unknown} value */
+function hasEmbeddedRemoteMcpCredentials(value) {
+  if (typeof value !== 'string') return false
+  try {
+    const url = new URL(value)
+    return (
+      (url.protocol === 'http:' || url.protocol === 'https:') &&
+      (url.username !== '' || url.password !== '')
+    )
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Verify the transport-specific required fields from OpenCode's local/remote
+ * MCP schema. Both V1 flat and V2 nested local commands are argv arrays.
+ * Unknown entry fields are left alone so documented and forward-compatible
+ * optional settings work.
+ * @param {any} entry
+ * @param {'v1' | 'v2'} layout
+ */
+function isValidMcpServerEntry(entry, layout) {
+  if (!isRecord(entry) || (entry.type !== 'local' && entry.type !== 'remote')) return false
+
+  if (entry.enabled !== undefined && typeof entry.enabled !== 'boolean') return false
+  if (entry.disabled !== undefined && typeof entry.disabled !== 'boolean') return false
+  if (entry.timeout !== undefined && !isValidMcpTimeout(entry.timeout, layout)) return false
+  if (entry.cwd !== undefined && typeof entry.cwd !== 'string') return false
+  if (entry.environment !== undefined && !isStringMap(entry.environment)) return false
+
+  if (entry.type === 'local') {
+    if (
+      !Array.isArray(entry.command) ||
+      entry.command.length === 0 ||
+      entry.command.some((part) => typeof part !== 'string')
+    ) {
+      return false
+    }
+    return true
+  }
+
+  return (
+    isAbsoluteRemoteMcpUrl(entry.url) &&
+    (entry.headers === undefined || isStringMap(entry.headers)) &&
+    (entry.oauth === undefined || entry.oauth === false || isRecord(entry.oauth))
+  )
+}
+
 function checkMcpConfig(args) {
   section('B. MCP Configuration')
 
@@ -377,49 +521,57 @@ function checkMcpConfig(args) {
   for (const cfg of configs) {
     info(`Checking ${cfg.label} opencode.json`)
 
-    const mcp = cfg.data.mcp
-    if (!mcp || typeof mcp !== 'object') {
+    const rawMcp = cfg.data.mcp
+    if (!rawMcp || typeof rawMcp !== 'object' || Array.isArray(rawMcp)) {
       if (requiredMcpNames.length > 0)
         error(`${cfg.label}: required MCPs missing — no "mcp" section`)
       else info(`${cfg.label}: no "mcp" section (${args.profile} profile — optional)`)
       continue
     }
+    const mcpRecords = getMcpServerEntryRecords(rawMcp)
+    for (const { entry, layout } of mcpRecords.values()) {
+      if (!isValidMcpServerEntry(entry, layout)) {
+        warn(`${cfg.label}: MCP server entry is invalid`)
+      }
+    }
 
     // 1. gh_grep MCP check (optional in every supported profile)
-    const ghGrep = mcp.gh_grep
-    if (ghGrep) {
-      if (ghGrep.type === 'remote' && ghGrep.url === 'https://mcp.grep.app') {
+    const ghGrepRecord = mcpRecords.get('gh_grep')
+    if (ghGrepRecord) {
+      const { entry: ghGrep, layout } = ghGrepRecord
+      const isValid = isValidMcpServerEntry(ghGrep, layout)
+      if (isValid && ghGrep.type === 'remote' && ghGrep.url === 'https://mcp.grep.app') {
         pass(`${cfg.label}: gh_grep MCP configured correctly`)
-      } else {
-        const gotUrl = ghGrep.url ?? '<missing>'
-        const detail =
-          ghGrep.type !== 'remote'
-            ? `type is "${ghGrep.type}" instead of "remote"`
-            : `url is "${gotUrl}"`
-        warn(`${cfg.label}: gh_grep MCP may need review — ${detail}`)
+      } else if (isValid) {
+        warn(
+          `${cfg.label}: gh_grep MCP may need review — expected a remote MCP at the recommended endpoint`,
+        )
       }
     } else {
       info(`${cfg.label}: optional gh_grep MCP not configured (${args.profile} profile)`)
     }
 
     // 2. Context7 MCP check
-    const context7 = mcp.context7
-    if (context7) {
-      const isLocal = context7.type === 'local'
-      const hasCommand =
-        Array.isArray(context7.command) &&
-        context7.command.length > 0 &&
-        context7.command.some((s) => s.includes('context7-mcp') || s.includes('context7'))
-      const enabled = context7.enabled !== false
+    const context7Record = mcpRecords.get('context7')
+    if (context7Record) {
+      const { entry: context7, layout } = context7Record
+      if (isValidMcpServerEntry(context7, layout)) {
+        const isLocal = context7.type === 'local'
+        const hasCommand =
+          Array.isArray(context7.command) &&
+          context7.command.length > 0 &&
+          context7.command.some((s) => s.includes('context7-mcp') || s.includes('context7'))
+        const enabled = context7.enabled !== false
 
-      if (isLocal && hasCommand && enabled) {
-        pass(`${cfg.label}: Context7 MCP configured correctly`)
-      } else {
-        const details = []
-        if (!isLocal) details.push(`type should be "local"`)
-        if (!hasCommand) details.push("command missing or doesn't mention context7-mcp")
-        if (!enabled) details.push('not enabled')
-        warn(`${cfg.label}: Context7 MCP issues — ${details.join(', ')}`)
+        if (isLocal && hasCommand && enabled) {
+          pass(`${cfg.label}: Context7 MCP configured correctly`)
+        } else {
+          const details = []
+          if (!isLocal) details.push(`type should be "local"`)
+          if (!hasCommand) details.push("command missing or doesn't mention context7-mcp")
+          if (!enabled) details.push('not enabled')
+          warn(`${cfg.label}: Context7 MCP issues — ${details.join(', ')}`)
+        }
       }
     } else {
       info(`${cfg.label}: optional Context7 MCP not configured (${args.profile} profile)`)
@@ -443,13 +595,18 @@ function checkMcpConfig(args) {
     // existing executable and existing absolute script paths. Catches the
     // ENOENT-on-spawn failure class (dead hardcoded path, ambiguous relative
     // path) before opencode tries to spawn the server.
-    for (const [name, mcpEntry] of Object.entries(mcp)) {
-      if (mcpEntry?.type !== 'local') continue
-      const cmd = mcpEntry.command
-      if (!Array.isArray(cmd) || cmd.length === 0) {
-        warn(`${cfg.label}: MCP "${name}" has no command array`)
-        continue
+    for (const [name, { entry: mcpEntry, layout }] of mcpRecords) {
+      if (
+        isRecord(mcpEntry) &&
+        mcpEntry.type === 'remote' &&
+        hasEmbeddedRemoteMcpCredentials(mcpEntry.url)
+      ) {
+        warn(
+          `${cfg.label}: a remote MCP URL contains embedded credentials; use environment variables for authentication instead`,
+        )
       }
+      if (!isValidMcpServerEntry(mcpEntry, layout) || mcpEntry.type !== 'local') continue
+      const cmd = mcpEntry.command
       const exe = cmd[0]
       if (!exe.includes('/')) {
         // PATH-resolved executable — cannot verify statically; surface for manual check
@@ -472,13 +629,25 @@ function checkMcpConfig(args) {
   }
 
   if (requiredMcpNames.length > 0) {
-    const configured = new Set(configs.flatMap((cfg) => Object.keys(cfg.data.mcp ?? {})))
+    const configured = new Set(
+      configs.flatMap((cfg) =>
+        [...getMcpServerEntryRecords(cfg.data.mcp)]
+          .filter(([, { entry, layout }]) => isValidMcpServerEntry(entry, layout))
+          .map(([name]) => name),
+      ),
+    )
     for (const required of requiredMcpNames) {
       if (configured.has(required))
         pass(
           `Required MCP "${required}" entry is present (presence check only; this check does not verify enabled state, command/transport usability, connectivity, or health)`,
+          { code: 'required_mcp_present', classification: 'present', server: required },
         )
-      else error(`Required MCP "${required}" not configured in any available config`)
+      else
+        error(`Required MCP "${required}" not configured in any available config`, {
+          code: 'required_mcp_missing',
+          classification: 'missing',
+          server: required,
+        })
     }
   }
 }
@@ -586,9 +755,8 @@ async function checkMcpRuntimeSmoke(args) {
 
   const local = []
   for (const cfg of collectMcpConfigs(args)) {
-    for (const [name, entry] of Object.entries(cfg.data.mcp ?? {})) {
-      if (entry?.type !== 'local') continue
-      if (!Array.isArray(entry.command) || entry.command.length === 0) continue
+    for (const [name, { entry, layout }] of getMcpServerEntryRecords(cfg.data.mcp)) {
+      if (!isValidMcpServerEntry(entry, layout) || entry.type !== 'local') continue
       const cwd = resolveMcpCwd(entry, cfg.path)
       const command = entry.command.map((part, index) =>
         index === 0 || part.startsWith('-') || part.startsWith('/') ? part : resolve(cwd, part),
@@ -625,7 +793,7 @@ async function checkMcpRuntimeSmoke(args) {
  */
 function checkAgentMcpReferences(cfg) {
   const agentFiles = readdirSync(AGENTS_DIR).filter((f) => f.endsWith('.md'))
-  const mcpNames = new Set(Object.keys(cfg.data.mcp ?? {}))
+  const mcpNames = new Set(Object.keys(getMcpServerEntries(cfg.data.mcp)))
   const referencedNames = new Set()
 
   for (const file of agentFiles) {

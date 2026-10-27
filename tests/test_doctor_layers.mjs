@@ -2,7 +2,7 @@
 
 import { strict as assert } from 'node:assert'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -18,6 +18,7 @@ import {
   collectRegisteredPluginRefs,
   deriveInstalledAgentFiles,
   findMissingPermissionTask,
+  getMcpServerEntries,
   hasPermissionTask,
   isValidAgentFile,
   probeNodeSqlite,
@@ -44,6 +45,23 @@ assert.doesNotMatch(
 
 const warningsOnly = summaryMessage({ error: 0, warn: 1 }, 0)
 assert.match(warningsOnly, /warnings are advisory/i, 'warnings-only summary remains advisory')
+
+assert.deepEqual(
+  getMcpServerEntries({
+    servers: {
+      'pantheon-memory': { type: 'local', command: ['/runtime/python'] },
+      overlap: { type: 'remote', url: 'https://nested.example/mcp' },
+    },
+    'flat-user': { type: 'remote', url: 'https://flat.example/mcp' },
+    overlap: { type: 'local', command: ['/flat/python'] },
+  }),
+  {
+    'pantheon-memory': { type: 'local', command: ['/runtime/python'] },
+    'flat-user': { type: 'remote', url: 'https://flat.example/mcp' },
+    overlap: { type: 'remote', url: 'https://nested.example/mcp' },
+  },
+  'V2 nested entries and distinct V1 flat entries are both visible, with V2 winning duplicates',
+)
 
 // Freshness is exercised through a deterministic result harness rather than
 // mocking child_process or relying on filesystem timestamps.
@@ -134,51 +152,528 @@ const mcpProfileFixture = mkdtempSync(join(tmpdir(), 'pantheon-doctor-mcp-profil
 try {
   writeFileSync(join(mcpProfileFixture, 'opencode.json'), JSON.stringify({ mcp: {} }))
   const configHome = join(mcpProfileFixture, 'config')
+  const privateTmp = join(mcpProfileFixture, 'tmp')
+  mkdirSync(privateTmp)
   const env = {
     ...process.env,
     HOME: mcpProfileFixture,
     XDG_CONFIG_HOME: configHome,
     PANTHEON_HOME: join(configHome, 'opencode'),
+    TMPDIR: privateTmp,
   }
   const doctor = join(ROOT, 'scripts', 'doctor.mjs')
+  const hasRequiredMcp = (report, name, state) =>
+    report.findings.some(({ code, server }) => code === `required_mcp_${state}` && server === name)
   const requiredProfile = spawnSync(
     process.execPath,
-    [doctor, '--target', mcpProfileFixture, '--profile', 'global'],
+    [doctor, '--target', mcpProfileFixture, '--profile', 'global', '--json'],
     { encoding: 'utf8', env },
   )
-  assert.match(
-    `${requiredProfile.stdout}\n${requiredProfile.stderr}`,
-    /Required MCP "pantheon-persistence" not configured/,
+  assert.equal(
+    hasRequiredMcp(JSON.parse(requiredProfile.stdout), 'pantheon-persistence', 'missing'),
+    true,
     'global doctor profile requires pantheon-persistence',
   )
 
   writeFileSync(
     join(mcpProfileFixture, 'opencode.json'),
-    JSON.stringify({ mcp: { 'pantheon-persistence': { enabled: false, type: 'remote' } } }),
+    JSON.stringify({
+      mcp: {
+        'pantheon-persistence': {
+          enabled: false,
+          type: 'remote',
+          url: 'https://persistence.example/mcp',
+        },
+      },
+    }),
   )
   const presenceOnlyProfile = spawnSync(
     process.execPath,
-    [doctor, '--target', mcpProfileFixture, '--profile', 'global', '--verbose'],
+    [doctor, '--target', mcpProfileFixture, '--profile', 'global', '--json'],
     { encoding: 'utf8', env },
   )
-  assert.match(
-    `${presenceOnlyProfile.stdout}\n${presenceOnlyProfile.stderr}`,
-    /Required MCP "pantheon-persistence" entry is present \(presence check only; this check does not verify enabled state, command\/transport usability, connectivity, or health\)/,
+  assert.equal(
+    hasRequiredMcp(JSON.parse(presenceOnlyProfile.stdout), 'pantheon-persistence', 'present'),
+    true,
     'required MCP check reports presence without asserting enabled or usable transport',
+  )
+
+  const runJsonDoctor = (mcp) => {
+    writeFileSync(join(mcpProfileFixture, 'opencode.json'), JSON.stringify({ mcp }))
+    const result = spawnSync(
+      process.execPath,
+      [doctor, '--target', mcpProfileFixture, '--profile', 'global', '--json'],
+      { encoding: 'utf8', env },
+    )
+    assert.ok(result.stdout, result.stderr || 'doctor JSON invocation produced no report')
+    return JSON.parse(result.stdout)
+  }
+
+  const validRequiredServers = {
+    'pantheon-resources': {
+      type: 'remote',
+      url: 'https://resources.example/mcp',
+      headers: { Accept: 'application/json' },
+      oauth: false,
+    },
+    'pantheon-persistence': {
+      type: 'local',
+      command: ['python3', 'server.py'],
+      cwd: '.',
+      environment: { MODE: 'test' },
+      enabled: false,
+    },
+  }
+
+  const injectedGhGrepHeader = 'local\n⚠️ forged warning \u001b[31mGH_GREP_SECRET_SENTINEL'
+  const ghGrepConfig = {
+    gh_grep: {
+      type: 'remote',
+      url: 'https://custom.example/mcp',
+      headers: { 'X-Test': injectedGhGrepHeader },
+    },
+  }
+  writeFileSync(join(mcpProfileFixture, 'opencode.json'), JSON.stringify({ mcp: ghGrepConfig }))
+  const textGhGrepReport = spawnSync(
+    process.execPath,
+    [doctor, '--target', mcpProfileFixture, '--profile', 'lite', '--verbose'],
+    { encoding: 'utf8', env },
+  )
+  assert.ok(
+    textGhGrepReport.stdout,
+    textGhGrepReport.stderr || 'doctor text invocation produced no output',
+  )
+  assert.equal(
+    textGhGrepReport.status,
+    2,
+    'text doctor completes with its expected unrelated fixture errors',
+  )
+  assert.doesNotMatch(
+    `${textGhGrepReport.stdout}\n${textGhGrepReport.stderr}`,
+    /Doctor crashed:/,
+    'text doctor emits a report instead of crashing',
+  )
+  assert.match(
+    textGhGrepReport.stdout,
+    /gh_grep MCP may need review — expected a remote MCP at the recommended endpoint/,
+    'text report includes the generic gh_grep diagnostic',
+  )
+  const textGhGrepOutput = `${textGhGrepReport.stdout}\n${textGhGrepReport.stderr}`
+  for (const sentinel of ['GH_GREP_SECRET_SENTINEL', 'forged warning', '\u001b[31m']) {
+    assert.equal(
+      textGhGrepOutput.includes(sentinel),
+      false,
+      `text stdout/stderr do not emit gh_grep sentinel ${JSON.stringify(sentinel)}`,
+    )
+  }
+  writeFileSync(join(mcpProfileFixture, 'opencode.json'), JSON.stringify({ mcp: ghGrepConfig }))
+  const jsonGhGrepProcess = spawnSync(
+    process.execPath,
+    [doctor, '--target', mcpProfileFixture, '--profile', 'lite', '--json'],
+    { encoding: 'utf8', env },
+  )
+  assert.ok(
+    jsonGhGrepProcess.stdout,
+    jsonGhGrepProcess.stderr || 'doctor JSON invocation produced no report',
+  )
+  const jsonGhGrepReport = JSON.parse(jsonGhGrepProcess.stdout)
+  assert.equal(
+    jsonGhGrepProcess.status,
+    jsonGhGrepReport.summary.exit_code,
+    'JSON process exit code matches the completed doctor report',
+  )
+  assert.equal(
+    jsonGhGrepProcess.status,
+    2,
+    'JSON doctor exits with the expected unrelated fixture errors',
+  )
+  assert.equal(
+    jsonGhGrepReport.findings.some(({ code }) => code === 'doctor_failure'),
+    false,
+    'JSON doctor produced a normal report instead of a crash fallback',
+  )
+  assert.ok(
+    jsonGhGrepReport.findings.some(
+      ({ category, message }) =>
+        category === 'warn' &&
+        /gh_grep MCP may need review — expected a remote MCP at the recommended endpoint/.test(
+          message,
+        ),
+    ),
+    'JSON report includes the generic gh_grep diagnostic',
+  )
+  const jsonGhGrepOutput = `${jsonGhGrepProcess.stdout}\n${jsonGhGrepProcess.stderr}`
+  for (const sentinel of ['GH_GREP_SECRET_SENTINEL', 'forged warning', '\u001b[31m']) {
+    assert.equal(
+      jsonGhGrepOutput.includes(sentinel),
+      false,
+      `JSON stdout/stderr do not emit gh_grep sentinel ${JSON.stringify(sentinel)}`,
+    )
+  }
+
+  for (const [server, malformed] of [
+    ['context7', 'CONTEXT7_SCALAR_SECRET_SENTINEL'],
+    ['gh_grep', null],
+  ]) {
+    const report = runJsonDoctor({ [server]: malformed })
+    assert.ok(
+      report.findings.some(
+        ({ category, message }) =>
+          category === 'warn' && /MCP server entry is invalid/.test(message),
+      ),
+      `scalar ${server} MCP entry gets a generic invalid-entry warning`,
+    )
+    assert.doesNotMatch(
+      JSON.stringify(report),
+      new RegExp(`optional ${server === 'context7' ? 'Context7' : 'gh_grep'} MCP not configured`),
+      `scalar ${server} MCP entry is not described as absent`,
+    )
+    assert.equal(
+      JSON.stringify(report).includes(server),
+      false,
+      `scalar ${server} MCP config key is not echoed in diagnostics`,
+    )
+  }
+
+  const invalidGhGrepReport = runJsonDoctor({
+    gh_grep: {
+      type: 'remote',
+      url: 'https://mcp.grep.app',
+      headers: { Authorization: 7, Debug: 'GH_GREP_INVALID_SECRET_SENTINEL' },
+    },
+  })
+  assert.ok(
+    invalidGhGrepReport.findings.some(
+      ({ category, message }) => category === 'warn' && /MCP server entry is invalid/.test(message),
+    ),
+    'malformed gh_grep entry is explicitly flagged invalid',
+  )
+  assert.equal(
+    invalidGhGrepReport.findings.some(
+      ({ category, message }) =>
+        category === 'pass' && /gh_grep MCP configured correctly/.test(message),
+    ),
+    false,
+    'malformed gh_grep entry cannot pass the special detector',
+  )
+  assert.doesNotMatch(
+    JSON.stringify(invalidGhGrepReport),
+    /GH_GREP_INVALID_SECRET_SENTINEL/,
+    'invalid gh_grep values are not echoed in JSON findings',
+  )
+
+  for (const command of [
+    ['context7-mcp', 7],
+    [7, 'context7-mcp'],
+  ]) {
+    writeFileSync(
+      join(mcpProfileFixture, 'opencode.json'),
+      JSON.stringify({
+        mcp: {
+          context7: {
+            type: 'local',
+            command,
+            cwd: 'CONTEXT7_SECRET_SENTINEL',
+          },
+        },
+      }),
+    )
+    const context7Report = spawnSync(
+      process.execPath,
+      [doctor, '--target', mcpProfileFixture, '--profile', 'lite', '--verbose'],
+      { encoding: 'utf8', env },
+    )
+    const output = `${context7Report.stdout}\n${context7Report.stderr}`
+    assert.equal(
+      context7Report.status,
+      2,
+      `malformed Context7 argv ${JSON.stringify(command)} completes with expected fixture errors`,
+    )
+    assert.doesNotMatch(
+      output,
+      /Doctor crashed:/,
+      'malformed Context7 input does not crash the doctor',
+    )
+    assert.match(
+      output,
+      /MCP server entry is invalid/,
+      'malformed Context7 entry is explicitly flagged invalid',
+    )
+    assert.doesNotMatch(
+      output,
+      /Context7 MCP configured correctly/,
+      'malformed Context7 entry is never reported successful',
+    )
+    assert.doesNotMatch(
+      output,
+      /CONTEXT7_SECRET_SENTINEL/,
+      'malformed Context7 values are not printed',
+    )
+  }
+
+  const malformedNestedEntries = [
+    ['partial cwd-only entry', { cwd: '/private/DO_NOT_PRINT' }],
+    ['unsupported type', { type: 'stdio', command: ['python3'] }],
+    ['V2 local command is not an argv array', { type: 'local', command: 'SECRET_COMMAND' }],
+    ['empty V2 local command', { type: 'local', command: [] }],
+    ['V2 local command contains non-string argv', { type: 'local', command: ['python3', 7] }],
+    [
+      'V2 timeout must be a supported positive-integer map',
+      {
+        type: 'local',
+        command: ['python3'],
+        timeout: { catalog: 0 },
+      },
+    ],
+    [
+      'V2 timeout must use its supported map shape',
+      {
+        type: 'local',
+        command: ['python3'],
+        timeout: 60000,
+      },
+    ],
+    ['remote entry has no URL', { type: 'remote' }],
+    ['non-object nested entry', 'SECRET_ENTRY'],
+    ['null nested entry', null],
+  ]
+  for (const [label, malformed] of malformedNestedEntries) {
+    const report = runJsonDoctor({
+      servers: { 'pantheon-memory': malformed, ...validRequiredServers },
+    })
+    assert.ok(
+      hasRequiredMcp(report, 'pantheon-memory', 'missing'),
+      `${label}: malformed nested required entry is not counted as present`,
+    )
+    assert.ok(
+      report.findings.some(
+        ({ category, message }) =>
+          category === 'warn' && /MCP server entry is invalid/.test(message),
+      ),
+      `${label}: malformed nested entry gets a generic invalid-entry warning`,
+    )
+    assert.ok(
+      !hasRequiredMcp(report, 'pantheon-memory', 'present'),
+      `${label}: doctor does not report the malformed entry as present`,
+    )
+    assert.doesNotMatch(
+      JSON.stringify(report.findings),
+      /DO_NOT_PRINT|SECRET_COMMAND/,
+      `${label}: malformed user values are not included in doctor findings`,
+    )
+  }
+
+  for (const [label, url] of [
+    ['malformed remote URL', 'not-a-URL'],
+    ['relative remote URL', '/mcp'],
+    ['non-HTTP remote URL', 'file:///tmp/mcp'],
+  ]) {
+    const report = runJsonDoctor({
+      servers: {
+        'pantheon-memory': { type: 'remote', url },
+        ...validRequiredServers,
+      },
+    })
+    assert.ok(
+      hasRequiredMcp(report, 'pantheon-memory', 'missing'),
+      `${label}: malformed remote endpoint is not counted as present`,
+    )
+  }
+
+  const validNestedReport = runJsonDoctor({
+    servers: {
+      'pantheon-memory': {
+        type: 'local',
+        command: ['python3'],
+        cwd: '.',
+        environment: { MODE: 'test' },
+        enabled: false,
+        timeout: { catalog: 5000 },
+      },
+      ...validRequiredServers,
+    },
+  })
+  for (const name of ['pantheon-memory', 'pantheon-resources', 'pantheon-persistence']) {
+    assert.ok(
+      hasRequiredMcp(validNestedReport, name, 'present'),
+      `valid V2 local/remote entry ${name} is reported present`,
+    )
+  }
+
+  const validV1FlatReport = runJsonDoctor({
+    'pantheon-memory': { type: 'local', command: ['python3', '-V'], timeout: 5000 },
+    ...validRequiredServers,
+  })
+  assert.ok(
+    hasRequiredMcp(validV1FlatReport, 'pantheon-memory', 'present'),
+    'V1 flat local argv-array shape remains supported',
+  )
+
+  const validEmptyArgReport = runJsonDoctor({
+    servers: {
+      'pantheon-memory': { type: 'local', command: ['python3', ''] },
+      ...validRequiredServers,
+    },
+  })
+  assert.ok(
+    hasRequiredMcp(validEmptyArgReport, 'pantheon-memory', 'present'),
+    'an empty string is accepted as a valid process argument',
+  )
+
+  const validHttpRemoteReport = runJsonDoctor({
+    servers: {
+      'pantheon-memory': { type: 'remote', url: 'http://localhost:3000/mcp' },
+      ...validRequiredServers,
+    },
+  })
+  assert.ok(
+    hasRequiredMcp(validHttpRemoteReport, 'pantheon-memory', 'present'),
+    'an absolute HTTP Streamable MCP endpoint is accepted',
+  )
+
+  for (const [label, url, secret] of [
+    [
+      'username only',
+      'https://REMOTE_USERNAME_SECRET_SENTINEL@memory.example/mcp',
+      'REMOTE_USERNAME_SECRET_SENTINEL',
+    ],
+    [
+      'password only',
+      'https://:REMOTE_PASSWORD_SECRET_SENTINEL@memory.example/mcp',
+      'REMOTE_PASSWORD_SECRET_SENTINEL',
+    ],
+    [
+      'username and password',
+      'https://user:REMOTE_URL_SECRET_SENTINEL@memory.example/mcp',
+      'REMOTE_URL_SECRET_SENTINEL',
+    ],
+  ]) {
+    const report = runJsonDoctor({
+      servers: {
+        'pantheon-memory': { type: 'remote', url },
+        ...validRequiredServers,
+      },
+    })
+    assert.ok(
+      hasRequiredMcp(report, 'pantheon-memory', 'missing'),
+      `${label}: remote MCP URL with embedded credentials is rejected`,
+    )
+    const output = JSON.stringify(report)
+    assert.match(
+      output,
+      /environment variables for authentication/,
+      `${label}: credential rejection advises using environment variables`,
+    )
+    assert.ok(
+      !output.includes(url) && !output.includes(secret),
+      `${label}: credential rejection does not echo the URL or secret`,
+    )
+  }
+
+  const malformedV1ScalarReport = runJsonDoctor({
+    'pantheon-memory': { type: 'local', command: 'SECRET_COMMAND', args: ['SECRET_ARG'] },
+    ...validRequiredServers,
+  })
+  assert.ok(
+    hasRequiredMcp(malformedV1ScalarReport, 'pantheon-memory', 'missing'),
+    'legacy scalar V1 command plus args is rejected; V1 command must be an argv array',
   )
 
   const liteProfile = spawnSync(
     process.execPath,
-    [doctor, '--target', mcpProfileFixture, '--profile', 'lite'],
+    [doctor, '--target', mcpProfileFixture, '--profile', 'lite', '--json'],
     { encoding: 'utf8', env },
   )
-  assert.doesNotMatch(
-    `${liteProfile.stdout}\n${liteProfile.stderr}`,
-    /Required MCP ".*" not configured/,
+  assert.equal(
+    JSON.parse(liteProfile.stdout).findings.some(({ code }) => code === 'required_mcp_missing'),
+    false,
     'lite doctor profile leaves all MCPs optional',
   )
 } finally {
   rmSync(mcpProfileFixture, { recursive: true, force: true })
+}
+
+// Invalid local MCP entries must not reach path diagnostics or runtime spawn.
+// The doctor runs in an isolated HOME/XDG config, and the configured marker
+// process would write a file if an invalid entry were launched.
+const malformedMcpFixture = mkdtempSync(join(tmpdir(), 'pantheon-doctor-mcp-redaction-'))
+try {
+  const privateCwd = join(malformedMcpFixture, 'PATH_SENTINEL')
+  mkdirSync(privateCwd)
+  const commandScript = join(malformedMcpFixture, 'COMMAND_SENTINEL.js')
+  const spawnMarker = join(malformedMcpFixture, 'spawned')
+  writeFileSync(
+    commandScript,
+    `import { writeFileSync } from 'node:fs'\nwriteFileSync(${JSON.stringify(spawnMarker)}, 'spawned')\n`,
+  )
+  const config = {
+    mcp: {
+      servers: {
+        context7: 'CONTEXT7_SCALAR_SECRET_SENTINEL',
+        gh_grep: 7,
+        MALFORMED_SERVER_NAME_SENTINEL: 'MALFORMED_ENTRY_VALUE_SENTINEL',
+        malformed: {
+          type: 'local',
+          command: [process.execPath, commandScript, 'ARGS_SENTINEL.py'],
+          cwd: privateCwd,
+          environment: { ENV_KEY_SENTINEL: { secret: 'ENV_VALUE_SENTINEL' } },
+        },
+        malformedCommand: {
+          type: 'local',
+          command: [process.execPath, commandScript, 'ARGS_SENTINEL.py', 7],
+          cwd: privateCwd,
+          environment: { ENV_KEY_SENTINEL: { secret: 'ENV_VALUE_SENTINEL' } },
+        },
+      },
+    },
+  }
+  writeFileSync(join(malformedMcpFixture, 'opencode.json'), JSON.stringify(config))
+  const privateHome = join(malformedMcpFixture, 'home')
+  const privateXdg = join(malformedMcpFixture, 'xdg')
+  const privateTmp = join(malformedMcpFixture, 'tmp')
+  mkdirSync(privateHome)
+  mkdirSync(privateXdg)
+  mkdirSync(privateTmp)
+  const result = spawnSync(
+    process.execPath,
+    [join(ROOT, 'scripts', 'doctor.mjs'), '--target', malformedMcpFixture, '--profile', 'lite'],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        HOME: privateHome,
+        XDG_CONFIG_HOME: privateXdg,
+        PANTHEON_HOME: join(privateXdg, 'opencode'),
+        TMPDIR: privateTmp,
+      },
+    },
+  )
+  const doctorOutput = `${result.stdout}\n${result.stderr}`
+  assert.match(
+    doctorOutput,
+    /MCP server entry is invalid/,
+    'malformed non-special and scalar MCP entries get a generic diagnostic',
+  )
+  assert.doesNotMatch(
+    doctorOutput,
+    /optional (?:Context7|gh_grep) MCP not configured/,
+    'present scalar special MCP entries are not described as absent',
+  )
+  for (const sentinel of [
+    'COMMAND_SENTINEL',
+    'ARGS_SENTINEL',
+    'ENV_KEY_SENTINEL',
+    'ENV_VALUE_SENTINEL',
+    'PATH_SENTINEL',
+    'CONTEXT7_SCALAR_SECRET_SENTINEL',
+    'MALFORMED_SERVER_NAME_SENTINEL',
+    'MALFORMED_ENTRY_VALUE_SENTINEL',
+  ]) {
+    assert.ok(!doctorOutput.includes(sentinel), `doctor output/error redacts ${sentinel}`)
+  }
+  assert.equal(existsSync(spawnMarker), false, 'invalid local entry is never spawned')
+} finally {
+  rmSync(malformedMcpFixture, { recursive: true, force: true })
 }
 
 // B3 installer/doctor checks: installed agents are derived from config source
