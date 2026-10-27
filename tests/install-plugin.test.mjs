@@ -138,6 +138,24 @@ test('V2 install selects the V2 TUI API and V1 reinstall removes that entrypoint
   }
 })
 
+test('V2 install repoints the ./server export at the V2 server bundle', () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-tui-server-swap-'))
+  const source = join(REPO_ROOT, 'src', 'plugins', 'tui')
+  try {
+    copyPluginFiles(source, target, { version: 'v2' })
+    const v2Package = JSON.parse(readFileSync(join(target, 'package.json'), 'utf8'))
+    assert.equal(v2Package.exports['./server'], './dist/server-v2.js')
+    assert.equal(v2Package.exports['./tui'], './dist/tui-v2.js')
+    assert.ok(existsSync(join(target, 'dist', 'server-v2.js')))
+
+    copyPluginFiles(source, target, { version: 'v1' })
+    const v1Package = JSON.parse(readFileSync(join(target, 'package.json'), 'utf8'))
+    assert.equal(v1Package.exports['./server'], './dist/server.js')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
 test('plugin legacy cleanup rejects a symlinked destination parent without touching outside files', () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-plugin-linked-parent-'))
   const outside = join(target, 'outside')

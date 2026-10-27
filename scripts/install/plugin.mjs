@@ -145,6 +145,13 @@ export function copyPluginFiles(
     if (version === 'v2' && packageJson.exports?.['./tui-v2']) {
       packageJson.exports['./tui'] = packageJson.exports['./tui-v2']
     }
+    // The OpenCode host resolves the plugin server through the `./server` export.
+    // In the V2 copy it must point at the V2 server bundle so V2-only RPCs
+    // (pantheon.quota) are registered; otherwise the host loads the V1 server
+    // and the quota status stays "unavailable".
+    if (version === 'v2' && packageJson.exports?.['./server-v2']) {
+      packageJson.exports['./server'] = packageJson.exports['./server-v2']
+    }
     const pkgStatus = writeIfChanged(
       join(dstDir, 'package.json'),
       `${JSON.stringify(packageJson, null, 2)}\n`,

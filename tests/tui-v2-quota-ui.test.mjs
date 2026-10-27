@@ -1192,3 +1192,45 @@ test('sidebar text and quota windows fit terminal cells without losing content',
     assert.ok(finance.every((line) => quotaUI.cellWidth(line) <= width))
   }
 })
+
+test('footer summary mirrors the fault-aware sidebar status labels', () => {
+  const fault = 'rpc de quota indisponível no servidor'
+  const unavailable = {
+    status: 'unavailable',
+    providers: [],
+    details: [],
+    updatedAt: null,
+    error: fault,
+  }
+  assert.equal(quotaUI.snapshotSummary(unavailable, 'used'), `erro: ${fault}`)
+  assert.equal(
+    quotaUI.snapshotSummary(
+      { status: 'unavailable', providers: [], details: [], updatedAt: null },
+      'used',
+    ),
+    'status indisponível',
+  )
+  assert.equal(
+    quotaUI.snapshotSummary(
+      { status: 'stale', providers: [], details: [], updatedAt: null, error: fault },
+      'used',
+    ),
+    'dados desatualizados',
+  )
+  assert.equal(
+    quotaUI.snapshotSummary(
+      { status: 'needs_setup', providers: [], details: [], updatedAt: null },
+      'remaining',
+    ),
+    'nenhum provedor elegível',
+  )
+
+  const ready = quotaUI.quotaSnapshotFromStatus({
+    providers: [
+      status('chutes', 'connected', 'none', 'available', [
+        { kind: 'provider_quota', used: 2, remaining: 8, unit: 'requests' },
+      ]),
+    ],
+  })
+  assert.match(quotaUI.snapshotSummary(ready, 'remaining'), /rest(?:ante|\.) 8 requests/)
+})

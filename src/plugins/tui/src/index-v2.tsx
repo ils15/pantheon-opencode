@@ -65,6 +65,7 @@ export {
   quotaWindowLines,
   runQuotaPanelCommand,
   sidebarFinanceEntries,
+  snapshotSummary,
 } from './quota-v2'
 export type { QuotaSidebarEntry } from './quota-v2-model'
 export {

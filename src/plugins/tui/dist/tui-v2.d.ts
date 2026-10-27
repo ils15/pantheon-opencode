@@ -191,6 +191,7 @@ export declare const QUOTA_PANEL_NAME = "pantheon.quota";
 export declare const QUOTA_OPEN_COMMAND_ID = "pantheon.quota.open";
 export declare const QUOTA_ICON = "▥";
 export declare function quotaUsageTone(usedPercent: number): 'success' | 'warning' | 'error';
+export declare function snapshotSummary(snapshot: QuotaSnapshot, display: 'used' | 'remaining'): string;
 type FinanceMetric = Extract<QuotaMetric, {
   kind: 'balance' | 'estimate' | 'key_usage';
 }>;

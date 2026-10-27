@@ -68,13 +68,13 @@ function tone(context: Context, color: QuotaTone): string {
   return context.theme.text?.feedback?.[color]?.base ?? base(context)
 }
 
-function snapshotSummary(snapshot: QuotaSnapshot, display: 'used' | 'remaining'): string {
+export function snapshotSummary(snapshot: QuotaSnapshot, display: 'used' | 'remaining'): string {
   if (snapshot.status === 'loading') return 'carregando status'
-  if (snapshot.status === 'needs_setup') return 'nenhum provedor elegível'
-  if (snapshot.status === 'unavailable') return 'status indisponível'
-  if (snapshot.status === 'connected_unavailable') return 'credencial local · dados indisponíveis'
-  if (snapshot.status === 'stale') return 'dados desatualizados'
-  if (snapshot.status === 'disabled') return 'desativado'
+  if (snapshot.status !== 'ready' && snapshot.status !== 'partial') {
+    // Reuse the sidebar label map (fault-aware for `unavailable`) so the footer
+    // never contradicts the sidebar; lowercase matches the footer style.
+    return quotaSnapshotStatusLabel(snapshot.status, snapshot.error).toLowerCase()
+  }
   const metrics = snapshot.providers.flatMap((provider) => provider.metrics)
   const metric = metrics.find((item) => item.kind !== 'provider_status') ?? metrics[0]
   if (metric) {
