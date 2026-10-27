@@ -300,7 +300,8 @@ function createCredentialResolver(context) {
 				return {};
 			}
 			return {};
-		} catch {
+		} catch (error) {
+			console.warn("[pantheon-tui quota] credential resolution failed:", error);
 			throw new Error("Credential resolution failed");
 		}
 	}
@@ -646,6 +647,7 @@ function createQuotaPlugin(queryCli = queryAlibabaTokenPlanUsage) {
 					status: async (_input, callContext) => getProviderStatus(resolver, adapters, callContext.signal)
 				});
 			} catch (error) {
+				console.warn("[pantheon-tui quota] quota RPC registration failed:", error);
 				eventController.abort();
 				shutdownController.abort();
 				resolver.dispose();

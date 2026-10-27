@@ -65,7 +65,7 @@ function resolveConfigDir() {
  * The raw TSX source is never copied — the loader consumes only the bundle.
  * @returns {{ created: number, skipped: number }}
  */
-function copyPluginFiles(srcDir, dstDir, version) {
+export function copyPluginFiles(srcDir, dstDir, version) {
   const result = { created: 0, skipped: 0 }
 
   mkdirSync(dstDir, { recursive: true })
@@ -92,6 +92,14 @@ function copyPluginFiles(srcDir, dstDir, version) {
     const packageJson = JSON.parse(readFileSync(pkgSrc, 'utf8'))
     if (version === 'v2' && packageJson.exports?.['./tui-v2']) {
       packageJson.exports['./tui'] = packageJson.exports['./tui-v2']
+    }
+    // Mirror of scripts/install/plugin.mjs: the OpenCode host resolves the
+    // plugin server through the `./server` export. In the V2 copy it must
+    // point at the V2 server bundle so V2-only RPCs (pantheon.quota) are
+    // registered; otherwise the host loads the V1 server and the quota
+    // status stays "unavailable".
+    if (version === 'v2' && packageJson.exports?.['./server-v2']) {
+      packageJson.exports['./server'] = packageJson.exports['./server-v2']
     }
     const content = `${JSON.stringify(packageJson, null, 2)}\n`
     if (writeIfChanged(join(dstDir, 'package.json'), content)) result.created++

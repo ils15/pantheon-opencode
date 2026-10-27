@@ -103,6 +103,11 @@ see [Quick Start](docs/QUICKSTART.md).
   missing timing is not inferred. After expiry the UI shows “aguardando
   atualização” until refreshed data arrives. Empty quota gauges use a visible
   track even when no usage is reported.
+  When a quota status request fails, the UI preserves the last valid
+  snapshot, marks it stale, and shows the failure cause as `Erro: <causa>`
+  in the sidebar and `/quota` panel (plus a `Último erro` line) instead
+  of a blind "Status indisponível"; the cause is logged as
+  `[pantheon-tui quota]`.
   Usage severity uses warning color from 60% consumed and error color above 85%.
   Session costs, provider balances and selected-key usage retain their distinct
   labels and reported periods. Long values and states continue onto additional

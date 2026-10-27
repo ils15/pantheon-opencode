@@ -79,6 +79,8 @@ type QuotaSnapshot = {
   providers: QuotaProviderView[];
   details: QuotaProviderDetail[];
   updatedAt: number | null;
+  /** Short diagnostic of the latest transport/RPC failure; absent after a successful refresh. */
+  error?: string | undefined;
 };
 export declare const QUOTA_CLOCK_INTERVAL_MS = 60000;
 type QuotaClockOptions = {
@@ -147,7 +149,7 @@ export declare function resolveActiveModelRef(sessionModel: unknown, activeMessa
  * tokens from the already-cached, bounded session-family messages. */
 export declare function collectRecentModelUsageRows(input: CollectRecentModelUsageInput): RecentModelUsageRow[];
 export declare function normalizeQuotaPreferences(value: unknown): QuotaPreferences;
-export declare function quotaSnapshotStatusLabel(status: QuotaSnapshotStatus): string;
+export declare function quotaSnapshotStatusLabel(status: QuotaSnapshotStatus, error?: string | undefined): string;
 /** Map the current typed RPC status into a provider-neutral, data-only UI model. */
 export declare function quotaSnapshotFromStatus(response: unknown, now?: number): QuotaSnapshot;
 /** Return complementary whole percentages only when both quota values define a real range. */
@@ -189,6 +191,7 @@ export declare const QUOTA_PANEL_NAME = "pantheon.quota";
 export declare const QUOTA_OPEN_COMMAND_ID = "pantheon.quota.open";
 export declare const QUOTA_ICON = "▥";
 export declare function quotaUsageTone(usedPercent: number): 'success' | 'warning' | 'error';
+export declare function snapshotSummary(snapshot: QuotaSnapshot, display: 'used' | 'remaining'): string;
 type FinanceMetric = Extract<QuotaMetric, {
   kind: 'balance' | 'estimate' | 'key_usage';
 }>;

@@ -8,6 +8,11 @@ atualização” remains visible without showing a stale date until fresh data a
 The countdown advances using a local clock and does not request provider data; the
 enabled quota runtime refreshes provider status every 60 seconds. Empty quota
 gauges retain a visible track when reported usage is zero.
+When a quota status request fails, the last valid snapshot is preserved
+and the failure cause is shown as `Erro: <causa>` (plus a `Último erro`
+line in the detail panel) instead of a blind "Status indisponível". The
+server keeps the original cause out of the UI response and logs it as
+`[pantheon-tui quota]`.
 
 Financial values and provider states wrap onto additional lines as needed. The
 sidebar keeps session costs, balances and selected-key usage distinct, including
