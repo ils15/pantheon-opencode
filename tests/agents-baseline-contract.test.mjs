@@ -67,6 +67,12 @@ test('generated line counts use LF boundaries without assuming a final newline',
   assert.equal(logicalLineCount(globalArtifact), 118)
 })
 
+test('the shared agent return contract renders the universal evidence quality gate', () => {
+  assert.match(returnContract, /All agents check each result against the request and evidence/)
+  assert.match(globalArtifact, /All agents check each result against the request and evidence/)
+  assert.match(returnContract, /remove unrelated work, generic filler, unsupported claims/)
+})
+
 test('Zeus can call the least-privilege Pantheon vision tool for diagnostics', () => {
   assert.match(zeusPrompt, /pantheon-vision:\s*\[vision_describe\]/)
   assert.doesNotMatch(zeusPrompt, /pantheon-vision:\s*all/)

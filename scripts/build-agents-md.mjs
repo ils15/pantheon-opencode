@@ -133,7 +133,7 @@ const PROJECT_HEADER = `# Pantheon — Repository Setup
 
 Setup: [INSTALLATION.md](docs/INSTALLATION.md).
 
-- Build/Test: \`npm test\`
+- Test: focused checks by default; \`npm test\` for CI/release or broad/high-risk changes
 - Lint: \`npm run lint\`
 
 ## Teste de Instalação Global (sandbox)

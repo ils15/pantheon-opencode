@@ -13,8 +13,12 @@ permission:
     "*": deny
 temperature: 0.2
 skills:
-  - tdd-with-agents
   - incremental-implementation
+  - loop-engineering
+  - reflect
+  - simplify
+  - tdd-with-agents
+  - worktrees
 mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_search]

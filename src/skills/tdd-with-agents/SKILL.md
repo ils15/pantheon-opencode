@@ -1,9 +1,6 @@
 ---
 name: tdd-with-agents
 description: "TDD enforcement with RED→GREEN→REFACTOR cycle and advanced testing patterns. Use for test-driven development across all layers."
-context: fork
-globs: []
-alwaysApply: false
 ---
 
 # TDD with Agents

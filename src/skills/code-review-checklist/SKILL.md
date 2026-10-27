@@ -1,9 +1,6 @@
 ---
 name: code-review-checklist
 description: "Systematic code review with quality gates, security audit, and parallel checks. Use for structured feedback on pull requests."
-context: fork
-globs: []
-alwaysApply: false
 ---
 
 # Code Review Checklist

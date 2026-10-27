@@ -27,10 +27,11 @@ Simplify code while preserving its exact behavior. Focus on reducing complexity 
 
 ## Verification
 
-After each simplification:
-1. Run tests (`pytest`, `npm test`)
-2. Verify no behavior change
-3. If no tests exist: add minimal characterization tests first
+For each simplification:
+1. Choose the smallest existing test or static check that covers the changed behavior.
+2. For a behavior change, add one focused regression test when the existing suite does not cover it; run that test and verify the behavior.
+3. Run a broader suite only when the change crosses layers, touches a strong safety gate, affects required coverage, or a CI/release gate calls for it. `npm test` is the full repository suite, not the default after every simplification.
+4. For documentation-only or formatting-only changes, inspect the diff and run the narrowest relevant check instead of inventing a test.
 
 ## Rules
 - Never change public API signatures without explicit approval

@@ -14,8 +14,12 @@ permission:
 temperature: 0.1
 skills:
   - code-review-checklist
+  - loop-engineering
+  - reflect
   - security-hardening
+  - simplify
   - tdd-with-agents
+  - worktrees
 mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_search]

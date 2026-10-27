@@ -130,6 +130,14 @@ test('generated Zeus prompt avoids duplicating canonical memory and stall protoc
   assert.doesNotMatch(zeusSource, /^## TODO Enforcer \(Auto-Retry\)$/m)
   assert.doesNotMatch(zeusSource, /^## Delegation Cache Instructions$/m)
   assert.doesNotMatch(zeusSource, /DelegationCacheDecision/)
+  assert.match(
+    zeusSource,
+    /Para um entregável delimitado, delegue uma vez ao especialista final; ele pode reunir os fatos necessários/i,
+  )
+  assert.match(
+    zeusSource,
+    /Use Apollo à parte apenas se a pesquisa for o entregável ou bloquear a escolha do especialista/i,
+  )
 })
 
 test('timeout instructions use the explicit routing fallback map as canonical', () => {

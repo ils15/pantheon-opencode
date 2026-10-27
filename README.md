@@ -28,10 +28,10 @@ charge of every decision and every merge.
   collaborators.
 - **You stay in charge:** Pantheon supports your judgment; it does not replace
   it.
-- **Right-sized coordination:** bounded work goes to one specialist; planning,
-  discovery, parallel work, and review are added when scope and risk call for
-  them. `/pantheon-deepwork` remains the checkpointed workflow for heavy
-  multi-phase work.
+- **Right-sized coordination:** bounded work goes to one specialist, who
+  gathers the needed context. Planning, separate discovery, parallel work, and
+  review are added when scope and risk call for them. `/pantheon-deepwork`
+  remains the checkpointed workflow for heavy multi-phase work.
 
 ## Start in 2 minutes
 
@@ -55,6 +55,8 @@ installer changes are preflighted before one final authorization; `--yes` alone
 does not authorize writes. Overlapping MCP wildcard policies that could allow
   an action after a denial are blocked, and ineffective MCP `ask` rules matching
 configured or installer-seeded servers require an explicit outcome.
+Existing native V2 `permissions` arrays stay authoritative; Pantheon does not
+append legacy default grants to them.
 Flat third-party MCP entries in `opencode.jsonc` block V2 setup until manually
 converted to `mcp.servers` or removed; nested third-party servers are preserved.
 Headless/CI/non-TTY runs are preview-only and do not invoke writing init (V1
@@ -159,12 +161,11 @@ contract and targets OpenCode 2 only.
 The support policy, the known-broken exception, and the verified-version
 evidence have exactly one home: [Compatibility](docs/COMPATIBILITY.md).
 
-### V2 plugin options (opt-in features)
+### V2 plugin options
 
 The OpenCode V2 host hands a plugin its `options` only from the object form of
-the entry, and two features — per-request context pruning and ambient memory
-injection — read exactly that bag. `init` therefore writes the object form, so
-enabling them is one edit away and nothing is on by default:
+the entry. `init` writes that form for the optional per-request context pruner;
+memory retrieval stays an explicit `memory_search` MCP call.
 
 ```json
 {
@@ -172,30 +173,28 @@ enabling them is one edit away and nothing is on by default:
     {
       "package": "/path/to/pantheon-opencode/src/plugin-v2",
       "options": {
-        "context_pruner": { "enabled": true },
-        "memory_injection": { "enabled": true }
+        "context_pruner": { "enabled": true }
       }
     }
   ]
 }
 ```
 
-Keep the `package` value `init` wrote and add keys inside `options`; any key you
-add by hand survives a re-run. Both features are off unless `enabled` is
+Keep the `package` value `init` wrote and add keys inside `options`; custom
+options survive a re-run. The context pruner is off unless `enabled` is
 literally `true`.
 
 | Option | Default | Effect |
 |---|---|---|
 | `options.context_pruner.enabled` | `false` | Prune old turns from the request payload and at compaction. Off by default because per-request pruning invalidates the provider prompt cache. |
-| `options.memory_injection.enabled` | `false` | Ride the most relevant memory entries along on the session's first request, bounded by `maxEntries`/`maxChars`. |
 
 `context_pruner` also accepts `keepTurns`, `purgeAfterTurns`, `protectedTools`,
-`minSavingsTokens` and `charsPerToken`; `memory_injection` accepts `maxEntries`,
-`maxChars` and `namespace`. Unknown keys are ignored with a one-time warning in
-the hook log, so a typo cannot silently change behaviour. Run
+`minSavingsTokens` and `charsPerToken`. Unknown keys are ignored with a
+one-time warning in the hook log, so a typo cannot silently change behaviour. Run
 `npx pantheon-opencode doctor` to see whether the installed entry can receive
-options at all. Full rules: [OpenCode V2](docs/opencode-v2.md) and
-[Memory](docs/MEMORY.md).
+options at all. An old `memory_injection` option may remain in an existing
+config because user options are preserved, but the plugin no longer reads it.
+Full rules: [OpenCode V2](docs/opencode-v2.md) and [Memory](docs/MEMORY.md).
 
 ## Delegation
 
@@ -257,6 +256,10 @@ Ideas, bug reports, documentation improvements, and code contributions are
 welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue or pull
 request. That file also defines the documentation rule: one home per fact, with
 a short list of facts that must not be duplicated.
+
+For code changes, run the smallest relevant check and expand it to match the
+change's risk. `npm test` is the full repository suite; see
+[CONTRIBUTING.md](CONTRIBUTING.md) for when to use it.
 
 ## Citation and DOI
 

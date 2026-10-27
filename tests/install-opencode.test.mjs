@@ -469,7 +469,8 @@ test('V2 drops the exact legacy MCP toggle and preserves user MCP servers in the
     assert.deepEqual(Object.keys(config.mcp.servers), ['userServer'])
     assert.equal(config.mcp.servers.enabled, undefined)
     assert.equal(config.mcp.servers.userServer.url, 'https://user.example/mcp')
-    assert.equal(config.mcp.servers.userServer.enabled, true)
+    assert.equal(config.mcp.servers.userServer.enabled, undefined)
+    assert.equal(config.mcp.servers.userServer.disabled, false)
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
@@ -490,8 +491,23 @@ test('V2 install preserves flat user MCP servers beside a nested server map', as
       },
       'v2',
     )
-    assert.deepEqual(config.mcp.servers['flat-user'], flatUser)
+    assert.deepEqual(config.mcp.servers['flat-user'], {
+      type: 'remote',
+      url: 'https://flat.example/mcp',
+      disabled: false,
+    })
     assert.deepEqual(config.mcp.servers['nested-user'], nestedUser)
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('existing V2 permissions remain authoritative when defaults are merged', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-native-permissions-'))
+  const nativePermissions = [{ action: 'edit', resource: '*', effect: 'deny' }]
+  try {
+    const config = await runInstall(target, { permissions: nativePermissions }, 'v2')
+    assert.deepEqual(config.permissions, nativePermissions)
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
@@ -775,8 +791,10 @@ test('runtime-only install copies executable MCP assets and remains idempotent',
     // OpenCode 2 uses the native nested named-server map. V1 stays flat; the
     // focused V1 assertion above protects that version-specific contract.
     assert.equal(config.mcp['pantheon-resources'], undefined)
-    assert.equal(config.mcp.servers['pantheon-resources'].enabled, true)
-    assert.equal(config.mcp.servers['pantheon-code-mode'].enabled, true)
+    assert.equal(config.mcp.servers['pantheon-resources'].enabled, undefined)
+    assert.equal(config.mcp.servers['pantheon-resources'].disabled, undefined)
+    assert.equal(config.mcp.servers['pantheon-code-mode'].enabled, undefined)
+    assert.equal(config.mcp.servers['pantheon-code-mode'].disabled, undefined)
     assert.ok(existsSync(join(runtime, 'scripts', 'mcp_resources.py')))
     assert.ok(existsSync(join(runtime, 'requirements-vision.txt')))
     // Code-mode payload is seeded from the packaged .pantheon/code-mode dir

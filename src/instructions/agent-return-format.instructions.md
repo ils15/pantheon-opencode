@@ -6,7 +6,7 @@ agents: ["*"]
 
 # Agent Return Format
 
-Implementation agents (Hermes, Aphrodite, Demeter, Hephaestus, Prometheus) MUST return results to Zeus in this format:
+All agents check each result against the request and evidence; remove unrelated work, generic filler, unsupported claims, and unnecessary complexity; state uncertainty and preserve safety constraints. Implementation agents (Hermes, Aphrodite, Demeter, Hephaestus, Prometheus) MUST return results to Zeus in this format:
 
 ## subtask_summary
 **files_changed:** [list of file paths, one per line]

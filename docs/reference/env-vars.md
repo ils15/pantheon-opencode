@@ -39,7 +39,6 @@ Sandbox mechanics are in [Release Process](../RELEASING.md).
 | Variable | Default | Purpose |
 |---|---|---|
 | `PANTHEON_MEMORY_MAX_ENTRY_BYTES` | `65536` | Per-entry serialized size cap for `memory_store`. Any positive integer; an invalid value falls back to 64 KiB. Read per write. |
-| `PANTHEON_MEMORY_INJECTION_DEBUG` | unset | Set to `1` to append the raw error message to the injection skip log for local debugging. Off by default because it can copy memory text and prompt fragments into the log. |
 
 Memory policy is in [Memory](../MEMORY.md).
 

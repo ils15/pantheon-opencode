@@ -41,6 +41,10 @@ action the host evaluates; the installer translates `allow`/`deny` into the
 former. `ask` is not expressible for MCP on that host — it hides the tool
 instead of prompting, so the installer emits no rule and warns.
 
+An existing native V2 `permissions` array remains authoritative. The installer
+does not append its legacy default grants to that array; it seeds those defaults
+only when the config has no native V2 permissions yet.
+
 Deny-by-default, the entrypoints, and custom-server setup are in [MCP](MCP.md).
 
 ## Dispatch sidebar block
@@ -217,6 +221,11 @@ output is not re-summarized into permanent context.
 - The marker makes a second pass a no-op, and a pass estimated below 200 tokens
   does nothing.
 
+The hook log records savings for changed passes and the first occurrence of
+each fixed no-op reason (`no-candidates` or `below-threshold`) per session and
+hook site. These entries contain counts and estimated tokens only; tool content
+and arguments are not logged.
+
 The array is mutated in place: no message is deleted or reordered, `system` is
 untouched, and an unexpected shape fails open without throwing. The same engine
 is available per request only when the V2 plugin entry sets
@@ -227,29 +236,10 @@ tune it.
 
 `init` writes the entry in its object form (`{ "package": …, "options": { … } }`),
 so there is a place to put that key without guessing the syntax — a bare-string
-entry leaves the host with no options at all, and both opt-in features read
-`ctx.options`. The keys, their defaults, and the `memory_injection` counterpart
-are listed in the README's *V2 plugin options* table.
-
-## Memory injection
-
-`pantheon-memory` is pull-only: an agent recalls an entry only when it calls
-`memory_search`. An install can instead have the most relevant entries ride
-along on the first request. It is opt-in and off by default:
-
-```json
-{
-  "plugins": [
-    { "package": "<installed>/src/plugin-v2", "options": { "memory_injection": { "enabled": true } } }
-  ]
-}
-```
-
-The payload is computed once per session, bounded by `maxEntries` and
-`maxChars`, and re-added verbatim with a marker so the system prompt grows once,
-not per request. Every failure injects nothing and never throws. The full
-selection, ranking, failure, and logging rules are in
-[Memory](MEMORY.md#ambient-injection-on-v2-opt-in-default-off).
+entry leaves the host with no options at all. The context-pruner option and
+default are listed in the README's *V2 plugin options* table. Memory retrieval
+uses the `pantheon-memory` MCP only when an agent explicitly calls
+`memory_search`; see [Memory](MEMORY.md#recall-and-compaction-policy).
 
 ## Session goals
 

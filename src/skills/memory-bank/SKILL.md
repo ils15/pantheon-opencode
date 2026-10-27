@@ -1,9 +1,6 @@
 ---
 name: memory-bank
 description: "Memory bank rules, structure, and optimization — complete guide to Pantheon memory management."
-context: fork
-globs: []
-alwaysApply: false
 ---
 
 # Memory Bank
@@ -100,32 +97,13 @@ At sprint close:
 
 ---
 
-## Optimization: Compression Rules
+## Memory Bank maintenance
 
-### Problem: Memory bank files grow too large, wasting tokens on every load.
-
-### Strategy: Lazy-load only what's needed
-
-| Rule | Before | After |
-|------|--------|-------|
-| **Active context** | 500+ lines of history | 50 lines: current sprint only |
-| **Progress log** | Everything since day 1 | Link to archived logs; keep last 50 lines |
-| **Task records** | All tasks in one file | One file per task; archive completed |
-| **Notes** | Long narrative | Bullet points with links to source |
-
-### Compression Targets
-
-- `01-active-context.md`: Keep under 100 lines. Archive old sprints to `_notes/`.
-- `02-progress-log.md`: Keep last 20 entries. Archive older to `_notes/archive/`.
-- `_tasks/`: Mark completed tasks `[x]`, move to `_tasks/archive/`.
-
-### Commands
-
-```
-@mnemosyne Compress memory bank          # Audit and compress all files
-@mnemosyne Archive completed tasks       # Move done tasks to archive
-@mnemosyne Trim active context           # Keep only current sprint
-```
+Memory Bank cleanup is a manual file-maintenance task, separate from native
+conversation compaction. Do it only when requested. Keep active-context files
+focused on current decisions and blockers; move old material only when its
+destination and retention are clear. Do not enforce line-count or entry-count
+targets, rewrite the archive automatically, or create one artifact per phase.
 
 ---
 

@@ -1879,7 +1879,11 @@ test('moving a nested Pantheon MCP entry preserves flat user servers in the V2 c
   assert.deepEqual(staged.mcp['user-server'], userServer)
   assert.deepEqual(staged.mcp.servers['pantheon-resources'], managedServer)
   const converted = migrateV1toV2(staged)
-  assert.deepEqual(converted.mcp.servers['user-server'], userServer)
+  assert.deepEqual(converted.mcp.servers['user-server'], {
+    type: 'remote',
+    url: 'https://user.example/mcp',
+    disabled: false,
+  })
   assert.deepEqual(converted.mcp.servers['pantheon-resources'], managedServer)
 })
 

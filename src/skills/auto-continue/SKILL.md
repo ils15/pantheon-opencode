@@ -1,9 +1,6 @@
 ---
 name: auto-continue
 description: "Auto-continue through todos with idle detection and safety gates. Use for multi-step orchestration."
-context: fork
-globs: []
-alwaysApply: false
 ---
 
 # Auto-Continue Mode

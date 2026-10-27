@@ -10,6 +10,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.2-beta.1] - 2026-10-27
+
+### Changed
+
+- **agents** — V2 compiles declared skills into per-agent allowlists; metadata, routing, and installed skills are checked for drift.
+- **memory** — Recall stays an explicit `memory_search` MCP call, session checkpoints are reserved for cross-session handoff, and native OpenCode compaction owns active-history summarization.
+- **prompts** — Manual prompt templates use named `{{UPPER_SNAKE_CASE}}` inputs; slash commands keep OpenCode's native `$ARGUMENTS` expansion.
+- **install** — V2 MCP entries use the native `disabled` field and migrate legacy `enabled` values.
+- **install** — Existing native V2 permission arrays remain authoritative; legacy defaults are seeded only when no V2 array exists.
+
+### Removed
+
+- **plugin** — Removed ambient V2 memory injection and its debug environment variable; the legacy `memory_injection` option is ignored if preserved in an existing config.
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
 ## [v1.6.1] - 2026-10-24
 
 ### Added

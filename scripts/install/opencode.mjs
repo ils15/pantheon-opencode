@@ -483,6 +483,37 @@ export function mergeAgentMcpPermissions(explicit, mcpTools, configuredServers =
   return { ...(explicit ?? {}), ...generated }
 }
 
+/** Build a fail-closed skill allowlist from an agent's canonical `skills` list. */
+export function deriveNativeSkillPermissions(skills) {
+  if (!Array.isArray(skills)) {
+    throw new TypeError('agent skills must be an array of skill IDs')
+  }
+
+  const permissions = { '*': 'deny' }
+  const seen = new Set()
+  for (const skill of skills) {
+    if (typeof skill !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(skill)) {
+      throw new TypeError(`agent skill ID is invalid: ${String(skill)}`)
+    }
+    if (seen.has(skill)) throw new TypeError(`agent skill list contains duplicate skill: ${skill}`)
+    seen.add(skill)
+    permissions[skill] = 'allow'
+  }
+  return permissions
+}
+
+/**
+ * Add the canonical skill allowlist to one agent's permission map. An explicit
+ * skill policy in canonical frontmatter would make last-match precedence
+ * ambiguous, so require that policy to be expressed through `skills:` instead.
+ */
+export function mergeAgentSkillPermissions(explicit, skills) {
+  if (explicit?.skill !== undefined) {
+    throw new TypeError('agent skill access must be declared only through the skills list')
+  }
+  return { ...(explicit ?? {}), skill: deriveNativeSkillPermissions(skills) }
+}
+
 function deepClone(value) {
   return JSON.parse(JSON.stringify(value))
 }
@@ -833,19 +864,22 @@ export function deduplicatePluginReferences(refs) {
  * postinstall/sync that re-copies the payload after `init` can never restore
  * it, so the quota status stays "unavailable".
  *
- * Idempotent: an existing entry for the copy (same identity) is not
- * duplicated; every other entry is preserved. Gated on the copy existing so
- * an install without the plugins component does not register a dangling
- * path.
+ * Idempotent: the existing entry for the copy (same identity) is retained
+ * and kept after the core plugin, while every other entry stays in place.
+ * Gated on the copy existing so an install without the plugins component does
+ * not register a dangling path.
  *
  * @param {{ plugins?: unknown }} config - the config object about to be written (mutated)
  * @param {{ tuiCopyDir: string }} opts - absolute path of the copied plugin directory
  */
 export function ensureTuiCopyRegistered(config, { tuiCopyDir }) {
   if (!Array.isArray(config.plugins)) config.plugins = []
-  if (existsSync(tuiCopyDir) && !hasPluginReference(config.plugins, tuiCopyDir)) {
-    config.plugins.push(tuiCopyDir)
-  }
+  if (!existsSync(tuiCopyDir)) return
+
+  const identity = pluginReferenceIdentity(tuiCopyDir)
+  const existing = config.plugins.find((entry) => pluginReferenceIdentity(entry) === identity)
+  config.plugins = config.plugins.filter((entry) => pluginReferenceIdentity(entry) !== identity)
+  config.plugins.push(existing ?? tuiCopyDir)
 }
 
 /**
@@ -1436,7 +1470,7 @@ export function applyMcpServerEntries(config, { runtimeTarget, venvPython, versi
       type: 'local',
       cwd: runtimeTarget,
       command: [venvPython, entry.script],
-      enabled: true,
+      ...(version === 'v1' ? { enabled: true } : {}),
     }
     servers.push(entry.name)
   }
@@ -2525,6 +2559,9 @@ async function installPass(
       if (fm.permission) {
         agent.permission = JSON.parse(JSON.stringify(fm.permission))
       }
+      if (fm.skills !== undefined) {
+        agent.permission = mergeAgentSkillPermissions(agent.permission, fm.skills)
+      }
       if (fm.mcp_tools !== undefined) {
         agent.permission = mergeAgentMcpPermissions(
           agent.permission,
@@ -2776,13 +2813,10 @@ async function installPass(
     config.plugins = config.plugins.filter(
       (plugin) => pluginReferenceIdentity(plugin) !== pluginReferenceIdentity(resolvedV2),
     )
-    // ALWAYS the object form, even on a fresh install with nothing to preserve.
-    // The host hands a plugin its `options` only from `{ package, options }`,
-    // and the opt-in features (`context_pruner`, `memory_injection`) read
-    // `ctx.options`. Emitting a bare string — which a fresh install used to do —
-    // left those features unreachable for anyone who did not already know the
-    // object syntax from the docs, so the shape (with an empty options bag) is
-    // written from the start and a user's hand-added keys survive a re-run.
+    // Always use object form, even on a fresh install. The host passes plugin
+    // options only from `{ package, options }`, and `context_pruner` reads
+    // `ctx.options`. A bare string left the option unreachable; an empty object
+    // keeps the contract visible and preserves user-added keys on re-run.
     config.plugins.push({
       package: resolvedV2,
       options: existingV2Options === null ? {} : deepClone(existingV2Options),
@@ -2846,6 +2880,10 @@ async function installPass(
   // --------------------------------------------------------------------
   // C. Merge permissions
   // --------------------------------------------------------------------
+  // A native V2 array is an explicit policy, including an empty one. Do not
+  // append legacy defaults to it: reruns would duplicate rules, and custom V2
+  // configs would gain grants the user did not choose.
+  const hasNativeV2Permissions = version === 'v2' && Array.isArray(config.permissions)
   if (config.permission === undefined) config.permission = {}
   if (
     typeof config.permission === 'object' &&
@@ -2865,7 +2903,11 @@ async function installPass(
     // must not seed the key. It used to anyway, via the unconditional
     // PRODUCT_CONFIG_DEFAULTS.permission merge that sat above this block —
     // which also made this gate dead code.
-    if (componentSet.has('skills') && config.permission.skill === undefined) {
+    if (
+      componentSet.has('skills') &&
+      config.permission.skill === undefined &&
+      !hasNativeV2Permissions
+    ) {
       config.permission.skill = { '*': 'allow' }
     }
     // These five are the commands Pantheon's OWN agents must be able to run
@@ -2891,7 +2933,7 @@ async function installPass(
     // NOTE: this grant is NOT gated on the skills component — unlike
     // permission.skill above, agents are installed by the agents component and
     // the test/lint commands are needed whichever components were selected.
-    if (config.permission.bash === undefined) {
+    if (config.permission.bash === undefined && !hasNativeV2Permissions) {
       config.permission.bash = {
         'git *': 'allow',
         'npm *': 'allow',

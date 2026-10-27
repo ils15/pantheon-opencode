@@ -15,6 +15,10 @@ temperature: 0.2
 skills:
   - git-workflow-and-versioning
   - incremental-implementation
+  - loop-engineering
+  - reflect
+  - simplify
+  - worktrees
 mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_search]

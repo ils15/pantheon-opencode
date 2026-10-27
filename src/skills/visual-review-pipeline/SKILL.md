@@ -1,7 +1,6 @@
 ---
 name: visual-review-pipeline
 description: "Automated visual review pipeline — Playwright screenshots, self-analysis, fix loop, escalation. Used by Aphrodite for UI verification."
-applyTo: "agents/{aphrodite,zeus}.agent.md"
 ---
 
 # Visual Review Pipeline

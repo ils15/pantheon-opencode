@@ -189,7 +189,7 @@ const V2_EXPECTED = {
       bifrost: {
         type: 'remote',
         url: 'https://example.com/mcp',
-        enabled: true,
+        disabled: false,
       },
     },
   },
@@ -826,8 +826,52 @@ describe('config-migration', () => {
       const v2 = migrateV1toV2(V1_CONFIG)
       assert.ok(v2.mcp.servers.bifrost, 'nested mcp.servers.bifrost exists')
       const b = v2.mcp.servers.bifrost
-      assert.equal(b.enabled, true, 'enabled flag is preserved')
+      assert.equal(b.enabled, undefined, 'V2 does not emit the legacy enabled flag')
+      assert.equal(b.disabled, false, 'V1 enabled:true becomes V2 disabled:false')
       assert.equal(b.timeout, undefined, 'no timeout when V1 had none')
+    })
+
+    it('converts V1 disabled servers into native V2 disabled:true', () => {
+      const v2 = migrateV1toV2({ mcp: { local: { type: 'local', enabled: false } } })
+      assert.equal(v2.mcp.servers.local.enabled, undefined)
+      assert.equal(v2.mcp.servers.local.disabled, true)
+    })
+
+    it('normalizes legacy enabled fields inside an existing V2 servers map', () => {
+      const v2 = migrateV1toV2({
+        mcp: {
+          servers: {
+            legacyEnabled: { type: 'local', command: ['node', 'mcp.mjs'], enabled: true },
+            nativeDisabled: { type: 'local', command: ['node', 'mcp.mjs'], disabled: true },
+          },
+        },
+      })
+      assert.deepEqual(v2.mcp.servers.legacyEnabled, {
+        type: 'local',
+        command: ['node', 'mcp.mjs'],
+        disabled: false,
+      })
+      assert.equal(v2.mcp.servers.nativeDisabled.disabled, true)
+      assert.equal(v2.mcp.servers.nativeDisabled.enabled, undefined)
+    })
+
+    it('rejects conflicting legacy enabled and native disabled values', () => {
+      assert.throws(
+        () =>
+          migrateV1toV2({
+            mcp: {
+              servers: {
+                conflict: {
+                  type: 'local',
+                  command: ['node', 'mcp.mjs'],
+                  enabled: true,
+                  disabled: true,
+                },
+              },
+            },
+          }),
+        /conflicting MCP enabled and disabled flags/i,
+      )
     })
 
     it('rejects array-shaped MCP maps and preserves a flat server named servers', () => {
@@ -845,7 +889,10 @@ describe('config-migration', () => {
 
       const flatServersEntry = { type: 'remote', url: 'https://servers.example/mcp' }
       const converted = migrateV1toV2({ mcp: { servers: flatServersEntry } })
-      assert.deepEqual(converted.mcp.servers.servers, flatServersEntry)
+      assert.deepEqual(converted.mcp.servers.servers, {
+        type: 'remote',
+        url: 'https://servers.example/mcp',
+      })
     })
 
     it('rejects present null and falsy MCP values while allowing absent or valid maps', () => {
@@ -907,7 +954,11 @@ describe('config-migration', () => {
       ]) {
         const v2 = migrateV1toV2({ mcp })
         assert.deepEqual(Object.keys(v2.mcp.servers), expectedOrder)
-        assert.deepEqual(v2.mcp.servers['flat-user'], flatUser)
+        assert.deepEqual(v2.mcp.servers['flat-user'], {
+          type: 'remote',
+          url: 'https://flat.example/mcp',
+          disabled: false,
+        })
         assert.deepEqual(v2.mcp.servers['nested-user'], nestedUser)
 
         const v1 = migrateV2toV1(v2)
@@ -1484,7 +1535,8 @@ describe('config-migration', () => {
       // Agent permission count: 6 edit + 2 shell = 8
       assert.equal(v2.agents.talos.permissions.length, 8)
       // MCP server config is nested under the V2 servers map.
-      assert.equal(v2.mcp.servers.bifrost.enabled, true)
+      assert.equal(v2.mcp.servers.bifrost.enabled, undefined)
+      assert.equal(v2.mcp.servers.bifrost.disabled, false)
     })
   })
 

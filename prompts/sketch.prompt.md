@@ -9,7 +9,7 @@ tools: ['search', 'agent/askQuestions']
 
 ## Idea
 
-$input
+{{TASK_INPUT}}
 
 ---
 
@@ -44,43 +44,43 @@ Produce only after confirmation.
 ## Spec Output Format
 
 ```markdown
-# Feature Spec: <Feature Name>
+# Feature Spec: {{FEATURE_NAME}}
 
 **Date:** YYYY-MM-DD
 **Status:** Draft
 
 ## Overview
-<2–3 sentence description>
+{{FEATURE_DESCRIPTION}}
 
 ## Goals
-- <Goal 1>
+- {{GOAL_1}}
 
 ## Non-Goals
-- <Explicitly excluded>
+- {{EXPLICITLY_EXCLUDED}}
 
 ## Functional Requirements
 
 ### Must Have (MVP)
-- [ ] <Requirement 1>
+- [ ] {{REQUIREMENT_1}}
 
 ### Should Have (v1.1)
-- [ ] <Requirement 4>
+- [ ] {{REQUIREMENT_4}}
 
 ## Technical Constraints
-- **Stack:** <relevant tech>
-- **Integrations:** <APIs, services>
-- **Security:** <auth, data sensitivity>
+- **Stack:** {{RELEVANT_TECH}}
+- **Integrations:** {{INTEGRATIONS}}
+- **Security:** {{SECURITY}}
 
 ## Success Criteria
-- [ ] <Measurable outcome 1>
+- [ ] {{MEASURABLE_OUTCOME_1}}
 
 ## Open Questions
-- [ ] <Unresolved decision 1>
+- [ ] {{UNRESOLVED_DECISION_1}}
 
 ## Suggested Implementation Phases
-1. **Phase 1:** <database/schema>
-2. **Phase 2:** <backend API>
-3. **Phase 3:** <frontend>
+1. **Phase 1:** {{DATABASE_SCHEMA}}
+2. **Phase 2:** {{BACKEND_API}}
+3. **Phase 3:** {{FRONTEND}}
 ```
 
 ---

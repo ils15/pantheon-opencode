@@ -57,6 +57,7 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { agentFixtureIdentity, contentDirectoryIdentity } from '../lib/agent-fixture.mjs'
 import { runIsCompleted, summarizeRuns } from '../lib/aggregate.mjs'
 import { parseBenchArgs, UsageError } from '../lib/args.mjs'
+import { assessScenarioArtifact } from '../lib/artifact-oracle.mjs'
 import {
   collectFirstRequest,
   collectInstructionState,
@@ -256,6 +257,7 @@ function collectRunArtifacts(dbPath, runDir, sessionId) {
     root: { status: 'unavailable', reason: 'run database not available' },
     tokens: { status: 'unavailable', reason: 'run database not available' },
     toolCalls: { status: 'unavailable', reason: 'run database not available' },
+    toolTelemetry: { status: 'unavailable', reason: 'run database not available' },
     childrenCount: null,
   }
   let instructions = { status: 'unavailable', reason: 'run database not available' }
@@ -270,6 +272,7 @@ function collectRunArtifacts(dbPath, runDir, sessionId) {
         ...metrics,
         tokens: { status: 'unavailable', reason: err.message },
         toolCalls: { status: 'unavailable', reason: err.message },
+        toolTelemetry: { status: 'unavailable', reason: err.message },
       }
       instructions = { status: 'unavailable', reason: err.message }
       firstRequest = { status: 'unavailable', reason: err.message }
@@ -298,6 +301,7 @@ function collectRunArtifacts(dbPath, runDir, sessionId) {
       ...metrics,
       tokens: { status: 'unavailable', reason },
       toolCalls: { status: 'unavailable', reason },
+      toolTelemetry: { status: 'unavailable', reason },
     }
     instructions = { status: 'unavailable', reason }
     firstRequest = { status: 'unavailable', reason }
@@ -561,6 +565,11 @@ async function main() {
       timedOut: outcome.timedOut,
       rootSession,
     })
+    const artifact = assessScenarioArtifact({
+      scenario,
+      runDir,
+      customPrompt: taskPrompt !== null,
+    })
     let failureReason = null
     if (outcome.timedOut) failureReason = `timeout after ${RUN_TIMEOUT_MS}ms`
     else if (outcome.exitCode !== 0) failureReason = `exit code ${outcome.exitCode}`
@@ -576,6 +585,7 @@ async function main() {
       startedAt: startedIso,
       status: completed ? 'completed' : 'failed',
       failureReason,
+      artifact,
       wallMs: outcome.wallMs,
       exitCode: outcome.exitCode,
       timedOut: outcome.timedOut,
@@ -595,6 +605,7 @@ async function main() {
       // Keep additions to the collector's session-level report contract intact.
       tokens: metrics.tokens,
       toolCalls: toolCallsToMap(metrics.toolCalls),
+      toolTelemetry: metrics.toolTelemetry,
       hooks,
       instructions,
       firstRequest,
@@ -610,6 +621,7 @@ async function main() {
           rootParentId: record.rootParentId,
           childrenCount: metrics.childrenCount,
           toolCalls: record.toolCalls,
+          artifact,
           agentRouting: metrics.agentRouting,
           routingParity: opts.routingParity,
           instructions,
@@ -645,7 +657,7 @@ async function main() {
   const report = {
     meta: {
       kind: 'pantheon-bench-baseline',
-      reportVersion: 3,
+      reportVersion: 4,
       createdAt: startedAtIso,
       gitSha: rev.sha,
       gitDirty: rev.dirty,

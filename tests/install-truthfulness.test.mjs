@@ -10,9 +10,9 @@
  *        stopped, and the outcome is readable from disk on the next run.
  *   #263 the printed feature list is labelled as the static seed it is, the V2
  *        registered surface is stated too, and `--json` carries the same facts.
- *   #268 a fresh V2 install writes the object form, so `options` (and therefore
- *        `context_pruner` / `memory_injection`) is reachable, and a user's
- *        hand-added keys survive a re-run.
+ *   #268 a fresh V2 install writes the object form, so `options` and
+ *        `context_pruner` are reachable, while hand-added options survive a
+ *        re-run (including inert legacy keys).
  *   #269 a V1 third-party plugin entry is not left dead in the singular key, and
  *        a sibling `opencode.jsonc` is reported instead of silently merging.
  *

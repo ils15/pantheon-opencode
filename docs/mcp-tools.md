@@ -238,7 +238,7 @@ delegated.
 | Agent | Typical scripts |
 |-------|----------------|
 | hermes | `pytest`, `ruff check`, `ruff format` |
-| aphrodite | `npm test`, `biome check` |
+| aphrodite | Focused tests for the changed surface; full `npm test` only when the scope or risk warrants it; `biome check` |
 | demeter | `alembic upgrade head && pytest` |
 | themis | Lint/quality check scripts during review |
 | prometheus | Docker builds, CI/CD pipeline scripts |

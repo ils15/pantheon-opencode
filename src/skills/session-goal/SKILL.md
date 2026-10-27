@@ -1,9 +1,6 @@
 ---
 name: session-goal
 description: "Pin session objectives to prevent scope creep. Use for alignment across long multi-agent sessions."
-context: fork
-globs: []
-alwaysApply: false
 ---
 
 # Session Goal — Alignment Anchor
