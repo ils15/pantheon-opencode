@@ -7,6 +7,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+<!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. -->
+
+## [v1.6.2-beta.1] - 2026-10-27
+
 ### Changed
 
 - **agents** — V2 compiles declared skills into per-agent allowlists; metadata, routing, and installed skills are checked for drift.
@@ -19,9 +24,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **plugin** — Removed ambient V2 memory injection and its debug environment variable; the legacy `memory_injection` option is ignored if preserved in an existing config.
 
-<!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. -->
-
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
 ## [v1.6.1] - 2026-10-24
 
 ### Added
