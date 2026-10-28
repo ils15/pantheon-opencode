@@ -1059,12 +1059,59 @@ test('quota slash/palette command opens its details panel and focused actions do
   assert.equal(keymap.enabled(), false)
   assert.deepEqual(
     keymap.commands.map((item) => item.bind),
-    ['e', 'm', 'r', 'escape,q'],
+    ['e', 'm', 'r', 'escape,q', 'tab', 'shift+tab'],
   )
   panel.focused = true
   assert.equal(keymap.enabled(), true)
   await quotaUI.runQuotaPanelCommand('refresh', { focused: true, close() {} }, runtime)
   assert.equal(refreshes, 1)
+  let closeCount = 0
+  const closeCommand = quotaUI
+    .quotaPanelKeymapLayer({ focused: true, close: () => closeCount++ }, runtime)
+    .commands.find(({ bind }) => bind === 'escape,q')
+  closeCommand.run()
+  assert.equal(closeCount, 1)
+})
+
+test('quota panel tabs default to Limits and wrap in either keyboard direction', () => {
+  assert.deepEqual(quotaUI.QUOTA_TABS, ['usage', 'limits', 'plugin', 'settings'])
+  assert.equal(quotaUI.DEFAULT_QUOTA_TAB, 'limits')
+  assert.equal(quotaUI.moveQuotaTab('limits', 1), 'plugin')
+  assert.equal(quotaUI.moveQuotaTab('limits', -1), 'usage')
+  assert.equal(quotaUI.moveQuotaTab('settings', 1), 'usage')
+  assert.equal(quotaUI.moveQuotaTab('usage', -1), 'settings')
+
+  const panel = { focused: false, close() {} }
+  const runtime = {
+    refresh: async () => {},
+    toggleEnabled: async () => {},
+    toggleDisplay: async () => {},
+  }
+  let selected = 'limits'
+  const keymap = quotaUI.quotaPanelKeymapLayer(panel, runtime, (direction) => {
+    selected = quotaUI.moveQuotaTab(selected, direction)
+  })
+  assert.deepEqual(
+    keymap.commands.map(({ bind }) => bind),
+    ['e', 'm', 'r', 'escape,q', 'tab', 'shift+tab'],
+  )
+  keymap.commands.find(({ bind }) => bind === 'tab').run()
+  assert.equal(selected, 'limits', 'unfocused panel must not intercept Tab')
+  panel.focused = true
+  keymap.commands.find(({ bind }) => bind === 'tab').run()
+  assert.equal(selected, 'plugin')
+  keymap.commands.find(({ bind }) => bind === 'shift+tab').run()
+  assert.equal(selected, 'limits')
+})
+
+test('quota panel header identifies the active chat model and warns only for partial quota status', () => {
+  assert.equal(
+    quotaUI.activeQuotaModelLabel({ providerID: 'openai', modelID: 'gpt-5', label: 'GPT-5' }),
+    'Modelo ativo · openai/gpt-5',
+  )
+  assert.equal(quotaUI.quotaPanelStatusMessage({ status: 'ready' }), undefined)
+  assert.equal(quotaUI.quotaPanelStatusMessage({ status: 'partial' }), 'Dados parciais')
+  assert.notEqual(quotaUI.quotaPanelStatusMessage({ status: 'stale' }), 'Dados parciais')
 })
 
 test('quota window layout respects width, display mode and explicit reset only', () => {
@@ -1112,7 +1159,447 @@ test('quota window layout respects width, display mode and explicit reset only',
     0,
     true,
   )
-  assert.ok(emptyGauge.some((line) => line.includes('░░░░')))
+  assert.ok(emptyGauge.every((line) => !/[▰▱░▒▓█]/u.test(line)))
+  assert.match(emptyGauge.join(' '), /100\s*%/)
+})
+
+function historyResult(overrides = {}) {
+  return {
+    status: 'available',
+    period: '7d',
+    coverageStart: '2026-10-21',
+    partial: false,
+    truncated: false,
+    rows: 2,
+    buckets: [
+      {
+        date: '2026-10-27',
+        input: 400,
+        output: 100,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: 500,
+        estimatedUsd: 0.012,
+        pricingComplete: true,
+      },
+    ],
+    totals: { input: 400, output: 100, cacheRead: 0, cacheWrite: 0, total: 500 },
+    models: [
+      {
+        providerID: 'provider-a',
+        modelID: 'model-one',
+        totals: { input: 300, output: 50, cacheRead: 0, cacheWrite: 0, total: 350 },
+        estimatedUsd: 0.01,
+        pricingComplete: true,
+      },
+      {
+        providerID: 'provider-b',
+        modelID: 'model-two',
+        totals: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, total: 150 },
+        estimatedUsd: 0.002,
+        pricingComplete: true,
+      },
+    ],
+    pricing: {
+      status: 'complete',
+      complete: true,
+      billed: false,
+      estimatedUsd: 0.012,
+      unpricedModels: 0,
+    },
+    ...overrides,
+  }
+}
+
+test('usage history selector exposes all ranges and marks the selected period', () => {
+  const label = quotaUI.usageHistorySelectorLabel('15d')
+  assert.match(label, /7d/)
+  assert.match(label, /\[15d\]/)
+  assert.match(label, /30d/)
+  assert.match(label, /\[?Total\]?/)
+  assert.deepEqual(['7', '1', '3', 't'].map(quotaUI.usageHistoryPeriodForKey), [
+    '7d',
+    '15d',
+    '30d',
+    'total',
+  ])
+})
+
+test('usage history reports coverage and warns only for RPC partial or truncation flags', () => {
+  const complete = historyResult()
+  assert.equal(quotaUI.usageHistoryCoverageLabel(complete), 'Cobertura desde 2026-10-21')
+  assert.equal(quotaUI.usageHistoryPartialWarning(complete), null)
+  assert.match(quotaUI.usageHistoryPricingLabel(complete), /não cobrada/i)
+
+  const partial = historyResult({ partial: true, status: 'partial' })
+  assert.match(quotaUI.usageHistoryPartialWarning(partial), /parcial/i)
+  const truncated = historyResult({ truncated: true, status: 'partial' })
+  assert.match(quotaUI.usageHistoryPartialWarning(truncated), /truncado/i)
+  assert.match(
+    quotaUI.usageHistoryCoverageLabel(historyResult({ coverageStart: null })),
+    /início da cobertura indisponível/i,
+  )
+  assert.equal(
+    quotaUI.usageHistoryUnavailableMessage({ status: 'unavailable', reason: 'history_timeout' }),
+    'Consulta de histórico excedeu o tempo limite.',
+  )
+})
+
+test('usage history chart includes daily overall totals and every provider/model total', () => {
+  const lines = quotaUI.usageHistoryChartLines(historyResult(), 34)
+  const chart = lines.join('\n')
+  assert.match(chart, /Geral.*500 tokens/i)
+  assert.match(chart, /2026-10-27/)
+  assert.match(chart, /provider-a\/model-one/)
+  assert.match(chart, /provider-b\/model-two/)
+  assert.match(chart, /350 tokens/)
+  assert.match(chart, /150 tokens/)
+  assert.ok(lines.every((line) => quotaUI.cellWidth(line) <= 34))
+  assert.match(quotaUI.usageHistoryEmptyMessage(), /sem histórico/i)
+})
+
+test('context estimate is explicit, pre-cache and separate from session-reported spend', () => {
+  const estimate = quotaUI.activeContextEstimateLines(
+    {
+      status: 'estimated',
+      estimatedUsd: 0.012345,
+      billed: false,
+      basis: 'pre-cache-context-tokens-times-input-price',
+      cacheDiscountApplied: false,
+    },
+    34,
+  )
+  const estimateText = estimate.join(' ')
+  assert.match(estimateText, /Estimativa de contexto \(pré-cache\)/i)
+  assert.match(estimateText, /não é valor cobrado/i)
+  assert.match(estimateText, /0\.012345/)
+  assert.doesNotMatch(estimateText, /97%|desconto aplicado/i)
+
+  const unavailable = quotaUI.activeContextEstimateLines(
+    {
+      status: 'unavailable',
+      billed: false,
+      basis: 'pre-cache-context-tokens-times-input-price',
+      cacheDiscountApplied: false,
+      reason: 'no-pricing',
+    },
+    34,
+  )
+  assert.match(unavailable.join(' '), /preço de entrada indisponível/i)
+  assert.match(quotaUI.sessionSpendLabel(0.043), /Gasto da sessão \(relatado\).*\$0\.04/)
+  assert.ok(estimate.every((line) => quotaUI.cellWidth(line) <= 34))
+})
+
+test('active chat model identity is explicit and history lines fit narrow panels', () => {
+  assert.equal(
+    quotaUI.activeModelIdentity({ providerID: 'provider-a', modelID: 'chat-model', label: 'Chat' }),
+    'provider-a/chat-model',
+  )
+  const narrowLines = quotaUI.usageHistoryChartLines(historyResult(), 24)
+  assert.ok(narrowLines.every((line) => quotaUI.cellWidth(line) <= 24))
+  assert.match(narrowLines.join('\n'), /provider-a/)
+  assert.match(narrowLines.join('\n'), /provider-b/)
+  const selectorLines = quotaUI.usageHistorySelectorLines('total', 24)
+  const pricingLines = quotaUI.usageHistoryTextLines(
+    quotaUI.usageHistoryPricingLabel(historyResult()),
+    24,
+  )
+  assert.ok(selectorLines.every((line) => quotaUI.cellWidth(line) <= 24))
+  assert.ok(pricingLines.every((line) => quotaUI.cellWidth(line) <= 24))
+  const empty = historyResult({
+    rows: 0,
+    buckets: [],
+    models: [],
+    totals: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  })
+  assert.match(quotaUI.usageHistoryChartLines(empty, 24).join(' '), /sem histórico/i)
+})
+
+test('native usage-history panel renders coverage/models and selects periods from the keyboard', async (t) => {
+  const rendererEntry = typeof Bun === 'undefined' ? 'index.js' : 'index.bun.js'
+  const { testRender } = await import(
+    pathToFileURL(
+      join(process.cwd(), `src/plugins/tui/node_modules/@opentui/solid/${rendererEntry}`),
+    ).href
+  )
+  const requests = []
+  const layers = []
+  const context = {
+    client: {
+      rpc: () => ({
+        usage_history: async ({ period }) => {
+          requests.push(period)
+          return historyResult({ period })
+        },
+      }),
+    },
+    location: 'native-render-test',
+    keymap: { layer: (factory) => layers.push(factory) },
+  }
+  const panel = { focused: true }
+  let setup
+  try {
+    setup = await testRender(() => quotaUI.UsageHistorySection({ context, panel, width: 18 }), {
+      width: 24,
+      height: 44,
+    })
+  } catch (error) {
+    const message = String(error)
+    if (
+      message.includes('OpenTUI native FFI is not available for this runtime yet') ||
+      message.includes("Cannot find module '@opentui/core-win32-x64'")
+    ) {
+      t.skip('OpenTUI native rendering is unavailable for this runtime/platform.')
+      return
+    }
+    throw error
+  }
+
+  try {
+    await setup.waitFor(() => setup.captureCharFrame().includes('provider-a'))
+    const initialFrame = setup.captureCharFrame()
+    assert.match(initialFrame, /Cobertura desde 2026-10-21/)
+    assert.match(initialFrame, /provider-a/)
+    assert.match(initialFrame, /provider-b/)
+    assert.doesNotMatch(initialFrame, /Dados parciais/)
+    assert.ok(initialFrame.split('\n').every((line) => quotaUI.cellWidth(line) <= 24))
+
+    const command = layers[0]().commands.find(({ bind }) => bind === '1')
+    assert.ok(command)
+    await command.run()
+    await setup.waitFor(
+      () => requests.includes('15d') && setup.captureCharFrame().includes('[15d]'),
+    )
+    assert.deepEqual(requests, ['7d', '15d'])
+  } finally {
+    setup.renderer.destroy()
+  }
+})
+
+test('native quota tabs default to text-only Limits, expose usage/plugin/settings, and close on click', async (t) => {
+  const rendererEntry = typeof Bun === 'undefined' ? 'index.js' : 'index.bun.js'
+  const { testRender } = await import(
+    pathToFileURL(
+      join(process.cwd(), `src/plugins/tui/node_modules/@opentui/solid/${rendererEntry}`),
+    ).href
+  )
+  const { createSignal } = await import('solid-js')
+  const layers = []
+  const historyRequests = []
+  const [snapshot, setSnapshot] = createSignal({
+    status: 'ready',
+    providers: [],
+    details: [
+      {
+        id: 'openai',
+        label: 'OpenAI',
+        authentication: 'connected',
+        state: 'available',
+        metrics: [
+          {
+            kind: 'provider_quota',
+            period: '5h',
+            used: 72,
+            remaining: 28,
+            unit: '%',
+            resetsAt: Date.now() + 3_600_000,
+          },
+          {
+            kind: 'provider_quota',
+            period: 'weekly',
+            used: 40,
+            remaining: 60,
+            unit: '%',
+            resetsAt: Date.now() + 86_400_000,
+          },
+        ],
+      },
+    ],
+    updatedAt: Date.now(),
+  })
+  const [preferences, setPreferences] = createSignal({ enabled: true, display: 'remaining' })
+  const history = {
+    status: 'available',
+    period: '7d',
+    coverageStart: '2026-10-21',
+    partial: false,
+    truncated: false,
+    rows: 1,
+    buckets: [
+      {
+        date: '2026-10-27',
+        input: 50_000,
+        output: 2_000,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: 52_000,
+        estimatedUsd: 0.123,
+        pricingComplete: true,
+      },
+    ],
+    totals: { input: 50_000, output: 2_000, cacheRead: 0, cacheWrite: 0, total: 52_000 },
+    models: [
+      {
+        providerID: 'openai',
+        modelID: 'gpt-5',
+        totals: { input: 50_000, output: 2_000, cacheRead: 0, cacheWrite: 0, total: 52_000 },
+        estimatedUsd: 0.123,
+        pricingComplete: true,
+      },
+    ],
+    pricing: {
+      status: 'complete',
+      complete: true,
+      billed: false,
+      estimatedUsd: 0.123,
+      unpricedModels: 0,
+    },
+  }
+  const context = {
+    theme: {
+      themeMode: 'dark',
+      text: {
+        base: '#ffffff',
+        muted: '#999999',
+        feedback: {
+          info: { base: '#55aaff' },
+          warning: { base: '#ffaa00' },
+          error: { base: '#ff5555' },
+          success: { base: '#55ff55' },
+        },
+      },
+    },
+    keymap: { layer: (factory) => layers.push(factory) },
+    data: {
+      on: () => () => {},
+      session: {
+        get: () => ({ model: { id: 'gpt-5', providerID: 'openai' } }),
+        family: () => [],
+        message: {
+          list: () => [
+            {
+              type: 'assistant',
+              model: { id: 'gpt-5', providerID: 'openai' },
+              tokens: { input: 50_000, output: 2_000 },
+              cost: 0.123,
+            },
+          ],
+        },
+      },
+      location: {
+        default: () => ({ directory: '/workspace' }),
+        model: {
+          list: () => [
+            { id: 'gpt-5', modelID: 'gpt-5', providerID: 'openai', limit: { context: 100_000 } },
+          ],
+        },
+      },
+    },
+    client: {
+      rpc: () => ({
+        usage_history: async ({ period }) => {
+          historyRequests.push(period)
+          return { ...history, period }
+        },
+        active_context_cost: async () => ({
+          status: 'estimated',
+          estimatedUsd: 0.25,
+          billed: false,
+          basis: 'pre-cache-context-tokens-times-input-price',
+          cacheDiscountApplied: false,
+        }),
+      }),
+    },
+  }
+  const runtime = {
+    snapshot,
+    preferences,
+    refresh: async () => {},
+    toggleEnabled: async () => setPreferences((value) => ({ ...value, enabled: !value.enabled })),
+    toggleDisplay: async () =>
+      setPreferences((value) => ({
+        ...value,
+        display: value.display === 'remaining' ? 'used' : 'remaining',
+      })),
+    dispose: () => {},
+  }
+  let closeCount = 0
+  const panel = {
+    name: quotaUI.QUOTA_PANEL_NAME,
+    sessionID: 'ses-quota-panel-test',
+    width: 48,
+    focused: true,
+    close: () => closeCount++,
+  }
+  let setup
+  try {
+    setup = await testRender(() => quotaUI.QuotaPanel({ context, runtime, panel }), {
+      width: 48,
+      height: 60,
+    })
+  } catch (error) {
+    const message = String(error)
+    if (
+      message.includes('OpenTUI native FFI is not available for this runtime yet') ||
+      message.includes("Cannot find module '@opentui/core-win32-x64'")
+    ) {
+      t.skip('OpenTUI native rendering is unavailable for this runtime/platform.')
+      return
+    }
+    throw error
+  }
+
+  try {
+    await setup.waitFor(() => setup.captureCharFrame().includes('5h'))
+    const limitsFrame = setup.captureCharFrame()
+    assert.match(limitsFrame, /Limits/)
+    assert.match(limitsFrame, /Usage/)
+    assert.match(limitsFrame, /Plugin/)
+    assert.match(limitsFrame, /Settings/)
+    assert.match(limitsFrame, /Modelo ativo · openai\/gpt-5/)
+    assert.match(limitsFrame, /72\s*%|28\s*%/)
+    assert.doesNotMatch(limitsFrame, /Dados parciais/)
+    assert.doesNotMatch(limitsFrame, /[▰▱░▒▓█]/u)
+    assert.ok(limitsFrame.split('\n').every((line) => quotaUI.cellWidth(line) <= 48))
+
+    const keymap = layers[0]()
+    const runTab = async (bind) => keymap.commands.find((command) => command.bind === bind).run()
+    const pluginRow = limitsFrame.split('\n').findIndex((line) => line.includes('Plugin'))
+    assert.notEqual(pluginRow, -1)
+    const pluginColumn = limitsFrame.split('\n')[pluginRow].indexOf('Plugin') + 2
+    await setup.mockMouse.click(pluginColumn, pluginRow)
+    await setup.waitFor(() => setup.captureCharFrame().includes('PROVEDORES DETECTADOS'))
+    const pluginFrame = setup.captureCharFrame()
+    assert.match(pluginFrame, /Pantheon TUI v/)
+    assert.match(pluginFrame, /OpenAI/)
+
+    await runTab('tab')
+    await runTab('tab')
+    await setup.waitFor(() => setup.captureCharFrame().includes('[E] Quota'))
+    assert.match(setup.captureCharFrame(), /\[M\] Exibir restante/)
+
+    await runTab('tab')
+    await setup.waitFor(() => setup.captureCharFrame().includes('Cobertura desde'))
+    await setup.waitFor(() => setup.captureCharFrame().includes('Estimativa de contexto'))
+    const usageFrame = setup.captureCharFrame()
+    assert.match(usageFrame, /Gasto da sessão \(relatado\)/)
+    assert.match(usageFrame, /openai\/gpt-5/)
+    assert.match(usageFrame, /provider-a|openai/)
+    assert.deepEqual(historyRequests, ['7d'])
+
+    setSnapshot((value) => ({ ...value, status: 'partial' }))
+    await setup.waitFor(() => setup.captureCharFrame().includes('Dados parciais'))
+    assert.match(setup.captureCharFrame(), /Modelo ativo · openai\/gpt-5/)
+
+    const frame = setup.captureCharFrame().split('\n')
+    const closeRow = frame.findIndex((line) => line.includes('× Fechar'))
+    assert.notEqual(closeRow, -1)
+    const closeColumn = frame[closeRow].indexOf('× Fechar') + 2
+    await setup.mockMouse.click(closeColumn, closeRow)
+    assert.equal(closeCount, 1)
+  } finally {
+    setup.renderer.destroy()
+  }
 })
 
 test('metric rows align values when possible and preserve long labels and states', () => {
@@ -1233,4 +1720,44 @@ test('footer summary mirrors the fault-aware sidebar status labels', () => {
     ],
   })
   assert.match(quotaUI.snapshotSummary(ready, 'remaining'), /rest(?:ante|\.) 8 requests/)
+})
+
+test('quota tab and provider icons support ASCII fallback without shifting terminal columns', () => {
+  const labels = { usage: 'Usage', limits: 'Limits', plugin: 'Plugin', settings: 'Settings' }
+
+  assert.equal(quotaUI.quotaIcon('clock', 'ascii'), '(t)')
+  assert.equal(quotaUI.quotaIcon('clock', 'unicode'), '🕒')
+  for (const [tab, label] of Object.entries(labels)) {
+    for (const mode of ['ascii', 'unicode']) {
+      const text = quotaUI.quotaTabLabel(tab, mode)
+      assert.ok(text.endsWith(label))
+      assert.equal(quotaUI.cellWidth(text) - quotaUI.cellWidth(label), 4)
+    }
+  }
+  for (const mode of ['ascii', 'unicode']) {
+    const row = Object.keys(labels)
+      .map((tab) => `${tab === 'limits' ? '› ' : '  '}${quotaUI.quotaTabLabel(tab, mode)}`)
+      .join(' ')
+    assert.ok(quotaUI.cellWidth(row) <= 54)
+  }
+
+  const states = [
+    ['not_connected', 'unavailable', '*  Precisa configurar'],
+    ['unavailable', 'unavailable', 'x  Indisponível'],
+    ['connected', 'available', 'v  Credencial local · há dados'],
+    ['connected', 'unavailable', '!  Credencial local · sem dados'],
+  ]
+  for (const [authentication, state, expected] of states) {
+    assert.equal(quotaUI.providerState({ authentication, state }, 'ascii').label, expected)
+  }
+  for (const [authentication, state, text] of [
+    ['not_connected', 'unavailable', 'Precisa configurar'],
+    ['unavailable', 'unavailable', 'Indisponível'],
+    ['connected', 'available', 'Credencial local · há dados'],
+    ['connected', 'unavailable', 'Credencial local · sem dados'],
+  ]) {
+    const label = quotaUI.providerState({ authentication, state }, 'unicode').label
+    assert.ok(label.endsWith(text))
+    assert.equal(quotaUI.cellWidth(label) - quotaUI.cellWidth(text), 3)
+  }
 })

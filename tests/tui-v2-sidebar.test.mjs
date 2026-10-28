@@ -2568,7 +2568,7 @@ test('Dispatch is a single block: one header, the live rows and one rollup', asy
 })
 
 test('sidebar and quota icons are single-width glyphs; the fixed header has none', async () => {
-  const { BLOCK_ICONS, cellWidth, QUOTA_ICON } = await loadV2()
+  const { BLOCK_ICONS, cellWidth, quotaIcon, QUOTA_ICON } = await loadV2()
 
   assert.deepEqual(
     BLOCK_ICONS,
@@ -2591,6 +2591,11 @@ test('sidebar and quota icons are single-width glyphs; the fixed header has none
   }
   assert.equal([...QUOTA_ICON].length, 1)
   assert.equal(cellWidth(QUOTA_ICON), 1)
+  assert.equal(QUOTA_ICON, quotaIcon('refresh'))
+  for (const mode of ['nerd', 'unicode', 'ascii']) {
+    const fallback = quotaIcon('refresh', mode)
+    assert.equal(cellWidth(fallback), 1, `${mode} quota icon stays within one terminal cell`)
+  }
   // The host measures a `emoji-regex` match as two cells, so no header glyph may
   // match it (☑ U+2611 was the one candidate that did).
   const emoji = (await import('emoji-regex')).default()

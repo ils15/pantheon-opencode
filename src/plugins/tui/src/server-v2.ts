@@ -1,6 +1,8 @@
+import { Worker } from 'node:worker_threads'
 import { Plugin } from '@opencode/plugin'
 import type { Context } from '@opencode/plugin/promise/plugin'
 import type { RpcCallContext, RpcRegistration } from '@opencode/plugin/promise/rpc'
+import { estimateActiveContextCost } from './cost-data'
 import { createGoKeyDiagnostic } from './go-key-diagnostic'
 import {
   isOpenAICodexOAuthMethod,
@@ -17,9 +19,79 @@ import {
   type QuotaProviderId,
   quotaRpc,
 } from './quota-rpc'
+import {
+  isUsageHistoryPeriod,
+  MAX_HISTORY_QUERY_MS,
+  type UsageHistoryRpcResult,
+} from './usage-history-contract'
 
 const CREDENTIAL_CACHE_TTL_MS = 30_000
 const ADAPTER_CACHE_TTL_MS = 20_000
+
+function queryUsageHistoryInWorker(
+  period: string,
+  signal: AbortSignal,
+): Promise<UsageHistoryRpcResult> {
+  if (!isUsageHistoryPeriod(period)) {
+    return Promise.resolve({ status: 'unavailable', reason: 'invalid_period' })
+  }
+  return new Promise((resolve, reject) => {
+    let settled = false
+    let worker: Worker
+    try {
+      worker = new Worker(new URL('./usage-history-worker.js', import.meta.url), {
+        workerData: { period },
+        resourceLimits: { maxOldGenerationSizeMb: 64, stackSizeMb: 2 },
+      })
+    } catch {
+      resolve({ status: 'unavailable', reason: 'history_unavailable' })
+      return
+    }
+    let timer: ReturnType<typeof setTimeout>
+
+    const onAbort = (): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      signal.removeEventListener('abort', onAbort)
+      void worker.terminate()
+      reject(new DOMException('Usage history request aborted', 'AbortError'))
+    }
+    const finish = (result: UsageHistoryRpcResult): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      signal.removeEventListener('abort', onAbort)
+      void worker.terminate()
+      resolve(result)
+    }
+
+    timer = setTimeout(() => {
+      finish({ status: 'unavailable', reason: 'history_timeout' })
+    }, MAX_HISTORY_QUERY_MS)
+    signal.addEventListener('abort', onAbort, { once: true })
+    worker.once('message', (message: unknown) => {
+      if (
+        typeof message === 'object' &&
+        message !== null &&
+        'ok' in message &&
+        message.ok === true &&
+        'result' in message &&
+        typeof message.result === 'object' &&
+        message.result !== null
+      ) {
+        finish(message.result as UsageHistoryRpcResult)
+        return
+      }
+      finish({ status: 'unavailable', reason: 'history_unavailable' })
+    })
+    worker.once('error', () => finish({ status: 'unavailable', reason: 'history_unavailable' }))
+    worker.once('exit', () => {
+      if (!settled) finish({ status: 'unavailable', reason: 'history_unavailable' })
+    })
+    if (signal.aborted) onAbort()
+  })
+}
 
 type ResolvedCredential = {
   readonly method?: 'oauth' | 'key' | 'unsupported'
@@ -159,6 +231,39 @@ function routeKindField(
 }
 
 /**
+ * OpenCode Go follows the upstream quota plugin's key order: process environment, the
+ * effective OpenCode provider settings, then a selected OpenCode API-key connection.
+ * Provider settings are read through the host API; Pantheon never parses OpenCode files.
+ */
+async function configuredOpenCodeGoApiKey(context: Context): Promise<string | undefined> {
+  const environmentKey = process.env.OPENCODE_API_KEY?.trim()
+  if (environmentKey) return environmentKey
+
+  for (const providerID of ['opencode-go', 'opencode']) {
+    let value: unknown
+    try {
+      value = (await context.provider.get({ providerID })).data.settings?.apiKey
+    } catch {
+      continue
+    }
+    if (typeof value !== 'string') continue
+    const configured = value.trim()
+    if (!configured) continue
+
+    const environmentTemplate = configured.match(/^\{env:([A-Za-z_][A-Za-z0-9_]*)\}$/)
+    if (environmentTemplate) {
+      if (environmentTemplate[1] !== 'OPENCODE_API_KEY') continue
+      const resolved = process.env.OPENCODE_API_KEY?.trim()
+      if (resolved) return resolved
+      continue
+    }
+    if (configured.startsWith('{env:')) continue
+    return configured
+  }
+  return undefined
+}
+
+/**
  * Resolve only listed, selected credential connections in the closed provider
  * catalog. Only the minimum access-token/key field is retained in memory.
  */
@@ -212,8 +317,21 @@ function createCredentialResolver(context: Context) {
     // Quota visibility is tied to a selected OpenCode credential connection;
     // local CLI identity is outside that credential context.
     if (definition.source === 'local-cli') return {}
+    const configuredGoKey =
+      provider === 'opencode-go' ? await configuredOpenCodeGoApiKey(context) : undefined
+    if (goKeyOnly && configuredGoKey) {
+      return { method: 'key', secret: configuredGoKey, routeKind: 'api_key' }
+    }
     try {
-      const listedConnections = await listCredentialConnections()
+      let listedConnections: Map<string, Set<string>>
+      try {
+        listedConnections = await listCredentialConnections()
+      } catch (error) {
+        // A configured OpenCode Go key can still be used if integration discovery fails.
+        // Without it, retain the normal selected-connection error behavior.
+        if (provider !== 'opencode-go' || !configuredGoKey) throw error
+        listedConnections = new Map()
+      }
       if (provider === 'opencode-go') {
         const activeListed = async (integrationID: string) => {
           const connections = listedConnections.get(integrationID)
@@ -270,15 +388,17 @@ function createCredentialResolver(context: Context) {
         }
 
         let activePrimary: Awaited<ReturnType<typeof activeListed>>
-        try {
-          activePrimary = await activeListed('opencode-go')
-        } catch {
-          // An API-key lookup failure must not discard an already resolved Console login.
+        if (!configuredGoKey) {
+          try {
+            activePrimary = await activeListed('opencode-go')
+          } catch {
+            // An API-key lookup failure must not discard an already resolved Console login.
+          }
         }
         const unsupportedPrimaryLogin =
-          activePrimary !== undefined && activePrimary.method !== 'key'
-        let apiKey: string | undefined
-        for (const integrationID of ['opencode-go', 'opencode']) {
+          !configuredGoKey && activePrimary !== undefined && activePrimary.method !== 'key'
+        let apiKey = configuredGoKey
+        for (const integrationID of configuredGoKey ? [] : ['opencode-go', 'opencode']) {
           let active: Awaited<ReturnType<typeof activeListed>>
           try {
             active =
@@ -367,10 +487,9 @@ function createCredentialResolver(context: Context) {
         return {}
       }
       return {}
-    } catch (error) {
-      // Host errors may contain identifiers or provider data; never forward them.
-      // The sanitized error alone hides the cause, so keep the original in the server log.
-      console.warn('[pantheon-tui quota] credential resolution failed:', error)
+    } catch {
+      // Host errors may contain credentials, provider data, or arbitrary thrown metadata.
+      console.warn('[pantheon-tui quota] credential resolution failed (exception)')
       throw new Error('Credential resolution failed')
     }
   }
@@ -437,11 +556,12 @@ function createCredentialResolver(context: Context) {
   }
 }
 
-function isCredentialInvalidationEvent(type: string): boolean {
+function isQuotaSourceInvalidationEvent(type: string): boolean {
   return (
     type === 'credential.updated' ||
     type === 'credential.switched' ||
-    type === 'integration.updated'
+    type === 'integration.updated' ||
+    type === 'provider.updated'
   )
 }
 
@@ -784,7 +904,7 @@ export function createQuotaPlugin(
       const eventTask = (async () => {
         try {
           for await (const event of context.event.subscribe({ signal: eventController.signal })) {
-            if (isCredentialInvalidationEvent(event.type)) {
+            if (isQuotaSourceInvalidationEvent(event.type)) {
               resolver.invalidate()
               adapters.invalidate()
               if (registration) {
@@ -815,6 +935,30 @@ export function createQuotaPlugin(
             ),
           status: async (_input, callContext: RpcCallContext<typeof quotaRpc.methods.status>) =>
             getProviderStatus(resolver, adapters, callContext.signal),
+          usage_history: async (
+            input,
+            callContext: RpcCallContext<typeof quotaRpc.methods.usage_history>,
+          ) => {
+            callContext.signal.throwIfAborted()
+            const period = (input as { period: string }).period
+            return queryUsageHistoryInWorker(
+              period,
+              AbortSignal.any([callContext.signal, shutdownController.signal]),
+            )
+          },
+          active_context_cost: async (
+            input,
+            callContext: RpcCallContext<typeof quotaRpc.methods.active_context_cost>,
+          ) => {
+            callContext.signal.throwIfAborted()
+            return estimateActiveContextCost(
+              input as {
+                providerID: string | null
+                modelID: string | null
+                contextTokens: number | null
+              },
+            )
+          },
         })
       } catch (error) {
         console.warn('[pantheon-tui quota] quota RPC registration failed:', error)

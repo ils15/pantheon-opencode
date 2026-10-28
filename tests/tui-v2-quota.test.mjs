@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import test from 'node:test'
 import { pathToFileURL, URL } from 'node:url'
+import { format } from 'node:util'
 import Ajv from 'ajv'
 
 const serverPath = join(process.cwd(), 'src/plugins/tui/dist/server-v2.js')
@@ -67,6 +72,7 @@ function createEventSource() {
 function createContext({
   active = {},
   credentials = {},
+  providerSettings = {},
   resolve,
   list = [],
   failResolve,
@@ -93,6 +99,17 @@ function createContext({
   }
 
   const context = {
+    provider: {
+      get: async ({ providerID }) =>
+        Object.hasOwn(providerSettings, providerID)
+          ? {
+              data: {
+                id: providerID,
+                settings: { apiKey: providerSettings[providerID] },
+              },
+            }
+          : { data: { id: providerID, settings: {} } },
+    },
     integration: {
       list: async () => ({ location: {}, data: knownIntegrations }),
       connection: {
@@ -410,7 +427,7 @@ test('V2 quota status deduplicates concurrent resolution and expires its in-memo
   }
 })
 
-test('V2 quota status invalidates resolved credentials on auth/integration events and cleans up', async (t) => {
+test('V2 quota status invalidates resolved credentials on auth/integration/provider events and cleans up', async (t) => {
   const connection = credentialConnection('deepseek', 'deepseek-login', 'key')
   const fake = createContext({
     active: { deepseek: connection },
@@ -427,7 +444,12 @@ test('V2 quota status invalidates resolved credentials on auth/integration event
 
   await status(fake)
   assert.deepEqual(fake.resolveCalls, ['deepseek-login'])
-  for (const type of ['credential.switched', 'credential.updated', 'integration.updated']) {
+  for (const type of [
+    'credential.switched',
+    'credential.updated',
+    'integration.updated',
+    'provider.updated',
+  ]) {
     fake.eventSource.emit({ type, data: {} })
     await flush()
     await status(fake)
@@ -437,8 +459,10 @@ test('V2 quota status invalidates resolved credentials on auth/integration event
     'deepseek-login',
     'deepseek-login',
     'deepseek-login',
+    'deepseek-login',
   ])
   assert.deepEqual(fake.rpcEvents, [
+    { name: 'credentials_changed', payload: {} },
     { name: 'credentials_changed', payload: {} },
     { name: 'credentials_changed', payload: {} },
     { name: 'credentials_changed', payload: {} },
@@ -449,7 +473,7 @@ test('V2 quota status invalidates resolved credentials on auth/integration event
   assert.equal(fake.eventSource.closed, 1)
   assert.equal(fake.rpcDisposed, 1)
   await status(fake)
-  assert.equal(fake.resolveCalls.length, 4)
+  assert.equal(fake.resolveCalls.length, 5)
 })
 
 test('credential switch racing resolution prevents sending the stale credential to an adapter', async (t) => {
@@ -675,7 +699,23 @@ test('V2 quota reports credential resolution failures separately from an empty e
   const cleanup = await setup(fake)
   t.after(cleanup)
 
-  const result = await status(fake)
+  const emittedLines = []
+  const originalWarn = console.warn
+  console.warn = (...values) => {
+    emittedLines.push(format(...values))
+  }
+  let result
+  try {
+    result = await status(fake)
+  } finally {
+    console.warn = originalWarn
+  }
+
+  assert.ok(emittedLines.some((line) => line.includes('credential resolution failed (exception)')))
+  assert.equal(
+    emittedLines.some((line) => line.includes(SECRET_SENTINEL)),
+    false,
+  )
   assert.equal(JSON.stringify(result).includes(SECRET_SENTINEL), false)
   assert.equal(result.credential_resolution_failed, true)
   assert.deepEqual(result.providers, [])
@@ -1522,6 +1562,164 @@ test('OpenCode Go accepts the legacy integration alias and trims the selected ke
     )
   }
   assert.deepEqual(fake.resolveCalls, ['legacy-go-login'])
+})
+
+test('OpenCode Go uses OPENCODE_API_KEY before provider settings and saved credentials', async (t) => {
+  const previousEnvironmentKey = process.env.OPENCODE_API_KEY
+  process.env.OPENCODE_API_KEY = 'environment-go-key'
+  t.after(() => {
+    if (previousEnvironmentKey === undefined) delete process.env.OPENCODE_API_KEY
+    else process.env.OPENCODE_API_KEY = previousEnvironmentKey
+  })
+  const connection = credentialConnection('opencode-go', 'saved-go-key', 'key')
+  const fake = createContext({
+    active: { 'opencode-go': connection },
+    list: [connection],
+    credentials: { 'saved-go-key': { type: 'key', key: 'saved-api-key' } },
+    providerSettings: { 'opencode-go': 'provider-settings-key' },
+  })
+  const originalFetch = globalThis.fetch
+  const calls = []
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options })
+    return Response.json({
+      usage: Object.fromEntries(
+        ['rolling', 'weekly', 'monthly'].map((window) => [window, { status: 'ok', percent: 10 }]),
+      ),
+    })
+  }
+  t.after(() => {
+    globalThis.fetch = originalFetch
+  })
+  const cleanup = await setup(fake)
+  t.after(cleanup)
+
+  const result = await status(fake)
+  assert.equal(provider(result, 'opencode-go').state, 'available')
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].url, 'https://opencode.ai/zen/go/v1/usage')
+  assert.equal(calls[0].options.headers.authorization, 'Bearer environment-go-key')
+  assert.deepEqual(fake.resolveCalls, [])
+})
+
+test('OpenCode Go uses effective provider settings before saved credentials without requiring a login', async (t) => {
+  const previousEnvironmentKey = process.env.OPENCODE_API_KEY
+  delete process.env.OPENCODE_API_KEY
+  t.after(() => {
+    if (previousEnvironmentKey === undefined) delete process.env.OPENCODE_API_KEY
+    else process.env.OPENCODE_API_KEY = previousEnvironmentKey
+  })
+  const fake = createContext({ providerSettings: { 'opencode-go': 'provider-settings-key' } })
+  const originalFetch = globalThis.fetch
+  let request
+  globalThis.fetch = async (url, options) => {
+    request = { url, options }
+    return Response.json({
+      usage: Object.fromEntries(
+        ['rolling', 'weekly', 'monthly'].map((window) => [window, { status: 'ok', percent: 10 }]),
+      ),
+    })
+  }
+  t.after(() => {
+    globalThis.fetch = originalFetch
+  })
+  const cleanup = await setup(fake)
+  t.after(cleanup)
+
+  const result = await status(fake)
+  assert.equal(provider(result, 'opencode-go').state, 'available')
+  assert.equal(request.url, 'https://opencode.ai/zen/go/v1/usage')
+  assert.equal(request.options.headers.authorization, 'Bearer provider-settings-key')
+  assert.deepEqual(fake.activeCalls, [])
+  assert.deepEqual(fake.resolveCalls, [])
+})
+
+test('OpenCode Go uses the legacy opencode provider setting when its Go provider setting is absent', async (t) => {
+  const previousEnvironmentKey = process.env.OPENCODE_API_KEY
+  delete process.env.OPENCODE_API_KEY
+  t.after(() => {
+    if (previousEnvironmentKey === undefined) delete process.env.OPENCODE_API_KEY
+    else process.env.OPENCODE_API_KEY = previousEnvironmentKey
+  })
+  const fake = createContext({ providerSettings: { opencode: 'legacy-provider-key' } })
+  const originalFetch = globalThis.fetch
+  let request
+  globalThis.fetch = async (url, options) => {
+    request = { url, options }
+    return Response.json({
+      usage: Object.fromEntries(
+        ['rolling', 'weekly', 'monthly'].map((window) => [window, { status: 'ok', percent: 10 }]),
+      ),
+    })
+  }
+  t.after(() => {
+    globalThis.fetch = originalFetch
+  })
+  const cleanup = await setup(fake)
+  t.after(cleanup)
+
+  const result = await status(fake)
+  assert.equal(provider(result, 'opencode-go').state, 'available')
+  assert.equal(request.options.headers.authorization, 'Bearer legacy-provider-key')
+  assert.deepEqual(fake.activeCalls, [])
+  assert.deepEqual(fake.resolveCalls, [])
+})
+
+test('OpenCode Go uses configured provider key only after Console failure', async (t) => {
+  const previousEnvironmentKey = process.env.OPENCODE_API_KEY
+  delete process.env.OPENCODE_API_KEY
+  t.after(() => {
+    if (previousEnvironmentKey === undefined) delete process.env.OPENCODE_API_KEY
+    else process.env.OPENCODE_API_KEY = previousEnvironmentKey
+  })
+  const consoleConnection = credentialConnection('opencode', 'console-login', 'oauth')
+  const fake = createContext({
+    active: { opencode: consoleConnection },
+    list: [consoleConnection],
+    credentials: {
+      'console-login': {
+        type: 'oauth',
+        methodID: 'device',
+        access: 'console-oauth-token',
+        metadata: { server: 'https://opencode.ai/console' },
+      },
+    },
+    providerSettings: { 'opencode-go': 'configured-go-api-key' },
+  })
+  const originalFetch = globalThis.fetch
+  const calls = []
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options })
+    if (url === 'https://opencode.ai/console/api/go/status') {
+      return new Response('', { status: 503 })
+    }
+    return Response.json({
+      usage: Object.fromEntries(
+        ['rolling', 'weekly', 'monthly'].map((window) => [window, { status: 'ok', percent: 10 }]),
+      ),
+    })
+  }
+  t.after(() => {
+    globalThis.fetch = originalFetch
+  })
+  const cleanup = await setup(fake)
+  t.after(cleanup)
+
+  const result = await status(fake)
+  assert.equal(provider(result, 'opencode-go').route_kind, 'api_key')
+  const goCalls = calls.filter(({ url }) =>
+    ['https://opencode.ai/console/api/go/status', 'https://opencode.ai/zen/go/v1/usage'].includes(
+      url,
+    ),
+  )
+  assert.deepEqual(
+    goCalls.map(({ url }) => url),
+    ['https://opencode.ai/console/api/go/status', 'https://opencode.ai/zen/go/v1/usage'],
+  )
+  assert.equal(goCalls[0].options.headers.authorization, 'Bearer console-oauth-token')
+  assert.equal(goCalls[1].options.headers.authorization, 'Bearer configured-go-api-key')
+  assert.ok(fake.resolveCalls.length > 0)
+  assert.ok(fake.resolveCalls.every((id) => id === 'console-login'))
 })
 
 test('OpenCode Go Console OAuth uses only the fixed Console status route and validated meters', async (t) => {
@@ -2619,4 +2817,207 @@ test('adapter timeout and invalid provider payload return safe unavailable state
   assert.equal(calls, 2)
   assert.equal(JSON.stringify([result, malformed]).includes(SECRET_SENTINEL), false)
   assert.equal(JSON.stringify([result, malformed]).includes(rawErrorDetail), false)
+})
+
+function createHistoryDatabase(path, modelCount = 1) {
+  const db = new DatabaseSync(path)
+  db.exec('CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT)')
+  const insert = db.prepare(
+    'INSERT INTO message (id, session_id, time_created, data) VALUES (?, ?, ?, ?)',
+  )
+  for (let index = 0; index < modelCount; index += 1) {
+    insert.run(
+      `row-${index}`,
+      'private-session-id-sentinel',
+      Date.now(),
+      JSON.stringify({
+        role: 'assistant',
+        agent: 'private-agent-sentinel',
+        model: { providerID: 'openai', id: `model-${index}` },
+        tokens: { input: 11, output: 7, cache: { read: 3, write: 2 } },
+        content: SECRET_SENTINEL,
+      }),
+    )
+  }
+  db.close()
+}
+
+function sha256(path) {
+  return createHash('sha256').update(readFileSync(path)).digest('hex')
+}
+
+test('usage history RPC returns bounded aggregate-only data from the server-owned database path', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'pantheon-history-rpc-'))
+  const dbPath = join(directory, 'private-database-name.db')
+  const previousPath = process.env.PANTHEON_COST_DB
+  createHistoryDatabase(dbPath)
+  const databaseHash = sha256(dbPath)
+  process.env.PANTHEON_COST_DB = dbPath
+  const fake = createContext()
+  const cleanup = await setup(fake)
+  t.after(async () => {
+    await cleanup()
+    if (previousPath === undefined) delete process.env.PANTHEON_COST_DB
+    else process.env.PANTHEON_COST_DB = previousPath
+    rmSync(directory, { recursive: true, force: true })
+  })
+
+  const inputValidator = new Ajv().compile(fake.definition.methods.usage_history.input)
+  const outputValidator = new Ajv().compile(fake.definition.methods.usage_history.output)
+  assert.equal(inputValidator({ period: '7d' }), true)
+  assert.equal(inputValidator({ period: '1d' }), false)
+  assert.equal(inputValidator({ period: '7d', dbPath }), false)
+
+  const result = await fake.handlers.usage_history(
+    { period: '7d' },
+    { signal: new AbortController().signal },
+  )
+  assert.equal(outputValidator(result), true, JSON.stringify(outputValidator.errors))
+  assert.equal(result.status, 'partial')
+  assert.equal(result.period, '7d')
+  assert.equal(result.partial, true)
+  assert.deepEqual(result.totals, { input: 11, output: 7, cacheRead: 3, cacheWrite: 2, total: 18 })
+  assert.equal(result.models.length, 1)
+  assert.equal(result.models[0].modelID, 'model-0')
+  assert.equal(result.rows, 1)
+  assert.equal(result.pricing.billed, false)
+  const serialized = JSON.stringify(result)
+  for (const secret of [
+    dbPath,
+    'private-database-name',
+    'private-session-id-sentinel',
+    'private-agent-sentinel',
+    SECRET_SENTINEL,
+  ]) {
+    assert.equal(serialized.includes(secret), false)
+  }
+  assert.equal(sha256(dbPath), databaseHash, 'history query must leave the database unchanged')
+})
+
+test('usage history RPC sanitizes query failures and rejects invalid periods', async (t) => {
+  const previousPath = process.env.PANTHEON_COST_DB
+  const privatePath = '/private/path/history-error-secret.db'
+  process.env.PANTHEON_COST_DB = privatePath
+  const fake = createContext()
+  const cleanup = await setup(fake)
+  t.after(async () => {
+    await cleanup()
+    if (previousPath === undefined) delete process.env.PANTHEON_COST_DB
+    else process.env.PANTHEON_COST_DB = previousPath
+  })
+
+  const outputValidator = new Ajv().compile(fake.definition.methods.usage_history.output)
+  const invalid = await fake.handlers.usage_history(
+    { period: '1d' },
+    { signal: new AbortController().signal },
+  )
+  assert.deepEqual(invalid, { status: 'unavailable', reason: 'invalid_period' })
+  assert.equal(outputValidator(invalid), true, JSON.stringify(outputValidator.errors))
+  const failed = await fake.handlers.usage_history(
+    { period: '7d' },
+    { signal: new AbortController().signal },
+  )
+  assert.deepEqual(failed, { status: 'unavailable', reason: 'history_unavailable' })
+  assert.equal(outputValidator(failed), true, JSON.stringify(outputValidator.errors))
+  assert.equal(JSON.stringify(failed).includes(privatePath), false)
+})
+
+test('usage history RPC caps model projections and reports truncation', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'pantheon-history-size-'))
+  const dbPath = join(directory, 'history.db')
+  const previousPath = process.env.PANTHEON_COST_DB
+  createHistoryDatabase(dbPath, 70)
+  process.env.PANTHEON_COST_DB = dbPath
+  const fake = createContext()
+  const cleanup = await setup(fake)
+  t.after(async () => {
+    await cleanup()
+    if (previousPath === undefined) delete process.env.PANTHEON_COST_DB
+    else process.env.PANTHEON_COST_DB = previousPath
+    rmSync(directory, { recursive: true, force: true })
+  })
+
+  const result = await fake.handlers.usage_history(
+    { period: 'total' },
+    { signal: new AbortController().signal },
+  )
+  assert.equal(result.status, 'partial')
+  assert.equal(result.truncated, true)
+  assert.equal(result.models.length, 64)
+  assert.ok(JSON.stringify(result).length < 100_000)
+  assert.equal(result.totals.input, 770)
+})
+
+test('active-context RPC estimates from safe model and context-token input without cache discount', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'pantheon-context-cost-'))
+  const previousHome = process.env.PANTHEON_HOME
+  process.env.PANTHEON_HOME = directory
+  mkdirSync(join(directory, 'cache'), { recursive: true })
+  writeFileSync(
+    join(directory, 'cache', 'models-dev.json'),
+    JSON.stringify({
+      version: 1,
+      fetchedAt: Date.now(),
+      providers: {
+        acme: { alpha: { inputPerMTok: 1, outputPerMTok: 2, cacheReadPerMTok: 0.01 } },
+      },
+    }),
+  )
+  const fake = createContext()
+  const cleanup = await setup(fake)
+  t.after(async () => {
+    await cleanup()
+    if (previousHome === undefined) delete process.env.PANTHEON_HOME
+    else process.env.PANTHEON_HOME = previousHome
+    rmSync(directory, { recursive: true, force: true })
+  })
+
+  const result = await fake.handlers.active_context_cost(
+    { providerID: 'acme', modelID: 'alpha', contextTokens: 12_000, cachePercent: 97 },
+    { signal: new AbortController().signal },
+  )
+  const validateOutput = new Ajv().compile(fake.definition.methods.active_context_cost.output)
+  const validateInput = new Ajv().compile(fake.definition.methods.active_context_cost.input)
+  assert.deepEqual(result, {
+    status: 'estimated',
+    estimatedUsd: 0.012,
+    billed: false,
+    basis: 'pre-cache-context-tokens-times-input-price',
+    cacheDiscountApplied: false,
+  })
+  assert.equal(validateOutput(result), true, JSON.stringify(validateOutput.errors))
+  assert.equal(
+    validateInput({ providerID: 'acme', modelID: 'alpha', contextTokens: 12_000 }),
+    true,
+    JSON.stringify(validateInput.errors),
+  )
+  assert.equal(
+    validateInput({ providerID: 'acme', modelID: 'alpha', contextTokens: -1 }),
+    true,
+    JSON.stringify(validateInput.errors),
+  )
+  assert.equal(
+    validateInput({
+      providerID: 'acme',
+      modelID: 'alpha',
+      contextTokens: 12_000,
+      cachePercent: 97,
+    }),
+    false,
+  )
+  assert.equal(JSON.stringify(result).includes('acme'), false)
+  assert.equal(JSON.stringify(result).includes('alpha'), false)
+
+  const invalidTokens = await fake.handlers.active_context_cost(
+    { providerID: 'acme', modelID: 'alpha', contextTokens: -1 },
+    { signal: new AbortController().signal },
+  )
+  assert.deepEqual(invalidTokens, {
+    status: 'unavailable',
+    billed: false,
+    basis: 'pre-cache-context-tokens-times-input-price',
+    cacheDiscountApplied: false,
+    reason: 'invalid-context-token-count',
+  })
+  assert.equal(validateOutput(invalidTokens), true, JSON.stringify(validateOutput.errors))
 })

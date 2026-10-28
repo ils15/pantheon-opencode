@@ -1,6 +1,9 @@
-import { n as quotaRpc, t as QUOTA_PROVIDER_IDS } from "./quota-rpc-UL2HuFRJ.js";
+import { r as isUsageHistoryPeriod, t as MAX_HISTORY_QUERY_MS } from "./usage-history-contract-nt1rnBPE.js";
+import { n as quotaRpc, t as QUOTA_PROVIDER_IDS } from "./quota-rpc-DMmXBhBe.js";
+import { t as estimateActiveContextCost } from "./cost-data-CCZUs1aJ.js";
 import { queryAlibabaTokenPlanUsage } from "./quota-cli.js";
 import { QUOTA_PROVIDER_CATALOG, isOpenAICodexOAuthMethod, isOpenCodeConsoleOAuthMethod, runQuotaAdapter } from "./quota-adapters.js";
+import { Worker } from "node:worker_threads";
 import { Plugin } from "@opencode/plugin";
 //#region src/go-key-diagnostic.ts
 /** Parse at most 4 KiB; inspect only own top-level error presence, never its value. */
@@ -88,6 +91,76 @@ function createGoKeyDiagnostic() {
 //#region src/server-v2.ts
 const CREDENTIAL_CACHE_TTL_MS = 3e4;
 const ADAPTER_CACHE_TTL_MS = 2e4;
+function queryUsageHistoryInWorker(period, signal) {
+	if (!isUsageHistoryPeriod(period)) return Promise.resolve({
+		status: "unavailable",
+		reason: "invalid_period"
+	});
+	return new Promise((resolve, reject) => {
+		let settled = false;
+		let worker;
+		try {
+			worker = new Worker(new URL("./usage-history-worker.js", import.meta.url), {
+				workerData: { period },
+				resourceLimits: {
+					maxOldGenerationSizeMb: 64,
+					stackSizeMb: 2
+				}
+			});
+		} catch {
+			resolve({
+				status: "unavailable",
+				reason: "history_unavailable"
+			});
+			return;
+		}
+		let timer;
+		const onAbort = () => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			signal.removeEventListener("abort", onAbort);
+			worker.terminate();
+			reject(new DOMException("Usage history request aborted", "AbortError"));
+		};
+		const finish = (result) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			signal.removeEventListener("abort", onAbort);
+			worker.terminate();
+			resolve(result);
+		};
+		timer = setTimeout(() => {
+			finish({
+				status: "unavailable",
+				reason: "history_timeout"
+			});
+		}, MAX_HISTORY_QUERY_MS);
+		signal.addEventListener("abort", onAbort, { once: true });
+		worker.once("message", (message) => {
+			if (typeof message === "object" && message !== null && "ok" in message && message.ok === true && "result" in message && typeof message.result === "object" && message.result !== null) {
+				finish(message.result);
+				return;
+			}
+			finish({
+				status: "unavailable",
+				reason: "history_unavailable"
+			});
+		});
+		worker.once("error", () => finish({
+			status: "unavailable",
+			reason: "history_unavailable"
+		}));
+		worker.once("exit", () => {
+			if (!settled) finish({
+				status: "unavailable",
+				reason: "history_unavailable"
+			});
+		});
+		if (signal.aborted) onAbort();
+	});
+}
 const PROVIDER_IDS = QUOTA_PROVIDER_IDS;
 function safeMetadataValue(metadata, names) {
 	if (!metadata) return void 0;
@@ -154,6 +227,35 @@ function routeKindField(provider, credential, effectiveRouteKind) {
 	return provider === "opencode-go" ? { route_kind: effectiveRouteKind ?? credential?.routeKind ?? "none" } : {};
 }
 /**
+* OpenCode Go follows the upstream quota plugin's key order: process environment, the
+* effective OpenCode provider settings, then a selected OpenCode API-key connection.
+* Provider settings are read through the host API; Pantheon never parses OpenCode files.
+*/
+async function configuredOpenCodeGoApiKey(context) {
+	const environmentKey = process.env.OPENCODE_API_KEY?.trim();
+	if (environmentKey) return environmentKey;
+	for (const providerID of ["opencode-go", "opencode"]) {
+		let value;
+		try {
+			value = (await context.provider.get({ providerID })).data.settings?.apiKey;
+		} catch {
+			continue;
+		}
+		if (typeof value !== "string") continue;
+		const configured = value.trim();
+		if (!configured) continue;
+		const environmentTemplate = configured.match(/^\{env:([A-Za-z_][A-Za-z0-9_]*)\}$/);
+		if (environmentTemplate) {
+			if (environmentTemplate[1] !== "OPENCODE_API_KEY") continue;
+			const resolved = process.env.OPENCODE_API_KEY?.trim();
+			if (resolved) return resolved;
+			continue;
+		}
+		if (configured.startsWith("{env:")) continue;
+		return configured;
+	}
+}
+/**
 * Resolve only listed, selected credential connections in the closed provider
 * catalog. Only the minimum access-token/key field is retained in memory.
 */
@@ -195,8 +297,20 @@ function createCredentialResolver(context) {
 	async function load(provider, goKeyOnly = false) {
 		const definition = QUOTA_PROVIDER_CATALOG[provider];
 		if (definition.source === "local-cli") return {};
+		const configuredGoKey = provider === "opencode-go" ? await configuredOpenCodeGoApiKey(context) : void 0;
+		if (goKeyOnly && configuredGoKey) return {
+			method: "key",
+			secret: configuredGoKey,
+			routeKind: "api_key"
+		};
 		try {
-			const listedConnections = await listCredentialConnections();
+			let listedConnections;
+			try {
+				listedConnections = await listCredentialConnections();
+			} catch (error) {
+				if (provider !== "opencode-go" || !configuredGoKey) throw error;
+				listedConnections = /* @__PURE__ */ new Map();
+			}
 			if (provider === "opencode-go") {
 				const activeListed = async (integrationID) => {
 					const connections = listedConnections.get(integrationID);
@@ -228,12 +342,12 @@ function createCredentialResolver(context) {
 					else if (activeConsole?.method === "oauth") unsupportedConsoleLogin = activeConsole.status?.status !== "needs_auth";
 				}
 				let activePrimary;
-				try {
+				if (!configuredGoKey) try {
 					activePrimary = await activeListed("opencode-go");
 				} catch {}
-				const unsupportedPrimaryLogin = activePrimary !== void 0 && activePrimary.method !== "key";
-				let apiKey;
-				for (const integrationID of ["opencode-go", "opencode"]) {
+				const unsupportedPrimaryLogin = !configuredGoKey && activePrimary !== void 0 && activePrimary.method !== "key";
+				let apiKey = configuredGoKey;
+				for (const integrationID of configuredGoKey ? [] : ["opencode-go", "opencode"]) {
 					let active;
 					try {
 						active = integrationID === "opencode-go" ? activePrimary : await activeListed(integrationID);
@@ -300,8 +414,8 @@ function createCredentialResolver(context) {
 				return {};
 			}
 			return {};
-		} catch (error) {
-			console.warn("[pantheon-tui quota] credential resolution failed:", error);
+		} catch {
+			console.warn("[pantheon-tui quota] credential resolution failed (exception)");
 			throw new Error("Credential resolution failed");
 		}
 	}
@@ -364,8 +478,8 @@ function createCredentialResolver(context) {
 		}
 	};
 }
-function isCredentialInvalidationEvent(type) {
-	return type === "credential.updated" || type === "credential.switched" || type === "integration.updated";
+function isQuotaSourceInvalidationEvent(type) {
+	return type === "credential.updated" || type === "credential.switched" || type === "integration.updated" || type === "provider.updated";
 }
 function createAdapterExecutor(shutdownSignal, queryCli) {
 	const MAX_CONCURRENCY = 3;
@@ -625,7 +739,7 @@ function createQuotaPlugin(queryCli = queryAlibabaTokenPlanUsage) {
 			let registration;
 			const eventTask = (async () => {
 				try {
-					for await (const event of context.event.subscribe({ signal: eventController.signal })) if (isCredentialInvalidationEvent(event.type)) {
+					for await (const event of context.event.subscribe({ signal: eventController.signal })) if (isQuotaSourceInvalidationEvent(event.type)) {
 						resolver.invalidate();
 						adapters.invalidate();
 						if (registration) try {
@@ -644,7 +758,16 @@ function createQuotaPlugin(queryCli = queryAlibabaTokenPlanUsage) {
 			try {
 				registration = await context.rpc.register(quotaRpc, {
 					go_key_diagnostic: async (_input, callContext) => goKeyDiagnostic(() => resolver.resolveActiveGoKey(), AbortSignal.any([callContext.signal, shutdownController.signal])),
-					status: async (_input, callContext) => getProviderStatus(resolver, adapters, callContext.signal)
+					status: async (_input, callContext) => getProviderStatus(resolver, adapters, callContext.signal),
+					usage_history: async (input, callContext) => {
+						callContext.signal.throwIfAborted();
+						const period = input.period;
+						return queryUsageHistoryInWorker(period, AbortSignal.any([callContext.signal, shutdownController.signal]));
+					},
+					active_context_cost: async (input, callContext) => {
+						callContext.signal.throwIfAborted();
+						return estimateActiveContextCost(input);
+					}
 				});
 			} catch (error) {
 				console.warn("[pantheon-tui quota] quota RPC registration failed:", error);

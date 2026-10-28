@@ -1,7 +1,7 @@
 {
   "name": "pantheon-tui",
   "type": "module",
-  "version": "1.6.2-beta.1",
+  "version": "1.6.2-beta.2",
   "description": "Pantheon TUI plugin — V1 rich sidebar and usage gauges; native V2 status, session and delegation sidebar",
   "license": "MIT",
   "engines": {
@@ -18,7 +18,8 @@
     "src",
     "tui.ts",
     "tui-v2.ts",
-    "index-v2.ts"
+    "index-v2.ts",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "scripts": {
     "build": "tsdown",
@@ -30,6 +31,7 @@
     "solid-js": "1.9.12"
   },
   "devDependencies": {
+    "@profullstack/hqtui": "0.11.1",
     "rolldown-plugin-solid": "0.2.1",
     "tsdown": "0.23.0"
   },

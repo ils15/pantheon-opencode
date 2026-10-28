@@ -37,21 +37,48 @@
  */
 import { execFile } from 'node:child_process'
 import { accessSync, constants, existsSync, statSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
+import type { CostSource, SqliteDatabase, SqliteModule } from '../plugins/tui/src/cost-data.ts'
 import {
-  computeModelCost,
+  ledgerLabel,
+  numberOf,
+  priceTokens,
+  requestedVersion,
+  resolveCostDbPath,
+  resolveSources,
+} from '../plugins/tui/src/cost-data.ts'
+import {
   forceRefreshPricing,
   loadPricing,
-  lookupModelPrice,
   type PricingOptions,
   type PricingSnapshot,
   type UnpricedReason,
 } from './model-pricing.ts'
 import type { NativeTaskStatus } from './native-task-status.ts'
 import type { ToolContextLike } from './tool-context.ts'
+
+export type {
+  ActiveContextCostEstimate,
+  ActiveContextCostInput,
+  CostSource,
+  OpenCodeVersion,
+  SqliteModule,
+  UsageHistoryBucket,
+  UsageHistoryModel,
+  UsageHistoryOptions,
+  UsageHistoryPeriod,
+  UsageHistoryPricing,
+  UsageHistoryResult,
+  UsagePricingStatus,
+  UsageTokenTotals,
+} from '../plugins/tui/src/cost-data.ts'
+export {
+  estimateActiveContextCost,
+  queryUsageHistory,
+  resolveCostDbPath,
+} from '../plugins/tui/src/cost-data.ts'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -120,26 +147,6 @@ export interface CostSessionScope {
   hierarchy: boolean
 }
 
-/**
- * Host table families that can carry a token ledger. A migrated database
- * carries both at once.
- */
-export type CostSource = 'message' | 'session_message'
-
-const COST_SOURCES: readonly CostSource[] = ['message', 'session_message']
-
-/**
- * Which table family each host generation stores its ledger in.
- *
- * Spelled out rather than comparing the literals: `'message' === 'v1'` is
- * false, so a filter written as `source === requested` narrows to nothing and
- * every version-pinned read fails.
- */
-const VERSION_SOURCES: Record<OpenCodeVersion, CostSource> = {
-  v1: 'message',
-  v2: 'session_message',
-}
-
 /** What the query actually found, so the report can describe its own coverage. */
 export interface CostCoverage {
   /** Table families that contributed rows. */
@@ -174,17 +181,6 @@ export interface CostCommandOptions {
   cliFallback?: CliFallbackDeps
   /** Pricing cache / fetch boundary (tests, air-gapped hosts). */
   pricing?: PricingOptions
-}
-
-export type OpenCodeVersion = 'v1' | 'v2'
-
-interface SqliteDatabase {
-  prepare(sql: string): { get(): unknown; all(...args: unknown[]): unknown[] }
-  close(): void
-}
-
-export interface SqliteModule {
-  DatabaseSync: new (path: string, options: { readOnly: boolean }) => SqliteDatabase
 }
 
 /** One cost tool: description + zod args shape + execute (delegation.ts shape). */
@@ -224,41 +220,6 @@ const costArgs = {
 /** Parsed arguments of the cost tool. */
 type CostArgs = z.infer<z.ZodObject<typeof costArgs>>
 
-/** The XDG state directory every real host installation writes its ledger to. */
-function defaultDbPath(): string {
-  const xdg = process.env.XDG_DATA_HOME
-  const dataHome = xdg !== undefined && xdg !== '' ? xdg : join(homedir(), '.local', 'share')
-  return join(dataHome, 'opencode', 'opencode.db')
-}
-
-/** Read and validate the optional host-generation selector. */
-function requestedVersion(): OpenCodeVersion | undefined {
-  const configured = process.env.PANTHEON_OPENCODE_VERSION
-  if (configured === undefined) return undefined
-  if (configured !== 'v1' && configured !== 'v2') {
-    throw new Error(`invalid PANTHEON_OPENCODE_VERSION "${configured}"; expected "v1" or "v2"`)
-  }
-  return configured
-}
-
-/**
- * Resolve the database.
- *
- * Precedence: explicit option → PANTHEON_COST_DB → OPENCODE_DB → the XDG
- * default `opencode.db`. An invalid PANTHEON_OPENCODE_VERSION fails fast rather
- * than being silently ignored.
- *
- * There is deliberately NO per-version filename. Deriving one from the host
- * generation pointed the V2 report at `opencode-v2.db`, which exists only
- * because a sandbox sets OPENCODE_DB — hence OPENCODE_DB's place in this chain.
- */
-export function resolveCostDbPath(options?: CostCommandOptions): string {
-  const explicit = options?.dbPath || process.env.PANTHEON_COST_DB || process.env.OPENCODE_DB
-  if (explicit) return explicit
-  requestedVersion()
-  return defaultDbPath()
-}
-
 /**
  * First existing db path, or undefined. An EXPLICIT override shadows the
  * candidate list entirely (testability: a fake path must not fall through
@@ -268,42 +229,6 @@ function findExistingDb(override?: string): string | undefined {
   const candidate =
     override === undefined ? resolveCostDbPath() : resolveCostDbPath({ dbPath: override })
   return existsSync(candidate) ? candidate : undefined
-}
-
-/**
- * Detect the ledger families by TABLE PRESENCE.
- *
- * Presence is the only reliable discriminator: a migrated database carries both
- * families, so pinning a schema-version constant would break whichever
- * population it excluded, and no manifest declares a supported host range.
- * PANTHEON_OPENCODE_VERSION only NARROWS an already-detected set — it never
- * chooses a file and never invents a family that is not there.
- */
-function resolveSources(db: SqliteDatabase, requested: OpenCodeVersion | undefined): CostSource[] {
-  const present = new Set(
-    (
-      db
-        .prepare(
-          "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('message', 'session_message')",
-        )
-        .all() as Array<{ name?: unknown }>
-    ).map((row) => String(row.name)),
-  )
-  const detected = COST_SOURCES.filter((source) => present.has(source))
-  if (detected.length === 0) {
-    throw new Error(
-      'incompatible opencode.db schema: neither the "message" nor the "session_message" table exists, so there is no token ledger to read',
-    )
-  }
-  if (requested === undefined) return detected
-  const wanted = VERSION_SOURCES[requested]
-  const narrowed = detected.filter((source) => source === wanted)
-  if (narrowed.length === 0) {
-    throw new Error(
-      `incompatible opencode.db schema: PANTHEON_OPENCODE_VERSION=${requested} selected no table family, but this database contains ${detected.join(' and ')}`,
-    )
-  }
-  return narrowed
 }
 
 /**
@@ -538,12 +463,6 @@ const DATABASE_START_SQL: Record<CostSource, string> = {
 
 type Counters = { scanned?: unknown; windowStart?: unknown; assistantRows?: unknown }
 
-function numberOf(value: unknown): number | undefined {
-  if (value === null || value === undefined) return undefined
-  const parsed = Number(value)
-  return Number.isFinite(parsed) ? parsed : undefined
-}
-
 function emptyCoverage(sources: CostSource[]): CostCoverage {
   return { sources, scanned: 0, assistantRows: 0 }
 }
@@ -586,28 +505,6 @@ interface SessionAccumulator {
   /** Model rows with no usable catalog price. */
   unpricedModels: number
   reason: UnpricedReason | undefined
-}
-
-/** A ledger label the catalog cannot know; never an empty string. */
-function ledgerLabel(value: unknown): string {
-  if (value === undefined || value === null) return 'unknown'
-  const text = String(value).trim()
-  return text === '' ? 'unknown' : text
-}
-
-/** Price one group, or explain why it cannot be priced. */
-function priceTokens(
-  pricing: PricingSnapshot | undefined,
-  provider: string,
-  model: string,
-  tokens: { input: number; output: number; cacheRead: number; cacheWrite: number },
-): { usd: number } | { reason: UnpricedReason } {
-  if (pricing === undefined) return { reason: 'no-pricing' }
-  const lookup = lookupModelPrice(pricing, provider, model)
-  if (!lookup.ok) return { reason: lookup.reason }
-  const cost = computeModelCost(lookup.price, tokens)
-  if (!cost.ok) return { reason: cost.reason }
-  return { usd: cost.usd }
 }
 
 /**

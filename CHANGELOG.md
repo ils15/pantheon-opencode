@@ -10,6 +10,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.2-beta.2] - 2026-10-28
+
+### Added
+
+- **TUI** — `/quota` adds recorded usage history for 7, 15, 30 days, and Total, with daily and per-model token summaries plus a clearly non-billable catalog estimate.
+- **quota** — OpenCode Go usage uses the canonical endpoint and falls back to the configured API key when its Console OAuth request fails.
+
+### Fixed
+
+- **quota** — Future-dated usage rows are excluded from rolling windows and Total.
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
 ## [v1.6.2-beta.1] - 2026-10-27
 
 ### Changed

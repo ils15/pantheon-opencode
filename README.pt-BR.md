@@ -76,7 +76,18 @@ apenas — `init` → reiniciar → `/dispatch` → primeiro resultado — veja 
 - **5 servidores MCP locais** para memória de projeto, persistência, recursos,
   execução confinada de scripts e visão.
 - **Uma TUI opcional**, com bloco de dispatch na sidebar e painel `/dispatch`
-  em largura total.
+  em largura total. A TUI V2 também inclui um resumo de quota na sidebar/rodapé
+  e o painel `/quota`, com abas Usage, Limits, Plugin e Settings. Usage mostra
+  gráficos de tokens registrados e totais por modelo em períodos de 7, 15, 30
+  dias ou Total, sem inventar dados para preencher lacunas. O painel identifica
+  o modelo ativo da conversa; o aviso de dados parciais só aparece quando a
+  resposta de quota é realmente parcial. O gasto reportado da sessão fica
+  separado da estimativa de contexto pré-cache, calculada com o preço de entrada
+  do modelo ativo, sem desconto de cache e sem representar uma cobrança. As
+  quotas aparecem como valores e status em texto, sem medidores de progresso;
+  quando há horário válido, mostram contagem regressiva local e o reset informado
+  pelo provedor em UTC. Horários ausentes não são inferidos. Use `E` para
+  desativar a quota e `M` para alternar entre restante e usado.
 
 A memória MCP fica disponível para busca explícita: o coordenador consulta o
 histórico uma vez quando ele pode mudar a tarefa e repassa apenas resultados

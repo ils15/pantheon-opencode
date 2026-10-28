@@ -1,4 +1,4 @@
-import { n as quotaRpc, t as QUOTA_PROVIDER_IDS } from "./quota-rpc-UL2HuFRJ.js";
+import { n as quotaRpc, t as QUOTA_PROVIDER_IDS } from "./quota-rpc-DMmXBhBe.js";
 import { createComponent, createElement, createTextNode, effect, insert, insertNode, memo, setProp } from "@opentui/solid";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -58,6 +58,2511 @@ function formatSpent(cost) {
 const MODEL_USAGE_VISIBLE_CEILING = 3;
 const MODEL_USAGE_MESSAGE_LIMIT = 400;
 const MODEL_USAGE_SESSION_LIMIT = 8;
+//#endregion
+//#region ../../../node_modules/@profullstack/hqtui/dist/capabilities.js
+/**
+* What the terminal can actually do. Detection is deliberately conservative:
+* we degrade colors and glyphs rather than print mojibake on someone's console.
+*/
+function detectProgram(env) {
+	if (env.TERM_PROGRAM === "hqterm") return "hqterm";
+	if (env.KITTY_WINDOW_ID || env.TERM === "xterm-kitty") return "kitty";
+	if (env.WEZTERM_EXECUTABLE || env.TERM_PROGRAM === "WezTerm") return "wezterm";
+	if (env.GHOSTTY_RESOURCES_DIR || env.TERM === "xterm-ghostty") return "ghostty";
+	if (env.TERM_PROGRAM === "iTerm.app" || env.LC_TERMINAL === "iTerm2") return "iterm";
+	if (env.ALACRITTY_WINDOW_ID || env.TERM === "alacritty") return "alacritty";
+	if (env.TERM_PROGRAM === "vscode") return "vscode";
+	if (env.WT_SESSION) return "windows-terminal";
+	if (env.TERM_PROGRAM === "Apple_Terminal") return "apple-terminal";
+	if (env.KONSOLE_VERSION) return "konsole";
+	if ((env.TERM ?? "").startsWith("xterm")) return "xterm";
+	return "unknown";
+}
+function detectColors(env, tty) {
+	if (env.NO_COLOR !== void 0 && env.NO_COLOR !== "") return "none";
+	if (env.FORCE_COLOR === "0") return "none";
+	if (env.FORCE_COLOR === "1") return "ansi16";
+	if (env.FORCE_COLOR === "2") return "ansi256";
+	if (env.FORCE_COLOR === "3") return "truecolor";
+	if (env.FORCE_COLOR === "false") return "none";
+	const forced = env.FORCE_COLOR !== void 0 && env.FORCE_COLOR !== "";
+	if (!tty && !forced) return "none";
+	const term = env.TERM ?? "";
+	if (term === "dumb") return "none";
+	const colorterm = (env.COLORTERM ?? "").toLowerCase();
+	if (colorterm === "truecolor" || colorterm === "24bit") return "truecolor";
+	const program = detectProgram(env);
+	if ([
+		"kitty",
+		"wezterm",
+		"ghostty",
+		"iterm",
+		"vscode",
+		"windows-terminal",
+		"konsole"
+	].includes(program)) return "truecolor";
+	if (term.includes("256")) return "ansi256";
+	if (term === "") return "ansi16";
+	return "ansi16";
+}
+function detectUnicode(env) {
+	if ((env.TERM ?? "") === "dumb") return false;
+	const locale = env.LC_ALL || env.LC_CTYPE || env.LANG || "";
+	if (/UTF-?8/i.test(locale)) return true;
+	if (env.WT_SESSION || env.TERM_PROGRAM || env.KITTY_WINDOW_ID) return true;
+	return process.platform === "win32" ? Boolean(env.WT_SESSION) : locale === "";
+}
+function detectCapabilities(overrides = {}, env = process.env, stream = process.stdout) {
+	const tty = overrides.tty ?? Boolean(stream.isTTY);
+	const term = env.TERM ?? "";
+	const program = detectProgram(env);
+	const tmux = Boolean(env.TMUX) || term.startsWith("tmux") || term.startsWith("screen");
+	const screen = term.startsWith("screen") && !env.TMUX;
+	const ssh = Boolean(env.SSH_CLIENT || env.SSH_TTY || env.SSH_CONNECTION);
+	const colors = overrides.colors ?? detectColors(env, tty);
+	const unicode = overrides.unicode ?? detectUnicode(env);
+	const syncCapable = [
+		"kitty",
+		"wezterm",
+		"ghostty",
+		"iterm",
+		"windows-terminal",
+		"konsole",
+		"alacritty",
+		"hqterm"
+	].includes(program) || tmux;
+	return {
+		tty,
+		colors,
+		trueColor: colors === "truecolor",
+		unicode,
+		braille: overrides.braille ?? (unicode && program !== "apple-terminal" && term !== "linux"),
+		mouse: overrides.mouse ?? (tty && term !== "dumb" && term !== "linux"),
+		synchronizedOutput: overrides.synchronizedOutput ?? (tty && syncCapable),
+		bracketedPaste: tty && term !== "dumb",
+		focusEvents: tty && term !== "dumb" && !screen,
+		tmux,
+		screen,
+		ssh,
+		windows: process.platform === "win32",
+		program
+	};
+}
+let pack = {
+	name: "OpenIcon",
+	version: "2026-09-24",
+	icons: new Map([
+		[
+			"accessibility",
+			"󰋦",
+			"♿",
+			"a11y"
+		],
+		[
+			"activity",
+			"󰐰",
+			"📈",
+			"/\\/"
+		],
+		[
+			"add",
+			"󰐕",
+			"+",
+			"+"
+		],
+		[
+			"alarm",
+			"󰀠",
+			"⏰",
+			"(!)"
+		],
+		[
+			"align-center",
+			"󰉠",
+			"≡",
+			"="
+		],
+		[
+			"align-left",
+			"󰉢",
+			"⫷",
+			"|="
+		],
+		[
+			"align-right",
+			"󰉣",
+			"⫸",
+			"=|"
+		],
+		[
+			"amazon",
+			"",
+			"ⓐ",
+			"amz"
+		],
+		[
+			"anchor",
+			"󰀱",
+			"⚓",
+			"t"
+		],
+		[
+			"android",
+			"󰀲",
+			"🤖",
+			"and"
+		],
+		[
+			"anthropic",
+			"",
+			"Ⓐ",
+			"ant"
+		],
+		[
+			"api",
+			"󱂛",
+			"⚙",
+			"api"
+		],
+		[
+			"apple",
+			"󰀵",
+			"🍎",
+			"mac"
+		],
+		[
+			"apple-music",
+			"",
+			"🎵",
+			"am"
+		],
+		[
+			"archive",
+			"󱈎",
+			"🗄",
+			"[_]"
+		],
+		[
+			"arrow-down",
+			"󰁅",
+			"↓",
+			"v"
+		],
+		[
+			"arrow-left",
+			"󰁍",
+			"←",
+			"<-"
+		],
+		[
+			"arrow-right",
+			"󰁔",
+			"→",
+			"->"
+		],
+		[
+			"arrow-up",
+			"󰁝",
+			"↑",
+			"^"
+		],
+		[
+			"arrow-up-right",
+			"󰁜",
+			"↗",
+			"/^"
+		],
+		[
+			"at",
+			"󰁥",
+			"@",
+			"@"
+		],
+		[
+			"award",
+			"󱌦",
+			"🏅",
+			"(*)"
+		],
+		[
+			"bag",
+			"󱇕",
+			"🛍",
+			"[u]"
+		],
+		[
+			"ban",
+			"󰜺",
+			"🚫",
+			"(/)"
+		],
+		[
+			"bandcamp",
+			"",
+			"◢",
+			"bc"
+		],
+		[
+			"barcode",
+			"󰁱",
+			"▥",
+			"|||"
+		],
+		[
+			"battery",
+			"󰂎",
+			"🔋",
+			"[=="
+		],
+		[
+			"battery-charging",
+			"󰂄",
+			"🔌",
+			"[=~"
+		],
+		[
+			"behance",
+			"",
+			"Bē",
+			"be"
+		],
+		[
+			"bell",
+			"󰂜",
+			"🔔",
+			"(!)"
+		],
+		[
+			"bell-off",
+			"󰪑",
+			"🔕",
+			"(x)"
+		],
+		[
+			"bitbucket",
+			"󰂨",
+			"🪣",
+			"bb"
+		],
+		[
+			"bitcoin",
+			"󰠓",
+			"₿",
+			"btc"
+		],
+		[
+			"bluesky",
+			"󱖉",
+			"🦋",
+			"bsky"
+		],
+		[
+			"bluetooth",
+			"󰂯",
+			"ᛒ",
+			"B"
+		],
+		[
+			"bold",
+			"󰉤",
+			"𝐁",
+			"B"
+		],
+		[
+			"book",
+			"󰭤",
+			"📕",
+			"[B]"
+		],
+		[
+			"book-open",
+			"󰭣",
+			"📖",
+			"[]"
+		],
+		[
+			"bookmark",
+			"󰃃",
+			"🔖",
+			"[]>"
+		],
+		[
+			"braces",
+			"󰅩",
+			"{}",
+			"{}"
+		],
+		[
+			"brave",
+			"󰒙",
+			"🦁",
+			"brv"
+		],
+		[
+			"briefcase",
+			"󰠔",
+			"💼",
+			"[b]"
+		],
+		[
+			"brush",
+			"󰃣",
+			"🖌",
+			"/~"
+		],
+		[
+			"bug",
+			"󰨰",
+			"🐛",
+			"bug"
+		],
+		[
+			"building",
+			"󱔟",
+			"🏢",
+			"[#]"
+		],
+		[
+			"bun",
+			"",
+			"🥟",
+			"bun"
+		],
+		[
+			"buy-me-a-coffee",
+			"󰅶",
+			"☕",
+			"bmc"
+		],
+		[
+			"calendar",
+			"󰭦",
+			"📅",
+			"[=]"
+		],
+		[
+			"calendar-check",
+			"󰱄",
+			"📅",
+			"[v]"
+		],
+		[
+			"calendar-plus",
+			"󰃳",
+			"📅",
+			"[+]"
+		],
+		[
+			"camera",
+			"󰵝",
+			"📷",
+			"[o]"
+		],
+		[
+			"cart",
+			"󰄑",
+			"🛒",
+			"\\_/"
+		],
+		[
+			"cast",
+			"󰄘",
+			"📡",
+			"))"
+		],
+		[
+			"cell-signal",
+			"󰒢",
+			"📶",
+			".:|"
+		],
+		[
+			"chat",
+			"󰻞",
+			"💬",
+			"()"
+		],
+		[
+			"chat-dots",
+			"󱋊",
+			"💬",
+			"(..)"
+		],
+		[
+			"check",
+			"󰄬",
+			"✓",
+			"v"
+		],
+		[
+			"check-circle",
+			"󰗡",
+			"✅",
+			"(v)"
+		],
+		[
+			"checkbox",
+			"󰄵",
+			"☑",
+			"[x]"
+		],
+		[
+			"checkbox-empty",
+			"󰄱",
+			"☐",
+			"[ ]"
+		],
+		[
+			"chevron-down",
+			"󰅀",
+			"⌄",
+			"v"
+		],
+		[
+			"chevron-left",
+			"󰅁",
+			"‹",
+			"<"
+		],
+		[
+			"chevron-right",
+			"󰅂",
+			"›",
+			">"
+		],
+		[
+			"chevron-up",
+			"󰅃",
+			"⌃",
+			"^"
+		],
+		[
+			"chevrons-left",
+			"󰄽",
+			"«",
+			"<<"
+		],
+		[
+			"chevrons-right",
+			"󰄾",
+			"»",
+			">>"
+		],
+		[
+			"chrome",
+			"󰊯",
+			"◉",
+			"chr"
+		],
+		[
+			"claude",
+			"",
+			"✳",
+			"cl"
+		],
+		[
+			"clipboard",
+			"󰅌",
+			"📋",
+			"[=]"
+		],
+		[
+			"clipboard-check",
+			"󰢨",
+			"📋",
+			"[v]"
+		],
+		[
+			"clock",
+			"󰅐",
+			"🕒",
+			"(t)"
+		],
+		[
+			"close",
+			"󰅖",
+			"✕",
+			"x"
+		],
+		[
+			"cloud",
+			"󰅣",
+			"☁",
+			"(~)"
+		],
+		[
+			"cloud-download",
+			"󰭽",
+			"☁",
+			"(v)"
+		],
+		[
+			"cloud-upload",
+			"󰭾",
+			"☁",
+			"(^)"
+		],
+		[
+			"cloudflare",
+			"",
+			"☁",
+			"cf"
+		],
+		[
+			"code",
+			"󰅴",
+			"⟨⟩",
+			"</>"
+		],
+		[
+			"codeberg",
+			"",
+			"⛰",
+			"cb"
+		],
+		[
+			"codepen",
+			"󰅵",
+			"⬡",
+			"cpn"
+		],
+		[
+			"coffee",
+			"󰛊",
+			"☕",
+			"c[_]"
+		],
+		[
+			"coins",
+			"󱢐",
+			"🪙",
+			"(o)"
+		],
+		[
+			"command",
+			"󰘳",
+			"⌘",
+			"cmd"
+		],
+		[
+			"compass",
+			"󰆌",
+			"🧭",
+			"(N)"
+		],
+		[
+			"contact",
+			"󰶫",
+			"📇",
+			"[@]"
+		],
+		[
+			"container",
+			"󰆧",
+			"📦",
+			"[c]"
+		],
+		[
+			"copy",
+			"󰆏",
+			"⧉",
+			"cp"
+		],
+		[
+			"cpu",
+			"󰘚",
+			"🔲",
+			"[#]"
+		],
+		[
+			"credit-card",
+			"󰆛",
+			"💳",
+			"[=]"
+		],
+		[
+			"crop",
+			"󰆞",
+			"⌗",
+			"[_"
+		],
+		[
+			"crosshair",
+			"󰆣",
+			"⌖",
+			"-+-"
+		],
+		[
+			"cut",
+			"󰆐",
+			"✂",
+			"8<"
+		],
+		[
+			"database",
+			"󱘲",
+			"🛢",
+			"[=]"
+		],
+		[
+			"debian",
+			"󰣚",
+			"🌀",
+			"deb"
+		],
+		[
+			"delete",
+			"󰩺",
+			"🗑",
+			"del"
+		],
+		[
+			"deno",
+			"",
+			"🦕",
+			"deno"
+		],
+		[
+			"dev-to",
+			"",
+			"DEV",
+			"dev"
+		],
+		[
+			"discord",
+			"󰙯",
+			"🎮",
+			"dc"
+		],
+		[
+			"docker",
+			"󰡨",
+			"🐳",
+			"dkr"
+		],
+		[
+			"dollar",
+			"󰇁",
+			"$",
+			"$"
+		],
+		[
+			"download",
+			"󰇚",
+			"⤓",
+			"v_"
+		],
+		[
+			"dribbble",
+			"",
+			"🏀",
+			"drb"
+		],
+		[
+			"droplet",
+			"󰸊",
+			"💧",
+			"o"
+		],
+		[
+			"ebay",
+			"",
+			"ⓔ",
+			"ebay"
+		],
+		[
+			"edit",
+			"󰏫",
+			"✎",
+			"/e"
+		],
+		[
+			"element",
+			"󰘨",
+			"Ⓔ",
+			"el"
+		],
+		[
+			"enter",
+			"󰌑",
+			"↵",
+			"<-|"
+		],
+		[
+			"error",
+			"󰗖",
+			"⛔",
+			"!!"
+		],
+		[
+			"ethereum",
+			"󰡪",
+			"Ξ",
+			"eth"
+		],
+		[
+			"etsy",
+			"",
+			"Ⓔ",
+			"etsy"
+		],
+		[
+			"external-link",
+			"󰏌",
+			"↗",
+			"->]"
+		],
+		[
+			"eye",
+			"󰛐",
+			"👁",
+			"o"
+		],
+		[
+			"eye-off",
+			"󰛑",
+			"🙈",
+			"-o-"
+		],
+		[
+			"facebook",
+			"󰈌",
+			"ⓕ",
+			"fb"
+		],
+		[
+			"farcaster",
+			"",
+			"⛩",
+			"fc"
+		],
+		[
+			"fast-forward",
+			"󰈑",
+			"⏩",
+			">>"
+		],
+		[
+			"figma",
+			"",
+			"🎨",
+			"fig"
+		],
+		[
+			"file",
+			"󰈤",
+			"📄",
+			"[f]"
+		],
+		[
+			"file-code",
+			"󱀫",
+			"📄",
+			"[<>]"
+		],
+		[
+			"file-plus",
+			"󰻭",
+			"📄",
+			"[+]"
+		],
+		[
+			"file-text",
+			"󰧮",
+			"📄",
+			"[t]"
+		],
+		[
+			"film",
+			"󰈰",
+			"🎞",
+			"[#]"
+		],
+		[
+			"filter",
+			"󰈳",
+			"⏷",
+			"Y"
+		],
+		[
+			"fingerprint",
+			"󰈷",
+			"🫆",
+			"(@)"
+		],
+		[
+			"firefox",
+			"󰈹",
+			"🦊",
+			"ff"
+		],
+		[
+			"flag",
+			"󰈽",
+			"⚑",
+			"|>"
+		],
+		[
+			"flask",
+			"󰂖",
+			"⚗",
+			"/_\\"
+		],
+		[
+			"folder",
+			"󰉖",
+			"📁",
+			"[d]"
+		],
+		[
+			"folder-open",
+			"󰷏",
+			"📂",
+			"[d]"
+		],
+		[
+			"folder-plus",
+			"󰮝",
+			"📁",
+			"[d+]"
+		],
+		[
+			"forward",
+			"󰒖",
+			"↪",
+			"->"
+		],
+		[
+			"frown",
+			"󰇸",
+			"🙁",
+			":("
+		],
+		[
+			"gauge",
+			"󰊚",
+			"⏲",
+			"(/)"
+		],
+		[
+			"ghost",
+			"󰊠",
+			"👻",
+			"gst"
+		],
+		[
+			"gift",
+			"󰊡",
+			"🎁",
+			"[+]"
+		],
+		[
+			"git-branch",
+			"",
+			"⎇",
+			"Y"
+		],
+		[
+			"git-commit",
+			"",
+			"⊸",
+			"-o-"
+		],
+		[
+			"git-merge",
+			"",
+			"⑂",
+			">-"
+		],
+		[
+			"git-pull-request",
+			"",
+			"⇄",
+			"PR"
+		],
+		[
+			"gitea",
+			"",
+			"🍵",
+			"gt"
+		],
+		[
+			"github",
+			"󰊤",
+			"🐙",
+			"gh"
+		],
+		[
+			"gitlab",
+			"󰮠",
+			"🦊",
+			"gl"
+		],
+		[
+			"globe",
+			"󰖟",
+			"🌐",
+			"(#)"
+		],
+		[
+			"gmail",
+			"󰊫",
+			"✉",
+			"gm"
+		],
+		[
+			"go",
+			"󰟓",
+			"🐹",
+			"go"
+		],
+		[
+			"google",
+			"󰊭",
+			"Ⓖ",
+			"g"
+		],
+		[
+			"google-meet",
+			"󰯜",
+			"📹",
+			"meet"
+		],
+		[
+			"grid",
+			"󱇙",
+			"▦",
+			"::"
+		],
+		[
+			"grip",
+			"󰇛",
+			"⠿",
+			"::"
+		],
+		[
+			"hacker-news",
+			"",
+			"Ⓨ",
+			"hn"
+		],
+		[
+			"hard-drive",
+			"󰋊",
+			"🖴",
+			"[o]"
+		],
+		[
+			"hash",
+			"󰐣",
+			"#",
+			"#"
+		],
+		[
+			"hashnode",
+			"",
+			"#",
+			"hn#"
+		],
+		[
+			"heading",
+			"󰉴",
+			"H",
+			"H"
+		],
+		[
+			"headphones",
+			"󰋋",
+			"🎧",
+			"hp"
+		],
+		[
+			"heart",
+			"󰋕",
+			"♥",
+			"<3"
+		],
+		[
+			"help",
+			"󰘥",
+			"❓",
+			"?"
+		],
+		[
+			"history",
+			"󰋚",
+			"🕘",
+			"<(t)"
+		],
+		[
+			"home",
+			"󰚡",
+			"🏠",
+			"~"
+		],
+		[
+			"hourglass",
+			"󰔟",
+			"⏳",
+			"8"
+		],
+		[
+			"id-card",
+			"󰶫",
+			"🪪",
+			"[id]"
+		],
+		[
+			"image",
+			"󰥶",
+			"🖼",
+			"[^]"
+		],
+		[
+			"image-plus",
+			"󰡼",
+			"🖼",
+			"[+]"
+		],
+		[
+			"inbox",
+			"󰚇",
+			"📥",
+			"[v]"
+		],
+		[
+			"info",
+			"󰋽",
+			"ℹ",
+			"i"
+		],
+		[
+			"instagram",
+			"󰋾",
+			"📷",
+			"ig"
+		],
+		[
+			"italic",
+			"󰉷",
+			"𝐼",
+			"/"
+		],
+		[
+			"javascript",
+			"󰌞",
+			"JS",
+			"js"
+		],
+		[
+			"jira",
+			"󰌃",
+			"◈",
+			"jira"
+		],
+		[
+			"key",
+			"󰷖",
+			"🔑",
+			"o-"
+		],
+		[
+			"keybase",
+			"",
+			"🔑",
+			"kb"
+		],
+		[
+			"keyboard",
+			"󰥻",
+			"⌨",
+			"[kb]"
+		],
+		[
+			"kick",
+			"",
+			"Ⓚ",
+			"kick"
+		],
+		[
+			"ko-fi",
+			"󰅶",
+			"☕",
+			"kofi"
+		],
+		[
+			"kubernetes",
+			"󱃾",
+			"☸",
+			"k8s"
+		],
+		[
+			"laptop",
+			"󰌢",
+			"💻",
+			"[_]"
+		],
+		[
+			"layers",
+			"󰧾",
+			"☰",
+			"="
+		],
+		[
+			"leaf",
+			"󰌪",
+			"🍃",
+			"~"
+		],
+		[
+			"lemmy",
+			"",
+			"🐭",
+			"lmy"
+		],
+		[
+			"lightbulb",
+			"󰌶",
+			"💡",
+			"i"
+		],
+		[
+			"line",
+			"",
+			"💬",
+			"line"
+		],
+		[
+			"link",
+			"󰌹",
+			"🔗",
+			"~"
+		],
+		[
+			"linkedin",
+			"󰌻",
+			"ⓘ",
+			"in"
+		],
+		[
+			"linux",
+			"󰌽",
+			"🐧",
+			"lnx"
+		],
+		[
+			"list",
+			"󰉹",
+			"☷",
+			"-="
+		],
+		[
+			"list-bullet",
+			"󰉹",
+			"•",
+			"*"
+		],
+		[
+			"list-ordered",
+			"󰉻",
+			"⒈",
+			"1."
+		],
+		[
+			"loader",
+			"󰝲",
+			"◌",
+			"..."
+		],
+		[
+			"lock",
+			"󰍁",
+			"🔒",
+			"[#]"
+		],
+		[
+			"log-in",
+			"󰍂",
+			"⇥",
+			"->|"
+		],
+		[
+			"log-out",
+			"󰍃",
+			"⇤",
+			"|->"
+		],
+		[
+			"mail",
+			"󰇰",
+			"✉",
+			"@"
+		],
+		[
+			"mail-open",
+			"󰗯",
+			"📨",
+			"@"
+		],
+		[
+			"map",
+			"󰦂",
+			"🗺",
+			"[#]"
+		],
+		[
+			"map-pin",
+			"󰟙",
+			"📍",
+			"@"
+		],
+		[
+			"mastodon",
+			"󰫑",
+			"🐘",
+			"mdn"
+		],
+		[
+			"matrix",
+			"󰘨",
+			"Ⓜ",
+			"[m]"
+		],
+		[
+			"mattermost",
+			"",
+			"Ⓜ",
+			"mm"
+		],
+		[
+			"maximize",
+			"󰊓",
+			"⛶",
+			"[ ]"
+		],
+		[
+			"medium",
+			"",
+			"Ⓜ",
+			"md"
+		],
+		[
+			"megaphone",
+			"󰬣",
+			"📣",
+			"<|"
+		],
+		[
+			"menu",
+			"󰍜",
+			"☰",
+			"="
+		],
+		[
+			"messenger",
+			"󰈎",
+			"💬",
+			"msg"
+		],
+		[
+			"mic",
+			"󰍮",
+			"🎤",
+			"mic"
+		],
+		[
+			"mic-off",
+			"󰍭",
+			"🔇",
+			"x-m"
+		],
+		[
+			"microsoft",
+			"󰍲",
+			"⊞",
+			"ms"
+		],
+		[
+			"minimize",
+			"󰊔",
+			"⊡",
+			"]["
+		],
+		[
+			"minus",
+			"󰍴",
+			"−",
+			"-"
+		],
+		[
+			"minus-circle",
+			"󰍷",
+			"⊖",
+			"(-)"
+		],
+		[
+			"misskey",
+			"",
+			"Ⓜ",
+			"mk"
+		],
+		[
+			"monitor",
+			"󰍹",
+			"🖥",
+			"[ ]"
+		],
+		[
+			"moon",
+			"󰖔",
+			"🌙",
+			"C"
+		],
+		[
+			"more-horizontal",
+			"󰇘",
+			"⋯",
+			"..."
+		],
+		[
+			"more-vertical",
+			"󰇙",
+			"⋮",
+			":"
+		],
+		[
+			"mouse",
+			"󰍽",
+			"🖱",
+			"(|)"
+		],
+		[
+			"move",
+			"󰆾",
+			"✥",
+			"+"
+		],
+		[
+			"music",
+			"󰎇",
+			"🎵",
+			"#"
+		],
+		[
+			"navigation",
+			"󱣱",
+			"➶",
+			">"
+		],
+		[
+			"netlify",
+			"",
+			"◆",
+			"ntl"
+		],
+		[
+			"newspaper",
+			"󱀄",
+			"📰",
+			"[n]"
+		],
+		[
+			"nodejs",
+			"󰎙",
+			"⬢",
+			"node"
+		],
+		[
+			"notion",
+			"",
+			"Ⓝ",
+			"ntn"
+		],
+		[
+			"npm",
+			"󰛷",
+			"📦",
+			"npm"
+		],
+		[
+			"online",
+			"󰪥",
+			"🟢",
+			"(o)"
+		],
+		[
+			"openai",
+			"",
+			"✺",
+			"oai"
+		],
+		[
+			"package",
+			"󰏗",
+			"📦",
+			"[#]"
+		],
+		[
+			"palette",
+			"󰸌",
+			"🎨",
+			"(:)"
+		],
+		[
+			"paperclip",
+			"󰏢",
+			"📎",
+			"0/"
+		],
+		[
+			"patreon",
+			"󰢂",
+			"Ⓟ",
+			"pat"
+		],
+		[
+			"pause",
+			"󰏤",
+			"⏸",
+			"||"
+		],
+		[
+			"paypal",
+			"",
+			"Ⓟ",
+			"pp"
+		],
+		[
+			"peertube",
+			"",
+			"▶",
+			"pt"
+		],
+		[
+			"pen-tool",
+			"󰴓",
+			"✒",
+			"_/"
+		],
+		[
+			"percent",
+			"󰏰",
+			"%",
+			"%"
+		],
+		[
+			"phone",
+			"󰷰",
+			"☎",
+			"tel"
+		],
+		[
+			"phone-call",
+			"󱆂",
+			"📞",
+			"tel"
+		],
+		[
+			"phone-off",
+			"󱆦",
+			"📵",
+			"x-t"
+		],
+		[
+			"pin",
+			"󰤱",
+			"📌",
+			"-|"
+		],
+		[
+			"pinterest",
+			"󰐇",
+			"📌",
+			"pin"
+		],
+		[
+			"pixelfed",
+			"",
+			"🖼",
+			"pxf"
+		],
+		[
+			"play",
+			"󰐊",
+			"▶",
+			">"
+		],
+		[
+			"plug",
+			"󱐥",
+			"🔌",
+			"-["
+		],
+		[
+			"plus-circle",
+			"󰐙",
+			"⊕",
+			"(+)"
+		],
+		[
+			"power",
+			"󰐥",
+			"⏻",
+			"(|)"
+		],
+		[
+			"print",
+			"󱞆",
+			"🖨",
+			"prn"
+		],
+		[
+			"product-hunt",
+			"",
+			"Ⓟ",
+			"ph"
+		],
+		[
+			"proton-mail",
+			"󰇱",
+			"✉",
+			"pm"
+		],
+		[
+			"puzzle",
+			"󰩦",
+			"🧩",
+			"[+]"
+		],
+		[
+			"python",
+			"󰌠",
+			"🐍",
+			"py"
+		],
+		[
+			"qr-code",
+			"󰐲",
+			"▦",
+			"[#]"
+		],
+		[
+			"quote",
+			"󰝗",
+			"❝",
+			"\""
+		],
+		[
+			"radio",
+			"󰀃",
+			"📻",
+			"(o)"
+		],
+		[
+			"radio-off",
+			"",
+			"○",
+			"( )"
+		],
+		[
+			"radio-on",
+			"󰐾",
+			"◉",
+			"(*)"
+		],
+		[
+			"railway",
+			"",
+			"🚆",
+			"rly"
+		],
+		[
+			"receipt",
+			"󰑉",
+			"🧾",
+			"[$]"
+		],
+		[
+			"reddit",
+			"󰑍",
+			"👽",
+			"rd"
+		],
+		[
+			"redo",
+			"󰑎",
+			"↷",
+			"->"
+		],
+		[
+			"refresh",
+			"󰑐",
+			"⟳",
+			"@"
+		],
+		[
+			"repeat",
+			"󰑖",
+			"🔁",
+			"<->"
+		],
+		[
+			"reply",
+			"󰑚",
+			"↩",
+			"<-"
+		],
+		[
+			"rewind",
+			"󰑟",
+			"⏪",
+			"<<"
+		],
+		[
+			"rocket",
+			"󱓟",
+			"🚀",
+			"^"
+		],
+		[
+			"rocketchat",
+			"",
+			"🚀",
+			"rc"
+		],
+		[
+			"rss",
+			"󰑫",
+			"📡",
+			"rss"
+		],
+		[
+			"ruler",
+			"󰑭",
+			"📏",
+			"|-|"
+		],
+		[
+			"rust",
+			"󱘗",
+			"🦀",
+			"rs"
+		],
+		[
+			"safari",
+			"󰀹",
+			"🧭",
+			"saf"
+		],
+		[
+			"save",
+			"󰠘",
+			"💾",
+			"[s]"
+		],
+		[
+			"search",
+			"󰍉",
+			"🔍",
+			"?"
+		],
+		[
+			"send",
+			"󱅥",
+			"➤",
+			">>"
+		],
+		[
+			"server",
+			"󰒋",
+			"🖥",
+			"[:]"
+		],
+		[
+			"settings",
+			"󰒓",
+			"⚙",
+			"*"
+		],
+		[
+			"share",
+			"󱔔",
+			"⤴",
+			"<"
+		],
+		[
+			"share-out",
+			"󰮓",
+			"⇪",
+			"^"
+		],
+		[
+			"shield",
+			"󰒙",
+			"🛡",
+			"[S]"
+		],
+		[
+			"shield-check",
+			"󰳈",
+			"🛡",
+			"[v]"
+		],
+		[
+			"shopify",
+			"󰒚",
+			"🛍",
+			"shp"
+		],
+		[
+			"shuffle",
+			"󰒟",
+			"🔀",
+			"><"
+		],
+		[
+			"sidebar",
+			"󱂪",
+			"▥",
+			"|="
+		],
+		[
+			"signal",
+			"󱅭",
+			"💬",
+			"sig"
+		],
+		[
+			"skip-back",
+			"󰒮",
+			"⏮",
+			"|<"
+		],
+		[
+			"skip-forward",
+			"󰒭",
+			"⏭",
+			">|"
+		],
+		[
+			"skype",
+			"󰒯",
+			"Ⓢ",
+			"sky"
+		],
+		[
+			"slack",
+			"󰒱",
+			"#",
+			"slk"
+		],
+		[
+			"sliders",
+			"󱕂",
+			"🎚",
+			"=|="
+		],
+		[
+			"smartphone",
+			"󰄜",
+			"📱",
+			"[.]"
+		],
+		[
+			"smile",
+			"󰇵",
+			"🙂",
+			":)"
+		],
+		[
+			"sms",
+			"󱅰",
+			"💬",
+			"sms"
+		],
+		[
+			"snapchat",
+			"󰒶",
+			"👻",
+			"snap"
+		],
+		[
+			"sort",
+			"󰒺",
+			"⇅",
+			"^v"
+		],
+		[
+			"sort-asc",
+			"󰒼",
+			"↑",
+			"a-z"
+		],
+		[
+			"sort-desc",
+			"󰒽",
+			"↓",
+			"z-a"
+		],
+		[
+			"soundcloud",
+			"󰓀",
+			"☁",
+			"sc"
+		],
+		[
+			"sourcehut",
+			"",
+			"◯",
+			"srht"
+		],
+		[
+			"sparkles",
+			"󰙴",
+			"✨",
+			"*+"
+		],
+		[
+			"spotify",
+			"󰓇",
+			"🎵",
+			"spot"
+		],
+		[
+			"stack-overflow",
+			"󰓌",
+			"📚",
+			"so"
+		],
+		[
+			"star",
+			"󰓒",
+			"★",
+			"*"
+		],
+		[
+			"stop",
+			"󰓛",
+			"⏹",
+			"[]"
+		],
+		[
+			"store",
+			"󱃁",
+			"🏪",
+			"[S]"
+		],
+		[
+			"strikethrough",
+			"󰊀",
+			"S̶",
+			"-s-"
+		],
+		[
+			"stripe",
+			"",
+			"Ⓢ",
+			"str"
+		],
+		[
+			"substack",
+			"󰾱",
+			"✉",
+			"ss"
+		],
+		[
+			"sun",
+			"󰖨",
+			"☀",
+			"*"
+		],
+		[
+			"supabase",
+			"",
+			"⚡",
+			"sb"
+		],
+		[
+			"table",
+			"󰓫",
+			"▦",
+			"[#]"
+		],
+		[
+			"tablet",
+			"󰓶",
+			"📱",
+			"[..]"
+		],
+		[
+			"tag",
+			"󰓼",
+			"🏷",
+			"#"
+		],
+		[
+			"target",
+			"󰓾",
+			"🎯",
+			"(o)"
+		],
+		[
+			"telegram",
+			"",
+			"✈",
+			"tg"
+		],
+		[
+			"terminal",
+			"󰆍",
+			"⌨",
+			">_"
+		],
+		[
+			"theme",
+			"󰔎",
+			"◐",
+			"(|)"
+		],
+		[
+			"thermometer",
+			"󰔏",
+			"🌡",
+			"|o"
+		],
+		[
+			"threads",
+			"󰁥",
+			"@",
+			"th"
+		],
+		[
+			"thumbs-down",
+			"󰔒",
+			"👎",
+			"-1"
+		],
+		[
+			"thumbs-up",
+			"󰔔",
+			"👍",
+			"+1"
+		],
+		[
+			"tiktok",
+			"󰎇",
+			"♪",
+			"tt"
+		],
+		[
+			"timer",
+			"󰔛",
+			"⏱",
+			"(:)"
+		],
+		[
+			"toggle-off",
+			"󰨙",
+			"🔘",
+			"[o=]"
+		],
+		[
+			"toggle-on",
+			"󰔡",
+			"🔘",
+			"[=o]"
+		],
+		[
+			"tor",
+			"",
+			"🧅",
+			"tor"
+		],
+		[
+			"translate",
+			"󰗊",
+			"🌐",
+			"A/a"
+		],
+		[
+			"trello",
+			"󰔲",
+			"▤",
+			"tr"
+		],
+		[
+			"trophy",
+			"󰔺",
+			"🏆",
+			"\\_/"
+		],
+		[
+			"truck",
+			"󱊝",
+			"🚚",
+			"[=o"
+		],
+		[
+			"tumblr",
+			"",
+			"ⓣ",
+			"tb"
+		],
+		[
+			"tv",
+			"󰔂",
+			"📺",
+			"[_]"
+		],
+		[
+			"twitch",
+			"󰕃",
+			"📺",
+			"ttv"
+		],
+		[
+			"type",
+			"󰊄",
+			"T",
+			"T"
+		],
+		[
+			"typescript",
+			"󰛦",
+			"TS",
+			"ts"
+		],
+		[
+			"ubuntu",
+			"󰕈",
+			"◎",
+			"ubu"
+		],
+		[
+			"umbrella",
+			"󰕋",
+			"☂",
+			"T"
+		],
+		[
+			"underline",
+			"󰊇",
+			"U̲",
+			"_"
+		],
+		[
+			"undo",
+			"󰕌",
+			"↶",
+			"<-"
+		],
+		[
+			"unlink",
+			"󰌺",
+			"⛓",
+			"~/"
+		],
+		[
+			"unlock",
+			"󰿇",
+			"🔓",
+			"[ ]"
+		],
+		[
+			"upload",
+			"󰕒",
+			"⤒",
+			"^_"
+		],
+		[
+			"user",
+			"󰀓",
+			"👤",
+			"@"
+		],
+		[
+			"user-check",
+			"󰯢",
+			"👤",
+			"@v"
+		],
+		[
+			"user-circle",
+			"󰭕",
+			"👤",
+			"(@)"
+		],
+		[
+			"user-minus",
+			"󰫬",
+			"👤",
+			"@-"
+		],
+		[
+			"user-plus",
+			"󰠁",
+			"👤",
+			"@+"
+		],
+		[
+			"users",
+			"󰀏",
+			"👥",
+			"@@"
+		],
+		[
+			"vercel",
+			"󰔶",
+			"▲",
+			"vc"
+		],
+		[
+			"video",
+			"󰯜",
+			"📹",
+			"[>"
+		],
+		[
+			"vimeo",
+			"󰕷",
+			"ⓥ",
+			"vm"
+		],
+		[
+			"voicemail",
+			"󰕽",
+			"⌨",
+			"oo"
+		],
+		[
+			"volume",
+			"󰕾",
+			"🔊",
+			"<))"
+		],
+		[
+			"volume-low",
+			"󰖀",
+			"🔉",
+			"<)"
+		],
+		[
+			"volume-off",
+			"󰖁",
+			"🔇",
+			"<x"
+		],
+		[
+			"wallet",
+			"󰯝",
+			"👛",
+			"[$]"
+		],
+		[
+			"warning",
+			"󰀪",
+			"⚠",
+			"!"
+		],
+		[
+			"watch",
+			"󰖉",
+			"⌚",
+			"(:)"
+		],
+		[
+			"webhook",
+			"󰘯",
+			"🪝",
+			"<~>"
+		],
+		[
+			"wechat",
+			"󰘑",
+			"💬",
+			"wx"
+		],
+		[
+			"whatsapp",
+			"󰖣",
+			"📞",
+			"wa"
+		],
+		[
+			"wifi",
+			"󰖩",
+			"📶",
+			"((."
+		],
+		[
+			"wifi-off",
+			"󰖪",
+			"📵",
+			"x(("
+		],
+		[
+			"windows",
+			"󰖳",
+			"⊞",
+			"win"
+		],
+		[
+			"wordpress",
+			"󰖴",
+			"Ⓦ",
+			"wp"
+		],
+		[
+			"x",
+			"󰬅",
+			"𝕏",
+			"x"
+		],
+		[
+			"x-circle",
+			"󰅚",
+			"❎",
+			"(x)"
+		],
+		[
+			"xmpp",
+			"󰟿",
+			"💬",
+			"xmpp"
+		],
+		[
+			"y-combinator",
+			"",
+			"Ⓨ",
+			"yc"
+		],
+		[
+			"youtube",
+			"󰗃",
+			"▶",
+			"yt"
+		],
+		[
+			"zap",
+			"󱐌",
+			"⚡",
+			"/"
+		],
+		[
+			"zoom",
+			"󰕧",
+			"📹",
+			"zm"
+		],
+		[
+			"zoom-in",
+			"󰛭",
+			"🔎",
+			"+?"
+		],
+		[
+			"zoom-out",
+			"󰛬",
+			"🔎",
+			"-?"
+		],
+		[
+			"zulip",
+			"",
+			"Ⓩ",
+			"zl"
+		]
+	].map(([key, nerd, unicode, ascii]) => [key, {
+		nerd,
+		unicode,
+		ascii
+	}])),
+	aliases: /* @__PURE__ */ new Map([
+		["a11y", "accessibility"],
+		["account", "user"],
+		["add-user", "user-plus"],
+		["address-book", "contact"],
+		["ai", "sparkles"],
+		["alarm-clock", "alarm"],
+		["alert-circle", "error"],
+		["alert-triangle", "warning"],
+		["announce", "megaphone"],
+		["at-sign", "at"],
+		["attach", "paperclip"],
+		["attachment", "paperclip"],
+		["bin", "delete"],
+		["biometric", "fingerprint"],
+		["blocked", "ban"],
+		["bolt", "zap"],
+		["box", "package"],
+		["bullhorn", "megaphone"],
+		["bullseye", "target"],
+		["call", "phone"],
+		["card", "credit-card"],
+		["caution", "warning"],
+		["cellphone", "smartphone"],
+		["check-square", "checkbox"],
+		["chip", "cpu"],
+		["cli", "terminal"],
+		["cmd", "command"],
+		["cog", "settings"],
+		["color", "palette"],
+		["comment", "chat"],
+		["company", "building"],
+		["computer", "laptop"],
+		["console", "terminal"],
+		["contrast", "theme"],
+		["curly-braces", "braces"],
+		["currency", "dollar"],
+		["dark-mode", "moon"],
+		["date", "calendar"],
+		["day", "sun"],
+		["db", "database"],
+		["delivery", "truck"],
+		["deploy", "rocket"],
+		["desktop", "monitor"],
+		["directory", "folder"],
+		["discount", "percent"],
+		["dislike", "thumbs-down"],
+		["display", "monitor"],
+		["document", "file"],
+		["duplicate", "copy"],
+		["ellipsis", "more-horizontal"],
+		["email", "mail"],
+		["envelope", "mail"],
+		["exit-fullscreen", "minimize"],
+		["experiment", "flask"],
+		["extension", "puzzle"],
+		["faq", "help"],
+		["favorite", "star"],
+		["find", "search"],
+		["floppy", "save"],
+		["forbidden", "ban"],
+		["fullscreen", "maximize"],
+		["gear", "settings"],
+		["goal", "target"],
+		["golang", "go"],
+		["hamburger", "menu"],
+		["happy", "smile"],
+		["hashtag", "hash"],
+		["hide", "eye-off"],
+		["house", "home"],
+		["i18n", "translate"],
+		["idea", "lightbulb"],
+		["identity", "id-card"],
+		["information", "info"],
+		["integration", "plug"],
+		["invite", "user-plus"],
+		["invoice", "receipt"],
+		["job", "briefcase"],
+		["json", "braces"],
+		["kebab", "more-vertical"],
+		["lab", "flask"],
+		["label", "tag"],
+		["language", "translate"],
+		["light-mode", "sun"],
+		["lightning", "zap"],
+		["like", "thumbs-up"],
+		["loading", "loader"],
+		["location", "map-pin"],
+		["login", "log-in"],
+		["logout", "log-out"],
+		["love", "heart"],
+		["magic", "sparkles"],
+		["magnify", "search"],
+		["marker", "map-pin"],
+		["mention", "at"],
+		["merge-request", "git-pull-request"],
+		["message", "chat"],
+		["microphone", "mic"],
+		["mobile", "smartphone"],
+		["movie", "film"],
+		["mute", "volume-off"],
+		["night", "moon"],
+		["node", "nodejs"],
+		["notification", "bell"],
+		["office", "building"],
+		["open-in-new", "external-link"],
+		["paper-plane", "send"],
+		["payment", "credit-card"],
+		["pencil", "edit"],
+		["pending", "hourglass"],
+		["people", "users"],
+		["person", "user"],
+		["photo", "image"],
+		["photo-camera", "camera"],
+		["picture", "image"],
+		["plugin", "puzzle"],
+		["plus", "add"],
+		["preferences", "settings"],
+		["present", "gift"],
+		["printer", "print"],
+		["prize", "trophy"],
+		["processor", "cpu"],
+		["profile", "user"],
+		["pull-request", "git-pull-request"],
+		["qr", "qr-code"],
+		["question", "help"],
+		["recent", "history"],
+		["reception", "cell-signal"],
+		["reload", "refresh"],
+		["scissors", "cut"],
+		["shell", "terminal"],
+		["shipping", "truck"],
+		["shopping-bag", "bag"],
+		["shopping-cart", "cart"],
+		["show", "eye"],
+		["sign-in", "log-in"],
+		["sign-out", "log-out"],
+		["song", "music"],
+		["sound", "volume"],
+		["source-code", "code"],
+		["speaker", "volume"],
+		["spinner", "loader"],
+		["square", "checkbox-empty"],
+		["stopwatch", "timer"],
+		["storefront", "store"],
+		["sync", "refresh"],
+		["team", "users"],
+		["telephone", "phone"],
+		["television", "tv"],
+		["thumbtack", "pin"],
+		["times", "close"],
+		["trash", "delete"],
+		["twitter", "x"],
+		["usd", "dollar"],
+		["view", "eye"],
+		["web", "globe"],
+		["work", "briefcase"],
+		["world", "globe"],
+		["x-mark", "close"]
+	])
+};
+let chosen;
+let detected;
+const isMode = (value) => value === "nerd" || value === "unicode" || value === "ascii";
+/** Which glyph family this environment gets, following the order at the top of this file. */
+function iconMode(env = process.env) {
+	const named = env.OPENICON_GLYPHS || env.HQTUI_ICONS;
+	if (isMode(named)) return named;
+	if (env.NERD_FONT === "1" || env.NERD_FONTS === "1") return "nerd";
+	return detectCapabilities({}, env).unicode ? "unicode" : "ascii";
+}
+/** The three glyphs of an icon, by key or alias, or undefined if the pack has no such icon. */
+function iconGlyphs(name) {
+	return pack.icons.get(name) ?? pack.icons.get(pack.aliases.get(name) ?? "");
+}
+/**
+* The best glyph for an icon: `icon("mail")`, `icon("email")` (an alias), or
+* `icon("github", { mode: "ascii" })`. Unknown names return "".
+*/
+function icon(name, options = {}) {
+	const glyphs = iconGlyphs(name);
+	if (!glyphs) return "";
+	const mode = options.mode ?? chosen ?? (detected ??= iconMode());
+	if (mode === "nerd") return glyphs.nerd || glyphs.unicode;
+	return mode === "unicode" ? glyphs.unicode : glyphs.ascii;
+}
 //#endregion
 //#region src/go-key-diagnostic-ui.ts
 const EXPLANATIONS = {
@@ -194,11 +2699,11 @@ const INITIAL_SNAPSHOT = {
 	details: [],
 	updatedAt: null
 };
-function asRecord(value) {
+function asRecord$1(value) {
 	return typeof value === "object" && value !== null ? value : void 0;
 }
 function modelID(ref) {
-	const record = asRecord(ref);
+	const record = asRecord$1(ref);
 	const id = typeof ref === "string" ? ref : record?.id ?? record?.modelID;
 	return typeof id === "string" && id.trim() !== "" ? id : null;
 }
@@ -206,14 +2711,14 @@ function messageModelRef(message) {
 	return message.model ?? message;
 }
 function modelProvider(ref, models) {
-	const direct = asRecord(ref)?.providerID;
+	const direct = asRecord$1(ref)?.providerID;
 	if (typeof direct === "string" && direct.trim() !== "") return direct.trim();
 	const id = modelID(ref);
 	if (id === null) return null;
 	const segment = id.slice(id.lastIndexOf("/") + 1);
 	const providers = /* @__PURE__ */ new Set();
 	for (const candidate of models) {
-		const item = asRecord(candidate);
+		const item = asRecord$1(candidate);
 		if (!item) continue;
 		if (item.id !== id && item.modelID !== id && item.id !== segment && item.modelID !== segment) continue;
 		if (typeof item.providerID === "string" && item.providerID.trim() !== "") providers.add(item.providerID.trim());
@@ -235,9 +2740,9 @@ function modelIdentity(ref, models) {
 	};
 }
 function tokenCount(message) {
-	const tokens = asRecord(message.tokens);
+	const tokens = asRecord$1(message.tokens);
 	if (!tokens) return null;
-	const cache = asRecord(tokens.cache);
+	const cache = asRecord$1(tokens.cache);
 	const reported = [
 		tokens.input,
 		tokens.output,
@@ -258,13 +2763,13 @@ function contextLimit(ref, models) {
 	if (providerID === null) return null;
 	const segment = id.slice(id.lastIndexOf("/") + 1);
 	const matches = models.filter((value) => {
-		const model = asRecord(value);
+		const model = asRecord$1(value);
 		if (!model) return false;
 		return (model.id === id || model.modelID === id || model.id === segment || model.modelID === segment) && model.providerID === providerID;
 	});
 	const limits = /* @__PURE__ */ new Set();
 	for (const candidate of matches) {
-		const limit = asRecord(asRecord(candidate)?.limit)?.context;
+		const limit = asRecord$1(asRecord$1(candidate)?.limit)?.context;
 		if (typeof limit === "number" && Number.isFinite(limit) && limit > 0) limits.add(limit);
 	}
 	return limits.size === 1 ? [...limits][0] ?? null : null;
@@ -272,11 +2777,11 @@ function contextLimit(ref, models) {
 function liveTranscriptWindow(messages, revertMessageID) {
 	let end = messages.length;
 	if (revertMessageID) {
-		const boundary = messages.findIndex((message) => asRecord(message)?.id === revertMessageID);
+		const boundary = messages.findIndex((message) => asRecord$1(message)?.id === revertMessageID);
 		if (boundary >= 0) end = boundary;
 	}
 	let start = 0;
-	for (let index = end - 1; index >= 0; index -= 1) if (asRecord(messages[index])?.type === "compaction") {
+	for (let index = end - 1; index >= 0; index -= 1) if (asRecord$1(messages[index])?.type === "compaction") {
 		start = index + 1;
 		break;
 	}
@@ -292,7 +2797,7 @@ function latestContext(messages, modelRef, models, revertMessageID) {
 	if (limit === null || limit <= 0) return null;
 	const { start, end } = liveTranscriptWindow(messages, revertMessageID);
 	for (let index = end - 1; index >= start; index -= 1) {
-		const message = asRecord(messages[index]);
+		const message = asRecord$1(messages[index]);
 		if (message?.type !== "assistant") continue;
 		const identity = modelIdentity(messageModelRef(message), models);
 		if (identity?.id !== target.id || identity.providerID !== target.providerID) continue;
@@ -315,7 +2820,7 @@ function resolveActiveModelRef(sessionModel, activeMessages, fallbackModel = nul
 	if (modelID(sessionModel) !== null) return sessionModel;
 	const firstMessage = Math.max(0, activeMessages.length - 400);
 	for (let index = activeMessages.length - 1; index >= firstMessage; index -= 1) {
-		const message = asRecord(activeMessages[index]);
+		const message = asRecord$1(activeMessages[index]);
 		if (message?.type !== "assistant") continue;
 		const ref = messageModelRef(message);
 		if (modelID(ref) !== null) return ref;
@@ -338,7 +2843,7 @@ function collectRecentModelUsageRows(input) {
 	const active = modelIdentity(input.activeModel, models);
 	const totals = /* @__PURE__ */ new Map();
 	for (const value of usageMessages) {
-		const message = asRecord(value);
+		const message = asRecord$1(value);
 		if (message?.type !== "assistant") continue;
 		const identity = modelIdentity(messageModelRef(message), models);
 		if (!identity) continue;
@@ -361,11 +2866,11 @@ function collectRecentModelUsageRows(input) {
 		for (let index = start; index < end; index += 1) {
 			const order = contextIndex;
 			contextIndex += 1;
-			const message = asRecord(messages[index]);
+			const message = asRecord$1(messages[index]);
 			if (message?.type !== "assistant" || (tokenCount(message) ?? 0) <= 0) continue;
 			const identity = modelIdentity(messageModelRef(message), models);
 			if (!identity) continue;
-			const time = asRecord(message.time);
+			const time = asRecord$1(message.time);
 			const timestamp = typeof time?.created === "number" && Number.isFinite(time.created) ? time.created : null;
 			const current = latestContextMessages.get(identity.key);
 			if (current === void 0 || (timestamp !== null && current.timestamp !== null ? timestamp >= current.timestamp : order > current.index)) latestContextMessages.set(identity.key, {
@@ -403,7 +2908,7 @@ function collectRecentModelUsageRows(input) {
 	})];
 }
 function normalizeQuotaPreferences(value) {
-	const settings = asRecord(value);
+	const settings = asRecord$1(value);
 	return {
 		enabled: typeof settings?.enabled === "boolean" ? settings.enabled : DEFAULT_QUOTA_PREFERENCES.enabled,
 		display: settings?.display === "used" ? "used" : "remaining"
@@ -413,7 +2918,7 @@ function providerLabel(id) {
 	return id.split(/[._-]+/).filter((part) => part.length > 0).map((part) => `${part.charAt(0).toLocaleUpperCase()}${part.slice(1)}`).join(" ");
 }
 function providerStatus(value) {
-	const item = asRecord(value);
+	const item = asRecord$1(value);
 	if (typeof item?.provider !== "string" || typeof item.label !== "string" || item.scope !== "account" && item.scope !== "selected_key" && item.scope !== "team" && item.scope !== "session" || item.authentication !== "connected" && item.authentication !== "not_connected" && item.authentication !== "unavailable" || item.state !== "available" && item.state !== "needs_setup" && item.state !== "unavailable" || typeof item.reason !== "string" || item.route_kind !== void 0 && item.route_kind !== "api_key" && item.route_kind !== "console_oauth" && item.route_kind !== "none" && item.route_kind !== "unsupported" || !Array.isArray(item.metrics)) return;
 	if (!QUOTA_PROVIDER_ID_SET.has(item.provider)) return void 0;
 	return {
@@ -465,7 +2970,7 @@ function quotaSnapshotStatusLabel(status, error) {
 	switch (status) {
 		case "loading": return "Buscando status…";
 		case "ready": return "Quota disponível";
-		case "partial": return "Dados parciais";
+		case "partial": return "Quota parcialmente disponível";
 		case "connected_unavailable": return "Credencial local · dados indisponíveis";
 		case "needs_setup": return "Nenhum provedor elegível";
 		case "unavailable": return error !== void 0 ? `Erro: ${error}` : "Status indisponível";
@@ -489,7 +2994,7 @@ function quotaRpcFaultMessage(error) {
 }
 /** Map the current typed RPC status into a provider-neutral, data-only UI model. */
 function quotaSnapshotFromStatus(response, now = Date.now()) {
-	const statusResponse = asRecord(response);
+	const statusResponse = asRecord$1(response);
 	const credentialResolutionFailed = statusResponse?.credential_resolution_failed === true;
 	const providersValue = statusResponse?.providers;
 	const providerList = Array.isArray(providersValue) ? providersValue : void 0;
@@ -547,7 +3052,7 @@ function quotaProgress(metric) {
 		remainingPercent: 100 - usedPercent
 	};
 }
-/** Connected-provider rows for the compact sidebar; only reported quota windows become gauges. */
+/** Connected-provider rows for the compact sidebar; only reported quota windows are shown. */
 function quotaSidebarEntries(snapshot) {
 	const entries = [];
 	for (const provider of snapshot.providers) {
@@ -919,11 +3424,539 @@ function cellWidth(value) {
 	return width;
 }
 //#endregion
+//#region src/usage-history-validation.ts
+function asRecord(value) {
+	return typeof value === "object" && value !== null ? value : null;
+}
+function isTotals(value) {
+	const totals = asRecord(value);
+	return totals !== null && [
+		"input",
+		"output",
+		"cacheRead",
+		"cacheWrite",
+		"total"
+	].every((key) => typeof totals[key] === "number" && Number.isSafeInteger(totals[key]) && totals[key] >= 0);
+}
+function isHistoryBucket(value) {
+	const bucket = asRecord(value);
+	return bucket !== null && typeof bucket.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(bucket.date) && isTotals(bucket) && typeof bucket.pricingComplete === "boolean" && (bucket.estimatedUsd === void 0 || typeof bucket.estimatedUsd === "number" && Number.isFinite(bucket.estimatedUsd));
+}
+function isHistoryModel(value) {
+	const model = asRecord(value);
+	return model !== null && typeof model.providerID === "string" && typeof model.modelID === "string" && isTotals(model.totals) && typeof model.pricingComplete === "boolean" && (model.estimatedUsd === void 0 || typeof model.estimatedUsd === "number" && Number.isFinite(model.estimatedUsd));
+}
+function isUsageHistoryRpcResult(value) {
+	const result = asRecord(value);
+	if (!result) return false;
+	if (result.status === "unavailable") return [
+		"invalid_period",
+		"history_unavailable",
+		"history_timeout"
+	].includes(String(result.reason));
+	if (result.status !== "available" && result.status !== "partial") return false;
+	const pricing = asRecord(result.pricing);
+	return [
+		"7d",
+		"15d",
+		"30d",
+		"total"
+	].includes(String(result.period)) && (result.coverageStart === null || typeof result.coverageStart === "string") && typeof result.partial === "boolean" && typeof result.truncated === "boolean" && typeof result.rows === "number" && Number.isSafeInteger(result.rows) && result.rows >= 0 && Array.isArray(result.buckets) && result.buckets.every(isHistoryBucket) && isTotals(result.totals) && Array.isArray(result.models) && result.models.every(isHistoryModel) && pricing !== null && [
+		"empty",
+		"unavailable",
+		"partial",
+		"complete"
+	].includes(String(pricing.status)) && typeof pricing.complete === "boolean" && pricing.billed === false && typeof pricing.unpricedModels === "number" && Number.isSafeInteger(pricing.unpricedModels) && pricing.unpricedModels >= 0 && (pricing.estimatedUsd === void 0 || typeof pricing.estimatedUsd === "number" && Number.isFinite(pricing.estimatedUsd));
+}
+function isActiveContextCostResult(value) {
+	const result = asRecord(value);
+	if (result?.billed !== false) return false;
+	if (result.cacheDiscountApplied !== false) return false;
+	if (result.basis !== "pre-cache-context-tokens-times-input-price") return false;
+	if (result.status === "estimated") return typeof result.estimatedUsd === "number" && Number.isFinite(result.estimatedUsd);
+	return result.status === "unavailable" && [
+		"invalid-context-token-count",
+		"missing-model-identity",
+		"no-pricing",
+		"unknown-model",
+		"ambiguous-model",
+		"missing-cache-price"
+	].includes(String(result.reason));
+}
+//#endregion
+//#region src/usage-view-model.ts
+const HISTORY_PERIODS = [
+	"7d",
+	"15d",
+	"30d",
+	"total"
+];
+const USAGE_HISTORY_PERIOD_BINDINGS = [
+	{
+		period: "7d",
+		bind: "7",
+		label: "7d"
+	},
+	{
+		period: "15d",
+		bind: "1",
+		label: "15d"
+	},
+	{
+		period: "30d",
+		bind: "3",
+		label: "30d"
+	},
+	{
+		period: "total",
+		bind: "t",
+		label: "total"
+	}
+];
+function wrapText(value, width) {
+	const maxWidth = Number.isFinite(width) ? Math.max(1, Math.floor(width)) : 1;
+	const lines = [];
+	const segmenter = new Intl.Segmenter();
+	let line = "";
+	for (const word of value.trim().split(/\s+/)) {
+		if (!word) continue;
+		if (line && cellWidth(line) + 1 + cellWidth(word) > maxWidth) {
+			lines.push(line);
+			line = "";
+		}
+		if (line) line += " ";
+		for (const { segment } of segmenter.segment(word)) {
+			if (cellWidth(line) + cellWidth(segment) > maxWidth) {
+				if (line) lines.push(line);
+				line = "";
+			}
+			line += segment;
+		}
+	}
+	if (line) lines.push(line);
+	return lines;
+}
+function usageHistoryTextLines(value, width) {
+	return wrapText(value, width);
+}
+function formatCount(value) {
+	return Math.max(0, value).toLocaleString("en-US");
+}
+function formatUsd(value) {
+	if (!Number.isFinite(value) || value < 0) return void 0;
+	return `$${new Intl.NumberFormat("en-US", {
+		minimumFractionDigits: 2,
+		maximumFractionDigits: 8
+	}).format(value)}`;
+}
+function chartBar(value, maxValue, width) {
+	const cells = Math.max(0, Math.floor(width));
+	if (cells === 0 || value <= 0 || maxValue <= 0) return "";
+	return "#".repeat(Math.max(1, Math.min(cells, Math.round(value / maxValue * cells))));
+}
+function chartValueLine(value, maximum, width) {
+	const count = `${formatCount(value)} tokens`;
+	const barWidth = Math.max(0, width - cellWidth(count) - 3);
+	const bar = chartBar(value, maximum, Math.min(12, barWidth));
+	return wrapText(`  ${bar ? `${bar} ` : ""}${count}`, width).join("\n");
+}
+function appendWrapped(target, value, width) {
+	target.push(...wrapText(value, width));
+}
+function usageHistorySelectorLabel(selected) {
+	return `Período: ${HISTORY_PERIODS.map((period) => {
+		const label = period === "total" ? "Total" : period;
+		return period === selected ? `[${label}]` : label;
+	}).join(" · ")}`;
+}
+function usageHistorySelectorLines(selected, width) {
+	return wrapText(usageHistorySelectorLabel(selected), width);
+}
+function usageHistoryPeriodForKey(key) {
+	return USAGE_HISTORY_PERIOD_BINDINGS.find((binding) => binding.bind === key)?.period;
+}
+function usageHistoryControlsLines(width) {
+	return wrapText("7 · 7d   1 · 15d   3 · 30d   T · total", width);
+}
+function usageHistoryCoverageLabel(result) {
+	return result.coverageStart === null ? "Início da cobertura indisponível" : `Cobertura desde ${result.coverageStart}`;
+}
+function usageHistoryPartialWarning(result) {
+	if (result.partial && result.truncated) return "Histórico parcial e truncado pelo limite seguro.";
+	if (result.partial) return "Histórico parcial segundo a consulta.";
+	if (result.truncated) return "Histórico truncado pelo limite seguro.";
+	return null;
+}
+function usageHistoryPricingLabel(result) {
+	const amount = result.pricing.estimatedUsd === void 0 ? void 0 : formatUsd(result.pricing.estimatedUsd);
+	const value = amount ? ` · ${amount}` : "";
+	switch (result.pricing.status) {
+		case "complete": return `Estimativa pelo catálogo${value} · não cobrada`;
+		case "partial": return `Estimativa parcial pelo catálogo${value} · não cobrada · ${result.pricing.unpricedModels} modelo(s) sem preço`;
+		case "unavailable": return "Estimativa de preço indisponível · nenhum valor cobrado";
+		case "empty": return "Sem dados de preço para estimar · nenhum valor cobrado";
+	}
+}
+function usageHistoryUnavailableMessage(result) {
+	if (result.status !== "unavailable") return null;
+	switch (result.reason) {
+		case "invalid_period": return "Período de histórico inválido.";
+		case "history_timeout": return "Consulta de histórico excedeu o tempo limite.";
+		case "history_unavailable": return "Histórico indisponível neste momento.";
+	}
+}
+function usageHistoryEmptyMessage() {
+	return "Sem histórico neste período.";
+}
+function usageHistoryChartLines(result, width) {
+	const maxWidth = Math.max(1, Math.floor(width));
+	if (result.rows === 0 && result.buckets.length === 0 && result.models.length === 0) return wrapText(usageHistoryEmptyMessage(), maxWidth);
+	const lines = [];
+	appendWrapped(lines, `GERAL · ${formatCount(result.totals.total)} tokens`, maxWidth);
+	if (result.buckets.length > 0) {
+		lines.push("Uso diário");
+		const maxBucket = Math.max(0, ...result.buckets.map((bucket) => bucket.total));
+		for (const bucket of result.buckets) {
+			appendWrapped(lines, bucket.date, maxWidth);
+			lines.push(...chartValueLine(bucket.total, maxBucket, maxWidth).split("\n"));
+		}
+	} else lines.push("Sem buckets diários neste período.");
+	lines.push("Modelos no período");
+	if (result.models.length === 0) {
+		lines.push("Sem totais por modelo.");
+		return lines.flatMap((line) => wrapText(line, maxWidth));
+	}
+	const maxModel = Math.max(0, ...result.models.map((model) => model.totals.total));
+	for (const model of result.models) {
+		appendWrapped(lines, `${model.providerID}/${model.modelID}`, maxWidth);
+		lines.push(...chartValueLine(model.totals.total, maxModel, maxWidth).split("\n"));
+	}
+	return lines.flatMap((line) => wrapText(line, maxWidth));
+}
+function activeModelIdentity(model) {
+	if (model.providerID && model.modelID) return `${model.providerID}/${model.modelID}`;
+	if (model.modelID) return model.modelID;
+	return model.label || "identidade indisponível";
+}
+function sessionSpendLabel(cost) {
+	if (!Number.isFinite(cost) || cost < 0) return null;
+	return `Gasto da sessão (relatado) · $${cost.toFixed(2)}`;
+}
+function unavailableContextReason(reason) {
+	switch (reason) {
+		case "invalid-context-token-count": return "contagem de tokens de contexto inválida";
+		case "missing-model-identity": return "identidade do modelo indisponível";
+		case "no-pricing":
+		case "missing-cache-price": return "preço de entrada indisponível";
+		case "unknown-model":
+		case "ambiguous-model": return "modelo não identificado na tabela de preços";
+	}
+}
+function activeContextEstimateLines(result, width) {
+	const maxWidth = Math.max(1, Math.floor(width));
+	if (result.status === "unavailable") return wrapText(`Estimativa de contexto (pré-cache) indisponível · ${unavailableContextReason(result.reason)}`, maxWidth);
+	const amount = formatUsd(result.estimatedUsd);
+	if (!amount) return wrapText("Estimativa de contexto (pré-cache) indisponível · valor inválido", maxWidth);
+	return [...wrapText(`Estimativa de contexto (pré-cache) · ${amount}`, maxWidth), ...wrapText("Preço de entrada × tokens pré-cache; sem desconto de cache; não é valor cobrado.", maxWidth)];
+}
+function activeContextEstimatePendingLines(width) {
+	return wrapText("Estimativa de contexto (pré-cache) · calculando…", width);
+}
+function activeContextEstimateMissingLines(width) {
+	return wrapText("Estimativa de contexto (pré-cache) indisponível · contexto não reportado.", width);
+}
+function activeContextEstimateErrorLines(width) {
+	return wrapText("Estimativa de contexto (pré-cache) indisponível · falha na consulta.", width);
+}
+//#endregion
+//#region src/usage-history-view.tsx
+/** @jsxImportSource @opentui/solid */
+function location(context) {
+	return context.location ?? context.data.location.default();
+}
+function ActiveContextEstimate(props) {
+	const [result, setResult] = createSignal(null);
+	const [loading, setLoading] = createSignal(false);
+	const [failed, setFailed] = createSignal(false);
+	const client = props.context.client.rpc(quotaRpc);
+	createEffect(() => {
+		const providerID = props.providerID;
+		const modelID = props.modelID;
+		const contextTokens = props.contextTokens;
+		if (contextTokens === null) {
+			setResult(null);
+			setFailed(false);
+			setLoading(false);
+			return;
+		}
+		if (!providerID || !modelID) {
+			setResult({
+				status: "unavailable",
+				billed: false,
+				basis: "pre-cache-context-tokens-times-input-price",
+				cacheDiscountApplied: false,
+				reason: "missing-model-identity"
+			});
+			setFailed(false);
+			setLoading(false);
+			return;
+		}
+		const controller = new AbortController();
+		let current = true;
+		setResult(null);
+		setFailed(false);
+		setLoading(true);
+		try {
+			client.active_context_cost({
+				providerID,
+				modelID,
+				contextTokens
+			}, {
+				signal: controller.signal,
+				location: location(props.context)
+			}).then((response) => {
+				if (!current) return;
+				if (isActiveContextCostResult(response)) setResult(response);
+				else setFailed(true);
+			}).catch(() => {
+				if (current) setFailed(true);
+			}).finally(() => {
+				if (current) setLoading(false);
+			});
+		} catch {
+			setFailed(true);
+			setLoading(false);
+		}
+		onCleanup(() => {
+			current = false;
+			controller.abort();
+		});
+	});
+	const lines = () => {
+		if (loading()) return activeContextEstimatePendingLines(props.width);
+		if (failed()) return activeContextEstimateErrorLines(props.width);
+		const current = result();
+		if (current) return activeContextEstimateLines(current, props.width);
+		return activeContextEstimateMissingLines(props.width);
+	};
+	return (() => {
+		var _el$ = createElement("box");
+		setProp(_el$, "flexDirection", "column");
+		insert(_el$, createComponent(For, {
+			get each() {
+				return lines();
+			},
+			children: (line) => (() => {
+				var _el$2 = createElement("text");
+				insert(_el$2, line);
+				return _el$2;
+			})()
+		}));
+		return _el$;
+	})();
+}
+function UsageHistorySection(props) {
+	const [period, setPeriod] = createSignal("7d");
+	const [result, setResult] = createSignal(null);
+	const [loading, setLoading] = createSignal(true);
+	const [requestFailed, setRequestFailed] = createSignal(false);
+	const client = props.context.client.rpc(quotaRpc);
+	const keymap = () => ({
+		mode: "global",
+		enabled: () => props.panel.focused === true,
+		commands: USAGE_HISTORY_PERIOD_BINDINGS.map(({ period: selected, bind, label }) => ({
+			id: `pantheon.quota.history.${selected}`,
+			title: `Histórico de uso: ${label}`,
+			bind,
+			run: () => {
+				if (props.panel.focused !== true) return false;
+				setPeriod(selected);
+			}
+		}))
+	});
+	props.context.keymap.layer(keymap);
+	createEffect(() => {
+		const selectedPeriod = period();
+		const controller = new AbortController();
+		let current = true;
+		setLoading(true);
+		setRequestFailed(false);
+		setResult(null);
+		try {
+			client.usage_history({ period: selectedPeriod }, {
+				signal: controller.signal,
+				location: location(props.context)
+			}).then((response) => {
+				if (!current) return;
+				if (isUsageHistoryRpcResult(response)) setResult(response);
+				else setRequestFailed(true);
+			}).catch(() => {
+				if (current) setRequestFailed(true);
+			}).finally(() => {
+				if (current) setLoading(false);
+			});
+		} catch {
+			setRequestFailed(true);
+			setLoading(false);
+		}
+		onCleanup(() => {
+			current = false;
+			controller.abort();
+		});
+	});
+	const chartLines = () => {
+		const current = result();
+		return current?.status === "available" || current?.status === "partial" ? usageHistoryChartLines(current, props.width) : [];
+	};
+	const unavailable = () => {
+		const current = result();
+		return current ? usageHistoryUnavailableMessage(current) : null;
+	};
+	const available = () => {
+		const current = result();
+		return current?.status === "available" || current?.status === "partial" ? current : void 0;
+	};
+	const warning = () => {
+		const current = result();
+		if (current?.status !== "available" && current?.status !== "partial") return [];
+		const message = usageHistoryPartialWarning(current);
+		return message ? usageHistoryTextLines(message, props.width) : [];
+	};
+	return (() => {
+		var _el$3 = createElement("box"), _el$4 = createElement("text");
+		insertNode(_el$3, _el$4);
+		setProp(_el$3, "flexDirection", "column");
+		setProp(_el$3, "paddingTop", 1);
+		insertNode(_el$4, createTextNode(`Histórico de uso`));
+		setProp(_el$4, "attributes", 1);
+		insert(_el$3, createComponent(For, {
+			get each() {
+				return usageHistorySelectorLines(period(), props.width);
+			},
+			children: (line) => (() => {
+				var _el$8 = createElement("text");
+				insert(_el$8, line);
+				return _el$8;
+			})()
+		}), null);
+		insert(_el$3, createComponent(For, {
+			get each() {
+				return usageHistoryControlsLines(props.width);
+			},
+			children: (line) => (() => {
+				var _el$9 = createElement("text");
+				insert(_el$9, line);
+				return _el$9;
+			})()
+		}), null);
+		insert(_el$3, createComponent(Show, {
+			get when() {
+				return loading();
+			},
+			get children() {
+				var _el$6 = createElement("text");
+				insertNode(_el$6, createTextNode(`Carregando histórico…`));
+				return _el$6;
+			}
+		}), null);
+		insert(_el$3, createComponent(Show, {
+			get when() {
+				return memo(() => !!!loading())() && requestFailed();
+			},
+			get children() {
+				return createComponent(For, {
+					get each() {
+						return usageHistoryTextLines("Falha ao consultar o histórico.", props.width);
+					},
+					children: (line) => (() => {
+						var _el$0 = createElement("text");
+						insert(_el$0, line);
+						return _el$0;
+					})()
+				});
+			}
+		}), null);
+		insert(_el$3, createComponent(Show, {
+			get when() {
+				return memo(() => !!!loading())() && unavailable();
+			},
+			children: (message) => createComponent(For, {
+				get each() {
+					return usageHistoryTextLines(message(), props.width);
+				},
+				children: (line) => (() => {
+					var _el$1 = createElement("text");
+					insert(_el$1, line);
+					return _el$1;
+				})()
+			})
+		}), null);
+		insert(_el$3, createComponent(Show, {
+			get when() {
+				return memo(() => !!(!loading() && !requestFailed()))() && available();
+			},
+			children: (history) => (() => {
+				var _el$10 = createElement("box");
+				setProp(_el$10, "flexDirection", "column");
+				insert(_el$10, createComponent(For, {
+					get each() {
+						return usageHistoryTextLines(usageHistoryCoverageLabel(history()), props.width);
+					},
+					children: (line) => (() => {
+						var _el$11 = createElement("text");
+						insert(_el$11, line);
+						return _el$11;
+					})()
+				}), null);
+				insert(_el$10, createComponent(For, {
+					get each() {
+						return warning();
+					},
+					children: (line) => (() => {
+						var _el$12 = createElement("text");
+						insert(_el$12, line);
+						return _el$12;
+					})()
+				}), null);
+				insert(_el$10, createComponent(For, {
+					get each() {
+						return usageHistoryTextLines(usageHistoryPricingLabel(history()), props.width);
+					},
+					children: (line) => (() => {
+						var _el$13 = createElement("text");
+						insert(_el$13, line);
+						return _el$13;
+					})()
+				}), null);
+				insert(_el$10, createComponent(For, {
+					get each() {
+						return chartLines();
+					},
+					children: (line) => (() => {
+						var _el$14 = createElement("text");
+						insert(_el$14, line);
+						return _el$14;
+					})()
+				}), null);
+				return _el$10;
+			})()
+		}), null);
+		return _el$3;
+	})();
+}
+//#endregion
 //#region src/quota-v2.tsx
 /** @jsxImportSource @opentui/solid */
 const QUOTA_PANEL_NAME = "pantheon.quota";
 const QUOTA_OPEN_COMMAND_ID = "pantheon.quota.open";
-const QUOTA_ICON = "▥";
+function quotaIcon(name, mode) {
+	return icon(name, mode ? { mode } : void 0);
+}
+function iconInSlot(name, width, mode) {
+	const glyph = quotaIcon(name, mode);
+	return `${glyph}${" ".repeat(Math.max(0, width - cellWidth(glyph)))}`;
+}
+const QUOTA_ICON = quotaIcon("refresh");
 const QUOTA_PANEL_TOAST = "Abra uma sessão para ver os detalhes da quota.";
 const MODEL_USAGE_REFRESH_EVENTS = [
 	"session.created",
@@ -956,9 +3989,9 @@ function snapshotSummary(snapshot, display) {
 	const metric = metrics.find((item) => item.kind !== "provider_status") ?? metrics[0];
 	if (metric) {
 		const value = compactQuotaMetric(metric, display) ?? "quota indisponível";
-		return snapshot.status === "partial" ? `parcial · ${value}` : value;
+		return snapshot.status === "partial" ? `quota parcialmente disponível · ${value}` : value;
 	}
-	if (snapshot.status === "partial") return "dados parciais";
+	if (snapshot.status === "partial") return "quota parcialmente disponível";
 	if (snapshot.providers[0]?.message) return snapshot.providers[0].message;
 	return "quota indisponível";
 }
@@ -1015,16 +4048,16 @@ function QuotaSidebarSummary(props) {
 			insertNode(_el$3, _el$4);
 			setProp(_el$3, "flexDirection", "column");
 			setProp(_el$3, "marginTop", 1);
-			insertNode(_el$4, createTextNode(`▥ Pantheon quota`));
+			insert(_el$4, `${QUOTA_ICON} Pantheon quota`);
 			insert(_el$3, createComponent(Show, {
 				get when() {
 					return props.runtime.snapshot().status !== "ready" || entries().length === 0;
 				},
 				get children() {
-					var _el$6 = createElement("text");
-					insert(_el$6, () => quotaSnapshotStatusLabel(props.runtime.snapshot().status, props.runtime.snapshot().error));
-					effect((_$p) => setProp(_el$6, "fg", muted(props.context), _$p));
-					return _el$6;
+					var _el$5 = createElement("text");
+					insert(_el$5, () => quotaSnapshotStatusLabel(props.runtime.snapshot().status, props.runtime.snapshot().error));
+					effect((_$p) => setProp(_el$5, "fg", muted(props.context), _$p));
+					return _el$5;
 				}
 			}), null);
 			insert(_el$3, createComponent(For, {
@@ -1032,9 +4065,9 @@ function QuotaSidebarSummary(props) {
 					return props.runtime.snapshot().providers;
 				},
 				children: (provider) => (() => {
-					var _el$7 = createElement("box");
-					setProp(_el$7, "flexDirection", "column");
-					insert(_el$7, createComponent(Show, {
+					var _el$6 = createElement("box");
+					setProp(_el$6, "flexDirection", "column");
+					insert(_el$6, createComponent(Show, {
 						get when() {
 							return entries().some((entry) => entry.providerID === provider.id) || finance().some((entry) => entry.providerID === provider.id) || provider.metrics.some((metric) => metric.kind === "provider_status");
 						},
@@ -1044,15 +4077,15 @@ function QuotaSidebarSummary(props) {
 									return quotaTextLines(provider.label, 34, 0);
 								},
 								children: (line) => (() => {
-									var _el$8 = createElement("text");
-									insert(_el$8, line);
-									effect((_$p) => setProp(_el$8, "fg", muted(props.context), _$p));
-									return _el$8;
+									var _el$7 = createElement("text");
+									insert(_el$7, line);
+									effect((_$p) => setProp(_el$7, "fg", muted(props.context), _$p));
+									return _el$7;
 								})()
 							});
 						}
 					}), null);
-					insert(_el$7, createComponent(For, {
+					insert(_el$6, createComponent(For, {
 						get each() {
 							return entries().filter((entry) => entry.providerID === provider.id);
 						},
@@ -1069,7 +4102,7 @@ function QuotaSidebarSummary(props) {
 							}
 						})
 					}), null);
-					insert(_el$7, createComponent(For, {
+					insert(_el$6, createComponent(For, {
 						get each() {
 							return provider.metrics.filter((metric) => metric.kind === "provider_status");
 						},
@@ -1078,14 +4111,14 @@ function QuotaSidebarSummary(props) {
 								return quotaMetricLines(metric, 34);
 							},
 							children: (line) => (() => {
-								var _el$9 = createElement("text");
-								insert(_el$9, line);
-								effect((_$p) => setProp(_el$9, "fg", muted(props.context), _$p));
-								return _el$9;
+								var _el$8 = createElement("text");
+								insert(_el$8, line);
+								effect((_$p) => setProp(_el$8, "fg", muted(props.context), _$p));
+								return _el$8;
 							})()
 						})
 					}), null);
-					insert(_el$7, createComponent(For, {
+					insert(_el$6, createComponent(For, {
 						get each() {
 							return finance().filter((entry) => entry.providerID === provider.id);
 						},
@@ -1094,14 +4127,14 @@ function QuotaSidebarSummary(props) {
 								return financeMetricLines(entry.metric, 34);
 							},
 							children: (line) => (() => {
-								var _el$0 = createElement("text");
-								insert(_el$0, line);
-								effect((_$p) => setProp(_el$0, "fg", base(props.context), _$p));
-								return _el$0;
+								var _el$9 = createElement("text");
+								insert(_el$9, line);
+								effect((_$p) => setProp(_el$9, "fg", base(props.context), _$p));
+								return _el$9;
 							})()
 						})
 					}), null);
-					return _el$7;
+					return _el$6;
 				})()
 			}), null);
 			effect((_$p) => setProp(_el$4, "fg", base(props.context), _$p));
@@ -1116,10 +4149,10 @@ function QuotaFooterSummary(props) {
 			return preferences().enabled;
 		},
 		get children() {
-			var _el$1 = createElement("text");
-			insert(_el$1, () => `Quota · ${snapshotSummary(props.runtime.snapshot(), preferences().display)}`);
-			effect((_$p) => setProp(_el$1, "fg", muted(props.context), _$p));
-			return _el$1;
+			var _el$0 = createElement("text");
+			insert(_el$0, () => `Quota · ${snapshotSummary(props.runtime.snapshot(), preferences().display)}`);
+			effect((_$p) => setProp(_el$0, "fg", muted(props.context), _$p));
+			return _el$0;
 		}
 	});
 }
@@ -1181,19 +4214,9 @@ function quotaWindowLines(metric, display, width, now, sidebarPercent = false) {
 	const compact = `  ${title} ${value}`;
 	const prefix = cellWidth(padded) <= width ? padded : compact;
 	const suffix = reset ? ` ${reset}` : "";
-	const rawBar = progress && (sidebarPercent || metric.unit.trim() === "%") ? contextBar(progress.usedPercent, 4) : void 0;
-	const bar = rawBar ? {
-		...rawBar,
-		empty: "░".repeat(cellWidth(rawBar.empty))
-	} : void 0;
 	const secondaryAmount = sidebarPercent ? void 0 : quotaAmount(display === "remaining" ? metric.used : metric.remaining, metric.unit);
 	const secondary = secondaryAmount ? quotaTextLines(`${display === "remaining" ? "Usado" : "Restante"} ${secondaryAmount}`, width, 4) : [];
 	if (!sidebarPercent && progress) secondary.push(...quotaTextLines(`${progress.remainingPercent}% restante`, width, 4));
-	if (bar && cellWidth(prefix + suffix) + 5 <= width) return [
-		`${prefix} ${bar.filled}${bar.empty}${suffix}`,
-		...resetDateLines,
-		...secondary
-	];
 	if (cellWidth(prefix + suffix) <= width) return [
 		`${prefix}${suffix}`,
 		...resetDateLines,
@@ -1219,20 +4242,20 @@ function quotaWindowLines(metric, display, width, now, sidebarPercent = false) {
 }
 function QuotaWindow(props) {
 	return (() => {
-		var _el$10 = createElement("box");
-		setProp(_el$10, "flexDirection", "column");
-		insert(_el$10, createComponent(For, {
+		var _el$1 = createElement("box");
+		setProp(_el$1, "flexDirection", "column");
+		insert(_el$1, createComponent(For, {
 			get each() {
 				return quotaWindowLines(props.metric, props.display, props.width, props.now);
 			},
 			children: (line) => (() => {
-				var _el$11 = createElement("text");
-				insert(_el$11, line);
-				effect((_$p) => setProp(_el$11, "fg", quotaColor(props.context, quotaProgress(props.metric)?.usedPercent), _$p));
-				return _el$11;
+				var _el$10 = createElement("text");
+				insert(_el$10, line);
+				effect((_$p) => setProp(_el$10, "fg", quotaColor(props.context, quotaProgress(props.metric)?.usedPercent), _$p));
+				return _el$10;
 			})()
 		}));
-		return _el$10;
+		return _el$1;
 	})();
 }
 function metricRow(metric) {
@@ -1292,37 +4315,37 @@ function QuotaMetricLine(props) {
 			return row();
 		},
 		get children() {
-			var _el$12 = createElement("box");
-			setProp(_el$12, "flexDirection", "column");
-			insert(_el$12, createComponent(For, {
+			var _el$11 = createElement("box");
+			setProp(_el$11, "flexDirection", "column");
+			insert(_el$11, createComponent(For, {
 				get each() {
 					return quotaMetricLines(props.metric, props.width);
 				},
 				children: (line) => (() => {
-					var _el$13 = createElement("text");
-					insert(_el$13, line);
-					effect((_$p) => setProp(_el$13, "fg", base(props.context), _$p));
-					return _el$13;
+					var _el$12 = createElement("text");
+					insert(_el$12, line);
+					effect((_$p) => setProp(_el$12, "fg", base(props.context), _$p));
+					return _el$12;
 				})()
 			}));
-			return _el$12;
+			return _el$11;
 		}
 	});
 }
-function providerState(provider) {
+function providerState(provider, mode) {
 	if (provider.authentication === "not_connected") return {
-		label: "○ Precisa configurar",
+		label: `${iconInSlot("settings", 2, mode)} Precisa configurar`,
 		tone: "warning"
 	};
 	if (provider.authentication === "unavailable") return {
-		label: "× Indisponível",
+		label: `${iconInSlot("close", 2, mode)} Indisponível`,
 		tone: "error"
 	};
 	return provider.state === "available" ? {
-		label: "✓ Credencial local · há dados",
+		label: `${iconInSlot("check", 2, mode)} Credencial local · há dados`,
 		tone: "success"
 	} : {
-		label: "! Credencial local · sem dados",
+		label: `${iconInSlot("warning", 2, mode)} Credencial local · sem dados`,
 		tone: "warning"
 	};
 }
@@ -1404,34 +4427,85 @@ function recentModelUsage(context, sessionID) {
 		revertMessageID
 	});
 }
-function ModelUsageDetails(props) {
+function activeQuotaModelLabel(row) {
+	return row ? `Modelo ativo · ${activeModelIdentity(row)}` : "Modelo ativo indisponível";
+}
+function quotaPanelStatusMessage(snapshot) {
+	if (snapshot.status === "partial") return "Dados parciais";
+	if (snapshot.status === "ready") return void 0;
+	return quotaSnapshotStatusLabel(snapshot.status, snapshot.error);
+}
+function useRecentModelUsage(context, sessionID) {
 	const [revision, setRevision] = createSignal(0);
 	const rows = createMemo(() => {
 		revision();
-		return recentModelUsage(props.context, props.sessionID);
+		return recentModelUsage(context, sessionID);
 	});
 	onMount(() => {
 		const unsubscribe = [];
 		for (const event of MODEL_USAGE_REFRESH_EVENTS) try {
-			unsubscribe.push(props.context.data.on(event, () => setRevision((value) => value + 1)));
+			unsubscribe.push(context.data.on(event, () => setRevision((value) => value + 1)));
 		} catch {}
 		onCleanup(() => {
 			for (const dispose of unsubscribe) dispose();
 		});
 	});
+	return rows;
+}
+function ActiveModelHeader(props) {
+	const rows = useRecentModelUsage(props.context, props.sessionID);
+	const activeModel = createMemo(() => rows().find((row) => row.active));
+	const status = () => props.snapshot.status;
+	const message = () => quotaPanelStatusMessage(props.snapshot);
+	const modelLine = () => activeQuotaModelLabel(activeModel());
+	return (() => {
+		var _el$13 = createElement("box");
+		setProp(_el$13, "flexDirection", "column");
+		insert(_el$13, createComponent(For, {
+			get each() {
+				return quotaTextLines(modelLine(), props.width, 0);
+			},
+			children: (line) => (() => {
+				var _el$14 = createElement("text");
+				insert(_el$14, line);
+				effect((_$p) => setProp(_el$14, "fg", base(props.context), _$p));
+				return _el$14;
+			})()
+		}), null);
+		insert(_el$13, createComponent(Show, {
+			get when() {
+				return message();
+			},
+			children: (label) => createComponent(For, {
+				get each() {
+					return quotaTextLines(label(), props.width, 0);
+				},
+				children: (line) => (() => {
+					var _el$15 = createElement("text");
+					insert(_el$15, line);
+					effect((_$p) => setProp(_el$15, "fg", status() === "partial" ? tone(props.context, "warning") : tone(props.context, status() === "unavailable" ? "error" : "info"), _$p));
+					return _el$15;
+				})()
+			})
+		}), null);
+		return _el$13;
+	})();
+}
+function ModelUsageDetails(props) {
+	const rows = useRecentModelUsage(props.context, props.sessionID);
 	const contextTone = (percent) => tone(props.context, contextUsageTone(percent));
 	const contextCells = () => Math.max(4, Math.min(12, Math.floor((props.width - 30) / 2)));
 	const modelLabel = (row) => `${row.providerID ? `${row.providerID}/` : ""}${row.label}`;
 	return (() => {
-		var _el$14 = createElement("box"), _el$15 = createElement("text"), _el$17 = createElement("text");
-		insertNode(_el$14, _el$15);
-		insertNode(_el$14, _el$17);
-		setProp(_el$14, "flexDirection", "column");
-		setProp(_el$14, "paddingTop", 1);
-		insertNode(_el$15, createTextNode(`Modelos em uso`));
-		setProp(_el$15, "attributes", 1);
-		insertNode(_el$17, createTextNode(`Mensagens recentes da sessão ativa e delegações.`));
-		insert(_el$14, createComponent(For, {
+		var _el$16 = createElement("box"), _el$17 = createElement("text"), _el$19 = createElement("text");
+		insertNode(_el$16, _el$17);
+		insertNode(_el$16, _el$19);
+		setProp(_el$16, "flexDirection", "column");
+		setProp(_el$16, "paddingTop", 1);
+		insertNode(_el$17, createTextNode(`Modelos em uso`));
+		setProp(_el$17, "attributes", 1);
+		insertNode(_el$19, createTextNode(`Mensagens recentes da sessão ativa e delegações.`));
+		insert(_el$16, createComponent(For, {
 			get each() {
 				return rows();
 			},
@@ -1441,11 +4515,18 @@ function ModelUsageDetails(props) {
 						return row.active;
 					},
 					get children() {
-						var _el$19 = createElement("text");
-						insertNode(_el$19, createTextNode(`MODELO ATUAL`));
-						setProp(_el$19, "attributes", 1);
-						effect((_$p) => setProp(_el$19, "fg", tone(props.context, "info"), _$p));
-						return _el$19;
+						return createComponent(For, {
+							get each() {
+								return quotaTextLines(`MODELO ATUAL · ${activeModelIdentity(row)}`, props.width, 0);
+							},
+							children: (line) => (() => {
+								var _el$31 = createElement("text");
+								setProp(_el$31, "attributes", 1);
+								insert(_el$31, line);
+								effect((_$p) => setProp(_el$31, "fg", tone(props.context, "info"), _$p));
+								return _el$31;
+							})()
+						});
 					}
 				}),
 				createComponent(Show, {
@@ -1474,10 +4555,10 @@ function ModelUsageDetails(props) {
 						},
 						get fallback() {
 							return (() => {
-								var _el$31 = createElement("text");
-								insertNode(_el$31, createTextNode(`dados indisponíveis`));
-								effect((_$p) => setProp(_el$31, "fg", muted(props.context), _$p));
-								return _el$31;
+								var _el$32 = createElement("text");
+								insertNode(_el$32, createTextNode(`dados indisponíveis`));
+								effect((_$p) => setProp(_el$32, "fg", muted(props.context), _$p));
+								return _el$32;
 							})();
 						},
 						get children() {
@@ -1508,69 +4589,51 @@ function ModelUsageDetails(props) {
 						children: (usage) => {
 							const bar = () => contextBar(usage().percent, contextCells());
 							return (() => {
-								var _el$33 = createElement("box"), _el$34 = createElement("box"), _el$35 = createElement("text"), _el$37 = createElement("text"), _el$38 = createElement("box"), _el$39 = createElement("text");
-								insertNode(_el$33, _el$34);
-								insertNode(_el$33, _el$38);
-								setProp(_el$33, "flexDirection", "column");
-								setProp(_el$33, "paddingTop", 1);
+								var _el$34 = createElement("box"), _el$35 = createElement("box"), _el$36 = createElement("text"), _el$38 = createElement("text"), _el$39 = createElement("box"), _el$40 = createElement("text");
 								insertNode(_el$34, _el$35);
-								insertNode(_el$34, _el$37);
-								setProp(_el$34, "flexDirection", "row");
-								setProp(_el$34, "justifyContent", "space-between");
-								setProp(_el$34, "gap", 1);
-								insertNode(_el$35, createTextNode(`Último contexto reportado`));
-								insert(_el$37, () => `${formatTokenCount(usage().tokens) ?? "—"} tokens`);
-								insertNode(_el$38, _el$39);
-								setProp(_el$38, "flexDirection", "row");
-								setProp(_el$38, "gap", 1);
-								insert(_el$38, createComponent(Show, {
+								insertNode(_el$34, _el$39);
+								setProp(_el$34, "flexDirection", "column");
+								setProp(_el$34, "paddingTop", 1);
+								insertNode(_el$35, _el$36);
+								insertNode(_el$35, _el$38);
+								setProp(_el$35, "flexDirection", "row");
+								setProp(_el$35, "justifyContent", "space-between");
+								setProp(_el$35, "gap", 1);
+								insertNode(_el$36, createTextNode(`Último contexto reportado`));
+								insert(_el$38, () => `${formatTokenCount(usage().tokens) ?? "—"} tokens`);
+								insertNode(_el$39, _el$40);
+								setProp(_el$39, "flexDirection", "row");
+								setProp(_el$39, "gap", 1);
+								insert(_el$39, createComponent(Show, {
 									get when() {
 										return bar();
 									},
 									children: (cells) => [(() => {
-										var _el$40 = createElement("text");
-										insert(_el$40, () => cells().filled);
-										effect((_$p) => setProp(_el$40, "fg", contextTone(usage().percent), _$p));
-										return _el$40;
-									})(), (() => {
 										var _el$41 = createElement("text");
-										insert(_el$41, () => cells().empty);
-										effect((_$p) => setProp(_el$41, "fg", muted(props.context), _$p));
+										insert(_el$41, () => cells().filled);
+										effect((_$p) => setProp(_el$41, "fg", contextTone(usage().percent), _$p));
 										return _el$41;
+									})(), (() => {
+										var _el$42 = createElement("text");
+										insert(_el$42, () => cells().empty);
+										effect((_$p) => setProp(_el$42, "fg", muted(props.context), _$p));
+										return _el$42;
 									})()]
-								}), _el$39);
-								insert(_el$39, () => `${usage().percent}% de ${formatContextWindow(usage().limit) ?? "—"}`);
+								}), _el$40);
+								insert(_el$40, () => `${usage().percent}% de ${formatContextWindow(usage().limit) ?? "—"}`);
 								effect((_p$) => {
 									var _v$5 = muted(props.context), _v$6 = contextTone(usage().percent), _v$7 = contextTone(usage().percent);
-									_v$5 !== _p$.e && (_p$.e = setProp(_el$35, "fg", _v$5, _p$.e));
-									_v$6 !== _p$.t && (_p$.t = setProp(_el$37, "fg", _v$6, _p$.t));
-									_v$7 !== _p$.a && (_p$.a = setProp(_el$39, "fg", _v$7, _p$.a));
+									_v$5 !== _p$.e && (_p$.e = setProp(_el$36, "fg", _v$5, _p$.e));
+									_v$6 !== _p$.t && (_p$.t = setProp(_el$38, "fg", _v$6, _p$.t));
+									_v$7 !== _p$.a && (_p$.a = setProp(_el$40, "fg", _v$7, _p$.a));
 									return _p$;
 								}, {
 									e: void 0,
 									t: void 0,
 									a: void 0
 								});
-								return _el$33;
+								return _el$34;
 							})();
-						}
-					}), null);
-					insert(_el$23, createComponent(Show, {
-						get when() {
-							return row.cost !== null;
-						},
-						get children() {
-							return createComponent(For, {
-								get each() {
-									return quotaTextLines(`Custo reportado · mensagens recentes · ${formatSpent(row.cost) ?? "—"}`, props.width - 2, 0);
-								},
-								children: (line) => (() => {
-									var _el$42 = createElement("text");
-									insert(_el$42, line);
-									effect((_$p) => setProp(_el$42, "fg", muted(props.context), _$p));
-									return _el$42;
-								})()
-							});
 						}
 					}), null);
 					insert(_el$23, createComponent(Show, {
@@ -1584,6 +4647,46 @@ function ModelUsageDetails(props) {
 							return _el$29;
 						}
 					}), null);
+					insert(_el$23, createComponent(Show, {
+						get when() {
+							return row.active;
+						},
+						get children() {
+							return createComponent(ActiveContextEstimate, {
+								get context() {
+									return props.context;
+								},
+								get providerID() {
+									return row.providerID;
+								},
+								get modelID() {
+									return row.modelID;
+								},
+								get contextTokens() {
+									return row.context?.tokens ?? null;
+								},
+								get width() {
+									return props.width - 2;
+								}
+							});
+						}
+					}), null);
+					insert(_el$23, createComponent(Show, {
+						get when() {
+							return memo(() => row.cost === null)() ? null : sessionSpendLabel(row.cost);
+						},
+						children: (label) => createComponent(For, {
+							get each() {
+								return quotaTextLines(label(), props.width - 2, 0);
+							},
+							children: (line) => (() => {
+								var _el$43 = createElement("text");
+								insert(_el$43, line);
+								effect((_$p) => setProp(_el$43, "fg", muted(props.context), _$p));
+								return _el$43;
+							})()
+						})
+					}), null);
 					effect((_$p) => setProp(_el$24, "fg", base(props.context), _$p));
 					return _el$23;
 				})()
@@ -1591,14 +4694,14 @@ function ModelUsageDetails(props) {
 		}), null);
 		effect((_p$) => {
 			var _v$ = tone(props.context, "info"), _v$2 = muted(props.context);
-			_v$ !== _p$.e && (_p$.e = setProp(_el$15, "fg", _v$, _p$.e));
-			_v$2 !== _p$.t && (_p$.t = setProp(_el$17, "fg", _v$2, _p$.t));
+			_v$ !== _p$.e && (_p$.e = setProp(_el$17, "fg", _v$, _p$.e));
+			_v$2 !== _p$.t && (_p$.t = setProp(_el$19, "fg", _v$2, _p$.t));
 			return _p$;
 		}, {
 			e: void 0,
 			t: void 0
 		});
-		return _el$14;
+		return _el$16;
 	})();
 }
 function QuotaProviderDetails(props) {
@@ -1613,34 +4716,34 @@ function QuotaProviderDetails(props) {
 		return message && message !== "status indisponível" && message !== "dados de quota indisponíveis" && message !== "setup necessário" ? message : void 0;
 	};
 	return (() => {
-		var _el$43 = createElement("box"), _el$48 = createElement("text");
-		insertNode(_el$43, _el$48);
-		setProp(_el$43, "flexDirection", "column");
-		setProp(_el$43, "paddingBottom", 1);
-		insert(_el$43, createComponent(For, {
+		var _el$44 = createElement("box"), _el$49 = createElement("text");
+		insertNode(_el$44, _el$49);
+		setProp(_el$44, "flexDirection", "column");
+		setProp(_el$44, "paddingBottom", 1);
+		insert(_el$44, createComponent(For, {
 			get each() {
 				return quotaTextLines(props.provider.label, props.width, 0);
 			},
 			children: (line) => (() => {
-				var _el$49 = createElement("text");
-				setProp(_el$49, "attributes", 1);
-				insert(_el$49, line);
-				effect((_$p) => setProp(_el$49, "fg", tone(props.context, "info"), _$p));
-				return _el$49;
+				var _el$50 = createElement("text");
+				setProp(_el$50, "attributes", 1);
+				insert(_el$50, line);
+				effect((_$p) => setProp(_el$50, "fg", tone(props.context, "info"), _$p));
+				return _el$50;
 			})()
-		}), _el$48);
-		insert(_el$43, createComponent(For, {
+		}), _el$49);
+		insert(_el$44, createComponent(For, {
 			get each() {
 				return quotaTextLines(state().label, props.width, 0);
 			},
 			children: (line) => (() => {
-				var _el$50 = createElement("text");
-				insert(_el$50, line);
-				effect((_$p) => setProp(_el$50, "fg", tone(props.context, state().tone), _$p));
-				return _el$50;
+				var _el$51 = createElement("text");
+				insert(_el$51, line);
+				effect((_$p) => setProp(_el$51, "fg", tone(props.context, state().tone), _$p));
+				return _el$51;
 			})()
-		}), _el$48);
-		insert(_el$43, createComponent(Show, {
+		}), _el$49);
+		insert(_el$44, createComponent(Show, {
 			get when() {
 				return quotaMetrics().length > 0;
 			},
@@ -1666,17 +4769,17 @@ function QuotaProviderDetails(props) {
 					})
 				});
 			}
-		}), _el$48);
-		insert(_el$43, createComponent(Show, {
+		}), _el$49);
+		insert(_el$44, createComponent(Show, {
 			get when() {
 				return financeMetrics().length > 0;
 			},
 			get children() {
 				return [(() => {
-					var _el$44 = createElement("text");
-					insertNode(_el$44, createTextNode(`GASTOS &amp; SALDO`));
-					effect((_$p) => setProp(_el$44, "fg", muted(props.context), _$p));
-					return _el$44;
+					var _el$45 = createElement("text");
+					insertNode(_el$45, createTextNode(`GASTOS &amp; SALDO`));
+					effect((_$p) => setProp(_el$45, "fg", muted(props.context), _$p));
+					return _el$45;
 				})(), createComponent(For, {
 					get each() {
 						return financeMetrics();
@@ -1692,17 +4795,17 @@ function QuotaProviderDetails(props) {
 					})
 				})];
 			}
-		}), _el$48);
-		insert(_el$43, createComponent(Show, {
+		}), _el$49);
+		insert(_el$44, createComponent(Show, {
 			get when() {
 				return otherMetrics().length > 0;
 			},
 			get children() {
 				return [(() => {
-					var _el$46 = createElement("text");
-					insertNode(_el$46, createTextNode(`OUTRAS MÉTRICAS`));
-					effect((_$p) => setProp(_el$46, "fg", muted(props.context), _$p));
-					return _el$46;
+					var _el$47 = createElement("text");
+					insertNode(_el$47, createTextNode(`OUTRAS MÉTRICAS`));
+					effect((_$p) => setProp(_el$47, "fg", muted(props.context), _$p));
+					return _el$47;
 				})(), createComponent(For, {
 					get each() {
 						return otherMetrics();
@@ -1718,22 +4821,33 @@ function QuotaProviderDetails(props) {
 					})
 				})];
 			}
-		}), _el$48);
-		insert(_el$43, createComponent(Show, {
+		}), _el$49);
+		insert(_el$44, createComponent(Show, {
 			get when() {
 				return safeError();
 			},
 			children: (message) => (() => {
-				var _el$51 = createElement("text");
-				insert(_el$51, () => clipped(`! ${message()}`, props.width - 2));
-				effect((_$p) => setProp(_el$51, "fg", tone(props.context, "warning"), _$p));
-				return _el$51;
+				var _el$52 = createElement("text");
+				insert(_el$52, () => clipped(`! ${message()}`, props.width - 2));
+				effect((_$p) => setProp(_el$52, "fg", tone(props.context, "warning"), _$p));
+				return _el$52;
 			})()
-		}), _el$48);
-		insert(_el$48, () => "─".repeat(Math.max(8, Math.min(32, props.width - 4))));
-		effect((_$p) => setProp(_el$48, "fg", muted(props.context), _$p));
-		return _el$43;
+		}), _el$49);
+		insert(_el$49, () => "─".repeat(Math.max(8, Math.min(32, props.width - 4))));
+		effect((_$p) => setProp(_el$49, "fg", muted(props.context), _$p));
+		return _el$44;
 	})();
+}
+const QUOTA_TABS = [
+	"usage",
+	"limits",
+	"plugin",
+	"settings"
+];
+const DEFAULT_QUOTA_TAB = "limits";
+function moveQuotaTab(current, direction) {
+	const nextIndex = (QUOTA_TABS.indexOf(current) + direction + QUOTA_TABS.length) % QUOTA_TABS.length;
+	return QUOTA_TABS[nextIndex] ?? "limits";
 }
 const QUOTA_PANEL_COMMANDS = [
 	{
@@ -1772,17 +4886,37 @@ function runQuotaPanelCommand(action, panel, runtime) {
 			return;
 	}
 }
-function quotaPanelKeymapLayer(panel, runtime) {
+function quotaPanelKeymapLayer(panel, runtime, onTabChange) {
 	const focused = () => panel.focused === true;
 	return {
 		mode: "global",
 		enabled: focused,
-		commands: QUOTA_PANEL_COMMANDS.map((command) => ({
-			id: command.id,
-			title: command.title,
-			bind: command.bind,
-			run: () => focused() ? runQuotaPanelCommand(command.action, panel, runtime) : false
-		}))
+		commands: [
+			...QUOTA_PANEL_COMMANDS.map((command) => ({
+				id: command.id,
+				title: command.title,
+				bind: command.bind,
+				run: () => focused() ? runQuotaPanelCommand(command.action, panel, runtime) : false
+			})),
+			{
+				id: "pantheon.quota.next-tab",
+				title: "Quota: próxima aba",
+				bind: "tab",
+				run: () => {
+					if (!focused()) return false;
+					onTabChange?.(1);
+				}
+			},
+			{
+				id: "pantheon.quota.previous-tab",
+				title: "Quota: aba anterior",
+				bind: "shift+tab",
+				run: () => {
+					if (!focused()) return false;
+					onTabChange?.(-1);
+				}
+			}
+		]
 	};
 }
 function quotaOpenCommand(context) {
@@ -1817,151 +4951,230 @@ function openQuotaPanel(context) {
 	} catch {}
 	return false;
 }
-function QuotaPanel(props) {
-	props.context.keymap.layer(() => quotaPanelKeymapLayer(props.panel, props.runtime));
-	const preferences = () => props.runtime.preferences();
-	const snapshot = () => props.runtime.snapshot();
-	const snapshotTone = () => {
-		switch (snapshot().status) {
-			case "ready": return "success";
-			case "partial":
-			case "connected_unavailable":
-			case "needs_setup":
-			case "stale": return "warning";
-			case "unavailable": return "error";
-			case "loading":
-			case "disabled": return "info";
-		}
-	};
+const QUOTA_TAB_LABELS = {
+	usage: "Usage",
+	limits: "Limits",
+	plugin: "Plugin",
+	settings: "Settings"
+};
+const QUOTA_TAB_ICONS = {
+	usage: "clock",
+	limits: "gauge",
+	plugin: "plug",
+	settings: "settings"
+};
+function quotaTabLabel(tab, mode) {
+	return `${iconInSlot(QUOTA_TAB_ICONS[tab], 3, mode)} ${QUOTA_TAB_LABELS[tab]}`;
+}
+function QuotaTabNavigation(props) {
 	return (() => {
-		var _el$52 = createElement("box"), _el$64 = createElement("scrollbox"), _el$65 = createElement("box"), _el$66 = createElement("box"), _el$67 = createElement("text"), _el$68 = createElement("text"), _el$69 = createElement("text"), _el$71 = createElement("text");
-		insertNode(_el$52, _el$64);
-		insertNode(_el$52, _el$66);
-		setProp(_el$52, "flexDirection", "column");
-		setProp(_el$52, "width", "100%");
-		setProp(_el$52, "height", "100%");
-		setProp(_el$52, "padding", 1);
-		insert(_el$52, createComponent(Show, {
-			get when() {
-				return props.panel.width >= 54;
-			},
-			get fallback() {
-				return (() => {
-					var _el$73 = createElement("box"), _el$74 = createElement("text"), _el$76 = createElement("text");
-					insertNode(_el$73, _el$74);
-					insertNode(_el$73, _el$76);
-					setProp(_el$73, "flexDirection", "column");
-					insertNode(_el$74, createTextNode(`▥ Pantheon / Quota`));
-					setProp(_el$74, "attributes", 1);
-					insert(_el$76, () => quotaSnapshotStatusLabel(snapshot().status, snapshot().error));
-					effect((_p$) => {
-						var _v$15 = tone(props.context, "info"), _v$16 = tone(props.context, snapshotTone());
-						_v$15 !== _p$.e && (_p$.e = setProp(_el$74, "fg", _v$15, _p$.e));
-						_v$16 !== _p$.t && (_p$.t = setProp(_el$76, "fg", _v$16, _p$.t));
-						return _p$;
-					}, {
-						e: void 0,
-						t: void 0
-					});
-					return _el$73;
-				})();
-			},
-			get children() {
-				var _el$53 = createElement("box"), _el$54 = createElement("text"), _el$56 = createElement("text");
-				insertNode(_el$53, _el$54);
-				insertNode(_el$53, _el$56);
-				setProp(_el$53, "flexDirection", "row");
-				setProp(_el$53, "justifyContent", "space-between");
-				setProp(_el$53, "gap", 1);
-				insertNode(_el$54, createTextNode(`▥ Pantheon / Quota`));
-				setProp(_el$54, "attributes", 1);
-				insert(_el$56, () => quotaSnapshotStatusLabel(snapshot().status, snapshot().error));
+		var _el$53 = createElement("box");
+		setProp(_el$53, "gap", 1);
+		insert(_el$53, createComponent(For, {
+			each: QUOTA_TABS,
+			children: (tab) => (() => {
+				var _el$54 = createElement("box"), _el$55 = createElement("text");
+				insertNode(_el$54, _el$55);
+				setProp(_el$54, "onMouseDown", () => props.onSelect(tab));
+				insert(_el$55, () => `${props.selected === tab ? "› " : "  "}${quotaTabLabel(tab)}`);
 				effect((_p$) => {
-					var _v$8 = tone(props.context, "info"), _v$9 = tone(props.context, snapshotTone());
-					_v$8 !== _p$.e && (_p$.e = setProp(_el$54, "fg", _v$8, _p$.e));
-					_v$9 !== _p$.t && (_p$.t = setProp(_el$56, "fg", _v$9, _p$.t));
+					var _v$8 = props.selected === tab ? tone(props.context, "info") : muted(props.context), _v$9 = props.selected === tab ? 1 : 0;
+					_v$8 !== _p$.e && (_p$.e = setProp(_el$55, "fg", _v$8, _p$.e));
+					_v$9 !== _p$.t && (_p$.t = setProp(_el$55, "attributes", _v$9, _p$.t));
 					return _p$;
 				}, {
 					e: void 0,
 					t: void 0
 				});
-				return _el$53;
-			}
-		}), _el$64);
-		insert(_el$52, createComponent(Show, {
+				return _el$54;
+			})()
+		}));
+		effect((_$p) => setProp(_el$53, "flexDirection", props.width < 54 ? "column" : "row", _$p));
+		return _el$53;
+	})();
+}
+function QuotaCloseButton(props) {
+	return (() => {
+		var _el$56 = createElement("box"), _el$57 = createElement("text");
+		insertNode(_el$56, _el$57);
+		insert(_el$57, () => `${quotaIcon("close")} Fechar`);
+		effect((_p$) => {
+			var _v$0 = props.close, _v$1 = tone(props.context, "info");
+			_v$0 !== _p$.e && (_p$.e = setProp(_el$56, "onMouseDown", _v$0, _p$.e));
+			_v$1 !== _p$.t && (_p$.t = setProp(_el$57, "fg", _v$1, _p$.t));
+			return _p$;
+		}, {
+			e: void 0,
+			t: void 0
+		});
+		return _el$56;
+	})();
+}
+function QuotaPluginDetails(props) {
+	return (() => {
+		var _el$58 = createElement("box"), _el$59 = createElement("text"), _el$61 = createElement("text"), _el$62 = createElement("text"), _el$64 = createElement("text"), _el$69 = createElement("text");
+		insertNode(_el$58, _el$59);
+		insertNode(_el$58, _el$61);
+		insertNode(_el$58, _el$62);
+		insertNode(_el$58, _el$64);
+		insertNode(_el$58, _el$69);
+		setProp(_el$58, "flexDirection", "column");
+		setProp(_el$58, "paddingTop", 1);
+		insertNode(_el$59, createTextNode(`Plugin`));
+		setProp(_el$59, "attributes", 1);
+		insert(_el$61, `Pantheon TUI v1.6.2-beta.2`);
+		insertNode(_el$62, createTextNode(`Status de conexão consultado pelo OpenCode; segredos não são exibidos.`));
+		insert(_el$64, () => `Status da quota: ${quotaSnapshotStatusLabel(props.snapshot.status, props.snapshot.error)}`);
+		insert(_el$58, createComponent(Show, {
 			get when() {
-				return memo(() => snapshot().error !== void 0)() && snapshot().status !== "ready";
+				return props.snapshot.details.length > 0;
 			},
 			get children() {
-				var _el$57 = createElement("text");
-				insert(_el$57, () => `Último erro: ${snapshot().error}`);
-				effect((_$p) => setProp(_el$57, "fg", muted(props.context), _$p));
-				return _el$57;
+				return [(() => {
+					var _el$65 = createElement("text");
+					insertNode(_el$65, createTextNode(`PROVEDORES DETECTADOS`));
+					effect((_$p) => setProp(_el$65, "fg", muted(props.context), _$p));
+					return _el$65;
+				})(), createComponent(For, {
+					get each() {
+						return props.snapshot.details;
+					},
+					children: (provider) => {
+						const state = providerState(provider);
+						return (() => {
+							var _el$71 = createElement("text");
+							insert(_el$71, () => `${provider.label} · ${state.label}`);
+							effect((_$p) => setProp(_el$71, "fg", tone(props.context, state.tone), _$p));
+							return _el$71;
+						})();
+					}
+				})];
 			}
-		}), _el$64);
-		insert(_el$52, createComponent(Show, {
+		}), _el$69);
+		insert(_el$58, createComponent(Show, {
 			get when() {
-				return memo(() => snapshot().status === "needs_setup")() && snapshot().details.length === 0;
+				return props.snapshot.details.length === 0;
 			},
 			get children() {
-				var _el$58 = createElement("text");
-				insertNode(_el$58, createTextNode(`Nenhum provedor elegível: verifique conexão ativa e credencial local compatível.`));
-				effect((_$p) => setProp(_el$58, "fg", muted(props.context), _$p));
-				return _el$58;
+				var _el$67 = createElement("text");
+				insertNode(_el$67, createTextNode(`Nenhum provedor elegível foi confirmado nesta sessão.`));
+				effect((_$p) => setProp(_el$67, "fg", muted(props.context), _$p));
+				return _el$67;
 			}
-		}), _el$64);
-		insert(_el$52, createComponent(Show, {
+		}), _el$69);
+		insertNode(_el$69, createTextNode(`Configure a conexão e credenciais pelo fluxo oficial do OpenCode; o painel não altera configurações.`));
+		effect((_p$) => {
+			var _v$10 = tone(props.context, "info"), _v$11 = base(props.context), _v$12 = muted(props.context), _v$13 = muted(props.context), _v$14 = muted(props.context);
+			_v$10 !== _p$.e && (_p$.e = setProp(_el$59, "fg", _v$10, _p$.e));
+			_v$11 !== _p$.t && (_p$.t = setProp(_el$61, "fg", _v$11, _p$.t));
+			_v$12 !== _p$.a && (_p$.a = setProp(_el$62, "fg", _v$12, _p$.a));
+			_v$13 !== _p$.o && (_p$.o = setProp(_el$64, "fg", _v$13, _p$.o));
+			_v$14 !== _p$.i && (_p$.i = setProp(_el$69, "fg", _v$14, _p$.i));
+			return _p$;
+		}, {
+			e: void 0,
+			t: void 0,
+			a: void 0,
+			o: void 0,
+			i: void 0
+		});
+		return _el$58;
+	})();
+}
+function QuotaSettings(props) {
+	const preferences = () => props.runtime.preferences();
+	return (() => {
+		var _el$72 = createElement("box"), _el$73 = createElement("text"), _el$75 = createElement("box"), _el$76 = createElement("text"), _el$77 = createElement("box"), _el$78 = createElement("text"), _el$79 = createElement("text");
+		insertNode(_el$72, _el$73);
+		insertNode(_el$72, _el$75);
+		insertNode(_el$72, _el$77);
+		insertNode(_el$72, _el$79);
+		setProp(_el$72, "flexDirection", "column");
+		setProp(_el$72, "paddingTop", 1);
+		insertNode(_el$73, createTextNode(`Settings`));
+		setProp(_el$73, "attributes", 1);
+		insertNode(_el$75, _el$76);
+		setProp(_el$75, "onMouseDown", () => void props.runtime.toggleEnabled());
+		insert(_el$76, () => `${quotaIcon(preferences().enabled ? "check" : "close")} [E] Quota ${preferences().enabled ? "ativada" : "desativada"} · clique para alternar`);
+		insertNode(_el$77, _el$78);
+		setProp(_el$77, "onMouseDown", () => void props.runtime.toggleDisplay());
+		insert(_el$78, () => `${quotaIcon("sliders")} [M] Exibir ${preferences().display === "remaining" ? "restante" : "usado"} · clique para alternar`);
+		insertNode(_el$79, createTextNode(`Tab/Shift+Tab navega pelas abas; Esc fecha o painel.`));
+		effect((_p$) => {
+			var _v$15 = tone(props.context, "info"), _v$16 = base(props.context), _v$17 = base(props.context), _v$18 = muted(props.context);
+			_v$15 !== _p$.e && (_p$.e = setProp(_el$73, "fg", _v$15, _p$.e));
+			_v$16 !== _p$.t && (_p$.t = setProp(_el$76, "fg", _v$16, _p$.t));
+			_v$17 !== _p$.a && (_p$.a = setProp(_el$78, "fg", _v$17, _p$.a));
+			_v$18 !== _p$.o && (_p$.o = setProp(_el$79, "fg", _v$18, _p$.o));
+			return _p$;
+		}, {
+			e: void 0,
+			t: void 0,
+			a: void 0,
+			o: void 0
+		});
+		return _el$72;
+	})();
+}
+function QuotaPanel(props) {
+	const [selectedTab, setSelectedTab] = createSignal(DEFAULT_QUOTA_TAB);
+	props.context.keymap.layer(() => quotaPanelKeymapLayer(props.panel, props.runtime, (direction) => setSelectedTab((tab) => moveQuotaTab(tab, direction))));
+	const preferences = () => props.runtime.preferences();
+	const snapshot = () => props.runtime.snapshot();
+	return (() => {
+		var _el$81 = createElement("box"), _el$91 = createElement("scrollbox"), _el$92 = createElement("box"), _el$94 = createElement("box"), _el$95 = createElement("text"), _el$96 = createElement("text"), _el$97 = createElement("text"), _el$98 = createElement("text");
+		insertNode(_el$81, _el$91);
+		insertNode(_el$81, _el$94);
+		setProp(_el$81, "flexDirection", "column");
+		setProp(_el$81, "width", "100%");
+		setProp(_el$81, "height", "100%");
+		setProp(_el$81, "padding", 1);
+		insert(_el$81, createComponent(Show, {
 			get when() {
-				return snapshot().status === "unavailable";
+				return props.panel.width >= 54;
+			},
+			get fallback() {
+				return (() => {
+					var _el$100 = createElement("box"), _el$101 = createElement("text");
+					insertNode(_el$100, _el$101);
+					setProp(_el$100, "flexDirection", "row");
+					setProp(_el$100, "justifyContent", "space-between");
+					setProp(_el$100, "gap", 1);
+					setProp(_el$101, "attributes", 1);
+					insert(_el$101, `${QUOTA_ICON} Pantheon / Quota`);
+					insert(_el$100, createComponent(QuotaCloseButton, {
+						get context() {
+							return props.context;
+						},
+						get close() {
+							return props.panel.close;
+						}
+					}), null);
+					effect((_$p) => setProp(_el$101, "fg", tone(props.context, "info"), _$p));
+					return _el$100;
+				})();
 			},
 			get children() {
-				var _el$60 = createElement("text");
-				insertNode(_el$60, createTextNode(`Não foi possível verificar o status da quota.`));
-				effect((_$p) => setProp(_el$60, "fg", muted(props.context), _$p));
-				return _el$60;
+				var _el$82 = createElement("box"), _el$83 = createElement("text");
+				insertNode(_el$82, _el$83);
+				setProp(_el$82, "flexDirection", "row");
+				setProp(_el$82, "justifyContent", "space-between");
+				setProp(_el$82, "gap", 1);
+				setProp(_el$83, "attributes", 1);
+				insert(_el$83, `${QUOTA_ICON} Pantheon / Quota`);
+				insert(_el$82, createComponent(QuotaCloseButton, {
+					get context() {
+						return props.context;
+					},
+					get close() {
+						return props.panel.close;
+					}
+				}), null);
+				effect((_$p) => setProp(_el$83, "fg", tone(props.context, "info"), _$p));
+				return _el$82;
 			}
-		}), _el$64);
-		insert(_el$52, createComponent(Show, {
-			get when() {
-				return snapshot().status === "stale";
-			},
-			get children() {
-				var _el$62 = createElement("text");
-				insertNode(_el$62, createTextNode(`A última resposta continua visível; atualize para tentar novamente.`));
-				effect((_$p) => setProp(_el$62, "fg", muted(props.context), _$p));
-				return _el$62;
-			}
-		}), _el$64);
-		insertNode(_el$64, _el$65);
-		setProp(_el$64, "flexGrow", 1);
-		setProp(_el$64, "flexShrink", 1);
-		setProp(_el$64, "flexBasis", 0);
-		setProp(_el$64, "minHeight", 3);
-		setProp(_el$64, "width", "100%");
-		setProp(_el$64, "scrollY", true);
-		setProp(_el$64, "focusable", true);
-		setProp(_el$64, "border", true);
-		setProp(_el$65, "flexDirection", "column");
-		setProp(_el$65, "paddingX", 1);
-		setProp(_el$65, "paddingY", 1);
-		insert(_el$65, createComponent(For, {
-			get each() {
-				return snapshot().details;
-			},
-			children: (provider) => createComponent(QuotaProviderDetails, {
-				provider,
-				get display() {
-					return preferences().display;
-				},
-				get width() {
-					return props.panel.width - 4;
-				},
-				get context() {
-					return props.context;
-				}
-			})
-		}), null);
-		insert(_el$65, createComponent(ModelUsageDetails, {
+		}), _el$91);
+		insert(_el$81, createComponent(ActiveModelHeader, {
 			get context() {
 				return props.context;
 			},
@@ -1969,28 +5182,198 @@ function QuotaPanel(props) {
 				return props.panel.sessionID;
 			},
 			get width() {
-				return props.panel.width - 6;
+				return props.panel.width - 4;
+			},
+			get snapshot() {
+				return snapshot();
+			}
+		}), _el$91);
+		insert(_el$81, createComponent(QuotaTabNavigation, {
+			get context() {
+				return props.context;
+			},
+			get selected() {
+				return selectedTab();
+			},
+			get width() {
+				return props.panel.width;
+			},
+			onSelect: setSelectedTab
+		}), _el$91);
+		insert(_el$81, createComponent(Show, {
+			get when() {
+				return memo(() => snapshot().error !== void 0)() && snapshot().status !== "ready";
+			},
+			get children() {
+				var _el$84 = createElement("text");
+				insert(_el$84, () => `Último erro: ${snapshot().error}`);
+				effect((_$p) => setProp(_el$84, "fg", muted(props.context), _$p));
+				return _el$84;
+			}
+		}), _el$91);
+		insert(_el$81, createComponent(Show, {
+			get when() {
+				return memo(() => snapshot().status === "needs_setup")() && snapshot().details.length === 0;
+			},
+			get children() {
+				var _el$85 = createElement("text");
+				insertNode(_el$85, createTextNode(`Nenhum provedor elegível: verifique conexão ativa e credencial local compatível.`));
+				effect((_$p) => setProp(_el$85, "fg", muted(props.context), _$p));
+				return _el$85;
+			}
+		}), _el$91);
+		insert(_el$81, createComponent(Show, {
+			get when() {
+				return snapshot().status === "unavailable";
+			},
+			get children() {
+				var _el$87 = createElement("text");
+				insertNode(_el$87, createTextNode(`Não foi possível verificar o status da quota.`));
+				effect((_$p) => setProp(_el$87, "fg", muted(props.context), _$p));
+				return _el$87;
+			}
+		}), _el$91);
+		insert(_el$81, createComponent(Show, {
+			get when() {
+				return snapshot().status === "stale";
+			},
+			get children() {
+				var _el$89 = createElement("text");
+				insertNode(_el$89, createTextNode(`A última resposta continua visível; atualize para tentar novamente.`));
+				effect((_$p) => setProp(_el$89, "fg", muted(props.context), _$p));
+				return _el$89;
+			}
+		}), _el$91);
+		insertNode(_el$91, _el$92);
+		setProp(_el$91, "flexGrow", 1);
+		setProp(_el$91, "flexShrink", 1);
+		setProp(_el$91, "flexBasis", 0);
+		setProp(_el$91, "minHeight", 3);
+		setProp(_el$91, "width", "100%");
+		setProp(_el$91, "scrollY", true);
+		setProp(_el$91, "focusable", true);
+		setProp(_el$91, "border", true);
+		setProp(_el$92, "flexDirection", "column");
+		setProp(_el$92, "paddingX", 1);
+		setProp(_el$92, "paddingY", 1);
+		insert(_el$92, createComponent(Show, {
+			get when() {
+				return selectedTab() === "usage";
+			},
+			get children() {
+				return [createComponent(UsageHistorySection, {
+					get context() {
+						return props.context;
+					},
+					get panel() {
+						return props.panel;
+					},
+					get width() {
+						return props.panel.width - 6;
+					}
+				}), createComponent(ModelUsageDetails, {
+					get context() {
+						return props.context;
+					},
+					get sessionID() {
+						return props.panel.sessionID;
+					},
+					get width() {
+						return props.panel.width - 6;
+					}
+				})];
 			}
 		}), null);
-		insertNode(_el$66, _el$67);
-		insertNode(_el$66, _el$68);
-		insertNode(_el$66, _el$69);
-		insertNode(_el$66, _el$71);
-		setProp(_el$66, "flexDirection", "column");
-		setProp(_el$66, "flexShrink", 0);
-		insert(_el$67, () => `Quota ${preferences().enabled ? "ativada" : "desativada"} · exibição: ${preferences().display === "remaining" ? "restante" : "usado"}`);
-		insert(_el$68, () => `E ${preferences().enabled ? "desativar" : "ativar"} · M alternar usado/restante`);
-		insertNode(_el$69, createTextNode(`↑/↓ rolar · R atualizar`));
-		insertNode(_el$71, createTextNode(`Esc/Q fechar`));
+		insert(_el$92, createComponent(Show, {
+			get when() {
+				return selectedTab() === "limits";
+			},
+			get children() {
+				return [createComponent(Show, {
+					get when() {
+						return snapshot().details.length > 0;
+					},
+					get children() {
+						return createComponent(For, {
+							get each() {
+								return snapshot().details;
+							},
+							children: (provider) => createComponent(QuotaProviderDetails, {
+								provider,
+								get display() {
+									return preferences().display;
+								},
+								get width() {
+									return props.panel.width - 4;
+								},
+								get context() {
+									return props.context;
+								}
+							})
+						});
+					}
+				}), createComponent(Show, {
+					get when() {
+						return snapshot().details.length === 0;
+					},
+					get children() {
+						var _el$93 = createElement("text");
+						insert(_el$93, () => quotaSnapshotStatusLabel(snapshot().status, snapshot().error));
+						effect((_$p) => setProp(_el$93, "fg", muted(props.context), _$p));
+						return _el$93;
+					}
+				})];
+			}
+		}), null);
+		insert(_el$92, createComponent(Show, {
+			get when() {
+				return selectedTab() === "plugin";
+			},
+			get children() {
+				return createComponent(QuotaPluginDetails, {
+					get context() {
+						return props.context;
+					},
+					get snapshot() {
+						return snapshot();
+					}
+				});
+			}
+		}), null);
+		insert(_el$92, createComponent(Show, {
+			get when() {
+				return selectedTab() === "settings";
+			},
+			get children() {
+				return createComponent(QuotaSettings, {
+					get context() {
+						return props.context;
+					},
+					get runtime() {
+						return props.runtime;
+					}
+				});
+			}
+		}), null);
+		insertNode(_el$94, _el$95);
+		insertNode(_el$94, _el$96);
+		insertNode(_el$94, _el$97);
+		insertNode(_el$94, _el$98);
+		setProp(_el$94, "flexDirection", "column");
+		setProp(_el$94, "flexShrink", 0);
+		insert(_el$95, () => `Quota ${preferences().enabled ? "ativada" : "desativada"} · exibição: ${preferences().display === "remaining" ? "restante" : "usado"}`);
+		insert(_el$96, () => `E ${preferences().enabled ? "desativar" : "ativar"} · M alternar usado/restante`);
+		insert(_el$97, () => `↑/↓ rolar · ${quotaIcon("refresh")} R atualizar`);
+		insertNode(_el$98, createTextNode(`Tab/Shift+Tab abas · Esc/Q fechar`));
 		effect((_p$) => {
-			var _v$0 = props.panel.focused, _v$1 = muted(props.context), _v$10 = tone(props.context, "info"), _v$11 = muted(props.context), _v$12 = muted(props.context), _v$13 = muted(props.context), _v$14 = muted(props.context);
-			_v$0 !== _p$.e && (_p$.e = setProp(_el$64, "focused", _v$0, _p$.e));
-			_v$1 !== _p$.t && (_p$.t = setProp(_el$64, "borderColor", _v$1, _p$.t));
-			_v$10 !== _p$.a && (_p$.a = setProp(_el$64, "focusedBorderColor", _v$10, _p$.a));
-			_v$11 !== _p$.o && (_p$.o = setProp(_el$67, "fg", _v$11, _p$.o));
-			_v$12 !== _p$.i && (_p$.i = setProp(_el$68, "fg", _v$12, _p$.i));
-			_v$13 !== _p$.n && (_p$.n = setProp(_el$69, "fg", _v$13, _p$.n));
-			_v$14 !== _p$.s && (_p$.s = setProp(_el$71, "fg", _v$14, _p$.s));
+			var _v$19 = props.panel.focused, _v$20 = muted(props.context), _v$21 = tone(props.context, "info"), _v$22 = muted(props.context), _v$23 = muted(props.context), _v$24 = muted(props.context), _v$25 = muted(props.context);
+			_v$19 !== _p$.e && (_p$.e = setProp(_el$91, "focused", _v$19, _p$.e));
+			_v$20 !== _p$.t && (_p$.t = setProp(_el$91, "borderColor", _v$20, _p$.t));
+			_v$21 !== _p$.a && (_p$.a = setProp(_el$91, "focusedBorderColor", _v$21, _p$.a));
+			_v$22 !== _p$.o && (_p$.o = setProp(_el$95, "fg", _v$22, _p$.o));
+			_v$23 !== _p$.i && (_p$.i = setProp(_el$96, "fg", _v$23, _p$.i));
+			_v$24 !== _p$.n && (_p$.n = setProp(_el$97, "fg", _v$24, _p$.n));
+			_v$25 !== _p$.s && (_p$.s = setProp(_el$98, "fg", _v$25, _p$.s));
 			return _p$;
 		}, {
 			e: void 0,
@@ -2001,7 +5384,7 @@ function QuotaPanel(props) {
 			n: void 0,
 			s: void 0
 		});
-		return _el$52;
+		return _el$81;
 	})();
 }
 function QuotaCommandLayer(props) {
@@ -4917,7 +8300,7 @@ function Sidebar(props) {
 		setProp(_el$12, "width", "100%");
 		setProp(_el$12, "padding", 1);
 		setProp(_el$13, "attributes", 1);
-		insert(_el$13, `Pantheon v1.6.2-beta.1`);
+		insert(_el$13, `Pantheon v1.6.2-beta.2`);
 		insert(_el$14, () => presetHeaderLine(model.preset().name ?? "", model.provider()));
 		insert(_el$12, createComponent(Show, {
 			get when() {
@@ -5644,7 +9027,7 @@ function HomeStatus(props) {
 	const muted = () => props.context.theme?.text?.muted ?? props.context.theme?.text?.base;
 	return (() => {
 		var _el$72 = createElement("text");
-		insert(_el$72, () => `Pantheon v1.6.2-beta.1${preset().name ? ` ▸ ${preset().name}` : ""}`);
+		insert(_el$72, () => `Pantheon v1.6.2-beta.2${preset().name ? ` ▸ ${preset().name}` : ""}`);
 		effect((_$p) => setProp(_el$72, "fg", muted(), _$p));
 		return _el$72;
 	})();
@@ -5766,6 +9149,6 @@ const plugin = Plugin.define({
 	}
 });
 //#endregion
-export { BLOCK_ICONS, CONTEXT_BAR_CELLS, CONTEXT_BAR_EMPTY_CELL, CONTEXT_BAR_FILLED_CELL, DEFAULT_QUOTA_PREFERENCES, DELEGATION_CHILD_STATUS_GRACE_MS, DISPATCH_AGENT_CEILING, DISPATCH_AGENT_WIDTH, DISPATCH_COST_WIDTH, DISPATCH_COUNT_WIDTH, DISPATCH_DONE_MARKER, DISPATCH_DURATION_WIDTH, DISPATCH_GROUP_COST_WIDTH, DISPATCH_KIND_ORIGIN_LABELS, DISPATCH_MAX_LINES, DISPATCH_MAX_WIDTH, DISPATCH_MIN_AGENT_WIDTH, DISPATCH_MODEL_WIDTH, DISPATCH_PANEL_AGENT_WIDTH, DISPATCH_PANEL_COMMANDS, DISPATCH_PANEL_COST_WIDTH, DISPATCH_PANEL_DASH, DISPATCH_PANEL_DURATION_WIDTH, DISPATCH_PANEL_EMPTY_TEXT, DISPATCH_PANEL_FULLSCREEN_BADGE, DISPATCH_PANEL_HEADER_MARKER, DISPATCH_PANEL_KIND_WIDTH, DISPATCH_PANEL_MIN_AGENT_WIDTH, DISPATCH_PANEL_NAME, DISPATCH_PANEL_PAGE_SIZE, DISPATCH_PANEL_RULE_CHAR, DISPATCH_PANEL_SELECTION_GUTTER, DISPATCH_PANEL_SELECTION_MARKER, DISPATCH_PANEL_TITLE_WIDTH, DISPATCH_PANEL_TOAST, DISPATCH_PANEL_WIDE_MIN_WIDTH, DISPATCH_RUNNING_CEILING, GIT_ARROW_DOWN, GIT_ARROW_UP, GIT_CHANGES_DEBOUNCE_MS, GIT_CLI_DEBOUNCE_MS, GIT_CLI_MAX_BUFFER, GIT_CLI_MIN_INTERVAL_MS, GIT_CLI_TIMEOUT_MS, HEADER_MAX_WIDTH, MODEL_USAGE_COST_WIDTH, MODEL_USAGE_DEBOUNCE_MS, MODEL_USAGE_MESSAGE_LIMIT, MODEL_USAGE_MODEL_WIDTH, MODEL_USAGE_SESSION_LIMIT, MODEL_USAGE_TOKEN_WIDTH, MODEL_USAGE_VISIBLE_CEILING, PRESET_MARKER, QUOTA_CLOCK_INTERVAL_MS, QUOTA_ICON, QUOTA_OPEN_COMMAND_ID, QUOTA_PANEL_COMMANDS, QUOTA_PANEL_NAME, SIDEBAR_REFRESH_EVENTS, SIDEBAR_WAITING_LABEL, SPEND_30D_LABEL, SPEND_30D_MS, SPEND_LINE_SEPARATOR, SPEND_PROBE_TOLERANCE_MS, SPEND_PROBE_WINDOW_MS, SPEND_REFRESH_DEBOUNCE_MS, SPEND_TODAY_LABEL, TODO_TEXT_WIDTH, TODO_VISIBLE_CEILING, UNKNOWN_AGENT, agentKey, buildDispatchBlock, cacheHitPercent, ceilingModelUsage, ceilingTodoItems, cellWidth, childAgentRowText, classifyDispatchKind, collectChildAgentUsage, collectDispatch, collectModelUsage, collectRecentModelUsageRows, collectSubagentCalls, collectWarmupTargets, compactQuotaMetric, completedSummaryText, computeContextUsage, contextBar, contextBarFilled, contextBlockRows, contextPerformanceLine, contextProgressColor, contextSpendLine, contextSpendLines, contextUsageTone, countGitChanges, createDispatchPanelModel, createFooterModel, createQuotaClock, createQuotaRuntime, createSidebarModel, plugin as default, defaultGitExec, delegationStateFromOutcome, delegationStateFromStatus, detectDelegationCompletions, dispatchAgentText, dispatchElapsed, dispatchHeaderSummary, dispatchKindFromAgent, dispatchKindFromPrefix, dispatchKindSuffix, dispatchModelText, dispatchPanelCell, dispatchPanelDetail, dispatchPanelFooter, dispatchPanelHeader, dispatchPanelKeymapLayer, dispatchPanelLayout, dispatchPanelMarker, dispatchPanelRangeText, dispatchPanelRowText, dispatchPanelRows, dispatchPanelRule, dispatchPanelTitle, dispatchPanelWindow, dispatchTokenLine, dispatchTokens, dispatchTotalCost, failedSuffixText, financeMetricLines, formatContextWindow, formatDispatchCost, formatDispatchDuration, formatGitChanges, formatGitSnapshot, formatQuotaCountdown, formatQuotaMetric, formatSpendUSD, formatSpent, formatTokenCount, formatUsageCost, formatUsageTokens, gitProbeAllowed, hiddenChildAgentsText, hiddenModelUsageText, hiddenTodoText, isTodoStatus, isValidSessionID, lastAssistantWithTokens, latestTodoItems, messageTokensTotal, modelRefID, modelUsageRowLines, modelUsageRowText, modelUsageRows, navigateToSession, normalizeQuotaPreferences, openDispatchPanel, openQuotaPanel, orderDispatchEntries, orderTodoItems, padCell, parseGitAheadBehind, parseGitStatusPorcelain, parsePresetOverrides, parseTodoItems, performDispatchPanelAction, presetFromEnv, presetHeaderLine, providerIDFromModels, providerIDFromRef, quotaClock, quotaGoCheckCommand, quotaMetricLines, quotaOpenCommand, quotaPanelKeymapLayer, quotaProgress, quotaSidebarEntries, quotaSnapshotFromStatus, quotaSnapshotStatusLabel, quotaTextLines, quotaUsageTone, quotaWindowLines, readGitSnapshot, resetSpendUnit, resolveActiveModelRef, resolveActivePresetForTui, resolveContextLimit, resolveModelContextSnapshot, resolvedSpendUnit, runDispatchPanelCommand, runQuotaPanelCommand, runningChildRowText, shortModelID, shortSessionID, sidebarFinanceEntries, sidebarMoneyLines, sidebarPlaceholder, sidebarTextLines, snapshotSummary, spendWindows, spinnerFrame, startOfLocalDay, statsCost, statsRangeMatches, toDelegationView, toDispatchEntry, todoRowText, todoTone, transcriptWindow, truncateLabel, turnTokensPerSecond, withBlockSpacers };
+export { BLOCK_ICONS, CONTEXT_BAR_CELLS, CONTEXT_BAR_EMPTY_CELL, CONTEXT_BAR_FILLED_CELL, DEFAULT_QUOTA_PREFERENCES, DEFAULT_QUOTA_TAB, DELEGATION_CHILD_STATUS_GRACE_MS, DISPATCH_AGENT_CEILING, DISPATCH_AGENT_WIDTH, DISPATCH_COST_WIDTH, DISPATCH_COUNT_WIDTH, DISPATCH_DONE_MARKER, DISPATCH_DURATION_WIDTH, DISPATCH_GROUP_COST_WIDTH, DISPATCH_KIND_ORIGIN_LABELS, DISPATCH_MAX_LINES, DISPATCH_MAX_WIDTH, DISPATCH_MIN_AGENT_WIDTH, DISPATCH_MODEL_WIDTH, DISPATCH_PANEL_AGENT_WIDTH, DISPATCH_PANEL_COMMANDS, DISPATCH_PANEL_COST_WIDTH, DISPATCH_PANEL_DASH, DISPATCH_PANEL_DURATION_WIDTH, DISPATCH_PANEL_EMPTY_TEXT, DISPATCH_PANEL_FULLSCREEN_BADGE, DISPATCH_PANEL_HEADER_MARKER, DISPATCH_PANEL_KIND_WIDTH, DISPATCH_PANEL_MIN_AGENT_WIDTH, DISPATCH_PANEL_NAME, DISPATCH_PANEL_PAGE_SIZE, DISPATCH_PANEL_RULE_CHAR, DISPATCH_PANEL_SELECTION_GUTTER, DISPATCH_PANEL_SELECTION_MARKER, DISPATCH_PANEL_TITLE_WIDTH, DISPATCH_PANEL_TOAST, DISPATCH_PANEL_WIDE_MIN_WIDTH, DISPATCH_RUNNING_CEILING, GIT_ARROW_DOWN, GIT_ARROW_UP, GIT_CHANGES_DEBOUNCE_MS, GIT_CLI_DEBOUNCE_MS, GIT_CLI_MAX_BUFFER, GIT_CLI_MIN_INTERVAL_MS, GIT_CLI_TIMEOUT_MS, HEADER_MAX_WIDTH, MODEL_USAGE_COST_WIDTH, MODEL_USAGE_DEBOUNCE_MS, MODEL_USAGE_MESSAGE_LIMIT, MODEL_USAGE_MODEL_WIDTH, MODEL_USAGE_SESSION_LIMIT, MODEL_USAGE_TOKEN_WIDTH, MODEL_USAGE_VISIBLE_CEILING, PRESET_MARKER, QUOTA_CLOCK_INTERVAL_MS, QUOTA_ICON, QUOTA_OPEN_COMMAND_ID, QUOTA_PANEL_COMMANDS, QUOTA_PANEL_NAME, QUOTA_TABS, QuotaPanel, SIDEBAR_REFRESH_EVENTS, SIDEBAR_WAITING_LABEL, SPEND_30D_LABEL, SPEND_30D_MS, SPEND_LINE_SEPARATOR, SPEND_PROBE_TOLERANCE_MS, SPEND_PROBE_WINDOW_MS, SPEND_REFRESH_DEBOUNCE_MS, SPEND_TODAY_LABEL, TODO_TEXT_WIDTH, TODO_VISIBLE_CEILING, UNKNOWN_AGENT, USAGE_HISTORY_PERIOD_BINDINGS, UsageHistorySection, activeContextEstimateErrorLines, activeContextEstimateLines, activeContextEstimateMissingLines, activeContextEstimatePendingLines, activeModelIdentity, activeQuotaModelLabel, agentKey, buildDispatchBlock, cacheHitPercent, ceilingModelUsage, ceilingTodoItems, cellWidth, childAgentRowText, classifyDispatchKind, collectChildAgentUsage, collectDispatch, collectModelUsage, collectRecentModelUsageRows, collectSubagentCalls, collectWarmupTargets, compactQuotaMetric, completedSummaryText, computeContextUsage, contextBar, contextBarFilled, contextBlockRows, contextPerformanceLine, contextProgressColor, contextSpendLine, contextSpendLines, contextUsageTone, countGitChanges, createDispatchPanelModel, createFooterModel, createQuotaClock, createQuotaRuntime, createSidebarModel, plugin as default, defaultGitExec, delegationStateFromOutcome, delegationStateFromStatus, detectDelegationCompletions, dispatchAgentText, dispatchElapsed, dispatchHeaderSummary, dispatchKindFromAgent, dispatchKindFromPrefix, dispatchKindSuffix, dispatchModelText, dispatchPanelCell, dispatchPanelDetail, dispatchPanelFooter, dispatchPanelHeader, dispatchPanelKeymapLayer, dispatchPanelLayout, dispatchPanelMarker, dispatchPanelRangeText, dispatchPanelRowText, dispatchPanelRows, dispatchPanelRule, dispatchPanelTitle, dispatchPanelWindow, dispatchTokenLine, dispatchTokens, dispatchTotalCost, failedSuffixText, financeMetricLines, formatContextWindow, formatDispatchCost, formatDispatchDuration, formatGitChanges, formatGitSnapshot, formatQuotaCountdown, formatQuotaMetric, formatSpendUSD, formatSpent, formatTokenCount, formatUsageCost, formatUsageTokens, gitProbeAllowed, hiddenChildAgentsText, hiddenModelUsageText, hiddenTodoText, isTodoStatus, isValidSessionID, lastAssistantWithTokens, latestTodoItems, messageTokensTotal, modelRefID, modelUsageRowLines, modelUsageRowText, modelUsageRows, moveQuotaTab, navigateToSession, normalizeQuotaPreferences, openDispatchPanel, openQuotaPanel, orderDispatchEntries, orderTodoItems, padCell, parseGitAheadBehind, parseGitStatusPorcelain, parsePresetOverrides, parseTodoItems, performDispatchPanelAction, presetFromEnv, presetHeaderLine, providerIDFromModels, providerIDFromRef, providerState, quotaClock, quotaGoCheckCommand, quotaIcon, quotaMetricLines, quotaOpenCommand, quotaPanelKeymapLayer, quotaPanelStatusMessage, quotaProgress, quotaSidebarEntries, quotaSnapshotFromStatus, quotaSnapshotStatusLabel, quotaTabLabel, quotaTextLines, quotaUsageTone, quotaWindowLines, readGitSnapshot, resetSpendUnit, resolveActiveModelRef, resolveActivePresetForTui, resolveContextLimit, resolveModelContextSnapshot, resolvedSpendUnit, runDispatchPanelCommand, runQuotaPanelCommand, runningChildRowText, sessionSpendLabel, shortModelID, shortSessionID, sidebarFinanceEntries, sidebarMoneyLines, sidebarPlaceholder, sidebarTextLines, snapshotSummary, spendWindows, spinnerFrame, startOfLocalDay, statsCost, statsRangeMatches, toDelegationView, toDispatchEntry, todoRowText, todoTone, transcriptWindow, truncateLabel, turnTokensPerSecond, usageHistoryChartLines, usageHistoryControlsLines, usageHistoryCoverageLabel, usageHistoryEmptyMessage, usageHistoryPartialWarning, usageHistoryPeriodForKey, usageHistoryPricingLabel, usageHistorySelectorLabel, usageHistorySelectorLines, usageHistoryTextLines, usageHistoryUnavailableMessage, withBlockSpacers };
 
 //# sourceMappingURL=tui-v2.js.map

@@ -1,3 +1,4 @@
+import { n as USAGE_HISTORY_PERIODS } from "./usage-history-contract-nt1rnBPE.js";
 import { Rpc } from "@opencode/plugin/promise/index";
 //#region src/quota-rpc.ts
 /** Full provider matrix approved for the V2 quota surface. */
@@ -304,6 +305,200 @@ const providerStatusSchema = {
 	],
 	additionalProperties: false
 };
+const usageHistoryTotalsSchema = {
+	type: "object",
+	properties: {
+		input: {
+			type: "integer",
+			minimum: 0,
+			maximum: Number.MAX_SAFE_INTEGER
+		},
+		output: {
+			type: "integer",
+			minimum: 0,
+			maximum: Number.MAX_SAFE_INTEGER
+		},
+		cacheRead: {
+			type: "integer",
+			minimum: 0,
+			maximum: Number.MAX_SAFE_INTEGER
+		},
+		cacheWrite: {
+			type: "integer",
+			minimum: 0,
+			maximum: Number.MAX_SAFE_INTEGER
+		},
+		total: {
+			type: "integer",
+			minimum: 0,
+			maximum: Number.MAX_SAFE_INTEGER
+		}
+	},
+	required: [
+		"input",
+		"output",
+		"cacheRead",
+		"cacheWrite",
+		"total"
+	],
+	additionalProperties: false
+};
+const usageHistoryBucketSchema = {
+	type: "object",
+	properties: {
+		date: {
+			type: "string",
+			pattern: "^\\d{4}-\\d{2}-\\d{2}$"
+		},
+		input: {
+			type: "integer",
+			minimum: 0,
+			maximum: Number.MAX_SAFE_INTEGER
+		},
+		output: {
+			type: "integer",
+			minimum: 0,
+			maximum: Number.MAX_SAFE_INTEGER
+		},
+		cacheRead: {
+			type: "integer",
+			minimum: 0,
+			maximum: Number.MAX_SAFE_INTEGER
+		},
+		cacheWrite: {
+			type: "integer",
+			minimum: 0,
+			maximum: Number.MAX_SAFE_INTEGER
+		},
+		total: {
+			type: "integer",
+			minimum: 0,
+			maximum: Number.MAX_SAFE_INTEGER
+		},
+		estimatedUsd: {
+			type: "number",
+			minimum: 0
+		},
+		pricingComplete: { type: "boolean" }
+	},
+	required: [
+		"date",
+		"input",
+		"output",
+		"cacheRead",
+		"cacheWrite",
+		"total",
+		"pricingComplete"
+	],
+	additionalProperties: false
+};
+const usageHistoryAvailableSchema = {
+	type: "object",
+	properties: {
+		status: {
+			type: "string",
+			enum: ["available", "partial"]
+		},
+		period: {
+			type: "string",
+			enum: USAGE_HISTORY_PERIODS
+		},
+		coverageStart: {
+			type: ["string", "null"],
+			pattern: "^\\d{4}-\\d{2}-\\d{2}$"
+		},
+		partial: { type: "boolean" },
+		truncated: { type: "boolean" },
+		rows: {
+			type: "integer",
+			minimum: 0,
+			maximum: Number.MAX_SAFE_INTEGER
+		},
+		buckets: {
+			type: "array",
+			items: usageHistoryBucketSchema,
+			maxItems: 366
+		},
+		totals: usageHistoryTotalsSchema,
+		models: {
+			type: "array",
+			maxItems: 64,
+			items: {
+				type: "object",
+				properties: {
+					providerID: {
+						type: "string",
+						minLength: 1,
+						maxLength: 128
+					},
+					modelID: {
+						type: "string",
+						minLength: 1,
+						maxLength: 128
+					},
+					totals: usageHistoryTotalsSchema,
+					estimatedUsd: {
+						type: "number",
+						minimum: 0
+					},
+					pricingComplete: { type: "boolean" }
+				},
+				required: [
+					"providerID",
+					"modelID",
+					"totals",
+					"pricingComplete"
+				],
+				additionalProperties: false
+			}
+		},
+		pricing: {
+			type: "object",
+			properties: {
+				status: {
+					type: "string",
+					enum: [
+						"empty",
+						"unavailable",
+						"partial",
+						"complete"
+					]
+				},
+				complete: { type: "boolean" },
+				billed: { const: false },
+				estimatedUsd: {
+					type: "number",
+					minimum: 0
+				},
+				unpricedModels: {
+					type: "integer",
+					minimum: 0,
+					maximum: Number.MAX_SAFE_INTEGER
+				}
+			},
+			required: [
+				"status",
+				"complete",
+				"billed",
+				"unpricedModels"
+			],
+			additionalProperties: false
+		}
+	},
+	required: [
+		"status",
+		"period",
+		"coverageStart",
+		"partial",
+		"truncated",
+		"rows",
+		"buckets",
+		"totals",
+		"models",
+		"pricing"
+	],
+	additionalProperties: false
+};
 /** Shared definition keeps the TUI RPC client aligned with the server contract. */
 const quotaRpc = Rpc.define({
 	id: "pantheon.quota",
@@ -376,6 +571,105 @@ const quotaRpc = Rpc.define({
 				required: ["providers"],
 				additionalProperties: false
 			}
+		},
+		usage_history: {
+			input: {
+				type: "object",
+				properties: { period: {
+					type: "string",
+					enum: USAGE_HISTORY_PERIODS
+				} },
+				required: ["period"],
+				additionalProperties: false
+			},
+			output: { oneOf: [usageHistoryAvailableSchema, {
+				type: "object",
+				properties: {
+					status: { const: "unavailable" },
+					reason: {
+						type: "string",
+						enum: [
+							"invalid_period",
+							"history_unavailable",
+							"history_timeout"
+						]
+					}
+				},
+				required: ["status", "reason"],
+				additionalProperties: false
+			}] }
+		},
+		active_context_cost: {
+			input: {
+				type: "object",
+				properties: {
+					providerID: {
+						type: ["string", "null"],
+						minLength: 1,
+						maxLength: 128
+					},
+					modelID: {
+						type: ["string", "null"],
+						minLength: 1,
+						maxLength: 128
+					},
+					contextTokens: { type: ["number", "null"] }
+				},
+				required: [
+					"providerID",
+					"modelID",
+					"contextTokens"
+				],
+				additionalProperties: false
+			},
+			output: { oneOf: [{
+				type: "object",
+				properties: {
+					status: { const: "estimated" },
+					estimatedUsd: {
+						type: "number",
+						minimum: 0
+					},
+					billed: { const: false },
+					basis: { const: "pre-cache-context-tokens-times-input-price" },
+					cacheDiscountApplied: { const: false }
+				},
+				required: [
+					"status",
+					"estimatedUsd",
+					"billed",
+					"basis",
+					"cacheDiscountApplied"
+				],
+				additionalProperties: false
+			}, {
+				type: "object",
+				properties: {
+					status: { const: "unavailable" },
+					billed: { const: false },
+					basis: { const: "pre-cache-context-tokens-times-input-price" },
+					cacheDiscountApplied: { const: false },
+					reason: {
+						type: "string",
+						enum: [
+							"invalid-context-token-count",
+							"missing-model-identity",
+							"no-pricing",
+							"unknown-model",
+							"ambiguous-model",
+							"missing-cache-price"
+						]
+					}
+				},
+				required: [
+					"status",
+					"billed",
+					"basis",
+					"cacheDiscountApplied",
+					"reason"
+				],
+				additionalProperties: false
+			}] }
 		}
 	},
 	events: { credentials_changed: { schema: {
@@ -387,4 +681,4 @@ const quotaRpc = Rpc.define({
 //#endregion
 export { quotaRpc as n, QUOTA_PROVIDER_IDS as t };
 
-//# sourceMappingURL=quota-rpc-UL2HuFRJ.js.map
+//# sourceMappingURL=quota-rpc-DMmXBhBe.js.map
