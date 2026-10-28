@@ -159,6 +159,39 @@ function routeKindField(
 }
 
 /**
+ * OpenCode Go follows the upstream quota plugin's key order: process environment, the
+ * effective OpenCode provider settings, then a selected OpenCode API-key connection.
+ * Provider settings are read through the host API; Pantheon never parses OpenCode files.
+ */
+async function configuredOpenCodeGoApiKey(context: Context): Promise<string | undefined> {
+  const environmentKey = process.env.OPENCODE_API_KEY?.trim()
+  if (environmentKey) return environmentKey
+
+  for (const providerID of ['opencode-go', 'opencode']) {
+    let value: unknown
+    try {
+      value = (await context.provider.get({ providerID })).data.settings?.apiKey
+    } catch {
+      continue
+    }
+    if (typeof value !== 'string') continue
+    const configured = value.trim()
+    if (!configured) continue
+
+    const environmentTemplate = configured.match(/^\{env:([A-Za-z_][A-Za-z0-9_]*)\}$/)
+    if (environmentTemplate) {
+      if (environmentTemplate[1] !== 'OPENCODE_API_KEY') continue
+      const resolved = process.env.OPENCODE_API_KEY?.trim()
+      if (resolved) return resolved
+      continue
+    }
+    if (configured.startsWith('{env:')) continue
+    return configured
+  }
+  return undefined
+}
+
+/**
  * Resolve only listed, selected credential connections in the closed provider
  * catalog. Only the minimum access-token/key field is retained in memory.
  */
@@ -212,8 +245,21 @@ function createCredentialResolver(context: Context) {
     // Quota visibility is tied to a selected OpenCode credential connection;
     // local CLI identity is outside that credential context.
     if (definition.source === 'local-cli') return {}
+    const configuredGoKey =
+      provider === 'opencode-go' ? await configuredOpenCodeGoApiKey(context) : undefined
+    if (goKeyOnly && configuredGoKey) {
+      return { method: 'key', secret: configuredGoKey, routeKind: 'api_key' }
+    }
     try {
-      const listedConnections = await listCredentialConnections()
+      let listedConnections: Map<string, Set<string>>
+      try {
+        listedConnections = await listCredentialConnections()
+      } catch (error) {
+        // A configured OpenCode Go key can still be used if integration discovery fails.
+        // Without it, retain the normal selected-connection error behavior.
+        if (provider !== 'opencode-go' || !configuredGoKey) throw error
+        listedConnections = new Map()
+      }
       if (provider === 'opencode-go') {
         const activeListed = async (integrationID: string) => {
           const connections = listedConnections.get(integrationID)
@@ -270,15 +316,17 @@ function createCredentialResolver(context: Context) {
         }
 
         let activePrimary: Awaited<ReturnType<typeof activeListed>>
-        try {
-          activePrimary = await activeListed('opencode-go')
-        } catch {
-          // An API-key lookup failure must not discard an already resolved Console login.
+        if (!configuredGoKey) {
+          try {
+            activePrimary = await activeListed('opencode-go')
+          } catch {
+            // An API-key lookup failure must not discard an already resolved Console login.
+          }
         }
         const unsupportedPrimaryLogin =
-          activePrimary !== undefined && activePrimary.method !== 'key'
-        let apiKey: string | undefined
-        for (const integrationID of ['opencode-go', 'opencode']) {
+          !configuredGoKey && activePrimary !== undefined && activePrimary.method !== 'key'
+        let apiKey = configuredGoKey
+        for (const integrationID of configuredGoKey ? [] : ['opencode-go', 'opencode']) {
           let active: Awaited<ReturnType<typeof activeListed>>
           try {
             active =
@@ -437,11 +485,12 @@ function createCredentialResolver(context: Context) {
   }
 }
 
-function isCredentialInvalidationEvent(type: string): boolean {
+function isQuotaSourceInvalidationEvent(type: string): boolean {
   return (
     type === 'credential.updated' ||
     type === 'credential.switched' ||
-    type === 'integration.updated'
+    type === 'integration.updated' ||
+    type === 'provider.updated'
   )
 }
 
@@ -784,7 +833,7 @@ export function createQuotaPlugin(
       const eventTask = (async () => {
         try {
           for await (const event of context.event.subscribe({ signal: eventController.signal })) {
-            if (isCredentialInvalidationEvent(event.type)) {
+            if (isQuotaSourceInvalidationEvent(event.type)) {
               resolver.invalidate()
               adapters.invalidate()
               if (registration) {

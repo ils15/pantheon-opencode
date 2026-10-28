@@ -117,15 +117,17 @@ see [Quick Start](docs/QUICKSTART.md).
   The installer selects the `plugins` component by default; in interactive setup
   you can change the component selection. A component-scoped install includes
   the TUI only when `plugins` is selected.
-  The V2 quota RPC shows providers only when OpenCode lists an active supported
-  connection and Pantheon can locally resolve a nonblank credential. This is
-  not proof that the provider accepted the credential; failed requests and
-  unsupported adapters can remain visible as unavailable. OpenCode Go checks
-  the selected Console OAuth login first, then uses an active OpenCode Go API
-  key (or its legacy OpenCode key alias) only when the Console request fails; a
-  Console 404 or a successful response without an access object reports no Go
-  subscription and does not fall back.
-  The route contract remains unofficial; see the
+  The V2 quota RPC shows providers when OpenCode lists an active supported
+  connection and Pantheon can locally resolve a nonblank credential. OpenCode
+  Go also supports `OPENCODE_API_KEY` and effective `opencode-go`/`opencode`
+  provider settings. This is not proof that the provider accepted the
+  credential; failed requests and unsupported adapters can remain visible as
+  unavailable. OpenCode Go checks a selected Console OAuth login first when
+  available, then uses the first available API key if no Console login exists
+  or its request fails; a Console 404 or a successful response without an
+  access object reports no Go subscription and does not fall back.
+  The API-key route follows OpenCode Quota's supported Go usage endpoint. See
+  the
   [quota provider coverage table](docs/tui-v2-quota-providers.md) for limits and
   troubleshooting.
   `/quota-go-check` is a separate manual, confirmation-gated diagnostic: one

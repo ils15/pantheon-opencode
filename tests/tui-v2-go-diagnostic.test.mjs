@@ -41,6 +41,7 @@ async function fixture(
     globalThis.fetch = original
   })
   const cleanup = await createQuotaPlugin().setup({
+    provider: { get: async ({ providerID }) => ({ data: { id: providerID, settings: {} } }) },
     integration: {
       list: async () => ({
         data: listed ? [{ id: integrationID, connections: [connection] }] : [],

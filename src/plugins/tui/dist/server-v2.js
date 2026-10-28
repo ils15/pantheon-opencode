@@ -154,6 +154,35 @@ function routeKindField(provider, credential, effectiveRouteKind) {
 	return provider === "opencode-go" ? { route_kind: effectiveRouteKind ?? credential?.routeKind ?? "none" } : {};
 }
 /**
+* OpenCode Go follows the upstream quota plugin's key order: process environment, the
+* effective OpenCode provider settings, then a selected OpenCode API-key connection.
+* Provider settings are read through the host API; Pantheon never parses OpenCode files.
+*/
+async function configuredOpenCodeGoApiKey(context) {
+	const environmentKey = process.env.OPENCODE_API_KEY?.trim();
+	if (environmentKey) return environmentKey;
+	for (const providerID of ["opencode-go", "opencode"]) {
+		let value;
+		try {
+			value = (await context.provider.get({ providerID })).data.settings?.apiKey;
+		} catch {
+			continue;
+		}
+		if (typeof value !== "string") continue;
+		const configured = value.trim();
+		if (!configured) continue;
+		const environmentTemplate = configured.match(/^\{env:([A-Za-z_][A-Za-z0-9_]*)\}$/);
+		if (environmentTemplate) {
+			if (environmentTemplate[1] !== "OPENCODE_API_KEY") continue;
+			const resolved = process.env.OPENCODE_API_KEY?.trim();
+			if (resolved) return resolved;
+			continue;
+		}
+		if (configured.startsWith("{env:")) continue;
+		return configured;
+	}
+}
+/**
 * Resolve only listed, selected credential connections in the closed provider
 * catalog. Only the minimum access-token/key field is retained in memory.
 */
@@ -195,8 +224,20 @@ function createCredentialResolver(context) {
 	async function load(provider, goKeyOnly = false) {
 		const definition = QUOTA_PROVIDER_CATALOG[provider];
 		if (definition.source === "local-cli") return {};
+		const configuredGoKey = provider === "opencode-go" ? await configuredOpenCodeGoApiKey(context) : void 0;
+		if (goKeyOnly && configuredGoKey) return {
+			method: "key",
+			secret: configuredGoKey,
+			routeKind: "api_key"
+		};
 		try {
-			const listedConnections = await listCredentialConnections();
+			let listedConnections;
+			try {
+				listedConnections = await listCredentialConnections();
+			} catch (error) {
+				if (provider !== "opencode-go" || !configuredGoKey) throw error;
+				listedConnections = /* @__PURE__ */ new Map();
+			}
 			if (provider === "opencode-go") {
 				const activeListed = async (integrationID) => {
 					const connections = listedConnections.get(integrationID);
@@ -228,12 +269,12 @@ function createCredentialResolver(context) {
 					else if (activeConsole?.method === "oauth") unsupportedConsoleLogin = activeConsole.status?.status !== "needs_auth";
 				}
 				let activePrimary;
-				try {
+				if (!configuredGoKey) try {
 					activePrimary = await activeListed("opencode-go");
 				} catch {}
-				const unsupportedPrimaryLogin = activePrimary !== void 0 && activePrimary.method !== "key";
-				let apiKey;
-				for (const integrationID of ["opencode-go", "opencode"]) {
+				const unsupportedPrimaryLogin = !configuredGoKey && activePrimary !== void 0 && activePrimary.method !== "key";
+				let apiKey = configuredGoKey;
+				for (const integrationID of configuredGoKey ? [] : ["opencode-go", "opencode"]) {
 					let active;
 					try {
 						active = integrationID === "opencode-go" ? activePrimary : await activeListed(integrationID);
@@ -364,8 +405,8 @@ function createCredentialResolver(context) {
 		}
 	};
 }
-function isCredentialInvalidationEvent(type) {
-	return type === "credential.updated" || type === "credential.switched" || type === "integration.updated";
+function isQuotaSourceInvalidationEvent(type) {
+	return type === "credential.updated" || type === "credential.switched" || type === "integration.updated" || type === "provider.updated";
 }
 function createAdapterExecutor(shutdownSignal, queryCli) {
 	const MAX_CONCURRENCY = 3;
@@ -625,7 +666,7 @@ function createQuotaPlugin(queryCli = queryAlibabaTokenPlanUsage) {
 			let registration;
 			const eventTask = (async () => {
 				try {
-					for await (const event of context.event.subscribe({ signal: eventController.signal })) if (isCredentialInvalidationEvent(event.type)) {
+					for await (const event of context.event.subscribe({ signal: eventController.signal })) if (isQuotaSourceInvalidationEvent(event.type)) {
 						resolver.invalidate();
 						adapters.invalidate();
 						if (registration) try {

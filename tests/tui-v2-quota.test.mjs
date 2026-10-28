@@ -67,6 +67,7 @@ function createEventSource() {
 function createContext({
   active = {},
   credentials = {},
+  providerSettings = {},
   resolve,
   list = [],
   failResolve,
@@ -93,6 +94,17 @@ function createContext({
   }
 
   const context = {
+    provider: {
+      get: async ({ providerID }) =>
+        Object.hasOwn(providerSettings, providerID)
+          ? {
+              data: {
+                id: providerID,
+                settings: { apiKey: providerSettings[providerID] },
+              },
+            }
+          : { data: { id: providerID, settings: {} } },
+    },
     integration: {
       list: async () => ({ location: {}, data: knownIntegrations }),
       connection: {
@@ -410,7 +422,7 @@ test('V2 quota status deduplicates concurrent resolution and expires its in-memo
   }
 })
 
-test('V2 quota status invalidates resolved credentials on auth/integration events and cleans up', async (t) => {
+test('V2 quota status invalidates resolved credentials on auth/integration/provider events and cleans up', async (t) => {
   const connection = credentialConnection('deepseek', 'deepseek-login', 'key')
   const fake = createContext({
     active: { deepseek: connection },
@@ -427,7 +439,12 @@ test('V2 quota status invalidates resolved credentials on auth/integration event
 
   await status(fake)
   assert.deepEqual(fake.resolveCalls, ['deepseek-login'])
-  for (const type of ['credential.switched', 'credential.updated', 'integration.updated']) {
+  for (const type of [
+    'credential.switched',
+    'credential.updated',
+    'integration.updated',
+    'provider.updated',
+  ]) {
     fake.eventSource.emit({ type, data: {} })
     await flush()
     await status(fake)
@@ -437,8 +454,10 @@ test('V2 quota status invalidates resolved credentials on auth/integration event
     'deepseek-login',
     'deepseek-login',
     'deepseek-login',
+    'deepseek-login',
   ])
   assert.deepEqual(fake.rpcEvents, [
+    { name: 'credentials_changed', payload: {} },
     { name: 'credentials_changed', payload: {} },
     { name: 'credentials_changed', payload: {} },
     { name: 'credentials_changed', payload: {} },
@@ -449,7 +468,7 @@ test('V2 quota status invalidates resolved credentials on auth/integration event
   assert.equal(fake.eventSource.closed, 1)
   assert.equal(fake.rpcDisposed, 1)
   await status(fake)
-  assert.equal(fake.resolveCalls.length, 4)
+  assert.equal(fake.resolveCalls.length, 5)
 })
 
 test('credential switch racing resolution prevents sending the stale credential to an adapter', async (t) => {
@@ -1522,6 +1541,174 @@ test('OpenCode Go accepts the legacy integration alias and trims the selected ke
     )
   }
   assert.deepEqual(fake.resolveCalls, ['legacy-go-login'])
+})
+
+test('OpenCode Go uses OPENCODE_API_KEY before provider settings and saved credentials', async (t) => {
+  const previousEnvironmentKey = process.env.OPENCODE_API_KEY
+  process.env.OPENCODE_API_KEY = 'environment-go-key'
+  t.after(() => {
+    if (previousEnvironmentKey === undefined) delete process.env.OPENCODE_API_KEY
+    else process.env.OPENCODE_API_KEY = previousEnvironmentKey
+  })
+  const connection = credentialConnection('opencode-go', 'saved-go-key', 'key')
+  const fake = createContext({
+    active: { 'opencode-go': connection },
+    list: [connection],
+    credentials: { 'saved-go-key': { type: 'key', key: 'saved-api-key' } },
+    providerSettings: { 'opencode-go': 'provider-settings-key' },
+  })
+  const originalFetch = globalThis.fetch
+  const calls = []
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options })
+    return Response.json({
+      usage: Object.fromEntries(
+        ['rolling', 'weekly', 'monthly'].map((window) => [
+          window,
+          { status: 'ok', percent: 10 },
+        ]),
+      ),
+    })
+  }
+  t.after(() => {
+    globalThis.fetch = originalFetch
+  })
+  const cleanup = await setup(fake)
+  t.after(cleanup)
+
+  const result = await status(fake)
+  assert.equal(provider(result, 'opencode-go').state, 'available')
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].url, 'https://opencode.ai/zen/go/v1/usage')
+  assert.equal(calls[0].options.headers.authorization, 'Bearer environment-go-key')
+  assert.deepEqual(fake.resolveCalls, [])
+})
+
+test('OpenCode Go uses effective provider settings before saved credentials without requiring a login', async (t) => {
+  const previousEnvironmentKey = process.env.OPENCODE_API_KEY
+  delete process.env.OPENCODE_API_KEY
+  t.after(() => {
+    if (previousEnvironmentKey === undefined) delete process.env.OPENCODE_API_KEY
+    else process.env.OPENCODE_API_KEY = previousEnvironmentKey
+  })
+  const fake = createContext({ providerSettings: { 'opencode-go': 'provider-settings-key' } })
+  const originalFetch = globalThis.fetch
+  let request
+  globalThis.fetch = async (url, options) => {
+    request = { url, options }
+    return Response.json({
+      usage: Object.fromEntries(
+        ['rolling', 'weekly', 'monthly'].map((window) => [
+          window,
+          { status: 'ok', percent: 10 },
+        ]),
+      ),
+    })
+  }
+  t.after(() => {
+    globalThis.fetch = originalFetch
+  })
+  const cleanup = await setup(fake)
+  t.after(cleanup)
+
+  const result = await status(fake)
+  assert.equal(provider(result, 'opencode-go').state, 'available')
+  assert.equal(request.url, 'https://opencode.ai/zen/go/v1/usage')
+  assert.equal(request.options.headers.authorization, 'Bearer provider-settings-key')
+  assert.deepEqual(fake.activeCalls, [])
+  assert.deepEqual(fake.resolveCalls, [])
+})
+
+test('OpenCode Go uses the legacy opencode provider setting when its Go provider setting is absent', async (t) => {
+  const previousEnvironmentKey = process.env.OPENCODE_API_KEY
+  delete process.env.OPENCODE_API_KEY
+  t.after(() => {
+    if (previousEnvironmentKey === undefined) delete process.env.OPENCODE_API_KEY
+    else process.env.OPENCODE_API_KEY = previousEnvironmentKey
+  })
+  const fake = createContext({ providerSettings: { opencode: 'legacy-provider-key' } })
+  const originalFetch = globalThis.fetch
+  let request
+  globalThis.fetch = async (url, options) => {
+    request = { url, options }
+    return Response.json({
+      usage: Object.fromEntries(
+        ['rolling', 'weekly', 'monthly'].map((window) => [
+          window,
+          { status: 'ok', percent: 10 },
+        ]),
+      ),
+    })
+  }
+  t.after(() => {
+    globalThis.fetch = originalFetch
+  })
+  const cleanup = await setup(fake)
+  t.after(cleanup)
+
+  const result = await status(fake)
+  assert.equal(provider(result, 'opencode-go').state, 'available')
+  assert.equal(request.options.headers.authorization, 'Bearer legacy-provider-key')
+  assert.deepEqual(fake.activeCalls, [])
+  assert.deepEqual(fake.resolveCalls, [])
+})
+
+test('OpenCode Go uses configured provider key only after Console failure', async (t) => {
+  const previousEnvironmentKey = process.env.OPENCODE_API_KEY
+  delete process.env.OPENCODE_API_KEY
+  t.after(() => {
+    if (previousEnvironmentKey === undefined) delete process.env.OPENCODE_API_KEY
+    else process.env.OPENCODE_API_KEY = previousEnvironmentKey
+  })
+  const consoleConnection = credentialConnection('opencode', 'console-login', 'oauth')
+  const fake = createContext({
+    active: { opencode: consoleConnection },
+    list: [consoleConnection],
+    credentials: {
+      'console-login': {
+        type: 'oauth',
+        methodID: 'device',
+        access: 'console-oauth-token',
+        metadata: { server: 'https://opencode.ai/console' },
+      },
+    },
+    providerSettings: { 'opencode-go': 'configured-go-api-key' },
+  })
+  const originalFetch = globalThis.fetch
+  const calls = []
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options })
+    if (url === 'https://opencode.ai/console/api/go/status') {
+      return new Response('', { status: 503 })
+    }
+    return Response.json({
+      usage: Object.fromEntries(
+        ['rolling', 'weekly', 'monthly'].map((window) => [
+          window,
+          { status: 'ok', percent: 10 },
+        ]),
+      ),
+    })
+  }
+  t.after(() => {
+    globalThis.fetch = originalFetch
+  })
+  const cleanup = await setup(fake)
+  t.after(cleanup)
+
+  const result = await status(fake)
+  assert.equal(provider(result, 'opencode-go').route_kind, 'api_key')
+  const goCalls = calls.filter(({ url }) =>
+    ['https://opencode.ai/console/api/go/status', 'https://opencode.ai/zen/go/v1/usage'].includes(url),
+  )
+  assert.deepEqual(
+    goCalls.map(({ url }) => url),
+    ['https://opencode.ai/console/api/go/status', 'https://opencode.ai/zen/go/v1/usage'],
+  )
+  assert.equal(goCalls[0].options.headers.authorization, 'Bearer console-oauth-token')
+  assert.equal(goCalls[1].options.headers.authorization, 'Bearer configured-go-api-key')
+  assert.ok(fake.resolveCalls.length > 0)
+  assert.ok(fake.resolveCalls.every((id) => id === 'console-login'))
 })
 
 test('OpenCode Go Console OAuth uses only the fixed Console status route and validated meters', async (t) => {
