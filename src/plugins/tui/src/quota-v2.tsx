@@ -1,12 +1,13 @@
 /** @jsxImportSource @opentui/solid */
+// biome-ignore-all lint/a11y/noStaticElementInteractions: OpenTUI has no DOM roles; mouse controls have keyboard equivalents.
 
 import type { Context, KeymapCommand, KeymapLayer, PanelInput } from '@opencode/plugin/tui/context'
+import { icon } from '@profullstack/hqtui'
 import { createMemo, createSignal, For, type JSX, onCleanup, onMount, Show } from 'solid-js'
 import {
   contextBar,
   contextUsageTone,
   formatContextWindow,
-  formatSpent,
   formatTokenCount,
 } from './context-gauge'
 import { quotaGoCheckCommand } from './go-key-diagnostic-ui'
@@ -28,10 +29,33 @@ import {
   resolveActiveModelRef,
 } from './quota-v2-model'
 import { cellWidth, SIDEBAR_CONTENT_WIDTH } from './sidebar-width'
+import { ActiveContextEstimate, UsageHistorySection } from './usage-history-view'
+import { activeModelIdentity, sessionSpendLabel } from './usage-view-model'
 
 export const QUOTA_PANEL_NAME = 'pantheon.quota'
 export const QUOTA_OPEN_COMMAND_ID = 'pantheon.quota.open'
-export const QUOTA_ICON = '\u25A5'
+export type QuotaIconMode = 'nerd' | 'unicode' | 'ascii'
+export type QuotaIconName =
+  | 'check'
+  | 'close'
+  | 'clock'
+  | 'gauge'
+  | 'plug'
+  | 'refresh'
+  | 'settings'
+  | 'sliders'
+  | 'warning'
+
+export function quotaIcon(name: QuotaIconName, mode?: QuotaIconMode): string {
+  return icon(name, mode ? { mode } : undefined)
+}
+
+function iconInSlot(name: QuotaIconName, width: number, mode?: QuotaIconMode): string {
+  const glyph = quotaIcon(name, mode)
+  return `${glyph}${' '.repeat(Math.max(0, width - cellWidth(glyph)))}`
+}
+
+export const QUOTA_ICON = quotaIcon('refresh')
 const QUOTA_PANEL_TOAST = 'Abra uma sessão para ver os detalhes da quota.'
 
 type QuotaSurfaceProps = { context: Context; runtime: QuotaRuntime }
@@ -79,9 +103,9 @@ export function snapshotSummary(snapshot: QuotaSnapshot, display: 'used' | 'rema
   const metric = metrics.find((item) => item.kind !== 'provider_status') ?? metrics[0]
   if (metric) {
     const value = compactQuotaMetric(metric, display) ?? 'quota indisponível'
-    return snapshot.status === 'partial' ? `parcial · ${value}` : value
+    return snapshot.status === 'partial' ? `quota parcialmente disponível · ${value}` : value
   }
-  if (snapshot.status === 'partial') return 'dados parciais'
+  if (snapshot.status === 'partial') return 'quota parcialmente disponível'
   if (snapshot.providers[0]?.message) return snapshot.providers[0].message
   return 'quota indisponível'
 }
@@ -299,11 +323,6 @@ export function quotaWindowLines(
   const compact = `  ${title} ${value}`
   const prefix = cellWidth(padded) <= width ? padded : compact
   const suffix = reset ? ` ${reset}` : ''
-  const rawBar =
-    progress && (sidebarPercent || metric.unit.trim() === '%')
-      ? contextBar(progress.usedPercent, 4)
-      : undefined
-  const bar = rawBar ? { ...rawBar, empty: '░'.repeat(cellWidth(rawBar.empty)) } : undefined
   const secondaryAmount = sidebarPercent
     ? undefined
     : quotaAmount(display === 'remaining' ? metric.used : metric.remaining, metric.unit)
@@ -316,9 +335,6 @@ export function quotaWindowLines(
     : []
   if (!sidebarPercent && progress) {
     secondary.push(...quotaTextLines(`${progress.remainingPercent}% restante`, width, 4))
-  }
-  if (bar && cellWidth(prefix + suffix) + 5 <= width) {
-    return [`${prefix} ${bar.filled}${bar.empty}${suffix}`, ...resetDateLines, ...secondary]
   }
   if (cellWidth(prefix + suffix) <= width)
     return [`${prefix}${suffix}`, ...resetDateLines, ...secondary]
@@ -429,13 +445,23 @@ function QuotaMetricLine(props: {
   )
 }
 
-function providerState(provider: QuotaProviderDetail): { label: string; tone: QuotaTone } {
+export function providerState(
+  provider: QuotaProviderDetail,
+  mode?: QuotaIconMode,
+): { label: string; tone: QuotaTone } {
   if (provider.authentication === 'not_connected')
-    return { label: '○ Precisa configurar', tone: 'warning' }
-  if (provider.authentication === 'unavailable') return { label: '× Indisponível', tone: 'error' }
+    return { label: `${iconInSlot('settings', 2, mode)} Precisa configurar`, tone: 'warning' }
+  if (provider.authentication === 'unavailable')
+    return { label: `${iconInSlot('close', 2, mode)} Indisponível`, tone: 'error' }
   return provider.state === 'available'
-    ? { label: '✓ Credencial local · há dados', tone: 'success' }
-    : { label: '! Credencial local · sem dados', tone: 'warning' }
+    ? {
+        label: `${iconInSlot('check', 2, mode)} Credencial local · há dados`,
+        tone: 'success',
+      }
+    : {
+        label: `${iconInSlot('warning', 2, mode)} Credencial local · sem dados`,
+        tone: 'warning',
+      }
 }
 
 function recentModelUsage(context: Context, sessionID: string): RecentModelUsageRow[] {
@@ -544,18 +570,29 @@ function recentModelUsage(context: Context, sessionID: string): RecentModelUsage
   })
 }
 
-function ModelUsageDetails(props: { context: Context; sessionID: string; width: number }) {
+export function activeQuotaModelLabel(row: RecentModelUsageRow | undefined): string {
+  return row ? `Modelo ativo · ${activeModelIdentity(row)}` : 'Modelo ativo indisponível'
+}
+
+export function quotaPanelStatusMessage(
+  snapshot: Pick<QuotaSnapshot, 'status' | 'error'>,
+): string | undefined {
+  if (snapshot.status === 'partial') return 'Dados parciais'
+  if (snapshot.status === 'ready') return undefined
+  return quotaSnapshotStatusLabel(snapshot.status, snapshot.error)
+}
+
+function useRecentModelUsage(context: Context, sessionID: string): () => RecentModelUsageRow[] {
   const [revision, setRevision] = createSignal(0)
   const rows = createMemo(() => {
     revision()
-    return recentModelUsage(props.context, props.sessionID)
+    return recentModelUsage(context, sessionID)
   })
-
   onMount(() => {
     const unsubscribe: Array<() => void> = []
     for (const event of MODEL_USAGE_REFRESH_EVENTS) {
       try {
-        unsubscribe.push(props.context.data.on(event, () => setRevision((value) => value + 1)))
+        unsubscribe.push(context.data.on(event, () => setRevision((value) => value + 1)))
       } catch {
         /* Cached values stay renderable if a host event is unavailable. */
       }
@@ -564,6 +601,48 @@ function ModelUsageDetails(props: { context: Context; sessionID: string; width: 
       for (const dispose of unsubscribe) dispose()
     })
   })
+  return rows
+}
+
+function ActiveModelHeader(props: {
+  context: Context
+  sessionID: string
+  width: number
+  snapshot: QuotaSnapshot
+}): JSX.Element {
+  const rows = useRecentModelUsage(props.context, props.sessionID)
+  const activeModel = createMemo(() => rows().find((row) => row.active))
+  const status = () => props.snapshot.status
+  const message = () => quotaPanelStatusMessage(props.snapshot)
+  const modelLine = () => activeQuotaModelLabel(activeModel())
+  return (
+    <box flexDirection="column">
+      <For each={quotaTextLines(modelLine(), props.width, 0)}>
+        {(line) => <text fg={base(props.context)}>{line}</text>}
+      </For>
+      <Show when={message()}>
+        {(label) => (
+          <For each={quotaTextLines(label(), props.width, 0)}>
+            {(line) => (
+              <text
+                fg={
+                  status() === 'partial'
+                    ? tone(props.context, 'warning')
+                    : tone(props.context, status() === 'unavailable' ? 'error' : 'info')
+                }
+              >
+                {line}
+              </text>
+            )}
+          </For>
+        )}
+      </Show>
+    </box>
+  )
+}
+
+function ModelUsageDetails(props: { context: Context; sessionID: string; width: number }) {
+  const rows = useRecentModelUsage(props.context, props.sessionID)
 
   const contextTone = (percent: number) => tone(props.context, contextUsageTone(percent))
   const contextCells = () => Math.max(4, Math.min(12, Math.floor((props.width - 30) / 2)))
@@ -580,9 +659,15 @@ function ModelUsageDetails(props: { context: Context; sessionID: string; width: 
         {(row, index) => (
           <>
             <Show when={row.active}>
-              <text fg={tone(props.context, 'info')} attributes={1}>
-                MODELO ATUAL
-              </text>
+              <For
+                each={quotaTextLines(`MODELO ATUAL · ${activeModelIdentity(row)}`, props.width, 0)}
+              >
+                {(line) => (
+                  <text fg={tone(props.context, 'info')} attributes={1}>
+                    {line}
+                  </text>
+                )}
+              </For>
             </Show>
             <Show when={!row.active && index() === 1}>
               <text fg={muted(props.context)} attributes={1}>
@@ -630,19 +715,24 @@ function ModelUsageDetails(props: { context: Context; sessionID: string; width: 
                   )
                 }}
               </Show>
-              <Show when={row.cost !== null}>
-                <For
-                  each={quotaTextLines(
-                    `Custo reportado · mensagens recentes · ${formatSpent(row.cost) ?? '—'}`,
-                    props.width - 2,
-                    0,
-                  )}
-                >
-                  {(line) => <text fg={muted(props.context)}>{line}</text>}
-                </For>
-              </Show>
               <Show when={row.tokens !== null && row.context === null}>
                 <text fg={muted(props.context)}>Contexto indisponível</text>
+              </Show>
+              <Show when={row.active}>
+                <ActiveContextEstimate
+                  context={props.context}
+                  providerID={row.providerID}
+                  modelID={row.modelID}
+                  contextTokens={row.context?.tokens ?? null}
+                  width={props.width - 2}
+                />
+              </Show>
+              <Show when={row.cost === null ? null : sessionSpendLabel(row.cost)}>
+                {(label) => (
+                  <For each={quotaTextLines(label(), props.width - 2, 0)}>
+                    {(line) => <text fg={muted(props.context)}>{line}</text>}
+                  </For>
+                )}
               </Show>
             </box>
           </>
@@ -741,6 +831,16 @@ function QuotaProviderDetails(props: {
 
 export type QuotaPanelAction = 'toggle-enabled' | 'toggle-display' | 'refresh' | 'close'
 
+export const QUOTA_TABS = ['usage', 'limits', 'plugin', 'settings'] as const
+export type QuotaTab = (typeof QUOTA_TABS)[number]
+export const DEFAULT_QUOTA_TAB: QuotaTab = 'limits'
+
+export function moveQuotaTab(current: QuotaTab, direction: -1 | 1): QuotaTab {
+  const currentIndex = QUOTA_TABS.indexOf(current)
+  const nextIndex = (currentIndex + direction + QUOTA_TABS.length) % QUOTA_TABS.length
+  return QUOTA_TABS[nextIndex] ?? DEFAULT_QUOTA_TAB
+}
+
 export const QUOTA_PANEL_COMMANDS: readonly {
   action: QuotaPanelAction
   id: string
@@ -785,17 +885,40 @@ export function runQuotaPanelCommand(
 export function quotaPanelKeymapLayer(
   panel: Pick<PanelInput, 'focused' | 'close'>,
   runtime: QuotaRuntime,
+  onTabChange?: (direction: -1 | 1) => void,
 ): KeymapLayer {
   const focused = () => panel.focused === true
   return {
     mode: 'global',
     enabled: focused,
-    commands: QUOTA_PANEL_COMMANDS.map((command) => ({
-      id: command.id,
-      title: command.title,
-      bind: command.bind,
-      run: () => (focused() ? runQuotaPanelCommand(command.action, panel, runtime) : false),
-    })),
+    commands: [
+      ...QUOTA_PANEL_COMMANDS.map((command) => ({
+        id: command.id,
+        title: command.title,
+        bind: command.bind,
+        run: () => (focused() ? runQuotaPanelCommand(command.action, panel, runtime) : false),
+      })),
+      {
+        id: 'pantheon.quota.next-tab',
+        title: 'Quota: próxima aba',
+        bind: 'tab',
+        run: () => {
+          if (!focused()) return false
+          onTabChange?.(1)
+          return undefined
+        },
+      },
+      {
+        id: 'pantheon.quota.previous-tab',
+        title: 'Quota: aba anterior',
+        bind: 'shift+tab',
+        run: () => {
+          if (!focused()) return false
+          onTabChange?.(-1)
+          return undefined
+        },
+      },
+    ],
   }
 }
 
@@ -829,39 +952,136 @@ export function openQuotaPanel(context: Pick<Context, 'ui'>): boolean {
   return false
 }
 
-function QuotaPanel(props: QuotaSurfaceProps & { panel: PanelInput }) {
-  props.context.keymap.layer(() => quotaPanelKeymapLayer(props.panel, props.runtime))
+const QUOTA_TAB_LABELS: Record<QuotaTab, string> = {
+  usage: 'Usage',
+  limits: 'Limits',
+  plugin: 'Plugin',
+  settings: 'Settings',
+}
+
+const QUOTA_TAB_ICONS: Record<QuotaTab, QuotaIconName> = {
+  usage: 'clock',
+  limits: 'gauge',
+  plugin: 'plug',
+  settings: 'settings',
+}
+
+export function quotaTabLabel(tab: QuotaTab, mode?: QuotaIconMode): string {
+  return `${iconInSlot(QUOTA_TAB_ICONS[tab], 3, mode)} ${QUOTA_TAB_LABELS[tab]}`
+}
+
+function QuotaTabNavigation(props: {
+  context: Context
+  selected: QuotaTab
+  width: number
+  onSelect: (tab: QuotaTab) => void
+}): JSX.Element {
+  return (
+    <box flexDirection={props.width < 54 ? 'column' : 'row'} gap={1}>
+      <For each={QUOTA_TABS}>
+        {(tab) => (
+          <box onMouseDown={() => props.onSelect(tab)}>
+            <text
+              fg={props.selected === tab ? tone(props.context, 'info') : muted(props.context)}
+              attributes={props.selected === tab ? 1 : 0}
+            >
+              {`${props.selected === tab ? '› ' : '  '}${quotaTabLabel(tab)}`}
+            </text>
+          </box>
+        )}
+      </For>
+    </box>
+  )
+}
+
+function QuotaCloseButton(props: { context: Context; close: () => void }): JSX.Element {
+  return (
+    <box onMouseDown={props.close}>
+      <text fg={tone(props.context, 'info')}>{`${quotaIcon('close')} Fechar`}</text>
+    </box>
+  )
+}
+
+function QuotaPluginDetails(props: { context: Context; snapshot: QuotaSnapshot }): JSX.Element {
+  return (
+    <box flexDirection="column" paddingTop={1}>
+      <text fg={tone(props.context, 'info')} attributes={1}>
+        Plugin
+      </text>
+      <text fg={base(props.context)}>{`Pantheon TUI v${__PANTHEON_VERSION__}`}</text>
+      <text fg={muted(props.context)}>
+        Status de conexão consultado pelo OpenCode; segredos não são exibidos.
+      </text>
+      <text fg={muted(props.context)}>
+        {`Status da quota: ${quotaSnapshotStatusLabel(props.snapshot.status, props.snapshot.error)}`}
+      </text>
+      <Show when={props.snapshot.details.length > 0}>
+        <text fg={muted(props.context)}>PROVEDORES DETECTADOS</text>
+        <For each={props.snapshot.details}>
+          {(provider) => {
+            const state = providerState(provider)
+            return (
+              <text fg={tone(props.context, state.tone)}>
+                {`${provider.label} · ${state.label}`}
+              </text>
+            )
+          }}
+        </For>
+      </Show>
+      <Show when={props.snapshot.details.length === 0}>
+        <text fg={muted(props.context)}>Nenhum provedor elegível foi confirmado nesta sessão.</text>
+      </Show>
+      <text fg={muted(props.context)}>
+        Configure a conexão e credenciais pelo fluxo oficial do OpenCode; o painel não altera
+        configurações.
+      </text>
+    </box>
+  )
+}
+
+function QuotaSettings(props: { context: Context; runtime: QuotaRuntime }): JSX.Element {
+  const preferences = () => props.runtime.preferences()
+  return (
+    <box flexDirection="column" paddingTop={1}>
+      <text fg={tone(props.context, 'info')} attributes={1}>
+        Settings
+      </text>
+      <box onMouseDown={() => void props.runtime.toggleEnabled()}>
+        <text fg={base(props.context)}>
+          {`${quotaIcon(preferences().enabled ? 'check' : 'close')} [E] Quota ${preferences().enabled ? 'ativada' : 'desativada'} · clique para alternar`}
+        </text>
+      </box>
+      <box onMouseDown={() => void props.runtime.toggleDisplay()}>
+        <text fg={base(props.context)}>
+          {`${quotaIcon('sliders')} [M] Exibir ${preferences().display === 'remaining' ? 'restante' : 'usado'} · clique para alternar`}
+        </text>
+      </box>
+      <text fg={muted(props.context)}>Tab/Shift+Tab navega pelas abas; Esc fecha o painel.</text>
+    </box>
+  )
+}
+
+export function QuotaPanel(props: QuotaSurfaceProps & { panel: PanelInput }): JSX.Element {
+  const [selectedTab, setSelectedTab] = createSignal<QuotaTab>(DEFAULT_QUOTA_TAB)
+  props.context.keymap.layer(() =>
+    quotaPanelKeymapLayer(props.panel, props.runtime, (direction) =>
+      setSelectedTab((tab) => moveQuotaTab(tab, direction)),
+    ),
+  )
   const preferences = () => props.runtime.preferences()
   const snapshot = () => props.runtime.snapshot()
-  const snapshotTone = (): QuotaTone => {
-    switch (snapshot().status) {
-      case 'ready':
-        return 'success'
-      case 'partial':
-      case 'connected_unavailable':
-      case 'needs_setup':
-      case 'stale':
-        return 'warning'
-      case 'unavailable':
-        return 'error'
-      case 'loading':
-      case 'disabled':
-        return 'info'
-    }
-  }
 
   return (
     <box flexDirection="column" width="100%" height="100%" padding={1}>
       <Show
         when={props.panel.width >= 54}
         fallback={
-          <box flexDirection="column">
-            <text fg={tone(props.context, 'info')} attributes={1}>
-              {`${QUOTA_ICON} Pantheon / Quota`}
-            </text>
-            <text fg={tone(props.context, snapshotTone())}>
-              {quotaSnapshotStatusLabel(snapshot().status, snapshot().error)}
-            </text>
+          <box flexDirection="row" justifyContent="space-between" gap={1}>
+            <text
+              fg={tone(props.context, 'info')}
+              attributes={1}
+            >{`${QUOTA_ICON} Pantheon / Quota`}</text>
+            <QuotaCloseButton context={props.context} close={props.panel.close} />
           </box>
         }
       >
@@ -869,11 +1089,21 @@ function QuotaPanel(props: QuotaSurfaceProps & { panel: PanelInput }) {
           <text fg={tone(props.context, 'info')} attributes={1}>
             {`${QUOTA_ICON} Pantheon / Quota`}
           </text>
-          <text fg={tone(props.context, snapshotTone())}>
-            {quotaSnapshotStatusLabel(snapshot().status, snapshot().error)}
-          </text>
+          <QuotaCloseButton context={props.context} close={props.panel.close} />
         </box>
       </Show>
+      <ActiveModelHeader
+        context={props.context}
+        sessionID={props.panel.sessionID}
+        width={props.panel.width - 4}
+        snapshot={snapshot()}
+      />
+      <QuotaTabNavigation
+        context={props.context}
+        selected={selectedTab()}
+        width={props.panel.width}
+        onSelect={setSelectedTab}
+      />
       <Show when={snapshot().error !== undefined && snapshot().status !== 'ready'}>
         <text fg={muted(props.context)}>{`Último erro: ${snapshot().error}`}</text>
       </Show>
@@ -904,21 +1134,43 @@ function QuotaPanel(props: QuotaSurfaceProps & { panel: PanelInput }) {
         focusedBorderColor={tone(props.context, 'info')}
       >
         <box flexDirection="column" paddingX={1} paddingY={1}>
-          <For each={snapshot().details}>
-            {(provider) => (
-              <QuotaProviderDetails
-                provider={provider}
-                display={preferences().display}
-                width={props.panel.width - 4}
-                context={props.context}
-              />
-            )}
-          </For>
-          <ModelUsageDetails
-            context={props.context}
-            sessionID={props.panel.sessionID}
-            width={props.panel.width - 6}
-          />
+          <Show when={selectedTab() === 'usage'}>
+            <UsageHistorySection
+              context={props.context}
+              panel={props.panel}
+              width={props.panel.width - 6}
+            />
+            <ModelUsageDetails
+              context={props.context}
+              sessionID={props.panel.sessionID}
+              width={props.panel.width - 6}
+            />
+          </Show>
+          <Show when={selectedTab() === 'limits'}>
+            <Show when={snapshot().details.length > 0}>
+              <For each={snapshot().details}>
+                {(provider) => (
+                  <QuotaProviderDetails
+                    provider={provider}
+                    display={preferences().display}
+                    width={props.panel.width - 4}
+                    context={props.context}
+                  />
+                )}
+              </For>
+            </Show>
+            <Show when={snapshot().details.length === 0}>
+              <text fg={muted(props.context)}>
+                {quotaSnapshotStatusLabel(snapshot().status, snapshot().error)}
+              </text>
+            </Show>
+          </Show>
+          <Show when={selectedTab() === 'plugin'}>
+            <QuotaPluginDetails context={props.context} snapshot={snapshot()} />
+          </Show>
+          <Show when={selectedTab() === 'settings'}>
+            <QuotaSettings context={props.context} runtime={props.runtime} />
+          </Show>
         </box>
       </scrollbox>
       <box flexDirection="column" flexShrink={0}>
@@ -928,8 +1180,8 @@ function QuotaPanel(props: QuotaSurfaceProps & { panel: PanelInput }) {
         <text
           fg={muted(props.context)}
         >{`E ${preferences().enabled ? 'desativar' : 'ativar'} · M alternar usado/restante`}</text>
-        <text fg={muted(props.context)}>↑/↓ rolar · R atualizar</text>
-        <text fg={muted(props.context)}>Esc/Q fechar</text>
+        <text fg={muted(props.context)}>{`↑/↓ rolar · ${quotaIcon('refresh')} R atualizar`}</text>
+        <text fg={muted(props.context)}>Tab/Shift+Tab abas · Esc/Q fechar</text>
       </box>
     </box>
   )

@@ -50,16 +50,26 @@ export {
   MODEL_USAGE_SESSION_LIMIT,
   MODEL_USAGE_VISIBLE_CEILING,
 } from './model-usage-limits'
+export type { QuotaIconMode, QuotaIconName, QuotaTab } from './quota-v2'
 export {
+  activeQuotaModelLabel,
+  DEFAULT_QUOTA_TAB,
   financeMetricLines,
+  moveQuotaTab,
   openQuotaPanel,
+  providerState,
   QUOTA_ICON,
   QUOTA_OPEN_COMMAND_ID,
   QUOTA_PANEL_COMMANDS,
   QUOTA_PANEL_NAME,
+  QUOTA_TABS,
+  QuotaPanel,
+  quotaIcon,
   quotaMetricLines,
   quotaOpenCommand,
   quotaPanelKeymapLayer,
+  quotaPanelStatusMessage,
+  quotaTabLabel,
   quotaTextLines,
   quotaUsageTone,
   quotaWindowLines,
@@ -85,6 +95,28 @@ export {
   quotaSnapshotStatusLabel,
 } from './quota-v2-model'
 export { cellWidth } from './sidebar-width'
+export { UsageHistorySection } from './usage-history-view'
+export type { ActiveContextCostResult } from './usage-view-model'
+export {
+  activeContextEstimateErrorLines,
+  activeContextEstimateLines,
+  activeContextEstimateMissingLines,
+  activeContextEstimatePendingLines,
+  activeModelIdentity,
+  sessionSpendLabel,
+  USAGE_HISTORY_PERIOD_BINDINGS,
+  usageHistoryChartLines,
+  usageHistoryControlsLines,
+  usageHistoryCoverageLabel,
+  usageHistoryEmptyMessage,
+  usageHistoryPartialWarning,
+  usageHistoryPeriodForKey,
+  usageHistoryPricingLabel,
+  usageHistorySelectorLabel,
+  usageHistorySelectorLines,
+  usageHistoryTextLines,
+  usageHistoryUnavailableMessage,
+} from './usage-view-model'
 export { resolveActiveModelRef, resolveModelContextSnapshot }
 
 const SINGLETON = Symbol.for('pantheon.tui.v2.loaded')

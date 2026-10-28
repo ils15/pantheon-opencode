@@ -1,6 +1,8 @@
+import { Worker } from 'node:worker_threads'
 import { Plugin } from '@opencode/plugin'
 import type { Context } from '@opencode/plugin/promise/plugin'
 import type { RpcCallContext, RpcRegistration } from '@opencode/plugin/promise/rpc'
+import { estimateActiveContextCost } from './cost-data'
 import { createGoKeyDiagnostic } from './go-key-diagnostic'
 import {
   isOpenAICodexOAuthMethod,
@@ -17,9 +19,79 @@ import {
   type QuotaProviderId,
   quotaRpc,
 } from './quota-rpc'
+import {
+  isUsageHistoryPeriod,
+  MAX_HISTORY_QUERY_MS,
+  type UsageHistoryRpcResult,
+} from './usage-history-contract'
 
 const CREDENTIAL_CACHE_TTL_MS = 30_000
 const ADAPTER_CACHE_TTL_MS = 20_000
+
+function queryUsageHistoryInWorker(
+  period: string,
+  signal: AbortSignal,
+): Promise<UsageHistoryRpcResult> {
+  if (!isUsageHistoryPeriod(period)) {
+    return Promise.resolve({ status: 'unavailable', reason: 'invalid_period' })
+  }
+  return new Promise((resolve, reject) => {
+    let settled = false
+    let worker: Worker
+    try {
+      worker = new Worker(new URL('./usage-history-worker.js', import.meta.url), {
+        workerData: { period },
+        resourceLimits: { maxOldGenerationSizeMb: 64, stackSizeMb: 2 },
+      })
+    } catch {
+      resolve({ status: 'unavailable', reason: 'history_unavailable' })
+      return
+    }
+    let timer: ReturnType<typeof setTimeout>
+
+    const onAbort = (): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      signal.removeEventListener('abort', onAbort)
+      void worker.terminate()
+      reject(new DOMException('Usage history request aborted', 'AbortError'))
+    }
+    const finish = (result: UsageHistoryRpcResult): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      signal.removeEventListener('abort', onAbort)
+      void worker.terminate()
+      resolve(result)
+    }
+
+    timer = setTimeout(() => {
+      finish({ status: 'unavailable', reason: 'history_timeout' })
+    }, MAX_HISTORY_QUERY_MS)
+    signal.addEventListener('abort', onAbort, { once: true })
+    worker.once('message', (message: unknown) => {
+      if (
+        typeof message === 'object' &&
+        message !== null &&
+        'ok' in message &&
+        message.ok === true &&
+        'result' in message &&
+        typeof message.result === 'object' &&
+        message.result !== null
+      ) {
+        finish(message.result as UsageHistoryRpcResult)
+        return
+      }
+      finish({ status: 'unavailable', reason: 'history_unavailable' })
+    })
+    worker.once('error', () => finish({ status: 'unavailable', reason: 'history_unavailable' }))
+    worker.once('exit', () => {
+      if (!settled) finish({ status: 'unavailable', reason: 'history_unavailable' })
+    })
+    if (signal.aborted) onAbort()
+  })
+}
 
 type ResolvedCredential = {
   readonly method?: 'oauth' | 'key' | 'unsupported'
@@ -415,10 +487,9 @@ function createCredentialResolver(context: Context) {
         return {}
       }
       return {}
-    } catch (error) {
-      // Host errors may contain identifiers or provider data; never forward them.
-      // The sanitized error alone hides the cause, so keep the original in the server log.
-      console.warn('[pantheon-tui quota] credential resolution failed:', error)
+    } catch {
+      // Host errors may contain credentials, provider data, or arbitrary thrown metadata.
+      console.warn('[pantheon-tui quota] credential resolution failed (exception)')
       throw new Error('Credential resolution failed')
     }
   }
@@ -864,6 +935,30 @@ export function createQuotaPlugin(
             ),
           status: async (_input, callContext: RpcCallContext<typeof quotaRpc.methods.status>) =>
             getProviderStatus(resolver, adapters, callContext.signal),
+          usage_history: async (
+            input,
+            callContext: RpcCallContext<typeof quotaRpc.methods.usage_history>,
+          ) => {
+            callContext.signal.throwIfAborted()
+            const period = (input as { period: string }).period
+            return queryUsageHistoryInWorker(
+              period,
+              AbortSignal.any([callContext.signal, shutdownController.signal]),
+            )
+          },
+          active_context_cost: async (
+            input,
+            callContext: RpcCallContext<typeof quotaRpc.methods.active_context_cost>,
+          ) => {
+            callContext.signal.throwIfAborted()
+            return estimateActiveContextCost(
+              input as {
+                providerID: string | null
+                modelID: string | null
+                contextTokens: number | null
+              },
+            )
+          },
         })
       } catch (error) {
         console.warn('[pantheon-tui quota] quota RPC registration failed:', error)

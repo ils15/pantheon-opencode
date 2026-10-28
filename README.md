@@ -100,11 +100,18 @@ see [Quick Start](docs/QUICKSTART.md).
   default; the sidebar keeps Todo and places quota immediately after Dispatch
   (header/version → Session → Context → Git → Todo → Dispatch → quota).
   Status stays in the native sidebar footer. Use `E` to disable quota or `M`
-  to switch between remaining and used. Quota windows show a local countdown and
-  the provider-reported reset date/time in UTC when valid timing is available;
-  missing timing is not inferred. After expiry the UI shows “aguardando
-  atualização” until refreshed data arrives. Empty quota gauges use a visible
-  track even when no usage is reported.
+  to switch between remaining and used. The `/quota` panel has **Usage, Limits,
+  Plugin, and Settings** tabs. Usage charts cover 7, 15, 30 days, or Total and
+  plot recorded daily token usage and model totals rather than filling gaps with
+  invented data. The panel identifies the active chat model; a partial-data
+  warning appears only when the quota snapshot is actually partial.
+  Session-reported spend is shown separately. The active context estimate uses
+  the active model's input price times pre-cache context tokens, applies no cache
+  discount, and is explicitly not billable.
+  Quota windows show text amounts and status, not provider progress gauges. They
+  show a local countdown and the provider-reported reset date/time in UTC when
+  valid timing is available; missing timing is not inferred. After expiry the UI
+  shows “aguardando atualização” until refreshed data arrives.
   When a quota status request fails, the UI preserves the last valid
   snapshot, marks it stale, and shows the failure cause as `Erro: <causa>`
   in the sidebar and `/quota` panel (plus a `Último erro` line) instead

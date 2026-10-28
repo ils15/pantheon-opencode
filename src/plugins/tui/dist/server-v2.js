@@ -1,6 +1,9 @@
-import { n as quotaRpc, t as QUOTA_PROVIDER_IDS } from "./quota-rpc-UL2HuFRJ.js";
+import { r as isUsageHistoryPeriod, t as MAX_HISTORY_QUERY_MS } from "./usage-history-contract-nt1rnBPE.js";
+import { n as quotaRpc, t as QUOTA_PROVIDER_IDS } from "./quota-rpc-DMmXBhBe.js";
+import { t as estimateActiveContextCost } from "./cost-data-CCZUs1aJ.js";
 import { queryAlibabaTokenPlanUsage } from "./quota-cli.js";
 import { QUOTA_PROVIDER_CATALOG, isOpenAICodexOAuthMethod, isOpenCodeConsoleOAuthMethod, runQuotaAdapter } from "./quota-adapters.js";
+import { Worker } from "node:worker_threads";
 import { Plugin } from "@opencode/plugin";
 //#region src/go-key-diagnostic.ts
 /** Parse at most 4 KiB; inspect only own top-level error presence, never its value. */
@@ -88,6 +91,76 @@ function createGoKeyDiagnostic() {
 //#region src/server-v2.ts
 const CREDENTIAL_CACHE_TTL_MS = 3e4;
 const ADAPTER_CACHE_TTL_MS = 2e4;
+function queryUsageHistoryInWorker(period, signal) {
+	if (!isUsageHistoryPeriod(period)) return Promise.resolve({
+		status: "unavailable",
+		reason: "invalid_period"
+	});
+	return new Promise((resolve, reject) => {
+		let settled = false;
+		let worker;
+		try {
+			worker = new Worker(new URL("./usage-history-worker.js", import.meta.url), {
+				workerData: { period },
+				resourceLimits: {
+					maxOldGenerationSizeMb: 64,
+					stackSizeMb: 2
+				}
+			});
+		} catch {
+			resolve({
+				status: "unavailable",
+				reason: "history_unavailable"
+			});
+			return;
+		}
+		let timer;
+		const onAbort = () => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			signal.removeEventListener("abort", onAbort);
+			worker.terminate();
+			reject(new DOMException("Usage history request aborted", "AbortError"));
+		};
+		const finish = (result) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			signal.removeEventListener("abort", onAbort);
+			worker.terminate();
+			resolve(result);
+		};
+		timer = setTimeout(() => {
+			finish({
+				status: "unavailable",
+				reason: "history_timeout"
+			});
+		}, MAX_HISTORY_QUERY_MS);
+		signal.addEventListener("abort", onAbort, { once: true });
+		worker.once("message", (message) => {
+			if (typeof message === "object" && message !== null && "ok" in message && message.ok === true && "result" in message && typeof message.result === "object" && message.result !== null) {
+				finish(message.result);
+				return;
+			}
+			finish({
+				status: "unavailable",
+				reason: "history_unavailable"
+			});
+		});
+		worker.once("error", () => finish({
+			status: "unavailable",
+			reason: "history_unavailable"
+		}));
+		worker.once("exit", () => {
+			if (!settled) finish({
+				status: "unavailable",
+				reason: "history_unavailable"
+			});
+		});
+		if (signal.aborted) onAbort();
+	});
+}
 const PROVIDER_IDS = QUOTA_PROVIDER_IDS;
 function safeMetadataValue(metadata, names) {
 	if (!metadata) return void 0;
@@ -341,8 +414,8 @@ function createCredentialResolver(context) {
 				return {};
 			}
 			return {};
-		} catch (error) {
-			console.warn("[pantheon-tui quota] credential resolution failed:", error);
+		} catch {
+			console.warn("[pantheon-tui quota] credential resolution failed (exception)");
 			throw new Error("Credential resolution failed");
 		}
 	}
@@ -685,7 +758,16 @@ function createQuotaPlugin(queryCli = queryAlibabaTokenPlanUsage) {
 			try {
 				registration = await context.rpc.register(quotaRpc, {
 					go_key_diagnostic: async (_input, callContext) => goKeyDiagnostic(() => resolver.resolveActiveGoKey(), AbortSignal.any([callContext.signal, shutdownController.signal])),
-					status: async (_input, callContext) => getProviderStatus(resolver, adapters, callContext.signal)
+					status: async (_input, callContext) => getProviderStatus(resolver, adapters, callContext.signal),
+					usage_history: async (input, callContext) => {
+						callContext.signal.throwIfAborted();
+						const period = input.period;
+						return queryUsageHistoryInWorker(period, AbortSignal.any([callContext.signal, shutdownController.signal]));
+					},
+					active_context_cost: async (input, callContext) => {
+						callContext.signal.throwIfAborted();
+						return estimateActiveContextCost(input);
+					}
 				});
 			} catch (error) {
 				console.warn("[pantheon-tui quota] quota RPC registration failed:", error);

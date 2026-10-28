@@ -622,7 +622,7 @@ export function quotaSnapshotStatusLabel(
     case 'ready':
       return 'Quota disponível'
     case 'partial':
-      return 'Dados parciais'
+      return 'Quota parcialmente disponível'
     case 'connected_unavailable':
       return 'Credencial local · dados indisponíveis'
     case 'needs_setup':
@@ -765,7 +765,7 @@ export function quotaProgress(
   return { usedPercent, remainingPercent: 100 - usedPercent }
 }
 
-/** Connected-provider rows for the compact sidebar; only reported quota windows become gauges. */
+/** Connected-provider rows for the compact sidebar; only reported quota windows are shown. */
 export function quotaSidebarEntries(snapshot: QuotaSnapshot): QuotaSidebarEntry[] {
   const entries: QuotaSidebarEntry[] = []
   for (const provider of snapshot.providers) {
