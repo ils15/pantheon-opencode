@@ -1,6 +1,6 @@
 {
   "name": "pantheon-opencode",
-  "version": "1.6.2-beta.2",
+  "version": "1.6.2-beta.3",
   "description": "Multi-agent orchestration for OpenCode — 14 specialized agents, TDD, Themis review gates.",
   "type": "module",
   "workspaces": [
@@ -100,6 +100,7 @@
     "src/plugins/tui/**",
     "!src/plugins/tui/node_modules/**",
     "src/skills/**",
+    "prompts/**",
     "!**/__pycache__/**",
     "!**/*.pyc"
   ],

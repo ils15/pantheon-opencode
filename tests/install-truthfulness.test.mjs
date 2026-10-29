@@ -258,33 +258,36 @@ test('an interactive cancel names the step the user stopped at', async () => {
   }
 })
 
-test('a cancel after choosing the project target reports THAT target, not the global one', async () => {
-  // The review finding: the confirmation cancel returned no target, so the run
-  // record landed in ~/.config/opencode while the message claimed nothing was
-  // written — even when the user had picked "Current project".
+test('a cancel at final review reports THAT project target, not the global one', async () => {
+  const canceled = Symbol.for('cancel')
   const prompts = {
-    isCancel: () => false,
+    isCancel: (value) => value === canceled,
     cancel: () => {},
     intro: () => {},
     multiselect: async () => ['agents'],
     select: async () => 'project',
-    confirm: async () => false,
+    confirm: async () => canceled,
   }
+  let resolvedTarget
   const { result } = await captureOutput(() =>
     installOpenCode(undefined, false, false, ['agents'], {
       interactive: true,
       version: 'v1',
       deps: { prompts, isTTY: true },
+      onTargetResolved: (target) => {
+        resolvedTarget = target
+      },
     }),
   )
   assert.equal(result.reason, 'canceled')
-  assert.equal(result.cancelPoint, 'confirmation')
+  assert.equal(result.cancelPoint, 'review')
   assert.equal(result.applied, false)
   assert.equal(result.target, process.cwd(), 'the chosen project directory must be recorded')
+  assert.equal(resolvedTarget, process.cwd(), 'run records must use the chosen project target')
   assert.notEqual(result.target, join(process.env.HOME ?? '', '.config', 'opencode'))
 })
 
-test('a cancel before the location prompt reports the resolved default target', async () => {
+test('a decline at final review reports the resolved global target', async () => {
   const prompts = {
     isCancel: () => false,
     cancel: () => {},
@@ -293,16 +296,22 @@ test('a cancel before the location prompt reports the resolved default target', 
     select: async () => 'global',
     confirm: async () => false,
   }
+  let resolvedTarget
   const { result } = await captureOutput(() =>
     installOpenCode('/tmp/pantheon-cancel-target-probe', false, false, ['agents'], {
       interactive: true,
       version: 'v1',
       global: true,
       deps: { prompts, isTTY: true },
+      onTargetResolved: (target) => {
+        resolvedTarget = target
+      },
     }),
   )
-  assert.equal(result.reason, 'canceled')
+  assert.equal(result.reason, 'declined')
+  assert.equal(result.cancelPoint, 'review')
   assert.equal(result.target, '/tmp/pantheon-cancel-target-probe')
+  assert.equal(resolvedTarget, '/tmp/pantheon-cancel-target-probe')
 })
 
 test('the run record distinguishes canceled, declined and applied', () => {

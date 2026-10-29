@@ -198,27 +198,36 @@ export function healthCheck(target, { dryRun = false, pythonTarget = target } = 
   // repointed: check 5 already asserts the capability that matters, and a
   // second sqlite3 import probe would tell us nothing new.
 
-  // Check 5: SQLite FTS5 available
+  // Check 5: prove FTS5 can actually create a virtual table. Compile flags alone
+  // are not a capability test, and the memory MCP has no supported fallback.
   if (python) {
     const fts5Cmd = [
       '-c',
-      'import sqlite3; ' +
-        "row = sqlite3.connect(':memory:').execute('PRAGMA compile_options').fetchall(); " +
-        "fts5 = any('ENABLE_FTS5' in str(r[0]) for r in row); " +
-        "print(f'SQLite {sqlite3.sqlite_version} FTS5={fts5}')",
+      'import sqlite3, sys\n' +
+        "db = sqlite3.connect(':memory:')\n" +
+        'version = sqlite3.sqlite_version\n' +
+        'try:\n' +
+        '    db.execute("CREATE VIRTUAL TABLE fts5_probe USING fts5(content)")\n' +
+        'except sqlite3.Error as exc:\n' +
+        '    print(f"SQLite {version} FTS5=False: {exc}")\n' +
+        '    sys.exit(1)\n' +
+        'print(f"SQLite {version} FTS5=True")',
     ]
     const result = spawnSync(python, fts5Cmd, { stdio: 'pipe' })
-    if (result.status === 0) {
-      results.passed.push({
-        check: 'sqlite-fts5',
-        detail: result.stdout.toString().trim(),
-      })
+    const detail = result.stdout.toString().trim() || result.stderr.toString().trim()
+    if (result.status === 0 && /\bFTS5=True\b/.test(detail)) {
+      results.passed.push({ check: 'sqlite-fts5', detail })
     } else {
       results.failed.push({
         check: 'sqlite-fts5',
-        detail: result.stderr.toString().trim().split('\n').slice(-1)[0],
+        detail: detail || 'Python could not verify SQLite FTS5 support',
       })
     }
+  } else {
+    results.failed.push({
+      check: 'sqlite-fts5',
+      detail: 'Python is unavailable for the FTS5 probe',
+    })
   }
 
   return results

@@ -5,13 +5,14 @@ Pantheon v1.6.0 is **compatible with OpenCode 2**. `npx pantheon-opencode init` 
 ## TL;DR (Quick Start)
 
 ```bash
-# Install Pantheon agents globally (preset selection is V1 legacy)
+# Direct installer; TTY mode reviews components, target, and the plan
 npx pantheon-opencode init
 
-# Headless (CI/scripts, uses defaults) — non-interactive apply requires --yes
+# Headless preview; add --yes to authorize applying the same defaults
+npx pantheon-opencode init --headless
 npx pantheon-opencode init --headless --yes
 
-# (Optional) MCP servers + skills + TUI plugin
+# Separate repository wrapper: V2 config migration review + installer preflight
 npm run setup
 
 # Verify installation
@@ -20,11 +21,19 @@ npm run doctor
 
 - **Requirements:** **Node.js >=26.4.0** for Pantheon's CLI/installer/Node tooling, **Python 3.11+** (optional, MCP servers), and a supported host: **OpenCode 1.19.x** (V1 contract) or **OpenCode 2.x** (V2 contract).
 - **Known broken:** OpenCode 2.0.22 does not expose `ctx.permission.assert`. Node 22, Node 24, and Node 26.0–26.3 are outside the supported range.
+- Direct `init` and `npm run setup` are different entry points. `init` runs the
+  installer directly; its TTY and headless defaults are identical: agents,
+  skills, instructions, commands, and plugins. `runtime` (Python/MCP) and
+  `prompts` are opt-in via selection or `--components`. A TTY `init` selects
+  components and target, shows the plan, then requests one final authorization
+  with default **no**. Without a TTY, `init` only previews unless `--yes` is
+  supplied; `--yes` suppresses prompts but still shows the preview and performs
+  the integrity/drift checks.
 - `npm run setup` runs the V2 config review before installer init, and only when
   the existing OpenCode generation detector reports V2. Config migration and
   installer changes are both preflighted before one final authorization;
-  `--yes` does not replace it. V1 and unresolved host generations do not enter
-  the V2 stage.
+  `--yes` does not replace it. This wrapper is separate from direct `init`;
+  V1 and unresolved host generations do not enter the V2 stage.
 - The V2 stage inspects `$XDG_CONFIG_HOME/opencode/opencode.json` and
   `$XDG_CONFIG_HOME/opencode/opencode.jsonc` separately when `XDG_CONFIG_HOME`
   is set to an absolute path; otherwise it uses `~/.config/opencode` (the
@@ -55,10 +64,10 @@ npm run doctor
   redacted key path and count. Convert them manually to `mcp.servers` or remove
   them before retrying. Already nested third-party servers remain untouched.
 - `--yes` alone authorizes no `npm run setup` writes. Headless/CI/non-TTY setup
-  runs are preview-only and do not invoke
-  installer init, including on V1, even with `--yes`. `--dry-run` previews the
-  migration and invokes init's dry-run only. Direct `npx pantheon-opencode init`
-  headless behavior is unchanged. JSONC files with comments inside values that
+  runs are preview-only and do not invoke writing init, even with `--yes`.
+  `--dry-run` previews the migration and invokes init's dry-run only. Direct
+  `npx pantheon-opencode init --headless --yes` does authorize its own apply.
+  JSONC files with comments inside values that
   would be rewritten are preview-only rather than serialized lossily. Applied
   files receive a verified backup set under
   `<config-dir>/.pantheon/backups/<timestamp>/` and per-file atomic
@@ -81,8 +90,8 @@ npm run doctor
 - `node:sqlite` >=22.5 is only a capability threshold for the optional `pantheon_cost` backend, not the package's support requirement.
 - In an interactive TTY setup summary, the installer recommends a persistent external location for future worktrees: `<project-parent>/.pantheon-worktrees/<exact-repository-directory-basename>/<task>` (for example, `/home/user/.pantheon-worktrees/My Project/feature-name`). Use the project directory's exact basename, including spaces; do not normalize it into a slug.
 - The recommendation is guidance for agents only; Pantheon does not create Git worktrees or directories automatically.
-- Interactive TTY configuration uses Clack prompts to select components, choose a global/project install, and confirm the review before applying. Canceling changes nothing.
-- Every path that ends without applying prints exactly one line naming where it stopped (`canceled at the review prompt`, `declined at the review prompt`, `canceled at the install location`, …). Ctrl-C is handled **from the moment the installer starts its work** (after the reviewed-plan authorization, if any) and until the run has been recorded: it prints the same named line, writes the record and exits `130`; the handler is deactivated once the apply is recorded, so a Ctrl-C during the optional post-install `--doctor` cannot rewrite a completed install as canceled. While a prompt is on screen, the prompt library also turns Ctrl-C into that same cancel line. Earlier than that — argument parsing, or loading a saved plan — a Ctrl-C signal ends the process with no Pantheon message, because nothing has been written yet. A cancel, a decline, or an apply is also written to `.pantheon/last-run.json` in the target (status, reason, cancel point, timestamp, version) so a later run can tell what the previous one did; `install-state.json` is still written only by an apply. The two gate refusals are exempt on purpose — a run refused before authorization (`2`) or after drift (`3`) keeps its documented guarantee of writing nothing, and reports itself in its message and exit code. A record that cannot be written is reported as a warning and never changes the exit code.
+- Interactive TTY `init` uses Clack prompts for one component selection and one global/project target, then shows the preview and requests final authorization (default **no**). `--yes` suppresses prompts; runtime and prompt templates remain opt-in in either mode.
+- Every path that ends without applying prints exactly one line naming where it stopped (`canceled at the review prompt`, `declined at the install location`, `canceled at the component selection`, …). Ctrl-C is handled after the install starts and until its outcome is recorded: before a managed write it exits `130` without changing configuration; after a write it records `partial` with `applied: true`, warns that changes may be partial, preserves the backup, and does not roll back automatically. The handler is deactivated once apply is recorded, so Ctrl-C during optional post-install `--doctor` cannot rewrite a completed install. While a prompt is on screen, the prompt library also turns Ctrl-C into the matching cancel. A cancel, decline, failure, or apply is written to `.pantheon/last-run.json` in the selected target; `install-state.json` is written by apply. Pre-authorization and drift refusals keep their no-write guarantee. A run-record write failure is reported as a warning and never changes the exit code.
 - For `npm run setup`, `--yes` does not replace the one final authorization
   after config and installer preflight. `--headless`, CI, and non-TTY paths
   never apply config or invoke writing init; V2 still gets a read-only preview.
@@ -126,20 +135,23 @@ diverge, and `--json` adds an entry to its `advisories` array, while
 not-registered seed and the scope of that list) and `plugin_options` (whether the
 written plugin entry can receive the opt-in `options`), so a machine sees the
 same facts the text notice prints. A sibling `opencode.jsonc` that the installer
-neither reads nor writes is reported in that same `advisories` array. The plan describes
-managed-file operations; it does not represent every bulk or external effect,
-such as creating or updating a Python environment. `postinstall`/`sync-tui` is
-also outside the `init` approval flow and may update TUI artifacts without a
-prompt. Do not treat the preview as a transaction or as a promise of automatic
-rollback.
+neither reads nor writes is reported in that same `advisories` array. The plan
+describes managed-file operations and, when `runtime` is selected, names whether
+the virtual environment will be created, reused, or recreated and that MCP
+dependencies may be installed/downloaded. It does not enumerate every
+dependency. Per-file detail is opt-in via `--verbose` (or structured `--json`).
+`postinstall`/`sync-tui` is also outside the `init` approval flow and may update
+TUI artifacts without a prompt. Do not treat the preview as a transaction or as
+a promise of automatic rollback.
 
 Before the first managed write, `init` creates an exact backup under
 `.pantheon/backups/<timestamp>/` (directory `0700`, files `0600`, retaining the
 5 most recent). Because the backup is byte-for-byte, it can contain credentials
 already present in your files; do not share it. To recover, use
 `npx pantheon-opencode restore [--project] [--yes]`. A failure or interruption
-may leave partial changes; recovery is manual through the `restore` command, not
-an automatic rollback.
+before the first managed write leaves configuration unchanged; after a write,
+the run is recorded as partial/applied and the backup is preserved. Recovery is
+manual through `restore`, not an automatic rollback.
 
 ### Removal and purge
 
@@ -370,7 +382,7 @@ validate keys, print values, write `.env`, or contact a catalog. Legacy
 explicit `--preset` use.
 
 ```bash
-npx pantheon-opencode init                     # interactive in a TTY; plan-only without --yes
+npx pantheon-opencode init                     # TTY component/target prompts, preview, default-no authorization
 npx pantheon-opencode init --interactive       # force the wizard
 npx pantheon-opencode init --preset go-hybrid  # explicit V1 preset
 npx pantheon-opencode init --headless --yes    # non-interactive defaults
@@ -538,10 +550,10 @@ node -e "import('./src/pantheon/presets.mjs').then(m=>console.log(m.validatePres
 ### Headless / CI (no TTY)
 
 > **A non-interactive apply requires `--yes`.** Without a TTY, `init` prints the
-> plan and **changes nothing** without `--yes` (alias `-y`). Exit codes: `0`
-> ok/plan-only (nothing applied) · `2` apply requested without authorization ·
-> `3` drift (a planned target changed between plan and apply) · `130` canceled ·
-> `1` failure.
+> plan and changes nothing unless `--yes` (alias `-y`) explicitly authorizes
+> it. TTY defaults and headless defaults match; `runtime` and `prompts` are
+> opt-in. Exit codes: `0` ok/plan-only/refused restore · `2` apply requested
+> without authorization · `3` drift · `130` canceled · `1` failure.
 
 #### Backup, restore, and approval flow
 
@@ -559,8 +571,10 @@ node -e "import('./src/pantheon/presets.mjs').then(m=>console.log(m.validatePres
   the probe fails or is unreadable; the plan then says that it assumes V1 and
   may diverge, and `--json` adds an entry to its `advisories` array. Pass
   `--opencode-version v1` or `v2` to pin the preview.
-- **Preview limits**: the plan represents managed-file operations, not every
-  bulk or external effect, such as Python environment setup.
+- **Preview limits**: the plan represents managed-file operations and names
+  runtime effects when selected (venv create/reuse/recreate and dependency
+  installation/download); it does not enumerate every installed dependency.
+  Per-file detail is shown only with `--verbose` (or structured `--json`).
   `postinstall`/`sync-tui` is outside the approval flow. It is not a transaction
   and does not guarantee automatic rollback.
 - **Exact backup**: before the first write, `init` saves an exact set under
@@ -571,7 +585,9 @@ node -e "import('./src/pantheon/presets.mjs').then(m=>console.log(m.validatePres
 - **Restore**: `pantheon-opencode restore [--project] [--from <dir>] [--dry-run] [--yes]`.
   It verifies the manifest integrity and refuses to restore a tampered set; it
   backs up the current state before reverting. In a non-interactive run it
-  requires `--yes`; on a TTY it asks (default **no**).
+  requires `--yes`; missing authorization fails closed without a backup or
+  mutation. On a TTY it asks (default **no**): explicit decline exits `0`,
+  cancellation exits `130`, and both leave files and backups unchanged.
 - **Failure mid-apply**: it aborts the remaining writes, cleans temporary files
   (`<file>.tmp-<pid>`), lists the paths already applied (without content), and
   prints the recovery instruction. **There is no automatic rollback** — the

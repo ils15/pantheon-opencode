@@ -316,9 +316,15 @@ async function main() {
         !Array.isArray(options.components) ||
         options.components.some(
           (component) =>
-            !['agents', 'skills', 'instructions', 'commands', 'plugins', 'runtime'].includes(
-              component,
-            ),
+            ![
+              'agents',
+              'skills',
+              'instructions',
+              'prompts',
+              'commands',
+              'plugins',
+              'runtime',
+            ].includes(component),
         ) ||
         options.clean !== false ||
         !['v1', 'v2', 'auto'].includes(options.version) ||
@@ -482,8 +488,8 @@ async function main() {
       process.exit(1)
     }
 
-    // Resolve the user's explicit selection separately from the defaults. An
-    // unscoped install gets runtime by default; explicit --components does not.
+    // Resolve the user's explicit selection separately from the defaults.
+    // Runtime and prompt templates are opt-in in both TTY and headless mode.
     let componentSelection
     try {
       componentSelection = resolveComponentSelection(args, {
@@ -525,6 +531,9 @@ async function main() {
     // installer's own default (`~/.config/opencode`), so the record lands next
     // to the config the next run will read.
     const fallbackTarget = isProject ? process.cwd() : resolveGlobalConfigDirectory(process.env)
+    let chosenTarget = reviewedPlan?.target.path ?? fallbackTarget
+    let hasAppliedWrites = false
+    let recoveryBackup = null
     /**
      * Persist the one-line record of this run. Bookkeeping is best-effort: a
      * failure is reported, never fatal, and never changes the exit code.
@@ -532,7 +541,7 @@ async function main() {
      * @param {{status: string, reason?: string|null, cancelPoint?: string|null, applied: boolean, target?: string}} outcome
      */
     const recordRun = (outcome) => {
-      const recordTarget = outcome.target ?? result?.target ?? fallbackTarget
+      const recordTarget = outcome.target ?? result?.target ?? chosenTarget
       const record = buildRunRecord({
         status: outcome.status,
         reason: outcome.reason ?? null,
@@ -610,16 +619,20 @@ async function main() {
     // consumes Ctrl-C in raw mode while a question is on screen (that path is
     // the interactive cancel above), so this covers the rest of the run.
     const onInterrupt = createInterruptHandler({
-      message: S.canceledAt(S.cancelPoints.interrupt),
+      message: () =>
+        hasAppliedWrites
+          ? S.interruptedAfterWrite(recoveryBackup)
+          : S.canceledAt(S.cancelPoints.interrupt),
       json: isJson,
       endGaugeLine,
       onInterrupt: () => {
         if (!isDryRun) {
           recordRun({
-            status: 'canceled',
-            reason: 'canceled',
+            status: hasAppliedWrites ? 'partial' : 'canceled',
+            reason: hasAppliedWrites ? 'interrupted' : 'canceled',
             cancelPoint: 'interrupt',
-            applied: false,
+            applied: hasAppliedWrites,
+            target: chosenTarget,
           })
         }
       },
@@ -688,7 +701,21 @@ async function main() {
         quiet: isJson,
         verbose: args.includes('--verbose') && !isJson,
         configPreview,
+        onTargetResolved: (resolvedTarget) => {
+          chosenTarget = resolvedTarget
+        },
+        onWrite: ({ target: writeTarget, backupDir }) => {
+          hasAppliedWrites = true
+          chosenTarget = writeTarget
+          if (backupDir) recoveryBackup = backupDir
+        },
       })
+      // File writers and the runtime installer use synchronous APIs. If SIGINT
+      // arrives during one of those calls, Node queues the signal callback
+      // until the event loop runs again. Keep the handler armed for one turn
+      // after the installer returns so a queued post-write interrupt is still
+      // recorded as partial instead of being lost to the success path.
+      await new Promise((resolve) => setImmediate(resolve))
     } catch (err) {
       installError = err
     } finally {
@@ -711,8 +738,15 @@ async function main() {
           `${S.installFailed(installError.message)}\n${S.failHintNoMcp}\n${S.failHintForce}`,
         )
       }
-      // No record for a thrown failure: the error itself is the explanation,
-      // and a run that failed has nothing to remember beyond its message.
+      if (!isDryRun) {
+        const outcome = installError.installOutcome ?? {}
+        recordRun({
+          status: outcome.applied ? 'partial' : 'failed',
+          reason: 'failed',
+          applied: outcome.applied === true,
+          target: outcome.target ?? chosenTarget,
+        })
+      }
       process.exitCode = 1
       return
     }
@@ -812,6 +846,7 @@ async function main() {
           totals,
           mcp_servers: mcpServers,
           mcp_server_count: mcpServers.length,
+          runtime_effects: result.runtimeEffects ?? null,
           files: files.map(({ path: filePath, action, bytes }) => ({
             path: path.relative(result.target, filePath) || '.',
             action,
@@ -881,7 +916,10 @@ async function main() {
       const doctorStartedAt = Date.now()
       const { spawnSync } = await import('node:child_process')
       const doctorScript = path.join(ROOT, 'scripts', 'doctor.mjs')
-      const doctor = spawnSync(process.execPath, [doctorScript], { stdio: 'inherit', cwd: ROOT })
+      const doctor = spawnSync(process.execPath, [doctorScript, '--target', result.target], {
+        stdio: 'inherit',
+        cwd: ROOT,
+      })
       const doctorSeconds = ((Date.now() - doctorStartedAt) / 1000).toFixed(1)
       // Never leave "Running health check..." as the last word: report the
       // outcome and duration, and propagate the child's exit code so CI sees

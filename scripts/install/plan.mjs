@@ -232,7 +232,7 @@ export function displayPath(target, filePath) {
  *     assumes V1 and may diverge from an apply on a 2.x host.
  *
  * @param {string} target - install target (used to relativize paths)
- * @param {{ files: object[], totals: object, mcpServers?: string[], versionAssumed?: boolean }} plan
+ * @param {{ files: object[], totals: object, mcpServers?: string[], runtimeEffects?: { venv: string, dependencies: string }, versionAssumed?: boolean }} plan
  * @param {{ perFile?: boolean }} [options] - `perFile: false` renders the
  *   summary (totals + MCP servers + "No files were written.") without the
  *   per-file list. That is the DEFAULT dry-run surface; the per-file list is
@@ -260,6 +260,13 @@ export function formatChangePlan(target, plan, { perFile = true } = {}) {
     const servers =
       names.length === 0 ? 'none (already configured or runtime skipped)' : names.join(', ')
     lines.push(`  MCP servers (${names.length}): ${servers}`)
+  }
+  if (plan.runtimeEffects) {
+    const { venv, dependencies } = plan.runtimeEffects
+    lines.push(`  Python virtual environment: ${venv}`)
+    lines.push(
+      `  MCP dependencies: ${dependencies === 'install' ? 'install (may download packages)' : dependencies}`,
+    )
   }
   if (plan.versionAssumed) {
     lines.push(

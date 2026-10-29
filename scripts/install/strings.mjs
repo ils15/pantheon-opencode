@@ -30,6 +30,9 @@ const TABLE = {
     // stronger claim would be false.
     canceledAt: (point) =>
       `Installation canceled at ${point} — nothing was applied; no configuration was changed.`,
+    interruptedAfterWrite: (backupDir) =>
+      `Installation interrupted at Ctrl-C — changes may be partially applied; no automatic rollback was attempted. ` +
+      `The backup is preserved${backupDir ? ` at ${backupDir}` : ''}; inspect it and restore manually if needed.`,
     declinedAt: (point) =>
       `Installation declined at ${point} — nothing was applied; no configuration was changed; ` +
       're-run init to review the plan again.',
@@ -117,6 +120,9 @@ const TABLE = {
     },
     canceledAt: (point) =>
       `Instalação cancelada em ${point} — nada foi aplicado; nenhuma configuração foi alterada.`,
+    interruptedAfterWrite: (backupDir) =>
+      `Instalação interrompida por Ctrl-C — alterações podem ter sido aplicadas parcialmente; nenhum rollback automático foi feito. ` +
+      `O backup foi preservado${backupDir ? ` em ${backupDir}` : ''}; revise e restaure manualmente se necessário.`,
     declinedAt: (point) =>
       `Instalação recusada em ${point} — nada foi aplicado; nenhuma configuração foi alterada; ` +
       'rode init de novo para revisar o plano.',

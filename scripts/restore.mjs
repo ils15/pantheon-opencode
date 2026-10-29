@@ -35,6 +35,7 @@ import {
   restoreBackupSet,
   verifyBackupSet,
 } from './install/backup.mjs'
+import { PROMPT_CANCELED } from './install/prompt-result.mjs'
 
 /**
  * Resolve the config dir whose `opencode.json` the installer manages.
@@ -122,9 +123,16 @@ export function pickBackupSet(configDir, from) {
  * @param {string} opts.backupDir
  * @param {boolean} [opts.dryRun]
  * @param {boolean} [opts.yes]
- * @returns {Promise<{ ok: boolean, code: number, entries?: object[] }>}
+ * @param {(message: string, options: object) => Promise<unknown>} [opts.promptReview]
+ * @returns {Promise<{ ok: boolean, code: number, reason?: string, entries?: object[] }>}
  */
-export async function runRestore({ configDir, backupDir, dryRun = false, yes = false }) {
+export async function runRestore({
+  configDir,
+  backupDir,
+  dryRun = false,
+  yes = false,
+  promptReview: injectedPromptReview = null,
+}) {
   const verify = verifyBackupSet(backupDir)
   if (!verify.ok) {
     console.error(
@@ -155,22 +163,26 @@ export async function runRestore({ configDir, backupDir, dryRun = false, yes = f
 
   if (dryRun) {
     console.log('  (dry-run) No files were written.')
-    return { ok: true, code: 0, entries: plan.entries }
+    return { ok: true, code: 0, reason: 'preview', entries: plan.entries }
   }
 
-  if (!yes) {
+  if (yes !== true) {
     // Reuse the shared confirm semantics (default NO). An interactive TTY may
     // authorize without --yes; a non-TTY run must never proceed silently.
     const tty = Boolean(process.stdin.isTTY && process.stdout.isTTY)
-    if (!tty) {
+    if (!tty && typeof injectedPromptReview !== 'function') {
       console.error('❌ Refusing to restore without authorization. Re-run with --yes.')
-      return { ok: false, code: 1 }
+      return { ok: false, code: 1, reason: 'not-authorized', entries: plan.entries }
     }
-    const { promptReview } = await import('./install/interactive.mjs')
+    const promptReview =
+      injectedPromptReview ?? (await import('./install/interactive.mjs')).promptReview
     const accepted = await promptReview('Restore these changes?', { default: false })
-    if (!accepted) {
+    if (accepted === PROMPT_CANCELED) {
+      return { ok: false, code: 130, reason: 'canceled', entries: plan.entries }
+    }
+    if (accepted !== true) {
       console.log('  Nothing restored.')
-      return { ok: true, code: 0, entries: plan.entries }
+      return { ok: true, code: 0, reason: 'declined', entries: plan.entries }
     }
   }
 
@@ -189,7 +201,7 @@ export async function runRestore({ configDir, backupDir, dryRun = false, yes = f
 
   restoreBackupSet(backupDir, configDir, { dryRun: false })
   console.log(`  ✅ Restored ${plan.entries.length} path(s).`)
-  return { ok: true, code: 0, entries: plan.entries }
+  return { ok: true, code: 0, reason: 'restored', entries: plan.entries }
 }
 
 async function main() {

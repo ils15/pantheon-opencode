@@ -33,7 +33,7 @@
  * Build and REGISTER a SIGINT handler.
  *
  * @param {{
- *   message: string,
+ *   message: string | (() => string),
  *   json?: boolean,
  *   onInterrupt?: () => void,
  *   endGaugeLine?: () => void,
@@ -62,8 +62,9 @@ export function createInterruptHandler({
       // The progress gauge owns the current terminal line; close it so the
       // message is not appended to a half-drawn bar and then erased.
       endGaugeLine()
-      if (json) writeStderr(message)
-      else logStderr(message)
+      const line = typeof message === 'function' ? message() : message
+      if (json) writeStderr(line)
+      else logStderr(line)
       onInterrupt()
     } finally {
       exit(130)

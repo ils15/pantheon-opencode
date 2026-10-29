@@ -9,6 +9,7 @@
  *   {
  *     "schema_version": 2,
  *     "pantheon_version": "1.1.1",
+ *     "migration_schema_version": "3.19.2",
  *     "previous_version": "1.1.0",
  *     "updated_at": "2026-07-26T10:30:00Z",
  *     "migration_checkpoint": null,
@@ -34,6 +35,7 @@ import { assertNoSymlinkAncestors, writeFileAtomically } from './verify.mjs'
 
 const STATE_FILE = 'install-state.json'
 const STATE_DIR = '.pantheon'
+export const MIGRATION_SCHEMA_VERSION = '3.19.2'
 
 function emptyFileInventory(legacyUnknown = true) {
   return {
@@ -69,6 +71,7 @@ export function createInitialState(version, updatedAt = new Date().toISOString()
   return {
     schema_version: 2,
     pantheon_version: version || '0.0.0',
+    migration_schema_version: MIGRATION_SCHEMA_VERSION,
     previous_version: null,
     updated_at: updatedAt,
     migration_checkpoint: null,
@@ -122,6 +125,7 @@ export function upgradeStateV1toV2(state) {
   return {
     schema_version: 2,
     pantheon_version: state.pantheon_version || state.version || 'unknown',
+    migration_schema_version: state.migration_schema_version ?? null,
     previous_version: state.previous_version || null,
     updated_at: state.updated_at || now,
     migration_checkpoint: null,
@@ -153,6 +157,7 @@ export function upgradeStateV1toV2(state) {
  * @returns {object} the same state object with required collections present
  */
 function ensureV2Shape(state) {
+  if (!Object.hasOwn(state, 'migration_schema_version')) state.migration_schema_version = null
   if (!Array.isArray(state.applied_migrations)) state.applied_migrations = []
   if (
     !state.components ||
@@ -199,6 +204,8 @@ export function writeState(target, state, options = {}) {
   assertNoSymlinkAncestors(stateFile)
   state.updated_at = options.updatedAt ?? new Date().toISOString()
   state.schema_version = 2
+  if (!Object.hasOwn(state, 'migration_schema_version')) state.migration_schema_version = null
+  if (!Array.isArray(state.applied_migrations)) state.applied_migrations = []
   if (!Object.hasOwn(state, 'file_inventory')) {
     state.file_inventory = emptyFileInventory(true)
   } else if (

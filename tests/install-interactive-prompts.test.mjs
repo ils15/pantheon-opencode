@@ -47,7 +47,7 @@ function fakePrompts({ components = ['agents'], target = 'global', confirmed = t
   }
 }
 
-test('interactive Clack prompts preserve selected components, location, and confirmation', async () => {
+test('interactive selection chooses components and location before one later apply confirmation', async () => {
   const prompts = fakePrompts({ components: ['agents', 'plugins'], target: 'project' })
   const result = await runInteractiveInstall({
     components: ['agents'],
@@ -58,12 +58,22 @@ test('interactive Clack prompts preserve selected components, location, and conf
 
   assert.deepEqual([...result.components], ['agents', 'plugins'])
   assert.equal(result.target, 'project')
-  assert.equal(result.confirmed, true)
   assert.deepEqual(
     prompts.calls.map(([name]) => name),
-    ['intro', 'multiselect', 'select', 'confirm'],
+    ['intro', 'multiselect', 'select'],
   )
   assert.deepEqual(prompts.calls[0], ['intro', 'OpenCode Installer'])
+})
+
+test('headless and TTY defaults match and runtime/prompts are opt-in', () => {
+  const defaults = resolveComponentSelection([]).components
+  assert.deepEqual(defaults, ['agents', 'skills', 'instructions', 'commands', 'plugins'])
+  assert.equal(defaults.includes('runtime'), false)
+  assert.equal(defaults.includes('prompts'), false)
+  assert.deepEqual(resolveComponentSelection(['--components', 'prompts,runtime']).components, [
+    'prompts',
+    'runtime',
+  ])
 })
 
 test('empty component selection cancels instead of reinstalling defaults', async () => {
@@ -135,13 +145,13 @@ test('review prompt preserves cancellation separately from an explicit decline',
   assert.equal(declinePrompts.calls.length, 1)
 })
 
-test('TTY --yes does not override an explicit decline before installer writes', async () => {
+test('TTY --yes uses defaults without invoking any prompts', async () => {
   const root = mkdtempSync(join(tmpdir(), 'pantheon-yes-decline-'))
   const target = join(root, 'opencode')
   mkdirSync(target, { recursive: true })
   const sentinel = join(target, 'sentinel.json')
   writeFileSync(sentinel, '{"untouched":true}\n')
-  const prompts = fakePrompts({ components: ['agents'], confirmed: false })
+  const prompts = fakePrompts({ components: ['skills'], confirmed: false })
 
   try {
     const result = await installOpenCode(target, false, false, ['agents'], {
@@ -152,10 +162,10 @@ test('TTY --yes does not override an explicit decline before installer writes', 
       deps: { prompts, isTTY: true },
     })
 
-    assert.equal(result.applied, false)
-    assert.equal(result.reason, 'canceled')
+    assert.equal(result.applied, true)
+    assert.deepEqual(prompts.calls, [])
     assert.equal(readFileSync(sentinel, 'utf8'), '{"untouched":true}\n')
-    assert.deepEqual(readdirSync(target), ['sentinel.json'])
+    assert.ok(existsSync(join(target, 'agents', 'zeus.md')))
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -236,14 +246,7 @@ test('CLI --no-mcp hard-excludes runtime even if the TTY prompt returns it', asy
       target,
       selection,
     }) => {
-      assert.deepEqual(initialValues, [
-        'agents',
-        'skills',
-        'instructions',
-        'prompts',
-        'commands',
-        'plugins',
-      ])
+      assert.deepEqual(initialValues, ['agents', 'skills', 'instructions', 'commands', 'plugins'])
       assert.equal(availableComponents.includes('runtime'), false)
       assert.equal(selection.components.includes('runtime'), false)
       assert.equal(result.applied, true)
@@ -408,6 +411,5 @@ test('forced interactive mode without a TTY keeps defaults and never invokes pro
 
   assert.deepEqual([...result.components], ['agents', 'skills'])
   assert.equal(result.target, 'global')
-  assert.equal(result.confirmed, true)
   assert.deepEqual(prompts.calls, [])
 })

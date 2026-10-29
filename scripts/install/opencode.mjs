@@ -60,7 +60,7 @@ import {
   mcpPermissionAliases,
   normalizeMcpPermissionSegment,
 } from './mcp-permissions.mjs'
-import { detectVersion, runMigrations } from './migrate.mjs'
+import { runMigrations } from './migrate.mjs'
 import { describeSharedState } from './opencode-state.mjs'
 import { DRY_RUN_PROBE_TIMEOUT_MS, resolveOpenCodeVersion } from './opencode-version.mjs'
 import {
@@ -102,16 +102,6 @@ import {
 import { setupVenv, venvPythonPath } from './venv.mjs'
 import { assertNoSymlinkAncestors, assertPathWithin, assertSafeRemoval } from './verify.mjs'
 
-const COMPONENT_NAMES = [
-  'agents',
-  'skills',
-  'instructions',
-  'prompts',
-  'commands',
-  'plugins',
-  'runtime',
-]
-
 /**
  * The ordered phases one install invocation really runs, derived from the
  * FINAL component selection (the interactive wizard may have changed it) and
@@ -144,7 +134,7 @@ export function planInstallPhases({ components, dryRun }) {
     if (!dryRun) phases.push(S.runningHealthChecks)
   }
   phases.push(S.writingConfiguration)
-  if (selected.has('runtime')) phases.push(S.runningMigrations)
+  phases.push(S.runningMigrations)
   if (!dryRun) phases.push(S.recordingState)
   return phases
 }
@@ -1355,6 +1345,8 @@ export function setupRuntimePhase(
     reviewedSnapshots = null,
     onVenvDone = null,
     onHealthDone = null,
+    onRuntimeEffects = null,
+    verbose = false,
   },
   stats,
   deps = {},
@@ -1365,14 +1357,27 @@ export function setupRuntimePhase(
   let stopProgress
   try {
     stopProgress = spinner(S.settingUpRuntime)
+    let setupResult
     try {
-      setup(target, {
+      setupResult = setup(target, {
         dryRun,
         force: clean,
+        verbose,
         recorder,
         reviewedRemovals,
         reviewedSnapshots,
       })
+      const pythonExists = existsSync(venvPythonPath(target))
+      const runtimeEffects = setupResult?.runtimeEffects ?? {
+        venv:
+          clean && existsSync(join(target, '.venv'))
+            ? 'recreate'
+            : pythonExists
+              ? 'reuse'
+              : 'create',
+        dependencies: 'install',
+      }
+      onRuntimeEffects?.(runtimeEffects)
     } finally {
       // Count the phase even when setup throws: it DID run (and failed). The
       // failure is reported below as a warning, not as a missing phase.
@@ -1410,6 +1415,7 @@ export function setupRuntimePhase(
       stopProgress = null
       warning(`${health.failed.length} check(s) failed — review above`)
       stats.warnings += health.failed.length
+      stats.errors += 1
       return false
     }
     stopProgress(true)
@@ -1420,6 +1426,7 @@ export function setupRuntimePhase(
     error(S.runtimeFailed(err.message))
     warning(S.runtimeSkippedMcp)
     stats.warnings += 1
+    stats.errors += 1
     return false
   }
 }
@@ -1567,7 +1574,7 @@ export async function installOpenCode(
   target,
   dryRun = false,
   clean = false,
-  components = ['agents', 'skills', 'instructions', 'commands', 'plugins', 'runtime'],
+  components = ['agents', 'skills', 'instructions', 'commands', 'plugins'],
   opts = {},
 ) {
   // Reset per-call so a stale run can never leak into a fresh failure report.
@@ -1582,6 +1589,15 @@ export async function installOpenCode(
     _activeGauge?.fail(err instanceof Error ? err.message : String(err))
     const run = dryRun ? null : _lastRun
     if (run) {
+      try {
+        err.installOutcome = {
+          target: run.target,
+          applied: run.applied,
+          backupDir: run.backupDir,
+        }
+      } catch {
+        // An exotic frozen error must not hide the installer failure.
+      }
       const S = strings()
       const paths = summarizeChanges(run.entries ?? [])
         .files.filter((f) => f.action !== ACTIONS.UNCHANGED && f.action !== ACTIONS.CONFLICT)
@@ -1608,7 +1624,7 @@ async function installPass(
   target,
   dryRun = false,
   clean = false,
-  components = ['agents', 'skills', 'instructions', 'commands', 'plugins', 'runtime'],
+  components = ['agents', 'skills', 'instructions', 'commands', 'plugins'],
   opts = {},
 ) {
   if (opts.configPreview !== undefined && opts.configPreview !== null && !dryRun) {
@@ -1619,6 +1635,7 @@ async function installPass(
   if (!target) {
     target = resolveGlobalConfigDirectory(process.env)
   }
+  opts.onTargetResolved?.(target)
 
   const componentSet = new Set(
     opts.noMcp ? components.filter((component) => component !== 'runtime') : components,
@@ -1631,6 +1648,7 @@ async function installPass(
   let plannedChanges = 0
   let planFiles = []
   let planTotals = null
+  let runtimeEffects = null
   let removalPaths = []
   // MCP servers this pass seeds into opencode.json, in write order. Filled by
   // applyMcpServerEntries so the preview names exactly what the apply writes.
@@ -1658,6 +1676,23 @@ async function installPass(
   const ownRecorder = opts.recorder ? null : createRecorder()
   const preview = dryRun && ownRecorder ? ownRecorder : null
   let recorder = opts.recorder ?? ownRecorder.recorder
+  const baseRecorder = recorder
+  const markAppliedWrite = () => {
+    if (dryRun) return
+    if (_lastRun) {
+      _lastRun.target = target
+      _lastRun.applied = true
+    }
+    if (typeof opts.onWrite === 'function') {
+      opts.onWrite({ target, backupDir: _lastRun?.backupDir ?? null })
+    }
+  }
+  if (!dryRun) {
+    recorder = (change) => {
+      baseRecorder(change)
+      if (['create', 'update', 'remove'].includes(change?.action)) markAppliedWrite()
+    }
+  }
   // Test-only failure seam: throw after N recorded writes so the failure path is
   // deterministic. Never reachable from production callers (opts.deps is not a
   // CLI flag) and never applied to the internal dry plan pass.
@@ -1671,7 +1706,9 @@ async function installPass(
     }
   }
   // Track this apply so the wrapper can report the paths written on a failure.
-  if (!dryRun) _lastRun = { target, entries: ownRecorder?.entries ?? [], backupDir: null }
+  if (!dryRun) {
+    _lastRun = { target, entries: ownRecorder?.entries ?? [], backupDir: null, applied: false }
+  }
 
   // V1/V2 dual-version awareness (Phase 3): the installer builds a unified
   // config, then applies V2-native migration (migrateV1toV2) when
@@ -1739,17 +1776,15 @@ async function installPass(
   const forceInteractive = opts.interactive === true
   const forceHeadless = opts.headless === true
   const autoYes = opts.yes === true
-  const interactive = forceInteractive || (stdinTTY && !forceHeadless)
+  const interactive = !autoYes && (forceInteractive || (stdinTTY && !forceHeadless))
 
   if (interactive && !dryRun) {
     const { runInteractiveInstall } = await import('./interactive.mjs')
     const hasRequestedComponents = Array.isArray(opts.requestedComponents)
     const promptComponents = hasRequestedComponents ? opts.requestedComponents : components
-    const promptDefaults = hasRequestedComponents
-      ? []
-      : opts.noMcp
-        ? COMPONENT_NAMES.filter((component) => component !== 'runtime')
-        : COMPONENT_NAMES
+    const promptDefaults = (hasRequestedComponents ? opts.requestedComponents : components).filter(
+      (component) => !opts.noMcp || component !== 'runtime',
+    )
     const result = await runInteractiveInstall({
       components: promptComponents,
       defaultComponents: promptDefaults,
@@ -1764,6 +1799,7 @@ async function installPass(
     // recorded target is where the user was installing, not where a file was
     // written (nothing was written either way).
     const selectedTarget = result.target === 'project' ? process.cwd() : target
+    opts.onTargetResolved?.(selectedTarget)
 
     if (result.canceled) {
       // The named point is what makes the message explainable. The interactive
@@ -1780,20 +1816,6 @@ async function installPass(
       }
     }
 
-    if (!result.confirmed) {
-      // Answering "No" at the pre-install confirmation is not the prompt
-      // library's cancel channel, so nothing was printed yet: this is the one
-      // message, and it names the point.
-      notice(S.canceledAt(S.cancelPoints.confirmation))
-      return {
-        ...stats,
-        applied: false,
-        reason: 'canceled',
-        cancelPoint: 'confirmation',
-        target: selectedTarget,
-      }
-    }
-
     // Map target selection to actual path
     const newComponents = [...result.components].filter(
       (component) => !opts.noMcp || component !== 'runtime',
@@ -1802,6 +1824,15 @@ async function installPass(
     for (const c of newComponents) componentSet.add(c)
 
     target = selectedTarget
+    if (!dryRun && _lastRun) _lastRun.target = target
+  }
+
+  // Reject invalid or newer persisted migration schemas before planning or
+  // applying any target writes. The migration runner repeats this check at the
+  // actual migration point to catch a marker changed during the install.
+  const migrationPreflight = runMigrations(target, { dryRun: true })
+  if (migrationPreflight.status === 'unsupported' || migrationPreflight.status === 'invalid') {
+    throw new Error(migrationPreflight.message)
   }
 
   // Product defaults live in code (PRODUCT_CONFIG_DEFAULTS). A repository-root
@@ -1894,9 +1925,8 @@ async function installPass(
     let planned
     try {
       // Use the LIVE selection: the wizard above may have changed componentSet.
-      // An AUTHORIZED apply (`--yes`) is not a preview: compute the plan +
-      // snapshots but stay silent. The gate path (no `--yes`) still prints the
-      // plan for the review / decline preview.
+      // Every apply computes and shows the concise plan before writing. --yes
+      // suppresses prompts, not the summary or integrity/drift checks.
       planned = await installOpenCode(target, true, clean, [...componentSet], {
         ...opts,
         // Hand the RESOLVED generation to the plan pass. Re-resolving would
@@ -1907,7 +1937,7 @@ async function installPass(
         planTimestamp,
         planOnly: true,
         quiet: autoYes,
-        quietPlan: autoYes,
+        quietPlan: false,
       })
     } finally {
       Object.assign(stats, savedStats)
@@ -1938,7 +1968,7 @@ async function installPass(
       if (drift.length > 0) {
         warning('Reviewed install plan drifted; no files were written.')
         for (const item of drift) warning(`  ${item}`)
-        return { ...stats, applied: false, reason: 'drift', drift }
+        return { ...stats, applied: false, reason: 'drift', drift, target }
       }
     }
 
@@ -1959,18 +1989,18 @@ async function installPass(
           // prints nothing, so this is the single place that guarantees the
           // message exists exactly once, and it names the point.
           if (typeof injected === 'function') notice(S.canceledAt(S.cancelPoints.review))
-          return { ...stats, applied: false, reason: 'canceled', cancelPoint: 'review' }
+          return { ...stats, applied: false, reason: 'canceled', cancelPoint: 'review', target }
         }
         if (!accepted) {
           // Answering "No" is not a cancel: it used to reach the caller as a
           // silent `reason: 'declined'` and exit 0 with "Nothing applied." and
           // no explanation at all.
           notice(S.declinedAt(S.cancelPoints.review))
-          return { ...stats, applied: false, reason: 'declined', cancelPoint: 'review' }
+          return { ...stats, applied: false, reason: 'declined', cancelPoint: 'review', target }
         }
       } else {
         notice(S.planOnlyNoYes)
-        return { ...stats, applied: false, reason: 'not-authorized' }
+        return { ...stats, applied: false, reason: 'not-authorized', target }
       }
     }
 
@@ -1988,6 +2018,7 @@ async function installPass(
         applied: false,
         reason: 'drift',
         drift: drifted.map((p) => displayPath(target, p)),
+        target,
       }
     }
     reviewedRemovals = new Set((planned?.removals ?? []).map((filePath) => resolve(filePath)))
@@ -2499,6 +2530,10 @@ async function installPass(
         // UI object into the runtime module.
         onVenvDone: () => advancePhase(S.settingUpRuntime),
         onHealthDone: () => advancePhase(S.runningHealthChecks),
+        onRuntimeEffects: (effects) => {
+          runtimeEffects = effects
+        },
+        verbose: opts.verbose === true,
       },
       stats,
       opts.deps,
@@ -3085,29 +3120,28 @@ async function installPass(
   advancePhase()
 
   // -----------------------------------------------------------------------
-  // 3.5 Run migrations (--components runtime)
+  // 3.5 Run state/schema migrations on every init, independent of runtime
+  // selection. Migration schema has its own marker and remains idempotent.
   // -----------------------------------------------------------------------
-  if (componentSet.has('runtime')) {
-    const currentVersion = detectVersion(target)
-    if (currentVersion) {
-      const migrationStep = step(S.runningMigrations)
-      const migration = runMigrations(target, currentVersion, {
-        dryRun,
-        recorder,
-        updatedAt: planTimestamp,
-      })
-      migrationStep(true)
-      if (migration.plannedState) projectedState = migration.plannedState
-      if (migration.applied > 0) {
-        success(`Applied ${migration.applied} migration(s)`)
-        for (const msg of migration.messages) {
-          bullet(msg, 1)
-        }
-      }
-    }
-    // Counted even when there is nothing to migrate: the phase ran its check.
-    advancePhase()
+  const migrationStep = step(S.runningMigrations)
+  const migration = runMigrations(target, {
+    dryRun,
+    recorder,
+    updatedAt: planTimestamp,
+  })
+  if (migration.status === 'unsupported' || migration.status === 'invalid') {
+    migrationStep(false)
+    throw new Error(migration.message)
   }
+  migrationStep(true)
+  if (migration.plannedState) projectedState = migration.plannedState
+  if (migration.applied > 0) {
+    success(`Applied ${migration.applied} migration(s)`)
+    for (const msg of migration.messages) {
+      bullet(msg, 1)
+    }
+  }
+  advancePhase()
 
   if (opts.preset && dryRun) {
     const { writeActivePreset } = await import('./model-picker.mjs')
@@ -3168,6 +3202,7 @@ async function installPass(
     // names `applyMcpServerEntries` seeded in THIS pass, in write order (empty
     // when the runtime component is not selected or failed its prerequisites).
     plan.mcpServers = mcpServers
+    if (componentSet.has('runtime')) plan.runtimeEffects = runtimeEffects
     plan.versionAssumed = versionAssumed
     planFiles = plan.files
     planTotals = plan.totals
@@ -3205,9 +3240,8 @@ async function installPass(
     // were written"), never one line per file — the gauge already answered
     // "is it moving?" and per-file detail is opt-in via --verbose. `[DRY-RUN]`
     // marks the header only; it no longer prefixes every line.
-    // An internal snapshot pass on the apply path (`quietPlan`, e.g. an
-    // authorized `--yes` run) computes the plan and snapshots but must NOT
-    // echo it — a real apply is not a dry run.
+    // `--yes` still exposes the concise preview before this apply pass runs;
+    // only explicit quiet callers (JSON/doctor) suppress it.
     if (!opts.quietPlan) {
       const verbose = opts.verbose === true
       const planText = formatChangePlan(target, plan, { perFile: verbose })
@@ -3231,43 +3265,6 @@ async function installPass(
   //    entries are only added when the Python runtime is actually healthy)
   // -----------------------------------------------------------------------
 
-  if (interactive && !dryRun) {
-    endGaugeLine()
-    const created = stats.created
-    const skipped = stats.skipped
-    const errors = stats.errors
-    const warnings = stats.warnings ?? 0
-
-    process.stdout.write('\n')
-    process.stdout.write(
-      `  ${colors.bold(
-        errors > 0
-          ? colors.yellow('Installation completed with errors')
-          : colors.green('Installation complete'),
-      )}\n`,
-    )
-    process.stdout.write(
-      `  ${colors.dim('\u2500'.repeat(Math.min(process.stdout.columns || 60, 60)))}\n`,
-    )
-    process.stdout.write(`  [OK] ${created} component(s) installed\n`)
-    if (skipped > 0)
-      process.stdout.write(`  ${colors.dim('\u2014')} ${skipped} already up-to-date\n`)
-    if (errors > 0) process.stdout.write(`  [WARN] ${errors} error(s) encountered\n`)
-    if (warnings > 0)
-      process.stdout.write(
-        `  [WARN] ${warnings} warning(s) — run 'pantheon-opencode doctor' for details\n`,
-      )
-    process.stdout.write('\n')
-    process.stdout.write(`  ${colors.bold('Next steps:')}\n`)
-    process.stdout.write(`  ${colors.dim('\u2022')} Configure agents in opencode.json\n`)
-    process.stdout.write(`  ${colors.dim('\u2022')} Run 'pantheon-opencode doctor' to verify\n`)
-    process.stdout.write(
-      `  ${colors.dim('\u2022')} Run 'opencode' to start using Pantheon agents\n`,
-    )
-    process.stdout.write('\n')
-    printWorktreeGuidance({ projectRoot: process.cwd(), interactive: true })
-  }
-
   // -----------------------------------------------------------------------
   // 5. V1 model preset selection (--components agents). V2 ignores the legacy
   //    active-preset marker, so it has no profile wizard or --preset support.
@@ -3275,12 +3272,20 @@ async function installPass(
   //    Q1 default "herdar do chat" (inherit) writes no active-preset.json —
   //    delegates inherit the parent chat model (native inheritance).
   // -----------------------------------------------------------------------
-  if (interactive && stdinTTY && version === 'v1' && !dryRun && !autoYes && !opts.preset) {
+  if (
+    interactive &&
+    stdinTTY &&
+    version === 'v1' &&
+    !dryRun &&
+    !autoYes &&
+    !opts.preset &&
+    stats.errors === 0
+  ) {
     const { runInitWizard } = await import('./model-picker.mjs')
     await runInitWizard({ presetDir: target, logger: console, prompts: opts.deps?.prompts })
   }
 
-  if (opts.preset && !dryRun) {
+  if (opts.preset && !dryRun && stats.errors === 0) {
     const { writeActivePreset } = await import('./model-picker.mjs')
     writeActivePreset(target, opts.preset, { source: 'cli', updatedAt: planTimestamp, recorder })
   }
@@ -3292,7 +3297,7 @@ async function installPass(
   //     blocks on stdin and the default behavior is unchanged. A failure here
   //     must never fail the install: vision stays optional.
   // -----------------------------------------------------------------------
-  if (interactive && !dryRun && !autoYes) {
+  if (interactive && !dryRun && !autoYes && stats.errors === 0) {
     const runVisionPrompt =
       opts.deps?.runVisionPrompt ?? (await import('./vision-prompt.mjs')).runVisionPrompt
     try {
@@ -3302,13 +3307,8 @@ async function installPass(
     }
   }
 
-  // Fail-closed: accumulated stats.errors (bad sources, missing requirements,
-  // failed health checks) must never masquerade as a successful installation.
-  if (stats.errors > 0) {
-    throw new Error(`installation completed with ${stats.errors} error(s); see output above`)
-  }
-
-  // Record the component state only after the install has completed. The
+  // Record component state even on a degraded runtime result so doctor and a
+  // later init can distinguish a failed runtime from an installed one. The
   // postinstall marker can predate `init` and start with every component
   // pending; leaving it untouched made a healthy beta install look incomplete
   // to `doctor` forever. Unselected components retain their previous state.
@@ -3348,8 +3348,15 @@ async function installPass(
       verifiedFiles,
     })
     writeState(target, state, { updatedAt: planTimestamp })
+    markAppliedWrite()
     stateStep(true)
     advancePhase()
+  }
+
+  // Fail closed only after the degraded state is persisted. The caller records
+  // the partial application and reports its exact target/recovery backup.
+  if (stats.errors > 0) {
+    throw new Error(`installation completed with ${stats.errors} error(s); see output above`)
   }
 
   // The apply gauge ends before the human summary; a dry run already closed it
@@ -3358,6 +3365,33 @@ async function installPass(
   progress?.done()
   if (!interactive && !dryRun && !opts.planOnly) {
     printSummary(target, ['opencode'], stats)
+  }
+  if (interactive && !dryRun && !opts.planOnly) {
+    endGaugeLine()
+    const created = stats.created
+    const skipped = stats.skipped
+    const warnings = stats.warnings ?? 0
+    process.stdout.write('\n')
+    process.stdout.write(`  ${colors.bold(colors.green('Installation complete'))}\n`)
+    process.stdout.write(
+      `  ${colors.dim('\u2500'.repeat(Math.min(process.stdout.columns || 60, 60)))}\n`,
+    )
+    process.stdout.write(`  [OK] ${created} component(s) installed\n`)
+    if (skipped > 0)
+      process.stdout.write(`  ${colors.dim('\u2014')} ${skipped} already up-to-date\n`)
+    if (warnings > 0)
+      process.stdout.write(
+        `  [WARN] ${warnings} warning(s) — run 'pantheon-opencode doctor' for details\n`,
+      )
+    process.stdout.write('\n')
+    process.stdout.write(`  ${colors.bold('Next steps:')}\n`)
+    process.stdout.write(`  ${colors.dim('\u2022')} Configure agents in opencode.json\n`)
+    process.stdout.write(`  ${colors.dim('\u2022')} Run 'pantheon-opencode doctor' to verify\n`)
+    process.stdout.write(
+      `  ${colors.dim('\u2022')} Run 'opencode' to start using Pantheon agents\n`,
+    )
+    process.stdout.write('\n')
+    printWorktreeGuidance({ projectRoot: process.cwd(), interactive: true })
   }
 
   // Beta 11 Setup phase 3: report whether this call APPLIED, so the caller can
@@ -3373,6 +3407,7 @@ async function installPass(
         files: planFiles,
         totals: planTotals,
         mcpServers,
+        runtimeEffects,
         removals: removalPaths,
         target,
         openCodeVersion: version,
@@ -3386,6 +3421,7 @@ async function installPass(
         applied: true,
         reason: 'applied',
         target,
+        runtimeEffects,
         openCodeVersion: version,
         configAdvisories,
         v2Capabilities: version === 'v2' ? v2Capabilities() : null,
