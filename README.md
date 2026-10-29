@@ -240,7 +240,7 @@ in [Architecture](docs/ARCHITECTURE.md) and
 | [Compatibility](docs/COMPATIBILITY.md) | [OpenCode V2](docs/opencode-v2.md) |
 | [Agents & Skills](docs/agents/README.md) | [Platforms](docs/PLATFORMS.md) |
 | [Release Process](docs/RELEASING.md) | [Branch Protection](docs/BRANCH-PROTECTION.md) |
-| [Model Routing](docs/reference/model-routing.md) | [Env Vars](docs/reference/env-vars.md) · [Code Mode](docs/reference/code-mode.md) |
+| [Model Routing](docs/reference/model-routing.md) | [Offline Evaluation Protocol](docs/reference/offline-evaluation.md) · [Env Vars](docs/reference/env-vars.md) · [Code Mode](docs/reference/code-mode.md) |
 | [Contributing](CONTRIBUTING.md) | [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) |
 
 The release install gate's tool canary loads the installed tarball's V2 plugin
