@@ -49,11 +49,11 @@ export async function promptReview(
  * Collect interactive setup choices before the installer begins any writes.
  *
  * @param {{ components?: string[], defaultComponents?: string[], noMcp?: boolean, prompts?: typeof clack, isTTY?: boolean }} [options]
- * @returns {Promise<{ components?: Set<string>, target?: string, confirmed?: boolean, canceled?: boolean, cancelPoint?: string }>}
+ * @returns {Promise<{ components?: Set<string>, target?: string, canceled?: boolean, cancelPoint?: string }>}
  *
- * `cancelPoint` names the step the user stopped at (`components`, `target`,
- * `confirmation`), so the caller can print one explainable line and persist the
- * same stable key in the run record.
+ * `cancelPoint` names the setup choice where the user stopped (`components` or
+ * `target`), so the caller can print one explainable line and persist the same
+ * stable key in the run record.
  */
 export async function runInteractiveInstall({
   components = [],
@@ -66,9 +66,10 @@ export async function runInteractiveInstall({
   const defaults = (defaultComponents.length > 0 ? defaultComponents : components).filter(isAllowed)
   const defaultSet = new Set(defaults)
 
-  // Preserve the prior no-TTY fallback (defaults, global target, and no apply
-  // authorization) without asking a terminal prompt library to access stdin.
-  if (!isTTY) return { components: defaultSet, target: 'global', confirmed: true }
+  // Preserve the same component and target defaults without asking a terminal
+  // prompt library to access stdin. Apply authorization is handled once, after
+  // the installer has built and displayed the complete plan.
+  if (!isTTY) return { components: defaultSet, target: 'global' }
 
   prompts.intro?.('OpenCode Installer')
 
@@ -110,13 +111,5 @@ export async function runInteractiveInstall({
   })
   if (cancelPrompt(prompts, target, 'target')) return { canceled: true, cancelPoint: 'target' }
 
-  const confirmed = await prompts.confirm({
-    message: `Install ${selectedComponents.size} component(s) in ${target === 'global' ? 'global config' : 'current project'}?`,
-    initialValue: true,
-  })
-  if (cancelPrompt(prompts, confirmed, 'confirmation')) {
-    return { canceled: true, cancelPoint: 'confirmation' }
-  }
-
-  return { components: selectedComponents, target, confirmed }
+  return { components: selectedComponents, target }
 }

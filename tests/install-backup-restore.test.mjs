@@ -48,7 +48,10 @@ import {
   restoreBackupSet,
   verifyBackupSet,
 } from '../scripts/install/backup.mjs'
+import { PROMPT_CANCELED } from '../scripts/install/prompt-result.mjs'
+import { runRestore } from '../scripts/restore.mjs'
 import { scanText } from '../scripts/secret-scan.mjs'
+import { seedHealthyRuntime } from './helpers/install-runtime-fixture.mjs'
 
 // The installer-integration case imports scripts/install/*.mjs, which needs the
 // declared `js-yaml`. Detect it once: the case is skipped when the dependency is
@@ -373,14 +376,79 @@ test('cli restore: non-TTY without --yes refuses and writes nothing', () => {
     writeFileSync(join(configDir, 'opencode.json'), '{"v":1}\n')
     const { name } = createBackupSet({ configDir, entries: ['opencode.json'] })
     writeFileSync(join(configDir, 'opencode.json'), '{"v":2}\n')
+    const backupCount = listBackupSets(configDir).length
 
     const result = spawnSync(process.execPath, [RESTORE, '--project', '--from', name], {
       cwd: configDir,
       encoding: 'utf8',
       timeout: 60_000,
     })
-    assert.notEqual(result.status, 0, 'must refuse without --yes')
+    assert.notEqual(result.status, 0, 'missing authorization must fail closed')
     assert.equal(readFileSync(join(configDir, 'opencode.json'), 'utf8'), '{"v":2}\n')
+    assert.equal(listBackupSets(configDir).length, backupCount, 'refusal must not create backup')
+  } finally {
+    rmSync(configDir, { recursive: true, force: true })
+  }
+})
+
+test('restore requires explicit true and never backs up or mutates after decline/cancel', async () => {
+  const configDir = makeConfigDir()
+  try {
+    writeFileSync(join(configDir, 'opencode.json'), '{"v":1}\n')
+    const { dir } = createBackupSet({ configDir, entries: ['opencode.json'] })
+    writeFileSync(join(configDir, 'opencode.json'), '{"v":2}\n')
+    const beforeSets = listBackupSets(configDir).map((set) => set.name)
+
+    const declined = await runRestore({
+      configDir,
+      backupDir: dir,
+      promptReview: async () => false,
+    })
+    assert.equal(declined.code, 0)
+    assert.equal(declined.reason, 'declined')
+    assert.equal(readFileSync(join(configDir, 'opencode.json'), 'utf8'), '{"v":2}\n')
+    assert.deepEqual(
+      listBackupSets(configDir).map((set) => set.name),
+      beforeSets,
+    )
+
+    const canceled = await runRestore({
+      configDir,
+      backupDir: dir,
+      promptReview: async () => PROMPT_CANCELED,
+    })
+    assert.equal(canceled.code, 130)
+    assert.equal(canceled.reason, 'canceled')
+    assert.equal(readFileSync(join(configDir, 'opencode.json'), 'utf8'), '{"v":2}\n')
+    assert.deepEqual(
+      listBackupSets(configDir).map((set) => set.name),
+      beforeSets,
+    )
+
+    const truthyButNotTrue = await runRestore({
+      configDir,
+      backupDir: dir,
+      promptReview: async () => ({ accepted: true }),
+    })
+    assert.equal(truthyButNotTrue.reason, 'declined')
+    assert.equal(readFileSync(join(configDir, 'opencode.json'), 'utf8'), '{"v":2}\n')
+    assert.deepEqual(
+      listBackupSets(configDir).map((set) => set.name),
+      beforeSets,
+    )
+
+    const truthyAuthorization = await runRestore({
+      configDir,
+      backupDir: dir,
+      yes: { accepted: true },
+    })
+    assert.equal(truthyAuthorization.code, 1)
+    assert.equal(truthyAuthorization.reason, 'not-authorized')
+    assert.equal(readFileSync(join(configDir, 'opencode.json'), 'utf8'), '{"v":2}\n')
+    assert.deepEqual(
+      listBackupSets(configDir).map((set) => set.name),
+      beforeSets,
+    )
   } finally {
     rmSync(configDir, { recursive: true, force: true })
   }
@@ -434,10 +502,9 @@ test('installer apply: exact backup before writes, warning once, no canary leak'
     // it is only reported as not revertible.
     mkdirSync(join(pluginDir, 'node_modules'), { recursive: true })
     writeFileSync(join(pluginDir, 'node_modules', 'dep.js'), '//bulk\n')
-    // Pre-seed a fake venv so setupVenv skips `python3 -m venv`; the absent pip
-    // fails fast and is non-fatal. This exercises the plugins+runtime paths.
-    mkdirSync(join(configDir, '.venv', 'bin'), { recursive: true })
-    writeFileSync(join(configDir, '.venv', 'bin', 'python3'), '')
+    // Use an offline runtime fixture that passes health checks and exercises the
+    // runtime installer path without relying on network package installation.
+    seedHealthyRuntime(configDir)
 
     // Preview (real dry run) must not leak the secret either.
     const preview = spawnSync(

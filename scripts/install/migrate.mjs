@@ -11,9 +11,8 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { configure as configureUi, tag } from './cli-ui.mjs'
 import { ACTIONS, fingerprintOutput, recordChange } from './plan.mjs'
-import { createInitialState, readState, writeState } from './state.mjs'
+import { createInitialState, MIGRATION_SCHEMA_VERSION, readState, writeState } from './state.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..', '..')
@@ -47,76 +46,84 @@ export function detectVersion(target) {
  * @param {string} target - Installation directory
  * @param {string|null} currentVersion - Detected version (null = fresh install)
  * @param {{ dryRun?: boolean, recorder?: (change: object) => void }} [options]
- * @returns {{ applied: number, messages: string[] }}
+ * @returns {{ applied: number, messages: string[], plannedState: object|null, status?: 'invalid'|'unsupported', marker?: unknown, message?: string }}
  */
-export function runMigrations(
-  target,
-  currentVersion,
-  { dryRun = false, recorder = null, updatedAt = new Date().toISOString() } = {},
-) {
+export function runMigrations(target, options = {}, legacyOptions = {}) {
+  // Preserve the old `(target, version, options)` call shape for downstream
+  // callers while making the persisted migration marker authoritative.
+  const explicitVersion = typeof options === 'string' ? options : null
+  const {
+    dryRun = false,
+    recorder = null,
+    updatedAt = new Date().toISOString(),
+  } = typeof options === 'object' && options !== null ? options : legacyOptions
+  const state = readState(target)
+  if (!state) return { applied: 0, messages: [], plannedState: null }
+
+  const schemaMarker = state.migration_schema_version
+  if (schemaMarker !== null && schemaMarker !== undefined) {
+    const parsedMarker = parseSemver(schemaMarker)
+    if (!parsedMarker) return blockedMigration('invalid', schemaMarker)
+    if (compareSemver(parsedMarker, parseSemver(MIGRATION_SCHEMA_VERSION)) > 0) {
+      return blockedMigration('unsupported', schemaMarker)
+    }
+  }
+
+  const currentVersion =
+    state.migration_schema_version ?? explicitVersion ?? state.pantheon_version ?? null
   const applied = []
-  const semver = parseSemver(currentVersion)
+  let cursor = parseSemver(currentVersion)
 
   // ── Migration: v3.10.0 → v3.18.0 ──────────────────────────────────
   // Fix dangling references, add Memory Protocol
-  if (semver && lt(semver, [3, 18, 0])) {
+  if (cursor && compareSemver(cursor, parseSemver('3.18.0')) < 0) {
     applied.push({
-      from: formatSemver(semver),
+      from: formatSemver(cursor),
       to: '3.18.0',
       description: 'Fix dangling references, add Memory Protocol',
     })
-    semver[0] = 3
-    semver[1] = 18
-    semver[2] = 0
+    cursor = parseSemver('3.18.0')
   }
 
   // ── Migration: v3.18.0 → v3.19.0 ──────────────────────────────────
   // Add runtime component, _pantheon_paths
-  if (semver && lt(semver, [3, 19, 0])) {
+  if (cursor && compareSemver(cursor, parseSemver('3.19.0')) < 0) {
     applied.push({
-      from: formatSemver(semver),
+      from: formatSemver(cursor),
       to: '3.19.0',
       description: 'Add runtime component, _pantheon_paths',
     })
-    semver[0] = 3
-    semver[1] = 19
-    semver[2] = 0
+    cursor = parseSemver('3.19.0')
   }
 
   // ── Migration: v3.19.0 → v3.19.1 ──────────────────────────────────
   // Add persistence MCP, fix 157 dangling refs
-  if (semver && lt(semver, [3, 19, 1])) {
+  if (cursor && compareSemver(cursor, parseSemver('3.19.1')) < 0) {
     applied.push({
-      from: formatSemver(semver),
+      from: formatSemver(cursor),
       to: '3.19.1',
       description: 'Add persistence MCP, fix dangling refs',
     })
-    semver[0] = 3
-    semver[1] = 19
-    semver[2] = 1
+    cursor = parseSemver('3.19.1')
   }
 
   // ── Migration: v3.19.1 → v3.19.2 ──────────────────────────────────
   // Upgrade state schema from v1 to v2
-  if (semver && lt(semver, [3, 19, 2])) {
+  if (cursor && compareSemver(cursor, parseSemver(MIGRATION_SCHEMA_VERSION)) < 0) {
     applied.push({
-      from: formatSemver(semver),
-      to: '3.19.2',
+      from: formatSemver(cursor),
+      to: MIGRATION_SCHEMA_VERSION,
       description: 'Upgrade install state schema to v2 with component tracking',
     })
-    semver[0] = 3
-    semver[1] = 19
-    semver[2] = 2
+    cursor = parseSemver(MIGRATION_SCHEMA_VERSION)
   }
 
   // ── Write updated state ───────────────────────────────────────────
-  if (applied.length > 0) {
+  const markerChanged = state.migration_schema_version !== MIGRATION_SCHEMA_VERSION
+  if (applied.length > 0 || markerChanged) {
     const statePath = join(target, '.pantheon', 'install-state.json')
-    const newVersion = formatSemver(semver)
-    let state = readState(target)
-    const stateExisted = state !== null
-    if (!state) state = createInitialState(newVersion, updatedAt)
-    state.pantheon_version = newVersion
+    const stateExisted = true
+    state.applied_migrations ??= []
     for (const m of applied) {
       state.applied_migrations.push({
         from: m.from,
@@ -133,6 +140,7 @@ export function runMigrations(
         runtime: { version: 1, status: 'installed' },
       }
     }
+    state.migration_schema_version = MIGRATION_SCHEMA_VERSION
     state.updated_at = updatedAt
     state.schema_version = 2
     const stateContent = `${JSON.stringify(state, null, 2)}\n`
@@ -155,10 +163,18 @@ export function runMigrations(
   }
 
   return {
-    applied: applied.length,
+    applied: 0,
     messages: applied.map((m) => `${m.from} → ${m.to}: ${m.description}`),
     plannedState: null,
   }
+}
+
+function blockedMigration(status, marker) {
+  const message =
+    status === 'unsupported'
+      ? `Migration schema ${marker} is newer than supported ${MIGRATION_SCHEMA_VERSION}; refusing to downgrade or modify the installation.`
+      : 'Invalid migration schema marker; refusing to modify the installation.'
+  return { applied: 0, messages: [], plannedState: null, status, marker, message }
 }
 
 // ---------------------------------------------------------------------------
@@ -279,7 +295,7 @@ export function rollbackMigration(target, version) {
   console.log(`  Rolling back migration: ${targetMigration.from} -> ${targetMigration.to}`)
 
   targetMigration.status = 'rolled_back'
-  state.pantheon_version = targetMigration.from
+  state.migration_schema_version = targetMigration.from
   writeState(target, state)
 
   console.log(`  [OK] Rolled back to ${targetMigration.from}`)
@@ -307,46 +323,69 @@ export function listAppliedMigrations(target) {
 // Minimal semver helpers (no external deps)
 // ---------------------------------------------------------------------------
 
-/**
- * Parse "x.y.z" → [major, minor, patch] or null.
- * @param {string|null} v
- * @returns {number[]|null}
- */
-function parseSemver(v) {
-  if (!v || typeof v !== 'string') return null
-  const parts = v.split('.').map(Number)
-  if (parts.length < 2 || parts.some(Number.isNaN)) return null
-  return [parts[0], parts[1], parts[2] ?? 0]
-}
+/** Parse strict SemVer precedence, accepting an optional `v` and build metadata. */
+export function parseSemver(value) {
+  if (typeof value !== 'string') return null
+  const match = value.match(
+    /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/,
+  )
+  if (!match) return null
+  const prerelease = match[4]
+    ? match[4].split('.').map((identifier) => {
+        if (!/^\d+$/.test(identifier)) return identifier
+        if (identifier.length > 1 && identifier.startsWith('0')) return null
+        return Number(identifier)
+      })
+    : []
+  if (prerelease.includes(null)) return null
 
-/**
- * Format [major, minor, patch] → "x.y.z".
- * @param {number[]} v
- * @returns {string}
- */
-function formatSemver(v) {
-  return `${v[0]}.${v[1]}.${v[2]}`
-}
-
-/**
- * Compare two semver arrays: is a < b?
- * @param {number[]} a
- * @param {number[]} b
- * @returns {boolean}
- */
-function lt(a, b) {
-  for (let i = 0; i < 3; i++) {
-    if ((a[i] ?? 0) !== (b[i] ?? 0)) {
-      return (a[i] ?? 0) < (b[i] ?? 0)
-    }
+  const parsed = {
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3]),
+    prerelease,
   }
-  return false
+  Object.defineProperty(parsed, 'compare', {
+    enumerable: false,
+    value: (other) => compareSemver(parsed, other),
+  })
+  return parsed
+}
+
+function compareSemver(left, right) {
+  for (const field of ['major', 'minor', 'patch']) {
+    if (left[field] !== right[field]) return left[field] < right[field] ? -1 : 1
+  }
+  const a = left.prerelease
+  const b = right.prerelease
+  if (a.length === 0 || b.length === 0) {
+    if (a.length === b.length) return 0
+    return a.length === 0 ? 1 : -1
+  }
+  const length = Math.min(a.length, b.length)
+  for (let index = 0; index < length; index += 1) {
+    if (a[index] === b[index]) continue
+    if (typeof a[index] === 'number' && typeof b[index] === 'number') {
+      return a[index] < b[index] ? -1 : 1
+    }
+    if (typeof a[index] === 'number') return -1
+    if (typeof b[index] === 'number') return 1
+    return a[index] < b[index] ? -1 : 1
+  }
+  if (a.length === b.length) return 0
+  return a.length < b.length ? -1 : 1
+}
+
+function formatSemver(value) {
+  const core = `${value.major}.${value.minor}.${value.patch}`
+  return value.prerelease.length === 0 ? core : `${core}-${value.prerelease.join('.')}`
 }
 
 // ---------------------------------------------------------------------------
 // CLI entry point
 // ---------------------------------------------------------------------------
-function main() {
+async function main() {
+  const { configure: configureUi, tag } = await import('./cli-ui.mjs')
   const args = process.argv.slice(2)
   const targetIdx = args.indexOf('--target')
   const target = targetIdx !== -1 ? args[targetIdx + 1] : process.cwd()
@@ -394,12 +433,21 @@ function main() {
 
   console.log(`  Current version: ${currentVersion}`)
 
-  if (!force && currentVersion === PANTHON_VERSION) {
+  const state = readState(target)
+  if (
+    !force &&
+    currentVersion === PANTHON_VERSION &&
+    state?.migration_schema_version === MIGRATION_SCHEMA_VERSION
+  ) {
     console.log('  [OK] Already at latest version — no migrations needed')
     return
   }
 
-  const migration = runMigrations(target, currentVersion, { dryRun })
+  const migration = runMigrations(target, { dryRun })
+
+  if (migration.status === 'unsupported' || migration.status === 'invalid') {
+    throw new Error(migration.message)
+  }
 
   if (migration.applied > 0) {
     console.log(`  [OK] Applied ${migration.applied} migration(s):`)
@@ -412,5 +460,8 @@ function main() {
 }
 
 if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
-  main()
+  main().catch((error) => {
+    console.error(`  [ERROR] ${error instanceof Error ? error.message : String(error)}`)
+    process.exitCode = 1
+  })
 }

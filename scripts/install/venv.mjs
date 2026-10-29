@@ -43,8 +43,8 @@ export function venvPythonPath(target) {
  * Set up a Python virtual environment and install MCP dependencies.
  *
  * @param {string} target - Target installation directory (e.g. ~/.config/opencode)
- * @param {{ dryRun?: boolean, skipInstall?: boolean, force?: boolean, recorder?: (change: object) => void, reviewedRemovals?: Set<string>|null, reviewedSnapshots?: Map<string, object>|null }} [options]
- * @returns {{ venvPath: string, python: string }}
+ * @param {{ dryRun?: boolean, skipInstall?: boolean, force?: boolean, verbose?: boolean, recorder?: (change: object) => void, reviewedRemovals?: Set<string>|null, reviewedSnapshots?: Map<string, object>|null }} [options]
+ * @returns {{ venvPath: string, python: string, runtimeEffects: { venv: 'create'|'reuse'|'recreate', dependencies: 'install'|'skip' } }}
  */
 export function setupVenv(
   target,
@@ -52,6 +52,7 @@ export function setupVenv(
     dryRun = false,
     skipInstall = false,
     force = false,
+    verbose = false,
     recorder = null,
     reviewedRemovals = null,
     reviewedSnapshots = null,
@@ -59,9 +60,13 @@ export function setupVenv(
 ) {
   const venvPath = join(target, '.venv')
   const pythonBin = venvPythonPath(target)
+  const hadVenv = existsSync(venvPath)
+  const recreateVenv = force && hadVenv
+  const hadPython = existsSync(pythonBin)
+  const venvAction = recreateVenv ? 'recreate' : hadPython ? 'reuse' : 'create'
 
   // Step 1: Force recreate venv if --force
-  if (force && existsSync(venvPath)) {
+  if (recreateVenv) {
     if (dryRun) {
       recordRemovalTree(venvPath, recorder)
       info('.venv would be removed (--force)')
@@ -74,7 +79,7 @@ export function setupVenv(
   }
 
   // Step 1b: Create venv if not exists
-  const venvExists = existsSync(pythonBin)
+  const venvExists = !recreateVenv && hadPython
   if (!venvExists) {
     if (dryRun) {
       // Never claim a directory was created by a run that writes nothing.
@@ -116,12 +121,12 @@ export function setupVenv(
         // Ensure PIP_USER=0 to install into venv, not user site-packages
         const pipEnv = { ...process.env, PIP_USER: '0' }
 
-        // stdio is 'ignore' (pip is noisy here), so the step marker is the ONLY
-        // evidence this ran — report both start and outcome instead of a silent
-        // 30s pause.
+        // Inherit pip output while the step marker makes the upgrade's start
+        // and outcome explicit.
         const pipUpgradeStep = step('Upgrading pip')
-        const pipUpgrade = spawnSync(pip, ['install', '--upgrade', 'pip'], {
-          stdio: 'ignore',
+        const pipVerbosity = verbose ? ['--verbose'] : ['--quiet']
+        const pipUpgrade = spawnSync(pip, ['install', ...pipVerbosity, '--upgrade', 'pip'], {
+          stdio: 'inherit',
           timeout: 30_000,
           env: pipEnv,
         })
@@ -129,8 +134,9 @@ export function setupVenv(
         pipUpgradeStep(upgraded)
         if (!upgraded) warning('pip upgrade failed — continuing with the bundled version')
 
-        // Install requirements — attempt 1: normal
-        const r = spawnSync(pip, ['install', '-r', reqFile], {
+        // Pip's quiet mode keeps normal init output concise while preserving
+        // stderr and its non-zero status; --verbose retains resolver detail.
+        const r = spawnSync(pip, ['install', ...pipVerbosity, '-r', reqFile], {
           stdio: 'inherit',
           timeout: 120_000,
           env: pipEnv,
@@ -139,11 +145,15 @@ export function setupVenv(
         if (r.status !== 0) {
           // Attempt 2: --break-system-packages (PEP 668 / externally-managed)
           warning('First attempt failed, retrying with --break-system-packages...')
-          const r2 = spawnSync(pip, ['install', '-r', reqFile, '--break-system-packages'], {
-            stdio: 'inherit',
-            timeout: 120_000,
-            env: pipEnv,
-          })
+          const r2 = spawnSync(
+            pip,
+            ['install', ...pipVerbosity, '-r', reqFile, '--break-system-packages'],
+            {
+              stdio: 'inherit',
+              timeout: 120_000,
+              env: pipEnv,
+            },
+          )
           if (r2.status !== 0) {
             throw new Error(
               'Failed to install MCP dependencies. ' +
@@ -169,7 +179,14 @@ export function setupVenv(
     info('Dependency install skipped (--skip-install)')
   }
 
-  return { venvPath, python: pythonBin }
+  return {
+    venvPath,
+    python: pythonBin,
+    runtimeEffects: {
+      venv: venvAction,
+      dependencies: skipInstall ? 'skip' : 'install',
+    },
+  }
 }
 
 // ---------------------------------------------------------------------------

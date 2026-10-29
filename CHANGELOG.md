@@ -10,6 +10,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.2-beta.3] - 2026-10-29
+
+### Changed
+
+- **install** — Direct `init` uses matching TTY/headless component defaults; Python runtime and prompt templates are opt-in, and `--yes` suppresses prompts without skipping preview or drift checks.
+- **install** — Runtime health checks verify SQLite FTS5 capability and fail when it is unavailable.
+
+### Fixed
+
+- **install** — Explicit restore decline exits successfully; missing authorization fails closed, while cancellation exits `130`. Post-write interrupts and runtime failures record the selected target and partial/degraded state.
+- **install** — Migration schema version is tracked separately from the installed package version and remains idempotent across prerelease package versions.
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
 ## [v1.6.2-beta.2] - 2026-10-28
 
 ### Added

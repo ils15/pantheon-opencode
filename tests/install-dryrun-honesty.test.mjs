@@ -71,6 +71,28 @@ test('healthCheck in dry-run mode inspects nothing and reports no failure', () =
   })
 })
 
+test('SQLite without a working FTS5 virtual table is a health failure', () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-health-no-fts5-'))
+  try {
+    mkdirSync(join(target, 'scripts'), { recursive: true })
+    mkdirSync(join(target, '.venv', 'bin'), { recursive: true })
+    writeFileSync(join(target, 'scripts', 'mcp_persistence.py'), '')
+    writeFileSync(join(target, 'scripts', '_pantheon_paths.py'), '')
+    writeFileSync(join(target, 'requirements-vision.txt'), '')
+    const probe = join(target, '.venv', 'bin', 'python3')
+    writeFileSync(probe, '#!/bin/sh\nprintf "SQLite 3.40.1 FTS5=False\\n"\n', { mode: 0o755 })
+
+    const results = healthCheck(target, { pythonTarget: target })
+    assert.equal(
+      results.passed.some(({ check }) => check === 'sqlite-fts5'),
+      false,
+    )
+    assert.ok(results.failed.some(({ check }) => check === 'sqlite-fts5'))
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
 // ---------------------------------------------------------------------------
 // 2. The vision server is resolved against the PACKAGE root, not the target
 // ---------------------------------------------------------------------------
@@ -412,6 +434,39 @@ test('the plan summary lists the MCP servers in the order the apply writes them'
     })
     const applied = JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8'))
     assert.deepEqual(Object.keys(applied.mcp), plan.mcpServers)
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('the plan summary names actual runtime and venv side effects without file detail', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-plan-effects-'))
+  try {
+    const plan = await installOpenCode(target, true, false, ['runtime'], {
+      yes: true,
+      headless: true,
+      version: 'v1',
+      quiet: true,
+      quietPlan: true,
+    })
+    const text = formatChangePlan(target, plan, { perFile: false })
+    assert.match(text, /Python virtual environment: create/)
+    assert.match(text, /MCP dependencies: install \(may download packages\)/)
+    assert.doesNotMatch(text, /scripts\/memory_mcp\.py/)
+
+    mkdirSync(join(target, '.venv', 'bin'), { recursive: true })
+    writeFileSync(join(target, '.venv', 'bin', 'python3'), '')
+    const forced = await installOpenCode(target, true, true, ['runtime'], {
+      yes: true,
+      headless: true,
+      version: 'v1',
+      quiet: true,
+      quietPlan: true,
+    })
+    assert.match(
+      formatChangePlan(target, forced, { perFile: false }),
+      /Python virtual environment: recreate/,
+    )
   } finally {
     rmSync(target, { recursive: true, force: true })
   }

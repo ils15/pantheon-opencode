@@ -50,6 +50,7 @@ import {
   snapshot,
   summarizeChanges,
 } from '../scripts/install/plan.mjs'
+import { seedHealthyRuntime } from './helpers/install-runtime-fixture.mjs'
 
 const ROOT = process.cwd()
 const BIN = join(ROOT, 'bin', 'pantheon-init.mjs')
@@ -521,11 +522,8 @@ test('cli: an idempotent runtime re-run previews manifest.json as unchanged', ()
   const xdg = mkdtempSync(join(tmpdir(), 'pantheon-idem-rt-xdg-'))
   try {
     const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: xdg }
-    // Keep the apply fast and offline-deterministic: a pre-seeded venv python
-    // makes setupVenv skip `python3 -m venv`; the absent pip then fails fast and
-    // is non-fatal (the runtime setup never aborts the install).
-    mkdirSync(join(target, '.venv', 'bin'), { recursive: true })
-    writeFileSync(join(target, '.venv', 'bin', 'python3'), '')
+    // Keep the apply fast and offline-deterministic with a healthy fake runtime.
+    seedHealthyRuntime(target)
     const base = [
       'init',
       '--project',
@@ -726,7 +724,7 @@ test('failure: a mid-apply throw reports applied paths and preserves unrelated t
     assert.match(out, /Apply failed/)
     assert.match(out, /already applied/)
     assert.match(out, /pantheon-opencode restore/)
-    assert.doesNotMatch(out, /\[DRY-RUN\]/, 'a failure is not a dry run')
+    assert.match(out, /\[DRY-RUN\] Change plan/, '--yes displays the plan before applying')
     assert.equal(
       readFileSync(tmpSibling, 'utf8'),
       'x',
@@ -792,7 +790,7 @@ test('failure (default global target): report preserves unrelated temp-like file
   }
 })
 
-test('authorized apply (--yes) emits no [DRY-RUN] plan block and writes for real', () => {
+test('--yes shows a concise preview before applying without prompts', () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-apply-quiet-'))
   const home = mkdtempSync(join(tmpdir(), 'pantheon-apply-quiet-home-'))
   const xdg = mkdtempSync(join(tmpdir(), 'pantheon-apply-quiet-xdg-'))
@@ -820,12 +818,9 @@ test('authorized apply (--yes) emits no [DRY-RUN] plan block and writes for real
     )
     const output = `${result.stdout}\n${result.stderr}`
     assert.equal(result.status, 0, `authorized apply must exit 0:\n${output}`)
-    assert.doesNotMatch(output, /\[DRY-RUN\]/, 'a real apply is not dry-run tagged')
-    assert.doesNotMatch(
-      output,
-      /No files were written\./,
-      'a real apply must not claim it wrote nothing',
-    )
+    assert.match(output, /\[DRY-RUN\] Change plan/, '--yes must display the preview')
+    assert.match(output, /No files were written\./, 'the preview names its no-write boundary')
+    assert.doesNotMatch(output, /agents\/zeus\.md/, 'file-level detail stays opt-in')
     assert.ok(existsSync(join(target, 'opencode.json')), 'the apply actually wrote')
   } finally {
     rmSync(target, { recursive: true, force: true })

@@ -160,6 +160,7 @@ test('init dry-run JSON names the MCP servers the apply will configure', () => {
       'pantheon-vision',
     ])
     assert.equal(report.mcp_server_count, 5)
+    assert.deepEqual(report.runtime_effects, { venv: 'create', dependencies: 'install' })
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

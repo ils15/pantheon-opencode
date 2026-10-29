@@ -1,5 +1,13 @@
 const DEFAULT_INSTALL_COMPONENTS = ['agents', 'skills', 'instructions', 'commands', 'plugins']
-const KNOWN_COMPONENTS = ['agents', 'skills', 'instructions', 'commands', 'plugins', 'runtime']
+const KNOWN_COMPONENTS = [
+  'agents',
+  'skills',
+  'instructions',
+  'prompts',
+  'commands',
+  'plugins',
+  'runtime',
+]
 
 /**
  * Resolve CLI component flags without widening an explicit component selection.
@@ -50,9 +58,6 @@ export function resolveComponentSelection(args, { reviewedComponents = null } = 
     }
   }
 
-  // Runtime is a default only for an unscoped install. Explicit --components
-  // remains the user's exact scope; runtime can still be requested by name.
-  if (explicitComponents === null && !components.includes('runtime')) components.push('runtime')
   return {
     components,
     requestedComponentsForPrompt: explicitComponents ? [...explicitComponents] : null,

@@ -27,17 +27,21 @@ const BIN = join(ROOT, 'bin', 'pantheon-init.mjs')
 test('preflight: missing python3 fails the install before any file is written', () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-preflight-'))
   try {
-    const result = spawnSync(process.execPath, [BIN, 'init', '--project', '--yes', '--headless'], {
-      cwd: target,
-      encoding: 'utf8',
-      timeout: 120_000,
-      env: {
-        ...process.env,
-        PATH: '/nonexistent-dir',
-        HOME: target,
-        XDG_CONFIG_HOME: join(target, 'xdg'),
+    const result = spawnSync(
+      process.execPath,
+      [BIN, 'init', '--project', '--yes', '--headless', '--components', 'runtime'],
+      {
+        cwd: target,
+        encoding: 'utf8',
+        timeout: 120_000,
+        env: {
+          ...process.env,
+          PATH: '/nonexistent-dir',
+          HOME: target,
+          XDG_CONFIG_HOME: join(target, 'xdg'),
+        },
       },
-    })
+    )
     assert.notEqual(result.status, 0, 'install must fail without python3/npm')
     assert.match(
       `${result.stderr}${result.stdout}`,
@@ -103,7 +107,7 @@ test('config rewrite is preserved byte-for-byte in the exact backup set', async 
   }
 })
 
-test('runtime phase is non-fatal: venv failure returns false and warns', () => {
+test('runtime phase reports setup failure to the install gate', () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-runtimefail-'))
   try {
     const stats = { created: 0, skipped: 0, errors: 0, warnings: 0 }
@@ -115,7 +119,56 @@ test('runtime phase is non-fatal: venv failure returns false and warns', () => {
     })
     assert.equal(ok, false, 'venv failure must return false (MCP entries omitted)')
     assert.equal(stats.warnings, 1, 'failure must surface as a warning, not a throw')
+    assert.equal(stats.errors, 1, 'a selected runtime failure must make the install fail')
   } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('runtime failure persists degraded state, preserves backup, and never prints success', async () => {
+  const { installOpenCode } = await import('../scripts/install/opencode.mjs')
+  const { listBackupSets } = await import('../scripts/install/backup.mjs')
+  const { readState } = await import('../scripts/install/state.mjs')
+  const { summary } = await import('../scripts/install/shared.mjs')
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-runtime-degraded-'))
+  const savedStats = { ...summary.opencode }
+  const original = { log: console.log, warn: console.warn, error: console.error }
+  const output = []
+  const capture = (...values) => output.push(values.join(' '))
+  console.log = capture
+  console.warn = capture
+  console.error = capture
+  try {
+    let failure
+    try {
+      await installOpenCode(target, false, false, ['runtime'], {
+        yes: true,
+        headless: true,
+        version: 'v1',
+        deps: {
+          setupVenv: (_target, options) => {
+            if (!options.dryRun) throw new Error('injected venv failure')
+            return {
+              runtimeEffects: { venv: 'create', dependencies: 'install' },
+            }
+          },
+        },
+      })
+    } catch (error) {
+      failure = error
+    }
+
+    assert.match(failure?.message ?? '', /installation completed with 1 error/)
+    assert.equal(failure.installOutcome.target, target)
+    assert.equal(failure.installOutcome.applied, true)
+    assert.ok(failure.installOutcome.backupDir, 'failure keeps the recovery backup path')
+    assert.equal(readState(target).components.runtime.status, 'failed')
+    assert.ok(listBackupSets(target).length > 0, 'recovery backup must be preserved')
+    assert.match(output.join('\n'), /injected venv failure/)
+    assert.doesNotMatch(output.join('\n'), /Installation complete|installed in/)
+  } finally {
+    Object.assign(console, original)
+    Object.assign(summary.opencode, savedStats)
     rmSync(target, { recursive: true, force: true })
   }
 })

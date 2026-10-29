@@ -241,6 +241,7 @@ test('init --doctor reports the health check result, duration and exit code', as
         [
           BIN,
           'init',
+          '--project',
           '--yes',
           '--headless',
           '--components',
@@ -259,6 +260,10 @@ test('init --doctor reports the health check result, duration and exit code', as
     )
     const output = `${child.stdout}\n${child.stderr}`
     assert.match(output, /Running health check\.\.\./)
+    assert.ok(
+      output.includes(`Target: ${target}`),
+      'doctor must inspect the selected project target',
+    )
 
     // The install ALWAYS reports completion and duration now. The exit code is
     // the child's, so a failing doctor fails the whole command instead of being

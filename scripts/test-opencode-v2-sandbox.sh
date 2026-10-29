@@ -17,8 +17,9 @@
 #
 # Modes (run sequentially; a failure stops later checks):
 #   --prepare        Build tarball, install pantheon-opencode + the OpenCode V2
-#                    binary in the sandbox prefix, headless init, and generate
-#                    the project config and sandbox run-test.sh.
+#                    binary in the sandbox prefix, headless init with the
+#                    default components plus opt-in runtime, and generate the
+#                    project config and sandbox run-test.sh.
 #   --run v2         Base validation: opencode mcp list + doctor (config is
 #                    regenerated first).
 #   --prompts        Prompt battery via `opencode run --format json`.
@@ -1043,7 +1044,8 @@ npm install -g "$TGZ"
 if ! git -C "$REPO_DIR" ls-files --error-unmatch -- "$TGZ" >/dev/null 2>&1; then rm -f -- "$TGZ"; fi
 
 echo "--- Init (headless) ---"
-pantheon-opencode init --headless -y
+pantheon-opencode init --headless -y \
+  --components agents,skills,instructions,commands,plugins,runtime
 rewrite_v2_mcp_config
 if ! node "$REPO_DIR/scripts/validate-sandbox-install.mjs" \
   --repo "$REPO_DIR" \
@@ -1436,7 +1438,7 @@ prepare_project() {
   pan="$(sandbox_bin_for "pantheon-opencode")" \
     || die "pantheon-opencode not installed in sandbox prefix — run $0 --prepare first"
   log "--- Regenerating config in $dir ---"
-  (cd "$dir" && "$pan" init --project --version "$TARGET_VERSION" --model "$PANTHEON_SANDBOX_MODEL" -y) \
+  (cd "$dir" && "$pan" init --project --version "$TARGET_VERSION" --model "$PANTHEON_SANDBOX_MODEL" --components agents,skills,instructions,commands,plugins,runtime -y) \
     || die "sandbox project initialization failed"
   rewrite_v2_mcp_config
   validate_sandbox_install
@@ -1550,8 +1552,10 @@ cmd_prepare() {
   local pan
   pan="$(sandbox_bin_for "pantheon-opencode")" \
     || die "pantheon-opencode not found in sandbox prefix after install"
-  log "--- Headless init (global venv + runtime) ---"
-  "$pan" init --headless -y --model "$PANTHEON_SANDBOX_MODEL" \
+  log "--- Headless init (default components + runtime) ---"
+  "$pan" init --headless -y \
+    --components agents,skills,instructions,commands,plugins,runtime \
+    --model "$PANTHEON_SANDBOX_MODEL" \
     || die "pantheon-opencode init --headless failed"
   prepare_project
   write_extract_py

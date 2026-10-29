@@ -302,7 +302,7 @@ test('explicit --components does not add runtime to the CLI install plan', () =>
   }
 })
 
-test('V2 rejects both --preset spellings before writing, while V1 accepts equals syntax', () => {
+test('V2 rejects both --preset spellings before installation writes, while V1 accepts equals syntax', () => {
   for (const presetArgs of [['--preset', 'anthropic'], ['--preset=anthropic']]) {
     const cwd = mkdtempSync(join(tmpdir(), 'pantheon-init-v2-preset-'))
     try {
@@ -315,7 +315,12 @@ test('V2 rejects both --preset spellings before writing, while V1 accepts equals
         `${result.stdout}\n${result.stderr}`,
         /--preset is not supported for OpenCode V2/i,
       )
-      assert.deepEqual(readdirSync(cwd), [])
+      assert.deepEqual(readdirSync(cwd), ['.pantheon'])
+      assert.deepEqual(readdirSync(join(cwd, '.pantheon')), ['last-run.json'])
+      const runRecord = JSON.parse(readFileSync(join(cwd, '.pantheon', 'last-run.json'), 'utf8'))
+      assert.equal(runRecord.status, 'failed')
+      assert.equal(runRecord.reason, 'failed')
+      assert.equal(runRecord.applied, false)
     } finally {
       rmSync(cwd, { recursive: true, force: true })
     }

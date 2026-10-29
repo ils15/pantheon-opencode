@@ -109,6 +109,32 @@ test('runner script exists and is executable, with valid bash syntax', () => {
   assert.equal(res.status, 0, `bash -n failed:\n${res.stderr}`)
 })
 
+test('sandbox global and project init opt into runtime without dropping default components', () => {
+  const globalInitCommands =
+    RUNNER_SRC.match(
+      /^[ \t]*(?:pantheon-opencode|"\$pan") init --headless[^\\\n]*(?:\\\n[^\n]*)?/gm,
+    ) ?? []
+  assert.equal(globalInitCommands.length, 2, 'both sandbox global-init paths must be covered')
+  for (const command of globalInitCommands) {
+    assert.match(
+      command,
+      /--components(?:=|\s+)agents,skills,instructions,commands,plugins,runtime(?:\s|$)/,
+      `sandbox global init must preserve default components and explicitly add runtime: ${command}`,
+    )
+  }
+
+  const projectInitCommands =
+    RUNNER_SRC.match(/^[ \t]*\(cd "\$dir" && "\$pan" init --project[^\n]*$/gm) ?? []
+  assert.equal(projectInitCommands.length, 1, 'project initialization path must be covered')
+  for (const command of projectInitCommands) {
+    assert.match(
+      command,
+      /--components(?:=|\s+)agents,skills,instructions,commands,plugins,runtime(?:\s|\)|$)/,
+      `sandbox project init must preserve default components and explicitly add runtime: ${command}`,
+    )
+  }
+})
+
 test('sandbox overrides inherited XDG paths including runtime and polls its private OpenCode log', (t) => {
   const workDir = mkdtempSync(join(tmpdir(), 'pantheon-v2-env-'))
   t.after(() => rmSync(workDir, { recursive: true, force: true }))
