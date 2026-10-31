@@ -91,16 +91,34 @@ truthy values leaves the feature off.
 | Variable | Default | Purpose |
 |---|---|---|
 | `PANTHEON_V2_P7_LOOP` | unset (off) | `1`, `on` or `true` enables the P7 loop adapter on `session.execution.succeeded`. It counts executions and writes `effect: none` observations to an in-memory, bounded collector that the plugin never reads back (it is exposed only to tests); it does not enforce loop limits. The 12-execution cap (`P7_LOOP_MAX_EXECUTIONS`) is advisory: no measured host surface signals a new user turn, so the streak is not claimed to reset. |
-| `PANTHEON_V2_P8_GUARDRAIL` | unset (off) | `1`, `on` or `true` enables the P8 guardrail on `permission.evaluate` only. It can only narrow, and it is not a no-op: a native event with no usable `action` token, and an `allow` decision with no attributed `sessionID`, are narrowed to `deny`. `execute.before` remains the only hard barrier; activation is blocked pending PH5-1…PH5-5. |
+| `PANTHEON_V2_P8_GUARDRAIL` | unset (off) | `1`, `on` or `true` would enable the P8 guardrail on `permission.evaluate` only. It can only narrow, and it remains **off**: C8 closed by measurement, and the verdict is that the declared rules match no delivered payload, so the point is recorded as `advisory` and narrows nothing. A written `deny` is honoured by the host, but no declared rule can produce one. `execute.before` remains the only hard barrier. |
 
-Shadow points (P1–P6, P9–P11) have no environment switch and **no production call
-site**: no production file imports them. The adapters are constructed only by
-their per-point test suites (`v2-decision-p1.test.ts` … `v2-decision-p11.test.ts`),
-not by any call site under `src/` outside the adapter modules themselves, and
-`src/plugin-v2.ts` registers only P7 and P8. On a host they therefore do not read
-the turn, record no telemetry and change nothing — not because they are disabled,
-but because nothing constructs them. They are library code exercised only by the
-per-point test suites. Coverage and unmeasured surfaces are in
+Shadow points (P1, P2, P3, P9, P11) have no environment switch: there is no
+behaviour to switch. P1 and P2 are registered on `session.hook('prompt')` and
+observe a projection of the admission payload carrying only `prompt.agents` and
+`prompt.skills` — no text, no file bytes, no metadata. P3 is registered at its
+declared `tool.invoke`: the `pantheon_local_decision` tool hands the adapter its
+own input, which carries `complexity` and `gateStatus`, so it records a
+classification when the tool is invoked. P9 is registered on
+`session.hook('compaction')` and reads the measured carrier only — the top-level
+`sessionID` and the `system` parts — pushing nothing into the injected context.
+P11 is registered inside `ctx.tool.transform` and reads the draft the host hands
+it without calling any mutator. Each record says `effect: none` and goes
+to an in-memory, bounded collector that the plugin never reads back (exposed only
+to tests). They cannot deny, delay or mutate admission; P2 stays advisory and
+never filters.
+
+The remaining four — P4, P5, P6 and P10 — have **no production call
+site**: no production file imports them. Their adapters are constructed only by
+their per-point test suites (`v2-decision-p4.test.ts` … `v2-decision-p11.test.ts`).
+P6 and P10 declared the prompt hook, but that payload carries neither council
+candidates nor counsellor claims; P4 needs a memory candidate array and the
+measured `context` payload carries `system` text parts instead; P5 needs a
+declared `{ requirements, responses }` pair and the `execute.after` event
+carries neither. They are unwired rather than recording a refusal from a
+surface that cannot feed them. On a host they do not read the
+turn, record no telemetry and change nothing — not because they are disabled, but
+because nothing constructs them. Coverage and unmeasured surfaces are in
 [Local Decision Router](local-decision-router.md#measured-coverage-and-unmeasured-surfaces-v2-decision-layer).
 
 ## Decision-provider transport

@@ -149,16 +149,18 @@ check('P7 records the branch-1 selection: measured coverage, execution counter, 
   }
 })
 
-check('P9 is measured on top-level sessions only and says so', () => {
+check('P9 is measured in top-level and child sessions and names overflow as unmeasured', () => {
   const p9 = point('P9')
   assert.equal(p9.status, 'measured')
-  assert.equal(p9.scope, 'top-level-session-only')
+  assert.equal(p9.scope, 'overflow-unmeasured')
   assert.equal(p9.evidence.includes('F-01'), true)
   assert.equal(p9.evidence.includes('F-02'), true)
   assert.equal(
-    p9.unknowns?.some((entry) => entry.includes('child-session')),
+    p9.unknowns?.some((entry) => entry.includes('reason:"overflow"')),
     true,
   )
+  assert.equal(p9.notes.includes('PROBE-G'), true)
+  assert.equal(p9.notes.includes('child session'), true)
   assert.equal(p9.premises.includes('PM-04'), true)
 })
 
@@ -171,10 +173,11 @@ check('P11 is measured against the absent host catalog and the tool draft', () =
   assert.equal(p11.premises.includes('PM-08'), true)
 })
 
-check('P8 is a premise, starts off and carries the hard-barrier invariant', () => {
+check('P8 is advisory: measured inert, starts off and keeps the hard-barrier invariant', () => {
   const p8 = point('P8')
-  assert.equal(p8.status, 'premise')
+  assert.equal(p8.status, 'advisory')
   assert.equal(p8.mode, 'off')
+  assert.equal(p8.wired, true)
   assert.equal(p8.premises.includes('PM-09'), true)
   assert.match(p8.securityInvariant ?? '', /execute\.before/)
   assert.match(p8.securityInvariant ?? '', /denies/)
@@ -269,17 +272,17 @@ check('the status of every point is pinned to the phase-6 table', () => {
     P5: 'premise',
     P6: 'measured',
     P7: 'measured',
-    P8: 'premise',
+    P8: 'advisory',
     P9: 'measured',
     P10: 'premise',
     P11: 'measured',
   })
-  assert.equal(point('P9').scope, 'top-level-session-only')
+  assert.equal(point('P9').scope, 'overflow-unmeasured')
 })
 
-check('P8 claims no coverage the phase-5 review left unmeasured', () => {
+check('P8 records the measured inertness instead of coverage it does not have', () => {
   const p8 = point('P8')
-  assert.equal(p8.status, 'premise')
+  assert.equal(p8.status, 'advisory')
   assert.equal(p8.mode, 'off')
   assert.equal(p8.hostSurface, 'permission.evaluate')
   assert.equal(p8.evidence.length, 0)
@@ -289,11 +292,17 @@ check('P8 claims no coverage the phase-5 review left unmeasured', () => {
   for (const token of ['N1', 'N3', 'N4', 'PH5-1']) {
     assert.equal(p8.notes.includes(token), true, token)
   }
+  // The binding outcome is a measurement, not a pending review.
+  for (const token of ['PROBE-F', 'p8.rule.none', 'unreachable']) {
+    assert.equal(p8.blockingCondition?.includes(token), true, token)
+  }
+  assert.equal(p8.blockingCondition?.includes('Not activatable by measurement'), true)
+  assert.equal(p8.notes.includes('PROBE-F'), true)
+  assert.equal(p8.notes.includes('narrows nothing'), true)
   // A-6 reserves C11–C13 for the PROBE-B corrections (all satisfied); using them
   // here would make a blocked guardrail read as eligible.
   assert.equal(p8.notes.includes('C11'), false)
   assert.equal((p8.blockingCondition ?? '').includes('C11'), false)
-  assert.equal(p8.blockingCondition?.includes('PH5-1'), true)
   assert.equal(p8.premises.includes('PM-16'), true)
 })
 

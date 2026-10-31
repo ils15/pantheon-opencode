@@ -141,7 +141,10 @@ import {
   createP8Guardrail,
   p8GuardrailEnabledFromEnv,
 } from './pantheon/v2-decision-points/p8-guardrail.ts'
+import { evaluateCompactionMemoryPoint } from './pantheon/v2-decision-points/p9-memory-compaction.ts'
+import { evaluateCatalogPoint } from './pantheon/v2-decision-points/p11-catalog.ts'
 import { DECISION_POINT_REGISTRY } from './pantheon/v2-decision-points.ts'
+import { observePromptSurface } from './pantheon/v2-decision-prompt-surface.ts'
 import { createTelemetrySink, type TelemetrySink } from './pantheon/v2-decision-telemetry.ts'
 import {
   type AuthoritativeSession,
@@ -669,8 +672,22 @@ async function registerV2Tools(
     const visionReady = typeof model?.list === 'function'
     if (!visionReady) markUnsupported('vision-tool')
     const visionRuntime = visionReady ? ({ model } as V2VisionRuntime) : undefined
-    const toolDefs = createV2ToolDefinitions(visionRuntime)
+    // P3 (complexity) declares `tool.invoke`; its construction site is the
+    // local selector's execute, fed by that tool's own input schema. The sink
+    // is the 0b record path (in-memory, bounded, I/O-free) and every record
+    // carries `mode: 'shadow'` — the mode the registry declares.
+    const p3Sink = createTelemetrySink()
+    p3TelemetrySink = p3Sink
+    const toolDefs = createV2ToolDefinitions(visionRuntime, {
+      complexitySink: (record) => {
+        p3Sink.emit({ ...record, mode: 'shadow' })
+      },
+    })
     if (boundedRead !== undefined) toolDefs.push(boundedRead)
+
+    // P11's record sink, created per registration (in-memory, bounded, I/O-free).
+    const p11Sink = createTelemetrySink()
+    p11TelemetrySink = p11Sink
 
     await toolCtx.transform((draft: V2ToolDraft) => {
       // Catalog grouping only. The host computes a tool's registration id as
@@ -692,6 +709,24 @@ async function registerV2Tools(
           output: def.output,
           execute: def.execute,
         })
+      }
+
+      // P11 (catalog) shadow observation on the only measured catalogue
+      // surface: the draft the host hands this callback — `{list, get,
+      // namespace, add, update, remove}`, 20 host tools, 46 with MCP servers
+      // registered (F-07). `ctx.catalog` is absent at every measured point
+      // (F-05) and is not used. The adapter reads and nothing else: `list()` is
+      // called, the six members are type-checked, and no add/update/remove is
+      // ever invoked, so the registration above is the only mutation. Shadow
+      // has no responder, so the record names the validated `choice` question
+      // (`catalog.no.answer`) instead of inventing a selection. Runs after the
+      // adds so the draft it reads is the one the host will keep.
+      try {
+        evaluateCatalogPoint(draft, (record) => {
+          p11Sink.emit({ ...record, mode: 'shadow' })
+        })
+      } catch {
+        // Observation must never fail the tool registration.
       }
     })
     return true
@@ -736,6 +771,70 @@ export function getP8TelemetrySinkForTests(): TelemetrySink | undefined {
 }
 
 let p8TelemetrySink: TelemetrySink | undefined
+
+/**
+ * The prompt-surface telemetry sink created by the most recent prompt-hook
+ * registration.
+ *
+ * P1 and P2 observe the same admission payload through `observePromptSurface`;
+ * each shadow record is reduced through the 0b record path
+ * (`createTelemetrySink`, in-memory, bounded, I/O-free) and carries
+ * `mode: 'shadow'` — the registry mode both declare. Nothing in production
+ * reads this collector back, so the write is only a claim if a reader can
+ * assert it: this accessor is that reader, and
+ * tests/pantheon/plugin-v2-contract.test.ts is its only caller.
+ */
+export function getPromptSurfaceTelemetrySinkForTests(): TelemetrySink | undefined {
+  return promptSurfaceTelemetrySink
+}
+
+let promptSurfaceTelemetrySink: TelemetrySink | undefined
+
+/**
+ * The P3 telemetry sink created by the most recent tool registration.
+ *
+ * P3 is constructed at `tool.invoke`: `pantheon_local_decision`'s execute calls
+ * the adapter with the tool input, which carries `complexity` and `gateStatus`.
+ * Records are reduced through the same in-memory 0b path and carry the P3
+ * registry `mode` (`shadow`). Exported only for
+ * tests/pantheon/plugin-v2-contract.test.ts and the wiring audit.
+ */
+export function getP3TelemetrySinkForTests(): TelemetrySink | undefined {
+  return p3TelemetrySink
+}
+
+let p3TelemetrySink: TelemetrySink | undefined
+
+/**
+ * The P9 telemetry sink created by the most recent compaction-hook
+ * registration.
+ *
+ * P9 declares `session.hook('compaction')` and observes the MEASURED carrier
+ * only: the top-level `sessionID` and the `system` part array (F-01, F-02).
+ * Records go through the same in-memory, bounded 0b path and carry the P9
+ * registry `mode` (`shadow`). Exported only for
+ * tests/pantheon/plugin-v2-contract.test.ts and the wiring audit.
+ */
+export function getP9TelemetrySinkForTests(): TelemetrySink | undefined {
+  return p9TelemetrySink
+}
+
+let p9TelemetrySink: TelemetrySink | undefined
+
+/**
+ * The P11 telemetry sink created by the most recent tool registration.
+ *
+ * P11 declares `tool.transform` and reads the draft the host hands that
+ * callback (F-07) — the only measured catalogue surface, since `ctx.catalog` is
+ * absent (F-05). Records go through the in-memory, bounded 0b path and carry the
+ * P11 registry `mode` (`shadow`). Exported only for
+ * tests/pantheon/plugin-v2-contract.test.ts and the wiring audit.
+ */
+export function getP11TelemetrySinkForTests(): TelemetrySink | undefined {
+  return p11TelemetrySink
+}
+
+let p11TelemetrySink: TelemetrySink | undefined
 
 /**
  * Attempt to subscribe to session events via V2 ctx.event.subscribe.
@@ -1199,6 +1298,13 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
   }
 
   try {
+    // Prompt-surface shadow points (P1 and P2) share this payload. P3 moved to
+    // `tool.invoke`, where its input actually carries a complexity vector; P6
+    // and P10 are unwired because no measured surface carries their inputs.
+    // The sink is in-memory and bounded, exactly like P7/P8; it is created per
+    // registration so one setup cannot observe another's records.
+    const promptSurfaceSink = createTelemetrySink()
+    promptSurfaceTelemetrySink = promptSurfaceSink
     // "prompt" hook — preserve attached image references and add model-visible
     // instructions so Zeus can inspect visual context and pass it to the
     // implementation specialist before editing.
@@ -1229,6 +1335,15 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
         // captured before Pantheon's own visual context, and the router caches
         // per session/message, so a repeated admission cannot call twice.
         await applyDecisionRouterToPrompt(admission, permissionAssert, userRequest)
+
+        // Shadow observation only. The projection carries `prompt.agents` and
+        // `prompt.skills` and nothing else, so no prompt text or file bytes
+        // reach a record; observeShadow clones and freezes it, so admission is
+        // not mutated. A failure here is contained by the outer catch and never
+        // reaches the host.
+        observePromptSurface(admission, (record) => {
+          promptSurfaceSink.emit({ ...record, mode: 'shadow' })
+        })
       } catch {
         // Fail-open: malformed/unsupported prompt shapes must not block input.
       }
@@ -2342,6 +2457,10 @@ export const plugin = define({
       // active goals per session, and the store needs no host API (same
       // `.pantheon/goals` directory V1 uses).
       const goalStore = new GoalStore({ dir: '.pantheon/goals' })
+      // P9's record sink, created per registration (in-memory, bounded,
+      // I/O-free) so one setup cannot observe another's records.
+      const p9Sink = createTelemetrySink()
+      p9TelemetrySink = p9Sink
       try {
         // 2.0.16 `SessionHooks` key is `compaction` (the migration doc maps
         // `experimental.session.compacting` → `ctx.session.hook("compaction")`).
@@ -2390,6 +2509,34 @@ export const plugin = define({
                 : typeof payload?.session?.id === 'string'
                   ? payload.session.id
                   : undefined
+
+            // P9 (compaction) shadow observation, on the MEASURED carrier only.
+            // The 2.2.5 compaction payload carries a TOP-LEVEL `sessionID` and
+            // no nested `session` object at all (PROBE-A, 11/11 runs), so the
+            // event is handed to the adapter as-is and it reads
+            // `payload.sessionID` — never `session.id`, which is absent there.
+            // A payload that carries only a nested id therefore produces NO
+            // decision (fail-closed) rather than being keyed by a carrier the
+            // host was never observed to send. This runs BEFORE the pruner and
+            // the context injection below, so `systemPartCount` describes the
+            // host payload and not the blocks Pantheon appends; the adapter
+            // clones what it reads and pushes nothing itself, so the injected
+            // context is unchanged — shadow is the record, nothing else.
+            // Child-session compaction is measured and needs no separate path:
+            // PROBE-G §3.1 fired this hook on a real child 3/3 with the CHILD
+            // sessionID at top level and the same payload shape (7 keys, no
+            // nested `session`, `system` array of 4). Compaction with
+            // `reason:"overflow"` was NOT inducible in 6 error shapes (PROBE-G
+            // §3.2 — the host retried and completed, and the one
+            // failure-recovery compaction was persisted as `reason:"auto"`), so
+            // that path remains unmeasured and is not designed for here.
+            try {
+              evaluateCompactionMemoryPoint({ payload }, (record) => {
+                p9Sink.emit({ ...record, mode: 'shadow' })
+              })
+            } catch {
+              // Observation must never reach the compaction request.
+            }
             const prunerConfig = resolveContextPrunerConfig(context.options)
             const stats = pruneMessages(payload?.messages, prunerConfig, 'compaction')
             logContextPrune(stats, sessionID)

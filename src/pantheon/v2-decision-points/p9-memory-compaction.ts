@@ -21,11 +21,18 @@
  * attribute it to. The same holds for an unusable `system` carrier and for an
  * absent memory source: nothing is guessed from a partial payload.
  *
- * Scope, stated so it cannot be over-read: this covers **top-level sessions
- * only**. Compaction with `reason:"overflow"` and compaction inside a child
- * session are UNKNOWN (PM-04) and are deliberately not designed for; the
- * `messages` channel was never exercised (PM-05), so this adapter does not
- * depend on it. Shadow: the decision is recorded and the record says
+ * Scope, stated so it cannot be over-read: the carrier is measured on
+ * **top-level** sessions and on a **child** session. PROBE-G §3.1 spawned a real
+ * child session and compacted it 3/3: the hook fires there, the payload carries
+ * the child's `sessionID` at top level, and the shape is identical to the
+ * top-level one (same 7 keys, no nested `session`, `system` an array of 4 parts),
+ * so no child-specific branch is needed. `reason:"overflow"` remains UNKNOWN and
+ * is deliberately not designed for: PROBE-G §3.2 could not induce it in 6 error
+ * shapes — the host retried and completed, and the one failure-recovery
+ * compaction observed was persisted as `reason:"auto"`. The checkpoint
+ * summary/reinjection inside a child session was not exercised (PROBE-G §4.6),
+ * and the `messages` channel was never exercised (PM-05), so this adapter does
+ * not depend on it. Shadow: the decision is recorded and the record says
  * `effect: 'none'`.
  */
 

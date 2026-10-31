@@ -181,15 +181,32 @@ function cloneDefaultUserConfig() {
 
 // src/pantheon/v2-decision-egress.ts
 var V2_DECISION_EGRESS_DEFAULT = "off";
+var DECLARED_EGRESS_ENDPOINTS = Object.freeze([
+  { url: "https://api.openai.com/v1/decisions", wireStatus: "unwired" },
+  { url: "https://api.typesafe.ai/v1/systemone", wireStatus: "unwired" },
+  { url: "https://opencode.ai/inference/systemone/v1/systemone", wireStatus: "unwired" }
+]);
+var V2_DECISION_EGRESS_EXERCISED_PATHS = Object.freeze([]);
+var V2_DECISION_EGRESS_ENDPOINT_WIRE_STATUS = Object.freeze(
+  Object.fromEntries(DECLARED_EGRESS_ENDPOINTS.map(({ url, wireStatus }) => [url, wireStatus]))
+);
+function findUnverifiedEgressEndpoints(endpoints, endpointWireStatus, exercisedPaths = V2_DECISION_EGRESS_EXERCISED_PATHS) {
+  const exercised = new Set(exercisedPaths);
+  return Object.freeze(
+    endpoints.filter((endpoint) => {
+      const status = endpointWireStatus[endpoint];
+      if (status === "unwired") return false;
+      if (status === "wired") return !exercised.has(endpoint);
+      return true;
+    })
+  );
+}
 var V2_DECISION_EGRESS_TRANSPORT = Object.freeze({
   wireStatus: "unwired",
   wired: false,
-  note: "Endpoints are retained inert (UNWIRED) in this surface. No transport, retry or fallback exists here, and this module never claims the transport was removed.",
-  endpoints: Object.freeze([
-    "https://api.openai.com/v1/decisions",
-    "https://api.typesafe.ai/v1/systemone",
-    "https://opencode.ai/inference/systemone/v1/systemone"
-  ])
+  note: "Endpoints are retained inert (UNWIRED) in this surface. No transport, retry or fallback exists here, and this module never claims the transport was removed. Verification covers only the paths a probe exercised \u2014 none \u2014 and every declared endpoint carries an explicit wire status so an unverified endpoint fails a test instead of passing silently.",
+  endpoints: Object.freeze(DECLARED_EGRESS_ENDPOINTS.map(({ url }) => url)),
+  endpointWireStatus: V2_DECISION_EGRESS_ENDPOINT_WIRE_STATUS
 });
 function resolveV2DecisionEgress(config, capEligibleCandidates = []) {
   const preference = migrateUserDecisionRouterConfig(config);
@@ -245,8 +262,11 @@ function assertV2DecisionEgressOptIn(state) {
 }
 export {
   V2_DECISION_EGRESS_DEFAULT,
+  V2_DECISION_EGRESS_ENDPOINT_WIRE_STATUS,
+  V2_DECISION_EGRESS_EXERCISED_PATHS,
   V2_DECISION_EGRESS_TRANSPORT,
   assertV2DecisionEgressOptIn,
+  findUnverifiedEgressEndpoints,
   resolveV2DecisionEgress,
   v2DecisionEgressMaySend
 };

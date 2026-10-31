@@ -51,6 +51,7 @@ import { createHashlineEditTool, type HashlineToolResult } from './hashline/tool
 import { createV2LocalDecisionDefinition } from './local-decision-tool.ts'
 import { createModelCommand } from './model-command.ts'
 import type { ToolContextLike } from './tool-context.ts'
+import type { ShadowSink } from './v2-decision-shadow.ts'
 import { createV2VisionTool, type V2VisionRuntime } from './v2-vision.ts'
 
 // ─── Contract types ─────────────────────────────────────────────────────
@@ -421,6 +422,17 @@ async function executeModel(
 // ─── Tool set ───────────────────────────────────────────────────────────
 
 /**
+ * Optional shadow sinks wired at tool registration.
+ *
+ * `complexity` belongs to P3, whose declared host surface is `tool.invoke`: the
+ * local selector's own input carries the complexity vector and gate status, so
+ * the observation is constructed where the payload can actually feed it.
+ */
+export interface V2ToolShadowOptions {
+  readonly complexitySink?: ShadowSink
+}
+
+/**
  * Build the V2 tool definitions.
  *
  * Every entry declares `output`. An empty object is the host's own marker for
@@ -434,7 +446,10 @@ async function executeModel(
  * per-call definition with no construction-time I/O. A fresh descriptor array
  * prevents callers from mutating another registration's definitions.
  */
-export function createV2ToolDefinitions(visionRuntime?: V2VisionRuntime): V2ToolDef[] {
+export function createV2ToolDefinitions(
+  visionRuntime?: V2VisionRuntime,
+  shadow: V2ToolShadowOptions = {},
+): V2ToolDef[] {
   const definitions: V2ToolDef[] = [
     {
       name: 'hashline_edit',
@@ -475,7 +490,11 @@ export function createV2ToolDefinitions(visionRuntime?: V2VisionRuntime): V2Tool
       execute: executeModel,
     },
   ]
-  definitions.push(createV2LocalDecisionDefinition())
+  definitions.push(
+    createV2LocalDecisionDefinition({
+      ...(shadow.complexitySink === undefined ? {} : { sink: shadow.complexitySink }),
+    }),
+  )
   if (visionRuntime) definitions.push(createV2VisionTool(visionRuntime))
   return definitions
 }

@@ -340,10 +340,17 @@ probability must both be at least `0.80`.
 surface.** `https://api.openai.com/v1/decisions` and
 `https://api.typesafe.ai/v1/systemone` (plus the two ineligible Console endpoints)
 remain in the private matrix as fixed strings, and `v2-decision-egress.ts` declares
-`wireStatus: 'unwired'` with no transport of its own. This is a statement about
-wiring, not about removal: nothing here claims the transport was deleted. Bifrost
-is not a decision-router provider, model, or budget row, and a test asserts its
-absence from both maps.
+`wireStatus: 'unwired'` with no transport of its own. Each declared endpoint also
+carries its own wire status, and a test fails when an endpoint is neither
+asserted `unwired` nor covered by a path a probe exercised. **Verification covers
+only the paths a probe exercised — none** — so this is not evidence about network
+absence anywhere else, and no read-only claim may be derived from it. This is a
+statement about wiring, not about removal: nothing here claims the transport was
+deleted. Bifrost is not a decision-router provider, model, or budget row, and a
+test asserts its absence from both maps. Separately, `permission.evaluate.egress`
+is unreachable in the probed host: a tool that declares `decision.egress`
+registers but is never advertised to the provider, so that permission action is
+never delivered (PROBE-F §3.9).
 
 **Dated documentation snapshot (2026-10-30):** OpenAI GPT-6 Luna standard rates
 are $0.10/1M input and $0.50/1M output tokens; its documentation separately lists
@@ -472,16 +479,28 @@ pass.
 ## Measured coverage and unmeasured surfaces (V2 decision layer)
 
 The registry reports coverage as measured, premise, advisory, or deferred, and
-`measured` never means "effect measured". What that means in practice — and, in
-particular, that **only P7 and P8 are wired into `src/plugin-v2.ts` while the other
-nine points are library code with no production call site**:
+`measured` never means "effect measured". What that means in practice: **P7 and
+P8 are wired behind flags (both off by default), P1 and P2 are wired in shadow at
+the prompt hook, P3 is wired in shadow at its declared `tool.invoke`, P9 is wired
+in shadow on the measured compaction carrier, P11 is wired in shadow inside
+`ctx.tool.transform`, and P4, P5, P6 and P10 are library code with no production
+call site**:
 
 | Point | Surface | Status | What is NOT covered |
 |---|---|---|---|
+| P1 (agent), P2 (skill) | `session.hook('prompt')` | Registered in **shadow**: they observe a content-free projection of the admission payload and record `effect: none`. P2 is **advisory only** — an empirical no-op on the default path, because the host sends `prompt.skills` absent. | No effect was measured, and records are in-memory and unread in production (test-visible only). P1 activation still waits on PM-07. P2b filtering was cancelled by measurement, not emulated; no token reduction is claimed. |
+| P3 (complexity) | `tool.invoke` | Registered in **shadow** at `pantheon_local_decision`: the tool hands the adapter its own input, which carries `complexity` and `gateStatus`, so it classifies when invoked and applies nothing. | No tool call was ever measured (PM-09), and records are in-memory and unread in production. |
 | P7 (loop) | `session.execution.succeeded` | Behind `PANTHEON_V2_P7_LOOP`, off by default. The 12-execution cap (`P7_LOOP_MAX_EXECUTIONS`) is **advisory**: `reset()` is caller-supplied, no measured host surface signals a user turn, and the streak is not claimed to reset on any event. | Effect is `none` and unmeasured (C6 is closed by PROBE-E; no P7 effect was observed); nested depth ≥ 2, failed/interrupted child executions and image jobs were not exercised. Never describe this as working loop enforcement. |
-| P2 (skill) | `session.hook('prompt')` | **Advisory only**: an empirical no-op on the default path, because the host sends `prompt.skills` absent. | P2b filtering was cancelled by measurement, not emulated; no token reduction is claimed. |
-| P9 (compaction) | `session.hook('compaction')` | Measured on **top-level sessions only**. | Child-session compaction, `reason: "overflow"`, and the `messages` channel are UNKNOWN. |
-| P8 (guardrail) | `permission.evaluate` | **Off**; activation is blocked pending its review conditions (PH5-1…PH5-5) and it starts off, never shadow. | `permission.evaluate` was registered and never fired; payload shape, write honouring and ordering are unmeasured. `execute.before` remains the only hard barrier. |
+| P9 (compaction) | `session.hook('compaction')` | Registered in **shadow** on the measured carrier: the top-level `sessionID` and the `system` part array. The record carries the decision key and the payload shape; nothing is pushed, so the injected context is unchanged. Measured on top-level **and child** sessions: PROBE-G fired the hook in a real child 3/3 with the child's `sessionID` at top level and the same 7-key payload (`system` array of 4), so there is no child-specific branch. | `reason: "overflow"` was **not inducible** in 6 error shapes (PROBE-G §3.2) and its carrier is UNKNOWN; the checkpoint summary/reinjection inside a child was not exercised; the `messages` channel remains UNKNOWN. A payload whose only id is a nested `session.id` produces **no decision**, and no measured surface carries the memory candidate list, so the record names that absence and claims no retention or priority. |
+| P11 (catalog) | `tool.transform` | Registered in **shadow** inside the `ctx.tool.transform` callback: it reads the draft the host hands it and calls none of its mutators. | Shadow has no responder, so the record is the validated `choice` question over the draft ids (`catalog.no.answer`), never a selection. `ctx.model`/`ctx.provider` were not exercised as catalogue sources (PM-08), and no host catalogue (`ctx.catalog`) exists at any measured point. |
+| P8 (guardrail) | `permission.evaluate` | **Not activatable by measurement**; recorded as `advisory`, starts off and never shadow. PROBE-F delivered 24 real events and measured delivery, payload, order and write honouring — but no declared rule matched any payload (valid `action` token, `sessionID` always present), an unrecognised effect is resolved as `ask` and executed, and `permission.evaluate.egress` is unreachable. The current rule set narrows nothing. | P8 itself was never enabled, so no narrowing was observed; the inert verdict comes from the measured payload matched against the declared rules. `execute.before` remains the only hard barrier (a `throw` there denies; a `throw` in `permission.evaluate` does not). |
+
+P6 and P10 are **unwired**: they declared the prompt hook, but that payload
+carries neither council candidates nor counsellor claims, so constructing them
+there would only record a permanent refusal. P4 and P5 are **unwired** for the
+same reason: the measured `context` payload carries `system` text parts and no
+memory candidate array for P4 to rank, and the `execute.after` event carries no
+declared `{ requirements, responses }` pair for P5 to verify.
 
 Budget facts are the same story: caps are local admission controls computed from
 explicit configuration, and they are not invoice guarantees. There are no default

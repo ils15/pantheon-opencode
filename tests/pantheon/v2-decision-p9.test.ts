@@ -9,9 +9,12 @@
  * These tests pin the two properties that make the adapter safe to wire later:
  * the decision is keyed by the top-level `sessionID` and never by a nested
  * session id, and a payload without a top-level id produces **no decision at
- * all**. Coverage is top-level sessions only — `reason:"overflow"` and
- * child-session compaction are unmeasured (PM-04), and the `messages` channel
- * was never exercised (PM-05).
+ * all**. The carrier is measured on top-level **and child** sessions: PROBE-G
+ * fired the hook in a real child 3/3 with the child's `sessionID` at top level
+ * and the same `system` part array, so no child-specific branch exists. The
+ * `reason:"overflow"` path was **not inducible** in 6 error shapes (PROBE-G
+ * §3.2) and remains unmeasured, and the `messages` channel was never exercised
+ * (PM-05).
  *
  * Run with: npx tsx tests/pantheon/v2-decision-p9.test.ts
  */

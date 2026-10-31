@@ -11,8 +11,15 @@
  * could rewrite a status could turn a premise into an apparent measurement.
  *
  * `mode` declares the mode a point would run in, never a production call site:
- * `src/plugin-v2.ts` registers only the P7 and P8 adapters, and the other nine
- * points are library code with no caller outside the harness and the tests.
+ * `wired` records whether the shipped plugin constructs the adapter, and the
+ * source-derived audit in `tests/pantheon/v2-decision-wiring.test.ts` fails when
+ * the flag and the production import graph disagree. P1 and P2 are constructed
+ * at the prompt hook, P3 at `tool.invoke` (its declared surface and the only one
+ * carrying `complexity`/`gateStatus`), P7 on the event channel, P8 on
+ * permission.evaluate, P9 on the compaction hook (the only surface carrying its
+ * top-level `sessionID`) and P11 inside `ctx.tool.transform` (the only measured
+ * catalogue surface); P4, P5, P6 and P10 remain library code with no caller
+ * outside the harness and the tests, and their `wired` stays `false`.
  */
 
 import type { DecisionPoint } from './v2-decision-registry.ts'
@@ -30,6 +37,7 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['choice'],
     mode: SHADOW,
     status: 'premise',
+    wired: true,
     evidence: ['F-08'],
     premises: ['PM-06', 'PM-07'],
     blockingCondition:
@@ -46,6 +54,7 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['choice', 'rank'],
     mode: SHADOW,
     status: 'advisory',
+    wired: true,
     evidence: ['F-06', 'F-08', 'F-09', 'F-10'],
     premises: ['PRE-02', 'PM-06', 'PM-07', 'PM-13'],
     blockingCondition:
@@ -66,11 +75,13 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['score', 'noul'],
     mode: SHADOW,
     status: 'premise',
+    wired: true,
     evidence: [],
     premises: ['PM-06', 'PM-09'],
     blockingCondition:
       'PM-09 open: no tool call was measured, so the tool.invoke surface that would carry complexity scoring was never exercised. C6 is closed by PROBE-E and is not the blocker',
-    notes: 'Complexity classification is contract-only in this phase.',
+    notes:
+      'Complexity classification is contract-only in this phase. Wired at its declared `tool.invoke`: `pantheon_local_decision` execute hands the adapter its own input, whose schema requires `complexity` and `gateStatus`, so the adapter classifies from the payload that reaches it instead of refusing from the prompt hook. PM-09 stays open — no tool call was ever measured — so this records a decision only when the tool is invoked and never applies one.',
   }),
   Object.freeze<DecisionPoint>({
     id: 'P4',
@@ -81,11 +92,12 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['rank'],
     mode: SHADOW,
     status: 'measured',
+    wired: false,
     evidence: ['F-02', 'F-03'],
     premises: ['PM-05'],
     blockingCondition: null,
     notes:
-      'System-array carrier and checkpoint reinjection measured (F-02, F-03); channel exclusivity unproven (PM-05).',
+      "System-array carrier and checkpoint reinjection measured (F-02, F-03); channel exclusivity unproven (PM-05). Unwired: the measured `session.hook('context')` payload carries `sessionID`, `model`, `system` (text parts), `messages`, `options`, `agent` and `tools` — no candidate list with `id`/`score`/`justification`, which is the adapter's only input. Constructing it there could pass nothing but `undefined` and record `memory.source.absent` on every request, so it stays library code until a measured surface carries the candidates it ranks. Memory TEXT crossing in `system` is the carrier, not a candidate source, and is not read as one.",
   }),
   Object.freeze<DecisionPoint>({
     id: 'P5',
@@ -96,11 +108,13 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['verify'],
     mode: SHADOW,
     status: 'premise',
+    wired: false,
     evidence: [],
     premises: ['PM-09'],
     blockingCondition:
       'C8 open: permission.evaluate and execute.before were registered but never fired; no tool call was measured',
-    notes: 'Verdicts PASS/FAIL/BLOCK; failed_to_respond in mandatory verification is BLOCK.',
+    notes:
+      'Verdicts PASS/FAIL/BLOCK; failed_to_respond in mandatory verification is BLOCK. Unwired: the adapter verifies a DECLARED `{ requirements, responses }` pair and no measured surface carries either — the `execute.after` event is `{ tool, sessionID, agent, messageID, id, input, status, result }`, with no verification declaration and no response map. The surface is additionally unmeasured (PM-09, C8 open: the tool hooks were registered and never fired), so constructing it there would record `themis.requirements.absent` on every call instead of a verdict.',
   }),
   Object.freeze<DecisionPoint>({
     id: 'P6',
@@ -111,10 +125,12 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['rank', 'score'],
     mode: SHADOW,
     status: 'measured',
+    wired: false,
     evidence: ['F-08'],
     premises: ['PM-07'],
     blockingCondition: null,
-    notes: 'Prompt payload shape measured; populated prompt.agents was never observed.',
+    notes:
+      'Prompt payload shape measured (F-08); populated prompt.agents was never observed (PM-07). Unwired: the prompt surface carries `prompt.agents`/`prompt.skills`, never the `{ id, score, justification }` candidate list this adapter ranks, so constructing it there would only record a permanent `council.source.absent` refusal. No measured surface carries council candidates; it stays library code until one does.',
   }),
   Object.freeze<DecisionPoint>({
     id: 'P7',
@@ -125,6 +141,7 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['noul', 'score'],
     mode: 'migration',
     status: 'measured',
+    wired: true,
     evidence: ['F-11', 'F-12', 'F-13', 'I-01'],
     premises: [],
     blockingCondition: null,
@@ -150,20 +167,21 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     hostPoint: 'noul (permission.evaluate only; execute.before untouched)',
     primitives: ['noul'],
     mode: 'off',
-    status: 'premise',
+    status: 'advisory',
+    wired: true,
     evidence: [],
     premises: ['PM-09', 'PM-16'],
     blockingCondition:
-      'C8 open: permission.evaluate was registered and never fired; activation also waits on PH5-1…PH5-5 (PLAN A-6 renames the Phase 5 review conditions) and enters off after P1–P3 are stable, with Themis review',
+      'Not activatable by measurement (PROBE-F): the two declared rules match none of the 24 measured permission.evaluate payloads — `action` is always a valid token and the top-level `sessionID` is always present (PROBE-F §3.2) — so with the flag on the outcome is `p8.rule.none` / `guardrail.keep` and nothing is narrowed (PROBE-F §6 I-F3, a static evaluation of the rules against the measured shape; the flag was never enabled). The host also treats an unrecognised effect as `ask` and executes after the ask path resolves, so "refuse and keep" does not block (PROBE-F §3.6). `permission.evaluate.egress` is unreachable in this host: a tool declaring that permission registers but is never advertised to the provider (PROBE-F §3.9). Activation is not waiting on review — as declared, the rule set narrows nothing on this host',
     securityInvariant:
-      'execute.before remains the only hard barrier. No adapter may allow what that barrier denies.',
+      'execute.before remains the only hard barrier. No adapter may allow what that barrier denies. A throw in permission.evaluate does not deny; a throw in execute.before does (PROBE-F §3.7).',
     unknowns: [
-      'permission.evaluate delivery, payload shape, effect-write honouring and ordering are unmeasured (PM-09, review N1/N5)',
-      'accessor/proxy write targets, inherited effect and non-writable own properties are unproven (review N2); the write now refuses a non-own or accessor descriptor, but host payloads carrying them were never observed',
-      'the rule blast radius on native events without an action token is unmeasured (review N5): action.unusable would deny such events, and payload shape is PM-09',
+      'permission.evaluate delivery, payload shape, effect-write honouring, ordering and the existing-deny branch were measured (PROBE-F §3.1–§3.5); permission.evaluate.egress was NOT (PROBE-F §3.9: the action is never advertised to the provider)',
+      'accessor/proxy write targets, inherited effect and non-writable own properties are still unproven as host inputs; the write refuses a non-own or accessor descriptor (p8.write.delegation), but the measured host delivered a plain writable data property every time (PROBE-F §3.2)',
+      'no payload made a declared rule match, so P8 narrowing in a real host was never observed: the flag was never enabled (PROBE-F §5.2). The inert verdict comes from the measured payload plus the declared rules, not from a flag-on run',
     ],
     notes:
-      'Starts off, not shadow. Only permission.evaluate is wired: execute.before is untouched and P8 adds no second barrier there. The Phase 5 review (N1–N8, conditions PH5-1…PH5-5) keeps activation blocked and forbids reading this entry as coverage. Its wiring findings N1 (discarded result / proof before P8), N3 (silent rejection) and N4 (no flag-on test) were repaired without activating the flag: apply() now runs before writeProof, so the proof records the post-apply effect (PH5-1); the guardrail outcome is emitted through the 0b telemetry sink carrying the `mode` this entry declares — `off`, never `active` — so a record cannot advertise an activation the registry denies (N10a); the record is emitted only after the delegation policy has decided and only when a fresh re-read of the event still holds the effect it describes, so a policy deny is never recorded as a P8 narrowing and a lying Proxy trap is never recorded as a write (N10b, N9); the write refuses accessor and non-own descriptors with p8.write.delegation (PH5-2). The flag-on integration test through the registered handler and the PANTHEON_V2_P8_GUARDRAIL isolation of the contract suite are PH5-3; the flag and the rule blast radius are documented in README and docs/reference/env-vars.md under PH5-4 (A-6 mapping). The rule blast radius on native events lacking action remains UNMEASURED (N5), every permission.evaluate path stays unmeasured (PM-09, P8_PATH_COVERAGE), the host honouring the write is a premise (PM-16), and activation stays blocked pending C8 and re-review.',
+      'Starts off, not shadow. Only permission.evaluate is wired: execute.before is untouched and P8 adds no second barrier there. The Phase 5 review (N1–N8, conditions PH5-1…PH5-5) kept activation blocked; its code findings were repaired without activating the flag: N1 (discarded result / proof before P8), N3 (silent rejection) and N4 (no flag-on test) — apply() runs before writeProof, so the proof records the post-apply effect (PH5-1); the guardrail outcome is emitted through the 0b telemetry sink carrying the `mode` this entry declares — `off`, never `active` (N10a); the record is emitted only after the delegation policy has decided and only when a fresh re-read of the event still holds the effect it describes (N10b, N9); the write refuses accessor and non-own descriptors with p8.write.delegation (PH5-2). PH5-3 and PH5-4 are the flag-on integration test and the documentation of the flag and its blast radius. C8 was then settled by measurement, not by review: PROBE-F delivered 24 real permission.evaluate events, measured the payload (`["sessionID","agent","action","resources","metadata","source","effect"]`, `effect` an own writable data property pre-populated with `allow` or `ask`), the order (`session.tool.called` → `execute.before` → `permission.evaluate` → [`permission.asked`] → execute), and measured that a written `deny` IS honoured (tool blocked, nothing written). The result is not an eligible guardrail: neither declared rule can match a delivered payload (valid `action` token, `sessionID` always present), the host lets an unrecognised effect resolve as `ask` and proceed, and `permission.evaluate.egress` is unreachable — so the current rule set narrows nothing and the point is recorded as advisory, not as awaiting review. PM-09 and PM-16 record what C8 was blocked on; PROBE-F measured them for 9 of the 10 paths, so neither is the blocker any more. wired stays true because the plugin still constructs the adapter, and the flag stays OFF (`mode: off`).',
   }),
   Object.freeze<DecisionPoint>({
     id: 'P9',
@@ -174,17 +192,19 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['noul', 'score'],
     mode: SHADOW,
     status: 'measured',
-    scope: 'top-level-session-only',
+    wired: true,
+    scope: 'overflow-unmeasured',
     evidence: ['F-01', 'F-02', 'F-03', 'F-04'],
     premises: ['PM-04', 'PM-05'],
     blockingCondition: null,
     unknowns: [
-      'child-session compaction is UNKNOWN',
-      'reason:"overflow" was never exercised',
+      'reason:"overflow" was not inducible in 6 error shapes (PROBE-G §3.2): the host retried and completed, and the one failure-recovery compaction observed was persisted as reason:"auto" — the carrier that path produces is UNKNOWN',
+      'the checkpoint summary/reinjection inside a child session was not exercised (PROBE-G §4.6)',
       'the messages channel was never exercised',
+      'no measured surface carries the memory candidate list P9 would retain or discard',
     ],
     notes:
-      'Measured on top-level sessions only: top-level sessionID carrier (F-01) and system-array text (F-02).',
+      'Measured on top-level sessions (top-level sessionID carrier, F-01; system-array text, F-02) and on a child session (PROBE-G §3.1: the hook fires 3/3 with the CHILD sessionID at top level, the same 7-key payload, no nested `session`, and `system` as an array of 4 parts — identical to the top-level shape, so the adapter needs no child-specific branch). Overflow is a different answer: `reason:"overflow"` was NOT inducible in 6 error shapes (400 JSON, text/plain, SSE error, empty body, persistent failure, persistent failure with x-should-retry:false); the host retried and completed in four, and the persistent case compacted with reason:"auto", so the overflow path and its carrier remain unmeasured (PROBE-G §3.2/§4). Wired at its declared `session.hook(\'compaction\')` in shadow: the handler hands the adapter the event as-is, the adapter reads `payload.sessionID` and the `system` part array and nothing else, and the injected context is unchanged — the record carries the decision key and `systemPartCount`, and the adapter pushes nothing. A payload whose only id is a nested `session.id` produces NO decision (fail-closed), because the 2.2.5 host never sends `session` at all (F-01). The memory candidate list is an optional caller input and no measured surface carries it, so the wired record states `compaction.memory.source.absent` — a named refusal, never a retention or priority claim.',
   }),
   Object.freeze<DecisionPoint>({
     id: 'P10',
@@ -195,12 +215,13 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['verify'],
     mode: SHADOW,
     status: 'premise',
+    wired: false,
     evidence: [],
     premises: [],
     blockingCondition:
-      'Not implemented: per-counselor claims were never designed or measured (DISCOVERY §4)',
+      'Not implemented: per-counselor claims were never designed or measured (DISCOVERY §4); no measured surface carries `counsellors[].claims[]`',
     notes:
-      'Explicit verdict per claim; failed_to_respond is BLOCK in mandatory verification. The prompt hook is the only measured council surface (F-08), so it names the boundary; the declaration records intent, not exercised coverage.',
+      'Explicit verdict per claim; failed_to_respond is BLOCK in mandatory verification. The prompt hook is the only measured council surface (F-08), but that payload carries neither counsellors nor claims, so the point is unwired: constructing it there would record `claims.absent` forever. The declaration records intent and the boundary, not exercised coverage.',
   }),
   Object.freeze<DecisionPoint>({
     id: 'P11',
@@ -211,10 +232,11 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['choice'],
     mode: SHADOW,
     status: 'measured',
+    wired: true,
     evidence: ['F-05', 'F-07'],
     premises: ['PM-06', 'PM-08'],
     blockingCondition: null,
     notes:
-      'Host catalog context is ABSENT at every measured point (F-05) and was removed from the design; the adapter uses the tool.transform draft (F-07).',
+      "Host catalog context is ABSENT at every measured point (F-05) and was removed from the design; the adapter uses the tool.transform draft (F-07). Wired inside the `ctx.tool.transform` callback in shadow: it reads the draft the host hands it (`list` plus the six measured members) and calls nothing else, so the only mutation on that draft is Pantheon's own `namespace`/`add`. Shadow has no responder, so the record names the validated `choice` question over the draft ids (`catalog.no.answer`) and never a selection; a draft that is absent or shaped differently fails closed with a reason instead of throwing into admission.",
   }),
 ])

@@ -116,6 +116,10 @@ async function main(): Promise<void> {
     V2_UNSUPPORTED_FEATURES,
     getP7TelemetrySinkForTests,
     getP8TelemetrySinkForTests,
+    getP3TelemetrySinkForTests,
+    getP9TelemetrySinkForTests,
+    getP11TelemetrySinkForTests,
+    getPromptSurfaceTelemetrySinkForTests,
     getUnsupportedFeatures,
     resetV2BridgeForTests,
     setV2Bridge,
@@ -629,6 +633,200 @@ async function main(): Promise<void> {
       previousText,
       'prompt retry must not duplicate visual context',
     )
+  })
+
+  test('prompt-surface shadow points reach the telemetry sink without touching admission', async () => {
+    let promptHandler: ((event: unknown) => void | Promise<void>) | undefined
+    await plugin.setup(
+      makeBaseContext({
+        session: {
+          hook: async (name: string, handler: typeof promptHandler) => {
+            if (name === 'prompt') promptHandler = handler
+            return { dispose: async () => {} }
+          },
+        },
+      }) as never,
+    )
+    assert.equal(typeof promptHandler, 'function')
+
+    const admission = {
+      sessionID: 'ses_prompt_surface',
+      messageID: 'msg_prompt_surface',
+      prompt: {
+        text: 'plain request with no attachment',
+        files: [],
+        agents: 'undefined',
+        skills: 'undefined',
+      },
+      metadata: {},
+    }
+    const previousSkills = admission.prompt.skills
+    const previousAgents = admission.prompt.agents
+    await promptHandler?.(admission)
+
+    const sink = getPromptSurfaceTelemetrySinkForTests()
+    assert.ok(sink, 'the prompt hook must install a telemetry sink')
+    assert.equal(sink.size(), 2, 'one record per prompt-surface point')
+    assert.deepEqual(
+      sink.events().map((record) => record.point),
+      ['P1', 'P2'],
+    )
+    for (const record of sink.events()) {
+      assert.equal(record.effect, 'none')
+      assert.equal(record.mode, 'shadow')
+    }
+    assert.equal(admission.prompt.skills, previousSkills, 'P2 must not filter skills')
+    assert.equal(admission.prompt.agents, previousAgents)
+  })
+
+  test('P9 reads the measured compaction carrier and leaves the payload identical', async () => {
+    resetV2BridgeForTests()
+    let compactionHandler: ((event: unknown) => void | Promise<void>) | undefined
+    await plugin.setup(
+      makeBaseContext({
+        session: {
+          hook: async (name: string, handler: typeof compactionHandler) => {
+            if (name === 'compaction') compactionHandler = handler
+            return { dispose: async () => {} }
+          },
+        },
+      }) as never,
+    )
+    assert.equal(typeof compactionHandler, 'function')
+
+    // The measured 2.2.5 payload (PROBE-A §4): top-level `sessionID`, `system`
+    // as an array of parts, and NO nested `session` object.
+    const measured = {
+      sessionID: 'ses_p9_top_level',
+      model: { id: 'fixture', providerID: 'fixture' },
+      system: [
+        { type: 'text', text: 'part one' },
+        { type: 'text', text: 'part two' },
+        { type: 'text', text: 'part three' },
+        { type: 'text', text: 'part four' },
+      ],
+      messages: [],
+      options: {},
+      agent: 'build',
+      tools: [],
+    }
+    const before = structuredClone(measured)
+    await compactionHandler?.(measured)
+
+    // Shadow: the injected context is unchanged. Nothing is pushed, nothing is
+    // pruned, and the payload the host will summarize is byte-identical.
+    assert.deepEqual(measured, before, 'P9 must not mutate the compaction payload')
+
+    const sink = getP9TelemetrySinkForTests()
+    assert.ok(sink, 'the compaction hook must install the P9 sink')
+    assert.equal(sink.size(), 1)
+    const [record] = sink.events()
+    assert.equal(record?.point, 'P9')
+    assert.equal(record?.mode, 'shadow')
+    assert.equal(record?.effect, 'none')
+    assert.equal(
+      record?.reason,
+      'compaction.memory.source.absent',
+      'the carrier was read (not absent) and the missing candidate list is named',
+    )
+
+    // A payload whose only id is a nested `session.id` is a carrier this host
+    // never sends, so it produces NO decision rather than a keyed one.
+    await compactionHandler?.({
+      session: { id: 'ses_nested_decoy' },
+      system: [{ type: 'text', text: 'only part' }],
+      messages: [],
+    })
+    const afterNested = sink.events()
+    assert.equal(afterNested.length, 2)
+    assert.equal(afterNested[1]?.reason, 'compaction.session.absent')
+  })
+
+  test('P11 reads the tool.transform draft and calls none of its mutators', async () => {
+    const calls = { list: 0, namespace: 0, add: 0, update: 0, remove: 0 }
+    await plugin.setup(
+      makeBaseContext({
+        tool: {
+          transform: async (callback: (draft: never) => void) => {
+            callback({
+              list: () => {
+                calls.list += 1
+                return [{ name: 'patch' }, { name: 'edit' }, { name: 'glob' }]
+              },
+              get: () => undefined,
+              namespace: () => {
+                calls.namespace += 1
+              },
+              add: () => {
+                calls.add += 1
+              },
+              update: () => {
+                calls.update += 1
+              },
+              remove: () => {
+                calls.remove += 1
+              },
+            } as never)
+            return { dispose: async () => {} }
+          },
+        },
+      }) as never,
+    )
+
+    const sink = getP11TelemetrySinkForTests()
+    assert.ok(sink, 'tool registration must install the P11 sink')
+    assert.equal(sink.size(), 1)
+    const [record] = sink.events()
+    assert.equal(record?.point, 'P11')
+    assert.equal(record?.mode, 'shadow')
+    assert.equal(record?.effect, 'none')
+    assert.equal(
+      record?.reason,
+      'catalog.no.answer',
+      'the measured draft was read and a question was built; shadow has no responder',
+    )
+    assert.equal(calls.list, 1, 'the draft is read exactly once')
+    assert.ok(calls.add > 0, 'Pantheon still registers its own tools')
+    assert.equal(calls.update, 0, 'P11 must never call a mutator')
+    assert.equal(calls.remove, 0, 'P11 must never call a mutator')
+  })
+
+  test('P3 is constructed at tool.invoke and classifies the tool payload', async () => {
+    const registered = await registerToolsThroughHostMock()
+    const local = registered.find((tool) => tool.name === 'pantheon_local_decision')
+    assert.ok(local, 'the local decision tool must be registered')
+
+    const result = await local.execute(
+      {
+        schemaVersion: 1,
+        candidateAgents: ['hermes'],
+        domain: null,
+        candidateSkillIds: [],
+        candidateResourceIds: [],
+        memorySearchRelevant: false,
+        gateStatus: 'none',
+        complexity: {
+          boundedness: 0,
+          reversibility: 0,
+          dependencies: 0,
+          uncertainty: 0,
+          verification: 2,
+        },
+      },
+      { agent: 'apollo' },
+    )
+    assert.ok(typeof result === 'object' && result !== null)
+
+    const sink = getP3TelemetrySinkForTests()
+    assert.ok(sink, 'tool registration must install the P3 sink')
+    assert.deepEqual(
+      sink.events().map((record) => record.point),
+      ['P3'],
+    )
+    const [record] = sink.events()
+    assert.equal(record?.decision, 'score.high')
+    assert.notEqual(record?.reason, 'complexity.invalid')
+    assert.equal(record?.mode, 'shadow')
   })
 
   test('permission hook matches host subagent origin, denies disallowed edges, and preserves asks', async () => {

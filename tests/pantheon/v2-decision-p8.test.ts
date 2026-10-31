@@ -1,12 +1,15 @@
 /**
  * P8 — the narrowing-only proof for the guardrail over `permission.evaluate`.
  *
- * The premise this file is built on is a negative one: PM-09 records that
- * `permission.evaluate` and `execute.before` were registered and **never
- * fired**. No payload shape below is therefore evidence; the inputs are the
- * *declared* contract plus hostile variants. What is proven here is not "P8
- * works in the host" — it is that P8 cannot widen, cannot grant, cannot throw
- * and is off when the flag is absent.
+ * C8 was settled by measurement, not by review: PROBE-F fired
+ * `permission.evaluate` and `execute.before` on 24 real tool calls (host
+ * 2.2.5), measured the payload and the order, and measured that a written
+ * `deny` IS honoured. The same measurement shows that neither declared rule can
+ * match a delivered payload and that the host lets an unrecognised effect
+ * proceed — so P8, as declared, narrows nothing. The inputs below stay
+ * synthetic; what is proven is not "P8 narrows in the host" — it is that P8
+ * cannot widen, cannot grant, cannot throw, is off when the flag is absent, and
+ * is inert on the measured shape.
  *
  * Two properties are enumerated rather than argued:
  *
@@ -352,21 +355,64 @@ check('an accessor or prototype descriptor is refused instead of delegating the 
   assert.equal(nonWritable.effect, 'allow')
 })
 
-check('the path coverage table is entirely unmeasured and names PM-09', () => {
-  assert.equal(P8_PATH_COVERAGE.length > 0, true)
+check('the path coverage table records 9 measured paths and names the unreachable one', () => {
+  assert.equal(P8_PATH_COVERAGE.length, 10)
   const paths = new Set<string>()
   for (const path of P8_PATH_COVERAGE) {
-    assert.equal(path.status, 'unmeasured', `${path.path} claims a measurement it lacks`)
-    assert.deepEqual([...path.evidence], ['PM-09'], `${path.path} must cite PM-09`)
     assert.equal(paths.has(path.path), false, `${path.path} is duplicated`)
     paths.add(path.path)
+    // Evidence is the probe section: PROBE-F's F- ids were not assigned here.
+    assert.equal(path.evidence.length > 0, true, `${path.path} cites nothing`)
+    for (const evidence of path.evidence) {
+      assert.equal(evidence.startsWith('PROBE-F'), true, `${path.path} cites ${evidence}`)
+    }
+    assert.equal(
+      path.evidence.includes('PM-09'),
+      false,
+      `${path.path} still cites the superseded premise`,
+    )
   }
   assert.equal(paths.size, P8_PATH_COVERAGE.length)
+  const measured = P8_PATH_COVERAGE.filter((path) => path.status === 'measured')
+  const unmeasured = P8_PATH_COVERAGE.filter((path) => path.status === 'unmeasured')
+  assert.equal(measured.length, 9)
+  assert.deepEqual(
+    unmeasured.map((path) => path.path),
+    ['permission.evaluate.egress'],
+    'only the egress path is unreachable in the probed host',
+  )
+  // No row may be marked measured without a narrowing observation being
+  // distinguishable: `measured` here means the host path was observed, and the
+  // module header states that no rule matched on any measured payload.
   assert.equal(
     P8_PATH_COVERAGE.some((path) => path.status === 'measured'),
-    false,
-    'no path on this surface has been measured',
+    true,
   )
+})
+
+check('the measured payload shape matches no declared rule', () => {
+  // PROBE-F §3.2: `action` is always a valid token and the top-level
+  // `sessionID` is always present, for every observed action and baseline.
+  for (const action of ['read', 'edit', 'shell', 'external_directory']) {
+    for (const baseline of ['allow', 'ask']) {
+      const event = { action, sessionID: 'ses_measured', effect: baseline }
+      const decision = evaluateP8Guardrail({ baseline: event.effect, event }, { enabled: true })
+      const label = `${action}/${baseline}`
+      assert.equal(decision.decision, 'guardrail.keep', label)
+      assert.equal(decision.reason, 'p8.rule.none', label)
+      assert.deepEqual([...decision.rules], [], label)
+      assert.equal(decision.narrowed, false, label)
+    }
+  }
+  // PROBE-F §3.6: the host resolves an unrecognised effect as `ask` and
+  // executes. The adapter refuses to treat that value as a baseline, so it
+  // keeps instead of guessing a narrowing.
+  const unknown = evaluateP8Guardrail(
+    { baseline: 'maybe', event: { action: 'shell', sessionID: 'ses_measured', effect: 'maybe' } },
+    { enabled: true },
+  )
+  assert.equal(unknown.decision, 'guardrail.refusal')
+  assert.equal(unknown.reason, 'p8.baseline.unrecognized')
 })
 
 check('the module is offline, synchronous and offers no grant path', () => {

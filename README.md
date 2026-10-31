@@ -291,38 +291,80 @@ Provider egress remains opt-in with the default `off`; no command in this layer
 can switch it on without enablement, recorded consent, one cap- and
 period-eligible candidate and a non-denying host gate. The fixed OpenAI/TypeSafe
 endpoints are retained inert and are documented as **unwired**; this statement is
-about wiring, not about removing any transport. Measured surface coverage is
+about wiring, not about removing any transport. Each endpoint carries its own
+explicit wire status, and a test fails when a declared endpoint is neither
+asserted `unwired` nor exercised by a real path. Verification covers **only the
+paths a probe exercised — none** — so nothing here is evidence about network
+absence on an unexercised path; `permission.evaluate.egress` is likewise
+unreachable in the probed host (a tool declaring it is never advertised to the
+provider). Measured surface coverage is
 reported honestly rather than implied: P7 runs behind `PANTHEON_V2_P7_LOOP` with
 an **advisory** execution cap (never described as enforcement), P2 is
 **advisory-only** (an empirical no-op on the default path), P9 was measured on
-**top-level sessions only**, and P8 is **off** with activation blocked pending its
-review conditions.
+top-level **and child** sessions with `reason:"overflow"` still unmeasured, and
+P8 is **advisory: not activatable by measurement** — its declared rules match no
+delivered permission payload, so it narrows nothing (PROBE-F).
 
 ### The V2 decision layer is declared in full and wired in part
 
 The V2 decision layer declares eleven integration points (P1–P11) over three
 decision primitives — `ask`, `rank`, and `verify` — and a deterministic policy
-that decides which point may run. **Two of the eleven are registered on the V2
-surface, and both are off by default:**
+that decides which point may run. **Seven of the eleven have a production call
+site: two behind flags that are off by default, five in shadow.**
 
 - **P7 (loop)** is wired to `session.execution.succeeded` behind
   `PANTHEON_V2_P7_LOOP`, which is off. It writes each observation to an
   in-memory, bounded telemetry collector that the plugin never reads back and
   exposes only to tests, so "records" here does not mean an operator-visible log.
 - **P8 (guardrail)** is wired to `permission.evaluate` behind
-  `PANTHEON_V2_P8_GUARDRAIL`, which is off, and its activation is blocked
-  (PH5-1…PH5-5).
+  `PANTHEON_V2_P8_GUARDRAIL`, which is off. C8 is closed **by measurement**, and
+  the measurement is negative: PROBE-F delivered 24 real `permission.evaluate`
+  events and every declared rule matched none of them (a valid `action` token and
+  a top-level `sessionID` are always present), the host resolves an unrecognised
+  effect as `ask` and proceeds, and `permission.evaluate.egress` is unreachable
+  (a tool declaring it is never advertised to the provider). As declared, P8 does
+  not narrow. The flag stays off.
+- **P1 and P2** are registered on `session.hook('prompt')` in **shadow**. They
+  observe the same admission payload through a projection that carries only
+  `prompt.agents` and `prompt.skills`: no text, no file bytes, no metadata, no
+  mutation, no throw. Every record says `effect: none` and goes to an in-memory,
+  bounded collector the plugin never reads back (test-visible only).
+- **P3** is wired at its declared `tool.invoke` in **shadow**: the
+  `pantheon_local_decision` tool hands the adapter its own input, whose schema
+  requires `complexity` and `gateStatus`. It records a classification when the
+  tool is invoked — never a permanent `complexity.invalid` refusal from a payload
+  that cannot carry the vector — and applies nothing.
+- **P9** is wired at its declared `session.hook('compaction')` in **shadow**, on
+  the carrier that was actually measured: the top-level `sessionID` and the
+  `system` part array. It records the decision key and the payload shape and
+  pushes nothing — the injected compaction context is unchanged — and a payload
+  whose only session id is a nested `session.id` (a field the 2.2.5 host never
+  sends) produces no decision at all. The same shape was measured in a **child**
+  session (PROBE-G: hook fires 3/3, child `sessionID` at top level, `system` an
+  array of 4), so no child-specific branch exists. `reason:"overflow"` was not
+  inducible and is not designed for. No measured surface carries the memory
+  candidate list it would retain or discard, so its record states that absence
+  rather than a retention or a priority.
+- **P11** is wired inside `ctx.tool.transform` in **shadow**: it reads the draft
+  the host hands that callback and calls none of its mutators. Shadow has no
+  responder, so it records the validated `choice` question over the draft ids —
+  never a selection.
 
-**The other nine — P1–P6 and P9–P11 — are library code with no production call
-site.** `src/plugin-v2.ts` imports only the P7 and P8 adapters; nothing
-constructs or registers the other nine outside the per-point test suites — the
-offline harness imports no adapter module. On a host they do not read the turn,
-record no telemetry and have no switch to turn off, because nothing registers
-them.
+**The other four — P4, P5, P6 and P10 — are library code with no production call
+site.** Nothing constructs or registers them outside the per-point test suites —
+the offline harness imports no adapter module. P6 and P10 declared the prompt
+hook, but that payload never carries council candidates or counsellor claims, so
+they stay unwired instead of recording a refusal from a surface that cannot feed
+them. P4 ranks a memory candidate array and the measured `context` payload
+carries `system` text parts, not candidates; P5 verifies a declared
+`{ requirements, responses }` pair and the `execute.after` event carries
+neither. On a host they do not read the turn, record no telemetry and have no
+switch to turn off, because nothing registers them.
 
-"Shadow by default" therefore means one thing only: the two wired points make no
-behavioural change while their flags are off. It does **not** mean that all eleven
-observe the turn. No activation flag is set in a default install.
+"Shadow" therefore means no behavioural change, not a claim of effect: the five
+shadow points read a narrow slice of their surface and decide nothing from it,
+and the two flag-gated points are off. No activation flag is set in a default
+install.
 
 The CLI separates effects: `npx pantheon-opencode decision-router help`, `status`,
 `preview` and `holds` never write, `setup` writes only under `--apply`, `preview`
@@ -341,13 +383,26 @@ What the layer does **not** do today, stated as measured rather than implied:
   observation to an in-memory collector that nothing reads back. Its
   12-execution cap is **advisory**: no measured host surface signals a new user
   turn, so nothing is claimed to reset the streak.
-- **P9 (compaction) is measured on top-level sessions only.** Child-session
-  compaction, `reason: "overflow"` and the `messages` channel remain UNKNOWN.
-- **P8 (guardrail) is off and its activation is blocked** pending its Phase 5
-  review conditions (PH5-1…PH5-5). The mechanism only narrows, and it is not a
-  drop-in no-op: with `PANTHEON_V2_P8_GUARDRAIL` set, an event with no usable
-  `action` token, and an `allow` decision with no attributed `sessionID`, are
-  narrowed to `deny`. `execute.before` remains the only hard barrier.
+- **P9 (compaction) is measured in top-level and child sessions.** PROBE-G fired
+  the hook in a real child 3/3 with the child's `sessionID` at top level and the
+  same payload shape. `reason: "overflow"` was **not inducible** in 6 error
+  shapes — the host retried and completed, and the one failure-recovery
+  compaction was persisted as `reason:"auto"` — so that path stays unmeasured;
+  the checkpoint reinjection inside a child was not exercised, and the `messages`
+  channel remains UNKNOWN. The memory candidate list is not available on any
+  measured surface, so the wired P9 record names that absence and claims no
+  retention or priority.
+- **P8 (guardrail) is not activatable by measurement.** PROBE-F delivered 24 real
+  `permission.evaluate` events: the payload is
+  `["sessionID","agent","action","resources","metadata","source","effect"]` with
+  `effect` an own writable data property pre-populated by the host, and a written
+  `deny` **is** honoured. But neither declared rule can match a delivered payload
+  (valid `action` token, `sessionID` always present), the host lets an
+  unrecognised effect resolve as `ask` and execute, and
+  `permission.evaluate.egress` is unreachable — so the current rule set matches
+  nothing and does not narrow. The point is recorded as **advisory**, not as
+  awaiting review, and the inertness is the measured verdict rather than a design
+  claim. `execute.before` remains the only hard barrier.
 - **The embeddings-versus-BM25 comparison has not been run.** The environment is
   offline with no embedding model available, so BM25 remains the baseline and no
   gain or loss in retrieval or tokens is claimed in either direction.

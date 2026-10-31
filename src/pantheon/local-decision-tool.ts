@@ -8,6 +8,8 @@ import {
   loadLocalDecisionPolicy,
   recommendLocalOrchestration,
 } from './local-orchestration.ts'
+import { evaluateComplexityPoint } from './v2-decision-points/p3-complexity.ts'
+import type { ShadowSink } from './v2-decision-shadow.ts'
 
 const TOOL_DESCRIPTION =
   'Zeus-only local advisory selector. Use selectively only when specialist routing is genuinely ' +
@@ -46,6 +48,32 @@ const inputShape = {
 
 type LocalDecisionToolOptions = {
   loadPolicy?: () => Promise<LocalDecisionPolicy | undefined>
+}
+
+/**
+ * Optional shadow observer for the V2 tool point.
+ *
+ * P3 declares `tool.invoke`, and the local selector's input is the surface that
+ * carries `complexity` and `gateStatus`. The sink is supplied by the plugin when
+ * it registers the tool; nothing here applies its record.
+ */
+type LocalDecisionShadowOptions = {
+  sink?: ShadowSink
+}
+
+/**
+ * Observe P3 in shadow at `tool.invoke`.
+ *
+ * Contained on purpose: the adapter already contains its own failures, and
+ * this wrapper guarantees that even an unexpected throw cannot change the
+ * tool result. No input is mutated and no decision is applied.
+ */
+function observeToolComplexity(input: unknown, sink?: ShadowSink): void {
+  try {
+    evaluateComplexityPoint(input, sink)
+  } catch {
+    // Shadow is best-effort; the tool result is unaffected.
+  }
 }
 
 async function runDecision(
@@ -108,7 +136,9 @@ const v2InputSchema: Record<string, unknown> = {
 }
 
 /** Create a V2 transform definition with the same Zeus-only execution guard and local plan. */
-export function createV2LocalDecisionDefinition(options: LocalDecisionToolOptions = {}) {
+export function createV2LocalDecisionDefinition(
+  options: LocalDecisionToolOptions & LocalDecisionShadowOptions = {},
+) {
   const policyLoader = options.loadPolicy ?? loadLocalDecisionPolicy
   return {
     name: 'pantheon_local_decision',
@@ -116,6 +146,10 @@ export function createV2LocalDecisionDefinition(options: LocalDecisionToolOption
     input: v2InputSchema,
     output: {},
     execute: async (input: Record<string, unknown>, context: unknown) => {
+      // P3 shadow observation at `tool.invoke`. The input schema declares
+      // `complexity` and `gateStatus`, so this is the one wired surface that
+      // can feed a complexity decision; the record never alters the result.
+      observeToolComplexity(input, options.sink)
       const callerAgent =
         context !== null && typeof context === 'object'
           ? (context as { agent?: unknown }).agent
