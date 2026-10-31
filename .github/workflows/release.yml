@@ -328,6 +328,15 @@ jobs:
           NODE
           cp "$RUNNER_TEMP/release-notes.md" "$RUNNER_TEMP/release-artifact/release-notes.md"
 
+      - name: Restore development dependencies for the remaining gates
+        # Gate (d) re-runs `package:validate`, which imports esbuild (a
+        # devDependency) for the committed decision-router bundle drift check.
+        # The evidence step above proves a production-only install works and
+        # leaves the checkout pruned by `npm ci --omit=dev`, so the full install
+        # is restored from the same lockfile before the gates run. The artifact
+        # is already built and hashed: nothing is repacked after this point.
+        run: npm ci --ignore-scripts
+
       - name: Gate (d) package
         run: |
           set -euo pipefail
