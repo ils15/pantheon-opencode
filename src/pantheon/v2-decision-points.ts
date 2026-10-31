@@ -11,8 +11,11 @@
  * could rewrite a status could turn a premise into an apparent measurement.
  *
  * `mode` declares the mode a point would run in, never a production call site:
- * `src/plugin-v2.ts` registers only the P7 and P8 adapters, and the other nine
- * points are library code with no caller outside the harness and the tests.
+ * `wired` records whether the shipped plugin constructs the adapter, and the
+ * source-derived audit in `tests/pantheon/v2-decision-wiring.test.ts` fails when
+ * the flag and the production import graph disagree. At this commit only P7 and
+ * P8 are constructed; the other nine are library code with no caller outside the
+ * harness and the tests.
  */
 
 import type { DecisionPoint } from './v2-decision-registry.ts'
@@ -30,6 +33,7 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['choice'],
     mode: SHADOW,
     status: 'premise',
+    wired: false,
     evidence: ['F-08'],
     premises: ['PM-06', 'PM-07'],
     blockingCondition:
@@ -46,6 +50,7 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['choice', 'rank'],
     mode: SHADOW,
     status: 'advisory',
+    wired: false,
     evidence: ['F-06', 'F-08', 'F-09', 'F-10'],
     premises: ['PRE-02', 'PM-06', 'PM-07', 'PM-13'],
     blockingCondition:
@@ -66,6 +71,7 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['score', 'noul'],
     mode: SHADOW,
     status: 'premise',
+    wired: false,
     evidence: [],
     premises: ['PM-06', 'PM-09'],
     blockingCondition:
@@ -81,6 +87,7 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['rank'],
     mode: SHADOW,
     status: 'measured',
+    wired: false,
     evidence: ['F-02', 'F-03'],
     premises: ['PM-05'],
     blockingCondition: null,
@@ -96,6 +103,7 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['verify'],
     mode: SHADOW,
     status: 'premise',
+    wired: false,
     evidence: [],
     premises: ['PM-09'],
     blockingCondition:
@@ -111,6 +119,7 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['rank', 'score'],
     mode: SHADOW,
     status: 'measured',
+    wired: false,
     evidence: ['F-08'],
     premises: ['PM-07'],
     blockingCondition: null,
@@ -125,6 +134,7 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['noul', 'score'],
     mode: 'migration',
     status: 'measured',
+    wired: true,
     evidence: ['F-11', 'F-12', 'F-13', 'I-01'],
     premises: [],
     blockingCondition: null,
@@ -151,6 +161,7 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['noul'],
     mode: 'off',
     status: 'premise',
+    wired: true,
     evidence: [],
     premises: ['PM-09', 'PM-16'],
     blockingCondition:
@@ -174,6 +185,7 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['noul', 'score'],
     mode: SHADOW,
     status: 'measured',
+    wired: false,
     scope: 'top-level-session-only',
     evidence: ['F-01', 'F-02', 'F-03', 'F-04'],
     premises: ['PM-04', 'PM-05'],
@@ -195,6 +207,7 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['verify'],
     mode: SHADOW,
     status: 'premise',
+    wired: false,
     evidence: [],
     premises: [],
     blockingCondition:
@@ -211,6 +224,7 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['choice'],
     mode: SHADOW,
     status: 'measured',
+    wired: false,
     evidence: ['F-05', 'F-07'],
     premises: ['PM-06', 'PM-08'],
     blockingCondition: null,

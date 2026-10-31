@@ -166,6 +166,17 @@ export interface DecisionPoint {
   readonly primitives: readonly DecisionPrimitive[]
   readonly mode: DecisionPointMode
   readonly status: DecisionPointStatus
+  /**
+   * Whether the shipped plugin actually constructs this point's adapter.
+   *
+   * This is a claim about the source, not about a probe: the audit in
+   * `tests/pantheon/v2-decision-wiring.test.ts` derives the answer from the
+   * production import graph rooted at `src/plugin-v2.ts` and fails when this
+   * flag disagrees. It is never derived from a hand-maintained list — a second
+   * list would repeat the "described as active, produces nothing" defect this
+   * field exists to expose.
+   */
+  readonly wired: boolean
   /** Set only when the measurement was narrower than the point's full scope. */
   readonly scope?: 'top-level-session-only'
   /** Unmeasured scope, named so it cannot be mistaken for measured coverage. */
