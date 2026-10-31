@@ -29,6 +29,7 @@ WRITER_COUNT = 5
 LOSER_COUNT = 1
 WINNER_COUNT = WRITER_COUNT - LOSER_COUNT
 READ_OPERATION_COUNT = 3
+READ_TEST_EXPECTED_ROWS = 2
 LOSER_MARKER = "LOSER-MARKER"
 
 # Long enough that every writer has issued its INSERT before the first one
@@ -118,34 +119,65 @@ def ordered_writes(module, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class _ReadOverlapCoordinator:
-    """Release readers and a writer together inside an open transaction."""
+    """Hold a writer after BEGIN until every reader reaches its call boundary."""
 
     def __init__(self, reader_count: int) -> None:
-        self.writer_inserted = threading.Event()
+        self.transaction_open = threading.Event()
+        self.release_writer = threading.Event()
         self.enabled = threading.Event()
-        self._readers_and_writer = threading.Barrier(reader_count + 1)
+        self.reader_lock_attempts = [threading.Event() for _ in range(reader_count)]
+        self._reader_thread_ids: dict[int, int] = {}
+        self._reader_ids_lock = threading.Lock()
+        self.writer_thread_id: int | None = None
 
-    def writer_wait_for_readers(self) -> None:
-        self.enabled.clear()
-        self.writer_inserted.set()
-        self._readers_and_writer.wait(timeout=ORDERING_TIMEOUT_SECONDS * 10)
+    def set_writer_thread(self) -> None:
+        self.writer_thread_id = threading.get_ident()
 
-    def reader_wait_for_writer(self) -> None:
-        if not self.writer_inserted.wait(timeout=ORDERING_TIMEOUT_SECONDS * 10):
-            raise TimeoutError("no writer entered its transaction")
-        self._readers_and_writer.wait(timeout=ORDERING_TIMEOUT_SECONDS * 10)
+    def register_reader_thread(self, index: int) -> None:
+        with self._reader_ids_lock:
+            self._reader_thread_ids[threading.get_ident()] = index
+
+    def record_reader_lock_attempt(self) -> None:
+        thread_id = threading.get_ident()
+        if thread_id == self.writer_thread_id:
+            return
+        with self._reader_ids_lock:
+            index = self._reader_thread_ids.get(thread_id)
+        if index is not None:
+            self.reader_lock_attempts[index].set()
+
+    def writer_wait_before_commit(self) -> None:
+        self.transaction_open.set()
+        if not self.release_writer.wait(timeout=ORDERING_TIMEOUT_SECONDS * 10):
+            raise TimeoutError("readers did not release the open write transaction")
+
+
+class _ObservedReadLock:
+    """Signal when a reader reaches the lock held by the open transaction."""
+
+    def __init__(self, lock, coordinator: _ReadOverlapCoordinator) -> None:
+        self._lock = lock
+        self._coordinator = coordinator
+
+    def __enter__(self):
+        self._coordinator.record_reader_lock_attempt()
+        self._lock.acquire()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        self._lock.release()
 
 
 class _CoordinatedReadConnection(sqlite3.Connection):
-    """Hold a writer inside INSERT until the read calls are ready to overlap."""
+    """Pause the writer after BEGIN IMMEDIATE and before its write/commit."""
 
     coordinator: _ReadOverlapCoordinator
 
     def execute(self, sql, parameters=(), /):
         cursor = super().execute(sql, parameters)
         coordinator = type(self).coordinator
-        if coordinator.enabled.is_set() and "INSERT INTO memories" in sql:
-            coordinator.writer_wait_for_readers()
+        if coordinator.enabled.is_set() and sql == "BEGIN IMMEDIATE":
+            coordinator.writer_wait_before_commit()
         return cursor
 
 
@@ -215,6 +247,79 @@ def _run_concurrently(target, count: int) -> tuple[list, list]:
 
     assert not any(thread.is_alive() for thread in threads), "a writer deadlocked"
     return results, errors
+
+
+def _run_readers_while_write_open(module, coordinator, readers, namespace):
+    """Run readers to the shared-lock boundary before releasing a writer."""
+    reader_results: list = [None] * len(readers)
+    reader_errors: list = [None] * len(readers)
+    reader_done = [threading.Event() for _ in readers]
+    writer_result: list = [None]
+    writer_error: list = [None]
+    writer_done = threading.Event()
+
+    def write() -> None:
+        coordinator.set_writer_thread()
+        try:
+            writer_result[0] = module.memory_store(
+                value="checkpoint threshold concurrent",
+                namespace=namespace,
+                key="concurrent",
+            )
+        except BaseException as exc:  # re-raised by the test
+            writer_error[0] = exc
+        finally:
+            writer_done.set()
+
+    def read(index: int) -> None:
+        coordinator.register_reader_thread(index)
+        try:
+            reader_results[index] = readers[index]()
+        except BaseException as exc:  # re-raised by the test
+            reader_errors[index] = exc
+        finally:
+            reader_done[index].set()
+
+    writer_thread = threading.Thread(target=write, daemon=True)
+    reader_threads = [
+        threading.Thread(target=read, args=(index,), daemon=True)
+        for index in range(len(readers))
+    ]
+    started_threads: list[threading.Thread] = []
+    try:
+        writer_thread.start()
+        started_threads.append(writer_thread)
+        assert coordinator.transaction_open.wait(
+            timeout=ORDERING_TIMEOUT_SECONDS * 10
+        ), "writer did not enter BEGIN IMMEDIATE"
+
+        for thread in reader_threads:
+            thread.start()
+            started_threads.append(thread)
+
+        for index, attempted in enumerate(coordinator.reader_lock_attempts):
+            assert attempted.wait(timeout=ORDERING_TIMEOUT_SECONDS * 10), (
+                f"reader {index} did not reach the shared database lock"
+            )
+        assert not writer_done.is_set(), "writer passed the open-transaction hook"
+        assert not any(event.is_set() for event in reader_done), (
+            "a reader completed before the writer released its transaction"
+        )
+    finally:
+        coordinator.release_writer.set()
+        deadline = time.monotonic() + ORDERING_TIMEOUT_SECONDS * 10
+        for thread in started_threads:
+            thread.join(timeout=max(0, deadline - time.monotonic()))
+
+    assert not any(thread.is_alive() for thread in started_threads), (
+        "a concurrent reader or writer deadlocked"
+    )
+    assert writer_error[0] is None, f"the writer raised: {writer_error[0]}"
+    assert reader_errors == [None] * len(readers), (
+        f"a concurrent read raised: {reader_errors}"
+    )
+    assert all(event.is_set() for event in reader_done), "a reader did not finish"
+    return writer_result[0], reader_results
 
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
@@ -310,9 +415,9 @@ def test_store_reports_open_failure_instead_of_success(
 
 
 def test_memory_reads_stay_consistent_while_writes_are_in_flight(
-    module, coordinated_reads
+    module, coordinated_reads, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """All read tools return valid results while a writer is in flight."""
+    """All read tools start during an open write transaction and finish after it."""
     namespace = "reads"
     assert (
         module.memory_store(
@@ -326,33 +431,17 @@ def test_memory_reads_stay_consistent_while_writes_are_in_flight(
         lambda: module.memory_recall("seed", namespace=namespace),
         module.memory_stats,
     )
-
-    def work(index: int):
-        if index < WINNER_COUNT:
-            return module.memory_store(
-                value=f"checkpoint threshold {index}",
-                namespace=namespace,
-                key=f"k{index}",
-            )
-        coordinated_reads.reader_wait_for_writer()
-        return readers[index - WINNER_COUNT]()
-
-    results, errors = _run_concurrently(
-        work, WINNER_COUNT + READ_OPERATION_COUNT
+    monkeypatch.setattr(
+        module, "_DB_LOCK", _ObservedReadLock(module._DB_LOCK, coordinated_reads)
     )
-    assert errors == [None] * len(results), f"a concurrent read/write raised: {errors}"
+    writer_result, reader_results = _run_readers_while_write_open(
+        module, coordinated_reads, readers, namespace
+    )
+    assert writer_result.get("status") == "stored", writer_result
 
-    stores = results[:WINNER_COUNT]
-    search, recalled, stats = results[WINNER_COUNT:]
-    assert all(isinstance(result, dict) for result in stores), stores
-    assert all(
-        result.get("status") == "stored" and "error" not in result
-        for result in stores
-    ), stores
+    search, recalled, stats = reader_results
     assert isinstance(search, list), search
-    assert all(
-        isinstance(hit, dict) and "error" not in hit for hit in search
-    ), search
+    assert all(isinstance(hit, dict) and "error" not in hit for hit in search), search
     assert {hit["key"] for hit in search} >= {"seed"}
     assert isinstance(recalled, dict) and "error" not in recalled, recalled
     assert recalled["key"] == "seed"
@@ -367,4 +456,4 @@ def test_memory_reads_stay_consistent_while_writes_are_in_flight(
         ).fetchone()[0]
     finally:
         conn.close()
-    assert persisted == len(stores) + 1  # the seed plus every reported store
+    assert persisted == READ_TEST_EXPECTED_ROWS
