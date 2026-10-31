@@ -4,8 +4,9 @@
  * P2a reports *where* the skill list came from — the prompt payload or the
  * per-turn draft (`ctx.skill.list()`, F-06) — and refuses with an explicit
  * reason when neither source is usable. It reports only: P2 is an empirical
- * no-op on the default path (F-09, PRE-02), and effective narrowing (P2b) is
- * conditional on C6 and is not implemented here.
+ * no-op on the default path (F-09, PRE-02). P2b was cancelled rather than
+ * emulated, because no measured mutation surface reaches project skills
+ * (PROBE-E); the registry records P2 as advisory.
  *
  * Shadow by construction: the admission payload is cloned and frozen by
  * `observeShadow`, the record always says `effect: 'none'`, and no failure is

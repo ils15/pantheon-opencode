@@ -32,13 +32,17 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     hostPoint: "session.hook('prompt') + filterSkills; catalog source ctx.skill",
     primitives: ['choice', 'rank'],
     mode: SHADOW,
-    status: 'measured',
+    status: 'advisory',
     evidence: ['F-06', 'F-08', 'F-09', 'F-10'],
-    premises: ['PRE-02', 'PM-06', 'PM-07'],
-    blockingCondition: null,
-    unknowns: ['effective filtering (P2b) is unmeasured until C6 closes'],
+    premises: ['PRE-02', 'PM-06', 'PM-07', 'PM-13'],
+    blockingCondition:
+      'P2b cancelled by measurement: no measured mutation surface reaches project skills (PROBE-E §5.1/§9), so effective filtering is unreachable and P2 records only',
+    unknowns: [
+      'other project-skill removal paths were not exercised (PROBE-E §7)',
+      'mutation inside a child/subagent session is UNKNOWN (PROBE-E §7)',
+    ],
     notes:
-      'Surface measured only. P2 is an empirical no-op on the default path (F-09, PRE-02); the P2a/P2b split is referenced and P2b stays conditional on C6.',
+      'P2 é no-op empírico no caminho default (F-09, PRE-02). P2a reports the skill source. P2b was cancelled, not emulated: skill.transform add/remove changes the next turn only for builtin draft entries; project skills are unreachable (get returns null, remove is ok without effect, an add override is not rendered). P2 never filters and claims no token reduction. PM-13 applies by analogy: an effect announced without an observable artifact is not an effect.',
   }),
   Object.freeze<DecisionPoint>({
     id: 'P3',

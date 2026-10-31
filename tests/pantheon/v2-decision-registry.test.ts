@@ -160,13 +160,33 @@ check('P8 is a premise, starts off and carries the hard-barrier invariant', () =
   assert.match(p8.securityInvariant ?? '', /denies/)
 })
 
-check('P2 records the measured surface and the empirical no-op premise', () => {
+check('P2 is advisory-only after P2b was cancelled by measurement', () => {
   const p2 = point('P2')
-  assert.equal(p2.status, 'measured')
+  assert.equal(p2.status, 'advisory')
+  assert.equal(p2.mode, 'shadow')
   assert.equal(p2.premises.includes('PRE-02'), true)
-  assert.equal(p2.notes.includes('P2a/P2b'), true)
+  assert.equal(p2.premises.includes('PM-13'), true)
+  assert.equal(p2.evidence.includes('F-09'), true)
+  assert.equal(typeof p2.blockingCondition, 'string')
+  assert.match(p2.blockingCondition ?? '', /P2b cancelled by measurement/)
+  assert.match(p2.blockingCondition ?? '', /no measured mutation surface/)
+  assert.match(p2.blockingCondition ?? '', /project skills/)
+  assert.equal(p2.notes.includes('P2 é no-op empírico no caminho default'), true)
+  assert.equal(p2.notes.includes('P2 filters'), false)
+  assert.equal(p2.notes.includes('P2 narrows'), false)
+})
+
+check('an advisory point without a blocking condition fails the audit', () => {
+  const broken = DECISION_POINT_REGISTRY.map((entry) =>
+    entry.id === 'P2' ? { ...entry, blockingCondition: ' ' } : entry,
+  )
+  const audit = auditDecisionRegistry(broken)
+  assert.equal(audit.ok, false)
   assert.equal(
-    p2.unknowns?.some((entry) => entry.includes('P2b')),
+    audit.violations.some(
+      (violation) =>
+        violation.code === 'ADVISORY_WITHOUT_BLOCKING_CONDITION' && violation.pointId === 'P2',
+    ),
     true,
   )
 })

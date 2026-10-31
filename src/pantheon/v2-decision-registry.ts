@@ -8,11 +8,15 @@
  * this point needs was not measured; the premise is registered by id in
  * `v2-decision-premises.ts`, and its canonical text lives in `STATUS.md` § Premissas. `deferred` means the
  * final design is suspended by an open condition and no effect is authorised.
+ * `advisory` means the surface was measured, the specified effect was measured
+ * *unreachable*, and the point therefore only records an observation: it
+ * applies no decision and may never be described as having one.
  *
  * Evidence ids follow PLAN §5.4 (F-01…F-18, I-01) and are never renumbered.
- * `measured` points must cite at least one `F-` id; `premise` and `deferred`
- * points must carry the blocking condition. {@link auditDecisionRegistry}
- * enforces both properties, and the harness treats a violation as a failure.
+ * `measured` points must cite at least one `F-` id; `premise`, `advisory` and
+ * `deferred` points must carry the blocking condition.
+ * {@link auditDecisionRegistry} enforces both properties, and the harness
+ * treats a violation as a failure.
  */
 
 import type { AskMode } from './v2-decision-contracts.ts'
@@ -34,7 +38,7 @@ export const DECISION_POINT_IDS = [
 ] as const
 
 export type DecisionPointId = (typeof DECISION_POINT_IDS)[number]
-export type DecisionPointStatus = 'measured' | 'premise' | 'deferred'
+export type DecisionPointStatus = 'measured' | 'premise' | 'advisory' | 'deferred'
 export type DecisionPointMode = 'shadow' | 'off' | 'migration'
 
 export type DecisionSurface =
@@ -99,6 +103,7 @@ export type RegistryViolationCode =
   | 'DUPLICATE_POINT'
   | 'MEASURED_WITHOUT_EVIDENCE'
   | 'PREMISE_WITHOUT_BLOCKING_CONDITION'
+  | 'ADVISORY_WITHOUT_BLOCKING_CONDITION'
   | 'DEFERRED_WITHOUT_BLOCKING_CONDITION'
   | 'DEFERRED_WITHOUT_TRIGGER'
   | 'UNKNOWN_EVIDENCE_ID'
@@ -172,7 +177,9 @@ export function auditDecisionRegistry(
       const code =
         point.status === 'deferred'
           ? 'DEFERRED_WITHOUT_BLOCKING_CONDITION'
-          : 'PREMISE_WITHOUT_BLOCKING_CONDITION'
+          : point.status === 'advisory'
+            ? 'ADVISORY_WITHOUT_BLOCKING_CONDITION'
+            : 'PREMISE_WITHOUT_BLOCKING_CONDITION'
       if (point.blockingCondition === null || point.blockingCondition.trim().length === 0) {
         violations.push({ code, pointId: point.id, detail: 'blocking condition is required' })
       }
