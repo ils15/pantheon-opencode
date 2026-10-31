@@ -8,9 +8,13 @@ Tests cover:
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import os
+import sqlite3
+import threading
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import eval_store
@@ -632,6 +636,90 @@ def eval_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 class TestEvalResources:
     """Tests for the plugin-eval certification resources."""
+
+    async def test_eval_resource_recovers_after_writer_lock_release(
+        self,
+        module,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The resource reaches SQLite under lock and reads the committed row."""
+        db_path = tmp_path / "memory" / "memory.db"
+        monkeypatch.setattr(eval_store, "_db_path", lambda: db_path)
+        eval_store.store_eval("before-lock", {"score": 60}, 60, when="2026-08-20")
+
+        writer = sqlite3.connect(db_path, timeout=10)
+        writer.execute("PRAGMA journal_mode=DELETE")
+        writer.execute("BEGIN EXCLUSIVE")
+        writer.execute(
+            """INSERT INTO memories
+               (namespace, key, value, metadata, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                eval_store.NAMESPACE,
+                "eval:after-lock:2026-08-21",
+                '{"score":77}',
+                '{"type":"eval","score":77}',
+                "2026-08-21T00:00:00Z",
+                "2026-08-21T00:00:00Z",
+            ),
+        )
+
+        sqlite_attempted = threading.Event()
+        resource_finished = threading.Event()
+        results: list[str] = []
+        errors: list[BaseException] = []
+        original_connect = sqlite3.connect
+
+        class TracedConnection(sqlite3.Connection):
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                super().__init__(*args, **kwargs)
+
+                def authorize(
+                    action: int,
+                    _arg1: str | None,
+                    _arg2: str | None,
+                    _database: str | None,
+                    _source: str | None,
+                ) -> int:
+                    if action == sqlite3.SQLITE_PRAGMA:
+                        sqlite_attempted.set()
+                    return sqlite3.SQLITE_OK
+
+                self.set_authorizer(authorize)
+
+        def traced_connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+            kwargs["factory"] = TracedConnection
+            return original_connect(*args, **kwargs)
+
+        monkeypatch.setattr(eval_store.sqlite3, "connect", traced_connect)
+
+        def read_resource() -> None:
+            try:
+                results.append(asyncio.run(module.list_plugin_evals()))
+            except BaseException as error:
+                errors.append(error)
+            finally:
+                resource_finished.set()
+
+        reader = threading.Thread(target=read_resource)
+        reader.start()
+        try:
+            assert sqlite_attempted.wait(5), "resource never entered SQLite"
+            assert writer.in_transaction, "writer lock was released prematurely"
+            writer.commit()
+            assert resource_finished.wait(10), "resource did not recover after release"
+        finally:
+            if writer.in_transaction:
+                writer.rollback()
+            reader.join(timeout=10)
+            writer.close()
+
+        assert not reader.is_alive()
+        assert not errors
+        assert len(results) == 1
+        assert "after-lock" in results[0]
+        assert "77" in results[0]
 
     async def test_eval_list_uri_registered(self, server: FastMCP) -> None:
         """The eval list URI pantheon://eval should be registered."""
