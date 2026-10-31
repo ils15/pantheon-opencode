@@ -101,7 +101,16 @@ test('provider endpoints are declared unwired and no gateway provider reaches eg
     assert.match(endpoint, /^https:\/\//)
   }
   assert.ok(V2_DECISION_EGRESS_TRANSPORT.endpoints.includes('https://api.openai.com/v1/decisions'))
-  assert.ok(V2_DECISION_EGRESS_TRANSPORT.endpoints.includes('https://api.typesafe.ai/v1/systemone'))
+  assert.ok(
+    V2_DECISION_EGRESS_TRANSPORT.endpoints.some((endpoint) => {
+      const parsed = new URL(endpoint)
+      return (
+        parsed.protocol === 'https:' &&
+        parsed.hostname === 'api.typesafe.ai' &&
+        parsed.pathname === '/v1/systemone'
+      )
+    }),
+  )
 
   const removedGateway = 'bifrost'
   assert.deepEqual(
