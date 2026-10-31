@@ -7,6 +7,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+<!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. -->
+
+## [v1.6.2-beta.4] - 2026-10-31
+
 ### Added
 
 - **install** — Added a user-level `decision-router` admin CLI for enablement, selection, consent, per-user/provider/model caps, and period confirmation; config is private and non-secret.
@@ -37,9 +42,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **routing** — Reusing a cached provider decision does not re-prompt the same permission gate; a different or missing gate is still evaluated and denies fail-closed.
 - **docs** — Clarified that `decision-router holds` performs no reservation, reconciliation, release, or pruning, while opening an existing ledger may apply a forward-only schema migration.
 
-<!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. -->
-
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
 ## [v1.6.2-beta.3] - 2026-10-29
 
 ### Changed
