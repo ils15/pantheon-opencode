@@ -670,7 +670,17 @@ async function registerV2Tools(
     const visionReady = typeof model?.list === 'function'
     if (!visionReady) markUnsupported('vision-tool')
     const visionRuntime = visionReady ? ({ model } as V2VisionRuntime) : undefined
-    const toolDefs = createV2ToolDefinitions(visionRuntime)
+    // P3 (complexity) declares `tool.invoke`; its construction site is the
+    // local selector's execute, fed by that tool's own input schema. The sink
+    // is the 0b record path (in-memory, bounded, I/O-free) and every record
+    // carries `mode: 'shadow'` — the mode the registry declares.
+    const p3Sink = createTelemetrySink()
+    p3TelemetrySink = p3Sink
+    const toolDefs = createV2ToolDefinitions(visionRuntime, {
+      complexitySink: (record) => {
+        p3Sink.emit({ ...record, mode: 'shadow' })
+      },
+    })
     if (boundedRead !== undefined) toolDefs.push(boundedRead)
 
     await toolCtx.transform((draft: V2ToolDraft) => {
@@ -742,10 +752,10 @@ let p8TelemetrySink: TelemetrySink | undefined
  * The prompt-surface telemetry sink created by the most recent prompt-hook
  * registration.
  *
- * P1, P2, P3, P6 and P10 observe the same admission payload through
- * `observePromptSurface`; each shadow record is reduced through the 0b record
- * path (`createTelemetrySink`, in-memory, bounded, I/O-free) and carries
- * `mode: 'shadow'` — the registry mode all five declare. Nothing in production
+ * P1 and P2 observe the same admission payload through `observePromptSurface`;
+ * each shadow record is reduced through the 0b record path
+ * (`createTelemetrySink`, in-memory, bounded, I/O-free) and carries
+ * `mode: 'shadow'` — the registry mode both declare. Nothing in production
  * reads this collector back, so the write is only a claim if a reader can
  * assert it: this accessor is that reader, and
  * tests/pantheon/plugin-v2-contract.test.ts is its only caller.
@@ -755,6 +765,21 @@ export function getPromptSurfaceTelemetrySinkForTests(): TelemetrySink | undefin
 }
 
 let promptSurfaceTelemetrySink: TelemetrySink | undefined
+
+/**
+ * The P3 telemetry sink created by the most recent tool registration.
+ *
+ * P3 is constructed at `tool.invoke`: `pantheon_local_decision`'s execute calls
+ * the adapter with the tool input, which carries `complexity` and `gateStatus`.
+ * Records are reduced through the same in-memory 0b path and carry the P3
+ * registry `mode` (`shadow`). Exported only for
+ * tests/pantheon/plugin-v2-contract.test.ts and the wiring audit.
+ */
+export function getP3TelemetrySinkForTests(): TelemetrySink | undefined {
+  return p3TelemetrySink
+}
+
+let p3TelemetrySink: TelemetrySink | undefined
 
 /**
  * Attempt to subscribe to session events via V2 ctx.event.subscribe.
@@ -1218,7 +1243,9 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
   }
 
   try {
-    // Prompt-surface shadow points (P1, P2, P3, P6, P10) share this payload.
+    // Prompt-surface shadow points (P1 and P2) share this payload. P3 moved to
+    // `tool.invoke`, where its input actually carries a complexity vector; P6
+    // and P10 are unwired because no measured surface carries their inputs.
     // The sink is in-memory and bounded, exactly like P7/P8; it is created per
     // registration so one setup cannot observe another's records.
     const promptSurfaceSink = createTelemetrySink()

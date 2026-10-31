@@ -473,17 +473,21 @@ pass.
 
 The registry reports coverage as measured, premise, advisory, or deferred, and
 `measured` never means "effect measured". What that means in practice: **P7 and
-P8 are wired behind flags (both off by default), P1, P2, P3, P6 and P10 are wired
-in shadow at the prompt hook, and P4, P5, P9 and P11 are library code with no
-production call site**:
+P8 are wired behind flags (both off by default), P1 and P2 are wired in shadow at
+the prompt hook, P3 is wired in shadow at its declared `tool.invoke`, and P4, P5,
+P6, P9, P10 and P11 are library code with no production call site**:
 
 | Point | Surface | Status | What is NOT covered |
 |---|---|---|---|
-| P1, P3, P6, P10 (agent, complexity, council, claims) | `session.hook('prompt')` | Registered in **shadow**: they observe a content-free projection of the admission payload and record `effect: none`. P3, P6 and P10 have no input on this payload and record a refusal token. | No effect was measured, and records are in-memory and unread in production (test-visible only). P1 activation still waits on PM-07. |
+| P1 (agent), P2 (skill) | `session.hook('prompt')` | Registered in **shadow**: they observe a content-free projection of the admission payload and record `effect: none`. P2 is **advisory only** — an empirical no-op on the default path, because the host sends `prompt.skills` absent. | No effect was measured, and records are in-memory and unread in production (test-visible only). P1 activation still waits on PM-07. P2b filtering was cancelled by measurement, not emulated; no token reduction is claimed. |
+| P3 (complexity) | `tool.invoke` | Registered in **shadow** at `pantheon_local_decision`: the tool hands the adapter its own input, which carries `complexity` and `gateStatus`, so it classifies when invoked and applies nothing. | No tool call was ever measured (PM-09), and records are in-memory and unread in production. |
 | P7 (loop) | `session.execution.succeeded` | Behind `PANTHEON_V2_P7_LOOP`, off by default. The 12-execution cap (`P7_LOOP_MAX_EXECUTIONS`) is **advisory**: `reset()` is caller-supplied, no measured host surface signals a user turn, and the streak is not claimed to reset on any event. | Effect is `none` and unmeasured (C6 is closed by PROBE-E; no P7 effect was observed); nested depth ≥ 2, failed/interrupted child executions and image jobs were not exercised. Never describe this as working loop enforcement. |
-| P2 (skill) | `session.hook('prompt')` | **Advisory only**: an empirical no-op on the default path, because the host sends `prompt.skills` absent. | P2b filtering was cancelled by measurement, not emulated; no token reduction is claimed. |
 | P9 (compaction) | `session.hook('compaction')` | Measured on **top-level sessions only**. | Child-session compaction, `reason: "overflow"`, and the `messages` channel are UNKNOWN. |
 | P8 (guardrail) | `permission.evaluate` | **Off**; activation is blocked pending its review conditions (PH5-1…PH5-5) and it starts off, never shadow. | `permission.evaluate` was registered and never fired; payload shape, write honouring and ordering are unmeasured. `execute.before` remains the only hard barrier. |
+
+P6 and P10 are **unwired**: they declared the prompt hook, but that payload
+carries neither council candidates nor counsellor claims, so constructing them
+there would only record a permanent refusal.
 
 Budget facts are the same story: caps are local admission controls computed from
 explicit configuration, and they are not invoice guarantees. There are no default

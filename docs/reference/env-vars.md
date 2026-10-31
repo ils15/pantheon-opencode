@@ -93,21 +93,25 @@ truthy values leaves the feature off.
 | `PANTHEON_V2_P7_LOOP` | unset (off) | `1`, `on` or `true` enables the P7 loop adapter on `session.execution.succeeded`. It counts executions and writes `effect: none` observations to an in-memory, bounded collector that the plugin never reads back (it is exposed only to tests); it does not enforce loop limits. The 12-execution cap (`P7_LOOP_MAX_EXECUTIONS`) is advisory: no measured host surface signals a new user turn, so the streak is not claimed to reset. |
 | `PANTHEON_V2_P8_GUARDRAIL` | unset (off) | `1`, `on` or `true` enables the P8 guardrail on `permission.evaluate` only. It can only narrow, and it is not a no-op: a native event with no usable `action` token, and an `allow` decision with no attributed `sessionID`, are narrowed to `deny`. `execute.before` remains the only hard barrier; activation is blocked pending PH5-1…PH5-5. |
 
-Shadow points (P1, P2, P3, P6, P10) have no environment switch: there is no
-behaviour to switch. They are registered on `session.hook('prompt')` and observe
-a projection of the admission payload carrying only `prompt.agents` and
-`prompt.skills` — no text, no file bytes, no metadata. Each record says
-`effect: none` and goes to an in-memory, bounded collector that the plugin never
-reads back (exposed only to tests). They cannot deny, delay or mutate admission;
-P2 stays advisory and never filters. P3, P6 and P10 have no input on this payload
-and record their own refusal token rather than a fabricated decision.
+Shadow points (P1, P2, P3) have no environment switch: there is no
+behaviour to switch. P1 and P2 are registered on `session.hook('prompt')` and
+observe a projection of the admission payload carrying only `prompt.agents` and
+`prompt.skills` — no text, no file bytes, no metadata. P3 is registered at its
+declared `tool.invoke`: the `pantheon_local_decision` tool hands the adapter its
+own input, which carries `complexity` and `gateStatus`, so it records a
+classification when the tool is invoked. Each record says `effect: none` and goes
+to an in-memory, bounded collector that the plugin never reads back (exposed only
+to tests). They cannot deny, delay or mutate admission; P2 stays advisory and
+never filters.
 
-The remaining four — P4, P5, P9 and P11 — have **no production call site**: no
-production file imports them. Their adapters are constructed only by their
-per-point test suites (`v2-decision-p4.test.ts` … `v2-decision-p11.test.ts`). On
-a host they do not read the turn, record no telemetry and change nothing — not
-because they are disabled, but because nothing constructs them. Coverage and
-unmeasured surfaces are in
+The remaining six — P4, P5, P6, P9, P10 and P11 — have **no production call
+site**: no production file imports them. Their adapters are constructed only by
+their per-point test suites (`v2-decision-p4.test.ts` … `v2-decision-p11.test.ts`).
+P6 and P10 declared the prompt hook, but that payload carries neither council
+candidates nor counsellor claims, so they are unwired rather than recording a
+refusal from a surface that cannot feed them. On a host they do not read the
+turn, record no telemetry and change nothing — not because they are disabled, but
+because nothing constructs them. Coverage and unmeasured surfaces are in
 [Local Decision Router](local-decision-router.md#measured-coverage-and-unmeasured-surfaces-v2-decision-layer).
 
 ## Decision-provider transport

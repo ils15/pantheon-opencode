@@ -172,9 +172,11 @@ export interface DecisionPoint {
    * This is a claim about the source, not about a probe: the audit in
    * `tests/pantheon/v2-decision-wiring.test.ts` derives the answer from the
    * production import graph rooted at `src/plugin-v2.ts` and fails when this
-   * flag disagrees. It is never derived from a hand-maintained list — a second
-   * list would repeat the "described as active, produces nothing" defect this
-   * field exists to expose.
+   * flag disagrees. It also derives *where* the handler is constructed and
+   * fails when a wired point's construction site is not its declared
+   * `hostSurface` — a handler called from the wrong hook is not wiring. It is
+   * never derived from a hand-maintained list — a second list would repeat the
+   * "described as active, produces nothing" defect this field exists to expose.
    */
   readonly wired: boolean
   /** Set only when the measurement was narrower than the point's full scope. */

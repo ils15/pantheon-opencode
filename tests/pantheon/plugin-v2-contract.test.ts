@@ -116,6 +116,7 @@ async function main(): Promise<void> {
     V2_UNSUPPORTED_FEATURES,
     getP7TelemetrySinkForTests,
     getP8TelemetrySinkForTests,
+    getP3TelemetrySinkForTests,
     getPromptSurfaceTelemetrySinkForTests,
     getUnsupportedFeatures,
     resetV2BridgeForTests,
@@ -663,10 +664,10 @@ async function main(): Promise<void> {
 
     const sink = getPromptSurfaceTelemetrySinkForTests()
     assert.ok(sink, 'the prompt hook must install a telemetry sink')
-    assert.equal(sink.size(), 5, 'one record per prompt-surface point')
+    assert.equal(sink.size(), 2, 'one record per prompt-surface point')
     assert.deepEqual(
       sink.events().map((record) => record.point),
-      ['P1', 'P2', 'P3', 'P6', 'P10'],
+      ['P1', 'P2'],
     )
     for (const record of sink.events()) {
       assert.equal(record.effect, 'none')
@@ -674,6 +675,44 @@ async function main(): Promise<void> {
     }
     assert.equal(admission.prompt.skills, previousSkills, 'P2 must not filter skills')
     assert.equal(admission.prompt.agents, previousAgents)
+  })
+
+  test('P3 is constructed at tool.invoke and classifies the tool payload', async () => {
+    const registered = await registerToolsThroughHostMock()
+    const local = registered.find((tool) => tool.name === 'pantheon_local_decision')
+    assert.ok(local, 'the local decision tool must be registered')
+
+    const result = await local.execute(
+      {
+        schemaVersion: 1,
+        candidateAgents: ['hermes'],
+        domain: null,
+        candidateSkillIds: [],
+        candidateResourceIds: [],
+        memorySearchRelevant: false,
+        gateStatus: 'none',
+        complexity: {
+          boundedness: 0,
+          reversibility: 0,
+          dependencies: 0,
+          uncertainty: 0,
+          verification: 2,
+        },
+      },
+      { agent: 'apollo' },
+    )
+    assert.ok(typeof result === 'object' && result !== null)
+
+    const sink = getP3TelemetrySinkForTests()
+    assert.ok(sink, 'tool registration must install the P3 sink')
+    assert.deepEqual(
+      sink.events().map((record) => record.point),
+      ['P3'],
+    )
+    const [record] = sink.events()
+    assert.equal(record?.decision, 'score.high')
+    assert.notEqual(record?.reason, 'complexity.invalid')
+    assert.equal(record?.mode, 'shadow')
   })
 
   test('permission hook matches host subagent origin, denies disallowed edges, and preserves asks', async () => {

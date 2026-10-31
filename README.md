@@ -302,9 +302,8 @@ review conditions.
 
 The V2 decision layer declares eleven integration points (P1–P11) over three
 decision primitives — `ask`, `rank`, and `verify` — and a deterministic policy
-that decides which point may run. **Seven of the eleven have a production call
-site: two behind flags that are off by default, five in shadow at the prompt
-hook.**
+that decides which point may run. **Five of the eleven have a production call
+site: two behind flags that are off by default, three in shadow.**
 
 - **P7 (loop)** is wired to `session.execution.succeeded` behind
   `PANTHEON_V2_P7_LOOP`, which is off. It writes each observation to an
@@ -313,23 +312,27 @@ hook.**
 - **P8 (guardrail)** is wired to `permission.evaluate` behind
   `PANTHEON_V2_P8_GUARDRAIL`, which is off, and its activation is blocked
   (PH5-1…PH5-5).
-- **P1, P2, P3, P6 and P10** are registered on `session.hook('prompt')` in
-  **shadow**. They observe the same admission payload through a projection that
-  carries only `prompt.agents` and `prompt.skills`: no text, no file bytes, no
-  metadata, no mutation, no throw. Every record says `effect: none` and goes to
-  an in-memory, bounded collector the plugin never reads back (test-visible
-  only). P3, P6 and P10 have no input on this payload and record their own
-  refusal token — `complexity.invalid`, `council.source.absent`, `claims.absent`
-  — rather than a fabricated decision.
+- **P1 and P2** are registered on `session.hook('prompt')` in **shadow**. They
+  observe the same admission payload through a projection that carries only
+  `prompt.agents` and `prompt.skills`: no text, no file bytes, no metadata, no
+  mutation, no throw. Every record says `effect: none` and goes to an in-memory,
+  bounded collector the plugin never reads back (test-visible only).
+- **P3** is wired at its declared `tool.invoke` in **shadow**: the
+  `pantheon_local_decision` tool hands the adapter its own input, whose schema
+  requires `complexity` and `gateStatus`. It records a classification when the
+  tool is invoked — never a permanent `complexity.invalid` refusal from a payload
+  that cannot carry the vector — and applies nothing.
 
-**The other four — P4, P5, P9 and P11 — are library code with no production call
-site.** Nothing constructs or registers them outside the per-point test suites —
-the offline harness imports no adapter module. On a host they do not read the
-turn, record no telemetry and have no switch to turn off, because nothing
-registers them.
+**The other six — P4, P5, P6, P9, P10 and P11 — are library code with no
+production call site.** Nothing constructs or registers them outside the
+per-point test suites — the offline harness imports no adapter module. P6 and
+P10 declared the prompt hook, but that payload never carries council candidates
+or counsellor claims, so they stay unwired instead of recording a refusal from a
+surface that cannot feed them. On a host they do not read the turn, record no
+telemetry and have no switch to turn off, because nothing registers them.
 
-"Shadow" therefore means no behavioural change, not a claim of effect: the five
-prompt-surface points read a narrow slice of the turn and decide nothing from it,
+"Shadow" therefore means no behavioural change, not a claim of effect: the three
+shadow points read a narrow slice of their surface and decide nothing from it,
 and the two flag-gated points are off. No activation flag is set in a default
 install.
 

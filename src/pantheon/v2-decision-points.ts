@@ -13,10 +13,11 @@
  * `mode` declares the mode a point would run in, never a production call site:
  * `wired` records whether the shipped plugin constructs the adapter, and the
  * source-derived audit in `tests/pantheon/v2-decision-wiring.test.ts` fails when
- * the flag and the production import graph disagree. P1, P2, P3, P6 and P10 are
- * constructed at the prompt hook, P7 on the event channel and P8 on
- * permission.evaluate; P4, P5, P9 and P11 remain library code with no caller
- * outside the harness and the tests, and their `wired` stays `false`.
+ * the flag and the production import graph disagree. P1 and P2 are constructed
+ * at the prompt hook, P3 at `tool.invoke` (its declared surface and the only one
+ * carrying `complexity`/`gateStatus`), P7 on the event channel and P8 on
+ * permission.evaluate; P4, P5, P6, P9, P10 and P11 remain library code with no
+ * caller outside the harness and the tests, and their `wired` stays `false`.
  */
 
 import type { DecisionPoint } from './v2-decision-registry.ts'
@@ -78,7 +79,7 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     blockingCondition:
       'PM-09 open: no tool call was measured, so the tool.invoke surface that would carry complexity scoring was never exercised. C6 is closed by PROBE-E and is not the blocker',
     notes:
-      'Complexity classification is contract-only in this phase. The adapter is constructed in shadow at the prompt hook, where the payload carries no complexity vector or gate status, so it records `complexity.invalid` and produces no classification on the host.',
+      'Complexity classification is contract-only in this phase. Wired at its declared `tool.invoke`: `pantheon_local_decision` execute hands the adapter its own input, whose schema requires `complexity` and `gateStatus`, so the adapter classifies from the payload that reaches it instead of refusing from the prompt hook. PM-09 stays open — no tool call was ever measured — so this records a decision only when the tool is invoked and never applies one.',
   }),
   Object.freeze<DecisionPoint>({
     id: 'P4',
@@ -121,11 +122,12 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['rank', 'score'],
     mode: SHADOW,
     status: 'measured',
-    wired: true,
+    wired: false,
     evidence: ['F-08'],
     premises: ['PM-07'],
     blockingCondition: null,
-    notes: 'Prompt payload shape measured; populated prompt.agents was never observed.',
+    notes:
+      'Prompt payload shape measured (F-08); populated prompt.agents was never observed (PM-07). Unwired: the prompt surface carries `prompt.agents`/`prompt.skills`, never the `{ id, score, justification }` candidate list this adapter ranks, so constructing it there would only record a permanent `council.source.absent` refusal. No measured surface carries council candidates; it stays library code until one does.',
   }),
   Object.freeze<DecisionPoint>({
     id: 'P7',
@@ -209,13 +211,13 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['verify'],
     mode: SHADOW,
     status: 'premise',
-    wired: true,
+    wired: false,
     evidence: [],
     premises: [],
     blockingCondition:
-      'Not implemented: per-counselor claims were never designed or measured (DISCOVERY §4)',
+      'Not implemented: per-counselor claims were never designed or measured (DISCOVERY §4); no measured surface carries `counsellors[].claims[]`',
     notes:
-      'Explicit verdict per claim; failed_to_respond is BLOCK in mandatory verification. The prompt hook is the only measured council surface (F-08), so it names the boundary; the declaration records intent, not exercised coverage.',
+      'Explicit verdict per claim; failed_to_respond is BLOCK in mandatory verification. The prompt hook is the only measured council surface (F-08), but that payload carries neither counsellors nor claims, so the point is unwired: constructing it there would record `claims.absent` forever. The declaration records intent and the boundary, not exercised coverage.',
   }),
   Object.freeze<DecisionPoint>({
     id: 'P11',
