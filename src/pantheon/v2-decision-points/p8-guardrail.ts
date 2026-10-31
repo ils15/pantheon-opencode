@@ -16,6 +16,17 @@
  * host installed. Without that check, "narrowing-only for every input" would
  * hold for data properties only.
  *
+ * ## Record truthfulness (N9)
+ *
+ * `wrote` and `narrowed` describe this module's own post-write read. JavaScript
+ * offers no way to tell an exotic target (a `Proxy` with a lying descriptor
+ * trap) from a plain object, and any number of in-process reads can be made to
+ * disagree. The guarantee is therefore not "the target accepted the write" but
+ * "the effect recorded is the effect the event holds when the record is
+ * produced": the plugin re-reads `event.effect` after the effect is final and
+ * records `guardrail.narrow` only if that read still says `deny`. This module
+ * never widens either way — a mismatch downgrades a claim, never an effect.
+ *
  * ## Blast radius (N5) — unmeasured
  *
  * `p8.rule.action.unusable` matches any event whose `action` is not a printable

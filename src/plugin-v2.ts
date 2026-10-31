@@ -141,6 +141,7 @@ import {
   createP8Guardrail,
   p8GuardrailEnabledFromEnv,
 } from './pantheon/v2-decision-points/p8-guardrail.ts'
+import { DECISION_POINT_REGISTRY } from './pantheon/v2-decision-points.ts'
 import { createTelemetrySink, type TelemetrySink } from './pantheon/v2-decision-telemetry.ts'
 import {
   type AuthoritativeSession,
@@ -721,11 +722,14 @@ let p7TelemetrySink: TelemetrySink | undefined
  * registration.
  *
  * P8 records every outcome it is responsible for — `guardrail.narrow`,
- * `guardrail.keep`, `guardrail.refusal`, `p8.write.rejected` and
- * `p8.write.delegation` — through the 0b record path (`createTelemetrySink`,
- * in-memory, bounded, I/O-free). A guardrail that narrows without a record is
- * indistinguishable from an inert one, which is exactly the defect PH5-1
- * closed. Exported only for tests/pantheon/plugin-v2-contract.test.ts.
+ * `guardrail.keep`, `guardrail.refusal`, `p8.write.rejected`,
+ * `p8.write.delegation` and `p8.write.unconfirmed` — through the 0b record path
+ * (`createTelemetrySink`, in-memory, bounded, I/O-free). A guardrail that
+ * narrows without a record is indistinguishable from an inert one, which is
+ * exactly the defect PH5-1 closed. Every record carries the P8 registry `mode`
+ * (`off`), never `active`, and a `narrow` is recorded only when a re-read of
+ * the event still holds it (N9/N10). Exported only for
+ * tests/pantheon/plugin-v2-contract.test.ts.
  */
 export function getP8TelemetrySinkForTests(): TelemetrySink | undefined {
   return p8TelemetrySink
@@ -1865,6 +1869,23 @@ async function registerV2ToolHooks(
 // ─── V2 Permission Hook ─────────────────────────────────────────────────
 
 /**
+ * Read `event.effect` after P8 wrote to it, for the record.
+ *
+ * A hostile getter reads as `null`, which can only downgrade a recorded
+ * `narrow` to `keep`, never upgrade one — the failure direction is "the record
+ * claims less", never "the record claims an effect the event does not hold".
+ */
+function readPermissionEffect(event: unknown): string | null {
+  try {
+    if (event === null || typeof event !== 'object') return null
+    const effect = (event as { readonly effect?: unknown }).effect
+    return typeof effect === 'string' ? effect : null
+  } catch {
+    return null
+  }
+}
+
+/**
  * Register permission hook via V2 ctx.permission.hook.
  *
  * The V2 permission.hook API (when available) provides:
@@ -1897,14 +1918,31 @@ async function registerV2PermissionHook(
   const p8Guardrail = createP8Guardrail({ enabled: p8GuardrailEnabledFromEnv() })
   const p8Sink = createTelemetrySink()
   p8TelemetrySink = p8Sink
-  const recordP8 = (result: ReturnType<typeof p8Guardrail.apply>): void => {
+  // The record's `mode` mirrors the P8 registry entry — `off` today — instead
+  // of asserting `active` (N10a). A record may never advertise an activation
+  // the registry and C8 deny, and deriving the value from the registry means
+  // the two cannot drift apart again. `mode` describes the point's declared
+  // mode; `decision`/`reason` carry the observation.
+  const p8RegistryMode = DECISION_POINT_REGISTRY.find((point) => point.id === 'P8')?.mode ?? 'off'
+  /**
+   * Record one P8 outcome.
+   *
+   * `event` is re-read immediately before emitting: `narrowed`/`wrote` are the
+   * guardrail's own post-write read, and a `Proxy` whose descriptor trap lies
+   * can make that read and the next one disagree (N9). A `narrow` is therefore
+   * recorded only when the event still holds `deny`; otherwise the record
+   * states the effect that is actually there (`guardrail.keep` with
+   * `p8.write.unconfirmed`), so sink and proof cannot contradict each other.
+   */
+  const recordP8 = (result: ReturnType<typeof p8Guardrail.apply>, event: unknown): void => {
     if (!p8Guardrail.enabled) return
     try {
+      const unconfirmed = result.narrowed && readPermissionEffect(event) !== 'deny'
       p8Sink.emit({
         point: 'P8',
-        decision: result.decision,
-        reason: result.reason,
-        mode: 'active',
+        decision: unconfirmed ? 'guardrail.keep' : result.decision,
+        reason: unconfirmed ? 'p8.write.unconfirmed' : result.reason,
+        mode: p8RegistryMode,
       })
     } catch {
       // Telemetry is best-effort and must not affect permission flow.
@@ -2039,11 +2077,22 @@ async function registerV2PermissionHook(
       //
       // Apply BEFORE recording (PH5-1): `writeProof` reads `event.effect`, so a
       // proof written first recorded `effectAfter: allow` for an event P8 then
-      // narrowed. The order below is apply → record on every path, and the
+      // narrowed. The order below is apply → final effect → record, and the
       // record carries the post-apply effect plus the guardrail outcome.
-      recordP8(p8Guardrail.apply(event))
-      if (decision === 'deny') deny('caller or target is not allowed by delegation policy')
-      else writeProof()
+      //
+      // Record only after the effect is final (N10b). `deny()` below rewrites
+      // the effect, and a record emitted before it would describe a state the
+      // handler never leaves behind; when the delegation policy already denies,
+      // the deny is the policy's, so P8 claims no narrowing at all — it changed
+      // nothing about that outcome. `deny()` also throws on an immutable event,
+      // and a record emitted after a throw would describe an unreached state.
+      const p8Result = p8Guardrail.apply(event)
+      if (decision === 'deny') {
+        deny('caller or target is not allowed by delegation policy')
+        return
+      }
+      writeProof()
+      recordP8(p8Result, event)
     })
     return true
   } catch {

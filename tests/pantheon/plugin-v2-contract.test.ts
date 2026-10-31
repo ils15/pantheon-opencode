@@ -11,6 +11,7 @@ import {
 } from '../../src/pantheon/local-decision-egress-gate.ts'
 import { TODO_CONTINUATION_PROMPT } from '../../src/pantheon/todo-enforcer.ts'
 import { BRIDGE_OPTIONS_KEY } from '../../src/pantheon/v2-bridge.ts'
+import { DECISION_POINT_REGISTRY } from '../../src/pantheon/v2-decision-points.ts'
 import type { HookResult } from '../../src/plugins/hook-runner.ts'
 
 type Registration = { dispose: () => Promise<void> }
@@ -1213,6 +1214,20 @@ async function main(): Promise<void> {
           ],
           'narrow and keep are both recorded',
         )
+        // N10a: the record mirrors the registry mode, which is `off`. Nothing
+        // here may claim the activation C8 blocks.
+        const p8RegistryMode = DECISION_POINT_REGISTRY.find((point) => point.id === 'P8')?.mode
+        assert.equal(p8RegistryMode, 'off')
+        assert.deepEqual(
+          sink.events().map((record) => record.mode),
+          [p8RegistryMode, p8RegistryMode],
+          'a record carries the declared mode, never `active`',
+        )
+        assert.equal(
+          sink.events().some((record) => record.mode === 'active'),
+          false,
+          'no record claims an activation the registry denies',
+        )
 
         const lines = readFileSync(proofPath, 'utf8').trim().split('\n')
         assert.equal(lines.length, 2, 'one proof line per handler call')
@@ -1255,6 +1270,118 @@ async function main(): Promise<void> {
     const sink = getP8TelemetrySinkForTests()
     assert.ok(sink)
     assert.equal(sink.size(), 0, 'the disabled guardrail emits no record')
+  })
+
+  test('P8 records only the effect the event still holds (N9)', async () => {
+    await withP8Flag('1', async () => {
+      let permissionHandler: ((event: unknown) => void | Promise<void>) | undefined
+      await plugin.setup(
+        makeBaseContext({
+          permission: {
+            hook: async (_name: string, handler: typeof permissionHandler) => {
+              permissionHandler = handler
+              return { dispose: async () => {} }
+            },
+          },
+        }) as never,
+      )
+      assert.equal(typeof permissionHandler, 'function')
+
+      // A Proxy whose descriptor trap reports an own writable data property and
+      // whose `get` answers the guardrail's post-write read with `deny` before
+      // settling back to `allow`. `set` claims success and stores nothing, so
+      // no effect is applied — but `apply()` cannot tell that from the read it
+      // performs. The record must not repeat that claim (N9).
+      let postWriteReads = 0
+      let writeClaimed = false
+      const target = { sessionID: 'root', resources: ['explore'], effect: 'allow' }
+      const lying = new Proxy(target, {
+        getOwnPropertyDescriptor(inner, key) {
+          if (key === 'effect') {
+            return { value: 'allow', writable: true, enumerable: true, configurable: true }
+          }
+          return Reflect.getOwnPropertyDescriptor(inner, key)
+        },
+        get(inner, key, receiver) {
+          if (key !== 'effect') return Reflect.get(inner, key, receiver)
+          if (!writeClaimed) return 'allow'
+          postWriteReads += 1
+          return postWriteReads === 1 ? 'deny' : 'allow'
+        },
+        set(inner, key, value) {
+          if (key !== 'effect') return Reflect.set(inner, key, value)
+          writeClaimed = true
+          return true
+        },
+      })
+
+      await (permissionHandler as (event: unknown) => Promise<void>)(lying)
+
+      assert.equal(target.effect, 'allow', 'the write never landed on the target')
+      const sink = getP8TelemetrySinkForTests()
+      assert.ok(sink)
+      assert.equal(sink.size(), 1, 'the outcome is still recorded')
+      const record = sink.events()[0]
+      assert.equal(record?.decision, 'guardrail.keep', 'the event does not hold a narrowing')
+      assert.equal(record?.reason, 'p8.write.unconfirmed')
+      assert.equal(
+        sink.events().some((event) => event.decision === 'guardrail.narrow'),
+        false,
+        'a record may not claim an effect the event does not hold',
+      )
+    })
+  })
+
+  test('P8 records no narrowing for an event the delegation policy already denies (N10b)', async () => {
+    await withP8Flag('1', async () => {
+      let permissionHandler: ((event: unknown) => void | Promise<void>) | undefined
+      let toolBeforeHandler: ((event: unknown) => void | Promise<void>) | undefined
+      await plugin.setup(
+        makeBaseContext({
+          tool: {
+            hook: async (name: string, handler: typeof toolBeforeHandler) => {
+              if (name === 'execute.before') toolBeforeHandler = handler
+              return { dispose: async () => {} }
+            },
+          },
+          permission: {
+            hook: async (_name: string, handler: typeof permissionHandler) => {
+              permissionHandler = handler
+              return { dispose: async () => {} }
+            },
+          },
+          session: { get: async ({ sessionID }: { sessionID: string }) => ({ id: sessionID }) },
+        }) as never,
+      )
+      assert.equal(typeof permissionHandler, 'function')
+
+      // A real host origin (athena → apollo), then a permission event with no
+      // `action`. P8 matches `p8.rule.action.unusable` and writes `deny`, and
+      // the delegation policy denies too (no `action: 'subagent'`). The final
+      // effect is the policy's, not the guardrail's, so no P8 record may claim
+      // the narrowing — the record used to be emitted before that deny (N10b).
+      await toolBeforeHandler?.({
+        tool: 'subagent',
+        sessionID: 'root',
+        agent: 'athena',
+        messageID: 'msg_p8_deny',
+        id: 'call_p8_deny',
+        input: { agent: 'apollo' },
+      })
+      const event = {
+        sessionID: 'root',
+        resources: ['apollo'],
+        effect: 'ask',
+        source: { type: 'tool', messageID: 'msg_p8_deny', id: 'call_p8_deny' },
+      }
+      await (permissionHandler as (event: unknown) => Promise<void>)(event)
+
+      assert.equal(event.effect, 'deny', 'the delegation policy denies')
+      assert.match(String((event as { message?: unknown }).message), /delegation denied/i)
+      const sink = getP8TelemetrySinkForTests()
+      assert.ok(sink)
+      assert.equal(sink.size(), 0, 'P8 contributed no effect to this outcome, so it records none')
+    })
   })
 
   // ─── V1→V2 bridge injection (issue #265) ────────────────────────────
