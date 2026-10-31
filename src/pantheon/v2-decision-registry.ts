@@ -179,8 +179,13 @@ export interface DecisionPoint {
    * "described as active, produces nothing" defect this field exists to expose.
    */
   readonly wired: boolean
-  /** Set only when the measurement was narrower than the point's full scope. */
-  readonly scope?: 'top-level-session-only'
+  /**
+   * Set only when the measurement was narrower than the point's full scope.
+   * `top-level-session-only`: only top-level sessions were exercised.
+   * `overflow-unmeasured`: sessions (top-level and child) were exercised, but
+   * the context-exhaustion path that would request `reason:"overflow"` was not.
+   */
+  readonly scope?: 'top-level-session-only' | 'overflow-unmeasured'
   /** Unmeasured scope, named so it cannot be mistaken for measured coverage. */
   readonly unknowns?: readonly string[]
   readonly evidence: readonly string[]

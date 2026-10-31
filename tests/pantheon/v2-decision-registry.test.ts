@@ -149,16 +149,18 @@ check('P7 records the branch-1 selection: measured coverage, execution counter, 
   }
 })
 
-check('P9 is measured on top-level sessions only and says so', () => {
+check('P9 is measured in top-level and child sessions and names overflow as unmeasured', () => {
   const p9 = point('P9')
   assert.equal(p9.status, 'measured')
-  assert.equal(p9.scope, 'top-level-session-only')
+  assert.equal(p9.scope, 'overflow-unmeasured')
   assert.equal(p9.evidence.includes('F-01'), true)
   assert.equal(p9.evidence.includes('F-02'), true)
   assert.equal(
-    p9.unknowns?.some((entry) => entry.includes('child-session')),
+    p9.unknowns?.some((entry) => entry.includes('reason:"overflow"')),
     true,
   )
+  assert.equal(p9.notes.includes('PROBE-G'), true)
+  assert.equal(p9.notes.includes('child session'), true)
   assert.equal(p9.premises.includes('PM-04'), true)
 })
 
@@ -275,7 +277,7 @@ check('the status of every point is pinned to the phase-6 table', () => {
     P10: 'premise',
     P11: 'measured',
   })
-  assert.equal(point('P9').scope, 'top-level-session-only')
+  assert.equal(point('P9').scope, 'overflow-unmeasured')
 })
 
 check('P8 records the measured inertness instead of coverage it does not have', () => {

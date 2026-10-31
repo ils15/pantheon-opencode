@@ -41,7 +41,8 @@ export const PREMISE_REGISTER: readonly PremiseEntry[] = Object.freeze([
   }),
   Object.freeze({
     id: 'PM-04',
-    statement: 'reason:"overflow" and child-session compaction were never exercised',
+    statement:
+      'reason:"overflow" was not inducible in 6 error shapes; child-session compaction is measured (3/3) but its checkpoint reinjection is not',
     blocks: 'P9 / Phase 3 (C9)',
     status: 'open',
   }),

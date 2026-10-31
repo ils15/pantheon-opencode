@@ -2522,8 +2522,14 @@ export const plugin = define({
             // host payload and not the blocks Pantheon appends; the adapter
             // clones what it reads and pushes nothing itself, so the injected
             // context is unchanged — shadow is the record, nothing else.
-            // Compaction with `reason:"overflow"` and child-session compaction
-            // are UNKNOWN and are not designed for here.
+            // Child-session compaction is measured and needs no separate path:
+            // PROBE-G §3.1 fired this hook on a real child 3/3 with the CHILD
+            // sessionID at top level and the same payload shape (7 keys, no
+            // nested `session`, `system` array of 4). Compaction with
+            // `reason:"overflow"` was NOT inducible in 6 error shapes (PROBE-G
+            // §3.2 — the host retried and completed, and the one
+            // failure-recovery compaction was persisted as `reason:"auto"`), so
+            // that path remains unmeasured and is not designed for here.
             try {
               evaluateCompactionMemoryPoint({ payload }, (record) => {
                 p9Sink.emit({ ...record, mode: 'shadow' })

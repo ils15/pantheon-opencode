@@ -193,18 +193,18 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     mode: SHADOW,
     status: 'measured',
     wired: true,
-    scope: 'top-level-session-only',
+    scope: 'overflow-unmeasured',
     evidence: ['F-01', 'F-02', 'F-03', 'F-04'],
     premises: ['PM-04', 'PM-05'],
     blockingCondition: null,
     unknowns: [
-      'child-session compaction is UNKNOWN',
-      'reason:"overflow" was never exercised',
+      'reason:"overflow" was not inducible in 6 error shapes (PROBE-G §3.2): the host retried and completed, and the one failure-recovery compaction observed was persisted as reason:"auto" — the carrier that path produces is UNKNOWN',
+      'the checkpoint summary/reinjection inside a child session was not exercised (PROBE-G §4.6)',
       'the messages channel was never exercised',
       'no measured surface carries the memory candidate list P9 would retain or discard',
     ],
     notes:
-      'Measured on top-level sessions only: top-level sessionID carrier (F-01) and system-array text (F-02). Wired at its declared `session.hook(\'compaction\')` in shadow: the handler hands the adapter the event as-is, the adapter reads `payload.sessionID` and the `system` part array and nothing else, and the injected context is unchanged — the record carries the decision key and `systemPartCount`, and the adapter pushes nothing. A payload whose only id is a nested `session.id` produces NO decision (fail-closed), because the 2.2.5 host never sends `session` at all (F-01). The memory candidate list is an optional caller input and no measured surface carries it, so the wired record states `compaction.memory.source.absent` — a named refusal, never a retention or priority claim. `reason:"overflow"` and child-session compaction stay UNKNOWN and are not designed for.',
+      'Measured on top-level sessions (top-level sessionID carrier, F-01; system-array text, F-02) and on a child session (PROBE-G §3.1: the hook fires 3/3 with the CHILD sessionID at top level, the same 7-key payload, no nested `session`, and `system` as an array of 4 parts — identical to the top-level shape, so the adapter needs no child-specific branch). Overflow is a different answer: `reason:"overflow"` was NOT inducible in 6 error shapes (400 JSON, text/plain, SSE error, empty body, persistent failure, persistent failure with x-should-retry:false); the host retried and completed in four, and the persistent case compacted with reason:"auto", so the overflow path and its carrier remain unmeasured (PROBE-G §3.2/§4). Wired at its declared `session.hook(\'compaction\')` in shadow: the handler hands the adapter the event as-is, the adapter reads `payload.sessionID` and the `system` part array and nothing else, and the injected context is unchanged — the record carries the decision key and `systemPartCount`, and the adapter pushes nothing. A payload whose only id is a nested `session.id` produces NO decision (fail-closed), because the 2.2.5 host never sends `session` at all (F-01). The memory candidate list is an optional caller input and no measured surface carries it, so the wired record states `compaction.memory.source.absent` — a named refusal, never a retention or priority claim.',
   }),
   Object.freeze<DecisionPoint>({
     id: 'P10',

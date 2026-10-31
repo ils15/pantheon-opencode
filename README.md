@@ -295,9 +295,9 @@ about wiring, not about removing any transport. Measured surface coverage is
 reported honestly rather than implied: P7 runs behind `PANTHEON_V2_P7_LOOP` with
 an **advisory** execution cap (never described as enforcement), P2 is
 **advisory-only** (an empirical no-op on the default path), P9 was measured on
-**top-level sessions only**, and P8 is **advisory: not activatable by
-measurement** — its declared rules match no delivered permission payload, so it
-narrows nothing (PROBE-F).
+top-level **and child** sessions with `reason:"overflow"` still unmeasured, and
+P8 is **advisory: not activatable by measurement** — its declared rules match no
+delivered permission payload, so it narrows nothing (PROBE-F).
 
 ### The V2 decision layer is declared in full and wired in part
 
@@ -333,7 +333,10 @@ site: two behind flags that are off by default, five in shadow.**
   `system` part array. It records the decision key and the payload shape and
   pushes nothing — the injected compaction context is unchanged — and a payload
   whose only session id is a nested `session.id` (a field the 2.2.5 host never
-  sends) produces no decision at all. No measured surface carries the memory
+  sends) produces no decision at all. The same shape was measured in a **child**
+  session (PROBE-G: hook fires 3/3, child `sessionID` at top level, `system` an
+  array of 4), so no child-specific branch exists. `reason:"overflow"` was not
+  inducible and is not designed for. No measured surface carries the memory
   candidate list it would retain or discard, so its record states that absence
   rather than a retention or a priority.
 - **P11** is wired inside `ctx.tool.transform` in **shadow**: it reads the draft
@@ -374,10 +377,15 @@ What the layer does **not** do today, stated as measured rather than implied:
   observation to an in-memory collector that nothing reads back. Its
   12-execution cap is **advisory**: no measured host surface signals a new user
   turn, so nothing is claimed to reset the streak.
-- **P9 (compaction) is measured on top-level sessions only.** Child-session
-  compaction, `reason: "overflow"` and the `messages` channel remain UNKNOWN, and
-  the memory candidate list is not available on any measured surface — so the
-  wired P9 record names that absence and claims no retention or priority.
+- **P9 (compaction) is measured in top-level and child sessions.** PROBE-G fired
+  the hook in a real child 3/3 with the child's `sessionID` at top level and the
+  same payload shape. `reason: "overflow"` was **not inducible** in 6 error
+  shapes — the host retried and completed, and the one failure-recovery
+  compaction was persisted as `reason:"auto"` — so that path stays unmeasured;
+  the checkpoint reinjection inside a child was not exercised, and the `messages`
+  channel remains UNKNOWN. The memory candidate list is not available on any
+  measured surface, so the wired P9 record names that absence and claims no
+  retention or priority.
 - **P8 (guardrail) is not activatable by measurement.** PROBE-F delivered 24 real
   `permission.evaluate` events: the payload is
   `["sessionID","agent","action","resources","metadata","source","effect"]` with
