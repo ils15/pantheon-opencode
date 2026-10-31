@@ -172,6 +172,104 @@ def test_get_latest_eval_ignores_other_namespaces(store: Any) -> None:
     assert len(store.list_evals()) == 1
 
 
+def test_eval_read_closes_connection_on_success(
+    store: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Successful resource reads close the temporary SQLite connection."""
+    original_connect = sqlite3.connect
+    opened: list[sqlite3.Connection] = []
+
+    class TrackingConnection(sqlite3.Connection):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            self.closed = False
+            opened.append(self)
+
+        def close(self) -> None:
+            self.closed = True
+            super().close()
+
+    def tracking_connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+        kwargs["factory"] = TrackingConnection
+        return original_connect(*args, **kwargs)
+
+    monkeypatch.setattr(store.sqlite3, "connect", tracking_connect)
+
+    assert store.list_evals() == []
+    assert len(opened) == 1
+    assert opened[0].closed
+
+
+def test_eval_connection_setup_failure_closes_connection(
+    store: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A SQLite setup failure closes its partially initialized connection."""
+    original_connect = sqlite3.connect
+    opened: list[sqlite3.Connection] = []
+
+    class SetupFailureConnection(sqlite3.Connection):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            self.closed = False
+            opened.append(self)
+
+        def executescript(self, sql: str, /) -> sqlite3.Cursor:
+            raise sqlite3.OperationalError("schema setup failed")
+
+        def close(self) -> None:
+            self.closed = True
+            super().close()
+
+    def setup_failure_connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+        kwargs["factory"] = SetupFailureConnection
+        return original_connect(*args, **kwargs)
+
+    monkeypatch.setattr(store.sqlite3, "connect", setup_failure_connect)
+
+    with pytest.raises(sqlite3.OperationalError, match="schema setup failed"):
+        store._connect()
+    assert len(opened) == 1
+    assert opened[0].closed
+
+
+def test_eval_read_query_failure_closes_connection(
+    store: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed resource query is handled and still closes its connection."""
+    original_connect = sqlite3.connect
+    opened: list[sqlite3.Connection] = []
+
+    class QueryFailureConnection(sqlite3.Connection):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            self.closed = False
+            opened.append(self)
+
+        def execute(
+            self,
+            sql: str,
+            parameters: Any = (),
+            /,
+        ) -> sqlite3.Cursor:
+            if sql.lstrip().upper().startswith("SELECT"):
+                raise sqlite3.OperationalError("resource query failed")
+            return super().execute(sql, parameters)
+
+        def close(self) -> None:
+            self.closed = True
+            super().close()
+
+    def query_failure_connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+        kwargs["factory"] = QueryFailureConnection
+        return original_connect(*args, **kwargs)
+
+    monkeypatch.setattr(store.sqlite3, "connect", query_failure_connect)
+
+    assert store.list_evals() == []
+    assert len(opened) == 1
+    assert opened[0].closed
+
+
 # --------------------------------------------------------------------------- #
 # eval-static.py                                                              #
 # --------------------------------------------------------------------------- #
