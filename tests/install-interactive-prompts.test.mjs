@@ -12,12 +12,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { resolveComponentSelection } from '../scripts/install/component-selection.mjs'
+import { createDecisionRouterConfig } from '../scripts/install/decision-router-config.mjs'
 import {
   PROMPT_CANCELED,
   promptReview,
   runInteractiveInstall,
 } from '../scripts/install/interactive.mjs'
 import { installOpenCode } from '../scripts/install/opencode.mjs'
+import { createInitialState, writeState } from '../scripts/install/state.mjs'
 
 const CANCEL = Symbol('cancel')
 
@@ -25,7 +27,12 @@ const CANCEL = Symbol('cancel')
 const canceledAt = (point) =>
   `Installation canceled at ${point} — nothing was applied; no configuration was changed.`
 
-function fakePrompts({ components = ['agents'], target = 'global', confirmed = true } = {}) {
+function fakePrompts({
+  components = ['agents'],
+  target = 'global',
+  decisionRouter = 'local',
+  confirmed = true,
+} = {}) {
   const calls = []
   return {
     calls,
@@ -38,7 +45,9 @@ function fakePrompts({ components = ['agents'], target = 'global', confirmed = t
     },
     select: async (options) => {
       calls.push(['select', options])
-      return target
+      if (options.message === 'Install location:') return target
+      if (options.message?.startsWith('Decision-router')) return decisionRouter
+      return 'inherit'
     },
     confirm: async (options) => {
       calls.push(['confirm', options])
@@ -58,11 +67,78 @@ test('interactive selection chooses components and location before one later app
 
   assert.deepEqual([...result.components], ['agents', 'plugins'])
   assert.equal(result.target, 'project')
+  assert.deepEqual(result.decisionRouterConfig, {
+    schema_version: 1,
+    provider: 'local',
+    egress_consent: false,
+  })
   assert.deepEqual(
     prompts.calls.map(([name]) => name),
-    ['intro', 'multiselect', 'select'],
+    ['intro', 'multiselect', 'select', 'select'],
   )
   assert.deepEqual(prompts.calls[0], ['intro', 'OpenCode Installer'])
+  const providerPrompt = prompts.calls.find(([, options]) =>
+    options?.message?.startsWith('Decision-router'),
+  )[1]
+  assert.deepEqual(
+    providerPrompt.options.map(({ value }) => value),
+    ['local', 'openai-decisions', 'jev', 'auto'],
+  )
+  assert.equal(providerPrompt.initialValue, 'local')
+  assert.match(providerPrompt.message, /installer preference/i)
+  assert.match(providerPrompt.message, /runtime provider\/model settings.*managed separately/i)
+  assert.match(providerPrompt.message, /installation makes no provider requests/i)
+})
+
+test('external provider choice requires separate consent and stores no credentials', async () => {
+  const prompts = fakePrompts({ decisionRouter: 'jev', confirmed: false })
+  const result = await runInteractiveInstall({ prompts, isTTY: true })
+
+  assert.deepEqual(result.decisionRouterConfig, {
+    schema_version: 1,
+    provider: 'jev',
+    egress_consent: false,
+  })
+  const consent = prompts.calls.find(([name]) => name === 'confirm')?.[1]
+  assert.equal(consent.initialValue, false)
+  assert.match(consent.message, /not runtime consent/i)
+  assert.match(consent.message, /configure actual user-level consent and caps/i)
+  assert.match(consent.message, /installation makes no provider requests/i)
+  assert.deepEqual(Object.keys(result.decisionRouterConfig).sort(), [
+    'egress_consent',
+    'provider',
+    'schema_version',
+  ])
+})
+
+test('an explicit affirmative consent is persisted separately from provider selection', async () => {
+  const prompts = fakePrompts({ decisionRouter: 'openai-decisions', confirmed: true })
+  const result = await runInteractiveInstall({ prompts, isTTY: true })
+
+  assert.deepEqual(result.decisionRouterConfig, {
+    schema_version: 1,
+    provider: 'openai-decisions',
+    egress_consent: true,
+  })
+})
+
+test('canceling provider or consent selection stops before an installer apply', async () => {
+  const providerPrompts = fakePrompts()
+  providerPrompts.select = async (options) =>
+    options.message === 'Install location:'
+      ? 'global'
+      : options.message?.startsWith('Decision-router')
+        ? CANCEL
+        : 'inherit'
+  const providerCanceled = await runInteractiveInstall({ prompts: providerPrompts, isTTY: true })
+  assert.equal(providerCanceled.canceled, true)
+  assert.equal(providerCanceled.cancelPoint, 'decisionRouter')
+
+  const consentPrompts = fakePrompts({ decisionRouter: 'jev' })
+  consentPrompts.confirm = async () => CANCEL
+  const consentCanceled = await runInteractiveInstall({ prompts: consentPrompts, isTTY: true })
+  assert.equal(consentCanceled.canceled, true)
+  assert.equal(consentCanceled.cancelPoint, 'egressConsent')
 })
 
 test('headless and TTY defaults match and runtime/prompts are opt-in', () => {
@@ -166,6 +242,11 @@ test('TTY --yes uses defaults without invoking any prompts', async () => {
     assert.deepEqual(prompts.calls, [])
     assert.equal(readFileSync(sentinel, 'utf8'), '{"untouched":true}\n')
     assert.ok(existsSync(join(target, 'agents', 'zeus.md')))
+    assert.deepEqual(
+      JSON.parse(readFileSync(join(target, '.pantheon', 'install-state.json'), 'utf8'))
+        .decision_router,
+      { schema_version: 1, provider: 'local', egress_consent: false },
+    )
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -184,7 +265,12 @@ async function withTTYComponentSelection(args, callback, selectedComponents = ['
     availableComponents = options.options.map((option) => option.value)
     return selectedComponents
   }
-  prompts.select = async ({ message }) => (message === 'Install location:' ? 'global' : 'inherit')
+  prompts.select = async ({ message }) =>
+    message === 'Install location:'
+      ? 'global'
+      : message?.startsWith('Decision-router')
+        ? 'local'
+        : 'inherit'
 
   try {
     const result = await withTTY(() =>
@@ -301,13 +387,57 @@ async function withTTY(callback) {
   }
 }
 
+test('interactive provider selection persists preference without any provider network request', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-provider-choice-no-network-'))
+  const target = join(root, 'opencode')
+  const prompts = fakePrompts({ decisionRouter: 'openai-decisions', confirmed: true })
+  const originalFetch = globalThis.fetch
+  let fetchCalls = 0
+  globalThis.fetch = async () => {
+    fetchCalls += 1
+    throw new Error('provider network must not be used during installation')
+  }
+
+  try {
+    const result = await installOpenCode(target, false, false, ['agents'], {
+      interactive: true,
+      version: 'v1',
+      global: true,
+      deps: {
+        prompts,
+        isTTY: true,
+        promptReview: async () => true,
+        runVisionPrompt: async () => {},
+      },
+    })
+    assert.equal(result.applied, true)
+    assert.equal(fetchCalls, 0)
+    const state = JSON.parse(readFileSync(join(target, '.pantheon', 'install-state.json'), 'utf8'))
+    assert.deepEqual(state.decision_router, {
+      schema_version: 1,
+      provider: 'openai-decisions',
+      egress_consent: true,
+    })
+    assert.deepEqual(Object.keys(state.decision_router).sort(), [
+      'egress_consent',
+      'provider',
+      'schema_version',
+    ])
+  } finally {
+    globalThis.fetch = originalFetch
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 async function runTTYInstall(target, version) {
   const selectMessages = []
   const prompts = fakePrompts()
   prompts.multiselect = async () => ['agents']
   prompts.select = async ({ message }) => {
     selectMessages.push(message)
-    return message === 'Install location:' ? 'global' : 'inherit'
+    if (message === 'Install location:') return 'global'
+    if (message?.startsWith('Decision-router')) return 'local'
+    return 'inherit'
   }
 
   const result = await installOpenCode(target, false, false, ['agents'], {
@@ -334,7 +464,8 @@ test('V2 interactive install skips the V1 profile wizard and preserves legacy ma
   try {
     const { result, selectMessages } = await withTTY(() => runTTYInstall(target, 'v2'))
     assert.equal(result.applied, true)
-    assert.deepEqual(selectMessages, ['Install location:'])
+    assert.deepEqual(selectMessages, ['Install location:', selectMessages[1]])
+    assert.match(selectMessages[1], /^Decision-router/)
     assert.equal(readFileSync(marker, 'utf8'), markerBytes)
   } finally {
     rmSync(root, { recursive: true, force: true })
@@ -349,8 +480,10 @@ test('V1 interactive install retains the model profile wizard', async () => {
     assert.equal(result.applied, true)
     assert.deepEqual(selectMessages, [
       'Install location:',
+      selectMessages[1],
       'Choose the default model profile for Pantheon agents.',
     ])
+    assert.match(selectMessages[1], /^Decision-router/)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -411,5 +544,44 @@ test('forced interactive mode without a TTY keeps defaults and never invokes pro
 
   assert.deepEqual([...result.components], ['agents', 'skills'])
   assert.equal(result.target, 'global')
+  assert.deepEqual(result.decisionRouterConfig, {
+    schema_version: 1,
+    provider: 'local',
+    egress_consent: false,
+  })
   assert.deepEqual(prompts.calls, [])
+})
+
+test('forced interactive update without a TTY preserves the saved provider preference and consent', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-interactive-no-tty-preserve-'))
+  const target = join(root, 'opencode')
+  mkdirSync(target, { recursive: true })
+  const state = createInitialState('existing-version')
+  state.decision_router = createDecisionRouterConfig('jev', true)
+  writeState(target, state)
+  const prompts = fakePrompts()
+
+  try {
+    const result = await installOpenCode(target, false, false, ['agents'], {
+      interactive: true,
+      version: 'v1',
+      global: true,
+      deps: {
+        prompts,
+        isTTY: false,
+        promptReview: async () => true,
+        runVisionPrompt: async () => {},
+      },
+    })
+
+    assert.equal(result.applied, true)
+    assert.deepEqual(prompts.calls, [])
+    assert.deepEqual(
+      JSON.parse(readFileSync(join(target, '.pantheon', 'install-state.json'), 'utf8'))
+        .decision_router,
+      { schema_version: 1, provider: 'jev', egress_consent: true },
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })

@@ -4,13 +4,16 @@
 # consults .git/hooks/pre-commit, so the framework must be invoked from here.
 # Mirrors the generated .git/hooks/pre-commit shim from `pre-commit install`.
 
+# Probe imports first: an installed interpreter may not have pre_commit.
 INSTALL_PYTHON=/usr/bin/python3
 
-if [ -x "$INSTALL_PYTHON" ]; then
+if [ -x "$INSTALL_PYTHON" ] && "$INSTALL_PYTHON" -c 'import pre_commit' >/dev/null 2>&1; then
 	exec "$INSTALL_PYTHON" -m pre_commit run
+elif command -v python3 >/dev/null 2>&1 && python3 -c 'import pre_commit' >/dev/null 2>&1; then
+	exec python3 -m pre_commit run
 elif command -v pre-commit > /dev/null 2>&1; then
 	exec pre-commit run
 else
-	echo 'pre-commit not found. Install with: pip install pre-commit' 1>&2
+	echo 'pre-commit unavailable. Install with: python3 -m pip install --user pre-commit' 1>&2
 	exit 1
 fi

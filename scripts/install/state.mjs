@@ -31,6 +31,7 @@
 
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { migrateDecisionRouterConfig } from './decision-router-config.mjs'
 import { assertNoSymlinkAncestors, writeFileAtomically } from './verify.mjs'
 
 const STATE_FILE = 'install-state.json'
@@ -82,6 +83,7 @@ export function createInitialState(version, updatedAt = new Date().toISOString()
       plugins: { version: 1, status: 'pending' },
       runtime: { version: 1, status: 'pending' },
     },
+    decision_router: migrateDecisionRouterConfig(undefined),
     file_inventory: emptyFileInventory(false),
   }
 }
@@ -139,6 +141,7 @@ export function upgradeStateV1toV2(state) {
             plugins: { version: 1, status: 'unknown' },
             runtime: { version: 1, status: 'unknown' },
           },
+    decision_router: migrateDecisionRouterConfig(state.decision_router),
     file_inventory: normalizeFileInventory(state),
   }
 }
@@ -174,6 +177,7 @@ function ensureV2Shape(state) {
   ) {
     state.file_inventory = invalidFileInventory()
   }
+  state.decision_router = migrateDecisionRouterConfig(state.decision_router)
   return state
 }
 
@@ -206,6 +210,7 @@ export function writeState(target, state, options = {}) {
   state.schema_version = 2
   if (!Object.hasOwn(state, 'migration_schema_version')) state.migration_schema_version = null
   if (!Array.isArray(state.applied_migrations)) state.applied_migrations = []
+  state.decision_router = migrateDecisionRouterConfig(state.decision_router)
   if (!Object.hasOwn(state, 'file_inventory')) {
     state.file_inventory = emptyFileInventory(true)
   } else if (

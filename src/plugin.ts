@@ -22,6 +22,7 @@ import { createGuardPathResolver } from './pantheon/guard-path.ts'
 import { createReadEnhancer } from './pantheon/hashline/read-enhancer.ts'
 import { createHashlineEditTool } from './pantheon/hashline/tool.ts'
 import { createIdleDispatcher } from './pantheon/idle-continuation.ts'
+import { createLocalDecisionTool } from './pantheon/local-decision-tool.ts'
 import { createPantheonLogger } from './pantheon/logger.ts'
 import { createModelCommand } from './pantheon/model-command.ts'
 import { pantheonPluginOnce } from './pantheon/plugin-once.ts'
@@ -369,6 +370,7 @@ const plugin: Plugin = async (input: PluginInput) => {
   // opencode.db read-only via the single node:sqlite backend. Fully wired.
   const costCommand = createCostCommand()
   const modelCommand = createModelCommand()
+  const localDecisionTool = createLocalDecisionTool()
 
   return {
     config: async (config: PluginConfig) => {
@@ -436,6 +438,8 @@ const plugin: Plugin = async (input: PluginInput) => {
       pantheon_cost: costCommand.pantheon_cost,
       // Deterministic /pantheon-model management of top-level model fields.
       pantheon_model: modelCommand.pantheon_model,
+      // Local advisory routing; execute() requires the host's Zeus agent context.
+      pantheon_local_decision: localDecisionTool,
     },
     'chat.message': async (hookInput, output) => {
       await vision.chatMessage(hookInput, output)

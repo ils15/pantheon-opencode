@@ -41,9 +41,46 @@ function pack(destination) {
     maxBuffer: 16 * 1024 * 1024,
     env: { ...process.env, HUSKY: '0' },
   })
-  const jsonStart = result.indexOf('[\n')
-  if (jsonStart < 0) throw new Error('npm pack did not return JSON metadata')
-  return join(destination, JSON.parse(result.slice(jsonStart))[0].filename)
+  return join(destination, firstPackEntry(result).filename)
+}
+
+/**
+ * Return the first pack entry in `output`. npm emits either an array or an
+ * object keyed by package name, and lifecycle scripts (prepack, prepare) append
+ * lines such as `npm notice run ...` or `HUSKY=0 skip install` to stdout, so
+ * slicing to the end of the output is not parseable.
+ */
+function firstPackEntry(output) {
+  const starts = ['{\n', '[\n']
+    .map((needle) => output.indexOf(needle))
+    .filter((index) => index >= 0)
+  if (starts.length === 0) throw new Error('npm pack did not return JSON metadata')
+  const start = Math.min(...starts)
+  const closing = { '{': '}', '[': ']' }
+  const stack = []
+  let inString = false
+  let escaped = false
+  for (let index = start; index < output.length; index += 1) {
+    const character = output[index]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (character === '\\') escaped = true
+      else if (character === '"') inString = false
+      continue
+    }
+    if (character === '"') inString = true
+    else if (character === '{' || character === '[') stack.push(closing[character])
+    else if (character === '}' || character === ']') {
+      if (stack.pop() !== character) throw new Error('npm pack returned unbalanced JSON metadata')
+      if (stack.length === 0) {
+        const parsed = JSON.parse(output.slice(start, index + 1))
+        const entry = Array.isArray(parsed) ? parsed[0] : Object.values(parsed)[0]
+        if (!entry?.filename) throw new Error('npm pack returned no tarball filename')
+        return entry
+      }
+    }
+  }
+  throw new Error('npm pack did not return complete JSON metadata')
 }
 
 function textFiles(root) {
@@ -146,6 +183,15 @@ test('tarball contains no machine paths and ships the runtime inputs', () => {
       assert.equal(actualHash, expectedHash, `manifest hash mismatch: ${script}`)
     }
     assertExecutableConfigIsPathFree(packageRoot)
+    // Node refuses to strip TypeScript types inside node_modules, so any
+    // published .mjs that imports a relative .ts specifier is dead on install.
+    for (const file of textFiles(packageRoot).filter((candidate) => candidate.endsWith('.mjs'))) {
+      assert.doesNotMatch(
+        readFileSync(file, 'utf8'),
+        /(?:from\s*|import\s*\(\s*)['"]\.{1,2}\/[^'"]+\.ts['"]/,
+        `${relative(packageRoot, file)} imports TypeScript, which Node cannot load from node_modules`,
+      )
+    }
     for (const file of textFiles(join(work, 'package'))) {
       const rel = file.slice(join(work, 'package').length + 1)
       const text = readFileSync(file, 'utf8')
@@ -222,6 +268,18 @@ test('installed package resolves hooks to its installed absolute path', () => {
       env: { ...process.env, XDG_CONFIG_HOME: sandboxConfig },
     })
     const cli = join(work, 'node_modules', 'pantheon-opencode', 'bin', 'pantheon-init.mjs')
+    const routerStatus = spawnSync(process.execPath, [cli, 'decision-router', 'status'], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        HOME: join(work, 'home'),
+        XDG_CONFIG_HOME: sandboxConfig,
+        XDG_STATE_HOME: join(work, 'state'),
+      },
+    })
+    assert.equal(routerStatus.status, 0, routerStatus.stderr || routerStatus.stdout)
+    assert.match(routerStatus.stdout, /Enabled: no/)
+    assert.doesNotMatch(routerStatus.stderr, /ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING/)
     const result = spawnSync(
       process.execPath,
       // --opencode-version v1 pins the generation: this asserts path resolution

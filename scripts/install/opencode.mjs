@@ -50,6 +50,7 @@ import {
   validateMcpV1toV2Source,
 } from './config-migration.mjs'
 import { resolveGlobalConfigDirectory } from './config-paths.mjs'
+import { migrateDecisionRouterConfig } from './decision-router-config.mjs'
 import { componentForInstalledPath, updateFileInventory } from './file-inventory.mjs'
 import { healthCheck } from './health-check.mjs'
 import {
@@ -1640,6 +1641,9 @@ async function installPass(
   const componentSet = new Set(
     opts.noMcp ? components.filter((component) => component !== 'runtime') : components,
   )
+  let decisionRouterConfig = migrateDecisionRouterConfig(
+    opts.decisionRouterConfig ?? readState(target)?.decision_router,
+  )
   const stats = summary.opencode
   // Per-call baseline. `stats` is the module-level cumulative summary, so the
   // consistency guard must compare against THIS call's delta, not the total.
@@ -1789,6 +1793,10 @@ async function installPass(
       components: promptComponents,
       defaultComponents: promptDefaults,
       noMcp: opts.noMcp === true,
+      getDecisionRouterConfig: (selection) => {
+        const selectionTarget = selection === 'project' ? process.cwd() : target
+        return readState(selectionTarget)?.decision_router
+      },
       prompts: opts.deps?.prompts,
       isTTY: opts.deps?.isTTY,
     })
@@ -1824,6 +1832,8 @@ async function installPass(
     for (const c of newComponents) componentSet.add(c)
 
     target = selectedTarget
+    decisionRouterConfig = migrateDecisionRouterConfig(result.decisionRouterConfig)
+    opts.decisionRouterConfig = decisionRouterConfig
     if (!dryRun && _lastRun) _lastRun.target = target
   }
 
@@ -3171,6 +3181,7 @@ async function installPass(
     const packageVersion = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version
     let state = projectedState ?? readState(target)
     if (!state) state = createInitialState(packageVersion, planTimestamp)
+    state.decision_router = decisionRouterConfig
     state.pantheon_version = packageVersion
     state.updated_at = planTimestamp
     state.schema_version = 2
@@ -3319,6 +3330,7 @@ async function installPass(
       throw new Error('Installation state exists but cannot be read; refusing to replace it')
     }
     state ??= createInitialState(packageVersion, planTimestamp)
+    state.decision_router = decisionRouterConfig
     state.pantheon_version = packageVersion
     state.updated_at = planTimestamp
     for (const component of ['agents', 'skills', 'plugins', 'runtime']) {

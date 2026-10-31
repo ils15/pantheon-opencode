@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 
 import * as clack from '@clack/prompts'
+import {
+  createDecisionRouterConfig,
+  DECISION_ROUTER_PROVIDERS,
+  DEFAULT_DECISION_ROUTER_CONFIG,
+  migrateDecisionRouterConfig,
+} from './decision-router-config.mjs'
 import { PROMPT_CANCELED } from './prompt-result.mjs'
 import { strings } from './strings.mjs'
 
@@ -48,8 +54,8 @@ export async function promptReview(
 /**
  * Collect interactive setup choices before the installer begins any writes.
  *
- * @param {{ components?: string[], defaultComponents?: string[], noMcp?: boolean, prompts?: typeof clack, isTTY?: boolean }} [options]
- * @returns {Promise<{ components?: Set<string>, target?: string, canceled?: boolean, cancelPoint?: string }>}
+ * @param {{ components?: string[], defaultComponents?: string[], noMcp?: boolean, prompts?: typeof clack, isTTY?: boolean, getDecisionRouterConfig?: (target: string) => unknown }} [options]
+ * @returns {Promise<{ components?: Set<string>, target?: string, decisionRouterConfig?: object, canceled?: boolean, cancelPoint?: string }>}
  *
  * `cancelPoint` names the setup choice where the user stopped (`components` or
  * `target`), so the caller can print one explainable line and persist the same
@@ -59,6 +65,7 @@ export async function runInteractiveInstall({
   components = [],
   defaultComponents = [],
   noMcp = false,
+  getDecisionRouterConfig = () => DEFAULT_DECISION_ROUTER_CONFIG,
   prompts = clack,
   isTTY = isTerminal(),
 } = {}) {
@@ -68,8 +75,16 @@ export async function runInteractiveInstall({
 
   // Preserve the same component and target defaults without asking a terminal
   // prompt library to access stdin. Apply authorization is handled once, after
-  // the installer has built and displayed the complete plan.
-  if (!isTTY) return { components: defaultSet, target: 'global' }
+  // the installer has built and displayed the complete plan. Re-read the
+  // selected default target's preference so --interactive without a TTY does
+  // not reset an existing provider choice or consent on update.
+  if (!isTTY) {
+    return {
+      components: defaultSet,
+      target: 'global',
+      decisionRouterConfig: migrateDecisionRouterConfig(getDecisionRouterConfig('global')),
+    }
+  }
 
   prompts.intro?.('OpenCode Installer')
 
@@ -111,5 +126,61 @@ export async function runInteractiveInstall({
   })
   if (cancelPrompt(prompts, target, 'target')) return { canceled: true, cancelPoint: 'target' }
 
-  return { components: selectedComponents, target }
+  const previousConfig = migrateDecisionRouterConfig(getDecisionRouterConfig(target))
+  const provider = await prompts.select({
+    message:
+      'Decision-router installer preference (default: Local). This records target-specific metadata only; runtime provider/model settings, egress consent, caps, and period confirmation are managed separately with `npx pantheon-opencode decision-router ...`. Installation makes no provider requests.',
+    options: [
+      {
+        label: 'Local',
+        value: DECISION_ROUTER_PROVIDERS[0],
+        hint: 'Local recommendation logic; no task data is sent to a provider',
+      },
+      {
+        label: 'OpenAI Decisions',
+        value: DECISION_ROUTER_PROVIDERS[1],
+        hint: 'GPT-6 Luna installer metadata only; set runtime config separately',
+      },
+      {
+        label: 'Jev',
+        value: DECISION_ROUTER_PROVIDERS[2],
+        hint: 'TypeSafe Jev installer metadata only; set runtime config separately',
+      },
+      {
+        label: 'Auto',
+        value: DECISION_ROUTER_PROVIDERS[3],
+        hint: 'Installer metadata only; runtime Auto requires one cap-valid enabled candidate',
+      },
+    ],
+    initialValue: previousConfig.provider,
+  })
+  if (cancelPrompt(prompts, provider, 'decisionRouter')) {
+    return { canceled: true, cancelPoint: 'decisionRouter' }
+  }
+
+  let egressConsent = false
+  if (provider !== 'local') {
+    const providerLabel =
+      provider === 'openai-decisions'
+        ? 'OpenAI Decisions'
+        : provider === 'jev'
+          ? 'Jev'
+          : 'the Auto-selected provider'
+    const consent = await prompts.confirm({
+      message:
+        `Save a legacy installer consent preference for potential future ${providerLabel} use? ` +
+        'This is not runtime consent and does not authorize provider transmission. Configure actual user-level consent and caps with `npx pantheon-opencode decision-router ...`. Installation makes no provider requests.',
+      initialValue: previousConfig.provider === provider && previousConfig.egress_consent,
+    })
+    if (cancelPrompt(prompts, consent, 'egressConsent')) {
+      return { canceled: true, cancelPoint: 'egressConsent' }
+    }
+    egressConsent = consent === true
+  }
+
+  return {
+    components: selectedComponents,
+    target,
+    decisionRouterConfig: createDecisionRouterConfig(provider, egressConsent),
+  }
 }

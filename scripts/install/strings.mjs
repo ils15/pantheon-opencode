@@ -21,6 +21,8 @@ const TABLE = {
     cancelPoints: {
       components: 'component selection',
       target: 'install location',
+      decisionRouter: 'decision router selection',
+      egressConsent: 'external data-sharing consent',
       confirmation: 'pre-install confirmation',
       review: 'review prompt',
       interrupt: 'interrupt (Ctrl-C)',
@@ -114,6 +116,8 @@ const TABLE = {
     cancelPoints: {
       components: 'seleção de componentes',
       target: 'local da instalação',
+      decisionRouter: 'seleção do roteador decisório',
+      egressConsent: 'consentimento de compartilhamento externo',
       confirmation: 'confirmação antes de instalar',
       review: 'prompt de revisão',
       interrupt: 'interrupção (Ctrl-C)',

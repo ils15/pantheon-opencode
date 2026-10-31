@@ -76,6 +76,11 @@ test('readState backfills a partial v2 marker (no applied_migrations array)', ()
     assert.ok(state.components && typeof state.components === 'object')
     assert.deepEqual(state.file_inventory.entries, [])
     assert.equal(state.file_inventory.legacy_unknown, true)
+    assert.deepEqual(state.decision_router, {
+      schema_version: 1,
+      provider: 'local',
+      egress_consent: false,
+    })
   })
 })
 

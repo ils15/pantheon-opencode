@@ -31,6 +31,7 @@ Sandbox mechanics are in [Release Process](../RELEASING.md).
 |---|---|---|
 | `PANTHEON_HOME` | unset | Overrides the config root used for memory and the price cache. Resolution is `PANTHEON_HOME`, else `$XDG_CONFIG_HOME/opencode`, else `~/.config/opencode`. |
 | `XDG_CONFIG_HOME` | `~/.config` | Used when `PANTHEON_HOME` is unset. |
+| `XDG_STATE_HOME` | `~/.local/state` | User state root for the separate local decision-budget SQLite ledger. |
 | `PANTHEON_PROJECT` | unset | Absolute project root for project-first resolution (code mode, persistence). A relative value is rejected where an absolute path is required. |
 | `PANTHEON_HOOKS_LOG` | `<project>/.pantheon/logs/hooks.log` | Overrides the plugin hook log path. |
 
@@ -71,6 +72,32 @@ Model precedence and the degradation chain are in [MCP](../MCP.md#pantheon-visio
 | Variable | Default | Purpose |
 |---|---|---|
 | `PANTHEON_MODEL_PRESET` | unset | V1 legacy preset selector. V2 ignores static presets and applies only explicit per-agent project overrides. |
+
+## Local decision recommendation
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PANTHEON_LOCAL_DECISION_ROUTER` | unset (disabled) | Set to `1` to enable only the standalone local advisory API. It does not enable provider transport, host dispatch, or permissions. |
+
+The API contract and its abstention behavior are in
+[Local Decision Router](local-decision-router.md).
+
+## Decision-provider transport
+
+Provider calls are disabled unless the user-level decision-router config is
+explicitly enabled and every local gate passes. See
+[Local Decision Router](local-decision-router.md).
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `OPENAI_API_KEY` | unset | Credential read only after enablement, consent, a cap-valid OpenAI Decisions candidate, a confirmed period, and the host permission gate. Never used by the local selector. |
+| `TYPESAFE_API_KEY` | unset | Same gate for TypeSafe direct Jev (`jev-1.14.0`). |
+| `OPENCODE_API_KEY` | unset | Not read by the decision router for OpenCode Console/Free; those providers are ineligible for egress. It remains in use by other documented OpenCode integrations. |
+
+There is no configurable base URL, retry, failover, or fan-out switch. The fixed
+endpoints, one-call-per-turn cache, and 12,000-character request cap live in the
+private adapter. Console/Free and Bifrost are never eligible. Caps have no
+defaults, and a denied host permission means zero requests.
 
 ## Runtime-specific
 

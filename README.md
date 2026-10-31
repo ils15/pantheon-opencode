@@ -97,6 +97,14 @@ see [Quick Start](docs/QUICKSTART.md).
   and documenting work.
 - **5 local MCP servers** for project memory, persistence, resources, confined
   script execution, and vision.
+- **A selective, advisory decision router** with structured local results and an
+  optional per-turn skill/agent recommendation. Provider egress is fail-closed: it
+  requires explicit enablement, consent, one cap-valid `openai-decisions` or
+  `typesafe-jev` candidate, a confirmed period, and the host permission gate.
+  Console/Free and Bifrost are never eligible. This statement applies to this
+  decision subsystem—not to all Pantheon egress; quota and Vision integrations
+  retain their separately documented external requests. See the
+  [router reference](docs/reference/local-decision-router.md).
 - **An optional TUI** with a dispatch sidebar block and a full-width
   `/dispatch` panel. The V2 TUI also provides a quota overview in the
   sidebar/footer and a `/quota` details panel. Quota display is enabled by
@@ -140,6 +148,11 @@ see [Quick Start](docs/QUICKSTART.md).
   the
   [quota provider coverage table](docs/tui-v2-quota-providers.md) for limits and
   troubleshooting.
+
+
+  Quota status requests are separate from the decision subsystem and continue to use
+  their documented provider APIs. Removing decision-provider transport does not
+  disable these quota requests.
   `/quota-go-check` is a separate manual, confirmation-gated diagnostic: one
   GET to `https://opencode.ai/zen/go/v1/usage` with the configured Go API key
   (not OAuth), at most one attempt per plugin runtime. It never refreshes quota,
@@ -229,6 +242,30 @@ fan-in or job recovery without an exposed mechanism.
 The delegation model, caller/target matrix, and approval gates are documented
 in [Architecture](docs/ARCHITECTURE.md) and
 [Permissions, Gates & Delegation](docs/PERMISSIONS-QUALITY-DELEGATION.md).
+The [local decision router](docs/reference/local-decision-router.md) is
+consultative: it narrows an advisory skill list and can recommend at most one
+specialist, but it never intercepts native child-session dispatch or changes
+permissions. The standalone API is default-off
+(`PANTHEON_LOCAL_DECISION_ROUTER=1`); per-turn selection additionally requires
+`enabled: true` in the user-level config. Provider egress is fail-closed and
+requires every local gate plus a non-denying host `ctx.permission.assert`. The
+host is not deny-by-default for `decision.egress` (an unruled assertion resolved
+allow on the measured canary), so the user-level config/consent gate is the
+source of truth and an explicit host `deny` rule is the kill-switch. A canary
+measured the assertion contract but made no live provider call, so egress remains
+unverified and off by default. Native child-session dispatch remains the final
+routing action.
+
+The installer may retain a legacy target-specific preference; it does not control
+runtime routing. `npx pantheon-opencode decision-router ...` manages user-level
+enablement, selection, candidates, consent, caps, and period confirmation. The
+separate SQLite ledger has no default caps. Caps limit local admission but are not
+invoice guarantees. Installation does not contact a model provider or inspect
+credentials. The published CLI imports a committed ESM ledger bundle:
+`npm run build:decision-router` regenerates it and `npm run check:decision-router`
+(the `prepack`/`prepublishOnly` drift gate) fails when it is stale. The
+`pantheon-opencode/local-decision-router` subpath itself is TypeScript source, so
+it loads only in the host runtime or under a transpiler such as `tsx`.
 
 ## Documentation
 
@@ -240,7 +277,7 @@ in [Architecture](docs/ARCHITECTURE.md) and
 | [Compatibility](docs/COMPATIBILITY.md) | [OpenCode V2](docs/opencode-v2.md) |
 | [Agents & Skills](docs/agents/README.md) | [Platforms](docs/PLATFORMS.md) |
 | [Release Process](docs/RELEASING.md) | [Branch Protection](docs/BRANCH-PROTECTION.md) |
-| [Model Routing](docs/reference/model-routing.md) | [Offline Evaluation Protocol](docs/reference/offline-evaluation.md) · [Env Vars](docs/reference/env-vars.md) · [Code Mode](docs/reference/code-mode.md) |
+| [Model Routing](docs/reference/model-routing.md) | [Local Decision Router](docs/reference/local-decision-router.md) · [Offline Evaluation Protocol](docs/reference/offline-evaluation.md) · [Env Vars](docs/reference/env-vars.md) · [Code Mode](docs/reference/code-mode.md) |
 | [Contributing](CONTRIBUTING.md) | [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) |
 
 The release install gate's tool canary loads the installed tarball's V2 plugin

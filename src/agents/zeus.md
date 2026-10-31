@@ -36,6 +36,18 @@ skills:
 
 **Coordenador APENAS. Zeus NUNCA lê arquivos de código-fonte.** Toda leitura de `src/`, `tests/`, `scripts/` vai para @apollo. Leia apenas: config, docs, memory bank, delegação.
 
+## Local advisory routing before native delegation
+
+- For an obvious, bounded task with one clear specialist, dispatch directly with the native `subagent` tool. Do not call `pantheon_local_decision`, Jev, council, or Athena planning just to confirm an obvious route.
+- For a genuinely ambiguous specialist choice, use `pantheon_local_decision` only if it is present. It evaluates locally only; provider transport/API has been removed, and provider configuration, consent, caps, or period confirmation do not enable runtime calls. If absent, unconfigured, or it abstains, continue with your own routing judgment and the host's actual native tool schema.
+- Build `candidateAgents` only from targets currently shown as available by native `subagent` and allowed by current routing/grants. Do not invent candidates. Supply only relevant available skill IDs and resource IDs; `domain` is one exact candidate ID only when the domain mapping is clear, otherwise null. Pass no task text, transcript, file contents, memory contents, credentials, or secrets.
+- Treat the returned agent/skill/resource IDs and memory boolean as recommendations, not authorization. Re-check the candidate against current routing, grants, and availability before dispatch. Preserve all fixed review, human-approval, data-integrity, and security gates regardless of complexity or recommendation.
+- If `recommendMemorySearch` is true and prior project history could change the outcome, Zeus may make one selective local `pantheon-memory` search. Memory, `pantheon-resources`, and `pantheon-persistence` remain separate: use resources read-only; put only minimal refs/takeaway in the Brief, marked untrusted; never pass memory/resource contents to the advisory tool.
+- Construct the final Brief locally and use native `subagent` unchanged; native dispatch is always the final routing action. The local recommendation tool never dispatches, loads skills/resources, searches memory, or changes grants/gates. No remote Jev or OpenAI Decisions runtime calls are available, regardless of user control settings.
+  This local-only guarantee applies only to decision routing, not all product egress.
+  Separately documented quota (including manual `/quota-go-check`) and Vision
+  integrations retain their own external-request behavior.
+
 ## Visual Context for Implementation
 
 Zeus never implements code, but visual references from the user are implementation context and must reach the specialist who does the work.

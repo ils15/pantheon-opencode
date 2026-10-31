@@ -5,6 +5,10 @@ import Module, { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { readOnlyRegistry, syncReadOnlySession } from '../../src/pantheon/delegation-enforce.ts'
+import {
+  DECISION_EGRESS_ACTION,
+  decisionPermissionSource,
+} from '../../src/pantheon/local-decision-egress-gate.ts'
 import { TODO_CONTINUATION_PROMPT } from '../../src/pantheon/todo-enforcer.ts'
 import { BRIDGE_OPTIONS_KEY } from '../../src/pantheon/v2-bridge.ts'
 import type { HookResult } from '../../src/plugins/hook-runner.ts'
@@ -958,11 +962,11 @@ async function main(): Promise<void> {
 
     assert.equal(setupResolved, true)
     assert.deepEqual(hookAttempts, [
+      'permission:evaluate',
       'session:context',
       'session:prompt',
       'tool:execute.before',
       'tool:execute.after',
-      'permission:evaluate',
       'session:compaction',
     ])
   })
@@ -1505,9 +1509,9 @@ async function main(): Promise<void> {
       : []
   }
 
-  test('V2 registers exactly the 3 self-sufficient tools', async () => {
+  test('V2 registers four self-sufficient tools including the local advisory router', async () => {
     const registered = await registerToolsThroughHostMock()
-    // 3 tools: hashline_edit, pantheon_cost, pantheon_model. The 3 goal tools
+    // The 3 goal tools
     // were REMOVED rather than stubbed — they need a GoalStore, a
     // GoalLoopClient and a BackgroundJobBoard, none of which exist on the V2
     // PluginContext. A placeholder would still fail this host contract on
@@ -1516,6 +1520,7 @@ async function main(): Promise<void> {
     assert.deepEqual(registered.map((t) => t.name).sort(), [
       'hashline_edit',
       'pantheon_cost',
+      'pantheon_local_decision',
       'pantheon_model',
     ])
   })
@@ -1636,7 +1641,12 @@ async function main(): Promise<void> {
     // is off — which is why it is asserted rather than assumed.
     const registered = await registerToolsThroughHostMock()
     const names = registered.map((t) => t.name).sort()
-    assert.deepEqual(names, ['hashline_edit', 'pantheon_cost', 'pantheon_model'])
+    assert.deepEqual(names, [
+      'hashline_edit',
+      'pantheon_cost',
+      'pantheon_local_decision',
+      'pantheon_model',
+    ])
 
     // Derive what a namespaced id WOULD look like and assert none of them is in
     // the registered set. Comparing prefixes directly would false-positive on
@@ -2106,6 +2116,46 @@ async function main(): Promise<void> {
     await captured.evaluate?.(permissionEvent)
     assert.equal(permissionEvent.effect, 'ask')
     assert.equal(permissionEvent.message, 'host approval required')
+  })
+
+  test('the registered evaluate hook leaves decision.egress to the host rules', async () => {
+    const captured = await setupCapturingPermissionHooks()
+    assert.equal(typeof captured.evaluate, 'function')
+
+    const endpoint = 'https://api.typesafe.ai/v1/systemone'
+    const sessionID = 'ses_contract_egress'
+    const messageID = 'msg_contract_egress'
+
+    // The plugin no longer decides `decision.egress`: the user-level config is
+    // the source of truth and the host's own rules are the kill-switch. The
+    // v2.2.0 canary showed this hook runs on the allow path of
+    // `permission.assert` and is skipped for an explicit deny, so egress must
+    // never depend on it. Whatever effect arrives, it stays.
+    for (const effect of ['ask', 'allow']) {
+      const egressEvent = {
+        action: DECISION_EGRESS_ACTION,
+        sessionID,
+        resources: [endpoint],
+        source: decisionPermissionSource(sessionID, messageID),
+        effect,
+        message: 'host approval required',
+      }
+      await captured.evaluate?.(egressEvent)
+      assert.equal(egressEvent.effect, effect, 'decision.egress is passed through untouched')
+      assert.equal(egressEvent.message, 'host approval required')
+    }
+
+    // A different action is untouched by the decision gate.
+    const other = {
+      action: 'read',
+      sessionID,
+      resources: [endpoint],
+      effect: 'ask',
+      message: 'host approval required',
+    }
+    await captured.evaluate?.(other)
+    assert.equal(other.effect, 'ask', 'non decision.egress actions pass through')
+    assert.equal(other.message, 'host approval required')
   })
 
   test('V2 registers a tool execute.before handler that enforces (not a no-op)', () => {

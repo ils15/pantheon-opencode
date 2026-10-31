@@ -110,6 +110,7 @@ npm run lint          # biome
 npm run typecheck     # tsc --noEmit
 npm test              # full test:ci + test:node + test:ts suite; CI/release or broad/high-risk changes
 npm run docs:lint
+npm run check:decision-router  # committed ledger bundle drift gate (regenerate: npm run build:decision-router)
 npm run skills:lock   # refresh canonical skill content digests
 ```
 
