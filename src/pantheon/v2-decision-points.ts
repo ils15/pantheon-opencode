@@ -11,8 +11,15 @@
  * could rewrite a status could turn a premise into an apparent measurement.
  *
  * `mode` declares the mode a point would run in, never a production call site:
- * `src/plugin-v2.ts` registers only the P7 and P8 adapters, and the other nine
- * points are library code with no caller outside the harness and the tests.
+ * `wired` records whether the shipped plugin constructs the adapter, and the
+ * source-derived audit in `tests/pantheon/v2-decision-wiring.test.ts` fails when
+ * the flag and the production import graph disagree. P1 and P2 are constructed
+ * at the prompt hook, P3 at `tool.invoke` (its declared surface and the only one
+ * carrying `complexity`/`gateStatus`), P7 on the event channel, P8 on
+ * permission.evaluate, P9 on the compaction hook (the only surface carrying its
+ * top-level `sessionID`) and P11 inside `ctx.tool.transform` (the only measured
+ * catalogue surface); P4, P5, P6 and P10 remain library code with no caller
+ * outside the harness and the tests, and their `wired` stays `false`.
  */
 
 import type { DecisionPoint } from './v2-decision-registry.ts'
@@ -30,6 +37,7 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['choice'],
     mode: SHADOW,
     status: 'premise',
+    wired: true,
     evidence: ['F-08'],
     premises: ['PM-06', 'PM-07'],
     blockingCondition:
@@ -46,6 +54,7 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['choice', 'rank'],
     mode: SHADOW,
     status: 'advisory',
+    wired: true,
     evidence: ['F-06', 'F-08', 'F-09', 'F-10'],
     premises: ['PRE-02', 'PM-06', 'PM-07', 'PM-13'],
     blockingCondition:
@@ -66,11 +75,13 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['score', 'noul'],
     mode: SHADOW,
     status: 'premise',
+    wired: true,
     evidence: [],
     premises: ['PM-06', 'PM-09'],
     blockingCondition:
       'PM-09 open: no tool call was measured, so the tool.invoke surface that would carry complexity scoring was never exercised. C6 is closed by PROBE-E and is not the blocker',
-    notes: 'Complexity classification is contract-only in this phase.',
+    notes:
+      'Complexity classification is contract-only in this phase. Wired at its declared `tool.invoke`: `pantheon_local_decision` execute hands the adapter its own input, whose schema requires `complexity` and `gateStatus`, so the adapter classifies from the payload that reaches it instead of refusing from the prompt hook. PM-09 stays open — no tool call was ever measured — so this records a decision only when the tool is invoked and never applies one.',
   }),
   Object.freeze<DecisionPoint>({
     id: 'P4',
@@ -81,11 +92,12 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['rank'],
     mode: SHADOW,
     status: 'measured',
+    wired: false,
     evidence: ['F-02', 'F-03'],
     premises: ['PM-05'],
     blockingCondition: null,
     notes:
-      'System-array carrier and checkpoint reinjection measured (F-02, F-03); channel exclusivity unproven (PM-05).',
+      "System-array carrier and checkpoint reinjection measured (F-02, F-03); channel exclusivity unproven (PM-05). Unwired: the measured `session.hook('context')` payload carries `sessionID`, `model`, `system` (text parts), `messages`, `options`, `agent` and `tools` — no candidate list with `id`/`score`/`justification`, which is the adapter's only input. Constructing it there could pass nothing but `undefined` and record `memory.source.absent` on every request, so it stays library code until a measured surface carries the candidates it ranks. Memory TEXT crossing in `system` is the carrier, not a candidate source, and is not read as one.",
   }),
   Object.freeze<DecisionPoint>({
     id: 'P5',
@@ -96,11 +108,13 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['verify'],
     mode: SHADOW,
     status: 'premise',
+    wired: false,
     evidence: [],
     premises: ['PM-09'],
     blockingCondition:
       'C8 open: permission.evaluate and execute.before were registered but never fired; no tool call was measured',
-    notes: 'Verdicts PASS/FAIL/BLOCK; failed_to_respond in mandatory verification is BLOCK.',
+    notes:
+      'Verdicts PASS/FAIL/BLOCK; failed_to_respond in mandatory verification is BLOCK. Unwired: the adapter verifies a DECLARED `{ requirements, responses }` pair and no measured surface carries either — the `execute.after` event is `{ tool, sessionID, agent, messageID, id, input, status, result }`, with no verification declaration and no response map. The surface is additionally unmeasured (PM-09, C8 open: the tool hooks were registered and never fired), so constructing it there would record `themis.requirements.absent` on every call instead of a verdict.',
   }),
   Object.freeze<DecisionPoint>({
     id: 'P6',
@@ -111,10 +125,12 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['rank', 'score'],
     mode: SHADOW,
     status: 'measured',
+    wired: false,
     evidence: ['F-08'],
     premises: ['PM-07'],
     blockingCondition: null,
-    notes: 'Prompt payload shape measured; populated prompt.agents was never observed.',
+    notes:
+      'Prompt payload shape measured (F-08); populated prompt.agents was never observed (PM-07). Unwired: the prompt surface carries `prompt.agents`/`prompt.skills`, never the `{ id, score, justification }` candidate list this adapter ranks, so constructing it there would only record a permanent `council.source.absent` refusal. No measured surface carries council candidates; it stays library code until one does.',
   }),
   Object.freeze<DecisionPoint>({
     id: 'P7',
@@ -125,6 +141,7 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['noul', 'score'],
     mode: 'migration',
     status: 'measured',
+    wired: true,
     evidence: ['F-11', 'F-12', 'F-13', 'I-01'],
     premises: [],
     blockingCondition: null,
@@ -151,6 +168,7 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['noul'],
     mode: 'off',
     status: 'premise',
+    wired: true,
     evidence: [],
     premises: ['PM-09', 'PM-16'],
     blockingCondition:
@@ -174,6 +192,7 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['noul', 'score'],
     mode: SHADOW,
     status: 'measured',
+    wired: true,
     scope: 'top-level-session-only',
     evidence: ['F-01', 'F-02', 'F-03', 'F-04'],
     premises: ['PM-04', 'PM-05'],
@@ -182,9 +201,10 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
       'child-session compaction is UNKNOWN',
       'reason:"overflow" was never exercised',
       'the messages channel was never exercised',
+      'no measured surface carries the memory candidate list P9 would retain or discard',
     ],
     notes:
-      'Measured on top-level sessions only: top-level sessionID carrier (F-01) and system-array text (F-02).',
+      'Measured on top-level sessions only: top-level sessionID carrier (F-01) and system-array text (F-02). Wired at its declared `session.hook(\'compaction\')` in shadow: the handler hands the adapter the event as-is, the adapter reads `payload.sessionID` and the `system` part array and nothing else, and the injected context is unchanged — the record carries the decision key and `systemPartCount`, and the adapter pushes nothing. A payload whose only id is a nested `session.id` produces NO decision (fail-closed), because the 2.2.5 host never sends `session` at all (F-01). The memory candidate list is an optional caller input and no measured surface carries it, so the wired record states `compaction.memory.source.absent` — a named refusal, never a retention or priority claim. `reason:"overflow"` and child-session compaction stay UNKNOWN and are not designed for.',
   }),
   Object.freeze<DecisionPoint>({
     id: 'P10',
@@ -195,12 +215,13 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['verify'],
     mode: SHADOW,
     status: 'premise',
+    wired: false,
     evidence: [],
     premises: [],
     blockingCondition:
-      'Not implemented: per-counselor claims were never designed or measured (DISCOVERY §4)',
+      'Not implemented: per-counselor claims were never designed or measured (DISCOVERY §4); no measured surface carries `counsellors[].claims[]`',
     notes:
-      'Explicit verdict per claim; failed_to_respond is BLOCK in mandatory verification. The prompt hook is the only measured council surface (F-08), so it names the boundary; the declaration records intent, not exercised coverage.',
+      'Explicit verdict per claim; failed_to_respond is BLOCK in mandatory verification. The prompt hook is the only measured council surface (F-08), but that payload carries neither counsellors nor claims, so the point is unwired: constructing it there would record `claims.absent` forever. The declaration records intent and the boundary, not exercised coverage.',
   }),
   Object.freeze<DecisionPoint>({
     id: 'P11',
@@ -211,10 +232,11 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['choice'],
     mode: SHADOW,
     status: 'measured',
+    wired: true,
     evidence: ['F-05', 'F-07'],
     premises: ['PM-06', 'PM-08'],
     blockingCondition: null,
     notes:
-      'Host catalog context is ABSENT at every measured point (F-05) and was removed from the design; the adapter uses the tool.transform draft (F-07).',
+      "Host catalog context is ABSENT at every measured point (F-05) and was removed from the design; the adapter uses the tool.transform draft (F-07). Wired inside the `ctx.tool.transform` callback in shadow: it reads the draft the host hands it (`list` plus the six measured members) and calls nothing else, so the only mutation on that draft is Pantheon's own `namespace`/`add`. Shadow has no responder, so the record names the validated `choice` question over the draft ids (`catalog.no.answer`) and never a selection; a draft that is absent or shaped differently fails closed with a reason instead of throwing into admission.",
   }),
 ])
