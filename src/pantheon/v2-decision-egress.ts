@@ -16,6 +16,18 @@
  *    and not a budget row of the decision router; that absence is asserted from
  *    the config maps in the egress tests, not from this module.
  *
+ * 3. **A declared endpoint that is not provably wired must SAY so.** Every
+ *    endpoint carries an explicit wire status, and
+ *    {@link findUnverifiedEgressEndpoints} returns the ones that are neither
+ *    declared `unwired` nor exercised by a real path. The exercised-path list is
+ *    empty and must stay honest: no probe issued a decision request, so no
+ *    endpoint can be marked `wired` without failing that check. Verification of
+ *    this surface therefore covers only the paths a probe exercised — none —
+ *    and the absence of a probe is recorded, not inferred as safety. Of the
+ *    ten `permission.evaluate` paths, `.egress` is unreachable in the probed
+ *    host: a tool declaring that permission registers but is never advertised to
+ *    the provider (PROBE-F §3.9).
+ *
  * Selection cardinality is delegated to `explainUserDecisionRouterAutoSelection`
  * (D5), so 0, 1 and 2+ eligible candidates are three distinct outcomes here too
  * and an ambiguous Auto selection can never be read as "the single one".
@@ -52,22 +64,70 @@ export type V2DecisionEgressState =
       candidate: UserDecisionRouterCandidate
     }
 
+export type V2DecisionEgressWireStatus = 'unwired' | 'wired'
+
+interface DeclaredEgressEndpoint {
+  readonly url: string
+  readonly wireStatus: V2DecisionEgressWireStatus
+}
+
 /**
- * Fixed endpoints retained from the private provider matrix. `wired: false` is
- * about THIS surface: phase 7 adds no transport, and no code path here can
- * issue a request. It is not a statement that the endpoint strings were removed.
+ * Fixed endpoints retained from the private provider matrix, each with its own
+ * wire status. `unwired` is about THIS surface: phase 7 adds no transport, and
+ * no code path here can issue a request. It is not a statement that the
+ * endpoint strings were removed.
  */
+const DECLARED_EGRESS_ENDPOINTS: readonly DeclaredEgressEndpoint[] = Object.freeze([
+  { url: 'https://api.openai.com/v1/decisions', wireStatus: 'unwired' },
+  { url: 'https://api.typesafe.ai/v1/systemone', wireStatus: 'unwired' },
+  { url: 'https://opencode.ai/inference/systemone/v1/systemone', wireStatus: 'unwired' },
+])
+
+/**
+ * Paths a probe actually exercised end to end. Empty, and that is the claim:
+ * no probe issued a decision request, so no endpoint may be reported as wired.
+ * Adding an entry here is a measurement claim and needs a probe artifact.
+ */
+export const V2_DECISION_EGRESS_EXERCISED_PATHS: readonly string[] = Object.freeze([])
+
+/** Per-endpoint wire status. Derived from the declaration, never hand-kept. */
+export const V2_DECISION_EGRESS_ENDPOINT_WIRE_STATUS: Readonly<
+  Record<string, V2DecisionEgressWireStatus>
+> = Object.freeze(
+  Object.fromEntries(DECLARED_EGRESS_ENDPOINTS.map(({ url, wireStatus }) => [url, wireStatus])),
+)
+
+/**
+ * Endpoints whose wire status is not verifiable: neither declared `unwired` nor
+ * covered by an exercised path. An unknown or missing status is unverified too —
+ * silence is not evidence of inertia.
+ */
+export function findUnverifiedEgressEndpoints(
+  endpoints: readonly string[],
+  endpointWireStatus: Readonly<Record<string, V2DecisionEgressWireStatus>>,
+  exercisedPaths: readonly string[] = V2_DECISION_EGRESS_EXERCISED_PATHS,
+): readonly string[] {
+  const exercised = new Set(exercisedPaths)
+  return Object.freeze(
+    endpoints.filter((endpoint) => {
+      const status = endpointWireStatus[endpoint]
+      if (status === 'unwired') return false
+      if (status === 'wired') return !exercised.has(endpoint)
+      return true
+    }),
+  )
+}
+
 export const V2_DECISION_EGRESS_TRANSPORT = Object.freeze({
   wireStatus: 'unwired',
   wired: false,
   note:
     'Endpoints are retained inert (UNWIRED) in this surface. No transport, retry or fallback ' +
-    'exists here, and this module never claims the transport was removed.',
-  endpoints: Object.freeze([
-    'https://api.openai.com/v1/decisions',
-    'https://api.typesafe.ai/v1/systemone',
-    'https://opencode.ai/inference/systemone/v1/systemone',
-  ]),
+    'exists here, and this module never claims the transport was removed. Verification covers ' +
+    'only the paths a probe exercised — none — and every declared endpoint carries an explicit ' +
+    'wire status so an unverified endpoint fails a test instead of passing silently.',
+  endpoints: Object.freeze(DECLARED_EGRESS_ENDPOINTS.map(({ url }) => url)),
+  endpointWireStatus: V2_DECISION_EGRESS_ENDPOINT_WIRE_STATUS,
 })
 
 /**

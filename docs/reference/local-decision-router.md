@@ -340,10 +340,17 @@ probability must both be at least `0.80`.
 surface.** `https://api.openai.com/v1/decisions` and
 `https://api.typesafe.ai/v1/systemone` (plus the two ineligible Console endpoints)
 remain in the private matrix as fixed strings, and `v2-decision-egress.ts` declares
-`wireStatus: 'unwired'` with no transport of its own. This is a statement about
-wiring, not about removal: nothing here claims the transport was deleted. Bifrost
-is not a decision-router provider, model, or budget row, and a test asserts its
-absence from both maps.
+`wireStatus: 'unwired'` with no transport of its own. Each declared endpoint also
+carries its own wire status, and a test fails when an endpoint is neither
+asserted `unwired` nor covered by a path a probe exercised. **Verification covers
+only the paths a probe exercised — none** — so this is not evidence about network
+absence anywhere else, and no read-only claim may be derived from it. This is a
+statement about wiring, not about removal: nothing here claims the transport was
+deleted. Bifrost is not a decision-router provider, model, or budget row, and a
+test asserts its absence from both maps. Separately, `permission.evaluate.egress`
+is unreachable in the probed host: a tool that declares `decision.egress`
+registers but is never advertised to the provider, so that permission action is
+never delivered (PROBE-F §3.9).
 
 **Dated documentation snapshot (2026-10-30):** OpenAI GPT-6 Luna standard rates
 are $0.10/1M input and $0.50/1M output tokens; its documentation separately lists

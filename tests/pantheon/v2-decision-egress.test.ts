@@ -8,8 +8,10 @@ import {
 import { DECISION_PROVIDER_ADAPTERS } from '../../src/pantheon/local-decision-provider-matrix.ts'
 import {
   assertV2DecisionEgressOptIn,
+  findUnverifiedEgressEndpoints,
   resolveV2DecisionEgress,
   V2_DECISION_EGRESS_DEFAULT,
+  V2_DECISION_EGRESS_EXERCISED_PATHS,
   V2_DECISION_EGRESS_TRANSPORT,
   v2DecisionEgressMaySend,
 } from '../../src/pantheon/v2-decision-egress.ts'
@@ -126,4 +128,57 @@ test('provider endpoints are declared unwired and no gateway provider reaches eg
   for (const provider of ['opencode-console-jev', 'opencode-console-jev-free']) {
     assert.equal(DECISION_PROVIDER_ADAPTERS[provider].egressEligible, false)
   }
+})
+
+/**
+ * C10: an endpoint that is not provably wired must be ASSERTED unwired. This
+ * fails on a declared endpoint that is neither declared `unwired` nor covered by
+ * an exercised path, and on a `wired` claim with no measurement behind it.
+ *
+ * Verification covers only the paths a probe exercised — none — so no endpoint
+ * may be reported as wired. `permission.evaluate.egress` is likewise unreachable
+ * in the probed host: a tool declaring that permission registers but is never
+ * advertised to the provider (PROBE-F §3.9).
+ */
+test('a declared endpoint is either asserted unwired or exercised, never silently unverified', () => {
+  const declared = [...V2_DECISION_EGRESS_TRANSPORT.endpoints]
+  assert.equal(declared.length, 3)
+  assert.deepEqual([...V2_DECISION_EGRESS_EXERCISED_PATHS], [], 'no probe issued a request')
+
+  for (const endpoint of declared) {
+    assert.ok(
+      Object.hasOwn(V2_DECISION_EGRESS_TRANSPORT.endpointWireStatus, endpoint),
+      `${endpoint} declares no wire status`,
+    )
+    assert.equal(V2_DECISION_EGRESS_TRANSPORT.endpointWireStatus[endpoint], 'unwired', endpoint)
+  }
+  // The exercised-path list may only name declared endpoints.
+  for (const path of V2_DECISION_EGRESS_EXERCISED_PATHS) {
+    assert.ok(declared.includes(path), `${path} is claimed as exercised but is not declared`)
+  }
+  assert.deepEqual(
+    [
+      ...findUnverifiedEgressEndpoints(
+        declared,
+        V2_DECISION_EGRESS_TRANSPORT.endpointWireStatus,
+        V2_DECISION_EGRESS_EXERCISED_PATHS,
+      ),
+    ],
+    [],
+    'every declared endpoint must be asserted unwired or exercised',
+  )
+
+  // The check itself must fail closed, or the assertion above proves nothing.
+  const missing = 'https://example.test/missing-status'
+  const unproven = 'https://example.test/unproven-wire'
+  assert.deepEqual([...findUnverifiedEgressEndpoints([missing], {}, [])], [missing])
+  assert.deepEqual(
+    [...findUnverifiedEgressEndpoints([unproven], { [unproven]: 'wired' }, [])],
+    [unproven],
+  )
+  assert.deepEqual(
+    [...findUnverifiedEgressEndpoints([unproven], { [unproven]: 'wired' }, [unproven])],
+    [],
+  )
+  assert.deepEqual([...findUnverifiedEgressEndpoints([missing], { [missing]: 'unwired' }, [])], [])
 })

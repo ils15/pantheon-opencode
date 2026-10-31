@@ -291,7 +291,13 @@ Provider egress remains opt-in with the default `off`; no command in this layer
 can switch it on without enablement, recorded consent, one cap- and
 period-eligible candidate and a non-denying host gate. The fixed OpenAI/TypeSafe
 endpoints are retained inert and are documented as **unwired**; this statement is
-about wiring, not about removing any transport. Measured surface coverage is
+about wiring, not about removing any transport. Each endpoint carries its own
+explicit wire status, and a test fails when a declared endpoint is neither
+asserted `unwired` nor exercised by a real path. Verification covers **only the
+paths a probe exercised — none** — so nothing here is evidence about network
+absence on an unexercised path; `permission.evaluate.egress` is likewise
+unreachable in the probed host (a tool declaring it is never advertised to the
+provider). Measured surface coverage is
 reported honestly rather than implied: P7 runs behind `PANTHEON_V2_P7_LOOP` with
 an **advisory** execution cap (never described as enforcement), P2 is
 **advisory-only** (an empirical no-op on the default path), P9 was measured on
