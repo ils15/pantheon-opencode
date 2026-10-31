@@ -17,11 +17,41 @@
  * `deferred` points must carry the blocking condition.
  * {@link auditDecisionRegistry} enforces both properties, and the harness
  * treats a violation as a failure.
+ *
+ * ## Tool-vs-hook boundary (D12)
+ *
+ * Every point declares two things and they are checked against each other, so
+ * neither can drift alone:
+ *
+ *   - `hostSurface` — the host API namespace that would carry the decision;
+ *   - `toolOrHook` — `tool` when that namespace is the tool surface
+ *     (`ctx.tool.transform`, a model-invocable Pantheon tool), `hook` when it
+ *     is a host-invoked surface (a session hook, `permission.evaluate`,
+ *     `execute.after`, the compaction hook, or the event channel).
+ *
+ * A catalog *read* (`ctx.skill`, the tool draft) never makes a point a tool
+ * point; the boundary is where the decision would be applied. A point that
+ * touched both would be ambiguous, so the declaration is exactly one of the
+ * two values and the audit rejects anything else. The declared `hostPoint`
+ * must also name the declared surface, which makes the declaration falsifiable
+ * without executing anything.
+ *
+ * ## Resource ids (D13)
+ *
+ * Resource ids are not stored per point: they are derived by
+ * `v2-decision-resource-ids.ts` from the point id, the domain surface, the
+ * premises and the evidence ids. The audit rejects a collision between two
+ * distinct ids, and the ids are always namespaced under
+ * `pantheon://v2-decision/`.
  */
 
 import type { AskMode } from './v2-decision-contracts.ts'
 import { DECISION_POINT_REGISTRY } from './v2-decision-points.ts'
 import { PREMISE_IDS, PREMISE_REGISTER, type PremiseEntry } from './v2-decision-premises.ts'
+import {
+  decisionResourceRefs,
+  findDecisionResourceIdCollisions,
+} from './v2-decision-resource-ids.ts'
 
 export const DECISION_POINT_IDS = [
   'P1',
@@ -56,6 +86,65 @@ export type DecisionSurface =
 
 export type DecisionPrimitive = AskMode | 'rank' | 'verify'
 
+/** Host API namespace that carries the decision (D12). */
+export type DecisionHostSurface =
+  | 'tool.invoke'
+  | 'tool.transform'
+  | 'session.hook.prompt'
+  | 'session.hook.context'
+  | 'session.hook.compaction'
+  | 'session.hook.execute.after'
+  | 'permission.evaluate'
+  | 'event.channel'
+
+/** The tool-vs-hook boundary. Exactly one value per point; never both. */
+export type DecisionToolOrHook = 'tool' | 'hook'
+
+/** Every host surface the registry may declare. */
+export const DECISION_HOST_SURFACES: readonly DecisionHostSurface[] = Object.freeze([
+  'tool.invoke',
+  'tool.transform',
+  'session.hook.prompt',
+  'session.hook.context',
+  'session.hook.compaction',
+  'session.hook.execute.after',
+  'permission.evaluate',
+  'event.channel',
+])
+
+/**
+ * The only correct side of the boundary for each host surface.
+ *
+ * `tool.transform` is a tool point even though the host invokes the transform:
+ * it acts on the tool namespace. The event channel is a hook point even though
+ * it is not a session hook: it is host-driven and model-invocable. The rule is
+ * namespace membership, not invocation direction.
+ */
+export const TOOL_OR_HOOK_BY_HOST_SURFACE: Readonly<
+  Record<DecisionHostSurface, DecisionToolOrHook>
+> = Object.freeze({
+  'tool.invoke': 'tool',
+  'tool.transform': 'tool',
+  'session.hook.prompt': 'hook',
+  'session.hook.context': 'hook',
+  'session.hook.compaction': 'hook',
+  'session.hook.execute.after': 'hook',
+  'permission.evaluate': 'hook',
+  'event.channel': 'hook',
+})
+
+/** A token the declared `hostPoint` must contain, so the claim is falsifiable. */
+const HOST_POINT_TOKENS: Readonly<Record<DecisionHostSurface, readonly string[]>> = Object.freeze({
+  'tool.invoke': ['tool pantheon_local_decision'],
+  'tool.transform': ['tool.transform'],
+  'session.hook.prompt': ['prompt'],
+  'session.hook.context': ['context'],
+  'session.hook.compaction': ['compaction'],
+  'session.hook.execute.after': ['execute.after'],
+  'permission.evaluate': ['permission.evaluate'],
+  'event.channel': ['session.execution.succeeded'],
+})
+
 export interface DecisionEventShape {
   /** Event type the adapter consumes, when the point is event-driven. */
   readonly type: string
@@ -68,6 +157,10 @@ export interface DecisionEventShape {
 export interface DecisionPoint {
   readonly id: DecisionPointId
   readonly surface: DecisionSurface
+  /** Host API namespace that would carry the decision. */
+  readonly hostSurface: DecisionHostSurface
+  /** Explicit D12 declaration, validated against `hostSurface`. */
+  readonly toolOrHook: DecisionToolOrHook
   readonly hostPoint: string
   readonly primitives: readonly DecisionPrimitive[]
   readonly mode: DecisionPointMode
@@ -111,6 +204,11 @@ export type RegistryViolationCode =
   | 'MISSING_PREMISE_REGISTER_ENTRY'
   | 'GUARDRAIL_WITHOUT_SECURITY_INVARIANT'
   | 'CATALOG_REFERENCE_PRESENT'
+  | 'UNKNOWN_HOST_SURFACE'
+  | 'AMBIGUOUS_TOOL_OR_HOOK'
+  | 'TOOL_OR_HOOK_MISMATCH'
+  | 'HOST_SURFACE_HOST_POINT_MISMATCH'
+  | 'RESOURCE_ID_COLLISION'
 
 export interface RegistryViolation {
   readonly code: RegistryViolationCode
@@ -216,6 +314,38 @@ export function auditDecisionRegistry(
         detail: 'guardrail points must carry the hard-barrier invariant',
       })
     }
+    const hostSurface = point.hostSurface
+    const surfaceIsKnown = DECISION_HOST_SURFACES.includes(hostSurface)
+    if (!surfaceIsKnown) {
+      violations.push({
+        code: 'UNKNOWN_HOST_SURFACE',
+        pointId: point.id,
+        detail: `${String(hostSurface)} is not a host surface`,
+      })
+    }
+    if (point.toolOrHook !== 'tool' && point.toolOrHook !== 'hook') {
+      violations.push({
+        code: 'AMBIGUOUS_TOOL_OR_HOOK',
+        pointId: point.id,
+        detail: 'a point declares exactly one side: tool or hook',
+      })
+    } else if (surfaceIsKnown && point.toolOrHook !== TOOL_OR_HOOK_BY_HOST_SURFACE[hostSurface]) {
+      violations.push({
+        code: 'TOOL_OR_HOOK_MISMATCH',
+        pointId: point.id,
+        detail: `${hostSurface} is a ${TOOL_OR_HOOK_BY_HOST_SURFACE[hostSurface]} surface, not ${point.toolOrHook}`,
+      })
+    }
+    if (
+      surfaceIsKnown &&
+      !HOST_POINT_TOKENS[hostSurface].some((token) => point.hostPoint.includes(token))
+    ) {
+      violations.push({
+        code: 'HOST_SURFACE_HOST_POINT_MISMATCH',
+        pointId: point.id,
+        detail: `hostPoint does not name the declared surface ${hostSurface}`,
+      })
+    }
     if (FORBIDDEN_CATALOG_REFERENCE.test(JSON.stringify(point))) {
       violations.push({
         code: 'CATALOG_REFERENCE_PRESENT',
@@ -223,6 +353,14 @@ export function auditDecisionRegistry(
         detail: 'the host catalog context is absent from the measured surface',
       })
     }
+  }
+
+  for (const resourceId of findDecisionResourceIdCollisions(decisionResourceRefs(points))) {
+    violations.push({
+      code: 'RESOURCE_ID_COLLISION',
+      pointId: null,
+      detail: `${resourceId} is produced by more than one id`,
+    })
   }
 
   return { ok: violations.length === 0, violations: Object.freeze(violations) }

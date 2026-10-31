@@ -1,5 +1,10 @@
 /**
- * The P1…P11 registry table.
+ * The P1…P11 registry table — the single per-point record.
+ *
+ * Each entry carries its domain surface, host surface and tool-vs-hook side,
+ * status, evidence ids, premise ids, blocking condition, event shape where the
+ * point is event-driven, and notes. Resource ids are not stored here: they are
+ * derived from these fields by `v2-decision-resource-ids.ts`.
  *
  * Data only: the status rules, premise register and audit live in
  * `v2-decision-registry.ts`. Frozen at module load, because an adapter that
@@ -15,6 +20,8 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
   Object.freeze<DecisionPoint>({
     id: 'P1',
     surface: 'agent',
+    hostSurface: 'session.hook.prompt',
+    toolOrHook: 'hook',
     hostPoint: "session.hook('prompt')",
     primitives: ['choice'],
     mode: SHADOW,
@@ -29,6 +36,8 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
   Object.freeze<DecisionPoint>({
     id: 'P2',
     surface: 'skill',
+    hostSurface: 'session.hook.prompt',
+    toolOrHook: 'hook',
     hostPoint: "session.hook('prompt') + filterSkills; catalog source ctx.skill",
     primitives: ['choice', 'rank'],
     mode: SHADOW,
@@ -47,6 +56,8 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
   Object.freeze<DecisionPoint>({
     id: 'P3',
     surface: 'complexity',
+    hostSurface: 'tool.invoke',
+    toolOrHook: 'tool',
     hostPoint: 'ask.score + noul (tool pantheon_local_decision)',
     primitives: ['score', 'noul'],
     mode: SHADOW,
@@ -59,6 +70,8 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
   Object.freeze<DecisionPoint>({
     id: 'P4',
     surface: 'memory',
+    hostSurface: 'session.hook.context',
+    toolOrHook: 'hook',
     hostPoint: 'rank (context → system)',
     primitives: ['rank'],
     mode: SHADOW,
@@ -72,6 +85,8 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
   Object.freeze<DecisionPoint>({
     id: 'P5',
     surface: 'verification',
+    hostSurface: 'session.hook.execute.after',
+    toolOrHook: 'hook',
     hostPoint: 'verify (execute.after / context)',
     primitives: ['verify'],
     mode: SHADOW,
@@ -85,6 +100,8 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
   Object.freeze<DecisionPoint>({
     id: 'P6',
     surface: 'council',
+    hostSurface: 'session.hook.prompt',
+    toolOrHook: 'hook',
     hostPoint: 'rank + score (prompt)',
     primitives: ['rank', 'score'],
     mode: SHADOW,
@@ -97,6 +114,8 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
   Object.freeze<DecisionPoint>({
     id: 'P7',
     surface: 'loop',
+    hostSurface: 'event.channel',
+    toolOrHook: 'hook',
     hostPoint: 'session.execution.succeeded — data.sessionID',
     primitives: ['noul', 'score'],
     mode: 'migration',
@@ -121,21 +140,31 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
   Object.freeze<DecisionPoint>({
     id: 'P8',
     surface: 'guardrail',
-    hostPoint: 'noul (permission.evaluate / execute.before)',
+    hostSurface: 'permission.evaluate',
+    toolOrHook: 'hook',
+    hostPoint: 'noul (permission.evaluate only; execute.before untouched)',
     primitives: ['noul'],
     mode: 'off',
     status: 'premise',
     evidence: [],
     premises: ['PM-09'],
     blockingCondition:
-      'C8 open: permission.evaluate and execute.before were registered but never fired; enters off after P1–P3 are stable, with Themis review',
+      'C8 open: permission.evaluate was registered and never fired; activation also waits on C11–C15 from the Phase 5 review and enters off after P1–P3 are stable, with Themis review',
     securityInvariant:
       'execute.before remains the only hard barrier. No adapter may allow what that barrier denies.',
-    notes: 'Starts off, not shadow. Can only narrow, never widen, a host decision.',
+    unknowns: [
+      'permission.evaluate delivery, payload shape, effect-write honouring and ordering are unmeasured (PM-09, review N1/N5)',
+      'accessor/proxy write targets, inherited effect and non-writable own properties are unproven (review N2)',
+      'the rule blast radius on native events without an action token is unmeasured (review N5)',
+    ],
+    notes:
+      'Starts off, not shadow. Only permission.evaluate is wired: execute.before is untouched and P8 adds no second barrier there. The Phase 5 review (N1–N8, C11–C15) keeps activation blocked and forbids reading this entry as coverage: the apply() result is discarded and the write proof is recorded before P8, so a narrowing leaves wrong evidence (N1); a refused write is silent (N3); no integration test runs with the flag on and the contract tests do not clear the env var (N4). Every permission.evaluate path stays unmeasured (PM-09, P8_PATH_COVERAGE), the host honouring the write is a premise, and a P8 that narrows is indistinguishable from an inert one until C11–C13 close.',
   }),
   Object.freeze<DecisionPoint>({
     id: 'P9',
     surface: 'compaction',
+    hostSurface: 'session.hook.compaction',
+    toolOrHook: 'hook',
     hostPoint: 'noul + score (compaction)',
     primitives: ['noul', 'score'],
     mode: SHADOW,
@@ -155,7 +184,9 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
   Object.freeze<DecisionPoint>({
     id: 'P10',
     surface: 'claims',
-    hostPoint: 'verify (per council member)',
+    hostSurface: 'session.hook.prompt',
+    toolOrHook: 'hook',
+    hostPoint: 'verify (per council member; prompt surface)',
     primitives: ['verify'],
     mode: SHADOW,
     status: 'premise',
@@ -163,11 +194,14 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     premises: [],
     blockingCondition:
       'Not implemented: per-counselor claims were never designed or measured (DISCOVERY §4)',
-    notes: 'Explicit verdict per claim; failed_to_respond is BLOCK in mandatory verification.',
+    notes:
+      'Explicit verdict per claim; failed_to_respond is BLOCK in mandatory verification. The prompt hook is the only measured council surface (F-08), so it names the boundary; the declaration records intent, not exercised coverage.',
   }),
   Object.freeze<DecisionPoint>({
     id: 'P11',
     surface: 'catalog',
+    hostSurface: 'tool.transform',
+    toolOrHook: 'tool',
     hostPoint: 'own adapter in tool.transform',
     primitives: ['choice'],
     mode: SHADOW,

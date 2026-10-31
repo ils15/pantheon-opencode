@@ -14,12 +14,14 @@ import { strict as assert } from 'node:assert'
 import { readdirSync, readFileSync } from 'node:fs'
 import {
   auditDecisionRegistry,
+  DECISION_HOST_SURFACES,
   DECISION_POINT_IDS,
   DECISION_POINT_REGISTRY,
   type DecisionPoint,
   findDecisionPoint,
   PREMISE_IDS,
   PREMISE_REGISTER,
+  TOOL_OR_HOOK_BY_HOST_SURFACE,
 } from '../../src/pantheon/v2-decision-registry.ts'
 
 let checks = 0
@@ -167,6 +169,134 @@ check('P8 is a premise, starts off and carries the hard-barrier invariant', () =
   assert.equal(p8.premises.includes('PM-09'), true)
   assert.match(p8.securityInvariant ?? '', /execute\.before/)
   assert.match(p8.securityInvariant ?? '', /denies/)
+})
+
+check('every point declares exactly one side of the tool/hook boundary', () => {
+  for (const entry of DECISION_POINT_REGISTRY) {
+    assert.equal(entry.toolOrHook === 'tool' || entry.toolOrHook === 'hook', true, entry.id)
+    assert.equal(DECISION_HOST_SURFACES.includes(entry.hostSurface), true, entry.id)
+    assert.equal(
+      entry.toolOrHook,
+      TOOL_OR_HOOK_BY_HOST_SURFACE[entry.hostSurface],
+      `${entry.id} disagrees with its host surface`,
+    )
+  }
+})
+
+check('the tool side of the boundary is exactly P3 and P11', () => {
+  const tools = DECISION_POINT_REGISTRY.filter((entry) => entry.toolOrHook === 'tool').map(
+    (entry) => entry.id,
+  )
+  assert.deepEqual(tools, ['P3', 'P11'])
+  assert.equal('tool.invoke' in TOOL_OR_HOOK_BY_HOST_SURFACE, true)
+  assert.equal(TOOL_OR_HOOK_BY_HOST_SURFACE['tool.transform'], 'tool')
+  assert.equal(TOOL_OR_HOOK_BY_HOST_SURFACE['event.channel'], 'hook')
+})
+
+check('a declaration that contradicts its host surface fails the audit', () => {
+  const broken = DECISION_POINT_REGISTRY.map((entry) =>
+    entry.id === 'P1' ? { ...entry, toolOrHook: 'tool' as const } : entry,
+  )
+  const audit = auditDecisionRegistry(broken)
+  assert.equal(audit.ok, false)
+  assert.equal(
+    audit.violations.some(
+      (violation) => violation.code === 'TOOL_OR_HOOK_MISMATCH' && violation.pointId === 'P1',
+    ),
+    true,
+  )
+})
+
+check('an ambiguous declaration is rejected, not tolerated', () => {
+  const broken = DECISION_POINT_REGISTRY.map((entry) =>
+    entry.id === 'P4' ? ({ ...entry, toolOrHook: 'both' } as unknown as DecisionPoint) : entry,
+  )
+  const audit = auditDecisionRegistry(broken)
+  assert.equal(audit.ok, false)
+  assert.equal(
+    audit.violations.some(
+      (violation) => violation.code === 'AMBIGUOUS_TOOL_OR_HOOK' && violation.pointId === 'P4',
+    ),
+    true,
+  )
+})
+
+check('a declaration the hostPoint does not name fails the audit', () => {
+  const broken = DECISION_POINT_REGISTRY.map((entry) =>
+    entry.id === 'P3' ? { ...entry, hostPoint: "session.hook('prompt')" } : entry,
+  )
+  const audit = auditDecisionRegistry(broken)
+  assert.equal(audit.ok, false)
+  const codes = new Set(audit.violations.map((violation) => violation.code))
+  assert.equal(codes.has('HOST_SURFACE_HOST_POINT_MISMATCH'), true)
+  assert.equal(codes.has('TOOL_OR_HOOK_MISMATCH'), false)
+})
+
+check('an unknown host surface fails the audit', () => {
+  const broken = DECISION_POINT_REGISTRY.map((entry) =>
+    entry.id === 'P9'
+      ? ({ ...entry, hostSurface: 'session.hook.unknown' } as unknown as DecisionPoint)
+      : entry,
+  )
+  const audit = auditDecisionRegistry(broken)
+  assert.equal(audit.ok, false)
+  assert.equal(
+    audit.violations.some(
+      (violation) => violation.code === 'UNKNOWN_HOST_SURFACE' && violation.pointId === 'P9',
+    ),
+    true,
+  )
+})
+
+check('the status of every point is pinned to the phase-6 table', () => {
+  const statuses = Object.fromEntries(
+    DECISION_POINT_REGISTRY.map((entry) => [entry.id, entry.status]),
+  )
+  assert.deepEqual(statuses, {
+    P1: 'premise',
+    P2: 'advisory',
+    P3: 'premise',
+    P4: 'measured',
+    P5: 'premise',
+    P6: 'measured',
+    P7: 'measured',
+    P8: 'premise',
+    P9: 'measured',
+    P10: 'premise',
+    P11: 'measured',
+  })
+  assert.equal(point('P9').scope, 'top-level-session-only')
+})
+
+check('P8 claims no coverage the phase-5 review left unmeasured', () => {
+  const p8 = point('P8')
+  assert.equal(p8.status, 'premise')
+  assert.equal(p8.mode, 'off')
+  assert.equal(p8.hostSurface, 'permission.evaluate')
+  assert.equal(p8.evidence.length, 0)
+  assert.equal(p8.hostPoint.includes('permission.evaluate'), true)
+  assert.equal(p8.hostPoint.includes('/ execute.before'), false)
+  assert.equal((p8.unknowns ?? []).length >= 3, true)
+  for (const token of ['N1', 'N3', 'N4', 'C11']) {
+    assert.equal(p8.notes.includes(token), true, token)
+  }
+})
+
+check('two ids that normalise onto the same resource id fail the audit', () => {
+  const broken = DECISION_POINT_REGISTRY.map((entry) => {
+    if (entry.id === 'P1') return { ...entry, id: 'P-1' } as unknown as DecisionPoint
+    if (entry.id === 'P2') return { ...entry, id: 'P 1' } as unknown as DecisionPoint
+    return entry
+  })
+  const audit = auditDecisionRegistry(broken)
+  const collisions = audit.violations.filter(
+    (violation) => violation.code === 'RESOURCE_ID_COLLISION',
+  )
+  assert.equal(collisions.length > 0, true, 'the collision rule must be able to fail')
+  assert.equal(
+    collisions.some((violation) => violation.detail.includes('/points/p-1')),
+    true,
+  )
 })
 
 check('P2 is advisory-only after P2b was cancelled by measurement', () => {
