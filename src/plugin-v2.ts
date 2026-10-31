@@ -137,6 +137,10 @@ import {
   type V2ContextLike,
 } from './pantheon/v2-bridge.ts'
 import { createP7LoopPoint, p7LoopEnabledFromEnv } from './pantheon/v2-decision-points/p7-loop.ts'
+import {
+  createP8Guardrail,
+  p8GuardrailEnabledFromEnv,
+} from './pantheon/v2-decision-points/p8-guardrail.ts'
 import { createTelemetrySink, type TelemetrySink } from './pantheon/v2-decision-telemetry.ts'
 import {
   type AuthoritativeSession,
@@ -1865,6 +1869,13 @@ async function registerV2PermissionHook(
     return false
   }
 
+  // P8 guardrail (PLAN §5 P8, Phase 5). Constructed once at registration and
+  // inert by default: `PANTHEON_V2_P8_GUARDRAIL` is absent in a default
+  // install, and absent means disabled — this ships no behavioural change.
+  // Enabled, it may only replace a wider effect with `deny`; it is synchronous,
+  // never throws, and never runs for `decision.egress` or an existing deny.
+  const p8Guardrail = createP8Guardrail({ enabled: p8GuardrailEnabledFromEnv() })
+
   try {
     await permCtx.hook('evaluate', async (rawEvent: unknown) => {
       const event = rawEvent as V2PermissionEvent | null
@@ -1988,6 +1999,11 @@ async function registerV2PermissionHook(
       decision = evaluateV2Delegation(event, session, event.effect, origin)
       if (decision === 'deny') deny('caller or target is not allowed by delegation policy')
       else writeProof()
+
+      // P8 (Phase 5): read the effect left in place and, only when the flag is
+      // on and a declared rule matches, replace it with `deny`. Off by default,
+      // synchronous, contained — it cannot grant, delay or throw into admission.
+      p8Guardrail.apply(event)
     })
     return true
   } catch {
