@@ -82,6 +82,21 @@ Model precedence and the degradation chain are in [MCP](../MCP.md#pantheon-visio
 The API contract and its abstention behavior are in
 [Local Decision Router](local-decision-router.md).
 
+## V2 decision layer
+
+Both flags are read once when the plugin registers, so changing either needs a
+host restart. Neither is set in a default install; anything other than the listed
+truthy values leaves the feature off.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PANTHEON_V2_P7_LOOP` | unset (off) | `1`, `on` or `true` enables the P7 loop adapter on `session.execution.succeeded`. It records per-execution observations and does not enforce loop limits (effect `none`). The 12-execution cap (`P7_LOOP_MAX_EXECUTIONS`) is advisory: no measured host surface signals a new user turn, so the streak is not claimed to reset. |
+| `PANTHEON_V2_P8_GUARDRAIL` | unset (off) | `1`, `on` or `true` enables the P8 guardrail on `permission.evaluate` only. It can only narrow, and it is not a no-op: a native event with no usable `action` token, and an `allow` decision with no attributed `sessionID`, are narrowed to `deny`. `execute.before` remains the only hard barrier; activation is blocked pending PH5-1…PH5-5. |
+
+Shadow points (P1–P6, P9–P11) have no environment switch: they observe and record
+telemetry and change nothing in the host. Coverage and unmeasured surfaces are in
+[Local Decision Router](local-decision-router.md#measured-coverage-and-unmeasured-surfaces-v2-decision-layer).
+
 ## Decision-provider transport
 
 Provider calls are disabled unless the user-level decision-router config is

@@ -479,11 +479,52 @@ The registry reports coverage as measured, premise, advisory, or deferred, and
 | P7 (loop) | `session.execution.succeeded` | Behind `PANTHEON_V2_P7_LOOP`, off by default. The 12-execution cap (`P7_LOOP_MAX_EXECUTIONS`) is **advisory**: `reset()` is caller-supplied, no measured host surface signals a user turn, and the streak is not claimed to reset on any event. | Effects are unmeasured (C6); nested depth ≥ 2, failed/interrupted child executions and image jobs were not exercised. Never describe this as working loop enforcement. |
 | P2 (skill) | `session.hook('prompt')` | **Advisory only**: an empirical no-op on the default path, because the host sends `prompt.skills` absent. | P2b filtering was cancelled by measurement, not emulated; no token reduction is claimed. |
 | P9 (compaction) | `session.hook('compaction')` | Measured on **top-level sessions only**. | Child-session compaction, `reason: "overflow"`, and the `messages` channel are UNKNOWN. |
-| P8 (guardrail) | `permission.evaluate` | **Off**; activation is blocked pending its review conditions (C11–C15) and it starts off, never shadow. | `permission.evaluate` was registered and never fired; payload shape, write honouring and ordering are unmeasured. `execute.before` remains the only hard barrier. |
+| P8 (guardrail) | `permission.evaluate` | **Off**; activation is blocked pending its review conditions (PH5-1…PH5-5, numbered C11–C15 in the Phase 5 review) and it starts off, never shadow. | `permission.evaluate` was registered and never fired; payload shape, write honouring and ordering are unmeasured. `execute.before` remains the only hard barrier. |
 
 Budget facts are the same story: caps are local admission controls computed from
 explicit configuration, and they are not invoice guarantees. There are no default
 caps, no automatic period rollover, and no admission from a missing ledger.
+
+### Offline harness calibration (run 2026-10-31)
+
+The registry above records what each point *is*; this section records what the
+offline harness actually exercised. It is a contract calibration, not a
+performance benchmark.
+
+| Field | Recorded value |
+|---|---|
+| Command | `npx tsx tests/pantheon/v2-decision-harness.test.ts` |
+| Runtime | Node 26.4.0, no provider, no network, synthetic fixtures |
+| Result | exit `0` — `V2 decision harness: 264 cases (132 normal, 66 refusal, 66 adversarial) across 11 points` |
+| Per point | 24 cases: 12 normal, 6 refusal, 6 adversarial; the suite asserts ≥ 20 total, ≥ 5 refusal and ≥ 5 adversarial per point |
+| Pass rate | 264/264 cases passed; the script exits non-zero on the first failed assertion |
+
+What the 264 cases check: policy admission per declared mode and status (shadow
+admitted with `effect: none`, `off` and `migration` points never admitted as
+shadow, `deferred` never admitted), deterministic replay, shadow no-op including a
+mutation attempted inside the isolated payload, the telemetry allowlist under
+hostile field names and injected secrets, budget exhaustion, closed gates, unknown
+points, the `ask`/`rank`/`verify` contracts and their refusals, the frozen
+registry against tampering, consumption of `session.execution.succeeded` from the
+measured envelope fixture, and an offline assertion that no `v2-decision-*` module
+references `node:http`, `node:https`, `node:net`, `undici`, `fetch` or Bifrost.
+
+Refusal behaviour is a pass, not an error, and it is asserted in the 66 refusal
+cases: an unknown point returns `UNKNOWN_POINT`; an exhausted budget returns
+`BUDGET_EXHAUSTED`; a closed gate returns `GATE_CLOSED`; malformed telemetry is
+rejected; a primitive that answers `refusal` is accepted as a success while a
+missing answer is `FAILED_TO_RESPOND`; mandatory verification without a verdict is
+`BLOCK`, and optional verification with only a `confidence` value is `FAIL`; `rank`
+with no candidates returns `NO_CANDIDATES` and duplicate ids return
+`DUPLICATE_ID`; the heuristic returns `refusal` rather than inventing a winner.
+
+**Not measured by this harness — no claim may be derived from it:** token counts,
+token savings, answer quality, latency or cost; any effect inside a host turn
+(effect remains unmeasured for every point, and P7 records `effect: 'none'`);
+`permission.evaluate` delivery, payload shape or write honouring; and the
+embeddings-versus-BM25 comparison, which is **not run** (offline environment, no
+embedding model), leaving BM25 as the baseline with no numeric result in either
+direction.
 
 ## Loading the standalone export
 

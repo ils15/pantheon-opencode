@@ -296,6 +296,52 @@ an **advisory** execution cap (never described as enforcement), P2 is
 **top-level sessions only**, and P8 is **off** with activation blocked pending its
 review conditions.
 
+### The V2 decision layer ships in shadow
+
+The V2 decision layer adds eleven integration points (P1–P11) over three decision
+primitives — `ask`, `rank`, and `verify` — and a deterministic policy that decides
+which point may run. **It ships in shadow by default.** A shadow point reads the
+turn, records a sanitized telemetry event (no prompt, no response, no user
+content) and changes nothing in the host; the offline harness asserts that no-op
+for every point. No activation flag is set in a default install.
+
+The CLI separates effects: `npx pantheon-opencode decision-router help`, `status`,
+`setup`/`preview` and `holds` never write, `preview` is an alias of `setup`, and
+`select` records a preference without enabling anything. Egress stays opt-in and
+off, and only the explicit `enable`, `consent`, `caps` and `period` actions can
+change that; no read-only command can.
+
+What the layer does **not** do today, stated as measured rather than implied:
+
+- **P2 (skills) is advisory-only and does not filter.** It is an empirical no-op
+  on the default path, because the host sends `prompt.skills` absent. Effective
+  project-skill filtering was cancelled by measurement, not emulated, and no
+  token reduction is claimed.
+- **P7 (loop) is behind `PANTHEON_V2_P7_LOOP`, off by default, and does not
+  enforce loop limits.** It records per-execution observations with
+  `effect: none`. Its 12-execution cap is **advisory**: no measured host surface
+  signals a new user turn, so nothing is claimed to reset the streak.
+- **P9 (compaction) is measured on top-level sessions only.** Child-session
+  compaction, `reason: "overflow"` and the `messages` channel remain UNKNOWN.
+- **P8 (guardrail) is off and its activation is blocked** pending its Phase 5
+  review conditions (PH5-1…PH5-5). The mechanism only narrows, and it is not a
+  drop-in no-op: with `PANTHEON_V2_P8_GUARDRAIL` set, an event with no usable
+  `action` token, and an `allow` decision with no attributed `sessionID`, are
+  narrowed to `deny`. `execute.before` remains the only hard barrier.
+- **The embeddings-versus-BM25 comparison has not been run.** The environment is
+  offline with no embedding model available, so BM25 remains the baseline and no
+  gain or loss in retrieval or tokens is claimed in either direction.
+
+Calibration that was run: the offline harness
+(`npx tsx tests/pantheon/v2-decision-harness.test.ts`) executed 264 synthetic
+cases — 132 normal, 66 refusal, 66 adversarial — across the eleven points, with
+24 cases per point and the suite asserting at least 20 cases, 5 refusals and 5
+adversarial cases per point. All 264 cases passed on 2026-10-31.
+The harness measures contracts (admission, refusal, shadow no-op, telemetry
+redaction, offline discipline, registry integrity), **not** token use, quality,
+latency or any effect inside a host turn. Numbers and unmeasured surfaces are
+recorded in the [router reference](docs/reference/local-decision-router.md).
+
 ## Documentation
 
 | Start here | Go deeper |
