@@ -28,6 +28,7 @@ WRITER_COUNT = 5
 # One duplicate-key writer plus distinct-key writers.
 LOSER_COUNT = 1
 WINNER_COUNT = WRITER_COUNT - LOSER_COUNT
+READ_OPERATION_COUNT = 3
 LOSER_MARKER = "LOSER-MARKER"
 
 # Long enough that every writer has issued its INSERT before the first one
@@ -42,9 +43,13 @@ ORDERING_TIMEOUT_SECONDS = 1.0
 def module(tmp_path: Path):
     """Import the memory MCP module bound to a fresh temporary database."""
     mod = importlib.import_module(MODULE_PATH)
+    original_db_path = mod.DB_PATH
     mod._set_memory_dir(str(tmp_path / "memory"))
-    mod._reset_test_state()
-    return mod
+    try:
+        yield mod
+    finally:
+        mod._reset_test_state()
+        mod.DB_PATH = original_db_path
 
 
 # ── Deterministic interleaving ────────────────────────────────────────────────
@@ -112,26 +117,55 @@ def ordered_writes(module, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(module.sqlite3, "connect", connect)
 
 
-class _WidenedInsertConnection(sqlite3.Connection):
-    """Real connection that pauses after each memory INSERT."""
+class _ReadOverlapCoordinator:
+    """Release readers and a writer together inside an open transaction."""
+
+    def __init__(self, reader_count: int) -> None:
+        self.writer_inserted = threading.Event()
+        self.enabled = threading.Event()
+        self._readers_and_writer = threading.Barrier(reader_count + 1)
+
+    def writer_wait_for_readers(self) -> None:
+        self.enabled.clear()
+        self.writer_inserted.set()
+        self._readers_and_writer.wait(timeout=ORDERING_TIMEOUT_SECONDS * 10)
+
+    def reader_wait_for_writer(self) -> None:
+        if not self.writer_inserted.wait(timeout=ORDERING_TIMEOUT_SECONDS * 10):
+            raise TimeoutError("no writer entered its transaction")
+        self._readers_and_writer.wait(timeout=ORDERING_TIMEOUT_SECONDS * 10)
+
+
+class _CoordinatedReadConnection(sqlite3.Connection):
+    """Hold a writer inside INSERT until the read calls are ready to overlap."""
+
+    coordinator: _ReadOverlapCoordinator
 
     def execute(self, sql, parameters=(), /):
         cursor = super().execute(sql, parameters)
-        if "INSERT INTO memories" in sql:
-            time.sleep(WRITE_WINDOW_SECONDS)
+        coordinator = type(self).coordinator
+        if coordinator.enabled.is_set() and "INSERT INTO memories" in sql:
+            coordinator.writer_wait_for_readers()
         return cursor
 
 
 @pytest.fixture
-def widened_writes(module, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Widen the uncommitted-write window without changing the write path."""
+def coordinated_reads(
+    module, monkeypatch: pytest.MonkeyPatch
+) -> _ReadOverlapCoordinator:
+    """Install a transaction barrier for concurrent reader coverage."""
+    coordinator = _ReadOverlapCoordinator(reader_count=READ_OPERATION_COUNT)
     real_connect = sqlite3.connect
 
     def connect(*args, **kwargs):
-        kwargs["factory"] = _WidenedInsertConnection
+        kwargs["factory"] = _CoordinatedReadConnection
         return real_connect(*args, **kwargs)
 
     monkeypatch.setattr(module.sqlite3, "connect", connect)
+    monkeypatch.setattr(
+        _CoordinatedReadConnection, "coordinator", coordinator, raising=False
+    )
+    return coordinator
 
 
 @pytest.fixture
@@ -157,17 +191,27 @@ def _run_concurrently(target, count: int) -> tuple[list, list]:
     errors: list = [None] * count
 
     def runner(index: int) -> None:
-        barrier.wait(timeout=10)
         try:
+            barrier.wait(timeout=10)
             results[index] = target(index)
         except BaseException as exc:  # re-raised by the test
             errors[index] = exc
 
-    threads = [threading.Thread(target=runner, args=(index,)) for index in range(count)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=30)
+    threads = [
+        threading.Thread(target=runner, args=(index,), daemon=True)
+        for index in range(count)
+    ]
+    try:
+        for thread in threads:
+            thread.start()
+        deadline = time.monotonic() + 30
+        for thread in threads:
+            thread.join(timeout=max(0, deadline - time.monotonic()))
+    finally:
+        barrier.abort()
+        for thread in threads:
+            if thread.is_alive():
+                thread.join(timeout=ORDERING_TIMEOUT_SECONDS * 10)
 
     assert not any(thread.is_alive() for thread in threads), "a writer deadlocked"
     return results, errors
@@ -265,10 +309,10 @@ def test_store_reports_open_failure_instead_of_success(
     assert result.get("id") is None
 
 
-def test_search_stays_consistent_while_writes_are_in_flight(
-    module, widened_writes
+def test_memory_reads_stay_consistent_while_writes_are_in_flight(
+    module, coordinated_reads
 ) -> None:
-    """Reads never see a mid-transaction state nor fail under concurrent writes."""
+    """All read tools return valid results while a writer is in flight."""
     namespace = "reads"
     assert (
         module.memory_store(
@@ -276,29 +320,46 @@ def test_search_stays_consistent_while_writes_are_in_flight(
         )["status"]
         == "stored"
     )
+    coordinated_reads.enabled.set()
+    readers = (
+        lambda: module.memory_search("checkpoint", namespace=namespace),
+        lambda: module.memory_recall("seed", namespace=namespace),
+        module.memory_stats,
+    )
 
     def work(index: int):
-        if index % 2 == 0:
+        if index < WINNER_COUNT:
             return module.memory_store(
                 value=f"checkpoint threshold {index}",
                 namespace=namespace,
                 key=f"k{index}",
             )
-        return module.memory_search("checkpoint", namespace=namespace)
+        coordinated_reads.reader_wait_for_writer()
+        return readers[index - WINNER_COUNT]()
 
-    results, errors = _run_concurrently(work, 5)
-    assert errors == [None] * 5, f"a concurrent read/write raised: {errors}"
+    results, errors = _run_concurrently(
+        work, WINNER_COUNT + READ_OPERATION_COUNT
+    )
+    assert errors == [None] * len(results), f"a concurrent read/write raised: {errors}"
 
-    searches = [result for result in results if isinstance(result, list)]
-    assert searches, "no search ran"
-    for hits in searches:
-        assert {hit["key"] for hit in hits} >= {"seed"}
+    stores = results[:WINNER_COUNT]
+    search, recalled, stats = results[WINNER_COUNT:]
+    assert all(isinstance(result, dict) for result in stores), stores
+    assert all(
+        result.get("status") == "stored" and "error" not in result
+        for result in stores
+    ), stores
+    assert isinstance(search, list), search
+    assert all(
+        isinstance(hit, dict) and "error" not in hit for hit in search
+    ), search
+    assert {hit["key"] for hit in search} >= {"seed"}
+    assert isinstance(recalled, dict) and "error" not in recalled, recalled
+    assert recalled["key"] == "seed"
+    assert isinstance(stats, dict) and stats.get("status") == "ok", stats
+    assert isinstance(stats.get("total_entries"), int), stats
+    assert isinstance(stats.get("namespaces"), list), stats
 
-    stored = [
-        result
-        for result in results
-        if isinstance(result, dict) and result.get("status") == "stored"
-    ]
     conn = sqlite3.connect(module.DB_PATH)
     try:
         persisted = conn.execute(
@@ -306,4 +367,4 @@ def test_search_stays_consistent_while_writes_are_in_flight(
         ).fetchone()[0]
     finally:
         conn.close()
-    assert persisted == len(stored) + 1  # the seed plus every reported store
+    assert persisted == len(stores) + 1  # the seed plus every reported store
