@@ -295,8 +295,9 @@ about wiring, not about removing any transport. Measured surface coverage is
 reported honestly rather than implied: P7 runs behind `PANTHEON_V2_P7_LOOP` with
 an **advisory** execution cap (never described as enforcement), P2 is
 **advisory-only** (an empirical no-op on the default path), P9 was measured on
-**top-level sessions only**, and P8 is **off** with activation blocked pending its
-review conditions.
+**top-level sessions only**, and P8 is **advisory: not activatable by
+measurement** — its declared rules match no delivered permission payload, so it
+narrows nothing (PROBE-F).
 
 ### The V2 decision layer is declared in full and wired in part
 
@@ -310,8 +311,13 @@ site: two behind flags that are off by default, five in shadow.**
   in-memory, bounded telemetry collector that the plugin never reads back and
   exposes only to tests, so "records" here does not mean an operator-visible log.
 - **P8 (guardrail)** is wired to `permission.evaluate` behind
-  `PANTHEON_V2_P8_GUARDRAIL`, which is off, and its activation is blocked
-  (PH5-1…PH5-5).
+  `PANTHEON_V2_P8_GUARDRAIL`, which is off. C8 is closed **by measurement**, and
+  the measurement is negative: PROBE-F delivered 24 real `permission.evaluate`
+  events and every declared rule matched none of them (a valid `action` token and
+  a top-level `sessionID` are always present), the host resolves an unrecognised
+  effect as `ask` and proceeds, and `permission.evaluate.egress` is unreachable
+  (a tool declaring it is never advertised to the provider). As declared, P8 does
+  not narrow. The flag stays off.
 - **P1 and P2** are registered on `session.hook('prompt')` in **shadow**. They
   observe the same admission payload through a projection that carries only
   `prompt.agents` and `prompt.skills`: no text, no file bytes, no metadata, no
@@ -372,11 +378,17 @@ What the layer does **not** do today, stated as measured rather than implied:
   compaction, `reason: "overflow"` and the `messages` channel remain UNKNOWN, and
   the memory candidate list is not available on any measured surface — so the
   wired P9 record names that absence and claims no retention or priority.
-- **P8 (guardrail) is off and its activation is blocked** pending its Phase 5
-  review conditions (PH5-1…PH5-5). The mechanism only narrows, and it is not a
-  drop-in no-op: with `PANTHEON_V2_P8_GUARDRAIL` set, an event with no usable
-  `action` token, and an `allow` decision with no attributed `sessionID`, are
-  narrowed to `deny`. `execute.before` remains the only hard barrier.
+- **P8 (guardrail) is not activatable by measurement.** PROBE-F delivered 24 real
+  `permission.evaluate` events: the payload is
+  `["sessionID","agent","action","resources","metadata","source","effect"]` with
+  `effect` an own writable data property pre-populated by the host, and a written
+  `deny` **is** honoured. But neither declared rule can match a delivered payload
+  (valid `action` token, `sessionID` always present), the host lets an
+  unrecognised effect resolve as `ask` and execute, and
+  `permission.evaluate.egress` is unreachable — so the current rule set matches
+  nothing and does not narrow. The point is recorded as **advisory**, not as
+  awaiting review, and the inertness is the measured verdict rather than a design
+  claim. `execute.before` remains the only hard barrier.
 - **The embeddings-versus-BM25 comparison has not been run.** The environment is
   offline with no embedding model available, so BM25 remains the baseline and no
   gain or loss in retrieval or tokens is claimed in either direction.

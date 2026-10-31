@@ -91,7 +91,7 @@ truthy values leaves the feature off.
 | Variable | Default | Purpose |
 |---|---|---|
 | `PANTHEON_V2_P7_LOOP` | unset (off) | `1`, `on` or `true` enables the P7 loop adapter on `session.execution.succeeded`. It counts executions and writes `effect: none` observations to an in-memory, bounded collector that the plugin never reads back (it is exposed only to tests); it does not enforce loop limits. The 12-execution cap (`P7_LOOP_MAX_EXECUTIONS`) is advisory: no measured host surface signals a new user turn, so the streak is not claimed to reset. |
-| `PANTHEON_V2_P8_GUARDRAIL` | unset (off) | `1`, `on` or `true` enables the P8 guardrail on `permission.evaluate` only. It can only narrow, and it is not a no-op: a native event with no usable `action` token, and an `allow` decision with no attributed `sessionID`, are narrowed to `deny`. `execute.before` remains the only hard barrier; activation is blocked pending PH5-1…PH5-5. |
+| `PANTHEON_V2_P8_GUARDRAIL` | unset (off) | `1`, `on` or `true` would enable the P8 guardrail on `permission.evaluate` only. It can only narrow, and it remains **off**: C8 closed by measurement, and the verdict is that the declared rules match no delivered payload, so the point is recorded as `advisory` and narrows nothing. A written `deny` is honoured by the host, but no declared rule can produce one. `execute.before` remains the only hard barrier. |
 
 Shadow points (P1, P2, P3, P9, P11) have no environment switch: there is no
 behaviour to switch. P1 and P2 are registered on `session.hook('prompt')` and

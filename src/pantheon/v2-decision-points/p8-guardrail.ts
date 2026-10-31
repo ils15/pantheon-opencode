@@ -27,15 +27,25 @@
  * records `guardrail.narrow` only if that read still says `deny`. This module
  * never widens either way — a mismatch downgrades a claim, never an effect.
  *
- * ## Blast radius (N5) — unmeasured
+ * ## Blast radius (N5) — measured: the declared rules match nothing
  *
- * `p8.rule.action.unusable` matches any event whose `action` is not a printable
- * `ACTION_TOKEN`, including an event with no `action` at all. On the native
- * `passthrough` path the declared test payload has no `action`, so enabling P8
- * on a host that delivers such events would deny every one of them. That is a
- * safe narrowing (never a grant) but an availability effect whose real extent
- * is **unmeasured** — PM-09 never observed a delivered payload. Do not read this
- * rule, or the on/off flag, as evidence of production behaviour.
+ * PROBE-F (`.pantheon/deepwork/decision-layer-v2/PROBE-F-permission-paths.md`)
+ * delivered 24 real `permission.evaluate` events on the 2.2.5 host. Every one
+ * carries a valid `action` token and a non-empty top-level `sessionID`
+ * (PROBE-F §3.2), so neither declared rule can match: `action.unusable` needs a
+ * non-token action, `allow.unattributed` needs an `allow` with no session. With
+ * the flag on the outcome is `p8.rule.none` → `guardrail.keep`, i.e. **inert**
+ * (PROBE-F §6 I-F3: the rules were matched statically against the measured
+ * payload; the flag itself was never enabled). The availability risk the
+ * phase-5 review named — denying native events with no `action` — does not
+ * materialise on this host, because the host always supplies one. The real
+ * finding is the opposite: no narrowing.
+ *
+ * An unrecognised effect is not a barrier either. The host treats a value it
+ * does not recognise as `ask`, resolves it, and executes (PROBE-F §3.6), so
+ * "refuse and keep" does not block. `execute.before` remains the only hard
+ * barrier: a `throw` there denies and skips permission evaluation, while a
+ * `throw` here does not deny at all (PROBE-F §3.7).
  *
  * Off by default: `PANTHEON_V2_P8_GUARDRAIL` is absent in a default install and
  * absence means disabled, so this phase ships no behavioural change. Evaluation
@@ -44,27 +54,34 @@
  * write — resolves to "leave the baseline alone". A guardrail that cannot
  * narrow is a no-op, not an allow.
  *
- * ## Path coverage — every path P8 touches
+ * ## Path coverage — measured host paths, no observed narrowing
  *
- * `PM-09` (STATUS.md § Premissas): `permission.evaluate` and `execute.before`
- * were registered and **never fired**; no probe exercised a tool call. No path
- * below is measured: `measured` would require a runtime observation carrying an
- * `F-` evidence id, none exists here, so every row is `unmeasured` and every
- * claim about host behaviour is an assumption. {@link P8_PATH_COVERAGE} is the
+ * `PM-09` recorded that these surfaces never fired; PROBE-F fired them and
+ * measured 9 of the 10 rows below. A row's `measured` status means the host path
+ * was observed — **not** that P8 narrowed on it: no rule matched on any measured
+ * payload, so no narrowing exists to observe. `unmeasured` is reserved for the
+ * one path PROBE-F could not reach. Evidence cites the probe section; PROBE-F
+ * proposes `F-42…F-48` but those ids are not assigned in this change, and this
+ * module must not invent them (PLAN §5.4). {@link P8_PATH_COVERAGE} is the
  * machine-readable form.
  *
- *   | path                                                   | status     | evidence |
- *   |--------------------------------------------------------|------------|----------|
- *   | permission.evaluate: hook delivery                     | unmeasured | PM-09    |
- *   | permission.evaluate: payload shape (action/sessionID…) | unmeasured | PM-09    |
- *   | permission.evaluate: `event.effect` write is honored   | unmeasured | PM-09    |
- *   | permission.evaluate: ordering vs. the host rules       | unmeasured | PM-09    |
- *   | permission.evaluate: existing `deny` early return      | unmeasured | PM-09    |
- *   | permission.evaluate: `decision.egress` early return    | unmeasured | PM-09    |
- *   | permission.evaluate: unknown/unrecognized baseline     | unmeasured | PM-09    |
- *   | execute.before: delivery                               | unmeasured | PM-09    |
- *   | execute.before: payload shape                          | unmeasured | PM-09    |
- *   | execute.before: throw-to-deny semantics                | unmeasured | PM-09    |
+ *   | path                                                   | status     | evidence       |
+ *   |--------------------------------------------------------|------------|----------------|
+ *   | permission.evaluate: hook delivery                     | measured   | PROBE-F §3.1   |
+ *   | permission.evaluate: payload shape (action/sessionID…) | measured   | PROBE-F §3.2   |
+ *   | permission.evaluate: `event.effect` write is honored   | measured   | PROBE-F §3.4   |
+ *   | permission.evaluate: ordering vs. the host rules       | measured   | PROBE-F §3.3   |
+ *   | permission.evaluate: existing `deny` early return      | measured   | PROBE-F §3.5   |
+ *   | permission.evaluate: `decision.egress` early return    | unmeasured | PROBE-F §3.9   |
+ *   | permission.evaluate: unknown/unrecognized baseline     | measured   | PROBE-F §3.6   |
+ *   | execute.before: delivery                               | measured   | PROBE-F §3.8   |
+ *   | execute.before: payload shape                          | measured   | PROBE-F §3.8   |
+ *   | execute.before: throw-to-deny semantics                | measured   | PROBE-F §3.7   |
+ *
+ * `permission.evaluate.egress` is unreachable in this host: a tool that declares
+ * the `decision.egress` permission registers but is never advertised to the
+ * provider, so the action never reaches the hook (PROBE-F §3.9). Its early
+ * return therefore reads a branch that was never delivered.
  *
  * On `execute.before` P8 adds no barrier: a second barrier is the widening risk
  * this phase must not take, and narrowing is optional (equality is a subset).
@@ -93,27 +110,37 @@ export type P8RuleId = (typeof P8_RULES)[number]
 
 export type P8Outcome = 'guardrail.keep' | 'guardrail.narrow' | 'guardrail.refusal'
 
+/**
+ * `measured`: the host path was observed in PROBE-F and the evidence names the
+ * probe section (the `F-` ids for PROBE-F are proposed but not yet assigned).
+ * `unmeasured`: the path was never exercised. Neither value claims a P8
+ * narrowing — no measured payload matched a declared rule.
+ */
 export type P8PathStatus = 'measured' | 'unmeasured'
 
 export interface P8PathCoverage {
   readonly path: string
   readonly status: P8PathStatus
-  /** `F-` ids when measured; the premise id when unmeasured. */
+  /** Probe section that observed the path; the premise id when unmeasured. */
   readonly evidence: readonly string[]
 }
 
 /** Every path P8 touches. Frozen: a path cannot be dropped silently. */
 export const P8_PATH_COVERAGE: readonly P8PathCoverage[] = Object.freeze([
-  { path: 'permission.evaluate.delivery', status: 'unmeasured', evidence: ['PM-09'] },
-  { path: 'permission.evaluate.payload-shape', status: 'unmeasured', evidence: ['PM-09'] },
-  { path: 'permission.evaluate.effect-write', status: 'unmeasured', evidence: ['PM-09'] },
-  { path: 'permission.evaluate.ordering', status: 'unmeasured', evidence: ['PM-09'] },
-  { path: 'permission.evaluate.existing-deny', status: 'unmeasured', evidence: ['PM-09'] },
-  { path: 'permission.evaluate.egress', status: 'unmeasured', evidence: ['PM-09'] },
-  { path: 'permission.evaluate.unknown-baseline', status: 'unmeasured', evidence: ['PM-09'] },
-  { path: 'execute.before.delivery', status: 'unmeasured', evidence: ['PM-09'] },
-  { path: 'execute.before.payload-shape', status: 'unmeasured', evidence: ['PM-09'] },
-  { path: 'execute.before.throw-to-deny', status: 'unmeasured', evidence: ['PM-09'] },
+  { path: 'permission.evaluate.delivery', status: 'measured', evidence: ['PROBE-F §3.1'] },
+  { path: 'permission.evaluate.payload-shape', status: 'measured', evidence: ['PROBE-F §3.2'] },
+  { path: 'permission.evaluate.effect-write', status: 'measured', evidence: ['PROBE-F §3.4'] },
+  { path: 'permission.evaluate.ordering', status: 'measured', evidence: ['PROBE-F §3.3'] },
+  { path: 'permission.evaluate.existing-deny', status: 'measured', evidence: ['PROBE-F §3.5'] },
+  { path: 'permission.evaluate.egress', status: 'unmeasured', evidence: ['PROBE-F §3.9'] },
+  {
+    path: 'permission.evaluate.unknown-baseline',
+    status: 'measured',
+    evidence: ['PROBE-F §3.6'],
+  },
+  { path: 'execute.before.delivery', status: 'measured', evidence: ['PROBE-F §3.8'] },
+  { path: 'execute.before.payload-shape', status: 'measured', evidence: ['PROBE-F §3.8'] },
+  { path: 'execute.before.throw-to-deny', status: 'measured', evidence: ['PROBE-F §3.7'] },
 ])
 
 const ACTION_TOKEN = /^[A-Za-z][A-Za-z0-9._:-]{0,63}$/
@@ -127,7 +154,7 @@ export interface P8GuardrailOptions {
 export interface P8GuardrailInput {
   /** Effect the host/delegation produced. Read, never inferred. */
   readonly baseline: unknown
-  /** Permission event as delivered (unmeasured shape, PM-09). */
+  /** Permission event as delivered (measured shape: PROBE-F §3.2). */
   readonly event?: unknown
 }
 
