@@ -71,10 +71,12 @@ check('a premise without a blocking condition fails the audit', () => {
 })
 
 check('a deferred point without a trigger or blocking condition fails the audit', () => {
+  // Built from P7's shape but forced back to `deferred`: P7 itself is now
+  // measured (PROBE-D selected branch 1), so it can no longer carry this case.
   const broken = DECISION_POINT_REGISTRY.map((entry) => {
     if (entry.id !== 'P7') return entry
     const { trigger: _trigger, ...withoutTrigger } = entry
-    return { ...withoutTrigger, blockingCondition: null }
+    return { ...withoutTrigger, status: 'deferred' as const, blockingCondition: null }
   })
   const audit = auditDecisionRegistry(broken)
   assert.equal(audit.ok, false)
@@ -113,19 +115,26 @@ check('the premise register covers PM-03..PM-15 plus PRE-01/PRE-02', () => {
   }
 })
 
-check('P7 is deferred with the measured trigger, carriers and fallback premise', () => {
+check('P7 records the branch-1 selection: measured coverage, execution counter, flag off', () => {
   const p7 = point('P7')
-  assert.equal(p7.status, 'deferred')
+  assert.equal(p7.status, 'measured')
   assert.equal(p7.mode, 'migration')
   assert.equal(p7.trigger, 'session.execution.succeeded')
   assert.equal(p7.eventShape?.carrier, 'data.sessionID')
   assert.equal(p7.eventShape?.forbiddenCarriers.includes('properties'), true)
-  assert.equal(p7.premises.includes('PRE-01'), true)
-  assert.equal(p7.premises.includes('PM-12'), true)
-  assert.equal(p7.blockingCondition?.includes('C7'), true)
-  assert.equal(p7.notes.includes('no loop enforcement'), true)
+  assert.equal(p7.blockingCondition, null)
+  assert.equal(p7.notes.includes('PROBE-D'), true)
+  assert.equal(p7.notes.includes('Branch 1'), true)
+  assert.equal(p7.notes.includes('per EXECUTION, not per turn'), true)
+  assert.equal(p7.notes.includes('OFF by default'), true)
   for (const id of ['F-11', 'F-12', 'F-13', 'I-01']) {
     assert.equal(p7.evidence.includes(id), true, id)
+  }
+  // PROBE-D facts await reviewer F-id assignment: this change must not invent
+  // F-18 or later.
+  for (const id of p7.evidence) {
+    const measured = /^F-(\d{2})$/.exec(id)
+    if (measured !== null) assert.equal(Number(measured[1]) <= 17, true, id)
   }
 })
 

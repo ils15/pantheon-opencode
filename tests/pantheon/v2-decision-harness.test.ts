@@ -196,7 +196,15 @@ function buildCases(entry: DecisionPoint): HarnessCase[] {
       { point, pointMode: entry.mode, status: entry.status },
     )
     assert.equal(decision.effect, 'none')
-    if (entry.status === 'deferred' || entry.mode === 'off') {
+    if (entry.status === 'deferred') {
+      assert.equal(decision.admitted, false)
+    } else if (entry.mode === 'migration') {
+      // Migration points replace active behaviour and are never admitted as
+      // shadow (PLAN §5.1). P7 reached this branch when PROBE-D selected
+      // branch 1, so the invariant is stated here instead of assumed.
+      assert.equal(decision.admitted, false)
+      assert.equal(decision.reasonCode, 'MIGRATION_NOT_SHADOW')
+    } else if (entry.mode === 'off') {
       assert.equal(decision.admitted, false)
     } else {
       assert.equal(decision.admitted, true)
@@ -298,6 +306,8 @@ function buildCases(entry: DecisionPoint): HarnessCase[] {
     )
     if (entry.status === 'deferred' || entry.mode === 'off') {
       assert.equal(decision.admitted, false)
+    } else if (entry.mode === 'migration') {
+      assert.equal(decision.reasonCode, 'MIGRATION_NOT_SHADOW')
     } else {
       assert.equal(decision.reasonCode, 'BUDGET_EXHAUSTED')
     }
@@ -309,6 +319,8 @@ function buildCases(entry: DecisionPoint): HarnessCase[] {
     )
     if (entry.status === 'deferred' || entry.mode === 'off') {
       assert.equal(decision.admitted, false)
+    } else if (entry.mode === 'migration') {
+      assert.equal(decision.reasonCode, 'MIGRATION_NOT_SHADOW')
     } else {
       assert.equal(decision.reasonCode, 'GATE_CLOSED')
     }

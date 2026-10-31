@@ -136,6 +136,7 @@ import {
   registerV2Bridge,
   type V2ContextLike,
 } from './pantheon/v2-bridge.ts'
+import { createP7LoopPoint, p7LoopEnabledFromEnv } from './pantheon/v2-decision-points/p7-loop.ts'
 import {
   type AuthoritativeSession,
   evaluateV2Delegation,
@@ -713,12 +714,33 @@ function subscribeV2Events(
     return undefined
   }
 
+  // P7 loop adapter (PLAN §5.1 branch 1, selected by PROBE-D §7). Constructed
+  // here but inert unless PANTHEON_V2_P7_LOOP is set: the flag is OFF by
+  // default, and activation is Phase 4b — not this change. Observation is
+  // synchronous and self-contained, so it cannot block the stream, cannot
+  // throw into the dispatch, and does not alter the cleanup below. No sink is
+  // wired while the flag is off: a decision that cannot be acted on is not
+  // made observable by logging it.
+  const loopPoint = createP7LoopPoint({ enabled: p7LoopEnabledFromEnv() })
+
   const controller = new AbortController()
   void (async () => {
     try {
       // biome-ignore lint/style/noNonNullAssertion: subscribe guaranteed by guard above
       for await (const event of eventCtx.subscribe!({ signal: controller.signal })) {
         await handleV2SessionEvent(event)
+        try {
+          loopPoint.observe(event)
+        } catch {
+          // The adapter contains its own failures; this keeps a future
+          // regression out of the dispatch loop.
+        }
+        // KNOWN DEFECT, out of scope for Phase 4a: this branch and
+        // `handleV2SessionEvent`'s `session.compacted` case key on types the
+        // measured host never delivers — `session.idle` 0/11 runs and
+        // `session.compacted` 0/11 (PROBE-C, F-12). The live turn-end signal
+        // is `session.execution.succeeded`, observed above. The branches are
+        // left untouched on purpose; removing them is a separate change.
         if (event.type === 'session.idle' || event.type === 'session.deleted') {
           const properties = event.properties ?? {}
           const info = properties.info

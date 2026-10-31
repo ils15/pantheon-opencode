@@ -100,19 +100,23 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     hostPoint: 'session.execution.succeeded — data.sessionID',
     primitives: ['noul', 'score'],
     mode: 'migration',
-    status: 'deferred',
+    status: 'measured',
     evidence: ['F-11', 'F-12', 'F-13', 'I-01'],
-    premises: ['PRE-01', 'PM-12'],
-    blockingCondition:
-      'C7 open: child/background coverage of session.execution.succeeded was never measured (Probe D / Phase 0c)',
+    premises: [],
+    blockingCondition: null,
     trigger: 'session.execution.succeeded',
     eventShape: {
       type: 'session.execution.succeeded',
       carrier: 'data.sessionID',
       forbiddenCarriers: ['properties'],
     },
+    unknowns: [
+      'session.execution.failed / .interrupted in a child session were never induced (PROBE-D §5.1)',
+      'nested subagent depth >= 2 was never exercised (PROBE-D §5.2)',
+      'a background image job was never exercised (PROBE-D §5.4)',
+    ],
     notes:
-      'Deferred, not shadow: replaces behaviour that is already active. Fallback branch (2/3 of PLAN §5.1): V2 delivers no loop enforcement, owner stays V1, and the gap is documented. It must never be described as working enforcement.',
+      'Branch 1 of PLAN §5.1 was selected by PROBE-D §7 (`.pantheon/deepwork/decision-layer-v2/PROBE-D-turn-end-channel.md`): `session.execution.succeeded` is delivered for child sessions with the child copy of `data.sessionID` — 13/13 children (6 foreground, 5 background, 2 with compaction) — and for background work (PROBE-D §4.1–§4.2). The event does NOT carry `parentID` (`dataKeys=["sessionID"]`, 44/44): attribution comes from `session.created.parentID` or `ctx.session.get`, never from the succeeded event (PROBE-D §4.1). Multiplicity is per EXECUTION, not per turn: 44 `started` = 44 `succeeded` for 46 inbox items; manual compaction adds +1 (C2 = 3), automatic compaction +0 (C1 = 1), a late background notification +1 on the parent (B3/B4/B5 = 2 vs B1/B2 = 1) (PROBE-D §4.3). The adapter implements that execution counter (`v2-decision-points/p7-loop.ts`) behind `PANTHEON_V2_P7_LOOP`, OFF by default; cutover is Phase 4b. Effect stays unmeasured (C6): the adapter records `effect: none` and must never be described as working enforcement while the flag is off. PROBE-D retires the PRE-01/PM-12 blocking premises; the premise register is not rewritten here.',
   }),
   Object.freeze<DecisionPoint>({
     id: 'P8',
