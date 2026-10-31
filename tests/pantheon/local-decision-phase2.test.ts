@@ -735,7 +735,10 @@ async function testDisabledConfigLeavesPromptUntouchedAndFetchesNothing(): Promi
     }
     const before = structuredClone(admission)
     const applied = await applyDecisionRouterToPrompt(admission, async () => {})
-    assert.deepEqual(applied, { markerApplied: false, skillsFiltered: false })
+    assert.equal(applied.markerApplied, false)
+    assert.equal(applied.skillsFiltered, false)
+    assert.equal(applied.skillsSource, 'none')
+    assert.match(applied.reason, /^[a-z0-9][a-z0-9.:-]{0,63}$/)
     assert.deepEqual(admission, before)
     assert.equal(fetchCalls, 0)
   })
@@ -752,25 +755,31 @@ async function testPromptHookWiringAppliesLocalSelection(): Promise<void> {
       egress_consent: false,
       enabled_candidates: [],
     })
+    // Measured host shape (F-08): the prompt hook sends `skills: "undefined"`.
     const admission = {
       sessionID: 'ses-hook',
       messageID: 'msg-hook',
       prompt: {
         text: 'implement a backend endpoint with pytest',
-        skills: [{ name: 'simplify' }, { name: 'tdd-with-agents' }, { name: 'worktrees' }],
+        agents: 'undefined',
+        skills: 'undefined',
       },
     }
     const applied = await applyDecisionRouterToPrompt(admission)
     assert.equal(applied.markerApplied, true)
-    assert.equal(applied.skillsFiltered, true)
-    assert.ok(admission.prompt.skills.length > 0)
     assert.equal(
-      admission.prompt.skills.some((skill) => skill.name === 'simplify'),
+      applied.skillsFiltered,
       false,
+      'P2 is an empirical no-op on the default path (F-09)',
     )
+    assert.equal(applied.skillsSource, 'none')
+    assert.equal(applied.reason, 'skills.source.absent')
+    assert.equal(admission.prompt.skills, 'undefined', 'the sentinel is never rewritten')
+    assert.equal(admission.prompt.agents, 'undefined')
     assert.match(admission.prompt.text, /<!-- pantheon-decision-router:v1 source=local /)
     const repeated = await applyDecisionRouterToPrompt(admission)
     assert.equal(repeated.markerApplied, false)
+    assert.equal(repeated.reason, 'marker.present')
   })
 }
 
@@ -783,13 +792,17 @@ function testPromptApplicationIsIdempotentAndBounded(): void {
     agent: 'hermes',
     reasonCode: 'LOCAL_SELECTION',
   }
+  // SYNTHETIC host shape: a populated `prompt.skills` array was never observed
+  // (F-08 sends the string "undefined"), so this case exercises the guard code
+  // only. It is not a measured effect and no filtering is claimed for P2.
   const prompt = {
     text: 'original request',
     skills: [{ name: 'tdd-with-agents' }, { name: 'simplify' }, { name: 'not-a-skill' }],
   }
   const applied = applyTurnDecisionToPrompt(prompt, decision)
   assert.equal(applied.markerApplied, true)
-  assert.equal(applied.skillsFiltered, true)
+  assert.equal(applied.skillsFiltered, true, 'synthetic host shape only')
+  assert.equal(applied.skillsSource, 'prompt')
   assert.deepEqual(prompt.skills, [{ name: 'tdd-with-agents' }])
   assert.match(
     prompt.text,
@@ -801,6 +814,13 @@ function testPromptApplicationIsIdempotentAndBounded(): void {
   const unknownShape = { text: 'x', skills: [{ label: 'tdd-with-agents' }] }
   assert.equal(applyTurnDecisionToPrompt(unknownShape, decision).skillsFiltered, false)
   assert.deepEqual(unknownShape.skills, [{ label: 'tdd-with-agents' }])
+  // Measured host shape: the same decision cannot reach the skill list (F-08, F-09).
+  const measured = { text: 'x', skills: 'undefined' }
+  const measuredResult = applyTurnDecisionToPrompt(measured, decision)
+  assert.equal(measuredResult.skillsFiltered, false)
+  assert.equal(measuredResult.skillsSource, 'none')
+  assert.equal(measuredResult.reason, 'skills.source.absent')
+  assert.equal(measured.skills, 'undefined')
 }
 
 function testV1AndPackageBoundsStayClosed(): void {
@@ -865,10 +885,6 @@ function testRejectedSecretShapesStayLocal(): void {
 }
 
 function testEmptySelectionNeverErasesHostSkills(): void {
-  const hostPrompt = () => ({
-    text: 'request',
-    skills: [{ name: 'worktrees' }, { name: 'simplify' }],
-  })
   const emptySelection: TurnDecision = {
     schemaVersion: 1,
     active: true,
@@ -877,8 +893,28 @@ function testEmptySelectionNeverErasesHostSkills(): void {
     agent: 'hermes',
     reasonCode: 'LOCAL_SELECTION',
   }
+
+  // Measured host shape (F-08): no skill list is reachable at all.
+  const measured = { text: 'request', skills: 'undefined', agents: 'undefined' }
+  const measuredResult = applyTurnDecisionToPrompt(measured, {
+    ...emptySelection,
+    skillIds: ['simplify'],
+  })
+  assert.equal(measuredResult.skillsFiltered, false)
+  assert.equal(measuredResult.skillsSource, 'none')
+  assert.equal(measuredResult.reason, 'skills.source.absent')
+  assert.equal(measured.skills, 'undefined')
+
+  // Synthetic host shape (never observed): only the empty-selection guard is
+  // under test here; it is not a measured effect of P2.
+  const hostPrompt = () => ({
+    text: 'request',
+    skills: [{ name: 'worktrees' }, { name: 'simplify' }],
+  })
   const empty = hostPrompt()
-  assert.equal(applyTurnDecisionToPrompt(empty, emptySelection).skillsFiltered, false)
+  const emptyResult = applyTurnDecisionToPrompt(empty, emptySelection)
+  assert.equal(emptyResult.skillsFiltered, false)
+  assert.equal(emptyResult.reason, 'selection.empty')
   assert.deepEqual(empty.skills, [{ name: 'worktrees' }, { name: 'simplify' }])
 
   const disjoint = hostPrompt()
@@ -888,6 +924,7 @@ function testEmptySelectionNeverErasesHostSkills(): void {
     agent: null,
   })
   assert.equal(disjointResult.skillsFiltered, false)
+  assert.equal(disjointResult.reason, 'skills.selection.disjoint')
   assert.deepEqual(disjoint.skills, [{ name: 'worktrees' }, { name: 'simplify' }])
 
   const valid = hostPrompt()
@@ -896,7 +933,8 @@ function testEmptySelectionNeverErasesHostSkills(): void {
     skillIds: ['simplify'],
     agent: null,
   })
-  assert.equal(validResult.skillsFiltered, true)
+  assert.equal(validResult.skillsFiltered, true, 'synthetic host shape only')
+  assert.equal(validResult.reason, 'skills.synthetic.narrowed')
   assert.deepEqual(valid.skills, [{ name: 'simplify' }])
 }
 

@@ -9,6 +9,12 @@ import { buildDecisionRouterBudget } from '../scripts/build-decision-router.mjs'
 const ROOT = process.cwd()
 const CLI = join(ROOT, 'scripts', 'decision-router.mjs')
 const BUNDLE = join(ROOT, 'scripts', 'decision-router-budget.mjs')
+/** Every prebuilt bundle the CLI imports; all must ship and stay TypeScript-free. */
+const BUNDLES = [
+  BUNDLE,
+  join(ROOT, 'scripts', 'decision-router-v2-budget.mjs'),
+  join(ROOT, 'scripts', 'decision-router-v2-egress.mjs'),
+]
 
 /** Relative TypeScript specifiers that Node cannot load from a published .mjs. */
 function relativeTypeScriptImports(text) {
@@ -20,8 +26,10 @@ function relativeTypeScriptImports(text) {
 test('published decision-router CLI has no TypeScript import', () => {
   const cli = readFileSync(CLI, 'utf8')
   assert.deepEqual(relativeTypeScriptImports(cli), [])
-  assert.ok(existsSync(BUNDLE), 'the committed ESM ledger bundle must ship with the CLI')
-  assert.deepEqual(relativeTypeScriptImports(readFileSync(BUNDLE, 'utf8')), [])
+  for (const bundle of BUNDLES) {
+    assert.ok(existsSync(bundle), `the committed ESM bundle must ship with the CLI: ${bundle}`)
+    assert.deepEqual(relativeTypeScriptImports(readFileSync(bundle, 'utf8')), [])
+  }
 })
 
 test('committed ledger bundle matches a fresh build', async () => {
@@ -47,7 +55,12 @@ test('CLI runs from an installed package layout inside node_modules', () => {
     for (const rel of [
       'scripts/decision-router.mjs',
       'scripts/decision-router-budget.mjs',
+      'scripts/decision-router-v2-budget.mjs',
+      'scripts/decision-router-v2-egress.mjs',
       'scripts/install/decision-router-config.mjs',
+      'scripts/install/decision-layer-preview.mjs',
+      'scripts/install/plan.mjs',
+      'scripts/install/state.mjs',
       'scripts/install/verify.mjs',
     ]) {
       const target = join(packageRoot, rel)
@@ -73,7 +86,10 @@ test('CLI runs from an installed package layout inside node_modules', () => {
 
     const usage = run(['unknown-command'])
     assert.equal(usage.status, 1)
-    assert.match(usage.stderr, /Usage: decision-router status\|select\|enable/)
+    assert.match(
+      usage.stderr,
+      /Usage: decision-router help\|status\|setup\|preview\|select\|enable/,
+    )
     assert.doesNotMatch(usage.stderr, /ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING/)
   } finally {
     rmSync(work, { recursive: true, force: true })

@@ -4,6 +4,8 @@
       "**",
       "!src/plugins/tui/dist",
       "!scripts/decision-router-budget.mjs",
+      "!scripts/decision-router-v2-budget.mjs",
+      "!scripts/decision-router-v2-egress.mjs",
       "!tests/integration",
       "!.mypy_cache",
       "!.pytest_cache",

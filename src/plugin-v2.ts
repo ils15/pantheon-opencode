@@ -136,6 +136,13 @@ import {
   registerV2Bridge,
   type V2ContextLike,
 } from './pantheon/v2-bridge.ts'
+import { createP7LoopPoint, p7LoopEnabledFromEnv } from './pantheon/v2-decision-points/p7-loop.ts'
+import {
+  createP8Guardrail,
+  p8GuardrailEnabledFromEnv,
+} from './pantheon/v2-decision-points/p8-guardrail.ts'
+import { DECISION_POINT_REGISTRY } from './pantheon/v2-decision-points.ts'
+import { createTelemetrySink, type TelemetrySink } from './pantheon/v2-decision-telemetry.ts'
 import {
   type AuthoritativeSession,
   evaluateV2Delegation,
@@ -696,6 +703,41 @@ async function registerV2Tools(
 // ─── V2 Event Subscription ──────────────────────────────────────────────
 
 /**
+ * The P7 telemetry sink created by the most recent event subscription.
+ *
+ * P7 writes through the 0b record path (`createTelemetrySink`): in-memory,
+ * bounded and I/O-free by design, so a test that asserts "the decision was
+ * actually recorded" has to read the same collector the wiring wrote to.
+ * Exported only for tests/pantheon/plugin-v2-contract.test.ts — production has
+ * no caller, and nothing in the plugin reads this back.
+ */
+export function getP7TelemetrySinkForTests(): TelemetrySink | undefined {
+  return p7TelemetrySink
+}
+
+let p7TelemetrySink: TelemetrySink | undefined
+
+/**
+ * The P8 telemetry sink created by the most recent permission-hook
+ * registration.
+ *
+ * P8 records every outcome it is responsible for — `guardrail.narrow`,
+ * `guardrail.keep`, `guardrail.refusal`, `p8.write.rejected`,
+ * `p8.write.delegation` and `p8.write.unconfirmed` — through the 0b record path
+ * (`createTelemetrySink`, in-memory, bounded, I/O-free). A guardrail that
+ * narrows without a record is indistinguishable from an inert one, which is
+ * exactly the defect PH5-1 closed. Every record carries the P8 registry `mode`
+ * (`off`), never `active`, and a `narrow` is recorded only when a re-read of
+ * the event still holds it (N9/N10). Exported only for
+ * tests/pantheon/plugin-v2-contract.test.ts.
+ */
+export function getP8TelemetrySinkForTests(): TelemetrySink | undefined {
+  return p8TelemetrySink
+}
+
+let p8TelemetrySink: TelemetrySink | undefined
+
+/**
  * Attempt to subscribe to session events via V2 ctx.event.subscribe.
  *
  * The V2 event.subscribe API (when available) provides an async iterable:
@@ -713,12 +755,45 @@ function subscribeV2Events(
     return undefined
   }
 
+  // P7 loop adapter (PLAN §5.1 branch 1, selected by PROBE-D §7). Constructed
+  // here but inert unless PANTHEON_V2_P7_LOOP is set: the flag is OFF by
+  // default, and activation is Phase 4b — not this change. Observation is
+  // synchronous and self-contained, so it cannot block the stream, cannot
+  // throw into the dispatch, and does not alter the cleanup below.
+  //
+  // The sink is the 0b telemetry record path (`createTelemetrySink`, in-memory
+  // and bounded, no I/O). Each shadow record is reduced to its own allowlisted
+  // fields plus `mode: 'migration'` — the P7 registry mode — and nothing else:
+  // the execution count is not on the allowlist, so it is not recorded, and no
+  // prompt, response or user content can reach the record. A disabled adapter
+  // never calls the sink, so flag-off still emits zero records.
+  const telemetrySink = createTelemetrySink()
+  p7TelemetrySink = telemetrySink
+  const loopPoint = createP7LoopPoint({
+    enabled: p7LoopEnabledFromEnv(),
+    sink: (record) => {
+      telemetrySink.emit({ ...record, mode: 'migration' })
+    },
+  })
+
   const controller = new AbortController()
   void (async () => {
     try {
       // biome-ignore lint/style/noNonNullAssertion: subscribe guaranteed by guard above
       for await (const event of eventCtx.subscribe!({ signal: controller.signal })) {
         await handleV2SessionEvent(event)
+        try {
+          loopPoint.observe(event)
+        } catch {
+          // The adapter contains its own failures; this keeps a future
+          // regression out of the dispatch loop.
+        }
+        // KNOWN DEFECT, out of scope for Phase 4a: this branch and
+        // `handleV2SessionEvent`'s `session.compacted` case key on types the
+        // measured host never delivers — `session.idle` 0/11 runs and
+        // `session.compacted` 0/11 (PROBE-C, F-12). The live turn-end signal
+        // is `session.execution.succeeded`, observed above. The branches are
+        // left untouched on purpose; removing them is a separate change.
         if (event.type === 'session.idle' || event.type === 'session.deleted') {
           const properties = event.properties ?? {}
           const info = properties.info
@@ -1794,6 +1869,23 @@ async function registerV2ToolHooks(
 // ─── V2 Permission Hook ─────────────────────────────────────────────────
 
 /**
+ * Read `event.effect` after P8 wrote to it, for the record.
+ *
+ * A hostile getter reads as `null`, which can only downgrade a recorded
+ * `narrow` to `keep`, never upgrade one — the failure direction is "the record
+ * claims less", never "the record claims an effect the event does not hold".
+ */
+function readPermissionEffect(event: unknown): string | null {
+  try {
+    if (event === null || typeof event !== 'object') return null
+    const effect = (event as { readonly effect?: unknown }).effect
+    return typeof effect === 'string' ? effect : null
+  } catch {
+    return null
+  }
+}
+
+/**
  * Register permission hook via V2 ctx.permission.hook.
  *
  * The V2 permission.hook API (when available) provides:
@@ -1813,6 +1905,48 @@ async function registerV2PermissionHook(
   if (!permCtx?.hook) {
     markUnsupported('permission-hook')
     return false
+  }
+
+  // P8 guardrail (PLAN §5 P8, Phase 5). Constructed once at registration and
+  // inert by default: `PANTHEON_V2_P8_GUARDRAIL` is absent in a default
+  // install, and absent means disabled — this ships no behavioural change.
+  // Enabled, it may only replace a wider effect with `deny`; it is synchronous,
+  // never throws, and never runs for `decision.egress` or an existing deny.
+  // Its outcome is recorded through the 0b telemetry path (in-memory, bounded,
+  // I/O-free) so a narrow, a refusal and a rejected write are observable; the
+  // disabled guardrail emits nothing.
+  const p8Guardrail = createP8Guardrail({ enabled: p8GuardrailEnabledFromEnv() })
+  const p8Sink = createTelemetrySink()
+  p8TelemetrySink = p8Sink
+  // The record's `mode` mirrors the P8 registry entry — `off` today — instead
+  // of asserting `active` (N10a). A record may never advertise an activation
+  // the registry and C8 deny, and deriving the value from the registry means
+  // the two cannot drift apart again. `mode` describes the point's declared
+  // mode; `decision`/`reason` carry the observation.
+  const p8RegistryMode = DECISION_POINT_REGISTRY.find((point) => point.id === 'P8')?.mode ?? 'off'
+  /**
+   * Record one P8 outcome.
+   *
+   * `event` is re-read immediately before emitting: `narrowed`/`wrote` are the
+   * guardrail's own post-write read, and a `Proxy` whose descriptor trap lies
+   * can make that read and the next one disagree (N9). A `narrow` is therefore
+   * recorded only when the event still holds `deny`; otherwise the record
+   * states the effect that is actually there (`guardrail.keep` with
+   * `p8.write.unconfirmed`), so sink and proof cannot contradict each other.
+   */
+  const recordP8 = (result: ReturnType<typeof p8Guardrail.apply>, event: unknown): void => {
+    if (!p8Guardrail.enabled) return
+    try {
+      const unconfirmed = result.narrowed && readPermissionEffect(event) !== 'deny'
+      p8Sink.emit({
+        point: 'P8',
+        decision: unconfirmed ? 'guardrail.keep' : result.decision,
+        reason: unconfirmed ? 'p8.write.unconfirmed' : result.reason,
+        mode: p8RegistryMode,
+      })
+    } catch {
+      // Telemetry is best-effort and must not affect permission flow.
+    }
   }
 
   try {
@@ -1936,8 +2070,29 @@ async function registerV2PermissionHook(
       // Native-only resources remain under host policy. If a Pantheon target
       // appears anywhere, the shared policy evaluates the complete resource set.
       decision = evaluateV2Delegation(event, session, event.effect, origin)
-      if (decision === 'deny') deny('caller or target is not allowed by delegation policy')
-      else writeProof()
+
+      // P8 (Phase 5): read the effect left in place and, only when the flag is
+      // on and a declared rule matches, replace it with `deny`. Off by default,
+      // synchronous, contained — it cannot grant, delay or throw into admission.
+      //
+      // Apply BEFORE recording (PH5-1): `writeProof` reads `event.effect`, so a
+      // proof written first recorded `effectAfter: allow` for an event P8 then
+      // narrowed. The order below is apply → final effect → record, and the
+      // record carries the post-apply effect plus the guardrail outcome.
+      //
+      // Record only after the effect is final (N10b). `deny()` below rewrites
+      // the effect, and a record emitted before it would describe a state the
+      // handler never leaves behind; when the delegation policy already denies,
+      // the deny is the policy's, so P8 claims no narrowing at all — it changed
+      // nothing about that outcome. `deny()` also throws on an immutable event,
+      // and a record emitted after a throw would describe an unreached state.
+      const p8Result = p8Guardrail.apply(event)
+      if (decision === 'deny') {
+        deny('caller or target is not allowed by delegation policy')
+        return
+      }
+      writeProof()
+      recordP8(p8Result, event)
     })
     return true
   } catch {

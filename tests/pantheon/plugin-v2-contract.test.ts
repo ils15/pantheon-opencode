@@ -11,6 +11,7 @@ import {
 } from '../../src/pantheon/local-decision-egress-gate.ts'
 import { TODO_CONTINUATION_PROMPT } from '../../src/pantheon/todo-enforcer.ts'
 import { BRIDGE_OPTIONS_KEY } from '../../src/pantheon/v2-bridge.ts'
+import { DECISION_POINT_REGISTRY } from '../../src/pantheon/v2-decision-points.ts'
 import type { HookResult } from '../../src/plugins/hook-runner.ts'
 
 type Registration = { dispose: () => Promise<void> }
@@ -113,6 +114,8 @@ async function main(): Promise<void> {
   const {
     default: plugin,
     V2_UNSUPPORTED_FEATURES,
+    getP7TelemetrySinkForTests,
+    getP8TelemetrySinkForTests,
     getUnsupportedFeatures,
     resetV2BridgeForTests,
     setV2Bridge,
@@ -125,6 +128,13 @@ async function main(): Promise<void> {
     new URL('../../src/pantheon/v2-unsupported.mjs', import.meta.url),
     'utf8',
   )
+
+  // Isolate P8 from the developer's shell (PH5-4). Most tests below assert
+  // flag-off behaviour, so a `PANTHEON_V2_P8_GUARDRAIL` exported in the
+  // environment must not reach them. The flag-on integration test sets it
+  // explicitly through `withP8Flag`, which restores this cleared value.
+  const previousP8Flag = process.env.PANTHEON_V2_P8_GUARDRAIL
+  delete process.env.PANTHEON_V2_P8_GUARDRAIL
 
   let passed = 0
   let failed = 0
@@ -1039,6 +1049,339 @@ async function main(): Promise<void> {
     assert.equal(signal?.aborted, true, 'v2Dispose aborts the event subscription')
     await finished
     assert.equal(streamClosed, true, 'event iterator exits after the disposal signal')
+  })
+
+  // ─── P7 sink wiring (Phase 4c) ──────────────────────────────────────
+  //
+  // With the flag on, a decision used to be computed and discarded: the adapter
+  // was built without a sink (CUTOVER-phase4b §8.3). These two tests pin the
+  // fix at the wiring level — the record reaches the 0b telemetry collector,
+  // carries only allowlisted fields, and the disabled adapter records nothing.
+
+  /**
+   * Deliver one event, then resolve `processed` on the NEXT pull: the dispatch
+   * loop has fully handled the event before it asks for another one. No timers.
+   */
+  function executionStream(event: Record<string, unknown>) {
+    let markProcessed!: () => void
+    const processed = new Promise<void>((resolve) => {
+      markProcessed = resolve
+    })
+    return {
+      processed,
+      subscribe: ({ signal }: { signal: AbortSignal }) => ({
+        async *[Symbol.asyncIterator]() {
+          yield event
+          markProcessed()
+          if (signal.aborted) return
+          await new Promise<void>((resolve) => {
+            signal.addEventListener('abort', () => resolve(), { once: true })
+          })
+        },
+      }),
+    }
+  }
+
+  function withP7Flag<T>(value: string | undefined, fn: () => Promise<T>): Promise<T> {
+    const previous = process.env.PANTHEON_V2_P7_LOOP
+    if (value === undefined) delete process.env.PANTHEON_V2_P7_LOOP
+    else process.env.PANTHEON_V2_P7_LOOP = value
+    return fn().finally(() => {
+      if (previous === undefined) delete process.env.PANTHEON_V2_P7_LOOP
+      else process.env.PANTHEON_V2_P7_LOOP = previous
+    })
+  }
+
+  /**
+   * Same isolation for P8: the suite cleared the variable at start, so the
+   * `finally` restores "absent" rather than the developer's shell value.
+   */
+  function withP8Flag<T>(value: string | undefined, fn: () => Promise<T>): Promise<T> {
+    const previous = process.env.PANTHEON_V2_P8_GUARDRAIL
+    if (value === undefined) delete process.env.PANTHEON_V2_P8_GUARDRAIL
+    else process.env.PANTHEON_V2_P8_GUARDRAIL = value
+    return fn().finally(() => {
+      if (previous === undefined) delete process.env.PANTHEON_V2_P8_GUARDRAIL
+      else process.env.PANTHEON_V2_P8_GUARDRAIL = previous
+    })
+  }
+
+  test('P7 records one allowlisted telemetry event per execution when the flag is on', async () => {
+    await withP7Flag('1', async () => {
+      const stream = executionStream({
+        type: 'session.execution.succeeded',
+        data: { sessionID: 'ses_p7_telemetry' },
+      })
+      try {
+        resetV2BridgeForTests()
+        await plugin.setup(makeBaseContext({ event: { subscribe: stream.subscribe } }) as never)
+        await stream.processed
+
+        const sink = getP7TelemetrySinkForTests()
+        assert.ok(sink, 'the P7 wiring must install a telemetry sink')
+        assert.equal(sink.size(), 1, 'exactly one record per execution')
+
+        const [record] = sink.events()
+        assert.ok(record)
+        assert.deepEqual(
+          Object.keys(record).sort(),
+          ['decision', 'effect', 'mode', 'point', 'reason', 'schemaVersion'],
+          'only allowlisted fields reach telemetry',
+        )
+        assert.equal(record.point, 'P7')
+        assert.equal(record.decision, 'loop.continue')
+        assert.equal(record.effect, 'none')
+        assert.equal(record.reason, 'p7.execution.counted')
+        assert.equal(record.mode, 'migration')
+      } finally {
+        v2Dispose()
+      }
+    })
+  })
+
+  test('P7 records nothing when the flag is off', async () => {
+    await withP7Flag(undefined, async () => {
+      const stream = executionStream({
+        type: 'session.execution.succeeded',
+        data: { sessionID: 'ses_p7_enabled_off' },
+      })
+      try {
+        resetV2BridgeForTests()
+        await plugin.setup(makeBaseContext({ event: { subscribe: stream.subscribe } }) as never)
+        await stream.processed
+
+        const sink = getP7TelemetrySinkForTests()
+        assert.ok(sink, 'the sink exists, so an empty result is the adapter refusing')
+        assert.equal(sink.size(), 0, 'the disabled adapter never calls the sink')
+        assert.deepEqual(sink.events(), [])
+      } finally {
+        v2Dispose()
+      }
+    })
+  })
+
+  // ─── P8 wiring (Phase 5 review PH5-1…PH5-4) ─────────────────────────
+  //
+  // The review found the guardrail's result discarded and the write proof
+  // recorded before P8, so a narrowing left `effectAfter: allow` behind. These
+  // tests drive the registered permission handler with the flag on and assert
+  // the applied effect and the recorded effect agree.
+
+  test('P8 with the flag on applies the deny before recording it (PH5-1/PH5-4)', async () => {
+    await withP8Flag('1', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'pantheon-p8-proof-'))
+      const proofPath = join(dir, 'permission.proof')
+      const previousProof = process.env.PANTHEON_HOOK_CANARY_PERMISSION_PROOF
+      process.env.PANTHEON_HOOK_CANARY_PERMISSION_PROOF = proofPath
+      try {
+        let permissionHandler: ((event: unknown) => void | Promise<void>) | undefined
+        await plugin.setup(
+          makeBaseContext({
+            permission: {
+              hook: async (_name: string, handler: typeof permissionHandler) => {
+                permissionHandler = handler
+                return { dispose: async () => {} }
+              },
+            },
+          }) as never,
+        )
+        assert.equal(typeof permissionHandler, 'function')
+        const handler = permissionHandler as (event: unknown) => Promise<void>
+
+        // No `action` token: p8.rule.action.unusable matches on the native
+        // passthrough path (the unmeasured N5 blast radius).
+        const narrowed = { sessionID: 'root', resources: ['explore'], effect: 'allow' }
+        await handler(narrowed)
+        assert.equal(narrowed.effect, 'deny', 'the applied effect is deny')
+
+        // A rule-free event is left exactly as the host decided.
+        const kept = {
+          sessionID: 'root',
+          action: 'read',
+          resources: ['explore'],
+          effect: 'allow',
+        }
+        await handler(kept)
+        assert.equal(kept.effect, 'allow', 'a rule-free event is untouched')
+
+        const sink = getP8TelemetrySinkForTests()
+        assert.ok(sink, 'the permission wiring must install a P8 telemetry sink')
+        assert.deepEqual(
+          sink.events().map((record) => [record.point, record.decision, record.reason]),
+          [
+            ['P8', 'guardrail.narrow', 'p8.rule.matched'],
+            ['P8', 'guardrail.keep', 'p8.rule.none'],
+          ],
+          'narrow and keep are both recorded',
+        )
+        // N10a: the record mirrors the registry mode, which is `off`. Nothing
+        // here may claim the activation C8 blocks.
+        const p8RegistryMode = DECISION_POINT_REGISTRY.find((point) => point.id === 'P8')?.mode
+        assert.equal(p8RegistryMode, 'off')
+        assert.deepEqual(
+          sink.events().map((record) => record.mode),
+          [p8RegistryMode, p8RegistryMode],
+          'a record carries the declared mode, never `active`',
+        )
+        assert.equal(
+          sink.events().some((record) => record.mode === 'active'),
+          false,
+          'no record claims an activation the registry denies',
+        )
+
+        const lines = readFileSync(proofPath, 'utf8').trim().split('\n')
+        assert.equal(lines.length, 2, 'one proof line per handler call')
+        const narrowProof = JSON.parse(lines[0].slice('permission.evaluate '.length))
+        assert.equal(narrowProof.effectBefore, 'allow')
+        assert.equal(
+          narrowProof.effectAfter,
+          narrowed.effect,
+          'the proof records the post-apply effect, not the pre-P8 one',
+        )
+        assert.equal(narrowProof.effectAfter, 'deny')
+        const keepProof = JSON.parse(lines[1].slice('permission.evaluate '.length))
+        assert.equal(keepProof.effectAfter, kept.effect)
+      } finally {
+        if (previousProof === undefined) {
+          delete process.env.PANTHEON_HOOK_CANARY_PERMISSION_PROOF
+        } else {
+          process.env.PANTHEON_HOOK_CANARY_PERMISSION_PROOF = previousProof
+        }
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+  })
+
+  test('P8 records and writes nothing when the flag is off', async () => {
+    let permissionHandler: ((event: unknown) => void | Promise<void>) | undefined
+    await plugin.setup(
+      makeBaseContext({
+        permission: {
+          hook: async (_name: string, handler: typeof permissionHandler) => {
+            permissionHandler = handler
+            return { dispose: async () => {} }
+          },
+        },
+      }) as never,
+    )
+    const event = { sessionID: 'root', resources: ['explore'], effect: 'allow' }
+    await permissionHandler?.(event)
+    assert.equal(event.effect, 'allow', 'the disabled guardrail writes nothing')
+    const sink = getP8TelemetrySinkForTests()
+    assert.ok(sink)
+    assert.equal(sink.size(), 0, 'the disabled guardrail emits no record')
+  })
+
+  test('P8 records only the effect the event still holds (N9)', async () => {
+    await withP8Flag('1', async () => {
+      let permissionHandler: ((event: unknown) => void | Promise<void>) | undefined
+      await plugin.setup(
+        makeBaseContext({
+          permission: {
+            hook: async (_name: string, handler: typeof permissionHandler) => {
+              permissionHandler = handler
+              return { dispose: async () => {} }
+            },
+          },
+        }) as never,
+      )
+      assert.equal(typeof permissionHandler, 'function')
+
+      // A Proxy whose descriptor trap reports an own writable data property and
+      // whose `get` answers the guardrail's post-write read with `deny` before
+      // settling back to `allow`. `set` claims success and stores nothing, so
+      // no effect is applied — but `apply()` cannot tell that from the read it
+      // performs. The record must not repeat that claim (N9).
+      let postWriteReads = 0
+      let writeClaimed = false
+      const target = { sessionID: 'root', resources: ['explore'], effect: 'allow' }
+      const lying = new Proxy(target, {
+        getOwnPropertyDescriptor(inner, key) {
+          if (key === 'effect') {
+            return { value: 'allow', writable: true, enumerable: true, configurable: true }
+          }
+          return Reflect.getOwnPropertyDescriptor(inner, key)
+        },
+        get(inner, key, receiver) {
+          if (key !== 'effect') return Reflect.get(inner, key, receiver)
+          if (!writeClaimed) return 'allow'
+          postWriteReads += 1
+          return postWriteReads === 1 ? 'deny' : 'allow'
+        },
+        set(inner, key, value) {
+          if (key !== 'effect') return Reflect.set(inner, key, value)
+          writeClaimed = true
+          return true
+        },
+      })
+
+      await (permissionHandler as (event: unknown) => Promise<void>)(lying)
+
+      assert.equal(target.effect, 'allow', 'the write never landed on the target')
+      const sink = getP8TelemetrySinkForTests()
+      assert.ok(sink)
+      assert.equal(sink.size(), 1, 'the outcome is still recorded')
+      const record = sink.events()[0]
+      assert.equal(record?.decision, 'guardrail.keep', 'the event does not hold a narrowing')
+      assert.equal(record?.reason, 'p8.write.unconfirmed')
+      assert.equal(
+        sink.events().some((event) => event.decision === 'guardrail.narrow'),
+        false,
+        'a record may not claim an effect the event does not hold',
+      )
+    })
+  })
+
+  test('P8 records no narrowing for an event the delegation policy already denies (N10b)', async () => {
+    await withP8Flag('1', async () => {
+      let permissionHandler: ((event: unknown) => void | Promise<void>) | undefined
+      let toolBeforeHandler: ((event: unknown) => void | Promise<void>) | undefined
+      await plugin.setup(
+        makeBaseContext({
+          tool: {
+            hook: async (name: string, handler: typeof toolBeforeHandler) => {
+              if (name === 'execute.before') toolBeforeHandler = handler
+              return { dispose: async () => {} }
+            },
+          },
+          permission: {
+            hook: async (_name: string, handler: typeof permissionHandler) => {
+              permissionHandler = handler
+              return { dispose: async () => {} }
+            },
+          },
+          session: { get: async ({ sessionID }: { sessionID: string }) => ({ id: sessionID }) },
+        }) as never,
+      )
+      assert.equal(typeof permissionHandler, 'function')
+
+      // A real host origin (athena → apollo), then a permission event with no
+      // `action`. P8 matches `p8.rule.action.unusable` and writes `deny`, and
+      // the delegation policy denies too (no `action: 'subagent'`). The final
+      // effect is the policy's, not the guardrail's, so no P8 record may claim
+      // the narrowing — the record used to be emitted before that deny (N10b).
+      await toolBeforeHandler?.({
+        tool: 'subagent',
+        sessionID: 'root',
+        agent: 'athena',
+        messageID: 'msg_p8_deny',
+        id: 'call_p8_deny',
+        input: { agent: 'apollo' },
+      })
+      const event = {
+        sessionID: 'root',
+        resources: ['apollo'],
+        effect: 'ask',
+        source: { type: 'tool', messageID: 'msg_p8_deny', id: 'call_p8_deny' },
+      }
+      await (permissionHandler as (event: unknown) => Promise<void>)(event)
+
+      assert.equal(event.effect, 'deny', 'the delegation policy denies')
+      assert.match(String((event as { message?: unknown }).message), /delegation denied/i)
+      const sink = getP8TelemetrySinkForTests()
+      assert.ok(sink)
+      assert.equal(sink.size(), 0, 'P8 contributed no effect to this outcome, so it records none')
+    })
   })
 
   // ─── V1→V2 bridge injection (issue #265) ────────────────────────────
@@ -3446,8 +3789,16 @@ async function main(): Promise<void> {
     } catch (err) {
       failed++
       console.error(`  ❌ ${name}:`, err)
+    } finally {
+      // A failing P8 test must not leave the flag on for the next one.
+      delete process.env.PANTHEON_V2_P8_GUARDRAIL
     }
   }
+
+  // Restore the developer's shell environment (PH5-4): the suite cleared it at
+  // start so flag-off assertions could not be contaminated.
+  if (previousP8Flag === undefined) delete process.env.PANTHEON_V2_P8_GUARDRAIL
+  else process.env.PANTHEON_V2_P8_GUARDRAIL = previousP8Flag
 
   // The #272 fixture created real symlinks; remove the tree once the tests
   // that read it have run.

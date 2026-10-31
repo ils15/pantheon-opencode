@@ -1,10 +1,19 @@
 import { PANTHEON_SKILL_CATALOG, PANTHEON_SKILL_IDS } from './pantheon-decision-catalog.ts'
 
-export type SkillSelectionReason = 'SELECTED_BY_KEYWORDS' | 'NO_LOCAL_MATCH' | 'INVALID_INPUT'
+export type SkillSelectionReason =
+  | 'SELECTED_BY_KEYWORDS'
+  | 'SELECTED_BY_MATERIAL_REQUIREMENT'
+  | 'NO_LOCAL_MATCH'
+  | 'INVALID_INPUT'
+
+/** Material requirement that must seat `artifact-management` (D2). */
+export type MaterialRequirement = 'gate' | 'planning'
 
 export interface LocalSkillSelection {
   skillIds: string[]
   reasonCode: SkillSelectionReason
+  /** `null` unless the request materially requires a gate or a plan (D2). */
+  materialRequirement: MaterialRequirement | null
 }
 
 /** Bounded so a malformed or huge prompt can never fan out local work. */
@@ -106,6 +115,55 @@ const KEYWORDS: Readonly<Record<string, readonly string[]>> = Object.freeze({
   worktrees: ['worktree', 'worktrees', 'parallel', 'isolation', 'isolated'],
 })
 
+/**
+ * Material gate/planning signals (D2).
+ *
+ * `artifact-management` exists for planned or materially risky work. Keyword
+ * scoring alone left it unreachable when the request demanded a gate or a plan
+ * without naming the artifact: "breaking change with human approval and a
+ * rollback plan" matched no keyword at all. These are static phrase/token
+ * lists, so detection stays local, deterministic, and bounded: no file, memory,
+ * catalog, or network read.
+ */
+const MATERIAL_GATE_TOKENS: ReadonlySet<string> = new Set([
+  'approval',
+  'cutover',
+  'gate',
+  'irreversible',
+  'signoff',
+])
+
+const MATERIAL_GATE_PHRASES: readonly string[] = Object.freeze([
+  'breaking change',
+  'risk assessment',
+  'risk review',
+  'schema change',
+  'sign off',
+])
+
+const MATERIAL_PLANNING_TOKENS: ReadonlySet<string> = new Set([
+  'deliverable',
+  'deliverables',
+  'milestone',
+  'milestones',
+  'plan',
+  'planning',
+  'roadmap',
+  'rollback',
+])
+
+const MATERIAL_PLANNING_PHRASES: readonly string[] = Object.freeze([
+  'across phases',
+  'break down',
+  'design doc',
+  'implementation plan',
+  'migration plan',
+  'rollout plan',
+  'work breakdown',
+])
+
+const ARTIFACT_SKILL_ID = 'artifact-management'
+
 const CATALOG_ORDER = new Map(PANTHEON_SKILL_CATALOG.map((entry, index) => [entry.id, index]))
 
 function normalize(value: string): string {
@@ -133,10 +191,53 @@ function scoreSkill(normalizedRequest: string, tokens: ReadonlySet<string>, skil
   return score
 }
 
+function hasMaterialSignal(
+  normalizedRequest: string,
+  tokens: ReadonlySet<string>,
+  signalTokens: ReadonlySet<string>,
+  signalPhrases: readonly string[],
+): boolean {
+  for (const token of signalTokens) {
+    if (tokens.has(token)) return true
+  }
+  return signalPhrases.some((phrase) => normalizedRequest.includes(phrase))
+}
+
+/**
+ * Detect a material gate or planning requirement (D2). A gate requirement wins
+ * over a planning one, so the reported token is stable when both are present.
+ */
+function detectMaterialRequirement(
+  normalizedRequest: string,
+  tokens: ReadonlySet<string>,
+): MaterialRequirement | null {
+  if (hasMaterialSignal(normalizedRequest, tokens, MATERIAL_GATE_TOKENS, MATERIAL_GATE_PHRASES)) {
+    return 'gate'
+  }
+  if (
+    hasMaterialSignal(
+      normalizedRequest,
+      tokens,
+      MATERIAL_PLANNING_TOKENS,
+      MATERIAL_PLANNING_PHRASES,
+    )
+  ) {
+    return 'planning'
+  }
+  return null
+}
+
 /**
  * Select a small, deterministic set of allowlisted Pantheon skills for the
  * current request. This function never reads files, memory, transcripts, or
  * the network, and it never returns the whole catalog as a fallback.
+ *
+ * D2 — when the request materially requires a gate or a plan, the artifact
+ * skill is guaranteed a seat instead of depending on the literal keywords
+ * `artifact`/`planned`/`multi-phase`/`impl`. That seat is first, so a hard
+ * budget drops the lowest-scoring keyword skill rather than the required one.
+ * This only ranks identifiers: it does not filter or mutate any prompt, and P2
+ * remains an empirical no-op on the default path (F-09).
  */
 export function selectPantheonSkills(
   request: unknown,
@@ -150,22 +251,31 @@ export function selectPantheonSkills(
     maxSkills < 1 ||
     maxSkills > MAX_SELECTED_SKILLS
   ) {
-    return { skillIds: [], reasonCode: 'INVALID_INPUT' }
+    return { skillIds: [], reasonCode: 'INVALID_INPUT', materialRequirement: null }
   }
 
   const normalizedRequest = normalize(request)
   const tokens = tokenize(normalizedRequest)
+  const material = detectMaterialRequirement(normalizedRequest, tokens)
   const scored: Array<{ id: string; score: number; order: number }> = []
   for (const skillId of PANTHEON_SKILL_IDS) {
     const score = scoreSkill(normalizedRequest, tokens, skillId)
     if (score <= 0) continue
     scored.push({ id: skillId, score, order: CATALOG_ORDER.get(skillId) ?? 0 })
   }
-  if (scored.length === 0) return { skillIds: [], reasonCode: 'NO_LOCAL_MATCH' }
+  if (material === null && scored.length === 0) {
+    return { skillIds: [], reasonCode: 'NO_LOCAL_MATCH', materialRequirement: null }
+  }
 
   scored.sort((left, right) => right.score - left.score || left.order - right.order)
+  const ranked = scored.map((entry) => entry.id)
+  const ordered =
+    material === null
+      ? ranked
+      : [ARTIFACT_SKILL_ID, ...ranked.filter((id) => id !== ARTIFACT_SKILL_ID)]
   return {
-    skillIds: scored.slice(0, maxSkills).map((entry) => entry.id),
-    reasonCode: 'SELECTED_BY_KEYWORDS',
+    skillIds: ordered.slice(0, maxSkills),
+    reasonCode: material === null ? 'SELECTED_BY_KEYWORDS' : 'SELECTED_BY_MATERIAL_REQUIREMENT',
+    materialRequirement: material,
   }
 }

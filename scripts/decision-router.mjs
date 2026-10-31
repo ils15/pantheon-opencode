@@ -1,23 +1,47 @@
 #!/usr/bin/env node
 import { existsSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
-// Prebuilt bundle: Node refuses to strip TypeScript types under node_modules,
-// so the published CLI cannot import the ledger source directly. Regenerate
+// Prebuilt bundles: Node refuses to strip TypeScript types under node_modules,
+// so the published CLI cannot import the TypeScript sources directly. Regenerate
 // with `npm run build:decision-router`; `--check` guards against drift.
 import {
   openLocalDecisionBudgetLedger,
   resolveLocalDecisionBudgetDbPath,
 } from './decision-router-budget.mjs'
 import {
+  evaluateCapGate,
+  evaluatePeriodGate,
+  inspectDecisionBudget,
+  listDecisionHoldsReadOnly,
+  utcPeriodOf,
+} from './decision-router-v2-budget.mjs'
+import {
+  resolveV2DecisionEgress,
+  V2_DECISION_EGRESS_DEFAULT,
+  V2_DECISION_EGRESS_TRANSPORT,
+} from './decision-router-v2-egress.mjs'
+import {
+  applyDecisionLayerPlan,
+  buildDecisionLayerPlan,
+  formatDecisionLayerPlan,
+  resolveInstallStatePath,
+  toDecisionLayerPlanJson,
+} from './install/decision-layer-preview.mjs'
+import {
   DECISION_PROVIDER_BUDGET_MAPPING,
   DECISION_ROUTER_MODELS,
+  diffDecisionRouterSurfaces,
   readUserDecisionRouterConfig,
   resolveUserDecisionRouterConfigPath,
   updateUserDecisionRouterConfig,
   writeUserDecisionRouterConfig,
 } from './install/decision-router-config.mjs'
+import { readState } from './install/state.mjs'
 
 const BUDGET_PROVIDERS = DECISION_PROVIDER_BUDGET_MAPPING
+
+const USAGE =
+  'Usage: decision-router help|status|setup|preview|select|enable|disable|consent|caps|period|holds'
 
 /**
  * Malformed command line (wrong flags, unknown provider, invalid value).
@@ -27,26 +51,108 @@ export class DecisionRouterUsageError extends TypeError {
   name = 'DecisionRouterUsageError'
 }
 
+/** Read-only command help. Touches no file, ledger or environment path. */
+export function decisionRouterHelp() {
+  return [
+    USAGE,
+    '',
+    'Read-only (never create, migrate or write anything):',
+    '  help                                      this text',
+    '  status [--target <dir>]                   configuration, egress posture and budget facts',
+    '  setup [options]                           computed artifact diff; writes only with --apply',
+    '  preview                                   alias of `setup` (never writes)',
+    '  holds                                     unresolved reservations, read-only',
+    '',
+    'Explicit actions (each one changes exactly one thing):',
+    '  select local|auto|<provider>/<model>       record a selection; enables nothing',
+    '  enable | disable                          turn selection on or off',
+    '  enable <provider> <model>                 toggle one candidate',
+    '  consent yes|no                            record egress consent',
+    '  caps user|provider <p>|model <p> <m> --monthly-usd N --per-decision-usd N',
+    '  period confirm --current none|YYYY-MM --next YYYY-MM',
+    '',
+    'setup options:',
+    '  --apply              write the previewed artifacts (otherwise nothing is written)',
+    '  --json               machine-readable plan',
+    '  --target <dir>       also reconcile <dir>/.pantheon/install-state.json when present',
+    '  --selection <value>  same values as `select`',
+    '  --accept-migration   allow a schema migration that would enable turn selection',
+    '',
+    `Egress default: ${V2_DECISION_EGRESS_DEFAULT}. Enablement, consent, one cap- and period-eligible`,
+    'candidate and the host permission gate are all required; any missing item means zero requests.',
+    `Provider endpoints are retained ${V2_DECISION_EGRESS_TRANSPORT.wireStatus} (UNWIRED) here; this`,
+    'interface adds no transport and never claims the transport was removed.',
+  ].join('\n')
+}
+
 /** Run an explicit, non-secret administrative command for the user-level router config. */
 export async function runDecisionRouterCommand(
   args,
   { env = process.env, stdout = console.log } = {},
 ) {
   const [command, ...rest] = args
-  if (command === 'status' && rest.length === 0) {
+
+  if (command === 'help' || command === '--help' || command === '-h') {
+    if (rest.length > 0) throw new DecisionRouterUsageError(USAGE)
+    stdout(decisionRouterHelp())
+    return
+  }
+
+  if (command === 'status') {
+    const options = parseNamedFlags(rest, ['--target'])
     const config = readUserDecisionRouterConfig({ env })
-    const ledger = openLedger(env)
-    try {
-      stdout(`Config: ${resolveUserDecisionRouterConfigPath(env)}`)
-      stdout(`Enabled: ${config.enabled ? 'yes' : 'no'}`)
-      stdout(`Selection: ${formatSelection(config.selection)}`)
-      stdout(`Egress consent: ${config.egress_consent ? 'yes' : 'no'}`)
+    const dbPath = resolveLocalDecisionBudgetDbPath(env)
+    const inspection = inspectDecisionBudget(dbPath)
+    const wallPeriod = utcPeriodOf(Date.now())
+    const egress = describeEgress(config, inspection, wallPeriod)
+
+    stdout(`Config: ${resolveUserDecisionRouterConfigPath(env)}`)
+    stdout(
+      `Config file: ${existsSync(resolveUserDecisionRouterConfigPath(env)) ? 'present' : 'absent'}`,
+    )
+    stdout(`Enabled: ${config.enabled ? 'yes' : 'no'}`)
+    stdout(`Selection: ${formatSelection(config.selection)}`)
+    stdout(`Egress consent: ${config.egress_consent ? 'yes' : 'no'}`)
+    stdout(
+      `Enabled candidates: ${config.enabled_candidates.length ? config.enabled_candidates.map(formatCandidate).join(', ') : 'none'}`,
+    )
+    stdout(describeEgressLine(egress))
+    stdout(`Ledger: ${formatLedger(inspection, dbPath)}`)
+    stdout(`Budget period: ${formatPeriod(inspection)}`)
+    stdout(`Caps: ${formatCaps(inspection)}`)
+    if (options['--target'] !== undefined) {
+      stdout(`Install-state: ${formatInstallState(config, options['--target'])}`)
+    }
+    stdout('Mode: read-only — status and help never create, migrate or write anything.')
+    return
+  }
+
+  if (command === 'setup' || command === 'preview') {
+    const options = parseSetupOptions(rest, command === 'preview')
+    const plan = buildDecisionLayerPlan({
+      env,
+      ...(options['--target'] === undefined ? {} : { target: options['--target'] }),
+      ...(options['--selection'] === undefined
+        ? {}
+        : { selection: parseSelectionTarget(options['--selection']) }),
+      acceptMigration: options['--accept-migration'] === true,
+    })
+    if (options['--json'] === true) {
+      stdout(JSON.stringify(toDecisionLayerPlanJson(plan), null, 2))
+    } else {
       stdout(
-        `Enabled candidates: ${config.enabled_candidates.length ? config.enabled_candidates.map(formatCandidate).join(', ') : 'none'}`,
+        formatDecisionLayerPlan(plan, {
+          scope: options['--target'] ?? 'user',
+          applyPending: options['--apply'] === true,
+        }),
       )
-      stdout(`Active budget period: ${ledger.getActiveBudgetPeriod() ?? 'unconfirmed'}`)
-    } finally {
-      ledger.close()
+    }
+    if (options['--apply'] === true) {
+      const result = applyDecisionLayerPlan(plan, { env })
+      stdout(
+        `Applied: ${result.written.length} written, ${result.skipped.length} unchanged. ` +
+          'No backup copy was created.',
+      )
     }
     return
   }
@@ -55,18 +161,18 @@ export async function runDecisionRouterCommand(
     const target = rest[0]
     if (rest.length !== 1 || typeof target !== 'string')
       throw new DecisionRouterUsageError('Usage: decision-router select local|auto|provider/model')
-    let selection
-    if (target === 'local' || target === 'auto') {
-      selection = { mode: target }
-    } else {
-      const [provider, model, ...extra] = target.split('/')
-      if (extra.length || !isKnownCandidate(provider, model)) {
-        throw new DecisionRouterUsageError('Selection must name one supported provider/model pair')
-      }
-      selection = { mode: 'explicit', provider, model }
-    }
+    const selection = parseSelectionTarget(target)
+    const before = readUserDecisionRouterConfig({ env })
     saveConfig(env, { selection })
-    stdout(`Selection saved: ${formatSelection(selection)}. Consent and enablement are unchanged.`)
+    const after = readUserDecisionRouterConfig({ env })
+    const revoked = before.egress_consent && !after.egress_consent
+    stdout(
+      `Selection saved: ${formatSelection(selection)}. ${
+        revoked
+          ? 'Egress consent was revoked because the target changed; nothing was enabled.'
+          : 'Enablement, consent, caps and period are unchanged.'
+      }`,
+    )
     return
   }
 
@@ -145,31 +251,22 @@ export async function runDecisionRouterCommand(
   }
 
   if (command === 'holds' && rest.length === 0) {
-    if (!existsSync(resolveLocalDecisionBudgetDbPath(env))) {
+    // Read-only: a listing must never create, migrate or reserve anything (D8).
+    const holds = listDecisionHoldsReadOnly(resolveLocalDecisionBudgetDbPath(env))
+    if (holds === null || holds.length === 0) {
       stdout('No unresolved provider holds.')
       return
     }
-    const ledger = openLedger(env)
-    try {
-      const holds = ledger.listUncertainReservations()
-      if (holds.length === 0) {
-        stdout('No unresolved provider holds.')
-        return
-      }
-      for (const hold of holds) {
-        stdout(
-          `Hold ${hold.reservationId}: status=${hold.state} provider=${hold.provider} model=${hold.model} period=${hold.period} reserved_micros=${hold.reservedMicros}`,
-        )
-      }
+    for (const hold of holds) {
       stdout(
-        'This listing does not reserve, reconcile, release, or prune holds. ' +
-          'Opening an existing ledger may apply a forward-only schema migration. ' +
-          'Unresolved holds are never auto-released; reconcile or resolve them ' +
-          'explicitly before pruning their period.',
+        `Hold ${hold.reservationId}: status=${hold.state} provider=${hold.provider} model=${hold.model} period=${hold.period} reserved_micros=${hold.reservedMicros}`,
       )
-    } finally {
-      ledger.close()
     }
+    stdout(
+      'This listing is read-only: it does not reserve, reconcile, release or prune, it never ' +
+        'creates or migrates the ledger, and unresolved holds are never auto-released. ' +
+        'Reconcile or resolve them explicitly before pruning their period.',
+    )
     return
   }
 
@@ -199,9 +296,134 @@ export async function runDecisionRouterCommand(
     return
   }
 
-  throw new DecisionRouterUsageError(
-    'Usage: decision-router status|select|enable|disable|consent|caps|period|holds',
-  )
+  throw new DecisionRouterUsageError(USAGE)
+}
+
+/** Cap- and period-eligible candidates, read-only, from the separated surfaces. */
+function capEligibleCandidates(config, inspection, wallPeriod) {
+  if (inspection.caps === null) return []
+  const period = evaluatePeriodGate({
+    activePeriod: inspection.period.activePeriod,
+    wallPeriod,
+  })
+  return config.enabled_candidates.filter(({ provider, model }) => {
+    const accounting = DECISION_PROVIDER_BUDGET_MAPPING[provider]
+    if (!accounting) return false
+    const cap = evaluateCapGate({
+      user: inspection.caps.user ?? undefined,
+      provider: inspection.caps.providers[accounting],
+      model: inspection.caps.models[`${accounting}/${model}`],
+    })
+    return cap.ok && period.ok
+  })
+}
+
+function describeEgress(config, inspection, wallPeriod) {
+  return resolveV2DecisionEgress(config, capEligibleCandidates(config, inspection, wallPeriod))
+}
+
+function describeEgressLine(egress) {
+  if (egress.mode === 'opt-in') {
+    return `Egress: opt-in (${egress.reason}) — ${egress.provider}/${egress.candidate.model}`
+  }
+  return `Egress: ${egress.mode} (${egress.reason}) — zero requests`
+}
+
+function formatLedger(inspection, dbPath) {
+  const { ledger } = inspection
+  if (!ledger.present) return `${dbPath} (absent; not created by this command)`
+  if (!ledger.readable) return `${dbPath} (unreadable: ${ledger.reason})`
+  return `${dbPath} (schema v${ledger.schemaVersion}, ${ledger.holds} unresolved hold(s), ${ledger.reservations} reservation(s))`
+}
+
+function formatPeriod(inspection) {
+  const { ledger, period } = inspection
+  if (!ledger.present) return 'unconfirmed (no ledger)'
+  if (!ledger.readable) return `unknown (${ledger.reason})`
+  return period.activePeriod ?? 'unconfirmed'
+}
+
+function formatCaps(inspection) {
+  if (inspection.caps === null) return 'none (no ledger)'
+  const providers = Object.keys(inspection.caps.providers).length
+  const models = Object.keys(inspection.caps.models).length
+  return `${inspection.caps.user === null ? 'user none' : 'user set'}, ${providers} provider, ${models} model`
+}
+
+function formatInstallState(config, target) {
+  const statePath = resolveInstallStatePath(target)
+  if (!existsSync(statePath)) return `no install-state at ${statePath} (nothing to reconcile)`
+  const state = readState(target)
+  if (state === null) {
+    return `unreadable install-state at ${statePath} (left untouched; repair or reinstall first)`
+  }
+  const diff = diffDecisionRouterSurfaces(config, state.decision_router)
+  if (diff.differences.length === 0) return `consistent with ${statePath}`
+  const fields = diff.differences
+    .map(
+      (entry) =>
+        `${entry.field}: install-state ${String(entry.installState)} -> user-config ${String(entry.userConfig)}`,
+    )
+    .join(', ')
+  return `divergent from ${statePath} (${fields}); run \`decision-router setup --target ${target} --apply\``
+}
+
+function parseSelectionTarget(target) {
+  if (target === 'local' || target === 'auto') return { mode: target }
+  const [provider, model, ...extra] = String(target).split('/')
+  if (extra.length || !isKnownCandidate(provider, model)) {
+    throw new DecisionRouterUsageError('Selection must name one supported provider/model pair')
+  }
+  return { mode: 'explicit', provider, model }
+}
+
+function parseNamedFlags(args, expected) {
+  const result = Object.create(null)
+  for (let index = 0; index < args.length; index += 1) {
+    const flag = args[index]
+    if (!expected.includes(flag) || Object.hasOwn(result, flag)) {
+      throw new DecisionRouterUsageError(USAGE)
+    }
+    const value = args[index + 1]
+    if (value === undefined || value.startsWith('--')) throw new DecisionRouterUsageError(USAGE)
+    result[flag] = value
+    index += 1
+  }
+  return result
+}
+
+function parseSetupOptions(args, forbidApply) {
+  const result = Object.create(null)
+  let index = 0
+  while (index < args.length) {
+    const flag = args[index]
+    if (flag === '--apply') {
+      if (forbidApply) {
+        throw new DecisionRouterUsageError('preview never writes; use `setup --apply`')
+      }
+      if (result['--apply'] === true) throw new DecisionRouterUsageError(USAGE)
+      result['--apply'] = true
+      index += 1
+      continue
+    }
+    if (flag === '--json' || flag === '--accept-migration') {
+      if (result[flag] === true) throw new DecisionRouterUsageError(USAGE)
+      result[flag] = true
+      index += 1
+      continue
+    }
+    if (flag === '--target' || flag === '--selection') {
+      const value = args[index + 1]
+      if (value === undefined || value.startsWith('--') || Object.hasOwn(result, flag)) {
+        throw new DecisionRouterUsageError(USAGE)
+      }
+      result[flag] = value
+      index += 2
+      continue
+    }
+    throw new DecisionRouterUsageError(USAGE)
+  }
+  return result
 }
 
 function saveConfig(env, update) {

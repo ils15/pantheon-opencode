@@ -84,7 +84,12 @@ function printUsage() {
     '  npx pantheon-opencode init --merge-dev-config <path> # Merge a dev config (off by default)',
   )
   console.log('  npx pantheon-opencode set-tier <name>      # Set active model preset (global)')
-  console.log('  npx pantheon-opencode decision-router status|select|enable|consent|caps|period')
+  console.log(
+    '  npx pantheon-opencode decision-router help|status|setup|preview|holds  # read-only',
+  )
+  console.log(
+    '  npx pantheon-opencode decision-router select|enable|consent|caps|period  # explicit actions',
+  )
   console.log(
     '  npx pantheon-opencode update [--stable]    # Update package + re-run init (default: beta channel)',
   )

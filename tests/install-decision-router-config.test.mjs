@@ -17,9 +17,11 @@ import {
   DECISION_ROUTER_MODELS,
   DEFAULT_DECISION_ROUTER_CONFIG,
   DEFAULT_USER_DECISION_ROUTER_CONFIG,
+  diffDecisionRouterSurfaces,
   isUserDecisionRouterEnabled,
   migrateDecisionRouterConfig,
   migrateUserDecisionRouterConfig,
+  projectDecisionRouterInstallState,
   REMOTELY_ELIGIBLE_DECISION_PROVIDERS,
   readUserDecisionRouterConfig,
   resolveDecisionRouterProvider,
@@ -288,4 +290,78 @@ test('the user provider matrix maps onto ledger accounting providers exactly onc
     assert.ok(ledgerProviders.has(accounting), `${provider} maps outside the ledger`)
   }
   assert.deepEqual(REMOTELY_ELIGIBLE_DECISION_PROVIDERS, ['openai-decisions', 'typesafe-jev'])
+})
+
+/** D7: install-state is a projection of the user config and round-trips. */
+test('install-state projection round-trips and reports divergence instead of drifting', () => {
+  const userConfig = {
+    schema_version: 2,
+    enabled: true,
+    selection: { mode: 'explicit', provider: 'typesafe-jev', model: 'jev-1.14.0' },
+    egress_consent: true,
+    enabled_candidates: [{ provider: 'typesafe-jev', model: 'jev-1.14.0' }],
+  }
+  const projection = projectDecisionRouterInstallState(userConfig)
+  assert.deepEqual(projection, {
+    schema_version: 1,
+    provider: 'typesafe-jev',
+    egress_consent: true,
+  })
+  // The canonical id must survive a read/write round trip instead of resetting
+  // to Local, which is what made setup and install-state disagree.
+  assert.deepEqual(migrateDecisionRouterConfig(projection), projection)
+  assert.deepEqual(diffDecisionRouterSurfaces(userConfig, projection).differences, [])
+
+  // A stale record that claims consent the config does not have is reported.
+  const stale = { schema_version: 1, provider: 'auto', egress_consent: true }
+  const noConsent = { ...userConfig, egress_consent: false }
+  const diff = diffDecisionRouterSurfaces(noConsent, stale)
+  assert.deepEqual(diff.differences.map((entry) => entry.field).sort(), [
+    'egress_consent',
+    'provider',
+  ])
+  assert.equal(
+    diff.differences.find((entry) => entry.field === 'egress_consent')?.installState,
+    true,
+  )
+  assert.equal(
+    diff.differences.find((entry) => entry.field === 'egress_consent')?.userConfig,
+    false,
+  )
+  assert.equal(projectDecisionRouterInstallState(noConsent).egress_consent, false)
+
+  // A local selection can never carry consent in the projected record.
+  assert.deepEqual(
+    projectDecisionRouterInstallState({ ...userConfig, selection: { mode: 'local' } }),
+    { schema_version: 1, provider: 'local', egress_consent: false },
+  )
+})
+
+/** D9: `select` cannot transfer a consent decision to a different target. */
+test('changing the selection revokes the previous consent and never enables', () => {
+  const consented = {
+    schema_version: 2,
+    enabled: false,
+    selection: { mode: 'explicit', provider: 'openai-decisions', model: 'gpt-6-luna' },
+    egress_consent: true,
+    enabled_candidates: [{ provider: 'openai-decisions', model: 'gpt-6-luna' }],
+  }
+  const moved = updateUserDecisionRouterConfig(consented, {
+    selection: { mode: 'explicit', provider: 'typesafe-jev', model: 'jev-1.14.0' },
+  })
+  assert.equal(moved.egress_consent, false)
+  assert.equal(moved.enabled, false, 'select never enables')
+  assert.deepEqual(moved.enabled_candidates, consented.enabled_candidates)
+
+  // Re-selecting the same target keeps the recorded consent.
+  const same = updateUserDecisionRouterConfig(consented, {
+    selection: { mode: 'explicit', provider: 'openai-decisions', model: 'gpt-6-luna' },
+  })
+  assert.equal(same.egress_consent, true)
+
+  // A selection moving to Local also clears consent.
+  assert.equal(
+    updateUserDecisionRouterConfig(consented, { selection: { mode: 'local' } }).egress_consent,
+    false,
+  )
 })

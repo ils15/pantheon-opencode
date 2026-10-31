@@ -35,21 +35,31 @@
  *   - Full `real` mode (the real plugin loaded by a live host, its hooks
  *     observably firing) needs a prepared sandbox: `--hooks`.
  *
- * Requirements (skipped when unavailable, so `npm test` stays green on a
- * machine without a host — the static guard above is exempt):
- *   - an `opencode` binary (V2) on PATH, or PANTHEON_HOOK_CANARY_BIN
- *   - a usable model, via PANTHEON_HOOK_CANARY_MODEL (provider/model)
+ * Requirements:
+ *   - an `opencode` binary (V2) on PATH, or PANTHEON_HOOK_CANARY_BIN. Without
+ *     one there is nothing to drive, so the host-gated tests skip (CI has no
+ *     binary; the static guard above still runs there).
+ *   - a usable model. PANTHEON_HOOK_CANARY_MODEL (provider/model) wins; with no
+ *     override the default is resolved against `opencode models`, so a retired
+ *     id cannot silently become the default again. When no usable model can be
+ *     resolved the suite FAILS with the reason and the remedy — it never skips.
+ *     A model-unavailable skip used to land in the summary as a non-failure,
+ *     which is indistinguishable from a canary that verified something.
  *
  * Isolation: a private `opencode serve` on a free port (never the shared
- * daemon on 49374), a throwaway project directory, and a proof file handed to
- * the host through the environment.
+ * daemon on 49374), a throwaway project directory with its own HOME and config
+ * (so the developer's MCP servers and agents cannot leak into a canary prompt),
+ * and a proof file handed to the host through the environment. The throwaway
+ * host gets a private `OPENCODE_DB`, so provider credentials — which live in
+ * that database — are copied across for the run (see seedCredentials); no
+ * session state is.
  */
 
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { after, before, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -61,11 +71,25 @@ const UNSUPPORTED_SEED_SRC = join(here, '..', '..', 'src', 'pantheon', 'v2-unsup
 const TEST_SRC = fileURLToPath(import.meta.url)
 
 const BIN = process.env.PANTHEON_HOOK_CANARY_BIN ?? 'opencode'
-const MODEL = process.env.PANTHEON_HOOK_CANARY_MODEL ?? 'opencode-go/mimo-v2.5'
 const AGENT = process.env.PANTHEON_HOOK_CANARY_AGENT ?? 'canary'
 const MODE = process.env.PANTHEON_HOOK_CANARY_MODE ?? 'fixture'
 const IS_REAL = MODE === 'real'
 const SERVER_TIMEOUT_MS = Number(process.env.PANTHEON_HOOK_CANARY_TIMEOUT_MS ?? 240000)
+
+/**
+ * Candidate defaults for the canary model, in preference order.
+ *
+ * Ids are still names, so they are never trusted on their own: the default is
+ * resolved against `opencode models` (see resolveCanaryModel). A listed id can
+ * still be dead upstream — `opencode-go/mimo-v2.5` stayed in the registry while
+ * the gateway answered HTTP 410 "deprecated" — so a retired preference is
+ * dropped there instead of shipping as the default.
+ */
+const PREFERRED_MODELS = [
+  'opencode-go/mimo-v2.6-flash',
+  'opencode-go/deepseek-v4.1-flash',
+  'opencode-go/qwen3.8-flash',
+]
 
 /** Label `plugin-v2.ts` writes only when this env var is set. */
 const LIFETIME_PROOF_LABEL = 'plugin-v2:session.hook:compaction'
@@ -80,6 +104,37 @@ const BINARY_AVAILABLE = (() => {
 const HOST_VERSION = BINARY_AVAILABLE
   ? spawnSync(BIN, ['--version'], { encoding: 'utf8' }).stdout.trim()
   : ''
+
+/** Result of {@link resolveCanaryModel}; `model` is empty when unusable. */
+function resolveCanaryModel() {
+  const override = process.env.PANTHEON_HOOK_CANARY_MODEL?.trim()
+  if (override) return { model: override, source: 'PANTHEON_HOOK_CANARY_MODEL' }
+
+  const listed = spawnSync(BIN, ['models'], { encoding: 'utf8', timeout: 120000 })
+  if (listed.error || listed.status !== 0) {
+    const detail = listed.error?.message ?? listed.stderr?.trim() ?? `exit code ${listed.status}`
+    return { model: '', source: null, reason: `\`${BIN} models\` failed: ${detail}` }
+  }
+  // One `provider/model` per line; ignore banner lines and duplicates.
+  const installed = new Set(
+    String(listed.stdout ?? '')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => /^[^/\s]+\/\S+$/.test(line)),
+  )
+  const match = PREFERRED_MODELS.find((model) => installed.has(model))
+  if (match) return { model: match, source: 'installed models' }
+  return {
+    model: '',
+    source: null,
+    reason: `none of the preferred canary models is installed (${PREFERRED_MODELS.join(', ')}; ${installed.size} models listed)`,
+  }
+}
+
+const MODEL_RESOLUTION = BINARY_AVAILABLE ? resolveCanaryModel() : { model: '', source: null }
+const MODEL = MODEL_RESOLUTION.model
+/** Why credential copying failed, quoted by a later model failure. */
+let credentialStatus = 'not attempted'
 
 /** @type {import('node:child_process').ChildProcess | null} */
 let server = null
@@ -136,8 +191,74 @@ async function waitFor(fn, timeoutMs, label) {
   }
 }
 
+/**
+ * Copy provider credentials from the developer's live OpenCode database into
+ * the throwaway database this canary spawns.
+ *
+ * The canary isolates `OPENCODE_DB` so a live run never writes to the shared
+ * database. Credentials live in that same database, so the isolated host used
+ * to start with no provider auth: every model failed with `provider.auth` and
+ * the old skip-on-auth path reported that as green. Copying the `credential`
+ * rows (and nothing else — no sessions, messages or history) is what lets the
+ * canary actually verify a callback instead of skipping past it.
+ *
+ * The server has already migrated the isolated database by the time this runs,
+ * so its `credential` schema is the host's own and is never re-declared here.
+ *
+ * @param {string} dbPath isolated database the canary host is using
+ * @returns {Promise<string>} status quoted by {@link assertModelRan}
+ */
+async function seedCredentials(dbPath) {
+  // Same data-root rule as the plugin and the vision picker: OPENCODE_DB wins,
+  // otherwise $XDG_DATA_HOME/opencode, otherwise ~/.local/share/opencode.
+  const source =
+    process.env.OPENCODE_DB?.trim() ||
+    join(
+      process.env.XDG_DATA_HOME?.trim() || join(homedir(), '.local', 'share'),
+      'opencode',
+      'opencode.db',
+    )
+  if (resolve(source) === resolve(dbPath)) return 'the canary host already uses the live database'
+  if (!existsSync(source)) return `no credential database at ${source}`
+
+  const columns =
+    'id, integration_id, label, value, connector_id, method_id, active, time_created, time_updated'
+  let db
+  try {
+    const { DatabaseSync } = await import('node:sqlite')
+    db = new DatabaseSync(dbPath)
+    db.exec(`ATTACH DATABASE '${source.replace(/'/g, "''")}' AS canary_live`)
+    db.exec(
+      `INSERT OR REPLACE INTO main.credential (${columns}) SELECT ${columns} FROM canary_live.credential`,
+    )
+    const { copied } = db.prepare('SELECT count(*) AS copied FROM main.credential').get()
+    return copied > 0
+      ? `${copied} credential row(s) copied from ${source}`
+      : `no credentials stored in ${source}`
+  } catch (error) {
+    return `could not copy credentials from ${source}: ${error instanceof Error ? error.message : String(error)}`
+  } finally {
+    if (db) {
+      try {
+        db.exec('DETACH DATABASE canary_live')
+      } catch {}
+      db.close()
+    }
+  }
+}
+
 before(async () => {
   if (!BINARY_AVAILABLE) return
+
+  if (!MODEL) {
+    // Fail, never skip: a skip for "model unavailable" reports as green.
+    throw new Error(
+      `the hook canary has no usable model: ${MODEL_RESOLUTION.reason ?? 'unknown reason'}.\n` +
+        `Set PANTHEON_HOOK_CANARY_MODEL to an installed model with working credentials (\`${BIN} models\`), ` +
+        'or restore credentials with `opencode auth login`. ' +
+        'The canary fails here by design — skipping would report unverified hooks as passing.',
+    )
+  }
 
   projectDir = mkdtempSync(join(tmpdir(), 'pantheon-hook-canary-'))
   proofFile = join(projectDir, 'canary-proof.log')
@@ -191,6 +312,13 @@ before(async () => {
         ...process.env,
         // Keep all live canary state out of the developer's shared DB.
         OPENCODE_DB: join(projectDir, 'opencode.db'),
+        // Self-contained host: the user's global config would otherwise load
+        // their MCP servers, instructions and agents into every canary prompt
+        // (thousands of tool schemas — over a model's context limit on a
+        // developer machine), so hook verification would depend on unrelated
+        // global state. Credentials are copied in separately below.
+        HOME: projectDir,
+        XDG_CONFIG_HOME: join(projectDir, '.config'),
         PANTHEON_HOOK_CANARY_PROOF: proofFile,
         PANTHEON_HOOK_CANARY_PERMISSION_PROOF: proofFile,
         PANTHEON_HOOK_CANARY_BLOCKED_READ_PATH: blockedReadPath,
@@ -251,6 +379,10 @@ before(async () => {
     'opencode serve to become ready',
   )
 
+  // The server has migrated its private DB by now; copy provider credentials in
+  // so the isolated host can authenticate at all (see seedCredentials).
+  credentialStatus = await seedCredentials(join(projectDir, 'opencode.db'))
+
   const [providerID, ...rest] = MODEL.split('/')
   const id = rest.join('/')
   const created = await request('POST', '/api/session', {
@@ -274,6 +406,18 @@ async function prompt(text) {
 async function messagesText() {
   const listed = await request('GET', `/api/session/${sessionID}/message`)
   return JSON.stringify(listed)
+}
+
+/** Message IDs already in the session, so a prompt's own output can be isolated. */
+async function messageIDs() {
+  const listed = await request('GET', `/api/session/${sessionID}/message`)
+  return new Set((listed?.data ?? []).map((message) => message.id))
+}
+
+/** Messages appended after {@link messageIDs} was taken. */
+async function messagesSince(before) {
+  const listed = await request('GET', `/api/session/${sessionID}/message`)
+  return (listed?.data ?? []).filter((message) => !before.has(message.id))
 }
 
 function parseProofRecords(proof) {
@@ -375,19 +519,28 @@ function findToolCallForPath(messages, toolName, expectedPath) {
   return target
 }
 
-function skipIfProviderCredentialsMissing(context, messages) {
-  const entries = Array.isArray(messages?.data) ? messages.data : []
-  const authError = entries.find(
-    (message) =>
-      message?.type === 'assistant' &&
-      message.error?.type === 'provider.auth' &&
-      typeof message.error.message === 'string',
+/**
+ * Fail — never skip — when the canary model could not run.
+ *
+ * A "model unavailable" skip lands in the summary as a non-failure, so a host
+ * that never reached any model looked verified. The provider error is the
+ * defect signal, so it is surfaced with the remedy instead of muted.
+ *
+ * @param {object[]} freshMessages messages appended by this prompt
+ * @param {string} label which prompt produced them, for the failure message
+ */
+function assertModelRan(freshMessages, label) {
+  const failed = (Array.isArray(freshMessages) ? freshMessages : []).find(
+    (message) => message?.error,
   )
-  if (authError) {
-    context.skip(`configured canary model is unavailable: ${authError.error.message}`)
-    return true
-  }
-  return false
+  if (!failed) return
+  const { type, message } = failed.error ?? {}
+  assert.fail(
+    `the canary model ${MODEL} (${label}) could not run: ${type ?? 'unknown error'}: ${message ?? 'no message'}. ` +
+      `Credential seeding: ${credentialStatus}. ` +
+      `The hook canary fails instead of skipping — a skip reads as green. ` +
+      `Set PANTHEON_HOOK_CANARY_MODEL to an installed model with working credentials (\`${BIN} models\`).`,
+  )
 }
 
 function findCompletedReadCall(messages, expectedPath, nonce) {
@@ -810,10 +963,11 @@ test('fixture canary execute.before blocks its synthetic read', {
   skip: fixtureOnlySkip(
     'S5b real-plugin execute.before enforcement is not implemented; this synthetic fixture guard is not Pantheon security coverage (deferred to S6)',
   ),
-}, async (context) => {
+}, async () => {
   // This is deliberately fixture-only: its synthetic blocker does not prove
   // that Pantheon enforces execute.before security.
   const proofBefore = readProof()
+  const before = await messageIDs()
   await prompt(
     `Use only the read tool to read this exact file path: ${blockedReadPath}. Do not use other tools. Then reply with exactly: CANARY-BLOCKED-READ-DONE`,
   )
@@ -822,8 +976,8 @@ test('fixture canary execute.before blocks its synthetic read', {
   // error carrying the canary message. A silent no-op would leave the call
   // completed. (Asserting on the read call, not on reachability of the file:
   // an agent may route around a blocked tool with another tool.)
+  assertModelRan(await messagesSince(before), 'blocked read prompt')
   const messages = JSON.parse(await messagesText()).data ?? []
-  if (skipIfProviderCredentialsMissing(context, { data: messages })) return
   const readError = findToolCallForPath(messages, 'read', blockedReadPath)
   assert.equal(readError.state?.status, 'error', 'the blocked read tool call did not fail')
   assert.match(
@@ -844,14 +998,15 @@ test('fixture canary allows a read and correlates execute.after to its completed
   skip: fixtureOnlySkip(
     'S5b real-plugin execute/permission callback effects are unproven; this fixture-only read lifecycle is not Pantheon behavior coverage',
   ),
-}, async (context) => {
+}, async () => {
   const proofBefore = readProof()
+  const before = await messageIDs()
   await prompt(
     `Use only the read tool to read this exact file path: ${allowedReadPath}. Do not use any other tool. Wait for the read result, then reply with exactly: CANARY-ALLOWED-READ-DONE`,
   )
 
+  assertModelRan(await messagesSince(before), 'allowed read prompt')
   const messages = JSON.parse(await messagesText())
-  if (skipIfProviderCredentialsMissing(context, messages)) return
   const readCall = findCompletedReadCall(messages, allowedReadPath, allowedReadNonce)
   const proofAfter = readProof()
   const readAfter = assertExecuteAfterForCall(proofBefore, proofAfter, readCall)
@@ -867,15 +1022,16 @@ test('real plugin execute.after exposes a hashline-tagged read result', {
   skip: realOnlySkip(
     'only the real plugin-v2 performs execute.after augmentation; the fixture records proof events, so a user-visible tag cannot be observed in fixture mode',
   ),
-}, async (context) => {
+}, async () => {
   // The parity contract is USER-VISIBLE: a recorded execute.after event alone
   // is instrumentation. The real plugin must rewrite the completed read output
   // so the session shows `N#tag|content`.
+  const before = await messageIDs()
   await prompt(
     `Use only the read tool to read this exact file path: ${allowedReadPath}. Do not use any other tool. Wait for the read result, then reply with exactly: CANARY-HASHLINE-READ-DONE`,
   )
+  assertModelRan(await messagesSince(before), 'hashline read prompt')
   const messages = JSON.parse(await messagesText())
-  if (skipIfProviderCredentialsMissing(context, messages)) return
   const readCall = findCompletedReadCall(messages, allowedReadPath, allowedReadNonce)
   assertHashlineTaggedRead(completedToolOutput(readCall.state), allowedReadNonce)
 })

@@ -261,11 +261,111 @@ runtime routing. `npx pantheon-opencode decision-router ...` manages user-level
 enablement, selection, candidates, consent, caps, and period confirmation. The
 separate SQLite ledger has no default caps. Caps limit local admission but are not
 invoice guarantees. Installation does not contact a model provider or inspect
-credentials. The published CLI imports a committed ESM ledger bundle:
-`npm run build:decision-router` regenerates it and `npm run check:decision-router`
-(the `prepack`/`prepublishOnly` drift gate) fails when it is stale. The
+credentials. The published CLI imports committed ESM bundles:
+`npm run build:decision-router` regenerates them and `npm run check:decision-router`
+(the `prepack`/`prepublishOnly` drift gate) fails when any is stale. The
 `pantheon-opencode/local-decision-router` subpath itself is TypeScript source, so
 it loads only in the host runtime or under a transpiler such as `tsx`.
+
+Decision-layer commands are separated by effect. `decision-router help`,
+`status`, `preview` and `holds` are read-only: they never create, migrate, or
+write the config or the SQLite ledger, and neither does `setup` without
+`--apply`. `select` records a preference and can never enable anything — moving
+the target also revokes consent recorded for the previous one. `setup` prints a
+**computed diff of the target artifacts** (snapshot + SHA-256 per file, compared
+against the exact bytes the writer would produce); `setup --apply` is the form
+that writes, and a second run reports `0 create · 0 update`. It is deliberately
+not the installer's "Change plan", which announced 112 creates for an apply that
+created nothing. `setup --target <dir>` also reconciles the
+`.pantheon/install-state.json` provider/consent record with the user-level config;
+that record is derived from the config and never asserts consent the config lacks.
+Neither path creates a backup: installer backup sets accumulate once per
+application and contain credential-bearing material (API keys/tokens), so no
+extra copy is made. Installer file-ownership tracking is partial and asymmetric —
+`file_inventory` indexes 53 PROJECT artifacts and no GLOBAL ones (F-15); the
+106-project / 107-global denominators are derived from the 213-artifact total and
+are not separately indexed — so this preview compares the decision-layer
+artifacts it owns, not "everything the installer touched".
+
+Provider egress remains opt-in with the default `off`; no command in this layer
+can switch it on without enablement, recorded consent, one cap- and
+period-eligible candidate and a non-denying host gate. The fixed OpenAI/TypeSafe
+endpoints are retained inert and are documented as **unwired**; this statement is
+about wiring, not about removing any transport. Measured surface coverage is
+reported honestly rather than implied: P7 runs behind `PANTHEON_V2_P7_LOOP` with
+an **advisory** execution cap (never described as enforcement), P2 is
+**advisory-only** (an empirical no-op on the default path), P9 was measured on
+**top-level sessions only**, and P8 is **off** with activation blocked pending its
+review conditions.
+
+### The V2 decision layer is declared in full and wired in part
+
+The V2 decision layer declares eleven integration points (P1–P11) over three
+decision primitives — `ask`, `rank`, and `verify` — and a deterministic policy
+that decides which point may run. **Two of the eleven are registered on the V2
+surface, and both are off by default:**
+
+- **P7 (loop)** is wired to `session.execution.succeeded` behind
+  `PANTHEON_V2_P7_LOOP`, which is off. It writes each observation to an
+  in-memory, bounded telemetry collector that the plugin never reads back and
+  exposes only to tests, so "records" here does not mean an operator-visible log.
+- **P8 (guardrail)** is wired to `permission.evaluate` behind
+  `PANTHEON_V2_P8_GUARDRAIL`, which is off, and its activation is blocked
+  (PH5-1…PH5-5).
+
+**The other nine — P1–P6 and P9–P11 — are library code with no production call
+site.** `src/plugin-v2.ts` imports only the P7 and P8 adapters; nothing
+constructs or registers the other nine outside the per-point test suites — the
+offline harness imports no adapter module. On a host they do not read the turn,
+record no telemetry and have no switch to turn off, because nothing registers
+them.
+
+"Shadow by default" therefore means one thing only: the two wired points make no
+behavioural change while their flags are off. It does **not** mean that all eleven
+observe the turn. No activation flag is set in a default install.
+
+The CLI separates effects: `npx pantheon-opencode decision-router help`, `status`,
+`preview` and `holds` never write, `setup` writes only under `--apply`, `preview`
+is an alias of `setup`, and `select` records a preference without enabling
+anything. Egress stays opt-in and off, and only the explicit `enable`, `consent`,
+`caps` and `period` actions can change that; no read-only command can.
+
+What the layer does **not** do today, stated as measured rather than implied:
+
+- **P2 (skills) is advisory-only and does not filter.** It is an empirical no-op
+  on the default path, because the host sends `prompt.skills` absent. Effective
+  project-skill filtering was cancelled by measurement, not emulated, and no
+  token reduction is claimed.
+- **P7 (loop) is behind `PANTHEON_V2_P7_LOOP`, off by default, and does not
+  enforce loop limits.** It counts executions and writes an `effect: none`
+  observation to an in-memory collector that nothing reads back. Its
+  12-execution cap is **advisory**: no measured host surface signals a new user
+  turn, so nothing is claimed to reset the streak.
+- **P9 (compaction) is measured on top-level sessions only.** Child-session
+  compaction, `reason: "overflow"` and the `messages` channel remain UNKNOWN.
+- **P8 (guardrail) is off and its activation is blocked** pending its Phase 5
+  review conditions (PH5-1…PH5-5). The mechanism only narrows, and it is not a
+  drop-in no-op: with `PANTHEON_V2_P8_GUARDRAIL` set, an event with no usable
+  `action` token, and an `allow` decision with no attributed `sessionID`, are
+  narrowed to `deny`. `execute.before` remains the only hard barrier.
+- **The embeddings-versus-BM25 comparison has not been run.** The environment is
+  offline with no embedding model available, so BM25 remains the baseline and no
+  gain or loss in retrieval or tokens is claimed in either direction.
+
+Calibration that was run: the offline harness
+(`npx tsx tests/pantheon/v2-decision-harness.test.ts`) executed 264 synthetic
+cases — 132 normal, 66 refusal, 66 adversarial — across the eleven points, with
+24 cases per point and the suite asserting at least 20 cases, 5 refusals and 5
+adversarial cases per point. All 264 cases passed on 2026-10-31. This harness is
+the only place all eleven points are exercised in one run, but it imports no
+adapter module: it iterates the registry and exercises the shared primitives,
+while the adapters are covered by their per-point suites
+(`v2-decision-p1.test.ts` … `v2-decision-p11.test.ts`). Passing it says nothing
+about whether a point is registered in a host.
+The harness measures contracts (admission, refusal, shadow no-op, telemetry
+redaction, offline discipline, registry integrity), **not** token use, quality,
+latency or any effect inside a host turn. Numbers and unmeasured surfaces are
+recorded in the [router reference](docs/reference/local-decision-router.md).
 
 ## Documentation
 

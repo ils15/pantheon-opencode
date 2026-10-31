@@ -7,8 +7,10 @@ import { assertNoSymlinkAncestors, writeFileAtomically } from './verify.mjs'
 export const DECISION_ROUTER_CONFIG_SCHEMA_VERSION = 1
 
 /**
- * Legacy installer-state providers. This file is target metadata only: the
- * runtime reads the user-level configuration below, never install-state.
+ * Legacy installer-state providers, in prompt order. This file is target
+ * metadata only: the runtime reads the user-level configuration below, never
+ * install-state. The order is positional (the interactive prompt indexes it), so
+ * ids are appended only through {@link ACCEPTED_INSTALL_STATE_PROVIDERS}.
  */
 export const DECISION_ROUTER_PROVIDERS = Object.freeze(['local', 'openai-decisions', 'jev', 'auto'])
 
@@ -70,7 +72,14 @@ const LEGACY_USER_CONFIG_KEYS = [
   'selection',
 ]
 
-const providerSet = new Set(DECISION_ROUTER_PROVIDERS)
+/**
+ * Accepted install-state provider ids. `typesafe-jev` is the canonical form of
+ * the legacy `jev` alias and is written by `projectDecisionRouterInstallState`;
+ * accepting it is what lets a projected record survive a read/write round trip
+ * instead of resetting to Local (D7). The prompt list above is unchanged, so no
+ * new install-time option appears.
+ */
+const ACCEPTED_INSTALL_STATE_PROVIDERS = new Set([...DECISION_ROUTER_PROVIDERS, 'typesafe-jev'])
 const externalProviderSet = new Set(['openai-decisions', 'jev', 'typesafe-jev'])
 
 /** Canonicalize the legacy `jev` spelling once, at every user-config boundary. */
@@ -92,7 +101,7 @@ export function migrateDecisionRouterConfig(value) {
     typeof value !== 'object' ||
     Array.isArray(value) ||
     value.schema_version !== DECISION_ROUTER_CONFIG_SCHEMA_VERSION ||
-    !providerSet.has(value.provider) ||
+    !ACCEPTED_INSTALL_STATE_PROVIDERS.has(value.provider) ||
     typeof value.egress_consent !== 'boolean'
   ) {
     return { ...DEFAULT_DECISION_ROUTER_CONFIG }
@@ -231,6 +240,18 @@ export function updateUserDecisionRouterConfig(config, update) {
     throw new TypeError('Invalid enabled provider/model candidates')
   }
   const next = { ...current, ...update }
+  // Selecting a different provider/model target is not consent for it (D9):
+  // `select` records a preference and can only ever leave egress OFF. A
+  // previously recorded consent is revoked when the target moves, unless the
+  // caller passes `egress_consent` in the same explicit update (an admin
+  // surface that names both fields at once).
+  if (
+    Object.hasOwn(update, 'selection') &&
+    !Object.hasOwn(update, 'egress_consent') &&
+    !sameSelection(normalizeSelection(update.selection), current.selection)
+  ) {
+    next.egress_consent = false
+  }
   const normalized = migrateUserDecisionRouterConfig(next)
   if (normalized.selection.mode === 'local' && update.egress_consent === true) {
     throw new TypeError('Local selection cannot enable egress consent')
@@ -243,23 +264,71 @@ export function isUserDecisionRouterEnabled(config) {
   return migrateUserDecisionRouterConfig(config).enabled
 }
 
-/** Auto resolves only one enabled, cap-valid direct provider/model tuple. */
-export function resolveUserDecisionRouterCandidate(config, capValidCandidates = []) {
-  const preference = migrateUserDecisionRouterConfig(config)
-  if (!preference.enabled || !preference.egress_consent) return null
+function eligibleAutoCandidates(preference, capValidCandidates) {
   const validKeys = new Set(
     capValidCandidates
       .filter(isKnownCandidate)
       .map(({ provider, model }) => candidateKey(normalizeDecisionProviderId(provider), model)),
   )
-  const enabled = preference.enabled_candidates.filter(
+  return preference.enabled_candidates.filter(
     (candidate) =>
       remotelyEligibleProviders.has(candidate.provider) &&
       validKeys.has(candidateKey(candidate.provider, candidate.model)),
   )
+}
+
+/**
+ * Explain an Auto selection with an explicit cardinality branch (D5).
+ *
+ * The defect this closes: 0 and 2+ eligible candidates both collapsed into a
+ * single `null`, so a caller could not tell "nothing is enabled" from "several
+ * are enabled and I refuse to guess". The three outcomes below are distinct
+ * values with distinct reason codes, and every refusal names the state that
+ * caused it.
+ *
+ * @param {unknown} config
+ * @param {ReadonlyArray<{ provider: string, model: string }>} [capValidCandidates]
+ * @returns {{ outcome: 'ineligible', reason: 'DISABLED'|'CONSENT_MISSING'|'NOT_AUTO' }
+ *   | { outcome: 'none', reason: 'NO_ELIGIBLE_CANDIDATE', count: 0 }
+ *   | { outcome: 'single', reason: 'SINGLE_ELIGIBLE_CANDIDATE', count: 1,
+ *       candidate: { provider: string, model: string } }
+ *   | { outcome: 'ambiguous', reason: 'MULTIPLE_ELIGIBLE_CANDIDATES', count: number }}
+ */
+export function explainUserDecisionRouterAutoSelection(config, capValidCandidates = []) {
+  const preference = migrateUserDecisionRouterConfig(config)
+  // Preconditions are reported as ineligible, never as a cardinality outcome:
+  // a disabled router with two candidates is disabled, not ambiguous.
+  if (!preference.enabled) return { outcome: 'ineligible', reason: 'DISABLED' }
+  if (!preference.egress_consent) return { outcome: 'ineligible', reason: 'CONSENT_MISSING' }
+  if (preference.selection.mode !== 'auto') return { outcome: 'ineligible', reason: 'NOT_AUTO' }
+
+  const eligible = eligibleAutoCandidates(preference, capValidCandidates)
+  if (eligible.length === 0) {
+    return { outcome: 'none', reason: 'NO_ELIGIBLE_CANDIDATE', count: 0 }
+  }
+  if (eligible.length > 1) {
+    return {
+      outcome: 'ambiguous',
+      reason: 'MULTIPLE_ELIGIBLE_CANDIDATES',
+      count: eligible.length,
+    }
+  }
+  return {
+    outcome: 'single',
+    reason: 'SINGLE_ELIGIBLE_CANDIDATE',
+    count: 1,
+    candidate: eligible[0],
+  }
+}
+
+/** Auto resolves only one enabled, cap-valid direct provider/model tuple. */
+export function resolveUserDecisionRouterCandidate(config, capValidCandidates = []) {
+  const preference = migrateUserDecisionRouterConfig(config)
+  if (!preference.enabled || !preference.egress_consent) return null
   if (preference.selection.mode === 'local') return null
   if (preference.selection.mode === 'explicit') {
     const selected = preference.selection
+    const enabled = eligibleAutoCandidates(preference, capValidCandidates)
     return (
       enabled.find(
         (candidate) =>
@@ -268,7 +337,8 @@ export function resolveUserDecisionRouterCandidate(config, capValidCandidates = 
       ) ?? null
     )
   }
-  return enabled.length === 1 ? enabled[0] : null
+  const explained = explainUserDecisionRouterAutoSelection(preference, capValidCandidates)
+  return explained.outcome === 'single' ? explained.candidate : null
 }
 
 /** Read only a private user-level JSON file. Invalid contents fail closed. */
@@ -306,9 +376,86 @@ export function writeUserDecisionRouterConfig(config, { env = process.env } = {}
   } catch (error) {
     if (error?.code !== 'ENOENT') throw error
   }
-  writeFileAtomically(filePath, `${JSON.stringify(normalized, null, 2)}\n`)
+  writeFileAtomically(filePath, serializeUserDecisionRouterConfig(normalized))
   chmodSync(filePath, 0o600)
   return filePath
+}
+
+/**
+ * The only serializer for the user-level config.
+ *
+ * A preview is honest only when the bytes it compares are the bytes the writer
+ * would produce, so the preview and the writer share this function. It is
+ * deliberately free of clock and environment reads.
+ *
+ * @param {unknown} config
+ * @returns {string}
+ */
+export function serializeUserDecisionRouterConfig(config) {
+  return `${JSON.stringify(migrateUserDecisionRouterConfig(config), null, 2)}\n`
+}
+
+/**
+ * Project the user-level configuration onto the only install-state record that
+ * may exist (D7).
+ *
+ * Install-state records a target preference; the runtime reads the user-level
+ * file. Deriving the record from that file is what keeps the two surfaces from
+ * disagreeing: there is no second place where a provider or a consent decision
+ * can be typed in. The projection carries the user's own consent boolean, so it
+ * can never assert consent the runtime configuration does not have.
+ *
+ * @param {unknown} userConfig
+ * @returns {{ schema_version: 1, provider: string, egress_consent: boolean }}
+ */
+export function projectDecisionRouterInstallState(userConfig) {
+  const preference = migrateUserDecisionRouterConfig(userConfig)
+  const provider =
+    preference.selection.mode === 'explicit'
+      ? normalizeDecisionProviderId(preference.selection.provider)
+      : preference.selection.mode
+  return migrateDecisionRouterConfig({
+    schema_version: DECISION_ROUTER_CONFIG_SCHEMA_VERSION,
+    provider,
+    egress_consent: preference.egress_consent,
+  })
+}
+
+/**
+ * Field-level divergence between install-state and the user-level config (D7).
+ * Returns field NAMES and both states, never free-form content; callers print a
+ * reconciliation instruction instead of rewriting the record silently.
+ *
+ * @param {unknown} userConfig
+ * @param {unknown} installStateRecord
+ * @returns {{ expected: object, actual: object, differences: Array<{ field: string, installState: unknown, userConfig: unknown }> }}
+ */
+export function diffDecisionRouterSurfaces(userConfig, installStateRecord) {
+  const expected = projectDecisionRouterInstallState(userConfig)
+  const actual = migrateDecisionRouterConfig(installStateRecord)
+  const differences = []
+  if (actual.provider !== expected.provider) {
+    differences.push({
+      field: 'provider',
+      installState: actual.provider,
+      userConfig: expected.provider,
+    })
+  }
+  if (actual.egress_consent !== expected.egress_consent) {
+    differences.push({
+      field: 'egress_consent',
+      installState: actual.egress_consent,
+      userConfig: expected.egress_consent,
+    })
+  }
+  return { expected, actual, differences }
+}
+
+function sameSelection(left, right) {
+  if (left === null || right === null) return left === right
+  if (left.mode !== right.mode) return false
+  if (left.mode !== 'explicit') return true
+  return left.provider === right.provider && left.model === right.model
 }
 
 function normalizeSelection(value) {
