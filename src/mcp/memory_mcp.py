@@ -34,12 +34,13 @@ Usage:
 from __future__ import annotations
 
 import contextlib
-import functools
 import json
 import logging
 import os
 import sqlite3
+import threading
 import time
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -76,8 +77,13 @@ def _set_memory_dir(path: str | Path) -> None:
 
 
 def _reset_test_state() -> None:
-    """Reset cached state for test isolation."""
-    _get_db.cache_clear()
+    """Close the cached connection and drop it for test isolation."""
+    global _DB_CONN
+    with _DB_LOCK:
+        previous, _DB_CONN = _DB_CONN, None
+    if previous is not None:
+        with contextlib.suppress(sqlite3.Error):
+            previous.close()
 
 
 # ── Store Limits ─────────────────────────────────────────────────────────────
@@ -145,6 +151,15 @@ mcp = FastMCP(
 )
 _LOGGER = logging.getLogger(__name__)
 
+# Returned when the store cannot be opened. A write that did not reach SQLite
+# must never be dressed up as ``status: stored``: the memory policy says an
+# entry is durable only after ``memory_store`` reports success.
+STORE_UNAVAILABLE_ERROR = (
+    "Failed to store memory: the memory database could not be opened, so "
+    "nothing was written. Check its configured location and permissions, then "
+    "retry."
+)
+
 # TypedDict comes from typing_extensions, not typing: pydantic only builds a
 # schema for typing.TypedDict on Python >= 3.12, and FastMCP builds the output
 # schema during @mcp.tool registration (see _SUPPORTS_TYPEDDICT in pydantic).
@@ -201,31 +216,103 @@ def _ensure_entry_lifecycle_schema(conn: sqlite3.Connection) -> bool:
     return added
 
 
-@functools.cache
+# One connection is shared by every tool call (FastMCP runs synchronous tools
+# in a threadpool), so the connection is also the unit of serialization:
+# ``lastrowid``, ``commit()`` and ``rollback()`` are connection-scoped, not
+# call-scoped. Without this lock one call reads another call's row id, and one
+# call's rollback discards another call's write while reporting success.
+# Reentrant because a tool may re-enter through a helper.
+_DB_LOCK = threading.RLock()
+_DB_CONN: sqlite3.Connection | None = None
+
+
+def _open_db() -> sqlite3.Connection:
+    """Open and initialize the memory database (caller holds ``_DB_LOCK``).
+
+    ``isolation_level=None`` puts the connection in autocommit mode so every
+    write path controls its own transaction explicitly (``BEGIN IMMEDIATE`` …
+    ``COMMIT``). With the implicit-transaction mode a failure between a write
+    and its ``commit()`` would leave a transaction open on the shared handle,
+    and the next ``BEGIN IMMEDIATE`` would fail with "cannot start a
+    transaction within a transaction".
+
+    A failed initialization closes the candidate connection before raising, so
+    a retry does not leak handles.
+    """
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False, isolation_level=None)
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.executescript(SCHEMA_SQL)
+        _ensure_entry_lifecycle_schema(conn)
+        if _codemap is not None:
+            with contextlib.suppress(Exception):
+                _codemap.ensure_codemap_schema(conn)
+    except BaseException:
+        conn.close()
+        raise
+    return conn
+
+
 def _get_db() -> sqlite3.Connection:
     """Get or create the SQLite connection singleton.
 
-    Creates DB directory, applies WAL/performance pragmas, and runs schema
-    init. The ``code_*`` tools share this connection, so the codemap schema
+    Double-checked locking makes construction single-shot: concurrent first
+    touches wait for the winner instead of each opening a connection. Before
+    this guard five parallel first calls created five connections, four of them
+    orphaned, and a racing ``PRAGMA journal_mode=WAL`` failed with "database is
+    locked". The ``code_*`` tools share this connection, so the codemap schema
     is applied on the same handle.
     """
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.executescript(SCHEMA_SQL)
-    _ensure_entry_lifecycle_schema(conn)
-    if _codemap is not None:
-        with contextlib.suppress(Exception):
-            _codemap.ensure_codemap_schema(conn)
-    return conn
+    global _DB_CONN  # noqa: PLW0603
+    conn = _DB_CONN
+    if conn is not None:
+        return conn
+    with _DB_LOCK:
+        if _DB_CONN is None:
+            _DB_CONN = _open_db()
+        return _DB_CONN
 
 
 def _get_conn() -> sqlite3.Connection:
     """Alias for _get_db — shorthand for tool use."""
     return _get_db()
+
+
+@contextlib.contextmanager
+def _write_transaction(db: sqlite3.Connection) -> Iterator[None]:
+    """Run the block as one ``BEGIN IMMEDIATE`` transaction under ``_DB_LOCK``.
+
+    ``BEGIN IMMEDIATE`` takes the write lock up front instead of on the first
+    mutating statement, so two writers cannot both read a state and then race
+    to change it. The block — including the read of ``lastrowid`` and the
+    ``COMMIT`` — runs while the lock is held, which is what makes a reported
+    success mean a persisted row.
+
+    Args:
+        db: The shared connection.
+
+    Yields:
+        None; the caller performs its statements inside the ``with`` body.
+
+    Raises:
+        Exception: Whatever the block raised, after rolling the transaction
+            back. Callers turn it into a visible tool error.
+    """
+    with _DB_LOCK:
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            yield
+            db.execute("COMMIT")
+        except BaseException:
+            # A failed COMMIT can leave the transaction open; ROLLBACK is the
+            # only way back to a usable connection.
+            with contextlib.suppress(sqlite3.Error):
+                db.execute("ROLLBACK")
+            raise
 
 
 # ── FTS Query Building ────────────────────────────────────────────────────────
@@ -785,7 +872,6 @@ def memory_store(
         return {"error": _format_store_violations(violations, examples)}
 
     value = value.strip()
-    db = _get_conn()
     now = _now_iso()
     expires_at = (
         None
@@ -797,20 +883,33 @@ def memory_store(
 
     metadata_str = metadata if metadata else "{}"
 
+    # Opening the store is part of the write: a connection that cannot be
+    # opened must be reported, never skipped into a success.
     try:
-        cur = db.execute(
-            """INSERT INTO memories (namespace, key, value, metadata,
-             created_at, updated_at, expires_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            [namespace, key, value, metadata_str, now, now, expires_at],
-        )
-        entry_id = cur.lastrowid
-        db.commit()
+        db = _get_conn()
+    except Exception:
+        _LOGGER.warning("memory_store failed: memory database could not be opened")
+        return {"error": STORE_UNAVAILABLE_ERROR}
+
+    try:
+        with _write_transaction(db):
+            cur = db.execute(
+                """INSERT INTO memories (namespace, key, value, metadata,
+                 created_at, updated_at, expires_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                [namespace, key, value, metadata_str, now, now, expires_at],
+            )
+            # Read under the lock, before COMMIT: lastrowid is connection
+            # state, so reading it later can return another call's row.
+            entry_id = cur.lastrowid
+            if entry_id is None:
+                # No id means no proof the row exists; refusing to report
+                # success is the whole point of this block.
+                raise RuntimeError("the store returned no row id for the insert")
     except sqlite3.IntegrityError as e:
-        db.rollback()
         return {"error": f"Duplicate key or constraint violation: {e}"}
     except Exception as e:
-        db.rollback()
+        _LOGGER.warning("memory_store failed: %s", e)
         return {"error": f"Failed to store memory: {e}"}
 
     return {
@@ -881,43 +980,50 @@ def memory_search(
         }
 
     try:
-        # Over-fetch 2x: freshness decay can promote a candidate that BM25
-        # ranked outside top_k, and ranking happens after the fetch.
-        hits = _search_candidates(db, fts_query, namespace, top_k * 2, include_expired)
-        if not hits:
-            return []
+        # Reads take the same lock as writes: the connection is shared, so a
+        # SELECT interleaved with an open write transaction observes rows that
+        # may still be rolled back, and FTS5 shadow-table reads can fail with
+        # SQLITE_LOCKED while the writer holds the table.
+        with _DB_LOCK:
+            # Over-fetch 2x: freshness decay can promote a candidate that BM25
+            # ranked outside top_k, and ranking happens after the fetch.
+            hits = _search_candidates(
+                db, fts_query, namespace, top_k * 2, include_expired
+            )
+            if not hits:
+                return []
 
-        candidate_ids = [doc_id for doc_id, _ in hits]
-        created_at_map = (
-            _fetch_created_at_map(db, candidate_ids)
-            if decay_days is not None and decay_days > 0
-            else {}
-        )
-        ranked = _score_hits(hits, top_k, created_at_map, decay_days)
+            candidate_ids = [doc_id for doc_id, _ in hits]
+            created_at_map = (
+                _fetch_created_at_map(db, candidate_ids)
+                if decay_days is not None and decay_days > 0
+                else {}
+            )
+            ranked = _score_hits(hits, top_k, created_at_map, decay_days)
 
-        results: list[dict[str, Any]] = []
-        if ranked:
-            # 5. Fetch full entries
-            id_list = [doc_id for doc_id, _ in ranked]
-            score_map = {doc_id: score for doc_id, score in ranked}
-            placeholders = ",".join("?" * len(id_list))
-            rows = db.execute(
-                f"""SELECT id, namespace, key, value, metadata, created_at,
-                           expires_at
-                    FROM memories WHERE id IN ({placeholders})""",
-                id_list,
-            ).fetchall()
+            results: list[dict[str, Any]] = []
+            if ranked:
+                # 5. Fetch full entries
+                id_list = [doc_id for doc_id, _ in ranked]
+                score_map = {doc_id: score for doc_id, score in ranked}
+                placeholders = ",".join("?" * len(id_list))
+                rows = db.execute(
+                    f"""SELECT id, namespace, key, value, metadata, created_at,
+                               expires_at
+                        FROM memories WHERE id IN ({placeholders})""",
+                    id_list,
+                ).fetchall()
 
-            # Preserve ranking order
-            row_map = {r["id"]: r for r in rows}
-            for doc_id in id_list:
-                row = row_map.get(doc_id)
-                if row is None:
-                    continue
-                entry = dict(row)
-                entry = _parse_metadata(entry)
-                entry["score"] = round(score_map.get(doc_id, 0.0), 4)
-                results.append(entry)
+                # Preserve ranking order
+                row_map = {r["id"]: r for r in rows}
+                for doc_id in id_list:
+                    row = row_map.get(doc_id)
+                    if row is None:
+                        continue
+                    entry = dict(row)
+                    entry = _parse_metadata(entry)
+                    entry["score"] = round(score_map.get(doc_id, 0.0), 4)
+                    results.append(entry)
     except Exception:
         _LOGGER.warning("memory_search failed: FTS or stored-entry read failed")
         return {
@@ -957,12 +1063,17 @@ def memory_recall(
     if not key or not key.strip():
         return None
 
-    db = _get_conn()
-    row = db.execute(
-        "SELECT id, namespace, key, value, metadata, created_at, updated_at, "
-        "expires_at FROM memories WHERE namespace = ? AND key = ?",
-        [namespace, key.strip()],
-    ).fetchone()
+    try:
+        db = _get_conn()
+        with _DB_LOCK:
+            row = db.execute(
+                "SELECT id, namespace, key, value, metadata, created_at, updated_at, "
+                "expires_at FROM memories WHERE namespace = ? AND key = ?",
+                [namespace, key.strip()],
+            ).fetchone()
+    except Exception as e:
+        _LOGGER.warning("memory_recall failed: %s", e)
+        return {"error": f"Failed to recall memory: {e}"}
 
     if row is None:
         return None
@@ -985,14 +1096,14 @@ def _purge_expired(db: sqlite3.Connection) -> dict[str, Any]:
         Dict with ``deleted``, ``purged`` (row count), and ``expired_only``.
     """
     try:
-        cur = db.execute(
-            "DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at <= ?",
-            [_now_iso()],
-        )
-        purged = cur.rowcount
-        db.commit()
+        with _write_transaction(db):
+            cur = db.execute(
+                "DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at <= ?",
+                [_now_iso()],
+            )
+            purged = cur.rowcount
     except Exception as e:
-        db.rollback()
+        _LOGGER.warning("memory_forget failed to purge expired entries: %s", e)
         return {"error": f"Failed to purge expired entries: {e}"}
     return {"deleted": purged > 0, "purged": purged, "expired_only": True}
 
@@ -1033,7 +1144,13 @@ def memory_forget(
                 "error": "expired_only cannot be combined with id or key; call "
                 "it alone to purge every expired entry"
             }
-        return _purge_expired(_get_conn())
+        try:
+            return _purge_expired(_get_conn())
+        except Exception:
+            _LOGGER.warning("memory_forget failed: memory database could not be opened")
+            return {
+                "error": "Failed to delete: the memory database could not be opened"
+            }
 
     if id is not None:
         identifier = id
@@ -1047,21 +1164,23 @@ def memory_forget(
     else:
         return {"error": "Provide either id or key"}
 
-    db = _get_conn()
     try:
-        if col == "id":
-            cur = db.execute("DELETE FROM memories WHERE id = ?", [id])
-        else:
-            cur = db.execute(sql, params)
-        db.commit()
-
-        if cur.rowcount == 0:
-            return {"deleted": False, "error": "Entry not found"}
-
-        return {"deleted": True, col: identifier, "namespace": namespace}
+        db = _get_conn()
+        with _write_transaction(db):
+            if col == "id":
+                cur = db.execute("DELETE FROM memories WHERE id = ?", [id])
+            else:
+                cur = db.execute(sql, params)
+            deleted = cur.rowcount
     except Exception as e:
-        db.rollback()
+        _LOGGER.warning("memory_forget failed: %s", e)
         return {"error": f"Failed to delete: {e}"}
+
+    if deleted == 0:
+        result: dict[str, Any] = {"deleted": False, "error": "Entry not found"}
+    else:
+        result = {"deleted": True, col: identifier, "namespace": namespace}
+    return result
 
 
 @mcp.tool(
@@ -1084,7 +1203,6 @@ def memory_list(
         List of memory entries sorted by created_at descending.
     """
     limit = max(1, min(500, int(limit)))
-    db = _get_conn()
 
     conditions: list[str] = []
     params: list[Any] = []
@@ -1100,12 +1218,15 @@ def memory_list(
     where = " AND ".join(conditions) if conditions else "1"
 
     try:
-        rows = db.execute(
-            f"SELECT id, namespace, key, value, metadata, created_at, expires_at "
-            f"FROM memories WHERE {where} ORDER BY created_at DESC LIMIT ?",
-            [*params, limit],
-        ).fetchall()
+        db = _get_conn()
+        with _DB_LOCK:
+            rows = db.execute(
+                f"SELECT id, namespace, key, value, metadata, created_at, expires_at "
+                f"FROM memories WHERE {where} ORDER BY created_at DESC LIMIT ?",
+                [*params, limit],
+            ).fetchall()
     except Exception as e:
+        _LOGGER.warning("memory_list failed: %s", e)
         return [{"error": f"List failed: {e}"}]
 
     results = []
@@ -1134,60 +1255,67 @@ def memory_stats() -> dict[str, Any]:
     Returns:
         Dict with count, namespaces, storage info, and size accounting.
     """
-    db = _get_conn()
+    try:
+        db = _get_conn()
+    except Exception as e:
+        _LOGGER.warning("memory_stats failed: %s", e)
+        return {"status": "error", "error": f"Failed to read statistics: {e}"}
 
     stats: dict[str, Any] = {"status": "ok"}
 
-    try:
-        stats["total_entries"] = db.execute(
-            "SELECT COUNT(*) AS c FROM memories"
-        ).fetchone()["c"]
-    except Exception:
-        stats["total_entries"] = 0
+    # The connection is shared with writers; reading under the same lock keeps
+    # each aggregate on one committed state instead of a half-applied write.
+    with _DB_LOCK:
+        try:
+            stats["total_entries"] = db.execute(
+                "SELECT COUNT(*) AS c FROM memories"
+            ).fetchone()["c"]
+        except Exception:
+            stats["total_entries"] = 0
 
-    try:
-        ns_rows = db.execute(
-            "SELECT namespace, COUNT(*) AS c FROM memories GROUP BY namespace "
-            "ORDER BY c DESC"
-        ).fetchall()
-        stats["namespaces"] = [
-            {"namespace": r["namespace"], "count": r["c"]} for r in ns_rows
-        ]
-    except Exception:
-        stats["namespaces"] = []
+        try:
+            ns_rows = db.execute(
+                "SELECT namespace, COUNT(*) AS c FROM memories GROUP BY namespace "
+                "ORDER BY c DESC"
+            ).fetchall()
+            stats["namespaces"] = [
+                {"namespace": r["namespace"], "count": r["c"]} for r in ns_rows
+            ]
+        except Exception:
+            stats["namespaces"] = []
 
-    cap = _max_entry_bytes()
-    warning_threshold = max(1, cap // 2)
-    stats["max_entry_bytes"] = cap
-    stats["warning_threshold_bytes"] = warning_threshold
+        cap = _max_entry_bytes()
+        warning_threshold = max(1, cap // 2)
+        stats["max_entry_bytes"] = cap
+        stats["warning_threshold_bytes"] = warning_threshold
 
-    try:
-        stats["total_bytes"] = db.execute(
-            f"SELECT coalesce(sum({_ENTRY_BYTES_SQL}), 0) AS b FROM memories"
-        ).fetchone()["b"]
-    except Exception:
-        stats["total_bytes"] = 0
+        try:
+            stats["total_bytes"] = db.execute(
+                f"SELECT coalesce(sum({_ENTRY_BYTES_SQL}), 0) AS b FROM memories"
+            ).fetchone()["b"]
+        except Exception:
+            stats["total_bytes"] = 0
 
-    try:
-        over_rows = db.execute(
-            f"SELECT COUNT(*) AS c FROM memories WHERE ({_ENTRY_BYTES_SQL}) > ?",
-            [warning_threshold],
-        ).fetchone()
-        stats["oversized_entries"] = over_rows["c"]
-    except Exception:
-        stats["oversized_entries"] = 0
+        try:
+            over_rows = db.execute(
+                f"SELECT COUNT(*) AS c FROM memories WHERE ({_ENTRY_BYTES_SQL}) > ?",
+                [warning_threshold],
+            ).fetchone()
+            stats["oversized_entries"] = over_rows["c"]
+        except Exception:
+            stats["oversized_entries"] = 0
 
-    try:
-        largest = db.execute(
-            f"SELECT namespace, key, ({_ENTRY_BYTES_SQL}) AS bytes FROM memories "
-            "ORDER BY bytes DESC, id ASC LIMIT 5"
-        ).fetchall()
-        stats["largest_entries"] = [
-            {"namespace": r["namespace"], "key": r["key"], "bytes": r["bytes"]}
-            for r in largest
-        ]
-    except Exception:
-        stats["largest_entries"] = []
+        try:
+            largest = db.execute(
+                f"SELECT namespace, key, ({_ENTRY_BYTES_SQL}) AS bytes FROM memories "
+                "ORDER BY bytes DESC, id ASC LIMIT 5"
+            ).fetchall()
+            stats["largest_entries"] = [
+                {"namespace": r["namespace"], "key": r["key"], "bytes": r["bytes"]}
+                for r in largest
+            ]
+        except Exception:
+            stats["largest_entries"] = []
 
     try:
         db_size = DB_PATH.stat().st_size if DB_PATH.exists() else 0
@@ -1238,8 +1366,13 @@ def code_index(
             "indexed": 0,
             "skipped": 0,
         }
-    db = _get_conn()
-    return _codemap.code_index(db, path, force, project_root=project_root)
+    try:
+        db = _get_conn()
+        with _DB_LOCK:
+            return _codemap.code_index(db, path, force, project_root=project_root)
+    except Exception as e:
+        _LOGGER.warning("code_index failed: %s", e)
+        return {"error": f"Failed to index code: {e}"}
 
 
 @mcp.tool(
@@ -1264,8 +1397,13 @@ def code_query(
     """
     if _codemap is None:
         return [{"error": "codemap module not available"}]
-    db = _get_conn()
-    return _codemap.code_query(db, query, type, limit)
+    try:
+        db = _get_conn()
+        with _DB_LOCK:
+            return _codemap.code_query(db, query, type, limit)
+    except Exception as e:
+        _LOGGER.warning("code_query failed: %s", e)
+        return [{"error": f"Failed to query code: {e}"}]
 
 
 @mcp.tool(
@@ -1286,8 +1424,13 @@ def code_neighbors(
     """
     if _codemap is None:
         return {"error": "codemap module not available"}
-    db = _get_conn()
-    return _codemap.code_neighbors(db, entity_id, depth)
+    try:
+        db = _get_conn()
+        with _DB_LOCK:
+            return _codemap.code_neighbors(db, entity_id, depth)
+    except Exception as e:
+        _LOGGER.warning("code_neighbors failed: %s", e)
+        return {"error": f"Failed to read code neighbors: {e}"}
 
 
 # ── Main Entrypoint ───────────────────────────────────────────────────────────

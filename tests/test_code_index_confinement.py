@@ -20,9 +20,7 @@ def isolated_memory_db(
     monkeypatch.setattr(memory_mcp, "DB_PATH", db_path)
     memory_mcp._reset_test_state()
     yield
-    if memory_mcp._get_db.cache_info().currsize:
-        memory_mcp._get_db().close()
-    memory_mcp._get_db.cache_clear()
+    memory_mcp._reset_test_state()
 
 
 def _create_project(tmp_path: Path) -> Path:
