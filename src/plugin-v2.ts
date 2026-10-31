@@ -717,6 +717,23 @@ export function getP7TelemetrySinkForTests(): TelemetrySink | undefined {
 let p7TelemetrySink: TelemetrySink | undefined
 
 /**
+ * The P8 telemetry sink created by the most recent permission-hook
+ * registration.
+ *
+ * P8 records every outcome it is responsible for — `guardrail.narrow`,
+ * `guardrail.keep`, `guardrail.refusal`, `p8.write.rejected` and
+ * `p8.write.delegation` — through the 0b record path (`createTelemetrySink`,
+ * in-memory, bounded, I/O-free). A guardrail that narrows without a record is
+ * indistinguishable from an inert one, which is exactly the defect PH5-1
+ * closed. Exported only for tests/pantheon/plugin-v2-contract.test.ts.
+ */
+export function getP8TelemetrySinkForTests(): TelemetrySink | undefined {
+  return p8TelemetrySink
+}
+
+let p8TelemetrySink: TelemetrySink | undefined
+
+/**
  * Attempt to subscribe to session events via V2 ctx.event.subscribe.
  *
  * The V2 event.subscribe API (when available) provides an async iterable:
@@ -1874,7 +1891,25 @@ async function registerV2PermissionHook(
   // install, and absent means disabled — this ships no behavioural change.
   // Enabled, it may only replace a wider effect with `deny`; it is synchronous,
   // never throws, and never runs for `decision.egress` or an existing deny.
+  // Its outcome is recorded through the 0b telemetry path (in-memory, bounded,
+  // I/O-free) so a narrow, a refusal and a rejected write are observable; the
+  // disabled guardrail emits nothing.
   const p8Guardrail = createP8Guardrail({ enabled: p8GuardrailEnabledFromEnv() })
+  const p8Sink = createTelemetrySink()
+  p8TelemetrySink = p8Sink
+  const recordP8 = (result: ReturnType<typeof p8Guardrail.apply>): void => {
+    if (!p8Guardrail.enabled) return
+    try {
+      p8Sink.emit({
+        point: 'P8',
+        decision: result.decision,
+        reason: result.reason,
+        mode: 'active',
+      })
+    } catch {
+      // Telemetry is best-effort and must not affect permission flow.
+    }
+  }
 
   try {
     await permCtx.hook('evaluate', async (rawEvent: unknown) => {
@@ -1997,13 +2032,18 @@ async function registerV2PermissionHook(
       // Native-only resources remain under host policy. If a Pantheon target
       // appears anywhere, the shared policy evaluates the complete resource set.
       decision = evaluateV2Delegation(event, session, event.effect, origin)
-      if (decision === 'deny') deny('caller or target is not allowed by delegation policy')
-      else writeProof()
 
       // P8 (Phase 5): read the effect left in place and, only when the flag is
       // on and a declared rule matches, replace it with `deny`. Off by default,
       // synchronous, contained — it cannot grant, delay or throw into admission.
-      p8Guardrail.apply(event)
+      //
+      // Apply BEFORE recording (PH5-1): `writeProof` reads `event.effect`, so a
+      // proof written first recorded `effectAfter: allow` for an event P8 then
+      // narrowed. The order below is apply → record on every path, and the
+      // record carries the post-apply effect plus the guardrail outcome.
+      recordP8(p8Guardrail.apply(event))
+      if (decision === 'deny') deny('caller or target is not allowed by delegation policy')
+      else writeProof()
     })
     return true
   } catch {

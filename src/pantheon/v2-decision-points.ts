@@ -159,11 +159,11 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
       'execute.before remains the only hard barrier. No adapter may allow what that barrier denies.',
     unknowns: [
       'permission.evaluate delivery, payload shape, effect-write honouring and ordering are unmeasured (PM-09, review N1/N5)',
-      'accessor/proxy write targets, inherited effect and non-writable own properties are unproven (review N2)',
-      'the rule blast radius on native events without an action token is unmeasured (review N5)',
+      'accessor/proxy write targets, inherited effect and non-writable own properties are unproven (review N2); the write now refuses a non-own or accessor descriptor, but host payloads carrying them were never observed',
+      'the rule blast radius on native events without an action token is unmeasured (review N5): action.unusable would deny such events, and payload shape is PM-09',
     ],
     notes:
-      'Starts off, not shadow. Only permission.evaluate is wired: execute.before is untouched and P8 adds no second barrier there. The Phase 5 review (N1–N8, conditions PH5-1…PH5-5) keeps activation blocked and forbids reading this entry as coverage: the apply() result is discarded and the write proof is recorded before P8, so a narrowing leaves wrong evidence (N1/PH5-1); a refused write is silent (N3/PH5-2); no integration test runs with the flag on and the contract tests do not clear the env var (N4/PH5-3). Every permission.evaluate path stays unmeasured (PM-09, P8_PATH_COVERAGE), the host honouring the write is a premise (PM-16), and a P8 that narrows is indistinguishable from an inert one until PH5-1 and PH5-5 close.',
+      'Starts off, not shadow. Only permission.evaluate is wired: execute.before is untouched and P8 adds no second barrier there. The Phase 5 review (N1–N8, conditions PH5-1…PH5-5) keeps activation blocked and forbids reading this entry as coverage. Its wiring findings N1 (discarded result / proof before P8), N3 (silent rejection) and N4 (no flag-on test) were repaired without activating the flag: apply() now runs before writeProof, so the proof records the post-apply effect, and the guardrail outcome (narrow/keep/refusal/rejected or delegated write) is emitted through the 0b telemetry sink (PH5-1/PH5-3); the write refuses accessor and non-own descriptors with p8.write.delegation (PH5-2); a flag-on integration test asserts the applied effect matches the record and the contract suite isolates PANTHEON_V2_P8_GUARDRAIL (PH5-4). The rule blast radius on native events lacking action remains UNMEASURED (N5), every permission.evaluate path stays unmeasured (PM-09, P8_PATH_COVERAGE), the host honouring the write is a premise (PM-16), and activation stays blocked pending C8 and re-review.',
   }),
   Object.freeze<DecisionPoint>({
     id: 'P9',

@@ -9,6 +9,23 @@
  * it can report is the baseline it read. No branch produces `'allow'` or `'ask'`.
  * {@link p8NarrowsOnly} states the property; the test suite enumerates it.
  *
+ * The write path also requires the event's `effect` to be an **own writable data
+ * property** before `Reflect.set` runs. A descriptor that is an accessor (own
+ * getter/setter) or absent (the write would delegate to the prototype) is
+ * refused with `p8.write.delegation` instead of trusting whatever `set` the
+ * host installed. Without that check, "narrowing-only for every input" would
+ * hold for data properties only.
+ *
+ * ## Blast radius (N5) — unmeasured
+ *
+ * `p8.rule.action.unusable` matches any event whose `action` is not a printable
+ * `ACTION_TOKEN`, including an event with no `action` at all. On the native
+ * `passthrough` path the declared test payload has no `action`, so enabling P8
+ * on a host that delivers such events would deny every one of them. That is a
+ * safe narrowing (never a grant) but an availability effect whose real extent
+ * is **unmeasured** — PM-09 never observed a delivered payload. Do not read this
+ * rule, or the on/off flag, as evidence of production behaviour.
+ *
  * Off by default: `PANTHEON_V2_P8_GUARDRAIL` is absent in a default install and
  * absence means disabled, so this phase ships no behavioural change. Evaluation
  * is synchronous with no I/O (it cannot delay admission), and every failure —
@@ -222,9 +239,37 @@ export function evaluateP8Guardrail(
 }
 
 /**
+ * Classify `event.effect` before writing it.
+ *
+ * `delegation`: the own descriptor is absent or an accessor, so an assignment
+ * would create a property or run a host setter — the write is refused.
+ * `non-writable`: an own data property that cannot be replaced — also refused,
+ * with the existing `p8.write.rejected` token.
+ * `writable`: an own writable data property, the only safe target.
+ */
+function effectWriteKind(target: object): 'writable' | 'delegation' | 'non-writable' {
+  const descriptor = Object.getOwnPropertyDescriptor(target, 'effect')
+  if (descriptor === undefined || !Object.hasOwn(descriptor, 'value')) return 'delegation'
+  return descriptor.writable === true ? 'writable' : 'non-writable'
+}
+
+function refusedWrite(
+  enabled: boolean,
+  baseline: P8PermissionEffect | null,
+  reason: string,
+): P8ApplyResult {
+  return Object.freeze({
+    ...decision(enabled, 'guardrail.keep', baseline ?? 'unavailable', baseline, [], reason),
+    wrote: false,
+  })
+}
+
+/**
  * Apply P8 to a permission event: read `event.effect`, write `'deny'` only when
  * a rule matched. A refused write leaves the baseline and reports
- * `p8.write.rejected`; this never throws into admission.
+ * `p8.write.rejected` (frozen/non-writable or a throwing target) or
+ * `p8.write.delegation` (accessor or non-own descriptor); this never throws
+ * into admission.
  */
 export function applyP8ToPermissionEvent(
   event: unknown,
@@ -240,36 +285,19 @@ export function applyP8ToPermissionEvent(
   const evaluated = evaluateP8Guardrail({ baseline, event }, options)
   if (!evaluated.narrowed) return Object.freeze({ ...evaluated, wrote: false })
   try {
-    const mutable = event as Record<string, unknown>
+    if (!isRecord(event)) return refusedWrite(enabled, baseline, 'p8.write.delegation')
+    const kind = effectWriteKind(event)
+    if (kind === 'delegation') return refusedWrite(enabled, baseline, 'p8.write.delegation')
+    if (kind === 'non-writable') return refusedWrite(enabled, baseline, 'p8.write.rejected')
     // `Reflect.set` reports a refused write instead of throwing in strict mode,
     // so a frozen host object cannot turn P8 into an exception in admission.
-    const assigned = Reflect.set(mutable, 'effect', 'deny')
-    if (!assigned || mutable.effect !== 'deny') {
-      return Object.freeze({
-        ...decision(
-          enabled,
-          'guardrail.keep',
-          baseline ?? 'unavailable',
-          baseline,
-          [],
-          'p8.write.rejected',
-        ),
-        wrote: false,
-      })
+    const assigned = Reflect.set(event, 'effect', 'deny')
+    if (!assigned || event.effect !== 'deny') {
+      return refusedWrite(enabled, baseline, 'p8.write.rejected')
     }
     return Object.freeze({ ...evaluated, wrote: true })
   } catch {
-    return Object.freeze({
-      ...decision(
-        enabled,
-        'guardrail.keep',
-        baseline ?? 'unavailable',
-        baseline,
-        [],
-        'p8.write.rejected',
-      ),
-      wrote: false,
-    })
+    return refusedWrite(enabled, baseline, 'p8.write.rejected')
   }
 }
 

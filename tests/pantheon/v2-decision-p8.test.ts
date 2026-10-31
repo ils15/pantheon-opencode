@@ -89,6 +89,29 @@ function unreadableActionEvent(): Payload {
   return event
 }
 
+/** Own `effect` is an accessor: a write would run the host setter. */
+function accessorEffectEvent(): Payload {
+  const event = { action: 'read' } as Payload
+  Object.defineProperty(event, 'effect', {
+    enumerable: true,
+    configurable: true,
+    get() {
+      return 'allow'
+    },
+    set() {
+      // A host setter that silently ignores the value.
+    },
+  })
+  return event
+}
+
+/** `effect` lives on the prototype: a write would delegate or create own. */
+function inheritedEffectEvent(): Payload {
+  const event = Object.create({ effect: 'allow' }) as Payload
+  event.action = 'read'
+  return event
+}
+
 /**
  * Event shapes: the declared contract plus adversarial variants (missing
  * fields, control characters, wrong types, hostile getters, frozen objects,
@@ -114,6 +137,8 @@ const EVENTS: readonly unknown[] = [
   Object.preventExtensions({ action: 'read', sessionID: 'ses_a', effect: 'allow' }),
   throwingEvent(),
   unreadableActionEvent(),
+  accessorEffectEvent(),
+  inheritedEffectEvent(),
   new Proxy({} as Payload, {
     get() {
       throw new Error('hostile proxy')
@@ -287,6 +312,44 @@ check('enabled: a valid allow passes through, an unattributable allow narrows', 
   assert.equal(rejected.narrowed, false)
   assert.equal(rejected.wrote, false)
   assert.equal(rejected.effect, 'allow', 'a refused write leaves the baseline in place')
+})
+
+check('an accessor or prototype descriptor is refused instead of delegating the write', () => {
+  const guardrail = createP8Guardrail({ enabled: true })
+
+  const accessor = accessorEffectEvent()
+  let setterCalls = 0
+  Object.defineProperty(accessor, 'effect', {
+    enumerable: true,
+    configurable: true,
+    get: () => 'allow',
+    set: () => {
+      setterCalls += 1
+    },
+  })
+  const delegated = guardrail.apply(accessor)
+  assert.equal(delegated.reason, 'p8.write.delegation')
+  assert.equal(delegated.wrote, false)
+  assert.equal(delegated.effect, 'allow', 'a refused accessor write leaves the baseline')
+  assert.equal(setterCalls, 0, 'the host setter must never run')
+  assert.equal(accessor.effect, 'allow')
+
+  const inherited = inheritedEffectEvent()
+  const inheritedResult = guardrail.apply(inherited)
+  assert.equal(inheritedResult.reason, 'p8.write.delegation')
+  assert.equal(inheritedResult.wrote, false)
+  assert.equal(Object.hasOwn(inherited, 'effect'), false, 'no own property was created')
+  assert.equal(inherited.effect, 'allow')
+
+  const nonWritable = Object.defineProperty({ action: 'read' }, 'effect', {
+    enumerable: true,
+    writable: false,
+    value: 'allow',
+  })
+  const rejected = guardrail.apply(nonWritable)
+  assert.equal(rejected.reason, 'p8.write.rejected')
+  assert.equal(rejected.wrote, false)
+  assert.equal(nonWritable.effect, 'allow')
 })
 
 check('the path coverage table is entirely unmeasured and names PM-09', () => {

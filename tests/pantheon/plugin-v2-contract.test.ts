@@ -114,6 +114,7 @@ async function main(): Promise<void> {
     default: plugin,
     V2_UNSUPPORTED_FEATURES,
     getP7TelemetrySinkForTests,
+    getP8TelemetrySinkForTests,
     getUnsupportedFeatures,
     resetV2BridgeForTests,
     setV2Bridge,
@@ -126,6 +127,13 @@ async function main(): Promise<void> {
     new URL('../../src/pantheon/v2-unsupported.mjs', import.meta.url),
     'utf8',
   )
+
+  // Isolate P8 from the developer's shell (PH5-4). Most tests below assert
+  // flag-off behaviour, so a `PANTHEON_V2_P8_GUARDRAIL` exported in the
+  // environment must not reach them. The flag-on integration test sets it
+  // explicitly through `withP8Flag`, which restores this cleared value.
+  const previousP8Flag = process.env.PANTHEON_V2_P8_GUARDRAIL
+  delete process.env.PANTHEON_V2_P8_GUARDRAIL
 
   let passed = 0
   let failed = 0
@@ -1083,6 +1091,20 @@ async function main(): Promise<void> {
     })
   }
 
+  /**
+   * Same isolation for P8: the suite cleared the variable at start, so the
+   * `finally` restores "absent" rather than the developer's shell value.
+   */
+  function withP8Flag<T>(value: string | undefined, fn: () => Promise<T>): Promise<T> {
+    const previous = process.env.PANTHEON_V2_P8_GUARDRAIL
+    if (value === undefined) delete process.env.PANTHEON_V2_P8_GUARDRAIL
+    else process.env.PANTHEON_V2_P8_GUARDRAIL = value
+    return fn().finally(() => {
+      if (previous === undefined) delete process.env.PANTHEON_V2_P8_GUARDRAIL
+      else process.env.PANTHEON_V2_P8_GUARDRAIL = previous
+    })
+  }
+
   test('P7 records one allowlisted telemetry event per execution when the flag is on', async () => {
     await withP7Flag('1', async () => {
       const stream = executionStream({
@@ -1135,6 +1157,104 @@ async function main(): Promise<void> {
         v2Dispose()
       }
     })
+  })
+
+  // ─── P8 wiring (Phase 5 review PH5-1…PH5-4) ─────────────────────────
+  //
+  // The review found the guardrail's result discarded and the write proof
+  // recorded before P8, so a narrowing left `effectAfter: allow` behind. These
+  // tests drive the registered permission handler with the flag on and assert
+  // the applied effect and the recorded effect agree.
+
+  test('P8 with the flag on applies the deny before recording it (PH5-1/PH5-4)', async () => {
+    await withP8Flag('1', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'pantheon-p8-proof-'))
+      const proofPath = join(dir, 'permission.proof')
+      const previousProof = process.env.PANTHEON_HOOK_CANARY_PERMISSION_PROOF
+      process.env.PANTHEON_HOOK_CANARY_PERMISSION_PROOF = proofPath
+      try {
+        let permissionHandler: ((event: unknown) => void | Promise<void>) | undefined
+        await plugin.setup(
+          makeBaseContext({
+            permission: {
+              hook: async (_name: string, handler: typeof permissionHandler) => {
+                permissionHandler = handler
+                return { dispose: async () => {} }
+              },
+            },
+          }) as never,
+        )
+        assert.equal(typeof permissionHandler, 'function')
+        const handler = permissionHandler as (event: unknown) => Promise<void>
+
+        // No `action` token: p8.rule.action.unusable matches on the native
+        // passthrough path (the unmeasured N5 blast radius).
+        const narrowed = { sessionID: 'root', resources: ['explore'], effect: 'allow' }
+        await handler(narrowed)
+        assert.equal(narrowed.effect, 'deny', 'the applied effect is deny')
+
+        // A rule-free event is left exactly as the host decided.
+        const kept = {
+          sessionID: 'root',
+          action: 'read',
+          resources: ['explore'],
+          effect: 'allow',
+        }
+        await handler(kept)
+        assert.equal(kept.effect, 'allow', 'a rule-free event is untouched')
+
+        const sink = getP8TelemetrySinkForTests()
+        assert.ok(sink, 'the permission wiring must install a P8 telemetry sink')
+        assert.deepEqual(
+          sink.events().map((record) => [record.point, record.decision, record.reason]),
+          [
+            ['P8', 'guardrail.narrow', 'p8.rule.matched'],
+            ['P8', 'guardrail.keep', 'p8.rule.none'],
+          ],
+          'narrow and keep are both recorded',
+        )
+
+        const lines = readFileSync(proofPath, 'utf8').trim().split('\n')
+        assert.equal(lines.length, 2, 'one proof line per handler call')
+        const narrowProof = JSON.parse(lines[0].slice('permission.evaluate '.length))
+        assert.equal(narrowProof.effectBefore, 'allow')
+        assert.equal(
+          narrowProof.effectAfter,
+          narrowed.effect,
+          'the proof records the post-apply effect, not the pre-P8 one',
+        )
+        assert.equal(narrowProof.effectAfter, 'deny')
+        const keepProof = JSON.parse(lines[1].slice('permission.evaluate '.length))
+        assert.equal(keepProof.effectAfter, kept.effect)
+      } finally {
+        if (previousProof === undefined) {
+          delete process.env.PANTHEON_HOOK_CANARY_PERMISSION_PROOF
+        } else {
+          process.env.PANTHEON_HOOK_CANARY_PERMISSION_PROOF = previousProof
+        }
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+  })
+
+  test('P8 records and writes nothing when the flag is off', async () => {
+    let permissionHandler: ((event: unknown) => void | Promise<void>) | undefined
+    await plugin.setup(
+      makeBaseContext({
+        permission: {
+          hook: async (_name: string, handler: typeof permissionHandler) => {
+            permissionHandler = handler
+            return { dispose: async () => {} }
+          },
+        },
+      }) as never,
+    )
+    const event = { sessionID: 'root', resources: ['explore'], effect: 'allow' }
+    await permissionHandler?.(event)
+    assert.equal(event.effect, 'allow', 'the disabled guardrail writes nothing')
+    const sink = getP8TelemetrySinkForTests()
+    assert.ok(sink)
+    assert.equal(sink.size(), 0, 'the disabled guardrail emits no record')
   })
 
   // ─── V1→V2 bridge injection (issue #265) ────────────────────────────
@@ -3542,8 +3662,16 @@ async function main(): Promise<void> {
     } catch (err) {
       failed++
       console.error(`  ❌ ${name}:`, err)
+    } finally {
+      // A failing P8 test must not leave the flag on for the next one.
+      delete process.env.PANTHEON_V2_P8_GUARDRAIL
     }
   }
+
+  // Restore the developer's shell environment (PH5-4): the suite cleared it at
+  // start so flag-off assertions could not be contaminated.
+  if (previousP8Flag === undefined) delete process.env.PANTHEON_V2_P8_GUARDRAIL
+  else process.env.PANTHEON_V2_P8_GUARDRAIL = previousP8Flag
 
   // The #272 fixture created real symlinks; remove the tree once the tests
   // that read it have run.
