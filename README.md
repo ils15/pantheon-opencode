@@ -302,8 +302,8 @@ review conditions.
 
 The V2 decision layer declares eleven integration points (P1–P11) over three
 decision primitives — `ask`, `rank`, and `verify` — and a deterministic policy
-that decides which point may run. **Five of the eleven have a production call
-site: two behind flags that are off by default, three in shadow.**
+that decides which point may run. **Six of the eleven have a production call
+site: two behind flags that are off by default, four in shadow.**
 
 - **P7 (loop)** is wired to `session.execution.succeeded` behind
   `PANTHEON_V2_P7_LOOP`, which is off. It writes each observation to an
@@ -322,16 +322,27 @@ site: two behind flags that are off by default, three in shadow.**
   requires `complexity` and `gateStatus`. It records a classification when the
   tool is invoked — never a permanent `complexity.invalid` refusal from a payload
   that cannot carry the vector — and applies nothing.
-
-**The other six — P4, P5, P6, P9, P10 and P11 — are library code with no
-production call site.** Nothing constructs or registers them outside the
-per-point test suites — the offline harness imports no adapter module. P6 and
-P10 declared the prompt hook, but that payload never carries council candidates
-or counsellor claims, so they stay unwired instead of recording a refusal from a
-surface that cannot feed them. On a host they do not read the turn, record no
+- **P9** is wired at its declared `session.hook('compaction')` in **shadow**, on
+  the carrier that was actually measured: the top-level `sessionID` and the
+  `system` part array. It records the decision key and the payload shape and
+  pushes nothing — the injected compaction context is unchanged — and a payload
+  whose only session id is a nested `session.id` (a field the 2.2.5 host never
+  sends) produces no decision at all. No measured surface carries the memory
+  candidate list it would retain or discard, so its record states that absence
+  rather than a retention or a priority.
+**The other five — P4, P5, P6, P10 and P11 — are library code with no production
+call site.** Nothing constructs or registers them outside the per-point test suites —
+the offline harness imports no adapter module. P6 and P10 declared the prompt
+hook, but that payload never carries council candidates or counsellor claims, so
+they stay unwired instead of recording a refusal from a surface that cannot feed
+them. P4 ranks a memory candidate array and the measured `context` payload
+carries `system` text parts, not candidates; P5 verifies a declared
+`{ requirements, responses }` pair and the `execute.after` event carries
+neither. P11 reads the measured `tool.transform` draft and is tracked below the
+same way, with no call site yet. On a host they do not read the turn, record no
 telemetry and have no switch to turn off, because nothing registers them.
 
-"Shadow" therefore means no behavioural change, not a claim of effect: the three
+"Shadow" therefore means no behavioural change, not a claim of effect: the four
 shadow points read a narrow slice of their surface and decide nothing from it,
 and the two flag-gated points are off. No activation flag is set in a default
 install.
@@ -354,7 +365,9 @@ What the layer does **not** do today, stated as measured rather than implied:
   12-execution cap is **advisory**: no measured host surface signals a new user
   turn, so nothing is claimed to reset the streak.
 - **P9 (compaction) is measured on top-level sessions only.** Child-session
-  compaction, `reason: "overflow"` and the `messages` channel remain UNKNOWN.
+  compaction, `reason: "overflow"` and the `messages` channel remain UNKNOWN, and
+  the memory candidate list is not available on any measured surface — so the
+  wired P9 record names that absence and claims no retention or priority.
 - **P8 (guardrail) is off and its activation is blocked** pending its Phase 5
   review conditions (PH5-1…PH5-5). The mechanism only narrows, and it is not a
   drop-in no-op: with `PANTHEON_V2_P8_GUARDRAIL` set, an event with no usable

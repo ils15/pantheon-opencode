@@ -117,6 +117,7 @@ async function main(): Promise<void> {
     getP7TelemetrySinkForTests,
     getP8TelemetrySinkForTests,
     getP3TelemetrySinkForTests,
+    getP9TelemetrySinkForTests,
     getPromptSurfaceTelemetrySinkForTests,
     getUnsupportedFeatures,
     resetV2BridgeForTests,
@@ -675,6 +676,69 @@ async function main(): Promise<void> {
     }
     assert.equal(admission.prompt.skills, previousSkills, 'P2 must not filter skills')
     assert.equal(admission.prompt.agents, previousAgents)
+  })
+
+  test('P9 reads the measured compaction carrier and leaves the payload identical', async () => {
+    resetV2BridgeForTests()
+    let compactionHandler: ((event: unknown) => void | Promise<void>) | undefined
+    await plugin.setup(
+      makeBaseContext({
+        session: {
+          hook: async (name: string, handler: typeof compactionHandler) => {
+            if (name === 'compaction') compactionHandler = handler
+            return { dispose: async () => {} }
+          },
+        },
+      }) as never,
+    )
+    assert.equal(typeof compactionHandler, 'function')
+
+    // The measured 2.2.5 payload (PROBE-A §4): top-level `sessionID`, `system`
+    // as an array of parts, and NO nested `session` object.
+    const measured = {
+      sessionID: 'ses_p9_top_level',
+      model: { id: 'fixture', providerID: 'fixture' },
+      system: [
+        { type: 'text', text: 'part one' },
+        { type: 'text', text: 'part two' },
+        { type: 'text', text: 'part three' },
+        { type: 'text', text: 'part four' },
+      ],
+      messages: [],
+      options: {},
+      agent: 'build',
+      tools: [],
+    }
+    const before = structuredClone(measured)
+    await compactionHandler?.(measured)
+
+    // Shadow: the injected context is unchanged. Nothing is pushed, nothing is
+    // pruned, and the payload the host will summarize is byte-identical.
+    assert.deepEqual(measured, before, 'P9 must not mutate the compaction payload')
+
+    const sink = getP9TelemetrySinkForTests()
+    assert.ok(sink, 'the compaction hook must install the P9 sink')
+    assert.equal(sink.size(), 1)
+    const [record] = sink.events()
+    assert.equal(record?.point, 'P9')
+    assert.equal(record?.mode, 'shadow')
+    assert.equal(record?.effect, 'none')
+    assert.equal(
+      record?.reason,
+      'compaction.memory.source.absent',
+      'the carrier was read (not absent) and the missing candidate list is named',
+    )
+
+    // A payload whose only id is a nested `session.id` is a carrier this host
+    // never sends, so it produces NO decision rather than a keyed one.
+    await compactionHandler?.({
+      session: { id: 'ses_nested_decoy' },
+      system: [{ type: 'text', text: 'only part' }],
+      messages: [],
+    })
+    const afterNested = sink.events()
+    assert.equal(afterNested.length, 2)
+    assert.equal(afterNested[1]?.reason, 'compaction.session.absent')
   })
 
   test('P3 is constructed at tool.invoke and classifies the tool payload', async () => {

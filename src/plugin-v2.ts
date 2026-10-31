@@ -141,6 +141,7 @@ import {
   createP8Guardrail,
   p8GuardrailEnabledFromEnv,
 } from './pantheon/v2-decision-points/p8-guardrail.ts'
+import { evaluateCompactionMemoryPoint } from './pantheon/v2-decision-points/p9-memory-compaction.ts'
 import { DECISION_POINT_REGISTRY } from './pantheon/v2-decision-points.ts'
 import { observePromptSurface } from './pantheon/v2-decision-prompt-surface.ts'
 import { createTelemetrySink, type TelemetrySink } from './pantheon/v2-decision-telemetry.ts'
@@ -780,6 +781,22 @@ export function getP3TelemetrySinkForTests(): TelemetrySink | undefined {
 }
 
 let p3TelemetrySink: TelemetrySink | undefined
+
+/**
+ * The P9 telemetry sink created by the most recent compaction-hook
+ * registration.
+ *
+ * P9 declares `session.hook('compaction')` and observes the MEASURED carrier
+ * only: the top-level `sessionID` and the `system` part array (F-01, F-02).
+ * Records go through the same in-memory, bounded 0b path and carry the P9
+ * registry `mode` (`shadow`). Exported only for
+ * tests/pantheon/plugin-v2-contract.test.ts and the wiring audit.
+ */
+export function getP9TelemetrySinkForTests(): TelemetrySink | undefined {
+  return p9TelemetrySink
+}
+
+let p9TelemetrySink: TelemetrySink | undefined
 
 /**
  * Attempt to subscribe to session events via V2 ctx.event.subscribe.
@@ -2402,6 +2419,10 @@ export const plugin = define({
       // active goals per session, and the store needs no host API (same
       // `.pantheon/goals` directory V1 uses).
       const goalStore = new GoalStore({ dir: '.pantheon/goals' })
+      // P9's record sink, created per registration (in-memory, bounded,
+      // I/O-free) so one setup cannot observe another's records.
+      const p9Sink = createTelemetrySink()
+      p9TelemetrySink = p9Sink
       try {
         // 2.0.16 `SessionHooks` key is `compaction` (the migration doc maps
         // `experimental.session.compacting` → `ctx.session.hook("compaction")`).
@@ -2450,6 +2471,28 @@ export const plugin = define({
                 : typeof payload?.session?.id === 'string'
                   ? payload.session.id
                   : undefined
+
+            // P9 (compaction) shadow observation, on the MEASURED carrier only.
+            // The 2.2.5 compaction payload carries a TOP-LEVEL `sessionID` and
+            // no nested `session` object at all (PROBE-A, 11/11 runs), so the
+            // event is handed to the adapter as-is and it reads
+            // `payload.sessionID` — never `session.id`, which is absent there.
+            // A payload that carries only a nested id therefore produces NO
+            // decision (fail-closed) rather than being keyed by a carrier the
+            // host was never observed to send. This runs BEFORE the pruner and
+            // the context injection below, so `systemPartCount` describes the
+            // host payload and not the blocks Pantheon appends; the adapter
+            // clones what it reads and pushes nothing itself, so the injected
+            // context is unchanged — shadow is the record, nothing else.
+            // Compaction with `reason:"overflow"` and child-session compaction
+            // are UNKNOWN and are not designed for here.
+            try {
+              evaluateCompactionMemoryPoint({ payload }, (record) => {
+                p9Sink.emit({ ...record, mode: 'shadow' })
+              })
+            } catch {
+              // Observation must never reach the compaction request.
+            }
             const prunerConfig = resolveContextPrunerConfig(context.options)
             const stats = pruneMessages(payload?.messages, prunerConfig, 'compaction')
             logContextPrune(stats, sessionID)

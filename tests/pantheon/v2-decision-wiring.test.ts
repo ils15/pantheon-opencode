@@ -580,6 +580,27 @@ await check('P6 and P10 are unwired because no measured surface carries their in
   }
 })
 
+await check('P4 and P5 are unwired because their required input is absent', () => {
+  // P4 ranks a candidate array (`id`/`score`/`justification`); the measured
+  // context payload carries `system` TEXT parts and no candidates. P5 verifies
+  // a declared `{ requirements, responses }` pair; the `execute.after` event
+  // carries neither. Wiring either would record a permanent refusal.
+  for (const id of ['P4', 'P5']) {
+    const point = DECISION_POINT_REGISTRY.find((entry) => entry.id === id)
+    assert.ok(point, `missing point ${id}`)
+    assert.equal(point.wired, false, `${id} must not be wired where its input cannot arrive`)
+    assert.equal(declaredSurfaceOf(id), null, `${id} must have no construction site`)
+  }
+})
+
+await check('P9 is constructed on the compaction carrier it declares', () => {
+  assert.equal(declaredSurfaceOf('P9'), 'session.hook.compaction')
+  const point = DECISION_POINT_REGISTRY.find((entry) => entry.id === 'P9')
+  assert.ok(point, 'missing point P9')
+  assert.equal(point.wired, true, 'P9 must be wired')
+  assert.equal(point.mode, 'shadow', 'P9 stays shadow')
+})
+
 await check('shadow on the measured host shape mutates nothing and records no content', () => {
   const admission = structuredClone(HOST_PROMPT_PAYLOAD_F08)
   const before = structuredClone(admission)

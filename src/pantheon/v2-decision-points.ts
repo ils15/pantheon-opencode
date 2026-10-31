@@ -15,9 +15,10 @@
  * source-derived audit in `tests/pantheon/v2-decision-wiring.test.ts` fails when
  * the flag and the production import graph disagree. P1 and P2 are constructed
  * at the prompt hook, P3 at `tool.invoke` (its declared surface and the only one
- * carrying `complexity`/`gateStatus`), P7 on the event channel and P8 on
- * permission.evaluate; P4, P5, P6, P9, P10 and P11 remain library code with no
- * caller outside the harness and the tests, and their `wired` stays `false`.
+ * carrying `complexity`/`gateStatus`), P7 on the event channel, P8 on
+ * permission.evaluate and P9 on the compaction hook (the only surface carrying
+ * its top-level `sessionID`); P4, P5, P6, P10 and P11 remain library code with
+ * no caller outside the harness and the tests, and their `wired` stays `false`.
  */
 
 import type { DecisionPoint } from './v2-decision-registry.ts'
@@ -189,7 +190,7 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['noul', 'score'],
     mode: SHADOW,
     status: 'measured',
-    wired: false,
+    wired: true,
     scope: 'top-level-session-only',
     evidence: ['F-01', 'F-02', 'F-03', 'F-04'],
     premises: ['PM-04', 'PM-05'],
@@ -198,9 +199,10 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
       'child-session compaction is UNKNOWN',
       'reason:"overflow" was never exercised',
       'the messages channel was never exercised',
+      'no measured surface carries the memory candidate list P9 would retain or discard',
     ],
     notes:
-      'Measured on top-level sessions only: top-level sessionID carrier (F-01) and system-array text (F-02).',
+      'Measured on top-level sessions only: top-level sessionID carrier (F-01) and system-array text (F-02). Wired at its declared `session.hook(\'compaction\')` in shadow: the handler hands the adapter the event as-is, the adapter reads `payload.sessionID` and the `system` part array and nothing else, and the injected context is unchanged — the record carries the decision key and `systemPartCount`, and the adapter pushes nothing. A payload whose only id is a nested `session.id` produces NO decision (fail-closed), because the 2.2.5 host never sends `session` at all (F-01). The memory candidate list is an optional caller input and no measured surface carries it, so the wired record states `compaction.memory.source.absent` — a named refusal, never a retention or priority claim. `reason:"overflow"` and child-session compaction stay UNKNOWN and are not designed for.',
   }),
   Object.freeze<DecisionPoint>({
     id: 'P10',
