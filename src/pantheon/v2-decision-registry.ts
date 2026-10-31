@@ -3,8 +3,9 @@
  *
  * A `measured` status means the *surface* was measured in a runtime probe
  * (presence, shape or channel). It never means the *effect* was measured:
- * effect requires a mutation observed in the following turn (condition C6) and
- * remains unmeasured for every point. `premise` means the surface or catalog
+ * effect requires a mutation observed in the following turn — the criterion C6
+ * answered for prompt/skill/tool mutations in PROBE-E — and no point's own
+ * effect has been measured. `premise` means the surface or catalog
  * this point needs was not measured; the premise is registered by id in
  * `v2-decision-premises.ts`, and its canonical text lives in `STATUS.md` § Premissas. `deferred` means the
  * final design is suspended by an open condition and no effect is authorised.
@@ -12,7 +13,7 @@
  * *unreachable*, and the point therefore only records an observation: it
  * applies no decision and may never be described as having one.
  *
- * Evidence ids follow PLAN §5.4 (F-01…F-18, I-01) and are never renumbered.
+ * Evidence ids follow PLAN §5.4 (F-01…F-32, I-01) and are never renumbered.
  * `measured` points must cite at least one `F-` id; `premise`, `advisory` and
  * `deferred` points must carry the blocking condition.
  * {@link auditDecisionRegistry} enforces both properties, and the harness

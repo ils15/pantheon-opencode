@@ -9,6 +9,10 @@
  * Data only: the status rules, premise register and audit live in
  * `v2-decision-registry.ts`. Frozen at module load, because an adapter that
  * could rewrite a status could turn a premise into an apparent measurement.
+ *
+ * `mode` declares the mode a point would run in, never a production call site:
+ * `src/plugin-v2.ts` registers only the P7 and P8 adapters, and the other nine
+ * points are library code with no caller outside the harness and the tests.
  */
 
 import type { DecisionPoint } from './v2-decision-registry.ts'
@@ -29,7 +33,7 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     evidence: ['F-08'],
     premises: ['PM-06', 'PM-07'],
     blockingCondition:
-      'C6 open: a prompt mutation was never observed taking effect in the next turn',
+      'PM-07 open: a host-populated prompt.agents was never observed, so no effect of a prompt mutation on the next turn was measured for P1. C6 itself is closed by PROBE-E and is not the blocker',
     notes:
       'Measured only as prompt-payload shape (F-08). Populated prompt.agents was never observed.',
   }),
@@ -51,7 +55,7 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
       'mutation inside a child/subagent session is UNKNOWN (PROBE-E §7)',
     ],
     notes:
-      'P2 é no-op empírico no caminho default (F-09, PRE-02). P2a reports the skill source. P2b was cancelled, not emulated: skill.transform add/remove changes the next turn only for builtin draft entries; project skills are unreachable (get returns null, remove is ok without effect, an add override is not rendered). P2 never filters and claims no token reduction. PM-13 applies by analogy: an effect announced without an observable artifact is not an effect.',
+      'P2 é no-op empírico no caminho default (F-09, PRE-02). P2a resolves the skill source, but the shipped prompt hook passes no `skillsDraft` — `applyTurnDecisionToPrompt(prompt, decision)` — so `skillsSource` is only `none` or `prompt` at runtime and the `draft` source (resolveSkillSource) has no production caller. P2b was cancelled, not emulated: skill.transform add/remove changes the next turn only for builtin draft entries; project skills are unreachable (get returns null, remove is ok without effect, an add override is not rendered). P2 never filters and claims no token reduction. PM-13 applies by analogy: an effect announced without an observable artifact is not an effect.',
   }),
   Object.freeze<DecisionPoint>({
     id: 'P3',
@@ -63,8 +67,9 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     mode: SHADOW,
     status: 'premise',
     evidence: [],
-    premises: ['PM-06'],
-    blockingCondition: 'C6 open: no measured effect in the following turn',
+    premises: ['PM-06', 'PM-09'],
+    blockingCondition:
+      'PM-09 open: no tool call was measured, so the tool.invoke surface that would carry complexity scoring was never exercised. C6 is closed by PROBE-E and is not the blocker',
     notes: 'Complexity classification is contract-only in this phase.',
   }),
   Object.freeze<DecisionPoint>({
@@ -135,7 +140,7 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
       'a background image job was never exercised (PROBE-D §5.4)',
     ],
     notes:
-      'Branch 1 of PLAN §5.1 was selected by PROBE-D §7 (`.pantheon/deepwork/decision-layer-v2/PROBE-D-turn-end-channel.md`): `session.execution.succeeded` is delivered for child sessions with the child copy of `data.sessionID` — 13/13 children (6 foreground, 5 background, 2 with compaction) — and for background work (PROBE-D §4.1–§4.2). The event does NOT carry `parentID` (`dataKeys=["sessionID"]`, 44/44): attribution comes from `session.created.parentID` or `ctx.session.get`, never from the succeeded event (PROBE-D §4.1). Multiplicity is per EXECUTION, not per turn: 44 `started` = 44 `succeeded` for 46 inbox items; manual compaction adds +1 (C2 = 3), automatic compaction +0 (C1 = 1), a late background notification +1 on the parent (B3/B4/B5 = 2 vs B1/B2 = 1) (PROBE-D §4.3). The adapter implements that execution counter (`v2-decision-points/p7-loop.ts`) behind `PANTHEON_V2_P7_LOOP`, OFF by default; cutover is Phase 4b. Effect stays unmeasured (C6): the adapter records `effect: none` and must never be described as working enforcement while the flag is off. The 12-execution cap (`P7_LOOP_MAX_EXECUTIONS`) is ADVISORY: `reset()` is caller-supplied, no measured user-input surface in the probed host provides a signal to call it, and the streak is not claimed to reset on any event. PROBE-D retires the PRE-01/PM-12 blocking premises; the premise register is not rewritten here.',
+      'Branch 1 of PLAN §5.1 was selected by PROBE-D §7 (`.pantheon/deepwork/decision-layer-v2/PROBE-D-turn-end-channel.md`): `session.execution.succeeded` is delivered for child sessions with the child copy of `data.sessionID` — 13/13 children (6 foreground, 5 background, 2 with compaction) — and for background work (PROBE-D §4.1–§4.2). The event does NOT carry `parentID` (`dataKeys=["sessionID"]`, 44/44): attribution comes from `session.created.parentID` or `ctx.session.get`, never from the succeeded event (PROBE-D §4.1). Multiplicity is per EXECUTION, not per turn: 44 `started` = 44 `succeeded` for 46 inbox items; manual compaction adds +1 (C2 = 3), automatic compaction +0 (C1 = 1), a late background notification +1 on the parent (B3/B4/B5 = 2 vs B1/B2 = 1) (PROBE-D §4.3). The adapter implements that execution counter (`v2-decision-points/p7-loop.ts`) behind `PANTHEON_V2_P7_LOOP`, OFF by default; cutover is Phase 4b. Effect stays unmeasured (C6 is closed by PROBE-E; no effect of P7 itself was observed): the adapter records `effect: none` and must never be described as working enforcement while the flag is off. The 12-execution cap (`P7_LOOP_MAX_EXECUTIONS`) is ADVISORY: `reset()` is caller-supplied, no measured user-input surface in the probed host provides a signal to call it, and the streak is not claimed to reset on any event. PROBE-D retires the PRE-01/PM-12 blocking premises; the premise register records PM-12 as closed by that measurement.',
   }),
   Object.freeze<DecisionPoint>({
     id: 'P8',
@@ -147,9 +152,9 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     mode: 'off',
     status: 'premise',
     evidence: [],
-    premises: ['PM-09'],
+    premises: ['PM-09', 'PM-16'],
     blockingCondition:
-      'C8 open: permission.evaluate was registered and never fired; activation also waits on C11–C15 from the Phase 5 review and enters off after P1–P3 are stable, with Themis review',
+      'C8 open: permission.evaluate was registered and never fired; activation also waits on PH5-1…PH5-5 (PLAN A-6 renames the Phase 5 review conditions) and enters off after P1–P3 are stable, with Themis review',
     securityInvariant:
       'execute.before remains the only hard barrier. No adapter may allow what that barrier denies.',
     unknowns: [
@@ -158,7 +163,7 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
       'the rule blast radius on native events without an action token is unmeasured (review N5)',
     ],
     notes:
-      'Starts off, not shadow. Only permission.evaluate is wired: execute.before is untouched and P8 adds no second barrier there. The Phase 5 review (N1–N8, C11–C15) keeps activation blocked and forbids reading this entry as coverage: the apply() result is discarded and the write proof is recorded before P8, so a narrowing leaves wrong evidence (N1); a refused write is silent (N3); no integration test runs with the flag on and the contract tests do not clear the env var (N4). Every permission.evaluate path stays unmeasured (PM-09, P8_PATH_COVERAGE), the host honouring the write is a premise, and a P8 that narrows is indistinguishable from an inert one until C11–C13 close.',
+      'Starts off, not shadow. Only permission.evaluate is wired: execute.before is untouched and P8 adds no second barrier there. The Phase 5 review (N1–N8, conditions PH5-1…PH5-5) keeps activation blocked and forbids reading this entry as coverage: the apply() result is discarded and the write proof is recorded before P8, so a narrowing leaves wrong evidence (N1/PH5-1); a refused write is silent (N3/PH5-2); no integration test runs with the flag on and the contract tests do not clear the env var (N4/PH5-3). Every permission.evaluate path stays unmeasured (PM-09, P8_PATH_COVERAGE), the host honouring the write is a premise (PM-16), and a P8 that narrows is indistinguishable from an inert one until PH5-1 and PH5-5 close.',
   }),
   Object.freeze<DecisionPoint>({
     id: 'P9',

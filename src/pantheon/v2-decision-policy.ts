@@ -7,8 +7,9 @@
  * network, so the same request always yields the same decision.
  *
  * This phase has no effect path. Even an admitted decision reports
- * `effect: 'none'`; activation (C6) and any observable effect belong to later
- * phases and are not implemented here.
+ * `effect: 'none'`; activation, any observable effect and the wiring of the
+ * points that have no production call site belong to later phases and are not
+ * implemented here.
  */
 
 import {

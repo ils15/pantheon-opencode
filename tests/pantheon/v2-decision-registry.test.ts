@@ -106,14 +106,22 @@ check('the registry covers P1..P11 exactly once', () => {
   )
 })
 
-check('the premise register covers PM-03..PM-15 plus PRE-01/PRE-02', () => {
+check('the premise register covers PM-03..PM-18 plus PRE-01/PRE-02', () => {
   assert.deepEqual(
     PREMISE_REGISTER.map((entry) => entry.id),
     [...PREMISE_IDS],
   )
   const ids = new Set(PREMISE_REGISTER.map((entry) => entry.id))
-  for (let index = 3; index <= 15; index += 1) {
+  for (let index = 3; index <= 18; index += 1) {
     assert.equal(ids.has(`PM-${String(index).padStart(2, '0')}`), true)
+  }
+  const byId = new Map(PREMISE_REGISTER.map((entry) => [entry.id, entry]))
+  // Retired by PROBE-E (F-26) and PROBE-D (F-18–F-21) respectively.
+  assert.equal(byId.get('PM-06')?.status, 'closed')
+  assert.equal(byId.get('PM-12')?.status, 'closed')
+  // PM-16 is the premise that decides whether P8's mechanism is real or inert.
+  for (const id of ['PM-16', 'PM-17', 'PM-18']) {
+    assert.equal(byId.get(id)?.status, 'open', id)
   }
 })
 
@@ -277,9 +285,26 @@ check('P8 claims no coverage the phase-5 review left unmeasured', () => {
   assert.equal(p8.hostPoint.includes('permission.evaluate'), true)
   assert.equal(p8.hostPoint.includes('/ execute.before'), false)
   assert.equal((p8.unknowns ?? []).length >= 3, true)
-  for (const token of ['N1', 'N3', 'N4', 'C11']) {
+  for (const token of ['N1', 'N3', 'N4', 'PH5-1']) {
     assert.equal(p8.notes.includes(token), true, token)
   }
+  // A-6 reserves C11–C13 for the PROBE-B corrections (all satisfied); using them
+  // here would make a blocked guardrail read as eligible.
+  assert.equal(p8.notes.includes('C11'), false)
+  assert.equal((p8.blockingCondition ?? '').includes('C11'), false)
+  assert.equal(p8.blockingCondition?.includes('PH5-1'), true)
+  assert.equal(p8.premises.includes('PM-16'), true)
+})
+
+check('P1 and P3 name a live premise instead of the closed C6 gate', () => {
+  // C6 was closed by PROBE-E; citing it as open hides the real blocker.
+  for (const id of ['P1', 'P3'] as const) {
+    const entry = point(id)
+    assert.equal((entry.blockingCondition ?? '').includes('C6 open'), false, id)
+    assert.match(entry.blockingCondition ?? '', /PM-\d{2}/, id)
+  }
+  assert.match(point('P1').blockingCondition ?? '', /PM-07/)
+  assert.match(point('P3').blockingCondition ?? '', /PM-09/)
 })
 
 check('two ids that normalise onto the same resource id fail the audit', () => {

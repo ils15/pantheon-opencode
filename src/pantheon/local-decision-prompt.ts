@@ -88,6 +88,11 @@ function identifiers(list: readonly unknown[]): { ids: string[]; unstable: boole
  * The prompt list wins when it is a real array. Otherwise the per-turn draft
  * (`ctx.skill.list()`, F-06) is reported as `draft`. The measured host shape
  * carries the sentinel string `"undefined"` (F-08), which is treated as absent.
+ *
+ * The `draft` branch has **no production caller**: the shipped prompt hook calls
+ * `applyTurnDecisionToPrompt(prompt, decision)` without `skillsDraft`, and
+ * `ctx.skill.list()` is never read by it. At runtime `skillsSource` is therefore
+ * `none` or `prompt` only, and the `draft` source is exercised by tests alone.
  */
 export function resolveSkillSource(
   promptSkills: unknown,
@@ -126,7 +131,9 @@ export function resolveSkillSource(
  * must never erase skills the host or user chose. The measured host shape is
  * the sentinel string (F-08), so this is unreachable on the default path: P2 is
  * an empirical no-op there (F-09). The array shape is synthetic — never
- * observed — and its outcome is not a measured effect (C6 open).
+ * observed — and its outcome is not a measured effect: PROBE-E measured no
+ * effect for any `prompt.skills`/`prompt.agents` mutation (F-24), while C6 as a
+ * question is closed for `skill.transform` and `prompt.text`.
  */
 function narrowSkills(
   prompt: Record<string, unknown>,

@@ -472,14 +472,16 @@ pass.
 ## Measured coverage and unmeasured surfaces (V2 decision layer)
 
 The registry reports coverage as measured, premise, advisory, or deferred, and
-`measured` never means "effect measured". What that means in practice:
+`measured` never means "effect measured". What that means in practice — and, in
+particular, that **only P7 and P8 are wired into `src/plugin-v2.ts` while the other
+nine points are library code with no production call site**:
 
 | Point | Surface | Status | What is NOT covered |
 |---|---|---|---|
-| P7 (loop) | `session.execution.succeeded` | Behind `PANTHEON_V2_P7_LOOP`, off by default. The 12-execution cap (`P7_LOOP_MAX_EXECUTIONS`) is **advisory**: `reset()` is caller-supplied, no measured host surface signals a user turn, and the streak is not claimed to reset on any event. | Effects are unmeasured (C6); nested depth ≥ 2, failed/interrupted child executions and image jobs were not exercised. Never describe this as working loop enforcement. |
+| P7 (loop) | `session.execution.succeeded` | Behind `PANTHEON_V2_P7_LOOP`, off by default. The 12-execution cap (`P7_LOOP_MAX_EXECUTIONS`) is **advisory**: `reset()` is caller-supplied, no measured host surface signals a user turn, and the streak is not claimed to reset on any event. | Effect is `none` and unmeasured (C6 is closed by PROBE-E; no P7 effect was observed); nested depth ≥ 2, failed/interrupted child executions and image jobs were not exercised. Never describe this as working loop enforcement. |
 | P2 (skill) | `session.hook('prompt')` | **Advisory only**: an empirical no-op on the default path, because the host sends `prompt.skills` absent. | P2b filtering was cancelled by measurement, not emulated; no token reduction is claimed. |
 | P9 (compaction) | `session.hook('compaction')` | Measured on **top-level sessions only**. | Child-session compaction, `reason: "overflow"`, and the `messages` channel are UNKNOWN. |
-| P8 (guardrail) | `permission.evaluate` | **Off**; activation is blocked pending its review conditions (PH5-1…PH5-5, numbered C11–C15 in the Phase 5 review) and it starts off, never shadow. | `permission.evaluate` was registered and never fired; payload shape, write honouring and ordering are unmeasured. `execute.before` remains the only hard barrier. |
+| P8 (guardrail) | `permission.evaluate` | **Off**; activation is blocked pending its review conditions (PH5-1…PH5-5) and it starts off, never shadow. | `permission.evaluate` was registered and never fired; payload shape, write honouring and ordering are unmeasured. `execute.before` remains the only hard barrier. |
 
 Budget facts are the same story: caps are local admission controls computed from
 explicit configuration, and they are not invoice guarantees. There are no default
