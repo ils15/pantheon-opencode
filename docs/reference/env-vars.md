@@ -94,11 +94,13 @@ truthy values leaves the feature off.
 | `PANTHEON_V2_P8_GUARDRAIL` | unset (off) | `1`, `on` or `true` enables the P8 guardrail on `permission.evaluate` only. It can only narrow, and it is not a no-op: a native event with no usable `action` token, and an `allow` decision with no attributed `sessionID`, are narrowed to `deny`. `execute.before` remains the only hard barrier; activation is blocked pending PH5-1…PH5-5. |
 
 Shadow points (P1–P6, P9–P11) have no environment switch and **no production call
-site**: no file under `src/` outside the test-exercised adapters imports them, and
+site**: no production file imports them. The adapters are constructed only by
+their per-point test suites (`v2-decision-p1.test.ts` … `v2-decision-p11.test.ts`),
+not by any call site under `src/` outside the adapter modules themselves, and
 `src/plugin-v2.ts` registers only P7 and P8. On a host they therefore do not read
 the turn, record no telemetry and change nothing — not because they are disabled,
-but because nothing constructs them. They are library code exercised by the offline
-harness and the per-point test suites only. Coverage and unmeasured surfaces are in
+but because nothing constructs them. They are library code exercised only by the
+per-point test suites. Coverage and unmeasured surfaces are in
 [Local Decision Router](local-decision-router.md#measured-coverage-and-unmeasured-surfaces-v2-decision-layer).
 
 ## Decision-provider transport

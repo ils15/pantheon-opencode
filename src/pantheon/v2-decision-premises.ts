@@ -22,9 +22,9 @@ export const PREMISE_REGISTER: readonly PremiseEntry[] = Object.freeze([
   Object.freeze({
     id: 'PRE-01',
     statement:
-      'P7 by event was a premise with a negative signal until the channel form was measured',
-    blocks: 'P7 / Phase 4 (C7, closed by PROBE-D)',
-    status: 'open',
+      'P7 by event was a premise with a negative signal until the channel form was measured; PROBE-D closed C7, and the residual `session.idle`/`session.compacted` negative signal stays measured',
+    blocks: 'nothing — historical record (C7 closed by PROBE-D)',
+    status: 'closed',
   }),
   Object.freeze({
     id: 'PRE-02',

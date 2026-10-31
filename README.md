@@ -315,9 +315,10 @@ surface, and both are off by default:**
 
 **The other nine — P1–P6 and P9–P11 — are library code with no production call
 site.** `src/plugin-v2.ts` imports only the P7 and P8 adapters; nothing
-constructs or registers the other nine outside the offline harness and the
-per-point test suites. On a host they do not read the turn, record no telemetry
-and have no switch to turn off, because nothing registers them.
+constructs or registers the other nine outside the per-point test suites — the
+offline harness imports no adapter module. On a host they do not read the turn,
+record no telemetry and have no switch to turn off, because nothing registers
+them.
 
 "Shadow by default" therefore means one thing only: the two wired points make no
 behavioural change while their flags are off. It does **not** mean that all eleven
@@ -356,8 +357,11 @@ Calibration that was run: the offline harness
 cases — 132 normal, 66 refusal, 66 adversarial — across the eleven points, with
 24 cases per point and the suite asserting at least 20 cases, 5 refusals and 5
 adversarial cases per point. All 264 cases passed on 2026-10-31. This harness is
-the only place all eleven points run: it drives each adapter directly, so passing
-it says nothing about whether a point is registered in a host.
+the only place all eleven points are exercised in one run, but it imports no
+adapter module: it iterates the registry and exercises the shared primitives,
+while the adapters are covered by their per-point suites
+(`v2-decision-p1.test.ts` … `v2-decision-p11.test.ts`). Passing it says nothing
+about whether a point is registered in a host.
 The harness measures contracts (admission, refusal, shadow no-op, telemetry
 redaction, offline discipline, registry integrity), **not** token use, quality,
 latency or any effect inside a host turn. Numbers and unmeasured surfaces are

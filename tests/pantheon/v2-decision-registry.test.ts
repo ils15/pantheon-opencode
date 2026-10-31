@@ -116,9 +116,10 @@ check('the premise register covers PM-03..PM-18 plus PRE-01/PRE-02', () => {
     assert.equal(ids.has(`PM-${String(index).padStart(2, '0')}`), true)
   }
   const byId = new Map(PREMISE_REGISTER.map((entry) => [entry.id, entry]))
-  // Retired by PROBE-E (F-26) and PROBE-D (F-18–F-21) respectively.
-  assert.equal(byId.get('PM-06')?.status, 'closed')
-  assert.equal(byId.get('PM-12')?.status, 'closed')
+  // Retired by PROBE-C/PROBE-D, PROBE-E and PROBE-D respectively.
+  for (const id of ['PRE-01', 'PM-06', 'PM-12']) {
+    assert.equal(byId.get(id)?.status, 'closed', id)
+  }
   // PM-16 is the premise that decides whether P8's mechanism is real or inert.
   for (const id of ['PM-16', 'PM-17', 'PM-18']) {
     assert.equal(byId.get(id)?.status, 'open', id)
