@@ -57,6 +57,11 @@ installer copies the canonical source into the installed scripts directory;
 entrypoint when running from a checkout. Keyword retrieval only — no embedding
 or vector index. The Memory server registers no resources.
 
+This Pantheon-owned SQLite store is separate from external MCP stores such as
+`flashmemory`; matching namespace strings do not share or synchronize entries.
+External providers define their own retention, TTL, and write semantics, so
+refer to provider- and version-specific documentation for those details.
+
 | Tool | Signature | Description | Who uses it |
 |------|-----------|-------------|-------------|
 | `memory_store` | `(value, namespace?: "default", key?, metadata?: "{}", ttl_seconds?)` | Store a reusable memory entry (FTS5 index updated by trigger); `metadata` is a JSON string. Over-cap writes are rejected, never truncated (see [entry cap and expiry](#entry-cap-expiry-and-purge-contract)). `ttl_seconds` gives the entry a lifetime; on success returns `{id, namespace, key, status, expires_at}`, where `expires_at` is `null` when the entry does not expire | Mnemosyne when durable context is warranted and write access is granted |

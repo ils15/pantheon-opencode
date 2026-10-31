@@ -8,6 +8,12 @@ Pantheon has three separate context stores. Use the smallest one that fits:
 | `pantheon-persistence` MCP | Separate SQLite store; session-qualified context checkpoints default to 4h (heartbeat: 5m) | Explicit checkpoints and temporary key/value data |
 | `.pantheon/memory-bank/` | Project files in the working tree; Git tracking depends on repository ignore/commit policy | Human-reviewed project context and ADRs |
 
+External MCP providers, such as `flashmemory`, use stores separate from
+Pantheon's `pantheon-memory` SQLite database. Using the same namespace string
+does not share or synchronize entries. External providers define their own
+retention, TTL, and write semantics; consult the relevant provider and version
+documentation for those behaviors.
+
 These stores are not automatically synchronized. In particular, compaction's
 TODO preservation is process-local and does not write to `pantheon-persistence`.
 The `context_*` persistence tools are optional MCP checkpoints, not automatic
