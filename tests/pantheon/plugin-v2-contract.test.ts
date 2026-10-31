@@ -113,6 +113,7 @@ async function main(): Promise<void> {
   const {
     default: plugin,
     V2_UNSUPPORTED_FEATURES,
+    getP7TelemetrySinkForTests,
     getUnsupportedFeatures,
     resetV2BridgeForTests,
     setV2Bridge,
@@ -1039,6 +1040,101 @@ async function main(): Promise<void> {
     assert.equal(signal?.aborted, true, 'v2Dispose aborts the event subscription')
     await finished
     assert.equal(streamClosed, true, 'event iterator exits after the disposal signal')
+  })
+
+  // ─── P7 sink wiring (Phase 4c) ──────────────────────────────────────
+  //
+  // With the flag on, a decision used to be computed and discarded: the adapter
+  // was built without a sink (CUTOVER-phase4b §8.3). These two tests pin the
+  // fix at the wiring level — the record reaches the 0b telemetry collector,
+  // carries only allowlisted fields, and the disabled adapter records nothing.
+
+  /**
+   * Deliver one event, then resolve `processed` on the NEXT pull: the dispatch
+   * loop has fully handled the event before it asks for another one. No timers.
+   */
+  function executionStream(event: Record<string, unknown>) {
+    let markProcessed!: () => void
+    const processed = new Promise<void>((resolve) => {
+      markProcessed = resolve
+    })
+    return {
+      processed,
+      subscribe: ({ signal }: { signal: AbortSignal }) => ({
+        async *[Symbol.asyncIterator]() {
+          yield event
+          markProcessed()
+          if (signal.aborted) return
+          await new Promise<void>((resolve) => {
+            signal.addEventListener('abort', () => resolve(), { once: true })
+          })
+        },
+      }),
+    }
+  }
+
+  function withP7Flag<T>(value: string | undefined, fn: () => Promise<T>): Promise<T> {
+    const previous = process.env.PANTHEON_V2_P7_LOOP
+    if (value === undefined) delete process.env.PANTHEON_V2_P7_LOOP
+    else process.env.PANTHEON_V2_P7_LOOP = value
+    return fn().finally(() => {
+      if (previous === undefined) delete process.env.PANTHEON_V2_P7_LOOP
+      else process.env.PANTHEON_V2_P7_LOOP = previous
+    })
+  }
+
+  test('P7 records one allowlisted telemetry event per execution when the flag is on', async () => {
+    await withP7Flag('1', async () => {
+      const stream = executionStream({
+        type: 'session.execution.succeeded',
+        data: { sessionID: 'ses_p7_telemetry' },
+      })
+      try {
+        resetV2BridgeForTests()
+        await plugin.setup(makeBaseContext({ event: { subscribe: stream.subscribe } }) as never)
+        await stream.processed
+
+        const sink = getP7TelemetrySinkForTests()
+        assert.ok(sink, 'the P7 wiring must install a telemetry sink')
+        assert.equal(sink.size(), 1, 'exactly one record per execution')
+
+        const [record] = sink.events()
+        assert.ok(record)
+        assert.deepEqual(
+          Object.keys(record).sort(),
+          ['decision', 'effect', 'mode', 'point', 'reason', 'schemaVersion'],
+          'only allowlisted fields reach telemetry',
+        )
+        assert.equal(record.point, 'P7')
+        assert.equal(record.decision, 'loop.continue')
+        assert.equal(record.effect, 'none')
+        assert.equal(record.reason, 'p7.execution.counted')
+        assert.equal(record.mode, 'migration')
+      } finally {
+        v2Dispose()
+      }
+    })
+  })
+
+  test('P7 records nothing when the flag is off', async () => {
+    await withP7Flag(undefined, async () => {
+      const stream = executionStream({
+        type: 'session.execution.succeeded',
+        data: { sessionID: 'ses_p7_enabled_off' },
+      })
+      try {
+        resetV2BridgeForTests()
+        await plugin.setup(makeBaseContext({ event: { subscribe: stream.subscribe } }) as never)
+        await stream.processed
+
+        const sink = getP7TelemetrySinkForTests()
+        assert.ok(sink, 'the sink exists, so an empty result is the adapter refusing')
+        assert.equal(sink.size(), 0, 'the disabled adapter never calls the sink')
+        assert.deepEqual(sink.events(), [])
+      } finally {
+        v2Dispose()
+      }
+    })
   })
 
   // ─── V1→V2 bridge injection (issue #265) ────────────────────────────

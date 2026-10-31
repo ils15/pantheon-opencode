@@ -137,6 +137,7 @@ import {
   type V2ContextLike,
 } from './pantheon/v2-bridge.ts'
 import { createP7LoopPoint, p7LoopEnabledFromEnv } from './pantheon/v2-decision-points/p7-loop.ts'
+import { createTelemetrySink, type TelemetrySink } from './pantheon/v2-decision-telemetry.ts'
 import {
   type AuthoritativeSession,
   evaluateV2Delegation,
@@ -697,6 +698,21 @@ async function registerV2Tools(
 // ─── V2 Event Subscription ──────────────────────────────────────────────
 
 /**
+ * The P7 telemetry sink created by the most recent event subscription.
+ *
+ * P7 writes through the 0b record path (`createTelemetrySink`): in-memory,
+ * bounded and I/O-free by design, so a test that asserts "the decision was
+ * actually recorded" has to read the same collector the wiring wrote to.
+ * Exported only for tests/pantheon/plugin-v2-contract.test.ts — production has
+ * no caller, and nothing in the plugin reads this back.
+ */
+export function getP7TelemetrySinkForTests(): TelemetrySink | undefined {
+  return p7TelemetrySink
+}
+
+let p7TelemetrySink: TelemetrySink | undefined
+
+/**
  * Attempt to subscribe to session events via V2 ctx.event.subscribe.
  *
  * The V2 event.subscribe API (when available) provides an async iterable:
@@ -718,10 +734,22 @@ function subscribeV2Events(
   // here but inert unless PANTHEON_V2_P7_LOOP is set: the flag is OFF by
   // default, and activation is Phase 4b — not this change. Observation is
   // synchronous and self-contained, so it cannot block the stream, cannot
-  // throw into the dispatch, and does not alter the cleanup below. No sink is
-  // wired while the flag is off: a decision that cannot be acted on is not
-  // made observable by logging it.
-  const loopPoint = createP7LoopPoint({ enabled: p7LoopEnabledFromEnv() })
+  // throw into the dispatch, and does not alter the cleanup below.
+  //
+  // The sink is the 0b telemetry record path (`createTelemetrySink`, in-memory
+  // and bounded, no I/O). Each shadow record is reduced to its own allowlisted
+  // fields plus `mode: 'migration'` — the P7 registry mode — and nothing else:
+  // the execution count is not on the allowlist, so it is not recorded, and no
+  // prompt, response or user content can reach the record. A disabled adapter
+  // never calls the sink, so flag-off still emits zero records.
+  const telemetrySink = createTelemetrySink()
+  p7TelemetrySink = telemetrySink
+  const loopPoint = createP7LoopPoint({
+    enabled: p7LoopEnabledFromEnv(),
+    sink: (record) => {
+      telemetrySink.emit({ ...record, mode: 'migration' })
+    },
+  })
 
   const controller = new AbortController()
   void (async () => {

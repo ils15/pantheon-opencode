@@ -204,6 +204,19 @@ const run = async (): Promise<void> => {
     assert.equal(result.record, null)
     assert.equal(result.reason, 'p7.session.absent')
     assert.deepEqual(records, [])
+
+    // The legacy envelope shape itself: `properties.sessionID` present and no
+    // `data` carrier at all. It must not yield a decision or a record.
+    const legacyOnly = point.observe({
+      type: 'session.execution.succeeded',
+      properties: { sessionID: 'ses_legacy_properties' },
+    })
+    assert.equal(legacyOnly.record, null)
+    assert.equal(legacyOnly.loopDecision, null)
+    assert.equal(legacyOnly.sessionID, null)
+    assert.equal(legacyOnly.reason, 'p7.session.absent')
+    assert.equal(point.executionCount('ses_legacy_properties'), 0)
+    assert.deepEqual(records, [])
   })
 
   await check('unknown or unrelated payloads produce a reason, never a throw', () => {

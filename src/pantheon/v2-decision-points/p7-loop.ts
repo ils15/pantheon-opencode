@@ -46,6 +46,16 @@
  * inert. Even when enabled, this adapter only observes and records: the shadow
  * record says `effect: 'none'`, and activation is Phase 4b, not this module.
  * `execute.before` remains the only hard barrier.
+ *
+ * ## The execution cap is advisory
+ *
+ * `P7_LOOP_MAX_EXECUTIONS` is a declared convention, not an enforced limit.
+ * `reset()` is caller-supplied, and no measured surface in the probed host
+ * delivers a user-input signal to call it: nothing in this process clears a
+ * streak, on any event. A long session therefore crosses the declared cap and
+ * the decision becomes `loop.stop` — which, with `effect: 'none'`, changes
+ * nothing the host does. The cap is not claimed to reset on any event; it
+ * resets only when a caller invokes `reset(sessionID)` explicitly.
  */
 
 import {
@@ -65,7 +75,7 @@ export const P7_LOOP_FLAG_ENV = 'PANTHEON_V2_P7_LOOP'
 /** Execution counts at which the ordinal loop-pressure score rises. */
 export const P7_LOOP_SCORE_THRESHOLDS = Object.freeze([2, 4] as const)
 
-/** Declared cap: past this many executions the adapter stops continuing. */
+/** Declared, advisory cap: past this many executions the adapter reports `loop.stop`. */
 export const P7_LOOP_MAX_EXECUTIONS = 12
 
 /**
@@ -74,9 +84,9 @@ export const P7_LOOP_MAX_EXECUTIONS = 12
  * `score` is `1 + thresholds met`, so it rises with consecutive executions and
  * saturates at 3. `noul` permits a continuation up to the cap; past it, the
  * declared answer is to stop. This is a deterministic convention, not a claim
- * about loop quality. The cap is a streak: `reset()` exists so the caller that
- * observes genuine user input can clear it. No reset signal is wired in Phase
- * 4a — the flag is off and no effect is authorised.
+ * about loop quality, and the cap is **advisory**: `reset()` is caller-supplied
+ * and no measured surface in the probed host provides a user-input signal, so
+ * nothing in this process resets a streak. See the module header.
  */
 export const P7_LOOP_POLICY = Object.freeze({
   scoreThresholds: P7_LOOP_SCORE_THRESHOLDS,
@@ -128,7 +138,7 @@ export interface P7LoopPoint {
   ): Promise<EventConsumptionSummary>
   /** Executions recorded for a session since construction (or last reset). */
   executionCount(sessionID: string): number
-  /** Clear one session's streak; the caller supplies the user-input signal. */
+  /** Clear one session's streak. Caller-supplied only — the cap is advisory. */
   reset(sessionID: string): void
 }
 
