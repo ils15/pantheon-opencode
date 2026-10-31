@@ -179,7 +179,7 @@ def test_runtime_copy_globals_come_from_hermetic_env(
     scripts_resources_copy: types.ModuleType, tmp_path: Path
 ) -> None:
     assert tmp_path / "pantheon-home" == scripts_resources_copy._PANTHEON_HOME
-    assert tmp_path / "project" == scripts_resources_copy._PANTHEON_PROJECT
+    assert tmp_path / "project" == scripts_resources_copy.pantheon_project()
 
 
 def test_runtime_copy_imports_standalone(tmp_path: Path) -> None:
@@ -203,7 +203,7 @@ def test_runtime_copy_imports_standalone(tmp_path: Path) -> None:
             sys.executable,
             "-c",
             "import mcp_resources as m; "
-            "print(m._PANTHEON_HOME); print(m._PANTHEON_PROJECT)",
+            "print(m._PANTHEON_HOME); print(m.pantheon_project())",
         ],
         env=env,
         capture_output=True,

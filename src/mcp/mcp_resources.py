@@ -23,7 +23,6 @@ from fastmcp import FastMCP
 
 # ── Path Resolution ──────────────────────────────────────────────────────────
 _PANTHEON_HOME: Path = pantheon_home()
-_PANTHEON_PROJECT: Path | None = pantheon_project()
 
 
 def _within(path: Path, parent: Path) -> bool:
@@ -68,12 +67,13 @@ def _resource_root(name: str) -> Path | None:
     preserves the global fallback while preventing symlink escapes.
     """
     candidates: list[tuple[Path, Path]] = []
-    if _PANTHEON_PROJECT is not None:
+    project = pantheon_project()
+    if project is not None:
         if name in {"agents", "skills"}:
-            local = _PANTHEON_PROJECT / ".opencode"
+            local = project / ".opencode"
             candidates.append((local / name, local))
         elif name in {"deepwork", "memory-bank"}:
-            local = _PANTHEON_PROJECT / ".pantheon"
+            local = project / ".pantheon"
             candidates.append((local / name, local))
     candidates.append((_PANTHEON_HOME / name, _PANTHEON_HOME))
     for root, parent in candidates:
@@ -86,9 +86,10 @@ def _resource_root(name: str) -> Path | None:
 def _resource_roots(name: str) -> list[Path]:
     """Return safe resource roots in local-first precedence order."""
     roots: list[Path] = []
-    if _PANTHEON_PROJECT is not None:
+    project = pantheon_project()
+    if project is not None:
         base_name = ".opencode" if name in {"agents", "skills"} else ".pantheon"
-        base = _PANTHEON_PROJECT / base_name
+        base = project / base_name
         local = _safe_root(base / name, base)
         if local is not None:
             roots.append(local)
@@ -208,9 +209,10 @@ async def list_skills() -> str:
 async def get_routing() -> str:
     """Return the full content of routing.yml."""
     routing_file = _safe_child(_PANTHEON_HOME, "routing.yml")
-    if routing_file is None and _PANTHEON_PROJECT:
-        routing_file = _safe_child(_PANTHEON_PROJECT / "src", "routing.yml")
-    if routing_file is None or not routing_file.exists():
+    project = pantheon_project()
+    if (routing_file is None or not routing_file.is_file()) and project:
+        routing_file = _safe_child(project / "src", "routing.yml")
+    if routing_file is None or not routing_file.is_file():
         return "routing.yml not found."
     return routing_file.read_text(encoding="utf-8")
 
