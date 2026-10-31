@@ -84,6 +84,7 @@ function printUsage() {
     '  npx pantheon-opencode init --merge-dev-config <path> # Merge a dev config (off by default)',
   )
   console.log('  npx pantheon-opencode set-tier <name>      # Set active model preset (global)')
+  console.log('  npx pantheon-opencode decision-router status|select|enable|consent|caps|period')
   console.log(
     '  npx pantheon-opencode update [--stable]    # Update package + re-run init (default: beta channel)',
   )
@@ -190,6 +191,22 @@ async function main() {
       cwd: ROOT,
     })
     process.exit(result.status ?? 1)
+  }
+
+  if (command === 'decision-router') {
+    const { DecisionRouterUsageError, runDecisionRouterCommand } = await import(
+      '../scripts/decision-router.mjs'
+    )
+    try {
+      await runDecisionRouterCommand(args.slice(1))
+    } catch (error) {
+      // A malformed command line is user input, not a crash: print one line and
+      // skip the stack the top-level handler would otherwise dump.
+      if (!(error instanceof DecisionRouterUsageError)) throw error
+      console.error(`Error: ${error.message}`)
+      process.exit(1)
+    }
+    return
   }
 
   // beta.5: one-command update — check npm dist-tag, install, re-init.

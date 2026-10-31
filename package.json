@@ -11,6 +11,7 @@
     "registry": "https://registry.npmjs.org/"
   },
   "exports": {
+    "./local-decision-router": "./src/pantheon/local-decision-router.ts",
     "./plugin": "./src/plugin.ts",
     "./plugin-v2": "./src/plugin-v2.ts",
     "./v2-bridge": "./src/pantheon/v2-bridge.ts"
@@ -20,6 +21,8 @@
     "prepare": "husky",
     "setup": "node scripts/setup.mjs",
     "build:agents-md": "node scripts/build-agents-md.mjs",
+    "build:decision-router": "node scripts/build-decision-router.mjs",
+    "check:decision-router": "node scripts/build-decision-router.mjs --check",
     "skills:lock": "node scripts/update-skills-lock.mjs",
     "setup:lite": "node bin/pantheon-init.mjs init --yes --clean --components agents,skills,instructions",
     "doctor": "node scripts/doctor.mjs",
@@ -27,7 +30,8 @@
     "init": "node bin/pantheon-init.mjs init --yes",
     "opencode": "OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true opencode",
     "start": "OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true opencode",
-    "prepublishOnly": "node scripts/validate-routing.mjs",
+    "prepack": "npm run check:decision-router",
+    "prepublishOnly": "node scripts/validate-routing.mjs && npm run check:decision-router",
     "postpublish": "node -e \"console.log('✅ Published pantheon-opencode v' + require('./package.json').version + ' to npm')\"",
     "version:status": "node scripts/versioning.mjs status",
     "version:apply": "node scripts/versioning.mjs apply",
@@ -35,7 +39,7 @@
     "release:dry-run": "node scripts/versioning.mjs status && node scripts/release-notes.mjs && node scripts/package-evidence.mjs",
     "package:evidence": "node scripts/package-evidence.mjs",
     "engine:check": "node scripts/validate-node-engine-policy.mjs",
-    "package:validate": "node scripts/validate-package.mjs && npm run engine:check",
+    "package:validate": "node scripts/validate-package.mjs && npm run check:decision-router && npm run engine:check",
     "lint": "biome ci .",
     "docs:lint": "node scripts/docs-link-check.mjs",
     "docs:media": "node scripts/docs-media.mjs",
@@ -87,6 +91,7 @@
     "src/instructions/*.instructions.md",
     "src/mcp/*.mjs",
     "scripts/*.mjs",
+    "!scripts/build-decision-router.mjs",
     "src/mcp/*.sh",
     "src/routing.yml",
     "src/pantheon/**",
@@ -116,6 +121,7 @@
     "@commitlint/cli": "21.2.3",
     "@commitlint/config-conventional": "21.2.3",
     "ajv": "8.20.0",
+    "esbuild": "0.28.2",
     "husky": "^9.1.7",
     "tsx": "4.23.15",
     "typescript": "7.0.2"

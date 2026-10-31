@@ -2,12 +2,14 @@
  * Pantheon V2 Plugin — full orchestration plugin for OpenCode V2.
  *
  * Registers:
- * - 3 unconditional self-sufficient tools via V2 tool.transform (hashline_edit,
- *   pantheon_cost, pantheon_model) plus up to 2 host-dependent ones: native
+ * - 4 unconditional self-sufficient tools via V2 tool.transform (hashline_edit,
+ *   pantheon_cost, pantheon_model, pantheon_local_decision) plus up to 2 host-dependent ones: native
  *   `vision_describe` when the host exposes the V2 model catalog (it resolves
  *   OpenCode Zen auth and sends images directly to the selected multimodal
  *   model), and `pantheon_bounded_read` when the host exposes its permission
  *   and session APIs (root Zeus sessions only).
+ *   `pantheon_local_decision` is advisory and rejects execution unless the
+ *   host tool context identifies the caller as Zeus.
  *   The goal tools need V1 infrastructure and are absent from this surface.
  * - 5 event subscriptions (session.created, idle, deleted, error, compacted)
  * - Session hooks (prompt, context, compaction)
@@ -108,6 +110,8 @@ import {
 } from './pantheon/delegation-enforce.ts'
 import { GOAL_LOOP_DEFAULTS, GoalStore } from './pantheon/goal-loop.ts'
 import { createGuardPathResolver } from './pantheon/guard-path.ts'
+import { DECISION_EGRESS_ACTION } from './pantheon/local-decision-egress-gate.ts'
+import { applyDecisionRouterToPrompt } from './pantheon/local-decision-prompt.ts'
 import { getSharedBoard } from './pantheon/shared-board.ts'
 import {
   TODO_ENFORCER_DEFAULTS,
@@ -1024,7 +1028,14 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
   // Config validity is independent of hook availability; warn before the early
   // return so a typo is visible even on a host that registers no session hook.
   warnContextPrunerConfigOnce(context.options)
-  const sessionCtx = hostDomains(context).session
+  const host = hostDomains(context)
+  const sessionCtx = host.session
+  const permission = host.permission
+  const assertPermission = permission?.assert
+  const permissionAssert =
+    typeof assertPermission === 'function'
+      ? (input: Record<string, unknown>) => assertPermission.call(permission, input)
+      : undefined
 
   if (!sessionCtx?.hook) {
     return false
@@ -1116,7 +1127,7 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
     // "prompt" hook — preserve attached image references and add model-visible
     // instructions so Zeus can inspect visual context and pass it to the
     // implementation specialist before editing.
-    await sessionCtx.hook('prompt', (event: unknown) => {
+    await sessionCtx.hook('prompt', async (event: unknown) => {
       try {
         // 2.0.29 host payload: `{ sessionID, messageID, prompt: { text,
         // files, agents, skills }, metadata, delivery }`. The session id is
@@ -1124,17 +1135,25 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
         // data: attachment's panic-free moment also relays it to the MCP.
         const admission = event as {
           sessionID?: unknown
-          prompt?: { text?: unknown; files?: unknown }
+          messageID?: unknown
+          prompt?: { text?: unknown; files?: unknown; skills?: unknown }
         } | null
         const prompt = admission?.prompt
         if (!prompt || typeof prompt.text !== 'string') return
-        if (prompt.text.includes('<!-- pantheon-v2-visual-context -->')) return
-        const sessionID =
-          typeof admission?.sessionID === 'string' && admission.sessionID.trim() !== ''
-            ? admission.sessionID
-            : undefined
-        const visualContext = buildV2VisionPromptContext(prompt.files, prompt.text, sessionID)
-        if (visualContext) prompt.text = `${prompt.text}\n\n${visualContext}`
+        const userRequest = prompt.text
+        if (!prompt.text.includes('<!-- pantheon-v2-visual-context -->')) {
+          const sessionID =
+            typeof admission?.sessionID === 'string' && admission.sessionID.trim() !== ''
+              ? admission.sessionID
+              : undefined
+          const visualContext = buildV2VisionPromptContext(prompt.files, prompt.text, sessionID)
+          if (visualContext) prompt.text = `${prompt.text}\n\n${visualContext}`
+        }
+
+        // Advisory per-turn selection. The helper reads only the prompt text
+        // captured before Pantheon's own visual context, and the router caches
+        // per session/message, so a repeated admission cannot call twice.
+        await applyDecisionRouterToPrompt(admission, permissionAssert, userRequest)
       } catch {
         // Fail-open: malformed/unsupported prompt shapes must not block input.
       }
@@ -1855,6 +1874,17 @@ async function registerV2PermissionHook(
         deny('permission event is missing')
         return
       }
+      // `decision.egress` is Pantheon's own custom action. It is NOT decided
+      // here: the user-level config/consent is the source of truth, and the
+      // host's own permission rules are the kill-switch (see
+      // local-decision-egress-gate). The v2.2.0 canary observed this hook runs
+      // on the allow path of `permission.assert` and is skipped for an explicit
+      // deny, so egress must never depend on it. Leaving the effect untouched
+      // preserves whatever the host decided.
+      if (event.action === DECISION_EGRESS_ACTION) {
+        writeProof()
+        return
+      }
       if (!Array.isArray(event.resources) || event.resources.length === 0) {
         deny('permission resources are missing or malformed')
         return
@@ -2110,7 +2140,13 @@ export const plugin = define({
     const boundedRead = await prepareV2BoundedRead(context).catch(() => undefined)
     if (boundedRead === undefined) markUnsupported('bounded-read')
 
-    // ─── Phase 2: V2 Event Subscription (best-effort) ────────────────
+    // ─── Phase 2: V2 Permission Hook (best-effort) ───────────────────
+    // Registered before the event subscription and session hooks so the
+    // delegation matrix is enforced before any turn runs. Egress never depends
+    // on this hook: the user-level config plus the host's own rules gate it.
+    await registerV2PermissionHook(context, subagentOrigins).catch(() => false)
+
+    // ─── Phase 3: V2 Event Subscription (best-effort) ────────────────
     const eventCleanup = subscribeV2Events(context, boundedRead?.clearSession)
     if (eventCleanup) {
       activeCleanups.push(eventCleanup)
@@ -2118,13 +2154,13 @@ export const plugin = define({
       markUnsupported('event-stream')
     }
 
-    // ─── Phase 3: V2 Session Hooks (best-effort) ─────────────────────
+    // ─── Phase 4: V2 Session Hooks (best-effort) ─────────────────────
     const sessionHooksRegistered = await registerV2SessionHooks(context).catch(() => false)
     if (!sessionHooksRegistered) {
       markUnsupported('session-hooks')
     }
 
-    // ─── Phase 4: V2 Tool Hooks (best-effort) ────────────────────────
+    // ─── Phase 5: V2 Tool Hooks (best-effort) ────────────────────────
     const toolHookResult = await registerV2ToolHooks(
       context,
       subagentOrigins,
@@ -2134,7 +2170,7 @@ export const plugin = define({
       markUnsupported('tool-execute-hooks')
     }
 
-    // ─── Phase 5: V2 Tool Registration (best-effort) ─────────────────
+    // ─── Phase 6: V2 Tool Registration (best-effort) ─────────────────
     const boundedReadDefinition = toolHookResult.beforeRegistered
       ? boundedRead?.definition
       : undefined
@@ -2143,9 +2179,6 @@ export const plugin = define({
     }
     const toolsRegistered = await registerV2Tools(context, boundedReadDefinition).catch(() => false)
     if (!toolsRegistered) markUnsupported('tool-transform')
-
-    // ─── Phase 6: V2 Permission Hook (best-effort) ───────────────────
-    await registerV2PermissionHook(context, subagentOrigins).catch(() => false)
 
     // ─── Phase 7: V2 Compaction Hook (best-effort) ───────────────────
     const compactionCtx = hostDomains(context).session

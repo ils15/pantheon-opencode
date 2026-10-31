@@ -9,7 +9,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **install** — Added a user-level `decision-router` admin CLI for enablement, selection, consent, per-user/provider/model caps, and period confirmation; config is private and non-secret.
+- **install** — Added `decision-router holds` to list unresolved reservations without reserving, reconciling, releasing, or pruning.
 - **docs** — Added an offline protocol for separately evaluating agent routing and task complexity; no benchmark results or provider selection are claimed.
+- **routing** — Added a default-off, local-only recommendation API for exact canonical agent roles and structured complexity dimensions; it does not dispatch agents or change gates.
+- **routing** — Added a private V2 per-turn selector: allowlisted skills, at most one specialist, one call per session/message, and deterministic local fallback.
+- **routing** — Added a private fixed-endpoint adapter for `gpt-6-luna` and `jev-1.14.0` with no caller-supplied transport, retry, or fan-out; Console/Free and Bifrost stay ineligible.
+- **routing** — Provider contract tests run under the real `tsx` runner (`npm run test:ts`) for the exact payload, gate denials, usage reconciliation, and one call per turn; no live call was made.
+- **routing** — Added a user-level `enabled` switch, canonical provider/model matrix, and a single ledger mapping; provider egress also requires the host `permission.assert` gate.
+- **routing** — Added a user-scoped SQLite ledger with explicit UTC reservations and no default caps. Admission caps are local safeguards, not invoice guarantees.
+- **docs** — `decision-router status`/`holds` are read paths: `status` may create the SQLite ledger, and both may migrate it, but neither reserves, reconciles, releases, or prunes.
+- **docs** — The `local-decision-router` subpath is TypeScript source needing the host runtime or a transpiler; the published CLI uses the committed ESM bundle.
+
+### Changed
+
+- **security** — Decision egress is fail-closed: a missing gate, cap, period, or credential means zero requests; V1 stays local-only.
+- **release** — `prepack` now runs the `check:decision-router` drift gate, so a stale ledger bundle cannot be packed or published.
+
+### Fixed
+
+- **install** — `decision-router caps user` without flags now reports `Both --monthly-usd and --per-decision-usd are required` as a one-line usage error instead of a stack trace.
+- **routing** — `permission.assert` denial (thrown or returned, including the host's `Permission denied: decision.egress` message) means zero requests; an explicit `deny` rule is the kill-switch.
+- **routing** — Egress trusts the user-level config; `permission.assert` is only the host kill-switch. A v2.2.0 canary showed an unruled assertion resolves allow and `evaluate` runs only on that path.
+- **routing** — A cached provider decision re-reads the user-level config/consent gate before reuse, so revoking consent takes effect without waiting for cache expiry.
+- **security** — The prompt hook reuses one decision per turn and never logs or persists the raw request; payloads stay allowlisted.
+- **security** — Credential rejection now requires a token boundary and structured `sk-` prefixes, so prose such as `task-force-*` or `disk-usage-*` is no longer treated as a key.
+- **routing** — Reusing a cached provider decision does not re-prompt the same permission gate; a different or missing gate is still evaluated and denies fail-closed.
+- **docs** — Clarified that `decision-router holds` performs no reservation, reconciliation, release, or pruning, while opening an existing ledger may apply a forward-only schema migration.
 
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->

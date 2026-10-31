@@ -2,7 +2,7 @@
  * V2 tool surface — the Pantheon tools that are self-sufficient on the
  * OpenCode V2 host, declared for `ctx.tool.transform`'s `draft.add`.
  *
- * ## Why only three unconditional tools
+ * ## Why four unconditional tools
  *
  * A V2 tool can only be served here when it needs no V1 infrastructure. The
  * three goal tools (`pantheon_goal_create`, `pantheon_goal_get`,
@@ -14,18 +14,19 @@
  * output contract on every call, so it buys nothing. See
  * `V2_UNSUPPORTED_FEATURES` in `../plugin-v2.ts` (marker `goal-tools`).
  *
- * `hashline_edit` (pure filesystem), `pantheon_cost` (reads `opencode.db`) and
- * `pantheon_model` (reads/writes `active-preset.json`) need none of that, so
- * they are wired to their real V1 implementations.
+ * `hashline_edit` (pure filesystem), `pantheon_cost` (reads `opencode.db`),
+ * `pantheon_model` (reads/writes `active-preset.json`), and the local-only
+ * `pantheon_local_decision` selector need none of that. Its execution rejects
+ * any host context that does not identify Zeus.
  *
- * ## Three unconditional tools, up to two host-dependent ones
+ * ## Four unconditional tools, up to two host-dependent ones
  *
- * The three above are always built. Two more exist on the V2 host and are
+ * The four above are always built. Two more exist on the V2 host and are
  * conditional: `vision_describe` is added here when the caller supplies a
  * vision runtime (the host model catalog), and `pantheon_bounded_read` is
  * appended by the plugin when the host exposes its permission and session APIs
- * (root Zeus sessions only). The effective count is therefore 3 unconditional
- * plus up to 2 host-dependent — never a flat 3.
+ * (root Zeus sessions only). The effective count is therefore 4 unconditional
+ * plus up to 2 host-dependent.
  *
  * ## The output declaration is mandatory
  *
@@ -47,6 +48,7 @@
 
 import { createCostCommand } from './cost-command.ts'
 import { createHashlineEditTool, type HashlineToolResult } from './hashline/tool.ts'
+import { createV2LocalDecisionDefinition } from './local-decision-tool.ts'
 import { createModelCommand } from './model-command.ts'
 import type { ToolContextLike } from './tool-context.ts'
 import { createV2VisionTool, type V2VisionRuntime } from './v2-vision.ts'
@@ -427,12 +429,10 @@ async function executeModel(
  * to fail validation. The protection against forgetting the field is the
  * required `output` on `V2ToolDef`, not the emptiness of this schema.
  *
- * The three tool instances (`hashlineEdit`, `costCommand`, `modelCommand`) are
- * module-level consts created once at import, not per call. What matters for
- * this function is only that it allocates a fresh descriptor array each call,
- * so a caller cannot mutate another's definitions. None of the three factories
- * performs filesystem or database work at construction, so importing this
- * module stays side-effect free.
+ * The existing tool instances (`hashlineEdit`, `costCommand`, `modelCommand`)
+ * are module-level consts created once at import. The local selector is a
+ * per-call definition with no construction-time I/O. A fresh descriptor array
+ * prevents callers from mutating another registration's definitions.
  */
 export function createV2ToolDefinitions(visionRuntime?: V2VisionRuntime): V2ToolDef[] {
   const definitions: V2ToolDef[] = [
@@ -475,6 +475,7 @@ export function createV2ToolDefinitions(visionRuntime?: V2VisionRuntime): V2Tool
       execute: executeModel,
     },
   ]
+  definitions.push(createV2LocalDecisionDefinition())
   if (visionRuntime) definitions.push(createV2VisionTool(visionRuntime))
   return definitions
 }

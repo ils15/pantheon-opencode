@@ -3,6 +3,7 @@
     "includes": [
       "**",
       "!src/plugins/tui/dist",
+      "!scripts/decision-router-budget.mjs",
       "!tests/integration",
       "!.mypy_cache",
       "!.pytest_cache",

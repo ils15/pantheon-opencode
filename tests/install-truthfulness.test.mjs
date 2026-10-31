@@ -260,13 +260,22 @@ test('an interactive cancel names the step the user stopped at', async () => {
 
 test('a cancel at final review reports THAT project target, not the global one', async () => {
   const canceled = Symbol.for('cancel')
+  let confirmationMessage
   const prompts = {
     isCancel: (value) => value === canceled,
     cancel: () => {},
     intro: () => {},
     multiselect: async () => ['agents'],
-    select: async () => 'project',
-    confirm: async () => canceled,
+    select: async ({ message }) =>
+      message === 'Install location:'
+        ? 'project'
+        : message.startsWith('Decision-router')
+          ? 'local'
+          : undefined,
+    confirm: async ({ message }) => {
+      confirmationMessage = message
+      return canceled
+    },
   }
   let resolvedTarget
   const { result } = await captureOutput(() =>
@@ -281,6 +290,7 @@ test('a cancel at final review reports THAT project target, not the global one',
   )
   assert.equal(result.reason, 'canceled')
   assert.equal(result.cancelPoint, 'review')
+  assert.match(confirmationMessage, /^Apply these \d+ changes\?$/)
   assert.equal(result.applied, false)
   assert.equal(result.target, process.cwd(), 'the chosen project directory must be recorded')
   assert.equal(resolvedTarget, process.cwd(), 'run records must use the chosen project target')
@@ -288,13 +298,22 @@ test('a cancel at final review reports THAT project target, not the global one',
 })
 
 test('a decline at final review reports the resolved global target', async () => {
+  let confirmationMessage
   const prompts = {
     isCancel: () => false,
     cancel: () => {},
     intro: () => {},
     multiselect: async () => ['agents'],
-    select: async () => 'global',
-    confirm: async () => false,
+    select: async ({ message }) =>
+      message === 'Install location:'
+        ? 'global'
+        : message.startsWith('Decision-router')
+          ? 'local'
+          : undefined,
+    confirm: async ({ message }) => {
+      confirmationMessage = message
+      return false
+    },
   }
   let resolvedTarget
   const { result } = await captureOutput(() =>
@@ -310,6 +329,7 @@ test('a decline at final review reports the resolved global target', async () =>
   )
   assert.equal(result.reason, 'declined')
   assert.equal(result.cancelPoint, 'review')
+  assert.match(confirmationMessage, /^Apply these \d+ changes\?$/)
   assert.equal(result.target, '/tmp/pantheon-cancel-target-probe')
   assert.equal(resolvedTarget, '/tmp/pantheon-cancel-target-probe')
 })
