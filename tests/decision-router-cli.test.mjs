@@ -165,8 +165,8 @@ test('holds lists unresolved reservations without mutating them', async () => {
     assert.match(listing, /model=jev-1\.14\.0/)
     assert.match(listing, /period=2026-01/)
     assert.match(listing, new RegExp(`reserved_micros=${reservation.reservedMicros}`))
-    assert.match(listing, /does not reserve, reconcile, release, or prune/)
-    assert.match(listing, /forward-only schema migration/)
+    assert.match(listing, /does not reserve, reconcile, release or prune/)
+    assert.match(listing, /never creates or migrates the ledger/)
 
     const reopened = openLocalDecisionBudgetLedger({ dbPath: path })
     try {

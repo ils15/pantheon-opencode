@@ -191,7 +191,10 @@ file stores API credentials. The installer may retain a legacy target preference
 it is not runtime authority. Only this user-level configuration is consulted.
 
 ```sh
-npx pantheon-opencode decision-router status
+npx pantheon-opencode decision-router help
+npx pantheon-opencode decision-router status [--target <dir>]
+npx pantheon-opencode decision-router setup [--apply] [--json] [--target <dir>] [--selection <value>] [--accept-migration]
+npx pantheon-opencode decision-router preview
 npx pantheon-opencode decision-router select openai-decisions/gpt-6-luna
 npx pantheon-opencode decision-router enable openai-decisions gpt-6-luna
 npx pantheon-opencode decision-router enable
@@ -203,10 +206,72 @@ npx pantheon-opencode decision-router period confirm --current none --next 2026-
 npx pantheon-opencode decision-router holds
 ```
 
-`decision-router holds` only reports unresolved reservations. Neither `holds` nor
-`status` reserves, reconciles, releases, or prunes: both are read paths. `status`
-opens the admission ledger unconditionally, so it may create the SQLite file; both
-commands may apply a forward-only schema migration when the ledger already exists.
+`help`, `status`, `setup`/`preview` and `holds` are **read-only**: they do not
+create, migrate, or write the config or the SQLite ledger. They open the ledger
+through a separate read-only surface (`node:sqlite` with `readOnly: true`), so an
+absent database stays absent and an unknown schema is reported instead of being
+migrated. `holds` never reserves, reconciles, releases, or prunes. Earlier
+revisions opened the ledger for write from `status` and `holds`; that is fixed
+here and pinned by tests.
+
+`select` records a preference and nothing else: it never enables the router, never
+records consent, never opens the ledger, and never changes which candidates are
+enabled. Moving the selection to a different provider/model **revokes** the
+consent recorded for the previous target, because that consent did not cover the
+new one. Selecting the same target again leaves consent untouched.
+
+### Computed artifact preview (not a change plan)
+
+`setup` prints a diff of the artifacts this layer owns, and `preview` is the same
+command with `--apply` refused:
+
+- the user-level config `$XDG_CONFIG_HOME/pantheon/decision-router.json`;
+- with `--target <dir>`, that target's `.pantheon/install-state.json` when it
+  already exists (no state is ever fabricated for an unmanaged target).
+
+The comparison is content-based, using the snapshot method of the idempotency
+probe: `lstat` + SHA-256 + size + mode of the current file against the exact bytes
+the writer would produce (preview and writer share one serializer). Each artifact
+is therefore `create` (missing), `unchanged` (same hash) or `update` (different
+hash), and changed fields are listed by name with the value of an allowlisted set
+of activation flags only — never file contents or hashes.
+
+This deliberately is **not** the installer's "Change plan". A measured second
+idempotent apply announced `112 create` and created nothing, because the
+announcement described what writers were asked to do rather than what the target
+bytes are. The property a test pins here is the opposite: preview → `--apply` →
+preview reports `0 create · 0 update`, and a byte-level edit flips exactly the
+field that changed. `--apply` re-reads every artifact first and refuses the whole
+plan if anything moved since the preview.
+
+`--accept-migration` exists for one case only: rewriting a legacy-schema config
+that would migrate to `enabled: true`. Without the flag the plan is `BLOCKED` and
+nothing is written, so a preview/apply can never activate turn selection as a
+side effect.
+
+### No extra backup, and why that matters
+
+Installer backup sets accumulate one directory per application and contain
+credential-bearing material (API keys/tokens) by the installer's own log. The
+decision-layer setup path creates **no** backup and **no** copy: it writes only
+the artifacts in the preview and says so in its output.
+
+### Install-state consistency
+
+`.pantheon/install-state.json` keeps a target-specific preference record
+(`provider`, `egress_consent`). It is not runtime authority. Its only legal value
+is the projection of the user-level config (`projectDecisionRouterInstallState`),
+so the two surfaces cannot disagree about consent: the record never asserts
+consent the config does not have. `status --target <dir>` reports `consistent` or
+the exact divergent fields, and `setup --target <dir> --apply` reconciles them
+without touching `updated_at`. `typesafe-jev` is accepted as a canonical provider
+id so a projected record survives a read/write round trip instead of resetting to
+Local.
+
+File-ownership tracking is **partial and asymmetric**: `file_inventory` holds 53
+of 106 project artifacts and 0 of 107 global artifacts, and it covers neither
+`opencode.json` nor `AGENTS.md`. This preview therefore makes no claim about
+"everything the installer owns"; it compares the decision-layer artifacts.
 
 Provider/model selection, enabling a candidate, recording an egress-consent setting, each of
 the user/provider/model caps, and budget-period confirmation are separate actions.
@@ -270,6 +335,15 @@ the turn falls back to the local selector. OpenCode Console usage is treated as
 unknown even when a proxy response resembles a usage object. Abstention is an
 explicit `abstain` choice or low confidence; answer confidence and the selected
 probability must both be at least `0.80`.
+
+**The endpoint URLs are retained inert and are UNWIRED in the decision-layer
+surface.** `https://api.openai.com/v1/decisions` and
+`https://api.typesafe.ai/v1/systemone` (plus the two ineligible Console endpoints)
+remain in the private matrix as fixed strings, and `v2-decision-egress.ts` declares
+`wireStatus: 'unwired'` with no transport of its own. This is a statement about
+wiring, not about removal: nothing here claims the transport was deleted. Bifrost
+is not a decision-router provider, model, or budget row, and a test asserts its
+absence from both maps.
 
 **Dated documentation snapshot (2026-10-30):** OpenAI GPT-6 Luna standard rates
 are $0.10/1M input and $0.50/1M output tokens; its documentation separately lists
@@ -394,6 +468,22 @@ guarantee the provider invoice: local state can be modified/deleted and billing
 semantics can differ. A successful local reservation does not by itself authorize
 a provider call; the host permission gate and current-turn deduplication must also
 pass.
+
+## Measured coverage and unmeasured surfaces (V2 decision layer)
+
+The registry reports coverage as measured, premise, advisory, or deferred, and
+`measured` never means "effect measured". What that means in practice:
+
+| Point | Surface | Status | What is NOT covered |
+|---|---|---|---|
+| P7 (loop) | `session.execution.succeeded` | Behind `PANTHEON_V2_P7_LOOP`, off by default. The 12-execution cap (`P7_LOOP_MAX_EXECUTIONS`) is **advisory**: `reset()` is caller-supplied, no measured host surface signals a user turn, and the streak is not claimed to reset on any event. | Effects are unmeasured (C6); nested depth ≥ 2, failed/interrupted child executions and image jobs were not exercised. Never describe this as working loop enforcement. |
+| P2 (skill) | `session.hook('prompt')` | **Advisory only**: an empirical no-op on the default path, because the host sends `prompt.skills` absent. | P2b filtering was cancelled by measurement, not emulated; no token reduction is claimed. |
+| P9 (compaction) | `session.hook('compaction')` | Measured on **top-level sessions only**. | Child-session compaction, `reason: "overflow"`, and the `messages` channel are UNKNOWN. |
+| P8 (guardrail) | `permission.evaluate` | **Off**; activation is blocked pending its review conditions (C11–C15) and it starts off, never shadow. | `permission.evaluate` was registered and never fired; payload shape, write honouring and ordering are unmeasured. `execute.before` remains the only hard barrier. |
+
+Budget facts are the same story: caps are local admission controls computed from
+explicit configuration, and they are not invoice guarantees. There are no default
+caps, no automatic period rollover, and no admission from a missing ledger.
 
 ## Loading the standalone export
 

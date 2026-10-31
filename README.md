@@ -261,11 +261,40 @@ runtime routing. `npx pantheon-opencode decision-router ...` manages user-level
 enablement, selection, candidates, consent, caps, and period confirmation. The
 separate SQLite ledger has no default caps. Caps limit local admission but are not
 invoice guarantees. Installation does not contact a model provider or inspect
-credentials. The published CLI imports a committed ESM ledger bundle:
-`npm run build:decision-router` regenerates it and `npm run check:decision-router`
-(the `prepack`/`prepublishOnly` drift gate) fails when it is stale. The
+credentials. The published CLI imports committed ESM bundles:
+`npm run build:decision-router` regenerates them and `npm run check:decision-router`
+(the `prepack`/`prepublishOnly` drift gate) fails when any is stale. The
 `pantheon-opencode/local-decision-router` subpath itself is TypeScript source, so
 it loads only in the host runtime or under a transpiler such as `tsx`.
+
+Decision-layer commands are separated by effect. `decision-router help`,
+`status`, `setup`/`preview`, and `holds` are read-only: they never create,
+migrate, or write the config or the SQLite ledger. `select` records a preference
+and can never enable anything — moving the target also revokes consent recorded
+for the previous one. `setup` prints a **computed diff of the target artifacts**
+(snapshot + SHA-256 per file, compared against the exact bytes the writer would
+produce); `--apply` writes, and a second run reports `0 create · 0 update`. It is
+deliberately not the installer's "Change plan", which announced 112 creates for
+an apply that created nothing. `setup --target <dir>` also reconciles the
+`.pantheon/install-state.json` provider/consent record with the user-level config;
+that record is derived from the config and never asserts consent the config lacks.
+Neither path creates a backup: installer backup sets accumulate once per
+application and contain credential-bearing material (API keys/tokens), so no
+extra copy is made. Installer file-ownership tracking is partial and asymmetric —
+`file_inventory` covers 53 of 106 project artifacts and 0 of 107 global artifacts
+— so this preview compares the decision-layer artifacts it owns, not "everything
+the installer touched".
+
+Provider egress remains opt-in with the default `off`; no command in this layer
+can switch it on without enablement, recorded consent, one cap- and
+period-eligible candidate and a non-denying host gate. The fixed OpenAI/TypeSafe
+endpoints are retained inert and are documented as **unwired**; this statement is
+about wiring, not about removing any transport. Measured surface coverage is
+reported honestly rather than implied: P7 runs behind `PANTHEON_V2_P7_LOOP` with
+an **advisory** execution cap (never described as enforcement), P2 is
+**advisory-only** (an empirical no-op on the default path), P9 was measured on
+**top-level sessions only**, and P8 is **off** with activation blocked pending its
+review conditions.
 
 ## Documentation
 
