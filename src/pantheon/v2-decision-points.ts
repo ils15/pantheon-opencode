@@ -13,9 +13,10 @@
  * `mode` declares the mode a point would run in, never a production call site:
  * `wired` records whether the shipped plugin constructs the adapter, and the
  * source-derived audit in `tests/pantheon/v2-decision-wiring.test.ts` fails when
- * the flag and the production import graph disagree. At this commit only P7 and
- * P8 are constructed; the other nine are library code with no caller outside the
- * harness and the tests.
+ * the flag and the production import graph disagree. P1, P2, P3, P6 and P10 are
+ * constructed at the prompt hook, P7 on the event channel and P8 on
+ * permission.evaluate; P4, P5, P9 and P11 remain library code with no caller
+ * outside the harness and the tests, and their `wired` stays `false`.
  */
 
 import type { DecisionPoint } from './v2-decision-registry.ts'
@@ -33,7 +34,7 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['choice'],
     mode: SHADOW,
     status: 'premise',
-    wired: false,
+    wired: true,
     evidence: ['F-08'],
     premises: ['PM-06', 'PM-07'],
     blockingCondition:
@@ -50,7 +51,7 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['choice', 'rank'],
     mode: SHADOW,
     status: 'advisory',
-    wired: false,
+    wired: true,
     evidence: ['F-06', 'F-08', 'F-09', 'F-10'],
     premises: ['PRE-02', 'PM-06', 'PM-07', 'PM-13'],
     blockingCondition:
@@ -71,12 +72,13 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['score', 'noul'],
     mode: SHADOW,
     status: 'premise',
-    wired: false,
+    wired: true,
     evidence: [],
     premises: ['PM-06', 'PM-09'],
     blockingCondition:
       'PM-09 open: no tool call was measured, so the tool.invoke surface that would carry complexity scoring was never exercised. C6 is closed by PROBE-E and is not the blocker',
-    notes: 'Complexity classification is contract-only in this phase.',
+    notes:
+      'Complexity classification is contract-only in this phase. The adapter is constructed in shadow at the prompt hook, where the payload carries no complexity vector or gate status, so it records `complexity.invalid` and produces no classification on the host.',
   }),
   Object.freeze<DecisionPoint>({
     id: 'P4',
@@ -119,7 +121,7 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['rank', 'score'],
     mode: SHADOW,
     status: 'measured',
-    wired: false,
+    wired: true,
     evidence: ['F-08'],
     premises: ['PM-07'],
     blockingCondition: null,
@@ -207,7 +209,7 @@ export const DECISION_POINT_REGISTRY: readonly DecisionPoint[] = Object.freeze([
     primitives: ['verify'],
     mode: SHADOW,
     status: 'premise',
-    wired: false,
+    wired: true,
     evidence: [],
     premises: [],
     blockingCondition:

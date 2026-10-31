@@ -21,9 +21,16 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
+  observePromptSurface,
+  PROMPT_SURFACE_MODE,
+  PROMPT_SURFACE_POINT_IDS,
+} from '../../src/pantheon/v2-decision-prompt-surface.ts'
+import {
   DECISION_POINT_REGISTRY,
   type DecisionPoint,
 } from '../../src/pantheon/v2-decision-registry.ts'
+import { createTelemetrySink } from '../../src/pantheon/v2-decision-telemetry.ts'
+import { HOST_PROMPT_PAYLOAD_F08 } from './v2-decision-fixtures.ts'
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url))
 const PRODUCTION_ENTRY = join(ROOT, 'src/plugin-v2.ts')
@@ -151,10 +158,10 @@ check('wired matches what the production import graph actually constructs', () =
 
 check('the audit fails when a point claims wired without a construction site', () => {
   const lying = DECISION_POINT_REGISTRY.map((point) =>
-    point.id === 'P1' ? { ...point, wired: true } : point,
+    point.id === 'P4' ? { ...point, wired: true } : point,
   )
   assert.deepEqual(findWiringViolations(lying, constructed), [
-    { pointId: 'P1', claimed: true, constructed: false },
+    { pointId: 'P4', claimed: true, constructed: false },
   ])
 })
 
@@ -165,6 +172,69 @@ check('the audit fails when a wired point claims it is not', () => {
   assert.deepEqual(findWiringViolations(understated, constructed), [
     { pointId: 'P7', claimed: false, constructed: true },
   ])
+})
+
+check('the prompt-surface points are wired and declare the shadow mode', () => {
+  for (const id of PROMPT_SURFACE_POINT_IDS) {
+    const point = DECISION_POINT_REGISTRY.find((entry) => entry.id === id)
+    assert.ok(point, `missing point ${id}`)
+    assert.equal(point.wired, true, `${id} must be wired`)
+    assert.equal(point.mode, PROMPT_SURFACE_MODE, `${id} must declare shadow`)
+  }
+})
+
+check('shadow on the measured host shape mutates nothing and records no content', () => {
+  const admission = structuredClone(HOST_PROMPT_PAYLOAD_F08)
+  const before = structuredClone(admission)
+  const observed: unknown[] = []
+
+  const result = observePromptSurface(admission, (record) => {
+    observed.push(record)
+  })
+
+  assert.deepEqual(admission, before, 'shadow must not mutate the admission payload')
+  assert.equal(admission.prompt.skills, 'undefined', 'P2 must not narrow a sentinel skills field')
+  assert.deepEqual(
+    result.records.map((record) => record.point),
+    [...PROMPT_SURFACE_POINT_IDS],
+  )
+  assert.deepEqual(observed, result.records, 'the sink sees every record')
+  for (const record of result.records) {
+    assert.equal(record.effect, 'none')
+  }
+  assert.equal(
+    JSON.stringify(result.records).includes('synthetic fixture prompt'),
+    false,
+    'prompt text must never reach a record',
+  )
+  assert.equal(result.skills.skillsSource, 'none')
+  assert.equal(result.skills.reason, 'skills.source.absent')
+})
+
+check('adapters without an input on this surface record a refusal, not a decision', () => {
+  const { records } = observePromptSurface(structuredClone(HOST_PROMPT_PAYLOAD_F08))
+  const reasonOf = (id: string): string | undefined =>
+    records.find((record) => record.point === id)?.reason
+  assert.equal(reasonOf('P1'), 'no.candidates')
+  assert.equal(reasonOf('P3'), 'complexity.invalid')
+  assert.equal(reasonOf('P6'), 'council.source.absent')
+  assert.equal(reasonOf('P10'), 'claims.absent')
+})
+
+check('a throwing sink is contained and every record is telemetry-compatible', () => {
+  const admission = structuredClone(HOST_PROMPT_PAYLOAD_F08)
+  assert.doesNotThrow(() => {
+    observePromptSurface(admission, () => {
+      throw new Error('observer failure')
+    })
+  })
+
+  const sink = createTelemetrySink()
+  const result = observePromptSurface(admission, (record) => {
+    sink.emit({ ...record, mode: PROMPT_SURFACE_MODE })
+  })
+  assert.equal(sink.size(), result.records.length)
+  assert.equal(sink.size(), PROMPT_SURFACE_POINT_IDS.length)
 })
 
 console.log(`V2 decision wiring: ${checks} groups passed`)

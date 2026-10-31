@@ -302,8 +302,9 @@ review conditions.
 
 The V2 decision layer declares eleven integration points (P1–P11) over three
 decision primitives — `ask`, `rank`, and `verify` — and a deterministic policy
-that decides which point may run. **Two of the eleven are registered on the V2
-surface, and both are off by default:**
+that decides which point may run. **Seven of the eleven have a production call
+site: two behind flags that are off by default, five in shadow at the prompt
+hook.**
 
 - **P7 (loop)** is wired to `session.execution.succeeded` behind
   `PANTHEON_V2_P7_LOOP`, which is off. It writes each observation to an
@@ -312,17 +313,25 @@ surface, and both are off by default:**
 - **P8 (guardrail)** is wired to `permission.evaluate` behind
   `PANTHEON_V2_P8_GUARDRAIL`, which is off, and its activation is blocked
   (PH5-1…PH5-5).
+- **P1, P2, P3, P6 and P10** are registered on `session.hook('prompt')` in
+  **shadow**. They observe the same admission payload through a projection that
+  carries only `prompt.agents` and `prompt.skills`: no text, no file bytes, no
+  metadata, no mutation, no throw. Every record says `effect: none` and goes to
+  an in-memory, bounded collector the plugin never reads back (test-visible
+  only). P3, P6 and P10 have no input on this payload and record their own
+  refusal token — `complexity.invalid`, `council.source.absent`, `claims.absent`
+  — rather than a fabricated decision.
 
-**The other nine — P1–P6 and P9–P11 — are library code with no production call
-site.** `src/plugin-v2.ts` imports only the P7 and P8 adapters; nothing
-constructs or registers the other nine outside the per-point test suites — the
-offline harness imports no adapter module. On a host they do not read the turn,
-record no telemetry and have no switch to turn off, because nothing registers
-them.
+**The other four — P4, P5, P9 and P11 — are library code with no production call
+site.** Nothing constructs or registers them outside the per-point test suites —
+the offline harness imports no adapter module. On a host they do not read the
+turn, record no telemetry and have no switch to turn off, because nothing
+registers them.
 
-"Shadow by default" therefore means one thing only: the two wired points make no
-behavioural change while their flags are off. It does **not** mean that all eleven
-observe the turn. No activation flag is set in a default install.
+"Shadow" therefore means no behavioural change, not a claim of effect: the five
+prompt-surface points read a narrow slice of the turn and decide nothing from it,
+and the two flag-gated points are off. No activation flag is set in a default
+install.
 
 The CLI separates effects: `npx pantheon-opencode decision-router help`, `status`,
 `preview` and `holds` never write, `setup` writes only under `--apply`, `preview`

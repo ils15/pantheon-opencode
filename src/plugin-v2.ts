@@ -142,6 +142,7 @@ import {
   p8GuardrailEnabledFromEnv,
 } from './pantheon/v2-decision-points/p8-guardrail.ts'
 import { DECISION_POINT_REGISTRY } from './pantheon/v2-decision-points.ts'
+import { observePromptSurface } from './pantheon/v2-decision-prompt-surface.ts'
 import { createTelemetrySink, type TelemetrySink } from './pantheon/v2-decision-telemetry.ts'
 import {
   type AuthoritativeSession,
@@ -738,6 +739,24 @@ export function getP8TelemetrySinkForTests(): TelemetrySink | undefined {
 let p8TelemetrySink: TelemetrySink | undefined
 
 /**
+ * The prompt-surface telemetry sink created by the most recent prompt-hook
+ * registration.
+ *
+ * P1, P2, P3, P6 and P10 observe the same admission payload through
+ * `observePromptSurface`; each shadow record is reduced through the 0b record
+ * path (`createTelemetrySink`, in-memory, bounded, I/O-free) and carries
+ * `mode: 'shadow'` — the registry mode all five declare. Nothing in production
+ * reads this collector back, so the write is only a claim if a reader can
+ * assert it: this accessor is that reader, and
+ * tests/pantheon/plugin-v2-contract.test.ts is its only caller.
+ */
+export function getPromptSurfaceTelemetrySinkForTests(): TelemetrySink | undefined {
+  return promptSurfaceTelemetrySink
+}
+
+let promptSurfaceTelemetrySink: TelemetrySink | undefined
+
+/**
  * Attempt to subscribe to session events via V2 ctx.event.subscribe.
  *
  * The V2 event.subscribe API (when available) provides an async iterable:
@@ -1199,6 +1218,11 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
   }
 
   try {
+    // Prompt-surface shadow points (P1, P2, P3, P6, P10) share this payload.
+    // The sink is in-memory and bounded, exactly like P7/P8; it is created per
+    // registration so one setup cannot observe another's records.
+    const promptSurfaceSink = createTelemetrySink()
+    promptSurfaceTelemetrySink = promptSurfaceSink
     // "prompt" hook — preserve attached image references and add model-visible
     // instructions so Zeus can inspect visual context and pass it to the
     // implementation specialist before editing.
@@ -1229,6 +1253,15 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
         // captured before Pantheon's own visual context, and the router caches
         // per session/message, so a repeated admission cannot call twice.
         await applyDecisionRouterToPrompt(admission, permissionAssert, userRequest)
+
+        // Shadow observation only. The projection carries `prompt.agents` and
+        // `prompt.skills` and nothing else, so no prompt text or file bytes
+        // reach a record; observeShadow clones and freezes it, so admission is
+        // not mutated. A failure here is contained by the outer catch and never
+        // reaches the host.
+        observePromptSurface(admission, (record) => {
+          promptSurfaceSink.emit({ ...record, mode: 'shadow' })
+        })
       } catch {
         // Fail-open: malformed/unsupported prompt shapes must not block input.
       }

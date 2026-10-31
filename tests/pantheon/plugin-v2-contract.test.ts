@@ -116,6 +116,7 @@ async function main(): Promise<void> {
     V2_UNSUPPORTED_FEATURES,
     getP7TelemetrySinkForTests,
     getP8TelemetrySinkForTests,
+    getPromptSurfaceTelemetrySinkForTests,
     getUnsupportedFeatures,
     resetV2BridgeForTests,
     setV2Bridge,
@@ -629,6 +630,50 @@ async function main(): Promise<void> {
       previousText,
       'prompt retry must not duplicate visual context',
     )
+  })
+
+  test('prompt-surface shadow points reach the telemetry sink without touching admission', async () => {
+    let promptHandler: ((event: unknown) => void | Promise<void>) | undefined
+    await plugin.setup(
+      makeBaseContext({
+        session: {
+          hook: async (name: string, handler: typeof promptHandler) => {
+            if (name === 'prompt') promptHandler = handler
+            return { dispose: async () => {} }
+          },
+        },
+      }) as never,
+    )
+    assert.equal(typeof promptHandler, 'function')
+
+    const admission = {
+      sessionID: 'ses_prompt_surface',
+      messageID: 'msg_prompt_surface',
+      prompt: {
+        text: 'plain request with no attachment',
+        files: [],
+        agents: 'undefined',
+        skills: 'undefined',
+      },
+      metadata: {},
+    }
+    const previousSkills = admission.prompt.skills
+    const previousAgents = admission.prompt.agents
+    await promptHandler?.(admission)
+
+    const sink = getPromptSurfaceTelemetrySinkForTests()
+    assert.ok(sink, 'the prompt hook must install a telemetry sink')
+    assert.equal(sink.size(), 5, 'one record per prompt-surface point')
+    assert.deepEqual(
+      sink.events().map((record) => record.point),
+      ['P1', 'P2', 'P3', 'P6', 'P10'],
+    )
+    for (const record of sink.events()) {
+      assert.equal(record.effect, 'none')
+      assert.equal(record.mode, 'shadow')
+    }
+    assert.equal(admission.prompt.skills, previousSkills, 'P2 must not filter skills')
+    assert.equal(admission.prompt.agents, previousAgents)
   })
 
   test('permission hook matches host subagent origin, denies disallowed edges, and preserves asks', async () => {
