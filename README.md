@@ -435,6 +435,13 @@ recorded in the [router reference](docs/reference/local-decision-router.md).
 | [Model Routing](docs/reference/model-routing.md) | [Local Decision Router](docs/reference/local-decision-router.md) · [Offline Evaluation Protocol](docs/reference/offline-evaluation.md) · [Env Vars](docs/reference/env-vars.md) · [Code Mode](docs/reference/code-mode.md) |
 | [Contributing](CONTRIBUTING.md) | [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) |
 
+Memory writes through `pantheon-memory` are serialized, and failed writes are
+reported as failures rather than as stored entries. Eval resources wait for
+SQLite locks and close their connections; project-specific resources resolve
+the current project root per request while preserving the trusted
+`PANTHEON_HOME` fallback. See [Memory](docs/MEMORY.md) for store separation and
+[MCP tools](docs/mcp-tools.md) for details.
+
 The release install gate's tool canary loads the installed tarball's V2 plugin
 entry under OpenCode 2.0.30 and verifies `hashline_edit` registration, Code Mode
 visibility, and a bounded edit in an isolated project. It does not prove npm
