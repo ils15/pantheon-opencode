@@ -302,8 +302,8 @@ review conditions.
 
 The V2 decision layer declares eleven integration points (P1–P11) over three
 decision primitives — `ask`, `rank`, and `verify` — and a deterministic policy
-that decides which point may run. **Six of the eleven have a production call
-site: two behind flags that are off by default, four in shadow.**
+that decides which point may run. **Seven of the eleven have a production call
+site: two behind flags that are off by default, five in shadow.**
 
 - **P7 (loop)** is wired to `session.execution.succeeded` behind
   `PANTHEON_V2_P7_LOOP`, which is off. It writes each observation to an
@@ -330,19 +330,23 @@ site: two behind flags that are off by default, four in shadow.**
   sends) produces no decision at all. No measured surface carries the memory
   candidate list it would retain or discard, so its record states that absence
   rather than a retention or a priority.
-**The other five — P4, P5, P6, P10 and P11 — are library code with no production
-call site.** Nothing constructs or registers them outside the per-point test suites —
+- **P11** is wired inside `ctx.tool.transform` in **shadow**: it reads the draft
+  the host hands that callback and calls none of its mutators. Shadow has no
+  responder, so it records the validated `choice` question over the draft ids —
+  never a selection.
+
+**The other four — P4, P5, P6 and P10 — are library code with no production call
+site.** Nothing constructs or registers them outside the per-point test suites —
 the offline harness imports no adapter module. P6 and P10 declared the prompt
 hook, but that payload never carries council candidates or counsellor claims, so
 they stay unwired instead of recording a refusal from a surface that cannot feed
 them. P4 ranks a memory candidate array and the measured `context` payload
 carries `system` text parts, not candidates; P5 verifies a declared
 `{ requirements, responses }` pair and the `execute.after` event carries
-neither. P11 reads the measured `tool.transform` draft and is tracked below the
-same way, with no call site yet. On a host they do not read the turn, record no
-telemetry and have no switch to turn off, because nothing registers them.
+neither. On a host they do not read the turn, record no telemetry and have no
+switch to turn off, because nothing registers them.
 
-"Shadow" therefore means no behavioural change, not a claim of effect: the four
+"Shadow" therefore means no behavioural change, not a claim of effect: the five
 shadow points read a narrow slice of their surface and decide nothing from it,
 and the two flag-gated points are off. No activation flag is set in a default
 install.

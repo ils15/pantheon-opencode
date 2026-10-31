@@ -13,8 +13,9 @@
  *      imports one of those names and calls it;
  *   4. the host surface is derived from the host registration that encloses —
  *      or contains — the enclosing function of that call (a `session.hook`
- *      name, `permission.hook('evaluate')`, `event.subscribe`, or the execute
- *      of a tool definition registered through `ctx.tool.transform`).
+ *      name, `permission.hook('evaluate')`, `event.subscribe`, the callback of
+ *      `tool.transform`, or the execute of a tool definition registered
+ *      through `ctx.tool.transform`).
  *
  * Nothing here re-lists which point is wired or where: changing the plugin
  * changes the answer, and the registry entry has to follow. This closes the
@@ -273,6 +274,19 @@ function collectHostRegistrations(file: string, source: string): HostRegistratio
     const end = matchingDelimiter(source, openParen, '(', ')')
     if (end === -1) continue
     registrations.push({ file, start: match.index, end, surface: 'event.channel' })
+  }
+  // `tool.transform` is a host registration as well: the draft handed to its
+  // callback is the only measured catalogue surface (F-07), so a point built
+  // inside that callback declares `tool.transform`. Only a receiver that names
+  // the TOOL namespace counts — `agent.transform`/`command.transform`/
+  // `reference.transform` carry other domains and must not be read as this one.
+  for (const match of source.matchAll(/([A-Za-z_$][\w$]*)\.transform\s*\(/g)) {
+    const receiver = match[1] as string
+    if (!/^tool/i.test(receiver)) continue
+    const openParen = match.index + match[0].lastIndexOf('(')
+    const end = matchingDelimiter(source, openParen, '(', ')')
+    if (end === -1) continue
+    registrations.push({ file, start: match.index, end, surface: 'tool.transform' })
   }
   return registrations
 }
@@ -593,12 +607,15 @@ await check('P4 and P5 are unwired because their required input is absent', () =
   }
 })
 
-await check('P9 is constructed on the compaction carrier it declares', () => {
+await check('P9 and P11 are constructed at the surfaces their payloads come from', () => {
   assert.equal(declaredSurfaceOf('P9'), 'session.hook.compaction')
-  const point = DECISION_POINT_REGISTRY.find((entry) => entry.id === 'P9')
-  assert.ok(point, 'missing point P9')
-  assert.equal(point.wired, true, 'P9 must be wired')
-  assert.equal(point.mode, 'shadow', 'P9 stays shadow')
+  assert.equal(declaredSurfaceOf('P11'), 'tool.transform')
+  for (const id of ['P9', 'P11']) {
+    const point = DECISION_POINT_REGISTRY.find((entry) => entry.id === id)
+    assert.ok(point, `missing point ${id}`)
+    assert.equal(point.wired, true, `${id} must be wired`)
+    assert.equal(point.mode, 'shadow', `${id} stays shadow`)
+  }
 })
 
 await check('shadow on the measured host shape mutates nothing and records no content', () => {

@@ -475,8 +475,9 @@ The registry reports coverage as measured, premise, advisory, or deferred, and
 `measured` never means "effect measured". What that means in practice: **P7 and
 P8 are wired behind flags (both off by default), P1 and P2 are wired in shadow at
 the prompt hook, P3 is wired in shadow at its declared `tool.invoke`, P9 is wired
-in shadow on the measured compaction carrier, and P4, P5, P6, P10 and P11 are
-library code with no production call site**:
+in shadow on the measured compaction carrier, P11 is wired in shadow inside
+`ctx.tool.transform`, and P4, P5, P6 and P10 are library code with no production
+call site**:
 
 | Point | Surface | Status | What is NOT covered |
 |---|---|---|---|
@@ -484,6 +485,7 @@ library code with no production call site**:
 | P3 (complexity) | `tool.invoke` | Registered in **shadow** at `pantheon_local_decision`: the tool hands the adapter its own input, which carries `complexity` and `gateStatus`, so it classifies when invoked and applies nothing. | No tool call was ever measured (PM-09), and records are in-memory and unread in production. |
 | P7 (loop) | `session.execution.succeeded` | Behind `PANTHEON_V2_P7_LOOP`, off by default. The 12-execution cap (`P7_LOOP_MAX_EXECUTIONS`) is **advisory**: `reset()` is caller-supplied, no measured host surface signals a user turn, and the streak is not claimed to reset on any event. | Effect is `none` and unmeasured (C6 is closed by PROBE-E; no P7 effect was observed); nested depth ≥ 2, failed/interrupted child executions and image jobs were not exercised. Never describe this as working loop enforcement. |
 | P9 (compaction) | `session.hook('compaction')` | Registered in **shadow** on the measured carrier: the top-level `sessionID` and the `system` part array. The record carries the decision key and the payload shape; nothing is pushed, so the injected context is unchanged. | Measured on **top-level sessions only**. Child-session compaction, `reason: "overflow"`, and the `messages` channel are UNKNOWN. A payload whose only id is a nested `session.id` produces **no decision**, and no measured surface carries the memory candidate list, so the record names that absence and claims no retention or priority. |
+| P11 (catalog) | `tool.transform` | Registered in **shadow** inside the `ctx.tool.transform` callback: it reads the draft the host hands it and calls none of its mutators. | Shadow has no responder, so the record is the validated `choice` question over the draft ids (`catalog.no.answer`), never a selection. `ctx.model`/`ctx.provider` were not exercised as catalogue sources (PM-08), and no host catalogue (`ctx.catalog`) exists at any measured point. |
 | P8 (guardrail) | `permission.evaluate` | **Off**; activation is blocked pending its review conditions (PH5-1…PH5-5) and it starts off, never shadow. | `permission.evaluate` was registered and never fired; payload shape, write honouring and ordering are unmeasured. `execute.before` remains the only hard barrier. |
 
 P6 and P10 are **unwired**: they declared the prompt hook, but that payload

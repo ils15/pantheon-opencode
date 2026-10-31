@@ -118,6 +118,7 @@ async function main(): Promise<void> {
     getP8TelemetrySinkForTests,
     getP3TelemetrySinkForTests,
     getP9TelemetrySinkForTests,
+    getP11TelemetrySinkForTests,
     getPromptSurfaceTelemetrySinkForTests,
     getUnsupportedFeatures,
     resetV2BridgeForTests,
@@ -739,6 +740,55 @@ async function main(): Promise<void> {
     const afterNested = sink.events()
     assert.equal(afterNested.length, 2)
     assert.equal(afterNested[1]?.reason, 'compaction.session.absent')
+  })
+
+  test('P11 reads the tool.transform draft and calls none of its mutators', async () => {
+    const calls = { list: 0, namespace: 0, add: 0, update: 0, remove: 0 }
+    await plugin.setup(
+      makeBaseContext({
+        tool: {
+          transform: async (callback: (draft: never) => void) => {
+            callback({
+              list: () => {
+                calls.list += 1
+                return [{ name: 'patch' }, { name: 'edit' }, { name: 'glob' }]
+              },
+              get: () => undefined,
+              namespace: () => {
+                calls.namespace += 1
+              },
+              add: () => {
+                calls.add += 1
+              },
+              update: () => {
+                calls.update += 1
+              },
+              remove: () => {
+                calls.remove += 1
+              },
+            } as never)
+            return { dispose: async () => {} }
+          },
+        },
+      }) as never,
+    )
+
+    const sink = getP11TelemetrySinkForTests()
+    assert.ok(sink, 'tool registration must install the P11 sink')
+    assert.equal(sink.size(), 1)
+    const [record] = sink.events()
+    assert.equal(record?.point, 'P11')
+    assert.equal(record?.mode, 'shadow')
+    assert.equal(record?.effect, 'none')
+    assert.equal(
+      record?.reason,
+      'catalog.no.answer',
+      'the measured draft was read and a question was built; shadow has no responder',
+    )
+    assert.equal(calls.list, 1, 'the draft is read exactly once')
+    assert.ok(calls.add > 0, 'Pantheon still registers its own tools')
+    assert.equal(calls.update, 0, 'P11 must never call a mutator')
+    assert.equal(calls.remove, 0, 'P11 must never call a mutator')
   })
 
   test('P3 is constructed at tool.invoke and classifies the tool payload', async () => {

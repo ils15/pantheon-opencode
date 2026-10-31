@@ -142,6 +142,7 @@ import {
   p8GuardrailEnabledFromEnv,
 } from './pantheon/v2-decision-points/p8-guardrail.ts'
 import { evaluateCompactionMemoryPoint } from './pantheon/v2-decision-points/p9-memory-compaction.ts'
+import { evaluateCatalogPoint } from './pantheon/v2-decision-points/p11-catalog.ts'
 import { DECISION_POINT_REGISTRY } from './pantheon/v2-decision-points.ts'
 import { observePromptSurface } from './pantheon/v2-decision-prompt-surface.ts'
 import { createTelemetrySink, type TelemetrySink } from './pantheon/v2-decision-telemetry.ts'
@@ -684,6 +685,10 @@ async function registerV2Tools(
     })
     if (boundedRead !== undefined) toolDefs.push(boundedRead)
 
+    // P11's record sink, created per registration (in-memory, bounded, I/O-free).
+    const p11Sink = createTelemetrySink()
+    p11TelemetrySink = p11Sink
+
     await toolCtx.transform((draft: V2ToolDraft) => {
       // Catalog grouping only. The host computes a tool's registration id as
       // `options.namespace === undefined ? name : `${namespace}_${name}``, and
@@ -704,6 +709,24 @@ async function registerV2Tools(
           output: def.output,
           execute: def.execute,
         })
+      }
+
+      // P11 (catalog) shadow observation on the only measured catalogue
+      // surface: the draft the host hands this callback — `{list, get,
+      // namespace, add, update, remove}`, 20 host tools, 46 with MCP servers
+      // registered (F-07). `ctx.catalog` is absent at every measured point
+      // (F-05) and is not used. The adapter reads and nothing else: `list()` is
+      // called, the six members are type-checked, and no add/update/remove is
+      // ever invoked, so the registration above is the only mutation. Shadow
+      // has no responder, so the record names the validated `choice` question
+      // (`catalog.no.answer`) instead of inventing a selection. Runs after the
+      // adds so the draft it reads is the one the host will keep.
+      try {
+        evaluateCatalogPoint(draft, (record) => {
+          p11Sink.emit({ ...record, mode: 'shadow' })
+        })
+      } catch {
+        // Observation must never fail the tool registration.
       }
     })
     return true
@@ -797,6 +820,21 @@ export function getP9TelemetrySinkForTests(): TelemetrySink | undefined {
 }
 
 let p9TelemetrySink: TelemetrySink | undefined
+
+/**
+ * The P11 telemetry sink created by the most recent tool registration.
+ *
+ * P11 declares `tool.transform` and reads the draft the host hands that
+ * callback (F-07) — the only measured catalogue surface, since `ctx.catalog` is
+ * absent (F-05). Records go through the in-memory, bounded 0b path and carry the
+ * P11 registry `mode` (`shadow`). Exported only for
+ * tests/pantheon/plugin-v2-contract.test.ts and the wiring audit.
+ */
+export function getP11TelemetrySinkForTests(): TelemetrySink | undefined {
+  return p11TelemetrySink
+}
+
+let p11TelemetrySink: TelemetrySink | undefined
 
 /**
  * Attempt to subscribe to session events via V2 ctx.event.subscribe.
