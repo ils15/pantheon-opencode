@@ -147,8 +147,13 @@ Release notes use the final emoji group format — **🆕 What's New /
 | `fix`, `security` | `## 🐞 Fixed` |
 | `--known-issues "text"` (CLI flag, repeatable) | `## ⚠️ Known Issues` (omitted when the flag is absent — never emitted empty) |
 | `Closes #N` / `Fixes #N` / `Resolves #N` in the commit **body** | `## ✅ Closed Issues` — bullet `- #N - <subject>` (deduped; omitted when no refs exist) |
+| `release` scope (maintainer-only, any commit type) | **omitted** from all public notes, including Closed Issues references |
 | `chore`, `refactor`, `test`, `ci`, `build`, `style`, `revert` (and unknown types) | **omitted** — internal, never user-facing |
 | `BREAKING CHANGE` footer or `type!:` / `type(scope)!:` | `💥` prefix on the bullet **inside** What's New (e.g. `- 💥 **scope** — subject`) — no dedicated Breaking group |
+
+The `release` scope is reserved for maintainers' internal release tooling.
+Commits using it are excluded before both section grouping and issue-reference
+collection, so they cannot appear in What's New, Fixed, or Closed Issues.
 
 Merge commits ("Merge …") and empty-subject chores are skipped. Bullets use
 `- **<scope>** — <subject>` (the scope as the bold prefix; without a scope
