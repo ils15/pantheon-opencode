@@ -8,9 +8,13 @@ Tests cover:
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import os
+import sqlite3
+import threading
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import eval_store
@@ -60,6 +64,124 @@ def server(module) -> FastMCP:
 class TestStaticResources:
     """Tests for static (non-parameterized) resources."""
 
+    async def test_project_root_is_resolved_for_each_public_resource_call(
+        self,
+        module,
+        server: FastMCP,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Project agents and routing follow PANTHEON_PROJECT changes at call time."""
+        projects = [tmp_path / "first-project", tmp_path / "second-project"]
+        for label, project in zip(("first", "second"), projects, strict=True):
+            agents = project / ".opencode" / "agents"
+            agents.mkdir(parents=True)
+            (agents / f"{label}.md").write_text(
+                f"---\nname: {label}\ndescription: {label} project agent\n---\n",
+                encoding="utf-8",
+            )
+            source = project / "src"
+            source.mkdir()
+            (source / "routing.yml").write_text(f"project: {label}\n", encoding="utf-8")
+
+        home = tmp_path / "global-home"
+        home.mkdir()
+        with patch.object(module, "_PANTHEON_HOME", home):
+            monkeypatch.setenv("PANTHEON_PROJECT", str(projects[0]))
+            first_agents = _text(await server.read_resource("pantheon://agents"))
+            first_routing = _text(await server.read_resource("pantheon://routing"))
+
+            monkeypatch.setenv("PANTHEON_PROJECT", str(projects[1]))
+            second_agents = _text(await server.read_resource("pantheon://agents"))
+            second_routing = _text(await server.read_resource("pantheon://routing"))
+
+        assert "first project agent" in first_agents
+        assert "second project agent" not in first_agents
+        assert "project: first" in first_routing
+        assert "second" not in first_routing
+        assert "second project agent" in second_agents
+        assert "first project agent" not in second_agents
+        assert "project: second" in second_routing
+        assert "first" not in second_routing
+
+    async def test_trusted_pantheon_home_remains_global_resource_fallback(
+        self,
+        module,
+        server: FastMCP,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A project without a local resource still falls back to PANTHEON_HOME."""
+        project = tmp_path / "project"
+        project.mkdir()
+        home = tmp_path / "trusted-home"
+        agents = home / "agents"
+        agents.mkdir(parents=True)
+        (agents / "global.md").write_text(
+            "---\nname: global\ndescription: trusted global fallback\n---\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("PANTHEON_PROJECT", str(project))
+
+        with patch.object(module, "_PANTHEON_HOME", home):
+            result = _text(await server.read_resource("pantheon://agents"))
+
+        assert "trusted global fallback" in result
+
+    async def test_global_routing_keeps_precedence_over_project_routing(
+        self,
+        module,
+        server: FastMCP,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Global routing remains preferred when both trusted files exist."""
+        project = tmp_path / "project"
+        project_src = project / "src"
+        project_src.mkdir(parents=True)
+        (project_src / "routing.yml").write_text("source: project\n", encoding="utf-8")
+        home = tmp_path / "trusted-home"
+        home.mkdir()
+        (home / "routing.yml").write_text("source: global\n", encoding="utf-8")
+        monkeypatch.setenv("PANTHEON_PROJECT", str(project))
+
+        with patch.object(module, "_PANTHEON_HOME", home):
+            result = _text(await server.read_resource("pantheon://routing"))
+
+        assert "source: global" in result
+        assert "source: project" not in result
+
+    async def test_dynamic_project_symlink_root_uses_global_fallback(
+        self,
+        module,
+        server: FastMCP,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Resolving the current project does not loosen symlink confinement."""
+        project = tmp_path / "project"
+        local_base = project / ".opencode"
+        local_base.mkdir(parents=True)
+        outside = tmp_path / "outside-agents"
+        outside.mkdir()
+        (outside / "escaped.md").write_text(
+            "description: must not be exposed", encoding="utf-8"
+        )
+        (local_base / "agents").symlink_to(outside, target_is_directory=True)
+        home = tmp_path / "trusted-home"
+        global_agents = home / "agents"
+        global_agents.mkdir(parents=True)
+        (global_agents / "global.md").write_text(
+            "---\ndescription: safe fallback\n---\n", encoding="utf-8"
+        )
+        monkeypatch.setenv("PANTHEON_PROJECT", str(project))
+
+        with patch.object(module, "_PANTHEON_HOME", home):
+            result = _text(await server.read_resource("pantheon://agents"))
+
+        assert "safe fallback" in result
+        assert "must not be exposed" not in result
+
     async def test_agents_list_uri_registered(self, server: FastMCP) -> None:
         """The agents list URI pantheon://agents should be registered."""
         resources = await server.list_resources()
@@ -82,7 +204,7 @@ class TestStaticResources:
             "---\ndescription: Global agent\n---\n", encoding="utf-8"
         )
         with (
-            patch.object(module, "_PANTHEON_PROJECT", project),
+            patch.object(module, "pantheon_project", return_value=project),
             patch.object(module, "_PANTHEON_HOME", tmp_path / "global"),
         ):
             text = await module.list_agents()
@@ -108,7 +230,7 @@ class TestStaticResources:
         global_root = tmp_path / "global" / root_name
         global_root.mkdir(parents=True)
         with (
-            patch.object(module, "_PANTHEON_PROJECT", project),
+            patch.object(module, "pantheon_project", return_value=project),
             patch.object(module, "_PANTHEON_HOME", tmp_path / "global"),
         ):
             assert module._resource_root(root_name) == global_root.resolve()
@@ -126,7 +248,7 @@ class TestStaticResources:
         (global_root / "global.md").write_text("global", encoding="utf-8")
 
         with (
-            patch.object(module, "_PANTHEON_PROJECT", linked),
+            patch.object(module, "pantheon_project", return_value=linked),
             patch.object(module, "_PANTHEON_HOME", tmp_path / "global"),
         ):
             assert module._resource_root("agents") == global_root.resolve()
@@ -141,7 +263,7 @@ class TestStaticResources:
         project.mkdir()
         target.mkdir()
         (project / base_name).symlink_to(target, target_is_directory=True)
-        with patch.object(module, "_PANTHEON_PROJECT", project):
+        with patch.object(module, "pantheon_project", return_value=project):
             assert module._safe_root(project / base_name, project) is None
 
     async def test_internal_symlink_is_rejected_even_when_target_stays_inside(
@@ -172,7 +294,7 @@ class TestStaticResources:
         global_root.mkdir(parents=True)
 
         with (
-            patch.object(module, "_PANTHEON_PROJECT", linked_project),
+            patch.object(module, "pantheon_project", return_value=linked_project),
             patch.object(module, "_PANTHEON_HOME", tmp_path / "global"),
         ):
             assert module._resource_root("agents") == global_root
@@ -191,7 +313,6 @@ class TestStaticResources:
 
         with (
             patch.dict(os.environ, {}, clear=True),
-            patch.object(module, "_PANTHEON_PROJECT", None),
             patch.object(module, "_PANTHEON_HOME", tmp_path / "global"),
             patch(
                 "src.mcp._pantheon_paths.os.getcwd",
@@ -200,7 +321,9 @@ class TestStaticResources:
         ):
             project_from_cwd = module.pantheon_project()
             assert project_from_cwd == linked_parent / "project"
-            with patch.object(module, "_PANTHEON_PROJECT", project_from_cwd):
+            with patch.object(
+                module, "pantheon_project", return_value=project_from_cwd
+            ):
                 assert module._resource_root("agents") == global_root
 
     async def test_symlinked_pantheon_home_is_rejected_by_server(
@@ -213,7 +336,7 @@ class TestStaticResources:
         linked_home.symlink_to(real_home, target_is_directory=True)
 
         with (
-            patch.object(module, "_PANTHEON_PROJECT", None),
+            patch.object(module, "pantheon_project", return_value=None),
             patch.object(module, "_PANTHEON_HOME", linked_home),
         ):
             assert module._resource_root("agents") is None
@@ -229,7 +352,7 @@ class TestStaticResources:
         outside.write_text("outside", encoding="utf-8")
         (agents / "escaped.md").symlink_to(outside)
         with (
-            patch.object(module, "_PANTHEON_PROJECT", project),
+            patch.object(module, "pantheon_project", return_value=project),
             patch.object(module, "_PANTHEON_HOME", tmp_path / "missing-global"),
         ):
             assert await module.list_agents() == "No agents found."
@@ -246,7 +369,7 @@ class TestStaticResources:
         (outside / "SKILL.md").write_text("outside", encoding="utf-8")
         (skills / "escaped").symlink_to(outside, target_is_directory=True)
         with (
-            patch.object(module, "_PANTHEON_PROJECT", project),
+            patch.object(module, "pantheon_project", return_value=project),
             patch.object(module, "_PANTHEON_HOME", tmp_path / "missing-global"),
         ):
             assert await module.list_skills() == "No skills found."
@@ -284,7 +407,7 @@ class TestStaticResources:
         monkeypatch.chdir(project)
         with (
             patch.object(module, "_PANTHEON_HOME", home),
-            patch.object(module, "_PANTHEON_PROJECT", project),
+            patch.object(module, "pantheon_project", return_value=project),
         ):
             result = await server.read_resource("pantheon://agents")
         text = _text(result)
@@ -303,7 +426,7 @@ class TestStaticResources:
     ) -> None:
         """Reading pantheon://skills should return skill names."""
         with (
-            patch.object(module, "_PANTHEON_PROJECT", None),
+            patch.object(module, "pantheon_project", return_value=None),
             patch.object(module, "_PANTHEON_HOME", ROOT / "src"),
         ):
             result = await server.read_resource("pantheon://skills")
@@ -320,7 +443,7 @@ class TestStaticResources:
     async def test_routing_returns_yaml_content(self, module, server: FastMCP) -> None:
         """Reading pantheon://routing should return routing.yml content."""
         with (
-            patch.object(module, "_PANTHEON_PROJECT", None),
+            patch.object(module, "pantheon_project", return_value=None),
             patch.object(module, "_PANTHEON_HOME", ROOT / "src"),
         ):
             result = await server.read_resource("pantheon://routing")
@@ -335,7 +458,7 @@ class TestStaticResources:
         """Missing global and project routing files must not raise an exception."""
         with (
             patch.object(module, "_PANTHEON_HOME", tmp_path / "global"),
-            patch.object(module, "_PANTHEON_PROJECT", tmp_path / "project"),
+            patch.object(module, "pantheon_project", return_value=tmp_path / "project"),
         ):
             assert await module.get_routing() == "routing.yml not found."
 
@@ -383,7 +506,7 @@ class TestResourceTemplates:
         outside.write_text("secret outside", encoding="utf-8")
         (agents / "zeus.md").symlink_to(outside)
         with (
-            patch.object(module, "_PANTHEON_PROJECT", project),
+            patch.object(module, "pantheon_project", return_value=project),
             patch.object(module, "_PANTHEON_HOME", tmp_path / "missing-global"),
         ):
             result = await module.get_agent("zeus")
@@ -401,7 +524,7 @@ class TestResourceTemplates:
         (local / "same.md").write_text("local", encoding="utf-8")
         (global_dir / "same.md").write_text("global", encoding="utf-8")
         with (
-            patch.object(module, "_PANTHEON_PROJECT", project),
+            patch.object(module, "pantheon_project", return_value=project),
             patch.object(module, "_PANTHEON_HOME", tmp_path / "global"),
         ):
             assert await module.get_agent("SAME") == "local"
@@ -632,6 +755,90 @@ def eval_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 class TestEvalResources:
     """Tests for the plugin-eval certification resources."""
+
+    async def test_eval_resource_recovers_after_writer_lock_release(
+        self,
+        module,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The resource reaches SQLite under lock and reads the committed row."""
+        db_path = tmp_path / "memory" / "memory.db"
+        monkeypatch.setattr(eval_store, "_db_path", lambda: db_path)
+        eval_store.store_eval("before-lock", {"score": 60}, 60, when="2026-08-20")
+
+        writer = sqlite3.connect(db_path, timeout=10)
+        writer.execute("PRAGMA journal_mode=DELETE")
+        writer.execute("BEGIN EXCLUSIVE")
+        writer.execute(
+            """INSERT INTO memories
+               (namespace, key, value, metadata, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                eval_store.NAMESPACE,
+                "eval:after-lock:2026-08-21",
+                '{"score":77}',
+                '{"type":"eval","score":77}',
+                "2026-08-21T00:00:00Z",
+                "2026-08-21T00:00:00Z",
+            ),
+        )
+
+        sqlite_attempted = threading.Event()
+        resource_finished = threading.Event()
+        results: list[str] = []
+        errors: list[BaseException] = []
+        original_connect = sqlite3.connect
+
+        class TracedConnection(sqlite3.Connection):
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                super().__init__(*args, **kwargs)
+
+                def authorize(
+                    action: int,
+                    _arg1: str | None,
+                    _arg2: str | None,
+                    _database: str | None,
+                    _source: str | None,
+                ) -> int:
+                    if action == sqlite3.SQLITE_PRAGMA:
+                        sqlite_attempted.set()
+                    return sqlite3.SQLITE_OK
+
+                self.set_authorizer(authorize)
+
+        def traced_connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+            kwargs["factory"] = TracedConnection
+            return original_connect(*args, **kwargs)
+
+        monkeypatch.setattr(eval_store.sqlite3, "connect", traced_connect)
+
+        def read_resource() -> None:
+            try:
+                results.append(asyncio.run(module.list_plugin_evals()))
+            except BaseException as error:
+                errors.append(error)
+            finally:
+                resource_finished.set()
+
+        reader = threading.Thread(target=read_resource)
+        reader.start()
+        try:
+            assert sqlite_attempted.wait(5), "resource never entered SQLite"
+            assert writer.in_transaction, "writer lock was released prematurely"
+            writer.commit()
+            assert resource_finished.wait(10), "resource did not recover after release"
+        finally:
+            if writer.in_transaction:
+                writer.rollback()
+            reader.join(timeout=10)
+            writer.close()
+
+        assert not reader.is_alive()
+        assert not errors
+        assert len(results) == 1
+        assert "after-lock" in results[0]
+        assert "77" in results[0]
 
     async def test_eval_list_uri_registered(self, server: FastMCP) -> None:
         """The eval list URI pantheon://eval should be registered."""
