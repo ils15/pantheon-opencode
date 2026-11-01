@@ -168,6 +168,36 @@ test('chore/refactor/test/ci/build/style/revert are all omitted', () => {
   assert.equal(groups.closedIssues.length, 0)
 })
 
+test('release-scoped fixes and docs are omitted while other scopes remain', () => {
+  const groups = groupCommits([
+    parseCommitLine('fix(release): internal tooling adjustment|'),
+    parseCommitLine('docs(release): document internal release tooling|'),
+    parseCommitLine('fix(mcp): handle request timeout|'),
+    parseCommitLine('feat(routing): add route selection|'),
+  ])
+
+  assert.deepEqual(
+    groups.whatsNew.map((entry) => entry.subject),
+    ['add route selection'],
+  )
+  assert.deepEqual(
+    groups.fixed.map((entry) => entry.subject),
+    ['handle request timeout'],
+  )
+  assert.doesNotMatch(renderMarkdown(groups), /internal tooling|internal release tooling/)
+})
+
+test('release-scoped issue references are excluded but other scope references remain', () => {
+  const groups = groupCommits([
+    parseCommitLine('fix(release): internal tooling adjustment|Closes #73'),
+    parseCommitLine('fix(mcp): handle request timeout|Closes #74'),
+  ])
+
+  assert.deepEqual(groups.closedIssues, [{ ref: 74, subject: 'handle request timeout' }])
+  assert.match(renderMarkdown(groups), /## ✅ Closed Issues\n- #74 - handle request timeout/)
+  assert.doesNotMatch(renderMarkdown(groups), /#73/)
+})
+
 test("perf and docs map to What's New; security maps to Fixed", () => {
   const groups = groupCommits([
     parseCommitLine('perf(core): cache lookups|'),

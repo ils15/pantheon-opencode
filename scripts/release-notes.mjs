@@ -19,8 +19,8 @@
  *                       bullet `- #N - <subject>` per referenced issue
  *                       (deduped); the group is OMITTED when no refs exist
  *
- * Omitted (internal, never user-facing): chore | refactor | test | ci |
- * build | style | revert (unknown conventional types too).
+ * Omitted (internal, never user-facing): release scope and chore | refactor |
+ * test | ci | build | style | revert (unknown conventional types too).
  *
  * Breaking: `BREAKING CHANGE` footer or `type!:` / `type(scope)!:` — the
  * commit keeps its type bucket and the bullet is prefixed with 💥
@@ -180,7 +180,8 @@ export function parseCommitLine(line) {
 /**
  * Conventional type → final release-note group. Types missing from this map
  * (chore, refactor, test, ci, build, style, revert, unknown) are internal
- * and omitted from the notes.
+ * and omitted from the notes. The maintainer-only `release` scope is also
+ * omitted, including its issue references.
  */
 const TYPE_GROUPS = {
   feat: 'whatsNew',
@@ -193,8 +194,9 @@ const TYPE_GROUPS = {
 /**
  * Group parsed commits into the final release-note sections. Breaking
  * commits keep their type bucket (the 💥 marker is applied at render time);
- * internal types are dropped; issue refs from ANY commit body feed
- * closedIssues (deduped, first occurrence wins). Entries keep git log order.
+ * internal types and the `release` scope are dropped; issue refs from remaining
+ * commit bodies feed closedIssues (deduped, first occurrence wins). Entries
+ * keep git log order.
  *
  * @param {Array<ReturnType<typeof parseCommitLine>>} entries
  * @param {{knownIssues?: string[]|string|null}} [options]
@@ -213,7 +215,7 @@ export function groupCommits(entries, options = {}) {
   }
   const seenRefs = new Set()
   for (const entry of entries) {
-    if (!entry) continue
+    if (!entry || entry.scope === 'release') continue
     const bucket = TYPE_GROUPS[entry.type]
     if (bucket) groups[bucket].push(entry)
     for (const ref of entry.refs) {
