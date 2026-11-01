@@ -53,9 +53,14 @@ node scripts/version-check.mjs
 npm run release:dry-run
 ```
 
-# beta.5: rebuild the TUI bundle AFTER the version bump — dist embeds the
-# package version and the CI "TUI dist freshness" gate fails otherwise.
-npm install --prefix src/plugins/tui && npm run build --prefix src/plugins/tui
+After a beta version bump, typecheck and rebuild the TUI workspace from the
+repository root. The dist bundles embed the package version, and CI checks their
+freshness; do not install dependencies with a nested prefix.
+
+```bash
+npm run typecheck --workspace=src/plugins/tui
+npm run build --workspace=src/plugins/tui
+```
 
 `apply` syncs the version manifests (`package.json`, `plugin.json`,
 `pyproject.toml`, [`src/plugins/tui/package.json`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/tui/package.json)) and promotes the
