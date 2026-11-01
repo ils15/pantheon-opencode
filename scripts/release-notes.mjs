@@ -127,6 +127,27 @@ function parseIssueRefs(body) {
 }
 
 /**
+ * Detect the documented BREAKING CHANGE trailer in the final body paragraph.
+ * The marker must be a trailer line, not a phrase embedded in body prose.
+ *
+ * @param {string} body
+ * @returns {boolean}
+ */
+function hasBreakingFooter(body) {
+  const footerLines = body
+    .trimEnd()
+    .split(/\r?\n(?:[ \t]*\r?\n)+/)
+    .at(-1)
+    .split(/\r?\n/)
+  const isTrailerLine = /^[A-Za-z][A-Za-z-]*(?: [A-Za-z][A-Za-z-]*)*:[ \t]+\S/
+
+  return (
+    isTrailerLine.test(footerLines[0]) &&
+    footerLines.some((line) => /^BREAKING CHANGE:[ \t]+\S.*$/i.test(line))
+  )
+}
+
+/**
  * Parse one "subject|body" record into a conventional-commit entry.
  * Returns null for records that must be skipped: merge commits ("Merge ..."),
  * non-conventional subjects, and empty-subject (trivial) commits.
@@ -151,7 +172,7 @@ export function parseCommitLine(line) {
     type: type.toLowerCase(),
     scope: scope || null,
     subject: cleanSubject,
-    breaking: Boolean(bang) || /BREAKING CHANGE/i.test(body),
+    breaking: Boolean(bang) || hasBreakingFooter(body),
     refs: parseIssueRefs(body),
   }
 }

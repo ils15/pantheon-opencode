@@ -36,7 +36,7 @@ test('parses a commit without scope', () => {
 })
 
 test('detects breaking via type(scope)! bang', () => {
-  const entry = parseCommitLine('feat(scope)!: drop legacy API|')
+  const entry = parseCommitLine('feat(foo)!: drop legacy API|')
   assert.equal(entry.breaking, true)
   assert.equal(entry.subject, 'drop legacy API')
 })
@@ -47,10 +47,34 @@ test('detects breaking via type! bang without scope', () => {
   assert.equal(entry.scope, null)
 })
 
-test('detects breaking via BREAKING CHANGE in the body', () => {
-  const entry = parseCommitLine('feat(core): new engine|BREAKING CHANGE: old engine removed')
+test('detects breaking via a BREAKING CHANGE footer', () => {
+  const entry = parseCommitLine(
+    'feat(core): new engine|Body describes the change.\n\nBREAKING CHANGE: old engine removed',
+  )
   assert.equal(entry.breaking, true)
   assert.equal(entry.type, 'feat')
+})
+
+test('does not detect a lowercase breaking change phrase in body prose', () => {
+  const entry = parseCommitLine(
+    'feat(core): new engine|The docs use the phrase breaking change in an example.',
+  )
+  assert.equal(entry.breaking, false)
+})
+
+test('does not detect a literal BREAKING CHANGE token in body prose', () => {
+  const entry = parseCommitLine(
+    'feat(core): new engine|The docs show `BREAKING CHANGE: old engine removed` as an example.',
+  )
+  assert.equal(entry.breaking, false)
+})
+
+test('the #303-like illustrative breaking-change example has no 💥 marker', () => {
+  const entry = parseCommitLine(
+    'feat(routing): add V2 decision layer with measured-shape adapters (#303)|A request that materially demanded a gate or a plan (e.g.\n"breaking change that needs human approval and a rollback plan before\ncutover") matched no keyword and selected no skill at all.',
+  )
+  const markdown = renderMarkdown(groupCommits([entry]))
+  assert.doesNotMatch(markdown, /💥/)
 })
 
 test('parses Closes #N from the commit body into refs', () => {
