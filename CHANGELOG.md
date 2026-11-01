@@ -10,6 +10,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.2-beta.5] - 2026-11-01
+
+## 🆕 What's New
+- **routing** — wire decision points to their declared host surfaces in shadow (#304)
+- **routing** — add V2 decision layer with measured-shape adapters (#303)
+
+## 🐞 Fixed
+- **mcp** — harden memory and resource MCP reliability (#306)
 ## [v1.6.2-beta.4] - 2026-10-31
 
 ### Added
