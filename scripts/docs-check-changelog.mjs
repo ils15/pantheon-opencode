@@ -10,7 +10,7 @@
  *   - a bullet over 200 characters (including continuation lines) in those
  *     sections;
  *   - an empty subsection under [Unreleased];
- *   - any `## 🆕|🐞|⚠️|✅` H2 anywhere;
+ *   - any emoji H2 except the generated `🆕 What's New` and `🐞 Fixed` headings;
  *   - a missing Deprecated or Removed block in the newest stable version.
  *
  * Historical sections are archived records: only their version-heading shape
@@ -26,7 +26,8 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const CHANGELOG = process.argv[2] ? process.argv[2] : join(ROOT, 'CHANGELOG.md')
 const MAX_BULLET = 200
 const ALLOWED_H3 = new Set(['Added', 'Changed', 'Deprecated', 'Removed', 'Fixed', 'Security'])
-const EMOJI_H2 = /^##\s+(?:🆕|🐞|⚠️|✅)/
+const EMOJI_H2 = /^##\s+\p{Extended_Pictographic}/u
+const ALLOWED_GENERATED_H2 = /^##\s+(?:🆕 What's New|🐞 Fixed)\s*$/
 const STABLE_VERSION_HEADING = /^## \[v?(\d+\.\d+\.\d+)\] - \d{4}-\d{2}-\d{2}$/
 // Historical headings may carry a pre-release suffix, a month-only date, or a
 // "(candidate)" marker.
@@ -104,7 +105,7 @@ function main() {
     if (line.startsWith('## ')) {
       closeSection()
 
-      if (EMOJI_H2.test(line)) {
+      if (EMOJI_H2.test(line) && !ALLOWED_GENERATED_H2.test(line)) {
         findings.push(`${lineNo}: emoji H2 is not allowed (${line.trim()})`)
         continue
       }
