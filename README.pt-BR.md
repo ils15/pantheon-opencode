@@ -83,7 +83,7 @@ apenas — `init` → reiniciar → `/dispatch` → primeiro resultado — veja 
   atrás do consentimento e dos limites de orçamento do usuário — ela nunca
   despacha agentes, executa skills ou altera permissões. Veja a
   [referência do roteador](docs/reference/local-decision-router.md) e o
-  [status das Decisions nativas](docs/reference/v2-native-decisions.md).
+  [Decisions nativas (Jev)](docs/reference/native-decisions.md).
 - **Uma TUI opcional**, com bloco de dispatch na sidebar e painel `/dispatch`
   em largura total. A TUI V2 também inclui um resumo de quota na sidebar/rodapé
   e o painel `/quota`, com abas Usage, Limits, Plugin e Settings. Usage mostra

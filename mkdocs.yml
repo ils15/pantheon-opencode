@@ -71,7 +71,7 @@ nav:
   - Reference:
       - Model Routing: reference/model-routing.md
       - Local Decision Router: reference/local-decision-router.md
-      - V2 Native Decisions: reference/v2-native-decisions.md
+      - Native Decisions (Jev): reference/native-decisions.md
       - Offline Evaluation: reference/offline-evaluation.md
       - Environment Variables: reference/env-vars.md
       - Code Mode: reference/code-mode.md

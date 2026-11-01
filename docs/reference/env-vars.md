@@ -82,7 +82,7 @@ Model precedence and the degradation chain are in [MCP](../MCP.md#pantheon-visio
 The API contract and its abstention behavior are in
 [Local Decision Router](local-decision-router.md).
 
-## V2 decision layer
+## Decision layer flags (shadow adapters)
 
 Both flags are read once when the plugin registers, so changing either needs a
 host restart. Neither is set in a default install; anything other than the listed
@@ -119,14 +119,14 @@ carries neither. They are unwired rather than recording a refusal from a
 surface that cannot feed them. On a host they do not read the
 turn, record no telemetry and change nothing — not because they are disabled, but
 because nothing constructs them. Coverage and unmeasured surfaces are in
-[Local Decision Router](local-decision-router.md#measured-coverage-and-unmeasured-surfaces-v2-decision-layer).
+[Local Decision Router](local-decision-router.md#measured-coverage-and-unmeasured-surfaces-decision-layer).
 
 ## Decision-provider credentials
 
 There is no Pantheon-owned decision transport. The only egress surface is the
 host's native Decisions API, invoked by the explicit `pantheon_jev_decide`
 tool behind the user-level config, budget, and permission gates — see
-[V2 Native Decisions](v2-native-decisions.md). The variables below are listed
+[V2 Native Decisions](native-decisions.md). The variables below are listed
 because decision-router code mentions them; none is read on a production path.
 
 | Variable | Default | Purpose |

@@ -5022,7 +5022,7 @@ function QuotaPluginDetails(props) {
 		setProp(_el$58, "paddingTop", 1);
 		insertNode(_el$59, createTextNode(`Plugin`));
 		setProp(_el$59, "attributes", 1);
-		insert(_el$61, `Pantheon TUI v1.6.2-beta.5`);
+		insert(_el$61, `Pantheon TUI v1.6.2-beta.6`);
 		insertNode(_el$62, createTextNode(`Status de conexão consultado pelo OpenCode; segredos não são exibidos.`));
 		insert(_el$64, () => `Status da quota: ${quotaSnapshotStatusLabel(props.snapshot.status, props.snapshot.error)}`);
 		insert(_el$58, createComponent(Show, {
@@ -8300,7 +8300,7 @@ function Sidebar(props) {
 		setProp(_el$12, "width", "100%");
 		setProp(_el$12, "padding", 1);
 		setProp(_el$13, "attributes", 1);
-		insert(_el$13, `Pantheon v1.6.2-beta.5`);
+		insert(_el$13, `Pantheon v1.6.2-beta.6`);
 		insert(_el$14, () => presetHeaderLine(model.preset().name ?? "", model.provider()));
 		insert(_el$12, createComponent(Show, {
 			get when() {
@@ -9027,7 +9027,7 @@ function HomeStatus(props) {
 	const muted = () => props.context.theme?.text?.muted ?? props.context.theme?.text?.base;
 	return (() => {
 		var _el$72 = createElement("text");
-		insert(_el$72, () => `Pantheon v1.6.2-beta.5${preset().name ? ` ▸ ${preset().name}` : ""}`);
+		insert(_el$72, () => `Pantheon v1.6.2-beta.6${preset().name ? ` ▸ ${preset().name}` : ""}`);
 		effect((_$p) => setProp(_el$72, "fg", muted(), _$p));
 		return _el$72;
 	})();

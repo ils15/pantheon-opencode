@@ -1,7 +1,7 @@
 # Local decision recommendation API
 
 > **Current status:** Deterministic local per-turn recommendations are active in
-> the V2 prompt hook when the user-level `enabled` preference is true. They are
+> the prompt hook when the user-level `enabled` preference is true. They are
 > advisory: the hook can add a local marker and only narrow an existing skill
 > array when identifiable IDs overlap; it never dispatches agents or changes
 > permissions or approvals. The former direct-provider branch is detached and
@@ -9,18 +9,18 @@
 > Native Decisions have exactly one production call site: the explicit, Zeus-only
 > `pantheon_jev_decide` tool through the host's native API, behind the full
 > consent/budget/permission chain. The per-turn hook makes no native call. See the
-> [V2 native Decisions status](v2-native-decisions.md).
+> [V2 native Decisions status](native-decisions.md).
 
 The `pantheon-opencode/local-decision-router` export is an opt-in, deterministic
 local advisory API. `PANTHEON_LOCAL_DECISION_ROUTER=1` enables only that local
-selector. OpenCode V1 and V2 expose a separate `pantheon_local_decision` advisory
+selector. The plugin exposes a separate `pantheon_local_decision` advisory
 tool; it does not intercept or replace native `subagent` dispatch. An abstention
 or recommendation does not start work, change grants, authorize shell, or relax a
 review/approval gate.
 
 ## Per-turn local recommendation (active)
 
-When the user-level `enabled` preference is true, the production V2 prompt hook
+When the user-level `enabled` preference is true, the production prompt hook
 uses the deterministic local skill selector and current local routing policy on
 the user's current request text. It may append a `pantheon-decision-router:v1`
 advisory marker and narrow `prompt.skills` only when the host supplies a non-empty
@@ -52,7 +52,7 @@ currently available native `subagent` targets. Skills are intersected with the
 selected agent's routing skill list; resource recommendations are restricted to
 known Pantheon resource IDs. The caller must supply candidates from the live
 host schema and currently available skill/resource set; the tool does not
-inspect or grant host permissions. V1/V2 plugin tool registration is global and
+inspect or grant host permissions. Plugin tool registration is global and
 does not expose per-agent visibility; therefore the tool checks the host-supplied
 `context.agent` at execution and returns abstention for every non-Zeus or
 identity-missing call. The selector is never an authorization boundary for the
@@ -88,7 +88,7 @@ native `pantheon_jev_decide` tool: egress requires `enabled`, `egress_consent`,
 exactly one cap-valid native candidate, and a confirmed budget period in the
 ledger. Those settings still do not activate any per-turn provider egress.
 Native candidate mapping and the full gate chain are documented in
-[V2 native Decisions](v2-native-decisions.md).
+[V2 native Decisions](native-decisions.md).
 
 Runtime preferences and caps are user-level, not project-level and not OpenCode
 global configuration. The non-secret JSON file is
@@ -209,9 +209,9 @@ or secret-pattern filters as an egress or payload-safety boundary beyond that
 tool. Any future per-turn wiring requires a new consent/payload policy, proven
 current-turn correlation, spend/overshoot controls, Themis review, and explicit
 approval. Native Decisions status is documented in
-[V2 native Decisions](v2-native-decisions.md).
+[V2 native Decisions](native-decisions.md).
 
-## Measured coverage and unmeasured surfaces (V2 decision layer)
+## Measured coverage and unmeasured surfaces (decision layer)
 
 The registry reports coverage as measured, premise, advisory, or deferred, and
 `measured` never means "effect measured". What that means in practice: **P7 and

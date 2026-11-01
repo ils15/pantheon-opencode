@@ -106,7 +106,7 @@ see [Quick Start](docs/QUICKSTART.md).
   never dispatches agents, runs skills, or changes permissions. This does not
   change separately documented quota and Vision integrations. See the
   [router reference](docs/reference/local-decision-router.md) and the
-  [V2 native Decisions status](docs/reference/v2-native-decisions.md).
+  [Native Decisions (Jev)](docs/reference/native-decisions.md).
 - **An optional TUI** with a dispatch sidebar block and a full-width
   `/dispatch` panel. The V2 TUI also provides a quota overview in the
   sidebar/footer and a `/quota` details panel. Quota display is enabled by
@@ -258,7 +258,7 @@ credentials cannot activate it. Native child-session dispatch remains separate.
 The one native egress surface is the Zeus-only `pantheon_jev_decide` tool,
 available on hosts that expose the V2.2.5 native Decisions API; its full gate
 chain, routes, and settlement rules are documented once in
-[V2 native Decisions](docs/reference/v2-native-decisions.md).
+[V2 native Decisions](docs/reference/native-decisions.md).
 
 The installer may retain a legacy target-specific preference; it does not control
 runtime routing. `npx pantheon-opencode decision-router ...` manages stored
@@ -434,7 +434,7 @@ recorded in the [router reference](docs/reference/local-decision-router.md).
 | [Compatibility](docs/COMPATIBILITY.md) | [OpenCode V2](docs/opencode-v2.md) |
 | [Agents & Skills](docs/agents/README.md) | [Platforms](docs/PLATFORMS.md) |
 | [Release Process](docs/RELEASING.md) | [Branch Protection](docs/BRANCH-PROTECTION.md) |
-| [Model Routing](docs/reference/model-routing.md) | [Local Decision Router](docs/reference/local-decision-router.md) · [V2 Native Decisions](docs/reference/v2-native-decisions.md) · [Offline Evaluation Protocol](docs/reference/offline-evaluation.md) · [Env Vars](docs/reference/env-vars.md) · [Code Mode](docs/reference/code-mode.md) |
+| [Model Routing](docs/reference/model-routing.md) | [Local Decision Router](docs/reference/local-decision-router.md) · [V2 Native Decisions](docs/reference/native-decisions.md) · [Offline Evaluation Protocol](docs/reference/offline-evaluation.md) · [Env Vars](docs/reference/env-vars.md) · [Code Mode](docs/reference/code-mode.md) |
 | [Contributing](CONTRIBUTING.md) | [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) |
 
 Memory writes through `pantheon-memory` are serialized, and failed writes are
