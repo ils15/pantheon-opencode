@@ -24,7 +24,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **security** — Removed the direct-fetch decision-provider path entirely (runner, payload protocol, fetch-path usage verifier, per-turn provider cache): Pantheon owns no transport, and the only egress is the host's native layer behind the enabled/consent/budget/permission chain. The per-turn prompt hook stays local-only.
 - **security** — The budget ledger now treats a host-reported zero cost as a real zero (releasing the hold) while still freezing user/provider/model buckets when actual cost exceeds the reservation.
-- **docs** — Consolidated the decision-status narrative to one source of truth per surface, corrected stale env-var rows (no decision credential is read on any production path), and removed orphan planning notes.
+- **docs** — Consolidated the decision-status narrative to one source of truth per surface, corrected stale env-var rows (no decision credential is read on any production path), and removed an orphan planning note (the tracked deepwork note stays: it is the checkout fixture the resources server resolves against).
 
 &lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. --&gt;
