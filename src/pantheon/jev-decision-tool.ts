@@ -20,9 +20,11 @@
 import { readUserDecisionRouterConfig } from '../../scripts/install/decision-router-config.mjs'
 import {
   consumeJevDecisionResult,
+  isJevDecisionPreset,
   type JevDecisionCatalogEntry,
   type NativeJevRouteFailure,
   prepareJevDecisionRequest,
+  prepareJevPresetRequest,
   resolveNativeJevRoute,
 } from './jev-decisions.ts'
 import {
@@ -64,6 +66,7 @@ export type JevDecisionRunFailure =
   | 'PERMISSION_DENIED'
   | 'STATE_INVALID'
   | 'QUESTIONS_INVALID'
+  | 'PRESET_INVALID'
   | 'RESERVATION_DENIED'
   | 'DECISION_CALL_FAILED'
   | 'USAGE_UNRECONCILED'
@@ -161,7 +164,13 @@ export async function runJevDecision(
     )
     if (assertion === 'deny') return refusal('PERMISSION_DENIED')
 
-    const prepared = prepareJevDecisionRequest(selection.selection.route, input ?? {})
+    const requested = (input ?? {}) as { mode?: unknown; questions?: unknown }
+    const prepared =
+      requested.mode === undefined
+        ? prepareJevDecisionRequest(selection.selection.route, input ?? {})
+        : isJevDecisionPreset(requested.mode)
+          ? prepareJevPresetRequest(selection.selection.route, requested.mode, input ?? {})
+          : { ok: false as const, reasonCode: 'PRESET_INVALID' as const }
     if (!prepared.ok) return refusal(prepared.reasonCode)
 
     const reservation = ledger.reserve(
@@ -200,6 +209,7 @@ export async function runJevDecision(
         id: selection.selection.route.model.id,
         billing: selection.selection.route.billing,
       },
+      ...(requested.mode === undefined ? {} : { preset: requested.mode }),
       answers: advice.answers,
       missing: advice.missing,
       usage: { costUsd: advice.costUsd, tokens: advice.tokens },
@@ -212,10 +222,12 @@ export async function runJevDecision(
 
 const TOOL_DESCRIPTION =
   'Zeus-only advisory typed decisions via the host native Jev route (OpenCode Console or a ' +
-  'configured decision model). Sends the given state text and typed questions (choice, score, ' +
-  'predicate) to the decision model and returns probabilistic answers with confidence. Requires ' +
-  'decision-router egress consent and budget caps; asks host permission first. It never dispatches ' +
-  'agents, runs skills, executes tools, or alters permissions — results are advisory only.'
+  'configured decision model). Two ways to ask: pass `mode: "skills"` to stack skills for the ' +
+  'state text (local prefilter shortlist, whole catalog fallback), `mode: "delegation"` to pick ' +
+  'a specialist, or pass explicit typed `questions` (choice, score, predicate). Returns ' +
+  'probabilistic answers with confidence. Requires decision-router egress consent and budget ' +
+  'caps; asks host permission first. It never dispatches agents, runs skills, executes tools, ' +
+  'or alters permissions — results are advisory only.'
 
 const questionSchema = {
   type: 'object',
@@ -259,10 +271,11 @@ const questionSchema = {
 const JEV_INPUT_SCHEMA: Record<string, unknown> = {
   type: 'object',
   additionalProperties: false,
-  required: ['schemaVersion', 'state', 'questions'],
+  required: ['schemaVersion', 'state'],
   properties: {
     schemaVersion: { type: 'integer', const: 1 },
     state: { type: 'string', minLength: 1, maxLength: 12_000 },
+    mode: { type: 'string', enum: ['skills', 'delegation'] },
     questions: { type: 'array', minItems: 1, maxItems: 4, items: questionSchema },
   },
 }

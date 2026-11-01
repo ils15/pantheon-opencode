@@ -22,6 +22,8 @@ import {
   DECISION_PROVIDER_ADAPTERS,
   type DecisionProviderId,
 } from './local-decision-provider-matrix.ts'
+import { selectPantheonSkills } from './local-decision-skills.ts'
+import { PANTHEON_AGENT_CATALOG, PANTHEON_SKILL_CATALOG } from './pantheon-decision-catalog.ts'
 import {
   NATIVE_DECISION_MAX_PROMPT_LENGTH,
   type NativeDecisionRequest,
@@ -171,7 +173,8 @@ export function resolveNativeJevRoute(
 // ─── Request preparation ────────────────────────────────────────────────
 
 export const JEV_DECISION_MAX_QUESTIONS = 4
-export const JEV_DECISION_MAX_CHOICES = 16
+/** Wide enough for the full skill catalog (20) plus `none` in preset mode. */
+export const JEV_DECISION_MAX_CHOICES = 24
 export const JEV_DECISION_MIN_CHOICES = 2
 export const JEV_DECISION_MAX_SCORE_LEVELS = 10
 export const JEV_DECISION_MIN_SCORE_LEVELS = 2
@@ -188,7 +191,7 @@ export type JevDecisionQuestionInput = {
   readonly levels?: unknown
 }
 
-export type JevDecisionPreparationFailure = 'STATE_INVALID' | 'QUESTIONS_INVALID'
+export type JevDecisionPreparationFailure = 'STATE_INVALID' | 'QUESTIONS_INVALID' | 'PRESET_INVALID'
 
 export type JevDecisionPreparation =
   | { readonly ok: true; readonly request: NativeDecisionRequest }
@@ -335,6 +338,96 @@ export function prepareJevDecisionRequest(
   return { ok: true, request: Object.freeze(request) }
 }
 
+// ─── Preset requests: skill stacking and delegation ─────────────────────
+
+/**
+ * Ready-made single-question requests over Pantheon's own catalog.
+ *
+ * The point is speed with breadth: a free deterministic local prefilter picks
+ * the skill shortlist when it can (≤ 4 skills), and Jev decides over it in one
+ * typed call; when nothing pre-matches, the whole skill catalog is offered
+ * instead. Both presets always include `none` — advice may abstain, and
+ * `effect` stays `none` no matter what comes back.
+ */
+export type JevDecisionPreset = 'skills' | 'delegation'
+
+export const JEV_DECISION_PRESETS = Object.freeze(['skills', 'delegation'] as const)
+
+export function isJevDecisionPreset(value: unknown): value is JevDecisionPreset {
+  return typeof value === 'string' && (JEV_DECISION_PRESETS as readonly string[]).includes(value)
+}
+
+/** Every canonical specialist except the orchestrator itself. */
+const SPECIALIST_CHOICES: ReadonlyArray<{ value: string }> = Object.freeze(
+  PANTHEON_AGENT_CATALOG.filter((agent) => agent.id !== 'zeus').map((agent) => ({
+    value: agent.id,
+  })),
+)
+
+const SKILL_DESCRIPTIONS = new Map(
+  PANTHEON_SKILL_CATALOG.map((entry) => [entry.id, entry.description]),
+)
+
+function choiceList(values: readonly string[]): Array<{ value: string; description?: string }> {
+  return values.map((value) => {
+    const description = SKILL_DESCRIPTIONS.get(value)
+    return description
+      ? { value, description: description.slice(0, JEV_DECISION_MAX_DESCRIPTION_LENGTH) }
+      : { value }
+  })
+}
+
+/**
+ * Build a preset request: one choice question over catalog-backed options.
+ * `skills` stacks the local skill shortlist (falling back to the whole
+ * catalog); `delegation` offers every canonical specialist except Zeus.
+ */
+export function prepareJevPresetRequest(
+  route: ResolvedNativeDecisionRoute,
+  mode: JevDecisionPreset,
+  input: { readonly state?: unknown; readonly questions?: unknown },
+): JevDecisionPreparation {
+  if (input.questions !== undefined) return { ok: false, reasonCode: 'PRESET_INVALID' }
+  const state = input.state
+  if (!isBoundedNonBlankString(state, NATIVE_DECISION_MAX_PROMPT_LENGTH)) {
+    return { ok: false, reasonCode: 'STATE_INVALID' }
+  }
+
+  const shortlist = mode === 'skills' ? selectPantheonSkills(state).skillIds : []
+  const options =
+    mode === 'skills'
+      ? [
+          ...choiceList(
+            shortlist.length > 0 ? shortlist : PANTHEON_SKILL_CATALOG.map((entry) => entry.id),
+          ),
+          { value: 'none' },
+        ]
+      : [...SPECIALIST_CHOICES, { value: 'none' }]
+  const question =
+    mode === 'skills'
+      ? {
+          type: 'choice' as const,
+          name: 'stack',
+          instructions:
+            'Choose the skills worth stacking for the described task, or none when none apply. ' +
+            'This is advisory only; nothing is loaded or executed by this decision.',
+          choices: options,
+        }
+      : {
+          type: 'choice' as const,
+          name: 'specialist',
+          instructions:
+            'Choose one listed specialist only when the described task clearly needs it; ' +
+            'otherwise choose none. This is advisory only; nothing is dispatched.',
+          choices: options,
+        }
+  const request = {
+    model: route.model,
+    input: [{ type: 'text', text: state }],
+    questions: [question],
+  } satisfies NativeDecisionRequest
+  return { ok: true, request: Object.freeze(request) }
+}
 // ─── Response consumption ───────────────────────────────────────────────
 
 export interface JevDecisionAdviceAnswer {

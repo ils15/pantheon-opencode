@@ -22,9 +22,11 @@ import {
 import {
   consumeJevDecisionResult,
   filterNativeCapValidCandidates,
+  isJevDecisionPreset,
   isNativeJevProvider,
   NATIVE_JEV_HOST_PROVIDERS,
   prepareJevDecisionRequest,
+  prepareJevPresetRequest,
   resolveNativeJevRoute,
 } from '../../src/pantheon/jev-decisions.ts'
 import {
@@ -35,6 +37,10 @@ import {
   getVerifiedUsageEvidenceDetails,
   verifyNativeUsageForReservation,
 } from '../../src/pantheon/local-decision-usage-evidence.internal.ts'
+import {
+  PANTHEON_AGENT_IDS,
+  PANTHEON_SKILL_CATALOG,
+} from '../../src/pantheon/pantheon-decision-catalog.ts'
 import { createV2ToolDefinitions } from '../../src/pantheon/v2-tools.ts'
 
 const CURRENT_PERIOD = new Date().toISOString().slice(0, 7)
@@ -343,6 +349,68 @@ function testPreparation(): void {
   )
 }
 
+// ─── Presets: skill stacking and delegation ─────────────────────────────
+
+function testPresets(): void {
+  assert.equal(isJevDecisionPreset('skills'), true)
+  assert.equal(isJevDecisionPreset('delegation'), true)
+  assert.equal(isJevDecisionPreset('council'), false)
+  const route = {
+    model: { providerID: 'opencode', id: 'jev-1.13' },
+    kind: 'opencode-console-jev',
+    billing: 'OpenCode Console',
+  }
+
+  // Skills preset: the local prefilter shortlist (≤ 4) plus `none`.
+  const stacked = prepareJevPresetRequest(route, 'skills', {
+    state: 'implement a FastAPI backend endpoint with pytest',
+  })
+  assert.ok(stacked.ok)
+  if (stacked.ok) {
+    const question = stacked.request.questions[0]
+    assert.equal(question.type, 'choice')
+    assert.equal(question.name === 'stack' && 'choices' in question, true)
+    const choices = (question as { choices: Array<{ value: string }> }).choices
+    assert.ok(choices.length >= 2 && choices.length <= 5, `shortlist+none: ${choices.length}`)
+    assert.ok(choices.some((option) => option.value === 'none'))
+  }
+
+  // No local match: the whole skill catalog is offered instead, plus `none`.
+  const fallback = prepareJevPresetRequest(route, 'skills', { state: 'qwertyuiop' })
+  assert.ok(fallback.ok)
+  if (fallback.ok) {
+    const choices = (fallback.request.questions[0] as { choices: Array<{ value: string }> }).choices
+    assert.equal(choices.length, PANTHEON_SKILL_CATALOG.length + 1)
+  }
+
+  // Delegation preset: every canonical specialist except Zeus, plus `none`.
+  const delegated = prepareJevPresetRequest(route, 'delegation', {
+    state: 'implement a backend endpoint',
+  })
+  assert.ok(delegated.ok)
+  if (delegated.ok) {
+    const question = delegated.request.questions[0] as {
+      name: string
+      choices: Array<{ value: string }>
+    }
+    assert.equal(question.name, 'specialist')
+    assert.equal(question.choices.length, PANTHEON_AGENT_IDS.size - 1 + 1)
+    assert.equal(
+      question.choices.some((option) => option.value === 'zeus'),
+      false,
+    )
+    assert.ok(question.choices.some((option) => option.value === 'hermes'))
+  }
+
+  // A preset is exclusive with explicit questions; state bounds still apply.
+  assert.equal(
+    prepareJevPresetRequest(route, 'skills', { state: 'x', questions: [] }).ok,
+    false,
+    'mode and questions are mutually exclusive',
+  )
+  assert.equal(prepareJevPresetRequest(route, 'skills', { state: '' }).ok, false)
+}
+
 // ─── Response consumption ───────────────────────────────────────────────
 
 function testConsumption(): void {
@@ -612,6 +680,31 @@ async function testToolGateChain(): Promise<void> {
       globalThis.fetch = originalFetch
     }
 
+    // Preset mode: one prepared catalog question, refusal for unknown modes.
+    const preset = stubRuntime()
+    const presetOutput = await runJevDecision(
+      { schemaVersion: 1, state: 'implement a FastAPI endpoint with pytest', mode: 'skills' },
+      toolContext,
+      preset.runtime,
+    )
+    assert.equal(preset.decideCalls.length, 1)
+    const presetRequest = preset.decideCalls[0] as { questions: Array<{ name: string }> }
+    assert.equal(presetRequest.questions[0]?.name, 'stack')
+    const presetParsed = JSON.parse(presetOutput) as { preset?: string; missing: string[] }
+    assert.equal(presetParsed.preset, 'skills')
+    assert.deepEqual(presetParsed.missing, ['stack'])
+
+    const unknownMode = stubRuntime()
+    assert.equal(
+      await runJevDecision(
+        { schemaVersion: 1, state: 'x', mode: 'council' },
+        toolContext,
+        unknownMode.runtime,
+      ),
+      refusalOf('PRESET_INVALID'),
+    )
+    assert.equal(unknownMode.decideCalls.length, 0)
+
     // A failed native call leaves the reservation pending (fail-closed).
     const failing = stubRuntime({
       decide: async () => {
@@ -673,7 +766,7 @@ function testRegistrationContract(): void {
   const definition = createV2JevDecisionDefinition(runtime)
   assert.equal(definition.name, 'pantheon_jev_decide')
   const schema = definition.input as { required?: string[] }
-  assert.deepEqual(schema.required, ['schemaVersion', 'state', 'questions'])
+  assert.deepEqual(schema.required, ['schemaVersion', 'state'])
 }
 
 // ─── Source-level transport invariants ──────────────────────────────────
@@ -690,6 +783,7 @@ testProviderMapping()
 testFilterNativeCandidates()
 testRouteSelection()
 testPreparation()
+testPresets()
 testConsumption()
 testNativeEvidence()
 testLedgerSettlement()
