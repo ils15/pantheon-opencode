@@ -23,6 +23,6 @@
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
-  "include": ["src"],
+  "include": ["src", "tests/pantheon/v2-native-decisions.test.ts"],
   "exclude": ["node_modules", "dist", "src/plugins/tui"]
 }

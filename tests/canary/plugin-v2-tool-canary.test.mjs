@@ -4667,6 +4667,21 @@ test('vision_describe is registered by the real V2 host with the output contract
   assert.ok(entry.hasOutput && entry.keys.includes('output'))
 })
 
+test('pantheon_jev_decide is registered by the real V2 host with the output contract', {
+  skip: skipped,
+}, () => {
+  assert.ok(live.observation, `the probe wrote no dump: ${live.diagnose()}`)
+  const entry = live.observation.toolList.find((tool) => tool.name === 'pantheon_jev_decide')
+  assert.ok(
+    entry,
+    `ctx.tool.list() has no pantheon_jev_decide; host-built names: ${live.observation.toolList
+      .map((tool) => tool.name)
+      .join(', ')}`,
+  )
+  assert.equal(entry.id, 'pantheon_jev_decide')
+  assert.ok(entry.hasOutput && entry.keys.includes('output'))
+})
+
 test('native V2 Vision sends image data to the live-catalog paid Go MiMo model', {
   skip: skipped,
 }, () => {

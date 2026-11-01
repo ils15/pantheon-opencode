@@ -5,6 +5,9 @@
 
 export type ReconciliableUsageProvider = 'openai-decisions' | 'typesafe-jev'
 
+/** Providers that can appear in usage details: fetch receipts or native routes. */
+export type UsageProvider = ReconciliableUsageProvider | 'opencode-console' | 'jev-free'
+
 export interface UsageReservationBinding {
   reservationId: string
   provider: ReconciliableUsageProvider
@@ -18,7 +21,7 @@ export type VerifiedUsageEvidence = {
 }
 
 export interface ParsedUsageCounts {
-  provider: ReconciliableUsageProvider
+  provider: UsageProvider
   model: string
   inputTokens: number
   outputTokens: number
@@ -30,7 +33,7 @@ export interface VerifiedUsageEvidenceDetails extends ParsedUsageCounts {
   reservationId: string
   period: string
   actualCostMicros: number
-  pricingSnapshot: '2026-10-30'
+  pricingSnapshot: '2026-10-30' | 'host-reported'
 }
 
 const MODEL_IDS: Readonly<Record<ReconciliableUsageProvider, string>> = Object.freeze({
@@ -187,8 +190,110 @@ function isReconciliableProvider(value: unknown): value is ReconciliableUsagePro
   return value === 'openai-decisions' || value === 'typesafe-jev'
 }
 
+/**
+ * Budget providers with a native host Decisions route. `openai-decisions` is
+ * absent: direct OpenAI has no native route, so it can never settle one.
+ */
+function isNativeUsageProvider(value: string): value is Exclude<UsageProvider, 'openai-decisions'> {
+  return value === 'typesafe-jev' || value === 'opencode-console' || value === 'jev-free'
+}
+
+/**
+ * Mint a reconciliation capability from a native host Decisions result.
+ *
+ * On the native route the host is the billing authority (it owns the provider
+ * credentials and the Console ledger), so the host-reported `cost` plays the
+ * role the fetch path's provider receipt plays. Absent cost is a real zero —
+ * the free Console variant and hosts that do not price Decisions both land
+ * here, and reconciling at zero releases the reservation instead of burning
+ * the period's budget. A result that produced no answer settles nothing: an
+ * error payload is not evidence that a decision was paid for.
+ */
+export function verifyNativeUsageForReservation(
+  bindingInput: unknown,
+  result: unknown,
+): VerifiedUsageEvidence | null {
+  try {
+    if (
+      !isPlainRecord(bindingInput) ||
+      !hasExactKeys(bindingInput, ['model', 'period', 'provider', 'reservationId'])
+    ) {
+      return null
+    }
+    const provider = bindingInput.provider
+    const model = bindingInput.model
+    const reservationId = bindingInput.reservationId
+    const period = bindingInput.period
+    if (
+      typeof provider !== 'string' ||
+      !isNativeUsageProvider(provider) ||
+      typeof model !== 'string' ||
+      model.length === 0 ||
+      typeof reservationId !== 'string' ||
+      !RESERVATION_ID.test(reservationId) ||
+      typeof period !== 'string' ||
+      !UTC_PERIOD.test(period)
+    ) {
+      return null
+    }
+    if (
+      !isPlainRecord(result) ||
+      !Array.isArray(result.answers) ||
+      result.answers.length === 0 ||
+      !result.answers.every((answer) => isPlainRecord(answer))
+    ) {
+      return null
+    }
+
+    let actualCostMicros = 0
+    if (result.cost !== undefined) {
+      if (!isNonNegativeFinite(result.cost)) return null
+      actualCostMicros = Math.round(result.cost * 1_000_000)
+      if (!Number.isSafeInteger(actualCostMicros)) return null
+    }
+    let inputTokens = 0
+    let outputTokens = 0
+    if (result.tokens !== undefined) {
+      if (!isPlainRecord(result.tokens)) return null
+      const { input, output } = result.tokens
+      if (
+        (input !== undefined && !isNonNegativeFinite(input)) ||
+        (output !== undefined && !isNonNegativeFinite(output))
+      ) {
+        return null
+      }
+      inputTokens = typeof input === 'number' ? input : 0
+      outputTokens = typeof output === 'number' ? output : 0
+    }
+
+    const evidence = Object.freeze(Object.create(null)) as VerifiedUsageEvidence
+    evidenceDetails.set(
+      evidence,
+      Object.freeze({
+        provider,
+        model,
+        inputTokens,
+        outputTokens,
+        cachedInputTokens: 0,
+        cacheWriteInputTokens: 0,
+        reservationId,
+        period,
+        actualCostMicros,
+        pricingSnapshot: 'host-reported',
+      }),
+    )
+    return evidence
+  } catch {
+    return null
+  }
+}
+
 function isNonNegativeSafeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+}
+
+function isNonNegativeFinite(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {

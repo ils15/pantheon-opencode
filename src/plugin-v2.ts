@@ -73,6 +73,11 @@
  * If the SDK ever exposes these host domains, replacing `hostDomains` with the real
  * type is a one-line change. Do NOT make that change while 1.18.x lacks them.
  *
+ * The separate offline native Decisions scaffold is typed against
+ * `@opencode/plugin@2.2.5`. It intentionally has no production call site and
+ * does not claim native Decisions support for V1 or OpenCode V2.0/2.1. The
+ * legacy plugin registrations are not migrated as part of that scaffold.
+ *
  * V2_UNSUPPORTED_FEATURES distinguishes adapter limitations from observed
  * host-absent APIs; setup handles optional registrations on a best-effort basis.
  *
@@ -110,6 +115,7 @@ import {
 } from './pantheon/delegation-enforce.ts'
 import { GOAL_LOOP_DEFAULTS, GoalStore } from './pantheon/goal-loop.ts'
 import { createGuardPathResolver } from './pantheon/guard-path.ts'
+import type { V2JevDecisionRuntime } from './pantheon/jev-decision-tool.ts'
 import { DECISION_EGRESS_ACTION } from './pantheon/local-decision-egress-gate.ts'
 import { applyDecisionRouterToPrompt } from './pantheon/local-decision-prompt.ts'
 import { getSharedBoard } from './pantheon/shared-board.ts'
@@ -156,6 +162,7 @@ import {
 } from './pantheon/v2-delegation-enforce.ts'
 import { createV2ExecuteAfter, resolveV2SandboxConfig } from './pantheon/v2-execute-after.ts'
 import { applyV2ModelOverrides, readV2ModelConfiguration } from './pantheon/v2-model-overrides.ts'
+import type { NativeDecisionRequest } from './pantheon/v2-native-decisions.ts'
 import { createV2ShellHooks, type V2ShellRunner } from './pantheon/v2-shell-hooks.ts'
 import { createV2ToolDefinitions, type V2ToolResult } from './pantheon/v2-tools.ts'
 import { V2_UNSUPPORTED_FEATURE_SEED } from './pantheon/v2-unsupported.mjs'
@@ -351,6 +358,16 @@ interface V2GenerateDomain {
   text?: (input: { model: { providerID: string; id: string }; prompt: string }) => Promise<unknown>
 }
 
+/**
+ * The host's experimental generation domain. Only `decisions` is declared: the
+ * native Jev route feature-detects it, and every other member stays unknown.
+ */
+interface V2ExperimentalDomain {
+  generate?: {
+    decisions?: (request: NativeDecisionRequest) => Promise<unknown>
+  }
+}
+
 /** `PluginContext` plus the host domains 1.18.x omits. See the module header. */
 interface HostPluginContext extends PluginContext {
   tool?: V2ToolDomain
@@ -359,6 +376,7 @@ interface HostPluginContext extends PluginContext {
   session?: V2SessionDomain
   model?: V2ModelDomain
   generate?: V2GenerateDomain
+  experimental?: V2ExperimentalDomain
   location?: V2LocationDomain
 }
 
@@ -669,20 +687,46 @@ async function registerV2Tools(
     // it, and the host rejects a definition whose result shape cannot satisfy
     // the declaration it makes.
     const model = host.model
-    const visionReady = typeof model?.list === 'function'
+    const modelListFn = model?.list
+    const visionReady = typeof modelListFn === 'function'
     if (!visionReady) markUnsupported('vision-tool')
     const visionRuntime = visionReady ? ({ model } as V2VisionRuntime) : undefined
+    // The native Jev tool needs BOTH the V2 model catalog (route resolution)
+    // and the host's native Decisions API. A host without either simply does
+    // not get the tool — same feature-detect discipline as vision_describe.
+    const decisionsFn = host.experimental?.generate?.decisions
+    const jevReady = visionReady && typeof decisionsFn === 'function'
+    if (!jevReady) markUnsupported('jev-decision-tool')
+    const permissionAssertFn = host.permission?.assert
+    let jevRuntime: V2JevDecisionRuntime | undefined
+    if (jevReady && typeof decisionsFn === 'function' && typeof modelListFn === 'function') {
+      const decide = decisionsFn
+      const listModels = modelListFn
+      const permissionAssert =
+        typeof permissionAssertFn === 'function'
+          ? (input: Record<string, unknown>) => permissionAssertFn.call(host.permission, input)
+          : undefined
+      jevRuntime = {
+        listModels: () => listModels(),
+        decide: (request: NativeDecisionRequest) => decide(request),
+        ...(permissionAssert === undefined ? {} : { permissionAssert }),
+      }
+    }
     // P3 (complexity) declares `tool.invoke`; its construction site is the
     // local selector's execute, fed by that tool's own input schema. The sink
     // is the 0b record path (in-memory, bounded, I/O-free) and every record
     // carries `mode: 'shadow'` — the mode the registry declares.
     const p3Sink = createTelemetrySink()
     p3TelemetrySink = p3Sink
-    const toolDefs = createV2ToolDefinitions(visionRuntime, {
-      complexitySink: (record) => {
-        p3Sink.emit({ ...record, mode: 'shadow' })
+    const toolDefs = createV2ToolDefinitions(
+      visionRuntime,
+      {
+        complexitySink: (record) => {
+          p3Sink.emit({ ...record, mode: 'shadow' })
+        },
       },
-    })
+      jevRuntime,
+    )
     if (boundedRead !== undefined) toolDefs.push(boundedRead)
 
     // P11's record sink, created per registration (in-memory, bounded, I/O-free).
@@ -1204,12 +1248,6 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
   warnContextPrunerConfigOnce(context.options)
   const host = hostDomains(context)
   const sessionCtx = host.session
-  const permission = host.permission
-  const assertPermission = permission?.assert
-  const permissionAssert =
-    typeof assertPermission === 'function'
-      ? (input: Record<string, unknown>) => assertPermission.call(permission, input)
-      : undefined
 
   if (!sessionCtx?.hook) {
     return false
@@ -1331,10 +1369,9 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
           if (visualContext) prompt.text = `${prompt.text}\n\n${visualContext}`
         }
 
-        // Advisory per-turn selection. The helper reads only the prompt text
-        // captured before Pantheon's own visual context, and the router caches
-        // per session/message, so a repeated admission cannot call twice.
-        await applyDecisionRouterToPrompt(admission, permissionAssert, userRequest)
+        // Local deterministic recommendations are advisory only. This path
+        // never consults provider consent/credentials or invokes remote egress.
+        await applyDecisionRouterToPrompt(admission, userRequest)
 
         // Shadow observation only. The projection carries `prompt.agents` and
         // `prompt.skills` and nothing else, so no prompt text or file bytes

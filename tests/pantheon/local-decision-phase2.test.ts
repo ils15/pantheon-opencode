@@ -734,7 +734,7 @@ async function testDisabledConfigLeavesPromptUntouchedAndFetchesNothing(): Promi
       },
     }
     const before = structuredClone(admission)
-    const applied = await applyDecisionRouterToPrompt(admission, async () => {})
+    const applied = await applyDecisionRouterToPrompt(admission)
     assert.equal(applied.markerApplied, false)
     assert.equal(applied.skillsFiltered, false)
     assert.equal(applied.skillsSource, 'none')
@@ -744,18 +744,21 @@ async function testDisabledConfigLeavesPromptUntouchedAndFetchesNothing(): Promi
   })
 }
 
-async function testPromptHookWiringAppliesLocalSelection(): Promise<void> {
+async function testPromptHookKeepsLocalRecommendationWithoutEgress(): Promise<void> {
   const environment = sandbox()
   await withEnvironment(environment, async () => {
-    clearTurnDecisionCache()
     writeUserDecisionRouterConfig({
       schema_version: 2,
       enabled: true,
-      selection: { mode: 'local' },
-      egress_consent: false,
-      enabled_candidates: [],
+      selection: { mode: 'explicit', provider: 'typesafe-jev', model: 'jev-1.14.0' },
+      egress_consent: true,
+      enabled_candidates: [{ provider: 'typesafe-jev', model: 'jev-1.14.0' }],
     })
-    // Measured host shape (F-08): the prompt hook sends `skills: "undefined"`.
+    let fetchCalls = 0
+    globalThis.fetch = (async () => {
+      fetchCalls += 1
+      throw new Error('production prompt hook must not egress')
+    }) as typeof fetch
     const admission = {
       sessionID: 'ses-hook',
       messageID: 'msg-hook',
@@ -767,19 +770,14 @@ async function testPromptHookWiringAppliesLocalSelection(): Promise<void> {
     }
     const applied = await applyDecisionRouterToPrompt(admission)
     assert.equal(applied.markerApplied, true)
-    assert.equal(
-      applied.skillsFiltered,
-      false,
-      'P2 is an empirical no-op on the default path (F-09)',
-    )
+    assert.equal(applied.skillsFiltered, false)
     assert.equal(applied.skillsSource, 'none')
     assert.equal(applied.reason, 'skills.source.absent')
-    assert.equal(admission.prompt.skills, 'undefined', 'the sentinel is never rewritten')
-    assert.equal(admission.prompt.agents, 'undefined')
-    assert.match(admission.prompt.text, /<!-- pantheon-decision-router:v1 source=local /)
-    const repeated = await applyDecisionRouterToPrompt(admission)
-    assert.equal(repeated.markerApplied, false)
-    assert.equal(repeated.reason, 'marker.present')
+    assert.match(
+      admission.prompt.text,
+      /<!-- pantheon-decision-router:v1 source=local skills=[a-z0-9,-]+(?: agent=[a-z0-9-]+)? -->/,
+    )
+    assert.equal(fetchCalls, 0)
   })
 }
 
@@ -830,6 +828,7 @@ function testV1AndPackageBoundsStayClosed(): void {
     readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
   ) as { exports: Record<string, string> }
   assert.equal(Object.hasOwn(packageJson.exports, './local-decision-provider'), false)
+  assert.equal(Object.hasOwn(packageJson.exports, './local-decision-turn'), false)
   assert.equal(Object.hasOwn(packageJson.exports, './local-decision-router'), true)
   const adapterSource = readFileSync(
     new URL('../../src/pantheon/local-decision-provider.internal.ts', import.meta.url),
@@ -841,10 +840,10 @@ function testV1AndPackageBoundsStayClosed(): void {
     new URL('../../src/pantheon/local-decision-prompt.ts', import.meta.url),
     'utf8',
   )
-  assert.match(v2, /applyDecisionRouterToPrompt\(admission, permissionAssert, userRequest\)/)
-  assert.match(promptModule, /decideForTurn\(\{/)
-  assert.match(promptModule, /applyTurnDecisionToPrompt\(prompt, decision\)/)
-  assert.match(promptModule, /messageID: event\.messageID/)
+  assert.doesNotMatch(v2, /runProviderDecision|experimental\.generate\.decisions/)
+  assert.match(v2, /applyDecisionRouterToPrompt\(/)
+  assert.doesNotMatch(promptModule, /decideForTurn|runProviderDecision|globalThis\.fetch/)
+  assert.match(promptModule, /decideLocalForTurn/)
 }
 
 function testRejectedSecretShapesStayLocal(): void {
@@ -1421,7 +1420,7 @@ await testCachedReuseRereadsConsentGate()
 await testTurnCacheBoundIsDocumentedAndEvictionRepeatsOneRequest()
 await testConsoleFreeProviderNeverFetches()
 await testDisabledConfigLeavesPromptUntouchedAndFetchesNothing()
-await testPromptHookWiringAppliesLocalSelection()
+await testPromptHookKeepsLocalRecommendationWithoutEgress()
 testPromptApplicationIsIdempotentAndBounded()
 testEmptySelectionNeverErasesHostSkills()
 testV1AndPackageBoundsStayClosed()

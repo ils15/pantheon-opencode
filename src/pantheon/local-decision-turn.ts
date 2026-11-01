@@ -1,9 +1,9 @@
 /**
- * One advisory decision per turn.
+ * Local and legacy provider-capable advisory decisions per turn.
  *
- * The selector is always local-first and at most one provider call is made per
- * session/message pair. The decision is cached for the rest of the turn, so a
- * repeated prompt hook cannot fan out or repeat egress.
+ * The production V2 prompt hook uses `decideLocalForTurn`; it is deterministic
+ * and local-only. `decideForTurn` retains its provider-capable branch for the
+ * offline adapter/gate tests, but it has no production call site.
  */
 import {
   isUserDecisionRouterEnabled,
@@ -224,6 +224,7 @@ function recordPermission(
  * Compute (or reuse) the advisory turn decision. The request text is used only
  * in memory and, when every gate passes, in the bounded provider payload.
  */
+/** @internal Provider-capable legacy helper; not called by the production prompt hook. */
 export async function decideForTurn(input: TurnDecisionInput): Promise<TurnDecision> {
   const request = typeof input.request === 'string' ? input.request : ''
   const sessionID = typeof input.sessionID === 'string' ? input.sessionID.trim() : ''
@@ -265,6 +266,34 @@ export async function decideForTurn(input: TurnDecisionInput): Promise<TurnDecis
   )
   inFlight.set(key, computation)
   return computation
+}
+
+/**
+ * Produce the existing deterministic local recommendation without entering the
+ * provider, consent, credential, permission, or transport path. The legacy
+ * per-turn `enabled` preference gates this advisory behavior; provider-selection
+ * and egress settings do not.
+ */
+export async function decideLocalForTurn(
+  input: Pick<TurnDecisionInput, 'request' | 'sessionID' | 'messageID'>,
+): Promise<TurnDecision> {
+  const request = typeof input.request === 'string' ? input.request : ''
+  const sessionID = typeof input.sessionID === 'string' ? input.sessionID.trim() : ''
+  const messageID = typeof input.messageID === 'string' ? input.messageID.trim() : ''
+  if (
+    request.trim().length === 0 ||
+    request.length > MAX_REQUEST_LENGTH ||
+    sessionID.length === 0 ||
+    messageID.length === 0
+  ) {
+    return inactive('INVALID_INPUT')
+  }
+
+  const config = readConfig()
+  if (config === undefined || !isUserDecisionRouterEnabled(config)) return inactive('DISABLED')
+
+  const policy = await loadLocalDecisionPolicy().catch(() => undefined)
+  return localDecision(request, policy, 'LOCAL_SELECTION')
 }
 
 async function computeTurn(
