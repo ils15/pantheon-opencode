@@ -61,6 +61,29 @@ function getLatestTag() {
   return tags.at(-1) || 'v0.0.0'
 }
 
+function getLatestBetaTag() {
+  const tags = runGit(['tag', '-l', 'v*'])
+    .split('\n')
+    .filter((tag) => /^v\d+\.\d+\.\d+-beta\.\d+$/.test(tag))
+  tags.sort((left, right) => {
+    const a = left
+      .slice(1)
+      .match(/^(\d+)\.(\d+)\.(\d+)-beta\.(\d+)$/)
+      .slice(1)
+      .map(Number)
+    const b = right
+      .slice(1)
+      .match(/^(\d+)\.(\d+)\.(\d+)-beta\.(\d+)$/)
+      .slice(1)
+      .map(Number)
+    for (let index = 0; index < a.length; index += 1) {
+      if (a[index] !== b[index]) return a[index] - b[index]
+    }
+    return 0
+  })
+  return tags.at(-1) || null
+}
+
 function getCurrentVersion() {
   return validateInventory(ROOT).sourceVersion
 }
@@ -400,9 +423,9 @@ switch (command) {
     const useBeta = command === 'beta' || args.includes('--beta')
 
     // Beta: advance the committed X.Y.Z-beta.N line and promote the
-    // [Unreleased] CHANGELOG section into [vX.Y.Z-beta.N], exactly like the
-    // stable path. The committed manifest is the single source of truth — no
-    // npm lookup, no git lookup, and no runtime version computation.
+    // [Unreleased] CHANGELOG section into [vX.Y.Z-beta.N]. Optional --notes
+    // uses commits since the latest beta tag; without it, the manual
+    // [Unreleased] body is preserved.
     if (useBeta) {
       if (!contentHasUnreleased())
         throw new Error('CHANGELOG.md is missing the [Unreleased] section')
@@ -410,7 +433,18 @@ switch (command) {
       const newVersion = nextBetaVersion(current)
       const date = new Date().toISOString().slice(0, 10)
       console.log(`Bumping ${current} → ${newVersion} (beta)`)
-      const changelogPlan = prepareUnreleased(newVersion, date)
+      let notesBody = null
+      if (useNotes) {
+        const since = getLatestBetaTag()
+        if (!since) throw new Error('cannot generate beta release notes: no prior beta tag found')
+        const raw = collectEntries({ since })
+        notesBody = renderChangelog(groupCommits(raw.map(parseCommitLine)))
+        if (!notesBody) {
+          throw new Error(`cannot generate beta release notes: no generated notes since ${since}`)
+        }
+        console.log(`  --notes generated from ${raw.length} commits since ${since}`)
+      }
+      const changelogPlan = prepareUnreleased(newVersion, date, notesBody)
       const manifestPlan = prepareManifests(newVersion)
       commitPreparedRelease(
         { ...manifestPlan, version: newVersion },
@@ -508,9 +542,11 @@ Commands:
   apply [type]         Bump manifests + move [Unreleased] → [vX.Y.Z]
                        type: patch | minor | major | auto (default: auto)
                        --notes: pre-fill the promoted entry with release
-                       notes generated from conventional commits
+                       notes since the latest stable tag
                        --beta: advance the committed X.Y.Z-beta.N line and
                        promote [Unreleased] → [vX.Y.Z-beta.N] in CHANGELOG
+                       --beta --notes: generate notes since the latest beta tag
+                       (fails without a beta baseline or non-empty notes)
   beta                 Alias for 'apply --beta'
   changelog [version]  Promote [Unreleased], or merge into an existing version section
 

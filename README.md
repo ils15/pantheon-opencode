@@ -448,6 +448,10 @@ visibility, and a bounded edit in an isolated project. It does not prove npm
 publication or compatibility with untested host versions; details are in the
 [release process](docs/RELEASING.md).
 
+Generate beta release notes from commits since the latest prior beta tag with
+`node scripts/versioning.mjs apply --beta --notes`. See the [release
+procedure](docs/RELEASING.md) for details.
+
 ## Status
 
 The manifests in this checkout express the version being prepared, not a
