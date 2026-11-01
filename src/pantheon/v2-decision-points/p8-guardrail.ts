@@ -29,8 +29,9 @@
  *
  * ## Blast radius (N5) — measured: the declared rules match nothing
  *
- * PROBE-F (`.pantheon/deepwork/decision-layer-v2/PROBE-F-permission-paths.md`)
- * delivered 24 real `permission.evaluate` events on the 2.2.5 host. Every one
+ * PROBE-F (permission.evaluate paths; measured facts summarized in
+ * docs/reference/local-decision-router.md) delivered 24 real
+ * `permission.evaluate` events on the 2.2.5 host. Every one
  * carries a valid `action` token and a non-empty top-level `sessionID`
  * (PROBE-F §3.2), so neither declared rule can match: `action.unusable` needs a
  * non-token action, `allow.unattributed` needs an `allow` with no session. With

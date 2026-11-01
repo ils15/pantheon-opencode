@@ -172,7 +172,10 @@ candidate comparison.
 ## Safety and current non-authorization
 
 - **JEV remains disabled by default and opt-in only.** This protocol does not
-  enable it, change runtime behavior, or authorize its use.
+  enable it, change runtime behavior, or authorize its use. The sanctioned
+  activation path is the explicit `pantheon_jev_decide` tool behind its own
+  consent, budget, and permission chain — see
+  [V2 Native Decisions](v2-native-decisions.md).
 - **Bifrost is research-only here, not an evaluation or production runtime.**
 - Model output may be an advisory label only. It cannot change grants, invoke
   shell, approve work, alter permissions/policy, or dispatch automatically.

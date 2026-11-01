@@ -454,7 +454,10 @@ export function openLocalDecisionBudgetLedger(
     if (
       !verified ||
       !Number.isSafeInteger(verified.actualCostMicros) ||
-      verified.actualCostMicros <= 0 ||
+      // Zero is a legitimate host-reported cost on the native route (the free
+      // Console variant and hosts that do not price Decisions); reconciling at
+      // zero releases the hold instead of burning the period's budget.
+      verified.actualCostMicros < 0 ||
       !isAllowedProvider(verified.provider) ||
       !isAllowedModel(verified.model) ||
       !isValidPeriod(verified.period)

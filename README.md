@@ -98,14 +98,13 @@ see [Quick Start](docs/QUICKSTART.md).
 - **5 local MCP servers** for project memory, persistence, resources, confined
   script execution, and vision.
 - **A selective, advisory decision router** with structured local results and
-  deterministic per-turn skill/specialist recommendations when enabled. V2 adds
-  only local advisory prompt behavior; direct-provider egress is inactive. The
-  explicit, Zeus-only `pantheon_jev_decide` advisory tool additionally calls the
-  host's native Decisions API (TypeSafe Jev via OpenCode Console or a configured
-  decision model) when the user has enabled a native candidate, recorded egress
-  consent, and confirmed budget caps — it never dispatches agents, runs skills,
-  or changes permissions. This does not change separately documented quota and
-  Vision integrations. See the
+  deterministic per-turn skill/specialist recommendations when enabled.
+  Pantheon-owned direct-provider egress is inactive; native egress exists only
+  via the explicit, Zeus-only `pantheon_jev_decide` advisory tool, which calls
+  the host's native Decisions API (TypeSafe Jev via OpenCode Console or a
+  configured decision model) behind the user's consent and budget gates — it
+  never dispatches agents, runs skills, or changes permissions. This does not
+  change separately documented quota and Vision integrations. See the
   [router reference](docs/reference/local-decision-router.md) and the
   [V2 native Decisions status](docs/reference/v2-native-decisions.md).
 - **An optional TUI** with a dispatch sidebar block and a full-width
@@ -256,15 +255,10 @@ uses no provider egress: the formerly documented direct-provider route remains
 historical/inactive, and legacy consent, caps, period, provider selection, or
 credentials cannot activate it. Native child-session dispatch remains separate.
 
-On hosts that expose the V2.2.5 native Decisions API
-(`ctx.experimental.generate.decisions`) and the model catalog, the Zeus-only
-`pantheon_jev_decide` tool offers explicit, on-demand typed decisions (choice,
-score, predicate) answered by the Jev decision model. Every call passes the full
-gate chain — enabled config with egress consent, exactly one cap-valid native
-candidate in the budget ledger, the host permission kill-switch on
-`decision.egress`, and a bounded request preparer — and settles the reservation
-from the host-reported cost before returning advisory-only answers. A host
-without the native API simply does not register the tool.
+The one native egress surface is the Zeus-only `pantheon_jev_decide` tool,
+available on hosts that expose the V2.2.5 native Decisions API; its full gate
+chain, routes, and settlement rules are documented once in
+[V2 native Decisions](docs/reference/v2-native-decisions.md).
 
 The installer may retain a legacy target-specific preference; it does not control
 runtime routing. `npx pantheon-opencode decision-router ...` manages stored
@@ -440,7 +434,7 @@ recorded in the [router reference](docs/reference/local-decision-router.md).
 | [Compatibility](docs/COMPATIBILITY.md) | [OpenCode V2](docs/opencode-v2.md) |
 | [Agents & Skills](docs/agents/README.md) | [Platforms](docs/PLATFORMS.md) |
 | [Release Process](docs/RELEASING.md) | [Branch Protection](docs/BRANCH-PROTECTION.md) |
-| [Model Routing](docs/reference/model-routing.md) | [Local Decision Router](docs/reference/local-decision-router.md) · [Offline Evaluation Protocol](docs/reference/offline-evaluation.md) · [Env Vars](docs/reference/env-vars.md) · [Code Mode](docs/reference/code-mode.md) |
+| [Model Routing](docs/reference/model-routing.md) | [Local Decision Router](docs/reference/local-decision-router.md) · [V2 Native Decisions](docs/reference/v2-native-decisions.md) · [Offline Evaluation Protocol](docs/reference/offline-evaluation.md) · [Env Vars](docs/reference/env-vars.md) · [Code Mode](docs/reference/code-mode.md) |
 | [Contributing](CONTRIBUTING.md) | [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) |
 
 Memory writes through `pantheon-memory` are serialized, and failed writes are

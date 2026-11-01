@@ -31,14 +31,13 @@ request. Its agent recommendation is advisory only and never dispatches a
 specialist, changes grants, authorizes shell, or relaxes an approval gate. The
 manual advisory API/tool remain separate.
 
-## Historical direct-provider route (inactive)
+## Historical direct-provider route (removed)
 
 Earlier revisions also documented direct-provider calls from the prompt path.
-That branch is detached: the production hook does not call its provider selector
-or transport. Legacy consent, caps, period, provider selection, credentials, and
-permission settings do not wire it back in. Old provider cache, payload,
-permission, and transport tests describe retained helper code only; they are not a
-current route, live-provider guarantee, or native Decisions fallback.
+That branch was detached from the production hook and has since been removed
+entirely (runner, payload protocol, and fetch-path usage verifier). Legacy
+consent, caps, period, provider selection, credentials, and permission settings
+do not bring it back: there is no Pantheon-owned transport left to wire.
 
 ## Local orchestration advisory
 
@@ -192,15 +191,15 @@ historical canary and test records describe old adapter assumptions only; they d
 not establish a current host permission contract, provider eligibility, or
 egress safety.
 
-## Historical provider eligibility, payload, protocol, and ledger (inert)
+## Historical provider eligibility, payload, protocol, and ledger (removed)
 
 Provider/model eligibility tables, endpoint and payload descriptions, pricing,
 permission assertions, and admission/reconciliation requirements from previous
-revisions are historical documentation, not a current runtime contract. The old
-private provider adapter and local budget helpers remain in source, but the V2
-production prompt hook does not invoke them and the package does not export the
-provider runner. Offline tests that stub `fetch` exercise helper code only; they
-do not demonstrate or authorize production egress.
+revisions are historical documentation, not a current runtime contract. The
+direct-fetch provider adapter, its payload protocol, and the fetch-path usage
+verifier were removed from source; the ledger remains and now settles the
+native route from host-reported cost. Nothing in the package performs a
+Pantheon-owned provider request.
 
 There is no active per-turn provider allowlist or route in this subsystem. The
 explicit `pantheon_jev_decide` tool is the only native egress surface; it is

@@ -13,7 +13,6 @@ import {
 import {
   DECISION_EGRESS_ACTION,
   decisionPermissionSource,
-  resolveDecisionEgressConsent,
 } from '../../src/pantheon/local-decision-egress-gate.ts'
 import { TODO_CONTINUATION_PROMPT } from '../../src/pantheon/todo-enforcer.ts'
 import { BRIDGE_OPTIONS_KEY } from '../../src/pantheon/v2-bridge.ts'
@@ -687,7 +686,6 @@ async function main(): Promise<void> {
       } finally {
         ledger.close()
       }
-      assert.equal(resolveDecisionEgressConsent().ok, true)
       globalThis.fetch = (async () => {
         fetchCalls += 1
         throw new Error('offline provider-call spy')

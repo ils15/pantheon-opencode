@@ -37,6 +37,8 @@ of repeating it.
 | Topic | Page |
 |---|---|
 | Model routing analysis and per-agent fallbacks | [Model Routing](reference/model-routing.md) |
+| Local decision router (per-turn advisory selector) | [Local Decision Router](reference/local-decision-router.md) |
+| Native Jev Decisions tool and gate chain | [V2 Native Decisions](reference/v2-native-decisions.md) |
 | Offline protocol for evaluating agent routing and task complexity | [Offline Evaluation](reference/offline-evaluation.md) |
 | Environment variables that change behavior | [Environment Variables](reference/env-vars.md) |
 | Confined script execution and approval manifests | [Code Mode](reference/code-mode.md) |

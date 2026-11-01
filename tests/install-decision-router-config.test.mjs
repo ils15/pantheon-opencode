@@ -24,7 +24,6 @@ import {
   projectDecisionRouterInstallState,
   REMOTELY_ELIGIBLE_DECISION_PROVIDERS,
   readUserDecisionRouterConfig,
-  resolveDecisionRouterProvider,
   resolveUserDecisionRouterCandidate,
   resolveUserDecisionRouterConfigPath,
   updateUserDecisionRouterConfig,
@@ -60,56 +59,6 @@ test('versioned preferences preserve provider and only an explicit boolean conse
     provider: 'auto',
     egress_consent: false,
   })
-})
-
-test('Auto only returns one explicitly authorized provider with consent and a configured budget', () => {
-  const auto = createDecisionRouterConfig('auto', true)
-  const options = { budgetConfigured: true }
-
-  assert.equal(
-    resolveDecisionRouterProvider(auto, { ...options, authorizedProviders: [] }),
-    'local',
-  )
-  assert.equal(
-    resolveDecisionRouterProvider(auto, {
-      ...options,
-      authorizedProviders: ['openai-decisions', 'jev'],
-    }),
-    'local',
-  )
-  assert.equal(
-    resolveDecisionRouterProvider(auto, {
-      ...options,
-      authorizedProviders: ['jev'],
-    }),
-    'jev',
-  )
-  assert.equal(
-    resolveDecisionRouterProvider(auto, {
-      authorizedProviders: ['jev'],
-      budgetConfigured: false,
-    }),
-    'local',
-  )
-  assert.equal(
-    resolveDecisionRouterProvider(createDecisionRouterConfig('openai-decisions', false), {
-      ...options,
-      authorizedProviders: ['openai-decisions'],
-    }),
-    'local',
-  )
-})
-
-test('provider resolution never inspects credentials or environment values', () => {
-  const config = createDecisionRouterConfig('auto', true)
-  assert.equal(
-    resolveDecisionRouterProvider(config, {
-      authorizedProviders: [],
-      budgetConfigured: true,
-    }),
-    'local',
-  )
-  assert.deepEqual(Object.keys(config).sort(), ['egress_consent', 'provider', 'schema_version'])
 })
 
 test('install-state migration gives old installs Local/disabled and persists versioned preference', () => {

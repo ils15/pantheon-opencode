@@ -121,22 +121,24 @@ turn, record no telemetry and change nothing — not because they are disabled, 
 because nothing constructs them. Coverage and unmeasured surfaces are in
 [Local Decision Router](local-decision-router.md#measured-coverage-and-unmeasured-surfaces-v2-decision-layer).
 
-## Decision-provider transport
+## Decision-provider credentials
 
-Provider calls are disabled unless the user-level decision-router config is
-explicitly enabled and every local gate passes. See
-[Local Decision Router](local-decision-router.md).
+There is no Pantheon-owned decision transport. The only egress surface is the
+host's native Decisions API, invoked by the explicit `pantheon_jev_decide`
+tool behind the user-level config, budget, and permission gates — see
+[V2 Native Decisions](v2-native-decisions.md). The variables below are listed
+because decision-router code mentions them; none is read on a production path.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `OPENAI_API_KEY` | unset | Credential read only after enablement, consent, a cap-valid OpenAI Decisions candidate, a confirmed period, and the host permission gate. Never used by the local selector. |
-| `TYPESAFE_API_KEY` | unset | Same gate for TypeSafe direct Jev (`jev-1.14.0`). |
-| `OPENCODE_API_KEY` | unset | Not read by the decision router for OpenCode Console/Free; those providers are ineligible for egress. It remains in use by other documented OpenCode integrations. |
+| `OPENAI_API_KEY` | unset | Not read anywhere. Direct OpenAI has no native Decisions route and is never substituted. |
+| `TYPESAFE_API_KEY` | unset | Not read anywhere. The native TypeSafe route uses host-owned `/connect` credentials, never a Pantheon env read. |
+| `OPENCODE_API_KEY` | unset | Not read by the decision router for OpenCode Console/Free; the native route uses the host's own Console auth. It remains in use by other documented OpenCode integrations. |
 
-There is no configurable base URL, retry, failover, or fan-out switch. The fixed
-endpoints, one-call-per-turn cache, and 12,000-character request cap live in the
-private adapter. Console/Free and Bifrost are never eligible. Caps have no
-defaults, and a denied host permission means zero requests.
+There is no configurable base URL, retry, failover, or fan-out switch, and caps
+have no defaults. The request bound (one bounded text state, 1–4 typed
+questions) lives in the native request preparer; a denied host permission means
+zero requests.
 
 ## Runtime-specific
 
