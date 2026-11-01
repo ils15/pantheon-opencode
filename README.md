@@ -451,6 +451,9 @@ publication or compatibility with untested host versions; details are in the
 Generate beta release notes from commits since the latest prior beta tag with
 `node scripts/versioning.mjs apply --beta --notes`. See the [release
 procedure](docs/RELEASING.md) for details.
+After the version bump, verify and rebuild the TUI workspace from the repository
+root with `npm run typecheck --workspace=src/plugins/tui` and
+`npm run build --workspace=src/plugins/tui`.
 The maintainer-only `release` scope is excluded from public notes and their
 Closed Issues references; see the [release-notes policy](docs/RELEASING.md#release-notes).
 
