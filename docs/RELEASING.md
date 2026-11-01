@@ -33,10 +33,11 @@ node scripts/versioning.mjs apply minor    # explicit type: patch | minor | majo
 node scripts/versioning.mjs apply --notes  # pre-fill the promoted entry with
                                            # release notes generated from commits
 
-# Advance the committed beta line (X.Y.Z-beta.N → X.Y.Z-beta.(N+1)) and
-# promote [Unreleased] → [vX.Y.Z-beta.N], exactly like the stable path.
+# Advance the committed beta line and promote the manual [Unreleased] body
 node scripts/versioning.mjs apply --beta
 node scripts/versioning.mjs beta           # alias for apply --beta
+# Replace [Unreleased] with generated notes since the latest beta tag
+node scripts/versioning.mjs apply --beta --notes
 
 # Merge pending notes into an already-promoted candidate without a version bump
 node scripts/versioning.mjs changelog 1.6.0-beta.10
@@ -59,12 +60,16 @@ npm install --prefix src/plugins/tui && npm run build --prefix src/plugins/tui
 `apply` syncs the version manifests (`package.json`, `plugin.json`,
 `pyproject.toml`, [`src/plugins/tui/package.json`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/tui/package.json)) and promotes the
 `[Unreleased]` changelog section to a versioned entry. `apply --beta` (alias
-`beta`) does the same: it syncs the manifests to the next committed
-`X.Y.Z-beta.N` **and** promotes `[Unreleased]` to `## [vX.Y.Z-beta.N]`. Do not
-edit `CHANGELOG.md` by hand. When the target version section already exists,
-`versioning.mjs changelog <version>` merges `[Unreleased]` into that section
-and resets the template without advancing the package version or duplicating
-the release heading. Release validation also
+`beta`) syncs the manifests to the next committed `X.Y.Z-beta.N` **and**
+promotes `[Unreleased]` to `## [vX.Y.Z-beta.N]`; without `--notes`, it keeps
+the manual `[Unreleased]` body. With `--beta --notes`, the promoted body is
+generated from commits since the latest beta tag (not the latest stable tag),
+using the same release-notes parser and renderer as the stable path. It fails
+before writing files if no beta baseline exists or the generated notes are
+empty. Do not edit `CHANGELOG.md` by hand. When the target version section
+already exists, `versioning.mjs changelog <version>` merges `[Unreleased]`
+into that section and resets the template without advancing the package
+version or duplicating the release heading. Release validation also
 keeps the root pair (`package.json` + `package-lock.json`) and the TUI pair
 ([`src/plugins/tui/package.json`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/tui/package.json) + [`src/plugins/tui/package-lock.json`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/tui/package-lock.json)) in the
 same versioned inventory. The TUI is a root **workspace**, so CI installs both
@@ -178,25 +183,31 @@ both dispatch channels; only the stable channel attaches it to a GitHub Release:
 | Channel | Notes source |
 |---------|--------------|
 | stable | `node scripts/changelog-extract.mjs X.Y.Z` reads the curated `## [X.Y.Z]` section from `CHANGELOG.md`; the dispatch fails if the section is missing. Used as the GitHub Release body. |
-| beta | `node scripts/changelog-extract.mjs X.Y.Z-beta.N` reads the curated `## [X.Y.Z-beta.N]` section from `CHANGELOG.md`; the dispatch fails if the section is missing. Carried in the release artifact only — beta creates no GitHub Release. |
+| beta | `node scripts/changelog-extract.mjs X.Y.Z-beta.N` reads the curated `## [X.Y.Z-beta.N]` section from `CHANGELOG.md`; the dispatch fails if the section is missing. Carried in the release artifact only — beta creates no GitHub Release. The workflow does not regenerate notes at dispatch time. |
 | recovery | Static note (`Recovery publish for existing tag ...`); the original notes are not regenerated. |
 
 The version is committed, so a `CHANGELOG.md` section is authorable before the
-dispatch and is required for **both** channels. Beta does not use generated
-conventional-commit notes.
+dispatch and is required for **both** channels. Stable `apply --notes` uses
+the latest stable tag; beta note generation is opt-in through
+`apply --beta --notes` and uses the latest beta tag. Without `--notes`, beta
+notes remain manually curated. In either channel, the dispatch extracts the
+committed changelog section and does not generate notes itself.
 
 ### Flow
 
 1. **Commit** — Conventional Commits enforced by commitlint (local hook + CI).
-2. **Generate** — `node scripts/release-notes.mjs` → paste the output into the
-   `[Unreleased]` section, or let `apply --notes` do it automatically.
+2. **Generate** — For stable, `node scripts/release-notes.mjs` uses the latest
+   stable tag; paste its output into `[Unreleased]` or use `apply --notes`.
+   For beta, use `apply --beta --notes` to generate since the latest beta tag,
+   or leave `--notes` off to keep manually curated content.
 3. **CHANGELOG** — `node scripts/versioning.mjs apply minor [--notes]` bumps
-   the manifests and promotes `[Unreleased]` → `[vX.Y.Z]`. With `--notes` the
-   promoted entry is pre-filled from the grouped commits (mapped to the final
-   emoji groups `## 🆕 What's New / 🐞 Fixed / ⚠️ Known Issues /
-   ✅ Closed Issues`); without it the flow stays manual. `--notes`
-   **replaces** any manual `[Unreleased]` content — review the diff before
-   committing.
+   the stable manifests and promotes `[Unreleased]` → `[vX.Y.Z]`; beta uses
+   `apply --beta [--notes]` and promotes to `[vX.Y.Z-beta.N]`. With `--notes`
+   the promoted entry is pre-filled from grouped commits (the final emoji
+   groups `## 🆕 What's New / 🐞 Fixed / ⚠️ Known Issues / ✅ Closed Issues`);
+   it **replaces** any manual `[Unreleased]` content. Beta `--notes` fails
+   before writes when there is no beta baseline or the generated notes are
+   empty. Review the diff before committing.
 4. **Release body by channel** — `node scripts/changelog-extract.mjs <version>`
    pulls the curated versioned section into the GitHub Release body for both
    stable (`X.Y.Z`) and beta (`X.Y.Z-beta.N`), and fails if the section is
@@ -388,8 +399,9 @@ the stable path.
    the committed version; it never computes a beta version and never queries
    npm for a baseline. A version that is not `X.Y.Z-beta.N` fails the gate.
 3. **CHANGELOG** — the bump PR must contain a `## [X.Y.Z-beta.N] - date` section;
-   the release body is extracted from it and the dispatch fails if it is
-   missing. Beta does not use generated conventional-commit notes.
+   it may be manually curated with `apply --beta` or generated with
+   `apply --beta --notes`. The release body is extracted from this committed
+   section; the dispatch fails if it is missing and does not regenerate notes.
 4. **Tag** — the immutable tag `vX.Y.Z-beta.N` is created on the **dispatch
    target SHA**. Beta creates **no** GitHub Release: the official Zenodo ↔
    GitHub integration archives every Release (pre-releases included), so a beta
