@@ -33,6 +33,19 @@ const RELEASE_FILES = [
   'src/plugins/tui/package-lock.json',
 ]
 const BETA_VERSION = '1.6.2-beta.4'
+const CHANGELOG_HEADER = `# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+
+## [Unreleased]
+
+<!-- Add new changes here. Running \`node scripts/versioning.mjs apply\` will
+     move this section to a versioned entry and reset the template below. -->
+
+`
 const fixtures = []
 
 test.after(() => {
@@ -43,7 +56,24 @@ function git(root, args) {
   return execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim()
 }
 
-function createFixture({ version = BETA_VERSION, unreleasedNote = null } = {}) {
+function fixtureChangelog(version) {
+  return `${CHANGELOG_HEADER}## [v${version}] - 2000-01-01
+
+### Added
+
+- **fixture** — Baseline entry for ${version}.
+`
+}
+
+function getFixtureVersion(root) {
+  return JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version
+}
+
+function createFixture({
+  version = BETA_VERSION,
+  unreleasedNote = null,
+  sourceVersion = null,
+} = {}) {
   const root = mkdtempSync(join(tmpdir(), 'pantheon-beta-release-notes-'))
   fixtures.push(root)
   for (const file of [...SCRIPT_FILES, ...RELEASE_FILES, 'CHANGELOG.md']) {
@@ -52,7 +82,16 @@ function createFixture({ version = BETA_VERSION, unreleasedNote = null } = {}) {
     copyFileSync(join(ROOT, file), target)
   }
 
-  if (version !== BETA_VERSION) setFixtureVersion(root, version)
+  // Allow tests to model a checked-out release candidate without changing the
+  // repository sources. Normalize both the copied manifests and changelog
+  // below so fixtures never inherit candidate state from the checkout.
+  if (sourceVersion) {
+    setFixtureVersion(root, sourceVersion)
+    writeFileSync(join(root, 'CHANGELOG.md'), fixtureChangelog(sourceVersion))
+  }
+  setFixtureVersion(root, version)
+  writeFileSync(join(root, 'CHANGELOG.md'), fixtureChangelog(version))
+
   if (unreleasedNote) {
     const changelogPath = join(root, 'CHANGELOG.md')
     const changelog = readFileSync(changelogPath, 'utf8')
@@ -74,12 +113,34 @@ function createFixture({ version = BETA_VERSION, unreleasedNote = null } = {}) {
   return root
 }
 
-function setFixtureVersion(root, version, currentVersion = BETA_VERSION) {
+function setFixtureVersion(root, version, currentVersion = getFixtureVersion(root)) {
   for (const file of RELEASE_FILES) {
     const path = join(root, file)
     const content = readFileSync(path, 'utf8')
     writeFileSync(path, content.replaceAll(currentVersion, version))
   }
+}
+
+function assertFixtureVersion(root, expectedVersion) {
+  const packageJson = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+  const packageLock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'))
+  const plugin = JSON.parse(readFileSync(join(root, 'plugin.json'), 'utf8'))
+  const tuiPackage = JSON.parse(readFileSync(join(root, 'src/plugins/tui/package.json'), 'utf8'))
+  const tuiLock = JSON.parse(readFileSync(join(root, 'src/plugins/tui/package-lock.json'), 'utf8'))
+  const zenodo = JSON.parse(readFileSync(join(root, '.zenodo.json'), 'utf8'))
+  const pyproject = readFileSync(join(root, 'pyproject.toml'), 'utf8')
+  const citation = readFileSync(join(root, 'CITATION.cff'), 'utf8')
+
+  assert.equal(packageJson.version, expectedVersion)
+  assert.equal(packageLock.version, expectedVersion)
+  assert.equal(packageLock.packages[''].version, expectedVersion)
+  assert.equal(plugin.version, expectedVersion)
+  assert.equal(tuiPackage.version, expectedVersion)
+  assert.equal(tuiLock.version, expectedVersion)
+  assert.equal(tuiLock.packages[''].version, expectedVersion)
+  assert.equal(zenodo.version, expectedVersion)
+  assert.match(pyproject, new RegExp(`^version = "${expectedVersion}"$`, 'm'))
+  assert.match(citation, new RegExp(`^version: ${expectedVersion}$`, 'm'))
 }
 
 function addCommit(root, subject) {
@@ -107,6 +168,22 @@ function snapshot(root, directory = root) {
   }
   return files.sort(([left], [right]) => left.localeCompare(right))
 }
+
+test('versioning fixtures normalize beta, stable, and synthetic beta.5 candidate inputs', () => {
+  const betaRoot = createFixture()
+  assertFixtureVersion(betaRoot, BETA_VERSION)
+  assert.equal(readFileSync(join(betaRoot, 'CHANGELOG.md'), 'utf8'), fixtureChangelog(BETA_VERSION))
+
+  const stableRoot = createFixture({ version: '1.6.2' })
+  assertFixtureVersion(stableRoot, '1.6.2')
+  assert.equal(readFileSync(join(stableRoot, 'CHANGELOG.md'), 'utf8'), fixtureChangelog('1.6.2'))
+
+  const candidateRoot = createFixture({ sourceVersion: '1.6.2-beta.5' })
+  assertFixtureVersion(candidateRoot, BETA_VERSION)
+  const changelog = readFileSync(join(candidateRoot, 'CHANGELOG.md'), 'utf8')
+  assert.equal(changelog, fixtureChangelog(BETA_VERSION))
+  assert.doesNotMatch(changelog, /^## \[v1\.6\.2-beta\.5\]/m)
+})
 
 test('beta --notes uses the newest beta baseline and promotes the generated range', () => {
   const root = createFixture({ version: '1.6.2-beta.3' })
