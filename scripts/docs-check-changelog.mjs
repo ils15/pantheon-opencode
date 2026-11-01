@@ -26,7 +26,8 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const CHANGELOG = process.argv[2] ? process.argv[2] : join(ROOT, 'CHANGELOG.md')
 const MAX_BULLET = 200
 const ALLOWED_H3 = new Set(['Added', 'Changed', 'Deprecated', 'Removed', 'Fixed', 'Security'])
-const EMOJI_H2 = /^##\s+\p{Extended_Pictographic}/u
+const EMOJI_H2 =
+  /^##\s+(?:\p{Extended_Pictographic}|\p{Regional_Indicator}{2}|[#*0-9]\uFE0F?\u20E3)/u
 const ALLOWED_GENERATED_H2 = /^##\s+(?:🆕 What's New|🐞 Fixed)\s*$/
 const STABLE_VERSION_HEADING = /^## \[v?(\d+\.\d+\.\d+)\] - \d{4}-\d{2}-\d{2}$/
 // Historical headings may carry a pre-release suffix, a month-only date, or a

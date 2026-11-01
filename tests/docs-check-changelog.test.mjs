@@ -45,10 +45,25 @@ test('accepts the two official generated emoji changelog headings', () => {
 })
 
 test('rejects unsupported emoji changelog headings', () => {
-  const result = checkChangelog(['## 🆕 Updates', '## ⚠️ Known Issues', '## 🧪 Experimental'])
+  const result = checkChangelog([
+    '## 🆕 Updates',
+    '## ⚠️ Known Issues',
+    '## 🧪 Experimental',
+    '## 🇺🇸 Updates',
+    '## 1️⃣ Updates',
+  ])
 
   assert.notEqual(result.status, 0)
   assert.match(result.stderr, /emoji H2 is not allowed \(## 🆕 Updates\)/)
   assert.match(result.stderr, /emoji H2 is not allowed \(## ⚠️ Known Issues\)/)
   assert.match(result.stderr, /emoji H2 is not allowed \(## 🧪 Experimental\)/)
+  assert.match(result.stderr, /emoji H2 is not allowed \(## 🇺🇸 Updates\)/)
+  assert.match(result.stderr, /emoji H2 is not allowed \(## 1️⃣ Updates\)/)
+})
+
+test('preserves ordinary non-emoji legacy H2 semantics', () => {
+  const result = checkChangelog(['## Updates'])
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /docs:check-changelog OK/)
 })
