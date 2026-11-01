@@ -11,10 +11,6 @@ import { performance } from "node:perf_hooks";
 import { DatabaseSync } from "node:sqlite";
 
 // src/pantheon/local-decision-usage-evidence.internal.ts
-var MODEL_IDS = Object.freeze({
-  "openai-decisions": "gpt-6-luna",
-  "typesafe-jev": "jev-1.14.0"
-});
 var evidenceDetails = /* @__PURE__ */ new WeakMap();
 function getVerifiedUsageEvidenceDetails(value) {
   if (typeof value !== "object" && typeof value !== "function" || value === null) return null;
@@ -287,7 +283,10 @@ function openLocalDecisionBudgetLedger(options = {}) {
       return { status: "unknown" };
     }
     const verified = getVerifiedUsageEvidenceDetails(evidence);
-    if (!verified || !Number.isSafeInteger(verified.actualCostMicros) || verified.actualCostMicros <= 0 || !isAllowedProvider(verified.provider) || !isAllowedModel(verified.model) || !isValidPeriod(verified.period)) {
+    if (!verified || !Number.isSafeInteger(verified.actualCostMicros) || // Zero is a legitimate host-reported cost on the native route (the free
+    // Console variant and hosts that do not price Decisions); reconciling at
+    // zero releases the hold instead of burning the period's budget.
+    verified.actualCostMicros < 0 || !isAllowedProvider(verified.provider) || !isAllowedModel(verified.model) || !isValidPeriod(verified.period)) {
       return { status: "unknown" };
     }
     return inImmediateTransaction(() => {

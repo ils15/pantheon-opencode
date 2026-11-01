@@ -70,6 +70,9 @@ nav:
   - Platforms: PLATFORMS.md
   - Reference:
       - Model Routing: reference/model-routing.md
+      - Local Decision Router: reference/local-decision-router.md
+      - Native Decisions (Jev): reference/native-decisions.md
+      - Offline Evaluation: reference/offline-evaluation.md
       - Environment Variables: reference/env-vars.md
       - Code Mode: reference/code-mode.md
   - Release Process:

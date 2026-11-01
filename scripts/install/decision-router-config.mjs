@@ -80,7 +80,6 @@ const LEGACY_USER_CONFIG_KEYS = [
  * new install-time option appears.
  */
 const ACCEPTED_INSTALL_STATE_PROVIDERS = new Set([...DECISION_ROUTER_PROVIDERS, 'typesafe-jev'])
-const externalProviderSet = new Set(['openai-decisions', 'jev', 'typesafe-jev'])
 
 /** Canonicalize the legacy `jev` spelling once, at every user-config boundary. */
 export function normalizeDecisionProviderId(provider) {
@@ -125,29 +124,11 @@ export function createDecisionRouterConfig(provider, egressConsent = false) {
 
 /**
  * Resolve a preference without probing the environment or credentials.
- * Auto can choose only one separately authorized provider; zero or multiple
- * candidates, missing consent, or a missing explicit budget all stay Local.
- * @param {{ schema_version?: number, provider?: string, egress_consent?: boolean }} config
- * @param {{ authorizedProviders?: string[], budgetConfigured?: boolean }} [options]
- * @returns {'local'|'openai-decisions'|'jev'|'typesafe-jev'}
+ * (The legacy `resolveDecisionRouterProvider` auto resolver was removed with
+ * the direct-fetch provider path; runtime selection uses
+ * `resolveUserDecisionRouterCandidate` / `explainUserDecisionRouterAutoSelection`
+ * and the native route resolver.)
  */
-export function resolveDecisionRouterProvider(
-  config,
-  { authorizedProviders = [], budgetConfigured = false } = {},
-) {
-  const preference = migrateDecisionRouterConfig(config)
-  if (!preference.egress_consent || budgetConfigured !== true) return 'local'
-  if (preference.provider === 'local') return 'local'
-
-  if (preference.provider === 'auto') {
-    const candidates = [
-      ...new Set(authorizedProviders.filter((provider) => externalProviderSet.has(provider))),
-    ]
-    return candidates.length === 1 ? candidates[0] : 'local'
-  }
-
-  return externalProviderSet.has(preference.provider) ? preference.provider : 'local'
-}
 
 /**
  * Resolve Pantheon's private non-secret user configuration path.

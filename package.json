@@ -1,6 +1,6 @@
 {
   "name": "pantheon-opencode",
-  "version": "1.6.2-beta.5",
+  "version": "1.6.2-beta.6",
   "description": "Multi-agent orchestration for OpenCode — 14 specialized agents, TDD, Themis review gates.",
   "type": "module",
   "workspaces": [
@@ -120,6 +120,7 @@
     "@biomejs/biome": "2.5.14",
     "@commitlint/cli": "21.2.3",
     "@commitlint/config-conventional": "21.2.3",
+    "@opencode/plugin": "2.2.5",
     "ajv": "8.20.0",
     "esbuild": "0.28.2",
     "husky": "^9.1.7",

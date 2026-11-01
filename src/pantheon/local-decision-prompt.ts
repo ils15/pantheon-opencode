@@ -1,4 +1,4 @@
-import { decideForTurn, type TurnDecision, type TurnDecisionInput } from './local-decision-turn.ts'
+import { decideLocalForTurn, type TurnDecision } from './local-decision-turn.ts'
 import { isPantheonAgentId, isPantheonSkillId } from './pantheon-decision-catalog.ts'
 
 const MARKER_PREFIX = '<!-- pantheon-decision-router:v1'
@@ -223,14 +223,9 @@ export function hasDecisionRouterMarker(text: unknown): boolean {
   return typeof text === 'string' && MARKER_PATTERN.test(text)
 }
 
-/**
- * Compute and apply the advisory decision to a host admission payload. The
- * optional `requestText` lets the caller keep Pantheon's own visual context out
- * of the decision input; malformed payloads are a no-op.
- */
+/** Apply the local advisory selector while keeping provider egress out of this route. */
 export async function applyDecisionRouterToPrompt(
   admission: unknown,
-  permissionAssert?: TurnDecisionInput['permissionAssert'],
   requestText?: string,
 ): Promise<PromptApplicationResult> {
   const none = (reason: PromptApplicationReason): PromptApplicationResult => ({
@@ -255,11 +250,10 @@ export async function applyDecisionRouterToPrompt(
     typeof requestText === 'string' && requestText.trim().length > 0 ? requestText : promptText
   if (hasDecisionRouterMarker(text)) return none('marker.present')
   try {
-    const decision = await decideForTurn({
+    const decision = await decideLocalForTurn({
       request: text,
       sessionID: event.sessionID,
       messageID: event.messageID,
-      permissionAssert,
     })
     return applyTurnDecisionToPrompt(prompt, decision)
   } catch {

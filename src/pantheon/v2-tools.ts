@@ -48,6 +48,7 @@
 
 import { createCostCommand } from './cost-command.ts'
 import { createHashlineEditTool, type HashlineToolResult } from './hashline/tool.ts'
+import { createV2JevDecisionDefinition, type V2JevDecisionRuntime } from './jev-decision-tool.ts'
 import { createV2LocalDecisionDefinition } from './local-decision-tool.ts'
 import { createModelCommand } from './model-command.ts'
 import type { ToolContextLike } from './tool-context.ts'
@@ -449,6 +450,7 @@ export interface V2ToolShadowOptions {
 export function createV2ToolDefinitions(
   visionRuntime?: V2VisionRuntime,
   shadow: V2ToolShadowOptions = {},
+  jevRuntime?: V2JevDecisionRuntime,
 ): V2ToolDef[] {
   const definitions: V2ToolDef[] = [
     {
@@ -496,5 +498,6 @@ export function createV2ToolDefinitions(
     }),
   )
   if (visionRuntime) definitions.push(createV2VisionTool(visionRuntime))
+  if (jevRuntime) definitions.push(createV2JevDecisionDefinition(jevRuntime))
   return definitions
 }

@@ -10,6 +10,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.2-beta.6] - 2026-11-01
+
+### Added
+
+- **routing** — Added the Zeus-only `pantheon_jev_decide` advisory tool: 1–4 typed questions (choice, score, predicate) answered by the Jev decision model through the host's native Decisions API; it registers only on hosts exposing that API and never dispatches agents, runs skills, or changes permissions.
+- **routing** — Added native route selection from the user-level decision-router config (OpenCode Console `jev-1.13` and custom `typesafe-ai` decision models) with a frozen provider→host mapping; direct OpenAI is refused and never substituted.
+- **routing** — Added host-reported settlement: the budget reservation reconciles from the host-reported DecisionResult cost (a reported zero releases the hold), and a failed or unreconciled call stays fail-closed.
+- **routing** — Added catalog presets to `pantheon_jev_decide`: `mode: "skills"` stacks the locally prefiltered skill shortlist (whole-catalog fallback) and `mode: "delegation"` picks a specialist, both single typed calls with `none` always offered.
+- **docs** — Documented the native gate chain, routes, and verification boundary in one reference (`docs/reference/native-decisions.md`) and indexed the decision-layer references in the docs nav; added a real-host canary assertion for the new tool's registration.
+
+### Changed
+
+- **security** — Removed the direct-fetch decision-provider path entirely (runner, payload protocol, fetch-path usage verifier, per-turn provider cache): Pantheon owns no transport, and the only egress is the host's native layer behind the enabled/consent/budget/permission chain. The per-turn prompt hook stays local-only.
+- **security** — The budget ledger now treats a host-reported zero cost as a real zero (releasing the hold) while still freezing user/provider/model buckets when actual cost exceeds the reservation.
+- **docs** — Consolidated the decision-status narrative to one source of truth per surface, corrected stale env-var rows (no decision credential is read on any production path), and removed an orphan planning note (the tracked deepwork note stays: it is the checkout fixture the resources server resolves against).
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
 ## [v1.6.2-beta.5] - 2026-11-01
 
 ## 🆕 What's New

@@ -17,10 +17,22 @@ import {
   openLocalDecisionBudgetLedger,
   resolveLocalDecisionBudgetDbPath,
 } from '../../src/pantheon/local-decision-budget.ts'
-import { verifyProviderUsageForReservation } from '../../src/pantheon/local-decision-usage-evidence.internal.ts'
+import { verifyNativeUsageForReservation } from '../../src/pantheon/local-decision-usage-evidence.internal.ts'
 
 const openai: BudgetProvider = 'openai-decisions'
 const openaiModel = 'gpt-6-luna'
+const jev: BudgetProvider = 'typesafe-jev'
+const jevModel = 'jev-1.14.0'
+
+/** Minimal native host DecisionResult the evidence minter accepts. */
+function nativeResult({ costUsd }: { costUsd?: number } = {}): object {
+  const result: Record<string, unknown> = {
+    answers: [{ type: 'choice', name: 'specialist', choice: 'none' }],
+  }
+  if (costUsd !== undefined) result.cost = costUsd
+  return result
+}
+
 function withTempDir(test: (directory: string) => void): void {
   const directory = mkdtempSync(join(tmpdir(), 'pantheon-budget-'))
   try {
@@ -380,8 +392,8 @@ function testPendingReservationSurvivesRestartAndRecovery(): void {
   withTempDir((directory) => {
     const dbPath = join(directory, 'ledger.sqlite')
     const first = openLocalDecisionBudgetLedger({ dbPath })
-    configure(first, { modelCaps: { monthly: 100, decision: 60 } })
-    const reservation = first.reserve(openai, openaiModel)
+    configure(first, { provider: jev, model: jevModel, modelCaps: { monthly: 100, decision: 60 } })
+    const reservation = first.reserve(jev, jevModel)
     if (reservation.status !== 'reserved') throw new Error('expected reservation')
     first.close()
 
@@ -389,50 +401,27 @@ function testPendingReservationSurvivesRestartAndRecovery(): void {
     const unresolved = reopened.listUncertainReservations()
     assert.equal(unresolved.length, 1)
     assert.equal(unresolved[0]?.state, 'pending')
-    assert.equal(unresolved[0]?.model, openaiModel)
+    assert.equal(unresolved[0]?.model, jevModel)
     assert.equal(reopened.recoverPendingReservations(), 1)
     assert.equal(reopened.listUncertainReservations()[0]?.state, 'uncertain')
-    assert.equal(reopened.reserve(openai, openaiModel).reason, 'monthly-cap')
-    const evidence = verifyProviderUsageForReservation(
+    assert.equal(reopened.reserve(jev, jevModel).reason, 'monthly-cap')
+    const evidence = verifyNativeUsageForReservation(
       {
         reservationId: reservation.reservationId,
-        provider: openai,
-        model: openaiModel,
+        provider: jev,
+        model: jevModel,
         period: reservation.period,
       },
-      openAiUsageResponse({ inputTokens: 100, outputTokens: 20 }),
+      nativeResult({ costUsd: 0.00001 }),
     )
     assert.ok(evidence)
     assert.equal(
       reopened.reconcileVerified(reservation.reservationId, evidence).status,
       'reconciled',
     )
-    assert.equal(reopened.reserve(openai, openaiModel).status, 'reserved')
+    assert.equal(reopened.reserve(jev, jevModel).status, 'reserved')
     reopened.close()
   })
-}
-
-function openAiUsageResponse({
-  inputTokens,
-  outputTokens,
-  cachedTokens = 0,
-  cacheWriteTokens = 0,
-}: {
-  inputTokens: number
-  outputTokens: number
-  cachedTokens?: number
-  cacheWriteTokens?: number
-}): object {
-  return {
-    model: openaiModel,
-    usage: {
-      input_tokens: inputTokens,
-      input_tokens_details: { cache_write_tokens: cacheWriteTokens, cached_tokens: cachedTokens },
-      output_tokens: outputTokens,
-      output_tokens_details: { reasoning_tokens: 0 },
-      total_tokens: inputTokens + outputTokens,
-    },
-  }
 }
 
 function testOpaqueVerifiedEvidenceRoundsCostsAndRejectsForgeryOrMismatch(): void {
@@ -459,40 +448,31 @@ function testOpaqueVerifiedEvidenceRoundsCostsAndRejectsForgeryOrMismatch(): voi
     )
     assert.equal(ledger.listUncertainReservations().length, 1)
 
+    const binding = {
+      reservationId: reservation.reservationId,
+      provider: 'typesafe-jev',
+      model: 'jev-1.14.0',
+      period: reservation.period,
+    }
     assert.equal(
-      verifyProviderUsageForReservation(
-        {
-          reservationId: reservation.reservationId,
-          provider: 'typesafe-jev',
-          model: 'jev-1.14.0',
-          period: reservation.period,
-        },
-        { model: 'jev-1.14.0', usage: { input_tokens: -1, output_tokens: 3 } },
-      ),
+      verifyNativeUsageForReservation(binding, { answers: [{}], cost: -1 }),
       null,
+      'a negative host cost mints nothing',
     )
     assert.equal(
-      verifyProviderUsageForReservation(
-        {
-          reservationId: reservation.reservationId,
-          provider: 'typesafe-jev',
-          model: 'jev-1.14.0',
-          period: reservation.period,
-        },
-        { model: 'jev-1.14.0', usage: { input_tokens: 0, output_tokens: 3 } },
-      ),
+      verifyNativeUsageForReservation(binding, { answers: [{}], cost: '2' }),
       null,
-      'zero-charge evidence cannot release a hold',
+      'a non-numeric host cost mints nothing',
+    )
+    assert.equal(
+      verifyNativeUsageForReservation(binding, { answers: [] }),
+      null,
+      'a result without answers is not evidence a decision was paid for',
     )
 
-    const wrongPeriod = verifyProviderUsageForReservation(
-      {
-        reservationId: reservation.reservationId,
-        provider: 'typesafe-jev',
-        model: 'jev-1.14.0',
-        period: '0001-01',
-      },
-      { model: 'jev-1.14.0', usage: { input_tokens: 1, output_tokens: 3 } },
+    const wrongPeriod = verifyNativeUsageForReservation(
+      { ...binding, period: '0001-01' },
+      nativeResult({ costUsd: 0.000001 }),
     )
     assert.ok(wrongPeriod)
     assert.equal(
@@ -500,14 +480,9 @@ function testOpaqueVerifiedEvidenceRoundsCostsAndRejectsForgeryOrMismatch(): voi
       'mismatch',
     )
 
-    const wrongReservation = verifyProviderUsageForReservation(
-      {
-        reservationId: 'different-reservation',
-        provider: 'typesafe-jev',
-        model: 'jev-1.14.0',
-        period: reservation.period,
-      },
-      { model: 'jev-1.14.0', usage: { input_tokens: 1, output_tokens: 3 } },
+    const wrongReservation = verifyNativeUsageForReservation(
+      { ...binding, reservationId: 'different-reservation' },
+      nativeResult({ costUsd: 0.000001 }),
     )
     assert.ok(wrongReservation)
     assert.equal(
@@ -515,14 +490,9 @@ function testOpaqueVerifiedEvidenceRoundsCostsAndRejectsForgeryOrMismatch(): voi
       'mismatch',
     )
 
-    const wrongProvider = verifyProviderUsageForReservation(
-      {
-        reservationId: reservation.reservationId,
-        provider: 'openai-decisions',
-        model: openaiModel,
-        period: reservation.period,
-      },
-      openAiUsageResponse({ inputTokens: 100, outputTokens: 20 }),
+    const wrongProvider = verifyNativeUsageForReservation(
+      { ...binding, provider: 'jev-free', model: 'jev-1.13-free' },
+      nativeResult({ costUsd: 0.000001 }),
     )
     assert.ok(wrongProvider)
     assert.equal(
@@ -530,40 +500,19 @@ function testOpaqueVerifiedEvidenceRoundsCostsAndRejectsForgeryOrMismatch(): voi
       'mismatch',
     )
 
-    assert.equal(
-      verifyProviderUsageForReservation(
-        {
-          reservationId: reservation.reservationId,
-          provider: 'opencode-console' as never,
-          model: 'jev-1.13-free',
-          period: reservation.period,
-        },
-        { model: 'jev-1.13-free', usage: { input_tokens: 0, output_tokens: 0 } },
-      ),
-      null,
-    )
     assert.equal(ledger.listUncertainReservations().length, 1)
     assert.equal(ledger.reserve('typesafe-jev', 'jev-1.14.0').reason, 'monthly-cap')
 
-    const correctEvidence = verifyProviderUsageForReservation(
-      {
-        reservationId: reservation.reservationId,
-        provider: 'typesafe-jev',
-        model: 'jev-1.14.0',
-        period: reservation.period,
-      },
-      { model: 'jev-1.14.0', usage: { input_tokens: 1, output_tokens: 3 } },
-    )
-    assert.ok(correctEvidence)
-    assert.deepEqual(ledger.reconcileVerified(reservation.reservationId, correctEvidence), {
+    // Absent host cost is a real zero: reconciling releases the hold instead
+    // of burning the period's budget (free Console variants).
+    const zeroCost = verifyNativeUsageForReservation(binding, nativeResult())
+    assert.ok(zeroCost)
+    assert.deepEqual(ledger.reconcileVerified(reservation.reservationId, zeroCost), {
       status: 'reconciled',
-      actualCostMicros: 1,
+      actualCostMicros: 0,
       frozen: false,
     })
-    assert.equal(
-      ledger.reconcileVerified(reservation.reservationId, correctEvidence).status,
-      'already-reconciled',
-    )
+    assert.equal(ledger.reserve('typesafe-jev', 'jev-1.14.0').status, 'reserved')
     ledger.close()
   })
 }
@@ -574,14 +523,14 @@ function testVerifiedUsageMustMatchReservationModel(): void {
     configure(ledger, { provider: 'typesafe-jev', model: 'other-model' })
     const reservation = ledger.reserve('typesafe-jev', 'other-model')
     if (reservation.status !== 'reserved') throw new Error('expected reservation')
-    const evidence = verifyProviderUsageForReservation(
+    const evidence = verifyNativeUsageForReservation(
       {
         reservationId: reservation.reservationId,
         provider: 'typesafe-jev',
         model: 'jev-1.14.0',
         period: reservation.period,
       },
-      { model: 'jev-1.14.0', usage: { input_tokens: 1, output_tokens: 3 } },
+      nativeResult(),
     )
     assert.ok(evidence)
     assert.equal(ledger.reconcileVerified(reservation.reservationId, evidence).status, 'mismatch')
@@ -590,38 +539,27 @@ function testVerifiedUsageMustMatchReservationModel(): void {
   })
 }
 
-function testOpenAiEvidenceOverrunFreezesScopesAndReconcileIsAtomic(): void {
+function testNativeEvidenceOverrunFreezesScopesAndReconcileIsAtomic(): void {
   withTempDir((directory) => {
     const dbPath = join(directory, 'ledger.sqlite')
     const ledger = openLocalDecisionBudgetLedger({ dbPath })
-    configure(ledger, { modelCaps: { monthly: 100, decision: 20 } })
-    const reservation = ledger.reserve(openai, openaiModel)
+    configure(ledger, {
+      provider: jev,
+      model: jevModel,
+      modelCaps: { monthly: 100, decision: 20 },
+    })
+    const reservation = ledger.reserve(jev, jevModel)
     if (reservation.status !== 'reserved') throw new Error('expected reservation')
-    const evidence = verifyProviderUsageForReservation(
+    const evidence = verifyNativeUsageForReservation(
       {
         reservationId: reservation.reservationId,
-        provider: openai,
-        model: openaiModel,
+        provider: jev,
+        model: jevModel,
         period: reservation.period,
       },
-      openAiUsageResponse({ inputTokens: 0, outputTokens: 100 }),
+      nativeResult({ costUsd: 0.00005 }),
     )
     assert.ok(evidence)
-    for (const details of [{ cacheWriteTokens: 1 }, { cachedTokens: 1 }]) {
-      assert.equal(
-        verifyProviderUsageForReservation(
-          {
-            reservationId: reservation.reservationId,
-            provider: openai,
-            model: openaiModel,
-            period: reservation.period,
-          },
-          openAiUsageResponse({ inputTokens: 10, outputTokens: 0, ...details }),
-        ),
-        null,
-        'unmodeled cached input pricing leaves the hold unresolved',
-      )
-    }
     assert.equal(ledger.listUncertainReservations()[0]?.reservationId, reservation.reservationId)
 
     const database = new DatabaseSync(dbPath)
@@ -643,7 +581,7 @@ function testOpenAiEvidenceOverrunFreezesScopesAndReconcileIsAtomic(): void {
       'already-reconciled',
     )
     assert.equal(database.prepare('SELECT count(*) AS n FROM budget_freezes').get()?.n, 3)
-    assert.equal(ledger.reserve(openai, openaiModel).reason, 'frozen')
+    assert.equal(ledger.reserve(jev, jevModel).reason, 'frozen')
     const stored = database
       .prepare('SELECT actual_micros FROM reservations WHERE id = ?')
       .get(reservation.reservationId) as { actual_micros: number }
@@ -1040,7 +978,7 @@ testDuplicateReservationIdCannotDoubleAdmit()
 testPendingReservationSurvivesRestartAndRecovery()
 testOpaqueVerifiedEvidenceRoundsCostsAndRejectsForgeryOrMismatch()
 testVerifiedUsageMustMatchReservationModel()
-testOpenAiEvidenceOverrunFreezesScopesAndReconcileIsAtomic()
+testNativeEvidenceOverrunFreezesScopesAndReconcileIsAtomic()
 await testSeparateProcessesCannotOverspendConcurrently()
 testVersionOneMigrationPreservesCapsReservationsAndUnknownHolds()
 testVersionTwoMigrationPreservesFutureDatedHoldsAndRequiresFreshConfirmation()

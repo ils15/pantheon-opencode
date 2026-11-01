@@ -75,6 +75,15 @@ apenas — `init` → reiniciar → `/dispatch` → primeiro resultado — veja 
   documentar.
 - **5 servidores MCP locais** para memória de projeto, persistência, recursos,
   execução confinada de scripts e visão.
+- **Um roteador de decisão seletivo e consultivo**, com resultados locais
+  estruturados e recomendações por turno quando habilitado. O egress direto
+  pertencente ao Pantheon é inativo; o egress nativo existe apenas na tool
+  explícita `pantheon_jev_decide` (só para o Zeus), que chama a API nativa de
+  Decisions do host (Jev/TypeSafe via OpenCode Console ou modelo configurado)
+  atrás do consentimento e dos limites de orçamento do usuário — ela nunca
+  despacha agentes, executa skills ou altera permissões. Veja a
+  [referência do roteador](docs/reference/local-decision-router.md) e o
+  [Decisions nativas (Jev)](docs/reference/native-decisions.md).
 - **Uma TUI opcional**, com bloco de dispatch na sidebar e painel `/dispatch`
   em largura total. A TUI V2 também inclui um resumo de quota na sidebar/rodapé
   e o painel `/quota`, com abas Usage, Limits, Plugin e Settings. Usage mostra

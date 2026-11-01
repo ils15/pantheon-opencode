@@ -97,14 +97,16 @@ see [Quick Start](docs/QUICKSTART.md).
   and documenting work.
 - **5 local MCP servers** for project memory, persistence, resources, confined
   script execution, and vision.
-- **A selective, advisory decision router** with structured local results and an
-  optional per-turn skill/agent recommendation. Provider egress is fail-closed: it
-  requires explicit enablement, consent, one cap-valid `openai-decisions` or
-  `typesafe-jev` candidate, a confirmed period, and the host permission gate.
-  Console/Free and Bifrost are never eligible. This statement applies to this
-  decision subsystem—not to all Pantheon egress; quota and Vision integrations
-  retain their separately documented external requests. See the
-  [router reference](docs/reference/local-decision-router.md).
+- **A selective, advisory decision router** with structured local results and
+  deterministic per-turn skill/specialist recommendations when enabled.
+  Pantheon-owned direct-provider egress is inactive; native egress exists only
+  via the explicit, Zeus-only `pantheon_jev_decide` advisory tool, which calls
+  the host's native Decisions API (TypeSafe Jev via OpenCode Console or a
+  configured decision model) behind the user's consent and budget gates — it
+  never dispatches agents, runs skills, or changes permissions. This does not
+  change separately documented quota and Vision integrations. See the
+  [router reference](docs/reference/local-decision-router.md) and the
+  [Native Decisions (Jev)](docs/reference/native-decisions.md).
 - **An optional TUI** with a dispatch sidebar block and a full-width
   `/dispatch` panel. The V2 TUI also provides a quota overview in the
   sidebar/footer and a `/quota` details panel. Quota display is enabled by
@@ -242,26 +244,29 @@ fan-in or job recovery without an exposed mechanism.
 The delegation model, caller/target matrix, and approval gates are documented
 in [Architecture](docs/ARCHITECTURE.md) and
 [Permissions, Gates & Delegation](docs/PERMISSIONS-QUALITY-DELEGATION.md).
-The [local decision router](docs/reference/local-decision-router.md) is
-consultative: it narrows an advisory skill list and can recommend at most one
-specialist, but it never intercepts native child-session dispatch or changes
-permissions. The standalone API is default-off
-(`PANTHEON_LOCAL_DECISION_ROUTER=1`); per-turn selection additionally requires
-`enabled: true` in the user-level config. Provider egress is fail-closed and
-requires every local gate plus a non-denying host `ctx.permission.assert`. The
-host is not deny-by-default for `decision.egress` (an unruled assertion resolved
-allow on the measured canary), so the user-level config/consent gate is the
-source of truth and an explicit host `deny` rule is the kill-switch. A canary
-measured the assertion contract but made no live provider call, so egress remains
-unverified and off by default. Native child-session dispatch remains the final
-routing action.
+The [local decision router](docs/reference/local-decision-router.md) provides a
+default-off standalone local API (`PANTHEON_LOCAL_DECISION_ROUTER=1`), the
+separate manual `pantheon_local_decision` advisory tool, and deterministic
+per-turn local recommendations when the user-level `enabled` preference is on.
+The prompt hook may add an advisory marker and narrow an existing `prompt.skills`
+array only when identifiable skill IDs overlap the local selection; this never
+dispatches child sessions or changes permissions or approvals. Per-turn selection
+uses no provider egress: the formerly documented direct-provider route remains
+historical/inactive, and legacy consent, caps, period, provider selection, or
+credentials cannot activate it. Native child-session dispatch remains separate.
+
+The one native egress surface is the Zeus-only `pantheon_jev_decide` tool,
+available on hosts that expose the V2.2.5 native Decisions API; its full gate
+chain, routes, and settlement rules are documented once in
+[V2 native Decisions](docs/reference/native-decisions.md).
 
 The installer may retain a legacy target-specific preference; it does not control
-runtime routing. `npx pantheon-opencode decision-router ...` manages user-level
-enablement, selection, candidates, consent, caps, and period confirmation. The
-separate SQLite ledger has no default caps. Caps limit local admission but are not
-invoice guarantees. Installation does not contact a model provider or inspect
-credentials. The published CLI imports committed ESM bundles:
+runtime routing. `npx pantheon-opencode decision-router ...` manages stored
+user-level preferences and budget state: `enabled` gates the local per-turn
+recommendation only; provider-selection and budget/consent state do not activate
+egress. The separate SQLite ledger has no default caps. Installation does not
+contact a model provider or inspect credentials. The published CLI imports
+committed ESM bundles:
 `npm run build:decision-router` regenerates them and `npm run check:decision-router`
 (the `prepack`/`prepublishOnly` drift gate) fails when any is stale. The
 `pantheon-opencode/local-decision-router` subpath itself is TypeScript source, so
@@ -287,17 +292,14 @@ extra copy is made. Installer file-ownership tracking is partial and asymmetric 
 are not separately indexed — so this preview compares the decision-layer
 artifacts it owns, not "everything the installer touched".
 
-Provider egress remains opt-in with the default `off`; no command in this layer
-can switch it on without enablement, recorded consent, one cap- and
-period-eligible candidate and a non-denying host gate. The fixed OpenAI/TypeSafe
-endpoints are retained inert and are documented as **unwired**; this statement is
-about wiring, not about removing any transport. Each endpoint carries its own
-explicit wire status, and a test fails when a declared endpoint is neither
-asserted `unwired` nor exercised by a real path. Verification covers **only the
-paths a probe exercised — none** — so nothing here is evidence about network
-absence on an unexercised path; `permission.evaluate.egress` is likewise
-unreachable in the probed host (a tool declaring it is never advertised to the
-provider). Measured surface coverage is
+The old OpenAI/TypeSafe per-turn provider adapters and endpoint descriptions are
+retained as historical, inert code; no legacy consent, cap, period, provider, or
+permission setting wires them into the production prompt hook. The captured-hook
+boundary test supplies an isolated synthetic consent/provider config and fake
+test-only credential, verifies a local recommendation marker, and verifies zero
+native Decisions or global `fetch` calls. This is an offline regression check of
+that hook, not a claim about unexercised network paths or a live-provider test.
+Measured surface coverage is
 reported honestly rather than implied: P7 runs behind `PANTHEON_V2_P7_LOOP` with
 an **advisory** execution cap (never described as enforcement), P2 is
 **advisory-only** (an empirical no-op on the default path), P9 was measured on
@@ -432,7 +434,7 @@ recorded in the [router reference](docs/reference/local-decision-router.md).
 | [Compatibility](docs/COMPATIBILITY.md) | [OpenCode V2](docs/opencode-v2.md) |
 | [Agents & Skills](docs/agents/README.md) | [Platforms](docs/PLATFORMS.md) |
 | [Release Process](docs/RELEASING.md) | [Branch Protection](docs/BRANCH-PROTECTION.md) |
-| [Model Routing](docs/reference/model-routing.md) | [Local Decision Router](docs/reference/local-decision-router.md) · [Offline Evaluation Protocol](docs/reference/offline-evaluation.md) · [Env Vars](docs/reference/env-vars.md) · [Code Mode](docs/reference/code-mode.md) |
+| [Model Routing](docs/reference/model-routing.md) | [Local Decision Router](docs/reference/local-decision-router.md) · [V2 Native Decisions](docs/reference/native-decisions.md) · [Offline Evaluation Protocol](docs/reference/offline-evaluation.md) · [Env Vars](docs/reference/env-vars.md) · [Code Mode](docs/reference/code-mode.md) |
 | [Contributing](CONTRIBUTING.md) | [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) |
 
 Memory writes through `pantheon-memory` are serialized, and failed writes are

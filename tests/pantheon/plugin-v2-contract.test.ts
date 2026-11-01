@@ -4,7 +4,12 @@ import { readFile } from 'node:fs/promises'
 import Module, { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { writeUserDecisionRouterConfig } from '../../scripts/install/decision-router-config.mjs'
 import { readOnlyRegistry, syncReadOnlySession } from '../../src/pantheon/delegation-enforce.ts'
+import {
+  openLocalDecisionBudgetLedger,
+  resolveLocalDecisionBudgetDbPath,
+} from '../../src/pantheon/local-decision-budget.ts'
 import {
   DECISION_EGRESS_ACTION,
   decisionPermissionSource,
@@ -633,6 +638,112 @@ async function main(): Promise<void> {
       previousText,
       'prompt retry must not duplicate visual context',
     )
+  })
+
+  test('unwired V2 prompt hook makes no native Decisions or provider request', async () => {
+    let promptHandler: ((event: unknown) => void | Promise<void>) | undefined
+    let nativeDecisionCalls = 0
+    let fetchCalls = 0
+    let permissionAssertCalls = 0
+    const originalFetch = globalThis.fetch
+    const root = mkdtempSync(join(tmpdir(), 'pantheon-v2-unwired-hook-'))
+    const configHome = join(root, 'config')
+    const originalEnvironment = new Map(
+      [
+        'HOME',
+        'XDG_CONFIG_HOME',
+        'XDG_STATE_HOME',
+        'TYPESAFE_API_KEY',
+        'OPENAI_API_KEY',
+        'OPENCODE_API_KEY',
+      ].map((key) => [key, process.env[key]]),
+    )
+    try {
+      process.env.HOME = root
+      process.env.XDG_CONFIG_HOME = configHome
+      process.env.XDG_STATE_HOME = join(root, 'state')
+      process.env.TYPESAFE_API_KEY = 'synthetic-test-only-provider-credential'
+      delete process.env.OPENAI_API_KEY
+      delete process.env.OPENCODE_API_KEY
+      writeUserDecisionRouterConfig({
+        schema_version: 2,
+        enabled: true,
+        selection: { mode: 'explicit', provider: 'typesafe-jev', model: 'jev-1.14.0' },
+        egress_consent: true,
+        enabled_candidates: [{ provider: 'typesafe-jev', model: 'jev-1.14.0' }],
+      })
+      const ledger = openLocalDecisionBudgetLedger({
+        dbPath: resolveLocalDecisionBudgetDbPath(),
+      })
+      try {
+        const caps = { monthlyCapMicros: 5_000_000, perDecisionCapMicros: 1_000_000 }
+        ledger.configureUserCaps(caps)
+        ledger.configureProviderCaps('typesafe-jev', caps)
+        ledger.configureModelCaps('typesafe-jev', 'jev-1.14.0', caps)
+        const budgetPeriod = new Date().toISOString().slice(0, 7)
+        assert.equal(ledger.confirmBudgetPeriod(null, budgetPeriod).status, 'confirmed')
+        assert.deepEqual(ledger.canReserve('typesafe-jev', 'jev-1.14.0'), { status: 'eligible' })
+      } finally {
+        ledger.close()
+      }
+      globalThis.fetch = (async () => {
+        fetchCalls += 1
+        throw new Error('offline provider-call spy')
+      }) as typeof fetch
+
+      await plugin.setup(
+        makeBaseContext({
+          experimental: {
+            generate: {
+              decisions: async () => {
+                nativeDecisionCalls += 1
+                return { answers: [] }
+              },
+            },
+          },
+          permission: {
+            assert: async () => {
+              permissionAssertCalls += 1
+              return undefined // Host's affirmative allow-path result.
+            },
+          },
+          session: {
+            hook: async (name: string, handler: typeof promptHandler) => {
+              if (name === 'prompt') promptHandler = handler
+              return { dispose: async () => {} }
+            },
+          },
+        }) as never,
+      )
+
+      assert.equal(typeof promptHandler, 'function')
+      const admission = {
+        sessionID: 'ses_decision_unwired',
+        messageID: 'msg_decision_unwired',
+        delivery: 'steer',
+        prompt: {
+          text: 'Please implement a FastAPI backend endpoint with pytest.',
+          files: [],
+          agents: 'undefined',
+          skills: 'undefined',
+        },
+      }
+      await promptHandler?.(admission)
+      assert.match(
+        admission.prompt.text,
+        /<!-- pantheon-decision-router:v1 source=local skills=[a-z0-9,-]+(?: agent=[a-z0-9-]+)? -->/,
+      )
+      assert.equal(nativeDecisionCalls, 0)
+      assert.equal(permissionAssertCalls, 0)
+      assert.equal(fetchCalls, 0)
+    } finally {
+      globalThis.fetch = originalFetch
+      for (const [key, value] of originalEnvironment) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   test('prompt-surface shadow points reach the telemetry sink without touching admission', async () => {
