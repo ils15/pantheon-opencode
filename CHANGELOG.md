@@ -7,6 +7,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **agents** — Zeus routing policy now prefers one typed `pantheon_jev_decide` call for genuinely ambiguous routing and skill stacking, with `pantheon_local_decision` as the offline fallback.
+- **docs** — Documented the skill-discovery loop (find, review, install, decide) and mapped the candidate MCP-gating expansions as deliberately unwired.
+
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
