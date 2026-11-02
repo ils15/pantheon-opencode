@@ -6,7 +6,7 @@ reasoning_effort: low
 permission:
   read: allow
   edit: allow
-  bash: allow
+  shell: allow
   task:
     "*": deny
 temperature: 0.3

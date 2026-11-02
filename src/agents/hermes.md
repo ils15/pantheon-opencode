@@ -21,7 +21,7 @@ skills:
   - tdd-with-agents
   - worktrees
 permission:
-  bash: allow
+  shell: allow
   read: allow
   grep: allow
   edit: allow

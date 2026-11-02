@@ -7,6 +7,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+<!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. -->
+
+## [v1.6.2-beta.9] - 2026-11-02
+
+### Added
+
+- **install** — `init --decision-model typesafe-jev/jev-1.14.0` merges the TypeSafe provider entry additively into the user's `opencode.json`; only the sign-in remains.
+
+### Changed
+
+- **agents** — Every agent frontmatter declares terminal permissions under `shell:` — the action a measured 2.2.5 host actually evaluates (canary-recorded evidence: a `shell` deny is enforced while `bash` falls through unruled).
+- **agents** — Deny intents keep a `bash:` twin; the former `bash:`-only keys never matched, which made specialists' terminal grants inconsistent.
+- **agents** — Zeus must never ask the user to type terminal commands: terminal work dispatches to a bash-capable specialist.
+- **install** — `--opencode-version v1` is refused with a deprecation message front-running the 2.0 removal of the legacy plugin line.
+- **docs** — New [Skill provenance search](docs/reference/skill-search-design.md) investigation (three tiers, Jev as typed ranker; deliberately unwired).
+- **docs** — Measured MCP numbers in [Performance](docs/reference/performance.md) (fastmcp startup, FTS5 memory, vision deps).
+
 ### Added
 
 - **install** — The wizard's decision-model question now configures the real route (consent + caps + period in one write): Console Jev, the free variant, or TypeSafe direct.
@@ -19,9 +37,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **performance** — The in-process secret scan is gated to exfil-capable tools (shell, file writes, web); read-only tools skip it, unknown names stay scanned (fail-closed).
 - **agents** — Zeus must never ask the user to type terminal commands: terminal work dispatches to a bash-capable specialist.
 
-<!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. -->
-
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
 ## [v1.6.2-beta.8] - 2026-11-02
 
 ### Added

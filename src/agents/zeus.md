@@ -6,6 +6,7 @@ permission:
   read: allow
   edit: deny
   hashline_edit: deny
+  shell: deny
   bash: deny
   vision_describe: allow
   pantheon_jev_decide: allow

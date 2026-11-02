@@ -570,6 +570,14 @@ async function main() {
       console.error(`❌ Invalid --version "${versionOpt}" — expected v1, v2 or auto`)
       process.exit(1)
     }
+    // The 2.0 deprecation front-run: the legacy plugin line is end-of-life.
+    // Loud warning now (the v1 code path still exists for legacy installs);
+    // the 2.0 removal turns this into a hard refusal.
+    if (versionOpt === 'v1') {
+      console.error(
+        '⚠️  --opencode-version v1 is DEPRECATED and will be removed in Pantheon 2.0 — the legacy plugin line is end-of-life. OpenCode 2.x hosts are the supported generation; remove the flag (auto detects the host).',
+      )
+    }
 
     // Resolve the user's explicit selection separately from the defaults.
     // Runtime and prompt templates are opt-in in both TTY and headless mode.
