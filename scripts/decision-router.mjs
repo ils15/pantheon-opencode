@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 // Prebuilt bundles: Node refuses to strip TypeScript types under node_modules,
@@ -41,7 +42,7 @@ import { readState } from './install/state.mjs'
 const BUDGET_PROVIDERS = DECISION_PROVIDER_BUDGET_MAPPING
 
 const USAGE =
-  'Usage: decision-router help|status|setup|preview|select|enable|disable|consent|caps|period|holds'
+  'Usage: decision-router help|status|setup|preview|select|enable|disable|consent|caps|period|holds|setup-model|doctor'
 
 /**
  * Malformed command line (wrong flags, unknown provider, invalid value).
@@ -70,6 +71,13 @@ export function decisionRouterHelp() {
     '  consent yes|no                            record egress consent',
     '  caps user|provider <p>|model <p> <m> --monthly-usd N --per-decision-usd N',
     '  period confirm --current none|YYYY-MM --next YYYY-MM',
+    '',
+    'Guided (each does the whole chain in one command):',
+    '  setup-model <provider>/<model> --monthly-usd N --per-decision-usd N [--no-consent]',
+    '                                           select + enable + consent + caps + period in one write,',
+    '                                           then print the verification summary',
+    '  doctor                                    read-only diagnosis of the native decision route with',
+    '                                           the exact command to run for each failing gate',
     '',
     'setup options:',
     '  --apply              write the previewed artifacts (otherwise nothing is written)',
@@ -296,7 +304,204 @@ export async function runDecisionRouterCommand(
     return
   }
 
+  if (command === 'setup-model') {
+    const [target, ...flagArgs] = rest
+    const selection = parseSelectionTarget(target)
+    if (selection.mode !== 'explicit') {
+      throw new DecisionRouterUsageError(
+        'setup-model requires an explicit provider/model pair, not local or auto',
+      )
+    }
+    const noConsent = flagArgs.includes('--no-consent')
+    const capArgs = flagArgs.filter((arg) => arg !== '--no-consent')
+    // Exactly the two caps flags with values; parseCaps validates them and
+    // leaves `rest` empty because setup-model has no positional caps targets.
+    if (capArgs.length !== 4) throw new DecisionRouterUsageError(USAGE)
+    const caps = parseCaps(capArgs)
+    if (caps.rest.length > 0) throw new DecisionRouterUsageError(USAGE)
+    const { provider, model } = selection
+    const candidate = { provider, model }
+
+    // One update names selection, enablement, candidates and (unless refused)
+    // consent together: selecting a different target revokes consent unless
+    // the same update names it, so this single write is the consent act.
+    saveConfig(env, {
+      enabled: true,
+      selection,
+      enabled_candidates: [candidate],
+      ...(noConsent ? {} : { egress_consent: true }),
+    })
+    stdout(`Selected and enabled ${provider}/${model}.`)
+    stdout(noConsent ? 'Egress consent NOT recorded (--no-consent).' : 'Egress consent recorded: yes.')
+
+    const ledger = openLedger(env)
+    try {
+      ledger.configureUserCaps({ monthlyCapMicros: caps.monthly, perDecisionCapMicros: caps.perDecision })
+      ledger.configureProviderCaps(DECISION_PROVIDER_BUDGET_MAPPING[provider], {
+        monthlyCapMicros: caps.monthly,
+        perDecisionCapMicros: caps.perDecision,
+      })
+      ledger.configureModelCaps(DECISION_PROVIDER_BUDGET_MAPPING[provider], model, {
+        monthlyCapMicros: caps.monthly,
+        perDecisionCapMicros: caps.perDecision,
+      })
+      stdout(
+        `Caps set (user/provider/model): $${(caps.monthly / 1_000_000).toFixed(2)}/month, $${(caps.perDecision / 1_000_000).toFixed(2)}/decision.`,
+      )
+      const wallPeriod = utcPeriodOf(Date.now())
+      const active = ledger.getActiveBudgetPeriod()
+      if (active === wallPeriod) {
+        stdout(`Budget period already active: ${wallPeriod}.`)
+      } else {
+        const result = ledger.confirmBudgetPeriod(active, wallPeriod)
+        if (result.status === 'confirmed') {
+          stdout(`Budget period confirmed: ${result.activePeriod}. Automatic rollover is disabled.`)
+        } else {
+          stdout(
+            `Budget period NOT confirmed (${result.reason}); run: decision-router period confirm --current ${active ?? 'none'} --next ${wallPeriod}`,
+          )
+        }
+      }
+    } finally {
+      ledger.close()
+    }
+
+    stdout('')
+    stdout('Native route checklist:')
+    stdout(
+      '  1. Host catalog: the model must exist as type "decision" (stock: opencode/jev-1.13; custom providers need type: "decision" in opencode.json). Verify: decision-router doctor',
+    )
+    stdout('  2. Restart OpenCode so the plugin registers pantheon_jev_decide.')
+    stdout(
+      '  3. Ask the Zeus agent to call pantheon_jev_decide (mode: "delegation" or "skills").',
+    )
+    stdout('Read-only verification: decision-router status / doctor / holds.')
+    return
+  }
+
+  if (command === 'doctor' && rest.length === 0) {
+    // Read-only diagnosis. The host-catalog probe runs `opencode models` with a
+    // timeout; a missing/unavailable binary is a warning, not a failure.
+    const config = readUserDecisionRouterConfig({ env })
+    const dbPath = resolveLocalDecisionBudgetDbPath(env)
+    const inspection = inspectDecisionBudget(dbPath)
+    const wallPeriod = utcPeriodOf(Date.now())
+    const egress = describeEgress(config, inspection, wallPeriod)
+    const rows = []
+    const fail = (name, detail, fix) => rows.push({ name, state: 'FAIL', detail, fix })
+    const warn = (name, detail, fix) => rows.push({ name, state: 'WARN', detail, fix })
+    const pass = (name, detail) => rows.push({ name, state: 'PASS', detail })
+
+    if (!existsSync(resolveUserDecisionRouterConfigPath(env))) {
+      fail('config', 'no user-level config yet', 'decision-router setup-model <provider>/<model> --monthly-usd N --per-decision-usd N')
+    } else if (!config.enabled) {
+      fail('config', 'turn selection is disabled', 'decision-router enable')
+    } else {
+      pass('config', 'enabled')
+    }
+    if (config.enabled && !config.egress_consent) {
+      fail('consent', 'egress consent missing', 'decision-router consent yes (or rerun setup-model without --no-consent)')
+    } else if (config.enabled) {
+      pass('consent', 'recorded')
+    }
+
+    const selection = config.selection
+    if (config.enabled && selection.mode === 'local') {
+      fail('selection', 'selection is local', 'decision-router select <provider>/<model>')
+    } else if (config.enabled && selection.mode === 'auto') {
+      if (egress.mode === 'opt-in') pass('selection', `auto resolved ${egress.provider}/${egress.candidate.model}`)
+      else fail('selection', `auto did not resolve (${egress.reason})`, 'enable exactly one cap-valid candidate, or select explicitly')
+    } else if (config.enabled && selection.mode === 'explicit') {
+      const enabled = config.enabled_candidates.some(
+        (candidate) => candidate.provider === selection.provider && candidate.model === selection.model,
+      )
+      if (!enabled) {
+        fail('selection', `${selection.provider}/${selection.model} selected but not enabled`, `decision-router enable ${selection.provider} ${selection.model}`)
+      } else {
+        pass('selection', `${selection.provider}/${selection.model}`)
+      }
+    }
+
+    if (config.enabled && egress.mode !== 'opt-in' && config.egress_consent) {
+      fail('budget', `no cap- and period-eligible candidate (${egress.reason})`, 'decision-router caps user|provider|model ... and decision-router period confirm')
+    } else if (config.enabled && egress.mode === 'opt-in') {
+      pass('budget', `admission open for ${egress.provider}/${egress.candidate.model}`)
+    }
+    if (inspection.ledger.present && inspection.ledger.readable && inspection.ledger.holds > 0) {
+      warn('holds', `${inspection.ledger.holds} unresolved hold(s) hold budget until reconciled`, 'decision-router holds')
+    }
+
+    const target =
+      config.enabled && selection.mode === 'explicit'
+        ? selection
+        : egress.mode === 'opt-in'
+          ? { provider: egress.provider, model: egress.candidate.model }
+          : null
+    if (target !== null) {
+      const probe = probeHostCatalog(env)
+      const hostProvider = target.provider === 'typesafe-jev' ? 'typesafe-ai' : 'opencode'
+      if (probe.ok) {
+        const exact = probe.models.has(`${hostProvider}/${target.model}`)
+        const loose = probe.models.has(target.model)
+        if (exact || loose) {
+          pass('host-catalog', `${hostProvider}/${target.model} listed by \`opencode models\``)
+        } else {
+          warn(
+            'host-catalog',
+            `${hostProvider}/${target.model} not in the flat models list`,
+            'the flat list can omit decision-typed models; if a call refuses with ROUTE_UNRESOLVED, add a custom provider entry with type: "decision" (see docs/reference/native-decisions.md) or pick a listed decision model',
+          )
+        }
+      } else {
+        warn('host-catalog', `could not probe: ${probe.reason}`, 'run `opencode models` manually; slow plugin activation is the usual cause')
+      }
+    }
+
+    for (const row of rows) {
+      const mark = row.state === 'PASS' ? '✔' : row.state === 'WARN' ? '▲' : '✖'
+      stdout(`${mark} ${row.name}: ${row.detail}`)
+      if (row.fix) stdout(`    fix → ${row.fix}`)
+    }
+    stdout('Read-only: doctor never creates, migrates or writes anything.')
+    return
+  }
+
   throw new DecisionRouterUsageError(USAGE)
+}
+
+/** Spawn-sync timeout floor so a wedged host cannot stall the doctor. */
+const HOST_PROBE_TIMEOUT_MS = 30_000
+
+/**
+ * Best-effort host catalog probe for the doctor. Returns the set of
+ * `provider/model` (and bare model ids, for exact-id matching) the host
+ * reports, or the reason the probe failed. Never writes anything.
+ */
+function probeHostCatalog(env) {
+  let result
+  try {
+    result = spawnSync('opencode', ['models'], {
+      encoding: 'utf8',
+      timeout: HOST_PROBE_TIMEOUT_MS,
+      env,
+    })
+  } catch (error) {
+    return { ok: false, reason: String(error?.message ?? error) }
+  }
+  if (result.error) return { ok: false, reason: String(result.error.message ?? result.error) }
+  if (result.status !== 0) {
+    const output = `${result.stdout ?? ''}${result.stderr ?? ''}`.trim()
+    return { ok: false, reason: output.slice(0, 120) || `exit ${result.status}` }
+  }
+  const models = new Set()
+  for (const line of `${result.stdout ?? ''}`.split(/\r?\n/)) {
+    const id = line.trim()
+    if (!id) continue
+    models.add(id)
+    const slash = id.indexOf('/')
+    if (slash > 0) models.add(id.slice(slash + 1))
+  }
+  return { ok: true, models }
 }
 
 /** Cap- and period-eligible candidates, read-only, from the separated surfaces. */

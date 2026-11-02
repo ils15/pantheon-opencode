@@ -28,20 +28,65 @@ candidate you select must exist in the host catalog under the mapping below.
 | TypeSafe Jev via a custom provider | `typesafe-jev` / `jev-1.14.0` | `{ providerID: "typesafe-ai", id: <catalog id> }` | Your TypeSafe key, via OpenCode `/connect` |
 | OpenRouter-hosted Jev | none in the matrix | host-configured model | OpenRouter |
 
-Setup recipe (state lives in `~/.config/pantheon/decision-router.json`, budget
-in `~/.local/state/pantheon/decision-budget.sqlite`):
+Setup in one command (state lives in `~/.config/pantheon/decision-router.json`,
+budget in `~/.local/state/pantheon/decision-budget.sqlite`; the command requires
+explicit caps — there are no defaults):
 
 ```sh
-npx pantheon-opencode decision-router select opencode-console-jev/jev-1.13
-npx pantheon-opencode decision-router enable opencode-console-jev jev-1.13
-npx pantheon-opencode decision-router enable          # turn selection on
-npx pantheon-opencode decision-router consent yes     # explicit egress consent
-npx pantheon-opencode decision-router caps user --monthly-usd 5 --per-decision-usd 0.10
-npx pantheon-opencode decision-router caps provider opencode-console-jev --monthly-usd 5 --per-decision-usd 0.10
-npx pantheon-opencode decision-router caps model opencode-console-jev jev-1.13 --monthly-usd 5 --per-decision-usd 0.10
-npx pantheon-opencode decision-router period confirm --current none --next 2026-11
-npx pantheon-opencode decision-router status          # read-only check
+npx pantheon-opencode decision-router setup-model opencode-console-jev/jev-1.13 \
+  --monthly-usd 5 --per-decision-usd 0.10
+npx pantheon-opencode decision-router doctor   # read-only verification with fixes
 ```
+
+`setup-model` performs select + enable + consent + caps (user, provider, model)
++ period confirmation in one write and prints the verification checklist;
+`--no-consent` configures everything except egress consent. `doctor` walks the
+whole native route — config, consent, selection, budget admission, unresolved
+holds, and a best-effort host-catalog probe — and prints the exact command to
+run for each failing gate. The per-command fallbacks (`select`, `enable`,
+`consent`, `caps`, `period`) remain for one-change-at-a-time edits.
+
+### Ready-to-copy provider examples
+
+The stock route needs no `opencode.json` change. The others do — merge (never
+replace) into your own config:
+
+**TypeSafe direct** (your TypeSafe key via OpenCode `/connect`; catalog id must
+equal the config candidate's model):
+
+```json
+{
+  "providers": {
+    "typesafe-ai": {
+      "models": {
+        "jev-1.14.0": { "name": "Jev (TypeSafe direct)", "modelID": "jev-latest", "type": "decision" }
+      }
+    }
+  }
+}
+```
+
+Then: `decision-router setup-model typesafe-jev/jev-1.14.0 --monthly-usd 3 --per-decision-usd 0.05`.
+
+**OpenRouter-hosted Jev** (billed by OpenRouter; the config candidate is not in
+Pantheon's matrix, so set an explicit selection through the host):
+
+```json
+{
+  "providers": {
+    "openrouter": {
+      "models": {
+        "typesafe/jev-1.13": { "name": "Jev (OpenRouter)", "type": "decision" }
+      }
+    }
+  }
+}
+```
+
+Catalog caveat: the flat `opencode models` list can omit decision-typed models
+and varies with host build and Console sign-in. If a call refuses with
+`ROUTE_UNRESOLVED`, `decision-router doctor` names it and the custom-provider
+entries above are the supported fallback.
 
 For a custom TypeSafe model, merge (never replace) a `type: "decision"` entry
 into your own `opencode.json`; the catalog id must equal the config candidate's
