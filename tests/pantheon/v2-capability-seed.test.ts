@@ -3,19 +3,23 @@
  *
  * The V2 seed (`src/pantheon/v2-unsupported.mjs`) is what install and `doctor`
  * show a migrating user, and what the plugin itself appends to at runtime. It
- * had drifted: it listed only the adapter's scope choices while four V1
+ * had drifted: it listed only the adapter's scope choices while several V1
  * behaviours (Zeus read guard, idle continuation, compaction context, tool
  * ceiling, todo restore, delegation audit) were missing from the V2 surface with
  * no marker at all.
  *
- * This file enforces the property that fixes that drift: for every mechanism
- * this repository wires, the SEED and the SOURCE must agree.
+ * This file enforces the property that fixes that drift. Since 2.0 the V1
+ * plugin line is DELETED, so the "V1 source" half of the original check (every
+ * mechanism was verified against src/plugin.ts / src/plugins/pantheon-hooks.ts)
+ * is gone; the truth property that remains verifiable is between the V2 SOURCE
+ * and the SEED:
  *
  *   ported      → the V2 source contains the mechanism, and the seed does NOT
  *                 claim it is missing.
- *   missing     → the V1 source contains it, the V2 source does not, and the
- *                 seed DOES declare it.
- *   conditional → both sources contain it, but it depends on a host API that
+ *   missing     → the V2 source does NOT contain the V1-style mechanism marker,
+ *                 and the seed DOES declare the reduction (the mechanism existed
+ *                 only on the removed V1 generation).
+ *   conditional → the V2 source contains it, but it depends on a host API that
  *                 the measured host may not expose, so the seed still declares
  *                 the reduction.
  *
@@ -39,11 +43,8 @@ import { V2_UNSUPPORTED_FEATURE_SEED } from '../../src/pantheon/v2-unsupported.m
 const read = (relative: string): string =>
   readFileSync(new URL(`../../${relative}`, import.meta.url), 'utf8')
 
-const V1_PLUGIN = read('src/plugin.ts')
 const V2_PLUGIN = read('src/plugin-v2.ts')
-const V1_HOOKS_PLUGIN = read('src/plugins/pantheon-hooks.ts')
 const V2_SHELL_HOOKS = read('src/pantheon/v2-shell-hooks.ts')
-const V1_DELEGATION_ENFORCE = read('src/pantheon/delegation-enforce.ts')
 
 type State = 'ported' | 'missing' | 'conditional'
 
@@ -51,11 +52,8 @@ interface Mechanism {
   /** Stable name used in failure messages. */
   id: string
   state: State
-  /** Marker in the V1 source (plugin.ts, or the file named by `v1Source`). */
-  v1: RegExp
   /** Marker in the V2 source (plugin-v2.ts, or the file named by `v2Source`). */
   v2: RegExp
-  v1Source?: string
   v2Source?: string
   /** Seed entry that must exist for a 'missing'/'conditional' mechanism. */
   seed?: string
@@ -65,7 +63,6 @@ const MECHANISMS: readonly Mechanism[] = [
   {
     id: 'zeus-read-guard (#264)',
     state: 'ported',
-    v1: /zeusReadGuard\(/,
     v2: /zeusReadGuard\(/,
   },
   {
@@ -75,71 +72,58 @@ const MECHANISMS: readonly Mechanism[] = [
     // Marking this "ported" would claim idle continuation works on every V2
     // install, which is exactly the overstatement #267 exists to stop.
     state: 'conditional',
-    v1: /idleDispatcher\.onIdle\(/,
     v2: /todoEnforcer\.onIdle\(/,
     seed: 'idle-todo-enforcer',
   },
   {
     id: 'idle-todo-enforcer (#265)',
     state: 'conditional',
-    // The V1 enforcer is constructed from `client.session`; V2 builds the same
+    // The V1 enforcer was constructed from `client.session`; V2 builds the same
     // class only when the host's session domain exposes the four methods.
-    v1: /new TodoEnforcer\(/,
     v2: /new TodoEnforcer\(/,
     seed: 'idle-todo-enforcer',
   },
   {
     id: 'compaction-context (#266)',
     state: 'ported',
-    v1: /buildCompactionContext\(/,
     v2: /buildCompactionContext\(/,
   },
   {
     id: 'vision-history-sanitization (#266)',
     state: 'ported',
-    v1: /experimental\.chat\.messages\.transform/,
     v2: /sanitizeVisionHistory\(/,
   },
   {
     id: 'formatter (#266)',
     state: 'ported',
-    v1: /format-multi-language\.sh/,
     v2: /FORMATTER_SCRIPT/,
-    v1Source: V1_HOOKS_PLUGIN,
     v2Source: V2_SHELL_HOOKS,
   },
   {
     id: 'delegation-audit (#266)',
     state: 'ported',
-    v1: /on-subagent-delegation-start\.sh/,
     v2: /DELEGATION_START_SCRIPT/,
-    v1Source: V1_HOOKS_PLUGIN,
     v2Source: V2_SHELL_HOOKS,
   },
   {
     id: 'delegation-matrix (#264)',
     state: 'ported',
-    v1: /isDelegationAllowed\(/,
     v2: /evaluateV2Delegation\(/,
-    v1Source: V1_DELEGATION_ENFORCE,
   },
   {
     id: 'prompt-admission (vision prompt context)',
     state: 'ported',
-    v1: /'chat\.message':/,
     v2: /sessionCtx\.hook\('prompt'/,
   },
   {
     id: 'tool-ceiling (#266)',
     state: 'missing',
-    v1: /handleToolCeilingEvent\(/,
     v2: /handleToolCeilingEvent\(/,
     seed: 'tool-ceiling',
   },
   {
     id: 'todo-restore (#266)',
     state: 'missing',
-    v1: /todoPreserver\.capture\(/,
     v2: /todoPreserver\.capture\(/,
     seed: 'todo-restore',
   },
@@ -147,8 +131,7 @@ const MECHANISMS: readonly Mechanism[] = [
     id: 'board-transitions',
     state: 'missing',
     // The board INSTANCE is injected on V2; what is missing is a writer. The
-    // terminal audit listener is the first of V1's four board writers.
-    v1: /board\.onTerminal\(/,
+    // terminal audit listener was the first of V1's four board writers.
     v2: /board\.onTerminal\(/,
     seed: 'board-transitions',
   },
@@ -235,14 +218,6 @@ function main(): void {
   for (const mechanism of MECHANISMS) {
     test(`${mechanism.id} is ${mechanism.state} in source and seed`, () => {
       const v2Source = mechanism.v2Source ?? V2_PLUGIN
-      const v1Source = mechanism.v1Source ?? V1_PLUGIN
-      // Sanity: the V1 marker must exist, otherwise the table is describing a
-      // mechanism that was renamed or removed in V1 too.
-      assert.match(
-        v1Source,
-        mechanism.v1,
-        `the V1 marker for ${mechanism.id} no longer matches — update this table`,
-      )
 
       if (mechanism.state === 'ported') {
         assert.match(
@@ -260,6 +235,8 @@ function main(): void {
       }
 
       if (mechanism.state === 'missing') {
+        // The marker is the V1-style wiring; if V2 ever grows it, the seed
+        // entry must go and the mechanism must be declared ported.
         assert.doesNotMatch(
           v2Source,
           mechanism.v2,

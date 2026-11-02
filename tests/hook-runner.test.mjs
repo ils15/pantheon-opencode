@@ -1,6 +1,6 @@
 /**
  * hook-runner.test.mjs — TDD tests for the Pantheon security-hooks runner
- * (src/plugins/hook-runner.ts).
+ * (src/pantheon/hook-runner.ts).
  *
  * Validates the P0 fix approved by Council Synthesis 2026-08-05:
  *  - the runner uses node:child_process (version-proof, no Bun Shell `$`)
@@ -18,7 +18,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { resolveHooksDir, runHook } from '../src/plugins/hook-runner.ts'
+import { resolveHooksDir, runHook } from '../src/pantheon/hook-runner.ts'
 
 const SESSION_ID = 'test-session-001'
 
@@ -108,7 +108,7 @@ test('allows talos doing harmless edits (exit 0)', async () => {
 
 // ─── scan-secrets.sh ────────────────────────────────────────────────────
 // Hybrid blocking contract (user-approved (c), 2026-08-06 — see the
-// pantheon-hooks.ts header and scripts/hooks/scan-secrets.sh):
+// plugin-v2 secret-scan notes and scripts/hooks/scan-secrets.sh):
 //   exit 0 — no match.
 //   exit 1 — LOW_CONFIDENCE match only (header/KEY NAMES: the Bifrost header
 //            name alone, api_key=, password=, secret=). Advisory: the

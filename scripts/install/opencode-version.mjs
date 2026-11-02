@@ -1,4 +1,13 @@
-/** OpenCode major-version selection shared by the CLI and installer. */
+/**
+ * OpenCode major-version selection shared by the CLI and installer.
+ *
+ * Pantheon 2.0 removed the V1 plugin line: OpenCode 2.x is the only supported
+ * host generation. The string 'v1' is still ACCEPTED by the parser — but only
+ * so an explicit `--opencode-version v1` (or OPENCODE_VERSION=v1) can be
+ * refused with a hard, named error instead of falling through as an unknown
+ * value. Legacy V1 INSTALLS are still recognized and migrated; they are never
+ * created.
+ */
 
 import { spawnSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -7,9 +16,36 @@ import { join } from 'node:path'
 
 import { warning } from './cli-ui.mjs'
 
-const VALID_VERSIONS = new Set(['v1', 'v2', 'auto'])
+const VALID_VERSIONS = new Set(['v2', 'auto'])
 
-/** @param {string[]} args @returns {'v1'|'v2'|'auto'|null} */
+/**
+ * The hard refusal for an explicit V1 selection. Non-recoverable by design:
+ * Pantheon 2.0 has no V1 code path left to run, so warning and proceeding
+ * would silently install a configuration the legacy host cannot load.
+ */
+function v1RefusalError() {
+  return new Error(
+    'Pantheon 2.0 requires OpenCode 2.x — the OpenCode V1 plugin line was removed. ' +
+      'Re-run with --opencode-version v2 (or "auto" to detect the host), and upgrade ' +
+      'OpenCode to 2.x if needed.',
+  )
+}
+
+/**
+ * The hard refusal for a host the probe READ as OpenCode 1.x: Pantheon 2.0
+ * cannot install into it, so guessing a generation is worse than stopping.
+ * The explicit v2 override stays available for operators whose binary probes
+ * misleadingly.
+ */
+function unsupportedHostError(major) {
+  return new Error(
+    `The detected OpenCode host reports 1.x (major ${major}), but Pantheon 2.0 requires ` +
+      'OpenCode 2.x — the V1 plugin line was removed. Upgrade OpenCode to 2.x and re-run ' +
+      '(or pass --opencode-version v2 to write the 2.x configuration anyway).',
+  )
+}
+
+/** @param {string[]} args @returns {'v2'|'auto'|null} */
 export function parseOpenCodeVersion(args) {
   // Match init's selector precedence: modern --version wins over the legacy
   // alias regardless of argument order. The package-level --version command is
@@ -42,12 +78,15 @@ export function parseOpenCodeVersion(args) {
 }
 
 function missingVersionValue(flag) {
-  return new Error(`${flag} requires a value: v1, v2, or auto.`)
+  return new Error(`${flag} requires a value: v2 or auto.`)
 }
 
 function normalize(value) {
+  // 'v1' is refused BY NAME, not as an invalid value: the message must say why
+  // (Pantheon 2.0, OpenCode 2.x requirement) and where to go (v2 / auto).
+  if (value === 'v1') throw v1RefusalError()
   if (!VALID_VERSIONS.has(value)) {
-    throw new Error(`Invalid OpenCode version "${value}" — expected v1, v2, or auto`)
+    throw new Error(`Invalid OpenCode version "${value}" — expected v2 or auto`)
   }
   return value
 }
@@ -60,9 +99,9 @@ const HOST_PROBE_TIMEOUT_MS = 5000
 
 /**
  * Budget for the same probe during a DRY RUN. A preview is bounded: the dry
- * run now probes the host (it used to skip the probe and assume V1, which made
- * the plan describe a different generation than the apply), so its latency
- * must stay small even on a host that hangs.
+ * run now probes the host (it used to skip the probe and assume a generation,
+ * which made the plan describe a different generation than the apply), so its
+ * latency must stay small even on a host that hangs.
  */
 export const DRY_RUN_PROBE_TIMEOUT_MS = 2000
 
@@ -80,8 +119,9 @@ export const DRY_RUN_PROBE_TIMEOUT_MS = 2000
  * exists to prevent.
  *
  * stderr is captured alongside stdout. A host that prints its version banner to
- * stderr and nothing to stdout would otherwise soft-fail to V1 — a wrong
- * answer whose cause has nothing to do with the host's generation.
+ * stderr and nothing to stdout would otherwise soft-fail to an assumed
+ * generation — a wrong answer whose cause has nothing to do with the host's
+ * generation.
  * @param {string} binary
  * @param {number} [timeoutMs=HOST_PROBE_TIMEOUT_MS]
  * @returns {{stdout: string, stderr: string}}
@@ -167,8 +207,8 @@ const TOOL_NAME_BEFORE = new RegExp(`${ANCHOR_NAME}[\\s:=]*$`, 'i')
 //     v2 with no warning. So a refused anchored major is reported, not dropped.
 //
 // Both cases fail LOUD rather than silently, which is the safe direction, and
-// the loud-v1 claim holds for the anchored case without depending on the dropped
-// token being the only candidate.
+// the loud assumption holds for the anchored case without depending on the
+// dropped token being the only candidate.
 const FIRST_PLAUSIBLE_MAJOR = 100
 
 /** Is `major` a value we refuse to read as a release number? */
@@ -233,11 +273,12 @@ function parseHostMajor(text) {
  * Resolve the target OpenCode generation.
  *
  * `auto` precedence — the order is load-bearing, do not "simplify" it:
- *   1. explicit `--opencode-version` argument
- *   2. OPENCODE_VERSION env var
+ *   1. explicit `--opencode-version` argument ('v1' is hard-refused)
+ *   2. OPENCODE_VERSION env var ('v1' is hard-refused)
  *   3. an `opencode2` binary basename
- *   4. a `--version` probe of the host binary (major >= 2 => v2)
- *   5. soft-fail to v1 with one visible warning
+ *   4. a `--version` probe of the host binary (major >= 2 => v2;
+ *      major 1 => the host itself is refused — see below)
+ *   5. an inconclusive probe warns once and assumes v2
  *
  * Step 3 stays ahead of step 4 because of WHAT THE TWO STEPS ARE. Step 3 is an
  * explicit operator hint: naming a binary `opencode2` and pointing
@@ -248,30 +289,28 @@ function parseHostMajor(text) {
  *
  * Historical note, NOT an observation of this host: an OpenCode 2.x prerelease
  * once printed "0.0.0-next-17444", which any "major >= 2 => v2" probe reads as
- * major 0 and would resolve to v1. That string does not come from the host —
- * it survives only in this repo's comments and test fixtures. It is also why a
- * major-0 anchored token now takes the loud path rather than resolving to v1 in
- * silence (see FIRST_PLAUSIBLE_MAJOR). Verified 2026-10-04: `opencode2` here is
- * a 47-byte shim that execs `opencode`, and `opencode2 --version` prints
+ * major 0. That string does not come from the host — it survives only in this
+ * repo's comments and test fixtures. It is also why a major-0 anchored token
+ * takes the loud path rather than resolving in silence (see
+ * FIRST_PLAUSIBLE_MAJOR). Verified 2026-10-04: `opencode2` here is a 47-byte
+ * shim that execs `opencode`, and `opencode2 --version` prints
  * "opencode v2.0.22" on stdout. So for a real `opencode2` today both the
  * basename and the probe return v2 and the ordering is harmless rather than
  * load-bearing; what it still defends is the general case above.
  *
- * Step 5 falls back to v1 rather than v2 on purpose. Writing a plural
- * `plugins` directory entry on an unknown 1.x host would be ignored there,
- * losing the plugin on that host AND dropping the V1-only surface — strictly
- * worse than the V1 default, which at least still works. The fallback is only
- * tolerable because it warns; a silent v1 is what made this a silent failure.
+ * Step 5 assumes v2 because v2 is the only generation this installer writes —
+ * there is no V1 code path left to fall back to. An inconclusive probe (host
+ * failed to run, output unreadable, or contradictory) cannot conjure a
+ * supported answer it never read, so the assumption is stated loudly through
+ * `warn` and reported through `onFallback` (the dry-run preview marks its plan
+ * `versionAssumed`). A probe that SUCCEEDS never warns: a 2.x host resolves
+ * quietly, and a definitive 1.x host is refused outright (unsupportedHostError)
+ * rather than written a V2 config that host would ignore.
  *
- * Every fallback also reports through `onFallback`, so a caller (the dry-run
- * preview) can tell the user its plan ASSUMED V1 instead of detecting it. A
- * probe that succeeds never reports: only an unknown host does.
- *
- * A dry run probes too. It used to pass `skipProbe` and assume V1, which made
- * `init --dry-run` describe the V1 plan on a V2 host (a target `tui.json` and a
- * removed `index.ts`) while the apply wrote `index.ts` and no `tui.json`. The
- * probe is `opencode --version` run inside a throwaway state directory (see
- * `probeHostVersion`), and `probeTimeoutMs` bounds it.
+ * A dry run probes too. It used to pass `skipProbe` and assume a generation,
+ * which made `init --dry-run` describe a plan that diverged from the apply.
+ * The probe is `opencode --version` run inside a throwaway state directory
+ * (see `probeHostVersion`), and `probeTimeoutMs` bounds it.
  *
  * @param {'v1'|'v2'|'auto'|null|undefined} requested
  * @param {{env?: Record<string, string|undefined>, binary?: string,
@@ -279,27 +318,27 @@ function parseHostMajor(text) {
  *          probeTimeoutMs?: number,
  *          warn?: (message: string) => void,
  *          onFallback?: (reason: 'probe-failed'|'unparseable'|'unreadable'|'ambiguous') => void}} [options]
- * @returns {'v1'|'v2'}
+ * @returns {'v2'} the only supported generation
  */
 export function resolveOpenCodeVersion(requested = 'auto', options = {}) {
+  if (requested === 'v1') throw v1RefusalError()
   if (!VALID_VERSIONS.has(requested)) {
-    throw new Error(`Invalid OpenCode version "${requested}" — expected v1, v2, or auto`)
+    throw new Error(`Invalid OpenCode version "${requested}" — expected v2 or auto`)
   }
-  if (requested === 'v1' || requested === 'v2') return requested
+  if (requested === 'v2') return requested
   const env = options.env ?? process.env
-  if (env.OPENCODE_VERSION === 'v1' || env.OPENCODE_VERSION === 'v2') {
-    return env.OPENCODE_VERSION
-  }
+  if (env.OPENCODE_VERSION === 'v1') throw v1RefusalError()
+  if (env.OPENCODE_VERSION === 'v2') return 'v2'
   const binary = options.binary ?? env.OPENCODE_BIN ?? ''
   const warn = options.warn ?? warning
   if (/(?:^|[\\/])opencode2(?:\.exe)?$/i.test(binary)) return 'v2'
 
   // One exit for every "we could not read the host" path: the warning and the
   // caller notification can never drift apart.
-  const fallbackToV1 = (reason, message) => {
+  const assumeV2 = (reason, message) => {
     warn(message)
     options.onFallback?.(reason)
-    return 'v1'
+    return 'v2'
   }
 
   const probe =
@@ -308,11 +347,10 @@ export function resolveOpenCodeVersion(requested = 'auto', options = {}) {
   try {
     raw = probe()
   } catch (err) {
-    return fallbackToV1(
+    return assumeV2(
       'probe-failed',
-      `Could not read the host OpenCode version (${err.message}). Falling back to the V1 ` +
-        `configuration; if this host is OpenCode 2.x re-run with --opencode-version v2 ` +
-        `(or v1 to force V1).`,
+      `Could not read the host OpenCode version (${err.message}). Assuming v2, the only ` +
+        'supported generation; if this host is not OpenCode 2.x, upgrade OpenCode and re-run.',
     )
   }
 
@@ -330,40 +368,44 @@ export function resolveOpenCodeVersion(requested = 'auto', options = {}) {
 
   if (parsed === null) {
     // A probe that RAN but whose output we cannot read is just as dangerous as
-    // one that failed: silently landing on V1 is the bug this gate exists to
-    // fix, so it gets the same visible warning.
-    return fallbackToV1(
+    // one that failed: the assumption must be visible, so it warns.
+    return assumeV2(
       'unparseable',
       `Could not parse the host OpenCode version from ` +
         `${JSON.stringify(`${streams.stdout}${streams.stderr}`.trim())}. ` +
-        `Falling back to the V1 configuration; if this host is OpenCode 2.x re-run with ` +
-        `--opencode-version v2 (or v1 to force V1).`,
+        'Assuming v2, the only supported generation.',
     )
   }
   if (parsed.unreadable !== undefined) {
     // The host named itself and reported a major this gate refuses to read (0,
     // or a calendar year). That is not noise like a trailing build date — it is
     // the host's own version, so letting a surviving runtime token decide would
-    // be a silent guess. Say what we saw and fall back loudly.
-    return fallbackToV1(
+    // be a silent guess. Say what we saw and assume v2 loudly.
+    return assumeV2(
       'unreadable',
       `The host OpenCode version output reports major ${parsed.unreadable}, which is ` +
         `not a release number this gate can interpret (a prerelease placeholder or a ` +
-        `calendar year). Falling back to the V1 configuration; pass --opencode-version v2 ` +
-        `if this host is OpenCode 2.x (or v1 to force V1).`,
+        'calendar year). Assuming v2, the only supported generation; pass ' +
+        '--opencode-version v2 to pin it explicitly.',
     )
   }
   if (parsed.ambiguous) {
     // Version-shaped tokens that disagree, with no tool name to break the tie.
     // The reviewer accepted "wrong but loud" here; guessing silently is the
     // defect this branch exists to prevent.
-    return fallbackToV1(
+    return assumeV2(
       'ambiguous',
       `The host OpenCode version output has contradictory versions ` +
         `(${parsed.ambiguous.map((major) => `major ${major}`).join(', ')}) and does not say ` +
-        `which is the host's. Falling back to the V1 configuration; pass ` +
-        `--opencode-version v2 if this host is OpenCode 2.x (or v1 to force V1).`,
+        "which is the host's. Assuming v2, the only supported generation; pass " +
+        '--opencode-version v2 to pin it explicitly.',
     )
   }
-  return parsed.major >= 2 ? 'v2' : 'v1'
+  if (parsed.major < 2) {
+    // The probe DID read the host: it is an OpenCode 1.x binary. Pantheon 2.0
+    // has no V1 code path, so writing the V2 configuration there would install
+    // a plugin the host drops. Refuse instead of guessing.
+    throw unsupportedHostError(parsed.major)
+  }
+  return 'v2'
 }

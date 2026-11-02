@@ -27,7 +27,7 @@
  */
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
-import type { HookPayload, HookResult } from '../plugins/hook-runner.ts'
+import type { HookPayload, HookResult } from './hook-runner.ts'
 
 /** Mirrors the scanner trail marker the classifier keys the advisory on. */
 export const SECRET_SCAN_MARKER = '[SECRET SCAN]'

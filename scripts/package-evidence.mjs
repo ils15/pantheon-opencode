@@ -26,7 +26,6 @@ const REQUIRED_PAYLOAD = [
   'package/pyproject.toml',
   'package/src/plugins/tui/package.json',
   'package/src/plugins/tui/package-lock.json',
-  'package/src/plugin.ts',
   'package/src/plugin-v2.ts',
   'package/src/pantheon/v2-bridge.ts',
   'package/src/plugins/tui/dist/tui.js',

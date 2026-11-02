@@ -20,10 +20,11 @@
  *   See `registerV2ToolHooks`.
  * - The SAME `execute.before` hook runs scripts/hooks/scan-secrets.sh over the
  *   tool input and throws on exit 2 (high-confidence token match). This is the
- *   ONLY hard security block on the V2 surface. It is wired HERE, not delegated
- *   to `src/plugins/pantheon-hooks.ts`: opencode.json declares only
- *   `src/plugin-v2` in `plugins`, so the V1 plugin never loads on a V2-only
- *   install and V1's identical block was inert by construction.
+ *   ONLY hard security block on the V2 surface. It is wired HERE — the V1
+ *   equivalent lived in `src/plugins/pantheon-hooks.ts` (removed in 2.0):
+ *   opencode.json declares only `src/plugin-v2` in `plugins`, so that plugin
+ *   never loaded on a V2-only install and V1's identical block was inert by
+ *   construction.
 
  * - A tool `execute.after` hook and a permission hook, with permission
  *   evaluation enforcing the caller/target matrix for Pantheon agents
@@ -115,6 +116,7 @@ import {
 } from './pantheon/delegation-enforce.ts'
 import { GOAL_LOOP_DEFAULTS, GoalStore } from './pantheon/goal-loop.ts'
 import { createGuardPathResolver } from './pantheon/guard-path.ts'
+import type { HookPayload, HookResult } from './pantheon/hook-runner.ts'
 import type { V2JevDecisionRuntime } from './pantheon/jev-decision-tool.ts'
 import { DECISION_EGRESS_ACTION } from './pantheon/local-decision-egress-gate.ts'
 import { applyDecisionRouterToPrompt } from './pantheon/local-decision-prompt.ts'
@@ -169,7 +171,6 @@ import { createV2ToolDefinitions, type V2ToolResult } from './pantheon/v2-tools.
 import { V2_UNSUPPORTED_FEATURE_SEED } from './pantheon/v2-unsupported.mjs'
 import { buildV2VisionPromptContext, type V2VisionRuntime } from './pantheon/v2-vision.ts'
 import { sanitizeVisionHistory } from './pantheon/vision.ts'
-import type { HookPayload, HookResult } from './plugins/hook-runner.ts'
 
 // ─── Unsupported Features Registry ───────────────────────────────────────
 
@@ -1404,15 +1405,14 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
 // ─── V2 Secret Scan ─────────────────────────────────────────────────────
 
 /**
- * High-confidence secret token formats — MIRRORS `SECRET_MASK_RE` in
- * src/plugins/pantheon-hooks.ts (V1) and `HIGH_CONFIDENCE_PATTERNS` in
- * scripts/hooks/scan-secrets.sh.
+ * High-confidence secret token formats — MIRRORS `HIGH_CONFIDENCE_PATTERNS` in
+ * scripts/hooks/scan-secrets.sh (and the in-process mirror in
+ * src/pantheon/v2-hook-engine.ts).
  *
- * Duplicated rather than imported because the V1 module is a separate plugin
- * that is NOT loaded on a V2-only install (see the module header), and pulling
- * it in for one regex would resurrect exactly the V1-hook coupling V2 exists to
- * remove. The drift risk is real and is asserted by a test in
- * tests/pantheon/plugin-v2-contract.test.ts.
+ * Duplicated rather than shared with the shell scanner because the scanner runs
+ * as a child process that must not import plugin code (and the V1 plugin this
+ * regex used to mirror was removed in 2.0). The drift risk is real and is
+ * asserted by tests in tests/pantheon/.
  *
  * Applied to every log line this module writes, so a hook trail can never
  * contain a raw credential. Header/KEY names (the Bifrost header alone,
@@ -1432,10 +1432,10 @@ function maskSecret(text: string): string {
  * This is the only deliberate throw on the V2 surface. opencode's
  * Plugin.trigger has no catch around hook invocations, so the rejection
  * propagates and fails the tool's execute promise BEFORE the tool body runs —
- * the same hard block V1 has (src/plugins/pantheon-hooks.ts
- * `SECRET_BLOCK_MESSAGE`), which was inert on a V2-only install because
- * pantheon-hooks.ts is never loaded there (opencode.json `plugins` declares only
- * `src/plugin-v2`).
+ * the same hard block the V1 plugin had (`SECRET_BLOCK_MESSAGE` in
+ * src/plugins/pantheon-hooks.ts, removed in 2.0), which was inert on a V2-only
+ * install because that plugin was never loaded there (opencode.json `plugins`
+ * declares only `src/plugin-v2`). This module is the only block now.
  *
  * English, like every other message this module emits: this string surfaces in
  * the user's session as the tool error, so it is read by whoever hit the block,
@@ -1454,7 +1454,7 @@ const SECRET_BLOCK_MESSAGE =
  * This is a deliberate fail-CLOSED denial. The previous handler blocked only
  * `code === 2` and treated every other outcome as advisory — but the runner
  * reports a missing script, a spawn failure and a payload-serialization failure
- * as `code: 1` too (src/plugins/hook-runner.ts), so a broken scanner read as a
+ * as `code: 1` too (src/pantheon/hook-runner.ts), so a broken scanner read as a
  * clean advisory and the tool ran, silently disabling the only hard secret block
  * on the V2 surface.
  *
@@ -1918,11 +1918,12 @@ async function registerV2ToolHooks(
         await v2EnforcementGuard(input, output)
 
         // High-confidence secret scan (scripts/hooks/scan-secrets.sh). This is the
-        // ONLY hard block on the V2 surface, and it exists here — rather than via
-        // `src/plugins/pantheon-hooks.ts` — because that module is a separate
-        // plugin that is never loaded on a V2-only install: opencode.json
-        // `plugins` declares only `src/plugin-v2`. V1's scan-secrets block was
-        // therefore inert by construction, not by misconfiguration.
+        // ONLY hard block on the V2 surface, and it exists here — the V1 plugin
+        // (`src/plugins/pantheon-hooks.ts`, removed in 2.0) that owned the
+        // equivalent block was a separate plugin never loaded on a V2-only
+        // install: opencode.json `plugins` declares only `src/plugin-v2`. V1's
+        // scan-secrets block was therefore inert by construction, not by
+        // misconfiguration.
         //
         // exit 0 → allow. exit 1 with a valid scanner report → advisory, logged
         // only. exit 2 (high-confidence match) → deny. A scanner that does NOT
@@ -2000,9 +2001,10 @@ async function registerV2ToolHooks(
     // "execute.after" — the V1 parity chain (task-result-guard →
     // context-sandbox → read-enhancer) rebuilt on the V2 event shape.
     //
-    // This IS behaviour, not a registration point: on a V2-only install the V1
-    // `pantheon-hooks` plugin is not loaded, so this handler is the only thing
-    // that truncates oversized output and tags `read` with hashline refs.
+    // This IS behaviour, not a registration point: the V1 `pantheon-hooks`
+    // plugin (removed in 2.0) never loaded on a V2-only install, so this handler
+    // is the only thing that truncates oversized output and tags `read` with
+    // hashline refs.
     // The sandbox config comes from `ctx.options.context_sandbox` (the V2 copy
     // the installer writes — V2.0.25 drops the V1 top-level key), resolved with
     // the same resolver V1 uses.

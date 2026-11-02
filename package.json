@@ -12,7 +12,6 @@
   },
   "exports": {
     "./local-decision-router": "./src/pantheon/local-decision-router.ts",
-    "./plugin": "./src/plugin.ts",
     "./plugin-v2": "./src/plugin-v2.ts",
     "./v2-bridge": "./src/pantheon/v2-bridge.ts"
   },
@@ -71,7 +70,6 @@
     "pyproject.toml",
     "scripts/install/*.mjs",
     "scripts/*.py",
-    "src/plugin.ts",
     "src/plugin-v2.ts",
     "src/plugin-v2",
     "src/pantheon/v2-bridge.ts",

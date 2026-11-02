@@ -117,7 +117,7 @@ test('an apply reports every phase through the gauge', async () => {
         installOpenCode(target, false, false, ['agents', 'runtime'], {
           yes: true,
           headless: true,
-          version: 'v1',
+          version: 'v2',
           quiet: true,
           deps: {
             setupVenv: () => {},
@@ -129,7 +129,7 @@ test('an apply reports every phase through the gauge', async () => {
         installOpenCode(target, false, false, ['agents', 'runtime'], {
           yes: true,
           headless: true,
-          version: 'v1',
+          version: 'v2',
           deps: {
             setupVenv: () => {},
             healthCheck: () => ({ passed: [], warnings: [], failed: [] }),
@@ -206,16 +206,6 @@ test('a dry-run venv setup never claims the venv was created', async () => {
   }
 })
 
-test('set-tier --dry-run uses the single [DRY-RUN] marker', () => {
-  const child = spawnSync(process.execPath, [BIN, 'set-tier', 'none', '--dry-run'], {
-    encoding: 'utf8',
-    env: { ...process.env, LANG: 'C', LC_ALL: 'C', XDG_CONFIG_HOME: tmpdir() },
-  })
-  assert.equal(child.status, 0, child.stderr)
-  assert.match(child.stdout, /\[DRY-RUN\] Would clear model preset/)
-  assert.doesNotMatch(child.stdout, /\[dry-run\]/)
-})
-
 test('migrate --dry-run uses the single [DRY-RUN] marker', () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-progress-migrate-'))
   try {
@@ -248,7 +238,7 @@ test('init --doctor reports the health check result, duration and exit code', as
           'agents',
           '--doctor',
           '--version',
-          'v1',
+          'v2',
         ],
         {
           cwd: target,
@@ -414,7 +404,7 @@ function runInit(cwd, args) {
   }
 }
 
-const DRY_ARGS = ['--project', '--dry-run', '--yes', '--headless', '--version', 'v1']
+const DRY_ARGS = ['--project', '--dry-run', '--yes', '--headless', '--version', 'v2']
 
 test('--dry-run default is a summary: no per-file paths, MCP list, nothing written', () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-progress-dry-'))
@@ -451,7 +441,7 @@ test('--dry-run --verbose restores the per-file change list', () => {
     const result = runInit(target, [...DRY_ARGS, '--components', 'agents,skills', '--verbose'])
     const output = `${result.stdout}\n${result.stderr}`
     assert.equal(result.status, 0, output)
-    assert.match(output, /create\s+\.opencode\/agents\/zeus\.md/)
+    assert.match(output, /create\s+agents\/zeus\.md/)
     assert.match(output, /create\s+\.opencode\/skills\//)
     assert.match(output, /No files were written\./)
     // Verbose shows per-step detail instead of drawing the gauge.

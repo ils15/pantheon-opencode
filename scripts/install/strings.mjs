@@ -6,8 +6,8 @@
  * table — deliberately no i18n framework (YAGNI).
  *
  * Scope: the user journey (banner → install steps → health → summary →
- * next steps). Deep diagnostics (per-file copy detail, doctor output) and
- * the model-picker wizard remain single-language by design.
+ * next steps). Deep diagnostics (per-file copy detail, doctor output) remain
+ * single-language by design.
  */
 
 const TABLE = {

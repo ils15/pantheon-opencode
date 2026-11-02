@@ -7,23 +7,21 @@
  * Thin CLI wrapper that parses arguments and delegates to
  * installOpenCode() from scripts/install/opencode.mjs.
  *
- * Dual-version install (Phase 3): the generated config is V1-shaped and valid
- * under BOTH OpenCode V1 (`opencode` 1.18.x) and V2 (`opencode2`, OpenCode 2.x —
- * `opencode2 --version` prints "opencode v2.0.22"; an early 2.x prerelease
- * printed "0.0.0-next-17444", which is history and not a host observation).
- * V2 reads the same config locations and normalizes V1 fields in memory through
- * migrateV1toV2() (scripts/install/config-migration.mjs), then writes the
- * V2-native `plugins` list. `--version v2` selects that path.
+ * Pantheon 2.0 targets OpenCode 2.x only (`--opencode-version v2|auto`). The
+ * legacy V1 plugin line is removed: an explicit `--opencode-version v1` is a
+ * hard refusal, while EXISTING V1 installs are still recognized, stripped and
+ * migrated to the V2 plugin entry (migrateV1toV2,
+ * scripts/install/config-migration.mjs).
  *
- * State is NOT isolated per generation: both host generations read one OpenCode
- * store, so this CLI claims neither a separate database nor a service port. The
- * installer prints the path an actual resolver returns
+ * State is NOT isolated per generation: the host reads one OpenCode store, so
+ * this CLI claims neither a separate database nor a service port. The installer
+ * prints the path an actual resolver returns
  * (scripts/install/opencode-state.mjs).
  */
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { configure as configureUi, endGaugeLine, tag } from '../scripts/install/cli-ui.mjs'
+import { endGaugeLine } from '../scripts/install/cli-ui.mjs'
 import { resolveComponentSelection } from '../scripts/install/component-selection.mjs'
 import { resolveGlobalConfigDirectory } from '../scripts/install/config-paths.mjs'
 import { resolveInstallExitCode } from '../scripts/install/exit-codes.mjs'
@@ -136,12 +134,10 @@ function printUsage() {
   console.log(
     '  npx pantheon-opencode init --decision-model opencode-console-jev/jev-1.13 --decision-monthly-usd 5 --decision-per-decision-usd 0.10',
   )
-  console.log('  npx pantheon-opencode init --opencode-version v1|v2|auto')
-  console.log('  npx pantheon-opencode init --preset <name> # Install and activate model preset')
+  console.log('  npx pantheon-opencode init --opencode-version v2|auto')
   console.log(
     '  npx pantheon-opencode init --merge-dev-config <path> # Merge a dev config (off by default)',
   )
-  console.log('  npx pantheon-opencode set-tier <name>      # Set active model preset (global)')
   console.log(
     '  npx pantheon-opencode decision-router help|status|setup|preview|holds  # read-only',
   )
@@ -150,9 +146,6 @@ function printUsage() {
   )
   console.log(
     '  npx pantheon-opencode update [--stable]    # Update package + re-run init (default: beta channel)',
-  )
-  console.log(
-    '  npx pantheon-opencode set-tier <name> --project  # Set active model preset (project)',
   )
   console.log('  npx pantheon-opencode prune               # List legacy artifacts (dry-run)')
   console.log('  npx pantheon-opencode prune --apply       # Remove stale backups')
@@ -289,79 +282,6 @@ async function main() {
     process.exit(0)
   }
 
-  if (command === 'set-tier') {
-    const isProject = args.includes('--project')
-    const isDryRun = args.includes('--dry-run')
-    const name = args[1]
-
-    const { loadPresetDefs } = await import('../src/pantheon/presets.mjs')
-    const { writeActivePreset } = await import('../scripts/install/model-picker.mjs')
-    const presets = loadPresetDefs()
-    const presetList = `none, ${Object.keys(presets).join(', ')}`
-
-    if (!name) {
-      console.error('❌ set-tier requires a preset name')
-      console.error(`   Available: ${presetList}`)
-      process.exit(1)
-    }
-    if (name !== 'none' && !presets[name]) {
-      console.error(`❌ Unknown preset "${name}"`)
-      console.error(`   Available: ${presetList}`)
-      process.exit(1)
-    }
-
-    // Fail-fast: every provider's API key env var must be set before writing
-    if (name !== 'none') {
-      for (const [pid, provider] of Object.entries(presets[name].providers || {})) {
-        if (!process.env[provider.apiKeyEnv]) {
-          console.error(`❌ Missing required API key configuration for provider "${pid}"`)
-          console.error('   Set the provider API key environment variable and retry.')
-          process.exit(1)
-        }
-      }
-    }
-
-    const presetDir = isProject ? process.cwd() : resolveGlobalConfigDirectory(process.env)
-    const filePath = path.join(presetDir, '.pantheon', 'active-preset.json')
-    const bakPath = path.join(presetDir, '.pantheon', 'active-preset.json.bak')
-
-    let prevName = '(none)'
-    if (fs.existsSync(filePath)) {
-      try {
-        prevName = JSON.parse(fs.readFileSync(filePath, 'utf8')).preset || '(unknown)'
-      } catch {
-        prevName = '(unknown)'
-      }
-    }
-
-    if (name === 'none') {
-      if (isDryRun) {
-        configureUi({ dryRun: true })
-        console.log(tag('Would clear model preset'))
-      } else {
-        if (fs.existsSync(filePath)) {
-          fs.mkdirSync(path.dirname(bakPath), { recursive: true })
-          fs.copyFileSync(filePath, bakPath)
-          fs.rmSync(filePath, { force: true })
-        }
-        console.log('Model preset cleared. Using opencode defaults.')
-        console.log(`   Backup: ${bakPath}`)
-      }
-      return
-    }
-
-    const result = writeActivePreset(presetDir, name, { dryRun: isDryRun, source: 'cli' })
-
-    console.log(`Model preset set: ${prevName} → ${name}`)
-    for (const [agent, spec] of Object.entries(presets[name].agents || {})) {
-      console.log(`   ${agent}: ${spec.model} [${spec.reasoning_effort}]`)
-    }
-    const providerNames = Object.keys(presets[name].providers || {})
-    console.log(`   Providers: ${providerNames.join(', ') || 'none'}`)
-    if (result.backupPath) console.log(`   Backup: ${result.backupPath}`)
-    return
-  }
-
   if (command === 'init' || !command) {
     const applyPlanIndex = args.indexOf('--apply-plan')
     const inlineApplyPlan = args.find((arg) => arg.startsWith('--apply-plan='))
@@ -407,7 +327,7 @@ async function main() {
             ].includes(component),
         ) ||
         options.clean !== false ||
-        !['v1', 'v2', 'auto'].includes(options.version) ||
+        !['v2', 'auto'].includes(options.version) ||
         typeof options.isProject !== 'boolean'
       ) {
         console.error('❌ Install-plan options are invalid or unsupported')
@@ -482,7 +402,6 @@ async function main() {
 
     // beta.5: warn on unrecognized flags instead of silently ignoring them.
     const VALUE_FLAGS = new Set([
-      '--preset',
       '--model',
       '--small-model',
       '--version',
@@ -527,23 +446,6 @@ async function main() {
       }
     }
 
-    const presetIndex = args.indexOf('--preset')
-    const inlinePreset = args.find((arg) => arg.startsWith('--preset='))
-    const hasPresetOption = presetIndex >= 0 || inlinePreset !== undefined
-    const parsedPreset =
-      presetIndex >= 0
-        ? (args[presetIndex + 1] ?? null)
-        : (inlinePreset?.slice('--preset='.length) ?? null)
-    if (
-      hasPresetOption &&
-      (typeof parsedPreset !== 'string' ||
-        parsedPreset.trim() === '' ||
-        parsedPreset.startsWith('--'))
-    ) {
-      console.error('❌ --preset requires a non-empty value')
-      process.exit(1)
-    }
-    const presetOpt = reviewedPlan ? (reviewedPlan.options.preset ?? null) : parsedPreset
     // Explicit top-level model overrides for the generated config.
     const modelIndex = args.indexOf('--model')
     const modelOpt = reviewedPlan
@@ -557,26 +459,21 @@ async function main() {
       : smallModelIndex >= 0
         ? (args[smallModelIndex + 1] ?? null)
         : null
-    // --version v1|v2|auto labels the install target. `auto` resolves the
+    // --version v2|auto labels the install target. `auto` resolves the
     // generation from the opencode binary at install time (see
-    // scripts/install/opencode-version.mjs). Invalid values fail fast.
-    const versionOpt = reviewedPlan ? reviewedPlan.options.version : parseOpenCodeVersion(args)
-    if (
-      versionOpt !== null &&
-      versionOpt !== 'v1' &&
-      versionOpt !== 'v2' &&
-      versionOpt !== 'auto'
-    ) {
-      console.error(`❌ Invalid --version "${versionOpt}" — expected v1, v2 or auto`)
-      process.exit(1)
-    }
-    // The 2.0 deprecation front-run: the legacy plugin line is end-of-life.
-    // Loud warning now (the v1 code path still exists for legacy installs);
-    // the 2.0 removal turns this into a hard refusal.
-    if (versionOpt === 'v1') {
-      console.error(
-        '⚠️  --opencode-version v1 is DEPRECATED and will be removed in Pantheon 2.0 — the legacy plugin line is end-of-life. OpenCode 2.x hosts are the supported generation; remove the flag (auto detects the host).',
-      )
+    // scripts/install/opencode-version.mjs); an explicit `v1` is a hard
+    // refusal (Pantheon 2.0 requires OpenCode 2.x), reported here through the
+    // CLI's standard fatal-usage pattern.
+    let versionOpt = null
+    if (reviewedPlan) {
+      versionOpt = reviewedPlan.options.version
+    } else {
+      try {
+        versionOpt = parseOpenCodeVersion(args)
+      } catch (err) {
+        console.error(`❌ ${err instanceof Error ? err.message : String(err)}`)
+        process.exit(1)
+      }
     }
 
     // Resolve the user's explicit selection separately from the defaults.
@@ -781,7 +678,6 @@ async function main() {
         yes: autoYes,
         model: modelOpt,
         smallModel: smallModelOpt,
-        preset: presetOpt,
         version: versionOpt ?? 'auto',
         mergeDevConfig: mergeDevConfigOpt,
         expectedPlan: reviewedPlan ?? setupApprovedPlan?.plan ?? null,
@@ -857,7 +753,6 @@ async function main() {
             isProject,
             model: modelOpt,
             smallModel: smallModelOpt,
-            preset: presetOpt,
             mergeDevConfig: mergeDevConfigOpt,
           },
           files: result.files,
@@ -902,7 +797,6 @@ async function main() {
               isProject,
               model: modelOpt,
               smallModel: smallModelOpt,
-              preset: presetOpt,
               mergeDevConfig: mergeDevConfigOpt,
             },
             files: result.files,
@@ -920,8 +814,9 @@ async function main() {
           advisories: [
             ...(result.versionAssumed
               ? [
-                  'The OpenCode host generation could not be detected; this plan assumes V1 ' +
-                    'and may diverge from the apply. Pass --opencode-version v1|v2 to pin it.',
+                  'The OpenCode host generation could not be detected; this plan assumes the ' +
+                    'OpenCode 2.x generation (the only one Pantheon supports). Pass ' +
+                    '--opencode-version v2 (or auto) to pin it.',
                 ]
               : []),
             // Warnings printed in text mode are suppressed by --quiet, so the

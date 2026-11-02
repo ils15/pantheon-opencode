@@ -1,8 +1,8 @@
 /**
  * Model routing presets — test harness for:
- *  - src/pantheon/presets.mjs            (resolver, normalizer, validator)
- *  - scripts/install/model-picker.mjs    (interactive picker + persistence)
- *  - bin/pantheon-init.mjs set-tier      (CLI command)
+ *  - src/pantheon/presets.mjs            (resolver, normalizer, validator;
+ *                                         still RECOGNIZES a legacy
+ *                                         active-preset.json marker)
  *  - scripts/validate-routing.mjs        (section F wrapper)
  *  - npm packaging                       (T21)
  *
@@ -10,7 +10,7 @@
  */
 import { strict as assert } from 'node:assert'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -24,14 +24,6 @@ const results = []
 function test(name, fn) {
   try {
     fn()
-    results.push({ name, passed: true })
-  } catch (e) {
-    results.push({ name, passed: false, error: e.message })
-  }
-}
-async function testAsync(name, fn) {
-  try {
-    await fn()
     results.push({ name, passed: true })
   } catch (e) {
     results.push({ name, passed: false, error: e.message })
@@ -56,29 +48,8 @@ function repoAgents() {
   return Object.keys(routing.agents || {}).filter((a) => a !== 'zen' && a !== 'zeus_copilot')
 }
 
-function runCli(args, { cwd, env } = {}) {
-  return spawnSync(process.execPath, [join(ROOT, 'bin', 'pantheon-init.mjs'), ...args], {
-    cwd: cwd ?? ROOT,
-    env: env ?? process.env,
-    encoding: 'utf8',
-  })
-}
-
-/** env for CLI tests: keys present, model-preset env unset. */
-function cliEnv() {
-  const env = {
-    ...process.env,
-    PANTHEON_OPENCODE_API_KEY: 'dummy',
-  }
-  delete env.PANTHEON_MODEL_PRESET
-  return env
-}
-
 function presetFile(dir) {
   return join(dir, '.pantheon', 'active-preset.json')
-}
-function presetBak(dir) {
-  return join(dir, '.pantheon', 'active-preset.json.bak')
 }
 
 // ─── T1: resolveActivePreset default → null ────────────────────────────
@@ -610,366 +581,6 @@ test('T13: validatePresetDefs rejects bad fixtures', () => {
   )
 })
 
-// ─── T14: set-tier writes file + backup ────────────────────────────────
-test('T14: set-tier writes active-preset.json + .bak on second run', () => {
-  const dir = makeTmp()
-  let r = runCli(['set-tier', 'go-fast', '--project'], { cwd: dir, env: cliEnv() })
-  assert.equal(r.status, 0, r.stdout + r.stderr)
-  const file = presetFile(dir)
-  assert.ok(existsSync(file), 'active-preset.json should exist')
-  const data = JSON.parse(readFileSync(file, 'utf8'))
-  assert.equal(data.version, 1)
-  assert.equal(data.preset, 'go-fast')
-  assert.equal(data.source, 'cli')
-  assert.ok(!Number.isNaN(Date.parse(data.updated_at)), 'updated_at must be ISO')
-
-  const firstContent = readFileSync(file, 'utf8')
-  r = runCli(['set-tier', 'go-free', '--project'], { cwd: dir, env: cliEnv() })
-  assert.equal(r.status, 0, r.stdout + r.stderr)
-  const bak = presetBak(dir)
-  assert.ok(existsSync(bak), 'backup should exist')
-  assert.equal(readFileSync(bak, 'utf8'), firstContent, 'backup must equal previous file')
-  const data2 = JSON.parse(readFileSync(file, 'utf8'))
-  assert.equal(data2.preset, 'go-free')
-})
-
-// ─── T15: unknown name → exit 1, lists presets ─────────────────────────
-test('T15: set-tier unknown name exits 1 and lists go-free', () => {
-  const r = runCli(['set-tier', 'bogus', '--project'], { cwd: makeTmp(), env: cliEnv() })
-  assert.equal(r.status, 1)
-  assert.ok((r.stdout + r.stderr).includes('go-free'), r.stdout + r.stderr)
-})
-
-// ─── T16: fail-fast missing key ────────────────────────────────────────
-test('T16: set-tier fails fast when API key env missing, writes nothing', () => {
-  const env = { ...process.env }
-  delete env.PANTHEON_MODEL_PRESET
-  delete env.PANTHEON_OPENCODE_API_KEY
-  const dir = makeTmp()
-  const r = runCli(['set-tier', 'go-fast', '--project'], { cwd: dir, env })
-  assert.equal(r.status, 1)
-  assert.ok(
-    (r.stdout + r.stderr).includes('Missing required API key configuration'),
-    r.stdout + r.stderr,
-  )
-  assert.ok(!existsSync(presetFile(dir)), 'no file should be written on fail-fast')
-})
-
-// ─── T17: set-tier none clears ─────────────────────────────────────────
-test('T17: set-tier none clears file, keeps backup, prints cleared', () => {
-  const dir = makeTmp()
-  let r = runCli(['set-tier', 'go-fast', '--project'], { cwd: dir, env: cliEnv() })
-  assert.equal(r.status, 0, r.stdout + r.stderr)
-  const file = presetFile(dir)
-  assert.ok(existsSync(file))
-  const prev = readFileSync(file, 'utf8')
-
-  r = runCli(['set-tier', 'none', '--project'], { cwd: dir, env: cliEnv() })
-  assert.equal(r.status, 0, r.stdout + r.stderr)
-  assert.ok(!existsSync(file), 'active-preset.json should be removed')
-  assert.ok(existsSync(presetBak(dir)), 'backup should remain')
-  assert.equal(readFileSync(presetBak(dir), 'utf8'), prev, 'backup equals previous preset')
-  assert.ok((r.stdout + r.stderr).toLowerCase().includes('cleared'), r.stdout + r.stderr)
-})
-
-// ─── T18: picker dry-run writes nothing ────────────────────────────────
-await testAsync('T18: picker dry-run does not write', async () => {
-  const picker = await import('../scripts/install/model-picker.mjs')
-  const dir = makeTmp()
-  const defs = { 'go-fast': { description: 'fast' } }
-  const mockRl = { question: async () => 'go-fast', close: () => {} }
-  const chosen = await picker.runModelPicker({
-    presetDir: dir,
-    presets: defs,
-    dryRun: true,
-    logger: silent,
-    rl: mockRl,
-  })
-  assert.equal(chosen, 'go-fast')
-  assert.ok(!existsSync(presetFile(dir)), 'dry-run must not write file')
-  const res = picker.writeActivePreset(dir, 'go-fast', { dryRun: true })
-  assert.equal(res.written, false)
-  assert.ok(!existsSync(presetFile(dir)), 'dry-run writeActivePreset must not write file')
-})
-
-// ─── T19: picker persists + autoYes skip guard ─────────────────────────
-await testAsync('T19: picker persists; opencode.mjs gates on autoYes/opts.preset', async () => {
-  const picker = await import('../scripts/install/model-picker.mjs')
-  const dir = makeTmp()
-  const defs = { 'go-fast': { description: 'fast' } }
-  const mockRl = { question: async () => 'go-fast', close: () => {} }
-  const chosen = await picker.runModelPicker({
-    presetDir: dir,
-    presets: defs,
-    dryRun: false,
-    logger: silent,
-    rl: mockRl,
-  })
-  assert.equal(chosen, 'go-fast')
-  const file = presetFile(dir)
-  assert.ok(existsSync(file), 'picker must persist choice')
-  assert.equal(JSON.parse(readFileSync(file, 'utf8')).preset, 'go-fast')
-})
-
-// ─── T19b: default model choice inherits without writing ─────────────────
-await testAsync('T19b: init wizard inherit selection writes nothing', async () => {
-  const picker = await import('../scripts/install/model-picker.mjs')
-  const dir = makeTmp()
-  const prompts = { select: async () => 'inherit', isCancel: () => false }
-  const result = await picker.runInitWizard({
-    presetDir: dir,
-    presets: { 'go-hybrid': { description: 'Go' }, openai: {}, anthropic: {} },
-    env: {},
-    dryRun: false,
-    logger: silent,
-    prompts,
-  })
-  assert.equal(result.preset, 'inherit')
-  assert.equal(result.scope, 'project')
-  assert.ok(!existsSync(presetFile(dir)), 'inherit must not write active-preset.json')
-})
-
-// ─── Key guidance names env vars without logging credentials ─────────────
-await testAsync('init wizard key guidance is static and never logs secrets', async () => {
-  const picker = await import('../scripts/install/model-picker.mjs')
-  const expected = {
-    'go-free': 'PANTHEON_OPENCODE_API_KEY',
-    'go-fast': 'PANTHEON_OPENCODE_API_KEY',
-    'go-premium': 'PANTHEON_OPENCODE_API_KEY',
-    'go-hybrid': 'PANTHEON_OPENCODE_API_KEY',
-    openai: 'OPENAI_API_KEY',
-    anthropic: 'ANTHROPIC_API_KEY',
-  }
-  const secrets = ['secret-from-env-fixture', 'secret-from-metadata-fixture']
-
-  for (const [preset, envName] of Object.entries(expected)) {
-    const guidance = picker.presetKeyEnvGuidance(preset)
-    assert.ok(guidance.includes(envName), `${preset} should name ${envName}`)
-    assert.ok(secrets.every((secret) => !guidance.includes(secret)))
-  }
-  assert.ok(!picker.presetKeyEnvGuidance('unknown').includes('PANTHEON_OPENCODE_API_KEY'))
-
-  for (const preset of ['go-hybrid', 'openai', 'anthropic']) {
-    const messages = []
-    await picker.runInitWizard({
-      presets: {
-        [preset]: { providers: { fixture: { apiKeyEnv: secrets[1] } } },
-      },
-      env: {
-        HOME: makeTmp(),
-        PANTHEON_OPENCODE_API_KEY: secrets[0],
-        OPENAI_API_KEY: secrets[0],
-        ANTHROPIC_API_KEY: secrets[0],
-      },
-      dryRun: true,
-      ask: async () => ({ preset, scope: 'project' }),
-      logger: {
-        log: (message) => messages.push(message),
-        warn: (message) => messages.push(message),
-      },
-    })
-    const output = messages.join('\n')
-    assert.ok(output.includes(expected[preset]), `${preset} output should name its key variable`)
-    assert.ok(
-      secrets.every((secret) => !output.includes(secret)),
-      `${preset} output leaked a secret`,
-    )
-  }
-})
-
-// ─── T19c: ask path accepts the internal inherit value ──────────────────
-await testAsync('T19c: init wizard ask path inherit writes nothing', async () => {
-  const picker = await import('../scripts/install/model-picker.mjs')
-  const dir = makeTmp()
-  const ask = async () => ({ preset: 'inherit', scope: 'project' })
-  const result = await picker.runInitWizard({
-    presetDir: dir,
-    presets: { 'go-hybrid': { description: 'Go' }, openai: {}, anthropic: {} },
-    env: {},
-    dryRun: false,
-    logger: silent,
-    ask,
-  })
-  assert.equal(result.preset, 'inherit')
-  assert.ok(!existsSync(presetFile(dir)), 'inherit must not write active-preset.json')
-})
-
-// ─── T19d: visible OpenCode Go maps to the internal go-hybrid ID ────────
-await testAsync('T19d: OpenCode Go label saves go-hybrid without key validation', async () => {
-  const picker = await import('../scripts/install/model-picker.mjs')
-  const dir = makeTmp()
-  const defs = {
-    'go-hybrid': { providers: { 'opencode-go': { apiKeyEnv: 'PANTHEON_OPENCODE_API_KEY' } } },
-    openai: {},
-    anthropic: {},
-  }
-  const ask = async () => ({ preset: 'OpenCode Go', scope: 'project' })
-  const result = await picker.runInitWizard({
-    presetDir: dir,
-    presets: defs,
-    env: {},
-    dryRun: false,
-    logger: silent,
-    ask,
-  })
-  assert.equal(result.preset, 'go-hybrid')
-  assert.equal(result.scope, 'project')
-  const file = presetFile(dir)
-  assert.ok(existsSync(file), 'project preset must be written')
-  assert.equal(JSON.parse(readFileSync(file, 'utf8')).preset, 'go-hybrid')
-})
-
-// ─── T19e: init wizard ask path — global scope writes XDG global file ───
-await testAsync(
-  'T19e: init wizard ask path global scope writes XDG_CONFIG_HOME/opencode',
-  async () => {
-    const picker = await import('../scripts/install/model-picker.mjs')
-    const dir = makeTmp()
-    const xdgHome = makeTmp()
-    const defs = {
-      'go-hybrid': { providers: { 'opencode-go': { apiKeyEnv: 'PANTHEON_OPENCODE_API_KEY' } } },
-      openai: {},
-      anthropic: {},
-    }
-    const ask = async () => ({ preset: 'go-hybrid', scope: 'global' })
-    const env = { HOME: dir, XDG_CONFIG_HOME: xdgHome }
-    const result = await picker.runInitWizard({
-      presetDir: dir,
-      presets: defs,
-      env,
-      dryRun: false,
-      logger: silent,
-      ask,
-    })
-    assert.equal(result.preset, 'go-hybrid')
-    assert.equal(result.scope, 'global')
-    const globalFile = join(xdgHome, 'opencode', '.pantheon', 'active-preset.json')
-    assert.ok(existsSync(globalFile), 'global preset must be written to XDG_CONFIG_HOME/opencode')
-    assert.ok(!existsSync(presetFile(dir)), 'project file must NOT be written for global scope')
-    assert.equal(JSON.parse(readFileSync(globalFile, 'utf8')).preset, 'go-hybrid')
-  },
-)
-
-// ─── T19f: init wizard ask path — project scope writes project file ─────
-await testAsync('T19f: init wizard ask path project scope writes project file', async () => {
-  const picker = await import('../scripts/install/model-picker.mjs')
-  const dir = makeTmp()
-  const defs = {
-    'go-hybrid': { providers: { 'opencode-go': { apiKeyEnv: 'PANTHEON_OPENCODE_API_KEY' } } },
-    openai: {},
-    anthropic: {},
-  }
-  const ask = async () => ({ preset: 'go-hybrid', scope: 'project' })
-  const env = { HOME: dir }
-  const result = await picker.runInitWizard({
-    presetDir: dir,
-    presets: defs,
-    env,
-    dryRun: false,
-    logger: silent,
-    ask,
-  })
-  assert.equal(result.preset, 'go-hybrid')
-  assert.equal(result.scope, 'project')
-  assert.ok(existsSync(presetFile(dir)), 'project preset must be written')
-})
-
-// ─── T19g: canceled scope prompt does not partially write the chosen profile ─
-await testAsync('T19g: canceling scope after profile selection writes nothing', async () => {
-  const picker = await import('../scripts/install/model-picker.mjs')
-  const dir = makeTmp()
-  const canceled = Symbol('cancel')
-  const answers = ['go-hybrid', canceled]
-  const prompts = {
-    select: async () => answers.shift(),
-    isCancel: (value) => value === canceled,
-    cancel: () => {},
-  }
-  const result = await picker.runInitWizard({
-    presetDir: dir,
-    presets: { 'go-hybrid': {}, openai: {}, anthropic: {} },
-    env: {},
-    dryRun: false,
-    logger: silent,
-    prompts,
-  })
-  assert.equal(result, null)
-  assert.ok(
-    !existsSync(presetFile(dir)),
-    'cancellation must not partially write active-preset.json',
-  )
-})
-
-// Beta14: the visible installer choices are labels, not internal preset IDs.
-await testAsync('installer exposes only Inherit, OpenCode Go, OpenAI, and Anthropic', async () => {
-  const picker = await import('../scripts/install/model-picker.mjs')
-  const questions = picker.buildInitQuestions({
-    'go-hybrid': { description: 'hybrid Go' },
-    openai: { description: 'OpenAI' },
-    anthropic: { description: 'Anthropic' },
-    'go-free': { description: 'legacy' },
-    'go-fast': { description: 'legacy' },
-    'go-premium': { description: 'legacy' },
-  })
-  assert.deepEqual(
-    questions[0].options.map(({ label, value }) => [label, value]),
-    [
-      ['Inherit', 'inherit'],
-      ['OpenCode Go', 'go-hybrid'],
-      ['OpenAI', 'openai'],
-      ['Anthropic', 'anthropic'],
-    ],
-  )
-  assert.equal(questions.length, 2, 'the installer must not collect or validate API keys')
-})
-
-await testAsync(
-  'Anthropic selection saves its internal ID and only names its key environment variable',
-  async () => {
-    const picker = await import('../scripts/install/model-picker.mjs')
-    const dir = makeTmp()
-    const values = ['anthropic', 'project']
-    const calls = []
-    const messages = []
-    const prompts = {
-      select: async (options) => {
-        calls.push(options)
-        return values.shift()
-      },
-      isCancel: () => false,
-      cancel: () => assert.fail('prompt should not be canceled'),
-    }
-    const env = new Proxy(
-      { HOME: dir },
-      {
-        get(target, property) {
-          assert.equal(String(property).includes('API_KEY'), false, 'wizard must not inspect keys')
-          return target[property]
-        },
-      },
-    )
-    const result = await picker.runInitWizard({
-      presetDir: dir,
-      presets: {
-        'go-hybrid': { providers: { 'opencode-go': { apiKeyEnv: 'PANTHEON_OPENCODE_API_KEY' } } },
-        openai: { providers: { openai: { apiKeyEnv: 'OPENAI_API_KEY' } } },
-        anthropic: { providers: { anthropic: { apiKeyEnv: 'ANTHROPIC_API_KEY' } } },
-      },
-      env,
-      logger: {
-        log: (message) => messages.push(message),
-        warn: (message) => messages.push(message),
-      },
-      prompts,
-    })
-
-    assert.equal(result.preset, 'anthropic')
-    assert.equal(JSON.parse(readFileSync(presetFile(dir), 'utf8')).preset, 'anthropic')
-    assert.equal(calls.length, 2)
-    assert.ok(messages.some((message) => message.includes('ANTHROPIC_API_KEY')))
-  },
-)
-
 test('go-hybrid overlays premium roles on go-fast and retains legacy preset definitions', () => {
   const routing = load(readFileSync(join(ROOT, 'src', 'routing.yml'), 'utf8'))
   const presets = routing.presets
@@ -986,23 +597,6 @@ test('go-hybrid overlays premium roles on go-fast and retains legacy preset defi
   )
   assert.equal(presets.anthropic.providers.anthropic.apiKeyEnv, 'ANTHROPIC_API_KEY')
 })
-
-// ─── T19h: old Go key alias helper remains compatible ──────────────────
-await testAsync(
-  'T19h: old Go key alias remains recognized by the compatibility helper',
-  async () => {
-    const picker = await import('../scripts/install/model-picker.mjs')
-    const defs = { 'go-fast': { description: 'fast' } }
-    assert.equal(
-      picker.requiredKeyEnvForPreset('go-fast', defs['go-fast']),
-      'PANTHEON_OPENCODE_API_KEY',
-    )
-    assert.equal(
-      picker.isKeyConfiguredForPreset({ OPENCODE_GO_API_KEY: 'set' }, 'go-fast', defs['go-fast']),
-      true,
-    )
-  },
-)
 
 // ─── T20: validate-routing passes with all preset definitions ──────────
 test('T20: validate-routing exits 0 and reports 6 presets', () => {
@@ -1464,8 +1058,9 @@ test('T32: validator rejects vision model whose provider is not declared', () =>
 
 // ─── T33: applyActivePresetToConfig present → config applied ──────────
 // P1-1: the plugin config hook calls applyActivePresetToConfig so
-// `init --preset` / `set-tier` actually changes agent models, reasoning
-// effort and fallbacks at runtime — not just the marker file.
+// A legacy active-preset.json marker (written by pre-2.0 installs) still
+// changes agent models, reasoning effort and fallbacks at runtime through the
+// plugin's preset resolver — recognition, never re-created by this installer.
 test('T33: applyActivePresetToConfig resolves file + applies agents/providers', () => {
   const dir = makeTmp()
   mkdirSync(join(dir, '.pantheon'), { recursive: true })

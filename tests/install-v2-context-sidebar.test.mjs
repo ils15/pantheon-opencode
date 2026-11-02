@@ -195,20 +195,6 @@ test('the installer writes the negation for V2 globals only, once per install', 
       withFakeNpm(async () => {
         const { installOpenCode } = await import('../scripts/install/opencode.mjs')
 
-        // (d) V1: the legacy path is untouched — no cli.json, tui.json instead.
-        await installOpenCode(v1Target, false, false, ['plugins'], {
-          yes: true,
-          headless: true,
-          version: 'v1',
-          global: true,
-          quiet: true,
-        })
-        assert.equal(
-          existsSync(join(v1Target, 'cli.json')),
-          false,
-          'V1 must not gain a V2 cli.json',
-        )
-
         // (a) V2 global: the directive lands in the client config.
         await installOpenCode(v2Target, false, false, ['plugins'], {
           yes: true,

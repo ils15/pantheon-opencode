@@ -1,26 +1,27 @@
 /**
- * V2 shell-hook parity — the two V1 shell hooks that had no V2 equivalent.
+ * V2 shell-hook parity — the shell hooks that ran only on the V1 generation.
  *
- * V1 runs them from `src/plugins/pantheon-hooks.ts` (`tool.execute.before` /
- * `tool.execute.after`):
+ * The V1 plugin (`src/plugins/pantheon-hooks.ts`, removed in 2.0) ran them from
+ * its `tool.execute.before` / `tool.execute.after` handlers:
  *
  *   - `format-multi-language.sh` on every completed tool call (post-write
  *     formatting);
  *   - `on-subagent-delegation-start.sh` / `-stop.sh`, which append the
  *     `delegations.log` audit records (start/stop joined on `delegation_id`).
  *
- * `pantheon-hooks.ts` is a SEPARATE plugin and is never loaded on a V2-only
- * install — `opencode.json` `plugins` declares only `src/plugin-v2` — so both
- * were dead on V2. The scripts themselves are environment-independent (they
+ * V1 was a SEPARATE plugin and was never loaded on a V2-only install —
+ * `opencode.json` `plugins` declares only `src/plugin-v2` — so both were dead
+ * on V2, and 2.0 removed the V1 plugin outright. This module is the only
+ * remaining wiring. The scripts themselves are environment-independent (they
  * read the Claude Code payload from stdin and write their own log files), so
  * they are run through the same `runHook` runner the secret scan already uses;
- * no V1 plugin import is needed and none is introduced.
+ * no legacy plugin import is needed and none is introduced.
  *
  * What is derived here, and why it is not a second implementation of V1:
  *
  *   - `delegation_id` — a UUID generated in the BEFORE hook and carried to the
  *     STOP hook through a callID-keyed record, which is how the two log lines
- *     join (V1 does the same in `pantheon-hooks.ts`).
+ *     join (the deleted V1 plugin did the same).
  *   - `agent_id` — `tool_input.subagent_type` (or `agent`/`target`) first, the
  *     tool name last, mirroring V1's `delegationAgent`. The AFTER-time args are
  *     never used to derive it, because a background dispatch returns
@@ -37,7 +38,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { type HookPayload, type HookResult, runHook } from '../plugins/hook-runner.ts'
+import { type HookPayload, type HookResult, runHook } from './hook-runner.ts'
 import {
   appendDelegationAuditLine,
   delegationStartLine,
@@ -46,11 +47,12 @@ import {
 } from './v2-hook-engine.ts'
 
 /**
- * Delegation tool names. MIRRORS `DELEGATION_TOOL_RE` in
- * `src/plugins/pantheon-hooks.ts` (V1). Duplicated rather than imported: that
- * module is the V1 plugin, not loaded on a V2-only install, and importing it
- * for one regex would resurrect the V1 coupling V2 exists to remove. The drift
- * risk is asserted by tests/pantheon/v2-shell-hooks.test.ts.
+ * Delegation tool names. MIRRORS `DELEGATION_TOOL_RE` in the V1 plugin
+ * (`src/plugins/pantheon-hooks.ts`, removed in 2.0). Deliberately duplicated
+ * rather than ever imported: the V1 plugin is gone, and V2 must not couple to
+ * legacy module layout for one regex. The drift risk against
+ * scripts/hooks/on-subagent-delegation-*.sh (which accept the same tool
+ * family) is asserted by tests/pantheon/v2-shell-hooks.test.ts.
  */
 export const V2_DELEGATION_TOOL_RE = /^(task|.*subagent.*)$/i
 
@@ -285,7 +287,7 @@ export function createV2ShellHooks(
       const event = rawEvent as V2AfterEvent
       const tool = text(event.tool)
       const payload = basePayload(event)
-      // V1 runs the formatter on every after-event; the script no-ops when the
+      // V1 ran the formatter on every after-event; the script no-ops when the
       // tool call touched no file it recognises.
       await fire(FORMATTER_SCRIPT, payload)
       if (!V2_DELEGATION_TOOL_RE.test(tool)) return

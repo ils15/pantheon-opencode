@@ -130,10 +130,10 @@ TTY prompt). Saved plans with `--force`/`--clean` are not supported.
 
 A dry run resolves the generation with the same resolver as apply, including the
 `--version` probe. The probe runs in a throwaway HOME/XDG sandbox with a
-2-second timeout, so the preview writes nothing. V1 is assumed only when the
-probe fails or is unreadable; the plan then says that it assumes V1 and may
-diverge, and `--json` adds an entry to its `advisories` array, while
-`--opencode-version v1|v2` pins the preview. A V2 preview also carries
+2-second timeout, so the preview writes nothing. The OpenCode 2.x generation is
+assumed only when the probe fails or is unreadable; the plan then says that it
+assumes it, and `--json` adds an entry to its `advisories` array, while
+`--opencode-version v2|auto` pins the preview. A V2 preview also carries
 `v2_capabilities` (what the generation registers, plus the statically known
 not-registered seed and the scope of that list) and `plugin_options` (whether the
 written plugin entry can receive the opt-in `options`), so a machine sees the
@@ -328,33 +328,21 @@ JavaScript coverage at all. Python coverage additionally requires
 
 ## OpenCode generation and plugin contract
 
-The installer selects exactly one plugin generation. V1 registers [`src/plugin.ts`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts)
-plus [`src/plugins/pantheon-hooks.ts`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/pantheon-hooks.ts) under the singular `plugin` key. V2
-registers the `<installed>/src/plugin-v2` directory under the plural `plugins`
-key.
-
-| Selection | Key | Registration | Surface |
-|---|---|---|---|
-| `v1` | `plugin` | [`src/plugin.ts`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts) + [`src/plugins/pantheon-hooks.ts`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/pantheon-hooks.ts) | Six tools, board lifecycle, V1 hooks and compaction |
-| `v2` | `plugins` | `<installed>/src/plugin-v2` | Host-native tools and hooks, read-only enforcement, optional delegation matrix |
-
-Choose explicitly when needed:
-
-```bash
-npx pantheon-opencode init --opencode-version v1
-npx pantheon-opencode init --opencode-version v2
-npx pantheon-opencode init --opencode-version auto
-```
+Pantheon 2.0 requires **OpenCode 2.x**; the legacy OpenCode V1 plugin line was
+removed. The installer registers the `<installed>/src/plugin-v2` directory under
+the plural `plugins` key. `--opencode-version` accepts `v2` or `auto` only — an
+explicit `v1` is refused.
 
 `auto` is the default. The resolution order and fallback behavior are documented
 once in [Compatibility](COMPATIBILITY.md#how-the-generation-is-selected). The
-exact tool list per generation is in
-[Architecture](ARCHITECTURE.md#what-each-generation-registers); user-facing V2
+exact tool list is in
+[Architecture](ARCHITECTURE.md#what-each-generation-registers); user-facing
 behavior is in [OpenCode V2](opencode-v2.md).
 
-The installer removes Pantheon references from both config shapes before writing
-the selected one, so a host never loads both generations. Third-party entries
-are retained and not converted.
+The installer strips Pantheon references from both config shapes (a pre-2.0
+config is recognized and migrated, never recreated) before writing the 2.x one,
+so a host never loads two generations. Third-party entries are retained and not
+converted.
 
 ### V2 config fields
 
@@ -387,12 +375,12 @@ providers (TypeSafe direct, OpenRouter-hosted) and the full gate chain:
 [Native Decisions](reference/native-decisions.md). Performance tuning (hook
 costs, prompt budget, model tiers): [Performance](reference/performance.md).
 
-## Interactive model setup (V1 legacy routing)
+## Interactive model setup (legacy routing reference)
 
-The TTY wizard applies to the legacy V1 preset path only. V2 ignores static
-presets and `PANTHEON_MODEL_PRESET`; use `pantheon_model` for explicit per-agent
-overrides. In V1, **Inherit** is the default and writes no
-`active-preset.json`, so delegates keep the parent chat model.
+The install-time model wizard was removed with the V1 plugin line. OpenCode 2.x
+ignores static presets and `PANTHEON_MODEL_PRESET`; use `pantheon_model` for
+explicit per-agent overrides. **Inherit** (no saved preset) keeps delegates on
+the parent chat model.
 
 | Choice | Saved preset | Provider / model | Environment variable |
 |---|---|---|---|
@@ -401,15 +389,13 @@ overrides. In V1, **Inherit** is the default and writes no
 | OpenAI | `openai` | OpenAI profile | `OPENAI_API_KEY` |
 | Anthropic | `anthropic` | `anthropic/claude-sonnet-5-5` | `ANTHROPIC_API_KEY` |
 
-The wizard reports the required variable **name only**. It does not read or
-validate keys, print values, write `.env`, or contact a catalog. Legacy
-`go-free`, `go-fast`, and `go-premium` presets remain for old settings and
-explicit `--preset` use.
+The table names the required variable **name only**: nothing here reads or
+validates keys, prints values, writes `.env`, or contacts a catalog. Legacy
+`go-free`, `go-fast`, and `go-premium` presets remain for old settings.
 
 ```bash
 npx pantheon-opencode init                     # TTY component/target prompts, preview, default-no authorization
 npx pantheon-opencode init --interactive       # force the wizard
-npx pantheon-opencode init --preset go-hybrid  # explicit V1 preset
 npx pantheon-opencode init --headless --yes    # non-interactive defaults
 npx pantheon-opencode init --headless --yes --no-mcp  # no Python/MCP
 ```

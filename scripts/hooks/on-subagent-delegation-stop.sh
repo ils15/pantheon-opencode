@@ -14,7 +14,8 @@
 #             after-hook args may carry the MERGED background result
 #             {task_id, state} and are NEVER used to derive the agent) ->
 #             tool_name -> env AGENT_NAME -> 'unknown'.
-#     status = 1. env STATUS override (hook-runner never sets it — empty here)
+#     status = 1. env STATUS override (the hook runner never sets it — empty
+#              here; see src/pantheon/hook-runner.ts)
 #              2. payload.status — plugin-derived from the REAL tool result.
 #                 P0-1: 'dispatched' is now a first-class status — the task
 #                 tool in BACKGROUND mode returns IMMEDIATELY with
@@ -64,8 +65,9 @@ ENV_STATUS="${STATUS:-}"
 ENV_REASON="${REASON:-}"
 ARG_REASON="${1:-}"
 
-# The Claude Code protocol payload arrives on stdin (hook-runner always pipes
-# it, even empty). Buffer it in a temp file — prompts can exceed argv limits.
+# The Claude Code protocol payload arrives on stdin (the shared hook runner,
+# src/pantheon/hook-runner.ts, always pipes it, even empty). Buffer it in a
+# temp file — prompts can exceed argv limits.
 TMP_IN=$(mktemp "${TMPDIR:-/tmp}/subagent-stop.XXXXXX")
 TMP_PY=$(mktemp "${TMPDIR:-/tmp}/subagent-stop.XXXXXX.py")
 TMP_OUT=$(mktemp "${TMPDIR:-/tmp}/subagent-stop.XXXXXX.out")

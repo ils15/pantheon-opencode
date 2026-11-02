@@ -20,8 +20,18 @@ import { assertNoSymlinkAncestors, verifyPathRemoved } from './verify.mjs'
 
 export const FILE_INVENTORY_VERSION = 1
 
-/** Map installer-owned copy layouts to their logical component without names heuristics. */
-export function componentForInstalledPath(target, filePath, { isGlobal, version = 'v1' } = {}) {
+/**
+ * Map installer-owned copy layouts to their logical component without name heuristics.
+ *
+ * The default generation is 'v2' because that is the only generation a NEW
+ * install records: the single production caller (the installer's state write)
+ * always passes the resolved version, which can only be v2. The 'project-v1'
+ * branch stays for legacy classification — entries recorded by pre-2.0
+ * installs keep that layout, and classifyFileInventory preserves (never
+ * removes) inventory entries whose recorded layout differs from the selected
+ * one.
+ */
+export function componentForInstalledPath(target, filePath, { isGlobal, version = 'v2' } = {}) {
   let relPath
   try {
     relPath = relativeTargetPath(target, filePath)

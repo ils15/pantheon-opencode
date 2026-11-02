@@ -285,7 +285,7 @@ test('explicit --components does not add runtime to the CLI install plan', () =>
         '--dry-run',
         '--verbose',
         '--version',
-        'v1',
+        'v2',
         '--components',
         'agents,skills',
       ],
@@ -302,54 +302,25 @@ test('explicit --components does not add runtime to the CLI install plan', () =>
   }
 })
 
-test('V2 rejects both --preset spellings before installation writes, while V1 accepts equals syntax', () => {
-  for (const presetArgs of [['--preset', 'anthropic'], ['--preset=anthropic']]) {
-    const cwd = mkdtempSync(join(tmpdir(), 'pantheon-init-v2-preset-'))
+test('an explicit --opencode-version v1 is a hard refusal before any write', () => {
+  for (const versionArgs of [
+    ['--opencode-version', 'v1'],
+    ['--version', 'v1'],
+  ]) {
+    const cwd = mkdtempSync(join(tmpdir(), 'pantheon-init-v1-refusal-'))
     try {
       const result = run(
-        ['init', '--project', '--headless', '--no-mcp', '--version', 'v2', ...presetArgs, '--yes'],
+        ['init', '--project', '--headless', '--no-mcp', ...versionArgs, '--yes'],
         cwd,
       )
       assert.notEqual(result.status, 0)
-      assert.match(
-        `${result.stdout}\n${result.stderr}`,
-        /--preset is not supported for OpenCode V2/i,
-      )
-      assert.deepEqual(readdirSync(cwd), ['.pantheon'])
-      assert.deepEqual(readdirSync(join(cwd, '.pantheon')), ['last-run.json'])
-      const runRecord = JSON.parse(readFileSync(join(cwd, '.pantheon', 'last-run.json'), 'utf8'))
-      assert.equal(runRecord.status, 'failed')
-      assert.equal(runRecord.reason, 'failed')
-      assert.equal(runRecord.applied, false)
+      const output = `${result.stdout}\n${result.stderr}`
+      assert.match(output, /Pantheon 2\.0 requires OpenCode 2\.x/)
+      assert.match(output, /--opencode-version v2/)
+      assert.deepEqual(readdirSync(cwd), [], 'a refused run must not write anything')
     } finally {
       rmSync(cwd, { recursive: true, force: true })
     }
-  }
-
-  const cwd = mkdtempSync(join(tmpdir(), 'pantheon-init-v1-preset-equals-'))
-  try {
-    const result = run(
-      [
-        'init',
-        '--project',
-        '--headless',
-        '--no-mcp',
-        '--version',
-        'v1',
-        '--components',
-        'agents',
-        '--preset=anthropic',
-        '--yes',
-      ],
-      cwd,
-    )
-    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
-    assert.equal(
-      JSON.parse(readFileSync(join(cwd, '.pantheon', 'active-preset.json'), 'utf8')).preset,
-      'anthropic',
-    )
-  } finally {
-    rmSync(cwd, { recursive: true, force: true })
   }
 })
 
@@ -384,22 +355,5 @@ test('direct V2 init safely warns and omits an untranslatable V1 MCP ask', () =>
     assert.ok(existsSync(join(cwd, 'agents', 'zeus.md')))
   } finally {
     rmSync(cwd, { recursive: true, force: true })
-  }
-})
-
-test('missing or empty --preset value fails before writing', () => {
-  for (const presetArgs of [['--preset'], ['--preset='], ['--preset', '--yes']]) {
-    const cwd = mkdtempSync(join(tmpdir(), 'pantheon-init-preset-missing-'))
-    try {
-      const result = run(
-        ['init', '--project', '--headless', '--no-mcp', '--version', 'v2', ...presetArgs],
-        cwd,
-      )
-      assert.notEqual(result.status, 0)
-      assert.match(`${result.stdout}\n${result.stderr}`, /--preset requires a non-empty value/i)
-      assert.deepEqual(readdirSync(cwd), [])
-    } finally {
-      rmSync(cwd, { recursive: true, force: true })
-    }
   }
 })

@@ -148,22 +148,23 @@ function withGlobalDirs(run) {
 const tuiAt = (dir, global_) =>
   global_ ? join(dir, 'tui.json') : join(dir, '.opencode', 'tui.json')
 
-// (a) clean global install → exactly 1 registration, pointing at the COPIED
-// directory, and that directory exists with dist/tui.js (the loader entry).
+// (a) clean global install: the copy payload lands in plugins/pantheon-tui and
+// NO tui.json registration is written — the 2.x host loads the copy only from
+// the config `plugins` list (ensureTuiCopyRegistered), so a legacy tui.json
+// entry is stripped, never re-created.
 withGlobalDirs(({ home, xdg }) => {
   const target = join(home, '.opencode')
   mkdirSync(target, { recursive: true })
   const status = syncTuiRegistration(target, { isGlobal: true, dryRun: false })
-  assert.equal(status, 'created', 'clean install registers the copied TUI dir')
-  const targetCfg = readTuiJson(tuiAt(target, true))
-  assert.ok(targetCfg, 'target tui.json created')
-  assert.equal(targetCfg.plugin.length, 1, 'exactly one TUI registration')
-  const [ref] = targetCfg.plugin
+  assert.equal(status, 'skipped', 'no tui.json registration is written for the 2.x host')
+  assert.equal(existsSync(tuiAt(target, true)), false, 'target tui.json is not created')
   const copyDir = resolveTuiCopyTarget(target)
-  assert.equal(ref, copyDir, 'the registered ref is the copied plugin directory')
-  assert.ok(existsSync(ref), 'copied plugin dir exists')
-  assert.ok(existsSync(join(ref, 'dist', 'tui.js')), 'copied dir has dist/tui.js (loader entry)')
-  assert.ok(existsSync(join(ref, 'package.json')), 'copied dir has package.json (exports map)')
+  assert.ok(existsSync(copyDir), 'copied plugin dir exists')
+  assert.ok(
+    existsSync(join(copyDir, 'dist', 'tui-v2.js')),
+    'copied dir has dist/tui-v2.js (the 2.x loader entry)',
+  )
+  assert.ok(existsSync(join(copyDir, 'package.json')), 'copied dir has package.json (exports map)')
   const other = tuiAt(join(xdg, 'opencode'), true)
   assert.equal(
     readTuiJson(other)?.plugin.length ?? 0,
@@ -172,39 +173,31 @@ withGlobalDirs(({ home, xdg }) => {
   )
 })
 
-// (b) idempotency: a second install produces a byte-identical tui.json with
-// the same single registration, and the copied dist files are untouched.
+// (b) idempotency: a second sync is a byte-identical no-op on the copied dist
+// files, and still no tui.json anywhere.
 withGlobalDirs(({ home, xdg }) => {
   const target = join(home, '.opencode')
   mkdirSync(target, { recursive: true })
   syncTuiRegistration(target, { isGlobal: true, dryRun: false })
-  const targetTui = tuiAt(target, true)
-  const first = readFileSync(targetTui, 'utf8')
   const copyDir = resolveTuiCopyTarget(target)
-  const firstDist = readFileSync(join(copyDir, 'dist', 'tui.js'), 'utf8')
+  const firstDist = readFileSync(join(copyDir, 'dist', 'tui-v2.js'), 'utf8')
 
   syncTuiRegistration(target, { isGlobal: true, dryRun: false })
 
   assert.equal(
-    readFileSync(targetTui, 'utf8'),
-    first,
-    'reinstall is a byte-identical no-op on tui.json',
-  )
-  const cfg = readTuiJson(targetTui)
-  assert.equal(cfg.plugin.length, 1, 'still exactly one registration')
-  assert.equal(cfg.plugin[0], copyDir, 'registration unchanged after reinstall')
-  assert.equal(
-    readFileSync(join(copyDir, 'dist', 'tui.js'), 'utf8'),
+    readFileSync(join(copyDir, 'dist', 'tui-v2.js'), 'utf8'),
     firstDist,
-    'copied dist files unchanged after reinstall',
+    'copied dist files unchanged after re-sync',
   )
+  assert.equal(existsSync(tuiAt(target, true)), false, 'still no tui.json in the target')
   const other = tuiAt(join(xdg, 'opencode'), true)
   assert.equal(readTuiJson(other)?.plugin.length ?? 0, 0, 'other location stays clean')
 })
 
 // (c) stale refs (dist file, package source, bare copy, npx) seeded in ALL
-// THREE tui.json locations are cleaned; the project target keeps exactly the
-// copied-dir registration — one Pantheon TUI reference system-wide.
+// THREE tui.json locations are cleaned; the user-owned same-suffix plugin is
+// preserved, and NO Pantheon TUI registration is re-added (the 2.x host reads
+// the config `plugins` list instead).
 withGlobalDirs(({ home, xdg }) => {
   const project = mkdtempSync(join(tmpdir(), 'pantheon-tui-proj-'))
   try {
@@ -222,8 +215,8 @@ withGlobalDirs(({ home, xdg }) => {
 
     assert.deepEqual(
       readTuiJson(projectTui).plugin,
-      [STALE_REFS[3], resolveTuiCopyTarget(projectTuiDir)],
-      'project target keeps the user plugin and adds exactly one copied-dir registration',
+      [STALE_REFS[3]],
+      'project target keeps the user plugin and re-registers nothing',
     )
     for (const p of [global1, global2]) {
       assert.deepEqual(
@@ -238,8 +231,8 @@ withGlobalDirs(({ home, xdg }) => {
       .filter((r) => typeof r === 'string' && r.includes('pantheon-tui'))
     assert.equal(
       allRefs.filter((ref) => ref !== STALE_REFS[3]).length,
-      1,
-      'exactly ONE Pantheon TUI reference is installed system-wide',
+      0,
+      'no Pantheon TUI tui.json reference is installed system-wide',
     )
   } finally {
     rmSync(project, { recursive: true, force: true })
@@ -263,11 +256,11 @@ withGlobalDirs(({ home }) => {
       `dist/${f} is byte-identical to the source of truth`,
     )
   }
-  assert.equal(
-    readFileSync(join(copyDir, 'package.json'), 'utf8'),
-    readFileSync(join(PACKAGE_TUI_SRC, 'package.json'), 'utf8'),
-    'package.json is byte-identical to the source of truth',
-  )
+  // The v2 copy REPOINTS the exports at the v2 bundles (it is not a
+  // byte-identical package.json copy); the payload files themselves are.
+  const copiedPackage = JSON.parse(readFileSync(join(copyDir, 'package.json'), 'utf8'))
+  assert.equal(copiedPackage.exports['./tui'], './dist/tui-v2.js')
+  assert.equal(copiedPackage.exports['./server'], './dist/server-v2.js')
   assert.equal(
     existsSync(join(copyDir, 'index.tsx')),
     false,

@@ -2,14 +2,16 @@
  * Tests for the V2 shell-hook parity module (#266).
  *
  * `format-multi-language.sh` and the two `on-subagent-delegation-*.sh` audit
- * scripts ran only from `src/plugins/pantheon-hooks.ts`, which a V2-only
- * install never loads. This module rebuilds the wiring without that plugin; the
- * runner is injected so the assertions are about the PAYLOAD the scripts
- * receive (the part the audit log joins on), not about spawning bash.
+ * scripts ran only from the V1 plugin (`src/plugins/pantheon-hooks.ts`, removed
+ * in 2.0), which a V2-only install never loads. This module is that wiring's
+ * only remaining home; the runner is injected so the assertions are about the
+ * PAYLOAD the scripts receive (the part the audit log joins on), not about
+ * spawning bash.
  *
  * Run with: npx tsx tests/pantheon/v2-shell-hooks.test.ts
  */
 import { strict as assert } from 'node:assert'
+import type { HookPayload, HookResult } from '../../src/pantheon/hook-runner.ts'
 import {
   createV2ShellHooks,
   DELEGATION_START_SCRIPT,
@@ -20,7 +22,6 @@ import {
   FORMATTER_SCRIPT,
   V2_DELEGATION_TOOL_RE,
 } from '../../src/pantheon/v2-shell-hooks.ts'
-import type { HookPayload, HookResult } from '../../src/plugins/hook-runner.ts'
 
 // ─── Harness ─────────────────────────────────────────────────────────────
 

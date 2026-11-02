@@ -202,7 +202,7 @@ test('a canceled review prints exactly one line naming the review point', async 
   try {
     const { result, output } = await captureOutput(() =>
       installOpenCode(target, false, false, ['agents'], {
-        version: 'v1',
+        version: 'v2',
         deps: { promptReview: async () => PROMPT_CANCELED },
       }),
     )
@@ -222,7 +222,7 @@ test('declining the review names the point instead of printing "Nothing applied.
   try {
     const { result, output } = await captureOutput(() =>
       installOpenCode(target, false, false, ['agents'], {
-        version: 'v1',
+        version: 'v2',
         deps: { promptReview: async () => false },
       }),
     )
@@ -249,7 +249,7 @@ test('an interactive cancel names the step the user stopped at', async () => {
     const { result } = await captureOutput(() =>
       installOpenCode(target, false, false, ['agents'], {
         interactive: true,
-        version: 'v1',
+        version: 'v2',
         global: true,
         deps: { prompts, isTTY: true },
       }),
@@ -286,7 +286,7 @@ test('a cancel at final review reports THAT project target, not the global one',
   const { result } = await captureOutput(() =>
     installOpenCode(undefined, false, false, ['agents'], {
       interactive: true,
-      version: 'v1',
+      version: 'v2',
       deps: { prompts, isTTY: true },
       onTargetResolved: (target) => {
         resolvedTarget = target
@@ -324,7 +324,7 @@ test('a decline at final review reports the resolved global target', async () =>
   const { result } = await captureOutput(() =>
     installOpenCode('/tmp/pantheon-cancel-target-probe', false, false, ['agents'], {
       interactive: true,
-      version: 'v1',
+      version: 'v2',
       global: true,
       deps: { prompts, isTTY: true },
       onTargetResolved: (target) => {
@@ -485,10 +485,10 @@ test('a real SIGINT during an interactive install exits 130 with one message', {
   try {
     const scriptCmd =
       `exec sh -c 'echo $$ > ${pidFile}; exec ${process.execPath} ${CLI} ` +
-      "init --interactive --project --no-mcp --components agents --opencode-version v1'"
+      "init --interactive --project --no-mcp --components agents --opencode-version v2'"
     const child = spawn('script', ['-q', '-e', '-c', scriptCmd, '/dev/null'], {
       cwd: project,
-      env: sandboxEnv(home, { OPENCODE_VERSION: 'v1' }),
+      env: sandboxEnv(home, { OPENCODE_VERSION: 'v2' }),
     })
     let out = ''
     child.stdout.on('data', (chunk) => {

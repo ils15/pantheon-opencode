@@ -53,7 +53,9 @@ test('V2 export loads from a clean production-only consumer', () => {
       readJson(join(ROOT, 'package.json')).dependencies['@opencode-ai/plugin'],
     )
     assert.equal(installedManifest.devDependencies?.['@opencode-ai/plugin'], undefined)
-    assert.equal(installedManifest.exports['./plugin'], './src/plugin.ts')
+    // 2.0 removed the V1 generation: the `./plugin` export (src/plugin.ts) is
+    // gone from the manifest, `./plugin-v2` is the only plugin export.
+    assert.equal(installedManifest.exports['./plugin'], undefined)
     assert.equal(installedManifest.exports['./plugin-v2'], './src/plugin-v2.ts')
 
     const consumerLock = readJson(join(consumer, 'package-lock.json'))
@@ -64,12 +66,21 @@ test('V2 export loads from a clean production-only consumer', () => {
     writeFileSync(
       loader,
       [
-        "import v2Plugin from 'pantheon-opencode/plugin-v2'",
-        "import v1Plugin from 'pantheon-opencode/plugin'",
-        "if (v2Plugin.id !== 'pantheon-opencode-v2') throw new Error('invalid V2 default export')",
-        "if (typeof v2Plugin.setup !== 'function') throw new Error('V2 setup is not callable')",
-        "if (typeof v1Plugin !== 'function') throw new Error('V1 export changed')",
-        "console.log('V2 and V1 exports loaded')",
+        // No top-level await: tsx compiles this .ts as CJS for the consumer.
+        'async function main() {',
+        '  let v1Export = null',
+        '  try {',
+        "    v1Export = (await import('pantheon-opencode/plugin')).default",
+        '  } catch (err) {',
+        "    if (err?.code !== 'ERR_MODULE_NOT_FOUND' && err?.code !== 'ERR_PACKAGE_PATH_NOT_EXPORTED') throw err",
+        '  }',
+        "  if (v1Export !== null) throw new Error('the V1 ./plugin export must be gone in 2.0')",
+        "  const v2Plugin = (await import('pantheon-opencode/plugin-v2')).default",
+        "  if (v2Plugin.id !== 'pantheon-opencode-v2') throw new Error('invalid V2 default export')",
+        "  if (typeof v2Plugin.setup !== 'function') throw new Error('V2 setup is not callable')",
+        "  console.log('V2 export loaded; V1 export absent')",
+        '}',
+        'main()',
         '',
       ].join('\n'),
     )

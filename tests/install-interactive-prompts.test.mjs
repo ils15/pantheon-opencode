@@ -184,7 +184,7 @@ test('interactive prompt cancellation exits before any installer configuration w
   try {
     const result = await installOpenCode(target, false, false, ['agents'], {
       interactive: true,
-      version: 'v1',
+      version: 'v2',
       global: true,
       deps: { prompts, isTTY: true },
     })
@@ -237,7 +237,7 @@ test('TTY --yes uses defaults without invoking any prompts', async () => {
     const result = await installOpenCode(target, false, false, ['agents'], {
       interactive: true,
       yes: true,
-      version: 'v1',
+      version: 'v2',
       global: true,
       deps: { prompts, isTTY: true },
     })
@@ -280,7 +280,7 @@ async function withTTYComponentSelection(args, callback, selectedComponents = ['
     const result = await withTTY(() =>
       installOpenCode(target, false, false, selection.components, {
         interactive: true,
-        version: 'v1',
+        version: 'v2',
         global: true,
         requestedComponents: selection.requestedComponentsForPrompt,
         noMcp: selection.noMcp,
@@ -360,7 +360,7 @@ test('canceling final apply authorization reports canceled and writes nothing', 
   try {
     const result = await installOpenCode(target, false, false, ['agents'], {
       headless: true,
-      version: 'v1',
+      version: 'v2',
       deps: { promptReview: async () => PROMPT_CANCELED },
     })
     assert.equal(result.applied, false)
@@ -405,7 +405,7 @@ test('the Jev wizard choice makes no provider network request during installatio
   try {
     const result = await installOpenCode(target, false, false, ['agents'], {
       interactive: true,
-      version: 'v1',
+      version: 'v2',
       global: true,
       deps: {
         prompts,
@@ -473,67 +473,6 @@ test('V2 interactive install skips the V1 profile wizard and preserves legacy ma
   }
 })
 
-test('V1 interactive install retains the model profile wizard', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'pantheon-v1-preset-wizard-'))
-  const target = join(root, 'opencode')
-  try {
-    const { result, selectMessages } = await withTTY(() => runTTYInstall(target, 'v1'))
-    assert.equal(result.applied, true)
-    assert.deepEqual(selectMessages, [
-      'Install location:',
-      selectMessages[1],
-      'Choose the default model profile for Pantheon agents.',
-    ])
-    assert.match(selectMessages[1], /^Configure the Jev/)
-  } finally {
-    rmSync(root, { recursive: true, force: true })
-  }
-})
-
-test('V1 explicit --preset continues to write the active preset marker', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'pantheon-v1-explicit-preset-'))
-  const target = join(root, 'opencode')
-  try {
-    await installOpenCode(target, false, false, ['agents'], {
-      headless: true,
-      yes: true,
-      version: 'v1',
-      global: true,
-      preset: 'anthropic',
-    })
-    assert.equal(
-      JSON.parse(readFileSync(join(target, '.pantheon', 'active-preset.json'), 'utf8')).preset,
-      'anthropic',
-    )
-  } finally {
-    rmSync(root, { recursive: true, force: true })
-  }
-})
-
-test('V2 explicit --preset is rejected before changing config or writing a marker', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'pantheon-v2-preset-rejected-'))
-  const target = join(root, 'opencode')
-  mkdirSync(target, { recursive: true })
-  const configPath = join(target, 'opencode.json')
-  const configBytes = '{"keep":true}\n'
-  writeFileSync(configPath, configBytes)
-
-  try {
-    await assert.rejects(
-      installOpenCode(target, false, false, ['agents'], {
-        headless: true,
-        version: 'v2',
-        preset: 'anthropic',
-      }),
-      /--preset is not supported for OpenCode V2/i,
-    )
-    assert.equal(readFileSync(configPath, 'utf8'), configBytes)
-    assert.equal(readdirSync(target).join(','), 'opencode.json')
-  } finally {
-    rmSync(root, { recursive: true, force: true })
-  }
-})
-
 test('forced interactive mode without a TTY keeps defaults and never invokes prompts', async () => {
   const prompts = fakePrompts()
   const result = await runInteractiveInstall({
@@ -565,7 +504,7 @@ test('forced interactive update without a TTY preserves the saved provider prefe
   try {
     const result = await installOpenCode(target, false, false, ['agents'], {
       interactive: true,
-      version: 'v1',
+      version: 'v2',
       global: true,
       deps: {
         prompts,

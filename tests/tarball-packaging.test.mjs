@@ -120,6 +120,11 @@ test('tarball contains no machine paths and ships the runtime inputs', () => {
     const tarball = pack(work)
     const listing = execFileSync('tar', ['-tzf', tarball], { encoding: 'utf8' })
     assert.doesNotMatch(listing, forbidden)
+    assert.doesNotMatch(
+      listing,
+      /^package\/dev\/tests(?:\/|$)/m,
+      'development harness tests must not ship in the npm tarball',
+    )
     assert.doesNotMatch(listing, /(?:^|\/)logs(?:\/|$)|\.log$/i)
     // Python bytecode/build dirs must never ship — the `files` whitelist in
     // package.json carries explicit `!**/__pycache__/**` / `!**/*.pyc`
@@ -207,9 +212,12 @@ test('tarball contains no machine paths and ships the runtime inputs', () => {
       assert.doesNotMatch(text, /\/tmp\//i, `temporary machine path in ${file}`)
       assert.doesNotMatch(text, privateUrl, `private URL in ${file}`)
     }
-    for (const file of ['package/scripts/doctor.mjs', 'package/src/plugins/pantheon-hooks.ts']) {
-      assert.match(listing, new RegExp(`^${file.replaceAll('/', '\\/')}$`, 'm'))
-    }
+    assert.match(listing, /^package\/scripts\/doctor\.mjs$/m)
+    // 2.0 payload: the V1 plugin line is removed. The legacy plugin entry
+    // points (src/plugin.ts, src/plugins/pantheon-hooks.ts) must NOT ship —
+    // a registration still pointing at them can never resolve after install.
+    assert.doesNotMatch(listing, /^package\/src\/plugin\.ts$/m)
+    assert.doesNotMatch(listing, /^package\/src\/plugins\/pantheon-hooks\.ts$/m)
     assert.match(listing, /^package\/src\/plugin-v2\/index\.ts$/m)
     assert.match(listing, /^package\/src\/plugin-v2\.ts$/m)
     assert.match(listing, /^package\/bin\/pantheon-init\.mjs$/m)
@@ -282,10 +290,12 @@ test('installed package resolves hooks to its installed absolute path', () => {
     assert.doesNotMatch(routerStatus.stderr, /ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING/)
     const result = spawnSync(
       process.execPath,
-      // --opencode-version v1 pins the generation: this asserts path resolution
+      // --opencode-version v2 pins the generation: this asserts path resolution
       // inside the INSTALLED package, not the host gate. Left on the default it
-      // resolves against the developer's real OpenCode and asserts nothing.
-      [cli, 'init', '--project', '--no-mcp', '--headless', '-y', '--opencode-version', 'v1'],
+      // probes the developer's real OpenCode (and falls back to a legacy
+      // generation when the probe fails) and asserts nothing. 2.0 removed the
+      // V1 plugin line, so the V2 branch is the only registrable one.
+      [cli, 'init', '--project', '--no-mcp', '--headless', '-y', '--opencode-version', 'v2'],
       {
         cwd: project,
         encoding: 'utf8',
@@ -302,19 +312,29 @@ test('installed package resolves hooks to its installed absolute path', () => {
       false,
       'installed package must not ship an opencode.json template',
     )
-    // Installer contract (this run is pinned to v1 above): both pantheon plugins
-    // are registered on the V1 branch — the root-level delegation plugin
-    // (src/plugin.ts) and the runtime hooks plugin (src/plugins/pantheon-hooks.ts)
-    // — resolved to absolute paths inside the INSTALLED package (never
-    // dev-machine paths). Not unconditional: the V2 branch registers only the
-    // src/plugin-v2 directory under the plural `plugins` key, and the default
-    // generation now comes from the host-version gate.
-    assert.deepEqual(config.plugin, [
-      join(installedRoot, 'src', 'plugin.ts'),
-      join(installedRoot, 'src', 'plugins', 'pantheon-hooks.ts'),
+    // Installer contract (this run is pinned to v2 above): 2.0 registers ONLY
+    // the V2 plugin directory inside the INSTALLED package, in object form
+    // ({ package, options }) under the plural `plugins` key, plus the copied
+    // TUI plugin directory. The singular `plugin` key of the removed V1
+    // generation must never come back, and every path is inside the installed
+    // package or the project's config dir — never dev-machine paths.
+    assert.equal(
+      config.plugin,
+      undefined,
+      'the V1 singular `plugin` key must not be written by a 2.0 install',
+    )
+    assert.deepEqual(config.plugins, [
+      { package: join(installedRoot, 'src', 'plugin-v2'), options: {} },
+      join(project, '.opencode', 'plugins', 'pantheon-tui'),
     ])
-    for (const entry of config.plugin) {
-      assert.equal(existsSync(entry), true, `registered plugin must exist: ${entry}`)
+    for (const entry of config.plugins) {
+      const path = typeof entry === 'string' ? entry : entry?.package
+      assert.equal(
+        typeof path,
+        'string',
+        `registered plugin must be a path: ${JSON.stringify(entry)}`,
+      )
+      assert.equal(existsSync(path), true, `registered plugin must exist: ${path}`)
     }
     // Regression guard (after the packaged opencode.json template was dropped
     // from `files`): the product defaults an install seeds are code constants in
@@ -331,41 +351,54 @@ test('installed package resolves hooks to its installed absolute path', () => {
       existsSync(join(project, '.opencode', 'skills')),
       'this install must select the skills component for the skill grant to apply',
     )
-    assert.equal(config.permission.skill['*'], 'allow')
-    // Regression guard: the default bash allowlist is the five commands
-    // Pantheon's own agents must run unattended, and nothing else. Growing it
-    // again is a silent product/security decision made for every installer, so
-    // the allow-set and the deny-set are both pinned here.
-    const bashKeys = Object.keys(config.permission.bash ?? {})
-    for (const required of ['git *', 'npm *', 'npx *', 'pytest *', 'ruff *']) {
-      assert.ok(bashKeys.includes(required), `permission.bash must allow \`${required}\``)
-    }
+    // Regression guard (v2 pin): the seeded grants reach the written config in
+    // the V2-native `permissions` array — the migration renames the V1
+    // `permission` object, so the legacy spelling must not survive. The skill
+    // grant plus the five commands Pantheon's own agents must run unattended,
+    // and nothing else. Growing it again is a silent product/security decision
+    // made for every installer, so the allow-set and the deny-set are both
+    // pinned here.
+    assert.equal(
+      config.permission,
+      undefined,
+      'the V1 `permission` spelling must be migrated to the V2 `permissions` array',
+    )
+    const rules = config.permissions ?? []
+    assert.ok(
+      rules.some(
+        (rule) => rule.action === 'skill' && rule.resource === '*' && rule.effect === 'allow',
+      ),
+      `permissions must grant skills; got: ${JSON.stringify(rules)}`,
+    )
+    const shellRules = rules
+      .filter((rule) => rule.action === 'shell')
+      .map((rule) => `${rule.resource}=${rule.effect}`)
+      .sort()
+    assert.deepEqual(
+      shellRules,
+      ['git *=allow', 'npm *=allow', 'npx *=allow', 'pytest *=allow', 'ruff *=allow'],
+      'the shell grants must be exactly the five agent-required commands',
+    )
     for (const forbidden of ['black', 'pip', 'docker', 'curl', 'gh', 'make']) {
       assert.equal(
-        bashKeys.some((key) => key === `${forbidden} *` || key === forbidden),
+        rules.some((rule) => rule.resource === `${forbidden} *` || rule.resource === forbidden),
         false,
-        `permission.bash must NOT pre-allow \`${forbidden}\` — that is the installing user's call`,
+        `permissions must NOT pre-allow \`${forbidden}\` — that is the installing user's call`,
       )
     }
-    assert.deepEqual(
-      bashKeys.sort(),
-      ['git *', 'npm *', 'npx *', 'pytest *', 'ruff *'],
-      'permission.bash must be exactly the five agent-required commands',
-    )
     assert.doesNotMatch(JSON.stringify(config), executableForbidden)
-    const tui = JSON.parse(readFileSync(join(project, '.opencode', 'tui.json'), 'utf8'))
     // Installer contract (af40321): the TUI plugin is COPIED to the target
     // config's plugins/pantheon-tui and registered as that directory — never
     // the in-package src/plugins/tui — so installs stay hermetic and
-    // idempotent. Assert the registered entry is the absolute copied dir and
-    // it carries the loader contract (dist/tui.js).
+    // idempotent. On the v2 pin the copy is registered under `plugins`
+    // (asserted above); V1's separate tui.json channel is dead.
     const tuiDir = join(project, '.opencode', 'plugins', 'pantheon-tui')
-    assert.deepEqual(tui.plugin, [tuiDir])
     assert.equal(existsSync(tuiDir), true)
     assert.equal(existsSync(join(tuiDir, 'dist', 'tui.js')), true)
     assert.equal(
-      tui.plugin.some((entry) => !entry.startsWith('/')),
+      existsSync(join(project, '.opencode', 'tui.json')),
       false,
+      'a v2 install must not write the V1 tui.json registration',
     )
   } finally {
     rmSync(work, { recursive: true, force: true })
@@ -402,9 +435,9 @@ test('installed package leaves an explicit permission.skill choice alone', () =>
     const cli = join(work, 'node_modules', 'pantheon-opencode', 'bin', 'pantheon-init.mjs')
     const result = spawnSync(
       process.execPath,
-      // Pinned to v1 for the same reason as the test above: the subject is the
+      // Pinned to v2 for the same reason as the test above: the subject is the
       // permission merge, not the host-version gate.
-      [cli, 'init', '--project', '--no-mcp', '--headless', '-y', '--opencode-version', 'v1'],
+      [cli, 'init', '--project', '--no-mcp', '--headless', '-y', '--opencode-version', 'v2'],
       { cwd: project, encoding: 'utf8' },
     )
     assert.equal(result.status, 0, result.stderr || result.stdout)
@@ -415,10 +448,23 @@ test('installed package leaves an explicit permission.skill choice alone', () =>
     const config = JSON.parse(readFileSync(join(project, 'opencode.json'), 'utf8'))
     // The regression: an unconditional `config.permission.skill = {'*':'allow'}`
     // silently flipped this deny to allow on every install that selected skills.
-    assert.deepEqual(config.permission.skill, { '*': 'deny' }, 'explicit deny must survive')
+    // On the v2 pin the surviving policy is read in the migrated V2-native
+    // array shape ({action, resource, effect} rules).
+    const rules = config.permissions ?? []
+    assert.ok(
+      rules.some(
+        (rule) => rule.action === 'skill' && rule.resource === '*' && rule.effect === 'deny',
+      ),
+      `explicit skill deny must survive the migration; got: ${JSON.stringify(rules)}`,
+    )
     // The user's own neighbouring values are untouched too — the merge is
     // absent-only, not a wholesale replacement of the block.
-    assert.equal(config.permission.websearch, 'allow')
+    assert.ok(
+      rules.some(
+        (rule) => rule.action === 'websearch' && rule.resource === '*' && rule.effect === 'allow',
+      ),
+      'explicit websearch allow must survive the migration',
+    )
     assert.equal(config.theme, 'user-theme')
     assert.equal(config.default_agent, 'zeus', 'unrelated defaults are still seeded')
   } finally {
@@ -442,7 +488,7 @@ test('package validator rejects executable templates with machine paths', () => 
     ])
     const configPath = join(fixture, 'plugin.json')
     const config = JSON.parse(readFileSync(configPath, 'utf8'))
-    config.plugin = ['/home/checkout/src/plugins/pantheon-hooks.ts']
+    config.plugin = ['/home/checkout/my-plugins/local-hook.ts']
     writeFileSync(configPath, `${JSON.stringify(config)}\n`)
     const result = spawnSync(process.execPath, [join(fixture, 'scripts', 'validate-package.mjs')], {
       cwd: fixture,

@@ -229,7 +229,8 @@ export function displayPath(target, filePath) {
  *     write order, with their count. Derived from the write path, never a
  *     separate hand-maintained list.
  *   * `versionAssumed` — the host generation could not be probed, so the plan
- *     assumes V1 and may diverge from an apply on a 2.x host.
+ *     assumes the OpenCode 2.x generation (the only one Pantheon supports) and
+ *     says so explicitly.
  *
  * @param {string} target - install target (used to relativize paths)
  * @param {{ files: object[], totals: object, mcpServers?: string[], runtimeEffects?: { venv: string, dependencies: string }, versionAssumed?: boolean }} plan
@@ -270,8 +271,8 @@ export function formatChangePlan(target, plan, { perFile = true } = {}) {
   }
   if (plan.versionAssumed) {
     lines.push(
-      '  OpenCode host generation unknown — this plan assumes V1 and may diverge from the ' +
-        'apply. Pass --opencode-version v1|v2 to pin it.',
+      '  OpenCode host generation unknown — this plan assumes the OpenCode 2.x generation, the ' +
+        'only one Pantheon supports. Pass --opencode-version v2 (or auto) to pin it explicitly.',
     )
   }
   lines.push('  No files were written.')

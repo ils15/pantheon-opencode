@@ -102,18 +102,33 @@ test('setup wrapper preserves init --yes and only offers V2 preparation on a det
     return { status: 0 }
   }
   const prepared = []
-  await runSetupWithPreview({
+  // An OPENCODE_VERSION=v1 environment is a hard refusal (Pantheon 2.0
+  // requires OpenCode 2.x): no init, no preparation, exit 1.
+  const refusalLines = []
+  const refusal = await runSetupWithPreview({
     args: ['--yes'],
     env: { OPENCODE_VERSION: 'v1' },
     interactive: true,
     runInit,
     prepare: async (options) => prepared.push(options),
+    output: { write: (text) => refusalLines.push(String(text)) },
+  })
+  assert.equal(refusal, 1)
+  assert.deepEqual(calls, [])
+  assert.deepEqual(prepared, [])
+  assert.match(refusalLines.join(''), /Pantheon 2\.0 requires OpenCode 2\.x/)
+
+  await runSetupWithPreview({
+    args: ['--yes'],
+    env: { OPENCODE_VERSION: 'v2' },
+    interactive: true,
+    runInit,
+    prepare: async () => ({ status: 'unchanged', changes: [] }),
     output: { write() {} },
   })
   assert.deepEqual(calls, [
-    ['init', '--yes', '--headless', '--setup-approved-plan-stdin', '--version=v1'],
+    ['init', '--yes', '--headless', '--setup-approved-plan-stdin', '--version=v2'],
   ])
-  assert.deepEqual(prepared, [])
 
   await runSetupWithPreview({
     args: [],
@@ -313,14 +328,16 @@ test('setup wrapper uses init version precedence for explicit CLI selections ove
       output: { write() {} },
     })
 
-  await run(['--opencode-version', 'v2'], { OPENCODE_VERSION: 'v1' })
-  assert.equal(prepared.length, 1)
+  // An explicit v1 selection refuses EVEN when the environment says v2: the
+  // refusal is not overridable by precedence.
   await run(['--version=v1'], { OPENCODE_VERSION: 'v2' })
+  assert.equal(prepared.length, 0)
+  await run(['--opencode-version', 'v2'], { OPENCODE_VERSION: 'v2' })
   assert.equal(prepared.length, 1)
-  await run(['--version', 'v2'], { OPENCODE_VERSION: 'v1' })
+  await run(['--version', 'v2'], { OPENCODE_VERSION: 'v2' })
   assert.equal(prepared.length, 2)
-  await run(['--opencode-version', 'v2', '--version', 'v1'], { OPENCODE_VERSION: 'v2' })
-  assert.equal(prepared.length, 2)
+  await run(['--opencode-version', 'v2', '--version', 'auto'], { OPENCODE_VERSION: 'v2' })
+  assert.equal(prepared.length, 3)
 })
 
 test('setup resolves auto version once and pins that generation through preflight and init', async (t) => {
@@ -490,7 +507,7 @@ test('invalid explicit versions fail in headless and dry-run CLI modes without w
         },
       )
       assert.notEqual(result.status, 0, `${selector.join(' ')} ${mode} must fail`)
-      assert.match(`${result.stdout}\n${result.stderr}`, /expected v1, v2, or auto/)
+      assert.match(`${result.stdout}\n${result.stderr}`, /expected v2 or auto/)
       assert.deepEqual(fs.readdirSync(xdg), [])
       assert.deepEqual(fs.readdirSync(cwd), [])
     }
@@ -544,13 +561,14 @@ test('headless setup previews V2 config even with --yes and never applies it', a
   assert.equal(initCalls, 0)
 })
 
-test('headless setup never starts a writing init for V1 or unchanged V2 config', async () => {
-  for (const { env, args, prepare } of [
-    { env: { OPENCODE_VERSION: 'v1' }, args: ['--headless'] },
+test('headless setup refuses a v1 environment and skips init for an unchanged V2 config', async () => {
+  for (const { env, args, prepare, expected } of [
+    { env: { OPENCODE_VERSION: 'v1' }, args: ['--headless'], prepare: null, expected: 1 },
     {
       env: { OPENCODE_VERSION: 'v2', CI: 'true' },
       args: ['--yes'],
       prepare: async () => ({ status: 'unchanged', changes: [] }),
+      expected: 0,
     },
   ]) {
     let initCalls = 0
@@ -565,7 +583,7 @@ test('headless setup never starts a writing init for V1 or unchanged V2 config',
       },
       output: { write() {} },
     })
-    assert.equal(result, 0)
+    assert.equal(result, expected)
     assert.equal(initCalls, 0)
   }
 })

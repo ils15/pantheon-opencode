@@ -79,7 +79,7 @@ import {
   summarizeChanges,
 } from './plan.mjs'
 import { findPlanDrift } from './plan-artifact.mjs'
-import { copyPluginFiles, installPlugin, registerPlugin, unregisterPlugin } from './plugin.mjs'
+import { copyPluginFiles, installPlugin, unregisterPlugin } from './plugin.mjs'
 import { PROMPT_CANCELED } from './prompt-result.mjs'
 import {
   checkRuntimePrerequisites,
@@ -184,11 +184,10 @@ function walkFiles(root, base = root, out = []) {
  *
  * @param {string} target
  * @param {Set<string>} componentSet
- * @param {string} version
  * @param {boolean} isGlobal
  * @returns {{ entries: string[], notRevertible: string[] }}
  */
-function collectInstallBackupEntries(target, componentSet, version, isGlobal) {
+function collectInstallBackupEntries(target, componentSet, isGlobal) {
   const entries = []
   const notRevertible = []
   const rel = (abs) => relative(target, abs)
@@ -219,15 +218,18 @@ function collectInstallBackupEntries(target, componentSet, version, isGlobal) {
   }
 
   const baseDir = isGlobal ? target : join(target, '.opencode')
-  const agentPrefix = isGlobal || version === 'v2' ? 'agents' : '.opencode/agents'
-  const agentDir = join(target, agentPrefix)
+  // OpenCode 2.x is the only supported generation: project agents live at
+  // ./agents (the 2.x loader scans <config-dir>/{agent,agents}/**), global
+  // installs are flat.
+  const agentDir = join(target, 'agents')
 
   // Always touched.
   addFile(join(target, 'opencode.json'))
   addFile(join(target, '.pantheon', 'install-state.json'))
   addFile(join(baseDir, 'opencode-vision.json'))
-  // The active-preset writer (writeActivePreset(target, …)) lives at
-  // <target>/.pantheon, NOT under <baseDir>, for both project and global scope.
+  // Legacy active-preset marker (a pre-2.0 install may still carry it; the
+  // plugin's preset resolver still reads it). Captured so a restore stays
+  // byte-for-byte; nothing in this install writes it anymore.
   addFile(join(target, '.pantheon', 'active-preset.json'))
   addFile(join(target, '.pantheon', 'active-preset.json.bak'))
 
@@ -254,7 +256,7 @@ function collectInstallBackupEntries(target, componentSet, version, isGlobal) {
     addSource(join(ROOT, 'prompts'), join(target, 'prompts'))
   }
   if (componentSet.has('commands')) {
-    const commandDir = isGlobal || version === 'v2' ? 'commands' : '.opencode/commands'
+    const commandDir = 'commands'
     addExisting(join(target, commandDir))
     addSource(join(ROOT, 'commands'), join(target, commandDir), (r) => r.endsWith('.md'))
   }
@@ -273,18 +275,10 @@ function collectInstallBackupEntries(target, componentSet, version, isGlobal) {
     addFile(join(dstPluginDir, 'tui.ts'))
     addFile(join(dstPluginDir, 'index.ts'))
     notRevertible.push(rel(join(dstPluginDir, 'node_modules')))
-    if (version === 'v1') {
-      const projectTui = join(baseDir, 'tui.json')
-      addFile(projectTui)
-      // Cross-location cleanup touches copies OUTSIDE the config dir.
-      for (const loc of tuiConfigLocations(target)) {
-        if (resolve(loc) !== resolve(projectTui)) notRevertible.push(loc)
-      }
-    }
     // V2's single terminal-client config, which this install also edits (it
     // cancels the builtin Context sidebar block). Captured so `restore` reverts
     // it byte-for-byte like every other file we touch.
-    if (version === 'v2' && isGlobal) addFile(join(baseDir, V2_CLI_CONFIG_FILENAME))
+    if (isGlobal) addFile(join(baseDir, V2_CLI_CONFIG_FILENAME))
   }
   if (componentSet.has('runtime')) {
     const runtimeTarget = isGlobal ? target : join(target, '.opencode')
@@ -1254,9 +1248,10 @@ export function applyContextSidebarNegation(
  *      paths, in-package src/plugins/tui dirs, bare plugins/pantheon-tui
  *      copies, and npx paths. A stale ref left in the non-target location
  *      would still be loaded and break the TUI.
- *   3. V1 registers the copied directory in the selected target. V2 does not
- *      write a project tui.json entry; its `plugins` registration is written
- *      by the config merge (ensureTuiCopyRegistered).
+ *   3. No tui.json registration is written: the 2.x host loads the copy's
+ *      server-side RPC only from the config `plugins` list, which
+ *      ensureTuiCopyRegistered writes during the config merge. A legacy
+ *      tui.json entry is stripped (step 2), never re-created.
  *
  * @param {string} target - install target directory
  * @param {object} [opts]
@@ -1270,14 +1265,13 @@ export function syncTuiRegistration(
   {
     isGlobal = false,
     dryRun = false,
-    version = 'v1',
+    version = 'v2',
     recorder = null,
     reviewedRemovals = null,
     reviewedSnapshots = null,
   } = {},
 ) {
   const configDir = isGlobal ? target : join(target, '.opencode')
-  const targetTuiConfigPath = join(configDir, 'tui.json')
 
   // 1. Copy the host-specific plugin into the target config's
   //    plugins/pantheon-tui. This keeps the installed entry hermetic.
@@ -1319,14 +1313,11 @@ export function syncTuiRegistration(
     })
   }
 
-  // The V2 host loads the copy's server-side RPC only from the config
+  // The 2.x host loads the copy's server-side RPC only from the config
   // `plugins` list — ensureTuiCopyRegistered writes that entry during the
-  // config merge, so no tui.json is written here. V1 still requires the
-  // explicit tui.json registration.
-  if (version === 'v2') return 'skipped'
-
-  // 3. Register the copied directory in the selected target only.
-  return registerPlugin(targetTuiConfigPath, tuiCopyDir, { dryRun, recorder })
+  // config merge, so no tui.json is written here. A legacy tui.json
+  // registration is stripped above (step 2) and never re-created.
+  return 'skipped'
 }
 
 /**
@@ -1443,30 +1434,24 @@ export function setupRuntimePhase(
  * config in place — the migration that makes the rename non-breaking.
  *
  * @param {object} config - full config object (mutated in place)
- * @param {{ runtimeTarget: string, venvPython: string, version?: 'v1' | 'v2' }} ctx
+ * @param {{ runtimeTarget: string, venvPython: string }} ctx
  * @returns {{ healed: number, warnings: string[], servers: string[] }} number of
  *   stale path strings rewritten, one warning per MCP permission the host
  *   cannot enforce, and the server names this call actually seeded (write
  *   order) — the dry-run preview reports exactly these
  */
-export function applyMcpServerEntries(config, { runtimeTarget, venvPython, version = 'v2' }) {
-  if (version === 'v2') {
-    if (Object.hasOwn(config, 'mcp')) validateMcpV1toV2Source(config.mcp)
-    else config.mcp = {}
+export function applyMcpServerEntries(config, { runtimeTarget, venvPython }) {
+  if (Object.hasOwn(config, 'mcp')) validateMcpV1toV2Source(config.mcp)
+  else config.mcp = {}
+  const { hasV2ServersMap, legacyServersToggle } = validateMcpV1toV2Source(config.mcp)
+  const existingServers = config.mcp.servers
+  let serverMap
+  if (hasV2ServersMap) {
+    serverMap = existingServers
   } else {
-    config.mcp = config.mcp || {}
-  }
-  let serverMap = config.mcp
-  if (version === 'v2') {
-    const { hasV2ServersMap, legacyServersToggle } = validateMcpV1toV2Source(config.mcp)
-    const existingServers = config.mcp.servers
-    if (hasV2ServersMap) {
-      serverMap = existingServers
-    } else {
-      serverMap = { ...config.mcp }
-      if (legacyServersToggle) delete serverMap.servers
-      config.mcp = { servers: serverMap }
-    }
+    serverMap = { ...config.mcp }
+    if (legacyServersToggle) delete serverMap.servers
+    config.mcp = { servers: serverMap }
   }
   const healed = migrateMcpEntrypointPaths(serverMap)
 
@@ -1478,53 +1463,26 @@ export function applyMcpServerEntries(config, { runtimeTarget, venvPython, versi
       type: 'local',
       cwd: runtimeTarget,
       command: [venvPython, entry.script],
-      ...(version === 'v1' ? { enabled: true } : {}),
     }
     servers.push(entry.name)
   }
 
-  // V1 compatibility defaults. V2 setup converts user `ask` entries only after
-  // explicit review; the inert legacy defaults are not seeded into V2 configs.
-  //
-  // Legacy defaults remain V1-only. V2 requires explicit native permissions;
-  // absent a rule, MCP servers remain accessible without a prompt.
-  if (version === 'v1') {
-    config.permission = config.permission || {}
-    config.permission.mcp = config.permission.mcp || {}
-    if (!config.permission.mcp['pantheon-resources']) {
-      config.permission.mcp['pantheon-resources'] = 'allow'
-    }
-    if (!config.permission.mcp['pantheon-code-mode']) {
-      config.permission.mcp['pantheon-code-mode'] = 'ask'
-    }
-    if (!config.permission.mcp['pantheon-memory']) {
-      config.permission.mcp['pantheon-memory'] = 'allow'
-    }
-    if (!config.permission.mcp['pantheon-persistence']) {
-      config.permission.mcp['pantheon-persistence'] = 'allow'
-    }
-    if (!config.permission.mcp['pantheon-vision']) {
-      config.permission.mcp['pantheon-vision'] = 'ask'
-    }
-  }
-
   // Report every `ask` entry, whether just seeded or left by a previous
-  // install: the config claims a gate the host does not apply. V1's MCP
-  // permission semantics were not measured, so the warning is V2-only.
+  // install: the config claims a gate the host does not apply. The legacy
+  // V1 MCP permission defaults are not seeded — 2.x requires explicit native
+  // permissions, and absent a rule MCP servers remain accessible without a
+  // prompt.
   const askCount = Object.values(config.permission?.mcp ?? {}).filter(
     (effect) => effect === 'ask',
   ).length
-  const warnings =
-    version === 'v2'
+  const warnings = [
+    ...(askCount > 0
       ? [
-          ...(askCount > 0
-            ? [
-                `${askCount} legacy MCP ask rule(s) cannot be enforced; run setup for an explicit policy choice.`,
-              ]
-            : []),
-          'V2 Pantheon MCP servers without an explicit permission rule remain accessible without a prompt.',
+          `${askCount} legacy MCP ask rule(s) cannot be enforced; run setup for an explicit policy choice.`,
         ]
-      : []
+      : []),
+    'V2 Pantheon MCP servers without an explicit permission rule remain accessible without a prompt.',
+  ]
 
   return { healed, warnings, servers }
 }
@@ -1716,26 +1674,24 @@ async function installPass(
     _lastRun = { target, entries: ownRecorder?.entries ?? [], backupDir: null, applied: false }
   }
 
-  // V1/V2 dual-version awareness (Phase 3): the installer builds a unified
-  // config, then applies V2-native migration (migrateV1toV2) when
-  // --opencode-version=v2. V2 normalizes V1 fields in memory (no rewrite).
-  // Neither generation isolates state: both read the same OpenCode store, so
-  // the V2 notice reports the path an actual resolver returns instead of a
-  // literal, and claims no service port because nothing binds one.
-  // Default to 'auto' so a flagless run resolves against the actual host. A
-  // hardcoded 'v1' here (or in bin/pantheon-init.mjs) is what shipped the bug:
-  // the V1 branch writes .ts file paths that a 2.x host drops from the config.
-  // `opts` is forwarded as the resolver's options bag so a caller (and CI) can
-  // pin env/probe instead of spawning a real host binary.
+  // OpenCode 2.x is the only supported generation: the installer builds the
+  // config in the V1 shape it may find on disk, then migrates it in memory with
+  // migrateV1toV2 before writing. Nothing isolates state per generation: the
+  // host reads one OpenCode store, so the notice below reports the path an
+  // actual resolver returns instead of a literal, and claims no service port
+  // because nothing binds one.
+  // Default to 'auto' so a flagless run resolves against the actual host; an
+  // explicit 'v1' is refused by the resolver (Pantheon 2.0 requires OpenCode
+  // 2.x). `opts` is forwarded as the resolver's options bag so a caller (and
+  // CI) can pin env/probe instead of spawning a real host binary.
   //
-  // A DRY RUN probes the host too. It used to pass `skipProbe` and assume V1,
-  // so `init --dry-run` on a 2.x host previewed the V1 plan (target `tui.json`,
-  // removed `index.ts`) while the apply wrote `index.ts` and no `tui.json` —
-  // a preview that contradicted the apply. The probe runs in a throwaway state
-  // directory, and the dry run bounds it with the shorter
-  // DRY_RUN_PROBE_TIMEOUT_MS so a hanging host cannot stall a preview. When the
-  // probe still fails, V1 is assumed and `versionAssumed` marks the plan as
-  // such (text + --json).
+  // A DRY RUN probes the host too. It used to pass `skipProbe` and assume a
+  // generation, so `init --dry-run` could preview a plan that contradicted the
+  // apply. The probe runs in a throwaway state directory, and the dry run
+  // bounds it with the shorter DRY_RUN_PROBE_TIMEOUT_MS so a hanging host
+  // cannot stall a preview. When the probe is still inconclusive, the plan
+  // assumes v2 — the only supported generation — and `versionAssumed` marks it
+  // as such (text + --json).
   let versionFallback = null
   const version = resolveOpenCodeVersion(opts.version ?? 'auto', {
     ...opts,
@@ -1744,12 +1700,6 @@ async function installPass(
       versionFallback = reason
     },
   })
-  if (version === 'v2' && opts.preset) {
-    throw new Error(
-      '--preset is not supported for OpenCode V2 because V2 ignores the legacy active-preset marker. ' +
-        'Configure models using V2-native OpenCode configuration instead.',
-    )
-  }
   const versionAssumed = dryRun && versionFallback !== null
   // Both V2 notices belong to the run the USER started, not to the internal
   // plan pass the gate spawns. That pass runs with the same output channel, so
@@ -1757,7 +1707,7 @@ async function installPass(
   // without --yes: plan pass, then the outer apply pass, both loud). The
   // sibling `warning()` for a sibling opencode.jsonc is gated the same way;
   // a real --dry-run is not a plan pass, so it still prints them once.
-  if (version === 'v2' && !opts.planOnly) {
+  if (!opts.planOnly) {
     // The notice states only what this installer actually does and what the
     // host actually reads. It previously claimed an isolated state database and
     // a dedicated service port: nothing in this package sets OPENCODE_DB, no
@@ -1772,8 +1722,7 @@ async function installPass(
     // drops the goal tools. The not-registered half is the same SEED
     // `getUnsupportedFeatures()` is built from (imported, never restated), so
     // this notice cannot drift from what the plugin reports; the notice says
-    // so, because the live list is a superset that grows at runtime. Advisory:
-    // a V2 install is a supported configuration, not a failure.
+    // so, because the live list is a superset that grows at runtime.
     // Default-quiet: the eleven-fact block is install *detail*, not an action
     // the user must take, so it prints only under --verbose (the recorded
     // run-state keeps it either way).
@@ -1871,7 +1820,7 @@ async function installPass(
   // files to disagree silently.
   const siblingJsonc = join(target, 'opencode.jsonc')
   const configAdvisories = []
-  if (version === 'v2' && existsSync(siblingJsonc)) {
+  if (existsSync(siblingJsonc)) {
     configAdvisories.push(
       `Both ${targetConfigPath} and ${siblingJsonc} exist and an OpenCode V2 host merges ` +
         'them (scalars from the .jsonc win, arrays are unioned). The installer reads and ' +
@@ -1898,7 +1847,7 @@ async function installPass(
   // Validate the original MCP shape before runtime entries can be seeded or a
   // flat map can be wrapped. Seeding first can turn malformed nested input into
   // an apparently valid wrapper and let migration silently discard user data.
-  if (version === 'v2' && Object.hasOwn(config, 'mcp')) {
+  if (Object.hasOwn(config, 'mcp')) {
     validateMcpV1toV2Source(config.mcp)
   }
   const pantheonConfig =
@@ -1917,13 +1866,13 @@ async function installPass(
     }
   }
 
-  // V1 project installs use the legacy .opencode/agents layout. OpenCode V2's
-  // active config directory is the project root and its agent loader scans
-  // <config-dir>/{agent,agents}/**, so V2 project agents must be at ./agents.
-  // Global installs are flat for both versions.
+  // OpenCode 2.x is the only supported generation. Its active config directory
+  // is the project root and the agent loader scans <config-dir>/{agent,agents}/**,
+  // so project agents live at ./agents; global installs are flat. (A legacy
+  // 1.x layout at .opencode/agents is only ever RECOGNIZED, never written.)
   const isGlobal = opts.global ?? isGlobalConfigDir(target)
   const _subDir = isGlobal ? '' : '.opencode'
-  const agentPrefix = isGlobal || version === 'v2' ? 'agents' : '.opencode/agents'
+  const agentPrefix = 'agents'
 
   // -----------------------------------------------------------------------
   // Plan pass + apply gate + drift check (Beta 11 Setup phases 3-4).
@@ -1975,7 +1924,6 @@ async function installPass(
           isProject: opts.isProject === true,
           model: opts.model ?? null,
           smallModel: opts.smallModel ?? null,
-          preset: opts.preset ?? null,
           mergeDevConfig: mergeDevConfigOpt,
         },
         files: planned?.files ?? [],
@@ -2082,7 +2030,7 @@ async function installPass(
     assertPathWithin(target, skillsTarget)
     assertNoSymlinkAncestors(skillsTarget)
   }
-  const backupPlan = collectInstallBackupEntries(target, componentSet, version, isGlobal)
+  const backupPlan = collectInstallBackupEntries(target, componentSet, isGlobal)
   const pkgVersion = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version
   if (dryRun) {
     const preview = previewBackupSet({
@@ -2309,9 +2257,10 @@ async function installPass(
     section('Commands')
     const srcCmds = join(ROOT, 'commands')
     // V2 project sandboxes use OPENCODE_CONFIG_DIR=<project root>, so OpenCode
-    // discovers custom commands from <target>/commands. V1 project installs
-    // keep the standard .opencode/commands layout; global installs are flat.
-    const commandDir = isGlobal || version === 'v2' ? 'commands' : '.opencode/commands'
+    // discovers custom commands from <target>/commands; global installs are
+    // flat. (A legacy 1.x layout under .opencode/commands is only recognized,
+    // never written.)
+    const commandDir = 'commands'
     const dstCmds = join(target, commandDir)
     if (existsSync(srcCmds)) {
       const cmdResult = syncDir(
@@ -2391,7 +2340,7 @@ async function installPass(
   // create one. Keeping it in the installer is what makes the de-duplication
   // durable: a hand edit in ~/.config/opencode/cli.json would be lost as soon as
   // the user re-runs init, and the Context block would render twice again.
-  if (componentSet.has('plugins') && version === 'v2' && isGlobal) {
+  if (componentSet.has('plugins') && isGlobal) {
     try {
       const cliStatus = applyContextSidebarNegation(target, { dryRun, recorder })
       if (cliStatus === 'created') stats.created++
@@ -2626,8 +2575,7 @@ async function installPass(
     return config
   }
 
-  const configuredMcpServersForPolicies =
-    version === 'v2' ? configuredMcpServerNames(config.mcp) : []
+  const configuredMcpServersForPolicies = configuredMcpServerNames(config.mcp)
   const canonicalAgentConfig = readAgentConfigFromCanonical()
   const agentSources = getAgentSources(agentPrefix)
 
@@ -2732,185 +2680,139 @@ async function installPass(
   }
 
   // --------------------------------------------------------------------
-  // B.5.1 Hermetic plugin resolution (packaging fix)
+  // B.5.1 Hermetic plugin resolution + singular `plugin` migration
   // --------------------------------------------------------------------
-  // A developer running from a checkout has a repository-root opencode.json
-  // that may reference plugins via developer-machine absolute paths (e.g.
-  // <dev>/pantheon/.../src/plugin.ts or
-  // <dev>/pantheon/.../src/plugins/pantheon-hooks.ts). Copying those
-  // verbatim into the user's config would break every global install on any
-  // other machine. resolveInstalledPlugin() rewrites each entry to the plugin
-  // file inside the INSTALLED package (derived from ROOT — never hardcoded),
-  // so both dev and global installs resolve to a path that actually exists.
-  // The source opencode.json keeps its dev path for local development; the
-  // transform happens at install/sync time only.
-
-  if (version === 'v1') {
-    // V1 loads the singular `plugin` list. Remove every Pantheon V2 entry from
-    // both config shapes before restoring the two V1 plugins. User plugins in
-    // either list are retained verbatim.
-    if (Array.isArray(config.plugins)) {
-      config.plugins = removePantheonPluginReferences(config.plugins)
-    }
-    if (config.plugin === undefined) config.plugin = []
-    if (Array.isArray(config.plugin)) {
-      config.plugin = removePantheonPluginReferences(config.plugin)
-      if (Array.isArray(pantheonConfig?.plugin)) {
-        for (const plugin of pantheonConfig.plugin) {
-          if (!isPantheonPluginReference(plugin) && !hasPluginReference(config.plugin, plugin)) {
-            config.plugin.push(deepClone(plugin))
-          }
-        }
-      }
-
-      const ensurePantheonPlugin = (ref) => {
-        const resolved = resolveInstalledPlugin(ref)
-        config.plugin = config.plugin.filter(
-          (plugin) => pluginReferenceIdentity(plugin) !== pluginReferenceIdentity(resolved),
-        )
-        config.plugin.push(resolved)
-      }
-      // Root-level delegation plugin remains a V1-only registration.
-      ensurePantheonPlugin('src/plugin.ts')
-      ensurePantheonPlugin('src/plugins/pantheon-hooks.ts')
-    }
-  }
-
-  if (version === 'v2') {
-    // V2 loads the plural `plugins` list, and the singular `plugin` key is dead
-    // on this host. Migrating a V1 config therefore means deciding, entry by
-    // entry, whether the V2 loader can load it AT ALL: a directory can, a file
-    // path is rejected ("must be a directory") and a package shorthand dies in
-    // `npm install`. Copying every entry across would turn "silently ignored"
-    // into "config fails to load", so only loadable entries move; the rest stay
-    // where they are and the warning names the exact failure mode.
-    if (Array.isArray(config.plugin)) {
-      // Strip Pantheon refs FIRST, exactly as the V1 branch does: a stale V1
-      // .ts path is not a registrable entry on this host and must not be moved.
-      config.plugin = removePantheonPluginReferences(config.plugin)
-      if (!Array.isArray(config.plugins)) config.plugins = []
-      const migrated = []
-      const blocked = []
-      for (const plugin of config.plugin) {
-        const verdict = v2PluginEntryLoadability(plugin, target)
-        if (!verdict.loadable) {
-          blocked.push({ plugin, reason: verdict.reason })
-          continue
-        }
-        if (!hasPluginReference(config.plugins, plugin)) {
-          config.plugins.push(deepClone(plugin))
-          migrated.push(plugin)
-        }
-      }
-      if (migrated.length > 0) {
-        warning(
-          `V2 host ignores the singular "plugin" key; also registered ${migrated.length} ` +
-            `third-party entr${migrated.length === 1 ? 'y' : 'ies'} under "plugins" so ` +
-            `they keep loading: ${migrated.map(describePluginEntry).join(', ')}. ` +
-            'Remove any that only support the V1 plugin API.',
-        )
-      }
-      if (blocked.length > 0) {
-        warning(
-          'V2 host ignores the singular "plugin" key; these entries were left in it ' +
-            `because the V2 loader cannot load them, so they will NOT be active: ${blocked
-              .map(
-                ({ plugin, reason }) =>
-                  `${describePluginEntry(plugin)} ${V2_LOAD_FAILURES[reason]}`,
-              )
-              .join('; ')}.`,
-        )
-      }
-      // Pantheon refs are already gone. An emptied array is not configuration:
-      // drop the dead key entirely so the written config points at the list the
-      // V2 host actually reads. A surviving V1 list is the user's own data and
-      // is left in place (a downgrade still finds it).
-      if (config.plugin.length === 0) delete config.plugin
-    }
+  // OpenCode 2.x loads the plural `plugins` list; the singular `plugin` key is
+  // dead on this host. Migrating a legacy config therefore means deciding,
+  // entry by entry, whether the 2.x loader can load it AT ALL: a directory can,
+  // a file path is rejected ("must be a directory") and a package shorthand
+  // dies in `npm install`. Copying every entry across would turn "silently
+  // ignored" into "config fails to load", so only loadable entries move; the
+  // rest stay where they are and the warning names the exact failure mode.
+  // Pantheon refs (legacy V1 .ts paths included) are stripped by identity and
+  // never re-registered: only the installed V2 plugin directory below is.
+  if (Array.isArray(config.plugin)) {
+    // Strip Pantheon refs FIRST: a stale V1 .ts path is not a registrable
+    // entry on this host and must not be moved.
+    config.plugin = removePantheonPluginReferences(config.plugin)
     if (!Array.isArray(config.plugins)) config.plugins = []
-    // Preserve any options already set on the Pantheon V2 entry across the
-    // remove/re-add below. The context_sandbox migration reads them, and a
-    // silent drop would lose a hand-set sandbox limit or any other plugin
-    // option the user chose. Only the object form can carry options.
-    const existingV2Options =
-      config.plugins
-        .filter((ref) => pluginReferenceIdentity(ref) === PANTHEON_V2_PLUGIN)
-        .map((ref) =>
-          typeof ref === 'object' && ref !== null && !Array.isArray(ref) ? ref.options : null,
-        )
-        .find((options) => options && typeof options === 'object' && !Array.isArray(options)) ??
-      null
-    config.plugins = deduplicatePluginReferences(removePantheonPluginReferences(config.plugins))
-    if (Array.isArray(pantheonConfig?.plugins)) {
-      for (const plugin of pantheonConfig.plugins) {
-        if (!isPantheonPluginReference(plugin) && !hasPluginReference(config.plugins, plugin)) {
-          config.plugins.push(deepClone(plugin))
-        }
+    const migrated = []
+    const blocked = []
+    for (const plugin of config.plugin) {
+      const verdict = v2PluginEntryLoadability(plugin, target)
+      if (!verdict.loadable) {
+        blocked.push({ plugin, reason: verdict.reason })
+        continue
+      }
+      if (!hasPluginReference(config.plugins, plugin)) {
+        config.plugins.push(deepClone(plugin))
+        migrated.push(plugin)
       }
     }
-    // The beta resolves every `plugins` entry through npm install, so an
-    // `a/b` shorthand (e.g. the published `pantheon-opencode/plugin-v2`
-    // export) is treated as a GitHub repo and dies with NpmInstallFailedError
-    // (beta log evidence). The beta loader additionally requires each entry
-    // to be a DIRECTORY with a real index.js/index.ts — a file path warns
-    // "must be a directory" and a symlink is ignored (sandbox probe
-    // evidence). Register the V2 plugin DIRECTORY inside the INSTALLED
-    // package — exactly like V1's ensurePantheonPlugin, but pointing at
-    // src/plugin-v2 whose index.ts shim re-exports the real entry.
-    // Legacy refs (npm shorthand, the old src/plugin-v2.ts file path) are
-    // recognized via managedPluginIdentity and already stripped above, so
-    // they migrate here.
-    const resolvedV2 = resolveInstalledPlugin(PANTHEON_V2_PLUGIN)
-    config.plugins = config.plugins.filter(
-      (plugin) => pluginReferenceIdentity(plugin) !== pluginReferenceIdentity(resolvedV2),
-    )
-    // Always use object form, even on a fresh install. The host passes plugin
-    // options only from `{ package, options }`, and `context_pruner` reads
-    // `ctx.options`. A bare string left the option unreachable; an empty object
-    // keeps the contract visible and preserves user-added keys on re-run.
-    config.plugins.push({
-      package: resolvedV2,
-      options: existingV2Options === null ? {} : deepClone(existingV2Options),
-    })
-
-    // See ensureTuiCopyRegistered: OpenCode 2.x loads server-side RPC of the
-    // copied TUI plugin ONLY through an explicit `plugins` entry.
-    ensureTuiCopyRegistered(config, {
-      tuiCopyDir: isGlobal
-        ? join(target, 'plugins', 'pantheon-tui')
-        : join(target, '.opencode', 'plugins', 'pantheon-tui'),
-    })
-
-    // A path that LOOKS like a Pantheon V2 entry but is not one this package
-    // can prove it owns (managedPluginIdentity only recognizes installed copies
-    // and this package's own paths) would now be registered twice: the host
-    // would run both copies' hooks. Retiring it on a guess could delete a
-    // third-party plugin, so say what is happening instead of guessing.
-    const lookalikes = config.plugins.filter(
-      (ref) =>
-        !isPantheonPluginReference(ref) &&
-        pluginMetadataReferences(ref).some((reference) =>
-          /(^|\/)plugin-v2(?:\.ts)?$/.test(normalizePluginRef(reference)),
-        ),
-    )
-    if (lookalikes.length > 0) {
+    if (migrated.length > 0) {
       warning(
-        'This config also points at another copy of the Pantheon V2 plugin, which this ' +
-          'installer cannot prove it owns: ' +
-          `${lookalikes.map(describePluginEntry).join(', ')}. With the entry registered in ` +
-          'this install, BOTH copies would load and their hooks would run twice. Remove that ' +
-          'entry by hand if it is an older Pantheon installation; it is left alone because a ' +
-          'third-party plugin could share the path.',
+        `The 2.x host ignores the singular "plugin" key; also registered ${migrated.length} ` +
+          `third-party entr${migrated.length === 1 ? 'y' : 'ies'} under "plugins" so ` +
+          `they keep loading: ${migrated.map(describePluginEntry).join(', ')}. ` +
+          'Remove any that only support the V1 plugin API.',
       )
     }
+    if (blocked.length > 0) {
+      warning(
+        'The 2.x host ignores the singular "plugin" key; these entries were left in it ' +
+          `because the 2.x loader cannot load them, so they will NOT be active: ${blocked
+            .map(
+              ({ plugin, reason }) => `${describePluginEntry(plugin)} ${V2_LOAD_FAILURES[reason]}`,
+            )
+            .join('; ')}.`,
+      )
+    }
+    // Pantheon refs are already gone. An emptied array is not configuration:
+    // drop the dead key entirely so the written config points at the list the
+    // 2.x host actually reads. A surviving legacy list is the user's own data
+    // and is left in place (a downgrade still finds it).
+    if (config.plugin.length === 0) delete config.plugin
+  }
+  if (!Array.isArray(config.plugins)) config.plugins = []
+  // Preserve any options already set on the Pantheon V2 entry across the
+  // remove/re-add below. The context_sandbox migration reads them, and a
+  // silent drop would lose a hand-set sandbox limit or any other plugin
+  // option the user chose. Only the object form can carry options.
+  const existingV2Options =
+    config.plugins
+      .filter((ref) => pluginReferenceIdentity(ref) === PANTHEON_V2_PLUGIN)
+      .map((ref) =>
+        typeof ref === 'object' && ref !== null && !Array.isArray(ref) ? ref.options : null,
+      )
+      .find((options) => options && typeof options === 'object' && !Array.isArray(options)) ?? null
+  config.plugins = deduplicatePluginReferences(removePantheonPluginReferences(config.plugins))
+  if (Array.isArray(pantheonConfig?.plugins)) {
+    for (const plugin of pantheonConfig.plugins) {
+      if (!isPantheonPluginReference(plugin) && !hasPluginReference(config.plugins, plugin)) {
+        config.plugins.push(deepClone(plugin))
+      }
+    }
+  }
+  // The 2.x host resolves every `plugins` entry through npm install, so an
+  // `a/b` shorthand (e.g. the published `pantheon-opencode/plugin-v2`
+  // export) is treated as a GitHub repo and dies with NpmInstallFailedError
+  // (beta log evidence). The 2.x loader additionally requires each entry
+  // to be a DIRECTORY with a real index.js/index.ts — a file path warns
+  // "must be a directory" and a symlink is ignored (sandbox probe
+  // evidence). Register the V2 plugin DIRECTORY inside the INSTALLED
+  // package, pointing at src/plugin-v2 whose index.ts shim re-exports the
+  // real entry. Legacy refs (npm shorthand, the old src/plugin-v2.ts file
+  // path, and the retired V1 identities) are recognized via
+  // managedPluginIdentity and already stripped above, so they migrate here.
+  const resolvedV2 = resolveInstalledPlugin(PANTHEON_V2_PLUGIN)
+  config.plugins = config.plugins.filter(
+    (plugin) => pluginReferenceIdentity(plugin) !== pluginReferenceIdentity(resolvedV2),
+  )
+  // Always use object form, even on a fresh install. The host passes plugin
+  // options only from `{ package, options }`, and `context_pruner` reads
+  // `ctx.options`. A bare string left the option unreachable; an empty object
+  // keeps the contract visible and preserves user-added keys on re-run.
+  config.plugins.push({
+    package: resolvedV2,
+    options: existingV2Options === null ? {} : deepClone(existingV2Options),
+  })
+
+  // See ensureTuiCopyRegistered: OpenCode 2.x loads server-side RPC of the
+  // copied TUI plugin ONLY through an explicit `plugins` entry.
+  ensureTuiCopyRegistered(config, {
+    tuiCopyDir: isGlobal
+      ? join(target, 'plugins', 'pantheon-tui')
+      : join(target, '.opencode', 'plugins', 'pantheon-tui'),
+  })
+
+  // A path that LOOKS like a Pantheon V2 entry but is not one this package
+  // can prove it owns (managedPluginIdentity only recognizes installed copies
+  // and this package's own paths) would now be registered twice: the host
+  // would run both copies' hooks. Retiring it on a guess could delete a
+  // third-party plugin, so say what is happening instead of guessing.
+  const lookalikes = config.plugins.filter(
+    (ref) =>
+      !isPantheonPluginReference(ref) &&
+      pluginMetadataReferences(ref).some((reference) =>
+        /(^|\/)plugin-v2(?:\.ts)?$/.test(normalizePluginRef(reference)),
+      ),
+  )
+  if (lookalikes.length > 0) {
+    warning(
+      'This config also points at another copy of the Pantheon V2 plugin, which this ' +
+        'installer cannot prove it owns: ' +
+        `${lookalikes.map(describePluginEntry).join(', ')}. With the entry registered in ` +
+        'this install, BOTH copies would load and their hooks would run twice. Remove that ' +
+        'entry by hand if it is an older Pantheon installation; it is left alone because a ' +
+        'third-party plugin could share the path.',
+    )
   }
 
   // Report whether the entry the host will read can actually carry options.
   // Computed here, from the config this pass is about to write, so it answers
   // the installed state rather than an assumption.
-  const v2PluginOptions =
-    version === 'v2' ? describePluginOptionsReachability(config.plugins) : null
-  if (v2PluginOptions !== null && !v2PluginOptions.reachable && !opts.planOnly) {
+  const v2PluginOptions = describePluginOptionsReachability(config.plugins)
+  if (!v2PluginOptions.reachable && !opts.planOnly) {
     warning(`Pantheon V2 plugin options are not reachable: ${v2PluginOptions.detail}`)
   }
 
@@ -2934,7 +2836,7 @@ async function installPass(
   // A native V2 array is an explicit policy, including an empty one. Do not
   // append legacy defaults to it: reruns would duplicate rules, and custom V2
   // configs would gain grants the user did not choose.
-  const hasNativeV2Permissions = version === 'v2' && Array.isArray(config.permissions)
+  const hasNativeV2Permissions = Array.isArray(config.permissions)
   if (config.permission === undefined) config.permission = {}
   if (
     typeof config.permission === 'object' &&
@@ -3032,16 +2934,6 @@ async function installPass(
   }
 
   // --------------------------------------------------------------------
-  // F. Compatibility cleanup (OpenCode V1 >= 1.15.7)
-  // --------------------------------------------------------------------
-  // Recent V1 releases reject the legacy `todoContinuation` setting. Remove
-  // it from the merged V1 config, while leaving the V2-shaped configuration
-  // untouched.
-  if (version === 'v1' && Object.hasOwn(config, 'todoContinuation')) {
-    delete config.todoContinuation
-  }
-
-  // --------------------------------------------------------------------
   // F.5 MCP server entries (for runtime-deployed scripts)
   // beta.5: skipped when the Python runtime setup failed — entries pointing
   // at a venv that does not exist would make every MCP fail to launch.
@@ -3058,7 +2950,6 @@ async function installPass(
     const mcp = applyMcpServerEntries(config, {
       runtimeTarget,
       venvPython: venvPythonPath(target),
-      version,
     })
     mcpServers = mcp.servers
     // `permission.mcp.<server>: ask` is inert on OpenCode 2.x. Never leave the
@@ -3071,43 +2962,41 @@ async function installPass(
   }
 
   // ── V2 native migration ──
-  // When targeting V2, convert the merged V1-shaped config to native V2 format
-  // before writing. V1 path is untouched (zero regression).
-  let configToWrite = config
-  if (version === 'v2') {
-    // The V2 converters can emit raw console warnings (ambiguous legacy
-    // values). Close the gauge line first so they are not printed on top of it
-    // and then erased by the next `\r` clear.
-    endGaugeLine()
-    info(S.v2Migrating)
-    configToWrite = migrateV1toV2(config)
+  // The merged config may carry legacy (V1-shaped) fields read from disk;
+  // convert it to native V2 format before writing.
+  // The converters can emit raw console warnings (ambiguous legacy
+  // values). Close the gauge line first so they are not printed on top of it
+  // and then erased by the next `\r` clear.
+  endGaugeLine()
+  info(S.v2Migrating)
+  const configToWrite = migrateV1toV2(config)
 
-    // Pantheon no longer sets a step ceiling. Any `steps` sitting on a managed
-    // agent was written by an earlier install and never chosen by the user —
-    // the merge above is additive by design (no delete path), so drop it here
-    // and let the host default apply. This runs after the migration because
-    // migrateV1toV2 copies the V1 `agent` block across verbatim (including any
-    // stale `steps`), which is exactly how the value reappears in V2.
-    // User-defined agents are out of scope and keep their value; the V1
-    // singular `agent` block is deliberately untouched (V1 is retiring).
-    const v2Agents = configToWrite.agents
-    if (v2Agents && typeof v2Agents === 'object' && !Array.isArray(v2Agents)) {
-      for (const name of Object.keys(canonicalAgentConfig)) {
-        const entry = v2Agents[name]
-        if (entry && typeof entry === 'object' && !Array.isArray(entry)) delete entry.steps
-      }
+  // Pantheon no longer sets a step ceiling. Any `steps` sitting on a managed
+  // agent was written by an earlier install and never chosen by the user —
+  // the merge above is additive by design (no delete path), so drop it here
+  // and let the host default apply. This runs after the migration because
+  // migrateV1toV2 copies the legacy `agent` block across verbatim (including
+  // any stale `steps`), which is exactly how the value reappears in V2.
+  // User-defined agents are out of scope and keep their value; the legacy
+  // singular `agent` block is deliberately untouched (a downgrade still
+  // finds it).
+  const v2Agents = configToWrite.agents
+  if (v2Agents && typeof v2Agents === 'object' && !Array.isArray(v2Agents)) {
+    for (const name of Object.keys(canonicalAgentConfig)) {
+      const entry = v2Agents[name]
+      if (entry && typeof entry === 'object' && !Array.isArray(entry)) delete entry.steps
     }
-
-    // Carry the V1 top-level `context_sandbox` into the exact Pantheon V2
-    // plugin entry's `options` — V2.0.25 silently drops the top-level key, so
-    // without this the user's enabled/limits choice is lost on a V1→V2 install.
-    // The V1 block itself is preserved by migrateV1toV2 for a downgrade.
-    // A null/type-invalid block throws HERE, before any config write.
-    configToWrite.plugins = applyContextSandboxToV2Plugins(
-      configToWrite.plugins,
-      config.context_sandbox,
-    )
   }
+
+  // Carry the legacy top-level `context_sandbox` into the exact Pantheon V2
+  // plugin entry's `options` — V2.0.25 silently drops the top-level key, so
+  // without this the user's enabled/limits choice is lost on a V1→V2 install.
+  // The legacy block itself is preserved by migrateV1toV2 for a downgrade.
+  // A null/type-invalid block throws HERE, before any config write.
+  configToWrite.plugins = applyContextSandboxToV2Plugins(
+    configToWrite.plugins,
+    config.context_sandbox,
+  )
 
   const configContent = `${JSON.stringify(configToWrite, null, 2)}\n`
   const configStep = step(S.writingConfig)
@@ -3158,17 +3047,6 @@ async function installPass(
     }
   }
   advancePhase()
-
-  if (opts.preset && dryRun) {
-    const { writeActivePreset } = await import('./model-picker.mjs')
-    writeActivePreset(target, opts.preset, {
-      dryRun: true,
-      source: 'cli',
-      updatedAt: planTimestamp,
-      recorder,
-      logger: { log() {} },
-    })
-  }
 
   // -----------------------------------------------------------------------
   // 3.75 Preview summary (Beta 11 Setup phase 1): print the REAL per-file
@@ -3281,31 +3159,6 @@ async function installPass(
   // 4. (runtime setup moved to 2.11 — before the config write — so MCP
   //    entries are only added when the Python runtime is actually healthy)
   // -----------------------------------------------------------------------
-
-  // -----------------------------------------------------------------------
-  // 5. V1 model preset selection (--components agents). V2 ignores the legacy
-  //    active-preset marker, so it has no profile wizard or --preset support.
-  //    The V1 interactive wizard runs unless autoYes or an explicit preset was given.
-  //    Q1 default "herdar do chat" (inherit) writes no active-preset.json —
-  //    delegates inherit the parent chat model (native inheritance).
-  // -----------------------------------------------------------------------
-  if (
-    interactive &&
-    stdinTTY &&
-    version === 'v1' &&
-    !dryRun &&
-    !autoYes &&
-    !opts.preset &&
-    stats.errors === 0
-  ) {
-    const { runInitWizard } = await import('./model-picker.mjs')
-    await runInitWizard({ presetDir: target, logger: console, prompts: opts.deps?.prompts })
-  }
-
-  if (opts.preset && !dryRun && stats.errors === 0) {
-    const { writeActivePreset } = await import('./model-picker.mjs')
-    writeActivePreset(target, opts.preset, { source: 'cli', updatedAt: planTimestamp, recorder })
-  }
 
   // -----------------------------------------------------------------------
   // 5.5 Optional vision prompt (interactive TTY only). The default — automatic
@@ -3431,7 +3284,7 @@ async function installPass(
         openCodeVersion: version,
         versionAssumed,
         configAdvisories,
-        v2Capabilities: version === 'v2' ? v2Capabilities() : null,
+        v2Capabilities: v2Capabilities(),
         decisionModelActivation,
         pluginOptions: v2PluginOptions,
       }
@@ -3444,7 +3297,7 @@ async function installPass(
         runtimeEffects,
         openCodeVersion: version,
         configAdvisories,
-        v2Capabilities: version === 'v2' ? v2Capabilities() : null,
+        v2Capabilities: v2Capabilities(),
         pluginOptions: v2PluginOptions,
       }
 }

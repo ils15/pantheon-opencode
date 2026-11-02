@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import {
-  existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -14,7 +13,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { copyAgentPrompts, writeAgentsMdManaged } from '../scripts/build-agents-md.mjs'
-import { writeActivePreset } from '../scripts/install/model-picker.mjs'
 import {
   copyFiles,
   installSkills,
@@ -74,70 +72,6 @@ test('writeState rejects a symlinked final file without changing its target', ()
 
     assert.throws(() => writeState(target, createInitialState('1.0.0')), /symlink/i)
     assert.equal(readFileSync(sentinel, 'utf8'), before)
-  })
-})
-
-test('writeActivePreset rejects a symlinked preset directory without changing outside files', () => {
-  withDirectories(({ target, outside }) => {
-    const sentinel = join(outside, 'sentinel')
-    const before = 'preset sentinel'
-    writeFileSync(sentinel, before)
-    symlinkSync(outside, join(target, '.pantheon'), 'dir')
-
-    assert.throws(() => writeActivePreset(target, 'go-fast'), /symlink/i)
-    assert.equal(readFileSync(sentinel, 'utf8'), before)
-  })
-})
-
-test('writeActivePreset rejects a symlinked final file without changing its target', () => {
-  withDirectories(({ target, outside }) => {
-    const presetDir = join(target, '.pantheon')
-    const sentinel = join(outside, 'sentinel')
-    const before = 'active sentinel'
-    mkdirSync(presetDir)
-    writeFileSync(sentinel, before)
-    symlinkSync(sentinel, join(presetDir, 'active-preset.json'))
-
-    assert.throws(() => writeActivePreset(target, 'go-fast'), /symlink/i)
-    assert.equal(readFileSync(sentinel, 'utf8'), before)
-  })
-})
-
-test('writeActivePreset rejects a planted backup symlink without changing its target', () => {
-  withDirectories(({ target, outside }) => {
-    const presetDir = join(target, '.pantheon')
-    const active = join(presetDir, 'active-preset.json')
-    const backup = `${active}.bak`
-    const sentinel = join(outside, 'sentinel')
-    const previous = '{"preset":"go-free"}\n'
-    const before = 'backup sentinel'
-    mkdirSync(presetDir)
-    writeFileSync(active, previous)
-    writeFileSync(sentinel, before)
-    symlinkSync(sentinel, backup)
-
-    assert.throws(() => writeActivePreset(target, 'go-fast'), /symlink/i)
-    assert.equal(readFileSync(sentinel, 'utf8'), before)
-    assert.equal(readFileSync(active, 'utf8'), previous)
-  })
-})
-
-test('writeActivePreset rejects a planted temporary symlink without changing its target', () => {
-  withDirectories(({ target, outside }) => {
-    const presetDir = join(target, '.pantheon')
-    const active = join(presetDir, 'active-preset.json')
-    const sentinel = join(outside, 'sentinel')
-    const previous = '{"preset":"go-free"}\n'
-    const before = 'temporary sentinel'
-    mkdirSync(presetDir)
-    writeFileSync(active, previous)
-    writeFileSync(sentinel, before)
-    symlinkSync(sentinel, `${active}.tmp-${process.pid}`)
-
-    assert.throws(() => writeActivePreset(target, 'go-fast'))
-    assert.equal(readFileSync(sentinel, 'utf8'), before)
-    assert.equal(readFileSync(active, 'utf8'), previous)
-    assert.equal(existsSync(`${active}.bak`), false)
   })
 })
 
@@ -241,15 +175,11 @@ test('config writes preserve existing private mode and use a private mode for ne
   })
 })
 
-test('state and preset files are not group- or world-accessible', () => {
+test('state files are not group- or world-accessible', () => {
   withDirectories(({ target }) => {
     writeState(target, createInitialState('1.0.0'))
-    writeActivePreset(target, 'go-fast')
 
-    for (const file of [
-      join(target, '.pantheon', 'install-state.json'),
-      join(target, '.pantheon', 'active-preset.json'),
-    ]) {
+    for (const file of [join(target, '.pantheon', 'install-state.json')]) {
       assert.equal(statSync(file).mode & 0o077, 0)
     }
   })

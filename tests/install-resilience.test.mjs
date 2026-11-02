@@ -73,7 +73,7 @@ test('config rewrite is preserved byte-for-byte in the exact backup set', async 
     await installOpenCode(target, false, false, ['agents'], {
       yes: true,
       headless: true,
-      version: 'v1',
+      version: 'v2',
     })
     const first = readFileSync(join(target, 'opencode.json'), 'utf8')
 
@@ -85,7 +85,7 @@ test('config rewrite is preserved byte-for-byte in the exact backup set', async 
     await installOpenCode(target, false, false, ['agents'], {
       yes: true,
       headless: true,
-      version: 'v1',
+      version: 'v2',
     })
 
     const withConfig = listBackupSets(target).filter((s) =>
@@ -144,7 +144,7 @@ test('runtime failure persists degraded state, preserves backup, and never print
       await installOpenCode(target, false, false, ['runtime'], {
         yes: true,
         headless: true,
-        version: 'v1',
+        version: 'v2',
         deps: {
           setupVenv: (_target, options) => {
             if (!options.dryRun) throw new Error('injected venv failure')
@@ -230,19 +230,29 @@ test('install prunes Pantheon refs from stale install locations, keeps third-par
     await installOpenCode(target, false, false, ['agents'], {
       yes: true,
       headless: true,
-      version: 'v1',
+      version: 'v2',
     })
 
-    const refs = JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8')).plugin
-    const stale = refs.filter((r) => typeof r === 'string' && r.includes('/old/'))
-    assert.deepEqual(stale, [], `stale install refs must be pruned: ${JSON.stringify(refs)}`)
-    assert.ok(
-      refs.includes(join(ROOT, 'src', 'plugin.ts')) &&
-        refs.includes(join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts')),
-      'current install refs must be present',
+    const config = JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8'))
+    const legacyRefs = (config.plugin ?? []).filter(
+      (r) => typeof r === 'string' && r.includes('/old/'),
     )
-    assert.ok(refs.includes('/tmp/vendor/src/plugin.ts'), 'third-party preserved')
-    assert.ok(refs.includes('@scope/user-plugin'), 'user plugin preserved')
+    assert.deepEqual(legacyRefs, [], `stale install refs must be pruned: ${JSON.stringify(config)}`)
+    // The legacy V1 identities are never re-registered; the singular key keeps
+    // only third-party entries and the V2 directory lands in config.plugins.
+    assert.ok(
+      !JSON.stringify(config.plugin ?? []).includes(join(ROOT, 'src', 'plugin.ts')) &&
+        !JSON.stringify(config.plugin ?? []).includes('pantheon-hooks'),
+      'legacy V1 plugin refs must not be re-registered',
+    )
+    assert.ok(config.plugin.includes('/tmp/vendor/src/plugin.ts'), 'third-party preserved')
+    assert.ok(config.plugin.includes('@scope/user-plugin'), 'user plugin preserved')
+    assert.ok(
+      (config.plugins ?? []).some(
+        (entry) => typeof entry === 'object' && entry.package === join(ROOT, 'src', 'plugin-v2'),
+      ),
+      'the V2 plugin directory is registered',
+    )
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
@@ -254,7 +264,7 @@ test('apply gate: a declined prompt writes nothing and reports applied:false', a
   try {
     const result = await installOpenCode(target, false, false, ['agents', 'commands'], {
       headless: true,
-      version: 'v1',
+      version: 'v2',
       deps: { promptReview: async () => false },
     })
     assert.equal(result.applied, false)
@@ -271,7 +281,7 @@ test('apply gate: an accepted prompt applies and reports applied:true', async ()
   try {
     const result = await installOpenCode(target, false, false, ['agents', 'commands'], {
       headless: true,
-      version: 'v1',
+      version: 'v2',
       deps: { promptReview: async () => true },
     })
     assert.equal(result.applied, true)

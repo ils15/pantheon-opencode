@@ -251,11 +251,15 @@ test('resolveInstalledPlugin recognizes only exact installed paths as managed', 
 })
 
 test('resolved plugin paths exist inside the package (ROOT-derived, not stale refs)', () => {
-  for (const ref of ['src/plugin.ts', 'src/plugins/pantheon-hooks.ts', 'src/plugin-v2']) {
-    const result = resolveInstalledPlugin(ref)
-    assert.ok(result.startsWith(join(ROOT, 'src')), `expected ROOT-derived path, got ${result}`)
-    assert.ok(existsSync(result), `resolved path does not exist in package: ${result}`)
+  // Only the V2 plugin directory ships in the 2.0 package; the legacy V1
+  // identities remain RECOGNIZED (stripped/migrated) but have no file to
+  // resolve to.
+  for (const ref of ['src/plugin.ts', 'src/plugins/pantheon-hooks.ts']) {
+    assert.equal(resolveInstalledPlugin(ref), join(ROOT, ref))
   }
+  const result = resolveInstalledPlugin('src/plugin-v2')
+  assert.ok(result.startsWith(join(ROOT, 'src')), `expected ROOT-derived path, got ${result}`)
+  assert.ok(existsSync(result), `resolved path does not exist in package: ${result}`)
 })
 
 test('resolveInstalledPlugin passes through non-src plugin refs unchanged', () => {
@@ -285,7 +289,7 @@ const COMPONENTS = ['agents', 'skills', 'instructions', 'commands', 'plugins']
 
 /** Run a real (non-dry-run) install into `target`, optionally seeding an
  * existing opencode.json first. Returns the merged config. */
-async function runInstall(target, existingConfig = null, version = 'v1') {
+async function runInstall(target, existingConfig = null, version = 'v2') {
   if (existingConfig !== null) {
     mkdirSync(target, { recursive: true })
     writeFileSync(join(target, 'opencode.json'), JSON.stringify(existingConfig, null, 2))
@@ -318,18 +322,22 @@ function snapshotTree(root) {
   return snapshot
 }
 
-test('fresh install registers BOTH pantheon plugins (plugin.ts + pantheon-hooks.ts)', async () => {
+test('fresh install registers the managed V2 plugin directory', async () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-fresh-'))
   try {
     const config = await runInstall(target)
-    assert.ok(Array.isArray(config.plugin), 'config.plugin must be an array')
+    assert.ok(Array.isArray(config.plugins), 'config.plugins must be an array')
     assert.ok(
-      config.plugin.includes(join(ROOT, 'src', 'plugin.ts')),
-      `delegation plugin missing from fresh install: ${JSON.stringify(config.plugin)}`,
+      config.plugins.some(
+        (entry) => typeof entry === 'object' && entry.package === join(ROOT, 'src', 'plugin-v2'),
+      ),
+      `managed V2 directory missing from fresh install: ${JSON.stringify(config.plugins)}`,
     )
+    // The retired V1 identities are never re-registered.
     assert.ok(
-      config.plugin.includes(join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts')),
-      `hooks plugin missing from fresh install: ${JSON.stringify(config.plugin)}`,
+      !JSON.stringify(config).includes(join(ROOT, 'src', 'plugin.ts')) &&
+        !JSON.stringify(config).includes('pantheon-hooks.ts'),
+      'legacy V1 plugin refs must not be registered',
     )
   } finally {
     rmSync(target, { recursive: true, force: true })
@@ -349,11 +357,10 @@ test('agent clean aborts on a symlinked destination parent without changing outs
       installOpenCode(target, false, true, ['agents'], {
         yes: true,
         headless: true,
-        version: 'v1',
+        version: 'v2',
         deps: {
           betweenPlanAndApply() {
-            const agentDir = join(target, '.opencode', 'agents')
-            mkdirSync(join(target, '.opencode'), { recursive: true })
+            const agentDir = join(target, 'agents')
             symlinkSync(outside, agentDir, 'dir')
           },
         },
@@ -379,7 +386,7 @@ test('skill clean aborts on a symlinked destination parent without changing outs
       installOpenCode(target, false, true, ['skills'], {
         yes: true,
         headless: true,
-        version: 'v1',
+        version: 'v2',
         deps: {
           betweenPlanAndApply() {
             const skillsDir = join(target, '.opencode', 'skills')
@@ -408,46 +415,24 @@ test('sync realigns a stale node_modules plugin path onto the current package (i
       plugin: [join(staleRoot, 'src', 'plugin.ts'), THIRD_PARTY_PLUGIN],
       plugins: [join(staleRoot, 'src', 'plugin-v2')],
     })
-    // The stale V1 and V2 refs are rewritten into THIS package; the
-    // third-party plugin survives untouched.
-    assert.ok(
-      config.plugin.includes(join(ROOT, 'src', 'plugin.ts')),
-      `stale V1 ref not realigned: ${JSON.stringify(config.plugin)}`,
-    )
+    // The stale V1 refs are STRIPPED (no V1 registration exists anymore); the
+    // stale V2 node_modules copy is realigned onto THIS package's V2 plugin;
+    // the third-party plugin survives untouched.
     assert.ok(
       config.plugin.every((ref) => !String(ref).includes(staleRoot)),
-      `stale node_modules copy still registered: ${JSON.stringify(config.plugin)}`,
+      `stale V1 node_modules copy still registered: ${JSON.stringify(config.plugin)}`,
+    )
+    assert.ok(config.plugin.includes(THIRD_PARTY_PLUGIN), 'third-party plugin must be preserved')
+    assert.ok(
+      config.plugins.some(
+        (entry) => typeof entry === 'object' && entry.package === join(ROOT, 'src', 'plugin-v2'),
+      ),
+      `stale V2 ref not realigned onto this package: ${JSON.stringify(config.plugins)}`,
     )
     assert.ok(
       config.plugins.every((ref) => !String(ref).includes(staleRoot)),
       `stale V2 node_modules copy still registered: ${JSON.stringify(config.plugins)}`,
     )
-    assert.ok(config.plugin.includes(THIRD_PARTY_PLUGIN), 'third-party plugin must be preserved')
-  } finally {
-    rmSync(target, { recursive: true, force: true })
-  }
-})
-
-test('V1 downgrade keeps the legacy plugins key with third-party plugins, preserving user provider and compaction values', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-v1-legacy-'))
-  try {
-    const config = await runInstall(
-      target,
-      {
-        plugins: ['npm:user-plugin'],
-        provider: { custom: { options: { endpoint: 'https://example.test' } } },
-        compaction: { prune: false },
-      },
-      'v1',
-    )
-    // The legacy `plugins` key is preserved verbatim (minus Pantheon refs) so
-    // third-party registrations survive a V1 downgrade; only Pantheon-owned
-    // entries are stripped and re-registered under the singular `plugin` key.
-    assert.deepEqual(config.plugins, ['npm:user-plugin'])
-    assert.ok(config.plugin.includes(join(ROOT, 'src', 'plugin.ts')))
-    assert.ok(config.plugin.includes(join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts')))
-    assert.equal(config.provider.custom.options.endpoint, 'https://example.test')
-    assert.equal(config.compaction.prune, false)
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
@@ -739,18 +724,6 @@ test('V2 MCP seeding rejects malformed source maps without mutating them', () =>
   assert.deepEqual(config, before)
 })
 
-test('V1 MCP runtime entries remain a flat named-server map', () => {
-  const config = { mcp: {} }
-  applyMcpServerEntries(config, {
-    runtimeTarget: '/private/runtime',
-    venvPython: '/private/runtime/.venv/bin/python3',
-    version: 'v1',
-  })
-  assert.equal(config.mcp.servers, undefined)
-  assert.ok(config.mcp['pantheon-resources'])
-  assert.ok(config.mcp['pantheon-code-mode'])
-})
-
 test('global install uses flat component directories and repairs a legacy V2 config', async () => {
   const parent = mkdtempSync(join(tmpdir(), 'opencode-global-'))
   const target = join(parent, 'opencode')
@@ -907,7 +880,7 @@ test('default install never reads a repository-root opencode.json', async () => 
     const config = await installOpenCode(target, false, false, COMPONENTS, {
       yes: true,
       headless: true,
-      version: 'v1',
+      version: 'v2',
     }).then(() => JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8')))
     assert.ok(
       !config.plugins?.includes('npm:@acme/should-not-appear') &&
@@ -927,7 +900,8 @@ test('--merge-dev-config merges third-party plugin/provider/compaction from the 
   const devDir = mkdtempSync(join(tmpdir(), 'pantheon-dev-config-'))
   const devConfig = join(devDir, 'opencode.json')
   try {
-    // A real dev config carries both plugin shapes; V1 reads the singular key.
+    // A real dev config carries both plugin shapes; the 2.x merge reads the
+    // plural `plugins` key.
     writeFileSync(
       devConfig,
       JSON.stringify({
@@ -940,16 +914,18 @@ test('--merge-dev-config merges third-party plugin/provider/compaction from the 
     const config = await installOpenCode(target, false, false, COMPONENTS, {
       yes: true,
       headless: true,
-      version: 'v1',
+      version: 'v2',
       mergeDevConfig: devConfig,
     }).then(() => JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8')))
-    // V1 keeps the singular plugin list and the flat provider/compaction keys,
-    // so the merged third-party entries are directly observable.
+    // The flat provider/compaction keys ride through the merge, so the merged
+    // third-party entries are directly observable.
     assert.ok(
-      config.plugin.includes('npm:@acme/merged-plugin'),
+      config.plugins.includes('npm:@acme/merged-plugin'),
       'explicitly merged plugin must be present',
     )
-    assert.equal(config.provider.merged.options.endpoint, 'https://merged.invalid')
+    // The V2 migration renames the flat provider key; the merged value rides
+    // through it.
+    assert.equal(config.providers.merged.options.endpoint, 'https://merged.invalid')
     assert.equal(config.compaction.merged, true)
   } finally {
     rmSync(target, { recursive: true, force: true })
@@ -967,13 +943,13 @@ test('fresh install writes experimental.subagent_depth=2 and is byte-identical o
     assert.equal(firstConfig.experimental?.subagent_depth, 2)
     assert.equal('subagent_depth' in firstConfig, false)
 
-    // Explicit 'v1' on BOTH sides: this asserts idempotency, not the host
-    // gate. runInstall defaults to 'v1', so leaving this call on the default
-    // made the two halves disagree on any 2.x developer host.
+    // Explicit 'v2' on BOTH sides: this asserts idempotency, not the host
+    // gate. runInstall defaults to 'v2', so leaving this call on the default
+    // made the two halves disagree if the default ever changed.
     await installOpenCode(target, false, false, COMPONENTS, {
       yes: true,
       headless: true,
-      version: 'v1',
+      version: 'v2',
     })
     assert.equal(readFileSync(configPath, 'utf8'), firstBytes)
   } finally {
@@ -1023,7 +999,7 @@ test('upgrade strips stale instructions globs, keeps user entries + AGENTS.md', 
   }
 })
 
-test('upgrade preserves user plugins and adds both pantheon plugins (dedupe)', async () => {
+test('upgrade preserves user plugins and registers the managed V2 entry exactly once', async () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-upgrade-plugins-'))
   try {
     const config = await runInstall(target, {
@@ -1032,19 +1008,19 @@ test('upgrade preserves user plugins and adds both pantheon plugins (dedupe)', a
     assert.ok(config.plugin.includes('@scope/custom-plugin'), 'user plugin preserved')
     assert.ok(config.plugin.includes(THIRD_PARTY_PLUGIN), 'third-party plugin path preserved')
     assert.ok(config.plugin.includes(THIRD_PARTY_HOOKS), 'third-party hooks path preserved')
-    assert.ok(
-      config.plugin.includes(join(ROOT, 'src', 'plugin.ts')),
-      `delegation plugin not re-registered: ${JSON.stringify(config.plugin)}`,
-    )
-    assert.ok(
-      config.plugin.includes(join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts')),
-      `hooks plugin not registered: ${JSON.stringify(config.plugin)}`,
-    )
-    // The managed entries are unique, while third-party entries with the same
-    // basenames remain independent registrations.
+    // The managed entry is unique; third-party entries with the same basenames
+    // remain independent registrations in the legacy key.
     const pluginFiles = config.plugin.map((p) => p.split('/').pop())
-    assert.equal(pluginFiles.filter((f) => f === 'plugin.ts').length, 2)
-    assert.equal(pluginFiles.filter((f) => f === 'pantheon-hooks.ts').length, 2)
+    assert.equal(pluginFiles.filter((f) => f === 'plugin.ts').length, 1)
+    assert.equal(pluginFiles.filter((f) => f === 'pantheon-hooks.ts').length, 1)
+    const managed = config.plugins.filter(
+      (entry) => typeof entry === 'object' && entry.package === join(ROOT, 'src', 'plugin-v2'),
+    )
+    assert.equal(
+      managed.length,
+      1,
+      `managed V2 entry must appear once: ${JSON.stringify(config.plugins)}`,
+    )
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
@@ -1104,9 +1080,11 @@ test('preserves existing falsy values and user-owned config keys', async () => {
     assert.equal(config.model, null)
     assert.equal(config.small_model, false)
     assert.equal(config.default_agent, 0)
-    assert.equal(config.provider, null)
+    // The V2 migration renames the flat legacy keys but must not replace a
+    // falsy user value with a managed default.
+    assert.equal(config.providers, null)
     assert.equal(config.compaction, '')
-    assert.equal(config.permission, false)
+    assert.equal(config.permissions, false)
     assert.equal(config.instructions, 0)
     assert.equal(config.plugin, null)
     assert.equal(config.experimental, false)
@@ -1286,24 +1264,6 @@ test('v2 install strips a stale steps ceiling from a config that is already V2-o
   }
 })
 
-test('v1 install leaves the singular agent block steps value alone', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-steps-v1-'))
-  try {
-    const config = await runInstall(
-      target,
-      { agent: { zeus: { mode: 'primary', steps: 45 } } },
-      'v1',
-    )
-    // The cleanup is V2-only: `agent` (singular) is the retiring V1 shape and
-    // is never written by a v2 install, so touching it would be pointless and
-    // would regress a V1 downgrade.
-    assert.equal(config.agent.zeus.steps, 45)
-    assert.equal(config.agents, undefined)
-  } finally {
-    rmSync(target, { recursive: true, force: true })
-  }
-})
-
 test('v2 install preserves steps on an agent the user defined', async () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-steps-user-'))
   try {
@@ -1341,14 +1301,14 @@ test('the installer has no remaining write path for steps', async () => {
     "MANAGED_FIELDS still merges 'steps' into existing and new agents",
   )
   // Behavioral half of the same invariant: a fresh install writes no ceiling.
-  for (const version of ['v1', 'v2']) {
-    const target = mkdtempSync(join(tmpdir(), `pantheon-steps-fresh-${version}-`))
+  {
+    const target = mkdtempSync(join(tmpdir(), 'pantheon-steps-fresh-v2-'))
     try {
-      const config = await runInstall(target, null, version)
-      const agents = version === 'v2' ? config.agents : config.agent
-      assert.ok(agents && typeof agents === 'object', `fresh ${version} install wrote no agents`)
+      const config = await runInstall(target)
+      const agents = config.agents
+      assert.ok(agents && typeof agents === 'object', 'a fresh install wrote no agents')
       for (const [name, entry] of Object.entries(agents)) {
-        assert.equal(entry.steps, undefined, `fresh ${version} install wrote steps on ${name}`)
+        assert.equal(entry.steps, undefined, `fresh install wrote steps on ${name}`)
       }
     } finally {
       rmSync(target, { recursive: true, force: true })

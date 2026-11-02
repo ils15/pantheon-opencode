@@ -1,17 +1,13 @@
 /**
- * install-e2e.test.mjs — End-to-end tests for the V1 and V2 install paths
+ * install-e2e.test.mjs — End-to-end tests for the OpenCode 2.x install path
  *
- * Validates the complete flow of `init --opencode-version=v1|v2`:
- *  - Config shape per version (V1: plugin singular/permission object/agent
- *    singular; V2: plugins plural/providers/permissions array/agents object)
- *  - Third-party plugins preserved
- *  - TUI registration correct
+ * Pantheon 2.0 targets OpenCode 2.x only (`init --opencode-version v2|auto`).
+ * Validates the complete flow:
+ *  - Config shape (plugins plural/providers/permissions array/agents object)
+ *  - Third-party plugins preserved, legacy V1-shaped configs migrated
+ *  - TUI registration correct (no tui.json; config.plugins only)
  *  - Idempotent (byte-identical) output
  *  - Snapshot key structure
- *  - Cross-version overwrites and round-trips
- *
- * Version-generic tests run for both versions; shape-specific assertions live
- * in their own sections.
  *
  * Run: node --test tests/install-e2e.test.mjs
  */
@@ -73,13 +69,9 @@ function assertManagedV2Plugin(config) {
 }
 
 const COMPONENTS = ['agents', 'skills', 'instructions', 'commands', 'plugins']
-const VERSIONS = ['v1', 'v2']
-
-/** Per-version fixture seeds: the user plugin spec and a third-party seed. */
-const VERSION_FIXTURES = {
-  v1: { userPlugin: '@scope/custom-v1-plugin' },
-  v2: { userPlugin: '@scope/custom-v2-plugin' },
-}
+// OpenCode 2.x is the only supported generation.
+const VERSIONS = ['v2']
+const USER_PLUGIN = '@scope/custom-v2-plugin'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -150,10 +142,8 @@ for (const version of VERSIONS) {
     const target = mkdtempSync(join(tmpdir(), `pantheon-e2e-${version}-commands-`))
     try {
       await runInstall(target, version)
-      const commandDir =
-        version === 'v2' ? join(target, 'commands') : join(target, '.opencode', 'commands')
-      const misplacedDir =
-        version === 'v2' ? join(target, '.opencode', 'commands') : join(target, 'commands')
+      const commandDir = join(target, 'commands')
+      const misplacedDir = join(target, '.opencode', 'commands')
       const installed = join(commandDir, 'pantheon-deepwork.md')
 
       assert.ok(
@@ -183,40 +173,22 @@ for (const version of VERSIONS) {
         'pantheon-tui copy directory must exist',
       )
       const tuiPluginDir = join(target, '.opencode', 'plugins', 'pantheon-tui')
-      if (version === 'v1') {
-        const tuiJsonPath = join(target, '.opencode', 'tui.json')
-        assert.ok(existsSync(tuiJsonPath), 'V1 requires tui.json registration')
-        const tuiConfig = JSON.parse(readFileSync(tuiJsonPath, 'utf8'))
-        const pluginList = tuiConfig.plugin || tuiConfig.plugins
-        assert.ok(Array.isArray(pluginList), 'tui.json must contain a plugin list')
-        assert.ok(pluginList.some((p) => String(p).includes('pantheon-tui')))
-        assert.equal(existsSync(join(tuiPluginDir, 'index.ts')), false)
-      } else {
-        assert.equal(
-          existsSync(join(target, '.opencode', 'tui.json')),
-          false,
-          'V2 discovers local plugin entrypoints; it does not use project tui.json',
-        )
-        assert.equal(
-          readFileSync(join(tuiPluginDir, 'tui.ts'), 'utf8'),
-          readFileSync(join(ROOT, 'src', 'plugins', 'tui', 'tui-v2.ts'), 'utf8'),
-        )
-        assert.equal(
-          readFileSync(join(tuiPluginDir, 'index.ts'), 'utf8'),
-          readFileSync(join(ROOT, 'src', 'plugins', 'tui', 'index-v2.ts'), 'utf8'),
-        )
-        assert.equal(
-          JSON.parse(readFileSync(join(tuiPluginDir, 'package.json'), 'utf8')).exports['./tui'],
-          './dist/tui-v2.js',
-        )
-      }
+      assert.equal(
+        existsSync(join(target, '.opencode', 'tui.json')),
+        false,
+        'the 2.x host discovers local plugin entrypoints; it does not use project tui.json',
+      )
       assert.equal(
         readFileSync(join(tuiPluginDir, 'tui.ts'), 'utf8'),
-        readFileSync(
-          join(ROOT, 'src', 'plugins', 'tui', version === 'v2' ? 'tui-v2.ts' : 'tui.ts'),
-          'utf8',
-        ),
-        'installed TUI copy must use the entrypoint for the selected host generation',
+        readFileSync(join(ROOT, 'src', 'plugins', 'tui', 'tui-v2.ts'), 'utf8'),
+      )
+      assert.equal(
+        readFileSync(join(tuiPluginDir, 'index.ts'), 'utf8'),
+        readFileSync(join(ROOT, 'src', 'plugins', 'tui', 'index-v2.ts'), 'utf8'),
+      )
+      assert.equal(
+        JSON.parse(readFileSync(join(tuiPluginDir, 'package.json'), 'utf8')).exports['./tui'],
+        './dist/tui-v2.js',
       )
       const tuiPackage = JSON.parse(readFileSync(join(tuiPluginDir, 'package.json'), 'utf8'))
       assert.ok(tuiPackage.files.includes('tui.ts'), 'npm package must ship the TUI entrypoint')
@@ -262,10 +234,7 @@ for (const version of VERSIONS) {
   test(`[${version}] idempotent with third-party plugins`, async () => {
     const target = mkdtempSync(join(tmpdir(), `pantheon-e2e-${version}-idemp-3p-`))
     try {
-      const seed =
-        version === 'v1'
-          ? { plugin: [THIRD_PARTY_PLUGIN, VERSION_FIXTURES.v1.userPlugin] }
-          : { plugin: [THIRD_PARTY_PLUGIN], plugins: [VERSION_FIXTURES.v2.userPlugin] }
+      const seed = { plugin: [THIRD_PARTY_PLUGIN], plugins: [USER_PLUGIN] }
       await runInstall(target, version, seed)
       const configPath = join(target, 'opencode.json')
       const firstBytes = readFileSync(configPath, 'utf8')
@@ -283,18 +252,15 @@ for (const version of VERSIONS) {
   test(`[${version}] preserves third-party plugins`, async () => {
     const target = mkdtempSync(join(tmpdir(), `pantheon-e2e-${version}-3p-`))
     try {
-      const userPlugin = VERSION_FIXTURES[version].userPlugin
       const config = await runInstall(target, version, {
         plugin: [THIRD_PARTY_PLUGIN],
-        ...(version === 'v1' ? {} : { plugins: [userPlugin] }),
+        plugins: [USER_PLUGIN],
       })
       assert.ok(
         config.plugin.includes(THIRD_PARTY_PLUGIN),
         `Third-party plugin ${THIRD_PARTY_PLUGIN} must be preserved`,
       )
-      if (version === 'v2') {
-        assert.ok(config.plugins.includes(userPlugin), 'third-party V2 plugin preserved')
-      }
+      assert.ok(config.plugins.includes(USER_PLUGIN), 'third-party 2.x plugin preserved')
     } finally {
       rmSync(target, { recursive: true, force: true })
     }
@@ -302,239 +268,7 @@ for (const version of VERSIONS) {
 }
 
 // ---------------------------------------------------------------------------
-// 2. V1 shape specifics
-// ---------------------------------------------------------------------------
-
-test('V1 fresh install produces plugin (singular) as array', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v1-fresh-'))
-  try {
-    const config = await runInstall(target, 'v1')
-    assert.ok(Array.isArray(config.plugin), 'config.plugin must be an array')
-    assert.ok(config.plugin.length >= 2, 'plugin array must have at least 2 pantheon entries')
-  } finally {
-    rmSync(target, { recursive: true, force: true })
-  }
-})
-
-test('V1 fresh install registers src/plugin.ts and pantheon-hooks.ts', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v1-managed-'))
-  try {
-    const config = await runInstall(target, 'v1')
-    assert.ok(
-      config.plugin.includes(join(ROOT, 'src', 'plugin.ts')),
-      `src/plugin.ts missing from V1 plugin array: ${JSON.stringify(config.plugin)}`,
-    )
-    assert.ok(
-      config.plugin.includes(join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts')),
-      `pantheon-hooks.ts missing from V1 plugin array: ${JSON.stringify(config.plugin)}`,
-    )
-  } finally {
-    rmSync(target, { recursive: true, force: true })
-  }
-})
-
-test('V1 fresh install does NOT include V2 plugin entry in plugin array', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v1-no-v2-'))
-  try {
-    const config = await runInstall(target, 'v1')
-    const hasV2Export = config.plugin.some((entry) =>
-      [V2_EXPORT, V2_LEGACY_FILE, join(ROOT, 'src', 'plugin-v2.ts'), V2_PLUGIN].includes(
-        pluginReference(entry),
-      ),
-    )
-    assert.ok(!hasV2Export, 'V1 config must not contain V2 plugin entry')
-  } finally {
-    rmSync(target, { recursive: true, force: true })
-  }
-})
-
-test('V1 fresh install has permission as object and no V2-only keys', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v1-shape-'))
-  try {
-    const config = await runInstall(target, 'v1')
-    assert.ok(config.permission !== undefined, 'V1 config must have permission key')
-    assert.ok(
-      typeof config.permission === 'object' && !Array.isArray(config.permission),
-      'V1 permission must be an object, not an array',
-    )
-    assert.ok(!('agents' in config), 'V1 config must not have agents (plural) key')
-    assert.ok(!('providers' in config), 'V1 config must not have providers (plural) key')
-  } finally {
-    rmSync(target, { recursive: true, force: true })
-  }
-})
-
-test('V1 fresh install does NOT use V2 mcp.servers format', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v1-mcp-'))
-  try {
-    const config = await runInstall(target, 'v1')
-    if (config.mcp !== undefined) {
-      assert.ok(
-        typeof config.mcp === 'object' && !Array.isArray(config.mcp),
-        'V1 mcp must be an object',
-      )
-      assert.ok(
-        !('servers' in config.mcp),
-        'V1 mcp must not have servers sub-key (that is V2 format)',
-      )
-    }
-    assert.ok(!('servers' in (config.mcp || {})), 'V1 must not use mcp.servers format')
-  } finally {
-    rmSync(target, { recursive: true, force: true })
-  }
-})
-
-test('V1 fresh install has agent as singular object (not agents)', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v1-agent-'))
-  try {
-    const config = await runInstall(target, 'v1')
-    if ('agent' in config) {
-      assert.ok(
-        typeof config.agent === 'object' && !Array.isArray(config.agent),
-        'V1 agent must be a named object',
-      )
-    }
-  } finally {
-    rmSync(target, { recursive: true, force: true })
-  }
-})
-
-test('V1 project agent prompts stay in the legacy .opencode/agents directory', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v1-agent-files-'))
-  try {
-    const config = await runInstall(target, 'v1')
-
-    assert.ok(existsSync(join(target, '.opencode', 'agents', 'hermes.md')))
-    assert.ok(!existsSync(join(target, 'agents', 'hermes.md')))
-    assert.equal(config.agent.hermes.source, '.opencode/agents/hermes.md')
-  } finally {
-    rmSync(target, { recursive: true, force: true })
-  }
-})
-
-test('V1 agent MCP permissions follow mcp_tools allowlists', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v1-mcp-perms-'))
-  try {
-    const config = await runInstall(target, 'v1')
-    const zeus = config.agent.zeus.permission
-    const gaia = config.agent.gaia.permission
-    assert.equal(zeus['pantheon-memory_*'], 'deny')
-    assert.equal(zeus.pantheon_memory_memory_search, 'allow')
-    assert.equal(zeus.pantheon_memory_memory_store, undefined)
-    assert.equal(zeus.task['*'], 'allow')
-    assert.equal(zeus.pantheon_persistence_context_save, 'allow')
-    assert.equal(zeus.pantheon_persistence_context_list, undefined)
-    assert.equal(gaia.pantheon_vision_vision_analyze, 'allow')
-    assert.equal(zeus['pantheon_vision_*'], 'deny')
-  } finally {
-    rmSync(target, { recursive: true, force: true })
-  }
-})
-
-test('V1 removes todoContinuation (rejected by recent OpenCode)', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v1-todo-'))
-  try {
-    const config = await runInstall(target, 'v1', { todoContinuation: true })
-    assert.equal(
-      Object.hasOwn(config, 'todoContinuation'),
-      false,
-      'V1 must remove todoContinuation',
-    )
-  } finally {
-    rmSync(target, { recursive: true, force: true })
-  }
-})
-
-test('V1 adds current managed plugins even when stale refs exist', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v1-stale-'))
-  try {
-    const config = await runInstall(target, 'v1', {
-      plugin: [
-        '/old/install/src/plugin.ts',
-        '/old/install/src/plugins/pantheon-hooks.ts',
-        THIRD_PARTY_PLUGIN,
-      ],
-    })
-    assert.ok(
-      config.plugin.includes(join(ROOT, 'src', 'plugin.ts')),
-      'Must have current src/plugin.ts',
-    )
-    assert.ok(
-      config.plugin.includes(join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts')),
-      'Must have current pantheon-hooks.ts',
-    )
-    assert.ok(config.plugin.includes(THIRD_PARTY_PLUGIN))
-  } finally {
-    rmSync(target, { recursive: true, force: true })
-  }
-})
-
-test('V1 keeps third-party plugins in plugins key untouched', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v1-3pv2-'))
-  try {
-    const config = await runInstall(target, 'v1', {
-      plugin: [THIRD_PARTY_PLUGIN],
-      plugins: ['custom-v2-plugin'],
-    })
-    assert.deepEqual(config.plugins, ['custom-v2-plugin'])
-    assert.ok(config.plugin.includes(THIRD_PARTY_PLUGIN))
-  } finally {
-    rmSync(target, { recursive: true, force: true })
-  }
-})
-
-test('V1 config snapshot has expected key structure', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v1-snapshot-'))
-  try {
-    const config = await runInstall(target, 'v1')
-    assert.ok('$schema' in config, 'snapshot must have $schema')
-    assert.ok('plugin' in config, 'snapshot must have plugin (singular)')
-    assert.ok('permission' in config, 'snapshot must have permission (singular)')
-    assert.ok('experimental' in config, 'snapshot must have experimental')
-    assert.ok('instructions' in config, 'snapshot must have instructions')
-    assert.ok(!('plugins' in config), 'V1 snapshot must not have plugins (plural)')
-    assert.ok(!('providers' in config), 'V1 snapshot must not have providers (plural)')
-    assert.ok(!('permissions' in config), 'V1 snapshot must not have permissions (plural)')
-    assert.ok(!('agents' in config), 'V1 snapshot must not have agents (plural)')
-  } finally {
-    rmSync(target, { recursive: true, force: true })
-  }
-})
-
-test('V1 config snapshot permissions contain skill allow rule', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v1-snap-perm-'))
-  try {
-    const config = await runInstall(target, 'v1')
-    assert.ok(config.permission.skill !== undefined, 'V1 snapshot permission must have skill key')
-    assert.deepEqual(config.permission.skill, { '*': 'allow' })
-  } finally {
-    rmSync(target, { recursive: true, force: true })
-  }
-})
-
-test('V1 includes talos agent with permission configuration', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v1-talos-'))
-  try {
-    const config = await runInstall(target, 'v1')
-    assert.ok(
-      config.agent !== undefined && config.agent.talos !== undefined,
-      'V1 config must have agent.talos',
-    )
-    assert.ok(config.agent.talos.permission !== undefined, 'talos must have permission')
-    assert.ok(
-      typeof config.agent.talos.permission === 'object' &&
-        !Array.isArray(config.agent.talos.permission),
-      'talos.permission must be an object',
-    )
-    assert.ok('read' in config.agent.talos.permission, 'talos must have read permission')
-    assert.ok('edit' in config.agent.talos.permission, 'talos must have edit permission')
-  } finally {
-    rmSync(target, { recursive: true, force: true })
-  }
-})
-
-// ---------------------------------------------------------------------------
-// 3. V2 shape specifics
+// 2. V2 shape specifics
 // ---------------------------------------------------------------------------
 
 test('V2 fresh install produces plugins (plural) as array with managed dir entry', async () => {
@@ -685,75 +419,50 @@ test('V2 agent MCP permissions follow mcp_tools allowlists', async () => {
   }
 })
 
-test('V1 and V2 agents receive only the skills declared in canonical frontmatter', async () => {
-  for (const generation of ['v1', 'v2']) {
-    const target = mkdtempSync(join(tmpdir(), `pantheon-agent-skills-${generation}-`))
-    try {
-      const config = await runInstall(target, generation)
-      const agents = generation === 'v1' ? config.agent : config.agents
-      if (generation === 'v1') {
-        assert.equal(agents.zeus.permission.skill['*'], 'deny')
-        assert.equal(agents.zeus.permission.skill['agent-coordination'], 'allow')
-        assert.equal(agents.zeus.permission.skill.simplify, 'allow')
-        assert.equal(agents.zeus.permission.skill['code-review-checklist'], undefined)
-      } else {
-        const rules = agents.zeus.permissions.filter((rule) => rule.action === 'skill')
-        const effect = (skill) => rules.findLast((rule) => rule.resource === skill)?.effect
-        assert.equal(effect('*'), 'deny')
-        assert.equal(effect('agent-coordination'), 'allow')
-        assert.equal(effect('simplify'), 'allow')
-        assert.equal(effect('code-review-checklist'), undefined)
-      }
-    } finally {
-      rmSync(target, { recursive: true, force: true })
-    }
+test('agents receive only the skills declared in canonical frontmatter', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-agent-skills-v2-'))
+  try {
+    const config = await runInstall(target, 'v2')
+    const rules = config.agents.zeus.permissions.filter((rule) => rule.action === 'skill')
+    const effect = (skill) => rules.findLast((rule) => rule.resource === skill)?.effect
+    assert.equal(effect('*'), 'deny')
+    assert.equal(effect('agent-coordination'), 'allow')
+    assert.equal(effect('simplify'), 'allow')
+    assert.equal(effect('code-review-checklist'), undefined)
+  } finally {
+    rmSync(target, { recursive: true, force: true })
   }
 })
 
-test('manual goal tools have exact per-agent grants in generated V1 and V2 configs', async () => {
+test('manual goal tools have exact per-agent grants in the generated config', async () => {
   const goalTools = ['goal_create', 'goal_get', 'goal_update', 'goal_done']
   const expectedFor = (agent) => {
     if (agent === 'zeus') return new Set(goalTools)
     return new Set()
   }
 
-  for (const generation of ['v1', 'v2']) {
-    const target = mkdtempSync(join(tmpdir(), `pantheon-goal-grants-${generation}-`))
-    try {
-      const config = await runInstall(target, generation)
-      const agents = generation === 'v1' ? config.agent : config.agents
-      assert.ok(agents.zeus && agents.athena && agents.themis)
-      for (const [agentName, agent] of Object.entries(agents)) {
-        const expected = expectedFor(agentName)
-        if (generation === 'v1') {
-          const permissions = agent.permission
-          assert.equal(permissions['pantheon_persistence_*'], 'deny', agentName)
-          for (const tool of goalTools) {
-            assert.equal(
-              permissions[`pantheon_persistence_${tool}`],
-              expected.has(tool) ? 'allow' : undefined,
-              `${generation}/${agentName}/${tool}`,
-            )
-          }
-          continue
-        }
-
-        const rules = agent.permissions
-        const exactRule = (tool) =>
-          rules.findLast((rule) => rule.action === `pantheon_persistence_${tool}`)
-        const serverDeny = rules.findLast((rule) => rule.action === 'pantheon_persistence_*')
-        assert.equal(serverDeny?.effect, 'deny', `${generation}/${agentName} default deny`)
-        for (const tool of goalTools) {
-          assert.equal(
-            exactRule(tool)?.effect,
-            expected.has(tool) ? 'allow' : undefined,
-            `${generation}/${agentName}/${tool}`,
-          )
-        }
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-goal-grants-v2-'))
+  try {
+    const config = await runInstall(target, 'v2')
+    const agents = config.agents
+    assert.ok(agents.zeus && agents.athena && agents.themis)
+    for (const [agentName, agent] of Object.entries(agents)) {
+      const expected = expectedFor(agentName)
+      const rules = agent.permissions
+      const exactRule = (tool) =>
+        rules.findLast((rule) => rule.action === `pantheon_persistence_${tool}`)
+      const serverDeny = rules.findLast((rule) => rule.action === 'pantheon_persistence_*')
+      assert.equal(serverDeny?.effect, 'deny', `${agentName} default deny`)
+      for (const tool of goalTools) {
+        assert.equal(
+          exactRule(tool)?.effect,
+          expected.has(tool) ? 'allow' : undefined,
+          `${agentName}/${tool}`,
+        )
       }
-    } finally {
-      rmSync(target, { recursive: true, force: true })
     }
+  } finally {
+    rmSync(target, { recursive: true, force: true })
   }
 })
 
@@ -768,100 +477,50 @@ test('read-only codemap grants are limited to Apollo and Athena; indexing remain
   ]
   const expectedAgents = new Set(['apollo', 'athena'])
 
-  for (const generation of ['v1', 'v2']) {
-    const target = mkdtempSync(join(tmpdir(), `pantheon-codemap-grants-${generation}-`))
-    try {
-      const config = await runInstall(target, generation)
-      const agents = generation === 'v1' ? config.agent : config.agents
-      assert.ok(agents.apollo && agents.athena && agents.zeus)
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-codemap-grants-v2-'))
+  try {
+    const config = await runInstall(target, 'v2')
+    const agents = config.agents
+    assert.ok(agents.apollo && agents.athena && agents.zeus)
 
-      for (const [agentName, agent] of Object.entries(agents)) {
-        const expected = expectedAgents.has(agentName)
-        if (generation === 'v1') {
-          const permissions = agent.permission
-          assert.equal(permissions['pantheon_memory_*'], 'deny', `${agentName} Memory default deny`)
-          assert.equal(
-            permissions.pantheon_memory_code_index,
-            undefined,
-            `${generation}/${agentName}/code_index must remain denied`,
-          )
-          for (const tool of codeTools) {
-            assert.equal(
-              permissions[`pantheon_memory_${tool}`],
-              expected ? 'allow' : undefined,
-              `${generation}/${agentName}/${tool}`,
-            )
-          }
-          if (expected) {
-            assert.equal(
-              permissions.pantheon_memory_memory_search,
-              'allow',
-              `${agentName} memory_search`,
-            )
-            for (const tool of otherMemoryTools) {
-              assert.equal(
-                permissions[`pantheon_memory_${tool}`],
-                undefined,
-                `${generation}/${agentName}/${tool} must remain ungranted`,
-              )
-            }
-          }
-          if (expected) {
-            assert.equal(permissions['pantheon_code_mode_*'], 'deny', `${agentName} Code Mode deny`)
-            assert.equal(permissions.pantheon_code_mode_execute_code_script, undefined)
-          }
-          if (agentName === 'mnemosyne') {
-            assert.equal(permissions.pantheon_memory_memory_search, 'allow')
-            for (const tool of otherMemoryTools) {
-              assert.equal(permissions[`pantheon_memory_${tool}`], 'allow')
-            }
-          }
-          continue
-        }
-
-        const rules = agent.permissions
-        const effect = (action) => rules.findLast((rule) => rule.action === action)?.effect
-        assert.equal(effect('pantheon_memory_*'), 'deny', `${agentName} Memory default deny`)
+    for (const [agentName, agent] of Object.entries(agents)) {
+      const expected = expectedAgents.has(agentName)
+      const rules = agent.permissions
+      const effect = (action) => rules.findLast((rule) => rule.action === action)?.effect
+      assert.equal(effect('pantheon_memory_*'), 'deny', `${agentName} Memory default deny`)
+      assert.equal(
+        effect('pantheon_memory_code_index'),
+        undefined,
+        `${agentName}/code_index must remain denied`,
+      )
+      for (const tool of codeTools) {
         assert.equal(
-          effect('pantheon_memory_code_index'),
-          undefined,
-          `${generation}/${agentName}/code_index must remain denied`,
+          effect(`pantheon_memory_${tool}`),
+          expected ? 'allow' : undefined,
+          `${agentName}/${tool}`,
         )
-        for (const tool of codeTools) {
+      }
+      if (expected) {
+        assert.equal(effect('pantheon_memory_memory_search'), 'allow', `${agentName} memory_search`)
+        for (const tool of otherMemoryTools) {
           assert.equal(
             effect(`pantheon_memory_${tool}`),
-            expected ? 'allow' : undefined,
-            `${generation}/${agentName}/${tool}`,
+            undefined,
+            `${agentName}/${tool} must remain ungranted`,
           )
         }
-        if (expected) {
-          assert.equal(
-            effect('pantheon_memory_memory_search'),
-            'allow',
-            `${agentName} memory_search`,
-          )
-          for (const tool of otherMemoryTools) {
-            assert.equal(
-              effect(`pantheon_memory_${tool}`),
-              undefined,
-              `${generation}/${agentName}/${tool} must remain ungranted`,
-            )
-          }
-        }
-        if (expected) {
-          assert.equal(effect('pantheon_code_mode_*'), 'deny', `${agentName} Code Mode deny`)
-          assert.equal(effect('pantheon_code_mode_execute_code_script'), undefined)
-        }
-        if (agentName === 'mnemosyne') {
-          assert.equal(effect('pantheon_memory_memory_search'), 'allow')
-          for (const tool of otherMemoryTools) {
-            assert.equal(effect(`pantheon_memory_${tool}`), 'allow')
-          }
+        assert.equal(effect('pantheon_code_mode_*'), 'deny', `${agentName} Code Mode deny`)
+        assert.equal(effect('pantheon_code_mode_execute_code_script'), undefined)
+      }
+      if (agentName === 'mnemosyne') {
+        assert.equal(effect('pantheon_memory_memory_search'), 'allow')
+        for (const tool of otherMemoryTools) {
+          assert.equal(effect(`pantheon_memory_${tool}`), 'allow')
         }
       }
-    } finally {
-      rmSync(target, { recursive: true, force: true })
     }
+  } finally {
+    rmSync(target, { recursive: true, force: true })
   }
 })
 
@@ -984,33 +643,19 @@ test('V2 includes talos agent with permissions configuration', async () => {
 })
 
 // ---------------------------------------------------------------------------
-// 4. Cross-version overwrites and round-trips
+// 3. Legacy-config migration (a V1-shaped config is recognized, never recreated)
 // ---------------------------------------------------------------------------
 
-test('V1 after V2 adds V1 config keys (plugin, permission, provider)', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v1-after-v2-'))
-  try {
-    await runInstall(target, 'v2')
-    const v1Config = await runInstall(target, 'v1')
-    assert.ok('plugin' in v1Config, 'After V1 overwrite, config must have plugin (singular)')
-    assert.ok(
-      typeof v1Config.permission === 'object' && !Array.isArray(v1Config.permission),
-      'After V1 overwrite, permission must be object',
-    )
-    assert.ok(
-      v1Config.plugin.includes(join(ROOT, 'src', 'plugin.ts')),
-      'V1 plugin must contain delegation plugin',
-    )
-  } finally {
-    rmSync(target, { recursive: true, force: true })
-  }
-})
-
-test('V2 after V1 adds V2 config keys (plugins, providers, permissions)', async () => {
+test('V2 install over a legacy V1-shaped config adds V2 config keys (plugins, providers, permissions)', async () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v2-after-v1-'))
   try {
-    const v1Config = await runInstall(target, 'v1')
-    assert.ok('plugin' in v1Config, 'V1 config must have plugin')
+    // A pre-2.0 config on disk: singular `plugin`/`permission` keys, no
+    // `plugins` list. The install recognizes the legacy shape and migrates it.
+    const legacy = await runInstall(target, 'v2', {
+      plugin: [THIRD_PARTY_PLUGIN, join(ROOT, 'src', 'plugin.ts')],
+      permission: { bash: { '*': 'allow' } },
+    })
+    assert.ok('plugin' in legacy, 'the legacy singular key survives for third-party entries')
     const v2Config = await runInstall(target, 'v2')
     assert.ok('plugins' in v2Config, 'After V2 overwrite, config must have plugins (plural)')
     assertManagedV2Plugin(v2Config)
@@ -1019,38 +664,21 @@ test('V2 after V1 adds V2 config keys (plugins, providers, permissions)', async 
   }
 })
 
-test('V1→V2 round-trip adds V2 plugin entry', async () => {
+test('legacy V1-shaped config round-trip adds the V2 plugin entry', async () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-roundtrip-v2-'))
   try {
-    const v1Config = await runInstall(target, 'v1')
-    assert.ok('plugin' in v1Config, 'Must start with V1 config')
+    // Seed the exact marker of a pre-2.0 install instead of running a V1
+    // install (the V1 code path no longer exists).
+    const seeded = await runInstall(target, 'v2', {
+      plugin: [join(ROOT, 'src', 'plugin.ts'), join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts')],
+    })
+    assert.ok(
+      !seeded.plugin?.includes(join(ROOT, 'src', 'plugin.ts')),
+      'the stale V1 ref must be stripped on the first V2 install',
+    )
     const v2Config = await runInstall(target, 'v2')
-    assert.ok('plugins' in v2Config, 'Must have V2 plugins key after V2 install')
+    assert.ok('plugins' in v2Config, 'Must have V2 plugins key after the V2 install')
     assertManagedV2Plugin(v2Config)
-  } finally {
-    rmSync(target, { recursive: true, force: true })
-  }
-})
-
-test('V2→V1 round-trip adds V1 plugin and delegation plugin', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-roundtrip-v1-'))
-  try {
-    const v2Config = await runInstall(target, 'v2')
-    assert.ok('plugins' in v2Config, 'Must start with V2 config')
-    const v1Config = await runInstall(target, 'v1')
-    assert.ok('plugin' in v1Config, 'Must have V1 plugin key after V1 install')
-    assert.ok(
-      v1Config.plugin.includes(join(ROOT, 'src', 'plugin.ts')),
-      'V1 delegation plugin must be present',
-    )
-    assert.ok(
-      v1Config.plugin.includes(join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts')),
-      'V1 hooks plugin must be present',
-    )
-    assert.ok(
-      typeof v1Config.permission === 'object' && !Array.isArray(v1Config.permission),
-      'V1 must have permission as object',
-    )
   } finally {
     rmSync(target, { recursive: true, force: true })
   }

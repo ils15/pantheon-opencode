@@ -517,7 +517,7 @@ test('installer apply: exact backup before writes, warning once, no canary leak'
         '--yes',
         '--headless',
         '--version',
-        'v1',
+        'v2',
         '--no-mcp',
         '--components',
         'agents,commands',
@@ -541,7 +541,7 @@ test('installer apply: exact backup before writes, warning once, no canary leak'
         '--yes',
         '--headless',
         '--version',
-        'v1',
+        'v2',
         '--components',
         'agents,skills,instructions,commands,plugins,runtime',
       ],
@@ -598,10 +598,6 @@ test('installer apply: exact backup before writes, warning once, no canary leak'
       manifest.notRevertible.some((p) => p.endsWith('.venv')),
       `venv must be listed notRevertible: ${manifest.notRevertible}`,
     )
-    assert.ok(
-      manifest.notRevertible.some((p) => p.endsWith('tui.json')),
-      'out-of-target tui.json must be listed notRevertible',
-    )
     // The plugin dir's existing/legacy files are captured; node_modules is
     // pruned from entries and is the ONLY plugin path listed not revertible.
     const relPaths = manifest.entries.map((e) => e.relativePath)
@@ -648,7 +644,7 @@ test('canary: drift-abort and failure paths never leak the secret', {
       result = await installOpenCode(target, false, false, ['agents', 'commands'], {
         yes: true,
         headless: true,
-        version: 'v1',
+        version: 'v2',
         deps: makeDeps(target),
       })
     } catch {

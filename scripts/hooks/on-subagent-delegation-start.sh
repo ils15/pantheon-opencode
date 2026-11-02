@@ -46,8 +46,9 @@ ENV_AGENT_NAME="${AGENT_NAME:-}"
 ENV_TASK_DESC="${TASK_DESC:-}"
 ARG_TASK_DESC="${1:-}"
 
-# The Claude Code protocol payload arrives on stdin (hook-runner always pipes
-# it, even empty). Buffer it in a temp file — prompts can exceed argv limits.
+# The Claude Code protocol payload arrives on stdin (the shared hook runner,
+# src/pantheon/hook-runner.ts, always pipes it, even empty). Buffer it in a
+# temp file — prompts can exceed argv limits.
 TMP_IN=$(mktemp "${TMPDIR:-/tmp}/subagent-start.XXXXXX")
 TMP_PY=$(mktemp "${TMPDIR:-/tmp}/subagent-start.XXXXXX.py")
 trap 'rm -f "$TMP_IN" "$TMP_PY"' EXIT

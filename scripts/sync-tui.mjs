@@ -197,9 +197,12 @@ async function main() {
     const installedVersion = readVersion(join(tuiCopyDir, 'package.json'))
     const sourceVersion = readVersion(join(tuiSrcDir, 'package.json'))
 
-    // Copy fresh files
+    // Copy fresh files. OpenCode 2.x is the only supported generation, so the
+    // copy always selects the tui-v2 bundle (pass the options BAG — a bare
+    // string would destructure to `version: undefined` and silently pick the
+    // legacy V1 bundle).
     const version = resolveOpenCodeVersion('auto', { warn: (message) => console.warn(message) })
-    const { created } = copyPluginFiles(tuiSrcDir, tuiCopyDir, version)
+    const { created } = copyPluginFiles(tuiSrcDir, tuiCopyDir, { version })
 
     // Lockfile installation is the only accepted dependency path. Strip
     // global-context npm vars so a global postinstall can't trigger ECIGLOBAL.

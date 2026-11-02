@@ -63,7 +63,6 @@ test('Biome exclusions are restricted to approved generated and non-source paths
 test('Biome exclusions do not cover application or fixture source', () => {
   const excludes = biome.files.includes.filter((entry) => entry.startsWith('!'))
   const protectedFiles = [
-    'src/plugin.ts',
     'scripts/versioning.mjs',
     'src/plugins/tui/src/index.ts',
     '.pantheon/code-mode/checkpoint_session.py',

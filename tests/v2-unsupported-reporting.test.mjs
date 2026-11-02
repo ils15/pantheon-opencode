@@ -1,9 +1,10 @@
 /** Behavioural tests for the V2 feature-reduction REPORTING (S0).
  *
- * On an OpenCode 2.x host `src/plugin-v2.ts` registers 3 tools; on a 1.x host
- * `src/plugin.ts` registers 6 plus a BackgroundJobBoard, the three goal tools
- * and a caller/target delegation matrix. A user migrating from V1 to V2 loses
- * that surface, and at install time nothing said so.
+ * On an OpenCode 2.x host `src/plugin-v2.ts` registers 3 tools; the removed V1
+ * plugin line (`src/plugin.ts`, deleted in 2.0) registered 6 plus a
+ * BackgroundJobBoard, the three goal tools and a caller/target delegation
+ * matrix. A user migrating from a legacy V1 install to V2 loses that surface,
+ * and at install time nothing said so.
  *
  * `getUnsupportedFeatures()` already returns the right marker strings, but it
  * had NO production caller — only tests read it. These tests pin the two places
@@ -99,27 +100,6 @@ test('a V2-generation install reports the unsupported feature list', async () =>
   }
 })
 
-test('a V1-generation install does not report the V2 reduction', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-v1-silent-install-'))
-  try {
-    const output = await captureOutput(() =>
-      installOpenCode(target, true, false, ['plugins'], {
-        yes: true,
-        headless: true,
-        version: 'v1',
-      }),
-    )
-    for (const feature of ['goal-tools']) {
-      assert.ok(
-        !output.includes(feature),
-        `a V1-generation install must not report the V2-only "${feature}" marker; got:\n${output}`,
-      )
-    }
-  } finally {
-    rmSync(target, { recursive: true, force: true })
-  }
-})
-
 // ─── Doctor ────────────────────────────────────────────────────────────
 
 /** A collected config as `collectMcpConfigs` produces it. */
@@ -151,7 +131,11 @@ test('doctor recognises the absolute and package-export forms of the V2 entry', 
   }
 })
 
-test('doctor collects nothing for a V1-registered config', () => {
+test('doctor collects nothing for a legacy-registered config', () => {
+  // A pre-2.0 install registered the legacy generation through the singular
+  // `plugin` key; doctor must treat it as NOT a V2 registration (the string
+  // refs are stale identities, not loadable entries — they are never probed
+  // for existence here).
   const configs = [
     config('project root', {
       plugin: ['/opt/pantheon/src/plugin.ts', '/opt/pantheon/src/plugins/pantheon-hooks.ts'],
@@ -181,8 +165,10 @@ test('doctor reports the reduction through its own output shape', () => {
 })
 
 test('doctor stays quiet when no V2 generation is registered', () => {
-  const sandbox = mkdtempSync(join(tmpdir(), 'pantheon-v1-quiet-doctor-'))
+  const sandbox = mkdtempSync(join(tmpdir(), 'pantheon-legacy-quiet-doctor-'))
   try {
+    // A legacy singular-`plugin` registration (pre-2.0 shape) must not read as
+    // a V2 registration, whatever it points at.
     writeFileSync(
       join(sandbox, 'opencode.json'),
       JSON.stringify({ plugin: ['/opt/pantheon/src/plugin.ts'] }, null, 2),
@@ -194,7 +180,10 @@ test('doctor stays quiet when no V2 generation is registered', () => {
       }),
     )
     for (const feature of SEED) {
-      assert.ok(!output.includes(feature), `doctor must not report "${feature}" for a V1 install`)
+      assert.ok(
+        !output.includes(feature),
+        `doctor must not report "${feature}" for a legacy-only install`,
+      )
     }
   } finally {
     rmSync(sandbox, { recursive: true, force: true })
@@ -205,9 +194,13 @@ test('doctor stays quiet when no V2 generation is registered', () => {
 
 test('registration and seed emptiness are separate facts, not one list length', () => {
   const v2 = [config('project root', { plugins: ['src/plugin-v2'] })]
-  const v1 = [config('project root', { plugin: ['/opt/pantheon/src/plugin.ts'] })]
+  const legacy = [config('project root', { plugin: ['/opt/pantheon/src/plugin.ts'] })]
   assert.equal(isV2GenerationRegistered(v2), true, 'a V2 registration must be detected')
-  assert.equal(isV2GenerationRegistered(v1), false, 'a V1-only config must not read as V2')
+  assert.equal(
+    isV2GenerationRegistered(legacy),
+    false,
+    'a legacy-only (singular `plugin`) config must not read as V2',
+  )
 })
 
 test('an EMPTY seed on a registered V2 generation never reports "nothing reduced"', () => {
@@ -236,7 +229,7 @@ test('an EMPTY seed on a registered V2 generation never reports "nothing reduced
 
 test('no V2 generation registered still reports "nothing reduced", quietly', () => {
   const verdict = describeV2Reduction({ registered: false, features: [] })
-  assert.equal(verdict.level, 'info', 'an ordinary V1 install is not a finding')
+  assert.equal(verdict.level, 'info', 'an ordinary legacy install is not a finding')
   assert.equal(verdict.status, 'no-v2-generation')
   assert.match(verdict.message, /No V2 plugin generation registered — nothing reduced/)
 })

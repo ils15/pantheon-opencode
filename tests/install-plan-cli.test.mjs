@@ -18,15 +18,15 @@ import { test } from 'node:test'
 const CLI = join(process.cwd(), 'bin', 'pantheon-init.mjs')
 const HAS_SCRIPT = spawnSync('script', ['--version'], { encoding: 'utf8' }).status === 0
 
-// These fixtures model the V1 layout (.opencode/agents/...). Pin the host
-// generation so a preview never depends on which OpenCode binary happens to be
-// installed on the machine running the tests.
+// Pin the host generation (OpenCode 2.x, the only supported one) so a preview
+// never depends on which OpenCode binary happens to be installed on the
+// machine running the tests. Project agents live at ./agents under 2.x.
 function baseEnv(cwd) {
   return {
     ...process.env,
     HOME: cwd,
     XDG_CONFIG_HOME: join(cwd, '.config'),
-    OPENCODE_VERSION: 'v1',
+    OPENCODE_VERSION: 'v2',
   }
 }
 
@@ -136,7 +136,7 @@ test('init dry-run JSON is stdout-only structured output and writes no target fi
     assert.equal(report.schema_version, 1)
     assert.equal(report.command, 'init')
     assert.equal(report.status, 'planned')
-    assert.ok(report.files.some((file) => file.path === '.opencode/agents/zeus.md'))
+    assert.ok(report.files.some((file) => file.path === 'agents/zeus.md'))
     assert.equal(existsSync(join(target, '.opencode')), false)
     assert.deepEqual(readdirSync(target), [])
   } finally {
@@ -354,7 +354,7 @@ test('saved project plan safely records and applies external global TUI cleanup'
       '--components',
       'plugins',
       '--opencode-version',
-      'v1',
+      'v2',
       '--dry-run',
       '--save-plan',
       plan,
@@ -409,7 +409,7 @@ test('JSON dry-run reports plan-save failures as one JSON document', () => {
 test('JSON save-plan rejects a collision with a planned target and preserves its sentinel', () => {
   const root = mkdtempSync(join(tmpdir(), 'pantheon-init-plan-collision-'))
   const target = join(root, 'target')
-  const plannedFile = join(target, '.opencode', 'agents', 'zeus.md')
+  const plannedFile = join(target, 'agents', 'zeus.md')
   const sentinel = 'user-managed sentinel\n'
   try {
     mkdirSync(dirname(plannedFile), { recursive: true })
@@ -487,7 +487,7 @@ test('authorized saved plan applies reviewed files and creates its backup', () =
     const { target, plan } = savePlan(root)
     const result = run(target, '--apply-plan', plan, '--yes')
     assert.equal(result.status, 0, result.stderr)
-    assert.equal(existsSync(join(target, '.opencode', 'agents', 'zeus.md')), true)
+    assert.equal(existsSync(join(target, 'agents', 'zeus.md')), true)
     assert.equal(existsSync(join(target, '.pantheon', 'backups')), true)
   } finally {
     rmSync(root, { recursive: true, force: true })
@@ -501,11 +501,9 @@ test('saved plugin plan reviews legacy removals, detects drift, and preserves un
   const pluginDir = join(target, '.opencode', 'plugins', 'pantheon-tui')
   const distDir = join(pluginDir, 'dist')
   const plan = join(root, 'reviewed-plan.json')
-  const legacyPaths = [
-    join(pluginDir, 'index.tsx'),
-    join(distDir, 'tui.tsx'),
-    join(pluginDir, 'index.ts'),
-  ]
+  // The 2.x copy WRITES index.ts (the V2 discovery shim); only the tsx-era
+  // files are stale under it.
+  const legacyPaths = [join(pluginDir, 'index.tsx'), join(distDir, 'tui.tsx')]
   const unreviewedPath = join(distDir, 'user-extra.tsx')
 
   mkdirSync(fakeBin)
@@ -525,9 +523,8 @@ test('saved plugin plan reviews legacy removals, detects drift, and preserves un
         HOME: target,
         XDG_CONFIG_HOME: join(target, '.config'),
         PATH: `${fakeBin}:${process.env.PATH}`,
-        // Legacy-removal semantics differ per generation: V1 drops the V2
-        // `index.ts` shim. Pin V1 rather than depend on the host binary.
-        OPENCODE_VERSION: 'v1',
+        // Pin the generation rather than depend on the host binary.
+        OPENCODE_VERSION: 'v2',
       },
     })
 
@@ -634,7 +631,7 @@ test('--dry-run --force lists plugin, agent, and skill subtree removals without 
   const target = mkdtempSync(join(tmpdir(), 'pantheon-force-removal-preview-'))
   const extraFiles = [
     join(target, '.opencode', 'plugins', 'pantheon-tui', 'user-extra.js'),
-    join(target, '.opencode', 'agents', 'user-agent.md'),
+    join(target, 'agents', 'user-agent.md'),
     join(target, '.opencode', 'skills', 'user-skill', 'notes.txt'),
   ]
   try {

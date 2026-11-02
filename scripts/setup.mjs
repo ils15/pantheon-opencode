@@ -204,7 +204,9 @@ export async function runSetup({
     generation = resolveVersion(requested, {
       env,
       warn: () =>
-        warnings.push('OpenCode version detection was inconclusive; pass --version v1 or v2.'),
+        warnings.push(
+          'OpenCode version detection was inconclusive; assuming v2 (pass --version v2 to pin it).',
+        ),
       onFallback: () => {
         detectionFallback = true
       },
@@ -212,7 +214,7 @@ export async function runSetup({
   } catch (error) {
     writeOutput(
       output,
-      `${error instanceof Error ? error.message : 'OpenCode generation selection is invalid; pass --version v1, v2, or auto.'}\n`,
+      `${error instanceof Error ? error.message : 'OpenCode generation selection is invalid; pass --version v2 or auto.'}\n`,
     )
     return 1
   }

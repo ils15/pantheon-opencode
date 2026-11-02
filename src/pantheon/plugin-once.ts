@@ -4,12 +4,13 @@
  * PROBLEM (2026-08-12, live logs — duplicate toasts + duplicate task_ids in
  * ONE process): opencode MERGES the global `~/.config/opencode/opencode.json`
  * (which points at the INSTALLED npm package's plugin paths) with the project
- * `opencode.json` (which points at the REPO source paths). Both list the SAME
- * two plugins — `src/plugin.ts` and `src/plugins/pantheon-hooks.ts` — so each
- * module is LOADED TWICE from two different filesystem paths in the same
- * process. Each load is a separate module instance with its own module scope;
- * the plugin factory then runs twice, registering every hook twice (duplicate
- * toasts, duplicate delegation correlation, duplicated tool registrations).
+ * `opencode.json` (which points at the REPO source paths). Both listed the SAME
+ * plugins — `src/plugin.ts` and `src/plugins/pantheon-hooks.ts` in the V1
+ * generation, the TUI plugin today — so each module is LOADED TWICE from two
+ * different filesystem paths in the same process. Each load is a separate
+ * module instance with its own module scope; the plugin factory then runs
+ * twice, registering every hook twice (duplicate toasts, duplicate delegation
+ * correlation, duplicated tool registrations).
  *
  * FIX: claim a stable per-plugin key on a process-global Set
  * (`globalThis.__pantheonPluginsLoaded`). The second factory invocation sees
@@ -21,11 +22,10 @@
  * (never in bun/node), the helper returns false and the plugin always runs
  * (double registration returns, but the plugin never breaks startup).
  *
- * TEST ESCAPE HATCH: set PANTHEON_PLUGIN_ONCE=off to disable the guard. The
- * multi-phase regression suites (pantheon-hooks-chat.test.mjs,
- * plugin-log-policy.test.mjs) deliberately invoke the hooks factory once per
- * phase in the SAME process via cache-busted imports, and the process-global
- * guard would turn every phase after the first into a no-op. Production
+ * TEST ESCAPE HATCH: set PANTHEON_PLUGIN_ONCE=off to disable the guard. A
+ * multi-phase regression suite may deliberately invoke a guarded factory once
+ * per phase in the SAME process via cache-busted imports, and the process-
+ * global guard would turn every phase after the first into a no-op. Production
  * never sets this — the guard stays active and dedupes the npm-package +
  * repo double load.
  *

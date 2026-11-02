@@ -1697,13 +1697,6 @@ describe('applyMcpServerEntries — MCP ask warning', () => {
     assert.ok(migrated.mcp.servers['pantheon-resources'])
   })
 
-  it('does not warn for V1, where the MCP permission semantics were not measured', () => {
-    const config = {}
-    const { warnings } = applyMcpServerEntries(config, { ...context, version: 'v1' })
-    assert.deepEqual(warnings, [])
-    assert.equal(config.permission.mcp['pantheon-code-mode'], 'ask')
-  })
-
   it('does not repeat the installer ask warning during a V2 install', () => {
     const config = {}
     const installer = applyMcpServerEntries(config, context)

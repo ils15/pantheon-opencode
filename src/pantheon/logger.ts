@@ -1,6 +1,6 @@
 /**
  * Pantheon plugin logger — silence-by-default TUI policy (shared with
- * pantheon-hooks, see src/plugins/pantheon-hooks.ts L42-58).
+ * pantheon plugin, see the logging-policy notes in src/plugin-v2.ts).
  *
  * WHY: `console.log`/`console.error` in an opencode plugin writes to the
  * process stdout/stderr, which the TUI renders DIRECTLY into the terminal —
@@ -9,10 +9,11 @@
  * this helper:
  *
  *   1. ALWAYS append one ISO-stamped, module-prefixed line to the
- *      project-local `.pantheon/logs/hooks.log` (same file pantheon-hooks
- *      uses, so the plugin trail stays auditable on disk);
+ *      project-local `.pantheon/logs/hooks.log` (the same file the plugin
+ *      hook trail writes, so it stays auditable on disk);
  *   2. echo to the console ONLY when `PANTHEON_HOOKS_LOG=1` (or any truthy
- *      value — same env var pantheon-hooks uses; read at creation time).
+ *      value — the same env var the plugin hook trail uses; read at creation
+ *      time).
  *
  * All channels are best-effort and fire-and-forget: a logging failure must
  * never break the plugin, and an unhandled rejection could itself pollute
@@ -32,7 +33,7 @@ export interface PantheonLoggerOptions {
   /**
    * Env gate for the console echo — truthy means echo in addition to the
    * log file. Defaults to `process.env.PANTHEON_HOOKS_LOG` (read at
-   * creation), matching the pantheon-hooks policy. Injectable for tests.
+   * creation), matching the plugin logging policy. Injectable for tests.
    */
   env?: string | undefined
   /**
@@ -72,7 +73,7 @@ function formatArg(arg: unknown): string {
 
 /**
  * Append one ISO-stamped line to the hooks.log. Multi-line messages are
- * split so EVERY line carries the stamp (pantheon-hooks appendHookLog
+ * split so EVERY line carries the stamp (the plugin appendHookLog
  * pattern). Throws only on IO failure — callers swallow.
  */
 async function appendToLog(logPath: string, prefix: string, args: unknown[]): Promise<void> {

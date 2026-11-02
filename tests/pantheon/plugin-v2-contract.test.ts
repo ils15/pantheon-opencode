@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { writeUserDecisionRouterConfig } from '../../scripts/install/decision-router-config.mjs'
 import { readOnlyRegistry, syncReadOnlySession } from '../../src/pantheon/delegation-enforce.ts'
+import type { HookResult } from '../../src/pantheon/hook-runner.ts'
 import {
   openLocalDecisionBudgetLedger,
   resolveLocalDecisionBudgetDbPath,
@@ -17,7 +18,6 @@ import {
 import { TODO_CONTINUATION_PROMPT } from '../../src/pantheon/todo-enforcer.ts'
 import { BRIDGE_OPTIONS_KEY } from '../../src/pantheon/v2-bridge.ts'
 import { DECISION_POINT_REGISTRY } from '../../src/pantheon/v2-decision-points.ts'
-import type { HookResult } from '../../src/plugins/hook-runner.ts'
 
 type Registration = { dispose: () => Promise<void> }
 
@@ -132,7 +132,6 @@ async function main(): Promise<void> {
     v2Dispose,
   } = await import('../../src/plugin-v2.ts')
   const pluginSource = await readFile(new URL('../../src/plugin-v2.ts', import.meta.url), 'utf8')
-  const pluginV1Source = await readFile(new URL('../../src/plugin.ts', import.meta.url), 'utf8')
   const unsupportedSeedSource = await readFile(
     new URL('../../src/pantheon/v2-unsupported.mjs', import.meta.url),
     'utf8',
@@ -204,8 +203,7 @@ async function main(): Promise<void> {
     }
   })
 
-  test('V1/V2 tool contract is eager, not lazy MCP schema registration', () => {
-    assert.match(pluginV1Source, /tool:\s*\{/)
+  test('the V2 tool contract is eager, not lazy MCP schema registration', () => {
     assert.match(pluginSource, /toolCtx\?\.transform/)
     assert.match(pluginSource, /for \(const def of toolDefs\)/)
     assert.match(pluginSource, /draft\.add\(/)
@@ -1790,14 +1788,6 @@ async function main(): Promise<void> {
       injected?.todoEnforcer,
       existingEnforcer,
       'the already-registered enforcer must be reused, not replaced by a second instance',
-    )
-    // The V1 side of the same contract: it publishes its singletons so the V2
-    // entry can find them. Asserted on the source because this suite drives the
-    // V2 entry only.
-    assert.match(
-      pluginV1Source,
-      /registerV2Bridge\(createV2Bridge\(\{ board, todoEnforcer \}\)\)/,
-      'src/plugin.ts must register its board+enforcer for the V2 entry',
     )
     resetV2BridgeForTests()
   })
@@ -3423,11 +3413,12 @@ async function main(): Promise<void> {
   // scripts/hooks/scan-secrets.sh as a child process. Nothing here is mocked.
   //
   // Why this exists at all: opencode.json declares only `src/plugin-v2` in
-  // `plugins`, so `src/plugins/pantheon-hooks.ts` is never loaded on a V2-only
-  // install. V1's high-confidence secret block therefore did not run — inert by
-  // construction, not by misconfiguration of one machine. This is the only hard
-  // security block on the V2 surface, so the wiring itself is the thing under
-  // test: deleting the `runHook('scan-secrets.sh', …)` call must drop these.
+  // `plugins`, so the V1 hooks plugin (`src/plugins/pantheon-hooks.ts`, removed
+  // in 2.0) never loaded on a V2-only install. V1's high-confidence secret
+  // block therefore did not run — inert by construction, not by
+  // misconfiguration of one machine. This is the only hard security block on
+  // the V2 surface, so the wiring itself is the thing under test: deleting the
+  // in-process scan call must drop these.
 
   console.log('\n🔐 V2 Secret Scan Tests')
 
@@ -3544,11 +3535,11 @@ async function main(): Promise<void> {
 
   test('removing the scan-secrets wiring from plugin-v2 drops the secret block', async () => {
     // Structural counterpart to the behavioural tests above. If the block is
-    // ever "restored" by re-registering the V1 plugin (pantheon-hooks.ts) the
-    // file would stop calling the runner itself, and on a V2-only install —
+    // ever "restored" by re-registering a legacy hooks plugin the file would
+    // stop calling the scanner itself, and on a V2-only install —
     // opencode.json `plugins: ["src/plugin-v2"]` — the block would go inert
-    // again while every behavioural test kept passing on a machine that has the
-    // V1 plugin lying around. These two assertions together fail that.
+    // again while every behavioural test kept passing on a machine that has a
+    // stale V1 plugin lying around. These two assertions together fail that.
     // The scan runs IN-PROCESS since the bash-per-call spawn was removed
     // (src/pantheon/v2-hook-engine.ts): the wiring to assert is the engine
     // call as the default runner, not a shell invocation.
@@ -3563,35 +3554,13 @@ async function main(): Promise<void> {
       'the high-confidence exit code (2) must be the one that blocks',
     )
     // Anchored to a line whose first token is `import`, so the module's prose
-    // about `src/plugins/pantheon-hooks.ts` (six mentions, all in comments)
-    // cannot satisfy or trip it — only a real import statement can.
+    // about the removed `src/plugins/pantheon-hooks.ts` (all mentions are in
+    // comments) cannot satisfy or trip it — only a real import statement can.
     assert.doesNotMatch(
       pluginSource,
       /^\s*import\s+(?:[^'"]*from\s+)?['"][^'"]*pantheon-hooks(?:\.ts)?['"]/m,
-      'plugin-v2 must not import the V1 hooks plugin: it is not loaded on a V2-only install, so importing it would make the block inert again',
+      'plugin-v2 must not import a legacy hooks plugin: a removed plugin is not loadable, so importing it would break or go inert',
     )
-  })
-
-  test('the secret mask regex in plugin-v2 has not drifted from the V1 surface', () => {
-    // The mask regex is duplicated (V1's copy is unreachable from V2). Drift
-    // means a redacted value is no longer redacted, so the two must stay in
-    // step. Compared against the V1 source rather than a second literal here, so
-    // there is exactly one place to update.
-    const v1Source = readFileSync(
-      new URL('../../src/plugins/pantheon-hooks.ts', import.meta.url),
-      'utf8',
-    )
-    const extract = (source: string): string | null => {
-      // The literal is a single line in both files; `[^\n]*` keeps the match
-      // from running past it into the next declaration.
-      const match = /const SECRET_MASK_RE\s*=\s*(\/[^\n]*\/[a-z]*)/.exec(source)
-      return match?.[1]?.trim() ?? null
-    }
-    const v2Mask = extract(pluginSource)
-    const v1Mask = extract(v1Source)
-    assert.ok(v2Mask !== null, 'plugin-v2.ts must define SECRET_MASK_RE')
-    assert.ok(v1Mask !== null, 'pantheon-hooks.ts must define SECRET_MASK_RE')
-    assert.equal(v2Mask, v1Mask, 'the V1 and V2 secret mask regexes have drifted')
   })
 
   test('scan-secrets.sh is shipped in the published package and reachable from the plugin', () => {
@@ -3604,15 +3573,17 @@ async function main(): Promise<void> {
     ) as { files?: string[] }
     assert.ok(pkg.files?.includes('scripts/hooks/**'), 'scripts/hooks/** must be published')
     assert.ok(
-      pkg.files?.includes('src/plugins/**'),
-      'src/plugins/** (the hook runner) must be published',
+      pkg.files?.includes('src/pantheon/**'),
+      'src/pantheon/** (the hook runner, since 2.0 at src/pantheon/hook-runner.ts) must be published',
     )
     // The runner resolves scripts/hooks/ from its own import.meta.url:
-    // src/plugins/hook-runner.ts -> ../../scripts/hooks/. Both halves are in
-    // `files`, so the relative hop is intact for any install prefix
-    // (lib/node_modules, the npx cache, or a linked checkout).
+    // src/pantheon/hook-runner.ts -> ../../scripts/hooks/ (the URL resolves
+    // against the file's directory, and src/pantheon/ sits at the same depth
+    // src/plugins/ did). Both halves are in `files`, so the relative hop is
+    // intact for any install prefix (lib/node_modules, the npx cache, or a
+    // linked checkout).
     assert.match(
-      readFileSync(new URL('../../src/plugins/hook-runner.ts', import.meta.url), 'utf8'),
+      readFileSync(new URL('../../src/pantheon/hook-runner.ts', import.meta.url), 'utf8'),
       /new URL\('\.\.\/\.\.\/scripts\/hooks\/', import\.meta\.url\)/,
       'the hook runner must anchor its scripts/hooks resolution on import.meta.url, not process.cwd()',
     )
@@ -3631,7 +3602,7 @@ async function main(): Promise<void> {
   // Why it matters: the prior handler blocked `code === 2` and treated every
   // other outcome as advisory, but the runner reports a missing script, a spawn
   // failure and a serialization failure as `code: 1` as well (see
-  // src/plugins/hook-runner.ts). A broken scanner therefore read as a clean
+  // src/pantheon/hook-runner.ts). A broken scanner therefore read as a clean
   // advisory and the tool ran — the only hard secret block on the V2 surface,
   // silently off.
 

@@ -39,8 +39,8 @@
  *      The same entrypoint path is deduped (one `setup`), so a same-path double
  *      entry is harmless; a distinct-path double load (npm package + repo
  *      source) is NOT exercised here and would run `setup` twice — the V2
- *      plugin has no `pantheonPluginOnce` guard (only `src/plugin.ts`,
- *      `pantheon-hooks.ts` and the TUI do).
+ *      plugin has no `pantheonPluginOnce` guard (the V1 plugins removed in
+ *      2.0 had one; the TUI still does).
  *
  * Exit code: 1 when a non-MCP-death scenario changes its registry after the
  * first turn or its model-facing list at any turn. Set

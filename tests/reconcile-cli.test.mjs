@@ -21,11 +21,11 @@ const INIT = join(process.cwd(), 'bin', 'pantheon-init.mjs')
 const DOCTOR = join(process.cwd(), 'scripts', 'doctor.mjs')
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
 
-// The seeded inventories below are project-v1 layouts. Pin the host generation
-// so the preview does not depend on which OpenCode binary is installed on the
-// machine running the tests (a V2 host would classify every owned path as a
-// layout mismatch).
-const BASE_ENV = { OPENCODE_VERSION: 'v1' }
+// Pin the host generation (OpenCode 2.x, the only supported one) so the
+// preview does not depend on which OpenCode binary is installed on the machine
+// running the tests. Seed inventories use the project-v2 layout (./agents) to
+// match the generation the reconcile preview computes.
+const BASE_ENV = { OPENCODE_VERSION: 'v2' }
 
 function run(args, cwd) {
   return spawnSync(process.execPath, [CLI, ...args], {
@@ -41,7 +41,7 @@ function seedTarget(target, entries) {
   state.file_inventory.target_root = target
   state.file_inventory.entries = []
   state.file_inventory.legacy_unknown = false
-  for (const { path, content, component = 'agents', layout = 'project-v1' } of entries) {
+  for (const { path, content, component = 'agents', layout = 'project-v2' } of entries) {
     const absolute = join(target, path)
     mkdirSync(join(absolute, '..'), { recursive: true })
     writeFileSync(absolute, content)
@@ -71,7 +71,7 @@ test('reconcile preview is read-only, scoped to selected components, and saves a
     const target = join(root, 'project')
     const planPath = join(root, 'review.json')
     seedTarget(target, [
-      { path: '.opencode/agents/retired.md', content: 'old agent' },
+      { path: 'agents/retired.md', content: 'old agent' },
       { path: '.opencode/skills/retired/SKILL.md', content: 'old skill', component: 'skills' },
     ])
     const beforeState = readFileSync(join(target, '.pantheon', 'install-state.json'))
@@ -81,7 +81,7 @@ test('reconcile preview is read-only, scoped to selected components, and saves a
     )
     assert.equal(preview.status, 0, `${preview.stdout}\n${preview.stderr}`)
     assert.match(preview.stdout, /stale-owned/)
-    assert.equal(readFileSync(join(target, '.opencode/agents/retired.md'), 'utf8'), 'old agent')
+    assert.equal(readFileSync(join(target, 'agents/retired.md'), 'utf8'), 'old agent')
     assert.equal(existsSync(join(target, '.pantheon/backups')), false)
     assert.deepEqual(readFileSync(join(target, '.pantheon', 'install-state.json')), beforeState)
 
@@ -89,7 +89,7 @@ test('reconcile preview is read-only, scoped to selected components, and saves a
     assert.equal(statSync(planPath).mode & 0o777, 0o600)
     assert.deepEqual(
       artifact.operations.map((operation) => operation.path),
-      ['.opencode/agents/retired.md'],
+      ['agents/retired.md'],
     )
     assert.equal(artifact.operations[0].sha256, sha256('old agent'))
     assert.equal(
@@ -116,18 +116,16 @@ test('reconcile honors explicit global targets and keeps explicit targets projec
 
     const projectTarget = join(root, 'custom-project')
     const projectPlan = join(root, 'project-review.json')
-    seedTarget(projectTarget, [
-      { path: '.opencode/agents/retired.md', content: 'old project agent' },
-    ])
+    seedTarget(projectTarget, [{ path: 'agents/retired.md', content: 'old project agent' }])
     const projectReview = run(
       ['--target', projectTarget, '--components', 'agents', '--save-plan', projectPlan],
       root,
     )
     assert.equal(projectReview.status, 0, `${projectReview.stdout}\n${projectReview.stderr}`)
-    assert.match(projectReview.stdout, /stale-owned\s+\.opencode\/agents\/retired\.md/)
+    assert.match(projectReview.stdout, /stale-owned\s+agents\/retired\.md/)
     assert.equal(
       JSON.parse(readFileSync(projectPlan, 'utf8')).selected_layouts.agents,
-      'project-v1',
+      'project-v2',
     )
   })
 })
@@ -136,22 +134,22 @@ test('reconcile requires authorization, backs up, and removes only exact reviewe
   withRoot((root) => {
     const target = join(root, 'project')
     const planPath = join(root, 'review.json')
-    seedTarget(target, [{ path: '.opencode/agents/retired.md', content: 'old agent' }])
+    seedTarget(target, [{ path: 'agents/retired.md', content: 'old agent' }])
     const saved = run(['--target', target, '--components', 'agents', '--save-plan', planPath], root)
     assert.equal(saved.status, 0, saved.stderr)
 
     const unauthorized = run(['--apply-plan', planPath], root)
     assert.equal(unauthorized.status, 2)
-    assert.equal(existsSync(join(target, '.opencode/agents/retired.md')), true)
+    assert.equal(existsSync(join(target, 'agents/retired.md')), true)
 
-    mkdirSync(join(target, '.opencode/agents/nested'), { recursive: true })
-    writeFileSync(join(target, '.opencode/agents/nested/user.md'), 'keep')
+    mkdirSync(join(target, 'agents/nested'), { recursive: true })
+    writeFileSync(join(target, 'agents/nested/user.md'), 'keep')
     const applied = run(['--apply-plan', planPath, '--yes'], root)
     assert.equal(applied.status, 0, `${applied.stdout}\n${applied.stderr}`)
-    assert.equal(existsSync(join(target, '.opencode/agents/retired.md')), false)
-    assert.equal(readFileSync(join(target, '.opencode/agents/nested/user.md'), 'utf8'), 'keep')
+    assert.equal(existsSync(join(target, 'agents/retired.md')), false)
+    assert.equal(readFileSync(join(target, 'agents/nested/user.md'), 'utf8'), 'keep')
     const backup = join(target, '.pantheon/backups')
-    const backupSet = join(backup, readdirSync(backup)[0], '.opencode/agents/retired.md')
+    const backupSet = join(backup, readdirSync(backup)[0], 'agents/retired.md')
     assert.equal(readFileSync(backupSet, 'utf8'), 'old agent')
     assert.deepEqual(
       JSON.parse(readFileSync(join(target, '.pantheon', 'install-state.json'))).file_inventory
@@ -165,8 +163,8 @@ test('reconcile aborts saved plan when operation-set ownership drifts before app
   withRoot((root) => {
     const target = join(root, 'project')
     const planPath = join(root, 'review.json')
-    const owned = join(target, '.opencode/agents/retired.md')
-    seedTarget(target, [{ path: '.opencode/agents/retired.md', content: 'old agent' }])
+    const owned = join(target, 'agents/retired.md')
+    seedTarget(target, [{ path: 'agents/retired.md', content: 'old agent' }])
     const saved = run(['--target', target, '--components', 'agents', '--save-plan', planPath], root)
     assert.equal(saved.status, 0, saved.stderr)
     writeFileSync(owned, 'user changed it')
@@ -190,7 +188,7 @@ test('init records a versioned per-file inventory after verified writes', () => 
         'agents',
         '--no-mcp',
         '--version',
-        'v1',
+        'v2',
         '--yes',
         '--headless',
       ],
@@ -226,7 +224,7 @@ test('init records a versioned per-file inventory after verified writes', () => 
 test('doctor reports recorded-file drift distinctly without modifying the target', () => {
   withRoot((root) => {
     const target = join(root, 'project')
-    const ownedPath = '.opencode/agents/zeus.md'
+    const ownedPath = 'agents/zeus.md'
     seedTarget(target, [{ path: ownedPath, content: 'installed agent' }])
     writeFileSync(join(target, ownedPath), 'user changed this')
     const statePath = join(target, '.pantheon', 'install-state.json')

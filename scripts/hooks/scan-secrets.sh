@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # scan-secrets.sh — Pantheon PreToolUse Secret Scanning Hook
 # Detects hardcoded secrets in tool input. Logs ALWAYS (masked); the exit
-# code drives the plugin's hybrid blocking (see pantheon-hooks.ts):
+# code drives the plugin's hybrid blocking (the V2 plugin: src/plugin-v2.ts +
+# src/pantheon/v2-hook-engine.ts; the V1 pantheon-hooks.ts plugin was removed
+# in 2.0):
 #
 #   exit 0 — no match.
 #   exit 1 — LOW_CONFIDENCE match only (header/KEY NAMES such as the Bifrost header

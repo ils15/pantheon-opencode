@@ -485,18 +485,21 @@ async function main() {
   )
 
   await testAsync(
-    'plugin wiring: chat.params populates the registry and session.deleted unregisters it',
+    'plugin wiring: execute.before populates the registry and session.deleted unregisters it',
     async () => {
-      const source = readFileSync(new URL('../../src/plugin.ts', import.meta.url), 'utf8')
+      // 2.0 removed the V1 plugin; the V2 entry registers the read-only guard.
+      // The host puts the active agent on the execute.before event itself, so
+      // there is no separate chat.params hook to assert on.
+      const source = readFileSync(new URL('../../src/plugin-v2.ts', import.meta.url), 'utf8')
       assert.match(
         source,
-        /'chat\.params':[\s\S]*?syncReadOnlySession\(\s*readOnlyRegistry/,
-        'chat.params must call syncReadOnlySession(readOnlyRegistry, …) to populate the registry',
+        /syncReadOnlySession\(readOnlyRegistry,\s*input\.sessionID,\s*agent\)/,
+        'execute.before must call syncReadOnlySession(readOnlyRegistry, …) to populate the registry',
       )
       assert.match(
         source,
-        /ev\.type === 'session\.deleted'[\s\S]{0,200}readOnlyRegistry\.unregister/,
-        'session.deleted must unregister the read-only session',
+        /async function onSessionDeleted[\s\S]{0,1200}readOnlyRegistry\.unregister/,
+        'session.deleted must unregister the read-only session (onSessionDeleted)',
       )
     },
   )

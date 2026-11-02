@@ -16,7 +16,6 @@
  *   2. PANTHEON_HOOKS_LOG=1 → file AND console (opt-in debug echo);
  *   3. log file appends across calls, every line ISO-stamped + module-prefixed;
  *   4. the process.env gate is read at creation time (per-instance);
- *   5. regression: src/plugin.ts has NO bare console.log/console.error/
  *      console.warn (all routed through the logger).
  *
  * Run: node --test tests/pantheon/logger.test.mjs
@@ -29,7 +28,6 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 const LOGGER_URL = new URL('../../src/pantheon/logger.ts', import.meta.url).href
-const PLUGIN_URL = new URL('../../src/plugin.ts', import.meta.url).href
 const { createPantheonLogger } = await import(LOGGER_URL)
 
 /** Intercept console.* and record every call (restore() puts them back). */
@@ -191,14 +189,4 @@ test('process.env.PANTHEON_HOOKS_LOG gates the console echo at creation time', a
     else process.env.PANTHEON_HOOKS_LOG = prevEnv
     rmSync(tmp, { recursive: true, force: true })
   }
-})
-
-test('regression: src/plugin.ts has NO bare console.log/console.error/console.warn', () => {
-  const src = readFileSync(new URL(PLUGIN_URL), 'utf8')
-  const offenders = [...src.matchAll(/console\.(log|error|warn)\s*\(/g)].map((m) => m[0])
-  assert.deepEqual(
-    offenders,
-    [],
-    'plugin.ts must not write to the console directly (TUI pollution) — route through createPantheonLogger',
-  )
 })
