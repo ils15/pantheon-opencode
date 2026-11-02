@@ -30,7 +30,7 @@ const canceledAt = (point) =>
 function fakePrompts({
   components = ['agents'],
   target = 'global',
-  decisionRouter = 'local',
+  jevActivation = 'skip',
   confirmed = true,
 } = {}) {
   const calls = []
@@ -46,7 +46,7 @@ function fakePrompts({
     select: async (options) => {
       calls.push(['select', options])
       if (options.message === 'Install location:') return target
-      if (options.message?.startsWith('Decision-router')) return decisionRouter
+      if (options.message?.startsWith('Configure the Jev')) return jevActivation
       return 'inherit'
     },
     confirm: async (options) => {
@@ -56,7 +56,7 @@ function fakePrompts({
   }
 }
 
-test('interactive selection chooses components and location before one later apply confirmation', async () => {
+test('interactive selection chooses components and location, then asks the Jev activation', async () => {
   const prompts = fakePrompts({ components: ['agents', 'plugins'], target: 'project' })
   const result = await runInteractiveInstall({
     components: ['agents'],
@@ -67,78 +67,82 @@ test('interactive selection chooses components and location before one later app
 
   assert.deepEqual([...result.components], ['agents', 'plugins'])
   assert.equal(result.target, 'project')
+  // The installer-state record stays at its default (Local): the wizard's Jev
+  // question configures the REAL user-level route, not this metadata.
   assert.deepEqual(result.decisionRouterConfig, {
     schema_version: 1,
     provider: 'local',
     egress_consent: false,
   })
+  assert.equal(result.decisionModelActivation, null)
   assert.deepEqual(
     prompts.calls.map(([name]) => name),
     ['intro', 'multiselect', 'select', 'select'],
   )
-  assert.deepEqual(prompts.calls[0], ['intro', 'OpenCode Installer'])
-  const providerPrompt = prompts.calls.find(([, options]) =>
-    options?.message?.startsWith('Decision-router'),
+  const jevPrompt = prompts.calls.find(([, options]) =>
+    options?.message?.startsWith('Configure the Jev'),
   )[1]
   assert.deepEqual(
-    providerPrompt.options.map(({ value }) => value),
-    ['local', 'openai-decisions', 'jev', 'auto'],
+    jevPrompt.options.map(({ value }) => value),
+    [
+      'skip',
+      'opencode-console-jev/jev-1.13',
+      'opencode-console-jev-free/jev-1.13-free',
+      'typesafe-jev/jev-1.14.0',
+    ],
   )
-  assert.equal(providerPrompt.initialValue, 'local')
-  assert.match(providerPrompt.message, /installer preference/i)
-  assert.match(providerPrompt.message, /runtime provider\/model settings.*managed separately/i)
-  assert.match(providerPrompt.message, /installation makes no provider requests/i)
+  assert.equal(jevPrompt.initialValue, 'skip')
 })
 
-test('external provider choice requires separate consent and stores no credentials', async () => {
-  const prompts = fakePrompts({ decisionRouter: 'jev', confirmed: false })
-  const result = await runInteractiveInstall({ prompts, isTTY: true })
-
-  assert.deepEqual(result.decisionRouterConfig, {
+test('choosing a Jev route activates it with explicit caps; unknown legacy values degrade to skip', async () => {
+  // Stock Console route: activation recorded with the recommended defaults
+  // (the stub has no text input, so the caps degrade to defaults).
+  const stock = fakePrompts({ jevActivation: 'opencode-console-jev/jev-1.13' })
+  const stockResult = await runInteractiveInstall({ prompts: stock, isTTY: true })
+  assert.deepEqual(stockResult.decisionModelActivation, {
+    target: 'opencode-console-jev/jev-1.13',
+    monthly: '5',
+    perDecision: '0.10',
+  })
+  assert.deepEqual(stockResult.decisionRouterConfig, {
     schema_version: 1,
-    provider: 'jev',
+    provider: 'local',
     egress_consent: false,
   })
-  const consent = prompts.calls.find(([name]) => name === 'confirm')?.[1]
-  assert.equal(consent.initialValue, false)
-  assert.match(consent.message, /not runtime consent/i)
-  assert.match(consent.message, /configure actual user-level consent and caps/i)
-  assert.match(consent.message, /installation makes no provider requests/i)
-  assert.deepEqual(Object.keys(result.decisionRouterConfig).sort(), [
-    'egress_consent',
-    'provider',
-    'schema_version',
-  ])
+
+  // Free variant activates the free target.
+  const free = fakePrompts({ jevActivation: 'opencode-console-jev-free/jev-1.13-free' })
+  const freeResult = await runInteractiveInstall({ prompts: free, isTTY: true })
+  assert.equal(freeResult.decisionModelActivation.target, 'opencode-console-jev-free/jev-1.13-free')
+
+  // TypeSafe direct activates its target (the provider block is a manual
+  // prerequisite documented in the wizard hint and reference docs).
+  const typesafe = fakePrompts({ jevActivation: 'typesafe-jev/jev-1.14.0' })
+  const typesafeResult = await runInteractiveInstall({ prompts: typesafe, isTTY: true })
+  assert.equal(typesafeResult.decisionModelActivation.target, 'typesafe-jev/jev-1.14.0')
+
+  // Legacy metadata spellings and unknown values are NOT targets: direct
+  // OpenAI has no native route and 'jev'/'auto' were the old metadata prompt.
+  for (const legacy of ['jev', 'openai-decisions', 'auto', 'local']) {
+    const legacyResult = await runInteractiveInstall({
+      prompts: fakePrompts({ jevActivation: legacy }),
+      isTTY: true,
+    })
+    assert.equal(legacyResult.decisionModelActivation, null, `${legacy} must not activate`)
+  }
 })
 
-test('an explicit affirmative consent is persisted separately from provider selection', async () => {
-  const prompts = fakePrompts({ decisionRouter: 'openai-decisions', confirmed: true })
-  const result = await runInteractiveInstall({ prompts, isTTY: true })
-
-  assert.deepEqual(result.decisionRouterConfig, {
-    schema_version: 1,
-    provider: 'openai-decisions',
-    egress_consent: true,
-  })
-})
-
-test('canceling provider or consent selection stops before an installer apply', async () => {
+test('canceling the Jev activation stops before an installer apply', async () => {
   const providerPrompts = fakePrompts()
   providerPrompts.select = async (options) =>
     options.message === 'Install location:'
       ? 'global'
-      : options.message?.startsWith('Decision-router')
+      : options.message?.startsWith('Configure the Jev')
         ? CANCEL
         : 'inherit'
   const providerCanceled = await runInteractiveInstall({ prompts: providerPrompts, isTTY: true })
   assert.equal(providerCanceled.canceled, true)
   assert.equal(providerCanceled.cancelPoint, 'decisionRouter')
-
-  const consentPrompts = fakePrompts({ decisionRouter: 'jev' })
-  consentPrompts.confirm = async () => CANCEL
-  const consentCanceled = await runInteractiveInstall({ prompts: consentPrompts, isTTY: true })
-  assert.equal(consentCanceled.canceled, true)
-  assert.equal(consentCanceled.cancelPoint, 'egressConsent')
 })
 
 test('headless and TTY defaults match and runtime/prompts are opt-in', () => {
@@ -268,8 +272,8 @@ async function withTTYComponentSelection(args, callback, selectedComponents = ['
   prompts.select = async ({ message }) =>
     message === 'Install location:'
       ? 'global'
-      : message?.startsWith('Decision-router')
-        ? 'local'
+      : message?.startsWith('Configure the Jev')
+        ? 'skip'
         : 'inherit'
 
   try {
@@ -387,10 +391,10 @@ async function withTTY(callback) {
   }
 }
 
-test('interactive provider selection persists preference without any provider network request', async () => {
+test('the Jev wizard choice makes no provider network request during installation', async () => {
   const root = mkdtempSync(join(tmpdir(), 'pantheon-provider-choice-no-network-'))
   const target = join(root, 'opencode')
-  const prompts = fakePrompts({ decisionRouter: 'openai-decisions', confirmed: true })
+  const prompts = fakePrompts({ jevActivation: 'opencode-console-jev/jev-1.13' })
   const originalFetch = globalThis.fetch
   let fetchCalls = 0
   globalThis.fetch = async () => {
@@ -413,16 +417,13 @@ test('interactive provider selection persists preference without any provider ne
     assert.equal(result.applied, true)
     assert.equal(fetchCalls, 0)
     const state = JSON.parse(readFileSync(join(target, '.pantheon', 'install-state.json'), 'utf8'))
+    // The activation configures the USER-level route at the end of init; the
+    // installer-state record stays at its default.
     assert.deepEqual(state.decision_router, {
       schema_version: 1,
-      provider: 'openai-decisions',
-      egress_consent: true,
+      provider: 'local',
+      egress_consent: false,
     })
-    assert.deepEqual(Object.keys(state.decision_router).sort(), [
-      'egress_consent',
-      'provider',
-      'schema_version',
-    ])
   } finally {
     globalThis.fetch = originalFetch
     rmSync(root, { recursive: true, force: true })
@@ -436,7 +437,7 @@ async function runTTYInstall(target, version) {
   prompts.select = async ({ message }) => {
     selectMessages.push(message)
     if (message === 'Install location:') return 'global'
-    if (message?.startsWith('Decision-router')) return 'local'
+    if (message?.startsWith('Configure the Jev')) return 'skip'
     return 'inherit'
   }
 
@@ -465,7 +466,7 @@ test('V2 interactive install skips the V1 profile wizard and preserves legacy ma
     const { result, selectMessages } = await withTTY(() => runTTYInstall(target, 'v2'))
     assert.equal(result.applied, true)
     assert.deepEqual(selectMessages, ['Install location:', selectMessages[1]])
-    assert.match(selectMessages[1], /^Decision-router/)
+    assert.match(selectMessages[1], /^Configure the Jev/)
     assert.equal(readFileSync(marker, 'utf8'), markerBytes)
   } finally {
     rmSync(root, { recursive: true, force: true })
@@ -483,7 +484,7 @@ test('V1 interactive install retains the model profile wizard', async () => {
       selectMessages[1],
       'Choose the default model profile for Pantheon agents.',
     ])
-    assert.match(selectMessages[1], /^Decision-router/)
+    assert.match(selectMessages[1], /^Configure the Jev/)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

@@ -1644,6 +1644,8 @@ async function installPass(
   let decisionRouterConfig = migrateDecisionRouterConfig(
     opts.decisionRouterConfig ?? readState(target)?.decision_router,
   )
+  /** Wizard-confirmed Jev activation (target + caps), surfaced on the result. */
+  let decisionModelActivation = null
   const stats = summary.opencode
   // Per-call baseline. `stats` is the module-level cumulative summary, so the
   // consistency guard must compare against THIS call's delta, not the total.
@@ -1772,7 +1774,10 @@ async function installPass(
     // this notice cannot drift from what the plugin reports; the notice says
     // so, because the live list is a superset that grows at runtime. Advisory:
     // a V2 install is a supported configuration, not a failure.
-    notice(formatV2CapabilityNotice())
+    // Default-quiet: the eleven-fact block is install *detail*, not an action
+    // the user must take, so it prints only under --verbose (the recorded
+    // run-state keeps it either way).
+    if (opts.verbose === true) notice(formatV2CapabilityNotice())
   }
 
   // Interactive mode handling
@@ -1834,6 +1839,7 @@ async function installPass(
     target = selectedTarget
     decisionRouterConfig = migrateDecisionRouterConfig(result.decisionRouterConfig)
     opts.decisionRouterConfig = decisionRouterConfig
+    decisionModelActivation = result.decisionModelActivation ?? null
     if (!dryRun && _lastRun) _lastRun.target = target
   }
 
@@ -3426,12 +3432,14 @@ async function installPass(
         versionAssumed,
         configAdvisories,
         v2Capabilities: version === 'v2' ? v2Capabilities() : null,
+        decisionModelActivation,
         pluginOptions: v2PluginOptions,
       }
     : {
         ...stats,
         applied: true,
         reason: 'applied',
+        decisionModelActivation,
         target,
         runtimeEffects,
         openCodeVersion: version,

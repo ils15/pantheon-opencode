@@ -38,6 +38,12 @@
 
 import { randomUUID } from 'node:crypto'
 import { type HookPayload, type HookResult, runHook } from '../plugins/hook-runner.ts'
+import {
+  appendDelegationAuditLine,
+  delegationStartLine,
+  delegationStopLine,
+  formatterApplies,
+} from './v2-hook-engine.ts'
 
 /**
  * Delegation tool names. MIRRORS `DELEGATION_TOOL_RE` in
@@ -53,10 +59,68 @@ export const FORMATTER_SCRIPT = 'format-multi-language.sh'
 export const DELEGATION_START_SCRIPT = 'on-subagent-delegation-start.sh'
 export const DELEGATION_STOP_SCRIPT = 'on-subagent-delegation-stop.sh'
 
-/** One script invocation. Injected in tests to avoid spawning a shell. */
+/** One audit/formatter invocation. Injected in tests to avoid spawning a shell. */
 export type V2ShellRunner = (script: string, payload: HookPayload) => Promise<HookResult>
 
-const defaultRunner: V2ShellRunner = (script, payload) => runHook(script, payload)
+const IDLE_RESULT: HookResult = { code: 0, stdout: '', stderr: '', signal: null, timedOut: false }
+
+/**
+ * In-process dispatcher. Start/stop audit lines are written directly (same
+ * JSON shape and LOG_DIR resolution as the shell scripts); the formatter
+ * still spawns when the tool call touched a formattable file and is skipped —
+ * without a child process — for every call the script would no-op anyway.
+ */
+const defaultRunner: V2ShellRunner = async (script, payload) => {
+  const record = (payload ?? {}) as Record<string, unknown>
+  const tool = typeof record.tool_name === 'string' ? record.tool_name : ''
+  if (script === DELEGATION_START_SCRIPT) {
+    const delegationID = typeof record.delegation_id === 'string' ? record.delegation_id : ''
+    const agent = typeof record.agent_id === 'string' ? record.agent_id : ''
+    const sessionID = typeof record.session_id === 'string' ? record.session_id : ''
+    const task =
+      record.tool_input !== null && typeof record.tool_input === 'object'
+        ? String((record.tool_input as Record<string, unknown>).description ?? '')
+        : ''
+    appendDelegationAuditLine(
+      delegationStartLine({ agent, task, sessionID, delegationID, now: Date.now() }),
+    )
+    return IDLE_RESULT
+  }
+  if (script === DELEGATION_STOP_SCRIPT) {
+    const delegationID = typeof record.delegation_id === 'string' ? record.delegation_id : ''
+    const agent = typeof record.agent_id === 'string' ? record.agent_id : ''
+    const sessionID = typeof record.session_id === 'string' ? record.session_id : ''
+    const status = typeof record.status === 'string' ? record.status : ''
+    const taskID = typeof record.task_id === 'string' ? record.task_id : ''
+    const duration =
+      typeof record.duration_ms === 'number' && Number.isFinite(record.duration_ms)
+        ? Math.max(0, Math.round(record.duration_ms))
+        : null
+    appendDelegationAuditLine(
+      delegationStopLine({
+        agent,
+        status,
+        reason: status,
+        task:
+          record.tool_input !== null && typeof record.tool_input === 'object'
+            ? String((record.tool_input as Record<string, unknown>).description ?? '')
+            : '',
+        sessionID,
+        result: record.tool_output ?? null,
+        delegationID,
+        taskID,
+        durationMs: duration,
+        now: Date.now(),
+      }),
+    )
+    return IDLE_RESULT
+  }
+  if (script === FORMATTER_SCRIPT) {
+    if (!formatterApplies(tool, record.tool_input)) return IDLE_RESULT
+    return runHook(script, payload)
+  }
+  return runHook(script, payload)
+}
 
 /** Hard cap on pending records — a tool result may never arrive. */
 const MAX_PENDING_STARTS = 256

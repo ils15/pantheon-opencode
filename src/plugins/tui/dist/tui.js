@@ -167,7 +167,7 @@ async function detectVersion(api) {
 			if (ver) return ver;
 		}
 	} catch {}
-	return "1.6.2-beta.7";
+	return "1.6.2-beta.8";
 }
 /**
 * usage-bar — AI subscription usage gauge for the opencode TUI.

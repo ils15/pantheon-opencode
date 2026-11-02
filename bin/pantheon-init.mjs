@@ -60,6 +60,61 @@ function readVersion() {
   }
 }
 
+/**
+ * Merge the TypeSafe decision-model provider entry into the user's
+ * `opencode.json` (never replaces existing keys; a non-JSON file is reported,
+ * never overwritten). Returns true, or a short failure reason.
+ */
+/**
+ * Merge (never overwrite) the TypeSafe decision-model entry into the user's
+ * OpenCode config, so choosing the TypeSafe route in the wizard needs only the
+ * user's own sign-in afterwards. The merge is additive: existing provider
+ * entries and an existing jev-1.14.0 model are preserved. Returns true, or a
+ * short failure reason for the installer to print.
+ */
+function provisionTypesafeProvider() {
+  const xdg = process.env.XDG_CONFIG_HOME
+  const home = process.env.HOME
+  const base = xdg && xdg.startsWith('/') ? xdg : `${home ?? '~'}/.config`
+  const candidates = [`${base}/opencode/opencode.json`]
+  if (home) candidates.push(`${home}/.config/opencode/opencode.json`)
+  const configPath = candidates.find((candidate) => fs.existsSync(candidate))
+  if (configPath === undefined) return 'opencode.json not found'
+  let data
+  try {
+    data = JSON.parse(fs.readFileSync(configPath, 'utf8'))
+  } catch {
+    return 'opencode.json is not plain JSON (comments?)'
+  }
+  data.providers ??= {}
+  data.providers['typesafe-ai'] ??= {}
+  data.providers['typesafe-ai'].models ??= {}
+  if (data.providers['typesafe-ai'].models['jev-1.14.0'] === undefined) {
+    data.providers['typesafe-ai'].models['jev-1.14.0'] = {
+      name: 'Jev (TypeSafe direct)',
+      modelID: 'jev-latest',
+      type: 'decision',
+    }
+  }
+  try {
+    fs.writeFileSync(configPath, `${JSON.stringify(data, null, 2)}\n`)
+    return true
+  } catch (error) {
+    return String(error instanceof Error ? error.message : error)
+  }
+}
+
+/** Value of a repeatable installer flag from the raw argv, or undefined. */
+function readArgValue(name) {
+  const prefix = `${name}=`
+  for (let i = 1; i < process.argv.length; i++) {
+    const arg = process.argv[i]
+    if (arg === name) return process.argv[i + 1]
+    if (arg.startsWith(prefix)) return arg.slice(prefix.length)
+  }
+  return undefined
+}
+
 function printUsage() {
   console.log('Pantheon OpenCode — Multi-agent orchestration platform')
   console.log('')
@@ -78,6 +133,9 @@ function printUsage() {
   console.log('  npx pantheon-opencode init --headless     # Force non-interactive mode')
   console.log('  npx pantheon-opencode init -y             # Skip confirmations, use defaults')
   console.log('  npx pantheon-opencode init --components agents,skills,instructions')
+  console.log(
+    '  npx pantheon-opencode init --decision-model opencode-console-jev/jev-1.13 --decision-monthly-usd 5 --decision-per-decision-usd 0.10',
+  )
   console.log('  npx pantheon-opencode init --opencode-version v1|v2|auto')
   console.log('  npx pantheon-opencode init --preset <name> # Install and activate model preset')
   console.log(
@@ -433,6 +491,9 @@ async function main() {
       '--merge-dev-config',
       '--apply-plan',
       '--save-plan',
+      '--decision-model',
+      '--decision-monthly-usd',
+      '--decision-per-decision-usd',
     ])
     for (let i = 1; i < args.length; i++) {
       const arg = args[i]
@@ -958,6 +1019,56 @@ async function main() {
       }
     }
 
+    // Optional Jev decision-model activation, requested at install time with
+    // explicit caps (the setup-model chain: selection + enable + consent +
+    // user/provider/model caps + period confirmation). Dry-run prints intent
+    // only. Failures never fail the install itself.
+    // Explicit flags win; otherwise honor the wizard's Jev activation choice.
+    const wizardActivation = result.decisionModelActivation ?? null
+    const decisionTarget = readArgValue('--decision-model') ?? wizardActivation?.target ?? null
+    if (decisionTarget) {
+      const monthly = readArgValue('--decision-monthly-usd') ?? wizardActivation?.monthly ?? '5'
+      const perDecision =
+        readArgValue('--decision-per-decision-usd') ?? wizardActivation?.perDecision ?? '0.10'
+      const noConsent = process.argv.includes('--decision-no-consent')
+      console.log('')
+      if (isDryRun) {
+        console.log(`  ${S.jevDryRun(decisionTarget)}`)
+      } else {
+        try {
+          const { runDecisionRouterCommand } = await import('../scripts/decision-router.mjs')
+          await runDecisionRouterCommand(
+            [
+              'setup-model',
+              decisionTarget,
+              '--monthly-usd',
+              monthly,
+              '--per-decision-usd',
+              perDecision,
+              ...(noConsent ? ['--no-consent'] : []),
+            ],
+            { stdout: (line) => console.log(`  ${line}`) },
+          )
+          console.log(`  ${S.jevConfigured(decisionTarget)}`)
+          if (decisionTarget.startsWith('typesafe-jev')) {
+            const provisioned = provisionTypesafeProvider()
+            console.log(
+              provisioned === true
+                ? '  TypeSafe provider entry merged into opencode.json (models.typesafe-ai, type "decision"). Sign in with `opencode auth login` (TypeSafe) or /connect.'
+                : `  TypeSafe provider entry NOT merged (${provisioned}); merge it manually — see docs/reference/native-decisions.md.`,
+            )
+          }
+        } catch (error) {
+          console.error(
+            `  ${S.jevConfigureFailed(error instanceof Error ? error.message : String(error))}`,
+          )
+          console.error(
+            `  Fix later with: npx pantheon-opencode decision-router setup-model ${decisionTarget} --monthly-usd ${monthly} --per-decision-usd ${perDecision}`,
+          )
+        }
+      }
+    }
+
     console.log('')
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
     console.log(`  ${S.installedTitle(version)}`)
@@ -968,6 +1079,9 @@ async function main() {
     console.log(`  ${S.nextLaunch}`)
     console.log(`  ${S.nextAgents}`)
     console.log(`  ${S.nextProject}`)
+    if (!decisionTarget) {
+      console.log(`  ${S.nextJev}`)
+    }
     console.log('')
 
     return

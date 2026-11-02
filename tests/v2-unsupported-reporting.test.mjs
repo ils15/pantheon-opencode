@@ -89,8 +89,10 @@ test('a V2-generation install reports the unsupported feature list', async () =>
         yes: true,
         headless: true,
         version: 'v2',
+        verbose: true,
       }),
     )
+    // Quiet by default; the capability facts print under --verbose.
     assertReportsEveryFeature(output, 'the V2-generation installer')
   } finally {
     rmSync(target, { recursive: true, force: true })

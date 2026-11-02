@@ -17,6 +17,9 @@ npm run setup
 
 # Verify installation
 npm run doctor
+
+# Optional: activate the Jev decision model in the same pass
+npx pantheon-opencode init --decision-model opencode-console-jev/jev-1.13 --decision-monthly-usd 5 --decision-per-decision-usd 0.10
 ```
 
 - **Requirements:** **Node.js >=26.4.0** for Pantheon's CLI/installer/Node tooling, **Python 3.11+** (optional, MCP servers), and a supported host: **OpenCode 1.19.x** (V1 contract) or **OpenCode 2.x** (V2 contract).
@@ -361,6 +364,28 @@ The V2 installer writes native V2 fields instead of V1 shims: `providers`,
 tool name). `action: "mcp"` and the V1 key `permission.mcp.<server>` are not
 evaluated by the host; the installer converts `allow`/`deny` and emits no rule
 for `ask`, because `ask` hides the tool instead of prompting.
+
+## Jev decision model (optional, current generation)
+
+The Zeus-only `pantheon_jev_decide` advisory tool registers automatically on
+hosts that expose the native Decisions API; using it requires the user-level
+decision-route configuration. Two ways:
+
+```bash
+# One command at install time (explicit caps required — no defaults):
+npx pantheon-opencode init --decision-model opencode-console-jev/jev-1.13 \
+  --decision-monthly-usd 5 --decision-per-decision-usd 0.10
+
+# Or any time later:
+npx pantheon-opencode decision-router setup-model opencode-console-jev/jev-1.13 \
+  --monthly-usd 5 --per-decision-usd 0.10
+npx pantheon-opencode decision-router doctor   # read-only route diagnosis
+```
+
+`--decision-no-consent` configures everything except egress consent. Other
+providers (TypeSafe direct, OpenRouter-hosted) and the full gate chain:
+[Native Decisions](reference/native-decisions.md). Performance tuning (hook
+costs, prompt budget, model tiers): [Performance](reference/performance.md).
 
 ## Interactive model setup (V1 legacy routing)
 

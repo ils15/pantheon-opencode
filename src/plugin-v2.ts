@@ -161,6 +161,7 @@ import {
   v2ResourceTarget,
 } from './pantheon/v2-delegation-enforce.ts'
 import { createV2ExecuteAfter, resolveV2SandboxConfig } from './pantheon/v2-execute-after.ts'
+import { runSecretScanInProcess } from './pantheon/v2-hook-engine.ts'
 import { applyV2ModelOverrides, readV2ModelConfiguration } from './pantheon/v2-model-overrides.ts'
 import type { NativeDecisionRequest } from './pantheon/v2-native-decisions.ts'
 import { createV2ShellHooks, type V2ShellRunner } from './pantheon/v2-shell-hooks.ts'
@@ -168,7 +169,7 @@ import { createV2ToolDefinitions, type V2ToolResult } from './pantheon/v2-tools.
 import { V2_UNSUPPORTED_FEATURE_SEED } from './pantheon/v2-unsupported.mjs'
 import { buildV2VisionPromptContext, type V2VisionRuntime } from './pantheon/v2-vision.ts'
 import { sanitizeVisionHistory } from './pantheon/vision.ts'
-import { type HookPayload, type HookResult, runHook } from './plugins/hook-runner.ts'
+import type { HookPayload, HookResult } from './plugins/hook-runner.ts'
 
 // ─── Unsupported Features Registry ───────────────────────────────────────
 
@@ -1659,10 +1660,17 @@ function evaluateSecretScanResult(scan: HookResult): SecretScanDecision {
   return { action: 'fail-closed', reason: 'scanner-unexpected-exit' }
 }
 
-/** Invocation of scripts/hooks/scan-secrets.sh used by the tool guard. */
+/** Invocation of the secret scan used by the tool guard. */
 type SecretScanRunner = (payload: HookPayload) => Promise<HookResult>
 
-const defaultSecretScanRunner: SecretScanRunner = (payload) => runHook('scan-secrets.sh', payload)
+/**
+ * The scan runs IN-PROCESS (src/pantheon/v2-hook-engine.ts, same patterns and
+ * exit-code contract as the former scripts/hooks/scan-secrets.sh) so a tool
+ * call no longer spawns a bash child. The runner signature and the classifier
+ * below are unchanged; {@link setV2SecretScanRunnerForTests} still injects
+ * structured results the in-process path cannot produce on its own.
+ */
+const defaultSecretScanRunner: SecretScanRunner = async (payload) => runSecretScanInProcess(payload)
 
 let secretScanRunner: SecretScanRunner = defaultSecretScanRunner
 

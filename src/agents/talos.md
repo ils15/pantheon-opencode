@@ -22,6 +22,11 @@ mcp_tools:
   pantheon-code-mode: [execute_code_script]
 ---
 
+## Verification Tiers
+
+Small bounded fix → change + one targeted proof, no ceremony. Material change → full test discipline. Match the tier to the change.
+
+
 ## Core Capabilities
 
 ### 1. Rapid Repairs

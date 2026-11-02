@@ -30,6 +30,11 @@ mcp_tools:
   pantheon-vision: [vision_describe, vision_ocr, vision_analyze]
 ---
 
+## Verification Tiers
+
+Small bounded fix → change + one targeted proof, no ceremony. Material change → full test discipline. Match the tier to the change.
+
+
 ##  When NOT to Use Aphrodite
 - For backend API implementation — that's @hermes
 - For database schema changes — that's @demeter

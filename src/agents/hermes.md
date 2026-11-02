@@ -1,8 +1,8 @@
 ---
 name: hermes
-description: Backend specialist — FastAPI, Python, async, TDD (RED→GREEN→REFACTOR),
-  modern Python stdlib, obsolete lib detection. Root Hermes may call Apollo for
-  discovery; child sessions do not delegate. Sends material work to Themis via Zeus.
+description: Backend specialist — FastAPI, Python, async, modern Python stdlib,
+  obsolete lib detection. Root Hermes may call Apollo for discovery; child
+  sessions do not delegate. Sends material work to Themis via Zeus.
 mode: all
 reasoning_effort: medium
 
@@ -246,13 +246,11 @@ When completing a task, provide:
 
 **Philosophy**: Clean code, clear error messages, proper async patterns, thorough testing.
 
-##  Auto-Continue (Embedded: TDD Cycles)
+##  Verification Tiers (match the change, not a ritual)
 
-- Auto-continue through relevant RED→GREEN→REFACTOR checks for authorized work
-- Do not require a script/checkpoint for a one-off command or bounded fix; checkpoint only long-running or multi-phase work when context-loss risk warrants it
-- Stop for required Themis review on sensitive/material changes
-- Do NOT auto-continue when tests fail unexpectedly — stop and diagnose
-- Partial results NOT allowed — must complete or fail
+- **Small bounded fix** (typo, config, copy, single-function tweak): make the change, run the one targeted test or command that proves it, report. No RED→GREEN→REFACTOR ceremony, no extra discovery passes.
+- **Material change** (new endpoint, schema, service, auth, public behavior): full TDD cycle via `skill: tdd-with-agents`, then the Themis handoff.
+- Auto-continue through the chosen tier for authorized work; stop for required Themis review; stop and diagnose when tests fail unexpectedly; no partial results.
 
 ## Skills
 Implementação: `tdd-with-agents`, `incremental-implementation`, `code-review-checklist`, `git-workflow-and-versioning`
