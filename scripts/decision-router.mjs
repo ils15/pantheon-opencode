@@ -332,11 +332,16 @@ export async function runDecisionRouterCommand(
       ...(noConsent ? {} : { egress_consent: true }),
     })
     stdout(`Selected and enabled ${provider}/${model}.`)
-    stdout(noConsent ? 'Egress consent NOT recorded (--no-consent).' : 'Egress consent recorded: yes.')
+    stdout(
+      noConsent ? 'Egress consent NOT recorded (--no-consent).' : 'Egress consent recorded: yes.',
+    )
 
     const ledger = openLedger(env)
     try {
-      ledger.configureUserCaps({ monthlyCapMicros: caps.monthly, perDecisionCapMicros: caps.perDecision })
+      ledger.configureUserCaps({
+        monthlyCapMicros: caps.monthly,
+        perDecisionCapMicros: caps.perDecision,
+      })
       ledger.configureProviderCaps(DECISION_PROVIDER_BUDGET_MAPPING[provider], {
         monthlyCapMicros: caps.monthly,
         perDecisionCapMicros: caps.perDecision,
@@ -372,9 +377,7 @@ export async function runDecisionRouterCommand(
       '  1. Host catalog: the model must exist as type "decision" (stock: opencode/jev-1.13; custom providers need type: "decision" in opencode.json). Verify: decision-router doctor',
     )
     stdout('  2. Restart OpenCode so the plugin registers pantheon_jev_decide.')
-    stdout(
-      '  3. Ask the Zeus agent to call pantheon_jev_decide (mode: "delegation" or "skills").',
-    )
+    stdout('  3. Ask the Zeus agent to call pantheon_jev_decide (mode: "delegation" or "skills").')
     stdout('Read-only verification: decision-router status / doctor / holds.')
     return
   }
@@ -393,14 +396,22 @@ export async function runDecisionRouterCommand(
     const pass = (name, detail) => rows.push({ name, state: 'PASS', detail })
 
     if (!existsSync(resolveUserDecisionRouterConfigPath(env))) {
-      fail('config', 'no user-level config yet', 'decision-router setup-model <provider>/<model> --monthly-usd N --per-decision-usd N')
+      fail(
+        'config',
+        'no user-level config yet',
+        'decision-router setup-model <provider>/<model> --monthly-usd N --per-decision-usd N',
+      )
     } else if (!config.enabled) {
       fail('config', 'turn selection is disabled', 'decision-router enable')
     } else {
       pass('config', 'enabled')
     }
     if (config.enabled && !config.egress_consent) {
-      fail('consent', 'egress consent missing', 'decision-router consent yes (or rerun setup-model without --no-consent)')
+      fail(
+        'consent',
+        'egress consent missing',
+        'decision-router consent yes (or rerun setup-model without --no-consent)',
+      )
     } else if (config.enabled) {
       pass('consent', 'recorded')
     }
@@ -409,26 +420,45 @@ export async function runDecisionRouterCommand(
     if (config.enabled && selection.mode === 'local') {
       fail('selection', 'selection is local', 'decision-router select <provider>/<model>')
     } else if (config.enabled && selection.mode === 'auto') {
-      if (egress.mode === 'opt-in') pass('selection', `auto resolved ${egress.provider}/${egress.candidate.model}`)
-      else fail('selection', `auto did not resolve (${egress.reason})`, 'enable exactly one cap-valid candidate, or select explicitly')
+      if (egress.mode === 'opt-in')
+        pass('selection', `auto resolved ${egress.provider}/${egress.candidate.model}`)
+      else
+        fail(
+          'selection',
+          `auto did not resolve (${egress.reason})`,
+          'enable exactly one cap-valid candidate, or select explicitly',
+        )
     } else if (config.enabled && selection.mode === 'explicit') {
       const enabled = config.enabled_candidates.some(
-        (candidate) => candidate.provider === selection.provider && candidate.model === selection.model,
+        (candidate) =>
+          candidate.provider === selection.provider && candidate.model === selection.model,
       )
       if (!enabled) {
-        fail('selection', `${selection.provider}/${selection.model} selected but not enabled`, `decision-router enable ${selection.provider} ${selection.model}`)
+        fail(
+          'selection',
+          `${selection.provider}/${selection.model} selected but not enabled`,
+          `decision-router enable ${selection.provider} ${selection.model}`,
+        )
       } else {
         pass('selection', `${selection.provider}/${selection.model}`)
       }
     }
 
     if (config.enabled && egress.mode !== 'opt-in' && config.egress_consent) {
-      fail('budget', `no cap- and period-eligible candidate (${egress.reason})`, 'decision-router caps user|provider|model ... and decision-router period confirm')
+      fail(
+        'budget',
+        `no cap- and period-eligible candidate (${egress.reason})`,
+        'decision-router caps user|provider|model ... and decision-router period confirm',
+      )
     } else if (config.enabled && egress.mode === 'opt-in') {
       pass('budget', `admission open for ${egress.provider}/${egress.candidate.model}`)
     }
     if (inspection.ledger.present && inspection.ledger.readable && inspection.ledger.holds > 0) {
-      warn('holds', `${inspection.ledger.holds} unresolved hold(s) hold budget until reconciled`, 'decision-router holds')
+      warn(
+        'holds',
+        `${inspection.ledger.holds} unresolved hold(s) hold budget until reconciled`,
+        'decision-router holds',
+      )
     }
 
     const target =
@@ -453,7 +483,11 @@ export async function runDecisionRouterCommand(
           )
         }
       } else {
-        warn('host-catalog', `could not probe: ${probe.reason}`, 'run `opencode models` manually; slow plugin activation is the usual cause')
+        warn(
+          'host-catalog',
+          `could not probe: ${probe.reason}`,
+          'run `opencode models` manually; slow plugin activation is the usual cause',
+        )
       }
     }
 
