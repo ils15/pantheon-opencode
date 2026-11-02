@@ -13,6 +13,7 @@ permission:
   webfetch: allow
   edit: deny
   hashline_edit: deny
+  shell: deny
   bash: deny
   task:
     "*": deny

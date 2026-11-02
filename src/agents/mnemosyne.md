@@ -26,6 +26,7 @@ skills:
   - simplify
   - worktrees
 permission:
+  shell: deny
   bash: deny
   read: allow
   grep: allow

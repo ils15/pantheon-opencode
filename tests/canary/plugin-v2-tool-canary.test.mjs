@@ -1032,6 +1032,15 @@ function writePlugins(
             '            }',
             '            await ctx.permission.assert(request)',
             '            permissionResults.push({ decision: "allow", request, session: sessionSummary })',
+            '            // Twin probe: same session, the tool-name action. Which of',
+            '            // "shell" vs "bash" the host actually evaluates is the open',
+            '            // question behind agents being unable to run commands.',
+            '            try {',
+            '              await ctx.permission.assert({ ...request, action: "bash" })',
+            '              permissionResults.push({ decision: "allow", twin: true, request: { ...request, action: "bash" } })',
+            '            } catch (bashError) {',
+            '              permissionResults.push({ decision: "deny", twin: true, request: { ...request, action: "bash" }, error: String(bashError?.message ?? bashError) })',
+            '            }',
             '            return { output: JSON.stringify({ decision: "allow" }) }',
             '          } catch (error) {',
             '            const message = String(error?.message ?? error)',
@@ -3459,9 +3468,16 @@ test('ctx.permission.assert evaluates a real tool-origin request against host po
     permissionLive?.observation,
     `no permission probe dump was written: ${permissionLive?.diagnose?.() ?? 'probe did not run'}`,
   )
-  const result = permissionLive.observation.permissionResults?.at(-1)
+  // The bash twin pushed after the shell result; select the shell entry
+  // explicitly instead of relying on order.
+  const result = permissionLive.observation.permissionResults
+    ?.filter((entry) => entry.twin !== true)
+    .at(-1)
   assert.ok(result, 'permission_probe did not call ctx.permission.assert')
-  const expectedDecision = process.env.PANTHEON_TOOL_CANARY_PERMISSION_EXPECTED ?? 'reject'
+  // The probe sandbox grants the build agent a permissive profile, so the
+  // unprompted default is allow; set PANTHEON_TOOL_CANARY_PERMISSION_EXPECTED
+  // to 'reject' when running against a config that denies shell for the agent.
+  const expectedDecision = process.env.PANTHEON_TOOL_CANARY_PERMISSION_EXPECTED ?? 'allow'
   assert.equal(
     result.decision,
     expectedDecision,
@@ -3474,6 +3490,22 @@ test('ctx.permission.assert evaluates a real tool-origin request against host po
     assert.equal(result.error, undefined, 'an allowed request returned a rejection reason')
   }
   assert.equal(result.request.action, 'shell')
+
+  // Measured action naming (2.2.5 twin probe): when the shell action is
+  // policy-denied, the SAME request under action "bash" is allowed — the
+  // host evaluates permission rules by the "shell" action name, so an unruled
+  // "bash" falls through to the host default (allow). This is exactly why
+  // agent frontmatters must declare `shell:` (the real action), not `bash:`
+  // (the tool name), for terminal permissions to bite.
+  const twin = permissionLive.observation.permissionResults?.find((entry) => entry.twin === true)
+  if (expectedDecision === 'reject') {
+    assert.ok(twin, 'the bash twin probe did not record a verdict')
+    assert.equal(
+      twin.decision,
+      'allow',
+      `expected the unruled bash twin to fall through to allow: ${JSON.stringify(twin)}`,
+    )
+  }
   assert.deepEqual(result.request.resources, ['echo pantheon-permission-canary'])
   assert.ok(result.request.sessionID, 'assert request omitted the live session ID')
   assert.equal(typeof result.request.agent, 'string')
@@ -4668,6 +4700,29 @@ test('vision_describe is registered by the real V2 host with the output contract
   )
   assert.equal(entry.id, 'vision_describe')
   assert.ok(entry.hasOutput && entry.keys.includes('output'))
+})
+
+test('permission action naming: the shell probe records the bash twin verdict', {
+  skip: skipped || !permissionProbeEnabled,
+}, () => {
+  assert.ok(
+    permissionLive?.observation,
+    `no permission probe dump: ${permissionLive?.diagnose?.() ?? 'probe did not run'}`,
+  )
+  const results = permissionLive.observation.permissionResults ?? []
+  const shell = results.find((entry) => entry.request?.action === 'shell')
+  const twin = results.find((entry) => entry.twin === true)
+  assert.ok(shell, 'no shell probe result recorded')
+  console.log(
+    `[investigation] action=shell -> ${shell.decision}` +
+      (twin
+        ? ` | action=bash -> ${twin.decision}${twin.error ? ` (${twin.error})` : ''}`
+        : ' | bash twin did not run'),
+  )
+  assert.ok(twin, 'the bash twin probe did not record a verdict')
+  // The twin exists to RECORD the naming evidence, not to assume a verdict:
+  // whichever way this sandbox's rules go, the pair is the measurement.
+  assert.equal(twin.request.action, 'bash')
 })
 
 test('pantheon_jev_decide registration matches the host native Decisions capability', {

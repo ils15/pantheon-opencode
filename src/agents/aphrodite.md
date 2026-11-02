@@ -8,7 +8,7 @@ permission:
   grep: allow
   edit: allow
   vision_describe: allow
-  bash: allow
+  shell: allow
   webfetch: allow
   glob: allow
   question: allow
