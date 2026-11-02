@@ -126,10 +126,25 @@ The decision layers are ordered by cost; use the cheapest one that answers:
 | Explicit typed questions | one typed call | any bounded choice/score/yes-no the orchestrator wants judged |
 | Main chat model | full model call | open-ended reasoning — never replaced by the layers above |
 
-Not built yet (mapped, deliberately unwired): council analysis through Jev,
-gating memory-MCP calls on a typed predicate, and per-agent decision
-affordances beyond Zeus. Each needs its own carrier measurement, consent
-policy, and review before wiring.
+### Candidate expansions (mapped, deliberately unwired)
+
+Each row names the decision, the Jev question, and what must be proven before
+wiring. None is authorized by this release; every one needs its own carrier
+measurement, consent/payload policy, and review — the same bar the tool
+itself went through.
+
+| Candidate | Jev question | Why it could help | Must be proven first |
+| --- | --- | --- | --- |
+| Memory persistence advisory | predicate: "is this state worth a durable entry?" | fewer missed saves and less noise | the measured save-moment carrier; the advisory must never relax the explicit request/authorization rule |
+| Council pre-ranking | choice over counselors | cheaper assembly for genuinely multi-perspective work | a real council carrier (the council point is still unwired) |
+| Vision-call gating | predicate before `vision_describe` | probably none — vision already fires only for image jobs; an extra decision adds latency | a measured case of vision invoked without an image driver |
+| Per-agent affordances | specialists' own typed questions | parallel small decisions off the main model | caller-matrix policy, per-agent consent, review |
+| Skill discovery tool | search the ecosystem from the session | removes the manual `npx skills find` step | its own networked-egress consent surface and a registry trust policy |
+
+Until one of these is wired, the flow stays: local prefilter → Jev preset
+(consented) → main model, with MCP calls governed by their own documented
+policies (memory: explicit request/authorization; vision: image-driven;
+persistence: explicit checkpoints).
 
 ## Skill ecosystem (hybrid, on-demand)
 
