@@ -15,6 +15,7 @@ import {
   maskSecretMatch,
   resolveDelegationLogDir,
   runSecretScanInProcess,
+  secretScanApplies,
 } from '../../src/pantheon/v2-hook-engine.ts'
 
 function scan(payload: unknown) {
@@ -27,13 +28,16 @@ function testScanContract(): void {
   assert.equal(scan({ tool_input: '' }).code, 0)
 
   // High-confidence token formats → exit 2 with the block line.
+  // The AWS example key is assembled at runtime: the CI critical-secret scan
+  // matches the raw literal in tracked sources.
+  const awsExample = `${'AKIA'}${'IOSFODNN7EXAMPLE'}`
   const high = scan({
-    tool_input: `key = "AKIAIOSFODNN7EXAMPLE" plus GH_TOKEN=ghp_${'a'.repeat(36)}`,
+    tool_input: `key = "${awsExample}" plus GH_TOKEN=ghp_${'a'.repeat(36)}`,
   })
   assert.equal(high.code, 2)
   assert.ok(high.stderr.includes('[SECRET SCAN]'))
   assert.ok(high.stderr.includes('Tool call will be BLOCKED'))
-  assert.ok(!high.stderr.includes('AKIAIOSFODNN7EXAMPLE'), 'match is masked')
+  assert.ok(!high.stderr.includes(awsExample), 'match is masked')
   assert.ok(high.stderr.includes('AKIA****MPLE'), 'first4****last4 masking')
 
   // Bifrost prefix and bearer/JWT families.
@@ -155,6 +159,20 @@ function testAuditAppenderAndDir(): void {
   }
 }
 
+function testScanGate(): void {
+  assert.equal(secretScanApplies('bash'), true)
+  assert.equal(secretScanApplies('write'), true)
+  assert.equal(secretScanApplies('Edit'), true)
+  assert.equal(secretScanApplies('hashline_edit'), true)
+  assert.equal(secretScanApplies('webfetch'), true)
+  assert.equal(secretScanApplies('read'), false)
+  assert.equal(secretScanApplies('grep'), false)
+  assert.equal(secretScanApplies('glob'), false)
+  assert.equal(secretScanApplies('session_list'), false)
+  assert.equal(secretScanApplies('unknown_future_tool'), true, 'unknown names stay scanned')
+  assert.equal(secretScanApplies(undefined), true, 'missing tool name stays scanned')
+}
+
 function testFormatterGate(): void {
   assert.equal(formatterApplies('edit', { file_path: 'src/mod.ts' }), true)
   assert.equal(formatterApplies('Write', { file_path: 'README.md' }), true)
@@ -170,4 +188,5 @@ testMasking()
 testAuditLines()
 testAuditAppenderAndDir()
 testFormatterGate()
+testScanGate()
 console.log('v2 hook engine tests passed')

@@ -107,7 +107,7 @@ async function captureOutput(fn) {
 }
 
 /** A V2 install over an existing config, returning the written config. */
-async function installV2With(existingConfig, prepare = () => {}) {
+async function installV2With(existingConfig, prepare = () => {}, { verbose = false } = {}) {
   const target = scratchDir('pantheon-truthfulness-')
   try {
     prepare(target)
@@ -115,7 +115,12 @@ async function installV2With(existingConfig, prepare = () => {}) {
       writeFileSync(join(target, 'opencode.json'), `${JSON.stringify(existingConfig, null, 2)}\n`)
     }
     const { output, result } = await captureOutput(() =>
-      installOpenCode(target, false, false, [], { yes: true, headless: true, version: 'v2' }),
+      installOpenCode(target, false, false, [], {
+        yes: true,
+        headless: true,
+        version: 'v2',
+        verbose,
+      }),
     )
     return {
       output,
@@ -562,21 +567,35 @@ test('the capability payload and the seed cannot drift', () => {
   assert.deepEqual(listV2UnsupportedFeatures(), SEED)
 })
 
-test('a V2 install prints the capability notice exactly once', async () => {
-  const run = await installV2With(null)
+test('a V2 install keeps the capability block quiet by default and prints it once under --verbose', async () => {
+  // Default output is action-oriented: the eleven-fact capability block is
+  // install detail, gated behind --verbose (the user-facing change from the
+  // installer-noise review).
+  const quiet = await installV2With(null)
   try {
     assert.equal(
-      countOccurrences(run.output, 'what this install registers'),
-      1,
-      `the registered-surface notice must appear once:\n${run.output}`,
+      countOccurrences(quiet.output, 'what this install registers'),
+      0,
+      `the capability block must not print by default:\n${quiet.output}`,
     )
-    assert.equal(countOccurrences(run.output, 'OpenCode V2 target'), 1)
-    assert.match(run.output, /session context\/prompt\/compaction/)
+    assert.equal(countOccurrences(quiet.output, 'OpenCode V2 target'), 1)
+  } finally {
+    quiet.cleanup()
+  }
+
+  const verbose = await installV2With(null, undefined, { verbose: true })
+  try {
+    assert.equal(
+      countOccurrences(verbose.output, 'what this install registers'),
+      1,
+      `the registered-surface notice must appear exactly once under --verbose:\n${verbose.output}`,
+    )
+    assert.match(verbose.output, /session context\/prompt\/compaction/)
     for (const feature of SEED) {
-      assert.ok(run.output.includes(feature), `missing "${feature}"`)
+      assert.ok(verbose.output.includes(feature), `missing "${feature}"`)
     }
   } finally {
-    run.cleanup()
+    verbose.cleanup()
   }
 })
 
@@ -605,10 +624,11 @@ test('an unauthorized V2 preview prints each notice exactly once (not twice)', (
       1,
       `the state notice must appear once:\n${output}`,
     )
+    // Quiet by default: the capability block is --verbose-only detail now.
     assert.equal(
       countOccurrences(output, 'what this install registers'),
-      1,
-      `the capability notice must appear once:\n${output}`,
+      0,
+      `the capability notice must stay quiet by default:\n${output}`,
     )
     assert.match(output, /re-run with --yes/i)
   } finally {

@@ -7,6 +7,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **install** — The wizard's decision-model question now configures the real route (consent + caps + period in one write): Console Jev, the free variant, or TypeSafe direct.
+- **install** — Choosing TypeSafe direct merges the `providers.typesafe-ai` entry additively into the user's opencode.json; only the sign-in remains.
+- **install** — Legacy metadata spellings degrade to skip with a hint; direct OpenAI has no native Decisions route.
+- **install** — The capability notice prints only under `--verbose`.
+
+### Changed
+
+- **performance** — The in-process secret scan is gated to exfil-capable tools (shell, file writes, web); read-only tools skip it, unknown names stay scanned (fail-closed).
+- **agents** — Zeus must never ask the user to type terminal commands: terminal work dispatches to a bash-capable specialist.
+
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 

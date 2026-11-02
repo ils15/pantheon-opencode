@@ -76,6 +76,31 @@ function firstMatch(input: string, pattern: RegExp): string | null {
   return found === null ? null : found[0]
 }
 
+/**
+ * Known read-only tools: their INPUT cannot carry a secret out of the user's
+ * machine (paths, patterns, ids), so scanning them was pure latency. The gate
+ * is a DENYLIST — any tool this list has never heard of keeps getting scanned
+ * (fail-closed for unknown names).
+ */
+const READ_ONLY_TOOLS = new Set([
+  'read',
+  'grep',
+  'glob',
+  'list',
+  'question',
+  'session_list',
+  'session_read',
+  'worktree_list',
+  'subagent_list',
+])
+
+export function secretScanApplies(tool: unknown): boolean {
+  if (typeof tool !== 'string') return true
+  const normalized = tool.trim().toLowerCase()
+  if (normalized === '') return true
+  return !READ_ONLY_TOOLS.has(normalized)
+}
+
 /** The serialized tool input the shell scanner received as `$1`/stdin. */
 function scannerInput(payload: HookPayload): string {
   if (typeof payload === 'string') return payload

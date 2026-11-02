@@ -60,6 +60,50 @@ function readVersion() {
   }
 }
 
+/**
+ * Merge the TypeSafe decision-model provider entry into the user's
+ * `opencode.json` (never replaces existing keys; a non-JSON file is reported,
+ * never overwritten). Returns true, or a short failure reason.
+ */
+/**
+ * Merge (never overwrite) the TypeSafe decision-model entry into the user's
+ * OpenCode config, so choosing the TypeSafe route in the wizard needs only the
+ * user's own sign-in afterwards. The merge is additive: existing provider
+ * entries and an existing jev-1.14.0 model are preserved. Returns true, or a
+ * short failure reason for the installer to print.
+ */
+function provisionTypesafeProvider() {
+  const xdg = process.env.XDG_CONFIG_HOME
+  const home = process.env.HOME
+  const base = xdg && xdg.startsWith('/') ? xdg : `${home ?? '~'}/.config`
+  const candidates = [`${base}/opencode/opencode.json`]
+  if (home) candidates.push(`${home}/.config/opencode/opencode.json`)
+  const configPath = candidates.find((candidate) => fs.existsSync(candidate))
+  if (configPath === undefined) return 'opencode.json not found'
+  let data
+  try {
+    data = JSON.parse(fs.readFileSync(configPath, 'utf8'))
+  } catch {
+    return 'opencode.json is not plain JSON (comments?)'
+  }
+  data.providers ??= {}
+  data.providers['typesafe-ai'] ??= {}
+  data.providers['typesafe-ai'].models ??= {}
+  if (data.providers['typesafe-ai'].models['jev-1.14.0'] === undefined) {
+    data.providers['typesafe-ai'].models['jev-1.14.0'] = {
+      name: 'Jev (TypeSafe direct)',
+      modelID: 'jev-latest',
+      type: 'decision',
+    }
+  }
+  try {
+    fs.writeFileSync(configPath, `${JSON.stringify(data, null, 2)}\n`)
+    return true
+  } catch (error) {
+    return String(error instanceof Error ? error.message : error)
+  }
+}
+
 /** Value of a repeatable installer flag from the raw argv, or undefined. */
 function readArgValue(name) {
   const prefix = `${name}=`
@@ -979,10 +1023,13 @@ async function main() {
     // explicit caps (the setup-model chain: selection + enable + consent +
     // user/provider/model caps + period confirmation). Dry-run prints intent
     // only. Failures never fail the install itself.
-    const decisionTarget = readArgValue('--decision-model')
+    // Explicit flags win; otherwise honor the wizard's Jev activation choice.
+    const wizardActivation = result.decisionModelActivation ?? null
+    const decisionTarget = readArgValue('--decision-model') ?? wizardActivation?.target ?? null
     if (decisionTarget) {
-      const monthly = readArgValue('--decision-monthly-usd') ?? '5'
-      const perDecision = readArgValue('--decision-per-decision-usd') ?? '0.10'
+      const monthly = readArgValue('--decision-monthly-usd') ?? wizardActivation?.monthly ?? '5'
+      const perDecision =
+        readArgValue('--decision-per-decision-usd') ?? wizardActivation?.perDecision ?? '0.10'
       const noConsent = process.argv.includes('--decision-no-consent')
       console.log('')
       if (isDryRun) {
@@ -1003,6 +1050,14 @@ async function main() {
             { stdout: (line) => console.log(`  ${line}`) },
           )
           console.log(`  ${S.jevConfigured(decisionTarget)}`)
+          if (decisionTarget.startsWith('typesafe-jev')) {
+            const provisioned = provisionTypesafeProvider()
+            console.log(
+              provisioned === true
+                ? '  TypeSafe provider entry merged into opencode.json (models.typesafe-ai, type "decision"). Sign in with `opencode auth login` (TypeSafe) or /connect.'
+                : `  TypeSafe provider entry NOT merged (${provisioned}); merge it manually — see docs/reference/native-decisions.md.`,
+            )
+          }
         } catch (error) {
           console.error(
             `  ${S.jevConfigureFailed(error instanceof Error ? error.message : String(error))}`,

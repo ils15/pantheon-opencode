@@ -126,61 +126,86 @@ export async function runInteractiveInstall({
   })
   if (cancelPrompt(prompts, target, 'target')) return { canceled: true, cancelPoint: 'target' }
 
-  const previousConfig = migrateDecisionRouterConfig(getDecisionRouterConfig(target))
-  const provider = await prompts.select({
+  // The old four-option metadata prompt (Local/OpenAI/Jev/Auto) recorded an
+  // installer preference that controlled nothing at runtime and confused
+  // everyone. The interactive question is now the honest one: configure the
+  // Jev decision model now (one write, explicit caps) or skip — the CLI
+  // (`decision-router setup-model`) remains the later path either way. The
+  // legacy installer-state record stays at its default (Local): metadata the
+  // runtime never reads, while real consent lives in the user-level config
+  // that setup-model writes.
+  const jevActivation = await prompts.select({
     message:
-      'Decision-router installer preference (default: Local). This records target-specific metadata only; runtime provider/model settings, egress consent, caps, and period confirmation are managed separately with `npx pantheon-opencode decision-router ...`. Installation makes no provider requests.',
+      'Configure the Jev decision model now? (advisory tool for Zeus; one write: selection, consent, caps, period — USD caps are required)',
     options: [
       {
-        label: 'Local',
-        value: DECISION_ROUTER_PROVIDERS[0],
-        hint: 'Local recommendation logic; no task data is sent to a provider',
+        label: 'Skip (default)',
+        value: 'skip',
+        hint: 'Configure later: decision-router setup-model',
       },
       {
-        label: 'OpenAI Decisions',
-        value: DECISION_ROUTER_PROVIDERS[1],
-        hint: 'GPT-6 Luna installer metadata only; set runtime config separately',
+        label: 'OpenCode Console Jev (stock)',
+        value: 'opencode-console-jev/jev-1.13',
+        hint: 'Billed to your Console; uses host-owned auth',
       },
       {
-        label: 'Jev',
-        value: DECISION_ROUTER_PROVIDERS[2],
-        hint: 'TypeSafe Jev installer metadata only; set runtime config separately',
+        label: 'Console Jev free variant',
+        value: 'opencode-console-jev-free/jev-1.13-free',
+        hint: 'No paid budget consumed; host-owned auth',
       },
       {
-        label: 'Auto',
-        value: DECISION_ROUTER_PROVIDERS[3],
-        hint: 'Installer metadata only; runtime Auto requires one cap-valid enabled candidate',
+        label: 'TypeSafe Jev (direct)',
+        value: 'typesafe-jev/jev-1.14.0',
+        hint: 'Installer merges the provider entry; you sign in with your TypeSafe key (/connect)',
       },
     ],
-    initialValue: previousConfig.provider,
+    initialValue: 'skip',
   })
-  if (cancelPrompt(prompts, provider, 'decisionRouter')) {
+  if (cancelPrompt(prompts, jevActivation, 'decisionRouter')) {
     return { canceled: true, cancelPoint: 'decisionRouter' }
   }
-
-  let egressConsent = false
-  if (provider !== 'local') {
-    const providerLabel =
-      provider === 'openai-decisions'
-        ? 'OpenAI Decisions'
-        : provider === 'jev'
-          ? 'Jev'
-          : 'the Auto-selected provider'
-    const consent = await prompts.confirm({
-      message:
-        `Save a legacy installer consent preference for potential future ${providerLabel} use? ` +
-        'This is not runtime consent and does not authorize provider transmission. Configure actual user-level consent and caps with `npx pantheon-opencode decision-router ...`. Installation makes no provider requests.',
-      initialValue: previousConfig.provider === provider && previousConfig.egress_consent,
-    })
-    if (cancelPrompt(prompts, consent, 'egressConsent')) {
-      return { canceled: true, cancelPoint: 'egressConsent' }
+  // Only known targets activate; anything else (a stale stub, a renamed
+  // option) degrades to skip instead of configuring a wrong route.
+  const KNOWN_JEV_TARGETS = new Set([
+    'opencode-console-jev/jev-1.13',
+    'opencode-console-jev-free/jev-1.13-free',
+    'typesafe-jev/jev-1.14.0',
+  ])
+  const activationChoice =
+    typeof jevActivation === 'string' && KNOWN_JEV_TARGETS.has(jevActivation)
+      ? jevActivation
+      : 'skip'
+  let decisionModelActivation = null
+  if (activationChoice !== 'skip') {
+    // Caps prompts degrade to the recommended defaults when the prompt
+    // implementation has no text input (stubbed tests, restricted TTYs).
+    const askText = async (message, fallback) => {
+      if (typeof prompts.text !== 'function') return fallback
+      const answer = await prompts.text({ message, defaultValue: fallback, placeholder: fallback })
+      if (cancelPrompt(prompts, answer, 'decisionRouter')) {
+        return { canceled: true }
+      }
+      return String(answer || fallback)
     }
-    egressConsent = consent === true
+    const monthly = await askText('Monthly USD cap for decision calls (e.g. 5)', '5')
+    if (monthly && typeof monthly === 'object') {
+      return { canceled: true, cancelPoint: 'decisionRouter' }
+    }
+    const perDecision = await askText('Per-decision USD cap (e.g. 0.10)', '0.10')
+    if (perDecision && typeof perDecision === 'object') {
+      return { canceled: true, cancelPoint: 'decisionRouter' }
+    }
+    decisionModelActivation = {
+      target: activationChoice,
+      monthly: String(monthly || '5'),
+      perDecision: String(perDecision || '0.10'),
+    }
   }
 
   return {
     components: selectedComponents,
     target,
-    decisionRouterConfig: createDecisionRouterConfig(provider, egressConsent),
+    decisionRouterConfig: createDecisionRouterConfig(DECISION_ROUTER_PROVIDERS[0], false),
+    decisionModelActivation,
   }
 }
