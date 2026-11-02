@@ -945,6 +945,9 @@ function writePlugins(
       '        list: kind(ctx.tool && ctx.tool.list),',
       '      },',
       '      event: { subscribe: kind(ctx.event && ctx.event.subscribe) },',
+      '      experimental: {',
+      '        nativeDecisions: kind(ctx.experimental && ctx.experimental.generate && ctx.experimental.generate.decisions),',
+      '      },',
       '      permission: {',
       '        hook: kind(ctx.permission && ctx.permission.hook),',
       '        assert: kind(ctx.permission && ctx.permission.assert),',
@@ -4667,19 +4670,30 @@ test('vision_describe is registered by the real V2 host with the output contract
   assert.ok(entry.hasOutput && entry.keys.includes('output'))
 })
 
-test('pantheon_jev_decide is registered by the real V2 host with the output contract', {
+test('pantheon_jev_decide registration matches the host native Decisions capability', {
   skip: skipped,
 }, () => {
   assert.ok(live.observation, `the probe wrote no dump: ${live.diagnose()}`)
+  const capability = live.observation.domains?.experimental?.nativeDecisions
   const entry = live.observation.toolList.find((tool) => tool.name === 'pantheon_jev_decide')
-  assert.ok(
-    entry,
-    `ctx.tool.list() has no pantheon_jev_decide; host-built names: ${live.observation.toolList
-      .map((tool) => tool.name)
-      .join(', ')}`,
-  )
-  assert.equal(entry.id, 'pantheon_jev_decide')
-  assert.ok(entry.hasOutput && entry.keys.includes('output'))
+  if (capability === 'function') {
+    assert.ok(
+      entry,
+      `ctx.tool.list() has no pantheon_jev_decide although the host exposes the native ` +
+        `Decisions API; host-built names: ${live.observation.toolList
+          .map((tool) => tool.name)
+          .join(', ')}`,
+    )
+    assert.equal(entry.id, 'pantheon_jev_decide')
+    assert.ok(entry.hasOutput && entry.keys.includes('output'))
+  } else {
+    assert.equal(
+      entry,
+      undefined,
+      `pantheon_jev_decide registered on a host whose native Decisions capability is ` +
+        `'${capability}' — the feature-detect must gate registration`,
+    )
+  }
 })
 
 test('native V2 Vision sends image data to the live-catalog paid Go MiMo model', {
