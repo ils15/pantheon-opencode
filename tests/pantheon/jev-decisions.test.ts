@@ -402,6 +402,57 @@ function testPresets(): void {
     assert.ok(question.choices.some((option) => option.value === 'hermes'))
   }
 
+  // Host-installed skills extend the pool after the catalog pool, deduped,
+  // bounded, with descriptions carried through; malformed entries are skipped.
+  const hostSkills = [
+    { id: 'docker-build-strategies', description: 'Build optimized Docker images.' },
+    { id: 'tdd-with-agents', description: 'duplicate of a catalog skill' },
+    { id: 'x'.repeat(65) },
+    null,
+    'junk',
+    42,
+    { id: 'no-description' },
+  ]
+  const merged = prepareJevPresetRequest(
+    route,
+    'skills',
+    {
+      state: 'implement a FastAPI backend endpoint with pytest',
+    },
+    hostSkills,
+  )
+  assert.ok(merged.ok)
+  if (merged.ok) {
+    const choices = (
+      merged.request.questions[0] as { choices: Array<{ value: string; description?: string }> }
+    ).choices
+    const docker = choices.find((option) => option.value === 'docker-build-strategies')
+    assert.ok(docker, 'an installed host skill becomes decidable')
+    assert.equal(docker?.description, 'Build optimized Docker images.')
+    assert.equal(
+      choices.filter((option) => option.value === 'tdd-with-agents').length,
+      1,
+      'installed skills dedupe against the catalog',
+    )
+    assert.equal(
+      choices.some((option) => option.value === 'x'.repeat(65)),
+      false,
+      'over-long ids are skipped',
+    )
+    assert.ok(choices.some((option) => option.value === 'no-description'))
+    assert.ok(choices.length <= 24)
+  }
+
+  // Full-catalog fallback still respects the bound with many host skills.
+  const many = Array.from({ length: 30 }, (_, index) => ({ id: `host-skill-${index}` }))
+  const capped = prepareJevPresetRequest(route, 'skills', { state: 'qwertyuiop' }, many)
+  assert.ok(capped.ok)
+  if (capped.ok) {
+    const choices = (capped.request.questions[0] as { choices: Array<{ value: string }> }).choices
+    assert.equal(choices.length, 24, 'bound is catalog pool + host skills up to 23 + none')
+    assert.ok(choices.some((option) => option.value === 'none'))
+  }
+
   // A preset is exclusive with explicit questions; state bounds still apply.
   assert.equal(
     prepareJevPresetRequest(route, 'skills', { state: 'x', questions: [] }).ok,
@@ -681,15 +732,44 @@ async function testToolGateChain(): Promise<void> {
     }
 
     // Preset mode: one prepared catalog question, refusal for unknown modes.
+    // The host skill registry extends the pool; a hostile one degrades to
+    // catalog-only.
     const preset = stubRuntime()
+    preset.runtime.listSkills = async () => [
+      { id: 'docker-build-strategies', description: 'Build optimized Docker images.' },
+      'garbage',
+      { id: '' },
+    ]
     const presetOutput = await runJevDecision(
       { schemaVersion: 1, state: 'implement a FastAPI endpoint with pytest', mode: 'skills' },
       toolContext,
       preset.runtime,
     )
     assert.equal(preset.decideCalls.length, 1)
-    const presetRequest = preset.decideCalls[0] as { questions: Array<{ name: string }> }
+    const presetRequest = preset.decideCalls[0] as {
+      questions: Array<{ name: string; choices?: Array<{ value: string }> }>
+    }
     assert.equal(presetRequest.questions[0]?.name, 'stack')
+    assert.ok(
+      presetRequest.questions[0]?.choices?.some(
+        (option) => option.value === 'docker-build-strategies',
+      ),
+      'installed host skills are offered to the decision model',
+    )
+    const hostileRegistry = stubRuntime({
+      listSkills: async () => {
+        throw new Error('registry unavailable')
+      },
+    })
+    assert.equal(
+      await runJevDecision(
+        { schemaVersion: 1, state: 'implement a FastAPI endpoint with pytest', mode: 'skills' },
+        toolContext,
+        hostileRegistry.runtime,
+      ).then((output) => (JSON.parse(output) as { effect: string }).effect),
+      'none',
+      'a throwing registry degrades to the catalog-only preset',
+    )
     const presetParsed = JSON.parse(presetOutput) as { preset?: string; missing: string[] }
     assert.equal(presetParsed.preset, 'skills')
     assert.deepEqual(presetParsed.missing, ['stack'])

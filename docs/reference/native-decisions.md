@@ -131,6 +131,29 @@ gating memory-MCP calls on a typed predicate, and per-agent decision
 affordances beyond Zeus. Each needs its own carrier measurement, consent
 policy, and review before wiring.
 
+## Skill ecosystem (hybrid, on-demand)
+
+The stacking preset is open: its pool is the Pantheon catalog **plus every
+skill the host has installed** (`ctx.skill.list()`). Anything following the
+open Agent Skills format (`SKILL.md`) — Pantheon's own or third-party —
+becomes decidable the moment it is installed, with no Pantheon change.
+
+Division of labor; trusting an install is never the model's job:
+
+- **Install** — manual and reviewed. `npx skills add <repo> -a opencode`
+  (the open skills ecosystem CLI) places the skill in the host's skill
+  directories (project `.opencode/skills/` or global). Pantheon never
+  installs, updates, or removes skills, and there is no auto-update.
+  Third-party skills are untrusted instructions: review the `SKILL.md` and
+  any scripts before installing, prefer pinned versions, and keep production
+  servers off ad-hoc installs.
+- **Decide** — with the pool installed, `mode: "skills"` pre-filters local
+  candidates (or offers the whole pool) and Jev picks what to stack for the
+  current task in one typed call; the answer is advisory and loads nothing.
+- **Share** — a private skills repository (for example `ils15/pantheon-skills`)
+  becomes the approved, versioned library other projects pull from; the
+  skills CLI resolves private repositories with existing git credentials.
+
 ## Verification boundary
 
 The focused tests (`tests/pantheon/jev-decisions.test.ts`,
