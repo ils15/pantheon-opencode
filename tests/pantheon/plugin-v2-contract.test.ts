@@ -3549,10 +3549,13 @@ async function main(): Promise<void> {
     // opencode.json `plugins: ["src/plugin-v2"]` — the block would go inert
     // again while every behavioural test kept passing on a machine that has the
     // V1 plugin lying around. These two assertions together fail that.
+    // The scan runs IN-PROCESS since the bash-per-call spawn was removed
+    // (src/pantheon/v2-hook-engine.ts): the wiring to assert is the engine
+    // call as the default runner, not a shell invocation.
     assert.match(
       pluginSource,
-      /runHook\(\s*'scan-secrets\.sh'/,
-      'plugin-v2.ts must invoke scan-secrets.sh through the shared hook runner',
+      /runSecretScanInProcess\(payload\)/,
+      'plugin-v2.ts must run the secret scan through the in-process engine',
     )
     assert.match(
       pluginSource,

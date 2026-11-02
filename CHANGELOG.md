@@ -10,6 +10,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.2-beta.8] - 2026-11-02
+
+### Added
+
+- **install** — Added `init --decision-model <provider>/<model> --decision-monthly-usd N --decision-per-decision-usd N` to activate the Jev decision route during installation (the same chain as `decision-router setup-model`; `--decision-no-consent` refuses consent), and the post-install next steps now include the optional decision-model path in English and Portuguese.
+
+### Changed
+
+- **performance** — The per-tool-call secret scan and the per-dispatch delegation audit now run in-process (`v2-hook-engine.ts`): same patterns, masked trail, exit-code contract, fail-closed classifier, and `delegations.log` artifacts — without the former one `bash` child per tool call and two more per delegation (each also spawning `python3`). Post-write formatting spawns only when the tool call touched a formattable file.
+- **agents** — Specialist prompts carry two-tier verification (small bounded fix → change plus one targeted proof; material change → full discipline), replacing the unconditional TDD mandate in Hermes; Aphrodite and Talos gained the same tier note.
+- **docs** — New Performance and tuning reference (measured hook costs, prompt budget, decision latency, context-growth knob) and an INSTALLATION section for the Jev decision-model flow.
+
 ## [v1.6.2-beta.7] - 2026-11-02
 
 ### Added

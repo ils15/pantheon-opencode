@@ -60,6 +60,17 @@ function readVersion() {
   }
 }
 
+/** Value of a repeatable installer flag from the raw argv, or undefined. */
+function readArgValue(name) {
+  const prefix = `${name}=`
+  for (let i = 1; i < process.argv.length; i++) {
+    const arg = process.argv[i]
+    if (arg === name) return process.argv[i + 1]
+    if (arg.startsWith(prefix)) return arg.slice(prefix.length)
+  }
+  return undefined
+}
+
 function printUsage() {
   console.log('Pantheon OpenCode — Multi-agent orchestration platform')
   console.log('')
@@ -78,6 +89,9 @@ function printUsage() {
   console.log('  npx pantheon-opencode init --headless     # Force non-interactive mode')
   console.log('  npx pantheon-opencode init -y             # Skip confirmations, use defaults')
   console.log('  npx pantheon-opencode init --components agents,skills,instructions')
+  console.log(
+    '  npx pantheon-opencode init --decision-model opencode-console-jev/jev-1.13 --decision-monthly-usd 5 --decision-per-decision-usd 0.10',
+  )
   console.log('  npx pantheon-opencode init --opencode-version v1|v2|auto')
   console.log('  npx pantheon-opencode init --preset <name> # Install and activate model preset')
   console.log(
@@ -433,6 +447,9 @@ async function main() {
       '--merge-dev-config',
       '--apply-plan',
       '--save-plan',
+      '--decision-model',
+      '--decision-monthly-usd',
+      '--decision-per-decision-usd',
     ])
     for (let i = 1; i < args.length; i++) {
       const arg = args[i]
@@ -958,6 +975,45 @@ async function main() {
       }
     }
 
+    // Optional Jev decision-model activation, requested at install time with
+    // explicit caps (the setup-model chain: selection + enable + consent +
+    // user/provider/model caps + period confirmation). Dry-run prints intent
+    // only. Failures never fail the install itself.
+    const decisionTarget = readArgValue('--decision-model')
+    if (decisionTarget) {
+      const monthly = readArgValue('--decision-monthly-usd') ?? '5'
+      const perDecision = readArgValue('--decision-per-decision-usd') ?? '0.10'
+      const noConsent = process.argv.includes('--decision-no-consent')
+      console.log('')
+      if (isDryRun) {
+        console.log(`  ${S.jevDryRun(decisionTarget)}`)
+      } else {
+        try {
+          const { runDecisionRouterCommand } = await import('../scripts/decision-router.mjs')
+          await runDecisionRouterCommand(
+            [
+              'setup-model',
+              decisionTarget,
+              '--monthly-usd',
+              monthly,
+              '--per-decision-usd',
+              perDecision,
+              ...(noConsent ? ['--no-consent'] : []),
+            ],
+            { stdout: (line) => console.log(`  ${line}`) },
+          )
+          console.log(`  ${S.jevConfigured(decisionTarget)}`)
+        } catch (error) {
+          console.error(
+            `  ${S.jevConfigureFailed(error instanceof Error ? error.message : String(error))}`,
+          )
+          console.error(
+            `  Fix later with: npx pantheon-opencode decision-router setup-model ${decisionTarget} --monthly-usd ${monthly} --per-decision-usd ${perDecision}`,
+          )
+        }
+      }
+    }
+
     console.log('')
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
     console.log(`  ${S.installedTitle(version)}`)
@@ -968,6 +1024,9 @@ async function main() {
     console.log(`  ${S.nextLaunch}`)
     console.log(`  ${S.nextAgents}`)
     console.log(`  ${S.nextProject}`)
+    if (!decisionTarget) {
+      console.log(`  ${S.nextJev}`)
+    }
     console.log('')
 
     return

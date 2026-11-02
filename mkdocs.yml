@@ -73,6 +73,7 @@ nav:
       - Local Decision Router: reference/local-decision-router.md
       - Native Decisions (Jev): reference/native-decisions.md
       - Offline Evaluation: reference/offline-evaluation.md
+      - Performance: reference/performance.md
       - Environment Variables: reference/env-vars.md
       - Code Mode: reference/code-mode.md
   - Release Process:

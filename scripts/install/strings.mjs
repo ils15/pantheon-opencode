@@ -56,6 +56,12 @@ const TABLE = {
     nextLaunch: '2. Launch OpenCode',
     nextAgents: '3. Invoke agents with @agent-name in chat',
     nextProject: '4. For project-local install:\n     npx pantheon-opencode init --project',
+    nextJev:
+      '5. Jev decision model (optional, off by default):\n     npx pantheon-opencode decision-router setup-model opencode-console-jev/jev-1.13 --monthly-usd 5 --per-decision-usd 0.10\n     npx pantheon-opencode decision-router doctor',
+    jevConfigured: (target) =>
+      `Jev decision model configured: ${target} (consent + caps + period; verify with decision-router doctor)`,
+    jevConfigureFailed: (msg) => `Decision-model configuration failed: ${msg}`,
+    jevDryRun: (target) => `[DRY-RUN] decision model would be configured: ${target}`,
     // install steps
     globalLayout:
       'Global config directory detected — using flat layout (agents/, skills/, commands/)',
@@ -148,6 +154,12 @@ const TABLE = {
     nextLaunch: '2. Abra o OpenCode',
     nextAgents: '3. Invoc agentes com @nome-do-agente no chat',
     nextProject: '4. Para instalar no projeto:\n     npx pantheon-opencode init --project',
+    nextJev:
+      '5. Modelo de decisão Jev (opcional, desligado por padrão):\n     npx pantheon-opencode decision-router setup-model opencode-console-jev/jev-1.13 --monthly-usd 5 --per-decision-usd 0.10\n     npx pantheon-opencode decision-router doctor',
+    jevConfigured: (target) =>
+      `Modelo de decisão Jev configurado: ${target} (consentimento + limites + período; verifique com decision-router doctor)`,
+    jevConfigureFailed: (msg) => `Falha ao configurar o modelo de decisão: ${msg}`,
+    jevDryRun: (target) => `[DRY-RUN] o modelo de decisão seria configurado: ${target}`,
     // install steps
     globalLayout:
       'Diretório de config global detectado — layout plano (agents/, skills/, commands/)',
