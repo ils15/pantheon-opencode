@@ -9,8 +9,8 @@ noted.
 | Variable | Default | Purpose |
 |---|---|---|
 | `OPENCODE_VERSION` | unset | `v1` or `v2` selects the plugin generation. Overridden by an explicit `--opencode-version` flag. |
-| `OPENCODE_BIN` | `opencode` | Host binary used for the `--version` probe. A basename of `opencode2` selects V2 without probing. |
-| `OPENCODE_V2_SPEC` | `@opencode/cli@latest` | Sandbox spec that provides the `opencode2` binary. |
+| `OPENCODE_BIN` | `opencode` | Host binary used for the `--version` probe. A basename of `opencode2` selects the 2.x line without probing. |
+| `OPENCODE_SANDBOX_SPEC` | `@opencode/cli@latest` | Sandbox spec that provides the `opencode2` binary (sandbox harness only). |
 
 Generation resolution and fallback are described once in
 [Compatibility](../COMPATIBILITY.md#how-the-generation-is-selected).
@@ -71,7 +71,7 @@ Model precedence and the degradation chain are in [MCP](../MCP.md#pantheon-visio
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `PANTHEON_MODEL_PRESET` | unset | V1 legacy preset selector. V2 ignores static presets and applies only explicit per-agent project overrides. |
+| `PANTHEON_MODEL_PRESET` | unset | Legacy preset selector (removed surface). The plugin ignores static presets and applies only explicit per-agent project overrides. |
 
 ## Local decision recommendation
 
@@ -90,8 +90,8 @@ truthy values leaves the feature off.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `PANTHEON_V2_P7_LOOP` | unset (off) | `1`, `on` or `true` enables the P7 loop adapter on `session.execution.succeeded`. It counts executions and writes `effect: none` observations to an in-memory, bounded collector that the plugin never reads back (it is exposed only to tests); it does not enforce loop limits. The 12-execution cap (`P7_LOOP_MAX_EXECUTIONS`) is advisory: no measured host surface signals a new user turn, so the streak is not claimed to reset. |
-| `PANTHEON_V2_P8_GUARDRAIL` | unset (off) | `1`, `on` or `true` would enable the P8 guardrail on `permission.evaluate` only. It can only narrow, and it remains **off**: C8 closed by measurement, and the verdict is that the declared rules match no delivered payload, so the point is recorded as `advisory` and narrows nothing. A written `deny` is honoured by the host, but no declared rule can produce one. `execute.before` remains the only hard barrier. |
+| `PANTHEON_P7_LOOP` | unset (off) | `1`, `on` or `true` enables the P7 loop adapter on `session.execution.succeeded`. It counts executions and writes `effect: none` observations to an in-memory, bounded collector that the plugin never reads back (it is exposed only to tests); it does not enforce loop limits. The 12-execution cap (`P7_LOOP_MAX_EXECUTIONS`) is advisory: no measured host surface signals a new user turn, so the streak is not claimed to reset. Alias: `PANTHEON_V2_P7_LOOP` (pre-2.0 spelling) is still read for 2.0 with a deprecation warning; removed in 2.1. |
+| `PANTHEON_P8_GUARDRAIL` | unset (off) | `1`, `on` or `true` would enable the P8 guardrail on `permission.evaluate` only. It can only narrow, and it remains **off**: C8 closed by measurement, and the verdict is that the declared rules match no delivered payload, so the point is recorded as `advisory` and narrows nothing. A written `deny` is honoured by the host, but no declared rule can produce one. `execute.before` remains the only hard barrier. Alias: `PANTHEON_V2_P8_GUARDRAIL` (pre-2.0 spelling) is still read for 2.0 with a deprecation warning; removed in 2.1. |
 
 Shadow points (P1, P2, P3, P9, P11) have no environment switch: there is no
 behaviour to switch. P1 and P2 are registered on `session.hook('prompt')` and
@@ -126,7 +126,7 @@ because nothing constructs them. Coverage and unmeasured surfaces are in
 There is no Pantheon-owned decision transport. The only egress surface is the
 host's native Decisions API, invoked by the explicit `pantheon_jev_decide`
 tool behind the user-level config, budget, and permission gates — see
-[V2 Native Decisions](native-decisions.md). The variables below are listed
+[Native Decisions](native-decisions.md). The variables below are listed
 because decision-router code mentions them; none is read on a production path.
 
 | Variable | Default | Purpose |

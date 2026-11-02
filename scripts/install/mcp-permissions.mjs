@@ -1,6 +1,6 @@
 import { opencodeWildcardPatternsOverlap } from './opencode-wildcard.mjs'
 
-/** Canonical OpenCode V2 MCP action-name normalization shared by all writers. */
+/** Canonical OpenCode 2.x MCP action-name normalization shared by all writers. */
 
 export function normalizeMcpPermissionSegment(value) {
   return value.replace(/[^a-zA-Z0-9_]/g, '_')
@@ -42,7 +42,7 @@ export function assertMcpServerPermissionScopesUnambiguous(rules) {
         mcpServerPermissionScopesOverlap(left.server, right.server)
       ) {
         throw new TypeError(
-          'Distinct MCP permission server scopes overlap after OpenCode V2 action normalization.',
+          'Distinct MCP permission server scopes overlap after OpenCode 2.x action normalization.',
         )
       }
     }
@@ -61,7 +61,7 @@ export function assertMcpPermissionScopesDoNotAliasConfiguredServers(
         mcpServerPermissionScopesOverlap(policyServer, configuredServer)
       ) {
         throw new TypeError(
-          'An MCP permission scope overlaps a distinct configured server after OpenCode V2 action normalization.',
+          'An MCP permission scope overlaps a distinct configured server after OpenCode 2.x action normalization.',
         )
       }
     }
@@ -157,7 +157,7 @@ export function assertMcpPermissionNamesUnambiguous(names) {
     const normalized = normalizeMcpPermissionSegment(name)
     const owner = normalizedOwners.get(normalized)
     if (owner !== undefined && owner !== name) {
-      throw new TypeError('MCP names collide after OpenCode V2 permission normalization.')
+      throw new TypeError('MCP names collide after OpenCode 2.x permission normalization.')
     }
     normalizedOwners.set(normalized, name)
   }

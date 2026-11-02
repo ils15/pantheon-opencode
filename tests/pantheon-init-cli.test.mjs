@@ -138,7 +138,7 @@ test('doctor wrapper forwards the packaged profile interface', () => {
 })
 
 test('V2 project config uses the plural plugin key under isolated HOME/XDG', () => {
-  const cwd = mkdtempSync(join(tmpdir(), 'pantheon-init-v2-'))
+  const cwd = mkdtempSync(join(tmpdir(), 'pantheon-init-'))
   const home = mkdtempSync(join(tmpdir(), 'pantheon-home-'))
   const xdg = mkdtempSync(join(tmpdir(), 'pantheon-xdg-'))
   try {
@@ -325,7 +325,7 @@ test('an explicit --opencode-version v1 is a hard refusal before any write', () 
 })
 
 test('direct V2 init safely warns and omits an untranslatable V1 MCP ask', () => {
-  const cwd = mkdtempSync(join(tmpdir(), 'pantheon-init-v2-mcp-ask-'))
+  const cwd = mkdtempSync(join(tmpdir(), 'pantheon-init-mcp-ask-'))
   try {
     writeFileSync(
       join(cwd, 'opencode.json'),

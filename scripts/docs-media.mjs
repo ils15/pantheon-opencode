@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Regenerate the terminal captures embedded in docs/opencode-v2.md.
+ * Regenerate the terminal captures embedded in docs/opencode.md.
  *
  * Every capture is recorded by VHS from a tape committed next to its output in
  * docs/assets/tui/. VHS shells out to ttyd (the terminal it drives) and ffmpeg
@@ -9,7 +9,7 @@
  *
  * Usage:
  *   node scripts/docs-media.mjs                 # record every *.tape
- *   node scripts/docs-media.mjs v2-sidebar      # record one tape (name or file)
+ *   node scripts/docs-media.mjs sidebar      # record one tape (name or file)
  *   node scripts/docs-media.mjs --check         # verify prerequisites only
  */
 

@@ -37,7 +37,7 @@ o que importou. Você continua no controle de cada decisão e de cada merge.
 ## Comece em 2 minutos
 
 Requisitos: [OpenCode](https://opencode.ai/docs/) **1.19.x** (V1) ou **OpenCode
-2.x** (V2), e Node.js **>=26.4.0** para a CLI e as ferramentas. **OpenCode 2.0.22
+2.x**, e Node.js **>=26.4.0** para a CLI e as ferramentas. **OpenCode 2.0.22
 tem falha conhecida**; veja [Compatibilidade](docs/COMPATIBILITY.md).
 
 No projeto onde você quer usar o Pantheon:
@@ -58,7 +58,7 @@ conversa principal antes de pedir aprovação — nunca como um plano escondido 
 conversa de um agente filho.
 
 Reinicie o OpenCode depois de instalar ou trocar a geração do plugin. O
-instalador seleciona uma geração por instalação; plugins V1 e V2 nunca são
+instalador seleciona uma geração por instalação; dois plugins Pantheon nunca são
 registrados juntos.
 
 Flags do instalador, códigos de saída, planos salvos, backup e restore,
@@ -85,7 +85,7 @@ apenas — `init` → reiniciar → `/dispatch` → primeiro resultado — veja 
   [referência do roteador](docs/reference/local-decision-router.md) e o
   [Decisions nativas (Jev)](docs/reference/native-decisions.md).
 - **Uma TUI opcional**, com bloco de dispatch na sidebar e painel `/dispatch`
-  em largura total. A TUI V2 também inclui um resumo de quota na sidebar/rodapé
+  em largura total. A TUI também inclui um resumo de quota na sidebar/rodapé
   e o painel `/quota`, com abas Usage, Limits, Plugin e Settings. Usage mostra
   gráficos de tokens registrados e totais por modelo em períodos de 7, 15, 30
   dias ou Total, sem inventar dados para preencher lacunas. O painel identifica
@@ -107,7 +107,7 @@ Veja [Memória](docs/MEMORY.md).
 
 ## Compatibilidade
 
-OpenCode **1.19.x** (plugin V1) e **OpenCode 2.x** (plugin V2) são suportados.
+OpenCode **1.19.x** (plugin legado, removido no 2.0) e **OpenCode 2.x** (o plugin) são suportados.
 **OpenCode 2.0.22 tem falha conhecida.** A partir da 1.7, a linha abandona o
 contrato V1 e mira apenas o OpenCode 2.
 
@@ -146,7 +146,7 @@ O modelo de delegação, a matriz chamador/alvo e os gates de aprovação estão
 | [Instalação](docs/INSTALLATION.md) | [Arquitetura](docs/ARCHITECTURE.md) |
 | [Início rápido](docs/QUICKSTART.md) | [MCP](docs/MCP.md) · [Ferramentas MCP](docs/mcp-tools.md) |
 | [Atualização](docs/UPGRADING.pt-BR.md) | [Memória](docs/MEMORY.md) |
-| [Compatibilidade](docs/COMPATIBILITY.md) | [OpenCode V2](docs/opencode-v2.md) |
+| [Compatibilidade](docs/COMPATIBILITY.md) | [OpenCode 2.x](docs/opencode.md) |
 | [Agentes e Skills](docs/agents/README.md) | [Plataformas](docs/PLATFORMS.md) |
 | [Processo de release](docs/RELEASING.md) | [Proteção de branch](docs/BRANCH-PROTECTION.md) |
 | [Roteamento de modelos](docs/reference/model-routing.md) | [Variáveis de ambiente](docs/reference/env-vars.md) · [Code Mode](docs/reference/code-mode.md) |

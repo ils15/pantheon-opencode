@@ -1,5 +1,5 @@
 /**
- * Tests for DCP dynamic context pruning (OpenCode V2 only).
+ * Tests for DCP dynamic context pruning (OpenCode 2.x only).
  *
  * Fixtures use the message shape measured on opencode v2.1.2:
  *   user/assistant text  { id?, role, content: [{ type: 'text', text }], metadata? }
@@ -24,7 +24,7 @@ import {
   pruneMessages,
   resolveContextPrunerConfig,
 } from '../../src/pantheon/context-pruner.ts'
-import { plugin } from '../../src/plugin-v2.ts'
+import { plugin } from '../../src/plugin.ts'
 
 // ─── Harness ─────────────────────────────────────────────────────────────
 

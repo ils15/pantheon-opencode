@@ -329,15 +329,15 @@ JavaScript coverage at all. Python coverage additionally requires
 ## OpenCode generation and plugin contract
 
 Pantheon 2.0 requires **OpenCode 2.x**; the legacy OpenCode V1 plugin line was
-removed. The installer registers the `<installed>/src/plugin-v2` directory under
+removed. The installer registers the `<installed>/src/plugin` directory under
 the plural `plugins` key. `--opencode-version` accepts `v2` or `auto` only — an
 explicit `v1` is refused.
 
 `auto` is the default. The resolution order and fallback behavior are documented
 once in [Compatibility](COMPATIBILITY.md#how-the-generation-is-selected). The
 exact tool list is in
-[Architecture](ARCHITECTURE.md#what-each-generation-registers); user-facing
-behavior is in [OpenCode V2](opencode-v2.md).
+[Architecture](ARCHITECTURE.md#what-the-plugin-registers); user-facing
+behavior is in [OpenCode 2.x](opencode.md).
 
 The installer strips Pantheon references from both config shapes (a pre-2.0
 config is recognized and migrated, never recreated) before writing the 2.x one,
@@ -346,7 +346,7 @@ converted.
 
 ### V2 config fields
 
-The V2 installer writes native V2 fields instead of V1 shims: `providers`,
+The installer writes native V2 fields instead of V1 shims: `providers`,
 `permissions`, and MCP entries under `mcp`. The enforceable MCP rule is
 `{ "action": "<server>_*", "resource": "*", "effect": "deny" }` (or the exact
 tool name). `action: "mcp"` and the V1 key `permission.mcp.<server>` are not
@@ -440,7 +440,7 @@ no wizard. See [MCP Tools](mcp-tools.md#opencode-plugin-tools).
 
 ## Delegation on V2
 
-OpenCode V2 documents `subagent` as the child-session tool. It is a host tool,
+OpenCode 2.x documents `subagent` as the child-session tool. It is a host tool,
 not a Pantheon-specific API; availability, schema, background support, and
 completion observability depend on the active runtime. A foreground call waits
 for the result; with `background: true`, where the schema supports it, the call
@@ -455,7 +455,7 @@ register a Pantheon delegation tool.
 
 The TUI is an optional component installed by `npm run setup` or an install that
 includes the `plugins` component. The installer selects the host-specific entry:
-OpenCode V1 uses `tui.json`; OpenCode V2 discovers the local plugin's
+OpenCode V1 uses `tui.json`; OpenCode 2.x discovers the local plugin's
 `index.ts` + `tui.ts` pair. Without the `plugins` component, neither entry is
 installed.
 
@@ -468,7 +468,7 @@ it). A `cli.json` that is not valid JSON, or whose `plugins` is not an array, is
 never overwritten; the install warns and continues.
 
 The sidebar block and `/dispatch` panel are documented in
-[OpenCode V2](opencode-v2.md#dispatch-sidebar-block).
+[OpenCode 2.x](opencode.md#dispatch-sidebar-block).
 
 ### TUI dev build
 
@@ -501,7 +501,7 @@ Type these in the OpenCode chat:
 
 ## Troubleshooting — Keys and Presets
 
-> This section describes the legacy V1 install and preset path. On OpenCode V2,
+> This section describes the legacy V1 install and preset path. On OpenCode 2.x,
 > `PANTHEON_MODEL_PRESET` and `preset` markers do not activate models; only
 > explicit project per-agent overrides are applied, global files are ignored,
 > and without an override the host model stays intact. Global mutation requires
@@ -551,7 +551,7 @@ node -e "import('./src/pantheon/presets.mjs').then(m=>console.log(m.validatePres
 | Provider without a credential on the V1 runtime | Go/OpenAI/Anthropic profile active, but the expected variable is unavailable | Configure `PANTHEON_OPENCODE_API_KEY` (alias `OPENCODE_GO_API_KEY` for Go), `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY`, as the profile requires |
 | `unknown agent "foo"` in `/pantheon-model set` | non-canonical agent | Use one of the 14: `zeus`, `athena`, `apollo`, `hermes`, `aphrodite`, `demeter`, `themis`, `prometheus`, `hephaestus`, `nyx`, `gaia`, `iris`, `mnemosyne`, `talos` |
 | `model must use provider/model-id format` | model without a slash, or with a space/`..` | Use `provider/model-id`, e.g. `openai/gpt-5.6-sol`, `opencode-go/kimi-k2.7-code` (validates `MODEL_REF_PATTERN`) |
-| On V1, `global set/reset requires explicit confirmation...` | `--scope global` without confirmation | On V1, add `--confirm --authorize-global` (or use `--scope project`, the safe default). The V2 tool does not support global. |
+| On V1, `global set/reset requires explicit confirmation...` | `--scope global` without confirmation | On V1, add `--confirm --authorize-global` (or use `--scope project`, the safe default). The tool does not support global. |
 | `.pantheon/active-preset.json has invalid JSON` | corrupted file | Delete or fix the JSON; `readActivePresetRaw` treats it as absent + logs `warn` without secrets; `write` preserves the previous file on failure |
 | `health-check: active-preset.json verification failed` | `writeActivePreset` wrote, but `preset` mismatched | Check permissions (`mode` default `600`, `O_NOFOLLOW`, `fsync` dir); the wizard logs a warning and does not expose the key |
 | `[pantheon-delegate] no model resolved for agent "X" — omitting model...` | no preset and no override, native inheritance | Normal on the default (native inheritance); to pin, `npx pantheon-opencode set-tier <preset>` or `/pantheon-model set --agent X ...` |

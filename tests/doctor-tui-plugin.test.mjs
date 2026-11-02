@@ -29,13 +29,27 @@ function seedPluginsInstalled(target) {
   writeState(target, state)
 }
 
-function seedPayload(copyDir, { v1 = true, v2 = false } = {}) {
+function seedPayload(copyDir, { current = true, legacyBundle = false } = {}) {
   mkdirSync(join(copyDir, 'dist'), { recursive: true })
-  if (v1) writeFileSync(join(copyDir, 'dist', 'tui.js'), 'export default {}\n')
-  if (v2) writeFileSync(join(copyDir, 'dist', 'tui-v2.js'), 'export default {}\n')
+  if (current) writeFileSync(join(copyDir, 'dist', 'tui.js'), 'export default {}\n')
+  // Legacy installs copied before the 2.0 rename carry dist/tui-v2.js and a
+  // ./tui-v2 export; doctor must still discover them.
+  if (legacyBundle) {
+    writeFileSync(join(copyDir, 'dist', 'tui-v2.js'), 'export default {}\n')
+  }
   writeFileSync(
     join(copyDir, 'package.json'),
-    `${JSON.stringify({ name: 'pantheon-tui', exports: { './tui': v2 ? './dist/tui-v2.js' : './dist/tui.js' } }, null, 2)}\n`,
+    `${JSON.stringify(
+      {
+        name: 'pantheon-tui',
+        exports: {
+          './tui': current ? './dist/tui.js' : './dist/tui-v2.js',
+          ...(legacyBundle ? { './tui-v2': './dist/tui-v2.js' } : {}),
+        },
+      },
+      null,
+      2,
+    )}\n`,
   )
   writeFileSync(join(copyDir, 'tui.ts'), "export { default } from './dist/tui.js'\n")
 }
@@ -101,7 +115,7 @@ test('a complete V1 payload that no tui.json references fails closed', async () 
   }
 })
 
-test('a V1 payload registered by its copied directory passes', async () => {
+test('a payload registered by its copied directory passes', async () => {
   const target = projectTarget()
   try {
     seedPluginsInstalled(target)
@@ -127,12 +141,25 @@ test('a stale Pantheon reference next to the current registration fails closed',
   }
 })
 
-test('a V2 payload discovered by the host (no tui.json) passes', async () => {
+test('a bundle discovered by the host (no tui.json) passes', async () => {
   const target = projectTarget()
   try {
     seedPluginsInstalled(target)
     const { copyDir } = await resolveTuiInstallPaths({ target })
-    seedPayload(copyDir, { v1: true, v2: true })
+    seedPayload(copyDir, { current: true })
+    writeFileSync(join(copyDir, 'index.ts'), 'export const Pantheon = async () => ({})\n')
+    assert.equal(await checkTuiPlugin({ target }), 'ok')
+  } finally {
+    rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('a legacy pre-rename bundle (dist/tui-v2.js) is still discovered', async () => {
+  const target = projectTarget()
+  try {
+    seedPluginsInstalled(target)
+    const { copyDir } = await resolveTuiInstallPaths({ target })
+    seedPayload(copyDir, { current: false, legacyBundle: true })
     writeFileSync(join(copyDir, 'index.ts'), 'export const Pantheon = async () => ({})\n')
     assert.equal(await checkTuiPlugin({ target }), 'ok')
   } finally {

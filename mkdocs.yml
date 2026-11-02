@@ -63,7 +63,7 @@ nav:
   - Architecture: ARCHITECTURE.md
   - Agents & Skills: agents/README.md
   - Permissions, Gates & Delegation: PERMISSIONS-QUALITY-DELEGATION.md
-  - OpenCode V2: opencode-v2.md
+  - OpenCode 2.x: opencode.md
   - MCP: MCP.md
   - MCP Tools: mcp-tools.md
   - Memory: MEMORY.md

@@ -24,6 +24,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
 import { KNOWN_AGENTS } from './model-agents.ts'
+import { readModelConfiguration } from './model-overrides.ts'
 import {
   capabilityEntry,
   hasVision,
@@ -32,7 +33,6 @@ import {
   resolveActivePreset,
 } from './presets.mjs'
 import type { ToolContextLike } from './tool-context.ts'
-import { readV2ModelConfiguration } from './v2-model-overrides.ts'
 
 export type { KnownAgent } from './model-agents.ts'
 export { KNOWN_AGENTS } from './model-agents.ts'
@@ -94,10 +94,10 @@ export interface ModelCommandOptions {
   ask?: (questions: unknown[]) => Promise<Record<string, unknown>>
   /** Optional readline injection for wizard fallback. */
   rl?: { question: (q: string) => Promise<string>; close?: () => void }
-  /** V2 ignores static presets and reports/applies only explicit per-agent overrides. */
-  v2Mode?: boolean
-  /** Filesystem seam for secure V2 preset reads, including post-write verification. */
-  v2PresetReadFileSystem?: V2PresetReadFileSystem
+  /** Overrides-only mode ignores static presets and reports/applies only explicit per-agent overrides. */
+  overridesOnlyMode?: boolean
+  /** Filesystem seam for secure preset reads, including post-write verification. */
+  presetReadFileSystem?: PresetReadFileSystem
 }
 
 export interface ModelTool {
@@ -118,20 +118,20 @@ interface ReadFileResult {
   data: unknown
 }
 
-interface V2PresetReadStats {
+interface PresetReadStats {
   isFile(): boolean
   mode: number
 }
 
-interface V2PresetReadHandle {
-  stat(): Promise<V2PresetReadStats>
+interface PresetReadHandle {
+  stat(): Promise<PresetReadStats>
   readFile(encoding: 'utf8'): Promise<string>
   close(): Promise<void>
 }
 
-/** Filesystem operations injectable for focused V2 race-safety tests. */
-export interface V2PresetReadFileSystem {
-  open(path: string, flags: number): Promise<V2PresetReadHandle>
+/** Filesystem operations injectable for focused race-safety tests. */
+export interface PresetReadFileSystem {
+  open(path: string, flags: number): Promise<PresetReadHandle>
 }
 
 interface AgentStatus {
@@ -382,11 +382,11 @@ async function readActivePresetRaw(path: string, label: string): Promise<ReadFil
   }
 }
 
-/** Read V2 mutation state from one nonblocking, no-follow file descriptor. */
-export async function readV2ActivePresetRaw(
+/** Read mutation state from one nonblocking, no-follow file descriptor. */
+export async function readActivePresetRawSecure(
   path: string,
   label: string,
-  fileSystem: V2PresetReadFileSystem = {
+  fileSystem: PresetReadFileSystem = {
     open: async (filePath, flags) => open(filePath, flags),
   },
 ): Promise<ReadFileResult> {
@@ -403,7 +403,7 @@ export async function readV2ActivePresetRaw(
     )
   }
 
-  let file: V2PresetReadHandle | undefined
+  let file: PresetReadHandle | undefined
   try {
     file = await fileSystem.open(path, constants.O_RDONLY | noFollowFlag | nonBlockFlag)
     const openedStats = await file.stat()
@@ -595,15 +595,15 @@ async function updateActivePreset(
 
   const path = presetPathForScope(options, scope)
   return withPathLock(path, async () => {
-    const current = options.v2Mode
-      ? await readV2ActivePresetRaw(path, 'configuration file', options.v2PresetReadFileSystem)
+    const current = options.overridesOnlyMode
+      ? await readActivePresetRawSecure(path, 'configuration file', options.presetReadFileSystem)
       : await readActivePresetRaw(path, 'configuration file')
     if (current.exists && !current.valid) {
       throw new ModelCommandError(`${scope} preset file contains invalid JSON; file preserved`)
     }
 
     let fallbackPreset: string | undefined
-    if (!options.v2Mode) {
+    if (!options.overridesOnlyMode) {
       const env = envValue(options)
       fallbackPreset = defaultFallbackPreset()
       // Prefer env preset if set and known (V1 legacy behavior only).
@@ -687,11 +687,11 @@ async function updateActivePreset(
 
       // health-check: verify file parses and preset resolves
       try {
-        if (options.v2Mode) {
-          const written = await readV2ActivePresetRaw(
+        if (options.overridesOnlyMode) {
+          const written = await readActivePresetRawSecure(
             path,
             'configuration file',
-            options.v2PresetReadFileSystem,
+            options.presetReadFileSystem,
           )
           if (written.exists && written.content !== undefined) JSON.parse(written.content)
         } else {
@@ -702,8 +702,8 @@ async function updateActivePreset(
         options.logger?.warn?.('health-check: active-preset.json verification failed')
       }
 
-      const activation = options.v2Mode
-        ? 'V2 reads this override during the next agent-config transform on a subsequent OpenCode configuration load; the current session is unchanged.'
+      const activation = options.overridesOnlyMode
+        ? 'Pantheon reads this override during the next agent-config transform on a subsequent OpenCode configuration load; the current session is unchanged.'
         : 'Restart OpenCode for the change to take effect.'
       const base = `Model override set (${scope}): ${agentKey} → ${model} (effort: ${variantInfo.variant ?? 'none'}). ${activation}`
       return visionWarning ? `${base}\n${visionWarning}` : base
@@ -716,8 +716,8 @@ async function updateActivePreset(
       // Clean up empty overrides.agents to keep file tidy, but keep overrides object
       // Remove empty overrides if no agents and no providers etc? Keep minimal.
       await writeActivePresetAtomically(path, shaped, current)
-      const activation = options.v2Mode
-        ? 'V2 reads overrides during the next agent-config transform on a subsequent OpenCode configuration load; the current session is unchanged.'
+      const activation = options.overridesOnlyMode
+        ? 'Pantheon reads overrides during the next agent-config transform on a subsequent OpenCode configuration load; the current session is unchanged.'
         : 'Restart OpenCode for the change to take effect.'
       return `Model override removed (${scope}): ${agentKey}. ${activation}`
     }
@@ -737,8 +737,8 @@ async function resolvePerAgentStatus(options: ModelCommandOptions): Promise<{
   const candidates = activePresetCandidatesList(options)
   const warnings: string[] = []
 
-  if (options.v2Mode) {
-    const configuration = readV2ModelConfiguration({ candidates, env })
+  if (options.overridesOnlyMode) {
+    const configuration = readModelConfiguration({ candidates, env })
     warnings.push(...configuration.warnings)
     const agents = KNOWN_AGENTS.map((agent): AgentStatus => {
       const override = configuration.overrides[agent]
@@ -843,24 +843,24 @@ async function renderStatus(options: ModelCommandOptions): Promise<string> {
     await resolvePerAgentStatus(options)
   const lines: string[] = []
   lines.push(
-    options.v2Mode
+    options.overridesOnlyMode
       ? 'Pantheon model configuration per-agent (configured values only; not a readout of the model serving a completion):'
       : 'Pantheon model configuration per-agent (restart OpenCode after changes):',
   )
-  if (options.v2Mode) {
-    lines.push('V2 manual override scope: project only; global overrides are not read or applied.')
+  if (options.overridesOnlyMode) {
+    lines.push('Manual override scope: project only; global overrides are not read or applied.')
     if (legacyPresetMarker) {
       const markerSource =
         legacyPresetMarker.source === 'env' ? 'PANTHEON_MODEL_PRESET' : 'active-preset.json'
       lines.push(
-        `Legacy preset marker present in ${markerSource} — ignored in V2; static presets are retired.`,
+        `Legacy preset marker present in ${markerSource} — ignored; static presets are retired.`,
       )
     } else {
-      lines.push('Legacy preset marker: none (static presets are retired and ignored in V2).')
+      lines.push('Legacy preset marker: none (static presets are retired and ignored).')
     }
     lines.push('Host default remains unchanged when no manual override is set.')
     lines.push(
-      'Manual project-scoped per-agent overrides are read by the V2 agent transform on the next OpenCode configuration load; the current session is unchanged.',
+      'Manual project-scoped per-agent overrides are read by the 2.x agent transform on the next OpenCode configuration load; the current session is unchanged.',
     )
   } else if (presetName) {
     const originLabel =
@@ -1028,7 +1028,7 @@ async function runWizard(options: ModelCommandOptions): Promise<string> {
 
 /** Create the `pantheon_model` tool; the interactive wizard is V1-only. */
 export function createModelCommand(options: ModelCommandOptions = {}): ModelToolset {
-  const args = options.v2Mode
+  const args = options.overridesOnlyMode
     ? {
         ...modelArgs,
         action: modelArgs.action.describe(
@@ -1039,8 +1039,8 @@ export function createModelCommand(options: ModelCommandOptions = {}): ModelTool
 
   return {
     pantheon_model: {
-      description: options.v2Mode
-        ? 'Show, set, or reset explicit per-agent project-scoped model overrides in active-preset.json. Global overrides are not read or written in V2; future support requires separate explicit authorization. V2 ignores static preset names and PANTHEON_MODEL_PRESET; no wizard or implicit model selection. Status reports project-scoped configured values only and never writes .env or top-level model/small_model.'
+      description: options.overridesOnlyMode
+        ? 'Show, set, or reset explicit per-agent project-scoped model overrides in active-preset.json. Global overrides are not read or written; future support requires separate explicit authorization. Static preset names and PANTHEON_MODEL_PRESET are ignored; no wizard or implicit model selection. Status reports project-scoped configured values only and never writes .env or top-level model/small_model.'
         : 'Show, set, or reset per-agent model overrides in active-preset.json (project or global). Overrides win over preset; env preset wins over file. Never writes .env or top-level model/small_model.',
       args,
       execute: async (args, _ctx) => {
@@ -1051,7 +1051,7 @@ export function createModelCommand(options: ModelCommandOptions = {}): ModelTool
 
           // Wizard when invoked with no args at all
           if (!hasAction && !hasAgentModelEffort) {
-            if (options.v2Mode) return await renderStatus(options)
+            if (options.overridesOnlyMode) return await renderStatus(options)
             return await runWizard(options)
           }
 

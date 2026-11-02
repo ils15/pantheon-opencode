@@ -36,7 +36,7 @@ charge of every decision and every merge.
 ## Start in 2 minutes
 
 Requirements: [OpenCode](https://opencode.ai/docs/) **1.19.x** (V1) or **OpenCode
-2.x** (V2), and Node.js **>=26.4.0** for the CLI and tooling. **OpenCode 2.0.22
+2.x**, and Node.js **>=26.4.0** for the CLI and tooling. **OpenCode 2.0.22
 is known broken**; see [Compatibility](docs/COMPATIBILITY.md).
 
 From the project where you want to use Pantheon:
@@ -53,18 +53,18 @@ then asks once for final authorization (default **no**). Without a TTY, `init`
 is preview-only unless `--yes` explicitly authorizes the apply; `--yes` skips
 prompts but still prints the preview and checks for drift.
 
-`npm run setup` is a separate repository setup wrapper. On detected OpenCode V2
+`npm run setup` is a separate repository setup wrapper. On detected OpenCode 2.x
 it reviews the global config before installer init: legacy permission rules can
 be migrated after explicit review. Config migration and installer changes are
 preflighted before one final authorization; `--yes` alone does not authorize
 setup writes, and headless/CI setup remains preview-only. Direct
-`npx pantheon-opencode init` does not run that V2 config-migration review. See
+`npx pantheon-opencode init` does not run that config-migration review. See
 the [installation guide](docs/INSTALLATION.md) for layer handling, conflict
 choices, backups, and recovery.
-Existing native V2 `permissions` arrays remain authoritative. Unsafe MCP
+Existing native `permissions` arrays remain authoritative. Unsafe MCP
 wildcard policies and ineffective `ask` rules require explicit resolution;
 third-party flat MCP entries in `opencode.jsonc` must be converted to
-`mcp.servers` or removed before V2 setup.
+`mcp.servers` or removed before setup.
 
 Global `init` and `setup` use `$XDG_CONFIG_HOME/opencode` when
 `XDG_CONFIG_HOME` is absolute; otherwise they use `~/.config/opencode`.
@@ -81,7 +81,7 @@ conversation before asking for approval — never as a plan hidden in a child
 agent's conversation.
 
 Restart OpenCode after installing or changing the plugin generation. The
-installer selects one generation per installation; V1 and V2 plugins are never
+installer selects one generation per installation; two Pantheon plugins are never
 registered together.
 
 Installer flags, exit codes, saved plans, backup and restore, uninstall,
@@ -108,7 +108,7 @@ see [Quick Start](docs/QUICKSTART.md).
   [router reference](docs/reference/local-decision-router.md) and the
   [Native Decisions (Jev)](docs/reference/native-decisions.md).
 - **An optional TUI** with a dispatch sidebar block and a full-width
-  `/dispatch` panel. The V2 TUI also provides a quota overview in the
+  `/dispatch` panel. The TUI also provides a quota overview in the
   sidebar/footer and a `/quota` details panel. Quota display is enabled by
   default; the sidebar keeps Todo and places quota immediately after Dispatch
   (header/version → Session → Context → Git → Todo → Dispatch → quota).
@@ -137,7 +137,7 @@ see [Quick Start](docs/QUICKSTART.md).
   The installer selects the `plugins` component by default; in interactive setup
   you can change the component selection. A component-scoped install includes
   the TUI only when `plugins` is selected.
-  The V2 quota RPC shows providers when OpenCode lists an active supported
+  The quota RPC shows providers when OpenCode lists an active supported
   connection and Pantheon can locally resolve a nonblank credential. OpenCode
   Go also supports `OPENCODE_API_KEY` and effective `opencode-go`/`opencode`
   provider settings. This is not proof that the provider accepted the
@@ -148,7 +148,7 @@ see [Quick Start](docs/QUICKSTART.md).
   access object reports no Go subscription and does not fall back.
   The API-key route follows OpenCode Quota's supported Go usage endpoint. See
   the
-  [quota provider coverage table](docs/tui-v2-quota-providers.md) for limits and
+  [quota provider coverage table](docs/tui-quota-providers.md) for limits and
   troubleshooting.
 
 
@@ -170,7 +170,7 @@ see [Quick Start](docs/QUICKSTART.md).
 Vision requests to OpenCode Zen require a valid active session and are rejected
 before image fetching or model-catalog lookup when the session is missing or
 invalid. The Python vision MCP keeps its local metadata/OCR fallback when no
-gateway credential is configured. In the V2 plugin, an explicit Vision model
+gateway credential is configured. In the plugin, an explicit Vision model
 pin that is unavailable or ineligible returns an actionable error rather than
 silently switching models; remove the pin to use automatic model discovery.
 
@@ -181,16 +181,16 @@ routine child summaries stay in the handoff. See [Memory](docs/MEMORY.md).
 
 ## Compatibility
 
-OpenCode **1.19.x** (V1 plugin) and **OpenCode 2.x** (V2 plugin) are supported.
+OpenCode **1.19.x** (legacy plugin, removed in 2.0) and **OpenCode 2.x** (the plugin) are supported.
 **OpenCode 2.0.22 is known broken.** From 1.7 onward the line drops the V1
 contract and targets OpenCode 2 only.
 
 The support policy, the known-broken exception, and the verified-version
 evidence have exactly one home: [Compatibility](docs/COMPATIBILITY.md).
 
-### V2 plugin options
+### Plugin options
 
-The OpenCode V2 host hands a plugin its `options` only from the object form of
+The OpenCode 2.x host hands a plugin its `options` only from the object form of
 the entry. `init` writes that form for the optional per-request context pruner;
 memory retrieval stays an explicit `memory_search` MCP call.
 
@@ -221,7 +221,7 @@ one-time warning in the hook log, so a typo cannot silently change behaviour. Ru
 `npx pantheon-opencode doctor` to see whether the installed entry can receive
 options at all. An old `memory_injection` option may remain in an existing
 config because user options are preserved, but the plugin no longer reads it.
-Full rules: [OpenCode V2](docs/opencode-v2.md) and [Memory](docs/MEMORY.md).
+Full rules: [OpenCode 2.x](docs/opencode.md) and [Memory](docs/MEMORY.md).
 
 ## Delegation
 
@@ -256,9 +256,9 @@ historical/inactive, and legacy consent, caps, period, provider selection, or
 credentials cannot activate it. Native child-session dispatch remains separate.
 
 The one native egress surface is the Zeus-only `pantheon_jev_decide` tool,
-available on hosts that expose the V2.2.5 native Decisions API; its full gate
+available on hosts that expose the 2.2.5 native Decisions API; its full gate
 chain, routes, and settlement rules are documented once in
-[V2 native Decisions](docs/reference/native-decisions.md).
+[Native Decisions](docs/reference/native-decisions.md).
 
 The installer may retain a legacy target-specific preference; it does not control
 runtime routing. `npx pantheon-opencode decision-router ...` manages stored
@@ -307,9 +307,9 @@ top-level **and child** sessions with `reason:"overflow"` still unmeasured, and
 P8 is **advisory: not activatable by measurement** — its declared rules match no
 delivered permission payload, so it narrows nothing (PROBE-F).
 
-### The V2 decision layer is declared in full and wired in part
+### The decision layer is declared in full and wired in part
 
-The V2 decision layer declares eleven integration points (P1–P11) over three
+The decision layer declares eleven integration points (P1–P11) over three
 decision primitives — `ask`, `rank`, and `verify` — and a deterministic policy
 that decides which point may run. **Seven of the eleven have a production call
 site: two behind flags that are off by default, five in shadow.**
@@ -431,7 +431,7 @@ recorded in the [router reference](docs/reference/local-decision-router.md).
 | [Installation](docs/INSTALLATION.md) | [Architecture](docs/ARCHITECTURE.md) |
 | [Quick Start](docs/QUICKSTART.md) | [MCP](docs/MCP.md) · [MCP tools](docs/mcp-tools.md) |
 | [Upgrading](docs/UPGRADING.md) | [Memory](docs/MEMORY.md) |
-| [Compatibility](docs/COMPATIBILITY.md) | [OpenCode V2](docs/opencode-v2.md) |
+| [Compatibility](docs/COMPATIBILITY.md) | [OpenCode 2.x](docs/opencode.md) |
 | [Agents & Skills](docs/agents/README.md) | [Platforms](docs/PLATFORMS.md) |
 | [Release Process](docs/RELEASING.md) | [Branch Protection](docs/BRANCH-PROTECTION.md) |
 | [Model Routing](docs/reference/model-routing.md) | [Local Decision Router](docs/reference/local-decision-router.md) · [V2 Native Decisions](docs/reference/native-decisions.md) · [Offline Evaluation Protocol](docs/reference/offline-evaluation.md) · [Env Vars](docs/reference/env-vars.md) · [Code Mode](docs/reference/code-mode.md) |
@@ -444,7 +444,7 @@ the current project root per request while preserving the trusted
 `PANTHEON_HOME` fallback. See [Memory](docs/MEMORY.md) for store separation and
 [MCP tools](docs/mcp-tools.md) for details.
 
-The release install gate's tool canary loads the installed tarball's V2 plugin
+The release install gate's tool canary loads the installed tarball's plugin
 entry under OpenCode 2.0.30 and verifies `hashline_edit` registration, Code Mode
 visibility, and a bounded edit in an isolated project. It does not prove npm
 publication or compatibility with untested host versions; details are in the

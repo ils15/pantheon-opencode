@@ -1,7 +1,7 @@
 /**
  * Symlink resolution for the Zeus read guard.
  *
- * `zeusReadGuard` is a pure, synchronous predicate shared by V1 and V2, so it
+ * `zeusReadGuard` is a pure, synchronous predicate shared by the legacy and 2.x surfaces, so it
  * cannot touch the filesystem itself. It therefore used to match only the
  * STRING path: `docs/link → ../src` reached `src/` after resolution but passed
  * the guard, while `pantheon_bounded_read` refused the same path via `lstat` +

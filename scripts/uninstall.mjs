@@ -8,8 +8,8 @@ import { createInterface } from 'node:readline'
 import { isatty } from 'node:tty'
 import { backupWarning, createBackupSet } from './install/backup.mjs'
 import {
+  CLI_CONFIG_FILENAME,
   CONTEXT_SIDEBAR_NEGATION,
-  V2_CLI_CONFIG_FILENAME,
   withContextSidebarEnabled,
 } from './install/opencode.mjs'
 import { snapshot } from './install/plan.mjs'
@@ -422,7 +422,7 @@ function runUninstallPass(target, dryRun, { purgeData = false, reviewedPaths = n
   }
   const tui = join(configDir, 'tui.json')
   cleanTuiConfig(tui, dryRun, ownedRoot, reviewedPaths)
-  cleanV2CliConfig(configDir, dryRun, ownedRoot, reviewedPaths)
+  cleanCliConfig(configDir, dryRun, ownedRoot, reviewedPaths)
   const agentsMd = join(root, 'AGENTS.md')
   if (isPantheonContent(agentsMd)) removePath(agentsMd, dryRun, ownedRoot, agentsMd, reviewedPaths)
   const scheduledConfigEntries = configInfo?.isDirectory()
@@ -510,8 +510,8 @@ function cleanTuiConfig(path, dryRun, root, reviewedPaths = null) {
  * @param {string} root - target root every removal must stay inside
  * @param {Set<string>|null} [reviewedPaths] - paths reviewed in the plan
  */
-function cleanV2CliConfig(configDir, dryRun, root, reviewedPaths = null) {
-  const path = join(configDir, V2_CLI_CONFIG_FILENAME)
+function cleanCliConfig(configDir, dryRun, root, reviewedPaths = null) {
+  const path = join(configDir, CLI_CONFIG_FILENAME)
   const info = lstat(path)
   if (!info?.isFile() || info.isSymbolicLink()) {
     stats.skipped += 1
@@ -561,7 +561,7 @@ function cleanV2CliConfig(configDir, dryRun, root, reviewedPaths = null) {
   rewrittenPaths.add(path)
   if (dryRun) {
     if (!quietPreview)
-      console.log(`  ~ Would update ${V2_CLI_CONFIG_FILENAME} (remove ${CONTEXT_SIDEBAR_NEGATION})`)
+      console.log(`  ~ Would update ${CLI_CONFIG_FILENAME} (remove ${CONTEXT_SIDEBAR_NEGATION})`)
     stats.removed += 1
     return
   }

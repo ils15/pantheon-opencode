@@ -1,6 +1,6 @@
 /**
  * Pantheon plugin logger — silence-by-default TUI policy (shared with
- * pantheon plugin, see the logging-policy notes in src/plugin-v2.ts).
+ * pantheon plugin, see the logging-policy notes in src/plugin.ts).
  *
  * WHY: `console.log`/`console.error` in an opencode plugin writes to the
  * process stdout/stderr, which the TUI renders DIRECTLY into the terminal —

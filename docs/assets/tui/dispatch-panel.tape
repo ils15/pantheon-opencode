@@ -3,7 +3,7 @@
 # STATUS: UNVERIFIED — no image has been produced from this tape. See
 # docs/internal/validation.md#tui-media-gap for the blocker record.
 #
-# Target slot: docs/opencode-v2.md#dispatch-panel (media slug
+# Target slot: docs/opencode.md#dispatch-panel (media slug
 # `opencode-v2-dispatch-panel`).
 # Output: dispatch-panel.gif + dispatch-panel-detail.png (this directory).
 #

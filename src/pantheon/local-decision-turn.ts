@@ -1,7 +1,7 @@
 /**
  * The deterministic local advisory decision for one turn.
  *
- * The production V2 prompt hook uses `decideLocalForTurn` only. It is
+ * The production prompt hook uses `decideLocalForTurn` only. It is
  * deterministic and local-only: no provider branch, no consent/credential/
  * permission path, no transport, no cache — the legacy provider-capable
  * `decideForTurn` and its one-call-per-turn cache were removed with the

@@ -481,7 +481,7 @@ function inspectInstallerEntries(config) {
   const plugins = new Set()
   if (Array.isArray(config.plugins)) {
     for (const entry of config.plugins) {
-      if (pluginReferenceIdentity(entry) === 'src/plugin-v2') plugins.add('V2 plugin')
+      if (pluginReferenceIdentity(entry) === 'src/plugin') plugins.add('Pantheon plugin')
     }
   }
 
@@ -593,7 +593,7 @@ function managedEntryMovePlan(files) {
   const sourcePlugins = sourcePluginsProperty?.valueNode
   if (sourcePlugins?.type === 'array') {
     const pluginItems = sourcePlugins.items.filter(
-      (item) => pluginReferenceIdentity(item.value) === 'src/plugin-v2',
+      (item) => pluginReferenceIdentity(item.value) === 'src/plugin',
     )
     if (pluginItems.length > 0) {
       const targetPlugins = target.config?.plugins
@@ -606,7 +606,7 @@ function managedEntryMovePlan(files) {
       const prefixCount = pluginItems.length
       const prefixSafe = pluginItems.every((item, index) => sourcePlugins.items[index] === item)
       const targetManagedPlugins = Array.isArray(targetPlugins)
-        ? targetPlugins.filter((plugin) => pluginReferenceIdentity(plugin) === 'src/plugin-v2')
+        ? targetPlugins.filter((plugin) => pluginReferenceIdentity(plugin) === 'src/plugin')
         : []
       if (targetManagedPlugins.length > 0) {
         const exactDuplicate =
@@ -632,7 +632,7 @@ function managedEntryMovePlan(files) {
         const targetSafe =
           targetPlugins === undefined ||
           (Array.isArray(targetPlugins) &&
-            !targetPlugins.some((plugin) => pluginReferenceIdentity(plugin) === 'src/plugin-v2'))
+            !targetPlugins.some((plugin) => pluginReferenceIdentity(plugin) === 'src/plugin'))
         const canMove =
           prefixSafe &&
           exactSourceDuplicates &&
@@ -1138,7 +1138,7 @@ function printInspection(files, sources, output) {
   emit(output, 'V2 config preflight (read-only; no files have been changed):')
   emit(
     output,
-    'OpenCode V2 loads opencode.json then opencode.jsonc. MCP servers merge by name, later server objects replace earlier ones, and permission arrays append in file order.',
+    'OpenCode 2.x loads opencode.json then opencode.jsonc. MCP servers merge by name, later server objects replace earlier ones, and permission arrays append in file order.',
   )
   for (const file of files) {
     if (!file.exists) {
@@ -1158,7 +1158,7 @@ function printInspection(files, sources, output) {
       .map((key) => `${key} policy present`)
     const managed = inspectInstallerEntries(file.config)
     if (managed.plugins.length > 0)
-      relevant.push(`Pantheon V2 plugin entry: ${managed.plugins.length}`)
+      relevant.push(`Pantheon plugin entry: ${managed.plugins.length}`)
     if (managed.mcp.length > 0)
       relevant.push(`verified Pantheon MCP entries: ${managed.mcp.length}`)
     emit(

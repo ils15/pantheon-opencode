@@ -26,9 +26,11 @@ import { ROOT } from '../scripts/install/shared.mjs'
 // A third-party checkout can use either of the historical directory names, so
 // the directory name alone must never rewrite its absolute path.
 assert.ok(
-  resolveInstalledPlugin(join(ROOT, 'src', 'plugin.ts')) === join(ROOT, 'src', 'plugin.ts') &&
+  resolveInstalledPlugin(join(ROOT, 'src', 'plugin')) === join(ROOT, 'src', 'plugin') &&
+    // Retired identities keep OWNERSHIP but re-resolve onto the current dir.
+    resolveInstalledPlugin(join(ROOT, 'src', 'plugin.ts')) === join(ROOT, 'src', 'plugin') &&
     resolveInstalledPlugin(join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts')) ===
-      join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts'),
+      join(ROOT, 'src', 'plugin'),
   'exact installed Pantheon paths remain managed',
 )
 assert.equal(
@@ -66,7 +68,7 @@ for (const dependency of ['pillow', 'paddle', 'gemini', 'torch']) {
 }
 
 // The post-install check must probe the standalone FastMCP import path used by
-// the MCP v2-compatible runtime, not the removed SDK v1 re-export.
+// the MCP compatible runtime, not the removed SDK v1 re-export.
 const healthTarget = mkdtempSync(join(tmpdir(), 'pantheon-mcp-health-'))
 try {
   const scriptsDir = join(healthTarget, 'scripts')
@@ -161,8 +163,8 @@ withGlobalDirs(({ home, xdg }) => {
   const copyDir = resolveTuiCopyTarget(target)
   assert.ok(existsSync(copyDir), 'copied plugin dir exists')
   assert.ok(
-    existsSync(join(copyDir, 'dist', 'tui-v2.js')),
-    'copied dir has dist/tui-v2.js (the 2.x loader entry)',
+    existsSync(join(copyDir, 'dist', 'tui.js')),
+    'copied dir has dist/tui.js (the 2.x loader entry)',
   )
   assert.ok(existsSync(join(copyDir, 'package.json')), 'copied dir has package.json (exports map)')
   const other = tuiAt(join(xdg, 'opencode'), true)
@@ -180,12 +182,12 @@ withGlobalDirs(({ home, xdg }) => {
   mkdirSync(target, { recursive: true })
   syncTuiRegistration(target, { isGlobal: true, dryRun: false })
   const copyDir = resolveTuiCopyTarget(target)
-  const firstDist = readFileSync(join(copyDir, 'dist', 'tui-v2.js'), 'utf8')
+  const firstDist = readFileSync(join(copyDir, 'dist', 'tui.js'), 'utf8')
 
   syncTuiRegistration(target, { isGlobal: true, dryRun: false })
 
   assert.equal(
-    readFileSync(join(copyDir, 'dist', 'tui-v2.js'), 'utf8'),
+    readFileSync(join(copyDir, 'dist', 'tui.js'), 'utf8'),
     firstDist,
     'copied dist files unchanged after re-sync',
   )
@@ -259,8 +261,8 @@ withGlobalDirs(({ home }) => {
   // The v2 copy REPOINTS the exports at the v2 bundles (it is not a
   // byte-identical package.json copy); the payload files themselves are.
   const copiedPackage = JSON.parse(readFileSync(join(copyDir, 'package.json'), 'utf8'))
-  assert.equal(copiedPackage.exports['./tui'], './dist/tui-v2.js')
-  assert.equal(copiedPackage.exports['./server'], './dist/server-v2.js')
+  assert.equal(copiedPackage.exports['./tui'], './dist/tui.js')
+  assert.equal(copiedPackage.exports['./server'], './dist/server.js')
   assert.equal(
     existsSync(join(copyDir, 'index.tsx')),
     false,

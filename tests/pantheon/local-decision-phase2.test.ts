@@ -285,13 +285,13 @@ function testFetchProviderPathIsRemoved(): void {
   assert.equal(Object.hasOwn(packageJson.exports, './local-decision-provider'), false)
   assert.equal(Object.hasOwn(packageJson.exports, './local-decision-turn'), false)
   assert.equal(Object.hasOwn(packageJson.exports, './local-decision-router'), true)
-  const v2 = readFileSync(new URL('../../src/plugin-v2.ts', import.meta.url), 'utf8')
+  const pluginSource = readFileSync(new URL('../../src/plugin.ts', import.meta.url), 'utf8')
   const promptModule = readFileSync(
     new URL('../../src/pantheon/local-decision-prompt.ts', import.meta.url),
     'utf8',
   )
-  assert.doesNotMatch(v2, /runProviderDecision/)
-  assert.match(v2, /applyDecisionRouterToPrompt\(/)
+  assert.doesNotMatch(pluginSource, /runProviderDecision/)
+  assert.match(pluginSource, /applyDecisionRouterToPrompt\(/)
   assert.doesNotMatch(promptModule, /decideForTurn|runProviderDecision|globalThis\.fetch/)
   assert.match(promptModule, /decideLocalForTurn/)
 }

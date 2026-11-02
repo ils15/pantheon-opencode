@@ -785,7 +785,7 @@ function testVersionTwoMigrationPreservesFutureDatedHoldsAndRequiresFreshConfirm
 
 function testFailedVersionTwoMigrationRollsBackHoldNormalization(): void {
   withTempDir((directory) => {
-    const dbPath = join(directory, 'v2-conflict.sqlite')
+    const dbPath = join(directory, 'conflict.sqlite')
     const old = new DatabaseSync(dbPath)
     old.exec(`
       PRAGMA application_id = 1346522161;

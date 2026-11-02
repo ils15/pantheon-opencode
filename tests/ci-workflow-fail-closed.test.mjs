@@ -189,7 +189,7 @@ test('root workspace lock provides TUI test dependencies without vector packages
   assert.doesNotMatch(lockedNames, /sqlite[-_]vec|fastembed|vector_memory/)
 })
 
-test('CI wires explicit coverage and V2 isolation gates', () => {
+test('CI wires explicit coverage and sandbox isolation gates', () => {
   assert.match(
     workflow,
     /python3 -m coverage run --branch --source=src\/mcp -m pytest/,
@@ -197,7 +197,7 @@ test('CI wires explicit coverage and V2 isolation gates', () => {
   )
   assert.match(workflow, /python3 -m coverage report --fail-under=80/)
 
-  const testJob = workflow.match(/^ {2}test-suite:[\s\S]*?(?=^ {2}plugin-v2-ts-coverage:)/m)
+  const testJob = workflow.match(/^ {2}test-suite:[\s\S]*?(?=^ {2}plugin-ts-coverage:)/m)
   assert.ok(testJob, 'CI must run the test suite in its own parallel job')
   assert.match(testJob[0], /fetch-depth: 0/)
   assert.match(testJob[0], /npm run test:node/)
@@ -208,25 +208,25 @@ test('CI wires explicit coverage and V2 isolation gates', () => {
   assert.doesNotMatch(validateJob[0], /npm test|coverage run/)
 
   const sandboxStep = workflow.match(
-    /- name: V2 sandbox \(isolated database and dedicated port\)\n[\s\S]*?(?=\n {2}[a-z][a-z0-9-]*:|\n*$)/,
+    /- name: Sandbox install \(isolated database and dedicated service port\)\n[\s\S]*?(?=\n {2}[a-z][a-z0-9-]*:|\n*$)/,
   )
-  assert.ok(sandboxStep, 'CI must define an explicit V2 sandbox gate')
+  assert.ok(sandboxStep, 'CI must define an explicit sandbox gate')
   assert.match(
     sandboxStep[0],
-    /PANTHEON_SANDBOX_ROOT:\s+\$\{\{\s*runner\.temp\s*\}\}\/pantheon-sandbox-v2/,
+    /PANTHEON_SANDBOX_ROOT:\s+\$\{\{\s*runner\.temp\s*\}\}\/pantheon-sandbox/,
   )
   assert.match(
     sandboxStep[0],
-    /OPENCODE_DB:\s+\$\{\{\s*runner\.temp\s*\}\}\/pantheon-sandbox-v2\/opencode-v2\.db/,
+    /OPENCODE_DB:\s+\$\{\{\s*runner\.temp\s*\}\}\/pantheon-sandbox\/opencode\.db/,
   )
   assert.doesNotMatch(
     sandboxStep[0],
     /OPENCODE_CONFIG:\s+/,
     'the workflow must not select a V2 config file through the legacy variable',
   )
-  assert.match(sandboxStep[0], /PANTHEON_V2_PORT:\s+'49376'/)
+  assert.match(sandboxStep[0], /PANTHEON_SANDBOX_PORT:\s+'49376'/)
   assert.match(sandboxStep[0], /PORT:\s+'49376'/)
-  assert.match(sandboxStep[0], /bash scripts\/test-opencode-v2-sandbox\.sh --prepare --run v2/)
+  assert.match(sandboxStep[0], /bash scripts\/test-opencode-sandbox\.sh --prepare --run v2/)
   assert.doesNotMatch(
     sandboxStep[0],
     /serve --hostname 127\.0\.0\.1/,
@@ -237,7 +237,7 @@ test('CI wires explicit coverage and V2 isolation gates', () => {
 
 test('V2 harness isolates config, database, port, and waits for five MCP handshakes', () => {
   const harness = readFileSync(
-    fileURLToPath(new URL('../scripts/test-opencode-v2-sandbox.sh', import.meta.url)),
+    fileURLToPath(new URL('../scripts/test-opencode-sandbox.sh', import.meta.url)),
     'utf8',
   )
   const envHelper = readFileSync(
@@ -256,7 +256,7 @@ test('V2 harness isolates config, database, port, and waits for five MCP handsha
   )
   assert.doesNotMatch(
     harness,
-    /export OPENCODE_CONFIG="\$V2_CONFIG"/,
+    /export OPENCODE_CONFIG="\$SANDBOX_CONFIG"/,
     'the legacy file-valued OPENCODE_CONFIG selector must not be used',
   )
   assert.equal(
@@ -273,8 +273,8 @@ test('V2 harness isolates config, database, port, and waits for five MCP handsha
     /unset OPENCODE_CONFIG_CONTENT OPENCODE_CONFIG_DIR OPENCODE_CONFIG_PROJECT_DISABLE/,
     'the selected config directory must not be unset after it is established',
   )
-  assert.match(harness, /export OPENCODE_DB="\$V2_DB"/)
-  assert.match(harness, /export PORT="\$V2_PORT"/)
+  assert.match(harness, /export OPENCODE_DB="\$SANDBOX_DB"/)
+  assert.match(harness, /export PORT="\$SANDBOX_PORT"/)
   assert.match(envHelper, /export XDG_STATE_HOME="\$sandbox_home\/\.local\/state"/)
   assert.match(envHelper, /export XDG_CONFIG_HOME="\$sandbox_home\/\.config"/)
   assert.match(envHelper, /export XDG_DATA_HOME="\$HOME\/\.local\/share"/)
@@ -283,7 +283,7 @@ test('V2 harness isolates config, database, port, and waits for five MCP handsha
   assert.match(envHelper, /export TMPDIR="\$sandbox_root\/tmp"/)
   assert.match(
     harness,
-    /V2_SERVICE_STATE="\$SANDBOX_HOME\/\.local\/state\/opencode\/service\.json"/,
+    /SANDBOX_SERVICE_STATE="\$SANDBOX_HOME\/\.local\/state\/opencode\/service\.json"/,
   )
   assert.match(harness, /message=\\"mcp connected\\"/)
   assert.match(harness, /MCP connectivity check failed/)
@@ -293,35 +293,35 @@ test('V2 harness isolates config, database, port, and waits for five MCP handsha
 
 test('V2 loader order starts mcp list before waiting for handshakes', () => {
   const harness = readFileSync(
-    fileURLToPath(new URL('../scripts/test-opencode-v2-sandbox.sh', import.meta.url)),
+    fileURLToPath(new URL('../scripts/test-opencode-sandbox.sh', import.meta.url)),
     'utf8',
   )
-  const serviceBody = harness.match(/start_v2_service\(\) \{[\s\S]*?\n\}/)?.[0]
+  const serviceBody = harness.match(/start_service\(\) \{[\s\S]*?\n\}/)?.[0]
   assert.ok(serviceBody, 'V2 service helper must be present')
   assert.match(serviceBody, /global\/health/)
   assert.match(
     serviceBody,
-    /wait_for_v2_service_registration/,
+    /wait_for_service_registration/,
     'healthcheck helper must wait for the dedicated service registration before mcp list',
   )
   assert.doesNotMatch(
     serviceBody,
-    /wait_for_v2_handshakes/,
+    /wait_for_handshakes/,
     'healthcheck helper must not wait for MCPs before mcp list triggers loading',
   )
 
   for (const [name, launch] of [
     [
       'generated runner',
-      '(cd "$project" && timeout --foreground "$V2_MCP_LIST_TIMEOUT" "$bin" mcp list)',
+      '(cd "$project" && timeout --foreground "$SANDBOX_MCP_LIST_TIMEOUT" "$bin" mcp list)',
     ],
     [
       'main runner',
-      '(cd "$(project_dir)" && timeout --foreground "$V2_MCP_LIST_TIMEOUT" "$bin" mcp list)',
+      '(cd "$(project_dir)" && timeout --foreground "$SANDBOX_MCP_LIST_TIMEOUT" "$bin" mcp list)',
     ],
   ]) {
     const launchIndex = harness.indexOf(`${launch} \\`)
-    const waitIndex = harness.indexOf('if wait_for_v2_handshakes; then', launchIndex)
+    const waitIndex = harness.indexOf('if wait_for_handshakes; then', launchIndex)
     assert.ok(launchIndex >= 0, `${name} must launch mcp list asynchronously`)
     assert.ok(waitIndex > launchIndex, `${name} must wait for handshakes after mcp list starts`)
   }
@@ -330,19 +330,19 @@ test('V2 loader order starts mcp list before waiting for handshakes', () => {
     /connected_count.*-eq 5/s,
     'the output gate must remain fail-closed at exactly five connected MCPs',
   )
-  assert.match(harness, /V2_LOOPBACK_HOST="\$\{PANTHEON_V2_HOST:-127\.0\.0\.1\}"/)
-  assert.match(harness, /registration_url.*http:\/\/\$V2_LOOPBACK_HOST:\$V2_PORT/)
-  assert.match(harness, /registration_pid.*\$V2_SERVER_PID/)
+  assert.match(harness, /SANDBOX_LOOPBACK_HOST="\$\{PANTHEON_SANDBOX_HOST:-127\.0\.0\.1\}"/)
+  assert.match(harness, /registration_url.*http:\/\/\$SANDBOX_LOOPBACK_HOST:\$SANDBOX_PORT/)
+  assert.match(harness, /registration_pid.*\$SANDBOX_SERVER_PID/)
 })
 
 test('V2 config merge rewrites stale MCP paths to the active sandbox', (t) => {
   const harness = readFileSync(
-    fileURLToPath(new URL('../scripts/test-opencode-v2-sandbox.sh', import.meta.url)),
+    fileURLToPath(new URL('../scripts/test-opencode-sandbox.sh', import.meta.url)),
     'utf8',
   )
-  const sandboxRoot = mkdtempSync(join(tmpdir(), 'pantheon-v2-config-contract-'))
+  const sandboxRoot = mkdtempSync(join(tmpdir(), 'pantheon-config-contract-'))
   t.after(() => rmSync(sandboxRoot, { recursive: true, force: true }))
-  const project = join(sandboxRoot, 'project-v2')
+  const project = join(sandboxRoot, 'project')
   const runtime = join(project, '.opencode')
   const managed = [
     ['pantheon-code-mode', 'code_mode.py'],
@@ -369,8 +369,8 @@ test('V2 config merge rewrites stale MCP paths to the active sandbox', (t) => {
             name,
             {
               type: 'local',
-              cwd: '/old-sandbox/project-v2/.opencode',
-              command: ['/old-sandbox/project-v2/.venv/bin/python3', 'scripts/stale.py'],
+              cwd: '/old-sandbox/project/.opencode',
+              command: ['/old-sandbox/project/.venv/bin/python3', 'scripts/stale.py'],
               enabled: true,
             },
           ]),
@@ -403,7 +403,7 @@ ${harness.slice(bootstrapEnd + 1, cliMarker)}`,
     'bash',
     [
       '-c',
-      'set -euo pipefail; source "$DEFS"; SANDBOX_ROOT="$ROOT"; TARGET_VERSION=v2; V2_CONFIG="$CONFIG"; rewrite_v2_mcp_config',
+      'set -euo pipefail; source "$DEFS"; SANDBOX_ROOT="$ROOT"; TARGET_VERSION=v2; SANDBOX_CONFIG="$CONFIG"; rewrite_v2_mcp_config',
     ],
     {
       encoding: 'utf8',

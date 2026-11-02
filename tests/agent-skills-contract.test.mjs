@@ -64,7 +64,7 @@ test('every agent skill grant resolves to one installed skill and every skill is
   }
 })
 
-test('skill metadata uses the OpenCode V2 frontmatter contract', () => {
+test('skill metadata uses the OpenCode 2.x frontmatter contract', () => {
   const skillDirectories = readdirSync(SKILLS_DIR, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)

@@ -15,12 +15,12 @@ import {
   inspectDecisionBudget,
   listDecisionHoldsReadOnly,
   utcPeriodOf,
-} from './decision-router-v2-budget.mjs'
+} from './decision-router-budget-gates.mjs'
 import {
-  resolveV2DecisionEgress,
-  V2_DECISION_EGRESS_DEFAULT,
-  V2_DECISION_EGRESS_TRANSPORT,
-} from './decision-router-v2-egress.mjs'
+  DECISION_EGRESS_DEFAULT,
+  DECISION_EGRESS_TRANSPORT,
+  resolveDecisionEgress,
+} from './decision-router-egress.mjs'
 import {
   applyDecisionLayerPlan,
   buildDecisionLayerPlan,
@@ -86,9 +86,9 @@ export function decisionRouterHelp() {
     '  --selection <value>  same values as `select`',
     '  --accept-migration   allow a schema migration that would enable turn selection',
     '',
-    `Egress default: ${V2_DECISION_EGRESS_DEFAULT}. Enablement, consent, one cap- and period-eligible`,
+    `Egress default: ${DECISION_EGRESS_DEFAULT}. Enablement, consent, one cap- and period-eligible`,
     'candidate and the host permission gate are all required; any missing item means zero requests.',
-    `Provider endpoints are retained ${V2_DECISION_EGRESS_TRANSPORT.wireStatus} (UNWIRED) here; this`,
+    `Provider endpoints are retained ${DECISION_EGRESS_TRANSPORT.wireStatus} (UNWIRED) here; this`,
     'interface adds no transport and never claims the transport was removed.',
   ].join('\n')
 }
@@ -558,7 +558,7 @@ function capEligibleCandidates(config, inspection, wallPeriod) {
 }
 
 function describeEgress(config, inspection, wallPeriod) {
-  return resolveV2DecisionEgress(config, capEligibleCandidates(config, inspection, wallPeriod))
+  return resolveDecisionEgress(config, capEligibleCandidates(config, inspection, wallPeriod))
 }
 
 function describeEgressLine(egress) {

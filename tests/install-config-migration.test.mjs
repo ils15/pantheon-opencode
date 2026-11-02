@@ -262,7 +262,7 @@ describe('config-migration', () => {
       })
     })
 
-    it('maps V1 permission.write to the host action the V2 hosts evaluate (edit)', () => {
+    it('maps V1 permission.write to the host action the hosts evaluate (edit)', () => {
       // P0-5 evidence: every V2 host (2.0.22, 2.0.30, 2.1.0, 2.1.2) evaluates a
       // `write` tool call under the action name `edit`, so a rule emitted as
       // `write` never decides that call — `permission.write: deny` must block
@@ -475,7 +475,7 @@ describe('config-migration', () => {
             migrateV1toV2({
               permission: { mcp: { 'my-mcp.server': 'deny', my_mcp_server: 'allow' } },
             }),
-          /collide after OpenCode V2 permission normalization/i,
+          /collide after OpenCode 2.x permission normalization/i,
         )
       })
 
@@ -1697,7 +1697,7 @@ describe('applyMcpServerEntries — MCP ask warning', () => {
     assert.ok(migrated.mcp.servers['pantheon-resources'])
   })
 
-  it('does not repeat the installer ask warning during a V2 install', () => {
+  it('does not repeat the installer ask warning during a 2.x install', () => {
     const config = {}
     const installer = applyMcpServerEntries(config, context)
     assert.equal(installer.warnings.length, 1, 'the installer reports the V2 default policy')

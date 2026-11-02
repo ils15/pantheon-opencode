@@ -3,7 +3,7 @@
 # STATUS: UNVERIFIED — no image has been produced from this tape. See
 # docs/internal/validation.md#tui-media-gap for the blocker record.
 #
-# Target slot: docs/opencode-v2.md#plan-before-approval (media slug
+# Target slot: docs/opencode.md#plan-before-approval (media slug
 # `opencode-v2-plan-approval`).
 # Output: plan-approval.gif (this directory).
 #

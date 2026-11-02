@@ -24,7 +24,7 @@ function fixture() {
     writeFileSync(join(repo, file), `current ${file}\n`)
     writeFileSync(join(install, file), `current ${file}\n`)
   }
-  writeFileSync(config, JSON.stringify({ plugins: [join(install, 'src', 'plugin-v2')] }))
+  writeFileSync(config, JSON.stringify({ plugins: [join(install, 'src', 'plugin')] }))
   return { root, repo, install, config }
 }
 

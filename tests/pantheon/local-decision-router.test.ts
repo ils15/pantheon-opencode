@@ -1,4 +1,5 @@
 import { strict as assert } from 'node:assert'
+import { PANTHEON_AGENTS } from '../../src/pantheon/delegation-policy.ts'
 import {
   LOCAL_DECISION_ROUTER_ENV,
   type LocalDecisionInput,
@@ -10,7 +11,6 @@ import {
   loadLocalDecisionPolicy,
   recommendLocalOrchestration,
 } from '../../src/pantheon/local-orchestration.ts'
-import { PANTHEON_AGENTS } from '../../src/pantheon/v2-delegation-enforce.ts'
 
 const enabledEnv = { [LOCAL_DECISION_ROUTER_ENV]: '1' }
 

@@ -213,13 +213,12 @@ test('tarball contains no machine paths and ships the runtime inputs', () => {
       assert.doesNotMatch(text, privateUrl, `private URL in ${file}`)
     }
     assert.match(listing, /^package\/scripts\/doctor\.mjs$/m)
-    // 2.0 payload: the V1 plugin line is removed. The legacy plugin entry
-    // points (src/plugin.ts, src/plugins/pantheon-hooks.ts) must NOT ship —
-    // a registration still pointing at them can never resolve after install.
-    assert.doesNotMatch(listing, /^package\/src\/plugin\.ts$/m)
+    // 2.0 payload: the current plugin entry (src/plugin.ts + the src/plugin
+    // directory shim) ships; the retired V1 hooks entry must NOT — a
+    // registration still pointing at it can never resolve after install.
+    assert.match(listing, /^package\/src\/plugin\.ts$/m)
+    assert.match(listing, /^package\/src\/plugin\/index\.ts$/m)
     assert.doesNotMatch(listing, /^package\/src\/plugins\/pantheon-hooks\.ts$/m)
-    assert.match(listing, /^package\/src\/plugin-v2\/index\.ts$/m)
-    assert.match(listing, /^package\/src\/plugin-v2\.ts$/m)
     assert.match(listing, /^package\/bin\/pantheon-init\.mjs$/m)
     // The code-mode payload must ship inside the tarball so fresh installs
     // can seed the runtime scripts directory.
@@ -313,7 +312,7 @@ test('installed package resolves hooks to its installed absolute path', () => {
       'installed package must not ship an opencode.json template',
     )
     // Installer contract (this run is pinned to v2 above): 2.0 registers ONLY
-    // the V2 plugin directory inside the INSTALLED package, in object form
+    // the plugin directory inside the INSTALLED package, in object form
     // ({ package, options }) under the plural `plugins` key, plus the copied
     // TUI plugin directory. The singular `plugin` key of the removed V1
     // generation must never come back, and every path is inside the installed
@@ -324,7 +323,7 @@ test('installed package resolves hooks to its installed absolute path', () => {
       'the V1 singular `plugin` key must not be written by a 2.0 install',
     )
     assert.deepEqual(config.plugins, [
-      { package: join(installedRoot, 'src', 'plugin-v2'), options: {} },
+      { package: join(installedRoot, 'src', 'plugin'), options: {} },
       join(project, '.opencode', 'plugins', 'pantheon-tui'),
     ])
     for (const entry of config.plugins) {

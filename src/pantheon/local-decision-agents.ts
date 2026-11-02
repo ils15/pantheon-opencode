@@ -1,7 +1,7 @@
+import { PANTHEON_AGENTS } from './delegation-policy.ts'
 import type { LocalDecisionPolicy } from './local-orchestration.ts'
 import { PANTHEON_AGENT_CATALOG, PANTHEON_AGENT_IDS } from './pantheon-decision-catalog.ts'
 import { isAgentAllowed } from './permission-globs.ts'
-import { PANTHEON_AGENTS } from './v2-delegation-enforce.ts'
 
 export type AgentRecommendationReason =
   | 'RECOMMENDED'

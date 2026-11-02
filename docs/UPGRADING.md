@@ -1,5 +1,10 @@
 # Upgrading Pantheon
 
+> **2.0 note:** 2.0 removed the V1 plugin line. The sections below describe the
+> 1.x → 2.x migration and are kept as history; new installs are 2.x-only and
+> the installer registers `src/plugin` (pre-rename configs still register
+> `src/plugin-v2`, which `init` migrates).
+
 [Português (Brasil)](UPGRADING.pt-BR.md)
 
 This guide covers two moves: **1.5.2 → 1.6.0**, which is an in-line upgrade, and
@@ -41,23 +46,23 @@ byte-compare idempotent, and the exact backup set under
 
 ### What changes in 1.6.0
 
-- **The V2 tool surface is three unconditional tools** — `hashline_edit`,
+- **The tool surface is three unconditional tools** — `hashline_edit`,
   `pantheon_cost`, `pantheon_model` — plus up to two host-dependent ones:
   `vision_describe` when the host exposes its model catalog, and
   `pantheon_bounded_read` when the host exposes its permission and session APIs
   (root Zeus sessions only). It is not six tools.
-- **The three V2 goal tools are not registered.** The goal loop needs a
+- **The three plugin goal tools are not registered.** The goal loop needs a
   `GoalStore`, a `GoalLoopClient`, and a `BackgroundJobBoard`, none of which the
-  V2 `PluginContext` exposes. The gap is reported as `goal-tools`.
-- **Every V2 tool declares `output`.** OpenCode 2.0.x rejects a tool whose
+  `PluginContext` exposes. The gap is reported as `goal-tools`.
+- **Every tool declares `output`.** OpenCode 2.0.x rejects a tool whose
   declaration and result disagree.
-- **V2 read-only sessions are enforced.** A delegated `apollo`/`gaia` session is
+- **Read-only sessions are enforced.** A delegated `apollo`/`gaia` session is
   denied `edit`, `write`, `bash`, `task`, `hashline_edit`, and
-  `pantheon_model` by the V2 `execute.before` hook.
+  `pantheon_model` by the `execute.before` hook.
 - **Durable manual goals move to the Persistence MCP.** `goal_create`,
   `goal_get`, `goal_update`, and `goal_done` are Zeus-only and session-scoped.
   V1 goal tools remain available but deprecated.
-- **Step ceilings are stripped on V2 installs.** `steps` is optional in
+- **Step ceilings are stripped on installs.** `steps` is optional in
   OpenCode 2; an absent value means no native ceiling. Run the installer once to
   clear a stale value from a managed agent.
 - **Memory gains a 64 KiB cap and TTL**, and `pantheon_cost` reports USD by
@@ -80,12 +85,12 @@ never installs both Pantheon plugin generations.
 
 1. Stop OpenCode before changing the plugin generation.
 2. Run `init` once with the desired selector (`v1`, `v2`, or `auto`). Do not
-   copy a V1 plugin entry into a V2 `plugins` list, or vice versa.
+   copy a V1 plugin entry into a `plugins` list, or vice versa.
 3. If the TUI is wanted, include the installer `plugins` component. V1 uses
    `tui.json`; V2 uses its native local-plugin `index.ts` + `tui.ts`
    entrypoints. Installing the V2 server plugin alone does not install the TUI.
 4. Inspect the result: V1 Pantheon entries belong in `plugin`; the V2 Pantheon
-   entry is the `<installed>/src/plugin-v2` directory in `plugins`.
+   entry is the `<installed>/src/plugin` directory in `plugins`.
 5. Restart OpenCode after changing configuration.
 6. Run `doctor` and confirm no plugin-version drift remains.
 
@@ -106,7 +111,7 @@ does not mean it guessed. Pass `--opencode-version v2` explicitly, or set
   BackgroundJobBoard lifecycle, and the V1 event/tool/compaction hooks.
 - **V2:** does not register the BackgroundJobBoard, V1 event/tool hooks, or a
   Pantheon V1 compaction hook. It adds the V2 hooks documented in
-  [OpenCode V2](opencode-v2.md).
+  [OpenCode 2.x](opencode.md).
 - **Recovery:** on restart, old or running V1 board jobs are marked errored;
   they are not auto-resumed and child work is not restarted automatically. V2
   adds no automatic resume/restart behavior.
@@ -128,7 +133,7 @@ Prepare for 2.x by:
 - moving durable manual goals to the Persistence MCP `goal_*` tools;
 - replacing any reliance on V1 goal tools or the BackgroundJobBoard;
 - confirming the installation is registered through `plugins` with the
-  `<installed>/src/plugin-v2` directory;
+  `<installed>/src/plugin` directory;
 - running `doctor` and the V2 sandbox checks described in
   [Release Process](RELEASING.md).
 

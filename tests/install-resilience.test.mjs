@@ -249,9 +249,9 @@ test('install prunes Pantheon refs from stale install locations, keeps third-par
     assert.ok(config.plugin.includes('@scope/user-plugin'), 'user plugin preserved')
     assert.ok(
       (config.plugins ?? []).some(
-        (entry) => typeof entry === 'object' && entry.package === join(ROOT, 'src', 'plugin-v2'),
+        (entry) => typeof entry === 'object' && entry.package === join(ROOT, 'src', 'plugin'),
       ),
-      'the V2 plugin directory is registered',
+      'the plugin directory is registered',
     )
   } finally {
     rmSync(target, { recursive: true, force: true })

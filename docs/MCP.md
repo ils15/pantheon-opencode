@@ -101,8 +101,8 @@ Rules:
 - `all` allows every tool from that named Pantheon server.
 - A list allows only those tool names; an empty list denies every tool there.
 - A server omitted from an agent's metadata is denied for that agent.
-- Rules are generated into V1 `permission` objects and V2 `permissions` arrays.
-- V1 `permission.task` rules translate to V2's native `subagent` action.
+- Rules are generated into legacy `permission` objects and `permissions` arrays.
+- Legacy `permission.task` rules translate to the native `subagent` action.
 - Third-party MCP permissions remain the user's configuration.
 
 On OpenCode 2.x the host evaluates a `permissions` rule whose action is
@@ -110,7 +110,7 @@ On OpenCode 2.x the host evaluates a `permissions` rule whose action is
 `permission.mcp.<server>` key is not an action the host evaluates; the installer
 translates `allow`/`deny` into the former. `ask` is not expressible for MCP on
 that host: it hides the tool instead of prompting, so the installer emits no
-rule and warns. In V2, per-agent rules can hide tools from that agent without
+rule and warns. On 2.x, per-agent rules can hide tools from that agent without
 disconnecting the server.
 
 The Apollo/Athena `code_query` and `code_neighbors` grants are the approved
@@ -235,7 +235,7 @@ mcp_tools:
 | **my-tools** | `analyze_dependency(package, depth?)` | Check a dependency for known vulnerabilities |
 ```
 
-**4. Set access control.** V1 uses `permission.mcp.<server>`; on V2 use the
+**4. Set access control.** Legacy 1.x used `permission.mcp.<server>`; on 2.x use the
 native `<server>_*` rule described above. Start with `ask` for a new server and
 downgrade to `allow` only after verifying read-only safety.
 

@@ -40,7 +40,7 @@ const { DatabaseSync } = await import('node:sqlite')
  * Minimal V2-shaped fixture database. Column names match the real host schema
  * (verified read-only on the live opencode.db): session_v2 + session_message.
  */
-function buildV2Fixture(dbPath) {
+function buildFixture(dbPath) {
   const db = new DatabaseSync(dbPath)
   db.exec(`
     CREATE TABLE session_v2 (
@@ -137,7 +137,7 @@ function withFixture(run) {
   const dir = mkdtempSync(join(tmpdir(), 'bench-collector-'))
   const dbPath = join(dir, 'opencode.db')
   try {
-    buildV2Fixture(dbPath)
+    buildFixture(dbPath)
     run(dbPath, dir)
   } finally {
     rmSync(dir, { recursive: true, force: true })

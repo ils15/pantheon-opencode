@@ -1,3 +1,2 @@
-// OpenCode V1 compatibility entrypoint. The V2 installer copies tui-v2.ts as
-// the installed root tui.ts instead.
+// OpenCode 2.x's CLI loader resolves this root-level TUI entrypoint.
 export { default } from './dist/tui.js'

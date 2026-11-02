@@ -1,6 +1,6 @@
 /**
  * Process-wide BackgroundJobBoard singleton shared by every Pantheon plugin
- * surface (the V2 plugin, src/plugin-v2.ts; the V1 writers were removed in 2.0).
+ * surface (the plugin, src/plugin.ts; the V1 writers were removed in 2.0).
  *
  * WHY globalThis and not a module-level `const`: opencode loads each plugin
  * TWICE from two different filesystem paths (the installed npm package AND

@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
+  createLocalDecisionDefinition,
   createLocalDecisionTool,
-  createV2LocalDecisionDefinition,
 } from '../../src/pantheon/local-decision-tool.ts'
 import type {
   LocalDecisionPolicy,
@@ -73,8 +73,8 @@ async function testV1ToolRequiresHostReportedZeusAndDoesNotDispatch(): Promise<v
   assert.equal(policyLoads, 1)
 }
 
-async function testV2DefinitionHasStructuredSchemaAndZeusExecutionGuard(): Promise<void> {
-  const definition = createV2LocalDecisionDefinition({ loadPolicy: async () => policy })
+async function testDefinitionHasStructuredSchemaAndZeusExecutionGuard(): Promise<void> {
+  const definition = createLocalDecisionDefinition({ loadPolicy: async () => policy })
   assert.equal(definition.name, 'pantheon_local_decision')
   assert.equal(definition.input.additionalProperties, false)
   assert.deepEqual(Object.keys(definition.input.properties as Record<string, unknown>).sort(), [
@@ -128,6 +128,6 @@ async function testAmbiguityStaysLocalInSanitizedProviderReadyChild(): Promise<v
 }
 
 await testV1ToolRequiresHostReportedZeusAndDoesNotDispatch()
-await testV2DefinitionHasStructuredSchemaAndZeusExecutionGuard()
+await testDefinitionHasStructuredSchemaAndZeusExecutionGuard()
 await testAmbiguityStaysLocalInSanitizedProviderReadyChild()
 console.log('local decision tool tests passed')

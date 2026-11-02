@@ -5,8 +5,8 @@ import {
   openLocalDecisionBudgetLedger,
 } from '../../../src/pantheon/local-decision-budget.ts'
 import {
+  createLocalDecisionDefinition,
   createLocalDecisionTool,
-  createV2LocalDecisionDefinition,
 } from '../../../src/pantheon/local-decision-tool.ts'
 import type {
   LocalDecisionPolicy,
@@ -98,7 +98,7 @@ assert.equal(result.action, 'advisory_only')
 assert.equal(Object.hasOwn(result, 'dispatch'), false)
 assert.equal(fetchCalls, 0)
 
-const v2Tool = createV2LocalDecisionDefinition({ loadPolicy: async () => policy })
+const v2Tool = createLocalDecisionDefinition({ loadPolicy: async () => policy })
 const v2Result = await v2Tool.execute(input as unknown as Record<string, unknown>, {
   agent: 'zeus',
 })

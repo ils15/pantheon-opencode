@@ -26,7 +26,7 @@ import { join } from 'node:path'
 import { test as nodeTest } from 'node:test'
 import { migrateV1toV2 } from '../scripts/install/config-migration.mjs'
 import {
-  applyContextSandboxToV2Plugins,
+  applyContextSandboxToPlugins,
   applyMcpServerEntries,
   deriveNativeMcpPermissions,
   installOpenCode,
@@ -87,7 +87,7 @@ test('mcp_tools all and checkpoint allowlists map to V1 and V2 MCP names', () =>
 test('mcp_tools rejects server names with colliding V2-normalized actions', () => {
   assert.throws(
     () => deriveNativeMcpPermissions({ pantheon_resources: ['execute'] }),
-    /collide after OpenCode V2 permission normalization/i,
+    /collide after OpenCode 2.x permission normalization/i,
   )
 })
 
@@ -138,9 +138,13 @@ test('generated mcp_tools grants cannot override explicit agent denies or asks',
   assert.equal(mergeAgentMcpPermissions({}, { foo: 'all' })['foo_*'], 'allow')
 })
 
-test('resolveInstalledPlugin maps the exact relative root plugin into the installed package', () => {
+test('resolveInstalledPlugin re-resolves the retired V1 file ref onto the current plugin directory', () => {
+  // The V1 identity `src/plugin.ts` is recognized forever, but the file it
+  // named was removed in 2.0 and the current entry is the DIRECTORY — a file
+  // path registration would be rejected by the 2.x loader ("must be a
+  // directory"), so the ref migrates onto src/plugin.
   const result = resolveInstalledPlugin('src/plugin.ts')
-  assert.equal(result, join(ROOT, 'src', 'plugin.ts'))
+  assert.equal(result, join(ROOT, 'src', 'plugin'))
 })
 
 test('resolveInstalledPlugin preserves a third-party plugin with the same basename', () => {
@@ -164,30 +168,33 @@ test('resolveInstalledPlugin preserves third-party paths under pantheon-named di
   )
 })
 
-test('resolveInstalledPlugin maps the exact relative hooks plugin into the installed package', () => {
+test('resolveInstalledPlugin re-resolves the retired hooks entry onto the current plugin directory', () => {
   const result = resolveInstalledPlugin('src/plugins/pantheon-hooks.ts')
-  assert.equal(result, join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts'))
+  assert.equal(result, join(ROOT, 'src', 'plugin'))
 })
 
-test('resolveInstalledPlugin maps the V2 plugin directory into the installed package', () => {
-  const result = resolveInstalledPlugin('src/plugin-v2')
-  assert.equal(result, join(ROOT, 'src', 'plugin-v2'))
+test('resolveInstalledPlugin maps the legacy pre-rename directory onto the current identity', () => {
+  // Legacy recognition (2.0-beta registered src/plugin-v2): the ref migrates
+  // onto src/plugin. The pre-rename directory no longer ships — join() the
+  // legacy segments at runtime so this check cannot be confused with the
+  // current path.
+  assert.equal(resolveInstalledPlugin('src/plugin-v2'), join(ROOT, 'src', 'plugin'))
+  assert.equal(existsSync(join(ROOT, 'src', 'plugin' + '-v2')), false)
 })
 
 test('resolveInstalledPlugin migrates the legacy V2 file ref to the plugin directory', () => {
-  assert.equal(resolveInstalledPlugin('src/plugin-v2.ts'), join(ROOT, 'src', 'plugin-v2'))
+  assert.equal(resolveInstalledPlugin('src/plugin-v2.ts'), join(ROOT, 'src', 'plugin'))
   assert.equal(
     resolveInstalledPlugin(join(ROOT, 'src', 'plugin-v2.ts')),
-    join(ROOT, 'src', 'plugin-v2'),
+    join(ROOT, 'src', 'plugin'),
   )
 })
 
-test('V2 npm-shorthand and legacy refs share the directory identity', () => {
-  const dir = join(ROOT, 'src', 'plugin-v2')
-  for (const ref of ['pantheon-opencode/plugin-v2', 'src/plugin-v2.ts']) {
-    assert.equal(pluginReferenceIdentity(ref), 'src/plugin-v2')
+test('legacy npm-shorthand and pre-rename refs share the current identity', () => {
+  for (const ref of ['pantheon-opencode/plugin-v2', 'src/plugin-v2.ts', 'src/plugin-v2']) {
+    assert.equal(pluginReferenceIdentity(ref), 'src/plugin')
   }
-  assert.equal(pluginReferenceIdentity(dir), 'src/plugin-v2')
+  assert.equal(pluginReferenceIdentity('src/plugin'), 'src/plugin')
 })
 
 test('versioned Pantheon package refs are managed during V2 migration', async () => {
@@ -199,12 +206,12 @@ test('versioned Pantheon package refs are managed during V2 migration', async ()
   ]) {
     assert.equal(
       pluginReferenceIdentity(ref),
-      'src/plugin-v2',
-      `Pantheon package ref should map to the managed V2 plugin: ${JSON.stringify(ref)}`,
+      'src/plugin',
+      `Pantheon package ref should map to the managed plugin: ${JSON.stringify(ref)}`,
     )
   }
 
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-stale-package-ref-'))
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-stale-package-ref-'))
   try {
     const thirdParty = 'npm:@acme/my-plugin'
     const config = await runInstall(
@@ -219,11 +226,11 @@ test('versioned Pantheon package refs are managed during V2 migration', async ()
       'v2',
     )
 
-    // Always the object form (issue #268): the V2 host passes plugin `options`
+    // Always the object form (issue #268): the host passes plugin `options`
     // only from `{ package, options }`, and the opt-in features read that bag.
     assert.deepEqual(config.plugins, [
       thirdParty,
-      { package: join(ROOT, 'src', 'plugin-v2'), options: {} },
+      { package: join(ROOT, 'src', 'plugin'), options: {} },
       // The copied TUI plugin is registered explicitly: OpenCode 2.x loads its
       // server RPC only from the `plugins` list (a missing entry leaves the
       // V2-only pantheon.quota RPC at rpc.unavailable).
@@ -237,29 +244,36 @@ test('versioned Pantheon package refs are managed during V2 migration', async ()
 test('resolveInstalledPlugin preserves a third-party plugin-v2 file path', () => {
   const thirdParty = '/tmp/vendor/pantheon-opencode/src/plugin-v2.ts'
   assert.equal(resolveInstalledPlugin(thirdParty), thirdParty)
-  assert.notEqual(pluginReferenceIdentity(thirdParty), 'src/plugin-v2')
+  assert.notEqual(pluginReferenceIdentity(thirdParty), 'src/plugin')
 })
 
-test('resolveInstalledPlugin recognizes only exact installed paths as managed', () => {
+test('resolveInstalledPlugin re-resolves retired installed paths onto the current directory', () => {
+  // The retired identities keep OWNERSHIP (an update must strip them), but
+  // their files no longer exist, so both re-resolve onto src/plugin.
   for (const ref of [
     join(ROOT, 'src', 'plugin.ts'),
     join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts'),
   ]) {
-    const result = resolveInstalledPlugin(ref)
-    assert.equal(result, ref)
+    assert.equal(resolveInstalledPlugin(ref), join(ROOT, 'src', 'plugin'))
   }
+  assert.equal(resolveInstalledPlugin(join(ROOT, 'src', 'plugin')), join(ROOT, 'src', 'plugin'))
 })
 
 test('resolved plugin paths exist inside the package (ROOT-derived, not stale refs)', () => {
-  // Only the V2 plugin directory ships in the 2.0 package; the legacy V1
-  // identities remain RECOGNIZED (stripped/migrated) but have no file to
-  // resolve to.
-  for (const ref of ['src/plugin.ts', 'src/plugins/pantheon-hooks.ts']) {
-    assert.equal(resolveInstalledPlugin(ref), join(ROOT, ref))
-  }
-  const result = resolveInstalledPlugin('src/plugin-v2')
+  // Every managed identity re-resolves onto the CURRENT plugin directory:
+  // the legacy V1/2.0-beta identities remain RECOGNIZED (stripped/migrated)
+  // but their files no longer ship.
+  const result = resolveInstalledPlugin('src/plugin')
   assert.ok(result.startsWith(join(ROOT, 'src')), `expected ROOT-derived path, got ${result}`)
   assert.ok(existsSync(result), `resolved path does not exist in package: ${result}`)
+  for (const legacy of [
+    'src/plugin.ts',
+    'src/plugins/pantheon-hooks.ts',
+    'src/plugin-v2',
+    'src/plugin-v2.ts',
+  ]) {
+    assert.equal(resolveInstalledPlugin(legacy), result)
+  }
 })
 
 test('resolveInstalledPlugin passes through non-src plugin refs unchanged', () => {
@@ -322,16 +336,16 @@ function snapshotTree(root) {
   return snapshot
 }
 
-test('fresh install registers the managed V2 plugin directory', async () => {
+test('fresh install registers the managed plugin directory', async () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-fresh-'))
   try {
     const config = await runInstall(target)
     assert.ok(Array.isArray(config.plugins), 'config.plugins must be an array')
     assert.ok(
       config.plugins.some(
-        (entry) => typeof entry === 'object' && entry.package === join(ROOT, 'src', 'plugin-v2'),
+        (entry) => typeof entry === 'object' && entry.package === join(ROOT, 'src', 'plugin'),
       ),
-      `managed V2 directory missing from fresh install: ${JSON.stringify(config.plugins)}`,
+      `managed plugin directory missing from fresh install: ${JSON.stringify(config.plugins)}`,
     )
     // The retired V1 identities are never re-registered.
     assert.ok(
@@ -425,7 +439,7 @@ test('sync realigns a stale node_modules plugin path onto the current package (i
     assert.ok(config.plugin.includes(THIRD_PARTY_PLUGIN), 'third-party plugin must be preserved')
     assert.ok(
       config.plugins.some(
-        (entry) => typeof entry === 'object' && entry.package === join(ROOT, 'src', 'plugin-v2'),
+        (entry) => typeof entry === 'object' && entry.package === join(ROOT, 'src', 'plugin'),
       ),
       `stale V2 ref not realigned onto this package: ${JSON.stringify(config.plugins)}`,
     )
@@ -439,7 +453,7 @@ test('sync realigns a stale node_modules plugin path onto the current package (i
 })
 
 test('V2 drops the exact legacy MCP toggle and preserves user MCP servers in the native map', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-mcp-'))
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-mcp-'))
   try {
     const config = await runInstall(
       target,
@@ -462,7 +476,7 @@ test('V2 drops the exact legacy MCP toggle and preserves user MCP servers in the
 })
 
 test('V2 install preserves flat user MCP servers beside a nested server map', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-mixed-mcp-'))
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-mixed-mcp-'))
   const flatUser = { type: 'remote', url: 'https://flat.example/mcp', enabled: true }
   const nestedUser = { type: 'local', command: ['node', 'nested-server.mjs'] }
   try {
@@ -488,7 +502,7 @@ test('V2 install preserves flat user MCP servers beside a nested server map', as
 })
 
 test('existing V2 permissions remain authoritative when defaults are merged', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-native-permissions-'))
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-native-permissions-'))
   const nativePermissions = [{ action: 'edit', resource: '*', effect: 'deny' }]
   try {
     const config = await runInstall(target, { permissions: nativePermissions }, 'v2')
@@ -499,7 +513,7 @@ test('existing V2 permissions remain authoritative when defaults are merged', as
 })
 
 test('V2 installer does not write a normalized legacy MCP grant that aliases a configured server', async (t) => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-mcp-alias-'))
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-mcp-alias-'))
   const configPath = join(target, 'opencode.json')
   const original = JSON.stringify(
     {
@@ -529,7 +543,7 @@ test('V2 installer does not write a normalized legacy MCP grant that aliases a c
 })
 
 test('V2 installer checks managed-agent MCP scopes against configured user servers', async (t) => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-agent-mcp-alias-'))
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-agent-mcp-alias-'))
   const configPath = join(target, 'opencode.json')
   writeFileSync(
     configPath,
@@ -562,7 +576,7 @@ test('V2 installer checks managed-agent MCP scopes against configured user serve
 })
 
 test('V2 installer rejects malformed nested MCP before seeding or writing any target files', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-malformed-mcp-'))
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-malformed-mcp-'))
   const configPath = join(target, 'opencode.json')
   const seed = `${JSON.stringify(
     {
@@ -602,7 +616,7 @@ test('V2 installer rejects array-shaped MCP maps before seeding or writing any t
     ['top-level', [{ type: 'remote', url: 'https://array.example/mcp' }]],
     ['nested', { servers: [{ type: 'remote', url: 'https://array.example/mcp' }] }],
   ]) {
-    const target = mkdtempSync(join(tmpdir(), `pantheon-v2-${label}-array-mcp-`))
+    const target = mkdtempSync(join(tmpdir(), `pantheon-${label}-array-mcp-`))
     t.after(() => rmSync(target, { recursive: true, force: true }))
     const configPath = join(target, 'opencode.json')
     const seed = `${JSON.stringify({ mcp }, null, 2)}\n`
@@ -638,7 +652,7 @@ nodeTest(
       ['zero', 0],
       ['empty-string', ''],
     ]) {
-      const target = mkdtempSync(join(tmpdir(), `pantheon-v2-${label}-mcp-`))
+      const target = mkdtempSync(join(tmpdir(), `pantheon-${label}-mcp-`))
       t.after(() => rmSync(target, { recursive: true, force: true }))
       const configPath = join(target, 'opencode.json')
       const seed = `${JSON.stringify({ mcp }, null, 2)}\n`
@@ -667,7 +681,7 @@ nodeTest(
 )
 
 nodeTest('direct V2 init accepts absent MCP and seeds its managed servers', async (t) => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-absent-mcp-'))
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-absent-mcp-'))
   t.after(() => rmSync(target, { recursive: true, force: true }))
   const configPath = join(target, 'opencode.json')
   writeFileSync(configPath, '{"theme":"dark"}\n')
@@ -823,7 +837,7 @@ test('global runtime install seeds <config>/.pantheon/code-mode', async () => {
 })
 
 test('V2 upgrade merges and deduplicates user plugins without overwriting config.plugins', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-plugins-'))
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-plugins-'))
   try {
     const userPlugin = 'npm:@acme/my-plugin'
     const v1Only = 'npm:@acme/v1-only'
@@ -832,13 +846,13 @@ test('V2 upgrade merges and deduplicates user plugins without overwriting config
       { plugin: [v1Only], plugins: [userPlugin, userPlugin], theme: 'user-theme' },
       'v2',
     )
-    // A V1 entry the V2 loader cannot load (a package shorthand) is NOT copied
+    // A V1 entry the loader cannot load (a package shorthand) is NOT copied
     // into `plugins`: that would make the V2 config fail to load. It stays in
-    // the singular key, which the V2 host ignores.
+    // the singular key, which the host ignores.
     assert.deepEqual(config.plugin, [v1Only])
     assert.ok(!config.plugins.includes(v1Only))
     // V2 registers the plugin DIRECTORY inside the installed package
-    // (<pkg>/src/plugin-v2, whose index.ts shim re-exports the real entry):
+    // (<pkg>/src/plugin, whose index.ts shim re-exports the real entry):
     // the beta loader rejects file paths ("must be a directory") and resolves
     // `a/b` shorthands via npm install (NpmInstallFailedError) — never the V1
     // local-file paths, which stay V1-only.
@@ -846,7 +860,7 @@ test('V2 upgrade merges and deduplicates user plugins without overwriting config
       userPlugin,
       // The object form is what makes `options` reachable at all; a fresh
       // install writes it with an empty bag (issue #268).
-      { package: join(ROOT, 'src', 'plugin-v2'), options: {} },
+      { package: join(ROOT, 'src', 'plugin'), options: {} },
       // The copied TUI plugin: with no explicit entry the OpenCode 2.x host
       // never loads the copy's server and pantheon.quota reads unavailable.
       join(target, '.opencode', 'plugins', 'pantheon-tui'),
@@ -1014,7 +1028,7 @@ test('upgrade preserves user plugins and registers the managed V2 entry exactly 
     assert.equal(pluginFiles.filter((f) => f === 'plugin.ts').length, 1)
     assert.equal(pluginFiles.filter((f) => f === 'pantheon-hooks.ts').length, 1)
     const managed = config.plugins.filter(
-      (entry) => typeof entry === 'object' && entry.package === join(ROOT, 'src', 'plugin-v2'),
+      (entry) => typeof entry === 'object' && entry.package === join(ROOT, 'src', 'plugin'),
     )
     assert.equal(
       managed.length,
@@ -1221,7 +1235,7 @@ test('user-set model is never overwritten by the merge', async () => {
 // delete runs after it.
 
 test('v2 install strips a stale steps ceiling from a managed agent', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-steps-v2-'))
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-steps-'))
   try {
     const config = await runInstall(
       target,
@@ -1302,7 +1316,7 @@ test('the installer has no remaining write path for steps', async () => {
   )
   // Behavioral half of the same invariant: a fresh install writes no ceiling.
   {
-    const target = mkdtempSync(join(tmpdir(), 'pantheon-steps-fresh-v2-'))
+    const target = mkdtempSync(join(tmpdir(), 'pantheon-steps-fresh-'))
     try {
       const config = await runInstall(target)
       const agents = config.agents
@@ -1353,7 +1367,7 @@ test('a managed agent absent from the config is created without steps', async ()
 })
 
 test('v2 instructions-only install refreshes prompts in the native V2 agent directory', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-v2-agent-refresh-'))
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-agent-refresh-'))
   const options = { yes: true, headless: true, version: 'v2' }
   const v2Hermes = join(target, 'agents', 'hermes.md')
   try {
@@ -1414,7 +1428,7 @@ test('v2 install keeps the managed agent merge when agent and agents coexist', a
 // ---------------------------------------------------------------------------
 // V2.0.25 accepts but SILENTLY DROPS a top-level `context_sandbox` key (sandbox
 // probe evidence), while plugin-entry `options` survive verbatim. The installer
-// therefore duplicates the V1 block into the Pantheon V2 plugin entry's options
+// therefore duplicates the V1 block into the Pantheon plugin entry's options
 // and leaves the top-level block for a V1 downgrade.
 
 test('V2 install duplicates a V1 top-level context_sandbox into the Pantheon plugin options', async () => {
@@ -1426,9 +1440,9 @@ test('V2 install duplicates a V1 top-level context_sandbox into the Pantheon plu
     // V1 top-level block is preserved for a downgrade.
     assert.deepEqual(config.context_sandbox, legacy, 'top-level block must survive')
     // The exact Pantheon V2 entry carries the same value under options.
-    const entry = config.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin-v2')
+    const entry = config.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin')
     assert.equal(typeof entry, 'object', 'the Pantheon V2 entry becomes an options object')
-    assert.equal(entry.package, join(ROOT, 'src', 'plugin-v2'))
+    assert.equal(entry.package, join(ROOT, 'src', 'plugin'))
     assert.deepEqual(entry.options.context_sandbox, legacy)
   } finally {
     rmSync(target, { recursive: true, force: true })
@@ -1444,14 +1458,14 @@ test('an explicit V2 plugin option wins per leaf over the legacy top-level block
         context_sandbox: { enabled: false, limits: { read: { maxLines: 5, keepTail: 2 } } },
         plugins: [
           {
-            package: join(ROOT, 'src', 'plugin-v2'),
+            package: join(ROOT, 'src', 'plugin'),
             options: { context_sandbox: { limits: { read: { maxLines: 99 } } } },
           },
         ],
       },
       'v2',
     )
-    const entry = config.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin-v2')
+    const entry = config.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin')
     assert.deepEqual(entry.options.context_sandbox, {
       enabled: false,
       limits: { read: { maxLines: 99, keepTail: 2 } },
@@ -1508,29 +1522,27 @@ test('context_sandbox migration preserves third-party plugin entries and their o
       (ref) => pluginReferenceIdentity(ref) === 'npm:@acme/other',
     )
     assert.deepEqual(preserved, thirdParty, 'third-party entry and options untouched')
-    const entry = config.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin-v2')
+    const entry = config.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin')
     assert.deepEqual(entry.options.context_sandbox, { enabled: false })
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
 })
 
-test('applyContextSandboxToV2Plugins converts a string entry and leaves others intact', () => {
-  const v2ref = join(ROOT, 'src', 'plugin-v2')
-  const plugins = ['npm:@acme/other', v2ref]
-  applyContextSandboxToV2Plugins(plugins, { enabled: true })
+test('applyContextSandboxToPlugins converts a string entry and leaves others intact', () => {
+  const managedRef = join(ROOT, 'src', 'plugin')
+  const plugins = ['npm:@acme/other', managedRef]
+  applyContextSandboxToPlugins(plugins, { enabled: true })
   assert.equal(plugins[0], 'npm:@acme/other')
   assert.deepEqual(plugins[1], {
-    package: v2ref,
+    package: managedRef,
     options: { context_sandbox: { enabled: true } },
   })
 })
 
-test('applyContextSandboxToV2Plugins is a no-op when the legacy key is absent', () => {
-  const plugins = [join(ROOT, 'src', 'plugin-v2')]
-  assert.deepEqual(applyContextSandboxToV2Plugins(plugins, undefined), [
-    join(ROOT, 'src', 'plugin-v2'),
-  ])
+test('applyContextSandboxToPlugins is a no-op when the legacy key is absent', () => {
+  const plugins = [join(ROOT, 'src', 'plugin')]
+  assert.deepEqual(applyContextSandboxToPlugins(plugins, undefined), [join(ROOT, 'src', 'plugin')])
 })
 
 test('V2-only null/invalid context_sandbox options abort even without a legacy key', async () => {
@@ -1551,7 +1563,7 @@ test('V2-only null/invalid context_sandbox options abort even without a legacy k
     const configPath = join(target, 'opencode.json')
     try {
       const seed = `${JSON.stringify(
-        { plugins: [{ package: join(ROOT, 'src', 'plugin-v2'), options }] },
+        { plugins: [{ package: join(ROOT, 'src', 'plugin'), options }] },
         null,
         2,
       )}\n`
@@ -1584,10 +1596,10 @@ test('V2-only valid context_sandbox options are validated and preserved idempote
     }
     const first = await runInstall(
       target,
-      { plugins: [{ package: join(ROOT, 'src', 'plugin-v2'), options }] },
+      { plugins: [{ package: join(ROOT, 'src', 'plugin'), options }] },
       'v2',
     )
-    const entry = first.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin-v2')
+    const entry = first.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin')
     assert.deepEqual(
       entry.options.context_sandbox,
       options.context_sandbox,
@@ -1596,7 +1608,7 @@ test('V2-only valid context_sandbox options are validated and preserved idempote
     assert.equal(entry.options.sibling_option, 'kept', 'sibling plugin options preserved')
 
     const second = await runInstall(target, first, 'v2')
-    assert.deepEqual(second, first, 'a second V2-only install must be a byte-identical no-op')
+    assert.deepEqual(second, first, 'a second 2.x-only install must be a byte-identical no-op')
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
@@ -1606,10 +1618,10 @@ test('a V2 plugin entry with no managed option stays a no-op EMPTY options bag',
   const target = mkdtempSync(join(tmpdir(), 'pantheon-ctxsandbox-none-'))
   try {
     const first = await runInstall(target, null, 'v2')
-    const entry = first.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin-v2')
+    const entry = first.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin')
     // The object form is emitted from the start; without legacy input the bag
     // is empty, so nothing is enabled by installing (issue #268).
-    assert.deepEqual(entry, { package: join(ROOT, 'src', 'plugin-v2'), options: {} })
+    assert.deepEqual(entry, { package: join(ROOT, 'src', 'plugin'), options: {} })
 
     const second = await runInstall(target, first, 'v2')
     assert.deepEqual(second, first, 'absent legacy + absent V2 options stays idempotent')
@@ -1786,7 +1798,7 @@ test('context_sandbox migration is applied independently to global and project t
         version: 'v2',
       })
       const config = JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8'))
-      const entry = config.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin-v2')
+      const entry = config.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin')
       assert.deepEqual(entry.options.context_sandbox, legacy, `scope migrate failed for ${target}`)
     }
   } finally {

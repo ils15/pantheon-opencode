@@ -1,0 +1,497 @@
+/**
+ * Tool surface — the Pantheon tools that are self-sufficient on the
+ * OpenCode 2.x host, declared for `ctx.tool.transform`'s `draft.add`.
+ *
+ * ## Why four unconditional tools
+ *
+ * A tool can only be served here when it needs no legacy infrastructure. The
+ * three goal tools (`pantheon_goal_create`, `pantheon_goal_get`,
+ * `pantheon_goal_update`) are NOT: `GoalLoopDeps` requires a `GoalStore`, a
+ * `GoalLoopClient` and a `BackgroundJobBoard`, none of which exist on the 2.x
+ * `PluginContext`, and `getBridgeFromContext` resolves to `null` outside V1.
+ * They are therefore absent from this surface rather than registered as
+ * placeholders that resolve to a message — a placeholder still fails the host's
+ * output contract on every call, so it buys nothing. See
+ * `UNSUPPORTED_FEATURES` in `../plugin-v2.ts` (marker `goal-tools`).
+ *
+ * `hashline_edit` (pure filesystem), `pantheon_cost` (reads `opencode.db`),
+ * `pantheon_model` (reads/writes `active-preset.json`), and the local-only
+ * `pantheon_local_decision` selector need none of that. Its execution rejects
+ * any host context that does not identify Zeus.
+ *
+ * ## Four unconditional tools, up to two host-dependent ones
+ *
+ * The four above are always built. Two more exist on the host and are
+ * conditional: `vision_describe` is added here when the caller supplies a
+ * vision runtime (the host model catalog), and `pantheon_bounded_read` is
+ * appended by the plugin when the host exposes its permission and session APIs
+ * (root Zeus sessions only). The effective count is therefore 4 unconditional
+ * plus up to 2 host-dependent.
+ *
+ * ## The output declaration is mandatory
+ *
+ * The host enforces a biconditional between a tool's declared `output` and the
+ * value its `execute` resolves to (opencode 2.0.22):
+ *
+ *   `def.output === undefined` and `'output' in result`   -> throws
+ *     "Tool result declared output without an output schema"
+ *   `def.output !== undefined` and `!('output' in result)` -> throws
+ *     "Tool did not return its declared output"
+ *
+ * Declaring `output` and returning it are therefore one decision, not two. The
+ * first branch is the historical Pantheon defect; the second is why the two
+ * must move together. `ToolDef` makes the field required so TypeScript
+ * rejects a tool that forgets it.
+ *
+ * @module pantheon/tools
+ */
+
+import { createCostCommand } from './cost-command.ts'
+import type { ShadowSink } from './decision-shadow.ts'
+import { createHashlineEditTool, type HashlineToolResult } from './hashline/tool.ts'
+import { createJevDecisionDefinition, type JevDecisionRuntime } from './jev-decision-tool.ts'
+import { createLocalDecisionDefinition } from './local-decision-tool.ts'
+import { createModelCommand } from './model-command.ts'
+import { createNativeVisionTool, type NativeVisionRuntime } from './native-vision.ts'
+import type { ToolContextLike } from './tool-context.ts'
+
+// ─── Contract types ─────────────────────────────────────────────────────
+
+/**
+ * Tool result shape.
+ *
+ * The V1 SDK types `ToolResult` as `string | { output: string, ... }`, but the
+ * The 2.x beta host reads a field off the resolved value and throws when a tool
+ * resolves to a bare string. Always resolve to the object shape — it satisfies
+ * both the SDK union and the beta host.
+ *
+ * `title` and `metadata` are part of the shape because `hashline_edit` returns
+ * them on success (see `HashlineToolResult`); the host spreads `metadata`
+ * through when present, so they are carried rather than dropped.
+ */
+export interface ToolResult {
+  output: string
+  title?: string
+  metadata?: Record<string, unknown>
+}
+
+/**
+ * A tool definition ready for registration.
+ *
+ * `output` is REQUIRED, not optional: an omitted declaration is precisely the
+ * condition the host rejects at runtime, so making it optional would let the
+ * defect return silently.
+ */
+export interface ToolDef {
+  name: string
+  description: string
+  input: Record<string, unknown>
+  output: Record<string, unknown>
+  execute: (input: Record<string, unknown>, context: unknown) => Promise<ToolResult>
+}
+
+// ─── Context adapter ────────────────────────────────────────────────────
+
+/**
+ * Project the host's 2.x tool context onto the structural `ToolContextLike`.
+ *
+ * The host may omit `directory`/`worktree`; `hashline_edit` then falls back to
+ * `process.cwd()` through its own `resolveFile` containment guard, so an absent
+ * field degrades safely rather than throwing.
+ */
+function toolContext(context: unknown): ToolContextLike {
+  const ctx = (context ?? {}) as Partial<ToolContextLike>
+  return {
+    sessionID: typeof ctx.sessionID === 'string' ? ctx.sessionID : 'unknown',
+    // Spread rather than assign `undefined`: the project compiles with
+    // exactOptionalPropertyTypes, so an explicit undefined is not assignable.
+    ...(typeof ctx.directory === 'string' ? { directory: ctx.directory } : {}),
+    ...(typeof ctx.worktree === 'string' ? { worktree: ctx.worktree } : {}),
+    ...(typeof ctx.agent === 'string' ? { agent: ctx.agent } : {}),
+  }
+}
+
+/** Error text for an unexpected throw, without leaking a stack trace. */
+function errorText(prefix: string, err: unknown): string {
+  return `${prefix}: ${err instanceof Error ? err.message : String(err)}`
+}
+
+// ─── hashline_edit ──────────────────────────────────────────────────────
+
+/** JSON Schema for `hashline_edit`, mirroring the V1 zod args exactly. */
+const HASHLINE_EDIT_INPUT: Record<string, unknown> = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['file', 'edits'],
+  properties: {
+    file: {
+      type: 'string',
+      minLength: 1,
+      description: 'File to edit. Absolute, or relative to the worktree.',
+    },
+    edits: {
+      type: 'array',
+      minItems: 1,
+      description:
+        'Edits to apply. All refs are validated against the ORIGINAL file before anything is written.',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['op', 'ref'],
+        properties: {
+          op: { type: 'string', enum: ['replace', 'append', 'prepend', 'delete'] },
+          ref: {
+            type: 'string',
+            minLength: 1,
+            description: 'Anchor ref "LINE#TAG" against the ORIGINAL snapshot.',
+          },
+          endRef: {
+            type: 'string',
+            minLength: 1,
+            description: 'Optional range end for replace/delete, as "LINE#TAG".',
+          },
+          lines: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Replacement lines (replace only).',
+          },
+          content: {
+            type: 'string',
+            description: 'Text to insert (append/prepend); split on newlines.',
+          },
+        },
+      },
+    },
+  },
+}
+
+/** Coerced `hashline_edit` args, structurally equal to the V1 zod inference. */
+interface HashlineEditArgs {
+  file: string
+  edits: Array<{
+    op: 'replace' | 'append' | 'prepend' | 'delete'
+    ref: string
+    endRef?: string
+    lines?: string[]
+    content?: string
+  }>
+}
+
+const HASHLINE_OPS = new Set(['replace', 'append', 'prepend', 'delete'])
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * Re-validate the host-provided input against the declared JSON Schema.
+ *
+ * The host validates `input` before `execute`, but this wrapper is also the
+ * direct programmatic entry point (tests, embedded callers), so it must not
+ * assume a pre-validated shape. Failures are returned as error-as-text, the
+ * same contract the V1 tool uses for user errors.
+ */
+function coerceHashlineEditArgs(input: Record<string, unknown>):
+  | {
+      ok: true
+      args: HashlineEditArgs
+    }
+  | { ok: false; error: string } {
+  const file = input.file
+  if (typeof file !== 'string' || file.length === 0) {
+    return { ok: false, error: 'hashline_edit: "file" must be a non-empty string' }
+  }
+  const rawEdits = input.edits
+  if (!Array.isArray(rawEdits) || rawEdits.length === 0) {
+    return { ok: false, error: 'hashline_edit: "edits" must be a non-empty array' }
+  }
+  const edits: HashlineEditArgs['edits'] = []
+  for (const [i, raw] of rawEdits.entries()) {
+    if (!isRecord(raw)) {
+      return { ok: false, error: `hashline_edit: edit (index ${i}) must be an object` }
+    }
+    const op = raw.op
+    if (typeof op !== 'string' || !HASHLINE_OPS.has(op)) {
+      return {
+        ok: false,
+        error: `hashline_edit: edit (index ${i}) "op" must be one of replace, append, prepend, delete`,
+      }
+    }
+    const ref = raw.ref
+    if (typeof ref !== 'string' || ref.length === 0) {
+      return {
+        ok: false,
+        error: `hashline_edit: edit (index ${i}) "ref" must be a non-empty string`,
+      }
+    }
+    let lines: string[] | undefined
+    if (raw.lines !== undefined) {
+      if (!Array.isArray(raw.lines) || raw.lines.some((l) => typeof l !== 'string')) {
+        return {
+          ok: false,
+          error: `hashline_edit: edit (index ${i}) "lines" must be a string array`,
+        }
+      }
+      lines = raw.lines as string[]
+    }
+    if (raw.content !== undefined && typeof raw.content !== 'string') {
+      return { ok: false, error: `hashline_edit: edit (index ${i}) "content" must be a string` }
+    }
+    if (raw.endRef !== undefined && typeof raw.endRef !== 'string') {
+      return { ok: false, error: `hashline_edit: edit (index ${i}) "endRef" must be a string` }
+    }
+    edits.push({
+      op: op as HashlineEditArgs['edits'][number]['op'],
+      ref,
+      // Conditional spread: exactOptionalPropertyTypes forbids `prop: undefined`.
+      ...(typeof raw.endRef === 'string' ? { endRef: raw.endRef } : {}),
+      ...(lines === undefined ? {} : { lines }),
+      ...(typeof raw.content === 'string' ? { content: raw.content } : {}),
+    })
+  }
+  return { ok: true, args: { file, edits } }
+}
+
+const hashlineEdit = createHashlineEditTool()
+
+/**
+ * Wrap the V1 `hashline_edit` tool for the plugin surface.
+ *
+ * The V1 tool returns error-as-text for user errors and the success object
+ * `{ title, output, metadata }`. Both are carried: the `output` string always
+ * satisfies the host's declaration, and `title`/`metadata` survive because the
+ * host spreads metadata through.
+ */
+async function executeHashlineEdit(
+  input: Record<string, unknown>,
+  context: unknown,
+): Promise<ToolResult> {
+  const coerced = coerceHashlineEditArgs(input)
+  if (!coerced.ok) return { output: coerced.error }
+  let result: HashlineToolResult
+  try {
+    result = await hashlineEdit.execute(coerced.args, toolContext(context))
+  } catch (err: unknown) {
+    // The V1 tool does not throw for user errors; this is defence in depth so
+    // an unexpected throw surfaces as text instead of an absent tool result.
+    return { output: errorText('hashline_edit failed', err) }
+  }
+  if (typeof result === 'string') return { output: result }
+  return {
+    output: result.output,
+    ...(result.title === undefined ? {} : { title: result.title }),
+    ...(result.metadata === undefined ? {} : { metadata: result.metadata }),
+  }
+}
+
+// ─── pantheon_cost ──────────────────────────────────────────────────────
+
+/** JSON Schema for `pantheon_cost`, mirroring the V1 zod args. */
+const COST_INPUT: Record<string, unknown> = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    days: {
+      type: 'integer',
+      minimum: 1,
+      maximum: 365,
+      description: 'Reporting window in days (default 7).',
+    },
+    session: {
+      type: 'string',
+      minLength: 1,
+      description:
+        'Root session id. The report is scoped to that session plus every descendant session in its subtree.',
+    },
+    refreshPricing: {
+      type: 'boolean',
+      description:
+        'Await a models.dev price refresh (bounded by a short timeout) instead of using the cached catalog. This is the only path that waits on the network.',
+    },
+  },
+}
+
+/** Validate `days` exactly as the V1 zod schema does; absent means default. */
+function coerceDays(value: unknown): { ok: true; days?: number } | { ok: false; error: string } {
+  if (value === undefined) return { ok: true }
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > 365) {
+    return { ok: false, error: 'pantheon_cost: "days" must be an integer between 1 and 365' }
+  }
+  return { ok: true, days: value }
+}
+
+/** Validate `session` exactly as the V1 zod schema does; absent means no scope. */
+function coerceSession(
+  value: unknown,
+): { ok: true; session?: string } | { ok: false; error: string } {
+  if (value === undefined) return { ok: true }
+  if (typeof value !== 'string' || value.length === 0) {
+    return { ok: false, error: 'pantheon_cost: "session" must be a non-empty string' }
+  }
+  return { ok: true, session: value }
+}
+
+/** Validate `refreshPricing` exactly as the V1 zod schema does; absent means cached. */
+function coerceRefreshPricing(
+  value: unknown,
+): { ok: true; refreshPricing?: boolean } | { ok: false; error: string } {
+  if (value === undefined) return { ok: true }
+  if (typeof value !== 'boolean') {
+    return { ok: false, error: 'pantheon_cost: "refreshPricing" must be a boolean' }
+  }
+  return { ok: true, refreshPricing: value }
+}
+
+const costCommand = createCostCommand()
+
+async function executeCost(input: Record<string, unknown>, context: unknown): Promise<ToolResult> {
+  const days = coerceDays(input.days)
+  if (!days.ok) return { output: days.error }
+  const session = coerceSession(input.session)
+  if (!session.ok) return { output: session.error }
+  const refreshPricing = coerceRefreshPricing(input.refreshPricing)
+  if (!refreshPricing.ok) return { output: refreshPricing.error }
+  // Every accepted option is forwarded: a schema the host validates but the
+  // wrapper drops would be a tool that silently ignores its own arguments.
+  // The V1 tool already wraps its whole body and reports failures as text.
+  const output = await costCommand.pantheon_cost.execute(
+    {
+      ...(days.days === undefined ? {} : { days: days.days }),
+      ...(session.session === undefined ? {} : { session: session.session }),
+      ...(refreshPricing.refreshPricing === undefined
+        ? {}
+        : { refreshPricing: refreshPricing.refreshPricing }),
+    },
+    toolContext(context),
+  )
+  return { output }
+}
+
+// ─── pantheon_model ─────────────────────────────────────────────────────
+
+/** JSON Schema for `pantheon_model`; global scope is intentionally absent. */
+const MODEL_INPUT: Record<string, unknown> = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    action: {
+      type: 'string',
+      enum: ['status', 'show', 'set', 'reset'],
+      description: 'Operation to perform. Defaults to status when agent/model are absent.',
+    },
+    agent: { type: 'string', description: 'Agent name (one of the 14 canonical agents).' },
+    model: { type: 'string', description: 'Model in provider/model-id format; used by set.' },
+    effort: {
+      type: 'string',
+      enum: ['low', 'medium', 'high'],
+      description: 'Reasoning effort (variant), clamped to model capability.',
+    },
+    scope: {
+      type: 'string',
+      enum: ['project'],
+      description: 'Project scope only; global overrides are not supported.',
+    },
+  },
+}
+
+const modelCommand = createModelCommand({ overridesOnlyMode: true })
+
+async function executeModel(input: Record<string, unknown>, context: unknown): Promise<ToolResult> {
+  if (input.scope !== undefined && input.scope !== 'project') {
+    return { output: 'Error: pantheon_model is project-only; global scope is not supported.' }
+  }
+  if (Object.hasOwn(input, 'confirm') || Object.hasOwn(input, 'authorize_global')) {
+    return {
+      output:
+        'Error: pantheon_model does not accept authorization flags; global authorization is not supported by this tool.',
+    }
+  }
+  // The V1 tool validates its own args (zod) and reports failures as text.
+  const output = await modelCommand.pantheon_model.execute(
+    input as Parameters<typeof modelCommand.pantheon_model.execute>[0],
+    toolContext(context),
+  )
+  return { output }
+}
+
+// ─── Tool set ───────────────────────────────────────────────────────────
+
+/**
+ * Optional shadow sinks wired at tool registration.
+ *
+ * `complexity` belongs to P3, whose declared host surface is `tool.invoke`: the
+ * local selector's own input carries the complexity vector and gate status, so
+ * the observation is constructed where the payload can actually feed it.
+ */
+export interface ToolShadowOptions {
+  readonly complexitySink?: ShadowSink
+}
+
+/**
+ * Build the tool definitions.
+ *
+ * Every entry declares `output`. An empty object is the host's own marker for
+ * "declared, unconstrained" (its MCP bridge uses `output: g.outputSchema ??
+ * {}`), so it satisfies the declaration without adding a second way for a tool
+ * to fail validation. The protection against forgetting the field is the
+ * required `output` on `ToolDef`, not the emptiness of this schema.
+ *
+ * The existing tool instances (`hashlineEdit`, `costCommand`, `modelCommand`)
+ * are module-level consts created once at import. The local selector is a
+ * per-call definition with no construction-time I/O. A fresh descriptor array
+ * prevents callers from mutating another registration's definitions.
+ */
+export function createToolDefinitions(
+  visionRuntime?: NativeVisionRuntime,
+  shadow: ToolShadowOptions = {},
+  jevRuntime?: JevDecisionRuntime,
+): ToolDef[] {
+  const definitions: ToolDef[] = [
+    {
+      name: 'hashline_edit',
+      description:
+        'Edit a file anchored by hashline refs (LINE#TAG) instead of raw line numbers. ' +
+        'Ops: replace (ref..endRef or single ref → lines), append/prepend (anchor ref → content), ' +
+        'delete (ref..endRef). ALL refs must be validated against the ORIGINAL file before ' +
+        'anything is written; on mismatch the tool returns an error with a re-tagged excerpt ' +
+        'and a Did-you-mean suggestion, and nothing is modified.',
+      input: HASHLINE_EDIT_INPUT,
+      output: {},
+      execute: executeHashlineEdit,
+    },
+    {
+      name: 'pantheon_cost',
+      description:
+        'Report token usage and USD cost by agent and phase, by model, and by session, over the ' +
+        'last N days from opencode.db (read-only). Costs come from the models.dev catalog cached ' +
+        'on disk: a call reads that cache and never waits on the network unless refreshPricing is ' +
+        'set, a stale cache is refreshed in the background and the report says so, and an unpriced ' +
+        'model reads — and is excluded from the totals, which then say partial. Pass session=<root ' +
+        'session id> to aggregate that session plus its descendant sessions. Phase may be unknown ' +
+        'on 2.x; costs are catalog list prices, not an invoice.',
+      input: COST_INPUT,
+      output: {},
+      execute: executeCost,
+    },
+    {
+      name: 'pantheon_model',
+      description:
+        'Show, set, or reset explicit per-agent project-scoped model overrides in active-preset.json. ' +
+        'Static preset names and PANTHEON_MODEL_PRESET are ignored; no wizard or implicit model ' +
+        'selection. Global overrides are not read or written; future global support requires ' +
+        'separate explicit authorization. Pass action="status" to read project-scoped overrides. ' +
+        'Never writes .env or top-level model/small_model.',
+      input: MODEL_INPUT,
+      output: {},
+      execute: executeModel,
+    },
+  ]
+  definitions.push(
+    createLocalDecisionDefinition({
+      ...(shadow.complexitySink === undefined ? {} : { sink: shadow.complexitySink }),
+    }),
+  )
+  if (visionRuntime) definitions.push(createNativeVisionTool(visionRuntime))
+  if (jevRuntime) definitions.push(createJevDecisionDefinition(jevRuntime))
+  return definitions
+}

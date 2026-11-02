@@ -24,13 +24,13 @@ npx pantheon-opencode init --project  # project-local
 
 The installer registers Pantheon's runtime integrations automatically. It
 writes the singular `plugin` key for OpenCode V1 and the plural `plugins` key
-for OpenCode V2; do not add either key by hand. Flags, backup, uninstall, and
+for OpenCode 2.x; do not add either key by hand. Flags, backup, uninstall, and
 reconcile are in [Installation](INSTALLATION.md).
 
 ## Configuration
 
 OpenCode reads `opencode.json` (or `opencode.jsonc`) from the project root. The
-installer writes `opencode.json`; a V2 host may also merge a sibling
+installer writes `opencode.json`; a host may also merge a sibling
 `.jsonc` — see
 [Compatibility](COMPATIBILITY.md#config-registration-and-the-hosts-config-merge).
 
@@ -72,7 +72,7 @@ Global install:
 ```
 
 The V2 TUI uses a local plugin directory instead of `tui.json`. See
-[OpenCode V2](opencode-v2.md).
+[OpenCode 2.x](opencode.md).
 
 ## Quick reference
 
@@ -99,7 +99,7 @@ place.
 OpenCode can run as an ACP-compatible agent for editors such as Zed,
 JetBrains, or Neovim. Start the server with `opencode acp`; it communicates over
 JSON-RPC on stdio. ACP does not change the selected plugin contract: V1
-hook/delegate behavior still depends on V1 host events, and the V2 plugin
+hook/delegate behavior still depends on V1 host events, and the plugin
 remains its own surface. Verify the registration in `opencode.json` before
 relying on a feature.
 

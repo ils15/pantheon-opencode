@@ -75,7 +75,7 @@ export function requestedVersion(): OpenCodeVersion | undefined {
  * than being silently ignored.
  *
  * There is deliberately NO per-version filename. Deriving one from the host
- * generation pointed the V2 report at `opencode-v2.db`, which exists only
+ * generation pointed the 2.x report at `opencode-v2.db`, which exists only
  * because a sandbox sets OPENCODE_DB — hence OPENCODE_DB's place in this chain.
  */
 export function resolveCostDbPath(options?: { dbPath?: string }): string {
@@ -368,7 +368,7 @@ function offlinePricing(options?: UsageHistoryOptions): PricingSnapshot {
  *
  * Rolling periods are exact N×24-hour windows ending at `now`; daily buckets
  * are UTC dates. Future-dated rows are excluded from every period, including
- * `total`, while `total` has no lower age cap. Both V1 and V2 tables are read
+ * `total`, while `total` has no lower age cap. Both 1.x and 2.x tables are read
  * when a migrated database contains both. The database is opened read-only and
  * model pricing comes only from a cached snapshot: this path never fetches pricing.
  */

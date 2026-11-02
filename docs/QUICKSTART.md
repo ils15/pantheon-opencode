@@ -38,7 +38,7 @@ details. The compact quota overview is also shown in the sidebar/footer.
 Providers are included only when OpenCode lists an active supported connection
 and Pantheon can resolve a nonblank credential locally. That check does not
 confirm provider-side acceptance; see the
-[quota coverage and troubleshooting notes](tui-v2-quota-providers.md).
+[quota coverage and troubleshooting notes](tui-quota-providers.md).
 
 ## 3. Check the install
 
@@ -81,7 +81,7 @@ per child and detail for the selected child. It needs an open session.
 
 - [Installation](INSTALLATION.md) — flags, saved plans, backup, uninstall,
   reconcile, MCP pins.
-- [OpenCode V2](opencode-v2.md) — sidebar block, `/dispatch` panel, context
+- [OpenCode 2.x](opencode.md) — sidebar block, `/dispatch` panel, context
   pruning, native compaction, session goals.
 - [MCP](MCP.md) and [MCP Tools](mcp-tools.md) — servers and tool signatures.
 - [Memory](MEMORY.md) — what is stored, for how long, and when to search.

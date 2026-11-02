@@ -4,7 +4,7 @@
  * One test group per issue, each pinning the USER-VISIBLE claim rather than the
  * implementation detail:
  *
- *   #261 the V2 notice no longer invents an isolated database or a service port;
+ *   #261 the notice no longer invents an isolated database or a service port;
  *        both its path and its wording come from a resolver a test can call.
  *   #262 every path that applies nothing prints exactly ONE line naming where it
  *        stopped, and the outcome is readable from disk on the next run.
@@ -25,8 +25,13 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+import {
+  describePluginOptionsReachability,
+  formatCapabilityNotice,
+  pluginCapabilities,
+} from '../scripts/install/capabilities.mjs'
 import { createInterruptHandler } from '../scripts/install/interrupt.mjs'
-import { installOpenCode, v2PluginEntryLoadability } from '../scripts/install/opencode.mjs'
+import { installOpenCode, pluginEntryLoadability } from '../scripts/install/opencode.mjs'
 import {
   describeSharedState,
   resolveOpenCodeStatePath,
@@ -38,16 +43,11 @@ import {
   runRecordPath,
   writeRunRecord,
 } from '../scripts/install/run-record.mjs'
-import {
-  describePluginOptionsReachability,
-  formatV2CapabilityNotice,
-  v2Capabilities,
-} from '../scripts/install/v2-capabilities.mjs'
-import { listV2UnsupportedFeatures } from '../src/pantheon/v2-unsupported.mjs'
+import { listUnsupportedFeatures } from '../src/pantheon/unsupported.mjs'
 
 const REPO_ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const CLI = join(REPO_ROOT, 'bin', 'pantheon-init.mjs')
-const SEED = listV2UnsupportedFeatures()
+const SEED = listUnsupportedFeatures()
 const HAS_SCRIPT = spawnSync('script', ['--version'], { encoding: 'utf8' }).status === 0
 
 /** Count non-overlapping occurrences of `needle` in `haystack`. */
@@ -139,7 +139,10 @@ async function installV2With(existingConfig, prepare = () => {}, { verbose = fal
 function pantheonEntries(plugins) {
   return (plugins ?? []).filter((entry) => {
     const candidate = typeof entry === 'string' ? entry : entry?.package
-    return typeof candidate === 'string' && candidate.includes('plugin-v2')
+    if (typeof candidate !== 'string') return false
+    // Legacy marker plus the current identity — mirrors the installer sniff.
+    if (candidate.includes('plugin-v2')) return true
+    return candidate === 'src/plugin' || candidate.endsWith('/src/plugin')
   })
 }
 
@@ -174,7 +177,7 @@ test('the shared-state sentence names the resolved store and claims no port', ()
   assert.doesNotMatch(sentence, /opencode-v2\.db/)
 })
 
-test('a V2 install prints the resolver path and no invented isolation claim', async () => {
+test('a 2.x install prints the resolver path and no invented isolation claim', async () => {
   const run = await installV2With(null)
   try {
     const { path: dbPath } = resolveOpenCodeStatePath()
@@ -529,7 +532,7 @@ test('a real SIGINT during an interactive install exits 130 with one message', {
 // ─── #263: label the list, state the surface, carry it in --json ───────
 
 test('the printed list is labelled as the static seed, not the complete set', () => {
-  const notice = formatV2CapabilityNotice()
+  const notice = formatCapabilityNotice()
   for (const feature of SEED) {
     assert.ok(notice.includes(feature), `the notice must list "${feature}"`)
   }
@@ -538,7 +541,7 @@ test('the printed list is labelled as the static seed, not the complete set', ()
 })
 
 test('the notice also states what V2 registers today', () => {
-  const notice = formatV2CapabilityNotice()
+  const notice = formatCapabilityNotice()
   for (const hook of ['context', 'prompt', 'compaction', 'execute.before', 'execute.after']) {
     assert.ok(notice.includes(hook), `the notice must name the "${hook}" hook`)
   }
@@ -555,7 +558,7 @@ function assertNotReducedSurfaceOnly(notice) {
 }
 
 test('the capability payload and the seed cannot drift', () => {
-  const capabilities = v2Capabilities()
+  const capabilities = pluginCapabilities()
   assert.deepEqual(capabilities.not_registered, SEED)
   assert.deepEqual(capabilities.registered.tools, [
     'hashline_edit',
@@ -564,10 +567,10 @@ test('the capability payload and the seed cannot drift', () => {
   ])
   // A reporter cannot mutate the shared seed through the payload.
   capabilities.not_registered.push('invented')
-  assert.deepEqual(listV2UnsupportedFeatures(), SEED)
+  assert.deepEqual(listUnsupportedFeatures(), SEED)
 })
 
-test('a V2 install keeps the capability block quiet by default and prints it once under --verbose', async () => {
+test('a 2.x install keeps the capability block quiet by default and prints it once under --verbose', async () => {
   // Default output is action-oriented: the eleven-fact capability block is
   // install detail, gated behind --verbose (the user-facing change from the
   // installer-noise review).
@@ -578,7 +581,7 @@ test('a V2 install keeps the capability block quiet by default and prints it onc
       0,
       `the capability block must not print by default:\n${quiet.output}`,
     )
-    assert.equal(countOccurrences(quiet.output, 'OpenCode V2 target'), 1)
+    assert.equal(countOccurrences(quiet.output, 'OpenCode 2.x target'), 1)
   } finally {
     quiet.cleanup()
   }
@@ -620,7 +623,7 @@ test('an unauthorized V2 preview prints each notice exactly once (not twice)', (
     const output = `${result.stdout}\n${result.stderr}`
     assert.equal(result.status, 2, `apply-without-authorization must exit 2:\n${output}`)
     assert.equal(
-      countOccurrences(output, 'OpenCode V2 target'),
+      countOccurrences(output, 'OpenCode 2.x target'),
       1,
       `the state notice must appear once:\n${output}`,
     )
@@ -692,7 +695,7 @@ test('a fresh V2 install writes the object form with an options bag', async () =
     const entries = pantheonEntries(run.config.plugins)
     assert.equal(entries.length, 1)
     assert.equal(typeof entries[0], 'object', 'a fresh install must not emit a bare string')
-    assert.ok(entries[0].package.endsWith(join('src', 'plugin-v2')))
+    assert.ok(entries[0].package.endsWith(join('src', 'plugin')))
     assert.deepEqual(entries[0].options, {})
     assert.equal(run.result.pluginOptions.reachable, true)
   } finally {
@@ -736,11 +739,11 @@ test('a legacy bare-string Pantheon entry gains an installed object-form entry',
     const entries = pantheonEntries(run.config.plugins)
     const installed = entries.find((entry) => typeof entry === 'object')
     assert.ok(installed, 'the installed entry must be the object form')
-    assert.ok(installed.package.endsWith(join('src', 'plugin-v2')))
+    assert.ok(installed.package.endsWith(join('src', 'plugin')))
     assert.deepEqual(installed.options, {})
     // An unrecognised absolute path is the user's data and is not silently
     // deleted; only the managed identity is rewritten.
-    assert.ok(run.config.plugins.includes('/old/install/src/plugin-v2'))
+    assert.ok(run.config.plugins.includes('/old/install/src/plugin-v2')) // legacy ref kept (unprovable)
   } finally {
     run.cleanup()
   }
@@ -766,7 +769,7 @@ test('options reachability reports the three installed shapes honestly', () => {
 
 // ─── #269: no third-party entry disappears silently ────────────────────
 
-test('v2PluginEntryLoadability accepts only an existing directory', () => {
+test('pluginEntryLoadability accepts only an existing directory', () => {
   const dir = scratchDir('pantheon-loadability-')
   try {
     const pluginDir = join(dir, 'vendor', 'acme-plugin')
@@ -775,17 +778,17 @@ test('v2PluginEntryLoadability accepts only an existing directory', () => {
     const pluginFile = join(dir, 'vendor', 'single-file.ts')
     writeFileSync(pluginFile, 'export default {}\n')
 
-    assert.deepEqual(v2PluginEntryLoadability('./vendor/acme-plugin', dir), {
+    assert.deepEqual(pluginEntryLoadability('./vendor/acme-plugin', dir), {
       loadable: true,
       reason: 'directory',
       resolved: pluginDir,
     })
-    assert.equal(v2PluginEntryLoadability('./vendor/single-file.ts', dir).reason, 'file')
-    assert.equal(v2PluginEntryLoadability('./vendor/missing', dir).reason, 'missing')
-    assert.equal(v2PluginEntryLoadability('acme-plugin', dir).reason, 'npm-spec')
-    assert.equal(v2PluginEntryLoadability('@scope/acme', dir).reason, 'npm-spec')
-    assert.equal(v2PluginEntryLoadability('npm:@scope/acme', dir).reason, 'npm-spec')
-    assert.equal(v2PluginEntryLoadability({ package: 'acme' }, dir).reason, 'unverifiable')
+    assert.equal(pluginEntryLoadability('./vendor/single-file.ts', dir).reason, 'file')
+    assert.equal(pluginEntryLoadability('./vendor/missing', dir).reason, 'missing')
+    assert.equal(pluginEntryLoadability('acme-plugin', dir).reason, 'npm-spec')
+    assert.equal(pluginEntryLoadability('@scope/acme', dir).reason, 'npm-spec')
+    assert.equal(pluginEntryLoadability('npm:@scope/acme', dir).reason, 'npm-spec')
+    assert.equal(pluginEntryLoadability({ package: 'acme' }, dir).reason, 'unverifiable')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -803,7 +806,7 @@ test('only a loadable third-party directory moves into the V2 plural key', async
     },
   )
   try {
-    // The directory the V2 loader can actually load is re-registered…
+    // The directory the loader can actually load is re-registered…
     assert.deepEqual(run.config.plugins.slice(0, 2), ['third-party-v2', './vendor/acme-plugin'])
     assert.equal(pantheonEntries(run.config.plugins).length, 1)
     // …the V1 list itself is the user's data and is left intact, so a downgrade
@@ -848,9 +851,9 @@ test('a provable relocated Pantheon install is retired, not registered twice', a
     const entries = pantheonEntries(run.config.plugins)
     assert.equal(entries.length, 1, 'exactly one Pantheon V2 entry may remain')
     assert.equal(typeof entries[0], 'object')
-    assert.ok(entries[0].package.endsWith(join('src', 'plugin-v2')))
+    assert.ok(entries[0].package.endsWith(join('src', 'plugin')))
     assert.ok(!run.config.plugins.includes(relocated), 'the stale copy is retired')
-    assert.doesNotMatch(run.output, /another copy of the Pantheon V2 plugin/)
+    assert.doesNotMatch(run.output, /another copy of the Pantheon plugin/)
   } finally {
     run.cleanup()
   }
@@ -865,7 +868,7 @@ test('a Pantheon-lookalike this installer cannot prove it owns is kept and repor
   try {
     assert.ok(run.config.plugins.includes(lookalike))
     assert.equal(pantheonEntries(run.config.plugins).length, 2)
-    assert.match(run.output, /another copy of the Pantheon V2 plugin/)
+    assert.match(run.output, /another copy of the Pantheon plugin/)
     assert.match(run.output, /hooks would run twice/)
   } finally {
     run.cleanup()

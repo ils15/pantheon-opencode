@@ -88,7 +88,7 @@ native `pantheon_jev_decide` tool: egress requires `enabled`, `egress_consent`,
 exactly one cap-valid native candidate, and a confirmed budget period in the
 ledger. Those settings still do not activate any per-turn provider egress.
 Native candidate mapping and the full gate chain are documented in
-[V2 native Decisions](native-decisions.md).
+[Native Decisions](native-decisions.md).
 
 Runtime preferences and caps are user-level, not project-level and not OpenCode
 global configuration. The non-secret JSON file is
@@ -211,7 +211,7 @@ or secret-pattern filters as an egress or payload-safety boundary beyond that
 tool. Any future per-turn wiring requires a new consent/payload policy, proven
 current-turn correlation, spend/overshoot controls, Themis review, and explicit
 approval. Native Decisions status is documented in
-[V2 native Decisions](native-decisions.md).
+[Native Decisions](native-decisions.md).
 
 ## Measured coverage and unmeasured surfaces (decision layer)
 

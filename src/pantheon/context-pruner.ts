@@ -1,7 +1,7 @@
 /**
- * Dynamic Context Pruning (DCP) for the OpenCode V2 runtime.
+ * Dynamic Context Pruning (DCP) for the OpenCode 2.x runtime.
  *
- * The V2 host hands an in-place mutable `messages` array to
+ * The 2.x host hands an in-place mutable `messages` array to
  * `session.hook('compaction', …)` right before it is sent to the summarization
  * model. Pruning that array is safe: it changes only what feeds the summary,
  * never the persisted session. The same engine is exposed behind an explicit
@@ -94,7 +94,7 @@ export const DEFAULT_CONTEXT_PRUNER_CONFIG: ContextPrunerConfig = {
 }
 
 /**
- * Read `options.context_pruner` (the V2 config copy, mirroring how
+ * Read `options.context_pruner` (the config copy the installer writes, mirroring how
  * `context_sandbox` is read). Malformed input yields the defaults — config
  * parsing must never take the hook down.
  */

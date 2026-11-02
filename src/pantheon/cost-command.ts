@@ -13,16 +13,16 @@
  *
  * ## Host generations
  *
- * The V1/V2 distinction is the SCHEMA of opencode.db, never its filename: every
+ * The 1.x/2.x distinction is the SCHEMA of opencode.db, never its filename: every
  * real installation writes `opencode.db`, and a migrated database carries BOTH
- * `message` (V1) and `session_message` (V2) tables at once. The two families are
+ * `message` (1.x) and `session_message` (2.x) tables at once. The two families are
  * detected by table presence and their `id` spaces are disjoint, so both are
  * read and merged rather than one being guessed at.
  *
  * The two discriminators are NOT interchangeable. V1 marks assistant turns with
- * `data.role = 'assistant'`; V2 has no `role` key at all (measured: absent from
+ * `data.role = 'assistant'`; 2.x has no `role` key at all (measured: absent from
  * 40052 of 40052 rows on the host 2.0.22 database) and marks them with the
- * `type = 'assistant'` COLUMN. Reusing the V1 predicate against V2 discards
+ * `type = 'assistant'` COLUMN. Reusing the 1.x predicate against 2.x discards
  * every row, which is why an unreadable ledger is reported as UNSUPPORTED
  * instead of as a successful, empty report.
  *
@@ -253,12 +253,12 @@ function findExistingDb(override?: string): string | undefined {
  *   - `COALESCE(SUM(...), 0)` — a group whose tokens are all NULL sums to NULL,
  *     and adding NULL into an accumulator would print NaN into the report.
  *   - `session_id` is read only when the LEDGER table carries it. A real V1 and
- *     V2 table both do, but a partial database (or a hand-built fixture) may
+ *     2.x table both do, but a partial database (or a hand-built fixture) may
  *     not, and selecting a missing column would fail the whole report instead
  *     of dropping the session view.
  *
- * V1 marks assistant turns with `data.role`; V2 marks them with the `type`
- * COLUMN. V2 carries no `role` key, so the V1 predicate would match nothing.
+ * 1.x marks assistant turns with `data.role`; 2.x marks them with the `type`
+ * COLUMN. 2.x carries no `role` key, so the 1.x predicate would match nothing.
  */
 const COST_AGGREGATE_SQL: Record<CostSource, (sessionId: boolean) => string> = {
   message: (sessionId) => `
@@ -769,7 +769,7 @@ function isoDay(epochMs: number): string {
 /**
  * Describe the window the numbers actually cover.
  *
- * A database created by a V2 host holds only the days since it was created, so
+ * A database created by a host holds only the days since it was created, so
  * a 30-day request over 8 days of history must not read as a month of usage.
  */
 function formatCoverage(coverage: CostCoverage, days: number): string {
@@ -1139,7 +1139,7 @@ function renderMarkdown(
   const footer = [
     formatCoverage(coverage, days),
     'Window: rolling 24-hour days from query time (not calendar days or session boundaries).',
-    'Aggregation: per agent and phase (phase may be unknown on V2), per model, and per session.',
+    'Aggregation: per agent and phase (phase may be unknown on 2.x), per model, and per session.',
     'Attribution: a session row covers that session alone; passing session:<id> sums the root session and its descendant sessions.',
     'Limits: costs are catalog list prices (USD per 1M tokens), not a provider invoice; a row that mixes priced and unpriced models shows its priced part and is reported as partial, and an unknown model is never priced at zero.',
     ...(reconciliation === undefined ? [] : [reconciliation]),
@@ -1561,7 +1561,7 @@ export function createCostCommand(options?: CostCommandOptions): CostCommand {
   return {
     pantheon_cost: {
       description:
-        'Report input, output, cache and total token usage together with USD cost, by agent and phase, by model, and by session, in a rolling N × 24-hour window from query time (read-only). Costs come from the models.dev catalog, cached on disk; a tool call reads the cache and never waits on the network unless refreshPricing is set. An unknown or unpriced model reads — and is excluded from the totals, never priced at zero, and the total says it is partial. Pass session:<id> to aggregate that root session plus its descendant sessions. Phase may be unknown on V2. Costs are catalog list prices, not an invoice. The report states the coverage window it actually covers and whether its prices are stale.',
+        'Report input, output, cache and total token usage together with USD cost, by agent and phase, by model, and by session, in a rolling N × 24-hour window from query time (read-only). Costs come from the models.dev catalog, cached on disk; a tool call reads the cache and never waits on the network unless refreshPricing is set. An unknown or unpriced model reads — and is excluded from the totals, never priced at zero, and the total says it is partial. Pass session:<id> to aggregate that root session plus its descendant sessions. Phase may be unknown on 2.x. Costs are catalog list prices, not an invoice. The report states the coverage window it actually covers and whether its prices are stale.',
       args: costArgs,
       execute,
     },

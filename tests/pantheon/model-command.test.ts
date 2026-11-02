@@ -21,8 +21,8 @@ import {
   createModelCommand,
   KNOWN_AGENTS,
   type ModelCommandLogger,
-  readV2ActivePresetRaw,
-  type V2PresetReadFileSystem,
+  type PresetReadFileSystem,
+  readActivePresetRawSecure,
   validateModelRef,
 } from '../../src/pantheon/model-command.ts'
 
@@ -46,8 +46,8 @@ function command(
     env?: NodeJS.ProcessEnv
     ask?: (q: unknown[]) => Promise<Record<string, unknown>>
     logger?: ModelCommandLogger
-    v2Mode?: boolean
-    v2PresetReadFileSystem?: V2PresetReadFileSystem
+    overridesOnlyMode?: boolean
+    presetReadFileSystem?: PresetReadFileSystem
   } = {},
 ) {
   const candidates = [
@@ -61,8 +61,8 @@ function command(
     env: opts.env,
     ask: opts.ask,
     logger: opts.logger,
-    v2Mode: opts.v2Mode,
-    v2PresetReadFileSystem: opts.v2PresetReadFileSystem,
+    overridesOnlyMode: opts.overridesOnlyMode,
+    presetReadFileSystem: opts.presetReadFileSystem,
   }).pantheon_model
 }
 
@@ -90,7 +90,7 @@ async function main(): Promise<void> {
     const calls: string[] = []
     let openedFlags = 0
     await assert.rejects(
-      readV2ActivePresetRaw('fifo-active-preset.json', 'configuration file', {
+      readActivePresetRawSecure('fifo-active-preset.json', 'configuration file', {
         open: async (_path, flags) => {
           calls.push('open')
           openedFlags = flags
@@ -130,7 +130,7 @@ async function main(): Promise<void> {
       const warnings: string[] = []
       const postWriteCalls: string[] = []
       const postWriteFlags: number[] = []
-      const fileSystem: V2PresetReadFileSystem = {
+      const fileSystem: PresetReadFileSystem = {
         open: async (path, flags) => {
           openCount += 1
           postWriteFlags.push(flags)
@@ -161,8 +161,8 @@ async function main(): Promise<void> {
         },
       }
       const tool = command(scope, {
-        v2Mode: true,
-        v2PresetReadFileSystem: fileSystem,
+        overridesOnlyMode: true,
+        presetReadFileSystem: fileSystem,
         logger: { warn: (message) => warnings.push(message) },
       })
       const result = await tool.execute(
@@ -370,7 +370,7 @@ async function main(): Promise<void> {
         projectActive(scope),
         JSON.stringify({ version: 1, preset: 'go-free', overrides: {} }),
       )
-      const status = await command(scope, { env: {}, v2Mode: true }).execute(
+      const status = await command(scope, { env: {}, overridesOnlyMode: true }).execute(
         { action: 'status' },
         { sessionID: 'root', agent: 'zeus' },
       )
@@ -404,7 +404,7 @@ async function main(): Promise<void> {
       )
       const status = await command(scope, {
         env: { PANTHEON_MODEL_PRESET: 'go-fast' } as NodeJS.ProcessEnv,
-        v2Mode: true,
+        overridesOnlyMode: true,
       }).execute({ action: 'show' }, { sessionID: 'root', agent: 'zeus' })
       assert.match(status, /legacy preset marker present in PANTHEON_MODEL_PRESET .*ignored in V2/i)
       assert.doesNotMatch(status, /go-fast|go-free/)
@@ -434,7 +434,7 @@ async function main(): Promise<void> {
           overrides: { agents: { hermes: { model: 'openai/gpt-5.6' } } },
         }),
       )
-      const status = await command(scope, { env: {}, v2Mode: true }).execute(
+      const status = await command(scope, { env: {}, overridesOnlyMode: true }).execute(
         { action: 'status' },
         { sessionID: 'root', agent: 'zeus' },
       )
@@ -457,7 +457,7 @@ async function main(): Promise<void> {
         globalActive(scope),
         JSON.stringify({ overrides: { agents: { hermes: { model: 'openai/gpt-5.6' } } } }),
       )
-      const status = await command(scope, { env: {}, v2Mode: true }).execute(
+      const status = await command(scope, { env: {}, overridesOnlyMode: true }).execute(
         { action: 'status' },
         { sessionID: 'root', agent: 'zeus' },
       )
@@ -491,7 +491,7 @@ async function main(): Promise<void> {
         globalActive(scope),
         JSON.stringify({ overrides: { agents: { apollo: { model: 'openai/gpt-5.6' } } } }),
       )
-      const status = await command(scope, { env: {}, v2Mode: true }).execute(
+      const status = await command(scope, { env: {}, overridesOnlyMode: true }).execute(
         { action: 'status' },
         { sessionID: 'root', agent: 'zeus' },
       )
@@ -514,7 +514,7 @@ async function main(): Promise<void> {
       let wizardCalls = 0
       const tool = command(scope, {
         env: {},
-        v2Mode: true,
+        overridesOnlyMode: true,
         ask: async () => {
           wizardCalls += 1
           return {}
@@ -808,7 +808,7 @@ async function main(): Promise<void> {
       })
       writeFileSync(target, original)
       symlinkSync(target, projectActive(scope))
-      const tool = command(scope, { v2Mode: true })
+      const tool = command(scope, { overridesOnlyMode: true })
       const ctx = { sessionID: 'root', agent: 'zeus' }
 
       for (const args of [

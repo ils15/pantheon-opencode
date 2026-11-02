@@ -201,7 +201,7 @@ function convertMcpPermissions(value, result, provenance, configuredMcpServers) 
     }
     if (effect === 'ask') {
       console.warn(
-        '[config-migration] An MCP ask policy cannot be enforced in OpenCode V2; no rule was emitted. ' +
+        '[config-migration] An MCP ask policy cannot be enforced in OpenCode 2.x; no rule was emitted. ' +
           'Use `npm run setup` to choose an explicit outcome.',
       )
       continue
@@ -310,7 +310,7 @@ function assertV1ActionNormalizationDoesNotCollapseSources(provenance) {
         opencodeWildcardPatternsOverlap(left.rule.resource, right.rule.resource)
       ) {
         throw new TypeError(
-          'Distinct V1 permission sources overlap after OpenCode V2 action normalization; migration stopped.',
+          'Distinct V1 permission sources overlap after OpenCode 2.x action normalization; migration stopped.',
         )
       }
     }
@@ -627,7 +627,7 @@ function convertMcpV1toV2(mcpConfig) {
 
 /**
  * Normalize the V1 `enabled` and V2 `disabled` spellings without guessing
- * when both are present. OpenCode V2 connects configured servers by default;
+ * when both are present. OpenCode 2.x connects configured servers by default;
  * `disabled: true` is the native opt-out.
  *
  * @param {object} serverConfig
@@ -897,7 +897,7 @@ function mergeManagedAgents(base, managed) {
 // ---------------------------------------------------------------------------
 //
 // `context_sandbox` is a Pantheon-owned, V1 top-level setting (src/plugin.ts
-// reads `config.context_sandbox`). OpenCode V2 no longer carries custom
+// reads `config.context_sandbox`). OpenCode 2.x no longer carries custom
 // top-level keys: a sandbox probe against V2.0.25 showed `context_sandbox`
 // exits 0 but is SILENTLY DROPPED — identical to an arbitrary unknown key and
 // with no warning — while a value nested under a plugin entry's `options`

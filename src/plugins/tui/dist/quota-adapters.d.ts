@@ -1,6 +1,6 @@
 import { queryAlibabaTokenPlanUsage } from "./quota-cli.js";
 //#region src/quota-rpc.d.ts
-/** Full provider matrix approved for the V2 quota surface. */
+/** Full provider matrix approved for the quota surface. */
 declare const QUOTA_PROVIDER_IDS: readonly ['anthropic', 'chutes', 'cursor', 'github-copilot', 'google-agy', 'kilo-gateway', 'nanogpt', 'ollama-cloud', 'openai', 'opencode-go', 'opencode-zen', 'openrouter', 'synthetic', 'xai-supergrok', 'gemini-cli', 'alibaba-coding-plan', 'alibaba-token-plan', 'deepseek', 'kimi-code-global', 'kimi-code-cn', 'minimax-plan-global', 'minimax-plan-cn', 'xiaomi-mimo', 'zai-coding-plan', 'zhipu-coding-plan'];
 type QuotaProviderId = (typeof QUOTA_PROVIDER_IDS)[number];
 //#endregion

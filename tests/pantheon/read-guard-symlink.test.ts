@@ -11,7 +11,7 @@
  * resolver itself (relative/absolute, `..`, non-existent tail, loop → fail
  * closed) and the shared guard predicates. 2.0 removed the V1 plugin that
  * registered the guard through `chat.params` + `tool.execute.before`; the V2
- * registration path is covered in plugin-v2-contract.test.ts.
+ * registration path is covered in plugin-contract.test.ts.
  *
  * Run with: npx tsx tests/pantheon/read-guard-symlink.test.ts
  */

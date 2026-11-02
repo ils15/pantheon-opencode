@@ -1,102 +1,216 @@
-// biome-ignore-all lint/suspicious/noExplicitAny: necessary for TuiPluginApi dynamic state access
+// biome-ignore-all lint/suspicious/noExplicitAny: OpenCode 2.x exposes its TUI API at runtime.
 // biome-ignore-all lint/a11y/noStaticElementInteractions: TUI elements, not DOM
 /** @jsxImportSource @opentui/solid */
 
-/**
- * pantheon-tui — Pantheon TUI plugin for opencode.
- *
- * V1 bundle: `tsdown` emits `dist/tui.js`, re-exported by root `tui.ts`.
- * OpenCode V2 uses the separate `src/index-v2.tsx` entry and native CLI plugin
- * API. No raw TSX implementation is shipped. Because the bundle inlines relative
- * imports, this entry may be split into modules without breaking the loader.
- *
- * Slots:
- *   - sidebar_content        (order 900) — Pantheon sidebar (header/version/
- *     branch, Sessions, real-time Delegations panel).
- *   - app_bottom             (order 60)  — AI subscription usage gauges
- *     (Anthropic/OpenAI quotas, OpenCode Go/Zen dollar limits + provider
- *     status incidents).
- *
- * ─────────────────────────────────────────────────────────────────────────────
- * VENDORED FEATURES (MIT) — incorporated with their license headers preserved:
- *
- *   • satas20/opencode-usage-bar (MIT)
- *       https://github.com/satas20/opencode-usage-bar
- *
- *   v1.2.0 added an OpenCode Go/Zen usage provider (`opencodego`) on top of
- *   the vendored base — dollar-denominated rolling limits ($12/5h, $30/7d,
- *   $60/month) via the same key used for inference. Still MIT-credited to
- *   satas20 for the original bar/config/poll code.
- *
- * satas20/opencode-todo-progress was vendored in v1.1.0 alongside the
- * usage-bar but has since been REMOVED as redundant — the native session
- * footer already surfaces todo/context state, so its todo bar slot was
- * dropped entirely. Only usage-bar code remains.
- * ─────────────────────────────────────────────────────────────────────────────
- *
- * LIMITATION — native context/tokens statusline:
- *   The opencode session footer natively shows a context/tokens statusline
- *   next to the prompt. There is NO config option to hide it: the tui.json
- *   schema (opencode.ai/tui.json) only exposes `theme`, `keybinds`,
- *   `scroll_speed`, `scroll_acceleration`, `diff_style`, `mouse` and
- *   `attention`, and the SDK `Config` type has no statusline/tokens display
- *   flag (checked against @opencode-ai/sdk `Config` and the published
- *   schema). The Pantheon sidebar therefore no longer duplicates that footer
- *   (the old ContextBar was removed) and we deliberately do NOT hack the
- *   native footer. Track upstream: opencode statusline config.
- */
-
-import { Buffer } from 'node:buffer'
-import type { Dirent } from 'node:fs'
-import { appendFile, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from '@opencode-ai/plugin/tui'
-import { createMemo, createResource, createSignal, For, onCleanup, onMount, Show } from 'solid-js'
+import { join } from 'node:path'
+import { Plugin } from '@opencode/plugin/tui'
+import type { Context, KeymapLayer, PanelInput } from '@opencode/plugin/tui/context'
+import type { Accessor, JSX } from 'solid-js'
+import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from 'solid-js'
+import {
+  type ContextProgressTone,
+  contextBar,
+  contextUsageTone,
+  formatContextWindow,
+  formatSpent,
+  formatTokenCount,
+} from './context-gauge'
+import {
+  MODEL_USAGE_MESSAGE_LIMIT,
+  MODEL_USAGE_SESSION_LIMIT,
+  MODEL_USAGE_VISIBLE_CEILING,
+} from './model-usage-limits'
+import { QuotaSidebarSummary, quotaTextLines, registerQuotaTui } from './quota'
+import {
+  createQuotaRuntime,
+  type QuotaRuntime,
+  resolveActiveModelRef,
+  resolveModelContextSnapshot,
+} from './quota-model'
+import { cellWidth, GRAPHEMES, SIDEBAR_CONTENT_WIDTH } from './sidebar-width'
 
-// ─── Double-load guard (mirrors src/pantheon/plugin-once.ts) ───────────────
-// Opencode merges global + project plugin paths, so this module can load twice
-// in one process. The second factory invocation becomes a no-op.
-const __tuiPluginOnceKey = '__pantheonPluginsLoaded'
-function pantheonPluginOnce(key: string): boolean {
-  try {
-    const g = globalThis as unknown as Record<string, unknown>
-    if (g[__tuiPluginOnceKey] === undefined) g[__tuiPluginOnceKey] = new Set<string>()
-    const set = g[__tuiPluginOnceKey]
-    if (!(set instanceof Set)) return false
-    if ((set as Set<string>).has(key)) return true
-    ;(set as Set<string>).add(key)
-    return false
-  } catch {
-    return false
-  }
-}
+export type { ContextProgressTone } from './context-gauge'
+export {
+  CONTEXT_BAR_CELLS,
+  CONTEXT_BAR_EMPTY_CELL,
+  CONTEXT_BAR_FILLED_CELL,
+  contextBar,
+  contextBarFilled,
+  contextUsageTone,
+  formatContextWindow,
+  formatSpent,
+  formatTokenCount,
+} from './context-gauge'
+export { quotaGoCheckCommand } from './go-key-diagnostic-ui'
+export {
+  MODEL_USAGE_MESSAGE_LIMIT,
+  MODEL_USAGE_SESSION_LIMIT,
+  MODEL_USAGE_VISIBLE_CEILING,
+} from './model-usage-limits'
+export type { QuotaIconMode, QuotaIconName, QuotaTab } from './quota'
+export {
+  activeQuotaModelLabel,
+  DEFAULT_QUOTA_TAB,
+  financeMetricLines,
+  moveQuotaTab,
+  openQuotaPanel,
+  providerState,
+  QUOTA_ICON,
+  QUOTA_OPEN_COMMAND_ID,
+  QUOTA_PANEL_COMMANDS,
+  QUOTA_PANEL_NAME,
+  QUOTA_TABS,
+  QuotaPanel,
+  quotaIcon,
+  quotaMetricLines,
+  quotaOpenCommand,
+  quotaPanelKeymapLayer,
+  quotaPanelStatusMessage,
+  quotaTabLabel,
+  quotaTextLines,
+  quotaUsageTone,
+  quotaWindowLines,
+  runQuotaPanelCommand,
+  sidebarFinanceEntries,
+  snapshotSummary,
+} from './quota'
+export type { QuotaSidebarEntry } from './quota-model'
+export {
+  collectRecentModelUsageRows,
+  compactQuotaMetric,
+  createQuotaClock,
+  createQuotaRuntime,
+  DEFAULT_QUOTA_PREFERENCES,
+  formatQuotaCountdown,
+  formatQuotaMetric,
+  normalizeQuotaPreferences,
+  QUOTA_CLOCK_INTERVAL_MS,
+  quotaClock,
+  quotaProgress,
+  quotaSidebarEntries,
+  quotaSnapshotFromStatus,
+  quotaSnapshotStatusLabel,
+} from './quota-model'
+export { cellWidth } from './sidebar-width'
+export { UsageHistorySection } from './usage-history-view'
+export type { ActiveContextCostResult } from './usage-view-model'
+export {
+  activeContextEstimateErrorLines,
+  activeContextEstimateLines,
+  activeContextEstimateMissingLines,
+  activeContextEstimatePendingLines,
+  activeModelIdentity,
+  sessionSpendLabel,
+  USAGE_HISTORY_PERIOD_BINDINGS,
+  usageHistoryChartLines,
+  usageHistoryControlsLines,
+  usageHistoryCoverageLabel,
+  usageHistoryEmptyMessage,
+  usageHistoryPartialWarning,
+  usageHistoryPeriodForKey,
+  usageHistoryPricingLabel,
+  usageHistorySelectorLabel,
+  usageHistorySelectorLines,
+  usageHistoryTextLines,
+  usageHistoryUnavailableMessage,
+} from './usage-view-model'
+export { resolveActiveModelRef, resolveModelContextSnapshot }
+
+const SINGLETON = Symbol.for('pantheon.tui.v2.loaded')
 
 /* ─── Constants ─────────────────────────────────────────── */
 
-/** How often the sidebar re-reads .pantheon/active-preset.json so `set-tier`
- *  changes made while opencode is open show up within ~30s. */
+/** How often the sidebar re-reads .pantheon/active-preset.json (V1 parity) so
+ *  `set-tier` changes made while opencode is open show up within ~30s. */
 const PRESET_REFRESH_MS = 30_000
-
-/* ─── Helpers ───────────────────────────────────────────── */
+/** Running-row spinner cadence — matches V1's animation tick. */
+const SPINNER_INTERVAL_MS = 80
+/** Bounded warm-up: sync at most this many sessions at plugin load. */
+const WARMUP_SESSION_LIMIT = 24
+/** Sidebar body shown while the host has not published a session yet. */
+export const SIDEBAR_WAITING_LABEL = 'Aguardando sessão…'
+/** Delegate-completion toast title. */
+const TOAST_TITLE = 'Pantheon'
+/** Marker before the preset label (fixed header, home status, prompt footer).
+ *  `▸` U+25B8 is one cell; the previous bolt (U+26A1) carries
+ *  Emoji_Presentation and is measured as two cells, which misaligned the line. */
+export const PRESET_MARKER = '\u25B8'
+/** Git ahead / behind arrows (U+2191 / U+2193), one cell each — the glyphs the
+ *  reference sidebars use for `↑ahead ↓behind`. */
+export const GIT_ARROW_UP = '\u2191'
+export const GIT_ARROW_DOWN = '\u2193'
+/** One event name the host publishes on `data.on` — the OpenCode 2.x union. */
+export type SidebarDataEvent = Parameters<Context['data']['on']>[0]
+/** 2.x events that refresh the sidebar. 1.x also listened to `session.updated`,
+ *  but that name is absent from the OpenCode 2.x event union (verified against
+ *  `@opencode/client`'s `OpenCodeEvent`), so the valid events that carry the
+ *  same state changes are used instead: `session.renamed` /
+ *  `session.metadata.updated` / `session.moved` (the mutations `session.updated`
+ *  used to stand for) and `session.idle` (a child finishing). `satisfies` keeps
+ *  the literals while making a name outside the union a type error (surfaced by
+ *  `tsc -p tsconfig.build.json`), and the sidebar test asserts the same names
+ *  against the installed union at runtime. */
+export const SIDEBAR_REFRESH_EVENTS = [
+  'session.created',
+  'session.renamed',
+  'session.metadata.updated',
+  'session.moved',
+  'session.idle',
+  'session.status',
+  'session.deleted',
+] as const satisfies readonly SidebarDataEvent[]
 
 /* ─── Active Preset Detection ──────────────────────────────
- * Inline replica of src/pantheon/presets.mjs resolveActivePreset() — the
- * copied plugin ships only dist/ + package.json, so it cannot reach
- * src/pantheon at runtime; the resolution logic is mirrored here rather than
- * importing presets.mjs.
+ * Inline replica of the V1 sidebar resolver (src/plugins/tui/src/index.tsx,
+ * which itself mirrors src/pantheon/presets.mjs). The copied plugin ships only
+ * dist/ + package.json, so it can reach neither module at runtime — the
+ * resolution logic is mirrored here rather than imported.
  *
  * Priority: env PANTHEON_MODEL_PRESET > first existing candidate file > none.
- * Custom/unknown preset names are shown as-is (a preset may be defined that
- * is not in the built-in list). "none" disables → default.                */
+ * Custom/unknown preset names are shown as-is. "none" disables → default. */
 
-type PresetInfo = { name: string | null; source: 'env' | 'file' | null }
+export type PresetInfo = { name: string | null; source: 'env' | 'file' | null }
 
-/** Read .pantheon/active-preset.json — mirrors the presets.mjs file leg:
- *  first existing candidate wins; malformed JSON or a `preset` that is
- *  missing, empty or "none" → null (no fall-through to lower candidates). */
-async function readActivePresetFile(cwd: string): Promise<{ name: string; source: 'file' } | null> {
+/** One `overrides.agents[<agent>]` entry from active-preset.json. */
+export type AgentModelOverride = { model?: string; variant?: string }
+/** The override map the CLI wrote into active-preset.json. */
+export type PresetOverrides = { agents: Record<string, AgentModelOverride> }
+/** A preset plus the explicit overrides stored next to it. */
+export type ActivePresetDetail = { info: PresetInfo; overrides: PresetOverrides }
+
+function emptyOverrides(): PresetOverrides {
+  return { agents: {} }
+}
+
+/** Keep only well-formed per-agent overrides: unknown keys are ignored and a
+ *  non-string model/variant is dropped instead of leaking into the render. */
+export function parsePresetOverrides(value: unknown): PresetOverrides {
+  const overrides = emptyOverrides()
+  if (!value || typeof value !== 'object') return overrides
+  const agents = (value as { agents?: unknown }).agents
+  if (!agents || typeof agents !== 'object') return overrides
+  for (const [agent, entry] of Object.entries(agents as Record<string, unknown>)) {
+    if (agent === '' || !entry || typeof entry !== 'object') continue
+    const model = (entry as { model?: unknown }).model
+    const variant = (entry as { variant?: unknown }).variant
+    const override: AgentModelOverride = {}
+    if (typeof model === 'string' && model !== '') override.model = model
+    if (typeof variant === 'string' && variant !== '') override.variant = variant
+    if (override.model !== undefined || override.variant !== undefined) {
+      overrides.agents[agent] = override
+    }
+  }
+  return overrides
+}
+
+/** Read .pantheon/active-preset.json — first existing candidate wins; malformed
+ *  JSON or a `preset` that is missing, empty or "none" → null (no fall-through
+ *  to lower candidates). The explicit per-agent overrides stored in the same
+ *  file come along so the sidebar can mark them with `*`. */
+async function readActivePresetDetail(cwd: string): Promise<ActivePresetDetail | null> {
   const xdgConfig = process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config')
   const candidates = [
     join(cwd, '.pantheon', 'active-preset.json'),
@@ -111,10 +225,13 @@ async function readActivePresetFile(cwd: string): Promise<{ name: string; source
       continue // candidate does not exist — try the next one
     }
     try {
-      const parsed = JSON.parse(raw) as { preset?: unknown }
+      const parsed = JSON.parse(raw) as { preset?: unknown; overrides?: unknown }
       const name = parsed && typeof parsed === 'object' ? parsed.preset : undefined
       if (typeof name !== 'string' || name.length === 0 || name === 'none') return null
-      return { name, source: 'file' }
+      return {
+        info: { name, source: 'file' },
+        overrides: parsePresetOverrides(parsed.overrides),
+      }
     } catch {
       return null // malformed file — treat as default (mirrors presets.mjs)
     }
@@ -123,7 +240,7 @@ async function readActivePresetFile(cwd: string): Promise<{ name: string; source
 }
 
 /** Env leg of resolution: PANTHEON_MODEL_PRESET set and !== 'none' wins. */
-function presetFromEnv(env: Record<string, string | undefined>): PresetInfo {
+export function presetFromEnv(env: Record<string, string | undefined>): PresetInfo {
   const name = env.PANTHEON_MODEL_PRESET
   if (name !== undefined && name !== '' && name !== 'none') {
     return { name, source: 'env' }
@@ -131,2610 +248,2716 @@ function presetFromEnv(env: Record<string, string | undefined>): PresetInfo {
   return { name: null, source: null }
 }
 
-/** Resolve the active preset for the sidebar: env > file > default. */
-async function resolvePresetForTui(
+/** Resolve the active preset plus its per-agent overrides: env > file > default.
+ *  An env-selected preset has no file overrides by construction. */
+export async function resolveActivePresetForTui(
   env: Record<string, string | undefined>,
   cwd: string,
-): Promise<PresetInfo> {
+): Promise<ActivePresetDetail> {
   const envPreset = presetFromEnv(env)
-  if (envPreset.source === 'env') return envPreset
-  return (await readActivePresetFile(cwd)) ?? { name: null, source: null }
-}
-
-/* ─── Version Detection ────────────────────────────────────
- * 100% dinâmico — fallback embutido em build (__PANTHEON_VERSION__).
- * Se falhar, retorna null e a View omite a versão.
- *
- * Try order:
- *   0a. pantheon-tui/package.json (installed: dist/tui.js → 2 níveis)
- *   0b. pantheon/package.json (dev: src/plugins/tui/dist/tui.js → 4 níveis)
- *   1. api.client.file.read package.json
- *   2. git describe --tags
- *   3. opencode --version
- *   4. __PANTHEON_VERSION__ (tsdown define — build-time embed)
- *   5. null                                                      */
-
-// Build-time embedded version (tsdown `define` in tsdown.config.ts). Injected
-// into the bundled dist/tui.js — the only artifact the loader consumes.
-declare const __PANTHEON_VERSION__: string | undefined
-
-async function detectVersion(api: TuiPluginApi): Promise<string | null> {
-  // Try 0a: installed location (2 levels: dist/tui.js → pantheon-tui/package.json)
-  try {
-    const pkgUrl = new URL('../../package.json', import.meta.url)
-    const pkgContent = await readFile(fileURLToPath(pkgUrl), 'utf8')
-    const pkg = JSON.parse(pkgContent)
-    if (pkg.version) return pkg.version
-  } catch {}
-
-  // Try 0b: dev location (4 levels: src/plugins/tui/dist/tui.js → package.json)
-  try {
-    const pkgUrl = new URL('../../../../package.json', import.meta.url)
-    const pkgContent = await readFile(fileURLToPath(pkgUrl), 'utf8')
-    const pkg = JSON.parse(pkgContent)
-    if (pkg.version) return pkg.version
-  } catch {}
-
-  // Try 1: package.json do projeto (via worktree path)
-  try {
-    const wt = ((api.state as any).path?.worktree ?? '') as string
-    const fp = wt ? `${wt}/package.json` : 'package.json'
-    const result = await api.client.file.read({ path: fp })
-    const content = String(result?.data?.content ?? '')
-    const match = content.match(/"version":\s*"([^"]+)"/)
-    if (match?.[1]) return match[1]
-  } catch {
-    /* fall through */
-  }
-
-  // Try 2: git describe --tags
-  try {
-    const proc = (api as any).client?.process
-    if (typeof proc?.exec === 'function') {
-      const r = await proc.exec({
-        command: 'git',
-        args: ['describe', '--tags', '--always'],
-        timeoutMs: 3000,
-      })
-      const stdout = (r.stdout ?? r.output ?? '') as string
-      const tag = stdout
-        .trim()
-        .replace(/^v/, '')
-        .replace(/-\d+-g[0-9a-f]+$/, '')
-      if (tag) return tag
+  if (envPreset.source === 'env') return { info: envPreset, overrides: emptyOverrides() }
+  return (
+    (await readActivePresetDetail(cwd)) ?? {
+      info: { name: null, source: null },
+      overrides: emptyOverrides(),
     }
-  } catch {
-    /* fall through */
-  }
-
-  // Try 3: opencode --version
-  try {
-    const proc = (api as any).client?.process
-    if (typeof proc?.exec === 'function') {
-      const r = await proc.exec({ command: 'opencode', args: ['--version'], timeoutMs: 3000 })
-      const stdout = (r.stdout ?? r.output ?? '') as string
-      const ver = stdout.trim().replace(/^v/, '')
-      if (ver) return ver
-    }
-  } catch {
-    /* fall through */
-  }
-
-  // Try 4: build-time embedded version (tsdown define) — last-resort fallback
-  // so the sidebar ALWAYS shows a version even when every probe above fails.
-  if (typeof __PANTHEON_VERSION__ !== 'undefined' && __PANTHEON_VERSION__) {
-    return __PANTHEON_VERSION__
-  }
-
-  return null // sem fallback — versão não aparece
-}
-
-/* ──────────────────────────────────────────────────────────
- * VENDORED: opencode-usage-bar (MIT) — satas20
- * https://github.com/satas20/opencode-usage-bar
- * ────────────────────────────────────────────────────────── */
-
-/**
- * usage-bar — AI subscription usage gauge for the opencode TUI.
- *
- * Renders a compact usage strip in the `app_bottom` slot — a full-width row
- * just below the session footer:
- *
- *   ▓▓▓▓░░ 65% · 0h 11m                                  (one window)
- *   cld ▓▓▓▓░ 65% · 0h 11m  7d ▓░░░░ 19% · 1d 11h   oai ▓░░░░ 12% · 3h 4m
- *   ! cld ▓▓▓▓░ 65% · 0h 11m                             (anthropic incident)
- *
- * Providers:
- *   anthropic — Claude Pro/Max via the OAuth token in ~/.claude/.credentials.json
- *   openai    — ChatGPT Plus/Pro via the Codex CLI login in ~/.codex/auth.json
- *   opencodego— OpenCode Go/Zen dollar limits ($12/5h, $30/7d, $60/mo) via
- *               PANTHEON_OPENCODE_API_KEY (fallback OPENCODE_API_KEY). No
- *               status page — the provider hides silently when unconfigured
- *               or when the (not yet public) usage endpoint is unavailable.
- *
- * When a provider's public status page reports an incident, a colored `!`
- * marker appears next to its prefix (red = major/critical, amber = minor,
- * cyan = maintenance). The usage bar itself is unaffected. Disable with
- * `show_status = false` under `[ui]`.
- *
- * Configured via ~/.config/opencode/usage-bar.toml (auto-created with
- * commented defaults on first run; read once at startup). Tokens/keys are
- * only ever sent to their own provider's API host.
- *
- * Loaded via tui.json, e.g.:
- *   { "plugin": ["@satas/opencode-usage-bar"] }      // published npm package
- *   { "plugin": ["/abs/path/to/src/index.tsx"] }     // local file (no build)
- */
-
-const POLL_MS = 120_000
-const FETCH_TIMEOUT_MS = 10_000
-const CONFIG_FILE = 'usage-bar.toml'
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-/** Which quota window a value belongs to; toggled per provider in config. */
-type WindowCategory = '5h' | '7d' | '1m' | 'model'
-
-/** Provider health from the vendor's public status page (Statuspage schema). */
-type StatusIndicator = 'none' | 'minor' | 'major' | 'critical' | 'maintenance'
-
-type UsageWindow = {
-  category: WindowCategory
-  /** short display label, e.g. "5h", "7d", "Fable" */
-  label: string
-  /** 0–100 percent of the window used */
-  percent: number
-  /** epoch ms when the window resets */
-  resetsAt: number
-}
-
-type ProviderId = 'anthropic' | 'openai' | 'opencodego'
-
-type ProviderConfig = {
-  enabled: boolean
-  show: Record<WindowCategory, boolean>
-  /** anthropic: path to .credentials.json */
-  credentialsPath?: string
-  /** openai: path to Codex auth.json */
-  codexAuthPath?: string
-}
-
-type UsageBarConfig = {
-  showBars: boolean
-  showStatus: boolean
-  barWidth?: number
-  providers: Record<ProviderId, ProviderConfig>
-}
-
-type Provider = {
-  id: ProviderId
-  /** short prefix shown when multiple providers are visible */
-  short: string
-  /** vendor status page JSON endpoint (Statuspage `status.json`); optional */
-  statusUrl?: string
-  fetchUsage(cfg: ProviderConfig): Promise<UsageWindow[] | null>
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function expandTilde(p: string) {
-  return p === '~' ? homedir() : p.startsWith('~/') ? join(homedir(), p.slice(2)) : p
-}
-
-function fmtDuration(ms: number) {
-  const totalMinutes = Math.max(0, Math.ceil(ms / 60_000))
-  const days = Math.floor(totalMinutes / 1440)
-  const hours = Math.floor((totalMinutes % 1440) / 60)
-  const minutes = totalMinutes % 60
-  if (days > 0) return `${days}d ${hours}h`
-  return `${hours}h ${minutes}m`
-}
-
-/** Decode a JWT's `exp` claim (unix seconds) without verifying. 0 on failure. */
-function jwtExp(token: string): number {
-  try {
-    const payload = token.split('.')[1]
-    if (!payload) return 0
-    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as {
-      exp?: number
-    }
-    return typeof claims.exp === 'number' ? claims.exp : 0
-  } catch {
-    return 0
-  }
-}
-
-async function fetchJson(url: string, headers: Record<string, string>): Promise<unknown | null> {
-  try {
-    const res = await fetch(url, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
-    if (!res.ok) return null
-    return await res.json()
-  } catch {
-    return null
-  }
-}
-
-/** Fetch a vendor's overall status from its public Statuspage JSON endpoint.
- *  Returns the `indicator` ("none" when healthy), or `null` when the fetch
- *  itself failed — so a network blip never clears a known incident. */
-async function fetchStatus(url: string): Promise<StatusIndicator | null> {
-  const data = (await fetchJson(url, {})) as {
-    status?: { indicator?: string }
-  } | null
-  if (!data?.status) return null
-  const indicator = data.status.indicator
-  return indicator === 'minor' ||
-    indicator === 'major' ||
-    indicator === 'critical' ||
-    indicator === 'maintenance'
-    ? indicator
-    : 'none'
-}
-
-// ---------------------------------------------------------------------------
-// opencode auth store (fallback credential source)
-// ---------------------------------------------------------------------------
-
-type OpencodeAuthEntry = {
-  type?: string
-  access?: string
-  expires?: number // epoch ms; 0 = no expiry
-  accountId?: string
-}
-
-/** Set from `api.state.path.state` at startup; default matches opencode's
- *  XDG data dir. */
-let opencodeAuthFile = join(homedir(), '.local', 'share', 'opencode', 'auth.json')
-
-/** Read a provider's entry from opencode's own auth store
- *  (`opencode auth login`). Returns null when missing/unreadable. */
-async function opencodeAuth(...ids: string[]): Promise<OpencodeAuthEntry | null> {
-  try {
-    const auth = JSON.parse(await readFile(opencodeAuthFile, 'utf8')) as Record<
-      string,
-      OpencodeAuthEntry
-    >
-    for (const id of ids) {
-      const entry = auth[id]
-      if (entry) return entry
-    }
-    return null
-  } catch {
-    return null
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Providers
-// ---------------------------------------------------------------------------
-
-/** Claude Pro/Max — Anthropic's OAuth usage endpoint (same one Claude Code's
- *  `/usage` uses). Token from ~/.claude/.credentials.json, falling back to
- *  opencode's own auth store; sent only to api.anthropic.com. */
-const anthropicProvider: Provider = {
-  id: 'anthropic',
-  short: 'cld',
-  statusUrl: 'https://status.anthropic.com/api/v2/status.json',
-  async fetchUsage(cfg) {
-    let token: string | undefined
-    try {
-      const path = expandTilde(
-        cfg.credentialsPath ?? join(homedir(), '.claude', '.credentials.json'),
-      )
-      const creds = JSON.parse(await readFile(path, 'utf8')) as {
-        claudeAiOauth?: { accessToken?: string; expiresAt?: number }
-      }
-      const oauth = creds.claudeAiOauth
-      if (oauth?.accessToken && !(oauth.expiresAt && Date.now() >= oauth.expiresAt))
-        token = oauth.accessToken
-    } catch {
-      // fall through to opencode auth
-    }
-    if (!token) {
-      const entry = await opencodeAuth('anthropic')
-      if (entry?.access && !(entry.expires && Date.now() >= entry.expires)) token = entry.access
-    }
-    if (!token) return null
-
-    const data = (await fetchJson('https://api.anthropic.com/api/oauth/usage', {
-      authorization: `Bearer ${token}`,
-      'anthropic-beta': 'oauth-2025-04-20',
-    })) as {
-      limits?: Array<{
-        kind?: string
-        percent?: number
-        resets_at?: string
-        scope?: { model?: { display_name?: string | null } | null } | null
-      }>
-    } | null
-    if (!data || !Array.isArray(data.limits)) return null
-
-    const windows: UsageWindow[] = []
-    for (const limit of data.limits) {
-      if (!limit || typeof limit.percent !== 'number' || !Number.isFinite(limit.percent)) continue
-      if (!limit.kind || !limit.resets_at) continue
-      const resetsAt = Date.parse(limit.resets_at)
-      if (Number.isNaN(resetsAt)) continue
-      const category: WindowCategory =
-        limit.kind === 'session' ? '5h' : limit.kind === 'weekly_all' ? '7d' : 'model'
-      const label = category === 'model' ? (limit.scope?.model?.display_name ?? 'model') : category
-      windows.push({ category, label, percent: limit.percent, resetsAt })
-    }
-    // Session window first, then the rest in API order.
-    windows.sort((a, b) => Number(b.category === '5h') - Number(a.category === '5h'))
-    return windows.length > 0 ? windows : null
-  },
-}
-
-/** ChatGPT Plus/Pro (Codex) — reads the Codex CLI login and asks the wham
- *  usage endpoint. Read-only: never refreshes/rewrites auth.json; when the
- *  token is expired we simply hide (Codex CLI refreshes the file itself). */
-const openaiProvider: Provider = {
-  id: 'openai',
-  short: 'oai',
-  statusUrl: 'https://status.openai.com/api/v2/status.json',
-  async fetchUsage(cfg) {
-    let accessToken: string | undefined
-    let accountId: string | undefined
-    try {
-      const path = expandTilde(cfg.codexAuthPath ?? join(homedir(), '.codex', 'auth.json'))
-      const auth = JSON.parse(await readFile(path, 'utf8')) as {
-        tokens?: { access_token?: string; id_token?: string; account_id?: string }
-      }
-      const tokens = auth.tokens
-      // Check the expiry of the token we actually send (the access token);
-      // the id_token expires much earlier and would cause false negatives.
-      const exp = tokens?.access_token ? jwtExp(tokens.access_token) : 0
-      if (tokens?.access_token && !(exp > 0 && exp * 1000 <= Date.now() + 60_000)) {
-        accessToken = tokens.access_token
-        accountId = tokens.account_id
-      }
-    } catch {
-      // fall through to opencode auth
-    }
-    if (!accessToken) {
-      const entry = await opencodeAuth('openai')
-      if (entry?.access && !(entry.expires && Date.now() >= entry.expires)) {
-        accessToken = entry.access
-        accountId = entry.accountId
-      }
-    }
-    if (!accessToken) return null
-
-    const headers: Record<string, string> = {
-      authorization: `Bearer ${accessToken}`,
-      'user-agent': 'codex-cli',
-    }
-    if (accountId) headers['chatgpt-account-id'] = accountId
-
-    const data = (await fetchJson('https://chatgpt.com/backend-api/wham/usage', headers)) as {
-      rate_limit?: {
-        primary_window?: WhamWindow | null
-        secondary_window?: WhamWindow | null
-      }
-    } | null
-    if (!data?.rate_limit) return null
-
-    // Classify by window duration when present (some accounts return the
-    // weekly window as primary_window), falling back to position.
-    const windows: UsageWindow[] = []
-    const primary = parseWhamWindow(data.rate_limit.primary_window, '5h')
-    if (primary) windows.push(primary)
-    const secondary = parseWhamWindow(data.rate_limit.secondary_window, '7d')
-    if (secondary) windows.push(secondary)
-    windows.sort((a, b) => Number(b.category === '5h') - Number(a.category === '5h'))
-    return windows.length > 0 ? windows : null
-  },
-}
-
-type WhamWindow = {
-  used_percent?: number
-  limit_window_seconds?: number
-  reset_at?: number
-  reset_after_seconds?: number
-}
-
-function parseWhamWindow(
-  w: WhamWindow | null | undefined,
-  fallback: WindowCategory,
-): UsageWindow | null {
-  if (!w || typeof w.used_percent !== 'number' || !Number.isFinite(w.used_percent)) return null
-  let resetsAt: number | undefined
-  if (typeof w.reset_at === 'number') resetsAt = w.reset_at * 1000
-  else if (typeof w.reset_after_seconds === 'number')
-    resetsAt = Date.now() + w.reset_after_seconds * 1000
-  if (!resetsAt || !Number.isFinite(resetsAt)) return null
-  const category: WindowCategory =
-    typeof w.limit_window_seconds === 'number' && w.limit_window_seconds > 0
-      ? w.limit_window_seconds <= 21_600 // ≤ 6h → session window
-        ? '5h'
-        : '7d'
-      : fallback
-  return { category, label: category, percent: w.used_percent, resetsAt }
-}
-
-/** OpenCode Go/Zen — dollar-denominated rolling usage limits ($12 / 5h,
- *  $30 / 7d, $60 / subscription month). Token is the same key used for
- *  inference: PANTHEON_OPENCODE_API_KEY, falling back to OPENCODE_API_KEY.
- *  It is only ever sent in the Authorization header to opencode.ai — never
- *  logged or written to disk. The usage endpoint (opencode.ai/zen/go/v1/
- *  usage) is not yet part of the public docs, so any non-ok response
- *  (404/401/403/500) hides the provider silently instead of erroring out. */
-const opencodeGoProvider: Provider = {
-  id: 'opencodego',
-  short: 'go',
-  // No statusUrl — opencode.ai has no verified public status page to poll.
-  async fetchUsage(_cfg) {
-    const token = process.env.PANTHEON_OPENCODE_API_KEY ?? process.env.OPENCODE_API_KEY
-    if (!token) return null
-
-    const data = (await fetchJson('https://opencode.ai/zen/go/v1/usage', {
-      authorization: `Bearer ${token}`,
-    })) as {
-      rolling5h?: GoUsageWindow
-      weekly?: GoUsageWindow
-      monthly?: GoUsageWindow
-    } | null
-    if (!data) return null
-
-    const windows: UsageWindow[] = []
-    // Mirror the defensive parsing used by the other providers: a window
-    // missing its percent or reset time is skipped rather than rendered.
-    const push = (w: GoUsageWindow | undefined, category: '5h' | '7d' | '1m') => {
-      if (!w) return
-      if (typeof w.usagePercent !== 'number' || !Number.isFinite(w.usagePercent)) return
-      if (typeof w.resetInSec !== 'number' || !Number.isFinite(w.resetInSec)) return
-      windows.push({
-        category,
-        label: category,
-        percent: Math.round(w.usagePercent),
-        resetsAt: Date.now() + w.resetInSec * 1000,
-      })
-    }
-    push(data.rolling5h, '5h')
-    push(data.weekly, '7d')
-    push(data.monthly, '1m')
-    return windows.length > 0 ? windows : null
-  },
-}
-
-type GoUsageWindow = {
-  usageDollars?: number
-  limitDollars?: number
-  usagePercent?: number
-  resetInSec?: number
-}
-
-const providers: Provider[] = [anthropicProvider, openaiProvider, opencodeGoProvider]
-
-// ---------------------------------------------------------------------------
-// Config
-// ---------------------------------------------------------------------------
-
-const DEFAULT_TOML = `# opencode-usage-bar configuration
-# Read once at startup — restart opencode after editing.
-
-[ui]
-show_bars = true      # render ▓▓░░ mini-bars (false = text only)
-show_status = true    # show a ! marker next to a provider during incidents
-# bar_width = 6       # override bar width (default: 6 for a single window, 5 otherwise)
-
-[anthropic]
-enabled = true        # Claude Pro/Max via ~/.claude/.credentials.json
-show_5h = true        # rolling 5-hour session window
-show_7d = false       # weekly cap across all models
-show_model = false    # per-model weekly windows (e.g. Fable)
-# credentials_path = "~/.claude/.credentials.json"
-
-[openai]
-enabled = false       # ChatGPT Plus/Pro via the Codex CLI login
-show_5h = true
-show_7d = false
-# codex_auth_path = "~/.codex/auth.json"
-
-[opencodego]
-enabled = true        # OpenCode Go/Zen dollar usage via PANTHEON_OPENCODE_API_KEY
-show_5h = true        # rolling 5-hour window ($12)
-show_7d = true        # rolling 7-day window ($30)
-show_1m = false       # subscription-month window ($60) — opt-in
-# Falls back to OPENCODE_API_KEY when PANTHEON_OPENCODE_API_KEY is unset.
-`
-
-function defaultConfig(): UsageBarConfig {
-  const show = (over: Partial<Record<WindowCategory, boolean>> = {}) => ({
-    '5h': true,
-    '7d': false,
-    '1m': false,
-    model: false,
-    ...over,
-  })
-  return {
-    showBars: true,
-    showStatus: true,
-    providers: {
-      anthropic: { enabled: true, show: show() },
-      openai: { enabled: false, show: show() },
-      // 5h+7d on by default; monthly window opt-in; model never for Go.
-      opencodego: { enabled: true, show: show({ '7d': true }) },
-    },
-  }
-}
-
-type TomlTable = Record<string, unknown>
-
-function asTable(v: unknown): TomlTable {
-  return v && typeof v === 'object' && !Array.isArray(v) ? (v as TomlTable) : {}
-}
-
-function bool(v: unknown, fallback: boolean) {
-  return typeof v === 'boolean' ? v : fallback
-}
-
-function str(v: unknown): string | undefined {
-  return typeof v === 'string' && v.length > 0 ? v : undefined
-}
-
-function parseConfig(raw: string): UsageBarConfig {
-  const toml = (globalThis as Record<string, any>).Bun?.TOML
-  if (!toml?.parse) return defaultConfig()
-  const root = asTable(toml.parse(raw))
-  const cfg = defaultConfig()
-
-  const ui = asTable(root.ui)
-  cfg.showBars = bool(ui.show_bars, cfg.showBars)
-  cfg.showStatus = bool(ui.show_status, cfg.showStatus)
-  const rawWidth = ui.bar_width
-  if (typeof rawWidth === 'number' && Number.isFinite(rawWidth) && rawWidth >= 1)
-    cfg.barWidth = Math.min(40, Math.floor(rawWidth))
-
-  for (const id of ['anthropic', 'openai', 'opencodego'] as ProviderId[]) {
-    const t = asTable(root[id])
-    const p = cfg.providers[id]
-    p.enabled = bool(t.enabled, p.enabled)
-    p.show['5h'] = bool(t.show_5h, p.show['5h'])
-    p.show['7d'] = bool(t.show_7d, p.show['7d'])
-    p.show['1m'] = bool(t.show_1m, p.show['1m'])
-    p.show.model = bool(t.show_model, p.show.model)
-    // Assign only when present — keeps `exactOptionalPropertyTypes` happy.
-    const credentialsPath = str(t.credentials_path)
-    if (credentialsPath !== undefined) p.credentialsPath = credentialsPath
-    const codexAuthPath = str(t.codex_auth_path)
-    if (codexAuthPath !== undefined) p.codexAuthPath = codexAuthPath
-  }
-  return cfg
-}
-
-/** Load `<config dir>/usage-bar.toml`, creating it with commented defaults on
- *  first run. Any failure falls back to defaults without touching an existing
- *  file. */
-async function loadConfig(configPath: string | undefined): Promise<UsageBarConfig> {
-  const dir =
-    configPath && !configPath.endsWith('.json')
-      ? configPath
-      : configPath
-        ? dirname(configPath)
-        : join(homedir(), '.config', 'opencode')
-  const file = join(dir, CONFIG_FILE)
-
-  try {
-    const raw = await readFile(file, 'utf8')
-    try {
-      return parseConfig(raw)
-    } catch {
-      return defaultConfig() // malformed TOML — keep the file, use defaults
-    }
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
-      try {
-        await mkdir(dir, { recursive: true })
-        await writeFile(file, DEFAULT_TOML, { flag: 'wx' })
-      } catch {
-        // ignore — config stays default in memory
-      }
-    }
-    return defaultConfig()
-  }
-}
-
-/** Vendored usage-bar plugin init: reads config, seeds the kv cache, starts
- *  the poll loop and registers the `app_bottom` slot. Skips everything (and
- *  registers nothing) when no provider is enabled — mirrors the standalone
- *  plugin's early return. */
-async function setupUsageBar(api: TuiPluginApi) {
-  const config = await loadConfig(api.state.path?.config)
-  if (api.state.path?.state) opencodeAuthFile = join(api.state.path.state, 'auth.json')
-
-  const enabled = providers.filter((p) => config.providers[p.id].enabled)
-  if (enabled.length === 0) return // nothing to poll or render
-
-  const seed: Record<string, UsageWindow[]> = {}
-  for (const p of enabled) {
-    const cached = api.kv.get<UsageWindow[] | undefined>(`usage-bar.${p.id}.windows`, undefined)
-    if (cached) seed[p.id] = cached
-  }
-  const [byProvider, setByProvider] = createSignal<Record<string, UsageWindow[]>>(seed)
-  // Status is deliberately not cached across restarts: incidents are
-  // short-lived, and the first poll lands seconds after startup anyway.
-  const [byStatus, setByStatus] = createSignal<Record<string, StatusIndicator>>({})
-  const [now, setNow] = createSignal(Date.now())
-
-  setInterval(() => setNow(Date.now()), 1_000)
-
-  for (const p of enabled) {
-    const cfg = config.providers[p.id]
-    const poll = async () => {
-      // Fetch usage and status concurrently; status pages are CDN-backed and
-      // never throttle, so we poll them on the same cadence as usage.
-      const statusP = config.showStatus && p.statusUrl ? fetchStatus(p.statusUrl) : null
-      const [all, status] = await Promise.all([p.fetchUsage(cfg), statusP])
-      if (all) {
-        const windows = all.filter((w) => cfg.show[w.category] && w.resetsAt > Date.now())
-        setByProvider((prev) => ({ ...prev, [p.id]: windows }))
-        api.kv.set(`usage-bar.${p.id}.windows`, windows)
-      }
-      // `null` means the status fetch failed — keep the last known indicator.
-      if (status !== null) setByStatus((prev) => ({ ...prev, [p.id]: status }))
-      // Back off when the usage fetch failed (e.g. 429 — these endpoints throttle).
-      setTimeout(poll, all ? POLL_MS : POLL_MS * 3)
-    }
-    void poll()
-  }
-
-  api.slots.register({
-    order: 60,
-    slots: {
-      // `app_bottom` renders as a full-width row below the session footer.
-      app_bottom() {
-        const theme = () => api.theme.current
-
-        type Group = { short: string; status: StatusIndicator; windows: UsageWindow[] }
-        const groups = createMemo<Group[]>(() => {
-          const map = byProvider()
-          const statusMap = byStatus()
-          const out: Group[] = []
-          for (const p of enabled) {
-            // Drop windows that have reset since the last poll.
-            const windows = (map[p.id] ?? []).filter((w) => w.resetsAt > now())
-            if (windows.length > 0)
-              out.push({ short: p.short, status: statusMap[p.id] ?? 'none', windows })
-          }
-          return out
-        })
-        const totalWindows = createMemo(() =>
-          groups().reduce((sum, g) => sum + g.windows.length, 0),
-        )
-        const barWidth = createMemo(() => config.barWidth ?? (totalWindows() === 1 ? 6 : 5))
-        const multiProvider = createMemo(() => groups().length >= 2)
-
-        const pctOf = (w: UsageWindow) => Math.min(100, Math.max(0, Math.round(w.percent)))
-        const filledOf = (w: UsageWindow) =>
-          Math.min(barWidth(), Math.max(0, Math.round((pctOf(w) / 100) * barWidth())))
-        const colorOf = (w: UsageWindow) => {
-          const t = theme()
-          const pct = pctOf(w)
-          if (pct > 85) return t.error
-          if (pct >= 50) return t.warning
-          return t.success
-        }
-        // Status marker color: red for severe incidents, amber for minor,
-        // cyan for scheduled maintenance.
-        const statusColor = (s: StatusIndicator) => {
-          const t = theme()
-          if (s === 'critical' || s === 'major') return t.error
-          if (s === 'minor') return t.warning
-          return t.info
-        }
-
-        return (
-          <Show when={groups().length > 0}>
-            <box flexDirection="row" gap={3} alignItems="center" width="100%" paddingLeft={1}>
-              <For each={groups()}>
-                {(g) => (
-                  <box flexDirection="row" gap={2} alignItems="center" flexShrink={0}>
-                    <Show when={config.showStatus && g.status !== 'none'}>
-                      <text fg={statusColor(g.status)}>!</text>
-                    </Show>
-                    <Show when={multiProvider()}>
-                      <text fg={theme().textMuted}>{g.short}</text>
-                    </Show>
-                    <For each={g.windows}>
-                      {(w) => (
-                        <box flexDirection="row" gap={1} alignItems="center" flexShrink={0}>
-                          <Show when={g.windows.length >= 2}>
-                            <text fg={theme().textMuted}>{w.label}</text>
-                          </Show>
-                          <Show when={config.showBars}>
-                            <box flexDirection="row">
-                              <text fg={colorOf(w)}>{'▓'.repeat(filledOf(w))}</text>
-                              <text fg={theme().textMuted}>
-                                {'░'.repeat(barWidth() - filledOf(w))}
-                              </text>
-                            </box>
-                          </Show>
-                          <text fg={theme().text}>{pctOf(w)}%</text>
-                          <text
-                            fg={theme().textMuted}
-                          >{`· ${fmtDuration(w.resetsAt - now())}`}</text>
-                        </box>
-                      )}
-                    </For>
-                  </box>
-                )}
-              </For>
-            </box>
-          </Show>
-        )
-      },
-    },
-  })
-}
-
-/* ─── Delegations (real-time panel) ────────────────────────
- * CHILDREN + MD (delegations-sidebar pattern, feat/compaction-134):
- *
- *   1. PRIMARY — SDK child sessions via `api.client.session.children`:
- *      every delegated child session is created with
- *      parentID = caller (native `task()` child session), so
- *      the children of the current session ARE the delegation list — the
- *      same mechanism the opencode-delegations-sidebar reference uses
- *      (`client.session.children` + `session.parentID === current`).
- *      Live status comes from `api.state.session.status(childID)`
- *      (busy/retry → running; idle → terminal). This does NOT depend on
- *  tool-part events, which runtime 1.18.13 may not deliver for
- *  native `task()` (the "(0) even while delegating" symptom).
- *
- *   1b. NATIVE task() CHILDREN — `session.children` returns ALL children,
- *      and the native `task()` tool ALSO spawns a child session with
- *      parentID = caller. A child WITHOUT a delegate report is a native
- *      task() child: childrenToDelegationEntries tags it source
- *      'children-only' (distinct info color),
- *      so native task() work is visible in the panel alongside delegate
- *      children — never filtered out, never duplicated
- *      with a report row for the same child (a child WITH a report keeps the
- *      md entry, source 'md').
- *
- *   2. ENRICHMENT — markdown reports written under
- *      `.pantheon/delegations/<sessionID>/<alias>.md` (legacy delegate output;
- *      the delegate layer was removed, existing reports stay readable). Each
- *      child
- *      is matched to its report by the `Task ID` header (== child session
- *      id == task id), which supplies the alias (apo-N), agent,
- *      description and terminal duration/timedOut. No report → the child
- *      itself still renders (title as description, derived state). The md
- *      channel is read from EVERY session (readAllDelegationEntries) as an
- *      enrichment source, but the ACTIVE-SESSION FILTER
- *      (filterDelegationsToSession) drops every non-focused report — the panel
- *      lists only the focused session.
- *
- *   3. REFRESH — session.created/updated/deleted/status events and live-store
- *      subscription notifications re-fetch children; a 1s safety poll
- *      (oh-my-opencode-slim pattern) re-fetches
- *      children + re-reads the md so the panel updates EVEN without events.
- *
- *   4. DIAGNOSTICS — every re-fetch logs
- *      "panel: children=N(pantheon=M native=K) md=N events=N"
- *      to `.pantheon/logs/hooks.log` (silence-by-default, createPantheonLogger
- *      policy) so the (0) symptom is diagnosable from disk: children>0 means
- *      the source works, pantheon/native splits report vs task() children.
- *      A children fetch
- *      failure logs "panel: error <msg>" (previously silenced), and a missing
- *      current session (null/placeholder sessionID) logs "panel: children=0
- *      md=N ... (no sessionID — inactive panel)" — the panel stays EMPTY
- *      instead of erroring (no cross-session history).
- *
- *   5. SESSIONID GUARD (placeholder regression) — the runtime may hand the
- *      sidebar the UNSUBSTITUTED template literal "{sessionID}" as its
- *      session_id (no focused session). Forwarding it to session.children
- *      made opencode's server reject every poll (~1 err/s: "Expected a string
- *      starting with \"ses\", got \"%7BsessionID%7D\"") and fail-open the
- *      panel into "(0)". resolveCurrentSessionID (slot prop → api.state →
- *      route.current) never yields a placeholder (isValidSessionId rejects
- *      "{sessionID}" and "%7BsessionID%7D" via the startsWith("ses")
- *      contract); a null resolution SKIPS the children fetch entirely and the
- *      panel renders EMPTY — zero rows, zero errors.
- *
- * The live tool-part lifecycle helpers below remain (tested, exported) but
- * are no longer the source of truth: they update the shared live store, whose
- * subscribers re-trigger the children fetch. Everything is fail-open: a missing
- * children API or directory yields [], and any unreadable input is skipped —
- * never crash. */
-
-export type DelegationEntry = {
-  /** Job alias, e.g. "apo-1" (from the H1 title, falling back to filename). */
-  alias: string
-  /** Parent session the job was launched from (dir name under .pantheon/delegations). */
-  sessionID: string
-  /** Child session id (= task id, from the `Task ID` header). The
-   *  children channel always sets it from the child session itself; the md
-   *  channel parses it so child↔md matching works by taskID. */
-  taskID?: string
-  /** Agent name, e.g. "apollo". */
-  agent: string
-  state:
-    | 'running'
-    | 'retry'
-    | 'completed'
-    | 'error'
-    | 'startup_failed'
-    | 'startup_unknown'
-    | 'cancelled'
-    | 'stale-running'
-  /** Epoch ms of the `Started` header. */
-  startedAt: number
-  /** Epoch ms of the `Finalized` header — null while still running. */
-  updatedAt: number | null
-  timedOut: boolean
-  description: string
-  // NOTE: the nested/tree view is BACKLOG. `session.children` returns direct
-  // children only, so no real grandchild rows exist yet; the parentTaskID /
-  // childCount fields + tree-connector helpers were removed as dead code.
-  // Reintroduce them once nested rows are actually produced.
-  /** Internal provenance used to keep a finalized md report authoritative.
-   *  'children-only' = a native task() child session with NO delegate report
-   *  (a native child row); 'md' = the child has a matching report;
-   *  'child' = the plain children channel; 'live' = the optimistic tool-event
-   *  channel. */
-  source?: 'child' | 'live' | 'md' | 'children-only'
-}
-
-/** True for `\s` characters (space, tab, newline, CR) — plain char checks so
- *  the parser stays regex-free (CodeQL flagged the old `\s*`/`\s+` + `(.+)`
- *  patterns as polynomial ReDoS: 12x HIGH). */
-function isWs(ch: string | undefined): boolean {
-  return ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r'
-}
-
-/** Em/en dash + hyphen — the separators accepted after the H1 title. */
-const TITLE_SEPARATORS = '—–-'
-
-/** Parse one delegation report md header into a structured entry.
- *  Returns null (skip) when the file is not a recognizable report:
- *  missing agent/state/startedAt, an unknown state, or an unparsable
- *  Started timestamp. The alias falls back to the file name when the H1
- *  title is missing. Pure — no I/O.
- *
- *  Linear, single-pass over `raw.split('\n')` with plain string operations
- *  (startsWith/indexOf/slice) — zero regex, so worst case is O(bytes) even
- *  on adversarial whitespace-heavy input (ReDoS regression, CodeQL 12x HIGH). */
-export function parseDelegationMarkdown(
-  raw: string,
-  fileAlias?: string,
-  sessionID = '',
-): DelegationEntry | null {
-  let title: string | undefined
-  let agent: string | undefined
-  let description = ''
-  let state: string | undefined
-  let timedOut = false
-  let started: string | undefined
-  let finalized: string | undefined
-  let taskID: string | undefined
-
-  for (const rawLine of raw.split('\n')) {
-    // H1 title: `# Delegation Report — <alias>` (empty alias → fallback later).
-    if (rawLine[0] === '#' && isWs(rawLine[1])) {
-      let i = 2
-      while (i < rawLine.length && isWs(rawLine[i])) i++
-      if (rawLine.startsWith('Delegation Report', i)) {
-        i += 'Delegation Report'.length
-        while (i < rawLine.length && isWs(rawLine[i])) i++
-        if (i < rawLine.length && TITLE_SEPARATORS.includes(rawLine[i])) {
-          const rest = rawLine.slice(i + 1).trim()
-          if (rest !== '' && title === undefined) title = rest
-        }
-      }
-      continue
-    }
-    // Field bullets: `- **Name**: value` — unknown names are ignored.
-    if (rawLine[0] !== '-') continue
-    let i = 1
-    while (i < rawLine.length && isWs(rawLine[i])) i++
-    if (!rawLine.startsWith('**', i)) continue
-    const nameStart = i + 2
-    const valueEnd = rawLine.indexOf('**:', nameStart)
-    if (valueEnd < 0) continue
-    const name = rawLine.slice(nameStart, valueEnd)
-    const value = rawLine.slice(valueEnd + 3).trim()
-    switch (name) {
-      case 'Task ID':
-        // `- **Task ID**: \`ses_x\`` — strip the surrounding backticks.
-        if (value !== '' && taskID === undefined) taskID = stripTaskIdTicks(value)
-        break
-      case 'Agent':
-        // Empty value counts as missing (old regex `(.+)` required 1+ chars).
-        if (value !== '' && agent === undefined) agent = value
-        break
-      case 'Description':
-        description = value
-        break
-      case 'State':
-        if (value !== '' && state === undefined) state = value
-        break
-      case 'Timed out':
-        // Old `(true|false)` prefix match, case-sensitive — kept verbatim.
-        timedOut = value.startsWith('true')
-        break
-      case 'Started':
-        if (value !== '' && started === undefined) started = value
-        break
-      case 'Finalized':
-        finalized = value
-        break
-      default:
-        break // unknown field (e.g. Task ID) → ignore the line
-    }
-  }
-
-  const startedAt = started !== undefined ? Date.parse(started) : NaN
-  if (agent === undefined || state === undefined || Number.isNaN(startedAt)) return null
-  const normalized = state.toLowerCase()
-  // Running state should only come from live channels, never from persisted
-  // reports. A stale "running" MD artifact contaminates the panel — skip it.
-  if (normalized === 'running') return null
-  if (
-    normalized !== 'completed' &&
-    normalized !== 'error' &&
-    normalized !== 'startup_failed' &&
-    normalized !== 'startup_unknown' &&
-    normalized !== 'cancelled'
-  ) {
-    return null
-  }
-  const finalizedAt = finalized !== undefined ? Date.parse(finalized) : NaN
-
-  return {
-    alias: title ?? (fileAlias !== undefined ? stripMdSuffix(fileAlias) : 'unknown'),
-    sessionID,
-    ...(taskID !== undefined ? { taskID } : {}),
-    agent,
-    state: normalized,
-    startedAt,
-    updatedAt: Number.isNaN(finalizedAt) ? null : finalizedAt,
-    timedOut,
-    description,
-    source: 'md',
-  }
-}
-
-/** Strip a trailing `.md` (any case) — linear replacement for /\.md$/i. */
-function stripMdSuffix(name: string): string {
-  return name.toLowerCase().endsWith('.md') ? name.slice(0, name.length - 3) : name
-}
-
-/** Strip surrounding backticks from a `Task ID` value: "`ses_x`" → "ses_x". */
-function stripTaskIdTicks(value: string): string {
-  const start = value[0] === '`' ? 1 : 0
-  const end =
-    value.length > start && value[value.length - 1] === '`' ? value.length - 1 : value.length
-  return value.slice(start, end)
-}
-
-/** Read every delegation report under `<dir>/<sessionID>/<alias>.md`.
- *  Fail-open: a missing/unreadable directory yields [], and each unreadable
- *  or malformed file is skipped individually. Entries are sorted running
- *  first, then terminal by `updatedAt` (most recent first) so the panel can
- *  render them in order directly. */
-export async function readDelegationEntries(dir: string): Promise<DelegationEntry[]> {
-  let sessionDirs: Dirent[]
-  try {
-    sessionDirs = await readdir(dir, { withFileTypes: true })
-  } catch {
-    return [] // directory absent/unreadable — nothing to show
-  }
-
-  const entries: DelegationEntry[] = []
-  for (const session of sessionDirs) {
-    if (!session.isDirectory()) continue
-    let files: Dirent[]
-    try {
-      files = await readdir(join(dir, session.name), { withFileTypes: true })
-    } catch {
-      continue // unreadable session dir — skip
-    }
-    for (const file of files) {
-      if (!file.isFile() || !file.name.endsWith('.md')) continue
-      try {
-        const raw = await readFile(join(dir, session.name, file.name), 'utf8')
-        const entry = parseDelegationMarkdown(raw, file.name, session.name)
-        if (entry !== null) entries.push(entry)
-      } catch {
-        // unreadable/malformed file — skip, never crash
-      }
-    }
-  }
-
-  entries.sort(compareDelegationEntries)
-  return entries
-}
-
-/** Read delegation reports from EVERY session under
- *  `<root>/.pantheon/delegations/<sessionID>/<alias>.md` — the panel's
- *  ENRICHMENT source. The read is deliberately unfiltered (each entry carries
- *  its directory's sessionID, so a taskID match can enrich any channel);
- *  callers MUST scope the merged result with {@link filterDelegationsToSession}
- *  before rendering — only the active session's reports are shown. Entries are
- *  running first, Finalized desc (the sort applied by readDelegationEntries).
- *  Fail-open: a missing/unreadable directory yields []. */
-export async function readAllDelegationEntries(root: string): Promise<DelegationEntry[]> {
-  return readDelegationEntries(join(root, '.pantheon', 'delegations'))
-}
-
-/** Resolve the PROJECT ROOT used by every pantheon file channel. `directory`
- *  wins over `worktree` (the old `resolveDelegationsDir` already did this);
- *  an absent/empty root or `/` (no git — e.g. the sandbox test project) falls
- *  back to cwd. Standardised here so the delegations md and the panel logger
- *  all read the SAME root (audit finding: the channels
- *  resolved the root independently). Pure — no I/O. */
-export function resolvePantheonRoot(
-  state: { directory?: string; worktree?: string } | undefined,
-  cwd = process.cwd(),
-): string {
-  const root = state?.directory ?? state?.worktree ?? ''
-  if (root === '' || root === '/') return cwd
-  return root
-}
-
-/** Resolve the directory where delegation md reports are written.
- *  The finalizer writes `.pantheon/delegations` RELATIVE to the server cwd,
- *  which the TUI exposes as `TuiState.path.directory`. */
-export function resolveDelegationsDir(
-  state: { directory?: string; worktree?: string } | undefined,
-  cwd = process.cwd(),
-): string {
-  return join(resolvePantheonRoot(state, cwd), '.pantheon', 'delegations')
-}
-
-/** Project root derived from the delegations dir: `<root>/.pantheon/delegations`
- *  → `<root>`. Used to point the panel logger at the REAL hooks.log — passing
- *  the delegations dir (or its dirname) directly made createTuiLogger append
- *  to `<root>/.pantheon/.pantheon/logs/hooks.log`, a nested empty dir the real
- *  log never saw. Pure — no I/O. */
-export function panelLogDir(delegationsDir: string): string {
-  return dirname(dirname(delegationsDir))
-}
-
-/** Where the panel logger appends lines: `<projectRoot>/.pantheon/logs/hooks.log`.
- *  Pure — testable without the runtime. */
-export function tuiLogPath(projectRoot: string): string {
-  return join(projectRoot, '.pantheon', 'logs', 'hooks.log')
-}
-
-/** Sort delegations: running first, then terminal by recency (updatedAt,
- *  falling back to startedAt, descending). Shared by the md reader and
- *  mergeDelegationSources. */
-export function compareDelegationEntries(a: DelegationEntry, b: DelegationEntry): number {
-  const isActive = (st: DelegationEntry['state']) =>
-    st === 'running' || st === 'retry' || st === 'stale-running' ? 1 : 0
-  const aRun = isActive(a.state)
-  const bRun = isActive(b.state)
-  if (aRun !== bRun) return bRun - aRun
-  return (b.updatedAt ?? b.startedAt) - (a.updatedAt ?? a.startedAt)
-}
-
-/** Split the panel list: active jobs (running/retry, stale-marked) first,
- *  then the most recent terminal reports; the remaining tail is collapsed
- *  by the View into a single "… +N more" line. Pure — so the history-only panel (no sessionID) is testable
- *  without the TUI runtime. */
-export function splitDelegationList(
-  all: readonly DelegationEntry[],
-  maxRecent = 8,
-  now = Date.now(),
-  staleThresholdMs = 30 * 60 * 1000, // 30 minutes
-): { active: DelegationEntry[]; recent: DelegationEntry[] } {
-  // Active = running OR retry OR the display-only stale-running. A stale row
-  // is still a live job (backend state unchanged), so it must never fall into
-  // the terminal tail — pushing a running delegation out hid the row
-  // the user launched.
-  const isActiveState = (st: DelegationEntry['state']): boolean =>
-    st === 'running' || st === 'retry' || st === 'stale-running'
-  const active = all
-    .filter((d) => isActiveState(d.state))
-    .map((d) => markStaleIfRunning(d, now, staleThresholdMs))
-    .sort(compareDelegationEntries)
-  const terminal = all
-    .filter((d) => !isActiveState(d.state))
-    .filter((d) => {
-      // A missing/invalid finalized timestamp is not evidence that a report is
-      // old. Keep it visible rather than accidentally hiding a terminal job.
-      if (d.updatedAt === null || !Number.isFinite(d.updatedAt)) return true
-      const age = now - d.updatedAt
-      if (age < 0) return true
-      const retention =
-        delegationRowStatus(d.state) === 'failed'
-          ? DELEGATION_FAILED_RETENTION_MS
-          : DELEGATION_DONE_RETENTION_MS
-      return age < retention
-    })
-    .sort(compareDelegationEntries)
-  return {
-    active,
-    recent: terminal.slice(0, maxRecent),
-  }
-}
-
-/** Live-first window used by {@link ceilingDelegationList} (kept for the
- *  ceiling helper and existing tests): active jobs first, then the most
- *  recent terminal reports (capped). Pure. */
-export function visibleDelegationList(
-  all: readonly DelegationEntry[],
-  maxTerminal = 8,
-  now = Date.now(),
-  staleThresholdMs = 30 * 60 * 1000, // 30 minutes
-): DelegationEntry[] {
-  const { active, recent } = splitDelegationList(all, maxTerminal, now, staleThresholdMs)
-  return [...active, ...recent]
-}
-
-/** Default stale-running threshold: 30 minutes. */
-export const STALE_RUNNING_THRESHOLD_MS = 30 * 60 * 1000
-
-/** Idle silence window: if no updatedAt change in this window, the entry is
- *  considered stale. Combined with the stale-running threshold to produce the
- *  display-only `stale-running` state. */
-export const IDLE_SILENCE_MS = 60 * 1000
-
-/** Visual-only terminal retention windows. Reports remain on disk; these
- *  constants only control which rows enter the TUI window. */
-export const DELEGATION_DONE_RETENTION_MS = 2 * 60 * 1000
-export const DELEGATION_FAILED_RETENTION_MS = 10 * 60 * 1000
-
-/** Grace window for an ABSENT child status. `api.state.session.status()` only
- *  carries the sessions that are currently ALIVE; every finished child of a
- *  long-lived session is missing from that map. A child with no status is
- *  therefore treated as terminal (done) — treating it as running made every
- *  historical child of the session show up as "active" (the "197 children,
- *  all active" regression). The one exception is a freshly-spawned child that
- *  has not been registered by the status API yet: within this window of its
- *  last activity (`time.updated`, falling back to `time.created`) it still
- *  reads as running. */
-export const DELEGATION_CHILD_STATUS_GRACE_MS = 60 * 1000
-
-/** Recency window for the children channel. `session.children` returns EVERY
- *  child the focused session ever spawned, so a long session accumulates
- *  hundreds of historical rows that would inflate the panel. A child whose
- *  last activity (its own time, or its matched report's Finalized timestamp)
- *  is older than this window is dropped BEFORE it can enter the list. 24h
- *  keeps the sidebar scoped to current work while still covering long
- *  delegations. A child with no timestamp at all is kept (fail-open). */
-export const DELEGATION_CHILDREN_RECENCY_MS = 24 * 60 * 60 * 1000
-
-/** Alias-less NATIVE task() live entries never receive a report alias (the
- *  task tool output carries none), so the 30s alias-less prune in
- *  mergeChildDelegationSources must not apply to them — 5 minutes covers a
- *  slow child listing while still bounding the live map. */
-export const NATIVE_LIVE_ALIASLESS_TTL_MS = 5 * 60 * 1000
-
-/**
- * Mark a running entry as `stale-running` if it has been running longer than
- * the threshold AND has no recent activity (no `updatedAt` change in the last
- * `IDLE_SILENCE_MS`). This is DISPLAY-ONLY — the persisted state is unchanged.
- *
- * A `stale-running` entry renders with a warning indicator but the underlying
- * delegation is still treated as running by the backend.
- */
-export function markStaleIfRunning(
-  entry: DelegationEntry,
-  now: number,
-  thresholdMs = STALE_RUNNING_THRESHOLD_MS,
-): DelegationEntry {
-  if (entry.state !== 'running') return entry
-  const elapsed = now - entry.startedAt
-  if (elapsed < thresholdMs) return entry
-  // If updatedAt exists and is recent, entry is still active — not stale.
-  if (entry.updatedAt !== null && now - entry.updatedAt < IDLE_SILENCE_MS) return entry
-  return { ...entry, state: 'stale-running' as const }
-}
-
-/** Compact elapsed-time label, single unit only: "12s"/"3m"/"1h"/"2d" — ticks every
- *  second for running jobs. */
-export function fmtElapsed(ms: number): string {
-  const total = Math.max(0, Math.floor(ms / 1000))
-  const days = Math.floor(total / 86_400)
-  const hours = Math.floor((total % 86_400) / 3_600)
-  const minutes = Math.floor((total % 3_600) / 60)
-  const seconds = total % 60
-  if (days > 0) return `${days}d`
-  if (hours > 0) return `${hours}h`
-  if (minutes > 0) return `${minutes}m`
-  return `${seconds}s`
-}
-
-/** Elapsed label for one entry: an ACTIVE entry (running/retry/stale-running)
- *  ticks `now - startedAt`; a terminal one is fixed at
- *  `updatedAt - startedAt` (em dash when no finalized timestamp). */
-export function delegationElapsed(entry: DelegationEntry, now: number): string {
-  if (entry.state === 'running' || entry.state === 'retry' || entry.state === 'stale-running')
-    return fmtElapsed(now - entry.startedAt)
-  return entry.updatedAt !== null ? fmtElapsed(entry.updatedAt - entry.startedAt) : '\u2014'
-}
-
-/** The activity labels shown by the animated row. Keeping this pure makes the
- * state machine testable without booting OpenCode's renderer. */
-export type DelegationActivity = 'delegating' | 'working' | 'completed' | 'error' | 'cancelled'
-
-export function delegationActivity(entry: DelegationEntry): DelegationActivity {
-  if (entry.state === 'completed') return 'completed'
-  if (
-    entry.state === 'error' ||
-    entry.state === 'startup_failed' ||
-    entry.state === 'startup_unknown'
   )
-    return 'error'
-  if (entry.state === 'cancelled') return 'cancelled'
-  if (entry.alias.startsWith('live-') && entry.taskID === undefined) return 'delegating'
-  return 'working'
 }
 
-export function delegationActivityLabel(entry: DelegationEntry): string {
-  if (entry.state === 'retry') return 'RETRYING'
-  switch (delegationActivity(entry)) {
-    case 'delegating':
-      return 'DELEGATING'
-    case 'working':
-      return 'WORKING'
-    case 'completed':
-      return entry.timedOut ? 'DONE (TIMED OUT)' : 'DONE'
-    case 'error':
-      return 'ERROR'
-    default:
-      return 'CANCELLED'
-  }
-}
+/* ─── Session helpers ────────────────────────────────────── */
 
-const DELEGATION_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
-
-/** Return the spinner glyph for the given frame counter. The frame counter
- *  is incremented every ~80ms by a dedicated animation timer, decoupled from
- *  the data poll cycle. Pure — no side effects. */
-export function delegationSpinnerFrame(frame: number): string {
-  const index = Math.abs(Math.floor(frame)) % DELEGATION_SPINNER_FRAMES.length
-  return DELEGATION_SPINNER_FRAMES[index] ?? DELEGATION_SPINNER_FRAMES[0]
-}
-
-/** Every state the row knows how to draw: the delegation lifecycle states
- *  derived from the children status + md reports (`completed`, `error`,
- *  `cancelled`, `startup_failed`, `startup_unknown`) plus the TUI-only
- *  states (`retry`, `stale-running`). Fase 1 deliberately omits speculative
- *  blocked/paused/scheduled/skipped. There is no `pending` display state: a
- *  pre-dispatch tool part maps to `running` in {@link reduceDelegationToolPart}. */
-export type DelegationDisplayState = DelegationEntry['state']
-
-/** Semantic tone mapped to the TUI theme at the row ({@link DelegationRow}).
- *  Kept separate + pure so the color channel is testable without booting the
- *  renderer. Every display state resolves to one of the three status colors;
- *  the row paints its whole content with it (see {@link DelegationRow}). */
-export type DelegationStateTone = 'warning' | 'error' | 'success'
-
-/** Status → color mapping for the whole-row tone. Red = failure, green =
- *  terminal, yellow = in flight. The glyph remains a redundant channel so the
- *  state stays legible in monochrome. Display-only; no behavior change. */
-export function delegationStateTone(state: DelegationDisplayState): DelegationStateTone {
-  switch (state) {
-    case 'running':
-    case 'retry':
-    case 'startup_unknown':
-    case 'stale-running':
-      return 'warning'
-    case 'error':
-    case 'startup_failed':
-      return 'error'
-    case 'completed':
-    case 'cancelled':
-      return 'success'
-  }
-}
-
-/* ─── Live tool activity per child session (beta.6) ────────────────────────
- *  The delegation panel's activity line ("↳ bash npm test") — what the agent
- *  is doing RIGHT NOW. Sourced from message.part.updated tool parts: every
- *  pending/running tool part updates a per-child-session record (latest wins).
- *  Module-level by design: the sidebar remounts on route changes and the
- *  "what is each agent doing" state should survive that (OMO pattern). */
-
-export type ToolActivity = {
-  tool: string
-  summary: string
-  at: number
-}
-
-/** Bounded tracker: child session id → latest running tool call. */
-const latestToolActivity = new Map<string, ToolActivity>()
-const MAX_TOOL_ACTIVITY_ENTRIES = 200
-const TOOL_ACTIVITY_TTL_MS = 5 * 60 * 1000
-
-/** First usable summary string from common tool input fields. */
-function summarizeToolInput(input: Record<string, unknown> | undefined): string {
-  if (!input) return ''
-  const candidates = ['command', 'description', 'prompt', 'filePath', 'pattern', 'url', 'query']
-  for (const key of candidates) {
-    const value = input[key]
-    if (typeof value === 'string' && value.trim() !== '') return value
-  }
-  return ''
-}
-
-/** Reduce one message.part.updated tool part to displayable activity.
- *  Returns null for non-tool parts, completed/error parts (no live activity)
- *  or parts without a session id. Pure. */
-export function extractToolActivity(
-  part: {
-    type?: string
-    tool?: string
-    sessionID?: string
-    state?: { status?: string; input?: Record<string, unknown> }
-  },
-  now = Date.now(),
-): { sessionID: string; activity: ToolActivity } | null {
-  if (part?.type !== 'tool') return null
-  const status = part.state?.status
-  if (status !== 'pending' && status !== 'running') return null
-  const sessionID = typeof part.sessionID === 'string' ? part.sessionID : ''
-  if (sessionID === '') return null
-  const tool = typeof part.tool === 'string' && part.tool !== '' ? part.tool : 'tool'
-  const summary = summarizeToolInput(part.state?.input).replace(/\s+/g, ' ').trim().slice(0, 48)
-  return { sessionID, activity: { tool, summary, at: now } }
-}
-
-/** Record an activity sample (bounded map, oldest dropped). */
-export function trackToolActivity(
-  map: Map<string, ToolActivity>,
-  sessionID: string,
-  activity: ToolActivity,
-): void {
-  if (sessionID === '') return
-  if (map.size >= MAX_TOOL_ACTIVITY_ENTRIES) {
-    const oldest = map.keys().next().value
-    if (oldest !== undefined) map.delete(oldest)
-  }
-  map.set(sessionID, activity)
-}
-
-/** Latest live activity for a child session, or null when absent/stale. */
-export function latestToolActivityFor(
-  map: Map<string, ToolActivity>,
-  sessionID: string | undefined,
-  now = Date.now(),
-  ttlMs = TOOL_ACTIVITY_TTL_MS,
-): ToolActivity | null {
-  if (!sessionID) return null
-  const hit = map.get(sessionID)
-  if (hit === undefined) return null
-  if (now - hit.at > ttlMs) return null
-  return hit
-}
-
-/** Merge the immediate tool-event channel into the child-session channel.
- *
- * Children remain the durable source, while live entries make a delegation
- * visible before the child API/report catches up. A finalized md entry wins
- * over a stale live entry; a child-only row is upgraded with live agent,
- * alias, phase and timestamps. */
-export function mergeChildDelegationSources(
-  children: readonly DelegationEntry[],
-  live: readonly LiveDelegationEntry[],
-): DelegationEntry[] {
-  const result = [...children]
-  const byTask = new Map<string, number>()
-  const bySessionAlias = new Map<string, number>()
-  const key = (sessionID: string, alias: string): string => `${sessionID}\u0000${alias}`
-
-  result.forEach((entry, index) => {
-    if (entry.taskID !== undefined) byTask.set(entry.taskID, index)
-    bySessionAlias.set(key(entry.sessionID, entry.alias), index)
-  })
-
-  for (const liveEntry of live) {
-    // A native task() live part never carries a report alias or taskID, so it
-    // is exempt from the 30s alias-less prune and lives on its own longer TTL.
-    const aliaslessTTL = liveEntry.tool === 'task' ? NATIVE_LIVE_ALIASLESS_TTL_MS : 30_000
-    if (
-      liveEntry.alias === null &&
-      liveEntry.taskID === null &&
-      Date.now() - liveEntry.startedAt > aliaslessTTL
-    )
-      continue
-    const incoming = toDelegationEntry(liveEntry)
-    // A native task() live part never carries a report alias — it is a
-    // children-only row by definition whether it lands on a new row or
-    // upgrades an existing children-only one.
-    const isNativeLive = liveEntry.tool === 'task' && liveEntry.alias === null
-    if (isNativeLive) {
-      // Native task() rows carry no report alias — keep the per-call
-      // `live-<callID>` identity from toDelegationEntry (one row per native
-      // call) with the children-only provenance; the row identity still falls
-      // back to the agent via delegationRowIdentity. A taskID-known native
-      // still merges into its child row through the byTask lookup below.
-      incoming.source = 'children-only'
-    }
-    const index =
-      (incoming.taskID !== undefined ? byTask.get(incoming.taskID) : undefined) ??
-      (incoming.alias !== ''
-        ? bySessionAlias.get(key(incoming.sessionID, incoming.alias))
-        : undefined)
-
-    if (index === undefined) {
-      result.push(incoming)
-      const newIndex = result.length - 1
-      if (incoming.taskID !== undefined) byTask.set(incoming.taskID, newIndex)
-      bySessionAlias.set(key(incoming.sessionID, incoming.alias), newIndex)
-      continue
-    }
-
-    const existing = result[index]
-    if (existing === undefined) continue
-    // Any terminal state is authoritative — a child session that went idle
-    // correctly derives 'completed' via childStatusToState before the MD
-    // report is written. The live tool-part channel stays 'running' for the
-    // whole call, so allowing it to overwrite a terminal state would flip
-    // completed → running (the bug this fixes).
-    //
-    // When the existing entry IS terminal, we still absorb live metadata
-    // (alias, agent) but preserve the terminal state.
-    if (existing.state !== 'running') {
-      if (liveEntry.alias !== null && existing.alias !== incoming.alias) {
-        existing.alias = incoming.alias
-      }
-      if (incoming.agent !== 'agent' && existing.agent !== incoming.agent) {
-        existing.agent = incoming.agent
-      }
-      continue
-    }
-    result[index] = {
-      ...existing,
-      alias: liveEntry.alias !== null ? incoming.alias : existing.alias,
-      sessionID: existing.sessionID || incoming.sessionID,
-      taskID: existing.taskID ?? incoming.taskID,
-      agent: incoming.agent !== 'agent' ? incoming.agent : existing.agent,
-      description: incoming.description !== '' ? incoming.description : existing.description,
-      state: incoming.state,
-      startedAt: Math.min(existing.startedAt, incoming.startedAt),
-      updatedAt: incoming.updatedAt,
-      // A native task() live upgrade must not flip a children-only row to
-      // 'live' (that would drop the children-only provenance).
-      source: isNativeLive ? existing.source : 'live',
-    }
-  }
-
-  result.sort(compareDelegationEntries)
-  return result
-}
-
-/* ─── Live tool-call lifecycle (agent-sidebar pattern) ─────
- * Refresh trigger for jobs born while opencode is open. The TUI event bus
- * (api.event.on) delivers `message.part.updated` for every part change;
- * we only care about tool parts whose `tool` is the native `task` subagent
- * tool (parentID === caller mechanism — its rows render `nat:`); the panel
- * rows themselves come from the children channel. Shape-adapted from the
- * SDK v2 ToolPart but duck-typed so the pure helpers are testable without
- * the SDK. */
-
-/** Duck-typed subset of a tool part (SDK v2 `ToolPart` / `ToolState`). */
-export type DelegationToolPart = {
-  id?: string
-  callID?: string
-  sessionID?: string
-  type?: string
-  tool?: string
-  state?: {
-    status?: string
-    input?: Record<string, unknown>
-    output?: string
-    error?: string
-    time?: { start?: number; end?: number }
-  }
-}
-
-/** One live delegation tracked in-memory, keyed by the task callID. */
-export type LiveDelegationEntry = {
-  /** Tool call id of the task part (stable across events). */
-  callID: string
-  /** Part id (for message.part.removed cleanup). */
-  partID: string
-  /** Parent session the delegation was launched from. */
-  sessionID: string
-  tool: 'task'
-  /** Agent name (from the task input args). */
-  agent: string
-  description: string
-  /** Known once the task completes and its output carries a marker. */
-  alias: string | null
-  /** Child session id (parsed from the task output, when present). */
-  taskID: string | null
-  state: 'running' | 'completed' | 'error' | 'cancelled'
-  startedAt: number
-  updatedAt: number | null
-}
-
-/** Result of parsing one tool part into lifecycle-relevant fields. */
-export type ParsedDelegationToolPart = {
-  callID: string
-  partID: string
-  sessionID: string
-  tool: 'task'
-  /** Agent name from the task input args ('agent' fallback when absent). */
-  agent: string
-  description: string
-  status: 'pending' | 'running' | 'completed' | 'error'
-  alias: string | null
-  taskID: string | null
-  startedAt: number
-  endAt: number | null
-}
-
-/** Alias in the task output: "Delegated to apollo: [apo-1] (task …)". */
-const DELEGATE_ALIAS_PATTERN = /\[([a-z]{2,8}-\d+)\]/i
-/** Child task id in the task output: "(task ses_child_9)". */
-const DELEGATE_TASKID_PATTERN = /\(task\s+([a-z0-9_]+)\)/i
-
-/** Extract the tool name + args from a `message.part.updated` part and
- *  reduce it to what the panel needs. Returns null for anything that is
- *  not the native `task` subagent tool (parentID === caller mechanism —
- *  its children render `nat:`), or is missing its callID. */
-export function parseDelegationToolPart(
-  part: DelegationToolPart,
-  now = Date.now(),
-): ParsedDelegationToolPart | null {
-  if (part.type !== 'tool') return null
-  if (part.tool !== 'task') return null
-  const callID = part.callID
-  if (callID === undefined || callID === '') return null
-  const sessionID = part.sessionID ?? ''
-  const state = part.state ?? {}
-  const status = state.status ?? 'pending'
-  if (status !== 'pending' && status !== 'running' && status !== 'completed' && status !== 'error')
-    return null
-  const input = state.input ?? {}
-  const startedAt = state.time?.start ?? now
-  const endAt = state.time?.end ?? null
-
-  const agent =
-    typeof input.agent === 'string'
-      ? input.agent
-      : typeof input.subagent_type === 'string'
-        ? (input.subagent_type as string)
-        : 'agent'
-  const description =
-    typeof input.description === 'string'
-      ? input.description
-      : typeof input.prompt === 'string'
-        ? (input.prompt as string).slice(0, 120)
-        : ''
-  // The alias/taskID only exist once the task COMPLETES (they are
-  // returned in its output); a running/pending part has neither. A native
-  // `task` part never carries a report alias — the children channel supplies
-  // the child session id and the row's identity.
-  let alias: string | null = null
-  let taskID: string | null = null
-  if (status === 'completed') {
-    const output = state.output ?? ''
-    alias = DELEGATE_ALIAS_PATTERN.exec(output)?.[1] ?? null
-    taskID = DELEGATE_TASKID_PATTERN.exec(output)?.[1] ?? null
-  }
-  return {
-    callID,
-    partID: part.id ?? '',
-    sessionID,
-    tool: 'task',
-    agent,
-    description,
-    status,
-    alias,
-    taskID,
-    startedAt,
-    endAt,
-  }
-}
-
-/** Apply one tool part to the live map. Returns true when the map changed.
- *  Pure w.r.t. I/O — only mutates `map`. */
-export function reduceDelegationToolPart(
-  map: Map<string, LiveDelegationEntry>,
-  part: DelegationToolPart,
-  now = Date.now(),
-): boolean {
-  const parsed = parseDelegationToolPart(part, now)
-  if (parsed === null) return false
-
-  // Task tool: pending/running → job launched (running). A COMPLETED task
-  // only means the call returned — the child session keeps running, and we
-  // pick up alias + taskID from the output when present. Native `task` parts
-  // never yield a report alias, so their rows stay identity-less until the
-  // children channel resolves them.
-  const existing = map.get(parsed.callID)
-  if (parsed.status === 'error') {
-    if (existing !== undefined && existing.state === 'error' && existing.updatedAt === parsed.endAt)
-      return false
-    map.set(parsed.callID, {
-      callID: parsed.callID,
-      partID: parsed.partID,
-      sessionID: parsed.sessionID,
-      tool: parsed.tool,
-      agent: parsed.agent,
-      description: parsed.description,
-      alias: existing?.alias ?? null,
-      taskID: existing?.taskID ?? null,
-      state: 'error',
-      startedAt: existing?.startedAt ?? parsed.startedAt,
-      updatedAt: parsed.endAt ?? now,
-    })
-    return true
-  }
-  if (existing === undefined) {
-    map.set(parsed.callID, {
-      callID: parsed.callID,
-      partID: parsed.partID,
-      sessionID: parsed.sessionID,
-      tool: parsed.tool,
-      agent: parsed.agent,
-      description: parsed.description,
-      alias: parsed.alias,
-      taskID: parsed.taskID,
-      state: 'running',
-      startedAt: parsed.startedAt,
-      updatedAt: null,
-    })
-    return true
-  }
-  // Existing entry: absorb newly-discovered alias/taskID/agent/description.
-  let changed = false
-  if (parsed.alias !== null && existing.alias !== parsed.alias) {
-    existing.alias = parsed.alias
-    changed = true
-  }
-  if (parsed.taskID !== null && existing.taskID !== parsed.taskID) {
-    existing.taskID = parsed.taskID
-    changed = true
-  }
-  if (parsed.agent !== null && existing.agent !== parsed.agent) {
-    existing.agent = parsed.agent
-    changed = true
-  }
-  if (parsed.description !== '' && existing.description !== parsed.description) {
-    existing.description = parsed.description
-    changed = true
-  }
-  if (existing.partID === '' && parsed.partID !== '') {
-    existing.partID = parsed.partID
-    changed = true
-  }
-  return changed
-}
-
-/** Remove a live entry by part id (message.part.removed) or call id.
- *  Returns true when something was removed. */
-export function removeDelegationEntry(
-  map: Map<string, LiveDelegationEntry>,
-  partIDOrCallID: string,
-): boolean {
-  if (map.delete(partIDOrCallID)) return true
-  for (const [key, entry] of map) {
-    if (entry.partID === partIDOrCallID) {
-      map.delete(key)
-      return true
-    }
-  }
-  return false
-}
-
-/** Collect native task tool parts from a session's messages.
- *  Messages may carry their parts inline (duck-typed `msg.parts`); when
- *  they don't, the optional `getParts(messageID)` callback is used (the TUI
- *  SDK exposes `api.state.part(messageID)`). The native `task` tool spawns a
- *  child session with parentID = caller, so its parts feed the live-map as
- *  the refresh signal (rows come from the children channel). Pure w.r.t.
- *  I/O — used by the mount re-scan to re-seed the live map after
- *  compaction/attach. */
-export function collectDelegationToolParts(
-  messages: readonly { id?: string; parts?: unknown[] }[] | undefined,
-  getParts?: (messageID: string) => readonly unknown[] | undefined,
-): DelegationToolPart[] {
-  const out: DelegationToolPart[] = []
-  for (const msg of messages ?? []) {
-    let parts: readonly unknown[] | undefined
-    if (Array.isArray(msg?.parts)) {
-      parts = msg.parts
-    } else if (msg?.id !== undefined && typeof getParts === 'function') {
-      parts = getParts(msg.id)
-    }
-    if (!parts) continue
-    for (const raw of parts) {
-      const part = raw as DelegationToolPart
-      if (part?.type === 'tool' && part.tool === 'task') {
-        out.push(part)
-      }
-    }
-  }
-  return out
-}
-
-/** Apply a batch of tool parts (in message order) to the live map. Used on
- *  mount to re-seed entries that `message.part.removed` (compaction) wiped,
- *  from the session's existing tool parts. Returns how many parts changed
- *  the map (0 on the second identical seed — idempotent, no extra bumps). */
-export function seedLiveDelegationMap(
-  map: Map<string, LiveDelegationEntry>,
-  parts: readonly DelegationToolPart[],
-  now = Date.now(),
-): number {
-  let changed = 0
-  for (const part of parts) {
-    if (reduceDelegationToolPart(map, part, now)) changed++
-  }
-  return changed
-}
-
-/** Convert a live entry into the shared display shape. Alias falls back to
- *  a `live-<callID>` prefix while the task call has not completed yet. */
-export function toDelegationEntry(live: LiveDelegationEntry): DelegationEntry {
-  return {
-    alias: live.alias ?? `live-${live.callID.slice(0, 8)}`,
-    sessionID: live.sessionID,
-    ...(live.taskID !== null ? { taskID: live.taskID } : {}),
-    agent: live.agent,
-    state: live.state,
-    startedAt: live.startedAt,
-    updatedAt: live.updatedAt,
-    timedOut: false,
-    description: live.description,
-    source: 'live',
-  }
-}
-
-/** Combine the live channel with the md (historical) channel into one
- *  display list. Dedupes by (sessionID, alias) — aliases are per-parent-
- *  session, so the same alias in different sessions stays separate. A
- *  terminal md entry is authoritative over a live running entry for the
- *  same job (it carries Finalized/timedOut/cancelled from finalize). */
-export function mergeDelegationSources(
-  live: readonly LiveDelegationEntry[],
-  md: readonly DelegationEntry[],
-): DelegationEntry[] {
-  const keyOf = (sessionID: string, alias: string): string => `${sessionID}\u0000${alias}`
-  const byKey = new Map<string, DelegationEntry>()
-  for (const m of md) {
-    const key = keyOf(m.sessionID, m.alias)
-    const existing = byKey.get(key)
-    if (existing === undefined || (existing.state === 'running' && m.state !== 'running'))
-      byKey.set(key, m)
-  }
-  const aliasless: DelegationEntry[] = []
-  for (const l of live) {
-    const e = toDelegationEntry(l)
-    if (l.alias === null) {
-      aliasless.push(e)
-      continue
-    }
-    const key = keyOf(l.sessionID, l.alias)
-    const mdEntry = byKey.get(key)
-    if (mdEntry !== undefined && mdEntry.state !== 'running') continue // md terminal wins
-    byKey.set(key, e)
-  }
-  const all = [...aliasless, ...byKey.values()]
-  all.sort(compareDelegationEntries)
-  return all
-}
-
-/** Scope a fully-merged display list to the ACTIVE session only.
- *
- *  The panel is session-scoped: rows from other sessions (md history under
- *  `.pantheon/delegations/<other-session>/`) and rows with no
- *  attributable session (empty sessionID) are DROPPED. The previous
- *  cross-session behavior rendered those rows and clicking them led to
- *  "Session not found" — there is no cross-session channel anymore.
- *
- *  The md channel still feeds the merge UNFILTERED so it can ENRICH an
- *  active-session row with state/alias/agent (dedup by taskID), but it can
- *  never introduce a row for another session: this filter is applied
- *  ONCE, after every merge (children + live + md).
- *
- *  Returns [] when no active session resolves (null/placeholder) — there is no
- *  scope to show. Native children always carry the active session id (stamped
- *  by `childrenToDelegationEntries`), so they survive the filter. Pure. */
-export function filterDelegationsToSession(
-  entries: readonly DelegationEntry[],
-  activeSessionID: string | null | undefined,
-): DelegationEntry[] {
-  if (!isValidSessionId(activeSessionID)) return []
-  return entries.filter((entry) => entry.sessionID === activeSessionID)
-}
-
-/* ─── Children channel (primary source, delegations-sidebar pattern) ────
- * `api.client.session.children` returns the child sessions of the current
- * session — every native task() call spawns one (parentID = caller). The
- * pure helpers here turn those children + the md reports into the display
- * list, and navigate to a child session on click. */
-
-/* ─── Current-session resolution + path guard (placeholder regression) ──
- * The sidebar forwarded `props.session_id` verbatim into
- * `session.children({ sessionID })`. When the TUI runtime renders the
- * sidebar without a focused session it leaves the route template
- * UNSUBSTITUTED — the literal "{sessionID}" string — which opencode's server
- * rejected every poll (SchemaError: Expected a string starting with "ses",
- * got "%7BsessionID%7D"), ~1 error/s from the 1s safety poll, and the failed
- * call fail-opened into "Delegations (0)".
- *
- * Contract: resolution NEVER yields a placeholder — an invalid/absent id is
- * null, and a null resolution means the children fetch is SKIPPED (empty
- * panel, ZERO errors). Sources, in order:
- *   1. the sidebar_content slot prop (`session_id`);
- *   2. `api.state.sessionID` (duck-typed: the typed TuiState has no such
- *      field, but the runtime state is a superset — the delegations-sidebar
- *      reference reads the current session from api.state);
- *   3. `api.route.current.params.sessionID` (typed: TuiRouteCurrent's
- *      `{ name: 'session', params: { sessionID } }` variant).
- * Each source passes the same server-aligned validity check (non-empty
- * string starting with "ses"), so a placeholder or garbage at any position
- * falls through to the next source instead of hitting the wire. */
-
-/** Server-aligned session id validity: opencode rejects anything not starting
- *  with "ses" (SchemaError). This deliberately mirrors that exact contract —
- *  nothing stricter, nothing looser — so a template placeholder ("{sessionID}"),
- *  its URL-encoded form ("%7BsessionID%7D", what the server reported in the
- *  schema error), an empty/undefined value, or a foreign id (e.g. "wrk_") can
- *  never reach a path and error-spam the log. Confirmed: "{sessionID}" starts
- *  with "{" and "%7BsessionID%7D" with "%" — both fail startsWith("ses"), so
- *  the placeholder is rejected WITHOUT an explicit denylist (covered by tests). */
-export function isValidSessionId(id: unknown): id is string {
+/** `SessionInfo.id` is always a `ses…` handle. Guarded so a placeholder or a
+ *  foreign id never reaches the status/navigate APIs. */
+export function isValidSessionID(id: unknown): id is string {
   return typeof id === 'string' && id.startsWith('ses')
 }
 
-/** Sources the sidebar can resolve the CURRENT session id from. Duck-typed
- *  subsets of TuiPluginApi / TuiState / TuiRouteCurrent so the helper stays
- *  pure and testable without the TUI runtime. */
-export type TuiSessionSources = {
-  /** sidebar_content slot prop (`session_id`). */
-  sessionID?: string | null
-  api?: {
-    /** Runtime state superset — may expose the current session id. */
-    state?: { sessionID?: unknown }
-    /** Typed route: { name: 'session', params: { sessionID } } when in one. */
-    route?: { current?: { name?: string; params?: Record<string, unknown> } }
-  } | null
+function numberOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
-/** Resolve the current session id for the sidebar. Order: slot prop →
- *  api.state.sessionID (runtime superset) → api.route.current.params.sessionID
- *  (typed route). Every source is validated; invalid/absent → next source.
- *  NEVER returns a placeholder or non-ses id. Null → callers MUST skip the
- *  fetch (empty panel, zero errors). Pure — no I/O, no runtime required. */
-export function resolveCurrentSessionID(sources: TuiSessionSources): string | null {
-  const candidates: unknown[] = [
-    sources?.sessionID,
-    sources?.api?.state?.sessionID,
-    sources?.api?.route?.current?.params?.sessionID,
-  ]
-  for (const candidate of candidates) {
-    if (isValidSessionId(candidate)) return candidate
+/* ─── Sidebar metrics ─────────────────────────────────────
+ * The context gauge mirrors the host's own computation: the token total of the
+ * last assistant message that carries `tokens`, measured after the most recent
+ * compaction and before an active revert boundary, against the model's context
+ * limit. Everything is pure so the arithmetic is testable without a renderer. */
+
+/** Model reference shapes the host publishes: `ModelRef` objects, bare ids, or
+ *  `provider/model` strings. Returns the id part, never throws. */
+export function modelRefID(ref: unknown): string | null {
+  if (typeof ref === 'string') return ref === '' ? null : ref
+  if (ref && typeof ref === 'object') {
+    const id = (ref as { id?: unknown }).id
+    if (typeof id === 'string' && id !== '') return id
   }
   return null
 }
 
-/** THE single choke point for every `session.children` / session-API path.
- *  Returns the v2 SDK parameter shape `{ sessionID }` ONLY for a
- *  server-valid session id; returns null for anything else (placeholder,
- *  empty, foreign id) so the caller skips the call entirely instead of
- *  sending an unsubstituted placeholder (the "%7BsessionID%7D" regression).
- *  The TUI client is `@opencode-ai/sdk/v2`, whose session methods take a
- *  FLAT parameter object (`{ sessionID }`), NOT the v1 `{ path: { id } }`
- *  envelope — passing the v1 shape left the v2 `{sessionID}` URL template
- *  unsubstituted (`/session/%7BsessionID%7D/children`). Every session-API
- *  call site MUST go through this function (enforced by the source-scan
- *  test in tests/pantheon/tui-delegations.test.ts). */
-export function safeSessionPath(id: unknown): { sessionID: string } | null {
-  if (!isValidSessionId(id)) return null
-  return { sessionID: id }
+/** Short display id: the segment after the last `/` (`opencode-go/kimi-k3` →
+ *  `kimi-k3`), truncated so a long id never wraps the sidebar. */
+export function shortModelID(ref: unknown, max = 24): string | null {
+  const id = modelRefID(ref)
+  if (id === null) return null
+  const segment = id.slice(id.lastIndexOf('/') + 1)
+  if (segment === '') return null
+  return segment.length > max ? `${segment.slice(0, Math.max(1, max - 1))}…` : segment
 }
 
-/** Build the `session.children` parameters ONLY from a validated session id.
- *  Delegates to {@link safeSessionPath} — the single choke point. Returns
- *  the v2 SDK shape `{ sessionID }`; null for null/invalid ids so the caller
- *  skips the fetch instead of sending an unsubstituted placeholder (the
- *  "%7BsessionID%7D" regression). */
-export function buildChildrenPath(id: string | null | undefined): { sessionID: string } | null {
-  return safeSessionPath(id)
+/** `providerID` of a model reference, trimmed; null when absent/blank. Derived
+ *  only from what the host already published — never a lookup table. */
+export function providerIDFromRef(ref: unknown): string | null {
+  if (ref === null || typeof ref !== 'object') return null
+  const providerID = (ref as { providerID?: unknown }).providerID
+  return typeof providerID === 'string' && providerID.trim() !== '' ? providerID.trim() : null
 }
 
-/** Duck-typed subset of a child Session (+ its live status type). */
-export type ChildDelegationLike = {
-  /** Child session id (= task id). */
-  id: string
-  /** Session title — the delegate's description or prompt prefix. */
-  title?: string
-  /** Agent name when the child session carries one (duck-typed; native
-   *  task() children may expose it, md reports always do). */
-  agent?: string
-  /** Status type from api.state.session.status: 'busy' | 'retry' | 'idle',
-   *  or undefined when the status API is unavailable. */
-  status?: string
-  time?: {
-    created?: number
-    updated?: number
+/** Provider for a bare-string model reference: match its id (or bare segment)
+ *  in the host model list. Null when the list cannot answer. */
+export function providerIDFromModels(models: unknown, ref: unknown): string | null {
+  if (!Array.isArray(models)) return null
+  const id = modelRefID(ref)
+  if (id === null) return null
+  const segment = id.slice(id.lastIndexOf('/') + 1)
+  for (const model of models) {
+    if (!model || typeof model !== 'object') continue
+    const modelID = typeof model.modelID === 'string' ? model.modelID : ''
+    const rowID = typeof model.id === 'string' ? model.id : ''
+    if (modelID !== id && rowID !== id && modelID !== segment && rowID !== segment) continue
+    const providerID = providerIDFromRef(model)
+    if (providerID !== null) return providerID
+  }
+  return null
+}
+
+/** Resolve `model.limit.context` for a model reference. Match order: the
+ *  provider-qualified id, then the bare id (the host's `id`/`modelID` fields).
+ *  Absent/ambiguous models degrade to null so the gauge is simply omitted. */
+export function resolveContextLimit(models: readonly any[], ref: unknown): number | null {
+  const id = modelRefID(ref)
+  if (id === null) return null
+  const providerID =
+    ref && typeof ref === 'object' ? (ref as { providerID?: unknown }).providerID : undefined
+  const segment = id.slice(id.lastIndexOf('/') + 1)
+  const matches = models.filter((model) => {
+    if (!model || typeof model !== 'object') return false
+    const modelID = typeof model.modelID === 'string' ? model.modelID : ''
+    const rowID = typeof model.id === 'string' ? model.id : ''
+    const idMatches = modelID === id || rowID === id || modelID === segment || rowID === segment
+    if (!idMatches) return false
+    if (typeof providerID !== 'string' || providerID === '') return true
+    return model.providerID === providerID
+  })
+  const candidates =
+    matches.length > 0
+      ? matches
+      : models.filter((model) => {
+          const modelID = typeof model?.modelID === 'string' ? model.modelID : ''
+          const rowID = typeof model?.id === 'string' ? model.id : ''
+          return modelID === segment || rowID === segment
+        })
+  for (const model of candidates) {
+    const limit = model?.limit?.context
+    if (typeof limit === 'number' && Number.isFinite(limit) && limit > 0) return limit
+  }
+  return null
+}
+
+/** Native token total: input + output + reasoning + cache read + cache write. */
+export function messageTokensTotal(tokens: any): number {
+  const cacheRead = numberOrNull(tokens?.cache?.read) ?? 0
+  const cacheWrite = numberOrNull(tokens?.cache?.write) ?? 0
+  return (
+    (numberOrNull(tokens?.input) ?? 0) +
+    (numberOrNull(tokens?.output) ?? 0) +
+    (numberOrNull(tokens?.reasoning) ?? 0) +
+    cacheRead +
+    cacheWrite
+  )
+}
+
+export type ContextUsage = { tokens: number; percent: number; limit: number }
+
+/** The part of a transcript that still counts: everything before the revert
+ *  boundary (when a revert is active), then after the last compaction. Both
+ *  derived numbers that read "the last assistant with usage" — the context
+ *  gauge and the cache hit rate — share this window, so a reverted-away or
+ *  compacted-away message can never feed either one. Pure. */
+export function transcriptWindow(
+  messages: readonly any[],
+  revertMessageID?: string | null,
+): { start: number; end: number } {
+  let end = messages.length
+  if (typeof revertMessageID === 'string' && revertMessageID !== '') {
+    const boundary = messages.findIndex((message) => message?.id === revertMessageID)
+    if (boundary >= 0) end = boundary
+  }
+
+  let start = 0
+  for (let index = end - 1; index >= 0; index--) {
+    if (messages[index]?.type === 'compaction') {
+      start = index + 1
+      break
+    }
+  }
+
+  return { start, end }
+}
+
+/** Context usage for a message list. Scope: the live window (see
+ *  `transcriptWindow`). The last assistant message carrying `tokens` in that
+ *  window wins. Null when there is no limit or no such message — the caller
+ *  then omits the block. */
+export function computeContextUsage(
+  messages: readonly any[],
+  contextLimit: number | null | undefined,
+  revertMessageID?: string | null,
+): ContextUsage | null {
+  const limit = numberOrNull(contextLimit)
+  if (limit === null || limit <= 0) return null
+  if (!Array.isArray(messages) || messages.length === 0) return null
+
+  const { start, end } = transcriptWindow(messages, revertMessageID)
+
+  for (let index = end - 1; index >= start; index--) {
+    const message = messages[index]
+    if (message?.type !== 'assistant' || !message.tokens) continue
+    const tokens = messageTokensTotal(message.tokens)
+    if (!Number.isFinite(tokens) || tokens <= 0) continue
+    return { tokens, percent: Math.round((tokens / limit) * 100), limit }
+  }
+  return null
+}
+
+/** Color for one gauge stage. Filled cells and the percent value both come from
+ *  this one call, so the bar and its number can never disagree. `theme` is the
+ *  host's resolved theme (loosely typed at runtime); a missing token falls back
+ *  to the theme's base text instead of an unstyled cell. Pure. */
+export function contextProgressColor(stage: ContextProgressTone, theme: any): any {
+  return theme?.text?.feedback?.[stage]?.base ?? theme?.text?.base
+}
+
+/** The muted extra line under the gauge: `cache 92% · 42.3 tok/s`. Either half
+ *  may be missing (no cache read, no measurable turn); no data at all yields
+ *  null so no empty line is rendered. The speed keeps the host's own one
+ *  decimal and `tok/s` label. Pure. */
+export function contextPerformanceLine(
+  performance: ContextPerformance | null | undefined,
+): string | null {
+  if (!performance) return null
+  const parts: string[] = []
+  const cacheHit = numberOrNull(performance.cacheHit)
+  if (cacheHit !== null) parts.push(`cache ${Math.round(cacheHit)}%`)
+  const tokensPerSecond = numberOrNull(performance.tokensPerSecond)
+  if (tokensPerSecond !== null) parts.push(`${tokensPerSecond.toFixed(1)} tok/s`)
+  return parts.length === 0 ? null : parts.join(SPEND_LINE_SEPARATOR)
+}
+
+/** Cache hit rate of one message: `cache.read / (input + cache.read)` as a
+ *  percentage. The denominator must be > 0, otherwise the ratio is meaningless
+ *  (a message that only wrote to the cache has no input to hit). Null when the
+ *  numbers are absent. Pure. */
+export function cacheHitPercent(tokens: any): number | null {
+  const read = numberOrNull(tokens?.cache?.read)
+  const input = numberOrNull(tokens?.input)
+  if (read === null || input === null) return null
+  const denominator = input + read
+  if (!(denominator > 0)) return null
+  return (read / denominator) * 100
+}
+
+/** The message the cache hit rate comes from: the last assistant of the live
+ *  window (see `transcriptWindow`) that actually carries `tokens`. Later
+ *  messages without usage — a streaming placeholder that the host publishes
+ *  before any step completes, a step that reports no usage — are skipped
+ *  instead of blanking a ratio the previous message already measured. Null
+ *  when nothing in the window has usage. Pure. */
+export function lastAssistantWithTokens(
+  messages: readonly any[] | null | undefined,
+  revertMessageID?: string | null,
+): any | null {
+  if (!Array.isArray(messages) || messages.length === 0) return null
+  const { start, end } = transcriptWindow(messages, revertMessageID)
+  for (let index = end - 1; index >= start; index--) {
+    const message = messages[index]
+    if (message?.type !== 'assistant' || !message.tokens) continue
+    return message
+  }
+  return null
+}
+
+/** Tokens per second of the current turn. Mirrors the host's
+ *  `turnTokensPerSecond` (anomalyco/opencode v2.0.30,
+ *  `packages/tui/src/routes/session/rows.ts`) so the sidebar and the native
+ *  session footer can never disagree: the numerator is `output + reasoning`
+ *  summed over every assistant step of the turn and the denominator is the
+ *  summed active streaming time `max(0, time.streamed - time.created)`, so the
+ *  division happens once, after aggregating — each step weighs by its own
+ *  duration instead of each step voting equally. `completed` is never used; a
+ *  turn with a step that has no `time.streamed` has no measurable speed. The
+ *  turn starts after the last `user` message; with no user message only the
+ *  last assistant step counts (degraded: there is no boundary to group by).
+ *  Pure and fail-open. */
+export function turnTokensPerSecond(
+  messages: readonly any[] | null | undefined,
+  position?: number | null,
+): number | null {
+  if (!Array.isArray(messages) || messages.length === 0) return null
+  let anchor = -1
+  if (
+    typeof position === 'number' &&
+    Number.isInteger(position) &&
+    position >= 0 &&
+    position < messages.length
+  ) {
+    anchor = position
+  } else {
+    for (let index = messages.length - 1; index >= 0; index--) {
+      if (messages[index]?.type === 'assistant') {
+        anchor = index
+        break
+      }
+    }
+  }
+  if (anchor === -1 || messages[anchor]?.type !== 'assistant') return null
+
+  let start = -1
+  for (let index = anchor - 1; index >= 0; index--) {
+    if (messages[index]?.type === 'user') {
+      start = index
+      break
+    }
+  }
+  const steps =
+    start === -1
+      ? [messages[anchor]]
+      : messages.slice(start + 1, anchor + 1).filter((item) => item?.type === 'assistant')
+  if (steps.length === 0) return null
+
+  let output = 0
+  let duration = 0
+  for (const step of steps) {
+    output +=
+      (numberOrNull(step?.tokens?.output) ?? 0) + (numberOrNull(step?.tokens?.reasoning) ?? 0)
+    const created = numberOrNull(step?.time?.created)
+    const streamed = numberOrNull(step?.time?.streamed)
+    if (created === null || streamed === null) return null
+    duration += Math.max(0, streamed - created)
+  }
+  if (output <= 0 || duration <= 0) return null
+  const rate = output / (duration / 1_000)
+  return Number.isFinite(rate) && rate > 0 ? rate : null
+}
+
+/** Last-message telemetry the Context block renders in muted text. Both halves
+ *  are optional; the block renders no line when neither is available. */
+export type ContextPerformance = { cacheHit: number | null; tokensPerSecond: number | null }
+
+/** One rendered context row. `lead` and `tail` carry the gauge bar when the row
+ *  has one (`lead` is toned with the value, `tail` is muted), so the 12 cells
+ *  stay contiguous while the empty half still reads as background. */
+export type ContextRow = {
+  lead: string | null
+  value: string
+  tail: string | null
+  suffix: string | null
+  tone: ContextProgressTone | null
+}
+
+/** The `Context` block's data rows; null rows are not rendered. */
+export type ContextBlockRows = {
+  tokens: ContextRow | null
+  percent: ContextRow | null
+  spent: ContextRow | null
+}
+
+/** Rows for the `Context` block:
+ *  `<tokens> tokens` / `▰▰▰▰▰▱▱▱▱▱▱▱ <percent>% of <window>` /
+ *  `$<spent> spent`. The percentage row carries the only semantic tone, the
+ *  gauge bar (12 cells) and is omitted entirely when the percentage is
+ *  unavailable (never `undefined%`). A block with neither tokens nor cost
+ *  yields null. Pure. */
+export function contextBlockRows(
+  usage: ContextUsage | null,
+  cost: number | null | undefined,
+): ContextBlockRows | null {
+  const spentValue = formatSpent(cost)
+  const spent: ContextRow | null =
+    spentValue === null
+      ? null
+      : { lead: null, value: spentValue, tail: null, suffix: ' gasto na sessão', tone: null }
+  if (usage === null) return spent === null ? null : { tokens: null, percent: null, spent }
+
+  const tokensValue = formatTokenCount(usage.tokens)
+  const tokens: ContextRow | null =
+    tokensValue === null
+      ? null
+      : { lead: null, value: tokensValue, tail: null, suffix: ' tokens', tone: null }
+
+  const percentValue = numberOrNull(usage.percent)
+  const window = formatContextWindow(usage.limit)
+  const bar = contextBar(percentValue)
+  const percent: ContextRow | null =
+    bar === null || percentValue === null
+      ? null
+      : {
+          lead: bar.filled,
+          value: ` ${Math.round(percentValue)}%`,
+          tail: bar.empty,
+          suffix: window === null ? null : ` of ${window}`,
+          tone: contextUsageTone(percentValue),
+        }
+
+  if (tokens === null && percent === null && spent === null) return null
+  return { tokens, percent, spent }
+}
+
+/* ─── Per-model real usage ────────────────────────────────
+ * `SessionMessageAssistant` carries the real `model` (`ModelRef`), an optional
+ * `cost` (`MoneyUSD` = number) and optional `tokens`, so the sidebar can show
+ * what each model actually cost instead of estimating from pricing tables.
+ * Everything below is pure so the aggregation is testable without a renderer;
+ * a message without `cost` contributes 0 and is omitted (never a guessed
+ * price). */
+
+/** Column widths for one model row (labels are muted, numbers right-aligned). */
+export const MODEL_USAGE_MODEL_WIDTH = 12
+export const MODEL_USAGE_TOKEN_WIDTH = 6
+export const MODEL_USAGE_COST_WIDTH = 8
+/** Session events arrive in bursts; model rows are recomputed at most once
+ *  per window (same cadence as the git-count revalidation). */
+export const MODEL_USAGE_DEBOUNCE_MS = 400
+
+/** Real usage for one model, summed across the assistant messages that used it. */
+export type ModelUsage = { model: string; tokens: number; cost: number }
+
+/** Totals per model from assistant messages: sums `cost` and `tokens`, drops
+ *  models whose real cost is 0/absent, and orders by cost (then tokens, then
+ *  name). `providerID` participates in the key so two providers exposing the
+ *  same bare id are not merged. Pure. */
+export function collectModelUsage(messages: readonly any[]): ModelUsage[] {
+  if (!Array.isArray(messages)) return []
+  const totals = new Map<string, ModelUsage>()
+  for (const message of messages) {
+    if (message?.type !== 'assistant') continue
+    const id = modelRefID(message.model)
+    const model = shortModelID(message.model, MODEL_USAGE_MODEL_WIDTH)
+    if (id === null || model === null) continue
+    const providerID = typeof message.model?.providerID === 'string' ? message.model.providerID : ''
+    const key = `${providerID}\u0000${id}`
+    const tokenCount = message.tokens ? messageTokensTotal(message.tokens) : 0
+    const cost = numberOrNull(message.cost) ?? 0
+    const current = totals.get(key)
+    if (current) {
+      current.tokens += Math.max(0, tokenCount)
+      current.cost += Math.max(0, cost)
+    } else {
+      totals.set(key, { model, tokens: Math.max(0, tokenCount), cost: Math.max(0, cost) })
+    }
+  }
+  return [...totals.values()]
+    .filter((row) => row.cost > 0)
+    .sort((a, b) => b.cost - a.cost || b.tokens - a.tokens || a.model.localeCompare(b.model))
+}
+
+/** Visible rows plus the aggregate of the models that did not fit. Pure. */
+export type ModelUsageCeiling = {
+  visible: ModelUsage[]
+  hidden: number
+  hiddenCost: number
+  hiddenTokens: number
+}
+
+/** Cap the model list at `maxVisible`; the rest is aggregated (still real
+ *  totals) for the `… +N` line. Pure. */
+export function ceilingModelUsage(
+  rows: readonly ModelUsage[],
+  maxVisible = MODEL_USAGE_VISIBLE_CEILING,
+): ModelUsageCeiling {
+  const limit = Math.max(0, maxVisible)
+  const visible = rows.slice(0, limit)
+  const rest = rows.slice(visible.length)
+  return {
+    visible,
+    hidden: rest.length,
+    hiddenCost: rest.reduce((sum, row) => sum + row.cost, 0),
+    hiddenTokens: rest.reduce((sum, row) => sum + row.tokens, 0),
   }
 }
 
-/** Map a child status type to a display state.
- *
- *  Only `busy`/`retry` are EXPLICIT live states. `idle` is terminal and so is
- *  any other/unknown status — a status the panel does not recognise is not
- *  evidence of activity. An ABSENT status is the historical case: the status
- *  map (`api.state.session.status`) contains only currently-alive sessions, so
- *  every finished child of a long session is missing from it. Defaulting that
- *  to running made the whole session history render as "active" (the
- *  "197 children, all active" regression), so an absent status is terminal
- *  (done) UNLESS the child was active within `graceMs` — a just-spawned child
- *  that the status API has not registered yet must still render as running.
- *
- *  @param status  the `api.state.session.status(id)?.type`, or undefined
- *  @param time    the child session time fields (`created`/`updated`)
- *  @param now     current wall-clock ms (injectable for tests)
- *  @param graceMs recency window for the absent-status running assumption
- *  Pure — no I/O. */
-export function childStatusToState(
+/** Compact tokens for a model row (`80,000` → `80K`); `0` stays explicit. Pure. */
+export function formatUsageTokens(tokens: number | null | undefined): string {
+  const value = numberOrNull(tokens)
+  if (value === null || value <= 0) return '0'
+  return formatContextWindow(value) ?? String(Math.round(value))
+}
+
+/** Real per-model cost with adaptive precision: cents for `>= $0.01`, up to
+ *  four decimals below that (a real `$0.0031` must not render as `$0.00`), and
+ *  an explicit `< $0.0001` for the remainder. Pure. */
+export function formatUsageCost(cost: number | null | undefined): string | null {
+  const value = numberOrNull(cost)
+  if (value === null || value < 0) return null
+  if (value === 0) return '$0.00'
+  if (value >= 0.01) return `$${value.toFixed(2)}`
+  if (value >= 0.0001) {
+    const fixed = value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')
+    return `$${fixed}`
+  }
+  return '<$0.0001'
+}
+
+/** One formatted model row: truncated label + compact tokens + real cost. */
+export type ModelUsageRow = { model: string; tokens: string; cost: string }
+
+/** Format the visible model rows for rendering. Labels are already short ids
+ *  (12 chars); the second truncation only guards host drift. Pure. */
+export function modelUsageRows(rows: readonly ModelUsage[]): ModelUsageRow[] {
+  return rows.map((row) => ({
+    model: truncateLabel(row.model, MODEL_USAGE_MODEL_WIDTH),
+    tokens: formatUsageTokens(row.tokens),
+    cost: formatUsageCost(row.cost) ?? '$0.00',
+  }))
+}
+
+/** Exact single-line text of a model row, with numbers right-aligned. Pure. */
+export function modelUsageRowText(row: ModelUsageRow): string {
+  return `${row.model.padEnd(MODEL_USAGE_MODEL_WIDTH)}  ${row.tokens.padStart(MODEL_USAGE_TOKEN_WIDTH)}  ${row.cost.padStart(MODEL_USAGE_COST_WIDTH)}`
+}
+
+/** Wrap sidebar text by terminal cells, preserving the complete values. */
+export function sidebarTextLines(value: string): string[] {
+  return quotaTextLines(value, SIDEBAR_CONTENT_WIDTH, 0)
+}
+
+/** Align a monetary value when it fits, otherwise preserve it on a new line. */
+export function sidebarMoneyLines(label: string, value: string): string[] {
+  const gap = SIDEBAR_CONTENT_WIDTH - cellWidth(label) - cellWidth(value)
+  return gap >= 1
+    ? [`${label}${' '.repeat(gap)}${value}`]
+    : [...sidebarTextLines(label), ...sidebarTextLines(value)]
+}
+
+/** Keep the existing OpenCode periods together when possible. */
+export function contextSpendLines(value: string): string[] {
+  const match = /^(.*\S)\s+(<?\$\S+)$/.exec(value)
+  return match?.[1] && match[2] && cellWidth(value) <= SIDEBAR_CONTENT_WIDTH
+    ? sidebarMoneyLines(match[1], match[2])
+    : sidebarTextLines(value)
+}
+
+/** Keep ordinary rows aligned; give oversized values their own lines. */
+export function modelUsageRowLines(row: ModelUsageRow): string[] {
+  const single = modelUsageRowText(row)
+  if (cellWidth(single) <= SIDEBAR_CONTENT_WIDTH) return [single]
+  return [
+    ...sidebarTextLines(row.model),
+    ...sidebarTextLines(`Tokens ${row.tokens}`),
+    ...sidebarTextLines(`USD ${row.cost}`),
+  ]
+}
+
+/** Muted aggregate line for the models beyond the cap (`… +2  $0.03`). Null
+ *  when every model fits. Pure. */
+export function hiddenModelUsageText(hidden: number, hiddenCost: number): string | null {
+  if (!Number.isFinite(hidden) || hidden <= 0) return null
+  const cost = formatUsageCost(hiddenCost)
+  return cost === null ? `… +${hidden}` : `… +${hidden}  ${cost}`
+}
+
+/* ─── Child agent bucket ──────────────────────────────────
+ * `SessionInfo.agent` is the host's per-session agent id, so the `Dispatch`
+ * block groups the delegation tree by that field alone — no extra request, no
+ * price table, and no per-message refinement: the aggregate is a count plus the
+ * summed child cost, which is the only thing the short sidebar can afford. */
+
+/** Bucket for a session the host published without an agent id. */
+export const UNKNOWN_AGENT = '?'
+
+/** Agent key of a session or message: the trimmed id when it is a non-empty
+ *  string, else the `?` bucket — never `undefined`. Pure. */
+export function agentKey(value: unknown): string {
+  if (typeof value !== 'string') return UNKNOWN_AGENT
+  const text = value.trim()
+  return text === '' ? UNKNOWN_AGENT : text
+}
+
+/* ─── Todo block ──────────────────────────────────────────
+ * The host exposes no todo API: the installed client has no
+ * `session.todo`/`client.session.todo` and the 2.x event union carries no
+ * `todo.updated`. The authoritative source is the transcript — the
+ * `todowrite` tool part (`SessionMessageAssistantTool`) stores the whole list
+ * in `state.input.todos`, and the tool is a full replace (delete + insert), so
+ * the newest *completed* write is the current list. Deriving it from the
+ * transcript (never from a local write history) also makes a session revert
+ * correct for free: the reverted-away write is simply not in `message.list`
+ * anymore. Everything below is pure and fail-open. */
+
+export type TodoStatus = 'in_progress' | 'pending' | 'completed' | 'cancelled'
+
+/** One rendered todo row. `priority` is carried by the tool but not rendered:
+ *  the reference block uses a single marker column. */
+export type TodoItem = { content: string; status: TodoStatus }
+
+/** Rows rendered before the `… +N` line. */
+export const TODO_VISIBLE_CEILING = 6
+/** Content width before the ellipsis — the block has ~30-34 usable columns. */
+export const TODO_TEXT_WIDTH = 28
+
+/** Row markers (`•` in progress, `−` cancelled with U+2212, as in the git row). */
+const TODO_MARKERS: Record<TodoStatus, string> = {
+  in_progress: '[\u2022]',
+  pending: '[ ]',
+  completed: '[x]',
+  cancelled: '[\u2212]',
+}
+
+/** Group order: live work first, then open, then closed. */
+const TODO_STATUS_ORDER: readonly TodoStatus[] = [
+  'in_progress',
+  'pending',
+  'completed',
+  'cancelled',
+]
+
+/** Narrow a loose `status` value to the tool's four states. */
+export function isTodoStatus(value: unknown): value is TodoStatus {
+  return (
+    value === 'in_progress' || value === 'pending' || value === 'completed' || value === 'cancelled'
+  )
+}
+
+/** Items from a `todowrite` `input` payload. A missing/malformed `input`,
+ *  absent `todos`, an unknown `status` or an empty/missing `content` drops the
+ *  entry instead of throwing; a list with nothing readable yields `[]`. Pure. */
+export function parseTodoItems(input: unknown): TodoItem[] {
+  const raw = (input as { todos?: unknown } | null | undefined)?.todos
+  if (!Array.isArray(raw)) return []
+  const items: TodoItem[] = []
+  for (const entry of raw) {
+    const content = (entry as { content?: unknown } | null | undefined)?.content
+    const status = (entry as { status?: unknown } | null | undefined)?.status
+    if (typeof content !== 'string' || content.trim() === '') continue
+    if (!isTodoStatus(status)) continue
+    items.push({ content: content.trim(), status })
+  }
+  return items
+}
+
+/** Newest completed `todowrite` in a transcript. The tool replaces the list
+ *  wholesale, so the last write wins; a write with `todos: []` returns null
+ *  (the block disappears rather than showing the previous list) and a
+ *  not-yet-completed write is ignored. Null when the transcript carries no
+ *  such part, so the block never renders a guess. Pure. */
+export function latestTodoItems(messages: readonly any[] | null | undefined): TodoItem[] | null {
+  if (!Array.isArray(messages)) return null
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]
+    if (message?.type !== 'assistant' || !Array.isArray(message.content)) continue
+    const parts = message.content
+    for (let position = parts.length - 1; position >= 0; position--) {
+      const part = parts[position]
+      if (part?.type !== 'tool' || part?.name !== 'todowrite') continue
+      if (part?.state?.status !== 'completed') continue
+      const items = parseTodoItems(part.state.input)
+      return items.length === 0 ? null : items
+    }
+  }
+  return null
+}
+
+/** Stable group order (in_progress → pending → completed → cancelled); within a
+ *  group the transcript order is preserved. Pure. */
+export function orderTodoItems(items: readonly TodoItem[]): TodoItem[] {
+  return [...items].sort(
+    (a, b) => TODO_STATUS_ORDER.indexOf(a.status) - TODO_STATUS_ORDER.indexOf(b.status),
+  )
+}
+
+/** Row color channel: `accent` for live work, `muted` for closed items, base
+ *  for pending. Kept separate from the theme so it is testable. Pure. */
+export type TodoTone = 'accent' | 'muted' | 'base'
+
+/** Tone for one status — no rainbow, a single accent. Pure. */
+export function todoTone(status: TodoStatus): TodoTone {
+  if (status === 'in_progress') return 'accent'
+  if (status === 'completed' || status === 'cancelled') return 'muted'
+  return 'base'
+}
+
+/** Exact rendered text of one row: `[•] <content truncated to 28>`. Pure. */
+export function todoRowText(item: TodoItem): string {
+  return `${TODO_MARKERS[item.status]} ${truncateLabel(item.content, TODO_TEXT_WIDTH)}`
+}
+
+/** Ordered rows capped for the sidebar, plus how many did not fit. Pure. */
+export type TodoCeiling = { visible: TodoItem[]; hidden: number }
+
+/** Order then cap the list at `maxVisible`. Pure. */
+export function ceilingTodoItems(
+  items: readonly TodoItem[],
+  maxVisible = TODO_VISIBLE_CEILING,
+): TodoCeiling {
+  const ordered = orderTodoItems(items)
+  const visible = ordered.slice(0, Math.max(0, maxVisible))
+  return { visible, hidden: Math.max(0, ordered.length - visible.length) }
+}
+
+/** Overflow line (`… +3`); null when every item fits. Pure. */
+export function hiddenTodoText(hidden: number): string | null {
+  if (!Number.isFinite(hidden) || hidden <= 0) return null
+  return `… +${Math.round(hidden)}`
+}
+
+/* ─── Git change counts ───────────────────────────────────
+ * Two sources, in order of authority:
+ *   1. the git CLI (`git status --porcelain=v1 -uall` + `git rev-list
+ *      --count --left-right @{upstream}...HEAD`), which is the only way to see
+ *      untracked files and ahead/behind — the HTTP protocol exposes neither;
+ *   2. `client.vcs.status()` (`GET /api/vcs/status`), one `VcsFileStatus` per
+ *      changed file: `{ file, additions, deletions, status }` with `status` in
+ *      `"added" | "modified" | "deleted"`. Used only when the CLI fails, and it
+ *      counts files per status — never lines.
+ * Both are fail-open: no git or no API degrades to the branch-only row. */
+
+export type GitChangeCounts = { added: number; modified: number; deleted: number }
+
+/** Narrow a `VcsFileStatus["status"]` value read off a loose payload. */
+function isGitChangeStatus(value: unknown): value is keyof GitChangeCounts {
+  return value === 'added' || value === 'modified' || value === 'deleted'
+}
+
+/** Files per status from a `VcsFileStatus[]` payload. Unknown statuses and
+ *  malformed entries are ignored. Pure. */
+export function countGitChanges(files: readonly any[] | null | undefined): GitChangeCounts {
+  const counts: GitChangeCounts = { added: 0, modified: 0, deleted: 0 }
+  if (!Array.isArray(files)) return counts
+  for (const entry of files) {
+    const status: unknown = entry?.status
+    if (isGitChangeStatus(status)) counts[status] += 1
+  }
+  return counts
+}
+
+/** `+1 ±2 −3` for the file counts; each zero term is omitted, and an empty
+ *  change set returns null so the row is not rendered at all. Pure. */
+export function formatGitChanges(files: readonly any[] | null | undefined): string | null {
+  const { added, modified, deleted } = countGitChanges(files)
+  const parts: string[] = []
+  if (added > 0) parts.push(`+${added}`)
+  if (modified > 0) parts.push(`±${modified}`)
+  if (deleted > 0) parts.push(`\u2212${deleted}`)
+  return parts.length === 0 ? null : parts.join(' ')
+}
+
+/* ─── Git CLI (untracked / ahead / behind) ────────────────
+ * Run with an async `execFile` — never `execSync`, which would block the TUI's
+ * render loop — bounded by a timeout and with `windowsHide` so a Windows host
+ * does not flash a console window. One probe is two short git calls; the
+ * sidebar revalidates on mount and on the session events it already
+ * subscribes to, behind a debounce and a cooldown (see the constants), and
+ * skips a revalidation entirely while one is still running — there is no queue
+ * and no polling timer. */
+
+/** Wall-clock ceiling for one git call. A stuck git (index lock, network
+ *  filesystem) is killed instead of holding the row forever. */
+export const GIT_CLI_TIMEOUT_MS = 2_000
+/** Session events arrive in bursts; a git probe is scheduled at most once per
+ *  window instead of once per event. */
+export const GIT_CLI_DEBOUNCE_MS = 1_000
+/** Minimum spacing between two probe starts. Five seconds keeps a chatty event
+ *  stream from spawning a git process per step while staying fresh enough to
+ *  show a file appearing mid-turn. */
+export const GIT_CLI_MIN_INTERVAL_MS = 5_000
+/** Stdout ceiling for one git call. `status --porcelain=v1 -uall` lists every
+ *  untracked file, so a large worktree easily passes the 1 MB `execFile`
+ *  default — which would reject and silently hand the row back to the
+ *  `vcs.status` fallback. 4 MB is far above a realistic porcelain listing. */
+export const GIT_CLI_MAX_BUFFER = 4 * 1024 * 1024
+
+/** One `execFile` call: `(file, args, options) → { stdout }`. Injectable so the
+ *  parsing/gating logic is testable without spawning processes. */
+export type GitExec = (
+  file: string,
+  args: readonly string[],
+  options: { cwd: string; timeout: number; windowsHide: boolean; maxBuffer: number },
+) => Promise<{ stdout: string }>
+
+/** Default runner: the promisified `node:child_process.execFile`. A non-zero
+ *  exit (no repository, no upstream) rejects and the caller decides. */
+export const defaultGitExec: GitExec = (file, args, options) =>
+  new Promise((resolve, reject) => {
+    execFile(
+      file,
+      [...args],
+      {
+        cwd: options.cwd,
+        timeout: options.timeout,
+        windowsHide: options.windowsHide,
+        maxBuffer: options.maxBuffer,
+      },
+      (error, stdout) => {
+        if (error) reject(error)
+        else resolve({ stdout: typeof stdout === 'string' ? stdout : String(stdout ?? '') })
+      },
+    )
+  })
+
+/** Files per status from `git status --porcelain=v1 -uall`, including the two
+ *  columns the protocol cannot report. Each line starts with `XY` (index and
+ *  worktree state); a rename prints `R  old -> new`, and `??` / `!!` are
+ *  untracked / ignored. Precedence per file: deleted > added > modified, so
+ *  `AM` counts once as added and `AD` once as deleted. Renames, copies and
+ *  unmerged entries count as modified. Pure. */
+export type GitPorcelainCounts = {
+  added: number
+  modified: number
+  deleted: number
+  untracked: number
+}
+
+/** Parse porcelain v1 output into file counts. Empty/malformed output yields
+ *  zero counts (a clean tree), never a throw. Pure. */
+export function parseGitStatusPorcelain(output: string | null | undefined): GitPorcelainCounts {
+  const counts: GitPorcelainCounts = { added: 0, modified: 0, deleted: 0, untracked: 0 }
+  if (typeof output !== 'string' || output === '') return counts
+  for (const line of output.split('\n')) {
+    if (line.length < 2) continue
+    const index = line[0]
+    const worktree = line[1]
+    if (index === '!' && worktree === '!') continue // ignored file
+    if (index === '?' && worktree === '?') {
+      counts.untracked += 1
+      continue
+    }
+    if (index === ' ' && worktree === ' ') continue
+    if (index === 'D' || worktree === 'D') counts.deleted += 1
+    else if (index === 'A' || worktree === 'A') counts.added += 1
+    else counts.modified += 1
+  }
+  return counts
+}
+
+/** `git rev-list --count --left-right @{upstream}...HEAD` prints two numbers:
+ *  commits only on the upstream (behind) then commits only on HEAD (ahead).
+ *  Null when the output is not that pair — e.g. the command failed because the
+ *  branch has no upstream, in which case the arrows are simply omitted. Pure. */
+export function parseGitAheadBehind(
+  output: string | null | undefined,
+): { ahead: number; behind: number } | null {
+  if (typeof output !== 'string') return null
+  const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(output)
+  if (match === null) return null
+  const behind = Number(match[1])
+  const ahead = Number(match[2])
+  if (!Number.isFinite(ahead) || !Number.isFinite(behind)) return null
+  return { ahead, behind }
+}
+
+/** One git observation: file counts plus the upstream distance (either arrow
+ *  may be unknown when the branch has no upstream). */
+export type GitCliSnapshot = {
+  changes: GitPorcelainCounts
+  ahead: number | null
+  behind: number | null
+}
+
+/** One probe: `git status --porcelain=v1 -uall` for the counts, then
+ *  `git rev-list --count --left-right @{upstream}...HEAD` for the arrows (a
+ *  failure there only drops the arrows). A status failure rejects — the caller
+ *  then falls back to `client.vcs.status`. */
+export async function readGitSnapshot(
+  directory: string,
+  exec: GitExec = defaultGitExec,
+): Promise<GitCliSnapshot> {
+  const options = {
+    cwd: directory,
+    timeout: GIT_CLI_TIMEOUT_MS,
+    windowsHide: true,
+    maxBuffer: GIT_CLI_MAX_BUFFER,
+  }
+  const status = await exec('git', ['status', '--porcelain=v1', '-uall'], options)
+  const changes = parseGitStatusPorcelain(status?.stdout)
+  let ahead: number | null = null
+  let behind: number | null = null
+  try {
+    const counts = await exec(
+      'git',
+      ['rev-list', '--count', '--left-right', '@{upstream}...HEAD'],
+      options,
+    )
+    const parsed = parseGitAheadBehind(counts?.stdout)
+    if (parsed !== null) {
+      ahead = parsed.ahead
+      behind = parsed.behind
+    }
+  } catch {
+    /* no upstream configured — the arrows are omitted, the counts still show */
+  }
+  return { changes, ahead, behind }
+}
+
+/** Rendered git row: `+1 ±2 −1 ?2 ↑3 ↓1`, zero terms omitted. Null when the
+ *  tree is clean and in sync, so the block keeps only its branch line. Pure. */
+export function formatGitSnapshot(snapshot: GitCliSnapshot | null | undefined): string | null {
+  if (!snapshot?.changes) return null
+  const { added, modified, deleted, untracked } = snapshot.changes
+  const parts: string[] = []
+  if (added > 0) parts.push(`+${added}`)
+  if (modified > 0) parts.push(`±${modified}`)
+  if (deleted > 0) parts.push(`\u2212${deleted}`)
+  if (untracked > 0) parts.push(`?${untracked}`)
+  if ((snapshot.ahead ?? 0) > 0) parts.push(`${GIT_ARROW_UP}${snapshot.ahead}`)
+  if ((snapshot.behind ?? 0) > 0) parts.push(`${GIT_ARROW_DOWN}${snapshot.behind}`)
+  return parts.length === 0 ? null : parts.join(' ')
+}
+
+/** Whether a new probe may start. An in-flight probe always wins (no queue), and
+ *  the previous start must be older than the cooldown. Pure. */
+export function gitProbeAllowed(
+  state: { now: number; lastRunAt: number | null; inFlight: boolean },
+  cooldownMs = GIT_CLI_MIN_INTERVAL_MS,
+): boolean {
+  if (state.inFlight) return false
+  if (state.lastRunAt === null) return true
+  const elapsed = state.now - state.lastRunAt
+  return !Number.isFinite(elapsed) || elapsed >= cooldownMs
+}
+
+/* ─── Spend (local server stats) ─────────────────────────
+ * `client.session.stats()` → `GET /api/experimental/session/stats` is the only
+ * source: it is served by the local OpenCode process that is already running,
+ * so the numbers are pure spend — no provider call, no credential read, no
+ * polling, and no plan limit (the protocol exposes no quota/balance field).
+ * The route is experimental: any failure leaves the values unknown and
+ * preserves whatever was last known. */
+
+/** Spend window labels, in render order. */
+export const SPEND_TODAY_LABEL = 'hoje'
+export const SPEND_30D_LABEL = '30d'
+/** Separator between the two windows on the Context footer line. */
+export const SPEND_LINE_SEPARATOR = ' \u00B7 '
+/** `30d` window: 30 × 24 h, measured back from "now". */
+export const SPEND_30D_MS = 30 * 24 * 60 * 60 * 1000
+/** Probe window: one hour, narrow enough that a unit mix-up cannot line up. */
+export const SPEND_PROBE_WINDOW_MS = 60 * 60 * 1000
+/** The echoed `range` may be rounded server-side; 120 s absorbs that. */
+export const SPEND_PROBE_TOLERANCE_MS = 120_000
+/** Session events arrive in bursts — same 400 ms window as the other blocks. */
+export const SPEND_REFRESH_DEBOUNCE_MS = 400
+
+/** Spend per window in USD. Either side may be unknown (kept `null`). */
+export type SpendTotals = { today: number | null; thirtyDays: number | null }
+
+/** `from`/`to` unit accepted by the route. `SessionStatsInput` declares both as
+ *  bare `number` and does not say which unit, so it is measured once per
+ *  process (`ms` unless the server echoes seconds) instead of guessed. */
+type SpendUnit = 'ms' | 's' | 'unavailable'
+
+/** Resolved unit for this process; `null` until the mount probe answers. */
+let spendUnit: SpendUnit | null = null
+/** In-flight probe, so two refreshes cannot each burn the 2-call budget. */
+let spendProbe: Promise<SpendUnit> | null = null
+
+/** Test-only: forget the process-wide unit resolution. Never called at runtime. */
+export function resetSpendUnit(): void {
+  spendUnit = null
+  spendProbe = null
+}
+
+/** Resolved unit (`ms` / `s` / `unavailable`) or null while still unknown. */
+export function resolvedSpendUnit(): SpendUnit | null {
+  return spendUnit
+}
+
+/** Local midnight for `now`: `new Date()` with the clock fields zeroed in the
+ *  current timezone (DST-safe, unlike subtracting hours). Pure. */
+export function startOfLocalDay(now: number): number {
+  const date = new Date(now)
+  date.setHours(0, 0, 0, 0)
+  return date.getTime()
+}
+
+/** The two windows the block shows: `hoje` (local midnight → now) and `30d`
+ *  (now − 30 days → now). Pure. */
+export function spendWindows(now: number): {
+  today: { from: number; to: number }
+  thirtyDays: { from: number; to: number }
+} {
+  return {
+    today: { from: startOfLocalDay(now), to: now },
+    thirtyDays: { from: now - SPEND_30D_MS, to: now },
+  }
+}
+
+/** USD with two decimals (`$0.42`), four for a positive sub-cent amount
+ *  (`$0.0031`), and `<$0.0001` when even four decimals would read `$0.0000`.
+ *  `0` prints `$0.00`. Null for a missing/negative/non-finite value. Pure. */
+export function formatSpendUSD(cost: number | null | undefined): string | null {
+  const value = numberOrNull(cost)
+  if (value === null || value < 0) return null
+  if (value === 0) return '$0.00'
+  if (value >= 0.01) return `$${value.toFixed(2)}`
+  const cents = value.toFixed(2)
+  if (cents !== '0.00') return `$${cents}`
+  const cents4 = value.toFixed(4)
+  return cents4 === '0.0000' ? '<$0.0001' : `$${cents4}`
+}
+
+/** `cost` off a `SessionStatsInfo` (`MoneyUSD` = number) or null when the
+ *  payload is malformed/negative, so a bad value never reaches a row. Pure. */
+export function statsCost(result: unknown): number | null {
+  const cost = numberOrNull((result as { cost?: unknown } | null | undefined)?.cost)
+  return cost !== null && cost >= 0 ? cost : null
+}
+
+/** True when the server echoed the window we sent, within 120 s. `scale` is how
+ *  many milliseconds one unit of the sent window is worth (`1` for `ms`, `1000`
+ *  for `s`). The echo is accepted either as the same numbers we sent (the route
+ *  keeps the caller's unit) or converted to millisecond epoch (`DateTime.Utc`),
+ *  so the probe pins the unit without assuming which of the two it gets. Pure. */
+export function statsRangeMatches(
+  range: unknown,
+  sent: { from: number; to: number },
+  scale: number,
+): boolean {
+  const from = numberOrNull((range as { from?: unknown } | null | undefined)?.from)
+  const to = numberOrNull((range as { to?: unknown } | null | undefined)?.to)
+  if (from === null || to === null) return false
+  const tolerance = SPEND_PROBE_TOLERANCE_MS / scale
+  const sameUnit = Math.abs(from - sent.from) <= tolerance && Math.abs(to - sent.to) <= tolerance
+  const asMilliseconds =
+    Math.abs(from - sent.from * scale) <= SPEND_PROBE_TOLERANCE_MS &&
+    Math.abs(to - sent.to * scale) <= SPEND_PROBE_TOLERANCE_MS
+  return sameUnit || asMilliseconds
+}
+
+/** The `Context` block's last line: OpenCode stats source and both spend windows
+ *  on one muted row (`OpenCode · hoje $0.42 · 30d $9.80`). A window without a
+ *  usable amount is omitted, and no usable window at all yields null so the
+ *  line (and not the block) is dropped. Pure. */
+export function contextSpendLine(totals: SpendTotals | null): string | null {
+  if (totals === null) return null
+  const parts: string[] = []
+  const today = formatSpendUSD(totals.today)
+  if (today !== null) parts.push(`${SPEND_TODAY_LABEL} ${today}`)
+  const thirtyDays = formatSpendUSD(totals.thirtyDays)
+  if (thirtyDays !== null) parts.push(`${SPEND_30D_LABEL} ${thirtyDays}`)
+  return parts.length === 0
+    ? null
+    : `OpenCode${SPEND_LINE_SEPARATOR}${parts.join(SPEND_LINE_SEPARATOR)}`
+}
+
+/** Grapheme iterator: a cut never splits a surrogate pair, a combining mark
+ *  from its base or a ZWJ emoji sequence, so truncation stays cell-exact. */
+/** Clamp a free-form label to `max` terminal cells without wrapping. The width
+ *  is measured in display cells, never in UTF-16 code units: a CJK or emoji
+ *  label used to overflow the column it was cut for (`計画の移行` is 5 code
+ *  units but 10 cells, `🚀` is 2 units and 2 cells). Pure. */
+export function truncateLabel(value: string, max = 28): string {
+  const text = value.trim()
+  const budget = Math.max(1, Math.floor(numberOrNull(max) ?? 1))
+  if (cellWidth(text) <= budget) return text
+  const ellipsis = '\u2026'
+  const room = budget - cellWidth(ellipsis)
+  let cut = ''
+  let used = 0
+  for (const { segment } of GRAPHEMES.segment(text)) {
+    const width = cellWidth(segment)
+    if (used + width > room) break
+    cut += segment
+    used += width
+  }
+  return `${cut.replace(/\s+$/, '')}${ellipsis}`
+}
+
+/** Right-pad `value` with spaces to exactly `cells` display columns (a wider
+ *  value is truncated first). `padEnd` counts code units, so it under-pads a
+ *  CJK/emoji cell and the next column drifts. Pure. */
+export function padCell(value: string, cells: number): string {
+  const width = Math.max(0, Math.floor(numberOrNull(cells) ?? 0))
+  if (width === 0) return ''
+  const text = truncateLabel(value, width)
+  return `${text}${' '.repeat(Math.max(0, width - cellWidth(text)))}`
+}
+
+/** Columns the fixed header may use before it would wrap the sidebar. */
+export const HEADER_MAX_WIDTH = SIDEBAR_CONTENT_WIDTH
+
+/** Preset row of the fixed header: `▸ <preset> · <provider>`. The provider is
+ *  cut first when the row overflows, so the preset name is never the casualty;
+ *  a missing provider leaves the preset alone (no `unknown` placeholder). */
+export function presetHeaderLine(presetName: string, providerID: string | null): string {
+  const name = presetName.trim() === '' ? 'default' : presetName.trim()
+  const base = `${PRESET_MARKER} ${name}`
+  const provider = providerID === null ? '' : providerID.trim()
+  if (provider === '') return truncateLabel(base, HEADER_MAX_WIDTH)
+  const room = HEADER_MAX_WIDTH - `${base} · `.length
+  if (room < 2) return truncateLabel(base, HEADER_MAX_WIDTH)
+  return `${base} · ${truncateLabel(provider, room)}`
+}
+
+/* ─── Dispatch kind (why the child exists) ────────────────
+ * The host's own row answers *who* runs and *how much* it cost, never *why* the
+ * child exists. Only two evidence sources are allowed here, and neither is
+ * invented: the `description` the parent typed for the `subagent` call (a
+ * bracketed prefix such as `[review]`), and — when the prefix is absent — the
+ * agent that owns the child (athena plans, themis reviews, talos hotfixes,
+ * apollo scouts). `council` is the single exception: a round of specialists is
+ * a declared intent, not an agent identity, so it is *never* inferred from the
+ * agent. Every classification carries the `origin` of its evidence, and a child
+ * that cannot be correlated to a call degrades to `{ null, 'unavailable' }`
+ * instead of a guess. Pure. */
+
+export type DispatchKind = 'coun' | 'plan' | 'revw' | 'hot' | 'disc' | 'oth'
+export type DispatchKindOrigin = 'prefix' | 'agent' | 'unavailable'
+
+/** One classification plus the evidence that produced it. */
+export type DispatchKindLabel = { kind: DispatchKind | null; origin: DispatchKindOrigin }
+
+/** Bracketed description prefix → short label (`[council]` → `coun`). */
+const DISPATCH_PREFIX_KINDS: ReadonlyArray<readonly [string, DispatchKind]> = [
+  ['council', 'coun'],
+  ['discovery', 'disc'],
+  ['hotfix', 'hot'],
+  ['plan', 'plan'],
+  ['review', 'revw'],
+]
+
+/** Agent → kind, consulted only when the description declares no prefix.
+ *  `council` is deliberately absent — see the section comment. */
+const DISPATCH_AGENT_KINDS: Readonly<Record<string, DispatchKind>> = {
+  apollo: 'disc',
+  athena: 'plan',
+  talos: 'hot',
+  themis: 'revw',
+}
+
+/** Kind declared by a leading `[prefix]` on the description: case-insensitive
+ *  and tolerant of spaces inside the brackets. Null when none is declared. */
+export function dispatchKindFromPrefix(description: unknown): DispatchKind | null {
+  if (typeof description !== 'string') return null
+  const match = /^\s*\[\s*([a-z]+)\s*\]/i.exec(description)
+  if (match === null) return null
+  const token = (match[1] ?? '').toLowerCase()
+  for (const [word, kind] of DISPATCH_PREFIX_KINDS) {
+    if (word === token) return kind
+  }
+  return null
+}
+
+/** Kind implied by the child's agent, null for an agent that implies none. */
+export function dispatchKindFromAgent(agent: unknown): DispatchKind | null {
+  if (typeof agent !== 'string') return null
+  return DISPATCH_AGENT_KINDS[agent.trim().toLowerCase()] ?? null
+}
+
+/** Classify one dispatch. The description prefix always wins over the agent;
+ *  otherwise the agent decides, and anything else is `oth` (a real dispatch we
+ *  simply cannot name). A missing call is the only `unavailable` outcome. Pure. */
+export function classifyDispatchKind(
+  call: { description?: unknown; agent?: unknown } | null | undefined,
+): DispatchKindLabel {
+  if (call === null || call === undefined) return { kind: null, origin: 'unavailable' }
+  const fromPrefix = dispatchKindFromPrefix(call.description)
+  if (fromPrefix !== null) return { kind: fromPrefix, origin: 'prefix' }
+  return { kind: dispatchKindFromAgent(call.agent) ?? 'oth', origin: 'agent' }
+}
+
+/** A `subagent` tool call the parent made, as its own transcript records it. */
+export type SubagentCall = {
+  /** Child session id the call created — the correlation key. */
+  sessionID: string
+  agent: string
+  description: string
+  background: boolean
+}
+
+/** Host tool that spawns a child (2.x name; it is not `task`). */
+const SUBAGENT_TOOL = 'subagent'
+/** The tool result also names its child: `<subagent sessionID="ses_…" …>`. */
+const SUBAGENT_SESSION_PATTERN = /sessionID="([^"]+)"/
+
+/** Text of a tool `content` payload, joined; tolerant of the string form. */
+function toolContentText(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  const chunks: string[] = []
+  for (const part of content) {
+    const text = (part as { text?: unknown } | null | undefined)?.text
+    if (typeof text === 'string') chunks.push(text)
+  }
+  return chunks.join('\n')
+}
+
+/** Child session id of one `subagent` call: the exact `metadata.sessionID`
+ *  first, then an `output`/`result` id, then the `<subagent sessionID="…">` tag
+ *  in the result text. Null when the call has not produced a child yet. */
+function subagentSessionID(state: any): string | null {
+  const direct = [state?.metadata?.sessionID, state?.output?.sessionID, state?.result?.sessionID]
+  for (const candidate of direct) {
+    if (typeof candidate === 'string' && candidate !== '') return candidate
+  }
+  const match = SUBAGENT_SESSION_PATTERN.exec(toolContentText(state?.content))
+  return match?.[1] ?? null
+}
+
+/** Correlate the parent transcript's `subagent` calls with the children they
+ *  spawned: child session id → `{ agent, description, background }`. One pass
+ *  over the list the sidebar already holds — no request, no `message.sync` on
+ *  the child. `streaming`/`pending` states carry their input as *partial JSON
+ *  text*, so they are skipped rather than parsed. Fail-open: a malformed part
+ *  contributes nothing. Pure. */
+export function collectSubagentCalls(
+  messages: readonly any[] | null | undefined,
+): Map<string, SubagentCall> {
+  const calls = new Map<string, SubagentCall>()
+  if (!Array.isArray(messages)) return calls
+  for (const message of messages) {
+    if (message?.type !== 'assistant' || !Array.isArray(message.content)) continue
+    for (const part of message.content) {
+      if (part?.type !== 'tool' || part?.name !== SUBAGENT_TOOL) continue
+      const state = part.state
+      if (state === null || typeof state !== 'object') continue
+      if (state.status === 'streaming' || state.status === 'pending') continue
+      const sessionID = subagentSessionID(state)
+      if (!isValidSessionID(sessionID)) continue
+      const input =
+        state.input !== null && typeof state.input === 'object' ? (state.input as any) : {}
+      const agent = typeof input.agent === 'string' ? input.agent : ''
+      const description = typeof input.description === 'string' ? input.description : ''
+      calls.set(sessionID, {
+        sessionID,
+        agent,
+        description,
+        background: input.background === true,
+      })
+    }
+  }
+  return calls
+}
+
+/* ─── Delegation helpers ─────────────────────────────────── */
+
+export type DelegationState = 'running' | 'completed' | 'failed' | 'interrupted'
+export type DelegationTone = 'warning' | 'error' | 'success'
+
+/** Grace window for a child that has not started yet. 2.x's `session.status()`
+ *  returns `idle` both for "created but not started" and for "finished", so an
+ *  idle/unknown/absent child whose own last activity (`time.updated`, falling
+ *  back to `time.created`) is this recent still reads as running — otherwise a
+ *  just-spawned child renders a premature ✓. Trade-off (V1 parity: it had the
+ *  same window for its absent statuses): a child that finished within the window
+ *  and reports no `outcome` reads as running until the window closes, at which
+ *  point it turns terminal and its completion toast fires. A child that reports
+ *  a terminal `outcome` is never held back by the window. */
+export const DELEGATION_CHILD_STATUS_GRACE_MS = 60 * 1000
+
+/** One delegated child job as the sidebar renders it. */
+export type DelegationView = {
+  /** Child session id — also the click-through target. */
+  id: string
+  /** Alias shown on the row: the child title, else agent, else short id. */
+  label: string
+  state: DelegationState
+  /** Epoch ms of the child's `time.created`. */
+  startedAt: number | null
+  /** Epoch ms of the child's `time.updated`. */
+  updatedAt: number | null
+  /** Child agent id, when the host published one. */
+  agent: string | null
+  /** Resolved child model, shortened to its bare id. */
+  model: string | null
+  /** Real `SessionInfo.cost` for the child, null when the host published none. */
+  cost: number | null
+  /** Why the child exists — see `classifyDispatchKind`. Null when no `subagent`
+   *  call in the parent transcript could be correlated with this child. */
+  kind: DispatchKind | null
+  /** Which evidence produced `kind`. */
+  kindOrigin: DispatchKindOrigin
+  /** The parent asked for this child to run in the background. */
+  background: boolean
+}
+
+/** Map the host's live session status to a display state. 2.x exposes only
+ *  `"idle" | "running"` through the TUI context (the client union adds `retry`
+ *  and `busy`); `error`/`failed` are handled defensively for host drift.
+ *  `idle`, `retry` and unknown/absent statuses are terminal only once the
+ *  child's own activity is older than the grace window — within it the child
+ *  reads as running (see `DELEGATION_CHILD_STATUS_GRACE_MS`). An interruption is
+ *  not part of this union: it arrives as a terminal `outcome`. Pure. */
+export function delegationStateFromStatus(
   status: string | undefined,
   time?: { created?: number; updated?: number },
   now = Date.now(),
   graceMs = DELEGATION_CHILD_STATUS_GRACE_MS,
-): 'running' | 'completed' | 'retry' {
-  if (status === 'retry') return 'retry'
-  if (status === 'busy') {
-    // A stale "busy" in the status map means the child is likely dead, not
-    // running. The opencode status map may retain entries for sessions that
-    // have already terminated. Cross-check against the child's own activity
-    // timestamps: if the last activity is older than the stale-running
-    // threshold, treat the child as completed rather than propagating the
-    // stale busy status as "running" (the "213 children, all active" bug).
-    if (time) {
-      const lastActivity = Math.max(time.updated ?? 0, time.created ?? 0)
-      if (lastActivity > 0 && now - lastActivity > STALE_RUNNING_THRESHOLD_MS) return 'completed'
-    }
-    return 'running'
-  }
-  if (status !== undefined) return 'completed' // idle + any other explicit terminal
-  // Absent status: running only while the child's last activity is fresh.
-  const lastActivity = Math.max(time?.updated ?? 0, time?.created ?? 0)
-  if (lastActivity > 0 && now - lastActivity < graceMs) return 'running'
-  return 'completed'
-}
-
-/** Status-only row model: ONE glyph + ONE identity per row.
- *
- *  A row is
- *  `{glyph} {alias:7} {elapsed:>5}` plus a muted description line. The short
- *  alias (`apo-1`) is the single identity; rows without a report alias show
- *  the agent instead (never both). */
-export type DelegationRowStatus = 'active' | 'done' | 'failed' | 'retry'
-
-/** Map every FSM/display state to one of the 4 row kinds. reconciled never
- *  reaches the panel (the md parser drops it) but reads as done;
- *  cancelled reads as done; startup_failed reads as failed while
- *  startup_unknown (no error known) reads as retry. Pure. */
-export function delegationRowStatus(state: DelegationDisplayState): DelegationRowStatus {
-  switch (state) {
+): DelegationState {
+  switch (status) {
     case 'running':
-    case 'stale-running':
-      return 'active'
-    case 'retry':
-    case 'startup_unknown':
-      return 'retry'
-    case 'completed':
-    case 'cancelled':
-      return 'done'
+    case 'busy':
+      return 'running'
     case 'error':
-    case 'startup_failed':
+    case 'failed':
       return 'failed'
+    default: {
+      const lastActivity = Math.max(time?.updated ?? 0, time?.created ?? 0)
+      if (lastActivity > 0 && now - lastActivity < graceMs) return 'running'
+      return 'completed'
+    }
   }
 }
 
-/** The only 4 glyphs a row may show: animated active, done, failed, retry.
- *  Shape is redundant with color (never the only signal). Pure. */
-export const DELEGATION_ROW_GLYPHS: Readonly<Record<DelegationRowStatus, string>> = {
-  active: '⠋', // base frame of the animated spinner
-  done: '✓',
-  failed: '✕',
-  retry: '⟳',
-}
-
-export function delegationRowGlyph(status: DelegationRowStatus): string {
-  return DELEGATION_ROW_GLYPHS[status]
-}
-
-/** Row marker (`<glyph> `) — the single state channel. `active` animates
- *  through the spinner for the given frame counter (incremented every ~80ms);
- *  every other kind is static. Pure. */
-export function delegationRowMarker(state: DelegationDisplayState, frame = 0): string {
-  const status = delegationRowStatus(state)
-  const glyph = status === 'active' ? delegationSpinnerFrame(frame) : delegationRowGlyph(status)
-  return `${glyph} `
-}
-
-/** ONE identity per row: the short report alias (`apo-1`); a row without a
- *  report alias (native task() child `native-task` / `native-<id>`, or an
- *  alias-less native live row `live-<callID>` kept as children-only) shows
- *  the agent instead — never alias + agent stacked. Pure. */
-export function delegationRowIdentity(entry: DelegationEntry): string {
-  if (entry.agent === '') return entry.alias
-  if (entry.alias === 'native-task' || entry.alias.startsWith('native-')) return entry.agent
-  if (entry.alias.startsWith('live-') && entry.source === 'children-only') return entry.agent
-  return entry.alias
-}
-
-/** Fixed alias cell, pad-right + hard-truncate to `width` (default 7) so
- *  identities line up across rows. Pure. */
-export const DELEGATION_ALIAS_WIDTH = 7
-
-export function formatDelegationAlias(identity: string, width = DELEGATION_ALIAS_WIDTH): string {
-  if (identity.length >= width) return identity.slice(0, width)
-  return `${identity}${' '.repeat(width - identity.length)}`
-}
-
-/** Max description width on the row detail line — the old 180-char slice
- *  wrapped the sidebar; 44 keeps one readable line. */
-export const DELEGATION_DESCRIPTION_MAX = 44
-
-/** Lazily-built grapheme segmenter. `Intl.Segmenter` keeps ZWJ emoji families
- *  (and skin-tone/variation sequences) intact; `Array.from` (code points) is
- *  the fallback for runtimes without it. */
-let graphemeSegmenter: Intl.Segmenter | undefined
-
-/** Split `text` into display graphemes so truncation never cuts a multi-unit
- *  emoji in half (surrogate pair → mojibake). */
-function splitGraphemes(text: string): string[] {
-  if (typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function') {
-    graphemeSegmenter ??= new Intl.Segmenter('pt', { granularity: 'grapheme' })
-    return Array.from(graphemeSegmenter.segment(text), (s) => s.segment)
+/** Map a 2.x child `outcome` to a display state. `interrupted` (user abort,
+ *  shutdown, superseded, inactivity) is distinct from both success and failure,
+ *  so an aborted child never renders the ✓ of a completed one. Returns null for
+ *  an absent/unrecognised outcome so the live status decides. Pure. */
+export function delegationStateFromOutcome(outcome: unknown): DelegationState | null {
+  switch (outcome) {
+    case 'succeeded':
+      return 'completed'
+    case 'failed':
+      return 'failed'
+    case 'interrupted':
+      return 'interrupted'
+    default:
+      return null
   }
-  return Array.from(text)
 }
 
-/** Truncate a description to `max` graphemes appending `…` when cut. Exact
- *  `max`-length text is left untouched. Grapheme-granular, so an emoji made of
- *  several code points is never split into mojibake at the boundary. Pure. */
-export function truncateDelegationDescription(
-  text: string,
-  max = DELEGATION_DESCRIPTION_MAX,
+/** Build a delegation row from a child session + its live status, plus the
+ *  `subagent` call that spawned it (when the parent transcript had one). A
+ *  terminal `outcome` wins when present (the only 2.x primitive that surfaces a
+ *  delegation failure/interruption once the status is back to idle); otherwise
+ *  the live status decides, with the absent/idle grace window applied. The
+ *  `call` only ever *adds* the purpose and the background flag — an absent one
+ *  leaves the row fully renderable. Pure. */
+export function toDelegationView(
+  child: any,
+  status: string | undefined,
+  now = Date.now(),
+  call?: SubagentCall | null,
+): DelegationView {
+  const id = typeof child?.id === 'string' ? child.id : ''
+  const title = typeof child?.title === 'string' && child.title !== '' ? child.title : ''
+  const agent = typeof child?.agent === 'string' && child.agent !== '' ? child.agent : ''
+  const label = title !== '' ? title : agent !== '' ? agent : id.slice(0, 8)
+  const state: DelegationState =
+    delegationStateFromOutcome(child?.outcome) ??
+    delegationStateFromStatus(status, child?.time, now)
+  const classification = classifyDispatchKind(call)
+  return {
+    id,
+    label,
+    state,
+    startedAt: numberOrNull(child?.time?.created),
+    updatedAt: numberOrNull(child?.time?.updated),
+    agent: agent !== '' ? agent : null,
+    model: shortModelID(child?.model),
+    cost: numberOrNull(child?.cost),
+    kind: classification.kind,
+    kindOrigin: classification.origin,
+    background: call?.background === true,
+  }
+}
+
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const
+
+/** Spinner glyph for a frame counter (incremented every ~80ms while any job is
+ *  running). Pure. */
+export function spinnerFrame(frame: number): string {
+  const index = Math.abs(Math.floor(frame)) % SPINNER_FRAMES.length
+  return SPINNER_FRAMES[index] ?? SPINNER_FRAMES[0]
+}
+
+/** Shared order: live work first, then most recent activity. One comparator for
+ *  every consumer of the dispatch tree (sidebar block and panel list), so the
+ *  two views can never disagree about which child comes first. Pure. */
+function compareDelegations(a: DelegationView, b: DelegationView): number {
+  const activeA = a.state === 'running' ? 1 : 0
+  const activeB = b.state === 'running' ? 1 : 0
+  if (activeA !== activeB) return activeB - activeA
+  return (b.updatedAt ?? 0) - (a.updatedAt ?? 0)
+}
+
+/* ─── Dispatch collector (shared) ─────────────────────────
+ * The single source of the delegation tree: the sidebar block and the
+ * `pantheon.dispatch` panel both render `collectDispatch` output, so a child
+ * can never appear twice under two different semantics — the duplication bug
+ * the two-collector design had. It reads only state the host already cached:
+ * `session.family` for the id set, `session.get` per child, `session.status`
+ * for liveness, and the parent's own `message.list` for the `subagent` calls
+ * that explain each child. Never a child `message.list`, never `message.sync`,
+ * never an HTTP call. */
+
+/** Token totals published on `SessionInfo.tokens`, one entry per counter. */
+export type DispatchTokens = {
+  input: number | null
+  output: number | null
+  reasoning: number | null
+  cacheRead: number | null
+  cacheWrite: number | null
+}
+
+/** One child of the dispatch tree: the delegation row plus the fields only the
+ *  panel's detail view needs (`SessionInfo.title`/`parentID`/`tokens` and the
+ *  spawning call's description). */
+export type DispatchEntry = {
+  view: DelegationView
+  title: string | null
+  description: string | null
+  parentID: string | null
+  tokens: DispatchTokens | null
+}
+
+/** Optional inputs of `collectDispatch`: a fixed clock (tests/render ticks) and
+ *  an already-computed `agent` map, so a caller that walked the parent
+ *  transcript anyway never pays for a second walk. */
+export type CollectDispatchOptions = {
+  now?: number
+  calls?: Map<string, SubagentCall>
+}
+
+/** `message.list` of one session, degrades to an empty list. The host's list is
+ *  a cached directory read, not a request. */
+function readSessionMessages(context: any, sessionID: string): any[] {
+  try {
+    const result = context?.data?.session?.message?.list?.(sessionID)
+    return Array.isArray(result) ? result : []
+  } catch {
+    return []
+  }
+}
+
+/** Token counters of a child, null when the host published none of them. Pure. */
+export function dispatchTokens(tokens: unknown): DispatchTokens | null {
+  if (tokens === null || typeof tokens !== 'object') return null
+  const source = tokens as Record<string, unknown>
+  const cache =
+    source.cache !== null && typeof source.cache === 'object'
+      ? (source.cache as Record<string, unknown>)
+      : {}
+  const totals: DispatchTokens = {
+    input: numberOrNull(source.input),
+    output: numberOrNull(source.output),
+    reasoning: numberOrNull(source.reasoning),
+    cacheRead: numberOrNull(cache.read),
+    cacheWrite: numberOrNull(cache.write),
+  }
+  const values = [
+    totals.input,
+    totals.output,
+    totals.reasoning,
+    totals.cacheRead,
+    totals.cacheWrite,
+  ]
+  return values.every((value) => value === null) ? null : totals
+}
+
+/** One child `SessionInfo` + its live status → `DispatchEntry`. The call only
+ *  ever adds the kind and the description; an absent one leaves the entry fully
+ *  renderable. Pure. */
+export function toDispatchEntry(
+  child: any,
+  status: string | undefined,
+  now = Date.now(),
+  call?: SubagentCall | null,
+): DispatchEntry {
+  const title = typeof child?.title === 'string' && child.title !== '' ? child.title : null
+  const parentID =
+    typeof child?.parentID === 'string' && child.parentID !== '' ? child.parentID : null
+  const description =
+    typeof call?.description === 'string' && call.description !== '' ? call.description : null
+  return {
+    view: toDelegationView(child, status, now, call),
+    title,
+    description,
+    parentID,
+    tokens: dispatchTokens(child?.tokens),
+  }
+}
+
+/** The delegation tree of `sessionID` — every child `session.family` returns,
+ *  root excluded, each enriched from `session.get`/`session.status` and the
+ *  parent's `subagent` calls. Empty when the family API is unavailable or the
+ *  session id is not a real handle (never falls back to the root). Ordered by
+ *  the shared `compareDelegations`, so callers render the same list in the same
+ *  order. A family that repeats an id yields one row per child: the id is
+ *  deduplicated before the walk, so a duplicate can never double a row or its
+ *  cost. */
+export function collectDispatch(
+  context: any,
+  sessionID: string | undefined,
+  options: CollectDispatchOptions = {},
+): DispatchEntry[] {
+  if (!isValidSessionID(sessionID)) return []
+  let family: string[] = []
+  try {
+    const result = context?.data?.session?.family?.(sessionID)
+    if (Array.isArray(result)) family = result
+  } catch {
+    return []
+  }
+  const now = numberOrNull(options.now) ?? Date.now()
+  const calls = options.calls ?? collectSubagentCalls(readSessionMessages(context, sessionID))
+  const entries: DispatchEntry[] = []
+  // A host may publish the same child more than once (`family()` is not
+  // guaranteed unique). Deduplicate by id, preserving the host's order, so a
+  // repeated id never renders two rows nor counts its cost twice.
+  const seen = new Set<string>()
+  for (const childID of family) {
+    if (childID === sessionID || !isValidSessionID(childID)) continue
+    if (seen.has(childID)) continue
+    seen.add(childID)
+    let child: any
+    try {
+      child = context.data.session.get(childID)
+    } catch {
+      continue
+    }
+    if (!child) continue
+    entries.push(
+      toDispatchEntry(child, sessionStatusOf(context, childID), now, calls.get(childID) ?? null),
+    )
+  }
+  return entries.sort((a, b) => compareDelegations(a.view, b.view))
+}
+
+/* ─── Block layout ───────────────────────────────────────── */
+
+/** Sidebar blocks in render order. Spacing is derived from this list instead of
+ *  from the view, so a hidden block can never leave an empty gap behind. */
+export type SidebarBlockKey = 'context' | 'git' | 'todo' | 'dispatch'
+
+/** One rendered block: its key, and whether a blank line precedes it. */
+export type SidebarBlock = { key: SidebarBlockKey; spacer: boolean }
+
+/** Header glyph per block — one codepoint each, rendered muted before the bold
+ *  label. The fixed header (version/preset/session) takes none.
+ *  Measured as one terminal cell by the host (`@opentui/core` counts
+ *  `emoji-regex` matches as two): ▤ U+25A4 (EAW=A), ◆ U+25C6 (A), ▾ U+25BE (N),
+ *  ◈ U+25C8 (A). `☑` U+2611 was rejected for the Todo header because it matches
+ *  `emoji-regex` and would occupy two cells; `⌁` U+2301 (the old Dispatch glyph)
+ *  was replaced by the host's own Notice glyph. */
+export const BLOCK_ICONS: Record<SidebarBlockKey, string> = {
+  context: '\u25A4',
+  git: '\u25C6',
+  todo: '\u25BE',
+  dispatch: '\u25C8',
+}
+
+/** Tag every block that has content with its spacer: never before the first
+ *  (the view puts a single blank line after the fixed header instead), one
+ *  blank line before every later block. A repeated key collapses instead of
+ *  stacking spacers, so an absent optional block can never leave a double gap.
+ *  Pure. */
+export function withBlockSpacers(keys: readonly SidebarBlockKey[]): SidebarBlock[] {
+  const seen = new Set<SidebarBlockKey>()
+  const blocks: SidebarBlock[] = []
+  for (const key of keys) {
+    if (seen.has(key)) continue
+    seen.add(key)
+    blocks.push({ key, spacer: blocks.length > 0 })
+  }
+  return blocks
+}
+
+/* ─── Dispatch block ──────────────────────────────────────
+ * One block for the whole child set, in two sections: the live jobs one row
+ * each, then the finished ones aggregated per agent. A per-session list cannot
+ * survive a wide fan-out (71 children would either scroll the sidebar or hide
+ * most of them behind `… +66`), while a per-agent rollup keeps the count, the
+ * spend and the failures readable in a handful of rows. */
+
+/** Live children rendered one row each; the rest collapse into `… +N rodando`. */
+export const DISPATCH_RUNNING_CEILING = 3
+/** Agent rollup rows rendered before the `… +K  $<soma>` line. */
+export const DISPATCH_AGENT_CEILING = 3
+/** Hard cap on the block's rendered rows, header included. The sidebar is
+ *  short; live work is served first, then the finished rollup. */
+export const DISPATCH_MAX_LINES = 8
+/** Marker of the aggregated "finished" section. */
+export const DISPATCH_DONE_MARKER = '\u2713'
+/** Column width of the agent (or of its title/id fallback). */
+export const DISPATCH_AGENT_WIDTH = 12
+/** Narrowest agent column a row may fall back to before the cost is kept whole
+ *  and the label truncates further. */
+export const DISPATCH_MIN_AGENT_WIDTH = 8
+/** Column width of the short model id — the model is dropped before the agent
+ *  or the cost so a row always fits. */
+export const DISPATCH_MODEL_WIDTH = 7
+/** Column width of the per-dispatch cost (`$0.04`; a sub-cent cost widens it). */
+export const DISPATCH_COST_WIDTH = 5
+/** Column width of the duration (`12.7s` / `1m04s` / `820ms`). */
+export const DISPATCH_DURATION_WIDTH = 5
+/** Column width of the `×<count>` cell of an agent rollup row. */
+export const DISPATCH_COUNT_WIDTH = 3
+/** Column width of an agent rollup cost (`$0.0051` still fits). */
+export const DISPATCH_GROUP_COST_WIDTH = 7
+/** Hard column budget for one row — a Dispatch line never wraps:
+ *  marker(2) + agent(12) + model(7) + cost(5) + duration(5) + 3 spaces = 34.
+ *  The kind suffix (`·disc`, `·disc~`) is wider evidence than the model, so a
+ *  classified row spends the model's columns first: marker(2) + agent(≤12) +
+ *  suffix(≤6) + cost(5) + duration(5) + 2 spaces ≤ 32, still inside 34. */
+export const DISPATCH_MAX_WIDTH = 34
+
+/** Middle dot used between a label and its kind (`apollo·disc`). */
+const DISPATCH_KIND_SEPARATOR = '\u00B7'
+/** Background marker: the parent asked the child to run in the background. */
+const DISPATCH_BACKGROUND_MARKER = '~'
+
+/** Kind suffix glued to a row's label: `·disc`, `·disc~` for a background run,
+ *  and empty when the child could not be classified (the row then reads exactly
+ *  as before). Pure. */
+export function dispatchKindSuffix(
+  kind: DispatchKind | null | undefined,
+  background?: boolean,
 ): string {
-  const graphemes = splitGraphemes(text)
-  if (graphemes.length <= max) return text
-  return `${graphemes.slice(0, Math.max(0, max - 1)).join('')}\u2026`
+  if (kind === null || kind === undefined) return ''
+  const text = `${DISPATCH_KIND_SEPARATOR}${kind}`
+  return background === true ? `${text}${DISPATCH_BACKGROUND_MARKER}` : text
 }
 
-/** Fixed elapsed-time box: right-aligned to `width` (default 5) so elapsed
- *  values line up across rows, e.g. `  12s`. A label that already fills
- *  the box is returned untouched. Pure. */
-export const DELEGATION_ELAPSED_WIDTH = 5
+/** Header summary: `2 rodando · $3.49`. The live count is omitted when nothing
+ *  runs, and the total spend is always printed (the header only renders while
+ *  the tree has children, so `$0.00` is a real answer). Pure. */
+export function dispatchHeaderSummary(
+  running: number | null | undefined,
+  cost: number | null | undefined,
+): string | null {
+  const parts: string[] = []
+  const live = numberOrNull(running) ?? 0
+  if (live > 0) parts.push(`${Math.round(live)} rodando`)
+  const formatted = formatSpendUSD(numberOrNull(cost) ?? 0)
+  if (formatted !== null) parts.push(formatted)
+  return parts.length === 0 ? null : parts.join(SPEND_LINE_SEPARATOR)
+}
 
-export function formatDelegationElapsed(
-  entry: DelegationEntry,
-  now: number,
-  width = DELEGATION_ELAPSED_WIDTH,
+/** Compact duration without an internal space: `820` → `820ms`, `12_400` →
+ *  `12.4s`, `64_000` → `1m04s`, `3_780_000` → `1h03m`, `172_800_000` → `2d`.
+ *  An absent or negative value renders an em dash, never `NaN`s. Pure. */
+export function formatDispatchDuration(ms: number | null | undefined): string {
+  const value = numberOrNull(ms)
+  if (value === null || value < 0) return '\u2014'
+  if (value < 1_000) return `${Math.round(value)}ms`
+  const seconds = value / 1000
+  if (seconds < 59.95) return `${seconds.toFixed(1)}s`
+  const total = Math.round(seconds)
+  const hours = Math.floor(total / 3_600)
+  const minutes = Math.floor((total % 3_600) / 60)
+  if (hours >= 24) return `${Math.floor(hours / 24)}d`
+  if (hours > 0) return `${hours}h${String(minutes).padStart(2, '0')}m`
+  return `${minutes}m${String(total % 60).padStart(2, '0')}s`
+}
+
+/** Elapsed label for one row: a live child measures `now - created`, a finished
+ *  one freezes at `updated - created` (em dash when a timestamp is missing).
+ *  Pure. */
+export function dispatchElapsed(view: DelegationView, now = Date.now()): string {
+  if (view.startedAt === null) return '\u2014'
+  if (view.state === 'running') return formatDispatchDuration(now - view.startedAt)
+  if (view.updatedAt === null) return '\u2014'
+  return formatDispatchDuration(view.updatedAt - view.startedAt)
+}
+
+/** Name column: the agent when the host published one, else the child title,
+ *  else the short id — never `undefined`. Truncated to the column width. Pure. */
+export function dispatchAgentText(
+  view: Pick<DelegationView, 'agent' | 'label' | 'id'>,
+  max = DISPATCH_AGENT_WIDTH,
 ): string {
-  const label = delegationElapsed(entry, now)
-  if (label.length >= width) return label
-  return `${' '.repeat(width - label.length)}${label}`
+  const agent = typeof view.agent === 'string' ? view.agent.trim() : ''
+  const label = typeof view.label === 'string' ? view.label.trim() : ''
+  const id = typeof view.id === 'string' ? view.id.trim() : ''
+  const name = agent !== '' ? agent : label !== '' ? label : id
+  return name === '' ? '\u2014' : truncateLabel(name, max)
 }
 
-/** Colored left half of a row line: `<marker><alias:7> ` — the state glyph
- *  plus the single identity, padded so the muted elapsed column aligns. The
- *  row renders this colored lead separately from the muted elapsed tail. Pure. */
-export function formatDelegationRowLead(entry: DelegationEntry, marker: string): string {
-  return `${marker}${formatDelegationAlias(delegationRowIdentity(entry))} `
+/** Model column, empty when the host published none. Pure. */
+export function dispatchModelText(view: Pick<DelegationView, 'model'>): string {
+  const model = typeof view.model === 'string' ? view.model.trim() : ''
+  return model === '' ? '' : truncateLabel(model, DISPATCH_MODEL_WIDTH)
 }
 
-// Tree connectors (`isNestedDelegation` / `delegationTreePrefix`) were removed
-// as dead code: `session.children` returns direct children only, so no row is
-// ever actually nested and the connectors were never populated in production.
-// BACKLOG: produce real grandchild rows first, then reintroduce them.
+/** Cost column: the child's real `SessionInfo.cost` with two decimals (up to
+ *  four below a cent, so `$0.0031` never collapses to `$0.00`), `$0.00` for a
+ *  zero cost, and an em dash when the host published no numeric cost. Pure. */
+export function formatDispatchCost(cost: number | null | undefined): string {
+  return formatUsageCost(cost) ?? '\u2014'
+}
 
-/** Visible-row ceiling for the panel: the remainder collapses into a single
- *  "… +N more" line. Live rows render first, so a running job is never hidden
- *  by the cap. */
-export const DELEGATION_VISIBLE_CEILING = 8
+/** Total spend of every child (live + finished), `0` when none published a
+ *  numeric cost. Pure. */
+export function dispatchTotalCost(views: readonly DelegationView[]): number {
+  let total = 0
+  for (const view of views ?? []) {
+    const cost = numberOrNull(view?.cost)
+    if (cost !== null && cost >= 0) total += cost
+  }
+  return total
+}
 
-/** Header summary: `(N active · M done)` plus `· K failed` only when K > 0.
- *  Active counts running/retry AND display-only stale-running (a stale row is
- *  still a live job — it must never read as done); failed counts
- *  error/startup_failed; cancelled reads as done. Pure. */
-export function formatDelegationHeader(entries: readonly DelegationEntry[]): string {
-  let active = 0
-  let done = 0
+/** One live child: `⠸ <agent 12>·<kind> <custo> <duração>`, with the model as a
+ *  fourth column only when the row still fits and the child is unclassified —
+ *  the kind is the stronger evidence at this width, so it takes the model's
+ *  columns. The kind rides glued to the label (never a column of its own) and
+ *  disappears with the label's truncation; then the agent column shrinks (never
+ *  below `DISPATCH_MIN_AGENT_WIDTH`); the cost is always present — `$0.00` for a
+ *  zero cost, an em dash for a missing one. Pure. */
+export function runningChildRowText(
+  view: DelegationView,
+  now = Date.now(),
+  frame = 0,
+  max = DISPATCH_MAX_WIDTH,
+): string {
+  const marker = `${spinnerFrame(frame)} `
+  const duration = dispatchElapsed(view, now).padStart(DISPATCH_DURATION_WIDTH)
+  const cost = formatDispatchCost(view.cost).padStart(DISPATCH_COST_WIDTH)
+  const model = dispatchModelText(view)
+  const suffix = dispatchKindSuffix(view.kind, view.background)
+  const limit = Math.max(1, max)
+  const row = (agentWidth: number, withModel: boolean, withSuffix = true): string => {
+    const kind = withSuffix ? suffix : ''
+    const name = dispatchAgentText(view, agentWidth)
+    // The kind rides glued to the label and never becomes a column of its own:
+    // an unclassified row keeps the fixed 12-column label cell byte-for-byte.
+    const cell = kind === '' ? name.padEnd(agentWidth) : `${name}${kind}`
+    const tail = withModel
+      ? `${model.padEnd(DISPATCH_MODEL_WIDTH)} ${cost} ${duration}`
+      : `${cost} ${duration}`
+    return `${marker}${cell} ${tail}`
+  }
+  if (model !== '' && suffix === '') {
+    const withModel = row(DISPATCH_AGENT_WIDTH, true)
+    if (withModel.length <= limit) return withModel
+  }
+  const full = row(DISPATCH_AGENT_WIDTH, false)
+  if (full.length <= limit) return full
+  for (let width = DISPATCH_AGENT_WIDTH - 1; width >= DISPATCH_MIN_AGENT_WIDTH; width -= 1) {
+    const narrowed = row(width, false)
+    if (narrowed.length <= limit) return narrowed
+  }
+  // The kind is evidence, the cost is the point: on a budget too narrow even for
+  // the minimum agent column, the suffix yields before the row overflows.
+  if (suffix !== '') return row(DISPATCH_MIN_AGENT_WIDTH, false, false)
+  return row(DISPATCH_MIN_AGENT_WIDTH, false)
+}
+
+/** Sessions and spend attributed to one agent in the finished section. `kind`
+ *  is only set when every finished session of the group agrees on it — a mixed
+ *  group carries no single purpose, so the row omits it rather than picking one.
+ *  `background` follows the same rule (all of them background). */
+export type ChildAgentUsage = {
+  agent: string
+  count: number
+  cost: number
+  kind: DispatchKind | null
+  background: boolean
+}
+
+/** Rollup of the finished children by agent: `×count` sessions and the summed
+ *  `SessionInfo.cost`. Failed and interrupted children are included (they are
+ *  finished); running ones are not. The group's kind survives only when the
+ *  whole group agrees, so an aggregate row never claims a purpose it cannot
+ *  prove. Ordered by cost, then count, then name. Pure. */
+export function collectChildAgentUsage(views: readonly DelegationView[]): ChildAgentUsage[] {
+  type Accumulated = {
+    agent: string
+    count: number
+    cost: number
+    kinds: Set<DispatchKind | null>
+    background: boolean
+  }
+  const totals = new Map<string, Accumulated>()
+  for (const view of views ?? []) {
+    if (!view || view.state === 'running') continue
+    const agent = agentKey(view.agent)
+    const current = totals.get(agent) ?? {
+      agent,
+      count: 0,
+      cost: 0,
+      kinds: new Set<DispatchKind | null>(),
+      background: true,
+    }
+    current.count += 1
+    current.kinds.add(view.kind ?? null)
+    if (view.background !== true) current.background = false
+    const cost = numberOrNull(view.cost)
+    if (cost !== null && cost >= 0) current.cost += cost
+    totals.set(agent, current)
+  }
+  return [...totals.values()]
+    .map((entry) => {
+      const shared = entry.kinds.size === 1 ? ([...entry.kinds][0] ?? null) : null
+      return {
+        agent: entry.agent,
+        count: entry.count,
+        cost: entry.cost,
+        kind: shared,
+        background: entry.background,
+      }
+    })
+    .sort((a, b) => b.cost - a.cost || b.count - a.count || a.agent.localeCompare(b.agent))
+}
+
+/** One agent rollup row: `<agent 12> ×<count 3>·<kind> <custo 7>`. The kind is
+ *  glued to the count (the row's only label) and omitted for a mixed group; the
+ *  agent column shrinks (never below the minimum) before the cost, which is
+ *  what the row is for. Pure. */
+export function childAgentRowText(row: ChildAgentUsage, max = DISPATCH_MAX_WIDTH): string {
+  const suffix = dispatchKindSuffix(row?.kind, row?.background)
+  const count = `\u00D7${String(Math.max(0, Math.round(numberOrNull(row?.count) ?? 0))).padStart(
+    DISPATCH_COUNT_WIDTH,
+  )}`
+  const cost = formatDispatchCost(row?.cost).padStart(DISPATCH_GROUP_COST_WIDTH)
+  const limit = Math.max(1, max)
+  const text = (agentWidth: number, withSuffix = true): string => {
+    const kind = withSuffix ? suffix : ''
+    return `${truncateLabel(agentKey(row?.agent), agentWidth).padEnd(agentWidth)} ${count}${kind} ${cost}`
+  }
+  const full = text(DISPATCH_AGENT_WIDTH)
+  if (full.length <= limit) return full
+  for (let width = DISPATCH_AGENT_WIDTH - 1; width >= DISPATCH_MIN_AGENT_WIDTH; width -= 1) {
+    const narrowed = text(width)
+    if (narrowed.length <= limit) return narrowed
+  }
+  // Same rule as a live row: the kind yields before the row overflows.
+  if (suffix !== '') return text(DISPATCH_MIN_AGENT_WIDTH, false)
+  return text(DISPATCH_MIN_AGENT_WIDTH)
+}
+
+/** The `… +K  $<soma>` line for agents beyond the rollup cap. Null when every
+ *  agent fits. Pure. */
+export function hiddenChildAgentsText(hidden: number, hiddenCost: number): string | null {
+  const count = numberOrNull(hidden) ?? 0
+  if (count <= 0) return null
+  const cost = formatSpendUSD(numberOrNull(hiddenCost) ?? 0)
+  return cost === null ? `\u2026 +${Math.round(count)}` : `\u2026 +${Math.round(count)}  ${cost}`
+}
+
+/** Summary of the finished section: `✓ 70 · $3.40 · 9 agentes`. `· $<soma>` is
+ *  omitted when nothing was spent and `· 1 agente` when a single agent owns
+ *  every finished child; `✓ <total>` always prints. Null when nothing finished.
+ *  Pure. */
+export function completedSummaryText(
+  completed: number | null | undefined,
+  cost: number | null | undefined,
+  agents: number | null | undefined,
+): string | null {
+  const total = numberOrNull(completed) ?? 0
+  if (total <= 0) return null
+  const parts = [`${DISPATCH_DONE_MARKER} ${Math.round(total)}`]
+  const spend = numberOrNull(cost) ?? 0
+  if (spend > 0) {
+    const formatted = formatSpendUSD(spend)
+    if (formatted !== null) parts.push(formatted)
+  }
+  const groups = Math.round(numberOrNull(agents) ?? 0)
+  if (groups > 1) parts.push(`${groups} agentes`)
+  return parts.join(SPEND_LINE_SEPARATOR)
+}
+
+/** The `· <F> falhas` suffix of the finished summary, null when nothing failed.
+ *  Pure. */
+export function failedSuffixText(failures: number | null | undefined): string | null {
+  const count = numberOrNull(failures) ?? 0
+  if (count <= 0) return null
+  const rounded = Math.round(count)
+  return `${rounded} ${rounded === 1 ? 'falha' : 'falhas'}`
+}
+
+/** One rendered live row: its text plus the session it navigates to. */
+export type DispatchRunningLine = { id: string; text: string }
+
+/** Everything the `Dispatch` block renders, already joined and capped. */
+export type DispatchBlockView = {
+  runningCount: number
+  completedCount: number
+  agentCount: number
+  failures: number
+  totalCost: number
+  running: DispatchRunningLine[]
+  runningHidden: number
+  summary: string | null
+  agents: ChildAgentUsage[]
+  agentsHidden: number
+  agentsHiddenCost: number
+}
+
+/** Newest activity first, so the live rows that just moved lead the section.
+ *  Pure. */
+function lastActivity(view: DelegationView): number {
+  return Math.max(numberOrNull(view?.updatedAt) ?? 0, numberOrNull(view?.startedAt) ?? 0)
+}
+
+/** Build the whole block from the child set. Null when there is no child, so
+ *  the block (and its spacer) never renders empty. Live work is capped at
+ *  `DISPATCH_RUNNING_CEILING` and the finished rollup at
+ *  `DISPATCH_AGENT_CEILING`, with the rollup giving up rows first to keep the
+ *  block inside `DISPATCH_MAX_LINES`. Pure. */
+export function buildDispatchBlock(
+  views: readonly DelegationView[],
+  now = Date.now(),
+  frame = 0,
+  max = DISPATCH_MAX_WIDTH,
+): DispatchBlockView | null {
+  const list = Array.isArray(views)
+    ? views.filter((view) => view && typeof view.id === 'string')
+    : []
+  if (list.length === 0) return null
+
+  const running = list
+    .filter((view) => view.state === 'running')
+    .sort((a, b) => lastActivity(b) - lastActivity(a))
+  const finished = list.filter((view) => view.state !== 'running')
+  const groups = collectChildAgentUsage(finished)
+  const finishedCost = groups.reduce((sum, group) => sum + group.cost, 0)
+  const failures = finished.filter((view) => view.state === 'failed').length
+  const totalCost = dispatchTotalCost(list)
+
+  const runningSlots = Math.min(DISPATCH_RUNNING_CEILING, running.length)
+  const runningHidden = running.length - runningSlots
+  const runningLines = running.map((view) => ({
+    id: view.id,
+    text: runningChildRowText(view, now, frame, max),
+  }))
+  const summary = completedSummaryText(finished.length, finishedCost, groups.length)
+
+  // Budget: header + live section + summary + rollup. The rollup yields first,
+  // and its own `… +K` line is reserved before any agent row is granted, so the
+  // block can never exceed `DISPATCH_MAX_LINES`.
+  const runningRows = runningSlots + (runningHidden > 0 ? 1 : 0)
+  const room = Math.max(0, DISPATCH_MAX_LINES - 1 - runningRows - (summary === null ? 0 : 1))
+  const wanted = Math.min(DISPATCH_AGENT_CEILING, groups.length)
+  const agentSlots =
+    groups.length > wanted ? Math.min(wanted, Math.max(0, room - 1)) : Math.min(wanted, room)
+  const visibleAgents = groups.slice(0, agentSlots)
+  const hiddenAgents = groups.slice(agentSlots)
+
+  return {
+    runningCount: running.length,
+    completedCount: finished.length,
+    agentCount: groups.length,
+    failures,
+    totalCost,
+    running: runningLines.slice(0, runningSlots),
+    runningHidden,
+    summary,
+    agents: visibleAgents,
+    agentsHidden: hiddenAgents.length,
+    agentsHiddenCost: hiddenAgents.reduce((sum, group) => sum + group.cost, 0),
+  }
+}
+
+/* ─── Dispatch panel ──────────────────────────────────────
+ * The `pantheon.dispatch` panel is the full-width counterpart of the sidebar
+ * block: one row per child session (not per agent), the header counters of the
+ * whole tree and a detail column for the selected child. It renders
+ * `collectDispatch` output — the same collector the sidebar block consumes — so
+ * a child can never be listed twice or described two different ways.
+ *
+ * Everything below is pure until `createDispatchPanelModel`: row/header/detail
+ * text is computed without a renderer, and the model owns only the signals the
+ * view needs (selection by id, viewport, expansion, spinner frame). */
+
+/** Panel content name, registered by the `session.panel` claim and passed to
+ *  `ui.panel.open`. */
+export const DISPATCH_PANEL_NAME = 'pantheon.dispatch'
+/** Toast shown when `ui.panel.open` refuses (no session route is active). The
+ *  panel only exists inside a session, so there is no alternative route. */
+export const DISPATCH_PANEL_TOAST = 'Abra uma sessão para ver o Dispatch'
+/** Panel title marker — the same glyph the sidebar block header uses. */
+export const DISPATCH_PANEL_HEADER_MARKER = '\u25C8'
+/** Selected-row gutter marker (`▸`, one cell). */
+export const DISPATCH_PANEL_SELECTION_MARKER = '\u25B8'
+/** Cells the selection gutter occupies before a row's own text. */
+export const DISPATCH_PANEL_SELECTION_GUTTER = 2
+/** Column of the horizontal rule under the header. */
+export const DISPATCH_PANEL_RULE_CHAR = '\u2500'
+/** Em dash for any datum the host did not publish. */
+export const DISPATCH_PANEL_DASH = '\u2014'
+/** Body of an empty panel (the claim still renders, the list is just empty). */
+export const DISPATCH_PANEL_EMPTY_TEXT = 'Nenhuma sessão delegada'
+/** Width at or above which the list and the detail sit side by side. */
+export const DISPATCH_PANEL_WIDE_MIN_WIDTH = 72
+/** Rows the viewport holds; pageup/pagedown move by exactly this many rows. */
+export const DISPATCH_PANEL_PAGE_SIZE = 10
+/** Panel row columns: marker(2) + agent(12) + kind(4) + cost(≥7) + duration(8).
+ *  The cost column is at least this wide; a sub-cent cost widens it per row. */
+export const DISPATCH_PANEL_AGENT_WIDTH = 12
+export const DISPATCH_PANEL_MIN_AGENT_WIDTH = 6
+export const DISPATCH_PANEL_KIND_WIDTH = 4
+export const DISPATCH_PANEL_COST_WIDTH = 7
+export const DISPATCH_PANEL_DURATION_WIDTH = 8
+/** Title column budget (`◈ Dispatch — <sessão>`). */
+export const DISPATCH_PANEL_TITLE_WIDTH = 44
+/** Badge appended to the title while the host presents the panel full screen. */
+export const DISPATCH_PANEL_FULLSCREEN_BADGE = '[fullscreen]'
+/** Columns a row spends before the agent cell, cost column excluded
+ *  (2 marker + 1 + 4 kind + 1 + 8 duration). The cost is measured per row
+ *  because `<$0.0001` is one cell wider than `DISPATCH_PANEL_COST_WIDTH`. */
+const DISPATCH_PANEL_ROW_FIXED_WIDTH = 16
+
+/** Human labels of a kind's evidence, as the detail line prints them. */
+export const DISPATCH_KIND_ORIGIN_LABELS: Readonly<Record<DispatchKindOrigin, string>> = {
+  prefix: 'prefixo',
+  agent: 'agente',
+  unavailable: 'indisponível',
+}
+
+/** Entries in row order: live work first, then most recent activity — the same
+ *  comparator the sidebar block uses. Pure. */
+export function orderDispatchEntries(entries: readonly DispatchEntry[]): DispatchEntry[] {
+  return [...entries].sort((a, b) => compareDelegations(a.view, b.view))
+}
+
+/** `◈ Dispatch — <sessão>`, with the session title truncated (never wrapped),
+ *  plus the `[fullscreen]` badge while the host presents the panel full screen.
+ *  An absent title leaves the marker and the name alone. Pure. */
+export function dispatchPanelTitle(
+  sessionTitle: string | null | undefined,
+  max = DISPATCH_PANEL_TITLE_WIDTH,
+  presentation?: string,
+): string {
+  const base = `${DISPATCH_PANEL_HEADER_MARKER} Dispatch`
+  const badge = presentation === 'fullscreen' ? ` ${DISPATCH_PANEL_FULLSCREEN_BADGE}` : ''
+  const title = typeof sessionTitle === 'string' ? sessionTitle.trim() : ''
+  if (title === '') return `${base}${badge}`
+  return `${base} ${DISPATCH_PANEL_DASH} ${truncateLabel(title, Math.max(4, max))}${badge}`
+}
+
+/** Header counters: `2 rodando · 70 concluídos · 1 falha · $3.59`. A zero
+ *  counter is omitted (never `0 rodando`); the total spend is printed whenever
+ *  the tree has a child, because `$0.00` is then a real answer. Null for an
+ *  empty tree, so the header renders no counter line at all. Pure. */
+export function dispatchPanelHeader(
+  entries: readonly DispatchEntry[] | null | undefined,
+): string | null {
+  const list = Array.isArray(entries) ? entries.filter((entry) => entry?.view) : []
+  if (list.length === 0) return null
+  let running = 0
+  let completed = 0
   let failed = 0
-  for (const e of entries) {
-    switch (delegationRowStatus(e.state)) {
-      case 'active':
-      case 'retry':
-        active++
+  for (const entry of list) {
+    switch (entry.view.state) {
+      case 'running':
+        running += 1
+        break
+      case 'completed':
+        completed += 1
         break
       case 'failed':
-        failed++
+        failed += 1
         break
-      case 'done':
-        done++
+      default:
         break
     }
   }
-  const tail = failed > 0 ? ` · ${failed} failed` : ''
-  return `(${active} active · ${done} done${tail})`
+  const parts: string[] = []
+  if (running > 0) parts.push(`${running} rodando`)
+  if (completed > 0) parts.push(`${completed} ${completed === 1 ? 'concluído' : 'concluídos'}`)
+  if (failed > 0) parts.push(`${failed} ${failed === 1 ? 'falha' : 'falhas'}`)
+  const cost = formatSpendUSD(dispatchTotalCost(list.map((entry) => entry.view)))
+  if (cost !== null) parts.push(cost)
+  return parts.length === 0 ? null : parts.join(SPEND_LINE_SEPARATOR)
 }
 
-/** Cap the panel: live rows first, then most-recent retained terminal rows, at
- *  most `maxVisible` total. Hidden counts describe the retained render list,
- *  not expired history. */
-export function ceilingDelegationList(
-  all: readonly DelegationEntry[],
-  maxVisible = DELEGATION_VISIBLE_CEILING,
-  now = Date.now(),
-): { visible: DelegationEntry[]; hidden: number; hiddenActive: number; hiddenTerminal: number } {
-  const { active, recent } = splitDelegationList(all, all.length, now)
-  const visibleActive = active.slice(0, maxVisible)
-  const visible = [
-    ...visibleActive,
-    ...recent.slice(0, Math.max(0, maxVisible - visibleActive.length)),
-  ]
-  const hiddenActive = Math.max(0, active.length - visibleActive.length)
-  const hiddenTerminal = Math.max(0, recent.length - (visible.length - visibleActive.length))
-  return { visible, hidden: hiddenActive + hiddenTerminal, hiddenActive, hiddenTerminal }
+/** Horizontal rule under the header, clamped to the panel's own width. Pure. */
+export function dispatchPanelRule(width: number, max = 200): string {
+  const columns = Math.max(0, Math.min(max, Math.floor(numberOrNull(width) ?? 0)))
+  return DISPATCH_PANEL_RULE_CHAR.repeat(columns)
 }
 
-/** Split a display list into native task() rows vs pantheon report rows.
- *  Native = source 'children-only' (no delegate report); everything else counts
- *  as pantheon. Pure — powers the hooks.log line. */
-export function countDelegationSources(entries: readonly DelegationEntry[]): {
-  native: number
-  pantheon: number
-  total: number
-} {
-  let native = 0
-  for (const e of entries) if (e.source === 'children-only') native++
-  return { native, pantheon: entries.length - native, total: entries.length }
+/** Row marker: animated spinner while running, `✓` done, `✗` failed, `○`
+ *  cancelled/interrupted, `?` for a state the host never publishes. Every glyph
+ *  is one cell wide and `?` is the only fallback, so an unknown state is visible
+ *  instead of silently rendering as success. Pure. */
+export function dispatchPanelMarker(state: DelegationState | string, frame = 0): string {
+  switch (state) {
+    case 'running':
+      return `${spinnerFrame(frame)} `
+    case 'completed':
+      return '\u2713 '
+    case 'failed':
+      return '\u2717 '
+    case 'interrupted':
+      return '\u25CB '
+    default:
+      return '? '
+  }
 }
 
-/** Diagnostic hooks.log line for a panel re-fetch, with the children
- *  breakdown (pantheon = children WITH a delegate report, native = children
- *  WITHOUT one). Pure — the View logs the returned string verbatim. */
-export function formatPanelLogLine(
-  children: number,
-  pantheon: number,
-  native: number,
-  md: number,
-  events: number,
+/** One padded, truncated cell: an absent/blank value becomes the em dash, and
+ *  the value is cut to the cell's own width (never to the line's length, so one
+ *  long cell cannot squeeze its neighbours out of alignment). Pure. */
+export function dispatchPanelCell(value: unknown, width: number): string {
+  const cells = Math.max(1, Math.floor(numberOrNull(width) ?? 1))
+  const text = typeof value === 'string' ? value.trim() : ''
+  return padCell(text === '' ? DISPATCH_PANEL_DASH : text, cells)
+}
+
+/** One list row: `⠋ prometheus   plan   $0.09  14m34s`. The agent cell absorbs
+ *  the width difference (down to `DISPATCH_PANEL_MIN_AGENT_WIDTH`), so a narrow
+ *  panel truncates the label rather than the numbers; the cost column grows by
+ *  itself for a sub-cent value so the row never spends more than its budget.
+ *  Pure. */
+export function dispatchPanelRowText(
+  entry: DispatchEntry,
+  options: { now?: number; frame?: number; max?: number } = {},
 ): string {
-  return `panel: children=${children}(pantheon=${pantheon} native=${native}) md=${md} events=${events}`
+  const view = entry?.view
+  if (!view) return ''
+  const now = numberOrNull(options.now) ?? Date.now()
+  const frame = numberOrNull(options.frame) ?? 0
+  const width = Math.floor(numberOrNull(options.max) ?? 35)
+  const costText = formatDispatchCost(view.cost)
+  const costWidth = Math.max(DISPATCH_PANEL_COST_WIDTH, cellWidth(costText))
+  const agentWidth = Math.max(
+    DISPATCH_PANEL_MIN_AGENT_WIDTH,
+    Math.min(DISPATCH_PANEL_AGENT_WIDTH, width - (DISPATCH_PANEL_ROW_FIXED_WIDTH + costWidth)),
+  )
+  const marker = dispatchPanelMarker(view.state, frame)
+  const agent = dispatchPanelCell(dispatchAgentText(view, DISPATCH_PANEL_AGENT_WIDTH), agentWidth)
+  const kind = dispatchPanelCell(view.kind, DISPATCH_PANEL_KIND_WIDTH)
+  const cost = costText.padStart(costWidth)
+  const duration = truncateLabel(
+    dispatchElapsed(view, now),
+    DISPATCH_PANEL_DURATION_WIDTH,
+  ).padStart(DISPATCH_PANEL_DURATION_WIDTH)
+  return `${marker}${agent} ${kind} ${cost}${duration}`
 }
 
-/** Turn child sessions (PRIMARY) enriched with md reports into the display
- *  list. One entry per child id (duplicates across re-fetches collapse).
- *  The md report is matched by `Task ID` (== child.id) and supplies alias,
- *  agent, description, terminal state and duration. A child without a
- *  report still renders: description from its title, agent from the child
- *  itself (fallback 'agent'), state derived from its status, startedAt from
- *  time.created. A report-less child is a NATIVE task() child (every
- *  child of the current session — the native `task()` tool — carries
- *  parentID = caller), so it gets source 'children-only', a
- *  per-child alias 'native-<last4 of the child id>' (one identity per native
- *  row) instead of a report alias. The 'task nativa' description fallback
- *  keeps the row non-empty when the child carries no title.
- *  A FRESH terminal md state wins over the derived state (a stale md report
- *  from a previous incarnation never flips a live child — see
- *  mdTerminalCoversChild); a running md defers to
- *  the child's live status. A running child is NEVER archived — it always
- *  lands in the active split (splitDelegationList active = running/retry).
- *  `parentSessionID` (the focused session id) is stamped on report-less
- *  children so the row carries its origin session; omit it and they stay
- *  unscoped ('').
- *  Children outside {@link DELEGATION_CHILDREN_RECENCY_MS} are dropped before
- *  they can enter the list (the per-session child list grows for the whole
- *  session lifetime); the survivors are sorted running-first, most recent
- *  first (compareDelegationEntries), so a ceiling hides the OLDEST rows.
- *  Pure — no I/O. */
-/** Temporal guard for the children channel (same recycled-alias class as the
- *  md merge): an md terminal report matched by taskID may still belong to
- *  a PREVIOUS job incarnation. Accept it only when its Finalized timestamp
- *  covers the child's latest activity, when either side has no timestamp to
- *  compare, or when both startedAt agree on a single job incarnation.
- *  Pure — no I/O. */
-function mdTerminalCoversChild(md: DelegationEntry, child: ChildDelegationLike): boolean {
-  const childUpdated = child.time?.updated
-  if (md.updatedAt !== null && childUpdated !== undefined) {
-    if (md.updatedAt >= childUpdated) return true
-    // Stale Finalized — same incarnation only if both startedAt agree.
-    return md.startedAt === child.time?.created
-  }
-  return true
+/** `ses_ab12cd`, short enough for a detail line. Full id when it already fits. */
+export function shortSessionID(id: string | null | undefined, max = 10): string {
+  const text = typeof id === 'string' ? id.trim() : ''
+  if (text === '') return DISPATCH_PANEL_DASH
+  return text.length <= max ? text : `${text.slice(0, Math.max(1, max - 1))}\u2026`
 }
 
-export function childrenToDelegationEntries(
-  children: readonly ChildDelegationLike[] | undefined,
-  md: readonly DelegationEntry[],
-  now = Date.now(),
-  parentSessionID = '',
-): DelegationEntry[] {
-  const byTaskID = new Map<string, DelegationEntry>()
-  for (const m of md) {
-    if (m.taskID !== undefined && !byTaskID.has(m.taskID)) byTaskID.set(m.taskID, m)
-  }
-  const out: DelegationEntry[] = []
-  const seen = new Set<string>()
-  for (const child of children ?? []) {
-    if (child.id === '' || seen.has(child.id)) continue
-    seen.add(child.id)
-    const mdEntry = byTaskID.get(child.id)
-    // Recency window (source-level): the children API returns EVERY child the
-    // session ever spawned, so without this the whole session history enters
-    // the list (the "197 children" panel). Effective recency = the latest of
-    // the child's own activity and its matched report's Finalized timestamp;
-    // a child with NO timestamp at all is kept (fail-open — it cannot be
-    // judged). Oldest rows are the ones dropped.
-    const lastActivity = Math.max(
-      child.time?.updated ?? 0,
-      child.time?.created ?? 0,
-      mdEntry?.updatedAt ?? 0,
-    )
-    if (lastActivity > 0 && now - lastActivity > DELEGATION_CHILDREN_RECENCY_MS) continue
-    const state =
-      mdEntry !== undefined && mdEntry.state !== 'running' && mdTerminalCoversChild(mdEntry, child)
-        ? mdEntry.state
-        : childStatusToState(child.status, child.time, now)
-    out.push({
-      alias: mdEntry?.alias ?? `native-${child.id.slice(-4)}`,
-      // A report-less child IS a child of the focused session
-      // (session.children is session-scoped), so the caller-passed
-      // parentSessionID is stamped on it as its origin session; an md
-      // match always carries its own session (the report dir name).
-      sessionID: mdEntry?.sessionID ?? parentSessionID,
-      taskID: child.id,
-      agent: mdEntry?.agent ?? child.agent ?? 'agent',
-      state,
-      startedAt: mdEntry?.startedAt ?? child.time?.created ?? now,
-      updatedAt:
-        mdEntry?.updatedAt ??
-        (state === 'running' || state === 'stale-running' ? null : (child.time?.updated ?? null)),
-      timedOut: mdEntry?.timedOut ?? false,
-      description:
-        mdEntry !== undefined && mdEntry.description !== ''
-          ? mdEntry.description
-          : child.title !== undefined && child.title !== ''
-            ? child.title
-            : 'task nativa',
-      source: mdEntry !== undefined ? 'md' : 'children-only',
-    })
-  }
-  out.sort(compareDelegationEntries)
-  return out
+/** Token counters of one child on a single line (`in 1.2K · out 430 · r 120 ·
+ *  cache 8K/1K`), or `tokens —` when the host published none. Pure. */
+export function dispatchTokenLine(tokens: DispatchTokens | null | undefined): string {
+  if (!tokens) return `tokens ${DISPATCH_PANEL_DASH}`
+  const value = (token: number | null) =>
+    token === null ? DISPATCH_PANEL_DASH : (formatContextWindow(token) ?? String(token))
+  return [
+    `in ${value(tokens.input)}`,
+    `out ${value(tokens.output)}`,
+    `r ${value(tokens.reasoning)}`,
+    `cache ${value(tokens.cacheRead)}/${value(tokens.cacheWrite)}`,
+  ].join(SPEND_LINE_SEPARATOR)
 }
 
-/** Navigate the TUI to a child session (click/Enter on a delegation row).
- *  Returns false when the route API is unavailable or the target id is
- *  missing/placeholder — the row stays inert instead of crashing. Only a
- *  server-valid session id ("ses...") ever reaches the router, so an
- *  unsubstituted "{sessionID}" placeholder can never be routed. */
-export function navigateToDelegationSession(
-  route:
-    | {
-        navigate?: (name: string, params?: Record<string, unknown>) => void | PromiseLike<void>
-      }
-    | undefined,
-  taskID: string | undefined,
-): boolean {
-  if (typeof route?.navigate !== 'function' || !isValidSessionId(taskID)) return false
-  try {
-    const navigation = route.navigate('session', { sessionID: taskID })
-    if (navigation !== undefined) {
-      // A removed session can reject route.navigate for historical rows. That
-      // rejection is expected and intentionally absorbed so it cannot break
-      // the TUI; the no-op avoids logging sensitive session details.
-      void Promise.resolve(navigation).catch(() => undefined)
+/** Detail lines of the selected child: heading (title, else the spawning
+ *  description, else the row label), short id + model, token counters, and the
+ *  kind plus its evidence and the parent id. Two to four lines; `expanded:
+ *  false` keeps only the heading. Every missing datum prints `—`. Pure. */
+export function dispatchPanelDetail(
+  entry: DispatchEntry | null | undefined,
+  options: { expanded?: boolean; max?: number } = {},
+): string[] {
+  if (!entry?.view) return [DISPATCH_PANEL_DASH]
+  const max = Math.max(8, Math.floor(numberOrNull(options.max) ?? 60))
+  const view = entry.view
+  const heading =
+    entry.title ??
+    entry.description ??
+    (typeof view.label === 'string' && view.label !== '' ? view.label : null) ??
+    view.id
+  const lines = [truncateLabel(heading, max)]
+  if (options.expanded === false) return lines
+  lines.push(
+    truncateLabel(
+      `${shortSessionID(view.id)}${SPEND_LINE_SEPARATOR}${view.model ?? DISPATCH_PANEL_DASH}`,
+      max,
+    ),
+  )
+  lines.push(truncateLabel(dispatchTokenLine(entry.tokens), max))
+  const origin =
+    DISPATCH_KIND_ORIGIN_LABELS[view.kindOrigin] ?? DISPATCH_KIND_ORIGIN_LABELS.unavailable
+  lines.push(
+    truncateLabel(
+      `kind ${view.kind ?? DISPATCH_PANEL_DASH} (${origin})${SPEND_LINE_SEPARATOR}parent ${entry.parentID ?? DISPATCH_PANEL_DASH}`,
+      max,
+    ),
+  )
+  return lines
+}
+
+/** Panel geometry for its input width: wide (≥72) puts the detail in a second
+ *  column, narrow stacks it under the list. `rowWidth` is what a list row may
+ *  spend after the selection gutter. Pure. */
+export type DispatchPanelLayout = {
+  mode: 'wide' | 'narrow'
+  listWidth: number
+  detailWidth: number
+  rowWidth: number
+}
+
+export function dispatchPanelLayout(width: number): DispatchPanelLayout {
+  const columns = Math.max(20, Math.floor(numberOrNull(width) ?? 0))
+  if (columns >= DISPATCH_PANEL_WIDE_MIN_WIDTH) {
+    const listWidth = Math.max(40, Math.min(64, columns - 26))
+    return {
+      mode: 'wide',
+      listWidth,
+      detailWidth: Math.max(24, columns - listWidth - 2),
+      rowWidth: listWidth - DISPATCH_PANEL_SELECTION_GUTTER,
     }
+  }
+  return {
+    mode: 'narrow',
+    listWidth: columns,
+    detailWidth: columns,
+    rowWidth: columns - DISPATCH_PANEL_SELECTION_GUTTER,
+  }
+}
+
+/** Viewport of the list: the page holding the selection, scrolled so the
+ *  selected row stays visible with its predecessors. Bounded, so a 71-child
+ *  tree renders ten rows, never all of them. Pure. */
+export function dispatchPanelWindow(
+  total: number,
+  selectedIndex: number,
+  pageSize = DISPATCH_PANEL_PAGE_SIZE,
+): { start: number; end: number; size: number } {
+  const count = Math.max(0, Math.floor(numberOrNull(total) ?? 0))
+  const size = Math.max(1, Math.floor(numberOrNull(pageSize) ?? DISPATCH_PANEL_PAGE_SIZE))
+  if (count === 0) return { start: 0, end: 0, size }
+  const index = Math.min(count - 1, Math.max(0, Math.floor(numberOrNull(selectedIndex) ?? 0)))
+  const start = Math.min(Math.max(0, index - size + 1), Math.max(0, count - size))
+  return { start, end: Math.min(count, start + size), size }
+}
+
+/** `1-10 de 71` while the list is longer than one page; null when everything
+ *  fits (and for an empty list), so the footer never pads itself. Pure. */
+export function dispatchPanelRangeText(start: number, end: number, total: number): string | null {
+  const count = Math.max(0, Math.floor(numberOrNull(total) ?? 0))
+  const first = Math.max(0, Math.floor(numberOrNull(start) ?? 0))
+  const last = Math.min(count, Math.floor(numberOrNull(end) ?? 0))
+  if (count === 0 || (first === 0 && last >= count)) return null
+  return `${first + 1}-${last} de ${count}`
+}
+
+/** One rendered list row, selection resolved by the view against the model's
+ *  selected id. */
+export type DispatchPanelRow = { id: string; state: DelegationState; text: string }
+
+/** Every entry as a row, ordered by the shared comparator. Pure. */
+export function dispatchPanelRows(
+  entries: readonly DispatchEntry[] | null | undefined,
+  options: { now?: number; frame?: number; max?: number } = {},
+): DispatchPanelRow[] {
+  const list = Array.isArray(entries)
+    ? entries.filter((entry) => entry?.view && typeof entry.view.id === 'string')
+    : []
+  return orderDispatchEntries(list).map((entry) => ({
+    id: entry.view.id,
+    state: entry.view.state,
+    text: dispatchPanelRowText(entry, options),
+  }))
+}
+
+/** Panel action, one per command. */
+export type DispatchPanelAction =
+  | 'up'
+  | 'down'
+  | 'home'
+  | 'end'
+  | 'pageup'
+  | 'pagedown'
+  | 'toggle'
+  | 'fullscreen'
+  | 'close'
+
+/** One namespaced command: stable id, explicit binding, and the action it runs. */
+export type DispatchPanelCommandSpec = {
+  action: DispatchPanelAction
+  id: string
+  title: string
+  bind: string
+}
+
+/** The panel's whole keymap, in table order. `bind` is explicit for every
+ *  command (no auto-binding), and every id is namespaced, so a `k`/`q`/`f`
+ *  binding can never collide with the host's own keys. */
+export const DISPATCH_PANEL_COMMANDS: readonly DispatchPanelCommandSpec[] = [
+  {
+    action: 'up',
+    id: 'pantheon.dispatch.up',
+    title: 'Dispatch: selecionar anterior',
+    bind: 'k,up',
+  },
+  {
+    action: 'down',
+    id: 'pantheon.dispatch.down',
+    title: 'Dispatch: selecionar próxima',
+    bind: 'j,down',
+  },
+  { action: 'home', id: 'pantheon.dispatch.home', title: 'Dispatch: primeira', bind: 'home' },
+  { action: 'end', id: 'pantheon.dispatch.end', title: 'Dispatch: última', bind: 'end' },
+  {
+    action: 'pageup',
+    id: 'pantheon.dispatch.pageup',
+    title: 'Dispatch: página acima',
+    bind: 'pageup',
+  },
+  {
+    action: 'pagedown',
+    id: 'pantheon.dispatch.pagedown',
+    title: 'Dispatch: página abaixo',
+    bind: 'pagedown',
+  },
+  {
+    action: 'toggle',
+    id: 'pantheon.dispatch.toggle',
+    title: 'Dispatch: expandir detalhe',
+    bind: 'enter',
+  },
+  {
+    action: 'fullscreen',
+    id: 'pantheon.dispatch.fullscreen',
+    title: 'Dispatch: tela cheia',
+    bind: 'f',
+  },
+  { action: 'close', id: 'pantheon.dispatch.close', title: 'Dispatch: fechar', bind: 'escape,q' },
+]
+
+/** Run one action against the model and the host-owned panel input. Kept apart
+ *  from the keymap so the whole command surface is testable without a renderer.
+ */
+export function performDispatchPanelAction(
+  action: DispatchPanelAction,
+  model: Pick<DispatchPanelModel, 'move' | 'first' | 'last' | 'pageUp' | 'pageDown' | 'toggle'>,
+  panel: Pick<PanelInput, 'close' | 'toggleFullscreen'>,
+): void {
+  switch (action) {
+    case 'up':
+      model.move(-1)
+      return
+    case 'down':
+      model.move(1)
+      return
+    case 'home':
+      model.first()
+      return
+    case 'end':
+      model.last()
+      return
+    case 'pageup':
+      model.pageUp()
+      return
+    case 'pagedown':
+      model.pageDown()
+      return
+    case 'toggle':
+      model.toggle()
+      return
+    case 'fullscreen':
+      panel.toggleFullscreen()
+      return
+    case 'close':
+      panel.close()
+      return
+    default:
+      return
+  }
+}
+
+/** Footer: the keys the host reports for each command (`keymap.shortcuts`) with
+ *  an em dash whenever a command has no binding, so the hint can never advertise
+ *  a key that does nothing. Pure. */
+export function dispatchPanelFooter(shortcutsOf: (id: string) => readonly string[]): string {
+  const keys = (id: string): string => {
+    let list: readonly string[] = []
+    try {
+      const result = shortcutsOf(id)
+      list = Array.isArray(result) ? result : []
+    } catch {
+      list = []
+    }
+    const text = list
+      .map((key) => String(key ?? '').trim())
+      .filter((key) => key !== '')
+      .join('/')
+    return text === '' ? DISPATCH_PANEL_DASH : text
+  }
+  return [
+    `${keys('pantheon.dispatch.up')} ${keys('pantheon.dispatch.down')} mover`,
+    `${keys('pantheon.dispatch.toggle')} detalhe`,
+    `${keys('pantheon.dispatch.fullscreen')} fullscreen`,
+    `${keys('pantheon.dispatch.close')} fechar`,
+  ].join(SPEND_LINE_SEPARATOR)
+}
+
+/** The subset of `PanelInput` the model reads, so tests can drive it with a
+ *  plain object. */
+export type DispatchPanelInput = {
+  readonly name: string
+  readonly sessionID: string
+  readonly width: number
+  readonly presentation?: string
+}
+
+/** `keymap.shortcuts` of one command; empty when the keymap is unavailable. */
+function keymapShortcuts(context: any, id: string): readonly string[] {
+  try {
+    const list = context?.keymap?.shortcuts?.(id)
+    return Array.isArray(list) ? list : []
+  } catch {
+    return []
+  }
+}
+
+/** Open the panel from the command palette / slash command. `ui.panel.open`
+ *  only accepts a `session` route, so a refusal (no session open) is answered
+ *  with a toast — never a fallback route, never a silent no-op. Returns whether
+ *  the panel opened. */
+export function openDispatchPanel(context: any): boolean {
+  let opened = false
+  try {
+    opened = context?.ui?.panel?.open?.(DISPATCH_PANEL_NAME) === true
+  } catch {
+    opened = false
+  }
+  if (opened) return true
+  try {
+    context?.ui?.toast?.show?.({ message: DISPATCH_PANEL_TOAST, variant: 'warning' })
+  } catch {
+    /* toast unavailable — the command still degrades to a no-op */
+  }
+  return false
+}
+
+/** Reactive state the panel view renders. Selection is held by session id, so
+ *  it survives list updates; the index is derived (and falls back to the first
+ *  row when the selected child disappears). */
+export type DispatchPanelModel = {
+  entries: Accessor<DispatchEntry[]>
+  rows: Accessor<DispatchPanelRow[]>
+  title: Accessor<string>
+  header: Accessor<string | null>
+  detail: Accessor<string[]>
+  layout: Accessor<DispatchPanelLayout>
+  visible: Accessor<{ start: number; rows: DispatchPanelRow[] }>
+  selectedID: Accessor<string | null>
+  selectedIndex: Accessor<number>
+  expanded: Accessor<boolean>
+  hasRunning: Accessor<boolean>
+  frame: Accessor<number>
+  footer: Accessor<string>
+  move: (delta: number) => void
+  first: () => void
+  last: () => void
+  pageUp: () => void
+  pageDown: () => void
+  toggle: () => void
+}
+
+/** Model behind the panel. Mounted only while the panel claim renders (the
+ *  `Show` in `session.panel`), so the 80 ms tick it arms exists exactly while
+ *  the panel is open; it also stops on `isOpen()` going false and on dispose.
+ *  It performs no `message.sync`, writes no `session.metadata` and makes no
+ *  request: `collectDispatch` reads only host-cached state. */
+export function createDispatchPanelModel(
+  context: any,
+  panel: () => DispatchPanelInput,
+): DispatchPanelModel {
+  const [revision, setRevision] = createSignal(0)
+  const [frame, setFrame] = createSignal(0)
+  const [expanded, setExpanded] = createSignal(true)
+  const [selectedID, setSelectedID] = createSignal<string | null>(null)
+
+  const isOpen = () => panel().name === DISPATCH_PANEL_NAME
+  const activeSessionID = () => {
+    const id = panel().sessionID
+    return isValidSessionID(id) ? id : ''
+  }
+
+  const entries = createMemo(() => {
+    revision()
+    if (!isOpen()) return []
+    return collectDispatch(context, activeSessionID())
+  })
+
+  const layout = createMemo(() => dispatchPanelLayout(panel().width))
+
+  const rows = createMemo(() => {
+    const mode = layout()
+    return dispatchPanelRows(entries(), {
+      now: Date.now(),
+      frame: frame(),
+      max: mode.rowWidth,
+    })
+  })
+
+  const selectedIndex = createMemo(() => {
+    const list = rows()
+    if (list.length === 0) return 0
+    const id = selectedID()
+    if (id === null) return 0
+    const index = list.findIndex((row) => row.id === id)
+    return index === -1 ? 0 : index
+  })
+
+  const selectedIDAccessor = createMemo(() => rows()[selectedIndex()]?.id ?? null)
+  const selectedEntry = createMemo(() => entries()[selectedIndex()] ?? null)
+
+  const session = createMemo(() => {
+    revision()
+    const id = activeSessionID()
+    if (id === '') return undefined
+    try {
+      return context.data.session.get(id)
+    } catch {
+      return undefined
+    }
+  })
+
+  const title = createMemo(() =>
+    dispatchPanelTitle(session()?.title, DISPATCH_PANEL_TITLE_WIDTH, panel().presentation),
+  )
+  const header = createMemo(() => dispatchPanelHeader(entries()))
+  const detail = createMemo(() =>
+    dispatchPanelDetail(selectedEntry(), {
+      expanded: expanded(),
+      max: layout().detailWidth,
+    }),
+  )
+
+  const visible = createMemo(() => {
+    const list = rows()
+    const window = dispatchPanelWindow(list.length, selectedIndex())
+    return { start: window.start, rows: list.slice(window.start, window.end) }
+  })
+
+  const hasRunning = createMemo(() => rows().some((row) => row.state === 'running'))
+
+  const footer = createMemo(() => {
+    const list = rows()
+    const window = dispatchPanelWindow(list.length, selectedIndex())
+    const range = dispatchPanelRangeText(window.start, window.end, list.length)
+    const hints = dispatchPanelFooter((id) => keymapShortcuts(context, id))
+    return range === null ? hints : `${range}${SPEND_LINE_SEPARATOR}${hints}`
+  })
+
+  const select = (index: number) => {
+    const list = rows()
+    if (list.length === 0) return
+    const clamped = Math.min(list.length - 1, Math.max(0, Math.round(index)))
+    setSelectedID(list[clamped]?.id ?? null)
+  }
+
+  onMount(() => {
+    onCleanup(subscribeSidebarRefresh(context, () => setRevision((value) => value + 1)))
+  })
+
+  // Spinner ticks only while the panel is open *and* a child runs; closing the
+  // panel, the last child finishing or the component unmounting all clear it.
+  createEffect(() => {
+    if (!isOpen() || !hasRunning()) return
+    const spinner = setInterval(() => setFrame((value) => value + 1), SPINNER_INTERVAL_MS)
+    onCleanup(() => clearInterval(spinner))
+  })
+
+  return {
+    entries,
+    rows,
+    title,
+    header,
+    detail,
+    layout,
+    visible,
+    selectedID: selectedIDAccessor,
+    selectedIndex,
+    expanded,
+    hasRunning,
+    frame,
+    footer,
+    move: (delta: number) => select(selectedIndex() + (numberOrNull(delta) ?? 0)),
+    first: () => select(0),
+    last: () => select(rows().length - 1),
+    pageUp: () => select(selectedIndex() - DISPATCH_PANEL_PAGE_SIZE),
+    pageDown: () => select(selectedIndex() + DISPATCH_PANEL_PAGE_SIZE),
+    toggle: () => setExpanded((value) => !value),
+  }
+}
+
+/** Session ids to eagerly sync at load (deduped, bounded). Pure. */
+export function collectWarmupTargets(
+  sessions: readonly any[],
+  limit = WARMUP_SESSION_LIMIT,
+): string[] {
+  const ids: string[] = []
+  for (const session of sessions) {
+    if (!isValidSessionID(session?.id) || ids.includes(session.id)) continue
+    ids.push(session.id)
+    if (ids.length >= limit) break
+  }
+  return ids
+}
+
+/* ─── Known Issue guard ──────────────────────────────────── */
+
+/** Body a sidebar instance renders when the host has not published a real
+ *  session id yet. OpenCode 2.x scopes the `sidebar.content` slot to a session
+ *  (`SlotMap["sidebar.content"] = { sessionID: string }`), so before the first
+ *  prompt the slot may not mount at all — see the `home.footer.status`
+ *  contribution for the pre-prompt degradation. Pure. */
+export function sidebarPlaceholder(sessionID: string | undefined): string | null {
+  return isValidSessionID(sessionID) ? null : SIDEBAR_WAITING_LABEL
+}
+
+/* ─── Click-through ──────────────────────────────────────── */
+
+/** Navigate to a session through the 2.x router. Fail-open: an absent router or
+ *  a removed session must never break the sidebar. Returns whether a valid
+ *  navigation was dispatched. Pure. */
+export function navigateToSession(
+  router: { navigate?: (destination: any) => void } | undefined,
+  sessionID: string | undefined,
+): boolean {
+  if (typeof router?.navigate !== 'function' || !isValidSessionID(sessionID)) return false
+  try {
+    router.navigate({ type: 'session', sessionID })
     return true
   } catch {
-    // Synchronous router failures are also fail-open for an inert historical row.
     return false
   }
 }
 
-/** Build the mouse handler used by each delegation row. */
-export function createDelegationRowOpenHandler(
-  route:
-    | {
-        navigate?: (name: string, params?: Record<string, unknown>) => void | PromiseLike<void>
-      }
-    | undefined,
-  taskID: string | undefined,
-): () => void {
-  return () => {
-    navigateToDelegationSession(route, taskID)
+/* ─── Delegate-completion detection (toasts) ─────────────── */
+
+export type DelegationCompletion = { id: string; label: string; state: DelegationState }
+
+/** Diff two delegation observations: entries that were `running` and are no
+ *  longer running count as completions, fired once per transition. Returns the
+ *  next snapshot so callers can keep a single tracker. First observation never
+ *  reports a completion (no toast spam on mount). Pure. */
+export function detectDelegationCompletions(
+  previous: ReadonlyMap<string, DelegationState>,
+  current: ReadonlyArray<DelegationCompletion>,
+): { completed: DelegationCompletion[]; snapshot: Map<string, DelegationState> } {
+  const snapshot = new Map<string, DelegationState>()
+  const completed: DelegationCompletion[] = []
+  for (const entry of current) {
+    snapshot.set(entry.id, entry.state)
+    if (previous.get(entry.id) === 'running' && entry.state !== 'running') completed.push(entry)
   }
+  return { completed, snapshot }
 }
 
-/* ─── Silence-by-default panel logger ──────────────────────
- * Mirrors src/pantheon/logger.ts createPantheonLogger (the copied plugin
- * ships only dist/ + package.json, so it cannot import from src/pantheon):
- * every line is ALWAYS appended to `<logDir>/.pantheon/logs/hooks.log` and
- * echoed to the console ONLY when PANTHEON_HOOKS_LOG is truthy (opencode
- * renders plugin console output directly into the TUI — the pollution bug).
- * Best-effort and fire-and-forget: a logging failure must never break the
- * panel. */
-type TuiLogger = { info: (message: string, ...args: unknown[]) => void }
+/* ─── Runtime helpers ────────────────────────────────────── */
 
-/** Silence-by-default panel logger.
- *  @param projectRoot the PROJECT ROOT — the logger appends to
- *  `<projectRoot>/.pantheon/logs/hooks.log` (tuiLogPath). Passing anything
- *  deeper (e.g. the delegations dir) used to double-nest the path into
- *  `<root>/.pantheon/.pantheon/logs/hooks.log` and never reach the real log;
- *  derive the root with {@link panelLogDir}. */
-function createTuiLogger(projectRoot: string | undefined, module = 'pantheon-tui'): TuiLogger {
-  const echo = (process.env.PANTHEON_HOOKS_LOG ?? '').trim() !== ''
-  const logPath = tuiLogPath(projectRoot ?? process.cwd())
-  const formatArg = (arg: unknown): string => {
-    if (arg instanceof Error) return arg.stack ?? arg.message
-    if (typeof arg === 'string') return arg
-    try {
-      return JSON.stringify(arg)
-    } catch {
-      return String(arg)
-    }
-  }
-  const write = (message: string, args: unknown[]) => {
-    const lines = [message, ...args.map(formatArg)]
-      .join(' ')
-      .split('\n')
-      .map((p) => p.trim())
-      .filter((p) => p !== '')
-    if (lines.length === 0) return
-    void (async () => {
-      try {
-        await mkdir(dirname(logPath), { recursive: true })
-        const stamp = new Date().toISOString()
-        await appendFile(
-          logPath,
-          `${lines.map((l) => `[${stamp}] [${module}] ${l}`).join('\n')}\n`,
-          'utf8',
-        )
-      } catch (err) {
-        /* best-effort file log — never break the panel over logging, but do
-         * NOT swallow the failure silently: a missing symbol here (e.g.
-         * `appendFile` used without an import) previously threw an invisible
-         * ReferenceError and the log silently stopped writing. Gated by the
-         * echo flag to avoid the TUI-pollution bug described above. */
-        if (echo) {
-          try {
-            process.stderr.write(`[${module}] file-log failed: ${formatArg(err)}\n`)
-          } catch {
-            /* stderr unavailable — never break the panel */
-          }
-        }
-      }
-    })()
-    if (echo) {
-      for (const line of lines) console.log(`[${module}] ${line}`)
-    }
-  }
-  return { info: (message, ...args) => write(message, args) }
-}
-
-/* ─── Session Row (single session with live status indicator) ─ */
-
-function SessionRow(props: { api: TuiPluginApi; session: any }) {
-  const theme = () => props.api.theme.current
-
-  const status = createMemo(() => {
-    // isValidSessionId guard: a placeholder / foreign session id must never
-    // reach the status API (same "%7BsessionID%7D" regression class as the
-    // children path). Invalid id → no status call, no icon.
-    if (!isValidSessionId(props.session?.id)) return null
-    try {
-      const s = (props.api.state as any).session?.status?.(props.session.id)
-      if (s?.type) return s.type as string
-    } catch {
-      /* ignore */
-    }
-    return null
-  })
-
-  const statusIcon = createMemo(() => {
-    switch (status()) {
-      case 'busy':
-        return '\u25cf ' // ● — running
-      case 'retry':
-        return '\u26a0 ' // ⚠ — needs attention
-      default:
-        return '' // idle/unknown — no icon
-    }
-  })
-
-  return (
-    <text fg={theme().textMuted}>
-      {`${statusIcon()}${props.session?.id?.slice(0, 8) ?? '????'}... ${props.session?.title?.slice(0, 26) ?? '(untitled)'}`}
-    </text>
-  )
-}
-
-/* ─── Delegation Row (single job from the children/md channels) ─ */
-
-function DelegationRow(props: {
-  api: TuiPluginApi
-  job: DelegationEntry
-  now: number
-  frame: number
-}) {
-  const theme = () => props.api.theme.current
-
-  // Color is a status-wide channel: the WHOLE row (lead, elapsed, description,
-  // live activity) carries the state tone, so red=failed / green=done /
-  // yellow=in-flight reads at a glance. The glyph stays as a redundant,
-  // monochrome-legible signal — never the only one.
-  const tone = createMemo(() => {
-    const t = theme()
-    switch (delegationStateTone(props.job.state)) {
-      case 'warning':
-        return t.warning
-      case 'error':
-        return t.error
-      case 'success':
-        return t.success
-      default:
-        return t.textMuted // defensive: unknown runtime state
-    }
-  })
-
-  const marker = createMemo(() => delegationRowMarker(props.job.state, props.frame))
-  const lead = createMemo(() => formatDelegationRowLead(props.job, marker()))
-  const elapsed = createMemo(() => formatDelegationElapsed(props.job, props.now))
-  const description = createMemo(() => truncateDelegationDescription(props.job.description))
-
-  // beta.6: live tool call the child is running RIGHT NOW ("↳ bash npm test"),
-  // fed by message.part.updated activity tracking. Null while idle/done.
-  const activity = createMemo(() =>
-    latestToolActivityFor(latestToolActivity, props.job.taskID, props.now),
-  )
-
-  // Click a row → navigate to the child session (route API guarded in the
-  // helper). Enter-key binding is left out (per-row keymap wiring is not
-  // worth the complexity in this sidebar); mouse is enabled in tui.json.
-  const open = createDelegationRowOpenHandler(props.api.route, props.job.taskID)
-
-  return (
-    <box onMouseDown={open}>
-      {/* Line 1: toned lead (glyph + identity) + toned elapsed tail. */}
-      <box flexDirection="row">
-        <text>
-          <span fg={tone()}>{lead()}</span>
-          <span fg={tone()}>{elapsed()}</span>
-        </text>
-      </box>
-      {/* Line 2: the description, indented under the identity and toned. */}
-      <Show when={description() !== ''}>
-        <text fg={tone()}>{`  ${description()}`}</text>
-      </Show>
-      <Show when={activity()}>
-        {(a) => (
-          <text
-            fg={tone()}
-          >{`  ↳ ${truncateDelegationDescription(`${a().tool}${a().summary !== '' ? ` ${a().summary}` : ''}`)}`}</text>
-        )}
-      </Show>
-    </box>
-  )
-}
-
-/* ─── Main Sidebar View ──────────────────────────────────── */
-
-/** Plugin-level live delegation store shared by event subscriptions and View.
- *  Mutations notify subscribers so the View can refresh its durable child
- *  list while also reading the map as an optimistic live source. */
-export type LiveDelegationStore = {
-  map: Map<string, LiveDelegationEntry>
-  /** Subscribe to invalidations consumed by the sidebar's refresh path. */
-  subscribe: (listener: () => void) => () => void
-  /** Notify sidebar subscribers after a live mutation. */
-  bump: () => void
-}
-
-/** Create the observable live store shared by task events and the sidebar. */
-export function createLiveDelegationStore(): LiveDelegationStore {
-  const listeners = new Set<() => void>()
-  return {
-    map: new Map<string, LiveDelegationEntry>(),
-    subscribe(listener) {
-      listeners.add(listener)
-      return () => listeners.delete(listener)
-    },
-    bump() {
-      for (const listener of listeners) listener()
-    },
-  }
-}
-
-/** Register the live task-part events that invalidate the sidebar store. */
-export function registerLiveDelegationEvents(
-  api: TuiPluginApi,
-  liveStore: LiveDelegationStore,
-): () => void {
-  const unsubLive: (() => void)[] = []
-
+function resolveLocation(context: any): any {
   try {
-    unsubLive.push(
-      api.event.on('message.part.updated', (event: unknown) => {
-        // SDK v2 shape: properties.part (v1 drift: properties.info.part).
-        const props = ((event as { properties?: unknown } | null)?.properties ?? {}) as {
-          part?: unknown
-          info?: { part?: unknown }
-        }
-        const part = (props.part ?? props.info?.part) as DelegationToolPart | undefined
-        if (part === undefined) return
-        // beta.6: track the live tool call per child session (panel's
-        // activity line). Fire-and-forget — display-only state.
-        const sample = extractToolActivity(part as Parameters<typeof extractToolActivity>[0])
-        if (sample !== null)
-          trackToolActivity(latestToolActivity, sample.sessionID, sample.activity)
-        if (reduceDelegationToolPart(liveStore.map, part)) liveStore.bump()
-      }),
-    )
+    return context?.location ?? context?.data?.location?.default()
   } catch {
-    /* events API unavailable — children API + 1s poll cover the panel */
+    return undefined
   }
+}
 
+function resolveSidebarCwd(context: any): string {
+  const location = resolveLocation(context)
+  if (location && typeof location.directory === 'string' && location.directory !== '') {
+    return location.directory
+  }
+  return process.cwd()
+}
+
+function sessionStatusOf(context: any, sessionID: string): string | undefined {
   try {
-    unsubLive.push(
-      api.event.on('message.part.removed', (event: unknown) => {
-        // SDK v2 shape: properties.partID (v1 drift: properties.part.id).
-        const props = ((event as { properties?: unknown } | null)?.properties ?? {}) as {
-          partID?: string
-          part?: { id?: string }
-        }
-        const partID = props.partID ?? props.part?.id
-        if (partID !== undefined && removeDelegationEntry(liveStore.map, partID)) liveStore.bump()
-      }),
-    )
+    const status = context?.data?.session?.status?.(sessionID)
+    return typeof status === 'string' ? status : undefined
   } catch {
-    /* events API unavailable — children API + 1s poll cover the panel */
+    return undefined
   }
+}
 
-  return () => {
-    for (const unsub of unsubLive) {
+/** Subscribe `refresh` to every 2.x event that can change sidebar state. Returns
+ *  a disposer that releases exactly the subscriptions the host handed out. The
+ *  event names come from the 2.x union; the cast turns an unknown name into a
+ *  compile error instead of a silent no-op subscription. */
+function subscribeSidebarRefresh(context: any, refresh: () => void): () => void {
+  const stop: Array<() => void> = []
+  const data = context?.data as Context['data'] | undefined
+  if (typeof data?.on === 'function') {
+    for (const type of SIDEBAR_REFRESH_EVENTS) {
       try {
-        unsub()
+        const unsubscribe = data.on(type, refresh)
+        if (typeof unsubscribe === 'function') stop.push(unsubscribe)
       } catch {
-        /* ignore */
+        // Sidebar stays useful with the initial cached state if an event is unavailable.
       }
+    }
+  }
+  return () => {
+    for (const unsubscribe of stop) {
+      if (typeof unsubscribe === 'function') unsubscribe()
     }
   }
 }
 
-function View(props: {
-  api: TuiPluginApi
-  sessionID: string | undefined
-  version: string | null
-  liveStore: LiveDelegationStore
-}) {
-  const [showSessions, setShowSessions] = createSignal(false)
-  // Show live work immediately; the header remains clickable to collapse it.
-  const [showDelegations, setShowDelegations] = createSignal(true)
+/** Populate the cached data at load so the sidebar has content before the first
+ *  prompt (Known Issue guard). Fire-and-forget: a missing API or a failed sync
+ *  degrades silently and the sidebar still renders its static header. */
+function warmUpSidebarData(context: any, location: any): void {
+  try {
+    void Promise.resolve(context?.data?.location?.vcs?.sync?.(location)).catch(() => {})
+  } catch {
+    /* vcs API unavailable */
+  }
+  let listed: any[] = []
+  try {
+    const result = context?.data?.session?.list?.()
+    if (Array.isArray(result)) listed = result
+  } catch {
+    /* session API unavailable */
+  }
+  for (const id of collectWarmupTargets(listed)) {
+    try {
+      void Promise.resolve(context?.data?.session?.sync?.(id)).catch(() => {})
+    } catch {
+      /* per-session sync unavailable */
+    }
+  }
+}
 
-  const theme = () => props.api.theme.current
+function showDelegationToast(context: any, done: DelegationCompletion): void {
+  const variant =
+    done.state === 'failed' ? 'error' : done.state === 'interrupted' ? 'warning' : 'success'
+  const verb =
+    done.state === 'failed' ? 'falhou' : done.state === 'interrupted' ? 'interrompida' : 'concluída'
+  try {
+    context?.ui?.toast?.show?.({
+      title: TOAST_TITLE,
+      message: `${done.label} ${verb}`,
+      variant,
+      sessionID: done.id,
+    })
+  } catch {
+    /* toast API unavailable — the row already carries the state tone */
+  }
+}
 
-  const branch = createMemo(() =>
-    props.api.state.vcs?.branch ? `\u2387 ${props.api.state.vcs.branch}` : null,
-  )
-
-  // ── Active preset indicator ──
-  // Seeded synchronously from env (never blocks first paint), then re-checked
-  // against .pantheon/active-preset.json on mount and every 30s so `set-tier`
-  // changes made while opencode is open become visible.
+/** Active preset signal with mount + 30s refresh. Shared by the sidebar and the
+ *  home-screen status contribution. */
+function useActivePreset(context: any): {
+  preset: Accessor<PresetInfo>
+  overrides: Accessor<PresetOverrides>
+} {
   const [preset, setPreset] = createSignal<PresetInfo>(presetFromEnv(process.env))
-
+  const [overrides, setOverrides] = createSignal<PresetOverrides>(emptyOverrides())
   onMount(() => {
-    const cwd = ((props.api.state as any).path?.worktree ?? '') || process.cwd()
+    const cwd = resolveSidebarCwd(context)
     let cancelled = false
     const refresh = async () => {
       try {
-        const info = await resolvePresetForTui(process.env, cwd)
-        if (!cancelled) setPreset(info)
+        const detail = await resolveActivePresetForTui(process.env, cwd)
+        if (!cancelled) {
+          setPreset(detail.info)
+          setOverrides(detail.overrides)
+        }
       } catch {
-        // transient read error — keep the last known value
+        /* transient read error — keep the last known value */
       }
     }
     void refresh()
@@ -2744,432 +2967,1397 @@ function View(props: {
       clearInterval(timer)
     })
   })
+  return { preset, overrides }
+}
 
-  // ── Sessions: fetch via api.client.session.list (not proc.exec) ──
-  const [sessionList, { refetch: refetchSessions }] = createResource(async () => {
-    try {
-      const result = await (props.api.client as any)?.session?.list?.({ limit: 100 })
-      return result ?? { data: [] }
-    } catch {
-      return { data: [] }
-    }
-  })
+/** Debounce for the git file-count revalidation. `vcs.status` is an HTTP call;
+ *  session events arrive in bursts, so the row is refreshed at most once per
+ *  window instead of on every event. */
+export const GIT_CHANGES_DEBOUNCE_MS = 400
 
-  // Total top-level sessions (excludes subagent sessions)
-  const totalSessions = createMemo(() => {
-    const result = sessionList()
-    if (!result) return 0
-    const data: any[] = (result as any).data ?? result
-    if (!Array.isArray(data)) return 0
-    return data.filter((s: any) => !s.parentID).length
-  })
+/** `context.client.vcs.status(input?, requestOptions?)` →
+ *  `Promise<{ data: VcsFileStatus[] }>` (`GET /api/vcs/status`). Returns the
+ *  callable or null when the host does not expose it, so callers degrade to
+ *  the branch-only row instead of throwing. */
+function vcsStatusCall(context: any): ((input?: any) => Promise<any>) | null {
+  const status = context?.client?.vcs?.status
+  return typeof status === 'function' ? status.bind(context.client.vcs) : null
+}
 
-  // Recent top-level sessions, sorted by time.updated descending
-  const recentSessions = createMemo(() => {
-    const result = sessionList()
-    if (!result) return []
-    const data: any[] = (result as any).data ?? result
-    if (!Array.isArray(data)) return []
-    return data
-      .filter(
-        (s: any) =>
-          !s.parentID &&
-          s.id !== resolveCurrentSessionID({ sessionID: props.sessionID, api: props.api }),
-      )
-      .sort((a: any, b: any) => {
-        const ta = a.time?.updated ?? a.updated ?? 0
-        const tb = b.time?.updated ?? b.updated ?? 0
-        return tb - ta
-      })
-      .slice(0, 8)
-  })
+/** `context.client.session.stats(input?, requestOptions?)` →
+ *  `Promise<SessionStatsInfo>` (`GET /api/experimental/session/stats`), served
+ *  by the local process. Returns the callable or null when the host does not
+ *  expose it, so the Context spend line simply does not render. */
+function statsCall(context: any): ((input?: any) => Promise<any>) | null {
+  const stats = context?.client?.session?.stats
+  return typeof stats === 'function' ? stats.bind(context.client.session) : null
+}
 
-  // ── Delegations: session.children (PRIMARY) + md reports (enrichment) ──
-  // The panel's source of truth is the SDK child-session API
-  // (`api.client.session.children`) — every native task() call spawns a child
-  // session with parentID = this session, so children ARE the delegation
-  // list (delegations-sidebar pattern). The md channel
-  // (.pantheon/delegations) enriches each child with alias/agent/description
-  // and terminal duration via the `Task ID` match. Live tool-call events are
-  // merged optimistically so the row appears before those channels catch up.
-  // Consistent project root (directory ?? worktree, cwd fallback) — the md
-  // history and the panel logger both read the SAME root (audit finding: the
-  // channels resolved it independently).
-  const projectRoot = createMemo(() => resolvePantheonRoot((props.api.state as any).path))
-  // Silence-by-default panel logger → the REAL <root>/.pantheon/logs/hooks.log.
-  const panelLog = createTuiLogger(projectRoot())
-  // ONLY the active session renders: the final list is filtered by
-  // filterDelegationsToSession after every merge (children + live + md).
-  // Live-first ordering keeps running rows on top; the ceiling
-  // collapses the rest into "… +N more".
-  // The rendered list is childDelegations (children enriched with md);
-  // there is no separate md-only signal — the md channel only feeds
-  // childrenToDelegationEntries below.
-  const [childDelegations, setChildDelegations] = createSignal<DelegationEntry[]>([])
-  // 1s ticker drives the running-jobs elapsed counter AND the safety poll
-  // (oh-my-opencode-slim pattern): re-fetch children + re-read the md every
-  // second so the panel updates even when NO event ever fires.
-  const [now, setNow] = createSignal(Date.now())
-  // Frame counter for the spinner animation — incremented every ~80ms by a
-  // dedicated fast timer, completely decoupled from the data poll cycle.
-  const [frame, setFrame] = createSignal(0)
-  // Cumulative count of event-triggered refreshes — logged with every fetch
-  // ("panel: children=N(pantheon=M native=K) md=N events=N") so the (0)
-  // symptom is diagnosable: children>0 means the source works; events=0
-  // means the event bus isn't delivering, and the 1s poll is what keeps
-  // the panel honest.
-  let eventRefreshCount = 0
-  // In-flight guard: overlap between the poll, events and store subscribers
-  // collapses into one fetch — no duplicate work, no duplicate entries.
-  let delegationsInflight: Promise<void> | null = null
-  const refreshDelegations = () => {
-    if (delegationsInflight !== null) return delegationsInflight
-    delegationsInflight = (async () => {
-      try {
-        // Typed (no `as any`): TuiState.session.status is a v2 sync accessor
-        // taking the session id directly — same shape as the client call.
-        const state = props.api.state
-        // 0. md reports from EVERY session under .pantheon/delegations — the
-        // ENRICHMENT channel. Read unfiltered (taskID match supplies alias/
-        // agent/description/terminal state); the active-session filter after
-        // the merge keeps only the focused session's reports. Fail-open: a
-        // missing dir yields [].
-        let md: DelegationEntry[] = []
-        try {
-          md = await readAllDelegationEntries(projectRoot())
-        } catch {
-          md = [] // fail-open: never crash the sidebar on a read error
-        }
-        // 1. current session — resolve + GUARD (placeholder regression). The
-        // runtime may render the sidebar with an unsubstituted "{sessionID}"
-        // slot prop; forwarding it to session.children made the server reject
-        // every poll (~1 err/s: "Expected a string starting with \"ses\", got
-        // \"%7BsessionID%7D\"") and fail-open the panel into "(0)". A null
-        // resolution SKIPS the fetch entirely: the active-session filter yields
-        // an EMPTY panel (zero children, zero rows, zero errors).
-        const sessionID = resolveCurrentSessionID({ sessionID: props.sessionID, api: props.api })
-        if (sessionID === null) {
-          // No focused session → no scope → empty list. The md read still ran
-          // (enrichment source) but with no session there is nothing to scope
-          // to: there is no cross-session panel.
-          setChildDelegations([])
-          panelLog.info(
-            `${formatPanelLogLine(0, 0, 0, md.length, eventRefreshCount)} (no sessionID — inactive panel)`,
-          )
-          return
-        }
-        // 2. children — PRIMARY source (SDK: api.client.session.children).
-        // v2 SDK: `children` takes a FLAT `{ sessionID }` parameter object.
-        // The v1 `{ path: { id } }` envelope is NOT understood by the v2
-        // client — it left the URL template unsubstituted and the server
-        // rejected every poll ("%7BsessionID%7D" regression).
-        let children: ChildDelegationLike[] = []
-        try {
-          // buildChildrenPath re-validates: with sessionID !== null it is
-          // never null, so no placeholder can reach the wire.
-          const childrenPath = buildChildrenPath(sessionID)
-          const result = childrenPath
-            ? await props.api.client.session.children(childrenPath)
-            : undefined
-          const data = (result?.data ?? result) as unknown
-          children = Array.isArray(data) ? (data as ChildDelegationLike[]) : []
-        } catch (err) {
-          children = [] // children API unavailable — the panel shows md only
-          panelLog.info('panel: error children fetch', err)
-        }
-        // 3. live status per child (sync API) + merge children with md.
-        const resolveStatus = (childID: unknown): string | undefined => {
-          // isValidSessionId guard: a placeholder / foreign id must never
-          // reach the status API (same regression class as the children
-          // path — "%7BsessionID%7D").
-          if (!isValidSessionId(childID)) return undefined
-          try {
-            return state.session.status(childID)?.type
-          } catch {
-            return undefined // status API unavailable — child state fallback
-          }
-        }
-        const withStatus = children.map((c) => ({ ...c, status: resolveStatus(c.id) }))
-        // Report-less rows ARE children of the focused session
-        // (session.children is session-scoped), so the resolved id is stamped on
-        // the row as its origin session.
-        const childEntries = childrenToDelegationEntries(withStatus, md, now(), sessionID)
-        for (const [k, v] of props.liveStore.map)
-          if (v.alias === null && v.taskID === null && Date.now() - v.startedAt > 30_000)
-            props.liveStore.map.delete(k)
-        // The event channel is optimistic: it renders a job even while the
-        // child session/report is still being created. Filter by parent so a
-        // different focused session never leaks rows into this sidebar.
-        const liveEntries = [...props.liveStore.map.values()].filter(
-          (entry) => entry.sessionID === sessionID,
-        )
-        // The event channel is optimistic; merge it over the children/md rows.
-        // Then the active-session filter — applied ONCE after the merge — keeps
-        // ONLY rows whose sessionID === the focused session, so md entries from
-        // other sessions (and orphans with no sessionID) can never render.
-        setChildDelegations(
-          filterDelegationsToSession(
-            mergeChildDelegationSources(childEntries, liveEntries),
-            sessionID,
-          ),
-        )
-        // 4. diagnostic line — every re-fetch (silence-by-default, hooks.log).
-        const counts = countDelegationSources(childEntries)
-        panelLog.info(
-          formatPanelLogLine(
-            children.length,
-            counts.pantheon,
-            counts.native,
-            md.length,
-            eventRefreshCount,
-          ),
-        )
-      } finally {
-        delegationsInflight = null
-      }
-    })()
-    return delegationsInflight
+/** Local IANA zone for the stats call (`America/Sao_Paulo`); omitted when the
+ *  runtime cannot resolve one. */
+function localTimezone(): string | undefined {
+  try {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
+    return typeof zone === 'string' && zone !== '' ? zone : undefined
+  } catch {
+    return undefined
   }
-  // Live-first ceiling: at most DELEGATION_VISIBLE_CEILING rows render; the
-  // remainder collapses into a single "… +N more" line. Both the ceiling and
-  // the header operate on the ALREADY-FILTERED active-session list
-  // (childDelegations), so other-session / hidden rows never inflate counts.
-  const delegationCeiling = createMemo(() =>
-    ceilingDelegationList(childDelegations(), DELEGATION_VISIBLE_CEILING, now()),
-  )
-  // Header counts the same retained rows shown below, so hidden/expired md
-  // history cannot inflate the summary.
-  const delegationHeader = createMemo(() => formatDelegationHeader(delegationCeiling().visible))
+}
 
-  // ── Event subscriptions for live session/delegation updates ──
-  onMount(() => {
-    const cleanup: (() => void)[] = []
+/** Fields every stats call sends. `tools: 'none'` skips the tool aggregation
+ *  the block never renders; `project` is omitted (no cheap id in hand) rather
+ *  than guessed. */
+function statsInput(): Record<string, unknown> {
+  const timezone = localTimezone()
+  return timezone === undefined ? { tools: 'none' } : { tools: 'none', timezone }
+}
 
-    // Session events — triggers the sessions resource refetch.
+/** Convert a millisecond instant to the unit the route accepted. */
+function spendInstant(ms: number, unit: SpendUnit): number {
+  return unit === 's' ? Math.floor(ms / 1000) : ms
+}
+
+/** Measure the `from`/`to` unit once: millisecond epoch first, then a single
+ *  seconds attempt. Bounded to two calls and never throws; anything the route
+ *  rejects (mismatch, throw, malformed echo) ends as `unavailable`, which hides
+ *  the block for the rest of the process instead of retrying forever. */
+async function probeSpendUnit(call: (input?: any) => Promise<any>): Promise<SpendUnit> {
+  const now = Date.now()
+  const fromMs = now - SPEND_PROBE_WINDOW_MS
+  const attempts: Array<{ sent: { from: number; to: number }; scale: number; unit: SpendUnit }> = [
+    { sent: { from: fromMs, to: now }, scale: 1, unit: 'ms' },
+    {
+      sent: { from: Math.floor(fromMs / 1000), to: Math.floor(now / 1000) },
+      scale: 1000,
+      unit: 's',
+    },
+  ]
+  for (const attempt of attempts) {
     try {
-      cleanup.push(props.api.event.on('session.status', refetchSessions))
-      cleanup.push(props.api.event.on('session.created', refetchSessions))
-      cleanup.push(props.api.event.on('session.updated', refetchSessions))
-      cleanup.push(props.api.event.on('session.deleted', refetchSessions))
+      const result = await call({ ...statsInput(), ...attempt.sent })
+      if (statsRangeMatches(result?.range, attempt.sent, attempt.scale)) return attempt.unit
     } catch {
-      /* events API not available in this runtime */
+      /* route rejected the call in this unit — try the next one, then give up */
     }
+  }
+  return 'unavailable'
+}
 
-    // Delegation panel: children are born/die with session lifecycle events
-    // (a delegate spawns a child → session.created fires) — re-fetch on all
-    // of them. `session.status` re-syncs busy→idle state transitions.
-    try {
-      const eventRefresh = () => {
-        eventRefreshCount += 1
-        void refreshDelegations()
-      }
-      cleanup.push(props.api.event.on('session.created', eventRefresh))
-      cleanup.push(props.api.event.on('session.updated', eventRefresh))
-      cleanup.push(props.api.event.on('session.deleted', eventRefresh))
-      cleanup.push(props.api.event.on('session.status', eventRefresh))
-    } catch {
-      /* events API not available — the 1s poll still covers it */
-    }
-
-    // Task-part events invalidate the same store the panel reads, refreshing
-    // children when those events arrive and making optimistic live rows visible.
-    cleanup.push(
-      props.liveStore.subscribe(() => {
-        eventRefreshCount += 1
-        void refreshDelegations()
-      }),
+/** Resolve (and cache) the unit for this process. Concurrent callers share one
+ *  probe, so a burst of refreshes cannot spend more than two calls on it. */
+function ensureSpendUnit(call: (input?: any) => Promise<any>): Promise<SpendUnit> {
+  if (spendUnit !== null) return Promise.resolve(spendUnit)
+  if (spendProbe === null) {
+    spendProbe = probeSpendUnit(call).then(
+      (unit) => {
+        spendUnit = unit
+        spendProbe = null
+        return unit
+      },
+      (): SpendUnit => {
+        spendUnit = 'unavailable'
+        spendProbe = null
+        return 'unavailable'
+      },
     )
-    // Fetch the initial state; future updates use the store subscription above.
-    eventRefreshCount += 1
-    void refreshDelegations()
+  }
+  return spendProbe
+}
 
-    // Safety poll (OMO-slim pattern): 1s re-fetch children + md + tick the
-    // elapsed counter. Guarantees the panel updates even with zero events.
-    const poll = setInterval(() => {
-      setNow(Date.now())
-      void refreshDelegations()
-    }, 1_000)
-    cleanup.push(() => clearInterval(poll))
-    // Fast spinner animation: 80ms frame counter, decoupled from data poll.
-    // Only the spinner glyph depends on this; elapsed + data use the 1s timer.
-    const animation = setInterval(() => setFrame((f) => f + 1), 80)
-    cleanup.push(() => clearInterval(animation))
+/* ─── Reactive model ─────────────────────────────────────── */
 
-    // Compaction recovery: `message.part.removed` clears live entries while
-    // compacting, so after a compaction/attach the live map would start
-    // empty even though the session still holds the delegation tool parts.
-    // Re-seed the live map from the session's existing parts (in message
-    // order) right after the subscriptions are registered — the store
-    // notification re-triggers the children fetch. Fail-open: if the SDK access is
-    // unavailable we skip — the children API + the 1s poll keep the panel
-    // working.
+/** Reactive state the sidebar view renders. Accessors keep the view reactive
+ *  while the model itself stays free of JSX, so its effects are exercisable
+ *  without a TUI renderer. */
+export type SidebarModel = {
+  activeSessionID: Accessor<string>
+  session: Accessor<any>
+  branch: Accessor<string | null>
+  /** `+N ±N −N` file counts from `vcs.status` (fallback only), null when
+   *  clean/unavailable. */
+  gitChanges: Accessor<string | null>
+  /** The rendered git row: CLI counts with `?untracked ↑ahead ↓behind` when git
+   *  answered, else the `vcs.status` counts, else null. */
+  gitLine: Accessor<string | null>
+  /** Last successful git CLI observation (counts + upstream distance), null
+   *  while git has never answered. */
+  gitCli: Accessor<GitCliSnapshot | null>
+  /** Cache hit rate + output speed of the active session's newest messages. */
+  performance: Accessor<ContextPerformance | null>
+  /** The rendered `Dispatch` block: live rows, the finished rollup and the
+   *  spend totals. Null when the session has no child (block hidden). */
+  dispatch: Accessor<DispatchBlockView | null>
+  /** Blocks that have content, in render order, each tagged with its spacer. */
+  blocks: Accessor<SidebarBlock[]>
+  hasRunning: Accessor<boolean>
+  frame: Accessor<number>
+  preset: Accessor<PresetInfo>
+  /** Provider of the model in use, derived from the session, its transcript or
+   *  the host location; null when nothing resolves (the header omits it). */
+  provider: Accessor<string | null>
+  /** Resolved preset override map (explicit per-agent models). */
+  presetOverrides: Accessor<PresetOverrides>
+  /** Family cost in USD (root + delegations), null when the host cannot answer. */
+  cost: Accessor<number | null>
+  /** Real per-model totals from assistant messages, capped for the sidebar. */
+  modelUsage: Accessor<ModelUsageCeiling>
+  /** Todo rows derived from the newest completed `todowrite`, ordered + capped. */
+  todo: Accessor<TodoCeiling>
+  /** Local spend for `hoje` / `30d`, null when stats is unavailable/unknown.
+   *  Rendered as the Context block's last line, not as its own block. */
+  spend: Accessor<SpendTotals | null>
+  /** Context gauge; null when there is no limit or no token-carrying message. */
+  contextUsage: Accessor<ContextUsage | null>
+  /** Current agent and its resolved short model id (`*` = explicit override). */
+  agentModel: Accessor<{ agent: string; model: string; overridden: boolean } | null>
+}
+
+/** Reactive wiring behind the sidebar: refresh subscription, warm syncs, the
+ *  running-only spinner and the completion-toast effect. `context` stays loosely
+ *  typed (the host API only exists at runtime) but the refresh event names are
+ *  narrowed to the 2.x union at the subscription site. */
+export function createSidebarModel(
+  context: any,
+  sessionID: () => string | undefined,
+  gitExec: GitExec = defaultGitExec,
+): SidebarModel {
+  const [revision, setRevision] = createSignal(0)
+  const [metricsRevision, setMetricsRevision] = createSignal(0)
+  const [frame, setFrame] = createSignal(0)
+  const location = resolveLocation(context)
+  const activePreset = useActivePreset(context)
+  const preset = activePreset.preset
+  const presetOverrides = activePreset.overrides
+  let observedStates = new Map<string, DelegationState>()
+  let metricsDebounce: ReturnType<typeof setTimeout> | undefined
+
+  // Model rows walk the family's message lists, so they are coalesced instead
+  // of recomputed on every event in a burst (the host publishes many per step).
+  const scheduleMetrics = () => {
+    if (metricsDebounce !== undefined) clearTimeout(metricsDebounce)
+    metricsDebounce = setTimeout(() => {
+      metricsDebounce = undefined
+      setMetricsRevision((value) => value + 1)
+    }, MODEL_USAGE_DEBOUNCE_MS)
+  }
+  const refresh = () => {
+    setRevision((value) => value + 1)
+    scheduleMetrics()
+  }
+  const activeSessionID = () => {
+    const id = sessionID()
+    return isValidSessionID(id) ? id : ''
+  }
+
+  const session = createMemo(() => {
+    revision()
+    const id = activeSessionID()
+    if (id === '') return undefined
     try {
-      const sdk = (props.api.state as any)?.session
-      const mountSessionID = resolveCurrentSessionID({ sessionID: props.sessionID, api: props.api })
-      if (mountSessionID !== null && typeof sdk?.messages === 'function') {
-        const messages: readonly { id?: string; parts?: unknown[] }[] =
-          sdk.messages(mountSessionID) ?? []
-        const state = props.api.state as any
-        const getParts =
-          typeof state?.part === 'function'
-            ? (messageID: string) => state.part(messageID)
-            : undefined
-        const parts = collectDelegationToolParts(messages, getParts)
-        if (parts.length > 0 && seedLiveDelegationMap(props.liveStore.map, parts) > 0) {
-          props.liveStore.bump()
+      return context.data.session.get(id)
+    } catch {
+      /* session API unavailable */
+      return undefined
+    }
+  })
+
+  const branch = createMemo(() => {
+    revision()
+    try {
+      return context.data.location.vcs.info(location)?.branch?.current ?? null
+    } catch {
+      /* vcs API unavailable */
+      return null
+    }
+  })
+
+  // Git file counts: the git CLI first (it is the only source for untracked and
+  // ahead/behind), with `client.vcs.status` as the fallback when git is missing
+  // or fails. The CLI probe runs at mount and on session events, behind a
+  // debounce, a 5 s cooldown and a single-flight guard — no polling timer, no
+  // queue. `vcs.status` is only queried while the CLI has never answered.
+  // Both git signals are keyed by the session they were read for: the host
+  // reuses one sidebar instance across routes, so a value observed for one
+  // session must never be read as if it belonged to the next one.
+  type GitChangesRead = { session: string; text: string | null }
+  type GitCliRead = { session: string; snapshot: GitCliSnapshot | null }
+  const [gitChangesRead, setGitChangesRead] = createSignal<GitChangesRead>({
+    session: activeSessionID(),
+    text: null,
+  })
+  const [gitCliRead, setGitCliRead] = createSignal<GitCliRead>({
+    session: activeSessionID(),
+    snapshot: null,
+  })
+  const gitChanges = createMemo(() => {
+    const read = gitChangesRead()
+    return read.session === activeSessionID() ? read.text : null
+  })
+  const gitCli = createMemo(() => {
+    const read = gitCliRead()
+    return read.session === activeSessionID() ? read.snapshot : null
+  })
+  let gitRequest = 0
+  let gitDebounce: ReturnType<typeof setTimeout> | undefined
+  let gitProbeDebounce: ReturnType<typeof setTimeout> | undefined
+  let gitProbeSessionID = activeSessionID()
+  let gitProbeStartedAt: number | null = null
+  let gitProbeInFlight = false
+  let disposed = false
+  const loadGitChanges = async () => {
+    const status = vcsStatusCall(context)
+    if (status === null) return
+    const session = activeSessionID()
+    const request = ++gitRequest
+    try {
+      const result = await status({ location: { directory: resolveSidebarCwd(context) } })
+      // Superseded by a newer request, or by a session switch.
+      if (request !== gitRequest || session !== activeSessionID()) return
+      const files = Array.isArray(result?.data) ? result.data : Array.isArray(result) ? result : []
+      setGitChangesRead({ session, text: formatGitChanges(files) })
+    } catch {
+      /* vcs.status unavailable or failed — keep the previous counts */
+    }
+  }
+  const runGitProbe = async () => {
+    const session = activeSessionID()
+    // A different session invalidates the previous 5 s cooldown and any flight
+    // started for the old one: the new directory is probed right away instead
+    // of waiting out a window observed elsewhere.
+    if (session !== gitProbeSessionID) {
+      gitProbeSessionID = session
+      gitProbeStartedAt = null
+      gitProbeInFlight = false
+    }
+    if (
+      !gitProbeAllowed({
+        now: Date.now(),
+        lastRunAt: gitProbeStartedAt,
+        inFlight: gitProbeInFlight,
+      })
+    ) {
+      return // cooldown or a probe still running — no queue, skip this one
+    }
+    gitProbeInFlight = true
+    gitProbeStartedAt = Date.now()
+    try {
+      const snapshot = await readGitSnapshot(resolveSidebarCwd(context), gitExec)
+      // A result read for another session must not land on this one.
+      if (!disposed && session === activeSessionID()) setGitCliRead({ session, snapshot })
+    } catch {
+      /* git CLI unavailable — the vcs.status fallback stays in charge */
+    } finally {
+      if (session === gitProbeSessionID) gitProbeInFlight = false
+    }
+  }
+  const scheduleGitChanges = () => {
+    if (vcsStatusCall(context) === null) return
+    if (gitCli() !== null) return // the CLI is authoritative once it answered
+    if (gitDebounce !== undefined) clearTimeout(gitDebounce)
+    gitDebounce = setTimeout(() => {
+      gitDebounce = undefined
+      void loadGitChanges()
+    }, GIT_CHANGES_DEBOUNCE_MS)
+  }
+  const scheduleGitProbe = () => {
+    if (gitProbeDebounce !== undefined) clearTimeout(gitProbeDebounce)
+    gitProbeDebounce = setTimeout(() => {
+      gitProbeDebounce = undefined
+      void runGitProbe()
+    }, GIT_CLI_DEBOUNCE_MS)
+  }
+  // One rendered git line. A CLI snapshot wins even when it is clean (the
+  // protocol fallback is not consulted then); `vcs.status` is used only while
+  // the CLI has never answered.
+  const gitLine = createMemo(() => {
+    const snapshot = gitCli()
+    if (snapshot !== null) return formatGitSnapshot(snapshot)
+    return gitChanges()
+  })
+
+  // A session switch discards the previous observations (both git accessors are
+  // session-keyed, so a late answer is unreadable rather than merely ignored) and
+  // asks both sources again immediately: the new directory never waits out the
+  // cooldown observed for the old one. Observations kept by the completion toast
+  // are dropped by that effect's own session guard.
+  createEffect(
+    on(
+      activeSessionID,
+      (id) => {
+        if (disposed || id === '') return
+        void runGitProbe()
+        void loadGitChanges()
+      },
+      { defer: true },
+    ),
+  )
+
+  // Spend reads the local server's own aggregate (`session.stats`): two calls
+  // per refresh, one per window, in parallel. Never a provider request, never a
+  // credential read, never an interval. The `from`/`to` unit is measured by a
+  // single probe at mount (see `probeSpendUnit`); while it is unresolved or
+  // unavailable the Context footer line stays hidden. A failed window keeps its
+  // last good value, so a partial failure still renders the other window.
+  const [spend, setSpend] = createSignal<SpendTotals | null>(null)
+  let spendTotals: SpendTotals = { today: null, thirtyDays: null }
+  let spendRequest = 0
+  let spendDebounce: ReturnType<typeof setTimeout> | undefined
+  const loadSpend = async () => {
+    const stats = statsCall(context)
+    if (stats === null) return
+    try {
+      const unit = await ensureSpendUnit(stats)
+      if (unit === 'unavailable') return
+      const request = ++spendRequest
+      const windows = spendWindows(Date.now())
+      const settled = await Promise.allSettled([
+        stats({
+          ...statsInput(),
+          from: spendInstant(windows.today.from, unit),
+          to: spendInstant(windows.today.to, unit),
+        }),
+        stats({
+          ...statsInput(),
+          from: spendInstant(windows.thirtyDays.from, unit),
+          to: spendInstant(windows.thirtyDays.to, unit),
+        }),
+      ])
+      if (request !== spendRequest) return // superseded by a newer refresh
+      const next: SpendTotals = { ...spendTotals }
+      for (const [index, key] of (['today', 'thirtyDays'] as const).entries()) {
+        const result = settled[index]
+        if (result === undefined || result.status !== 'fulfilled') continue
+        const cost = statsCost(result.value)
+        if (cost === null) continue // malformed/negative — keep the last good value
+        next[key] = cost
+      }
+      spendTotals = next
+      setSpend(next)
+    } catch {
+      /* experimental route gone — keep the last good values (block hidden if none) */
+    }
+  }
+  const scheduleSpend = () => {
+    if (statsCall(context) === null) return
+    if (spendDebounce !== undefined) clearTimeout(spendDebounce)
+    spendDebounce = setTimeout(() => {
+      spendDebounce = undefined
+      void loadSpend()
+    }, SPEND_REFRESH_DEBOUNCE_MS)
+  }
+
+  // Messages feed the context gauge. `message.list` is synchronous and returns
+  // the host's cached list; a missing API degrades to an empty window.
+  const messages = createMemo(() => {
+    revision()
+    const id = activeSessionID()
+    if (id === '') return []
+    try {
+      const result = context.data.session.message?.list?.(id)
+      return Array.isArray(result) ? result : []
+    } catch {
+      return []
+    }
+  })
+
+  // Root + delegation sessions, deduped and bounded. `family()` returns ids
+  // (not SessionInfo), so each child is resolved through `session.get`.
+  const familySessionIDs = createMemo(() => {
+    revision()
+    const id = activeSessionID()
+    if (id === '') return []
+    const ids = [id]
+    try {
+      const result = context.data.session.family?.(id)
+      if (Array.isArray(result)) {
+        for (const childID of result) {
+          if (!isValidSessionID(childID) || ids.includes(childID)) continue
+          ids.push(childID)
+          if (ids.length >= MODEL_USAGE_SESSION_LIMIT) break
         }
       }
     } catch {
-      /* re-scan unavailable — children API + 1s poll still cover it */
+      /* family API unavailable — the root session still contributes */
     }
-
-    onCleanup(() =>
-      cleanup.forEach((fn) => {
-        fn()
-      }),
-    )
+    return ids
   })
 
-  const HR = () => <text fg={theme().textMuted}>{'\u2500'.repeat(28)}</text>
+  // One `message.list` call per family session feeds the real per-model
+  // aggregate and the Todo block: the newest completed `todowrite` of the
+  // *active* session is captured inside the same walk (a child's list is not
+  // this sidebar's todo). `message.list` is the host's cached list, so this is a
+  // single fetch/scan per refresh, never one per block. Each session contributes
+  // at most MODEL_USAGE_MESSAGE_LIMIT entries, which keeps the walk O(limit) per
+  // update.
+  const transcript = createMemo(() => {
+    metricsRevision()
+    const rootID = activeSessionID()
+    const collected: any[] = []
+    let todo: TodoItem[] = []
+    for (const id of familySessionIDs()) {
+      let list: any[] = []
+      try {
+        const result = context.data.session.message?.list?.(id)
+        if (Array.isArray(result)) list = result
+      } catch {
+        /* one unreadable session must not hide the others */
+      }
+      collected.push(...list.slice(-MODEL_USAGE_MESSAGE_LIMIT))
+      if (id === rootID) todo = latestTodoItems(list) ?? []
+    }
+    return { messages: collected, todo }
+  })
+  const usageMessages = createMemo(() => transcript().messages)
+  // Ordered + capped todo rows; empty when the transcript has no `todowrite`,
+  // so the block stays hidden.
+  const todo = createMemo(() => ceilingTodoItems(transcript().todo, TODO_VISIBLE_CEILING))
 
+  // Session cost is the host's authoritative number for the session; while a
+  // session is live it already includes every assistant message. Summing the
+  // family gives the true spend of the delegation tree. When no cost API is
+  // reachable, the real message costs (never a price-table estimate) are the
+  // fallback.
+  const messageCostTotal = createMemo(() => {
+    let total = 0
+    for (const message of usageMessages()) {
+      if (message?.type !== 'assistant') continue
+      const cost = numberOrNull(message.cost)
+      if (cost !== null && cost > 0) total += cost
+    }
+    return total
+  })
+
+  const cost = createMemo(() => {
+    revision()
+    const ids = familySessionIDs()
+    if (ids.length === 0) return null
+    let total = 0
+    let found = false
+    for (const id of ids) {
+      let value: unknown
+      try {
+        value = context.data.session.cost?.(id)
+      } catch {
+        value = undefined
+      }
+      let resolved = numberOrNull(value)
+      if (resolved === null) {
+        try {
+          resolved = numberOrNull(context.data.session.get(id)?.cost)
+        } catch {
+          resolved = null
+        }
+      }
+      if (resolved !== null && resolved >= 0) {
+        total += resolved
+        found = true
+      }
+    }
+    if (found) {
+      // The session cost is authoritative, but a host that has not recorded it
+      // yet can still expose real message costs. Never show $0.00 next to
+      // positive model rows; take the larger real number, never a price table.
+      return Math.max(total, messageCostTotal())
+    }
+    const fallback = messageCostTotal()
+    return fallback > 0 ? fallback : null
+  })
+
+  const modelUsage = createMemo(() => {
+    metricsRevision()
+    return ceilingModelUsage(collectModelUsage(usageMessages()), MODEL_USAGE_VISIBLE_CEILING)
+  })
+
+  // Resolved model reference: the session's own model first, then the agent's
+  // configured model from the host, with the preset override as the last word.
+  const modelRefs = createMemo(() => {
+    revision()
+    const current = session()
+    const agent = typeof current?.agent === 'string' && current.agent !== '' ? current.agent : ''
+    let agentRef: unknown
+    if (agent !== '') {
+      try {
+        const agents = context.data.location?.agent?.list?.(location)
+        if (Array.isArray(agents)) agentRef = agents.find((entry) => entry?.id === agent)?.model
+      } catch {
+        /* agent list unavailable */
+      }
+    }
+    const override = agent === '' ? undefined : presetOverrides().agents[agent]?.model
+    return {
+      agent,
+      sessionRef: current?.model,
+      agentRef,
+      override: typeof override === 'string' && override !== '' ? override : null,
+    }
+  })
+
+  const agentModel = createMemo(() => {
+    const { agent, sessionRef, agentRef, override } = modelRefs()
+    // An explicit preset override is the user's last word, so it is displayed
+    // (and starred) ahead of the session/agent reference.
+    const model = shortModelID(override) ?? shortModelID(sessionRef) ?? shortModelID(agentRef)
+    if (model === null) return null
+    return { agent, model, overridden: override !== null }
+  })
+
+  // Provider of the model actually in use — derived, never typed: the session's
+  // own model, then the newest assistant message from the transcript walk, then
+  // the current agent's model in the host location (agent list first, its model
+  // list for a bare id). Null when none of them answers, so the header can omit
+  // it instead of inventing a name.
+  const provider = createMemo(() => {
+    revision()
+    const fromSession = providerIDFromRef(session()?.model)
+    if (fromSession !== null) return fromSession
+    const list = messages()
+    for (let index = list.length - 1; index >= 0; index -= 1) {
+      const message = list[index]
+      if (message?.type !== 'assistant') continue
+      const fromMessage = providerIDFromRef(message.model)
+      if (fromMessage !== null) return fromMessage
+    }
+    const { agentRef } = modelRefs()
+    const fromAgent = providerIDFromRef(agentRef)
+    if (fromAgent !== null) return fromAgent
+    try {
+      return providerIDFromModels(context.data.location?.model?.list?.(location), agentRef)
+    } catch {
+      /* model list unavailable */
+      return null
+    }
+  })
+
+  const contextUsage = createMemo(() => {
+    const list = messages().slice(-MODEL_USAGE_MESSAGE_LIMIT)
+    if (list.length === 0) return null
+    const refs = modelRefs()
+    const ref = resolveActiveModelRef(refs.sessionRef, list, refs.agentRef)
+    if (ref === null) return null
+    let models: unknown[] = []
+    try {
+      const result = context.data.location?.model?.list?.(location)
+      if (Array.isArray(result)) models = result
+    } catch {
+      /* Unknown model limits suppress only the context gauge. */
+    }
+    return resolveModelContextSnapshot(list, ref, models, session()?.revert?.messageID)
+  })
+
+  // Telemetry that rides on the messages already in hand — no extra request.
+  // The halves are deliberately separate memos: the cache hit rate comes from
+  // the last assistant that carries `tokens` and never looks at the clock,
+  // while the speed needs the turn (and `time.streamed`) to be measurable. One
+  // half being unavailable must never blank the other.
+  const cachePerformance = createMemo<number | null>(() => {
+    const message = lastAssistantWithTokens(messages(), session()?.revert?.messageID)
+    return message === null ? null : cacheHitPercent(message.tokens)
+  })
+
+  // The turn the newest assistant step closes gets the host's aggregated
+  // `turnTokensPerSecond` (see the helper).
+  const turnPerformance = createMemo<number | null>(() => {
+    const list = messages()
+    let anchor = -1
+    for (let index = list.length - 1; index >= 0; index--) {
+      if (list[index]?.type === 'assistant') {
+        anchor = index
+        break
+      }
+    }
+    return anchor === -1 ? null : turnTokensPerSecond(list, anchor)
+  })
+
+  const performance = createMemo<ContextPerformance | null>(() => {
+    const cacheHit = cachePerformance()
+    const tokensPerSecond = turnPerformance()
+    if (cacheHit === null && tokensPerSecond === null) return null
+    return { cacheHit, tokensPerSecond }
+  })
+
+  // Child session id → the `subagent` call that spawned it (description, agent,
+  // background). This rides the transcript the sidebar already holds: one pass,
+  // no request, and no `message.sync` on the children. The call is evidence for
+  // *why* a child exists; when it is missing the row simply stays unclassified.
+  const subagentCalls = createMemo(() => collectSubagentCalls(messages()))
+
+  // Delegations = every child of the active session (native task() children and
+  // a dispatch's own children alike), enriched with each child's live status and
+  // terminal outcome. `collectDispatch` is the same collector the
+  // `pantheon.dispatch` panel renders, so the sidebar and the panel can never
+  // list a child twice or disagree about its evidence; the calls map already
+  // computed above is handed over so this costs no second transcript walk.
+  const dispatchEntries = createMemo(() => {
+    revision()
+    const id = activeSessionID()
+    if (id === '') return []
+    return collectDispatch(context, id, { now: Date.now(), calls: subagentCalls() })
+  })
+
+  /** What the sidebar block renders: the collector's rows, nothing else. */
+  const allDelegations = createMemo(() => dispatchEntries().map((entry) => entry.view))
+
+  const hasRunning = createMemo(() => allDelegations().some((view) => view.state === 'running'))
+
+  // The whole `Dispatch` block in one memo: the live rows (newest first, capped),
+  // the finished rollup per agent and the spend totals. Reading `frame()` is what
+  // re-evaluates it while something runs — the spinner already ticks every 80 ms,
+  // so a live row's duration advances without a second timer and an idle sidebar
+  // stays static. Null when the session has no child, so the block (and its
+  // spacer) never renders empty.
+  const dispatch = createMemo(() => {
+    frame()
+    return buildDispatchBlock(allDelegations(), Date.now(), frame())
+  })
+
+  // Which blocks render, and where a blank line goes. The conditions mirror the
+  // ones in the view's own `<Show>`s — both read these same memos, so a spacer
+  // can never outlive the block it separates.
+  const blocks = createMemo(() => {
+    const present: SidebarBlockKey[] = []
+    // Context also owns the spend line, so the stats totals alone keep it up.
+    if (contextBlockRows(contextUsage(), cost()) !== null || contextSpendLine(spend()) !== null) {
+      present.push('context')
+    }
+    if (branch() !== null || gitLine() !== null) present.push('git')
+    if (todo().visible.length > 0) present.push('todo')
+    if (dispatch() !== null) present.push('dispatch')
+    return withBlockSpacers(present)
+  })
+
+  onMount(() => {
+    const unsubscribeAll = subscribeSidebarRefresh(context, () => {
+      refresh()
+      scheduleGitChanges()
+      scheduleGitProbe()
+      scheduleSpend()
+    })
+    const id = activeSessionID()
+    if (id !== '') {
+      try {
+        void Promise.resolve(context.data.session.sync(id)).then(refresh)
+      } catch {
+        /* sync unavailable */
+      }
+      try {
+        void Promise.resolve(context.data.session.message?.sync?.(id)).then(refresh)
+      } catch {
+        /* message sync unavailable — the gauge degrades to cost-only */
+      }
+    }
+    try {
+      void Promise.resolve(context.data.location.vcs.sync(location)).then(refresh)
+    } catch {
+      /* vcs sync unavailable */
+    }
+
+    void loadGitChanges()
+    void runGitProbe()
+    void loadSpend()
+
+    // Spinner ticks only while a job is running; terminal rows stay static. The
+    // interval is armed on the running edge and cleared on the terminal one, so
+    // an idle sidebar schedules no work at all.
+    createEffect(() => {
+      if (!hasRunning()) return
+      const spinner = setInterval(() => setFrame((value) => value + 1), SPINNER_INTERVAL_MS)
+      onCleanup(() => clearInterval(spinner))
+    })
+
+    onCleanup(() => {
+      disposed = true
+      if (gitDebounce !== undefined) clearTimeout(gitDebounce)
+      if (gitProbeDebounce !== undefined) clearTimeout(gitProbeDebounce)
+      if (spendDebounce !== undefined) clearTimeout(spendDebounce)
+      if (metricsDebounce !== undefined) clearTimeout(metricsDebounce)
+    })
+    onCleanup(unsubscribeAll)
+  })
+
+  // Discrete completion toast: exactly one per running→terminal transition, and
+  // never across a session switch — a state observed in one session says nothing
+  // about the next one, so the snapshot is dropped with the session id.
+  let observedSessionID = activeSessionID()
+  createEffect(() => {
+    const id = activeSessionID()
+    const views = allDelegations()
+    if (id !== observedSessionID) {
+      observedSessionID = id
+      observedStates = new Map()
+    }
+    if (id === '') {
+      observedStates = new Map()
+      return
+    }
+    const { completed, snapshot } = detectDelegationCompletions(
+      observedStates,
+      views.map((view) => ({ id: view.id, label: view.label, state: view.state })),
+    )
+    observedStates = snapshot
+    for (const done of completed) showDelegationToast(context, done)
+  })
+
+  return {
+    activeSessionID,
+    session,
+    branch,
+    gitChanges,
+    gitLine,
+    gitCli,
+    performance,
+    dispatch,
+    blocks,
+    hasRunning,
+    frame,
+    preset,
+    provider,
+    presetOverrides,
+    cost,
+    modelUsage,
+    todo,
+    spend,
+    contextUsage,
+    agentModel,
+  }
+}
+
+/* ─── Components ─────────────────────────────────────────── */
+
+/** One `Context` row: an optional toned lead segment (the gauge's filled
+ *  cells), the value, the muted gauge tail (empty cells) and the muted unit
+ *  suffix (`tokens` / `of 200K` / `spent`). */
+function ContextRowView(props: { row: ContextRow; fg: string; muted: string }) {
+  const fullWidth = () =>
+    cellWidth(
+      `${props.row.lead ?? ''}${props.row.tail ?? ''}${props.row.value}${props.row.suffix ?? ''}`,
+    )
   return (
-    <box flexDirection="column" width="100%">
-      {/* ── Header ── */}
-      <text fg={theme().accent} attributes={1}>
-        {`Pantheon${props.version ? ` v${props.version}` : ''}`}
-      </text>
-      <Show when={branch()}>{(b) => <text fg={theme().textMuted}>{b()}</text>}</Show>
-
-      {/* ── Active preset indicator ── */}
+    <Show
+      when={props.row.suffix !== ' gasto na sessão'}
+      fallback={
+        <box flexDirection="column">
+          <For each={sidebarMoneyLines('gasto na sessão', props.row.value)}>
+            {(line) => <text fg={props.fg}>{line}</text>}
+          </For>
+        </box>
+      }
+    >
       <Show
-        when={preset().name}
+        when={fullWidth() <= SIDEBAR_CONTENT_WIDTH}
         fallback={
-          <box flexDirection="row" gap={1}>
-            <text fg={theme().textMuted}>Preset: default</text>
+          <box flexDirection="column">
+            <For each={sidebarTextLines(`${props.row.value.trim()}${props.row.suffix ?? ''}`)}>
+              {(line) => <text fg={props.fg}>{line}</text>}
+            </For>
           </box>
         }
       >
-        {(name) => (
-          <box flexDirection="row" gap={1}>
-            <text fg={theme().textMuted}>{'\u26a1 Preset:'}</text>
-            <text fg={theme().accent}>{name()}</text>
-            <text fg={theme().textMuted}>{`(${preset().source ?? ''})`}</text>
-          </box>
-        )}
+        <box flexDirection="row">
+          <Show when={props.row.lead}>{(lead) => <text fg={props.fg}>{lead()}</text>}</Show>
+          <Show when={props.row.tail}>{(tail) => <text fg={props.muted}>{tail()}</text>}</Show>
+          <text fg={props.fg}>{props.row.value}</text>
+          <Show when={props.row.suffix}>
+            {(suffix) => <text fg={props.muted}>{suffix()}</text>}
+          </Show>
+        </box>
       </Show>
+    </Show>
+  )
+}
 
-      <HR />
-
-      {/* ── Sessions ── */}
-      <box onMouseDown={() => setShowSessions((x) => !x)}>
-        <text fg={theme().text} attributes={1}>
-          {`${showSessions() ? '\u25bc' : '\u25b6'} Sessions`}
-        </text>
-        <text fg={theme().textMuted}>{` (${String(totalSessions())})`}</text>
-      </box>
-      <Show when={showSessions()}>
-        <Show
-          when={recentSessions().length > 0}
-          fallback={
-            <box marginLeft={1}>
-              <text fg={theme().textMuted}>No recent sessions</text>
-            </box>
-          }
-        >
-          <box marginLeft={1} flexDirection="column">
-            <For each={recentSessions()}>
-              {(ses: any) => <SessionRow api={props.api} session={ses} />}
-            </For>
-          </box>
-        </Show>
-      </Show>
-
-      {/* ── Delegations (session.children primary + .pantheon/delegations md enrichment) ── */}
-      <box onMouseDown={() => setShowDelegations((x) => !x)}>
-        <text fg={theme().text} attributes={1}>
-          {`${showDelegations() ? '▼' : '▶'} Delegations`}
-        </text>
-        <text fg={theme().textMuted}>
-          {delegationCeiling().visible.length > 0 ? ` ${delegationHeader()}` : ' — idle'}
-        </text>
-      </box>
-      <Show when={showDelegations()}>
-        <Show
-          when={delegationCeiling().visible.length > 0}
-          fallback={
-            <box marginLeft={1}>
-              <text fg={theme().textMuted}>No delegations</text>
-            </box>
-          }
-        >
-          <box marginLeft={1} flexDirection="column">
-            <For each={delegationCeiling().visible}>
-              {(job) => <DelegationRow api={props.api} job={job} now={now()} frame={frame()} />}
-            </For>
-            <Show when={delegationCeiling().hidden > 0}>
-              <text fg={theme().textMuted}>
-                {delegationCeiling().hiddenActive > 0
-                  ? `… +${delegationCeiling().hiddenActive} active`
-                  : `… +${delegationCeiling().hiddenTerminal} more`}
-              </text>
-            </Show>
-          </box>
-        </Show>
+/** Block title: a muted single-width glyph, then the bold label. The fixed
+ *  header at the top of the sidebar deliberately renders no icon. `summary` is
+ *  the muted tail some blocks carry (`· 2 rodando · $0.47`), so the header
+ *  stays one line. */
+function BlockHeader(props: {
+  icon: string
+  label: string
+  fg: string
+  muted: string
+  summary?: string | null
+}) {
+  return (
+    <box flexDirection="row">
+      <text fg={props.muted}>{`${props.icon} `}</text>
+      <text fg={props.fg} attributes={1}>
+        {props.label}
+      </text>
+      <Show when={props.summary}>
+        {(summary) => <text fg={props.muted}>{`${SPEND_LINE_SEPARATOR}${summary()}`}</text>}
       </Show>
     </box>
   )
 }
 
-/* ─── Plugin Registration ────────────────────────────────── */
+interface SidebarProps {
+  context: Context
+  sessionID?: string
+  quotaRuntime: QuotaRuntime
+}
 
-const tui: TuiPlugin = (api, _options, _meta) => {
-  if (pantheonPluginOnce('pantheon:tui')) return
-  // Do not await project file/process probes here. OpenCode waits for the TUI
-  // factory before it finishes startup, and a Windows host opening a WSL
-  // project can leave those probes pending while the project bridge comes up.
-  // Register the sidebar immediately and fill in the optional version later.
-  const [version, setVersion] = createSignal<string | null>(null)
-  void detectVersion(api)
-    .then((detected) => setVersion(detected))
-    .catch(() => setVersion(null))
+function Sidebar(props: SidebarProps): JSX.Element {
+  const { context } = props
+  const model = createSidebarModel(context, () => props.sessionID)
+  const text = () => context.theme.text?.base
+  const muted = () => context.theme.text?.muted ?? text()
+  const tone = (value: DelegationTone) => context.theme?.text?.feedback?.[value]?.base ?? text()
+  /* Single accent: in-progress uses `theme.text.feedback.warning.base` when the
+   * theme ships it, so live work is the only colored row. */
+  const todoFg = (status: TodoStatus) => {
+    const rowTone = todoTone(status)
+    if (rowTone === 'accent') return tone('warning')
+    return rowTone === 'muted' ? muted() : text()
+  }
+  const open = (sessionID: string) => () => navigateToSession(context.ui?.router, sessionID)
+  /* Spacing comes from the block list, never from the view: a block with no
+   * content is simply absent there, so it leaves no orphan gap behind. */
+  const block = (key: SidebarBlockKey) => model.blocks().find((entry) => entry.key === key)
+  /* Read the flag live (not through a captured entry) so a block that becomes
+   * the first one loses its spacer instead of keeping a stale blank line. */
+  const spacer = (key: SidebarBlockKey) => block(key)?.spacer === true
+  const usageRows = () => modelUsageRows(model.modelUsage().visible)
+  const usageHidden = () =>
+    hiddenModelUsageText(model.modelUsage().hidden, model.modelUsage().hiddenCost)
+  const contextRows = () => contextBlockRows(model.contextUsage(), model.cost())
+  const spendLine = () => contextSpendLine(model.spend())
+  const performanceLine = () => contextPerformanceLine(model.performance())
+  /* Filled cells and the percent value resolve through the same stage, so the
+   * bar and its number can never disagree. */
+  const gaugeFg = (row: ContextRow) => contextProgressColor(row.tone ?? 'warning', context.theme)
+  const dispatchView = () => model.dispatch()
+  const dispatchSummary = () => {
+    const view = dispatchView()
+    return view === null ? null : dispatchHeaderSummary(view.runningCount, view.totalCost)
+  }
+  const failedSuffix = () => failedSuffixText(dispatchView()?.failures)
 
-  // Vendored feature (MIT): AI subscription usage gauges.
-  void setupUsageBar(api) // async init — never blocks sidebar registration
+  return (
+    <box flexDirection="column" width="100%" padding={1}>
+      <text fg={text()} attributes={1}>{`Pantheon v${__PANTHEON_VERSION__}`}</text>
+      {/* Preset plus the provider of the model in use — both derived from host
+          state. The provider is dropped when nothing resolves, so the row is
+          never a placeholder. */}
+      <text fg={muted()}>{presetHeaderLine(model.preset().name ?? '', model.provider())}</text>
+      <Show
+        when={model.activeSessionID() !== '' && model.session()}
+        fallback={<text fg={muted()}>{sidebarPlaceholder(props.sessionID)}</text>}
+      >
+        {(current: any) => (
+          <text fg={text()}>{`Sessão: ${truncateLabel(current().title || current().id)}`}</text>
+        )}
+      </Show>
 
-  // ── Live delegation store (tool-part tracker + sidebar invalidation) ──
-  // The Delegations panel's PRIMARY source is `api.client.session.children`
-  // (delegations-sidebar pattern) — `message.part.updated` may not fire for
-  // the native task tool on runtime 1.18.13 (the "(0)" symptom). The
-  // tool-part lifecycle below still tracks `task` parts and invalidates the
-  // store subscription consumed by the View: when part events DO arrive, the panel
-  // re-fetches children. Fail-open: if the events API is unavailable nothing
-  // subscribes and the 1s safety poll keeps the panel working (never crash).
-  const liveStore = createLiveDelegationStore()
-  const unsubscribeLive = registerLiveDelegationEvents(api, liveStore)
-  api.lifecycle.onDispose(() => {
-    unsubscribeLive()
-    liveStore.map.clear()
-  })
+      {/* Exactly one blank line between the fixed header and the first block, so
+          the session line never touches the first gauge. Blocks carry their own
+          spacer (see `withBlockSpacers`), so this never doubles. */}
+      <Show when={model.blocks().length > 0}>
+        <box height={1} />
+      </Show>
 
-  api.slots.register({
-    order: 900,
-    slots: {
-      sidebar_content(_ctx, props) {
-        return (
-          <View api={api} sessionID={props.session_id} version={version()} liveStore={liveStore} />
-        )
+      {/* Context — a 12-cell gauge of the model's window, one row per model
+          with real message cost > 0 (`<model> <tokens> $<cost>`), and one muted
+          footer line with the local `hoje` / `30d` totals. The native block is
+          disabled in cli.json, so this is the only source of the data. Only the
+          gauge carries a semantic tone; labels and units stay muted. */}
+      <Show when={block('context')}>
+        <box flexDirection="column">
+          <Show when={spacer('context')}>
+            <box height={1} />
+          </Show>
+          <BlockHeader icon={BLOCK_ICONS.context} label="Context" fg={text()} muted={muted()} />
+          <Show when={contextRows()}>
+            {(rows) => (
+              <box flexDirection="column">
+                <Show when={rows().tokens}>
+                  {(row) => <ContextRowView row={row()} fg={text()} muted={muted()} />}
+                </Show>
+                <Show when={rows().percent}>
+                  {(row) => <ContextRowView row={row()} fg={gaugeFg(row())} muted={muted()} />}
+                </Show>
+                <Show when={rows().spent}>
+                  {(row) => <ContextRowView row={row()} fg={text()} muted={muted()} />}
+                </Show>
+                {/* Real per-model spend, only for models with cost > 0. Label muted,
+                    numbers right-aligned; the gauge above remains the block's
+                    single accent. When no message carries cost this loop is empty
+                    and the block keeps its original token/spend rows. */}
+                <Show when={usageRows().length > 0}>
+                  <text fg={muted()}>Sessão · custo reportado</text>
+                  <text fg={muted()}>
+                    {'Modelo'.padEnd(MODEL_USAGE_MODEL_WIDTH) +
+                      '  Tokens'.padStart(8) +
+                      '  USD'.padStart(10)}
+                  </text>
+                </Show>
+                <For each={usageRows()}>
+                  {(row: ModelUsageRow) => (
+                    <box flexDirection="column">
+                      <For each={modelUsageRowLines(row)}>
+                        {(line) => <text fg={text()}>{line}</text>}
+                      </For>
+                    </box>
+                  )}
+                </For>
+                <Show when={usageHidden()}>
+                  {(line) => (
+                    <For each={sidebarTextLines(line())}>
+                      {(part) => <text fg={muted()}>{part}</text>}
+                    </For>
+                  )}
+                </Show>
+              </box>
+            )}
+          </Show>
+          {/* Cache hit + output speed of the newest messages: already in the
+              transcript walk, so these cost no request. Muted, one line, and
+              absent entirely when neither number exists. */}
+          <Show when={performanceLine()}>{(line) => <text fg={muted()}>{line()}</text>}</Show>
+          {/* Spend, not budget: two local windows on one muted line. Absent
+              whenever stats is missing or the from/to unit probe failed. */}
+          <Show when={spendLine()}>
+            {(line) => (
+              <For each={contextSpendLines(line())}>
+                {(part) => <text fg={muted()}>{part}</text>}
+              </For>
+            )}
+          </Show>
+        </box>
+      </Show>
+
+      {/* Git status — branch from the location cache; file counts from the git
+          CLI (`+1 ±2 −1 ?2 ↑3 ↓1`, async, debounced, 5 s cooldown) and only
+          `client.vcs.status` when git is unavailable. Untracked and
+          ahead/behind exist only on the CLI path: the HTTP protocol has no
+          field for either. The header renders even without a branch when the
+          CLI answered, so a repo with a detached HEAD still shows its counts. */}
+      <Show when={block('git')}>
+        <box flexDirection="column">
+          <Show when={spacer('git')}>
+            <box height={1} />
+          </Show>
+          <BlockHeader icon={BLOCK_ICONS.git} label="Git status" fg={text()} muted={muted()} />
+          <Show when={model.branch()}>
+            {(value) => (
+              <box flexDirection="row">
+                <text fg={muted()}>{'⎇ '}</text>
+                <text fg={text()}>{truncateLabel(value(), 32)}</text>
+              </box>
+            )}
+          </Show>
+          <Show when={model.gitLine()}>{(line) => <text fg={text()}>{line()}</text>}</Show>
+        </box>
+      </Show>
+
+      {/* Todo — derived from the newest completed `todowrite` in the active
+          session's transcript (no todo API exists in the installed client).
+          Rows are grouped in_progress → pending → completed → cancelled, capped
+          at six, and every row keeps a single accent: live work only. The
+          header takes `warning` so the block reads apart from the neutral
+          reference blocks above it. */}
+      <Show when={block('todo')}>
+        <box flexDirection="column">
+          <Show when={spacer('todo')}>
+            <box height={1} />
+          </Show>
+          <Show when={model.todo().visible.length > 0}>
+            <box flexDirection="column">
+              <BlockHeader
+                icon={BLOCK_ICONS.todo}
+                label="Todo"
+                fg={tone('warning')}
+                muted={muted()}
+              />
+              <For each={model.todo().visible}>
+                {(item: TodoItem) => <text fg={todoFg(item.status)}>{todoRowText(item)}</text>}
+              </For>
+              <Show when={hiddenTodoText(model.todo().hidden)}>
+                {(line) => <text fg={muted()}>{line()}</text>}
+              </Show>
+            </box>
+          </Show>
+        </box>
+      </Show>
+
+      {/* Dispatch — one block for the whole child set. The header carries the
+          live count and the subtree's real spend; then one row per live child
+          (newest first, capped at three, `… +N rodando` beyond), the aggregated
+          `✓ <total> · $<soma> · <M> agentes` line of the finished ones, up to
+          three per-agent rollup rows (`<agente> ×<n>  $<soma>`), `… +K  $<soma>`
+          beyond, and `· <F> falhas` on the summary when any child failed. Every
+          row is one preformatted line, so no column can be squeezed away by the
+          layout; live rows navigate to the child session on click. */}
+      <Show when={block('dispatch')}>
+        <box flexDirection="column">
+          <Show when={spacer('dispatch')}>
+            <box height={1} />
+          </Show>
+          <Show when={dispatchView()}>
+            {(view) => (
+              <box flexDirection="column">
+                <BlockHeader
+                  icon={BLOCK_ICONS.dispatch}
+                  label="Dispatch"
+                  fg={view().runningCount > 0 ? tone('success') : muted()}
+                  muted={muted()}
+                  summary={dispatchSummary()}
+                />
+                <For each={view().running}>
+                  {(row: DispatchRunningLine) => (
+                    <box onMouseDown={open(row.id)} flexShrink={0}>
+                      <text fg={tone('success')}>{row.text}</text>
+                    </box>
+                  )}
+                </For>
+                <Show when={view().runningHidden > 0}>
+                  <text fg={muted()}>{`\u2026 +${view().runningHidden} rodando`}</text>
+                </Show>
+                <Show when={view().summary}>
+                  {(line) => (
+                    <box flexDirection="row" flexShrink={0}>
+                      <text fg={muted()}>{line()}</text>
+                      <Show when={failedSuffix()}>
+                        {(suffix) => (
+                          <text fg={tone('error')}>{`${SPEND_LINE_SEPARATOR}${suffix()}`}</text>
+                        )}
+                      </Show>
+                    </box>
+                  )}
+                </Show>
+                <For each={view().agents}>
+                  {(row: ChildAgentUsage) => <text fg={muted()}>{childAgentRowText(row)}</text>}
+                </For>
+                <Show when={hiddenChildAgentsText(view().agentsHidden, view().agentsHiddenCost)}>
+                  {(line) => <text fg={muted()}>{line()}</text>}
+                </Show>
+              </box>
+            )}
+          </Show>
+        </box>
+      </Show>
+      {/* Keep quota inside this composition: host slots order claims, not our blocks. */}
+      <QuotaSidebarSummary context={context} runtime={props.quotaRuntime} />
+    </box>
+  )
+}
+
+/** Panel actions that only make sense with a row selected. A panel over an
+ *  empty tree still owns `f`/`escape`, but the navigation keys fall through
+ *  instead of being swallowed by a no-op. */
+const DISPATCH_PANEL_ROW_ACTIONS: ReadonlySet<DispatchPanelAction> = new Set<DispatchPanelAction>([
+  'up',
+  'down',
+  'home',
+  'end',
+  'pageup',
+  'pagedown',
+  'toggle',
+])
+
+/** One command: runs only while the panel owns the keyboard, and reports
+ *  `false` (the host keeps the key) when it cannot act. `undefined` means the
+ *  key was consumed. */
+export function runDispatchPanelCommand(
+  action: DispatchPanelAction,
+  panel: Pick<PanelInput, 'focused' | 'close' | 'toggleFullscreen'>,
+  model: Pick<
+    DispatchPanelModel,
+    'rows' | 'move' | 'first' | 'last' | 'pageUp' | 'pageDown' | 'toggle'
+  >,
+): false | undefined {
+  if (panel.focused !== true) return false
+  if (DISPATCH_PANEL_ROW_ACTIONS.has(action) && model.rows().length === 0) return false
+  performDispatchPanelAction(action, model, panel)
+  return undefined
+}
+
+/** Keymap layer of the panel, as data. It is registered inside the
+ *  `session.panel` claim, but the host mounts the effects of *every* panel
+ *  contribution, so the layer itself is not proof of focus: without `enabled`
+ *  the `j/k/f/q/enter/escape` bindings were consumed while the panel was not
+ *  focused and the composer lost its keys. `enabled` (the documented gate) makes
+ *  the whole layer inert until `panel.focused` is true. Pure. */
+export function dispatchPanelKeymapLayer(
+  panel: Pick<PanelInput, 'focused' | 'close' | 'toggleFullscreen'>,
+  model: DispatchPanelModel,
+): KeymapLayer {
+  const focused = () => panel.focused === true
+  return {
+    mode: 'global',
+    enabled: focused,
+    commands: DISPATCH_PANEL_COMMANDS.map((spec) => ({
+      id: spec.id,
+      title: spec.title,
+      bind: spec.bind,
+      run: () => (focused() ? runDispatchPanelCommand(spec.action, panel, model) : false),
+    })),
+  }
+}
+
+/** Keymap layer of the panel. Created inside the `session.panel` claim, so the
+ *  host removes it with the panel; it renders nothing. */
+function DispatchPanelKeymap(props: {
+  context: any
+  panel: PanelInput
+  model: DispatchPanelModel
+}) {
+  props.context.keymap.layer(() => dispatchPanelKeymapLayer(props.panel, props.model))
+  return null
+}
+
+// TODO(dispatch panel): jumping to the selected child session. `ui.router` only
+// has the destination shape verified for the sidebar's click-through
+// (`navigateToSession`), and no verified destination exists for a *child* id
+// from inside a session route — so panel rows stay non-interactive and the
+// detail prints the short id instead. Revisit once the router API for `session`
+// destinations is verified against the installed host.
+/** The full-width dispatch panel: header counters, one row per child session,
+ *  the detail of the selected child and the key hints. Wide panels put the
+ *  detail beside the list; narrow ones stack it under the list and every cell is
+ *  truncated to its own column instead of wrapping. */
+function DispatchPanel(props: { context: any; panel: PanelInput }) {
+  const model = createDispatchPanelModel(props.context, () => props.panel)
+  const text = () => props.context.theme.text?.base
+  const muted = () => props.context.theme.text?.muted ?? text()
+  const tone = (value: DelegationTone) =>
+    props.context.theme?.text?.feedback?.[value]?.base ?? text()
+  const rowFg = (state: DelegationState) => {
+    if (state === 'failed') return tone('error')
+    if (state === 'running') return tone('success')
+    if (state === 'interrupted') return tone('warning')
+    return text()
+  }
+  const selected = (id: string) => id === model.selectedID()
+  const rows = () => (
+    <For each={model.visible().rows}>
+      {(row: DispatchPanelRow) => (
+        <box flexDirection="row" flexShrink={0}>
+          <text fg={selected(row.id) ? text() : muted()}>
+            {selected(row.id) ? `${DISPATCH_PANEL_SELECTION_MARKER} ` : '  '}
+          </text>
+          <text fg={rowFg(row.state)} attributes={selected(row.id) ? 1 : 0}>
+            {row.text}
+          </text>
+        </box>
+      )}
+    </For>
+  )
+  const detail = () => (
+    <For each={model.detail()}>
+      {(line: string, index: () => number) => (
+        <text fg={index() === 0 ? text() : muted()}>{line}</text>
+      )}
+    </For>
+  )
+  const empty = () => <text fg={muted()}>{DISPATCH_PANEL_EMPTY_TEXT}</text>
+
+  return (
+    <box flexDirection="column" width="100%" padding={1}>
+      <DispatchPanelKeymap context={props.context} panel={props.panel} model={model} />
+      {/* `◈ Dispatch — <sessão>` then the counters of the whole tree; a counter
+          that is zero is absent, and an empty tree renders no counter line. */}
+      <text fg={text()} attributes={1}>
+        {model.title()}
+      </text>
+      <Show when={model.header()}>{(line) => <text fg={muted()}>{line()}</text>}</Show>
+      <text fg={muted()}>{dispatchPanelRule(props.panel.width - 2)}</text>
+      <Show
+        when={model.layout().mode === 'wide'}
+        fallback={
+          <box flexDirection="column">
+            <Show when={model.rows().length > 0} fallback={empty()}>
+              <box flexDirection="column">{rows()}</box>
+            </Show>
+            <Show when={model.selectedID()}>
+              <box flexDirection="column">
+                <box height={1} />
+                {detail()}
+              </box>
+            </Show>
+          </box>
+        }
+      >
+        <box flexDirection="row">
+          <box flexDirection="column" width={model.layout().listWidth}>
+            <Show when={model.rows().length > 0} fallback={empty()}>
+              {rows()}
+            </Show>
+          </box>
+          {/* No selected child (an empty tree) → no detail column at all, so an
+              empty panel never renders a dangling em dash beside the list. */}
+          <Show when={model.selectedID()}>
+            <box flexDirection="column" width={model.layout().detailWidth}>
+              {detail()}
+            </box>
+          </Show>
+        </box>
+      </Show>
+      <box height={1} />
+      <text fg={muted()}>{model.footer()}</text>
+    </box>
+  )
+}
+
+/** App-level command claim: the only way into the panel. It registers the
+ *  `pantheon.dispatch.open` command (palette + `/dispatch`) and renders nothing;
+ *  the panel itself lives behind its own `session.panel` claim. */
+function DispatchCommandLayer(props: { context: any }) {
+  props.context.keymap.layer(() => ({
+    mode: 'global',
+    commands: [
+      {
+        id: 'pantheon.dispatch.open',
+        title: 'Pantheon: Dispatch',
+        group: 'Pantheon',
+        palette: true,
+        slash: { name: 'dispatch', aliases: ['pantheon-dispatch'] },
+        run: () => {
+          openDispatchPanel(props.context)
+        },
       },
-    },
-  })
+    ],
+  }))
+  return null
 }
 
-const plugin: TuiPluginModule & { id: string; setup: () => Promise<void> } = {
-  id: 'pantheon.tui',
-  tui,
-  // Beta loader contract: every `plugins` directory entry must expose a
-  // no-op `setup` so the entry loads as `pantheon.tui` with zero errors
-  // (sandbox probe evidence). The TUI itself boots via `tui()`.
-  setup: async () => {},
+/** Home-screen status contribution. The sidebar slot is session-scoped, so
+ *  before the first prompt the sidebar may not mount at all (Known Issue) —
+ *  this keeps a compact Pantheon line visible on the home footer meanwhile. */
+function HomeStatus(props: { context: any }) {
+  const preset = useActivePreset(props.context).preset
+  const muted = () => props.context.theme?.text?.muted ?? props.context.theme?.text?.base
+  return (
+    <text
+      fg={muted()}
+    >{`Pantheon v${__PANTHEON_VERSION__}${preset().name ? ` ${PRESET_MARKER} ${preset().name}` : ''}`}</text>
+  )
 }
+
+/** Lean footer model: only the preset label and the live delegation count. It
+ *  deliberately does not reuse `createSidebarModel` — that model owns the
+ *  completion toasts and the spinner, and a second instance would double-toast.
+ *  No session id in the slot input is a graceful no-op (count 0). */
+export type FooterModel = {
+  preset: Accessor<PresetInfo>
+  running: Accessor<number>
+}
+
+export function createFooterModel(context: any, sessionID: () => string | undefined): FooterModel {
+  const [revision, setRevision] = createSignal(0)
+  const preset = useActivePreset(context).preset
+  const activeSessionID = () => {
+    const id = sessionID()
+    return isValidSessionID(id) ? id : ''
+  }
+
+  const running = createMemo(() => {
+    revision()
+    const id = activeSessionID()
+    if (id === '') return 0
+    let family: string[] = []
+    try {
+      const result = context.data.session.family?.(id)
+      if (Array.isArray(result)) family = result
+    } catch {
+      return 0
+    }
+    const now = Date.now()
+    let count = 0
+    for (const childID of family) {
+      if (childID === id || !isValidSessionID(childID)) continue
+      try {
+        const child = context.data.session.get(childID)
+        if (child?.parentID !== id) continue
+        const view = toDelegationView(child, sessionStatusOf(context, childID), now)
+        if (view.state === 'running') count += 1
+      } catch {
+        /* one unreadable child must not hide the rest */
+      }
+    }
+    return count
+  })
+
+  onMount(() => {
+    onCleanup(subscribeSidebarRefresh(context, () => setRevision((value) => value + 1)))
+  })
+
+  return { preset, running }
+}
+
+/** Prompt-footer contribution: `▸<preset> · ✦<n> ativos`, appended next to the
+ *  native line (never replacing it) and only while a delegation is running. */
+function PromptFooter(props: { context: any; sessionID?: string | undefined }) {
+  const model = createFooterModel(props.context, () => props.sessionID)
+  const muted = () => props.context.theme?.text?.muted ?? props.context.theme?.text?.base
+  return (
+    <Show when={model.running() > 0}>
+      <text fg={muted()}>
+        {`${PRESET_MARKER}${model.preset().name ?? 'default'} · ✦${model.running()} ativos`}
+      </text>
+    </Show>
+  )
+}
+
+/* ─── Plugin registration ────────────────────────────────── */
+
+const plugin = Plugin.define({
+  id: 'pantheon.tui',
+  setup(context: Context) {
+    const globalState = globalThis as unknown as Record<PropertyKey, unknown>
+    if (globalState[SINGLETON]) return
+    globalState[SINGLETON] = true
+
+    const location = resolveLocation(context)
+    // Eager load/sync at setup so the cache is warm before the slot's first
+    // render (Known Issue: empty sidebar before the first prompt).
+    warmUpSidebarData(context, location)
+    const quotaRuntime = createQuotaRuntime(context)
+    const unregisterQuotaTui = registerQuotaTui(context, quotaRuntime)
+
+    const unregisterSidebar = context.ui.slot({
+      append: 'sidebar.content',
+      render: ({ sessionID }: { sessionID: string }) => (
+        <Sidebar context={context} sessionID={sessionID} quotaRuntime={quotaRuntime} />
+      ),
+    })
+    const unregisterHome = context.ui.slot({
+      append: 'home.footer.status',
+      render: () => <HomeStatus context={context} />,
+    })
+    // Additive claim: the native prompt footer keeps its own tokens/cost line.
+    const unregisterPromptFooter = context.ui.slot({
+      append: 'prompt.footer',
+      render: ({ sessionID }: { sessionID?: string }) => (
+        <PromptFooter context={context} sessionID={sessionID} />
+      ),
+    })
+    // The dispatch panel is a session-scoped slot: the claim renders only when
+    // the host's selected panel is ours, and the host keeps `focused`, `close`
+    // and `toggleFullscreen` (the panel never steals focus or routing).
+    const unregisterPanel = context.ui.slot({
+      append: 'session.panel',
+      render: (panel) => (
+        <Show when={panel.name === DISPATCH_PANEL_NAME}>
+          <DispatchPanel context={context} panel={panel} />
+        </Show>
+      ),
+    })
+    // Command layer: an additive claim at `app` that renders nothing and only
+    // registers the keymap layer, so `/dispatch` and the palette entry exist
+    // even while no panel is open.
+    const unregisterCommands = context.ui.slot({
+      append: 'app',
+      render: () => <DispatchCommandLayer context={context} />,
+    })
+    return () => {
+      if (typeof unregisterSidebar === 'function') unregisterSidebar()
+      if (typeof unregisterHome === 'function') unregisterHome()
+      if (typeof unregisterPromptFooter === 'function') unregisterPromptFooter()
+      if (typeof unregisterPanel === 'function') unregisterPanel()
+      if (typeof unregisterCommands === 'function') unregisterCommands()
+      unregisterQuotaTui()
+      delete globalState[SINGLETON]
+    }
+  },
+})
 
 export default plugin

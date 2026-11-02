@@ -41,10 +41,10 @@ const test = (name, fn) => nodeTest(name, { skip: SKIP_REASON }, fn)
 // Constants
 // ---------------------------------------------------------------------------
 
-const V2_PLUGIN = join(ROOT, 'src', 'plugin-v2')
-// Legacy V2 refs (migrated by the installer into V2_PLUGIN): the npm
-// shorthand the beta resolves via npm install (NpmInstallFailedError) and the
-// pre-directory-contract file path (loader warns "must be a directory").
+const MANAGED_PLUGIN = join(ROOT, 'src', 'plugin')
+// Legacy plugin refs, recognized and migrated by the installer onto
+// MANAGED_PLUGIN: the npm shorthand (resolved through the deprecated package
+// export) and the pre-rename directory/file paths.
 const V2_EXPORT = 'pantheon-opencode/plugin-v2'
 const V2_LEGACY_FILE = 'src/plugin-v2.ts'
 const THIRD_PARTY_PLUGIN = '/tmp/vendor/src/plugin.ts'
@@ -54,24 +54,24 @@ function pluginReference(entry) {
   return typeof entry === 'string' ? entry : entry?.package
 }
 
-/** Assert that config has one managed V2 entry in the current object contract. */
-function assertManagedV2Plugin(config) {
-  const entries = config.plugins.filter((entry) => pluginReference(entry) === V2_PLUGIN)
-  assert.equal(entries.length, 1, 'V2 plugin must appear exactly once')
-  assert.equal(typeof entries[0], 'object', 'V2 plugin entry must use object form')
-  assert.equal(entries[0].package, V2_PLUGIN, 'V2 plugin package must be the managed directory')
+/** Assert that config has one managed plugin entry in the current object contract. */
+function assertManagedPlugin(config) {
+  const entries = config.plugins.filter((entry) => pluginReference(entry) === MANAGED_PLUGIN)
+  assert.equal(entries.length, 1, 'managed plugin must appear exactly once')
+  assert.equal(typeof entries[0], 'object', 'managed plugin entry must use object form')
+  assert.equal(entries[0].package, MANAGED_PLUGIN, 'package must be the managed directory')
   assert.ok(
     entries[0].options !== null &&
       typeof entries[0].options === 'object' &&
       !Array.isArray(entries[0].options),
-    'V2 plugin entry must have an options object',
+    'managed plugin entry must have an options object',
   )
 }
 
 const COMPONENTS = ['agents', 'skills', 'instructions', 'commands', 'plugins']
 // OpenCode 2.x is the only supported generation.
 const VERSIONS = ['v2']
-const USER_PLUGIN = '@scope/custom-v2-plugin'
+const USER_PLUGIN = '@scope/custom-plugin'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -180,15 +180,15 @@ for (const version of VERSIONS) {
       )
       assert.equal(
         readFileSync(join(tuiPluginDir, 'tui.ts'), 'utf8'),
-        readFileSync(join(ROOT, 'src', 'plugins', 'tui', 'tui-v2.ts'), 'utf8'),
+        readFileSync(join(ROOT, 'src', 'plugins', 'tui', 'tui.ts'), 'utf8'),
       )
       assert.equal(
         readFileSync(join(tuiPluginDir, 'index.ts'), 'utf8'),
-        readFileSync(join(ROOT, 'src', 'plugins', 'tui', 'index-v2.ts'), 'utf8'),
+        readFileSync(join(ROOT, 'src', 'plugins', 'tui', 'index.ts'), 'utf8'),
       )
       assert.equal(
         JSON.parse(readFileSync(join(tuiPluginDir, 'package.json'), 'utf8')).exports['./tui'],
-        './dist/tui-v2.js',
+        './dist/tui.js',
       )
       const tuiPackage = JSON.parse(readFileSync(join(tuiPluginDir, 'package.json'), 'utf8'))
       assert.ok(tuiPackage.files.includes('tui.ts'), 'npm package must ship the TUI entrypoint')
@@ -272,28 +272,28 @@ for (const version of VERSIONS) {
 // ---------------------------------------------------------------------------
 
 test('V2 fresh install produces plugins (plural) as array with managed dir entry', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v2-fresh-'))
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-fresh-'))
   try {
     const config = await runInstall(target, 'v2')
     assert.ok(Array.isArray(config.plugins), 'config.plugins must be an array')
-    assertManagedV2Plugin(config)
+    assertManagedPlugin(config)
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
 })
 
 test('V2 fresh install registers a directory that carries the loader contract', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v2-dircontract-'))
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-dircontract-'))
   try {
     const config = await runInstall(target, 'v2')
-    assertManagedV2Plugin(config)
+    assertManagedPlugin(config)
     assert.ok(
-      existsSync(V2_PLUGIN) && statSync(V2_PLUGIN).isDirectory(),
-      `entry must be a directory: ${V2_PLUGIN}`,
+      existsSync(MANAGED_PLUGIN) && statSync(MANAGED_PLUGIN).isDirectory(),
+      `entry must be a directory: ${MANAGED_PLUGIN}`,
     )
     assert.ok(
-      existsSync(join(V2_PLUGIN, 'index.ts')),
-      `entry directory must carry a real index.ts: ${V2_PLUGIN}`,
+      existsSync(join(MANAGED_PLUGIN, 'index.ts')),
+      `entry directory must carry a real index.ts: ${MANAGED_PLUGIN}`,
     )
   } finally {
     rmSync(target, { recursive: true, force: true })
@@ -301,7 +301,7 @@ test('V2 fresh install registers a directory that carries the loader contract', 
 })
 
 test('V2 fresh install does NOT include V1 plugin entries or V1-shape keys', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v2-shape-'))
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-shape-'))
   try {
     const config = await runInstall(target, 'v2')
     assert.ok(!('provider' in config), 'V2 config must not have top-level provider (singular)')
@@ -318,7 +318,7 @@ test('V2 fresh install does NOT include V1 plugin entries or V1-shape keys', asy
 })
 
 test('V2 fresh install has permissions as array and flat MCP keys', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v2-perms-'))
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-perms-'))
   try {
     const config = await runInstall(target, 'v2')
     assert.ok(
@@ -348,7 +348,7 @@ test('V2 fresh install has permissions as array and flat MCP keys', async () => 
 })
 
 test('V2 fresh install has agents as named object with array permissions', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v2-agents-'))
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-agents-'))
   try {
     const config = await runInstall(target, 'v2')
     if ('agents' in config) {
@@ -371,7 +371,7 @@ test('V2 fresh install has agents as named object with array permissions', async
 })
 
 test('V2 project agents are installed where the V2 config directory discovers them', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v2-agent-files-'))
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-agent-files-'))
   try {
     const config = await runInstall(target, 'v2')
 
@@ -386,7 +386,7 @@ test('V2 project agents are installed where the V2 config directory discovers th
 })
 
 test('V2 agent MCP permissions follow mcp_tools allowlists', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v2-mcp-perms-'))
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-mcp-perms-'))
   try {
     const config = await runInstall(target, 'v2')
     const rules = config.agents.zeus.permissions
@@ -420,7 +420,7 @@ test('V2 agent MCP permissions follow mcp_tools allowlists', async () => {
 })
 
 test('agents receive only the skills declared in canonical frontmatter', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-agent-skills-v2-'))
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-agent-skills-'))
   try {
     const config = await runInstall(target, 'v2')
     const rules = config.agents.zeus.permissions.filter((rule) => rule.action === 'skill')
@@ -441,7 +441,7 @@ test('manual goal tools have exact per-agent grants in the generated config', as
     return new Set()
   }
 
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-goal-grants-v2-'))
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-goal-grants-'))
   try {
     const config = await runInstall(target, 'v2')
     const agents = config.agents
@@ -477,7 +477,7 @@ test('read-only codemap grants are limited to Apollo and Athena; indexing remain
   ]
   const expectedAgents = new Set(['apollo', 'athena'])
 
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-codemap-grants-v2-'))
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-codemap-grants-'))
   try {
     const config = await runInstall(target, 'v2')
     const agents = config.agents
@@ -525,7 +525,7 @@ test('read-only codemap grants are limited to Apollo and Athena; indexing remain
 })
 
 test('V2 preserves todoContinuation (not rewritten for V2)', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v2-todo-'))
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-todo-'))
   try {
     const config = await runInstall(target, 'v2', { todoContinuation: true })
     assert.equal(config.todoContinuation, true)
@@ -535,12 +535,12 @@ test('V2 preserves todoContinuation (not rewritten for V2)', async () => {
 })
 
 test('V2 removes Pantheon V2 refs from plugins before adding the managed entry', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v2-dedup-'))
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-dedup-'))
   try {
     const config = await runInstall(target, 'v2', {
-      plugins: [V2_EXPORT, V2_LEGACY_FILE, V2_PLUGIN, 'other-plugin'],
+      plugins: [V2_EXPORT, V2_LEGACY_FILE, MANAGED_PLUGIN, 'other-plugin'],
     })
-    assertManagedV2Plugin(config)
+    assertManagedPlugin(config)
     const references = config.plugins.map(pluginReference)
     assert.ok(!references.includes(V2_EXPORT), 'npm-shorthand ref must migrate')
     assert.ok(!references.includes(V2_LEGACY_FILE), 'legacy file ref must migrate')
@@ -551,7 +551,7 @@ test('V2 removes Pantheon V2 refs from plugins before adding the managed entry',
 })
 
 test('V2 cleans V1 Pantheon refs from plugin key', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v2-cleanup-'))
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-cleanup-'))
   try {
     const config = await runInstall(target, 'v2', {
       plugin: [
@@ -575,7 +575,7 @@ test('V2 cleans V1 Pantheon refs from plugin key', async () => {
 })
 
 test('V2 config snapshot has expected V2 key structure', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v2-snapshot-'))
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-snapshot-'))
   try {
     const config = await runInstall(target, 'v2')
     assert.ok('$schema' in config, 'snapshot must have $schema')
@@ -592,7 +592,7 @@ test('V2 config snapshot has expected V2 key structure', async () => {
 })
 
 test('V2 config snapshot permissions contain skill allow rule', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v2-snap-perm-'))
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-snap-perm-'))
   try {
     const config = await runInstall(target, 'v2')
     if ('permissions' in config && Array.isArray(config.permissions)) {
@@ -606,7 +606,7 @@ test('V2 config snapshot permissions contain skill allow rule', async () => {
 })
 
 test('V2 includes talos agent with permissions configuration', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v2-talos-'))
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-talos-'))
   try {
     const config = await runInstall(target, 'v2')
     assert.ok(
@@ -647,7 +647,7 @@ test('V2 includes talos agent with permissions configuration', async () => {
 // ---------------------------------------------------------------------------
 
 test('V2 install over a legacy V1-shaped config adds V2 config keys (plugins, providers, permissions)', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-v2-after-v1-'))
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-after-v1-'))
   try {
     // A pre-2.0 config on disk: singular `plugin`/`permission` keys, no
     // `plugins` list. The install recognizes the legacy shape and migrates it.
@@ -658,14 +658,14 @@ test('V2 install over a legacy V1-shaped config adds V2 config keys (plugins, pr
     assert.ok('plugin' in legacy, 'the legacy singular key survives for third-party entries')
     const v2Config = await runInstall(target, 'v2')
     assert.ok('plugins' in v2Config, 'After V2 overwrite, config must have plugins (plural)')
-    assertManagedV2Plugin(v2Config)
+    assertManagedPlugin(v2Config)
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
 })
 
-test('legacy V1-shaped config round-trip adds the V2 plugin entry', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-roundtrip-v2-'))
+test('legacy V1-shaped config round-trip adds the plugin entry', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-e2e-roundtrip-'))
   try {
     // Seed the exact marker of a pre-2.0 install instead of running a V1
     // install (the V1 code path no longer exists).
@@ -678,7 +678,7 @@ test('legacy V1-shaped config round-trip adds the V2 plugin entry', async () => 
     )
     const v2Config = await runInstall(target, 'v2')
     assert.ok('plugins' in v2Config, 'Must have V2 plugins key after the V2 install')
-    assertManagedV2Plugin(v2Config)
+    assertManagedPlugin(v2Config)
   } finally {
     rmSync(target, { recursive: true, force: true })
   }

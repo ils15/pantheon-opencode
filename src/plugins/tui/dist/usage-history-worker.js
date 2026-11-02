@@ -1,5 +1,5 @@
 import { i as projectUsageHistoryResult, r as isUsageHistoryPeriod } from "./usage-history-contract-nt1rnBPE.js";
-import { n as queryUsageHistory, r as resolveCostDbPath } from "./cost-data-CCZUs1aJ.js";
+import { n as queryUsageHistory, r as resolveCostDbPath } from "./cost-data-BQYp7Qvl.js";
 import { parentPort, workerData } from "node:worker_threads";
 //#region src/usage-history-worker.ts
 const port = parentPort;

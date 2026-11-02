@@ -81,7 +81,7 @@ const REQUIRED_TARBALL_PAYLOAD = [
   'package/package.json',
   'package/plugin.json',
   'package/pyproject.toml',
-  'package/src/plugin-v2.ts',
+  'package/src/plugin.ts',
   'package/src/plugins/tui/dist/tui.js',
   'package/src/plugins/tui/package.json',
   'package/src/plugins/tui/package-lock.json',
@@ -209,9 +209,9 @@ function sandboxEnv(root, host, tarball, port) {
   return {
     PANTHEON_SANDBOX_ROOT: root,
     PANTHEON_SANDBOX_TARBALL: tarball,
-    OPENCODE_V2_SPEC: `@opencode/cli@${host}`,
-    OPENCODE_V2_BIN: 'opencode',
-    PANTHEON_V2_PORT: String(port),
+    OPENCODE_SANDBOX_SPEC: `@opencode/cli@${host}`,
+    OPENCODE_SANDBOX_BIN: 'opencode',
+    PANTHEON_SANDBOX_PORT: String(port),
     PORT: String(port),
   }
 }
@@ -288,7 +288,7 @@ function testsGate() {
     run('python-coverage-threshold', python, ['-m', 'coverage', 'report', '--fail-under=80']),
     run('node-tests', 'npm', ['run', 'test:node']),
     run('typescript-tests', 'npm', ['run', 'test:ts']),
-    run('plugin-v2-line-coverage', 'npm', ['run', 'coverage:plugin-v2']),
+    run('plugin-line-coverage', 'npm', ['run', 'coverage:plugin']),
     // Mandatory here and optional in the developer loop: the release gate may
     // not publish without the real-install tier.
     run('install-tier', 'npm', ['run', 'test:install'], {
@@ -303,11 +303,11 @@ function testsGate() {
       pinnedRequirements: ['src/mcp/requirements-mcp.txt', 'src/mcp/requirements-vision.txt'],
       requiredCoverage: [
         'python: src/mcp branch coverage >= 80% (coverage report --fail-under=80)',
-        'typescript: src/plugin-v2.ts line coverage (coverage:plugin-v2)',
+        'typescript: src/plugin.ts line coverage (coverage:plugin)',
       ],
       notPass: [
         'Node coverage (`npm run coverage`) is report-only and is NOT a PASS signal.',
-        'TypeScript under src/ outside the plugin-v2 measurement is unmeasured, NOT PASS.',
+        'TypeScript under src/ outside the plugin measurement is unmeasured, NOT PASS.',
       ],
     },
   }
@@ -376,7 +376,7 @@ function hostGate(options) {
       run(
         `host-${row.host}`,
         'bash',
-        ['scripts/test-opencode-v2-sandbox.sh', '--prepare', '--run', 'v2'],
+        ['scripts/test-opencode-sandbox.sh', '--prepare', '--run', 'v2'],
         {
           env: sandboxEnv(root, row.host, tarball, 49380 + index),
         },
@@ -417,7 +417,7 @@ function installGate(options) {
   const sandbox = run(
     'sandbox-install',
     'bash',
-    ['scripts/test-opencode-v2-sandbox.sh', '--prepare', '--run', 'v2'],
+    ['scripts/test-opencode-sandbox.sh', '--prepare', '--run', 'v2'],
     { env: sandboxEnv(root, host, tarball, port) },
   )
   const version = installedVersion(root)

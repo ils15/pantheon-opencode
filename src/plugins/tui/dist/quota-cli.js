@@ -1,6 +1,6 @@
+import { spawn } from "node:child_process";
 import { access, lstat, realpath } from "node:fs/promises";
 import { basename, isAbsolute, join, parse, resolve, sep } from "node:path";
-import { spawn } from "node:child_process";
 import { constants } from "node:fs";
 //#region src/quota-cli.ts
 const CLI_TIMEOUT_MS = 5e3;

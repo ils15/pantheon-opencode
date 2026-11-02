@@ -78,7 +78,7 @@ function createDb(path: string, compatible: boolean, agent = 'hermes'): void {
  * `role` key is present in 0 of 40052 rows, so a payload carrying it would be a
  * fixture that lies about the format it is supposed to represent.
  */
-interface V2Row {
+interface SessionRow {
   type: string
   agent?: string
   role?: string
@@ -90,10 +90,10 @@ interface V2Row {
   malformed?: boolean
 }
 
-const V2_SCHEMA =
+const HOST_SCHEMA =
   'CREATE TABLE session_message (id TEXT, session_id TEXT, type TEXT, seq INTEGER, time_created INTEGER, time_updated INTEGER, data TEXT)'
 
-function insertV2Row(db: DatabaseSync, row: V2Row, seq: number): void {
+function insertSessionRow(db: DatabaseSync, row: SessionRow, seq: number): void {
   const at = row.timeCreated ?? Date.now()
   const data = row.malformed
     ? '{not json at all'
@@ -110,11 +110,11 @@ function insertV2Row(db: DatabaseSync, row: V2Row, seq: number): void {
   ).run(`msg_${seq}`, 'ses_test', row.type, seq, at, at, data)
 }
 
-function createV2Db(path: string, rows: readonly V2Row[]): void {
+function createHostDb(path: string, rows: readonly SessionRow[]): void {
   const db = new DatabaseSync(path)
-  db.exec(V2_SCHEMA)
+  db.exec(HOST_SCHEMA)
   rows.forEach((row, index) => {
-    insertV2Row(db, row, index + 1)
+    insertSessionRow(db, row, index + 1)
   })
   db.close()
 }
@@ -124,10 +124,14 @@ function createV2Db(path: string, rows: readonly V2Row[]): void {
  * to be disjoint (0 ids in common across 80403 + 19498 rows), so the report
  * must merge them without double-counting.
  */
-function createMigratedDb(path: string, v1Rows: readonly V2Row[], v2Rows: readonly V2Row[]): void {
+function createMigratedDb(
+  path: string,
+  v1Rows: readonly SessionRow[],
+  v2Rows: readonly SessionRow[],
+): void {
   const db = new DatabaseSync(path)
   db.exec('CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT)')
-  db.exec(V2_SCHEMA)
+  db.exec(HOST_SCHEMA)
   const insertV1 = db.prepare(
     'INSERT INTO message (id, session_id, time_created, data) VALUES (?,?,?,?)',
   )
@@ -146,7 +150,7 @@ function createMigratedDb(path: string, v1Rows: readonly V2Row[], v2Rows: readon
     )
   })
   v2Rows.forEach((row, index) => {
-    insertV2Row(db, row, index + 1)
+    insertSessionRow(db, row, index + 1)
   })
   db.close()
 }
@@ -225,7 +229,7 @@ async function main() {
       // because the host isolates it via OPENCODE_DB — which is therefore the
       // override that actually selects a non-default file.
       const sandboxDb = join(dir, 'opencode-v2.db')
-      createV2Db(sandboxDb, [
+      createHostDb(sandboxDb, [
         { type: 'assistant', agent: 'sandboxed', tokens: { input: 2, output: 5 } },
       ])
       await withEnv(
@@ -257,7 +261,7 @@ async function main() {
       const dbPath = join(dir, 'v2.db')
       // No `role` key anywhere: this is the real V2 payload, and the historical
       // `info.role !== 'assistant'` filter discarded 100% of it silently.
-      createV2Db(dbPath, [
+      createHostDb(dbPath, [
         { type: 'assistant', agent: 'zeus', tokens: { input: 100, output: 10 } },
         { type: 'assistant', agent: 'zeus', tokens: { input: 20, output: 5 } },
         { type: 'assistant', agent: 'hermes', tokens: { input: 7, output: 3 } },
@@ -278,7 +282,7 @@ async function main() {
     const dir = freshDir()
     try {
       const dbPath = join(dir, 'v2.db')
-      createV2Db(dbPath, [
+      createHostDb(dbPath, [
         { type: 'user', agent: 'user-noise', tokens: { input: 999_999, output: 999_999 } },
         { type: 'system', agent: 'sys-noise', tokens: { input: 888_888, output: 888_888 } },
         { type: 'assistant', agent: 'demeter', tokens: { input: 4, output: 6 } },
@@ -305,7 +309,7 @@ async function main() {
       const dir = freshDir()
       try {
         const dbPath = join(dir, 'v2.db')
-        createV2Db(dbPath, [
+        createHostDb(dbPath, [
           { type: 'assistant', agent: 'themis', tokens: { input: 11, output: 13 } },
           { type: 'assistant', malformed: true },
           { type: 'assistant', tokens: { input: 555, output: 555 } },
@@ -413,7 +417,7 @@ async function main() {
         // The exact mutation that shipped: read the right table with the wrong
         // discriminator. Every row is discarded, so the old code answered
         // `status: OK` + "No token records" — a silent, wrong report.
-        createV2Db(dbPath, [
+        createHostDb(dbPath, [
           {
             type: 'assistant',
             agent: 'zeus',
@@ -447,7 +451,7 @@ async function main() {
         // A V2 ledger whose assistant rows carry no tokens at all: the schema was
         // recognised but no token source could be read. An empty table would be a
         // lie about a working schema, so this must be an explicit diagnosis.
-        createV2Db(dbPath, [
+        createHostDb(dbPath, [
           { type: 'assistant', agent: 'zeus' },
           { type: 'assistant', agent: 'hermes' },
         ])
@@ -478,7 +482,7 @@ async function main() {
         const dbPath = join(dir, 'unreadable.db')
         // Assistant rows that carry an agent but no tokens: the ledger was found,
         // so silence is a lie about a working schema.
-        createV2Db(dbPath, [
+        createHostDb(dbPath, [
           { type: 'assistant', agent: 'zeus' },
           { type: 'assistant', agent: 'hermes' },
         ])
@@ -526,7 +530,7 @@ async function main() {
       // A database that only started recording 3 days ago, queried for 30: the
       // number must not read as a month of history.
       const threeDaysAgo = Date.now() - 3 * 86_400_000
-      createV2Db(dbPath, [
+      createHostDb(dbPath, [
         {
           type: 'assistant',
           agent: 'hermes',
@@ -577,11 +581,11 @@ async function main() {
     }
   })
 
-  await testAsync('scripts/cost.mjs and cost-command.ts agree on a V2 database', async () => {
+  await testAsync('scripts/cost.mjs and cost-command.ts agree on a 2.x database', async () => {
     const dir = freshDir()
     try {
       const dbPath = join(dir, 'v2.db')
-      createV2Db(dbPath, [
+      createHostDb(dbPath, [
         { type: 'assistant', agent: 'zeus', tokens: { input: 100, output: 10 } },
         { type: 'assistant', agent: 'apollo', tokens: { input: 3, output: 4 } },
         { type: 'user', agent: 'noise', tokens: { input: 7777, output: 7777 } },
@@ -603,7 +607,7 @@ async function main() {
       assert.deepEqual(
         script.rows,
         viaCommand.rows,
-        'the CLI fallback and the tool disagree about the same V2 database',
+        'the CLI fallback and the tool disagree about the same 2.x database',
       )
       // Rows alone are not lockstep: coverage is what the caller turns into a
       // diagnosis, so a mirror whose counters disagree would report a different
@@ -622,11 +626,11 @@ async function main() {
     }
   })
 
-  await testAsync('scripts/cost.mjs aggregates a V2 database', async () => {
+  await testAsync('scripts/cost.mjs aggregates a 2.x database', async () => {
     const dir = freshDir()
     try {
       const dbPath = join(dir, 'v2.db')
-      createV2Db(dbPath, [{ type: 'assistant', agent: 'nyx', tokens: { input: 9, output: 9 } }])
+      createHostDb(dbPath, [{ type: 'assistant', agent: 'nyx', tokens: { input: 9, output: 9 } }])
       const out = await execFileAsync(process.execPath, [
         SCRIPT_PATH,
         '--db-path',
@@ -651,7 +655,7 @@ async function main() {
     const dir = freshDir()
     try {
       const dbPath = join(dir, 'v2.db')
-      createV2Db(dbPath, [{ type: 'assistant', agent: 'nyx', tokens: { input: 9, output: 9 } }])
+      createHostDb(dbPath, [{ type: 'assistant', agent: 'nyx', tokens: { input: 9, output: 9 } }])
       const output = await createCostCommand({ dbPath }).pantheon_cost.execute(
         { days: 1 },
         { sessionID: 'ses_root' },
@@ -659,7 +663,7 @@ async function main() {
       assert.match(output, /rolling 24-hour days from query time/i)
       assert.match(output, /not calendar days or session boundaries/i)
       assert.match(output, /per agent and phase/i)
-      assert.match(output, /phase may be unknown on V2/i)
+      assert.match(output, /phase may be unknown on 2.x/i)
       // The report used to declare itself token-only and non-attributable. It
       // now prices and attributes, so the honest caveats are about the price
       // source and the unpriced-row rule instead.
@@ -692,10 +696,10 @@ async function main() {
             createDb(explicit, true, 'explicit-agent')
             createDb(envDb, true, 'env-agent')
           } else {
-            createV2Db(explicit, [
+            createHostDb(explicit, [
               { type: 'assistant', agent: 'explicit-agent', tokens: { input: 5, output: 5 } },
             ])
-            createV2Db(envDb, [
+            createHostDb(envDb, [
               { type: 'assistant', agent: 'env-agent', tokens: { input: 9, output: 9 } },
             ])
           }

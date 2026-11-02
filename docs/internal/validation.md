@@ -9,7 +9,7 @@ the user documentation and is not in the site navigation.
 
 `scripts/test-opencode-v2-sandbox.sh` validates the globally installed package
 as a real user inside an isolated sandbox (own `HOME`, npm prefix, and venv) —
-never the development environment. It checks the OpenCode V2 leg: the binary,
+never the development environment. It checks the OpenCode 2.x leg: the binary,
 MCP connectivity, `doctor`, and — with `--prompts` — a prompt battery covering
 the `pantheon://agents` resource, memory store/recall, filesystem writes, and
 agent delegation. The gate is fail-closed: every required check must return an
@@ -242,7 +242,7 @@ entrypoint when running from a checkout.
 
 ## TUI media gap
 
-`docs/opencode-v2.md` reserves three media slots — the sidebar Dispatch block,
+`docs/opencode.md` reserves three media slots — the sidebar Dispatch block,
 the `/dispatch` panel, and the plan-approval turn. **No image has been produced
 for any of them.** The slots carry an explicit `illustrative, not a screenshot`
 marker and an "Illustrative layout — not a screenshot" caption; the three tapes

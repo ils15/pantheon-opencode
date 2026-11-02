@@ -18,10 +18,10 @@ of repeating it.
 
 | Topic | Page |
 |---|---|
-| Agent flow, delegation mechanics, and the V1/V2 plugin contract | [Architecture](ARCHITECTURE.md) |
+| Agent flow, delegation mechanics, and the plugin contract | [Architecture](ARCHITECTURE.md) |
 | The 14 agents and their canonical files | [Agents & Skills](agents/README.md) |
 | Permission layers, quality gates, and delegation rules | [Permissions, Gates & Delegation](PERMISSIONS-QUALITY-DELEGATION.md) |
-| OpenCode V2 behavior: detection, tools, Dispatch, pruning, goals | [OpenCode V2](opencode-v2.md) |
+| OpenCode 2.x behavior: detection, tools, Dispatch, pruning, goals | [OpenCode 2.x](opencode.md) |
 
 ## Operate
 

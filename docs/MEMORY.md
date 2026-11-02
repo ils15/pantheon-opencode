@@ -107,7 +107,7 @@ the transcript, routine tool logs, or speculative results. `context_save` and
 turn, delegation, or phase boundary.
 
 An old `memory_injection` setting may remain in a user's plugin options because
-installation preserves custom options; the V2 plugin ignores it. Remove that
+installation preserves custom options; the plugin ignores it. Remove that
 legacy key if it appears in `opencode.json`.
 
 ## Persistence checkpoints
@@ -155,7 +155,7 @@ Over-limit data is rejected, not truncated; shorten it or omit the optional
 ## Manual session goals
 
 The four `goal_*` tools are a direct, manual feature of the Persistence MCP;
-they do not add a V2 plugin proxy or another goal database. Canonical agent
+they do not add a plugin proxy or another goal database. Canonical agent
 frontmatter grants them only to Zeus. All other agents are denied.
 
 Goals are partitioned by OpenCode session id inside the Persistence deployment
@@ -178,7 +178,7 @@ path, or SQL.
 These are manual records only. They do not migrate or replace the V1
 `src/pantheon/goal-store.ts` authority, write to it, or trigger continuation,
 reinjection, an evaluator, loop, board, TUI/RPC, or `ctx.storage`. The V1 JSON
-store at `.pantheon/goals/*.json` is untouched and not imported. The V2 plugin's
+store at `.pantheon/goals/*.json` is untouched and not imported. The plugin's
 own goal tools remain unsupported.
 
 A pristine Persistence **project** database is initialized with both the

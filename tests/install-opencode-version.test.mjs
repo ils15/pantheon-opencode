@@ -17,8 +17,9 @@ import { ROOT } from '../scripts/install/shared.mjs'
 const NO_COMPONENTS = []
 // Canonical V2 entry: the plugin directory inside the installed package.
 // V2_EXPORT / V2_LEGACY_FILE are pre-directory-contract refs the installer
-// migrates into V2_PLUGIN.
-const V2_PLUGIN = join(ROOT, 'src', 'plugin-v2')
+// Legacy refs below are recognized and migrated by the installer onto
+// MANAGED_PLUGIN (the current identity since the 2.0 rename).
+const MANAGED_PLUGIN = join(ROOT, 'src', 'plugin')
 const V2_EXPORT = 'pantheon-opencode/plugin-v2'
 const _V2_LEGACY_FILE = 'src/plugin-v2.ts'
 const THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN = '/tmp/vendor/pantheon-opencode/src/plugin.ts'
@@ -47,7 +48,7 @@ async function installConfig(existingConfig, version, extra = {}) {
 /** The registered Pantheon V2 entry, whatever shape the writer used. */
 function v2EntryOf(config) {
   return (config.plugins ?? []).find(
-    (entry) => pluginReferenceIdentity(entry) === pluginReferenceIdentity(V2_PLUGIN),
+    (entry) => pluginReferenceIdentity(entry) === pluginReferenceIdentity(MANAGED_PLUGIN),
   )
 }
 
@@ -163,23 +164,27 @@ test('v2 leaves an UNLOADABLE third-party config.plugin entry where it is', asyn
   const config = await installConfig(
     {
       plugin: ['user-v1-plugin'],
-      plugins: ['user-v2-plugin'],
+      plugins: ['user-plugin'],
     },
     'v2',
   )
 
-  // `user-v1-plugin` is a package shorthand: the V2 loader would resolve it
+  // `user-v1-plugin` is a package shorthand: the loader would resolve it
   // through npm install and fail (NpmInstallFailedError), so migrating it into
   // `plugins` would turn "ignored" into "the config fails to load". It stays in
-  // the singular key, which the V2 host ignores.
-  assert.equal(config.plugins[0], 'user-v2-plugin')
+  // the singular key, which the host ignores.
+  assert.equal(config.plugins[0], 'user-plugin')
   assert.ok(!config.plugins.includes('user-v1-plugin'))
   assert.deepEqual(config.plugin, ['user-v1-plugin'])
-  assert.equal(v2EntryOf(config).package, V2_PLUGIN)
+  assert.equal(v2EntryOf(config).package, MANAGED_PLUGIN)
   assert.deepEqual(v2EntryOf(config).options, {}, 'the entry must be able to carry options')
   assert.ok(!config.plugins.includes(V2_EXPORT))
   assert.ok(!config.plugins.includes(join(ROOT, 'src', 'plugin-v2.ts')))
-  assert.ok(!config.plugins.some((entry) => pluginReferenceIdentity(entry) === 'src/plugin.ts'))
+  assert.ok(
+    !config.plugins.some((entry) =>
+      String(pluginReferenceIdentity(entry)).endsWith('pantheon-hooks.ts'),
+    ),
+  )
 })
 
 test('auto migrates a legacy config to the V2 entry without mixing Pantheon refs', async () => {
@@ -189,11 +194,11 @@ test('auto migrates a legacy config to the V2 entry without mixing Pantheon refs
     const v2 = await installConfig(
       {
         plugin: [THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN, 'third-party-v1'],
-        plugins: [V2_PLUGIN, 'third-party-v2'],
+        plugins: [MANAGED_PLUGIN, 'third-party-v2'],
       },
       'auto',
     )
-    // Neither entry is a directory the V2 loader can load — one is a shorthand,
+    // Neither entry is a directory the loader can load — one is a shorthand,
     // the other a path that does not exist — so neither is migrated; both stay
     // in the legacy list, which V2 ignores, instead of breaking the V2 config.
     assert.ok(!v2.plugins.includes('third-party-v1'))
@@ -226,10 +231,12 @@ test('exact installed package plugin paths remain managed', () => {
   // IDENTITY mapping is asserted here — the installer must still recognize a
   // legacy registration (existing user installs) as Pantheon-owned so
   // migrations/cleanup keep working. Recognition only; nothing registers them.
+  // Retired identities keep OWNERSHIP but re-resolve onto the current plugin
+  // directory (their files no longer ship).
   const delegation = resolveInstalledPlugin(join(ROOT, 'src', 'plugin.ts'))
   const hooks = resolveInstalledPlugin(join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts'))
-  assert.equal(delegation, join(ROOT, 'src', 'plugin.ts'))
-  assert.equal(hooks, join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts'))
+  assert.equal(delegation, MANAGED_PLUGIN)
+  assert.equal(hooks, MANAGED_PLUGIN)
 })
 
 test('external plugin paths under pantheon-named directories remain untouched', () => {
@@ -244,12 +251,14 @@ test('plugin deduplication uses Pantheon identity or full path, never basename',
   const refs = deduplicatePluginReferences([
     '/home/old/src/plugin.ts',
     join(ROOT, 'src', 'plugin.ts'),
+    // (the ROOT-scoped V1 ref above is still owned; it re-resolves onto the
+    // current directory, so the dedup below counts one managed entry)
     '/user/plugin.ts',
     '/another/plugin.ts',
     'custom-plugin',
     'custom-plugin',
   ])
-  assert.equal(refs.filter((entry) => pluginReferenceIdentity(entry) === 'src/plugin.ts').length, 1)
+  assert.equal(refs.filter((entry) => pluginReferenceIdentity(entry) === 'src/plugin').length, 1)
   assert.ok(refs.includes('/user/plugin.ts'))
   assert.ok(refs.includes('/another/plugin.ts'))
   assert.equal(refs.filter((entry) => entry === 'custom-plugin').length, 1)
@@ -263,7 +272,7 @@ test('default resolution on a 2.x host registers the V2 directory, never .ts fil
   // key. A 2.x host rejects those ("configured plugin path must be a directory")
   // and the loader drops the entry, so the plugin surface silently dies.
   // No `version` is passed — this exercises the real production default.
-  const config = await installConfig({ plugin: [], plugins: [V2_PLUGIN] }, undefined, {
+  const config = await installConfig({ plugin: [], plugins: [MANAGED_PLUGIN] }, undefined, {
     env: {},
     probe: hostSays('2.0.22'),
     warn: silentWarn,
@@ -271,7 +280,7 @@ test('default resolution on a 2.x host registers the V2 directory, never .ts fil
 
   assert.deepEqual(
     {
-      hasV2Directory: v2EntryOf(config)?.package === V2_PLUGIN,
+      hasV2Directory: v2EntryOf(config)?.package === MANAGED_PLUGIN,
       tsFilePaths: (config.plugin ?? []).filter((entry) => entry.endsWith('.ts')).length,
     },
     { hasV2Directory: true, tsFilePaths: 0 },
@@ -383,7 +392,7 @@ test('the tool-name match wins over later unrelated version-like tokens', () => 
 
 test('the "v" prefix is matched case-insensitively', () => {
   // A case-sensitive "v" failed to parse and soft-failed with a warning.
-  assert.equal(resolveVersion({ probe: hostSays('OpenCode V2.0.22') }), 'v2')
+  assert.equal(resolveVersion({ probe: hostSays('OpenCode 2.x.0.22') }), 'v2')
   assert.throws(() => resolveVersion({ probe: hostSays('opencode V1.18.33') }), V1_REFUSAL)
   assert.equal(resolveVersion({ probe: hostSays('OPENCODE v2.0.22') }), 'v2')
 })
@@ -600,7 +609,7 @@ test('a corrupted install is repaired: V2 directory registered, both .ts paths p
     warn: silentWarn,
   })
 
-  assert.equal(v2EntryOf(config)?.package, V2_PLUGIN, 'the V2 directory must be registered')
+  assert.equal(v2EntryOf(config)?.package, MANAGED_PLUGIN, 'the V2 directory must be registered')
   for (const tsPath of V1_TS_PATHS) {
     assert.ok(!(config.plugin ?? []).includes(tsPath), `stale V1 path must be purged: ${tsPath}`)
   }

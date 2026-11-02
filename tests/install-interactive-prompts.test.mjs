@@ -455,7 +455,7 @@ async function runTTYInstall(target, version) {
 }
 
 test('V2 interactive install skips the V1 profile wizard and preserves legacy marker bytes', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'pantheon-v2-no-preset-wizard-'))
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-no-preset-wizard-'))
   const target = join(root, 'opencode')
   const marker = join(target, '.pantheon', 'active-preset.json')
   const markerBytes = '{"version":1,"preset":"keep-existing"}\n'

@@ -144,11 +144,11 @@ jobs:
           node -e "const f=require('fs'),d='src/plugins/tui/dist/';for(const n of f.readdirSync(d)){const p=d+n,s=f.readFileSync(p);if(s.length&&s.at(-1)!==10)f.appendFileSync(p,'\n')}"
           git diff --exit-code src/plugins/tui/dist
 
-      # The V2 hook canary is already run by test:node's
+      # The hook canary is already run by test:node's
       # `tests/pantheon/*.mjs` glob. Keep `npm run test:hooks` as the focused
       # local command; do not execute the same canary twice in CI.
 
-      # V2 tool canary (tests/canary/plugin-v2-tool-canary.test.mjs). It is the
+      # Plugin tool canary (tests/canary/plugin-tool-canary.test.mjs). It is the
       # only gate that drives a Pantheon tool through a REAL host — the hook
       # canary above only exercises the built-in `read` tool, which is how
       # `draft.add({ name, description, input, execute })` without `output`
@@ -166,7 +166,7 @@ jobs:
       #      unavailable on this runner. That unavailability is announced in the
       #      log on purpose: "no binary" and "never tested" must not look the
       #      same in the run summary.
-      - name: V2 tool canary (host-free guards)
+      - name: Plugin tool canary (host-free guards)
         env:
           # The host-free cases are host-free by construction, so this step
           # claims exactly the two it runs. Pointing BINARY at a path that does
@@ -177,9 +177,9 @@ jobs:
         run: >-
           node --test
           --test-name-pattern='the host environment is redirected into the sandbox|the mutation really removes output from draft.add'
-          tests/canary/plugin-v2-tool-canary.test.mjs
+          tests/canary/plugin-tool-canary.test.mjs
 
-      - name: V2 tool canary (full host run)
+      - name: Plugin tool canary (full host run)
         run: |
           set -euo pipefail
           if ! command -v "${PANTHEON_TOOL_CANARY_BIN:-opencode}" >/dev/null 2>&1; then
@@ -222,16 +222,16 @@ jobs:
       - name: Verify tarball/package evidence
         run: npm run package:evidence -- --output-dir="$RUNNER_TEMP/package-evidence" --target-sha="$(git rev-parse HEAD)"
 
-      - name: V2 sandbox (isolated database and dedicated port)
+      - name: Sandbox install (isolated database and dedicated service port)
         env:
-          PANTHEON_SANDBOX_ROOT: ${{ runner.temp }}/pantheon-sandbox-v2
-          OPENCODE_DB: ${{ runner.temp }}/pantheon-sandbox-v2/opencode-v2.db
-          PANTHEON_V2_PORT: '49376'
+          PANTHEON_SANDBOX_ROOT: ${{ runner.temp }}/pantheon-sandbox
+          OPENCODE_DB: ${{ runner.temp }}/pantheon-sandbox/opencode.db
+          PANTHEON_SANDBOX_PORT: '49376'
           PORT: '49376'
         run: |
           set -euo pipefail
           mkdir -p "$PANTHEON_SANDBOX_ROOT"
-          bash scripts/test-opencode-v2-sandbox.sh --prepare --run v2
+          bash scripts/test-opencode-sandbox.sh --prepare --run v2
 
   test-suite:
     runs-on: ubuntu-latest
@@ -324,7 +324,7 @@ jobs:
       - name: TypeScript tests
         run: npm run test:ts
 
-  plugin-v2-ts-coverage:
+  plugin-ts-coverage:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -336,7 +336,7 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
       - name: TypeScript plugin coverage
-        run: npm run coverage:plugin-v2
+        run: npm run coverage:plugin
 
   docs:
     runs-on: ubuntu-latest

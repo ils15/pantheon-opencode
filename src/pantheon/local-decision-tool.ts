@@ -1,4 +1,6 @@
 import { type ToolContext, tool } from '@opencode-ai/plugin'
+import { evaluateComplexityPoint } from './decision-points/p3-complexity.ts'
+import type { ShadowSink } from './decision-shadow.ts'
 import {
   LOCAL_DECISION_COMPLEXITY_DIMENSIONS,
   type LocalDecisionGateStatus,
@@ -8,8 +10,6 @@ import {
   loadLocalDecisionPolicy,
   recommendLocalOrchestration,
 } from './local-orchestration.ts'
-import { evaluateComplexityPoint } from './v2-decision-points/p3-complexity.ts'
-import type { ShadowSink } from './v2-decision-shadow.ts'
 
 const TOOL_DESCRIPTION =
   'Zeus-only local advisory selector. Use selectively only when specialist routing is genuinely ' +
@@ -51,7 +51,7 @@ type LocalDecisionToolOptions = {
 }
 
 /**
- * Optional shadow observer for the V2 tool point.
+ * Optional shadow observer for the tool point.
  *
  * P3 declares `tool.invoke`, and the local selector's input is the surface that
  * carries `complexity` and `gateStatus`. The sink is supplied by the plugin when
@@ -135,8 +135,8 @@ const v2InputSchema: Record<string, unknown> = {
   },
 }
 
-/** Create a V2 transform definition with the same Zeus-only execution guard and local plan. */
-export function createV2LocalDecisionDefinition(
+/** Create a transform definition with the same Zeus-only execution guard and local plan. */
+export function createLocalDecisionDefinition(
   options: LocalDecisionToolOptions & LocalDecisionShadowOptions = {},
 ) {
   const policyLoader = options.loadPolicy ?? loadLocalDecisionPolicy

@@ -1,4 +1,4 @@
-import { PANTHEON_AGENTS } from './v2-delegation-enforce.ts'
+import { PANTHEON_AGENTS } from './delegation-policy.ts'
 
 /** Explicit opt-in for the local advisory API. Unset and any value except `1` disable it. */
 export const LOCAL_DECISION_ROUTER_ENV = 'PANTHEON_LOCAL_DECISION_ROUTER'

@@ -70,7 +70,7 @@ export const EMPTY_TASK_ERROR =
  * The placeholder text the HOST substitutes into a child-dispatch tool result
  * when the child produced no assistant text.
  *
- * Field-measured on an OpenCode V2 host: the host binary contains the literal
+ * Field-measured on an OpenCode 2.x host: the host binary contains the literal
  * `Subagent completed without a text response.` and injects it into the tool
  * result, so the parent sees a success-looking string instead of silence.
  *
@@ -82,7 +82,7 @@ export const HOST_EMPTY_RESULT_TEXT = 'Subagent completed without a text respons
 /**
  * Whether a tool label is a child dispatch the guard must inspect.
  *
- * The accepted labels are `task` and `subagent`. Exported so the V2 adapter's
+ * The accepted labels are `task` and `subagent`. Exported so the adapter's
  * pre-guard early return uses the SAME set: a label the guard handles must
  * never be dropped before the guard sees it.
  *

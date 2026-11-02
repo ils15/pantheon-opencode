@@ -8,7 +8,7 @@
  *
  * The 2.0 cycle removed the V1 plugin (`src/plugin.ts`), so the end-to-end
  * `chat.message` hook blocks that drove the V1 plugin factory are gone; the V2
- * plugin's own vision surface is covered by tests/pantheon/plugin-v2-*.test.ts.
+ * plugin's own vision surface is covered by tests/pantheon/plugin-*.test.ts.
  *
  * Run: node tests/test_plugin_vision.mjs
  */
@@ -111,7 +111,7 @@ delete process.env.PANTHEON_VISION_TOOL
 
 const tempDirs = []
 
-// node:sqlite backs the OpenCode V2 credential store; the production read is
+// node:sqlite backs the OpenCode 2.x credential store; the production read is
 // best-effort, so these cases are skipped when the builtin is unavailable.
 const require = createRequire(import.meta.url)
 let sqliteAvailable = true
@@ -600,9 +600,9 @@ assert.equal(
 clearAuthStore()
 
 // ─── V2 SQLite credential store: native path parity with the MCP ───────────
-// OpenCode V2 moved credentials into a `credential` table (the file named by
+// OpenCode 2.x moved credentials into a `credential` table (the file named by
 // OPENCODE_DB when set, else <data dir>/opencode.db). The native path must
-// read the same store as the MCP and the picker so a V2 host — with no
+// read the same store as the MCP and the picker so a host — with no
 // auth.json — resolves every vision path without extra login.
 
 /** Create a V2 `credential` table in `dir/opencode.db` with the given rows. */
@@ -637,17 +637,17 @@ if (!sqliteAvailable) {
     {
       integrationID: 'opencode-go',
       active: 1,
-      value: JSON.stringify({ type: 'key', key: 'v2-db-go-key' }),
+      value: JSON.stringify({ type: 'key', key: 'db-go-key' }),
     },
   ])
   assert.equal(
     await readOpencodeAuthToken(['opencode-go'], v2Dir),
-    'v2-db-go-key',
+    'db-go-key',
     'auth.json absent → V2 credential db supplies the token',
   )
   assert.equal(
     await readOpencodeAuthToken(['opencode', 'opencode-go'], v2Dir),
-    'v2-db-go-key',
+    'db-go-key',
     'db rows tried in providerIDs order (missing opencode → opencode-go used)',
   )
 
@@ -729,7 +729,7 @@ if (!sqliteAvailable) {
 
   // XDG_DATA_HOME relocates the default data dir: with no explicit statePath,
   // readOpencodeAuthToken must read the db under $XDG_DATA_HOME/opencode
-  // (mirrors v2-vision.ts), while OPENCODE_DB still wins when set.
+  // (mirrors vision.ts), while OPENCODE_DB still wins when set.
   const xdgDataDir = makeAuthDir('pantheon-xdgdata-')
   seedCredentialDb(join(xdgDataDir, 'opencode'), [
     {

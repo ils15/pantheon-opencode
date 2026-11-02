@@ -534,7 +534,7 @@ test('preserves user MCPs whose command or metadata merely mentions Pantheon', (
 })
 
 test('uninstall V2 removes owned config.plugins entries and preserves user plugins', () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-uninstall-v2-'))
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-uninstall-'))
   try {
     writeFileSync(
       join(target, 'opencode.json'),

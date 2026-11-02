@@ -322,7 +322,7 @@ function relativePlan(plan, target) {
     .sort((left, right) => left.path.localeCompare(right.path))
 }
 
-test('default dry-run plan matches the pinned V2 plan on a V2 host', async () => {
+test('default dry-run plan matches the pinned V2 plan on a host', async () => {
   // Equal-length temp roots keep path-embedded byte counts comparable.
   const targetA = mkdtempSync(join(tmpdir(), 'pantheon-plan-a-'))
   const targetB = mkdtempSync(join(tmpdir(), 'pantheon-plan-b-'))

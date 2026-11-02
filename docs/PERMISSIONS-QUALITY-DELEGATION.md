@@ -1,5 +1,10 @@
 # Permissions, Quality Gates and Delegation — A Cross-Cutting Map
 
+> **2.0 note:** The per-generation (V1/V2) splits below describe the removed V1
+> line and are kept as history. The current surface is the 2.x plugin only:
+> `src/plugin.ts` plus `src/pantheon/*`; legacy identities are recognized for
+> migration, never registered.
+
 Three subsystems in this repository are each specified in more than one place, and
 in each case the places are not wired to one another. A reader who takes any single
 one of them as the specification will be wrong about the other two.
@@ -100,7 +105,7 @@ failing-closed gates, but they are not the reviewer:
 | Read-only sessions may not mutate | `tool.execute.before` throws | [`src/pantheon/delegation-enforce.ts:181`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L181) (blocked-tool set), [`src/plugin.ts:101`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts#L101) |
 | A child session may not delegate again | same guard, child-session branch | [`src/pantheon/delegation-enforce.ts:353`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L353) |
 | Caller/target delegation matrix | same guard, `isDelegationAllowed` (V1; V2 uses the permission hook — see [§3.5](#35-per-host-generation-what-you-can-rely-on)) | [`src/pantheon/delegation-enforce.ts:138`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L138) |
-| The orchestrator's source-read policy denies checked source targets | `zeusReadGuard` throws for denied targets | [`src/pantheon/delegation-enforce.ts:313`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L313), wired on V1 from the `chat.params` agent map ([`src/plugin.ts:502`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts#L502)) and on V2 from the `execute.before` event agent ([`src/plugin-v2.ts`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin-v2.ts)) |
+| The orchestrator's source-read policy denies checked source targets | `zeusReadGuard` throws for denied targets | [`src/pantheon/delegation-enforce.ts:313`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L313), wired on V1 from the `chat.params` agent map ([`src/plugin.ts:502`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts#L502)) and on V2 from the `execute.before` event agent ([`src/plugin.ts`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts)) |
 | Code-mode scripts must be approved | SHA-256 manifest, opt-in | `scripts/install/opencode.mjs:138` |
 | Routing/frontmatter consistency | repo validator script | `scripts/validate-routing.mjs:313` |
 | Secrets | pre-commit gitleaks + CI scan | `.pre-commit-config.yaml:7` |
@@ -793,7 +798,7 @@ instead (`permission.asked`, `GET /permission`,
 [permission-matrix evidence](https://github.com/ils15/pantheon-opencode/blob/main/bench/results/p05-permission-matrix-2026-10-22.md).
 
 The V2 matrix is implemented by `registerV2PermissionHook`
-([`src/plugin-v2.ts:1528-1658`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin-v2.ts#L1528-L1658), registered best-effort at [`src/plugin-v2.ts:1856`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin-v2.ts#L1856)),
+([`src/plugin.ts:1528-1658`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts#L1528-L1658), registered best-effort at [`src/plugin.ts:1856`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts#L1856)),
 which calls `evaluateV2Delegation`
 ([`src/pantheon/v2-delegation-enforce.ts:170-213`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/v2-delegation-enforce.ts#L170-L213)). That decision is: Zeus may
 target any Pantheon agent; Athena and Hermes may target Apollo only; every other
@@ -801,7 +806,7 @@ Pantheon caller is denied; a child session is denied. It is **not** implemented
 by `createEnforcementGuard`.
 
 The guard is built without `getSessionAgent`, `isRootSession` or
-`isChildSession` ([`src/plugin-v2.ts:1323-1325`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin-v2.ts#L1323-L1325)), for two reasons that are easy to
+`isChildSession` ([`src/plugin.ts:1323-1325`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts#L1323-L1325)), for two reasons that are easy to
 conflate:
 
 1. **Missing `getSessionAgent` — wiring.** V2 learns the active agent from the
@@ -872,7 +877,7 @@ mutating tools in a read-only session (`task` included), but it does not carry
 the caller→target policy. The matrix lives in the permission hook, and that hook
 exists only when the host exposes `ctx.permission.hook`. If the host lacks it or
 registration fails, `markUnsupported('permission-hook')`
-([`src/plugin-v2.ts:1535-1536`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin-v2.ts#L1535-L1536)) and the matrix is **unavailable**; host
+([`src/plugin.ts:1535-1536`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts#L1535-L1536)) and the matrix is **unavailable**; host
 permissions remain in control.
 
 **Runtime evidence.** The runtime canary on OpenCode `v2.0.29` proves both sides:
@@ -901,7 +906,7 @@ exactly this reason: it needs a store, a loop client and a board, none of which 
 V2 plugin context exposes ([`src/pantheon/v2-unsupported.mjs`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/v2-unsupported.mjs)).
 
 **The bridge is wired, and the board is still inert.** `createV2Bridge`/`injectBridge`
-are called from the V2 entry (`installV2Bridge`, [`src/plugin-v2.ts`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin-v2.ts)), so
+are called from the V2 entry (`installV2Bridge`, [`src/plugin.ts`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts)), so
 `resolveBridge()` is no longer null and `session.idle` reaches the todo enforcer
 when the host's session domain supports it. When V1 loaded first, it publishes its
 own board+enforcer (`registerV2Bridge` in [`src/plugin.ts`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts)) and V2 reuses that

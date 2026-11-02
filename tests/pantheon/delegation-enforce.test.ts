@@ -490,7 +490,7 @@ async function main() {
       // 2.0 removed the V1 plugin; the V2 entry registers the read-only guard.
       // The host puts the active agent on the execute.before event itself, so
       // there is no separate chat.params hook to assert on.
-      const source = readFileSync(new URL('../../src/plugin-v2.ts', import.meta.url), 'utf8')
+      const source = readFileSync(new URL('../../src/plugin.ts', import.meta.url), 'utf8')
       assert.match(
         source,
         /syncReadOnlySession\(readOnlyRegistry,\s*input\.sessionID,\s*agent\)/,
@@ -507,7 +507,7 @@ async function main() {
   // ═══════════════════════════════════════════════════════════════════════
   // S1 — pin the WHY behind the unenforced V2 delegation matrix.
   //
-  // `src/plugin-v2.ts` and `docs/UPGRADING.md` both used to justify omitting
+  // `src/plugin.ts` and `docs/UPGRADING.md` both used to justify omitting
   // the delegation predicates by saying that `isRoot` reports `true` while
   // unseeded, "which would deny every task() call". That chain is inverted:
   // `true` PASSES the root gate. These assertions lock the real mechanism so

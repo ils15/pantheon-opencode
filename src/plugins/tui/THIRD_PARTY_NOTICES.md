@@ -1,6 +1,6 @@
 # Third-party notices
 
-The `dist/tui-v2.js` bundle includes tree-shaken code and the OpenIcon glyph
+The `dist/tui.js` bundle includes tree-shaken code and the OpenIcon glyph
 table from `@profullstack/hqtui` 0.11.1, licensed under the MIT License.
 
 Copyright (c) 2026 HQTUI contributors

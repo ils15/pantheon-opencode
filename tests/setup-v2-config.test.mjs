@@ -59,7 +59,7 @@ function runSetupWithPreview(options) {
 }
 
 function fixture(t) {
-  const root = mkdtempSync(join(tmpdir(), 'pantheon-setup-v2-'))
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-setup-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
   return root
 }
@@ -786,7 +786,7 @@ test('inspection reports only exact Pantheon plugin and MCP identities with conf
     target,
     JSON.stringify({
       provider: { private: { apiKey: 'sk-secret-inspection-value' } },
-      plugins: ['src/plugin-v2', 'third-party-plugin'],
+      plugins: ['src/plugin', 'third-party-plugin'],
       mcp: {
         'pantheon-resources': {
           type: 'local',
@@ -807,7 +807,7 @@ test('inspection reports only exact Pantheon plugin and MCP identities with conf
   const result = await prepareV2Config({ configDir: root, interactive: false, output })
   assert.equal(result.status, 'unchanged')
   const printed = output.lines.join('\n')
-  assert.match(printed, /V2 plugin/)
+  assert.match(printed, /Pantheon plugin/)
   assert.match(printed, /verified Pantheon MCP entries: 1/)
   assert.equal(printed.includes('pantheon-resources'), false)
   assert.equal(printed.includes('custom-server'), false)
@@ -1568,7 +1568,7 @@ test('safe JSONC managed plugin and MCP entries move without changing effective 
   writeFileSync(
     jsonc,
     JSON.stringify({
-      plugins: ['src/plugin-v2', 'jsonc-plugin'],
+      plugins: ['src/plugin', 'jsonc-plugin'],
       mcp: { servers: { 'pantheon-resources': managedServer } },
       theme: 'dark',
     }),
@@ -1582,7 +1582,7 @@ test('safe JSONC managed plugin and MCP entries move without changing effective 
   assert.equal(result.status, 'applied')
   const targetConfig = JSON.parse(readFileSync(json, 'utf8'))
   const sourceConfig = JSON.parse(readFileSync(jsonc, 'utf8'))
-  assert.deepEqual(targetConfig.plugins, ['existing-plugin', 'src/plugin-v2'])
+  assert.deepEqual(targetConfig.plugins, ['existing-plugin', 'src/plugin'])
   assert.deepEqual(Object.keys(targetConfig.mcp.servers), ['pantheon-resources'])
   assert.deepEqual(sourceConfig.plugins, ['jsonc-plugin'])
   assert.deepEqual(sourceConfig.mcp.servers, {})
@@ -1737,10 +1737,10 @@ test('exact cross-layer Pantheon plugin duplicates are removed from JSONC', asyn
   const root = fixture(t)
   const json = join(root, 'opencode.json')
   const jsonc = join(root, 'opencode.jsonc')
-  writeFileSync(json, JSON.stringify({ plugins: ['before', 'src/plugin-v2', 'after'] }))
+  writeFileSync(json, JSON.stringify({ plugins: ['before', 'src/plugin', 'after'] }))
   writeFileSync(
     jsonc,
-    JSON.stringify({ plugins: ['jsonc-before', 'src/plugin-v2', 'jsonc-middle', 'src/plugin-v2'] }),
+    JSON.stringify({ plugins: ['jsonc-before', 'src/plugin', 'jsonc-middle', 'src/plugin'] }),
   )
 
   const result = await prepareWithTestApply({
@@ -1752,7 +1752,7 @@ test('exact cross-layer Pantheon plugin duplicates are removed from JSONC', asyn
   assert.equal(result.status, 'applied')
   assert.deepEqual(JSON.parse(readFileSync(json, 'utf8')).plugins, [
     'before',
-    'src/plugin-v2',
+    'src/plugin',
     'after',
   ])
   assert.deepEqual(JSON.parse(readFileSync(jsonc, 'utf8')).plugins, [
@@ -1769,7 +1769,7 @@ test('setup moves one exact duplicate managed plugin and leaves no duplicate if 
   const json = join(configDir, 'opencode.json')
   const jsonc = join(configDir, 'opencode.jsonc')
   writeFileSync(json, JSON.stringify({ theme: 'dark' }))
-  writeFileSync(jsonc, JSON.stringify({ plugins: ['src/plugin-v2', 'src/plugin-v2', 'user'] }))
+  writeFileSync(jsonc, JSON.stringify({ plugins: ['src/plugin', 'src/plugin', 'user'] }))
 
   const result = await runSetup({
     args: ['--components', 'agents'],
@@ -1789,7 +1789,7 @@ test('setup moves one exact duplicate managed plugin and leaves no duplicate if 
   })
 
   assert.equal(result, 1)
-  assert.deepEqual(JSON.parse(readFileSync(json, 'utf8')).plugins, ['src/plugin-v2'])
+  assert.deepEqual(JSON.parse(readFileSync(json, 'utf8')).plugins, ['src/plugin'])
   assert.deepEqual(JSON.parse(readFileSync(jsonc, 'utf8')).plugins, ['user'])
 })
 
@@ -1800,8 +1800,8 @@ test('setup refuses differing duplicate managed plugin entries before any write'
   const originalJson = JSON.stringify({ theme: 'dark' })
   const originalJsonc = JSON.stringify({
     plugins: [
-      { package: 'src/plugin-v2', options: { mode: 'first' } },
-      { package: 'src/plugin-v2', options: { mode: 'second' } },
+      { package: 'src/plugin', options: { mode: 'first' } },
+      { package: 'src/plugin', options: { mode: 'second' } },
     ],
   })
   writeFileSync(json, originalJson)
@@ -1836,10 +1836,10 @@ test('cross-layer Pantheon plugin duplicates with differing options block before
   const json = join(root, 'opencode.json')
   const jsonc = join(root, 'opencode.jsonc')
   const originalJson = JSON.stringify({
-    plugins: [{ package: 'src/plugin-v2', options: { mode: 'json' } }],
+    plugins: [{ package: 'src/plugin', options: { mode: 'json' } }],
   })
   const originalJsonc = JSON.stringify({
-    plugins: [{ package: 'src/plugin-v2', options: { mode: 'jsonc' } }],
+    plugins: [{ package: 'src/plugin', options: { mode: 'jsonc' } }],
   })
   writeFileSync(json, originalJson)
   writeFileSync(jsonc, originalJsonc)
@@ -1968,7 +1968,7 @@ test('unsafe plugin order and same-name MCP overrides fail closed when JSONC plu
     mcp: { servers: { 'pantheon-resources': override } },
   })
   const originalJsonc = JSON.stringify({
-    plugins: ['jsonc-plugin', 'src/plugin-v2'],
+    plugins: ['jsonc-plugin', 'src/plugin'],
     mcp: { servers: { 'pantheon-resources': managedServer } },
   })
   writeFileSync(json, originalJson)
@@ -1983,9 +1983,9 @@ test('unsafe plugin order and same-name MCP overrides fail closed when JSONC plu
   assert.equal(readFileSync(json, 'utf8'), originalJson)
   assert.equal(readFileSync(jsonc, 'utf8'), originalJsonc)
   assert.match(result.reason, /cannot be migrated or deduplicated safely in the V2 init preview/)
-  assert.equal(JSON.parse(readFileSync(json, 'utf8')).plugins.includes('src/plugin-v2'), false)
+  assert.equal(JSON.parse(readFileSync(json, 'utf8')).plugins.includes('src/plugin'), false)
   assert.equal(
-    JSON.parse(readFileSync(jsonc, 'utf8')).plugins.filter((p) => p === 'src/plugin-v2').length,
+    JSON.parse(readFileSync(jsonc, 'utf8')).plugins.filter((p) => p === 'src/plugin').length,
     1,
   )
   assert.deepEqual(fs.readdirSync(root).sort(), ['opencode.json', 'opencode.jsonc'])
@@ -1998,8 +1998,8 @@ test('a JSONC managed plugin behind a JSON selector fails closed before setup in
   fs.mkdirSync(configDir, { recursive: true })
   const json = join(configDir, 'opencode.json')
   const jsonc = join(configDir, 'opencode.jsonc')
-  const originalJson = '{"plugins":["-src/plugin-v2"]}\n'
-  const originalJsonc = '{"plugins":["src/plugin-v2"]}\n'
+  const originalJson = '{"plugins":["-src/plugin"]}\n'
+  const originalJsonc = '{"plugins":["src/plugin"]}\n'
   writeFileSync(json, originalJson)
   writeFileSync(jsonc, originalJsonc)
   const output = captureOutput()
@@ -2031,7 +2031,7 @@ test('a JSONC managed plugin behind a JSON selector fails closed before setup in
     /cannot be migrated or deduplicated safely in the V2 init preview/,
   )
   assert.equal(
-    JSON.parse(readFileSync(jsonc, 'utf8')).plugins.filter((p) => p === 'src/plugin-v2').length,
+    JSON.parse(readFileSync(jsonc, 'utf8')).plugins.filter((p) => p === 'src/plugin').length,
     1,
   )
 })

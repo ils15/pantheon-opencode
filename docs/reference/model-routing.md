@@ -1,15 +1,14 @@
 # Pantheon Model Routing — Deep Analysis with Per-Plan Fallback Chains
 
-> **V2 runtime note (2026-10):** The static model tables and presets in this
-> document describe legacy V1 routing analysis; they do not select models in
-> OpenCode V2. V2 leaves the host's model intact unless an explicit
-> `overrides.agents.<agent>.model` is configured. Only that agent's manual model
-> and optional `variant` are applied by the V2 agent transform. Legacy
-> `preset` markers in `active-preset.json` and `PANTHEON_MODEL_PRESET` are
-> ignored, not deleted, and do not activate a provider or model. V2 has no model
-> wizard or implicit model selection. The V1 legacy path is **frozen** for this
-> beta: it keeps its legacy behavior and static `routing.yml` preset IDs, and the
-> V1 preset migration is not authorized in this beta. V2 manual overrides and
+> **Removed in 2.0 (historical reference):** The static model tables and presets
+> in this document describe the legacy 1.x routing analysis; they do not select
+> models in OpenCode 2.x. The plugin leaves the host's model intact unless an
+> explicit `overrides.agents.<agent>.model` is configured. Only that agent's
+> manual model and optional `variant` are applied by the agent transform.
+> Legacy `preset` markers in `active-preset.json` and `PANTHEON_MODEL_PRESET`
+> are ignored, not deleted, and do not activate a provider or model. There is
+> no model wizard or implicit model selection. The file is kept for link
+> stability; the V1 line it described was removed in 2.0. V2 manual overrides and
 > status are project-only;
 > global override files are not read or applied. The V2 tool rejects global
 > `set`/`reset` and same-call `confirm`/`authorize_global` flags because it has no

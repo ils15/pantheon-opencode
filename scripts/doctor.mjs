@@ -29,11 +29,11 @@ import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { listV2UnsupportedFeatures } from '../src/pantheon/v2-unsupported.mjs'
+import { listUnsupportedFeatures } from '../src/pantheon/unsupported.mjs'
+import { describePluginOptionsReachability } from './install/capabilities.mjs'
 import { classifyFileInventory } from './install/file-inventory.mjs'
 import { staleTuiRefs } from './install/plugin.mjs'
 import { readState } from './install/state.mjs'
-import { describePluginOptionsReachability } from './install/v2-capabilities.mjs'
 import { isSupportedNodeVersion, MIN_SUPPORTED_NODE_VERSION } from './node-engine-policy.mjs'
 
 // ---------------------------------------------------------------------------
@@ -385,7 +385,7 @@ function getMcpServerEntryRecords(mcp) {
   if (isNestedServerMap) {
     for (const [name, entry] of Object.entries(nested)) {
       // A nested entry takes precedence over a duplicate V1 flat name, in
-      // agreement with the V2 host's effective configuration.
+      // agreement with the host's effective configuration.
       entries.set(name, { entry, layout: 'v2' })
     }
   }
@@ -396,7 +396,7 @@ function getMcpServerEntryRecords(mcp) {
 /**
  * Return MCP entries from either the V1 flat map or V2's `mcp.servers` map.
  * When both contain distinct names, keep both; for a duplicate, the nested V2
- * entry wins because it is the shape the V2 host reads.
+ * entry wins because it is the shape the host reads.
  * @param {unknown} mcp
  * @returns {Record<string, any>}
  */
@@ -430,7 +430,7 @@ function isValidMcpTimeout(timeout, layout) {
 }
 
 /**
- * OpenCode V2 remote MCP servers use Streamable HTTP and require an absolute
+ * OpenCode 2.x remote MCP servers use Streamable HTTP and require an absolute
  * HTTP(S) endpoint. Parsing without a base rejects relative URLs.
  * @param {unknown} value
  */
@@ -1533,9 +1533,12 @@ export function resolveInstalledPackageRoot(pluginPath) {
  * Pantheon; anything else belongs to the user and is never checked here.
  */
 const MANAGED_PLUGIN_IDENTITIES = new Set([
-  'src/plugin.ts',
-  'src/plugins/pantheon-hooks.ts',
-  'src/plugin-v2',
+  // The identity the installer writes since the 2.0 rename.
+  'src/plugin',
+  // ── Legacy identities, recognized FOREVER for stale reporting ─────────────
+  'src/plugin.ts', // V1 plugin file entry (removed in 2.0)
+  'src/plugins/pantheon-hooks.ts', // V1 hook-runner entry
+  'src/plugin-v2', // 2.0-beta directory identity (renamed to src/plugin)
   // Legacy V2 file ref from before the directory contract (still migrated by
   // the installer, so a pre-migration config is ours too).
   'src/plugin-v2.ts',
@@ -1737,31 +1740,37 @@ export function checkPluginVersionDrift(args) {
 // ---------------------------------------------------------------------------
 
 /**
- * Whether an opencode.json registers the V2 generation of the Pantheon plugin.
+ * Whether an opencode.json registers the Pantheon plugin on the 2.x `plugins`
+ * contract (the plural key).
  *
- * The V2 contract is the PLURAL `plugins` key; V1 is the singular `plugin` key.
- * So the key alone is not the test — a config can legitimately carry a
- * third-party entry in `plugins`. What identifies the generation is a Pantheon
- * V2 entry inside it. Matched on the `plugin-v2` marker so all three real
- * spellings are recognised: the canonical DIRECTORY (`src/plugin-v2`), an
- * absolute path to it, and the package export (`pantheon-opencode/plugin-v2`).
+ * The plural `plugins` key is the 2.x contract; the removed V1 line used the
+ * singular `plugin` key. So the key alone is not the test — a config can
+ * legitimately carry a third-party entry in `plugins`. What identifies the
+ * plugin is a Pantheon-owned entry inside it. Matched on the `plugin-v2`
+ * marker (LEGACY recognition, never remove) so the pre-rename spellings still
+ * count — the directory (`src/plugin-v2`), an absolute path to it, and the
+ * package export (`pantheon-opencode/plugin-v2`) — plus the current identity
+ * (`src/plugin`, its absolute form) and any npm spec for this package.
  *
  * @param {unknown} ref
  * @returns {boolean}
  */
-function isV2PluginRef(ref) {
+function isCurrentGenerationRef(ref) {
   const candidate =
     typeof ref === 'string'
       ? ref
       : ref && typeof ref === 'object'
         ? (ref.path ?? ref.source ?? ref.id ?? ref.name)
         : undefined
-  return typeof candidate === 'string' && candidate.includes('plugin-v2')
+  if (typeof candidate !== 'string') return false
+  if (candidate.includes('plugin-v2')) return true
+  if (candidate === 'src/plugin' || candidate.endsWith('/src/plugin')) return true
+  return /^pantheon-opencode(?:@|\/|$)/.test(candidate)
 }
 
 /**
- * Whether any reachable config registers the V2 generation of the Pantheon
- * plugin. Split out of {@link collectV2UnsupportedFeatures} because "is the V2
+ * Whether any reachable config registers the plugin generation of the Pantheon
+ * plugin. Split out of {@link collectUnsupportedFeatures} because "is the V2
  * generation registered" and "does the seed list anything" are TWO facts: the
  * first is about the user's config, the second about this repository's seed. A
  * single `features.length === 0` cannot tell them apart, and conflating them
@@ -1770,10 +1779,10 @@ function isV2PluginRef(ref) {
  * @param {{path:string, data:object}[]} configs
  * @returns {boolean}
  */
-export function isV2GenerationRegistered(configs) {
+export function isCurrentGenerationRegistered(configs) {
   return configs.some((cfg) => {
     const list = cfg.data?.plugins
-    return Array.isArray(list) && list.some(isV2PluginRef)
+    return Array.isArray(list) && list.some(isCurrentGenerationRef)
   })
 }
 
@@ -1782,19 +1791,19 @@ export function isV2GenerationRegistered(configs) {
  *
  * Returns the shared seed verbatim when ANY reachable config registers the V2
  * generation, and an empty list otherwise. The strings come from
- * `src/pantheon/v2-unsupported.mjs` — the same seed `getUnsupportedFeatures()`
+ * `src/pantheon/unsupported.mjs` — the same seed `getUnsupportedFeatures()`
  * is built from — so doctor cannot report a reduction the plugin does not, or
  * miss one it does. Nothing is reworded here.
  *
  * An empty result is ambiguous on its own and deliberately not interpreted
- * here: ask {@link isV2GenerationRegistered} for the registration fact, or
- * {@link describeV2Reduction} to get both at once.
+ * here: ask {@link isCurrentGenerationRegistered} for the registration fact, or
+ * {@link describeFeatureReduction} to get both at once.
  *
  * @param {{path:string, data:object}[]} configs
  * @returns {string[]}
  */
-export function collectV2UnsupportedFeatures(configs) {
-  return isV2GenerationRegistered(configs) ? listV2UnsupportedFeatures() : []
+export function collectUnsupportedFeatures(configs) {
+  return isCurrentGenerationRegistered(configs) ? listUnsupportedFeatures() : []
 }
 
 /**
@@ -1806,7 +1815,7 @@ export function collectV2UnsupportedFeatures(configs) {
  *   - not registered → info. A V1 install is a supported configuration with
  *     nothing to reduce, and saying so plainly is correct.
  *   - registered, seed EMPTY → warn. This is a packaging fault in THIS repo,
- *     not an absence of reduction: the V2 surface really is reduced and the
+ *     not an absence of reduction: the plugin surface really is reduced and the
  *     report is missing. It must never claim "nothing reduced".
  *   - registered, seed populated → warn, listing every marker.
  *
@@ -1815,14 +1824,14 @@ export function collectV2UnsupportedFeatures(configs) {
  * has to recover the case by matching on the message.
  *
  * @param {{registered:boolean, features:string[]}} input
- * @returns {{status:'reported'|'empty-seed'|'no-v2-generation', level:'info'|'warn', message:string}}
+ * @returns {{status:'reported'|'empty-seed'|'no-generation', level:'info'|'warn', message:string}}
  */
-export function describeV2Reduction({ registered, features }) {
+export function describeFeatureReduction({ registered, features }) {
   if (!registered) {
     return {
-      status: 'no-v2-generation',
+      status: 'no-generation',
       level: 'info',
-      message: 'No V2 plugin generation registered — nothing reduced',
+      message: 'No Pantheon plugin registered on the 2.x plugins contract — nothing reduced',
     }
   }
   if (features.length === 0) {
@@ -1830,50 +1839,49 @@ export function describeV2Reduction({ registered, features }) {
       status: 'empty-seed',
       level: 'warn',
       message:
-        'Pantheon IS registered on the V2 plugin generation, but the shared ' +
+        'Pantheon IS registered on the 2.x plugins contract, but the shared ' +
         'unsupported-feature seed is empty, so the reduction cannot be reported. ' +
         "That is a fault in this installation's reporting, not an absence of " +
-        'reduction: the V2 surface still registers fewer tools than V1 (the three ' +
-        'goal tools are absent), so a clean report would be false.',
+        'reduction: the current surface registers fewer tools than the removed V1 ' +
+        'line (the three goal tools are absent), so a clean report would be false.',
     }
   }
   return {
     status: 'reported',
     level: 'warn',
     message:
-      'Pantheon is registered on the V2 plugin generation: 3 unconditional tools ' +
+      'Pantheon is registered on the 2.x plugins contract: 3 unconditional tools ' +
       '(hashline_edit, pantheon_cost, pantheon_model) plus the host-dependent ones, and a ' +
-      "real hook/transform surface, against the V1 surface's 6 tools plus the " +
-      'BackgroundJobBoard. Not provided on V2 (static seed — a live host can add runtime ' +
+      'real hook/transform surface. Not provided (static seed — a live host can add runtime ' +
       `markers on top): ${features.join(', ')}`,
   }
 }
 
 /**
- * Report the V2 feature reduction through doctor's own output shape
+ * Report the feature reduction through doctor's own output shape
  * (section + warn/info), so it lands in the health summary like every other
- * finding and never changes the exit code: a V2 install is a supported
+ * finding and never changes the exit code: a 2.x install is a supported
  * configuration, not a broken one.
  *
  * @param {{target:string, env?:object}} args
- * @returns {'reported'|'empty-seed'|'no-v2-generation'|'no-config'}
+ * @returns {'reported'|'empty-seed'|'no-generation'|'no-config'}
  */
-export function checkV2UnsupportedFeatures(args) {
-  section('H4. V2 Feature Reduction')
+export function checkUnsupportedFeatures(args) {
+  section('H4. Feature Reduction')
 
   const configs = collectMcpConfigs(args)
   if (configs.length === 0) {
-    info('No opencode.json was found — V2 feature reduction check skipped')
+    info('No opencode.json was found — feature reduction check skipped')
     return 'no-config'
   }
 
   // Branch on REGISTRATION, not on the marker count: an empty seed on a
-  // registered V2 generation is a reporting fault and must not be reported as
+  // registered plugin is a reporting fault and must not be reported as
   // the reassuring "nothing reduced".
-  const registered = isV2GenerationRegistered(configs)
-  const verdict = describeV2Reduction({
+  const registered = isCurrentGenerationRegistered(configs)
+  const verdict = describeFeatureReduction({
     registered,
-    features: collectV2UnsupportedFeatures(configs),
+    features: collectUnsupportedFeatures(configs),
   })
   if (verdict.level === 'info') info(verdict.message)
   else warn(verdict.message)
@@ -1966,12 +1974,15 @@ export async function checkTuiPlugin(args) {
     return 'missing-dir'
   }
 
-  const v1Bundle = join(copyDir, 'dist', 'tui.js')
-  const v2Bundle = join(copyDir, 'dist', 'tui-v2.js')
-  if (!existsSync(v1Bundle) && !existsSync(v2Bundle)) {
+  // The current bundle is dist/tui.js; installs copied before the 2.0 rename
+  // still carry the legacy dist/tui-v2.js bundle, which the host resolves
+  // through the deprecated ./tui-v2 export — recognize both.
+  const bundle = join(copyDir, 'dist', 'tui.js')
+  const legacyBundle = join(copyDir, 'dist', 'tui-v2.js')
+  if (!existsSync(bundle) && !existsSync(legacyBundle)) {
     error(
       `TUI bundle is missing under ${join(copyDir, 'dist')} — the copied plugin cannot be ` +
-        'loaded by either host. Run `npx pantheon-opencode init` to reinstall it.',
+        'loaded by the host. Run `npx pantheon-opencode init` to reinstall it.',
       { code: 'tui_plugin_dist_missing', classification: 'missing' },
     )
     return 'missing-dist'
@@ -1980,19 +1991,20 @@ export async function checkTuiPlugin(args) {
   const tuiConfig = readJson(tuiJsonPath)
   const pluginRefs = Array.isArray(tuiConfig?.plugin) ? tuiConfig.plugin : []
   const registered = pluginRefs.some((ref) => samePath(ref, copyDir))
-  // V2 discovers local plugins from the plugins directory instead of tui.json;
-  // its payload is identified by the sibling index.ts server entrypoint plus a
-  // package export that resolves to the compiled V2 bundle.
-  const v2Target = tuiExportTarget(copyDir)
-  const v2Discovered =
+  // The 2.x host discovers local plugins from the plugins directory instead of
+  // tui.json; its payload is identified by the sibling index.ts server
+  // entrypoint plus a package export that resolves to the compiled bundle
+  // (legacy installs resolve to dist/tui-v2.js).
+  const tuiTarget = tuiExportTarget(copyDir)
+  const discovered =
     existsSync(join(copyDir, 'index.ts')) &&
-    typeof v2Target === 'string' &&
-    v2Target.endsWith('tui-v2.js')
+    typeof tuiTarget === 'string' &&
+    (tuiTarget.endsWith('tui.js') || tuiTarget.endsWith('tui-v2.js'))
 
-  if (!registered && !v2Discovered) {
+  if (!registered && !discovered) {
     error(
       `TUI plugin is copied to ${copyDir} but no host discovery finds it: ` +
-        `${tuiJsonPath} does not reference it and the V2 discovery files are incomplete. ` +
+        `${tuiJsonPath} does not reference it and the plugin discovery files are incomplete. ` +
         'Run `npx pantheon-opencode init` to re-register it.',
       { code: 'tui_plugin_not_registered', classification: 'ambiguous' },
     )
@@ -2282,8 +2294,8 @@ export function classifyNodeSqliteProbe(probe) {
 // ---------------------------------------------------------------------------
 
 /**
- * Where each plugin generation declares its tool surface, relative to the
- * package root a registered plugin points into.
+ * Where the plugin declares its tool surface, relative to the package root a
+ * registered plugin points into.
  *
  * The backend probe answers "can this Node read opencode.db?". It does NOT
  * answer "is `pantheon_cost` registered on the host at all?" — a tool removed
@@ -2291,16 +2303,18 @@ export function classifyNodeSqliteProbe(probe) {
  * These files are the surface the doctor already ships and can inspect without
  * importing or executing plugin code.
  *
- * The V2 generation has TWO surfaces: `src/pantheon/v2-tools.ts` from beta.3
- * and the 1.5.0+ entry `src/plugin-v2.ts`, which declares the tools itself.
- * Reading only the first reported a healthy 1.5 tree as "pantheon_cost is NOT
- * declared", so every declared surface of the generation is inspected and their
- * declarations are unioned.
+ * The plugin has TWO surfaces: `src/pantheon/tools.ts` (the tool definitions)
+ * and the entry `src/plugin.ts`, which declares tools too. Reading only the
+ * first reported a healthy 1.5 tree as "pantheon_cost is NOT declared", so
+ * every declared surface is inspected and their declarations are unioned.
+ * (Historical note: before 2.0 the V1 generation declared a third shape here —
+ * a `tool:` object keyed by tool name in `src/plugin.ts`. The V1 line is
+ * removed; the entry now uses the current shape.)
  */
-const TOOL_SURFACE_FILES = Object.freeze({
-  v1: Object.freeze([join('src', 'plugin.ts')]),
-  v2: Object.freeze([join('src', 'plugin-v2.ts'), join('src', 'pantheon', 'v2-tools.ts')]),
-})
+const TOOL_SURFACE_FILES = Object.freeze([
+  join('src', 'plugin.ts'),
+  join('src', 'pantheon', 'tools.ts'),
+])
 
 /** The published package name — the only package identity this installer owns. */
 const PANTHEON_PACKAGE_NAME = 'pantheon-opencode'
@@ -2310,47 +2324,25 @@ function stripSourceComments(source) {
   return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 }
 
-/** Extract the first `key: { ... }` object-literal body, or null. */
-function extractObjectLiteralBody(source, key) {
-  const match = new RegExp(`\\b${key}\\s*:\\s*\\{`).exec(source)
-  if (!match) return null
-  let depth = 0
-  const start = match.index + match[0].length - 1
-  for (let index = start; index < source.length; index++) {
-    if (source[index] === '{') depth++
-    else if (source[index] === '}') {
-      depth--
-      if (depth === 0) return source.slice(start + 1, index)
-    }
-  }
-  return null
-}
-
 /**
- * Tool names declared by a plugin-generation source file.
+ * Tool names declared by a plugin source file.
  *
- * V2 declares each tool as `name: 'x'` in `createV2ToolDefinitions`, or — from
- * the 1.5.0 entry — as quoted elements of a `toolNames` array. V1 keys the
- * `tool:` object by tool name. Returns null when the generation's shape cannot
- * be located (unverifiable), which the classifier treats as a failure rather
- * than a pass: "cannot prove registration" is not "registered".
+ * The plugin declares each tool as `name: 'x'` in `createToolDefinitions`, or —
+ * from the 1.5.0 entry — as quoted elements of a `toolNames` array. Returns
+ * null when that shape cannot be located (unverifiable), which the classifier
+ * treats as a failure rather than a pass: "cannot prove registration" is not
+ * "registered".
  *
  * @param {string} source
- * @param {'v1'|'v2'} generation
  * @returns {string[]|null}
  */
-export function readDeclaredToolNames(source, generation) {
+export function readDeclaredToolNames(source) {
   const body = stripSourceComments(source)
-  if (generation === 'v2') {
-    const names = new Set(
-      [...body.matchAll(/\bname:\s*['"]([A-Za-z0-9_-]+)['"]/g)].map((match) => match[1]),
-    )
-    for (const match of body.matchAll(/^\s*['"]([A-Za-z0-9_-]+)['"],?\s*$/gm)) names.add(match[1])
-    return [...names]
-  }
-  const toolBlock = extractObjectLiteralBody(body, 'tool')
-  if (toolBlock === null) return null
-  return [...toolBlock.matchAll(/^\s*([a-z][a-z0-9_]*)\s*:/gm)].map((match) => match[1])
+  const names = new Set(
+    [...body.matchAll(/\bname:\s*['"]([A-Za-z0-9_-]+)['"]/g)].map((match) => match[1]),
+  )
+  for (const match of body.matchAll(/^\s*['"]([A-Za-z0-9_-]+)['"],?\s*$/gm)) names.add(match[1])
+  return [...names]
 }
 
 /**
@@ -2393,9 +2385,10 @@ export function resolveRegisteredPluginRoot(ref) {
   if (!absolute) return null
 
   const normalized = absolute.replaceAll('\\', '/').replace(/\/+$/, '')
-  const marker =
-    /^(.*?)\/src\/plugin-v2(?:\/index\.ts|\.ts)?$/.exec(normalized) ??
-    /^(.*?)\/src\/plugin(?:-v2)?\.ts$/.exec(normalized)
+  // Recognizes the current identity (src/plugin, src/plugin/index.ts,
+  // src/plugin.ts) AND the legacy spellings (src/plugin-v2, src/plugin-v2.ts,
+  // src/plugin-v2/index.ts) so a pre-2.0 registration still resolves.
+  const marker = /^(.*?)\/src\/plugin(?:-v2)?(?:\/index\.ts|\.ts)?$/.exec(normalized)
   const root = marker ? marker[1] : normalized
   return existsSync(join(root, 'package.json')) ? root : null
 }
@@ -2407,7 +2400,7 @@ export function resolveRegisteredPluginRoot(ref) {
  * writes (or a path inside an installed `pantheon-opencode` tree), or a
  * `package.json` naming this package. Everything else belongs to the user, so a
  * third-party plugin registered under `plugins` is ignored instead of being
- * read as a Pantheon surface with a missing `src/pantheon/v2-tools.ts` (which
+ * read as a Pantheon surface with a missing `src/pantheon/tools.ts` (which
  * failed a healthy installation as blocking).
  *
  * @param {{path:string, configPath:string}} ref
@@ -2426,9 +2419,9 @@ export function isPantheonPluginRef(ref) {
 /** Describe one registered surface for a finding message. */
 function describeSurface(surface) {
   if (surface.files.length === 0) {
-    return `${surface.generation}: no tool surface under ${surface.root}`
+    return `no tool surface under ${surface.root}`
   }
-  return `${surface.generation}: ${surface.files.join(' + ')}`
+  return surface.files.join(' + ')
 }
 
 /**
@@ -2439,7 +2432,7 @@ function describeSurface(surface) {
  * instead of being skipped or passed against the running package.
  *
  * @param {{target:string, env?:object}} args
- * @returns {{generation:'v1'|'v2'|null, root:string|null, files:string[], declared:string[]|null, unverifiable?:string}[]}
+ * @returns {{root:string|null, files:string[], declared:string[]|null, unverifiable?:string}[]}
  */
 export function resolveRegisteredToolSurfaces(args) {
   const refs = collectRegisteredPluginRefs(collectMcpConfigs(args))
@@ -2453,7 +2446,6 @@ export function resolveRegisteredToolSurfaces(args) {
       if (seen.has(key)) continue
       seen.add(key)
       surfaces.push({
-        generation: null,
         root: null,
         files: [],
         declared: null,
@@ -2466,14 +2458,13 @@ export function resolveRegisteredToolSurfaces(args) {
 
     const root = resolveRegisteredPluginRoot(ref)
     if (!root) continue
-    const generation = ref.path?.includes('plugin-v2') || ref.key === 'plugins' ? 'v2' : 'v1'
-    const key = `${generation}:${root}`
+    const key = root
     if (seen.has(key)) continue
     seen.add(key)
 
-    const files = TOOL_SURFACE_FILES[generation]
-      .map((relative) => join(root, relative))
-      .filter((file) => existsSync(file))
+    const files = TOOL_SURFACE_FILES.map((relative) => join(root, relative)).filter((file) =>
+      existsSync(file),
+    )
     const declared = new Set()
     let readable = 0
     for (const file of files) {
@@ -2483,17 +2474,16 @@ export function resolveRegisteredToolSurfaces(args) {
       } catch {
         continue
       }
-      const names = readDeclaredToolNames(source, generation)
+      const names = readDeclaredToolNames(source)
       if (names === null) continue
       readable++
       for (const name of names) declared.add(name)
     }
     surfaces.push({
-      generation,
       root,
       files,
       // No readable surface stays null so the classifier fails closed. With
-      // several generation files present the declarations are unioned, so a
+      // several surface files present the declarations are unioned, so a
       // tool any of them declares is never reported absent.
       declared: readable === 0 ? null : [...declared],
     })
@@ -2889,7 +2879,7 @@ async function main() {
   checkAgentsMdFreshness(args)
   checkSubagentDepthPlacement(args)
   checkPermissionTaskPresence(args)
-  checkV2UnsupportedFeatures(args)
+  checkUnsupportedFeatures(args)
 
   printSummary(args.target)
   if (jsonMode) writeDoctorJson(createDoctorJsonReport(args), exitCode)

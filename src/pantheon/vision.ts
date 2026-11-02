@@ -127,7 +127,7 @@ const BYTES_PER_MB = 1024 * 1024
  * budget on REASONING tokens FIRST: measured 1023 reasoning tokens against a
  * 1024 cap (content came back null with finish_reason "length"), while 2048
  * finished normally (`stop`) with a complete description. The former 500
- * truncated EVERY reasoning call. Exported so the V2 tool surface shares one
+ * truncated EVERY reasoning call. Exported so the tool surface shares one
  * value instead of hard-coding its own copy.
  */
 export const NATIVE_MAX_TOKENS = 2048
@@ -504,7 +504,7 @@ function providerSupportsNativeVision(providerID: string, npm: string | null): b
  * the direct gateway (HTTP 403 "free tier can only be used from within
  * OpenCode"), so they must never be picked on the native describe path. Two
  * conservative signals: an explicit `cost.input <= 0`, OR a `-free` id suffix.
- * `<= 0` (not `=== 0`) matches V2's `isFreeVisionModel` so a malformed negative
+ * `<= 0` (not `=== 0`) matches the native vision `isFreeVisionModel` so a malformed negative
  * cost can never be treated as paid on one path and free on the other.
  */
 function catalogEntryIsFree(entry: CatalogEntry): boolean {
@@ -604,7 +604,7 @@ export async function fetchProvidersCatalog(
 
 // ─── OpenCode auth store (fallback credential source) ────────────────────
 // `opencode auth login` stores provider tokens in <data dir>/auth.json on V1
-// and in a `credential` table inside <data dir>/opencode.db on V2. The vision
+// and in a `credential` table inside <data dir>/opencode.db on 2.x. The vision
 // plugin reads BOTH stores so a connected user needs no exported env var, and
 // so every vision path (plugin native, MCP, picker) resolves the same
 // credential. Mirrors the usage-bar pattern (src/plugins/tui) but stays local
@@ -612,14 +612,14 @@ export async function fetchProvidersCatalog(
 
 function defaultAuthStateDir(): string {
   // Honor XDG_DATA_HOME so a relocated data root resolves the same auth store
-  // (auth.json) and V2 credential db (opencode.db) as the plugin and the MCP.
-  // Mirrors v2-vision.ts; OPENCODE_DB still names the exact db file.
+  // (auth.json) and the 2.x credential db (opencode.db) as the plugin and the MCP.
+  // Mirrors native-vision.ts; OPENCODE_DB still names the exact db file.
   const dataHome = process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share')
   return join(dataHome, 'opencode')
 }
 
 /**
- * Path to the OpenCode V2 credential database. `OPENCODE_DB` names the exact
+ * Path to the OpenCode 2.x credential database. `OPENCODE_DB` names the exact
  * file when the host relocated it (e.g. a sandbox with its own db); otherwise
  * the default `<data dir>/opencode.db` sibling of `auth.json` is used.
  */
@@ -630,7 +630,7 @@ function v2CredentialDbPath(stateDir: string, env: Record<string, string | undef
 
 /**
  * Credential field names accepted in an OpenCode auth entry. V1 OAuth entries
- * carry `access`; V1/V2 API-key entries carry `key`/`apiKey`. Mirrors the
+ * carry `access`; 1.x/2.x API-key entries carry `key`/`apiKey`. Mirrors the
  * Pantheon Vision MCP's `_extract_key` so the native path sees the same
  * credential shapes as the tool path.
  */
@@ -663,7 +663,7 @@ function extractAuthToken(value: unknown): string | null {
 }
 
 /**
- * Extract a token from a V2 `credential.value` cell: the cell is JSON text
+ * Extract a token from a 2.x `credential.value` cell: the cell is JSON text
  * (e.g. `{"type":"key","key":"..."}` or an OAuth blob), so it is parsed first.
  * A non-JSON or unusable value yields null. The token is never logged.
  */
@@ -677,9 +677,9 @@ function extractCredentialCellToken(value: unknown): string | null {
 }
 
 /**
- * Read a provider token from the OpenCode V2 SQLite credential store
- * (`<data dir>/opencode.db`, table `credential`). OpenCode V2 moved credentials
- * out of `auth.json`; a V2 host has no JSON file, so an auth.json-only read left
+ * Read a provider token from the OpenCode 2.x SQLite credential store
+ * (`<data dir>/opencode.db`, table `credential`). OpenCode 2.x moved credentials
+ * out of `auth.json`; a host has no JSON file, so an auth.json-only read left
  * the native path unresolvable even though the MCP (which reads this table) and
  * the picker both worked.
  *
@@ -688,7 +688,7 @@ function extractCredentialCellToken(value: unknown): string | null {
  * back to the tool→local chain. Rows are tried in `providerIDs` order; the
  * stored value is never logged.
  */
-async function readV2CredentialToken(
+async function readCredentialToken(
   providerIDs: readonly string[],
   stateDir: string,
   env: Record<string, string | undefined>,
@@ -699,7 +699,7 @@ async function readV2CredentialToken(
   try {
     sqlite = await import('node:sqlite')
   } catch {
-    return null // runtime without node:sqlite → no V2 store to read
+    return null // runtime without node:sqlite → no 2.x store to read
   }
   const DatabaseSync = sqlite.DatabaseSync
   if (typeof DatabaseSync !== 'function') return null
@@ -732,9 +732,9 @@ async function readV2CredentialToken(
  * `statePath` is the opencode data dir (default `$XDG_DATA_HOME/opencode`, else
  * `~/.local/share/opencode`). The
  * V1 `auth.json` inside it maps provider IDs to `{ access | key, expires }`;
- * the V2 `opencode.db` (or the file named by `OPENCODE_DB`) holds the same
+ * the 2.x `opencode.db` (or the file named by `OPENCODE_DB`) holds the same
  * secrets in a `credential` table. The V1 file is read first (it is absent on a
- * V2 host), then the V2 store.
+ * 2.x host), then the 2.x store.
  *
  * Returns the first non-expired token across `providerIDs`, or null when both
  * stores are missing/corrupted or no entry has a usable token — callers fall
@@ -755,7 +755,7 @@ export async function readOpencodeAuthToken(
         auth = parsed as Record<string, unknown>
       }
     } catch {
-      auth = null // corrupted → treat as absent, then try the V2 store
+      auth = null // corrupted → treat as absent, then try the 2.x store
     }
     if (auth) {
       for (const id of providerIDs) {
@@ -764,7 +764,7 @@ export async function readOpencodeAuthToken(
       }
     }
   }
-  return readV2CredentialToken(providerIDs, stateDir, env)
+  return readCredentialToken(providerIDs, stateDir, env)
 }
 
 function userConfigPath(): string {
@@ -1074,10 +1074,10 @@ export async function saveDataUrlImage(dataUrl: string, mime: string): Promise<s
 
 /**
  * Synchronous sibling of `saveDataUrlImage` for callers that run inside a
- * synchronous host hook — namely the V2 `prompt` admission, which must hand a
+ * synchronous host hook — namely the 2.x `prompt` admission, which must hand a
  * path-based vision tool/MCP a real reference for an inline (clipboard)
  * attachment whose bytes exist only in memory as a data URI. Bytes go to the
- * SAME temp dir + LRU registry, so V1 and V2 attachment cleanup share one
+ * SAME temp dir + LRU registry, so 1.x and 2.x attachment cleanup share one
  * mechanism. The global cap is enforced best-effort (a sync caller cannot await
  * it): the eviction runs off the returned tick and never rejects.
  */
@@ -1201,7 +1201,7 @@ export function resolveNativeVisionConfig(
  * Credential precedence:
  * - Zen endpoints (`opencode` / `opencode-go*`): the env keys
  *   (`PANTHEON_OPENCODE_API_KEY` ?? `OPENCODE_API_KEY`) first, then the auth
- *   store (`auth.json` on V1, the V2 `opencode.db` credential table) — the
+ *   store (`auth.json` on 1.x, the 2.x `opencode.db` credential table) — the
  *   resolved provider entry first, then the legacy Zen entries (`opencode-go`,
  *   then `opencode`) — so connected users don't need to export anything.
  * - Non-Zen endpoints (discovered or explicit via the npm allowlist): ONLY the
@@ -1605,8 +1605,8 @@ function unescapeXml(text: string): string {
 /**
  * Payload bound for the user's question interpolated into vision prompts:
  * prompts longer than this are clipped (with an ellipsis marker) so a long
- * turn never bloats the gateway request. Exported because the V2 path
- * (v2-vision.ts) applies the same cap to its own describe prompt.
+ * turn never bloats the gateway request. Exported because the 2.x path
+ * (native-vision.ts) applies the same cap to its own describe prompt.
  */
 export const MAX_PROMPT_USER_TEXT_CHARS = 2000
 

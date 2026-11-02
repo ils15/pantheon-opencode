@@ -1,5 +1,5 @@
 /**
- * The explicit V2 tool surface for native Jev Decisions.
+ * The explicit tool surface for native Jev Decisions.
  *
  * This is the one production call site for the native Decisions scaffold. The
  * surface is an explicit tool invocation, which resolves the hook path's
@@ -37,10 +37,10 @@ import {
   buildDecisionEgressRequest,
 } from './local-decision-egress-gate.ts'
 import { verifyNativeUsageForReservation } from './local-decision-usage-evidence.internal.ts'
-import type { NativeDecisionRequest } from './v2-native-decisions.ts'
-import type { V2ToolDef } from './v2-tools.ts'
+import type { NativeDecisionRequest } from './native-decisions.ts'
+import type { ToolDef } from './tools.ts'
 
-export interface V2JevDecisionRuntime {
+export interface JevDecisionRuntime {
   /** Raw host model catalog (`ctx.model.list`); may resolve to anything. */
   readonly listModels: () => Promise<unknown>
   /** The host's native Decisions API (`ctx.experimental.generate.decisions`). */
@@ -97,7 +97,7 @@ function isNonBlankString(value: unknown): value is string {
  * registry degrades to the catalog-only preset. Reading the registry applies
  * no trust: installation already was the user's manual, reviewed act.
  */
-async function readHostSkills(runtime: V2JevDecisionRuntime): Promise<JevHostSkill[] | undefined> {
+async function readHostSkills(runtime: JevDecisionRuntime): Promise<JevHostSkill[] | undefined> {
   if (typeof runtime.listSkills !== 'function') return undefined
   let raw: unknown
   try {
@@ -121,7 +121,7 @@ async function readHostSkills(runtime: V2JevDecisionRuntime): Promise<JevHostSki
   return skills
 }
 
-async function readCatalog(runtime: V2JevDecisionRuntime): Promise<JevDecisionCatalogEntry[]> {
+async function readCatalog(runtime: JevDecisionRuntime): Promise<JevDecisionCatalogEntry[]> {
   const raw = await runtime.listModels()
   if (!Array.isArray(raw)) throw new TypeError('Model catalog is not a list')
   const entries: JevDecisionCatalogEntry[] = []
@@ -147,7 +147,7 @@ async function readCatalog(runtime: V2JevDecisionRuntime): Promise<JevDecisionCa
 export async function runJevDecision(
   input: unknown,
   toolContext: unknown,
-  runtime: V2JevDecisionRuntime,
+  runtime: JevDecisionRuntime,
 ): Promise<string> {
   const context =
     toolContext !== null && typeof toolContext === 'object' && !Array.isArray(toolContext)
@@ -322,8 +322,8 @@ const JEV_INPUT_SCHEMA: Record<string, unknown> = {
   },
 }
 
-/** Create the V2 tool definition; registration is the caller's decision. */
-export function createV2JevDecisionDefinition(runtime: V2JevDecisionRuntime): V2ToolDef {
+/** Create the tool definition; registration is the caller's decision. */
+export function createJevDecisionDefinition(runtime: JevDecisionRuntime): ToolDef {
   return {
     name: 'pantheon_jev_decide',
     description: TOOL_DESCRIPTION,

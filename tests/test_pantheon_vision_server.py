@@ -433,11 +433,11 @@ async def test_credential_store_supplies_key_on_v2_host(
     """
     data_dir = tmp_path / ".local" / "share" / "opencode"
     data_dir.mkdir(parents=True)
-    _seed_credential_db(data_dir, "opencode-go", "v2-store-key")
+    _seed_credential_db(data_dir, "opencode-go", "store-key")
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
     assert not (data_dir / "auth.json").exists(), "precondition: no V1 auth.json"
-    assert vision._resolve_auth() == ("v2-store-key", vision.GO_ENDPOINT)
+    assert vision._resolve_auth() == ("store-key", vision.GO_ENDPOINT)
 
 
 @pytest.mark.asyncio

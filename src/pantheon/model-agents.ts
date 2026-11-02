@@ -1,4 +1,4 @@
-/** Canonical agent IDs shared by model routing and V2 override validation. */
+/** Canonical agent IDs shared by model routing and override validation. */
 export const KNOWN_AGENTS = [
   'zeus',
   'athena',

@@ -10,7 +10,7 @@ export const SANDBOX_SOURCE_FILES = [
   'scripts/install/config-migration.mjs',
   'scripts/install/opencode.mjs',
   'scripts/validate-sandbox-install.mjs',
-  'src/plugin-v2.ts',
+  'src/plugin.ts',
 ]
 
 function readJson(path, label) {
@@ -69,7 +69,13 @@ export function validateSandboxInstall({ repoDir, installDir, projectConfig, con
     sourceHash.update(relativePath).update('\0').update(installed).update('\0')
   }
 
-  const expectedPluginPath = resolve(installDir, 'src', 'plugin-v2')
+  // The current registration path plus the pre-2.0 spellings, which remain
+  // recognized so a sandbox prepared by an older release still validates.
+  const expectedPluginPaths = new Set([
+    resolve(installDir, 'src', 'plugin'),
+    resolve(installDir, 'src', 'plugin-v2'),
+    resolve(installDir, 'src', 'plugin-v2.ts'),
+  ])
   const allConfigPaths = [...new Set([projectConfig, ...configPaths].map((path) => resolve(path)))]
   let activeProjectPluginCount = 0
   for (const configPath of allConfigPaths) {
@@ -82,14 +88,14 @@ export function validateSandboxInstall({ repoDir, installDir, projectConfig, con
       if (PACKAGE_REF.test(normalized)) {
         throw new Error(`stale Pantheon package reference in ${configPath}: ${ref}`)
       }
-      if (resolve(ref) === expectedPluginPath) {
+      if (expectedPluginPaths.has(resolve(ref))) {
         if (configPath === resolve(projectConfig)) activeProjectPluginCount += 1
       }
     }
   }
   if (activeProjectPluginCount !== 1) {
     throw new Error(
-      `project config must reference the sandbox V2 plugin exactly once; found ${activeProjectPluginCount}: ${resolve(projectConfig)}`,
+      `project config must reference the sandbox plugin exactly once; found ${activeProjectPluginCount}: ${resolve(projectConfig)}`,
     )
   }
 

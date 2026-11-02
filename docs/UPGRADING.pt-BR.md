@@ -1,6 +1,11 @@
 <!-- synced-from: docs/UPGRADING.md @ 7359e4f -->
 # Atualização do Pantheon
 
+> **Nota do 2.0:** o 2.0 removeu a linha de plugin V1. As seções abaixo descrevem
+> a migração 1.x → 2.x e são mantidas como histórico; instalações novas são
+> exclusivamente 2.x e o instalador registra `src/plugin` (configs anteriores à
+> renome ainda registram `src/plugin-v2`, que o `init` migra).
+
 [English](UPGRADING.md)
 
 Este guia cobre dois movimentos: **1.5.2 → 1.6.0**, uma atualização dentro da
@@ -87,7 +92,7 @@ instala as duas gerações do plugin Pantheon.
    `tui.json`; V2 usa os entrypoints nativos `index.ts` + `tui.ts`. Instalar
    apenas o plugin de servidor V2 não instala a TUI.
 4. Inspecione o resultado: entradas Pantheon V1 ficam em `plugin`; a entrada V2
-   é o diretório `<installed>/src/plugin-v2` em `plugins`.
+   é o diretório `<installed>/src/plugin` em `plugins`.
 5. Reinicie o OpenCode depois de mudar a configuração.
 6. Rode `doctor` e confirme que não resta drift de versão do plugin.
 
@@ -109,7 +114,7 @@ explicitamente, ou defina `OPENCODE_VERSION=v2`. Para ver o que o gate lê, rode
   BackgroundJobBoard e os hooks V1 de evento/tool/compaction.
 - **V2:** não registra o BackgroundJobBoard, hooks V1 de evento/tool nem um hook
   de compaction V1. Ele adiciona os hooks V2 documentados em
-  [OpenCode V2](opencode-v2.md).
+  [OpenCode 2.x](opencode.md).
 - **Recuperação:** ao reiniciar, jobs antigos ou em execução do board V1 são
   marcados como erro; não são retomados automaticamente e o trabalho filho não
   reinicia sozinho. O V2 não adiciona retomada/reinício automático.
@@ -131,7 +136,7 @@ Prepare-se para a 2.x:
 - movendo goals manuais duráveis para as tools `goal_*` do MCP de Persistence;
 - removendo qualquer dependência das tools de goal V1 ou do BackgroundJobBoard;
 - confirmando que a instalação está registrada em `plugins` com o diretório
-  `<installed>/src/plugin-v2`;
+  `<installed>/src/plugin`;
 - rodando `doctor` e as checagens de sandbox V2 descritas no
   [Processo de release](RELEASING.md).
 

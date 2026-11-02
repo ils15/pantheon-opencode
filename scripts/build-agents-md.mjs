@@ -2,7 +2,7 @@
 /**
  * build-agents-md.mjs — Generate BOTH AGENTS.md artifacts from canonical sources.
  *
- * AGENTS.md files are instruction files BOTH OpenCode V1 and V2 load (V1
+ * AGENTS.md files are instruction files the host loads (1.x
  * auto-discovers them, V2 loads them explicitly; the `instructions` config
  * key is accepted-but-ignored by V2). Every session pays for global AND
  * project AGENTS.md content, so a single duplicated file is paid twice per
@@ -163,7 +163,7 @@ const INSTRUCTIONS_PREAMBLE = `---
 
 # Agent Instructions
 
-Shared rules from \`src/instructions/*.instructions.md\`, identical for OpenCode V1 and V2 (V2 ignores \`instructions\`). Repo-specific setup stays in that project's AGENTS.md, so no rule loads twice; agent-scoped rules live only in the matching prompt.`
+Shared rules from \`src/instructions/*.instructions.md\` (the 2.x host ignores \`instructions\`; the shared rules existed for the removed V1 line). Repo-specific setup stays in that project's AGENTS.md, so no rule loads twice; agent-scoped rules live only in the matching prompt.`
 
 // ---------------------------------------------------------------------------
 // Frontmatter parsing (stdlib only — no yaml dependency)

@@ -156,7 +156,7 @@ function probeHostVersion(binary, timeoutMs = HOST_PROBE_TIMEOUT_MS) {
 // A version-SHAPED token: optional "v", a major, a dot, a minor. The lookbehind
 // rejects starting mid-number so "1.18.33" offers ONE candidate ("1.18") rather
 // than also offering "18.33". Case-insensitive because hosts print both
-// "opencode v2.0.22" and "OpenCode V2.0.22".
+// "opencode v2.0.22" and "OpenCode 2.x.0.22".
 const VERSION_TOKEN = /(?<![\d.])v?(\d+)\.(\d+)/gi
 
 // A token immediately preceded by the tool name IS that host's own version,

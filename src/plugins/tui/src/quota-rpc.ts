@@ -5,7 +5,7 @@ import {
   USAGE_HISTORY_PERIODS,
 } from './usage-history-contract'
 
-/** Full provider matrix approved for the V2 quota surface. */
+/** Full provider matrix approved for the quota surface. */
 export const QUOTA_PROVIDER_IDS = [
   'anthropic',
   'chutes',

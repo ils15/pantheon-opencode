@@ -14,10 +14,10 @@ import {
   writeUserDecisionRouterConfig,
 } from '../../scripts/install/decision-router-config.mjs'
 import {
-  createV2JevDecisionDefinition,
+  createJevDecisionDefinition,
+  type JevDecisionRuntime,
   nativeJevPermissionResource,
   runJevDecision,
-  type V2JevDecisionRuntime,
 } from '../../src/pantheon/jev-decision-tool.ts'
 import {
   consumeJevDecisionResult,
@@ -41,7 +41,7 @@ import {
   PANTHEON_AGENT_IDS,
   PANTHEON_SKILL_CATALOG,
 } from '../../src/pantheon/pantheon-decision-catalog.ts'
-import { createV2ToolDefinitions } from '../../src/pantheon/v2-tools.ts'
+import { createToolDefinitions } from '../../src/pantheon/tools.ts'
 
 const CURRENT_PERIOD = new Date().toISOString().slice(0, 7)
 const CAPS = { monthlyCapMicros: 5_000_000, perDecisionCapMicros: 1_000_000 }
@@ -136,14 +136,14 @@ function confirmCaps(): void {
   }
 }
 
-function stubRuntime(overrides: Partial<V2JevDecisionRuntime> = {}): {
-  runtime: V2JevDecisionRuntime
+function stubRuntime(overrides: Partial<JevDecisionRuntime> = {}): {
+  runtime: JevDecisionRuntime
   decideCalls: unknown[]
   permissionRequests: Record<string, unknown>[]
 } {
   const decideCalls: unknown[] = []
   const permissionRequests: Record<string, unknown>[] = []
-  const runtime: V2JevDecisionRuntime = {
+  const runtime: JevDecisionRuntime = {
     listModels: async () => CATALOG,
     decide: async (request) => {
       decideCalls.push(request)
@@ -830,20 +830,20 @@ function refusalOf(reasonCode: string): string {
 
 function testRegistrationContract(): void {
   const { runtime } = stubRuntime()
-  const withJev = createV2ToolDefinitions(undefined, {}, runtime)
+  const withJev = createToolDefinitions(undefined, {}, runtime)
   assert.ok(withJev.some((def) => def.name === 'pantheon_jev_decide'))
   const jevDef = withJev.find((def) => def.name === 'pantheon_jev_decide')
   assert.ok(jevDef)
   assert.equal(typeof jevDef?.input, 'object')
   assert.deepEqual(Object.keys(jevDef?.output ?? {}), [])
 
-  const withoutJev = createV2ToolDefinitions(undefined, {}, undefined)
+  const withoutJev = createToolDefinitions(undefined, {}, undefined)
   assert.equal(
     withoutJev.some((def) => def.name === 'pantheon_jev_decide'),
     false,
   )
 
-  const definition = createV2JevDecisionDefinition(runtime)
+  const definition = createJevDecisionDefinition(runtime)
   assert.equal(definition.name, 'pantheon_jev_decide')
   const schema = definition.input as { required?: string[] }
   assert.deepEqual(schema.required, ['schemaVersion', 'state'])
