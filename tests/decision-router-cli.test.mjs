@@ -268,9 +268,15 @@ test('setup-model performs the whole activation chain in one command', async () 
   )
   const config = readUserDecisionRouterConfig({ env })
   assert.equal(config.enabled, true)
-  assert.deepEqual(config.selection, { mode: 'explicit', provider: 'opencode-console-jev', model: 'jev-1.13' })
+  assert.deepEqual(config.selection, {
+    mode: 'explicit',
+    provider: 'opencode-console-jev',
+    model: 'jev-1.13',
+  })
   assert.equal(config.egress_consent, true)
-  assert.deepEqual(config.enabled_candidates, [{ provider: 'opencode-console-jev', model: 'jev-1.13' }])
+  assert.deepEqual(config.enabled_candidates, [
+    { provider: 'opencode-console-jev', model: 'jev-1.13' },
+  ])
 
   // Caps and period are in the ledger, admission open (reuse the status path).
   const status = []
@@ -284,7 +290,15 @@ test('setup-model performs the whole activation chain in one command', async () 
 test('setup-model --no-consent configures everything except egress consent', async () => {
   const { env } = sandbox()
   await runDecisionRouterCommand(
-    ['setup-model', 'typesafe-jev/jev-1.14.0', '--monthly-usd', '2', '--per-decision-usd', '0.05', '--no-consent'],
+    [
+      'setup-model',
+      'typesafe-jev/jev-1.14.0',
+      '--monthly-usd',
+      '2',
+      '--per-decision-usd',
+      '0.05',
+      '--no-consent',
+    ],
     { env, stdout: () => {} },
   )
   const config = readUserDecisionRouterConfig({ env })
@@ -296,16 +310,22 @@ test('setup-model --no-consent configures everything except egress consent', asy
 test('setup-model rejects local/auto targets and requires both caps flags', async () => {
   const { env } = sandbox()
   await assert.rejects(
-    runDecisionRouterCommand(['setup-model', 'local', '--monthly-usd', '1', '--per-decision-usd', '1'], {
-      env,
-      stdout: () => {},
-    }),
+    runDecisionRouterCommand(
+      ['setup-model', 'local', '--monthly-usd', '1', '--per-decision-usd', '1'],
+      {
+        env,
+        stdout: () => {},
+      },
+    ),
   )
   await assert.rejects(
-    runDecisionRouterCommand(['setup-model', 'opencode-console-jev/jev-1.13', '--monthly-usd', '1'], {
-      env,
-      stdout: () => {},
-    }),
+    runDecisionRouterCommand(
+      ['setup-model', 'opencode-console-jev/jev-1.13', '--monthly-usd', '1'],
+      {
+        env,
+        stdout: () => {},
+      },
+    ),
   )
 })
 
@@ -313,7 +333,14 @@ test('doctor diagnoses the chain read-only and degrades when the host probe fail
   const { home, env } = sandbox()
   const output = []
   await runDecisionRouterCommand(
-    ['setup-model', 'opencode-console-jev/jev-1.13', '--monthly-usd', '5', '--per-decision-usd', '0.10'],
+    [
+      'setup-model',
+      'opencode-console-jev/jev-1.13',
+      '--monthly-usd',
+      '5',
+      '--per-decision-usd',
+      '0.10',
+    ],
     { env, stdout: () => {} },
   )
   // No opencode binary resolves inside the test env, so the catalog probe
@@ -323,13 +350,19 @@ test('doctor diagnoses the chain read-only and degrades when the host probe fail
   assert.ok(output.some((line) => line.startsWith('✔ consent: recorded')))
   assert.ok(output.some((line) => line.startsWith('✔ selection: opencode-console-jev/jev-1.13')))
   assert.ok(output.some((line) => line.startsWith('✔ budget: admission open')))
-  assert.ok(output.some((line) => line.startsWith('▲ host-catalog:')), 'host probe degrades to a warning')
+  assert.ok(
+    output.some((line) => line.startsWith('▲ host-catalog:')),
+    'host probe degrades to a warning',
+  )
   assert.ok(output.some((line) => line.includes('Read-only: doctor never creates')))
 
   // Doctor on a fresh environment flags everything with actionable fixes.
   const fresh = sandbox()
   const freshOutput = []
-  await runDecisionRouterCommand(['doctor'], { env: fresh.env, stdout: (line) => freshOutput.push(line) })
+  await runDecisionRouterCommand(['doctor'], {
+    env: fresh.env,
+    stdout: (line) => freshOutput.push(line),
+  })
   assert.ok(freshOutput.some((line) => line.startsWith('✖ config:')))
   assert.ok(freshOutput.some((line) => line.includes('fix →')))
   rmSync(fresh.home, { recursive: true, force: true })
