@@ -41,6 +41,7 @@ of repeating it.
 | Native Jev Decisions tool and gate chain | [Native Decisions](reference/native-decisions.md) |
 | Offline protocol for evaluating agent routing and task complexity | [Offline Evaluation](reference/offline-evaluation.md) |
 | Performance costs and tuning knobs | [Performance](reference/performance.md) |
+| Skill provenance search design (unwired) | [Skill Search Design](reference/skill-search-design.md) |
 | Environment variables that change behavior | [Environment Variables](reference/env-vars.md) |
 | Confined script execution and approval manifests | [Code Mode](reference/code-mode.md) |
 

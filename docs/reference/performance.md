@@ -33,6 +33,26 @@ picks what to load per task instead of carrying everything always.
 - Model tiers: phase reviews on the flash tier; the pro tier reserved for the
   final gate (`routing.yml` / `set-tier`).
 
+## MCP servers (measured)
+
+| Cost | Number | Note |
+| --- | --- | --- |
+| `fastmcp` import per server | 0.5–0.8 s | Paid once per host session at server spawn (5 servers ⇒ ~2.5–4 s of Python imports at startup); per-CALL costs are sqlite-local and fast. Startup parallelization is host-side. |
+| Memory search | FTS5 (BM25) | SQLite-side keyword search with freshness decay; the vector pipeline (sqlite-vec + fastembed) is documented as not active — no embedding fallback exists, so storage shape matters (see MEMORY.md). |
+| Vision deps | heavy (separate venv) | Installed only with the `runtime` component; the vision server is the reason `--no-mcp` exists. |
+
+Improvement queue (deliberately not done): an embeddings pipeline for memory
+(needs model + storage decisions), and host-side server warm-start. Neither is
+a per-call latency problem today.
+
+## Skill discovery (designed, unwired)
+
+The three-tier skill provenance search — installed / registry / ecosystem,
+with Jev ranking annotated candidates and trust staying outside the model —
+is specified in [Skill search design](skill-search-design.md). Tier 1 (local
+only) could ship without any new consent surface; tiers 2–3 need the egress
+class described there.
+
 ## Context growth (long sessions)
 
 The deterministic context pruner exists but is **off by default** (per-request

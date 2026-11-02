@@ -6,7 +6,7 @@ reasoning_effort: high
 permission:
   read: allow
   grep: allow
-  bash: allow
+  shell: allow
   edit: deny
   hashline_edit: deny
   task:
