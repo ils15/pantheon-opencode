@@ -7,14 +7,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Changed
-
-- **agents** — Zeus routing policy now prefers one typed `pantheon_jev_decide` call for genuinely ambiguous routing and skill stacking, with `pantheon_local_decision` as the offline fallback.
-- **docs** — Documented the skill-discovery loop (find, review, install, decide) and mapped the candidate MCP-gating expansions as deliberately unwired.
-
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.2-beta.7] - 2026-11-02
+
+### Added
+
+- **install** — Added `decision-router setup-model <provider>/<model> --monthly-usd N --per-decision-usd N`: one command performs selection, enablement, egress consent, user/provider/model caps, and budget-period confirmation, then prints the verification checklist (`--no-consent` configures everything except consent).
+- **install** — Added `decision-router doctor`: read-only diagnosis of the whole native decision route (config, consent, selection, budget admission, unresolved holds, best-effort host-catalog probe) printing the exact command to run for each failing gate.
+
+### Changed
+
+- **agents** — Modernized the Zeus system prompt: pruned stale release-history sections, kept the operational guards, and granted `pantheon_jev_decide` in the agent permission frontmatter so new installs get the advisory tool without manual config edits.
+- **docs** — Documented ready-to-copy decision-provider examples (TypeSafe direct, OpenRouter-hosted Jev) with the catalog caveat that the flat `opencode models` list can omit decision-typed models.
+- **agents** — Zeus routing policy now prefers one typed `pantheon_jev_decide` call for genuinely ambiguous routing and skill stacking, with `pantheon_local_decision` as the offline fallback.
+- **docs** — Documented the skill-discovery loop (find, review, install, decide) and mapped the candidate MCP-gating expansions as deliberately unwired.
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
 ## [v1.6.2-beta.6] - 2026-11-01
 
 ### Added

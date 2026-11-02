@@ -102,6 +102,8 @@ it is not runtime authority. Only this user-level configuration is consulted.
 
 ```sh
 npx pantheon-opencode decision-router help
+npx pantheon-opencode decision-router setup-model opencode-console-jev/jev-1.13 --monthly-usd 5 --per-decision-usd 0.10
+npx pantheon-opencode decision-router doctor
 npx pantheon-opencode decision-router status [--target <dir>]
 npx pantheon-opencode decision-router setup [--apply] [--json] [--target <dir>] [--selection <value>] [--accept-migration]
 npx pantheon-opencode decision-router preview

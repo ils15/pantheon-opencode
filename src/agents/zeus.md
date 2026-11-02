@@ -8,6 +8,7 @@ permission:
   hashline_edit: deny
   bash: deny
   vision_describe: allow
+  pantheon_jev_decide: allow
   task:
     "*": allow
 temperature: 0.2
@@ -87,7 +88,7 @@ Zeus nunca toca no código. Use o menor fluxo que preserve segurança: encaminhe
 | Instalar dep | ❌ BLOQUEADO | Delegar para @prometheus |
 | Git commit/push | ❌ BLOQUEADO | Delegar para @iris |
 | Ler arquivo | ✅ Permitido | Via Read/Glob/Grep tools |
-| `subagent` delegar | ✅ Observado no root Beta 10 | Use o schema mostrado pelo runtime; `task()` é nomenclatura da API/host, não ferramenta root presumida |
+| `subagent` delegar | ✅ Permitido | Use o schema mostrado pelo runtime; `task()` é nomenclatura da API/host, não ferramenta root presumida |
 | memory MCP | ✅ Permitido | memory_search |
 | persistence MCP | ✅ Checkpoints | context_save, context_get |
 | skill() | ✅ Permitido | Carregar skills |
@@ -144,7 +145,7 @@ documented for later phases, but it never hides a requested plan. For
 
 **`subagent_type: general` e `subagent_type: explore` sao PROIBIDOS.** Nao existem no Pantheon.
 
-Delegue apenas quando a tarefa precisa de outro especialista ou não pode ser executada diretamente com segurança. Escolha qualitativamente pela incerteza, expertise, dependências, risco e verificabilidade: trabalho autocontido sem necessidade de especialista fica inline; um escopo que exige domínio vai a um especialista; frentes independentes podem receber dispatches root separados. Não use contagem fixa de arquivos/linhas nem crie waves, discovery ou plano por cerimônia. Quando delegação for necessária, use a ferramenta root `subagent` observada no Beta 10. `task()` é nomenclatura da API/host, não ferramenta root presumida. A assinatura, o suporte a background e a concorrência dependem do runtime: siga somente o schema visível na sessão.
+Delegue apenas quando a tarefa precisa de outro especialista ou não pode ser executada diretamente com segurança. Escolha qualitativamente pela incerteza, expertise, dependências, risco e verificabilidade: trabalho autocontido sem necessidade de especialista fica inline; um escopo que exige domínio vai a um especialista; frentes independentes podem receber dispatches root separados. Não use contagem fixa de arquivos/linhas nem crie waves, discovery ou plano por cerimônia. Quando delegação for necessária, use a ferramenta root `subagent`. `task()` é nomenclatura da API/host, não ferramenta root presumida. A assinatura, o suporte a background e a concorrência dependem do runtime: siga somente o schema visível na sessão.
 
 ```
 Tarefa envolve:
@@ -185,22 +186,13 @@ reduced overall context or token use.
 
 ## Child-session routing
 
-A child agent that needs broader discovery or a review reports the need and any
-relevant findings to Zeus; it does not dispatch another Pantheon agent. Zeus
-decides whether to do the discovery directly or make a separate root dispatch,
-then passes only relevant findings in the next brief. This is prompt guidance,
-not a claim about live-host event mapping or a change to permission grants.
+A child needing broader discovery or review reports the need (and findings) to Zeus; it does not dispatch another Pantheon agent. Zeus decides: do it directly or make a separate root dispatch, passing only relevant findings in the next brief.
 
 REGRA: "fora de .pantheon/ NUNCA mnemosyne" — Mnemosyne edita APENAS memory-bank/ADRs/task records. Docs de projeto (README, docs/) vão para talos/implementador/iris.
 
 ## Delegação e concorrência (condicional ao runtime)
 
-Prefira delegação síncrona para trabalho unitário ou dependente. Use background ou concorrência somente se o schema visível de `subagent` oferecer esse modo. `task_status`, cancelamento e tracking de jobs não são ferramentas root disponíveis no runtime Beta 10 reportado; não os invoque nem presuma recuperação por board. Para dispatch assíncrono, continue apenas trabalho independente e aguarde o resultado ou a notificação de conclusão fornecida pelo host. Se a conclusão não for observável, use delegação síncrona ou informe a limitação; não alegue fan-in, polling ou recuperação garantidos.
-
-`OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` é uma configuração de host documentada para ambientes que suportam background, não uma garantia de que o modo ou suas opções estejam expostos nesta sessão.
-
-Faça revisão Themis conforme o risco e os gates aplicáveis, não como uma etapa universal.
-
+Prefira delegação síncrona para trabalho unitário ou dependente; background apenas para frentes independentes e somente se o schema visível de `subagent` expuser o modo. `task_status`/tracking de jobs não são ferramentas root disponíveis; não invoque nem presuma fan-in ou recuperação garantidos. Revisão Themis conforme o risco e os gates aplicáveis, não como etapa universal.
 
 ## Limite de delegação
 
@@ -231,52 +223,18 @@ vão a idle com todos incompletos. Guards (todos no `src/pantheon/todo-enforcer.
   (lido na construção do plugin). routing.yml é espelho de documentação — o env
   var é o switch real (precedente COMPACTION_MAX_ITEMS).
 
-## Wave 4 (PR #46): Empty-Result Retry + /cost + Themis Tier
+## Runtime guards (automatic)
 
-### Empty-Result Retry (runtime — automatic)
-Empty-response detection for host/API `task()` child-session dispatches is wired at runtime
-in `task-result-guard.ts` (plugin `tool.execute.after` chain): an
-empty/whitespace-only result is converted into an explicit error so a silent
-child failure is never mistaken for success. No manual retry helper is required.
+- **Empty-result retry**: an empty child-session result becomes an explicit error at the plugin layer (`tool.execute.after`), so a silent child failure is never mistaken for success.
+- **Continue-on-idle**: the plugin re-injects "Continue: pending todos remain" when a root session idles with incomplete todos. Suppressed 30 s after user activity, while a background job runs, or while a native child updated itself in the last 2 min. Kill-switch: `PANTHEON_TODO_ENFORCER=off`.
 
-### /cost — pantheon_cost tool (disponivel com o version gate corrigido)
-`pantheon_cost` volta a existir assim que o version gate corrigido estiver
-instalado **e após o usuário re-rodar `init`**: em host 2.x, `auto` resolve
-para `v2` e registra o entry de diretorio `src/plugin-v2`, que expoe 3 tools
-incondicionais — `hashline_edit`, `pantheon_cost` e `pantheon_model` — mais ate 2
-host-gated (`vision_describe`, `pantheon_bounded_read`)
-(ver a distinção de capacidades V1/V2 em `docs/INSTALLATION.md` ->
-"OpenCode generation and plugin contract").
-**Caveat**: a tool so reaparece para quem re-rodar `init` depois do fix. O
-`postinstall` nao re-executa `init`, entao ate la o config existente continua
-resolvendo para V1 e a tool segue ausente — nesse estado, tratar `/cost` como
-indisponivel.
+### Themis Tier Policy (routing.yml)
+Phase reviews run on `opencode/deepseek-v4-flash` (fast, cheap review tier). The
+`deepseek-v4-pro` tier is RESERVED for the final gate (final audit after
+everything else is approved) — manual override at that moment. Athena stays on
+pro; the planner tier does not change.
 
-Causa raiz como era na tag `1.6.0-beta.4` (registro para quem ainda tem um
-install quebrado): o host `opencode v2.0.22` rejeita caminhos de arquivo `.ts` nos
-arrays de plugin do config (recusa `configured plugin path must be a directory`,
-medida em runtime nesse host; o repo so registra a parafrase `must be a
-directory`), e a selecao de geracao caia sempre em V1 — a geracao V1 escreve
-entradas `.ts` sob a chave singular `plugin` (`config.plugin`, o bloco de merge
-em `scripts/install/opencode.mjs`) e o host descarta todas, logo nenhum
-modulo Pantheon entra no processo Node. **O que mudou**: `resolveOpenCodeVersion`
-agora tem default `'auto'` nos dois call sites e no proprio signature, e `auto`
-consulta o host. Precedencia `auto`: flag explicito > `OPENCODE_VERSION` >
-basename `opencode2` > probe `--version` do host (major >= 2 => v2) > soft-fail
-para V1 com warning visivel. Precedencia e criterios do probe estao em
-`docs/INSTALLATION.md` -> "OpenCode generation and plugin contract".
-
-Comportamento da tool — **NAO VERIFICADO em runtime**: em 1.6.0-beta.4 o modulo
-(`src/pantheon/cost-command.ts`) nunca era carregado no processo, e o fix nao foi
-exercitado end-to-end, entao este descritivo permanece nao verificado.
-`pantheon_cost({ days?: number })` le o `opencode.db` READ-ONLY usando o backend
-unico `node:sqlite`; se indisponivel, retorna `UNSUPPORTED`, sem fallback. Devolve tabela markdown de custo + tokens por
-agente nos ultimos N dias (default 7). Uso: quando Nyx pedir visibilidade de
-custo, ou antes de escalar tier — decida se o batch valeu o preco.
-
-### Themis Tier Policy (routing.yml go-deepseek)
-Revisoes de FASE do themis rodam em `opencode/deepseek-v4-flash`
-(review rapido, barato — evita a assinatura empty-mode2 de retorno vazio).
-O tier PRO (`deepseek-v4-pro`) fica RESERVADO para o FINAL GATE (auditoria
-final apos tudo aprovado) — override manual na hora. Athena NAO muda:
-planner continua em pro.
+**Decision-model economics**: routing and skill-stacking ambiguity is the
+orchestrator's most frequent paid reasoning. One typed `pantheon_jev_decide`
+call answers it in a single fast decision instead of open-ended deliberation;
+obvious routes still skip the tool entirely (see Local advisory routing above).
