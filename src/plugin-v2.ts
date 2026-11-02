@@ -702,6 +702,10 @@ async function registerV2Tools(
     if (jevReady && typeof decisionsFn === 'function' && typeof modelListFn === 'function') {
       const decide = decisionsFn
       const listModels = modelListFn
+      // The 2.2.5 host exposes ctx.skill as the SkillEditor (list()); the SDK
+      // types this file sees declare skill as the registration hook, so the
+      // runtime shape is read through one narrow, feature-detected cast.
+      const skillList = (host as { skill?: { list?: () => unknown } }).skill?.list
       const permissionAssert =
         typeof permissionAssertFn === 'function'
           ? (input: Record<string, unknown>) => permissionAssertFn.call(host.permission, input)
@@ -709,6 +713,9 @@ async function registerV2Tools(
       jevRuntime = {
         listModels: () => listModels(),
         decide: (request: NativeDecisionRequest) => decide(request),
+        // Sync-or-async host skill list; absent/throwing falls back to the
+        // catalog-only preset inside the tool.
+        listSkills: async () => skillList?.(),
         ...(permissionAssert === undefined ? {} : { permissionAssert }),
       }
     }

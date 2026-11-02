@@ -368,24 +368,79 @@ const SKILL_DESCRIPTIONS = new Map(
   PANTHEON_SKILL_CATALOG.map((entry) => [entry.id, entry.description]),
 )
 
-function choiceList(values: readonly string[]): Array<{ value: string; description?: string }> {
+function choiceList(
+  values: readonly string[],
+  descriptions: ReadonlyMap<string, string | undefined> = SKILL_DESCRIPTIONS,
+): Array<{ value: string; description?: string }> {
   return values.map((value) => {
-    const description = SKILL_DESCRIPTIONS.get(value)
+    const description = descriptions.get(value)
     return description
       ? { value, description: description.slice(0, JEV_DECISION_MAX_DESCRIPTION_LENGTH) }
       : { value }
   })
 }
 
+/** One installed skill the host reports (`ctx.skill.list()`), bounded. */
+export interface JevHostSkill {
+  readonly id: string
+  readonly description?: string
+}
+
+const CATALOG_SKILL_IDS = PANTHEON_SKILL_CATALOG.map((entry) => entry.id)
+
+/**
+ * Merge host-discovered skills behind the catalog pool: the local prefilter
+ * (or the whole catalog, when nothing pre-matches) always comes first, then
+ * every installed skill the host reports that is not already present, until
+ * the choice bound minus `none` is reached. This is what makes the preset
+ * open: anything installed into the host's skill directories — Pantheon's
+ * own or third-party Agent Skills — becomes decidable without Pantheon
+ * knowing about it at build time. Trusting an install is the user's manual
+ * act; this merger only decides among what is already trusted.
+ */
+export function mergeHostSkills(
+  pool: readonly string[],
+  hostSkills: readonly JevHostSkill[] | undefined,
+  descriptions: Map<string, string | undefined>,
+): Array<{ value: string; description?: string }> {
+  const merged = [...pool]
+  const seen = new Set(merged)
+  const bound = JEV_DECISION_MAX_CHOICES - 1
+  if (hostSkills !== undefined) {
+    for (const skill of hostSkills) {
+      if (merged.length >= bound) break
+      if (
+        skill === null ||
+        typeof skill !== 'object' ||
+        typeof skill.id !== 'string' ||
+        skill.id.length === 0 ||
+        skill.id.length > JEV_DECISION_MAX_NAME_LENGTH ||
+        skill.id.trim() !== skill.id ||
+        seen.has(skill.id)
+      ) {
+        continue
+      }
+      seen.add(skill.id)
+      merged.push(skill.id)
+      if (typeof skill.description === 'string' && skill.description.length > 0) {
+        descriptions.set(skill.id, skill.description.slice(0, JEV_DECISION_MAX_DESCRIPTION_LENGTH))
+      }
+    }
+  }
+  return choiceList(merged, descriptions)
+}
+
 /**
  * Build a preset request: one choice question over catalog-backed options.
  * `skills` stacks the local skill shortlist (falling back to the whole
- * catalog); `delegation` offers every canonical specialist except Zeus.
+ * catalog, extended with host-installed skills); `delegation` offers every
+ * canonical specialist except Zeus.
  */
 export function prepareJevPresetRequest(
   route: ResolvedNativeDecisionRoute,
   mode: JevDecisionPreset,
   input: { readonly state?: unknown; readonly questions?: unknown },
+  hostSkills?: readonly JevHostSkill[],
 ): JevDecisionPreparation {
   if (input.questions !== undefined) return { ok: false, reasonCode: 'PRESET_INVALID' }
   const state = input.state
@@ -393,38 +448,40 @@ export function prepareJevPresetRequest(
     return { ok: false, reasonCode: 'STATE_INVALID' }
   }
 
-  const shortlist = mode === 'skills' ? selectPantheonSkills(state).skillIds : []
-  const options =
-    mode === 'skills'
-      ? [
-          ...choiceList(
-            shortlist.length > 0 ? shortlist : PANTHEON_SKILL_CATALOG.map((entry) => entry.id),
-          ),
-          { value: 'none' },
-        ]
-      : [...SPECIALIST_CHOICES, { value: 'none' }]
-  const question =
-    mode === 'skills'
-      ? {
-          type: 'choice' as const,
-          name: 'stack',
-          instructions:
-            'Choose the skills worth stacking for the described task, or none when none apply. ' +
-            'This is advisory only; nothing is loaded or executed by this decision.',
-          choices: options,
-        }
-      : {
+  if (mode === 'delegation') {
+    const request = {
+      model: route.model,
+      input: [{ type: 'text', text: state }],
+      questions: [
+        {
           type: 'choice' as const,
           name: 'specialist',
           instructions:
             'Choose one listed specialist only when the described task clearly needs it; ' +
             'otherwise choose none. This is advisory only; nothing is dispatched.',
-          choices: options,
-        }
+          choices: [...SPECIALIST_CHOICES, { value: 'none' }],
+        },
+      ],
+    } satisfies NativeDecisionRequest
+    return { ok: true, request: Object.freeze(request) }
+  }
+
+  const shortlist = selectPantheonSkills(state).skillIds
+  const pool = shortlist.length > 0 ? shortlist : CATALOG_SKILL_IDS
+  const descriptions = new Map(PANTHEON_SKILL_CATALOG.map((entry) => [entry.id, entry.description]))
   const request = {
     model: route.model,
     input: [{ type: 'text', text: state }],
-    questions: [question],
+    questions: [
+      {
+        type: 'choice' as const,
+        name: 'stack',
+        instructions:
+          'Choose the skills worth stacking for the described task, or none when none apply. ' +
+          'This is advisory only; nothing is loaded or executed by this decision.',
+        choices: [...mergeHostSkills(pool, hostSkills, descriptions), { value: 'none' }],
+      },
+    ],
   } satisfies NativeDecisionRequest
   return { ok: true, request: Object.freeze(request) }
 }

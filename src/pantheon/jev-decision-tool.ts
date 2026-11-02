@@ -22,6 +22,7 @@ import {
   consumeJevDecisionResult,
   isJevDecisionPreset,
   type JevDecisionCatalogEntry,
+  type JevHostSkill,
   type NativeJevRouteFailure,
   prepareJevDecisionRequest,
   prepareJevPresetRequest,
@@ -44,6 +45,11 @@ export interface V2JevDecisionRuntime {
   readonly listModels: () => Promise<unknown>
   /** The host's native Decisions API (`ctx.experimental.generate.decisions`). */
   readonly decide: (request: NativeDecisionRequest) => Promise<unknown>
+  /**
+   * Raw host skill registry (`ctx.skill.list()`); optional. Its entries extend
+   * the skills preset so installed Agent Skills become decidable.
+   */
+  readonly listSkills?: () => Promise<unknown>
   /** Host permission kill-switch (`ctx.permission.assert`), when present. */
   readonly permissionAssert?: (input: Record<string, unknown>) => Promise<unknown>
 }
@@ -83,6 +89,36 @@ function refusal(reasonCode: JevDecisionRunFailure): string {
 
 function isNonBlankString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0
+}
+
+/**
+ * Read the host's installed skills for the stacking preset. Anything that is
+ * not a plain {id, description?} record is skipped; a missing or hostile
+ * registry degrades to the catalog-only preset. Reading the registry applies
+ * no trust: installation already was the user's manual, reviewed act.
+ */
+async function readHostSkills(runtime: V2JevDecisionRuntime): Promise<JevHostSkill[] | undefined> {
+  if (typeof runtime.listSkills !== 'function') return undefined
+  let raw: unknown
+  try {
+    raw = await runtime.listSkills()
+  } catch {
+    return undefined
+  }
+  if (!Array.isArray(raw)) return undefined
+  const skills: JevHostSkill[] = []
+  for (const entry of raw) {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) continue
+    const record = entry as { id?: unknown; description?: unknown }
+    if (typeof record.id !== 'string' || record.id.length === 0) continue
+    skills.push({
+      id: record.id,
+      ...(typeof record.description === 'string' && record.description.length > 0
+        ? { description: record.description }
+        : {}),
+    })
+  }
+  return skills
 }
 
 async function readCatalog(runtime: V2JevDecisionRuntime): Promise<JevDecisionCatalogEntry[]> {
@@ -169,7 +205,12 @@ export async function runJevDecision(
       requested.mode === undefined
         ? prepareJevDecisionRequest(selection.selection.route, input ?? {})
         : isJevDecisionPreset(requested.mode)
-          ? prepareJevPresetRequest(selection.selection.route, requested.mode, input ?? {})
+          ? prepareJevPresetRequest(
+              selection.selection.route,
+              requested.mode,
+              input ?? {},
+              requested.mode === 'skills' ? await readHostSkills(runtime) : undefined,
+            )
           : { ok: false as const, reasonCode: 'PRESET_INVALID' as const }
     if (!prepared.ok) return refusal(prepared.reasonCode)
 
@@ -223,7 +264,8 @@ export async function runJevDecision(
 const TOOL_DESCRIPTION =
   'Zeus-only advisory typed decisions via the host native Jev route (OpenCode Console or a ' +
   'configured decision model). Two ways to ask: pass `mode: "skills"` to stack skills for the ' +
-  'state text (local prefilter shortlist, whole catalog fallback), `mode: "delegation"` to pick ' +
+  'state text (local prefilter shortlist, catalog fallback, plus every skill installed in the ' +
+  'host), `mode: "delegation"` to pick ' +
   'a specialist, or pass explicit typed `questions` (choice, score, predicate). Returns ' +
   'probabilistic answers with confidence. Requires decision-router egress consent and budget ' +
   'caps; asks host permission first. It never dispatches agents, runs skills, executes tools, ' +
