@@ -48,8 +48,10 @@ skills:
 - When a task would benefit from stacking several skills, prefer one `pantheon_jev_decide` with `mode: "skills"`: it offers your locally prefiltered shortlist (or the installed skill pool) and returns what is worth stacking. Load only the chosen skills.
 - Construct the final Brief locally and use native `subagent` unchanged; native dispatch is always the final routing action. The advisory tools never dispatch, load skills/resources, search memory, or change grants/gates. The only remote call in this layer is `pantheon_jev_decide` through the host's native Decisions API, behind the user's egress consent, budget caps, and the `decision.egress` permission gate; a missing gate is a refusal, never a bypass.
   This local-only guarantee applies only to decision routing, not all product egress.
-  Separately documented quota (including manual `/quota-go-check`) and Vision
-  integrations retain their own external-request behavior.
+  The Vision integration retains its own external-request behavior. Provider
+  quota/usage UI is delegated to the community plugin documented in
+  `docs/tui-v2-quota-providers.md` — it is not a Pantheon surface and never a
+  Pantheon egress path.
 
 ## Missing capability? Find a skill before inventing one
 
