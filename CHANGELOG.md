@@ -10,6 +10,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.2-beta.10] - 2026-11-03
+
+### Added
+
+- **routing** — Jev refusals carry the sanitized error CLASS in a `detail` field (`TypeError`, `RangeError`, …): enough to tell a detached-call failure from a host-side data failure, while the message (which can carry paths or provider detail) never reaches the chat.
+
+### Changed
+
+- **tui** — The native quota surface is removed: the `/quota` panel, the sidebar quota block, usage history, the go-key diagnostics, and the `pantheon.quota` RPC no longer ship. The recommended community plugin [`@slkiser/opencode-quota`](https://github.com/slkiser/opencode-quota) covers provider quota and usage (OpenCode 2.0.26+; an `npx` installer path exists for 1.x hosts) — see [Quota & usage](docs/tui-v2-quota-providers.md). `pantheon_cost` and the sidebar `Context` block are unaffected.
+- **routing** — The visible `&lt;!-- pantheon-decision-router:v1 … --&gt;` marker is no longer appended to the prompt: the host chat rendered the HTML comment to the user. The router keeps running (shadow observation, telemetry, budget, presets); measured evidence showed every prompt mutation was a no-op (F-24, F-08/F-09), so no behavioral routing is lost.
+- **agents** — Zeus's decision-routing instructions no longer reference the removed `/quota-go-check` command.
+
+### Fixed
+
+- **routing** — The native Jev runtime now invokes host methods with their owning domain as receiver. `model.list()` was called detached from the host object and threw on real sessions, surfacing only as `CATALOG_UNAVAILABLE`; the canary always exercised the bound call and never caught it. `decisions()` and `skill.list()` are bound the same way, with a contract test that fails on any detached call.
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
 ## [v1.6.2-beta.9] - 2026-11-02
 
 ### Added
