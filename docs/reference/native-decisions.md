@@ -184,6 +184,42 @@ nothing else. The `flag` verdict is a named constant reserved for a future
 active phase and is unreachable; there is no deny path, no ask path, and no
 permission narrowing on this surface.
 
+## J2 skill-selection scorecard (offline harness)
+
+The skill-selection surface — the P2 local prefilter plus the
+`mode: "skills"` preset — is measured by a dated, rerunnable scorecard
+(`bench/results/j2-skill-selection-scorecard-2026-11-03.md`), produced by the
+offline harness `tests/pantheon/j2-skill-selection-scorecard.test.ts` with its
+scenario catalog and canned-reply table in
+`tests/pantheon/j2-fixtures.ts`. Every scenario runs BOTH paths: the
+deterministic prefilter (`selectPantheonSkills`) and the full preset through
+the real gate chain (config → consent → budget reservation → permission
+kill-switch → one host call → settlement) on a sandboxed HOME, with
+`globalThis.fetch` a throwing spy.
+
+**Replies are faked offline.** Every Jev answer in the harness comes from a
+canned, per-scenario table (successes, low confidence, refusals, duplicates,
+out-of-pool choices, timeouts, malformed payloads) — the harness measures the
+plumbing (preparation, gating, consumption, telemetry at point `J2`), not
+model quality. The states are synthetic by construction and the harness
+asserts injection prose planted in a state never escapes the state slot into
+the option pool, the question, the advice, the permission request, or
+telemetry (leak count 0), and that refusals and timeouts are handled without
+retrying or throwing into the host.
+
+**Activation gate.** This phase measures only. The gate is: shadow → 2
+consecutive scorecards with the activation criterion met → then, and only
+then, discuss activation as a separately reviewed change. The criterion is
+deliberately not defined numerically here, and an offline scorecard proves
+nothing about the live model — a live, consented, clock-bounded scorecard is
+a future run.
+
+**Question-phrasing finding.** One sentence distinguishing required vs
+preferred attributes measurably doubled answer accuracy in the source
+measurement (the `writing-a-jev-question` guide in the
+awesome-typesafe-jev repository, where the finding originates); apply it
+when phrasing or revising the `mode: "skills"` preset instructions.
+
 ## Fast decision paths
 
 The decision layers are ordered by cost; use the cheapest one that answers:
