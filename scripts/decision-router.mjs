@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 // Prebuilt bundles: Node refuses to strip TypeScript types under node_modules,
@@ -32,6 +31,8 @@ import {
   DECISION_PROVIDER_BUDGET_MAPPING,
   DECISION_ROUTER_MODELS,
   diffDecisionRouterSurfaces,
+  inspectTypesafeHostProvider,
+  provisionTypesafeHostProvider,
   readUserDecisionRouterConfig,
   resolveUserDecisionRouterConfigPath,
   updateUserDecisionRouterConfig,
@@ -336,6 +337,23 @@ export async function runDecisionRouterCommand(
       noConsent ? 'Egress consent NOT recorded (--no-consent).' : 'Egress consent recorded: yes.',
     )
 
+    // The TypeSafe route needs a host-side provider entry the decisions API
+    // can resolve; the Console routes are host-native and need none. The
+    // merge is additive and idempotent; a failure is a printed warning (the
+    // decision config stays valid — the call fails at the host until the
+    // entry exists).
+    if (provider === 'typesafe-jev') {
+      const provision = provisionTypesafeHostProvider({ env })
+      if (provision.ok) {
+        stdout(
+          `TypeSafe provider entry merged into ${provision.path} (models.typesafe-ai, type "decision"). ` +
+            'Sign in with `opencode auth login` (TypeSafe) or /connect.',
+        )
+      } else {
+        stdout(`⚠ TypeSafe provider entry NOT merged: ${provision.reason}`)
+      }
+    }
+
     const ledger = openLedger(env)
     try {
       ledger.configureUserCaps({
@@ -468,25 +486,27 @@ export async function runDecisionRouterCommand(
           ? { provider: egress.provider, model: egress.candidate.model }
           : null
     if (target !== null) {
-      const probe = probeHostCatalog(env)
-      const hostProvider = target.provider === 'typesafe-jev' ? 'typesafe-ai' : 'opencode'
-      if (probe.ok) {
-        const exact = probe.models.has(`${hostProvider}/${target.model}`)
-        const loose = probe.models.has(target.model)
-        if (exact || loose) {
-          pass('host-catalog', `${hostProvider}/${target.model} listed by \`opencode models\``)
+      // Route-aware checks, not a catalog probe: decision models are not chat
+      // models and never appear in `opencode models` (field evidence 2.2.5:
+      // 561 entries, 0 jev, while the decisions API answers the same ref).
+      if (target.provider === 'typesafe-jev') {
+        const hostProvider = inspectTypesafeHostProvider({ env })
+        if (hostProvider.present) {
+          pass(
+            'native-route',
+            `typesafe-ai provider entry present (${hostProvider.path}); credential via \`opencode auth login\` (TypeSafe) or /connect`,
+          )
         } else {
-          warn(
-            'host-catalog',
-            `${hostProvider}/${target.model} not in the flat models list`,
-            'the flat list can omit decision-typed models; if a call refuses with ROUTE_UNRESOLVED, add a custom provider entry with type: "decision" (see docs/reference/native-decisions.md) or pick a listed decision model',
+          fail(
+            'native-route',
+            `opencode.json has no providers.typesafe-ai entry (${hostProvider.path})`,
+            'decision-router setup-model typesafe-jev/jev-1.14.0 merges it (type: "decision")',
           )
         }
       } else {
-        warn(
-          'host-catalog',
-          `could not probe: ${probe.reason}`,
-          'run `opencode models` manually; slow plugin activation is the usual cause',
+        pass(
+          'native-route',
+          'host-native opencode route; decision models are not listed in the chat catalog by design',
         )
       }
     }
@@ -501,41 +521,6 @@ export async function runDecisionRouterCommand(
   }
 
   throw new DecisionRouterUsageError(USAGE)
-}
-
-/** Spawn-sync timeout floor so a wedged host cannot stall the doctor. */
-const HOST_PROBE_TIMEOUT_MS = 30_000
-
-/**
- * Best-effort host catalog probe for the doctor. Returns the set of
- * `provider/model` (and bare model ids, for exact-id matching) the host
- * reports, or the reason the probe failed. Never writes anything.
- */
-function probeHostCatalog(env) {
-  let result
-  try {
-    result = spawnSync('opencode', ['models'], {
-      encoding: 'utf8',
-      timeout: HOST_PROBE_TIMEOUT_MS,
-      env,
-    })
-  } catch (error) {
-    return { ok: false, reason: String(error?.message ?? error) }
-  }
-  if (result.error) return { ok: false, reason: String(result.error.message ?? result.error) }
-  if (result.status !== 0) {
-    const output = `${result.stdout ?? ''}${result.stderr ?? ''}`.trim()
-    return { ok: false, reason: output.slice(0, 120) || `exit ${result.status}` }
-  }
-  const models = new Set()
-  for (const line of `${result.stdout ?? ''}`.split(/\r?\n/)) {
-    const id = line.trim()
-    if (!id) continue
-    models.add(id)
-    const slash = id.indexOf('/')
-    if (slash > 0) models.add(id.slice(slash + 1))
-  }
-  return { ok: true, models }
 }
 
 /** Cap- and period-eligible candidates, read-only, from the separated surfaces. */

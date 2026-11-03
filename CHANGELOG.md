@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.2-beta.15] - 2026-11-03
+
+### Added
+
+- **routing** — `decision-router setup-model typesafe-jev/...` now provisions the TypeSafe host provider entry itself (the same additive `providers.typesafe-ai` merge the installer's `--decision-model` path performs), so the TypeSafe direct route is one command plus your own sign-in.
+- **routing** — `doctor` checks are route-aware: the Console routes pass as host-native without any catalog probe (decision models are not chat models and never appear in `opencode models`), and the TypeSafe route is verified against the provider entry with a provisioning fix hint.
+
 ## [v1.6.2-beta.14] - 2026-11-03
 
 ### Fixed

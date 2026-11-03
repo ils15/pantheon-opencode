@@ -1,4 +1,4 @@
-import { chmodSync, lstatSync, mkdirSync, readFileSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, parse, resolve, sep } from 'node:path'
 import { assertNoSymlinkAncestors, writeFileAtomically } from './verify.mjs'
@@ -556,5 +556,71 @@ function assertTrustedDirectoryChain(directory) {
     if ((mode & 0o022) !== 0 && !rootStickyDirectory) {
       throw new Error('Decision-router configuration path is writable by other users')
     }
+  }
+}
+
+/** Host config file the TypeSafe provisioner merges into. */
+function resolveHostOpenCodeConfigPath(env) {
+  const xdg = env.XDG_CONFIG_HOME
+  const home = env.HOME && isAbsolute(env.HOME) ? env.HOME : homedir()
+  const root = xdg && isAbsolute(xdg) ? xdg : join(home, '.config')
+  return resolve(root, 'opencode', 'opencode.json')
+}
+
+/**
+ * Additively merge the TypeSafe decision provider entry into the user's host
+ * `opencode.json` (`providers.typesafe-ai.models["jev-1.14.0"]`, type
+ * "decision"). Existing provider entries and an existing model entry are
+ * preserved. Read-only on the decision-router config; the merge is the one
+ * write.
+ * @param {{ env?: Record<string, string | undefined> }} [options]
+ * @returns {{ ok: true, path: string } | { ok: false, reason: string }}
+ */
+export function provisionTypesafeHostProvider({ env = process.env } = {}) {
+  const configPath = resolveHostOpenCodeConfigPath(env)
+  if (!existsSync(configPath)) return { ok: false, reason: 'opencode.json not found' }
+  let data
+  try {
+    const parsed = JSON.parse(readFileSync(configPath, 'utf8'))
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { ok: false, reason: 'opencode.json is not a JSON object' }
+    }
+    data = parsed
+  } catch {
+    return { ok: false, reason: 'opencode.json is not plain JSON (comments?)' }
+  }
+  data.providers ??= {}
+  data.providers['typesafe-ai'] ??= {}
+  data.providers['typesafe-ai'].models ??= {}
+  if (data.providers['typesafe-ai'].models['jev-1.14.0'] === undefined) {
+    data.providers['typesafe-ai'].models['jev-1.14.0'] = {
+      name: 'Jev (TypeSafe direct)',
+      modelID: 'jev-latest',
+      type: 'decision',
+    }
+  }
+  try {
+    writeFileSync(configPath, `${JSON.stringify(data, null, 2)}\n`)
+    return { ok: true, path: configPath }
+  } catch (error) {
+    return { ok: false, reason: String(error instanceof Error ? error.message : error) }
+  }
+}
+
+/**
+ * Read-only check that the TypeSafe provider entry exists in the host config.
+ * Never writes; an unreadable config reports present:false with the path for
+ * the doctor's fix hint.
+ * @param {{ env?: Record<string, string | undefined> }} [options]
+ * @returns {{ present: boolean, path: string }}
+ */
+export function inspectTypesafeHostProvider({ env = process.env } = {}) {
+  const configPath = resolveHostOpenCodeConfigPath(env)
+  try {
+    const parsed = JSON.parse(readFileSync(configPath, 'utf8'))
+    const model = parsed?.providers?.['typesafe-ai']?.models?.['jev-1.14.0']
+    return { present: model !== undefined && model !== null, path: configPath }
+  } catch {
+    return { present: false, path: configPath }
   }
 }

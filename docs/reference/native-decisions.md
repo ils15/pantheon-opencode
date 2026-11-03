@@ -17,16 +17,17 @@ host's own provider layer.
 
 ## Setup and decision models
 
-Decision models are ordinary host models with `type: "decision"` in the host
-catalog. Pantheon never maps or switches providers on your behalf: the config
-candidate you select must exist in the host catalog under the mapping below.
+Decision models are **not chat models**: they never appear in the host model
+catalog (`opencode models`) at all — field-measured on 2.2.5 (561 catalog
+entries, zero jev models, while the decisions API answers the same model ref
+directly). Route resolution therefore reads only your Pantheon config, never
+the catalog. Pantheon never maps or switches providers on your behalf.
 
-| Decision model | Config candidate | Host reference | Billing / auth |
-| --- | --- | --- | --- |
-| OpenCode Console Jev (stock) | `opencode-console-jev` / `jev-1.13` | `{ providerID: "opencode", id: "jev-1.13" }` | OpenCode Console, host-owned auth |
-| OpenCode Console Jev free variant | `opencode-console-jev-free` / `jev-1.13-free` | `{ providerID: "opencode", id: "jev-1.13-free" }` | OpenCode Console, host-owned auth |
-| TypeSafe Jev via a custom provider | `typesafe-jev` / `jev-1.14.0` | `{ providerID: "typesafe-ai", id: <catalog id> }` | Your TypeSafe key, via OpenCode `/connect` |
-| OpenRouter-hosted Jev | none in the matrix | host-configured model | OpenRouter |
+| Decision model | Config candidate | Host reference | Billing / auth | Route requirement |
+| --- | --- | --- | --- | --- |
+| OpenCode Console Jev free | `opencode-console-jev-free` / `jev-1.13-free` | `{ providerID: "opencode", id: "jev-1.13-free" }` | Free (`billing_source: free`) | None — host-native |
+| OpenCode Console Jev (paid) | `opencode-console-jev` / `jev-1.13` | `{ providerID: "opencode", id: "jev-1.13" }` | Console credits; **requires a Zen workspace key** (an OpenCode Go subscription does not include it — the host answers 404 without one) | None — host-native |
+| TypeSafe Jev direct | `typesafe-jev` / `jev-1.14.0` | `{ providerID: "typesafe-ai", id: "jev-1.14.0" }` | Your TypeSafe key | `setup-model` merges the provider entry (`type: "decision"`) into `opencode.json`; then sign in (`opencode auth login` TypeSafe or `/connect`) |
 
 Setup in one command (state lives in `~/.config/pantheon/decision-router.json`,
 budget in `~/.local/state/pantheon/decision-budget.sqlite`; the command requires
@@ -39,12 +40,15 @@ npx pantheon-opencode decision-router doctor   # read-only verification with fix
 ```
 
 `setup-model` performs select + enable + consent + caps (user, provider, model)
-+ period confirmation in one write and prints the verification checklist;
-`--no-consent` configures everything except egress consent. `doctor` walks the
-whole native route — config, consent, selection, budget admission, unresolved
-holds, and a best-effort host-catalog probe — and prints the exact command to
-run for each failing gate. The per-command fallbacks (`select`, `enable`,
-`consent`, `caps`, `period`) remain for one-change-at-a-time edits.
++ period confirmation in one write and prints the verification checklist — and
+for the TypeSafe route it also merges the host provider entry into
+`opencode.json` (additive, idempotent). `--no-consent` configures everything
+except egress consent. `doctor` walks the whole native route — config, consent,
+selection, budget admission, unresolved holds, and a route-aware native-route
+check (host-native pass for the Console routes; provider-entry check for
+TypeSafe) — and prints the exact command to run for each failing gate. The
+per-command fallbacks (`select`, `enable`, `consent`, `caps`, `period`) remain
+for one-change-at-a-time edits.
 
 ### Ready-to-copy provider examples
 
@@ -83,31 +87,6 @@ Pantheon's matrix, so set an explicit selection through the host):
 }
 ```
 
-Catalog caveat: the flat `opencode models` list can omit decision-typed models
-and varies with host build and Console sign-in. If a call refuses with
-`ROUTE_UNRESOLVED`, `decision-router doctor` names it and the custom-provider
-entries above are the supported fallback.
-
-For a custom TypeSafe model, merge (never replace) a `type: "decision"` entry
-into your own `opencode.json`; the catalog id must equal the config candidate's
-model (here `jev-1.14.0`):
-
-```json
-{
-  "providers": {
-    "typesafe-ai": {
-      "models": {
-        "jev-1.14.0": {
-          "name": "Jev Latest (custom)",
-          "modelID": "jev-latest",
-          "type": "decision"
-        }
-      }
-    }
-  }
-}
-```
-
 Who can invoke: only the orchestrator (`zeus`) today. Widening the caller
 matrix to more agents is a deliberate, separately reviewed change — not a
 config toggle — because each allowed caller multiplies consented egress. Cost
@@ -125,9 +104,9 @@ order — every failure is a bounded refusal JSON, never a retry:
    with `egress_consent: true`.
 2. **Route gate** — the selection (explicit, or auto with exactly one eligible
    candidate) must resolve to a native route through the frozen provider
-   table, and the host catalog must contain that `(providerID, id)` with
-   `type: "decision"`. Direct OpenAI has no native route and is never
-   substituted.
+   table. The host chat catalog is deliberately NOT consulted (decision
+   models are not chat models); an unknown model surfaces as the host's own
+   call error. Direct OpenAI has no native route and is never substituted.
 3. **Budget gate** — the ledger must admit a reservation (confirmed period,
    positive monthly and per-decision caps). The reservation is taken before
    the call and held (pending, fail-closed) if the call fails or the result

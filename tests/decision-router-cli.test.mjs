@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -329,7 +337,7 @@ test('setup-model rejects local/auto targets and requires both caps flags', asyn
   )
 })
 
-test('doctor diagnoses the chain read-only and degrades when the host probe fails', async () => {
+test('doctor diagnoses the chain read-only with route-aware native-route checks', async () => {
   const { home, env } = sandbox()
   const output = []
   await runDecisionRouterCommand(
@@ -343,18 +351,57 @@ test('doctor diagnoses the chain read-only and degrades when the host probe fail
     ],
     { env, stdout: () => {} },
   )
-  // No opencode binary resolves inside the test env, so the catalog probe
-  // degrades to a WARN with a fix hint; every other gate is PASS.
+  // Console routes are host-native: the row passes without probing any
+  // catalog (decision models are not chat models and never appear in the
+  // flat `opencode models` list — field evidence 2.2.5).
   await runDecisionRouterCommand(['doctor'], { env, stdout: (line) => output.push(line) })
   assert.ok(output.some((line) => line.startsWith('✔ config: enabled')))
   assert.ok(output.some((line) => line.startsWith('✔ consent: recorded')))
   assert.ok(output.some((line) => line.startsWith('✔ selection: opencode-console-jev/jev-1.13')))
   assert.ok(output.some((line) => line.startsWith('✔ budget: admission open')))
   assert.ok(
-    output.some((line) => line.startsWith('▲ host-catalog:')),
-    'host probe degrades to a warning',
+    output.some((line) => line.startsWith('✔ native-route: host-native opencode route')),
+    'console route passes without a catalog probe',
   )
   assert.ok(output.some((line) => line.includes('Read-only: doctor never creates')))
+
+  // The TypeSafe route is checked against the host provider entry: a typesafe
+  // selection without one fails with the provisioning fix.
+  const typesafe = sandbox()
+  const tsConfigHome = join(typesafe.env.XDG_CONFIG_HOME, 'pantheon')
+  mkdirSync(tsConfigHome, { recursive: true, mode: 0o700 })
+  const tsConfigPath = join(tsConfigHome, 'decision-router.json')
+  writeFileSync(
+    tsConfigPath,
+    JSON.stringify({
+      schema_version: 2,
+      enabled: true,
+      egress_consent: true,
+      selection: { mode: 'explicit', provider: 'typesafe-jev', model: 'jev-1.14.0' },
+      enabled_candidates: [{ provider: 'typesafe-jev', model: 'jev-1.14.0' }],
+    }),
+  )
+  chmodSync(tsConfigPath, 0o600)
+  // A real OpenCode install already has a host config; create the minimal one.
+  const ocDir = join(typesafe.env.XDG_CONFIG_HOME, 'opencode')
+  mkdirSync(ocDir, { recursive: true, mode: 0o700 })
+  writeFileSync(join(ocDir, 'opencode.json'), '{}\n')
+
+  // Caps are required for the budget gate; write a ledger via setup-model.
+  await runDecisionRouterCommand(
+    ['setup-model', 'typesafe-jev/jev-1.14.0', '--monthly-usd', '3', '--per-decision-usd', '0.05'],
+    { env: typesafe.env, stdout: () => {} },
+  )
+  const tsOutput = []
+  await runDecisionRouterCommand(['doctor'], { env: typesafe.env, stdout: (l) => tsOutput.push(l) })
+  assert.ok(
+    tsOutput.some((line) => line.startsWith('✔ native-route:')),
+    'setup-model provisioned the host provider entry',
+  )
+  const opencodeJson = JSON.parse(
+    readFileSync(join(typesafe.env.XDG_CONFIG_HOME, 'opencode', 'opencode.json'), 'utf8'),
+  )
+  assert.equal(opencodeJson.providers['typesafe-ai'].models['jev-1.14.0'].type, 'decision')
 
   // Doctor on a fresh environment flags everything with actionable fixes.
   const fresh = sandbox()
@@ -367,4 +414,5 @@ test('doctor diagnoses the chain read-only and degrades when the host probe fail
   assert.ok(freshOutput.some((line) => line.includes('fix →')))
   rmSync(fresh.home, { recursive: true, force: true })
   rmSync(home, { recursive: true, force: true })
+  rmSync(typesafe.home, { recursive: true, force: true })
 })
