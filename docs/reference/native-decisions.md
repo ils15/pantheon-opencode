@@ -220,6 +220,85 @@ measurement (the `writing-a-jev-question` guide in the
 awesome-typesafe-jev repository, where the finding originates); apply it
 when phrasing or revising the `mode: "skills"` preset instructions.
 
+## J3 turn-complexity escalation (shadow)
+
+A third, opt-in consumer of the gate chain — and the first Jev uplift surface
+that computes (but does not apply) a routing decision. When
+`PANTHEON_J3_ESCALATION` is set to `1`, `on`, or `true` (anything else, or
+unset, leaves it off — off means zero overhead: no sink, no observer, no
+per-dispatch work), the plugin's `execute.before` hook fires ONE bounded
+native Jev decision per **delegate dispatch** — the native `subagent` tool
+assembling the Brief — through the same shared runner
+(`runGatedNativeJevCall`): config `enabled` + `egress_consent`, budget-ledger
+admission, the `decision.egress` permission kill-switch, one host call,
+settlement.
+
+**Classification.** The request asks ONE **score** question — "complexity of
+this delegation for the current task" — over the full 2..10 level bound
+(labels `trivial` … `sprawling`). The consumer takes the reported score at
+face value under the tool's own strict validation (name and type must match
+the prepared question, score non-negative and finite, duplicates refused);
+anything else is `null`, never a guess.
+
+**Sanitization contract (identical to J1).** The request carries NO user
+content: no Brief text, no task description, no paths. The state text is the
+exact bounded template over four structural fields — the delegate id
+(accepted only as a canonical Pantheon agent token; anything else is
+`INPUT_INVALID`), the sha256 of the Brief text, its character length, and the
+local risk-word boolean. The Brief text itself never leaves this machine.
+
+**Rails (all local, no Jev call).** Three independent local rails force the
+verdict to the main model regardless of the reported score:
+
+1. **Risk words** — the Brief mentioning any of `deploy`, `migrate`, `drop`,
+   `delete`, `prod`, `production`, `payment`, `secret`, `credential` never
+   goes cheap (case-insensitive substring match on purpose: inflections and
+   plurals rail too, and over-matching biases to the safe direction).
+2. **User-pinned model** — an explicit per-agent override for the delegate in
+   the project model configuration (the same file `pantheon_model` writes)
+   is never overridden; a configuration that cannot be read counts as pinned.
+3. **Context length** — a Brief longer than 8,000 chars never downgrades.
+
+**Verdict policy.** Pure and fail-safe: complexity ≤ 4 (the documented cheap
+threshold — the lower third of the offered scale, deliberately conservative
+because a wrong `cheap` costs task quality while a wrong `main` only costs
+tokens) AND no rail tripped → `cheap`; anything else — including every
+unsure, malformed, refused or timed-out classification — → `main`. The main
+model is never downgraded by uncertainty.
+
+**Shadow contract.** In this phase the verdict NEVER changes the dispatched
+model. The record (`point: 'J3'`, `mode: 'shadow'`, `effect: 'none'`, reason
+tokens like `esc-cheap-c2`, `esc-main-c7`, `esc-main-c-na`, `skip-timeout`)
+is the whole effect. The activation mechanism — set the per-agent override
+for the delegate BEFORE dispatch through the existing model-override
+mechanism (`v2-model-overrides`), restore the previous model after — exists
+in `jev-escalation.ts` (`applyEscalationOverride` / `clearEscalationOverride`)
+but the shadow observer has no path to it; the plugin wiring carries no
+reference to it (asserted structurally by the contract test). The mechanism
+is proved by direct test exercise only: a cheap override resolves to the
+documented cheap model (`opencode/mimo-v2.6-flash`, a supported chat model
+validated by the same capability table the override mechanism uses — decision
+models are not chat models and are never escalation targets, and the host
+catalog is never consulted), and clears to the exact previous model. The
+parent model is never touched by any of this: escalation applies only to
+delegate dispatches, explicitly.
+
+**No delay.** Fired without awaiting the hook; self-bounded at 2s
+(AbortController); on timeout records `skip-timeout`. In an active phase the
+same deadline is the dispatch rule: a classification still in flight when the
+dispatch resolves the model is `main` — dispatch is never delayed. Exactly
+one call per dispatch: no retry, no queue.
+
+**Activation prerequisites.** This phase measures only. Before anything
+activates: a measured baseline scorecard from replayed synthetic scenarios
+(the offline harness `tests/pantheon/jev-escalation.test.ts` proves the
+plumbing and the rails; it does NOT measure model quality — the request
+carries structural fields only, so the live classifier's accuracy against
+real Briefs is unknown until replayed with consented live replies), the
+shadow-record distribution reviewed, and the activation itself is a
+separately reviewed change. A quiet log proves nothing — the hermes gate this
+series adopts.
+
 ## Fast decision paths
 
 The decision layers are ordered by cost; use the cheapest one that answers:

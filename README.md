@@ -218,7 +218,15 @@ native decision per write/execute tool call behind `PANTHEON_J1_RISK_SCORE`
 (off by default, zero overhead when off): the request carries no user content
 (tool name token, scope class, input sha256 only), every failure mode skips
 silently with a reason token, and the shadow record is the whole effect — it
-never blocks, asks, or narrows a permission.
+never blocks, asks, or narrows a permission. A third opt-in consumer, the J3
+turn-complexity escalation, runs in shadow behind `PANTHEON_J3_ESCALATION`
+(off by default): it classifies each delegate dispatch with one bounded score
+question (Brief sha256, length and a risk-word flag only — the Brief text
+never leaves the machine), local rails (risk words, user-pinned models, large
+context) and every unsure answer always favor the main model, and the recorded
+verdict never changes the dispatched model — the per-agent override mechanism
+is proved by test and reserved for a separately reviewed activation with its
+own measured baseline.
 
 The installer may retain a legacy target-specific preference; it does not control
 runtime routing. `npx pantheon-opencode decision-router ...` manages stored

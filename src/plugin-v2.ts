@@ -117,6 +117,11 @@ import { GOAL_LOOP_DEFAULTS, GoalStore } from './pantheon/goal-loop.ts'
 import { createGuardPathResolver } from './pantheon/guard-path.ts'
 import type { V2JevDecisionRuntime } from './pantheon/jev-decision-tool.ts'
 import {
+  createJ3EscalationObserver,
+  isSubagentDispatchEvent,
+  j3EscalationEnabledFromEnv,
+} from './pantheon/jev-escalation.ts'
+import {
   createJ1RiskGateObserver,
   isRiskGateTarget,
   j1RiskGateEnabledFromEnv,
@@ -933,6 +938,27 @@ export function getJ1TelemetrySinkForTests(): TelemetrySink | undefined {
 }
 
 let j1TelemetrySink: TelemetrySink | undefined
+
+/**
+ * The J3 turn-complexity escalation telemetry sink created by the most recent
+ * tool-hook registration.
+ *
+ * J3 (the escalation shadow classifier, `jev-escalation.ts`) is NOT a registry
+ * point: it is a flag-gated shadow observer on delegate dispatches (the native
+ * `subagent` tool). The sink exists only when `PANTHEON_J3_ESCALATION` is on
+ * AND the host runtime exposes the native Decisions API, so flag-off leaves it
+ * undefined — the zero-overhead contract. Records go through the in-memory,
+ * bounded 0b path (`createTelemetrySink`, no I/O) and carry `mode: 'shadow'`;
+ * the observer is fire-and-observe, so the dispatch never waits on it. The
+ * recorded verdict never changes the dispatched model: the override mechanism
+ * for the activation step lives in `jev-escalation.ts` and is unreachable from
+ * this wiring. Exported only for tests/pantheon/plugin-v2-contract.test.ts.
+ */
+export function getJ3TelemetrySinkForTests(): TelemetrySink | undefined {
+  return j3TelemetrySink
+}
+
+let j3TelemetrySink: TelemetrySink | undefined
 
 /**
  * Attempt to subscribe to session events via V2 ctx.event.subscribe.
@@ -1933,6 +1959,31 @@ async function registerV2ToolHooks(
     })
   }
 
+  // J3 turn-complexity escalation (jev-escalation.ts) — SHADOW. Constructed
+  // ONLY when PANTHEON_J3_ESCALATION is on AND the host runtime exposes the
+  // native Decisions API (the same instance `pantheon_jev_decide` uses), so
+  // flag-off is a hard zero: no sink, no observer, no per-dispatch work. When
+  // enabled, the observer classifies ONE delegate dispatch (the native
+  // `subagent` tool) through the SAME gate chain as the explicit tool and
+  // records shadow records only — fired WITHOUT await inside the before-
+  // handler (fire-and-observe), self-bounded at 2s with an AbortController,
+  // never retried. The verdict NEVER changes the dispatched model in this
+  // phase: the per-agent override mechanism for activation lives in
+  // jev-escalation.ts and this wiring has no path to it (asserted
+  // structurally by the contract test below — the override function's name
+  // must not appear in this file at all).
+  let j3Observer: ((event: unknown) => Promise<void>) | undefined
+  if (jevRuntime !== undefined && j3EscalationEnabledFromEnv()) {
+    const j3Sink = createTelemetrySink()
+    j3TelemetrySink = j3Sink
+    j3Observer = createJ3EscalationObserver({
+      runtime: jevRuntime,
+      sink: (record) => {
+        j3Sink.emit({ ...record, mode: 'shadow' })
+      },
+    })
+  }
+
   // Symlink resolution for the Zeus read guard (#272). The predicate is pure,
   // so the filesystem work happens at this call site, rooted at the project
   // directory the host reports. Same mechanism as V1's (src/plugin.ts) so the
@@ -2058,6 +2109,15 @@ async function registerV2ToolHooks(
         // truthiness read.
         if (j1Observer !== undefined && isRiskGateTarget((event as { tool?: unknown }).tool)) {
           void j1Observer(event)
+        }
+        // J3 turn-complexity shadow classification. Same fire-and-observe
+        // discipline as J1: the dispatch's latency is unchanged, the observer
+        // self-bounds at 2s, contains its own failures, records at most one
+        // shadow record per dispatch, and never blocks, retries, or queues.
+        // The recorded verdict NEVER changes the dispatched model (shadow
+        // contract); undefined (no-op) when the flag is off.
+        if (j3Observer !== undefined && isSubagentDispatchEvent(event)) {
+          void j3Observer(event)
         }
         // Delegation audit START record (#266). Deliberately AFTER every guard
         // and the secret scan: a denied call must not leave a start record with

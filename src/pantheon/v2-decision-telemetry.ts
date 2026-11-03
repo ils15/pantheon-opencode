@@ -40,11 +40,11 @@ export type TelemetryMode = 'shadow' | 'active' | 'off' | 'migration'
 /**
  * Point ids admitted into telemetry: the measured P-series registry points
  * plus the J-series of the Jev uplift (J1 risk-score gate; J2 skill-selection
- * scorecard; later J phases extend the series, never the P-series). The two
- * series are disjoint on purpose — a J record is advisory-tool telemetry, not
- * a registry point.
+ * scorecard; J3 turn-complexity escalation; later J phases extend the series,
+ * never the P-series). The two series are disjoint on purpose — a J record is
+ * advisory-tool telemetry, not a registry point.
  */
-export type TelemetryPointId = DecisionPointId | 'J1' | 'J2'
+export type TelemetryPointId = DecisionPointId | 'J1' | 'J2' | 'J3'
 
 export interface DecisionTelemetryEvent {
   readonly schemaVersion: typeof TELEMETRY_SCHEMA_VERSION
