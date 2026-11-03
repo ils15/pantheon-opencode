@@ -10,6 +10,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.2-beta.16] - 2026-11-03
+
+### Added
+
+- **hooks** — J1 risk-score advisory gate (shadow): when `PANTHEON_J1_RISK_SCORE` is on, exfil-capable tool calls get one Jev risk-score + intent-predicate observation through the same gate chain as `pantheon_jev_decide` (consent, budget caps, `decision.egress` permission). Shadow only — the verdict is always observed, never enforced; nothing blocks or delays (2s abandon, fail-open on every failure mode). The request carries zero user content: tool name token, scope class, input hash only. Default off.
+
 ## [v1.6.2-beta.15] - 2026-11-03
 
 ### Added
