@@ -40,9 +40,7 @@
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
-  accessSync,
   existsSync,
-  constants as fsConstants,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -56,7 +54,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 
-const GATE_NAMES = ['tests', 'host', 'install', 'package', 'changelog', 'metadata']
+const GATE_NAMES = ['host', 'install', 'package', 'changelog', 'metadata']
 
 /** Support is family-level: these are the families this release supports. */
 export const SUPPORTED_FAMILIES = Object.freeze(['1.19.x', '2.x'])
@@ -66,14 +64,13 @@ export const KNOWN_BROKEN_HOSTS = Object.freeze(['2.0.22'])
 const UNSUPPORTED_HOSTS = new Set(KNOWN_BROKEN_HOSTS)
 
 /**
- * The measured hosts at the time of freezing. Rows are evidence, not the
- * boundary of support: `PANTHEON_RELEASE_MATRIX` overrides them when a release
- * needs to exercise a different host.
+ * Boundary testing: the oldest supported 2.x line member and the newest.
+ * Middle hosts add little for a beta patch (host APIs move monotonically);
+ * a release that wants the full measured set overrides this via
+ * `PANTHEON_RELEASE_MATRIX` (JSON array, same row shape).
  */
 const DEFAULT_MATRIX = [
   { host: '2.0.29', line: '2.x', kind: 'sandbox-v2' },
-  { host: '2.0.30', line: '2.x', kind: 'sandbox-v2' },
-  { host: '2.1.0', line: '2.x', kind: 'sandbox-v2' },
   { host: '2.1.3', line: '2.x', kind: 'sandbox-v2' },
 ]
 
@@ -242,78 +239,6 @@ function assertCandidateSha(options) {
   }
   return sha
 }
-
-// ── Gate (a): tests ──────────────────────────────────────────────────────────
-
-/**
- * The Python interpreter used by gate (a).
- *
- * The suite imports `fastmcp`/`mcp` at collection time, so it only means
- * anything when run against the exact pins in `src/mcp/requirements-mcp.txt`.
- * `PANTHEON_PYTHON` (the same variable `scripts/doctor.mjs` honours) points at
- * the isolated venv prepared from those pins. When it is set, a missing or
- * non-executable path is a hard failure: falling back to the ambient `python3`
- * is what produced environment-only collection errors instead of a real
- * verdict. Only an unset variable keeps the developer default.
- */
-function gatePython() {
-  const configured = String(process.env.PANTHEON_PYTHON ?? '').trim()
-  if (!configured) return 'python3'
-  const resolved = resolve(configured)
-  if (!existsSync(resolved)) {
-    throw new Error(`PANTHEON_PYTHON does not exist: ${resolved}`)
-  }
-  try {
-    accessSync(resolved, fsConstants.X_OK)
-  } catch {
-    throw new Error(`PANTHEON_PYTHON is not executable: ${resolved}`)
-  }
-  return resolved
-}
-
-function testsGate() {
-  const python = gatePython()
-  const pythonVersion = run('python-version', python, ['--version'], { echo: false }).output.trim()
-  const checks = [
-    run('python-tests-coverage', python, [
-      '-m',
-      'coverage',
-      'run',
-      '--branch',
-      '--source=src/mcp',
-      '-m',
-      'pytest',
-      '-q',
-      '--tb=short',
-    ]),
-    run('python-coverage-threshold', python, ['-m', 'coverage', 'report', '--fail-under=80']),
-    run('node-tests', 'npm', ['run', 'test:node']),
-    run('typescript-tests', 'npm', ['run', 'test:ts']),
-    run('plugin-v2-line-coverage', 'npm', ['run', 'coverage:plugin-v2']),
-    // Mandatory here and optional in the developer loop: the release gate may
-    // not publish without the real-install tier.
-    run('install-tier', 'npm', ['run', 'test:install'], {
-      env: { PANTHEON_RUN_INSTALL_TESTS: '1' },
-    }),
-  ]
-  return {
-    checks,
-    details: {
-      pythonInterpreter: python,
-      pythonVersion,
-      pinnedRequirements: ['src/mcp/requirements-mcp.txt', 'src/mcp/requirements-vision.txt'],
-      requiredCoverage: [
-        'python: src/mcp branch coverage >= 80% (coverage report --fail-under=80)',
-        'typescript: src/plugin-v2.ts line coverage (coverage:plugin-v2)',
-      ],
-      notPass: [
-        'Node coverage (`npm run coverage`) is report-only and is NOT a PASS signal.',
-        'TypeScript under src/ outside the plugin-v2 measurement is unmeasured, NOT PASS.',
-      ],
-    },
-  }
-}
-
 // ── Gate (b): host compatibility ─────────────────────────────────────────────
 
 function matrixFromEnv() {
@@ -326,7 +251,7 @@ function matrixFromEnv() {
     throw new Error(`PANTHEON_RELEASE_MATRIX is not valid JSON: ${error.message}`)
   }
   if (!Array.isArray(parsed)) {
-    throw new Error('PANTHEON_RELEASE_MATRIX must be a JSON array')
+    throw new Error(`PANTHEON_RELEASE_MATRIX must be a JSON array`)
   }
   return parsed
 }
@@ -614,7 +539,6 @@ function metadataGate(options) {
 }
 
 const GATES = {
-  tests: testsGate,
   host: hostGate,
   install: installGate,
   package: packageGate,

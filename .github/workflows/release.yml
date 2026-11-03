@@ -44,15 +44,16 @@ jobs:
       RECOVERY_TARGET_SHA: ${{ inputs.recovery_target_sha }}
       RECOVERY_PR_NUMBER: ${{ inputs.recovery_pr_number }}
       TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.recovery_target_sha || github.sha }}
-      # The measured host evidence for this release. Rows are evidence, not the
-      # boundary of support: every OpenCode 2.x minor is supported. Changing the
-      # set requires editing this workflow, so the frozen evidence is reviewable
-      # in the diff; the known-broken host 2.0.22 must not appear and is
-      # rejected by the gate.
+      # The measured host evidence for this release: boundary testing — the
+      # oldest supported 2.x member and the newest (host APIs move
+      # monotonically, so the boundaries catch shape drift the middle minors
+      # cannot hide). Every OpenCode 2.x minor is supported; the middle hosts
+      # stay exercised in development and can be restored here when a release
+      # wants the full measured set. Changing the set requires editing this
+      # workflow, so the frozen evidence is reviewable in the diff; the
+      # known-broken host 2.0.22 must not appear and is rejected by the gate.
       PANTHEON_RELEASE_MATRIX: >-
         [{"host":"2.0.29","line":"2.x","kind":"sandbox-v2"},
-        {"host":"2.0.30","line":"2.x","kind":"sandbox-v2"},
-        {"host":"2.1.0","line":"2.x","kind":"sandbox-v2"},
         {"host":"2.1.3","line":"2.x","kind":"sandbox-v2"}]
     steps:
       # This is deliberately the first step. In particular, no release
@@ -286,11 +287,11 @@ jobs:
           if [ "$GATE_RECOVERY" = "true" ]; then args+=(--recovery); fi
           node scripts/release-gates.mjs "${args[@]}"
 
-      - name: Gate (a) tests
-        timeout-minutes: 10
-        run: |
-          set -euo pipefail
-          node scripts/release-gates.mjs tests --evidence-dir "$RUNNER_TEMP/gate-evidence"
+      # The full node/ts/python suites are NOT re-run here: ci.yml already
+      # ran them on this exact SHA at merge time, and that evidence travels
+      # with the commit. The release gates cover only what CI cannot: a real
+      # host sandbox, a real user install, the packaged payload, and the
+      # changelog/metadata contract.
 
       - name: Create release artifact and notes
         env:

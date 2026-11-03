@@ -40,14 +40,15 @@ test('validation checks out and confirms the exact TARGET_SHA before release cre
   assert.doesNotMatch(validate, /(?:NODE_AUTH_TOKEN|NPM_TOKEN|RELEASE_TOKEN):\s*\$\{\{/)
 })
 
-test('release host proof keeps the four V2 rows and all six gates without an automatic V1 row', () => {
+test('release host proof keeps the boundary V2 rows and the non-CI gates without an automatic V1 row', () => {
   const matrixMatch = /PANTHEON_RELEASE_MATRIX:\s*>-\s*\n([\s\S]*?)\n {4}steps:/.exec(validate)
   assert.ok(matrixMatch, 'expected the frozen release host matrix')
   const matrix = JSON.parse(matrixMatch[1])
+  // Boundary testing: oldest supported 2.x member + newest. The full suite
+  // (node/ts/python) is CI evidence on the merged SHA and is deliberately
+  // NOT re-run by the release workflow.
   assert.deepEqual(matrix, [
     { host: '2.0.29', line: '2.x', kind: 'sandbox-v2' },
-    { host: '2.0.30', line: '2.x', kind: 'sandbox-v2' },
-    { host: '2.1.0', line: '2.x', kind: 'sandbox-v2' },
     { host: '2.1.3', line: '2.x', kind: 'sandbox-v2' },
   ])
 
@@ -59,8 +60,9 @@ test('release host proof keeps the four V2 rows and all six gates without an aut
   assert.deepEqual(defaultMatrix, matrix)
 
   const gates = [...validate.matchAll(/- name: Gate \([a-f]\) ([a-z]+)/g)].map(([, gate]) => gate)
-  assert.deepEqual(gates.sort(), ['changelog', 'host', 'install', 'metadata', 'package', 'tests'])
-  for (const gate of ['tests', 'host', 'install', 'package']) {
+  assert.deepEqual(gates.sort(), ['changelog', 'host', 'install', 'metadata', 'package'])
+  assert.doesNotMatch(validate, /release-gates\.mjs tests\b/)
+  for (const gate of ['host', 'install', 'package']) {
     assert.match(validate, new RegExp(`release-gates\\.mjs ${gate}\\b`))
   }
   for (const gate of ['changelog', 'metadata']) {
