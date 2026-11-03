@@ -11,7 +11,7 @@ of repeating it.
 |---|---|
 | Install Pantheon, or review installer flags, backups, and uninstall | [Installation](INSTALLATION.md) |
 | Reach a first result in ten minutes | [Quick Start](QUICKSTART.md) |
-| Move an existing install to 1.6.0, or plan for 1.7+ | [Upgrading](UPGRADING.md) |
+| Move an existing install to 2.0, or review the 1.x migration history | [Upgrading](UPGRADING.md) |
 | Know which OpenCode and Node versions are supported | [Compatibility](COMPATIBILITY.md) |
 
 ## Understand the system

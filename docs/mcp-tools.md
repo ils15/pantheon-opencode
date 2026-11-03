@@ -209,7 +209,7 @@ Goal tools are Zeus-only because goals are session-scoped and cannot be read
 across sessions. Athena and Themis run in child sessions and cannot read Zeus's
 goal; as root they cannot create a goal in their own session because only Zeus
 has `goal_create`. Manual goals do not enable automatic continuation and do not
-replace the V1 `GoalStore`. See
+replace the removed 1.x `GoalStore`. See
 [Memory](MEMORY.md#manual-session-goals) for details.
 
 ---
@@ -305,7 +305,7 @@ excluded from the total, which then says `(partial)` — a model the catalog pri
 at zero stays `$0.00`, because an unknown model is never reported as free.
 Passing `session` scopes the whole report to that root session plus its
 descendant sessions, resolved through the `parent_id` links already in the
-database. Costs are catalog list prices, not a provider invoice; on V2 the phase
+database. Costs are catalog list prices, not a provider invoice; the phase
 can be `unknown`; and the `node:sqlite` CLI-fallback path still reports tokens
 only, with the report saying so.
 

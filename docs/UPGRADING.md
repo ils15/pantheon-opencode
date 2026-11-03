@@ -7,6 +7,38 @@
 
 [Português (Brasil)](UPGRADING.pt-BR.md)
 
+## Upgrading to 2.0
+
+Pantheon 2.0 requires **OpenCode 2.x** and Node.js **>=26.4.0**; the legacy
+OpenCode 1.19.x plugin line was removed. What that means for an existing
+install:
+
+- **Removed with the V1 line:** the V1 plugin itself, the install-time model
+  wizard and static presets (`init --preset`, `set-tier`,
+  `PANTHEON_MODEL_PRESET` — use `pantheon_model` project overrides instead),
+  the V1 goal tools and BackgroundJobBoard lifecycle, and
+  `/pantheon-model`'s interactive wizard and global scope. See
+  [Installation](INSTALLATION.md) and
+  [Model Routing](reference/model-routing.md).
+- **Legacy installs are migrated, not recreated:** run
+  `npx pantheon-opencode init` once. A pre-2.0 registration — including the
+  deprecated `src/plugin-v2` package path — is recognized, stripped, and
+  rewritten to the current `src/plugin` entry. A host that reports OpenCode 1.x
+  is refused (upgrade OpenCode first), and an explicit `--opencode-version v1`
+  refuses with the 2.0 message. Version resolution is documented in
+  [Compatibility](COMPATIBILITY.md#how-the-generation-is-selected).
+- **Deprecated aliases go away in 2.1:** the `pantheon-opencode/plugin-v2`
+  export alias and the `PANTHEON_V2_P7_LOOP` / `PANTHEON_V2_P8_GUARDRAIL`
+  environment-variable aliases still work in 2.0 with a deprecation warning;
+  rename to `pantheon-opencode/plugin` and `PANTHEON_P7_LOOP` /
+  `PANTHEON_P8_GUARDRAIL` before 2.1. Canonical names are in
+  [Env Vars](reference/env-vars.md).
+- After upgrading, run `pantheon-opencode doctor` and restart OpenCode.
+
+Version-by-version detail lives in the
+[changelog](https://github.com/ils15/pantheon-opencode/blob/main/CHANGELOG.md);
+this page does not duplicate it.
+
 This guide covers two moves: **1.5.2 → 1.6.0**, which is an in-line upgrade, and
 **1.6.x → 2.x**, which crosses the Pantheon support boundary. Supported host
 versions and evidence are in [Compatibility](COMPATIBILITY.md); this page
@@ -121,21 +153,12 @@ does not mean it guessed. Pass `--opencode-version v2` explicitly, or set
 Do not describe this upgrade as a V1-to-V2 feature-parity migration. It is a
 choice between a legacy runtime plugin and a narrower, host-native adapter.
 
-## Outlook: 1.6.x to 2.x
+## Historical outlook: the 1.6.x plan for 2.x
 
-From **1.7 onward** Pantheon drops the V1 contract and targets OpenCode 2 only.
-OpenCode 1.X hosts are not supported on 2.x. OpenCode 2 support is already
-present in 1.6.x, so the 2.x change is a removal of the V1 path rather than a
-new host requirement.
-
-Prepare for 2.x by:
-
-- moving durable manual goals to the Persistence MCP `goal_*` tools;
-- replacing any reliance on V1 goal tools or the BackgroundJobBoard;
-- confirming the installation is registered through `plugins` with the
-  `<installed>/src/plugin` directory;
-- running `doctor` and the V2 sandbox checks described in
-  [Release Process](RELEASING.md).
+The removal the 1.6.x line announced for "1.7 onward" shipped as **2.0**: the
+V1 contract is gone and OpenCode 2 is the only supported host. The preparation
+steps below are kept for readers coming from 1.6.x; what actually happened to
+each surface is listed in [Upgrading to 2.0](#upgrading-to-20).
 
 ## Historical upgrade notes
 

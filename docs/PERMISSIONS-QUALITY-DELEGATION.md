@@ -104,8 +104,8 @@ failing-closed gates, but they are not the reviewer:
 |---|---|---|
 | Read-only sessions may not mutate | `tool.execute.before` throws | [`src/pantheon/delegation-enforce.ts:181`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L181) (blocked-tool set), [`src/plugin.ts:101`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts#L101) |
 | A child session may not delegate again | same guard, child-session branch | [`src/pantheon/delegation-enforce.ts:353`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L353) |
-| Caller/target delegation matrix | same guard, `isDelegationAllowed` (V1; V2 uses the permission hook — see [§3.5](#35-per-host-generation-what-you-can-rely-on)) | [`src/pantheon/delegation-enforce.ts:138`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L138) |
-| The orchestrator's source-read policy denies checked source targets | `zeusReadGuard` throws for denied targets | [`src/pantheon/delegation-enforce.ts:313`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L313), wired on V1 from the `chat.params` agent map ([`src/plugin.ts:502`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts#L502)) and on V2 from the `execute.before` event agent ([`src/plugin.ts`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts)) |
+| Caller/target delegation matrix | the permission hook when the host exposes it — see [§3.5](#35-per-host-generation-what-you-can-rely-on) | [`src/pantheon/delegation-enforce.ts:138`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L138) |
+| The orchestrator's source-read policy denies checked source targets | `zeusReadGuard` throws for denied targets | [`src/pantheon/delegation-enforce.ts:313`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/delegation-enforce.ts#L313), wired from the `execute.before` event agent ([`src/plugin.ts`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts)) |
 | Code-mode scripts must be approved | SHA-256 manifest, opt-in | `scripts/install/opencode.mjs:138` |
 | Routing/frontmatter consistency | repo validator script | `scripts/validate-routing.mjs:313` |
 | Secrets | pre-commit gitleaks + CI scan | `.pre-commit-config.yaml:7` |
@@ -224,7 +224,7 @@ use, which is not always what the hatch's name suggests.
 | `PANTHEON_HOOKS_LOG=1` | [`src/pantheon/logger.ts:97`](https://github.com/ils15/pantheon-opencode/blob/main/src/pantheon/logger.ts#L97), [`src/plugins/pantheon-hooks.ts:192`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/pantheon-hooks.ts#L192) | Console echo of the file-only log. Does not change enforcement. |
 | `PANTHEON_TOASTS=off` | [`src/plugins/pantheon-hooks.ts:76`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/pantheon-hooks.ts#L76) | TUI notifications suppressed by category. Every suppressed toast is still written to the structured log and the hook log, so the trail stays auditable at any setting. |
 | `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` | documented in [QUICKSTART](QUICKSTART.md) and [INSTALLATION](INSTALLATION.md) | May enable background child sessions only on host versions that support and document this experimental setting; verify the active runtime rather than treating it as a general prerequisite or guarantee. In the reported Beta 10 Zeus-root inventory, `subagent` was callable but `task_status`/`cancel_task` were not exposed; no tracking or recovery guarantee follows. See [§3.1](#31-two-mechanisms-and-what-each-is-for). |
-| `--opencode-version v1\|v2`, `OPENCODE_VERSION`, `OPENCODE_BIN` | `scripts/install/opencode-version.mjs:213` | Pins the plugin generation. Precedence is argument, then env var, then an `opencode2` binary basename, then a `--version` probe, then a warned fallback to V1 (`scripts/install/opencode-version.mjs:223`, `scripts/install/opencode-version.mjs:288`). The fallback is the important one: it **warns and writes the V1 contract**, so an unrecognised 2.x host gets V1 plugins rather than none. |
+| `--opencode-version v2\|auto`, `OPENCODE_VERSION`, `OPENCODE_BIN` | `scripts/install/opencode-version.mjs` | Pins the OpenCode version the installer writes. Precedence is argument, then env var, then an `opencode2` binary basename, then a `--version` probe. An explicit `v1` is refused with the 2.0 message, and a probe that reads a 1.x host refuses the install; an inconclusive probe warns once and assumes the 2.x generation — the only one the installer writes. |
 | `git commit --no-verify` | `.pre-commit-config.yaml:7` | Skips the secret gate. The config comment names this a security violation; nothing in the repo prevents it. |
 | Editing a decorative layer | see [§2.7](#27-the-agent-table-in-agentsglobalmd) | Silently no-ops. This is the failure mode most likely to waste someone's time, because it produces no error. |
 
@@ -242,7 +242,7 @@ one another, no layer validates against another at runtime, and they can disagre
 | 1 | Per-agent frontmatter | [`src/agents/*.md`](https://github.com/ils15/pantheon-opencode/tree/main/src/agents) | A subset of keys reaches the installed config. The full block reaches the host only if the host reads the agent file. | **Partly** — see [§2.6](#26-which-layer-is-load-bearing) |
 | 2 | Routing matrix + permission keys | [`src/routing.yml`](https://github.com/ils15/pantheon-opencode/blob/main/src/routing.yml) | `presets:` and `presets.<n>.agents.<a>.model` are read at runtime. **Every permission and delegation key in it is decorative** — decorative here means *no code in this repository reads it*; it does **not** mean the host ignores it ([§2.6](#26-which-layer-is-load-bearing)). One narrow CI-time exception: the validator reads `delegation.zeus` ([§2.3](#23-layer-2-routingyml-what-is-read-and-what-is-not)). | **No** — see [§2.3](#23-layer-2-routingyml-what-is-read-and-what-is-not) |
 | 3 | Installed config the installer seeds | the user's `opencode.json` | The `agent.<name>.permission` blocks the host reads at session time. | **Yes** — see [§2.4](#24-layer-3-the-config-the-installer-seeds) |
-| 4 | V1→V2 translation map | `scripts/install/config-migration.mjs:49-59` | Only the V2 install path. Converts layer 3's shape; keys outside the six-entry table still pass through — see [§2.5](#25-layer-4-the-v1v2-translation-map). | **Yes, on the V2 path only** |
+| 4 | V1→V2 translation map | `scripts/install/config-migration.mjs:49-59` | The 2.x install path (the only one since 2.0). Converts legacy V1-shaped config; keys outside the six-entry table still pass through — see [§2.5](#25-layer-4-the-v1v2-translation-map). | **Yes, on the install path** |
 
 ### 2.2 Layer 1 — per-agent frontmatter
 
@@ -365,9 +365,9 @@ already declares a `bash` entry, which is all of them.
 
 ### 2.5 Layer 4 — the V1→V2 translation map
 
-This layer runs only when the installer resolves the V2 generation
-(`scripts/install/opencode.mjs:2188-2190`). It converts the V1-shaped config the
-merge produced into the V2 shape before writing.
+This layer runs on the 2.x install path — the only install path since 2.0. It
+converts the legacy V1-shaped config the
+merge produced into the 2.x shape before writing.
 
 The permission-action map has **six** entries
 (`scripts/install/config-migration.mjs:49-59`):
@@ -590,7 +590,9 @@ repo validator's G5b check, which can fail the build
 runtime behaviour — but it is a real read, which is why [§2.3](#23-layer-2-routingyml-what-is-read-and-what-is-not)
 scores that block "Partly" rather than "None".
 
-**Layer 4 is load-bearing on the V2 path and absent on the V1 path.**
+**Layer 4 is load-bearing on the single 2.x install path** — it fires whenever
+legacy V1-shaped keys are present, and is a no-op on a config that already
+carries only 2.x shapes.
 
 **The `tools:` map and a `permission:` block are not equivalent.** This is the
 distinction that has already bitten this project, and the difference has two halves:
@@ -754,17 +756,22 @@ for orchestrator state. A planner should not assume reusing one reuses the other
 
 ## Delegation by host generation
 
-The delegation mechanics above apply to both contracts; what a planner can rely
-on depends on the host generation selected at install time.
+The delegation mechanics above apply to the 2.x plugin; the split below is
+historical — it describes what a planner could rely on per host generation
+before 2.0 removed the V1 line, and is kept for readers migrating an older
+install.
 
 ### 3.5 Per host generation: what you can rely on
 
-**This section is conditional by construction.** "V1" and "V2" here mean the two
-plugin contracts Pantheon ships, selected at install time by a generation gate
-(`scripts/install/opencode-version.mjs:213`). They are not statements about any
-particular host build. The installer registers a different plugin set per contract
-and strips the other's entries (`scripts/install/opencode.mjs:1075`, `scripts/install/opencode.mjs:1106`), so
-this is a genuine fork, not a preference.
+**This section is historical by construction.** "V1" and "V2" here mean the two
+plugin contracts Pantheon once shipped, selected at install time by a generation
+gate (`scripts/install/opencode-version.mjs`). They are not statements about any
+particular host build. The installer used to register a different plugin set per contract
+and strip the other's entries (`scripts/install/opencode.mjs:1075`, `scripts/install/opencode.mjs:1106`), so
+it was a genuine fork, not a preference. 2.0 removed the V1 line: the current
+surface is the 2.x plugin only, and a legacy registration is recognized and
+migrated, never registered — see
+[Compatibility](COMPATIBILITY.md#config-registration-and-the-hosts-config-merge).
 
 The V2 adapter maintains an explicit list of what it does not implement, seeded in a
 plain-`.mjs` module so the plugin, the installer and `doctor` all read the same

@@ -29,11 +29,11 @@ install it. Canceling writes nothing.
 opencode
 ```
 
-Restart is required after installing or changing the plugin generation. A
-restart reloads the selected plugin; it is not an automatic resume of delegated
+Restart is required after installing or changing the plugin. A
+restart reloads the plugin; it is not an automatic resume of delegated
 work.
 
-With the V2 TUI installed, open a session and run `/quota` to see provider
+With the TUI installed, open a session and run `/quota` to see provider
 details. The compact quota overview is also shown in the sidebar/footer.
 Providers are included only when OpenCode lists an active supported connection
 and Pantheon can resolve a nonblank credential locally. That check does not

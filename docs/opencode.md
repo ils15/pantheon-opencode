@@ -8,10 +8,12 @@ tool-by-tool registration, and the delegation matrix are in
 
 ## Generation detection
 
-The installer selects one generation per installation. `auto` is the default
-and reads the host; `--opencode-version v1|v2|auto` overrides it. The resolution
+The installer registers one plugin per installation. `auto` is the default
+and reads the host; `--opencode-version v2|auto` overrides it, and an explicit
+`v1` is refused with the 2.0 message. The resolution
 order and the exact fallback behavior live in
-[Compatibility](COMPATIBILITY.md#how-the-generation-is-selected). The legacy
+[Compatibility](COMPATIBILITY.md#how-the-generation-is-selected). A legacy
+pre-2.0 registration is recognized and migrated by the installer; two Pantheon
 plugins are never registered together.
 
 ## Tools
@@ -37,9 +39,9 @@ The three legacy goal tools are not registered. Use the Persistence MCP
 ## Per-agent MCP permissions
 
 The installer reads each agent's `mcp_tools` allowlist and generates native
-per-agent permissions for both generations. On OpenCode 2.x the host evaluates a
+per-agent permissions. On OpenCode 2.x the host evaluates a
 `permissions` rule whose action is `<server>_*` (or `<server>_<tool>`) with
-effect `deny`/`allow`. The V1-shaped `permission.mcp.<server>` key is not an
+effect `deny`/`allow`. The legacy-shaped `permission.mcp.<server>` key is not an
 action the host evaluates; the installer translates `allow`/`deny` into the
 former. `ask` is not expressible for MCP on that host — it hides the tool
 instead of prompting, so the installer emits no rule and warns.
@@ -269,9 +271,10 @@ recovery without an exposed, verified mechanism.
 
 The plugin reports these gaps through `getUnsupportedFeatures()`:
 
-- Adapter scope choices: `legacy-hooks` (the V1-specific hook surface),
+- Adapter scope choices: `legacy-hooks` (the hook surface of the removed 1.x
+  line),
   `catalog-transform`, `integration-transform`, `skill-transform`,
-  `goal-tools` (the goal loop needs legacy infrastructure the 2.x context does not
+  `goal-tools` (the goal loop needs infrastructure the 2.x context does not
   expose).
 - Host-domain gaps: `idle-todo-enforcer` (the enforcer is constructed only when
   the host's `session` domain exposes `todo`/`messages`/`children`/`promptAsync`;
@@ -280,8 +283,8 @@ The plugin reports these gaps through `getUnsupportedFeatures()`:
   `<tool_ceiling>` block is not injected), `todo-restore` (no todo API to
   snapshot across compaction), and `board-transitions` (the shared board is
   reachable through the injected bridge, but the writers — terminal audit,
-  idle reports, dispatch mirror — live in V1's event hook and
-  `pantheon-hooks.ts`).
+  idle reports, dispatch mirror — were driven by the removed 1.x line's event
+  hook and `pantheon-hooks.ts`, which the current plugin does not register).
 
 Everything else the legacy plugin wired is present: the Zeus read guard, the
 compaction context, vision history sanitization, the post-write formatter, and

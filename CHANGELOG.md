@@ -10,6 +10,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v2.0.0-beta.1] - 2026-11-03
+
+### Added
+
+- **tui** — The `/quota` panel's Usage tab shows an estimated cost per agent from the read-only session ledger (`opencode.db`), priced from the cached models.dev catalog — same semantics as `pantheon_cost`; nothing is fetched, nothing is billed.
+- **plugin** — A new rename-safety test pins the single-generation surface: no `v2-` module prefixes, no legacy `plugin-v2` paths, and the deprecated exports keep resolving.
+
+### Changed
+
+- **plugin** — The `v2` nomenclature is gone from the current surface: `plugin-v2` → `plugin`, `src/pantheon/v2-*` → unprefixed modules, TUI payloads `tui-v2`/`server-v2` → `tui`/`server`, and `PANTHEON_V2_P7_LOOP` / `PANTHEON_V2_P8_GUARDRAIL` → `PANTHEON_P7_LOOP` / `PANTHEON_P8_GUARDRAIL`.
+- **install** — New registrations write the `src/plugin` directory; every historical registration path (`src/plugin-v2`, `src/plugin-v2.ts`, npm specs) stays recognized and is re-resolved onto the current entry, forever.
+- **docs** — The docs speak in the single 2.x generation; the removed V1 surfaces carry explicit "removed in 2.0" historical banners.
+- **install** — Inconclusive host probes now assume `v2` (the only supported generation); a host that definitively reports 1.x is refused.
+
+### Deprecated
+
+- **plugin** — The `./plugin-v2` package export and the TUI `./tui-v2` / `./server-v2` exports are aliases of the canonical names and are removed in 2.1; the `PANTHEON_V2_P7_LOOP` / `PANTHEON_V2_P8_GUARDRAIL` env aliases log one deprecation line and are removed in 2.1.
+
+### Removed
+
+- **plugin** — The V1 plugin line: `src/plugin.ts`, `src/plugins/pantheon-hooks.ts`, the singular `plugin` config writer, and the V1 permission canary. Pantheon 2.0 requires OpenCode 2.x; legacy V1 registrations keep being recognized, migrated by the installer, and classified by doctor/uninstall.
+- **install** — `init --preset`, the `set-tier` subcommand, and the V1 model picker. Per-agent model overrides live on the `pantheon_model` tool.
+- **install** — `--opencode-version v1` is no longer a deprecation warning: it refuses with the 2.0 message; `v2` and `auto` remain.
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
 ## [v1.6.2-beta.9] - 2026-11-02
 
 ### Added

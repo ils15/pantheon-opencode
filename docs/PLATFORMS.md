@@ -23,8 +23,9 @@ npx pantheon-opencode init --project  # project-local
 ```
 
 The installer registers Pantheon's runtime integrations automatically. It
-writes the singular `plugin` key for OpenCode V1 and the plural `plugins` key
-for OpenCode 2.x; do not add either key by hand. Flags, backup, uninstall, and
+writes the plural `plugins` key in `opencode.json` — and recognizes a legacy
+pre-2.0 registration it finds, migrating it. Do not add the key by hand.
+Flags, backup, uninstall, and
 reconcile are in [Installation](INSTALLATION.md).
 
 ## Configuration
@@ -68,10 +69,10 @@ Global install:
 ├── skills/
 ├── instructions/
 ├── scripts/          # installed MCP entrypoints
-└── tui.json          # V1 TUI registration
+└── plugins/pantheon-tui/  # installed TUI plugin (index.ts + tui.ts entrypoints)
 ```
 
-The V2 TUI uses a local plugin directory instead of `tui.json`. See
+The TUI is a local plugin directory, not a `tui.json` registration. See
 [OpenCode 2.x](opencode.md).
 
 ## Quick reference
@@ -98,9 +99,8 @@ place.
 
 OpenCode can run as an ACP-compatible agent for editors such as Zed,
 JetBrains, or Neovim. Start the server with `opencode acp`; it communicates over
-JSON-RPC on stdio. ACP does not change the selected plugin contract: V1
-hook/delegate behavior still depends on V1 host events, and the plugin
-remains its own surface. Verify the registration in `opencode.json` before
+JSON-RPC on stdio. ACP does not change the plugin: the same registered plugin and
+hooks run over ACP. Verify the registration in `opencode.json` before
 relying on a feature.
 
 For Zed, add this to `~/.config/zed/settings.json`:

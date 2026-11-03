@@ -31,7 +31,7 @@ picks what to load per task instead of carrying everything always.
 - Ambiguous route/skill stack → one typed `pantheon_jev_decide` call
   (consent- and budget-gated) instead of open-ended orchestrator reasoning.
 - Model tiers: phase reviews on the flash tier; the pro tier reserved for the
-  final gate (`routing.yml` / `set-tier`).
+  final gate (`pantheon_model` per-agent project overrides).
 
 ## MCP servers (measured)
 

@@ -9,13 +9,14 @@ summary once and link here.
 Support is declared for an OpenCode **family**, not for individual minors. A
 minor does not need its own measurement to be supported.
 
-- **OpenCode 1.19.x** — supported with the V1 plugin.
 - **OpenCode 2.x** — supported with the plugin. Every 2.x minor is supported,
-  including minors released after this document was written.
+  including minors released after this document was written. Pantheon 2.0
+  requires OpenCode 2.x; the legacy 1.19.x plugin line was removed, and an
+  existing 1.x registration is recognized for migration only, never registered.
 - **Known broken: OpenCode 2.0.22.** It does not expose
   `ctx.permission.assert` (`src/plugin.ts`;
-  `bench/results/p05-permission-matrix-2026-10-22.md:169`), so Pantheon's V2
-  permission-ordering and bounded-read paths fail there. The V2 loader also
+  `bench/results/p05-permission-matrix-2026-10-22.md:169`), so Pantheon's
+  permission-ordering and bounded-read paths fail there. The plugin loader also
   requires the plugin entry to be a directory
   (`scripts/install/opencode.mjs:579-582`); the installer already writes that
   form for every 2.x host, so it is not a 2.0.22-specific failure. Do not
@@ -26,8 +27,8 @@ minor does not need its own measurement to be supported.
 
 | Pantheon line | OpenCode 1.19.x | OpenCode 2.x | OpenCode 2.0.22 |
 |---|---|---|---|
-| **1.6.x** (current) | Removed in 2.0 | Supported — the plugin | Known broken — not supported |
-| **1.7 and later** | Not supported | Supported — the plugin | Known broken — not supported |
+| **2.0 and later** (current) | Removed — 2.x only | Supported — the plugin | Known broken — not supported |
+| **1.6.x** (historical) | Supported with the V1 plugin, removed in 2.0 | Supported — the plugin | Known broken — not supported |
 
 A missing measurement is not a support gap. The plugin targets the OpenCode 2
 contract and degrades feature by feature when a host lacks an optional domain;
@@ -53,22 +54,25 @@ does not lower the package or CLI support floor.
 
 ## How the generation is selected
 
-The installer selects exactly one generation per installation. `auto` is the
-default and resolves in this order: an explicit `--opencode-version` argument,
-then `OPENCODE_VERSION`, then an `OPENCODE_BIN` basename of `opencode2`, then a
-`--version` probe of the host where major >= 2 selects the 2.x line.
+The installer writes exactly one plugin registration per installation. `auto`
+is the default and resolves in this order: an explicit `--opencode-version`
+argument, then `OPENCODE_VERSION`, then an `OPENCODE_BIN` basename of
+`opencode2`, then a `--version` probe of the host. Only `v2` and `auto` are
+valid values; an explicit `v1` is refused with the 2.0 message, and a probe that
+reads a 1.x host (major < 2) refuses the install instead of writing a config
+that host would drop — with `--opencode-version v2` left as the explicit
+override for operators whose binary probes misleadingly.
 
 When the probe cannot run, prints no readable version, or prints contradictory
 version-shaped tokens with no tool name to break the tie, `auto` **warns once
-and falls back to V1**. It does not fail loudly. It also falls back loudly when
-the host names itself with a major it refuses to interpret (0, or a
-calendar-year value). A successful parse of major < 2 resolves to V1 and major
->= 2 resolves to the 2.x line, silently. The fallback direction is deliberate: a plural
-`plugins` directory entry on an unknown 1.x host loses the plugin entirely.
+and assumes the 2.x generation** — the only generation the installer writes. It
+also assumes 2.x, loudly, when the host names itself with a major it refuses to
+interpret (0, or a calendar-year value). A successful parse of major >= 2
+resolves to the 2.x line, silently.
 
 The probe prefers the version token that follows the tool name, so a runtime
 token ahead of it (`node v22.1.0 (opencode 1.18.33)`) or a trailing build date
-(`opencode v1.18.33 built 2026.10.04`) cannot flip the generation. An operator
+(`opencode v1.18.33 built 2026.10.04`) cannot flip the result. An operator
 whose `opencode` is a wrapper that prints a bare path is indistinguishable from
 a real host; the documented remedy is `--opencode-version`, not a heuristic.
 
@@ -89,13 +93,12 @@ outside what it can see. Resolve that by moving the entries you want into
 `opencode.json` and deleting the `.jsonc`.
 
 Within `opencode.json` the installer strips Pantheon references from both plugin
-keys and registers only the selected generation, so a 1.X host never loads the
-plugin and a 2.x host never loads a 1.x plugin. On a 1.x→2.x migration a
-third-party entry found in the V1 singular `plugin` key is additionally
+keys and registers only the current entry, so a host never loads two Pantheon
+plugins. On a 1.x→2.x migration a
+third-party entry found in the legacy singular `plugin` key is additionally
 registered under the 2.x plural `plugins` key (and reported), because the 2.x host
 does not read the singular key and the entry would otherwise stop loading
-silently. Forcing 2.x config on a 1.x host is an unsupported mixed/wrong-generation
-configuration, not a supported mode.
+silently.
 
 ## Historical note: OpenCode 1.19.x (removed in 2.0)
 
@@ -120,8 +123,9 @@ The 2.x path is real, not inert: it registers tools with `input`/`output`
 schemas, event subscriptions, session hooks, a read-only-enforcing
 `execute.before` hook (which also denies the orchestrator `read`/`glob`/`grep`
 of source, tests and scripts), and — when the host exposes it — a
-`permission.evaluate` delegation-matrix hook. It is not full V1 feature parity:
-the three goal tools remain unsupported and are reported as `goal-tools`, as are
+`permission.evaluate` delegation-matrix hook. It does not carry over the
+removed V1 line's goal tools: the three goal tools remain unsupported and are
+reported as `goal-tools`, as are
 the host-domain gaps the seed names (`idle-todo-enforcer`, `tool-ceiling`,
 `todo-restore`, `board-transitions`). See
 [Architecture](ARCHITECTURE.md) for the contract and
@@ -147,9 +151,9 @@ minor is supported on release day; measuring it is optional evidence work.
 
 ## End of life and known issues
 
-**1.6.x is the last Pantheon line that supports an OpenCode 1.X host.** From
-1.7 onward the line drops the V1 contract and targets OpenCode 2 only. This is a
-Pantheon support boundary, not a claim that 1.6 lacks OpenCode 2 support.
+**The V1 removal shipped in 2.0.** Pantheon 2.0 requires OpenCode 2.x; see
+[Upgrading](UPGRADING.md) for what the move changes and what happens to a
+legacy install.
 
 - **OpenCode 2.0.22 is known broken.** It does not expose
   `ctx.permission.assert`, so the permission-ordering and bounded-read paths

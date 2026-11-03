@@ -374,7 +374,10 @@ async function main(): Promise<void> {
         { action: 'status' },
         { sessionID: 'root', agent: 'zeus' },
       )
-      assert.match(status, /legacy preset marker present in active-preset\.json .*ignored; static presets are retired/i)
+      assert.match(
+        status,
+        /legacy preset marker present in active-preset\.json .*ignored; static presets are retired/i,
+      )
       assert.match(status, /static presets.*retired/i)
       assert.match(status, /host default remains unchanged when no manual override is set/i)
       assert.doesNotMatch(status, /restart OpenCode after changes/i)
@@ -406,7 +409,10 @@ async function main(): Promise<void> {
         env: { PANTHEON_MODEL_PRESET: 'go-fast' } as NodeJS.ProcessEnv,
         overridesOnlyMode: true,
       }).execute({ action: 'show' }, { sessionID: 'root', agent: 'zeus' })
-      assert.match(status, /legacy preset marker present in PANTHEON_MODEL_PRESET .*ignored; static presets are retired/i)
+      assert.match(
+        status,
+        /legacy preset marker present in PANTHEON_MODEL_PRESET .*ignored; static presets are retired/i,
+      )
       assert.doesNotMatch(status, /go-fast|go-free/)
       assert.match(
         status,

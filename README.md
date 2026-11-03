@@ -35,9 +35,9 @@ charge of every decision and every merge.
 
 ## Start in 2 minutes
 
-Requirements: [OpenCode](https://opencode.ai/docs/) **1.19.x** (V1) or **OpenCode
-2.x**, and Node.js **>=26.4.0** for the CLI and tooling. **OpenCode 2.0.22
-is known broken**; see [Compatibility](docs/COMPATIBILITY.md).
+Requirements: [OpenCode](https://opencode.ai/docs/) **2.x** — Pantheon 2.0
+requires OpenCode 2.x — and Node.js **>=26.4.0** for the CLI and tooling.
+**OpenCode 2.0.22 is known broken**; see [Compatibility](docs/COMPATIBILITY.md).
 
 From the project where you want to use Pantheon:
 
@@ -53,12 +53,12 @@ then asks once for final authorization (default **no**). Without a TTY, `init`
 is preview-only unless `--yes` explicitly authorizes the apply; `--yes` skips
 prompts but still prints the preview and checks for drift.
 
-`npm run setup` is a separate repository setup wrapper. On detected OpenCode 2.x
-it reviews the global config before installer init: legacy permission rules can
-be migrated after explicit review. Config migration and installer changes are
-preflighted before one final authorization; `--yes` alone does not authorize
-setup writes, and headless/CI setup remains preview-only. Direct
-`npx pantheon-opencode init` does not run that config-migration review. See
+`npm run setup` is a separate repository setup wrapper. Pantheon 2.0 requires
+OpenCode 2.x, so setup reviews the global config before installer init: legacy
+permission rules can be migrated after explicit review. Config migration and
+installer changes are preflighted before one final authorization; `--yes` alone
+does not authorize setup writes, and headless/CI setup remains preview-only.
+Direct `npx pantheon-opencode init` does not run that config-migration review. See
 the [installation guide](docs/INSTALLATION.md) for layer handling, conflict
 choices, backups, and recovery.
 Existing native `permissions` arrays remain authoritative. Unsafe MCP
@@ -80,9 +80,10 @@ When you ask for a plan, Athena returns it to Zeus, who displays it in the main
 conversation before asking for approval — never as a plan hidden in a child
 agent's conversation.
 
-Restart OpenCode after installing or changing the plugin generation. The
-installer selects one generation per installation; two Pantheon plugins are never
-registered together.
+Restart OpenCode after installing or changing the plugin. The installer
+registers exactly one Pantheon plugin per installation and recognizes a legacy
+pre-2.0 registration it finds, migrating it to the current entry; two Pantheon
+plugins are never registered together.
 
 Installer flags, exit codes, saved plans, backup and restore, uninstall,
 reconcile, and MCP pins are in the [installation guide](docs/INSTALLATION.md).
@@ -116,7 +117,10 @@ see [Quick Start](docs/QUICKSTART.md).
   to switch between remaining and used. The `/quota` panel has **Usage, Limits,
   Plugin, and Settings** tabs. Usage charts cover 7, 15, 30 days, or Total and
   plot recorded daily token usage and model totals rather than filling gaps with
-  invented data. The panel identifies the active chat model; a partial-data
+  invented data. The Usage tab also shows an estimated cost per agent, computed
+  from the read-only session ledger (`opencode.db`) and priced from the cached
+  models.dev catalog — the same semantics as `pantheon_cost`; nothing is
+  fetched, nothing is billed. The panel identifies the active chat model; a partial-data
   warning appears only when the quota snapshot is actually partial.
   Session-reported spend is shown separately. The active context estimate uses
   the active model's input price times pre-cache context tokens, applies no cache
@@ -181,9 +185,10 @@ routine child summaries stay in the handoff. See [Memory](docs/MEMORY.md).
 
 ## Compatibility
 
-OpenCode **1.19.x** (legacy plugin, removed in 2.0) and **OpenCode 2.x** (the plugin) are supported.
-**OpenCode 2.0.22 is known broken.** From 1.7 onward the line drops the V1
-contract and targets OpenCode 2 only.
+Pantheon 2.0 requires **OpenCode 2.x**. The legacy OpenCode 1.19.x plugin line
+was removed in 2.0; an existing 1.x registration is recognized and migrated by
+the installer, never registered again. **OpenCode 2.0.22 is known broken.** See
+[Upgrading](docs/UPGRADING.md) for what the move to 2.0 changes.
 
 The support policy, the known-broken exception, and the verified-version
 evidence have exactly one home: [Compatibility](docs/COMPATIBILITY.md).
@@ -198,7 +203,7 @@ memory retrieval stays an explicit `memory_search` MCP call.
 {
   "plugins": [
     {
-      "package": "/path/to/pantheon-opencode/src/plugin-v2",
+      "package": "/path/to/pantheon-opencode/src/plugin",
       "options": {
         "context_pruner": { "enabled": true }
       }
@@ -300,7 +305,7 @@ test-only credential, verifies a local recommendation marker, and verifies zero
 native Decisions or global `fetch` calls. This is an offline regression check of
 that hook, not a claim about unexercised network paths or a live-provider test.
 Measured surface coverage is
-reported honestly rather than implied: P7 runs behind `PANTHEON_V2_P7_LOOP` with
+reported honestly rather than implied: P7 runs behind `PANTHEON_P7_LOOP` with
 an **advisory** execution cap (never described as enforcement), P2 is
 **advisory-only** (an empirical no-op on the default path), P9 was measured on
 top-level **and child** sessions with `reason:"overflow"` still unmeasured, and
@@ -315,11 +320,11 @@ that decides which point may run. **Seven of the eleven have a production call
 site: two behind flags that are off by default, five in shadow.**
 
 - **P7 (loop)** is wired to `session.execution.succeeded` behind
-  `PANTHEON_V2_P7_LOOP`, which is off. It writes each observation to an
+  `PANTHEON_P7_LOOP`, which is off. It writes each observation to an
   in-memory, bounded telemetry collector that the plugin never reads back and
   exposes only to tests, so "records" here does not mean an operator-visible log.
 - **P8 (guardrail)** is wired to `permission.evaluate` behind
-  `PANTHEON_V2_P8_GUARDRAIL`, which is off. C8 is closed **by measurement**, and
+  `PANTHEON_P8_GUARDRAIL`, which is off. C8 is closed **by measurement**, and
   the measurement is negative: PROBE-F delivered 24 real `permission.evaluate`
   events and every declared rule matched none of them (a valid `action` token and
   a top-level `sessionID` are always present), the host resolves an unrecognised
@@ -380,7 +385,7 @@ What the layer does **not** do today, stated as measured rather than implied:
   on the default path, because the host sends `prompt.skills` absent. Effective
   project-skill filtering was cancelled by measurement, not emulated, and no
   token reduction is claimed.
-- **P7 (loop) is behind `PANTHEON_V2_P7_LOOP`, off by default, and does not
+- **P7 (loop) is behind `PANTHEON_P7_LOOP`, off by default, and does not
   enforce loop limits.** It counts executions and writes an `effect: none`
   observation to an in-memory collector that nothing reads back. Its
   12-execution cap is **advisory**: no measured host surface signals a new user
@@ -434,7 +439,7 @@ recorded in the [router reference](docs/reference/local-decision-router.md).
 | [Compatibility](docs/COMPATIBILITY.md) | [OpenCode 2.x](docs/opencode.md) |
 | [Agents & Skills](docs/agents/README.md) | [Platforms](docs/PLATFORMS.md) |
 | [Release Process](docs/RELEASING.md) | [Branch Protection](docs/BRANCH-PROTECTION.md) |
-| [Model Routing](docs/reference/model-routing.md) | [Local Decision Router](docs/reference/local-decision-router.md) · [V2 Native Decisions](docs/reference/native-decisions.md) · [Offline Evaluation Protocol](docs/reference/offline-evaluation.md) · [Env Vars](docs/reference/env-vars.md) · [Code Mode](docs/reference/code-mode.md) |
+| [Model Routing](docs/reference/model-routing.md) | [Local Decision Router](docs/reference/local-decision-router.md) · [Native Decisions (Jev)](docs/reference/native-decisions.md) · [Offline Evaluation Protocol](docs/reference/offline-evaluation.md) · [Env Vars](docs/reference/env-vars.md) · [Code Mode](docs/reference/code-mode.md) |
 | [Contributing](CONTRIBUTING.md) | [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) |
 
 Memory writes through `pantheon-memory` are serialized, and failed writes are

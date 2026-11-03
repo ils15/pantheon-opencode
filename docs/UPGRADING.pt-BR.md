@@ -8,6 +8,37 @@
 
 [English](UPGRADING.md)
 
+## Atualizando para o 2.0
+
+O Pantheon 2.0 exige **OpenCode 2.x** e Node.js **>=26.4.0**; a linha de plugin
+legado do OpenCode 1.19.x foi removida. O que isso significa para uma instalação
+existente:
+
+- **Removido junto com a linha V1:** o próprio plugin V1, o assistente de
+  modelo da instalação e os presets estáticos (`init --preset`, `set-tier`,
+  `PANTHEON_MODEL_PRESET` — use overrides de projeto do `pantheon_model`), as
+  tools de goal V1 e o ciclo do BackgroundJobBoard, e o assistente interativo e
+  o escopo global do `/pantheon-model`. Veja [Instalação](INSTALLATION.md) e
+  [Model Routing](reference/model-routing.md).
+- **Instalações legadas são migradas, não recriadas:** rode
+  `npx pantheon-opencode init` uma vez. Um registro pré-2.0 — incluindo o
+  caminho descontinuado `src/plugin-v2` — é reconhecido, removido e reescrito
+  para a entrada atual `src/plugin`. Um host que se reporta como OpenCode 1.x é
+  recusado (atualize o OpenCode primeiro), e um `--opencode-version v1` Explícito
+  é recusado com a mensagem do 2.0. A resolução de versão está documentada em
+  [Compatibilidade](COMPATIBILITY.md#how-the-generation-is-selected).
+- **Aliases descontinuados saem no 2.1:** o alias de export
+  `pantheon-opencode/plugin-v2` e os aliases de variável de ambiente
+  `PANTHEON_V2_P7_LOOP` / `PANTHEON_V2_P8_GUARDRAIL` ainda funcionam no 2.0 com
+  um aviso de descontinuação; renomeie para `pantheon-opencode/plugin` e
+  `PANTHEON_P7_LOOP` / `PANTHEON_P8_GUARDRAIL` antes do 2.1. Os nomes canônicos
+  estão em [Variáveis de ambiente](reference/env-vars.md).
+- Depois de atualizar, rode `pantheon-opencode doctor` e reinicie o OpenCode.
+
+O detalhe versão por versão fica no
+[changelog](https://github.com/ils15/pantheon-opencode/blob/main/CHANGELOG.md);
+esta página não o duplica.
+
 Este guia cobre dois movimentos: **1.5.2 → 1.6.0**, uma atualização dentro da
 linha, e **1.6.x → 2.x**, que cruza a fronteira de suporte do Pantheon. As
 versões de host suportadas e a evidência estão em
@@ -124,21 +155,13 @@ explicitamente, ou defina `OPENCODE_VERSION=v2`. Para ver o que o gate lê, rode
 Não descreva esta atualização como uma migração de paridade V1→V2. É uma escolha
 entre um plugin de runtime legado e um adaptador mais estreito, nativo do host.
 
-## Perspectiva: 1.6.x para 2.x
+## Perspectiva histórica: o plano da 1.6.x para a 2.x
 
-A partir da **1.7**, o Pantheon abandona o contrato V1 e mira apenas o OpenCode
-2. Hosts OpenCode 1.X não são suportados na 2.x. O suporte a OpenCode 2 já
-existe na 1.6.x, então a mudança da 2.x é a remoção do caminho V1, não um novo
-requisito de host.
-
-Prepare-se para a 2.x:
-
-- movendo goals manuais duráveis para as tools `goal_*` do MCP de Persistence;
-- removendo qualquer dependência das tools de goal V1 ou do BackgroundJobBoard;
-- confirmando que a instalação está registrada em `plugins` com o diretório
-  `<installed>/src/plugin`;
-- rodando `doctor` e as checagens de sandbox V2 descritas no
-  [Processo de release](RELEASING.md).
+A remoção que a linha 1.6.x anunciou para "a partir da 1.7" chegou como **2.0**:
+o contrato V1 saiu e o OpenCode 2 é o único host suportado. Os passos de
+preparação abaixo são mantidos para quem vem da 1.6.x; o que de fato aconteceu
+com cada superfície está em
+[Atualizando para o 2.0](#atualizando-para-o-20).
 
 ## Notas históricas de atualização
 

@@ -36,9 +36,9 @@ o que importou. Você continua no controle de cada decisão e de cada merge.
 
 ## Comece em 2 minutos
 
-Requisitos: [OpenCode](https://opencode.ai/docs/) **1.19.x** (V1) ou **OpenCode
-2.x**, e Node.js **>=26.4.0** para a CLI e as ferramentas. **OpenCode 2.0.22
-tem falha conhecida**; veja [Compatibilidade](docs/COMPATIBILITY.md).
+Requisitos: [OpenCode](https://opencode.ai/docs/) **2.x** — o Pantheon 2.0
+exige OpenCode 2.x — e Node.js **>=26.4.0** para a CLI e as ferramentas.
+**OpenCode 2.0.22 tem falha conhecida**; veja [Compatibilidade](docs/COMPATIBILITY.md).
 
 No projeto onde você quer usar o Pantheon:
 
@@ -57,8 +57,9 @@ Quando você pede um plano, Athena devolve o plano a Zeus, que o exibe na
 conversa principal antes de pedir aprovação — nunca como um plano escondido na
 conversa de um agente filho.
 
-Reinicie o OpenCode depois de instalar ou trocar a geração do plugin. O
-instalador seleciona uma geração por instalação; dois plugins Pantheon nunca são
+Reinicie o OpenCode depois de instalar ou trocar o plugin. O instalador registra
+exatamente um plugin Pantheon por instalação e reconhece um registro pré-2.0 que
+encontre, migrando-o para a entrada atual; dois plugins Pantheon nunca são
 registrados juntos.
 
 Flags do instalador, códigos de saída, planos salvos, backup e restore,
@@ -96,7 +97,11 @@ apenas — `init` → reiniciar → `/dispatch` → primeiro resultado — veja 
   quotas aparecem como valores e status em texto, sem medidores de progresso;
   quando há horário válido, mostram contagem regressiva local e o reset informado
   pelo provedor em UTC. Horários ausentes não são inferidos. Use `E` para
-  desativar a quota e `M` para alternar entre restante e usado.
+  desativar a quota e `M` para alternar entre restante e usado. A aba Usage
+  também mostra o custo estimado por agente, calculado do ledger de sessões
+  somente leitura (`opencode.db`) e precificado pelo cache do catálogo
+  models.dev — as mesmas semânticas do `pantheon_cost`; nada é buscado, nada é
+  cobrado.
 
 A memória MCP fica disponível para busca explícita: o coordenador consulta o
 histórico uma vez quando ele pode mudar a tarefa e repassa apenas resultados
@@ -107,16 +112,14 @@ Veja [Memória](docs/MEMORY.md).
 
 ## Compatibilidade
 
-OpenCode **1.19.x** (plugin legado, removido no 2.0) e **OpenCode 2.x** (o plugin) são suportados.
-**OpenCode 2.0.22 tem falha conhecida.** A partir da 1.7, a linha abandona o
-contrato V1 e mira apenas o OpenCode 2.
+O Pantheon 2.0 exige **OpenCode 2.x**. A linha de plugin legado do OpenCode
+1.19.x foi removida no 2.0; um registro 1.x existente é reconhecido e migrado
+pelo instalador, nunca registrado de novo. **OpenCode 2.0.22 tem falha
+conhecida.** Veja [Atualização](docs/UPGRADING.pt-BR.md) para o que muda na ida
+ao 2.0.
 
 A política de suporte, a exceção conhecida e a evidência de versões verificadas
 têm um único lar: [Compatibilidade](docs/COMPATIBILITY.md).
-
-A matriz de suporte, o piso de Node e as notas de host/build, as regras de
-geração OpenCode 1.x/2.x, a posição de fim de vida e os problemas conhecidos têm
-um único lar: [Compatibilidade](docs/COMPATIBILITY.md).
 
 ## Delegação
 

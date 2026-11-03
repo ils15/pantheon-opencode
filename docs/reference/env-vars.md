@@ -8,7 +8,7 @@ noted.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `OPENCODE_VERSION` | unset | `v1` or `v2` selects the plugin generation. Overridden by an explicit `--opencode-version` flag. |
+| `OPENCODE_VERSION` | unset | `v2` or `auto` selects the OpenCode version the installer writes; `v1` is refused with the 2.0 message (Pantheon 2.0 requires OpenCode 2.x). Overridden by an explicit `--opencode-version` flag. |
 | `OPENCODE_BIN` | `opencode` | Host binary used for the `--version` probe. A basename of `opencode2` selects the 2.x line without probing. |
 | `OPENCODE_SANDBOX_SPEC` | `@opencode/cli@latest` | Sandbox spec that provides the `opencode2` binary (sandbox harness only). |
 
