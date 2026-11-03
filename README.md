@@ -226,7 +226,13 @@ never leaves the machine), local rails (risk words, user-pinned models, large
 context) and every unsure answer always favor the main model, and the recorded
 verdict never changes the dispatched model — the per-agent override mechanism
 is proved by test and reserved for a separately reviewed activation with its
-own measured baseline.
+own measured baseline. A fourth consumer needs no flag at all: the tool's
+`mode: "review"` (J4 output-quality scoring) runs only when Zeus explicitly
+asks, after a delegation completes — one typed round-trip returns an advisory
+quality score against named criteria plus a needs-review flag. The result
+content never leaves the machine (shape metrics and criteria only, hostile
+criteria rejected outright), and the verdict is advisory telemetry plus a
+flag: it never blocks, retries, or alters the delegated result.
 
 The installer may retain a legacy target-specific preference; it does not control
 runtime routing. `npx pantheon-opencode decision-router ...` manages stored

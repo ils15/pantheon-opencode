@@ -117,7 +117,10 @@ order — every failure is a bounded refusal JSON, never a retry:
 5. **Payload preparer** — exactly one of:
    - a **preset**: `mode: "skills"` (stack skills for the state text — the
      local prefilter shortlist when it matches, the whole catalog otherwise)
-     or `mode: "delegation"` (every canonical specialist except Zeus); or
+     or `mode: "delegation"` (every canonical specialist except Zeus);
+   - the **review mode**: `mode: "review"` (J4 output-quality scoring — shape
+     metrics and named criteria in, a quality score and a needs-review flag
+     out, advisory only; detailed below); or
    - **explicit questions**: 1–4 typed questions (`choice` with 2–24 unique
      options, `score` with 2–10 unique levels, `predicate`), with bounded
      names, instructions, and descriptions.
@@ -298,6 +301,64 @@ real Briefs is unknown until replayed with consented live replies), the
 shadow-record distribution reviewed, and the activation itself is a
 separately reviewed change. A quiet log proves nothing — the hermes gate this
 series adopts.
+
+## J4 output quality scoring (advisory, on demand)
+
+A fourth consumer of the gate chain — and the first with no flag and no hook:
+`pantheon_jev_decide` gains `mode: "review"`, and the review runs ONLY when
+Zeus explicitly requests it after a delegation completes. That is the
+reference design's (jev-dsh-decision) on-demand shape: one consented call site
+(the existing tool, unchanged Zeus-only caller contract and gate chain), one
+typed round-trip, no automatic observation of delegation traffic.
+
+**The review.** The request asks TWO questions in the single round-trip: one
+**score** — "quality of this delegated result against the criteria", over the
+full 2..10 rubric bound — and one **predicate** (`noul`), "does this result
+need human review?". The consumer reuses the tool's strict validation (name
+and type must match the prepared questions, duplicates become errors);
+anything else is `null`, never a guess.
+
+**Sanitization: criteria in, content never out.** The result itself NEVER
+leaves the machine — the request has no content field at all (structural, not
+a scrub). The state text is a fixed bounded template over shape metrics only:
+the delegate id (a canonical Pantheon agent token), the result kind
+(`ok` / `empty` / `error`), the output character count, the task duration
+(`na` when unknown), and the criteria count. The criteria are the ONLY free
+text admitted, riding the score question's instructions: they are
+caller-provided instruction strings from the tool schema (never user text),
+1–120 chars each. Hostile shapes — paths and path separators, credential
+assignments and key material (`password=…`, PEM headers, AWS/SDK/Git token
+literals, `*.key` files), control characters, over-length — are rejected
+`CRITERIA_INVALID` outright, never sanitized on the way in; any other
+malformed review input is `REVIEW_INPUT_INVALID`, refused before any gate work
+is spent.
+
+**DSH hard caps, mirrored.** At most 4 criteria per review; bounded
+instruction strings; exactly ONE call per review (the shared settlement
+contract: no retry, no queue, fail-closed reservation); redacted errors
+everywhere — refusals carry reason codes, and a failing host call surfaces the
+error CLASS only (`TypeError`, `RangeError`), never host message text.
+
+**Verdict semantics: advisory flag only.** The pure verdict
+(`qualityVerdict`) is `recorded` or `flag-for-review`. An affirmative
+`noul` answer is the ONE flagging condition; the flag is advisory telemetry
+plus a `verdict` field in the tool output Zeus may weigh — it NEVER blocks,
+retries, or alters the delegated result. A low quality score with an explicit
+no-review answer records without flagging: the score is surfaced for Zeus,
+not enforced. An unsure, malformed, or refused review records `na` and never
+flags on a hunch.
+
+**Telemetry.** One shadow record per review run (`point: 'J4'`,
+`mode: 'shadow'`, `effect: 'none'`) with a bounded reason token —
+`q-7-review-yes`, `q-na-review-na`, or a `skip-…` token for every refusal
+path — into the in-memory, bounded decision telemetry collector the tool path
+never reads back.
+
+**P10 direction.** The review's score and flag are the raw material the
+future P10 counselor-claims layer needs (per-counselor quality claims fed by
+on-demand reviews). This release wires nothing of the council: no claim is
+recorded, no counselor reads J4 records, and connecting the two is a
+separately reviewed change with its own consent surface.
 
 ## Fast decision paths
 

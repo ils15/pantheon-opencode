@@ -836,8 +836,26 @@ function testRegistrationContract(): void {
 
   const definition = createV2JevDecisionDefinition(runtime)
   assert.equal(definition.name, 'pantheon_jev_decide')
-  const schema = definition.input as { required?: string[] }
-  assert.deepEqual(schema.required, ['schemaVersion', 'state'])
+  const schema = definition.input as {
+    required?: string[]
+    properties?: Record<string, { enum?: string[] }>
+    anyOf?: Array<{ required?: string[] }>
+  }
+  // One schema, two disjoint payloads: the state branch (presets and explicit
+  // questions) and the review branch (J4 delegateId + metrics + criteria).
+  assert.deepEqual(schema.required, ['schemaVersion'])
+  assert.deepEqual(schema.properties?.mode?.enum, ['skills', 'delegation', 'review'])
+  const branches = (schema.anyOf ?? []).map((branch) => branch.required ?? [])
+  const reviewBranch = branches.find((required) => required.includes('delegateId'))
+  const stateBranch = branches.find((required) => required.includes('state'))
+  assert.ok(reviewBranch && stateBranch, 'both payload branches are declared')
+  assert.deepEqual([...reviewBranch].sort(), [
+    'criteria',
+    'delegateId',
+    'resultMetrics',
+    'resultSummaryKind',
+  ])
+  assert.deepEqual(stateBranch, ['state'])
 }
 
 // ─── Source-level transport invariants ──────────────────────────────────

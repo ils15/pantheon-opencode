@@ -127,6 +127,7 @@ async function main(): Promise<void> {
     getPromptSurfaceTelemetrySinkForTests,
     getJ1TelemetrySinkForTests,
     getJ3TelemetrySinkForTests,
+    getJ4TelemetrySinkForTests,
     getUnsupportedFeatures,
     resetV2BridgeForTests,
     setV2Bridge,
@@ -872,6 +873,116 @@ async function main(): Promise<void> {
       )
       assert.equal(wrongReceiver, false, 'a host method was invoked detached')
       assert.equal(decideCalls, 1)
+    } finally {
+      globalThis.fetch = originalFetch
+      for (const [key, value] of originalEnvironment) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test('J4 review mode rides the wired runtime and records one shadow record', async () => {
+    let jevExecute: ((input: unknown, context: unknown) => Promise<string> | string) | undefined
+    const originalFetch = globalThis.fetch
+    const root = mkdtempSync(join(tmpdir(), 'pantheon-v2-jev-review-'))
+    const originalEnvironment = new Map(
+      ['HOME', 'XDG_CONFIG_HOME', 'XDG_STATE_HOME'].map((key) => [key, process.env[key]]),
+    )
+    try {
+      process.env.HOME = root
+      process.env.XDG_CONFIG_HOME = join(root, 'config')
+      process.env.XDG_STATE_HOME = join(root, 'state')
+      writeUserDecisionRouterConfig({
+        schema_version: 2,
+        enabled: true,
+        selection: { mode: 'explicit', provider: 'opencode-console-jev', model: 'jev-1.13' },
+        egress_consent: true,
+        enabled_candidates: [{ provider: 'opencode-console-jev', model: 'jev-1.13' }],
+      })
+      const ledger = openLocalDecisionBudgetLedger({
+        dbPath: resolveLocalDecisionBudgetDbPath(),
+      })
+      try {
+        const caps = { monthlyCapMicros: 5_000_000, perDecisionCapMicros: 1_000_000 }
+        ledger.configureUserCaps(caps)
+        ledger.configureProviderCaps('opencode-console', caps)
+        ledger.configureModelCaps('opencode-console', 'jev-1.13', caps)
+        const budgetPeriod = new Date().toISOString().slice(0, 7)
+        assert.equal(ledger.confirmBudgetPeriod(null, budgetPeriod).status, 'confirmed')
+      } finally {
+        ledger.close()
+      }
+      globalThis.fetch = (async () => {
+        throw new Error('offline provider-call spy')
+      }) as typeof fetch
+
+      await plugin.setup(
+        makeBaseContext({
+          model: { list: async () => [{ providerID: 'opencode', id: 'jev-1.13' }] },
+          experimental: {
+            generate: {
+              decisions: async () => ({
+                answers: [
+                  { type: 'score', name: 'quality', score: 7, confidence: 0.8 },
+                  { type: 'predicate', name: 'noul', probability: 0.9 },
+                ],
+                cost: 0.000002,
+                tokens: { input: 12, output: 8 },
+              }),
+            },
+          },
+          permission: { assert: async () => undefined },
+          tool: {
+            transform: async (callback: (draft: never) => void) => {
+              callback({
+                namespace: () => {},
+                add: (tool: { name: string; execute: typeof jevExecute }) => {
+                  if (tool.name === 'pantheon_jev_decide') jevExecute = tool.execute
+                },
+              } as never)
+              return { dispose: async () => {} }
+            },
+          },
+        }) as never,
+      )
+      assert.equal(typeof jevExecute, 'function', 'pantheon_jev_decide did not register')
+      const j4Sink = getJ4TelemetrySinkForTests()
+      assert.ok(j4Sink, 'the J4 review sink is wired with the runtime')
+      const result = (await jevExecute?.(
+        {
+          schemaVersion: 1,
+          mode: 'review',
+          delegateId: 'apollo',
+          resultSummaryKind: 'ok',
+          resultMetrics: { outputChars: 1234, taskDurationMs: 56_000 },
+          criteria: ['the task goal is met'],
+        },
+        { agent: 'zeus', sessionID: 'ses_j4', messageID: 'msg_j4' },
+      )) as { output: string }
+      const parsed = JSON.parse(result.output) as {
+        advisory?: boolean
+        effect?: string
+        mode?: string
+        quality?: number | null
+        needsReview?: boolean | null
+        verdict?: string
+      }
+      assert.equal(parsed.advisory, true, `expected an advisory review, got: ${result.output}`)
+      assert.equal(parsed.effect, 'none')
+      assert.equal(parsed.mode, 'review')
+      assert.equal(parsed.quality, 7)
+      assert.equal(parsed.needsReview, true)
+      assert.equal(parsed.verdict, 'flag-for-review')
+      // One shadow record through the plugin-wired telemetry collector.
+      const events = j4Sink?.events() ?? []
+      assert.equal(events.length, 1)
+      assert.equal(events[0]?.point, 'J4')
+      assert.equal(events[0]?.mode, 'shadow')
+      assert.equal(events[0]?.decision, 'flag-for-review')
+      assert.equal(events[0]?.reason, 'q-7-review-yes')
+      assert.equal(events[0]?.effect, 'none')
     } finally {
       globalThis.fetch = originalFetch
       for (const [key, value] of originalEnvironment) {
