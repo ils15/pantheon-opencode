@@ -287,6 +287,7 @@ jobs:
           node scripts/release-gates.mjs "${args[@]}"
 
       - name: Gate (a) tests
+        timeout-minutes: 10
         run: |
           set -euo pipefail
           node scripts/release-gates.mjs tests --evidence-dir "$RUNNER_TEMP/gate-evidence"
@@ -352,6 +353,7 @@ jobs:
           BASE_VERSION: ${{ steps.version_gate.outputs.version }}
 
       - name: Gate (b) host compatibility
+        timeout-minutes: 25
         run: |
           set -euo pipefail
           node scripts/release-gates.mjs host --evidence-dir "$RUNNER_TEMP/gate-evidence" --artifact-dir "$RUNNER_TEMP/release-artifact" --version "$BASE_VERSION" --target-sha "$TARGET_SHA"
