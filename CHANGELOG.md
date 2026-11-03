@@ -10,6 +10,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.2-beta.13] - 2026-11-03
+
+### Added
+
+- **install** — `init` now sweeps stale `pantheon-opencode` copies out of the npm cache's `_npx/` after a successful install (only the package subtree; unrelated packages and the just-installed copy survive). Field evidence: a 1.6.1 npx copy beside the registered 1.6.2-beta.12 made a bare `npx pantheon-opencode doctor` report the registered plugin as outdated, and old copies accumulate forever because npm never prunes them. Removal failures are swallowed and retried by the next init.
+- **routing** — `ROUTE_UNRESOLVED` refusals now carry the inner verdict in `detail` (`MODEL_NOT_IN_CATALOG`, `AMBIGUOUS_MODEL`, `MODEL_NOT_DECISION`): the class alone does not tell whether the configured decision model is absent from the host catalog or present but not decision-typed, and those have different fixes. Field-measured on 2.2.5: a host catalog without the Console Jev model (no OpenCode Console credential) reports `MODEL_NOT_IN_CATALOG`.
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
 ## [v1.6.2-beta.12] - 2026-11-03
 
 ### Added

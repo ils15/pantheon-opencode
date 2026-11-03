@@ -1077,6 +1077,22 @@ async function main() {
       }
     }
 
+    // Old-version residue: every `npx pantheon-opencode` invocation materializes
+    // a full copy under the npm cache's _npx/ and nothing in npm removes old
+    // ones. The registration points at THIS run's copy, so every other copy is
+    // unreferenced residue — sweep it (only the pantheon-opencode subtree;
+    // failures are swallowed and retried by the next init).
+    try {
+      const { sweepStalePantheonNpxCaches } = await import('../scripts/install/npx-cache-sweep.mjs')
+      const sweep = await sweepStalePantheonNpxCaches({ keep: ROOT })
+      if (sweep.removed.length > 0) {
+        console.log('')
+        console.log(`  ${S.sweptNpxCaches(sweep.removed.length)}`)
+      }
+    } catch {
+      // Diagnostics-only: a failed sweep never fails the install.
+    }
+
     console.log('')
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
     console.log(`  ${S.installedTitle(version)}`)

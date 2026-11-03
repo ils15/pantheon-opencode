@@ -51,6 +51,8 @@ const TABLE = {
     healthCheckExit: (seconds, status) =>
       `Health check finished in ${seconds}s and reported problems (exit ${status}); the installation itself completed`,
     installedTitle: (v) => `Pantheon OpenCode v${v} installed.`,
+    sweptNpxCaches: (n) =>
+      `Removed ${n} stale pantheon-opencode npx cache cop${n === 1 ? 'y' : 'ies'} (old-version residue).`,
     nextSteps: 'Next steps:',
     nextVerify: '1. Verify installation:\n     npx pantheon-opencode doctor',
     nextLaunch: '2. Launch OpenCode',
@@ -149,6 +151,8 @@ const TABLE = {
     healthCheckExit: (seconds, status) =>
       `Verificação de saúde concluída em ${seconds}s e reportou problemas (exit ${status}); a instalação em si foi concluída`,
     installedTitle: (v) => `Pantheon OpenCode v${v} instalado.`,
+    sweptNpxCaches: (n) =>
+      `Removida${n === 1 ? '' : 's'} ${n} cópia${n === 1 ? '' : 's'} velha${n === 1 ? '' : 's'} de pantheon-opencode do cache npx.`,
     nextSteps: 'Próximos passos:',
     nextVerify: '1. Verifique a instalação:\n     npx pantheon-opencode doctor',
     nextLaunch: '2. Abra o OpenCode',
