@@ -25,15 +25,11 @@ import {
 import { selectPantheonSkills } from './local-decision-skills.ts'
 import { PANTHEON_AGENT_CATALOG, PANTHEON_SKILL_CATALOG } from './pantheon-decision-catalog.ts'
 import {
+  findRouteKind,
   NATIVE_DECISION_MAX_PROMPT_LENGTH,
   type NativeDecisionRequest,
-  type NativeDecisionRouteFailure,
   type ResolvedNativeDecisionRoute,
-  resolveNativeDecisionRoute,
 } from './v2-native-decisions.ts'
-
-/** Catalog entry shape the route resolver needs from the host model list. */
-export type JevDecisionCatalogEntry = Parameters<typeof resolveNativeDecisionRoute>[2][number]
 
 /** Config-level providers that have a native host Decisions route. */
 export type NativeJevProviderId = Extract<
@@ -57,7 +53,7 @@ export function isNativeJevProvider(provider: unknown): provider is NativeJevPro
   return typeof provider === 'string' && Object.hasOwn(NATIVE_JEV_HOST_PROVIDERS, provider)
 }
 
-export type NativeJevRouteFailure = 'NO_ELIGIBLE_CANDIDATE' | 'ROUTE_UNRESOLVED'
+export type NativeJevRouteFailure = 'NO_ELIGIBLE_CANDIDATE'
 
 export interface NativeJevRouteSelection {
   readonly route: ResolvedNativeDecisionRoute
@@ -68,18 +64,7 @@ export interface NativeJevRouteSelection {
 
 export type NativeJevRouteResolution =
   | { readonly ok: true; readonly selection: NativeJevRouteSelection }
-  | {
-      readonly ok: false
-      readonly reasonCode: NativeJevRouteFailure
-      /**
-       * The inner route-resolution verdict when `reasonCode` is
-       * ROUTE_UNRESOLVED (`MODEL_NOT_IN_CATALOG`, `AMBIGUOUS_MODEL`,
-       * `MODEL_NOT_DECISION`): the class alone does not tell the user whether
-       * the configured decision model is absent from the host catalog or
-       * present but not decision-typed, and those have different fixes.
-       */
-      readonly detail?: NativeDecisionRouteFailure
-    }
+  | { readonly ok: false; readonly reasonCode: NativeJevRouteFailure }
 
 /**
  * Keep only candidates that both map to a native route and pass the caller's
@@ -126,7 +111,6 @@ function readEnabledCandidates(config: unknown): UserDecisionRouterCandidate[] {
  */
 export function resolveNativeJevRoute(
   config: unknown,
-  catalog: readonly JevDecisionCatalogEntry[],
   checkAdmission: (provider: BudgetProvider, model: string) => boolean,
 ): NativeJevRouteResolution {
   const record =
@@ -165,18 +149,18 @@ export function resolveNativeJevRoute(
   }
 
   const hostProvider = NATIVE_JEV_HOST_PROVIDERS[selected.provider]
-  const resolution = resolveNativeDecisionRoute(
-    { providerID: hostProvider, id: selected.model },
-    undefined,
-    catalog,
-  )
-  if (!resolution.ok) {
-    return { ok: false, reasonCode: 'ROUTE_UNRESOLVED', detail: resolution.reasonCode }
-  }
+  // NO catalog-presence gate. Field evidence (2.2.5, 2026-11-03): decision
+  // models are not chat models — `model.list()` never exposes them (561
+  // entries, 0 jev) while the decisions API answers the exact same ref
+  // directly (jev-1.13-free → 200; jev-1.13 → 404 from the host itself).
+  // The host is the authority on model existence: an unknown model surfaces
+  // later as DECISION_CALL_FAILED. Consent, budget caps and the host
+  // permission assertion remain the actual safety gates.
+  const routeModel = { providerID: hostProvider, id: selected.model }
   return {
     ok: true,
     selection: {
-      route: resolution.route,
+      route: Object.freeze({ model: routeModel, ...findRouteKind(routeModel) }),
       provider: selected.provider,
       accountingProvider: DECISION_PROVIDER_ADAPTERS[selected.provider].accountingProvider,
       model: selected.model,

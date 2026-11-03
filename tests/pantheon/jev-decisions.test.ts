@@ -193,7 +193,7 @@ function testRouteSelection(): void {
     egress_consent: true,
     enabled_candidates: [{ provider: PROVIDER, model: MODEL }],
   }
-  const resolved = resolveNativeJevRoute(enabled, CATALOG, ADMISSION_OK)
+  const resolved = resolveNativeJevRoute(enabled, ADMISSION_OK)
   assert.ok(resolved.ok)
   assert.deepEqual(resolved.ok ? resolved.selection.route.model : null, {
     providerID: 'opencode',
@@ -204,12 +204,12 @@ function testRouteSelection(): void {
     assert.equal(resolved.selection.model, 'jev-1.13')
   }
 
-  assert.equal(resolveNativeJevRoute(enabled, CATALOG, ADMISSION_DENIED).ok, false)
+  assert.equal(resolveNativeJevRoute(enabled, ADMISSION_DENIED).ok, false)
   const disabled = { ...enabled, enabled: false }
-  const disabledResult = resolveNativeJevRoute(disabled, CATALOG, ADMISSION_OK)
+  const disabledResult = resolveNativeJevRoute(disabled, ADMISSION_OK)
   assert.deepEqual(disabledResult, { ok: false, reasonCode: 'NO_ELIGIBLE_CANDIDATE' })
   const noConsent = { ...enabled, egress_consent: false }
-  assert.deepEqual(resolveNativeJevRoute(noConsent, CATALOG, ADMISSION_OK), {
+  assert.deepEqual(resolveNativeJevRoute(noConsent, ADMISSION_OK), {
     ok: false,
     reasonCode: 'NO_ELIGIBLE_CANDIDATE',
   })
@@ -220,7 +220,7 @@ function testRouteSelection(): void {
     enabled_candidates: [{ provider: 'openai-decisions', model: 'gpt-6-luna' }],
   }
   // Direct OpenAI has no native route, so the explicit selection cannot resolve.
-  assert.deepEqual(resolveNativeJevRoute(openAiOnly, CATALOG, ADMISSION_OK), {
+  assert.deepEqual(resolveNativeJevRoute(openAiOnly, ADMISSION_OK), {
     ok: false,
     reasonCode: 'NO_ELIGIBLE_CANDIDATE',
   })
@@ -234,31 +234,19 @@ function testRouteSelection(): void {
       { provider: 'typesafe-jev', model: 'jev-1.14.0' },
     ],
   }
-  const wideCatalog = [
-    ...CATALOG,
-    { providerID: 'typesafe-ai', id: 'jev-1.14.0', type: 'decision' },
-  ]
-  assert.deepEqual(resolveNativeJevRoute(auto, wideCatalog, ADMISSION_OK), {
+  assert.deepEqual(resolveNativeJevRoute(auto, ADMISSION_OK), {
     ok: false,
     reasonCode: 'NO_ELIGIBLE_CANDIDATE',
   })
   // Auto with exactly one cap-valid candidate resolves it.
   const singleAuto = { ...auto, enabled_candidates: [{ provider: PROVIDER, model: MODEL }] }
-  assert.ok(resolveNativeJevRoute(singleAuto, CATALOG, ADMISSION_OK).ok)
+  assert.ok(resolveNativeJevRoute(singleAuto, ADMISSION_OK).ok)
 
-  // A catalog without the model (or with a chat-typed entry) never resolves,
-  // and the inner verdict names which of the two it was.
-  const chatOnlyCatalog = [{ providerID: 'opencode', id: 'jev-1.13', type: 'chat' }]
-  assert.deepEqual(resolveNativeJevRoute(enabled, chatOnlyCatalog, ADMISSION_OK), {
-    ok: false,
-    reasonCode: 'ROUTE_UNRESOLVED',
-    detail: 'MODEL_NOT_DECISION',
-  })
-  assert.deepEqual(resolveNativeJevRoute(enabled, [], ADMISSION_OK), {
-    ok: false,
-    reasonCode: 'ROUTE_UNRESOLVED',
-    detail: 'MODEL_NOT_IN_CATALOG',
-  })
+  // The route does NOT consult the host chat catalog at all: decision models
+  // are not chat models and never appear in model.list() (field evidence
+  // 2.2.5: 561 entries, 0 jev, while the decisions API answers the same ref
+  // directly). Resolution is config + admission only — empty catalog resolves.
+  assert.ok(resolveNativeJevRoute(enabled, ADMISSION_OK).ok)
 }
 
 // ─── Request preparation ────────────────────────────────────────────────
@@ -697,29 +685,6 @@ async function testToolGateChain(): Promise<void> {
       refusalOf('PERMISSION_UNAVAILABLE'),
     )
 
-    // A catalog without the route refuses before reserving, and carries the
-    // inner verdict: MODEL_NOT_IN_CATALOG tells the user the host does not
-    // list the configured decision model at all.
-    const noRoute = stubRuntime({ listModels: async () => [] })
-    assert.deepEqual(JSON.parse(await runJevDecision(TOOL_INPUT, toolContext, noRoute.runtime)), {
-      advisory: false,
-      effect: 'none',
-      reasonCode: 'ROUTE_UNRESOLVED',
-      detail: 'MODEL_NOT_IN_CATALOG',
-    })
-
-    // A catalog entry present but not decision-typed names THAT condition —
-    // a different fix (host catalog shape) than an absent model.
-    const wrongType = stubRuntime({
-      listModels: async () => [{ providerID: 'opencode', id: 'jev-1.13', type: 'chat' }],
-    })
-    assert.deepEqual(JSON.parse(await runJevDecision(TOOL_INPUT, toolContext, wrongType.runtime)), {
-      advisory: false,
-      effect: 'none',
-      reasonCode: 'ROUTE_UNRESOLVED',
-      detail: 'MODEL_NOT_DECISION',
-    })
-
     // The success path: exactly one native call, prepared request, advice out.
     const ok = stubRuntime()
     const originalFetch = globalThis.fetch
@@ -893,19 +858,7 @@ async function testRefusalDetailIsSanitized(): Promise<void> {
     confirmCaps()
     const toolContext = { sessionID: 'ses_detail', messageID: 'msg_detail', agent: 'zeus' }
 
-    // A throwing catalog read refuses with the sanitized error CLASS only:
-    // the message (which can carry paths or config) never reaches the chat.
-    const brokenCatalog = stubRuntime({
-      listModels: async () => {
-        throw new TypeError('Cannot read properties of undefined (reading list)')
-      },
-    })
-    assert.deepEqual(
-      JSON.parse(await runJevDecision(TOOL_INPUT, toolContext, brokenCatalog.runtime)),
-      { advisory: false, effect: 'none', reasonCode: 'CATALOG_UNAVAILABLE', detail: 'TypeError' },
-    )
-
-    // A throwing native Decisions call carries the same sanitized class; the
+    // A throwing native Decisions call carries the sanitized error CLASS; the
     // message with provider detail stays out of the refusal.
     const brokenDecide = stubRuntime({
       decide: async () => {
@@ -919,31 +872,6 @@ async function testRefusalDetailIsSanitized(): Promise<void> {
   })
 }
 
-/** The 2.2.5 host wraps the catalog in a page object — the wrapped shape is accepted. */
-async function testWrappedCatalogShapeAccepted(): Promise<void> {
-  const environment = sandbox()
-  await withEnvironment(environment, async () => {
-    writeEnabledConfig()
-    confirmCaps()
-    const toolContext = { sessionID: 'ses_wrapped', messageID: 'msg_wrapped', agent: 'zeus' }
-
-    // Field evidence (beta.10, detail TypeError): the host's model.list()
-    // returns { data: [...] }, not a bare array. The must-read path accepts
-    // both shapes, exactly like the vision surface already does.
-    for (const wrapped of [{ data: CATALOG }, { models: CATALOG }]) {
-      const wrappedRuntime = stubRuntime({ listModels: async () => wrapped })
-      const output = await runJevDecision(TOOL_INPUT, toolContext, wrappedRuntime.runtime)
-      const parsed = JSON.parse(output) as { advisory: boolean; reasonCode?: string }
-      assert.equal(
-        parsed.advisory,
-        true,
-        `wrapped shape ${JSON.stringify(Object.keys(wrapped))} must resolve, got: ${output}`,
-      )
-      assert.equal(wrappedRuntime.decideCalls.length, 1)
-    }
-  })
-}
-
 testProviderMapping()
 testFilterNativeCandidates()
 testRouteSelection()
@@ -954,7 +882,7 @@ testNativeEvidence()
 testLedgerSettlement()
 await testToolGateChain()
 await testRefusalDetailIsSanitized()
-await testWrappedCatalogShapeAccepted()
+
 testRegistrationContract()
 testTransportInvariants()
 
