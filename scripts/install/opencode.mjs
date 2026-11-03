@@ -847,13 +847,13 @@ export function deduplicatePluginReferences(refs) {
 /**
  * Register the copied Pantheon TUI plugin in the V2 `plugins` list.
  *
- * The OpenCode 2.x host does not load server-side RPC from a local plugin
- * folder by free discovery — only entries listed in `config.plugins` are
- * loaded (sandbox probe evidence: no entry → `rpc.unavailable`; with the
- * entry the host logs `loading plugin id=…/pantheon-tui` and the V2-only
- * RPC (`pantheon.quota`) answers HTTP 200). Without this registration a
- * postinstall/sync that re-copies the payload after `init` can never restore
- * it, so the quota status stays "unavailable".
+ * The OpenCode 2.x host does not load a local plugin folder by free discovery —
+ * only entries listed in `config.plugins` are loaded (sandbox probe evidence:
+ * no entry → the copy's server half never attaches; with the entry the host
+ * logs `loading plugin id=…/pantheon-tui`). The server half is what wires the
+ * TUI runtime's reactive channel, so without this registration a
+ * postinstall/sync that re-copies the payload after `init` leaves a sidebar
+ * that mounts dead (the "mudo panel" symptom).
  *
  * Idempotent: the existing entry for the copy (same identity) is retained
  * and kept after the core plugin, while every other entry stays in place.

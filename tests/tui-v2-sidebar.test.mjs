@@ -54,31 +54,6 @@ const { createRoot, createSignal } = await import('solid-js')
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
-function quotaHostServices() {
-  const values = new Map()
-  const createStorage = (key, initial) => {
-    if (!values.has(key)) values.set(key, { ...initial })
-    return values.get(key)
-  }
-  return {
-    storage: {
-      store(key, { initial }) {
-        const value = createStorage(key, initial)
-        return [value, async (mutate) => mutate(value)]
-      },
-      memory(key, { initial }) {
-        const value = createStorage(key, initial)
-        return [value, (mutate) => mutate(value)]
-      },
-    },
-    client: {
-      rpc() {
-        return { status: async () => ({ providers: [] }) }
-      },
-    },
-  }
-}
-
 async function waitFor(predicate, description, timeoutMs = 1_000) {
   const deadline = Date.now() + timeoutMs
   while (!predicate()) {
@@ -735,7 +710,13 @@ test('packaged plugin registers additive TUI surfaces, warms up eagerly, and dis
   const calls = { vcsSync: [], sessionSync: [] }
 
   const context = {
-    ...quotaHostServices(),
+    /* The V2 TUI plugin is TUI-only: it must never open the quota RPC channel.
+     * Any `client.rpc` call during setup or teardown fails the test. */
+    client: {
+      rpc() {
+        throw new Error('the TUI plugin must not call an RPC (native quota surface was removed)')
+      },
+    },
     location: { directory: project },
     data: {
       location: {
@@ -770,7 +751,7 @@ test('packaged plugin registers additive TUI surfaces, warms up eagerly, and dis
     assert.equal(
       paths.filter((path) => path === 'sidebar.content').length,
       1,
-      'quota belongs to the same sidebar composition, not an independently ordered slot',
+      'the sidebar is one additive claim, not an independently ordered slot',
     )
     assert.ok(
       paths.includes('home.footer.status'),
@@ -781,6 +762,15 @@ test('packaged plugin registers additive TUI surfaces, warms up eagerly, and dis
       'prompt footer is claimed additively (native line stays intact)',
     )
     for (const claim of registrations) assert.equal(typeof claim.render, 'function')
+
+    // Absence assertions for the removed native quota surface: the TUI source
+    // registers no quota block and no `pantheon.quota` RPC anywhere, and setup
+    // above already proved no RPC channel is opened (client.rpc throws).
+    const v2Source = readFileSync(join(root, 'src/plugins/tui/src/index-v2.tsx'), 'utf8')
+    assert.equal(v2Source.includes('QuotaSidebarSummary'), false, 'no quota sidebar block')
+    assert.equal(/block\('quota'\)/.test(v2Source), false, 'no quota block key')
+    assert.equal(v2Source.includes('pantheon.quota'), false, 'no pantheon.quota RPC reference')
+    assert.equal(/rpc\s*\.\s*register/.test(v2Source), false, 'the TUI plugin registers no RPC')
 
     // Eager warm-up: vcs + every listed session synced at load (Known Issue fix).
     await new Promise((resolve) => setImmediate(resolve))
@@ -1789,7 +1779,6 @@ test('prompt footer is additive only and counts running delegations without toas
   const { default: plugin, createFooterModel } = await loadV2()
   const registrations = []
   const context = {
-    ...quotaHostServices(),
     location: { directory: tmpdir() },
     data: {
       location: { default: () => ({ directory: tmpdir() }), vcs: { sync: async () => {} } },
@@ -2494,7 +2483,7 @@ test('spend line: absent client.session.stats hides it without calling or throwi
   }
 })
 
-test('sidebar renders Context → Git status → Todo → Dispatch → quota', async () => {
+test('sidebar renders Context → Git status → Todo → Dispatch and no quota block', async () => {
   const { BLOCK_ICONS } = await loadV2()
   const source = readFileSync(join(root, 'src/plugins/tui/src/index-v2.tsx'), 'utf8')
 
@@ -2502,13 +2491,27 @@ test('sidebar renders Context → Git status → Todo → Dispatch → quota', a
   const gitAt = source.indexOf('{/* Git status —')
   const todoAt = source.indexOf('{/* Todo —')
   const dispatchAt = source.indexOf('{/* Dispatch —')
-  const quotaAt = source.indexOf('<QuotaSidebarSummary')
 
   assert.ok(contextAt > 0 && gitAt > 0 && todoAt > 0 && dispatchAt > 0, 'four blocks exist')
   assert.ok(contextAt < gitAt, 'Context renders before Git status')
   assert.ok(gitAt < todoAt, 'Todo renders after Git status')
   assert.ok(todoAt < dispatchAt, 'Dispatch follows Todo')
-  assert.ok(dispatchAt < quotaAt, 'quota follows Dispatch in the same composition')
+
+  // The native quota surface was removed (external plugin instead):
+  // no quota block, no quota summary component and no quota block key remain.
+  assert.equal(
+    source.includes('<QuotaSidebarSummary'),
+    false,
+    'the quota summary block is gone from the sidebar composition',
+  )
+  assert.equal(/block\('quota'\)/.test(source), false, 'no `quota` block key is read')
+  assert.equal(
+    /SidebarBlockKey =[^\n]*'quota'/.test(source),
+    false,
+    "SidebarBlockKey no longer carries 'quota'",
+  )
+  assert.equal(source.includes('registerQuotaTui'), false, 'the quota TUI registration is gone')
+  assert.equal(source.includes('createQuotaRuntime'), false, 'the quota runtime is gone')
 
   // The standalone `agentes` and `Skills` blocks were removed, not hidden: no
   // header, no label, no block key, no skill source and no skill estimate.
@@ -2567,8 +2570,8 @@ test('Dispatch is a single block: one header, the live rows and one rollup', asy
   assert.equal(source.includes('… +N member'), false, 'no per-session `… +N` list survives')
 })
 
-test('sidebar and quota icons are single-width glyphs; the fixed header has none', async () => {
-  const { BLOCK_ICONS, cellWidth, quotaIcon, QUOTA_ICON } = await loadV2()
+test('sidebar icons are single-width glyphs; the fixed header has none', async () => {
+  const { BLOCK_ICONS, cellWidth } = await loadV2()
 
   assert.deepEqual(
     BLOCK_ICONS,
@@ -2582,19 +2585,13 @@ test('sidebar and quota icons are single-width glyphs; the fixed header has none
   )
   for (const [key, icon] of Object.entries(BLOCK_ICONS)) {
     assert.equal([...icon].length, 1, `${key} uses exactly one codepoint, never a sequence`)
+    assert.equal(cellWidth(icon), 1, `${key} measures as exactly one terminal cell`)
     assert.ok(icon.codePointAt(0) < 0x2e80, `${key} stays out of the wide CJK blocks`)
     assert.equal(
       /\uFE0F/.test(icon),
       false,
       `${key} carries no variation selector that could widen it`,
     )
-  }
-  assert.equal([...QUOTA_ICON].length, 1)
-  assert.equal(cellWidth(QUOTA_ICON), 1)
-  assert.equal(QUOTA_ICON, quotaIcon('refresh'))
-  for (const mode of ['nerd', 'unicode', 'ascii']) {
-    const fallback = quotaIcon('refresh', mode)
-    assert.equal(cellWidth(fallback), 1, `${mode} quota icon stays within one terminal cell`)
   }
   // The host measures a `emoji-regex` match as two cells, so no header glyph may
   // match it (☑ U+2611 was the one candidate that did).
@@ -2603,8 +2600,6 @@ test('sidebar and quota icons are single-width glyphs; the fixed header has none
     emoji.lastIndex = 0
     assert.equal(emoji.test(icon), false, `${key} glyph is never measured as wide`)
   }
-  emoji.lastIndex = 0
-  assert.equal(emoji.test(QUOTA_ICON), false, 'quota icon is never measured as wide')
 
   const source = readFileSync(join(root, 'src/plugins/tui/src/index-v2.tsx'), 'utf8')
   for (const label of ['Context', 'Git status', 'Todo', 'Dispatch']) {

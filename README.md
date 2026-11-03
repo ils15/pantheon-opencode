@@ -104,68 +104,22 @@ see [Quick Start](docs/QUICKSTART.md).
   the host's native Decisions API (TypeSafe Jev via OpenCode Console or a
   configured decision model) behind the user's consent and budget gates — it
   never dispatches agents, runs skills, or changes permissions. This does not
-  change separately documented quota and Vision integrations. See the
+  change the separately documented Vision integration. See the
   [router reference](docs/reference/local-decision-router.md) and the
   [Native Decisions (Jev)](docs/reference/native-decisions.md).
 - **An optional TUI** with a dispatch sidebar block and a full-width
-  `/dispatch` panel. The V2 TUI also provides a quota overview in the
-  sidebar/footer and a `/quota` details panel. Quota display is enabled by
-  default; the sidebar keeps Todo and places quota immediately after Dispatch
-  (header/version → Session → Context → Git → Todo → Dispatch → quota).
-  Status stays in the native sidebar footer. Use `E` to disable quota or `M`
-  to switch between remaining and used. The `/quota` panel has **Usage, Limits,
-  Plugin, and Settings** tabs. Usage charts cover 7, 15, 30 days, or Total and
-  plot recorded daily token usage and model totals rather than filling gaps with
-  invented data. The panel identifies the active chat model; a partial-data
-  warning appears only when the quota snapshot is actually partial.
-  Session-reported spend is shown separately. The active context estimate uses
-  the active model's input price times pre-cache context tokens, applies no cache
-  discount, and is explicitly not billable.
-  Quota windows show text amounts and status, not provider progress gauges. They
-  show a local countdown and the provider-reported reset date/time in UTC when
-  valid timing is available; missing timing is not inferred. After expiry the UI
-  shows “aguardando atualização” until refreshed data arrives.
-  When a quota status request fails, the UI preserves the last valid
-  snapshot, marks it stale, and shows the failure cause as `Erro: <causa>`
-  in the sidebar and `/quota` panel (plus a `Último erro` line) instead
-  of a blind "Status indisponível"; the cause is logged as
-  `[pantheon-tui quota]`.
-  Usage severity uses warning color from 60% consumed and error color above 85%.
-  Session costs, provider balances and selected-key usage retain their distinct
-  labels and reported periods. Long values and states continue onto additional
-  lines within the sidebar's fixed 34-column content budget.
-  The installer selects the `plugins` component by default; in interactive setup
-  you can change the component selection. A component-scoped install includes
-  the TUI only when `plugins` is selected.
-  The V2 quota RPC shows providers when OpenCode lists an active supported
-  connection and Pantheon can locally resolve a nonblank credential. OpenCode
-  Go also supports `OPENCODE_API_KEY` and effective `opencode-go`/`opencode`
-  provider settings. This is not proof that the provider accepted the
-  credential; failed requests and unsupported adapters can remain visible as
-  unavailable. OpenCode Go checks a selected Console OAuth login first when
-  available, then uses the first available API key if no Console login exists
-  or its request fails; a Console 404 or a successful response without an
-  access object reports no Go subscription and does not fall back.
-  The API-key route follows OpenCode Quota's supported Go usage endpoint. See
-  the
-  [quota provider coverage table](docs/tui-v2-quota-providers.md) for limits and
-  troubleshooting.
-
-
-  Quota status requests are separate from the decision subsystem and continue to use
-  their documented provider APIs. Removing decision-provider transport does not
-  disable these quota requests.
-  `/quota-go-check` is a separate manual, confirmation-gated diagnostic: one
-  GET to `https://opencode.ai/zen/go/v1/usage` with the configured Go API key
-  (not OAuth), at most one attempt per plugin runtime. It never refreshes quota,
-  follows redirects or retries. Only HTTP 401 bodies are inspected, up to 4096
-  bytes, for an own top-level JSON `error` property; its value is never inspected.
-  Results contain only a safe category, optional HTTP status, coarse content type,
-  and (for 401) whether that structure is present, absent, or unavailable.
-  No error code, type, message, body, request ID, or byte count is displayed;
-  a 401 rejection's cause remains unknown. `success` means
-  HTTP success only—not a stable quota contract or parsed quota correctness.
-  Require Themis security review before using this diagnostic.
+  `/dispatch` panel. The V2 sidebar keeps the Pantheon version, the active
+  preset/source, git state, and a `Context` block (tokens, a percent gauge,
+  `$<spent> spent`, and a muted `cache <n>% · <n.n> tok/s` line); the native
+  prompt footer keeps its own line, and Pantheon only appends
+  `▸<preset> · ✦<n> ativos` while delegations are running. The installer
+  selects the `plugins` component by default; in interactive setup you can
+  change the component selection. A component-scoped install includes the TUI
+  only when `plugins` is selected. The TUI ships no quota panel: for provider
+  quota and usage inside OpenCode, install the recommended community plugin
+  [`@slkiser/opencode-quota`](https://github.com/slkiser/opencode-quota) — see
+  [Quota & usage](docs/tui-v2-quota-providers.md). `pantheon_cost` and
+  `pantheon_model` keep working unchanged.
 
 Vision requests to OpenCode Zen require a valid active session and are rejected
 before image fetching or model-catalog lookup when the session is missing or

@@ -23,13 +23,6 @@ import {
   MODEL_USAGE_SESSION_LIMIT,
   MODEL_USAGE_VISIBLE_CEILING,
 } from './model-usage-limits'
-import { QuotaSidebarSummary, quotaTextLines, registerQuotaTui } from './quota-v2'
-import {
-  createQuotaRuntime,
-  type QuotaRuntime,
-  resolveActiveModelRef,
-  resolveModelContextSnapshot,
-} from './quota-v2-model'
 import { cellWidth, GRAPHEMES, SIDEBAR_CONTENT_WIDTH } from './sidebar-width'
 
 export type { ContextProgressTone } from './context-gauge'
@@ -44,80 +37,12 @@ export {
   formatSpent,
   formatTokenCount,
 } from './context-gauge'
-export { quotaGoCheckCommand } from './go-key-diagnostic-ui'
 export {
   MODEL_USAGE_MESSAGE_LIMIT,
   MODEL_USAGE_SESSION_LIMIT,
   MODEL_USAGE_VISIBLE_CEILING,
 } from './model-usage-limits'
-export type { QuotaIconMode, QuotaIconName, QuotaTab } from './quota-v2'
-export {
-  activeQuotaModelLabel,
-  DEFAULT_QUOTA_TAB,
-  financeMetricLines,
-  moveQuotaTab,
-  openQuotaPanel,
-  providerState,
-  QUOTA_ICON,
-  QUOTA_OPEN_COMMAND_ID,
-  QUOTA_PANEL_COMMANDS,
-  QUOTA_PANEL_NAME,
-  QUOTA_TABS,
-  QuotaPanel,
-  quotaIcon,
-  quotaMetricLines,
-  quotaOpenCommand,
-  quotaPanelKeymapLayer,
-  quotaPanelStatusMessage,
-  quotaTabLabel,
-  quotaTextLines,
-  quotaUsageTone,
-  quotaWindowLines,
-  runQuotaPanelCommand,
-  sidebarFinanceEntries,
-  snapshotSummary,
-} from './quota-v2'
-export type { QuotaSidebarEntry } from './quota-v2-model'
-export {
-  collectRecentModelUsageRows,
-  compactQuotaMetric,
-  createQuotaClock,
-  createQuotaRuntime,
-  DEFAULT_QUOTA_PREFERENCES,
-  formatQuotaCountdown,
-  formatQuotaMetric,
-  normalizeQuotaPreferences,
-  QUOTA_CLOCK_INTERVAL_MS,
-  quotaClock,
-  quotaProgress,
-  quotaSidebarEntries,
-  quotaSnapshotFromStatus,
-  quotaSnapshotStatusLabel,
-} from './quota-v2-model'
 export { cellWidth } from './sidebar-width'
-export { UsageHistorySection } from './usage-history-view'
-export type { ActiveContextCostResult } from './usage-view-model'
-export {
-  activeContextEstimateErrorLines,
-  activeContextEstimateLines,
-  activeContextEstimateMissingLines,
-  activeContextEstimatePendingLines,
-  activeModelIdentity,
-  sessionSpendLabel,
-  USAGE_HISTORY_PERIOD_BINDINGS,
-  usageHistoryChartLines,
-  usageHistoryControlsLines,
-  usageHistoryCoverageLabel,
-  usageHistoryEmptyMessage,
-  usageHistoryPartialWarning,
-  usageHistoryPeriodForKey,
-  usageHistoryPricingLabel,
-  usageHistorySelectorLabel,
-  usageHistorySelectorLines,
-  usageHistoryTextLines,
-  usageHistoryUnavailableMessage,
-} from './usage-view-model'
-export { resolveActiveModelRef, resolveModelContextSnapshot }
 
 const SINGLETON = Symbol.for('pantheon.tui.v2.loaded')
 
@@ -360,6 +285,184 @@ export function resolveContextLimit(models: readonly any[], ref: unknown): numbe
     if (typeof limit === 'number' && Number.isFinite(limit) && limit > 0) return limit
   }
   return null
+}
+
+/* ─── Active model & context snapshot ─────────────────────
+ * `resolveActiveModelRef` and `resolveModelContextSnapshot` (and the private
+ * helpers below them) moved here verbatim from the removed `quota-v2-model.ts`
+ * when the native quota surface was deleted: the sidebar's Context gauge is
+ * their only remaining consumer. They read only host-published transcript and
+ * model-catalog data — no RPC and no provider call. They are deliberately
+ * distinct from the looser helpers above (`modelRefID`, `resolveContextLimit`,
+ * `transcriptWindow`): identity matching here is provider-qualified and the
+ * context window excludes messages with no reported usage. */
+
+export type ModelContextSnapshot = { tokens: number; percent: number; limit: number }
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null
+    ? (value as Record<string, unknown>)
+    : undefined
+}
+
+function modelID(ref: unknown): string | null {
+  const record = asRecord(ref)
+  const id = typeof ref === 'string' ? ref : (record?.id ?? record?.modelID)
+  return typeof id === 'string' && id.trim() !== '' ? id : null
+}
+
+function messageModelRef(message: Record<string, unknown>): unknown {
+  return message.model ?? message
+}
+
+function modelProvider(ref: unknown, models: readonly unknown[]): string | null {
+  const direct = asRecord(ref)?.providerID
+  if (typeof direct === 'string' && direct.trim() !== '') return direct.trim()
+  const id = modelID(ref)
+  if (id === null) return null
+  const segment = id.slice(id.lastIndexOf('/') + 1)
+  const providers = new Set<string>()
+  for (const candidate of models) {
+    const item = asRecord(candidate)
+    if (!item) continue
+    if (item.id !== id && item.modelID !== id && item.id !== segment && item.modelID !== segment)
+      continue
+    if (typeof item.providerID === 'string' && item.providerID.trim() !== '') {
+      providers.add(item.providerID.trim())
+    }
+  }
+  const explicitProvider = id.includes('/') ? id.slice(0, id.indexOf('/')) : null
+  if (explicitProvider && providers.has(explicitProvider)) return explicitProvider
+  return providers.size === 1 ? ([...providers][0] ?? null) : null
+}
+
+function modelIdentity(
+  ref: unknown,
+  models: readonly unknown[],
+): {
+  key: string
+  id: string
+  providerID: string | null
+  label: string
+} | null {
+  const id = modelID(ref)
+  if (id === null) return null
+  const providerID = modelProvider(ref, models)
+  const segment = id.slice(id.lastIndexOf('/') + 1)
+  return {
+    key: `${providerID ?? ''}\u0000${id}`,
+    id,
+    providerID,
+    label: segment || id,
+  }
+}
+
+function tokenCount(message: Record<string, unknown>): number | null {
+  const tokens = asRecord(message.tokens)
+  if (!tokens) return null
+  const cache = asRecord(tokens.cache)
+  const values = [tokens.input, tokens.output, tokens.reasoning, cache?.read, cache?.write]
+  const reported = values.filter(
+    (value): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0,
+  )
+  return reported.length === 0 ? null : reported.reduce((sum, value) => sum + value, 0)
+}
+
+function contextLimit(ref: unknown, models: readonly unknown[]): number | null {
+  const id = modelID(ref)
+  if (id === null) return null
+  const providerID = modelProvider(ref, models)
+  if (providerID === null) return null
+  const segment = id.slice(id.lastIndexOf('/') + 1)
+  const matches = models.filter((value) => {
+    const model = asRecord(value)
+    if (!model) return false
+    const idMatches =
+      model.id === id || model.modelID === id || model.id === segment || model.modelID === segment
+    return idMatches && model.providerID === providerID
+  })
+  const limits = new Set<number>()
+  for (const candidate of matches) {
+    const limit = asRecord(asRecord(candidate)?.limit)?.context
+    if (typeof limit === 'number' && Number.isFinite(limit) && limit > 0) limits.add(limit)
+  }
+  return limits.size === 1 ? ([...limits][0] ?? null) : null
+}
+
+function liveTranscriptWindow(
+  messages: readonly unknown[],
+  revertMessageID: string | null | undefined,
+): { start: number; end: number } {
+  let end = messages.length
+  if (revertMessageID) {
+    const boundary = messages.findIndex((message) => asRecord(message)?.id === revertMessageID)
+    if (boundary >= 0) end = boundary
+  }
+  let start = 0
+  for (let index = end - 1; index >= 0; index -= 1) {
+    if (asRecord(messages[index])?.type === 'compaction') {
+      start = index + 1
+      break
+    }
+  }
+  return { start, end }
+}
+
+function latestContext(
+  messages: readonly unknown[],
+  modelRef: unknown,
+  models: readonly unknown[],
+  revertMessageID?: string | null,
+): ModelContextSnapshot | null {
+  const target = modelIdentity(modelRef, models)
+  if (target === null || target.providerID === null) return null
+  const limit = contextLimit(modelRef, models)
+  if (limit === null || limit <= 0) return null
+  const { start, end } = liveTranscriptWindow(messages, revertMessageID)
+  for (let index = end - 1; index >= start; index -= 1) {
+    const message = asRecord(messages[index])
+    if (message?.type !== 'assistant') continue
+    const identity = modelIdentity(messageModelRef(message), models)
+    if (identity?.id !== target.id || identity.providerID !== target.providerID) continue
+    const tokens = tokenCount(message)
+    if (tokens === null || tokens <= 0) continue
+    return { tokens, percent: Math.round((tokens / limit) * 100), limit }
+  }
+  return null
+}
+
+/** Snapshot for one exact model identity in the bounded active transcript. */
+export function resolveModelContextSnapshot(
+  messages: readonly unknown[],
+  modelRef: unknown,
+  models: readonly unknown[],
+  revertMessageID?: string | null,
+): ModelContextSnapshot | null {
+  return latestContext(
+    messages.slice(-MODEL_USAGE_MESSAGE_LIMIT),
+    modelRef,
+    models,
+    revertMessageID,
+  )
+}
+
+/** Select the pinned chat model before transcript or configured-agent fallbacks. */
+export function resolveActiveModelRef(
+  sessionModel: unknown,
+  activeMessages: readonly unknown[],
+  fallbackModel: unknown = null,
+): unknown {
+  if (modelID(sessionModel) !== null) return sessionModel
+
+  const firstMessage = Math.max(0, activeMessages.length - MODEL_USAGE_MESSAGE_LIMIT)
+  for (let index = activeMessages.length - 1; index >= firstMessage; index -= 1) {
+    const message = asRecord(activeMessages[index])
+    if (message?.type !== 'assistant') continue
+    const ref = messageModelRef(message)
+    if (modelID(ref) !== null) return ref
+  }
+
+  return modelID(fallbackModel) === null ? null : fallbackModel
 }
 
 /** Native token total: input + output + reasoning + cache read + cache write. */
@@ -644,14 +747,14 @@ export function collectModelUsage(messages: readonly any[]): ModelUsage[] {
     if (id === null || model === null) continue
     const providerID = typeof message.model?.providerID === 'string' ? message.model.providerID : ''
     const key = `${providerID}\u0000${id}`
-    const tokenCount = message.tokens ? messageTokensTotal(message.tokens) : 0
+    const tokensTotal = message.tokens ? messageTokensTotal(message.tokens) : 0
     const cost = numberOrNull(message.cost) ?? 0
     const current = totals.get(key)
     if (current) {
-      current.tokens += Math.max(0, tokenCount)
+      current.tokens += Math.max(0, tokensTotal)
       current.cost += Math.max(0, cost)
     } else {
-      totals.set(key, { model, tokens: Math.max(0, tokenCount), cost: Math.max(0, cost) })
+      totals.set(key, { model, tokens: Math.max(0, tokensTotal), cost: Math.max(0, cost) })
     }
   }
   return [...totals.values()]
@@ -724,9 +827,39 @@ export function modelUsageRowText(row: ModelUsageRow): string {
   return `${row.model.padEnd(MODEL_USAGE_MODEL_WIDTH)}  ${row.tokens.padStart(MODEL_USAGE_TOKEN_WIDTH)}  ${row.cost.padStart(MODEL_USAGE_COST_WIDTH)}`
 }
 
+/** Wrap on grapheme boundaries, measuring terminal cells rather than code units.
+ *  (Body moved verbatim from the removed quota module's `quotaTextLines`.) */
+function wrapTextLines(text: string, width: number, indent: number): string[] {
+  const max = Number.isFinite(width) ? Math.max(0, Math.floor(width)) : 0
+  if (max < 1) return []
+  const padding = ' '.repeat(Math.min(Math.max(0, indent), Math.max(0, max - 2)))
+  const lines: string[] = []
+  let line = padding
+  const segmenter = new Intl.Segmenter()
+  for (const word of text.trim().split(/\s+/)) {
+    if (!word) continue
+    if (line.trim() && cellWidth(line) + 1 + cellWidth(word) > max) {
+      lines.push(line.trimEnd())
+      line = padding
+    }
+    if (line.trim()) line += ' '
+    for (const { segment } of segmenter.segment(word)) {
+      const glyphWidth = cellWidth(segment)
+      if (glyphWidth > max) continue
+      if (cellWidth(line) + glyphWidth > max) {
+        if (line.trim()) lines.push(line.trimEnd())
+        line = glyphWidth + cellWidth(padding) <= max ? padding : ''
+      }
+      line += segment
+    }
+  }
+  if (line.trim()) lines.push(line.trimEnd())
+  return lines
+}
+
 /** Wrap sidebar text by terminal cells, preserving the complete values. */
 export function sidebarTextLines(value: string): string[] {
-  return quotaTextLines(value, SIDEBAR_CONTENT_WIDTH, 0)
+  return wrapTextLines(value, SIDEBAR_CONTENT_WIDTH, 0)
 }
 
 /** Align a monetary value when it fits, otherwise preserve it on a new line. */
@@ -3792,7 +3925,6 @@ function BlockHeader(props: {
 interface SidebarProps {
   context: Context
   sessionID?: string
-  quotaRuntime: QuotaRuntime
 }
 
 function Sidebar(props: SidebarProps): JSX.Element {
@@ -4034,8 +4166,6 @@ function Sidebar(props: SidebarProps): JSX.Element {
           </Show>
         </box>
       </Show>
-      {/* Keep quota inside this composition: host slots order claims, not our blocks. */}
-      <QuotaSidebarSummary context={context} runtime={props.quotaRuntime} />
     </box>
   )
 }
@@ -4310,13 +4440,11 @@ const plugin = Plugin.define({
     // Eager load/sync at setup so the cache is warm before the slot's first
     // render (Known Issue: empty sidebar before the first prompt).
     warmUpSidebarData(context, location)
-    const quotaRuntime = createQuotaRuntime(context)
-    const unregisterQuotaTui = registerQuotaTui(context, quotaRuntime)
 
     const unregisterSidebar = context.ui.slot({
       append: 'sidebar.content',
       render: ({ sessionID }: { sessionID: string }) => (
-        <Sidebar context={context} sessionID={sessionID} quotaRuntime={quotaRuntime} />
+        <Sidebar context={context} sessionID={sessionID} />
       ),
     })
     const unregisterHome = context.ui.slot({
@@ -4354,7 +4482,6 @@ const plugin = Plugin.define({
       if (typeof unregisterPromptFooter === 'function') unregisterPromptFooter()
       if (typeof unregisterPanel === 'function') unregisterPanel()
       if (typeof unregisterCommands === 'function') unregisterCommands()
-      unregisterQuotaTui()
       delete globalState[SINGLETON]
     }
   },

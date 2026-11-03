@@ -33,12 +33,12 @@ Restart is required after installing or changing the plugin generation. A
 restart reloads the selected plugin; it is not an automatic resume of delegated
 work.
 
-With the V2 TUI installed, open a session and run `/quota` to see provider
-details. The compact quota overview is also shown in the sidebar/footer.
-Providers are included only when OpenCode lists an active supported connection
-and Pantheon can resolve a nonblank credential locally. That check does not
-confirm provider-side acceptance; see the
-[quota coverage and troubleshooting notes](tui-v2-quota-providers.md).
+With the V2 TUI installed, the sidebar shows the Pantheon version, active
+preset/source, git state, and a `Context` block with tokens, spend, and
+cache/speed. The TUI ships no quota panel: to see provider quota and usage,
+install the recommended community plugin
+[`@slkiser/opencode-quota`](https://github.com/slkiser/opencode-quota) — see
+[Quota & usage](tui-v2-quota-providers.md).
 
 ## 3. Check the install
 

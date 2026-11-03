@@ -1,5 +1,5 @@
-import { Accessor, JSX } from "solid-js";
-import { Context, KeymapCommand, KeymapLayer, PanelInput } from "@opencode/plugin/tui/context";
+import { Accessor } from "solid-js";
+import { Context, KeymapLayer, PanelInput } from "@opencode/plugin/tui/context";
 //#region src/context-gauge.d.ts
 /** Shared, data-only formatting and visual helpers for compact context gauges. */
 type ContextProgressTone = 'info' | 'success' | 'warning' | 'error';
@@ -16,234 +16,11 @@ export declare function contextBar(percent: number | null | undefined, cells?: n
 } | null;
 export declare function formatSpent(cost: number | null | undefined): string | null;
 //#endregion
-//#region src/quota-v2-model.d.ts
-type QuotaDisplay = 'used' | 'remaining';
-type QuotaPreferences = {
-  enabled: boolean;
-  display: QuotaDisplay;
-};
-export declare const DEFAULT_QUOTA_PREFERENCES: QuotaPreferences;
-type QuotaMetric = {
-  kind: 'provider_quota';
-  used: number;
-  remaining: number;
-  unit: string;
-  label?: string;
-  period?: string;
-  resetsAt?: number;
-} | {
-  kind: 'balance';
-  amount: number;
-  currency: string;
-  label?: string;
-  status?: string;
-} | {
-  kind: 'estimate';
-  amount: number;
-  unit: string;
-  label?: string;
-} | {
-  kind: 'key_usage';
-  amount: number;
-  currency: string;
-  label?: string;
-  period?: string;
-} | {
-  kind: 'session_usage';
-  amount: number;
-  unit: string;
-  label?: string;
-} | {
-  kind: 'provider_status';
-  status: 'available' | 'unavailable' | 'active' | 'inactive';
-  label: string;
-};
-type QuotaProviderView = {
-  id: string;
-  label: string;
-  quotaState: 'available' | 'unavailable';
-  message?: string;
-  metrics: QuotaMetric[];
-};
-type QuotaProviderDetail = {
-  id: string;
-  label: string;
-  authentication: 'connected' | 'not_connected' | 'unavailable';
-  state: 'available' | 'needs_setup' | 'unavailable';
-  message?: string;
-  metrics: QuotaMetric[];
-};
-type QuotaSnapshotStatus = 'loading' | 'ready' | 'partial' | 'connected_unavailable' | 'needs_setup' | 'unavailable' | 'stale' | 'disabled';
-type QuotaSnapshot = {
-  status: QuotaSnapshotStatus;
-  providers: QuotaProviderView[];
-  details: QuotaProviderDetail[];
-  updatedAt: number | null;
-  /** Short diagnostic of the latest transport/RPC failure; absent after a successful refresh. */
-  error?: string | undefined;
-};
-export declare const QUOTA_CLOCK_INTERVAL_MS = 60000;
-type QuotaClockOptions = {
-  now?: () => number;
-  setInterval?: typeof globalThis.setInterval;
-  clearInterval?: typeof globalThis.clearInterval;
-};
-type QuotaClock = {
-  subscribe: (listener: (now: number) => void) => () => void;
-};
-/** Create a shared local clock for countdown displays; it never refreshes quota data. */
-export declare function createQuotaClock(options?: QuotaClockOptions): QuotaClock;
-/** Module-local clock shared by all countdown consumers in the TUI bundle. */
-export declare const quotaClock: QuotaClock;
-/** Format a provider-reported reset timestamp using the caller's local clock. */
-export declare function formatQuotaCountdown(resetsAt: number | undefined, now: number): string | null | undefined;
-type QuotaSidebarEntry = {
-  kind: 'quota';
-  key: string;
-  providerID: string;
-  providerLabel: string;
-  metric: Extract<QuotaMetric, {
-    kind: 'provider_quota';
-  }>;
-  progress: {
-    usedPercent: number;
-    remainingPercent: number;
-  };
-} | {
-  kind: 'status';
-  key: string;
-  providerID: string;
-  providerLabel: string;
-  message: string;
-};
-type ModelContextSnapshot = {
-  tokens: number;
-  percent: number;
-  limit: number;
-};
-type RecentModelUsageRow = {
-  providerID: string | null;
-  modelID: string | null;
-  label: string;
-  tokens: number | null;
-  cost: number | null;
-  context: ModelContextSnapshot | null;
-  active: boolean;
-};
-type CollectRecentModelUsageInput = {
-  activeModel: unknown;
-  activeMessages: readonly unknown[];
-  usageMessages: readonly unknown[];
-  usageSessions?: readonly {
-    messages: readonly unknown[];
-    revertMessageID?: string | null;
-  }[];
-  models: readonly unknown[];
-  revertMessageID?: string | null;
-};
-/** Snapshot for one exact model identity in the bounded active transcript. */
-export declare function resolveModelContextSnapshot(messages: readonly unknown[], modelRef: unknown, models: readonly unknown[], revertMessageID?: string | null): ModelContextSnapshot | null;
-/** Select the pinned chat model before transcript or configured-agent fallbacks. */
-export declare function resolveActiveModelRef(sessionModel: unknown, activeMessages: readonly unknown[], fallbackModel?: unknown): unknown;
-/** Pin the active chat first, then rank two distinct models by summed reported
- * tokens from the already-cached, bounded session-family messages. */
-export declare function collectRecentModelUsageRows(input: CollectRecentModelUsageInput): RecentModelUsageRow[];
-export declare function normalizeQuotaPreferences(value: unknown): QuotaPreferences;
-export declare function quotaSnapshotStatusLabel(status: QuotaSnapshotStatus, error?: string | undefined): string;
-/** Map the current typed RPC status into a provider-neutral, data-only UI model. */
-export declare function quotaSnapshotFromStatus(response: unknown, now?: number): QuotaSnapshot;
-/** Return complementary whole percentages only when both quota values define a real range. */
-export declare function quotaProgress(metric: Extract<QuotaMetric, {
-  kind: 'provider_quota';
-}>): {
-  usedPercent: number;
-  remainingPercent: number;
-} | undefined;
-/** Connected-provider rows for the compact sidebar; only reported quota windows are shown. */
-export declare function quotaSidebarEntries(snapshot: QuotaSnapshot): QuotaSidebarEntry[];
-/** Render each measurement with its source/category label; no category is inferred. */
-export declare function formatQuotaMetric(metric: QuotaMetric, display: QuotaDisplay): string | undefined;
-/** Compact one-value summary for the footer; quota display follows the setting. */
-export declare function compactQuotaMetric(metric: QuotaMetric, display: QuotaDisplay): string | undefined;
-type QuotaRuntime = {
-  preferences: () => QuotaPreferences;
-  snapshot: () => QuotaSnapshot;
-  toggleEnabled: () => Promise<void>;
-  toggleDisplay: () => Promise<void>;
-  refresh: () => Promise<void>;
-  dispose: () => void;
-};
-/** One storage-backed source of truth for all quota TUI surfaces. */
-export declare function createQuotaRuntime(context: Pick<Context, 'client' | 'data' | 'location' | 'storage'>): QuotaRuntime;
-//#endregion
-//#region src/go-key-diagnostic-ui.d.ts
-/** Native keyboard-accessible dialogs; never invoked by quota refresh or panel mounting. */
-export declare function quotaGoCheckCommand(context: Pick<Context, 'ui' | 'client' | 'location' | 'data'>): KeymapCommand;
-//#endregion
 //#region src/model-usage-limits.d.ts
 /** Shared bounds for cached recent model-usage aggregation. */
 export declare const MODEL_USAGE_VISIBLE_CEILING = 3;
 export declare const MODEL_USAGE_MESSAGE_LIMIT = 400;
 export declare const MODEL_USAGE_SESSION_LIMIT = 8;
-//#endregion
-//#region src/quota-v2.d.ts
-export declare const QUOTA_PANEL_NAME = "pantheon.quota";
-export declare const QUOTA_OPEN_COMMAND_ID = "pantheon.quota.open";
-type QuotaIconMode = 'nerd' | 'unicode' | 'ascii';
-type QuotaIconName = 'check' | 'close' | 'clock' | 'gauge' | 'plug' | 'refresh' | 'settings' | 'sliders' | 'warning';
-export declare function quotaIcon(name: QuotaIconName, mode?: QuotaIconMode): string;
-export declare const QUOTA_ICON: string;
-type QuotaSurfaceProps = {
-  context: Context;
-  runtime: QuotaRuntime;
-};
-export declare function quotaUsageTone(usedPercent: number): 'success' | 'warning' | 'error';
-type QuotaTone = 'info' | 'success' | 'warning' | 'error';
-export declare function snapshotSummary(snapshot: QuotaSnapshot, display: 'used' | 'remaining'): string;
-type FinanceMetric = Extract<QuotaMetric, {
-  kind: 'balance' | 'estimate' | 'key_usage';
-}>;
-type FinanceEntry = {
-  providerID: string;
-  metric: FinanceMetric;
-};
-export declare function sidebarFinanceEntries(snapshot: QuotaSnapshot): FinanceEntry[];
-type QuotaWindowMetric = Extract<QuotaMetric, {
-  kind: 'provider_quota';
-}>;
-/** Wrap on grapheme boundaries, measuring terminal cells rather than code units. */
-export declare function quotaTextLines(text: string, width: number, indent: number): string[];
-/** Layout uses only a provider-reported reset; a local clock never refreshes data. */
-export declare function quotaWindowLines(metric: QuotaWindowMetric, display: 'used' | 'remaining', width: number, now: number, sidebarPercent?: boolean): string[];
-export declare function financeMetricLines(metric: FinanceMetric, width: number): string[];
-export declare function quotaMetricLines(metric: Exclude<QuotaMetric, {
-  kind: 'provider_quota';
-}>, width: number): string[];
-export declare function providerState(provider: QuotaProviderDetail, mode?: QuotaIconMode): {
-  label: string;
-  tone: QuotaTone;
-};
-export declare function activeQuotaModelLabel(row: RecentModelUsageRow | undefined): string;
-export declare function quotaPanelStatusMessage(snapshot: Pick<QuotaSnapshot, 'status' | 'error'>): string | undefined;
-type QuotaPanelAction = 'toggle-enabled' | 'toggle-display' | 'refresh' | 'close';
-export declare const QUOTA_TABS: readonly ['usage', 'limits', 'plugin', 'settings'];
-type QuotaTab = (typeof QUOTA_TABS)[number];
-export declare const DEFAULT_QUOTA_TAB: QuotaTab;
-export declare function moveQuotaTab(current: QuotaTab, direction: -1 | 1): QuotaTab;
-export declare const QUOTA_PANEL_COMMANDS: readonly {
-  action: QuotaPanelAction;
-  id: string;
-  title: string;
-  bind: string;
-}[];
-export declare function runQuotaPanelCommand(action: QuotaPanelAction, panel: Pick<PanelInput, 'focused' | 'close'>, runtime: QuotaRuntime): false | Promise<void> | undefined;
-export declare function quotaPanelKeymapLayer(panel: Pick<PanelInput, 'focused' | 'close'>, runtime: QuotaRuntime, onTabChange?: (direction: -1 | 1) => void): KeymapLayer;
-export declare function quotaOpenCommand(context: Pick<Context, 'ui'>): KeymapCommand;
-export declare function openQuotaPanel(context: Pick<Context, 'ui'>): boolean;
-export declare function quotaTabLabel(tab: QuotaTab, mode?: QuotaIconMode): string;
-export declare function QuotaPanel(props: QuotaSurfaceProps & {
-  panel: PanelInput;
-}): JSX.Element;
 //#endregion
 //#region src/sidebar-width.d.ts
 /** Terminal cells `value` occupies — the unit every column in this plugin is
@@ -252,111 +29,6 @@ export declare function QuotaPanel(props: QuotaSurfaceProps & {
  *  Asian Ambiguous as one, combining marks and variation selectors as none.
  *  Pure. */
 export declare function cellWidth(value: string): number;
-//#endregion
-//#region src/usage-history-view.d.ts
-export declare function UsageHistorySection(props: {
-  context: Context;
-  panel: PanelInput;
-  width: number;
-}): JSX.Element;
-//#endregion
-//#region src/usage-history-contract.d.ts
-type UsageHistoryRpcPeriod = '7d' | '15d' | '30d' | 'total';
-interface UsageHistoryRpcTotals {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  total: number;
-}
-interface UsageHistoryRpcBucket extends UsageHistoryRpcTotals {
-  date: string;
-  estimatedUsd?: number;
-  pricingComplete: boolean;
-}
-interface UsageHistoryRpcModel {
-  providerID: string;
-  modelID: string;
-  totals: UsageHistoryRpcTotals;
-  estimatedUsd?: number;
-  pricingComplete: boolean;
-}
-interface UsageHistoryRpcAvailable {
-  status: 'available' | 'partial';
-  period: UsageHistoryRpcPeriod;
-  coverageStart: string | null;
-  partial: boolean;
-  truncated: boolean;
-  rows: number;
-  buckets: UsageHistoryRpcBucket[];
-  totals: UsageHistoryRpcTotals;
-  models: UsageHistoryRpcModel[];
-  pricing: {
-    status: 'empty' | 'unavailable' | 'partial' | 'complete';
-    complete: boolean;
-    billed: false;
-    estimatedUsd?: number;
-    unpricedModels: number;
-  };
-}
-interface UsageHistoryRpcUnavailable {
-  status: 'unavailable';
-  reason: 'invalid_period' | 'history_unavailable' | 'history_timeout';
-}
-type UsageHistoryRpcResult = UsageHistoryRpcAvailable | UsageHistoryRpcUnavailable;
-//#endregion
-//#region src/usage-view-model.d.ts
-type ActiveContextCostResult = {
-  status: 'estimated';
-  estimatedUsd: number;
-  billed: false;
-  basis: 'pre-cache-context-tokens-times-input-price';
-  cacheDiscountApplied: false;
-} | {
-  status: 'unavailable';
-  billed: false;
-  basis: 'pre-cache-context-tokens-times-input-price';
-  cacheDiscountApplied: false;
-  reason: 'invalid-context-token-count' | 'missing-model-identity' | 'no-pricing' | 'unknown-model' | 'ambiguous-model' | 'missing-cache-price';
-};
-export declare const USAGE_HISTORY_PERIOD_BINDINGS: readonly [{
-  readonly period: '7d';
-  readonly bind: '7';
-  readonly label: '7d';
-}, {
-  readonly period: '15d';
-  readonly bind: '1';
-  readonly label: '15d';
-}, {
-  readonly period: '30d';
-  readonly bind: '3';
-  readonly label: '30d';
-}, {
-  readonly period: 'total';
-  readonly bind: 't';
-  readonly label: 'total';
-}];
-export declare function usageHistoryTextLines(value: string, width: number): string[];
-export declare function usageHistorySelectorLabel(selected: UsageHistoryRpcPeriod): string;
-export declare function usageHistorySelectorLines(selected: UsageHistoryRpcPeriod, width: number): string[];
-export declare function usageHistoryPeriodForKey(key: string): UsageHistoryRpcPeriod | undefined;
-export declare function usageHistoryControlsLines(width: number): string[];
-export declare function usageHistoryCoverageLabel(result: UsageHistoryRpcAvailable): string;
-export declare function usageHistoryPartialWarning(result: UsageHistoryRpcAvailable): string | null;
-export declare function usageHistoryPricingLabel(result: UsageHistoryRpcAvailable): string;
-export declare function usageHistoryUnavailableMessage(result: UsageHistoryRpcResult): string | null;
-export declare function usageHistoryEmptyMessage(): string;
-export declare function usageHistoryChartLines(result: UsageHistoryRpcAvailable, width: number): string[];
-export declare function activeModelIdentity(model: {
-  providerID: string | null;
-  modelID: string | null;
-  label: string;
-}): string;
-export declare function sessionSpendLabel(cost: number): string | null;
-export declare function activeContextEstimateLines(result: ActiveContextCostResult, width: number): string[];
-export declare function activeContextEstimatePendingLines(width: number): string[];
-export declare function activeContextEstimateMissingLines(width: number): string[];
-export declare function activeContextEstimateErrorLines(width: number): string[];
 //#endregion
 //#region src/index-v2.d.ts
 /** Sidebar body shown while the host has not published a session yet. */
@@ -426,6 +98,15 @@ export declare function providerIDFromModels(models: unknown, ref: unknown): str
  *  provider-qualified id, then the bare id (the host's `id`/`modelID` fields).
  *  Absent/ambiguous models degrade to null so the gauge is simply omitted. */
 export declare function resolveContextLimit(models: readonly any[], ref: unknown): number | null;
+export type ModelContextSnapshot = {
+  tokens: number;
+  percent: number;
+  limit: number;
+};
+/** Snapshot for one exact model identity in the bounded active transcript. */
+export declare function resolveModelContextSnapshot(messages: readonly unknown[], modelRef: unknown, models: readonly unknown[], revertMessageID?: string | null): ModelContextSnapshot | null;
+/** Select the pinned chat model before transcript or configured-agent fallbacks. */
+export declare function resolveActiveModelRef(sessionModel: unknown, activeMessages: readonly unknown[], fallbackModel?: unknown): unknown;
 /** Native token total: input + output + reasoning + cache read + cache write. */
 export declare function messageTokensTotal(tokens: any): number;
 export type ContextUsage = {
@@ -1354,5 +1035,5 @@ declare const plugin: {
   setup(context: Context): (() => void) | undefined;
 };
 //#endregion
-export { type ActiveContextCostResult, type ContextProgressTone, type QuotaIconMode, type QuotaIconName, type QuotaSidebarEntry, type QuotaTab, plugin as default };
+export { type ContextProgressTone, plugin as default };
 //# sourceMappingURL=tui-v2.d.ts.map
