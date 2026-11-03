@@ -227,7 +227,7 @@ function testHostileCriteriaRejected(): void {
     'API_KEY: sk-abcdefghijklmnopqrs',
     'the token = ghp_abcdefghijklmnopqrst',
     '-----BEGIN RSA PRIVATE KEY-----',
-    'aws key AKIAexample-redacted-0000 inside',
+    'aws_access_key_id = AKIAexample0000',
     // Control characters and newlines.
     'goal one\ngoal two',
     'tab\tseparated',
