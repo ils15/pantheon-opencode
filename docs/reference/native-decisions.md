@@ -139,6 +139,51 @@ order — every failure is a bounded refusal JSON, never a retry:
 The tool never dispatches agents, runs skills, executes other tools, grants
 permissions, or alters review gates.
 
+## J1 risk-score gate (shadow)
+
+A second, opt-in consumer of the same gate chain: when
+`PANTHEON_J1_RISK_SCORE` is set to `1`, `on`, or `true` (anything else, or
+unset, leaves it off — and off means zero overhead: no sink, no observer, no
+per-call work), the plugin's `execute.before` hook fires ONE bounded native
+Decisions call per **write/execute** tool call — bash/shell and webfetch
+(execute), file writes (write). Read-only tools are never observed, and the
+target list intersects the secret scan's own exfil-capable gate, so a tool the
+scan never inspects is never observed either.
+
+Each observation runs the exact chain the `pantheon_jev_decide` tool runs —
+config `enabled` + `egress_consent`, route via the budget ledger's admission
+check, the `decision.egress` permission kill-switch, one reservation, one host
+call, cost reconciliation — through the shared runner
+(`runGatedNativeJevCall`); no gate logic is duplicated. The request asks two
+questions only: one **score** ("risk of this tool call for the current task",
+2–10 levels) and one **predicate** ("is this call consistent with the current
+task intent?").
+
+**Sanitization contract.** The request carries NO user content: no task text,
+no file paths, no tool input values. The state text is a fixed template over
+three fields — the tool name (accepted only as a bounded `[A-Za-z0-9._:-]`
+token; paths, shell metacharacters, injection prose and oversize strings are
+rejected outright, never scrubbed), the scope class, and the sha256 of the
+serialized tool input (an opaque correlation value). The telemetry record
+carries the outcome as one bounded reason token, e.g. `risk-3-intent-yes` or
+`skip-timeout`.
+
+**Fail-open and fail-silent.** Every failure mode — config disabled, consent
+missing, route or ledger denied, permission denied, the host call throwing,
+usage unreconciled, or the 2-second deadline — records a single
+`skip-…` reason and moves on. The hook fires the observation WITHOUT awaiting
+it: the tool call's latency is unchanged, the observer bounds its own wait at
+2s (AbortController), abandoned calls settle their own ledger reservation in
+the background, and nothing is ever retried or queued.
+
+**Shadow never blocks.** The only verdict this phase can produce is
+`observe`, recorded as a shadow record (`point: 'J1'`, `mode: 'shadow'`,
+`effect: 'none'`) in the in-memory, bounded decision telemetry collector the
+plugin never reads back. A high risk score changes the recorded reason and
+nothing else. The `flag` verdict is a named constant reserved for a future
+active phase and is unreachable; there is no deny path, no ask path, and no
+permission narrowing on this surface.
+
 ## Fast decision paths
 
 The decision layers are ordered by cost; use the cheapest one that answers:
