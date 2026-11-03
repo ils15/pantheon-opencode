@@ -1,4 +1,5 @@
 import { Rpc } from '@opencode/plugin/promise/index'
+import { MAX_COST_AGENTS } from './cost-summary-contract'
 import {
   MAX_HISTORY_BUCKETS,
   MAX_HISTORY_MODELS,
@@ -251,6 +252,79 @@ const usageHistoryUnavailableSchema = {
   additionalProperties: false,
 } as const
 
+const costSummaryAgentSchema = {
+  type: 'object',
+  properties: {
+    agent: { type: 'string', minLength: 1, maxLength: 128 },
+    input: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+    output: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+    cacheRead: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+    cacheWrite: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+    total: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+    estimatedUsd: { type: 'number', minimum: 0 },
+    pricingComplete: { type: 'boolean' },
+  },
+  required: ['agent', 'input', 'output', 'cacheRead', 'cacheWrite', 'total', 'pricingComplete'],
+  additionalProperties: false,
+} as const
+
+const costSummaryAvailableSchema = {
+  type: 'object',
+  properties: {
+    status: { type: 'string', enum: ['available', 'partial'] },
+    period: { type: 'string', enum: USAGE_HISTORY_PERIODS },
+    coverageStart: { type: ['string', 'null'], pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+    partial: { type: 'boolean' },
+    truncated: { type: 'boolean' },
+    rows: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+    totals: usageHistoryTotalsSchema,
+    agents: { type: 'array', maxItems: MAX_COST_AGENTS, items: costSummaryAgentSchema },
+    pricing: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', enum: ['empty', 'unavailable', 'partial', 'complete'] },
+        complete: { type: 'boolean' },
+        billed: { const: false },
+        estimatedUsd: { type: 'number', minimum: 0 },
+        unpricedModels: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      },
+      required: ['status', 'complete', 'billed', 'unpricedModels'],
+      additionalProperties: false,
+    },
+  },
+  required: [
+    'status',
+    'period',
+    'coverageStart',
+    'partial',
+    'truncated',
+    'rows',
+    'totals',
+    'agents',
+    'pricing',
+  ],
+  additionalProperties: false,
+} as const
+
+const costSummaryUnavailableSchema = {
+  type: 'object',
+  properties: {
+    status: { const: 'unavailable' },
+    reason: {
+      type: 'string',
+      enum: [
+        'invalid_period',
+        'ledger_unavailable',
+        'ledger_unsupported',
+        'ledger_corrupt',
+        'ledger_timeout',
+      ],
+    },
+  },
+  required: ['status', 'reason'],
+  additionalProperties: false,
+} as const
+
 const activeContextCostInputSchema = {
   type: 'object',
   properties: {
@@ -358,6 +432,17 @@ export const quotaRpc = Rpc.define({
       },
       output: {
         oneOf: [usageHistoryAvailableSchema, usageHistoryUnavailableSchema],
+      },
+    },
+    cost_summary: {
+      input: {
+        type: 'object',
+        properties: { period: { type: 'string', enum: USAGE_HISTORY_PERIODS } },
+        required: ['period'],
+        additionalProperties: false,
+      },
+      output: {
+        oneOf: [costSummaryAvailableSchema, costSummaryUnavailableSchema],
       },
     },
     active_context_cost: {

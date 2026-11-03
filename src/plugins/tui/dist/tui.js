@@ -1,4 +1,5 @@
-import { n as quotaRpc, t as QUOTA_PROVIDER_IDS } from "./quota-rpc-BU_g5xdW.js";
+import { a as MAX_COST_AGENTS } from "./usage-history-contract-CHXPIL9L.js";
+import { n as quotaRpc, t as QUOTA_PROVIDER_IDS } from "./quota-rpc-DWc534zL.js";
 import { createComponent, createElement, createTextNode, effect, insert, insertNode, memo, setProp } from "@opentui/solid";
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
@@ -2564,6 +2565,581 @@ function icon(name, options = {}) {
 	return mode === "unicode" ? glyphs.unicode : glyphs.ascii;
 }
 //#endregion
+//#region src/cost-summary-validation.ts
+function asRecord$2(value) {
+	return typeof value === "object" && value !== null ? value : null;
+}
+const REASONS = [
+	"invalid_period",
+	"ledger_unavailable",
+	"ledger_unsupported",
+	"ledger_corrupt",
+	"ledger_timeout"
+];
+function isTotals$1(value) {
+	const totals = asRecord$2(value);
+	return totals !== null && [
+		"input",
+		"output",
+		"cacheRead",
+		"cacheWrite",
+		"total"
+	].every((key) => typeof totals[key] === "number" && Number.isSafeInteger(totals[key]) && totals[key] >= 0);
+}
+function isAgent(value) {
+	const agent = asRecord$2(value);
+	return agent !== null && typeof agent.agent === "string" && agent.agent.length > 0 && isTotals$1(agent) && typeof agent.pricingComplete === "boolean" && (agent.estimatedUsd === void 0 || typeof agent.estimatedUsd === "number" && Number.isFinite(agent.estimatedUsd));
+}
+/** Client-side guard: only a well-formed, aggregate-only cost summary renders. */
+function isCostSummaryRpcResult(value) {
+	const result = asRecord$2(value);
+	if (!result) return false;
+	if (result.status === "unavailable") return REASONS.includes(String(result.reason));
+	if (result.status !== "available" && result.status !== "partial") return false;
+	const pricing = asRecord$2(result.pricing);
+	return [
+		"7d",
+		"15d",
+		"30d",
+		"total"
+	].includes(String(result.period)) && (result.coverageStart === null || typeof result.coverageStart === "string") && typeof result.partial === "boolean" && typeof result.truncated === "boolean" && typeof result.rows === "number" && Number.isSafeInteger(result.rows) && result.rows >= 0 && isTotals$1(result.totals) && Array.isArray(result.agents) && result.agents.every(isAgent) && pricing !== null && [
+		"empty",
+		"unavailable",
+		"partial",
+		"complete"
+	].includes(String(pricing.status)) && typeof pricing.complete === "boolean" && pricing.billed === false && typeof pricing.unpricedModels === "number" && Number.isSafeInteger(pricing.unpricedModels) && pricing.unpricedModels >= 0 && (pricing.estimatedUsd === void 0 || typeof pricing.estimatedUsd === "number" && Number.isFinite(pricing.estimatedUsd));
+}
+//#endregion
+//#region src/sidebar-width.ts
+const GRAPHEMES = new Intl.Segmenter(void 0, { granularity: "grapheme" });
+/** A grapheme the host draws two cells wide: emoji presentation, an extended
+*  pictograph (a bare `❤` counts too, exactly as the host's `emoji-regex`
+*  does) and a regional-indicator pair (a flag). */
+const EMOJI_GLYPH = /\p{Emoji_Presentation}|\p{Extended_Pictographic}|\p{Regional_Indicator}/u;
+/** VS16 asks for emoji presentation; without it `1` is one cell, with it the
+*  keycap sequence is drawn as one two-cell glyph. */
+const EMOJI_PRESENTATION_SELECTOR = "️";
+/** Unicode default-ignorable code points carry no width of their own. */
+const IGNORABLE_GLYPH = /^\p{Default_Ignorable_Code_Point}$/u;
+/** East Asian Wide/Fullwidth ranges — two cells, never the ambiguous width
+*  (the host measures ambiguous as narrow, so `▸`/`✓`/`—` stay one cell).
+*  Generated from the host's own measurement (`string-width` over every code
+*  point, emoji excluded), so this table can be regenerated verbatim when the
+*  host upgrades its Unicode data instead of being hand-edited. */
+const CELL_WIDE_RANGES = [
+	[4352, 4446],
+	[9001, 9002],
+	[9776, 9783],
+	[9866, 9871],
+	[11904, 11929],
+	[11931, 12019],
+	[12032, 12245],
+	[12272, 12335],
+	[12337, 12348],
+	[12350, 12350],
+	[12353, 12438],
+	[12441, 12543],
+	[12549, 12591],
+	[12593, 12643],
+	[12645, 12686],
+	[12688, 12773],
+	[12783, 12830],
+	[12832, 12871],
+	[12880, 12950],
+	[12952, 12952],
+	[12954, 42124],
+	[42128, 42182],
+	[43360, 43388],
+	[44032, 55203],
+	[63744, 64255],
+	[65040, 65049],
+	[65072, 65106],
+	[65108, 65126],
+	[65128, 65131],
+	[65281, 65376],
+	[65504, 65510],
+	[94176, 94180],
+	[94192, 94198],
+	[94208, 101594],
+	[101631, 101664],
+	[101760, 101874],
+	[101888, 102801],
+	[102816, 102866],
+	[110576, 110579],
+	[110581, 110587],
+	[110589, 110590],
+	[110592, 110888],
+	[110898, 110898],
+	[110928, 110930],
+	[110933, 110933],
+	[110948, 110952],
+	[110960, 111355],
+	[119552, 119638],
+	[119648, 119670],
+	[127488, 127488],
+	[127504, 127513],
+	[127515, 127534],
+	[127536, 127537],
+	[127547, 127547],
+	[127552, 127560],
+	[127584, 127589],
+	[131072, 196605],
+	[196608, 262141]
+];
+/** One code point the terminal draws no cell for: control characters, the
+*  zero-width joiners/marks, combining marks and variation selectors. */
+function isZeroWidthCodePoint(code, glyph) {
+	if (code <= 31 || code >= 127 && code <= 159) return true;
+	if (code >= 8203 && code <= 8207) return true;
+	if (code === 65279) return true;
+	if (code >= 768 && code <= 879) return true;
+	if (code >= 6832 && code <= 6911) return true;
+	if (code >= 7616 && code <= 7679) return true;
+	if (code >= 8400 && code <= 8447) return true;
+	if (code >= 65024 && code <= 65039) return true;
+	if (code >= 65056 && code <= 65071) return true;
+	if (code >= 917760 && code <= 917999) return true;
+	if (code >= 55296 && code <= 57343) return true;
+	return IGNORABLE_GLYPH.test(glyph);
+}
+function isWideCodePoint(code) {
+	for (const [low, high] of CELL_WIDE_RANGES) {
+		if (code < low) return false;
+		if (code <= high) return true;
+	}
+	return false;
+}
+/** Cells one grapheme occupies. */
+function graphemeWidth(segment) {
+	if (EMOJI_GLYPH.test(segment)) return 2;
+	if (segment.length > 1 && segment.includes(EMOJI_PRESENTATION_SELECTOR)) return 2;
+	let width = 0;
+	for (const glyph of segment) {
+		const code = glyph.codePointAt(0) ?? 0;
+		if (isZeroWidthCodePoint(code, glyph)) continue;
+		width += isWideCodePoint(code) ? 2 : 1;
+	}
+	return width;
+}
+/** Terminal cells `value` occupies — the unit every column in this plugin is
+*  measured in. Mirrors the host (that is how `@opentui/core` sizes a text
+*  run): emoji count as two cells, East Asian Wide/Fullwidth as two, East
+*  Asian Ambiguous as one, combining marks and variation selectors as none.
+*  Pure. */
+function cellWidth(value) {
+	let width = 0;
+	for (const { segment } of GRAPHEMES.segment(value)) width += graphemeWidth(segment);
+	return width;
+}
+//#endregion
+//#region src/usage-view-model.ts
+const HISTORY_PERIODS = [
+	"7d",
+	"15d",
+	"30d",
+	"total"
+];
+const USAGE_HISTORY_PERIOD_BINDINGS = [
+	{
+		period: "7d",
+		bind: "7",
+		label: "7d"
+	},
+	{
+		period: "15d",
+		bind: "1",
+		label: "15d"
+	},
+	{
+		period: "30d",
+		bind: "3",
+		label: "30d"
+	},
+	{
+		period: "total",
+		bind: "t",
+		label: "total"
+	}
+];
+function wrapText(value, width) {
+	const maxWidth = Number.isFinite(width) ? Math.max(1, Math.floor(width)) : 1;
+	const lines = [];
+	const segmenter = new Intl.Segmenter();
+	let line = "";
+	for (const word of value.trim().split(/\s+/)) {
+		if (!word) continue;
+		if (line && cellWidth(line) + 1 + cellWidth(word) > maxWidth) {
+			lines.push(line);
+			line = "";
+		}
+		if (line) line += " ";
+		for (const { segment } of segmenter.segment(word)) {
+			if (cellWidth(line) + cellWidth(segment) > maxWidth) {
+				if (line) lines.push(line);
+				line = "";
+			}
+			line += segment;
+		}
+	}
+	if (line) lines.push(line);
+	return lines;
+}
+function usageHistoryTextLines(value, width) {
+	return wrapText(value, width);
+}
+/** Thousands-separated count, shared by the history chart and the cost summary. */
+function formatCount(value) {
+	return Math.max(0, value).toLocaleString("en-US");
+}
+/** Catalog money, shared by the history chart labels and the cost summary. */
+function formatUsd(value) {
+	if (!Number.isFinite(value) || value < 0) return void 0;
+	return `$${new Intl.NumberFormat("en-US", {
+		minimumFractionDigits: 2,
+		maximumFractionDigits: 8
+	}).format(value)}`;
+}
+function chartBar(value, maxValue, width) {
+	const cells = Math.max(0, Math.floor(width));
+	if (cells === 0 || value <= 0 || maxValue <= 0) return "";
+	return "#".repeat(Math.max(1, Math.min(cells, Math.round(value / maxValue * cells))));
+}
+function chartValueLine(value, maximum, width) {
+	const count = `${formatCount(value)} tokens`;
+	const barWidth = Math.max(0, width - cellWidth(count) - 3);
+	const bar = chartBar(value, maximum, Math.min(12, barWidth));
+	return wrapText(`  ${bar ? `${bar} ` : ""}${count}`, width).join("\n");
+}
+function appendWrapped(target, value, width) {
+	target.push(...wrapText(value, width));
+}
+function usageHistorySelectorLabel(selected) {
+	return `Período: ${HISTORY_PERIODS.map((period) => {
+		const label = period === "total" ? "Total" : period;
+		return period === selected ? `[${label}]` : label;
+	}).join(" · ")}`;
+}
+function usageHistorySelectorLines(selected, width) {
+	return wrapText(usageHistorySelectorLabel(selected), width);
+}
+function usageHistoryPeriodForKey(key) {
+	return USAGE_HISTORY_PERIOD_BINDINGS.find((binding) => binding.bind === key)?.period;
+}
+function usageHistoryControlsLines(width) {
+	return wrapText("7 · 7d   1 · 15d   3 · 30d   T · total", width);
+}
+function usageHistoryCoverageLabel(result) {
+	return result.coverageStart === null ? "Início da cobertura indisponível" : `Cobertura desde ${result.coverageStart}`;
+}
+function usageHistoryPartialWarning(result) {
+	if (result.partial && result.truncated) return "Histórico parcial e truncado pelo limite seguro.";
+	if (result.partial) return "Histórico parcial segundo a consulta.";
+	if (result.truncated) return "Histórico truncado pelo limite seguro.";
+	return null;
+}
+function usageHistoryPricingLabel(result) {
+	const amount = result.pricing.estimatedUsd === void 0 ? void 0 : formatUsd(result.pricing.estimatedUsd);
+	const value = amount ? ` · ${amount}` : "";
+	switch (result.pricing.status) {
+		case "complete": return `Estimativa pelo catálogo${value} · não cobrada`;
+		case "partial": return `Estimativa parcial pelo catálogo${value} · não cobrada · ${result.pricing.unpricedModels} modelo(s) sem preço`;
+		case "unavailable": return "Estimativa de preço indisponível · nenhum valor cobrado";
+		case "empty": return "Sem dados de preço para estimar · nenhum valor cobrado";
+	}
+}
+function usageHistoryUnavailableMessage(result) {
+	if (result.status !== "unavailable") return null;
+	switch (result.reason) {
+		case "invalid_period": return "Período de histórico inválido.";
+		case "history_timeout": return "Consulta de histórico excedeu o tempo limite.";
+		case "history_unavailable": return "Histórico indisponível neste momento.";
+	}
+}
+function usageHistoryEmptyMessage() {
+	return "Sem histórico neste período.";
+}
+function usageHistoryChartLines(result, width) {
+	const maxWidth = Math.max(1, Math.floor(width));
+	if (result.rows === 0 && result.buckets.length === 0 && result.models.length === 0) return wrapText(usageHistoryEmptyMessage(), maxWidth);
+	const lines = [];
+	appendWrapped(lines, `GERAL · ${formatCount(result.totals.total)} tokens`, maxWidth);
+	if (result.buckets.length > 0) {
+		lines.push("Uso diário");
+		const maxBucket = Math.max(0, ...result.buckets.map((bucket) => bucket.total));
+		for (const bucket of result.buckets) {
+			appendWrapped(lines, bucket.date, maxWidth);
+			lines.push(...chartValueLine(bucket.total, maxBucket, maxWidth).split("\n"));
+		}
+	} else lines.push("Sem buckets diários neste período.");
+	lines.push("Modelos no período");
+	if (result.models.length === 0) {
+		lines.push("Sem totais por modelo.");
+		return lines.flatMap((line) => wrapText(line, maxWidth));
+	}
+	const maxModel = Math.max(0, ...result.models.map((model) => model.totals.total));
+	for (const model of result.models) {
+		appendWrapped(lines, `${model.providerID}/${model.modelID}`, maxWidth);
+		lines.push(...chartValueLine(model.totals.total, maxModel, maxWidth).split("\n"));
+	}
+	return lines.flatMap((line) => wrapText(line, maxWidth));
+}
+function activeModelIdentity(model) {
+	if (model.providerID && model.modelID) return `${model.providerID}/${model.modelID}`;
+	if (model.modelID) return model.modelID;
+	return model.label || "identidade indisponível";
+}
+function sessionSpendLabel(cost) {
+	if (!Number.isFinite(cost) || cost < 0) return null;
+	return `Gasto da sessão (relatado) · $${cost.toFixed(2)}`;
+}
+function unavailableContextReason(reason) {
+	switch (reason) {
+		case "invalid-context-token-count": return "contagem de tokens de contexto inválida";
+		case "missing-model-identity": return "identidade do modelo indisponível";
+		case "no-pricing":
+		case "missing-cache-price": return "preço de entrada indisponível";
+		case "unknown-model":
+		case "ambiguous-model": return "modelo não identificado na tabela de preços";
+	}
+}
+function activeContextEstimateLines(result, width) {
+	const maxWidth = Math.max(1, Math.floor(width));
+	if (result.status === "unavailable") return wrapText(`Estimativa de contexto (pré-cache) indisponível · ${unavailableContextReason(result.reason)}`, maxWidth);
+	const amount = formatUsd(result.estimatedUsd);
+	if (!amount) return wrapText("Estimativa de contexto (pré-cache) indisponível · valor inválido", maxWidth);
+	return [...wrapText(`Estimativa de contexto (pré-cache) · ${amount}`, maxWidth), ...wrapText("Preço de entrada × tokens pré-cache; sem desconto de cache; não é valor cobrado.", maxWidth)];
+}
+function activeContextEstimatePendingLines(width) {
+	return wrapText("Estimativa de contexto (pré-cache) · calculando…", width);
+}
+function activeContextEstimateMissingLines(width) {
+	return wrapText("Estimativa de contexto (pré-cache) indisponível · contexto não reportado.", width);
+}
+function activeContextEstimateErrorLines(width) {
+	return wrapText("Estimativa de contexto (pré-cache) indisponível · falha na consulta.", width);
+}
+//#endregion
+//#region src/cost-summary-view-model.ts
+/** Why a ledger query could not answer; the panel shows the diagnostic, never the error. */
+function costSummaryUnavailableMessage(result) {
+	if (result.status !== "unavailable") return null;
+	switch (result.reason) {
+		case "invalid_period": return "Período de custo inválido.";
+		case "ledger_unavailable": return "Banco de dados de sessão indisponível: nenhum histórico de custo até o OpenCode armazenar dados.";
+		case "ledger_unsupported": return "Ledger não reconhecido: linhas existem mas nenhum uso pôde ser atribuído.";
+		case "ledger_corrupt": return "Banco de dados de uso ilegível: esquema não reconhecido.";
+		case "ledger_timeout": return "Consulta de custo excedeu o tempo limite.";
+	}
+}
+/**
+* The headline row, wrapped: attributed tokens plus the catalog money of the
+* priced part. A result with no priced model at all shows tokens only — the
+* pricing label line next to it carries the reason, so it never reads as free.
+*/
+function costSummaryTotalsLine(result, width) {
+	if (result.status === "unavailable") return [];
+	const estimate = result.pricing.estimatedUsd;
+	const money = estimate === void 0 ? void 0 : formatUsd(estimate);
+	return usageHistoryTextLines(`GERAL · ${formatCount(result.totals.total)} tokens` + (money === void 0 ? "" : ` · ${money}`), width);
+}
+/** Per-agent rows, wrapped; an unpriced agent says so instead of showing $0. */
+function costSummaryAgentLines(agent, width) {
+	const fallback = "preço indisponível";
+	const money = agent.estimatedUsd === void 0 ? fallback : formatUsd(agent.estimatedUsd) ?? fallback;
+	return usageHistoryTextLines(`  ${agent.agent} · ${formatCount(agent.total)} tokens · ${money}`, width);
+}
+//#endregion
+//#region src/cost-summary-view.tsx
+/** @jsxImportSource @opentui/solid */
+function location$1(context) {
+	return context.location ?? context.data.location.default();
+}
+/**
+* The `/quota` usage tab's cost section: the same read-only `opencode.db`
+* aggregation `pantheon_cost` reports, per agent, over the period selected by
+* the tab's shared usage-history selector. Aggregate numbers only — never
+* message content, session ids, or database paths.
+*/
+function CostSummarySection(props) {
+	const [result, setResult] = createSignal(null);
+	const [loading, setLoading] = createSignal(true);
+	const [requestFailed, setRequestFailed] = createSignal(false);
+	const client = props.context.client.rpc(quotaRpc);
+	createEffect(() => {
+		const selectedPeriod = props.period();
+		const controller = new AbortController();
+		let current = true;
+		setLoading(true);
+		setRequestFailed(false);
+		setResult(null);
+		try {
+			client.cost_summary({ period: selectedPeriod }, {
+				signal: controller.signal,
+				location: location$1(props.context)
+			}).then((response) => {
+				if (!current) return;
+				if (isCostSummaryRpcResult(response)) setResult(response);
+				else setRequestFailed(true);
+			}).catch(() => {
+				if (current) setRequestFailed(true);
+			}).finally(() => {
+				if (current) setLoading(false);
+			});
+		} catch {
+			setRequestFailed(true);
+			setLoading(false);
+		}
+		onCleanup(() => {
+			current = false;
+			controller.abort();
+		});
+	});
+	const unavailable = () => {
+		const current = result();
+		return current ? costSummaryUnavailableMessage(current) : null;
+	};
+	const available = () => {
+		const current = result();
+		return current?.status === "available" || current?.status === "partial" ? current : void 0;
+	};
+	const warning = () => {
+		const current = available();
+		if (!current) return [];
+		const message = usageHistoryPartialWarning(current);
+		return message ? usageHistoryTextLines(message, props.width) : [];
+	};
+	const agentLines = () => (available()?.agents ?? []).flatMap((agent) => costSummaryAgentLines(agent, props.width));
+	return (() => {
+		var _el$ = createElement("box"), _el$2 = createElement("text");
+		insertNode(_el$, _el$2);
+		setProp(_el$, "flexDirection", "column");
+		setProp(_el$, "paddingTop", 1);
+		insertNode(_el$2, createTextNode(`Custo estimado`));
+		setProp(_el$2, "attributes", 1);
+		insert(_el$, createComponent(Show, {
+			get when() {
+				return loading();
+			},
+			get children() {
+				var _el$4 = createElement("text");
+				insertNode(_el$4, createTextNode(`Calculando custo…`));
+				return _el$4;
+			}
+		}), null);
+		insert(_el$, createComponent(Show, {
+			get when() {
+				return memo(() => !!!loading())() && requestFailed();
+			},
+			get children() {
+				return createComponent(For, {
+					get each() {
+						return usageHistoryTextLines("Falha ao consultar o custo.", props.width);
+					},
+					children: (line) => (() => {
+						var _el$6 = createElement("text");
+						insert(_el$6, line);
+						return _el$6;
+					})()
+				});
+			}
+		}), null);
+		insert(_el$, createComponent(Show, {
+			get when() {
+				return memo(() => !!!loading())() && unavailable();
+			},
+			children: (message) => createComponent(For, {
+				get each() {
+					return usageHistoryTextLines(message(), props.width);
+				},
+				children: (line) => (() => {
+					var _el$7 = createElement("text");
+					insert(_el$7, line);
+					return _el$7;
+				})()
+			})
+		}), null);
+		insert(_el$, createComponent(Show, {
+			get when() {
+				return memo(() => !!(!loading() && !requestFailed()))() && available();
+			},
+			children: (summary) => (() => {
+				var _el$8 = createElement("box");
+				setProp(_el$8, "flexDirection", "column");
+				insert(_el$8, createComponent(For, {
+					get each() {
+						return usageHistoryTextLines(usageHistoryCoverageLabel(summary()), props.width);
+					},
+					children: (line) => (() => {
+						var _el$9 = createElement("text");
+						insert(_el$9, line);
+						return _el$9;
+					})()
+				}), null);
+				insert(_el$8, createComponent(For, {
+					get each() {
+						return warning();
+					},
+					children: (line) => (() => {
+						var _el$0 = createElement("text");
+						insert(_el$0, line);
+						return _el$0;
+					})()
+				}), null);
+				insert(_el$8, createComponent(For, {
+					get each() {
+						return usageHistoryTextLines(usageHistoryPricingLabel(summary()), props.width);
+					},
+					children: (line) => (() => {
+						var _el$1 = createElement("text");
+						insert(_el$1, line);
+						return _el$1;
+					})()
+				}), null);
+				insert(_el$8, createComponent(For, {
+					get each() {
+						return costSummaryTotalsLine(summary(), props.width);
+					},
+					children: (line) => (() => {
+						var _el$10 = createElement("text");
+						setProp(_el$10, "attributes", 1);
+						insert(_el$10, line);
+						return _el$10;
+					})()
+				}), null);
+				insert(_el$8, createComponent(Show, {
+					get when() {
+						return summary().rows === 0;
+					},
+					get children() {
+						return createComponent(For, {
+							get each() {
+								return usageHistoryTextLines(usageHistoryEmptyMessage(), props.width);
+							},
+							children: (line) => (() => {
+								var _el$11 = createElement("text");
+								insert(_el$11, line);
+								return _el$11;
+							})()
+						});
+					}
+				}), null);
+				insert(_el$8, createComponent(For, {
+					get each() {
+						return agentLines();
+					},
+					children: (line) => (() => {
+						var _el$12 = createElement("text");
+						insert(_el$12, line);
+						return _el$12;
+					})()
+				}), null);
+				return _el$8;
+			})()
+		}), null);
+		return _el$;
+	})();
+}
+//#endregion
 //#region src/go-key-diagnostic-ui.ts
 const EXPLANATIONS = {
 	not_run: "No request was sent. No eligible Go API key was available or the attempt was canceled.",
@@ -3302,128 +3878,6 @@ function createQuotaRuntime(context) {
 	return runtime;
 }
 //#endregion
-//#region src/sidebar-width.ts
-const GRAPHEMES = new Intl.Segmenter(void 0, { granularity: "grapheme" });
-/** A grapheme the host draws two cells wide: emoji presentation, an extended
-*  pictograph (a bare `❤` counts too, exactly as the host's `emoji-regex`
-*  does) and a regional-indicator pair (a flag). */
-const EMOJI_GLYPH = /\p{Emoji_Presentation}|\p{Extended_Pictographic}|\p{Regional_Indicator}/u;
-/** VS16 asks for emoji presentation; without it `1` is one cell, with it the
-*  keycap sequence is drawn as one two-cell glyph. */
-const EMOJI_PRESENTATION_SELECTOR = "️";
-/** Unicode default-ignorable code points carry no width of their own. */
-const IGNORABLE_GLYPH = /^\p{Default_Ignorable_Code_Point}$/u;
-/** East Asian Wide/Fullwidth ranges — two cells, never the ambiguous width
-*  (the host measures ambiguous as narrow, so `▸`/`✓`/`—` stay one cell).
-*  Generated from the host's own measurement (`string-width` over every code
-*  point, emoji excluded), so this table can be regenerated verbatim when the
-*  host upgrades its Unicode data instead of being hand-edited. */
-const CELL_WIDE_RANGES = [
-	[4352, 4446],
-	[9001, 9002],
-	[9776, 9783],
-	[9866, 9871],
-	[11904, 11929],
-	[11931, 12019],
-	[12032, 12245],
-	[12272, 12335],
-	[12337, 12348],
-	[12350, 12350],
-	[12353, 12438],
-	[12441, 12543],
-	[12549, 12591],
-	[12593, 12643],
-	[12645, 12686],
-	[12688, 12773],
-	[12783, 12830],
-	[12832, 12871],
-	[12880, 12950],
-	[12952, 12952],
-	[12954, 42124],
-	[42128, 42182],
-	[43360, 43388],
-	[44032, 55203],
-	[63744, 64255],
-	[65040, 65049],
-	[65072, 65106],
-	[65108, 65126],
-	[65128, 65131],
-	[65281, 65376],
-	[65504, 65510],
-	[94176, 94180],
-	[94192, 94198],
-	[94208, 101594],
-	[101631, 101664],
-	[101760, 101874],
-	[101888, 102801],
-	[102816, 102866],
-	[110576, 110579],
-	[110581, 110587],
-	[110589, 110590],
-	[110592, 110888],
-	[110898, 110898],
-	[110928, 110930],
-	[110933, 110933],
-	[110948, 110952],
-	[110960, 111355],
-	[119552, 119638],
-	[119648, 119670],
-	[127488, 127488],
-	[127504, 127513],
-	[127515, 127534],
-	[127536, 127537],
-	[127547, 127547],
-	[127552, 127560],
-	[127584, 127589],
-	[131072, 196605],
-	[196608, 262141]
-];
-/** One code point the terminal draws no cell for: control characters, the
-*  zero-width joiners/marks, combining marks and variation selectors. */
-function isZeroWidthCodePoint(code, glyph) {
-	if (code <= 31 || code >= 127 && code <= 159) return true;
-	if (code >= 8203 && code <= 8207) return true;
-	if (code === 65279) return true;
-	if (code >= 768 && code <= 879) return true;
-	if (code >= 6832 && code <= 6911) return true;
-	if (code >= 7616 && code <= 7679) return true;
-	if (code >= 8400 && code <= 8447) return true;
-	if (code >= 65024 && code <= 65039) return true;
-	if (code >= 65056 && code <= 65071) return true;
-	if (code >= 917760 && code <= 917999) return true;
-	if (code >= 55296 && code <= 57343) return true;
-	return IGNORABLE_GLYPH.test(glyph);
-}
-function isWideCodePoint(code) {
-	for (const [low, high] of CELL_WIDE_RANGES) {
-		if (code < low) return false;
-		if (code <= high) return true;
-	}
-	return false;
-}
-/** Cells one grapheme occupies. */
-function graphemeWidth(segment) {
-	if (EMOJI_GLYPH.test(segment)) return 2;
-	if (segment.length > 1 && segment.includes(EMOJI_PRESENTATION_SELECTOR)) return 2;
-	let width = 0;
-	for (const glyph of segment) {
-		const code = glyph.codePointAt(0) ?? 0;
-		if (isZeroWidthCodePoint(code, glyph)) continue;
-		width += isWideCodePoint(code) ? 2 : 1;
-	}
-	return width;
-}
-/** Terminal cells `value` occupies — the unit every column in this plugin is
-*  measured in. Mirrors the host (that is how `@opentui/core` sizes a text
-*  run): emoji count as two cells, East Asian Wide/Fullwidth as two, East
-*  Asian Ambiguous as one, combining marks and variation selectors as none.
-*  Pure. */
-function cellWidth(value) {
-	let width = 0;
-	for (const { segment } of GRAPHEMES.segment(value)) width += graphemeWidth(segment);
-	return width;
-}
-//#endregion
 //#region src/usage-history-validation.ts
 function asRecord(value) {
 	return typeof value === "object" && value !== null ? value : null;
@@ -3482,191 +3936,6 @@ function isActiveContextCostResult(value) {
 		"ambiguous-model",
 		"missing-cache-price"
 	].includes(String(result.reason));
-}
-//#endregion
-//#region src/usage-view-model.ts
-const HISTORY_PERIODS = [
-	"7d",
-	"15d",
-	"30d",
-	"total"
-];
-const USAGE_HISTORY_PERIOD_BINDINGS = [
-	{
-		period: "7d",
-		bind: "7",
-		label: "7d"
-	},
-	{
-		period: "15d",
-		bind: "1",
-		label: "15d"
-	},
-	{
-		period: "30d",
-		bind: "3",
-		label: "30d"
-	},
-	{
-		period: "total",
-		bind: "t",
-		label: "total"
-	}
-];
-function wrapText(value, width) {
-	const maxWidth = Number.isFinite(width) ? Math.max(1, Math.floor(width)) : 1;
-	const lines = [];
-	const segmenter = new Intl.Segmenter();
-	let line = "";
-	for (const word of value.trim().split(/\s+/)) {
-		if (!word) continue;
-		if (line && cellWidth(line) + 1 + cellWidth(word) > maxWidth) {
-			lines.push(line);
-			line = "";
-		}
-		if (line) line += " ";
-		for (const { segment } of segmenter.segment(word)) {
-			if (cellWidth(line) + cellWidth(segment) > maxWidth) {
-				if (line) lines.push(line);
-				line = "";
-			}
-			line += segment;
-		}
-	}
-	if (line) lines.push(line);
-	return lines;
-}
-function usageHistoryTextLines(value, width) {
-	return wrapText(value, width);
-}
-function formatCount(value) {
-	return Math.max(0, value).toLocaleString("en-US");
-}
-function formatUsd(value) {
-	if (!Number.isFinite(value) || value < 0) return void 0;
-	return `$${new Intl.NumberFormat("en-US", {
-		minimumFractionDigits: 2,
-		maximumFractionDigits: 8
-	}).format(value)}`;
-}
-function chartBar(value, maxValue, width) {
-	const cells = Math.max(0, Math.floor(width));
-	if (cells === 0 || value <= 0 || maxValue <= 0) return "";
-	return "#".repeat(Math.max(1, Math.min(cells, Math.round(value / maxValue * cells))));
-}
-function chartValueLine(value, maximum, width) {
-	const count = `${formatCount(value)} tokens`;
-	const barWidth = Math.max(0, width - cellWidth(count) - 3);
-	const bar = chartBar(value, maximum, Math.min(12, barWidth));
-	return wrapText(`  ${bar ? `${bar} ` : ""}${count}`, width).join("\n");
-}
-function appendWrapped(target, value, width) {
-	target.push(...wrapText(value, width));
-}
-function usageHistorySelectorLabel(selected) {
-	return `Período: ${HISTORY_PERIODS.map((period) => {
-		const label = period === "total" ? "Total" : period;
-		return period === selected ? `[${label}]` : label;
-	}).join(" · ")}`;
-}
-function usageHistorySelectorLines(selected, width) {
-	return wrapText(usageHistorySelectorLabel(selected), width);
-}
-function usageHistoryPeriodForKey(key) {
-	return USAGE_HISTORY_PERIOD_BINDINGS.find((binding) => binding.bind === key)?.period;
-}
-function usageHistoryControlsLines(width) {
-	return wrapText("7 · 7d   1 · 15d   3 · 30d   T · total", width);
-}
-function usageHistoryCoverageLabel(result) {
-	return result.coverageStart === null ? "Início da cobertura indisponível" : `Cobertura desde ${result.coverageStart}`;
-}
-function usageHistoryPartialWarning(result) {
-	if (result.partial && result.truncated) return "Histórico parcial e truncado pelo limite seguro.";
-	if (result.partial) return "Histórico parcial segundo a consulta.";
-	if (result.truncated) return "Histórico truncado pelo limite seguro.";
-	return null;
-}
-function usageHistoryPricingLabel(result) {
-	const amount = result.pricing.estimatedUsd === void 0 ? void 0 : formatUsd(result.pricing.estimatedUsd);
-	const value = amount ? ` · ${amount}` : "";
-	switch (result.pricing.status) {
-		case "complete": return `Estimativa pelo catálogo${value} · não cobrada`;
-		case "partial": return `Estimativa parcial pelo catálogo${value} · não cobrada · ${result.pricing.unpricedModels} modelo(s) sem preço`;
-		case "unavailable": return "Estimativa de preço indisponível · nenhum valor cobrado";
-		case "empty": return "Sem dados de preço para estimar · nenhum valor cobrado";
-	}
-}
-function usageHistoryUnavailableMessage(result) {
-	if (result.status !== "unavailable") return null;
-	switch (result.reason) {
-		case "invalid_period": return "Período de histórico inválido.";
-		case "history_timeout": return "Consulta de histórico excedeu o tempo limite.";
-		case "history_unavailable": return "Histórico indisponível neste momento.";
-	}
-}
-function usageHistoryEmptyMessage() {
-	return "Sem histórico neste período.";
-}
-function usageHistoryChartLines(result, width) {
-	const maxWidth = Math.max(1, Math.floor(width));
-	if (result.rows === 0 && result.buckets.length === 0 && result.models.length === 0) return wrapText(usageHistoryEmptyMessage(), maxWidth);
-	const lines = [];
-	appendWrapped(lines, `GERAL · ${formatCount(result.totals.total)} tokens`, maxWidth);
-	if (result.buckets.length > 0) {
-		lines.push("Uso diário");
-		const maxBucket = Math.max(0, ...result.buckets.map((bucket) => bucket.total));
-		for (const bucket of result.buckets) {
-			appendWrapped(lines, bucket.date, maxWidth);
-			lines.push(...chartValueLine(bucket.total, maxBucket, maxWidth).split("\n"));
-		}
-	} else lines.push("Sem buckets diários neste período.");
-	lines.push("Modelos no período");
-	if (result.models.length === 0) {
-		lines.push("Sem totais por modelo.");
-		return lines.flatMap((line) => wrapText(line, maxWidth));
-	}
-	const maxModel = Math.max(0, ...result.models.map((model) => model.totals.total));
-	for (const model of result.models) {
-		appendWrapped(lines, `${model.providerID}/${model.modelID}`, maxWidth);
-		lines.push(...chartValueLine(model.totals.total, maxModel, maxWidth).split("\n"));
-	}
-	return lines.flatMap((line) => wrapText(line, maxWidth));
-}
-function activeModelIdentity(model) {
-	if (model.providerID && model.modelID) return `${model.providerID}/${model.modelID}`;
-	if (model.modelID) return model.modelID;
-	return model.label || "identidade indisponível";
-}
-function sessionSpendLabel(cost) {
-	if (!Number.isFinite(cost) || cost < 0) return null;
-	return `Gasto da sessão (relatado) · $${cost.toFixed(2)}`;
-}
-function unavailableContextReason(reason) {
-	switch (reason) {
-		case "invalid-context-token-count": return "contagem de tokens de contexto inválida";
-		case "missing-model-identity": return "identidade do modelo indisponível";
-		case "no-pricing":
-		case "missing-cache-price": return "preço de entrada indisponível";
-		case "unknown-model":
-		case "ambiguous-model": return "modelo não identificado na tabela de preços";
-	}
-}
-function activeContextEstimateLines(result, width) {
-	const maxWidth = Math.max(1, Math.floor(width));
-	if (result.status === "unavailable") return wrapText(`Estimativa de contexto (pré-cache) indisponível · ${unavailableContextReason(result.reason)}`, maxWidth);
-	const amount = formatUsd(result.estimatedUsd);
-	if (!amount) return wrapText("Estimativa de contexto (pré-cache) indisponível · valor inválido", maxWidth);
-	return [...wrapText(`Estimativa de contexto (pré-cache) · ${amount}`, maxWidth), ...wrapText("Preço de entrada × tokens pré-cache; sem desconto de cache; não é valor cobrado.", maxWidth)];
-}
-function activeContextEstimatePendingLines(width) {
-	return wrapText("Estimativa de contexto (pré-cache) · calculando…", width);
-}
-function activeContextEstimateMissingLines(width) {
-	return wrapText("Estimativa de contexto (pré-cache) indisponível · contexto não reportado.", width);
-}
-function activeContextEstimateErrorLines(width) {
-	return wrapText("Estimativa de contexto (pré-cache) indisponível · falha na consulta.", width);
 }
 //#endregion
 //#region src/usage-history-view.tsx
@@ -3756,7 +4025,12 @@ function ActiveContextEstimate(props) {
 	})();
 }
 function UsageHistorySection(props) {
-	const [period, setPeriod] = createSignal("7d");
+	const [internalPeriod, setInternalPeriod] = createSignal("7d");
+	const period = () => props.period ? props.period() : internalPeriod();
+	const setPeriod = (selected) => {
+		if (props.onPeriodChange) props.onPeriodChange(selected);
+		else setInternalPeriod(selected);
+	};
 	const [result, setResult] = createSignal(null);
 	const [loading, setLoading] = createSignal(true);
 	const [requestFailed, setRequestFailed] = createSignal(false);
@@ -5118,6 +5392,7 @@ function QuotaSettings(props) {
 }
 function QuotaPanel(props) {
 	const [selectedTab, setSelectedTab] = createSignal(DEFAULT_QUOTA_TAB);
+	const [usagePeriod, setUsagePeriod] = createSignal("7d");
 	props.context.keymap.layer(() => quotaPanelKeymapLayer(props.panel, props.runtime, (direction) => setSelectedTab((tab) => moveQuotaTab(tab, direction))));
 	const preferences = () => props.runtime.preferences();
 	const snapshot = () => props.runtime.snapshot();
@@ -5261,27 +5536,41 @@ function QuotaPanel(props) {
 				return selectedTab() === "usage";
 			},
 			get children() {
-				return [createComponent(UsageHistorySection, {
-					get context() {
-						return props.context;
-					},
-					get panel() {
-						return props.panel;
-					},
-					get width() {
-						return props.panel.width - 6;
-					}
-				}), createComponent(ModelUsageDetails, {
-					get context() {
-						return props.context;
-					},
-					get sessionID() {
-						return props.panel.sessionID;
-					},
-					get width() {
-						return props.panel.width - 6;
-					}
-				})];
+				return [
+					createComponent(UsageHistorySection, {
+						get context() {
+							return props.context;
+						},
+						get panel() {
+							return props.panel;
+						},
+						get width() {
+							return props.panel.width - 6;
+						},
+						period: usagePeriod,
+						onPeriodChange: setUsagePeriod
+					}),
+					createComponent(CostSummarySection, {
+						get context() {
+							return props.context;
+						},
+						get width() {
+							return props.panel.width - 6;
+						},
+						period: usagePeriod
+					}),
+					createComponent(ModelUsageDetails, {
+						get context() {
+							return props.context;
+						},
+						get sessionID() {
+							return props.panel.sessionID;
+						},
+						get width() {
+							return props.panel.width - 6;
+						}
+					})
+				];
 			}
 		}), null);
 		insert(_el$92, createComponent(Show, {
@@ -9149,6 +9438,6 @@ const plugin = Plugin.define({
 	}
 });
 //#endregion
-export { BLOCK_ICONS, CONTEXT_BAR_CELLS, CONTEXT_BAR_EMPTY_CELL, CONTEXT_BAR_FILLED_CELL, DEFAULT_QUOTA_PREFERENCES, DEFAULT_QUOTA_TAB, DELEGATION_CHILD_STATUS_GRACE_MS, DISPATCH_AGENT_CEILING, DISPATCH_AGENT_WIDTH, DISPATCH_COST_WIDTH, DISPATCH_COUNT_WIDTH, DISPATCH_DONE_MARKER, DISPATCH_DURATION_WIDTH, DISPATCH_GROUP_COST_WIDTH, DISPATCH_KIND_ORIGIN_LABELS, DISPATCH_MAX_LINES, DISPATCH_MAX_WIDTH, DISPATCH_MIN_AGENT_WIDTH, DISPATCH_MODEL_WIDTH, DISPATCH_PANEL_AGENT_WIDTH, DISPATCH_PANEL_COMMANDS, DISPATCH_PANEL_COST_WIDTH, DISPATCH_PANEL_DASH, DISPATCH_PANEL_DURATION_WIDTH, DISPATCH_PANEL_EMPTY_TEXT, DISPATCH_PANEL_FULLSCREEN_BADGE, DISPATCH_PANEL_HEADER_MARKER, DISPATCH_PANEL_KIND_WIDTH, DISPATCH_PANEL_MIN_AGENT_WIDTH, DISPATCH_PANEL_NAME, DISPATCH_PANEL_PAGE_SIZE, DISPATCH_PANEL_RULE_CHAR, DISPATCH_PANEL_SELECTION_GUTTER, DISPATCH_PANEL_SELECTION_MARKER, DISPATCH_PANEL_TITLE_WIDTH, DISPATCH_PANEL_TOAST, DISPATCH_PANEL_WIDE_MIN_WIDTH, DISPATCH_RUNNING_CEILING, GIT_ARROW_DOWN, GIT_ARROW_UP, GIT_CHANGES_DEBOUNCE_MS, GIT_CLI_DEBOUNCE_MS, GIT_CLI_MAX_BUFFER, GIT_CLI_MIN_INTERVAL_MS, GIT_CLI_TIMEOUT_MS, HEADER_MAX_WIDTH, MODEL_USAGE_COST_WIDTH, MODEL_USAGE_DEBOUNCE_MS, MODEL_USAGE_MESSAGE_LIMIT, MODEL_USAGE_MODEL_WIDTH, MODEL_USAGE_SESSION_LIMIT, MODEL_USAGE_TOKEN_WIDTH, MODEL_USAGE_VISIBLE_CEILING, PRESET_MARKER, QUOTA_CLOCK_INTERVAL_MS, QUOTA_ICON, QUOTA_OPEN_COMMAND_ID, QUOTA_PANEL_COMMANDS, QUOTA_PANEL_NAME, QUOTA_TABS, QuotaPanel, SIDEBAR_REFRESH_EVENTS, SIDEBAR_WAITING_LABEL, SPEND_30D_LABEL, SPEND_30D_MS, SPEND_LINE_SEPARATOR, SPEND_PROBE_TOLERANCE_MS, SPEND_PROBE_WINDOW_MS, SPEND_REFRESH_DEBOUNCE_MS, SPEND_TODAY_LABEL, TODO_TEXT_WIDTH, TODO_VISIBLE_CEILING, UNKNOWN_AGENT, USAGE_HISTORY_PERIOD_BINDINGS, UsageHistorySection, activeContextEstimateErrorLines, activeContextEstimateLines, activeContextEstimateMissingLines, activeContextEstimatePendingLines, activeModelIdentity, activeQuotaModelLabel, agentKey, buildDispatchBlock, cacheHitPercent, ceilingModelUsage, ceilingTodoItems, cellWidth, childAgentRowText, classifyDispatchKind, collectChildAgentUsage, collectDispatch, collectModelUsage, collectRecentModelUsageRows, collectSubagentCalls, collectWarmupTargets, compactQuotaMetric, completedSummaryText, computeContextUsage, contextBar, contextBarFilled, contextBlockRows, contextPerformanceLine, contextProgressColor, contextSpendLine, contextSpendLines, contextUsageTone, countGitChanges, createDispatchPanelModel, createFooterModel, createQuotaClock, createQuotaRuntime, createSidebarModel, plugin as default, defaultGitExec, delegationStateFromOutcome, delegationStateFromStatus, detectDelegationCompletions, dispatchAgentText, dispatchElapsed, dispatchHeaderSummary, dispatchKindFromAgent, dispatchKindFromPrefix, dispatchKindSuffix, dispatchModelText, dispatchPanelCell, dispatchPanelDetail, dispatchPanelFooter, dispatchPanelHeader, dispatchPanelKeymapLayer, dispatchPanelLayout, dispatchPanelMarker, dispatchPanelRangeText, dispatchPanelRowText, dispatchPanelRows, dispatchPanelRule, dispatchPanelTitle, dispatchPanelWindow, dispatchTokenLine, dispatchTokens, dispatchTotalCost, failedSuffixText, financeMetricLines, formatContextWindow, formatDispatchCost, formatDispatchDuration, formatGitChanges, formatGitSnapshot, formatQuotaCountdown, formatQuotaMetric, formatSpendUSD, formatSpent, formatTokenCount, formatUsageCost, formatUsageTokens, gitProbeAllowed, hiddenChildAgentsText, hiddenModelUsageText, hiddenTodoText, isTodoStatus, isValidSessionID, lastAssistantWithTokens, latestTodoItems, messageTokensTotal, modelRefID, modelUsageRowLines, modelUsageRowText, modelUsageRows, moveQuotaTab, navigateToSession, normalizeQuotaPreferences, openDispatchPanel, openQuotaPanel, orderDispatchEntries, orderTodoItems, padCell, parseGitAheadBehind, parseGitStatusPorcelain, parsePresetOverrides, parseTodoItems, performDispatchPanelAction, presetFromEnv, presetHeaderLine, providerIDFromModels, providerIDFromRef, providerState, quotaClock, quotaGoCheckCommand, quotaIcon, quotaMetricLines, quotaOpenCommand, quotaPanelKeymapLayer, quotaPanelStatusMessage, quotaProgress, quotaSidebarEntries, quotaSnapshotFromStatus, quotaSnapshotStatusLabel, quotaTabLabel, quotaTextLines, quotaUsageTone, quotaWindowLines, readGitSnapshot, resetSpendUnit, resolveActiveModelRef, resolveActivePresetForTui, resolveContextLimit, resolveModelContextSnapshot, resolvedSpendUnit, runDispatchPanelCommand, runQuotaPanelCommand, runningChildRowText, sessionSpendLabel, shortModelID, shortSessionID, sidebarFinanceEntries, sidebarMoneyLines, sidebarPlaceholder, sidebarTextLines, snapshotSummary, spendWindows, spinnerFrame, startOfLocalDay, statsCost, statsRangeMatches, toDelegationView, toDispatchEntry, todoRowText, todoTone, transcriptWindow, truncateLabel, turnTokensPerSecond, usageHistoryChartLines, usageHistoryControlsLines, usageHistoryCoverageLabel, usageHistoryEmptyMessage, usageHistoryPartialWarning, usageHistoryPeriodForKey, usageHistoryPricingLabel, usageHistorySelectorLabel, usageHistorySelectorLines, usageHistoryTextLines, usageHistoryUnavailableMessage, withBlockSpacers };
+export { BLOCK_ICONS, CONTEXT_BAR_CELLS, CONTEXT_BAR_EMPTY_CELL, CONTEXT_BAR_FILLED_CELL, CostSummarySection, DEFAULT_QUOTA_PREFERENCES, DEFAULT_QUOTA_TAB, DELEGATION_CHILD_STATUS_GRACE_MS, DISPATCH_AGENT_CEILING, DISPATCH_AGENT_WIDTH, DISPATCH_COST_WIDTH, DISPATCH_COUNT_WIDTH, DISPATCH_DONE_MARKER, DISPATCH_DURATION_WIDTH, DISPATCH_GROUP_COST_WIDTH, DISPATCH_KIND_ORIGIN_LABELS, DISPATCH_MAX_LINES, DISPATCH_MAX_WIDTH, DISPATCH_MIN_AGENT_WIDTH, DISPATCH_MODEL_WIDTH, DISPATCH_PANEL_AGENT_WIDTH, DISPATCH_PANEL_COMMANDS, DISPATCH_PANEL_COST_WIDTH, DISPATCH_PANEL_DASH, DISPATCH_PANEL_DURATION_WIDTH, DISPATCH_PANEL_EMPTY_TEXT, DISPATCH_PANEL_FULLSCREEN_BADGE, DISPATCH_PANEL_HEADER_MARKER, DISPATCH_PANEL_KIND_WIDTH, DISPATCH_PANEL_MIN_AGENT_WIDTH, DISPATCH_PANEL_NAME, DISPATCH_PANEL_PAGE_SIZE, DISPATCH_PANEL_RULE_CHAR, DISPATCH_PANEL_SELECTION_GUTTER, DISPATCH_PANEL_SELECTION_MARKER, DISPATCH_PANEL_TITLE_WIDTH, DISPATCH_PANEL_TOAST, DISPATCH_PANEL_WIDE_MIN_WIDTH, DISPATCH_RUNNING_CEILING, GIT_ARROW_DOWN, GIT_ARROW_UP, GIT_CHANGES_DEBOUNCE_MS, GIT_CLI_DEBOUNCE_MS, GIT_CLI_MAX_BUFFER, GIT_CLI_MIN_INTERVAL_MS, GIT_CLI_TIMEOUT_MS, HEADER_MAX_WIDTH, MAX_COST_AGENTS, MODEL_USAGE_COST_WIDTH, MODEL_USAGE_DEBOUNCE_MS, MODEL_USAGE_MESSAGE_LIMIT, MODEL_USAGE_MODEL_WIDTH, MODEL_USAGE_SESSION_LIMIT, MODEL_USAGE_TOKEN_WIDTH, MODEL_USAGE_VISIBLE_CEILING, PRESET_MARKER, QUOTA_CLOCK_INTERVAL_MS, QUOTA_ICON, QUOTA_OPEN_COMMAND_ID, QUOTA_PANEL_COMMANDS, QUOTA_PANEL_NAME, QUOTA_TABS, QuotaPanel, SIDEBAR_REFRESH_EVENTS, SIDEBAR_WAITING_LABEL, SPEND_30D_LABEL, SPEND_30D_MS, SPEND_LINE_SEPARATOR, SPEND_PROBE_TOLERANCE_MS, SPEND_PROBE_WINDOW_MS, SPEND_REFRESH_DEBOUNCE_MS, SPEND_TODAY_LABEL, TODO_TEXT_WIDTH, TODO_VISIBLE_CEILING, UNKNOWN_AGENT, USAGE_HISTORY_PERIOD_BINDINGS, UsageHistorySection, activeContextEstimateErrorLines, activeContextEstimateLines, activeContextEstimateMissingLines, activeContextEstimatePendingLines, activeModelIdentity, activeQuotaModelLabel, agentKey, buildDispatchBlock, cacheHitPercent, ceilingModelUsage, ceilingTodoItems, cellWidth, childAgentRowText, classifyDispatchKind, collectChildAgentUsage, collectDispatch, collectModelUsage, collectRecentModelUsageRows, collectSubagentCalls, collectWarmupTargets, compactQuotaMetric, completedSummaryText, computeContextUsage, contextBar, contextBarFilled, contextBlockRows, contextPerformanceLine, contextProgressColor, contextSpendLine, contextSpendLines, contextUsageTone, costSummaryAgentLines, costSummaryTotalsLine, costSummaryUnavailableMessage, countGitChanges, createDispatchPanelModel, createFooterModel, createQuotaClock, createQuotaRuntime, createSidebarModel, plugin as default, defaultGitExec, delegationStateFromOutcome, delegationStateFromStatus, detectDelegationCompletions, dispatchAgentText, dispatchElapsed, dispatchHeaderSummary, dispatchKindFromAgent, dispatchKindFromPrefix, dispatchKindSuffix, dispatchModelText, dispatchPanelCell, dispatchPanelDetail, dispatchPanelFooter, dispatchPanelHeader, dispatchPanelKeymapLayer, dispatchPanelLayout, dispatchPanelMarker, dispatchPanelRangeText, dispatchPanelRowText, dispatchPanelRows, dispatchPanelRule, dispatchPanelTitle, dispatchPanelWindow, dispatchTokenLine, dispatchTokens, dispatchTotalCost, failedSuffixText, financeMetricLines, formatContextWindow, formatDispatchCost, formatDispatchDuration, formatGitChanges, formatGitSnapshot, formatQuotaCountdown, formatQuotaMetric, formatSpendUSD, formatSpent, formatTokenCount, formatUsageCost, formatUsageTokens, gitProbeAllowed, hiddenChildAgentsText, hiddenModelUsageText, hiddenTodoText, isTodoStatus, isValidSessionID, lastAssistantWithTokens, latestTodoItems, messageTokensTotal, modelRefID, modelUsageRowLines, modelUsageRowText, modelUsageRows, moveQuotaTab, navigateToSession, normalizeQuotaPreferences, openDispatchPanel, openQuotaPanel, orderDispatchEntries, orderTodoItems, padCell, parseGitAheadBehind, parseGitStatusPorcelain, parsePresetOverrides, parseTodoItems, performDispatchPanelAction, presetFromEnv, presetHeaderLine, providerIDFromModels, providerIDFromRef, providerState, quotaClock, quotaGoCheckCommand, quotaIcon, quotaMetricLines, quotaOpenCommand, quotaPanelKeymapLayer, quotaPanelStatusMessage, quotaProgress, quotaSidebarEntries, quotaSnapshotFromStatus, quotaSnapshotStatusLabel, quotaTabLabel, quotaTextLines, quotaUsageTone, quotaWindowLines, readGitSnapshot, resetSpendUnit, resolveActiveModelRef, resolveActivePresetForTui, resolveContextLimit, resolveModelContextSnapshot, resolvedSpendUnit, runDispatchPanelCommand, runQuotaPanelCommand, runningChildRowText, sessionSpendLabel, shortModelID, shortSessionID, sidebarFinanceEntries, sidebarMoneyLines, sidebarPlaceholder, sidebarTextLines, snapshotSummary, spendWindows, spinnerFrame, startOfLocalDay, statsCost, statsRangeMatches, toDelegationView, toDispatchEntry, todoRowText, todoTone, transcriptWindow, truncateLabel, turnTokensPerSecond, usageHistoryChartLines, usageHistoryControlsLines, usageHistoryCoverageLabel, usageHistoryEmptyMessage, usageHistoryPartialWarning, usageHistoryPeriodForKey, usageHistoryPricingLabel, usageHistorySelectorLabel, usageHistorySelectorLines, usageHistoryTextLines, usageHistoryUnavailableMessage, withBlockSpacers };
 
 //# sourceMappingURL=tui.js.map

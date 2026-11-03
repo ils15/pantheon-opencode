@@ -53,7 +53,7 @@ export default defineConfig({
     server: 'src/server.ts',
     'quota-cli': 'src/quota-cli.ts',
     'quota-adapters': 'src/quota-adapters.ts',
-    'usage-history-worker': 'src/usage-history-worker.ts',
+    'ledger-worker': 'src/ledger-worker.ts',
   },
   format: ['esm'],
   platform: 'node',

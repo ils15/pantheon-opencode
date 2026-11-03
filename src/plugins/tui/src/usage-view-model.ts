@@ -69,11 +69,13 @@ export function usageHistoryTextLines(value: string, width: number): string[] {
   return wrapText(value, width)
 }
 
-function formatCount(value: number): string {
+/** Thousands-separated count, shared by the history chart and the cost summary. */
+export function formatCount(value: number): string {
   return Math.max(0, value).toLocaleString('en-US')
 }
 
-function formatUsd(value: number): string | undefined {
+/** Catalog money, shared by the history chart labels and the cost summary. */
+export function formatUsd(value: number): string | undefined {
   if (!Number.isFinite(value) || value < 0) return undefined
   return `$${new Intl.NumberFormat('en-US', {
     minimumFractionDigits: 2,
@@ -121,20 +123,38 @@ export function usageHistoryControlsLines(width: number): string[] {
   return wrapText('7 · 7d   1 · 15d   3 · 30d   T · total', width)
 }
 
-export function usageHistoryCoverageLabel(result: UsageHistoryRpcAvailable): string {
+/**
+ * The window fields the shared ledger labels read. The usage history and the
+ * cost summary satisfy it structurally, so the two sections of the usage tab
+ * cannot word their coverage, pricing or partial warnings differently.
+ */
+export interface LedgerLabelSource {
+  coverageStart: string | null
+  partial: boolean
+  truncated: boolean
+  pricing: {
+    status: 'empty' | 'unavailable' | 'partial' | 'complete'
+    complete: boolean
+    billed: false
+    estimatedUsd?: number
+    unpricedModels: number
+  }
+}
+
+export function usageHistoryCoverageLabel(result: LedgerLabelSource): string {
   return result.coverageStart === null
     ? 'Início da cobertura indisponível'
     : `Cobertura desde ${result.coverageStart}`
 }
 
-export function usageHistoryPartialWarning(result: UsageHistoryRpcAvailable): string | null {
+export function usageHistoryPartialWarning(result: LedgerLabelSource): string | null {
   if (result.partial && result.truncated) return 'Histórico parcial e truncado pelo limite seguro.'
   if (result.partial) return 'Histórico parcial segundo a consulta.'
   if (result.truncated) return 'Histórico truncado pelo limite seguro.'
   return null
 }
 
-export function usageHistoryPricingLabel(result: UsageHistoryRpcAvailable): string {
+export function usageHistoryPricingLabel(result: LedgerLabelSource): string {
   const amount =
     result.pricing.estimatedUsd === undefined ? undefined : formatUsd(result.pricing.estimatedUsd)
   const value = amount ? ` · ${amount}` : ''

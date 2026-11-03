@@ -527,6 +527,16 @@ function priceTokens(pricing, provider, model, tokens) {
 	if (!cost.ok) return { reason: cost.reason };
 	return { usd: cost.usd };
 }
+/** Days in a rolling period; `total` has no lower age cap. */
+function rollingWindowDays(period) {
+	switch (period) {
+		case "7d": return 7;
+		case "15d": return 15;
+		case "30d": return 30;
+		case "total": return;
+		default: throw new Error(`unsupported usage history period: ${String(period)}`);
+	}
+}
 function emptyUsageTokens() {
 	return {
 		input: 0,
@@ -566,16 +576,12 @@ function offlinePricing(options) {
 * model pricing comes only from a cached snapshot: this path never fetches pricing.
 */
 async function queryUsageHistory(dbPath, period, options) {
-	const dayCounts = {
-		"7d": 7,
-		"15d": 15,
-		"30d": 30
-	};
-	if (period !== "total" && !Object.hasOwn(dayCounts, period)) throw new Error(`unsupported usage history period: ${String(period)}`);
+	const days = rollingWindowDays(period);
+	if (period !== "total" && days === void 0) throw new Error(`unsupported usage history period: ${String(period)}`);
 	const now = options?.now ?? Date.now();
 	if (!Number.isFinite(now)) throw new Error("usage history clock must be finite");
 	const rolling = period !== "total";
-	const since = rolling ? now - dayCounts[period] * 864e5 : void 0;
+	const since = rolling ? now - (days ?? 0) * 864e5 : void 0;
 	const db = new (await (import("node:sqlite"))).DatabaseSync(dbPath, { readOnly: true });
 	try {
 		const sources = resolveSources(db, void 0);
@@ -711,6 +717,172 @@ async function queryUsageHistory(dbPath, period, options) {
 	}
 }
 /**
+* Per-(agent, provider, model) aggregation, grouped finely enough to price and
+* to attribute. The only interpolated fragments are fixed module constants
+* (family table, discriminator, time predicates); JSON is validated in the CTE
+* before extraction, and all time bounds remain bound SQL parameters.
+*
+* Attribution mirrors `pantheon_cost`: rows without an agent are excluded, and
+* a NULL/blank provider or model reads the `unknown` label, so two raw groups
+* may fold together in JS exactly like they do in the tool's report.
+*/
+function costSummarySql(source, rolling) {
+	return `
+    WITH valid AS (
+      SELECT COALESCE(json_extract(data, '$.model.providerID'),
+                      json_extract(data, '$.providerID')) AS provider,
+             COALESCE(json_extract(data, '$.model.id'),
+                      json_extract(data, '$.modelID')) AS model,
+             json_extract(data, '$.agent') AS agent,
+             CASE WHEN json_type(data, '$.tokens.input') IN ('integer', 'real')
+                        AND json_extract(data, '$.tokens.input') >= 0
+                  THEN CAST(json_extract(data, '$.tokens.input') AS INTEGER) ELSE 0 END AS inTok,
+             CASE WHEN json_type(data, '$.tokens.output') IN ('integer', 'real')
+                        AND json_extract(data, '$.tokens.output') >= 0
+                  THEN CAST(json_extract(data, '$.tokens.output') AS INTEGER) ELSE 0 END AS outTok,
+             CASE WHEN json_type(data, '$.tokens.cache.read') IN ('integer', 'real')
+                        AND json_extract(data, '$.tokens.cache.read') >= 0
+                  THEN CAST(json_extract(data, '$.tokens.cache.read') AS INTEGER) ELSE 0 END AS cacheReadTok,
+             CASE WHEN json_type(data, '$.tokens.cache.write') IN ('integer', 'real')
+                        AND json_extract(data, '$.tokens.cache.write') >= 0
+                  THEN CAST(json_extract(data, '$.tokens.cache.write') AS INTEGER) ELSE 0 END AS cacheWriteTok
+      FROM ${source}
+      WHERE json_valid(data) AND ${assistantLedgerPredicate(source)} ${rolling ? "AND time_created >= ? AND time_created <= ?" : "AND time_created <= ?"}
+    )
+    SELECT agent AS agent,
+           provider AS provider,
+           model AS model,
+           COUNT(*) AS rows,
+           COALESCE(SUM(inTok), 0) AS tokensInput,
+           COALESCE(SUM(outTok), 0) AS tokensOutput,
+           COALESCE(SUM(cacheReadTok), 0) AS tokensCacheRead,
+           COALESCE(SUM(cacheWriteTok), 0) AS tokensCacheWrite
+    FROM valid
+    WHERE agent IS NOT NULL AND agent != ''
+    GROUP BY agent, provider, model`;
+}
+/** Window counters: rows of any type vs rows past the assistant discriminator. */
+function costSummaryCountersSql(source, rolling) {
+	const assistantPredicate = assistantLedgerPredicate(source);
+	const timeRange = rolling ? "time_created >= ? AND time_created <= ?" : "time_created <= ?";
+	return `SELECT
+      (SELECT COUNT(*) FROM ${source} WHERE ${timeRange}) AS scanned,
+      (SELECT COUNT(*) FROM ${source} WHERE ${timeRange} AND ${assistantPredicate}) AS assistantRows`;
+}
+/**
+* Read the token ledger of one database, read-only, priced from the cached
+* catalog only: like the usage charts, this path NEVER fetches pricing.
+*
+* Both ledger families are always read when a migrated database contains both —
+* the host-version override is a `pantheon_cost` diagnostic, not a reason to
+* hide rows from a panel view. A missing or unreadable database REJECTS; the
+* caller owns the diagnostic contract (an absent db is a normal panel state).
+*/
+async function queryCostSummary(dbPath, period, options) {
+	const days = rollingWindowDays(period);
+	const now = options?.now ?? Date.now();
+	if (!Number.isFinite(now)) throw new Error("usage history clock must be finite");
+	const rolling = period !== "total";
+	const since = rolling ? now - (days ?? 0) * 864e5 : void 0;
+	const db = new (await (import("node:sqlite"))).DatabaseSync(dbPath, { readOnly: true });
+	try {
+		const sources = resolveSources(db, void 0);
+		let scanned = 0;
+		let assistantRows = 0;
+		let coverageStartAt = null;
+		const groups = [];
+		for (const source of sources) {
+			const sourceStart = numberOf(db.prepare(usageCoverageSql(source)).get(now)?.coverageStartAt);
+			if (sourceStart !== void 0) coverageStartAt = coverageStartAt === null ? sourceStart : Math.min(coverageStartAt, sourceStart);
+			const countersRow = db.prepare(costSummaryCountersSql(source, rolling)).all(...since === void 0 ? [now, now] : [
+				since,
+				now,
+				since,
+				now
+			])[0];
+			scanned += numberOf(countersRow?.scanned) ?? 0;
+			assistantRows += numberOf(countersRow?.assistantRows) ?? 0;
+			const rows = db.prepare(costSummarySql(source, rolling)).all(...since === void 0 ? [now] : [since, now]);
+			groups.push(...rows);
+		}
+		const pricing = offlinePricing(options);
+		const agents = /* @__PURE__ */ new Map();
+		const totals = emptyUsageTokens();
+		let rows = 0;
+		let pricedGroups = 0;
+		let unpricedGroups = 0;
+		let estimatedUsd = 0;
+		for (const group of groups) {
+			const agent = ledgerLabel(group.agent);
+			const provider = ledgerLabel(group.provider);
+			const model = ledgerLabel(group.model);
+			const groupTokens = {
+				input: numberOf(group.tokensInput) ?? 0,
+				output: numberOf(group.tokensOutput) ?? 0,
+				cacheRead: numberOf(group.tokensCacheRead) ?? 0,
+				cacheWrite: numberOf(group.tokensCacheWrite) ?? 0
+			};
+			const groupRows = numberOf(group.rows) ?? 0;
+			rows += groupRows;
+			addUsageTokens(totals, groupTokens);
+			const accumulator = agents.get(agent) ?? {
+				agent,
+				tokens: emptyUsageTokens(),
+				rows: 0,
+				usd: 0,
+				pricedGroups: 0,
+				unpricedGroups: 0,
+				reason: void 0
+			};
+			addUsageTokens(accumulator.tokens, groupTokens);
+			accumulator.rows += groupRows;
+			const priced = priceTokens(pricing, provider, model, groupTokens);
+			if ("usd" in priced) {
+				accumulator.usd += priced.usd;
+				accumulator.pricedGroups += 1;
+				pricedGroups += 1;
+				estimatedUsd += priced.usd;
+			} else {
+				accumulator.unpricedGroups += 1;
+				accumulator.reason = accumulator.reason ?? priced.reason;
+				unpricedGroups += 1;
+			}
+			agents.set(agent, accumulator);
+		}
+		const agentRows = [...agents.values()].map((accumulator) => ({
+			agent: accumulator.agent,
+			tokensInput: accumulator.tokens.input,
+			tokensOutput: accumulator.tokens.output,
+			tokensCacheRead: accumulator.tokens.cacheRead,
+			tokensCacheWrite: accumulator.tokens.cacheWrite,
+			tokensTotal: accumulator.tokens.input + accumulator.tokens.output,
+			...accumulator.pricedGroups > 0 ? { estimatedUsd: accumulator.usd } : {},
+			pricingComplete: accumulator.unpricedGroups === 0,
+			...accumulator.unpricedGroups > 0 && accumulator.reason !== void 0 ? { unpricedReason: accumulator.reason } : {}
+		})).sort((left, right) => right.tokensTotal - left.tokensTotal);
+		const pricingStatus = rows === 0 ? "empty" : pricedGroups === 0 ? "unavailable" : unpricedGroups > 0 ? "partial" : "complete";
+		return {
+			period,
+			coverageStart: coverageStartAt === null ? null : new Date(coverageStartAt).toISOString().slice(0, 10),
+			coverageStartAt,
+			partial: since !== void 0 && coverageStartAt !== null && coverageStartAt > since,
+			rows,
+			scanned,
+			assistantRows,
+			agents: agentRows,
+			totals: toUsageTokenTotals(totals),
+			pricing: {
+				status: pricingStatus,
+				complete: pricingStatus === "complete",
+				...pricedGroups > 0 ? { estimatedUsd } : {},
+				unpricedModels: unpricedGroups
+			}
+		};
+	} finally {
+		db.close();
+	}
+}
+/**
 * Estimate current context cost using only its token count and cached input rate.
 * This is a pre-cache estimate, applies no cache discount, and is not billed or
 * used to alter host-reported session spend.
@@ -744,6 +916,6 @@ function estimateActiveContextCost(input, options) {
 	};
 }
 //#endregion
-export { queryUsageHistory as n, resolveCostDbPath as r, estimateActiveContextCost as t };
+export { resolveCostDbPath as i, queryCostSummary as n, queryUsageHistory as r, estimateActiveContextCost as t };
 
-//# sourceMappingURL=cost-data-BQYp7Qvl.js.map
+//# sourceMappingURL=cost-data-Dwuv_Azo.js.map

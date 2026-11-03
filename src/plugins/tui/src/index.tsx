@@ -44,6 +44,14 @@ export {
   formatSpent,
   formatTokenCount,
 } from './context-gauge'
+export type { CostSummaryRpcResult } from './cost-summary-contract'
+export { MAX_COST_AGENTS } from './cost-summary-contract'
+export { CostSummarySection } from './cost-summary-view'
+export {
+  costSummaryAgentLines,
+  costSummaryTotalsLine,
+  costSummaryUnavailableMessage,
+} from './cost-summary-view-model'
 export { quotaGoCheckCommand } from './go-key-diagnostic-ui'
 export {
   MODEL_USAGE_MESSAGE_LIMIT,

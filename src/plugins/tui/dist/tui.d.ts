@@ -176,6 +176,119 @@ type QuotaRuntime = {
 /** One storage-backed source of truth for all quota TUI surfaces. */
 export declare function createQuotaRuntime(context: Pick<Context, 'client' | 'data' | 'location' | 'storage'>): QuotaRuntime;
 //#endregion
+//#region src/usage-history-contract.d.ts
+type UsageHistoryRpcPeriod = '7d' | '15d' | '30d' | 'total';
+interface UsageHistoryRpcTotals {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  total: number;
+}
+interface UsageHistoryRpcBucket extends UsageHistoryRpcTotals {
+  date: string;
+  estimatedUsd?: number;
+  pricingComplete: boolean;
+}
+interface UsageHistoryRpcModel {
+  providerID: string;
+  modelID: string;
+  totals: UsageHistoryRpcTotals;
+  estimatedUsd?: number;
+  pricingComplete: boolean;
+}
+interface UsageHistoryRpcAvailable {
+  status: 'available' | 'partial';
+  period: UsageHistoryRpcPeriod;
+  coverageStart: string | null;
+  partial: boolean;
+  truncated: boolean;
+  rows: number;
+  buckets: UsageHistoryRpcBucket[];
+  totals: UsageHistoryRpcTotals;
+  models: UsageHistoryRpcModel[];
+  pricing: {
+    status: 'empty' | 'unavailable' | 'partial' | 'complete';
+    complete: boolean;
+    billed: false;
+    estimatedUsd?: number;
+    unpricedModels: number;
+  };
+}
+interface UsageHistoryRpcUnavailable {
+  status: 'unavailable';
+  reason: 'invalid_period' | 'history_unavailable' | 'history_timeout';
+}
+type UsageHistoryRpcResult = UsageHistoryRpcAvailable | UsageHistoryRpcUnavailable;
+//#endregion
+//#region src/cost-summary-contract.d.ts
+/** Per-agent rows shown by the panel before the tail is summarised. */
+export declare const MAX_COST_AGENTS = 32;
+/** One attributed agent row of the RPC contract. */
+interface CostSummaryRpcAgent {
+  agent: string;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  total: number;
+  estimatedUsd?: number;
+  pricingComplete: boolean;
+}
+interface CostSummaryRpcAvailable {
+  /**
+   * `partial` when the window is only partly covered, the projection was
+   * truncated, or some model groups lack a catalog price — the same honesty
+   * rule the cost tool applies to its `(partial)` totals.
+   */
+  status: 'available' | 'partial';
+  period: UsageHistoryRpcPeriod;
+  coverageStart: string | null;
+  partial: boolean;
+  truncated: boolean;
+  rows: number;
+  totals: UsageHistoryRpcTotals;
+  agents: CostSummaryRpcAgent[];
+  pricing: {
+    status: 'empty' | 'unavailable' | 'partial' | 'complete';
+    complete: boolean;
+    billed: false;
+    estimatedUsd?: number;
+    unpricedModels: number;
+  };
+}
+type CostSummaryRpcUnavailableReason = 'invalid_period' | 'ledger_unavailable' | 'ledger_unsupported' | 'ledger_corrupt' | 'ledger_timeout';
+interface CostSummaryRpcUnavailable {
+  status: 'unavailable';
+  reason: CostSummaryRpcUnavailableReason;
+}
+type CostSummaryRpcResult = CostSummaryRpcAvailable | CostSummaryRpcUnavailable;
+//#endregion
+//#region src/cost-summary-view.d.ts
+/**
+ * The `/quota` usage tab's cost section: the same read-only `opencode.db`
+ * aggregation `pantheon_cost` reports, per agent, over the period selected by
+ * the tab's shared usage-history selector. Aggregate numbers only — never
+ * message content, session ids, or database paths.
+ */
+export declare function CostSummarySection(props: {
+  context: Context;
+  width: number;
+  period: Accessor<UsageHistoryRpcPeriod>;
+}): JSX.Element;
+//#endregion
+//#region src/cost-summary-view-model.d.ts
+/** Why a ledger query could not answer; the panel shows the diagnostic, never the error. */
+export declare function costSummaryUnavailableMessage(result: CostSummaryRpcResult): string | null;
+/**
+ * The headline row, wrapped: attributed tokens plus the catalog money of the
+ * priced part. A result with no priced model at all shows tokens only — the
+ * pricing label line next to it carries the reason, so it never reads as free.
+ */
+export declare function costSummaryTotalsLine(result: CostSummaryRpcResult, width: number): string[];
+/** Per-agent rows, wrapped; an unpriced agent says so instead of showing $0. */
+export declare function costSummaryAgentLines(agent: CostSummaryRpcAgent, width: number): string[];
+//#endregion
 //#region src/go-key-diagnostic-ui.d.ts
 /** Native keyboard-accessible dialogs; never invoked by quota refresh or panel mounting. */
 export declare function quotaGoCheckCommand(context: Pick<Context, 'ui' | 'client' | 'location' | 'data'>): KeymapCommand;
@@ -258,52 +371,14 @@ export declare function UsageHistorySection(props: {
   context: Context;
   panel: PanelInput;
   width: number;
+  /**
+   * Controlled period shared with the tab's other ledger sections (the cost
+   * summary). Absent ⇒ the section owns an internal selector, exactly like
+   * before the cost section existed.
+   */
+  period?: Accessor<UsageHistoryRpcPeriod>;
+  onPeriodChange?: (period: UsageHistoryRpcPeriod) => void;
 }): JSX.Element;
-//#endregion
-//#region src/usage-history-contract.d.ts
-type UsageHistoryRpcPeriod = '7d' | '15d' | '30d' | 'total';
-interface UsageHistoryRpcTotals {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  total: number;
-}
-interface UsageHistoryRpcBucket extends UsageHistoryRpcTotals {
-  date: string;
-  estimatedUsd?: number;
-  pricingComplete: boolean;
-}
-interface UsageHistoryRpcModel {
-  providerID: string;
-  modelID: string;
-  totals: UsageHistoryRpcTotals;
-  estimatedUsd?: number;
-  pricingComplete: boolean;
-}
-interface UsageHistoryRpcAvailable {
-  status: 'available' | 'partial';
-  period: UsageHistoryRpcPeriod;
-  coverageStart: string | null;
-  partial: boolean;
-  truncated: boolean;
-  rows: number;
-  buckets: UsageHistoryRpcBucket[];
-  totals: UsageHistoryRpcTotals;
-  models: UsageHistoryRpcModel[];
-  pricing: {
-    status: 'empty' | 'unavailable' | 'partial' | 'complete';
-    complete: boolean;
-    billed: false;
-    estimatedUsd?: number;
-    unpricedModels: number;
-  };
-}
-interface UsageHistoryRpcUnavailable {
-  status: 'unavailable';
-  reason: 'invalid_period' | 'history_unavailable' | 'history_timeout';
-}
-type UsageHistoryRpcResult = UsageHistoryRpcAvailable | UsageHistoryRpcUnavailable;
 //#endregion
 //#region src/usage-view-model.d.ts
 type ActiveContextCostResult = {
@@ -341,9 +416,26 @@ export declare function usageHistorySelectorLabel(selected: UsageHistoryRpcPerio
 export declare function usageHistorySelectorLines(selected: UsageHistoryRpcPeriod, width: number): string[];
 export declare function usageHistoryPeriodForKey(key: string): UsageHistoryRpcPeriod | undefined;
 export declare function usageHistoryControlsLines(width: number): string[];
-export declare function usageHistoryCoverageLabel(result: UsageHistoryRpcAvailable): string;
-export declare function usageHistoryPartialWarning(result: UsageHistoryRpcAvailable): string | null;
-export declare function usageHistoryPricingLabel(result: UsageHistoryRpcAvailable): string;
+/**
+ * The window fields the shared ledger labels read. The usage history and the
+ * cost summary satisfy it structurally, so the two sections of the usage tab
+ * cannot word their coverage, pricing or partial warnings differently.
+ */
+interface LedgerLabelSource {
+  coverageStart: string | null;
+  partial: boolean;
+  truncated: boolean;
+  pricing: {
+    status: 'empty' | 'unavailable' | 'partial' | 'complete';
+    complete: boolean;
+    billed: false;
+    estimatedUsd?: number;
+    unpricedModels: number;
+  };
+}
+export declare function usageHistoryCoverageLabel(result: LedgerLabelSource): string;
+export declare function usageHistoryPartialWarning(result: LedgerLabelSource): string | null;
+export declare function usageHistoryPricingLabel(result: LedgerLabelSource): string;
 export declare function usageHistoryUnavailableMessage(result: UsageHistoryRpcResult): string | null;
 export declare function usageHistoryEmptyMessage(): string;
 export declare function usageHistoryChartLines(result: UsageHistoryRpcAvailable, width: number): string[];
@@ -1354,5 +1446,5 @@ declare const plugin: {
   setup(context: Context): (() => void) | undefined;
 };
 //#endregion
-export { type ActiveContextCostResult, type ContextProgressTone, type QuotaIconMode, type QuotaIconName, type QuotaSidebarEntry, type QuotaTab, plugin as default };
+export { type ActiveContextCostResult, type ContextProgressTone, type CostSummaryRpcResult, type QuotaIconMode, type QuotaIconName, type QuotaSidebarEntry, type QuotaTab, plugin as default };
 //# sourceMappingURL=tui.d.ts.map

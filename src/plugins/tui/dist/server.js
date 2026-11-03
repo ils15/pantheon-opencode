@@ -1,6 +1,6 @@
-import { r as isUsageHistoryPeriod, t as MAX_HISTORY_QUERY_MS } from "./usage-history-contract-nt1rnBPE.js";
-import { n as quotaRpc, t as QUOTA_PROVIDER_IDS } from "./quota-rpc-BU_g5xdW.js";
-import { t as estimateActiveContextCost } from "./cost-data-BQYp7Qvl.js";
+import { o as isCostSummaryUnavailableReason, r as isUsageHistoryPeriod, t as MAX_HISTORY_QUERY_MS } from "./usage-history-contract-CHXPIL9L.js";
+import { n as quotaRpc, t as QUOTA_PROVIDER_IDS } from "./quota-rpc-DWc534zL.js";
+import { t as estimateActiveContextCost } from "./cost-data-Dwuv_Azo.js";
 import { queryAlibabaTokenPlanUsage } from "./quota-cli.js";
 import { QUOTA_PROVIDER_CATALOG, isOpenAICodexOAuthMethod, isOpenCodeConsoleOAuthMethod, runQuotaAdapter } from "./quota-adapters.js";
 import { Worker } from "node:worker_threads";
@@ -91,7 +91,23 @@ function createGoKeyDiagnostic() {
 //#region src/server.ts
 const CREDENTIAL_CACHE_TTL_MS = 3e4;
 const ADAPTER_CACHE_TTL_MS = 2e4;
-function queryUsageHistoryInWorker(period, signal) {
+/** Per-task timeout reason; the shared query budget applies to both queries. */
+const LEDGER_TIMEOUT_REASON = {
+	usage_history: "history_timeout",
+	cost_summary: "ledger_timeout"
+};
+/** Fold a worker failure into the task's closed reason enum, never its message. */
+function ledgerUnavailable(task, reason) {
+	if (task === "cost_summary") return {
+		status: "unavailable",
+		reason: isCostSummaryUnavailableReason(reason) ? reason : "ledger_unavailable"
+	};
+	return {
+		status: "unavailable",
+		reason: reason === "invalid_period" ? "invalid_period" : "history_unavailable"
+	};
+}
+function queryLedgerInWorker(task, period, signal) {
 	if (!isUsageHistoryPeriod(period)) return Promise.resolve({
 		status: "unavailable",
 		reason: "invalid_period"
@@ -100,18 +116,18 @@ function queryUsageHistoryInWorker(period, signal) {
 		let settled = false;
 		let worker;
 		try {
-			worker = new Worker(new URL("./usage-history-worker.js", import.meta.url), {
-				workerData: { period },
+			worker = new Worker(new URL("./ledger-worker.js", import.meta.url), {
+				workerData: {
+					task,
+					period
+				},
 				resourceLimits: {
 					maxOldGenerationSizeMb: 64,
 					stackSizeMb: 2
 				}
 			});
 		} catch {
-			resolve({
-				status: "unavailable",
-				reason: "history_unavailable"
-			});
+			resolve(ledgerUnavailable(task));
 			return;
 		}
 		let timer;
@@ -121,7 +137,7 @@ function queryUsageHistoryInWorker(period, signal) {
 			clearTimeout(timer);
 			signal.removeEventListener("abort", onAbort);
 			worker.terminate();
-			reject(new DOMException("Usage history request aborted", "AbortError"));
+			reject(new DOMException("Ledger request aborted", "AbortError"));
 		};
 		const finish = (result) => {
 			if (settled) return;
@@ -132,10 +148,7 @@ function queryUsageHistoryInWorker(period, signal) {
 			resolve(result);
 		};
 		timer = setTimeout(() => {
-			finish({
-				status: "unavailable",
-				reason: "history_timeout"
-			});
+			finish(ledgerUnavailable(task, LEDGER_TIMEOUT_REASON[task]));
 		}, MAX_HISTORY_QUERY_MS);
 		signal.addEventListener("abort", onAbort, { once: true });
 		worker.once("message", (message) => {
@@ -143,20 +156,12 @@ function queryUsageHistoryInWorker(period, signal) {
 				finish(message.result);
 				return;
 			}
-			finish({
-				status: "unavailable",
-				reason: "history_unavailable"
-			});
+			const reason = typeof message === "object" && message !== null ? message.reason : void 0;
+			finish(ledgerUnavailable(task, reason));
 		});
-		worker.once("error", () => finish({
-			status: "unavailable",
-			reason: "history_unavailable"
-		}));
+		worker.once("error", () => finish(ledgerUnavailable(task)));
 		worker.once("exit", () => {
-			if (!settled) finish({
-				status: "unavailable",
-				reason: "history_unavailable"
-			});
+			if (!settled) finish(ledgerUnavailable(task));
 		});
 		if (signal.aborted) onAbort();
 	});
@@ -762,7 +767,12 @@ function createQuotaPlugin(queryCli = queryAlibabaTokenPlanUsage) {
 					usage_history: async (input, callContext) => {
 						callContext.signal.throwIfAborted();
 						const period = input.period;
-						return queryUsageHistoryInWorker(period, AbortSignal.any([callContext.signal, shutdownController.signal]));
+						return queryLedgerInWorker("usage_history", period, AbortSignal.any([callContext.signal, shutdownController.signal]));
+					},
+					cost_summary: async (input, callContext) => {
+						callContext.signal.throwIfAborted();
+						const period = input.period;
+						return queryLedgerInWorker("cost_summary", period, AbortSignal.any([callContext.signal, shutdownController.signal]));
 					},
 					active_context_cost: async (input, callContext) => {
 						callContext.signal.throwIfAborted();

@@ -11,7 +11,7 @@ import {
   createPinnedLookup,
   type NativeVisionModel,
   selectNativeVisionModel,
-} from '../../src/pantheon/vision.ts'
+} from '../../src/pantheon/native-vision.ts'
 
 const MODELS: NativeVisionModel[] = [
   {

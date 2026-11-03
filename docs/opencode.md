@@ -21,7 +21,10 @@ plugin path. The exact list per generation, with source locators, is in
 [Architecture](ARCHITECTURE.md#what-the-plugin-registers). In user terms:
 
 - `hashline_edit` edits files by line-tag anchors instead of raw line numbers.
-- `pantheon_cost` reports tokens and USD by agent, model, and session.
+- `pantheon_cost` reports tokens and USD by agent, model, and session. The
+  `/quota` panel's usage tab shows the same read-only, catalog-priced
+  aggregation per agent; see
+  [TUI quota providers](tui-quota-providers.md#cost-summary-section-usage-tab).
 - `pantheon_model` shows, sets, or resets per-agent project-scoped model
   overrides.
 - `vision_describe` appears when the host exposes its model catalog.

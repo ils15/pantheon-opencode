@@ -1,4 +1,4 @@
-import { n as USAGE_HISTORY_PERIODS } from "./usage-history-contract-nt1rnBPE.js";
+import { n as USAGE_HISTORY_PERIODS } from "./usage-history-contract-CHXPIL9L.js";
 import { Rpc } from "@opencode/plugin/promise/index";
 //#region src/quota-rpc.ts
 /** Full provider matrix approved for the quota surface. */
@@ -499,6 +499,146 @@ const usageHistoryAvailableSchema = {
 	],
 	additionalProperties: false
 };
+const usageHistoryUnavailableSchema = {
+	type: "object",
+	properties: {
+		status: { const: "unavailable" },
+		reason: {
+			type: "string",
+			enum: [
+				"invalid_period",
+				"history_unavailable",
+				"history_timeout"
+			]
+		}
+	},
+	required: ["status", "reason"],
+	additionalProperties: false
+};
+const costSummaryAgentSchema = {
+	type: "object",
+	properties: {
+		agent: {
+			type: "string",
+			minLength: 1,
+			maxLength: 128
+		},
+		input: {
+			type: "integer",
+			minimum: 0,
+			maximum: Number.MAX_SAFE_INTEGER
+		},
+		output: {
+			type: "integer",
+			minimum: 0,
+			maximum: Number.MAX_SAFE_INTEGER
+		},
+		cacheRead: {
+			type: "integer",
+			minimum: 0,
+			maximum: Number.MAX_SAFE_INTEGER
+		},
+		cacheWrite: {
+			type: "integer",
+			minimum: 0,
+			maximum: Number.MAX_SAFE_INTEGER
+		},
+		total: {
+			type: "integer",
+			minimum: 0,
+			maximum: Number.MAX_SAFE_INTEGER
+		},
+		estimatedUsd: {
+			type: "number",
+			minimum: 0
+		},
+		pricingComplete: { type: "boolean" }
+	},
+	required: [
+		"agent",
+		"input",
+		"output",
+		"cacheRead",
+		"cacheWrite",
+		"total",
+		"pricingComplete"
+	],
+	additionalProperties: false
+};
+const costSummaryAvailableSchema = {
+	type: "object",
+	properties: {
+		status: {
+			type: "string",
+			enum: ["available", "partial"]
+		},
+		period: {
+			type: "string",
+			enum: USAGE_HISTORY_PERIODS
+		},
+		coverageStart: {
+			type: ["string", "null"],
+			pattern: "^\\d{4}-\\d{2}-\\d{2}$"
+		},
+		partial: { type: "boolean" },
+		truncated: { type: "boolean" },
+		rows: {
+			type: "integer",
+			minimum: 0,
+			maximum: Number.MAX_SAFE_INTEGER
+		},
+		totals: usageHistoryTotalsSchema,
+		agents: {
+			type: "array",
+			maxItems: 32,
+			items: costSummaryAgentSchema
+		},
+		pricing: {
+			type: "object",
+			properties: {
+				status: {
+					type: "string",
+					enum: [
+						"empty",
+						"unavailable",
+						"partial",
+						"complete"
+					]
+				},
+				complete: { type: "boolean" },
+				billed: { const: false },
+				estimatedUsd: {
+					type: "number",
+					minimum: 0
+				},
+				unpricedModels: {
+					type: "integer",
+					minimum: 0,
+					maximum: Number.MAX_SAFE_INTEGER
+				}
+			},
+			required: [
+				"status",
+				"complete",
+				"billed",
+				"unpricedModels"
+			],
+			additionalProperties: false
+		}
+	},
+	required: [
+		"status",
+		"period",
+		"coverageStart",
+		"partial",
+		"truncated",
+		"rows",
+		"totals",
+		"agents",
+		"pricing"
+	],
+	additionalProperties: false
+};
 /** Shared definition keeps the TUI RPC client aligned with the server contract. */
 const quotaRpc = Rpc.define({
 	id: "pantheon.quota",
@@ -582,7 +722,19 @@ const quotaRpc = Rpc.define({
 				required: ["period"],
 				additionalProperties: false
 			},
-			output: { oneOf: [usageHistoryAvailableSchema, {
+			output: { oneOf: [usageHistoryAvailableSchema, usageHistoryUnavailableSchema] }
+		},
+		cost_summary: {
+			input: {
+				type: "object",
+				properties: { period: {
+					type: "string",
+					enum: USAGE_HISTORY_PERIODS
+				} },
+				required: ["period"],
+				additionalProperties: false
+			},
+			output: { oneOf: [costSummaryAvailableSchema, {
 				type: "object",
 				properties: {
 					status: { const: "unavailable" },
@@ -590,8 +742,10 @@ const quotaRpc = Rpc.define({
 						type: "string",
 						enum: [
 							"invalid_period",
-							"history_unavailable",
-							"history_timeout"
+							"ledger_unavailable",
+							"ledger_unsupported",
+							"ledger_corrupt",
+							"ledger_timeout"
 						]
 					}
 				},
@@ -681,4 +835,4 @@ const quotaRpc = Rpc.define({
 //#endregion
 export { quotaRpc as n, QUOTA_PROVIDER_IDS as t };
 
-//# sourceMappingURL=quota-rpc-BU_g5xdW.js.map
+//# sourceMappingURL=quota-rpc-DWc534zL.js.map

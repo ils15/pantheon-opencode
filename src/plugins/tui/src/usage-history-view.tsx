@@ -1,6 +1,7 @@
 /** @jsxImportSource @opentui/solid */
 
 import type { Context, KeymapLayer, PanelInput } from '@opencode/plugin/tui/context'
+import type { Accessor } from 'solid-js'
 import { createEffect, createSignal, For, type JSX, onCleanup, Show } from 'solid-js'
 import { quotaRpc } from './quota-rpc'
 import type { UsageHistoryRpcPeriod, UsageHistoryRpcResult } from './usage-history-contract'
@@ -113,8 +114,20 @@ export function UsageHistorySection(props: {
   context: Context
   panel: PanelInput
   width: number
+  /**
+   * Controlled period shared with the tab's other ledger sections (the cost
+   * summary). Absent ⇒ the section owns an internal selector, exactly like
+   * before the cost section existed.
+   */
+  period?: Accessor<UsageHistoryRpcPeriod>
+  onPeriodChange?: (period: UsageHistoryRpcPeriod) => void
 }): JSX.Element {
-  const [period, setPeriod] = createSignal<UsageHistoryRpcPeriod>('7d')
+  const [internalPeriod, setInternalPeriod] = createSignal<UsageHistoryRpcPeriod>('7d')
+  const period = (): UsageHistoryRpcPeriod => (props.period ? props.period() : internalPeriod())
+  const setPeriod = (selected: UsageHistoryRpcPeriod): void => {
+    if (props.onPeriodChange) props.onPeriodChange(selected)
+    else setInternalPeriod(selected)
+  }
   const [result, setResult] = createSignal<UsageHistoryRpcResult | null>(null)
   const [loading, setLoading] = createSignal(true)
   const [requestFailed, setRequestFailed] = createSignal(false)

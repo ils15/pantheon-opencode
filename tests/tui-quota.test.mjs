@@ -3021,3 +3021,187 @@ test('active-context RPC estimates from safe model and context-token input witho
   })
   assert.equal(validateOutput(invalidTokens), true, JSON.stringify(validateOutput.errors))
 })
+
+function createCostDatabase(path, { withAgentRow = true, withUnknownModel = true } = {}) {
+  const db = new DatabaseSync(path)
+  db.exec('CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT)')
+  const insert = db.prepare(
+    'INSERT INTO message (id, session_id, time_created, data) VALUES (?, ?, ?, ?)',
+  )
+  let seq = 0
+  const row = (data) => {
+    seq += 1
+    insert.run(`cost-${seq}`, 'private-session-id-sentinel', Date.now(), JSON.stringify(data))
+  }
+  if (withAgentRow) {
+    row({
+      role: 'assistant',
+      agent: 'zeus',
+      model: { providerID: 'acme', id: 'alpha' },
+      tokens: { input: 1000, output: 500, cache: { read: 20, write: 10 } },
+      content: SECRET_SENTINEL,
+    })
+  }
+  if (withUnknownModel) {
+    row({
+      role: 'assistant',
+      agent: 'hermes',
+      model: { providerID: 'acme', id: 'unheard-of' },
+      tokens: { input: 30, output: 0, cache: { read: 0, write: 0 } },
+    })
+  }
+  db.close()
+}
+
+function writePricingCache(directory) {
+  mkdirSync(join(directory, 'cache'), { recursive: true })
+  writeFileSync(
+    join(directory, 'cache', 'models-dev.json'),
+    JSON.stringify({
+      version: 1,
+      fetchedAt: Date.now(),
+      providers: {
+        acme: {
+          alpha: { inputPerMTok: 1, outputPerMTok: 2, cacheReadPerMTok: 0.5, cacheWritePerMTok: 1 },
+        },
+      },
+    }),
+  )
+}
+
+test('cost summary RPC returns attributed aggregates with partial-pricing semantics', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'pantheon-cost-rpc-'))
+  const dbPath = join(directory, 'private-database-name.db')
+  const previousPath = process.env.PANTHEON_COST_DB
+  const previousHome = process.env.PANTHEON_HOME
+  createCostDatabase(dbPath)
+  writePricingCache(directory)
+  const databaseHash = sha256(dbPath)
+  process.env.PANTHEON_COST_DB = dbPath
+  process.env.PANTHEON_HOME = directory
+  const fake = createContext()
+  const cleanup = await setup(fake)
+  t.after(async () => {
+    await cleanup()
+    if (previousPath === undefined) delete process.env.PANTHEON_COST_DB
+    else process.env.PANTHEON_COST_DB = previousPath
+    if (previousHome === undefined) delete process.env.PANTHEON_HOME
+    else process.env.PANTHEON_HOME = previousHome
+    rmSync(directory, { recursive: true, force: true })
+  })
+
+  const inputValidator = new Ajv().compile(fake.definition.methods.cost_summary.input)
+  const outputValidator = new Ajv().compile(fake.definition.methods.cost_summary.output)
+  assert.equal(inputValidator({ period: '7d' }), true)
+  assert.equal(inputValidator({ period: '1d' }), false)
+  assert.equal(inputValidator({ period: '7d', dbPath }), false)
+
+  const result = await fake.handlers.cost_summary(
+    { period: 'total' },
+    { signal: new AbortController().signal },
+  )
+  assert.equal(outputValidator(result), true, JSON.stringify(outputValidator.errors))
+  assert.equal(result.status, 'partial')
+  assert.equal(result.period, 'total')
+  assert.equal(result.rows, 2)
+  // zeus: (1000×1 + 500×2 + 20×0.5 + 10×1)/1e6 ; hermes' unknown model is unpriced.
+  const zeus = result.agents.find((agent) => agent.agent === 'zeus')
+  assert.ok(zeus, 'per-agent rows must carry the attributable agent label')
+  assert.ok(Math.abs(zeus.estimatedUsd - 0.00202) < 1e-9, JSON.stringify(result.agents))
+  assert.equal(zeus.pricingComplete, true)
+  const hermes = result.agents.find((agent) => agent.agent === 'hermes')
+  assert.equal(hermes.estimatedUsd, undefined)
+  assert.equal(hermes.pricingComplete, false)
+  assert.deepEqual(result.totals, {
+    input: 1030,
+    output: 500,
+    cacheRead: 20,
+    cacheWrite: 10,
+    total: 1530,
+  })
+  assert.equal(result.pricing.status, 'partial')
+  assert.equal(result.pricing.billed, false)
+  assert.equal(result.pricing.unpricedModels, 1)
+  const serialized = JSON.stringify(result)
+  for (const secret of [
+    dbPath,
+    'private-database-name',
+    'private-session-id-sentinel',
+    SECRET_SENTINEL,
+  ]) {
+    assert.equal(serialized.includes(secret), false)
+  }
+  assert.equal(sha256(dbPath), databaseHash, 'cost summary must leave the database unchanged')
+})
+
+test('cost summary RPC diagnoses unavailable ledgers without leaking the database path', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'pantheon-cost-rpc-bad-'))
+  const previousPath = process.env.PANTHEON_COST_DB
+  const previousHome = process.env.PANTHEON_HOME
+  writePricingCache(directory)
+  process.env.PANTHEON_HOME = directory
+  const fake = createContext()
+  const cleanup = await setup(fake)
+  t.after(async () => {
+    await cleanup()
+    if (previousPath === undefined) delete process.env.PANTHEON_COST_DB
+    else process.env.PANTHEON_COST_DB = previousPath
+    if (previousHome === undefined) delete process.env.PANTHEON_HOME
+    else process.env.PANTHEON_HOME = previousHome
+    rmSync(directory, { recursive: true, force: true })
+  })
+  const outputValidator = new Ajv().compile(fake.definition.methods.cost_summary.output)
+
+  const privatePath = join(directory, 'history-error-secret.db')
+  process.env.PANTHEON_COST_DB = privatePath
+  const missing = await fake.handlers.cost_summary(
+    { period: '7d' },
+    { signal: new AbortController().signal },
+  )
+  assert.deepEqual(missing, { status: 'unavailable', reason: 'ledger_unavailable' })
+  assert.equal(outputValidator(missing), true, JSON.stringify(outputValidator.errors))
+  assert.equal(JSON.stringify(missing).includes(privatePath), false)
+
+  const corruptPath = join(directory, 'corrupt.db')
+  writeFileSync(corruptPath, 'this is not a sqlite database at all')
+  process.env.PANTHEON_COST_DB = corruptPath
+  const corrupt = await fake.handlers.cost_summary(
+    { period: '7d' },
+    { signal: new AbortController().signal },
+  )
+  assert.deepEqual(corrupt, { status: 'unavailable', reason: 'ledger_corrupt' })
+  assert.equal(outputValidator(corrupt), true, JSON.stringify(outputValidator.errors))
+  assert.equal(JSON.stringify(corrupt).includes(corruptPath), false)
+
+  const foreignPath = join(directory, 'foreign.db')
+  const foreignDb = new DatabaseSync(foreignPath)
+  foreignDb.exec('CREATE TABLE unrelated (id INTEGER)')
+  foreignDb.close()
+  process.env.PANTHEON_COST_DB = foreignPath
+  const foreign = await fake.handlers.cost_summary(
+    { period: '7d' },
+    { signal: new AbortController().signal },
+  )
+  assert.deepEqual(foreign, { status: 'unavailable', reason: 'ledger_corrupt' })
+
+  const userOnlyPath = join(directory, 'user-only.db')
+  const userDb = new DatabaseSync(userOnlyPath)
+  userDb.exec('CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT)')
+  userDb
+    .prepare('INSERT INTO message (id, session_id, time_created, data) VALUES (?, ?, ?, ?)')
+    .run('u1', 'ses_private', Date.now(), JSON.stringify({ role: 'user', agent: 'zeus' }))
+  userDb.close()
+  process.env.PANTHEON_COST_DB = userOnlyPath
+  const unsupported = await fake.handlers.cost_summary(
+    { period: 'total' },
+    { signal: new AbortController().signal },
+  )
+  assert.deepEqual(unsupported, { status: 'unavailable', reason: 'ledger_unsupported' })
+  assert.equal(outputValidator(unsupported), true, JSON.stringify(outputValidator.errors))
+
+  const invalid = await fake.handlers.cost_summary(
+    { period: '1d' },
+    { signal: new AbortController().signal },
+  )
+  assert.deepEqual(invalid, { status: 'unavailable', reason: 'invalid_period' })
+})

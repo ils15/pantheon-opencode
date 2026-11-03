@@ -205,6 +205,32 @@ documented usage-only invocation is available.
   subscriptions response proves an active supported SuperGrok tier.
 - Custom providers remain disabled pending a safe SSRF design and Themis review.
 
+## Cost summary section (usage tab)
+
+The `/quota` panel's usage tab renders a `Custo estimado` section fed by the
+same read-only `opencode.db` aggregation the `pantheon_cost` tool reports. The
+`cost_summary` method of the `pantheon.quota` RPC runs in the shared ledger
+worker (64 MiB heap cap, the same 5 s budget as the usage history, a read-only
+`node:sqlite` connection) and returns aggregate numbers only: token totals and
+one row per attributable agent over the period selected by the tab's shared
+usage-history selector (`7d`, `15d`, `30d`, `total`; `total` has no lower age
+cap and future-dated rows are excluded from every period). Message content,
+session ids, and the database path never cross the RPC boundary; a failed query
+is a closed reason, never an error message.
+
+Pricing follows `pantheon_cost`'s rules exactly: the models.dev catalog cache
+is read offline (this path never fetches), an unknown or ambiguous model is
+never priced at zero, an agent mixing priced and unpriced models shows only its
+priced part with unpriced rows reading `preço indisponível`, and the result is
+`partial` when the window is only partly covered, the per-agent list is
+truncated at 32 rows, or any model group lacks a catalog price. Missing or
+unreadable databases are normal panel states with their own diagnostics:
+`ledger_unavailable` (no database yet), `ledger_corrupt` (unrecognized schema),
+`ledger_unsupported` (rows exist but none attributable), and `ledger_timeout`.
+Both ledger families (`message` and `session_message`) are always read when a
+migrated database carries both, and assistant rows without an agent are
+excluded from attribution, exactly as in the tool.
+
 ## Normalized metric distinctions
 
 - `provider_quota`: provider-reported used/remaining values and unit/window.

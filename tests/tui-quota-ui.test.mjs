@@ -1386,6 +1386,7 @@ test('native quota tabs default to text-only Limits, expose usage/plugin/setting
   const { createSignal } = await import('solid-js')
   const layers = []
   const historyRequests = []
+  const costRequests = []
   const [snapshot, setSnapshot] = createSignal({
     status: 'ready',
     providers: [],
@@ -1501,6 +1502,10 @@ test('native quota tabs default to text-only Limits, expose usage/plugin/setting
           historyRequests.push(period)
           return { ...history, period }
         },
+        cost_summary: async ({ period }) => {
+          costRequests.push(period)
+          return costResult({ period })
+        },
         active_context_cost: async () => ({
           status: 'estimated',
           estimatedUsd: 0.25,
@@ -1585,7 +1590,20 @@ test('native quota tabs default to text-only Limits, expose usage/plugin/setting
     assert.match(usageFrame, /Gasto da sessão \(relatado\)/)
     assert.match(usageFrame, /openai\/gpt-5/)
     assert.match(usageFrame, /provider-a|openai/)
+    assert.match(usageFrame, /Custo estimado/)
+    assert.match(usageFrame, /GERAL · 1,530 tokens/)
+    assert.match(usageFrame, /preço indisponível/)
     assert.deepEqual(historyRequests, ['7d'])
+    assert.deepEqual(costRequests, ['7d'])
+
+    // One shared selector drives both ledger sections of the usage tab.
+    const periodCommand = layers
+      .flatMap((layer) => layer().commands)
+      .find(({ bind }) => bind === '1')
+    assert.ok(periodCommand, 'the 15d binding must exist in the panel keymap')
+    await periodCommand.run()
+    await setup.waitFor(() => historyRequests.includes('15d') && costRequests.includes('15d'))
+    assert.deepEqual(costRequests, ['7d', '15d'])
 
     setSnapshot((value) => ({ ...value, status: 'partial' }))
     await setup.waitFor(() => setup.captureCharFrame().includes('Dados parciais'))
@@ -1759,5 +1777,172 @@ test('quota tab and provider icons support ASCII fallback without shifting termi
     const label = quotaUI.providerState({ authentication, state }, 'unicode').label
     assert.ok(label.endsWith(text))
     assert.equal(quotaUI.cellWidth(label) - quotaUI.cellWidth(text), 3)
+  }
+})
+
+function costResult(overrides = {}) {
+  return {
+    status: 'available',
+    period: '7d',
+    coverageStart: '2026-10-21',
+    partial: false,
+    truncated: false,
+    rows: 2,
+    totals: { input: 1030, output: 500, cacheRead: 20, cacheWrite: 10, total: 1530 },
+    agents: [
+      {
+        agent: 'zeus',
+        input: 1000,
+        output: 500,
+        cacheRead: 20,
+        cacheWrite: 10,
+        total: 1500,
+        estimatedUsd: 0.00201,
+        pricingComplete: true,
+      },
+      {
+        agent: 'hermes',
+        input: 30,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: 30,
+        pricingComplete: false,
+      },
+    ],
+    pricing: {
+      status: 'partial',
+      complete: false,
+      billed: false,
+      estimatedUsd: 0.00201,
+      unpricedModels: 1,
+    },
+    ...overrides,
+  }
+}
+
+test('cost summary lines fit the panel and keep unknown models unpriced', () => {
+  const totals = quotaUI.costSummaryTotalsLine(costResult(), 40)
+  assert.match(totals.join(' '), /GERAL · 1,530 tokens · \$0\.00201/)
+  assert.ok(totals.every((line) => quotaUI.cellWidth(line) <= 40))
+  const unpricedTotals = quotaUI.costSummaryTotalsLine(
+    costResult({
+      pricing: { status: 'unavailable', complete: false, billed: false, unpricedModels: 2 },
+    }),
+    40,
+  )
+  assert.match(unpricedTotals.join(' '), /GERAL · 1,530 tokens$/)
+  assert.ok(unpricedTotals.every((line) => quotaUI.cellWidth(line) <= 40))
+  const lines = costResult()
+    .agents.flatMap((agent) => quotaUI.costSummaryAgentLines(agent, 30))
+    .flat()
+  const text = lines.join(' ').replace(/\s+/g, ' ')
+  assert.match(text, /zeus · 1,500 tokens · \$0\.00201/)
+  assert.match(text, /hermes · 30 tokens · preço indisponível/)
+  assert.ok(lines.every((line) => quotaUI.cellWidth(line) <= 30))
+  const wideAgent = quotaUI.costSummaryAgentLines(
+    {
+      agent: 'a-very-long-agent-name-that-keeps-going',
+      input: 1,
+      output: 2,
+      cacheRead: 0,
+      cacheWrite: 0,
+      total: 3,
+      estimatedUsd: 0.5,
+      pricingComplete: true,
+    },
+    20,
+  )
+  assert.ok(wideAgent.every((line) => quotaUI.cellWidth(line) <= 20))
+  // A name longer than the width wraps mid-token; the pieces must survive.
+  assert.match(wideAgent.join(' '), /a-very-long-agent-na/)
+  assert.match(wideAgent.join(' '), /me-that-keeps-going · 3 tokens · \$0\.50/)
+  // The cost section reuses the history wording for coverage, pricing and the
+  // partial warning so the two sections of the same tab cannot disagree.
+  assert.match(
+    quotaUI.usageHistoryPricingLabel(costResult()),
+    /Estimativa parcial pelo catálogo.*não cobrada.*1 modelo\(s\) sem preço/,
+  )
+  assert.match(quotaUI.usageHistoryCoverageLabel(costResult()), /Cobertura desde 2026-10-21/)
+  assert.equal(quotaUI.usageHistoryPartialWarning(costResult()), null)
+  assert.match(
+    quotaUI.usageHistoryPartialWarning(costResult({ partial: true, truncated: true })),
+    /parcial e truncado/,
+  )
+})
+
+test('cost summary unavailable reasons map to panel diagnostics without path leaks', () => {
+  const cases = {
+    invalid_period: 'Período de custo inválido.',
+    ledger_unavailable: 'Banco de dados de sessão indisponível',
+    ledger_unsupported: 'nenhum uso pôde ser atribuído',
+    ledger_corrupt: 'esquema não reconhecido',
+    ledger_timeout: 'tempo limite',
+  }
+  for (const [reason, expected] of Object.entries(cases)) {
+    const message = quotaUI.costSummaryUnavailableMessage({ status: 'unavailable', reason })
+    assert.ok(message, `reason ${reason} must render a diagnostic`)
+    assert.match(message, new RegExp(expected))
+    assert.equal(quotaUI.costSummaryUnavailableMessage({ status: 'available' }), null)
+    assert.doesNotMatch(message, /\.db|\/home\//)
+  }
+})
+
+test('native cost summary section renders attributed totals and unavailable diagnostics', async (t) => {
+  const rendererEntry = typeof Bun === 'undefined' ? 'index.js' : 'index.bun.js'
+  const { testRender } = await import(
+    pathToFileURL(
+      join(process.cwd(), `src/plugins/tui/node_modules/@opentui/solid/${rendererEntry}`),
+    ).href
+  )
+  const requests = []
+  let respond = () => costResult()
+  const context = {
+    client: {
+      rpc: () => ({
+        cost_summary: async (input) => {
+          requests.push(input.period)
+          return respond()
+        },
+      }),
+    },
+    location: 'native-render-test',
+    keymap: { layer: () => {} },
+  }
+  const panel = { focused: true }
+  const period = () => '7d'
+  let setup
+  try {
+    setup = await testRender(
+      () => quotaUI.CostSummarySection({ context, panel, width: 44, period }),
+      { width: 48, height: 40 },
+    )
+  } catch (error) {
+    const message = String(error)
+    if (
+      message.includes('OpenTUI native FFI is not available for this runtime yet') ||
+      message.includes("Cannot find module '@opentui/core-win32-x64'")
+    ) {
+      t.skip('OpenTUI native rendering is unavailable for this runtime/platform.')
+      return
+    }
+    throw error
+  }
+
+  try {
+    await setup.waitFor(() => setup.captureCharFrame().includes('zeus'))
+    const frame = setup.captureCharFrame()
+    assert.match(frame, /Custo estimado/)
+    assert.match(frame, /GERAL · 1,530 tokens · \$0\.00201/)
+    assert.match(frame, /hermes/)
+    assert.match(frame, /preço indisponível/)
+    assert.match(frame, /Estimativa parcial pelo catálogo/)
+    assert.ok(frame.split('\n').every((line) => quotaUI.cellWidth(line) <= 48))
+
+    respond = () => ({ status: 'unavailable', reason: 'ledger_unavailable' })
+    await setup.waitFor(() => setup.captureCharFrame().includes('Banco de dados de sessão'))
+    assert.doesNotMatch(setup.captureCharFrame(), /zeus/)
+  } finally {
+    setup.renderer.destroy()
   }
 })

@@ -10,6 +10,7 @@ import {
   formatContextWindow,
   formatTokenCount,
 } from './context-gauge'
+import { CostSummarySection } from './cost-summary-view'
 import { quotaGoCheckCommand } from './go-key-diagnostic-ui'
 import { MODEL_USAGE_MESSAGE_LIMIT, MODEL_USAGE_SESSION_LIMIT } from './model-usage-limits'
 import {
@@ -29,6 +30,7 @@ import {
   resolveActiveModelRef,
 } from './quota-model'
 import { cellWidth, SIDEBAR_CONTENT_WIDTH } from './sidebar-width'
+import type { UsageHistoryRpcPeriod } from './usage-history-contract'
 import { ActiveContextEstimate, UsageHistorySection } from './usage-history-view'
 import { activeModelIdentity, sessionSpendLabel } from './usage-view-model'
 
@@ -1063,6 +1065,9 @@ function QuotaSettings(props: { context: Context; runtime: QuotaRuntime }): JSX.
 
 export function QuotaPanel(props: QuotaSurfaceProps & { panel: PanelInput }): JSX.Element {
   const [selectedTab, setSelectedTab] = createSignal<QuotaTab>(DEFAULT_QUOTA_TAB)
+  // One shared selector drives both ledger sections of the usage tab, so the
+  // token chart and the cost summary can never describe different windows.
+  const [usagePeriod, setUsagePeriod] = createSignal<UsageHistoryRpcPeriod>('7d')
   props.context.keymap.layer(() =>
     quotaPanelKeymapLayer(props.panel, props.runtime, (direction) =>
       setSelectedTab((tab) => moveQuotaTab(tab, direction)),
@@ -1139,6 +1144,13 @@ export function QuotaPanel(props: QuotaSurfaceProps & { panel: PanelInput }): JS
               context={props.context}
               panel={props.panel}
               width={props.panel.width - 6}
+              period={usagePeriod}
+              onPeriodChange={setUsagePeriod}
+            />
+            <CostSummarySection
+              context={props.context}
+              width={props.panel.width - 6}
+              period={usagePeriod}
             />
             <ModelUsageDetails
               context={props.context}

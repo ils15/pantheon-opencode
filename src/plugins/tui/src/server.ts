@@ -3,6 +3,7 @@ import { Plugin } from '@opencode/plugin'
 import type { Context } from '@opencode/plugin/promise/plugin'
 import type { RpcCallContext, RpcRegistration } from '@opencode/plugin/promise/rpc'
 import { estimateActiveContextCost } from './cost-data'
+import { type CostSummaryRpcResult, isCostSummaryUnavailableReason } from './cost-summary-contract'
 import { createGoKeyDiagnostic } from './go-key-diagnostic'
 import {
   isOpenAICodexOAuthMethod,
@@ -28,10 +29,36 @@ import {
 const CREDENTIAL_CACHE_TTL_MS = 30_000
 const ADAPTER_CACHE_TTL_MS = 20_000
 
-function queryUsageHistoryInWorker(
+/** The read-only ledger queries the shared worker serves. */
+type LedgerTask = 'usage_history' | 'cost_summary'
+
+type LedgerRpcResult = UsageHistoryRpcResult | CostSummaryRpcResult
+
+/** Per-task timeout reason; the shared query budget applies to both queries. */
+const LEDGER_TIMEOUT_REASON: Record<LedgerTask, 'history_timeout' | 'ledger_timeout'> = {
+  usage_history: 'history_timeout',
+  cost_summary: 'ledger_timeout',
+}
+
+/** Fold a worker failure into the task's closed reason enum, never its message. */
+function ledgerUnavailable(task: LedgerTask, reason?: unknown): LedgerRpcResult {
+  if (task === 'cost_summary') {
+    return {
+      status: 'unavailable',
+      reason: isCostSummaryUnavailableReason(reason) ? reason : 'ledger_unavailable',
+    }
+  }
+  return {
+    status: 'unavailable',
+    reason: reason === 'invalid_period' ? 'invalid_period' : 'history_unavailable',
+  }
+}
+
+function queryLedgerInWorker(
+  task: LedgerTask,
   period: string,
   signal: AbortSignal,
-): Promise<UsageHistoryRpcResult> {
+): Promise<LedgerRpcResult> {
   if (!isUsageHistoryPeriod(period)) {
     return Promise.resolve({ status: 'unavailable', reason: 'invalid_period' })
   }
@@ -39,12 +66,12 @@ function queryUsageHistoryInWorker(
     let settled = false
     let worker: Worker
     try {
-      worker = new Worker(new URL('./usage-history-worker.js', import.meta.url), {
-        workerData: { period },
+      worker = new Worker(new URL('./ledger-worker.js', import.meta.url), {
+        workerData: { task, period },
         resourceLimits: { maxOldGenerationSizeMb: 64, stackSizeMb: 2 },
       })
     } catch {
-      resolve({ status: 'unavailable', reason: 'history_unavailable' })
+      resolve(ledgerUnavailable(task))
       return
     }
     let timer: ReturnType<typeof setTimeout>
@@ -55,9 +82,9 @@ function queryUsageHistoryInWorker(
       clearTimeout(timer)
       signal.removeEventListener('abort', onAbort)
       void worker.terminate()
-      reject(new DOMException('Usage history request aborted', 'AbortError'))
+      reject(new DOMException('Ledger request aborted', 'AbortError'))
     }
-    const finish = (result: UsageHistoryRpcResult): void => {
+    const finish = (result: LedgerRpcResult): void => {
       if (settled) return
       settled = true
       clearTimeout(timer)
@@ -67,7 +94,7 @@ function queryUsageHistoryInWorker(
     }
 
     timer = setTimeout(() => {
-      finish({ status: 'unavailable', reason: 'history_timeout' })
+      finish(ledgerUnavailable(task, LEDGER_TIMEOUT_REASON[task]))
     }, MAX_HISTORY_QUERY_MS)
     signal.addEventListener('abort', onAbort, { once: true })
     worker.once('message', (message: unknown) => {
@@ -80,14 +107,18 @@ function queryUsageHistoryInWorker(
         typeof message.result === 'object' &&
         message.result !== null
       ) {
-        finish(message.result as UsageHistoryRpcResult)
+        finish(message.result as LedgerRpcResult)
         return
       }
-      finish({ status: 'unavailable', reason: 'history_unavailable' })
+      const reason =
+        typeof message === 'object' && message !== null
+          ? (message as { reason?: unknown }).reason
+          : undefined
+      finish(ledgerUnavailable(task, reason))
     })
-    worker.once('error', () => finish({ status: 'unavailable', reason: 'history_unavailable' }))
+    worker.once('error', () => finish(ledgerUnavailable(task)))
     worker.once('exit', () => {
-      if (!settled) finish({ status: 'unavailable', reason: 'history_unavailable' })
+      if (!settled) finish(ledgerUnavailable(task))
     })
     if (signal.aborted) onAbort()
   })
@@ -941,7 +972,20 @@ export function createQuotaPlugin(
           ) => {
             callContext.signal.throwIfAborted()
             const period = (input as { period: string }).period
-            return queryUsageHistoryInWorker(
+            return queryLedgerInWorker(
+              'usage_history',
+              period,
+              AbortSignal.any([callContext.signal, shutdownController.signal]),
+            )
+          },
+          cost_summary: async (
+            input,
+            callContext: RpcCallContext<typeof quotaRpc.methods.cost_summary>,
+          ) => {
+            callContext.signal.throwIfAborted()
+            const period = (input as { period: string }).period
+            return queryLedgerInWorker(
+              'cost_summary',
               period,
               AbortSignal.any([callContext.signal, shutdownController.signal]),
             )

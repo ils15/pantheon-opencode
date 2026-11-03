@@ -286,6 +286,22 @@ export interface UsageHistoryOptions {
   pricingOptions?: PricingOptions
 }
 
+/** Days in a rolling period; `total` has no lower age cap. */
+function rollingWindowDays(period: UsageHistoryPeriod): number | undefined {
+  switch (period) {
+    case '7d':
+      return 7
+    case '15d':
+      return 15
+    case '30d':
+      return 30
+    case 'total':
+      return undefined
+    default:
+      throw new Error(`unsupported usage history period: ${String(period)}`)
+  }
+}
+
 /** Current context estimate input; cache metrics are intentionally not accepted. */
 export interface ActiveContextCostInput {
   providerID: string | null
@@ -377,18 +393,14 @@ export async function queryUsageHistory(
   period: UsageHistoryPeriod,
   options?: UsageHistoryOptions,
 ): Promise<UsageHistoryResult> {
-  const dayCounts: Record<Exclude<UsageHistoryPeriod, 'total'>, number> = {
-    '7d': 7,
-    '15d': 15,
-    '30d': 30,
-  }
-  if (period !== 'total' && !Object.hasOwn(dayCounts, period)) {
+  const days = rollingWindowDays(period)
+  if (period !== 'total' && days === undefined) {
     throw new Error(`unsupported usage history period: ${String(period)}`)
   }
   const now = options?.now ?? Date.now()
   if (!Number.isFinite(now)) throw new Error('usage history clock must be finite')
   const rolling = period !== 'total'
-  const since = rolling ? now - dayCounts[period] * 86_400_000 : undefined
+  const since = rolling ? now - (days ?? 0) * 86_400_000 : undefined
   const sqlite = (await import('node:sqlite')) as SqliteModule
   const db = new sqlite.DatabaseSync(dbPath, { readOnly: true })
   try {
@@ -563,6 +575,275 @@ export async function queryUsageHistory(
         complete: pricingStatus === 'complete',
         ...(pricedModels > 0 ? { estimatedUsd } : {}),
         unpricedModels,
+      },
+    }
+  } finally {
+    db.close()
+  }
+}
+
+/** One per-agent cost row: the panel's view of an attributable ledger bucket. */
+export interface CostSummaryAgent {
+  agent: string
+  tokensInput: number
+  tokensOutput: number
+  tokensCacheRead: number
+  tokensCacheWrite: number
+  /** Total follows the cost report convention: input + output. */
+  tokensTotal: number
+  /** Sum of the priced model groups of this agent; absent when none priced. */
+  estimatedUsd?: number
+  /** False when any contributing model group could not be priced. */
+  pricingComplete: boolean
+  unpricedReason?: UnpricedReason
+}
+
+/**
+ * Window counters of the ledger read, so the projection can diagnose a ledger
+ * that WAS found but yielded no attributable tokens — the same evidence
+ * `pantheon_cost` builds its UNSUPPORTED status from.
+ */
+export interface CostSummaryResult {
+  period: UsageHistoryPeriod
+  /** Earliest assistant ledger record present in the database, as UTC date. */
+  coverageStart: string | null
+  /** Exact epoch-ms start of the earliest assistant ledger record. */
+  coverageStartAt: number | null
+  /** True only when a rolling window begins before this database's earliest record. */
+  partial: boolean
+  /** Assistant rows attributed to an agent and aggregated below. */
+  rows: number
+  /** Rows of ANY type inside the window. */
+  scanned: number
+  /** Rows that passed the schema-appropriate assistant discriminator. */
+  assistantRows: number
+  agents: CostSummaryAgent[]
+  totals: UsageTokenTotals
+  pricing: UsageHistoryPricing
+}
+
+interface CostSummaryLedgerGroup {
+  agent?: unknown
+  provider?: unknown
+  model?: unknown
+  rows?: unknown
+  tokensInput?: unknown
+  tokensOutput?: unknown
+  tokensCacheRead?: unknown
+  tokensCacheWrite?: unknown
+}
+
+/**
+ * Per-(agent, provider, model) aggregation, grouped finely enough to price and
+ * to attribute. The only interpolated fragments are fixed module constants
+ * (family table, discriminator, time predicates); JSON is validated in the CTE
+ * before extraction, and all time bounds remain bound SQL parameters.
+ *
+ * Attribution mirrors `pantheon_cost`: rows without an agent are excluded, and
+ * a NULL/blank provider or model reads the `unknown` label, so two raw groups
+ * may fold together in JS exactly like they do in the tool's report.
+ */
+function costSummarySql(source: CostSource, rolling: boolean): string {
+  const assistantPredicate = assistantLedgerPredicate(source)
+  const timeRange = rolling
+    ? 'AND time_created >= ? AND time_created <= ?'
+    : 'AND time_created <= ?'
+  return `
+    WITH valid AS (
+      SELECT COALESCE(json_extract(data, '$.model.providerID'),
+                      json_extract(data, '$.providerID')) AS provider,
+             COALESCE(json_extract(data, '$.model.id'),
+                      json_extract(data, '$.modelID')) AS model,
+             json_extract(data, '$.agent') AS agent,
+             CASE WHEN json_type(data, '$.tokens.input') IN ('integer', 'real')
+                        AND json_extract(data, '$.tokens.input') >= 0
+                  THEN CAST(json_extract(data, '$.tokens.input') AS INTEGER) ELSE 0 END AS inTok,
+             CASE WHEN json_type(data, '$.tokens.output') IN ('integer', 'real')
+                        AND json_extract(data, '$.tokens.output') >= 0
+                  THEN CAST(json_extract(data, '$.tokens.output') AS INTEGER) ELSE 0 END AS outTok,
+             CASE WHEN json_type(data, '$.tokens.cache.read') IN ('integer', 'real')
+                        AND json_extract(data, '$.tokens.cache.read') >= 0
+                  THEN CAST(json_extract(data, '$.tokens.cache.read') AS INTEGER) ELSE 0 END AS cacheReadTok,
+             CASE WHEN json_type(data, '$.tokens.cache.write') IN ('integer', 'real')
+                        AND json_extract(data, '$.tokens.cache.write') >= 0
+                  THEN CAST(json_extract(data, '$.tokens.cache.write') AS INTEGER) ELSE 0 END AS cacheWriteTok
+      FROM ${source}
+      WHERE json_valid(data) AND ${assistantPredicate} ${timeRange}
+    )
+    SELECT agent AS agent,
+           provider AS provider,
+           model AS model,
+           COUNT(*) AS rows,
+           COALESCE(SUM(inTok), 0) AS tokensInput,
+           COALESCE(SUM(outTok), 0) AS tokensOutput,
+           COALESCE(SUM(cacheReadTok), 0) AS tokensCacheRead,
+           COALESCE(SUM(cacheWriteTok), 0) AS tokensCacheWrite
+    FROM valid
+    WHERE agent IS NOT NULL AND agent != ''
+    GROUP BY agent, provider, model`
+}
+
+/** Window counters: rows of any type vs rows past the assistant discriminator. */
+function costSummaryCountersSql(source: CostSource, rolling: boolean): string {
+  const assistantPredicate = assistantLedgerPredicate(source)
+  const timeRange = rolling ? 'time_created >= ? AND time_created <= ?' : 'time_created <= ?'
+  return `SELECT
+      (SELECT COUNT(*) FROM ${source} WHERE ${timeRange}) AS scanned,
+      (SELECT COUNT(*) FROM ${source} WHERE ${timeRange} AND ${assistantPredicate}) AS assistantRows`
+}
+
+interface CostSummaryAgentAccumulator {
+  agent: string
+  tokens: MutableUsageTokens
+  rows: number
+  usd: number
+  pricedGroups: number
+  unpricedGroups: number
+  reason: UnpricedReason | undefined
+}
+
+/**
+ * Read the token ledger of one database, read-only, priced from the cached
+ * catalog only: like the usage charts, this path NEVER fetches pricing.
+ *
+ * Both ledger families are always read when a migrated database contains both —
+ * the host-version override is a `pantheon_cost` diagnostic, not a reason to
+ * hide rows from a panel view. A missing or unreadable database REJECTS; the
+ * caller owns the diagnostic contract (an absent db is a normal panel state).
+ */
+export async function queryCostSummary(
+  dbPath: string,
+  period: UsageHistoryPeriod,
+  options?: UsageHistoryOptions,
+): Promise<CostSummaryResult> {
+  const days = rollingWindowDays(period)
+  const now = options?.now ?? Date.now()
+  if (!Number.isFinite(now)) throw new Error('usage history clock must be finite')
+  const rolling = period !== 'total'
+  const since = rolling ? now - (days ?? 0) * 86_400_000 : undefined
+  const sqlite = (await import('node:sqlite')) as SqliteModule
+  const db = new sqlite.DatabaseSync(dbPath, { readOnly: true })
+  try {
+    const sources = resolveSources(db, undefined)
+    let scanned = 0
+    let assistantRows = 0
+    let coverageStartAt: number | null = null
+    const groups: CostSummaryLedgerGroup[] = []
+
+    for (const source of sources) {
+      const coverage = db.prepare(usageCoverageSql(source)).get(now) as {
+        coverageStartAt?: unknown
+      }
+      const sourceStart = numberOf(coverage?.coverageStartAt)
+      if (sourceStart !== undefined) {
+        coverageStartAt =
+          coverageStartAt === null ? sourceStart : Math.min(coverageStartAt, sourceStart)
+      }
+
+      const countersRow = (
+        db
+          .prepare(costSummaryCountersSql(source, rolling))
+          .all(...(since === undefined ? [now, now] : [since, now, since, now])) as Array<{
+          scanned?: unknown
+          assistantRows?: unknown
+        }>
+      )[0]
+      scanned += numberOf(countersRow?.scanned) ?? 0
+      assistantRows += numberOf(countersRow?.assistantRows) ?? 0
+
+      const rows = db
+        .prepare(costSummarySql(source, rolling))
+        .all(...(since === undefined ? [now] : [since, now])) as CostSummaryLedgerGroup[]
+      groups.push(...rows)
+    }
+
+    const pricing = offlinePricing(options)
+    const agents = new Map<string, CostSummaryAgentAccumulator>()
+    const totals = emptyUsageTokens()
+    let rows = 0
+    let pricedGroups = 0
+    let unpricedGroups = 0
+    let estimatedUsd = 0
+
+    for (const group of groups) {
+      const agent = ledgerLabel(group.agent)
+      const provider = ledgerLabel(group.provider)
+      const model = ledgerLabel(group.model)
+      const groupTokens: MutableUsageTokens = {
+        input: numberOf(group.tokensInput) ?? 0,
+        output: numberOf(group.tokensOutput) ?? 0,
+        cacheRead: numberOf(group.tokensCacheRead) ?? 0,
+        cacheWrite: numberOf(group.tokensCacheWrite) ?? 0,
+      }
+      const groupRows = numberOf(group.rows) ?? 0
+      rows += groupRows
+      addUsageTokens(totals, groupTokens)
+
+      const accumulator = agents.get(agent) ?? {
+        agent,
+        tokens: emptyUsageTokens(),
+        rows: 0,
+        usd: 0,
+        pricedGroups: 0,
+        unpricedGroups: 0,
+        reason: undefined,
+      }
+      addUsageTokens(accumulator.tokens, groupTokens)
+      accumulator.rows += groupRows
+      const priced = priceTokens(pricing, provider, model, groupTokens)
+      if ('usd' in priced) {
+        accumulator.usd += priced.usd
+        accumulator.pricedGroups += 1
+        pricedGroups += 1
+        estimatedUsd += priced.usd
+      } else {
+        accumulator.unpricedGroups += 1
+        accumulator.reason = accumulator.reason ?? priced.reason
+        unpricedGroups += 1
+      }
+      agents.set(agent, accumulator)
+    }
+
+    const agentRows: CostSummaryAgent[] = [...agents.values()]
+      .map((accumulator) => ({
+        agent: accumulator.agent,
+        tokensInput: accumulator.tokens.input,
+        tokensOutput: accumulator.tokens.output,
+        tokensCacheRead: accumulator.tokens.cacheRead,
+        tokensCacheWrite: accumulator.tokens.cacheWrite,
+        tokensTotal: accumulator.tokens.input + accumulator.tokens.output,
+        ...(accumulator.pricedGroups > 0 ? { estimatedUsd: accumulator.usd } : {}),
+        pricingComplete: accumulator.unpricedGroups === 0,
+        ...(accumulator.unpricedGroups > 0 && accumulator.reason !== undefined
+          ? { unpricedReason: accumulator.reason }
+          : {}),
+      }))
+      .sort((left, right) => right.tokensTotal - left.tokensTotal)
+
+    const empty = rows === 0
+    const pricingStatus: UsagePricingStatus = empty
+      ? 'empty'
+      : pricedGroups === 0
+        ? 'unavailable'
+        : unpricedGroups > 0
+          ? 'partial'
+          : 'complete'
+    return {
+      period,
+      coverageStart:
+        coverageStartAt === null ? null : new Date(coverageStartAt).toISOString().slice(0, 10),
+      coverageStartAt,
+      partial: since !== undefined && coverageStartAt !== null && coverageStartAt > since,
+      rows,
+      scanned,
+      assistantRows,
+      agents: agentRows,
+      totals: toUsageTokenTotals(totals),
+      pricing: {
+        status: pricingStatus,
+        complete: pricingStatus === 'complete',
+        ...(pricedGroups > 0 ? { estimatedUsd } : {}),
+        unpricedModels: unpricedGroups,
       },
     }
   } finally {

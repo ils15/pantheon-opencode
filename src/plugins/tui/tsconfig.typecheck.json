@@ -1,5 +1,5 @@
 {
   "//": "Typecheck gate for the TUI entry. `tsc --noEmit` at the package root was a no-op: with no tsconfig in this directory tsc walked up to the repo tsconfig.json, which excludes src/plugins/tui entirely — so nothing here was checked. tsdown bundles without type-checking, which is how an invalid event name (session.updated, absent from the OpenCode 2.x event union) shipped in the 2.x rewrite. This config points tsc at the TUI entry plus its ambient declarations so a type error in src/index.tsx fails `npm run typecheck`. Keep this file strict JSON — the repo pre-commit `check-json` hook rejects comments.",
   "extends": "./tsconfig.build.json",
-  "include": ["src/index.tsx", "src/server.ts", "src/usage-history-worker.ts", "src/opencode.d.ts"]
+  "include": ["src/index.tsx", "src/server.ts", "src/ledger-worker.ts", "src/opencode.d.ts"]
 }
