@@ -197,7 +197,7 @@ async function testDisabledConfigLeavesPromptUntouchedAndFetchesNothing(): Promi
   })
 }
 
-async function testPromptHookKeepsLocalRecommendationWithoutEgress(): Promise<void> {
+async function testPromptHookSuppressesVisibleMarkerWithoutEgress(): Promise<void> {
   const environment = sandbox()
   await withEnvironment(environment, async () => {
     writeEnabledConfig()
@@ -216,14 +216,13 @@ async function testPromptHookKeepsLocalRecommendationWithoutEgress(): Promise<vo
       },
     }
     const applied = await applyDecisionRouterToPrompt(admission)
-    assert.equal(applied.markerApplied, true)
+    assert.equal(applied.markerApplied, false)
     assert.equal(applied.skillsFiltered, false)
     assert.equal(applied.skillsSource, 'none')
     assert.equal(applied.reason, 'skills.source.absent')
-    assert.match(
-      admission.prompt.text,
-      /<!-- pantheon-decision-router:v1 source=local skills=[a-z0-9,-]+(?: agent=[a-z0-9-]+)? -->/,
-    )
+    // The visible marker is suppressed (1.6.2-beta.10): the host chat rendered
+    // the HTML comment to the user. The router itself still runs, without egress.
+    assert.equal(admission.prompt.text, 'implement a backend endpoint with pytest')
     assert.equal(fetchCalls, 0)
   })
 }
@@ -245,17 +244,15 @@ function testPromptApplicationIsIdempotentAndBounded(): void {
     skills: [{ name: 'tdd-with-agents' }, { name: 'simplify' }, { name: 'not-a-skill' }],
   }
   const applied = applyTurnDecisionToPrompt(prompt, decision)
-  assert.equal(applied.markerApplied, true)
+  assert.equal(applied.markerApplied, false)
+  assert.equal(prompt.text, 'original request', 'no visible marker is appended')
   assert.equal(applied.skillsFiltered, true, 'synthetic host shape only')
   assert.equal(applied.skillsSource, 'prompt')
   assert.deepEqual(prompt.skills, [{ name: 'tdd-with-agents' }])
-  assert.match(
-    prompt.text,
-    /<!-- pantheon-decision-router:v1 source=local skills=tdd-with-agents agent=hermes -->/,
-  )
   const repeated = applyTurnDecisionToPrompt(prompt, decision)
   assert.equal(repeated.markerApplied, false)
-  assert.equal((prompt.text.match(/pantheon-decision-router:v1/g) ?? []).length, 1)
+  assert.equal(prompt.text, 'original request')
+  assert.deepEqual(prompt.skills, [{ name: 'tdd-with-agents' }])
   const unknownShape = { text: 'x', skills: [{ label: 'tdd-with-agents' }] }
   assert.equal(applyTurnDecisionToPrompt(unknownShape, decision).skillsFiltered, false)
   assert.deepEqual(unknownShape.skills, [{ label: 'tdd-with-agents' }])
@@ -367,7 +364,7 @@ async function testPolicyCacheIsProcessScopedAndInvalidatable(): Promise<void> {
 testCatalogAndSkillSelection()
 testAgentRecommendationOnlyUsesEligibleCandidates()
 await testDisabledConfigLeavesPromptUntouchedAndFetchesNothing()
-await testPromptHookKeepsLocalRecommendationWithoutEgress()
+await testPromptHookSuppressesVisibleMarkerWithoutEgress()
 testPromptApplicationIsIdempotentAndBounded()
 testFetchProviderPathIsRemoved()
 testEmptySelectionNeverErasesHostSkills()

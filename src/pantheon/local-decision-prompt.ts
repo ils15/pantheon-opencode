@@ -1,7 +1,8 @@
 import { decideLocalForTurn, type TurnDecision } from './local-decision-turn.ts'
 import { isPantheonAgentId, isPantheonSkillId } from './pantheon-decision-catalog.ts'
 
-const MARKER_PREFIX = '<!-- pantheon-decision-router:v1'
+// The marker FORMAT stays pinned: prompts that still carry one (saved prompts,
+// copied messages) short-circuit through `hasDecisionRouterMarker`.
 const MARKER_PATTERN = /<!-- pantheon-decision-router:v1\b[^>]*-->/
 
 /** The host sends the *string* `"undefined"` for absent prompt fields (F-08). */
@@ -29,6 +30,7 @@ export type PromptApplicationReason =
   | 'skills.synthetic.narrowed'
 
 export interface PromptApplicationResult {
+  /** Always false since beta.10: the visible marker is suppressed. */
   markerApplied: boolean
   skillsFiltered: boolean
   /** Observable source of the skill list; `none` in the measured host shape (F-08). */
@@ -170,21 +172,18 @@ function narrowSkills(
   return { skillsFiltered: true, skillsSource: 'prompt', reason: 'skills.synthetic.narrowed' }
 }
 
-function buildMarker(decision: TurnDecision): string | null {
-  const skillIds = decision.skillIds.filter((id) => isPantheonSkillId(id))
-  const agent = decision.agent !== null && isPantheonAgentId(decision.agent) ? decision.agent : null
-  if (skillIds.length === 0 && agent === null) return null
-  const parts = [`source=${decision.source}`]
-  if (skillIds.length > 0) parts.push(`skills=${skillIds.join(',')}`)
-  if (agent !== null) parts.push(`agent=${agent}`)
-  return `${MARKER_PREFIX} ${parts.join(' ')} -->`
-}
-
 /**
  * Apply an advisory decision to the host prompt payload in place. It never
  * dispatches, changes permissions, or removes a pre-existing host marker.
  * `skillsDraft` is the per-turn draft list; it is observed for `skillsSource`
  * and never applied to admission.
+ *
+ * The visible `<!-- pantheon-decision-router:v1 … -->` marker is SUPPRESSED
+ * (1.6.2-beta.10): the host chat rendered the HTML comment to the user. The
+ * router itself keeps running — shadow observation, telemetry and the
+ * synthetic-shape skill guard all stay — and measured evidence showed the
+ * marker was the only live prompt mutation while every measured prompt
+ * mutation was a no-op (F-24, F-08/F-09), so nothing behavioral is lost.
  */
 export function applyTurnDecisionToPrompt(
   prompt: unknown,
@@ -205,17 +204,12 @@ export function applyTurnDecisionToPrompt(
     decision.skillIds.filter((id) => isPantheonSkillId(id)),
     skillsDraft,
   )
-  const result: PromptApplicationResult = {
+  return {
     markerApplied: false,
     skillsFiltered: narrowing.skillsFiltered,
     skillsSource: narrowing.skillsSource,
     reason: narrowing.reason,
   }
-  if (typeof target.text !== 'string' || target.text.includes(MARKER_PREFIX)) return result
-  const marker = buildMarker(decision)
-  if (marker === null) return result
-  target.text = `${target.text}\n\n${marker}`
-  return { ...result, markerApplied: true }
 }
 
 /** True when the prompt already carries a decision-router marker. */
