@@ -84,14 +84,15 @@ The API contract and its abstention behavior are in
 
 ## Decision layer flags (shadow adapters)
 
-Both flags are read once when the plugin registers, so changing either needs a
-host restart. Neither is set in a default install; anything other than the listed
-truthy values leaves the feature off.
+All three flags are read once when the plugin registers, so changing any of
+them needs a host restart. None is set in a default install; anything other
+than the listed truthy values leaves the feature off.
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `PANTHEON_V2_P7_LOOP` | unset (off) | `1`, `on` or `true` enables the P7 loop adapter on `session.execution.succeeded`. It counts executions and writes `effect: none` observations to an in-memory, bounded collector that the plugin never reads back (it is exposed only to tests); it does not enforce loop limits. The 12-execution cap (`P7_LOOP_MAX_EXECUTIONS`) is advisory: no measured host surface signals a new user turn, so the streak is not claimed to reset. |
 | `PANTHEON_V2_P8_GUARDRAIL` | unset (off) | `1`, `on` or `true` would enable the P8 guardrail on `permission.evaluate` only. It can only narrow, and it remains **off**: C8 closed by measurement, and the verdict is that the declared rules match no delivered payload, so the point is recorded as `advisory` and narrows nothing. A written `deny` is honoured by the host, but no declared rule can produce one. `execute.before` remains the only hard barrier. |
+| `PANTHEON_J1_RISK_SCORE` | unset (off) | `1`, `on` or `true` enables the J1 risk-score shadow gate on `execute.before` for write/execute tool calls (bash/shell and webfetch, file writes). Each observed call fires ONE bounded native Jev decision through the same gate chain as `pantheon_jev_decide` (config, consent, budget reservation, `decision.egress` permission) and records `effect: none` shadow records (reason tokens like `risk-3-intent-yes`, `skip-timeout`) to the in-memory, bounded collector the plugin never reads back. The request carries no user content: tool name token, scope class and the tool input's sha256 only. Fail-open on every failure mode; fired without awaiting the hook, self-bounded at 2s, never retried. Shadow never blocks — the only reachable verdict is `observe`. See [V2 Native Decisions](native-decisions.md#j1-risk-score-gate-shadow). |
 
 Shadow points (P1, P2, P3, P9, P11) have no environment switch: there is no
 behaviour to switch. P1 and P2 are registered on `session.hook('prompt')` and

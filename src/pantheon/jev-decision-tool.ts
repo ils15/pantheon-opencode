@@ -12,6 +12,11 @@
  * preparer. Transport is the host's own provider layer: this module never
  * touches fetch, endpoints, or credentials.
  *
+ * The gate chain lives in {@link runGatedNativeJevCall} so a second caller (the
+ * J1 risk-score shadow gate in `jev-risk-gate.ts`) reuses the exact same
+ * config → route → permission → reserve → decide → reconcile sequence instead
+ * of duplicating it; only the request preparer is caller-supplied.
+ *
  * Settlement follows the fetch runner's fail-closed contract: reserve before
  * the call, reconcile from the host-reported cost after it, and leave the
  * reservation pending (budget held for the period) when no evidence can be
@@ -21,14 +26,17 @@ import { readUserDecisionRouterConfig } from '../../scripts/install/decision-rou
 import {
   consumeJevDecisionResult,
   isJevDecisionPreset,
+  type JevDecisionPreparation,
   type JevHostSkill,
   type NativeJevRouteFailure,
+  type NativeJevRouteSelection,
   prepareJevDecisionRequest,
   prepareJevPresetRequest,
   resolveNativeJevRoute,
 } from './jev-decisions.ts'
 import {
   openLocalDecisionBudgetLedger,
+  type ReservationResult,
   resolveLocalDecisionBudgetDbPath,
 } from './local-decision-budget.ts'
 import {
@@ -36,7 +44,7 @@ import {
   buildDecisionEgressRequest,
 } from './local-decision-egress-gate.ts'
 import { verifyNativeUsageForReservation } from './local-decision-usage-evidence.internal.ts'
-import type { NativeDecisionRequest } from './v2-native-decisions.ts'
+import type { NativeDecisionRequest, ResolvedNativeDecisionRoute } from './v2-native-decisions.ts'
 import type { V2ToolDef } from './v2-tools.ts'
 
 export interface V2JevDecisionRuntime {
@@ -90,19 +98,166 @@ function refusal(reasonCode: JevDecisionRunFailure): string {
   return JSON.stringify({ advisory: false, effect: 'none', reasonCode })
 }
 
-/**
- * Refusal with the error CLASS only (`TypeError`, `RangeError`, …). The
- * message never crosses into the chat: it can carry paths, config or provider
- * detail, and the class alone already separates a detached-call failure from
- * a host-side data failure.
- */
-function refusalDetail(reasonCode: JevDecisionRunFailure, err: unknown): string {
-  const detail = err instanceof Error ? err.name : 'UnknownFailure'
-  return JSON.stringify({ advisory: false, effect: 'none', reasonCode, detail })
-}
-
 function isNonBlankString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0
+}
+
+// ─── Shared gate chain ───────────────────────────────────────────────────
+
+/**
+ * Every gate-chain failure the shared runner can produce. It is
+ * {@link JevDecisionRunFailure} minus `CALLER_NOT_ZEUS`: the caller check is a
+ * property of the explicit tool surface, not of the gate chain, so the J1
+ * shadow observer can run the same chain for any agent.
+ */
+export type GatedNativeJevFailure = Exclude<JevDecisionRunFailure, 'CALLER_NOT_ZEUS'>
+
+/** The minimal runtime slice the gate chain needs. */
+export type GatedNativeJevRuntime = Pick<V2JevDecisionRuntime, 'decide'> & {
+  /** Host permission kill-switch (`ctx.permission.assert`), when present. */
+  readonly permissionAssert?: (input: Record<string, unknown>) => Promise<unknown>
+}
+
+/** One completed, settled native Jev call: gates passed, usage reconciled. */
+export interface GatedNativeJevCall {
+  /** The route the config + ledger gates selected. */
+  readonly selection: NativeJevRouteSelection
+  /** The prepared, bounded request this call ran. */
+  readonly request: NativeDecisionRequest
+  /** The raw host response; consume it through `consumeJevDecisionResult`. */
+  readonly response: unknown
+  /** The frozen ledger reconciliation state. */
+  readonly frozen: boolean
+}
+
+export type GatedNativeJevCallResult =
+  | { readonly ok: true; readonly call: GatedNativeJevCall }
+  | {
+      readonly ok: false
+      readonly reasonCode: GatedNativeJevFailure
+      /** Sanitized error CLASS only (`TypeError`, …); set for call failures. */
+      readonly detail?: string
+    }
+
+/**
+ * Run ONE native Jev decision through the full gate chain — the exact chain
+ * `runJevDecision` has always run, extracted so a second caller (the J1
+ * risk-score shadow gate) reuses it instead of duplicating it:
+ * user-level config (`enabled`, `egress_consent`) → route via
+ * `resolveNativeJevRoute` with the ledger's admission check → host permission
+ * kill-switch on `decision.egress` → caller-supplied request preparation →
+ * reservation → the single host call → usage verification and reconciliation.
+ *
+ * The request preparer is injected because the two callers prepare differently
+ * (the tool from model input, J1 from a prebuilt bounded request); everything
+ * before and after it is shared. Settlement keeps the fetch runner's
+ * fail-closed contract: reserve before the call, reconcile from the
+ * host-reported cost after it, leave the reservation pending when no evidence
+ * can be minted.
+ *
+ * Rejects only when the budget ledger itself cannot be opened (the explicit
+ * tool surface propagates that as a tool error, unchanged); every gate failure
+ * is a structured `{ ok: false }` result, never a throw.
+ */
+export async function runGatedNativeJevCall(params: {
+  readonly sessionID: unknown
+  readonly messageID: unknown
+  /** Current agent, only when the caller actually knows it. */
+  readonly agent?: unknown
+  readonly runtime: GatedNativeJevRuntime
+  readonly prepare: (
+    route: ResolvedNativeDecisionRoute,
+  ) => JevDecisionPreparation | Promise<JevDecisionPreparation>
+}): Promise<GatedNativeJevCallResult> {
+  if (!isNonBlankString(params.sessionID) || !isNonBlankString(params.messageID)) {
+    return { ok: false, reasonCode: 'CONTEXT_UNAVAILABLE' }
+  }
+  const sessionID = params.sessionID
+  const messageID = params.messageID
+  const agent =
+    typeof params.agent === 'string' && params.agent.trim().length > 0 ? params.agent : undefined
+
+  let config: ReturnType<typeof readUserDecisionRouterConfig>
+  try {
+    config = readUserDecisionRouterConfig()
+  } catch {
+    return { ok: false, reasonCode: 'CONFIG_UNAVAILABLE' }
+  }
+  if (!config.enabled) return { ok: false, reasonCode: 'DISABLED' }
+  if (!config.egress_consent) return { ok: false, reasonCode: 'CONSENT_MISSING' }
+
+  const ledger = openLocalDecisionBudgetLedger({ dbPath: resolveLocalDecisionBudgetDbPath() })
+  try {
+    const selection = resolveNativeJevRoute(
+      config,
+      (provider, model) => ledger.canReserve(provider, model).status === 'eligible',
+    )
+    if (!selection.ok) return { ok: false, reasonCode: selection.reasonCode }
+
+    if (typeof params.runtime.permissionAssert !== 'function') {
+      return { ok: false, reasonCode: 'PERMISSION_UNAVAILABLE' }
+    }
+    const assertion = await assertDecisionEgressPermission(
+      params.runtime.permissionAssert,
+      buildDecisionEgressRequest({
+        sessionID,
+        messageID,
+        endpoint: nativeJevPermissionResource(
+          selection.selection.route.model.providerID,
+          selection.selection.route.model.id,
+        ),
+        ...(agent === undefined ? {} : { agent }),
+      }),
+    )
+    if (assertion === 'deny') return { ok: false, reasonCode: 'PERMISSION_DENIED' }
+
+    const prepared = await params.prepare(selection.selection.route)
+    if (!prepared.ok) return { ok: false, reasonCode: prepared.reasonCode }
+
+    const reservation: ReservationResult = ledger.reserve(
+      selection.selection.accountingProvider,
+      selection.selection.model,
+    )
+    if (reservation.status !== 'reserved') return { ok: false, reasonCode: 'RESERVATION_DENIED' }
+
+    let response: unknown
+    try {
+      response = await params.runtime.decide(prepared.request)
+    } catch (err) {
+      return {
+        ok: false,
+        reasonCode: 'DECISION_CALL_FAILED',
+        detail: err instanceof Error ? err.name : 'UnknownFailure',
+      }
+    }
+
+    const evidence = verifyNativeUsageForReservation(
+      {
+        reservationId: reservation.reservationId,
+        provider: selection.selection.accountingProvider,
+        model: selection.selection.model,
+        period: reservation.period,
+      },
+      response,
+    )
+    if (evidence === null) return { ok: false, reasonCode: 'USAGE_UNRECONCILED' }
+    const reconciliation = ledger.reconcileVerified(reservation.reservationId, evidence)
+    if (reconciliation.status !== 'reconciled') {
+      return { ok: false, reasonCode: 'USAGE_UNRECONCILED' }
+    }
+
+    return {
+      ok: true,
+      call: {
+        selection: selection.selection,
+        request: prepared.request,
+        response,
+        frozen: reconciliation.frozen,
+      },
+    }
+  } finally {
+    ledger.close()
+  }
 }
 
 /**
@@ -150,103 +305,54 @@ export async function runJevDecision(
       ? (toolContext as JevToolContext)
       : undefined
   if (context?.agent !== 'zeus') return refusal('CALLER_NOT_ZEUS')
-  const sessionID = context?.sessionID
-  const messageID = context?.messageID
-  if (!isNonBlankString(sessionID) || !isNonBlankString(messageID)) {
-    return refusal('CONTEXT_UNAVAILABLE')
-  }
 
-  let config: ReturnType<typeof readUserDecisionRouterConfig>
-  try {
-    config = readUserDecisionRouterConfig()
-  } catch {
-    return refusal('CONFIG_UNAVAILABLE')
-  }
-  if (!config.enabled) return refusal('DISABLED')
-  if (!config.egress_consent) return refusal('CONSENT_MISSING')
-
-  const ledger = openLocalDecisionBudgetLedger({ dbPath: resolveLocalDecisionBudgetDbPath() })
-  try {
-    const selection = resolveNativeJevRoute(
-      config,
-      (provider, model) => ledger.canReserve(provider, model).status === 'eligible',
-    )
-    if (!selection.ok) return refusal(selection.reasonCode)
-
-    if (typeof runtime.permissionAssert !== 'function') return refusal('PERMISSION_UNAVAILABLE')
-    const assertion = await assertDecisionEgressPermission(
-      runtime.permissionAssert,
-      buildDecisionEgressRequest({
-        sessionID,
-        messageID,
-        endpoint: nativeJevPermissionResource(
-          selection.selection.route.model.providerID,
-          selection.selection.route.model.id,
-        ),
-        agent: 'zeus',
-      }),
-    )
-    if (assertion === 'deny') return refusal('PERMISSION_DENIED')
-
-    const requested = (input ?? {}) as { mode?: unknown; questions?: unknown }
-    const prepared =
+  const requested = (input ?? {}) as { mode?: unknown; questions?: unknown }
+  const result = await runGatedNativeJevCall({
+    sessionID: context?.sessionID,
+    messageID: context?.messageID,
+    agent: 'zeus',
+    runtime,
+    prepare: async (route) =>
       requested.mode === undefined
-        ? prepareJevDecisionRequest(selection.selection.route, input ?? {})
+        ? prepareJevDecisionRequest(route, input ?? {})
         : isJevDecisionPreset(requested.mode)
           ? prepareJevPresetRequest(
-              selection.selection.route,
+              route,
               requested.mode,
               input ?? {},
               requested.mode === 'skills' ? await readHostSkills(runtime) : undefined,
             )
-          : { ok: false as const, reasonCode: 'PRESET_INVALID' as const }
-    if (!prepared.ok) return refusal(prepared.reasonCode)
-
-    const reservation = ledger.reserve(
-      selection.selection.accountingProvider,
-      selection.selection.model,
-    )
-    if (reservation.status !== 'reserved') return refusal('RESERVATION_DENIED')
-
-    let response: unknown
-    try {
-      response = await runtime.decide(prepared.request)
-    } catch (err) {
-      return refusalDetail('DECISION_CALL_FAILED', err)
-    }
-
-    const evidence = verifyNativeUsageForReservation(
-      {
-        reservationId: reservation.reservationId,
-        provider: selection.selection.accountingProvider,
-        model: selection.selection.model,
-        period: reservation.period,
-      },
-      response,
-    )
-    if (evidence === null) return refusal('USAGE_UNRECONCILED')
-    const reconciliation = ledger.reconcileVerified(reservation.reservationId, evidence)
-    if (reconciliation.status !== 'reconciled') return refusal('USAGE_UNRECONCILED')
-
-    const advice = consumeJevDecisionResult(response, prepared.request)
+          : { ok: false as const, reasonCode: 'PRESET_INVALID' as const },
+  })
+  if (!result.ok) {
+    if (result.detail === undefined) return refusal(result.reasonCode)
+    // Refusal with the error CLASS only (`TypeError`, `RangeError`, …): the
+    // message can carry paths, config or provider detail and never crosses
+    // into the chat.
     return JSON.stringify({
-      advisory: true,
+      advisory: false,
       effect: 'none',
-      reason: 'JEV_DECISION',
-      route: {
-        providerID: selection.selection.route.model.providerID,
-        id: selection.selection.route.model.id,
-        billing: selection.selection.route.billing,
-      },
-      ...(requested.mode === undefined ? {} : { preset: requested.mode }),
-      answers: advice.answers,
-      missing: advice.missing,
-      usage: { costUsd: advice.costUsd, tokens: advice.tokens },
-      frozen: reconciliation.frozen,
+      reasonCode: result.reasonCode,
+      detail: result.detail,
     })
-  } finally {
-    ledger.close()
   }
+
+  const advice = consumeJevDecisionResult(result.call.response, result.call.request)
+  return JSON.stringify({
+    advisory: true,
+    effect: 'none',
+    reason: 'JEV_DECISION',
+    route: {
+      providerID: result.call.selection.route.model.providerID,
+      id: result.call.selection.route.model.id,
+      billing: result.call.selection.route.billing,
+    },
+    ...(requested.mode === undefined ? {} : { preset: requested.mode }),
+    answers: advice.answers,
+    missing: advice.missing,
+    usage: { costUsd: advice.costUsd, tokens: advice.tokens },
+    frozen: result.call.frozen,
+  })
 }
 
 const TOOL_DESCRIPTION =

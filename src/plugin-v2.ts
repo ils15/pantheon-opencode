@@ -116,6 +116,11 @@ import {
 import { GOAL_LOOP_DEFAULTS, GoalStore } from './pantheon/goal-loop.ts'
 import { createGuardPathResolver } from './pantheon/guard-path.ts'
 import type { V2JevDecisionRuntime } from './pantheon/jev-decision-tool.ts'
+import {
+  createJ1RiskGateObserver,
+  isRiskGateTarget,
+  j1RiskGateEnabledFromEnv,
+} from './pantheon/jev-risk-gate.ts'
 import { DECISION_EGRESS_ACTION } from './pantheon/local-decision-egress-gate.ts'
 import { applyDecisionRouterToPrompt } from './pantheon/local-decision-prompt.ts'
 import { getSharedBoard } from './pantheon/shared-board.ts'
@@ -661,6 +666,45 @@ function transformReferences(draft: ReferenceDraft): void {
 // ─── V2 Tool Registration ───────────────────────────────────────────────
 
 /**
+ * Construct the ONE Jev runtime the plugin threads everywhere: the explicit
+ * `pantheon_jev_decide` tool and the J1 risk-score shadow observer both call
+ * through this instance, so `decide` and `permissionAssert` are bound to their
+ * owning host domains exactly once. `undefined` when the host lacks either the
+ * native Decisions API or the model catalog (the route no longer consults the
+ * catalog, but the tool registration contract still feature-detects both).
+ */
+function buildV2JevRuntime(host: ReturnType<typeof hostDomains>): V2JevDecisionRuntime | undefined {
+  const decisionsFn = host.experimental?.generate?.decisions
+  const modelListFn = host.model?.list
+  if (typeof decisionsFn !== 'function' || typeof modelListFn !== 'function') return undefined
+  const decisionsOwner = host.experimental?.generate
+  const decide = decisionsFn
+  const listModels = modelListFn
+  // The 2.2.5 host exposes ctx.skill as the SkillEditor (list()); the SDK
+  // types this file sees declare skill as the registration hook, so the
+  // runtime shape is read through one narrow, feature-detected cast.
+  const skillDomain = (host as { skill?: { list?: () => unknown } }).skill
+  const skillList = skillDomain?.list
+  const permissionAssertFn = host.permission?.assert
+  const permissionAssert =
+    typeof permissionAssertFn === 'function'
+      ? (input: Record<string, unknown>) => permissionAssertFn.call(host.permission, input)
+      : undefined
+  return {
+    // Every host method is invoked with its owning domain as receiver: the
+    // canary records `ctx.model.list()` (bound) succeeding on 2.2.5 while a
+    // detached reference threw in the field and surfaced only as
+    // CATALOG_UNAVAILABLE. Same discipline as permissionAssert above.
+    listModels: () => listModels.call(host.model),
+    decide: (request: NativeDecisionRequest) => decide.call(decisionsOwner, request),
+    // Sync-or-async host skill list; absent/throwing falls back to the
+    // catalog-only preset inside the tool.
+    listSkills: async () => skillList?.call(skillDomain),
+    ...(permissionAssert === undefined ? {} : { permissionAssert }),
+  }
+}
+
+/**
  * Attempt to register Pantheon tools via V2 ctx.tool.transform.
  *
  * The V2 tool.transform API (when available) provides:
@@ -675,6 +719,7 @@ function transformReferences(draft: ReferenceDraft): void {
 async function registerV2Tools(
   context: PluginContext,
   boundedRead?: ReturnType<typeof createV2BoundedReadTool>['definition'],
+  jevRuntime?: V2JevDecisionRuntime,
 ): Promise<boolean> {
   const host = hostDomains(context)
   const toolCtx = host.tool
@@ -698,34 +743,10 @@ async function registerV2Tools(
     const decisionsFn = host.experimental?.generate?.decisions
     const jevReady = visionReady && typeof decisionsFn === 'function'
     if (!jevReady) markUnsupported('jev-decision-tool')
-    const permissionAssertFn = host.permission?.assert
-    let jevRuntime: V2JevDecisionRuntime | undefined
-    if (jevReady && typeof decisionsFn === 'function' && typeof modelListFn === 'function') {
-      const decisionsOwner = host.experimental?.generate
-      const decide = decisionsFn
-      const listModels = modelListFn
-      // The 2.2.5 host exposes ctx.skill as the SkillEditor (list()); the SDK
-      // types this file sees declare skill as the registration hook, so the
-      // runtime shape is read through one narrow, feature-detected cast.
-      const skillDomain = (host as { skill?: { list?: () => unknown } }).skill
-      const skillList = skillDomain?.list
-      const permissionAssert =
-        typeof permissionAssertFn === 'function'
-          ? (input: Record<string, unknown>) => permissionAssertFn.call(host.permission, input)
-          : undefined
-      jevRuntime = {
-        // Every host method is invoked with its owning domain as receiver:
-        // the canary records `ctx.model.list()` (bound) succeeding on 2.2.5
-        // while a detached reference threw in the field and surfaced only as
-        // CATALOG_UNAVAILABLE. Same discipline as permissionAssert above.
-        listModels: () => listModels.call(host.model),
-        decide: (request: NativeDecisionRequest) => decide.call(decisionsOwner, request),
-        // Sync-or-async host skill list; absent/throwing falls back to the
-        // catalog-only preset inside the tool.
-        listSkills: async () => skillList?.call(skillDomain),
-        ...(permissionAssert === undefined ? {} : { permissionAssert }),
-      }
-    }
+    // The setup flow threads the ONE runtime instance it built (shared with
+    // the J1 observer in the execute.before hook); this local fallback keeps a
+    // direct registration call self-sufficient.
+    const runtime = jevRuntime ?? (jevReady ? buildV2JevRuntime(host) : undefined)
     // P3 (complexity) declares `tool.invoke`; its construction site is the
     // local selector's execute, fed by that tool's own input schema. The sink
     // is the 0b record path (in-memory, bounded, I/O-free) and every record
@@ -739,7 +760,7 @@ async function registerV2Tools(
           p3Sink.emit({ ...record, mode: 'shadow' })
         },
       },
-      jevRuntime,
+      runtime,
     )
     if (boundedRead !== undefined) toolDefs.push(boundedRead)
 
@@ -893,6 +914,25 @@ export function getP11TelemetrySinkForTests(): TelemetrySink | undefined {
 }
 
 let p11TelemetrySink: TelemetrySink | undefined
+
+/**
+ * The J1 risk-score telemetry sink created by the most recent tool-hook
+ * registration.
+ *
+ * J1 (the risk-score advisory gate, `jev-risk-gate.ts`) is NOT a registry
+ * point: it is a flag-gated shadow observer on write/execute tool calls. The
+ * sink exists only when `PANTHEON_J1_RISK_SCORE` is on AND the host runtime
+ * exposes the native Decisions API, so flag-off leaves it undefined — the
+ * zero-overhead contract. Records go through the in-memory, bounded 0b path
+ * (`createTelemetrySink`, no I/O) and carry `mode: 'shadow'`; the observer is
+ * fire-and-observe, so the tool call never waits on it. Exported only for
+ * tests/pantheon/plugin-v2-contract.test.ts.
+ */
+export function getJ1TelemetrySinkForTests(): TelemetrySink | undefined {
+  return j1TelemetrySink
+}
+
+let j1TelemetrySink: TelemetrySink | undefined
 
 /**
  * Attempt to subscribe to session events via V2 ctx.event.subscribe.
@@ -1856,6 +1896,7 @@ async function registerV2ToolHooks(
   context: PluginContext,
   subagentOrigins: V2SubagentOriginRegistry,
   boundedReadOrigins?: V2BoundedReadOriginRegistry,
+  jevRuntime?: V2JevDecisionRuntime,
 ): Promise<{ registered: boolean; beforeRegistered: boolean }> {
   const host = hostDomains(context)
   const toolCtx = host.tool
@@ -1871,6 +1912,26 @@ async function registerV2ToolHooks(
     ...(shellRunnerOverride === undefined ? {} : { run: shellRunnerOverride }),
     onUnkeyed: appendV2HookLog,
   })
+
+  // J1 risk-score advisory gate (jev-risk-gate.ts). Constructed ONLY when
+  // PANTHEON_J1_RISK_SCORE is on AND the host runtime exposes the native
+  // Decisions API (the same instance `pantheon_jev_decide` uses), so flag-off
+  // is a hard zero: no sink, no observer, no per-call work. When enabled, the
+  // observer runs the SAME gate chain as the explicit tool (config, consent,
+  // ledger reservation, permission kill-switch) and records shadow records
+  // only — it is fired WITHOUT await inside the before-handler (fire-and-
+  // observe), self-bounds at 2s with an AbortController, and never retries.
+  let j1Observer: ((event: unknown) => Promise<void>) | undefined
+  if (jevRuntime !== undefined && j1RiskGateEnabledFromEnv()) {
+    const j1Sink = createTelemetrySink()
+    j1TelemetrySink = j1Sink
+    j1Observer = createJ1RiskGateObserver({
+      runtime: jevRuntime,
+      sink: (record) => {
+        j1Sink.emit({ ...record, mode: 'shadow' })
+      },
+    })
+  }
 
   // Symlink resolution for the Zeus read guard (#272). The predicate is pure,
   // so the filesystem work happens at this call site, rooted at the project
@@ -1986,6 +2047,17 @@ async function registerV2ToolHooks(
         const origin = subagentOrigins.capture(event)
         if (origin !== undefined) {
           writeV2AdmissionProof('tool.execute.before', { ...origin })
+        }
+        // J1 risk-score shadow observation. Deliberately AFTER every guard: a
+        // denied call must not spend decision budget. Fire-and-observe — the
+        // promise is deliberately NOT awaited, so the hook's latency is
+        // unchanged; the observer self-bounds at 2s (AbortController),
+        // contains its own failures, records at most one shadow record per
+        // event, and never blocks, retries, or queues. Undefined (no-op) when
+        // the flag is off — the only cost of the flag-on check below is the
+        // truthiness read.
+        if (j1Observer !== undefined && isRiskGateTarget((event as { tool?: unknown }).tool)) {
+          void j1Observer(event)
         }
         // Delegation audit START record (#266). Deliberately AFTER every guard
         // and the secret scan: a denied call must not leave a start record with
@@ -2489,10 +2561,17 @@ export const plugin = define({
     }
 
     // ─── Phase 5: V2 Tool Hooks (best-effort) ────────────────────────
+    // The Jev runtime is built ONCE here and threaded to both consumers — the
+    // tool registration (Phase 6) and the J1 risk-score observer inside the
+    // execute.before hook — so `decide` and `permissionAssert` are bound to
+    // their owning host domains exactly once. Pure construction over the host
+    // domains: nothing is marked unsupported here; Phase 6 keeps that job.
+    const jevRuntime = buildV2JevRuntime(hostDomains(context))
     const toolHookResult = await registerV2ToolHooks(
       context,
       subagentOrigins,
       boundedRead?.origins,
+      jevRuntime,
     ).catch(() => ({ registered: false, beforeRegistered: false }))
     if (!toolHookResult.registered) {
       markUnsupported('tool-execute-hooks')
@@ -2505,7 +2584,9 @@ export const plugin = define({
     if (boundedRead !== undefined && boundedReadDefinition === undefined) {
       markUnsupported('bounded-read')
     }
-    const toolsRegistered = await registerV2Tools(context, boundedReadDefinition).catch(() => false)
+    const toolsRegistered = await registerV2Tools(context, boundedReadDefinition, jevRuntime).catch(
+      () => false,
+    )
     if (!toolsRegistered) markUnsupported('tool-transform')
 
     // ─── Phase 7: V2 Compaction Hook (best-effort) ───────────────────

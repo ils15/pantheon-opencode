@@ -37,9 +37,17 @@ export const TELEMETRY_FIELDS = [
 export type TelemetryField = (typeof TELEMETRY_FIELDS)[number]
 export type TelemetryMode = 'shadow' | 'active' | 'off' | 'migration'
 
+/**
+ * Point ids admitted into telemetry: the measured P-series registry points
+ * plus the J-series of the Jev uplift (J1 risk-score gate; later J phases
+ * extend the series, never the P-series). The two series are disjoint on
+ * purpose — a J record is advisory-tool telemetry, not a registry point.
+ */
+export type TelemetryPointId = DecisionPointId | 'J1'
+
 export interface DecisionTelemetryEvent {
   readonly schemaVersion: typeof TELEMETRY_SCHEMA_VERSION
-  readonly point: DecisionPointId
+  readonly point: TelemetryPointId
   readonly decision: string
   readonly effect: 'none'
   readonly reason: string
@@ -63,7 +71,8 @@ export type TelemetryResult =
     }
 
 const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/
-const POINT_ID = /^P(?:[1-9]|1[01])$/
+/** Registry points (`P1`…`P11`) plus the Jev-uplift series (`J0`…`J99`). */
+const POINT_ID = /^(?:P(?:[1-9]|1[01])|J[0-9]{1,2})$/
 const TELEMETRY_KEYS: ReadonlySet<string> = new Set(TELEMETRY_FIELDS)
 const MODES: ReadonlySet<string> = new Set(['shadow', 'active', 'off', 'migration'])
 const DURATION_MAX_MS = 60_000
@@ -76,7 +85,7 @@ function isToken(value: unknown): value is string {
   return typeof value === 'string' && TOKEN.test(value)
 }
 
-function isPointId(value: unknown): value is DecisionPointId {
+function isPointId(value: unknown): value is TelemetryPointId {
   return typeof value === 'string' && POINT_ID.test(value)
 }
 
@@ -98,7 +107,7 @@ export function sanitizeTelemetry(input: unknown): TelemetryResult {
     droppedFieldCount += 1
   }
 
-  let point: DecisionPointId | null = null
+  let point: TelemetryPointId | null = null
   let decision: string | null = null
   let reason: string | null = null
   let mode: TelemetryMode | null = null

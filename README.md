@@ -212,7 +212,13 @@ credentials cannot activate it. Native child-session dispatch remains separate.
 The one native egress surface is the Zeus-only `pantheon_jev_decide` tool,
 available on hosts that expose the V2.2.5 native Decisions API; its full gate
 chain, routes, and settlement rules are documented once in
-[V2 native Decisions](docs/reference/native-decisions.md).
+[V2 native Decisions](docs/reference/native-decisions.md). An opt-in second
+consumer of that chain, the J1 risk-score shadow gate, fires one bounded
+native decision per write/execute tool call behind `PANTHEON_J1_RISK_SCORE`
+(off by default, zero overhead when off): the request carries no user content
+(tool name token, scope class, input sha256 only), every failure mode skips
+silently with a reason token, and the shadow record is the whole effect — it
+never blocks, asks, or narrows a permission.
 
 The installer may retain a legacy target-specific preference; it does not control
 runtime routing. `npx pantheon-opencode decision-router ...` manages stored
