@@ -10,6 +10,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.2] - 2026-11-03
+
+### Added
+
+- **routing** — The Jev uplift: the native `pantheon_jev_decide` route works end to end (Console free variant field-verified), and TypeSafe direct is one `decision-router setup-model` command away.
+- **routing** — `decision-router doctor` is route-aware: Console routes pass host-native without a catalog probe; the TypeSafe route is checked against the provider entry.
+- **hooks** — J1 risk-score advisory gate (shadow): one Jev risk-score + intent observation per exfil-capable tool call when `PANTHEON_J1_RISK_SCORE` is on; never blocks; zero user content.
+- **hooks** — J3 turn-complexity escalation (shadow): cheap-vs-main per delegate dispatch with local rails, behind `PANTHEON_J3_ESCALATION`; the override is proven, never applied in shadow.
+- **routing** — J4 `mode: "review"` quality scoring: one round-trip quality + needs-review predicate for delegated results, on demand; the result never leaves the machine.
+- **routing** — The offline J2 skill-selection scorecard harness ships in `bench/results/` (29 scenarios, replies faked, honest negatives).
+- **install** — `init` sweeps stale `pantheon-opencode` copies from the npm cache's `_npx/` after a successful install (failures retry on the next init).
+
+### Deprecated
+
+- **install** — `--opencode-version v1` keeps its deprecation warning on this line; Pantheon 2.0 refuses it outright.
+
+### Removed
+
+- **tui** — The native `/quota` panel, the sidebar quota block, usage history, go-key diagnostics, and the `pantheon.quota` RPC; see the community replacement below.
+- **tui** — `/quota-go-check` and the undocumented `PANTHEON_TRUSTED_BL_EXECUTABLE` env var.
+- **docs** — The quota replacement is documented in `docs/tui-v2-quota-providers.md`: `@slkiser/opencode-quota`.
+
+### Fixed
+
+- **routing** — Three field-measured causes of a dead `pantheon_jev_decide` are fixed: the detached `model.list()` call, the wrapped `{ data: [...] }` shape, and the catalog-presence gate.
+- **routing** — Decision models are not chat models: route resolution reads config only; the visible `pantheon-decision-router:v1` prompt marker is suppressed.
+- **agents** — Zeus's decision-routing instructions no longer reference the removed `/quota-go-check` command.
+
 ## [v1.6.2-beta.17] - 2026-11-03
 
 ### Added
