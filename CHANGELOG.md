@@ -10,6 +10,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.2-beta.17] - 2026-11-03
+
+### Added
+
+- **routing** — J2 skill-selection scorecard harness: an offline, rerunnable, dated scorecard (29 synthetic scenarios including adversarial injection and refusal shapes, every Jev reply faked — zero network) measuring the P2 prefilter and the skills preset against expected picks, with honest negatives recorded in `bench/results/`. Activation gate: two consecutive scorecards, separately reviewed.
+- **hooks** — J3 turn-complexity escalation policy (shadow): when `PANTHEON_J3_ESCALATION` is on, delegate dispatches get one Jev complexity classification resolved cheap-vs-main through a pure policy with independent local rails (risk-word states never downgrade, user-pinned models always win, oversize context never downgrades, uncertainty resolves to main). Structurally shadow-only — the wiring cannot reach the override mechanism (contract-test enforced); the mechanism itself is proven by direct tests for the separately reviewed activation. Default off.
+- **routing** — J4 output quality scoring: a new `mode: "review"` on `pantheon_jev_decide` scores a delegated result against caller-named criteria (one round-trip: quality score + needs-human-review predicate). The request carries no result content — only delegate id, result kind, shape metrics, and bounded criteria. Advisory flag only; nothing blocks. On demand (Zeus-only, same consent/caps/permission chain).
+
 ## [v1.6.2-beta.16] - 2026-11-03
 
 ### Added
