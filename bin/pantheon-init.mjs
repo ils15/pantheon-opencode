@@ -26,6 +26,7 @@ import { fileURLToPath } from 'node:url'
 import { configure as configureUi, endGaugeLine, tag } from '../scripts/install/cli-ui.mjs'
 import { resolveComponentSelection } from '../scripts/install/component-selection.mjs'
 import { resolveGlobalConfigDirectory } from '../scripts/install/config-paths.mjs'
+import { provisionTypesafeHostProvider } from '../scripts/install/decision-router-config.mjs'
 import { resolveInstallExitCode } from '../scripts/install/exit-codes.mjs'
 import { createInterruptHandler } from '../scripts/install/interrupt.mjs'
 import { parseOpenCodeVersion } from '../scripts/install/opencode-version.mjs'
@@ -68,40 +69,13 @@ function readVersion() {
 /**
  * Merge (never overwrite) the TypeSafe decision-model entry into the user's
  * OpenCode config, so choosing the TypeSafe route in the wizard needs only the
- * user's own sign-in afterwards. The merge is additive: existing provider
- * entries and an existing jev-1.14.0 model are preserved. Returns true, or a
- * short failure reason for the installer to print.
+ * user's own sign-in afterwards. Delegates to the shared installer module —
+ * the same provisioner `decision-router setup-model typesafe-jev/...` uses.
+ * Returns true, or a short failure reason for the installer to print.
  */
 function provisionTypesafeProvider() {
-  const xdg = process.env.XDG_CONFIG_HOME
-  const home = process.env.HOME
-  const base = xdg && xdg.startsWith('/') ? xdg : `${home ?? '~'}/.config`
-  const candidates = [`${base}/opencode/opencode.json`]
-  if (home) candidates.push(`${home}/.config/opencode/opencode.json`)
-  const configPath = candidates.find((candidate) => fs.existsSync(candidate))
-  if (configPath === undefined) return 'opencode.json not found'
-  let data
-  try {
-    data = JSON.parse(fs.readFileSync(configPath, 'utf8'))
-  } catch {
-    return 'opencode.json is not plain JSON (comments?)'
-  }
-  data.providers ??= {}
-  data.providers['typesafe-ai'] ??= {}
-  data.providers['typesafe-ai'].models ??= {}
-  if (data.providers['typesafe-ai'].models['jev-1.14.0'] === undefined) {
-    data.providers['typesafe-ai'].models['jev-1.14.0'] = {
-      name: 'Jev (TypeSafe direct)',
-      modelID: 'jev-latest',
-      type: 'decision',
-    }
-  }
-  try {
-    fs.writeFileSync(configPath, `${JSON.stringify(data, null, 2)}\n`)
-    return true
-  } catch (error) {
-    return String(error instanceof Error ? error.message : error)
-  }
+  const result = provisionTypesafeHostProvider({ env: process.env })
+  return result.ok ? true : result.reason
 }
 
 /** Value of a repeatable installer flag from the raw argv, or undefined. */
