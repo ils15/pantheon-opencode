@@ -695,6 +695,14 @@ function buildV2JevRuntime(host: ReturnType<typeof hostDomains>): V2JevDecisionR
     typeof permissionAssertFn === 'function'
       ? (input: Record<string, unknown>) => permissionAssertFn.call(host.permission, input)
       : undefined
+  // The J4 output-quality review telemetry sink (jev-quality-score.ts): the
+  // review mode of `pantheon_jev_decide` records ONE observer-style shadow
+  // record per run (q-token or skip token) through the in-memory, bounded 0b
+  // path (`createTelemetrySink`, no I/O), carrying `mode: 'shadow'`. The sink
+  // is created per runtime build so it always matches the runtime that holds
+  // it; the records are advisory and never read back by the tool path.
+  const j4Sink = createTelemetrySink()
+  j4TelemetrySink = j4Sink
   return {
     // Every host method is invoked with its owning domain as receiver: the
     // canary records `ctx.model.list()` (bound) succeeding on 2.2.5 while a
@@ -706,6 +714,9 @@ function buildV2JevRuntime(host: ReturnType<typeof hostDomains>): V2JevDecisionR
     // catalog-only preset inside the tool.
     listSkills: async () => skillList?.call(skillDomain),
     ...(permissionAssert === undefined ? {} : { permissionAssert }),
+    shadowSink: (record) => {
+      j4Sink.emit({ ...record, mode: 'shadow' })
+    },
   }
 }
 
@@ -959,6 +970,25 @@ export function getJ3TelemetrySinkForTests(): TelemetrySink | undefined {
 }
 
 let j3TelemetrySink: TelemetrySink | undefined
+
+/**
+ * The J4 output-quality review telemetry sink created by the most recent Jev
+ * runtime build.
+ *
+ * J4 (the review mode of `pantheon_jev_decide`, `jev-quality-score.ts`) is
+ * NOT a registry point and has no flag: the review runs only when Zeus
+ * explicitly requests it, and the record (`point: 'J4'`, `mode: 'shadow'`,
+ * `effect: 'none'`, reason token `q-<n>-review-<yes|no|na>` or a `skip-…`
+ * token) is the whole effect — advisory, never read back by the tool path.
+ * The sink is created inside `buildV2JevRuntime`, so it exists exactly when
+ * the runtime (and with it the tool) exists. Exported only for
+ * tests/pantheon/plugin-v2-contract.test.ts.
+ */
+export function getJ4TelemetrySinkForTests(): TelemetrySink | undefined {
+  return j4TelemetrySink
+}
+
+let j4TelemetrySink: TelemetrySink | undefined
 
 /**
  * Attempt to subscribe to session events via V2 ctx.event.subscribe.

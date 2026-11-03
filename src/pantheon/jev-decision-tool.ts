@@ -35,6 +35,15 @@ import {
   resolveNativeJevRoute,
 } from './jev-decisions.ts'
 import {
+  buildJevReviewRequest,
+  encodeQualityScoreReason,
+  evaluateQualityScoreDecision,
+  J4_QUALITY_SCORE_POINT,
+  type QualityScoreEvaluation,
+  qualityVerdict,
+} from './jev-quality-score.ts'
+import { mapGateFailureToSkipReason } from './jev-risk-gate.ts'
+import {
   openLocalDecisionBudgetLedger,
   type ReservationResult,
   resolveLocalDecisionBudgetDbPath,
@@ -44,6 +53,7 @@ import {
   buildDecisionEgressRequest,
 } from './local-decision-egress-gate.ts'
 import { verifyNativeUsageForReservation } from './local-decision-usage-evidence.internal.ts'
+import { observeShadow, type ShadowSink } from './v2-decision-shadow.ts'
 import type { NativeDecisionRequest, ResolvedNativeDecisionRoute } from './v2-native-decisions.ts'
 import type { V2ToolDef } from './v2-tools.ts'
 
@@ -64,6 +74,13 @@ export interface V2JevDecisionRuntime {
   readonly listSkills?: () => Promise<unknown>
   /** Host permission kill-switch (`ctx.permission.assert`), when present. */
   readonly permissionAssert?: (input: Record<string, unknown>) => Promise<unknown>
+  /**
+   * Shadow-record sink for the J4 output-quality review telemetry
+   * (`jev-quality-score.ts`); optional. The plugin wires the in-memory,
+   * bounded telemetry collector here; absent sink → no J4 records, nothing
+   * else changes.
+   */
+  readonly shadowSink?: ShadowSink
 }
 
 /** Logical permission resource: no endpoint URL exists on the native route. */
@@ -73,6 +90,8 @@ export function nativeJevPermissionResource(providerID: string, id: string): str
 
 export type JevDecisionRunFailure =
   | 'CALLER_NOT_ZEUS'
+  | 'REVIEW_INPUT_INVALID'
+  | 'CRITERIA_INVALID'
   | 'CONTEXT_UNAVAILABLE'
   | 'CONFIG_UNAVAILABLE'
   | 'DISABLED'
@@ -102,15 +121,28 @@ function isNonBlankString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0
 }
 
+/** Map a review-mode refusal to its telemetry skip token. */
+function reviewRefusalSkipReason(reasonCode: JevDecisionRunFailure): string {
+  if (reasonCode === 'REVIEW_INPUT_INVALID') return 'skip-review-input-invalid'
+  if (reasonCode === 'CRITERIA_INVALID') return 'skip-criteria-invalid'
+  return mapGateFailureToSkipReason(reasonCode)
+}
+
 // ─── Shared gate chain ───────────────────────────────────────────────────
 
 /**
  * Every gate-chain failure the shared runner can produce. It is
- * {@link JevDecisionRunFailure} minus `CALLER_NOT_ZEUS`: the caller check is a
- * property of the explicit tool surface, not of the gate chain, so the J1
- * shadow observer can run the same chain for any agent.
+ * {@link JevDecisionRunFailure} minus the tool-surface properties:
+ * `CALLER_NOT_ZEUS` (the caller check) and the review mode's input
+ * validation (`REVIEW_INPUT_INVALID` / `CRITERIA_INVALID`) — all three are
+ * properties of the explicit tool surface, whose input the caller supplies
+ * directly, not of the gate chain; the J1/J3 shadow observers run the same
+ * chain for any agent and can never produce them.
  */
-export type GatedNativeJevFailure = Exclude<JevDecisionRunFailure, 'CALLER_NOT_ZEUS'>
+export type GatedNativeJevFailure = Exclude<
+  JevDecisionRunFailure,
+  'CALLER_NOT_ZEUS' | 'REVIEW_INPUT_INVALID' | 'CRITERIA_INVALID'
+>
 
 /** The minimal runtime slice the gate chain needs. */
 export type GatedNativeJevRuntime = Pick<V2JevDecisionRuntime, 'decide'> & {
@@ -294,6 +326,14 @@ async function readHostSkills(runtime: V2JevDecisionRuntime): Promise<JevHostSki
  * Run one explicit, gate-checked native Jev decision. Every failure path
  * returns a bounded refusal JSON; the only caller-visible success output is
  * the validated advice with `effect: 'none'`.
+ *
+ * The `mode: "review"` branch (J4 output-quality scoring, advisory only)
+ * validates and builds its bounded request BEFORE the gate chain — the same
+ * prebuilt-request pattern the J1/J3 observers use — so a malformed review
+ * never spends gate work, and its failure codes stay tool-surface properties.
+ * It records ONE J4 telemetry record per run (q-token on an answered review,
+ * skip tokens on every refusal path) and returns the evaluation plus the
+ * verdict flag; the verdict never blocks, retries, or alters anything.
  */
 export async function runJevDecision(
   input: unknown,
@@ -307,24 +347,66 @@ export async function runJevDecision(
   if (context?.agent !== 'zeus') return refusal('CALLER_NOT_ZEUS')
 
   const requested = (input ?? {}) as { mode?: unknown; questions?: unknown }
+  // Review mode (J4): the bounded request is built before any gate work, and
+  // an invalid review input is a tool-surface refusal — same class as the
+  // caller check, never a gate failure.
+  let reviewRequest: Omit<NativeDecisionRequest, 'model'> | undefined
+  if (requested.mode === 'review') {
+    const prepared = buildJevReviewRequest(input ?? {})
+    if (!prepared.ok) {
+      observeShadow(
+        J4_QUALITY_SCORE_POINT,
+        prepared.reasonCode,
+        () => ({
+          decision: 'unavailable',
+          reason: reviewRefusalSkipReason(prepared.reasonCode),
+        }),
+        runtime.shadowSink,
+      )
+      return refusal(prepared.reasonCode)
+    }
+    reviewRequest = prepared.request
+  }
   const result = await runGatedNativeJevCall({
     sessionID: context?.sessionID,
     messageID: context?.messageID,
     agent: 'zeus',
     runtime,
     prepare: async (route) =>
-      requested.mode === undefined
-        ? prepareJevDecisionRequest(route, input ?? {})
-        : isJevDecisionPreset(requested.mode)
-          ? prepareJevPresetRequest(
-              route,
-              requested.mode,
-              input ?? {},
-              requested.mode === 'skills' ? await readHostSkills(runtime) : undefined,
-            )
-          : { ok: false as const, reasonCode: 'PRESET_INVALID' as const },
+      reviewRequest !== undefined
+        ? {
+            ok: true as const,
+            request: {
+              model: route.model,
+              input: reviewRequest.input,
+              questions: reviewRequest.questions,
+            },
+          }
+        : requested.mode === undefined
+          ? prepareJevDecisionRequest(route, input ?? {})
+          : isJevDecisionPreset(requested.mode)
+            ? prepareJevPresetRequest(
+                route,
+                requested.mode,
+                input ?? {},
+                requested.mode === 'skills' ? await readHostSkills(runtime) : undefined,
+              )
+            : { ok: false as const, reasonCode: 'PRESET_INVALID' as const },
   })
   if (!result.ok) {
+    if (requested.mode === 'review') {
+      // The review observed a gate refusal: one skip record, the refusal
+      // itself is unchanged.
+      observeShadow(
+        J4_QUALITY_SCORE_POINT,
+        result.reasonCode,
+        () => ({
+          decision: 'unavailable',
+          reason: reviewRefusalSkipReason(result.reasonCode),
+        }),
+        runtime.shadowSink,
+      )
+    }
     if (result.detail === undefined) return refusal(result.reasonCode)
     // Refusal with the error CLASS only (`TypeError`, `RangeError`, …): the
     // message can carry paths, config or provider detail and never crosses
@@ -338,6 +420,44 @@ export async function runJevDecision(
   }
 
   const advice = consumeJevDecisionResult(result.call.response, result.call.request)
+  if (requested.mode === 'review') {
+    // J4 advisory evaluation: strict validation, the verdict is telemetry
+    // plus a returned flag — it never blocks, retries, or alters the result.
+    const evaluation: QualityScoreEvaluation = evaluateQualityScoreDecision(
+      result.call.response,
+      result.call.request,
+    )
+    observeShadow(
+      J4_QUALITY_SCORE_POINT,
+      evaluation,
+      (isolated) => {
+        const scored = isolated as QualityScoreEvaluation
+        return {
+          decision: qualityVerdict(scored),
+          reason: encodeQualityScoreReason(scored),
+        }
+      },
+      runtime.shadowSink,
+    )
+    return JSON.stringify({
+      advisory: true,
+      effect: 'none',
+      reason: 'JEV_DECISION',
+      route: {
+        providerID: result.call.selection.route.model.providerID,
+        id: result.call.selection.route.model.id,
+        billing: result.call.selection.route.billing,
+      },
+      mode: 'review',
+      quality: evaluation.quality,
+      needsReview: evaluation.needsReview,
+      verdict: qualityVerdict(evaluation),
+      answers: advice.answers,
+      missing: advice.missing,
+      usage: { costUsd: advice.costUsd, tokens: advice.tokens },
+      frozen: result.call.frozen,
+    })
+  }
   return JSON.stringify({
     advisory: true,
     effect: 'none',
@@ -357,13 +477,15 @@ export async function runJevDecision(
 
 const TOOL_DESCRIPTION =
   'Zeus-only advisory typed decisions via the host native Jev route (OpenCode Console or a ' +
-  'configured decision model). Two ways to ask: pass `mode: "skills"` to stack skills for the ' +
+  'configured decision model). Ways to ask: pass `mode: "skills"` to stack skills for the ' +
   'state text (local prefilter shortlist, catalog fallback, plus every skill installed in the ' +
   'host), `mode: "delegation"` to pick ' +
-  'a specialist, or pass explicit typed `questions` (choice, score, predicate). Returns ' +
-  'probabilistic answers with confidence. Requires decision-router egress consent and budget ' +
-  'caps; asks host permission first. It never dispatches agents, runs skills, executes tools, ' +
-  'or alters permissions — results are advisory only.'
+  'a specialist, `mode: "review"` to score a finished delegated result against named criteria ' +
+  '(advisory quality score + needs-review flag; the result content itself is never sent — ' +
+  'shape metrics and criteria only), or pass explicit typed `questions` (choice, score, ' +
+  'predicate). Returns probabilistic answers with confidence. Requires decision-router egress ' +
+  'consent and budget caps; asks host permission first. It never dispatches agents, runs ' +
+  'skills, executes tools, blocks, retries, or alters permissions — results are advisory only.'
 
 const questionSchema = {
   type: 'object',
@@ -404,15 +526,51 @@ const questionSchema = {
   },
 }
 
+const REVIEW_METRICS_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['outputChars', 'taskDurationMs'],
+  properties: {
+    outputChars: { type: 'integer', minimum: 0, maximum: 100_000_000 },
+    taskDurationMs: { type: ['integer', 'null'], minimum: 0, maximum: 100_000_000 },
+  },
+} as const
+
+/**
+ * One schema, two disjoint payloads: the state branch (presets and explicit
+ * questions carry the state text) and the review branch (J4 takes structural
+ * shape metrics, a delegate id and named criteria — never a state text, never
+ * result content; the criteria are the only free text, bounded at the DSH
+ * caps: at most 4, each 1–120 chars). The preparers are the authority; the
+ * schema is the model-facing contract.
+ */
 const JEV_INPUT_SCHEMA: Record<string, unknown> = {
   type: 'object',
   additionalProperties: false,
-  required: ['schemaVersion', 'state'],
+  required: ['schemaVersion'],
+  anyOf: [
+    { required: ['state'] },
+    { required: ['delegateId', 'resultSummaryKind', 'resultMetrics', 'criteria'] },
+  ],
   properties: {
     schemaVersion: { type: 'integer', const: 1 },
     state: { type: 'string', minLength: 1, maxLength: 12_000 },
-    mode: { type: 'string', enum: ['skills', 'delegation'] },
+    mode: { type: 'string', enum: ['skills', 'delegation', 'review'] },
     questions: { type: 'array', minItems: 1, maxItems: 4, items: questionSchema },
+    delegateId: {
+      type: 'string',
+      minLength: 1,
+      maxLength: 64,
+      pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$',
+    },
+    resultSummaryKind: { type: 'string', enum: ['ok', 'empty', 'error'] },
+    resultMetrics: REVIEW_METRICS_SCHEMA,
+    criteria: {
+      type: 'array',
+      minItems: 1,
+      maxItems: 4,
+      items: { type: 'string', minLength: 1, maxLength: 120 },
+    },
   },
 }
 
