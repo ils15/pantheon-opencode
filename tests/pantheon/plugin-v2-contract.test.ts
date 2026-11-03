@@ -729,13 +729,135 @@ async function main(): Promise<void> {
         },
       }
       await promptHandler?.(admission)
-      assert.match(
+      // The visible decision-router marker is suppressed (1.6.2-beta.10): the
+      // router runs, but the host chat no longer receives the HTML comment.
+      assert.equal(
         admission.prompt.text,
-        /<!-- pantheon-decision-router:v1 source=local skills=[a-z0-9,-]+(?: agent=[a-z0-9-]+)? -->/,
+        'Please implement a FastAPI backend endpoint with pytest.',
       )
       assert.equal(nativeDecisionCalls, 0)
       assert.equal(permissionAssertCalls, 0)
       assert.equal(fetchCalls, 0)
+    } finally {
+      globalThis.fetch = originalFetch
+      for (const [key, value] of originalEnvironment) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test('wired V2 Jev runtime invokes host methods with their owning receiver', async () => {
+    let jevExecute: ((input: unknown, context: unknown) => Promise<string> | string) | undefined
+    let wrongReceiver = false
+    let decideCalls = 0
+    const originalFetch = globalThis.fetch
+    const root = mkdtempSync(join(tmpdir(), 'pantheon-v2-jev-receiver-'))
+    const configHome = join(root, 'config')
+    const originalEnvironment = new Map(
+      ['HOME', 'XDG_CONFIG_HOME', 'XDG_STATE_HOME', 'OPENAI_API_KEY', 'OPENCODE_API_KEY'].map(
+        (key) => [key, process.env[key]],
+      ),
+    )
+    try {
+      process.env.HOME = root
+      process.env.XDG_CONFIG_HOME = configHome
+      process.env.XDG_STATE_HOME = join(root, 'state')
+      delete process.env.OPENAI_API_KEY
+      delete process.env.OPENCODE_API_KEY
+      writeUserDecisionRouterConfig({
+        schema_version: 2,
+        enabled: true,
+        selection: { mode: 'explicit', provider: 'opencode-console-jev', model: 'jev-1.13' },
+        egress_consent: true,
+        enabled_candidates: [{ provider: 'opencode-console-jev', model: 'jev-1.13' }],
+      })
+      const ledger = openLocalDecisionBudgetLedger({
+        dbPath: resolveLocalDecisionBudgetDbPath(),
+      })
+      try {
+        const caps = { monthlyCapMicros: 5_000_000, perDecisionCapMicros: 1_000_000 }
+        ledger.configureUserCaps(caps)
+        // The ledger accounts under the mapped budget provider, not the
+        // decision-provider id (opencode-console-jev → opencode-console).
+        ledger.configureProviderCaps('opencode-console', caps)
+        ledger.configureModelCaps('opencode-console', 'jev-1.13', caps)
+        const budgetPeriod = new Date().toISOString().slice(0, 7)
+        assert.equal(ledger.confirmBudgetPeriod(null, budgetPeriod).status, 'confirmed')
+      } finally {
+        ledger.close()
+      }
+      globalThis.fetch = (async () => {
+        throw new Error('offline provider-call spy')
+      }) as typeof fetch
+
+      const catalogDomain = {
+        // Method shorthand on purpose: a detached call loses `this` and fails
+        // here, which is exactly the field failure CATALOG_UNAVAILABLE hid.
+        list() {
+          if (this !== catalogDomain) {
+            wrongReceiver = true
+            throw new TypeError('detached model.list call')
+          }
+          return [{ providerID: 'opencode', id: 'jev-1.13', type: 'decision' }]
+        },
+      }
+      const decisionsDomain = {
+        // Method shorthand (an arrow has no own `this` to observe).
+        async decisions(_request: unknown) {
+          decideCalls += 1
+          if ((this as unknown) !== decisionsDomain) wrongReceiver = true
+          return { answers: [] }
+        },
+      }
+      await plugin.setup(
+        makeBaseContext({
+          model: catalogDomain,
+          experimental: { generate: decisionsDomain },
+          permission: {
+            assert: async () => undefined, // Host's affirmative allow-path result.
+          },
+          tool: {
+            transform: async (callback: (draft: never) => void) => {
+              callback({
+                namespace: () => {},
+                add: (tool: { name: string; execute: typeof jevExecute }) => {
+                  if (tool.name === 'pantheon_jev_decide') jevExecute = tool.execute
+                },
+              } as never)
+              return { dispose: async () => {} }
+            },
+          },
+        }) as never,
+      )
+      assert.equal(typeof jevExecute, 'function', 'pantheon_jev_decide did not register')
+      const result = (await jevExecute?.(
+        {
+          schemaVersion: 1,
+          state: 'pick a specialist for this turn',
+          questions: [
+            {
+              type: 'choice',
+              name: 'pick',
+              instructions: 'pick one',
+              choices: [{ value: 'a' }, { value: 'b' }],
+            },
+          ],
+        },
+        { agent: 'zeus', sessionID: 'ses_receiver', messageID: 'msg_receiver' },
+      )) as { output: string }
+      const parsed = JSON.parse(result.output) as { reasonCode?: string; detail?: string }
+      // The stubbed decide response carries no usage evidence, so the honest
+      // outcome here is USAGE_UNRECONCILED — the point is that the call got
+      // PAST catalog, permission and reservation with bound receivers.
+      assert.equal(
+        parsed.reasonCode,
+        'USAGE_UNRECONCILED',
+        `expected the full gate chain to run, got: ${result.output}`,
+      )
+      assert.equal(wrongReceiver, false, 'a host method was invoked detached')
+      assert.equal(decideCalls, 1)
     } finally {
       globalThis.fetch = originalFetch
       for (const [key, value] of originalEnvironment) {

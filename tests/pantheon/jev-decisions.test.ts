@@ -785,16 +785,19 @@ async function testToolGateChain(): Promise<void> {
     )
     assert.equal(unknownMode.decideCalls.length, 0)
 
-    // A failed native call leaves the reservation pending (fail-closed).
+    // A failed native call leaves the reservation pending (fail-closed) and
+    // surfaces only the sanitized error class.
     const failing = stubRuntime({
       decide: async () => {
         throw new Error('host transport failed')
       },
     })
-    assert.equal(
-      await runJevDecision(TOOL_INPUT, toolContext, failing.runtime),
-      refusalOf('DECISION_CALL_FAILED'),
-    )
+    assert.deepEqual(JSON.parse(await runJevDecision(TOOL_INPUT, toolContext, failing.runtime)), {
+      advisory: false,
+      effect: 'none',
+      reasonCode: 'DECISION_CALL_FAILED',
+      detail: 'Error',
+    })
     const ledger = openLocalDecisionBudgetLedger({ dbPath: resolveLocalDecisionBudgetDbPath() })
     try {
       assert.equal(ledger.listUncertainReservations().length, 1)
@@ -859,6 +862,40 @@ function testTransportInvariants(): void {
   assert.doesNotMatch(tool, /\bfetch\s*\(|process\.env|api\.typesafe\.ai|openrouter\.ai/)
 }
 
+/** Throwing catalog/decide refusals carry the sanitized error CLASS only. */
+async function testRefusalDetailIsSanitized(): Promise<void> {
+  const environment = sandbox()
+  await withEnvironment(environment, async () => {
+    writeEnabledConfig()
+    confirmCaps()
+    const toolContext = { sessionID: 'ses_detail', messageID: 'msg_detail', agent: 'zeus' }
+
+    // A throwing catalog read refuses with the sanitized error CLASS only:
+    // the message (which can carry paths or config) never reaches the chat.
+    const brokenCatalog = stubRuntime({
+      listModels: async () => {
+        throw new TypeError('Cannot read properties of undefined (reading list)')
+      },
+    })
+    assert.deepEqual(
+      JSON.parse(await runJevDecision(TOOL_INPUT, toolContext, brokenCatalog.runtime)),
+      { advisory: false, effect: 'none', reasonCode: 'CATALOG_UNAVAILABLE', detail: 'TypeError' },
+    )
+
+    // A throwing native Decisions call carries the same sanitized class; the
+    // message with provider detail stays out of the refusal.
+    const brokenDecide = stubRuntime({
+      decide: async () => {
+        throw new RangeError('route unavailable: /v1/decisions typesafe-jev')
+      },
+    })
+    assert.deepEqual(
+      JSON.parse(await runJevDecision(TOOL_INPUT, toolContext, brokenDecide.runtime)),
+      { advisory: false, effect: 'none', reasonCode: 'DECISION_CALL_FAILED', detail: 'RangeError' },
+    )
+  })
+}
+
 testProviderMapping()
 testFilterNativeCandidates()
 testRouteSelection()
@@ -868,6 +905,7 @@ testConsumption()
 testNativeEvidence()
 testLedgerSettlement()
 await testToolGateChain()
+testRefusalDetailIsSanitized()
 testRegistrationContract()
 testTransportInvariants()
 
