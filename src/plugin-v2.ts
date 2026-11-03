@@ -701,22 +701,28 @@ async function registerV2Tools(
     const permissionAssertFn = host.permission?.assert
     let jevRuntime: V2JevDecisionRuntime | undefined
     if (jevReady && typeof decisionsFn === 'function' && typeof modelListFn === 'function') {
+      const decisionsOwner = host.experimental?.generate
       const decide = decisionsFn
       const listModels = modelListFn
       // The 2.2.5 host exposes ctx.skill as the SkillEditor (list()); the SDK
       // types this file sees declare skill as the registration hook, so the
       // runtime shape is read through one narrow, feature-detected cast.
-      const skillList = (host as { skill?: { list?: () => unknown } }).skill?.list
+      const skillDomain = (host as { skill?: { list?: () => unknown } }).skill
+      const skillList = skillDomain?.list
       const permissionAssert =
         typeof permissionAssertFn === 'function'
           ? (input: Record<string, unknown>) => permissionAssertFn.call(host.permission, input)
           : undefined
       jevRuntime = {
-        listModels: () => listModels(),
-        decide: (request: NativeDecisionRequest) => decide(request),
+        // Every host method is invoked with its owning domain as receiver:
+        // the canary records `ctx.model.list()` (bound) succeeding on 2.2.5
+        // while a detached reference threw in the field and surfaced only as
+        // CATALOG_UNAVAILABLE. Same discipline as permissionAssert above.
+        listModels: () => listModels.call(host.model),
+        decide: (request: NativeDecisionRequest) => decide.call(decisionsOwner, request),
         // Sync-or-async host skill list; absent/throwing falls back to the
         // catalog-only preset inside the tool.
-        listSkills: async () => skillList?.(),
+        listSkills: async () => skillList?.call(skillDomain),
         ...(permissionAssert === undefined ? {} : { permissionAssert }),
       }
     }

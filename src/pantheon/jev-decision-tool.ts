@@ -87,6 +87,17 @@ function refusal(reasonCode: JevDecisionRunFailure): string {
   return JSON.stringify({ advisory: false, effect: 'none', reasonCode })
 }
 
+/**
+ * Refusal with the error CLASS only (`TypeError`, `RangeError`, …). The
+ * message never crosses into the chat: it can carry paths, config or provider
+ * detail, and the class alone already separates a detached-call failure from
+ * a host-side data failure.
+ */
+function refusalDetail(reasonCode: JevDecisionRunFailure, err: unknown): string {
+  const detail = err instanceof Error ? err.name : 'UnknownFailure'
+  return JSON.stringify({ advisory: false, effect: 'none', reasonCode, detail })
+}
+
 function isNonBlankString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0
 }
@@ -172,8 +183,8 @@ export async function runJevDecision(
   let catalog: JevDecisionCatalogEntry[]
   try {
     catalog = await readCatalog(runtime)
-  } catch {
-    return refusal('CATALOG_UNAVAILABLE')
+  } catch (err) {
+    return refusalDetail('CATALOG_UNAVAILABLE', err)
   }
 
   const ledger = openLocalDecisionBudgetLedger({ dbPath: resolveLocalDecisionBudgetDbPath() })
@@ -223,8 +234,8 @@ export async function runJevDecision(
     let response: unknown
     try {
       response = await runtime.decide(prepared.request)
-    } catch {
-      return refusal('DECISION_CALL_FAILED')
+    } catch (err) {
+      return refusalDetail('DECISION_CALL_FAILED', err)
     }
 
     const evidence = verifyNativeUsageForReservation(
