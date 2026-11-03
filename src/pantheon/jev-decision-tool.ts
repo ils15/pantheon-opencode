@@ -98,6 +98,11 @@ function refusalDetail(reasonCode: JevDecisionRunFailure, err: unknown): string 
   return JSON.stringify({ advisory: false, effect: 'none', reasonCode, detail })
 }
 
+/** Refusal carrying an already-sanitized enum detail (never free-form text). */
+function refusalNamed(reasonCode: JevDecisionRunFailure, detail: string): string {
+  return JSON.stringify({ advisory: false, effect: 'none', reasonCode, detail })
+}
+
 function isNonBlankString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0
 }
@@ -206,7 +211,11 @@ export async function runJevDecision(
       catalog,
       (provider, model) => ledger.canReserve(provider, model).status === 'eligible',
     )
-    if (!selection.ok) return refusal(selection.reasonCode)
+    if (!selection.ok) {
+      return selection.detail === undefined
+        ? refusal(selection.reasonCode)
+        : refusalNamed(selection.reasonCode, selection.detail)
+    }
 
     if (typeof runtime.permissionAssert !== 'function') return refusal('PERMISSION_UNAVAILABLE')
     const assertion = await assertDecisionEgressPermission(

@@ -27,6 +27,7 @@ import { PANTHEON_AGENT_CATALOG, PANTHEON_SKILL_CATALOG } from './pantheon-decis
 import {
   NATIVE_DECISION_MAX_PROMPT_LENGTH,
   type NativeDecisionRequest,
+  type NativeDecisionRouteFailure,
   type ResolvedNativeDecisionRoute,
   resolveNativeDecisionRoute,
 } from './v2-native-decisions.ts'
@@ -67,7 +68,18 @@ export interface NativeJevRouteSelection {
 
 export type NativeJevRouteResolution =
   | { readonly ok: true; readonly selection: NativeJevRouteSelection }
-  | { readonly ok: false; readonly reasonCode: NativeJevRouteFailure }
+  | {
+      readonly ok: false
+      readonly reasonCode: NativeJevRouteFailure
+      /**
+       * The inner route-resolution verdict when `reasonCode` is
+       * ROUTE_UNRESOLVED (`MODEL_NOT_IN_CATALOG`, `AMBIGUOUS_MODEL`,
+       * `MODEL_NOT_DECISION`): the class alone does not tell the user whether
+       * the configured decision model is absent from the host catalog or
+       * present but not decision-typed, and those have different fixes.
+       */
+      readonly detail?: NativeDecisionRouteFailure
+    }
 
 /**
  * Keep only candidates that both map to a native route and pass the caller's
@@ -158,7 +170,9 @@ export function resolveNativeJevRoute(
     undefined,
     catalog,
   )
-  if (!resolution.ok) return { ok: false, reasonCode: 'ROUTE_UNRESOLVED' }
+  if (!resolution.ok) {
+    return { ok: false, reasonCode: 'ROUTE_UNRESOLVED', detail: resolution.reasonCode }
+  }
   return {
     ok: true,
     selection: {

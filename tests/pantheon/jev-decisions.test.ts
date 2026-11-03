@@ -246,11 +246,18 @@ function testRouteSelection(): void {
   const singleAuto = { ...auto, enabled_candidates: [{ provider: PROVIDER, model: MODEL }] }
   assert.ok(resolveNativeJevRoute(singleAuto, CATALOG, ADMISSION_OK).ok)
 
-  // A catalog without the model (or with a chat-typed entry) never resolves.
+  // A catalog without the model (or with a chat-typed entry) never resolves,
+  // and the inner verdict names which of the two it was.
   const chatOnlyCatalog = [{ providerID: 'opencode', id: 'jev-1.13', type: 'chat' }]
   assert.deepEqual(resolveNativeJevRoute(enabled, chatOnlyCatalog, ADMISSION_OK), {
     ok: false,
     reasonCode: 'ROUTE_UNRESOLVED',
+    detail: 'MODEL_NOT_DECISION',
+  })
+  assert.deepEqual(resolveNativeJevRoute(enabled, [], ADMISSION_OK), {
+    ok: false,
+    reasonCode: 'ROUTE_UNRESOLVED',
+    detail: 'MODEL_NOT_IN_CATALOG',
   })
 }
 
@@ -690,12 +697,28 @@ async function testToolGateChain(): Promise<void> {
       refusalOf('PERMISSION_UNAVAILABLE'),
     )
 
-    // A catalog without the route refuses before reserving.
+    // A catalog without the route refuses before reserving, and carries the
+    // inner verdict: MODEL_NOT_IN_CATALOG tells the user the host does not
+    // list the configured decision model at all.
     const noRoute = stubRuntime({ listModels: async () => [] })
-    assert.equal(
-      await runJevDecision(TOOL_INPUT, toolContext, noRoute.runtime),
-      refusalOf('ROUTE_UNRESOLVED'),
-    )
+    assert.deepEqual(JSON.parse(await runJevDecision(TOOL_INPUT, toolContext, noRoute.runtime)), {
+      advisory: false,
+      effect: 'none',
+      reasonCode: 'ROUTE_UNRESOLVED',
+      detail: 'MODEL_NOT_IN_CATALOG',
+    })
+
+    // A catalog entry present but not decision-typed names THAT condition —
+    // a different fix (host catalog shape) than an absent model.
+    const wrongType = stubRuntime({
+      listModels: async () => [{ providerID: 'opencode', id: 'jev-1.13', type: 'chat' }],
+    })
+    assert.deepEqual(JSON.parse(await runJevDecision(TOOL_INPUT, toolContext, wrongType.runtime)), {
+      advisory: false,
+      effect: 'none',
+      reasonCode: 'ROUTE_UNRESOLVED',
+      detail: 'MODEL_NOT_DECISION',
+    })
 
     // The success path: exactly one native call, prepared request, advice out.
     const ok = stubRuntime()
