@@ -1,5 +1,5 @@
 import { decideLocalForTurn, type TurnDecision } from './local-decision-turn.ts'
-import { isPantheonAgentId, isPantheonSkillId } from './pantheon-decision-catalog.ts'
+import { isPantheonSkillId } from './pantheon-decision-catalog.ts'
 
 // The marker FORMAT stays pinned: prompts that still carry one (saved prompts,
 // copied messages) short-circuit through `hasDecisionRouterMarker`.

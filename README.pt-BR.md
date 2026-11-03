@@ -85,18 +85,16 @@ apenas — `init` → reiniciar → `/dispatch` → primeiro resultado — veja 
   [referência do roteador](docs/reference/local-decision-router.md) e o
   [Decisions nativas (Jev)](docs/reference/native-decisions.md).
 - **Uma TUI opcional**, com bloco de dispatch na sidebar e painel `/dispatch`
-  em largura total. A TUI V2 também inclui um resumo de quota na sidebar/rodapé
-  e o painel `/quota`, com abas Usage, Limits, Plugin e Settings. Usage mostra
-  gráficos de tokens registrados e totais por modelo em períodos de 7, 15, 30
-  dias ou Total, sem inventar dados para preencher lacunas. O painel identifica
-  o modelo ativo da conversa; o aviso de dados parciais só aparece quando a
-  resposta de quota é realmente parcial. O gasto reportado da sessão fica
-  separado da estimativa de contexto pré-cache, calculada com o preço de entrada
-  do modelo ativo, sem desconto de cache e sem representar uma cobrança. As
-  quotas aparecem como valores e status em texto, sem medidores de progresso;
-  quando há horário válido, mostram contagem regressiva local e o reset informado
-  pelo provedor em UTC. Horários ausentes não são inferidos. Use `E` para
-  desativar a quota e `M` para alternar entre restante e usado.
+  em largura total. A sidebar V2 mantém a versão do Pantheon, o preset/fonte
+  ativos, o estado do git e um bloco `Context` (tokens, medidor de percentual,
+  `$<gasto> gastos` e uma linha mutada `cache <n>% · <n.n> tok/s`); o rodapé
+  nativo do prompt segue intacto, e o Pantheon só acrescenta
+  `▸<preset> · ✦<n> ativos` enquanto há delegações rodando. A TUI não traz mais
+  painel de quota: para ver quota e uso de provedores dentro do OpenCode,
+  instale o plugin comunitário recomendado
+  [`@slkiser/opencode-quota`](https://github.com/slkiser/opencode-quota) — veja
+  [Quota & uso](docs/tui-v2-quota-providers.md). As tools `pantheon_cost` e
+  `pantheon_model` seguem funcionando sem alterações.
 
 A memória MCP fica disponível para busca explícita: o coordenador consulta o
 histórico uma vez quando ele pode mudar a tarefa e repassa apenas resultados

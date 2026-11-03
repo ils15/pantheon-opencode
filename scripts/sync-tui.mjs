@@ -95,9 +95,9 @@ export function copyPluginFiles(srcDir, dstDir, version) {
     }
     // Mirror of scripts/install/plugin.mjs: the OpenCode host resolves the
     // plugin server through the `./server` export. In the V2 copy it must
-    // point at the V2 server bundle so V2-only RPCs (pantheon.quota) are
-    // registered; otherwise the host loads the V1 server and the quota
-    // status stays "unavailable".
+    // point at the V2 server entry so the host attaches the copy's V2 server
+    // half (the TUI reactive channel depends on it); otherwise the host loads
+    // the V1 server stub of the previous generation's payload.
     if (version === 'v2' && packageJson.exports?.['./server-v2']) {
       packageJson.exports['./server'] = packageJson.exports['./server-v2']
     }

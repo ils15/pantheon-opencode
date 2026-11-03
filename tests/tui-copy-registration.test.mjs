@@ -2,9 +2,10 @@
  * tui-copy-registration.test.mjs — the V2 init registers the copied
  * pantheon-tui plugin in config["plugins"].
  *
- * OpenCode 2.x loads server-side RPC of a local plugin folder ONLY from the
+ * OpenCode 2.x loads a local plugin folder's server half ONLY from the
  * `config.plugins` list (sandbox probe evidence). Without the entry the host
- * never loads the copy's server and `pantheon.quota` stays `rpc.unavailable`.
+ * never loads the copy's server, and the TUI runtime's reactive channel stays
+ * dead — the sidebar mounts but effects/refresh/events never fire.
  * ensureTuiCopyRegistered must be idempotent: never duplicate the entry and
  * never drop other entries.
  */

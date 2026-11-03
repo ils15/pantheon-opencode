@@ -5,7 +5,8 @@
  * `exports['./server']` → `./server-v2` in the V2 copy, but sync-tui.mjs's
  * own copyPluginFiles (postinstall + `npm update` path) only had the `./tui`
  * swap — a sync running after `init` silently reverted the copy to the V1
- * server and the `pantheon.quota` RPC disappeared.
+ * server entry, so the host never attached the copy's V2 server half (the
+ * TUI runtime's reactive channel stays dead without it).
  */
 import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'

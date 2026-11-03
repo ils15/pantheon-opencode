@@ -53,9 +53,6 @@ export default defineConfig({
     'tui-v2': 'src/index-v2.tsx',
     server: 'src/server.ts',
     'server-v2': 'src/server-v2.ts',
-    'quota-cli': 'src/quota-cli.ts',
-    'quota-adapters': 'src/quota-adapters.ts',
-    'usage-history-worker': 'src/usage-history-worker.ts',
   },
   format: ['esm'],
   platform: 'node',
@@ -64,14 +61,7 @@ export default defineConfig({
   outExtensions: () => ({ js: '.js' }),
   dts: {
     tsconfig: join(__dirname, 'tsconfig.build.json'),
-    entry: [
-      'src/index.tsx',
-      'src/index-v2.tsx',
-      'src/server.ts',
-      'src/server-v2.ts',
-      'src/quota-cli.ts',
-      'src/quota-adapters.ts',
-    ],
+    entry: ['src/index.tsx', 'src/index-v2.tsx', 'src/server.ts', 'src/server-v2.ts'],
   },
   define: {
     __PANTHEON_VERSION__: JSON.stringify(pkg.version),
