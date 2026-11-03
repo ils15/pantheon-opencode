@@ -73,10 +73,10 @@ check('an already-marked payload keeps only its marker (effect asserted separate
   }
   const prompt = { text: 'request', skills: 'undefined', agents: 'undefined' }
   applyTurnDecisionToPrompt(prompt, decision)
+  assert.equal(prompt.text, 'request', 'no visible marker is appended (suppressed in beta.10)')
   const snapshot = structuredClone(prompt)
   const result = evaluateAgentPoint({ sessionID: 'ses_x', prompt })
-  assert.deepEqual(prompt, snapshot, 'shadow adds nothing on top of the marker')
-  assert.match(prompt.text, /<!-- pantheon-decision-router:v1 source=local agent=hermes -->/)
+  assert.deepEqual(prompt, snapshot, 'shadow never mutates the prompt payload')
   assert.equal(result.record.effect, 'none')
 })
 
