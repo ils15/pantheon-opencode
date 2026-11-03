@@ -21,7 +21,6 @@ import { readUserDecisionRouterConfig } from '../../scripts/install/decision-rou
 import {
   consumeJevDecisionResult,
   isJevDecisionPreset,
-  type JevDecisionCatalogEntry,
   type JevHostSkill,
   type NativeJevRouteFailure,
   prepareJevDecisionRequest,
@@ -41,7 +40,12 @@ import type { NativeDecisionRequest } from './v2-native-decisions.ts'
 import type { V2ToolDef } from './v2-tools.ts'
 
 export interface V2JevDecisionRuntime {
-  /** Raw host model catalog (`ctx.model.list`); may resolve to anything. */
+  /**
+   * Raw host model catalog (`ctx.model.list`); still wired, but the route no
+   * longer consults it — field evidence (2.2.5): decision models are not chat
+   * models and never appear in the catalog. Removed with the 2.0 runtime
+   * reshaping.
+   */
   readonly listModels: () => Promise<unknown>
   /** The host's native Decisions API (`ctx.experimental.generate.decisions`). */
   readonly decide: (request: NativeDecisionRequest) => Promise<unknown>
@@ -65,7 +69,6 @@ export type JevDecisionRunFailure =
   | 'CONFIG_UNAVAILABLE'
   | 'DISABLED'
   | 'CONSENT_MISSING'
-  | 'CATALOG_UNAVAILABLE'
   | 'CAP_OR_PERIOD_DENIED'
   | NativeJevRouteFailure
   | 'PERMISSION_UNAVAILABLE'
@@ -95,11 +98,6 @@ function refusal(reasonCode: JevDecisionRunFailure): string {
  */
 function refusalDetail(reasonCode: JevDecisionRunFailure, err: unknown): string {
   const detail = err instanceof Error ? err.name : 'UnknownFailure'
-  return JSON.stringify({ advisory: false, effect: 'none', reasonCode, detail })
-}
-
-/** Refusal carrying an already-sanitized enum detail (never free-form text). */
-function refusalNamed(reasonCode: JevDecisionRunFailure, detail: string): string {
   return JSON.stringify({ advisory: false, effect: 'none', reasonCode, detail })
 }
 
@@ -137,36 +135,6 @@ async function readHostSkills(runtime: V2JevDecisionRuntime): Promise<JevHostSki
   return skills
 }
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined
-}
-
-async function readCatalog(runtime: V2JevDecisionRuntime): Promise<JevDecisionCatalogEntry[]> {
-  // The 2.2.5 host wraps the catalog in a page object ({ data: [...] }); the
-  // vision surface already tolerates both shapes (modelList in v2-vision.ts).
-  // Requiring a bare array here turned every real session into
-  // CATALOG_UNAVAILABLE (field evidence: detail TypeError under beta.10 with
-  // the receiver binding already in place).
-  const raw = await runtime.listModels()
-  const candidates = Array.isArray(raw) ? raw : (asRecord(raw)?.data ?? asRecord(raw)?.models)
-  if (!Array.isArray(candidates)) throw new TypeError('Model catalog is not a list')
-  const entries: JevDecisionCatalogEntry[] = []
-  for (const model of candidates) {
-    if (model === null || typeof model !== 'object' || Array.isArray(model)) continue
-    const record = model as Record<string, unknown>
-    if (!isNonBlankString(record.providerID) || !isNonBlankString(record.id)) continue
-    if (typeof record.type !== 'string') continue
-    entries.push({
-      providerID: record.providerID,
-      id: record.id,
-      type: record.type,
-    } as JevDecisionCatalogEntry)
-  }
-  return entries
-}
-
 /**
  * Run one explicit, gate-checked native Jev decision. Every failure path
  * returns a bounded refusal JSON; the only caller-visible success output is
@@ -197,25 +165,13 @@ export async function runJevDecision(
   if (!config.enabled) return refusal('DISABLED')
   if (!config.egress_consent) return refusal('CONSENT_MISSING')
 
-  let catalog: JevDecisionCatalogEntry[]
-  try {
-    catalog = await readCatalog(runtime)
-  } catch (err) {
-    return refusalDetail('CATALOG_UNAVAILABLE', err)
-  }
-
   const ledger = openLocalDecisionBudgetLedger({ dbPath: resolveLocalDecisionBudgetDbPath() })
   try {
     const selection = resolveNativeJevRoute(
       config,
-      catalog,
       (provider, model) => ledger.canReserve(provider, model).status === 'eligible',
     )
-    if (!selection.ok) {
-      return selection.detail === undefined
-        ? refusal(selection.reasonCode)
-        : refusalNamed(selection.reasonCode, selection.detail)
-    }
+    if (!selection.ok) return refusal(selection.reasonCode)
 
     if (typeof runtime.permissionAssert !== 'function') return refusal('PERMISSION_UNAVAILABLE')
     const assertion = await assertDecisionEgressPermission(

@@ -81,7 +81,7 @@ function readModelRef(value: unknown): NativeDecisionModelRef | null {
   }
 }
 
-function findRouteKind(
+export function findRouteKind(
   model: NativeDecisionModelRef,
 ): Pick<ResolvedNativeDecisionRoute, 'kind' | 'billing'> {
   const stock = NATIVE_STOCK_DECISION_ROUTES.find(

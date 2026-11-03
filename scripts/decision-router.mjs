@@ -373,11 +373,11 @@ export async function runDecisionRouterCommand(
 
     stdout('')
     stdout('Native route checklist:')
-    stdout(
-      '  1. Host catalog: the model must exist as type "decision" (stock: opencode/jev-1.13; custom providers need type: "decision" in opencode.json). Verify: decision-router doctor',
-    )
-    stdout('  2. Restart OpenCode so the plugin registers pantheon_jev_decide.')
-    stdout('  3. Ask the Zeus agent to call pantheon_jev_decide (mode: "delegation" or "skills").')
+    // Decision models are not chat models: they never appear in the host
+    // model catalog (field evidence 2.2.5: 561 entries, 0 jev, while the
+    // decisions API answers the same ref directly). No catalog step here.
+    stdout('  1. Restart OpenCode so the plugin registers pantheon_jev_decide.')
+    stdout('  2. Ask the Zeus agent to call pantheon_jev_decide (mode: "delegation" or "skills").')
     stdout('Read-only verification: decision-router status / doctor / holds.')
     return
   }
