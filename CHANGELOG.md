@@ -10,6 +10,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.2-beta.11] - 2026-11-03
+
+### Fixed
+
+- **routing** — `pantheon_jev_decide` now accepts the host's wrapped catalog shape. The 2.2.5 host returns `{ data: [...] }` from `model.list()`, not a bare array; requiring an array turned every real session into `CATALOG_UNAVAILABLE` (field evidence: the sanitized `detail: TypeError` under beta.10 once the receiver binding landed). Same tolerance as the vision surface, which already unwrapped the page object.
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
 ## [v1.6.2-beta.10] - 2026-11-03
 
 ### Added

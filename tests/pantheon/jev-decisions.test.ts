@@ -896,6 +896,31 @@ async function testRefusalDetailIsSanitized(): Promise<void> {
   })
 }
 
+/** The 2.2.5 host wraps the catalog in a page object — the wrapped shape is accepted. */
+async function testWrappedCatalogShapeAccepted(): Promise<void> {
+  const environment = sandbox()
+  await withEnvironment(environment, async () => {
+    writeEnabledConfig()
+    confirmCaps()
+    const toolContext = { sessionID: 'ses_wrapped', messageID: 'msg_wrapped', agent: 'zeus' }
+
+    // Field evidence (beta.10, detail TypeError): the host's model.list()
+    // returns { data: [...] }, not a bare array. The must-read path accepts
+    // both shapes, exactly like the vision surface already does.
+    for (const wrapped of [{ data: CATALOG }, { models: CATALOG }]) {
+      const wrappedRuntime = stubRuntime({ listModels: async () => wrapped })
+      const output = await runJevDecision(TOOL_INPUT, toolContext, wrappedRuntime.runtime)
+      const parsed = JSON.parse(output) as { advisory: boolean; reasonCode?: string }
+      assert.equal(
+        parsed.advisory,
+        true,
+        `wrapped shape ${JSON.stringify(Object.keys(wrapped))} must resolve, got: ${output}`,
+      )
+      assert.equal(wrappedRuntime.decideCalls.length, 1)
+    }
+  })
+}
+
 testProviderMapping()
 testFilterNativeCandidates()
 testRouteSelection()
@@ -905,7 +930,8 @@ testConsumption()
 testNativeEvidence()
 testLedgerSettlement()
 await testToolGateChain()
-testRefusalDetailIsSanitized()
+await testRefusalDetailIsSanitized()
+await testWrappedCatalogShapeAccepted()
 testRegistrationContract()
 testTransportInvariants()
 

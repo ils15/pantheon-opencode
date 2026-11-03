@@ -132,11 +132,23 @@ async function readHostSkills(runtime: V2JevDecisionRuntime): Promise<JevHostSki
   return skills
 }
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined
+}
+
 async function readCatalog(runtime: V2JevDecisionRuntime): Promise<JevDecisionCatalogEntry[]> {
+  // The 2.2.5 host wraps the catalog in a page object ({ data: [...] }); the
+  // vision surface already tolerates both shapes (modelList in v2-vision.ts).
+  // Requiring a bare array here turned every real session into
+  // CATALOG_UNAVAILABLE (field evidence: detail TypeError under beta.10 with
+  // the receiver binding already in place).
   const raw = await runtime.listModels()
-  if (!Array.isArray(raw)) throw new TypeError('Model catalog is not a list')
+  const candidates = Array.isArray(raw) ? raw : (asRecord(raw)?.data ?? asRecord(raw)?.models)
+  if (!Array.isArray(candidates)) throw new TypeError('Model catalog is not a list')
   const entries: JevDecisionCatalogEntry[] = []
-  for (const model of raw) {
+  for (const model of candidates) {
     if (model === null || typeof model !== 'object' || Array.isArray(model)) continue
     const record = model as Record<string, unknown>
     if (!isNonBlankString(record.providerID) || !isNonBlankString(record.id)) continue
