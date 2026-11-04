@@ -10,6 +10,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.3-beta.4] - 2026-11-04
+
+### Added
+
+- **routing** — `decision-router setup-model cloudflare-workers-jev/clef --account-id=<id>` provisions the Cloudflare Workers AI custom provider entry (accountId + `models.clef`, type `"decision"`); the token rides `CLOUDFLARE_API_TOKEN` in the host environment. Docs record the OpenAI Decisions protocol and the what's-new TUI window as deliberately unwired candidates.
+
 ## [v1.6.3-beta.3] - 2026-11-04
 
 ### Fixed
