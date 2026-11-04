@@ -1062,11 +1062,12 @@ function testSchemaDeclaresReviewMode(): void {
   assert.ok(schema.properties?.mode, 'the mode property is declared')
   assert.deepEqual(
     schema.properties.mode?.enum,
-    ['skills', 'delegation', 'review'],
-    'the schema declares mode "review"',
+    ['skills', 'delegation', 'review', 'rank', 'verify'],
+    'the schema declares mode "review" (plus the v3.1 rank and verify modes)',
   )
-  // Two disjoint payloads in one schema: the state branch (presets and
-  // explicit questions) and the review branch (delegateId + metrics + criteria).
+  // Four disjoint payloads in one schema: the state branch (presets and
+  // explicit questions), the review branch (delegateId + metrics + criteria),
+  // and the v3.1 rank (candidates) and verify (claims) branches.
   const branches = (schema.anyOf ?? []).map((branch) => branch.required ?? [])
   const reviewBranch = branches.find((required) => required.includes('delegateId'))
   const stateBranch = branches.find((required) => required.includes('state'))

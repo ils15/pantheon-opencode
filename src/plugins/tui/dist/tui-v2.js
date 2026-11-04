@@ -330,7 +330,7 @@ async function readChangelogForBundle(bundleUrl) {
 }
 /** The ambient build-time version, or null outside a tsdown build. */
 function embeddedVersion() {
-	return "1.6.3-beta.6";
+	return "1.6.3-beta.9";
 }
 /**
 * Resolve the running Pantheon version for the what's-new window: the plugin
@@ -3649,7 +3649,7 @@ function Sidebar(props) {
 		setProp(_el$12, "width", "100%");
 		setProp(_el$12, "padding", 1);
 		setProp(_el$13, "attributes", 1);
-		insert(_el$13, `Pantheon v1.6.3-beta.6`);
+		insert(_el$13, `Pantheon v1.6.3-beta.9`);
 		insert(_el$14, () => presetHeaderLine(model.preset().name ?? "", model.provider()));
 		insert(_el$12, createComponent(Show, {
 			get when() {
@@ -4370,7 +4370,7 @@ function HomeStatus(props) {
 	const muted = () => props.context.theme?.text?.muted ?? props.context.theme?.text?.base;
 	return (() => {
 		var _el$72 = createElement("text");
-		insert(_el$72, () => `Pantheon v1.6.3-beta.6${preset().name ? ` ▸ ${preset().name}` : ""}`);
+		insert(_el$72, () => `Pantheon v1.6.3-beta.9${preset().name ? ` ▸ ${preset().name}` : ""}`);
 		effect((_$p) => setProp(_el$72, "fg", muted(), _$p));
 		return _el$72;
 	})();
