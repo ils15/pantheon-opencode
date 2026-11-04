@@ -10,6 +10,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.3-beta.6] - 2026-11-04
+
+### Added
+
+- **install** — The setup wizard gains a **decision-layer step**: the shadow gates (`PANTHEON_J1_RISK_SCORE`, `PANTHEON_J3_ESCALATION`) and the specialist-caller allowlist (`athena,themis`) become first-class setup choices, written to `~/.config/pantheon/decision-flags.env` (source it from your shell profile). All advisory/shadow; none change behavior by default. Part of the ratified setup modernization.
+
 ## [v1.6.3-beta.5] - 2026-11-04
 
 ### Fixed

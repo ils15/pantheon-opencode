@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import * as clack from '@clack/prompts'
 import {
   createDecisionRouterConfig,
@@ -168,6 +170,48 @@ export async function runInteractiveInstall({
   })
   if (cancelPrompt(prompts, jevActivation, 'decisionRouter')) {
     return { canceled: true, cancelPoint: 'decisionRouter' }
+  }
+
+  // Decision-layer options: the shadow gates and the specialist-caller
+  // allowlist are first-class setup choices. The installer writes a flags
+  // file the user sources (the host reads these at plugin registration from
+  // its own environment — the installer never edits shell profiles silently).
+  const jevFlags = await prompts.multiselect({
+    message: 'Decision layer extras (all advisory/shadow; none change behavior by default):',
+    options: [
+      {
+        label: 'J1 risk-score shadow gate',
+        value: 'PANTHEON_J1_RISK_SCORE=on',
+        hint: 'Records a Jev risk-score per exfil-capable tool call; observe-only',
+      },
+      {
+        label: 'J3 escalation shadow classifier',
+        value: 'PANTHEON_J3_ESCALATION=on',
+        hint: 'Records cheap-vs-main per delegate dispatch; never applies overrides in shadow',
+      },
+      {
+        label: 'Specialist callers: athena + themis (explicit questions)',
+        value: 'CALLERS=athena,themis',
+        hint: 'Allowlisted specialists may ask bounded Jev questions mid-task; presets stay Zeus-only',
+      },
+    ],
+    required: false,
+    initialValues: [],
+  })
+  if (cancelPrompt(prompts, jevFlags, 'decisionFlags')) {
+    return { canceled: true, cancelPoint: 'decisionFlags' }
+  }
+  if (Array.isArray(jevFlags) && jevFlags.length > 0) {
+    const flagsDir = join(process.env.XDG_CONFIG_HOME || `${process.env.HOME}/.config`, 'pantheon')
+    mkdirSync(flagsDir, { recursive: true, mode: 0o700 })
+    const flagsPath = join(flagsDir, 'decision-flags.env')
+    const lines = jevFlags.map((flag) => `export ${flag}`).join('\n')
+    writeFileSync(
+      flagsPath,
+      `# Pantheon decision layer — source from your shell profile
+${lines}
+`,
+    )
   }
   // Only known targets activate; anything else (a stale stub, a renamed
   // option) degrades to skip instead of configuring a wrong route.

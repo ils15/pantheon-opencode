@@ -77,7 +77,7 @@ test('interactive selection chooses components and location, then asks the Jev a
   assert.equal(result.decisionModelActivation, null)
   assert.deepEqual(
     prompts.calls.map(([name]) => name),
-    ['intro', 'multiselect', 'select', 'select'],
+    ['intro', 'multiselect', 'select', 'select', 'multiselect'],
   )
   const jevPrompt = prompts.calls.find(([, options]) =>
     options?.message?.startsWith('Configure the Jev'),
@@ -267,6 +267,7 @@ async function withTTYComponentSelection(args, callback, selectedComponents = ['
   let availableComponents
   let runtimeSetupCalled = false
   prompts.multiselect = async (options) => {
+    if (options.message?.startsWith('Decision layer extras')) return []
     initialValues = options.initialValues
     availableComponents = options.options.map((option) => option.value)
     return selectedComponents
