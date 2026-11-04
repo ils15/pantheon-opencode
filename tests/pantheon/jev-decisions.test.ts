@@ -658,7 +658,7 @@ async function testToolGateChain(): Promise<void> {
     const nonZeus = stubRuntime()
     assert.equal(
       await runJevDecision(TOOL_INPUT, { ...toolContext, agent: 'apollo' }, nonZeus.runtime),
-      refusalOf('CALLER_NOT_ZEUS'),
+      refusalOf('CALLER_NOT_ALLOWED'),
     )
     assert.equal(nonZeus.decideCalls.length, 0)
 
@@ -911,6 +911,72 @@ function testTransportInvariants(): void {
   assert.doesNotMatch(tool, /\bfetch\s*\(|process\.env|api\.typesafe\.ai|openrouter\.ai/)
 }
 
+/** Caller matrix: allowlist flag, preset restriction, real caller audit. */
+async function testCallerMatrix(): Promise<void> {
+  const environment = sandbox()
+  await withEnvironment(environment, async () => {
+    writeEnabledConfig()
+    confirmCaps()
+    const toolContext = (agent: string) => ({
+      sessionID: 'ses_caller',
+      messageID: 'msg_caller',
+      agent,
+    })
+    const QUESTIONS_INPUT = {
+      schemaVersion: 1,
+      state: 'pick between two bounded options for this task',
+      questions: [
+        {
+          type: 'choice',
+          name: 'pick',
+          instructions: 'pick one',
+          choices: [{ value: 'a' }, { value: 'b' }],
+        },
+      ],
+    }
+    const SKILLS_INPUT = { schemaVersion: 1, mode: 'skills', state: 'pick skills' }
+
+    // Flag off (default — no allowlist on the runtime): a specialist is
+    // refused, Zeus passes.
+    const refused = JSON.parse(
+      await runJevDecision(QUESTIONS_INPUT, toolContext('apollo'), stubRuntime().runtime),
+    )
+    assert.equal(refused.reasonCode, 'CALLER_NOT_ALLOWED')
+
+    // Allowlist via the runtime (the plugin wiring parses the flag): an
+    // allowlisted specialist passes the caller gate for explicit questions,
+    // the permission assertion carries the REAL caller, and the success
+    // output names the caller for audit.
+    {
+      const allowed = stubRuntime({ specialistCallers: ['apollo', 'themis'] })
+      const output = await runJevDecision(QUESTIONS_INPUT, toolContext('apollo'), allowed.runtime)
+      const parsed = JSON.parse(output) as { advisory: boolean; caller?: string }
+      assert.equal(parsed.advisory, true)
+      assert.equal(parsed.caller, 'apollo')
+      assert.deepEqual(allowed.permissionRequests[0]?.agent, 'apollo')
+
+      // Preset modes stay orchestrator-owned even for allowlisted callers.
+      const presetAttempt = JSON.parse(
+        await runJevDecision(SKILLS_INPUT, toolContext('apollo'), stubRuntime().runtime),
+      )
+      assert.equal(presetAttempt.reasonCode, 'CALLER_NOT_ALLOWED')
+
+      // A non-allowlisted specialist is still refused.
+      const off = JSON.parse(
+        await runJevDecision(QUESTIONS_INPUT, toolContext('hermes'), stubRuntime().runtime),
+      )
+      assert.equal(off.reasonCode, 'CALLER_NOT_ALLOWED')
+
+      // Duplicated/invalid allowlist entries are dropped, not fatal.
+      const stillAllowed = stubRuntime({ specialistCallers: ['apollo', 'apollo', '!!', 'themis'] })
+      const still = JSON.parse(
+        await runJevDecision(QUESTIONS_INPUT, toolContext('apollo'), stillAllowed.runtime),
+      )
+      assert.equal(still.advisory, true)
+    }
+  })
+}
+
 /** Throwing catalog/decide refusals carry the sanitized error CLASS only. */
 async function testRefusalDetailIsSanitized(): Promise<void> {
   const environment = sandbox()
@@ -943,6 +1009,7 @@ testNativeEvidence()
 testLedgerSettlement()
 await testToolGateChain()
 await testRefusalDetailIsSanitized()
+await testCallerMatrix()
 
 testRegistrationContract()
 testTransportInvariants()

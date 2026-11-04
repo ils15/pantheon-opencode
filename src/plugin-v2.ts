@@ -116,6 +116,7 @@ import {
 import { GOAL_LOOP_DEFAULTS, GoalStore } from './pantheon/goal-loop.ts'
 import { createGuardPathResolver } from './pantheon/guard-path.ts'
 import type { V2JevDecisionRuntime } from './pantheon/jev-decision-tool.ts'
+import { specialistCallerAllowlist } from './pantheon/jev-decision-tool.ts'
 import {
   createJ3EscalationObserver,
   isSubagentDispatchEvent,
@@ -679,6 +680,7 @@ function transformReferences(draft: ReferenceDraft): void {
  * catalog, but the tool registration contract still feature-detects both).
  */
 function buildV2JevRuntime(host: ReturnType<typeof hostDomains>): V2JevDecisionRuntime | undefined {
+  const specialistCallers = specialistCallerAllowlist(process.env.PANTHEON_JEV_SPECIALIST_CALLERS)
   const decisionsFn = host.experimental?.generate?.decisions
   const modelListFn = host.model?.list
   if (typeof decisionsFn !== 'function' || typeof modelListFn !== 'function') return undefined
@@ -704,6 +706,7 @@ function buildV2JevRuntime(host: ReturnType<typeof hostDomains>): V2JevDecisionR
   const j4Sink = createTelemetrySink()
   j4TelemetrySink = j4Sink
   return {
+    specialistCallers,
     // Every host method is invoked with its owning domain as receiver: the
     // canary records `ctx.model.list()` (bound) succeeding on 2.2.5 while a
     // detached reference threw in the field and surfaced only as
