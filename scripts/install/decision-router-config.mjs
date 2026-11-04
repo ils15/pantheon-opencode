@@ -591,9 +591,22 @@ export function provisionTypesafeHostProvider({ env = process.env } = {}) {
   }
   data.providers ??= {}
   data.providers['typesafe-ai'] ??= {}
-  data.providers['typesafe-ai'].models ??= {}
-  if (data.providers['typesafe-ai'].models['jev-1.14.0'] === undefined) {
-    data.providers['typesafe-ai'].models['jev-1.14.0'] = {
+  // A complete custom provider entry: without the npm adapter and the
+  // transport options (baseURL + apiKey) the host cannot resolve the
+  // provider at all (field evidence: a models-only entry 404s on the
+  // decisions API; models.dev does not carry typesafe-ai, so /connect and
+  // `opencode auth login` cannot supply it either). The credential rides
+  // the `{env:...}` reference — the key itself stays out of the config
+  // file; an entry the user already completed is preserved as-is.
+  const entry = data.providers['typesafe-ai']
+  entry.npm ??= '@ai-sdk/openai-compatible'
+  entry.name ??= 'TypeSafe AI'
+  entry.options ??= {}
+  entry.options.baseURL ??= 'https://api.typesafe.ai/v1'
+  entry.options.apiKey ??= '{env:TYPESAFE_API_KEY}'
+  entry.models ??= {}
+  if (entry.models['jev-1.14.0'] === undefined) {
+    entry.models['jev-1.14.0'] = {
       name: 'Jev (TypeSafe direct)',
       modelID: 'jev-latest',
       type: 'decision',
@@ -618,9 +631,30 @@ export function inspectTypesafeHostProvider({ env = process.env } = {}) {
   const configPath = resolveHostOpenCodeConfigPath(env)
   try {
     const parsed = JSON.parse(readFileSync(configPath, 'utf8'))
-    const model = parsed?.providers?.['typesafe-ai']?.models?.['jev-1.14.0']
-    return { present: model !== undefined && model !== null, path: configPath }
+    const entry = parsed?.providers?.['typesafe-ai']
+    const model = entry?.models?.['jev-1.14.0']
+    const present = model !== undefined && model !== null
+    const apiKey = entry?.options?.apiKey
+    // Credential states: inline key, `{env:...}` reference, or missing. The
+    // referenced env var is resolved by the HOST at call time — the doctor
+    // cannot see the host's environment, so a reference counts as present
+    // with a note instead of a verdict.
+    const hasCredential = typeof apiKey === 'string' && apiKey.length > 0
+    const viaEnvRef = hasCredential && apiKey.startsWith('{env:')
+    return {
+      present,
+      hasCredential,
+      viaEnvRef,
+      apiKeyRef: hasCredential ? apiKey : null,
+      path: configPath,
+    }
   } catch {
-    return { present: false, path: configPath }
+    return {
+      present: false,
+      hasCredential: false,
+      viaEnvRef: false,
+      apiKeyRef: null,
+      path: configPath,
+    }
   }
 }

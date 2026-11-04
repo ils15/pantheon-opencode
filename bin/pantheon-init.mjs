@@ -1036,7 +1036,7 @@ async function main() {
             const provisioned = provisionTypesafeProvider()
             console.log(
               provisioned === true
-                ? '  TypeSafe provider entry merged into opencode.json (models.typesafe-ai, type "decision"). Sign in with `opencode auth login` (TypeSafe) or /connect.'
+                ? '  TypeSafe provider entry merged into opencode.json (adapter + baseURL + apiKey via {env:TYPESAFE_API_KEY}, type "decision"). Activate: export TYPESAFE_API_KEY=<your TypeSafe key> and restart OpenCode. /connect does not carry custom providers.'
                 : `  TypeSafe provider entry NOT merged (${provisioned}); merge it manually — see docs/reference/native-decisions.md.`,
             )
           }

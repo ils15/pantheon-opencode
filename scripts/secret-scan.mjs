@@ -34,7 +34,7 @@ const patterns = [
   {
     label: 'literal API key value',
     regex: new RegExp(
-      `["']${escapeRegExp(apiKeyName)}["']\\s*[:=]\\s*["'](?!\\$\\{|process\\.env|os\\.getenv|env:)[^"']{12,}["']`,
+      `["']${escapeRegExp(apiKeyName)}["']\\s*[:=]\\s*["'](?!\\$\\{|process\\.env|os\\.getenv|env:|\\{env:)[^"']{12,}["']`,
       'i',
     ),
   },

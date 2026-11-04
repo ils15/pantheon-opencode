@@ -27,7 +27,7 @@ the catalog. Pantheon never maps or switches providers on your behalf.
 | --- | --- | --- | --- | --- |
 | OpenCode Console Jev free | `opencode-console-jev-free` / `jev-1.13-free` | `{ providerID: "opencode", id: "jev-1.13-free" }` | Free (`billing_source: free`) | None — host-native |
 | OpenCode Console Jev (paid) | `opencode-console-jev` / `jev-1.13` | `{ providerID: "opencode", id: "jev-1.13" }` | Console credits; **requires a Zen workspace key** (an OpenCode Go subscription does not include it — the host answers 404 without one) | None — host-native |
-| TypeSafe Jev direct | `typesafe-jev` / `jev-1.14.0` | `{ providerID: "typesafe-ai", id: "jev-1.14.0" }` | Your TypeSafe key | `setup-model` merges the provider entry (`type: "decision"`) into `opencode.json`; then sign in (`opencode auth login` TypeSafe or `/connect`) |
+| TypeSafe Jev direct | `typesafe-jev` / `jev-1.14.0` | `{ providerID: "typesafe-ai", id: "jev-1.14.0" }` | Your TypeSafe key | `setup-model` merges the complete custom provider entry into `opencode.json` (adapter, baseURL, `apiKey: "{env:TYPESAFE_API_KEY}"`, type `"decision"`); then `export TYPESAFE_API_KEY=<your key>` and restart. **`/connect` and `opencode auth login` do not carry custom providers** — models.dev has no typesafe-ai entry |
 
 Setup in one command (state lives in `~/.config/pantheon/decision-router.json`,
 budget in `~/.local/state/pantheon/decision-budget.sqlite`; the command requires
@@ -55,13 +55,19 @@ for one-change-at-a-time edits.
 The stock route needs no `opencode.json` change. The others do — merge (never
 replace) into your own config:
 
-**TypeSafe direct** (your TypeSafe key via OpenCode `/connect`; catalog id must
-equal the config candidate's model):
+**TypeSafe direct** (your TypeSafe key; the catalog id must equal the config
+candidate's model). `setup-model` merges exactly this — or merge manually:
 
 ```json
 {
   "providers": {
     "typesafe-ai": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "TypeSafe AI",
+      "options": {
+        "baseURL": "https://api.typesafe.ai/v1",
+        "apiKey": "{env:TYPESAFE_API_KEY}"
+      },
       "models": {
         "jev-1.14.0": { "name": "Jev (TypeSafe direct)", "modelID": "jev-latest", "type": "decision" }
       }
@@ -70,7 +76,12 @@ equal the config candidate's model):
 }
 ```
 
-Then: `decision-router setup-model typesafe-jev/jev-1.14.0 --monthly-usd 3 --per-decision-usd 0.05`.
+Then: `export TYPESAFE_API_KEY=<your key>`, restart OpenCode, and
+`decision-router setup-model typesafe-jev/jev-1.14.0 --monthly-usd 3 --per-decision-usd 0.05`.
+A models-only entry (no adapter/baseURL/apiKey) is inert: the host cannot
+resolve the provider and the decisions call 404s. `/connect` and
+`opencode auth login` list only registry (models.dev) providers — TypeSafe
+is not one.
 
 **OpenRouter-hosted Jev** (billed by OpenRouter; the config candidate is not in
 Pantheon's matrix, so set an explicit selection through the host):
