@@ -16,7 +16,6 @@ export type DecisionProviderId =
   | 'openai-decisions'
   | 'typesafe-jev'
   | 'opencode-console-jev'
-  | 'opencode-console-jev-free'
   | 'openrouter-jev'
   | 'vercel-gateway-jev'
   | 'cloudflare-workers-jev'

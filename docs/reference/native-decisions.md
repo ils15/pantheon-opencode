@@ -25,8 +25,7 @@ the catalog. Pantheon never maps or switches providers on your behalf.
 
 | Decision model | Config candidate | Host reference | Billing / auth | Route requirement |
 | --- | --- | --- | --- | --- |
-| OpenCode Console Jev free | `opencode-console-jev-free` / `jev-1.13-free` | `{ providerID: "opencode", id: "jev-1.13-free" }` | Free (`billing_source: free`) | None — host-native |
-| OpenCode Console Jev (paid) | `opencode-console-jev` / `jev-1.13` | `{ providerID: "opencode", id: "jev-1.13" }` | Console credits; **requires a Zen workspace key** (an OpenCode Go subscription does not include it — the host answers 404 without one) | None — host-native |
+| OpenCode Console Jev | `opencode-console-jev` / `jev-1.13` | `{ providerID: "opencode", id: "jev-1.13" }` | Zen workspace credits, via `OPENCODE_API_KEY` (a Go subscription does not include Jev — the host answers 404 without the workspace key) | `OPENCODE_API_KEY` — host-native |
 | TypeSafe Jev direct | `typesafe-jev` / `jev-1.14.0` | `{ providerID: "typesafe-ai", id: "jev-1.14.0" }` | Your TypeSafe key | `setup-model` merges the complete custom provider entry into `opencode.json` (adapter, baseURL, `apiKey: "{env:TYPESAFE_API_KEY}"`, type `"decision"`); then `export TYPESAFE_API_KEY=<your key>` and restart. **`/connect` and `opencode auth login` do not carry custom providers** — models.dev has no typesafe-ai entry |
 | OpenRouter-hosted Jev | `openrouter-jev` / `typesafe/jev-1.13` | `{ providerID: "openrouter", id: "typesafe/jev-1.13" }` | OpenRouter credits (`OPENROUTER_API_KEY`; host-native models.dev provider — `/connect` supports it) | None — host-native |
 | Vercel AI Gateway Jev | `vercel-gateway-jev` / `typesafe-ai/jev` | `{ providerID: "vercel-ai-gateway", id: "typesafe-ai/jev" }` | Vercel AI Gateway (`AI_GATEWAY_API_KEY`; host-native models.dev provider) | None — host-native |

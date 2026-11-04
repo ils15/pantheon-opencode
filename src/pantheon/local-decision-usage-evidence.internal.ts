@@ -8,7 +8,7 @@
  */
 
 /** Providers that can appear in usage details: native Decisions routes. */
-export type UsageProvider = 'typesafe-jev' | 'opencode-console' | 'jev-free'
+export type UsageProvider = 'typesafe-jev' | 'opencode-console'
 
 export interface ParsedUsageCounts {
   provider: UsageProvider
@@ -47,7 +47,7 @@ const evidenceDetails = new WeakMap<object, VerifiedUsageEvidenceDetails>()
  * absent: direct OpenAI has no native route, so it can never settle one.
  */
 function isNativeUsageProvider(value: string): value is UsageProvider {
-  return value === 'typesafe-jev' || value === 'opencode-console' || value === 'jev-free'
+  return value === 'typesafe-jev' || value === 'opencode-console'
 }
 
 /**

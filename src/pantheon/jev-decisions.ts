@@ -36,7 +36,6 @@ export type NativeJevProviderId = Extract<
   DecisionProviderId,
   | 'typesafe-jev'
   | 'opencode-console-jev'
-  | 'opencode-console-jev-free'
   | 'openrouter-jev'
   | 'vercel-gateway-jev'
   | 'cloudflare-workers-jev'
@@ -51,7 +50,6 @@ export type NativeJevProviderId = Extract<
 export const NATIVE_JEV_HOST_PROVIDERS = Object.freeze({
   'typesafe-jev': 'typesafe-ai',
   'opencode-console-jev': 'opencode',
-  'opencode-console-jev-free': 'opencode',
   // Host-embedded decision modules confirmed in the 2.2.5 binary
   // (providers/<id>/decisions, System One transport — the host normalizes
   // the request/response, so consumers only need the providerID mapping):

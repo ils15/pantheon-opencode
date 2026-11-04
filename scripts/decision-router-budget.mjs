@@ -26,7 +26,6 @@ var LOCAL_DECISION_BUDGET_PROVIDERS = Object.freeze([
   "openai-decisions",
   "typesafe-jev",
   "opencode-console",
-  "jev-free",
   "openrouter",
   "vercel-ai-gateway",
   "cloudflare-workers-ai"

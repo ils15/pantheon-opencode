@@ -84,12 +84,7 @@ test('interactive selection chooses components and location, then asks the Jev a
   )[1]
   assert.deepEqual(
     jevPrompt.options.map(({ value }) => value),
-    [
-      'skip',
-      'opencode-console-jev/jev-1.13',
-      'opencode-console-jev-free/jev-1.13-free',
-      'typesafe-jev/jev-1.14.0',
-    ],
+    ['skip', 'opencode-console-jev/jev-1.13', 'typesafe-jev/jev-1.14.0'],
   )
   assert.equal(jevPrompt.initialValue, 'skip')
 })
@@ -110,10 +105,11 @@ test('choosing a Jev route activates it with explicit caps; unknown legacy value
     egress_consent: false,
   })
 
-  // Free variant activates the free target.
+  // The free variant is REMOVED (limited free quota 429s mid-work): a stale
+  // free choice degrades to skip like any unknown target.
   const free = fakePrompts({ jevActivation: 'opencode-console-jev-free/jev-1.13-free' })
   const freeResult = await runInteractiveInstall({ prompts: free, isTTY: true })
-  assert.equal(freeResult.decisionModelActivation.target, 'opencode-console-jev-free/jev-1.13-free')
+  assert.equal(freeResult.decisionModelActivation, null, 'removed free route degrades to skip')
 
   // TypeSafe direct activates its target (the provider block is a manual
   // prerequisite documented in the wizard hint and reference docs).

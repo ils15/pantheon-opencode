@@ -149,11 +149,6 @@ export async function runInteractiveInstall({
         hint: 'Billed to your Console; uses host-owned auth',
       },
       {
-        label: 'Console Jev free variant',
-        value: 'opencode-console-jev-free/jev-1.13-free',
-        hint: 'No paid budget consumed; host-owned auth',
-      },
-      {
         label: 'TypeSafe Jev (direct)',
         value: 'typesafe-jev/jev-1.14.0',
         hint: 'Installer merges the provider entry; you sign in with your TypeSafe key (/connect)',
@@ -166,11 +161,7 @@ export async function runInteractiveInstall({
   }
   // Only known targets activate; anything else (a stale stub, a renamed
   // option) degrades to skip instead of configuring a wrong route.
-  const KNOWN_JEV_TARGETS = new Set([
-    'opencode-console-jev/jev-1.13',
-    'opencode-console-jev-free/jev-1.13-free',
-    'typesafe-jev/jev-1.14.0',
-  ])
+  const KNOWN_JEV_TARGETS = new Set(['opencode-console-jev/jev-1.13', 'typesafe-jev/jev-1.14.0'])
   const activationChoice =
     typeof jevActivation === 'string' && KNOWN_JEV_TARGETS.has(jevActivation)
       ? jevActivation

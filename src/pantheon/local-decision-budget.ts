@@ -13,7 +13,6 @@ export type BudgetProvider =
   | 'openai-decisions'
   | 'typesafe-jev'
   | 'opencode-console'
-  | 'jev-free'
   | 'openrouter'
   | 'vercel-ai-gateway'
   | 'cloudflare-workers-ai'
@@ -133,7 +132,6 @@ export const LOCAL_DECISION_BUDGET_PROVIDERS: readonly BudgetProvider[] = Object
   'openai-decisions',
   'typesafe-jev',
   'opencode-console',
-  'jev-free',
   'openrouter',
   'vercel-ai-gateway',
   'cloudflare-workers-ai',
