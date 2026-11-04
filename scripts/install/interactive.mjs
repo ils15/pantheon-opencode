@@ -146,12 +146,22 @@ export async function runInteractiveInstall({
       {
         label: 'OpenCode Console Jev (stock)',
         value: 'opencode-console-jev/jev-1.13',
-        hint: 'Billed to your Console; uses host-owned auth',
+        hint: consoleJevHint(process.env),
+      },
+      {
+        label: 'OpenRouter-hosted Jev',
+        value: 'openrouter-jev/typesafe/jev-1.13',
+        hint: openrouterJevHint(),
       },
       {
         label: 'TypeSafe Jev (direct)',
         value: 'typesafe-jev/jev-1.14.0',
-        hint: 'Installer merges the provider entry; you sign in with your TypeSafe key (/connect)',
+        hint: typesafeJevHint(process.env),
+      },
+      {
+        label: 'Cloudflare Clef',
+        value: 'cloudflare-workers-jev/clef',
+        hint: cloudflareJevHint(process.env),
       },
     ],
     initialValue: 'skip',
@@ -199,4 +209,27 @@ export async function runInteractiveInstall({
     decisionRouterConfig: createDecisionRouterConfig(DECISION_ROUTER_PROVIDERS[0], false),
     decisionModelActivation,
   }
+}
+
+/** Credential-state hints for the Jev wizard routes (set at prompt time). */
+function consoleJevHint(env = process.env) {
+  return env.OPENCODE_API_KEY
+    ? 'Zen credits via OPENCODE_API_KEY — ✓ detected in this shell'
+    : 'Zen credits via OPENCODE_API_KEY — export it first (opencode.ai/console)'
+}
+
+function openrouterJevHint() {
+  return 'Uses the host OpenRouter credential (opencode auth list); billed per decision'
+}
+
+function typesafeJevHint(env = process.env) {
+  return env.TYPESAFE_API_KEY
+    ? '✓ TYPESAFE_API_KEY detected — the installer merges the provider entry'
+    : 'export TYPESAFE_API_KEY first; the installer merges the provider entry'
+}
+
+function cloudflareJevHint(env = process.env) {
+  return env.CLOUDFLARE_API_TOKEN
+    ? '✓ CLOUDFLARE_API_TOKEN detected — pass --account-id at setup-model'
+    : 'Workers AI-scoped CLOUDFLARE_API_TOKEN + accountId; setup-model merges the entry'
 }
