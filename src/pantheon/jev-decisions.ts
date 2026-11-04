@@ -191,9 +191,31 @@ export type JevDecisionQuestionInput = {
 
 export type JevDecisionPreparationFailure = 'STATE_INVALID' | 'QUESTIONS_INVALID' | 'PRESET_INVALID'
 
+/**
+ * Per-cause tokens for the validation bucket. An LLM caller cannot converge
+ * on a bare `QUESTIONS_INVALID` (field evidence: nine distinct causes, five
+ * blind retries); the tool attaches the specific token as `detail` so the
+ * next attempt can be exact.
+ */
+export type JevDecisionPreparationDetail =
+  | 'QUESTIONS_NOT_A_LIST'
+  | 'QUESTION_COUNT_INVALID'
+  | 'QUESTION_NOT_AN_OBJECT'
+  | 'QUESTION_NAME_INVALID'
+  | 'QUESTION_NAME_BAD_PATTERN_OR_DUPLICATE'
+  | 'QUESTION_INSTRUCTIONS_INVALID'
+  | 'CHOICE_INVALID'
+  | 'SCORE_INVALID'
+  | 'PREDICATE_HAS_CHOICES_OR_LEVELS'
+  | 'QUESTION_TYPE_INVALID'
+
 export type JevDecisionPreparation =
   | { readonly ok: true; readonly request: NativeDecisionRequest }
-  | { readonly ok: false; readonly reasonCode: JevDecisionPreparationFailure }
+  | {
+      readonly ok: false
+      readonly reasonCode: JevDecisionPreparationFailure
+      readonly detail?: JevDecisionPreparationDetail
+    }
 
 function isBoundedNonBlankString(value: unknown, max: number): value is string {
   return typeof value === 'string' && value.trim().length > 0 && value.length <= max
@@ -283,40 +305,52 @@ export function prepareJevDecisionRequest(
     return { ok: false, reasonCode: 'STATE_INVALID' }
   }
   const rawQuestions = input.questions
-  if (!Array.isArray(rawQuestions)) return { ok: false, reasonCode: 'QUESTIONS_INVALID' }
+  if (!Array.isArray(rawQuestions)) {
+    return { ok: false, reasonCode: 'QUESTIONS_INVALID', detail: 'QUESTIONS_NOT_A_LIST' }
+  }
   if (rawQuestions.length < 1 || rawQuestions.length > JEV_DECISION_MAX_QUESTIONS) {
-    return { ok: false, reasonCode: 'QUESTIONS_INVALID' }
+    return { ok: false, reasonCode: 'QUESTIONS_INVALID', detail: 'QUESTION_COUNT_INVALID' }
   }
 
   const names = new Set<string>()
   const questions: NativeDecisionRequest['questions'][number][] = []
   for (const raw of rawQuestions) {
     if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
-      return { ok: false, reasonCode: 'QUESTIONS_INVALID' }
+      return { ok: false, reasonCode: 'QUESTIONS_INVALID', detail: 'QUESTION_NOT_AN_OBJECT' }
     }
     const question = raw as JevDecisionQuestionInput
     if (!isBoundedNonBlankString(question.name, JEV_DECISION_MAX_NAME_LENGTH)) {
-      return { ok: false, reasonCode: 'QUESTIONS_INVALID' }
+      return { ok: false, reasonCode: 'QUESTIONS_INVALID', detail: 'QUESTION_NAME_INVALID' }
     }
     if (!QUESTION_NAME_PATTERN.test(question.name) || names.has(question.name)) {
-      return { ok: false, reasonCode: 'QUESTIONS_INVALID' }
+      return {
+        ok: false,
+        reasonCode: 'QUESTIONS_INVALID',
+        detail: 'QUESTION_NAME_BAD_PATTERN_OR_DUPLICATE',
+      }
     }
     if (!isBoundedNonBlankString(question.instructions, JEV_DECISION_MAX_INSTRUCTIONS_LENGTH)) {
-      return { ok: false, reasonCode: 'QUESTIONS_INVALID' }
+      return { ok: false, reasonCode: 'QUESTIONS_INVALID', detail: 'QUESTION_INSTRUCTIONS_INVALID' }
     }
     names.add(question.name)
 
     if (question.type === 'choice') {
       const built = readChoiceQuestion(question)
-      if (built === null) return { ok: false, reasonCode: 'QUESTIONS_INVALID' }
+      if (built === null)
+        return { ok: false, reasonCode: 'QUESTIONS_INVALID', detail: 'CHOICE_INVALID' }
       questions.push(built)
     } else if (question.type === 'score') {
       const built = readScoreQuestion(question)
-      if (built === null) return { ok: false, reasonCode: 'QUESTIONS_INVALID' }
+      if (built === null)
+        return { ok: false, reasonCode: 'QUESTIONS_INVALID', detail: 'SCORE_INVALID' }
       questions.push(built)
     } else if (question.type === 'predicate') {
       if (question.choices !== undefined || question.levels !== undefined) {
-        return { ok: false, reasonCode: 'QUESTIONS_INVALID' }
+        return {
+          ok: false,
+          reasonCode: 'QUESTIONS_INVALID',
+          detail: 'PREDICATE_HAS_CHOICES_OR_LEVELS',
+        }
       }
       questions.push({
         type: 'predicate',
@@ -324,7 +358,7 @@ export function prepareJevDecisionRequest(
         instructions: question.instructions,
       })
     } else {
-      return { ok: false, reasonCode: 'QUESTIONS_INVALID' }
+      return { ok: false, reasonCode: 'QUESTIONS_INVALID', detail: 'QUESTION_TYPE_INVALID' }
     }
   }
 
