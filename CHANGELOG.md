@@ -10,6 +10,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.3-beta.10] - 2026-11-04
+
+### Fixed
+
+- **routing** — The Jev input envelope is enforced: schemaVersion is required (SCHEMA_VERSION_INVALID) and unknown keys are rejected (UNKNOWN_INPUT_KEYS) — the declared contract is now the enforced contract (field report N2/N3).
+
 ## [v1.6.3-beta.9] - 2026-11-04
 
 ### Changed
