@@ -221,6 +221,8 @@ export type JevDecisionPreparationDetail =
   | 'SCORE_INVALID'
   | 'PREDICATE_HAS_CHOICES_OR_LEVELS'
   | 'QUESTION_TYPE_INVALID'
+  | 'SCHEMA_VERSION_INVALID'
+  | 'UNKNOWN_INPUT_KEYS'
 
 export type JevDecisionPreparation =
   | { readonly ok: true; readonly request: NativeDecisionRequest }
@@ -311,8 +313,23 @@ function readScoreQuestion(
  */
 export function prepareJevDecisionRequest(
   route: ResolvedNativeDecisionRoute,
-  input: { readonly state?: unknown; readonly questions?: unknown },
+  input: {
+    readonly schemaVersion?: unknown
+    readonly state?: unknown
+    readonly questions?: unknown
+  },
 ): JevDecisionPreparation {
+  // Envelope enforcement (field report N2/N3): schemaVersion was documented
+  // as required but never checked, and unknown keys passed silently to the
+  // provider against the declared additionalProperties: false.
+  if (input.schemaVersion !== 1) {
+    return { ok: false, reasonCode: 'QUESTIONS_INVALID', detail: 'SCHEMA_VERSION_INVALID' }
+  }
+  const knownKeys = new Set(['schemaVersion', 'state', 'questions'])
+  const unknown = Object.keys(input).filter((key) => !knownKeys.has(key))
+  if (unknown.length > 0) {
+    return { ok: false, reasonCode: 'QUESTIONS_INVALID', detail: 'UNKNOWN_INPUT_KEYS' }
+  }
   const state = input.state
   if (!isBoundedNonBlankString(state, NATIVE_DECISION_MAX_PROMPT_LENGTH)) {
     return { ok: false, reasonCode: 'STATE_INVALID' }
