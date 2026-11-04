@@ -215,6 +215,23 @@ export function copyPluginFiles(
     else result.skipped++
   }
 
+  // CHANGELOG.md — the copy's one-time "What's new" window reads the release
+  // highlights for the running version from its own installed root. Best
+  // effort: a missing source simply means no window (the TUI fails open).
+  // src/plugins/tui → src/plugins → src → the package root, which ships
+  // CHANGELOG.md in its npm `files` allow-list.
+  const changelogSrc = join(srcDir, '..', '..', '..', 'CHANGELOG.md')
+  if (existsSync(changelogSrc)) {
+    const changelogStatus = writeIfChanged(
+      join(dstDir, 'CHANGELOG.md'),
+      readFileSync(changelogSrc, 'utf8'),
+      dryRun,
+      { recorder },
+    )
+    if (changelogStatus === 'created') result.created++
+    else result.skipped++
+  }
+
   return result
 }
 
