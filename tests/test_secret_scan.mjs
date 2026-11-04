@@ -26,6 +26,15 @@ assert.ok(scanText(`token: ${dummyBifrostValue}`, 'fixture').length > 0)
 assert.ok(scanText(`"${apiKeyName}": "fixture-api-key-value"`, 'fixture').length > 0)
 assert.ok(scanText(`"${authorizationName}": "Bearer fixture-bearer-value"`, 'fixture').length > 0)
 
+// Environment references are not literal keys: `{env:VAR}` (the OpenCode
+// config form) must never be flagged alongside ${VAR}, process.env and
+// os.getenv.
+assert.equal(
+  scanText(`"${apiKeyName}": "{env:TYPESAFE_API_KEY}"`, 'fixture').length,
+  0,
+  '{env:...} reference is not a literal key',
+)
+
 // Regression guard for the Bifrost header/prefix: scanVersionableFiles()
 // asserted above is the real guard — it scans EVERY versionable file, so a
 // per-file assertion was a manual duplicate of it.

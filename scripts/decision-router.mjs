@@ -346,8 +346,8 @@ export async function runDecisionRouterCommand(
       const provision = provisionTypesafeHostProvider({ env })
       if (provision.ok) {
         stdout(
-          `TypeSafe provider entry merged into ${provision.path} (models.typesafe-ai, type "decision"). ` +
-            'Sign in with `opencode auth login` (TypeSafe) or /connect.',
+          `TypeSafe provider entry merged into ${provision.path} (adapter + baseURL + apiKey via {env:TYPESAFE_API_KEY}, type "decision"). ` +
+            'Activate: export TYPESAFE_API_KEY=<your TypeSafe key> and restart OpenCode. /connect does not carry custom providers.',
         )
       } else {
         stdout(`⚠ TypeSafe provider entry NOT merged: ${provision.reason}`)
@@ -491,16 +491,26 @@ export async function runDecisionRouterCommand(
       // 561 entries, 0 jev, while the decisions API answers the same ref).
       if (target.provider === 'typesafe-jev') {
         const hostProvider = inspectTypesafeHostProvider({ env })
-        if (hostProvider.present) {
-          pass(
-            'native-route',
-            `typesafe-ai provider entry present (${hostProvider.path}); credential via \`opencode auth login\` (TypeSafe) or /connect`,
-          )
-        } else {
+        if (!hostProvider.present) {
           fail(
             'native-route',
             `opencode.json has no providers.typesafe-ai entry (${hostProvider.path})`,
-            'decision-router setup-model typesafe-jev/jev-1.14.0 merges it (type: "decision")',
+            'decision-router setup-model typesafe-jev/jev-1.14.0 merges the full provider entry (adapter, baseURL, apiKey ref)',
+          )
+        } else if (!hostProvider.hasCredential) {
+          warn(
+            'native-route',
+            'provider entry has no apiKey',
+            'set the TypeSafe key: export TYPESAFE_API_KEY=... and re-run setup-model (writes {env:TYPESAFE_API_KEY}), or add options.apiKey to the entry',
+          )
+        } else {
+          pass(
+            'native-route',
+            `typesafe-ai provider entry present (${hostProvider.path}); credential ${
+              hostProvider.viaEnvRef
+                ? `via env reference (${hostProvider.apiKeyRef}) — resolved by the host at call time`
+                : 'inline in the entry'
+            }`,
           )
         }
       } else {
