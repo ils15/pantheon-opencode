@@ -68,6 +68,12 @@ export interface V2JevDecisionRuntime {
   /** The host's native Decisions API (`ctx.experimental.generate.decisions`). */
   readonly decide: (request: NativeDecisionRequest) => Promise<unknown>
   /**
+   * Allowlisted specialist callers for explicit-questions mode (parsed from
+   * `PANTHEON_JEV_SPECIALIST_CALLERS` by the plugin wiring). Empty/absent =
+   * Zeus only. Preset modes stay Zeus-only regardless.
+   */
+  readonly specialistCallers?: readonly string[]
+  /**
    * Raw host skill registry (`ctx.skill.list()`); optional. Its entries extend
    * the skills preset so installed Agent Skills become decidable.
    */
@@ -88,8 +94,28 @@ export function nativeJevPermissionResource(providerID: string, id: string): str
   return `pantheon-native-decisions://${providerID}/${id}`
 }
 
+export const SPECIALIST_CALLERS_FLAG_ENV = 'PANTHEON_JEV_SPECIALIST_CALLERS'
+
+/**
+ * Parse the caller allowlist from the flag's CSV value. Unset/empty = Zeus
+ * only (the default). Preset modes (skills, delegation, review) stay
+ * Zeus-only regardless of the flag: owner/skill selection and result
+ * scoring are orchestration decisions; specialists may ask bounded typed
+ * questions mid-task, nothing else. Lives in the plugin wiring (which owns
+ * flag reads); this module receives the parsed list via the runtime.
+ */
+export function specialistCallerAllowlist(flagValue: string | undefined): readonly string[] {
+  const raw = String(flagValue ?? '').trim()
+  if (!raw) return []
+  const parsed = raw
+    .split(',')
+    .map((name) => name.trim())
+    .filter((name) => /^[a-z][a-z0-9-]{0,31}$/.test(name))
+  return [...new Set(parsed)]
+}
+
 export type JevDecisionRunFailure =
-  | 'CALLER_NOT_ZEUS'
+  | 'CALLER_NOT_ALLOWED'
   | 'REVIEW_INPUT_INVALID'
   | 'CRITERIA_INVALID'
   | 'CONTEXT_UNAVAILABLE'
@@ -133,7 +159,7 @@ function reviewRefusalSkipReason(reasonCode: JevDecisionRunFailure): string {
 /**
  * Every gate-chain failure the shared runner can produce. It is
  * {@link JevDecisionRunFailure} minus the tool-surface properties:
- * `CALLER_NOT_ZEUS` (the caller check) and the review mode's input
+ * `CALLER_NOT_ALLOWED` (the caller check) and the review mode's input
  * validation (`REVIEW_INPUT_INVALID` / `CRITERIA_INVALID`) — all three are
  * properties of the explicit tool surface, whose input the caller supplies
  * directly, not of the gate chain; the J1/J3 shadow observers run the same
@@ -141,13 +167,19 @@ function reviewRefusalSkipReason(reasonCode: JevDecisionRunFailure): string {
  */
 export type GatedNativeJevFailure = Exclude<
   JevDecisionRunFailure,
-  'CALLER_NOT_ZEUS' | 'REVIEW_INPUT_INVALID' | 'CRITERIA_INVALID'
+  'CALLER_NOT_ALLOWED' | 'REVIEW_INPUT_INVALID' | 'CRITERIA_INVALID'
 >
 
 /** The minimal runtime slice the gate chain needs. */
 export type GatedNativeJevRuntime = Pick<V2JevDecisionRuntime, 'decide'> & {
   /** Host permission kill-switch (`ctx.permission.assert`), when present. */
   readonly permissionAssert?: (input: Record<string, unknown>) => Promise<unknown>
+  /**
+   * Allowlisted specialist callers for explicit-questions mode (parsed from
+   * `PANTHEON_JEV_SPECIALIST_CALLERS` by the plugin wiring). Empty/absent =
+   * Zeus only. Preset modes stay Zeus-only regardless.
+   */
+  readonly specialistCallers?: readonly string[]
 }
 
 /** One completed, settled native Jev call: gates passed, usage reconciled. */
@@ -376,9 +408,21 @@ export async function runJevDecision(
     toolContext !== null && typeof toolContext === 'object' && !Array.isArray(toolContext)
       ? (toolContext as JevToolContext)
       : undefined
-  if (context?.agent !== 'zeus') return refusal('CALLER_NOT_ZEUS')
+  const caller = context?.agent
+  if (typeof caller !== 'string' || caller.length === 0) return refusal('CALLER_NOT_ALLOWED')
+  const allowlist = runtime.specialistCallers ?? []
+  if (caller !== 'zeus' && !allowlist.includes(caller)) {
+    return refusal('CALLER_NOT_ALLOWED')
+  }
 
   const requested = (input ?? {}) as { mode?: unknown; questions?: unknown }
+  // Preset modes stay orchestrator-owned even when the flag widens the
+  // caller matrix: owner/skill selection and result scoring are
+  // orchestration decisions; allowlisted specialists may ask bounded typed
+  // questions only.
+  if (caller !== 'zeus' && requested.mode !== undefined) {
+    return refusal('CALLER_NOT_ALLOWED')
+  }
   // Review mode (J4): the bounded request is built before any gate work, and
   // an invalid review input is a tool-surface refusal — same class as the
   // caller check, never a gate failure.
@@ -402,7 +446,7 @@ export async function runJevDecision(
   const result = await runGatedNativeJevCall({
     sessionID: context?.sessionID,
     messageID: context?.messageID,
-    agent: 'zeus',
+    agent: caller,
     runtime,
     prepare: async (route) =>
       reviewRequest !== undefined
@@ -481,6 +525,7 @@ export async function runJevDecision(
       advisory: true,
       effect: 'none',
       reason: 'JEV_DECISION',
+      caller,
       route: {
         providerID: result.call.selection.route.model.providerID,
         id: result.call.selection.route.model.id,
@@ -500,6 +545,7 @@ export async function runJevDecision(
     advisory: true,
     effect: 'none',
     reason: 'JEV_DECISION',
+    caller,
     route: {
       providerID: result.call.selection.route.model.providerID,
       id: result.call.selection.route.model.id,

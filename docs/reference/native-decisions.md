@@ -98,11 +98,15 @@ Pantheon's matrix, so set an explicit selection through the host):
 }
 ```
 
-Who can invoke: only the orchestrator (`zeus`) today. Widening the caller
-matrix to more agents is a deliberate, separately reviewed change — not a
-config toggle — because each allowed caller multiplies consented egress. Cost
-controls are the caps above (no defaults), the confirmed UTC period, and the
-host permission kill-switch on `decision.egress`.
+Who can invoke: the orchestrator (`zeus`) always; allowlisted specialists for
+**explicit typed questions only** (owner/skill selection and result scoring
+stay orchestrator-owned). The allowlist comes from
+`PANTHEON_JEV_SPECIALIST_CALLERS` (CSV of agent ids, default empty = Zeus
+only; read at plugin registration). The permission assertion and the success
+output carry the real caller. Cost controls are the caps above (no defaults),
+the confirmed UTC period, and the host permission kill-switch on
+`decision.egress` — caps are enforced per call regardless of caller, so the
+allowlist is a consent-concentration policy, not a technical boundary.
 
 ## The explicit `pantheon_jev_decide` tool
 

@@ -920,7 +920,7 @@ async function testToolReviewZeusOnly(): Promise<void> {
     const output = parseToolOutput(
       await runJevDecision(reviewInput(), { ...zeusContext(), agent: 'apollo' }, stub.runtime),
     )
-    assert.deepEqual(output, { advisory: false, effect: 'none', reasonCode: 'CALLER_NOT_ZEUS' })
+    assert.deepEqual(output, { advisory: false, effect: 'none', reasonCode: 'CALLER_NOT_ALLOWED' })
     assert.equal(stub.decideCalls.length, 0, 'a non-Zeus caller never spends the gate chain')
     assert.equal(stub.records.length, 0, 'and never writes J4 telemetry')
   })
