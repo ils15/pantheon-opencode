@@ -32,6 +32,7 @@ import {
   DECISION_ROUTER_MODELS,
   diffDecisionRouterSurfaces,
   inspectTypesafeHostProvider,
+  provisionCloudflareHostProvider,
   provisionTypesafeHostProvider,
   readUserDecisionRouterConfig,
   resolveUserDecisionRouterConfigPath,
@@ -314,7 +315,9 @@ export async function runDecisionRouterCommand(
       )
     }
     const noConsent = flagArgs.includes('--no-consent')
-    const capArgs = flagArgs.filter((arg) => arg !== '--no-consent')
+    const capArgs = flagArgs.filter(
+      (arg) => arg !== '--no-consent' && !arg.startsWith('--account-id='),
+    )
     // Exactly the two caps flags with values; parseCaps validates them and
     // leaves `rest` empty because setup-model has no positional caps targets.
     if (capArgs.length !== 4) throw new DecisionRouterUsageError(USAGE)
@@ -336,6 +339,28 @@ export async function runDecisionRouterCommand(
     stdout(
       noConsent ? 'Egress consent NOT recorded (--no-consent).' : 'Egress consent recorded: yes.',
     )
+
+    // The Cloudflare route needs a custom entry with the accountId (the
+    // host's embedded cloudflare-workers-ai module reads the token from
+    // CLOUDFLARE_API_TOKEN and the account from the entry options).
+    if (provider === 'cloudflare-workers-jev') {
+      const accountId = flagArgs.find((arg) => arg.startsWith('--account-id='))
+      const provision = provisionCloudflareHostProvider({
+        accountId: accountId?.split('=')[1],
+        env,
+      })
+      if (provision.ok) {
+        stdout(
+          `Cloudflare provider entry merged into ${provision.path} (accountId + models.clef, type "decision"). ` +
+            'The token comes from CLOUDFLARE_API_TOKEN (Workers AI-scoped token) in the host environment.',
+        )
+      } else {
+        stdout(
+          `⚠ Cloudflare provider entry NOT merged: ${provision.reason}` +
+            ' — pass --account-id=<32-hex Cloudflare account id>.',
+        )
+      }
+    }
 
     // The TypeSafe route needs a host-side provider entry the decisions API
     // can resolve; the Console routes are host-native and need none. The

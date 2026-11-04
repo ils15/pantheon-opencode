@@ -420,6 +420,18 @@ jev models appear in `opencode models` regardless of provider. Expansion is
 table-only on Pantheon's side — the host normalizes every embedded provider
 behind the same decisions call.
 
+### Candidate expansions (2026-11-04, mapped, deliberately unwired)
+
+- **OpenAI Decisions protocol** — the host 2.2.5 has **no** openai decisions
+  module; OpenAI speaks a different protocol (`POST
+  api.openai.com/v1/decisions`, model `gpt-6-luna`, up to 400 questions,
+  refusal as an answer type). Wiring it means Pantheon running its own
+  transport for the first time — breaks the "egress only via the host native
+  route" principle. Deliberately unwired.
+- **What's-new window** — a one-time TUI notice on version change surfacing
+  the changelog highlights (the extractor exists:
+  `scripts/changelog-extract.mjs`). Planned.
+
 ### Specialist callers (shipped)
 
 `PANTHEON_JEV_SPECIALIST_CALLERS` (CSV, default empty = Zeus only) allowlists
