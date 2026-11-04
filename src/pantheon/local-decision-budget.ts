@@ -137,7 +137,7 @@ export const LOCAL_DECISION_BUDGET_PROVIDERS: readonly BudgetProvider[] = Object
   'cloudflare-workers-ai',
 ])
 const ALLOWED_PROVIDERS = new Set<BudgetProvider>(LOCAL_DECISION_BUDGET_PROVIDERS)
-const MODEL_KEY = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
+const MODEL_KEY = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/
 const RESERVATION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const CLOCK_ROLLBACK_TOLERANCE_MS = 60_000
 

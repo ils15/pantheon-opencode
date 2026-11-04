@@ -31,7 +31,7 @@ var LOCAL_DECISION_BUDGET_PROVIDERS = Object.freeze([
   "cloudflare-workers-ai"
 ]);
 var ALLOWED_PROVIDERS = new Set(LOCAL_DECISION_BUDGET_PROVIDERS);
-var MODEL_KEY = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+var MODEL_KEY = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
 var RESERVATION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 var CLOCK_ROLLBACK_TOLERANCE_MS = 6e4;
 function resolveLocalDecisionBudgetDbPath(env = process.env) {
