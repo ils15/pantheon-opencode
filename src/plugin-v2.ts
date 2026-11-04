@@ -115,6 +115,7 @@ import {
 } from './pantheon/delegation-enforce.ts'
 import { GOAL_LOOP_DEFAULTS, GoalStore } from './pantheon/goal-loop.ts'
 import { createGuardPathResolver } from './pantheon/guard-path.ts'
+import { createJTelemetryMirror } from './pantheon/j-telemetry-file.ts'
 import type { V2JevDecisionRuntime } from './pantheon/jev-decision-tool.ts'
 import { specialistCallerAllowlist } from './pantheon/jev-decision-tool.ts'
 import {
@@ -705,6 +706,7 @@ function buildV2JevRuntime(host: ReturnType<typeof hostDomains>): V2JevDecisionR
   // it; the records are advisory and never read back by the tool path.
   const j4Sink = createTelemetrySink()
   j4TelemetrySink = j4Sink
+  const j4Mirror = createJTelemetryMirror({ enabled: true })
   return {
     specialistCallers,
     // Every host method is invoked with its owning domain as receiver: the
@@ -718,7 +720,9 @@ function buildV2JevRuntime(host: ReturnType<typeof hostDomains>): V2JevDecisionR
     listSkills: async () => skillList?.call(skillDomain),
     ...(permissionAssert === undefined ? {} : { permissionAssert }),
     shadowSink: (record) => {
-      j4Sink.emit({ ...record, mode: 'shadow' })
+      const shadowRecord = { ...record, mode: 'shadow' }
+      j4Sink.emit(shadowRecord)
+      j4Mirror?.record(shadowRecord)
     },
   }
 }
@@ -2009,10 +2013,13 @@ async function registerV2ToolHooks(
   if (jevRuntime !== undefined && j3EscalationEnabledFromEnv()) {
     const j3Sink = createTelemetrySink()
     j3TelemetrySink = j3Sink
+    const j3Mirror = createJTelemetryMirror({ enabled: true })
     j3Observer = createJ3EscalationObserver({
       runtime: jevRuntime,
       sink: (record) => {
-        j3Sink.emit({ ...record, mode: 'shadow' })
+        const shadowRecord = { ...record, mode: 'shadow' }
+        j3Sink.emit(shadowRecord)
+        j3Mirror?.record(shadowRecord)
       },
     })
   }
