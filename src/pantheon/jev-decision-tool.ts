@@ -169,6 +169,12 @@ export type GatedNativeJevCallResult =
       readonly reasonCode: GatedNativeJevFailure
       /** Sanitized error CLASS only (`TypeError`, …); set for call failures. */
       readonly detail?: string
+      /** Host's provider-layer reason class (`rate_limit`, …); no message text. */
+      readonly providerReason?: string
+      /** Integer HTTP status from the provider layer, when the host sets one. */
+      readonly status?: number
+      /** Positive retry window in ms, when the host sets one (rate limits). */
+      readonly retryAfterMs?: number
     }
 
 /**
@@ -256,11 +262,37 @@ export async function runGatedNativeJevCall(params: {
     try {
       response = await params.runtime.decide(prepared.request)
     } catch (err) {
-      return {
+      // Provider-layer errors carry bounded, non-content facts that change
+      // what the user does next: the host's reason class (`rate_limit` vs
+      // auth vs unknown) and, for rate limits, the retry window. The error
+      // message text NEVER crosses (it carries URLs and subscription prose).
+      const failure: {
+        ok: false
+        reasonCode: 'DECISION_CALL_FAILED'
+        detail: string
+        providerReason?: string
+        status?: number
+        retryAfterMs?: number
+      } = {
         ok: false,
         reasonCode: 'DECISION_CALL_FAILED',
         detail: err instanceof Error ? err.name : 'UnknownFailure',
       }
+      const errRecord = err as { reason?: unknown; status?: unknown; retryAfterMs?: unknown }
+      if (typeof errRecord.reason === 'string' && /^[a-z_]{1,32}$/i.test(errRecord.reason)) {
+        failure.providerReason = errRecord.reason
+      }
+      if (typeof errRecord.status === 'number' && Number.isInteger(errRecord.status)) {
+        failure.status = errRecord.status
+      }
+      if (
+        typeof errRecord.retryAfterMs === 'number' &&
+        Number.isFinite(errRecord.retryAfterMs) &&
+        errRecord.retryAfterMs > 0
+      ) {
+        failure.retryAfterMs = Math.round(errRecord.retryAfterMs)
+      }
+      return failure
     }
 
     const evidence = verifyNativeUsageForReservation(
@@ -407,15 +439,21 @@ export async function runJevDecision(
         runtime.shadowSink,
       )
     }
-    if (result.detail === undefined) return refusal(result.reasonCode)
-    // Refusal with the error CLASS only (`TypeError`, `RangeError`, …): the
+    if (result.detail === undefined && result.providerReason === undefined) {
+      return refusal(result.reasonCode)
+    }
+    // Refusal with the error CLASS only (`TypeError`, `RangeError`, …) plus
+    // the bounded provider facts (`rate_limit`, status, retry window): the
     // message can carry paths, config or provider detail and never crosses
     // into the chat.
     return JSON.stringify({
       advisory: false,
       effect: 'none',
       reasonCode: result.reasonCode,
-      detail: result.detail,
+      ...(result.detail === undefined ? {} : { detail: result.detail }),
+      ...(result.providerReason === undefined ? {} : { providerReason: result.providerReason }),
+      ...(result.status === undefined ? {} : { status: result.status }),
+      ...(result.retryAfterMs === undefined ? {} : { retryAfterMs: result.retryAfterMs }),
     })
   }
 
@@ -477,13 +515,15 @@ export async function runJevDecision(
 
 const TOOL_DESCRIPTION =
   'Zeus-only advisory typed decisions via the host native Jev route (OpenCode Console or a ' +
-  'configured decision model). Ways to ask: pass `mode: "skills"` to stack skills for the ' +
+  'configured decision model). Required: schemaVersion: 1 and a non-empty state (<=12000 chars). ' +
+  'Ways to ask: pass `mode: "skills"` to stack skills for the ' +
   'state text (local prefilter shortlist, catalog fallback, plus every skill installed in the ' +
   'host), `mode: "delegation"` to pick ' +
   'a specialist, `mode: "review"` to score a finished delegated result against named criteria ' +
   '(advisory quality score + needs-review flag; the result content itself is never sent — ' +
   'shape metrics and criteria only), or pass explicit typed `questions` (choice, score, ' +
-  'predicate). Returns probabilistic answers with confidence. Requires decision-router egress ' +
+  'predicate). Invalid-input refusals carry a `detail` token naming the exact cause. Returns ' +
+  'probabilistic answers with confidence. Requires decision-router egress ' +
   'consent and budget caps; asks host permission first. It never dispatches agents, runs ' +
   'skills, executes tools, blocks, retries, or alters permissions — results are advisory only.'
 

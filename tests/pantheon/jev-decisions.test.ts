@@ -277,6 +277,22 @@ function testPreparation(): void {
     false,
   )
   assert.equal(prepareJevDecisionRequest(route, { ...TOOL_INPUT, questions: [] }).ok, false)
+  // The validation bucket carries the per-cause token so an LLM caller can
+  // converge on the next attempt without reading the source.
+  assert.deepEqual(prepareJevDecisionRequest(route, { ...TOOL_INPUT, questions: [] }), {
+    ok: false,
+    reasonCode: 'QUESTIONS_INVALID',
+    detail: 'QUESTION_COUNT_INVALID',
+  })
+  assert.deepEqual(
+    prepareJevDecisionRequest(route, {
+      ...TOOL_INPUT,
+      questions: [
+        { type: 'predicate', name: 'q1', instructions: 'yes or no', choices: [{ value: 'a' }] },
+      ],
+    }),
+    { ok: false, reasonCode: 'QUESTIONS_INVALID', detail: 'PREDICATE_HAS_CHOICES_OR_LEVELS' },
+  )
   assert.equal(prepareJevDecisionRequest(route, { state: 'a' }).ok, false)
   assert.equal(
     prepareJevDecisionRequest(route, {
@@ -774,7 +790,32 @@ async function testToolGateChain(): Promise<void> {
     assert.equal(unknownMode.decideCalls.length, 0)
 
     // A failed native call leaves the reservation pending (fail-closed) and
-    // surfaces only the sanitized error class.
+    // surfaces only the sanitized error class plus the provider facts that
+    // change what the user does next (rate_limit + retry window). The
+    // message text (URLs, subscription prose) never crosses.
+    const rateLimited = stubRuntime({
+      decide: async () => {
+        const err = new Error(
+          'Free usage limit reached. subscribe to OpenCode Go: https://opencode.ai/go',
+        )
+        Object.assign(err, { reason: 'rate_limit', status: 429, retryAfterMs: 48152000 })
+        throw err
+      },
+    })
+    assert.deepEqual(
+      JSON.parse(await runJevDecision(TOOL_INPUT, toolContext, rateLimited.runtime)),
+      {
+        advisory: false,
+        effect: 'none',
+        reasonCode: 'DECISION_CALL_FAILED',
+        detail: 'Error',
+        providerReason: 'rate_limit',
+        status: 429,
+        retryAfterMs: 48152000,
+      },
+    )
+
+    // A provider error without the provider facts stays at the class alone.
     const failing = stubRuntime({
       decide: async () => {
         throw new Error('host transport failed')
@@ -788,7 +829,9 @@ async function testToolGateChain(): Promise<void> {
     })
     const ledger = openLocalDecisionBudgetLedger({ dbPath: resolveLocalDecisionBudgetDbPath() })
     try {
-      assert.equal(ledger.listUncertainReservations().length, 1)
+      // Two failed calls (the rate-limited probe above and this transport
+      // failure) leave two fail-closed holds — intentional, never a leak.
+      assert.equal(ledger.listUncertainReservations().length, 2)
     } finally {
       ledger.close()
     }
