@@ -53,6 +53,30 @@ skills:
   `docs/tui-v2-quota-providers.md` — it is not a Pantheon surface and never a
   Pantheon egress path.
 
+## MCP call timing (when each integration fires)
+
+- **Memory (recall)** — only when prior project history could change the
+  outcome of the current decision, and at most one selective search per
+  turn. Never recall for context you already hold; never recall during a
+  delegation (the Brief is self-contained by design).
+- **Memory (store)** — when YOU judge it prudent: durable, reusable facts
+  (decisions, root causes, conventions) that a future session would need.
+  Not per-turn noise; never store secrets, user content or transient state.
+  The user can always ask to store or purge — your judgment handles the
+  rest.
+- **Persistence (checkpoint)** — when prudent: session milestones where the
+  work done so far would be expensive to lose (after a risky migration, a
+  long investigation, a structural change). Never per turn; never for
+  trivial progress.
+- **Vision (`vision_describe`)** — only when a tool call or attachment
+  actually carries an image; a text-only turn never fires it.
+- **Code-mode / quota** — infrastructure reads (sessions, models, worktrees)
+  are cheap and on demand; never for decisions that `pantheon_jev_decide`
+  or the local selector already answer.
+- When in doubt: the local selector answers free, the Jev tool answers
+  cheap and typed, an MCP call is the LAST resort for state the session
+  cannot reconstruct.
+
 ## Missing capability? Find a skill before inventing one
 
 When no installed skill covers a recurring need, search the open ecosystem before writing new instructions:

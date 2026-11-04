@@ -236,7 +236,15 @@ asks, after a delegation completes — one typed round-trip returns an advisory
 quality score against named criteria plus a needs-review flag. The result
 content never leaves the machine (shape metrics and criteria only, hostile
 criteria rejected outright), and the verdict is advisory telemetry plus a
-flag: it never blocks, retries, or alters the delegated result.
+flag: it never blocks, retries, or alters the delegated result. Two more
+orchestrator-owned tool modes round out the surface: `mode: "rank"` picks the
+best of 2–8 named candidates for a state in one typed round-trip (it returns
+the winner and that candidate's fit score — the host API answers one scalar
+per question, so no full ordering is returned), and `mode: "verify"` checks
+1–4 named claims with one predicate question per claim, mapping each answer to
+`PASS` / `FAIL` / `BLOCK` where every refusal, timeout or malformed answer is
+`BLOCK` (fail-closed); claims are bounded caller-provided strings, hostile
+shapes rejected outright, and neither mode adds a telemetry point.
 
 The installer may retain a legacy target-specific preference; it does not control
 runtime routing. `npx pantheon-opencode decision-router ...` manages stored

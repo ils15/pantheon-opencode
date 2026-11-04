@@ -42,6 +42,12 @@ import {
   type QualityScoreEvaluation,
   qualityVerdict,
 } from './jev-quality-score.ts'
+import {
+  buildJevRankRequest,
+  buildJevVerifyRequest,
+  consumeJevRankResult,
+  consumeJevVerifyResult,
+} from './jev-rank-verify.ts'
 import { mapGateFailureToSkipReason } from './jev-risk-gate.ts'
 import {
   openLocalDecisionBudgetLedger,
@@ -70,7 +76,8 @@ export interface V2JevDecisionRuntime {
   /**
    * Allowlisted specialist callers for explicit-questions mode (parsed from
    * `PANTHEON_JEV_SPECIALIST_CALLERS` by the plugin wiring). Empty/absent =
-   * Zeus only. Preset modes stay Zeus-only regardless.
+   * Zeus only. Preset and v3.1 modes (skills, delegation, review, rank,
+   * verify) stay Zeus-only regardless.
    */
   readonly specialistCallers?: readonly string[]
   /**
@@ -98,11 +105,12 @@ export const SPECIALIST_CALLERS_FLAG_ENV = 'PANTHEON_JEV_SPECIALIST_CALLERS'
 
 /**
  * Parse the caller allowlist from the flag's CSV value. Unset/empty = Zeus
- * only (the default). Preset modes (skills, delegation, review) stay
- * Zeus-only regardless of the flag: owner/skill selection and result
- * scoring are orchestration decisions; specialists may ask bounded typed
- * questions mid-task, nothing else. Lives in the plugin wiring (which owns
- * flag reads); this module receives the parsed list via the runtime.
+ * only (the default). Preset and v3.1 modes (skills, delegation, review,
+ * rank, verify) stay Zeus-only regardless of the flag: owner/skill selection,
+ * result scoring, candidate ranking and claim verification are orchestration
+ * decisions; specialists may ask bounded typed questions mid-task, nothing
+ * else. Lives in the plugin wiring (which owns flag reads); this module
+ * receives the parsed list via the runtime.
  */
 export function specialistCallerAllowlist(flagValue: string | undefined): readonly string[] {
   const raw = String(flagValue ?? '').trim()
@@ -118,6 +126,10 @@ export type JevDecisionRunFailure =
   | 'CALLER_NOT_ALLOWED'
   | 'REVIEW_INPUT_INVALID'
   | 'CRITERIA_INVALID'
+  | 'RANK_INPUT_INVALID'
+  | 'CANDIDATE_INVALID'
+  | 'VERIFY_INPUT_INVALID'
+  | 'CLAIM_INVALID'
   | 'CONTEXT_UNAVAILABLE'
   | 'CONFIG_UNAVAILABLE'
   | 'DISABLED'
@@ -159,15 +171,24 @@ function reviewRefusalSkipReason(reasonCode: JevDecisionRunFailure): string {
 /**
  * Every gate-chain failure the shared runner can produce. It is
  * {@link JevDecisionRunFailure} minus the tool-surface properties:
- * `CALLER_NOT_ALLOWED` (the caller check) and the review mode's input
- * validation (`REVIEW_INPUT_INVALID` / `CRITERIA_INVALID`) — all three are
- * properties of the explicit tool surface, whose input the caller supplies
- * directly, not of the gate chain; the J1/J3 shadow observers run the same
- * chain for any agent and can never produce them.
+ * `CALLER_NOT_ALLOWED` (the caller check) and the input validation of the
+ * prebuilt-request modes — the review mode (`REVIEW_INPUT_INVALID` /
+ * `CRITERIA_INVALID`) and the v3.1 rank and verify modes
+ * (`RANK_INPUT_INVALID` / `CANDIDATE_INVALID` / `VERIFY_INPUT_INVALID` /
+ * `CLAIM_INVALID`). All of these are properties of the explicit tool surface,
+ * whose input the caller supplies directly, not of the gate chain; the
+ * J1/J3 shadow observers run the same chain for any agent and can never
+ * produce them.
  */
 export type GatedNativeJevFailure = Exclude<
   JevDecisionRunFailure,
-  'CALLER_NOT_ALLOWED' | 'REVIEW_INPUT_INVALID' | 'CRITERIA_INVALID'
+  | 'CALLER_NOT_ALLOWED'
+  | 'REVIEW_INPUT_INVALID'
+  | 'CRITERIA_INVALID'
+  | 'RANK_INPUT_INVALID'
+  | 'CANDIDATE_INVALID'
+  | 'VERIFY_INPUT_INVALID'
+  | 'CLAIM_INVALID'
 >
 
 /** The minimal runtime slice the gate chain needs. */
@@ -425,8 +446,10 @@ export async function runJevDecision(
   }
   // Review mode (J4): the bounded request is built before any gate work, and
   // an invalid review input is a tool-surface refusal — same class as the
-  // caller check, never a gate failure.
-  let reviewRequest: Omit<NativeDecisionRequest, 'model'> | undefined
+  // caller check, never a gate failure. The v3.1 rank and verify modes follow
+  // the same prebuilt-request pattern (no gate work for a malformed input);
+  // neither has a telemetry point — they are tool modes, not shadow gates.
+  let prebuilt: Omit<NativeDecisionRequest, 'model'> | undefined
   if (requested.mode === 'review') {
     const prepared = buildJevReviewRequest(input ?? {})
     if (!prepared.ok) {
@@ -441,7 +464,15 @@ export async function runJevDecision(
       )
       return refusal(prepared.reasonCode)
     }
-    reviewRequest = prepared.request
+    prebuilt = prepared.request
+  } else if (requested.mode === 'rank') {
+    const prepared = buildJevRankRequest(input ?? {})
+    if (!prepared.ok) return refusal(prepared.reasonCode)
+    prebuilt = prepared.request
+  } else if (requested.mode === 'verify') {
+    const prepared = buildJevVerifyRequest(input ?? {})
+    if (!prepared.ok) return refusal(prepared.reasonCode)
+    prebuilt = prepared.request
   }
   const result = await runGatedNativeJevCall({
     sessionID: context?.sessionID,
@@ -449,13 +480,13 @@ export async function runJevDecision(
     agent: caller,
     runtime,
     prepare: async (route) =>
-      reviewRequest !== undefined
+      prebuilt !== undefined
         ? {
             ok: true as const,
             request: {
               model: route.model,
-              input: reviewRequest.input,
-              questions: reviewRequest.questions,
+              input: prebuilt.input,
+              questions: prebuilt.questions,
             },
           }
         : requested.mode === undefined
@@ -541,6 +572,53 @@ export async function runJevDecision(
       frozen: result.call.frozen,
     })
   }
+  if (requested.mode === 'rank') {
+    // v3.1 rank: the winner choice plus that candidate's fit score. The host
+    // API answers one scalar per question, so no runner-up or full ordering is
+    // returned — see jev-rank-verify.ts for the honest limitation.
+    const rank = consumeJevRankResult(result.call.response, result.call.request)
+    return JSON.stringify({
+      advisory: true,
+      effect: 'none',
+      reason: 'JEV_DECISION',
+      caller,
+      route: {
+        providerID: result.call.selection.route.model.providerID,
+        id: result.call.selection.route.model.id,
+        billing: result.call.selection.route.billing,
+      },
+      mode: 'rank',
+      winner: rank.winner,
+      winnerFit: rank.winnerFit,
+      answers: advice.answers,
+      missing: advice.missing,
+      usage: { costUsd: advice.costUsd, tokens: advice.tokens },
+      frozen: result.call.frozen,
+    })
+  }
+  if (requested.mode === 'verify') {
+    // v3.1 verify: one PASS/FAIL/BLOCK verdict per claim, fail-closed. The
+    // tool never acts on the verdicts; a caller that requires a verdict
+    // treats a refusal (which never reaches this branch) as BLOCK.
+    const results = consumeJevVerifyResult(result.call.response, result.call.request)
+    return JSON.stringify({
+      advisory: true,
+      effect: 'none',
+      reason: 'JEV_DECISION',
+      caller,
+      route: {
+        providerID: result.call.selection.route.model.providerID,
+        id: result.call.selection.route.model.id,
+        billing: result.call.selection.route.billing,
+      },
+      mode: 'verify',
+      results,
+      answers: advice.answers,
+      missing: advice.missing,
+      usage: { costUsd: advice.costUsd, tokens: advice.tokens },
+      frozen: result.call.frozen,
+    })
+  }
   return JSON.stringify({
     advisory: true,
     effect: 'none',
@@ -567,7 +645,10 @@ const TOOL_DESCRIPTION =
   'host), `mode: "delegation"` to pick ' +
   'a specialist, `mode: "review"` to score a finished delegated result against named criteria ' +
   '(advisory quality score + needs-review flag; the result content itself is never sent — ' +
-  'shape metrics and criteria only), or pass explicit typed `questions` (choice, score, ' +
+  'shape metrics and criteria only), `mode: "rank"` to pick the best of 2-8 named candidates ' +
+  '(returns the winner and its fit score; no full ordering), `mode: "verify"` to check 1-4 ' +
+  'named claims (PASS/FAIL per claim; any refusal, timeout or malformed answer is BLOCK, ' +
+  'fail-closed), or pass explicit typed `questions` (choice, score, ' +
   'predicate). Invalid-input refusals carry a `detail` token naming the exact cause. Returns ' +
   'probabilistic answers with confidence. Requires decision-router egress ' +
   'consent and budget caps; asks host permission first. It never dispatches agents, runs ' +
@@ -622,13 +703,45 @@ const REVIEW_METRICS_SCHEMA = {
   },
 } as const
 
+const RANK_CANDIDATE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['id'],
+  properties: {
+    id: {
+      type: 'string',
+      minLength: 1,
+      maxLength: 64,
+      pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$',
+    },
+    description: { type: 'string', minLength: 1, maxLength: 500 },
+  },
+} as const
+
+const VERIFY_CLAIM_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['name', 'claim'],
+  properties: {
+    name: {
+      type: 'string',
+      minLength: 1,
+      maxLength: 64,
+      pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$',
+    },
+    claim: { type: 'string', minLength: 1, maxLength: 200 },
+  },
+} as const
+
 /**
- * One schema, two disjoint payloads: the state branch (presets and explicit
- * questions carry the state text) and the review branch (J4 takes structural
+ * One schema, four disjoint payloads: the state branch (presets and explicit
+ * questions carry the state text), the review branch (J4 takes structural
  * shape metrics, a delegate id and named criteria — never a state text, never
  * result content; the criteria are the only free text, bounded at the DSH
- * caps: at most 4, each 1–120 chars). The preparers are the authority; the
- * schema is the model-facing contract.
+ * caps: at most 4, each 1–120 chars), the rank branch (v3.1: a state plus
+ * 2–8 named candidates) and the verify branch (v3.1: 1–4 named claims, no
+ * state). The preparers are the authority; the schema is the model-facing
+ * contract.
  */
 const JEV_INPUT_SCHEMA: Record<string, unknown> = {
   type: 'object',
@@ -637,11 +750,13 @@ const JEV_INPUT_SCHEMA: Record<string, unknown> = {
   anyOf: [
     { required: ['state'] },
     { required: ['delegateId', 'resultSummaryKind', 'resultMetrics', 'criteria'] },
+    { required: ['candidates'] },
+    { required: ['claims'] },
   ],
   properties: {
     schemaVersion: { type: 'integer', const: 1 },
     state: { type: 'string', minLength: 1, maxLength: 12_000 },
-    mode: { type: 'string', enum: ['skills', 'delegation', 'review'] },
+    mode: { type: 'string', enum: ['skills', 'delegation', 'review', 'rank', 'verify'] },
     questions: { type: 'array', minItems: 1, maxItems: 4, items: questionSchema },
     delegateId: {
       type: 'string',
@@ -656,6 +771,18 @@ const JEV_INPUT_SCHEMA: Record<string, unknown> = {
       minItems: 1,
       maxItems: 4,
       items: { type: 'string', minLength: 1, maxLength: 120 },
+    },
+    candidates: {
+      type: 'array',
+      minItems: 2,
+      maxItems: 8,
+      items: RANK_CANDIDATE_SCHEMA,
+    },
+    claims: {
+      type: 'array',
+      minItems: 1,
+      maxItems: 4,
+      items: VERIFY_CLAIM_SCHEMA,
     },
   },
 }

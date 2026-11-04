@@ -10,7 +10,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
-## [v1.6.3-beta.6] - 2026-11-04
+## [v1.6.3-beta.9] - 2026-11-04
+
+### Changed
+
+- **agents** — The live scorecard now runs the full 13-specialist catalog (was a 5-agent sample); first full-catalog run: 6 exact hits, 2 domain-adjacent judgment calls, measured per agent.
+- **agents** — Zeus gains consolidated MCP call-timing rules: when to recall, when to store, when to checkpoint, when vision fires, and the escalation order (local selector -> Jev -> MCP last resort).
+
+## [v1.6.3-beta.7] - 2026-11-04
+
+### Added
+
+- **routing** — `jev-live-probe.mjs`: the operator-run live measurement tool. `--ping` is the calibration dry-run after `setup-model` (one call, exit 0 when reachable); `--scorecard` runs the live scenarios against the configured route and writes the dated scorecard into `bench/results/`. First live run: 7/8 correct specialist picks via OpenRouter.
+
+## [v1.6.3-beta.8] - 2026-11-04
+
+### Added
+
+- **routing** — The v3.1 **rank** and **verify** primitives on `pantheon_jev_decide`: `mode: "rank"` picks the winner among up to 8 candidates with a fit score (the host answers one scalar per question, so full ordering is impossible — documented); `mode: "verify"` checks 1–4 claims as predicate questions with **BLOCK fail-closed**. Hostile inputs rejected. Zeus-only, same gate chain.
+- **agents** — The live scorecard runs the full 13-specialist catalog (first full run: 6/8 exact, 2 domain-adjacent); Zeus gains consolidated MCP call-timing rules.
+
+## [v1.6.3-beta.7] - 2026-11-04
 
 ### Added
 

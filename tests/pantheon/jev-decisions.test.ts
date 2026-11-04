@@ -889,14 +889,26 @@ function testRegistrationContract(): void {
     properties?: Record<string, { enum?: string[] }>
     anyOf?: Array<{ required?: string[] }>
   }
-  // One schema, two disjoint payloads: the state branch (presets and explicit
-  // questions) and the review branch (J4 delegateId + metrics + criteria).
+  // One schema, four disjoint payloads: the state branch (presets and explicit
+  // questions), the review branch (J4 delegateId + metrics + criteria), and
+  // the v3.1 rank (candidates) and verify (claims) branches.
   assert.deepEqual(schema.required, ['schemaVersion'])
-  assert.deepEqual(schema.properties?.mode?.enum, ['skills', 'delegation', 'review'])
+  assert.deepEqual(schema.properties?.mode?.enum, [
+    'skills',
+    'delegation',
+    'review',
+    'rank',
+    'verify',
+  ])
   const branches = (schema.anyOf ?? []).map((branch) => branch.required ?? [])
   const reviewBranch = branches.find((required) => required.includes('delegateId'))
   const stateBranch = branches.find((required) => required.includes('state'))
+  const rankBranch = branches.find((required) => required.includes('candidates'))
+  const verifyBranch = branches.find((required) => required.includes('claims'))
   assert.ok(reviewBranch && stateBranch, 'both payload branches are declared')
+  assert.ok(rankBranch && verifyBranch, 'the v3.1 rank and verify branches are declared')
+  assert.deepEqual(rankBranch, ['candidates'])
+  assert.deepEqual(verifyBranch, ['claims'])
   assert.deepEqual([...reviewBranch].sort(), [
     'criteria',
     'delegateId',

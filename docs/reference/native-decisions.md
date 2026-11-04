@@ -137,7 +137,11 @@ order — every failure is a bounded refusal JSON, never a retry:
      or `mode: "delegation"` (every canonical specialist except Zeus);
    - the **review mode**: `mode: "review"` (J4 output-quality scoring — shape
      metrics and named criteria in, a quality score and a needs-review flag
-     out, advisory only; detailed below); or
+     out, advisory only; detailed below);
+   - the **rank mode**: `mode: "rank"` (v3.1 primitive — pick the best of
+     2–8 named candidates for the state; detailed below);
+   - the **verify mode**: `mode: "verify"` (v3.1 primitive — check 1–4 named
+     claims; detailed below); or
    - **explicit questions**: 1–4 typed questions (`choice` with 2–24 unique
      options, `score` with 2–10 unique levels, `predicate`), with bounded
      names, instructions, and descriptions.
@@ -377,6 +381,68 @@ on-demand reviews). This release wires nothing of the council: no claim is
 recorded, no counselor reads J4 records, and connecting the two is a
 separately reviewed change with its own consent surface.
 
+## Rank and verify (v3.1 primitives)
+
+Two further tool modes on `pantheon_jev_decide` — both built after the
+review-mode pattern (bounded request built before any gate work, the same
+shared gate chain, the same refusal contract, the tool's strict answer
+consumer) and both advisory only: `effect` stays `none`, nothing is blocked,
+dispatched, or altered, and neither mode has a telemetry point (they are tool
+modes, not shadow gates). Both stay orchestrator-owned: an allowlisted
+specialist may ask bounded typed questions only.
+
+### `mode: "rank"` — pick the best candidate
+
+Input: `{ schemaVersion: 1, mode: "rank", state, candidates }` where `state`
+is the usual bounded state text (≤ 12,000 chars, carried verbatim) and
+`candidates` is 2–8 records `{ id, description? }` — `id` a strict bounded
+token (`^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$`, unique), `description` optional
+bounded prose (≤ 500 chars). The request asks TWO questions in the single
+round-trip: one **choice** question (`winner`) over the candidate ids, and one
+**score** question (`fit`, the 2..10 rubric bound) rating the winner's fit.
+The tool returns `{ winner, winnerFit }` (each `null` when the answer is
+missing, mistyped, duplicated, or an error) plus the usual `answers`,
+`missing`, `usage`, and `frozen` fields.
+
+**The honest limitation.** Rank does NOT return a full ordering, a runner-up,
+or per-candidate scores. The host Decisions API answers one scalar per
+question — one score question per candidate would break the 4-question bound
+above four candidates, and one ambiguous "score each candidate" question has
+no per-candidate answer structure to pair back. The winner + fit pair is what
+one typed round-trip can express truthfully; a caller that needs a deeper
+order uses the explicit-questions mode with its own typed questions.
+
+Sanitization: candidate ids are strict tokens (they become choice values);
+descriptions are the same sanitization class as J4 criteria — paths, control
+characters, credential assignments and key material are rejected
+`CANDIDATE_INVALID`, never scrubbed; a malformed envelope (unknown keys,
+missing candidates, count outside 2–8) is `RANK_INPUT_INVALID`; an invalid
+state keeps the shared `STATE_INVALID` token.
+
+### `mode: "verify"` — check named claims, fail-closed
+
+Input: `{ schemaVersion: 1, mode: "verify", claims }` where `claims` is 1–4
+records `{ name, claim }` — `name` a strict bounded token (it becomes the
+predicate question's name, unique), `claim` a bounded 1–200-char instruction
+string. The verify mode takes NO state text (like review); the request's only
+input part is a fixed template, and each claim text rides its own predicate
+question's instructions. The tool returns `results`, one verdict per claim
+name:
+
+- probability ≥ 0.5 → `PASS`;
+- probability < 0.5 → `FAIL`;
+- a host refusal answer, a timeout (missing answer), a duplicate, or any
+  malformed/out-of-range probability → `BLOCK`.
+
+`BLOCK` is the fail-closed direction: an unanswered mandatory claim must never
+read as verified (or as refuted — an unverifiable claim is unverifiable, not
+false). The tool itself never acts on a verdict; a caller that REQUIRES a
+verdict (mandatory verification) treats every gate-chain refusal — which never
+reaches the consumer — as `BLOCK` at its own call site. Sanitization is the
+J4 criteria class: hostile claim shapes (paths, control characters,
+credential assignments, key material) are rejected `CLAIM_INVALID`, never
+scrubbed; a malformed envelope is `VERIFY_INPUT_INVALID`.
+
 ## Fast decision paths
 
 The decision layers are ordered by cost; use the cheapest one that answers:
@@ -436,9 +502,9 @@ behind the same decisions call.
 
 `PANTHEON_JEV_SPECIALIST_CALLERS` (CSV, default empty = Zeus only) allowlists
 agents to call `pantheon_jev_decide` with explicit typed questions; preset
-modes (skills/delegation/review) stay orchestrator-owned. The permission
-assertion and the success output carry the real caller; caps and the
-`decision.egress` kill-switch are enforced per call regardless of caller.
+modes (skills/delegation/review/rank/verify) stay orchestrator-owned. The
+permission assertion and the success output carry the real caller; caps and
+the `decision.egress` kill-switch are enforced per call regardless of caller.
 
 ## Skill ecosystem (hybrid, on-demand)
 
@@ -466,7 +532,8 @@ Division of labor; trusting an install is never the model's job:
 ## Verification boundary
 
 The focused tests (`tests/pantheon/jev-decisions.test.ts`,
-`tests/pantheon/v2-native-decisions.test.ts`) are offline: the native API is a
+`tests/pantheon/v2-native-decisions.test.ts`,
+`tests/pantheon/jev-rank-verify.test.ts`) are offline: the native API is a
 typed stub, the budget ledger runs on a temp database, and the success path
 runs with `globalThis.fetch` replaced by a throwing spy to prove the native
 route never touches a transport. A real-host canary asserts the tool's
