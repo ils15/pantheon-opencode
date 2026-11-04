@@ -628,6 +628,51 @@ export function provisionTypesafeHostProvider({ env = process.env } = {}) {
 }
 
 /**
+ * Additively merge the Cloudflare Workers AI decision provider entry into the
+ * user's host `opencode.json`. The host's embedded `cloudflare-workers-ai`
+ * decisions module needs the accountId in the entry options and reads the
+ * token from `CLOUDFLARE_API_TOKEN` (a Workers AI-scoped token — not the
+ * global Cloudflare key). Existing entries are preserved.
+ * @param {{ accountId: string, env?: Record<string, string | undefined> }} options
+ * @returns {{ ok: true, path: string } | { ok: false, reason: string }}
+ */
+export function provisionCloudflareHostProvider({ accountId, env = process.env } = {}) {
+  const trimmed = String(accountId ?? '').trim()
+  if (!/^[a-f0-9]{32}$/i.test(trimmed)) {
+    return { ok: false, reason: 'accountId must be the 32-hex Cloudflare account id' }
+  }
+  const configPath = resolveHostOpenCodeConfigPath(env)
+  if (!existsSync(configPath)) return { ok: false, reason: 'opencode.json not found' }
+  let data
+  try {
+    const parsed = JSON.parse(readFileSync(configPath, 'utf8'))
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { ok: false, reason: 'opencode.json is not a JSON object' }
+    }
+    data = parsed
+  } catch {
+    return { ok: false, reason: 'opencode.json is not plain JSON (comments?)' }
+  }
+  data.providers ??= {}
+  data.providers['cloudflare-workers-ai'] ??= {}
+  data.providers['cloudflare-workers-ai'].options ??= {}
+  data.providers['cloudflare-workers-ai'].options.accountId ??= trimmed
+  data.providers['cloudflare-workers-ai'].models ??= {}
+  if (data.providers['cloudflare-workers-ai'].models['clef'] === undefined) {
+    data.providers['cloudflare-workers-ai'].models['clef'] = {
+      name: 'Clef (Cloudflare Workers AI)',
+      type: 'decision',
+    }
+  }
+  try {
+    writeFileSync(configPath, `${JSON.stringify(data, null, 2)}\n`)
+    return { ok: true, path: configPath }
+  } catch (error) {
+    return { ok: false, reason: String(error instanceof Error ? error.message : error) }
+  }
+}
+
+/**
  * Read-only check that the TypeSafe provider entry exists in the host config.
  * Never writes; an unreadable config reports present:false with the path for
  * the doctor's fix hint.
