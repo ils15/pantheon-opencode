@@ -10,6 +10,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.3-beta.3] - 2026-11-04
+
+### Fixed
+
+- **routing** — The OpenRouter-hosted Jev route settles end to end: the usage-evidence validator and the budget ledger now admit the `openrouter` accounting provider and vendor-slash model ids (`typesafe/jev-1.13`). Field-verified on the user's host: Zeus → `pantheon_jev_decide` (mode skills) → real Jev answer via the stored OpenRouter credential, $0.00003 per decision, usage reconciled.
+
 ## [v1.6.3-beta.2] - 2026-11-04
 
 ### Removed
