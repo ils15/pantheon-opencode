@@ -10,6 +10,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.3-beta.1] - 2026-11-04
+
+### Fixed
+
+- **routing** — The TypeSafe provisioner writes a **complete** custom provider entry: the `@ai-sdk/openai-compatible` adapter, the `api.typesafe.ai/v1` baseURL, and an `apiKey` env reference (`{env:TYPESAFE_API_KEY}` — the key itself never lands in the config file). Field evidence: a models-only entry is inert because models.dev has no typesafe-ai entry, so `/connect` and `opencode auth login` cannot supply it and the decisions call 404s. `doctor` now warns when the entry lacks the apiKey; the activation path is `export TYPESAFE_API_KEY=...` + restart.
+
 ## [v1.6.2] - 2026-11-03
 
 ### Added
