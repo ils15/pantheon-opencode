@@ -28,6 +28,9 @@ the catalog. Pantheon never maps or switches providers on your behalf.
 | OpenCode Console Jev free | `opencode-console-jev-free` / `jev-1.13-free` | `{ providerID: "opencode", id: "jev-1.13-free" }` | Free (`billing_source: free`) | None — host-native |
 | OpenCode Console Jev (paid) | `opencode-console-jev` / `jev-1.13` | `{ providerID: "opencode", id: "jev-1.13" }` | Console credits; **requires a Zen workspace key** (an OpenCode Go subscription does not include it — the host answers 404 without one) | None — host-native |
 | TypeSafe Jev direct | `typesafe-jev` / `jev-1.14.0` | `{ providerID: "typesafe-ai", id: "jev-1.14.0" }` | Your TypeSafe key | `setup-model` merges the complete custom provider entry into `opencode.json` (adapter, baseURL, `apiKey: "{env:TYPESAFE_API_KEY}"`, type `"decision"`); then `export TYPESAFE_API_KEY=<your key>` and restart. **`/connect` and `opencode auth login` do not carry custom providers** — models.dev has no typesafe-ai entry |
+| OpenRouter-hosted Jev | `openrouter-jev` / `typesafe/jev-1.13` | `{ providerID: "openrouter", id: "typesafe/jev-1.13" }` | OpenRouter credits (`OPENROUTER_API_KEY`; host-native models.dev provider — `/connect` supports it) | None — host-native |
+| Vercel AI Gateway Jev | `vercel-gateway-jev` / `typesafe-ai/jev` | `{ providerID: "vercel-ai-gateway", id: "typesafe-ai/jev" }` | Vercel AI Gateway (`AI_GATEWAY_API_KEY`; host-native models.dev provider) | None — host-native |
+| Cloudflare Workers AI (Clef) | `cloudflare-workers-jev` / `clef` | `{ providerID: "cloudflare-workers-ai", id: "clef" }` | Workers AI (`CLOUDFLARE_API_TOKEN`, scoped) | Custom entry with your accountId — models.dev does not carry it; the Calibrated-Jev calibration does not transfer to Clef |
 
 Setup in one command (state lives in `~/.config/pantheon/decision-router.json`,
 budget in `~/.local/state/pantheon/decision-budget.sqlite`; the command requires
@@ -405,6 +408,26 @@ Until one of these is wired, the flow stays: local prefilter → Jev preset
 (consented) → main model, with MCP calls governed by their own documented
 policies (memory: explicit request/authorization; vision: image-driven;
 persistence: explicit checkpoints).
+
+### Provider matrix (measured on the 2.2.5 host binary)
+
+The host embeds decision modules for exactly 8 providerIDs: `opencode`,
+`typesafe-ai`, `openrouter`, `vercel-ai-gateway`, `cloudflare-workers-ai`,
+`cloudflare-ai-gateway`, `baseten`, `digitalocean`. **There is no `openai`,
+`zen`, `microsoft` or `laya` module** — those backends are only reachable via
+a plugin's own transport (the OpenAI Decisions protocol is a different one;
+the host does not speak it). Decision models are not chat models: none of the
+jev models appear in `opencode models` regardless of provider. Expansion is
+table-only on Pantheon's side — the host normalizes every embedded provider
+behind the same decisions call.
+
+### Specialist callers (shipped)
+
+`PANTHEON_JEV_SPECIALIST_CALLERS` (CSV, default empty = Zeus only) allowlists
+agents to call `pantheon_jev_decide` with explicit typed questions; preset
+modes (skills/delegation/review) stay orchestrator-owned. The permission
+assertion and the success output carry the real caller; caps and the
+`decision.egress` kill-switch are enforced per call regardless of caller.
 
 ## Skill ecosystem (hybrid, on-demand)
 

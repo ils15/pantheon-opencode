@@ -165,8 +165,14 @@ function testProviderMapping(): void {
     'typesafe-jev': 'typesafe-ai',
     'opencode-console-jev': 'opencode',
     'opencode-console-jev-free': 'opencode',
+    'openrouter-jev': 'openrouter',
+    'vercel-gateway-jev': 'vercel-ai-gateway',
+    'cloudflare-workers-jev': 'cloudflare-workers-ai',
   })
   assert.equal(isNativeJevProvider('opencode-console-jev'), true)
+  assert.equal(isNativeJevProvider('openrouter-jev'), true)
+  assert.equal(isNativeJevProvider('vercel-gateway-jev'), true)
+  assert.equal(isNativeJevProvider('cloudflare-workers-jev'), true)
   assert.equal(isNativeJevProvider('openai-decisions'), false)
   assert.equal(isNativeJevProvider('local'), false)
 }
