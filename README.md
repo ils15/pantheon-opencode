@@ -112,7 +112,11 @@ see [Quick Start](docs/QUICKSTART.md).
   preset/source, git state, and a `Context` block (tokens, a percent gauge,
   `$<spent> spent`, and a muted `cache <n>% · <n.n> tok/s` line); the native
   prompt footer keeps its own line, and Pantheon only appends
-  `▸<preset> · ✦<n> ativos` while delegations are running. The installer
+  `▸<preset> · ✦<n> ativos` while delegations are running. When the Pantheon
+  version changes since the last TUI start, a one-time dismissable
+  "What's new" dialog lists that version's highlights from the shipped
+  changelog — once per version, `esc`/`q` dismisses; see
+  [What's new window](docs/reference/whats-new.md). The installer
   selects the `plugins` component by default; in interactive setup you can
   change the component selection. A component-scoped install includes the TUI
   only when `plugins` is selected. The TUI ships no quota panel: for provider

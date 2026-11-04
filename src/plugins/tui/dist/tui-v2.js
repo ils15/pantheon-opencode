@@ -1,7 +1,8 @@
 import { createComponent, createElement, createTextNode, effect, insert, insertNode, memo, setProp } from "@opentui/solid";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, onMount } from "solid-js";
 import { execFile } from "node:child_process";
 import { Plugin } from "@opencode/plugin/tui";
@@ -178,6 +179,457 @@ function cellWidth(value) {
 	let width = 0;
 	for (const { segment } of GRAPHEMES.segment(value)) width += graphemeWidth(segment);
 	return width;
+}
+/** Prefix of the "+N more" line appended when the bullet budget is exceeded. */
+const WHATS_NEW_MORE_PREFIX = "… +";
+const EMPTY_HIGHLIGHTS = {
+	version: null,
+	found: false,
+	groups: [],
+	totalItems: 0,
+	truncated: false
+};
+/** Escape regex metacharacters so a version like 1.0.0 matches literally. */
+function escapeRegExp(text) {
+	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+/**
+* Extract the body of a version section from changelog text — inline replica
+* of scripts/changelog-extract.mjs `extractSection` (see that file for the
+* full contract: `## [<version>] - YYYY-MM-DD`, leading `v` and the date
+* optional, `## [Unreleased]` never matched).
+*/
+function extractSection(changelogText, version) {
+	const normalized = String(version).trim().replace(/^v/i, "");
+	if (!normalized || /^unreleased$/i.test(normalized)) return {
+		found: false,
+		body: null
+	};
+	const escaped = escapeRegExp(normalized);
+	const match = new RegExp(`^##[ \\t]+\\[v?${escaped}\\](?:[ \\t]*-[ \\t]*\\d{4}-\\d{2}-\\d{2})?(?=[ \\t]|$)`, "m").exec(changelogText);
+	if (!match) return {
+		found: false,
+		body: null
+	};
+	const newline = changelogText.indexOf("\n", match.index);
+	const start = newline === -1 ? changelogText.length : newline + 1;
+	const nextHeading = /^##[ \t]+\[/m.exec(changelogText.slice(start));
+	const end = nextHeading ? start + nextHeading.index : changelogText.length;
+	return {
+		found: true,
+		body: changelogText.slice(start, end).trim()
+	};
+}
+/**
+* Reduce one markdown line to plain text: links keep their label, emphasis
+* and inline-code markers are dropped, HTML comment fragments are removed,
+* and whitespace collapses. Deliberately simple — the input is our own
+* CHANGELOG (lint-capped at 200 chars per bullet), not hostile input.
+*/
+function stripMarkdown(text) {
+	return text.replace(/<!--[\s\S]*?-->/g, " ").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/(\*\*|__)/g, "").replace(/`/g, "").replace(/\s+/g, " ").trim();
+}
+/** Strip the leading H3 marker (`### Added` → `Added`). */
+function stripHeading(text) {
+	return text.replace(/^#{1,6}[ \t]+/, "").trim();
+}
+/**
+* Extract the release highlights for `version`: H3 subsection headings as
+* group labels and their bullets as sanitized plain text, bounded to
+* WHATS_NEW_MAX_ITEMS bullets. A missing section, a bullet-less section or a
+* blank changelog all return EMPTY_HIGHLIGHTS (no window).
+*/
+function extractHighlights(changelogText, version) {
+	const { found, body } = extractSection(changelogText ?? "", version ?? "");
+	if (!found || !body) return { ...EMPTY_HIGHLIGHTS };
+	const groups = [];
+	let totalItems = 0;
+	let truncated = false;
+	for (const rawLine of body.split("\n")) {
+		const line = rawLine.trim();
+		if (line === "" || line.startsWith("<!--")) continue;
+		if (/^#{1,6}[ \t]/.test(line)) {
+			const heading = stripMarkdown(stripHeading(line));
+			if (heading === "") continue;
+			if (groups.at(-1)?.items.length === 0) groups.pop();
+			groups.push({
+				heading,
+				items: []
+			});
+			continue;
+		}
+		if (totalItems >= 12) {
+			if (/^[-*][ \t]/.test(line)) totalItems += 1;
+			continue;
+		}
+		const isBullet = /^[-*][ \t]/.test(line);
+		const continuation = (groups.at(-1)?.items.length ?? 0) > 0;
+		if (!isBullet && !continuation) continue;
+		const content = stripMarkdown(isBullet ? line.replace(/^[-*][ \t]+/, "") : line);
+		if (content === "") continue;
+		const group = groups.at(-1);
+		if (group === void 0) groups.push({
+			heading: null,
+			items: [content]
+		});
+		else if (isBullet || group.items.length === 0) group.items.push(content);
+		else group.items[group.items.length - 1] = `${group.items.at(-1)} ${content}`.trim();
+		if (isBullet) totalItems += 1;
+	}
+	const kept = groups.filter((group) => group.items.length > 0);
+	truncated = totalItems > 12;
+	return {
+		version: found ? String(version).trim().replace(/^v/i, "") : null,
+		found,
+		groups: kept,
+		totalItems,
+		truncated
+	};
+}
+/** Window title — mirrors the sidebar's `Pantheon v<version>` convention. */
+function whatsNewTitle(version) {
+	return `O que há de novo — Pantheon v${String(version).trim().replace(/^v/i, "")}`;
+}
+/** Flat display lines for the window: group headings, `• ` bullets, `+N more`. */
+function whatsNewLines(highlights) {
+	const lines = [];
+	for (const group of highlights.groups) {
+		if (group.heading !== null) lines.push(group.heading);
+		for (const item of group.items) lines.push(`• ${item}`);
+	}
+	if (highlights.truncated) {
+		const hidden = Math.max(0, highlights.totalItems - 12);
+		if (hidden > 0) lines.push(`${WHATS_NEW_MORE_PREFIX}${hidden} mais`);
+	}
+	return lines;
+}
+/**
+* Candidate CHANGELOG.md locations for a bundle, first readable wins:
+*   1. the plugin copy root (`<configDir>/plugins/pantheon-tui/CHANGELOG.md`,
+*      shipped by both installers next to package.json);
+*   2. the package root (dev checkout; also an npm-package install when the
+*      bundle runs from `<pkg>/src/plugins/tui/dist/`).
+*/
+function changelogCandidates(bundlePath) {
+	const dist = dirname(bundlePath);
+	const copyRoot = dirname(dist);
+	const packageRoot = dirname(dirname(dirname(copyRoot)));
+	return [join(copyRoot, "CHANGELOG.md"), join(packageRoot, "CHANGELOG.md")];
+}
+/** Read the first existing candidate; null when none is readable (no window). */
+async function readChangelogForBundle(bundleUrl) {
+	try {
+		const bundlePath = fileURLToPath(bundleUrl);
+		for (const candidate of changelogCandidates(bundlePath)) try {
+			return await readFile(candidate, "utf8");
+		} catch {}
+		return null;
+	} catch {
+		return null;
+	}
+}
+/** The ambient build-time version, or null outside a tsdown build. */
+function embeddedVersion() {
+	return "1.6.3-beta.4";
+}
+/**
+* Resolve the running Pantheon version for the what's-new window: the plugin
+* copy's own package.json first (the copy root two levels above the bundle,
+* then the package root four levels above — the same legs as the V1 sidebar's
+* detectVersion try 0a/0b), falling back to the tsdown build embed. Null when
+* nothing resolves → no window (fail-open).
+*/
+async function resolveRunningVersion(bundleUrl, embedded = embeddedVersion()) {
+	try {
+		const bundlePath = fileURLToPath(bundleUrl);
+		const dist = dirname(bundlePath);
+		for (const root of [dirname(dist), dirname(dirname(dirname(dist)))]) try {
+			const raw = await readFile(join(root, "package.json"), "utf8");
+			const parsed = JSON.parse(raw);
+			if (typeof parsed.version === "string" && parsed.version.trim() !== "") return parsed.version;
+		} catch {}
+	} catch {}
+	return embedded;
+}
+//#endregion
+//#region src/whats-new-state.ts
+/**
+* whats-new-state.ts — last-seen version for the one-time "What's new" window.
+*
+* The TUI shows a dismissable release-highlights dialog once per Pantheon
+* version. Whether a version was already seen is persisted next to the other
+* opencode-level Pantheon state: `<configDir>/.pantheon/whats-new.json`, the
+* same directory that already holds `install-state.json` (scripts/install/
+* state.mjs) and the active-preset file the sidebar reads. There is no
+* established persistent TUI KV store (the host `api.kv` is per-process), so
+* the plugin owns one small JSON file with the atomic-write discipline used
+* across the repo (unique tmp + rename, mirrors scripts/install/verify.mjs).
+*
+* Fail-open everywhere: a missing or corrupt file reads as "never seen" (the
+* window may show), a failed write is silent (the window may show again) —
+* neither can ever block TUI startup.
+*/
+/** State file name, kept next to `install-state.json` in `<configDir>/.pantheon/`. */
+const WHATS_NEW_STATE_FILENAME = "whats-new.json";
+/** Parse a state file body; null when unreadable as the expected shape. */
+function parseWhatsNewState(raw) {
+	try {
+		const parsed = JSON.parse(raw);
+		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+		const record = parsed;
+		const seen = record.seenVersion;
+		if (typeof seen !== "string" && seen !== null) return null;
+		return {
+			seenVersion: seen,
+			updatedAt: String(record.updatedAt ?? "")
+		};
+	} catch {
+		return null;
+	}
+}
+/** Read the persisted state; null when missing or corrupt (never throws). */
+async function readWhatsNewState(statePath) {
+	try {
+		return parseWhatsNewState(await readFile(statePath, "utf8"));
+	} catch {
+		return null;
+	}
+}
+/**
+* Whether the one-time window should show for `version`: any version change
+* since the last dismissal (including downgrades). A falsy version — the
+* resolver failed — never shows.
+*/
+async function shouldShowWhatsNew(version, statePath) {
+	if (typeof version !== "string" || version.trim() === "") return false;
+	return (await readWhatsNewState(statePath))?.seenVersion !== version;
+}
+/**
+* Persist `version` as seen (atomic tmp + rename, 0o600). Never throws: a
+* failed write leaves the state untouched and the window may show again —
+* the same fail-open contract as the rest of the plugin.
+*/
+async function markSeenWhatsNew(version, statePath) {
+	if (typeof version !== "string" || version.trim() === "") return false;
+	const previous = await readWhatsNewState(statePath);
+	const next = {
+		seenVersion: version,
+		updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+	};
+	const tmpPath = `${statePath}.tmp-${process.pid}`;
+	try {
+		await mkdir(dirname(statePath), { recursive: true });
+		await writeFile(tmpPath, `${JSON.stringify({
+			...previous,
+			...next
+		}, null, 2)}\n`, {
+			encoding: "utf8",
+			mode: 384
+		});
+		await rename(tmpPath, statePath);
+		return true;
+	} catch {
+		try {
+			await unlink(tmpPath);
+		} catch {}
+		return false;
+	}
+}
+/** `stat`-based existence probe (async I/O discipline). */
+async function pathExists(path) {
+	try {
+		await stat(path);
+		return true;
+	} catch {
+		return false;
+	}
+}
+/**
+* Default state path: `<configDir>/.pantheon/whats-new.json`, resolving the
+* OpenCode config directory exactly like src/pantheon/tui-version-check.ts
+* (`$XDG_CONFIG_HOME/opencode` → `~/.opencode`), defaulting to the XDG
+* location `init` creates when neither exists yet.
+*/
+async function defaultWhatsNewStatePath(env = process.env, home = homedir()) {
+	const xdgConfig = env.XDG_CONFIG_HOME || join(home, ".config");
+	const primary = join(xdgConfig, "opencode");
+	if (await pathExists(primary)) return join(primary, ".pantheon", WHATS_NEW_STATE_FILENAME);
+	const legacy = join(home, ".opencode");
+	if (await pathExists(legacy)) return join(legacy, ".pantheon", WHATS_NEW_STATE_FILENAME);
+	return join(primary, ".pantheon", WHATS_NEW_STATE_FILENAME);
+}
+//#endregion
+//#region src/whats-new-open.ts
+/**
+* whats-new-open.ts — the show-once decision for the "What's new" window.
+*
+* Plain data in, plain data out: the entrypoints (index.tsx / index-v2.tsx)
+* resolve the running version and the shipped CHANGELOG.md, then hand this
+* module a `show` callback that renders the view data through the host's
+* dialog API. Keeping the decision JSX-free makes the whole one-time flow
+* testable offline (node strips the types natively) — the Solid glue lives in
+* whats-new.tsx.
+*
+* Contract (pinned by tests/tui-whats-new.test.mjs):
+*   - shows at most once per version: dismissal marks the version seen;
+*   - nothing to show (no version, missing CHANGELOG, empty section) → no
+*     window AND no pin — the next start may still show it;
+*   - never throws on its own inputs; I/O failures inside the state module
+*     are fail-open there.
+*/
+/** Muted footer hint teaching the dismiss bind (Portuguese, like the sidebar). */
+const WHATS_NEW_CLOSE_HINT = "esc/q fechar";
+/**
+* Open the one-time window when the version changed and highlights exist.
+* Returns true when the window was shown; the caller's `onClose` callback
+* (both host-initiated and local close binds) must funnel into marking seen.
+*/
+async function openWhatsNew(input) {
+	const { version, statePath, changelogText, show } = input;
+	if (typeof version !== "string" || version.trim() === "") return false;
+	if (!await shouldShowWhatsNew(version, statePath)) return false;
+	const lines = whatsNewLines(changelogText ? extractHighlights(changelogText, version) : { ...EMPTY_HIGHLIGHTS });
+	if (lines.length === 0) return false;
+	const data = {
+		version,
+		title: whatsNewTitle(version),
+		lines,
+		hint: WHATS_NEW_CLOSE_HINT
+	};
+	show(() => data, () => {
+		markSeenWhatsNew(version, statePath);
+	});
+	return true;
+}
+//#endregion
+//#region src/whats-new.tsx
+/** @jsxImportSource @opentui/solid */
+/**
+* whats-new.tsx — the one-time "What's new" window (per Pantheon version).
+*
+* When the running Pantheon version changed since the last TUI start, the V2
+* entrypoint fires {@link maybeShowWhatsNewV2} (fire-and-forget, never
+* awaited — startup must never block). The decision lives in
+* whats-new-open.ts; this file is only the host glue + view:
+* `context.ui.dialog.show` plus a keymap layer gated on the open signal so
+* `escape`/`q` dismiss while (and only while) the window is up — the same
+* gated-layer pattern as the dispatch panel.
+*
+* Deliberately V2-only: the two dist entries are self-contained (the V1
+* sidebar mirrors the preset resolver rather than importing it) because any
+* module shared by both entries becomes a content-hashed chunk in dist/,
+* changing the artifact shape the byte-reproducible-dist gate pins. The V1
+* generation (OpenCode 1.x, legacy) does not show the window; the pure
+* modules here are generation-agnostic, so a V1 mirror can follow the
+* documented inline-replica precedent if it is ever wanted.
+*
+* Dismissal always funnels into `markSeenWhatsNew` (idempotent), so the window
+* is shown exactly once per version. Every failure path is silent: missing
+* CHANGELOG.md, unreadable state, a host API that throws — the window simply
+* does not show (fail-open, like the rest of the plugin).
+*/
+/** Window body: title, rule, bounded highlight lines, dismiss hint. */
+function WhatsNewContent(props) {
+	return (() => {
+		var _el$ = createElement("box"), _el$2 = createElement("text"), _el$3 = createElement("text"), _el$5 = createElement("box"), _el$6 = createElement("text");
+		insertNode(_el$, _el$2);
+		insertNode(_el$, _el$3);
+		insertNode(_el$, _el$5);
+		insertNode(_el$, _el$6);
+		setProp(_el$, "flexDirection", "column");
+		setProp(_el$, "paddingLeft", 1);
+		setProp(_el$, "paddingRight", 1);
+		setProp(_el$, "paddingTop", 1);
+		setProp(_el$2, "attributes", 1);
+		insert(_el$2, () => props.data.title);
+		insertNode(_el$3, createTextNode(`──────────────────────────────────────`));
+		insert(_el$, createComponent(For, {
+			get each() {
+				return props.data.lines;
+			},
+			children: (line) => (() => {
+				var _el$7 = createElement("text");
+				insert(_el$7, line);
+				effect((_$p) => setProp(_el$7, "fg", line.startsWith("• ") ? props.fg : props.muted, _$p));
+				return _el$7;
+			})()
+		}), _el$5);
+		setProp(_el$5, "height", 1);
+		insert(_el$6, () => props.data.hint);
+		effect((_p$) => {
+			var _v$ = props.fg, _v$2 = props.muted, _v$3 = props.muted;
+			_v$ !== _p$.e && (_p$.e = setProp(_el$2, "fg", _v$, _p$.e));
+			_v$2 !== _p$.t && (_p$.t = setProp(_el$3, "fg", _v$2, _p$.t));
+			_v$3 !== _p$.a && (_p$.a = setProp(_el$6, "fg", _v$3, _p$.a));
+			return _p$;
+		}, {
+			e: void 0,
+			t: void 0,
+			a: void 0
+		});
+		return _el$;
+	})();
+}
+/**
+* Entry glue: resolve version + shipped CHANGELOG.md, then show the window
+* through the host dialog stack once. Never throws.
+*/
+async function maybeShowWhatsNewV2(context) {
+	try {
+		const version = await resolveRunningVersion(import.meta.url);
+		if (!version) return;
+		const statePath = await defaultWhatsNewStatePath();
+		const changelogText = await readChangelogForBundle(import.meta.url);
+		const [open, setOpen] = createSignal(false);
+		let dismiss = () => {};
+		try {
+			context.keymap.layer(() => ({
+				mode: "global",
+				enabled: () => open(),
+				commands: [{
+					id: "pantheon.whats-new.close",
+					title: "Fechar o que há de novo",
+					bind: "escape,q",
+					run: () => {
+						if (!open()) return false;
+						dismiss();
+					}
+				}]
+			}));
+		} catch {}
+		await openWhatsNew({
+			version,
+			statePath,
+			changelogText,
+			show: (render, onClose) => {
+				const close = () => {
+					setOpen(false);
+					onClose();
+				};
+				dismiss = () => {
+					try {
+						context.ui.dialog.clear();
+					} catch {}
+					close();
+				};
+				setOpen(true);
+				try {
+					const theme = context.theme?.text ?? {};
+					context.ui.dialog.show(() => createComponent(WhatsNewContent, {
+						get data() {
+							return render();
+						},
+						get fg() {
+							return theme.base;
+						},
+						get muted() {
+							return theme.muted;
+						}
+					}), close);
+				} catch {}
+			}
+		});
+	} catch {}
 }
 //#endregion
 //#region src/index-v2.tsx
@@ -4025,6 +4477,7 @@ const plugin = Plugin.define({
 			append: "app",
 			render: () => createComponent(DispatchCommandLayer, { context })
 		});
+		maybeShowWhatsNewV2(context);
 		return () => {
 			if (typeof unregisterSidebar === "function") unregisterSidebar();
 			if (typeof unregisterHome === "function") unregisterHome();

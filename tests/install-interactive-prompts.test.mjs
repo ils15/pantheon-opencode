@@ -84,7 +84,13 @@ test('interactive selection chooses components and location, then asks the Jev a
   )[1]
   assert.deepEqual(
     jevPrompt.options.map(({ value }) => value),
-    ['skip', 'opencode-console-jev/jev-1.13', 'typesafe-jev/jev-1.14.0'],
+    [
+      'skip',
+      'opencode-console-jev/jev-1.13',
+      'openrouter-jev/typesafe/jev-1.13',
+      'typesafe-jev/jev-1.14.0',
+      'cloudflare-workers-jev/clef',
+    ],
   )
   assert.equal(jevPrompt.initialValue, 'skip')
 })

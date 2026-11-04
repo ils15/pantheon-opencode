@@ -24,6 +24,7 @@ import {
   MODEL_USAGE_VISIBLE_CEILING,
 } from './model-usage-limits'
 import { cellWidth, GRAPHEMES, SIDEBAR_CONTENT_WIDTH } from './sidebar-width'
+import { maybeShowWhatsNewV2 } from './whats-new'
 
 export type { ContextProgressTone } from './context-gauge'
 export {
@@ -4476,6 +4477,11 @@ const plugin = Plugin.define({
       append: 'app',
       render: () => <DispatchCommandLayer context={context} />,
     })
+    // One-time "What's new" window (per Pantheon version) — fire-and-forget:
+    // resolves the running version and the shipped CHANGELOG.md, then opens a
+    // host dialog when the version changed since the last dismissal. Fail-open;
+    // a missing changelog or unreadable state simply means no window.
+    void maybeShowWhatsNewV2(context)
     return () => {
       if (typeof unregisterSidebar === 'function') unregisterSidebar()
       if (typeof unregisterHome === 'function') unregisterHome()

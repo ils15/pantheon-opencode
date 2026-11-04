@@ -106,6 +106,17 @@ export function copyPluginFiles(srcDir, dstDir, version) {
     else result.skipped++
   }
 
+  // CHANGELOG.md — the copy's one-time "What's new" window reads the release
+  // highlights for the running version from its own installed root. Best
+  // effort: a missing source simply means no window (the TUI fails open).
+  // src/plugins/tui → src/plugins → src → package root.
+  const changelogSrc = join(srcDir, '..', '..', '..', 'CHANGELOG.md')
+  if (existsSync(changelogSrc)) {
+    if (writeIfChanged(join(dstDir, 'CHANGELOG.md'), readFileSync(changelogSrc, 'utf8'))) {
+      result.created++
+    } else result.skipped++
+  }
+
   const tuiEntry = join(srcDir, version === 'v2' ? 'tui-v2.ts' : 'tui.ts')
   if (existsSync(tuiEntry)) {
     if (writeIfChanged(join(dstDir, 'tui.ts'), readFileSync(tuiEntry, 'utf8'))) result.created++
