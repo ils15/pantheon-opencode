@@ -34,7 +34,12 @@ import {
 /** Config-level providers that have a native host Decisions route. */
 export type NativeJevProviderId = Extract<
   DecisionProviderId,
-  'typesafe-jev' | 'opencode-console-jev' | 'opencode-console-jev-free'
+  | 'typesafe-jev'
+  | 'opencode-console-jev'
+  | 'opencode-console-jev-free'
+  | 'openrouter-jev'
+  | 'vercel-gateway-jev'
+  | 'cloudflare-workers-jev'
 >
 
 /**
@@ -47,6 +52,16 @@ export const NATIVE_JEV_HOST_PROVIDERS = Object.freeze({
   'typesafe-jev': 'typesafe-ai',
   'opencode-console-jev': 'opencode',
   'opencode-console-jev-free': 'opencode',
+  // Host-embedded decision modules confirmed in the 2.2.5 binary
+  // (providers/<id>/decisions, System One transport — the host normalizes
+  // the request/response, so consumers only need the providerID mapping):
+  // openrouter (models.dev provider; credential OPENROUTER_API_KEY),
+  // vercel-ai-gateway (models.dev provider; AI_GATEWAY_API_KEY),
+  // cloudflare-workers-ai (custom entry with accountId; CLOUDFLARE_API_TOKEN),
+  // baseten and digitalocean (modules present, decision models undocumented).
+  'openrouter-jev': 'openrouter',
+  'vercel-gateway-jev': 'vercel-ai-gateway',
+  'cloudflare-workers-jev': 'cloudflare-workers-ai',
 } satisfies Record<NativeJevProviderId, string>)
 
 export function isNativeJevProvider(provider: unknown): provider is NativeJevProviderId {

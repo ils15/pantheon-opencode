@@ -14,13 +14,22 @@ var DECISION_ROUTER_MODELS = Object.freeze({
   "openai-decisions": Object.freeze(["gpt-6-luna"]),
   "typesafe-jev": Object.freeze(["jev-1.14.0"]),
   "opencode-console-jev": Object.freeze(["jev-1.13"]),
-  "opencode-console-jev-free": Object.freeze(["jev-1.13-free"])
+  "opencode-console-jev-free": Object.freeze(["jev-1.13-free"]),
+  // Host-embedded decision modules confirmed in the 2.2.5 binary; the model
+  // ids are the provider-side decision models (see
+  // docs/reference/native-decisions.md for credential acquisition).
+  "openrouter-jev": Object.freeze(["typesafe/jev-1.13"]),
+  "vercel-gateway-jev": Object.freeze(["typesafe-ai/jev"]),
+  "cloudflare-workers-jev": Object.freeze(["clef"])
 });
 var DECISION_PROVIDER_BUDGET_MAPPING = Object.freeze({
   "openai-decisions": "openai-decisions",
   "typesafe-jev": "typesafe-jev",
   "opencode-console-jev": "opencode-console",
-  "opencode-console-jev-free": "jev-free"
+  "opencode-console-jev-free": "jev-free",
+  "openrouter-jev": "openrouter",
+  "vercel-gateway-jev": "vercel-ai-gateway",
+  "cloudflare-workers-jev": "cloudflare-workers-ai"
 });
 var REMOTELY_ELIGIBLE_DECISION_PROVIDERS = Object.freeze([
   "openai-decisions",

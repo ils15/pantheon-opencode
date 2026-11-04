@@ -489,7 +489,20 @@ export async function runDecisionRouterCommand(
       // Route-aware checks, not a catalog probe: decision models are not chat
       // models and never appear in `opencode models` (field evidence 2.2.5:
       // 561 entries, 0 jev, while the decisions API answers the same ref).
-      if (target.provider === 'typesafe-jev') {
+      if (target.provider === 'openrouter-jev' || target.provider === 'vercel-gateway-jev') {
+        const envName =
+          target.provider === 'openrouter-jev' ? 'OPENROUTER_API_KEY' : 'AI_GATEWAY_API_KEY'
+        pass(
+          'native-route',
+          `host-native ${target.provider === 'openrouter-jev' ? 'openrouter' : 'vercel-ai-gateway'} route; credential ${envName} via /connect or the environment`,
+        )
+      } else if (target.provider === 'cloudflare-workers-jev') {
+        warn(
+          'native-route',
+          'host module exists but the provider needs a custom entry with your Cloudflare accountId (models.dev does not carry it)',
+          'add providers["cloudflare-workers-ai"] with accountId + CLOUDFLARE_API_TOKEN (scoped Workers AI token); model clef',
+        )
+      } else if (target.provider === 'typesafe-jev') {
         const hostProvider = inspectTypesafeHostProvider({ env })
         if (!hostProvider.present) {
           fail(

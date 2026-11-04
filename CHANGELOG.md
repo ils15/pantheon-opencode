@@ -12,6 +12,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [v1.6.3-beta.1] - 2026-11-04
 
+### Added
+
+- **routing** — The decision-provider matrix expands to the host-embedded decision modules confirmed in the 2.2.5 binary: `openrouter-jev` (OpenRouter-hosted `typesafe/jev-1.13`), `vercel-gateway-jev` (Vercel AI Gateway `typesafe-ai/jev`), and `cloudflare-workers-jev` (Workers AI `clef`; needs a custom entry with your accountId). Route resolution stays config-only; `doctor` gains route-aware rows per provider.
+- **routing** — Specialist caller allowlist: `PANTHEON_JEV_SPECIALIST_CALLERS` (CSV, default empty = Zeus only) lets named agents call `pantheon_jev_decide` with explicit typed questions; preset modes stay orchestrator-owned. The permission assertion and the success output carry the real caller; caps and the `decision.egress` kill-switch are enforced per call regardless of caller.
+- **routing** — `DECISION_CALL_FAILED` surfaces the provider reason class, integer status and retry window (rate limits now self-explain); `QUESTIONS_INVALID` carries a per-cause `detail` token (ten causes, one each); the tool description states the required-fields contract on its surface.
+
 ### Fixed
 
 - **routing** — The TypeSafe provisioner writes a **complete** custom provider entry: the `@ai-sdk/openai-compatible` adapter, the `api.typesafe.ai/v1` baseURL, and an `apiKey` env reference (`{env:TYPESAFE_API_KEY}` — the key itself never lands in the config file). Field evidence: a models-only entry is inert because models.dev has no typesafe-ai entry, so `/connect` and `opencode auth login` cannot supply it and the decisions call 404s. `doctor` now warns when the entry lacks the apiKey; the activation path is `export TYPESAFE_API_KEY=...` + restart.

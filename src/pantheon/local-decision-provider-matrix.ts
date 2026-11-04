@@ -17,6 +17,9 @@ export type DecisionProviderId =
   | 'typesafe-jev'
   | 'opencode-console-jev'
   | 'opencode-console-jev-free'
+  | 'openrouter-jev'
+  | 'vercel-gateway-jev'
+  | 'cloudflare-workers-jev'
 
 /**
  * Single provider matrix. Model and accounting IDs come from the canonical

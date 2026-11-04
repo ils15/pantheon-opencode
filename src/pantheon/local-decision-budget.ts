@@ -9,7 +9,14 @@ import {
   type VerifiedUsageEvidence,
 } from './local-decision-usage-evidence.internal.ts'
 
-export type BudgetProvider = 'openai-decisions' | 'typesafe-jev' | 'opencode-console' | 'jev-free'
+export type BudgetProvider =
+  | 'openai-decisions'
+  | 'typesafe-jev'
+  | 'opencode-console'
+  | 'jev-free'
+  | 'openrouter'
+  | 'vercel-ai-gateway'
+  | 'cloudflare-workers-ai'
 
 /** Model and OpenCode Console variant keys must be configured before admission. */
 export type BudgetModel = string
@@ -127,6 +134,9 @@ export const LOCAL_DECISION_BUDGET_PROVIDERS: readonly BudgetProvider[] = Object
   'typesafe-jev',
   'opencode-console',
   'jev-free',
+  'openrouter',
+  'vercel-ai-gateway',
+  'cloudflare-workers-ai',
 ])
 const ALLOWED_PROVIDERS = new Set<BudgetProvider>(LOCAL_DECISION_BUDGET_PROVIDERS)
 const MODEL_KEY = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
