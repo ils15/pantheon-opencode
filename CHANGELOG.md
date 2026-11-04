@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.3-beta.5] - 2026-11-04
+
+### Fixed
+
+- **routing** — The ledger model-key slash fix (vendor ids like `typesafe/jev-1.13`) re-landed after being silently lost in a branch reset: the shipped beta.4 refused the OpenRouter model key with `invalid-model`. Field-verified end to end on the user's host: `advisory:true`, real Jev answer via OpenRouter at $0.00003/decision.
+- **install** — The Jev wizard shows the full live route matrix with credential-state hints (checked hint when `OPENCODE_API_KEY`/`TYPESAFE_API_KEY`/`CLOUDFLARE_API_TOKEN` is in the shell; the exact export when not).
+
 ## [v1.6.3-beta.4] - 2026-11-04
 
 ### Added
