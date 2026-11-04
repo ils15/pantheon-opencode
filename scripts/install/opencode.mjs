@@ -2789,6 +2789,26 @@ async function installPass(
       // .ts path is not a registrable entry on this host and must not be moved.
       config.plugin = removePantheonPluginReferences(config.plugin)
       if (!Array.isArray(config.plugins)) config.plugins = []
+    // Preflight: a Pantheon-owned registration whose target directory is
+    // missing means the previous install was invalidated (the npx cache
+    // recycles `_npx/<hash>` dirs — field evidence: a registered copy
+    // vanished and the host silently dropped the plugin, so the whole tool
+    // surface disappeared until the next init). Name the cause loudly
+    // before the re-registration below fixes it.
+    for (const ref of Array.isArray(config.plugins) ? config.plugins : []) {
+      const refPath = typeof ref === 'string' ? ref : ref?.package
+      if (typeof refPath !== 'string' || managedPluginIdentity(refPath) === null) continue
+      const absolute = isAbsolute(refPath) ? refPath : resolve(target, refPath)
+      if (existsSync(absolute)) continue
+      const staleNpx = refPath.includes('_npx/')
+      warning(
+        `Existing Pantheon registration points to ${refPath}, which no longer exists` +
+          (staleNpx
+            ? ' (the npx cache recycled that copy) — re-registering to the freshly installed tree'
+            : ' — re-registering to the freshly installed tree'),
+      )
+    }
+
       const migrated = []
       const blocked = []
       for (const plugin of config.plugin) {

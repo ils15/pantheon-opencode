@@ -214,6 +214,7 @@ test('versioned Pantheon package refs are managed during V2 migration', async ()
           'pantheon-opencode@1.6.0-beta.7',
           { package: 'pantheon-opencode@beta' },
           thirdParty,
+          '/tmp/pantheon-recycled-npx-copy/node_modules/pantheon-opencode/src/plugin-v2',
         ],
       },
       'v2',
