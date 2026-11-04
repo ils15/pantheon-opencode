@@ -327,13 +327,13 @@ function testDecisionCapsAndGlobalUserProviderModelBucketsAreIndependent(): void
       user: { monthly: 100, decision: 70 },
       modelCaps: { monthly: 100, decision: 60 },
     })
-    ledger.configureProviderCaps('jev-free', { monthlyCapMicros: 100, perDecisionCapMicros: 70 })
-    ledger.configureModelCaps('jev-free', 'jev-free-model', {
+    ledger.configureProviderCaps('openrouter', { monthlyCapMicros: 100, perDecisionCapMicros: 70 })
+    ledger.configureModelCaps('openrouter', 'openrouter-model', {
       monthlyCapMicros: 100,
       perDecisionCapMicros: 60,
     })
     assert.equal(ledger.reserve(openai, openaiModel).status, 'reserved')
-    assert.equal(ledger.reserve('jev-free', 'jev-free-model').reason, 'monthly-cap')
+    assert.equal(ledger.reserve('openrouter', 'openrouter-model').reason, 'monthly-cap')
     ledger.close()
   })
 
@@ -491,7 +491,7 @@ function testOpaqueVerifiedEvidenceRoundsCostsAndRejectsForgeryOrMismatch(): voi
     )
 
     const wrongProvider = verifyNativeUsageForReservation(
-      { ...binding, provider: 'jev-free', model: 'jev-1.13-free' },
+      { ...binding, provider: 'opencode-console', model: 'jev-1.13' },
       nativeResult({ costUsd: 0.000001 }),
     )
     assert.ok(wrongProvider)

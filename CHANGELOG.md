@@ -10,6 +10,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.3-beta.2] - 2026-11-04
+
+### Removed
+
+- **routing** — The Console Jev **free variant** route (`opencode-console-jev-free` / `jev-1.13-free`) is removed from the matrix, the wizard, and the ledger: the free tier is rate-limited hard enough to 429 mid-work (field-measured), which is exactly the failure mode a decision route must not have. Existing configs selecting it degrade to skip with a fix hint pointing at the Zen-credited route (`OPENCODE_API_KEY`) or the TypeSafe direct route.
+
 ## [v1.6.3-beta.1] - 2026-11-04
 
 ### Added

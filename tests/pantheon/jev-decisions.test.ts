@@ -164,7 +164,6 @@ function testProviderMapping(): void {
   assert.deepEqual(NATIVE_JEV_HOST_PROVIDERS, {
     'typesafe-jev': 'typesafe-ai',
     'opencode-console-jev': 'opencode',
-    'opencode-console-jev-free': 'opencode',
     'openrouter-jev': 'openrouter',
     'vercel-gateway-jev': 'vercel-ai-gateway',
     'cloudflare-workers-jev': 'cloudflare-workers-ai',

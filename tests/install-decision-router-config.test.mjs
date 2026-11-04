@@ -162,7 +162,9 @@ test('provider selection, egress consent, candidate enablement, and cap validity
 })
 
 test('Auto cardinality counts exact provider/model candidates and excludes unverified Console variants', () => {
-  assert.deepEqual(DECISION_ROUTER_MODELS['opencode-console-jev-free'], ['jev-1.13-free'])
+  // The removed Console free variant must not re-enter the matrix: a stale
+  // candidate for it is unknown data and fails the legacy migration closed.
+  assert.equal(DECISION_ROUTER_MODELS['opencode-console-jev-free'], undefined)
   const config = {
     schema_version: 1,
     selection: { mode: 'auto' },
@@ -170,7 +172,7 @@ test('Auto cardinality counts exact provider/model candidates and excludes unver
     enabled_candidates: [
       { provider: 'openai-decisions', model: 'gpt-6-luna' },
       { provider: 'jev', model: 'jev-1.14.0' },
-      { provider: 'opencode-console-jev-free', model: 'jev-1.13-free' },
+      { provider: 'opencode-console-jev', model: 'jev-1.13' },
     ],
   }
   assert.equal(resolveUserDecisionRouterCandidate(config, config.enabled_candidates), null)

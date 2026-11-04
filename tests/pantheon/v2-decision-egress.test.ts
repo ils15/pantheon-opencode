@@ -125,7 +125,7 @@ test('provider endpoints are declared unwired and no gateway provider reaches eg
     ),
     [],
   )
-  for (const provider of ['opencode-console-jev', 'opencode-console-jev-free']) {
+  for (const provider of ['opencode-console-jev']) {
     assert.match(DECISION_PROVIDER_ADAPTERS[provider].model, /^jev-1\.13/)
   }
 })
