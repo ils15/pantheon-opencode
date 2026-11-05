@@ -529,6 +529,27 @@ Division of labor; trusting an install is never the model's job:
   becomes the approved, versioned library other projects pull from; the
   skills CLI resolves private repositories with existing git credentials.
 
+The **discovery pipeline** binds these steps into one measured ladder
+(zeus.md carries the same rules):
+
+1. `mode: "skills"` answers over the installed pool — the Jev call that
+   decides within existing skills.
+2. Only on a gap: one read-only ecosystem search —
+   `npx -y skills find "<query>" < /dev/null` (non-interactive) or the
+   packaged helper `scripts/skill-search.mjs "<query>" --limit 5`, which
+   strips the ANSI output into the parseable contract
+   (`{skill, installs, url}` JSON; pinned by `tests/skill-search.test.mjs`).
+   The search is networked egress by the agent, priced by attention — never
+   a Jev question by itself, and at most one per need.
+3. One typed Jev choice question ranks the returned candidates
+   (descriptions + install counts as choice text; "none of these fit" is a
+   valid answer). Only names, counts and short descriptions cross the
+   boundary — skill contents are untrusted and never enter a Jev call.
+4. The winning candidate is PROPOSED to the user with its URL and the exact
+   command (`npx skills add <owner/repo@skill> -a opencode` — project-scoped
+   by default). Pantheon never installs; the review is the user's, and the
+   installed skill joins the pool that step 1 answers over.
+
 ## Verification boundary
 
 The focused tests (`tests/pantheon/jev-decisions.test.ts`,
