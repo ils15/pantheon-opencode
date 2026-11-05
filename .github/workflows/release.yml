@@ -206,7 +206,10 @@ jobs:
         if: steps.type.outputs.recovery == 'true'
         run: |
           set -euo pipefail
-          npm version "$RECOVERY_VERSION" --no-git-tag-version --ignore-scripts >/dev/null
+          # The recovery case may run on a checkout that ALREADY carries the
+          # recovered version committed (tag/publish backed without the
+          # ceremony); npm version refuses an unchanged version by default.
+          npm version "$RECOVERY_VERSION" --no-git-tag-version --ignore-scripts --allow-same-version >/dev/null
           node scripts/version-check.mjs --fix
 
       - name: Version gate
