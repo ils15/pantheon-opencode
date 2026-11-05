@@ -421,13 +421,14 @@ state keeps the shared `STATE_INVALID` token.
 
 ### `mode: "verify"` — check named claims, fail-closed
 
-Input: `{ schemaVersion: 1, mode: "verify", claims }` where `claims` is 1–4
-records `{ name, claim }` — `name` a strict bounded token (it becomes the
-predicate question's name, unique), `claim` a bounded 1–200-char instruction
-string. The verify mode takes NO state text (like review); the request's only
-input part is a fixed template, and each claim text rides its own predicate
-question's instructions. The tool returns `results`, one verdict per claim
-name:
+Input: `{ schemaVersion: 1, mode: "verify", claims, state? }` where `claims` is 1–4
+named `{ name, claim }` records (token names, bounded claim text). The optional
+`state` is caller-supplied EVIDENCE the claims are judged against (bounded,
+hostility-scanned) — field report beta.13: without it, environment-dependent
+claims are unanswerable and the honest verdict is `UNVERIFIABLE`, not `FAIL`.
+Verdicts: probability ≥ 0.5 → `PASS`; 0.35–0.65 → `UNVERIFIABLE` (the model
+could not tell); below → `FAIL`; and every refusal, timeout, or malformed
+answer is `BLOCK` (fail-closed — only `PASS` counts as passing).
 
 - probability ≥ 0.5 → `PASS`;
 - probability < 0.5 → `FAIL`;

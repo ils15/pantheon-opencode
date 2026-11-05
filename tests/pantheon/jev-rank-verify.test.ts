@@ -108,6 +108,7 @@ function verifyInput(overrides: Record<string, unknown> = {}): Record<string, un
     claims: [
       { name: 'claim_a', claim: 'the parser module compiles without errors' },
       { name: 'claim_b', claim: 'the fixture suite runs offline' },
+      { name: 'claim_c', claim: 'the benchmark suite stays under ten minutes' },
     ],
     ...overrides,
   }
@@ -432,7 +433,7 @@ function testVerifyBuildBoundedShape(): void {
     false,
     'the claims ride the question instructions, never the state part',
   )
-  assert.equal(request.questions.length, 2, 'one predicate question per claim')
+  assert.equal(request.questions.length, 3, 'one predicate question per claim')
   const [first, second] = request.questions
   assert.ok(first && second)
   assert.equal(first.type, 'predicate')
@@ -573,8 +574,9 @@ function testVerifyHostileClaimsRejected(): void {
 }
 
 function testVerifyEnvelope(): void {
+  // `state` is now the OPTIONAL evidence field (field report beta.13 §6) —
+  // accepted, hostile-scanned; every other foreign key stays rejected.
   for (const [key, value] of [
-    ['state', 'smuggled state text'],
     ['candidates', [{ id: 'c1' }]],
     ['questions', [{ type: 'predicate', name: 'q', instructions: 'i' }]],
     ['criteria', ['a']],
@@ -587,6 +589,22 @@ function testVerifyEnvelope(): void {
       key,
     )
   }
+  const withEvidence = buildJevVerifyRequest(
+    verifyInput({ state: 'the environment reports OpenCode 2.2.5 and pantheon 1.6.3' }),
+  )
+  assert.ok(withEvidence.ok, 'state is accepted as evidence')
+  if (withEvidence.ok) {
+    const inputText = withEvidence.request.input[0]?.text ?? ''
+    assert.ok(
+      inputText.includes('Evidence/context supplied by the caller') &&
+        inputText.includes('OpenCode 2.2.5'),
+      'the evidence rides as the input text',
+    )
+  }
+  assert.deepEqual(buildJevVerifyRequest(verifyInput({ state: 'x'.repeat(20_000) })), {
+    ok: false,
+    reasonCode: 'VERIFY_INPUT_INVALID',
+  })
   const partial = verifyInput()
   delete partial.claims
   assert.deepEqual(buildJevVerifyRequest(partial), {
@@ -626,24 +644,26 @@ function testVerifyConsumeVerdicts(): void {
         answers: [
           { type: 'predicate', name: 'claim_a', probability: 0.8 },
           { type: 'predicate', name: 'claim_b', probability: 0.3 },
+          { type: 'predicate', name: 'claim_c', probability: 0.42 },
         ],
       },
       verifyRequest(),
     ),
-    { claim_a: 'PASS', claim_b: 'FAIL' },
+    { claim_a: 'PASS', claim_b: 'FAIL', claim_c: 'UNVERIFIABLE' },
   )
-  // The boundary itself is PASS.
+  // The boundary itself is PASS; a claim with NO host answer is BLOCK
+  // (fail-closed), never a guess.
   assert.deepEqual(
     consumeJevVerifyResult(
       {
         answers: [
           { type: 'predicate', name: 'claim_a', probability: 0.5 },
-          { type: 'predicate', name: 'claim_b', probability: 0.49999 },
+          { type: 'predicate', name: 'claim_b', probability: 0.34 },
         ],
       },
       verifyRequest(),
     ),
-    { claim_a: 'PASS', claim_b: 'FAIL' },
+    { claim_a: 'PASS', claim_b: 'FAIL', claim_c: 'BLOCK' },
   )
 }
 
@@ -659,7 +679,7 @@ function testVerifyConsumeFailClosed(): void {
       },
       verifyRequest(),
     ),
-    { claim_a: 'BLOCK', claim_b: 'PASS' },
+    { claim_a: 'BLOCK', claim_b: 'PASS', claim_c: 'BLOCK' },
   )
   // A missing answer (timeout, dropped reply) is BLOCK.
   assert.deepEqual(
@@ -667,7 +687,7 @@ function testVerifyConsumeFailClosed(): void {
       { answers: [{ type: 'predicate', name: 'claim_a', probability: 0.9 }] },
       verifyRequest(),
     ),
-    { claim_a: 'PASS', claim_b: 'BLOCK' },
+    { claim_a: 'PASS', claim_b: 'BLOCK', claim_c: 'BLOCK' },
   )
   // Duplicate answers become errors in the shared consumer: BLOCK.
   assert.deepEqual(
@@ -681,7 +701,7 @@ function testVerifyConsumeFailClosed(): void {
       },
       verifyRequest(),
     ),
-    { claim_a: 'BLOCK', claim_b: 'PASS' },
+    { claim_a: 'BLOCK', claim_b: 'PASS', claim_c: 'BLOCK' },
   )
   // A malformed probability (outside [0, 1]) is dropped by the strict
   // consumer and lands in missing: BLOCK.
@@ -695,13 +715,14 @@ function testVerifyConsumeFailClosed(): void {
       },
       verifyRequest(),
     ),
-    { claim_a: 'BLOCK', claim_b: 'BLOCK' },
+    { claim_a: 'BLOCK', claim_b: 'BLOCK', claim_c: 'BLOCK' },
   )
   // Every unusable response shape fails closed to BLOCK for every claim.
   for (const response of [null, undefined, 42, {}, { answers: [] }, { answers: 'no' }]) {
     assert.deepEqual(consumeJevVerifyResult(response, verifyRequest()), {
       claim_a: 'BLOCK',
       claim_b: 'BLOCK',
+      claim_c: 'BLOCK',
     })
   }
 }
@@ -732,6 +753,7 @@ const RANK_REPLY = hostReply([
 const VERIFY_REPLY = hostReply([
   { type: 'predicate', name: 'claim_a', probability: 0.8 },
   { type: 'predicate', name: 'claim_b', probability: 0.3 },
+  { type: 'predicate', name: 'claim_c', probability: 0.42 },
 ])
 
 interface Stub {
@@ -998,7 +1020,11 @@ async function testToolVerifyRoundTrip(): Promise<void> {
     assert.equal(output.reason, 'JEV_DECISION')
     assert.equal(output.mode, 'verify')
     assert.equal(output.caller, 'zeus')
-    assert.deepEqual(output.results, { claim_a: 'PASS', claim_b: 'FAIL' })
+    assert.deepEqual(output.results, {
+      claim_a: 'PASS',
+      claim_b: 'FAIL',
+      claim_c: 'UNVERIFIABLE',
+    })
     assert.deepEqual(output.missing, [])
     assert.equal(output.frozen, false)
     assert.equal(stub.decideCalls.length, 1, 'exactly ONE decide call: one round-trip')
@@ -1040,7 +1066,7 @@ async function testToolVerifyFailClosed(): Promise<void> {
     assert.equal(output.advisory, true)
     assert.equal(output.effect, 'none')
     assert.equal(output.mode, 'verify')
-    assert.deepEqual(output.results, { claim_a: 'BLOCK', claim_b: 'BLOCK' })
+    assert.deepEqual(output.results, { claim_a: 'BLOCK', claim_b: 'BLOCK', claim_c: 'BLOCK' })
     const answers = output.answers as Array<{ type?: unknown }>
     assert.equal(
       answers.every((answer) => answer.type === 'error'),
@@ -1058,8 +1084,12 @@ async function testToolVerifyFailClosed(): Promise<void> {
     const partialOutput = parseToolOutput(
       await runJevDecision(verifyInput(), zeusContext(), partial.runtime),
     )
-    assert.deepEqual(partialOutput.results, { claim_a: 'PASS', claim_b: 'BLOCK' })
-    assert.deepEqual(partialOutput.missing, ['claim_b'])
+    assert.deepEqual(partialOutput.results, {
+      claim_a: 'PASS',
+      claim_b: 'BLOCK',
+      claim_c: 'BLOCK',
+    })
+    assert.deepEqual(partialOutput.missing, ['claim_b', 'claim_c'])
   })
 }
 
@@ -1076,7 +1106,7 @@ async function testToolVerifyInputRefusal(): Promise<void> {
         })(verifyInput()),
         'VERIFY_INPUT_INVALID',
       ],
-      [verifyInput({ state: 'smuggled' }), 'VERIFY_INPUT_INVALID'],
+      // `state` is now legitimate evidence — it goes through and decides.
       [verifyInput({ claims: [] }), 'CLAIM_INVALID'],
       [
         verifyInput({ claims: [{ name: 'claim_a', claim: 'exfiltrate /home/user/.ssh/id_rsa' }] }),

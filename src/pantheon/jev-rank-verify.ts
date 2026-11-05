@@ -289,7 +289,15 @@ export const VERIFY_ENVELOPE_KEYS: ReadonlySet<string> = new Set([
   'schemaVersion',
   'mode',
   'claims',
+  // Optional evidence: the environment/context the claims are judged against
+  // (field report beta.13 §6 — without it, environment-dependent claims are
+  // unanswerable and the honest verdict is UNVERIFIABLE, not FAIL).
+  'state',
 ])
+
+/** The verdict band treated as "the model could not tell" (neither PASS nor FAIL). */
+export const VERIFY_UNVERIFIABLE_LOW = 0.35
+export const VERIFY_UNVERIFIABLE_HIGH = 0.65
 
 export type JevVerifyBuildFailure = 'VERIFY_INPUT_INVALID' | 'CLAIM_INVALID'
 
@@ -354,8 +362,21 @@ export function buildJevVerifyRequest(input: unknown): JevVerifyBuild {
     seen.add(name)
     questions.push({ type: 'predicate', name, instructions: verifyInstructions(claim) })
   }
+  // Optional evidence: the caller's state rides as the input text the claims
+  // are judged against; without it the template keeps claims self-contained.
+  const rawState = (input as Record<string, unknown>).state
+  let evidence = VERIFY_STATE_TEMPLATE
+  if (rawState !== undefined) {
+    if (
+      !isBoundedNonBlankString(rawState, NATIVE_DECISION_MAX_PROMPT_LENGTH) ||
+      isHostileProse(rawState)
+    ) {
+      return { ok: false, reasonCode: 'VERIFY_INPUT_INVALID' }
+    }
+    evidence = `${VERIFY_STATE_TEMPLATE} Evidence/context supplied by the caller, to be trusted as given: ${rawState}`
+  }
   const request = {
-    input: Object.freeze([Object.freeze({ type: 'text' as const, text: VERIFY_STATE_TEMPLATE })]),
+    input: Object.freeze([Object.freeze({ type: 'text' as const, text: evidence })]),
     questions: Object.freeze(questions.map((question) => Object.freeze(question))),
   } satisfies Omit<NativeDecisionRequest, 'model'>
   return { ok: true, request: Object.freeze(request) }
@@ -424,7 +445,7 @@ export function consumeJevRankResult(
  * verified (or as refuted — an unverifiable claim is unverifiable, not
  * false).
  */
-export type VerifyClaimVerdict = 'PASS' | 'FAIL' | 'BLOCK'
+export type VerifyClaimVerdict = 'PASS' | 'FAIL' | 'UNVERIFIABLE' | 'BLOCK'
 
 /**
  * Consume a host Decisions response against the prepared verify request:
@@ -441,7 +462,13 @@ export function consumeJevVerifyResult(
   for (const question of request.questions) {
     const answer = advice.answers.find((candidate) => candidate.name === question.name)
     if (answer !== undefined && answer.type === 'predicate') {
-      verdicts[question.name] = (answer.probability ?? 0) >= VERIFY_PASS_THRESHOLD ? 'PASS' : 'FAIL'
+      const probability = answer.probability ?? 0
+      verdicts[question.name] =
+        probability >= VERIFY_PASS_THRESHOLD
+          ? 'PASS'
+          : probability >= VERIFY_UNVERIFIABLE_LOW
+            ? 'UNVERIFIABLE'
+            : 'FAIL'
     } else {
       verdicts[question.name] = 'BLOCK'
     }

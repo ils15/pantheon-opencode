@@ -27,8 +27,18 @@ const FIND_TIMEOUT_MS = 60_000
 const DEFAULT_LIMIT = 5
 /** SGR escape sequences are matched via the ESC codepoint (lint-clean, same semantics). */
 const ANSI_SGR = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g')
-const SKILL_LINE = /^([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+@[A-Za-z0-9._-]+)\s+(\d+)\s+installs$/
+const SKILL_LINE =
+  /^([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+@[A-Za-z0-9._-]+)\s+([\d.,]+)\s*([KM]?)\s+installs$/
 const URL_LINE = /^└?\s*(https:\/\/skills\.sh\/\S+)$/
+
+/** '578.8K' / '1.2M' / '489' → absolute integer installs (K=1e3, M=1e6). */
+export function parseInstallCount(digits, suffix) {
+  const base = Number(String(digits).replaceAll(',', ''))
+  if (!Number.isFinite(base)) return null
+  if (suffix === 'K') return Math.round(base * 1_000)
+  if (suffix === 'M') return Math.round(base * 1_000_000)
+  return Math.round(base)
+}
 
 /** Remove SGR escape sequences so the text lines become parseable. */
 export function stripAnsi(text) {
@@ -50,7 +60,11 @@ export function parseSkillSearchOutput(raw, { limit = DEFAULT_LIMIT } = {}) {
     const skillMatch = line.match(SKILL_LINE)
     if (skillMatch !== null) {
       if (found.length >= limit) continue
-      found.push({ skill: skillMatch[1], installs: Number(skillMatch[2]), url: undefined })
+      found.push({
+        skill: skillMatch[1],
+        installs: parseInstallCount(skillMatch[2], skillMatch[3]),
+        url: undefined,
+      })
       continue
     }
     const urlMatch = line.match(URL_LINE)
@@ -78,7 +92,24 @@ export function searchSkills(query, { limit = DEFAULT_LIMIT, owner, spawn = spaw
   if (result.status !== 0 && raw.trim() === '') {
     return { ok: false, error: `skills search exited ${result.status}` }
   }
-  return { ok: true, entries: parseSkillSearchOutput(raw, { limit }), raw }
+  const entries = parseSkillSearchOutput(raw, { limit })
+  // Field finding (beta.13 §9): skills.sh intermittently answers "No skills
+  // found" (exit 0) for queries that succeed on retry — an empty result is
+  // AMBIGUOUS between "nothing exists" and "degraded". Retry once on empty;
+  // when still empty the callers treat it as not-found (the cascade moves on).
+  if (entries.length === 0) {
+    const retry = spawn('npx', args, {
+      encoding: 'utf8',
+      timeout: FIND_TIMEOUT_MS,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    const retryRaw = `${retry.stdout ?? ''}`
+    const retried = parseSkillSearchOutput(retryRaw, { limit })
+    if (retried.length > 0)
+      return { ok: true, entries: retried, raw: retryRaw, emptyIsAmbiguous: false }
+    return { ok: true, entries: [], raw, emptyIsAmbiguous: true }
+  }
+  return { ok: true, entries, raw, emptyIsAmbiguous: false }
 }
 
 const GITHUB_TIMEOUT_MS = 30_000
@@ -204,7 +235,7 @@ function main(args = process.argv.slice(2)) {
   const query = args.find((a) => !a.startsWith('--'))
   if (query === undefined) {
     console.error(
-      'usage: node scripts/skill-search.mjs "<query>" [--limit 5] [--sources anthropic,skills-sh,github] [--owner <owner>] [--raw]',
+      'usage: node scripts/skill-search.mjs "<query>" [--limit 5(total, merged across tiers)] [--sources anthropic,skills-sh,github] [--owner <owner>] [--raw]',
     )
     process.exit(1)
   }
