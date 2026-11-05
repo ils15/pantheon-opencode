@@ -16,6 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **routing** — The Jev input envelope is enforced: schemaVersion is required (SCHEMA_VERSION_INVALID) and unknown keys are rejected (UNKNOWN_INPUT_KEYS) — the declared contract is now the enforced contract (field report N2/N3).
 
+<!-- beta.7–beta.9 were landed together in 548fc6d; separate commits for these releases are absent from repository history. Per-beta attribution follows that commit’s grouped changelog snapshot. -->
+
 ## [v1.6.3-beta.9] - 2026-11-04
 
 ### Changed
@@ -23,20 +25,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **agents** — The live scorecard now runs the full 13-specialist catalog (was a 5-agent sample); first full-catalog run: 6 exact hits, 2 domain-adjacent judgment calls, measured per agent.
 - **agents** — Zeus gains consolidated MCP call-timing rules: when to recall, when to store, when to checkpoint, when vision fires, and the escalation order (local selector -> Jev -> MCP last resort).
 
-## [v1.6.3-beta.7] - 2026-11-04
-
-### Added
-
-- **routing** — `jev-live-probe.mjs`: the operator-run live measurement tool. `--ping` is the calibration dry-run after `setup-model` (one call, exit 0 when reachable); `--scorecard` runs the live scenarios against the configured route and writes the dated scorecard into `bench/results/`. First live run: 7/8 correct specialist picks via OpenRouter.
-
 ## [v1.6.3-beta.8] - 2026-11-04
 
 ### Added
 
 - **routing** — The v3.1 **rank** and **verify** primitives on `pantheon_jev_decide`: `mode: "rank"` picks the winner among up to 8 candidates with a fit score (the host answers one scalar per question, so full ordering is impossible — documented); `mode: "verify"` checks 1–4 claims as predicate questions with **BLOCK fail-closed**. Hostile inputs rejected. Zeus-only, same gate chain.
-- **agents** — The live scorecard runs the full 13-specialist catalog (first full run: 6/8 exact, 2 domain-adjacent); Zeus gains consolidated MCP call-timing rules.
 
 ## [v1.6.3-beta.7] - 2026-11-04
+
+### Added
+
+- **routing** — `jev-live-probe.mjs`: the operator-run live measurement tool. `--ping` only resolves the configured route locally (exit 0 when valid; no provider call); `--scorecard` runs the 16 configured live scenarios against that route and writes the dated scorecard into `bench/results/`. First live run: 7/8 correct specialist picks via OpenRouter.
+
+## [v1.6.3-beta.6] - 2026-11-04
 
 ### Added
 

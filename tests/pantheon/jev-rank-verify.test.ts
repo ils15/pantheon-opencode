@@ -701,8 +701,11 @@ function testVerifyConsumeFailClosed(): void {
 
 const CURRENT_PERIOD = new Date().toISOString().slice(0, 7)
 const CAPS = { monthlyCapMicros: 5_000_000, perDecisionCapMicros: 1_000_000 }
+const ONE_DECISION_CAP = { monthlyCapMicros: 1_000_000, perDecisionCapMicros: 1_000_000 }
 const PROVIDER = 'opencode-console-jev'
 const MODEL = DECISION_ROUTER_MODELS[PROVIDER][0] as string
+const CLOUDFLARE_PROVIDER = 'cloudflare-workers-jev'
+const CLOUDFLARE_MODEL = DECISION_ROUTER_MODELS[CLOUDFLARE_PROVIDER][0] as string
 
 function hostReply(answers: readonly unknown[]): unknown {
   return Object.freeze({
@@ -803,6 +806,30 @@ function confirmCaps(): void {
     // is denied and no rank or verify reaches the host call.
     if (ledger.confirmBudgetPeriod(null, CURRENT_PERIOD).status !== 'confirmed') {
       throw new Error('the rank/verify sandbox could not confirm the budget period')
+    }
+  } finally {
+    ledger.close()
+  }
+}
+
+function writeCloudflareEnabledConfig(): void {
+  writeUserDecisionRouterConfig({
+    schema_version: 2,
+    enabled: true,
+    selection: { mode: 'explicit', provider: CLOUDFLARE_PROVIDER, model: CLOUDFLARE_MODEL },
+    egress_consent: true,
+    enabled_candidates: [{ provider: CLOUDFLARE_PROVIDER, model: CLOUDFLARE_MODEL }],
+  })
+}
+
+function confirmCloudflareCaps(): void {
+  const ledger = openLocalDecisionBudgetLedger({ dbPath: resolveLocalDecisionBudgetDbPath() })
+  try {
+    ledger.configureUserCaps(ONE_DECISION_CAP)
+    ledger.configureProviderCaps('cloudflare-workers-ai', ONE_DECISION_CAP)
+    ledger.configureModelCaps('cloudflare-workers-ai', CLOUDFLARE_MODEL, ONE_DECISION_CAP)
+    if (ledger.confirmBudgetPeriod(null, CURRENT_PERIOD).status !== 'confirmed') {
+      throw new Error('the Cloudflare sandbox could not confirm the budget period')
     }
   } finally {
     ledger.close()
@@ -914,6 +941,33 @@ async function testToolRankGateRefusalContract(): Promise<void> {
       parseToolOutput(await runJevDecision(rankInput(), zeusContext(), unreconciled.runtime)),
       { advisory: false, effect: 'none', reasonCode: 'USAGE_UNRECONCILED' },
     )
+  })
+}
+
+async function testCloudflareUsageEvidenceFailsClosedBeforeEgress(): Promise<void> {
+  const paths = sandbox()
+  await withSandbox(paths, async () => {
+    writeCloudflareEnabledConfig()
+    confirmCloudflareCaps()
+    const stub = stubRuntime()
+    assert.deepEqual(
+      parseToolOutput(await runJevDecision(rankInput(), zeusContext(), stub.runtime)),
+      { advisory: false, effect: 'none', reasonCode: 'USAGE_EVIDENCE_UNAVAILABLE' },
+    )
+    assert.equal(stub.decideCalls.length, 0, 'Cloudflare provider is never called')
+    assert.equal(stub.permissionRequests.length, 0, 'no egress permission is requested')
+
+    const ledger = openLocalDecisionBudgetLedger({ dbPath: resolveLocalDecisionBudgetDbPath() })
+    try {
+      assert.deepEqual(ledger.listUncertainReservations(), [], 'the rejected call reserved nothing')
+      assert.equal(
+        ledger.reserve('cloudflare-workers-ai', CLOUDFLARE_MODEL).status,
+        'reserved',
+        'the rejected call did not consume the only available decision reservation',
+      )
+    } finally {
+      ledger.close()
+    }
   })
 }
 
@@ -1188,6 +1242,10 @@ await checkAsync(
 await checkAsync(
   'tool: rank gate refusals keep the standard refusal contract',
   testToolRankGateRefusalContract,
+)
+await checkAsync(
+  'Cloudflare: usage evidence unavailable refuses before permission, provider call, or reservation',
+  testCloudflareUsageEvidenceFailsClosedBeforeEgress,
 )
 await checkAsync(
   'tool: verify round-trip (one call, results map, claims in instructions only)',

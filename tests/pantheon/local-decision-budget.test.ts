@@ -591,6 +591,123 @@ function testNativeEvidenceOverrunFreezesScopesAndReconcileIsAtomic(): void {
   })
 }
 
+function testOpenRouterSlashModelEvidenceReconcilesAndClosesReservation(): void {
+  withTempDir((directory) => {
+    const provider: BudgetProvider = 'openrouter'
+    const model = 'typesafe/jev-1.13'
+    const dbPath = join(directory, 'openrouter-ledger.sqlite')
+    const ledger = openLocalDecisionBudgetLedger({
+      dbPath,
+      clock: () => Date.parse('2026-11-05T12:00:00.000Z'),
+    })
+    configure(ledger, {
+      provider,
+      model,
+      period: '2026-11',
+      user: { monthly: 100, decision: 70 },
+      providerCaps: { monthly: 100, decision: 70 },
+      modelCaps: { monthly: 100, decision: 70 },
+    })
+
+    const reservation = ledger.reserve(provider, model)
+    if (reservation.status !== 'reserved') throw new Error('expected OpenRouter reservation')
+    const evidence = verifyNativeUsageForReservation(
+      {
+        reservationId: reservation.reservationId,
+        provider,
+        model,
+        period: reservation.period,
+      },
+      nativeResult({ costUsd: 0.000025 }),
+    )
+
+    assert.ok(evidence, 'a valid OpenRouter result should mint usage evidence')
+    assert.equal(ledger.listUncertainReservations().length, 1)
+    assert.deepEqual(ledger.reconcileVerified(reservation.reservationId, evidence), {
+      status: 'reconciled',
+      actualCostMicros: 25,
+      frozen: false,
+    })
+    assert.equal(
+      ledger.reconcileVerified(reservation.reservationId, evidence).status,
+      'already-reconciled',
+    )
+    assert.deepEqual(ledger.listUncertainReservations(), [])
+
+    const second = ledger.reserve(provider, model)
+    assert.equal(second.status, 'reserved', 'settlement should replace the hold with actual cost')
+    assert.equal(ledger.reserve(provider, model).reason, 'monthly-cap')
+
+    const database = new DatabaseSync(dbPath, { readOnly: true })
+    const row = database
+      .prepare(
+        'SELECT provider, model, state, reserved_micros, actual_micros FROM reservations WHERE id = ?',
+      )
+      .get(reservation.reservationId) as {
+      provider: string
+      model: string
+      state: string
+      reserved_micros: number
+      actual_micros: number | null
+    }
+    assert.equal(row.provider, provider)
+    assert.equal(row.model, model)
+    assert.equal(row.state, 'reconciled')
+    assert.equal(row.reserved_micros, 70)
+    assert.equal(row.actual_micros, 25)
+    database.close()
+    ledger.close()
+  })
+}
+
+function testRejectedOpenRouterEvidenceLeavesReservationAndBudgetHoldIntact(): void {
+  withTempDir((directory) => {
+    const provider: BudgetProvider = 'openrouter'
+    const model = 'typesafe/jev-1.13'
+    const ledger = openLocalDecisionBudgetLedger({ dbPath: join(directory, 'ledger.sqlite') })
+    configure(ledger, {
+      provider,
+      model,
+      user: { monthly: 60, decision: 60 },
+      providerCaps: { monthly: 60, decision: 60 },
+      modelCaps: { monthly: 60, decision: 60 },
+    })
+    const reservation = ledger.reserve(provider, model)
+    if (reservation.status !== 'reserved') throw new Error('expected OpenRouter reservation')
+    const binding = {
+      reservationId: reservation.reservationId,
+      provider,
+      model,
+      period: reservation.period,
+    }
+
+    assert.equal(
+      verifyNativeUsageForReservation(binding, { answers: [], cost: 0.00001 }),
+      null,
+      'an answerless provider result is not usage evidence',
+    )
+    assert.equal(
+      ledger.reconcileVerified(reservation.reservationId, { actualCostMicros: 10 } as never).status,
+      'unknown',
+    )
+    const wrongModelEvidence = verifyNativeUsageForReservation(
+      { ...binding, model: 'typesafe/jev-1.12' },
+      nativeResult({ costUsd: 0.00001 }),
+    )
+    assert.ok(wrongModelEvidence)
+    assert.equal(
+      ledger.reconcileVerified(reservation.reservationId, wrongModelEvidence).status,
+      'mismatch',
+    )
+    assert.deepEqual(
+      ledger.listUncertainReservations().map(({ reservationId, state }) => [reservationId, state]),
+      [[reservation.reservationId, 'pending']],
+    )
+    assert.equal(ledger.reserve(provider, model).reason, 'monthly-cap')
+    ledger.close()
+  })
+}
+
 async function testSeparateProcessesCannotOverspendConcurrently(): Promise<void> {
   const directory = mkdtempSync(join(tmpdir(), 'pantheon-budget-'))
   try {
@@ -979,6 +1096,8 @@ testPendingReservationSurvivesRestartAndRecovery()
 testOpaqueVerifiedEvidenceRoundsCostsAndRejectsForgeryOrMismatch()
 testVerifiedUsageMustMatchReservationModel()
 testNativeEvidenceOverrunFreezesScopesAndReconcileIsAtomic()
+testOpenRouterSlashModelEvidenceReconcilesAndClosesReservation()
+testRejectedOpenRouterEvidenceLeavesReservationAndBudgetHoldIntact()
 await testSeparateProcessesCannotOverspendConcurrently()
 testVersionOneMigrationPreservesCapsReservationsAndUnknownHolds()
 testVersionTwoMigrationPreservesFutureDatedHoldsAndRequiresFreshConfirmation()

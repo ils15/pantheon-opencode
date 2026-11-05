@@ -1646,6 +1646,8 @@ async function installPass(
   )
   /** Wizard-confirmed Jev activation (target + caps), surfaced on the result. */
   let decisionModelActivation = null
+  /** Cloudflare needs a user-supplied account ID, so the wizard defers it. */
+  let decisionModelDeferredSetup = null
   const stats = summary.opencode
   // Per-call baseline. `stats` is the module-level cumulative summary, so the
   // consistency guard must compare against THIS call's delta, not the total.
@@ -1804,6 +1806,7 @@ async function installPass(
       },
       prompts: opts.deps?.prompts,
       isTTY: opts.deps?.isTTY,
+      env: opts.deps?.env ?? opts.env ?? process.env,
     })
 
     // Resolve the location from the SELECTION before any cancel return: a
@@ -1840,6 +1843,7 @@ async function installPass(
     decisionRouterConfig = migrateDecisionRouterConfig(result.decisionRouterConfig)
     opts.decisionRouterConfig = decisionRouterConfig
     decisionModelActivation = result.decisionModelActivation ?? null
+    decisionModelDeferredSetup = result.decisionModelDeferredSetup ?? null
     if (!dryRun && _lastRun) _lastRun.target = target
   }
 
@@ -3453,6 +3457,7 @@ async function installPass(
         configAdvisories,
         v2Capabilities: version === 'v2' ? v2Capabilities() : null,
         decisionModelActivation,
+        decisionModelDeferredSetup,
         pluginOptions: v2PluginOptions,
       }
     : {
@@ -3460,6 +3465,7 @@ async function installPass(
         applied: true,
         reason: 'applied',
         decisionModelActivation,
+        decisionModelDeferredSetup,
         target,
         runtimeEffects,
         openCodeVersion: version,

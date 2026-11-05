@@ -56,8 +56,8 @@ export async function promptReview(
 /**
  * Collect interactive setup choices before the installer begins any writes.
  *
- * @param {{ components?: string[], defaultComponents?: string[], noMcp?: boolean, prompts?: typeof clack, isTTY?: boolean, getDecisionRouterConfig?: (target: string) => unknown }} [options]
- * @returns {Promise<{ components?: Set<string>, target?: string, decisionRouterConfig?: object, canceled?: boolean, cancelPoint?: string }>}
+ * @param {{ components?: string[], defaultComponents?: string[], noMcp?: boolean, prompts?: typeof clack, isTTY?: boolean, env?: Record<string, string | undefined>, getDecisionRouterConfig?: (target: string) => unknown }} [options]
+ * @returns {Promise<{ components?: Set<string>, target?: string, decisionRouterConfig?: object, decisionModelActivation?: object | null, decisionModelDeferredSetup?: object | null, canceled?: boolean, cancelPoint?: string }>}
  *
  * `cancelPoint` names the setup choice where the user stopped (`components` or
  * `target`), so the caller can print one explainable line and persist the same
@@ -67,6 +67,7 @@ export async function runInteractiveInstall({
   components = [],
   defaultComponents = [],
   noMcp = false,
+  env = process.env,
   getDecisionRouterConfig = () => DEFAULT_DECISION_ROUTER_CONFIG,
   prompts = clack,
   isTTY = isTerminal(),
@@ -138,7 +139,7 @@ export async function runInteractiveInstall({
   // that setup-model writes.
   const jevActivation = await prompts.select({
     message:
-      'Configure the Jev decision model now? (advisory tool for Zeus; one write: selection, consent, caps, period — USD caps are required)',
+      'Configure the Jev decision model now? (Console, OpenRouter, and TypeSafe activate here; Cloudflare is provisioned after install)',
     options: [
       {
         label: 'Skip (default)',
@@ -148,7 +149,7 @@ export async function runInteractiveInstall({
       {
         label: 'OpenCode Console Jev (stock)',
         value: 'opencode-console-jev/jev-1.13',
-        hint: consoleJevHint(process.env),
+        hint: consoleJevHint(env),
       },
       {
         label: 'OpenRouter-hosted Jev',
@@ -158,12 +159,12 @@ export async function runInteractiveInstall({
       {
         label: 'TypeSafe Jev (direct)',
         value: 'typesafe-jev/jev-1.14.0',
-        hint: typesafeJevHint(process.env),
+        hint: typesafeJevHint(env),
       },
       {
-        label: 'Cloudflare Clef',
+        label: 'Cloudflare Clef (provision after install)',
         value: 'cloudflare-workers-jev/clef',
-        hint: cloudflareJevHint(process.env),
+        hint: cloudflareJevHint(env),
       },
     ],
     initialValue: 'skip',
@@ -177,7 +178,8 @@ export async function runInteractiveInstall({
   // file the user sources (the host reads these at plugin registration from
   // its own environment — the installer never edits shell profiles silently).
   const jevFlags = await prompts.multiselect({
-    message: 'Decision layer extras (all advisory/shadow; none change behavior by default):',
+    message:
+      'Decision layer extras (shadow gates are observe-only; specialist access is explicit):',
     options: [
       {
         label: 'J1 risk-score shadow gate',
@@ -191,7 +193,7 @@ export async function runInteractiveInstall({
       },
       {
         label: 'Specialist callers: athena + themis (explicit questions)',
-        value: 'CALLERS=athena,themis',
+        value: 'PANTHEON_JEV_SPECIALIST_CALLERS=athena,themis',
         hint: 'Allowlisted specialists may ask bounded Jev questions mid-task; presets stay Zeus-only',
       },
     ],
@@ -201,26 +203,23 @@ export async function runInteractiveInstall({
   if (cancelPrompt(prompts, jevFlags, 'decisionFlags')) {
     return { canceled: true, cancelPoint: 'decisionFlags' }
   }
-  if (Array.isArray(jevFlags) && jevFlags.length > 0) {
-    const flagsDir = join(process.env.XDG_CONFIG_HOME || `${process.env.HOME}/.config`, 'pantheon')
-    mkdirSync(flagsDir, { recursive: true, mode: 0o700 })
-    const flagsPath = join(flagsDir, 'decision-flags.env')
-    const lines = jevFlags.map((flag) => `export ${flag}`).join('\n')
-    writeFileSync(
-      flagsPath,
-      `# Pantheon decision layer — source from your shell profile
-${lines}
-`,
-    )
-  }
-  // Only known targets activate; anything else (a stale stub, a renamed
-  // option) degrades to skip instead of configuring a wrong route.
-  const KNOWN_JEV_TARGETS = new Set(['opencode-console-jev/jev-1.13', 'typesafe-jev/jev-1.14.0'])
+  // Cloudflare needs an account-specific host provider entry. It remains an
+  // explicit deferred choice; setup-model must receive --account-id before any
+  // route is enabled.
+  const KNOWN_JEV_TARGETS = new Set([
+    'opencode-console-jev/jev-1.13',
+    'openrouter-jev/typesafe/jev-1.13',
+    'typesafe-jev/jev-1.14.0',
+  ])
+  const cloudflareDeferred = jevActivation === 'cloudflare-workers-jev/clef'
   const activationChoice =
     typeof jevActivation === 'string' && KNOWN_JEV_TARGETS.has(jevActivation)
       ? jevActivation
       : 'skip'
   let decisionModelActivation = null
+  const decisionModelDeferredSetup = cloudflareDeferred
+    ? { target: 'cloudflare-workers-jev/clef' }
+    : null
   if (activationChoice !== 'skip') {
     // Caps prompts degrade to the recommended defaults when the prompt
     // implementation has no text input (stubbed tests, restricted TTYs).
@@ -247,11 +246,28 @@ ${lines}
     }
   }
 
+  // Empty/absent caller allowlist is intentionally Zeus-only. Persist that
+  // default too, so rerunning the wizard cannot leave a prior allowlist active.
+  const selectedFlags = Array.isArray(jevFlags) ? jevFlags : []
+  const hasCallerFlag = selectedFlags.some((flag) =>
+    flag.startsWith('PANTHEON_JEV_SPECIALIST_CALLERS='),
+  )
+  const flagsDir = join(env.XDG_CONFIG_HOME || `${env.HOME}/.config`, 'pantheon')
+  mkdirSync(flagsDir, { recursive: true, mode: 0o700 })
+  const flagsPath = join(flagsDir, 'decision-flags.env')
+  const lines = selectedFlags.map((flag) => `export ${flag}`)
+  if (!hasCallerFlag) lines.push('export PANTHEON_JEV_SPECIALIST_CALLERS=')
+  writeFileSync(
+    flagsPath,
+    `# Pantheon decision layer — source from your shell profile\n${lines.join('\n')}\n`,
+  )
+
   return {
     components: selectedComponents,
     target,
     decisionRouterConfig: createDecisionRouterConfig(DECISION_ROUTER_PROVIDERS[0], false),
     decisionModelActivation,
+    decisionModelDeferredSetup,
   }
 }
 
@@ -273,7 +289,8 @@ function typesafeJevHint(env = process.env) {
 }
 
 function cloudflareJevHint(env = process.env) {
-  return env.CLOUDFLARE_API_TOKEN
-    ? '✓ CLOUDFLARE_API_TOKEN detected — pass --account-id at setup-model'
-    : 'Workers AI-scoped CLOUDFLARE_API_TOKEN + accountId; setup-model merges the entry'
+  const tokenHint = env.CLOUDFLARE_API_TOKEN
+    ? 'CLOUDFLARE_API_TOKEN detected'
+    : 'requires a Workers AI-scoped CLOUDFLARE_API_TOKEN'
+  return `${tokenHint}; not activated by this wizard. After install run: npx pantheon-opencode decision-router setup-model cloudflare-workers-jev/clef --account-id=<32-hex-id> --monthly-usd 5 --per-decision-usd 0.10`
 }

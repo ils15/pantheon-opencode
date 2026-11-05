@@ -2,7 +2,9 @@ export type UserDecisionRouterProvider =
   | 'openai-decisions'
   | 'typesafe-jev'
   | 'opencode-console-jev'
-  | 'opencode-console-jev-free'
+  | 'openrouter-jev'
+  | 'vercel-gateway-jev'
+  | 'cloudflare-workers-jev'
 
 export type UserDecisionRouterCandidate = {
   provider: UserDecisionRouterProvider
@@ -22,7 +24,7 @@ export type UserDecisionRouterConfig = {
   enabled_candidates: UserDecisionRouterCandidate[]
 }
 
-export const DECISION_ROUTER_MODELS: Readonly<Record<string, readonly string[]>>
+export const DECISION_ROUTER_MODELS: Readonly<Record<UserDecisionRouterProvider, readonly string[]>>
 export const DECISION_PROVIDER_BUDGET_MAPPING: Readonly<Record<string, string>>
 export const REMOTELY_ELIGIBLE_DECISION_PROVIDERS: readonly string[]
 export const DEFAULT_USER_DECISION_ROUTER_CONFIG: UserDecisionRouterConfig

@@ -349,6 +349,7 @@ const SKIP_REASON_BY_GATE_FAILURE: Readonly<Record<GatedNativeJevFailure, string
   PRESET_INVALID: 'skip-request-invalid',
   RESERVATION_DENIED: 'skip-reservation-denied',
   DECISION_CALL_FAILED: 'skip-decision-call-failed',
+  USAGE_EVIDENCE_UNAVAILABLE: 'skip-usage-evidence-unavailable',
   USAGE_UNRECONCILED: 'skip-usage-unreconciled',
 })
 

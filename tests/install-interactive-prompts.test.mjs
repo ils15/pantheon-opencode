@@ -10,7 +10,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { after, test } from 'node:test'
 import { resolveComponentSelection } from '../scripts/install/component-selection.mjs'
 import { createDecisionRouterConfig } from '../scripts/install/decision-router-config.mjs'
 import {
@@ -22,6 +22,12 @@ import { installOpenCode } from '../scripts/install/opencode.mjs'
 import { createInitialState, writeState } from '../scripts/install/state.mjs'
 
 const CANCEL = Symbol('cancel')
+const WIZARD_HOME = mkdtempSync(join(tmpdir(), 'pantheon-wizard-tests-'))
+const WIZARD_ENV = {
+  HOME: WIZARD_HOME,
+  XDG_CONFIG_HOME: join(WIZARD_HOME, 'config'),
+}
+after(() => rmSync(WIZARD_HOME, { recursive: true, force: true }))
 
 /** The one-line cancel message the installer prints for a given point. */
 const canceledAt = (point) =>
@@ -31,6 +37,7 @@ function fakePrompts({
   components = ['agents'],
   target = 'global',
   jevActivation = 'skip',
+  jevFlags = [],
   confirmed = true,
 } = {}) {
   const calls = []
@@ -41,7 +48,7 @@ function fakePrompts({
     intro: (title) => calls.push(['intro', title]),
     multiselect: async (options) => {
       calls.push(['multiselect', options])
-      return components
+      return options.message?.startsWith('Decision layer extras') ? jevFlags : components
     },
     select: async (options) => {
       calls.push(['select', options])
@@ -63,6 +70,7 @@ test('interactive selection chooses components and location, then asks the Jev a
     defaultComponents: ['agents', 'skills'],
     prompts,
     isTTY: true,
+    env: WIZARD_ENV,
   })
 
   assert.deepEqual([...result.components], ['agents', 'plugins'])
@@ -99,7 +107,7 @@ test('choosing a Jev route activates it with explicit caps; unknown legacy value
   // Stock Console route: activation recorded with the recommended defaults
   // (the stub has no text input, so the caps degrade to defaults).
   const stock = fakePrompts({ jevActivation: 'opencode-console-jev/jev-1.13' })
-  const stockResult = await runInteractiveInstall({ prompts: stock, isTTY: true })
+  const stockResult = await runInteractiveInstall({ prompts: stock, isTTY: true, env: WIZARD_ENV })
   assert.deepEqual(stockResult.decisionModelActivation, {
     target: 'opencode-console-jev/jev-1.13',
     monthly: '5',
@@ -114,14 +122,43 @@ test('choosing a Jev route activates it with explicit caps; unknown legacy value
   // The free variant is REMOVED (limited free quota 429s mid-work): a stale
   // free choice degrades to skip like any unknown target.
   const free = fakePrompts({ jevActivation: 'opencode-console-jev-free/jev-1.13-free' })
-  const freeResult = await runInteractiveInstall({ prompts: free, isTTY: true })
+  const freeResult = await runInteractiveInstall({ prompts: free, isTTY: true, env: WIZARD_ENV })
   assert.equal(freeResult.decisionModelActivation, null, 'removed free route degrades to skip')
 
-  // TypeSafe direct activates its target (the provider block is a manual
-  // prerequisite documented in the wizard hint and reference docs).
+  // TypeSafe direct activates its target and setup-model provisions the host
+  // provider entry before asking the user to supply their key.
   const typesafe = fakePrompts({ jevActivation: 'typesafe-jev/jev-1.14.0' })
-  const typesafeResult = await runInteractiveInstall({ prompts: typesafe, isTTY: true })
+  const typesafeResult = await runInteractiveInstall({
+    prompts: typesafe,
+    isTTY: true,
+    env: WIZARD_ENV,
+  })
   assert.equal(typesafeResult.decisionModelActivation.target, 'typesafe-jev/jev-1.14.0')
+
+  const openrouter = fakePrompts({ jevActivation: 'openrouter-jev/typesafe/jev-1.13' })
+  const openrouterResult = await runInteractiveInstall({
+    prompts: openrouter,
+    isTTY: true,
+    env: WIZARD_ENV,
+  })
+  assert.equal(openrouterResult.decisionModelActivation.target, 'openrouter-jev/typesafe/jev-1.13')
+
+  const cloudflare = fakePrompts({ jevActivation: 'cloudflare-workers-jev/clef' })
+  const cloudflareResult = await runInteractiveInstall({
+    prompts: cloudflare,
+    isTTY: true,
+    env: WIZARD_ENV,
+  })
+  assert.equal(cloudflareResult.decisionModelActivation, null)
+  assert.deepEqual(cloudflareResult.decisionModelDeferredSetup, {
+    target: 'cloudflare-workers-jev/clef',
+  })
+  const cloudflareChoice = cloudflare.calls
+    .find(([, options]) => options?.message?.startsWith('Configure the Jev'))[1]
+    .options.find(({ value }) => value === 'cloudflare-workers-jev/clef')
+  assert.match(cloudflareChoice.label, /provision after install/i)
+  assert.match(cloudflareChoice.hint, /--account-id=<32-hex-id>/)
+  assert.match(cloudflareChoice.hint, /not activated by this wizard/i)
 
   // Legacy metadata spellings and unknown values are NOT targets: direct
   // OpenAI has no native route and 'jev'/'auto' were the old metadata prompt.
@@ -129,8 +166,35 @@ test('choosing a Jev route activates it with explicit caps; unknown legacy value
     const legacyResult = await runInteractiveInstall({
       prompts: fakePrompts({ jevActivation: legacy }),
       isTTY: true,
+      env: WIZARD_ENV,
     })
     assert.equal(legacyResult.decisionModelActivation, null, `${legacy} must not activate`)
+  }
+})
+
+test('wizard writes the runtime specialist caller env name and preserves the Zeus-only default', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'pantheon-wizard-flags-'))
+  const env = { HOME: home, XDG_CONFIG_HOME: join(home, 'config') }
+  const flagsPath = join(env.XDG_CONFIG_HOME, 'pantheon', 'decision-flags.env')
+  try {
+    await runInteractiveInstall({ prompts: fakePrompts(), isTTY: true, env })
+    let generated = readFileSync(flagsPath, 'utf8')
+    assert.match(generated, /^export PANTHEON_JEV_SPECIALIST_CALLERS=$/m)
+    assert.doesNotMatch(generated, /export CALLERS=/)
+
+    await runInteractiveInstall({
+      prompts: fakePrompts({
+        jevFlags: ['PANTHEON_J1_RISK_SCORE=on', 'PANTHEON_JEV_SPECIALIST_CALLERS=athena,themis'],
+      }),
+      isTTY: true,
+      env,
+    })
+    generated = readFileSync(flagsPath, 'utf8')
+    assert.match(generated, /^export PANTHEON_JEV_SPECIALIST_CALLERS=athena,themis$/m)
+    assert.match(generated, /^export PANTHEON_J1_RISK_SCORE=on$/m)
+    assert.doesNotMatch(generated, /export CALLERS=/)
+  } finally {
+    rmSync(home, { recursive: true, force: true })
   }
 })
 
@@ -289,6 +353,7 @@ async function withTTYComponentSelection(args, callback, selectedComponents = ['
         noMcp: selection.noMcp,
         deps: {
           prompts,
+          env: WIZARD_ENV,
           promptReview: async () => true,
           runVisionPrompt: async () => {},
           setupVenv: () => {
@@ -412,6 +477,7 @@ test('the Jev wizard choice makes no provider network request during installatio
       global: true,
       deps: {
         prompts,
+        env: WIZARD_ENV,
         isTTY: true,
         promptReview: async () => true,
         runVisionPrompt: async () => {},
@@ -450,6 +516,7 @@ async function runTTYInstall(target, version) {
     global: true,
     deps: {
       prompts,
+      env: WIZARD_ENV,
       promptReview: async () => true,
       runVisionPrompt: async () => {},
     },

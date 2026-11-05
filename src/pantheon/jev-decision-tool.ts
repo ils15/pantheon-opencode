@@ -143,6 +143,7 @@ export type JevDecisionRunFailure =
   | 'PRESET_INVALID'
   | 'RESERVATION_DENIED'
   | 'DECISION_CALL_FAILED'
+  | 'USAGE_EVIDENCE_UNAVAILABLE'
   | 'USAGE_UNRECONCILED'
 
 interface JevToolContext {
@@ -284,6 +285,14 @@ export async function runGatedNativeJevCall(params: {
       (provider, model) => ledger.canReserve(provider, model).status === 'eligible',
     )
     if (!selection.ok) return { ok: false, reasonCode: selection.reasonCode }
+
+    // Cloudflare Workers AI has no supported native-usage evidence parser yet.
+    // Reject its Jev route before permission, request preparation, or budget
+    // reservation; otherwise the provider could be called and leave a pending
+    // reservation when reconciliation cannot be verified.
+    if (selection.selection.provider === 'cloudflare-workers-jev') {
+      return { ok: false, reasonCode: 'USAGE_EVIDENCE_UNAVAILABLE' }
+    }
 
     if (typeof params.runtime.permissionAssert !== 'function') {
       return { ok: false, reasonCode: 'PERMISSION_UNAVAILABLE' }

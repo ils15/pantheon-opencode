@@ -295,6 +295,138 @@ test('setup-model performs the whole activation chain in one command', async () 
   assert.ok(home.length > 0)
 })
 
+test('setup-model activates the OpenRouter Jev route from the configured provider matrix', async () => {
+  const { home, env } = sandbox()
+  try {
+    await runDecisionRouterCommand(
+      [
+        'setup-model',
+        'openrouter-jev/typesafe/jev-1.13',
+        '--monthly-usd',
+        '5',
+        '--per-decision-usd',
+        '0.10',
+      ],
+      { env, stdout: () => {} },
+    )
+    const config = readUserDecisionRouterConfig({ env })
+    assert.equal(config.enabled, true)
+    assert.equal(config.egress_consent, true)
+    assert.deepEqual(config.selection, {
+      mode: 'explicit',
+      provider: 'openrouter-jev',
+      model: 'typesafe/jev-1.13',
+    })
+    assert.deepEqual(config.enabled_candidates, [
+      { provider: 'openrouter-jev', model: 'typesafe/jev-1.13' },
+    ])
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('Cloudflare setup-model requires a provisionable account entry before enabling the route', async () => {
+  const { home, env } = sandbox()
+  const hostConfigDir = join(env.XDG_CONFIG_HOME, 'opencode')
+  mkdirSync(hostConfigDir, { recursive: true, mode: 0o700 })
+  const hostConfigPath = join(hostConfigDir, 'opencode.json')
+  writeFileSync(hostConfigPath, '{}\n')
+  try {
+    await assert.rejects(
+      runDecisionRouterCommand(
+        [
+          'setup-model',
+          'cloudflare-workers-jev/clef',
+          '--monthly-usd',
+          '5',
+          '--per-decision-usd',
+          '0.10',
+        ],
+        { env, stdout: () => {} },
+      ),
+      /requires --account-id=<32-hex-id>; route was not activated/,
+    )
+    assert.equal(readUserDecisionRouterConfig({ env }).enabled, false)
+    assert.equal(readFileSync(hostConfigPath, 'utf8'), '{}\n')
+
+    await runDecisionRouterCommand(
+      [
+        'setup-model',
+        'cloudflare-workers-jev/clef',
+        '--monthly-usd',
+        '5',
+        '--per-decision-usd',
+        '0.10',
+        '--account-id=0123456789abcdef0123456789abcdef',
+      ],
+      { env, stdout: () => {} },
+    )
+    assert.equal(readUserDecisionRouterConfig({ env }).enabled, true)
+    const hostConfig = JSON.parse(readFileSync(hostConfigPath, 'utf8'))
+    assert.equal(
+      hostConfig.providers['cloudflare-workers-ai'].options.accountId,
+      '0123456789abcdef0123456789abcdef',
+    )
+    assert.equal(hostConfig.providers['cloudflare-workers-ai'].models.clef.type, 'decision')
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('Cloudflare setup-model activates with a matching accountId and rejects a conflicting one', async () => {
+  const accountId = '0123456789abcdef0123456789abcdef'
+  const otherAccountId = 'fedcba9876543210fedcba9876543210'
+  const args = [
+    'setup-model',
+    'cloudflare-workers-jev/clef',
+    '--monthly-usd',
+    '5',
+    '--per-decision-usd',
+    '0.10',
+    `--account-id=${accountId}`,
+  ]
+
+  const matching = sandbox()
+  const matchingConfigDir = join(matching.env.XDG_CONFIG_HOME, 'opencode')
+  mkdirSync(matchingConfigDir, { recursive: true, mode: 0o700 })
+  const matchingConfigPath = join(matchingConfigDir, 'opencode.json')
+  writeFileSync(
+    matchingConfigPath,
+    `${JSON.stringify({ providers: { 'cloudflare-workers-ai': { options: { accountId } } } })}\n`,
+  )
+  try {
+    await runDecisionRouterCommand(args, { env: matching.env, stdout: () => {} })
+    assert.equal(readUserDecisionRouterConfig({ env: matching.env }).enabled, true)
+    assert.equal(
+      JSON.parse(readFileSync(matchingConfigPath, 'utf8')).providers['cloudflare-workers-ai'].options
+        .accountId,
+      accountId,
+    )
+  } finally {
+    rmSync(matching.home, { recursive: true, force: true })
+  }
+
+  const conflicting = sandbox()
+  const conflictingConfigDir = join(conflicting.env.XDG_CONFIG_HOME, 'opencode')
+  mkdirSync(conflictingConfigDir, { recursive: true, mode: 0o700 })
+  const conflictingConfigPath = join(conflictingConfigDir, 'opencode.json')
+  const existingConfig = {
+    providers: { 'cloudflare-workers-ai': { options: { accountId: otherAccountId } } },
+  }
+  const existingConfigText = `${JSON.stringify(existingConfig)}\n`
+  writeFileSync(conflictingConfigPath, existingConfigText)
+  try {
+    await assert.rejects(
+      runDecisionRouterCommand(args, { env: conflicting.env, stdout: () => {} }),
+      /existing accountId conflicts with --account-id/,
+    )
+    assert.equal(readUserDecisionRouterConfig({ env: conflicting.env }).enabled, false)
+    assert.equal(readFileSync(conflictingConfigPath, 'utf8'), existingConfigText)
+  } finally {
+    rmSync(conflicting.home, { recursive: true, force: true })
+  }
+})
+
 test('setup-model --no-consent configures everything except egress consent', async () => {
   const { env } = sandbox()
   await runDecisionRouterCommand(
