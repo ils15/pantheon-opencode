@@ -666,8 +666,8 @@ export function provisionCloudflareHostProvider({ accountId, env = process.env }
     provider.options.accountId = trimmed
   }
   provider.models ??= {}
-  if (provider.models['clef'] === undefined) {
-    provider.models['clef'] = {
+  if (provider.models.clef === undefined) {
+    provider.models.clef = {
       name: 'Clef (Cloudflare Workers AI)',
       type: 'decision',
     }

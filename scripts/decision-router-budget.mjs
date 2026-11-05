@@ -18,9 +18,10 @@ function getVerifiedUsageEvidenceDetails(value) {
 }
 
 // src/pantheon/local-decision-budget.ts
-var SCHEMA_VERSION = 3;
+var SCHEMA_VERSION = 4;
 var VERSION_TWO = 2;
 var APPLICATION_ID = 1346522161;
+var RELEASE_REASON_MAX_LENGTH = 200;
 var DB_FILENAME = "decision-budget.sqlite";
 var LOCAL_DECISION_BUDGET_PROVIDERS = Object.freeze([
   "openai-decisions",
@@ -381,6 +382,70 @@ function openLocalDecisionBudgetLedger(options = {}) {
       return safeChangeCount(result.changes);
     });
   }
+  function releaseHoldsForProvider(provider, reason) {
+    if (typeof provider !== "string" || provider.length < 1 || provider.length > 64) {
+      return { released: 0, freedMicros: 0 };
+    }
+    if (typeof reason !== "string" || reason.length < 1 || reason.length > RELEASE_REASON_MAX_LENGTH) {
+      return { released: 0, freedMicros: 0 };
+    }
+    return inImmediateTransaction(() => {
+      const timestamp = now();
+      const rows = db.prepare(
+        `SELECT id, provider, model, period_utc, reserved_micros, state, created_at_ms
+           FROM reservations WHERE provider = ? AND state IN ('pending', 'uncertain')
+           ORDER BY created_at_ms, id`
+      ).all(provider);
+      if (rows.length === 0) return { released: 0, freedMicros: 0 };
+      const archive = db.prepare(
+        `INSERT INTO released_holds
+           (reservation_id, provider, model, period_utc, reserved_micros, state_at_release,
+            reason, created_at_ms, released_at_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      );
+      let freedMicros = 0;
+      for (const row of rows) {
+        archive.run(
+          row.id,
+          row.provider,
+          row.model,
+          row.period_utc,
+          row.reserved_micros,
+          row.state,
+          reason,
+          row.created_at_ms,
+          timestamp
+        );
+        freedMicros = safeMicrosTotal(freedMicros + row.reserved_micros);
+      }
+      const remove = db.prepare(
+        `DELETE FROM reservations WHERE provider = ? AND state IN ('pending', 'uncertain')`
+      ).run(provider);
+      if (safeChangeCount(remove.changes) !== rows.length) {
+        throw new Error("Reservation rows changed during release");
+      }
+      return { released: rows.length, freedMicros };
+    });
+  }
+  function listReleasedHolds(limit) {
+    const bound = typeof limit === "number" && Number.isInteger(limit) && limit > 0 ? Math.min(limit, 200) : 20;
+    const rows = db.prepare(
+      `SELECT reservation_id, provider, model, period_utc, reserved_micros, state_at_release,
+                reason, created_at_ms, released_at_ms
+         FROM released_holds ORDER BY released_at_ms DESC, reservation_id LIMIT ?`
+    ).all(bound);
+    return rows.map((row) => ({
+      reservationId: row.reservation_id,
+      provider: row.provider,
+      model: row.model,
+      period: row.period_utc,
+      reservedMicros: row.reserved_micros,
+      stateAtRelease: row.state_at_release === "uncertain" ? "uncertain" : "pending",
+      reason: row.reason,
+      createdAtMs: row.created_at_ms,
+      releasedAtMs: row.released_at_ms
+    }));
+  }
   function pruneCompletedPeriods() {
     return inImmediateTransaction(() => {
       let currentPeriod;
@@ -436,6 +501,8 @@ function openLocalDecisionBudgetLedger(options = {}) {
     reconcileVerified,
     listUncertainReservations,
     recoverPendingReservations,
+    releaseHoldsForProvider,
+    listReleasedHolds,
     pruneCompletedPeriods,
     close: () => db.close()
   };
@@ -450,12 +517,16 @@ function ensureSchema(db) {
       if (applicationId !== 0 || tables.length !== 0) {
         throw new Error("Refusing to initialize an unrecognized SQLite database");
       }
-      createSchemaV3(db);
+      createSchemaV4(db);
     } else if (version === 1 && applicationId === APPLICATION_ID) {
       migrateVersionOne(db);
       migrateVersionTwoToThree(db);
+      migrateVersionThreeToFour(db);
     } else if (version === VERSION_TWO && applicationId === APPLICATION_ID) {
       migrateVersionTwoToThree(db);
+      migrateVersionThreeToFour(db);
+    } else if (version === 3 && applicationId === APPLICATION_ID) {
+      migrateVersionThreeToFour(db);
     } else if (version !== SCHEMA_VERSION || applicationId !== APPLICATION_ID) {
       throw new Error("Unsupported or incompatible local decision budget database schema");
     }
@@ -550,8 +621,37 @@ function migrateVersionTwoToThree(db) {
     INSERT INTO ledger_state (id, active_period_utc)
       SELECT id, NULL FROM ledger_state_v2;
     DROP TABLE ledger_state_v2;
+    PRAGMA user_version = 3;
+  `);
+}
+function migrateVersionThreeToFour(db) {
+  validateVersionThreeSchema(db);
+  db.exec(`
+    CREATE TABLE released_holds (
+      reservation_id TEXT PRIMARY KEY NOT NULL,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      period_utc TEXT NOT NULL CHECK (length(period_utc) = 7),
+      reserved_micros INTEGER NOT NULL CHECK (reserved_micros > 0),
+      state_at_release TEXT NOT NULL CHECK (state_at_release IN ('pending', 'uncertain')),
+      reason TEXT NOT NULL CHECK (length(reason) BETWEEN 1 AND ${RELEASE_REASON_MAX_LENGTH}),
+      created_at_ms INTEGER NOT NULL,
+      released_at_ms INTEGER NOT NULL
+    ) STRICT;
+    CREATE INDEX released_holds_released_idx ON released_holds (released_at_ms, reservation_id);
     PRAGMA user_version = ${SCHEMA_VERSION};
   `);
+}
+function createSchemaV4(db) {
+  createSchemaV3(db);
+  migrateVersionThreeToFour(db);
+}
+function validateVersionThreeSchema(db) {
+  db.prepare(
+    `SELECT id, provider, model, period_utc, reserved_micros, actual_micros, state,
+            created_at_ms, updated_at_ms FROM reservations LIMIT 0`
+  );
+  db.prepare("SELECT id, active_period_utc FROM ledger_state LIMIT 0");
 }
 function migrateVersionOne(db) {
   validateVersionOneSchema(db);

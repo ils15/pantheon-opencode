@@ -54,7 +54,7 @@ const SCENARIOS = [
   { state: 'Migrate the open issues to the new milestone labels via the API', expect: 'iris' },
   { state: 'Decide which stale session summaries are worth keeping', expect: 'mnemosyne' },
   { state: 'Fuzz the input parser with malformed payloads to find crashes', expect: 'nyx' },
-  { state: 'Verify the export module against the compliance checklist', expect: 'talos' },
+  { state: 'Fix the typo that makes the CLI parse --verbose as the output path', expect: 'talos' },
   { state: 'Polish the onboarding screen layout and micro-interactions', expect: 'aphrodite' },
 ]
 
@@ -81,7 +81,7 @@ function callDecisions(modelRef, state) {
           { value: 'aphrodite', description: 'UI and frontend craft' },
           { value: 'mnemosyne', description: 'memory curation and recall' },
           { value: 'nyx', description: 'chaos and adversarial testing' },
-          { value: 'talos', description: 'validation and compliance checks' },
+          { value: 'talos', description: 'hotfix express lane - small direct fixes, no ceremony' },
           { value: 'none', description: 'no specialist fits' },
         ],
       },
