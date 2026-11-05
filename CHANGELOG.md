@@ -10,6 +10,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.3-beta.14] - 2026-11-05
+
+## 🆕 What's New
+- pantheon-tui loads on every boot again: the server stub now exports the definition object host 2.2.5 requires (was ~3 load failures per boot, forever).
+- verify accepts optional `state` evidence and reports UNVERIFIABLE for the 0.35–0.65 band — false and "could not tell" are no longer the same verdict.
+- The skills-search popularity parser reads K/M counts — the most popular results no longer vanish from the skills.sh tier.
+- The installer never leaves the plugin registered into the volatile npx cache (the intermittent plugin-death root cause); the preflight also covers pure-V2 configs now.
+- prometheus's description names observability/tracing — the reform's domain split is now visible to the router.
+
 ## [v1.6.3-beta.13] - 2026-11-05
 
 ## 🆕 What's New
