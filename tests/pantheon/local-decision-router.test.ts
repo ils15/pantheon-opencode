@@ -45,6 +45,35 @@ function testDisabledByDefault(): void {
   }
 }
 
+function testGateStatusInfluencesTheDecision(): void {
+  // D1 (field report beta.11→12): the gate token is a contract input, not an
+  // echo — an open review/approval gate abstains, a quiet one routes.
+  const open = recommendLocalDecision(
+    sampleInput({ domains: ['hermes'], gateStatus: 'review_required' }),
+    enabledEnv,
+  )
+  assert.equal(open.decision, 'abstain')
+  assert.equal(open.reasonCode, 'GATE_OPEN')
+  assert.equal(open.gateStatus, 'review_required')
+  const approval = recommendLocalDecision(
+    sampleInput({ domains: ['hermes'], gateStatus: 'human_approval_required' }),
+    enabledEnv,
+  )
+  assert.equal(approval.decision, 'abstain')
+  assert.equal(approval.reasonCode, 'GATE_OPEN')
+  const quiet = recommendLocalDecision(
+    sampleInput({ domains: ['hermes'], gateStatus: 'none' }),
+    enabledEnv,
+  )
+  assert.equal(quiet.decision, 'route')
+  assert.equal(quiet.reasonCode, 'CANONICAL_ROLE')
+  const unresolved = recommendLocalDecision(
+    sampleInput({ domains: ['hermes'], gateStatus: 'unresolved' }),
+    enabledEnv,
+  )
+  assert.equal(unresolved.decision, 'route')
+}
+
 function testRoutesOnlyExactCanonicalSpecialistRoles(): void {
   for (const role of PANTHEON_AGENTS) {
     const recommendation = recommendLocalDecision(sampleInput({ domains: [role] }), enabledEnv)
@@ -309,6 +338,7 @@ testRecommendationIsDeterministic()
 testOrchestrationFastPathIsAdvisoryAndCatalogFiltered()
 testOrchestrationAbstainsWhenCandidatesAreNotUniquelyResolved()
 testOrchestrationFiltersRoutingGrantsAndRequiresZeus()
+testGateStatusInfluencesTheDecision()
 await testLocalPolicyLoadsCanonicalRoutingAndGrantData()
 
 console.log('local decision router tests passed')

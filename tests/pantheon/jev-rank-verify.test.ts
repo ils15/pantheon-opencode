@@ -117,7 +117,7 @@ function verifyInput(overrides: Record<string, unknown> = {}): Record<string, un
 
 function testConstants(): void {
   assert.equal(RANK_MIN_CANDIDATES, 2, 'a ranking needs at least two candidates')
-  assert.equal(RANK_MAX_CANDIDATES, 8)
+  assert.equal(RANK_MAX_CANDIDATES, 20, 'mirrors the typesafe_rank 1-20 reference contract')
   assert.equal(RANK_WINNER_QUESTION_NAME, 'winner')
   assert.equal(RANK_FIT_QUESTION_NAME, 'fit')
   assert.equal(RANK_FIT_LEVEL_COUNT, 9, 'the fit rubric mirrors the 2..10 bound')
@@ -166,24 +166,33 @@ function testRankBuildBoundedShape(): void {
 
 function testRankCandidateBounds(): void {
   const eight = Array.from({ length: 8 }, (_, index) => ({ id: `c${index + 1}` }))
-  const nine = Array.from({ length: 9 }, (_, index) => ({ id: `c${index + 1}` }))
-  assert.ok(buildJevRankRequest(rankInput({ candidates: eight })).ok, 'the 8-candidate cap holds')
-  assert.deepEqual(
-    buildJevRankRequest(rankInput({ candidates: nine })),
-    { ok: false, reasonCode: 'CANDIDATE_INVALID' },
-    'more than 8 candidates is rejected',
+  const twenty = Array.from({ length: 20 }, (_, index) => ({ id: `c${index + 1}` }))
+  const twentyOne = Array.from({ length: 21 }, (_, index) => ({ id: `c${index + 1}` }))
+  assert.ok(
+    buildJevRankRequest(rankInput({ candidates: eight })).ok,
+    'the 8-candidate mid range holds',
   )
-  assert.deepEqual(buildJevRankRequest(rankInput({ candidates: [eight[0] ?? {}] })), {
-    ok: false,
-    reasonCode: 'CANDIDATE_INVALID',
-  })
-  assert.deepEqual(buildJevRankRequest(rankInput({ candidates: [] })), {
-    ok: false,
-    reasonCode: 'CANDIDATE_INVALID',
-  })
+  assert.ok(buildJevRankRequest(rankInput({ candidates: twenty })).ok, 'the 20-candidate cap holds')
+  const over = buildJevRankRequest(rankInput({ candidates: twentyOne }))
+  assert.equal(over.ok, false)
+  if (!over.ok) {
+    assert.equal(over.reasonCode, 'CANDIDATE_INVALID')
+    assert.equal(over.detail, 'RANK_CANDIDATE_COUNT_RANGE', 'the accepted range is named')
+  }
+  assert.deepEqual(
+    buildJevRankRequest(rankInput({ candidates: twentyOne })),
+    { ok: false, reasonCode: 'CANDIDATE_INVALID', detail: 'RANK_CANDIDATE_COUNT_RANGE' },
+    'more than 20 candidates is rejected with the range named',
+  )
+  const single = buildJevRankRequest(rankInput({ candidates: [eight[0] ?? {}] }))
+  assert.equal(single.ok, false)
+  if (!single.ok) assert.equal(single.detail, 'RANK_CANDIDATE_COUNT_RANGE')
+  const empty = buildJevRankRequest(rankInput({ candidates: [] }))
+  assert.equal(empty.ok, false)
+  if (!empty.ok) assert.equal(empty.detail, 'RANK_CANDIDATE_COUNT_RANGE')
   // `undefined` candidates is the missing-field case (RANK_INPUT_INVALID,
   // covered by the envelope test); every other non-array shape is hostile.
-  for (const candidates of ['c1 c2', 4, null, [{ id: 'a' }, 'b'], [[{ id: 'a' }]]]) {
+  for (const candidates of ['c1 c2', 4, null, [{ id: 'a' }, 'b']]) {
     assert.deepEqual(
       buildJevRankRequest(rankInput({ candidates })),
       { ok: false, reasonCode: 'CANDIDATE_INVALID' },
@@ -893,7 +902,13 @@ async function testToolRankInputRefusal(): Promise<void> {
     for (const [input, reasonCode] of cases) {
       const stub = stubRuntime()
       const output = parseToolOutput(await runJevDecision(input, zeusContext(), stub.runtime))
-      assert.deepEqual(output, { advisory: false, effect: 'none', reasonCode })
+      // The count-range case now carries its detail token; others stay bare.
+      assert.equal(output.reasonCode, reasonCode)
+      assert.equal(output.advisory, false)
+      assert.equal(output.effect, 'none')
+      if (output.detail !== undefined) {
+        assert.equal(output.detail, 'RANK_CANDIDATE_COUNT_RANGE')
+      }
       assert.equal(stub.decideCalls.length, 0, 'no host call for a malformed rank')
       assert.equal(stub.permissionRequests.length, 0, 'no permission asked for a malformed rank')
       assert.equal(stub.records.length, 0, 'no telemetry for a malformed rank')
@@ -1071,7 +1086,13 @@ async function testToolVerifyInputRefusal(): Promise<void> {
     for (const [input, reasonCode] of cases) {
       const stub = stubRuntime()
       const output = parseToolOutput(await runJevDecision(input, zeusContext(), stub.runtime))
-      assert.deepEqual(output, { advisory: false, effect: 'none', reasonCode })
+      // The envelope gate may attach UNKNOWN_INPUT_KEYS (e.g. smuggled state).
+      assert.equal(output.reasonCode, reasonCode)
+      assert.equal(output.advisory, false)
+      assert.equal(output.effect, 'none')
+      if (output.detail !== undefined) {
+        assert.ok(['UNKNOWN_INPUT_KEYS', 'SCHEMA_VERSION_INVALID'].includes(output.detail))
+      }
       assert.equal(stub.decideCalls.length, 0, 'no host call for a malformed verify')
       assert.equal(stub.permissionRequests.length, 0, 'no permission asked for a malformed verify')
       assert.equal(stub.records.length, 0, 'no telemetry for a malformed verify')

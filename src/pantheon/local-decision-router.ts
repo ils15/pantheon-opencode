@@ -32,6 +32,7 @@ export interface LocalDecisionInput {
 
 export type LocalDecisionRouteReasonCode =
   | 'DISABLED'
+  | 'GATE_OPEN'
   | 'INVALID_INPUT'
   | 'NO_DOMAIN'
   | 'AMBIGUOUS_DOMAIN'
@@ -192,6 +193,15 @@ function evaluateEnabledInput(input: unknown): LocalDecisionRecommendation {
     }
   }
 
+  // D1 (field report beta.11→12): gateStatus must influence the output. An
+  // open review/approval gate abstains — the advisory never routes around a
+  // gate; resolving the gate is the caller's move, then this router answers.
+  if (gateStatus === 'review_required' || gateStatus === 'human_approval_required') {
+    return {
+      ...createAbstention('GATE_OPEN', complexity.reasonCode, gateStatus),
+      complexity,
+    }
+  }
   return {
     schemaVersion: 1,
     policyVersion: LOCAL_DECISION_ROUTER_POLICY_VERSION,

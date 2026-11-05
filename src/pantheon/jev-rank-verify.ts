@@ -54,8 +54,8 @@ import { NATIVE_DECISION_MAX_PROMPT_LENGTH } from './v2-native-decisions.ts'
 
 /** A ranking needs at least two candidates to choose between. */
 export const RANK_MIN_CANDIDATES = 2
-/** Above eight, ranking degrades to explicit questions with a real rubric. */
-export const RANK_MAX_CANDIDATES = 8
+/** Mirrors the typesafe_rank reference contract (1-20 accepted upstream). */
+export const RANK_MAX_CANDIDATES = 20
 
 /** Question name of the rank's choice question. */
 export const RANK_WINNER_QUESTION_NAME = 'winner'
@@ -164,7 +164,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 // ─── Rank: request building ──────────────────────────────────────────────
 
-const RANK_ENVELOPE_KEYS: ReadonlySet<string> = new Set([
+export const RANK_ENVELOPE_KEYS: ReadonlySet<string> = new Set([
   'schemaVersion',
   'mode',
   'state',
@@ -173,13 +173,24 @@ const RANK_ENVELOPE_KEYS: ReadonlySet<string> = new Set([
 
 export type JevRankBuildFailure = 'RANK_INPUT_INVALID' | 'CANDIDATE_INVALID' | 'STATE_INVALID'
 
+/** Per-cause token attached to a rank build refusal (e.g. the accepted count range). */
+export type JevRankBuildDetail = 'RANK_CANDIDATE_COUNT_RANGE'
+
 export type JevRankBuild =
   | { readonly ok: true; readonly request: Omit<NativeDecisionRequest, 'model'> }
-  | { readonly ok: false; readonly reasonCode: JevRankBuildFailure }
+  | {
+      readonly ok: false
+      readonly reasonCode: JevRankBuildFailure
+      readonly detail?: JevRankBuildDetail
+    }
 
 export type JevRankPreparation =
   | { readonly ok: true; readonly request: NativeDecisionRequest }
-  | { readonly ok: false; readonly reasonCode: JevRankBuildFailure }
+  | {
+      readonly ok: false
+      readonly reasonCode: JevRankBuildFailure
+      readonly detail?: JevRankBuildDetail
+    }
 
 /**
  * Validate the rank tool input and build the model-less request. The state is
@@ -205,7 +216,7 @@ export function buildJevRankRequest(input: unknown): JevRankBuild {
   if (rawCandidates === undefined) return { ok: false, reasonCode: 'RANK_INPUT_INVALID' }
   if (!Array.isArray(rawCandidates)) return { ok: false, reasonCode: 'CANDIDATE_INVALID' }
   if (rawCandidates.length < RANK_MIN_CANDIDATES || rawCandidates.length > RANK_MAX_CANDIDATES) {
-    return { ok: false, reasonCode: 'CANDIDATE_INVALID' }
+    return { ok: false, reasonCode: 'CANDIDATE_INVALID', detail: 'RANK_CANDIDATE_COUNT_RANGE' }
   }
   const seen = new Set<string>()
   const choices: Array<{ value: string; description?: string }> = []
@@ -274,7 +285,11 @@ export function prepareJevRankRequest(
 
 // ─── Verify: request building ────────────────────────────────────────────
 
-const VERIFY_ENVELOPE_KEYS: ReadonlySet<string> = new Set(['schemaVersion', 'mode', 'claims'])
+export const VERIFY_ENVELOPE_KEYS: ReadonlySet<string> = new Set([
+  'schemaVersion',
+  'mode',
+  'claims',
+])
 
 export type JevVerifyBuildFailure = 'VERIFY_INPUT_INVALID' | 'CLAIM_INVALID'
 

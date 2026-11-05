@@ -356,7 +356,7 @@ export function encodeQualityScoreReason(input: {
  * ANY other key — `state`, `questions`, or a smuggled content field — refuses
  * the preparation, so no content slot exists even at the input boundary.
  */
-const REVIEW_ENVELOPE_KEYS: ReadonlySet<string> = new Set([
+export const REVIEW_ENVELOPE_KEYS: ReadonlySet<string> = new Set([
   'schemaVersion',
   'mode',
   'delegateId',

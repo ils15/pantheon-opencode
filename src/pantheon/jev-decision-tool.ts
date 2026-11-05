@@ -24,8 +24,11 @@
  */
 import { readUserDecisionRouterConfig } from '../../scripts/install/decision-router-config.mjs'
 import {
+  checkJevEnvelope,
   consumeJevDecisionResult,
   isJevDecisionPreset,
+  JEV_EXPLICIT_ENVELOPE_KEYS,
+  JEV_PRESET_ENVELOPE_KEYS,
   type JevDecisionPreparation,
   type JevHostSkill,
   type NativeJevRouteFailure,
@@ -41,12 +44,15 @@ import {
   J4_QUALITY_SCORE_POINT,
   type QualityScoreEvaluation,
   qualityVerdict,
+  REVIEW_ENVELOPE_KEYS,
 } from './jev-quality-score.ts'
 import {
   buildJevRankRequest,
   buildJevVerifyRequest,
   consumeJevRankResult,
   consumeJevVerifyResult,
+  RANK_ENVELOPE_KEYS,
+  VERIFY_ENVELOPE_KEYS,
 } from './jev-rank-verify.ts'
 import { mapGateFailureToSkipReason } from './jev-risk-gate.ts'
 import {
@@ -152,8 +158,12 @@ interface JevToolContext {
   agent?: unknown
 }
 
-function refusal(reasonCode: JevDecisionRunFailure): string {
-  return JSON.stringify({ advisory: false, effect: 'none', reasonCode })
+function refusal(reasonCode: JevDecisionRunFailure, detail?: string): string {
+  return JSON.stringify(
+    detail === undefined
+      ? { advisory: false, effect: 'none', reasonCode }
+      : { advisory: false, effect: 'none', reasonCode, detail },
+  )
 }
 
 function isNonBlankString(value: unknown): value is string {
@@ -453,12 +463,46 @@ export async function runJevDecision(
   if (caller !== 'zeus' && requested.mode !== undefined) {
     return refusal('CALLER_NOT_ALLOWED')
   }
+  // The ONE envelope gate every path passes through before its builder:
+  // schemaVersion required, unknown keys rejected — explicit questions,
+  // presets, review, rank and verify alike (beta.10 claimed this contract;
+  // beta.12 applies it uniformly). Builders keep their semantic checks.
+  const envelopeKeys =
+    requested.mode === undefined
+      ? JEV_EXPLICIT_ENVELOPE_KEYS
+      : requested.mode === 'review'
+        ? REVIEW_ENVELOPE_KEYS
+        : requested.mode === 'rank'
+          ? RANK_ENVELOPE_KEYS
+          : requested.mode === 'verify'
+            ? VERIFY_ENVELOPE_KEYS
+            : isJevDecisionPreset(requested.mode)
+              ? JEV_PRESET_ENVELOPE_KEYS
+              : undefined
+  if (envelopeKeys !== undefined) {
+    const envelope = checkJevEnvelope(input, envelopeKeys)
+    if (!envelope.ok) {
+      const reasonCode: JevDecisionRunFailure =
+        requested.mode === undefined
+          ? 'QUESTIONS_INVALID'
+          : requested.mode === 'review'
+            ? 'REVIEW_INPUT_INVALID'
+            : requested.mode === 'rank'
+              ? 'RANK_INPUT_INVALID'
+              : requested.mode === 'verify'
+                ? 'VERIFY_INPUT_INVALID'
+                : 'PRESET_INVALID'
+      return refusal(reasonCode, envelope.detail)
+    }
+  }
+
   // Review mode (J4): the bounded request is built before any gate work, and
   // an invalid review input is a tool-surface refusal — same class as the
   // caller check, never a gate failure. The v3.1 rank and verify modes follow
   // the same prebuilt-request pattern (no gate work for a malformed input);
   // neither has a telemetry point — they are tool modes, not shadow gates.
   let prebuilt: Omit<NativeDecisionRequest, 'model'> | undefined
+  let candidateSource: JevDecisionPreparation['candidateSource'] | undefined
   if (requested.mode === 'review') {
     const prepared = buildJevReviewRequest(input ?? {})
     if (!prepared.ok) {
@@ -476,7 +520,7 @@ export async function runJevDecision(
     prebuilt = prepared.request
   } else if (requested.mode === 'rank') {
     const prepared = buildJevRankRequest(input ?? {})
-    if (!prepared.ok) return refusal(prepared.reasonCode)
+    if (!prepared.ok) return refusal(prepared.reasonCode, prepared.detail)
     prebuilt = prepared.request
   } else if (requested.mode === 'verify') {
     const prepared = buildJevVerifyRequest(input ?? {})
@@ -501,12 +545,16 @@ export async function runJevDecision(
         : requested.mode === undefined
           ? prepareJevDecisionRequest(route, input ?? {})
           : isJevDecisionPreset(requested.mode)
-            ? prepareJevPresetRequest(
-                route,
-                requested.mode,
-                input ?? {},
-                requested.mode === 'skills' ? await readHostSkills(runtime) : undefined,
-              )
+            ? (async () => {
+                const prepared = prepareJevPresetRequest(
+                  route,
+                  requested.mode,
+                  input ?? {},
+                  requested.mode === 'skills' ? await readHostSkills(runtime) : undefined,
+                )
+                if (prepared.ok) candidateSource = prepared.candidateSource
+                return prepared
+              })()
             : { ok: false as const, reasonCode: 'PRESET_INVALID' as const },
   })
   if (!result.ok) {
@@ -639,6 +687,7 @@ export async function runJevDecision(
       billing: result.call.selection.route.billing,
     },
     ...(requested.mode === undefined ? {} : { preset: requested.mode }),
+    ...(candidateSource === undefined ? {} : { candidateSource }),
     answers: advice.answers,
     missing: advice.missing,
     usage: { costUsd: advice.costUsd, tokens: advice.tokens },
@@ -654,7 +703,7 @@ const TOOL_DESCRIPTION =
   'host), `mode: "delegation"` to pick ' +
   'a specialist, `mode: "review"` to score a finished delegated result against named criteria ' +
   '(advisory quality score + needs-review flag; the result content itself is never sent — ' +
-  'shape metrics and criteria only), `mode: "rank"` to pick the best of 2-8 named candidates ' +
+  'shape metrics and criteria only), `mode: "rank"` to pick the best of 2-20 named candidates ' +
   '(returns the winner and its fit score; no full ordering), `mode: "verify"` to check 1-4 ' +
   'named claims (PASS/FAIL per claim; any refusal, timeout or malformed answer is BLOCK, ' +
   'fail-closed), or pass explicit typed `questions` (choice, score, ' +
@@ -784,7 +833,7 @@ const JEV_INPUT_SCHEMA: Record<string, unknown> = {
     candidates: {
       type: 'array',
       minItems: 2,
-      maxItems: 8,
+      maxItems: 20,
       items: RANK_CANDIDATE_SCHEMA,
     },
     claims: {
