@@ -93,7 +93,7 @@ see [Quick Start](docs/QUICKSTART.md).
 
 - **14 specialized agents** with one orchestrator, implementation specialists,
   a quality gate, and supporting roles.
-- **20 skills** and reusable instructions for planning, building, reviewing,
+- **21 skills** and reusable instructions for planning, building, reviewing,
   and documenting work.
 - **5 local MCP servers** for project memory, persistence, resources, confined
   script execution, and vision.

@@ -7,6 +7,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **skills** — `prompt-refinery`: a rough, vague, or one-line request is refined into a structured execution contract (objective, numbered scope slices, acceptance criteria per slice, deliverables, open questions with stated defaults) shown to the user for confirm-or-adjust BEFORE executing. One planning turn on the session model; decision models answer scalars and do not write prose. Granted to zeus (routing.yml + frontmatter), lock updated.
+
+### Changed
+
+- **agents** — nyx returns to its owner-intended observability & cost-analytics identity (tracing, per-agent cost dashboards — chaos/adversarial as secondary), prometheus drops the observability words; the live-probe choice descriptions follow.
+- **routing** — skills mode now offers the FULL local catalog + host skills (bound 24): the lexical prefilter dropped the exact skill the state described (codemap → none 0.88 from a prefiltered pool); at $0.00003 per call recall wins. `candidateSource` stays ('full-catalog' | 'host-skills').
+
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
