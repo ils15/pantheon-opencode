@@ -71,6 +71,11 @@ function readArgValue(name) {
   return undefined
 }
 
+/** Render a cap in a repair hint without changing the validator's grammar. */
+function formatUsdCapForRepair(value) {
+  return typeof value === 'string' && /^\.\d+$/.test(value) ? `0${value}` : value
+}
+
 function printUsage() {
   console.log('Pantheon OpenCode — Multi-agent orchestration platform')
   console.log('')
@@ -994,6 +999,8 @@ async function main() {
       const monthly = readArgValue('--decision-monthly-usd') ?? wizardActivation?.monthly ?? '5'
       const perDecision =
         readArgValue('--decision-per-decision-usd') ?? wizardActivation?.perDecision ?? '0.10'
+      const repairMonthly = formatUsdCapForRepair(monthly)
+      const repairPerDecision = formatUsdCapForRepair(perDecision)
       const noConsent = process.argv.includes('--decision-no-consent')
       console.log('')
       if (isDryRun) {
@@ -1019,7 +1026,7 @@ async function main() {
             `  ${S.jevConfigureFailed(error instanceof Error ? error.message : String(error))}`,
           )
           console.error(
-            `  Fix later with: npx pantheon-opencode decision-router setup-model ${decisionTarget} ${decisionTarget.startsWith('cloudflare-workers-jev/') ? '--account-id=<32-hex-id> ' : ''}--monthly-usd ${monthly} --per-decision-usd ${perDecision}`,
+            `  Fix later with: npx pantheon-opencode decision-router setup-model ${decisionTarget} ${decisionTarget.startsWith('cloudflare-workers-jev/') ? '--account-id=<32-hex-id> ' : ''}--monthly-usd ${repairMonthly} --per-decision-usd ${repairPerDecision}`,
           )
         }
       }

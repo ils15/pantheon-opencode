@@ -64,6 +64,38 @@ test('--help documents the apply-gate flags and the restore command', () => {
   }
 })
 
+test('init repair hints normalize leading-dot USD caps without relaxing validation', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'pantheon-init-cap-repair-'))
+  try {
+    const result = run(
+      [
+        'init',
+        '--project',
+        '--headless',
+        '--yes',
+        '--no-mcp',
+        '--components',
+        'agents',
+        '--version',
+        'v1',
+        '--decision-model',
+        'opencode-console-jev/not-a-model',
+        '--decision-monthly-usd',
+        '.5',
+        '--decision-per-decision-usd',
+        '.5',
+      ],
+      cwd,
+      { HOME: join(cwd, 'home'), XDG_CONFIG_HOME: join(cwd, 'xdg') },
+    )
+    const output = `${result.stdout}\n${result.stderr}`
+    assert.match(output, /Fix later with:.*--monthly-usd 0\.5 --per-decision-usd 0\.5/)
+    assert.doesNotMatch(output, /--monthly-usd \.5|--per-decision-usd \.5/)
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
 test('uninstall command is exposed with project and global scope options', () => {
   const cwd = mkdtempSync(join(tmpdir(), 'pantheon-init-uninstall-'))
   try {
