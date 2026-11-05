@@ -424,7 +424,7 @@ function main(args = process.argv.slice(2)) {
   }
   const date = new Date().toISOString().slice(0, 10)
   const outPath = resolve(`bench/results/mcp-usage-audit-${date}.md`)
-  writeFileSync(outPath, report + '\n')
+  writeFileSync(outPath, `${report}\n`)
   console.log(`audit written: ${outPath}`)
 }
 

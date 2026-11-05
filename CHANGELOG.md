@@ -7,6 +7,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+<!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. -->
+
+## [v1.6.3-beta.11] - 2026-11-05
+
+## 🆕 What's New
+- Measured MCP usage policy across the roster: durable stores only, milestone checkpoints, one vision pass per image — a governance ladder byte-identical in all 13 specialists, contract-pinned.
+- The skill-discovery pipeline with the trust cascade: installed pool → canonical Anthropic catalog → skills.sh → raw GitHub; Jev ranks, the user reviews and installs.
+- Dead-route holds release (ledger schema v4): the fix for budgets frozen forever by holds of removed routes ($1.00 freed in the field).
+- The roster reform measured: nyx re-scoped to chaos & adversarial, talos aligned to the real hotfix identity, domain-artifact ownership for all 14 agents.
+- Jev validated end to end in the field: N4 dead, verify field-verified, sandbox install 28/28 with all five MCPs live.
+
 ### Added
 
 - **agents** — The roster reform, measured: the governance ladder (session context → free local selector → one typed Jev question → MCP last resort, with the durable-store, milestone-checkpoint and one-pass-vision rules) now sits byte-identical in all 13 specialist agents, pinned by `tests/agent-mcp-policy.test.mjs`; nyx is re-scoped to its intended chaos & adversarial identity (its observability body duplicated prometheus and left fuzzing uncovered — the observability material moved to prometheus); mnemosyne's description names its memory-MCP curation ownership; the live scorecard's talos scenario now matches the real hotfix-express-lane identity. Post-reform live scorecard: 14/16 exact, 8/8 on the zero-dispatch agents.
@@ -14,13 +26,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **routing** — `decision-router holds release --provider <dead> --reason "<why>"`: the administrative correction for holds of routes that no longer exist (they can never reconcile and froze budget forever — the mechanical story behind the mid-month Jev die-offs). Ledger schema v4 adds the immutable `released_holds` archive; live providers are refused, their holds roll off with the period. First field application: the 10 `jev-free` fossils of the removed free route released, $1.00 of reserved budget freed.
 - **mcp** — `bench/mcp-usage-audit.mjs`: the measured native-MCP usage audit (transcript, memory db, persistence kv, bench lines → dated report in `bench/results/`; reports are local-only, they carry bounded session excerpts). First run measured the whole field history: 5.7k memory touches, 2.5k persistence, 84 vision — the verdicts and cost model live in `docs/mcp-tools.md`.
 
+- **agents** — The 14-agent domain-artifact analysis (docs/agents/README.md): each specialist owns its domain's durable file — aphrodite keeps docs/ui/conventions.md current whenever the project has a graphical surface, demeter docs/data, hermes docs/api, prometheus docs/infra — read-first, propose-when-missing, update-only-what-you-changed; new exclusive per-agent tools fail the measured bar (grants already enforce the exclusivity that pays).
+
+
 ### Changed
 
 - **agents** — The zeus usage policy is measured, not decorative: `memory_store` takes durable, reusable facts only (session narration goes to a checkpoint or nowhere; per-project namespaces; update instead of duplicate), checkpoints fire at milestones only (never per turn, never re-saving an unchanged key), and vision runs one pass per image (zeus and aphrodite) — each vision call is real gateway spend. The contradictory store phrases that produced the narration excess are gone, pinned by `tests/agent-mcp-policy.test.mjs`.
-
-
-<!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. -->
 
 ## [v1.6.3-beta.10] - 2026-11-04
 

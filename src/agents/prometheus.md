@@ -394,3 +394,12 @@ Document each chain in routing.yml under the agent's delegation entry.
 
 ## Skills
 `security-hardening`, `git-workflow-and-versioning`
+
+## Domain conventions doc
+
+If this project has a real infrastructure/pipeline surface, keep `docs/infra/conventions.md` current as you
+work: stack versions, decided patterns, the conventions this project actually
+follows. Read it first when it exists; propose creating it when the surface
+exists and the file does not. Update only what you changed — a stale
+convention line is worse than a missing one. The next session starts from
+this file, not from your memory.

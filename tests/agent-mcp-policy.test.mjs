@@ -3,8 +3,8 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-const agent = (name) => readFileSync(fileURLToPath(new URL(`../src/agents/${name}.md`, import.meta.url)), 'utf8')
-const agentsDir = new URL('../src/agents/', import.meta.url)
+const agent = (name) =>
+  readFileSync(fileURLToPath(new URL(`../src/agents/${name}.md`, import.meta.url)), 'utf8')
 const AGENT_NAMES = [
   'zeus',
   'apollo',
@@ -56,7 +56,6 @@ test('no agent instructs always-on memory or persistence usage', () => {
     )
   }
 })
-
 
 const MCP_GOVERNANCE_BLOCK = [
   '## MCP governance (identical ladder, grant-aware)',

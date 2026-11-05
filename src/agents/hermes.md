@@ -278,3 +278,12 @@ When completing a task, provide:
 
 ## Skills
 Implementação: `tdd-with-agents`, `incremental-implementation`, `code-review-checklist`, `git-workflow-and-versioning`
+
+## Domain conventions doc
+
+If this project has a real backend/API surface, keep `docs/api/conventions.md` current as you
+work: stack versions, decided patterns, the conventions this project actually
+follows. Read it first when it exists; propose creating it when the surface
+exists and the file does not. Update only what you changed — a stale
+convention line is worse than a missing one. The next session starts from
+this file, not from your memory.
