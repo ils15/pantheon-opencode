@@ -10,6 +10,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.3-beta.15] - 2026-11-05
+
+## 🆕 What's New
+- "Agent not found" fixed: the installer stops writing the cwd-relative agent `source` provenance and heals it away from existing installs — the host 2.2.5 resolved it against the session cwd and the whole roster vanished outside the config dir.
+
 ## [v1.6.3-beta.14] - 2026-11-05
 
 ## 🆕 What's New
