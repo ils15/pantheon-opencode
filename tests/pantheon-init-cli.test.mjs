@@ -89,10 +89,7 @@ test('init repair hints normalize leading-dot USD caps without relaxing validati
       { HOME: join(cwd, 'home'), XDG_CONFIG_HOME: join(cwd, 'xdg') },
     )
     const output = `${result.stdout}\n${result.stderr}`
-    assert.match(
-      output,
-      /Fix later with:.*--monthly-usd 0\.5 --per-decision-usd 0\.5/,
-    )
+    assert.match(output, /Fix later with:.*--monthly-usd 0\.5 --per-decision-usd 0\.5/)
     assert.doesNotMatch(output, /--monthly-usd \.5|--per-decision-usd \.5/)
   } finally {
     rmSync(cwd, { recursive: true, force: true })

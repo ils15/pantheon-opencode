@@ -136,10 +136,10 @@ test('USD cap validation rejects leading-dot decimals but accepts canonical deci
   const { home, env } = sandbox()
   try {
     await assert.rejects(
-      runDecisionRouterCommand(
-        ['caps', 'user', '--monthly-usd', '1', '--per-decision-usd', '.5'],
-        { env, stdout: () => {} },
-      ),
+      runDecisionRouterCommand(['caps', 'user', '--monthly-usd', '1', '--per-decision-usd', '.5'], {
+        env,
+        stdout: () => {},
+      }),
       {
         name: 'DecisionRouterUsageError',
         message: 'USD cap must be a non-negative decimal with at most six fractional digits',
