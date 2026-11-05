@@ -2600,20 +2600,6 @@ async function installPass(
   // A. Parse canonical agent config from src/agents/*.md frontmatter
   //    and merge into opencode.json config.
   // --------------------------------------------------------------------
-  function getAgentSources(agentPrefix) {
-    const agentsDir = join(ROOT, 'src', 'agents')
-    if (!existsSync(agentsDir)) return {}
-    const sources = {}
-    const files = readdirSync(agentsDir).filter(
-      (f) => (f.endsWith('.agent.md') || f.endsWith('.md')) && f.toLowerCase() !== 'readme.md',
-    )
-    for (const f of files) {
-      const name = f.replace(/\.(agent\.)?md$/, '')
-      sources[name] = `${agentPrefix}/${name}.md`
-    }
-    return sources
-  }
-
   function readAgentConfigFromCanonical() {
     const agentsDir = join(ROOT, 'src', 'agents')
     if (!existsSync(agentsDir)) return {}
@@ -2664,8 +2650,6 @@ async function installPass(
   const configuredMcpServersForPolicies =
     version === 'v2' ? configuredMcpServerNames(config.mcp) : []
   const canonicalAgentConfig = readAgentConfigFromCanonical()
-  const agentSources = getAgentSources(agentPrefix)
-
   if (config.agent === undefined) config.agent = {}
 
   if (config.agent && typeof config.agent === 'object' && !Array.isArray(config.agent)) {
@@ -2678,7 +2662,12 @@ async function installPass(
         // Preserve user-customized fields (model, provider, mcp, etc.)
         const existing = config.agent[agentName]
         if (!existing || typeof existing !== 'object' || Array.isArray(existing)) continue
-        if (agentSources[agentName]) existing.source = agentSources[agentName]
+        // HEAL: older installs wrote `source: "agents/<name>.md"` (cwd-relative
+        // provenance). Host 2.2.5 resolves that path against the SESSION cwd,
+        // so every agent vanished outside the config dir (field report
+        // beta.14: "Agent not found: zeus"). The host loads agents from the
+        // agents directory without this field — remove it wherever found.
+        delete existing.source
         for (const field of MANAGED_FIELDS) {
           if (field in agentCfg) {
             existing[field] = JSON.parse(JSON.stringify(agentCfg[field]))
@@ -2689,7 +2678,6 @@ async function installPass(
       } else {
         // ── New agent ──
         const newAgent = {}
-        if (agentSources[agentName]) newAgent.source = agentSources[agentName]
         if (agentCfg.description) newAgent.description = agentCfg.description
 
         // Copy all framework-managed fields from canonical config
