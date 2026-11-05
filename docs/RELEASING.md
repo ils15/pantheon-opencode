@@ -393,6 +393,28 @@ the same tool list as the canonical server.
 
 ---
 
+## Where a release may be cut (branch hygiene, 2026-11-05)
+
+Releases are cut **only** from the release line (`release/<X.Y.Z>`):
+
+1. Work happens on a feature branch — or in a task worktree at
+   `<project-parent>/.pantheon-worktrees/<repo>/<task>` (AGENTS.md
+   convention). A feature branch/worktree NEVER bumps versions, NEVER edits
+   the CHANGELOG's promoted sections, and NEVER runs `npm publish` — the
+   tarball must be the artifact of the release line's tip.
+2. Landing: PR into `release/<X.Y.Z>`; merge. The version bump
+   (`apply --beta`) and the curated `## [X.Y.Z-beta.N]` CHANGELOG section are
+   committed on the release line (as the `chore(release): ...` commit), then
+   the `release.yml` dispatch runs the sanctioned publish.
+3. Manual `npm publish` is a recovery exception only: when it has to happen
+   outside the workflow (e.g. the workflow's publish path was bypassed), the
+   very next step is the `release.yml` recovery dispatch (or, minimally, the
+   immutable `vX.Y.Z-beta.N` tag on the release SHA) so the published
+   artifact is always tag-backed.
+4. Worktrees are task-scoped and removed when the task lands; stale task
+   worktrees from finished work are deleted (branches: delete when fully
+   merged; keep unmerged refs for review).
+
 ## Beta Releases (explicit dispatch with `release_channel=beta`)
 
 Publication is authorized **only** by an explicit `workflow_dispatch` of
