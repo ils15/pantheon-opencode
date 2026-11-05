@@ -386,8 +386,9 @@ export function printWorktreeGuidance({
   projectRoot = process.cwd(),
   interactive = false,
   dryRun = false,
+  enabled = true,
 } = {}) {
-  if (!interactive || dryRun || !tty()) return
+  if (!interactive || dryRun || !tty() || enabled === false) return
 
   const recommendation = getWorktreeRecommendation(projectRoot)
   const rows = [

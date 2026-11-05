@@ -1427,6 +1427,8 @@ export function setupRuntimePhase(
     error(S.runtimeFailed(err.message))
     warning(S.runtimeSkippedMcp)
     stats.warnings += 1
+    if (!Array.isArray(stats.warningMessages)) stats.warningMessages = []
+    stats.warningMessages.push(S.runtimeSkippedMcp)
     stats.errors += 1
     return false
   }
@@ -2406,6 +2408,10 @@ async function installPass(
       // payload and the host config are already in place.
       warning(`Could not disable the builtin Context sidebar block: ${cause.message}`)
       stats.warnings++
+      if (!Array.isArray(stats.warningMessages)) stats.warningMessages = []
+      stats.warningMessages.push(
+        `Could not disable the builtin Context sidebar block: ${cause.message}`,
+      )
     }
   }
   if (componentSet.has('plugins')) advancePhase()
@@ -3091,6 +3097,8 @@ async function installPass(
     for (const message of mcp.warnings ?? []) {
       warning(message)
       stats.warnings += 1
+      if (!Array.isArray(stats.warningMessages)) stats.warningMessages = []
+      stats.warningMessages.push(message)
     }
   }
 
@@ -3421,19 +3429,27 @@ async function installPass(
     process.stdout.write(`  [OK] ${created} component(s) installed\n`)
     if (skipped > 0)
       process.stdout.write(`  ${colors.dim('\u2014')} ${skipped} already up-to-date\n`)
-    if (warnings > 0)
+    // The warning TEXT restates here — the count alone sent users to doctor to
+    // learn what had already scrolled past.
+    for (const message of stats.warningMessages ?? []) {
+      process.stdout.write(`  [WARN] ${message}\n`)
+    }
+    if (warnings > 0 && (stats.warningMessages ?? []).length === 0) {
+      process.stdout.write(`  [WARN] ${warnings} warning(s)\n`)
+    }
+    if (warnings > 0) {
       process.stdout.write(
-        `  [WARN] ${warnings} warning(s) — run 'pantheon-opencode doctor' for details\n`,
+        `  ${colors.dim("Run 'pantheon-opencode doctor' for the full health check")}\n`,
       )
+    }
     process.stdout.write('\n')
-    process.stdout.write(`  ${colors.bold('Next steps:')}\n`)
-    process.stdout.write(`  ${colors.dim('\u2022')} Configure agents in opencode.json\n`)
-    process.stdout.write(`  ${colors.dim('\u2022')} Run 'pantheon-opencode doctor' to verify\n`)
-    process.stdout.write(
-      `  ${colors.dim('\u2022')} Run 'opencode' to start using Pantheon agents\n`,
-    )
-    process.stdout.write('\n')
-    printWorktreeGuidance({ projectRoot: process.cwd(), interactive: true })
+    // Worktree guidance is a project-install concept: a global install run
+    // from $HOME derived a nonsense `<home>/.pantheon-worktrees/<user>` path.
+    printWorktreeGuidance({
+      projectRoot: process.cwd(),
+      interactive: true,
+      enabled: !(opts.global ?? isGlobalConfigDir(target)),
+    })
   }
 
   // Beta 11 Setup phase 3: report whether this call APPLIED, so the caller can
