@@ -53,10 +53,13 @@ export const PANTHEON_AGENT_CATALOG: readonly DecisionCatalogEntry[] = Object.fr
   { id: 'themis', description: 'Quality and security review gate.' },
   {
     id: 'prometheus',
-    description: 'Infrastructure, Docker, CI, observability and tracing, model providers.',
+    description: 'Infrastructure, Docker, CI, model providers and cloud costs.',
   },
   { id: 'hephaestus', description: 'AI pipelines: LangChain, RAG, vector stores.' },
-  { id: 'nyx', description: 'Chaos and adversarial testing: fuzzing, hostile inputs, boundaries.' },
+  {
+    id: 'nyx',
+    description: 'Observability and cost analytics: tracing, per-agent metrics; chaos and fuzz testing.',
+  },
   { id: 'gaia', description: 'Remote sensing and geospatial analysis.' },
   { id: 'iris', description: 'GitHub branches, pull requests, issues, releases.' },
   { id: 'mnemosyne', description: 'Memory bank and ADR authoring on request.' },

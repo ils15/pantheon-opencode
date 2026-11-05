@@ -413,7 +413,10 @@ function testPresets(): void {
     billing: 'OpenCode Console',
   }
 
-  // Skills preset: the local prefilter shortlist (≤ 4) plus `none`.
+  // Skills preset: the FULL local catalog (field report beta.15 §skills — the
+  // lexical prefilter dropped the exact skill the state described; the
+  // catalog is 12 entries and the choice bound is 24, so recall wins) + host
+  // skills + `none`.
   const stacked = prepareJevPresetRequest(route, 'skills', {
     state: 'implement a FastAPI backend endpoint with pytest',
   })
@@ -423,8 +426,13 @@ function testPresets(): void {
     assert.equal(question.type, 'choice')
     assert.equal(question.name === 'stack' && 'choices' in question, true)
     const choices = (question as { choices: Array<{ value: string }> }).choices
-    assert.ok(choices.length >= 2 && choices.length <= 5, `shortlist+none: ${choices.length}`)
+    assert.ok(choices.length >= 12 && choices.length <= 24, `catalog+none: ${choices.length}`)
     assert.ok(choices.some((option) => option.value === 'none'))
+    assert.ok(
+      choices.some((option) => option.value === 'codemap'),
+      'every local skill is offered — no lexical prefilter',
+    )
+    assert.equal(stacked.candidateSource, 'full-catalog')
   }
 
   // No local match: the whole skill catalog is offered instead, plus `none`.
@@ -522,7 +530,7 @@ function testPresets(): void {
   // Defect 2: the candidate path is reported, never silent.
   const stackedSource = prepareJevPresetRequest(route, 'skills', { state: 'qwertyuiop' })
   assert.ok(stackedSource.ok)
-  if (stackedSource.ok) assert.equal(stackedSource.candidateSource, 'full-catalog')
+  if (stackedSource.ok) assert.equal(stackedSource.candidateSource, 'full-catalog')  // always now
 
   // Defect 3: the envelope applies to presets at the TOOL gate (the single
   // point before any builder) — schemaVersion required, no unknown keys.

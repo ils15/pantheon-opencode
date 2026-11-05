@@ -22,6 +22,7 @@ skills:
   - agent-coordination
   - artifact-management
   - auto-continue
+  - prompt-refinery
   - codemap
   - context-compression
   - incremental-implementation
@@ -92,6 +93,18 @@ call before firing it.
 - When in doubt: the local selector answers free, the Jev tool answers
   cheap and typed, an MCP call is the LAST resort for state the session
   cannot reconstruct.
+
+## Vague multi-part request? Refine into a contract first
+
+When the user's request spans multiple concerns without explicit acceptance
+criteria (refactor + fix + redesign in one paragraph), refine it into a
+structured contract BEFORE executing: objective, numbered scope slices,
+acceptance criteria per slice, deliverables, and open questions with your
+recommended defaults. Load `skill: prompt-refinery` for the shape and rules.
+Show the contract once for confirm-or-adjust — silence proceeds with the
+stated defaults — then route the confirmed slices through the normal ladder.
+One refinement turn on the session model; never a dialogue, never a Jev call
+(decision models answer scalars, they do not write prose).
 
 ## Missing capability? Find a skill before inventing one
 

@@ -585,11 +585,15 @@ export function prepareJevPresetRequest(
     return { ok: true, request: Object.freeze(request) }
   }
 
-  const shortlist = selectPantheonSkills(state).skillIds
+  // Field report beta.15 §skills: the lexical prefilter dropped the exact
+  // skill the state described (codemap → none 0.88 from a prefiltered pool).
+  // The local catalog is 12 entries and the choice bound is 24 — recall beats
+  // a filter that saves half of $0.00003. The full local catalog + host
+  // skills always ride; `candidateSource` keeps reporting which pool the
+  // caller got.
   const hostHasSkills = Array.isArray(hostSkills) && hostSkills.length > 0
-  const candidateSource: JevSkillCandidateSource =
-    shortlist.length > 0 ? 'prefilter' : hostHasSkills ? 'host-skills' : 'full-catalog'
-  const pool = shortlist.length > 0 ? shortlist : CATALOG_SKILL_IDS
+  const candidateSource: JevSkillCandidateSource = hostHasSkills ? 'host-skills' : 'full-catalog'
+  const pool = CATALOG_SKILL_IDS
   const descriptions = new Map(PANTHEON_SKILL_CATALOG.map((entry) => [entry.id, entry.description]))
   const request = {
     model: route.model,

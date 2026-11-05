@@ -4,7 +4,7 @@
 
 Skills are reference modules loaded on demand by agents. Each skill provides domain-specific knowledge — architecture patterns, security checklists, optimization strategies, and implementation guides. Agents load skills when their task matches the skill's description, keeping context focused and token-efficient.
 
-There are **20 skills** divided into **5 domains**.
+There are **21 skills** divided into **5 domains**.
 
 ## Skills by Domain
 
