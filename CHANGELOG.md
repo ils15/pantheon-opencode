@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **routing** — `decision-router holds release --provider <dead> --reason "<why>"`: the administrative correction for holds of routes that no longer exist (they can never reconcile and froze budget forever — the mechanical story behind the mid-month Jev die-offs). Ledger schema v4 adds the immutable `released_holds` archive; live providers are refused, their holds roll off with the period. First field application: the 10 `jev-free` fossils of the removed free route released, $1.00 of reserved budget freed.
 - **mcp** — `bench/mcp-usage-audit.mjs`: the measured native-MCP usage audit (transcript, memory db, persistence kv, bench lines → dated report in `bench/results/`; reports are local-only, they carry bounded session excerpts). First run measured the whole field history: 5.7k memory touches, 2.5k persistence, 84 vision — the verdicts and cost model live in `docs/mcp-tools.md`.
 
 ### Changed

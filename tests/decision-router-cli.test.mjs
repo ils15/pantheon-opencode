@@ -11,6 +11,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { test } from 'node:test'
 import { runDecisionRouterCommand } from '../scripts/decision-router.mjs'
 import { readUserDecisionRouterConfig } from '../scripts/install/decision-router-config.mjs'
@@ -188,6 +189,92 @@ test('holds lists unresolved reservations without mutating them', async () => {
     } finally {
       reopened.close()
     }
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('holds release refuses live providers and demands provider and reason', async () => {
+  const { home, env } = sandbox()
+  try {
+    // The strict named-option parser rejects an incomplete flag set before
+    // the command's own usage line is reachable.
+    await assert.rejects(
+      runDecisionRouterCommand(['holds', 'release', '--provider', 'jev-free'], { env }),
+      /Missing or extra command options/,
+    )
+    await assert.rejects(
+      runDecisionRouterCommand(['holds', 'release', '--reason', 'no provider'], { env }),
+      /Missing or extra command options/,
+    )
+    await assert.rejects(
+      runDecisionRouterCommand(['holds', 'release'], { env }),
+      /Missing or extra command options/,
+    )
+    await assert.rejects(
+      runDecisionRouterCommand(
+        ['holds', 'release', '--provider', 'openrouter-jev', '--reason', 'x'],
+        { env },
+      ),
+      /live catalog route/,
+    )
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('holds release archives dead-route holds and frees the reserved budget', async () => {
+  const { home, env } = sandbox()
+  try {
+    const { openLocalDecisionBudgetLedger, resolveLocalDecisionBudgetDbPath } = await import(
+      '../src/pantheon/local-decision-budget.ts'
+    )
+    const path = resolveLocalDecisionBudgetDbPath(env)
+    const seeded = openLocalDecisionBudgetLedger({
+      dbPath: path,
+      clock: () => Date.parse('2026-01-10T00:00:00.000Z'),
+    })
+    try {
+      seeded.configureUserCaps({ monthlyCapMicros: 5_000_000, perDecisionCapMicros: 1_000_000 })
+      seeded.confirmBudgetPeriod(null, '2026-01').status
+    } finally {
+      seeded.close()
+    }
+    // A dead route's hold cannot be reserved through the API; legacy ledgers
+    // carry it as a plain row.
+    const dead = new DatabaseSync(path)
+    dead
+      .prepare(
+        'INSERT INTO reservations (id, provider, model, period_utc, reserved_micros, actual_micros, state, created_at_ms, updated_at_ms) VALUES (?,?,?,?,?,NULL,?,11,11)',
+      )
+      .run('hold-dead-1', 'jev-free', 'jev-1.13-free', '2026-01', 100_000, 'pending')
+    dead.close()
+
+    const output = []
+    await runDecisionRouterCommand(
+      ['holds', 'release', '--provider', 'jev-free', '--reason', 'route removed'],
+      {
+        env,
+        stdout: (line) => output.push(line),
+      },
+    )
+    const report = output.join('\n')
+    assert.match(report, /Released 1 hold\(s\) of provider jev-free/)
+    assert.match(report, /freed 0\.10 USD/)
+    assert.match(report, /Archived hold-dead-1/)
+    assert.match(report, /state_at_release=pending/)
+    assert.match(report, /reason="route removed"/)
+
+    const reopened = openLocalDecisionBudgetLedger({ dbPath: path })
+    try {
+      assert.equal(reopened.listUncertainReservations().length, 0)
+      assert.equal(reopened.listReleasedHolds(10).length, 1)
+    } finally {
+      reopened.close()
+    }
+    const listing = []
+    await runDecisionRouterCommand(['holds'], { env, stdout: (line) => listing.push(line) })
+    assert.match(listing.join('\n'), /No unresolved provider holds/)
   } finally {
     rmSync(home, { recursive: true, force: true })
   }
@@ -398,8 +485,8 @@ test('Cloudflare setup-model activates with a matching accountId and rejects a c
     await runDecisionRouterCommand(args, { env: matching.env, stdout: () => {} })
     assert.equal(readUserDecisionRouterConfig({ env: matching.env }).enabled, true)
     assert.equal(
-      JSON.parse(readFileSync(matchingConfigPath, 'utf8')).providers['cloudflare-workers-ai'].options
-        .accountId,
+      JSON.parse(readFileSync(matchingConfigPath, 'utf8')).providers['cloudflare-workers-ai']
+        .options.accountId,
       accountId,
     )
   } finally {

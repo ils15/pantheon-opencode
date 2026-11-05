@@ -65,6 +65,7 @@ export function decisionRouterHelp() {
     '  setup [options]                           computed artifact diff; writes only with --apply',
     '  preview                                   alias of `setup` (never writes)',
     '  holds                                     unresolved reservations, read-only',
+    '  holds release --provider <p> --reason "<why>"  archive+release dead-route holds',
     '',
     'Explicit actions (each one changes exactly one thing):',
     '  select local|auto|<provider>/<model>       record a selection; enables nothing',
@@ -277,6 +278,49 @@ export async function runDecisionRouterCommand(
         'creates or migrates the ledger, and unresolved holds are never auto-released. ' +
         'Reconcile or resolve them explicitly before pruning their period.',
     )
+    return
+  }
+
+  if (command === 'holds' && rest[0] === 'release') {
+    // Administrative correction for holds of routes that no longer exist:
+    // a dead provider can never reconcile, so its holds would freeze budget
+    // forever. Live providers are refused — their holds roll off with the
+    // period. Every released row is archived with the mandatory reason.
+    const [, ...releaseArgs] = rest
+    const options = parseNamedOptions(releaseArgs, ['--provider', '--reason'])
+    const provider = options['--provider']
+    const reason = options['--reason']
+    if (provider === undefined || reason === undefined) {
+      throw new DecisionRouterUsageError(
+        'Usage: decision-router holds release --provider <dead-provider> --reason "<why>"',
+      )
+    }
+    if (Object.hasOwn(DECISION_ROUTER_MODELS, provider)) {
+      throw new DecisionRouterUsageError(
+        `Provider ${provider} is a live catalog route — its holds are not releasable; ` +
+          'they reconcile or roll off with the budget period.',
+      )
+    }
+    const ledger = openLedger(env)
+    try {
+      const result = ledger.releaseHoldsForProvider(provider, reason)
+      if (result.released === 0) {
+        stdout(`No unresolved holds for provider ${provider}.`)
+      } else {
+        stdout(
+          `Released ${result.released} hold(s) of provider ${provider}; ` +
+            `freed ${(result.freedMicros / 1_000_000).toFixed(2)} USD of reserved budget.`,
+        )
+        for (const hold of ledger.listReleasedHolds(5)) {
+          stdout(
+            `Archived ${hold.reservationId}: provider=${hold.provider} model=${hold.model} ` +
+              `state_at_release=${hold.stateAtRelease} reason="${hold.reason}"`,
+          )
+        }
+      }
+    } finally {
+      ledger.close()
+    }
     return
   }
 
