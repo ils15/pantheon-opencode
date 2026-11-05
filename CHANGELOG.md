@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.3-beta.17] - 2026-11-05
+
+## 🆕 What's New
+- The J1 gate is now a ladder: off / shadow / warn / enforce (PANTHEON_J1_RISK_SCORE). Enforce awaits the bounded gate and DENIES a high-risk tool call in-session, with the threshold configurable (PANTHEON_J1_ENFORCE_THRESHOLD, default 0.8). Shadow stays the default-on behavior.
+- CALLER_NOT_ALLOWED refusals now teach the fix: allowlist the caller via PANTHEON_JEV_SPECIALIST_CALLERS or ask Zeus to route.
+- Plan persistence contract: Athena returns the plan as her response; Zeus persists PLAN.md — no more refused write attempts on deepwork plans.
+
 ## [v1.6.3-beta.16] - 2026-11-05
 
 ## 🆕 What's New
