@@ -705,8 +705,9 @@ const TOOL_DESCRIPTION =
   '(advisory quality score + needs-review flag; the result content itself is never sent — ' +
   'shape metrics and criteria only), `mode: "rank"` to pick the best of 2-20 named candidates ' +
   '(returns the winner and its fit score; no full ordering), `mode: "verify"` to check 1-4 ' +
-  'named claims (PASS/FAIL per claim; any refusal, timeout or malformed answer is BLOCK, ' +
-  'fail-closed), or pass explicit typed `questions` (choice, score, ' +
+  'named claims, with optional `state` evidence the claims are judged against ' +
+  '(verdicts PASS, FAIL, or UNVERIFIABLE for the 0.35-0.65 band; any refusal, timeout or ' +
+  'malformed answer is BLOCK, fail-closed), or pass explicit typed `questions` (choice, score, ' +
   'predicate). Invalid-input refusals carry a `detail` token naming the exact cause. Returns ' +
   'probabilistic answers with confidence. Requires decision-router egress ' +
   'consent and budget caps; asks host permission first. It never dispatches agents, runs ' +

@@ -624,13 +624,38 @@ function mergeMissing(target, source) {
  * `src/plugin.ts` or `src/plugins/pantheon-hooks.ts` is not evidence that the
  * plugin belongs to Pantheon and must be preserved verbatim.
  */
+/**
+ * Field report (beta.13 §2): a plugin registration into the npx cache
+ * (`/_npx/<hash>/`) is VOLATILE — other npx-booted MCPs (playwright, rea)
+ * recycle that tree while the host is running, and the plugin dies
+ * intermittently with ENOENT. When THIS installer itself runs from the cache,
+ * the freshly registered path must be the stable global install instead when
+ * one exists; otherwise the registration stays volatile and says so.
+ */
+export function resolveStablePantheonRoot(root = ROOT) {
+  const normalized = root.replaceAll('\\', '/')
+  if (!normalized.includes('/_npx/')) return { root, volatile: false }
+  const globalCandidate = resolve(
+    dirname(process.execPath),
+    '..',
+    'lib',
+    'node_modules',
+    'pantheon-opencode',
+  )
+  if (existsSync(join(globalCandidate, 'src', 'plugin-v2', 'index.ts'))) {
+    return { root: globalCandidate, volatile: false }
+  }
+  return { root, volatile: true }
+}
+
 export function resolveInstalledPlugin(plugin) {
   if (typeof plugin !== 'string') return plugin
   const normalized = normalizePluginRef(plugin)
-  if (PANTHEON_PLUGIN_IDENTITIES.has(normalized)) return join(ROOT, normalized)
+  const stable = resolveStablePantheonRoot()
+  if (PANTHEON_PLUGIN_IDENTITIES.has(normalized)) return join(stable.root, normalized)
   // Legacy V2 file ref (pre-directory-contract): migrate to the installed
   // plugin directory so the beta loader accepts the entry.
-  if (normalized === PANTHEON_V2_LEGACY_FILE) return join(ROOT, PANTHEON_V2_PLUGIN)
+  if (normalized === PANTHEON_V2_LEGACY_FILE) return join(stable.root, PANTHEON_V2_PLUGIN)
   const identity = managedPluginIdentity(plugin)
   if (identity !== null && isAbsolute(normalized)) {
     return INSTALLED_PANTHEON_PLUGIN_PATHS.get(identity) ?? plugin
@@ -2794,30 +2819,38 @@ async function installPass(
     // `npm install`. Copying every entry across would turn "silently ignored"
     // into "config fails to load", so only loadable entries move; the rest stay
     // where they are and the warning names the exact failure mode.
+    // Preflight (runs for pure-V2 configs too — a stale or volatile Pantheon
+    // registration must be named even when the singular `plugin` key is long
+    // gone). Field report beta.13 §2: an EXISTING `_npx` path is worse than a
+    // missing one — it passes the existsSync check at install time and dies
+    // intermittently later, so volatility is named and the re-registration
+    // below repoints to the stable tree.
+    if (Array.isArray(config.plugins)) {
+      for (const ref of config.plugins) {
+        const refPath = typeof ref === 'string' ? ref : ref?.package
+        if (typeof refPath !== 'string' || managedPluginIdentity(refPath) === null) continue
+        const absolute = isAbsolute(refPath) ? refPath : resolve(target, refPath)
+        if (!existsSync(absolute)) {
+          warning(
+            `Existing Pantheon registration points to ${refPath}, which no longer exists` +
+              (refPath.includes('_npx/')
+                ? ' (the npx cache recycled that copy) — re-registering to the freshly installed tree'
+                : ' — re-registering to the freshly installed tree'),
+          )
+        } else if (refPath.replaceAll('\\', '/').includes('/_npx/')) {
+          warning(
+            `Existing Pantheon registration points into the volatile npx cache (${refPath}) — ` +
+              'other npx-booted MCPs recycle that tree and kill the plugin mid-session; ' +
+              're-registering to a stable tree',
+          )
+        }
+      }
+    }
     if (Array.isArray(config.plugin)) {
       // Strip Pantheon refs FIRST, exactly as the V1 branch does: a stale V1
       // .ts path is not a registrable entry on this host and must not be moved.
       config.plugin = removePantheonPluginReferences(config.plugin)
       if (!Array.isArray(config.plugins)) config.plugins = []
-      // Preflight: a Pantheon-owned registration whose target directory is
-      // missing means the previous install was invalidated (the npx cache
-      // recycles `_npx/<hash>` dirs — field evidence: a registered copy
-      // vanished and the host silently dropped the plugin, so the whole tool
-      // surface disappeared until the next init). Name the cause loudly
-      // before the re-registration below fixes it.
-      for (const ref of Array.isArray(config.plugins) ? config.plugins : []) {
-        const refPath = typeof ref === 'string' ? ref : ref?.package
-        if (typeof refPath !== 'string' || managedPluginIdentity(refPath) === null) continue
-        const absolute = isAbsolute(refPath) ? refPath : resolve(target, refPath)
-        if (existsSync(absolute)) continue
-        const staleNpx = refPath.includes('_npx/')
-        warning(
-          `Existing Pantheon registration points to ${refPath}, which no longer exists` +
-            (staleNpx
-              ? ' (the npx cache recycled that copy) — re-registering to the freshly installed tree'
-              : ' — re-registering to the freshly installed tree'),
-        )
-      }
 
       const migrated = []
       const blocked = []
@@ -2890,6 +2923,14 @@ async function installPass(
     // Legacy refs (npm shorthand, the old src/plugin-v2.ts file path) are
     // recognized via managedPluginIdentity and already stripped above, so
     // they migrate here.
+    const stableRoot = resolveStablePantheonRoot()
+    if (stableRoot.volatile) {
+      warning(
+        'This installer runs from the npx cache and no stable global install of ' +
+          'pantheon-opencode was found; the plugin registration will point into the ' +
+          'volatile cache and can break mid-session. Fix: npm install -g pantheon-opencode, then re-run init.',
+      )
+    }
     const resolvedV2 = resolveInstalledPlugin(PANTHEON_V2_PLUGIN)
     config.plugins = config.plugins.filter(
       (plugin) => pluginReferenceIdentity(plugin) !== pluginReferenceIdentity(resolvedV2),

@@ -51,7 +51,10 @@ export const PANTHEON_AGENT_CATALOG: readonly DecisionCatalogEntry[] = Object.fr
   { id: 'aphrodite', description: 'Frontend specialist: React, TypeScript, WCAG.' },
   { id: 'demeter', description: 'Database specialist: SQLAlchemy, migrations, queries.' },
   { id: 'themis', description: 'Quality and security review gate.' },
-  { id: 'prometheus', description: 'Infrastructure, Docker, CI, and model providers.' },
+  {
+    id: 'prometheus',
+    description: 'Infrastructure, Docker, CI, observability and tracing, model providers.',
+  },
   { id: 'hephaestus', description: 'AI pipelines: LangChain, RAG, vector stores.' },
   { id: 'nyx', description: 'Chaos and adversarial testing: fuzzing, hostile inputs, boundaries.' },
   { id: 'gaia', description: 'Remote sensing and geospatial analysis.' },
