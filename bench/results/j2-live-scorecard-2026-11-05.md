@@ -21,7 +21,7 @@ unlike the offline harness that measures the plumbing.
 | Migrate the open issues to the new milestone lab… | iris | iris | 0 |
 | Decide which stale session summaries are worth k… | mnemosyne | mnemosyne | 0 |
 | Fuzz the input parser with malformed payloads to… | nyx | nyx | 0 |
-| Verify the export module against the compliance … | talos | talos | 0 |
+| Fix the typo that makes the CLI parse --verbose … | talos | talos | 0 |
 | Polish the onboarding screen layout and micro-in… | aphrodite | aphrodite | 0 |
 
 Total cost: $0.000000. Honest caveat: one run is a smoke
