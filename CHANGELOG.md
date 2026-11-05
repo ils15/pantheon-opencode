@@ -7,6 +7,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **mcp** — `bench/mcp-usage-audit.mjs`: the measured native-MCP usage audit (transcript, memory db, persistence kv, bench lines → dated report in `bench/results/`; reports are local-only, they carry bounded session excerpts). First run measured the whole field history: 5.7k memory touches, 2.5k persistence, 84 vision — the verdicts and cost model live in `docs/mcp-tools.md`.
+
+### Changed
+
+- **agents** — The zeus usage policy is measured, not decorative: `memory_store` takes durable, reusable facts only (session narration goes to a checkpoint or nowhere; per-project namespaces; update instead of duplicate), checkpoints fire at milestones only (never per turn, never re-saving an unchanged key), and vision runs one pass per image (zeus and aphrodite) — each vision call is real gateway spend. The contradictory store phrases that produced the narration excess are gone, pinned by `tests/agent-mcp-policy.test.mjs`.
+
+
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 

@@ -430,6 +430,12 @@ the current project root per request while preserving the trusted
 `PANTHEON_HOME` fallback. See [Memory](docs/MEMORY.md) for store separation and
 [MCP tools](docs/mcp-tools.md) for details.
 
+Native-MCP usage is measured, not assumed: `node bench/mcp-usage-audit.mjs`
+writes a dated audit of real memory/persistence/vision/code-mode/resource
+usage (reports stay local — they carry bounded session excerpts), and the
+agent usage policies derived from it are documented in
+[MCP tools](docs/mcp-tools.md).
+
 The release install gate's tool canary loads the installed tarball's V2 plugin
 entry under OpenCode 2.0.30 and verifies `hashline_edit` registration, Code Mode
 visibility, and a bounded edit in an isolated project. It does not prove npm
