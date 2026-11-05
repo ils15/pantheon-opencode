@@ -415,6 +415,16 @@ Releases are cut **only** from the release line (`release/<X.Y.Z>`):
    worktrees from finished work are deleted (branches: delete when fully
    merged; keep unmerged refs for review).
 
+## The 🆕 What's New summary (window contract)
+
+Every promoted release section SHOULD open with a `### 🆕 What's New` block:
+at most **6 bullets, one terminal line each** (≤ ~140 chars) — the one-time
+TUI window shows ONLY this block, paginated, and points at CHANGELOG.md for
+the rest. Long prose belongs under `### Added / Changed / Fixed` (read by
+humans on GitHub/npm), never in the window block. `## ` level also parses,
+but `### ` is the convention so the section stays inside the extractor's
+boundaries.
+
 ## Beta Releases (explicit dispatch with `release_channel=beta`)
 
 Publication is authorized **only** by an explicit `workflow_dispatch` of

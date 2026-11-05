@@ -12,12 +12,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [v1.6.3-beta.11] - 2026-11-05
 
-## 🆕 What's New
-- Measured MCP usage policy across the roster: durable stores only, milestone checkpoints, one vision pass per image — a governance ladder byte-identical in all 13 specialists, contract-pinned.
-- The skill-discovery pipeline with the trust cascade: installed pool → canonical Anthropic catalog → skills.sh → raw GitHub; Jev ranks, the user reviews and installs.
-- Dead-route holds release (ledger schema v4): the fix for budgets frozen forever by holds of removed routes ($1.00 freed in the field).
-- The roster reform measured: nyx re-scoped to chaos & adversarial, talos aligned to the real hotfix identity, domain-artifact ownership for all 14 agents.
-- Jev validated end to end in the field: N4 dead, verify field-verified, sandbox install 28/28 with all five MCPs live.
+### 🆕 What's New
+- Measured MCP usage policy across the roster — governance ladder byte-identical in all 13 specialists.
+- Skill-discovery pipeline with the trust cascade: Anthropic catalog → skills.sh → GitHub; Jev ranks, you install.
+- Dead-route holds release (ledger schema v4) — the fix for budgets frozen by removed routes.
+- Roster reform: nyx re-scoped to chaos & adversarial, talos aligned to hotfix, domain docs per agent.
+- Jev validated end to end in the field: N4 dead, verify field-verified, sandbox 28/28.
 
 ### Added
 

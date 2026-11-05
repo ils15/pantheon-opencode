@@ -22,6 +22,15 @@ import { fileURLToPath } from 'node:url'
 /** Hard cap on bullets shown in the window (the remainder is counted). */
 export const WHATS_NEW_MAX_ITEMS = 12
 
+/**
+ * Cap for the curated `🆕 What's New` summary block — the window shows the
+ * summary, never the full Added/Changed/Fixed walls.
+ */
+export const WHATS_NEW_SUMMARY_MAX_ITEMS = 6
+
+/** Bullets longer than this are truncated with an ellipsis (one-line rule). */
+export const WHATS_NEW_ITEM_MAX_CHARS = 140
+
 /** Prefix of the "+N more" line appended when the bullet budget is exceeded. */
 export const WHATS_NEW_MORE_PREFIX = '… +'
 
@@ -112,14 +121,55 @@ function stripHeading(text: string): string {
 }
 
 /**
- * Extract the release highlights for `version`: H3 subsection headings as
- * group labels and their bullets as sanitized plain text, bounded to
+ * Extract the curated summary block (`### 🆕 What's New` or `## 🆕 What's New`)
+ * from a section body: its bullets only, each truncated to
+ * WHATS_NEW_ITEM_MAX_CHARS, capped to WHATS_NEW_SUMMARY_MAX_ITEMS. Null when
+ * the section carries no summary block (the full-section fallback applies).
+ */
+export function extractWhatsNewSummary(body: string): string[] | null {
+  const lines = body.split('\n')
+  const start = lines.findIndex((line) => /^#{2,3}[ \t]+.*What'?s New/i.test(line.trim()))
+  if (start === -1) return null
+  const items: string[] = []
+  for (const rawLine of lines.slice(start + 1)) {
+    const line = rawLine.trim()
+    if (line === '' || line.startsWith('<!--')) continue
+    if (/^#{1,6}[ \t]/.test(line)) break // next subsection — summary ended
+    if (!/^[-*][ \t]/.test(line)) continue
+    if (items.length >= WHATS_NEW_SUMMARY_MAX_ITEMS) break
+    const content = stripMarkdown(line.replace(/^[-*][ \t]+/, ''))
+    if (content === '') continue
+    items.push(
+      content.length > WHATS_NEW_ITEM_MAX_CHARS
+        ? `${content.slice(0, WHATS_NEW_ITEM_MAX_CHARS - 1)}…`
+        : content,
+    )
+  }
+  return items.length > 0 ? items : null
+}
+
+/**
+ * Extract the release highlights for `version`. When the section carries a
+ * curated `🆕 What's New` summary block, THE WINDOW SHOWS ONLY THAT (the
+ * full Added/Changed/Fixed walls are for the CHANGELOG readers, not the
+ * dialog); otherwise it falls back to the H3-group extraction bounded to
  * WHATS_NEW_MAX_ITEMS bullets. A missing section, a bullet-less section or a
  * blank changelog all return EMPTY_HIGHLIGHTS (no window).
  */
 export function extractHighlights(changelogText: string, version: string): WhatsNewHighlights {
   const { found, body } = extractSection(changelogText ?? '', version ?? '')
   if (!found || !body) return { ...EMPTY_HIGHLIGHTS }
+
+  const summary = extractWhatsNewSummary(body)
+  if (summary !== null) {
+    return {
+      version: String(version).trim().replace(/^v/i, ''),
+      found: true,
+      groups: [{ heading: null, items: summary }],
+      totalItems: summary.length,
+      truncated: false,
+    }
+  }
 
   const groups: WhatsNewGroup[] = []
   let totalItems = 0
@@ -149,13 +199,17 @@ export function extractHighlights(changelogText: string, version: string): Whats
 
     const content = stripMarkdown(isBullet ? line.replace(/^[-*][ \t]+/, '') : line)
     if (content === '') continue
+    const bounded =
+      content.length > WHATS_NEW_ITEM_MAX_CHARS
+        ? `${content.slice(0, WHATS_NEW_ITEM_MAX_CHARS - 1)}…`
+        : content
     const group = groups.at(-1)
     if (group === undefined) {
-      groups.push({ heading: null, items: [content] })
+      groups.push({ heading: null, items: [bounded] })
     } else if (isBullet || group.items.length === 0) {
-      group.items.push(content)
+      group.items.push(bounded)
     } else {
-      group.items[group.items.length - 1] = `${group.items.at(-1)} ${content}`.trim()
+      group.items[group.items.length - 1] = `${group.items.at(-1)} ${bounded}`.trim()
     }
     if (isBullet) totalItems += 1
   }

@@ -317,6 +317,58 @@ test('highlights: the title matches the sidebar convention and the lines carry b
   assert.equal(lines.filter((line) => line.startsWith('• ')).length, 3)
 })
 
+test("highlights: the 🆕 What's New summary block wins over the full section", () => {
+  const text = [
+    '## [v1.7.0] - 2026-11-05',
+    '',
+    "### 🆕 What's New",
+    '- Short curated highlight one',
+    '- Short curated highlight two',
+    '',
+    '### Added',
+    '',
+    '- Long added bullet that the window must NOT show because the summary exists',
+    '',
+  ].join('\n')
+  const result = highlights.extractHighlights(text, '1.7.0')
+  assert.equal(result.found, true)
+  assert.equal(result.totalItems, 2, 'summary bullets only')
+  assert.deepEqual(result.groups, [
+    { heading: null, items: ['Short curated highlight one', 'Short curated highlight two'] },
+  ])
+  // H2 level also parses.
+  const h2 = text.replace("### 🆕 What's New", "## 🆕 What's New")
+  assert.equal(highlights.extractHighlights(h2, '1.7.0').totalItems, 2)
+})
+
+test('highlights: the summary caps at six items and truncates long bullets', () => {
+  const bullets = []
+  for (let index = 0; index < 9; index += 1) {
+    bullets.push(`- highlight ${index} ${'x'.repeat(160)}`)
+  }
+  const text = ['## [v1.7.1] - 2026-11-05', '', "### 🆕 What's New", ...bullets, ''].join('\n')
+  const result = highlights.extractHighlights(text, '1.7.1')
+  const items = result.groups.flatMap((group) => group.items)
+  assert.equal(items.length, highlights.WHATS_NEW_SUMMARY_MAX_ITEMS)
+  for (const item of items) {
+    assert.ok(item.length <= highlights.WHATS_NEW_ITEM_MAX_CHARS, 'one-line rule enforced')
+    assert.ok(item.endsWith('…'), 'truncation is visible')
+  }
+})
+
+test('open: pagination slices fixed-size pages and the hint names the page keys', () => {
+  const { paginateWhatsNewLines, WHATS_NEW_PAGE_SIZE, wrapWhatsNewLine } = open
+  const lines = Array.from({ length: WHATS_NEW_PAGE_SIZE + 3 }, (_, i) => `line ${i}`)
+  const pages = paginateWhatsNewLines(lines)
+  assert.equal(pages.length, 2)
+  assert.equal(pages[0].length, WHATS_NEW_PAGE_SIZE)
+  assert.equal(pages[1].length, 3)
+  assert.deepEqual(paginateWhatsNewLines([]), [[]])
+  assert.deepEqual(wrapWhatsNewLine('short', 76), ['short'])
+  assert.equal(wrapWhatsNewLine('x'.repeat(160), 76).length, 3)
+  assert.equal(wrapWhatsNewLine('x'.repeat(100), 0).length, 2, 'width floor applies')
+})
+
 /* ─── Sources: where the CHANGELOG and the version come from ── */
 
 test('highlights: changelog candidates — copy root first, package root second', () => {

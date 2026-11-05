@@ -234,14 +234,50 @@ function stripHeading(text) {
 	return text.replace(/^#{1,6}[ \t]+/, "").trim();
 }
 /**
-* Extract the release highlights for `version`: H3 subsection headings as
-* group labels and their bullets as sanitized plain text, bounded to
+* Extract the curated summary block (`### 🆕 What's New` or `## 🆕 What's New`)
+* from a section body: its bullets only, each truncated to
+* WHATS_NEW_ITEM_MAX_CHARS, capped to WHATS_NEW_SUMMARY_MAX_ITEMS. Null when
+* the section carries no summary block (the full-section fallback applies).
+*/
+function extractWhatsNewSummary(body) {
+	const lines = body.split("\n");
+	const start = lines.findIndex((line) => /^#{2,3}[ \t]+.*What'?s New/i.test(line.trim()));
+	if (start === -1) return null;
+	const items = [];
+	for (const rawLine of lines.slice(start + 1)) {
+		const line = rawLine.trim();
+		if (line === "" || line.startsWith("<!--")) continue;
+		if (/^#{1,6}[ \t]/.test(line)) break;
+		if (!/^[-*][ \t]/.test(line)) continue;
+		if (items.length >= 6) break;
+		const content = stripMarkdown(line.replace(/^[-*][ \t]+/, ""));
+		if (content === "") continue;
+		items.push(content.length > 140 ? `${content.slice(0, 139)}…` : content);
+	}
+	return items.length > 0 ? items : null;
+}
+/**
+* Extract the release highlights for `version`. When the section carries a
+* curated `🆕 What's New` summary block, THE WINDOW SHOWS ONLY THAT (the
+* full Added/Changed/Fixed walls are for the CHANGELOG readers, not the
+* dialog); otherwise it falls back to the H3-group extraction bounded to
 * WHATS_NEW_MAX_ITEMS bullets. A missing section, a bullet-less section or a
 * blank changelog all return EMPTY_HIGHLIGHTS (no window).
 */
 function extractHighlights(changelogText, version) {
 	const { found, body } = extractSection(changelogText ?? "", version ?? "");
 	if (!found || !body) return { ...EMPTY_HIGHLIGHTS };
+	const summary = extractWhatsNewSummary(body);
+	if (summary !== null) return {
+		version: String(version).trim().replace(/^v/i, ""),
+		found: true,
+		groups: [{
+			heading: null,
+			items: summary
+		}],
+		totalItems: summary.length,
+		truncated: false
+	};
 	const groups = [];
 	let totalItems = 0;
 	let truncated = false;
@@ -267,13 +303,14 @@ function extractHighlights(changelogText, version) {
 		if (!isBullet && !continuation) continue;
 		const content = stripMarkdown(isBullet ? line.replace(/^[-*][ \t]+/, "") : line);
 		if (content === "") continue;
+		const bounded = content.length > 140 ? `${content.slice(0, 139)}…` : content;
 		const group = groups.at(-1);
 		if (group === void 0) groups.push({
 			heading: null,
-			items: [content]
+			items: [bounded]
 		});
-		else if (isBullet || group.items.length === 0) group.items.push(content);
-		else group.items[group.items.length - 1] = `${group.items.at(-1)} ${content}`.trim();
+		else if (isBullet || group.items.length === 0) group.items.push(bounded);
+		else group.items[group.items.length - 1] = `${group.items.at(-1)} ${bounded}`.trim();
 		if (isBullet) totalItems += 1;
 	}
 	const kept = groups.filter((group) => group.items.length > 0);
@@ -479,6 +516,30 @@ async function defaultWhatsNewStatePath(env = process.env, home = homedir()) {
 */
 /** Muted footer hint teaching the dismiss bind (Portuguese, like the sidebar). */
 const WHATS_NEW_CLOSE_HINT = "esc/q fechar";
+/** Hint variant when the highlights span more than one page. */
+const WHATS_NEW_PAGES_HINT = "esc/q fechar · n próxima · p volta";
+/** Hard-wrap one display line into rows of at most `width` columns (>= 10). */
+function wrapWhatsNewLine(line, width) {
+	const bounded = Number.isInteger(width) && width > 10 ? width : 76;
+	const text = String(line);
+	if (text.length <= bounded) return [text];
+	const rows = [];
+	let rest = text;
+	while (rest.length > bounded) {
+		rows.push(rest.slice(0, bounded));
+		rest = rest.slice(bounded);
+	}
+	if (rest.length > 0) rows.push(rest);
+	return rows;
+}
+/** Slice display lines into fixed-size pages (>= 1 page, empty-safe). */
+function paginateWhatsNewLines(lines, pageSize = 14) {
+	const size = Number.isInteger(pageSize) && pageSize > 0 ? pageSize : 14;
+	if (lines.length === 0) return [[]];
+	const pages = [];
+	for (let i = 0; i < lines.length; i += size) pages.push(lines.slice(i, i + size));
+	return pages;
+}
 /**
 * Open the one-time window when the version changed and highlights exist.
 * Returns true when the window was shown; the caller's `onClose` callback
@@ -490,11 +551,13 @@ async function openWhatsNew(input) {
 	if (!await shouldShowWhatsNew(version, statePath)) return false;
 	const lines = whatsNewLines(changelogText ? extractHighlights(changelogText, version) : { ...EMPTY_HIGHLIGHTS });
 	if (lines.length === 0) return false;
+	const pages = paginateWhatsNewLines(lines);
 	const data = {
 		version,
 		title: whatsNewTitle(version),
 		lines,
-		hint: WHATS_NEW_CLOSE_HINT
+		pages,
+		hint: pages.length > 1 ? WHATS_NEW_PAGES_HINT : WHATS_NEW_CLOSE_HINT
 	};
 	show(() => data, () => {
 		markSeenWhatsNew(version, statePath);
@@ -512,8 +575,13 @@ async function openWhatsNew(input) {
 * awaited — startup must never block). The decision lives in
 * whats-new-open.ts; this file is only the host glue + view:
 * `context.ui.dialog.show` plus a keymap layer gated on the open signal so
-* `escape`/`q` dismiss while (and only while) the window is up — the same
-* gated-layer pattern as the dispatch panel.
+* `escape`/`q` dismiss and `n`/`p` flip pages while (and only while) the
+* window is up — the same gated-layer pattern as the dispatch panel.
+*
+* The window shows the curated 🆕 What's New summary (whats-new-highlights
+* prefers it), hard-wrapped to the window width and sliced into fixed-size
+* pages — a big changelog can never overflow the terminal; the footer points
+* at the complete CHANGELOG.md.
 *
 * Deliberately V2-only: the two dist entries are self-contained (the V1
 * sidebar mirrors the preset resolver rather than importing it) because any
@@ -528,8 +596,14 @@ async function openWhatsNew(input) {
 * CHANGELOG.md, unreadable state, a host API that throws — the window simply
 * does not show (fail-open, like the rest of the plugin).
 */
-/** Window body: title, rule, bounded highlight lines, dismiss hint. */
+/** Window body: title, rule, the current page (wrapped), footer hint. */
 function WhatsNewContent(props) {
+	const rows = () => {
+		const current = props.data.pages[Math.min(props.page(), props.pageCount() - 1)] ?? [];
+		const wrapped = [];
+		for (const line of current) wrapped.push(...wrapWhatsNewLine(line, 76));
+		return wrapped;
+	};
 	return (() => {
 		var _el$ = createElement("box"), _el$2 = createElement("text"), _el$3 = createElement("text"), _el$5 = createElement("box"), _el$6 = createElement("text");
 		insertNode(_el$, _el$2);
@@ -545,7 +619,7 @@ function WhatsNewContent(props) {
 		insertNode(_el$3, createTextNode(`──────────────────────────────────────`));
 		insert(_el$, createComponent(For, {
 			get each() {
-				return props.data.lines;
+				return rows();
 			},
 			children: (line) => (() => {
 				var _el$7 = createElement("text");
@@ -555,7 +629,11 @@ function WhatsNewContent(props) {
 			})()
 		}), _el$5);
 		setProp(_el$5, "height", 1);
-		insert(_el$6, () => props.data.hint);
+		insert(_el$6, (() => {
+			var _c$ = memo(() => props.pageCount() > 1);
+			return () => _c$() ? `${props.page() + 1}/${props.pageCount()} · ` : "";
+		})(), null);
+		insert(_el$6, () => props.data.hint, null);
 		effect((_p$) => {
 			var _v$ = props.fg, _v$2 = props.muted, _v$3 = props.muted;
 			_v$ !== _p$.e && (_p$.e = setProp(_el$2, "fg", _v$, _p$.e));
@@ -581,20 +659,43 @@ async function maybeShowWhatsNewV2(context) {
 		const statePath = await defaultWhatsNewStatePath();
 		const changelogText = await readChangelogForBundle(import.meta.url);
 		const [open, setOpen] = createSignal(false);
+		const [page, setPage] = createSignal(0);
+		let viewData;
+		const pageCount = () => Math.max(1, Math.ceil(viewData?.pages.length ?? 1));
 		let dismiss = () => {};
 		try {
 			context.keymap.layer(() => ({
 				mode: "global",
 				enabled: () => open(),
-				commands: [{
-					id: "pantheon.whats-new.close",
-					title: "Fechar o que há de novo",
-					bind: "escape,q",
-					run: () => {
-						if (!open()) return false;
-						dismiss();
+				commands: [
+					{
+						id: "pantheon.whats-new.close",
+						title: "Fechar o que há de novo",
+						bind: "escape,q",
+						run: () => {
+							if (!open()) return false;
+							dismiss();
+						}
+					},
+					{
+						id: "pantheon.whats-new.next",
+						title: "Próxima página",
+						bind: "n,right",
+						run: () => {
+							if (!open()) return false;
+							setPage((current) => Math.min(current + 1, pageCount() - 1));
+						}
+					},
+					{
+						id: "pantheon.whats-new.prev",
+						title: "Página anterior",
+						bind: "p,left",
+						run: () => {
+							if (!open()) return false;
+							setPage((current) => Math.max(current - 1, 0));
+						}
 					}
-				}]
+				]
 			}));
 		} catch {}
 		await openWhatsNew({
@@ -612,13 +713,15 @@ async function maybeShowWhatsNewV2(context) {
 					} catch {}
 					close();
 				};
+				viewData = render();
+				setPage(0);
 				setOpen(true);
 				try {
 					const theme = context.theme?.text ?? {};
 					context.ui.dialog.show(() => createComponent(WhatsNewContent, {
-						get data() {
-							return render();
-						},
+						data: viewData,
+						page,
+						pageCount,
 						get fg() {
 							return theme.base;
 						},
