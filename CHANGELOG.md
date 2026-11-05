@@ -10,6 +10,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.3-beta.13] - 2026-11-05
+
+## 🆕 What's New
+- One coherent setup summary: a single closing block instead of two competing "Next steps" lists.
+- Warnings restate their text inline — no more hunting for what scrolled past.
+- The worktree guidance box is project-only (a global install from $HOME showed a nonsense path).
+- The banner now prints the exact `source` line for the decision-layer flags file — the silent-off gap fixed.
+
 ## [v1.6.3-beta.12] - 2026-11-05
 
 ## 🆕 What's New
