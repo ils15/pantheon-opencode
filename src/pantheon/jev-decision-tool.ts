@@ -449,10 +449,14 @@ export async function runJevDecision(
       ? (toolContext as JevToolContext)
       : undefined
   const caller = context?.agent
-  if (typeof caller !== 'string' || caller.length === 0) return refusal('CALLER_NOT_ALLOWED')
+  if (typeof caller !== 'string' || caller.length === 0)
+    return refusal('CALLER_NOT_ALLOWED', 'CALLER_NOT_ALLOWLISTED')
   const allowlist = runtime.specialistCallers ?? []
   if (caller !== 'zeus' && !allowlist.includes(caller)) {
-    return refusal('CALLER_NOT_ALLOWED')
+    return refusal(
+      'CALLER_NOT_ALLOWED',
+      'CALLER_NOT_ALLOWLISTED — allowlist this caller via PANTHEON_JEV_SPECIALIST_CALLERS (then restart) or ask Zeus to route',
+    )
   }
 
   const requested = (input ?? {}) as { mode?: unknown; questions?: unknown }

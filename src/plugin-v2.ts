@@ -126,7 +126,9 @@ import {
 import {
   createJ1RiskGateObserver,
   isRiskGateTarget,
-  j1RiskGateEnabledFromEnv,
+  type J1Verdict,
+  j1EnforceThresholdFromEnv,
+  j1ModeFromEnv,
 } from './pantheon/jev-risk-gate.ts'
 import { DECISION_EGRESS_ACTION } from './pantheon/local-decision-egress-gate.ts'
 import { applyDecisionRouterToPrompt } from './pantheon/local-decision-prompt.ts'
@@ -1984,14 +1986,17 @@ async function registerV2ToolHooks(
   // ledger reservation, permission kill-switch) and records shadow records
   // only — it is fired WITHOUT await inside the before-handler (fire-and-
   // observe), self-bounds at 2s with an AbortController, and never retries.
-  let j1Observer: ((event: unknown) => Promise<void>) | undefined
-  if (jevRuntime !== undefined && j1RiskGateEnabledFromEnv()) {
+  const j1Mode = j1ModeFromEnv()
+  let j1Observer: ((event: unknown) => Promise<void | J1Verdict>) | undefined
+  if (jevRuntime !== undefined && j1Mode !== 'off') {
     const j1Sink = createTelemetrySink()
     j1TelemetrySink = j1Sink
     j1Observer = createJ1RiskGateObserver({
       runtime: jevRuntime,
+      mode: j1Mode,
+      threshold: j1EnforceThresholdFromEnv(),
       sink: (record) => {
-        j1Sink.emit({ ...record, mode: 'shadow' })
+        j1Sink.emit({ ...record, mode: j1Mode === 'enforce' ? 'enforce' : 'shadow' })
       },
     })
   }
@@ -2148,7 +2153,22 @@ async function registerV2ToolHooks(
         // the flag is off — the only cost of the flag-on check below is the
         // truthiness read.
         if (j1Observer !== undefined && isRiskGateTarget((event as { tool?: unknown }).tool)) {
-          void j1Observer(event)
+          // Ladder semantics: shadow/warn stay fire-and-observe (latency
+          // unchanged); ENFORCE awaits (bounded 2s) and DENIES via throw —
+          // the host surfaces the thrown message in the session, which is the
+          // block's visible form. Unavailability never denies (fail-open by
+          // design: a dead budget must not brick every shell call).
+          if (j1Mode === 'enforce') {
+            const verdict = (await j1Observer(event)) as J1Verdict | undefined
+            if (verdict?.block === true) {
+              throw new Error(
+                `[J1 enforce] chamada bloqueada: risco ${verdict.riskScore?.toFixed(2)} ` +
+                  `>= threshold (ajuste PANTHEON_J1_ENFORCE_THRESHOLD ou rebaixe o modo para shadow/warn)`,
+              )
+            }
+          } else {
+            void j1Observer(event)
+          }
         }
         // J3 turn-complexity shadow classification. Same fire-and-observe
         // discipline as J1: the dispatch's latency is unchanged, the observer
