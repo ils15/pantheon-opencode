@@ -81,6 +81,121 @@ export function searchSkills(query, { limit = DEFAULT_LIMIT, owner, spawn = spaw
   return { ok: true, entries: parseSkillSearchOutput(raw, { limit }), raw }
 }
 
+const GITHUB_TIMEOUT_MS = 30_000
+const ANTHROPIC_SKILLS_REPO = 'anthropics/skills'
+
+/**
+ * Tier 1: the canonical Anthropic catalog. Highest trust (curated upstream),
+ * checked first so the canonical `pdf`/`docx`/`xlsx`/`mcp-builder` skills
+ * outrank the third-party clones that skills.sh's ranking can surface.
+ * Matches query tokens against catalog entry names; returns one entry per
+ * matched name.
+ */
+export function searchAnthropicCatalog(query, { limit = DEFAULT_LIMIT, spawn = spawnSync } = {}) {
+  const result = spawn(
+    'gh',
+    ['api', `repos/${ANTHROPIC_SKILLS_REPO}/contents/skills`, '--jq', '.[].name'],
+    { encoding: 'utf8', timeout: GITHUB_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'] },
+  )
+  if (result.error !== undefined || result.status !== 0) {
+    return { ok: false, error: 'anthropic catalog lookup failed (gh api)' }
+  }
+  const tokens = String(query)
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length > 2)
+  const names = String(result.stdout ?? '')
+    .split('\n')
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0)
+  const matched = names.filter((name) => {
+    const lower = name.toLowerCase()
+    return tokens.some((token) => lower.includes(token))
+  })
+  return {
+    ok: true,
+    entries: matched.slice(0, limit).map((name) => ({
+      skill: `${ANTHROPIC_SKILLS_REPO}@${name}`,
+      installs: null,
+      url: `https://github.com/${ANTHROPIC_SKILLS_REPO}/tree/main/skills/${name}`,
+      source: 'anthropic',
+    })),
+  }
+}
+
+/**
+ * Tier 3: raw GitHub code search over every `SKILL.md` (the widest net —
+ * orders of magnitude beyond the skills.sh index, and the weakest trust:
+ * every hit is unreviewed third-party instructions).
+ */
+export function searchGithubSkills(query, { limit = DEFAULT_LIMIT, spawn = spawnSync } = {}) {
+  const terms = String(query)
+    .split(/\s+/)
+    .filter((term) => term.length > 1)
+    .slice(0, 3)
+    .map((term) => encodeURIComponent(term))
+    .join('+')
+  if (terms === '') return { ok: true, entries: [] }
+  const result = spawn(
+    'gh',
+    ['api', `search/code?q=filename:SKILL.md+${terms}&per_page=${Math.min(limit, 10)}`],
+    { encoding: 'utf8', timeout: GITHUB_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'] },
+  )
+  if (result.error !== undefined || result.status !== 0) {
+    return { ok: false, error: 'github code search failed (gh api)' }
+  }
+  let parsed
+  try {
+    parsed = JSON.parse(String(result.stdout ?? '{}'))
+  } catch {
+    return { ok: false, error: 'github code search returned non-JSON output' }
+  }
+  const items = Array.isArray(parsed.items) ? parsed.items : []
+  return {
+    ok: true,
+    entries: items.slice(0, limit).map((item) => {
+      const repo = String(item?.repository?.full_name ?? 'unknown/repo')
+      const path = String(item?.path ?? 'SKILL.md')
+      const name = path.split('/')[Math.max(0, path.split('/').length - 2)] ?? 'skill'
+      return {
+        skill: `${repo}@${name}`,
+        installs: null,
+        url: `https://github.com/${repo}/blob/main/${path}`,
+        source: 'github',
+      }
+    }),
+  }
+}
+
+/**
+ * The trust cascade: anthropic (canonical) → skills-sh (install-count
+ * signal, unreviewed) → github (widest, least trusted). Tier order is the
+ * recommendation order; callers may narrow with `sources`.
+ */
+export const SKILL_SEARCH_SOURCES = Object.freeze(['anthropic', 'skills-sh', 'github'])
+
+export function searchSkillSources(
+  query,
+  { limit = DEFAULT_LIMIT, owner, sources = SKILL_SEARCH_SOURCES, spawn = spawnSync } = {},
+) {
+  const perTier = Math.max(1, Math.ceil(limit / sources.length))
+  const out = []
+  const failures = []
+  for (const source of sources) {
+    const result =
+      source === 'anthropic'
+        ? searchAnthropicCatalog(query, { limit: perTier, spawn })
+        : source === 'skills-sh'
+          ? searchSkills(query, { limit: perTier, owner, spawn })
+          : source === 'github'
+            ? searchGithubSkills(query, { limit: perTier, spawn })
+            : { ok: false, error: `unknown source: ${source}` }
+    if (result.ok) out.push(...result.entries.map((entry) => ({ ...entry, source })))
+    else failures.push(`${source}: ${result.error}`)
+  }
+  return { ok: failures.length < sources.length, entries: out.slice(0, limit), failures }
+}
+
 function main(args = process.argv.slice(2)) {
   const get = (flag) => {
     const i = args.indexOf(flag)
@@ -89,21 +204,34 @@ function main(args = process.argv.slice(2)) {
   const query = args.find((a) => !a.startsWith('--'))
   if (query === undefined) {
     console.error(
-      'usage: node scripts/skill-search.mjs "<query>" [--limit 5] [--owner <owner>] [--raw]',
+      'usage: node scripts/skill-search.mjs "<query>" [--limit 5] [--sources anthropic,skills-sh,github] [--owner <owner>] [--raw]',
     )
     process.exit(1)
   }
-  const result = searchSkills(query, {
+  const sourcesArg = get('--sources')
+  const sources =
+    sourcesArg === undefined
+      ? SKILL_SEARCH_SOURCES
+      : sourcesArg
+          .split(',')
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0)
+  const result = searchSkillSources(query, {
     limit: Number(get('--limit') ?? DEFAULT_LIMIT),
     owner: get('--owner'),
+    sources,
   })
-  if (!result.ok) {
-    console.error(result.error)
-    process.exit(1)
-  }
   if (args.includes('--raw')) {
-    console.log(result.raw)
+    const skillsSh = result.entries.filter((e) => e.source === 'skills-sh')
+    console.log(JSON.stringify(skillsSh, null, 1))
     return
+  }
+  if (result.failures.length > 0) {
+    for (const failure of result.failures) console.error(`warning: ${failure}`)
+  }
+  if (result.entries.length === 0 && result.failures.length === sources.length) {
+    console.error('all sources failed')
+    process.exit(1)
   }
   console.log(JSON.stringify(result.entries, null, 1))
 }

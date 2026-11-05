@@ -534,13 +534,19 @@ The **discovery pipeline** binds these steps into one measured ladder
 
 1. `mode: "skills"` answers over the installed pool — the Jev call that
    decides within existing skills.
-2. Only on a gap: one read-only ecosystem search —
-   `npx -y skills find "<query>" < /dev/null` (non-interactive) or the
-   packaged helper `scripts/skill-search.mjs "<query>" --limit 5`, which
-   strips the ANSI output into the parseable contract
-   (`{skill, installs, url}` JSON; pinned by `tests/skill-search.test.mjs`).
-   The search is networked egress by the agent, priced by attention — never
-   a Jev question by itself, and at most one per need.
+2. Only on a gap: one read-only search across the **trust cascade** —
+   `node scripts/skill-search.mjs "<query>" --limit 5` queries, in order:
+   the **canonical Anthropic catalog** (`anthropics/skills` — curated
+   upstream; checked first so the canonical `pdf`/`docx`/`mcp-builder`
+   skills outrank the third-party clones that popularity ranking surfaces),
+   the **skills.sh index** (breadth with install-count signal, unreviewed),
+   and **raw GitHub** `filename:SKILL.md` code search (orders of magnitude
+   wider — 8,480 hits for "satellite" where the skills.sh index offered
+   three — and the weakest trust). Output is the merged parseable contract
+   (`{skill, installs, url, source}` JSON; pinned by
+   `tests/skill-search.test.mjs`), tier-ordered. The search is networked
+   egress by the agent, priced by attention — never a Jev question by
+   itself, and at most one per need.
 3. One typed Jev choice question ranks the returned candidates
    (descriptions + install counts as choice text; "none of these fit" is a
    valid answer). Only names, counts and short descriptions cross the

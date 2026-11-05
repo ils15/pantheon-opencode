@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { parseSkillSearchOutput, stripAnsi } from '../scripts/skill-search.mjs'
+import {
+  parseSkillSearchOutput,
+  searchAnthropicCatalog,
+  searchGithubSkills,
+  searchSkillSources,
+  stripAnsi,
+} from '../scripts/skill-search.mjs'
 
 const RAW = [
   '\u001b[38;5;250m███████╗██╗ \u001b[0m',
@@ -56,4 +62,92 @@ test('parseSkillSearchOutput: limit caps and install counts sort stays as printe
   assert.equal(parseSkillSearchOutput(text, { limit: 2 })[0].skill, 'a/repo@s1')
   assert.deepEqual(parseSkillSearchOutput('nothing useful here'), [])
   assert.deepEqual(parseSkillSearchOutput(''), [])
+})
+
+test('searchAnthropicCatalog: token match over the curated listing', () => {
+  const fakeSpawn = () => ({
+    status: 0,
+    stdout: 'pdf\ndocx\nxlsx\nmcp-builder\nskill-creator\nwebapp-testing\n',
+    stderr: '',
+  })
+  const result = searchAnthropicCatalog('convert pdf tables to csv', { spawn: fakeSpawn })
+  assert.ok(result.ok)
+  assert.deepEqual(result.entries, [
+    {
+      skill: 'anthropics/skills@pdf',
+      installs: null,
+      url: 'https://github.com/anthropics/skills/tree/main/skills/pdf',
+      source: 'anthropic',
+    },
+  ])
+  const empty = searchAnthropicCatalog('zzz-unknown-domain', { spawn: fakeSpawn })
+  assert.ok(empty.ok)
+  assert.deepEqual(empty.entries, [])
+  const failed = searchAnthropicCatalog('pdf', {
+    spawn: () => ({ status: 1, stdout: '', stderr: '' }),
+  })
+  assert.equal(failed.ok, false)
+})
+
+test('searchGithubSkills: code-search items become repo@name entries', () => {
+  const fakeSpawn = () => ({
+    status: 0,
+    stdout: JSON.stringify({
+      total_count: 2,
+      items: [
+        { repository: { full_name: 'antvis/L7' }, path: 'skills/l7/SKILL.md' },
+        { repository: { full_name: 'joelhooks/joelclaw' }, path: 'skills/satellite-rig/SKILL.md' },
+      ],
+    }),
+    stderr: '',
+  })
+  const result = searchGithubSkills('satellite imagery', { spawn: fakeSpawn })
+  assert.ok(result.ok)
+  assert.deepEqual(result.entries, [
+    {
+      skill: 'antvis/L7@l7',
+      installs: null,
+      url: 'https://github.com/antvis/L7/blob/main/skills/l7/SKILL.md',
+      source: 'github',
+    },
+    {
+      skill: 'joelhooks/joelclaw@satellite-rig',
+      installs: null,
+      url: 'https://github.com/joelhooks/joelclaw/blob/main/skills/satellite-rig/SKILL.md',
+      source: 'github',
+    },
+  ])
+  const bad = searchGithubSkills('pdf', { spawn: () => ({ status: 1, stdout: '', stderr: '' }) })
+  assert.equal(bad.ok, false)
+})
+
+test('searchSkillSources: tier order preserved, one failed source tolerated', () => {
+  const fakeSpawn = (bin, args) => {
+    if (bin === 'gh' && String(args[1]).startsWith('repos/')) {
+      return { status: 0, stdout: 'pdf\n', stderr: '' }
+    }
+    if (bin === 'gh') {
+      return {
+        status: 0,
+        stdout: '{"items":[{"repository":{"full_name":"o/r"},"path":"s/k/SKILL.md"}]}',
+        stderr: '',
+      }
+    }
+    return { status: 0, stdout: 'x/repo@pdf-tool 5 installs', stderr: '' }
+  }
+  const result = searchSkillSources('pdf table', { limit: 4, spawn: fakeSpawn })
+  assert.ok(result.ok)
+  assert.deepEqual(
+    result.entries.map((e) => e.source),
+    ['anthropic', 'skills-sh', 'github'],
+  )
+  assert.equal(result.entries[0].skill, 'anthropics/skills@pdf')
+  // Every tier failing surfaces the failures but never throws.
+  const allFail = searchSkillSources('pdf', {
+    sources: ['anthropic', 'skills-sh'],
+    spawn: () => ({ status: 1, stdout: '', stderr: '' }),
+  })
+  assert.equal(allFail.ok, false)
+  assert.deepEqual(allFail.entries, [])
+  assert.equal(allFail.failures.length, 2)
 })
