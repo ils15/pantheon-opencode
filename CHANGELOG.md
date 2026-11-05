@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **routing** — The beta.11→12 field report, all five defects: (1) delegation choices now carry the catalog descriptions (`{value, description}`, truncated at the documented bound) and `none` is described — the high-confidence wrong-`none` class is gone, live probe 5/5 exact on the four functional tasks plus the poem control; (2) skills results report `candidateSource: "prefilter" | "full-catalog" | "host-skills"` — the caller can tell "no such skill" from "the prefilter missed"; (3) the input envelope (schemaVersion required, unknown keys rejected) is enforced by ONE gate on every path — explicit questions, presets, review, rank, verify — making the beta.10 CHANGELOG claim true everywhere (`checkJevEnvelope`); (4) rank accepts up to 20 candidates (mirrors the typesafe_rank reference) and `CANDIDATE_INVALID` names the accepted range (`RANK_CANDIDATE_COUNT_RANGE`); (5) the local router's `gateStatus` influences the decision: an open review/approval gate abstains with `GATE_OPEN` instead of routing around it. Catalog nyx entry synced to the post-reform chaos identity. Gate chain, caps, consent, and reconciliation untouched. Field acceptance: `bench/results/jev-beta12-acceptance-2026-11-05.md`.
+
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
