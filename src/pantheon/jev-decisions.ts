@@ -224,13 +224,58 @@ export type JevDecisionPreparationDetail =
   | 'SCHEMA_VERSION_INVALID'
   | 'UNKNOWN_INPUT_KEYS'
 
+export type JevSkillCandidateSource = 'prefilter' | 'full-catalog' | 'host-skills'
+
 export type JevDecisionPreparation =
-  | { readonly ok: true; readonly request: NativeDecisionRequest }
+  | {
+      readonly ok: true
+      readonly request: NativeDecisionRequest
+      /** Skills mode only: which path produced the candidate pool. */
+      readonly candidateSource?: JevSkillCandidateSource
+    }
   | {
       readonly ok: false
       readonly reasonCode: JevDecisionPreparationFailure
       readonly detail?: JevDecisionPreparationDetail
     }
+
+/**
+ * The ONE envelope check every tool path passes through before its builder:
+ * `schemaVersion` is required (and must be 1) and unknown keys are rejected —
+ * the declared contract, now enforced uniformly (beta.10 claimed it; beta.12
+ * applies it to presets, review, rank and verify too).
+ */
+export type JevEnvelopeCheck = { ok: true } | { ok: false; detail: JevDecisionPreparationDetail }
+
+export function checkJevEnvelope(
+  input: unknown,
+  allowedKeys: ReadonlySet<string>,
+): JevEnvelopeCheck {
+  if (
+    input === null ||
+    typeof input !== 'object' ||
+    Array.isArray(input) ||
+    (input as Record<string, unknown>).schemaVersion !== 1
+  ) {
+    return { ok: false, detail: 'SCHEMA_VERSION_INVALID' }
+  }
+  const unknown = Object.keys(input as Record<string, unknown>).filter(
+    (key) => !allowedKeys.has(key),
+  )
+  if (unknown.length > 0) return { ok: false, detail: 'UNKNOWN_INPUT_KEYS' }
+  return { ok: true }
+}
+
+export const JEV_EXPLICIT_ENVELOPE_KEYS: ReadonlySet<string> = new Set([
+  'schemaVersion',
+  'state',
+  'questions',
+])
+export const JEV_PRESET_ENVELOPE_KEYS: ReadonlySet<string> = new Set([
+  'schemaVersion',
+  'mode',
+  'state',
+])
 
 function isBoundedNonBlankString(value: unknown, max: number): value is string {
   return typeof value === 'string' && value.trim().length > 0 && value.length <= max
@@ -420,11 +465,20 @@ export function isJevDecisionPreset(value: unknown): value is JevDecisionPreset 
 }
 
 /** Every canonical specialist except the orchestrator itself. */
-const SPECIALIST_CHOICES: ReadonlyArray<{ value: string }> = Object.freeze(
+const SPECIALIST_CHOICES: ReadonlyArray<{ value: string; description?: string }> = Object.freeze(
   PANTHEON_AGENT_CATALOG.filter((agent) => agent.id !== 'zeus').map((agent) => ({
     value: agent.id,
+    description: boundedCatalogDescription(agent.description),
   })),
 )
+
+/** Catalog descriptions are short; truncate defensively at the documented bound. */
+function boundedCatalogDescription(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.trim() === '') return undefined
+  return value.length > JEV_DECISION_MAX_DESCRIPTION_LENGTH
+    ? `${value.slice(0, JEV_DECISION_MAX_DESCRIPTION_LENGTH - 1)}…`
+    : value
+}
 
 const SKILL_DESCRIPTIONS = new Map(
   PANTHEON_SKILL_CATALOG.map((entry) => [entry.id, entry.description]),
@@ -521,7 +575,10 @@ export function prepareJevPresetRequest(
           instructions:
             'Choose one listed specialist only when the described task clearly needs it; ' +
             'otherwise choose none. This is advisory only; nothing is dispatched.',
-          choices: [...SPECIALIST_CHOICES, { value: 'none' }],
+          choices: [
+            ...SPECIALIST_CHOICES,
+            { value: 'none', description: 'No specialist fits the described task.' },
+          ],
         },
       ],
     } satisfies NativeDecisionRequest
@@ -529,6 +586,9 @@ export function prepareJevPresetRequest(
   }
 
   const shortlist = selectPantheonSkills(state).skillIds
+  const hostHasSkills = Array.isArray(hostSkills) && hostSkills.length > 0
+  const candidateSource: JevSkillCandidateSource =
+    shortlist.length > 0 ? 'prefilter' : hostHasSkills ? 'host-skills' : 'full-catalog'
   const pool = shortlist.length > 0 ? shortlist : CATALOG_SKILL_IDS
   const descriptions = new Map(PANTHEON_SKILL_CATALOG.map((entry) => [entry.id, entry.description]))
   const request = {
@@ -541,11 +601,14 @@ export function prepareJevPresetRequest(
         instructions:
           'Choose the skills worth stacking for the described task, or none when none apply. ' +
           'This is advisory only; nothing is loaded or executed by this decision.',
-        choices: [...mergeHostSkills(pool, hostSkills, descriptions), { value: 'none' }],
+        choices: [
+          ...mergeHostSkills(pool, hostSkills, descriptions),
+          { value: 'none', description: 'No skill stack fits the described task.' },
+        ],
       },
     ],
   } satisfies NativeDecisionRequest
-  return { ok: true, request: Object.freeze(request) }
+  return { ok: true, request: Object.freeze(request), candidateSource }
 }
 // ─── Response consumption ───────────────────────────────────────────────
 
