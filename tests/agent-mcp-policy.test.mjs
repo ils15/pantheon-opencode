@@ -57,6 +57,46 @@ test('no agent instructs always-on memory or persistence usage', () => {
   }
 })
 
+
+const MCP_GOVERNANCE_BLOCK = [
+  '## MCP governance (identical ladder, grant-aware)',
+  '',
+  '- Escalation order: session context first; the local selector answers free;',
+  '  one typed `pantheon_jev_decide` question when genuinely ambiguous (Zeus',
+  '  dispatches; a returned label is an advisory, never authorization); a',
+  '  native MCP call is the LAST resort for state the session cannot',
+  '  reconstruct.',
+  '- **Memory recall/search** — at most one selective query per turn, only when',
+  '  prior project history could change the decision; never for context you',
+  '  already hold. Every result rides in your context for the rest of the',
+  '  session.',
+  '- **Memory store** (only where granted) — durable, reusable facts ONLY:',
+  '  decisions with reasons, root causes, conventions, user preferences.',
+  '  Session narration never stores: subtask summaries, delegation status and',
+  '  debugging play-by-play go to a checkpoint or nowhere. Namespace per',
+  '  project; update an existing key instead of duplicating.',
+  '- **Persistence checkpoints** (only where granted) — milestones only: would',
+  '  losing this be expensive to redo? Never per turn; never re-save an',
+  '  unchanged key.',
+  '- **Vision** (only where granted) — only when the turn carries an',
+  '  addressable image; one pass per image; each call is real gateway spend.',
+  '- **Code-mode / infrastructure reads** — cheap and on demand; never for',
+  '  decisions the ladder already answers.',
+].join('\n')
+
+test('the governance block is byte-identical in every specialist agent', () => {
+  // PLAN.md §15.2 ratified "MCP governance identical in all" — the block is
+  // the enforcement: one drift breaks this. Zeus keeps its own detailed
+  // section (pinned by the zeus markers above) and is excluded here.
+  for (const name of AGENT_NAMES.filter((n) => n !== 'zeus')) {
+    const text = agent(name)
+    assert.ok(
+      text.includes(MCP_GOVERNANCE_BLOCK),
+      `${name} must carry the canonical governance block byte-identical`,
+    )
+  }
+})
+
 test('the docs baseline section that justifies the policy exists', () => {
   const docs = readFileSync(fileURLToPath(new URL('../docs/mcp-tools.md', import.meta.url)), 'utf8')
   assert.ok(docs.includes('## Measured usage baseline'))
