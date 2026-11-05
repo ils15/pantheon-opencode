@@ -732,12 +732,14 @@ async function testToolGateChain(): Promise<void> {
     assert.equal(await runJevDecision(TOOL_INPUT, toolContext, off.runtime), refusalOf('DISABLED'))
     assert.equal(off.decideCalls.length, 0)
 
-    // Non-Zeus callers are refused before anything else.
+    // Non-Zeus callers are refused before anything else — with the remedy
+    // named in the detail (field report beta.16: the refusal must teach the fix).
     const nonZeus = stubRuntime()
-    assert.equal(
+    const callerRefused = JSON.parse(
       await runJevDecision(TOOL_INPUT, { ...toolContext, agent: 'apollo' }, nonZeus.runtime),
-      refusalOf('CALLER_NOT_ALLOWED'),
-    )
+    ) as { reasonCode: string; detail?: string }
+    assert.equal(callerRefused.reasonCode, 'CALLER_NOT_ALLOWED')
+    assert.match(callerRefused.detail ?? '', /PANTHEON_JEV_SPECIALIST_CALLERS/)
     assert.equal(nonZeus.decideCalls.length, 0)
 
     // Consent missing is a refusal, never a host call (checked before the ledger).

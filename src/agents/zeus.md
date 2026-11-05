@@ -94,6 +94,14 @@ call before firing it.
   cheap and typed, an MCP call is the LAST resort for state the session
   cannot reconstruct.
 
+## Plan persistence (deepwork PLAN.md)
+
+Athena is plan-only and cannot write files; a plan she produces returns as her
+response. YOU persist it: write `.pantheon/deepwork/<slug>/PLAN.md` yourself
+(or hand the write to the specialist that owns the artifact) right after her
+plan lands. Never ask Athena to save, and never delegate persistence to her —
+the field refusal (beta.16) was the frontmatter working as designed.
+
 ## Vague multi-part request? Refine into a contract first
 
 When the user's request spans multiple concerns without explicit acceptance

@@ -120,12 +120,50 @@ const WRITE_TOOLS: ReadonlySet<string> = new Set([
   'hashline_edit',
 ])
 
-/** Whether the operator explicitly enabled the flag. Absence means off. */
+/**
+ * The escalation ladder (field beta.14: the operator wants iterative
+ * escalation, not a binary flag). `on`/`1`/`true` map to `shadow` for
+ * back-compatibility with the shipped setup.
+ *   off     — nothing fires (hard zero)
+ *   shadow  — observe + record; invisible in the session (today's behavior)
+ *   warn    — RESERVED (needs a V2 client channel; currently behaves as shadow)
+ *   enforce — an affirmative high-risk score DENIES the tool call (the host
+ *             surfaces the block message in the session); gate unavailability
+ *             never blocks (fail-open, documented)
+ */
+export type J1RiskGateMode = 'off' | 'shadow' | 'warn' | 'enforce'
+
+export const J1_ENFORCE_THRESHOLD_ENV = 'PANTHEON_J1_ENFORCE_THRESHOLD'
+export const J1_ENFORCE_THRESHOLD_DEFAULT = 0.8
+
+export function j1ModeFromEnv(
+  env: Record<string, string | undefined> = process.env,
+): J1RiskGateMode {
+  const raw = (env[J1_RISK_GATE_FLAG_ENV] ?? '').trim().toLowerCase()
+  if (raw === 'enforce') return 'enforce'
+  if (raw === 'warn') return 'warn'
+  return FLAG_ON.has(raw) ? 'shadow' : 'off'
+}
+
+/** Back-compatible: any non-off mode counts as enabled. */
 export function j1RiskGateEnabledFromEnv(
   env: Record<string, string | undefined> = process.env,
 ): boolean {
-  const raw = (env[J1_RISK_GATE_FLAG_ENV] ?? '').trim().toLowerCase()
-  return FLAG_ON.has(raw)
+  return j1ModeFromEnv(env) !== 'off'
+}
+
+/**
+ * The enforce-mode deny threshold (0..1). Invalid or out-of-range values fall
+ * back to the documented default — an operator typo must not disable the gate.
+ */
+export function j1EnforceThresholdFromEnv(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const text = (env[J1_ENFORCE_THRESHOLD_ENV] ?? '').trim()
+  if (text === '') return J1_ENFORCE_THRESHOLD_DEFAULT
+  const raw = Number(text)
+  if (!Number.isFinite(raw) || raw < 0 || raw > 1) return J1_ENFORCE_THRESHOLD_DEFAULT
+  return raw
 }
 
 /**
@@ -408,12 +446,25 @@ function abortDeadline(signal: AbortSignal): Promise<'timeout'> {
  * settles its own ledger reservation in the background (settlement of an
  * already-fired call — not a retry, and it writes no record).
  */
+export interface J1Verdict {
+  /** 'block' only in enforce mode with an affirmative high-risk score. */
+  block: boolean
+  riskScore: number | null
+  reason: string
+}
+
 export function createJ1RiskGateObserver(
-  options: J1RiskGateObserverOptions,
-): (event: unknown) => Promise<void> {
+  options: J1RiskGateObserverOptions & {
+    /** enforce: the caller awaits and denies on { block: true }. */
+    mode?: J1RiskGateMode
+    threshold?: number
+  },
+): (event: unknown) => Promise<void | J1Verdict> {
   const timeoutMs = options.timeoutMs ?? J1_RISK_GATE_TIMEOUT_MS
   const sink = options.sink
-  return async (event: unknown): Promise<void> => {
+  const enforce = options.mode === 'enforce'
+  const threshold = options.threshold ?? J1_ENFORCE_THRESHOLD_DEFAULT
+  return async (event: unknown): Promise<void | J1Verdict> => {
     try {
       const payload = (event ?? {}) as J1ExecuteBeforeEvent
       if (!isRiskGateTarget(payload.tool)) return
@@ -467,6 +518,18 @@ export function createJ1RiskGateObserver(
           }),
           sink,
         )
+        if (enforce) {
+          const risk = evaluation.riskScore
+          const block = risk !== null && risk >= threshold
+          return {
+            block,
+            riskScore: risk,
+            reason: block
+              ? `J1 enforce: risco ${risk.toFixed(2)} >= threshold ${threshold}`
+              : 'allow',
+          }
+        }
+        return
       } finally {
         clearTimeout(timer)
       }

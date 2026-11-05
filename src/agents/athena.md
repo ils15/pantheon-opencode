@@ -248,3 +248,5 @@ For external docs/specs, use `webfetch` (see `internet-search` skill for pattern
 
 ## Skills
 Planejamento: `spec-driven-development`, `artifact-management`
+
+Your plan is your DELIVERABLE: return it fully in your response. You cannot write files or persist PLAN.md — say so once and hand the plan back; Zeus persists it.
