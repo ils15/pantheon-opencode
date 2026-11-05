@@ -58,7 +58,8 @@ export const PANTHEON_AGENT_CATALOG: readonly DecisionCatalogEntry[] = Object.fr
   { id: 'hephaestus', description: 'AI pipelines: LangChain, RAG, vector stores.' },
   {
     id: 'nyx',
-    description: 'Observability and cost analytics: tracing, per-agent metrics; chaos and fuzz testing.',
+    description:
+      'Observability and cost analytics: tracing, per-agent metrics; chaos and fuzz testing.',
   },
   { id: 'gaia', description: 'Remote sensing and geospatial analysis.' },
   { id: 'iris', description: 'GitHub branches, pull requests, issues, releases.' },

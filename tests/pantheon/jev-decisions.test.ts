@@ -530,7 +530,7 @@ function testPresets(): void {
   // Defect 2: the candidate path is reported, never silent.
   const stackedSource = prepareJevPresetRequest(route, 'skills', { state: 'qwertyuiop' })
   assert.ok(stackedSource.ok)
-  if (stackedSource.ok) assert.equal(stackedSource.candidateSource, 'full-catalog')  // always now
+  if (stackedSource.ok) assert.equal(stackedSource.candidateSource, 'full-catalog') // always now
 
   // Defect 3: the envelope applies to presets at the TOOL gate (the single
   // point before any builder) — schemaVersion required, no unknown keys.
