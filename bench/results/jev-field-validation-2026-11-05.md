@@ -92,3 +92,31 @@ feature from this branch).
 - Schema v4 ledger: installed-CLI readers older than this branch report
   `unsupported-schema` until upgraded (this machine's global was upgraded
   during this validation).
+
+## Skill-discovery pipeline — field E2E (same day, live)
+
+The ladder from `docs/reference/native-decisions.md` (§ Skill ecosystem) ran
+end to end in a real session ("PDF tables to CSV" need):
+
+1. Installed pool: no PDF skill installed — gap confirmed.
+2. Ecosystem search (non-interactive): 3 candidates with install counts
+   (alterlab-pdf-extract 13, pdf-processing 247, pdf-processing-pro 737).
+3. One typed Jev choice question ranked them: pick **pdf-processing-pro**
+   (confidence 0.49), usage reconciled (`costUsd:0.000018`, `frozen:false`).
+4. Proposal only: the exact project-scoped command
+   (`npx skills add <repo> -a opencode`) was proposed, NOT run — the review
+   is the user's.
+
+Field notes (unblocks future runs, none are product bugs):
+
+- The running host service must be restarted after every global package
+  upgrade — a pre-restart Jev call failed with `unsupported-schema` (the
+  service still held the pre-v4 ledger reader) and, before the upgrade, a
+  rank/verify-less build answered `PRESET_INVALID`.
+- Explicit-questions envelope gotchas models stumble on (each answered by a
+  precise refusal, ledger untouched): the per-question `type: "choice"`
+  field is mandatory; the state key is `state` (a model wrote `statement`);
+  choice VALUES accept bounded prose (slash/@ fine) — the earlier token
+  suspicion was wrong.
+- Reform input: a worked explicit-questions example in the rewritten
+  zeus.md would cut this two-refusal warm-up.
