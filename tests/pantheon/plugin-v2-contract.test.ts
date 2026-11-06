@@ -926,7 +926,7 @@ async function main(): Promise<void> {
               decisions: async () => ({
                 answers: [
                   { type: 'score', name: 'quality', score: 7, confidence: 0.8 },
-                  { type: 'predicate', name: 'noul', probability: 0.9 },
+                  { type: 'predicate', name: 'needs_review', probability: 0.9 },
                 ],
                 cost: 0.000002,
                 tokens: { input: 12, output: 8 },
