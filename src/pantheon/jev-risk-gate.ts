@@ -89,7 +89,7 @@ export const J1_RISK_GATE_STATE_MAX_LENGTH = 512
 /** Predicate probability at or above which the intent counts as consistent. */
 export const RISK_GATE_INTENT_THRESHOLD = 0.5
 
-const FLAG_ON = new Set(['1', 'on', 'true'])
+const FLAG_ON = new Set(['1', 'on', 'true', 'shadow'])
 const TOOL_NAME_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/
 const SHA256_HEX = /^[0-9a-f]{64}$/
 const SCOPES: ReadonlySet<string> = new Set(['write', 'execute', 'read'])
@@ -192,7 +192,10 @@ export function isRiskGateTarget(tool: unknown): tool is string {
 
 /**
  * sha256 hex of the serialized tool input — an opaque correlation value, the
- * only content-derived field that ever leaves this process. Unserializable
+ * only content-derived field that ever leaves this process. The hash is a
+ * DETERMINISTIC pseudonymization (unsalted SHA-256 — same input, same hash by
+ * design, so approvals can be pinned to the exact call), NOT anonymization:
+ * someone holding the dictionary can reconstruct the input. Unserializable
  * inputs hash a stable marker; this never throws.
  */
 export function hashToolInput(input: unknown): string {

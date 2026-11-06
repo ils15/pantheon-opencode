@@ -116,6 +116,13 @@ import {
 import { GOAL_LOOP_DEFAULTS, GoalStore } from './pantheon/goal-loop.ts'
 import { createGuardPathResolver } from './pantheon/guard-path.ts'
 import { createJTelemetryMirror } from './pantheon/j-telemetry-file.ts'
+import {
+  approvalInputHash,
+  hasApproval,
+  isAffirmativeAnswer,
+  j1ApprovalMarker,
+  mintApproval,
+} from './pantheon/j1-approvals.ts'
 import type { V2JevDecisionRuntime } from './pantheon/jev-decision-tool.ts'
 import { specialistCallerAllowlist } from './pantheon/jev-decision-tool.ts'
 import {
@@ -2159,21 +2166,35 @@ async function registerV2ToolHooks(
           // block's visible form. Unavailability never denies (fail-open by
           // design: a dead budget must not brick every shell call).
           if (j1Mode === 'enforce') {
+            // The approval path (field beta.21: "exigir uma aprovação explícita
+            // para execução" — a deny must be askable, not destructive): an
+            // approved retry of the EXACT call (session + input hash, TTL
+            // bounded) passes without re-asking.
+            const enforceEvent = event as { tool?: unknown; input?: unknown; sessionID?: unknown }
+            const sessionID =
+              typeof enforceEvent.sessionID === 'string' ? enforceEvent.sessionID : ''
+            const inputHash = approvalInputHash(enforceEvent.input)
+            if (sessionID !== '' && hasApproval(sessionID, inputHash)) {
+              // Approved by the user: execute — and still observe (the
+              // approved execution is exactly the record the baseline wants).
+              void j1Observer(event)
+              return
+            }
             const verdict = (await j1Observer(event)) as J1Verdict | undefined
             if (verdict?.block === true) {
-              // The block is a HANDOFF CONTRACT (field: "risco alto deveria
-              // vir pra mim executar manualmente"), not an error to route
-              // around: present the refused call to the human for a manual
-              // decision. Never echo the tool input here — the arguments may
-              // carry the very secret the risk score flagged; the agent owns
-              // its own rendering.
+              // The block is an APPROVAL REQUEST (not an error to route
+              // around): ask the user through the `question` tool with the
+              // marker below; an affirmative answer mints a hash-pinned,
+              // TTL-bounded approval and the retry passes. Never echo the
+              // tool input here — the arguments may carry the very secret
+              // the risk score flagged; the agent owns its own rendering.
               throw new Error(
                 `[J1 enforce] risco ${verdict.riskScore?.toFixed(2)} >= threshold ` +
-                  '— ENTREGUE AO USUÁRIO: apresente a chamada ' +
-                  'recusada (ferramenta + o que ela faria), sem executá-la nem contorná-la de outra forma, ' +
-                  'e pergunte se ele executa manualmente. Alternativas dele: ajustar ' +
-                  'PANTHEON_J1_ENFORCE_THRESHOLD, rebaixar o modo para shadow/warn, ou reexecutar a tarefa ' +
-                  'sem o passo arriscado.',
+                  `— APROVAÇÃO EXPLÍCITA NECESSÁRIA: use a tool question com o nome ` +
+                  `"${j1ApprovalMarker(inputHash)}" perguntando ao USUÁRIO se aprova esta exata chamada ` +
+                  '(apresente a ferramenta e o que ela faria, sem executá-la nem contorná-la). ' +
+                  'Se ele aprovar, reintente a MESMA chamada — ela passará. Se ele recusar, siga sem o ' +
+                  'passo arriscado ou entregue a execução manual a ele.',
               )
             }
           } else {
@@ -2222,6 +2243,35 @@ async function registerV2ToolHooks(
       try {
         subagentOrigins.forget(event)
         boundedReadOrigins?.forget(event)
+        // J1 approval minter: the user's affirmative answer to a
+        // `j1-approval-<hash12>` question mints the hash-pinned, TTL-bounded
+        // approval the enforce gate checks. Only the OBSERVED host result can
+        // mint — the agent cannot fabricate an answer.
+        if (j1Mode === 'enforce') {
+          try {
+            const after = (event ?? {}) as {
+              tool?: unknown
+              sessionID?: unknown
+              output?: unknown
+              input?: unknown
+            }
+            if (after.tool === 'question') {
+              const sessionID = typeof after.sessionID === 'string' ? after.sessionID : ''
+              const serialized = JSON.stringify(after.output ?? {}) ?? ''
+              const markerMatch = serialized.match(/j1-approval-([0-9a-f]{12})/)
+              const markerHash = markerMatch?.[1]
+              if (sessionID !== '' && markerHash !== undefined) {
+                const name = `j1-approval-${markerHash}`
+                if (isAffirmativeAnswer(name, serialized)) {
+                  mintApproval(sessionID, markerHash)
+                }
+              }
+            }
+          } catch {
+            // The minter is best-effort; a parse failure just means no
+            // approval (fail-closed).
+          }
+        }
         await v2ExecuteAfter(event)
         // Formatter + delegation audit STOP (#266). Awaited for the same
         // reason V1 awaits it: the log record should exist before the tool

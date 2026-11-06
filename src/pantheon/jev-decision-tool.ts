@@ -516,6 +516,7 @@ export async function runJevDecision(
   // neither has a telemetry point — they are tool modes, not shadow gates.
   let prebuilt: Omit<NativeDecisionRequest, 'model'> | undefined
   let candidateSource: JevDecisionPreparation['candidateSource'] | undefined
+  let orderCandidates: readonly string[] = []
   if (requested.mode === 'review') {
     const prepared = buildJevReviewRequest(input ?? {})
     if (!prepared.ok) {
@@ -542,6 +543,7 @@ export async function runJevDecision(
   } else if (requested.mode === 'order') {
     const prepared = buildJevOrderRequest(input ?? {})
     if (!prepared.ok) return refusal(prepared.reasonCode, prepared.detail)
+    orderCandidates = prepared.candidates
     prebuilt = prepared.request
   }
   const result = await runGatedNativeJevCall({
@@ -674,7 +676,11 @@ export async function runJevDecision(
     // v3.1 ordering: one fit question per candidate (2-4), sorted descending.
     // Null score = the host answered nothing usable for that candidate —
     // visible, placed last, never guessed.
-    const ordering = consumeJevOrderResult(result.call.response, result.call.request)
+    const ordering = consumeJevOrderResult(
+      result.call.response,
+      result.call.request,
+      orderCandidates,
+    )
     return JSON.stringify({
       advisory: true,
       effect: 'none',

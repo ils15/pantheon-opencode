@@ -11,7 +11,15 @@ test('the J1 enforce block is a handoff contract, not a bare error', () => {
     fileURLToPath(new URL('../../src/plugin-v2.ts', import.meta.url)),
     'utf8',
   )
-  assert.ok(source.includes('ENTREGUE AO USUÁRIO'), 'hands the decision to the human')
-  assert.ok(source.includes('executa manualmente'), 'names the manual-execution path')
-  assert.ok(/sem execut[áa]-la nem contorn/i.test(source), 'forbids executing or working around')
+  assert.ok(
+    source.includes('APROVAÇÃO EXPLÍCITA NECESSÁRIA'),
+    'demands explicit approval (field beta.20→21: the deny must be askable)',
+  )
+  assert.ok(source.includes('question com o nome'), 'names the question channel')
+  assert.ok(/j1-approval-/, 'carries the approval marker')
+  assert.ok(
+    source.includes('sem executá-la nem contorná-la'),
+    'forbids executing or working around',
+  )
+  assert.ok(source.includes('reintente a MESMA chamada'), 'the approved retry passes')
 })

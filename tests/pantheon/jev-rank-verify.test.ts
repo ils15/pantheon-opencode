@@ -131,7 +131,11 @@ function testConstants(): void {
     'one predicate question per claim, within the 4-question bound',
   )
   assert.equal(CLAIM_MAX_LENGTH, 200)
-  assert.equal(VERIFY_PASS_THRESHOLD, 0.5)
+  assert.equal(
+    VERIFY_PASS_THRESHOLD,
+    0.65,
+    'PASS lives above the 0.35-0.65 UNVERIFIABLE band (QA beta.20)',
+  )
 }
 
 // ─── Rank request building ───────────────────────────────────────────────
@@ -653,19 +657,41 @@ function testVerifyConsumeVerdicts(): void {
     ),
     { claim_a: 'PASS', claim_b: 'FAIL', claim_c: 'UNVERIFIABLE' },
   )
-  // The boundary itself is PASS; a claim with NO host answer is BLOCK
-  // (fail-closed), never a guess.
+  // Band edges (QA beta.20): 0.65 UNVERIFIABLE (inclusive), 0.66 PASS,
+  // 0.35 UNVERIFIABLE, 0.5 UNVERIFIABLE, 0.34 FAIL; a claim with NO host
+  // answer is BLOCK (fail-closed), never a guess.
   assert.deepEqual(
     consumeJevVerifyResult(
       {
         answers: [
-          { type: 'predicate', name: 'claim_a', probability: 0.5 },
-          { type: 'predicate', name: 'claim_b', probability: 0.34 },
+          { type: 'predicate', name: 'claim_a', probability: 0.65 },
+          { type: 'predicate', name: 'claim_b', probability: 0.66 },
         ],
       },
       verifyRequest(),
     ),
-    { claim_a: 'PASS', claim_b: 'FAIL', claim_c: 'BLOCK' },
+    { claim_a: 'UNVERIFIABLE', claim_b: 'PASS', claim_c: 'BLOCK' },
+  )
+  assert.deepEqual(
+    consumeJevVerifyResult(
+      {
+        answers: [
+          { type: 'predicate', name: 'claim_a', probability: 0.35 },
+          { type: 'predicate', name: 'claim_b', probability: 0.5 },
+        ],
+      },
+      verifyRequest(),
+    ),
+    { claim_a: 'UNVERIFIABLE', claim_b: 'UNVERIFIABLE', claim_c: 'BLOCK' },
+  )
+  assert.deepEqual(
+    consumeJevVerifyResult(
+      {
+        answers: [{ type: 'predicate', name: 'claim_a', probability: 0.34 }],
+      },
+      verifyRequest(),
+    ),
+    { claim_a: 'FAIL', claim_b: 'BLOCK', claim_c: 'BLOCK' },
   )
 }
 
@@ -1250,7 +1276,13 @@ function testOrderConsume(): void {
     input: built.request.input,
     questions: built.request.questions,
   }
-  // Descending by score; nulls last; ties keep original order.
+  // Descending by score; nulls last; ties keep original order. The ids are
+  // the CALLER's (QA beta.20: positional c1..cN told the user nothing).
+  const built2 = buildJevOrderRequest(orderInput())
+  assert.ok(built2.ok)
+  if (!built2.ok) return
+  const realIds = built2.candidates
+  assert.deepEqual(realIds, ['c1', 'c2', 'c3'])
   const ordered = consumeJevOrderResult(
     {
       answers: [
@@ -1260,21 +1292,23 @@ function testOrderConsume(): void {
       ],
     },
     request,
+    realIds,
   )
   assert.deepEqual(
     ordered.map((entry) => entry.id),
-    ['c2', 'c3', 'c1'],
-    'descending, stable on ties',
+    realIds.slice(1).concat([realIds[0] ?? '']),
+    'descending, stable on ties, CALLER ids',
   )
   // A missing answer stays visible as null, never guessed.
   const withNull = consumeJevOrderResult(
     { answers: [{ type: 'score', name: 'fit_2', score: 3 }] },
     request,
+    realIds,
   )
   assert.deepEqual(withNull, [
-    { id: 'c2', score: 3 },
-    { id: 'c1', score: null },
-    { id: 'c3', score: null },
+    { id: realIds[1] ?? '', score: 3 },
+    { id: realIds[0] ?? '', score: null },
+    { id: realIds[2] ?? '', score: null },
   ])
 }
 

@@ -152,7 +152,7 @@ export const J3_ESCALATION_CHEAP_MODEL = 'opencode/mimo-v2.6-flash'
 /** Bound for the composed state text (the template is ~320 chars). */
 export const J3_ESCALATION_STATE_MAX_LENGTH = 512
 
-const FLAG_ON = new Set(['1', 'on', 'true'])
+const FLAG_ON = new Set(['1', 'on', 'true', 'shadow'])
 const TOKEN_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/
 const SHA256_HEX = /^[0-9a-f]{64}$/
 /** Largest state_chars printed into the template (8 digits). */

@@ -22,7 +22,8 @@
  * Zeus can check 1–4 named claims in ONE typed round-trip: one `predicate`
  * question per claim (within the 4-question bound), the claim text riding that
  * question's instructions. The consumer maps each answer: probability
- * ≥ {@link VERIFY_PASS_THRESHOLD} → `PASS`, below → `FAIL`, and every refusal,
+ * > {@link VERIFY_PASS_THRESHOLD} (0.65) → `PASS`; 0.35–0.65 → `UNVERIFIABLE`; below →
+ * `FAIL`; and every refusal,
  * timeout, duplicate or malformed answer → `BLOCK` (fail-closed: an
  * unanswered mandatory claim must never read as verified). The tool itself
  * never acts on a verdict — `effect` stays `none` — and a gate-chain refusal
@@ -73,7 +74,13 @@ export const VERIFY_MAX_CLAIMS = 4
 export const CLAIM_MAX_LENGTH = 200
 
 /** Predicate probability at or above which a claim counts as PASS. */
-export const VERIFY_PASS_THRESHOLD = 0.5
+/**
+ * PASS lives strictly ABOVE the UNVERIFIABLE band (QA beta.20: with PASS at
+ * 0.5 the documented 0.35-0.65 band was unreachable at its top half — 0.50
+ * and 0.65 returned PASS). Verdicts: < 0.35 FAIL, 0.35-0.65 UNVERIFIABLE,
+ * > 0.65 PASS.
+ */
+export const VERIFY_PASS_THRESHOLD = 0.65
 
 const CANDIDATE_ID_MAX_LENGTH = 64
 const CLAIM_NAME_MAX_LENGTH = 64
@@ -300,7 +307,12 @@ export type JevOrderBuildFailure =
 export type JevOrderBuildDetail = 'ORDER_CANDIDATE_COUNT_RANGE'
 
 export type JevOrderBuild =
-  | { readonly ok: true; readonly request: Omit<NativeDecisionRequest, 'model'> }
+  | {
+      readonly ok: true
+      readonly request: Omit<NativeDecisionRequest, 'model'>
+      /** The caller's candidate ids in question order (QA beta.20: the consumer must map scores back to THESE, not positional c1..cN). */
+      readonly candidates: readonly string[]
+    }
   | {
       readonly ok: false
       readonly reasonCode: JevOrderBuildFailure
@@ -308,7 +320,11 @@ export type JevOrderBuild =
     }
 
 export type JevOrderPreparation =
-  | { readonly ok: true; readonly request: NativeDecisionRequest }
+  | {
+      readonly ok: true
+      readonly request: NativeDecisionRequest
+      readonly candidates: readonly string[]
+    }
   | {
       readonly ok: false
       readonly reasonCode: JevOrderBuildFailure
@@ -387,7 +403,11 @@ export function buildJevOrderRequest(input: unknown): JevOrderBuild {
     ]),
     questions: Object.freeze(questions.map((question) => Object.freeze(question))),
   } satisfies Omit<NativeDecisionRequest, 'model'>
-  return { ok: true, request: Object.freeze(request) }
+  return {
+    ok: true,
+    request: Object.freeze(request),
+    candidates: Object.freeze(candidates.map((c) => c.id)),
+  }
 }
 
 export function prepareJevOrderRequest(
@@ -403,6 +423,7 @@ export function prepareJevOrderRequest(
       input: built.request.input,
       questions: built.request.questions,
     },
+    candidates: built.candidates,
   }
 }
 
@@ -420,6 +441,7 @@ export interface JevOrderEntry {
 export function consumeJevOrderResult(
   response: unknown,
   request: NativeDecisionRequest,
+  candidates: readonly string[],
 ): ReadonlyArray<JevOrderEntry> {
   const advice = consumeJevDecisionResult(response, request)
   const entries: Array<{ id: string; score: number | null; order: number }> = []
@@ -429,7 +451,9 @@ export function consumeJevOrderResult(
       answer !== undefined && answer.type === 'score' && typeof answer.score === 'number'
         ? answer.score
         : null
-    entries.push({ id: `c${index + 1}`, score, order: index })
+    // QA beta.20: map back to the CALLER's candidate id — positional c1..cN
+    // told the user nothing.
+    entries.push({ id: candidates[index] ?? `c${index + 1}`, score, order: index })
   })
   return Object.freeze(
     entries
@@ -609,7 +633,7 @@ export type VerifyClaimVerdict = 'PASS' | 'FAIL' | 'UNVERIFIABLE' | 'BLOCK'
 
 /**
  * Consume a host Decisions response against the prepared verify request:
- * one verdict per claim name. Probability ≥ {@link VERIFY_PASS_THRESHOLD} is
+ * one verdict per claim name. Probability > {@link VERIFY_PASS_THRESHOLD} is
  * `PASS`, below is `FAIL`; error answers, missing answers and any unusable
  * response shape are `BLOCK` — fail-closed.
  */
@@ -624,7 +648,7 @@ export function consumeJevVerifyResult(
     if (answer !== undefined && answer.type === 'predicate') {
       const probability = answer.probability ?? 0
       verdicts[question.name] =
-        probability >= VERIFY_PASS_THRESHOLD
+        probability > VERIFY_PASS_THRESHOLD
           ? 'PASS'
           : probability >= VERIFY_UNVERIFIABLE_LOW
             ? 'UNVERIFIABLE'
