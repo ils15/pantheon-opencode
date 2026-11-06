@@ -517,6 +517,7 @@ export async function runJevDecision(
   let prebuilt: Omit<NativeDecisionRequest, 'model'> | undefined
   let candidateSource: JevDecisionPreparation['candidateSource'] | undefined
   let orderCandidates: readonly string[] = []
+  let verifyEvidenceUsed: boolean | undefined
   if (requested.mode === 'review') {
     const prepared = buildJevReviewRequest(input ?? {})
     if (!prepared.ok) {
@@ -539,6 +540,9 @@ export async function runJevDecision(
   } else if (requested.mode === 'verify') {
     const prepared = buildJevVerifyRequest(input ?? {})
     if (!prepared.ok) return refusal(prepared.reasonCode)
+    verifyEvidenceUsed = (
+      prepared.request.input[0] as { text?: string } | undefined
+    )?.text?.includes('Evidence/context supplied by the caller')
     prebuilt = prepared.request
   } else if (requested.mode === 'order') {
     const prepared = buildJevOrderRequest(input ?? {})
@@ -715,6 +719,7 @@ export async function runJevDecision(
         billing: result.call.selection.route.billing,
       },
       mode: 'verify',
+      ...(verifyEvidenceUsed === undefined ? {} : { evidenceUsed: verifyEvidenceUsed }),
       results,
       answers: advice.answers,
       missing: advice.missing,
@@ -751,7 +756,8 @@ const TOOL_DESCRIPTION =
   '(advisory quality score + needs-review flag; the result content itself is never sent — ' +
   'shape metrics and criteria only), `mode: "rank"` to pick the best of 2-20 named candidates ' +
   '(winner + fit; no full ordering), `mode: "order"` to ORDER 2-4 candidates by fit (one ' +
-  'score question per candidate; returns the descending ordering with per-candidate scores), ' +
+  'score question per candidate; returns the descending ordering with per-candidate scores — ' +
+  'an ORDINAL on the 2..10 rubric, not a probability), ' +
   '(returns the winner and its fit score; no full ordering), `mode: "verify"` to check 1-4 ' +
   'named claims, with optional `state` evidence the claims are judged against ' +
   '(verdicts PASS, FAIL, or UNVERIFIABLE for the 0.35-0.65 band; any refusal, timeout or ' +
@@ -877,7 +883,19 @@ const JEV_INPUT_SCHEMA: Record<string, unknown> = {
       type: 'array',
       minItems: 1,
       maxItems: 4,
-      items: { type: 'string', minLength: 1, maxLength: 120 },
+      items: {
+        anyOf: [
+          { type: 'string', minLength: 1, maxLength: 120 },
+          {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              id: { type: 'string', minLength: 1, maxLength: 64 },
+              description: { type: 'string', minLength: 1, maxLength: 120 },
+            },
+          },
+        ],
+      },
     },
     candidates: {
       type: 'array',

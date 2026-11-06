@@ -176,6 +176,59 @@ function testBuildRequestExactTemplate(): void {
 
 // ─── Criteria bounds (the DSH caps, mirrored) ────────────────────────────
 
+function testBatteryCriteriaPtObjectForm(): void {
+  // Regression: the beta.24 battery #10 EXACT payload (PT object criteria)
+  // must build — it returned CRITERIA_INVALID in the field.
+  const built = buildQualityScoreRequest({
+    delegateId: 'hermes',
+    resultSummaryKind: 'ok',
+    resultMetrics: { outputChars: 1200, taskDurationMs: 45000 },
+    criteria: [{ id: 'goal', description: 'o objetivo da tarefa foi atingido' }],
+  })
+  assert.ok(built.ok, 'the battery #10 payload builds (field regression)')
+  if (!built.ok) return
+  const question = built.request.questions[0]
+  if (question.type === 'score') {
+    assert.ok(
+      question.instructions.includes('o objetivo da tarefa foi atingido'),
+      'the PT description rides the question',
+    )
+  }
+}
+
+function testCriteriaObjectFormAccepted(): void {
+  // Field beta.24 #10: `{id, description}` objects are the natural caller
+  // shape — both forms normalize to the description text.
+  const localBase = {
+    delegateId: 'apollo',
+    resultSummaryKind: 'ok' as const,
+    resultMetrics: { outputChars: 10, taskDurationMs: null },
+  }
+  const asObjects = buildQualityScoreRequest({
+    ...localBase,
+    criteria: [{ id: 'goal', description: 'the task goal is met' }],
+  })
+  const asStrings = buildQualityScoreRequest({ ...localBase, criteria: ['the task goal is met'] })
+  assert.ok(asObjects.ok, 'object criteria accepted')
+  assert.ok(asStrings.ok, 'string criteria still accepted')
+  if (asObjects.ok && asStrings.ok) {
+    const o = asObjects.request.questions[0]
+    const st = asStrings.request.questions[0]
+    if (o.type === 'score' && st.type === 'score') {
+      assert.equal(o.instructions, st.instructions, 'both normalize to the same request')
+    }
+  }
+  // A hostile id or a missing description still refuses.
+  assert.equal(
+    buildQualityScoreRequest({
+      ...localBase,
+      criteria: [{ id: 'x'.repeat(65), description: 'ok' }],
+    }).ok,
+    false,
+  )
+  assert.equal(buildQualityScoreRequest({ ...localBase, criteria: [{ id: 'g' }] }).ok, false)
+}
+
 function testCriteriaBounds(): void {
   const base = {
     delegateId: 'apollo',
@@ -200,17 +253,23 @@ function testCriteriaBounds(): void {
   assert.ok(
     buildQualityScoreRequest({ ...base, criteria: ['x'.repeat(J4_CRITERIA_MAX_LENGTH)] }).ok,
   )
-  assert.deepEqual(
-    buildQualityScoreRequest({ ...base, criteria: ['x'.repeat(J4_CRITERIA_MAX_LENGTH + 1)] }),
-    { ok: false, reasonCode: 'CRITERIA_INVALID' },
-  )
+  const long = buildQualityScoreRequest({
+    ...base,
+    criteria: ['x'.repeat(J4_CRITERIA_MAX_LENGTH + 1)],
+  })
+  assert.equal(long.ok, false)
+  if (!long.ok) {
+    assert.equal(long.reasonCode, 'CRITERIA_INVALID')
+    assert.match(long.detail ?? '', /CRITERIA_SHAPE/)
+  }
   // Blank, empty and non-string items are rejected, never coerced.
   for (const criteria of [[''], ['   '], [42], [null], [undefined], [['a']], 'a b c', 4, null]) {
     const built = buildQualityScoreRequest({
       ...base,
       criteria: criteria as unknown as readonly string[],
     })
-    assert.deepEqual(built, { ok: false, reasonCode: 'CRITERIA_INVALID' }, JSON.stringify(criteria))
+    assert.equal(built.ok, false)
+    if (!built.ok) assert.equal(built.reasonCode, 'CRITERIA_INVALID')
   }
 }
 
@@ -238,11 +297,8 @@ function testHostileCriteriaRejected(): void {
   ]
   for (const criterion of hostile) {
     const built = buildQualityScoreRequest({ ...base, criteria: [criterion] })
-    assert.deepEqual(
-      built,
-      { ok: false, reasonCode: 'CRITERIA_INVALID' },
-      JSON.stringify(criterion),
-    )
+    assert.equal(built.ok, false, JSON.stringify(criterion))
+    if (!built.ok) assert.equal(built.reasonCode, 'CRITERIA_INVALID')
   }
   // Benign prose that merely MENTIONS sensitive words without a credential
   // assignment shape stays admissible — the rejection targets shapes, not
@@ -962,7 +1018,9 @@ async function testToolReviewInputRefusal(): Promise<void> {
         hostileStub.runtime,
       ),
     )
-    assert.deepEqual(hostile, { advisory: false, effect: 'none', reasonCode: 'CRITERIA_INVALID' })
+    assert.equal(hostile.reasonCode, 'CRITERIA_INVALID')
+    assert.equal(hostile.advisory, false)
+    assert.equal(hostile.effect, 'none')
     assert.equal(hostileStub.decideCalls.length, 0)
     assert.equal(hostileStub.records[0]?.reason, 'skip-criteria-invalid')
   })
@@ -1118,6 +1176,8 @@ check(
   testPrepareJevReviewRequest,
 )
 check('telemetry: the sink admits the J4 point under the same allowlist', testTelemetryAdmitsJ4)
+check('criteria: object form normalizes, hostile ids refuse', testCriteriaObjectFormAccepted)
+check('criteria: the beta.24 battery #10 PT payload builds', testBatteryCriteriaPtObjectForm)
 check(
   'schema contract: mode "review" declared with its disjoint payload',
   testSchemaDeclaresReviewMode,
