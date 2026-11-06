@@ -10,6 +10,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.3-beta.20] - 2026-11-06
+
+## 🆕 What's New
+- The J1 enforce block is now a HANDOFF CONTRACT: a high-risk call is denied with instructions to present it to the user for a MANUAL decision — no executing, no working around; the message names the levers (threshold, mode, rerun without the risky step).
+
 ## [v1.6.3-beta.19] - 2026-11-06
 
 ## 🆕 What's New
