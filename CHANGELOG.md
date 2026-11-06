@@ -10,6 +10,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.3-beta.21] - 2026-11-06
+
+## 🆕 What's New
+- The J1 enforce block is now an APPROVAL GATE: a high-risk call is denied with an ask — the agent questions the user under a `j1-approval-<hash>` marker; an affirmative answer mints a hash-pinned, TTL-bounded (15 min), session-scoped pass for that exact call, and the retry executes (and records). No observed answer, no pass — fail-closed.
+- QA beta.20 fixes: verify verdict band precedence (0.35–0.65 UNVERIFIABLE inclusive; PASS strictly above), order maps scores back to the caller's candidate ids, `=shadow` no longer reads as off, scorecard count/cost honesty.
+
 ## [v1.6.3-beta.20] - 2026-11-06
 
 ## 🆕 What's New
