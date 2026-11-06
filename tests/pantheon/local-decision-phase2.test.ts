@@ -23,6 +23,7 @@ import {
 } from '../../src/pantheon/local-decision-prompt.ts'
 import { selectPantheonSkills } from '../../src/pantheon/local-decision-skills.ts'
 import type { TurnDecision } from '../../src/pantheon/local-decision-turn.ts'
+import { localDecisionForTest } from '../../src/pantheon/local-decision-turn.ts'
 import {
   clearLocalDecisionPolicyCache,
   type LocalDecisionPolicy,
@@ -116,6 +117,36 @@ function samplePolicy(overrides: Partial<LocalDecisionPolicy> = {}): LocalDecisi
     permissionTask: { '*': 'allow' },
     ...overrides,
   }
+}
+
+function testAgentSkillFallbackFeedsPtDelegations(): void {
+  // D3 (field reports beta.13-16): same domain, EN fed / PT starved.
+  process.env.PANTHEON_LOCAL_DECISION_ROUTER = '1'
+  try {
+    const en = decideLocalForTurnSync(
+      'delegar para hermes: implement a FastAPI backend endpoint with pytest',
+    )
+    assert.equal(en.agent, 'hermes')
+    assert.ok(en.skillIds.length > 0, 'EN feeds')
+    const pt = decideLocalForTurnSync(
+      'delegar: implementar um endpoint FastAPI com testes de integracao',
+    )
+    assert.equal(pt.agent, 'hermes')
+    assert.ok(pt.skillIds.length > 0, 'PT no longer starves (D3)')
+    assert.ok(pt.skillIds.includes('tdd-with-agents'), 'the fallback is hermes-relevant')
+    // A no-signal request stays skill-only, no agent fallback leaks.
+    const quiet = decideLocalForTurnSync('apenas um comentario qualquer sem delegacao')
+    assert.equal(quiet.agent, null)
+  } finally {
+    delete process.env.PANTHEON_LOCAL_DECISION_ROUTER
+  }
+}
+
+function decideLocalForTurnSync(request: string) {
+  // The env flag is read at call time; policy load is best-effort (undefined
+  // policy still routes skills, agent needs policy — read it like prod does).
+  const decision = localDecisionForTest(request, samplePolicy())
+  return decision
 }
 
 function testCatalogAndSkillSelection(): void {
@@ -369,5 +400,6 @@ testPromptApplicationIsIdempotentAndBounded()
 testFetchProviderPathIsRemoved()
 testEmptySelectionNeverErasesHostSkills()
 await testPolicyCacheIsProcessScopedAndInvalidatable()
+testAgentSkillFallbackFeedsPtDelegations()
 
 console.log('local decision phase 2 tests passed')

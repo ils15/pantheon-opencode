@@ -332,6 +332,11 @@ const recommendation = recommendLocalDecision({
 
 ## Input and route behavior
 
+Each `complexity` dimension is 0..2 where **higher = riskier / less
+contained**: `boundedness: 2` means POORLY bounded (not "very bounded"), and
+the aggregate label is `max(dimensions)` — one hot dimension labels the task
+high (lo `0,0,2,2,2` and hi `2,2,0,0,0` are both `high` by design).
+
 Input schema version `1` accepts only structured fields: `domains`, `complexity`,
 and `gateStatus`. Extra fields (including free-form task text) make the input
 invalid; the router does not parse text, infer keywords, or call a model.
