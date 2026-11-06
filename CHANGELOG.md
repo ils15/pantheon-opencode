@@ -10,6 +10,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.3-beta.25] - 2026-11-06
+
+## 🆕 What's New
+- The external-research regressions: three refiner fixtures (cited-scenario analyzes, direct-vague contracts, bounded-fix executes), skills review hardened (origin/adoption are signals, dangerous content blocks regardless of popularity), and the order score documented as an ORDINAL on the 2..10 rubric — never a probability.
+- The beta.24 battery #10 exact PT payload is a regression test now (the CRITERIA_SHAPE fix holds under its exact shape).
+
 ## [v1.6.3-beta.24] - 2026-11-06
 
 ## 🆕 What's New
