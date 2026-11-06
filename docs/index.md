@@ -1,7 +1,7 @@
 # Pantheon Documentation
 
 Pantheon is a multi-agent orchestration framework for **OpenCode**: 14
-specialized agents, 21 skills, and one guided workflow from plan to reviewed
+specialized agents, 22 skills, and one guided workflow from plan to reviewed
 change. This page is the map. Each fact has one home; pages link to it instead
 of repeating it.
 

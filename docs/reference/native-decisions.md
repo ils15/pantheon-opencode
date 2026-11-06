@@ -541,7 +541,9 @@ The **discovery pipeline** binds these steps into one measured ladder
    the **canonical Anthropic catalog** (`anthropics/skills` — curated
    upstream; checked first so the canonical `pdf`/`docx`/`mcp-builder`
    skills outrank the third-party clones that popularity ranking surfaces),
-   the **skills.sh index** (breadth with install-count signal, unreviewed),
+   the **skills.sh index** (breadth with install-count signal, unreviewed;
+   known-good community repos to try by name in the GitHub tier:
+   `mattpocock/skills` — engineering craft, still untrusted until reviewed),
    and **raw GitHub** `filename:SKILL.md` code search (orders of magnitude
    wider — 8,480 hits for "satellite" where the skills.sh index offered
    three — and the weakest trust). Output is the merged parseable contract

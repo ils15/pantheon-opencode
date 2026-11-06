@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [Unreleased]
+
+### Added
+
+- **skills** — `agent-forge`: forge a new OpenCode agent on demand — interview (gap, surface, scope, model posture), draft against the canonical shape (frontmatter, least-privilege permissions, registered-tools-only MCP grants, the governance ladder byte-copied), confirm, write project- or user-scoped. Collision and no-overwrite guarantees included. Granted to zeus (routing.yml + frontmatter); inventory now 22 skills.
+- **skills** — the discovery ladder's ranking step now uses Jev `mode: "order"`: the top 2-4 cascade candidates come back as a DESCENDING ordering with per-candidate fit scores (more than 4 get pre-cut to the strongest signals). `mattpocock/skills` documented as a known-good community repo for the GitHub tier.
+
 ## [v1.6.3-beta.21] - 2026-11-06
 
 ## 🆕 What's New
