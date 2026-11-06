@@ -2161,9 +2161,19 @@ async function registerV2ToolHooks(
           if (j1Mode === 'enforce') {
             const verdict = (await j1Observer(event)) as J1Verdict | undefined
             if (verdict?.block === true) {
+              // The block is a HANDOFF CONTRACT (field: "risco alto deveria
+              // vir pra mim executar manualmente"), not an error to route
+              // around: present the refused call to the human for a manual
+              // decision. Never echo the tool input here — the arguments may
+              // carry the very secret the risk score flagged; the agent owns
+              // its own rendering.
               throw new Error(
-                `[J1 enforce] chamada bloqueada: risco ${verdict.riskScore?.toFixed(2)} ` +
-                  `>= threshold (ajuste PANTHEON_J1_ENFORCE_THRESHOLD ou rebaixe o modo para shadow/warn)`,
+                `[J1 enforce] risco ${verdict.riskScore?.toFixed(2)} >= threshold ` +
+                  '— ENTREGUE AO USUÁRIO: apresente a chamada ' +
+                  'recusada (ferramenta + o que ela faria), sem executá-la nem contorná-la de outra forma, ' +
+                  'e pergunte se ele executa manualmente. Alternativas dele: ajustar ' +
+                  'PANTHEON_J1_ENFORCE_THRESHOLD, rebaixar o modo para shadow/warn, ou reexecutar a tarefa ' +
+                  'sem o passo arriscado.',
               )
             }
           } else {
