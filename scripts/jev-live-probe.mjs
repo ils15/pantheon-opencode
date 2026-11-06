@@ -178,7 +178,7 @@ function main(args = process.argv.slice(2)) {
       `# Live J2 scorecard — ${date}`,
       '',
       `Route: \`${modelRef.providerID}/${modelRef.id}\`. Operator-run via \`opencode api\``,
-      '(consented route, billed to the user). 12 scenarios; agreement between the',
+      `(consented route, billed to the user). ${rows.length} scenarios; agreement between the`,
       'live model and the expected pick is the metric — this measures the MODEL,',
       'unlike the offline harness that measures the plumbing.',
       '',
@@ -189,7 +189,9 @@ function main(args = process.argv.slice(2)) {
           `| ${r.state.slice(0, 48)}${r.state.length > 48 ? '…' : ''} | ${r.expect} | ${r.got ?? '—'} | ${r.cost ?? '—'} |`,
       ),
       '',
-      `Total cost: $${totalCost.toFixed(6)}. Honest caveat: one run is a smoke`,
+      totalCost > 0
+        ? `Total cost: $${totalCost.toFixed(6)} (sum of route-reported costs). Honest caveat: one run is a smoke`
+        : `Total cost: NOT reported by the route (the cost field came empty on every call — QA beta.20). Honest caveat: one run is a smoke`,
       'measurement, not a calibration — a claim about model quality needs',
       'repeated runs and a bigger scenario set.',
       '',

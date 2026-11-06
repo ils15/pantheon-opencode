@@ -426,9 +426,10 @@ named `{ name, claim }` records (token names, bounded claim text). The optional
 `state` is caller-supplied EVIDENCE the claims are judged against (bounded,
 hostility-scanned) — field report beta.13: without it, environment-dependent
 claims are unanswerable and the honest verdict is `UNVERIFIABLE`, not `FAIL`.
-Verdicts: probability ≥ 0.5 → `PASS`; 0.35–0.65 → `UNVERIFIABLE` (the model
-could not tell); below → `FAIL`; and every refusal, timeout, or malformed
-answer is `BLOCK` (fail-closed — only `PASS` counts as passing).
+Verdicts: probability > 0.65 → `PASS`; 0.35–0.65 → `UNVERIFIABLE` (the model
+could not tell — inclusive band, QA beta.20); below → `FAIL`; and every
+refusal, timeout, or malformed answer is `BLOCK` (fail-closed — only `PASS`
+counts as passing).
 
 - probability ≥ 0.5 → `PASS`;
 - probability < 0.5 → `FAIL`;
