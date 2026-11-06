@@ -10,6 +10,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.3-beta.24] - 2026-11-06
+
+## 🆕 What's New
+- Refinement is now DETERMINISTIC: the local router computes `refineRecommended` from pure text rules (multi-concern, no acceptance criteria — PT+EN; one-liners never refine; explicit criteria suppress). No Jev, no model judgment, zero cost — badly structured prompts get the refine signal before they can degrade processing, and zeus treats the signal as obligatory.
+
 ## [v1.6.3-beta.23] - 2026-11-06
 
 ## 🆕 What's New
