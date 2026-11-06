@@ -55,20 +55,55 @@ function readConfig(): UserDecisionRouterConfig | undefined {
   }
 }
 
-function localDecision(
+/**
+ * Delegation-relevant skills per specialist (D3 fix, field reports beta.13-16:
+ * a PT-Brasil delegation matched the agent lexically but starved on skills —
+ * the English-lexical prefilter returned [] for the same domain). When the
+ * prefilter matches nothing but an agent was selected, these curated subsets
+ * of the agent's own grants keep the delegation fed. Pinned against the
+ * canonical frontmatter by tests/pantheon/local-decision-turn.test.ts.
+ */
+const AGENT_SKILL_FALLBACK: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  athena: ['spec-driven-development', 'verification-planning'],
+  apollo: ['codemap'],
+  themis: ['code-review-checklist', 'security-hardening'],
+  hermes: ['incremental-implementation', 'tdd-with-agents'],
+  aphrodite: ['incremental-implementation', 'visual-review-pipeline'],
+  demeter: ['incremental-implementation', 'tdd-with-agents'],
+  prometheus: ['git-workflow-and-versioning'],
+  hephaestus: ['tdd-with-agents'],
+  nyx: ['auto-continue'],
+  gaia: ['auto-continue'],
+  iris: ['artifact-management', 'git-workflow-and-versioning'],
+  mnemosyne: ['memory-bank', 'context-compression'],
+  talos: ['incremental-implementation'],
+})
+
+/** Pure decision core exposed for offline tests (D3 contract).
+ * @internal
+ */
+export function localDecisionForTest(
   request: string,
   policy: LocalDecisionPolicy | undefined,
   reasonCode: string,
 ): TurnDecision {
-  const skills = selectPantheonSkills(request)
+  const selection = selectPantheonSkills(request)
   const agent = hasDelegationSignal(request)
     ? recommendLocalDecisionAgent(request, policy).agent
     : null
+  // D3: the prefilter is English-lexical; a PT state for the SAME domain
+  // starved. When it matches nothing but the agent is known, fall back to the
+  // agent's own curated grants — never an empty recommendation for a routed
+  // specialist.
+  const skillIds =
+    selection.skillIds.length > 0 || agent === null || !(agent in AGENT_SKILL_FALLBACK)
+      ? selection.skillIds
+      : AGENT_SKILL_FALLBACK[agent]
   return {
     schemaVersion: 1,
     active: true,
     source: 'local',
-    skillIds: skills.skillIds,
+    skillIds,
     agent,
     reasonCode,
   }
@@ -97,5 +132,5 @@ export async function decideLocalForTurn(input: TurnDecisionInput): Promise<Turn
   if (config === undefined || !isUserDecisionRouterEnabled(config)) return inactive('DISABLED')
 
   const policy = await loadLocalDecisionPolicy().catch(() => undefined)
-  return localDecision(request, policy, 'LOCAL_SELECTION')
+  return localDecisionForTest(request, policy, 'LOCAL_SELECTION')
 }
