@@ -10,6 +10,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.3-beta.18] - 2026-11-06
+
+## 🆕 What's New
+- `mode: "order"`: ORDER 2-4 candidates by fit — one score question per candidate, the descending ordering with per-candidate scores comes back (nulls visible, last, never guessed). Rank picks a winner; order ranks the shortlist.
+- The review questions are self-documenting now: `quality` (score) and `needs_review` (predicate) — "noul" was the decision model's internal archetype leaking into user-visible payloads.
+
 ## [v1.6.3-beta.17] - 2026-11-05
 
 ## 🆕 What's New
