@@ -26,6 +26,9 @@ export interface TurnDecision {
   skillIds: string[]
   agent: string | null
   reasonCode: string
+  /** Deterministic refinement flag (no model judgment): the request looks
+   * multi-concern and without acceptance criteria — refine BEFORE executing. */
+  refineRecommended: boolean
 }
 
 export interface TurnDecisionInput {
@@ -44,6 +47,7 @@ function inactive(reasonCode: string): TurnDecision {
     skillIds: [],
     agent: null,
     reasonCode,
+    refineRecommended: false,
   }
 }
 
@@ -106,7 +110,75 @@ export function localDecisionForTest(
     skillIds,
     agent,
     reasonCode,
+    refineRecommended: shouldRefine(request),
   }
+}
+
+/**
+ * DETERMINISTIC refinement trigger (field beta.22→23: the owner wants
+ * accessibility — badly structured prompts must not degrade processing, and
+ * deciding "should I refine?" via Jev is negative economics). Pure text
+ * signals, no model: (a) 2+ distinct action concerns, (b) long multi-clause
+ * text, AND (c) no acceptance-criteria markers. One positive concern OR the
+ * long-multi-clause shape plus absent criteria fires it.
+ */
+const CONCERN_MARKERS: readonly string[] = [
+  // EN + PT: fix / improve / redesign / create / refactor / add
+  'corrigir',
+  'corrija',
+  'arrumar',
+  'consertar',
+  'melhorar',
+  'melhora',
+  'refatorar',
+  'refatora',
+  'redesign',
+  'redesenhar',
+  'criar',
+  'crie',
+  'adicionar',
+  'adicione',
+  'implementar',
+  'trocar',
+  'fix',
+  'improve',
+  'refactor',
+  'redesign',
+  'create',
+  'add',
+  'rewrite',
+  'restructure',
+]
+
+const CRITERIA_MARKERS: readonly string[] = [
+  'critério',
+  'criterio',
+  'critérios',
+  'acceptance',
+  'aceite',
+  'testes de aceitação',
+  'acceptance criteria',
+  'done when',
+  'pronto quando',
+  'definition of done',
+]
+
+export function shouldRefine(request: string): boolean {
+  if (typeof request !== 'string') return false
+  const text = request.trim()
+  if (text.length < 24) return false // a one-liner fix never refines
+  const lowered = text.toLowerCase()
+  if (CRITERIA_MARKERS.some((marker) => lowered.includes(marker))) return false
+  const concerns = CONCERN_MARKERS.filter((marker) =>
+    new RegExp(`(^|\\s|[^a-zà-ú])${marker}`, 'i').test(lowered),
+  ).length
+  if (concerns >= 2) return true
+  // Long multi-clause text with a single concern also refines (the shape of a
+  // vague brief): 3+ clauses via separators.
+  const clauses = text
+    .split(/[,;.]|(?:\s[eE]\s)|(?:\sy\s)/)
+    .filter((part) => part.trim().length > 8)
+  return concerns >= 1 && clauses.length >= 3
 }
 
 /**
