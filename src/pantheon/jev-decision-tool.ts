@@ -517,6 +517,7 @@ export async function runJevDecision(
   let prebuilt: Omit<NativeDecisionRequest, 'model'> | undefined
   let candidateSource: JevDecisionPreparation['candidateSource'] | undefined
   let orderCandidates: readonly string[] = []
+  let verifyEvidenceUsed: boolean | undefined
   if (requested.mode === 'review') {
     const prepared = buildJevReviewRequest(input ?? {})
     if (!prepared.ok) {
@@ -539,6 +540,9 @@ export async function runJevDecision(
   } else if (requested.mode === 'verify') {
     const prepared = buildJevVerifyRequest(input ?? {})
     if (!prepared.ok) return refusal(prepared.reasonCode)
+    verifyEvidenceUsed = (
+      prepared.request.input[0] as { text?: string } | undefined
+    )?.text?.includes('Evidence/context supplied by the caller')
     prebuilt = prepared.request
   } else if (requested.mode === 'order') {
     const prepared = buildJevOrderRequest(input ?? {})
@@ -715,6 +719,7 @@ export async function runJevDecision(
         billing: result.call.selection.route.billing,
       },
       mode: 'verify',
+      ...(verifyEvidenceUsed === undefined ? {} : { evidenceUsed: verifyEvidenceUsed }),
       results,
       answers: advice.answers,
       missing: advice.missing,
@@ -877,7 +882,19 @@ const JEV_INPUT_SCHEMA: Record<string, unknown> = {
       type: 'array',
       minItems: 1,
       maxItems: 4,
-      items: { type: 'string', minLength: 1, maxLength: 120 },
+      items: {
+        anyOf: [
+          { type: 'string', minLength: 1, maxLength: 120 },
+          {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              id: { type: 'string', minLength: 1, maxLength: 64 },
+              description: { type: 'string', minLength: 1, maxLength: 120 },
+            },
+          },
+        ],
+      },
     },
     candidates: {
       type: 'array',
