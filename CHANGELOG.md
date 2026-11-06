@@ -10,6 +10,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.3-beta.19] - 2026-11-06
+
+## 🆕 What's New
+- Local router D3 fixed: a PT-BR delegation no longer starves on skills — when the English-lexical prefilter matches nothing but the agent is known, the agent's curated delegation-relevant grants feed the turn (same domain, EN fed / PT starved was the four-report-old field bug).
+- D4: the complexity dimensions' polarity is documented where it bit — higher = riskier/less contained (boundedness:2 is POORLY bounded), aggregate label = max(dimensions).
+
 ## [v1.6.3-beta.18] - 2026-11-06
 
 ## 🆕 What's New
