@@ -93,7 +93,7 @@ export async function runInteractiveInstall({
 
   const componentOptions = [
     { label: 'agents', value: 'agents', hint: 'Agent configurations and routing (14 agents)' },
-    { label: 'skills', value: 'skills', hint: `Reusable skill workflows (${21} skills)` },
+    { label: 'skills', value: 'skills', hint: `Reusable skill workflows (${22} skills)` },
     { label: 'instructions', value: 'instructions', hint: 'AGENTS.md and instructional files' },
     { label: 'prompts', value: 'prompts', hint: 'Prompt templates for agents' },
     { label: 'commands', value: 'commands', hint: 'OpenCode command shortcuts' },
