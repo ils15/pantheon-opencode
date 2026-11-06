@@ -63,7 +63,12 @@ export const J4_QUALITY_SCORE_POINT = 'J4'
 
 /** Question names of the two prepared questions, matched on consumption. */
 export const QUALITY_QUESTION_NAME = 'quality'
-export const REVIEW_QUESTION_NAME = 'noul'
+/**
+ * Field report (beta.13→16): the review question was literally named 'noul'
+ * — the decision model's internal archetype leaked into a user-visible
+ * payload. The name is ours to choose; `quality` says what it measures.
+ */
+export const REVIEW_QUESTION_NAME = 'needs_review'
 
 /** DSH hard-cap mirror: at most 4 criteria per review request. */
 export const J4_MAX_CRITERIA = 4

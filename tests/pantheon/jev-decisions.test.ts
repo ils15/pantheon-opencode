@@ -974,6 +974,7 @@ function testRegistrationContract(): void {
     'review',
     'rank',
     'verify',
+    'order',
   ])
   const branches = (schema.anyOf ?? []).map((branch) => branch.required ?? [])
   const reviewBranch = branches.find((required) => required.includes('delegateId'))

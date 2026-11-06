@@ -100,7 +100,11 @@ function reviewInput(overrides: Record<string, unknown> = {}): Record<string, un
 function testConstants(): void {
   assert.equal(J4_QUALITY_SCORE_POINT, 'J4')
   assert.equal(QUALITY_QUESTION_NAME, 'quality')
-  assert.equal(REVIEW_QUESTION_NAME, 'noul', 'the DSH name for the needs-review predicate')
+  assert.equal(
+    REVIEW_QUESTION_NAME,
+    'needs_review',
+    'self-documenting; the internal archetype name leaked (field beta.16)',
+  )
   // DSH hard caps, mirrored: at most 4 criteria per request, each a bounded
   // instruction string, and the quality rubric spans the full 2..10 bound.
   assert.equal(J4_MAX_CRITERIA, 4)
@@ -136,7 +140,7 @@ function testBuildRequestBoundedShape(): void {
   assert.equal(new Set(score.levels?.map((level) => level.label)).size, 9, 'unique labels')
   assert.ok(score.instructions.length > 0 && score.instructions.length <= 2000)
   assert.equal(predicate.type, 'predicate')
-  assert.equal(predicate.name, 'noul')
+  assert.equal(predicate.name, 'needs_review')
   assert.equal(predicate.levels, undefined)
   assert.ok(predicate.instructions.length > 0 && predicate.instructions.length <= 2000)
   // The criteria (the only free text) ride the score question's instructions.
@@ -408,7 +412,7 @@ function testEvaluateValid(): void {
       {
         answers: [
           { type: 'score', name: 'quality', score: 7, confidence: 0.8 },
-          { type: 'predicate', name: 'noul', probability: 0.8 },
+          { type: 'predicate', name: 'needs_review', probability: 0.8 },
         ],
         cost: 0,
         tokens: { input: 1, output: 1 },
@@ -422,7 +426,7 @@ function testEvaluateValid(): void {
       {
         answers: [
           { type: 'score', name: 'quality', score: 2 },
-          { type: 'predicate', name: 'noul', probability: 0.2 },
+          { type: 'predicate', name: 'needs_review', probability: 0.2 },
         ],
       },
       request,
@@ -435,7 +439,7 @@ function testEvaluateValid(): void {
       {
         answers: [
           { type: 'score', name: 'quality', score: 9 },
-          { type: 'predicate', name: 'noul', probability: J4_REVIEW_THRESHOLD },
+          { type: 'predicate', name: 'needs_review', probability: J4_REVIEW_THRESHOLD },
         ],
       },
       request,
@@ -448,7 +452,7 @@ function testEvaluateValid(): void {
       {
         answers: [
           { type: 'score', name: 'quality', score: 0 },
-          { type: 'predicate', name: 'noul', probability: 0 },
+          { type: 'predicate', name: 'needs_review', probability: 0 },
         ],
       },
       request,
@@ -484,7 +488,7 @@ function testEvaluateMalformed(): void {
       expected: { quality: 5, needsReview: null },
     },
     {
-      response: { answers: [{ type: 'predicate', name: 'noul', probability: 0.9 }] },
+      response: { answers: [{ type: 'predicate', name: 'needs_review', probability: 0.9 }] },
       expected: { quality: null, needsReview: true },
     },
     // Wrong question names.
@@ -502,7 +506,7 @@ function testEvaluateMalformed(): void {
       response: {
         answers: [
           { type: 'choice', name: 'quality', choice: 'good' },
-          { type: 'predicate', name: 'noul', probability: 0.9 },
+          { type: 'predicate', name: 'needs_review', probability: 0.9 },
         ],
       },
       expected: { quality: null, needsReview: true },
@@ -511,7 +515,7 @@ function testEvaluateMalformed(): void {
       response: {
         answers: [
           { type: 'score', name: 'quality', score: 5 },
-          { type: 'score', name: 'noul', score: 1 },
+          { type: 'score', name: 'needs_review', score: 1 },
         ],
       },
       expected: { quality: 5, needsReview: null },
@@ -521,7 +525,7 @@ function testEvaluateMalformed(): void {
       response: {
         answers: [
           { type: 'score', name: 'quality', score: 'high' },
-          { type: 'predicate', name: 'noul', probability: 0.9 },
+          { type: 'predicate', name: 'needs_review', probability: 0.9 },
         ],
       },
       expected: { quality: null, needsReview: true },
@@ -530,7 +534,7 @@ function testEvaluateMalformed(): void {
       response: {
         answers: [
           { type: 'score', name: 'quality', score: -1 },
-          { type: 'predicate', name: 'noul', probability: 0.9 },
+          { type: 'predicate', name: 'needs_review', probability: 0.9 },
         ],
       },
       expected: { quality: null, needsReview: true },
@@ -539,7 +543,7 @@ function testEvaluateMalformed(): void {
       response: {
         answers: [
           { type: 'score', name: 'quality', score: 5 },
-          { type: 'predicate', name: 'noul', probability: 1.5 },
+          { type: 'predicate', name: 'needs_review', probability: 1.5 },
         ],
       },
       expected: { quality: 5, needsReview: null },
@@ -549,7 +553,7 @@ function testEvaluateMalformed(): void {
       response: {
         answers: [
           { type: 'error', name: 'quality', reason: 'model declined' },
-          { type: 'error', name: 'noul', reason: 'model declined' },
+          { type: 'error', name: 'needs_review', reason: 'model declined' },
         ],
       },
       expected: { quality: null, needsReview: null },
@@ -561,7 +565,7 @@ function testEvaluateMalformed(): void {
         answers: [
           { type: 'score', name: 'quality', score: 2 },
           { type: 'score', name: 'quality', score: 5 },
-          { type: 'predicate', name: 'noul', probability: 0.1 },
+          { type: 'predicate', name: 'needs_review', probability: 0.1 },
         ],
       },
       expected: { quality: null, needsReview: false },
@@ -580,7 +584,7 @@ function testEvaluateMalformed(): void {
       {
         answers: [
           { type: 'score', name: 'quality', score: 6, nested: { secret: 'x' } },
-          { type: 'predicate', name: 'noul', probability: 0.4, extra: 'drop-me' },
+          { type: 'predicate', name: 'needs_review', probability: 0.4, extra: 'drop-me' },
         ],
       },
       request,
@@ -720,7 +724,7 @@ function hostReply(answers: readonly unknown[]): unknown {
 
 const REVIEW_REPLY = hostReply([
   { type: 'score', name: 'quality', score: 6, confidence: 0.8 },
-  { type: 'predicate', name: 'noul', probability: 0.8 },
+  { type: 'predicate', name: 'needs_review', probability: 0.8 },
 ])
 
 interface Stub {
@@ -854,7 +858,7 @@ async function testToolReviewRecordedPath(): Promise<void> {
       {},
       hostReply([
         { type: 'score', name: 'quality', score: 8, confidence: 0.9 },
-        { type: 'predicate', name: 'noul', probability: 0.2 },
+        { type: 'predicate', name: 'needs_review', probability: 0.2 },
       ]),
     )
     const output = parseToolOutput(await runJevDecision(reviewInput(), zeusContext(), stub.runtime))
@@ -879,7 +883,7 @@ async function testToolReviewMalformedAdvice(): Promise<void> {
     assert.equal(output.quality, null)
     assert.equal(output.needsReview, null)
     assert.equal(output.verdict, 'recorded')
-    assert.deepEqual(output.missing, ['quality', 'noul'])
+    assert.deepEqual(output.missing, ['quality', 'needs_review'])
     assert.equal(stub.records[0]?.decision, 'recorded')
     assert.equal(stub.records[0]?.reason, 'q-na-review-na')
   })
@@ -894,7 +898,7 @@ async function testToolReviewRefusalReply(): Promise<void> {
       {},
       hostReply([
         { type: 'error', name: 'quality', reason: 'model_declined' },
-        { type: 'error', name: 'noul', reason: 'model_declined' },
+        { type: 'error', name: 'quality', reason: 'model_declined' },
       ]),
     )
     const output = parseToolOutput(await runJevDecision(reviewInput(), zeusContext(), stub.runtime))
@@ -920,7 +924,11 @@ async function testToolReviewZeusOnly(): Promise<void> {
     const output = parseToolOutput(
       await runJevDecision(reviewInput(), { ...zeusContext(), agent: 'apollo' }, stub.runtime),
     )
-    assert.deepEqual(output, { advisory: false, effect: 'none', reasonCode: 'CALLER_NOT_ALLOWED' })
+    const refusal = output as { reasonCode: string; detail?: string }
+    assert.equal(refusal.reasonCode, 'CALLER_NOT_ALLOWED')
+    assert.match(refusal.detail ?? '', /PANTHEON_JEV_SPECIALIST_CALLERS/, 'names the remedy')
+    assert.equal(output.advisory, false)
+    assert.equal(output.effect, 'none')
     assert.equal(stub.decideCalls.length, 0, 'a non-Zeus caller never spends the gate chain')
     assert.equal(stub.records.length, 0, 'and never writes J4 telemetry')
   })
@@ -1062,8 +1070,8 @@ function testSchemaDeclaresReviewMode(): void {
   assert.ok(schema.properties?.mode, 'the mode property is declared')
   assert.deepEqual(
     schema.properties.mode?.enum,
-    ['skills', 'delegation', 'review', 'rank', 'verify'],
-    'the schema declares mode "review" (plus the v3.1 rank and verify modes)',
+    ['skills', 'delegation', 'review', 'rank', 'verify', 'order'],
+    'the schema declares mode "review" (plus the v3.1 rank, verify and order modes)',
   )
   // Four disjoint payloads in one schema: the state branch (presets and
   // explicit questions), the review branch (delegateId + metrics + criteria),
