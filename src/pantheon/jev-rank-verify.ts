@@ -46,7 +46,7 @@
  * @module jev-rank-verify
  */
 
-import { consumeJevDecisionResult } from './jev-decisions.ts'
+import { consumeJevDecisionResult, JEV_DECISION_MAX_QUESTIONS } from './jev-decisions.ts'
 import type { NativeDecisionRequest, ResolvedNativeDecisionRoute } from './v2-native-decisions.ts'
 import { NATIVE_DECISION_MAX_PROMPT_LENGTH } from './v2-native-decisions.ts'
 
@@ -281,6 +281,166 @@ export function prepareJevRankRequest(
       questions: built.request.questions,
     },
   }
+}
+
+// ─── Order: top-K ordering (2-4 candidates, one fit question each) ───────
+
+export const ORDER_ENVELOPE_KEYS: ReadonlySet<string> = new Set([
+  'schemaVersion',
+  'mode',
+  'state',
+  'candidates',
+])
+
+export type JevOrderBuildFailure =
+  | 'ORDER_INPUT_INVALID'
+  | 'ORDER_CANDIDATE_INVALID'
+  | 'STATE_INVALID'
+
+export type JevOrderBuildDetail = 'ORDER_CANDIDATE_COUNT_RANGE'
+
+export type JevOrderBuild =
+  | { readonly ok: true; readonly request: Omit<NativeDecisionRequest, 'model'> }
+  | {
+      readonly ok: false
+      readonly reasonCode: JevOrderBuildFailure
+      readonly detail?: JevOrderBuildDetail
+    }
+
+export type JevOrderPreparation =
+  | { readonly ok: true; readonly request: NativeDecisionRequest }
+  | {
+      readonly ok: false
+      readonly reasonCode: JevOrderBuildFailure
+      readonly detail?: JevOrderBuildDetail
+    }
+
+const ORDER_MAX_CANDIDATES = JEV_DECISION_MAX_QUESTIONS // one score question per candidate
+
+const ORDER_STATE_TEMPLATE =
+  'Advisory ordering. The caller supplied a task and 2-4 candidates; ' +
+  'each question scores ONE candidate for fit against the stated task. ' +
+  'Score each candidate on its own terms. Nothing is enforced.'
+
+/**
+ * Build the order request: one SCORE question per candidate (the host answers
+ * one scalar per question, so 2-4 candidates is the honest ceiling). Ids ride
+ * the candidate validation reused from rank; question names are positional
+ * (`fit_1`..) so no id pattern can collide with the question-name grammar.
+ */
+export function buildJevOrderRequest(input: unknown): JevOrderBuild {
+  if (!isRecord(input)) return { ok: false, reasonCode: 'ORDER_INPUT_INVALID' }
+  for (const key of Object.keys(input)) {
+    if (!ORDER_ENVELOPE_KEYS.has(key)) return { ok: false, reasonCode: 'ORDER_INPUT_INVALID' }
+  }
+  const state = input.state
+  if (!isBoundedNonBlankString(state, NATIVE_DECISION_MAX_PROMPT_LENGTH) || isHostileProse(state)) {
+    return { ok: false, reasonCode: 'STATE_INVALID' }
+  }
+  const rawCandidates = input.candidates
+  if (rawCandidates === undefined) return { ok: false, reasonCode: 'ORDER_INPUT_INVALID' }
+  if (!Array.isArray(rawCandidates)) return { ok: false, reasonCode: 'ORDER_CANDIDATE_INVALID' }
+  if (rawCandidates.length < 2 || rawCandidates.length > ORDER_MAX_CANDIDATES) {
+    return {
+      ok: false,
+      reasonCode: 'ORDER_CANDIDATE_INVALID',
+      detail: 'ORDER_CANDIDATE_COUNT_RANGE',
+    }
+  }
+  const seen = new Set<string>()
+  const candidates: Array<{ id: string; description?: string }> = []
+  for (const raw of rawCandidates) {
+    if (!isRecord(raw)) return { ok: false, reasonCode: 'ORDER_CANDIDATE_INVALID' }
+    const extraKeys = Object.keys(raw).filter((key) => key !== 'id' && key !== 'description')
+    if (extraKeys.length > 0) return { ok: false, reasonCode: 'ORDER_CANDIDATE_INVALID' }
+    const id = raw.id
+    if (typeof id !== 'string' || id.length < 1 || id.length > 64) {
+      return { ok: false, reasonCode: 'ORDER_CANDIDATE_INVALID' }
+    }
+    if (seen.has(id)) return { ok: false, reasonCode: 'ORDER_CANDIDATE_INVALID' }
+    seen.add(id)
+    const description = raw.description
+    if (description !== undefined) {
+      if (!isBoundedNonBlankString(description, 500) || isHostileProse(description)) {
+        return { ok: false, reasonCode: 'ORDER_CANDIDATE_INVALID' }
+      }
+      candidates.push({ id, description })
+    } else {
+      candidates.push({ id })
+    }
+  }
+  const levels = Array.from({ length: 9 }, (_, index) => ({
+    label: String(index + 2),
+  }))
+  const questions = candidates.map((candidate, index) => ({
+    type: 'score' as const,
+    name: `fit_${index + 1}`,
+    instructions:
+      `Score how well candidate "${candidate.id}"` +
+      (candidate.description ? ` (${candidate.description})` : '') +
+      ` fits the task. 2 = poor fit, 10 = exact fit.`,
+    levels,
+  }))
+  const request = {
+    input: Object.freeze([
+      Object.freeze({ type: 'text' as const, text: `${ORDER_STATE_TEMPLATE} Task: ${state}` }),
+    ]),
+    questions: Object.freeze(questions.map((question) => Object.freeze(question))),
+  } satisfies Omit<NativeDecisionRequest, 'model'>
+  return { ok: true, request: Object.freeze(request) }
+}
+
+export function prepareJevOrderRequest(
+  route: ResolvedNativeDecisionRoute,
+  input: unknown,
+): JevOrderPreparation {
+  const built = buildJevOrderRequest(input)
+  if (!built.ok) return built
+  return {
+    ok: true,
+    request: {
+      model: route.model,
+      input: built.request.input,
+      questions: built.request.questions,
+    },
+  }
+}
+
+/** One ordered entry: the candidate id and its fit score (null when the host answered nothing usable). */
+export interface JevOrderEntry {
+  readonly id: string
+  readonly score: number | null
+}
+
+/**
+ * Consume the order result: map each positional score answer back to its
+ * candidate, sort by score descending (nulls last, stable), and return the
+ * ordering. A missing/invalid score stays visible as null — never guessed.
+ */
+export function consumeJevOrderResult(
+  response: unknown,
+  request: NativeDecisionRequest,
+): ReadonlyArray<JevOrderEntry> {
+  const advice = consumeJevDecisionResult(response, request)
+  const entries: Array<{ id: string; score: number | null; order: number }> = []
+  request.questions.forEach((question, index) => {
+    const answer = advice.answers.find((candidate) => candidate.name === question.name)
+    const score =
+      answer !== undefined && answer.type === 'score' && typeof answer.score === 'number'
+        ? answer.score
+        : null
+    entries.push({ id: `c${index + 1}`, score, order: index })
+  })
+  return Object.freeze(
+    entries
+      .sort((left, right) => {
+        if (left.score === null && right.score === null) return left.order - right.order
+        if (left.score === null) return 1
+        if (right.score === null) return -1
+        return right.score - left.score || left.order - right.order
+      })
+      .map(({ id, score }) => ({ id, score })),
+  )
 }
 
 // ─── Verify: request building ────────────────────────────────────────────

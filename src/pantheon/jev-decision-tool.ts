@@ -47,10 +47,13 @@ import {
   REVIEW_ENVELOPE_KEYS,
 } from './jev-quality-score.ts'
 import {
+  buildJevOrderRequest,
   buildJevRankRequest,
   buildJevVerifyRequest,
+  consumeJevOrderResult,
   consumeJevRankResult,
   consumeJevVerifyResult,
+  ORDER_ENVELOPE_KEYS,
   RANK_ENVELOPE_KEYS,
   VERIFY_ENVELOPE_KEYS,
 } from './jev-rank-verify.ts'
@@ -134,6 +137,8 @@ export type JevDecisionRunFailure =
   | 'CRITERIA_INVALID'
   | 'RANK_INPUT_INVALID'
   | 'CANDIDATE_INVALID'
+  | 'ORDER_INPUT_INVALID'
+  | 'ORDER_CANDIDATE_INVALID'
   | 'VERIFY_INPUT_INVALID'
   | 'CLAIM_INVALID'
   | 'CONTEXT_UNAVAILABLE'
@@ -480,9 +485,11 @@ export async function runJevDecision(
           ? RANK_ENVELOPE_KEYS
           : requested.mode === 'verify'
             ? VERIFY_ENVELOPE_KEYS
-            : isJevDecisionPreset(requested.mode)
-              ? JEV_PRESET_ENVELOPE_KEYS
-              : undefined
+            : requested.mode === 'order'
+              ? ORDER_ENVELOPE_KEYS
+              : isJevDecisionPreset(requested.mode)
+                ? JEV_PRESET_ENVELOPE_KEYS
+                : undefined
   if (envelopeKeys !== undefined) {
     const envelope = checkJevEnvelope(input, envelopeKeys)
     if (!envelope.ok) {
@@ -495,7 +502,9 @@ export async function runJevDecision(
               ? 'RANK_INPUT_INVALID'
               : requested.mode === 'verify'
                 ? 'VERIFY_INPUT_INVALID'
-                : 'PRESET_INVALID'
+                : requested.mode === 'order'
+                  ? 'ORDER_INPUT_INVALID'
+                  : 'PRESET_INVALID'
       return refusal(reasonCode, envelope.detail)
     }
   }
@@ -529,6 +538,10 @@ export async function runJevDecision(
   } else if (requested.mode === 'verify') {
     const prepared = buildJevVerifyRequest(input ?? {})
     if (!prepared.ok) return refusal(prepared.reasonCode)
+    prebuilt = prepared.request
+  } else if (requested.mode === 'order') {
+    const prepared = buildJevOrderRequest(input ?? {})
+    if (!prepared.ok) return refusal(prepared.reasonCode, prepared.detail)
     prebuilt = prepared.request
   }
   const result = await runGatedNativeJevCall({
@@ -657,6 +670,29 @@ export async function runJevDecision(
       frozen: result.call.frozen,
     })
   }
+  if (requested.mode === 'order') {
+    // v3.1 ordering: one fit question per candidate (2-4), sorted descending.
+    // Null score = the host answered nothing usable for that candidate —
+    // visible, placed last, never guessed.
+    const ordering = consumeJevOrderResult(result.call.response, result.call.request)
+    return JSON.stringify({
+      advisory: true,
+      effect: 'none',
+      reason: 'JEV_DECISION',
+      caller,
+      route: {
+        providerID: result.call.selection.route.model.providerID,
+        id: result.call.selection.route.model.id,
+        billing: result.call.selection.route.billing,
+      },
+      mode: 'order',
+      ordering,
+      answers: advice.answers,
+      missing: advice.missing,
+      usage: { costUsd: advice.costUsd, tokens: advice.tokens },
+      frozen: result.call.frozen,
+    })
+  }
   if (requested.mode === 'verify') {
     // v3.1 verify: one PASS/FAIL/BLOCK verdict per claim, fail-closed. The
     // tool never acts on the verdicts; a caller that requires a verdict
@@ -708,6 +744,8 @@ const TOOL_DESCRIPTION =
   'a specialist, `mode: "review"` to score a finished delegated result against named criteria ' +
   '(advisory quality score + needs-review flag; the result content itself is never sent — ' +
   'shape metrics and criteria only), `mode: "rank"` to pick the best of 2-20 named candidates ' +
+  '(winner + fit; no full ordering), `mode: "order"` to ORDER 2-4 candidates by fit (one ' +
+  'score question per candidate; returns the descending ordering with per-candidate scores), ' +
   '(returns the winner and its fit score; no full ordering), `mode: "verify"` to check 1-4 ' +
   'named claims, with optional `state` evidence the claims are judged against ' +
   '(verdicts PASS, FAIL, or UNVERIFIABLE for the 0.35-0.65 band; any refusal, timeout or ' +
@@ -819,7 +857,7 @@ const JEV_INPUT_SCHEMA: Record<string, unknown> = {
   properties: {
     schemaVersion: { type: 'integer', const: 1 },
     state: { type: 'string', minLength: 1, maxLength: 12_000 },
-    mode: { type: 'string', enum: ['skills', 'delegation', 'review', 'rank', 'verify'] },
+    mode: { type: 'string', enum: ['skills', 'delegation', 'review', 'rank', 'verify', 'order'] },
     questions: { type: 'array', minItems: 1, maxItems: 4, items: questionSchema },
     delegateId: {
       type: 'string',
