@@ -336,7 +336,8 @@ const ORDER_MAX_CANDIDATES = JEV_DECISION_MAX_QUESTIONS // one score question pe
 const ORDER_STATE_TEMPLATE =
   'Advisory ordering. The caller supplied a task and 2-4 candidates; ' +
   'each question scores ONE candidate for fit against the stated task. ' +
-  'Score each candidate on its own terms. Nothing is enforced.'
+  'Score each candidate on its own terms. Nothing is enforced. ' +
+  'The score is an ORDINAL on the 2..10 rubric (10 = exact fit), never a probability.'
 
 /**
  * Build the order request: one SCORE question per candidate (the host answers
@@ -388,6 +389,9 @@ export function buildJevOrderRequest(input: unknown): JevOrderBuild {
   const levels = Array.from({ length: 9 }, (_, index) => ({
     label: String(index + 2),
   }))
+  // Position-bias regression (external ref: Zheng et al. 2023): the builder
+  // PRESERVES the caller's candidate order — any reordering is the model's
+  // verdict, never ours. The consumer maps scores back to caller ids.
   const questions = candidates.map((candidate, index) => ({
     type: 'score' as const,
     name: `fit_${index + 1}`,

@@ -756,7 +756,8 @@ const TOOL_DESCRIPTION =
   '(advisory quality score + needs-review flag; the result content itself is never sent — ' +
   'shape metrics and criteria only), `mode: "rank"` to pick the best of 2-20 named candidates ' +
   '(winner + fit; no full ordering), `mode: "order"` to ORDER 2-4 candidates by fit (one ' +
-  'score question per candidate; returns the descending ordering with per-candidate scores), ' +
+  'score question per candidate; returns the descending ordering with per-candidate scores — ' +
+  'an ORDINAL on the 2..10 rubric, not a probability), ' +
   '(returns the winner and its fit score; no full ordering), `mode: "verify"` to check 1-4 ' +
   'named claims, with optional `state` evidence the claims are judged against ' +
   '(verdicts PASS, FAIL, or UNVERIFIABLE for the 0.35-0.65 band; any refusal, timeout or ' +

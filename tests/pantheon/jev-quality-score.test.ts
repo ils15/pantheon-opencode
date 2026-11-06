@@ -176,6 +176,26 @@ function testBuildRequestExactTemplate(): void {
 
 // ─── Criteria bounds (the DSH caps, mirrored) ────────────────────────────
 
+function testBatteryCriteriaPtObjectForm(): void {
+  // Regression: the beta.24 battery #10 EXACT payload (PT object criteria)
+  // must build — it returned CRITERIA_INVALID in the field.
+  const built = buildQualityScoreRequest({
+    delegateId: 'hermes',
+    resultSummaryKind: 'ok',
+    resultMetrics: { outputChars: 1200, taskDurationMs: 45000 },
+    criteria: [{ id: 'goal', description: 'o objetivo da tarefa foi atingido' }],
+  })
+  assert.ok(built.ok, 'the battery #10 payload builds (field regression)')
+  if (!built.ok) return
+  const question = built.request.questions[0]
+  if (question.type === 'score') {
+    assert.ok(
+      question.instructions.includes('o objetivo da tarefa foi atingido'),
+      'the PT description rides the question',
+    )
+  }
+}
+
 function testCriteriaObjectFormAccepted(): void {
   // Field beta.24 #10: `{id, description}` objects are the natural caller
   // shape — both forms normalize to the description text.
@@ -1157,6 +1177,7 @@ check(
 )
 check('telemetry: the sink admits the J4 point under the same allowlist', testTelemetryAdmitsJ4)
 check('criteria: object form normalizes, hostile ids refuse', testCriteriaObjectFormAccepted)
+check('criteria: the beta.24 battery #10 PT payload builds', testBatteryCriteriaPtObjectForm)
 check(
   'schema contract: mode "review" declared with its disjoint payload',
   testSchemaDeclaresReviewMode,
