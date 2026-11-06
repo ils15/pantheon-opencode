@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.3-beta.23] - 2026-11-06
+
+## 🆕 What's New
+- Doctor recognizes the installer's own V2 shape again (`{ package, options }` was never probed — a healthy config read as "no V2 generation registered").
+- TUI version embed rebuilt (the footer no longer says beta.15).
+- The prompt-refinery contract is bound to the FIRST turn: no reads, no dispatches before it (field evidence: discovery-first burned a delegation and still ended in the same questions).
+
 ## [v1.6.3-beta.22] - 2026-11-06
 
 ## 🆕 What's New
