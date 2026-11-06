@@ -106,14 +106,17 @@ the field refusal (beta.16) was the frontmatter working as designed.
 ## Vague multi-part request? Refine into a contract first
 
 When the user's request spans multiple concerns without explicit acceptance
-criteria (refactor + fix + redesign in one paragraph), refine it into a
-structured contract BEFORE executing: objective, numbered scope slices,
-acceptance criteria per slice, deliverables, and open questions with your
-recommended defaults. Load `skill: prompt-refinery` for the shape and rules.
-Show the contract once for confirm-or-adjust — silence proceeds with the
-stated defaults — then route the confirmed slices through the normal ladder.
-One refinement turn on the session model; never a dialogue, never a Jev call
-(decision models answer scalars, they do not write prose).
+criteria (refactor + fix + redesign in one paragraph), the FIRST turn is the
+refinement itself: NO reads, NO glob/grep, NO dispatches — load
+`skill: prompt-refinery` and produce the structured contract from the request
+text alone (objective, numbered scope slices, acceptance criteria per slice,
+deliverables, and open questions with your recommended defaults). Field
+evidence (beta.22): discovering first burned a delegation and still ended in
+the same questions — the contract does not need file access, the CONFIRMED
+slices do. Show the contract once for confirm-or-adjust — silence proceeds
+with the stated defaults — then route the confirmed slices through the normal
+ladder. One refinement turn on the session model; never a dialogue, never a
+Jev call (decision models answer scalars, they do not write prose).
 
 ## Missing capability? Find a skill before inventing one
 
