@@ -10,6 +10,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.3-beta.29] - 2026-11-07
+
+## 🆕 What's New
+- **skills** — the three-tier refine — minimal adjust default, full contract via >> only
+- **skills** — the refinement tiers — internal minimal adjust, >> full contract
+- **routing** — the pre-stable cost inventory
+- **skills** — the enhancer references and project-convention priority
+- **skills** — the three-tier refine — minimal adjust default, full contract via >> only
+- **routing** — the external-ref regressions
+- **routing** — the criteria object form and the fixture-vs-work rule
+- **install** — the deterministic refine trigger
+- **skills** — agent-forge on-demand agents and the order-mode discovery ladder
+- **routing** — the J1 approval gate — explicit ask, hash-pinned pass
+- **routing** — the J1 enforce handoff contract — risk hands off to the human
+- **routing** — the order mode (top-K ordering) and the noul rename
+- **routing** — the J1 escalation ladder (off/shadow/warn/enforce) and the caller-refusal remedy
+- **skills** — the prompt-refinery contract and the nyx observability restore
+- **install** — one coherent setup summary — inline warnings, project-only worktree box, flags hint
+- **routing** — the beta.12 field acceptance record
+- **tui** — the paginated What's New window with the curated summary contract
+
+## 🐞 Fixed
+- **install** — the jsonc heal repairs orphan commas
+- **config** — the jsonc heal and the venv-aware test:ci
+- **validate** — the V2 package probe
+- **routing** — the local-router D3 PT fallback and the D4 polarity docs
+- **install** — heal the cwd-relative agent source field — the Agent-not-found root cause
+- **routing** — the beta.13 field report — verify evidence, popularity parser, stable plugin root
+- **routing** — the field-report corrections — descriptions ride, envelope everywhere, rank 20, gate influence
 ## [v1.6.3-beta.28] - 2026-11-07
 
 ## 🆕 What's New
