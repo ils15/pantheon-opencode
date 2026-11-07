@@ -10,6 +10,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.3-beta.27] - 2026-11-07
+
+## 🆕 What's New
+- prompt-refinery em TRÊS níveis com custo controlado por limite de saída (não por tier de modelo): pedido claro passa intacto; o sinal determinístico dispara o AJUSTE MÍNIMO (≤15 linhas — PT corrigido, estrutura leve); o contrato completo de seis seções é EXCLUSIVO do prefixo `>>`. Referências incorporadas: prompt-enhancer (opt-in, cap, fail-open) e prompt-improver (nudges self-cancel-cheap, clarificação com opções). Falha = fail-open; convenções do projeto têm prioridade sobre defaults.
+
 ## [v1.6.3-beta.26] - 2026-11-07
 
 ## 🆕 What's New
