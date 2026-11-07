@@ -392,6 +392,8 @@ const SKIP_REASON_BY_GATE_FAILURE: Readonly<Record<GatedNativeJevFailure, string
   DECISION_CALL_FAILED: 'skip-decision-call-failed',
   USAGE_EVIDENCE_UNAVAILABLE: 'skip-usage-evidence-unavailable',
   USAGE_UNRECONCILED: 'skip-usage-unreconciled',
+  ORDER_INPUT_INVALID: 'skip-request-invalid',
+  ORDER_CANDIDATE_INVALID: 'skip-request-invalid',
 })
 
 /** Map a gate failure to its telemetry reason token; unknown → fail-open. */

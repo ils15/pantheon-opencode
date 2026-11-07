@@ -99,10 +99,9 @@ export function localDecisionForTest(
   // starved. When it matches nothing but the agent is known, fall back to the
   // agent's own curated grants — never an empty recommendation for a routed
   // specialist.
-  const skillIds =
-    selection.skillIds.length > 0 || agent === null || !(agent in AGENT_SKILL_FALLBACK)
-      ? selection.skillIds
-      : AGENT_SKILL_FALLBACK[agent]
+  const fallback = agent !== null ? AGENT_SKILL_FALLBACK[agent] : undefined
+  const skillIds: string[] =
+    selection.skillIds.length > 0 || fallback === undefined ? selection.skillIds : [...fallback]
   return {
     schemaVersion: 1,
     active: true,
