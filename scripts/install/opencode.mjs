@@ -2647,6 +2647,28 @@ async function installPass(
     return config
   }
 
+  // Provenance prefix per install shape (D3-scoped: project installs write it;
+  // global installs NEVER do — the cwd-relative path vanishes agents there).
+  const agentPrefixForSource = isGlobalConfigDir(target)
+    ? null
+    : version === 'v2'
+      ? 'agents'
+      : '.opencode/agents'
+  const agentSources = {}
+  if (agentPrefixForSource !== null) {
+    const agentsDir = join(ROOT, 'src', 'agents')
+    if (existsSync(agentsDir)) {
+      const files = readdirSync(agentsDir).filter(
+        (f) => (f.endsWith('.agent.md') || f.endsWith('.md')) && f.toLowerCase() !== 'readme.md',
+      )
+      for (const f of files) {
+        const name = f.replace(/\.(agent\.)?md$/, '')
+        agentSources[name] = `${agentPrefixForSource}/${name}.md`
+      }
+    }
+  }
+  const isGlobalTarget = isGlobalConfigDir(target)
+
   const configuredMcpServersForPolicies =
     version === 'v2' ? configuredMcpServerNames(config.mcp) : []
   const canonicalAgentConfig = readAgentConfigFromCanonical()
@@ -2662,12 +2684,15 @@ async function installPass(
         // Preserve user-customized fields (model, provider, mcp, etc.)
         const existing = config.agent[agentName]
         if (!existing || typeof existing !== 'object' || Array.isArray(existing)) continue
-        // HEAL: older installs wrote `source: "agents/<name>.md"` (cwd-relative
-        // provenance). Host 2.2.5 resolves that path against the SESSION cwd,
-        // so every agent vanished outside the config dir (field report
-        // beta.14: "Agent not found: zeus"). The host loads agents from the
-        // agents directory without this field — remove it wherever found.
-        delete existing.source
+        // HEAL + provenance (field beta.14→26): `source` is cwd-relative and
+        // host 2.2.5 resolves it against the SESSION cwd — so it is written
+        // ONLY for project installs (the session cwd IS the project) and
+        // NEVER for global installs, where the relative path pointed outside
+        // the config dir and made every agent vanish ("Agent not found:
+        // zeus"). Global entries also get a stale GLOBAL source healed away.
+        if (isGlobalTarget) delete existing.source
+        else if (agentSources[agentName] && !isGlobalTarget)
+          existing.source = agentSources[agentName]
 
         // The sibling opencode.jsonc merges with PRIORITY on this host and is
         // user-managed (the installer never rewrites it wholesale) — but OUR
@@ -2678,7 +2703,9 @@ async function installPass(
           const jsoncPath = join(target, 'opencode.jsonc')
           if (existsSync(jsoncPath)) {
             const raw = readFileSync(jsoncPath, 'utf8')
-            const healed = raw.replace(/,?\s*"source":\s*"agents\/[A-Za-z0-9_-]+\.md"/g, '')
+            let healed = raw.replace(/,?\s*"source":\s*"agents\/[A-Za-z0-9_-]+\.md"/g, '')
+            // A source-first entry leaves `"name": {,` — repair the orphan.
+            healed = healed.replace(/("[A-Za-z0-9_-]+": \{),/g, '$1')
             if (healed !== raw) {
               writeFileSync(jsoncPath, healed)
               warning(
@@ -2700,6 +2727,7 @@ async function installPass(
       } else {
         // ── New agent ──
         const newAgent = {}
+        if (!isGlobalTarget && agentSources[agentName]) newAgent.source = agentSources[agentName]
         if (agentCfg.description) newAgent.description = agentCfg.description
 
         // Copy all framework-managed fields from canonical config

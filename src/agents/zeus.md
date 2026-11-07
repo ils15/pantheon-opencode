@@ -107,8 +107,10 @@ the field refusal (beta.16) was the frontmatter working as designed.
 
 When the user's request spans multiple concerns without explicit acceptance
 criteria (refactor + fix + redesign in one paragraph), the FIRST turn is the
-refinement itself: NO reads, NO glob/grep, NO dispatches — load
-`skill: prompt-refinery` and produce the structured contract from the request
+MINIMAL adjustment (≤15 lines): PT corrigido, estrutura leve, expansão do
+implícito — o mesmo pedido, legível. NÃO produza o contrato gigante: ele é
+SOMENTE do prefixo `>>` (opt-in explícito do usuário). O modelo ativo da
+sessão faz os dois níveis; o limite de saída é o controle de custo.
 text alone (objective, numbered scope slices, acceptance criteria per slice,
 deliverables, and open questions with your recommended defaults). A request
 QUOTED as a test fixture — numbered battery payloads, "ESPERADO:" markers,
@@ -123,8 +125,8 @@ evidence (beta.22): discovering first burned a delegation and still ended in
 the same questions — the contract does not need file access, the CONFIRMED
 slices do. Show the contract once for confirm-or-adjust — silence proceeds
 with the stated defaults — then route the confirmed slices through the normal
-ladder. One refinement turn on the session model; never a dialogue, never a
-Jev call (decision models answer scalars, they do not write prose).
+ladder. One refinement turn; never a dialogue, never a Jev call (decision
+models answer scalars, they do not write prose).
 
 ## Missing capability? Find a skill before inventing one
 
