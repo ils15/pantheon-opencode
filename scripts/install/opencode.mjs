@@ -2678,7 +2678,9 @@ async function installPass(
           const jsoncPath = join(target, 'opencode.jsonc')
           if (existsSync(jsoncPath)) {
             const raw = readFileSync(jsoncPath, 'utf8')
-            const healed = raw.replace(/,?\s*"source":\s*"agents\/[A-Za-z0-9_-]+\.md"/g, '')
+            let healed = raw.replace(/,?\s*"source":\s*"agents\/[A-Za-z0-9_-]+\.md"/g, '')
+            // A source-first entry leaves `"name": {,` — repair the orphan.
+            healed = healed.replace(/("[A-Za-z0-9_-]+": \{),/g, '$1')
             if (healed !== raw) {
               writeFileSync(jsoncPath, healed)
               warning(
