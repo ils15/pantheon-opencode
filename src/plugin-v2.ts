@@ -113,7 +113,7 @@ import {
   type ToolExecuteBeforeOutput,
   zeusReadGuard,
 } from './pantheon/delegation-enforce.ts'
-import { GOAL_LOOP_DEFAULTS, GoalStore } from './pantheon/goal-loop.ts'
+import { GOAL_LOOP_DEFAULTS, GoalStore } from './pantheon/goal-store.ts'
 import { createGuardPathResolver } from './pantheon/guard-path.ts'
 import { createJTelemetryMirror } from './pantheon/j-telemetry-file.ts'
 import {
@@ -154,15 +154,6 @@ import {
   createV2BoundedReadTool,
   type V2BoundedReadOriginRegistry,
 } from './pantheon/v2-bounded-read.ts'
-import {
-  createV2Bridge,
-  getRegisteredV2Bridge,
-  getV2BridgeFromContext,
-  injectBridge,
-  type PantheonV2Bridge,
-  registerV2Bridge,
-  type V2ContextLike,
-} from './pantheon/v2-bridge.ts'
 import { createP7LoopPoint, p7LoopEnabledFromEnv } from './pantheon/v2-decision-points/p7-loop.ts'
 import {
   createP8Guardrail,
@@ -287,8 +278,8 @@ function normalizeSystemToParts(system: unknown): unknown[] | null {
 /** Set once, so a payload without a `system` channel warns once per process. */
 let compactionChannelWarned = false
 
-/** Set once, so a failed bridge construction logs one line per process. */
-let bridgeFailureLogged = false
+/** Set once, so a failed enforcer construction logs one line per process. */
+let idleEnforcerFailureLogged = false
 
 /**
  * Append text blocks to a hook payload's `system` channel.
@@ -415,42 +406,16 @@ function hostDomains(context: PluginContext): HostPluginContext {
   return context as HostPluginContext
 }
 
-// ─── V1 Bridge Integration ──────────────────────────────────────────────
+// ─── Idle todo enforcer ────────────────────────────────────────────────
 
 /**
- * Module-level bridge reference. Set via `setV2Bridge()` from V1 plugin
- * after singletons are initialized. Tools check this first (fast path),
- * then fall back to `ctx.options` retrieval.
+ * Module-level todo enforcer, set at plugin setup by
+ * `installV2TodoEnforcer`. Event handlers receive no context, so it lives
+ * here for the process lifetime. Stays `undefined` when the host session
+ * domain lacks the methods the enforcer needs — reported via the
+ * `idle-todo-enforcer` marker.
  */
-let v1Bridge: PantheonV2Bridge | null = null
-
-/**
- * Set the V1 bridge from the V1 plugin's setup.
- * Called once during V1 plugin initialization — the bridge is then
- * available to all V2 tool handlers and event hooks.
- */
-export function setV2Bridge(bridge: PantheonV2Bridge): void {
-  v1Bridge = bridge
-  // Also publish process-wide so a V1 load that registers FIRST and a V2 load
-  // that resolves SECOND converge on one bridge (see v2-bridge.ts).
-  registerV2Bridge(bridge)
-}
-
-/**
- * Get the V1 bridge, checking module-level first, then the process-wide
- * registration, then ctx.options.
- * Returns null when no bridge is available (V2 standalone mode).
- */
-function resolveBridge(ctx?: V2ContextLike): PantheonV2Bridge | null {
-  if (v1Bridge != null) return v1Bridge
-  const registered = getRegisteredV2Bridge()
-  if (registered != null) {
-    v1Bridge = registered
-    return registered
-  }
-  if (ctx != null) return getV2BridgeFromContext(ctx)
-  return null
-}
+let idleTodoEnforcer: TodoEnforcer | undefined
 
 /**
  * The subset of the host's `session` domain a `TodoEnforcerClient` needs.
@@ -507,40 +472,15 @@ function createV2TodoEnforcerClient(
 }
 
 /**
- * Construct the V1→V2 bridge IN the V2 entry and publish it on both channels
- * (issue #265).
+ * Construct the idle-path singletons, V2-native (no V1 plugin): the shared
+ * background-job board and the todo enforcer. The enforcer exists only when
+ * the host session domain exposes the four methods it needs — otherwise the
+ * `idle-todo-enforcer` reduction is marked and stays part of the seed.
  *
- * Before this, `setV2Bridge`/`injectBridge`/`createV2Bridge` had no production
- * caller: `resolveBridge()` always returned null, so `onSessionIdle` reached a
- * null enforcer and idle continuation never ran on any V2 install — including
- * the V1+V2 co-load, because nothing had ever put a bridge in `ctx.options`
- * either.
- *
- * What is genuinely constructible without a V1 `PluginInput`:
- *
- *   - `board` — a process-wide singleton (`getSharedBoard`), the same instance
- *     V1 and the hooks plugin use.
- *   - `todoEnforcer` — the V1 class, fed by an adapter over the host's session
- *     domain. Present only when that domain exposes the four methods the
- *     enforcer uses; otherwise the reduction is marked (`idle-todo-enforcer`)
- *     and, because the marker is one a migrating user must be told about, it
- *     is also part of the static seed.
- *
- * Files in the bridge that need a V1 `client` (goal loop, vision handler) stay
- * out: `goal-tools` already declares the goal surface absent, and the vision
- * handler is V1-only.
+ * Stored module-level (event handlers get no context) and returned to
+ * setup, so the compaction hook lists pending todos with the same instance.
  */
-function installV2Bridge(context: PluginContext): TodoEnforcer | undefined {
-  // Co-load guard (#265 review): a bridge with an enforcer may already exist —
-  // registered by V1 in this process, or by an earlier V2 setup. Building a
-  // second enforcer would answer the same `session.idle` twice (V1's dispatcher
-  // and this plugin each inject a continuation prompt). Reuse, never overwrite.
-  const existing = resolveBridge(context)
-  if (existing?.todoEnforcer !== undefined) {
-    injectBridge(context, existing)
-    return existing.todoEnforcer
-  }
-
+function installV2TodoEnforcer(context: PluginContext): TodoEnforcer | undefined {
   const todoClient = createV2TodoEnforcerClient(hostDomains(context).session)
   if (todoClient === undefined) markUnsupported('idle-todo-enforcer')
   const board = getSharedBoard()
@@ -552,16 +492,7 @@ function installV2Bridge(context: PluginContext): TodoEnforcer | undefined {
           board,
           options: { ...TODO_ENFORCER_DEFAULTS, enabled: todoEnforcerEnabledFromEnv() },
         })
-  const bridge = createV2Bridge({ board, ...(todoEnforcer === undefined ? {} : { todoEnforcer }) })
-  // Two channels, both needed: `ctx.options` is what a handler holding the
-  // context reads (`resolveBridge(ctx)`), and the module-level reference is
-  // what the event handlers use, since they receive no context.
-  injectBridge(context, bridge)
-  setV2Bridge(bridge)
-  // Returned so the compaction hook can list the session's PENDING TODOS with
-  // the same instance — the `<todo_context>` half of V1's compaction blocks
-  // needs exactly `listPendingTodos`, and the host exposes no todo listing of
-  // its own.
+  idleTodoEnforcer = todoEnforcer
   return todoEnforcer
 }
 
@@ -1146,11 +1077,6 @@ async function onSessionCreated(event: V2SessionEvent): Promise<void> {
     parentID: sessionInfo.parentID ?? data.parentID ?? properties.parentID ?? null,
     agent: sessionInfo.agent ?? data.agent ?? properties.agent ?? null,
   })
-  const _bridge = resolveBridge()
-  if (_bridge?.board != null) {
-    // Bridge present ⇒ this process also loaded V1, whose own event hook owns
-    // root-session registration. Intentionally nothing to do on the V2 side.
-  }
 }
 
 async function onSessionIdle(_event: V2SessionEvent): Promise<void> {
@@ -1170,19 +1096,17 @@ async function onSessionIdle(_event: V2SessionEvent): Promise<void> {
   // ever arrives. Implementing this safely needs V2-side session threading
   // first; until then it stays deferred rather than approximated.
   //
-  // Idle continuation — goal loop / todo enforcer dispatch. The bridge is
-  // constructed by THIS module in `installV2Bridge` (Phase 0) and holds the
-  // V1 TodoEnforcer instance when the host's session domain exposes the
-  // methods the enforcer uses. Before issue #265 nothing injected a bridge on
-  // the V2 path, so this call was a guaranteed no-op on every install.
+  // Idle continuation — todo enforcer dispatch. The enforcer is constructed
+  // by THIS module at setup (installV2TodoEnforcer) when the host session
+  // domain exposes the methods the enforcer uses.
   const sessionID = _event.properties?.sessionID as string | undefined
   if (!sessionID) return
-  const bridge = resolveBridge()
-  if (bridge?.todoEnforcer != null) {
+  const enforcer = idleTodoEnforcer
+  if (enforcer != null) {
     try {
-      await bridge.todoEnforcer.onIdle(sessionID)
+      await enforcer.onIdle(sessionID)
     } catch {
-      // Fail-open: idle continuation must never break the session.
+      // Fail-open: the enforcer never breaks the session.
     }
   }
 }
@@ -1942,17 +1866,13 @@ export function setV2ShellRunnerForTests(runner: V2ShellRunner | null): void {
 let shellRunnerOverride: V2ShellRunner | undefined
 
 /**
- * Test seam — clear the module-level bridge AND the process-wide registration.
+ * Test seam — clear the module-level idle todo enforcer.
  *
- * Exported only for tests/pantheon/plugin-v2-contract.test.ts. The co-load guard
- * makes `installV2Bridge` reuse an existing bridge (so V1's enforcer is never
- * duplicated), which means a test that asserts the CONSTRUCTION path has to
- * start from "no bridge". Production has no caller: a process keeps its bridge
- * for its lifetime.
+ * Exported only for tests/pantheon/plugin-v2-contract.test.ts, which must
+ * start from "no enforcer" when asserting the construction path.
  */
-export function resetV2BridgeForTests(): void {
-  v1Bridge = null
-  registerV2Bridge(null)
+export function resetV2IdleEnforcerForTests(): void {
+  idleTodoEnforcer = undefined
 }
 
 /**
@@ -2647,35 +2567,28 @@ export const plugin = define({
   id: 'pantheon-opencode-v2',
 
   async setup(context: PluginContext): Promise<void> {
-    // ─── Phase 0: V1→V2 bridge (issue #265) ────────────────────────────
+    // ─── Phase 0: idle todo enforcer ─────────────────────────────────────
     // First, because the event subscription below can deliver `session.idle`
-    // as soon as it starts: a bridge installed after it would lose the first
-    // idle of the process. Constructing it here is what makes
-    // `resolveBridge()` non-null on a V2 install — before this, the factory
-    // and the injector had no production call site at all.
+    // as soon as it starts: an enforcer installed after it would lose the
+    // first idle of the process.
     //
-    // The returned enforcer (when the host session domain supports it) is the
-    // single instance: Phase 7 asks it for pending todos and the idle path asks
-    // it to continue, so there are never two.
-    //
-    // Guarded, because this phase is the only one that MUTATES the context:
-    // `injectBridge` writes `ctx.options`, and an unguarded throw here would
-    // reject `setup()` and remove every later registration with it — the read
-    // guard, the secret scan and all tools. A degraded run is far better than a
-    // plugin that registers nothing, and the degradation is reported (`v1-bridge`
-    // in the live unsupported list) instead of being invisible.
+    // Guarded, because an unguarded throw here would reject `setup()` and
+    // remove every later registration with it. A degraded run is better
+    // than none, and the degradation is reported instead of invisible.
     let idleEnforcer: TodoEnforcer | undefined
     try {
-      idleEnforcer = installV2Bridge(context)
+      idleEnforcer = installV2TodoEnforcer(context)
     } catch (error) {
       idleEnforcer = undefined
-      markUnsupported('v1-bridge')
-      if (!bridgeFailureLogged) {
-        bridgeFailureLogged = true
+      idleTodoEnforcer = undefined
+      markUnsupported('idle-todo-enforcer')
+      if (!idleEnforcerFailureLogged) {
+        idleEnforcerFailureLogged = true
         const reason = error instanceof Error ? error.message : String(error)
         appendV2HookLog(
-          `[v1-bridge] construction failed; continuing without a bridge ` +
-            `(idle continuation and todo context unavailable): ${reason}`,
+          '[idle-todo-enforcer] construction failed; continuing without ' +
+            'idle continuation and todo context: ' +
+            reason,
         )
       }
     }
@@ -2867,9 +2780,8 @@ export const plugin = define({
             // which is the only text sink the V2 compaction hook exposes
             // (`context` is the session-hook name in V1, not a field here).
             //
-            // The `<todo_context>` section is present only when the bridge
-            // built a real enforcer (host session domain exposes the todo
-            // listing), and `<tool_ceiling>` has no V2 producer at all — both
+            // The `<todo_context>` section is present only when setup built a real
+            // enforcer (host session domain exposes the todo listing), and `<tool_ceiling>` has no V2 producer at all — both
             // reductions are declared in the capability seed instead of
             // silently missing.
             const blocks = await buildCompactionContext({
@@ -2920,11 +2832,11 @@ export const plugin = define({
   },
 })
 
-// ─── V1 Compatibility Bridge ─────────────────────────────────────────────
+// ─── Cleanup and dispose ─────────────────────────────────────────────
 
 /**
- * V1-compatible cleanup — call from the V1 plugin's dispose hook or
- * process exit handler to clean up V2 event subscriptions.
+ * Cleanup — call from the host dispose lifecycle, tests, or the process
+ * exit handler to tear down V2 event subscriptions.
  */
 export function v2Dispose(): void {
   for (const cleanup of activeCleanups) {

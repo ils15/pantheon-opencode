@@ -32,6 +32,13 @@ export interface Goal {
 
 const DEFAULT_GOAL_DIR = '.pantheon/goals'
 
+/** Hard-coded runtime defaults; routing.yml is documentation-only. */
+export const GOAL_LOOP_DEFAULTS = {
+  enabled: false,
+  cooldownMs: 5000,
+  maxContinuations: 25,
+} as const
+
 /**
  * File-based goal persistence. `save` writes atomically (tmp + rename);
  * `load` returns undefined when no goal exists yet.

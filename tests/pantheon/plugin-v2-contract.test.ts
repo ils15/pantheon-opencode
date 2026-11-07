@@ -15,7 +15,6 @@ import {
   decisionPermissionSource,
 } from '../../src/pantheon/local-decision-egress-gate.ts'
 import { TODO_CONTINUATION_PROMPT } from '../../src/pantheon/todo-enforcer.ts'
-import { BRIDGE_OPTIONS_KEY } from '../../src/pantheon/v2-bridge.ts'
 import { DECISION_POINT_REGISTRY } from '../../src/pantheon/v2-decision-points.ts'
 import type { HookResult } from '../../src/plugins/hook-runner.ts'
 
@@ -129,13 +128,11 @@ async function main(): Promise<void> {
     getJ3TelemetrySinkForTests,
     getJ4TelemetrySinkForTests,
     getUnsupportedFeatures,
-    resetV2BridgeForTests,
-    setV2Bridge,
+    resetV2IdleEnforcerForTests,
     setV2ShellRunnerForTests,
     v2Dispose,
   } = await import('../../src/plugin-v2.ts')
   const pluginSource = await readFile(new URL('../../src/plugin-v2.ts', import.meta.url), 'utf8')
-  const pluginV1Source = await readFile(new URL('../../src/plugin.ts', import.meta.url), 'utf8')
   const unsupportedSeedSource = await readFile(
     new URL('../../src/pantheon/v2-unsupported.mjs', import.meta.url),
     'utf8',
@@ -217,8 +214,7 @@ async function main(): Promise<void> {
     }
   })
 
-  test('V1/V2 tool contract is eager, not lazy MCP schema registration', () => {
-    assert.match(pluginV1Source, /tool:\s*\{/)
+  test('V2 tool contract is eager, not lazy MCP schema registration', () => {
     assert.match(pluginSource, /toolCtx\?\.transform/)
     assert.match(pluginSource, /for \(const def of toolDefs\)/)
     assert.match(pluginSource, /draft\.add\(/)
@@ -355,7 +351,7 @@ async function main(): Promise<void> {
     // anonymous casts it replaced do not come back.
     assert.match(pluginSource, /interface HostPluginContext extends PluginContext/)
     assert.match(pluginSource, /function hostDomains\(context: PluginContext\): HostPluginContext/)
-    // Nine call sites: installV2Bridge, registerV2Tools, subscribeV2Events,
+    // Nine call sites: installV2TodoEnforcer, registerV2Tools, subscribeV2Events,
     // registerV2SessionHooks, registerV2ToolHooks, registerV2PermissionHook,
     // bounded-read preparation, Phase 7's compaction hook, and the setup
     // flow's one-shot Jev runtime build (Phase 5, threaded to the tool
@@ -1487,7 +1483,7 @@ async function main(): Promise<void> {
   })
 
   test('P9 reads the measured compaction carrier and leaves the payload identical', async () => {
-    resetV2BridgeForTests()
+    resetV2IdleEnforcerForTests()
     let compactionHandler: ((event: unknown) => void | Promise<void>) | undefined
     await plugin.setup(
       makeBaseContext({
@@ -2000,11 +1996,11 @@ async function main(): Promise<void> {
       idleDelivered = resolve
     })
 
-    // Delivery is observed through the REAL bridge the V2 entry now builds:
+    // Delivery is observed through the REAL enforcer the V2 entry now builds:
     // `onSessionIdle` dispatches to the constructed enforcer, whose first
-    // action is the todo lookup. A hand-injected bridge would hide exactly the
-    // wiring under test (issue #265).
-    resetV2BridgeForTests()
+    // action is the todo lookup. A hand-injected enforcer would hide exactly
+    // the wiring under test.
+    resetV2IdleEnforcerForTests()
     await plugin.setup(
       makeBaseContext({
         session: {
@@ -2118,7 +2114,7 @@ async function main(): Promise<void> {
         data: { sessionID: 'ses_p7_telemetry' },
       })
       try {
-        resetV2BridgeForTests()
+        resetV2IdleEnforcerForTests()
         await plugin.setup(makeBaseContext({ event: { subscribe: stream.subscribe } }) as never)
         await stream.processed
 
@@ -2151,7 +2147,7 @@ async function main(): Promise<void> {
         data: { sessionID: 'ses_p7_enabled_off' },
       })
       try {
-        resetV2BridgeForTests()
+        resetV2IdleEnforcerForTests()
         await plugin.setup(makeBaseContext({ event: { subscribe: stream.subscribe } }) as never)
         await stream.processed
 
@@ -2389,15 +2385,14 @@ async function main(): Promise<void> {
     })
   })
 
-  // ─── V1→V2 bridge injection (issue #265) ────────────────────────────
+  // ─── Idle todo enforcer ────────────────────────────────────────────
   //
-  // The bridge factory, the injector and the context accessor existed with NO
-  // production call site: `resolveBridge()` was always null, so idle
-  // continuation was dead on every V2 install. These drive `plugin.setup` and
-  // assert the bridge it builds, then prove `session.idle` reaches a real
-  // enforcer instance (a prompt is injected) instead of a null no-op.
+  // setup constructs the shared board + todo enforcer (when the host
+  // session domain exposes the methods the enforcer needs). These drive
+  // `plugin.setup`, assert the enforcer it builds, and prove `session.idle`
+  // reaches a real enforcer (a prompt is injected) instead of a no-op.
 
-  console.log('\n🌉 V2 Bridge Injection Tests')
+  console.log('\n🤖 Idle Todo Enforcer Tests')
 
   /** The four session methods the enforcer client needs, with recorders. */
   function idleSessionDomain(options: {
@@ -2416,21 +2411,18 @@ async function main(): Promise<void> {
     }
   }
 
-  test('plugin.setup injects the bridge (board + enforcer) instead of leaving it null', async () => {
-    resetV2BridgeForTests()
+  test('plugin.setup constructs the idle enforcer when the session domain supports it', async () => {
+    resetV2IdleEnforcerForTests()
     const context = makeBaseContext({ session: idleSessionDomain({}) })
     await plugin.setup(context as never)
-    const injected = context.options[BRIDGE_OPTIONS_KEY] as Record<string, unknown> | undefined
-    assert.ok(injected !== undefined, 'setup must inject the bridge into ctx.options')
-    assert.ok(injected?.board !== undefined, 'the bridge must carry the shared board')
     assert.ok(
-      injected?.todoEnforcer !== undefined,
-      'the bridge must carry a real TodoEnforcer when the session domain supports it',
+      !getUnsupportedFeatures().includes('idle-todo-enforcer'),
+      'a supporting session domain must not mark the enforcer reduction',
     )
   })
 
   test('session.idle reaches the enforcer and injects a continuation prompt', async () => {
-    resetV2BridgeForTests()
+    resetV2IdleEnforcerForTests()
     const prompts: Array<Record<string, unknown>> = []
     const sessionID = 'ses-v2-idle-enforcer'
     let idleDelivered!: () => void
@@ -2463,83 +2455,16 @@ async function main(): Promise<void> {
     assert.equal(parts?.[0]?.text, TODO_CONTINUATION_PROMPT)
   })
 
-  test('a bridge registered by V1 in the same process is reused, never duplicated', async () => {
-    // Co-load case (#265 review): when the V1 plugin loaded first it publishes
-    // its own board+enforcer. Building a second enforcer here would make ONE
-    // `session.idle` produce two continuation prompts.
-    resetV2BridgeForTests()
-    const existingEnforcer = {
-      onIdle: async () => {},
-      listPendingTodos: async () => [],
-    }
-    const existingBridge = {
-      board: { list: () => [], get: () => undefined },
-      todoEnforcer: existingEnforcer,
-    }
-    setV2Bridge(existingBridge as never)
-    const context = makeBaseContext({
-      session: idleSessionDomain({ todos: [{ content: 'must not be used', status: 'pending' }] }),
-    })
-    await plugin.setup(context as never)
-    const injected = context.options[BRIDGE_OPTIONS_KEY] as Record<string, unknown> | undefined
-    assert.equal(
-      injected?.todoEnforcer,
-      existingEnforcer,
-      'the already-registered enforcer must be reused, not replaced by a second instance',
-    )
-    // The V1 side of the same contract: it publishes its singletons so the V2
-    // entry can find them. Asserted on the source because this suite drives the
-    // V2 entry only.
-    assert.match(
-      pluginV1Source,
-      /registerV2Bridge\(createV2Bridge\(\{ board, todoEnforcer \}\)\)/,
-      'src/plugin.ts must register its board+enforcer for the V2 entry',
-    )
-    resetV2BridgeForTests()
-  })
-
-  test('a failing bridge construction never rejects setup and is reported', async () => {
-    // `injectBridge` writes ctx.options. A read-only options object makes that
-    // write throw — the failure mode the guard exists for: before it, the throw
-    // rejected setup() and every later registration (read guard, secret scan,
-    // tools) silently disappeared with it.
-    resetV2BridgeForTests()
-    let before: ((event: unknown) => void | Promise<void>) | undefined
-    const context = makeBaseContext({
-      options: Object.freeze({}),
-      tool: {
-        hook: async (name: string, handler: (event: unknown) => void | Promise<void>) => {
-          if (name === 'execute.before') before = handler
-          return { dispose: async () => {} }
-        },
-      },
-    })
-    await plugin.setup(context as never)
-    assert.equal(typeof before, 'function', 'the execute.before guard must still be registered')
-    assert.ok(
-      getUnsupportedFeatures().includes('v1-bridge'),
-      'a run without a bridge must say so in the unsupported report',
-    )
-    resetV2BridgeForTests()
-  })
-
-  test('a host without the session methods yields a bridge with no enforcer (declared reduction)', async () => {
-    resetV2BridgeForTests()
+  test('a host without the session methods yields no enforcer (declared reduction)', async () => {
+    resetV2IdleEnforcerForTests()
     const context = makeBaseContext({})
     await plugin.setup(context as never)
-    const injected = context.options[BRIDGE_OPTIONS_KEY] as Record<string, unknown> | undefined
-    assert.ok(injected !== undefined, 'the bridge is still injected — the board is constructible')
-    assert.equal(
-      injected?.todoEnforcer,
-      undefined,
-      'an enforcer built on absent session methods would be a silent no-op',
-    )
     assert.ok(
       getUnsupportedFeatures().includes('idle-todo-enforcer'),
-      'the reduction must be reported, not hidden behind a null bridge',
+      'the reduction must be reported, not silent',
     )
+    resetV2IdleEnforcerForTests()
   })
-
   // ─── Registry leak: session.deleted (S3) ────────────────────────────
 
   test('session.deleted drops the read-only registration instead of leaking it', async () => {
@@ -3909,7 +3834,7 @@ async function main(): Promise<void> {
   console.log('\n🧩 V1 Parity Tests (compaction context, vision history, shell hooks)')
 
   test('the compaction hook appends the V1 compaction-context blocks to payload.system', async () => {
-    resetV2BridgeForTests()
+    resetV2IdleEnforcerForTests()
     const sessionID = 'ses-v2-compaction' // cspell:disable-line
     let compactionHandler: ((event: unknown) => void | Promise<void>) | undefined
     await plugin.setup(
@@ -4053,8 +3978,8 @@ async function main(): Promise<void> {
 
   test('removing the enforcement from plugin-v2 drops the V2 denial path', async () => {
     // Structural counterpart to the behavioural tests above: the guard must be
-    // instantiated in THIS module. If it were delegated to a V1 bridge that is
-    // never built, the file would import nothing from delegation-enforce.
+    // instantiated in THIS module: were it delegated to a separate module,
+    // the file would import nothing from delegation-enforce.
     assert.match(
       pluginSource,
       /createEnforcementGuard\(/,
@@ -4617,108 +4542,6 @@ async function main(): Promise<void> {
   // ─── V1→V2 Bridge Tests ────────────────────────────────────────────
 
   console.log('\n🌉 V1→V2 Bridge Tests')
-
-  const { createV2Bridge, getV2BridgeFromContext, injectBridge, BRIDGE_OPTIONS_KEY } = await import(
-    '../../src/pantheon/v2-bridge.ts'
-  )
-
-  test('createV2Bridge returns a frozen PantheonV2Bridge', () => {
-    const bridge = createV2Bridge({
-      board: { list: () => [], get: () => undefined } as never,
-    })
-    assert.ok(bridge != null)
-    assert.ok(bridge.board != null)
-    assert.equal(bridge.goalStore, undefined)
-    assert.equal(bridge.todoEnforcer, undefined)
-    assert.equal(bridge.visionHandler, undefined)
-  })
-
-  test('createV2Bridge returns frozen object (immutable)', () => {
-    const bridge = createV2Bridge({})
-    assert.throws(() => {
-      ;(bridge as Record<string, unknown>).board = 'should-fail'
-    }, TypeError)
-  })
-
-  test('injectBridge stores bridge under BRIDGE_OPTIONS_KEY', () => {
-    const ctx = { options: {} as Record<string, unknown> }
-    const bridge = createV2Bridge({ board: { list: () => [] } as never })
-    injectBridge(ctx, bridge)
-    assert.strictEqual(ctx.options[BRIDGE_OPTIONS_KEY], bridge)
-  })
-
-  test('getV2BridgeFromContext retrieves injected bridge', () => {
-    const ctx = { options: {} as Record<string, unknown> }
-    const bridge = createV2Bridge({
-      board: { list: () => [] } as never,
-    })
-    injectBridge(ctx, bridge)
-    const retrieved = getV2BridgeFromContext(ctx)
-    assert.strictEqual(retrieved, bridge)
-  })
-
-  test('getV2BridgeFromContext returns null when no bridge injected', () => {
-    const ctx = { options: {} as Record<string, unknown> }
-    const retrieved = getV2BridgeFromContext(ctx)
-    assert.equal(retrieved, null)
-  })
-
-  test('getV2BridgeFromContext returns null for non-object options', () => {
-    const ctx1 = { options: { [BRIDGE_OPTIONS_KEY]: 'not-an-object' } }
-    assert.equal(getV2BridgeFromContext(ctx1), null)
-
-    const ctx2 = { options: { [BRIDGE_OPTIONS_KEY]: 42 } }
-    assert.equal(getV2BridgeFromContext(ctx2), null)
-  })
-
-  test('getV2BridgeFromContext returns null for undefined options key', () => {
-    const ctx = { options: {} as Record<string, unknown> }
-    assert.equal(getV2BridgeFromContext(ctx), null)
-  })
-
-  test('setV2Bridge from plugin-v2 sets module-level bridge', async () => {
-    const { setV2Bridge } = await import('../../src/plugin-v2.ts')
-    const bridge = createV2Bridge({
-      board: { list: () => [] } as never,
-    })
-    setV2Bridge(bridge)
-    // After setting, the module-level bridge should be available.
-    // We verify indirectly: getV2BridgeFromContext should still work
-    // even without ctx.options injection.
-    const _ctx = { options: {} as Record<string, unknown> }
-    // Note: setV2Bridge sets module-level, resolveBridge checks module-level first.
-    // But since we can't directly call resolveBridge (it's private),
-    // we verify the export exists and is callable.
-    assert.equal(typeof setV2Bridge, 'function')
-  })
-
-  test('bridge with all singletons', () => {
-    const bridge = createV2Bridge({
-      board: { list: () => [], get: () => undefined, updateStatus: async () => {} } as never,
-      goalStore: { list: async () => [] } as never,
-      todoEnforcer: { onIdle: async () => {}, noteUserActivity: () => {} } as never,
-      visionHandler: {
-        chatMessage: async () => {},
-        messagesTransform: async () => {},
-        event: async () => {},
-      },
-    })
-    assert.ok(bridge.board)
-    assert.ok(bridge.goalStore)
-    assert.ok(bridge.todoEnforcer)
-    assert.ok(bridge.visionHandler)
-  })
-
-  test('bridge gracefully degrades with partial singletons', () => {
-    const bridge = createV2Bridge({
-      board: { list: () => [] } as never,
-      // goalStore intentionally omitted
-    })
-    assert.ok(bridge.board)
-    assert.equal(bridge.goalStore, undefined)
-    assert.equal(bridge.todoEnforcer, undefined)
-    assert.equal(bridge.visionHandler, undefined)
-  })
 
   // ─── Cleanup Tests ─────────────────────────────────────────────────
 
