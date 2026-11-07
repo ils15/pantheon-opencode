@@ -1,18 +1,18 @@
 {
   "title": "Pantheon Opencode",
   "upload_type": "software",
-  "description": "Pantheon v1.7.0-beta.1 is an OpenCode plugin and installer for coordinating 14 specialized agents. The repository includes reusable skills, slash-command definitions, MCP server implementations, documentation, and tests. This release records version 1.7.0-beta.1 synchronized across package.json, package-lock.json, plugin.json, pyproject.toml, CITATION.cff, .zenodo.json, and src/plugins/tui/package.json.\n\nO Pantheon v1.7.0-beta.1 é um plugin e instalador para OpenCode que coordena 14 agentes especializados. O repositório inclui skills reutilizáveis, definições de comandos slash, implementações de servidores MCP, documentação e testes. Esta release registra a versão 1.7.0-beta.1 sincronizada entre package.json, package-lock.json, plugin.json, pyproject.toml, CITATION.cff, .zenodo.json e src/plugins/tui/package.json.",
+  "description": "Pantheon v1.7.0 is an OpenCode plugin and installer coordinating 14 specialized agents, with a typed decision router (Jev: delegation/skills/order/rank/verify/review modes with budget ledger and human approval gates), 22 curated skills, an on-demand agent forge, and a cost-aware skill discovery cascade. This is the LAST version supporting the OpenCode V1 contract.\n\nO Pantheon v1.7.0 é um plugin e instalador para OpenCode que coordena 14 agentes especializados, com roteador de decisão tipado (Jev: modos delegation/skills/order/rank/verify/review com ledger de budget e gates de aprovação humana), 22 skills curadas, forja de agentes sob demanda e cascata de descoberta de skills consciente de custo. Esta é a ÚLTIMA versão compatível com o contrato OpenCode V1.",
   "creators": [
     {
       "name": "Igor Leite da Silva",
       "orcid": "0000-0001-7787-7562"
     }
   ],
-  "version": "1.7.0-beta.1",
+  "version": "1.7.0",
   "license": "MIT",
   "language": "eng",
   "keywords": ["opencode", "ai-agents", "multi-agent", "orchestration", "developer-tools"],
-  "url": "https://github.com/ils15/pantheon-opencode/releases/tag/v1.7.0-beta.1",
+  "url": "https://github.com/ils15/pantheon-opencode/releases/tag/v1.7.0",
   "related_identifiers": [
     {
       "identifier": "https://github.com/ils15/pantheon-opencode",

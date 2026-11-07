@@ -26,8 +26,9 @@ minor does not need its own measurement to be supported.
 
 | Pantheon line | OpenCode 1.19.x | OpenCode 2.x | OpenCode 2.0.22 |
 |---|---|---|---|
-| **1.6.x** (current) | Supported — V1 plugin | Supported — V2 plugin | Known broken — not supported |
-| **1.7 and later** | Not supported | Supported — V2 plugin | Known broken — not supported |
+| **1.6.x** | Supported — V1 plugin | Supported — V2 plugin | Known broken — not supported |
+| **1.7.x** (current) — **last line with V1 support** | Supported — V1 plugin | Supported — V2 plugin | Known broken — not supported |
+| **1.8 and later** | Not supported | Supported — V2 plugin | Known broken — not supported |
 
 A missing measurement is not a support gap. The V2 plugin targets the OpenCode 2
 contract and degrades feature by feature when a host lacks an optional domain;

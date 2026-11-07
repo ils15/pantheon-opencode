@@ -140,8 +140,8 @@ routine child summaries stay in the handoff. See [Memory](docs/MEMORY.md).
 ## Compatibility
 
 OpenCode **1.19.x** (V1 plugin) and **OpenCode 2.x** (V2 plugin) are supported.
-**OpenCode 2.0.22 is known broken.** From 1.7 onward the line drops the V1
-contract and targets OpenCode 2 only.
+**OpenCode 2.0.22 is known broken.** **1.7.0 is the LAST version supporting the
+OpenCode V1 contract** — the next minor line targets OpenCode 2 only.
 
 The support policy, the known-broken exception, and the verified-version
 evidence have exactly one home: [Compatibility](docs/COMPATIBILITY.md).

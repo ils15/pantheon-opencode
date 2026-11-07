@@ -198,7 +198,14 @@ export async function runInteractiveInstall({
       },
     ],
     required: false,
-    initialValues: [],
+    // Ship-enabled default (field beta.16→28: the owner's setup ships the
+    // decision layer ON — J1/J3 in shadow are observe-only and safe; the
+    // user can uncheck any of them before confirming).
+    initialValues: [
+      'PANTHEON_J1_RISK_SCORE=on',
+      'PANTHEON_J3_ESCALATION=on',
+      'PANTHEON_JEV_SPECIALIST_CALLERS=athena,themis',
+    ],
   })
   if (cancelPrompt(prompts, jevFlags, 'decisionFlags')) {
     return { canceled: true, cancelPoint: 'decisionFlags' }

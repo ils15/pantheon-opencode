@@ -5,6 +5,69 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 
+## [v1.7.0] - 2026-11-07
+
+### 🆕 O que é a 1.7.0
+
+Primeira minor da linha 1.7: orquestração completa com decisão tipada, gates de
+segurança com aprovação humana, e ecossistema de skills com descoberta
+consciente de custo. **Esta é a ÚLTIMA versão compatível com o contrato
+OpenCode V1 (1.19.x)** — a partir da próxima minor, a linha alvo é OpenCode 2.x.
+
+### Added — Jev (roteador de decisão)
+
+- **`mode: "order"`**: ordenação real de 2-4 candidatos com score por candidato (o rank escolhe vencedor; o order classifica a shortlist; score é ORDINAL na rubrica 2..10, nunca probabilidade).
+- **`mode: "verify"` com evidência**: envelope aceita `state` opcional que vira o texto-base do julgamento; vereditos PASS (>0.65) / UNVERIFIABLE (0.35-0.65) / FAIL (<0.35); ausente/recusado = BLOCK fail-closed.
+- **Rank até 20 candidatos** (contrato typesafe_rank) com o range nomeado na recusa (`RANK_CANDIDATE_COUNT_RANGE`).
+- **Envelope enforced em TODOS os caminhos** (explícito, presets, review, rank, verify): schemaVersion exigido, chaves desconhecidas rejeitadas, com `detail` exato por causa.
+- **Review aceita critérios-objeto** (`{id, description}`) além de strings; recusa com `CRITERIA_SHAPE` detalhado.
+- **`CALLER_NOT_ALLOWED` ensina o remédio**: `PANTHEON_JEV_SPECIALIST_CALLERS` ou rotear via Zeus.
+- Descrições de agentes nas choices do delegation (o viés "none com confiança alta" em tarefa clara morreu: live 5/5).
+
+### Added — J1 (gate de risco) com escada de escalada
+
+- **off / shadow / warn / enforce** via `PANTHEON_J1_RISK_SCORE` (on = shadow, retrocompatível).
+- **enforce**: chamada de risco alto (≥ threshold configurável) é NEGADA com o **contrato de handoff**: o agente apresenta a chamada ao usuário para decisão MANUAL — sem executar, sem contornar; aprovações positivas via tool question mintam passe hash-pinned com TTL.
+- Gate indisponível nunca bloqueia (fail-open documentado: budget morto não bricka shells).
+
+### Added — skills e ecossistema
+
+- **`agent-forge`**: cria agentes OpenCode sob demanda — entrevista, rascunho canônico, confirmação, gravação em escopo projeto/global, nunca sobrescreve.
+- **prompt-refinery em 3 níveis**: pedido claro passa intacto; o sinal determinístico dispara o AJUSTE MÍNIMO interno (≤15 linhas, silencioso); o contrato completo de 6 seções é EXCLUSIVO do prefixo `>>`. Perguntas de bloqueio pela tool `question` nativa.
+- **Descoberta de skills com cascata de confiança**: catálogo canônico Anthropic → skills.sh (parser K/M corrigido) → GitHub cru; ranking por Jev `mode: "order"`; instalação SEMPRE pelo usuário.
+
+### Added — governança e setup
+
+- **Setup com decision layer ligada por padrão**: J1/J3 shadow + chamadores especialistas pré-marcados (desmarcáveis).
+- **Heal do campo `source` cwd-relativo** nos dois configs (`.json` e `.jsonc`) — a causa raiz do "Agent not found".
+- **`test:ci` prefere o venv do repo** — o tier Python roda os pins, não o sistema.
+- **Gate de release**: o dist da TUI precisa carregar a versão da release — rodapé mentiroso não publica mais.
+
+### Fixed
+
+- **N4 (`USAGE_UNRECONCILED 100%`)**: morto — reconciliação verificada em campo na rota OpenRouter.
+- **"Agent not found: zeus"**: causa raiz curada (campo `source` cwd-relativo no config) + repair de vírgulas órfãs no heal do jsonc.
+- **D1/D2 do roteador local**: gateStatus influencia a decisão (`GATE_OPEN`); artifact-management alcançável via material-requirement.
+- **TUI**: dist rebuilt — o carimbo de versão acompanha a release (gate novo no workflow).
+- Doctor reconhece o shape V2 do installer (`{ package, options }`).
+- Verify: PASS com evidência no state (0.96) — o defeito "palpite sem lastro" da beta.13 fechado com evidência.
+
+### Changed
+
+- **Refino determinístico**: o roteador local marca `refineRecommended` por regras de texto puro (multi-concern sem critérios; PT+EN; one-liners nunca) — zero Jev, zero custo de modelo na decisão de refinar.
+- **nyx de volta à identidade observabilidade/custo** (chaos/fuzz como secundário); prometheus sem as palavras de observabilidade; TUI dist no carimbo da release.
+- **full-catalog no skills mode** — o prefilter lexical não derruba mais a skill exata que o estado descreve.
+
+### Security
+
+- Envelope fechado em todos os caminhos; hostile-scan no criteria/claims/candidates; never echo de input nas mensagens de gate; aprovação hash-pinned por chamada exata.
+
+### Compatibility
+
+- **Última versão com suporte ao contrato OpenCode V1 (1.19.x)** — a próxima minor alvo é OpenCode 2.x apenas. V2 continua o alvo principal desta linha.
+
+---
+
 ## [Unreleased]
 
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
