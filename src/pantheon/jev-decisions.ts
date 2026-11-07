@@ -22,7 +22,6 @@ import {
   DECISION_PROVIDER_ADAPTERS,
   type DecisionProviderId,
 } from './local-decision-provider-matrix.ts'
-import { selectPantheonSkills } from './local-decision-skills.ts'
 import { PANTHEON_AGENT_CATALOG, PANTHEON_SKILL_CATALOG } from './pantheon-decision-catalog.ts'
 import {
   findRouteKind,

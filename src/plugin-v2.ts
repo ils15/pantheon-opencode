@@ -1994,7 +1994,7 @@ async function registerV2ToolHooks(
   // only — it is fired WITHOUT await inside the before-handler (fire-and-
   // observe), self-bounds at 2s with an AbortController, and never retries.
   const j1Mode = j1ModeFromEnv()
-  let j1Observer: ((event: unknown) => Promise<void | J1Verdict>) | undefined
+  let j1Observer: ((event: unknown) => Promise<J1Verdict | undefined>) | undefined
   if (jevRuntime !== undefined && j1Mode !== 'off') {
     const j1Sink = createTelemetrySink()
     j1TelemetrySink = j1Sink
