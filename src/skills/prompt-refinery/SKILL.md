@@ -13,7 +13,7 @@ description: "Turn a rough, vague, or one-line request into a structured executi
 
 | Nível | Gatilho | O que acontece |
 |---|---|---|
-| **0 — Passa intacto** | Pedido claro e delimitado ("corrija o typo do README") | Executa direto, zero token de refinamento |
+| **0 — Passa intacto** | Pedido claro e delimitado ("corrija o typo do README"), cumprimentos e conversa fiada (o `__SKIP__` do prompt-enhancer) | Executa direto, zero token de refinamento |
 | **1 — Ajuste mínimo (automático)** | O sinal determinístico dispara (multi-concern sem critérios) | Reescreve o prompt: **PT corrigido** (typos, acentos), estrutura leve (objetivo + fatias em 1 linha cada + o que falta como pergunta), expansão do implícito. **Limite duro: ~15 linhas.** Não é um contrato — é o mesmo pedido, legível |
 | **2 — Contrato completo** | **SOMENTE prefixo `>>`** (`>> fazer os deploys e limpar a vps`) | As seis seções inteiras (objetivo, fatias, critérios, entregáveis, perguntas com defaults, glossário) |
 
@@ -51,6 +51,9 @@ Produce ALL of the following sections, filling from the request and marking real
 - **Domain mapping stays the ladder's**: after confirmation, slices route through the normal discovery ladder (local selector → Jev → specialist dispatch). The contract is the SPEC, not the dispatcher.
 - **Preserve the user's language** (a PT-BR request refines into PT-BR).
 - **Falha = fail-open**: qualquer erro no rewrite e o prompt ORIGINAL segue — nunca bloqueia.
+- **Nudge self-cancel cheap** (do claude-code-prompt-improver): perguntas abertas abrem com "se isso não se aplicar ao seu caso, ignore" — o nudge barato se anula sozinho quando o palpite erra, sem custo de diálogo.
+- **`extra_instructions` do projeto**: convenções do projeto (stack, hosts de deploy, domínios como cupons ML/AliExpress) têm PRIORIDADE sobre os defaults recomendados — leia o AGENTS.md do projeto antes de propor defaults.
+- **Referências**: `omkarxpatel/prompt-enhancer` (prefixo opt-in, cap de saída, fail-open) e `severity1/claude-code-prompt-improver` (nudges self-cancel, clarificação com opções) — os dois designs que este skill incorpora.
 - **Modelo**: o rewrite roda no modelo de sessão com o cap de 8 linhas; "barato" é o CAP, não um tier específico — quando houver modelo free/rápido no preset ativo (ex.: mimo-v2.5-free, deepseek-v4-flash-free), prefira-o via routing para o turno de rewrite.
 - **One refinement turn.** The rewrite is a single planning pass on the session model — no extra provider call, no Jev needed for the rewrite itself (decision models answer typed scalars, they do not write prose).
 - **Cost honesty**: the refinement costs roughly one planning turn (~1–4K tokens each way). The expensive thing is executing a mis-specified request; this skill buys that back.
