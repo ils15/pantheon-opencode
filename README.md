@@ -19,6 +19,44 @@ from an idea to a reviewed change. Fourteen specialized agents share one
 workflow: plan, implement, check, review, and record what mattered. You stay in
 charge of every decision and every merge.
 
+```mermaid
+flowchart LR
+    U["👤 You"] --> Z["⚡ Zeus<br/>orchestrator"]
+    Z -->|"delegates"| S["14 specialists<br/>hermes · aphrodite · demeter · themis …"]
+    Z -->|"ambiguous route"| J["🎲 Jev decision router<br/>typed · budgeted · reversible"]
+    J -->|"orders · ranks · verifies"| S
+    S -->|"last resort"| M["🔌 Native MCP<br/>memory · persistence · vision<br/>code-mode · resources"]
+    Z --> G["🛡️ J1 risk gate<br/>off / shadow / warn / enforce"]
+    G -->|"high risk"| H["👤 Human approval"]
+```
+
+**The escalation ladder every agent follows** (the same block lives in all 14
+agent files): session context first → the free local selector → one typed Jev
+question when genuinely ambiguous → a native MCP call only as the LAST resort
+for state the session cannot reconstruct.
+
+```mermaid
+flowchart LR
+    R["📝 rough request"] --> T0{"clear &<br/>bounded?"}
+    T0 -->|yes| X["⚡ execute directly"]
+    T0 -->|"vague /<br/>multi-concern"| T1["🔍 Tier 1 — internal<br/>minimal adjust ≤15 lines<br/>(silent, no approval)"]
+    T1 --> T2q{">> given?"}
+    T2q -->|yes| T2["📜 Tier 2 — full contract<br/>6 sections, confirm-or-adjust"]
+    T2q -->|no| X
+```
+
+**Skill discovery runs a trust cascade** — canonical first, popularity never
+compensates for provenance:
+
+```mermaid
+flowchart LR
+    L["📚 installed pool<br/>(always first)"] -->|"gap"| C1["🟢 anthropics/skills<br/>canonical"]
+    C1 -->|"no fit"| C2["🔵 skills.sh<br/>install-count signal"]
+    C2 -->|"no fit"| C3["🟠 GitHub raw<br/>widest, weakest"]
+    C3 --> J["🎲 Jev orders<br/>the candidates"]
+    J --> P["👤 YOU review<br/>and run the install"]
+```
+
 ## Why use it?
 
 - **Less context switching:** keep planning and building in the same workflow.

@@ -7,6 +7,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [v1.7.0] - 2026-11-07
 
+## 🆕 What's New
+- **Typed decision router with a real budget**: delegation, skills, ORDER (top-K), rank (≤20), verify (evidence + UNVERIFIABLE band) and review modes — every call budgeted, reconciled, and ~$0.000025 apiece.
+- **J1 risk gate with a ladder**: off / shadow / warn / enforce — high-risk tool calls demand EXPLICIT human approval (hash-pinned, 15-min TTL), never silently executed or bypassed.
+- **agent-forge**: forge a new OpenCode agent on demand — interview, canonical draft, confirm, project/user scope.
+- **Skill discovery with a trust cascade**: canonical Anthropic catalog → skills.sh → raw GitHub, ranked by Jev order; installation stays in YOUR hands.
+- **prompt-refinery in three tiers**: clear requests pass intact; vague ones get a silent internal adjust (≤15 lines); the full contract is `>>`-gated.
+- **The roster modernized**: nyx/chaos restored, agent descriptions aligned to the catalog, PT-BR delegations fed by the agent-scoped fallback.
+- **Local router debt paid**: gate influence (GATE_OPEN), artifact-management reachable, dimension polarity documented.
+- **Setup**: decision-layer extras ship pre-checked; the installer heals the stale agent-source poison in BOTH configs (.json + .jsonc).
+- **Last version supporting the OpenCode V1 contract (1.19.x)** — the next minor targets OpenCode 2.x only.
+
+### 🐞 Field bugs dead
+- "Agent not found: zeus" (cwd-relative source poison, both configs healed)
+- N4 USAGE_UNRECONCILED 100% (dead — field-verified reconcile)
+- The dead-route holds freezing budgets (released with schema v4 archive)
+- The TUI footer version drift (release gate now enforces the dist stamp)
+
+
 ### 🆕 O que é a 1.7.0
 
 Primeira minor da linha 1.7: orquestração completa com decisão tipada, gates de
