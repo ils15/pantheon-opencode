@@ -7,82 +7,57 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [v1.7.0] - 2026-11-07
 
-## 🆕 What's New
-- **Typed decision router with a real budget**: delegation, skills, ORDER (top-K), rank (≤20), verify (evidence + UNVERIFIABLE band) and review modes — every call budgeted, reconciled, and ~$0.000025 apiece.
-- **J1 risk gate with a ladder**: off / shadow / warn / enforce — high-risk tool calls demand EXPLICIT human approval (hash-pinned, 15-min TTL), never silently executed or bypassed.
-- **agent-forge**: forge a new OpenCode agent on demand — interview, canonical draft, confirm, project/user scope.
-- **Skill discovery with a trust cascade**: canonical Anthropic catalog → skills.sh → raw GitHub, ranked by Jev order; installation stays in YOUR hands.
-- **prompt-refinery in three tiers**: clear requests pass intact; vague ones get a silent internal adjust (≤15 lines); the full contract is `>>`-gated.
-- **The roster modernized**: nyx/chaos restored, agent descriptions aligned to the catalog, PT-BR delegations fed by the agent-scoped fallback.
-- **Local router debt paid**: gate influence (GATE_OPEN), artifact-management reachable, dimension polarity documented.
-- **Setup**: decision-layer extras ship pre-checked; the installer heals the stale agent-source poison in BOTH configs (.json + .jsonc).
+- **Typed decision router with a real budget**: delegation, skills, ORDER, rank, verify and review modes — budgeted, reconciled, ~$0.000025 per call.
+- **J1 risk gate with a ladder**: off / shadow / warn / enforce — high-risk calls demand explicit human approval, never bypassed.
+- **agent-forge**: forge an OpenCode agent on demand — interview, draft, confirm, write to project or user scope.
+- **Skill discovery with a trust cascade**: Anthropic catalog → skills.sh → raw GitHub; Jev ranks; you install.
+- **prompt-refinery in three tiers**: clear requests pass; vague ones get a silent internal adjust; full contract is `>>`-gated.
 - **Last version supporting the OpenCode V1 contract (1.19.x)** — the next minor targets OpenCode 2.x only.
 
-### 🐞 Field bugs dead
-- "Agent not found: zeus" (cwd-relative source poison, both configs healed)
-- N4 USAGE_UNRECONCILED 100% (dead — field-verified reconcile)
-- The dead-route holds freezing budgets (released with schema v4 archive)
-- The TUI footer version drift (release gate now enforces the dist stamp)
+### Added
 
-
-### 🆕 O que é a 1.7.0
-
-Primeira minor da linha 1.7: orquestração completa com decisão tipada, gates de
-segurança com aprovação humana, e ecossistema de skills com descoberta
-consciente de custo. **Esta é a ÚLTIMA versão compatível com o contrato
-OpenCode V1 (1.19.x)** — a partir da próxima minor, a linha alvo é OpenCode 2.x.
-
-### Added — Jev (roteador de decisão)
-
-- **`mode: "order"`**: ordenação real de 2-4 candidatos com score por candidato (o rank escolhe vencedor; o order classifica a shortlist; score é ORDINAL na rubrica 2..10, nunca probabilidade).
-- **`mode: "verify"` com evidência**: envelope aceita `state` opcional que vira o texto-base do julgamento; vereditos PASS (>0.65) / UNVERIFIABLE (0.35-0.65) / FAIL (<0.35); ausente/recusado = BLOCK fail-closed.
-- **Rank até 20 candidatos** (contrato typesafe_rank) com o range nomeado na recusa (`RANK_CANDIDATE_COUNT_RANGE`).
-- **Envelope enforced em TODOS os caminhos** (explícito, presets, review, rank, verify): schemaVersion exigido, chaves desconhecidas rejeitadas, com `detail` exato por causa.
-- **Review aceita critérios-objeto** (`{id, description}`) além de strings; recusa com `CRITERIA_SHAPE` detalhado.
-- **`CALLER_NOT_ALLOWED` ensina o remédio**: `PANTHEON_JEV_SPECIALIST_CALLERS` ou rotear via Zeus.
-- Descrições de agentes nas choices do delegation (o viés "none com confiança alta" em tarefa clara morreu: live 5/5).
-
-### Added — J1 (gate de risco) com escada de escalada
-
-- **off / shadow / warn / enforce** via `PANTHEON_J1_RISK_SCORE` (on = shadow, retrocompatível).
-- **enforce**: chamada de risco alto (≥ threshold configurável) é NEGADA com o **contrato de handoff**: o agente apresenta a chamada ao usuário para decisão MANUAL — sem executar, sem contornar; aprovações positivas via tool question mintam passe hash-pinned com TTL.
-- Gate indisponível nunca bloqueia (fail-open documentado: budget morto não bricka shells).
-
-### Added — skills e ecossistema
-
-- **`agent-forge`**: cria agentes OpenCode sob demanda — entrevista, rascunho canônico, confirmação, gravação em escopo projeto/global, nunca sobrescreve.
-- **prompt-refinery em 3 níveis**: pedido claro passa intacto; o sinal determinístico dispara o AJUSTE MÍNIMO interno (≤15 linhas, silencioso); o contrato completo de 6 seções é EXCLUSIVO do prefixo `>>`. Perguntas de bloqueio pela tool `question` nativa.
-- **Descoberta de skills com cascata de confiança**: catálogo canônico Anthropic → skills.sh (parser K/M corrigido) → GitHub cru; ranking por Jev `mode: "order"`; instalação SEMPRE pelo usuário.
-
-### Added — governança e setup
-
-- **Setup com decision layer ligada por padrão**: J1/J3 shadow + chamadores especialistas pré-marcados (desmarcáveis).
-- **Heal do campo `source` cwd-relativo** nos dois configs (`.json` e `.jsonc`) — a causa raiz do "Agent not found".
-- **`test:ci` prefere o venv do repo** — o tier Python roda os pins, não o sistema.
-- **Gate de release**: o dist da TUI precisa carregar a versão da release — rodapé mentiroso não publica mais.
-
-### Fixed
-
-- **N4 (`USAGE_UNRECONCILED 100%`)**: morto — reconciliação verificada em campo na rota OpenRouter.
-- **"Agent not found: zeus"**: causa raiz curada (campo `source` cwd-relativo no config) + repair de vírgulas órfãs no heal do jsonc.
-- **D1/D2 do roteador local**: gateStatus influencia a decisão (`GATE_OPEN`); artifact-management alcançável via material-requirement.
-- **TUI**: dist rebuilt — o carimbo de versão acompanha a release (gate novo no workflow).
-- Doctor reconhece o shape V2 do installer (`{ package, options }`).
-- Verify: PASS com evidência no state (0.96) — o defeito "palpite sem lastro" da beta.13 fechado com evidência.
+- **routing** — `mode: "order"` on `pantheon_jev_decide`: real top-K ordering of 2-4 candidates with a per-candidate fit score (an ordinal on the 2..10 rubric, never a probability).
+- **routing** — `mode: "verify"` accepts optional `state` evidence the claims are judged against; verdicts PASS / UNVERIFIABLE / FAIL with BLOCK fail-closed on missing or refused answers.
+- **routing** — rank accepts up to 20 candidates (typesafe_rank contract) and `CANDIDATE_INVALID` names the accepted range.
+- **routing** — the input envelope is enforced on EVERY path (explicit, presets, review, rank, verify): schemaVersion required, unknown keys rejected with the exact cause.
+- **routing** — review accepts criteria objects (`{id, description}`) alongside strings; refusals carry the `CRITERIA_SHAPE` detail.
+- **routing** — `CALLER_NOT_ALLOWED` names the remedy: allowlist via `PANTHEON_JEV_SPECIALIST_CALLERS` or route through Zeus.
+- **skills** — `agent-forge`: forge an OpenCode agent on demand — interview, canonical draft, confirm, write to project or user scope; never overwrites.
+- **skills** — prompt-refinery in three tiers with the trust-cascade discovery ranking.
+- **install** — decision-layer extras (J1/J3 shadow gates, specialist callers) ship pre-checked in the interactive setup.
 
 ### Changed
 
-- **Refino determinístico**: o roteador local marca `refineRecommended` por regras de texto puro (multi-concern sem critérios; PT+EN; one-liners nunca) — zero Jev, zero custo de modelo na decisão de refinar.
-- **nyx de volta à identidade observabilidade/custo** (chaos/fuzz como secundário); prometheus sem as palavras de observabilidade; TUI dist no carimbo da release.
-- **full-catalog no skills mode** — o prefilter lexical não derruba mais a skill exata que o estado descreve.
+- **routing** — the J1 escalation ladder: off / shadow / warn / enforce via `PANTHEON_J1_RISK_SCORE`, with `PANTHEON_J1_ENFORCE_THRESHOLD` (default 0.8).
+- **routing** — enforce denies a high-risk call with the HANDOFF CONTRACT: the agent presents the refused call for your manual decision; your approval mints a hash-pinned, TTL-bounded pass.
+- **routing** — `CALLER_NOT_ALLOWED` names the remedy (allowlist via `PANTHEON_JEV_SPECIALIST_CALLERS` or route through Zeus).
+- **skills** — the discovery ladder ranks candidates with Jev `mode: "order"` and documents the trust tiers; `mattpocock/skills` referenced for the GitHub tier.
+- **agents** — nyx back to observability & cost analytics (chaos/fuzz secondary); prometheus without the observability words; mnemosyne and talos descriptions aligned to the catalog.
+- **agents** — plan-persistence contract: Athena returns the plan, Zeus persists PLAN.md.
+- **install** — decision-layer extras ship pre-checked; the installer heals the stale agent-source poison in BOTH configs (.json + .jsonc), repairing orphan commas.
+- **docs** — README with mermaid diagrams (escalation ladder, refine tiers, trust cascade); COMPATIBILITY table updated for the 1.7.x line.
+
+### Deprecated
+
+- **OpenCode V1 contract (1.19.x)** — supported through this release, deprecated afterward: the next minor targets OpenCode 2.x only.
+
+### Removed
+
+- **The lexical skills prefilter** — replaced by the full-catalog offer (the filter dropped the exact skill the state described).
+- **The Console Jev free-variant route** and the legacy PR+SHA beta-version scheme.
+
+### Fixed
+
+- **routing** — "Agent not found: zeus": the installer heals the stale cwd-relative agent-source field in both configs (root cause of the vanished roster).
+- **routing** — N4 USAGE_UNRECONCILED 100%: dead — field-verified reconcile on the OpenRouter route.
+- **routing** — the dead-route holds freezing budgets: released with the schema v4 archive.
+- **routing** — D1/D2 of the local router: gateStatus influences the decision (GATE_OPEN); artifact-management reachable via material-requirement.
+- **tui** — the version embed ships at the release version (the package gate now fails a stale TUI dist).
+- **doctor** — recognizes the installer's own V2 shape (`{ package, options }`).
 
 ### Security
 
-- Envelope fechado em todos os caminhos; hostile-scan no criteria/claims/candidates; never echo de input nas mensagens de gate; aprovação hash-pinned por chamada exata.
-
-### Compatibility
-
-- **Última versão com suporte ao contrato OpenCode V1 (1.19.x)** — a próxima minor alvo é OpenCode 2.x apenas. V2 continua o alvo principal desta linha.
+- The input envelope is closed on every path; hostile-prose scans cover criteria, claims and candidates; gate messages never echo tool input; approvals are hash-pinned to the exact refused call.
 
 ---
 
@@ -93,7 +68,7 @@ OpenCode V1 (1.19.x)** — a partir da próxima minor, a linha alvo é OpenCode 
 
 ## [v1.7.0-beta.1] - 2026-11-07
 
-## 🆕 What's New — a linha 1.7 abre
+## 🆕 What's New
 - **`mode: "order"`** no Jev: ordenação real de 2-4 candidatos com score por candidato (rank escolhe vencedor; order classifica a shortlist).
 - **J1 approval gate** com escada off/shadow/warn/enforce: chamada de risco alto exige APROVAÇÃO EXPLÍCITA do usuário (hash-pinned, TTL 15min) — nunca contorno.
 - **`agent-forge`**: cria um agente OpenCode sob demanda — entrevista, rascunho canônico, confirmação, gravação em escopo projeto/global.
