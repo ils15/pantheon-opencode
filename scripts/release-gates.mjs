@@ -457,6 +457,25 @@ function packageGate(options) {
   }
 
   const validate = run('package-validate', 'npm', ['run', 'package:validate'])
+
+  // TUI dist stamp gate (QA beta.20 "O artefato TUI"): the sidebar version is
+  // build-time baked into tui-v2.js — a stale embed ships a footer lying about
+  // the running version. Extract the dist from THIS tarball and require the
+  // release version string to be present.
+  const stamp = run(
+    'tui-dist-read',
+    'tar',
+    ['-xzOf', tarball, 'package/src/plugins/tui/dist/tui-v2.js'],
+    { echo: false },
+  )
+  const distText = stamp.output
+  if (!distText.includes(options.version)) {
+    throw new Error(
+      `TUI dist embed is stale: ${options.version} not found in the packaged tui-v2.js — ` +
+        'rebuild the TUI workspace (npm run build --workspace=src/plugins/tui) at the release version and repack',
+    )
+  }
+
   return {
     checks: [validate],
     details: {
