@@ -288,7 +288,9 @@ export function readDecisionBudgetLedgerFacts(dbPath: string): DecisionBudgetLed
       .user_version
     const applicationId = (db.prepare('PRAGMA application_id').get() as { application_id: number })
       .application_id
-    if (applicationId !== EXPECTED_APPLICATION_ID || version !== 3) {
+    // v4 adds the released_holds archive; the live tables this module reads
+    // are identical from v3 through v4.
+    if (applicationId !== EXPECTED_APPLICATION_ID || (version !== 3 && version !== 4)) {
       return { present: true, readable: false, reason: 'unsupported-schema' }
     }
     const activeRow = db.prepare('SELECT active_period_utc FROM ledger_state WHERE id = 1').get() as
@@ -425,7 +427,7 @@ export function listDecisionHoldsReadOnly(dbPath: string): DecisionHoldRow[] | n
       .application_id
     const version = (db.prepare('PRAGMA user_version').get() as { user_version: number })
       .user_version
-    if (applicationId !== EXPECTED_APPLICATION_ID || version !== 3) return null
+    if (applicationId !== EXPECTED_APPLICATION_ID || (version !== 3 && version !== 4)) return null
     const rows = db
       .prepare(
         `SELECT id, provider, model, period_utc, reserved_micros, state

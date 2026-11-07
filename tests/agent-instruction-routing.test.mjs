@@ -158,9 +158,13 @@ test('context_save guidance documents the object content contract', () => {
   assert.match(antiStall, /JSON\.stringify/)
   assert.match(antiStall, /omit an unset `goal`/)
 
-  const skill = read('../src/skills/auto-continue/SKILL.md')
-  assert.match(skill, /JSON\.stringify\(state\)/)
-  assert.match(skill, /omit the key rather than passing a string/)
+  // The checkpoint contract moved to references/ (cost inventory beta.27:
+  // the SKILL.md body was 2,656 tokens; the detail is read under demand).
+  const skillCore = read('../src/skills/auto-continue/SKILL.md')
+  const skillDetails = read('../src/skills/auto-continue/references/auto-continue-details.md')
+  assert.match(skillCore, /checkpoint/, 'the core still points at checkpointing')
+  assert.match(skillDetails, /JSON\.stringify\(state\)/)
+  assert.match(skillDetails, /omit the key rather than passing a string/)
 
   const persistence = read('../docs/MEMORY.md')
   assert.match(persistence, /JSON-encoded string/)

@@ -4,6 +4,12 @@ import { PANTHEON_AGENTS } from './v2-delegation-enforce.ts'
 export const LOCAL_DECISION_ROUTER_ENV = 'PANTHEON_LOCAL_DECISION_ROUTER'
 export const LOCAL_DECISION_ROUTER_POLICY_VERSION = 'local-decision-router/v1'
 
+/**
+ * Complexity dimensions, each 0..2 where HIGHER MEANS RISKIER/LESS CONTAINED
+ * (field report D4, three rounds unread): `boundedness: 2` reads like "very
+ * bounded" but means POORLY bounded (scope escapes). The label aggregate is
+ * max(dimensions) — one hot dimension is enough to label the task high.
+ */
 export const LOCAL_DECISION_COMPLEXITY_DIMENSIONS = [
   'boundedness',
   'reversibility',
@@ -32,6 +38,7 @@ export interface LocalDecisionInput {
 
 export type LocalDecisionRouteReasonCode =
   | 'DISABLED'
+  | 'GATE_OPEN'
   | 'INVALID_INPUT'
   | 'NO_DOMAIN'
   | 'AMBIGUOUS_DOMAIN'
@@ -192,6 +199,15 @@ function evaluateEnabledInput(input: unknown): LocalDecisionRecommendation {
     }
   }
 
+  // D1 (field report beta.11→12): gateStatus must influence the output. An
+  // open review/approval gate abstains — the advisory never routes around a
+  // gate; resolving the gate is the caller's move, then this router answers.
+  if (gateStatus === 'review_required' || gateStatus === 'human_approval_required') {
+    return {
+      ...createAbstention('GATE_OPEN', complexity.reasonCode, gateStatus),
+      complexity,
+    }
+  }
   return {
     schemaVersion: 1,
     policyVersion: LOCAL_DECISION_ROUTER_POLICY_VERSION,

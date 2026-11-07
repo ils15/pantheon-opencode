@@ -1750,11 +1750,14 @@ export function checkPluginVersionDrift(args) {
  * @returns {boolean}
  */
 function isV2PluginRef(ref) {
+  // QA beta.20: the installer's V2 writer emits `{ package, options }` —
+  // `package` must be probed FIRST or a perfectly healthy config reads as
+  // "no V2 generation registered" (a false negative the field hit).
   const candidate =
     typeof ref === 'string'
       ? ref
       : ref && typeof ref === 'object'
-        ? (ref.path ?? ref.source ?? ref.id ?? ref.name)
+        ? (ref.package ?? ref.path ?? ref.source ?? ref.id ?? ref.name)
         : undefined
   return typeof candidate === 'string' && candidate.includes('plugin-v2')
 }

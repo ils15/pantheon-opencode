@@ -34,9 +34,11 @@ import {
   runJevDecision,
 } from '../../src/pantheon/jev-decision-tool.ts'
 import {
+  buildJevOrderRequest,
   buildJevRankRequest,
   buildJevVerifyRequest,
   CLAIM_MAX_LENGTH,
+  consumeJevOrderResult,
   consumeJevRankResult,
   consumeJevVerifyResult,
   prepareJevRankRequest,
@@ -108,6 +110,7 @@ function verifyInput(overrides: Record<string, unknown> = {}): Record<string, un
     claims: [
       { name: 'claim_a', claim: 'the parser module compiles without errors' },
       { name: 'claim_b', claim: 'the fixture suite runs offline' },
+      { name: 'claim_c', claim: 'the benchmark suite stays under ten minutes' },
     ],
     ...overrides,
   }
@@ -117,7 +120,7 @@ function verifyInput(overrides: Record<string, unknown> = {}): Record<string, un
 
 function testConstants(): void {
   assert.equal(RANK_MIN_CANDIDATES, 2, 'a ranking needs at least two candidates')
-  assert.equal(RANK_MAX_CANDIDATES, 8)
+  assert.equal(RANK_MAX_CANDIDATES, 20, 'mirrors the typesafe_rank 1-20 reference contract')
   assert.equal(RANK_WINNER_QUESTION_NAME, 'winner')
   assert.equal(RANK_FIT_QUESTION_NAME, 'fit')
   assert.equal(RANK_FIT_LEVEL_COUNT, 9, 'the fit rubric mirrors the 2..10 bound')
@@ -128,7 +131,11 @@ function testConstants(): void {
     'one predicate question per claim, within the 4-question bound',
   )
   assert.equal(CLAIM_MAX_LENGTH, 200)
-  assert.equal(VERIFY_PASS_THRESHOLD, 0.5)
+  assert.equal(
+    VERIFY_PASS_THRESHOLD,
+    0.65,
+    'PASS lives above the 0.35-0.65 UNVERIFIABLE band (QA beta.20)',
+  )
 }
 
 // ─── Rank request building ───────────────────────────────────────────────
@@ -166,24 +173,33 @@ function testRankBuildBoundedShape(): void {
 
 function testRankCandidateBounds(): void {
   const eight = Array.from({ length: 8 }, (_, index) => ({ id: `c${index + 1}` }))
-  const nine = Array.from({ length: 9 }, (_, index) => ({ id: `c${index + 1}` }))
-  assert.ok(buildJevRankRequest(rankInput({ candidates: eight })).ok, 'the 8-candidate cap holds')
-  assert.deepEqual(
-    buildJevRankRequest(rankInput({ candidates: nine })),
-    { ok: false, reasonCode: 'CANDIDATE_INVALID' },
-    'more than 8 candidates is rejected',
+  const twenty = Array.from({ length: 20 }, (_, index) => ({ id: `c${index + 1}` }))
+  const twentyOne = Array.from({ length: 21 }, (_, index) => ({ id: `c${index + 1}` }))
+  assert.ok(
+    buildJevRankRequest(rankInput({ candidates: eight })).ok,
+    'the 8-candidate mid range holds',
   )
-  assert.deepEqual(buildJevRankRequest(rankInput({ candidates: [eight[0] ?? {}] })), {
-    ok: false,
-    reasonCode: 'CANDIDATE_INVALID',
-  })
-  assert.deepEqual(buildJevRankRequest(rankInput({ candidates: [] })), {
-    ok: false,
-    reasonCode: 'CANDIDATE_INVALID',
-  })
+  assert.ok(buildJevRankRequest(rankInput({ candidates: twenty })).ok, 'the 20-candidate cap holds')
+  const over = buildJevRankRequest(rankInput({ candidates: twentyOne }))
+  assert.equal(over.ok, false)
+  if (!over.ok) {
+    assert.equal(over.reasonCode, 'CANDIDATE_INVALID')
+    assert.equal(over.detail, 'RANK_CANDIDATE_COUNT_RANGE', 'the accepted range is named')
+  }
+  assert.deepEqual(
+    buildJevRankRequest(rankInput({ candidates: twentyOne })),
+    { ok: false, reasonCode: 'CANDIDATE_INVALID', detail: 'RANK_CANDIDATE_COUNT_RANGE' },
+    'more than 20 candidates is rejected with the range named',
+  )
+  const single = buildJevRankRequest(rankInput({ candidates: [eight[0] ?? {}] }))
+  assert.equal(single.ok, false)
+  if (!single.ok) assert.equal(single.detail, 'RANK_CANDIDATE_COUNT_RANGE')
+  const empty = buildJevRankRequest(rankInput({ candidates: [] }))
+  assert.equal(empty.ok, false)
+  if (!empty.ok) assert.equal(empty.detail, 'RANK_CANDIDATE_COUNT_RANGE')
   // `undefined` candidates is the missing-field case (RANK_INPUT_INVALID,
   // covered by the envelope test); every other non-array shape is hostile.
-  for (const candidates of ['c1 c2', 4, null, [{ id: 'a' }, 'b'], [[{ id: 'a' }]]]) {
+  for (const candidates of ['c1 c2', 4, null, [{ id: 'a' }, 'b']]) {
     assert.deepEqual(
       buildJevRankRequest(rankInput({ candidates })),
       { ok: false, reasonCode: 'CANDIDATE_INVALID' },
@@ -423,7 +439,7 @@ function testVerifyBuildBoundedShape(): void {
     false,
     'the claims ride the question instructions, never the state part',
   )
-  assert.equal(request.questions.length, 2, 'one predicate question per claim')
+  assert.equal(request.questions.length, 3, 'one predicate question per claim')
   const [first, second] = request.questions
   assert.ok(first && second)
   assert.equal(first.type, 'predicate')
@@ -564,8 +580,9 @@ function testVerifyHostileClaimsRejected(): void {
 }
 
 function testVerifyEnvelope(): void {
+  // `state` is now the OPTIONAL evidence field (field report beta.13 §6) —
+  // accepted, hostile-scanned; every other foreign key stays rejected.
   for (const [key, value] of [
-    ['state', 'smuggled state text'],
     ['candidates', [{ id: 'c1' }]],
     ['questions', [{ type: 'predicate', name: 'q', instructions: 'i' }]],
     ['criteria', ['a']],
@@ -578,6 +595,22 @@ function testVerifyEnvelope(): void {
       key,
     )
   }
+  const withEvidence = buildJevVerifyRequest(
+    verifyInput({ state: 'the environment reports OpenCode 2.2.5 and pantheon 1.6.3' }),
+  )
+  assert.ok(withEvidence.ok, 'state is accepted as evidence')
+  if (withEvidence.ok) {
+    const inputText = withEvidence.request.input[0]?.text ?? ''
+    assert.ok(
+      inputText.includes('Evidence/context supplied by the caller') &&
+        inputText.includes('OpenCode 2.2.5'),
+      'the evidence rides as the input text',
+    )
+  }
+  assert.deepEqual(buildJevVerifyRequest(verifyInput({ state: 'x'.repeat(20_000) })), {
+    ok: false,
+    reasonCode: 'VERIFY_INPUT_INVALID',
+  })
   const partial = verifyInput()
   delete partial.claims
   assert.deepEqual(buildJevVerifyRequest(partial), {
@@ -617,24 +650,48 @@ function testVerifyConsumeVerdicts(): void {
         answers: [
           { type: 'predicate', name: 'claim_a', probability: 0.8 },
           { type: 'predicate', name: 'claim_b', probability: 0.3 },
+          { type: 'predicate', name: 'claim_c', probability: 0.42 },
         ],
       },
       verifyRequest(),
     ),
-    { claim_a: 'PASS', claim_b: 'FAIL' },
+    { claim_a: 'PASS', claim_b: 'FAIL', claim_c: 'UNVERIFIABLE' },
   )
-  // The boundary itself is PASS.
+  // Band edges (QA beta.20): 0.65 UNVERIFIABLE (inclusive), 0.66 PASS,
+  // 0.35 UNVERIFIABLE, 0.5 UNVERIFIABLE, 0.34 FAIL; a claim with NO host
+  // answer is BLOCK (fail-closed), never a guess.
   assert.deepEqual(
     consumeJevVerifyResult(
       {
         answers: [
-          { type: 'predicate', name: 'claim_a', probability: 0.5 },
-          { type: 'predicate', name: 'claim_b', probability: 0.49999 },
+          { type: 'predicate', name: 'claim_a', probability: 0.65 },
+          { type: 'predicate', name: 'claim_b', probability: 0.66 },
         ],
       },
       verifyRequest(),
     ),
-    { claim_a: 'PASS', claim_b: 'FAIL' },
+    { claim_a: 'UNVERIFIABLE', claim_b: 'PASS', claim_c: 'BLOCK' },
+  )
+  assert.deepEqual(
+    consumeJevVerifyResult(
+      {
+        answers: [
+          { type: 'predicate', name: 'claim_a', probability: 0.35 },
+          { type: 'predicate', name: 'claim_b', probability: 0.5 },
+        ],
+      },
+      verifyRequest(),
+    ),
+    { claim_a: 'UNVERIFIABLE', claim_b: 'UNVERIFIABLE', claim_c: 'BLOCK' },
+  )
+  assert.deepEqual(
+    consumeJevVerifyResult(
+      {
+        answers: [{ type: 'predicate', name: 'claim_a', probability: 0.34 }],
+      },
+      verifyRequest(),
+    ),
+    { claim_a: 'FAIL', claim_b: 'BLOCK', claim_c: 'BLOCK' },
   )
 }
 
@@ -650,7 +707,7 @@ function testVerifyConsumeFailClosed(): void {
       },
       verifyRequest(),
     ),
-    { claim_a: 'BLOCK', claim_b: 'PASS' },
+    { claim_a: 'BLOCK', claim_b: 'PASS', claim_c: 'BLOCK' },
   )
   // A missing answer (timeout, dropped reply) is BLOCK.
   assert.deepEqual(
@@ -658,7 +715,7 @@ function testVerifyConsumeFailClosed(): void {
       { answers: [{ type: 'predicate', name: 'claim_a', probability: 0.9 }] },
       verifyRequest(),
     ),
-    { claim_a: 'PASS', claim_b: 'BLOCK' },
+    { claim_a: 'PASS', claim_b: 'BLOCK', claim_c: 'BLOCK' },
   )
   // Duplicate answers become errors in the shared consumer: BLOCK.
   assert.deepEqual(
@@ -672,7 +729,7 @@ function testVerifyConsumeFailClosed(): void {
       },
       verifyRequest(),
     ),
-    { claim_a: 'BLOCK', claim_b: 'PASS' },
+    { claim_a: 'BLOCK', claim_b: 'PASS', claim_c: 'BLOCK' },
   )
   // A malformed probability (outside [0, 1]) is dropped by the strict
   // consumer and lands in missing: BLOCK.
@@ -686,13 +743,14 @@ function testVerifyConsumeFailClosed(): void {
       },
       verifyRequest(),
     ),
-    { claim_a: 'BLOCK', claim_b: 'BLOCK' },
+    { claim_a: 'BLOCK', claim_b: 'BLOCK', claim_c: 'BLOCK' },
   )
   // Every unusable response shape fails closed to BLOCK for every claim.
   for (const response of [null, undefined, 42, {}, { answers: [] }, { answers: 'no' }]) {
     assert.deepEqual(consumeJevVerifyResult(response, verifyRequest()), {
       claim_a: 'BLOCK',
       claim_b: 'BLOCK',
+      claim_c: 'BLOCK',
     })
   }
 }
@@ -701,8 +759,11 @@ function testVerifyConsumeFailClosed(): void {
 
 const CURRENT_PERIOD = new Date().toISOString().slice(0, 7)
 const CAPS = { monthlyCapMicros: 5_000_000, perDecisionCapMicros: 1_000_000 }
+const ONE_DECISION_CAP = { monthlyCapMicros: 1_000_000, perDecisionCapMicros: 1_000_000 }
 const PROVIDER = 'opencode-console-jev'
 const MODEL = DECISION_ROUTER_MODELS[PROVIDER][0] as string
+const CLOUDFLARE_PROVIDER = 'cloudflare-workers-jev'
+const CLOUDFLARE_MODEL = DECISION_ROUTER_MODELS[CLOUDFLARE_PROVIDER][0] as string
 
 function hostReply(answers: readonly unknown[]): unknown {
   return Object.freeze({
@@ -720,6 +781,7 @@ const RANK_REPLY = hostReply([
 const VERIFY_REPLY = hostReply([
   { type: 'predicate', name: 'claim_a', probability: 0.8 },
   { type: 'predicate', name: 'claim_b', probability: 0.3 },
+  { type: 'predicate', name: 'claim_c', probability: 0.42 },
 ])
 
 interface Stub {
@@ -809,6 +871,30 @@ function confirmCaps(): void {
   }
 }
 
+function writeCloudflareEnabledConfig(): void {
+  writeUserDecisionRouterConfig({
+    schema_version: 2,
+    enabled: true,
+    selection: { mode: 'explicit', provider: CLOUDFLARE_PROVIDER, model: CLOUDFLARE_MODEL },
+    egress_consent: true,
+    enabled_candidates: [{ provider: CLOUDFLARE_PROVIDER, model: CLOUDFLARE_MODEL }],
+  })
+}
+
+function confirmCloudflareCaps(): void {
+  const ledger = openLocalDecisionBudgetLedger({ dbPath: resolveLocalDecisionBudgetDbPath() })
+  try {
+    ledger.configureUserCaps(ONE_DECISION_CAP)
+    ledger.configureProviderCaps('cloudflare-workers-ai', ONE_DECISION_CAP)
+    ledger.configureModelCaps('cloudflare-workers-ai', CLOUDFLARE_MODEL, ONE_DECISION_CAP)
+    if (ledger.confirmBudgetPeriod(null, CURRENT_PERIOD).status !== 'confirmed') {
+      throw new Error('the Cloudflare sandbox could not confirm the budget period')
+    }
+  } finally {
+    ledger.close()
+  }
+}
+
 function zeusContext(): Record<string, unknown> {
   return { sessionID: 'ses_rv', messageID: 'msg_rv', agent: 'zeus' }
 }
@@ -866,7 +952,13 @@ async function testToolRankInputRefusal(): Promise<void> {
     for (const [input, reasonCode] of cases) {
       const stub = stubRuntime()
       const output = parseToolOutput(await runJevDecision(input, zeusContext(), stub.runtime))
-      assert.deepEqual(output, { advisory: false, effect: 'none', reasonCode })
+      // The count-range case now carries its detail token; others stay bare.
+      assert.equal(output.reasonCode, reasonCode)
+      assert.equal(output.advisory, false)
+      assert.equal(output.effect, 'none')
+      if (output.detail !== undefined) {
+        assert.equal(output.detail, 'RANK_CANDIDATE_COUNT_RANGE')
+      }
       assert.equal(stub.decideCalls.length, 0, 'no host call for a malformed rank')
       assert.equal(stub.permissionRequests.length, 0, 'no permission asked for a malformed rank')
       assert.equal(stub.records.length, 0, 'no telemetry for a malformed rank')
@@ -917,6 +1009,33 @@ async function testToolRankGateRefusalContract(): Promise<void> {
   })
 }
 
+async function testCloudflareUsageEvidenceFailsClosedBeforeEgress(): Promise<void> {
+  const paths = sandbox()
+  await withSandbox(paths, async () => {
+    writeCloudflareEnabledConfig()
+    confirmCloudflareCaps()
+    const stub = stubRuntime()
+    assert.deepEqual(
+      parseToolOutput(await runJevDecision(rankInput(), zeusContext(), stub.runtime)),
+      { advisory: false, effect: 'none', reasonCode: 'USAGE_EVIDENCE_UNAVAILABLE' },
+    )
+    assert.equal(stub.decideCalls.length, 0, 'Cloudflare provider is never called')
+    assert.equal(stub.permissionRequests.length, 0, 'no egress permission is requested')
+
+    const ledger = openLocalDecisionBudgetLedger({ dbPath: resolveLocalDecisionBudgetDbPath() })
+    try {
+      assert.deepEqual(ledger.listUncertainReservations(), [], 'the rejected call reserved nothing')
+      assert.equal(
+        ledger.reserve('cloudflare-workers-ai', CLOUDFLARE_MODEL).status,
+        'reserved',
+        'the rejected call did not consume the only available decision reservation',
+      )
+    } finally {
+      ledger.close()
+    }
+  })
+}
+
 async function testToolVerifyRoundTrip(): Promise<void> {
   const paths = sandbox()
   await withSandbox(paths, async () => {
@@ -929,7 +1048,11 @@ async function testToolVerifyRoundTrip(): Promise<void> {
     assert.equal(output.reason, 'JEV_DECISION')
     assert.equal(output.mode, 'verify')
     assert.equal(output.caller, 'zeus')
-    assert.deepEqual(output.results, { claim_a: 'PASS', claim_b: 'FAIL' })
+    assert.deepEqual(output.results, {
+      claim_a: 'PASS',
+      claim_b: 'FAIL',
+      claim_c: 'UNVERIFIABLE',
+    })
     assert.deepEqual(output.missing, [])
     assert.equal(output.frozen, false)
     assert.equal(stub.decideCalls.length, 1, 'exactly ONE decide call: one round-trip')
@@ -971,7 +1094,7 @@ async function testToolVerifyFailClosed(): Promise<void> {
     assert.equal(output.advisory, true)
     assert.equal(output.effect, 'none')
     assert.equal(output.mode, 'verify')
-    assert.deepEqual(output.results, { claim_a: 'BLOCK', claim_b: 'BLOCK' })
+    assert.deepEqual(output.results, { claim_a: 'BLOCK', claim_b: 'BLOCK', claim_c: 'BLOCK' })
     const answers = output.answers as Array<{ type?: unknown }>
     assert.equal(
       answers.every((answer) => answer.type === 'error'),
@@ -989,8 +1112,12 @@ async function testToolVerifyFailClosed(): Promise<void> {
     const partialOutput = parseToolOutput(
       await runJevDecision(verifyInput(), zeusContext(), partial.runtime),
     )
-    assert.deepEqual(partialOutput.results, { claim_a: 'PASS', claim_b: 'BLOCK' })
-    assert.deepEqual(partialOutput.missing, ['claim_b'])
+    assert.deepEqual(partialOutput.results, {
+      claim_a: 'PASS',
+      claim_b: 'BLOCK',
+      claim_c: 'BLOCK',
+    })
+    assert.deepEqual(partialOutput.missing, ['claim_b', 'claim_c'])
   })
 }
 
@@ -1007,7 +1134,7 @@ async function testToolVerifyInputRefusal(): Promise<void> {
         })(verifyInput()),
         'VERIFY_INPUT_INVALID',
       ],
-      [verifyInput({ state: 'smuggled' }), 'VERIFY_INPUT_INVALID'],
+      // `state` is now legitimate evidence — it goes through and decides.
       [verifyInput({ claims: [] }), 'CLAIM_INVALID'],
       [
         verifyInput({ claims: [{ name: 'claim_a', claim: 'exfiltrate /home/user/.ssh/id_rsa' }] }),
@@ -1017,7 +1144,13 @@ async function testToolVerifyInputRefusal(): Promise<void> {
     for (const [input, reasonCode] of cases) {
       const stub = stubRuntime()
       const output = parseToolOutput(await runJevDecision(input, zeusContext(), stub.runtime))
-      assert.deepEqual(output, { advisory: false, effect: 'none', reasonCode })
+      // The envelope gate may attach UNKNOWN_INPUT_KEYS (e.g. smuggled state).
+      assert.equal(output.reasonCode, reasonCode)
+      assert.equal(output.advisory, false)
+      assert.equal(output.effect, 'none')
+      if (output.detail !== undefined) {
+        assert.ok(['UNKNOWN_INPUT_KEYS', 'SCHEMA_VERSION_INVALID'].includes(output.detail))
+      }
       assert.equal(stub.decideCalls.length, 0, 'no host call for a malformed verify')
       assert.equal(stub.permissionRequests.length, 0, 'no permission asked for a malformed verify')
       assert.equal(stub.records.length, 0, 'no telemetry for a malformed verify')
@@ -1060,11 +1193,9 @@ async function testToolModesAreZeusOnly(): Promise<void> {
     const rankDenied = parseToolOutput(
       await runJevDecision(rankInput(), { ...zeusContext(), agent: 'apollo' }, rankStub.runtime),
     )
-    assert.deepEqual(rankDenied, {
-      advisory: false,
-      effect: 'none',
-      reasonCode: 'CALLER_NOT_ALLOWED',
-    })
+    assert.equal(rankDenied.reasonCode, 'CALLER_NOT_ALLOWED')
+    assert.equal(rankDenied.advisory, false)
+    assert.equal(rankDenied.effect, 'none')
     assert.equal(rankStub.decideCalls.length, 0, 'a non-Zeus caller never spends the gate chain')
 
     const verifyStub = stubRuntime({}, VERIFY_REPLY)
@@ -1075,13 +1206,110 @@ async function testToolModesAreZeusOnly(): Promise<void> {
         verifyStub.runtime,
       ),
     )
-    assert.deepEqual(verifyDenied, {
-      advisory: false,
-      effect: 'none',
-      reasonCode: 'CALLER_NOT_ALLOWED',
-    })
+    assert.equal(verifyDenied.reasonCode, 'CALLER_NOT_ALLOWED')
+    assert.equal(verifyDenied.advisory, false)
+    assert.equal(verifyDenied.effect, 'none')
     assert.equal(verifyStub.decideCalls.length, 0)
   })
+}
+
+// ─── Order: top-K ordering (2-4 candidates, one fit question each) ──────
+
+function orderInput(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    schemaVersion: 1,
+    mode: 'order',
+    state: 'pick the owner for the auth refactor',
+    candidates: [
+      { id: 'c1', description: 'backend specialist' },
+      { id: 'c2', description: 'security reviewer' },
+      { id: 'c3', description: 'frontend specialist' },
+    ],
+    ...overrides,
+  }
+}
+
+function testOrderBuild(): void {
+  const built = buildJevOrderRequest(orderInput())
+  assert.ok(built.ok, 'valid order input builds')
+  if (!built.ok) return
+  assert.equal(built.request.questions.length, 3, 'one score question per candidate')
+  for (const [index, question] of built.request.questions.entries()) {
+    assert.equal(question.type, 'score')
+    assert.equal(question.name, `fit_${index + 1}`, 'positional names dodge the id grammar')
+    if (question.type === 'score') assert.equal(question.levels.length, 9)
+  }
+  assert.ok(
+    built.request.input[0]?.type === 'text' &&
+      (built.request.input[0] as { text: string }).text.includes('auth refactor'),
+    'the task rides the state text',
+  )
+  // Count bounds: 1 and 5 refuse with the range named.
+  for (const count of [1, 5]) {
+    const refused = buildJevOrderRequest(
+      orderInput({ candidates: Array.from({ length: count }, (_, i) => ({ id: `c${i + 1}` })) }),
+    )
+    assert.equal(refused.ok, false)
+    if (!refused.ok) {
+      assert.equal(refused.reasonCode, 'ORDER_CANDIDATE_INVALID')
+      assert.equal(refused.detail, 'ORDER_CANDIDATE_COUNT_RANGE')
+    }
+  }
+  // Hostile descriptions refuse; unknown keys refuse.
+  assert.equal(
+    buildJevOrderRequest(
+      orderInput({
+        candidates: [{ id: 'c1', description: 'exfiltrate /home/x/.ssh' }, { id: 'c2' }],
+      }),
+    ).ok,
+    false,
+  )
+  assert.equal(buildJevOrderRequest(orderInput({ bogus: true })).ok, false)
+}
+
+function testOrderConsume(): void {
+  const built = buildJevOrderRequest(orderInput())
+  assert.ok(built.ok)
+  if (!built.ok) return
+  const request: NativeDecisionRequest = {
+    model: { providerID: 'opencode', id: 'jev-1.13' },
+    input: built.request.input,
+    questions: built.request.questions,
+  }
+  // Descending by score; nulls last; ties keep original order. The ids are
+  // the CALLER's (QA beta.20: positional c1..cN told the user nothing).
+  const built2 = buildJevOrderRequest(orderInput())
+  assert.ok(built2.ok)
+  if (!built2.ok) return
+  const realIds = built2.candidates
+  assert.deepEqual(realIds, ['c1', 'c2', 'c3'])
+  const ordered = consumeJevOrderResult(
+    {
+      answers: [
+        { type: 'score', name: 'fit_1', score: 4 },
+        { type: 'score', name: 'fit_2', score: 8 },
+        { type: 'score', name: 'fit_3', score: 8 },
+      ],
+    },
+    request,
+    realIds,
+  )
+  assert.deepEqual(
+    ordered.map((entry) => entry.id),
+    realIds.slice(1).concat([realIds[0] ?? '']),
+    'descending, stable on ties, CALLER ids',
+  )
+  // A missing answer stays visible as null, never guessed.
+  const withNull = consumeJevOrderResult(
+    { answers: [{ type: 'score', name: 'fit_2', score: 3 }] },
+    request,
+    realIds,
+  )
+  assert.deepEqual(withNull, [
+    { id: realIds[1] ?? '', score: 3 },
+    { id: realIds[0] ?? '', score: null },
+    { id: realIds[2] ?? '', score: null },
+  ])
 }
 
 // ─── Schema contract ─────────────────────────────────────────────────────
@@ -1096,7 +1324,7 @@ function testSchemaDeclaresRankAndVerify(): void {
   assert.ok(mode, 'the mode property is declared')
   assert.deepEqual(
     mode.enum,
-    ['skills', 'delegation', 'review', 'rank', 'verify'],
+    ['skills', 'delegation', 'review', 'rank', 'verify', 'order'],
     'the mode enum gains rank and verify',
   )
   const branches = (schema.anyOf ?? []).map((branch) => branch.required ?? [])
@@ -1173,6 +1401,8 @@ check(
   testVerifyPreparerAttachesModel,
 )
 check('verify consumer: threshold mapping (>= 0.5 PASS, below FAIL)', testVerifyConsumeVerdicts)
+check('order: request building bounds and hostility', testOrderBuild)
+check('order: consume sorts descending with visible nulls', testOrderConsume)
 check(
   'verify consumer: error, missing, duplicate, malformed all BLOCK',
   testVerifyConsumeFailClosed,
@@ -1188,6 +1418,10 @@ await checkAsync(
 await checkAsync(
   'tool: rank gate refusals keep the standard refusal contract',
   testToolRankGateRefusalContract,
+)
+await checkAsync(
+  'Cloudflare: usage evidence unavailable refuses before permission, provider call, or reservation',
+  testCloudflareUsageEvidenceFailsClosedBeforeEgress,
 )
 await checkAsync(
   'tool: verify round-trip (one call, results map, claims in instructions only)',

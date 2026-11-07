@@ -116,13 +116,21 @@ npx pantheon-opencode decision-router caps provider openai-decisions --monthly-u
 npx pantheon-opencode decision-router caps model openai-decisions gpt-6-luna --monthly-usd 5 --per-decision-usd 0.10
 npx pantheon-opencode decision-router period confirm --current none --next 2026-10
 npx pantheon-opencode decision-router holds
+npx pantheon-opencode decision-router holds release --provider <dead-provider> --reason "<why>"
 ```
 
 `help`, `status`, `setup`/`preview` and `holds` are **read-only**: they do not
 create, migrate, or write the config or the SQLite ledger. They open the ledger
 through a separate read-only surface (`node:sqlite` with `readOnly: true`), so an
 absent database stays absent and an unknown schema is reported instead of being
-migrated. `holds` never reserves, reconciles, releases, or prunes. Earlier
+migrated. `holds` never reserves, reconciles, releases, or prunes — with one
+deliberate exception: `holds release --provider <p> --reason "<why>"` is the
+administrative correction for **dead routes only**. A provider that no longer
+exists in the route catalog can never reconcile its holds, so they would freeze
+budget forever; release archives every pending/uncertain hold of that provider
+into the ledger's `released_holds` audit table (schema v4) with the mandatory
+reason and frees the reserved budget. A live catalog provider is refused — its
+holds settle by reconciliation or roll off with the period. Earlier
 revisions opened the ledger for write from `status` and `holds`; that is fixed
 here and pinned by tests.
 
@@ -323,6 +331,11 @@ const recommendation = recommendLocalDecision({
 ```
 
 ## Input and route behavior
+
+Each `complexity` dimension is 0..2 where **higher = riskier / less
+contained**: `boundedness: 2` means POORLY bounded (not "very bounded"), and
+the aggregate label is `max(dimensions)` — one hot dimension labels the task
+high (lo `0,0,2,2,2` and hi `2,2,0,0,0` are both `high` by design).
 
 Input schema version `1` accepts only structured fields: `domains`, `complexity`,
 and `gateStatus`. Extra fields (including free-form task text) make the input

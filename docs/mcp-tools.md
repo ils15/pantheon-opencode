@@ -365,6 +365,41 @@ v1.0.
 
 ---
 
+## Measured usage baseline (2026-11-05 audit)
+
+`bench/mcp-usage-audit.mjs` measures real native-MCP usage across four local,
+read-only sources (transcript `session_message`, the memory MCP database, the
+persistence kv databases, hooks.log bench lines) and writes a dated report to
+`bench/results/`. First measured run — 183k assistant messages, 8.7k user
+turns, 1.5k sessions with MCP activity:
+
+| Server | Execute blocks | Verdict from the data |
+|--------|----------------|-----------------------|
+| pantheon-memory | 5,760 | Over-firing on **store** (1,918 calls; most stored content was session narration — subtask summaries, delegation status, debugging play-by-play — not durable facts). Reads (search/recall ≈ 2,787) are the point and stay. |
+| pantheon-persistence | 2,546 | Checkpoints over-fire per turn (1,003 `context_save` → only 465 distinct checkpoints; the same `key:"latest"` re-saved turn after turn). kv rows are platform machinery (delegation telemetry), not model judgment. |
+| pantheon-vision | 84 | Legitimate (real screenshots only). Single waste pattern: three passes (describe + analyze + OCR) on one image. |
+| pantheon-code-mode | 54 | Barely used; keep as-is. |
+| pantheon-resources | 47 | Barely used; keep as-is. |
+
+**Cost model** (what "weigh the cost" means per server): `pantheon-vision` is
+real gateway spend per image call; `pantheon-memory` reads ride in the model's
+context for the rest of the session (per-token cost), and a bad store is a cost
+paid by every future session that recalls it; persistence checkpoints are
+near-free locally but add turn noise. The usage policies in `zeus.md`
+(durable-facts-only stores, milestone-only checkpoints, one vision pass per
+image) are the correction this baseline justifies.
+
+**Field finding — grants vs the `execute` bridge**: `mcp_tools` grants gate
+which MCP tools a model may call directly. On the Code Mode `execute` path the
+model addresses servers programmatically regardless of grants — measured proof:
+zeus (granted `memory_search` only) made 1,918 `memory_store` calls. Grants are
+the matrix of intent and of the direct-call surface, not an enforcement wall;
+usage policy lives in the agent instructions.
+
+Run the audit: `node bench/mcp-usage-audit.mjs` (adds `--db`, `--stdout`).
+
+---
+
 ## Permission Tiers
 
 OpenCode MCP tool grants authorize an agent to call the server tools exposed to

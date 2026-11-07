@@ -23,6 +23,7 @@ import {
 } from '../../src/pantheon/local-decision-prompt.ts'
 import { selectPantheonSkills } from '../../src/pantheon/local-decision-skills.ts'
 import type { TurnDecision } from '../../src/pantheon/local-decision-turn.ts'
+import { localDecisionForTest, shouldRefine } from '../../src/pantheon/local-decision-turn.ts'
 import {
   clearLocalDecisionPolicyCache,
   type LocalDecisionPolicy,
@@ -116,6 +117,81 @@ function samplePolicy(overrides: Partial<LocalDecisionPolicy> = {}): LocalDecisi
     permissionTask: { '*': 'allow' },
     ...overrides,
   }
+}
+
+function testDeterministicRefineHeuristic(): void {
+  // Field beta.22→23: the owner wants refinement ACCESSIBLE and mechanical —
+  // no Jev deciding whether to refine (negative economics). Pure text rules.
+  assert.equal(
+    shouldRefine(
+      'refatora o dashboard do meu projeto: os calculos de saque tao errados, queria abas separadas, e a fonte ta pequena e ruim. melhora tudo isso',
+    ),
+    true,
+    'vague multi-concern refines',
+  )
+  assert.equal(
+    shouldRefine('corrija o typo na linha 3 do README'),
+    false,
+    'a one-liner never refines',
+  )
+  assert.equal(
+    shouldRefine('refatora o dashboard e melhora a fonte. criterios de aceite: testes passando'),
+    false,
+    'explicit acceptance criteria suppress the flag',
+  )
+  assert.equal(
+    shouldRefine('melhora a fonte do dashboard'),
+    false,
+    'single concern, short — execute',
+  )
+  assert.equal(
+    shouldRefine(
+      'rewrite the auth module and restructure the config, also fix the migration scripts please',
+    ),
+    true,
+    'EN multi-concern refines too',
+  )
+  // The turn decision carries the flag end to end.
+  process.env.PANTHEON_LOCAL_DECISION_ROUTER = '1'
+  try {
+    const decision = localDecisionForTest(
+      'refatora o dashboard: calculos errados, abas separadas, fonte ruim',
+      samplePolicy(),
+    )
+    assert.equal(decision.refineRecommended, true, 'the flag rides the turn decision')
+  } finally {
+    delete process.env.PANTHEON_LOCAL_DECISION_ROUTER
+  }
+}
+
+function testAgentSkillFallbackFeedsPtDelegations(): void {
+  // D3 (field reports beta.13-16): same domain, EN fed / PT starved.
+  process.env.PANTHEON_LOCAL_DECISION_ROUTER = '1'
+  try {
+    const en = decideLocalForTurnSync(
+      'delegar para hermes: implement a FastAPI backend endpoint with pytest',
+    )
+    assert.equal(en.agent, 'hermes')
+    assert.ok(en.skillIds.length > 0, 'EN feeds')
+    const pt = decideLocalForTurnSync(
+      'delegar: implementar um endpoint FastAPI com testes de integracao',
+    )
+    assert.equal(pt.agent, 'hermes')
+    assert.ok(pt.skillIds.length > 0, 'PT no longer starves (D3)')
+    assert.ok(pt.skillIds.includes('tdd-with-agents'), 'the fallback is hermes-relevant')
+    // A no-signal request stays skill-only, no agent fallback leaks.
+    const quiet = decideLocalForTurnSync('apenas um comentario qualquer sem delegacao')
+    assert.equal(quiet.agent, null)
+  } finally {
+    delete process.env.PANTHEON_LOCAL_DECISION_ROUTER
+  }
+}
+
+function decideLocalForTurnSync(request: string) {
+  // The env flag is read at call time; policy load is best-effort (undefined
+  // policy still routes skills, agent needs policy — read it like prod does).
+  const decision = localDecisionForTest(request, samplePolicy())
+  return decision
 }
 
 function testCatalogAndSkillSelection(): void {
@@ -369,5 +445,7 @@ testPromptApplicationIsIdempotentAndBounded()
 testFetchProviderPathIsRemoved()
 testEmptySelectionNeverErasesHostSkills()
 await testPolicyCacheIsProcessScopedAndInvalidatable()
+testAgentSkillFallbackFeedsPtDelegations()
+testDeterministicRefineHeuristic()
 
 console.log('local decision phase 2 tests passed')

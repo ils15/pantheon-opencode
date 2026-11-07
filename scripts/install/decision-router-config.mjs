@@ -656,10 +656,18 @@ export function provisionCloudflareHostProvider({ accountId, env = process.env }
   data.providers ??= {}
   data.providers['cloudflare-workers-ai'] ??= {}
   data.providers['cloudflare-workers-ai'].options ??= {}
-  data.providers['cloudflare-workers-ai'].options.accountId ??= trimmed
-  data.providers['cloudflare-workers-ai'].models ??= {}
-  if (data.providers['cloudflare-workers-ai'].models['clef'] === undefined) {
-    data.providers['cloudflare-workers-ai'].models['clef'] = {
+  const provider = data.providers['cloudflare-workers-ai']
+  const existingAccountId = provider.options.accountId
+  if (existingAccountId != null && String(existingAccountId).trim() !== '') {
+    if (String(existingAccountId).trim().toLowerCase() !== trimmed.toLowerCase()) {
+      return { ok: false, reason: 'existing accountId conflicts with --account-id' }
+    }
+  } else {
+    provider.options.accountId = trimmed
+  }
+  provider.models ??= {}
+  if (provider.models.clef === undefined) {
+    provider.models.clef = {
       name: 'Clef (Cloudflare Workers AI)',
       type: 'decision',
     }

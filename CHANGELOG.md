@@ -5,16 +5,248 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 
+## [v1.7.0] - 2026-11-07
+
+- **Typed decision router with a real budget**: delegation, skills, ORDER, rank, verify and review modes — budgeted, reconciled, ~$0.000025 per call.
+- **J1 risk gate with a ladder**: off / shadow / warn / enforce — high-risk calls demand explicit human approval, never bypassed.
+- **agent-forge**: forge an OpenCode agent on demand — interview, draft, confirm, write to project or user scope.
+- **Skill discovery with a trust cascade**: Anthropic catalog → skills.sh → raw GitHub; Jev ranks; you install.
+- **prompt-refinery in three tiers**: clear requests pass; vague ones get a silent internal adjust; full contract is `>>`-gated.
+- **Last version supporting the OpenCode V1 contract (1.19.x)** — the next minor targets OpenCode 2.x only.
+
+### Added
+
+- **routing** — `mode: "order"` on `pantheon_jev_decide`: real top-K ordering of 2-4 candidates with a per-candidate fit score (an ordinal on the 2..10 rubric, never a probability).
+- **routing** — `mode: "verify"` accepts optional `state` evidence the claims are judged against; verdicts PASS / UNVERIFIABLE / FAIL with BLOCK fail-closed on missing or refused answers.
+- **routing** — rank accepts up to 20 candidates (typesafe_rank contract) and `CANDIDATE_INVALID` names the accepted range.
+- **routing** — the input envelope is enforced on EVERY path (explicit, presets, review, rank, verify): schemaVersion required, unknown keys rejected with the exact cause.
+- **routing** — review accepts criteria objects (`{id, description}`) alongside strings; refusals carry the `CRITERIA_SHAPE` detail.
+- **routing** — `CALLER_NOT_ALLOWED` names the remedy: allowlist via `PANTHEON_JEV_SPECIALIST_CALLERS` or route through Zeus.
+- **skills** — `agent-forge`: forge an OpenCode agent on demand — interview, canonical draft, confirm, write to project or user scope; never overwrites.
+- **skills** — prompt-refinery in three tiers with the trust-cascade discovery ranking.
+- **install** — decision-layer extras (J1/J3 shadow gates, specialist callers) ship pre-checked in the interactive setup.
+
+### Changed
+
+- **routing** — the J1 escalation ladder: off / shadow / warn / enforce via `PANTHEON_J1_RISK_SCORE`, with `PANTHEON_J1_ENFORCE_THRESHOLD` (default 0.8).
+- **routing** — enforce denies a high-risk call with the HANDOFF CONTRACT: the agent presents the refused call for your manual decision; your approval mints a hash-pinned, TTL-bounded pass.
+- **routing** — `CALLER_NOT_ALLOWED` names the remedy (allowlist via `PANTHEON_JEV_SPECIALIST_CALLERS` or route through Zeus).
+- **skills** — the discovery ladder ranks candidates with Jev `mode: "order"` and documents the trust tiers; `mattpocock/skills` referenced for the GitHub tier.
+- **agents** — nyx back to observability & cost analytics (chaos/fuzz secondary); prometheus without the observability words; mnemosyne and talos descriptions aligned to the catalog.
+- **agents** — plan-persistence contract: Athena returns the plan, Zeus persists PLAN.md.
+- **install** — decision-layer extras ship pre-checked; the installer heals the stale agent-source poison in BOTH configs (.json + .jsonc), repairing orphan commas.
+- **docs** — README with mermaid diagrams (escalation ladder, refine tiers, trust cascade); COMPATIBILITY table updated for the 1.7.x line.
+
+### Deprecated
+
+- **OpenCode V1 contract (1.19.x)** — supported through this release, deprecated afterward: the next minor targets OpenCode 2.x only.
+
+### Removed
+
+- **The lexical skills prefilter** — replaced by the full-catalog offer (the filter dropped the exact skill the state described).
+- **The Console Jev free-variant route** and the legacy PR+SHA beta-version scheme.
+
+### Fixed
+
+- **routing** — "Agent not found: zeus": the installer heals the stale cwd-relative agent-source field in both configs (root cause of the vanished roster).
+- **routing** — N4 USAGE_UNRECONCILED 100%: dead — field-verified reconcile on the OpenRouter route.
+- **routing** — the dead-route holds freezing budgets: released with the schema v4 archive.
+- **routing** — D1/D2 of the local router: gateStatus influences the decision (GATE_OPEN); artifact-management reachable via material-requirement.
+- **tui** — the version embed ships at the release version (the package gate now fails a stale TUI dist).
+- **doctor** — recognizes the installer's own V2 shape (`{ package, options }`).
+
+### Security
+
+- The input envelope is closed on every path; hostile-prose scans cover criteria, claims and candidates; gate messages never echo tool input; approvals are hash-pinned to the exact refused call.
+
+---
+
 ## [Unreleased]
 
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
+
+## [v1.7.0-beta.1] - 2026-11-07
+
+## 🆕 What's New
+- **`mode: "order"`** no Jev: ordenação real de 2-4 candidatos com score por candidato (rank escolhe vencedor; order classifica a shortlist).
+- **J1 approval gate** com escada off/shadow/warn/enforce: chamada de risco alto exige APROVAÇÃO EXPLÍCITA do usuário (hash-pinned, TTL 15min) — nunca contorno.
+- **`agent-forge`**: cria um agente OpenCode sob demanda — entrevista, rascunho canônico, confirmação, gravação em escopo projeto/global.
+- **prompt-refinery em 3 níveis**: pedido claro passa intacto; ajuste mínimo interno (≤15 linhas); contrato completo só com `>>`.
+- **Descoberta de skills com cascata de confiança**: catálogo canônico Anthropic → skills.sh → GitHub cru, ranqueado por Jev order; instalação só pelo usuário.
+- **Correções do campo**: criteria-objeto no review, banda UNVERIFIABLE no verify com evidência (`state`), jsonc heal (o veneno que sumia com o roster), D3 PT-starvation,CRITERIA_SHAPE com remedio, verify band edges.
+- **Jev REAL**: 275 decisões reconciliadas, $0.0068 acumulado (~$0.000025/decisão).
+
+
+ - 2026-11-07
+
+## 🆕 What's New
+- **skills** — the three-tier refine — minimal adjust default, full contract via >> only
+- **skills** — the refinement tiers — internal minimal adjust, >> full contract
+- **routing** — the pre-stable cost inventory
+- **skills** — the enhancer references and project-convention priority
+- **skills** — the three-tier refine — minimal adjust default, full contract via >> only
+- **routing** — the external-ref regressions
+- **routing** — the criteria object form and the fixture-vs-work rule
+- **install** — the deterministic refine trigger
+- **skills** — agent-forge on-demand agents and the order-mode discovery ladder
+- **routing** — the J1 approval gate — explicit ask, hash-pinned pass
+- **routing** — the J1 enforce handoff contract — risk hands off to the human
+- **routing** — the order mode (top-K ordering) and the noul rename
+- **routing** — the J1 escalation ladder (off/shadow/warn/enforce) and the caller-refusal remedy
+- **skills** — the prompt-refinery contract and the nyx observability restore
+- **install** — one coherent setup summary — inline warnings, project-only worktree box, flags hint
+- **routing** — the beta.12 field acceptance record
+- **tui** — the paginated What's New window with the curated summary contract
+
+## 🐞 Fixed
+- **install** — the jsonc heal repairs orphan commas
+- **config** — the jsonc heal and the venv-aware test:ci
+- **validate** — the V2 package probe
+- **routing** — the local-router D3 PT fallback and the D4 polarity docs
+- **install** — heal the cwd-relative agent source field — the Agent-not-found root cause
+- **routing** — the beta.13 field report — verify evidence, popularity parser, stable plugin root
+- **routing** — the field-report corrections — descriptions ride, envelope everywhere, rank 20, gate influence
+## [v1.6.3-beta.28] - 2026-11-07
+
+## 🆕 What's New
+- auto-continue split: core 2,656→1,003 tokens, the cooldown/timeout/checkpoint details moved to references/ (read under demand). The checkpoint contract is intact — the test follows the move.
+- prompt-refinery tiers finalized: Tier 1 is an INTERNAL minimal adjust (the user sees the work begin, no approval ceremony; generous scope when the request demands); the six-section contract is EXCLUSIVELY the >> prefix; clarifying questions ride the native question tool.
+- Descriptions trimmed keeping triggers (mnemosyne, agent-forge, prompt-refinery); skill-creator referenced in agent-forge.
+
+## [v1.6.3-beta.27] - 2026-11-07
+
+## 🆕 What's New
+- prompt-refinery em TRÊS níveis com custo controlado por limite de saída (não por tier de modelo): pedido claro passa intacto; o sinal determinístico dispara o AJUSTE MÍNIMO (≤15 linhas — PT corrigido, estrutura leve); o contrato completo de seis seções é EXCLUSIVO do prefixo `>>`. Referências incorporadas: prompt-enhancer (opt-in, cap, fail-open) e prompt-improver (nudges self-cancel-cheap, clarificação com opções). Falha = fail-open; convenções do projeto têm prioridade sobre defaults.
+
+## [v1.6.3-beta.26] - 2026-11-07
+
+## 🆕 What's New
+- The installer heals the stale agent-`source` field in the sibling opencode.jsonc too — the field that kept the roster invisible outside the config dir even after the .json heal (field beta.25: sessions fell back to the default agent and pantheon_jev_decide was nowhere).
+- `test:ci` prefers the repo venv when present, so the Python tier runs the pinned fastmcp/mcp instead of whatever the system python has.
+
+## [v1.6.3-beta.25] - 2026-11-06
+
+## 🆕 What's New
+- The external-research regressions: three refiner fixtures (cited-scenario analyzes, direct-vague contracts, bounded-fix executes), skills review hardened (origin/adoption are signals, dangerous content blocks regardless of popularity), and the order score documented as an ORDINAL on the 2..10 rubric — never a probability.
+- The beta.24 battery #10 exact PT payload is a regression test now (the CRITERIA_SHAPE fix holds under its exact shape).
+
+## [v1.6.3-beta.24] - 2026-11-06
+
+## 🆕 What's New
+- Refinement is now DETERMINISTIC: the local router computes `refineRecommended` from pure text rules (multi-concern, no acceptance criteria — PT+EN; one-liners never refine; explicit criteria suppress). No Jev, no model judgment, zero cost — badly structured prompts get the refine signal before they can degrade processing, and zeus treats the signal as obligatory.
+
+## [v1.6.3-beta.23] - 2026-11-06
+
+## 🆕 What's New
+- Doctor recognizes the installer's own V2 shape again (`{ package, options }` was never probed — a healthy config read as "no V2 generation registered").
+- TUI version embed rebuilt (the footer no longer says beta.15).
+- The prompt-refinery contract is bound to the FIRST turn: no reads, no dispatches before it (field evidence: discovery-first burned a delegation and still ended in the same questions).
+
+## [v1.6.3-beta.22] - 2026-11-06
+
+## 🆕 What's New
+- `agent-forge` skill: ask for a dedicated agent ("cria um agente de reviews de PR") and Pantheon interviews you, drafts the canonical agent file (least-privilege permissions, registered-tools-only grants, the governance ladder), confirms, and writes it project- or user-scoped — the host loads it on the next session.
+- Skill discovery now ranks with Jev `mode: "order"`: the top cascade candidates return a full descending ordering with fit scores, not a single winner. `mattpocock/skills` joins the GitHub tier as a known-good reference repo.
+
+## [v1.6.3-beta.21] - 2026-11-06
+
+## 🆕 What's New
+- The J1 enforce block is now an APPROVAL GATE: a high-risk call is denied with an ask — the agent questions the user under a `j1-approval-<hash>` marker; an affirmative answer mints a hash-pinned, TTL-bounded (15 min), session-scoped pass for that exact call, and the retry executes (and records). No observed answer, no pass — fail-closed.
+- QA beta.20 fixes: verify verdict band precedence (0.35–0.65 UNVERIFIABLE inclusive; PASS strictly above), order maps scores back to the caller's candidate ids, `=shadow` no longer reads as off, scorecard count/cost honesty.
+
+## [v1.6.3-beta.20] - 2026-11-06
+
+## 🆕 What's New
+- The J1 enforce block is now a HANDOFF CONTRACT: a high-risk call is denied with instructions to present it to the user for a MANUAL decision — no executing, no working around; the message names the levers (threshold, mode, rerun without the risky step).
+
+## [v1.6.3-beta.19] - 2026-11-06
+
+## 🆕 What's New
+- Local router D3 fixed: a PT-BR delegation no longer starves on skills — when the English-lexical prefilter matches nothing but the agent is known, the agent's curated delegation-relevant grants feed the turn (same domain, EN fed / PT starved was the four-report-old field bug).
+- D4: the complexity dimensions' polarity is documented where it bit — higher = riskier/less contained (boundedness:2 is POORLY bounded), aggregate label = max(dimensions).
+
+## [v1.6.3-beta.18] - 2026-11-06
+
+## 🆕 What's New
+- `mode: "order"`: ORDER 2-4 candidates by fit — one score question per candidate, the descending ordering with per-candidate scores comes back (nulls visible, last, never guessed). Rank picks a winner; order ranks the shortlist.
+- The review questions are self-documenting now: `quality` (score) and `needs_review` (predicate) — "noul" was the decision model's internal archetype leaking into user-visible payloads.
+
+## [v1.6.3-beta.17] - 2026-11-05
+
+## 🆕 What's New
+- The J1 gate is now a ladder: off / shadow / warn / enforce (PANTHEON_J1_RISK_SCORE). Enforce awaits the bounded gate and DENIES a high-risk tool call in-session, with the threshold configurable (PANTHEON_J1_ENFORCE_THRESHOLD, default 0.8). Shadow stays the default-on behavior.
+- CALLER_NOT_ALLOWED refusals now teach the fix: allowlist the caller via PANTHEON_JEV_SPECIALIST_CALLERS or ask Zeus to route.
+- Plan persistence contract: Athena returns the plan as her response; Zeus persists PLAN.md — no more refused write attempts on deepwork plans.
+
+## [v1.6.3-beta.16] - 2026-11-05
+
+## 🆕 What's New
+- `prompt-refinery` skill: a vague multi-part request is refined into a structured contract (objective, slices, acceptance criteria, open questions with defaults) shown for confirm-or-adjust BEFORE executing — one planning turn on the session model.
+- Skills mode offers the full local catalog + host skills — the lexical prefilter could drop the exact skill you described (codemap → none 0.88). candidateSource still reports the pool.
+- nyx returns to observability & cost analytics (owner intent), prometheus drops those words — the routing you expected now matches the catalog.
+
+## [v1.6.3-beta.15] - 2026-11-05
+
+## 🆕 What's New
+- "Agent not found" fixed: the installer stops writing the cwd-relative agent `source` provenance and heals it away from existing installs — the host 2.2.5 resolved it against the session cwd and the whole roster vanished outside the config dir.
+
+## [v1.6.3-beta.14] - 2026-11-05
+
+## 🆕 What's New
+- pantheon-tui loads on every boot again: the server stub now exports the definition object host 2.2.5 requires (was ~3 load failures per boot, forever).
+- verify accepts optional `state` evidence and reports UNVERIFIABLE for the 0.35–0.65 band — false and "could not tell" are no longer the same verdict.
+- The skills-search popularity parser reads K/M counts — the most popular results no longer vanish from the skills.sh tier.
+- The installer never leaves the plugin registered into the volatile npx cache (the intermittent plugin-death root cause); the preflight also covers pure-V2 configs now.
+- prometheus's description names observability/tracing — the reform's domain split is now visible to the router.
+
+## [v1.6.3-beta.13] - 2026-11-05
+
+## 🆕 What's New
+- One coherent setup summary: a single closing block instead of two competing "Next steps" lists.
+- Warnings restate their text inline — no more hunting for what scrolled past.
+- The worktree guidance box is project-only (a global install from $HOME showed a nonsense path).
+- The banner now prints the exact `source` line for the decision-layer flags file — the silent-off gap fixed.
+
+## [v1.6.3-beta.12] - 2026-11-05
+
+## 🆕 What's New
+- Delegation answers are domain-aware again: agent descriptions ride with every choice — live probe 5/5 exact (FastAPI→hermes, WCAG→aphrodite, Alembic→demeter, security→themis, poem→none).
+- The input envelope is enforced on EVERY path now: presets, review, rank and verify all refuse missing/unknown keys with the exact cause.
+- Rank accepts up to 20 candidates (typesafe_rank contract) and names the accepted range on refusal.
+- Skills results report where the candidates came from (`candidateSource`), ending silent prefilter misses.
+- The local router respects open gates: review/approval required → abstain (`GATE_OPEN`), never route around.
+
+## [v1.6.3-beta.11] - 2026-11-05
+
+### 🆕 What's New
+- Measured MCP usage policy across the roster — governance ladder byte-identical in all 13 specialists.
+- Skill-discovery pipeline with the trust cascade: Anthropic catalog → skills.sh → GitHub; Jev ranks, you install.
+- Dead-route holds release (ledger schema v4) — the fix for budgets frozen by removed routes.
+- Roster reform: nyx re-scoped to chaos & adversarial, talos aligned to hotfix, domain docs per agent.
+- Jev validated end to end in the field: N4 dead, verify field-verified, sandbox 28/28.
+
+### Added
+
+- **agents** — The roster reform, measured: the governance ladder (session context → free local selector → one typed Jev question → MCP last resort, with the durable-store, milestone-checkpoint and one-pass-vision rules) now sits byte-identical in all 13 specialist agents, pinned by `tests/agent-mcp-policy.test.mjs`; nyx is re-scoped to its intended chaos & adversarial identity (its observability body duplicated prometheus and left fuzzing uncovered — the observability material moved to prometheus); mnemosyne's description names its memory-MCP curation ownership; the live scorecard's talos scenario now matches the real hotfix-express-lane identity. Post-reform live scorecard: 14/16 exact, 8/8 on the zero-dispatch agents.
+- **skills** — The skill-discovery pipeline: installed pool first (one Jev `mode: "skills"`), then one read-only search across the trust cascade — the canonical `anthropics/skills` catalog first (so `pdf`/`docx`/`mcp-builder` outrank the clones popularity ranking surfaces), the skills.sh index with install counts, then raw GitHub `SKILL.md` code search (8,480 hits where the index offered three) — via `scripts/skill-search.mjs` emitting tier-ordered `{skill, installs, url, source}` JSON, pinned by `tests/skill-search.test.mjs`, then one typed Jev choice question ranking the candidates (only names/counts/descriptions cross — skill contents are untrusted), then the winning candidate is PROPOSED to the user with the project-scoped install command. Pantheon never installs; the review is the user's. The ladder is documented in `docs/reference/native-decisions.md` and carried in `zeus.md`.
+- **routing** — `decision-router holds release --provider <dead> --reason "<why>"`: the administrative correction for holds of routes that no longer exist (they can never reconcile and froze budget forever — the mechanical story behind the mid-month Jev die-offs). Ledger schema v4 adds the immutable `released_holds` archive; live providers are refused, their holds roll off with the period. First field application: the 10 `jev-free` fossils of the removed free route released, $1.00 of reserved budget freed.
+- **mcp** — `bench/mcp-usage-audit.mjs`: the measured native-MCP usage audit (transcript, memory db, persistence kv, bench lines → dated report in `bench/results/`; reports are local-only, they carry bounded session excerpts). First run measured the whole field history: 5.7k memory touches, 2.5k persistence, 84 vision — the verdicts and cost model live in `docs/mcp-tools.md`.
+
+- **agents** — The 14-agent domain-artifact analysis (docs/agents/README.md): each specialist owns its domain's durable file — aphrodite keeps docs/ui/conventions.md current whenever the project has a graphical surface, demeter docs/data, hermes docs/api, prometheus docs/infra — read-first, propose-when-missing, update-only-what-you-changed; new exclusive per-agent tools fail the measured bar (grants already enforce the exclusivity that pays).
+
+
+### Changed
+
+- **agents** — The zeus usage policy is measured, not decorative: `memory_store` takes durable, reusable facts only (session narration goes to a checkpoint or nowhere; per-project namespaces; update instead of duplicate), checkpoints fire at milestones only (never per turn, never re-saving an unchanged key), and vision runs one pass per image (zeus and aphrodite) — each vision call is real gateway spend. The contradictory store phrases that produced the narration excess are gone, pinned by `tests/agent-mcp-policy.test.mjs`.
 
 ## [v1.6.3-beta.10] - 2026-11-04
 
 ### Fixed
 
 - **routing** — The Jev input envelope is enforced: schemaVersion is required (SCHEMA_VERSION_INVALID) and unknown keys are rejected (UNKNOWN_INPUT_KEYS) — the declared contract is now the enforced contract (field report N2/N3).
+
+<!-- beta.7–beta.9 were landed together in 548fc6d; separate commits for these releases are absent from repository history. Per-beta attribution follows that commit’s grouped changelog snapshot. -->
 
 ## [v1.6.3-beta.9] - 2026-11-04
 
@@ -23,20 +255,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **agents** — The live scorecard now runs the full 13-specialist catalog (was a 5-agent sample); first full-catalog run: 6 exact hits, 2 domain-adjacent judgment calls, measured per agent.
 - **agents** — Zeus gains consolidated MCP call-timing rules: when to recall, when to store, when to checkpoint, when vision fires, and the escalation order (local selector -> Jev -> MCP last resort).
 
-## [v1.6.3-beta.7] - 2026-11-04
-
-### Added
-
-- **routing** — `jev-live-probe.mjs`: the operator-run live measurement tool. `--ping` is the calibration dry-run after `setup-model` (one call, exit 0 when reachable); `--scorecard` runs the live scenarios against the configured route and writes the dated scorecard into `bench/results/`. First live run: 7/8 correct specialist picks via OpenRouter.
-
 ## [v1.6.3-beta.8] - 2026-11-04
 
 ### Added
 
 - **routing** — The v3.1 **rank** and **verify** primitives on `pantheon_jev_decide`: `mode: "rank"` picks the winner among up to 8 candidates with a fit score (the host answers one scalar per question, so full ordering is impossible — documented); `mode: "verify"` checks 1–4 claims as predicate questions with **BLOCK fail-closed**. Hostile inputs rejected. Zeus-only, same gate chain.
-- **agents** — The live scorecard runs the full 13-specialist catalog (first full run: 6/8 exact, 2 domain-adjacent); Zeus gains consolidated MCP call-timing rules.
 
 ## [v1.6.3-beta.7] - 2026-11-04
+
+### Added
+
+- **routing** — `jev-live-probe.mjs`: the operator-run live measurement tool. `--ping` only resolves the configured route locally (exit 0 when valid; no provider call); `--scorecard` runs the 16 configured live scenarios against that route and writes the dated scorecard into `bench/results/`. First live run: 7/8 correct specialist picks via OpenRouter.
+
+## [v1.6.3-beta.6] - 2026-11-04
 
 ### Added
 

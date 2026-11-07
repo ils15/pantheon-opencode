@@ -26,7 +26,6 @@ import { fileURLToPath } from 'node:url'
 import { configure as configureUi, endGaugeLine, tag } from '../scripts/install/cli-ui.mjs'
 import { resolveComponentSelection } from '../scripts/install/component-selection.mjs'
 import { resolveGlobalConfigDirectory } from '../scripts/install/config-paths.mjs'
-import { provisionTypesafeHostProvider } from '../scripts/install/decision-router-config.mjs'
 import { resolveInstallExitCode } from '../scripts/install/exit-codes.mjs'
 import { createInterruptHandler } from '../scripts/install/interrupt.mjs'
 import { parseOpenCodeVersion } from '../scripts/install/opencode-version.mjs'
@@ -61,23 +60,6 @@ function readVersion() {
   }
 }
 
-/**
- * Merge the TypeSafe decision-model provider entry into the user's
- * `opencode.json` (never replaces existing keys; a non-JSON file is reported,
- * never overwritten). Returns true, or a short failure reason.
- */
-/**
- * Merge (never overwrite) the TypeSafe decision-model entry into the user's
- * OpenCode config, so choosing the TypeSafe route in the wizard needs only the
- * user's own sign-in afterwards. Delegates to the shared installer module —
- * the same provisioner `decision-router setup-model typesafe-jev/...` uses.
- * Returns true, or a short failure reason for the installer to print.
- */
-function provisionTypesafeProvider() {
-  const result = provisionTypesafeHostProvider({ env: process.env })
-  return result.ok ? true : result.reason
-}
-
 /** Value of a repeatable installer flag from the raw argv, or undefined. */
 function readArgValue(name) {
   const prefix = `${name}=`
@@ -87,6 +69,11 @@ function readArgValue(name) {
     if (arg.startsWith(prefix)) return arg.slice(prefix.length)
   }
   return undefined
+}
+
+/** Render a cap in a repair hint without changing the validator's grammar. */
+function formatUsdCapForRepair(value) {
+  return typeof value === 'string' && /^\.\d+$/.test(value) ? `0${value}` : value
 }
 
 function printUsage() {
@@ -1012,6 +999,8 @@ async function main() {
       const monthly = readArgValue('--decision-monthly-usd') ?? wizardActivation?.monthly ?? '5'
       const perDecision =
         readArgValue('--decision-per-decision-usd') ?? wizardActivation?.perDecision ?? '0.10'
+      const repairMonthly = formatUsdCapForRepair(monthly)
+      const repairPerDecision = formatUsdCapForRepair(perDecision)
       const noConsent = process.argv.includes('--decision-no-consent')
       console.log('')
       if (isDryRun) {
@@ -1032,23 +1021,29 @@ async function main() {
             { stdout: (line) => console.log(`  ${line}`) },
           )
           console.log(`  ${S.jevConfigured(decisionTarget)}`)
-          if (decisionTarget.startsWith('typesafe-jev')) {
-            const provisioned = provisionTypesafeProvider()
-            console.log(
-              provisioned === true
-                ? '  TypeSafe provider entry merged into opencode.json (adapter + baseURL + apiKey via {env:TYPESAFE_API_KEY}, type "decision"). Activate: export TYPESAFE_API_KEY=<your TypeSafe key> and restart OpenCode. /connect does not carry custom providers.'
-                : `  TypeSafe provider entry NOT merged (${provisioned}); merge it manually — see docs/reference/native-decisions.md.`,
-            )
-          }
         } catch (error) {
           console.error(
             `  ${S.jevConfigureFailed(error instanceof Error ? error.message : String(error))}`,
           )
           console.error(
-            `  Fix later with: npx pantheon-opencode decision-router setup-model ${decisionTarget} --monthly-usd ${monthly} --per-decision-usd ${perDecision}`,
+            `  Fix later with: npx pantheon-opencode decision-router setup-model ${decisionTarget} ${decisionTarget.startsWith('cloudflare-workers-jev/') ? '--account-id=<32-hex-id> ' : ''}--monthly-usd ${repairMonthly} --per-decision-usd ${repairPerDecision}`,
           )
         }
       }
+    }
+
+    const deferredJevSetup = result.decisionModelDeferredSetup ?? null
+    if (deferredJevSetup?.target === 'cloudflare-workers-jev/clef') {
+      console.log('')
+      console.log(
+        '  Cloudflare Clef was not activated: its host provider entry requires your Cloudflare account ID.',
+      )
+      console.log(
+        '  After install, provision it with: npx pantheon-opencode decision-router setup-model cloudflare-workers-jev/clef --account-id=<32-hex-id> --monthly-usd 5 --per-decision-usd 0.10',
+      )
+      console.log(
+        '  Also set CLOUDFLARE_API_TOKEN to a Workers AI-scoped token in the OpenCode host environment, then restart OpenCode.',
+      )
     }
 
     // Old-version residue: every `npx pantheon-opencode` invocation materializes
@@ -1076,9 +1071,32 @@ async function main() {
     console.log(`  ${S.nextVerify}`)
     console.log(`  ${S.nextLaunch}`)
     console.log(`  ${S.nextAgents}`)
-    console.log(`  ${S.nextProject}`)
+    if (!isProject) {
+      // The project-local hint only matters when this install was not one.
+      console.log(`  ${S.nextProject}`)
+    }
     if (!decisionTarget) {
       console.log(`  ${S.nextJev}`)
+    }
+    // The decision-layer extras (J1/J3/specialist callers) write an env file;
+    // without sourcing it the gates stay off silently — the exact gap the
+    // field hit on the beta.12 setup pass.
+    try {
+      const { existsSync } = await import('node:fs')
+      const flagsPath = path.join(
+        process.env.XDG_CONFIG_HOME ?? path.join(process.env.HOME ?? '', '.config'),
+        'pantheon',
+        'decision-flags.env',
+      )
+      if (existsSync(flagsPath)) {
+        console.log('')
+        console.log('  Decision-layer flags (J1/J3/specialist callers):')
+        console.log(
+          `    source ${flagsPath}  # add to your shell profile; applies to NEW opencode sessions`,
+        )
+      }
+    } catch {
+      // Hint is best-effort; never fail the install over it.
     }
     console.log('')
 

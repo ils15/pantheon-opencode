@@ -1,6 +1,6 @@
 {
   "name": "pantheon-opencode",
-  "version": "1.6.3-beta.10",
+  "version": "1.7.0",
   "description": "Multi-agent orchestration for OpenCode \u2014 14 specialized agents, TDD, Themis review gates.",
   "type": "module",
   "workspaces": [
@@ -59,7 +59,7 @@
     "test:tool-canary": "node scripts/run-node-tests.mjs --label 'test:tool-canary' 'tests/canary/tool-canary-support.test.mjs' 'tests/canary/plugin-v2-tool-canary.test.mjs'",
     "test:all": "npm run test:ci && npm run test:node && npm run test:ts",
     "test": "npm run test:all",
-    "test:ci": "python3 -m pytest -q --tb=short 2>&1"
+    "test:ci": "PANTHEON_PY=${PYTHON:-python3}; if [ -x .venv/bin/python3 ]; then PANTHEON_PY=.venv/bin/python3; fi; $PANTHEON_PY -m pytest -q --tb=short 2>&1"
   },
   "bin": {
     "pantheon-opencode": "bin/pantheon-init.mjs"

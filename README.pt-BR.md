@@ -71,7 +71,7 @@ apenas — `init` → reiniciar → `/dispatch` → primeiro resultado — veja 
 
 - **14 agentes especializados**, com um orquestrador, especialistas de
   implementação, um gate de qualidade e papéis de apoio.
-- **20 skills** e instruções reutilizáveis para planejar, construir, revisar e
+- **22 skills** e instruções reutilizáveis para planejar, construir, revisar e
   documentar.
 - **5 servidores MCP locais** para memória de projeto, persistência, recursos,
   execução confinada de scripts e visão.

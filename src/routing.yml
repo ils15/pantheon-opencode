@@ -174,9 +174,11 @@ agents:
     - talos
     skills:
     - agent-coordination
+    - agent-forge
     - artifact-management
     - auto-continue
     - codemap
+    - prompt-refinery
     - context-compression
     - incremental-implementation
     - loop-engineering

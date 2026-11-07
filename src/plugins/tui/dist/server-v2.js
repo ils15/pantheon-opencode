@@ -11,16 +11,23 @@
 * channel — the initial JSX mounts but effects/refresh/events stay dead (the
 * "mudo panel" symptom; same contract as the V1 `server.ts` stub).
 *
-* This stub satisfies the loader contract. The native quota RPC that used to
-* live here was removed in 1.6.2 — provider quota/usage visibility is now the
-* community plugin's job (`@slkiser/opencode-quota`,
-* docs/tui-v2-quota-providers.md) — and pantheon-tui has no other background
-* server work of its own.
+* This stub satisfies the loader contract. Field report (beta.13): host 2.2.5
+* validates the default export as a DEFINITION OBJECT — "Plugin must export a
+* default definition with an id and an effect or setup function
+* (SchemaError(Expected object at ["default"]))" — the bare `server()`
+* function form failed that schema on every boot (~3.4k load failures in the
+* host log). The native quota RPC that used to live here was removed in 1.6.2
+* — provider quota/usage visibility is now the community plugin's job
+* (`@slkiser/opencode-quota`, docs/tui-v2-quota-providers.md) — and
+* pantheon-tui has no other background server work of its own.
 */
-function server() {
-	return {};
-}
+var server_v2_default = {
+	id: "pantheon.tui.server",
+	setup() {
+		return {};
+	}
+};
 //#endregion
-export { server as default };
+export { server_v2_default as default };
 
 //# sourceMappingURL=server-v2.js.map

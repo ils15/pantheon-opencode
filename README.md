@@ -19,6 +19,44 @@ from an idea to a reviewed change. Fourteen specialized agents share one
 workflow: plan, implement, check, review, and record what mattered. You stay in
 charge of every decision and every merge.
 
+```mermaid
+flowchart LR
+    U["👤 You"] --> Z["⚡ Zeus<br/>orchestrator"]
+    Z -->|"delegates"| S["14 specialists<br/>hermes · aphrodite · demeter · themis …"]
+    Z -->|"ambiguous route"| J["🎲 Jev decision router<br/>typed · budgeted · reversible"]
+    J -->|"orders · ranks · verifies"| S
+    S -->|"last resort"| M["🔌 Native MCP<br/>memory · persistence · vision<br/>code-mode · resources"]
+    Z --> G["🛡️ J1 risk gate<br/>off / shadow / warn / enforce"]
+    G -->|"high risk"| H["👤 Human approval"]
+```
+
+**The escalation ladder every agent follows** (the same block lives in all 14
+agent files): session context first → the free local selector → one typed Jev
+question when genuinely ambiguous → a native MCP call only as the LAST resort
+for state the session cannot reconstruct.
+
+```mermaid
+flowchart LR
+    R["📝 rough request"] --> T0{"clear &<br/>bounded?"}
+    T0 -->|yes| X["⚡ execute directly"]
+    T0 -->|"vague /<br/>multi-concern"| T1["🔍 Tier 1 — internal<br/>minimal adjust ≤15 lines<br/>(silent, no approval)"]
+    T1 --> T2q{">> given?"}
+    T2q -->|yes| T2["📜 Tier 2 — full contract<br/>6 sections, confirm-or-adjust"]
+    T2q -->|no| X
+```
+
+**Skill discovery runs a trust cascade** — canonical first, popularity never
+compensates for provenance:
+
+```mermaid
+flowchart LR
+    L["📚 installed pool<br/>(always first)"] -->|"gap"| C1["🟢 anthropics/skills<br/>canonical"]
+    C1 -->|"no fit"| C2["🔵 skills.sh<br/>install-count signal"]
+    C2 -->|"no fit"| C3["🟠 GitHub raw<br/>widest, weakest"]
+    C3 --> J["🎲 Jev orders<br/>the candidates"]
+    J --> P["👤 YOU review<br/>and run the install"]
+```
+
 ## Why use it?
 
 - **Less context switching:** keep planning and building in the same workflow.
@@ -93,7 +131,7 @@ see [Quick Start](docs/QUICKSTART.md).
 
 - **14 specialized agents** with one orchestrator, implementation specialists,
   a quality gate, and supporting roles.
-- **20 skills** and reusable instructions for planning, building, reviewing,
+- **22 skills** and reusable instructions for planning, building, reviewing,
   and documenting work.
 - **5 local MCP servers** for project memory, persistence, resources, confined
   script execution, and vision.
@@ -140,8 +178,8 @@ routine child summaries stay in the handoff. See [Memory](docs/MEMORY.md).
 ## Compatibility
 
 OpenCode **1.19.x** (V1 plugin) and **OpenCode 2.x** (V2 plugin) are supported.
-**OpenCode 2.0.22 is known broken.** From 1.7 onward the line drops the V1
-contract and targets OpenCode 2 only.
+**OpenCode 2.0.22 is known broken.** **1.7.0 is the LAST version supporting the
+OpenCode V1 contract** — the next minor line targets OpenCode 2 only.
 
 The support policy, the known-broken exception, and the verified-version
 evidence have exactly one home: [Compatibility](docs/COMPATIBILITY.md).
@@ -429,6 +467,12 @@ SQLite locks and close their connections; project-specific resources resolve
 the current project root per request while preserving the trusted
 `PANTHEON_HOME` fallback. See [Memory](docs/MEMORY.md) for store separation and
 [MCP tools](docs/mcp-tools.md) for details.
+
+Native-MCP usage is measured, not assumed: `node bench/mcp-usage-audit.mjs`
+writes a dated audit of real memory/persistence/vision/code-mode/resource
+usage (reports stay local — they carry bounded session excerpts), and the
+agent usage policies derived from it are documented in
+[MCP tools](docs/mcp-tools.md).
 
 The release install gate's tool canary loads the installed tarball's V2 plugin
 entry under OpenCode 2.0.30 and verifies `hashline_edit` registration, Code Mode

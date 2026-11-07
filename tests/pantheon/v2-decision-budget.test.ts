@@ -218,7 +218,7 @@ test('inspection reads the three concerns without mutating the ledger', () => {
     assert.equal(inspection.ledger.present, true)
     assert.equal(inspection.ledger.readable, true)
     if (inspection.ledger.present && inspection.ledger.readable) {
-      assert.equal(inspection.ledger.schemaVersion, 3)
+      assert.equal(inspection.ledger.schemaVersion, 4)
       assert.equal(inspection.ledger.activePeriod, '2026-10')
       assert.equal(inspection.ledger.holds, 1)
       assert.equal(inspection.ledger.reservations, 1)

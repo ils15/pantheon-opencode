@@ -11,6 +11,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { test } from 'node:test'
 import { runDecisionRouterCommand } from '../scripts/decision-router.mjs'
 import { readUserDecisionRouterConfig } from '../scripts/install/decision-router-config.mjs'
@@ -131,6 +132,28 @@ test('admin rejects unsupported providers, models, implicit period changes, and 
   }
 })
 
+test('USD cap validation rejects leading-dot decimals but accepts canonical decimals and integers', async () => {
+  const { home, env } = sandbox()
+  try {
+    await assert.rejects(
+      runDecisionRouterCommand(['caps', 'user', '--monthly-usd', '1', '--per-decision-usd', '.5'], {
+        env,
+        stdout: () => {},
+      }),
+      {
+        name: 'DecisionRouterUsageError',
+        message: 'USD cap must be a non-negative decimal with at most six fractional digits',
+      },
+    )
+    await runDecisionRouterCommand(
+      ['caps', 'user', '--monthly-usd', '0.5', '--per-decision-usd', '5'],
+      { env, stdout: () => {} },
+    )
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
 test('holds lists unresolved reservations without mutating them', async () => {
   const { home, env } = sandbox()
   try {
@@ -188,6 +211,92 @@ test('holds lists unresolved reservations without mutating them', async () => {
     } finally {
       reopened.close()
     }
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('holds release refuses live providers and demands provider and reason', async () => {
+  const { home, env } = sandbox()
+  try {
+    // The strict named-option parser rejects an incomplete flag set before
+    // the command's own usage line is reachable.
+    await assert.rejects(
+      runDecisionRouterCommand(['holds', 'release', '--provider', 'jev-free'], { env }),
+      /Missing or extra command options/,
+    )
+    await assert.rejects(
+      runDecisionRouterCommand(['holds', 'release', '--reason', 'no provider'], { env }),
+      /Missing or extra command options/,
+    )
+    await assert.rejects(
+      runDecisionRouterCommand(['holds', 'release'], { env }),
+      /Missing or extra command options/,
+    )
+    await assert.rejects(
+      runDecisionRouterCommand(
+        ['holds', 'release', '--provider', 'openrouter-jev', '--reason', 'x'],
+        { env },
+      ),
+      /live catalog route/,
+    )
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('holds release archives dead-route holds and frees the reserved budget', async () => {
+  const { home, env } = sandbox()
+  try {
+    const { openLocalDecisionBudgetLedger, resolveLocalDecisionBudgetDbPath } = await import(
+      '../src/pantheon/local-decision-budget.ts'
+    )
+    const path = resolveLocalDecisionBudgetDbPath(env)
+    const seeded = openLocalDecisionBudgetLedger({
+      dbPath: path,
+      clock: () => Date.parse('2026-01-10T00:00:00.000Z'),
+    })
+    try {
+      seeded.configureUserCaps({ monthlyCapMicros: 5_000_000, perDecisionCapMicros: 1_000_000 })
+      seeded.confirmBudgetPeriod(null, '2026-01').status
+    } finally {
+      seeded.close()
+    }
+    // A dead route's hold cannot be reserved through the API; legacy ledgers
+    // carry it as a plain row.
+    const dead = new DatabaseSync(path)
+    dead
+      .prepare(
+        'INSERT INTO reservations (id, provider, model, period_utc, reserved_micros, actual_micros, state, created_at_ms, updated_at_ms) VALUES (?,?,?,?,?,NULL,?,11,11)',
+      )
+      .run('hold-dead-1', 'jev-free', 'jev-1.13-free', '2026-01', 100_000, 'pending')
+    dead.close()
+
+    const output = []
+    await runDecisionRouterCommand(
+      ['holds', 'release', '--provider', 'jev-free', '--reason', 'route removed'],
+      {
+        env,
+        stdout: (line) => output.push(line),
+      },
+    )
+    const report = output.join('\n')
+    assert.match(report, /Released 1 hold\(s\) of provider jev-free/)
+    assert.match(report, /freed 0\.10 USD/)
+    assert.match(report, /Archived hold-dead-1/)
+    assert.match(report, /state_at_release=pending/)
+    assert.match(report, /reason="route removed"/)
+
+    const reopened = openLocalDecisionBudgetLedger({ dbPath: path })
+    try {
+      assert.equal(reopened.listUncertainReservations().length, 0)
+      assert.equal(reopened.listReleasedHolds(10).length, 1)
+    } finally {
+      reopened.close()
+    }
+    const listing = []
+    await runDecisionRouterCommand(['holds'], { env, stdout: (line) => listing.push(line) })
+    assert.match(listing.join('\n'), /No unresolved provider holds/)
   } finally {
     rmSync(home, { recursive: true, force: true })
   }
@@ -293,6 +402,138 @@ test('setup-model performs the whole activation chain in one command', async () 
   assert.ok(status.some((line) => line.includes('Budget period: 20')))
   assert.ok(output.some((line) => line.includes('Native route checklist:')))
   assert.ok(home.length > 0)
+})
+
+test('setup-model activates the OpenRouter Jev route from the configured provider matrix', async () => {
+  const { home, env } = sandbox()
+  try {
+    await runDecisionRouterCommand(
+      [
+        'setup-model',
+        'openrouter-jev/typesafe/jev-1.13',
+        '--monthly-usd',
+        '5',
+        '--per-decision-usd',
+        '0.10',
+      ],
+      { env, stdout: () => {} },
+    )
+    const config = readUserDecisionRouterConfig({ env })
+    assert.equal(config.enabled, true)
+    assert.equal(config.egress_consent, true)
+    assert.deepEqual(config.selection, {
+      mode: 'explicit',
+      provider: 'openrouter-jev',
+      model: 'typesafe/jev-1.13',
+    })
+    assert.deepEqual(config.enabled_candidates, [
+      { provider: 'openrouter-jev', model: 'typesafe/jev-1.13' },
+    ])
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('Cloudflare setup-model requires a provisionable account entry before enabling the route', async () => {
+  const { home, env } = sandbox()
+  const hostConfigDir = join(env.XDG_CONFIG_HOME, 'opencode')
+  mkdirSync(hostConfigDir, { recursive: true, mode: 0o700 })
+  const hostConfigPath = join(hostConfigDir, 'opencode.json')
+  writeFileSync(hostConfigPath, '{}\n')
+  try {
+    await assert.rejects(
+      runDecisionRouterCommand(
+        [
+          'setup-model',
+          'cloudflare-workers-jev/clef',
+          '--monthly-usd',
+          '5',
+          '--per-decision-usd',
+          '0.10',
+        ],
+        { env, stdout: () => {} },
+      ),
+      /requires --account-id=<32-hex-id>; route was not activated/,
+    )
+    assert.equal(readUserDecisionRouterConfig({ env }).enabled, false)
+    assert.equal(readFileSync(hostConfigPath, 'utf8'), '{}\n')
+
+    await runDecisionRouterCommand(
+      [
+        'setup-model',
+        'cloudflare-workers-jev/clef',
+        '--monthly-usd',
+        '5',
+        '--per-decision-usd',
+        '0.10',
+        '--account-id=0123456789abcdef0123456789abcdef',
+      ],
+      { env, stdout: () => {} },
+    )
+    assert.equal(readUserDecisionRouterConfig({ env }).enabled, true)
+    const hostConfig = JSON.parse(readFileSync(hostConfigPath, 'utf8'))
+    assert.equal(
+      hostConfig.providers['cloudflare-workers-ai'].options.accountId,
+      '0123456789abcdef0123456789abcdef',
+    )
+    assert.equal(hostConfig.providers['cloudflare-workers-ai'].models.clef.type, 'decision')
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('Cloudflare setup-model activates with a matching accountId and rejects a conflicting one', async () => {
+  const accountId = '0123456789abcdef0123456789abcdef'
+  const otherAccountId = 'fedcba9876543210fedcba9876543210'
+  const args = [
+    'setup-model',
+    'cloudflare-workers-jev/clef',
+    '--monthly-usd',
+    '5',
+    '--per-decision-usd',
+    '0.10',
+    `--account-id=${accountId}`,
+  ]
+
+  const matching = sandbox()
+  const matchingConfigDir = join(matching.env.XDG_CONFIG_HOME, 'opencode')
+  mkdirSync(matchingConfigDir, { recursive: true, mode: 0o700 })
+  const matchingConfigPath = join(matchingConfigDir, 'opencode.json')
+  writeFileSync(
+    matchingConfigPath,
+    `${JSON.stringify({ providers: { 'cloudflare-workers-ai': { options: { accountId } } } })}\n`,
+  )
+  try {
+    await runDecisionRouterCommand(args, { env: matching.env, stdout: () => {} })
+    assert.equal(readUserDecisionRouterConfig({ env: matching.env }).enabled, true)
+    assert.equal(
+      JSON.parse(readFileSync(matchingConfigPath, 'utf8')).providers['cloudflare-workers-ai']
+        .options.accountId,
+      accountId,
+    )
+  } finally {
+    rmSync(matching.home, { recursive: true, force: true })
+  }
+
+  const conflicting = sandbox()
+  const conflictingConfigDir = join(conflicting.env.XDG_CONFIG_HOME, 'opencode')
+  mkdirSync(conflictingConfigDir, { recursive: true, mode: 0o700 })
+  const conflictingConfigPath = join(conflictingConfigDir, 'opencode.json')
+  const existingConfig = {
+    providers: { 'cloudflare-workers-ai': { options: { accountId: otherAccountId } } },
+  }
+  const existingConfigText = `${JSON.stringify(existingConfig)}\n`
+  writeFileSync(conflictingConfigPath, existingConfigText)
+  try {
+    await assert.rejects(
+      runDecisionRouterCommand(args, { env: conflicting.env, stdout: () => {} }),
+      /existing accountId conflicts with --account-id/,
+    )
+    assert.equal(readUserDecisionRouterConfig({ env: conflicting.env }).enabled, false)
+    assert.equal(readFileSync(conflictingConfigPath, 'utf8'), existingConfigText)
+  } finally {
+    rmSync(conflicting.home, { recursive: true, force: true })
+  }
 })
 
 test('setup-model --no-consent configures everything except egress consent', async () => {

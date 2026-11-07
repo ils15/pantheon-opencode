@@ -591,6 +591,123 @@ function testNativeEvidenceOverrunFreezesScopesAndReconcileIsAtomic(): void {
   })
 }
 
+function testOpenRouterSlashModelEvidenceReconcilesAndClosesReservation(): void {
+  withTempDir((directory) => {
+    const provider: BudgetProvider = 'openrouter'
+    const model = 'typesafe/jev-1.13'
+    const dbPath = join(directory, 'openrouter-ledger.sqlite')
+    const ledger = openLocalDecisionBudgetLedger({
+      dbPath,
+      clock: () => Date.parse('2026-11-05T12:00:00.000Z'),
+    })
+    configure(ledger, {
+      provider,
+      model,
+      period: '2026-11',
+      user: { monthly: 100, decision: 70 },
+      providerCaps: { monthly: 100, decision: 70 },
+      modelCaps: { monthly: 100, decision: 70 },
+    })
+
+    const reservation = ledger.reserve(provider, model)
+    if (reservation.status !== 'reserved') throw new Error('expected OpenRouter reservation')
+    const evidence = verifyNativeUsageForReservation(
+      {
+        reservationId: reservation.reservationId,
+        provider,
+        model,
+        period: reservation.period,
+      },
+      nativeResult({ costUsd: 0.000025 }),
+    )
+
+    assert.ok(evidence, 'a valid OpenRouter result should mint usage evidence')
+    assert.equal(ledger.listUncertainReservations().length, 1)
+    assert.deepEqual(ledger.reconcileVerified(reservation.reservationId, evidence), {
+      status: 'reconciled',
+      actualCostMicros: 25,
+      frozen: false,
+    })
+    assert.equal(
+      ledger.reconcileVerified(reservation.reservationId, evidence).status,
+      'already-reconciled',
+    )
+    assert.deepEqual(ledger.listUncertainReservations(), [])
+
+    const second = ledger.reserve(provider, model)
+    assert.equal(second.status, 'reserved', 'settlement should replace the hold with actual cost')
+    assert.equal(ledger.reserve(provider, model).reason, 'monthly-cap')
+
+    const database = new DatabaseSync(dbPath, { readOnly: true })
+    const row = database
+      .prepare(
+        'SELECT provider, model, state, reserved_micros, actual_micros FROM reservations WHERE id = ?',
+      )
+      .get(reservation.reservationId) as {
+      provider: string
+      model: string
+      state: string
+      reserved_micros: number
+      actual_micros: number | null
+    }
+    assert.equal(row.provider, provider)
+    assert.equal(row.model, model)
+    assert.equal(row.state, 'reconciled')
+    assert.equal(row.reserved_micros, 70)
+    assert.equal(row.actual_micros, 25)
+    database.close()
+    ledger.close()
+  })
+}
+
+function testRejectedOpenRouterEvidenceLeavesReservationAndBudgetHoldIntact(): void {
+  withTempDir((directory) => {
+    const provider: BudgetProvider = 'openrouter'
+    const model = 'typesafe/jev-1.13'
+    const ledger = openLocalDecisionBudgetLedger({ dbPath: join(directory, 'ledger.sqlite') })
+    configure(ledger, {
+      provider,
+      model,
+      user: { monthly: 60, decision: 60 },
+      providerCaps: { monthly: 60, decision: 60 },
+      modelCaps: { monthly: 60, decision: 60 },
+    })
+    const reservation = ledger.reserve(provider, model)
+    if (reservation.status !== 'reserved') throw new Error('expected OpenRouter reservation')
+    const binding = {
+      reservationId: reservation.reservationId,
+      provider,
+      model,
+      period: reservation.period,
+    }
+
+    assert.equal(
+      verifyNativeUsageForReservation(binding, { answers: [], cost: 0.00001 }),
+      null,
+      'an answerless provider result is not usage evidence',
+    )
+    assert.equal(
+      ledger.reconcileVerified(reservation.reservationId, { actualCostMicros: 10 } as never).status,
+      'unknown',
+    )
+    const wrongModelEvidence = verifyNativeUsageForReservation(
+      { ...binding, model: 'typesafe/jev-1.12' },
+      nativeResult({ costUsd: 0.00001 }),
+    )
+    assert.ok(wrongModelEvidence)
+    assert.equal(
+      ledger.reconcileVerified(reservation.reservationId, wrongModelEvidence).status,
+      'mismatch',
+    )
+    assert.deepEqual(
+      ledger.listUncertainReservations().map(({ reservationId, state }) => [reservationId, state]),
+      [[reservation.reservationId, 'pending']],
+    )
+    assert.equal(ledger.reserve(provider, model).reason, 'monthly-cap')
+    ledger.close()
+  })
+}
+
 async function testSeparateProcessesCannotOverspendConcurrently(): Promise<void> {
   const directory = mkdtempSync(join(tmpdir(), 'pantheon-budget-'))
   try {
@@ -673,7 +790,7 @@ function testVersionOneMigrationPreservesCapsReservationsAndUnknownHolds(): void
     ledger.close()
 
     const migrated = new DatabaseSync(dbPath, { readOnly: true })
-    assert.equal(migrated.prepare('PRAGMA user_version').get()?.user_version, 3)
+    assert.equal(migrated.prepare('PRAGMA user_version').get()?.user_version, 4)
     assert.equal(
       migrated
         .prepare("SELECT count(*) AS n FROM reservations WHERE id IN ('pending-old', 'done-old')")
@@ -760,7 +877,7 @@ function testVersionTwoMigrationPreservesFutureDatedHoldsAndRequiresFreshConfirm
     ledger.close()
 
     const migrated = new DatabaseSync(dbPath, { readOnly: true })
-    assert.equal(migrated.prepare('PRAGMA user_version').get()?.user_version, 3)
+    assert.equal(migrated.prepare('PRAGMA user_version').get()?.user_version, 4)
     assert.equal(
       migrated.prepare("SELECT count(*) AS n FROM reservations WHERE period_utc = '2026-03'").get()
         ?.n,
@@ -966,6 +1083,195 @@ function testPrivatePathPermissionsAndPruneResolvedButNotPendingPeriods(): void 
   })
 }
 
+function testReleaseHoldsForDeadProvidersArchivesAndFreesBudget(): void {
+  withTempDir((directory) => {
+    const dbPath = join(directory, 'release.sqlite')
+    const seed = openLocalDecisionBudgetLedger({
+      dbPath,
+      clock: () => Date.parse('2026-01-10T00:00:00.000Z'),
+    })
+    try {
+      const caps = { monthlyCapMicros: 100, perDecisionCapMicros: 30 }
+      seed.configureUserCaps(caps)
+      seed.configureProviderCaps('typesafe-jev', caps)
+      seed.configureModelCaps('typesafe-jev', 'jev-1.14.0', caps)
+      seed.confirmBudgetPeriod(null, '2026-01').status
+      seed.reserve('typesafe-jev', 'jev-1.14.0')
+    } finally {
+      seed.close()
+    }
+    // Dead-provider rows are not reservable through the API (the provider is
+    // not in the union) — insert them exactly as legacy ledgers carry them.
+    const dead = new DatabaseSync(dbPath)
+    const insert =
+      'INSERT INTO reservations (id, provider, model, period_utc, reserved_micros, actual_micros, state, created_at_ms, updated_at_ms) VALUES (?,?,?,?,?,?,?,11,11)'
+    dead.prepare(insert).run('dead-1', 'jev-free', 'jev-1.13-free', '2026-01', 30, null, 'pending')
+    dead
+      .prepare(insert)
+      .run('dead-2', 'jev-free', 'jev-1.13-free', '2026-01', 30, null, 'uncertain')
+    // A reconciled row of the same dead provider must survive the release.
+    dead
+      .prepare(
+        'INSERT INTO reservations (id, provider, model, period_utc, reserved_micros, actual_micros, state, created_at_ms, updated_at_ms) VALUES (?,?,?,?,?,3,?,12,12)',
+      )
+      .run('dead-done', 'jev-free', 'jev-1.13-free', '2026-01', 5, 'reconciled')
+    dead.close()
+
+    const ledger = openLocalDecisionBudgetLedger({
+      dbPath,
+      clock: () => Date.parse('2026-01-10T00:00:00.000Z'),
+    })
+    try {
+      // Before: 30 live + 60 dead = 90 reserved; one more 30 would exceed 100.
+      assert.equal(ledger.canReserve('typesafe-jev', 'jev-1.14.0').reason, 'monthly-cap')
+      // Validation refusals return zero without touching anything.
+      assert.deepEqual(ledger.releaseHoldsForProvider('jev-free', ''), {
+        released: 0,
+        freedMicros: 0,
+      })
+      assert.deepEqual(ledger.releaseHoldsForProvider('', 'x'), { released: 0, freedMicros: 0 })
+      assert.deepEqual(ledger.releaseHoldsForProvider('x'.repeat(65), 'x'), {
+        released: 0,
+        freedMicros: 0,
+      })
+
+      const result = ledger.releaseHoldsForProvider('jev-free', 'route removed from the catalog')
+      assert.equal(result.released, 2)
+      assert.equal(result.freedMicros, 60)
+
+      // After: only the live 30 counts; admission is eligible again.
+      assert.equal(ledger.canReserve('typesafe-jev', 'jev-1.14.0').status, 'eligible')
+      // The archive carries the full row plus reason and release time.
+      const archived = ledger.listReleasedHolds(10)
+      assert.equal(archived.length, 2)
+      assert.ok(archived.every((hold) => hold.provider === 'jev-free'))
+      assert.ok(
+        archived.every(
+          (hold) => hold.stateAtRelease === 'pending' || hold.stateAtRelease === 'uncertain',
+        ),
+      )
+      assert.ok(archived.every((hold) => hold.reason === 'route removed from the catalog'))
+      assert.ok(archived.every((hold) => hold.releasedAtMs > 0))
+      assert.deepEqual(archived.map((hold) => hold.stateAtRelease).sort(), ['pending', 'uncertain'])
+      // Re-release is a no-op; the reconciled row of the same provider is untouched.
+      assert.deepEqual(ledger.releaseHoldsForProvider('jev-free', 'again'), {
+        released: 0,
+        freedMicros: 0,
+      })
+      const raw = new DatabaseSync(dbPath, { readOnly: true })
+      try {
+        const left = raw
+          .prepare("SELECT COUNT(*) AS c FROM reservations WHERE provider = 'jev-free'")
+          .get()
+        assert.equal(left.c, 1)
+        const done = raw.prepare("SELECT id FROM reservations WHERE id = 'dead-done'").get()
+        assert.equal(done.id, 'dead-done')
+        const archivedRows = raw.prepare('SELECT COUNT(*) AS c FROM released_holds').get()
+        assert.equal(archivedRows.c, 2)
+      } finally {
+        raw.close()
+      }
+    } finally {
+      ledger.close()
+    }
+  })
+}
+
+function testVersionThreeMigrationAddsReleasedArchiveAndPreservesHolds(): void {
+  withTempDir((directory) => {
+    const dbPath = join(directory, 'v3.sqlite')
+    const old = new DatabaseSync(dbPath)
+    old.exec(`
+      PRAGMA application_id = 1346522161;
+      PRAGMA user_version = 3;
+      CREATE TABLE user_caps (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        monthly_cap_micros INTEGER NOT NULL CHECK (monthly_cap_micros >= 0),
+        per_decision_cap_micros INTEGER NOT NULL CHECK (per_decision_cap_micros >= 0),
+        updated_at_ms INTEGER NOT NULL
+      ) STRICT;
+      CREATE TABLE provider_caps (
+        provider TEXT PRIMARY KEY NOT NULL,
+        monthly_cap_micros INTEGER NOT NULL CHECK (monthly_cap_micros >= 0),
+        per_decision_cap_micros INTEGER NOT NULL CHECK (per_decision_cap_micros >= 0),
+        updated_at_ms INTEGER NOT NULL
+      ) STRICT;
+      CREATE TABLE model_caps (
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL CHECK (length(model) BETWEEN 1 AND 128),
+        monthly_cap_micros INTEGER NOT NULL CHECK (monthly_cap_micros >= 0),
+        per_decision_cap_micros INTEGER NOT NULL CHECK (per_decision_cap_micros >= 0),
+        updated_at_ms INTEGER NOT NULL,
+        PRIMARY KEY (provider, model)
+      ) STRICT;
+      CREATE TABLE reservations (
+        id TEXT PRIMARY KEY NOT NULL,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL CHECK (length(model) BETWEEN 1 AND 128),
+        period_utc TEXT NOT NULL CHECK (length(period_utc) = 7),
+        reserved_micros INTEGER NOT NULL CHECK (reserved_micros > 0),
+        actual_micros INTEGER CHECK (actual_micros IS NULL OR actual_micros >= 0),
+        state TEXT NOT NULL CHECK (state IN ('pending', 'uncertain', 'reconciled')),
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        CHECK ((state = 'reconciled' AND actual_micros IS NOT NULL) OR
+               (state IN ('pending', 'uncertain') AND actual_micros IS NULL))
+      ) STRICT;
+      CREATE INDEX reservations_provider_period_idx ON reservations (provider, period_utc, state);
+      CREATE INDEX reservations_period_state_idx ON reservations (period_utc, state);
+      CREATE TABLE budget_freezes (
+        id INTEGER PRIMARY KEY,
+        scope TEXT NOT NULL CHECK (scope IN ('user', 'provider', 'model')),
+        provider TEXT,
+        model TEXT,
+        period_utc TEXT NOT NULL CHECK (length(period_utc) = 7),
+        reason TEXT NOT NULL CHECK (reason = 'overrun'),
+        created_at_ms INTEGER NOT NULL,
+        CHECK ((scope = 'user' AND provider IS NULL AND model IS NULL) OR
+               (scope = 'provider' AND provider IS NOT NULL AND model IS NULL) OR
+               (scope = 'model' AND provider IS NOT NULL AND model IS NOT NULL))
+      ) STRICT;
+      CREATE TABLE ledger_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        active_period_utc TEXT CHECK (active_period_utc IS NULL OR length(active_period_utc) = 7)
+      ) STRICT;
+      INSERT INTO user_caps VALUES (1, 100, 30, 1);
+      INSERT INTO provider_caps VALUES ('jev-free', 100, 30, 1);
+      INSERT INTO model_caps VALUES ('jev-free', 'jev-1.13-free', 100, 30, 1);
+      INSERT INTO reservations VALUES ('hold-v3', 'jev-free', 'jev-1.13-free', '2026-11', 30, NULL, 'pending', 10, 10);
+      INSERT INTO ledger_state VALUES (1, '2026-11');
+    `)
+    old.close()
+
+    const ledger = openLocalDecisionBudgetLedger({
+      dbPath,
+      clock: () => Date.parse('2026-11-10T00:00:00.000Z'),
+    })
+    try {
+      const raw = new DatabaseSync(dbPath, { readOnly: true })
+      try {
+        assert.equal(raw.prepare('PRAGMA user_version').get()?.user_version, 4)
+        const table = raw
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'released_holds'",
+          )
+          .get()
+        assert.equal(table.name, 'released_holds')
+        const holds = raw.prepare('SELECT COUNT(*) AS c FROM reservations').get()
+        assert.equal(holds.c, 1, 'the migrated hold stays in place until explicitly released')
+      } finally {
+        raw.close()
+      }
+      const result = ledger.releaseHoldsForProvider('jev-free', 'dead route')
+      assert.equal(result.released, 1)
+      assert.equal(result.freedMicros, 30)
+      assert.equal(ledger.listReleasedHolds(10)[0]?.reservationId, 'hold-v3')
+    } finally {
+      ledger.close()
+    }
+  })
+}
+
 testDefaultPathUsesUserStateDirectory()
 testMissingConfirmationAndWallClockDivergenceFailClosed()
 testAdmissionCheckIsReadOnlyAndAppliesAllConfiguredCaps()
@@ -976,9 +1282,13 @@ testDecisionCapsAndGlobalUserProviderModelBucketsAreIndependent()
 testOpenCodeVariantsShareProviderCapAndHaveSeparateModelCaps()
 testDuplicateReservationIdCannotDoubleAdmit()
 testPendingReservationSurvivesRestartAndRecovery()
+testReleaseHoldsForDeadProvidersArchivesAndFreesBudget()
+testVersionThreeMigrationAddsReleasedArchiveAndPreservesHolds()
 testOpaqueVerifiedEvidenceRoundsCostsAndRejectsForgeryOrMismatch()
 testVerifiedUsageMustMatchReservationModel()
 testNativeEvidenceOverrunFreezesScopesAndReconcileIsAtomic()
+testOpenRouterSlashModelEvidenceReconcilesAndClosesReservation()
+testRejectedOpenRouterEvidenceLeavesReservationAndBudgetHoldIntact()
 await testSeparateProcessesCannotOverspendConcurrently()
 testVersionOneMigrationPreservesCapsReservationsAndUnknownHolds()
 testVersionTwoMigrationPreservesFutureDatedHoldsAndRequiresFreshConfirmation()

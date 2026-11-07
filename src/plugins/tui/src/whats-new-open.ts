@@ -27,11 +27,49 @@ import { markSeenWhatsNew, shouldShowWhatsNew } from './whats-new-state.ts'
 /** Muted footer hint teaching the dismiss bind (Portuguese, like the sidebar). */
 export const WHATS_NEW_CLOSE_HINT = 'esc/q fechar'
 
+/** Hint variant when the highlights span more than one page. */
+export const WHATS_NEW_PAGES_HINT = 'esc/q fechar · n próxima · p volta'
+
+/** The CHANGELOG pointer shown under the highlights (the window summarizes; the file is complete). */
+export const WHATS_NEW_MORE_HINT = 'CHANGELOG completo: CHANGELOG.md no pacote'
+
+/** Rows per page — bounded so no changelog can overflow the terminal. */
+export const WHATS_NEW_PAGE_SIZE = 14
+
+/** Hard-wrap one display line into rows of at most `width` columns (>= 10). */
+export function wrapWhatsNewLine(line: string, width: number): string[] {
+  const bounded = Number.isInteger(width) && width > 10 ? width : 76
+  const text = String(line)
+  if (text.length <= bounded) return [text]
+  const rows: string[] = []
+  let rest = text
+  while (rest.length > bounded) {
+    rows.push(rest.slice(0, bounded))
+    rest = rest.slice(bounded)
+  }
+  if (rest.length > 0) rows.push(rest)
+  return rows
+}
+
+/** Slice display lines into fixed-size pages (>= 1 page, empty-safe). */
+export function paginateWhatsNewLines(
+  lines: string[],
+  pageSize: number = WHATS_NEW_PAGE_SIZE,
+): string[][] {
+  const size = Number.isInteger(pageSize) && pageSize > 0 ? pageSize : WHATS_NEW_PAGE_SIZE
+  if (lines.length === 0) return [[]]
+  const pages: string[][] = []
+  for (let i = 0; i < lines.length; i += size) pages.push(lines.slice(i, i + size))
+  return pages
+}
+
 /** Everything the window needs to render — no host types, no JSX. */
 export interface WhatsNewViewData {
   version: string
   title: string
   lines: string[]
+  /** Fixed-size pages of `lines` (single page when the highlights are short). */
+  pages: string[][]
   hint: string
 }
 
@@ -64,11 +102,13 @@ export async function openWhatsNew(input: WhatsNewOpenInput): Promise<boolean> {
   const lines = whatsNewLines(highlights)
   if (lines.length === 0) return false
 
+  const pages = paginateWhatsNewLines(lines)
   const data: WhatsNewViewData = {
     version,
     title: whatsNewTitle(version),
     lines,
-    hint: WHATS_NEW_CLOSE_HINT,
+    pages,
+    hint: pages.length > 1 ? WHATS_NEW_PAGES_HINT : WHATS_NEW_CLOSE_HINT,
   }
   show(
     () => data,

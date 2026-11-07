@@ -82,6 +82,20 @@ export interface UncertainReservation {
   updatedAtMs: number
 }
 
+export interface ReleasedHold {
+  reservationId: string
+  provider: string
+  model: string
+  period: string
+  reservedMicros: number
+  stateAtRelease: 'pending' | 'uncertain'
+  reason: string
+  createdAtMs: number
+  releasedAtMs: number
+}
+
+export type ReleaseHoldsResult = { released: number; freedMicros: number }
+
 export interface LocalDecisionBudgetLedger {
   /** Admin/configuration API: writes policy to the local user-level DB. */
   configureUserCaps(caps: BudgetCaps): void
@@ -107,6 +121,16 @@ export interface LocalDecisionBudgetLedger {
   listUncertainReservations(): UncertainReservation[]
   /** Recovery only moves pending rows to uncertain; it never releases budget. */
   recoverPendingReservations(): number
+  /**
+   * Release every unresolved hold of one provider, archiving each row into
+   * `released_holds` with the mandatory reason. Deliberately narrow: this is
+   * the administrative correction for holds of routes that no longer exist
+   * (they can never reconcile, so they would freeze budget forever). Live
+   * providers roll their holds off with the period instead.
+   */
+  releaseHoldsForProvider(provider: string, reason: string): ReleaseHoldsResult
+  /** Recent archived releases, newest first — the audit view of the above. */
+  listReleasedHolds(limit?: number): ReleasedHold[]
   /** Prune resolved reservations from past UTC periods with no unresolved holds. */
   pruneCompletedPeriods(): number
   close(): void
@@ -123,9 +147,11 @@ export interface OpenLocalDecisionBudgetOptions {
   busyTimeoutMs?: number
 }
 
-const SCHEMA_VERSION = 3
+const SCHEMA_VERSION = 4
 const VERSION_TWO = 2
 const APPLICATION_ID = 0x50424c31
+/** Reason strings recorded on a released hold are bounded for the audit trail. */
+const RELEASE_REASON_MAX_LENGTH = 200
 const DB_FILENAME = 'decision-budget.sqlite'
 /** Accounting provider IDs accepted by the ledger. */
 export const LOCAL_DECISION_BUDGET_PROVIDERS: readonly BudgetProvider[] = Object.freeze([
@@ -608,6 +634,101 @@ export function openLocalDecisionBudgetLedger(
     })
   }
 
+  function releaseHoldsForProvider(provider: string, reason: string): ReleaseHoldsResult {
+    if (typeof provider !== 'string' || provider.length < 1 || provider.length > 64) {
+      return { released: 0, freedMicros: 0 }
+    }
+    if (
+      typeof reason !== 'string' ||
+      reason.length < 1 ||
+      reason.length > RELEASE_REASON_MAX_LENGTH
+    ) {
+      return { released: 0, freedMicros: 0 }
+    }
+    return inImmediateTransaction(() => {
+      const timestamp = now()
+      const rows = db
+        .prepare(
+          `SELECT id, provider, model, period_utc, reserved_micros, state, created_at_ms
+           FROM reservations WHERE provider = ? AND state IN ('pending', 'uncertain')
+           ORDER BY created_at_ms, id`,
+        )
+        .all(provider) as Array<{
+        id: string
+        provider: string
+        model: string
+        period_utc: string
+        reserved_micros: number
+        state: 'pending' | 'uncertain'
+        created_at_ms: number
+      }>
+      if (rows.length === 0) return { released: 0, freedMicros: 0 }
+      const archive = db.prepare(
+        `INSERT INTO released_holds
+           (reservation_id, provider, model, period_utc, reserved_micros, state_at_release,
+            reason, created_at_ms, released_at_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      let freedMicros = 0
+      for (const row of rows) {
+        archive.run(
+          row.id,
+          row.provider,
+          row.model,
+          row.period_utc,
+          row.reserved_micros,
+          row.state,
+          reason,
+          row.created_at_ms,
+          timestamp,
+        )
+        freedMicros = safeMicrosTotal(freedMicros + row.reserved_micros)
+      }
+      const remove = db
+        .prepare(
+          `DELETE FROM reservations WHERE provider = ? AND state IN ('pending', 'uncertain')`,
+        )
+        .run(provider)
+      if (safeChangeCount(remove.changes) !== rows.length) {
+        throw new Error('Reservation rows changed during release')
+      }
+      return { released: rows.length, freedMicros }
+    })
+  }
+
+  function listReleasedHolds(limit?: number): ReleasedHold[] {
+    const bound =
+      typeof limit === 'number' && Number.isInteger(limit) && limit > 0 ? Math.min(limit, 200) : 20
+    const rows = db
+      .prepare(
+        `SELECT reservation_id, provider, model, period_utc, reserved_micros, state_at_release,
+                reason, created_at_ms, released_at_ms
+         FROM released_holds ORDER BY released_at_ms DESC, reservation_id LIMIT ?`,
+      )
+      .all(bound) as Array<{
+      reservation_id: string
+      provider: string
+      model: string
+      period_utc: string
+      reserved_micros: number
+      state_at_release: string
+      reason: string
+      created_at_ms: number
+      released_at_ms: number
+    }>
+    return rows.map((row) => ({
+      reservationId: row.reservation_id,
+      provider: row.provider,
+      model: row.model,
+      period: row.period_utc,
+      reservedMicros: row.reserved_micros,
+      stateAtRelease: row.state_at_release === 'uncertain' ? 'uncertain' : 'pending',
+      reason: row.reason,
+      createdAtMs: row.created_at_ms,
+      releasedAtMs: row.released_at_ms,
+    }))
+  }
+
   function pruneCompletedPeriods(): number {
     return inImmediateTransaction(() => {
       let currentPeriod: string
@@ -675,6 +796,8 @@ export function openLocalDecisionBudgetLedger(
     reconcileVerified,
     listUncertainReservations,
     recoverPendingReservations,
+    releaseHoldsForProvider,
+    listReleasedHolds,
     pruneCompletedPeriods,
     close: () => db.close(),
   }
@@ -699,12 +822,16 @@ function ensureSchema(db: DatabaseSync): void {
       if (applicationId !== 0 || tables.length !== 0) {
         throw new Error('Refusing to initialize an unrecognized SQLite database')
       }
-      createSchemaV3(db)
+      createSchemaV4(db)
     } else if (version === 1 && applicationId === APPLICATION_ID) {
       migrateVersionOne(db)
       migrateVersionTwoToThree(db)
+      migrateVersionThreeToFour(db)
     } else if (version === VERSION_TWO && applicationId === APPLICATION_ID) {
       migrateVersionTwoToThree(db)
+      migrateVersionThreeToFour(db)
+    } else if (version === 3 && applicationId === APPLICATION_ID) {
+      migrateVersionThreeToFour(db)
     } else if (version !== SCHEMA_VERSION || applicationId !== APPLICATION_ID) {
       throw new Error('Unsupported or incompatible local decision budget database schema')
     }
@@ -802,8 +929,48 @@ function migrateVersionTwoToThree(db: DatabaseSync): void {
     INSERT INTO ledger_state (id, active_period_utc)
       SELECT id, NULL FROM ledger_state_v2;
     DROP TABLE ledger_state_v2;
+    PRAGMA user_version = 3;
+  `)
+}
+
+/**
+ * v4 adds the `released_holds` archive (immutable audit trail for the
+ * administrative release of dead-route holds). The live `reservations` table
+ * and its state CHECK are untouched — a release archives the row and deletes
+ * it, so the accounting keeps summing only live states.
+ */
+function migrateVersionThreeToFour(db: DatabaseSync): void {
+  validateVersionThreeSchema(db)
+  db.exec(`
+    CREATE TABLE released_holds (
+      reservation_id TEXT PRIMARY KEY NOT NULL,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      period_utc TEXT NOT NULL CHECK (length(period_utc) = 7),
+      reserved_micros INTEGER NOT NULL CHECK (reserved_micros > 0),
+      state_at_release TEXT NOT NULL CHECK (state_at_release IN ('pending', 'uncertain')),
+      reason TEXT NOT NULL CHECK (length(reason) BETWEEN 1 AND ${RELEASE_REASON_MAX_LENGTH}),
+      created_at_ms INTEGER NOT NULL,
+      released_at_ms INTEGER NOT NULL
+    ) STRICT;
+    CREATE INDEX released_holds_released_idx ON released_holds (released_at_ms, reservation_id);
     PRAGMA user_version = ${SCHEMA_VERSION};
   `)
+}
+
+function createSchemaV4(db: DatabaseSync): void {
+  createSchemaV3(db)
+  migrateVersionThreeToFour(db)
+}
+
+function validateVersionThreeSchema(db: DatabaseSync): void {
+  // The v3 tables match the post-migration shape; the v4 step adds
+  // released_holds on top of them.
+  db.prepare(
+    `SELECT id, provider, model, period_utc, reserved_micros, actual_micros, state,
+            created_at_ms, updated_at_ms FROM reservations LIMIT 0`,
+  )
+  db.prepare('SELECT id, active_period_utc FROM ledger_state LIMIT 0')
 }
 
 function migrateVersionOne(db: DatabaseSync): void {

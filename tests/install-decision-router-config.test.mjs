@@ -243,6 +243,19 @@ test('the user provider matrix maps onto ledger accounting providers exactly onc
   assert.deepEqual(REMOTELY_ELIGIBLE_DECISION_PROVIDERS, ['openai-decisions', 'typesafe-jev'])
 })
 
+test('the decision-router declaration provider union stays in parity with the runtime matrix', () => {
+  const declaration = readFileSync(
+    join(process.cwd(), 'scripts/install/decision-router-config.d.mts'),
+    'utf8',
+  )
+  const providerType = declaration.match(
+    /export type UserDecisionRouterProvider =([\s\S]*?)\n\nexport type UserDecisionRouterCandidate/,
+  )?.[1]
+  assert.ok(providerType, 'provider union declaration must be present')
+  const declaredProviders = [...providerType.matchAll(/'([^']+)'/g)].map((match) => match[1])
+  assert.deepEqual(declaredProviders.sort(), Object.keys(DECISION_ROUTER_MODELS).sort())
+})
+
 /** D7: install-state is a projection of the user config and round-trips. */
 test('install-state projection round-trips and reports divergence instead of drifting', () => {
   const userConfig = {

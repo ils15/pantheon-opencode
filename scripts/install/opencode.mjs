@@ -624,13 +624,38 @@ function mergeMissing(target, source) {
  * `src/plugin.ts` or `src/plugins/pantheon-hooks.ts` is not evidence that the
  * plugin belongs to Pantheon and must be preserved verbatim.
  */
+/**
+ * Field report (beta.13 §2): a plugin registration into the npx cache
+ * (`/_npx/<hash>/`) is VOLATILE — other npx-booted MCPs (playwright, rea)
+ * recycle that tree while the host is running, and the plugin dies
+ * intermittently with ENOENT. When THIS installer itself runs from the cache,
+ * the freshly registered path must be the stable global install instead when
+ * one exists; otherwise the registration stays volatile and says so.
+ */
+export function resolveStablePantheonRoot(root = ROOT) {
+  const normalized = root.replaceAll('\\', '/')
+  if (!normalized.includes('/_npx/')) return { root, volatile: false }
+  const globalCandidate = resolve(
+    dirname(process.execPath),
+    '..',
+    'lib',
+    'node_modules',
+    'pantheon-opencode',
+  )
+  if (existsSync(join(globalCandidate, 'src', 'plugin-v2', 'index.ts'))) {
+    return { root: globalCandidate, volatile: false }
+  }
+  return { root, volatile: true }
+}
+
 export function resolveInstalledPlugin(plugin) {
   if (typeof plugin !== 'string') return plugin
   const normalized = normalizePluginRef(plugin)
-  if (PANTHEON_PLUGIN_IDENTITIES.has(normalized)) return join(ROOT, normalized)
+  const stable = resolveStablePantheonRoot()
+  if (PANTHEON_PLUGIN_IDENTITIES.has(normalized)) return join(stable.root, normalized)
   // Legacy V2 file ref (pre-directory-contract): migrate to the installed
   // plugin directory so the beta loader accepts the entry.
-  if (normalized === PANTHEON_V2_LEGACY_FILE) return join(ROOT, PANTHEON_V2_PLUGIN)
+  if (normalized === PANTHEON_V2_LEGACY_FILE) return join(stable.root, PANTHEON_V2_PLUGIN)
   const identity = managedPluginIdentity(plugin)
   if (identity !== null && isAbsolute(normalized)) {
     return INSTALLED_PANTHEON_PLUGIN_PATHS.get(identity) ?? plugin
@@ -1427,6 +1452,8 @@ export function setupRuntimePhase(
     error(S.runtimeFailed(err.message))
     warning(S.runtimeSkippedMcp)
     stats.warnings += 1
+    if (!Array.isArray(stats.warningMessages)) stats.warningMessages = []
+    stats.warningMessages.push(S.runtimeSkippedMcp)
     stats.errors += 1
     return false
   }
@@ -1646,6 +1673,8 @@ async function installPass(
   )
   /** Wizard-confirmed Jev activation (target + caps), surfaced on the result. */
   let decisionModelActivation = null
+  /** Cloudflare needs a user-supplied account ID, so the wizard defers it. */
+  let decisionModelDeferredSetup = null
   const stats = summary.opencode
   // Per-call baseline. `stats` is the module-level cumulative summary, so the
   // consistency guard must compare against THIS call's delta, not the total.
@@ -1804,6 +1833,7 @@ async function installPass(
       },
       prompts: opts.deps?.prompts,
       isTTY: opts.deps?.isTTY,
+      env: opts.deps?.env ?? opts.env ?? process.env,
     })
 
     // Resolve the location from the SELECTION before any cancel return: a
@@ -1840,6 +1870,7 @@ async function installPass(
     decisionRouterConfig = migrateDecisionRouterConfig(result.decisionRouterConfig)
     opts.decisionRouterConfig = decisionRouterConfig
     decisionModelActivation = result.decisionModelActivation ?? null
+    decisionModelDeferredSetup = result.decisionModelDeferredSetup ?? null
     if (!dryRun && _lastRun) _lastRun.target = target
   }
 
@@ -2402,6 +2433,10 @@ async function installPass(
       // payload and the host config are already in place.
       warning(`Could not disable the builtin Context sidebar block: ${cause.message}`)
       stats.warnings++
+      if (!Array.isArray(stats.warningMessages)) stats.warningMessages = []
+      stats.warningMessages.push(
+        `Could not disable the builtin Context sidebar block: ${cause.message}`,
+      )
     }
   }
   if (componentSet.has('plugins')) advancePhase()
@@ -2565,20 +2600,6 @@ async function installPass(
   // A. Parse canonical agent config from src/agents/*.md frontmatter
   //    and merge into opencode.json config.
   // --------------------------------------------------------------------
-  function getAgentSources(agentPrefix) {
-    const agentsDir = join(ROOT, 'src', 'agents')
-    if (!existsSync(agentsDir)) return {}
-    const sources = {}
-    const files = readdirSync(agentsDir).filter(
-      (f) => (f.endsWith('.agent.md') || f.endsWith('.md')) && f.toLowerCase() !== 'readme.md',
-    )
-    for (const f of files) {
-      const name = f.replace(/\.(agent\.)?md$/, '')
-      sources[name] = `${agentPrefix}/${name}.md`
-    }
-    return sources
-  }
-
   function readAgentConfigFromCanonical() {
     const agentsDir = join(ROOT, 'src', 'agents')
     if (!existsSync(agentsDir)) return {}
@@ -2626,11 +2647,31 @@ async function installPass(
     return config
   }
 
+  // Provenance prefix per install shape (D3-scoped: project installs write it;
+  // global installs NEVER do — the cwd-relative path vanishes agents there).
+  const agentPrefixForSource = isGlobalConfigDir(target)
+    ? null
+    : version === 'v2'
+      ? 'agents'
+      : '.opencode/agents'
+  const agentSources = {}
+  if (agentPrefixForSource !== null) {
+    const agentsDir = join(ROOT, 'src', 'agents')
+    if (existsSync(agentsDir)) {
+      const files = readdirSync(agentsDir).filter(
+        (f) => (f.endsWith('.agent.md') || f.endsWith('.md')) && f.toLowerCase() !== 'readme.md',
+      )
+      for (const f of files) {
+        const name = f.replace(/\.(agent\.)?md$/, '')
+        agentSources[name] = `${agentPrefixForSource}/${name}.md`
+      }
+    }
+  }
+  const isGlobalTarget = isGlobalConfigDir(target)
+
   const configuredMcpServersForPolicies =
     version === 'v2' ? configuredMcpServerNames(config.mcp) : []
   const canonicalAgentConfig = readAgentConfigFromCanonical()
-  const agentSources = getAgentSources(agentPrefix)
-
   if (config.agent === undefined) config.agent = {}
 
   if (config.agent && typeof config.agent === 'object' && !Array.isArray(config.agent)) {
@@ -2643,7 +2684,39 @@ async function installPass(
         // Preserve user-customized fields (model, provider, mcp, etc.)
         const existing = config.agent[agentName]
         if (!existing || typeof existing !== 'object' || Array.isArray(existing)) continue
-        if (agentSources[agentName]) existing.source = agentSources[agentName]
+        // HEAL + provenance (field beta.14→26): `source` is cwd-relative and
+        // host 2.2.5 resolves it against the SESSION cwd — so it is written
+        // ONLY for project installs (the session cwd IS the project) and
+        // NEVER for global installs, where the relative path pointed outside
+        // the config dir and made every agent vanish ("Agent not found:
+        // zeus"). Global entries also get a stale GLOBAL source healed away.
+        if (isGlobalTarget) delete existing.source
+        else if (agentSources[agentName] && !isGlobalTarget)
+          existing.source = agentSources[agentName]
+
+        // The sibling opencode.jsonc merges with PRIORITY on this host and is
+        // user-managed (the installer never rewrites it wholesale) — but OUR
+        // stale `source` field poisons the merged view exactly the same way
+        // (field beta.25: the config dir healed, the jsonc kept the roster
+        // invisible outside it). Targeted strip of the exact pattern only.
+        try {
+          const jsoncPath = join(target, 'opencode.jsonc')
+          if (existsSync(jsoncPath)) {
+            const raw = readFileSync(jsoncPath, 'utf8')
+            let healed = raw.replace(/,?\s*"source":\s*"agents\/[A-Za-z0-9_-]+\.md"/g, '')
+            // A source-first entry leaves `"name": {,` — repair the orphan.
+            healed = healed.replace(/("[A-Za-z0-9_-]+": \{),/g, '$1')
+            if (healed !== raw) {
+              writeFileSync(jsoncPath, healed)
+              warning(
+                'Healed the sibling opencode.jsonc: removed stale cwd-relative agent "source" fields ' +
+                  '(the field that made agents vanish outside the config dir). Review the file if you hand-edit it.',
+              )
+            }
+          }
+        } catch {
+          // The jsonc is user data; a failed heal is reported by doctor instead.
+        }
         for (const field of MANAGED_FIELDS) {
           if (field in agentCfg) {
             existing[field] = JSON.parse(JSON.stringify(agentCfg[field]))
@@ -2654,7 +2727,7 @@ async function installPass(
       } else {
         // ── New agent ──
         const newAgent = {}
-        if (agentSources[agentName]) newAgent.source = agentSources[agentName]
+        if (!isGlobalTarget && agentSources[agentName]) newAgent.source = agentSources[agentName]
         if (agentCfg.description) newAgent.description = agentCfg.description
 
         // Copy all framework-managed fields from canonical config
@@ -2784,30 +2857,38 @@ async function installPass(
     // `npm install`. Copying every entry across would turn "silently ignored"
     // into "config fails to load", so only loadable entries move; the rest stay
     // where they are and the warning names the exact failure mode.
+    // Preflight (runs for pure-V2 configs too — a stale or volatile Pantheon
+    // registration must be named even when the singular `plugin` key is long
+    // gone). Field report beta.13 §2: an EXISTING `_npx` path is worse than a
+    // missing one — it passes the existsSync check at install time and dies
+    // intermittently later, so volatility is named and the re-registration
+    // below repoints to the stable tree.
+    if (Array.isArray(config.plugins)) {
+      for (const ref of config.plugins) {
+        const refPath = typeof ref === 'string' ? ref : ref?.package
+        if (typeof refPath !== 'string' || managedPluginIdentity(refPath) === null) continue
+        const absolute = isAbsolute(refPath) ? refPath : resolve(target, refPath)
+        if (!existsSync(absolute)) {
+          warning(
+            `Existing Pantheon registration points to ${refPath}, which no longer exists` +
+              (refPath.includes('_npx/')
+                ? ' (the npx cache recycled that copy) — re-registering to the freshly installed tree'
+                : ' — re-registering to the freshly installed tree'),
+          )
+        } else if (refPath.replaceAll('\\', '/').includes('/_npx/')) {
+          warning(
+            `Existing Pantheon registration points into the volatile npx cache (${refPath}) — ` +
+              'other npx-booted MCPs recycle that tree and kill the plugin mid-session; ' +
+              're-registering to a stable tree',
+          )
+        }
+      }
+    }
     if (Array.isArray(config.plugin)) {
       // Strip Pantheon refs FIRST, exactly as the V1 branch does: a stale V1
       // .ts path is not a registrable entry on this host and must not be moved.
       config.plugin = removePantheonPluginReferences(config.plugin)
       if (!Array.isArray(config.plugins)) config.plugins = []
-      // Preflight: a Pantheon-owned registration whose target directory is
-      // missing means the previous install was invalidated (the npx cache
-      // recycles `_npx/<hash>` dirs — field evidence: a registered copy
-      // vanished and the host silently dropped the plugin, so the whole tool
-      // surface disappeared until the next init). Name the cause loudly
-      // before the re-registration below fixes it.
-      for (const ref of Array.isArray(config.plugins) ? config.plugins : []) {
-        const refPath = typeof ref === 'string' ? ref : ref?.package
-        if (typeof refPath !== 'string' || managedPluginIdentity(refPath) === null) continue
-        const absolute = isAbsolute(refPath) ? refPath : resolve(target, refPath)
-        if (existsSync(absolute)) continue
-        const staleNpx = refPath.includes('_npx/')
-        warning(
-          `Existing Pantheon registration points to ${refPath}, which no longer exists` +
-            (staleNpx
-              ? ' (the npx cache recycled that copy) — re-registering to the freshly installed tree'
-              : ' — re-registering to the freshly installed tree'),
-        )
-      }
 
       const migrated = []
       const blocked = []
@@ -2880,6 +2961,14 @@ async function installPass(
     // Legacy refs (npm shorthand, the old src/plugin-v2.ts file path) are
     // recognized via managedPluginIdentity and already stripped above, so
     // they migrate here.
+    const stableRoot = resolveStablePantheonRoot()
+    if (stableRoot.volatile) {
+      warning(
+        'This installer runs from the npx cache and no stable global install of ' +
+          'pantheon-opencode was found; the plugin registration will point into the ' +
+          'volatile cache and can break mid-session. Fix: npm install -g pantheon-opencode, then re-run init.',
+      )
+    }
     const resolvedV2 = resolveInstalledPlugin(PANTHEON_V2_PLUGIN)
     config.plugins = config.plugins.filter(
       (plugin) => pluginReferenceIdentity(plugin) !== pluginReferenceIdentity(resolvedV2),
@@ -3087,6 +3176,8 @@ async function installPass(
     for (const message of mcp.warnings ?? []) {
       warning(message)
       stats.warnings += 1
+      if (!Array.isArray(stats.warningMessages)) stats.warningMessages = []
+      stats.warningMessages.push(message)
     }
   }
 
@@ -3417,19 +3508,27 @@ async function installPass(
     process.stdout.write(`  [OK] ${created} component(s) installed\n`)
     if (skipped > 0)
       process.stdout.write(`  ${colors.dim('\u2014')} ${skipped} already up-to-date\n`)
-    if (warnings > 0)
+    // The warning TEXT restates here — the count alone sent users to doctor to
+    // learn what had already scrolled past.
+    for (const message of stats.warningMessages ?? []) {
+      process.stdout.write(`  [WARN] ${message}\n`)
+    }
+    if (warnings > 0 && (stats.warningMessages ?? []).length === 0) {
+      process.stdout.write(`  [WARN] ${warnings} warning(s)\n`)
+    }
+    if (warnings > 0) {
       process.stdout.write(
-        `  [WARN] ${warnings} warning(s) — run 'pantheon-opencode doctor' for details\n`,
+        `  ${colors.dim("Run 'pantheon-opencode doctor' for the full health check")}\n`,
       )
+    }
     process.stdout.write('\n')
-    process.stdout.write(`  ${colors.bold('Next steps:')}\n`)
-    process.stdout.write(`  ${colors.dim('\u2022')} Configure agents in opencode.json\n`)
-    process.stdout.write(`  ${colors.dim('\u2022')} Run 'pantheon-opencode doctor' to verify\n`)
-    process.stdout.write(
-      `  ${colors.dim('\u2022')} Run 'opencode' to start using Pantheon agents\n`,
-    )
-    process.stdout.write('\n')
-    printWorktreeGuidance({ projectRoot: process.cwd(), interactive: true })
+    // Worktree guidance is a project-install concept: a global install run
+    // from $HOME derived a nonsense `<home>/.pantheon-worktrees/<user>` path.
+    printWorktreeGuidance({
+      projectRoot: process.cwd(),
+      interactive: true,
+      enabled: !(opts.global ?? isGlobalConfigDir(target)),
+    })
   }
 
   // Beta 11 Setup phase 3: report whether this call APPLIED, so the caller can
@@ -3453,6 +3552,7 @@ async function installPass(
         configAdvisories,
         v2Capabilities: version === 'v2' ? v2Capabilities() : null,
         decisionModelActivation,
+        decisionModelDeferredSetup,
         pluginOptions: v2PluginOptions,
       }
     : {
@@ -3460,6 +3560,7 @@ async function installPass(
         applied: true,
         reason: 'applied',
         decisionModelActivation,
+        decisionModelDeferredSetup,
         target,
         runtimeEffects,
         openCodeVersion: version,

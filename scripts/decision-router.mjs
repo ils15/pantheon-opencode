@@ -65,6 +65,7 @@ export function decisionRouterHelp() {
     '  setup [options]                           computed artifact diff; writes only with --apply',
     '  preview                                   alias of `setup` (never writes)',
     '  holds                                     unresolved reservations, read-only',
+    '  holds release --provider <p> --reason "<why>"  archive+release dead-route holds',
     '',
     'Explicit actions (each one changes exactly one thing):',
     '  select local|auto|<provider>/<model>       record a selection; enables nothing',
@@ -75,7 +76,7 @@ export function decisionRouterHelp() {
     '  period confirm --current none|YYYY-MM --next YYYY-MM',
     '',
     'Guided (each does the whole chain in one command):',
-    '  setup-model <provider>/<model> --monthly-usd N --per-decision-usd N [--no-consent]',
+    '  setup-model <provider>/<model> --monthly-usd N --per-decision-usd N [--no-consent] [--account-id=<32-hex-id>]',
     '                                           select + enable + consent + caps + period in one write,',
     '                                           then print the verification summary',
     '  doctor                                    read-only diagnosis of the native decision route with',
@@ -280,6 +281,49 @@ export async function runDecisionRouterCommand(
     return
   }
 
+  if (command === 'holds' && rest[0] === 'release') {
+    // Administrative correction for holds of routes that no longer exist:
+    // a dead provider can never reconcile, so its holds would freeze budget
+    // forever. Live providers are refused — their holds roll off with the
+    // period. Every released row is archived with the mandatory reason.
+    const [, ...releaseArgs] = rest
+    const options = parseNamedOptions(releaseArgs, ['--provider', '--reason'])
+    const provider = options['--provider']
+    const reason = options['--reason']
+    if (provider === undefined || reason === undefined) {
+      throw new DecisionRouterUsageError(
+        'Usage: decision-router holds release --provider <dead-provider> --reason "<why>"',
+      )
+    }
+    if (Object.hasOwn(DECISION_ROUTER_MODELS, provider)) {
+      throw new DecisionRouterUsageError(
+        `Provider ${provider} is a live catalog route — its holds are not releasable; ` +
+          'they reconcile or roll off with the budget period.',
+      )
+    }
+    const ledger = openLedger(env)
+    try {
+      const result = ledger.releaseHoldsForProvider(provider, reason)
+      if (result.released === 0) {
+        stdout(`No unresolved holds for provider ${provider}.`)
+      } else {
+        stdout(
+          `Released ${result.released} hold(s) of provider ${provider}; ` +
+            `freed ${(result.freedMicros / 1_000_000).toFixed(2)} USD of reserved budget.`,
+        )
+        for (const hold of ledger.listReleasedHolds(5)) {
+          stdout(
+            `Archived ${hold.reservationId}: provider=${hold.provider} model=${hold.model} ` +
+              `state_at_release=${hold.stateAtRelease} reason="${hold.reason}"`,
+          )
+        }
+      }
+    } finally {
+      ledger.close()
+    }
+    return
+  }
+
   if (command === 'period') {
     const [action, ...periodArgs] = rest
     if (action !== 'confirm')
@@ -326,6 +370,29 @@ export async function runDecisionRouterCommand(
     const { provider, model } = selection
     const candidate = { provider, model }
 
+    // Cloudflare's native module requires an account-specific custom host
+    // provider entry. Fail before selecting/enabling the route if that entry
+    // cannot be provisioned; a warning after activation would leave a route
+    // that cannot be resolved by the host.
+    let cloudflareProvision = null
+    if (provider === 'cloudflare-workers-jev') {
+      const accountIdFlag = flagArgs.find((arg) => arg.startsWith('--account-id='))
+      if (!accountIdFlag) {
+        throw new DecisionRouterUsageError(
+          'Cloudflare route requires --account-id=<32-hex-id>; route was not activated',
+        )
+      }
+      cloudflareProvision = provisionCloudflareHostProvider({
+        accountId: accountIdFlag.slice('--account-id='.length),
+        env,
+      })
+      if (!cloudflareProvision.ok) {
+        throw new DecisionRouterUsageError(
+          `Cloudflare route was not activated: ${cloudflareProvision.reason}`,
+        )
+      }
+    }
+
     // One update names selection, enablement, candidates and (unless refused)
     // consent together: selecting a different target revokes consent unless
     // the same update names it, so this single write is the consent act.
@@ -340,26 +407,11 @@ export async function runDecisionRouterCommand(
       noConsent ? 'Egress consent NOT recorded (--no-consent).' : 'Egress consent recorded: yes.',
     )
 
-    // The Cloudflare route needs a custom entry with the accountId (the
-    // host's embedded cloudflare-workers-ai module reads the token from
-    // CLOUDFLARE_API_TOKEN and the account from the entry options).
-    if (provider === 'cloudflare-workers-jev') {
-      const accountId = flagArgs.find((arg) => arg.startsWith('--account-id='))
-      const provision = provisionCloudflareHostProvider({
-        accountId: accountId?.split('=')[1],
-        env,
-      })
-      if (provision.ok) {
-        stdout(
-          `Cloudflare provider entry merged into ${provision.path} (accountId + models.clef, type "decision"). ` +
-            'The token comes from CLOUDFLARE_API_TOKEN (Workers AI-scoped token) in the host environment.',
-        )
-      } else {
-        stdout(
-          `⚠ Cloudflare provider entry NOT merged: ${provision.reason}` +
-            ' — pass --account-id=<32-hex Cloudflare account id>.',
-        )
-      }
+    if (cloudflareProvision) {
+      stdout(
+        `Cloudflare provider entry merged into ${cloudflareProvision.path} (accountId + models.clef, type "decision"). ` +
+          'The token comes from CLOUDFLARE_API_TOKEN (Workers AI-scoped token) in the host environment.',
+      )
     }
 
     // The TypeSafe route needs a host-side provider entry the decisions API
@@ -642,11 +694,16 @@ function formatInstallState(config, target) {
 
 function parseSelectionTarget(target) {
   if (target === 'local' || target === 'auto') return { mode: target }
-  const [provider, model, ...extra] = String(target).split('/')
-  if (extra.length || !isKnownCandidate(provider, model)) {
-    throw new DecisionRouterUsageError('Selection must name one supported provider/model pair')
+  const value = String(target)
+  for (const provider of Object.keys(DECISION_ROUTER_MODELS)) {
+    const prefix = `${provider}/`
+    if (!value.startsWith(prefix)) continue
+    const model = value.slice(prefix.length)
+    if (DECISION_ROUTER_MODELS[provider].includes(model)) {
+      return { mode: 'explicit', provider, model }
+    }
   }
-  return { mode: 'explicit', provider, model }
+  throw new DecisionRouterUsageError('Selection must name one supported provider/model pair')
 }
 
 function parseNamedFlags(args, expected) {

@@ -1256,7 +1256,7 @@ test('v2 install strips a stale steps ceiling from a managed agent', async () =>
     assert.equal(config.agents.zeus.steps, undefined)
     // Everything else about the managed agent is untouched.
     assert.equal(config.agents.zeus.mode, 'primary')
-    assert.equal(config.agents.zeus.source, 'agents/zeus.md')
+    assert.equal(config.agents.zeus.source, undefined, 'stale source is healed on managed agents')
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
@@ -1387,7 +1387,7 @@ test('a managed agent absent from the config is created without steps', async ()
     const zeus = config.agents.zeus
     assert.ok(zeus, 'the managed agent must be created')
     assert.equal(zeus.steps, undefined, 'a newly created agent must not gain a steps ceiling')
-    assert.equal(zeus.source, 'agents/zeus.md')
+    assert.equal(zeus.source, undefined, 'no source provenance on fresh agents')
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
@@ -1432,7 +1432,10 @@ test('v2 install keeps the managed agent merge when agent and agents coexist', a
     )
     const zeus = config.agents.zeus
     // Managed fields from the V1 block survive the rename.
-    assert.equal(zeus.source, 'agents/zeus.md', 'managed source must not be discarded')
+    // HEAL (field beta.14): the legacy cwd-relative `source` is stripped from
+    // managed entries — host 2.2.5 resolves it against the session cwd and
+    // every agent vanished outside the config dir.
+    assert.equal(zeus.source, undefined, 'stale cwd-relative source must be healed away')
     assert.equal(zeus.temperature, 0.2, 'managed temperature must not be discarded')
     assert.deepEqual(
       zeus.permissions.filter((p) => p.action === 'edit'),
