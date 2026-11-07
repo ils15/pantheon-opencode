@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.3-beta.28] - 2026-11-07
+
+## 🆕 What's New
+- auto-continue split: core 2,656→1,003 tokens, the cooldown/timeout/checkpoint details moved to references/ (read under demand). The checkpoint contract is intact — the test follows the move.
+- prompt-refinery tiers finalized: Tier 1 is an INTERNAL minimal adjust (the user sees the work begin, no approval ceremony; generous scope when the request demands); the six-section contract is EXCLUSIVELY the >> prefix; clarifying questions ride the native question tool.
+- Descriptions trimmed keeping triggers (mnemosyne, agent-forge, prompt-refinery); skill-creator referenced in agent-forge.
+
 ## [v1.6.3-beta.27] - 2026-11-07
 
 ## 🆕 What's New
