@@ -2857,7 +2857,7 @@ async function main(): Promise<void> {
       : []
   }
 
-  test('V2 registers four self-sufficient tools including the local advisory router', async () => {
+  test('V2 registers the self-sufficient tools including the local advisory router', async () => {
     const registered = await registerToolsThroughHostMock()
     // The 3 goal tools
     // were REMOVED rather than stubbed — they need a GoalStore, a
@@ -2865,11 +2865,13 @@ async function main(): Promise<void> {
     // PluginContext. A placeholder would still fail this host contract on
     // every call, so it bought nothing. See the `goal-tools` entry in
     // V2_UNSUPPORTED_FEATURES.
+    // beta.29 adds `todowrite` (pass-through) so the TUI todo panel renders.
     assert.deepEqual(registered.map((t) => t.name).sort(), [
       'hashline_edit',
       'pantheon_cost',
       'pantheon_local_decision',
       'pantheon_model',
+      'todowrite',
     ])
   })
 
@@ -2994,6 +2996,7 @@ async function main(): Promise<void> {
       'pantheon_cost',
       'pantheon_local_decision',
       'pantheon_model',
+      'todowrite',
     ])
 
     // Derive what a namespaced id WOULD look like and assert none of them is in

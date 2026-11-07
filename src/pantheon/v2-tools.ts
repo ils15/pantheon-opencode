@@ -447,6 +447,47 @@ export interface V2ToolShadowOptions {
  * per-call definition with no construction-time I/O. A fresh descriptor array
  * prevents callers from mutating another registration's definitions.
  */
+/** JSON Schema for `todowrite` — the TUI todo panel's feed (full replace). */
+const TODOWRITE_INPUT = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['todos'],
+  properties: {
+    todos: {
+      type: 'array',
+      minItems: 1,
+      maxItems: 50,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['content', 'status'],
+        properties: {
+          content: { type: 'string', minLength: 1, maxLength: 500 },
+          status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'cancelled'] },
+        },
+      },
+    },
+  },
+} as const
+
+/** A V2 pass-through `todowrite`: the host stores the tool part in the
+ * transcript, and the TUI todo panel renders the newest completed write. The
+ * tool itself is stateless — the transcript IS the store. */
+const todowriteTool: V2ToolDef = {
+  name: 'todowrite',
+  description:
+    'Write the session task checklist (full replace). The TUI todo panel renders the ' +
+    'newest list; mark each item in_progress/completed as soon as its state changes.',
+  input: TODOWRITE_INPUT,
+  output: {},
+  execute: async (input) => {
+    const todos = Array.isArray((input as Record<string, unknown>).todos)
+      ? (input as Record<string, unknown>).todos
+      : []
+    return { ok: true, todos, output: JSON.stringify({ todos }) }
+  },
+}
+
 export function createV2ToolDefinitions(
   visionRuntime?: V2VisionRuntime,
   shadow: V2ToolShadowOptions = {},
@@ -497,6 +538,7 @@ export function createV2ToolDefinitions(
       ...(shadow.complexitySink === undefined ? {} : { sink: shadow.complexitySink }),
     }),
   )
+  definitions.push(todowriteTool)
   if (visionRuntime) definitions.push(createV2VisionTool(visionRuntime))
   if (jevRuntime) definitions.push(createV2JevDecisionDefinition(jevRuntime))
   return definitions

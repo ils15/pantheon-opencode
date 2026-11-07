@@ -155,10 +155,16 @@ test('prompts avoid unsupported token-savings claims', () => {
 })
 
 test('checkpoint use avoids a redundant read after successful save', () => {
-  assert.match(autoContinue, /only when `context_save` and `context_get` are explicitly/i)
-  assert.match(autoContinue, /content=`?JSON\.stringify\(state\)/i)
-  assert.match(autoContinue, /needs no immediate `context_get`/i)
-  assert.match(autoContinue, /only when resuming or when the save result is uncertain/i)
+  // The checkpoint contract moved to references/ (cost inventory beta.27) —
+  // the core keeps the pointer, the detail keeps the contract.
+  const autoContinueDetails = readPrompt(
+    '../src/skills/auto-continue/references/auto-continue-details.md',
+  )
+  assert.match(autoContinue, /auto-continue-details/, 'the core points at the details file')
+  assert.match(autoContinueDetails, /only when `context_save` and `context_get` are explicitly/i)
+  assert.match(autoContinueDetails, /content=`?JSON\.stringify\(state\)/i)
+  assert.match(autoContinueDetails, /needs no immediate `context_get`/i)
+  assert.match(autoContinueDetails, /only when resuming or when the save result is uncertain/i)
   assert.match(
     zeusAntiStall,
     /only for long-running or multi-phase work when `context_save` and `context_get` are available/i,

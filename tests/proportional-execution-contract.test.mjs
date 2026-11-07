@@ -49,8 +49,13 @@ test('implementers investigate only as needed and verify proportionally', () => 
 })
 
 test('automatic execution is bounded and never bypasses sensitive actions', () => {
+  // The gate table moved to references/ (cost inventory beta.27); the core
+  // keeps the never-bypass posture, the detail keeps the per-gate rules.
+  const autoContinueDetails = read(
+    '../src/skills/auto-continue/references/auto-continue-details.md',
+  )
   assert.match(autoContinue, /full-auto/i)
-  assert.match(autoContinue, /never auto|never automate|must not be automated/i)
+  assert.match(autoContinueDetails, /Never auto|never auto-bypass/i)
   assert.match(routing, /retry_count:\s*1\b/)
   assert.match(timeoutRetry, /never retry the same chain automatically/i)
   assert.match(

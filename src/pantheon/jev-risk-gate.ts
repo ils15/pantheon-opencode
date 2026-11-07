@@ -464,15 +464,15 @@ export function createJ1RiskGateObserver(
     mode?: J1RiskGateMode
     threshold?: number
   },
-): (event: unknown) => Promise<void | J1Verdict> {
+): (event: unknown) => Promise<J1Verdict | undefined> {
   const timeoutMs = options.timeoutMs ?? J1_RISK_GATE_TIMEOUT_MS
   const sink = options.sink
   const enforce = options.mode === 'enforce'
   const threshold = options.threshold ?? J1_ENFORCE_THRESHOLD_DEFAULT
-  return async (event: unknown): Promise<void | J1Verdict> => {
+  return async (event: unknown): Promise<J1Verdict | undefined> => {
     try {
       const payload = (event ?? {}) as J1ExecuteBeforeEvent
-      if (!isRiskGateTarget(payload.tool)) return
+      if (!isRiskGateTarget(payload.tool)) return undefined
       const tool = payload.tool
       const scope = classifyRiskGateScope(tool)
       const built = buildRiskGateRequest({
@@ -482,7 +482,7 @@ export function createJ1RiskGateObserver(
       })
       if (!built.ok) {
         recordSkip(sink, 'skip-input-invalid')
-        return
+        return undefined
       }
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -507,11 +507,11 @@ export function createJ1RiskGateObserver(
         ])
         if (outcome === 'timeout') {
           recordSkip(sink, 'skip-timeout')
-          return
+          return undefined
         }
         if (!outcome.ok) {
           recordSkip(sink, mapGateFailureToSkipReason(outcome.reasonCode))
-          return
+          return undefined
         }
         const evaluation = evaluateRiskGateDecision(outcome.call.response, outcome.call.request)
         observeShadow(
@@ -543,6 +543,7 @@ export function createJ1RiskGateObserver(
       // be opened; any other unexpected failure lands here too. One skip
       // record, no detail, no propagation into the tool call.
       recordSkip(sink, 'skip-gate-unavailable')
+      return undefined
     }
   }
 }
