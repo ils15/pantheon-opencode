@@ -2668,6 +2668,28 @@ async function installPass(
         // beta.14: "Agent not found: zeus"). The host loads agents from the
         // agents directory without this field — remove it wherever found.
         delete existing.source
+
+        // The sibling opencode.jsonc merges with PRIORITY on this host and is
+        // user-managed (the installer never rewrites it wholesale) — but OUR
+        // stale `source` field poisons the merged view exactly the same way
+        // (field beta.25: the config dir healed, the jsonc kept the roster
+        // invisible outside it). Targeted strip of the exact pattern only.
+        try {
+          const jsoncPath = join(target, 'opencode.jsonc')
+          if (existsSync(jsoncPath)) {
+            const raw = readFileSync(jsoncPath, 'utf8')
+            const healed = raw.replace(/,?\s*"source":\s*"agents\/[A-Za-z0-9_-]+\.md"/g, '')
+            if (healed !== raw) {
+              writeFileSync(jsoncPath, healed)
+              warning(
+                'Healed the sibling opencode.jsonc: removed stale cwd-relative agent "source" fields ' +
+                  '(the field that made agents vanish outside the config dir). Review the file if you hand-edit it.',
+              )
+            }
+          }
+        } catch {
+          // The jsonc is user data; a failed heal is reported by doctor instead.
+        }
         for (const field of MANAGED_FIELDS) {
           if (field in agentCfg) {
             existing[field] = JSON.parse(JSON.stringify(agentCfg[field]))

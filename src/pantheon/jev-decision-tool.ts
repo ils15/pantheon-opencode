@@ -31,6 +31,7 @@ import {
   JEV_PRESET_ENVELOPE_KEYS,
   type JevDecisionPreparation,
   type JevHostSkill,
+  type JevSkillCandidateSource,
   type NativeJevRouteFailure,
   type NativeJevRouteSelection,
   prepareJevDecisionRequest,
@@ -515,7 +516,7 @@ export async function runJevDecision(
   // the same prebuilt-request pattern (no gate work for a malformed input);
   // neither has a telemetry point — they are tool modes, not shadow gates.
   let prebuilt: Omit<NativeDecisionRequest, 'model'> | undefined
-  let candidateSource: JevDecisionPreparation['candidateSource'] | undefined
+  let candidateSource: JevSkillCandidateSource | undefined
   let orderCandidates: readonly string[] = []
   let verifyEvidenceUsed: boolean | undefined
   if (requested.mode === 'review') {
@@ -569,11 +570,16 @@ export async function runJevDecision(
           ? prepareJevDecisionRequest(route, input ?? {})
           : isJevDecisionPreset(requested.mode)
             ? (async () => {
+                // TS drops property narrowing inside closures — re-narrow here.
+                const preset = requested.mode
+                if (!isJevDecisionPreset(preset)) {
+                  return { ok: false as const, reasonCode: 'PRESET_INVALID' as const }
+                }
                 const prepared = prepareJevPresetRequest(
                   route,
-                  requested.mode,
+                  preset,
                   input ?? {},
-                  requested.mode === 'skills' ? await readHostSkills(runtime) : undefined,
+                  preset === 'skills' ? await readHostSkills(runtime) : undefined,
                 )
                 if (prepared.ok) candidateSource = prepared.candidateSource
                 return prepared

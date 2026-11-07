@@ -466,10 +466,10 @@ export function isJevDecisionPreset(value: unknown): value is JevDecisionPreset 
 
 /** Every canonical specialist except the orchestrator itself. */
 const SPECIALIST_CHOICES: ReadonlyArray<{ value: string; description?: string }> = Object.freeze(
-  PANTHEON_AGENT_CATALOG.filter((agent) => agent.id !== 'zeus').map((agent) => ({
-    value: agent.id,
-    description: boundedCatalogDescription(agent.description),
-  })),
+  PANTHEON_AGENT_CATALOG.filter((agent) => agent.id !== 'zeus').map((agent) => {
+    const description = boundedCatalogDescription(agent.description)
+    return description === undefined ? { value: agent.id } : { value: agent.id, description }
+  }),
 )
 
 /** Catalog descriptions are short; truncate defensively at the documented bound. */

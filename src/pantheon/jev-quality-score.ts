@@ -137,7 +137,12 @@ export type QualityScorePreparedRequest =
       /** The request body; the caller attaches the resolved route's `model`. */
       readonly request: Omit<NativeDecisionRequest, 'model'>
     }
-  | { readonly ok: false; readonly reasonCode: QualityScoreRequestFailure }
+  | {
+      readonly ok: false
+      readonly reasonCode: QualityScoreRequestFailure
+      /** Per-cause token (e.g. CRITERIA_SHAPE) so the caller can fix the input. */
+      readonly detail?: string
+    }
 
 const QUALITY_LABELS = [
   'unusable',
