@@ -10,7 +10,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
-## [v1.6.3-beta.29] - 2026-11-07
+## [v1.7.0-beta.1] - 2026-11-07
+
+## 🆕 What's New — a linha 1.7 abre
+- **`mode: "order"`** no Jev: ordenação real de 2-4 candidatos com score por candidato (rank escolhe vencedor; order classifica a shortlist).
+- **J1 approval gate** com escada off/shadow/warn/enforce: chamada de risco alto exige APROVAÇÃO EXPLÍCITA do usuário (hash-pinned, TTL 15min) — nunca contorno.
+- **`agent-forge`**: cria um agente OpenCode sob demanda — entrevista, rascunho canônico, confirmação, gravação em escopo projeto/global.
+- **prompt-refinery em 3 níveis**: pedido claro passa intacto; ajuste mínimo interno (≤15 linhas); contrato completo só com `>>`.
+- **Descoberta de skills com cascata de confiança**: catálogo canônico Anthropic → skills.sh → GitHub cru, ranqueado por Jev order; instalação só pelo usuário.
+- **Correções do campo**: criteria-objeto no review, banda UNVERIFIABLE no verify com evidência (`state`), jsonc heal (o veneno que sumia com o roster), D3 PT-starvation,CRITERIA_SHAPE com remedio, verify band edges.
+- **Jev REAL**: 275 decisões reconciliadas, $0.0068 acumulado (~$0.000025/decisão).
+
+
+ - 2026-11-07
 
 ## 🆕 What's New
 - **skills** — the three-tier refine — minimal adjust default, full contract via >> only
