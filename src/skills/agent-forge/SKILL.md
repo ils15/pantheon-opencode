@@ -1,6 +1,6 @@
 ---
 name: agent-forge
-description: "Forge a new OpenCode agent on demand — interview the user, draft a canonical agent .md (frontmatter, permissions, MCP grants, governance ladder), write it project- or user-scoped, and validate it against the existing roster. Use when the user asks for 'um agente que faça X', 'create an agent for X', or wants a specialist that the roster lacks."
+description: "Forge a new OpenCode agent on demand. Use when the user asks for 'um agente que faça X', 'create an agent for X', or wants a specialist the roster lacks."
 ---
 
 # Agent Forge
@@ -67,6 +67,7 @@ Rules that are NOT optional:
 - **Governance identical** — the ladder block is byte-copied from a canonical agent; a forged agent never invents its own escalation rules.
 - **Never overwrite** — if the target file exists, show it and ask before replacing.
 - **Routing honesty** — project agents are picked up by the host automatically; do not claim they are in `routing.yml` or the decision catalogs (those are package-level and validated by tests).
+- **Referência de fluxo**: o `skill-creator` da Anthropic (entender objetivo → quando ativa → formato → como testar → rascunho → iterar) é o precedentes do nosso interview → draft → confirm.
 
 ---
 

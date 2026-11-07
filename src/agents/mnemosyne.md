@@ -1,6 +1,6 @@
 ---
 name: mnemosyne
-description: "Memory curation specialist — owns the durable pantheon-memory stores (memory_store/recall/search) with namespace hygiene and the durable-facts-only policy; curates .pantheon/memory-bank/ and writes ADRs/task records on explicit request. Called by zeus. Never invoked automatically after phases."
+description: "Memory curation specialist — owns the durable pantheon-memory stores (memory_store/recall/search) and curates .pantheon/memory-bank/ + ADRs on request. Use when memory needs saving, curating or recovering."
 mode: all
 reasoning_effort: low
 
