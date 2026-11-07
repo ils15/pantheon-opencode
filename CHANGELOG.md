@@ -10,6 +10,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v1.6.3-beta.26] - 2026-11-07
+
+## 🆕 What's New
+- The installer heals the stale agent-`source` field in the sibling opencode.jsonc too — the field that kept the roster invisible outside the config dir even after the .json heal (field beta.25: sessions fell back to the default agent and pantheon_jev_decide was nowhere).
+- `test:ci` prefers the repo venv when present, so the Python tier runs the pinned fastmcp/mcp instead of whatever the system python has.
+
 ## [v1.6.3-beta.25] - 2026-11-06
 
 ## 🆕 What's New
