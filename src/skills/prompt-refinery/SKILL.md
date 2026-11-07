@@ -1,11 +1,11 @@
 ---
 name: prompt-refinery
-description: "Turn a rough, vague, or one-line request into a structured execution contract (objective, scope slices, acceptance criteria, deliverables, open questions) shown to the user BEFORE executing. Use when a request spans multiple concerns or lacks explicit acceptance criteria."
+description: "Turn a vague multi-concern request into a usable brief — internally and silently by default; the full contract is shown only via >>. Use when the request mixes refactor/fix/redesign without acceptance criteria, or starts with >>."
 ---
 
 # Prompt Refinery
 
-> **A vague request executes expensively and wrong. Refine it into a contract, show the contract, then execute what was confirmed.**
+> **A vague request executes expensively and wrong. Tier 1 refines it INTERNALLY (the user sees the work begin); Tier 2 — only via `>>` — shows the full contract for confirmation.**
 
 ---
 
@@ -14,16 +14,16 @@ description: "Turn a rough, vague, or one-line request into a structured executi
 | Nível | Gatilho | O que acontece |
 |---|---|---|
 | **0 — Passa intacto** | Pedido claro e delimitado ("corrija o typo do README"), cumprimentos e conversa fiada (o `__SKIP__` do prompt-enhancer) | Executa direto, zero token de refinamento |
-| **1 — Ajuste mínimo (automático)** | O sinal determinístico dispara (multi-concern sem critérios) | Reescreve o prompt: **PT corrigido** (typos, acentos), estrutura leve (objetivo + fatias em 1 linha cada + o que falta como pergunta), expansão do implícito. **Limite duro: ~15 linhas.** Não é um contrato — é o mesmo pedido, legível |
-| **2 — Contrato completo** | **SOMENTE prefixo `>>`** (`>> fazer os deploys e limpar a vps`) | As seis seções inteiras (objetivo, fatias, critérios, entregáveis, perguntas com defaults, glossário) |
+| **1 — Ajuste mínimo INTERNO (automático)** | O sinal determinístico dispara | Reescreve o prompt **silenciosamente, para uso próprio**: PT corrigido, estrutura leve, expansão do implícito, lacunas viram escolhas com default declarado. SEM apresentar contrato, SEM pedir aprovação — o usuário vê o trabalho começar. Limite: o essencial (~10-15 linhas internas); escopo pode ser generoso quando o pedido pede |
+| **2 — Contrato completo** | **SOMENTE prefixo `>>`** | As seis seções inteiras apresentadas ao usuário para confirmar-ou-ajustar (a ÚNICA via com aprovação explícita) |
 
 O modelo ativo da sessão faz os dois níveis sem problema — o custo é controlado pelo LIMITE de saída de cada nível, não por trocar de modelo. Nível 1 nunca vira nível 2 sem o prefixo.
 
 ---
 
-## The contract shape — TWO tiers (cost control)
+## The contract shape — tiers and caps
 
-**COMPACTO (default, quando o sinal determinístico dispara):** no máximo **8 linhas**, uma por seção, pule o que não se aplica. Exemplo de saída aceitável:
+**NÍVEL 1 — Ajuste mínimo INTERNO (o default do sinal determinístico):** reescrita para uso próprio, SEM apresentar ao usuário. O essencial + o que o pedido pedir (o escopo mínimo não é um aperto: expanda o implícito, estime o que falta com default declarado). Exemplo de saída aceitável:
 
 ```
 Objetivo: publicar deploys pendentes e liberar espaço nos VPS sem perder dados.
@@ -32,7 +32,7 @@ Aceite: lista de SHAs por serviço; espaço antes/depois; nada persistente apaga
 Perguntas: quais VPS? (default: os que rodam estes serviços) | limpeza destrutiva? (default: não).
 ```
 
-**COMPLETO (só quando o usuário pedir "contrato completo" ou o domínio exigir):** as seis seções abaixo, inteiras.
+**NÍVEL 2 — Contrato completo (SOMENTE com o prefixo `>>`):** as seis seções abaixo, inteiras, apresentadas ao usuário para confirmar-ou-ajustar.
 
 Produce ALL of the following sections, filling from the request and marking real gaps as open questions — never invent requirements silently:
 
@@ -47,13 +47,14 @@ Produce ALL of the following sections, filling from the request and marking real
 
 ## Operating rules
 
-- **Show, then execute.** The refined contract is presented to the user for confirm-or-adjust BEFORE implementation — one confirmation, not a dialogue. Silence or "ok" proceeds with the defaults stated in Perguntas abertas.
+- **Tier 1 é INTERNO**: o ajuste mínimo acontece na cabeça do agente — o usuário vê o trabalho começar, não o reescrito. Aprovação explícita só existe no Tier 2 (`>>`).
 - **Domain mapping stays the ladder's**: after confirmation, slices route through the normal discovery ladder (local selector → Jev → specialist dispatch). The contract is the SPEC, not the dispatcher.
 - **Preserve the user's language** (a PT-BR request refines into PT-BR).
 - **Falha = fail-open**: qualquer erro no rewrite e o prompt ORIGINAL segue — nunca bloqueia.
-- **Nudge self-cancel cheap** (do claude-code-prompt-improver): perguntas abertas abrem com "se isso não se aplicar ao seu caso, ignore" — o nudge barato se anula sozinho quando o palpite erra, sem custo de diálogo.
+- **Nudge self-cancel cheap** (do claude-code-prompt-improver): perguntas abertas com "se isso não se aplicar ao seu caso, ignore" — o nudge barato se anula sozinho quando o palpite erra.
+- **Perguntas pela tool `question` nativa** (NUNCA Jev — decisão de paid/free; não prosa solta): uma lacuna que BLOQUEIA a execução vira uma pergunta com opções e o default recomendado. Lacuna não-bloqueante vira escolha com default declarado e segue.
 - **`extra_instructions` do projeto**: convenções do projeto (stack, hosts de deploy, domínios como cupons ML/AliExpress) têm PRIORIDADE sobre os defaults recomendados — leia o AGENTS.md do projeto antes de propor defaults.
 - **Referências**: `omkarxpatel/prompt-enhancer` (prefixo opt-in, cap de saída, fail-open) e `severity1/claude-code-prompt-improver` (nudges self-cancel, clarificação com opções) — os dois designs que este skill incorpora.
-- **Modelo**: o rewrite roda no modelo de sessão com o cap de 8 linhas; "barato" é o CAP, não um tier específico — quando houver modelo free/rápido no preset ativo (ex.: mimo-v2.5-free, deepseek-v4-flash-free), prefira-o via routing para o turno de rewrite.
+- **Modelo**: o rewrite roda no modelo ativo da sessão; o controle de custo é o CAP de cada nível (interno ~10-15 linhas; completo = as seis seções) — quando houver modelo free/rápido no preset ativo (ex.: mimo-v2.5-free, deepseek-v4-flash-free), prefira-o via routing para o turno de rewrite.
 - **One refinement turn.** The rewrite is a single planning pass on the session model — no extra provider call, no Jev needed for the rewrite itself (decision models answer typed scalars, they do not write prose).
 - **Cost honesty**: the refinement costs roughly one planning turn (~1–4K tokens each way). The expensive thing is executing a mis-specified request; this skill buys that back.
