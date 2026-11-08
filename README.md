@@ -157,7 +157,11 @@ see [Quick Start](docs/QUICKSTART.md).
   version changes since the last TUI start, a one-time dismissable
   "What's new" dialog lists that version's highlights from the shipped
   changelog — once per version, `esc`/`q` dismisses; see
-  [What's new window](docs/reference/whats-new.md). The installer
+  [What's new window](docs/reference/whats-new.md). `/pantheon-settings`
+  (also `Pantheon: Settings` in the command palette) opens the settings
+  window: `up`/`down` selects a Pantheon runtime gate, `enter` toggles it —
+  writing the global `pantheon-overrides.json` the installer and doctor
+  consume — `tab` flips to the About page, `esc`/`q` closes. The installer
   selects the `plugins` component by default; in interactive setup you can
   change the component selection. A component-scoped install includes the TUI
   only when `plugins` is selected. The TUI ships no quota panel: for provider

@@ -24,6 +24,7 @@ import {
   MODEL_USAGE_SESSION_LIMIT,
   MODEL_USAGE_VISIBLE_CEILING,
 } from './model-usage-limits'
+import { maybeShowPantheonSettings } from './pantheon-settings'
 import { cellWidth, GRAPHEMES, SIDEBAR_CONTENT_WIDTH } from './sidebar-width'
 import { nextCheckState, pickUpdateNotice, type UpdateCheckState } from './update-notice.ts'
 import { maybeShowWhatsNewV2 } from './whats-new'
@@ -4391,6 +4392,30 @@ function DispatchCommandLayer(props: { context: any }) {
   return null
 }
 
+/** Command layer for the settings window: palette + `/pantheon-settings`
+ *  entry, deliberately with no raw keybind — the host already owns a native
+ *  `/settings` surface (verified against the host command list), so a blind
+ *  bind would fight it. The window's in-dialog binds stay gated by
+ *  `enabled: () => open()` inside pantheon-settings.tsx. */
+function PantheonSettingsCommandLayer(props: { context: any }) {
+  props.context.keymap.layer(() => ({
+    mode: 'global',
+    commands: [
+      {
+        id: 'pantheon.settings.open',
+        title: 'Pantheon: Settings',
+        group: 'Pantheon',
+        palette: true,
+        slash: { name: 'pantheon-settings' },
+        run: () => {
+          void maybeShowPantheonSettings(props.context)
+        },
+      },
+    ],
+  }))
+  return null
+}
+
 /** Home-screen status contribution. The sidebar slot is session-scoped, so
  *  before the first prompt the sidebar may not mount at all (Known Issue) —
  *  this keeps a compact Pantheon line visible on the home footer meanwhile. */
@@ -4523,6 +4548,12 @@ const plugin = Plugin.define({
       append: 'app',
       render: () => <DispatchCommandLayer context={context} />,
     })
+    // /pantheon-settings trigger — same additive `app` claim shape as the
+    // dispatch layer; nothing renders, the command registration is the point.
+    const unregisterSettingsCommands = context.ui.slot({
+      append: 'app',
+      render: () => <PantheonSettingsCommandLayer context={context} />,
+    })
     // One-time "What's new" window (per Pantheon version) — fire-and-forget:
     // resolves the running version and the shipped CHANGELOG.md, then opens a
     // host dialog when the version changed since the last dismissal. Fail-open;
@@ -4535,6 +4566,7 @@ const plugin = Plugin.define({
       if (typeof unregisterPromptFooter === 'function') unregisterPromptFooter()
       if (typeof unregisterPanel === 'function') unregisterPanel()
       if (typeof unregisterCommands === 'function') unregisterCommands()
+      if (typeof unregisterSettingsCommands === 'function') unregisterSettingsCommands()
       delete globalState[SINGLETON]
     }
   },
