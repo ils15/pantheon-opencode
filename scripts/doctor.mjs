@@ -29,9 +29,8 @@ import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { load } from 'js-yaml'
-import { classifyOverrideFiles } from './install/behavior-overrides.bundle.mjs'
-
 import { listV2UnsupportedFeatures } from '../src/pantheon/unsupported.mjs'
+import { classifyOverrideFiles } from './install/behavior-overrides.bundle.mjs'
 import { describePluginOptionsReachability } from './install/capabilities.mjs'
 import { classifyFileInventory } from './install/file-inventory.mjs'
 import { staleTuiRefs } from './install/plugin.mjs'
@@ -2828,7 +2827,6 @@ async function checkInstallerFileInventory(args) {
     }
   }
 }
-
 
 // ─── Named-behavior overrides ───────────────────────────────────────────
 

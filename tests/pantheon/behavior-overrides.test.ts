@@ -8,8 +8,8 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
-  classifyOverrideFiles,
   type BehaviorSpec,
+  classifyOverrideFiles,
   installDecision,
   isRuntimeDisabled,
   mergeOverrides,
@@ -88,7 +88,9 @@ describe('classifyOverrideFiles', () => {
     })
     const r = classifyOverrideFiles(REGISTRY, project, undefined)
     assert.ok(r.warnings.some((w) => w.code === 'override_schema_invalid' && w.file === 'project'))
-    assert.ok(r.warnings.some((w) => w.code === 'override_unknown_behavior' && w.file === 'project'))
+    assert.ok(
+      r.warnings.some((w) => w.code === 'override_unknown_behavior' && w.file === 'project'),
+    )
     // Invalid entries are dropped; the valid-but-unknown one survives.
     assert.equal(r.effective['skill-tdd-with-agents'], undefined)
     assert.equal(r.effective['ghost']?.action, 'disable')

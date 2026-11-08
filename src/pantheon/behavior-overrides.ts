@@ -165,8 +165,10 @@ export function classifyOverrideFiles(
   globalRaw?: string,
 ): OverrideClassification {
   const warnings: OverrideWarning[] = []
-  const global = globalRaw === undefined ? undefined : parseOverridesFile(globalRaw, 'global overrides')
-  const project = projectRaw === undefined ? undefined : parseOverridesFile(projectRaw, 'project overrides')
+  const global =
+    globalRaw === undefined ? undefined : parseOverridesFile(globalRaw, 'global overrides')
+  const project =
+    projectRaw === undefined ? undefined : parseOverridesFile(projectRaw, 'project overrides')
   for (const parsed of [global, project]) {
     if (parsed === undefined) continue
     for (const error of parsed.errors) {
@@ -181,9 +183,7 @@ export function classifyOverrideFiles(
   for (const id of unknownBehaviorIds(effective, registry)) {
     warnings.push({
       code: 'override_unknown_behavior',
-      file: (project?.entries[id] !== undefined ? 'project' : 'global') as
-        | 'project'
-        | 'global',
+      file: (project?.entries[id] !== undefined ? 'project' : 'global') as 'project' | 'global',
       message: `override names unknown behavior "${id}" — it is not in the routing.yml behaviors registry`,
     })
   }
