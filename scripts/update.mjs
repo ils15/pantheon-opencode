@@ -103,9 +103,25 @@ export function runUpdate(
 
   if (compareVersions(latest, currentVersion) <= 0) {
     console.log(
-      `✅ Already up to date (installed v${currentVersion}; ${channel} channel: v${latest}).`,
+      `\u2705 Already up to date (installed v${currentVersion}; ${channel} channel: v${latest}).`,
     )
     return 0
+  }
+
+  // A stable installation never jumps to a prerelease silently (you stay
+  // in charge): the jump needs explicit opt-in via --allow-prerelease. The
+  // remedy is printed, never guessed.
+  const isPrerelease = (version) => /-beta\.\d+$/.test(version)
+  const crossingToPrerelease = isPrerelease(latest) && !isPrerelease(currentVersion)
+  if (crossingToPrerelease && !args.includes('--allow-prerelease')) {
+    console.error(
+      '\u274c v' +
+        latest +
+        ' is a BETA and your installed v' +
+        currentVersion +
+        ' is stable. A stable\u2192beta jump needs explicit opt-in: rerun with `update --allow-prerelease`, or stay on the stable line with `update --stable`.',
+    )
+    return 1
   }
 
   console.log(`Updating v${currentVersion} → v${latest} (channel: ${channel})...`)

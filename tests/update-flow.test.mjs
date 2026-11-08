@@ -144,6 +144,53 @@ test('doctor --json --fix is rejected before performing checks or writes', () =>
   }
 })
 
+test('a stable install never jumps to a beta without explicit opt-in', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-update-jump-'))
+  const globalRoot = join(root, 'npm-global')
+  const packageRoot = join(globalRoot, 'pantheon-opencode')
+  const script = join(packageRoot, 'bin', 'pantheon-init.mjs')
+  try {
+    mkdirSync(join(packageRoot, 'bin'), { recursive: true })
+    writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({ version: '1.7.0' }))
+    writeFileSync(script, '#!/usr/bin/env node\n')
+    let installCalls = 0
+    const spawnSyncImpl = (_command, args) => {
+      if (args[0] === 'root') return { status: 0, stdout: `${globalRoot}\n`, stderr: '' }
+      if (args[0] === 'view') return { status: 0, stdout: '2.0.0-beta.1\n', stderr: '' }
+      if (args[0] === 'install') {
+        installCalls += 1
+        writeFileSync(
+          join(packageRoot, 'package.json'),
+          JSON.stringify({ version: '2.0.0-beta.1' }),
+        )
+        return { status: 0, stdout: '', stderr: '' }
+      }
+      throw new Error(`Unexpected command: ${args.join(' ')}`)
+    }
+    const refused = await runUpdate([], {
+      root: packageRoot,
+      currentVersion: '1.7.0',
+      runningScript: script,
+      spawnSync: spawnSyncImpl,
+      refresh: () => ({ status: 0 }),
+    })
+    assert.equal(refused, 1, 'the silent stable->beta jump must refuse')
+    assert.equal(installCalls, 0, 'no install before explicit opt-in')
+
+    const authorized = await runUpdate(['--allow-prerelease'], {
+      root: packageRoot,
+      currentVersion: '1.7.0',
+      runningScript: script,
+      spawnSync: spawnSyncImpl,
+      refresh: () => ({ status: 0 }),
+    })
+    assert.equal(authorized, 0, 'explicit --allow-prerelease authorizes the jump')
+    assert.equal(installCalls, 1)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('update refuses a local checkout before registry access', () => {
   const result = spawnSync(process.execPath, [BIN, 'update'], {
     encoding: 'utf8',
