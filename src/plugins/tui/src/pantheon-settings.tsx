@@ -16,12 +16,12 @@ import { homedir, join } from 'node:path'
 import type { Context } from '@opencode/plugin/tui/context'
 import { createSignal, For, Show } from 'solid-js'
 import {
+  type EffectiveOverrides,
+  isBehaviorDisabled,
   SETTINGS_BEHAVIORS,
   type SettingsRow,
-  isBehaviorDisabled,
   serializeOverrides,
   toggledOverrides,
-  type EffectiveOverrides,
 } from './pantheon-settings-state.ts'
 
 function globalOverridesPath(): string {
@@ -71,9 +71,7 @@ export function SettingsContent(props: {
               About
             </text>
             <text fg={props.muted}>{'─'.repeat(38)}</text>
-            <For each={props.about()}>
-              {(line: string) => <text fg={props.muted}>{line}</text>}
-            </For>
+            <For each={props.about()}>{(line: string) => <text fg={props.muted}>{line}</text>}</For>
           </box>
         }
       >

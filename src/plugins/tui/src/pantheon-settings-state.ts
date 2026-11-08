@@ -42,8 +42,18 @@ export const SETTINGS_BEHAVIORS: readonly SettingsBehavior[] = Object.freeze([
     title: 'Prompt refinery skill',
     description: 'Vague requests refined — silent adjust, >> full contract.',
   },
-  { id: 'gate-idle-todo-enforcer', kind: 'runtime', title: 'Idle todo enforcer', description: 'Continues pending todos when a session goes idle.' },
-  { id: 'gate-context-pruner', kind: 'runtime', title: 'Context pruner', description: 'Prunes repeated tool output before summarization.' },
+  {
+    id: 'gate-idle-todo-enforcer',
+    kind: 'runtime',
+    title: 'Idle todo enforcer',
+    description: 'Continues pending todos when a session goes idle.',
+  },
+  {
+    id: 'gate-context-pruner',
+    kind: 'runtime',
+    title: 'Context pruner',
+    description: 'Prunes repeated tool output before summarization.',
+  },
   {
     id: 'gate-j1-risk-gate',
     kind: 'runtime',

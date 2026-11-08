@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
-  SETTINGS_BEHAVIORS,
-  SETTINGS_TOGGLABLE_IDS,
   aboutRows,
   isBehaviorDisabled,
+  SETTINGS_BEHAVIORS,
+  SETTINGS_TOGGLABLE_IDS,
   serializeOverrides,
   toggledOverrides,
 } from '../src/plugins/tui/src/pantheon-settings-state.ts'

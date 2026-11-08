@@ -96,6 +96,12 @@ import type {
 } from '@opencode-ai/plugin/v2/promise'
 import { define } from '@opencode-ai/plugin/v2/promise'
 import {
+  type EffectiveOverrides,
+  installDecision,
+  isRuntimeDisabled,
+  mergeOverrides,
+} from './pantheon/behavior-overrides.ts'
+import {
   BOUNDED_READ_TOOL,
   createV2BoundedReadTool,
   type V2BoundedReadOriginRegistry,
@@ -138,12 +144,6 @@ import {
 } from './pantheon/delegation-policy.ts'
 import { createV2ExecuteAfter, resolveV2SandboxConfig } from './pantheon/execute-after.ts'
 import { GOAL_LOOP_DEFAULTS, GoalStore } from './pantheon/goal-store.ts'
-import {
-  installDecision,
-  isRuntimeDisabled,
-  mergeOverrides,
-  type EffectiveOverrides,
-} from './pantheon/behavior-overrides.ts'
 import { createGuardPathResolver } from './pantheon/guard-path.ts'
 import { runSecretScanInProcess } from './pantheon/hook-engine.ts'
 import { createJTelemetryMirror } from './pantheon/j-telemetry-file.ts'
@@ -2829,11 +2829,15 @@ export const plugin = define({
             const prunerConfig = resolveContextPrunerConfig(context.options)
             loadRuntimeOverrides()
             if (gateDisabled('gate-context-pruner')) {
-              logPruneFailureOnce(sessionID, 'compaction', new Error('gate-context-pruner override'))
+              logPruneFailureOnce(
+                sessionID,
+                'compaction',
+                new Error('gate-context-pruner override'),
+              )
             } else {
-            const stats = pruneMessages(payload?.messages, prunerConfig, 'compaction')
-            logContextPrune(stats, sessionID)
-            logPruneShapeIssue(stats, sessionID, 'compaction')
+              const stats = pruneMessages(payload?.messages, prunerConfig, 'compaction')
+              logContextPrune(stats, sessionID)
+              logPruneShapeIssue(stats, sessionID, 'compaction')
             }
 
             // Compaction context (V1 `experimental.session.compacting`
