@@ -1,10 +1,15 @@
 /**
- * config-migration.mjs — Bidirectional V1↔V2 config format migration
+ * config-migration.mjs — legacy V1-shaped config normalization for the V2 path
  *
- * Converts opencode.json between:
+ * Pantheon 2.0 targets OpenCode 2.x only; this module is the ONE-WAY compat
+ * pass that normalizes a legacy (OpenCode 1.x-era) config shape before the V2
+ * host reads it:
  * - V1 (object-based): `permission`, `agent`, `provider`, `mcp` with flat keys
  * - V2 (array-based): `permissions`, `agents`, `providers`, and
  *   `mcp.servers.<name>` server configuration.
+ *
+ * The backward (V2→V1) direction is gone with the V1 contract: nothing writes
+ * a V1-shaped config anymore.
  *
  * Rules:
  * 1. Deep clone before mutating — never modifies input
@@ -55,19 +60,10 @@ const V1_PERMISSION_TO_ACTION = {
   bash: 'shell',
   task: 'subagent',
   skill: 'skill',
-  // Listed before `write` so the reverse map resolves `edit` to the canonical
-  // V1 key instead of to the alias.
   edit: 'edit',
   write: 'edit',
   websearch: 'websearch',
   // passthrough unknowns
-}
-
-/** Effect restrictiveness is used only when V2 rules must collapse into V1 keys. */
-const EFFECT_RESTRICTIVENESS = { allow: 1, ask: 2, deny: 3 }
-
-function isKnownEffect(effect) {
-  return typeof effect === 'string' && Object.hasOwn(EFFECT_RESTRICTIVENESS, effect)
 }
 
 /** A structurally valid permission rule, used for redacted malformed-entry counts. */
@@ -86,44 +82,6 @@ function warnInvalidPermissionEntries(entries) {
   console.warn(
     `[config-migration] ${invalid.length} malformed permission ${invalid.length === 1 ? 'entry was' : 'entries were'} preserved in order.`,
   )
-}
-
-/**
- * Resolve two effects proposed for the same action+resource.
- *
- * Security bias: `deny` always wins, including against an unrecognized effect,
- * and an unrecognized effect never silently replaces a known one. When both
- * effects are unrecognized they cannot be ranked, so the first is kept and the
- * warning says exactly that — it makes no restrictiveness claim.
- *
- * @returns {string} the effect to keep
- */
-function resolveEffects(current, next) {
-  if (current === next) return current
-
-  const currentKnown = isKnownEffect(current)
-  const nextKnown = isKnownEffect(next)
-
-  if (!currentKnown && !nextKnown) {
-    console.warn(
-      '[config-migration] Unrecognized effects could not be ranked; keeping the first value.',
-    )
-    return current
-  }
-  if (currentKnown && !nextKnown) {
-    console.warn('[config-migration] An unrecognized effect could not replace a known effect.')
-    return current
-  }
-  if (!currentKnown && nextKnown) {
-    console.warn('[config-migration] A known effect replaced an unrecognized effect.')
-    return next
-  }
-
-  const winner = EFFECT_RESTRICTIVENESS[next] > EFFECT_RESTRICTIVENESS[current] ? next : current
-  console.warn(
-    '[config-migration] Conflicting effects were found; keeping the more restrictive value.',
-  )
-  return winner
 }
 
 /**
@@ -317,63 +275,11 @@ function assertV1ActionNormalizationDoesNotCollapseSources(provenance) {
   }
 }
 
-/**
- * Convert V2 permissions array back to V1 permission object.
- *
- * Rules that land on the same V1 key+resource are merged with the same
- * restrictiveness policy as the forward map (`deny > ask > allow`, `deny`
- * always wins, an unrecognized effect never replaces a known one). "Last wins"
- * would let `[{edit,*,deny},{edit,*,allow}]` downgrade a deny to allow, which
- * is the opposite of what the forward direction guarantees.
- */
-function convertPermissionsV2toV1(permArray) {
-  // Reverse action mapping: V2 action → V1 key. Aliases collapse onto one action
-  // (`write` and `edit` both → `edit`), so the FIRST key wins — the canonical
-  // V1 spelling — instead of the alias that happens to be listed last.
-  // Null prototype + hasOwn: actions named like Object.prototype members
-  // (`__proto__`, `constructor`, `toString`) must pass through literally.
-  const ACTION_TO_V1 = Object.create(null)
-  for (const [v1Key, action] of Object.entries(V1_PERMISSION_TO_ACTION)) {
-    if (!Object.hasOwn(ACTION_TO_V1, action)) ACTION_TO_V1[action] = v1Key
-  }
-
-  // Group by V1 key first, resolving collisions per resource, so the output
-  // shape (scalar for a lone "*" rule, object otherwise) does not depend on
-  // array order.
-  const byKey = new Map()
-  for (const { action, resource, effect } of permArray) {
-    const v1Key = Object.hasOwn(ACTION_TO_V1, action) ? ACTION_TO_V1[action] : action
-    let rules = byKey.get(v1Key)
-    if (rules === undefined) {
-      rules = new Map()
-      byKey.set(v1Key, rules)
-    }
-    rules.set(resource, rules.has(resource) ? resolveEffects(rules.get(resource), effect) : effect)
-  }
-
-  const result = {}
-  for (const [v1Key, rules] of byKey) {
-    if (rules.size === 1 && rules.has('*')) {
-      setOwn(result, v1Key, rules.get('*'))
-      continue
-    }
-    const group = {}
-    for (const [resource, effect] of rules) setOwn(group, resource, effect)
-    setOwn(result, v1Key, group)
-  }
-  return result
-}
-
 /** Provider name consolidation: V1 → V2 */
 const PROVIDER_RENAME = {
   'azure-cognitive-services': 'azure',
   'google-vertex-anthropic': 'google-vertex',
 }
-
-/** Reverse: V2 → V1 */
-const PROVIDER_RENAME_REVERSE = Object.fromEntries(
-  Object.entries(PROVIDER_RENAME).map(([k, v]) => [v, k]),
-)
 
 /**
  * Convert a single V1 provider config to V2.
@@ -426,64 +332,6 @@ function convertProviderV1toV2(_name, config) {
       if (variant) {
         const newKey = `${modelKey}#${variant}`
         newModels[newKey] = finalConfig
-      } else {
-        newModels[modelKey] = finalConfig
-      }
-    }
-    result.models = newModels
-  }
-
-  return result
-}
-
-/**
- * Convert a single V2 provider config back to V1.
- */
-function convertProviderV2toV1(_name, config) {
-  const result = { ...config }
-
-  // package → npm (strip aisdk: prefix)
-  if (result.package !== undefined) {
-    result.npm = result.package.startsWith('aisdk:') ? result.package.slice(6) : result.package
-    delete result.package
-  }
-
-  // settings.baseURL → api
-  if (result.settings?.baseURL !== undefined) {
-    result.api = result.settings.baseURL
-    const { baseURL, ...restSettings } = result.settings
-    if (Object.keys(restSettings).length > 0) {
-      result.settings = restSettings
-    } else {
-      delete result.settings
-    }
-  }
-
-  // settings.apiKey → options.apiKey
-  if (result.settings?.apiKey !== undefined) {
-    if (!result.options) result.options = {}
-    result.options.apiKey = result.settings.apiKey
-    const { apiKey, ...restSettings } = result.settings || {}
-    if (Object.keys(restSettings).length > 0) {
-      result.settings = restSettings
-    } else {
-      delete result.settings
-    }
-  }
-
-  // Model key with #suffix → variant field
-  // Also rename model-level "media" → "attachment"
-  if (result.models) {
-    const newModels = {}
-    for (const [modelKey, modelConfig] of Object.entries(result.models)) {
-      const { media, ...restConfig } = modelConfig || {}
-      const finalConfig = { ...restConfig }
-      if (media !== undefined) {
-        finalConfig.attachment = media
-      }
-      if (modelKey.includes('#')) {
-        const [baseName, variant] = modelKey.split('#', 2)
-        newModels[baseName] = { ...finalConfig, variant }
       } else {
         newModels[modelKey] = finalConfig
       }
@@ -607,7 +455,7 @@ function convertMcpV1toV2(mcpConfig) {
     if (Object.hasOwn(servers, name)) {
       throw new Error('Conflicting flat and nested MCP server entries cannot be merged safely.')
     }
-    const srv = normalizeMcpServerFlags(serverConfig, 'v2')
+    const srv = normalizeMcpServerFlags(serverConfig)
 
     // Normalize legacy V2's split timeout to the V1/V2-compatible number.
     if (srv.timeout !== undefined && srv.timeout !== null) {
@@ -626,15 +474,14 @@ function convertMcpV1toV2(mcpConfig) {
 }
 
 /**
- * Normalize the V1 `enabled` and V2 `disabled` spellings without guessing
- * when both are present. OpenCode V2 connects configured servers by default;
+ * Normalize legacy MCP server flags to the V2 spelling. `enabled: true` is the
+ * OpenCode 1.x opt-in; OpenCode V2 connects configured servers by default and
  * `disabled: true` is the native opt-out.
  *
  * @param {object} serverConfig
- * @param {'v1' | 'v2'} targetVersion
  * @returns {object}
  */
-function normalizeMcpServerFlags(serverConfig, targetVersion) {
+function normalizeMcpServerFlags(serverConfig) {
   const srv = { ...serverConfig }
   const hasEnabled = Object.hasOwn(srv, 'enabled')
   const hasDisabled = Object.hasOwn(srv, 'disabled')
@@ -648,30 +495,11 @@ function normalizeMcpServerFlags(serverConfig, targetVersion) {
     throw new TypeError('Conflicting MCP enabled and disabled flags.')
   }
 
-  if (targetVersion === 'v2') {
-    if (hasEnabled) {
-      srv.disabled = !srv.enabled
-      delete srv.enabled
-    }
-  } else if (hasDisabled) {
-    srv.enabled = !srv.disabled
-    delete srv.disabled
+  if (hasEnabled) {
+    srv.disabled = !srv.enabled
+    delete srv.enabled
   }
   return srv
-}
-
-/**
- * Convert V2 MCP config back to V1.
- */
-function convertMcpV2toV1(mcpConfig) {
-  if (!mcpConfig || typeof mcpConfig !== 'object') return mcpConfig
-  const v2Servers = convertMcpV1toV2(mcpConfig)?.servers
-  if (!isPlainObject(v2Servers)) return mcpConfig
-  const servers = {}
-  for (const [name, config] of Object.entries(v2Servers)) {
-    setOwn(servers, name, normalizeMcpServerFlags(config, 'v1'))
-  }
-  return servers
 }
 
 // ---------------------------------------------------------------------------
@@ -779,11 +607,6 @@ const V1_TO_V2_RENAMES = {
   permission: 'permissions',
 }
 
-/** Build reverse map */
-const V2_TO_V1_RENAMES = Object.fromEntries(
-  Object.entries(V1_TO_V2_RENAMES).map(([k, v]) => [v, k]),
-)
-
 /**
  * Agent fields owned by the framework. Mirrors the exported MANAGED_FIELDS in
  * install/opencode.mjs plus `source`, which the installer writes next to them.
@@ -791,8 +614,8 @@ const V2_TO_V1_RENAMES = Object.fromEntries(
  * itself when both `agent` and `agents` coexist: these come from the V1 block,
  * every other field stays the user's.
  *
- * `permissions` is the V2 name — the converter renames the V1 `permission`
- * block before the merge runs.
+ * `permissions` is the V2 spelling — both the installer and this converter emit
+ * the V2 rule array under that key.
  *
  * `description` is deliberately absent, and this list is deliberately narrower
  * than what the installer writes. The installer writes a description only when
@@ -803,12 +626,6 @@ const V2_TO_V1_RENAMES = Object.fromEntries(
  * migration stricter than the installer and would overwrite a description the
  * installer deliberately preserves. mergeManagedAgents carries the value across
  * instead, so it survives the merge without being treated as framework-owned.
- *
- * KNOWN DEBT: the installer still writes the V1 spelling `permission`, while V2
- * reads `permissions`. An agent that goes through this merge can therefore end
- * up carrying both keys, with `permission` left as dead weight that nothing
- * reads. Tracked for the next slice; not fixed here, because picking a winner
- * changes what an install writes.
  */
 export const MANAGED_AGENT_FIELDS = Object.freeze([
   'source',
@@ -1093,14 +910,10 @@ function resolveTopLevelPermissions(config, configuredMcpServers = []) {
 // ---------------------------------------------------------------------------
 
 /**
- * Migrate a V1 opencode.json config to V2 format.
- *
- * When top-level `permission` (V1) and `permissions` (V2) coexist, the V2 array
- * is the base and the V1 rules are merged into it — see
- * `resolveTopLevelPermissions`.
- *
- * @param {object} config - V1 config object (not mutated)
- * @returns {object} V2 config object
+ * Collect the configured MCP server names from either config shape (V1 flat map
+ * or V2 `mcp.servers`), used to guard permission aliasing.
+ * @param {unknown} mcpConfig
+ * @returns {string[]}
  */
 function configuredMcpServerNames(mcpConfig) {
   if (!isPlainObject(mcpConfig)) return []
@@ -1112,7 +925,46 @@ function configuredMcpServerNames(mcpConfig) {
   })
 }
 
-export function migrateV1toV2(config, { mcpServerNames = [] } = {}) {
+/**
+ * Normalize a legacy (OpenCode 1.x-era) MCP block to the V2 shape: the flat
+ * server map is wrapped into `mcp.servers`, legacy `enabled` flags become
+ * `disabled`, and split timeouts collapse to one number. An already-nested V2
+ * map passes through with its flags normalized.
+ *
+ * @param {object} mcpConfig - the `mcp` block (not mutated)
+ * @returns {{ servers: object }} the V2 `mcp` value
+ */
+export function normalizeMcpConfigToV2(mcpConfig) {
+  return convertMcpV1toV2(mcpConfig)
+}
+
+/**
+ * Convert a legacy top-level `permission` policy object into the V2 `permissions`
+ * rule array. Used by the installer, by setup, and by the agent-level conversion
+ * inside {@link normalizeLegacyV1Config}.
+ *
+ * @param {object} permObj - V1 permission policy object
+ * @param {{ mcpServerNames?: string[] }} [options]
+ * @returns {Array<{action: string, resource: string, effect: string}>}
+ */
+export function convertLegacyPermissionsToV2(permObj, { mcpServerNames = [] } = {}) {
+  return convertPermissionsV1toV2(permObj, mcpServerNames)
+}
+
+/**
+ * Normalize a legacy V1-shaped opencode.json config to the V2 shape the host
+ * reads. This is the one-way compat pass for configs written before the V2-only
+ * contract; it is NOT a bidirectional migration (nothing writes V1 anymore).
+ *
+ * When top-level `permission` (V1) and `permissions` (V2) coexist, the V2 array
+ * is the base and the V1 rules are merged into it — see
+ * `resolveTopLevelPermissions`.
+ *
+ * @param {object} config - legacy config object (not mutated)
+ * @param {{ mcpServerNames?: string[] }} [options]
+ * @returns {object} V2-shaped config object
+ */
+export function normalizeLegacyV1Config(config, { mcpServerNames = [] } = {}) {
   const c = deepClone(config)
   // JSON cloning omits own properties whose value is undefined. Keep a present
   // MCP field visible to validation so it cannot be mistaken for absence.
@@ -1165,51 +1017,6 @@ export function migrateV1toV2(config, { mcpServerNames = [] } = {}) {
       result.mcp = convertMcpV1toV2(value)
     } else if (v2Key !== key) {
       result[v2Key] = value
-    } else {
-      result[key] = value
-    }
-  }
-
-  return result
-}
-
-/**
- * Migrate a V2 opencode.json config back to V1 format.
- *
- * @param {object} config - V2 config object (not mutated)
- * @returns {object} V1 config object
- */
-export function migrateV2toV1(config) {
-  const c = deepClone(config)
-  const result = {}
-
-  for (const [key, value] of Object.entries(c)) {
-    const v1Key = V2_TO_V1_RENAMES[key] || key
-
-    if (key === 'permissions' && Array.isArray(value)) {
-      result.permission = convertPermissionsV2toV1(value)
-    } else if (key === 'agents' && typeof value === 'object' && value !== null) {
-      const agents = {}
-      for (const [agentName, agentConfig] of Object.entries(value)) {
-        const ac = { ...agentConfig }
-        if (Array.isArray(ac.permissions)) {
-          ac.permission = convertPermissionsV2toV1(ac.permissions)
-          delete ac.permissions
-        }
-        agents[agentName] = ac
-      }
-      result.agent = agents
-    } else if (key === 'providers' && typeof value === 'object' && value !== null) {
-      const providers = {}
-      for (const [provName, provConfig] of Object.entries(value)) {
-        const renamed = PROVIDER_RENAME_REVERSE[provName] || provName
-        providers[renamed] = convertProviderV2toV1(provName, provConfig)
-      }
-      result.provider = providers
-    } else if (key === 'mcp' && typeof value === 'object' && value !== null) {
-      result.mcp = convertMcpV2toV1(value)
-    } else if (v1Key !== key) {
-      result[v1Key] = value
     } else {
       result[key] = value
     }

@@ -54,19 +54,42 @@
  * @module jev-quality-score
  */
 
+import { PANTHEON_AGENTS } from './delegation-policy.ts'
 import { consumeJevDecisionResult } from './jev-decisions.ts'
-import { PANTHEON_AGENTS } from './v2-delegation-enforce.ts'
-import type { NativeDecisionRequest, ResolvedNativeDecisionRoute } from './v2-native-decisions.ts'
+import type { NativeDecisionRequest, ResolvedNativeDecisionRoute } from './native-decisions.ts'
 
 /** Telemetry point id for the output-quality review (J-series: Jev uplift). */
 export const J4_QUALITY_SCORE_POINT = 'J4'
 
 /** Question names of the two prepared questions, matched on consumption. */
 export const QUALITY_QUESTION_NAME = 'quality'
-export const REVIEW_QUESTION_NAME = 'noul'
+/**
+ * Field report (beta.13→16): the review question was literally named 'noul'
+ * — the decision model's internal archetype leaked into a user-visible
+ * payload. The name is ours to choose; `quality` says what it measures.
+ */
+export const REVIEW_QUESTION_NAME = 'needs_review'
 
 /** DSH hard-cap mirror: at most 4 criteria per review request. */
 export const J4_MAX_CRITERIA = 4
+
+/**
+ * Normalize one criterion: a plain string, or a `{ id?, description }` record
+ * (field report beta.24 #10 — the object form is the natural caller shape and
+ * was refused by a strings-only check; both are accepted, the DESCRIPTION is
+ * what rides the request, the id is caller bookkeeping).
+ */
+export function normalizeJevCriterion(raw: unknown): string | null {
+  if (typeof raw === 'string') return raw
+  if (raw !== null && typeof raw === 'object' && !Array.isArray(raw)) {
+    const record = raw as { id?: unknown; description?: unknown }
+    if (record.id !== undefined && (typeof record.id !== 'string' || record.id.length > 64)) {
+      return null
+    }
+    if (typeof record.description === 'string') return record.description
+  }
+  return null
+}
 /** A rubric needs at least one named criterion. */
 export const J4_MIN_CRITERIA = 1
 /** Each criterion is a bounded instruction string (1–120 chars). */
@@ -114,7 +137,12 @@ export type QualityScorePreparedRequest =
       /** The request body; the caller attaches the resolved route's `model`. */
       readonly request: Omit<NativeDecisionRequest, 'model'>
     }
-  | { readonly ok: false; readonly reasonCode: QualityScoreRequestFailure }
+  | {
+      readonly ok: false
+      readonly reasonCode: QualityScoreRequestFailure
+      /** Per-cause token (e.g. CRITERIA_SHAPE) so the caller can fix the input. */
+      readonly detail?: string
+    }
 
 const QUALITY_LABELS = [
   'unusable',
@@ -220,16 +248,23 @@ export function buildQualityScoreRequest(
   if (criteria.length < J4_MIN_CRITERIA || criteria.length > J4_MAX_CRITERIA) {
     return { ok: false, reasonCode: 'CRITERIA_INVALID' }
   }
+  const normalized: string[] = []
   for (const criterion of criteria) {
+    const text = normalizeJevCriterion(criterion)
     if (
-      typeof criterion !== 'string' ||
-      criterion.length < 1 ||
-      criterion.length > J4_CRITERIA_MAX_LENGTH ||
-      criterion.trim().length === 0 ||
-      isHostileCriterion(criterion)
+      text === null ||
+      text.length < 1 ||
+      text.length > J4_CRITERIA_MAX_LENGTH ||
+      text.trim().length === 0 ||
+      isHostileCriterion(text)
     ) {
-      return { ok: false, reasonCode: 'CRITERIA_INVALID' }
+      return {
+        ok: false,
+        reasonCode: 'CRITERIA_INVALID',
+        detail: 'CRITERIA_SHAPE — cada critério é uma string (1-120) ou {id?, description}',
+      }
     }
+    normalized.push(text)
   }
 
   const state =
@@ -244,7 +279,7 @@ export function buildQualityScoreRequest(
   }
   const qualityInstructions =
     QUALITY_INSTRUCTIONS_PREFIX +
-    ` Criteria: ${criteria.map((criterion, index) => `(${index + 1}) ${criterion}`).join('; ')}.`
+    ` Criteria: ${normalized.map((criterion, index) => `(${index + 1}) ${criterion}`).join('; ')}.`
   return {
     ok: true,
     request: Object.freeze({
@@ -356,7 +391,7 @@ export function encodeQualityScoreReason(input: {
  * ANY other key — `state`, `questions`, or a smuggled content field — refuses
  * the preparation, so no content slot exists even at the input boundary.
  */
-const REVIEW_ENVELOPE_KEYS: ReadonlySet<string> = new Set([
+export const REVIEW_ENVELOPE_KEYS: ReadonlySet<string> = new Set([
   'schemaVersion',
   'mode',
   'delegateId',

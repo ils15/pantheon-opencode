@@ -23,11 +23,16 @@
  * minted. A failed or unreconciled call is a refusal, never a retry.
  */
 import { readUserDecisionRouterConfig } from '../../scripts/install/decision-router-config.mjs'
+import { observeShadow, type ShadowSink } from './decision-shadow.ts'
 import {
+  checkJevEnvelope,
   consumeJevDecisionResult,
   isJevDecisionPreset,
+  JEV_EXPLICIT_ENVELOPE_KEYS,
+  JEV_PRESET_ENVELOPE_KEYS,
   type JevDecisionPreparation,
   type JevHostSkill,
+  type JevSkillCandidateSource,
   type NativeJevRouteFailure,
   type NativeJevRouteSelection,
   prepareJevDecisionRequest,
@@ -41,12 +46,18 @@ import {
   J4_QUALITY_SCORE_POINT,
   type QualityScoreEvaluation,
   qualityVerdict,
+  REVIEW_ENVELOPE_KEYS,
 } from './jev-quality-score.ts'
 import {
+  buildJevOrderRequest,
   buildJevRankRequest,
   buildJevVerifyRequest,
+  consumeJevOrderResult,
   consumeJevRankResult,
   consumeJevVerifyResult,
+  ORDER_ENVELOPE_KEYS,
+  RANK_ENVELOPE_KEYS,
+  VERIFY_ENVELOPE_KEYS,
 } from './jev-rank-verify.ts'
 import { mapGateFailureToSkipReason } from './jev-risk-gate.ts'
 import {
@@ -59,9 +70,8 @@ import {
   buildDecisionEgressRequest,
 } from './local-decision-egress-gate.ts'
 import { verifyNativeUsageForReservation } from './local-decision-usage-evidence.internal.ts'
-import { observeShadow, type ShadowSink } from './v2-decision-shadow.ts'
-import type { NativeDecisionRequest, ResolvedNativeDecisionRoute } from './v2-native-decisions.ts'
-import type { V2ToolDef } from './v2-tools.ts'
+import type { NativeDecisionRequest, ResolvedNativeDecisionRoute } from './native-decisions.ts'
+import type { V2ToolDef } from './tools.ts'
 
 export interface V2JevDecisionRuntime {
   /**
@@ -128,6 +138,8 @@ export type JevDecisionRunFailure =
   | 'CRITERIA_INVALID'
   | 'RANK_INPUT_INVALID'
   | 'CANDIDATE_INVALID'
+  | 'ORDER_INPUT_INVALID'
+  | 'ORDER_CANDIDATE_INVALID'
   | 'VERIFY_INPUT_INVALID'
   | 'CLAIM_INVALID'
   | 'CONTEXT_UNAVAILABLE'
@@ -143,6 +155,7 @@ export type JevDecisionRunFailure =
   | 'PRESET_INVALID'
   | 'RESERVATION_DENIED'
   | 'DECISION_CALL_FAILED'
+  | 'USAGE_EVIDENCE_UNAVAILABLE'
   | 'USAGE_UNRECONCILED'
 
 interface JevToolContext {
@@ -151,8 +164,12 @@ interface JevToolContext {
   agent?: unknown
 }
 
-function refusal(reasonCode: JevDecisionRunFailure): string {
-  return JSON.stringify({ advisory: false, effect: 'none', reasonCode })
+function refusal(reasonCode: JevDecisionRunFailure, detail?: string): string {
+  return JSON.stringify(
+    detail === undefined
+      ? { advisory: false, effect: 'none', reasonCode }
+      : { advisory: false, effect: 'none', reasonCode, detail },
+  )
 }
 
 function isNonBlankString(value: unknown): value is string {
@@ -284,6 +301,14 @@ export async function runGatedNativeJevCall(params: {
       (provider, model) => ledger.canReserve(provider, model).status === 'eligible',
     )
     if (!selection.ok) return { ok: false, reasonCode: selection.reasonCode }
+
+    // Cloudflare Workers AI has no supported native-usage evidence parser yet.
+    // Reject its Jev route before permission, request preparation, or budget
+    // reservation; otherwise the provider could be called and leave a pending
+    // reservation when reconciliation cannot be verified.
+    if (selection.selection.provider === 'cloudflare-workers-jev') {
+      return { ok: false, reasonCode: 'USAGE_EVIDENCE_UNAVAILABLE' }
+    }
 
     if (typeof params.runtime.permissionAssert !== 'function') {
       return { ok: false, reasonCode: 'PERMISSION_UNAVAILABLE' }
@@ -430,10 +455,14 @@ export async function runJevDecision(
       ? (toolContext as JevToolContext)
       : undefined
   const caller = context?.agent
-  if (typeof caller !== 'string' || caller.length === 0) return refusal('CALLER_NOT_ALLOWED')
+  if (typeof caller !== 'string' || caller.length === 0)
+    return refusal('CALLER_NOT_ALLOWED', 'CALLER_NOT_ALLOWLISTED')
   const allowlist = runtime.specialistCallers ?? []
   if (caller !== 'zeus' && !allowlist.includes(caller)) {
-    return refusal('CALLER_NOT_ALLOWED')
+    return refusal(
+      'CALLER_NOT_ALLOWED',
+      'CALLER_NOT_ALLOWLISTED — allowlist this caller via PANTHEON_JEV_SPECIALIST_CALLERS (then restart) or ask Zeus to route',
+    )
   }
 
   const requested = (input ?? {}) as { mode?: unknown; questions?: unknown }
@@ -444,12 +473,52 @@ export async function runJevDecision(
   if (caller !== 'zeus' && requested.mode !== undefined) {
     return refusal('CALLER_NOT_ALLOWED')
   }
+  // The ONE envelope gate every path passes through before its builder:
+  // schemaVersion required, unknown keys rejected — explicit questions,
+  // presets, review, rank and verify alike (beta.10 claimed this contract;
+  // beta.12 applies it uniformly). Builders keep their semantic checks.
+  const envelopeKeys =
+    requested.mode === undefined
+      ? JEV_EXPLICIT_ENVELOPE_KEYS
+      : requested.mode === 'review'
+        ? REVIEW_ENVELOPE_KEYS
+        : requested.mode === 'rank'
+          ? RANK_ENVELOPE_KEYS
+          : requested.mode === 'verify'
+            ? VERIFY_ENVELOPE_KEYS
+            : requested.mode === 'order'
+              ? ORDER_ENVELOPE_KEYS
+              : isJevDecisionPreset(requested.mode)
+                ? JEV_PRESET_ENVELOPE_KEYS
+                : undefined
+  if (envelopeKeys !== undefined) {
+    const envelope = checkJevEnvelope(input, envelopeKeys)
+    if (!envelope.ok) {
+      const reasonCode: JevDecisionRunFailure =
+        requested.mode === undefined
+          ? 'QUESTIONS_INVALID'
+          : requested.mode === 'review'
+            ? 'REVIEW_INPUT_INVALID'
+            : requested.mode === 'rank'
+              ? 'RANK_INPUT_INVALID'
+              : requested.mode === 'verify'
+                ? 'VERIFY_INPUT_INVALID'
+                : requested.mode === 'order'
+                  ? 'ORDER_INPUT_INVALID'
+                  : 'PRESET_INVALID'
+      return refusal(reasonCode, envelope.detail)
+    }
+  }
+
   // Review mode (J4): the bounded request is built before any gate work, and
   // an invalid review input is a tool-surface refusal — same class as the
   // caller check, never a gate failure. The v3.1 rank and verify modes follow
   // the same prebuilt-request pattern (no gate work for a malformed input);
   // neither has a telemetry point — they are tool modes, not shadow gates.
   let prebuilt: Omit<NativeDecisionRequest, 'model'> | undefined
+  let candidateSource: JevSkillCandidateSource | undefined
+  let orderCandidates: readonly string[] = []
+  let verifyEvidenceUsed: boolean | undefined
   if (requested.mode === 'review') {
     const prepared = buildJevReviewRequest(input ?? {})
     if (!prepared.ok) {
@@ -467,11 +536,19 @@ export async function runJevDecision(
     prebuilt = prepared.request
   } else if (requested.mode === 'rank') {
     const prepared = buildJevRankRequest(input ?? {})
-    if (!prepared.ok) return refusal(prepared.reasonCode)
+    if (!prepared.ok) return refusal(prepared.reasonCode, prepared.detail)
     prebuilt = prepared.request
   } else if (requested.mode === 'verify') {
     const prepared = buildJevVerifyRequest(input ?? {})
     if (!prepared.ok) return refusal(prepared.reasonCode)
+    verifyEvidenceUsed = (
+      prepared.request.input[0] as { text?: string } | undefined
+    )?.text?.includes('Evidence/context supplied by the caller')
+    prebuilt = prepared.request
+  } else if (requested.mode === 'order') {
+    const prepared = buildJevOrderRequest(input ?? {})
+    if (!prepared.ok) return refusal(prepared.reasonCode, prepared.detail)
+    orderCandidates = prepared.candidates
     prebuilt = prepared.request
   }
   const result = await runGatedNativeJevCall({
@@ -492,12 +569,21 @@ export async function runJevDecision(
         : requested.mode === undefined
           ? prepareJevDecisionRequest(route, input ?? {})
           : isJevDecisionPreset(requested.mode)
-            ? prepareJevPresetRequest(
-                route,
-                requested.mode,
-                input ?? {},
-                requested.mode === 'skills' ? await readHostSkills(runtime) : undefined,
-              )
+            ? (async () => {
+                // TS drops property narrowing inside closures — re-narrow here.
+                const preset = requested.mode
+                if (!isJevDecisionPreset(preset)) {
+                  return { ok: false as const, reasonCode: 'PRESET_INVALID' as const }
+                }
+                const prepared = prepareJevPresetRequest(
+                  route,
+                  preset,
+                  input ?? {},
+                  preset === 'skills' ? await readHostSkills(runtime) : undefined,
+                )
+                if (prepared.ok) candidateSource = prepared.candidateSource
+                return prepared
+              })()
             : { ok: false as const, reasonCode: 'PRESET_INVALID' as const },
   })
   if (!result.ok) {
@@ -596,6 +682,33 @@ export async function runJevDecision(
       frozen: result.call.frozen,
     })
   }
+  if (requested.mode === 'order') {
+    // v3.1 ordering: one fit question per candidate (2-4), sorted descending.
+    // Null score = the host answered nothing usable for that candidate —
+    // visible, placed last, never guessed.
+    const ordering = consumeJevOrderResult(
+      result.call.response,
+      result.call.request,
+      orderCandidates,
+    )
+    return JSON.stringify({
+      advisory: true,
+      effect: 'none',
+      reason: 'JEV_DECISION',
+      caller,
+      route: {
+        providerID: result.call.selection.route.model.providerID,
+        id: result.call.selection.route.model.id,
+        billing: result.call.selection.route.billing,
+      },
+      mode: 'order',
+      ordering,
+      answers: advice.answers,
+      missing: advice.missing,
+      usage: { costUsd: advice.costUsd, tokens: advice.tokens },
+      frozen: result.call.frozen,
+    })
+  }
   if (requested.mode === 'verify') {
     // v3.1 verify: one PASS/FAIL/BLOCK verdict per claim, fail-closed. The
     // tool never acts on the verdicts; a caller that requires a verdict
@@ -612,6 +725,7 @@ export async function runJevDecision(
         billing: result.call.selection.route.billing,
       },
       mode: 'verify',
+      ...(verifyEvidenceUsed === undefined ? {} : { evidenceUsed: verifyEvidenceUsed }),
       results,
       answers: advice.answers,
       missing: advice.missing,
@@ -630,6 +744,7 @@ export async function runJevDecision(
       billing: result.call.selection.route.billing,
     },
     ...(requested.mode === undefined ? {} : { preset: requested.mode }),
+    ...(candidateSource === undefined ? {} : { candidateSource }),
     answers: advice.answers,
     missing: advice.missing,
     usage: { costUsd: advice.costUsd, tokens: advice.tokens },
@@ -645,10 +760,14 @@ const TOOL_DESCRIPTION =
   'host), `mode: "delegation"` to pick ' +
   'a specialist, `mode: "review"` to score a finished delegated result against named criteria ' +
   '(advisory quality score + needs-review flag; the result content itself is never sent — ' +
-  'shape metrics and criteria only), `mode: "rank"` to pick the best of 2-8 named candidates ' +
+  'shape metrics and criteria only), `mode: "rank"` to pick the best of 2-20 named candidates ' +
+  '(winner + fit; no full ordering), `mode: "order"` to ORDER 2-4 candidates by fit (one ' +
+  'score question per candidate; returns the descending ordering with per-candidate scores — ' +
+  'an ORDINAL on the 2..10 rubric, not a probability), ' +
   '(returns the winner and its fit score; no full ordering), `mode: "verify"` to check 1-4 ' +
-  'named claims (PASS/FAIL per claim; any refusal, timeout or malformed answer is BLOCK, ' +
-  'fail-closed), or pass explicit typed `questions` (choice, score, ' +
+  'named claims, with optional `state` evidence the claims are judged against ' +
+  '(verdicts PASS, FAIL, or UNVERIFIABLE for the 0.35-0.65 band; any refusal, timeout or ' +
+  'malformed answer is BLOCK, fail-closed), or pass explicit typed `questions` (choice, score, ' +
   'predicate). Invalid-input refusals carry a `detail` token naming the exact cause. Returns ' +
   'probabilistic answers with confidence. Requires decision-router egress ' +
   'consent and budget caps; asks host permission first. It never dispatches agents, runs ' +
@@ -756,7 +875,7 @@ const JEV_INPUT_SCHEMA: Record<string, unknown> = {
   properties: {
     schemaVersion: { type: 'integer', const: 1 },
     state: { type: 'string', minLength: 1, maxLength: 12_000 },
-    mode: { type: 'string', enum: ['skills', 'delegation', 'review', 'rank', 'verify'] },
+    mode: { type: 'string', enum: ['skills', 'delegation', 'review', 'rank', 'verify', 'order'] },
     questions: { type: 'array', minItems: 1, maxItems: 4, items: questionSchema },
     delegateId: {
       type: 'string',
@@ -770,12 +889,24 @@ const JEV_INPUT_SCHEMA: Record<string, unknown> = {
       type: 'array',
       minItems: 1,
       maxItems: 4,
-      items: { type: 'string', minLength: 1, maxLength: 120 },
+      items: {
+        anyOf: [
+          { type: 'string', minLength: 1, maxLength: 120 },
+          {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              id: { type: 'string', minLength: 1, maxLength: 64 },
+              description: { type: 'string', minLength: 1, maxLength: 120 },
+            },
+          },
+        ],
+      },
     },
     candidates: {
       type: 'array',
       minItems: 2,
-      maxItems: 8,
+      maxItems: 20,
       items: RANK_CANDIDATE_SCHEMA,
     },
     claims: {

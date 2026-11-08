@@ -19,6 +19,44 @@ from an idea to a reviewed change. Fourteen specialized agents share one
 workflow: plan, implement, check, review, and record what mattered. You stay in
 charge of every decision and every merge.
 
+```mermaid
+flowchart LR
+    U["👤 You"] --> Z["⚡ Zeus<br/>orchestrator"]
+    Z -->|"delegates"| S["14 specialists<br/>hermes · aphrodite · demeter · themis …"]
+    Z -->|"ambiguous route"| J["🎲 Jev decision router<br/>typed · budgeted · reversible"]
+    J -->|"orders · ranks · verifies"| S
+    S -->|"last resort"| M["🔌 Native MCP<br/>memory · persistence · vision<br/>code-mode · resources"]
+    Z --> G["🛡️ J1 risk gate<br/>off / shadow / warn / enforce"]
+    G -->|"high risk"| H["👤 Human approval"]
+```
+
+**The escalation ladder every agent follows** (the same block lives in all 14
+agent files): session context first → the free local selector → one typed Jev
+question when genuinely ambiguous → a native MCP call only as the LAST resort
+for state the session cannot reconstruct.
+
+```mermaid
+flowchart LR
+    R["📝 rough request"] --> T0{"clear &<br/>bounded?"}
+    T0 -->|yes| X["⚡ execute directly"]
+    T0 -->|"vague /<br/>multi-concern"| T1["🔍 Tier 1 — internal<br/>minimal adjust ≤15 lines<br/>(silent, no approval)"]
+    T1 --> T2q{">> given?"}
+    T2q -->|yes| T2["📜 Tier 2 — full contract<br/>6 sections, confirm-or-adjust"]
+    T2q -->|no| X
+```
+
+**Skill discovery runs a trust cascade** — canonical first, popularity never
+compensates for provenance:
+
+```mermaid
+flowchart LR
+    L["📚 installed pool<br/>(always first)"] -->|"gap"| C1["🟢 anthropics/skills<br/>canonical"]
+    C1 -->|"no fit"| C2["🔵 skills.sh<br/>install-count signal"]
+    C2 -->|"no fit"| C3["🟠 GitHub raw<br/>widest, weakest"]
+    C3 --> J["🎲 Jev orders<br/>the candidates"]
+    J --> P["👤 YOU review<br/>and run the install"]
+```
+
 ## Why use it?
 
 - **Less context switching:** keep planning and building in the same workflow.
@@ -35,16 +73,20 @@ charge of every decision and every merge.
 
 ## Start in 2 minutes
 
-Requirements: [OpenCode](https://opencode.ai/docs/) **1.19.x** (V1) or **OpenCode
-2.x** (V2), and Node.js **>=26.4.0** for the CLI and tooling. **OpenCode 2.0.22
-is known broken**; see [Compatibility](docs/COMPATIBILITY.md).
+Requirements: [OpenCode](https://opencode.ai/docs/) **2.x** and Node.js
+**>=26.4.0** for the CLI and tooling. **OpenCode 2.0.22 is known broken**; see
+[Compatibility](docs/COMPATIBILITY.md).
 
-From the project where you want to use Pantheon:
+From anywhere (global, all projects) or inside a project:
 
 ```bash
-npx pantheon-opencode init
+opencode plugin add pantheon-opencode
+# or pin it: opencode plugin add pantheon-opencode@<version>
 opencode
 ```
+
+Restart OpenCode when prompted. `npx pantheon-opencode init` remains only
+as the OpenCode 1.x migration path and an opt-in project scaffolding tool.
 
 Direct `init` uses the same component defaults in TTY and headless runs:
 `agents`, `skills`, `instructions`, `commands`, and `plugins`. `runtime` and
@@ -53,18 +95,18 @@ then asks once for final authorization (default **no**). Without a TTY, `init`
 is preview-only unless `--yes` explicitly authorizes the apply; `--yes` skips
 prompts but still prints the preview and checks for drift.
 
-`npm run setup` is a separate repository setup wrapper. On detected OpenCode V2
-it reviews the global config before installer init: legacy permission rules can
-be migrated after explicit review. Config migration and installer changes are
-preflighted before one final authorization; `--yes` alone does not authorize
-setup writes, and headless/CI setup remains preview-only. Direct
-`npx pantheon-opencode init` does not run that V2 config-migration review. See
-the [installation guide](docs/INSTALLATION.md) for layer handling, conflict
-choices, backups, and recovery.
-Existing native V2 `permissions` arrays remain authoritative. Unsafe MCP
+`npm run setup` is a separate repository setup wrapper. On a detected
+OpenCode 2.x host it reviews the global config before installer init: legacy
+permission rules can be migrated after explicit review. Config migration and
+installer changes are preflighted before one final authorization; `--yes`
+alone does not authorize setup writes, and headless/CI setup remains
+preview-only. Direct `npx pantheon-opencode init` does not run that
+config-migration review. See the [installation guide](docs/INSTALLATION.md)
+for layer handling, conflict choices, backups, and recovery.
+Existing native `permissions` arrays remain authoritative. Unsafe MCP
 wildcard policies and ineffective `ask` rules require explicit resolution;
 third-party flat MCP entries in `opencode.jsonc` must be converted to
-`mcp.servers` or removed before V2 setup.
+`mcp.servers` or removed before setup.
 
 Global `init` and `setup` use `$XDG_CONFIG_HOME/opencode` when
 `XDG_CONFIG_HOME` is absolute; otherwise they use `~/.config/opencode`.
@@ -80,9 +122,8 @@ When you ask for a plan, Athena returns it to Zeus, who displays it in the main
 conversation before asking for approval — never as a plan hidden in a child
 agent's conversation.
 
-Restart OpenCode after installing or changing the plugin generation. The
-installer selects one generation per installation; V1 and V2 plugins are never
-registered together.
+Restart OpenCode after installing or changing the plugin. Pantheon registers a
+single plugin; a host never loads two Pantheon plugins.
 
 Installer flags, exit codes, saved plans, backup and restore, uninstall,
 reconcile, and MCP pins are in the [installation guide](docs/INSTALLATION.md).
@@ -93,7 +134,7 @@ see [Quick Start](docs/QUICKSTART.md).
 
 - **14 specialized agents** with one orchestrator, implementation specialists,
   a quality gate, and supporting roles.
-- **20 skills** and reusable instructions for planning, building, reviewing,
+- **23 skills** and reusable instructions for planning, building, reviewing,
   and documenting work.
 - **5 local MCP servers** for project memory, persistence, resources, confined
   script execution, and vision.
@@ -108,7 +149,7 @@ see [Quick Start](docs/QUICKSTART.md).
   [router reference](docs/reference/local-decision-router.md) and the
   [Native Decisions (Jev)](docs/reference/native-decisions.md).
 - **An optional TUI** with a dispatch sidebar block and a full-width
-  `/dispatch` panel. The V2 sidebar keeps the Pantheon version, the active
+  `/dispatch` panel. The sidebar keeps the Pantheon version, the active
   preset/source, git state, and a `Context` block (tokens, a percent gauge,
   `$<spent> spent`, and a muted `cache <n>% · <n.n> tok/s` line); the native
   prompt footer keeps its own line, and Pantheon only appends
@@ -128,7 +169,7 @@ see [Quick Start](docs/QUICKSTART.md).
 Vision requests to OpenCode Zen require a valid active session and are rejected
 before image fetching or model-catalog lookup when the session is missing or
 invalid. The Python vision MCP keeps its local metadata/OCR fallback when no
-gateway credential is configured. In the V2 plugin, an explicit Vision model
+gateway credential is configured. In the plugin, an explicit Vision model
 pin that is unavailable or ineligible returns an actionable error rather than
 silently switching models; remove the pin to use automatic model discovery.
 
@@ -139,24 +180,24 @@ routine child summaries stay in the handoff. See [Memory](docs/MEMORY.md).
 
 ## Compatibility
 
-OpenCode **1.19.x** (V1 plugin) and **OpenCode 2.x** (V2 plugin) are supported.
-**OpenCode 2.0.22 is known broken.** From 1.7 onward the line drops the V1
-contract and targets OpenCode 2 only.
+OpenCode **2.x** is supported. **OpenCode 2.0.22 is known broken.** **2.0
+removes the OpenCode V1 contract entirely** — 1.7.x was the last line with V1
+support.
 
 The support policy, the known-broken exception, and the verified-version
 evidence have exactly one home: [Compatibility](docs/COMPATIBILITY.md).
 
-### V2 plugin options
+### Plugin options
 
-The OpenCode V2 host hands a plugin its `options` only from the object form of
-the entry. `init` writes that form for the optional per-request context pruner;
-memory retrieval stays an explicit `memory_search` MCP call.
+The host hands a plugin its `options` only from the object form of the entry.
+`init` writes that form for the optional per-request context pruner; memory
+retrieval stays an explicit `memory_search` MCP call.
 
 ```json
 {
   "plugins": [
     {
-      "package": "/path/to/pantheon-opencode/src/plugin-v2",
+      "package": "/path/to/pantheon-opencode/src/plugin",
       "options": {
         "context_pruner": { "enabled": true }
       }
@@ -179,7 +220,7 @@ one-time warning in the hook log, so a typo cannot silently change behaviour. Ru
 `npx pantheon-opencode doctor` to see whether the installed entry can receive
 options at all. An old `memory_injection` option may remain in an existing
 config because user options are preserved, but the plugin no longer reads it.
-Full rules: [OpenCode V2](docs/opencode-v2.md) and [Memory](docs/MEMORY.md).
+Full rules: [OpenCode 2.x](docs/opencode.md) and [Memory](docs/MEMORY.md).
 
 ## Delegation
 
@@ -214,9 +255,9 @@ historical/inactive, and legacy consent, caps, period, provider selection, or
 credentials cannot activate it. Native child-session dispatch remains separate.
 
 The one native egress surface is the Zeus-only `pantheon_jev_decide` tool,
-available on hosts that expose the V2.2.5 native Decisions API; its full gate
+available on hosts that expose the 2.2.5 native Decisions API; its full gate
 chain, routes, and settlement rules are documented once in
-[V2 native Decisions](docs/reference/native-decisions.md). An opt-in second
+[Native Decisions (Jev)](docs/reference/native-decisions.md). An opt-in second
 consumer of that chain, the J1 risk-score shadow gate, fires one bounded
 native decision per write/execute tool call behind `PANTHEON_J1_RISK_SCORE`
 (off by default, zero overhead when off): the request carries no user content
@@ -286,26 +327,26 @@ test-only credential, verifies a local recommendation marker, and verifies zero
 native Decisions or global `fetch` calls. This is an offline regression check of
 that hook, not a claim about unexercised network paths or a live-provider test.
 Measured surface coverage is
-reported honestly rather than implied: P7 runs behind `PANTHEON_V2_P7_LOOP` with
+reported honestly rather than implied: P7 runs behind `PANTHEON_P7_LOOP` with
 an **advisory** execution cap (never described as enforcement), P2 is
 **advisory-only** (an empirical no-op on the default path), P9 was measured on
 top-level **and child** sessions with `reason:"overflow"` still unmeasured, and
 P8 is **advisory: not activatable by measurement** — its declared rules match no
 delivered permission payload, so it narrows nothing (PROBE-F).
 
-### The V2 decision layer is declared in full and wired in part
+### The decision layer is declared in full and wired in part
 
-The V2 decision layer declares eleven integration points (P1–P11) over three
+The decision layer declares eleven integration points (P1–P11) over three
 decision primitives — `ask`, `rank`, and `verify` — and a deterministic policy
 that decides which point may run. **Seven of the eleven have a production call
 site: two behind flags that are off by default, five in shadow.**
 
 - **P7 (loop)** is wired to `session.execution.succeeded` behind
-  `PANTHEON_V2_P7_LOOP`, which is off. It writes each observation to an
+  `PANTHEON_P7_LOOP`, which is off. It writes each observation to an
   in-memory, bounded telemetry collector that the plugin never reads back and
   exposes only to tests, so "records" here does not mean an operator-visible log.
 - **P8 (guardrail)** is wired to `permission.evaluate` behind
-  `PANTHEON_V2_P8_GUARDRAIL`, which is off. C8 is closed **by measurement**, and
+  `PANTHEON_P8_GUARDRAIL`, which is off. C8 is closed **by measurement**, and
   the measurement is negative: PROBE-F delivered 24 real `permission.evaluate`
   events and every declared rule matched none of them (a valid `action` token and
   a top-level `sessionID` are always present), the host resolves an unrecognised
@@ -366,7 +407,7 @@ What the layer does **not** do today, stated as measured rather than implied:
   on the default path, because the host sends `prompt.skills` absent. Effective
   project-skill filtering was cancelled by measurement, not emulated, and no
   token reduction is claimed.
-- **P7 (loop) is behind `PANTHEON_V2_P7_LOOP`, off by default, and does not
+- **P7 (loop) is behind `PANTHEON_P7_LOOP`, off by default, and does not
   enforce loop limits.** It counts executions and writes an `effect: none`
   observation to an in-memory collector that nothing reads back. Its
   12-execution cap is **advisory**: no measured host surface signals a new user
@@ -396,14 +437,14 @@ What the layer does **not** do today, stated as measured rather than implied:
   gain or loss in retrieval or tokens is claimed in either direction.
 
 Calibration that was run: the offline harness
-(`npx tsx tests/pantheon/v2-decision-harness.test.ts`) executed 264 synthetic
+(`npx tsx tests/pantheon/decision-harness.test.ts`) executed 264 synthetic
 cases — 132 normal, 66 refusal, 66 adversarial — across the eleven points, with
 24 cases per point and the suite asserting at least 20 cases, 5 refusals and 5
 adversarial cases per point. All 264 cases passed on 2026-10-31. This harness is
 the only place all eleven points are exercised in one run, but it imports no
 adapter module: it iterates the registry and exercises the shared primitives,
 while the adapters are covered by their per-point suites
-(`v2-decision-p1.test.ts` … `v2-decision-p11.test.ts`). Passing it says nothing
+(`decision-p1.test.ts` … `decision-p11.test.ts`). Passing it says nothing
 about whether a point is registered in a host.
 The harness measures contracts (admission, refusal, shadow no-op, telemetry
 redaction, offline discipline, registry integrity), **not** token use, quality,
@@ -417,10 +458,10 @@ recorded in the [router reference](docs/reference/local-decision-router.md).
 | [Installation](docs/INSTALLATION.md) | [Architecture](docs/ARCHITECTURE.md) |
 | [Quick Start](docs/QUICKSTART.md) | [MCP](docs/MCP.md) · [MCP tools](docs/mcp-tools.md) |
 | [Upgrading](docs/UPGRADING.md) | [Memory](docs/MEMORY.md) |
-| [Compatibility](docs/COMPATIBILITY.md) | [OpenCode V2](docs/opencode-v2.md) |
+| [Compatibility](docs/COMPATIBILITY.md) | [OpenCode 2.x](docs/opencode.md) |
 | [Agents & Skills](docs/agents/README.md) | [Platforms](docs/PLATFORMS.md) |
 | [Release Process](docs/RELEASING.md) | [Branch Protection](docs/BRANCH-PROTECTION.md) |
-| [Model Routing](docs/reference/model-routing.md) | [Local Decision Router](docs/reference/local-decision-router.md) · [V2 Native Decisions](docs/reference/native-decisions.md) · [Offline Evaluation Protocol](docs/reference/offline-evaluation.md) · [Env Vars](docs/reference/env-vars.md) · [Code Mode](docs/reference/code-mode.md) |
+| [Model Routing](docs/reference/model-routing.md) | [Local Decision Router](docs/reference/local-decision-router.md) · [Native Decisions (Jev)](docs/reference/native-decisions.md) · [Offline Evaluation Protocol](docs/reference/offline-evaluation.md) · [Env Vars](docs/reference/env-vars.md) · [Code Mode](docs/reference/code-mode.md) |
 | [Contributing](CONTRIBUTING.md) | [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) |
 
 Memory writes through `pantheon-memory` are serialized, and failed writes are
@@ -430,7 +471,13 @@ the current project root per request while preserving the trusted
 `PANTHEON_HOME` fallback. See [Memory](docs/MEMORY.md) for store separation and
 [MCP tools](docs/mcp-tools.md) for details.
 
-The release install gate's tool canary loads the installed tarball's V2 plugin
+Native-MCP usage is measured, not assumed: `node bench/mcp-usage-audit.mjs`
+writes a dated audit of real memory/persistence/vision/code-mode/resource
+usage (reports stay local — they carry bounded session excerpts), and the
+agent usage policies derived from it are documented in
+[MCP tools](docs/mcp-tools.md).
+
+The release install gate's tool canary loads the installed tarball's plugin
 entry under OpenCode 2.0.30 and verifies `hashline_edit` registration, Code Mode
 visibility, and a bounded edit in an isolated project. It does not prove npm
 publication or compatibility with untested host versions; details are in the
@@ -456,7 +503,7 @@ latest published changes.
 ## What's new
 
 See the [GitHub release](https://github.com/ils15/pantheon-opencode/releases)
-and [CHANGELOG.md](CHANGELOG.md) for the changes in 1.6.1.
+and [CHANGELOG.md](CHANGELOG.md) for the changes in 1.7.0.
 
 ## Contribute
 

@@ -27,6 +27,11 @@ import { installOpenCode } from '../scripts/install/opencode.mjs'
 import { formatChangePlan } from '../scripts/install/plan.mjs'
 import { ROOT } from '../scripts/install/shared.mjs'
 
+// test:node runs on machines without an OpenCode binary, so the host gate
+// could not confirm the generation it writes for. Pin it for this file: every
+// install in here targets the only supported host line. Gate-specific tests
+// that pass their own env/probe stay deterministic either way.
+process.env.OPENCODE_VERSION = 'v2'
 const REPO_ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 
 /** Run `fn` with console.log/warn/error captured instead of printed. */
@@ -160,7 +165,6 @@ test('a quiet dry-run install preview prints no NOT FOUND and no dry-run noise',
       installOpenCode(target, true, false, ['agents', 'runtime'], {
         yes: true,
         headless: true,
-        version: 'v1',
         quiet: true,
         quietPlan: true,
       }),
@@ -188,7 +192,6 @@ test('doctor --json keeps its JSON intact and leaks no dry-run preview lines', a
     await installOpenCode(target, false, false, ['agents'], {
       yes: true,
       headless: true,
-      version: 'v1',
       quiet: true,
     })
 
@@ -223,7 +226,6 @@ test('the previewed plan contains the same MCP entries the apply writes', async 
     const plan = await installOpenCode(target, true, false, ['runtime'], {
       yes: true,
       headless: true,
-      version: 'v1',
       quiet: true,
       quietPlan: true,
     })
@@ -234,7 +236,6 @@ test('the previewed plan contains the same MCP entries the apply writes', async 
     await installOpenCode(target, false, false, ['runtime'], {
       yes: true,
       headless: true,
-      version: 'v1',
       quiet: true,
       // Seams: no real venv/network in a unit test. The health check passes,
       // which is the state the preview promises.
@@ -247,7 +248,7 @@ test('the previewed plan contains the same MCP entries the apply writes', async 
     const applied = readFileSync(configPath, 'utf8')
     const config = JSON.parse(applied)
     assert.equal(
-      Object.keys(config.mcp ?? {}).length,
+      Object.keys(config.mcp?.servers ?? {}).length,
       5,
       `the apply must write the five MCP servers: ${JSON.stringify(config.mcp)}`,
     )
@@ -286,7 +287,6 @@ test('a fresh-target plan has no phantom no-op operations for nonexistent paths'
     const plan = await installOpenCode(target, true, false, undefined, {
       yes: true,
       headless: true,
-      version: 'v1',
       quiet: true,
       quietPlan: true,
     })
@@ -322,7 +322,7 @@ function relativePlan(plan, target) {
     .sort((left, right) => left.path.localeCompare(right.path))
 }
 
-test('default dry-run plan matches the pinned V2 plan on a V2 host', async () => {
+test('default dry-run plan matches the env-pinned plan on a 2.x host', async () => {
   // Equal-length temp roots keep path-embedded byte counts comparable.
   const targetA = mkdtempSync(join(tmpdir(), 'pantheon-plan-a-'))
   const targetB = mkdtempSync(join(tmpdir(), 'pantheon-plan-b-'))
@@ -336,7 +336,6 @@ test('default dry-run plan matches the pinned V2 plan on a V2 host', async () =>
   try {
     const auto = await installOpenCode(targetA, true, false, ['agents', 'plugins'], {
       ...common,
-      version: 'auto',
       // The resolver only consults env when it is supplied; an empty env keeps
       // the test independent of the machine running it.
       env: {},
@@ -344,11 +343,9 @@ test('default dry-run plan matches the pinned V2 plan on a V2 host', async () =>
     })
     const pinned = await installOpenCode(targetB, true, false, ['agents', 'plugins'], {
       ...common,
-      version: 'v2',
-      env: {},
+      env: { OPENCODE_VERSION: 'v2' },
     })
     assert.equal(auto.openCodeVersion, 'v2', 'the probe must resolve the real host generation')
-    assert.equal(auto.versionAssumed, false, 'a successful probe is not an assumption')
     assert.deepEqual(
       relativePlan(auto, targetA),
       relativePlan(pinned, targetB),
@@ -370,25 +367,30 @@ test('default dry-run plan matches the pinned V2 plan on a V2 host', async () =>
   }
 })
 
-test('a failed host probe stays loud and says the plan assumes V1', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-plan-fallback-'))
+test('a failed host probe refuses the plan before anything is planned', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-plan-unprobed-'))
   try {
-    const plan = await installOpenCode(target, true, false, ['agents'], {
-      yes: true,
-      headless: true,
-      quiet: true,
-      quietPlan: true,
-      version: 'auto',
-      env: {},
-      probe: () => {
-        throw new Error('no such binary: opencode')
+    // There is no generation to fall back to, so an unprovable host fails the
+    // run BEFORE the plan exists — the pin is the deterministic escape hatch.
+    await assert.rejects(
+      () =>
+        installOpenCode(target, true, false, ['agents'], {
+          yes: true,
+          headless: true,
+          quiet: true,
+          quietPlan: true,
+          env: {},
+          probe: () => {
+            throw new Error('no such binary: opencode')
+          },
+        }),
+      (err) => {
+        assert.match(err.message, /Could not probe the host OpenCode version/)
+        assert.match(err.message, /pin OPENCODE_VERSION=v2/)
+        return true
       },
-    })
-    assert.equal(plan.openCodeVersion, 'v1')
-    assert.equal(plan.versionAssumed, true)
-    const text = formatChangePlan(target, plan)
-    assert.match(text, /assumes V1/)
-    assert.match(text, /may diverge/)
+    )
+    assert.equal(existsSync(join(target, 'opencode.json')), false, 'nothing was written')
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
@@ -404,7 +406,6 @@ test('the plan summary lists the MCP servers in the order the apply writes them'
     const plan = await installOpenCode(target, true, false, ['runtime'], {
       yes: true,
       headless: true,
-      version: 'v1',
       quiet: true,
       quietPlan: true,
     })
@@ -425,7 +426,6 @@ test('the plan summary lists the MCP servers in the order the apply writes them'
     await installOpenCode(target, false, false, ['runtime'], {
       yes: true,
       headless: true,
-      version: 'v1',
       quiet: true,
       deps: {
         setupVenv: () => {},
@@ -433,7 +433,7 @@ test('the plan summary lists the MCP servers in the order the apply writes them'
       },
     })
     const applied = JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8'))
-    assert.deepEqual(Object.keys(applied.mcp), plan.mcpServers)
+    assert.deepEqual(Object.keys(applied.mcp.servers), plan.mcpServers)
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
@@ -445,7 +445,6 @@ test('the plan summary names actual runtime and venv side effects without file d
     const plan = await installOpenCode(target, true, false, ['runtime'], {
       yes: true,
       headless: true,
-      version: 'v1',
       quiet: true,
       quietPlan: true,
     })
@@ -459,7 +458,6 @@ test('the plan summary names actual runtime and venv side effects without file d
     const forced = await installOpenCode(target, true, true, ['runtime'], {
       yes: true,
       headless: true,
-      version: 'v1',
       quiet: true,
       quietPlan: true,
     })

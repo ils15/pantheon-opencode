@@ -73,7 +73,7 @@ npx pantheon-opencode init --opencode-version auto
 
 `auto` is the default. `--version v1|v2` remains accepted after `init` as the
 legacy spelling. The resolution order and fallback behavior are documented once
-in [Compatibility](COMPATIBILITY.md#how-the-generation-is-selected). `auto`
+in [Compatibility](COMPATIBILITY.md#the-host-gate). `auto`
 never installs both Pantheon plugin generations.
 
 ### Migration checklist
@@ -106,7 +106,7 @@ does not mean it guessed. Pass `--opencode-version v2` explicitly, or set
   BackgroundJobBoard lifecycle, and the V1 event/tool/compaction hooks.
 - **V2:** does not register the BackgroundJobBoard, V1 event/tool hooks, or a
   Pantheon V1 compaction hook. It adds the V2 hooks documented in
-  [OpenCode V2](opencode-v2.md).
+  [OpenCode 2.x](opencode.md).
 - **Recovery:** on restart, old or running V1 board jobs are marked errored;
   they are not auto-resumed and child work is not restarted automatically. V2
   adds no automatic resume/restart behavior.

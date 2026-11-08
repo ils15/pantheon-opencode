@@ -21,6 +21,11 @@ import { test } from 'node:test'
 import { setupRuntimePhase } from '../scripts/install/opencode.mjs'
 import { checkRuntimePrerequisites } from '../scripts/install/shared.mjs'
 
+// test:node runs on machines without an OpenCode binary, so the host gate
+// could not confirm the generation it writes for. Pin it for this file: every
+// install in here targets the only supported host line. Gate-specific tests
+// that pass their own env/probe stay deterministic either way.
+process.env.OPENCODE_VERSION = 'v2'
 const ROOT = process.cwd()
 const BIN = join(ROOT, 'bin', 'pantheon-init.mjs')
 
@@ -73,7 +78,6 @@ test('config rewrite is preserved byte-for-byte in the exact backup set', async 
     await installOpenCode(target, false, false, ['agents'], {
       yes: true,
       headless: true,
-      version: 'v1',
     })
     const first = readFileSync(join(target, 'opencode.json'), 'utf8')
 
@@ -85,7 +89,6 @@ test('config rewrite is preserved byte-for-byte in the exact backup set', async 
     await installOpenCode(target, false, false, ['agents'], {
       yes: true,
       headless: true,
-      version: 'v1',
     })
 
     const withConfig = listBackupSets(target).filter((s) =>
@@ -144,7 +147,6 @@ test('runtime failure persists degraded state, preserves backup, and never print
       await installOpenCode(target, false, false, ['runtime'], {
         yes: true,
         headless: true,
-        version: 'v1',
         deps: {
           setupVenv: (_target, options) => {
             if (!options.dryRun) throw new Error('injected venv failure')
@@ -173,17 +175,22 @@ test('runtime failure persists degraded state, preserves backup, and never print
   }
 })
 
-test('CLI accepts --opencode-version auto and --components; warns on unknown flags', () => {
+test('CLI accepts --components; the removed generation flag now warns as unknown', () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-flags-'))
   try {
     const base = ['init', '--project', '--yes', '--headless', '--dry-run']
 
+    // The generation selector is gone with the V1 contract: the flag is no
+    // longer a value flag, so it is skipped over (with its value ignored) and
+    // reported as an unknown option — but the run still succeeds, because the
+    // flag carries no meaning the installer could honor.
     const auto = spawnSync(process.execPath, [BIN, ...base, '--opencode-version', 'auto'], {
       cwd: target,
       encoding: 'utf8',
       timeout: 120_000,
     })
-    assert.equal(auto.status, 0, `--version auto must be accepted: ${auto.stderr}`)
+    assert.equal(auto.status, 0, `the removed flag must not fail the run: ${auto.stderr}`)
+    assert.match(`${auto.stdout}\n${auto.stderr}`, /Unknown option ignored: --opencode-version/)
 
     const comps = spawnSync(process.execPath, [BIN, ...base, '--components', 'agents,skills'], {
       cwd: target,
@@ -230,19 +237,29 @@ test('install prunes Pantheon refs from stale install locations, keeps third-par
     await installOpenCode(target, false, false, ['agents'], {
       yes: true,
       headless: true,
-      version: 'v1',
     })
 
-    const refs = JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8')).plugin
-    const stale = refs.filter((r) => typeof r === 'string' && r.includes('/old/'))
-    assert.deepEqual(stale, [], `stale install refs must be pruned: ${JSON.stringify(refs)}`)
-    assert.ok(
-      refs.includes(join(ROOT, 'src', 'plugin.ts')) &&
-        refs.includes(join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts')),
-      'current install refs must be present',
+    const config = JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8'))
+    // The singular key is legacy: Pantheon refs (including stale nvm/npx V1
+    // paths) are stripped everywhere; unverified third-party entries stay put.
+    const stale = (config.plugin ?? [])
+      .concat(config.plugins ?? [])
+      .filter((r) => typeof r === 'string' && r.includes('/old/'))
+    assert.deepEqual(stale, [], `stale install refs must be pruned: ${JSON.stringify(config)}`)
+    const v2Entry = (config.plugins ?? []).find(
+      (entry) => typeof entry === 'object' && entry?.package === join(ROOT, 'src', 'plugin'),
     )
-    assert.ok(refs.includes('/tmp/vendor/src/plugin.ts'), 'third-party preserved')
-    assert.ok(refs.includes('@scope/user-plugin'), 'user plugin preserved')
+    assert.ok(v2Entry, 'the V2 plugin directory must be registered')
+    assert.deepEqual(v2Entry.options, {})
+    assert.ok(
+      (config.plugin ?? []).includes('/tmp/vendor/src/plugin.ts'),
+      'third-party preserved in the legacy key',
+    )
+    assert.ok(
+      (config.plugin ?? []).includes('@scope/user-plugin'),
+      'user plugin preserved in the legacy key',
+    )
+    assert.ok(!config.plugin.includes(undefined))
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
@@ -254,7 +271,6 @@ test('apply gate: a declined prompt writes nothing and reports applied:false', a
   try {
     const result = await installOpenCode(target, false, false, ['agents', 'commands'], {
       headless: true,
-      version: 'v1',
       deps: { promptReview: async () => false },
     })
     assert.equal(result.applied, false)
@@ -271,7 +287,6 @@ test('apply gate: an accepted prompt applies and reports applied:true', async ()
   try {
     const result = await installOpenCode(target, false, false, ['agents', 'commands'], {
       headless: true,
-      version: 'v1',
       deps: { promptReview: async () => true },
     })
     assert.equal(result.applied, true)

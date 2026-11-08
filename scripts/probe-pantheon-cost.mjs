@@ -220,7 +220,7 @@ async function main() {
   const dataHome = join(root, 'data')
   const opencodeDir = join(dataHome, 'opencode')
   // Every real installation writes `opencode.db`; the v1/v2 distinction is the
-  // SCHEMA of that file, never its name. Deriving `opencode-v2.db` here made the
+  // SCHEMA of that file, never its name. Deriving `opencode.db` here made the
   // probe assert a path that exists on no real machine.
   const selectedDb = join(opencodeDir, 'opencode.db')
   const otherDb = join(root, 'other.db')

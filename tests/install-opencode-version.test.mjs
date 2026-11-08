@@ -7,35 +7,30 @@ import { test } from 'node:test'
 import {
   deduplicatePluginReferences,
   installOpenCode,
-  parseOpenCodeVersion,
   pluginReferenceIdentity,
   resolveInstalledPlugin,
   resolveOpenCodeVersion,
+  unsupportedHostMessage,
 } from '../scripts/install/opencode.mjs'
 import { ROOT } from '../scripts/install/shared.mjs'
 
 const NO_COMPONENTS = []
 // Canonical V2 entry: the plugin directory inside the installed package.
-// V2_EXPORT / V2_LEGACY_FILE are pre-directory-contract refs the installer
-// migrates into V2_PLUGIN.
-const V2_PLUGIN = join(ROOT, 'src', 'plugin-v2')
-const V2_EXPORT = 'pantheon-opencode/plugin-v2'
-const _V2_LEGACY_FILE = 'src/plugin-v2.ts'
+const V2_PLUGIN = join(ROOT, 'src', 'plugin')
 const THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN = '/tmp/vendor/pantheon-opencode/src/plugin.ts'
 const THIRD_PARTY_PANTHEON_PLUGIN = '/tmp/vendor/pantheon/src/plugin.ts'
 
 // `extra` is merged into the installer options bag. It exists so a test can
-// omit `version` (exercising the real default gate) while still pinning the
+// omit any host pin (exercising the real default gate) while still pinning the
 // host probe — CI has no `opencode` binary on PATH, so an unpinned probe would
 // make these assertions environment-dependent instead of deterministic.
-async function installConfig(existingConfig, version, extra = {}) {
+async function installConfig(existingConfig, extra = {}) {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-version-'))
   try {
     writeFileSync(join(target, 'opencode.json'), JSON.stringify(existingConfig, null, 2))
     await installOpenCode(target, false, false, NO_COMPONENTS, {
       yes: true,
       headless: true,
-      version,
       ...extra,
     })
     return JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8'))
@@ -64,7 +59,7 @@ const hostStreams =
 const hostProbeFails = () => {
   throw new Error('spawnSync opencode ENOENT')
 }
-/** Swallow the soft-fail warning so test output stays readable. */
+/** Swallow the unknown-host warning so test output stays readable. */
 const silentWarn = () => {}
 
 /**
@@ -82,149 +77,100 @@ function verboseBanner(tokens) {
 
 /** Resolve with an isolated env and a swallowed warning — for the gate tests. */
 const resolveVersion = (options) =>
-  resolveOpenCodeVersion('auto', { env: {}, warn: silentWarn, ...options })
+  resolveOpenCodeVersion({ env: {}, warn: silentWarn, ...options })
 
-/** V1-only file paths the V1 generation registers in the singular `plugin` key. */
+/** V1-only file paths the removed V1 generation registered in the singular key. */
 const V1_TS_PATHS = [
   join(ROOT, 'src', 'plugin.ts'),
   join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts'),
 ]
 
-test('parses --opencode-version=v1, v2, and auto', () => {
-  assert.equal(parseOpenCodeVersion(['init', '--opencode-version=v1']), 'v1')
-  assert.equal(parseOpenCodeVersion(['init', '--opencode-version=v2']), 'v2')
-  assert.equal(parseOpenCodeVersion(['init', '--opencode-version=auto']), 'auto')
-})
-
-test('parses separated version values and rejects invalid values', () => {
-  assert.equal(parseOpenCodeVersion(['init', '--opencode-version', 'v1']), 'v1')
-  assert.equal(parseOpenCodeVersion(['init', '--opencode-version', 'v2']), 'v2')
-  assert.equal(parseOpenCodeVersion(['init', '--opencode-version', 'auto']), 'auto')
+test('the env pin accepts only v2 and refuses the v1 generation explicitly', () => {
+  assert.equal(resolveOpenCodeVersion({ env: { OPENCODE_VERSION: 'v2' } }), 'v2')
   assert.throws(
-    () => parseOpenCodeVersion(['init', '--opencode-version=v3']),
-    /expected v1, v2, or auto/,
-  )
-  assert.throws(() => parseOpenCodeVersion(['init', '--version', 'v3']), /expected v1, v2, or auto/)
-  assert.throws(
-    () => parseOpenCodeVersion(['init', '--version', 'banana']),
-    /expected v1, v2, or auto/,
-  )
-  assert.throws(
-    () => parseOpenCodeVersion(['init', '--version=banana']),
-    /expected v1, v2, or auto/,
-  )
-  assert.throws(() => parseOpenCodeVersion(['init', '--version']), /--version requires a value/i)
-})
-
-test('rejects explicit version selectors with missing values', () => {
-  for (const [args, flag] of [
-    [['init', '--version'], '--version'],
-    [['init', '--version', '--dry-run'], '--version'],
-    [['init', '--version='], '--version'],
-    [['init', '--opencode-version'], '--opencode-version'],
-    [['init', '--opencode-version', '--yes'], '--opencode-version'],
-    [['init', '--opencode-version='], '--opencode-version'],
-  ]) {
-    assert.throws(
-      () => parseOpenCodeVersion(args),
-      new RegExp(`${flag.replaceAll('-', '\\-')} requires a value`, 'i'),
-    )
-  }
-})
-
-test('auto resolves an explicit environment or opencode2 binary hint', () => {
-  assert.equal(resolveOpenCodeVersion('auto', { env: { OPENCODE_VERSION: 'v2' } }), 'v2')
-  assert.equal(resolveOpenCodeVersion('auto', { env: {}, binary: '/usr/bin/opencode2' }), 'v2')
-  // A plain `opencode` basename carries no hint, so the decision now falls
-  // through to the host probe. Pin a failing probe: leaving the real binary to
-  // answer would make this assertion depend on the developer's PATH.
-  assert.equal(
-    resolveOpenCodeVersion('auto', {
-      env: {},
-      binary: '/usr/bin/opencode',
-      probe: hostProbeFails,
-      warn: silentWarn,
-    }),
-    'v1',
-  )
-  assert.throws(() => resolveOpenCodeVersion('v3'), /expected v1, v2, or auto/)
-})
-
-test('v1 preserves config.plugins and third-party paths in config.plugin', async () => {
-  const config = await installConfig(
-    {
-      plugin: [THIRD_PARTY_PANTHEON_PLUGIN, '@scope/custom-plugin'],
-      plugins: ['custom-v2-plugin'],
+    () => resolveOpenCodeVersion({ env: { OPENCODE_VERSION: 'v1' } }),
+    (err) => {
+      assert.match(err.message, /Pantheon 2\.0 requires OpenCode 2\.x/)
+      assert.match(err.message, /this host is 1\.x/)
+      return true
     },
-    'v1',
   )
-
-  assert.deepEqual(config.plugins, ['custom-v2-plugin'])
-  assert.equal(config.plugin.filter((entry) => entry.endsWith('/plugin.ts')).length, 2)
-  assert.ok(config.plugin.includes(THIRD_PARTY_PANTHEON_PLUGIN))
-  assert.equal(config.plugin.filter((entry) => entry.endsWith('/pantheon-hooks.ts')).length, 1)
-  assert.ok(config.plugin.includes('@scope/custom-plugin'))
-  assert.ok(config.plugin.includes(join(ROOT, 'src', 'plugin.ts')))
-  assert.ok(config.plugin.includes(join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts')))
+  assert.throws(
+    () => resolveOpenCodeVersion({ env: { OPENCODE_VERSION: 'banana' } }),
+    /Invalid OPENCODE_VERSION/,
+  )
 })
 
-test('v2 leaves an UNLOADABLE third-party config.plugin entry where it is', async () => {
+test('an opencode2 basename is a 2.x hint that skips the probe', () => {
+  assert.equal(resolveOpenCodeVersion({ env: {}, binary: '/usr/bin/opencode2' }), 'v2')
+  // A plain `opencode` basename carries no hint: the gate falls through to
+  // the host probe. Pin a failing probe so the assertion cannot depend on
+  // the developer's PATH — and there is no generation to fall back to, so
+  // an unprobeable host is a refusal, not a warning.
+  assert.throws(
+    () =>
+      resolveOpenCodeVersion({
+        env: {},
+        binary: '/usr/bin/opencode',
+        probe: hostProbeFails,
+        warn: silentWarn,
+      }),
+    /Could not probe the host OpenCode version/,
+  )
+})
+test('V2-only installs never write .ts file paths and register the V2 directory', async () => {
+  const config = await installConfig(
+    { plugin: [], plugins: [V2_PLUGIN] },
+    { env: {}, probe: hostSays('2.0.22'), warn: silentWarn },
+  )
+
+  assert.deepEqual(
+    {
+      hasV2Directory: v2EntryOf(config)?.package === V2_PLUGIN,
+      tsFilePaths: (config.plugin ?? []).filter((entry) => entry.endsWith('.ts')).length,
+    },
+    { hasV2Directory: true, tsFilePaths: 0 },
+  )
+})
+
+test('an UNLOADABLE third-party config.plugin entry stays where it is', async () => {
   const config = await installConfig(
     {
       plugin: ['user-v1-plugin'],
       plugins: ['user-v2-plugin'],
     },
-    'v2',
+    { env: {}, probe: hostSays('2.0.22'), warn: silentWarn },
   )
 
-  // `user-v1-plugin` is a package shorthand: the V2 loader would resolve it
+  // `user-v1-plugin` is a package shorthand: the loader would resolve it
   // through npm install and fail (NpmInstallFailedError), so migrating it into
   // `plugins` would turn "ignored" into "the config fails to load". It stays in
-  // the singular key, which the V2 host ignores.
+  // the singular key, which the host ignores.
   assert.equal(config.plugins[0], 'user-v2-plugin')
   assert.ok(!config.plugins.includes('user-v1-plugin'))
   assert.deepEqual(config.plugin, ['user-v1-plugin'])
   assert.equal(v2EntryOf(config).package, V2_PLUGIN)
   assert.deepEqual(v2EntryOf(config).options, {}, 'the entry must be able to carry options')
-  assert.ok(!config.plugins.includes(V2_EXPORT))
-  assert.ok(!config.plugins.includes(join(ROOT, 'src', 'plugin-v2.ts')))
+  assert.ok(!config.plugins.includes('pantheon-opencode/plugin'))
+  assert.ok(!config.plugins.includes(join(ROOT, 'src', 'plugin.ts')))
   assert.ok(!config.plugins.some((entry) => pluginReferenceIdentity(entry) === 'src/plugin.ts'))
 })
 
-test('auto selects V2 and V1 during migrations without mixing Pantheon refs', async () => {
-  const previousVersion = process.env.OPENCODE_VERSION
-  try {
-    process.env.OPENCODE_VERSION = 'v2'
-    const v2 = await installConfig(
-      {
-        plugin: [THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN, 'third-party-v1'],
-        plugins: [V2_PLUGIN, 'third-party-v2'],
-      },
-      'auto',
-    )
-    // Neither entry is a directory the V2 loader can load — one is a shorthand,
-    // the other a path that does not exist — so neither is migrated; both stay
-    // in the V1 list, which V2 ignores, instead of breaking the V2 config.
-    assert.ok(!v2.plugins.includes('third-party-v1'))
-    assert.ok(!v2.plugins.includes('/tmp/vendor/pantheon-opencode/src/plugin.ts'))
-    assert.deepEqual(v2.plugin, ['/tmp/vendor/pantheon-opencode/src/plugin.ts', 'third-party-v1'])
-    assert.deepEqual(v2EntryOf(v2).options, {})
-
-    process.env.OPENCODE_VERSION = 'v1'
-    const v1 = await installConfig(
-      {
-        plugin: ['third-party-v1'],
-        plugins: [V2_PLUGIN, 'third-party-v2'],
-      },
-      'auto',
-    )
-    assert.deepEqual(v1.plugins, ['third-party-v2'])
-    assert.ok(v1.plugin.includes(join(ROOT, 'src', 'plugin.ts')))
-    assert.ok(!v1.plugin.includes(V2_PLUGIN))
-  } finally {
-    if (previousVersion === undefined) delete process.env.OPENCODE_VERSION
-    else process.env.OPENCODE_VERSION = previousVersion
-  }
+test('unloadable third-party entries in the singular key are named, not migrated', async () => {
+  const config = await installConfig(
+    {
+      plugin: [THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN, 'third-party-v1'],
+      plugins: [V2_PLUGIN, 'third-party-v2'],
+    },
+    { env: {}, probe: hostSays('2.0.22'), warn: silentWarn },
+  )
+  // Neither entry is a directory the loader can load — one is a shorthand,
+  // the other a path that does not exist — so neither is migrated; both stay
+  // in the singular list, which the host ignores, instead of breaking the config.
+  assert.ok(!v2EntryOf(config) === false, 'the V2 entry must still be registered')
+  assert.ok(!config.plugins.includes('third-party-v1'))
+  assert.ok(!config.plugins.includes('/tmp/vendor/pantheon-opencode/src/plugin.ts'))
+  assert.deepEqual(v2EntryOf(config).options, {})
 })
 
 test('does not install or register TUI when the plugins component is omitted', async () => {
@@ -233,7 +179,9 @@ test('does not install or register TUI when the plugins component is omitted', a
     await installOpenCode(target, false, false, NO_COMPONENTS, {
       yes: true,
       headless: true,
-      version: 'v1',
+      env: {},
+      probe: hostSays('2.0.22'),
+      warn: silentWarn,
     })
     assert.equal(existsSync(join(target, '.opencode', 'tui.json')), false)
     assert.equal(existsSync(join(target, '.opencode', 'plugins', 'pantheon-tui')), false)
@@ -242,15 +190,18 @@ test('does not install or register TUI when the plugins component is omitted', a
   }
 })
 
-test('exact installed package plugin paths remain managed', () => {
-  const delegation = resolveInstalledPlugin(join(ROOT, 'src', 'plugin.ts'))
-  const hooks = resolveInstalledPlugin(join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts'))
-  assert.equal(delegation, join(ROOT, 'src', 'plugin.ts'))
-  assert.equal(hooks, join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts'))
-  assert.ok(existsSync(delegation))
-  assert.ok(existsSync(hooks))
+test('legacy V1 plugin paths heal to the canonical directory, and the files are gone', () => {
+  // The .ts files are gone from this package. A stale ref to the plugin entry
+  // HEALS to the canonical directory identity (the only shape the loader
+  // accepts), while non-entry legacy paths keep their verbatim identity so
+  // cleanup can still strip them.
+  assert.equal(resolveInstalledPlugin(join(ROOT, 'src', 'plugin.ts')), join(ROOT, 'src', 'plugin'))
+  assert.equal(
+    resolveInstalledPlugin(join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts')),
+    join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts'),
+  )
+  assert.equal(existsSync(join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts')), false)
 })
-
 test('external plugin paths under pantheon-named directories remain untouched', () => {
   assert.equal(
     resolveInstalledPlugin(THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN),
@@ -263,126 +214,135 @@ test('plugin deduplication uses Pantheon identity or full path, never basename',
   const refs = deduplicatePluginReferences([
     '/home/old/src/plugin.ts',
     join(ROOT, 'src', 'plugin.ts'),
+    join(ROOT, 'src', 'plugin'),
     '/user/plugin.ts',
     '/another/plugin.ts',
     'custom-plugin',
     'custom-plugin',
   ])
-  assert.equal(refs.filter((entry) => pluginReferenceIdentity(entry) === 'src/plugin.ts').length, 1)
+  // The .ts ref and the directory share one Pantheon identity: exactly one
+  // survives (the first seen). Basenames never collapse anything: both
+  // /user/plugin.ts and /another/plugin.ts stay.
+  assert.equal(refs.filter((entry) => pluginReferenceIdentity(entry) === 'src/plugin').length, 1)
   assert.ok(refs.includes('/user/plugin.ts'))
   assert.ok(refs.includes('/another/plugin.ts'))
   assert.equal(refs.filter((entry) => entry === 'custom-plugin').length, 1)
 })
-
 // ─── Host-version gate ──────────────────────────────────────────────────────
 
-test('default resolution on a 2.x host registers the V2 directory, never .ts file paths', async () => {
-  // Reproduces the shipped bug: on an OpenCode 2.x host the default gate used to
-  // resolve V1, whose branch writes .ts FILE paths into the singular `plugin`
-  // key. A 2.x host rejects those ("configured plugin path must be a directory")
-  // and the loader drops the entry, so the plugin surface silently dies.
-  // No `version` is passed — this exercises the real production default.
-  const config = await installConfig({ plugin: [], plugins: [V2_PLUGIN] }, undefined, {
-    env: {},
-    probe: hostSays('2.0.22'),
-    warn: silentWarn,
-  })
-
-  assert.deepEqual(
-    {
-      hasV2Directory: v2EntryOf(config)?.package === V2_PLUGIN,
-      tsFilePaths: (config.plugin ?? []).filter((entry) => entry.endsWith('.ts')).length,
-    },
-    { hasV2Directory: true, tsFilePaths: 0 },
-  )
+test('a confirmed 1.x host is refused with the exact unsupported-host message', () => {
+  const refusal = unsupportedHostMessage(1)
+  assert.match(refusal, /Pantheon 2\.0 requires OpenCode 2\.x/)
+  assert.match(refusal, /this host is 1\.x — uninstall Pantheon 1\.x or upgrade the host/)
+  for (const output of ['1.18.33', 'opencode v1.18.33\n', 'node v22.1.0 (opencode 1.18.33)']) {
+    let warnings = 0
+    assert.throws(
+      () =>
+        resolveOpenCodeVersion({
+          env: {},
+          probe: hostSays(output),
+          warn: () => (warnings += 1),
+        }),
+      /Pantheon 2\.0 requires OpenCode 2\.x; this host is 1\.x/,
+      `a 1.x host must be refused: ${JSON.stringify(output)}`,
+    )
+    assert.equal(warnings, 0, 'a 1.x refusal is an error, not a warning')
+  }
 })
 
-test('the default gate follows the host probe, with explicit > env > basename > probe precedence', () => {
-  const resolve = (options) =>
-    resolveOpenCodeVersion('auto', { env: {}, warn: silentWarn, ...options })
+test('an anchored 2.x probe resolves quietly, and the probe decides when nothing else is set', () => {
+  const resolve = (options) => resolveOpenCodeVersion({ env: {}, warn: silentWarn, ...options })
 
-  // The probe decides when nothing above it is set.
   assert.equal(resolve({ probe: hostSays('2.0.22') }), 'v2')
   assert.equal(resolve({ probe: hostSays('v2.4.1') }), 'v2', 'a leading "v" is tolerated')
-  assert.equal(resolve({ probe: hostSays('1.18.33') }), 'v1')
   // Real hosts print the binary name first: `opencode --version` emits
-  // "opencode v2.0.22". An anchored ^\d parser silently reads that as
-  // unparseable and soft-fails every 2.x host back to v1.
+  // "opencode v2.0.22". An anchored-^\d parser would read that as unparseable.
   assert.equal(resolve({ probe: hostSays('opencode v2.0.22\n') }), 'v2')
-  assert.equal(resolve({ probe: hostSays('opencode v1.18.33\n') }), 'v1')
-  // Soft failure: an unrunnable or unparseable host must not throw.
-  assert.equal(resolve({ probe: hostProbeFails }), 'v1')
-  assert.equal(resolve({ probe: hostSays('not-a-version') }), 'v1')
-  assert.equal(resolve({ probe: hostSays('') }), 'v1')
-
-  // ...and it must never be SILENT. Landing on V1 is the failure this gate
-  // exists to prevent, so both soft-fail paths have to warn. Only the CALL is
-  // asserted — never the message text, which is free to change.
-  for (const probe of [hostProbeFails, hostSays('not-a-version'), hostSays('')]) {
-    let warnings = 0
-    resolveOpenCodeVersion('auto', { env: {}, probe, warn: () => (warnings += 1) })
-    assert.equal(warnings, 1, 'a soft-failed probe must warn exactly once')
-  }
   // A resolved host stays quiet.
   let quiet = 0
-  resolveOpenCodeVersion('auto', {
+  resolveOpenCodeVersion({
     env: {},
     probe: hostSays('opencode v2.0.22'),
     warn: () => (quiet += 1),
   })
   assert.equal(quiet, 0, 'a successfully probed host must not warn')
+})
 
-  // OPENCODE_VERSION beats a contradicting probe.
-  assert.equal(resolve({ env: { OPENCODE_VERSION: 'v2' }, probe: hostSays('1.18.33') }), 'v2')
-  assert.equal(resolve({ env: { OPENCODE_VERSION: 'v1' }, probe: hostSays('2.0.22') }), 'v1')
-
-  // An explicit argument beats a contradicting probe.
+test('an unknown host is refused loudly — there is no generation to fall back to', () => {
+  // A failed or unreadable probe says nothing about the generation, and the
+  // installer cannot confirm the one premise it writes for, so it refuses.
+  // OPENCODE_VERSION=v2 is the deterministic escape hatch.
+  for (const [probe, cause] of [
+    [hostProbeFails, /Could not probe the host OpenCode version/],
+    [hostSays('not-a-version'), /Could not parse the host OpenCode version/],
+    [hostSays(''), /Could not parse the host OpenCode version/],
+  ]) {
+    let warnings = 0
+    assert.throws(
+      () =>
+        resolveOpenCodeVersion({
+          env: {},
+          probe,
+          warn: () => (warnings += 1),
+        }),
+      cause,
+      'an unknown host must refuse, naming the pin escape hatch',
+    )
+    assert.equal(warnings, 0, 'a refusal is an error, not a warning')
+  }
+})
+test('the env pin beats a contradicting probe', () => {
   assert.equal(
-    resolveOpenCodeVersion('v1', { env: {}, probe: hostSays('2.0.22'), warn: silentWarn }),
-    'v1',
-  )
-  assert.equal(
-    resolveOpenCodeVersion('v2', { env: {}, probe: hostSays('1.18.33'), warn: silentWarn }),
+    resolveOpenCodeVersion({ env: { OPENCODE_VERSION: 'v2' }, probe: hostSays('1.18.33') }),
     'v2',
   )
+})
 
-  // The ordering trap: an `opencode2` basename is an OPERATOR hint and must win
-  // over the probe's heuristic read of a version string. See the precedence
-  // rationale in scripts/install/opencode-version.mjs.
+test('the ordering trap: an `opencode2` basename wins over the probe read', () => {
   assert.equal(
-    resolve({
+    resolveOpenCodeVersion({
       env: { OPENCODE_BIN: '/usr/local/bin/opencode2' },
-      // Fictional string from this repo's history, NOT an observation of any
-      // host — see the historical note in scripts/install/opencode-version.mjs.
       // The basename short-circuits before the probe is read, so the value is
       // irrelevant to what this test pins.
-      probe: hostSays('0.0.0-next-17444'),
+      probe: hostSays('not-a-version'),
     }),
     'v2',
   )
 })
 
-test('a version-like token ahead of the tool name cannot flip the generation', () => {
+test('a version-like token ahead of the tool name cannot flip the verdict', () => {
   // Reviewer-proven silent misclassification: first-match-wins took "22.1.0"
-  // from the NODE token and resolved a genuine 1.x host to v2, with no warning.
-  // The token that follows the tool name is the one that describes the host.
-  const warnings = []
-  const resolved = resolveOpenCodeVersion('auto', {
-    env: {},
-    probe: hostSays('node v22.1.0 (opencode 1.18.33)'),
-    warn: (message) => warnings.push(message),
-  })
-
-  assert.equal(resolved, 'v1', 'a 1.x host behind a node 22 prefix must not resolve to v2')
-  // The tool name disambiguated it, so this is a RESOLVED host, not a soft
-  // failure: it stays quiet. The pin that matters is `resolved !== 'v2'`.
-  assert.equal(warnings.length, 0, 'a name-anchored match is a resolution, not a warning')
+  // from the NODE token and read a genuine 1.x host as 2.x, with no warning.
+  // The token that follows the tool name is the one that describes the host —
+  // and with V2-only, that means the difference between a quiet pass and the
+  // hard 1.x refusal.
+  assert.throws(
+    () => resolveVersion({ probe: hostSays('node v22.1.0 (opencode 1.18.33)') }),
+    /this host is 1\.x/,
+    'a 1.x host behind a node 22 prefix must still be refused',
+  )
+  // The tool name disambiguated it, so this is a RESOLVED host, not an unknown:
+  // a genuine 2.x behind the same prefix stays quiet.
+  let warnings = 0
+  assert.equal(
+    resolveOpenCodeVersion({
+      env: {},
+      probe: hostSays('node v22.1.0 (opencode 2.0.22)'),
+      warn: () => (warnings += 1),
+    }),
+    'v2',
+  )
+  assert.equal(warnings, 0, 'a name-anchored match is a resolution, not a warning')
 })
 
 test('the tool-name match wins over later unrelated version-like tokens', () => {
   // Pins that we do NOT anchor to the last token: last-token anchoring matches
-  // "2026.10.04" here and flips this 1.x host to v2.
-  assert.equal(resolveVersion({ probe: hostSays('opencode v1.18.33 built 2026.10.04') }), 'v1')
+  // "2026.10.04" here and misreads this 1.x host — the refusal below proves the
+  // host token decided.
+  assert.throws(
+    () => resolveVersion({ probe: hostSays('opencode v1.18.33 built 2026.10.04') }),
+    /this host is 1\.x/,
+  )
   // Symmetric case, so the rule is not accidentally "always pick the first".
   assert.equal(resolveVersion({ probe: hostSays('opencode v2.0.22 built 2026.10.04') }), 'v2')
   // A leading runtime token must not outrank the tool's own version either way.
@@ -390,124 +350,106 @@ test('the tool-name match wins over later unrelated version-like tokens', () => 
 })
 
 test('the "v" prefix is matched case-insensitively', () => {
-  // A case-sensitive "v" failed to parse and soft-failed to v1 with a warning.
+  // A case-sensitive "v" would fail to parse and push a genuine 1.x host into
+  // the unknown fallback instead of the refusal — this pins both directions.
+  assert.throws(() => resolveVersion({ probe: hostSays('opencode V1.18.33') }), /this host is 1\.x/)
   assert.equal(resolveVersion({ probe: hostSays('OpenCode V2.0.22') }), 'v2')
-  assert.equal(resolveVersion({ probe: hostSays('opencode V1.18.33') }), 'v1')
   assert.equal(resolveVersion({ probe: hostSays('OPENCODE v2.0.22') }), 'v2')
 })
 
-test('contradicting version tokens with no tool name warn loudly and fall back to v1', () => {
-  // Nothing here says which token is the host's, so the gate must not guess.
-  // "Wrong but loud" is the accepted outcome; a silent pick is the defect.
-  const warnings = []
-  const resolved = resolveOpenCodeVersion('auto', {
-    env: {},
-    probe: hostSays('1.18.33 (runtime 2.0.0)'),
-    warn: (message) => warnings.push(message),
-  })
-
-  assert.equal(resolved, 'v1', 'an unresolvable contradiction must fall back to v1')
-  assert.equal(warnings.length, 1, 'the contradiction must produce exactly one visible warning')
+test('contradicting version tokens with no tool name refuse loudly', () => {
+  // Nothing here says which token is the host's, so the gate must not treat
+  // it as a fact. With no generation left to fall back to, the contradiction
+  // refuses instead of warning.
+  let warnings = 0
+  assert.throws(
+    () =>
+      resolveOpenCodeVersion({
+        env: {},
+        probe: hostSays('1.18.33 (runtime 2.0.0)'),
+        warn: () => (warnings += 1),
+      }),
+    /contradictory versions/,
+  )
+  assert.equal(warnings, 0, 'a refusal is an error, not a warning')
 })
-
 test('a date is never read as a major version', () => {
-  // "2026.10.04" is version-SHAPED but is a build date. Reading its leading
-  // "2026" as a major would flip an unknown host to v2 in silence.
+  // "2026.10.04" is version-SHAPED but a build date. Unanchored and
+  // implausible it is noise — and when nothing version-shaped survives, the
+  // gate refuses instead of guessing.
   for (const output of ['2026.10.04', 'opencode built 2026.10.04', 'dev build 2026.10.04 12:00']) {
-    const warnings = []
-    const resolved = resolveOpenCodeVersion('auto', {
-      env: {},
-      probe: hostSays(output),
-      warn: (message) => warnings.push(message),
-    })
-
-    assert.equal(resolved, 'v1', `a bare date must not resolve to v2: ${JSON.stringify(output)}`)
-    assert.equal(warnings.length, 1, `a bare date must warn: ${JSON.stringify(output)}`)
+    assert.throws(
+      () => resolveVersion({ probe: hostSays(output) }),
+      /Could not parse the host OpenCode version/,
+      `a bare date must refuse: ${JSON.stringify(output)}`,
+    )
   }
   // A date alongside a real version is noise, not a contradiction: the
   // name-anchored version decides and the host stays quiet.
-  const warnings = []
+  let warnings = 0
   assert.equal(
-    resolveOpenCodeVersion('auto', {
+    resolveOpenCodeVersion({
       env: {},
       probe: hostSays('opencode v2.0.22 built 2026.10.04'),
-      warn: (message) => warnings.push(message),
+      warn: () => (warnings += 1),
     }),
     'v2',
   )
-  assert.equal(warnings.length, 0, 'a trailing build date is noise, not ambiguity')
+  assert.equal(warnings, 0, 'a trailing build date is noise, not ambiguity')
 })
-
-test('a major-0 prerelease banner is unresolvable rather than a silent v1', () => {
-  // The original defect class — V1 config written on a 2.x host — recurring for a
-  // build that reports major 0. "0.0.0-next-17444" is the exact string this
-  // repo's own comments cite, so the code has to reject it rather than quietly
-  // read it as "older than 2". A genuine 0.x host is a decade away; if one ever
-  // exists, a loud fallback is the correct direction to fail.
+test('a major-0 prerelease banner is an unreadable self-report and refuses', () => {
+  // "0.0.0-next-17444" is NOT a release number, so it must never read as
+  // "older than 2" (a 2.x beta refused as a 1.x host is the defect class).
+  // Anchored, it is the host's own version and this gate will not interpret
+  // it: with no fallback generation left, that is a loud refusal. Bare, the
+  // 0 is unanchored noise, so the refusal arrives through the nothing-shaped
+  // path instead — either way it is loud.
   for (const output of ['opencode 0.0.0-next-17444', 'opencode 0.1.0', '0.0.0-next-17444']) {
-    const warnings = []
-    const resolved = resolveOpenCodeVersion('auto', {
-      env: {},
-      probe: hostSays(output),
-      warn: (message) => warnings.push(message),
-    })
-
-    assert.equal(resolved, 'v1', `a major-0 banner must fall back to v1: ${JSON.stringify(output)}`)
-    assert.equal(warnings.length, 1, `a major-0 banner must warn: ${JSON.stringify(output)}`)
+    assert.throws(
+      () => resolveVersion({ probe: hostSays(output) }),
+      /Pantheon 2\.0 requires OpenCode 2\.x/,
+      `a major-0 banner must refuse loudly: ${JSON.stringify(output)}`,
+    )
   }
   // An UNANCHORED 0 alongside a real version stays noise, like a date: the
-  // surviving token still decides, because nothing claims the 0 is the host's.
-  const warnings = []
+  // surviving token still decides, and the host stays quiet.
+  let warnings = 0
   assert.equal(
-    resolveOpenCodeVersion('auto', {
+    resolveOpenCodeVersion({
       env: {},
       probe: hostSays('opencode v2.0.22 (build 0.9.9)'),
-      warn: (message) => warnings.push(message),
+      warn: () => (warnings += 1),
     }),
     'v2',
   )
-  assert.equal(warnings.length, 0, 'an unanchored 0 next to a real host version is noise')
+  assert.equal(warnings, 0, 'an unanchored 0 next to a real host version is noise')
 })
-
-test('an anchored major we cannot interpret is loud even when a runtime token survives', () => {
-  // A name-anchored token IS the host's own version. When its major is one we
-  // refuse to interpret (0, or a calendar year >= 100), dropping it and letting
-  // a surviving `node v22` promote itself to deciding power is a SILENT wrong
-  // answer — the exact defect this gate exists to prevent. So a refused ANCHORED
-  // major is reported, not discarded.
+test('an anchored major we cannot interpret refuses even when a runtime token survives', () => {
+  // A name-anchored token IS the host's own version. When its major is one
+  // this gate refuses to interpret (0, or a calendar year >= 100), dropping
+  // it and letting a surviving `node v22` promote itself to deciding power
+  // would be a silent wrong answer. With no fallback generation left, the
+  // unreadable self-report refuses.
   for (const output of ['opencode 100.0.0 (node v22.1.0)', 'opencode 100.0.0 (runtime 2.0.0)']) {
-    const warnings = []
-    const resolved = resolveOpenCodeVersion('auto', {
-      env: {},
-      probe: hostSays(output),
-      warn: (message) => warnings.push(message),
-    })
-
-    assert.equal(
-      resolved,
-      'v1',
-      `an uninterpretable anchored major must fall back to v1: ${JSON.stringify(output)}`,
-    )
-    assert.equal(
-      warnings.length,
-      1,
-      `an uninterpretable anchored major must warn: ${JSON.stringify(output)}`,
+    assert.throws(
+      () => resolveVersion({ probe: hostSays(output) }),
+      /Pantheon 2\.0 requires OpenCode 2\.x/,
+      `an uninterpretable anchored major must refuse: ${JSON.stringify(output)}`,
     )
   }
   // The quiet counterpart stays quiet: an UNANCHORED date is noise, not an
   // unreadable host version. Only the anchored case is loud.
-  const warnings = []
+  let warnings = 0
   assert.equal(
-    resolveOpenCodeVersion('auto', {
+    resolveOpenCodeVersion({
       env: {},
       probe: hostSays('opencode v2.0.22 built 2026.10.04'),
-      warn: (message) => warnings.push(message),
+      warn: () => (warnings += 1),
     }),
     'v2',
   )
-  assert.equal(warnings.length, 0, 'a dropped unanchored date must stay silent')
+  assert.equal(warnings, 0, 'a dropped unanchored date must stay silent')
 })
-
 test('parsing cost stays linear in the size of the probe output', () => {
   // Anchoring used to copy the entire prefix once per match
   // (`source.slice(0, match.index)`), which is quadratic in output size: ~4x
@@ -536,42 +478,42 @@ test('parsing cost stays linear in the size of the probe output', () => {
   )
 })
 
-test('an anchor beyond the bounded window loses its anchor but never resolves silently wrong', () => {
-  // The anchor window is bounded (ANCHOR_WINDOW_BYTES in the parser) because
-  // `[\s:=]*` is unbounded — no finite window is exact. Past the budget the
-  // anchor is missed, so the parse falls back to consensus among all tokens,
-  // which either agrees with the anchored answer or goes LOUD. It can never turn
-  // one resolution into a different resolution.
-  const warnings = []
-  const resolved = resolveOpenCodeVersion('auto', {
-    env: {},
-    probe: hostSays(`opencode${' '.repeat(200)}2.0.22 node v1.18.33`),
-    warn: (message) => warnings.push(message),
-  })
-  assert.equal(
-    resolved,
-    'v1',
+test('an anchor beyond the bounded window refuses instead of guessing', () => {
+  // The anchor window is bounded (ANCHOR_WINDOW_BYTES) because the separator
+  // run is unbounded — no finite window is exact. Past the budget the anchor
+  // is missed and the parse falls back to consensus among all tokens, which
+  // here disagrees: with no generation to fall back to, that is a refusal,
+  // never a silent pick.
+  assert.throws(
+    () =>
+      resolveVersion({
+        probe: hostSays(`opencode${' '.repeat(200)}2.0.22 node v1.18.33`),
+      }),
+    /contradictory versions/,
     'a missed anchor must not silently read the host version from a runtime token',
   )
-  assert.equal(warnings.length, 1, 'a missed anchor must go loud, not guess')
-
   // Inside the budget the anchor still decides, which is the whole point of it.
   assert.equal(
-    resolveVersion({ probe: hostSays(`opencode${' '.repeat(8)}2.0.22 node v1.18.33`) }),
+    resolveVersion({
+      probe: hostSays(`opencode${' '.repeat(8)}2.0.22 node v1.18.33`),
+    }),
     'v2',
     'an anchor within the budget must still outrank a contradicting runtime token',
   )
 })
-
 test('the probe reads stdout first and only falls back to stderr', () => {
-  // A host that prints its version to stderr must not soft-fail to v1.
+  // A host that prints its version to stderr is not unknown: stderr is the
+  // fallback stream, never a second vote.
   assert.equal(resolveVersion({ probe: hostStreams({ stderr: 'opencode v2.0.22\n' }) }), 'v2')
   assert.equal(resolveVersion({ probe: hostStreams({ stdout: 'opencode v2.0.22\n' }) }), 'v2')
-  // When BOTH parse, stdout wins — stderr is the fallback, not a second vote.
-  // If it were a second vote this 1.x host would flip to v2.
-  assert.equal(
-    resolveVersion({ probe: hostStreams({ stdout: 'opencode v1.18.33\n', stderr: 'v2.0.22\n' }) }),
-    'v1',
+  // When BOTH parse, stdout wins — otherwise this 1.x host would slip past
+  // the refusal on the strength of its stderr.
+  assert.throws(
+    () =>
+      resolveVersion({
+        probe: hostStreams({ stdout: 'opencode v1.18.33\n', stderr: 'v2.0.22\n' }),
+      }),
+    /this host is 1\.x/,
   )
   // stderr is consulted only when stdout yields nothing.
   assert.equal(
@@ -580,37 +522,24 @@ test('the probe reads stdout first and only falls back to stderr', () => {
     }),
     'v2',
   )
-  // Neither stream readable is still a loud, soft v1.
-  const warnings = []
-  assert.equal(
-    resolveOpenCodeVersion('auto', {
-      env: {},
-      probe: hostStreams({ stdout: '', stderr: '' }),
-      warn: (message) => warnings.push(message),
-    }),
-    'v1',
+  // Both streams empty: nothing version-shaped anywhere — a refusal.
+  assert.throws(
+    () => resolveVersion({ probe: hostStreams({ stdout: '', stderr: '' }) }),
+    /Could not parse the host OpenCode version/,
+    'an empty probe on both streams must refuse',
   )
-  assert.equal(warnings.length, 1, 'an empty probe on both streams must warn')
 })
-
-test('an explicit v1 install removes a registered V2 directory entry from config.plugins', async () => {
-  // Coverage gap: the adjacent migration test already asserts this through
-  // `auto` + OPENCODE_VERSION=v1, so the explicit-argument path was never
-  // asserted on its own.
-  const config = await installConfig({ plugins: [V2_PLUGIN, 'third-party-v2'] }, 'v1')
-
-  assert.ok(!config.plugins.includes(V2_PLUGIN), 'V1 must not leave a V2 directory configured')
-  assert.ok(config.plugins.includes('third-party-v2'), 'user entries must survive')
-})
-
-test('a corrupted install is repaired: V2 directory registered, both .ts paths purged', async () => {
-  // Exact field state left behind by a V1 default run against a 2.x host: two
-  // .ts file paths in the singular key, and nothing in the plural key.
-  const config = await installConfig({ plugin: V1_TS_PATHS, plugins: [] }, undefined, {
-    env: {},
-    probe: hostSays('2.0.22'),
-    warn: silentWarn,
-  })
+test('a corrupted stale-V1 install is repaired: V2 directory registered, both .ts paths purged', async () => {
+  // Exact field state left behind by the old V1 branch: two .ts file paths in
+  // the singular key, and nothing in the plural key.
+  const config = await installConfig(
+    { plugin: V1_TS_PATHS, plugins: [] },
+    {
+      env: {},
+      probe: hostSays('2.0.22'),
+      warn: silentWarn,
+    },
+  )
 
   assert.equal(v2EntryOf(config)?.package, V2_PLUGIN, 'the V2 directory must be registered')
   for (const tsPath of V1_TS_PATHS) {

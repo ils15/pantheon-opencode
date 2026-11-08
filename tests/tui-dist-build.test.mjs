@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url'
 const root = fileURLToPath(new URL('..', import.meta.url))
 const tuiPackage = join(root, 'src/plugins/tui')
 const dist = join(tuiPackage, 'dist')
+const packageVersion = JSON.parse(readFileSync(join(tuiPackage, 'package.json'), 'utf8')).version
 
 function readDistSnapshot(directory) {
   return Object.fromEntries(
@@ -73,6 +74,11 @@ test('a clean TUI build reproduces every packaged dist artifact byte-for-byte', 
     })
 
     const after = readDistSnapshot(join(buildPackage, 'dist'))
+    for (const name of ['tui.js']) {
+      const bundle = after[name].toString('utf8')
+      assert.ok(bundle.includes(packageVersion), `${name} embeds the current TUI package version`)
+      assert.doesNotMatch(bundle, /1\.6\.3-beta\.13/, `${name} has no stale beta.13 version`)
+    }
     for (const [name, contents] of Object.entries(after)) {
       if (!name.endsWith('.js')) continue
       assert.doesNotMatch(

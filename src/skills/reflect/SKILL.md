@@ -46,4 +46,5 @@ After completing a task, reflect on what could be improved in the workflow itsel
 - Be specific: "Searched for auth patterns 4x" not "too much searching"
 - One action item per friction point
 - Escalate to @mnemosyne for memory-bank updates
+- "Create skill" and "Add instruction" action items are executed through `instruction-forge` (it owns where the rule lives and how it is tested); "Update agent" routes to `agent-forge`
 - At end: "Reflection complete. Action items created."

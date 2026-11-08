@@ -33,26 +33,9 @@ All work in this session must serve this goal.
 3. **Focuses verification** — Themis checks that implementations serve the goal
 4. **Surfaces drift** — if a task drifts from the goal, flag it before proceeding
 
----
-
 ## Goal Format
 
-A good session goal has 4 components:
-
-```
-GOAL: <What to build>
-SCOPE: <Which layers/modules are in scope>
-SUCCESS CRITERIA: <How we know it's done>
-OUT OF SCOPE: <What to explicitly exclude>
-```
-
-**Example:**
-```
-GOAL: Add email verification to the registration flow
-SCOPE: Backend (POST /auth/verify, token model), Frontend (VerifyEmail page), DB (verification_tokens table)
-SUCCESS CRITERIA: User can register, receive a verification email link, click it, and have their account marked as verified. All layers tested >80% coverage.
-OUT OF SCOPE: Password reset, 2FA, email template design
-```
+Pin four components — `GOAL`, `SCOPE`, `SUCCESS CRITERIA`, `OUT OF SCOPE`. Full template and worked example: [references/goal-format.md](references/goal-format.md).
 
 ---
 
@@ -94,41 +77,11 @@ Never silently drift from the goal — always confirm with the user before chang
 
 ---
 
-## Session Reuse (Cross-Task Continuity)
+## Routing
 
-Reuse agent sessions between related delegations to avoid re-reading files and re-building context.
+| Action / trigger | Reference |
+|---|---|
+| Pinning a goal and needing the full template or a worked example | [references/goal-format.md](references/goal-format.md) |
+| Deciding whether a follow-up delegation reuses an agent session or starts fresh (reuse criteria, signaling, `task_id` tracking) | [references/session-reuse.md](references/session-reuse.md) |
 
-### When to Reuse
-
-Prefer reusing an existing session when:
-- Follow-up task touches the **same files** or **same feature thread** as a previous delegation
-- The specialist already loaded relevant file context in the prior session
-- Debugging continues on the same stack trace or module
-
-### When to Start Fresh
-
-Force a new session when:
-- Unrelated feature or different part of the codebase
-- Previous session has too much noise from an abandoned investigation
-- The specialist's accumulated context would mislead the new task
-
-### How to Signal Reuse
-
-When dispatching a follow-up task, include the session reuse context explicitly:
-
-```
-@hermes — continuing the auth endpoint work from the previous session.
-Files already explored: backend/routers/auth.py, backend/services/auth_service.py.
-New task: add refresh token rotation.
-```
-
-### Session Tracking
-
-Zeus tracks active sessions with a `task_id` per delegation:
-
-| Agent | Active Session | Files in Context | Max Age |
-|-------|---------------|-----------------|---------|
-| hermes | ses_abc123 | 4 files | 15 min |
-| aphrodite | ses_def456 | 3 files | 15 min |
-
-When `session_max: 2` is set in routing.yml, Zeus keeps the last 2 sessions for that agent and discards older ones. This prevents stale context from accumulating.
+A missing reference interrupts the action — read nothing in its place, never improvise from memory.

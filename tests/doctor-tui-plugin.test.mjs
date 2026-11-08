@@ -29,13 +29,12 @@ function seedPluginsInstalled(target) {
   writeState(target, state)
 }
 
-function seedPayload(copyDir, { v1 = true, v2 = false } = {}) {
+function seedPayload(copyDir, { bundle = true } = {}) {
   mkdirSync(join(copyDir, 'dist'), { recursive: true })
-  if (v1) writeFileSync(join(copyDir, 'dist', 'tui.js'), 'export default {}\n')
-  if (v2) writeFileSync(join(copyDir, 'dist', 'tui-v2.js'), 'export default {}\n')
+  if (bundle) writeFileSync(join(copyDir, 'dist', 'tui.js'), 'export default {}\n')
   writeFileSync(
     join(copyDir, 'package.json'),
-    `${JSON.stringify({ name: 'pantheon-tui', exports: { './tui': v2 ? './dist/tui-v2.js' : './dist/tui.js' } }, null, 2)}\n`,
+    `${JSON.stringify({ name: 'pantheon-tui', exports: { './tui': './dist/tui.js' } }, null, 2)}\n`,
   )
   writeFileSync(join(copyDir, 'tui.ts'), "export { default } from './dist/tui.js'\n")
 }
@@ -89,7 +88,7 @@ test('a copied plugin without a compiled bundle fails closed', async () => {
   }
 })
 
-test('a complete V1 payload that no tui.json references fails closed', async () => {
+test('a complete payload that no tui.json references fails closed', async () => {
   const target = projectTarget()
   try {
     seedPluginsInstalled(target)
@@ -101,7 +100,7 @@ test('a complete V1 payload that no tui.json references fails closed', async () 
   }
 })
 
-test('a V1 payload registered by its copied directory passes', async () => {
+test('a payload registered by its copied directory passes', async () => {
   const target = projectTarget()
   try {
     seedPluginsInstalled(target)
@@ -127,12 +126,12 @@ test('a stale Pantheon reference next to the current registration fails closed',
   }
 })
 
-test('a V2 payload discovered by the host (no tui.json) passes', async () => {
+test('a payload discovered by the host through the plugin directory (no tui.json) passes', async () => {
   const target = projectTarget()
   try {
     seedPluginsInstalled(target)
     const { copyDir } = await resolveTuiInstallPaths({ target })
-    seedPayload(copyDir, { v1: true, v2: true })
+    seedPayload(copyDir)
     writeFileSync(join(copyDir, 'index.ts'), 'export const Pantheon = async () => ({})\n')
     assert.equal(await checkTuiPlugin({ target }), 'ok')
   } finally {

@@ -2,7 +2,7 @@
  * bench/lib/hooklog.mjs — parser for the `[bench]` hook instrumentation lines
  * in .pantheon/logs/hooks.log (beta-10 latency slice, Phase 0).
  *
- * The instrumentation (src/plugin-v2.ts) appends, per tool call:
+ * The instrumentation (src/plugin.ts) appends, per tool call:
  *
  *   [ISO] [bench] tool.execute.before end tool=<name> callID=<id> started_at=<ISO> duration_ms=<n>
  *   [ISO] [bench] tool.execute.after  end tool=<name> callID=<id> duration_ms=<n> since_before_ms=<n>

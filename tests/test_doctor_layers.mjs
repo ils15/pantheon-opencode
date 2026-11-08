@@ -854,7 +854,7 @@ assert.equal(
 )
 assert.equal(
   resolveInstalledPackageRoot(
-    '/home/admin/.npm/_npx/abc/node_modules/pantheon-opencode/src/plugin-v2',
+    '/home/admin/.npm/_npx/abc/node_modules/pantheon-opencode/src/plugin',
   ),
   '/home/admin/.npm/_npx/abc/node_modules/pantheon-opencode',
   'npx-cache copy resolves to its package root',
@@ -865,7 +865,7 @@ assert.equal(
   'relative V1 ref is not an installed copy',
 )
 assert.equal(
-  resolveInstalledPackageRoot('src/plugin-v2'),
+  resolveInstalledPackageRoot('src/plugin'),
   null,
   'relative V2 ref is not an installed copy',
 )
@@ -915,9 +915,9 @@ assert.deepEqual(
       path: '/c1/opencode.json',
       data: { plugin: ['/abs/node_modules/pantheon-opencode/src/plugin.ts', 'third-party'] },
     },
-    { path: '/c2/opencode.json', data: { plugins: ['src/plugin-v2'] } },
+    { path: '/c2/opencode.json', data: { plugins: ['src/plugin'] } },
   ]).map((r) => r.path),
-  ['/abs/node_modules/pantheon-opencode/src/plugin.ts', 'third-party', 'src/plugin-v2'],
+  ['/abs/node_modules/pantheon-opencode/src/plugin.ts', 'third-party', 'src/plugin'],
   'both plugin lists are collected in order',
 )
 assert.deepEqual(
@@ -967,9 +967,9 @@ try {
   // referenced tree has to EXIST for that shape to be real: a relative ref that
   // resolves nowhere is a dangling registration and the doctor fails closed on
   // it (P0-6, tests/doctor-plugin-path-staleness.test.mjs).
-  mkdirSync(join(driftFixture, 'src', 'plugin-v2'), { recursive: true })
-  writeFileSync(join(driftFixture, 'src', 'plugin-v2', 'index.ts'), '// dev entry\n')
-  writeFileSync(join(driftFixture, 'opencode.json'), JSON.stringify({ plugins: ['src/plugin-v2'] }))
+  mkdirSync(join(driftFixture, 'src', 'plugin'), { recursive: true })
+  writeFileSync(join(driftFixture, 'src', 'plugin', 'index.ts'), '// dev entry\n')
+  writeFileSync(join(driftFixture, 'opencode.json'), JSON.stringify({ plugins: ['src/plugin'] }))
   assert.equal(
     checkPluginVersionDrift({ target: driftFixture, env: { HOME: driftFixture } }),
     'skip',

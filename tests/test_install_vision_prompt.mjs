@@ -18,6 +18,11 @@ import {
   runVisionPrompt,
 } from '../scripts/install/vision-prompt.mjs'
 
+// test:node runs on machines without an OpenCode binary, so the host gate
+// could not confirm the generation it writes for. Pin it for this file: every
+// install in here targets the only supported host line. Gate-specific tests
+// that pass their own env/probe stay deterministic either way.
+process.env.OPENCODE_VERSION = 'v2'
 const silentLogger = { log() {}, warn() {}, error() {} }
 
 /** Run `fn` with HOME/XDG_CONFIG_HOME pointed at a throwaway dir. */
@@ -167,7 +172,6 @@ test('non-interactive install (--yes --headless) never prompts nor writes vision
       await installOpenCode(target, false, false, ['agents'], {
         yes: true,
         headless: true,
-        version: 'v1',
       })
       assert.equal(existsSync(globalVisionConfigPath(env)), false)
     } finally {

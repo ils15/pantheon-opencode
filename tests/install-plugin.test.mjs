@@ -26,6 +26,11 @@ import {
 } from '../scripts/install/plugin.mjs'
 import { ROOT } from '../scripts/install/shared.mjs'
 
+// test:node runs on machines without an OpenCode binary, so the host gate
+// could not confirm the generation it writes for. Pin it for this file: every
+// install in here targets the only supported host line. Gate-specific tests
+// that pass their own env/probe stay deterministic either way.
+process.env.OPENCODE_VERSION = 'v2'
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
 const THIRD_PARTY_TUI = '/tmp/acme/pantheon-opencode/plugins/pantheon-tui'
@@ -96,61 +101,49 @@ test('unregisterPlugin preserves unmanaged paths containing pantheon-opencode', 
   }
 })
 
-test('V1 TUI entry retains the legacy plugin setup contract', () => {
+test('the TUI entry keeps the canonical plugin contract', () => {
   const source = readFileSync(join(REPO_ROOT, 'src', 'plugins', 'tui', 'src', 'index.tsx'), 'utf8')
-  assert.match(source, /setup:\s*async\s*\(\)\s*=>\s*\{\}/)
   assert.match(source, /id:\s*['"]pantheon\.tui['"]/)
+  assert.match(source, /setup\(/)
   const dist = join(REPO_ROOT, 'src', 'plugins', 'tui', 'dist', 'tui.js')
   assert.ok(existsSync(dist), `TUI dist must exist: ${dist}`)
   assert.match(readFileSync(dist, 'utf8'), /setup/)
   const tuiEntrypoint = readFileSync(join(REPO_ROOT, 'src', 'plugins', 'tui', 'tui.ts'), 'utf8')
   assert.match(tuiEntrypoint, /export\s+\{\s*default\s*\}\s+from\s+['"]\.\/dist\/tui\.js['"];?/)
+  // The local plugin entry re-exports the server bundle the host attaches.
+  const serverEntry = readFileSync(join(REPO_ROOT, 'src', 'plugins', 'tui', 'index.ts'), 'utf8')
+  assert.match(serverEntry, /export\s+\{\s*default\s*\}\s+from\s+['"]\.\/dist\/server\.js['"]/)
 })
 
-test('V2 install selects the V2 TUI API and V1 reinstall removes that entrypoint', () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-tui-generation-'))
+test('a copy carries the single TUI contract and a reinstall converges to it', () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-tui-copy-'))
   const source = join(REPO_ROOT, 'src', 'plugins', 'tui')
   try {
-    copyPluginFiles(source, target, { version: 'v2' })
-    assert.equal(
-      readFileSync(join(target, 'tui.ts'), 'utf8'),
-      readFileSync(join(source, 'tui-v2.ts'), 'utf8'),
-    )
-    assert.equal(
-      readFileSync(join(target, 'index.ts'), 'utf8'),
-      readFileSync(join(source, 'index-v2.ts'), 'utf8'),
-    )
-    const v2Package = JSON.parse(readFileSync(join(target, 'package.json'), 'utf8'))
-    assert.equal(v2Package.exports['./tui'], './dist/tui-v2.js')
-    assert.match(readFileSync(join(target, 'dist', 'tui-v2.js'), 'utf8'), /sidebar\.content/)
-    assert.match(readFileSync(join(target, 'dist', 'tui-v2.js'), 'utf8'), /@opencode\/plugin\/tui/)
+    // A stale previous-generation loader (old exports) is replaced by the
+    // canonical payload of THIS package; legacy raw copies are removed.
+    writeFileSync(join(target, 'tui.ts'), "export { default } from './dist/tui.js'\n")
+    mkdirSync(join(target, 'dist'), { recursive: true })
+    writeFileSync(join(target, 'index.tsx'), 'legacy raw copy\n')
+    writeFileSync(join(target, 'dist', 'tui.tsx'), 'legacy raw bundle\n')
+    copyPluginFiles(source, target)
 
-    copyPluginFiles(source, target, { version: 'v1' })
-    assert.equal(existsSync(join(target, 'index.ts')), false)
     assert.equal(
       readFileSync(join(target, 'tui.ts'), 'utf8'),
       readFileSync(join(source, 'tui.ts'), 'utf8'),
     )
-    const v1Package = JSON.parse(readFileSync(join(target, 'package.json'), 'utf8'))
-    assert.equal(v1Package.exports['./tui'], './dist/tui.js')
-  } finally {
-    rmSync(target, { recursive: true, force: true })
-  }
-})
-
-test('V2 install repoints the ./server export at the V2 server bundle', () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-tui-server-swap-'))
-  const source = join(REPO_ROOT, 'src', 'plugins', 'tui')
-  try {
-    copyPluginFiles(source, target, { version: 'v2' })
-    const v2Package = JSON.parse(readFileSync(join(target, 'package.json'), 'utf8'))
-    assert.equal(v2Package.exports['./server'], './dist/server-v2.js')
-    assert.equal(v2Package.exports['./tui'], './dist/tui-v2.js')
-    assert.ok(existsSync(join(target, 'dist', 'server-v2.js')))
-
-    copyPluginFiles(source, target, { version: 'v1' })
-    const v1Package = JSON.parse(readFileSync(join(target, 'package.json'), 'utf8'))
-    assert.equal(v1Package.exports['./server'], './dist/server.js')
+    assert.equal(existsSync(join(target, 'index.tsx')), false)
+    assert.equal(existsSync(join(target, 'dist', 'tui.tsx')), false)
+    const copied = JSON.parse(readFileSync(join(target, 'package.json'), 'utf8'))
+    assert.equal(copied.exports['./tui'], './dist/tui.js')
+    assert.equal(copied.exports['./tui-v2'], undefined)
+    const bundle = readFileSync(join(target, 'dist', 'tui.js'), 'utf8')
+    assert.match(bundle, /sidebar\.content/)
+    assert.match(bundle, /@opencode\/plugin\/tui/)
+    assert.equal(
+      readFileSync(join(target, 'index.ts'), 'utf8'),
+      readFileSync(join(source, 'index.ts'), 'utf8'),
+    )
+    assert.ok(existsSync(join(target, 'dist', 'server.js')), 'the server bundle is copied')
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
@@ -203,7 +196,7 @@ test('force plugin cleanup rejects a symlinked destination parent without deleti
   }
 })
 
-test('npm package tarball includes both host TUI entrypoints', () => {
+test('npm package tarball includes the TUI entrypoints and bundles', () => {
   const packageDir = join(REPO_ROOT, 'src', 'plugins', 'tui')
   const result = spawnSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], {
     cwd: packageDir,
@@ -214,15 +207,19 @@ test('npm package tarball includes both host TUI entrypoints', () => {
   const [packed] = JSON.parse(result.stdout)
   assert.ok(
     packed.files.some((file) => file.path === 'tui.ts'),
-    'the published TUI package must contain the V1 tui.ts entrypoint',
+    'the published TUI package must contain the tui.ts loader',
   )
   assert.ok(
-    packed.files.some((file) => file.path === 'tui-v2.ts'),
-    'the published TUI package must contain the V2 tui-v2.ts entrypoint',
+    packed.files.some((file) => file.path === 'index.ts'),
+    'the published TUI package must contain the local plugin entrypoint',
   )
   assert.ok(
-    packed.files.some((file) => file.path === 'index-v2.ts'),
-    'the published TUI package must contain the V2 local plugin entrypoint',
+    packed.files.some((file) => file.path === 'dist/tui.js'),
+    'the published TUI package must contain the compiled TUI bundle',
+  )
+  assert.ok(
+    packed.files.some((file) => file.path === 'dist/server.js'),
+    'the published TUI package must contain the server bundle',
   )
 })
 
@@ -310,32 +307,36 @@ test('copyPluginFiles refuses to write an entrypoint for a missing bundle', () =
     writeFileSync(join(src, 'package.json'), JSON.stringify({ name: 'pantheon-tui' }))
     writeFileSync(join(src, 'tui.ts'), "export { default } from './dist/tui.js'\n")
 
-    const result = copyPluginFiles(src, dst, { version: 'v1' })
+    const result = copyPluginFiles(src, dst)
 
-    assert.equal(result.errors, 1, 'a missing bundle is an error, never a silent skip')
-    assert.match(result.problems[0], /bundle not found/i)
+    // Both re-exports fail closed: the TUI bundle AND the server bundle are
+    // missing, so both entrypoints are refused.
+    assert.equal(result.errors, 2, 'a missing bundle is an error, never a silent skip')
+    assert.match(result.problems[0], /TUI bundle not found/i)
+    assert.match(result.problems[1], /server bundle not found/i)
     assert.equal(
       existsSync(join(dst, 'tui.ts')),
       false,
       'the re-export that points at a missing bundle must not be written',
     )
+    assert.equal(existsSync(join(dst, 'index.ts')), false)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
 })
 
-test('copyPluginFiles refuses a V2 package missing its server bundle', () => {
-  const root = mkdtempSync(join(tmpdir(), 'pantheon-tui-no-v2-server-bundle-'))
+test('copyPluginFiles refuses a package missing its server bundle', () => {
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-tui-no-server-bundle-'))
   const src = join(root, 'src')
   const dst = join(root, 'dst')
   try {
     mkdirSync(join(src, 'dist'), { recursive: true })
-    writeFileSync(join(src, 'dist', 'tui-v2.js'), 'export default () => ({})\n')
+    writeFileSync(join(src, 'dist', 'tui.js'), 'export default () => ({})\n')
     writeFileSync(join(src, 'package.json'), JSON.stringify({ name: 'pantheon-tui' }))
-    writeFileSync(join(src, 'tui-v2.ts'), "export { default } from './dist/tui-v2.js'\n")
-    writeFileSync(join(src, 'index-v2.ts'), "export { default } from './dist/server-v2.js'\n")
+    writeFileSync(join(src, 'tui.ts'), "export { default } from './dist/tui.js'\n")
+    writeFileSync(join(src, 'index.ts'), "export { default } from './dist/server.js'\n")
 
-    const result = copyPluginFiles(src, dst, { version: 'v2' })
+    const result = copyPluginFiles(src, dst)
 
     assert.equal(result.errors, 1)
     assert.match(result.problems[0], /server bundle not found/i)
@@ -354,44 +355,17 @@ test('installPlugin reports a missing bundle as an error instead of a partial in
     writeFileSync(join(src, 'package.json'), JSON.stringify({ name: 'pantheon-tui' }))
     writeFileSync(join(src, 'tui.ts'), "export { default } from './dist/tui.js'\n")
 
-    const result = installPlugin(src, dst, { version: 'v1', dryRun: true })
+    const result = installPlugin(src, dst, { dryRun: true })
 
-    assert.equal(result.errors, 1)
+    assert.equal(result.errors, 2)
     assert.equal(existsSync(join(dst, 'tui.ts')), false)
+    assert.equal(existsSync(join(dst, 'index.ts')), false)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
 })
 
-test('installOpenCode with the plugins component installs the TUI payload and registers it (V1)', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-tui-install-v1-'))
-  try {
-    await withIsolatedHome(() =>
-      withFakeNpm(async () => {
-        const { installOpenCode } = await import('../scripts/install/opencode.mjs')
-        const result = await installOpenCode(target, false, false, ['plugins'], {
-          yes: true,
-          headless: true,
-          version: 'v1',
-          quiet: true,
-        })
-        assert.equal(result.applied, true)
-
-        const configDir = join(target, '.opencode')
-        const copyDir = join(configDir, 'plugins', 'pantheon-tui')
-        assert.ok(existsSync(join(copyDir, 'dist', 'tui.js')), 'the compiled V1 bundle is copied')
-        assert.ok(existsSync(join(copyDir, 'tui.ts')), 'the V1 loader is copied')
-
-        const tuiJson = JSON.parse(readFileSync(join(configDir, 'tui.json'), 'utf8'))
-        assert.deepEqual(tuiJson.plugin, [copyDir], 'V1 registers the copied directory')
-      }),
-    )
-  } finally {
-    rmSync(target, { recursive: true, force: true })
-  }
-})
-
-test('installOpenCode with the plugins component writes the V2 discovery files', async () => {
+test('installOpenCode with the plugins component installs the TUI copy with the current contract', async () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-tui-install-v2-'))
   try {
     await withIsolatedHome(() =>
@@ -400,20 +374,19 @@ test('installOpenCode with the plugins component writes the V2 discovery files',
         await installOpenCode(target, false, false, ['plugins'], {
           yes: true,
           headless: true,
-          version: 'v2',
           quiet: true,
         })
 
         const configDir = join(target, '.opencode')
         const copyDir = join(configDir, 'plugins', 'pantheon-tui')
-        assert.ok(existsSync(join(copyDir, 'dist', 'tui-v2.js')), 'the V2 bundle is copied')
-        assert.ok(existsSync(join(copyDir, 'index.ts')), 'the V2 local-plugin entrypoint is copied')
+        assert.ok(existsSync(join(copyDir, 'dist', 'tui.js')), 'the compiled bundle is copied')
+        assert.ok(existsSync(join(copyDir, 'index.ts')), 'the local-plugin entrypoint is copied')
         const pkg = JSON.parse(readFileSync(join(copyDir, 'package.json'), 'utf8'))
-        assert.equal(pkg.exports['./tui'], './dist/tui-v2.js')
+        assert.equal(pkg.exports['./tui'], './dist/tui.js')
         assert.equal(
           existsSync(join(configDir, 'tui.json')),
           false,
-          'V2 discovers local plugins and must not add a project tui.json',
+          'the host discovers local plugins and must not gain a project tui.json',
         )
       }),
     )

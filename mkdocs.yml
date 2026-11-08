@@ -1,6 +1,6 @@
 site_name: Pantheon
 site_url: https://ils15.github.io/pantheon-opencode/
-site_description: Multi-agent orchestration framework for OpenCode — 14 specialized agents and 20 skills
+site_description: Multi-agent orchestration framework for OpenCode — 14 specialized agents and 23 skills
 repo_url: https://github.com/ils15/pantheon-opencode
 edit_uri: edit/main/docs/
 
@@ -63,7 +63,7 @@ nav:
   - Architecture: ARCHITECTURE.md
   - Agents & Skills: agents/README.md
   - Permissions, Gates & Delegation: PERMISSIONS-QUALITY-DELEGATION.md
-  - OpenCode V2: opencode-v2.md
+  - OpenCode 2.x: opencode.md
   - MCP: MCP.md
   - MCP Tools: mcp-tools.md
   - Memory: MEMORY.md

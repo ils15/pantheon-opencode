@@ -10,7 +10,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test } from 'node:test'
+import { after, test } from 'node:test'
 import { resolveComponentSelection } from '../scripts/install/component-selection.mjs'
 import { createDecisionRouterConfig } from '../scripts/install/decision-router-config.mjs'
 import {
@@ -21,7 +21,18 @@ import {
 import { installOpenCode } from '../scripts/install/opencode.mjs'
 import { createInitialState, writeState } from '../scripts/install/state.mjs'
 
+// test:node runs on machines without an OpenCode binary, so the host gate
+// could not confirm the generation it writes for. Pin it for this file: every
+// install in here targets the only supported host line. Gate-specific tests
+// that pass their own env/probe stay deterministic either way.
+process.env.OPENCODE_VERSION = 'v2'
 const CANCEL = Symbol('cancel')
+const WIZARD_HOME = mkdtempSync(join(tmpdir(), 'pantheon-wizard-tests-'))
+const WIZARD_ENV = {
+  HOME: WIZARD_HOME,
+  XDG_CONFIG_HOME: join(WIZARD_HOME, 'config'),
+}
+after(() => rmSync(WIZARD_HOME, { recursive: true, force: true }))
 
 /** The one-line cancel message the installer prints for a given point. */
 const canceledAt = (point) =>
@@ -31,6 +42,7 @@ function fakePrompts({
   components = ['agents'],
   target = 'global',
   jevActivation = 'skip',
+  jevFlags = [],
   confirmed = true,
 } = {}) {
   const calls = []
@@ -41,7 +53,7 @@ function fakePrompts({
     intro: (title) => calls.push(['intro', title]),
     multiselect: async (options) => {
       calls.push(['multiselect', options])
-      return components
+      return options.message?.startsWith('Decision layer extras') ? jevFlags : components
     },
     select: async (options) => {
       calls.push(['select', options])
@@ -63,6 +75,7 @@ test('interactive selection chooses components and location, then asks the Jev a
     defaultComponents: ['agents', 'skills'],
     prompts,
     isTTY: true,
+    env: WIZARD_ENV,
   })
 
   assert.deepEqual([...result.components], ['agents', 'plugins'])
@@ -99,7 +112,7 @@ test('choosing a Jev route activates it with explicit caps; unknown legacy value
   // Stock Console route: activation recorded with the recommended defaults
   // (the stub has no text input, so the caps degrade to defaults).
   const stock = fakePrompts({ jevActivation: 'opencode-console-jev/jev-1.13' })
-  const stockResult = await runInteractiveInstall({ prompts: stock, isTTY: true })
+  const stockResult = await runInteractiveInstall({ prompts: stock, isTTY: true, env: WIZARD_ENV })
   assert.deepEqual(stockResult.decisionModelActivation, {
     target: 'opencode-console-jev/jev-1.13',
     monthly: '5',
@@ -114,14 +127,43 @@ test('choosing a Jev route activates it with explicit caps; unknown legacy value
   // The free variant is REMOVED (limited free quota 429s mid-work): a stale
   // free choice degrades to skip like any unknown target.
   const free = fakePrompts({ jevActivation: 'opencode-console-jev-free/jev-1.13-free' })
-  const freeResult = await runInteractiveInstall({ prompts: free, isTTY: true })
+  const freeResult = await runInteractiveInstall({ prompts: free, isTTY: true, env: WIZARD_ENV })
   assert.equal(freeResult.decisionModelActivation, null, 'removed free route degrades to skip')
 
-  // TypeSafe direct activates its target (the provider block is a manual
-  // prerequisite documented in the wizard hint and reference docs).
+  // TypeSafe direct activates its target and setup-model provisions the host
+  // provider entry before asking the user to supply their key.
   const typesafe = fakePrompts({ jevActivation: 'typesafe-jev/jev-1.14.0' })
-  const typesafeResult = await runInteractiveInstall({ prompts: typesafe, isTTY: true })
+  const typesafeResult = await runInteractiveInstall({
+    prompts: typesafe,
+    isTTY: true,
+    env: WIZARD_ENV,
+  })
   assert.equal(typesafeResult.decisionModelActivation.target, 'typesafe-jev/jev-1.14.0')
+
+  const openrouter = fakePrompts({ jevActivation: 'openrouter-jev/typesafe/jev-1.13' })
+  const openrouterResult = await runInteractiveInstall({
+    prompts: openrouter,
+    isTTY: true,
+    env: WIZARD_ENV,
+  })
+  assert.equal(openrouterResult.decisionModelActivation.target, 'openrouter-jev/typesafe/jev-1.13')
+
+  const cloudflare = fakePrompts({ jevActivation: 'cloudflare-workers-jev/clef' })
+  const cloudflareResult = await runInteractiveInstall({
+    prompts: cloudflare,
+    isTTY: true,
+    env: WIZARD_ENV,
+  })
+  assert.equal(cloudflareResult.decisionModelActivation, null)
+  assert.deepEqual(cloudflareResult.decisionModelDeferredSetup, {
+    target: 'cloudflare-workers-jev/clef',
+  })
+  const cloudflareChoice = cloudflare.calls
+    .find(([, options]) => options?.message?.startsWith('Configure the Jev'))[1]
+    .options.find(({ value }) => value === 'cloudflare-workers-jev/clef')
+  assert.match(cloudflareChoice.label, /provision after install/i)
+  assert.match(cloudflareChoice.hint, /--account-id=<32-hex-id>/)
+  assert.match(cloudflareChoice.hint, /not activated by this wizard/i)
 
   // Legacy metadata spellings and unknown values are NOT targets: direct
   // OpenAI has no native route and 'jev'/'auto' were the old metadata prompt.
@@ -129,8 +171,35 @@ test('choosing a Jev route activates it with explicit caps; unknown legacy value
     const legacyResult = await runInteractiveInstall({
       prompts: fakePrompts({ jevActivation: legacy }),
       isTTY: true,
+      env: WIZARD_ENV,
     })
     assert.equal(legacyResult.decisionModelActivation, null, `${legacy} must not activate`)
+  }
+})
+
+test('wizard writes the runtime specialist caller env name and preserves the Zeus-only default', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'pantheon-wizard-flags-'))
+  const env = { HOME: home, XDG_CONFIG_HOME: join(home, 'config') }
+  const flagsPath = join(env.XDG_CONFIG_HOME, 'pantheon', 'decision-flags.env')
+  try {
+    await runInteractiveInstall({ prompts: fakePrompts(), isTTY: true, env })
+    let generated = readFileSync(flagsPath, 'utf8')
+    assert.match(generated, /^export PANTHEON_JEV_SPECIALIST_CALLERS=$/m)
+    assert.doesNotMatch(generated, /export CALLERS=/)
+
+    await runInteractiveInstall({
+      prompts: fakePrompts({
+        jevFlags: ['PANTHEON_J1_RISK_SCORE=on', 'PANTHEON_JEV_SPECIALIST_CALLERS=athena,themis'],
+      }),
+      isTTY: true,
+      env,
+    })
+    generated = readFileSync(flagsPath, 'utf8')
+    assert.match(generated, /^export PANTHEON_JEV_SPECIALIST_CALLERS=athena,themis$/m)
+    assert.match(generated, /^export PANTHEON_J1_RISK_SCORE=on$/m)
+    assert.doesNotMatch(generated, /export CALLERS=/)
+  } finally {
+    rmSync(home, { recursive: true, force: true })
   }
 })
 
@@ -186,7 +255,6 @@ test('interactive prompt cancellation exits before any installer configuration w
   try {
     const result = await installOpenCode(target, false, false, ['agents'], {
       interactive: true,
-      version: 'v1',
       global: true,
       deps: { prompts, isTTY: true },
     })
@@ -239,7 +307,6 @@ test('TTY --yes uses defaults without invoking any prompts', async () => {
     const result = await installOpenCode(target, false, false, ['agents'], {
       interactive: true,
       yes: true,
-      version: 'v1',
       global: true,
       deps: { prompts, isTTY: true },
     })
@@ -283,12 +350,12 @@ async function withTTYComponentSelection(args, callback, selectedComponents = ['
     const result = await withTTY(() =>
       installOpenCode(target, false, false, selection.components, {
         interactive: true,
-        version: 'v1',
         global: true,
         requestedComponents: selection.requestedComponentsForPrompt,
         noMcp: selection.noMcp,
         deps: {
           prompts,
+          env: WIZARD_ENV,
           promptReview: async () => true,
           runVisionPrompt: async () => {},
           setupVenv: () => {
@@ -363,7 +430,6 @@ test('canceling final apply authorization reports canceled and writes nothing', 
   try {
     const result = await installOpenCode(target, false, false, ['agents'], {
       headless: true,
-      version: 'v1',
       deps: { promptReview: async () => PROMPT_CANCELED },
     })
     assert.equal(result.applied, false)
@@ -408,10 +474,10 @@ test('the Jev wizard choice makes no provider network request during installatio
   try {
     const result = await installOpenCode(target, false, false, ['agents'], {
       interactive: true,
-      version: 'v1',
       global: true,
       deps: {
         prompts,
+        env: WIZARD_ENV,
         isTTY: true,
         promptReview: async () => true,
         runVisionPrompt: async () => {},
@@ -433,7 +499,7 @@ test('the Jev wizard choice makes no provider network request during installatio
   }
 })
 
-async function runTTYInstall(target, version) {
+async function runTTYInstall(target) {
   const selectMessages = []
   const prompts = fakePrompts()
   prompts.multiselect = async () => ['agents']
@@ -446,10 +512,10 @@ async function runTTYInstall(target, version) {
 
   const result = await installOpenCode(target, false, false, ['agents'], {
     interactive: true,
-    version,
     global: true,
     deps: {
       prompts,
+      env: WIZARD_ENV,
       promptReview: async () => true,
       runVisionPrompt: async () => {},
     },
@@ -457,7 +523,7 @@ async function runTTYInstall(target, version) {
   return { result, selectMessages }
 }
 
-test('V2 interactive install skips the V1 profile wizard and preserves legacy marker bytes', async () => {
+test('interactive install skips the retired profile wizard and preserves legacy marker bytes', async () => {
   const root = mkdtempSync(join(tmpdir(), 'pantheon-v2-no-preset-wizard-'))
   const target = join(root, 'opencode')
   const marker = join(target, '.pantheon', 'active-preset.json')
@@ -466,7 +532,7 @@ test('V2 interactive install skips the V1 profile wizard and preserves legacy ma
   writeFileSync(marker, markerBytes)
 
   try {
-    const { result, selectMessages } = await withTTY(() => runTTYInstall(target, 'v2'))
+    const { result, selectMessages } = await withTTY(() => runTTYInstall(target))
     assert.equal(result.applied, true)
     assert.deepEqual(selectMessages, ['Install location:', selectMessages[1]])
     assert.match(selectMessages[1], /^Configure the Jev/)
@@ -476,38 +542,20 @@ test('V2 interactive install skips the V1 profile wizard and preserves legacy ma
   }
 })
 
-test('V1 interactive install retains the model profile wizard', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'pantheon-v1-preset-wizard-'))
+test('an explicit --preset is refused outright, on any project shape', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-preset-refused-'))
   const target = join(root, 'opencode')
   try {
-    const { result, selectMessages } = await withTTY(() => runTTYInstall(target, 'v1'))
-    assert.equal(result.applied, true)
-    assert.deepEqual(selectMessages, [
-      'Install location:',
-      selectMessages[1],
-      'Choose the default model profile for Pantheon agents.',
-    ])
-    assert.match(selectMessages[1], /^Configure the Jev/)
-  } finally {
-    rmSync(root, { recursive: true, force: true })
-  }
-})
-
-test('V1 explicit --preset continues to write the active preset marker', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'pantheon-v1-explicit-preset-'))
-  const target = join(root, 'opencode')
-  try {
-    await installOpenCode(target, false, false, ['agents'], {
-      headless: true,
-      yes: true,
-      version: 'v1',
-      global: true,
-      preset: 'anthropic',
-    })
-    assert.equal(
-      JSON.parse(readFileSync(join(target, '.pantheon', 'active-preset.json'), 'utf8')).preset,
-      'anthropic',
+    await assert.rejects(
+      installOpenCode(target, false, false, ['agents'], {
+        headless: true,
+        yes: true,
+        global: true,
+        preset: 'anthropic',
+      }),
+      /--preset is not supported/i,
     )
+    assert.equal(existsSync(join(target, '.pantheon', 'active-preset.json')), false)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -525,10 +573,9 @@ test('V2 explicit --preset is rejected before changing config or writing a marke
     await assert.rejects(
       installOpenCode(target, false, false, ['agents'], {
         headless: true,
-        version: 'v2',
         preset: 'anthropic',
       }),
-      /--preset is not supported for OpenCode V2/i,
+      /--preset is not supported/i,
     )
     assert.equal(readFileSync(configPath, 'utf8'), configBytes)
     assert.equal(readdirSync(target).join(','), 'opencode.json')
@@ -568,7 +615,6 @@ test('forced interactive update without a TTY preserves the saved provider prefe
   try {
     const result = await installOpenCode(target, false, false, ['agents'], {
       interactive: true,
-      version: 'v1',
       global: true,
       deps: {
         prompts,

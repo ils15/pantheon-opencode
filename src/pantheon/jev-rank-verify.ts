@@ -22,7 +22,8 @@
  * Zeus can check 1–4 named claims in ONE typed round-trip: one `predicate`
  * question per claim (within the 4-question bound), the claim text riding that
  * question's instructions. The consumer maps each answer: probability
- * ≥ {@link VERIFY_PASS_THRESHOLD} → `PASS`, below → `FAIL`, and every refusal,
+ * > {@link VERIFY_PASS_THRESHOLD} (0.65) → `PASS`; 0.35–0.65 → `UNVERIFIABLE`; below →
+ * `FAIL`; and every refusal,
  * timeout, duplicate or malformed answer → `BLOCK` (fail-closed: an
  * unanswered mandatory claim must never read as verified). The tool itself
  * never acts on a verdict — `effect` stays `none` — and a gate-chain refusal
@@ -46,16 +47,16 @@
  * @module jev-rank-verify
  */
 
-import { consumeJevDecisionResult } from './jev-decisions.ts'
-import type { NativeDecisionRequest, ResolvedNativeDecisionRoute } from './v2-native-decisions.ts'
-import { NATIVE_DECISION_MAX_PROMPT_LENGTH } from './v2-native-decisions.ts'
+import { consumeJevDecisionResult, JEV_DECISION_MAX_QUESTIONS } from './jev-decisions.ts'
+import type { NativeDecisionRequest, ResolvedNativeDecisionRoute } from './native-decisions.ts'
+import { NATIVE_DECISION_MAX_PROMPT_LENGTH } from './native-decisions.ts'
 
 // ─── Bounds ──────────────────────────────────────────────────────────────
 
 /** A ranking needs at least two candidates to choose between. */
 export const RANK_MIN_CANDIDATES = 2
-/** Above eight, ranking degrades to explicit questions with a real rubric. */
-export const RANK_MAX_CANDIDATES = 8
+/** Mirrors the typesafe_rank reference contract (1-20 accepted upstream). */
+export const RANK_MAX_CANDIDATES = 20
 
 /** Question name of the rank's choice question. */
 export const RANK_WINNER_QUESTION_NAME = 'winner'
@@ -73,7 +74,13 @@ export const VERIFY_MAX_CLAIMS = 4
 export const CLAIM_MAX_LENGTH = 200
 
 /** Predicate probability at or above which a claim counts as PASS. */
-export const VERIFY_PASS_THRESHOLD = 0.5
+/**
+ * PASS lives strictly ABOVE the UNVERIFIABLE band (QA beta.20: with PASS at
+ * 0.5 the documented 0.35-0.65 band was unreachable at its top half — 0.50
+ * and 0.65 returned PASS). Verdicts: < 0.35 FAIL, 0.35-0.65 UNVERIFIABLE,
+ * > 0.65 PASS.
+ */
+export const VERIFY_PASS_THRESHOLD = 0.65
 
 const CANDIDATE_ID_MAX_LENGTH = 64
 const CLAIM_NAME_MAX_LENGTH = 64
@@ -164,7 +171,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 // ─── Rank: request building ──────────────────────────────────────────────
 
-const RANK_ENVELOPE_KEYS: ReadonlySet<string> = new Set([
+export const RANK_ENVELOPE_KEYS: ReadonlySet<string> = new Set([
   'schemaVersion',
   'mode',
   'state',
@@ -173,13 +180,24 @@ const RANK_ENVELOPE_KEYS: ReadonlySet<string> = new Set([
 
 export type JevRankBuildFailure = 'RANK_INPUT_INVALID' | 'CANDIDATE_INVALID' | 'STATE_INVALID'
 
+/** Per-cause token attached to a rank build refusal (e.g. the accepted count range). */
+export type JevRankBuildDetail = 'RANK_CANDIDATE_COUNT_RANGE'
+
 export type JevRankBuild =
   | { readonly ok: true; readonly request: Omit<NativeDecisionRequest, 'model'> }
-  | { readonly ok: false; readonly reasonCode: JevRankBuildFailure }
+  | {
+      readonly ok: false
+      readonly reasonCode: JevRankBuildFailure
+      readonly detail?: JevRankBuildDetail
+    }
 
 export type JevRankPreparation =
   | { readonly ok: true; readonly request: NativeDecisionRequest }
-  | { readonly ok: false; readonly reasonCode: JevRankBuildFailure }
+  | {
+      readonly ok: false
+      readonly reasonCode: JevRankBuildFailure
+      readonly detail?: JevRankBuildDetail
+    }
 
 /**
  * Validate the rank tool input and build the model-less request. The state is
@@ -205,7 +223,7 @@ export function buildJevRankRequest(input: unknown): JevRankBuild {
   if (rawCandidates === undefined) return { ok: false, reasonCode: 'RANK_INPUT_INVALID' }
   if (!Array.isArray(rawCandidates)) return { ok: false, reasonCode: 'CANDIDATE_INVALID' }
   if (rawCandidates.length < RANK_MIN_CANDIDATES || rawCandidates.length > RANK_MAX_CANDIDATES) {
-    return { ok: false, reasonCode: 'CANDIDATE_INVALID' }
+    return { ok: false, reasonCode: 'CANDIDATE_INVALID', detail: 'RANK_CANDIDATE_COUNT_RANGE' }
   }
   const seen = new Set<string>()
   const choices: Array<{ value: string; description?: string }> = []
@@ -272,9 +290,202 @@ export function prepareJevRankRequest(
   }
 }
 
+// ─── Order: top-K ordering (2-4 candidates, one fit question each) ───────
+
+export const ORDER_ENVELOPE_KEYS: ReadonlySet<string> = new Set([
+  'schemaVersion',
+  'mode',
+  'state',
+  'candidates',
+])
+
+export type JevOrderBuildFailure =
+  | 'ORDER_INPUT_INVALID'
+  | 'ORDER_CANDIDATE_INVALID'
+  | 'STATE_INVALID'
+
+export type JevOrderBuildDetail = 'ORDER_CANDIDATE_COUNT_RANGE'
+
+export type JevOrderBuild =
+  | {
+      readonly ok: true
+      readonly request: Omit<NativeDecisionRequest, 'model'>
+      /** The caller's candidate ids in question order (QA beta.20: the consumer must map scores back to THESE, not positional c1..cN). */
+      readonly candidates: readonly string[]
+    }
+  | {
+      readonly ok: false
+      readonly reasonCode: JevOrderBuildFailure
+      readonly detail?: JevOrderBuildDetail
+    }
+
+export type JevOrderPreparation =
+  | {
+      readonly ok: true
+      readonly request: NativeDecisionRequest
+      readonly candidates: readonly string[]
+    }
+  | {
+      readonly ok: false
+      readonly reasonCode: JevOrderBuildFailure
+      readonly detail?: JevOrderBuildDetail
+    }
+
+const ORDER_MAX_CANDIDATES = JEV_DECISION_MAX_QUESTIONS // one score question per candidate
+
+const ORDER_STATE_TEMPLATE =
+  'Advisory ordering. The caller supplied a task and 2-4 candidates; ' +
+  'each question scores ONE candidate for fit against the stated task. ' +
+  'Score each candidate on its own terms. Nothing is enforced. ' +
+  'The score is an ORDINAL on the 2..10 rubric (10 = exact fit), never a probability.'
+
+/**
+ * Build the order request: one SCORE question per candidate (the host answers
+ * one scalar per question, so 2-4 candidates is the honest ceiling). Ids ride
+ * the candidate validation reused from rank; question names are positional
+ * (`fit_1`..) so no id pattern can collide with the question-name grammar.
+ */
+export function buildJevOrderRequest(input: unknown): JevOrderBuild {
+  if (!isRecord(input)) return { ok: false, reasonCode: 'ORDER_INPUT_INVALID' }
+  for (const key of Object.keys(input)) {
+    if (!ORDER_ENVELOPE_KEYS.has(key)) return { ok: false, reasonCode: 'ORDER_INPUT_INVALID' }
+  }
+  const state = input.state
+  if (!isBoundedNonBlankString(state, NATIVE_DECISION_MAX_PROMPT_LENGTH) || isHostileProse(state)) {
+    return { ok: false, reasonCode: 'STATE_INVALID' }
+  }
+  const rawCandidates = input.candidates
+  if (rawCandidates === undefined) return { ok: false, reasonCode: 'ORDER_INPUT_INVALID' }
+  if (!Array.isArray(rawCandidates)) return { ok: false, reasonCode: 'ORDER_CANDIDATE_INVALID' }
+  if (rawCandidates.length < 2 || rawCandidates.length > ORDER_MAX_CANDIDATES) {
+    return {
+      ok: false,
+      reasonCode: 'ORDER_CANDIDATE_INVALID',
+      detail: 'ORDER_CANDIDATE_COUNT_RANGE',
+    }
+  }
+  const seen = new Set<string>()
+  const candidates: Array<{ id: string; description?: string }> = []
+  for (const raw of rawCandidates) {
+    if (!isRecord(raw)) return { ok: false, reasonCode: 'ORDER_CANDIDATE_INVALID' }
+    const extraKeys = Object.keys(raw).filter((key) => key !== 'id' && key !== 'description')
+    if (extraKeys.length > 0) return { ok: false, reasonCode: 'ORDER_CANDIDATE_INVALID' }
+    const id = raw.id
+    if (typeof id !== 'string' || id.length < 1 || id.length > 64) {
+      return { ok: false, reasonCode: 'ORDER_CANDIDATE_INVALID' }
+    }
+    if (seen.has(id)) return { ok: false, reasonCode: 'ORDER_CANDIDATE_INVALID' }
+    seen.add(id)
+    const description = raw.description
+    if (description !== undefined) {
+      if (!isBoundedNonBlankString(description, 500) || isHostileProse(description)) {
+        return { ok: false, reasonCode: 'ORDER_CANDIDATE_INVALID' }
+      }
+      candidates.push({ id, description })
+    } else {
+      candidates.push({ id })
+    }
+  }
+  const levels = Array.from({ length: 9 }, (_, index) => ({
+    label: String(index + 2),
+  }))
+  // Position-bias regression (external ref: Zheng et al. 2023): the builder
+  // PRESERVES the caller's candidate order — any reordering is the model's
+  // verdict, never ours. The consumer maps scores back to caller ids.
+  const questions = candidates.map((candidate, index) => ({
+    type: 'score' as const,
+    name: `fit_${index + 1}`,
+    instructions:
+      `Score how well candidate "${candidate.id}"` +
+      (candidate.description ? ` (${candidate.description})` : '') +
+      ` fits the task. 2 = poor fit, 10 = exact fit.`,
+    levels,
+  }))
+  const request = {
+    input: Object.freeze([
+      Object.freeze({ type: 'text' as const, text: `${ORDER_STATE_TEMPLATE} Task: ${state}` }),
+    ]),
+    questions: Object.freeze(questions.map((question) => Object.freeze(question))),
+  } satisfies Omit<NativeDecisionRequest, 'model'>
+  return {
+    ok: true,
+    request: Object.freeze(request),
+    candidates: Object.freeze(candidates.map((c) => c.id)),
+  }
+}
+
+export function prepareJevOrderRequest(
+  route: ResolvedNativeDecisionRoute,
+  input: unknown,
+): JevOrderPreparation {
+  const built = buildJevOrderRequest(input)
+  if (!built.ok) return built
+  return {
+    ok: true,
+    request: {
+      model: route.model,
+      input: built.request.input,
+      questions: built.request.questions,
+    },
+    candidates: built.candidates,
+  }
+}
+
+/** One ordered entry: the candidate id and its fit score (null when the host answered nothing usable). */
+export interface JevOrderEntry {
+  readonly id: string
+  readonly score: number | null
+}
+
+/**
+ * Consume the order result: map each positional score answer back to its
+ * candidate, sort by score descending (nulls last, stable), and return the
+ * ordering. A missing/invalid score stays visible as null — never guessed.
+ */
+export function consumeJevOrderResult(
+  response: unknown,
+  request: NativeDecisionRequest,
+  candidates: readonly string[],
+): ReadonlyArray<JevOrderEntry> {
+  const advice = consumeJevDecisionResult(response, request)
+  const entries: Array<{ id: string; score: number | null; order: number }> = []
+  request.questions.forEach((question, index) => {
+    const answer = advice.answers.find((candidate) => candidate.name === question.name)
+    const score =
+      answer !== undefined && answer.type === 'score' && typeof answer.score === 'number'
+        ? answer.score
+        : null
+    // QA beta.20: map back to the CALLER's candidate id — positional c1..cN
+    // told the user nothing.
+    entries.push({ id: candidates[index] ?? `c${index + 1}`, score, order: index })
+  })
+  return Object.freeze(
+    entries
+      .sort((left, right) => {
+        if (left.score === null && right.score === null) return left.order - right.order
+        if (left.score === null) return 1
+        if (right.score === null) return -1
+        return right.score - left.score || left.order - right.order
+      })
+      .map(({ id, score }) => ({ id, score })),
+  )
+}
+
 // ─── Verify: request building ────────────────────────────────────────────
 
-const VERIFY_ENVELOPE_KEYS: ReadonlySet<string> = new Set(['schemaVersion', 'mode', 'claims'])
+export const VERIFY_ENVELOPE_KEYS: ReadonlySet<string> = new Set([
+  'schemaVersion',
+  'mode',
+  'claims',
+  // Optional evidence: the environment/context the claims are judged against
+  // (field report beta.13 §6 — without it, environment-dependent claims are
+  // unanswerable and the honest verdict is UNVERIFIABLE, not FAIL).
+  'state',
+])
+
+/** The verdict band treated as "the model could not tell" (neither PASS nor FAIL). */
+export const VERIFY_UNVERIFIABLE_LOW = 0.35
+export const VERIFY_UNVERIFIABLE_HIGH = 0.65
 
 export type JevVerifyBuildFailure = 'VERIFY_INPUT_INVALID' | 'CLAIM_INVALID'
 
@@ -339,8 +550,21 @@ export function buildJevVerifyRequest(input: unknown): JevVerifyBuild {
     seen.add(name)
     questions.push({ type: 'predicate', name, instructions: verifyInstructions(claim) })
   }
+  // Optional evidence: the caller's state rides as the input text the claims
+  // are judged against; without it the template keeps claims self-contained.
+  const rawState = (input as Record<string, unknown>).state
+  let evidence = VERIFY_STATE_TEMPLATE
+  if (rawState !== undefined) {
+    if (
+      !isBoundedNonBlankString(rawState, NATIVE_DECISION_MAX_PROMPT_LENGTH) ||
+      isHostileProse(rawState)
+    ) {
+      return { ok: false, reasonCode: 'VERIFY_INPUT_INVALID' }
+    }
+    evidence = `${VERIFY_STATE_TEMPLATE} Evidence/context supplied by the caller, to be trusted as given: ${rawState}`
+  }
   const request = {
-    input: Object.freeze([Object.freeze({ type: 'text' as const, text: VERIFY_STATE_TEMPLATE })]),
+    input: Object.freeze([Object.freeze({ type: 'text' as const, text: evidence })]),
     questions: Object.freeze(questions.map((question) => Object.freeze(question))),
   } satisfies Omit<NativeDecisionRequest, 'model'>
   return { ok: true, request: Object.freeze(request) }
@@ -409,11 +633,11 @@ export function consumeJevRankResult(
  * verified (or as refuted — an unverifiable claim is unverifiable, not
  * false).
  */
-export type VerifyClaimVerdict = 'PASS' | 'FAIL' | 'BLOCK'
+export type VerifyClaimVerdict = 'PASS' | 'FAIL' | 'UNVERIFIABLE' | 'BLOCK'
 
 /**
  * Consume a host Decisions response against the prepared verify request:
- * one verdict per claim name. Probability ≥ {@link VERIFY_PASS_THRESHOLD} is
+ * one verdict per claim name. Probability > {@link VERIFY_PASS_THRESHOLD} is
  * `PASS`, below is `FAIL`; error answers, missing answers and any unusable
  * response shape are `BLOCK` — fail-closed.
  */
@@ -426,7 +650,13 @@ export function consumeJevVerifyResult(
   for (const question of request.questions) {
     const answer = advice.answers.find((candidate) => candidate.name === question.name)
     if (answer !== undefined && answer.type === 'predicate') {
-      verdicts[question.name] = (answer.probability ?? 0) >= VERIFY_PASS_THRESHOLD ? 'PASS' : 'FAIL'
+      const probability = answer.probability ?? 0
+      verdicts[question.name] =
+        probability > VERIFY_PASS_THRESHOLD
+          ? 'PASS'
+          : probability >= VERIFY_UNVERIFIABLE_LOW
+            ? 'UNVERIFIABLE'
+            : 'FAIL'
     } else {
       verdicts[question.name] = 'BLOCK'
     }

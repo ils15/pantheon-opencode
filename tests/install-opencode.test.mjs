@@ -24,9 +24,8 @@ import {
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test as nodeTest } from 'node:test'
-import { migrateV1toV2 } from '../scripts/install/config-migration.mjs'
 import {
-  applyContextSandboxToV2Plugins,
+  applyContextSandboxToPluginEntry,
   applyMcpServerEntries,
   deriveNativeMcpPermissions,
   installOpenCode,
@@ -40,6 +39,11 @@ import {
 } from '../scripts/install/opencode.mjs'
 import { ROOT, writeConfigWithBackup, writeIfChanged } from '../scripts/install/shared.mjs'
 
+// test:node runs on machines without an OpenCode binary, so the host gate
+// could not confirm the generation it writes for. Pin it for this file: every
+// install in here targets the only supported host line. Gate-specific tests
+// that pass their own env/probe stay deterministic either way.
+process.env.OPENCODE_VERSION = 'v2'
 const THIRD_PARTY_PLUGIN = '/tmp/vendor/src/plugin.ts'
 const THIRD_PARTY_HOOKS = '/tmp/pantheon-opencode-vendor/src/plugins/pantheon-hooks.ts'
 const THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN = '/tmp/vendor/pantheon-opencode/src/plugin.ts'
@@ -170,24 +174,21 @@ test('resolveInstalledPlugin maps the exact relative hooks plugin into the insta
 })
 
 test('resolveInstalledPlugin maps the V2 plugin directory into the installed package', () => {
-  const result = resolveInstalledPlugin('src/plugin-v2')
-  assert.equal(result, join(ROOT, 'src', 'plugin-v2'))
+  const result = resolveInstalledPlugin('src/plugin')
+  assert.equal(result, join(ROOT, 'src', 'plugin'))
 })
 
 test('resolveInstalledPlugin migrates the legacy V2 file ref to the plugin directory', () => {
-  assert.equal(resolveInstalledPlugin('src/plugin-v2.ts'), join(ROOT, 'src', 'plugin-v2'))
-  assert.equal(
-    resolveInstalledPlugin(join(ROOT, 'src', 'plugin-v2.ts')),
-    join(ROOT, 'src', 'plugin-v2'),
-  )
+  assert.equal(resolveInstalledPlugin('src/plugin.ts'), join(ROOT, 'src', 'plugin'))
+  assert.equal(resolveInstalledPlugin(join(ROOT, 'src', 'plugin.ts')), join(ROOT, 'src', 'plugin'))
 })
 
 test('V2 npm-shorthand and legacy refs share the directory identity', () => {
-  const dir = join(ROOT, 'src', 'plugin-v2')
-  for (const ref of ['pantheon-opencode/plugin-v2', 'src/plugin-v2.ts']) {
-    assert.equal(pluginReferenceIdentity(ref), 'src/plugin-v2')
+  const dir = join(ROOT, 'src', 'plugin')
+  for (const ref of ['pantheon-opencode/plugin', 'src/plugin.ts']) {
+    assert.equal(pluginReferenceIdentity(ref), 'src/plugin')
   }
-  assert.equal(pluginReferenceIdentity(dir), 'src/plugin-v2')
+  assert.equal(pluginReferenceIdentity(dir), 'src/plugin')
 })
 
 test('versioned Pantheon package refs are managed during V2 migration', async () => {
@@ -199,7 +200,7 @@ test('versioned Pantheon package refs are managed during V2 migration', async ()
   ]) {
     assert.equal(
       pluginReferenceIdentity(ref),
-      'src/plugin-v2',
+      'src/plugin',
       `Pantheon package ref should map to the managed V2 plugin: ${JSON.stringify(ref)}`,
     )
   }
@@ -214,7 +215,7 @@ test('versioned Pantheon package refs are managed during V2 migration', async ()
           'pantheon-opencode@1.6.0-beta.7',
           { package: 'pantheon-opencode@beta' },
           thirdParty,
-          '/tmp/pantheon-recycled-npx-copy/node_modules/pantheon-opencode/src/plugin-v2',
+          '/tmp/pantheon-recycled-npx-copy/node_modules/pantheon-opencode/src/plugin',
         ],
       },
       'v2',
@@ -224,7 +225,7 @@ test('versioned Pantheon package refs are managed during V2 migration', async ()
     // only from `{ package, options }`, and the opt-in features read that bag.
     assert.deepEqual(config.plugins, [
       thirdParty,
-      { package: join(ROOT, 'src', 'plugin-v2'), options: {} },
+      { package: join(ROOT, 'src', 'plugin'), options: {} },
       // The copied TUI plugin is registered explicitly: OpenCode 2.x loads its
       // server half only from the `plugins` list (a missing entry leaves the
       // copy's TUI runtime without its reactive channel).
@@ -235,10 +236,10 @@ test('versioned Pantheon package refs are managed during V2 migration', async ()
   }
 })
 
-test('resolveInstalledPlugin preserves a third-party plugin-v2 file path', () => {
-  const thirdParty = '/tmp/vendor/pantheon-opencode/src/plugin-v2.ts'
+test('resolveInstalledPlugin preserves a third-party plugin file path', () => {
+  const thirdParty = '/tmp/vendor/pantheon-opencode/src/plugin.ts'
   assert.equal(resolveInstalledPlugin(thirdParty), thirdParty)
-  assert.notEqual(pluginReferenceIdentity(thirdParty), 'src/plugin-v2')
+  assert.notEqual(pluginReferenceIdentity(thirdParty), 'src/plugin')
 })
 
 test('resolveInstalledPlugin recognizes only exact installed paths as managed', () => {
@@ -252,7 +253,7 @@ test('resolveInstalledPlugin recognizes only exact installed paths as managed', 
 })
 
 test('resolved plugin paths exist inside the package (ROOT-derived, not stale refs)', () => {
-  for (const ref of ['src/plugin.ts', 'src/plugins/pantheon-hooks.ts', 'src/plugin-v2']) {
+  for (const ref of ['src/plugin.ts', 'src/plugins/pantheon-hooks.ts', 'src/plugin']) {
     const result = resolveInstalledPlugin(ref)
     assert.ok(result.startsWith(join(ROOT, 'src')), `expected ROOT-derived path, got ${result}`)
     assert.ok(existsSync(result), `resolved path does not exist in package: ${result}`)
@@ -350,7 +351,6 @@ test('agent clean aborts on a symlinked destination parent without changing outs
       installOpenCode(target, false, true, ['agents'], {
         yes: true,
         headless: true,
-        version: 'v1',
         deps: {
           betweenPlanAndApply() {
             const agentDir = join(target, '.opencode', 'agents')
@@ -380,7 +380,6 @@ test('skill clean aborts on a symlinked destination parent without changing outs
       installOpenCode(target, false, true, ['skills'], {
         yes: true,
         headless: true,
-        version: 'v1',
         deps: {
           betweenPlanAndApply() {
             const skillsDir = join(target, '.opencode', 'skills')
@@ -407,7 +406,7 @@ test('sync realigns a stale node_modules plugin path onto the current package (i
     const staleRoot = '/home/admin/node_modules/pantheon-opencode'
     const config = await runInstall(target, {
       plugin: [join(staleRoot, 'src', 'plugin.ts'), THIRD_PARTY_PLUGIN],
-      plugins: [join(staleRoot, 'src', 'plugin-v2')],
+      plugins: [join(staleRoot, 'src', 'plugin')],
     })
     // The stale V1 and V2 refs are rewritten into THIS package; the
     // third-party plugin survives untouched.
@@ -537,7 +536,6 @@ test('V2 installer does not write a normalized legacy MCP grant that aliases a c
       installOpenCode(target, true, false, COMPONENTS, {
         yes: true,
         headless: true,
-        version: 'v2',
       }),
     /MCP permission scope overlaps a distinct configured server/i,
   )
@@ -570,7 +568,6 @@ test('V2 installer checks managed-agent MCP scopes against configured user serve
       installOpenCode(target, true, false, COMPONENTS, {
         yes: true,
         headless: true,
-        version: 'v2',
       }),
     /MCP permission scope overlaps a distinct configured server/i,
   )
@@ -603,7 +600,6 @@ test('V2 installer rejects malformed nested MCP before seeding or writing any ta
         installOpenCode(target, false, false, ['runtime'], {
           yes: true,
           headless: true,
-          version: 'v2',
         }),
       /malformed or ambiguous nested MCP server map/i,
     )
@@ -632,7 +628,6 @@ test('V2 installer rejects array-shaped MCP maps before seeding or writing any t
         installOpenCode(target, false, false, ['runtime'], {
           yes: true,
           headless: true,
-          version: 'v2',
         }),
       /mcp(?:\.servers)? must be an object map/i,
       `${label} MCP array should fail before install writes`,
@@ -668,7 +663,6 @@ nodeTest(
           installOpenCode(target, false, false, ['runtime'], {
             yes: true,
             headless: true,
-            version: 'v2',
           }),
         /top-level mcp must be an object map/i,
         `${label} MCP value should fail before install writes`,
@@ -691,7 +685,6 @@ nodeTest('direct V2 init accepts absent MCP and seeds its managed servers', asyn
   const result = await installOpenCode(target, true, false, ['runtime'], {
     yes: true,
     headless: true,
-    version: 'v2',
   })
 
   assert.deepEqual(result.mcpServers, [
@@ -709,7 +702,6 @@ test('V2 MCP runtime entries use the native nested named-server map', () => {
     applyMcpServerEntries(config, {
       runtimeTarget: '/private/runtime',
       venvPython: '/private/runtime/.venv/bin/python3',
-      version: 'v2',
     })
     assert.equal(config.mcp['pantheon-resources'], undefined)
     assert.ok(config.mcp.servers['pantheon-resources'])
@@ -733,7 +725,6 @@ test('V2 MCP seeding rejects malformed source maps without mutating them', () =>
       applyMcpServerEntries(config, {
         runtimeTarget: '/private/runtime',
         venvPython: '/private/runtime/.venv/bin/python3',
-        version: 'v2',
       }),
     /malformed or ambiguous nested MCP server map/i,
   )
@@ -745,7 +736,6 @@ test('V1 MCP runtime entries remain a flat named-server map', () => {
   applyMcpServerEntries(config, {
     runtimeTarget: '/private/runtime',
     venvPython: '/private/runtime/.venv/bin/python3',
-    version: 'v1',
   })
   assert.equal(config.mcp.servers, undefined)
   assert.ok(config.mcp['pantheon-resources'])
@@ -761,7 +751,6 @@ test('global install uses flat component directories and repairs a legacy V2 con
     const config = await installOpenCode(target, false, false, COMPONENTS, {
       yes: true,
       headless: true,
-      version: 'v2',
     }).then(() => JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8')))
     assert.ok(existsSync(join(target, 'agents')))
     assert.ok(existsSync(join(target, 'skills')))
@@ -784,7 +773,6 @@ test('runtime-only install copies executable MCP assets and remains idempotent',
     await installOpenCode(target, false, false, ['runtime'], {
       yes: true,
       headless: true,
-      version: 'v2',
       deps: runtimeDeps,
     })
     const runtime = join(target, '.opencode')
@@ -817,7 +805,6 @@ test('runtime-only install copies executable MCP assets and remains idempotent',
     await installOpenCode(target, false, false, ['runtime'], {
       yes: true,
       headless: true,
-      version: 'v2',
       deps: runtimeDeps,
     })
     assert.equal(readFileSync(join(runtime, 'scripts', 'code_mode.py'), 'utf8'), before)
@@ -835,7 +822,6 @@ test('global runtime install seeds <config>/.pantheon/code-mode', async () => {
     await installOpenCode(target, false, false, ['runtime'], {
       yes: true,
       headless: true,
-      version: 'v2',
     })
     const codeModeDir = join(target, '.pantheon', 'code-mode')
     assert.ok(existsSync(codeModeDir), 'global code-mode dir must be created')
@@ -866,7 +852,7 @@ test('V2 upgrade merges and deduplicates user plugins without overwriting config
     assert.deepEqual(config.plugin, [v1Only])
     assert.ok(!config.plugins.includes(v1Only))
     // V2 registers the plugin DIRECTORY inside the installed package
-    // (<pkg>/src/plugin-v2, whose index.ts shim re-exports the real entry):
+    // (<pkg>/src/plugin, whose index.ts shim re-exports the real entry):
     // the beta loader rejects file paths ("must be a directory") and resolves
     // `a/b` shorthands via npm install (NpmInstallFailedError) — never the V1
     // local-file paths, which stay V1-only.
@@ -874,7 +860,7 @@ test('V2 upgrade merges and deduplicates user plugins without overwriting config
       userPlugin,
       // The object form is what makes `options` reachable at all; a fresh
       // install writes it with an empty bag (issue #268).
-      { package: join(ROOT, 'src', 'plugin-v2'), options: {} },
+      { package: join(ROOT, 'src', 'plugin'), options: {} },
       // The copied TUI plugin: with no explicit entry the OpenCode 2.x host
       // never loads the copy's server half and the TUI runtime stays dead.
       join(target, '.opencode', 'plugins', 'pantheon-tui'),
@@ -908,7 +894,6 @@ test('default install never reads a repository-root opencode.json', async () => 
     const config = await installOpenCode(target, false, false, COMPONENTS, {
       yes: true,
       headless: true,
-      version: 'v1',
     }).then(() => JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8')))
     assert.ok(
       !config.plugins?.includes('npm:@acme/should-not-appear') &&
@@ -941,7 +926,6 @@ test('--merge-dev-config merges third-party plugin/provider/compaction from the 
     const config = await installOpenCode(target, false, false, COMPONENTS, {
       yes: true,
       headless: true,
-      version: 'v1',
       mergeDevConfig: devConfig,
     }).then(() => JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8')))
     // V1 keeps the singular plugin list and the flat provider/compaction keys,
@@ -974,7 +958,6 @@ test('fresh install writes experimental.subagent_depth=2 and is byte-identical o
     await installOpenCode(target, false, false, COMPONENTS, {
       yes: true,
       headless: true,
-      version: 'v1',
     })
     assert.equal(readFileSync(configPath, 'utf8'), firstBytes)
   } finally {
@@ -1256,7 +1239,7 @@ test('v2 install strips a stale steps ceiling from a managed agent', async () =>
     assert.equal(config.agents.zeus.steps, undefined)
     // Everything else about the managed agent is untouched.
     assert.equal(config.agents.zeus.mode, 'primary')
-    assert.equal(config.agents.zeus.source, 'agents/zeus.md')
+    assert.equal(config.agents.zeus.source, undefined, 'stale source is healed on managed agents')
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
@@ -1357,27 +1340,6 @@ test('the installer has no remaining write path for steps', async () => {
   }
 })
 
-test('migrateV1toV2 still carries steps and the installer drops it afterwards', async () => {
-  // config-migration.mjs must stay a pure shape converter: the `{ ...agentConfig }`
-  // spread there (config-migration.mjs:329) is what carries `steps` into V2, and
-  // stripping it there would make the converter lossy for every caller. The
-  // delete belongs downstream in opencode.mjs, inside the v2 branch.
-  const migrated = migrateV1toV2({ agent: { zeus: { mode: 'primary', steps: 45 } } })
-  assert.equal(migrated.agents.zeus.steps, 45, 'the pure converter must not lose fields')
-
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-steps-migrate-'))
-  try {
-    const config = await runInstall(
-      target,
-      { agent: { zeus: { mode: 'primary', steps: 45 } } },
-      'v2',
-    )
-    assert.equal(config.agents.zeus.steps, undefined)
-  } finally {
-    rmSync(target, { recursive: true, force: true })
-  }
-})
-
 test('a managed agent absent from the config is created without steps', async () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-steps-new-'))
   try {
@@ -1387,7 +1349,7 @@ test('a managed agent absent from the config is created without steps', async ()
     const zeus = config.agents.zeus
     assert.ok(zeus, 'the managed agent must be created')
     assert.equal(zeus.steps, undefined, 'a newly created agent must not gain a steps ceiling')
-    assert.equal(zeus.source, 'agents/zeus.md')
+    assert.equal(zeus.source, undefined, 'no source provenance on fresh agents')
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
@@ -1432,7 +1394,10 @@ test('v2 install keeps the managed agent merge when agent and agents coexist', a
     )
     const zeus = config.agents.zeus
     // Managed fields from the V1 block survive the rename.
-    assert.equal(zeus.source, 'agents/zeus.md', 'managed source must not be discarded')
+    // HEAL (field beta.14): the legacy cwd-relative `source` is stripped from
+    // managed entries — host 2.2.5 resolves it against the session cwd and
+    // every agent vanished outside the config dir.
+    assert.equal(zeus.source, undefined, 'stale cwd-relative source must be healed away')
     assert.equal(zeus.temperature, 0.2, 'managed temperature must not be discarded')
     assert.deepEqual(
       zeus.permissions.filter((p) => p.action === 'edit'),
@@ -1467,9 +1432,9 @@ test('V2 install duplicates a V1 top-level context_sandbox into the Pantheon plu
     // V1 top-level block is preserved for a downgrade.
     assert.deepEqual(config.context_sandbox, legacy, 'top-level block must survive')
     // The exact Pantheon V2 entry carries the same value under options.
-    const entry = config.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin-v2')
+    const entry = config.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin')
     assert.equal(typeof entry, 'object', 'the Pantheon V2 entry becomes an options object')
-    assert.equal(entry.package, join(ROOT, 'src', 'plugin-v2'))
+    assert.equal(entry.package, join(ROOT, 'src', 'plugin'))
     assert.deepEqual(entry.options.context_sandbox, legacy)
   } finally {
     rmSync(target, { recursive: true, force: true })
@@ -1485,14 +1450,14 @@ test('an explicit V2 plugin option wins per leaf over the legacy top-level block
         context_sandbox: { enabled: false, limits: { read: { maxLines: 5, keepTail: 2 } } },
         plugins: [
           {
-            package: join(ROOT, 'src', 'plugin-v2'),
+            package: join(ROOT, 'src', 'plugin'),
             options: { context_sandbox: { limits: { read: { maxLines: 99 } } } },
           },
         ],
       },
       'v2',
     )
-    const entry = config.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin-v2')
+    const entry = config.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin')
     assert.deepEqual(entry.options.context_sandbox, {
       enabled: false,
       limits: { read: { maxLines: 99, keepTail: 2 } },
@@ -1514,7 +1479,6 @@ test('a null context_sandbox aborts the install before the config is rewritten',
         installOpenCode(target, false, false, COMPONENTS, {
           yes: true,
           headless: true,
-          version: 'v2',
         }),
       /context_sandbox must be an object/,
     )
@@ -1549,17 +1513,17 @@ test('context_sandbox migration preserves third-party plugin entries and their o
       (ref) => pluginReferenceIdentity(ref) === 'npm:@acme/other',
     )
     assert.deepEqual(preserved, thirdParty, 'third-party entry and options untouched')
-    const entry = config.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin-v2')
+    const entry = config.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin')
     assert.deepEqual(entry.options.context_sandbox, { enabled: false })
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
 })
 
-test('applyContextSandboxToV2Plugins converts a string entry and leaves others intact', () => {
-  const v2ref = join(ROOT, 'src', 'plugin-v2')
+test('applyContextSandboxToPluginEntry converts a string entry and leaves others intact', () => {
+  const v2ref = join(ROOT, 'src', 'plugin')
   const plugins = ['npm:@acme/other', v2ref]
-  applyContextSandboxToV2Plugins(plugins, { enabled: true })
+  applyContextSandboxToPluginEntry(plugins, { enabled: true })
   assert.equal(plugins[0], 'npm:@acme/other')
   assert.deepEqual(plugins[1], {
     package: v2ref,
@@ -1567,10 +1531,10 @@ test('applyContextSandboxToV2Plugins converts a string entry and leaves others i
   })
 })
 
-test('applyContextSandboxToV2Plugins is a no-op when the legacy key is absent', () => {
-  const plugins = [join(ROOT, 'src', 'plugin-v2')]
-  assert.deepEqual(applyContextSandboxToV2Plugins(plugins, undefined), [
-    join(ROOT, 'src', 'plugin-v2'),
+test('applyContextSandboxToPluginEntry is a no-op when the legacy key is absent', () => {
+  const plugins = [join(ROOT, 'src', 'plugin')]
+  assert.deepEqual(applyContextSandboxToPluginEntry(plugins, undefined), [
+    join(ROOT, 'src', 'plugin'),
   ])
 })
 
@@ -1592,7 +1556,7 @@ test('V2-only null/invalid context_sandbox options abort even without a legacy k
     const configPath = join(target, 'opencode.json')
     try {
       const seed = `${JSON.stringify(
-        { plugins: [{ package: join(ROOT, 'src', 'plugin-v2'), options }] },
+        { plugins: [{ package: join(ROOT, 'src', 'plugin'), options }] },
         null,
         2,
       )}\n`
@@ -1604,7 +1568,6 @@ test('V2-only null/invalid context_sandbox options abort even without a legacy k
           installOpenCode(target, false, false, COMPONENTS, {
             yes: true,
             headless: true,
-            version: 'v2',
           }),
         error,
         `invalid V2-only context_sandbox (${label}) must abort the install`,
@@ -1625,10 +1588,10 @@ test('V2-only valid context_sandbox options are validated and preserved idempote
     }
     const first = await runInstall(
       target,
-      { plugins: [{ package: join(ROOT, 'src', 'plugin-v2'), options }] },
+      { plugins: [{ package: join(ROOT, 'src', 'plugin'), options }] },
       'v2',
     )
-    const entry = first.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin-v2')
+    const entry = first.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin')
     assert.deepEqual(
       entry.options.context_sandbox,
       options.context_sandbox,
@@ -1647,10 +1610,10 @@ test('a V2 plugin entry with no managed option stays a no-op EMPTY options bag',
   const target = mkdtempSync(join(tmpdir(), 'pantheon-ctxsandbox-none-'))
   try {
     const first = await runInstall(target, null, 'v2')
-    const entry = first.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin-v2')
+    const entry = first.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin')
     // The object form is emitted from the start; without legacy input the bag
     // is empty, so nothing is enabled by installing (issue #268).
-    assert.deepEqual(entry, { package: join(ROOT, 'src', 'plugin-v2'), options: {} })
+    assert.deepEqual(entry, { package: join(ROOT, 'src', 'plugin'), options: {} })
 
     const second = await runInstall(target, first, 'v2')
     assert.deepEqual(second, first, 'absent legacy + absent V2 options stays idempotent')
@@ -1785,7 +1748,6 @@ test('a config race during install aborts the install instead of reporting succe
         installOpenCode(target, false, false, COMPONENTS, {
           yes: true,
           headless: true,
-          version: 'v2',
           deps: { beforeRecheck: () => writeFileSync(configPath, concurrent) },
         }),
       /changed on disk during install/,
@@ -1824,10 +1786,9 @@ test('context_sandbox migration is applied independently to global and project t
       await installOpenCode(target, false, false, COMPONENTS, {
         yes: true,
         headless: true,
-        version: 'v2',
       })
       const config = JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8'))
-      const entry = config.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin-v2')
+      const entry = config.plugins.find((ref) => pluginReferenceIdentity(ref) === 'src/plugin')
       assert.deepEqual(entry.options.context_sandbox, legacy, `scope migrate failed for ${target}`)
     }
   } finally {

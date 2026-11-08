@@ -24,7 +24,7 @@ function fixture() {
     writeFileSync(join(repo, file), `current ${file}\n`)
     writeFileSync(join(install, file), `current ${file}\n`)
   }
-  writeFileSync(config, JSON.stringify({ plugins: [join(install, 'src', 'plugin-v2')] }))
+  writeFileSync(config, JSON.stringify({ plugins: [join(install, 'src', 'plugin')] }))
   return { root, repo, install, config }
 }
 
@@ -50,7 +50,7 @@ test('sandbox install proof rejects a stale npm package ref even when the packag
     writeFileSync(
       paths.config,
       JSON.stringify({
-        plugins: ['pantheon-opencode@1.6.0-beta.7', join(paths.install, 'src', 'plugin-v2')],
+        plugins: ['pantheon-opencode@1.6.0-beta.7', join(paths.install, 'src', 'plugin')],
       }),
     )
     assert.throws(

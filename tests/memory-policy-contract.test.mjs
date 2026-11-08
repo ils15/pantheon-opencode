@@ -5,7 +5,7 @@ import { test } from 'node:test'
 import { ROOT } from '../scripts/install/shared.mjs'
 
 test('V2 memory retrieval is an explicit MCP call, with no ambient injection hook', () => {
-  const plugin = readFileSync(join(ROOT, 'src', 'plugin-v2.ts'), 'utf8')
+  const plugin = readFileSync(join(ROOT, 'src', 'plugin.ts'), 'utf8')
   for (const retiredReference of [
     'memory-context.ts',
     'memoryInjectionCache',

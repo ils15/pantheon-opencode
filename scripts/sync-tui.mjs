@@ -14,7 +14,6 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { resolveOpenCodeVersion } from './install/opencode-version.mjs'
 import { isSupportedNodeVersion } from './node-engine-policy.mjs'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
@@ -65,7 +64,7 @@ function resolveConfigDir() {
  * The raw TSX source is never copied — the loader consumes only the bundle.
  * @returns {{ created: number, skipped: number }}
  */
-export function copyPluginFiles(srcDir, dstDir, version) {
+export function copyPluginFiles(srcDir, dstDir) {
   const result = { created: 0, skipped: 0 }
 
   mkdirSync(dstDir, { recursive: true })
@@ -90,17 +89,11 @@ export function copyPluginFiles(srcDir, dstDir, version) {
   const pkgSrc = join(srcDir, 'package.json')
   if (existsSync(pkgSrc)) {
     const packageJson = JSON.parse(readFileSync(pkgSrc, 'utf8'))
-    if (version === 'v2' && packageJson.exports?.['./tui-v2']) {
-      packageJson.exports['./tui'] = packageJson.exports['./tui-v2']
-    }
     // Mirror of scripts/install/plugin.mjs: the OpenCode host resolves the
     // plugin server through the `./server` export. In the V2 copy it must
     // point at the V2 server entry so the host attaches the copy's V2 server
     // half (the TUI reactive channel depends on it); otherwise the host loads
     // the V1 server stub of the previous generation's payload.
-    if (version === 'v2' && packageJson.exports?.['./server-v2']) {
-      packageJson.exports['./server'] = packageJson.exports['./server-v2']
-    }
     const content = `${JSON.stringify(packageJson, null, 2)}\n`
     if (writeIfChanged(join(dstDir, 'package.json'), content)) result.created++
     else result.skipped++
@@ -117,19 +110,19 @@ export function copyPluginFiles(srcDir, dstDir, version) {
     } else result.skipped++
   }
 
-  const tuiEntry = join(srcDir, version === 'v2' ? 'tui-v2.ts' : 'tui.ts')
+  const tuiEntry = join(srcDir, 'tui.ts')
   if (existsSync(tuiEntry)) {
     if (writeIfChanged(join(dstDir, 'tui.ts'), readFileSync(tuiEntry, 'utf8'))) result.created++
     else result.skipped++
   }
 
-  const v2ServerEntry = join(srcDir, 'index-v2.ts')
-  const v2ServerDestination = join(dstDir, 'index.ts')
-  if (version === 'v2' && existsSync(v2ServerEntry)) {
-    if (writeIfChanged(v2ServerDestination, readFileSync(v2ServerEntry, 'utf8'))) result.created++
+  const serverEntry = join(srcDir, 'index.ts')
+  const serverDestination = join(dstDir, 'index.ts')
+  if (existsSync(serverEntry)) {
+    if (writeIfChanged(serverDestination, readFileSync(serverEntry, 'utf8'))) result.created++
     else result.skipped++
-  } else if (existsSync(v2ServerDestination)) {
-    rmSync(v2ServerDestination, { force: true })
+  } else if (existsSync(serverDestination)) {
+    rmSync(serverDestination, { force: true })
   }
 
   // Keep the copied plugin installable with deterministic npm ci.
@@ -209,8 +202,7 @@ async function main() {
     const sourceVersion = readVersion(join(tuiSrcDir, 'package.json'))
 
     // Copy fresh files
-    const version = resolveOpenCodeVersion('auto', { warn: (message) => console.warn(message) })
-    const { created } = copyPluginFiles(tuiSrcDir, tuiCopyDir, version)
+    const { created } = copyPluginFiles(tuiSrcDir, tuiCopyDir)
 
     // Lockfile installation is the only accepted dependency path. Strip
     // global-context npm vars so a global postinstall can't trigger ECIGLOBAL.

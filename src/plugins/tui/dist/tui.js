@@ -1,76 +1,810 @@
 import { createComponent, createElement, createTextNode, effect, insert, insertNode, memo, setProp } from "@opentui/solid";
-import { Buffer } from "node:buffer";
-import { appendFile, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { Plugin } from "@opencode/plugin/tui";
+import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, onMount } from "solid-js";
 import { fileURLToPath } from "node:url";
-import { For, Show, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
-//#region src/index.tsx
-/** @jsxImportSource @opentui/solid */
+//#region src/context-gauge.ts
+const CONTEXT_BAR_CELLS = 12;
+const CONTEXT_BAR_FILLED_CELL = "▰";
+const CONTEXT_BAR_EMPTY_CELL = "▱";
+function numberOrNull$1(value) {
+	return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+function contextUsageTone(percent) {
+	if (percent > 90) return "error";
+	if (percent > 50) return "warning";
+	if (percent > 25) return "success";
+	return "info";
+}
+function formatTokenCount(tokens) {
+	const value = numberOrNull$1(tokens);
+	if (value === null || value < 0) return null;
+	return Math.round(value).toLocaleString("en-US");
+}
+function formatContextWindow(limit) {
+	const value = numberOrNull$1(limit);
+	if (value === null || value <= 0) return null;
+	if (value >= 1e6) return `${(value / 1e6).toFixed(1)}M`;
+	if (value >= 1e3) return `${Math.floor(value / 1e3)}K`;
+	return `${Math.floor(value)}`;
+}
+function contextBarFilled(percent, cells = 12) {
+	const total = Math.max(1, Math.floor(cells));
+	const filled = Math.round(percent / 100 * total);
+	if (!Number.isFinite(filled)) return 0;
+	return Math.min(total, Math.max(0, filled));
+}
+function contextBar(percent, cells = 12) {
+	const value = numberOrNull$1(percent);
+	if (value === null) return null;
+	const total = Math.max(1, Math.floor(cells));
+	const filled = contextBarFilled(value, total);
+	return {
+		filled: "▰".repeat(filled),
+		empty: "▱".repeat(total - filled)
+	};
+}
+function formatSpent(cost) {
+	const value = numberOrNull$1(cost);
+	if (value === null || value < 0) return null;
+	return `$${value.toFixed(2)}`;
+}
+//#endregion
+//#region src/model-usage-limits.ts
+/** Shared bounds for cached recent model-usage aggregation. */
+const MODEL_USAGE_VISIBLE_CEILING = 3;
+const MODEL_USAGE_MESSAGE_LIMIT = 400;
+const MODEL_USAGE_SESSION_LIMIT = 8;
+//#endregion
+//#region src/sidebar-width.ts
+const GRAPHEMES = new Intl.Segmenter(void 0, { granularity: "grapheme" });
+/** A grapheme the host draws two cells wide: emoji presentation, an extended
+*  pictograph (a bare `❤` counts too, exactly as the host's `emoji-regex`
+*  does) and a regional-indicator pair (a flag). */
+const EMOJI_GLYPH = /\p{Emoji_Presentation}|\p{Extended_Pictographic}|\p{Regional_Indicator}/u;
+/** VS16 asks for emoji presentation; without it `1` is one cell, with it the
+*  keycap sequence is drawn as one two-cell glyph. */
+const EMOJI_PRESENTATION_SELECTOR = "️";
+/** Unicode default-ignorable code points carry no width of their own. */
+const IGNORABLE_GLYPH = /^\p{Default_Ignorable_Code_Point}$/u;
+/** East Asian Wide/Fullwidth ranges — two cells, never the ambiguous width
+*  (the host measures ambiguous as narrow, so `▸`/`✓`/`—` stay one cell).
+*  Generated from the host's own measurement (`string-width` over every code
+*  point, emoji excluded), so this table can be regenerated verbatim when the
+*  host upgrades its Unicode data instead of being hand-edited. */
+const CELL_WIDE_RANGES = [
+	[4352, 4446],
+	[9001, 9002],
+	[9776, 9783],
+	[9866, 9871],
+	[11904, 11929],
+	[11931, 12019],
+	[12032, 12245],
+	[12272, 12335],
+	[12337, 12348],
+	[12350, 12350],
+	[12353, 12438],
+	[12441, 12543],
+	[12549, 12591],
+	[12593, 12643],
+	[12645, 12686],
+	[12688, 12773],
+	[12783, 12830],
+	[12832, 12871],
+	[12880, 12950],
+	[12952, 12952],
+	[12954, 42124],
+	[42128, 42182],
+	[43360, 43388],
+	[44032, 55203],
+	[63744, 64255],
+	[65040, 65049],
+	[65072, 65106],
+	[65108, 65126],
+	[65128, 65131],
+	[65281, 65376],
+	[65504, 65510],
+	[94176, 94180],
+	[94192, 94198],
+	[94208, 101594],
+	[101631, 101664],
+	[101760, 101874],
+	[101888, 102801],
+	[102816, 102866],
+	[110576, 110579],
+	[110581, 110587],
+	[110589, 110590],
+	[110592, 110888],
+	[110898, 110898],
+	[110928, 110930],
+	[110933, 110933],
+	[110948, 110952],
+	[110960, 111355],
+	[119552, 119638],
+	[119648, 119670],
+	[127488, 127488],
+	[127504, 127513],
+	[127515, 127534],
+	[127536, 127537],
+	[127547, 127547],
+	[127552, 127560],
+	[127584, 127589],
+	[131072, 196605],
+	[196608, 262141]
+];
+/** One code point the terminal draws no cell for: control characters, the
+*  zero-width joiners/marks, combining marks and variation selectors. */
+function isZeroWidthCodePoint(code, glyph) {
+	if (code <= 31 || code >= 127 && code <= 159) return true;
+	if (code >= 8203 && code <= 8207) return true;
+	if (code === 65279) return true;
+	if (code >= 768 && code <= 879) return true;
+	if (code >= 6832 && code <= 6911) return true;
+	if (code >= 7616 && code <= 7679) return true;
+	if (code >= 8400 && code <= 8447) return true;
+	if (code >= 65024 && code <= 65039) return true;
+	if (code >= 65056 && code <= 65071) return true;
+	if (code >= 917760 && code <= 917999) return true;
+	if (code >= 55296 && code <= 57343) return true;
+	return IGNORABLE_GLYPH.test(glyph);
+}
+function isWideCodePoint(code) {
+	for (const [low, high] of CELL_WIDE_RANGES) {
+		if (code < low) return false;
+		if (code <= high) return true;
+	}
+	return false;
+}
+/** Cells one grapheme occupies. */
+function graphemeWidth(segment) {
+	if (EMOJI_GLYPH.test(segment)) return 2;
+	if (segment.length > 1 && segment.includes(EMOJI_PRESENTATION_SELECTOR)) return 2;
+	let width = 0;
+	for (const glyph of segment) {
+		const code = glyph.codePointAt(0) ?? 0;
+		if (isZeroWidthCodePoint(code, glyph)) continue;
+		width += isWideCodePoint(code) ? 2 : 1;
+	}
+	return width;
+}
+/** Terminal cells `value` occupies — the unit every column in this plugin is
+*  measured in. Mirrors the host (that is how `@opentui/core` sizes a text
+*  run): emoji count as two cells, East Asian Wide/Fullwidth as two, East
+*  Asian Ambiguous as one, combining marks and variation selectors as none.
+*  Pure. */
+function cellWidth(value) {
+	let width = 0;
+	for (const { segment } of GRAPHEMES.segment(value)) width += graphemeWidth(segment);
+	return width;
+}
+/** Prefix of the "+N more" line appended when the bullet budget is exceeded. */
+const WHATS_NEW_MORE_PREFIX = "… +";
+const EMPTY_HIGHLIGHTS = {
+	version: null,
+	found: false,
+	groups: [],
+	totalItems: 0,
+	truncated: false
+};
+/** Escape regex metacharacters so a version like 1.0.0 matches literally. */
+function escapeRegExp(text) {
+	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 /**
-* pantheon-tui — Pantheon TUI plugin for opencode.
-*
-* V1 bundle: `tsdown` emits `dist/tui.js`, re-exported by root `tui.ts`.
-* OpenCode V2 uses the separate `src/index-v2.tsx` entry and native CLI plugin
-* API. No raw TSX implementation is shipped. Because the bundle inlines relative
-* imports, this entry may be split into modules without breaking the loader.
-*
-* Slots:
-*   - sidebar_content        (order 900) — Pantheon sidebar (header/version/
-*     branch, Sessions, real-time Delegations panel).
-*   - app_bottom             (order 60)  — AI subscription usage gauges
-*     (Anthropic/OpenAI quotas, OpenCode Go/Zen dollar limits + provider
-*     status incidents).
-*
-* ─────────────────────────────────────────────────────────────────────────────
-* VENDORED FEATURES (MIT) — incorporated with their license headers preserved:
-*
-*   • satas20/opencode-usage-bar (MIT)
-*       https://github.com/satas20/opencode-usage-bar
-*
-*   v1.2.0 added an OpenCode Go/Zen usage provider (`opencodego`) on top of
-*   the vendored base — dollar-denominated rolling limits ($12/5h, $30/7d,
-*   $60/month) via the same key used for inference. Still MIT-credited to
-*   satas20 for the original bar/config/poll code.
-*
-* satas20/opencode-todo-progress was vendored in v1.1.0 alongside the
-* usage-bar but has since been REMOVED as redundant — the native session
-* footer already surfaces todo/context state, so its todo bar slot was
-* dropped entirely. Only usage-bar code remains.
-* ─────────────────────────────────────────────────────────────────────────────
-*
-* LIMITATION — native context/tokens statusline:
-*   The opencode session footer natively shows a context/tokens statusline
-*   next to the prompt. There is NO config option to hide it: the tui.json
-*   schema (opencode.ai/tui.json) only exposes `theme`, `keybinds`,
-*   `scroll_speed`, `scroll_acceleration`, `diff_style`, `mouse` and
-*   `attention`, and the SDK `Config` type has no statusline/tokens display
-*   flag (checked against @opencode-ai/sdk `Config` and the published
-*   schema). The Pantheon sidebar therefore no longer duplicates that footer
-*   (the old ContextBar was removed) and we deliberately do NOT hack the
-*   native footer. Track upstream: opencode statusline config.
+* Extract the body of a version section from changelog text — inline replica
+* of scripts/changelog-extract.mjs `extractSection` (see that file for the
+* full contract: `## [<version>] - YYYY-MM-DD`, leading `v` and the date
+* optional, `## [Unreleased]` never matched).
 */
-const __tuiPluginOnceKey = "__pantheonPluginsLoaded";
-function pantheonPluginOnce(key) {
+function extractSection(changelogText, version) {
+	const normalized = String(version).trim().replace(/^v/i, "");
+	if (!normalized || /^unreleased$/i.test(normalized)) return {
+		found: false,
+		body: null
+	};
+	const escaped = escapeRegExp(normalized);
+	const match = new RegExp(`^##[ \\t]+\\[v?${escaped}\\](?:[ \\t]*-[ \\t]*\\d{4}-\\d{2}-\\d{2})?(?=[ \\t]|$)`, "m").exec(changelogText);
+	if (!match) return {
+		found: false,
+		body: null
+	};
+	const newline = changelogText.indexOf("\n", match.index);
+	const start = newline === -1 ? changelogText.length : newline + 1;
+	const nextHeading = /^##[ \t]+\[/m.exec(changelogText.slice(start));
+	const end = nextHeading ? start + nextHeading.index : changelogText.length;
+	return {
+		found: true,
+		body: changelogText.slice(start, end).trim()
+	};
+}
+/**
+* Reduce one markdown line to plain text: links keep their label, emphasis
+* and inline-code markers are dropped, HTML comment fragments are removed,
+* and whitespace collapses. Deliberately simple — the input is our own
+* CHANGELOG (lint-capped at 200 chars per bullet), not hostile input.
+*/
+function stripMarkdown(text) {
+	return text.replace(/<!--[\s\S]*?-->/g, " ").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/(\*\*|__)/g, "").replace(/`/g, "").replace(/\s+/g, " ").trim();
+}
+/** Strip the leading H3 marker (`### Added` → `Added`). */
+function stripHeading(text) {
+	return text.replace(/^#{1,6}[ \t]+/, "").trim();
+}
+/**
+* Extract the curated summary block (`### 🆕 What's New` or `## 🆕 What's New`)
+* from a section body: its bullets only, each truncated to
+* WHATS_NEW_ITEM_MAX_CHARS, capped to WHATS_NEW_SUMMARY_MAX_ITEMS. Null when
+* the section carries no summary block (the full-section fallback applies).
+*/
+function extractWhatsNewSummary(body) {
+	const lines = body.split("\n");
+	const start = lines.findIndex((line) => /^#{2,3}[ \t]+.*What'?s New/i.test(line.trim()));
+	if (start === -1) return null;
+	const items = [];
+	for (const rawLine of lines.slice(start + 1)) {
+		const line = rawLine.trim();
+		if (line === "" || line.startsWith("<!--")) continue;
+		if (/^#{1,6}[ \t]/.test(line)) break;
+		if (!/^[-*][ \t]/.test(line)) continue;
+		if (items.length >= 6) break;
+		const content = stripMarkdown(line.replace(/^[-*][ \t]+/, ""));
+		if (content === "") continue;
+		items.push(content.length > 140 ? `${content.slice(0, 139)}…` : content);
+	}
+	return items.length > 0 ? items : null;
+}
+/**
+* Extract the release highlights for `version`. When the section carries a
+* curated `🆕 What's New` summary block, THE WINDOW SHOWS ONLY THAT (the
+* full Added/Changed/Fixed walls are for the CHANGELOG readers, not the
+* dialog); otherwise it falls back to the H3-group extraction bounded to
+* WHATS_NEW_MAX_ITEMS bullets. A missing section, a bullet-less section or a
+* blank changelog all return EMPTY_HIGHLIGHTS (no window).
+*/
+function extractHighlights(changelogText, version) {
+	const { found, body } = extractSection(changelogText ?? "", version ?? "");
+	if (!found || !body) return { ...EMPTY_HIGHLIGHTS };
+	const summary = extractWhatsNewSummary(body);
+	if (summary !== null) return {
+		version: String(version).trim().replace(/^v/i, ""),
+		found: true,
+		groups: [{
+			heading: null,
+			items: summary
+		}],
+		totalItems: summary.length,
+		truncated: false
+	};
+	const groups = [];
+	let totalItems = 0;
+	let truncated = false;
+	for (const rawLine of body.split("\n")) {
+		const line = rawLine.trim();
+		if (line === "" || line.startsWith("<!--")) continue;
+		if (/^#{1,6}[ \t]/.test(line)) {
+			const heading = stripMarkdown(stripHeading(line));
+			if (heading === "") continue;
+			if (groups.at(-1)?.items.length === 0) groups.pop();
+			groups.push({
+				heading,
+				items: []
+			});
+			continue;
+		}
+		if (totalItems >= 12) {
+			if (/^[-*][ \t]/.test(line)) totalItems += 1;
+			continue;
+		}
+		const isBullet = /^[-*][ \t]/.test(line);
+		const continuation = (groups.at(-1)?.items.length ?? 0) > 0;
+		if (!isBullet && !continuation) continue;
+		const content = stripMarkdown(isBullet ? line.replace(/^[-*][ \t]+/, "") : line);
+		if (content === "") continue;
+		const bounded = content.length > 140 ? `${content.slice(0, 139)}…` : content;
+		const group = groups.at(-1);
+		if (group === void 0) groups.push({
+			heading: null,
+			items: [bounded]
+		});
+		else if (isBullet || group.items.length === 0) group.items.push(bounded);
+		else group.items[group.items.length - 1] = `${group.items.at(-1)} ${bounded}`.trim();
+		if (isBullet) totalItems += 1;
+	}
+	const kept = groups.filter((group) => group.items.length > 0);
+	truncated = totalItems > 12;
+	return {
+		version: found ? String(version).trim().replace(/^v/i, "") : null,
+		found,
+		groups: kept,
+		totalItems,
+		truncated
+	};
+}
+/** Window title — mirrors the sidebar's `Pantheon v<version>` convention. */
+function whatsNewTitle(version) {
+	return `O que há de novo — Pantheon v${String(version).trim().replace(/^v/i, "")}`;
+}
+/** Flat display lines for the window: group headings, `• ` bullets, `+N more`. */
+function whatsNewLines(highlights) {
+	const lines = [];
+	for (const group of highlights.groups) {
+		if (group.heading !== null) lines.push(group.heading);
+		for (const item of group.items) lines.push(`• ${item}`);
+	}
+	if (highlights.truncated) {
+		const hidden = Math.max(0, highlights.totalItems - 12);
+		if (hidden > 0) lines.push(`${WHATS_NEW_MORE_PREFIX}${hidden} mais`);
+	}
+	return lines;
+}
+/**
+* Candidate CHANGELOG.md locations for a bundle, first readable wins:
+*   1. the plugin copy root (`<configDir>/plugins/pantheon-tui/CHANGELOG.md`,
+*      shipped by both installers next to package.json);
+*   2. the package root (dev checkout; also an npm-package install when the
+*      bundle runs from `<pkg>/src/plugins/tui/dist/`).
+*/
+function changelogCandidates(bundlePath) {
+	const dist = dirname(bundlePath);
+	const copyRoot = dirname(dist);
+	const packageRoot = dirname(dirname(dirname(copyRoot)));
+	return [join(copyRoot, "CHANGELOG.md"), join(packageRoot, "CHANGELOG.md")];
+}
+/** Read the first existing candidate; null when none is readable (no window). */
+async function readChangelogForBundle(bundleUrl) {
 	try {
-		const g = globalThis;
-		if (g[__tuiPluginOnceKey] === void 0) g[__tuiPluginOnceKey] = /* @__PURE__ */ new Set();
-		const set = g[__tuiPluginOnceKey];
-		if (!(set instanceof Set)) return false;
-		if (set.has(key)) return true;
-		set.add(key);
+		const bundlePath = fileURLToPath(bundleUrl);
+		for (const candidate of changelogCandidates(bundlePath)) try {
+			return await readFile(candidate, "utf8");
+		} catch {}
+		return null;
+	} catch {
+		return null;
+	}
+}
+/** The ambient build-time version, or null outside a tsdown build. */
+function embeddedVersion() {
+	return "2.0.0-beta.1";
+}
+/**
+* Resolve the running Pantheon version for the what's-new window: the plugin
+* copy's own package.json first (the copy root two levels above the bundle,
+* then the package root four levels above — the same legs as the V1 sidebar's
+* detectVersion try 0a/0b), falling back to the tsdown build embed. Null when
+* nothing resolves → no window (fail-open).
+*/
+async function resolveRunningVersion(bundleUrl, embedded = embeddedVersion()) {
+	try {
+		const bundlePath = fileURLToPath(bundleUrl);
+		const dist = dirname(bundlePath);
+		for (const root of [dirname(dist), dirname(dirname(dirname(dist)))]) try {
+			const raw = await readFile(join(root, "package.json"), "utf8");
+			const parsed = JSON.parse(raw);
+			if (typeof parsed.version === "string" && parsed.version.trim() !== "") return parsed.version;
+		} catch {}
+	} catch {}
+	return embedded;
+}
+//#endregion
+//#region src/whats-new-state.ts
+/**
+* whats-new-state.ts — last-seen version for the one-time "What's new" window.
+*
+* The TUI shows a dismissable release-highlights dialog once per Pantheon
+* version. Whether a version was already seen is persisted next to the other
+* opencode-level Pantheon state: `<configDir>/.pantheon/whats-new.json`, the
+* same directory that already holds `install-state.json` (scripts/install/
+* state.mjs) and the active-preset file the sidebar reads. There is no
+* established persistent TUI KV store (the host `api.kv` is per-process), so
+* the plugin owns one small JSON file with the atomic-write discipline used
+* across the repo (unique tmp + rename, mirrors scripts/install/verify.mjs).
+*
+* Fail-open everywhere: a missing or corrupt file reads as "never seen" (the
+* window may show), a failed write is silent (the window may show again) —
+* neither can ever block TUI startup.
+*/
+/** State file name, kept next to `install-state.json` in `<configDir>/.pantheon/`. */
+const WHATS_NEW_STATE_FILENAME = "whats-new.json";
+/** Parse a state file body; null when unreadable as the expected shape. */
+function parseWhatsNewState(raw) {
+	try {
+		const parsed = JSON.parse(raw);
+		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+		const record = parsed;
+		const seen = record.seenVersion;
+		if (typeof seen !== "string" && seen !== null) return null;
+		return {
+			seenVersion: seen,
+			updatedAt: String(record.updatedAt ?? "")
+		};
+	} catch {
+		return null;
+	}
+}
+/** Read the persisted state; null when missing or corrupt (never throws). */
+async function readWhatsNewState(statePath) {
+	try {
+		return parseWhatsNewState(await readFile(statePath, "utf8"));
+	} catch {
+		return null;
+	}
+}
+/**
+* Whether the one-time window should show for `version`: any version change
+* since the last dismissal (including downgrades). A falsy version — the
+* resolver failed — never shows.
+*/
+async function shouldShowWhatsNew(version, statePath) {
+	if (typeof version !== "string" || version.trim() === "") return false;
+	return (await readWhatsNewState(statePath))?.seenVersion !== version;
+}
+/**
+* Persist `version` as seen (atomic tmp + rename, 0o600). Never throws: a
+* failed write leaves the state untouched and the window may show again —
+* the same fail-open contract as the rest of the plugin.
+*/
+async function markSeenWhatsNew(version, statePath) {
+	if (typeof version !== "string" || version.trim() === "") return false;
+	const previous = await readWhatsNewState(statePath);
+	const next = {
+		seenVersion: version,
+		updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+	};
+	const tmpPath = `${statePath}.tmp-${process.pid}`;
+	try {
+		await mkdir(dirname(statePath), { recursive: true });
+		await writeFile(tmpPath, `${JSON.stringify({
+			...previous,
+			...next
+		}, null, 2)}\n`, {
+			encoding: "utf8",
+			mode: 384
+		});
+		await rename(tmpPath, statePath);
+		return true;
+	} catch {
+		try {
+			await unlink(tmpPath);
+		} catch {}
 		return false;
+	}
+}
+/** `stat`-based existence probe (async I/O discipline). */
+async function pathExists(path) {
+	try {
+		await stat(path);
+		return true;
 	} catch {
 		return false;
 	}
 }
-/** How often the sidebar re-reads .pantheon/active-preset.json so `set-tier`
-*  changes made while opencode is open show up within ~30s. */
+/**
+* Default state path: `<configDir>/.pantheon/whats-new.json`, resolving the
+* OpenCode config directory exactly like src/pantheon/tui-version-check.ts
+* (`$XDG_CONFIG_HOME/opencode` → `~/.opencode`), defaulting to the XDG
+* location `init` creates when neither exists yet.
+*/
+async function defaultWhatsNewStatePath(env = process.env, home = homedir()) {
+	const xdgConfig = env.XDG_CONFIG_HOME || join(home, ".config");
+	const primary = join(xdgConfig, "opencode");
+	if (await pathExists(primary)) return join(primary, ".pantheon", WHATS_NEW_STATE_FILENAME);
+	const legacy = join(home, ".opencode");
+	if (await pathExists(legacy)) return join(legacy, ".pantheon", WHATS_NEW_STATE_FILENAME);
+	return join(primary, ".pantheon", WHATS_NEW_STATE_FILENAME);
+}
+//#endregion
+//#region src/whats-new-open.ts
+/**
+* whats-new-open.ts — the show-once decision for the "What's new" window.
+*
+* Plain data in, plain data out: the entrypoints (index.tsx / index-v2.tsx)
+* resolve the running version and the shipped CHANGELOG.md, then hand this
+* module a `show` callback that renders the view data through the host's
+* dialog API. Keeping the decision JSX-free makes the whole one-time flow
+* testable offline (node strips the types natively) — the Solid glue lives in
+* whats-new.tsx.
+*
+* Contract (pinned by tests/tui-whats-new.test.mjs):
+*   - shows at most once per version: dismissal marks the version seen;
+*   - nothing to show (no version, missing CHANGELOG, empty section) → no
+*     window AND no pin — the next start may still show it;
+*   - never throws on its own inputs; I/O failures inside the state module
+*     are fail-open there.
+*/
+/** Muted footer hint teaching the dismiss bind (Portuguese, like the sidebar). */
+const WHATS_NEW_CLOSE_HINT = "esc/q fechar";
+/** Hint variant when the highlights span more than one page. */
+const WHATS_NEW_PAGES_HINT = "esc/q fechar · n próxima · p volta";
+/** Hard-wrap one display line into rows of at most `width` columns (>= 10). */
+function wrapWhatsNewLine(line, width) {
+	const bounded = Number.isInteger(width) && width > 10 ? width : 76;
+	const text = String(line);
+	if (text.length <= bounded) return [text];
+	const rows = [];
+	let rest = text;
+	while (rest.length > bounded) {
+		rows.push(rest.slice(0, bounded));
+		rest = rest.slice(bounded);
+	}
+	if (rest.length > 0) rows.push(rest);
+	return rows;
+}
+/** Slice display lines into fixed-size pages (>= 1 page, empty-safe). */
+function paginateWhatsNewLines(lines, pageSize = 14) {
+	const size = Number.isInteger(pageSize) && pageSize > 0 ? pageSize : 14;
+	if (lines.length === 0) return [[]];
+	const pages = [];
+	for (let i = 0; i < lines.length; i += size) pages.push(lines.slice(i, i + size));
+	return pages;
+}
+/**
+* Open the one-time window when the version changed and highlights exist.
+* Returns true when the window was shown; the caller's `onClose` callback
+* (both host-initiated and local close binds) must funnel into marking seen.
+*/
+async function openWhatsNew(input) {
+	const { version, statePath, changelogText, show } = input;
+	if (typeof version !== "string" || version.trim() === "") return false;
+	if (!await shouldShowWhatsNew(version, statePath)) return false;
+	const lines = whatsNewLines(changelogText ? extractHighlights(changelogText, version) : { ...EMPTY_HIGHLIGHTS });
+	if (lines.length === 0) return false;
+	const pages = paginateWhatsNewLines(lines);
+	const data = {
+		version,
+		title: whatsNewTitle(version),
+		lines,
+		pages,
+		hint: pages.length > 1 ? WHATS_NEW_PAGES_HINT : WHATS_NEW_CLOSE_HINT
+	};
+	show(() => data, () => {
+		markSeenWhatsNew(version, statePath);
+	});
+	return true;
+}
+//#endregion
+//#region src/whats-new.tsx
+/** @jsxImportSource @opentui/solid */
+/**
+* whats-new.tsx — the one-time "What's new" window (per Pantheon version).
+*
+* When the running Pantheon version changed since the last TUI start, the V2
+* entrypoint fires {@link maybeShowWhatsNewV2} (fire-and-forget, never
+* awaited — startup must never block). The decision lives in
+* whats-new-open.ts; this file is only the host glue + view:
+* `context.ui.dialog.show` plus a keymap layer gated on the open signal so
+* `escape`/`q` dismiss and `n`/`p` flip pages while (and only while) the
+* window is up — the same gated-layer pattern as the dispatch panel.
+*
+* The window shows the curated 🆕 What's New summary (whats-new-highlights
+* prefers it), hard-wrapped to the window width and sliced into fixed-size
+* pages — a big changelog can never overflow the terminal; the footer points
+* at the complete CHANGELOG.md.
+*
+* Deliberately V2-only: the two dist entries are self-contained (the V1
+* sidebar mirrors the preset resolver rather than importing it) because any
+* module shared by both entries becomes a content-hashed chunk in dist/,
+* changing the artifact shape the byte-reproducible-dist gate pins. The V1
+* generation (OpenCode 1.x, legacy) does not show the window; the pure
+* modules here are generation-agnostic, so a V1 mirror can follow the
+* documented inline-replica precedent if it is ever wanted.
+*
+* Dismissal always funnels into `markSeenWhatsNew` (idempotent), so the window
+* is shown exactly once per version. Every failure path is silent: missing
+* CHANGELOG.md, unreadable state, a host API that throws — the window simply
+* does not show (fail-open, like the rest of the plugin).
+*/
+/** Window body: title, rule, the current page (wrapped), footer hint. */
+function WhatsNewContent(props) {
+	const rows = () => {
+		const current = props.data.pages[Math.min(props.page(), props.pageCount() - 1)] ?? [];
+		const wrapped = [];
+		for (const line of current) wrapped.push(...wrapWhatsNewLine(line, 76));
+		return wrapped;
+	};
+	return (() => {
+		var _el$ = createElement("box"), _el$2 = createElement("text"), _el$3 = createElement("text"), _el$5 = createElement("box"), _el$6 = createElement("text");
+		insertNode(_el$, _el$2);
+		insertNode(_el$, _el$3);
+		insertNode(_el$, _el$5);
+		insertNode(_el$, _el$6);
+		setProp(_el$, "flexDirection", "column");
+		setProp(_el$, "paddingLeft", 1);
+		setProp(_el$, "paddingRight", 1);
+		setProp(_el$, "paddingTop", 1);
+		setProp(_el$2, "attributes", 1);
+		insert(_el$2, () => props.data.title);
+		insertNode(_el$3, createTextNode(`──────────────────────────────────────`));
+		insert(_el$, createComponent(For, {
+			get each() {
+				return rows();
+			},
+			children: (line) => (() => {
+				var _el$7 = createElement("text");
+				insert(_el$7, line);
+				effect((_$p) => setProp(_el$7, "fg", line.startsWith("• ") ? props.fg : props.muted, _$p));
+				return _el$7;
+			})()
+		}), _el$5);
+		setProp(_el$5, "height", 1);
+		insert(_el$6, (() => {
+			var _c$ = memo(() => props.pageCount() > 1);
+			return () => _c$() ? `${props.page() + 1}/${props.pageCount()} · ` : "";
+		})(), null);
+		insert(_el$6, () => props.data.hint, null);
+		effect((_p$) => {
+			var _v$ = props.fg, _v$2 = props.muted, _v$3 = props.muted;
+			_v$ !== _p$.e && (_p$.e = setProp(_el$2, "fg", _v$, _p$.e));
+			_v$2 !== _p$.t && (_p$.t = setProp(_el$3, "fg", _v$2, _p$.t));
+			_v$3 !== _p$.a && (_p$.a = setProp(_el$6, "fg", _v$3, _p$.a));
+			return _p$;
+		}, {
+			e: void 0,
+			t: void 0,
+			a: void 0
+		});
+		return _el$;
+	})();
+}
+/**
+* Entry glue: resolve version + shipped CHANGELOG.md, then show the window
+* through the host dialog stack once. Never throws.
+*/
+async function maybeShowWhatsNewV2(context) {
+	try {
+		const version = await resolveRunningVersion(import.meta.url);
+		if (!version) return;
+		const statePath = await defaultWhatsNewStatePath();
+		const changelogText = await readChangelogForBundle(import.meta.url);
+		const [open, setOpen] = createSignal(false);
+		const [page, setPage] = createSignal(0);
+		let viewData;
+		const pageCount = () => Math.max(1, Math.ceil(viewData?.pages.length ?? 1));
+		let dismiss = () => {};
+		try {
+			context.keymap.layer(() => ({
+				mode: "global",
+				enabled: () => open(),
+				commands: [
+					{
+						id: "pantheon.whats-new.close",
+						title: "Fechar o que há de novo",
+						bind: "escape,q",
+						run: () => {
+							if (!open()) return false;
+							dismiss();
+						}
+					},
+					{
+						id: "pantheon.whats-new.next",
+						title: "Próxima página",
+						bind: "n,right",
+						run: () => {
+							if (!open()) return false;
+							setPage((current) => Math.min(current + 1, pageCount() - 1));
+						}
+					},
+					{
+						id: "pantheon.whats-new.prev",
+						title: "Página anterior",
+						bind: "p,left",
+						run: () => {
+							if (!open()) return false;
+							setPage((current) => Math.max(current - 1, 0));
+						}
+					}
+				]
+			}));
+		} catch {}
+		await openWhatsNew({
+			version,
+			statePath,
+			changelogText,
+			show: (render, onClose) => {
+				const close = () => {
+					setOpen(false);
+					onClose();
+				};
+				dismiss = () => {
+					try {
+						context.ui.dialog.clear();
+					} catch {}
+					close();
+				};
+				viewData = render();
+				setPage(0);
+				setOpen(true);
+				try {
+					const theme = context.theme?.text ?? {};
+					context.ui.dialog.show(() => createComponent(WhatsNewContent, {
+						data: viewData,
+						page,
+						pageCount,
+						get fg() {
+							return theme.base;
+						},
+						get muted() {
+							return theme.muted;
+						}
+					}), close);
+				} catch {}
+			}
+		});
+	} catch {}
+}
+//#endregion
+//#region src/index.tsx
+/** @jsxImportSource @opentui/solid */
+const SINGLETON = Symbol.for("pantheon.tui.v2.loaded");
+/** How often the sidebar re-reads .pantheon/active-preset.json (V1 parity) so
+*  `set-tier` changes made while opencode is open show up within ~30s. */
 const PRESET_REFRESH_MS = 3e4;
-/** Read .pantheon/active-preset.json — mirrors the presets.mjs file leg:
-*  first existing candidate wins; malformed JSON or a `preset` that is
-*  missing, empty or "none" → null (no fall-through to lower candidates). */
-async function readActivePresetFile(cwd) {
+/** Running-row spinner cadence — matches V1's animation tick. */
+const SPINNER_INTERVAL_MS = 80;
+/** Bounded warm-up: sync at most this many sessions at plugin load. */
+const WARMUP_SESSION_LIMIT = 24;
+/** Sidebar body shown while the host has not published a session yet. */
+const SIDEBAR_WAITING_LABEL = "Aguardando sessão…";
+/** Delegate-completion toast title. */
+const TOAST_TITLE = "Pantheon";
+/** Marker before the preset label (fixed header, home status, prompt footer).
+*  `▸` U+25B8 is one cell; the previous bolt (U+26A1) carries
+*  Emoji_Presentation and is measured as two cells, which misaligned the line. */
+const PRESET_MARKER = "▸";
+/** Git ahead / behind arrows (U+2191 / U+2193), one cell each — the glyphs the
+*  reference sidebars use for `↑ahead ↓behind`. */
+const GIT_ARROW_UP = "↑";
+const GIT_ARROW_DOWN = "↓";
+/** One event name the host publishes on `data.on` — the OpenCode V2 union. */
+/** V2 events that refresh the sidebar. V1 also listened to `session.updated`,
+*  but that name is absent from the OpenCode V2 event union (verified against
+*  `@opencode/client`'s `OpenCodeEvent`), so the valid events that carry the
+*  same state changes are used instead: `session.renamed` /
+*  `session.metadata.updated` / `session.moved` (the mutations `session.updated`
+*  used to stand for) and `session.idle` (a child finishing). `satisfies` keeps
+*  the literals while making a name outside the union a type error (surfaced by
+*  `tsc -p tsconfig.build.json`), and the sidebar test asserts the same names
+*  against the installed union at runtime. */
+const SIDEBAR_REFRESH_EVENTS = [
+	"session.created",
+	"session.renamed",
+	"session.metadata.updated",
+	"session.moved",
+	"session.idle",
+	"session.status",
+	"session.deleted"
+];
+/** One `overrides.agents[<agent>]` entry from active-preset.json. */
+/** The override map the CLI wrote into active-preset.json. */
+/** A preset plus the explicit overrides stored next to it. */
+function emptyOverrides() {
+	return { agents: {} };
+}
+/** Keep only well-formed per-agent overrides: unknown keys are ignored and a
+*  non-string model/variant is dropped instead of leaking into the render. */
+function parsePresetOverrides(value) {
+	const overrides = emptyOverrides();
+	if (!value || typeof value !== "object") return overrides;
+	const agents = value.agents;
+	if (!agents || typeof agents !== "object") return overrides;
+	for (const [agent, entry] of Object.entries(agents)) {
+		if (agent === "" || !entry || typeof entry !== "object") continue;
+		const model = entry.model;
+		const variant = entry.variant;
+		const override = {};
+		if (typeof model === "string" && model !== "") override.model = model;
+		if (typeof variant === "string" && variant !== "") override.variant = variant;
+		if (override.model !== void 0 || override.variant !== void 0) overrides.agents[agent] = override;
+	}
+	return overrides;
+}
+/** Read .pantheon/active-preset.json — first existing candidate wins; malformed
+*  JSON or a `preset` that is missing, empty or "none" → null (no fall-through
+*  to lower candidates). The explicit per-agent overrides stored in the same
+*  file come along so the sidebar can mark them with `*`. */
+async function readActivePresetDetail(cwd) {
 	const xdgConfig = process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config");
 	const candidates = [
 		join(cwd, ".pantheon", "active-preset.json"),
@@ -89,8 +823,11 @@ async function readActivePresetFile(cwd) {
 			const name = parsed && typeof parsed === "object" ? parsed.preset : void 0;
 			if (typeof name !== "string" || name.length === 0 || name === "none") return null;
 			return {
-				name,
-				source: "file"
+				info: {
+					name,
+					source: "file"
+				},
+				overrides: parsePresetOverrides(parsed.overrides)
 			};
 		} catch {
 			return null;
@@ -110,889 +847,1147 @@ function presetFromEnv(env) {
 		source: null
 	};
 }
-/** Resolve the active preset for the sidebar: env > file > default. */
-async function resolvePresetForTui(env, cwd) {
+/** Resolve the active preset plus its per-agent overrides: env > file > default.
+*  An env-selected preset has no file overrides by construction. */
+async function resolveActivePresetForTui(env, cwd) {
 	const envPreset = presetFromEnv(env);
-	if (envPreset.source === "env") return envPreset;
-	return await readActivePresetFile(cwd) ?? {
-		name: null,
-		source: null
+	if (envPreset.source === "env") return {
+		info: envPreset,
+		overrides: emptyOverrides()
+	};
+	return await readActivePresetDetail(cwd) ?? {
+		info: {
+			name: null,
+			source: null
+		},
+		overrides: emptyOverrides()
 	};
 }
-async function detectVersion(api) {
-	try {
-		const pkgUrl = new URL("../../package.json", import.meta.url);
-		const pkgContent = await readFile(fileURLToPath(pkgUrl), "utf8");
-		const pkg = JSON.parse(pkgContent);
-		if (pkg.version) return pkg.version;
-	} catch {}
-	try {
-		const pkgUrl = new URL("../../../../package.json", import.meta.url);
-		const pkgContent = await readFile(fileURLToPath(pkgUrl), "utf8");
-		const pkg = JSON.parse(pkgContent);
-		if (pkg.version) return pkg.version;
-	} catch {}
-	try {
-		const wt = api.state.path?.worktree ?? "";
-		const fp = wt ? `${wt}/package.json` : "package.json";
-		const result = await api.client.file.read({ path: fp });
-		const match = String(result?.data?.content ?? "").match(/"version":\s*"([^"]+)"/);
-		if (match?.[1]) return match[1];
-	} catch {}
-	try {
-		const proc = api.client?.process;
-		if (typeof proc?.exec === "function") {
-			const r = await proc.exec({
-				command: "git",
-				args: [
-					"describe",
-					"--tags",
-					"--always"
-				],
-				timeoutMs: 3e3
-			});
-			const tag = (r.stdout ?? r.output ?? "").trim().replace(/^v/, "").replace(/-\d+-g[0-9a-f]+$/, "");
-			if (tag) return tag;
-		}
-	} catch {}
-	try {
-		const proc = api.client?.process;
-		if (typeof proc?.exec === "function") {
-			const r = await proc.exec({
-				command: "opencode",
-				args: ["--version"],
-				timeoutMs: 3e3
-			});
-			const ver = (r.stdout ?? r.output ?? "").trim().replace(/^v/, "");
-			if (ver) return ver;
-		}
-	} catch {}
-	return "1.6.3-beta.10";
+/** `SessionInfo.id` is always a `ses…` handle. Guarded so a placeholder or a
+*  foreign id never reaches the status/navigate APIs. */
+function isValidSessionID(id) {
+	return typeof id === "string" && id.startsWith("ses");
 }
-/**
-* usage-bar — AI subscription usage gauge for the opencode TUI.
-*
-* Renders a compact usage strip in the `app_bottom` slot — a full-width row
-* just below the session footer:
-*
-*   ▓▓▓▓░░ 65% · 0h 11m                                  (one window)
-*   cld ▓▓▓▓░ 65% · 0h 11m  7d ▓░░░░ 19% · 1d 11h   oai ▓░░░░ 12% · 3h 4m
-*   ! cld ▓▓▓▓░ 65% · 0h 11m                             (anthropic incident)
-*
-* Providers:
-*   anthropic — Claude Pro/Max via the OAuth token in ~/.claude/.credentials.json
-*   openai    — ChatGPT Plus/Pro via the Codex CLI login in ~/.codex/auth.json
-*   opencodego— OpenCode Go/Zen dollar limits ($12/5h, $30/7d, $60/mo) via
-*               PANTHEON_OPENCODE_API_KEY (fallback OPENCODE_API_KEY). No
-*               status page — the provider hides silently when unconfigured
-*               or when the (not yet public) usage endpoint is unavailable.
-*
-* When a provider's public status page reports an incident, a colored `!`
-* marker appears next to its prefix (red = major/critical, amber = minor,
-* cyan = maintenance). The usage bar itself is unaffected. Disable with
-* `show_status = false` under `[ui]`.
-*
-* Configured via ~/.config/opencode/usage-bar.toml (auto-created with
-* commented defaults on first run; read once at startup). Tokens/keys are
-* only ever sent to their own provider's API host.
-*
-* Loaded via tui.json, e.g.:
-*   { "plugin": ["@satas/opencode-usage-bar"] }      // published npm package
-*   { "plugin": ["/abs/path/to/src/index.tsx"] }     // local file (no build)
-*/
-const POLL_MS = 12e4;
-const FETCH_TIMEOUT_MS = 1e4;
-const CONFIG_FILE = "usage-bar.toml";
-/** Which quota window a value belongs to; toggled per provider in config. */
-/** Provider health from the vendor's public status page (Statuspage schema). */
-function expandTilde(p) {
-	return p === "~" ? homedir() : p.startsWith("~/") ? join(homedir(), p.slice(2)) : p;
+function numberOrNull(value) {
+	return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
-function fmtDuration(ms) {
-	const totalMinutes = Math.max(0, Math.ceil(ms / 6e4));
-	const days = Math.floor(totalMinutes / 1440);
-	const hours = Math.floor(totalMinutes % 1440 / 60);
-	const minutes = totalMinutes % 60;
-	if (days > 0) return `${days}d ${hours}h`;
-	return `${hours}h ${minutes}m`;
-}
-/** Decode a JWT's `exp` claim (unix seconds) without verifying. 0 on failure. */
-function jwtExp(token) {
-	try {
-		const payload = token.split(".")[1];
-		if (!payload) return 0;
-		const claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-		return typeof claims.exp === "number" ? claims.exp : 0;
-	} catch {
-		return 0;
+/** Model reference shapes the host publishes: `ModelRef` objects, bare ids, or
+*  `provider/model` strings. Returns the id part, never throws. */
+function modelRefID(ref) {
+	if (typeof ref === "string") return ref === "" ? null : ref;
+	if (ref && typeof ref === "object") {
+		const id = ref.id;
+		if (typeof id === "string" && id !== "") return id;
 	}
+	return null;
 }
-async function fetchJson(url, headers) {
-	try {
-		const res = await fetch(url, {
-			headers,
-			signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
-		});
-		if (!res.ok) return null;
-		return await res.json();
-	} catch {
-		return null;
-	}
+/** Short display id: the segment after the last `/` (`opencode-go/kimi-k3` →
+*  `kimi-k3`), truncated so a long id never wraps the sidebar. */
+function shortModelID(ref, max = 24) {
+	const id = modelRefID(ref);
+	if (id === null) return null;
+	const segment = id.slice(id.lastIndexOf("/") + 1);
+	if (segment === "") return null;
+	return segment.length > max ? `${segment.slice(0, Math.max(1, max - 1))}…` : segment;
 }
-/** Fetch a vendor's overall status from its public Statuspage JSON endpoint.
-*  Returns the `indicator` ("none" when healthy), or `null` when the fetch
-*  itself failed — so a network blip never clears a known incident. */
-async function fetchStatus(url) {
-	const data = await fetchJson(url, {});
-	if (!data?.status) return null;
-	const indicator = data.status.indicator;
-	return indicator === "minor" || indicator === "major" || indicator === "critical" || indicator === "maintenance" ? indicator : "none";
+/** `providerID` of a model reference, trimmed; null when absent/blank. Derived
+*  only from what the host already published — never a lookup table. */
+function providerIDFromRef(ref) {
+	if (ref === null || typeof ref !== "object") return null;
+	const providerID = ref.providerID;
+	return typeof providerID === "string" && providerID.trim() !== "" ? providerID.trim() : null;
 }
-/** Set from `api.state.path.state` at startup; default matches opencode's
-*  XDG data dir. */
-let opencodeAuthFile = join(homedir(), ".local", "share", "opencode", "auth.json");
-/** Read a provider's entry from opencode's own auth store
-*  (`opencode auth login`). Returns null when missing/unreadable. */
-async function opencodeAuth(...ids) {
-	try {
-		const auth = JSON.parse(await readFile(opencodeAuthFile, "utf8"));
-		for (const id of ids) {
-			const entry = auth[id];
-			if (entry) return entry;
-		}
-		return null;
-	} catch {
-		return null;
+/** Provider for a bare-string model reference: match its id (or bare segment)
+*  in the host model list. Null when the list cannot answer. */
+function providerIDFromModels(models, ref) {
+	if (!Array.isArray(models)) return null;
+	const id = modelRefID(ref);
+	if (id === null) return null;
+	const segment = id.slice(id.lastIndexOf("/") + 1);
+	for (const model of models) {
+		if (!model || typeof model !== "object") continue;
+		const modelID = typeof model.modelID === "string" ? model.modelID : "";
+		const rowID = typeof model.id === "string" ? model.id : "";
+		if (modelID !== id && rowID !== id && modelID !== segment && rowID !== segment) continue;
+		const providerID = providerIDFromRef(model);
+		if (providerID !== null) return providerID;
 	}
+	return null;
 }
-/** Claude Pro/Max — Anthropic's OAuth usage endpoint (same one Claude Code's
-*  `/usage` uses). Token from ~/.claude/.credentials.json, falling back to
-*  opencode's own auth store; sent only to api.anthropic.com. */
-const anthropicProvider = {
-	id: "anthropic",
-	short: "cld",
-	statusUrl: "https://status.anthropic.com/api/v2/status.json",
-	async fetchUsage(cfg) {
-		let token;
-		try {
-			const path = expandTilde(cfg.credentialsPath ?? join(homedir(), ".claude", ".credentials.json"));
-			const oauth = JSON.parse(await readFile(path, "utf8")).claudeAiOauth;
-			if (oauth?.accessToken && !(oauth.expiresAt && Date.now() >= oauth.expiresAt)) token = oauth.accessToken;
-		} catch {}
-		if (!token) {
-			const entry = await opencodeAuth("anthropic");
-			if (entry?.access && !(entry.expires && Date.now() >= entry.expires)) token = entry.access;
-		}
-		if (!token) return null;
-		const data = await fetchJson("https://api.anthropic.com/api/oauth/usage", {
-			authorization: `Bearer ${token}`,
-			"anthropic-beta": "oauth-2025-04-20"
-		});
-		if (!data || !Array.isArray(data.limits)) return null;
-		const windows = [];
-		for (const limit of data.limits) {
-			if (!limit || typeof limit.percent !== "number" || !Number.isFinite(limit.percent)) continue;
-			if (!limit.kind || !limit.resets_at) continue;
-			const resetsAt = Date.parse(limit.resets_at);
-			if (Number.isNaN(resetsAt)) continue;
-			const category = limit.kind === "session" ? "5h" : limit.kind === "weekly_all" ? "7d" : "model";
-			const label = category === "model" ? limit.scope?.model?.display_name ?? "model" : category;
-			windows.push({
-				category,
-				label,
-				percent: limit.percent,
-				resetsAt
-			});
-		}
-		windows.sort((a, b) => Number(b.category === "5h") - Number(a.category === "5h"));
-		return windows.length > 0 ? windows : null;
+/** Resolve `model.limit.context` for a model reference. Match order: the
+*  provider-qualified id, then the bare id (the host's `id`/`modelID` fields).
+*  Absent/ambiguous models degrade to null so the gauge is simply omitted. */
+function resolveContextLimit(models, ref) {
+	const id = modelRefID(ref);
+	if (id === null) return null;
+	const providerID = ref && typeof ref === "object" ? ref.providerID : void 0;
+	const segment = id.slice(id.lastIndexOf("/") + 1);
+	const matches = models.filter((model) => {
+		if (!model || typeof model !== "object") return false;
+		const modelID = typeof model.modelID === "string" ? model.modelID : "";
+		const rowID = typeof model.id === "string" ? model.id : "";
+		if (!(modelID === id || rowID === id || modelID === segment || rowID === segment)) return false;
+		if (typeof providerID !== "string" || providerID === "") return true;
+		return model.providerID === providerID;
+	});
+	const candidates = matches.length > 0 ? matches : models.filter((model) => {
+		const modelID = typeof model?.modelID === "string" ? model.modelID : "";
+		const rowID = typeof model?.id === "string" ? model.id : "";
+		return modelID === segment || rowID === segment;
+	});
+	for (const model of candidates) {
+		const limit = model?.limit?.context;
+		if (typeof limit === "number" && Number.isFinite(limit) && limit > 0) return limit;
 	}
-};
-/** ChatGPT Plus/Pro (Codex) — reads the Codex CLI login and asks the wham
-*  usage endpoint. Read-only: never refreshes/rewrites auth.json; when the
-*  token is expired we simply hide (Codex CLI refreshes the file itself). */
-const openaiProvider = {
-	id: "openai",
-	short: "oai",
-	statusUrl: "https://status.openai.com/api/v2/status.json",
-	async fetchUsage(cfg) {
-		let accessToken;
-		let accountId;
-		try {
-			const path = expandTilde(cfg.codexAuthPath ?? join(homedir(), ".codex", "auth.json"));
-			const tokens = JSON.parse(await readFile(path, "utf8")).tokens;
-			const exp = tokens?.access_token ? jwtExp(tokens.access_token) : 0;
-			if (tokens?.access_token && !(exp > 0 && exp * 1e3 <= Date.now() + 6e4)) {
-				accessToken = tokens.access_token;
-				accountId = tokens.account_id;
-			}
-		} catch {}
-		if (!accessToken) {
-			const entry = await opencodeAuth("openai");
-			if (entry?.access && !(entry.expires && Date.now() >= entry.expires)) {
-				accessToken = entry.access;
-				accountId = entry.accountId;
-			}
-		}
-		if (!accessToken) return null;
-		const headers = {
-			authorization: `Bearer ${accessToken}`,
-			"user-agent": "codex-cli"
-		};
-		if (accountId) headers["chatgpt-account-id"] = accountId;
-		const data = await fetchJson("https://chatgpt.com/backend-api/wham/usage", headers);
-		if (!data?.rate_limit) return null;
-		const windows = [];
-		const primary = parseWhamWindow(data.rate_limit.primary_window, "5h");
-		if (primary) windows.push(primary);
-		const secondary = parseWhamWindow(data.rate_limit.secondary_window, "7d");
-		if (secondary) windows.push(secondary);
-		windows.sort((a, b) => Number(b.category === "5h") - Number(a.category === "5h"));
-		return windows.length > 0 ? windows : null;
+	return null;
+}
+function asRecord(value) {
+	return typeof value === "object" && value !== null ? value : void 0;
+}
+function modelID(ref) {
+	const record = asRecord(ref);
+	const id = typeof ref === "string" ? ref : record?.id ?? record?.modelID;
+	return typeof id === "string" && id.trim() !== "" ? id : null;
+}
+function messageModelRef(message) {
+	return message.model ?? message;
+}
+function modelProvider(ref, models) {
+	const direct = asRecord(ref)?.providerID;
+	if (typeof direct === "string" && direct.trim() !== "") return direct.trim();
+	const id = modelID(ref);
+	if (id === null) return null;
+	const segment = id.slice(id.lastIndexOf("/") + 1);
+	const providers = /* @__PURE__ */ new Set();
+	for (const candidate of models) {
+		const item = asRecord(candidate);
+		if (!item) continue;
+		if (item.id !== id && item.modelID !== id && item.id !== segment && item.modelID !== segment) continue;
+		if (typeof item.providerID === "string" && item.providerID.trim() !== "") providers.add(item.providerID.trim());
 	}
-};
-function parseWhamWindow(w, fallback) {
-	if (!w || typeof w.used_percent !== "number" || !Number.isFinite(w.used_percent)) return null;
-	let resetsAt;
-	if (typeof w.reset_at === "number") resetsAt = w.reset_at * 1e3;
-	else if (typeof w.reset_after_seconds === "number") resetsAt = Date.now() + w.reset_after_seconds * 1e3;
-	if (!resetsAt || !Number.isFinite(resetsAt)) return null;
-	const category = typeof w.limit_window_seconds === "number" && w.limit_window_seconds > 0 ? w.limit_window_seconds <= 21600 ? "5h" : "7d" : fallback;
+	const explicitProvider = id.includes("/") ? id.slice(0, id.indexOf("/")) : null;
+	if (explicitProvider && providers.has(explicitProvider)) return explicitProvider;
+	return providers.size === 1 ? [...providers][0] ?? null : null;
+}
+function modelIdentity(ref, models) {
+	const id = modelID(ref);
+	if (id === null) return null;
+	const providerID = modelProvider(ref, models);
+	const segment = id.slice(id.lastIndexOf("/") + 1);
 	return {
-		category,
-		label: category,
-		percent: w.used_percent,
-		resetsAt
+		key: `${providerID ?? ""}\u0000${id}`,
+		id,
+		providerID,
+		label: segment || id
 	};
 }
-const providers = [
-	anthropicProvider,
-	openaiProvider,
-	{
-		id: "opencodego",
-		short: "go",
-		async fetchUsage(_cfg) {
-			const token = process.env.PANTHEON_OPENCODE_API_KEY ?? process.env.OPENCODE_API_KEY;
-			if (!token) return null;
-			const data = await fetchJson("https://opencode.ai/zen/go/v1/usage", { authorization: `Bearer ${token}` });
-			if (!data) return null;
-			const windows = [];
-			const push = (w, category) => {
-				if (!w) return;
-				if (typeof w.usagePercent !== "number" || !Number.isFinite(w.usagePercent)) return;
-				if (typeof w.resetInSec !== "number" || !Number.isFinite(w.resetInSec)) return;
-				windows.push({
-					category,
-					label: category,
-					percent: Math.round(w.usagePercent),
-					resetsAt: Date.now() + w.resetInSec * 1e3
-				});
-			};
-			push(data.rolling5h, "5h");
-			push(data.weekly, "7d");
-			push(data.monthly, "1m");
-			return windows.length > 0 ? windows : null;
+function tokenCount(message) {
+	const tokens = asRecord(message.tokens);
+	if (!tokens) return null;
+	const cache = asRecord(tokens.cache);
+	const reported = [
+		tokens.input,
+		tokens.output,
+		tokens.reasoning,
+		cache?.read,
+		cache?.write
+	].filter((value) => typeof value === "number" && Number.isFinite(value) && value >= 0);
+	return reported.length === 0 ? null : reported.reduce((sum, value) => sum + value, 0);
+}
+function contextLimit(ref, models) {
+	const id = modelID(ref);
+	if (id === null) return null;
+	const providerID = modelProvider(ref, models);
+	if (providerID === null) return null;
+	const segment = id.slice(id.lastIndexOf("/") + 1);
+	const matches = models.filter((value) => {
+		const model = asRecord(value);
+		if (!model) return false;
+		return (model.id === id || model.modelID === id || model.id === segment || model.modelID === segment) && model.providerID === providerID;
+	});
+	const limits = /* @__PURE__ */ new Set();
+	for (const candidate of matches) {
+		const limit = asRecord(asRecord(candidate)?.limit)?.context;
+		if (typeof limit === "number" && Number.isFinite(limit) && limit > 0) limits.add(limit);
+	}
+	return limits.size === 1 ? [...limits][0] ?? null : null;
+}
+function liveTranscriptWindow(messages, revertMessageID) {
+	let end = messages.length;
+	if (revertMessageID) {
+		const boundary = messages.findIndex((message) => asRecord(message)?.id === revertMessageID);
+		if (boundary >= 0) end = boundary;
+	}
+	let start = 0;
+	for (let index = end - 1; index >= 0; index -= 1) if (asRecord(messages[index])?.type === "compaction") {
+		start = index + 1;
+		break;
+	}
+	return {
+		start,
+		end
+	};
+}
+function latestContext(messages, modelRef, models, revertMessageID) {
+	const target = modelIdentity(modelRef, models);
+	if (target === null || target.providerID === null) return null;
+	const limit = contextLimit(modelRef, models);
+	if (limit === null || limit <= 0) return null;
+	const { start, end } = liveTranscriptWindow(messages, revertMessageID);
+	for (let index = end - 1; index >= start; index -= 1) {
+		const message = asRecord(messages[index]);
+		if (message?.type !== "assistant") continue;
+		const identity = modelIdentity(messageModelRef(message), models);
+		if (identity?.id !== target.id || identity.providerID !== target.providerID) continue;
+		const tokens = tokenCount(message);
+		if (tokens === null || tokens <= 0) continue;
+		return {
+			tokens,
+			percent: Math.round(tokens / limit * 100),
+			limit
+		};
+	}
+	return null;
+}
+/** Snapshot for one exact model identity in the bounded active transcript. */
+function resolveModelContextSnapshot(messages, modelRef, models, revertMessageID) {
+	return latestContext(messages.slice(-400), modelRef, models, revertMessageID);
+}
+/** Select the pinned chat model before transcript or configured-agent fallbacks. */
+function resolveActiveModelRef(sessionModel, activeMessages, fallbackModel = null) {
+	if (modelID(sessionModel) !== null) return sessionModel;
+	const firstMessage = Math.max(0, activeMessages.length - 400);
+	for (let index = activeMessages.length - 1; index >= firstMessage; index -= 1) {
+		const message = asRecord(activeMessages[index]);
+		if (message?.type !== "assistant") continue;
+		const ref = messageModelRef(message);
+		if (modelID(ref) !== null) return ref;
+	}
+	return modelID(fallbackModel) === null ? null : fallbackModel;
+}
+/** Native token total: input + output + reasoning + cache read + cache write. */
+function messageTokensTotal(tokens) {
+	const cacheRead = numberOrNull(tokens?.cache?.read) ?? 0;
+	const cacheWrite = numberOrNull(tokens?.cache?.write) ?? 0;
+	return (numberOrNull(tokens?.input) ?? 0) + (numberOrNull(tokens?.output) ?? 0) + (numberOrNull(tokens?.reasoning) ?? 0) + cacheRead + cacheWrite;
+}
+/** The part of a transcript that still counts: everything before the revert
+*  boundary (when a revert is active), then after the last compaction. Both
+*  derived numbers that read "the last assistant with usage" — the context
+*  gauge and the cache hit rate — share this window, so a reverted-away or
+*  compacted-away message can never feed either one. Pure. */
+function transcriptWindow(messages, revertMessageID) {
+	let end = messages.length;
+	if (typeof revertMessageID === "string" && revertMessageID !== "") {
+		const boundary = messages.findIndex((message) => message?.id === revertMessageID);
+		if (boundary >= 0) end = boundary;
+	}
+	let start = 0;
+	for (let index = end - 1; index >= 0; index--) if (messages[index]?.type === "compaction") {
+		start = index + 1;
+		break;
+	}
+	return {
+		start,
+		end
+	};
+}
+/** Context usage for a message list. Scope: the live window (see
+*  `transcriptWindow`). The last assistant message carrying `tokens` in that
+*  window wins. Null when there is no limit or no such message — the caller
+*  then omits the block. */
+function computeContextUsage(messages, contextLimit, revertMessageID) {
+	const limit = numberOrNull(contextLimit);
+	if (limit === null || limit <= 0) return null;
+	if (!Array.isArray(messages) || messages.length === 0) return null;
+	const { start, end } = transcriptWindow(messages, revertMessageID);
+	for (let index = end - 1; index >= start; index--) {
+		const message = messages[index];
+		if (message?.type !== "assistant" || !message.tokens) continue;
+		const tokens = messageTokensTotal(message.tokens);
+		if (!Number.isFinite(tokens) || tokens <= 0) continue;
+		return {
+			tokens,
+			percent: Math.round(tokens / limit * 100),
+			limit
+		};
+	}
+	return null;
+}
+/** Color for one gauge stage. Filled cells and the percent value both come from
+*  this one call, so the bar and its number can never disagree. `theme` is the
+*  host's resolved theme (loosely typed at runtime); a missing token falls back
+*  to the theme's base text instead of an unstyled cell. Pure. */
+function contextProgressColor(stage, theme) {
+	return theme?.text?.feedback?.[stage]?.base ?? theme?.text?.base;
+}
+/** The muted extra line under the gauge: `cache 92% · 42.3 tok/s`. Either half
+*  may be missing (no cache read, no measurable turn); no data at all yields
+*  null so no empty line is rendered. The speed keeps the host's own one
+*  decimal and `tok/s` label. Pure. */
+function contextPerformanceLine(performance) {
+	if (!performance) return null;
+	const parts = [];
+	const cacheHit = numberOrNull(performance.cacheHit);
+	if (cacheHit !== null) parts.push(`cache ${Math.round(cacheHit)}%`);
+	const tokensPerSecond = numberOrNull(performance.tokensPerSecond);
+	if (tokensPerSecond !== null) parts.push(`${tokensPerSecond.toFixed(1)} tok/s`);
+	return parts.length === 0 ? null : parts.join(SPEND_LINE_SEPARATOR);
+}
+/** Cache hit rate of one message: `cache.read / (input + cache.read)` as a
+*  percentage. The denominator must be > 0, otherwise the ratio is meaningless
+*  (a message that only wrote to the cache has no input to hit). Null when the
+*  numbers are absent. Pure. */
+function cacheHitPercent(tokens) {
+	const read = numberOrNull(tokens?.cache?.read);
+	const input = numberOrNull(tokens?.input);
+	if (read === null || input === null) return null;
+	const denominator = input + read;
+	if (!(denominator > 0)) return null;
+	return read / denominator * 100;
+}
+/** The message the cache hit rate comes from: the last assistant of the live
+*  window (see `transcriptWindow`) that actually carries `tokens`. Later
+*  messages without usage — a streaming placeholder that the host publishes
+*  before any step completes, a step that reports no usage — are skipped
+*  instead of blanking a ratio the previous message already measured. Null
+*  when nothing in the window has usage. Pure. */
+function lastAssistantWithTokens(messages, revertMessageID) {
+	if (!Array.isArray(messages) || messages.length === 0) return null;
+	const { start, end } = transcriptWindow(messages, revertMessageID);
+	for (let index = end - 1; index >= start; index--) {
+		const message = messages[index];
+		if (message?.type !== "assistant" || !message.tokens) continue;
+		return message;
+	}
+	return null;
+}
+/** Tokens per second of the current turn. Mirrors the host's
+*  `turnTokensPerSecond` (anomalyco/opencode v2.0.30,
+*  `packages/tui/src/routes/session/rows.ts`) so the sidebar and the native
+*  session footer can never disagree: the numerator is `output + reasoning`
+*  summed over every assistant step of the turn and the denominator is the
+*  summed active streaming time `max(0, time.streamed - time.created)`, so the
+*  division happens once, after aggregating — each step weighs by its own
+*  duration instead of each step voting equally. `completed` is never used; a
+*  turn with a step that has no `time.streamed` has no measurable speed. The
+*  turn starts after the last `user` message; with no user message only the
+*  last assistant step counts (degraded: there is no boundary to group by).
+*  Pure and fail-open. */
+function turnTokensPerSecond(messages, position) {
+	if (!Array.isArray(messages) || messages.length === 0) return null;
+	let anchor = -1;
+	if (typeof position === "number" && Number.isInteger(position) && position >= 0 && position < messages.length) anchor = position;
+	else for (let index = messages.length - 1; index >= 0; index--) if (messages[index]?.type === "assistant") {
+		anchor = index;
+		break;
+	}
+	if (anchor === -1 || messages[anchor]?.type !== "assistant") return null;
+	let start = -1;
+	for (let index = anchor - 1; index >= 0; index--) if (messages[index]?.type === "user") {
+		start = index;
+		break;
+	}
+	const steps = start === -1 ? [messages[anchor]] : messages.slice(start + 1, anchor + 1).filter((item) => item?.type === "assistant");
+	if (steps.length === 0) return null;
+	let output = 0;
+	let duration = 0;
+	for (const step of steps) {
+		output += (numberOrNull(step?.tokens?.output) ?? 0) + (numberOrNull(step?.tokens?.reasoning) ?? 0);
+		const created = numberOrNull(step?.time?.created);
+		const streamed = numberOrNull(step?.time?.streamed);
+		if (created === null || streamed === null) return null;
+		duration += Math.max(0, streamed - created);
+	}
+	if (output <= 0 || duration <= 0) return null;
+	const rate = output / (duration / 1e3);
+	return Number.isFinite(rate) && rate > 0 ? rate : null;
+}
+/** Last-message telemetry the Context block renders in muted text. Both halves
+*  are optional; the block renders no line when neither is available. */
+/** One rendered context row. `lead` and `tail` carry the gauge bar when the row
+*  has one (`lead` is toned with the value, `tail` is muted), so the 12 cells
+*  stay contiguous while the empty half still reads as background. */
+/** The `Context` block's data rows; null rows are not rendered. */
+/** Rows for the `Context` block:
+*  `<tokens> tokens` / `▰▰▰▰▰▱▱▱▱▱▱▱ <percent>% of <window>` /
+*  `$<spent> spent`. The percentage row carries the only semantic tone, the
+*  gauge bar (12 cells) and is omitted entirely when the percentage is
+*  unavailable (never `undefined%`). A block with neither tokens nor cost
+*  yields null. Pure. */
+function contextBlockRows(usage, cost) {
+	const spentValue = formatSpent(cost);
+	const spent = spentValue === null ? null : {
+		lead: null,
+		value: spentValue,
+		tail: null,
+		suffix: " gasto na sessão",
+		tone: null
+	};
+	if (usage === null) return spent === null ? null : {
+		tokens: null,
+		percent: null,
+		spent
+	};
+	const tokensValue = formatTokenCount(usage.tokens);
+	const tokens = tokensValue === null ? null : {
+		lead: null,
+		value: tokensValue,
+		tail: null,
+		suffix: " tokens",
+		tone: null
+	};
+	const percentValue = numberOrNull(usage.percent);
+	const window = formatContextWindow(usage.limit);
+	const bar = contextBar(percentValue);
+	const percent = bar === null || percentValue === null ? null : {
+		lead: bar.filled,
+		value: ` ${Math.round(percentValue)}%`,
+		tail: bar.empty,
+		suffix: window === null ? null : ` of ${window}`,
+		tone: contextUsageTone(percentValue)
+	};
+	if (tokens === null && percent === null && spent === null) return null;
+	return {
+		tokens,
+		percent,
+		spent
+	};
+}
+/** Column widths for one model row (labels are muted, numbers right-aligned). */
+const MODEL_USAGE_MODEL_WIDTH = 12;
+const MODEL_USAGE_TOKEN_WIDTH = 6;
+const MODEL_USAGE_COST_WIDTH = 8;
+/** Session events arrive in bursts; model rows are recomputed at most once
+*  per window (same cadence as the git-count revalidation). */
+const MODEL_USAGE_DEBOUNCE_MS = 400;
+/** Real usage for one model, summed across the assistant messages that used it. */
+/** Totals per model from assistant messages: sums `cost` and `tokens`, drops
+*  models whose real cost is 0/absent, and orders by cost (then tokens, then
+*  name). `providerID` participates in the key so two providers exposing the
+*  same bare id are not merged. Pure. */
+function collectModelUsage(messages) {
+	if (!Array.isArray(messages)) return [];
+	const totals = /* @__PURE__ */ new Map();
+	for (const message of messages) {
+		if (message?.type !== "assistant") continue;
+		const id = modelRefID(message.model);
+		const model = shortModelID(message.model, 12);
+		if (id === null || model === null) continue;
+		const key = `${typeof message.model?.providerID === "string" ? message.model.providerID : ""}\u0000${id}`;
+		const tokensTotal = message.tokens ? messageTokensTotal(message.tokens) : 0;
+		const cost = numberOrNull(message.cost) ?? 0;
+		const current = totals.get(key);
+		if (current) {
+			current.tokens += Math.max(0, tokensTotal);
+			current.cost += Math.max(0, cost);
+		} else totals.set(key, {
+			model,
+			tokens: Math.max(0, tokensTotal),
+			cost: Math.max(0, cost)
+		});
+	}
+	return [...totals.values()].filter((row) => row.cost > 0).sort((a, b) => b.cost - a.cost || b.tokens - a.tokens || a.model.localeCompare(b.model));
+}
+/** Visible rows plus the aggregate of the models that did not fit. Pure. */
+/** Cap the model list at `maxVisible`; the rest is aggregated (still real
+*  totals) for the `… +N` line. Pure. */
+function ceilingModelUsage(rows, maxVisible = 3) {
+	const limit = Math.max(0, maxVisible);
+	const visible = rows.slice(0, limit);
+	const rest = rows.slice(visible.length);
+	return {
+		visible,
+		hidden: rest.length,
+		hiddenCost: rest.reduce((sum, row) => sum + row.cost, 0),
+		hiddenTokens: rest.reduce((sum, row) => sum + row.tokens, 0)
+	};
+}
+/** Compact tokens for a model row (`80,000` → `80K`); `0` stays explicit. Pure. */
+function formatUsageTokens(tokens) {
+	const value = numberOrNull(tokens);
+	if (value === null || value <= 0) return "0";
+	return formatContextWindow(value) ?? String(Math.round(value));
+}
+/** Real per-model cost with adaptive precision: cents for `>= $0.01`, up to
+*  four decimals below that (a real `$0.0031` must not render as `$0.00`), and
+*  an explicit `< $0.0001` for the remainder. Pure. */
+function formatUsageCost(cost) {
+	const value = numberOrNull(cost);
+	if (value === null || value < 0) return null;
+	if (value === 0) return "$0.00";
+	if (value >= .01) return `$${value.toFixed(2)}`;
+	if (value >= 1e-4) return `$${value.toFixed(4).replace(/0+$/, "").replace(/\.$/, "")}`;
+	return "<$0.0001";
+}
+/** One formatted model row: truncated label + compact tokens + real cost. */
+/** Format the visible model rows for rendering. Labels are already short ids
+*  (12 chars); the second truncation only guards host drift. Pure. */
+function modelUsageRows(rows) {
+	return rows.map((row) => ({
+		model: truncateLabel(row.model, 12),
+		tokens: formatUsageTokens(row.tokens),
+		cost: formatUsageCost(row.cost) ?? "$0.00"
+	}));
+}
+/** Exact single-line text of a model row, with numbers right-aligned. Pure. */
+function modelUsageRowText(row) {
+	return `${row.model.padEnd(12)}  ${row.tokens.padStart(6)}  ${row.cost.padStart(8)}`;
+}
+/** Wrap on grapheme boundaries, measuring terminal cells rather than code units.
+*  (Body moved verbatim from the removed quota module's `quotaTextLines`.) */
+function wrapTextLines(text, width, indent) {
+	const max = Number.isFinite(width) ? Math.max(0, Math.floor(width)) : 0;
+	if (max < 1) return [];
+	const padding = " ".repeat(Math.min(Math.max(0, indent), Math.max(0, max - 2)));
+	const lines = [];
+	let line = padding;
+	const segmenter = new Intl.Segmenter();
+	for (const word of text.trim().split(/\s+/)) {
+		if (!word) continue;
+		if (line.trim() && cellWidth(line) + 1 + cellWidth(word) > max) {
+			lines.push(line.trimEnd());
+			line = padding;
+		}
+		if (line.trim()) line += " ";
+		for (const { segment } of segmenter.segment(word)) {
+			const glyphWidth = cellWidth(segment);
+			if (glyphWidth > max) continue;
+			if (cellWidth(line) + glyphWidth > max) {
+				if (line.trim()) lines.push(line.trimEnd());
+				line = glyphWidth + cellWidth(padding) <= max ? padding : "";
+			}
+			line += segment;
 		}
 	}
+	if (line.trim()) lines.push(line.trimEnd());
+	return lines;
+}
+/** Wrap sidebar text by terminal cells, preserving the complete values. */
+function sidebarTextLines(value) {
+	return wrapTextLines(value, 34, 0);
+}
+/** Align a monetary value when it fits, otherwise preserve it on a new line. */
+function sidebarMoneyLines(label, value) {
+	const gap = 34 - cellWidth(label) - cellWidth(value);
+	return gap >= 1 ? [`${label}${" ".repeat(gap)}${value}`] : [...sidebarTextLines(label), ...sidebarTextLines(value)];
+}
+/** Keep the existing OpenCode periods together when possible. */
+function contextSpendLines(value) {
+	const match = /^(.*\S)\s+(<?\$\S+)$/.exec(value);
+	return match?.[1] && match[2] && cellWidth(value) <= 34 ? sidebarMoneyLines(match[1], match[2]) : sidebarTextLines(value);
+}
+/** Keep ordinary rows aligned; give oversized values their own lines. */
+function modelUsageRowLines(row) {
+	const single = modelUsageRowText(row);
+	if (cellWidth(single) <= 34) return [single];
+	return [
+		...sidebarTextLines(row.model),
+		...sidebarTextLines(`Tokens ${row.tokens}`),
+		...sidebarTextLines(`USD ${row.cost}`)
+	];
+}
+/** Muted aggregate line for the models beyond the cap (`… +2  $0.03`). Null
+*  when every model fits. Pure. */
+function hiddenModelUsageText(hidden, hiddenCost) {
+	if (!Number.isFinite(hidden) || hidden <= 0) return null;
+	const cost = formatUsageCost(hiddenCost);
+	return cost === null ? `… +${hidden}` : `… +${hidden}  ${cost}`;
+}
+/** Bucket for a session the host published without an agent id. */
+const UNKNOWN_AGENT = "?";
+/** Agent key of a session or message: the trimmed id when it is a non-empty
+*  string, else the `?` bucket — never `undefined`. Pure. */
+function agentKey(value) {
+	if (typeof value !== "string") return "?";
+	const text = value.trim();
+	return text === "" ? "?" : text;
+}
+/** One rendered todo row. `priority` is carried by the tool but not rendered:
+*  the reference block uses a single marker column. */
+/** Rows rendered before the `… +N` line. */
+const TODO_VISIBLE_CEILING = 6;
+/** Content width before the ellipsis — the block has ~30-34 usable columns. */
+const TODO_TEXT_WIDTH = 28;
+/** Row markers (`•` in progress, `−` cancelled with U+2212, as in the git row). */
+const TODO_MARKERS = {
+	in_progress: "[•]",
+	pending: "[ ]",
+	completed: "[x]",
+	cancelled: "[−]"
+};
+/** Group order: live work first, then open, then closed. */
+const TODO_STATUS_ORDER = [
+	"in_progress",
+	"pending",
+	"completed",
+	"cancelled"
 ];
-const DEFAULT_TOML = `# opencode-usage-bar configuration
-# Read once at startup — restart opencode after editing.
-
-[ui]
-show_bars = true      # render ▓▓░░ mini-bars (false = text only)
-show_status = true    # show a ! marker next to a provider during incidents
-# bar_width = 6       # override bar width (default: 6 for a single window, 5 otherwise)
-
-[anthropic]
-enabled = true        # Claude Pro/Max via ~/.claude/.credentials.json
-show_5h = true        # rolling 5-hour session window
-show_7d = false       # weekly cap across all models
-show_model = false    # per-model weekly windows (e.g. Fable)
-# credentials_path = "~/.claude/.credentials.json"
-
-[openai]
-enabled = false       # ChatGPT Plus/Pro via the Codex CLI login
-show_5h = true
-show_7d = false
-# codex_auth_path = "~/.codex/auth.json"
-
-[opencodego]
-enabled = true        # OpenCode Go/Zen dollar usage via PANTHEON_OPENCODE_API_KEY
-show_5h = true        # rolling 5-hour window ($12)
-show_7d = true        # rolling 7-day window ($30)
-show_1m = false       # subscription-month window ($60) — opt-in
-# Falls back to OPENCODE_API_KEY when PANTHEON_OPENCODE_API_KEY is unset.
-`;
-function defaultConfig() {
-	const show = (over = {}) => ({
-		"5h": true,
-		"7d": false,
-		"1m": false,
-		model: false,
-		...over
-	});
-	return {
-		showBars: true,
-		showStatus: true,
-		providers: {
-			anthropic: {
-				enabled: true,
-				show: show()
-			},
-			openai: {
-				enabled: false,
-				show: show()
-			},
-			opencodego: {
-				enabled: true,
-				show: show({ "7d": true })
-			}
+/** Narrow a loose `status` value to the tool's four states. */
+function isTodoStatus(value) {
+	return value === "in_progress" || value === "pending" || value === "completed" || value === "cancelled";
+}
+/** Items from a `todowrite` `input` payload. A missing/malformed `input`,
+*  absent `todos`, an unknown `status` or an empty/missing `content` drops the
+*  entry instead of throwing; a list with nothing readable yields `[]`. Pure. */
+function parseTodoItems(input) {
+	const raw = input?.todos;
+	if (!Array.isArray(raw)) return [];
+	const items = [];
+	for (const entry of raw) {
+		const content = entry?.content;
+		const status = entry?.status;
+		if (typeof content !== "string" || content.trim() === "") continue;
+		if (!isTodoStatus(status)) continue;
+		items.push({
+			content: content.trim(),
+			status
+		});
+	}
+	return items;
+}
+/** Newest completed `todowrite` in a transcript. The tool replaces the list
+*  wholesale, so the last write wins; a write with `todos: []` returns null
+*  (the block disappears rather than showing the previous list) and a
+*  not-yet-completed write is ignored. Null when the transcript carries no
+*  such part, so the block never renders a guess. Pure. */
+function latestTodoItems(messages) {
+	if (!Array.isArray(messages)) return null;
+	for (let index = messages.length - 1; index >= 0; index--) {
+		const message = messages[index];
+		if (message?.type !== "assistant" || !Array.isArray(message.content)) continue;
+		const parts = message.content;
+		for (let position = parts.length - 1; position >= 0; position--) {
+			const part = parts[position];
+			if (part?.type !== "tool" || part?.name !== "todowrite") continue;
+			if (part?.state?.status !== "completed") continue;
+			const items = parseTodoItems(part.state.input);
+			return items.length === 0 ? null : items;
 		}
+	}
+	return null;
+}
+/** Stable group order (in_progress → pending → completed → cancelled); within a
+*  group the transcript order is preserved. Pure. */
+function orderTodoItems(items) {
+	return [...items].sort((a, b) => TODO_STATUS_ORDER.indexOf(a.status) - TODO_STATUS_ORDER.indexOf(b.status));
+}
+/** Row color channel: `accent` for live work, `muted` for closed items, base
+*  for pending. Kept separate from the theme so it is testable. Pure. */
+/** Tone for one status — no rainbow, a single accent. Pure. */
+function todoTone(status) {
+	if (status === "in_progress") return "accent";
+	if (status === "completed" || status === "cancelled") return "muted";
+	return "base";
+}
+/** Exact rendered text of one row: `[•] <content truncated to 28>`. Pure. */
+function todoRowText(item) {
+	return `${TODO_MARKERS[item.status]} ${truncateLabel(item.content, 28)}`;
+}
+/** Ordered rows capped for the sidebar, plus how many did not fit. Pure. */
+/** Order then cap the list at `maxVisible`. Pure. */
+function ceilingTodoItems(items, maxVisible = 6) {
+	const ordered = orderTodoItems(items);
+	const visible = ordered.slice(0, Math.max(0, maxVisible));
+	return {
+		visible,
+		hidden: Math.max(0, ordered.length - visible.length)
 	};
 }
-function asTable(v) {
-	return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+/** Overflow line (`… +3`); null when every item fits. Pure. */
+function hiddenTodoText(hidden) {
+	if (!Number.isFinite(hidden) || hidden <= 0) return null;
+	return `… +${Math.round(hidden)}`;
 }
-function bool(v, fallback) {
-	return typeof v === "boolean" ? v : fallback;
+/** Narrow a `VcsFileStatus["status"]` value read off a loose payload. */
+function isGitChangeStatus(value) {
+	return value === "added" || value === "modified" || value === "deleted";
 }
-function str(v) {
-	return typeof v === "string" && v.length > 0 ? v : void 0;
-}
-function parseConfig(raw) {
-	const toml = globalThis.Bun?.TOML;
-	if (!toml?.parse) return defaultConfig();
-	const root = asTable(toml.parse(raw));
-	const cfg = defaultConfig();
-	const ui = asTable(root.ui);
-	cfg.showBars = bool(ui.show_bars, cfg.showBars);
-	cfg.showStatus = bool(ui.show_status, cfg.showStatus);
-	const rawWidth = ui.bar_width;
-	if (typeof rawWidth === "number" && Number.isFinite(rawWidth) && rawWidth >= 1) cfg.barWidth = Math.min(40, Math.floor(rawWidth));
-	for (const id of [
-		"anthropic",
-		"openai",
-		"opencodego"
-	]) {
-		const t = asTable(root[id]);
-		const p = cfg.providers[id];
-		p.enabled = bool(t.enabled, p.enabled);
-		p.show["5h"] = bool(t.show_5h, p.show["5h"]);
-		p.show["7d"] = bool(t.show_7d, p.show["7d"]);
-		p.show["1m"] = bool(t.show_1m, p.show["1m"]);
-		p.show.model = bool(t.show_model, p.show.model);
-		const credentialsPath = str(t.credentials_path);
-		if (credentialsPath !== void 0) p.credentialsPath = credentialsPath;
-		const codexAuthPath = str(t.codex_auth_path);
-		if (codexAuthPath !== void 0) p.codexAuthPath = codexAuthPath;
+/** Files per status from a `VcsFileStatus[]` payload. Unknown statuses and
+*  malformed entries are ignored. Pure. */
+function countGitChanges(files) {
+	const counts = {
+		added: 0,
+		modified: 0,
+		deleted: 0
+	};
+	if (!Array.isArray(files)) return counts;
+	for (const entry of files) {
+		const status = entry?.status;
+		if (isGitChangeStatus(status)) counts[status] += 1;
 	}
-	return cfg;
+	return counts;
 }
-/** Load `<config dir>/usage-bar.toml`, creating it with commented defaults on
-*  first run. Any failure falls back to defaults without touching an existing
-*  file. */
-async function loadConfig(configPath) {
-	const dir = configPath && !configPath.endsWith(".json") ? configPath : configPath ? dirname(configPath) : join(homedir(), ".config", "opencode");
-	const file = join(dir, CONFIG_FILE);
-	try {
-		const raw = await readFile(file, "utf8");
-		try {
-			return parseConfig(raw);
-		} catch {
-			return defaultConfig();
-		}
-	} catch (err) {
-		if (err?.code === "ENOENT") try {
-			await mkdir(dir, { recursive: true });
-			await writeFile(file, DEFAULT_TOML, { flag: "wx" });
-		} catch {}
-		return defaultConfig();
-	}
+/** `+1 ±2 −3` for the file counts; each zero term is omitted, and an empty
+*  change set returns null so the row is not rendered at all. Pure. */
+function formatGitChanges(files) {
+	const { added, modified, deleted } = countGitChanges(files);
+	const parts = [];
+	if (added > 0) parts.push(`+${added}`);
+	if (modified > 0) parts.push(`±${modified}`);
+	if (deleted > 0) parts.push(`\u2212${deleted}`);
+	return parts.length === 0 ? null : parts.join(" ");
 }
-/** Vendored usage-bar plugin init: reads config, seeds the kv cache, starts
-*  the poll loop and registers the `app_bottom` slot. Skips everything (and
-*  registers nothing) when no provider is enabled — mirrors the standalone
-*  plugin's early return. */
-async function setupUsageBar(api) {
-	const config = await loadConfig(api.state.path?.config);
-	if (api.state.path?.state) opencodeAuthFile = join(api.state.path.state, "auth.json");
-	const enabled = providers.filter((p) => config.providers[p.id].enabled);
-	if (enabled.length === 0) return;
-	const seed = {};
-	for (const p of enabled) {
-		const cached = api.kv.get(`usage-bar.${p.id}.windows`, void 0);
-		if (cached) seed[p.id] = cached;
-	}
-	const [byProvider, setByProvider] = createSignal(seed);
-	const [byStatus, setByStatus] = createSignal({});
-	const [now, setNow] = createSignal(Date.now());
-	setInterval(() => setNow(Date.now()), 1e3);
-	for (const p of enabled) {
-		const cfg = config.providers[p.id];
-		const poll = async () => {
-			const statusP = config.showStatus && p.statusUrl ? fetchStatus(p.statusUrl) : null;
-			const [all, status] = await Promise.all([p.fetchUsage(cfg), statusP]);
-			if (all) {
-				const windows = all.filter((w) => cfg.show[w.category] && w.resetsAt > Date.now());
-				setByProvider((prev) => ({
-					...prev,
-					[p.id]: windows
-				}));
-				api.kv.set(`usage-bar.${p.id}.windows`, windows);
-			}
-			if (status !== null) setByStatus((prev) => ({
-				...prev,
-				[p.id]: status
-			}));
-			setTimeout(poll, all ? POLL_MS : POLL_MS * 3);
-		};
-		poll();
-	}
-	api.slots.register({
-		order: 60,
-		slots: { app_bottom() {
-			const theme = () => api.theme.current;
-			const groups = createMemo(() => {
-				const map = byProvider();
-				const statusMap = byStatus();
-				const out = [];
-				for (const p of enabled) {
-					const windows = (map[p.id] ?? []).filter((w) => w.resetsAt > now());
-					if (windows.length > 0) out.push({
-						short: p.short,
-						status: statusMap[p.id] ?? "none",
-						windows
-					});
-				}
-				return out;
-			});
-			const totalWindows = createMemo(() => groups().reduce((sum, g) => sum + g.windows.length, 0));
-			const barWidth = createMemo(() => config.barWidth ?? (totalWindows() === 1 ? 6 : 5));
-			const multiProvider = createMemo(() => groups().length >= 2);
-			const pctOf = (w) => Math.min(100, Math.max(0, Math.round(w.percent)));
-			const filledOf = (w) => Math.min(barWidth(), Math.max(0, Math.round(pctOf(w) / 100 * barWidth())));
-			const colorOf = (w) => {
-				const t = theme();
-				const pct = pctOf(w);
-				if (pct > 85) return t.error;
-				if (pct >= 50) return t.warning;
-				return t.success;
-			};
-			const statusColor = (s) => {
-				const t = theme();
-				if (s === "critical" || s === "major") return t.error;
-				if (s === "minor") return t.warning;
-				return t.info;
-			};
-			return createComponent(Show, {
-				get when() {
-					return groups().length > 0;
-				},
-				get children() {
-					var _el$ = createElement("box");
-					setProp(_el$, "flexDirection", "row");
-					setProp(_el$, "gap", 3);
-					setProp(_el$, "alignItems", "center");
-					setProp(_el$, "width", "100%");
-					setProp(_el$, "paddingLeft", 1);
-					insert(_el$, createComponent(For, {
-						get each() {
-							return groups();
-						},
-						children: (g) => (() => {
-							var _el$2 = createElement("box");
-							setProp(_el$2, "flexDirection", "row");
-							setProp(_el$2, "gap", 2);
-							setProp(_el$2, "alignItems", "center");
-							setProp(_el$2, "flexShrink", 0);
-							insert(_el$2, createComponent(Show, {
-								get when() {
-									return memo(() => !!config.showStatus)() && g.status !== "none";
-								},
-								get children() {
-									var _el$3 = createElement("text");
-									insertNode(_el$3, createTextNode(`!`));
-									effect((_$p) => setProp(_el$3, "fg", statusColor(g.status), _$p));
-									return _el$3;
-								}
-							}), null);
-							insert(_el$2, createComponent(Show, {
-								get when() {
-									return multiProvider();
-								},
-								get children() {
-									var _el$5 = createElement("text");
-									insert(_el$5, () => g.short);
-									effect((_$p) => setProp(_el$5, "fg", theme().textMuted, _$p));
-									return _el$5;
-								}
-							}), null);
-							insert(_el$2, createComponent(For, {
-								get each() {
-									return g.windows;
-								},
-								children: (w) => (() => {
-									var _el$6 = createElement("box"), _el$1 = createElement("text"), _el$10 = createTextNode(`%`), _el$11 = createElement("text");
-									insertNode(_el$6, _el$1);
-									insertNode(_el$6, _el$11);
-									setProp(_el$6, "flexDirection", "row");
-									setProp(_el$6, "gap", 1);
-									setProp(_el$6, "alignItems", "center");
-									setProp(_el$6, "flexShrink", 0);
-									insert(_el$6, createComponent(Show, {
-										get when() {
-											return g.windows.length >= 2;
-										},
-										get children() {
-											var _el$7 = createElement("text");
-											insert(_el$7, () => w.label);
-											effect((_$p) => setProp(_el$7, "fg", theme().textMuted, _$p));
-											return _el$7;
-										}
-									}), _el$1);
-									insert(_el$6, createComponent(Show, {
-										get when() {
-											return config.showBars;
-										},
-										get children() {
-											var _el$8 = createElement("box"), _el$9 = createElement("text"), _el$0 = createElement("text");
-											insertNode(_el$8, _el$9);
-											insertNode(_el$8, _el$0);
-											setProp(_el$8, "flexDirection", "row");
-											insert(_el$9, () => "▓".repeat(filledOf(w)));
-											insert(_el$0, () => "░".repeat(barWidth() - filledOf(w)));
-											effect((_p$) => {
-												var _v$ = colorOf(w), _v$2 = theme().textMuted;
-												_v$ !== _p$.e && (_p$.e = setProp(_el$9, "fg", _v$, _p$.e));
-												_v$2 !== _p$.t && (_p$.t = setProp(_el$0, "fg", _v$2, _p$.t));
-												return _p$;
-											}, {
-												e: void 0,
-												t: void 0
-											});
-											return _el$8;
-										}
-									}), _el$1);
-									insertNode(_el$1, _el$10);
-									insert(_el$1, () => pctOf(w), _el$10);
-									insert(_el$11, () => `· ${fmtDuration(w.resetsAt - now())}`);
-									effect((_p$) => {
-										var _v$3 = theme().text, _v$4 = theme().textMuted;
-										_v$3 !== _p$.e && (_p$.e = setProp(_el$1, "fg", _v$3, _p$.e));
-										_v$4 !== _p$.t && (_p$.t = setProp(_el$11, "fg", _v$4, _p$.t));
-										return _p$;
-									}, {
-										e: void 0,
-										t: void 0
-									});
-									return _el$6;
-								})()
-							}), null);
-							return _el$2;
-						})()
-					}));
-					return _el$;
-				}
-			});
-		} }
+/** Wall-clock ceiling for one git call. A stuck git (index lock, network
+*  filesystem) is killed instead of holding the row forever. */
+const GIT_CLI_TIMEOUT_MS = 2e3;
+/** Session events arrive in bursts; a git probe is scheduled at most once per
+*  window instead of once per event. */
+const GIT_CLI_DEBOUNCE_MS = 1e3;
+/** Minimum spacing between two probe starts. Five seconds keeps a chatty event
+*  stream from spawning a git process per step while staying fresh enough to
+*  show a file appearing mid-turn. */
+const GIT_CLI_MIN_INTERVAL_MS = 5e3;
+/** Stdout ceiling for one git call. `status --porcelain=v1 -uall` lists every
+*  untracked file, so a large worktree easily passes the 1 MB `execFile`
+*  default — which would reject and silently hand the row back to the
+*  `vcs.status` fallback. 4 MB is far above a realistic porcelain listing. */
+const GIT_CLI_MAX_BUFFER = 4194304;
+/** One `execFile` call: `(file, args, options) → { stdout }`. Injectable so the
+*  parsing/gating logic is testable without spawning processes. */
+/** Default runner: the promisified `node:child_process.execFile`. A non-zero
+*  exit (no repository, no upstream) rejects and the caller decides. */
+const defaultGitExec = (file, args, options) => new Promise((resolve, reject) => {
+	execFile(file, [...args], {
+		cwd: options.cwd,
+		timeout: options.timeout,
+		windowsHide: options.windowsHide,
+		maxBuffer: options.maxBuffer
+	}, (error, stdout) => {
+		if (error) reject(error);
+		else resolve({ stdout: typeof stdout === "string" ? stdout : String(stdout ?? "") });
 	});
-}
-/** True for `\s` characters (space, tab, newline, CR) — plain char checks so
-*  the parser stays regex-free (CodeQL flagged the old `\s*`/`\s+` + `(.+)`
-*  patterns as polynomial ReDoS: 12x HIGH). */
-function isWs(ch) {
-	return ch === " " || ch === "	" || ch === "\n" || ch === "\r";
-}
-/** Em/en dash + hyphen — the separators accepted after the H1 title. */
-const TITLE_SEPARATORS = "—–-";
-/** Parse one delegation report md header into a structured entry.
-*  Returns null (skip) when the file is not a recognizable report:
-*  missing agent/state/startedAt, an unknown state, or an unparsable
-*  Started timestamp. The alias falls back to the file name when the H1
-*  title is missing. Pure — no I/O.
-*
-*  Linear, single-pass over `raw.split('\n')` with plain string operations
-*  (startsWith/indexOf/slice) — zero regex, so worst case is O(bytes) even
-*  on adversarial whitespace-heavy input (ReDoS regression, CodeQL 12x HIGH). */
-function parseDelegationMarkdown(raw, fileAlias, sessionID = "") {
-	let title;
-	let agent;
-	let description = "";
-	let state;
-	let timedOut = false;
-	let started;
-	let finalized;
-	let taskID;
-	for (const rawLine of raw.split("\n")) {
-		if (rawLine[0] === "#" && isWs(rawLine[1])) {
-			let i = 2;
-			while (i < rawLine.length && isWs(rawLine[i])) i++;
-			if (rawLine.startsWith("Delegation Report", i)) {
-				i += 17;
-				while (i < rawLine.length && isWs(rawLine[i])) i++;
-				if (i < rawLine.length && TITLE_SEPARATORS.includes(rawLine[i])) {
-					const rest = rawLine.slice(i + 1).trim();
-					if (rest !== "" && title === void 0) title = rest;
-				}
-			}
+});
+/** Files per status from `git status --porcelain=v1 -uall`, including the two
+*  columns the protocol cannot report. Each line starts with `XY` (index and
+*  worktree state); a rename prints `R  old -> new`, and `??` / `!!` are
+*  untracked / ignored. Precedence per file: deleted > added > modified, so
+*  `AM` counts once as added and `AD` once as deleted. Renames, copies and
+*  unmerged entries count as modified. Pure. */
+/** Parse porcelain v1 output into file counts. Empty/malformed output yields
+*  zero counts (a clean tree), never a throw. Pure. */
+function parseGitStatusPorcelain(output) {
+	const counts = {
+		added: 0,
+		modified: 0,
+		deleted: 0,
+		untracked: 0
+	};
+	if (typeof output !== "string" || output === "") return counts;
+	for (const line of output.split("\n")) {
+		if (line.length < 2) continue;
+		const index = line[0];
+		const worktree = line[1];
+		if (index === "!" && worktree === "!") continue;
+		if (index === "?" && worktree === "?") {
+			counts.untracked += 1;
 			continue;
 		}
-		if (rawLine[0] !== "-") continue;
-		let i = 1;
-		while (i < rawLine.length && isWs(rawLine[i])) i++;
-		if (!rawLine.startsWith("**", i)) continue;
-		const nameStart = i + 2;
-		const valueEnd = rawLine.indexOf("**:", nameStart);
-		if (valueEnd < 0) continue;
-		const name = rawLine.slice(nameStart, valueEnd);
-		const value = rawLine.slice(valueEnd + 3).trim();
-		switch (name) {
-			case "Task ID":
-				if (value !== "" && taskID === void 0) taskID = stripTaskIdTicks(value);
-				break;
-			case "Agent":
-				if (value !== "" && agent === void 0) agent = value;
-				break;
-			case "Description":
-				description = value;
-				break;
-			case "State":
-				if (value !== "" && state === void 0) state = value;
-				break;
-			case "Timed out":
-				timedOut = value.startsWith("true");
-				break;
-			case "Started":
-				if (value !== "" && started === void 0) started = value;
-				break;
-			case "Finalized": finalized = value;
-		}
+		if (index === " " && worktree === " ") continue;
+		if (index === "D" || worktree === "D") counts.deleted += 1;
+		else if (index === "A" || worktree === "A") counts.added += 1;
+		else counts.modified += 1;
 	}
-	const startedAt = started !== void 0 ? Date.parse(started) : NaN;
-	if (agent === void 0 || state === void 0 || Number.isNaN(startedAt)) return null;
-	const normalized = state.toLowerCase();
-	if (normalized === "running") return null;
-	if (normalized !== "completed" && normalized !== "error" && normalized !== "startup_failed" && normalized !== "startup_unknown" && normalized !== "cancelled") return null;
-	const finalizedAt = finalized !== void 0 ? Date.parse(finalized) : NaN;
+	return counts;
+}
+/** `git rev-list --count --left-right @{upstream}...HEAD` prints two numbers:
+*  commits only on the upstream (behind) then commits only on HEAD (ahead).
+*  Null when the output is not that pair — e.g. the command failed because the
+*  branch has no upstream, in which case the arrows are simply omitted. Pure. */
+function parseGitAheadBehind(output) {
+	if (typeof output !== "string") return null;
+	const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(output);
+	if (match === null) return null;
+	const behind = Number(match[1]);
+	const ahead = Number(match[2]);
+	if (!Number.isFinite(ahead) || !Number.isFinite(behind)) return null;
 	return {
-		alias: title ?? (fileAlias !== void 0 ? stripMdSuffix(fileAlias) : "unknown"),
-		sessionID,
-		...taskID !== void 0 ? { taskID } : {},
-		agent,
-		state: normalized,
-		startedAt,
-		updatedAt: Number.isNaN(finalizedAt) ? null : finalizedAt,
-		timedOut,
-		description,
-		source: "md"
+		ahead,
+		behind
 	};
 }
-/** Strip a trailing `.md` (any case) — linear replacement for /\.md$/i. */
-function stripMdSuffix(name) {
-	return name.toLowerCase().endsWith(".md") ? name.slice(0, name.length - 3) : name;
-}
-/** Strip surrounding backticks from a `Task ID` value: "`ses_x`" → "ses_x". */
-function stripTaskIdTicks(value) {
-	const start = value[0] === "`" ? 1 : 0;
-	const end = value.length > start && value[value.length - 1] === "`" ? value.length - 1 : value.length;
-	return value.slice(start, end);
-}
-/** Read every delegation report under `<dir>/<sessionID>/<alias>.md`.
-*  Fail-open: a missing/unreadable directory yields [], and each unreadable
-*  or malformed file is skipped individually. Entries are sorted running
-*  first, then terminal by `updatedAt` (most recent first) so the panel can
-*  render them in order directly. */
-async function readDelegationEntries(dir) {
-	let sessionDirs;
+/** One git observation: file counts plus the upstream distance (either arrow
+*  may be unknown when the branch has no upstream). */
+/** One probe: `git status --porcelain=v1 -uall` for the counts, then
+*  `git rev-list --count --left-right @{upstream}...HEAD` for the arrows (a
+*  failure there only drops the arrows). A status failure rejects — the caller
+*  then falls back to `client.vcs.status`. */
+async function readGitSnapshot(directory, exec = defaultGitExec) {
+	const options = {
+		cwd: directory,
+		timeout: GIT_CLI_TIMEOUT_MS,
+		windowsHide: true,
+		maxBuffer: GIT_CLI_MAX_BUFFER
+	};
+	const changes = parseGitStatusPorcelain((await exec("git", [
+		"status",
+		"--porcelain=v1",
+		"-uall"
+	], options))?.stdout);
+	let ahead = null;
+	let behind = null;
 	try {
-		sessionDirs = await readdir(dir, { withFileTypes: true });
-	} catch {
-		return [];
-	}
-	const entries = [];
-	for (const session of sessionDirs) {
-		if (!session.isDirectory()) continue;
-		let files;
-		try {
-			files = await readdir(join(dir, session.name), { withFileTypes: true });
-		} catch {
-			continue;
+		const parsed = parseGitAheadBehind((await exec("git", [
+			"rev-list",
+			"--count",
+			"--left-right",
+			"@{upstream}...HEAD"
+		], options))?.stdout);
+		if (parsed !== null) {
+			ahead = parsed.ahead;
+			behind = parsed.behind;
 		}
-		for (const file of files) {
-			if (!file.isFile() || !file.name.endsWith(".md")) continue;
-			try {
-				const entry = parseDelegationMarkdown(await readFile(join(dir, session.name, file.name), "utf8"), file.name, session.name);
-				if (entry !== null) entries.push(entry);
-			} catch {}
-		}
-	}
-	entries.sort(compareDelegationEntries);
-	return entries;
-}
-/** Read delegation reports from EVERY session under
-*  `<root>/.pantheon/delegations/<sessionID>/<alias>.md` — the panel's
-*  ENRICHMENT source. The read is deliberately unfiltered (each entry carries
-*  its directory's sessionID, so a taskID match can enrich any channel);
-*  callers MUST scope the merged result with {@link filterDelegationsToSession}
-*  before rendering — only the active session's reports are shown. Entries are
-*  running first, Finalized desc (the sort applied by readDelegationEntries).
-*  Fail-open: a missing/unreadable directory yields []. */
-async function readAllDelegationEntries(root) {
-	return readDelegationEntries(join(root, ".pantheon", "delegations"));
-}
-/** Resolve the PROJECT ROOT used by every pantheon file channel. `directory`
-*  wins over `worktree` (the old `resolveDelegationsDir` already did this);
-*  an absent/empty root or `/` (no git — e.g. the sandbox test project) falls
-*  back to cwd. Standardised here so the delegations md and the panel logger
-*  all read the SAME root (audit finding: the channels
-*  resolved the root independently). Pure — no I/O. */
-function resolvePantheonRoot(state, cwd = process.cwd()) {
-	const root = state?.directory ?? state?.worktree ?? "";
-	if (root === "" || root === "/") return cwd;
-	return root;
-}
-/** Resolve the directory where delegation md reports are written.
-*  The finalizer writes `.pantheon/delegations` RELATIVE to the server cwd,
-*  which the TUI exposes as `TuiState.path.directory`. */
-function resolveDelegationsDir(state, cwd = process.cwd()) {
-	return join(resolvePantheonRoot(state, cwd), ".pantheon", "delegations");
-}
-/** Project root derived from the delegations dir: `<root>/.pantheon/delegations`
-*  → `<root>`. Used to point the panel logger at the REAL hooks.log — passing
-*  the delegations dir (or its dirname) directly made createTuiLogger append
-*  to `<root>/.pantheon/.pantheon/logs/hooks.log`, a nested empty dir the real
-*  log never saw. Pure — no I/O. */
-function panelLogDir(delegationsDir) {
-	return dirname(dirname(delegationsDir));
-}
-/** Where the panel logger appends lines: `<projectRoot>/.pantheon/logs/hooks.log`.
-*  Pure — testable without the runtime. */
-function tuiLogPath(projectRoot) {
-	return join(projectRoot, ".pantheon", "logs", "hooks.log");
-}
-/** Sort delegations: running first, then terminal by recency (updatedAt,
-*  falling back to startedAt, descending). Shared by the md reader and
-*  mergeDelegationSources. */
-function compareDelegationEntries(a, b) {
-	const isActive = (st) => st === "running" || st === "retry" || st === "stale-running" ? 1 : 0;
-	const aRun = isActive(a.state);
-	const bRun = isActive(b.state);
-	if (aRun !== bRun) return bRun - aRun;
-	return (b.updatedAt ?? b.startedAt) - (a.updatedAt ?? a.startedAt);
-}
-/** Split the panel list: active jobs (running/retry, stale-marked) first,
-*  then the most recent terminal reports; the remaining tail is collapsed
-*  by the View into a single "… +N more" line. Pure — so the history-only panel (no sessionID) is testable
-*  without the TUI runtime. */
-function splitDelegationList(all, maxRecent = 8, now = Date.now(), staleThresholdMs = 18e5) {
-	const isActiveState = (st) => st === "running" || st === "retry" || st === "stale-running";
+	} catch {}
 	return {
-		active: all.filter((d) => isActiveState(d.state)).map((d) => markStaleIfRunning(d, now, staleThresholdMs)).sort(compareDelegationEntries),
-		recent: all.filter((d) => !isActiveState(d.state)).filter((d) => {
-			if (d.updatedAt === null || !Number.isFinite(d.updatedAt)) return true;
-			const age = now - d.updatedAt;
-			if (age < 0) return true;
-			return age < (delegationRowStatus(d.state) === "failed" ? DELEGATION_FAILED_RETENTION_MS : DELEGATION_DONE_RETENTION_MS);
-		}).sort(compareDelegationEntries).slice(0, maxRecent)
+		changes,
+		ahead,
+		behind
 	};
 }
-/** Live-first window used by {@link ceilingDelegationList} (kept for the
-*  ceiling helper and existing tests): active jobs first, then the most
-*  recent terminal reports (capped). Pure. */
-function visibleDelegationList(all, maxTerminal = 8, now = Date.now(), staleThresholdMs = 18e5) {
-	const { active, recent } = splitDelegationList(all, maxTerminal, now, staleThresholdMs);
-	return [...active, ...recent];
+/** Rendered git row: `+1 ±2 −1 ?2 ↑3 ↓1`, zero terms omitted. Null when the
+*  tree is clean and in sync, so the block keeps only its branch line. Pure. */
+function formatGitSnapshot(snapshot) {
+	if (!snapshot?.changes) return null;
+	const { added, modified, deleted, untracked } = snapshot.changes;
+	const parts = [];
+	if (added > 0) parts.push(`+${added}`);
+	if (modified > 0) parts.push(`±${modified}`);
+	if (deleted > 0) parts.push(`\u2212${deleted}`);
+	if (untracked > 0) parts.push(`?${untracked}`);
+	if ((snapshot.ahead ?? 0) > 0) parts.push(`↑${snapshot.ahead}`);
+	if ((snapshot.behind ?? 0) > 0) parts.push(`↓${snapshot.behind}`);
+	return parts.length === 0 ? null : parts.join(" ");
 }
-/** Default stale-running threshold: 30 minutes. */
-const STALE_RUNNING_THRESHOLD_MS = 18e5;
-/** Idle silence window: if no updatedAt change in this window, the entry is
-*  considered stale. Combined with the stale-running threshold to produce the
-*  display-only `stale-running` state. */
-const IDLE_SILENCE_MS = 6e4;
-/** Visual-only terminal retention windows. Reports remain on disk; these
-*  constants only control which rows enter the TUI window. */
-const DELEGATION_DONE_RETENTION_MS = 12e4;
-const DELEGATION_FAILED_RETENTION_MS = 6e5;
-/** Grace window for an ABSENT child status. `api.state.session.status()` only
-*  carries the sessions that are currently ALIVE; every finished child of a
-*  long-lived session is missing from that map. A child with no status is
-*  therefore treated as terminal (done) — treating it as running made every
-*  historical child of the session show up as "active" (the "197 children,
-*  all active" regression). The one exception is a freshly-spawned child that
-*  has not been registered by the status API yet: within this window of its
-*  last activity (`time.updated`, falling back to `time.created`) it still
-*  reads as running. */
+/** Whether a new probe may start. An in-flight probe always wins (no queue), and
+*  the previous start must be older than the cooldown. Pure. */
+function gitProbeAllowed(state, cooldownMs = GIT_CLI_MIN_INTERVAL_MS) {
+	if (state.inFlight) return false;
+	if (state.lastRunAt === null) return true;
+	const elapsed = state.now - state.lastRunAt;
+	return !Number.isFinite(elapsed) || elapsed >= cooldownMs;
+}
+/** Spend window labels, in render order. */
+const SPEND_TODAY_LABEL = "hoje";
+const SPEND_30D_LABEL = "30d";
+/** Separator between the two windows on the Context footer line. */
+const SPEND_LINE_SEPARATOR = " · ";
+/** `30d` window: 30 × 24 h, measured back from "now". */
+const SPEND_30D_MS = 2592e6;
+/** Probe window: one hour, narrow enough that a unit mix-up cannot line up. */
+const SPEND_PROBE_WINDOW_MS = 36e5;
+/** The echoed `range` may be rounded server-side; 120 s absorbs that. */
+const SPEND_PROBE_TOLERANCE_MS = 12e4;
+/** Session events arrive in bursts — same 400 ms window as the other blocks. */
+const SPEND_REFRESH_DEBOUNCE_MS = 400;
+/** Spend per window in USD. Either side may be unknown (kept `null`). */
+/** `from`/`to` unit accepted by the route. `SessionStatsInput` declares both as
+*  bare `number` and does not say which unit, so it is measured once per
+*  process (`ms` unless the server echoes seconds) instead of guessed. */
+/** Resolved unit for this process; `null` until the mount probe answers. */
+let spendUnit = null;
+/** In-flight probe, so two refreshes cannot each burn the 2-call budget. */
+let spendProbe = null;
+/** Test-only: forget the process-wide unit resolution. Never called at runtime. */
+function resetSpendUnit() {
+	spendUnit = null;
+	spendProbe = null;
+}
+/** Resolved unit (`ms` / `s` / `unavailable`) or null while still unknown. */
+function resolvedSpendUnit() {
+	return spendUnit;
+}
+/** Local midnight for `now`: `new Date()` with the clock fields zeroed in the
+*  current timezone (DST-safe, unlike subtracting hours). Pure. */
+function startOfLocalDay(now) {
+	const date = new Date(now);
+	date.setHours(0, 0, 0, 0);
+	return date.getTime();
+}
+/** The two windows the block shows: `hoje` (local midnight → now) and `30d`
+*  (now − 30 days → now). Pure. */
+function spendWindows(now) {
+	return {
+		today: {
+			from: startOfLocalDay(now),
+			to: now
+		},
+		thirtyDays: {
+			from: now - SPEND_30D_MS,
+			to: now
+		}
+	};
+}
+/** USD with two decimals (`$0.42`), four for a positive sub-cent amount
+*  (`$0.0031`), and `<$0.0001` when even four decimals would read `$0.0000`.
+*  `0` prints `$0.00`. Null for a missing/negative/non-finite value. Pure. */
+function formatSpendUSD(cost) {
+	const value = numberOrNull(cost);
+	if (value === null || value < 0) return null;
+	if (value === 0) return "$0.00";
+	if (value >= .01) return `$${value.toFixed(2)}`;
+	const cents = value.toFixed(2);
+	if (cents !== "0.00") return `$${cents}`;
+	const cents4 = value.toFixed(4);
+	return cents4 === "0.0000" ? "<$0.0001" : `$${cents4}`;
+}
+/** `cost` off a `SessionStatsInfo` (`MoneyUSD` = number) or null when the
+*  payload is malformed/negative, so a bad value never reaches a row. Pure. */
+function statsCost(result) {
+	const cost = numberOrNull(result?.cost);
+	return cost !== null && cost >= 0 ? cost : null;
+}
+/** True when the server echoed the window we sent, within 120 s. `scale` is how
+*  many milliseconds one unit of the sent window is worth (`1` for `ms`, `1000`
+*  for `s`). The echo is accepted either as the same numbers we sent (the route
+*  keeps the caller's unit) or converted to millisecond epoch (`DateTime.Utc`),
+*  so the probe pins the unit without assuming which of the two it gets. Pure. */
+function statsRangeMatches(range, sent, scale) {
+	const from = numberOrNull(range?.from);
+	const to = numberOrNull(range?.to);
+	if (from === null || to === null) return false;
+	const tolerance = SPEND_PROBE_TOLERANCE_MS / scale;
+	const sameUnit = Math.abs(from - sent.from) <= tolerance && Math.abs(to - sent.to) <= tolerance;
+	const asMilliseconds = Math.abs(from - sent.from * scale) <= 12e4 && Math.abs(to - sent.to * scale) <= 12e4;
+	return sameUnit || asMilliseconds;
+}
+/** The `Context` block's last line: OpenCode stats source and both spend windows
+*  on one muted row (`OpenCode · hoje $0.42 · 30d $9.80`). A window without a
+*  usable amount is omitted, and no usable window at all yields null so the
+*  line (and not the block) is dropped. Pure. */
+function contextSpendLine(totals) {
+	if (totals === null) return null;
+	const parts = [];
+	const today = formatSpendUSD(totals.today);
+	if (today !== null) parts.push(`${SPEND_TODAY_LABEL} ${today}`);
+	const thirtyDays = formatSpendUSD(totals.thirtyDays);
+	if (thirtyDays !== null) parts.push(`30d ${thirtyDays}`);
+	return parts.length === 0 ? null : `OpenCode${SPEND_LINE_SEPARATOR}${parts.join(SPEND_LINE_SEPARATOR)}`;
+}
+/** Grapheme iterator: a cut never splits a surrogate pair, a combining mark
+*  from its base or a ZWJ emoji sequence, so truncation stays cell-exact. */
+/** Clamp a free-form label to `max` terminal cells without wrapping. The width
+*  is measured in display cells, never in UTF-16 code units: a CJK or emoji
+*  label used to overflow the column it was cut for (`計画の移行` is 5 code
+*  units but 10 cells, `🚀` is 2 units and 2 cells). Pure. */
+function truncateLabel(value, max = 28) {
+	const text = value.trim();
+	const budget = Math.max(1, Math.floor(numberOrNull(max) ?? 1));
+	if (cellWidth(text) <= budget) return text;
+	const ellipsis = "…";
+	const room = budget - cellWidth(ellipsis);
+	let cut = "";
+	let used = 0;
+	for (const { segment } of GRAPHEMES.segment(text)) {
+		const width = cellWidth(segment);
+		if (used + width > room) break;
+		cut += segment;
+		used += width;
+	}
+	return `${cut.replace(/\s+$/, "")}${ellipsis}`;
+}
+/** Right-pad `value` with spaces to exactly `cells` display columns (a wider
+*  value is truncated first). `padEnd` counts code units, so it under-pads a
+*  CJK/emoji cell and the next column drifts. Pure. */
+function padCell(value, cells) {
+	const width = Math.max(0, Math.floor(numberOrNull(cells) ?? 0));
+	if (width === 0) return "";
+	const text = truncateLabel(value, width);
+	return `${text}${" ".repeat(Math.max(0, width - cellWidth(text)))}`;
+}
+/** Columns the fixed header may use before it would wrap the sidebar. */
+const HEADER_MAX_WIDTH = 34;
+/** Preset row of the fixed header: `▸ <preset> · <provider>`. The provider is
+*  cut first when the row overflows, so the preset name is never the casualty;
+*  a missing provider leaves the preset alone (no `unknown` placeholder). */
+function presetHeaderLine(presetName, providerID) {
+	const base = `▸ ${presetName.trim() === "" ? "default" : presetName.trim()}`;
+	const provider = providerID === null ? "" : providerID.trim();
+	if (provider === "") return truncateLabel(base, HEADER_MAX_WIDTH);
+	const room = HEADER_MAX_WIDTH - `${base} · `.length;
+	if (room < 2) return truncateLabel(base, HEADER_MAX_WIDTH);
+	return `${base} · ${truncateLabel(provider, room)}`;
+}
+/** One classification plus the evidence that produced it. */
+/** Bracketed description prefix → short label (`[council]` → `coun`). */
+const DISPATCH_PREFIX_KINDS = [
+	["council", "coun"],
+	["discovery", "disc"],
+	["hotfix", "hot"],
+	["plan", "plan"],
+	["review", "revw"]
+];
+/** Agent → kind, consulted only when the description declares no prefix.
+*  `council` is deliberately absent — see the section comment. */
+const DISPATCH_AGENT_KINDS = {
+	apollo: "disc",
+	athena: "plan",
+	talos: "hot",
+	themis: "revw"
+};
+/** Kind declared by a leading `[prefix]` on the description: case-insensitive
+*  and tolerant of spaces inside the brackets. Null when none is declared. */
+function dispatchKindFromPrefix(description) {
+	if (typeof description !== "string") return null;
+	const match = /^\s*\[\s*([a-z]+)\s*\]/i.exec(description);
+	if (match === null) return null;
+	const token = (match[1] ?? "").toLowerCase();
+	for (const [word, kind] of DISPATCH_PREFIX_KINDS) if (word === token) return kind;
+	return null;
+}
+/** Kind implied by the child's agent, null for an agent that implies none. */
+function dispatchKindFromAgent(agent) {
+	if (typeof agent !== "string") return null;
+	return DISPATCH_AGENT_KINDS[agent.trim().toLowerCase()] ?? null;
+}
+/** Classify one dispatch. The description prefix always wins over the agent;
+*  otherwise the agent decides, and anything else is `oth` (a real dispatch we
+*  simply cannot name). A missing call is the only `unavailable` outcome. Pure. */
+function classifyDispatchKind(call) {
+	if (call === null || call === void 0) return {
+		kind: null,
+		origin: "unavailable"
+	};
+	const fromPrefix = dispatchKindFromPrefix(call.description);
+	if (fromPrefix !== null) return {
+		kind: fromPrefix,
+		origin: "prefix"
+	};
+	return {
+		kind: dispatchKindFromAgent(call.agent) ?? "oth",
+		origin: "agent"
+	};
+}
+/** A `subagent` tool call the parent made, as its own transcript records it. */
+/** Host tool that spawns a child (V2 name; it is not `task`). */
+const SUBAGENT_TOOL = "subagent";
+/** The tool result also names its child: `<subagent sessionID="ses_…" …>`. */
+const SUBAGENT_SESSION_PATTERN = /sessionID="([^"]+)"/;
+/** Text of a tool `content` payload, joined; tolerant of the string form. */
+function toolContentText(content) {
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	const chunks = [];
+	for (const part of content) {
+		const text = part?.text;
+		if (typeof text === "string") chunks.push(text);
+	}
+	return chunks.join("\n");
+}
+/** Child session id of one `subagent` call: the exact `metadata.sessionID`
+*  first, then an `output`/`result` id, then the `<subagent sessionID="…">` tag
+*  in the result text. Null when the call has not produced a child yet. */
+function subagentSessionID(state) {
+	const direct = [
+		state?.metadata?.sessionID,
+		state?.output?.sessionID,
+		state?.result?.sessionID
+	];
+	for (const candidate of direct) if (typeof candidate === "string" && candidate !== "") return candidate;
+	return SUBAGENT_SESSION_PATTERN.exec(toolContentText(state?.content))?.[1] ?? null;
+}
+/** Correlate the parent transcript's `subagent` calls with the children they
+*  spawned: child session id → `{ agent, description, background }`. One pass
+*  over the list the sidebar already holds — no request, no `message.sync` on
+*  the child. `streaming`/`pending` states carry their input as *partial JSON
+*  text*, so they are skipped rather than parsed. Fail-open: a malformed part
+*  contributes nothing. Pure. */
+function collectSubagentCalls(messages) {
+	const calls = /* @__PURE__ */ new Map();
+	if (!Array.isArray(messages)) return calls;
+	for (const message of messages) {
+		if (message?.type !== "assistant" || !Array.isArray(message.content)) continue;
+		for (const part of message.content) {
+			if (part?.type !== "tool" || part?.name !== SUBAGENT_TOOL) continue;
+			const state = part.state;
+			if (state === null || typeof state !== "object") continue;
+			if (state.status === "streaming" || state.status === "pending") continue;
+			const sessionID = subagentSessionID(state);
+			if (!isValidSessionID(sessionID)) continue;
+			const input = state.input !== null && typeof state.input === "object" ? state.input : {};
+			const agent = typeof input.agent === "string" ? input.agent : "";
+			const description = typeof input.description === "string" ? input.description : "";
+			calls.set(sessionID, {
+				sessionID,
+				agent,
+				description,
+				background: input.background === true
+			});
+		}
+	}
+	return calls;
+}
+/** Grace window for a child that has not started yet. V2's `session.status()`
+*  returns `idle` both for "created but not started" and for "finished", so an
+*  idle/unknown/absent child whose own last activity (`time.updated`, falling
+*  back to `time.created`) is this recent still reads as running — otherwise a
+*  just-spawned child renders a premature ✓. Trade-off (V1 parity: it had the
+*  same window for its absent statuses): a child that finished within the window
+*  and reports no `outcome` reads as running until the window closes, at which
+*  point it turns terminal and its completion toast fires. A child that reports
+*  a terminal `outcome` is never held back by the window. */
 const DELEGATION_CHILD_STATUS_GRACE_MS = 6e4;
-/** Recency window for the children channel. `session.children` returns EVERY
-*  child the focused session ever spawned, so a long session accumulates
-*  hundreds of historical rows that would inflate the panel. A child whose
-*  last activity (its own time, or its matched report's Finalized timestamp)
-*  is older than this window is dropped BEFORE it can enter the list. 24h
-*  keeps the sidebar scoped to current work while still covering long
-*  delegations. A child with no timestamp at all is kept (fail-open). */
-const DELEGATION_CHILDREN_RECENCY_MS = 864e5;
-/** Alias-less NATIVE task() live entries never receive a report alias (the
-*  task tool output carries none), so the 30s alias-less prune in
-*  mergeChildDelegationSources must not apply to them — 5 minutes covers a
-*  slow child listing while still bounding the live map. */
-const NATIVE_LIVE_ALIASLESS_TTL_MS = 3e5;
-/**
-* Mark a running entry as `stale-running` if it has been running longer than
-* the threshold AND has no recent activity (no `updatedAt` change in the last
-* `IDLE_SILENCE_MS`). This is DISPLAY-ONLY — the persisted state is unchanged.
-*
-* A `stale-running` entry renders with a warning indicator but the underlying
-* delegation is still treated as running by the backend.
-*/
-function markStaleIfRunning(entry, now, thresholdMs = STALE_RUNNING_THRESHOLD_MS) {
-	if (entry.state !== "running") return entry;
-	if (now - entry.startedAt < thresholdMs) return entry;
-	if (entry.updatedAt !== null && now - entry.updatedAt < 6e4) return entry;
-	return {
-		...entry,
-		state: "stale-running"
-	};
-}
-/** Compact elapsed-time label, single unit only: "12s"/"3m"/"1h"/"2d" — ticks every
-*  second for running jobs. */
-function fmtElapsed(ms) {
-	const total = Math.max(0, Math.floor(ms / 1e3));
-	const days = Math.floor(total / 86400);
-	const hours = Math.floor(total % 86400 / 3600);
-	const minutes = Math.floor(total % 3600 / 60);
-	const seconds = total % 60;
-	if (days > 0) return `${days}d`;
-	if (hours > 0) return `${hours}h`;
-	if (minutes > 0) return `${minutes}m`;
-	return `${seconds}s`;
-}
-/** Elapsed label for one entry: an ACTIVE entry (running/retry/stale-running)
-*  ticks `now - startedAt`; a terminal one is fixed at
-*  `updatedAt - startedAt` (em dash when no finalized timestamp). */
-function delegationElapsed(entry, now) {
-	if (entry.state === "running" || entry.state === "retry" || entry.state === "stale-running") return fmtElapsed(now - entry.startedAt);
-	return entry.updatedAt !== null ? fmtElapsed(entry.updatedAt - entry.startedAt) : "—";
-}
-/** The activity labels shown by the animated row. Keeping this pure makes the
-* state machine testable without booting OpenCode's renderer. */
-function delegationActivity(entry) {
-	if (entry.state === "completed") return "completed";
-	if (entry.state === "error" || entry.state === "startup_failed" || entry.state === "startup_unknown") return "error";
-	if (entry.state === "cancelled") return "cancelled";
-	if (entry.alias.startsWith("live-") && entry.taskID === void 0) return "delegating";
-	return "working";
-}
-function delegationActivityLabel(entry) {
-	if (entry.state === "retry") return "RETRYING";
-	switch (delegationActivity(entry)) {
-		case "delegating": return "DELEGATING";
-		case "working": return "WORKING";
-		case "completed": return entry.timedOut ? "DONE (TIMED OUT)" : "DONE";
-		case "error": return "ERROR";
-		default: return "CANCELLED";
+/** One delegated child job as the sidebar renders it. */
+/** Map the host's live session status to a display state. V2 exposes only
+*  `"idle" | "running"` through the TUI context (the client union adds `retry`
+*  and `busy`); `error`/`failed` are handled defensively for host drift.
+*  `idle`, `retry` and unknown/absent statuses are terminal only once the
+*  child's own activity is older than the grace window — within it the child
+*  reads as running (see `DELEGATION_CHILD_STATUS_GRACE_MS`). An interruption is
+*  not part of this union: it arrives as a terminal `outcome`. Pure. */
+function delegationStateFromStatus(status, time, now = Date.now(), graceMs = DELEGATION_CHILD_STATUS_GRACE_MS) {
+	switch (status) {
+		case "running":
+		case "busy": return "running";
+		case "error":
+		case "failed": return "failed";
+		default: {
+			const lastActivity = Math.max(time?.updated ?? 0, time?.created ?? 0);
+			if (lastActivity > 0 && now - lastActivity < graceMs) return "running";
+			return "completed";
+		}
 	}
 }
-const DELEGATION_SPINNER_FRAMES = [
+/** Map a V2 child `outcome` to a display state. `interrupted` (user abort,
+*  shutdown, superseded, inactivity) is distinct from both success and failure,
+*  so an aborted child never renders the ✓ of a completed one. Returns null for
+*  an absent/unrecognised outcome so the live status decides. Pure. */
+function delegationStateFromOutcome(outcome) {
+	switch (outcome) {
+		case "succeeded": return "completed";
+		case "failed": return "failed";
+		case "interrupted": return "interrupted";
+		default: return null;
+	}
+}
+/** Build a delegation row from a child session + its live status, plus the
+*  `subagent` call that spawned it (when the parent transcript had one). A
+*  terminal `outcome` wins when present (the only V2 primitive that surfaces a
+*  delegation failure/interruption once the status is back to idle); otherwise
+*  the live status decides, with the absent/idle grace window applied. The
+*  `call` only ever *adds* the purpose and the background flag — an absent one
+*  leaves the row fully renderable. Pure. */
+function toDelegationView(child, status, now = Date.now(), call) {
+	const id = typeof child?.id === "string" ? child.id : "";
+	const title = typeof child?.title === "string" && child.title !== "" ? child.title : "";
+	const agent = typeof child?.agent === "string" && child.agent !== "" ? child.agent : "";
+	const label = title !== "" ? title : agent !== "" ? agent : id.slice(0, 8);
+	const state = delegationStateFromOutcome(child?.outcome) ?? delegationStateFromStatus(status, child?.time, now);
+	const classification = classifyDispatchKind(call);
+	return {
+		id,
+		label,
+		state,
+		startedAt: numberOrNull(child?.time?.created),
+		updatedAt: numberOrNull(child?.time?.updated),
+		agent: agent !== "" ? agent : null,
+		model: shortModelID(child?.model),
+		cost: numberOrNull(child?.cost),
+		kind: classification.kind,
+		kindOrigin: classification.origin,
+		background: call?.background === true
+	};
+}
+const SPINNER_FRAMES = [
 	"⠋",
 	"⠙",
 	"⠹",
@@ -1004,863 +1999,1034 @@ const DELEGATION_SPINNER_FRAMES = [
 	"⠇",
 	"⠏"
 ];
-/** Return the spinner glyph for the given frame counter. The frame counter
-*  is incremented every ~80ms by a dedicated animation timer, decoupled from
-*  the data poll cycle. Pure — no side effects. */
-function delegationSpinnerFrame(frame) {
-	const index = Math.abs(Math.floor(frame)) % DELEGATION_SPINNER_FRAMES.length;
-	return DELEGATION_SPINNER_FRAMES[index] ?? DELEGATION_SPINNER_FRAMES[0];
+/** Spinner glyph for a frame counter (incremented every ~80ms while any job is
+*  running). Pure. */
+function spinnerFrame(frame) {
+	const index = Math.abs(Math.floor(frame)) % SPINNER_FRAMES.length;
+	return SPINNER_FRAMES[index] ?? SPINNER_FRAMES[0];
 }
-/** Every state the row knows how to draw: the delegation lifecycle states
-*  derived from the children status + md reports (`completed`, `error`,
-*  `cancelled`, `startup_failed`, `startup_unknown`) plus the TUI-only
-*  states (`retry`, `stale-running`). Fase 1 deliberately omits speculative
-*  blocked/paused/scheduled/skipped. There is no `pending` display state: a
-*  pre-dispatch tool part maps to `running` in {@link reduceDelegationToolPart}. */
-/** Semantic tone mapped to the TUI theme at the row ({@link DelegationRow}).
-*  Kept separate + pure so the color channel is testable without booting the
-*  renderer. Every display state resolves to one of the three status colors;
-*  the row paints its whole content with it (see {@link DelegationRow}). */
-/** Status → color mapping for the whole-row tone. Red = failure, green =
-*  terminal, yellow = in flight. The glyph remains a redundant channel so the
-*  state stays legible in monochrome. Display-only; no behavior change. */
-function delegationStateTone(state) {
-	switch (state) {
-		case "running":
-		case "retry":
-		case "startup_unknown":
-		case "stale-running": return "warning";
-		case "error":
-		case "startup_failed": return "error";
-		case "completed":
-		case "cancelled": return "success";
+/** Shared order: live work first, then most recent activity. One comparator for
+*  every consumer of the dispatch tree (sidebar block and panel list), so the
+*  two views can never disagree about which child comes first. Pure. */
+function compareDelegations(a, b) {
+	const activeA = a.state === "running" ? 1 : 0;
+	const activeB = b.state === "running" ? 1 : 0;
+	if (activeA !== activeB) return activeB - activeA;
+	return (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
+}
+/** Token totals published on `SessionInfo.tokens`, one entry per counter. */
+/** One child of the dispatch tree: the delegation row plus the fields only the
+*  panel's detail view needs (`SessionInfo.title`/`parentID`/`tokens` and the
+*  spawning call's description). */
+/** Optional inputs of `collectDispatch`: a fixed clock (tests/render ticks) and
+*  an already-computed `agent` map, so a caller that walked the parent
+*  transcript anyway never pays for a second walk. */
+/** `message.list` of one session, degrades to an empty list. The host's list is
+*  a cached directory read, not a request. */
+function readSessionMessages(context, sessionID) {
+	try {
+		const result = context?.data?.session?.message?.list?.(sessionID);
+		return Array.isArray(result) ? result : [];
+	} catch {
+		return [];
 	}
 }
-/** Bounded tracker: child session id → latest running tool call. */
-const latestToolActivity = /* @__PURE__ */ new Map();
-const MAX_TOOL_ACTIVITY_ENTRIES = 200;
-const TOOL_ACTIVITY_TTL_MS = 3e5;
-/** First usable summary string from common tool input fields. */
-function summarizeToolInput(input) {
-	if (!input) return "";
-	for (const key of [
-		"command",
-		"description",
-		"prompt",
-		"filePath",
-		"pattern",
-		"url",
-		"query"
-	]) {
-		const value = input[key];
-		if (typeof value === "string" && value.trim() !== "") return value;
-	}
-	return "";
+/** Token counters of a child, null when the host published none of them. Pure. */
+function dispatchTokens(tokens) {
+	if (tokens === null || typeof tokens !== "object") return null;
+	const source = tokens;
+	const cache = source.cache !== null && typeof source.cache === "object" ? source.cache : {};
+	const totals = {
+		input: numberOrNull(source.input),
+		output: numberOrNull(source.output),
+		reasoning: numberOrNull(source.reasoning),
+		cacheRead: numberOrNull(cache.read),
+		cacheWrite: numberOrNull(cache.write)
+	};
+	return [
+		totals.input,
+		totals.output,
+		totals.reasoning,
+		totals.cacheRead,
+		totals.cacheWrite
+	].every((value) => value === null) ? null : totals;
 }
-/** Reduce one message.part.updated tool part to displayable activity.
-*  Returns null for non-tool parts, completed/error parts (no live activity)
-*  or parts without a session id. Pure. */
-function extractToolActivity(part, now = Date.now()) {
-	if (part?.type !== "tool") return null;
-	const status = part.state?.status;
-	if (status !== "pending" && status !== "running") return null;
-	const sessionID = typeof part.sessionID === "string" ? part.sessionID : "";
-	if (sessionID === "") return null;
+/** One child `SessionInfo` + its live status → `DispatchEntry`. The call only
+*  ever adds the kind and the description; an absent one leaves the entry fully
+*  renderable. Pure. */
+function toDispatchEntry(child, status, now = Date.now(), call) {
+	const title = typeof child?.title === "string" && child.title !== "" ? child.title : null;
+	const parentID = typeof child?.parentID === "string" && child.parentID !== "" ? child.parentID : null;
+	const description = typeof call?.description === "string" && call.description !== "" ? call.description : null;
 	return {
-		sessionID,
-		activity: {
-			tool: typeof part.tool === "string" && part.tool !== "" ? part.tool : "tool",
-			summary: summarizeToolInput(part.state?.input).replace(/\s+/g, " ").trim().slice(0, 48),
-			at: now
-		}
+		view: toDelegationView(child, status, now, call),
+		title,
+		description,
+		parentID,
+		tokens: dispatchTokens(child?.tokens)
 	};
 }
-/** Record an activity sample (bounded map, oldest dropped). */
-function trackToolActivity(map, sessionID, activity) {
-	if (sessionID === "") return;
-	if (map.size >= MAX_TOOL_ACTIVITY_ENTRIES) {
-		const oldest = map.keys().next().value;
-		if (oldest !== void 0) map.delete(oldest);
+/** The delegation tree of `sessionID` — every child `session.family` returns,
+*  root excluded, each enriched from `session.get`/`session.status` and the
+*  parent's `subagent` calls. Empty when the family API is unavailable or the
+*  session id is not a real handle (never falls back to the root). Ordered by
+*  the shared `compareDelegations`, so callers render the same list in the same
+*  order. A family that repeats an id yields one row per child: the id is
+*  deduplicated before the walk, so a duplicate can never double a row or its
+*  cost. */
+function collectDispatch(context, sessionID, options = {}) {
+	if (!isValidSessionID(sessionID)) return [];
+	let family = [];
+	try {
+		const result = context?.data?.session?.family?.(sessionID);
+		if (Array.isArray(result)) family = result;
+	} catch {
+		return [];
 	}
-	map.set(sessionID, activity);
-}
-/** Latest live activity for a child session, or null when absent/stale. */
-function latestToolActivityFor(map, sessionID, now = Date.now(), ttlMs = TOOL_ACTIVITY_TTL_MS) {
-	if (!sessionID) return null;
-	const hit = map.get(sessionID);
-	if (hit === void 0) return null;
-	if (now - hit.at > ttlMs) return null;
-	return hit;
-}
-/** Merge the immediate tool-event channel into the child-session channel.
-*
-* Children remain the durable source, while live entries make a delegation
-* visible before the child API/report catches up. A finalized md entry wins
-* over a stale live entry; a child-only row is upgraded with live agent,
-* alias, phase and timestamps. */
-function mergeChildDelegationSources(children, live) {
-	const result = [...children];
-	const byTask = /* @__PURE__ */ new Map();
-	const bySessionAlias = /* @__PURE__ */ new Map();
-	const key = (sessionID, alias) => `${sessionID}\u0000${alias}`;
-	result.forEach((entry, index) => {
-		if (entry.taskID !== void 0) byTask.set(entry.taskID, index);
-		bySessionAlias.set(key(entry.sessionID, entry.alias), index);
-	});
-	for (const liveEntry of live) {
-		const aliaslessTTL = liveEntry.tool === "task" ? NATIVE_LIVE_ALIASLESS_TTL_MS : 3e4;
-		if (liveEntry.alias === null && liveEntry.taskID === null && Date.now() - liveEntry.startedAt > aliaslessTTL) continue;
-		const incoming = toDelegationEntry(liveEntry);
-		const isNativeLive = liveEntry.tool === "task" && liveEntry.alias === null;
-		if (isNativeLive) incoming.source = "children-only";
-		const index = (incoming.taskID !== void 0 ? byTask.get(incoming.taskID) : void 0) ?? (incoming.alias !== "" ? bySessionAlias.get(key(incoming.sessionID, incoming.alias)) : void 0);
-		if (index === void 0) {
-			result.push(incoming);
-			const newIndex = result.length - 1;
-			if (incoming.taskID !== void 0) byTask.set(incoming.taskID, newIndex);
-			bySessionAlias.set(key(incoming.sessionID, incoming.alias), newIndex);
+	const now = numberOrNull(options.now) ?? Date.now();
+	const calls = options.calls ?? collectSubagentCalls(readSessionMessages(context, sessionID));
+	const entries = [];
+	const seen = /* @__PURE__ */ new Set();
+	for (const childID of family) {
+		if (childID === sessionID || !isValidSessionID(childID)) continue;
+		if (seen.has(childID)) continue;
+		seen.add(childID);
+		let child;
+		try {
+			child = context.data.session.get(childID);
+		} catch {
 			continue;
 		}
-		const existing = result[index];
-		if (existing === void 0) continue;
-		if (existing.state !== "running") {
-			if (liveEntry.alias !== null && existing.alias !== incoming.alias) existing.alias = incoming.alias;
-			if (incoming.agent !== "agent" && existing.agent !== incoming.agent) existing.agent = incoming.agent;
-			continue;
-		}
-		result[index] = {
-			...existing,
-			alias: liveEntry.alias !== null ? incoming.alias : existing.alias,
-			sessionID: existing.sessionID || incoming.sessionID,
-			taskID: existing.taskID ?? incoming.taskID,
-			agent: incoming.agent !== "agent" ? incoming.agent : existing.agent,
-			description: incoming.description !== "" ? incoming.description : existing.description,
-			state: incoming.state,
-			startedAt: Math.min(existing.startedAt, incoming.startedAt),
-			updatedAt: incoming.updatedAt,
-			source: isNativeLive ? existing.source : "live"
+		if (!child) continue;
+		entries.push(toDispatchEntry(child, sessionStatusOf(context, childID), now, calls.get(childID) ?? null));
+	}
+	return entries.sort((a, b) => compareDelegations(a.view, b.view));
+}
+/** Sidebar blocks in render order. Spacing is derived from this list instead of
+*  from the view, so a hidden block can never leave an empty gap behind. */
+/** One rendered block: its key, and whether a blank line precedes it. */
+/** Header glyph per block — one codepoint each, rendered muted before the bold
+*  label. The fixed header (version/preset/session) takes none.
+*  Measured as one terminal cell by the host (`@opentui/core` counts
+*  `emoji-regex` matches as two): ▤ U+25A4 (EAW=A), ◆ U+25C6 (A), ▾ U+25BE (N),
+*  ◈ U+25C8 (A). `☑` U+2611 was rejected for the Todo header because it matches
+*  `emoji-regex` and would occupy two cells; `⌁` U+2301 (the old Dispatch glyph)
+*  was replaced by the host's own Notice glyph. */
+const BLOCK_ICONS = {
+	context: "▤",
+	git: "◆",
+	todo: "▾",
+	dispatch: "◈"
+};
+/** Tag every block that has content with its spacer: never before the first
+*  (the view puts a single blank line after the fixed header instead), one
+*  blank line before every later block. A repeated key collapses instead of
+*  stacking spacers, so an absent optional block can never leave a double gap.
+*  Pure. */
+function withBlockSpacers(keys) {
+	const seen = /* @__PURE__ */ new Set();
+	const blocks = [];
+	for (const key of keys) {
+		if (seen.has(key)) continue;
+		seen.add(key);
+		blocks.push({
+			key,
+			spacer: blocks.length > 0
+		});
+	}
+	return blocks;
+}
+/** Live children rendered one row each; the rest collapse into `… +N rodando`. */
+const DISPATCH_RUNNING_CEILING = 3;
+/** Agent rollup rows rendered before the `… +K  $<soma>` line. */
+const DISPATCH_AGENT_CEILING = 3;
+/** Hard cap on the block's rendered rows, header included. The sidebar is
+*  short; live work is served first, then the finished rollup. */
+const DISPATCH_MAX_LINES = 8;
+/** Marker of the aggregated "finished" section. */
+const DISPATCH_DONE_MARKER = "✓";
+/** Column width of the agent (or of its title/id fallback). */
+const DISPATCH_AGENT_WIDTH = 12;
+/** Narrowest agent column a row may fall back to before the cost is kept whole
+*  and the label truncates further. */
+const DISPATCH_MIN_AGENT_WIDTH = 8;
+/** Column width of the short model id — the model is dropped before the agent
+*  or the cost so a row always fits. */
+const DISPATCH_MODEL_WIDTH = 7;
+/** Column width of the per-dispatch cost (`$0.04`; a sub-cent cost widens it). */
+const DISPATCH_COST_WIDTH = 5;
+/** Column width of the duration (`12.7s` / `1m04s` / `820ms`). */
+const DISPATCH_DURATION_WIDTH = 5;
+/** Column width of the `×<count>` cell of an agent rollup row. */
+const DISPATCH_COUNT_WIDTH = 3;
+/** Column width of an agent rollup cost (`$0.0051` still fits). */
+const DISPATCH_GROUP_COST_WIDTH = 7;
+/** Hard column budget for one row — a Dispatch line never wraps:
+*  marker(2) + agent(12) + model(7) + cost(5) + duration(5) + 3 spaces = 34.
+*  The kind suffix (`·disc`, `·disc~`) is wider evidence than the model, so a
+*  classified row spends the model's columns first: marker(2) + agent(≤12) +
+*  suffix(≤6) + cost(5) + duration(5) + 2 spaces ≤ 32, still inside 34. */
+const DISPATCH_MAX_WIDTH = 34;
+/** Middle dot used between a label and its kind (`apollo·disc`). */
+const DISPATCH_KIND_SEPARATOR = "·";
+/** Background marker: the parent asked the child to run in the background. */
+const DISPATCH_BACKGROUND_MARKER = "~";
+/** Kind suffix glued to a row's label: `·disc`, `·disc~` for a background run,
+*  and empty when the child could not be classified (the row then reads exactly
+*  as before). Pure. */
+function dispatchKindSuffix(kind, background) {
+	if (kind === null || kind === void 0) return "";
+	const text = `${DISPATCH_KIND_SEPARATOR}${kind}`;
+	return background === true ? `${text}${DISPATCH_BACKGROUND_MARKER}` : text;
+}
+/** Header summary: `2 rodando · $3.49`. The live count is omitted when nothing
+*  runs, and the total spend is always printed (the header only renders while
+*  the tree has children, so `$0.00` is a real answer). Pure. */
+function dispatchHeaderSummary(running, cost) {
+	const parts = [];
+	const live = numberOrNull(running) ?? 0;
+	if (live > 0) parts.push(`${Math.round(live)} rodando`);
+	const formatted = formatSpendUSD(numberOrNull(cost) ?? 0);
+	if (formatted !== null) parts.push(formatted);
+	return parts.length === 0 ? null : parts.join(SPEND_LINE_SEPARATOR);
+}
+/** Compact duration without an internal space: `820` → `820ms`, `12_400` →
+*  `12.4s`, `64_000` → `1m04s`, `3_780_000` → `1h03m`, `172_800_000` → `2d`.
+*  An absent or negative value renders an em dash, never `NaN`s. Pure. */
+function formatDispatchDuration(ms) {
+	const value = numberOrNull(ms);
+	if (value === null || value < 0) return "—";
+	if (value < 1e3) return `${Math.round(value)}ms`;
+	const seconds = value / 1e3;
+	if (seconds < 59.95) return `${seconds.toFixed(1)}s`;
+	const total = Math.round(seconds);
+	const hours = Math.floor(total / 3600);
+	const minutes = Math.floor(total % 3600 / 60);
+	if (hours >= 24) return `${Math.floor(hours / 24)}d`;
+	if (hours > 0) return `${hours}h${String(minutes).padStart(2, "0")}m`;
+	return `${minutes}m${String(total % 60).padStart(2, "0")}s`;
+}
+/** Elapsed label for one row: a live child measures `now - created`, a finished
+*  one freezes at `updated - created` (em dash when a timestamp is missing).
+*  Pure. */
+function dispatchElapsed(view, now = Date.now()) {
+	if (view.startedAt === null) return "—";
+	if (view.state === "running") return formatDispatchDuration(now - view.startedAt);
+	if (view.updatedAt === null) return "—";
+	return formatDispatchDuration(view.updatedAt - view.startedAt);
+}
+/** Name column: the agent when the host published one, else the child title,
+*  else the short id — never `undefined`. Truncated to the column width. Pure. */
+function dispatchAgentText(view, max = 12) {
+	const agent = typeof view.agent === "string" ? view.agent.trim() : "";
+	const label = typeof view.label === "string" ? view.label.trim() : "";
+	const id = typeof view.id === "string" ? view.id.trim() : "";
+	const name = agent !== "" ? agent : label !== "" ? label : id;
+	return name === "" ? "—" : truncateLabel(name, max);
+}
+/** Model column, empty when the host published none. Pure. */
+function dispatchModelText(view) {
+	const model = typeof view.model === "string" ? view.model.trim() : "";
+	return model === "" ? "" : truncateLabel(model, 7);
+}
+/** Cost column: the child's real `SessionInfo.cost` with two decimals (up to
+*  four below a cent, so `$0.0031` never collapses to `$0.00`), `$0.00` for a
+*  zero cost, and an em dash when the host published no numeric cost. Pure. */
+function formatDispatchCost(cost) {
+	return formatUsageCost(cost) ?? "—";
+}
+/** Total spend of every child (live + finished), `0` when none published a
+*  numeric cost. Pure. */
+function dispatchTotalCost(views) {
+	let total = 0;
+	for (const view of views ?? []) {
+		const cost = numberOrNull(view?.cost);
+		if (cost !== null && cost >= 0) total += cost;
+	}
+	return total;
+}
+/** One live child: `⠸ <agent 12>·<kind> <custo> <duração>`, with the model as a
+*  fourth column only when the row still fits and the child is unclassified —
+*  the kind is the stronger evidence at this width, so it takes the model's
+*  columns. The kind rides glued to the label (never a column of its own) and
+*  disappears with the label's truncation; then the agent column shrinks (never
+*  below `DISPATCH_MIN_AGENT_WIDTH`); the cost is always present — `$0.00` for a
+*  zero cost, an em dash for a missing one. Pure. */
+function runningChildRowText(view, now = Date.now(), frame = 0, max = 34) {
+	const marker = `${spinnerFrame(frame)} `;
+	const duration = dispatchElapsed(view, now).padStart(5);
+	const cost = formatDispatchCost(view.cost).padStart(5);
+	const model = dispatchModelText(view);
+	const suffix = dispatchKindSuffix(view.kind, view.background);
+	const limit = Math.max(1, max);
+	const row = (agentWidth, withModel, withSuffix = true) => {
+		const kind = withSuffix ? suffix : "";
+		const name = dispatchAgentText(view, agentWidth);
+		const cell = kind === "" ? name.padEnd(agentWidth) : `${name}${kind}`;
+		const tail = withModel ? `${model.padEnd(7)} ${cost} ${duration}` : `${cost} ${duration}`;
+		return `${marker}${cell} ${tail}`;
+	};
+	if (model !== "" && suffix === "") {
+		const withModel = row(12, true);
+		if (withModel.length <= limit) return withModel;
+	}
+	const full = row(12, false);
+	if (full.length <= limit) return full;
+	for (let width = 11; width >= 8; width -= 1) {
+		const narrowed = row(width, false);
+		if (narrowed.length <= limit) return narrowed;
+	}
+	if (suffix !== "") return row(8, false, false);
+	return row(8, false);
+}
+/** Sessions and spend attributed to one agent in the finished section. `kind`
+*  is only set when every finished session of the group agrees on it — a mixed
+*  group carries no single purpose, so the row omits it rather than picking one.
+*  `background` follows the same rule (all of them background). */
+/** Rollup of the finished children by agent: `×count` sessions and the summed
+*  `SessionInfo.cost`. Failed and interrupted children are included (they are
+*  finished); running ones are not. The group's kind survives only when the
+*  whole group agrees, so an aggregate row never claims a purpose it cannot
+*  prove. Ordered by cost, then count, then name. Pure. */
+function collectChildAgentUsage(views) {
+	const totals = /* @__PURE__ */ new Map();
+	for (const view of views ?? []) {
+		if (!view || view.state === "running") continue;
+		const agent = agentKey(view.agent);
+		const current = totals.get(agent) ?? {
+			agent,
+			count: 0,
+			cost: 0,
+			kinds: /* @__PURE__ */ new Set(),
+			background: true
+		};
+		current.count += 1;
+		current.kinds.add(view.kind ?? null);
+		if (view.background !== true) current.background = false;
+		const cost = numberOrNull(view.cost);
+		if (cost !== null && cost >= 0) current.cost += cost;
+		totals.set(agent, current);
+	}
+	return [...totals.values()].map((entry) => {
+		const shared = entry.kinds.size === 1 ? [...entry.kinds][0] ?? null : null;
+		return {
+			agent: entry.agent,
+			count: entry.count,
+			cost: entry.cost,
+			kind: shared,
+			background: entry.background
+		};
+	}).sort((a, b) => b.cost - a.cost || b.count - a.count || a.agent.localeCompare(b.agent));
+}
+/** One agent rollup row: `<agent 12> ×<count 3>·<kind> <custo 7>`. The kind is
+*  glued to the count (the row's only label) and omitted for a mixed group; the
+*  agent column shrinks (never below the minimum) before the cost, which is
+*  what the row is for. Pure. */
+function childAgentRowText(row, max = 34) {
+	const suffix = dispatchKindSuffix(row?.kind, row?.background);
+	const count = `\u00D7${String(Math.max(0, Math.round(numberOrNull(row?.count) ?? 0))).padStart(3)}`;
+	const cost = formatDispatchCost(row?.cost).padStart(7);
+	const limit = Math.max(1, max);
+	const text = (agentWidth, withSuffix = true) => {
+		const kind = withSuffix ? suffix : "";
+		return `${truncateLabel(agentKey(row?.agent), agentWidth).padEnd(agentWidth)} ${count}${kind} ${cost}`;
+	};
+	const full = text(12);
+	if (full.length <= limit) return full;
+	for (let width = 11; width >= 8; width -= 1) {
+		const narrowed = text(width);
+		if (narrowed.length <= limit) return narrowed;
+	}
+	if (suffix !== "") return text(8, false);
+	return text(8);
+}
+/** The `… +K  $<soma>` line for agents beyond the rollup cap. Null when every
+*  agent fits. Pure. */
+function hiddenChildAgentsText(hidden, hiddenCost) {
+	const count = numberOrNull(hidden) ?? 0;
+	if (count <= 0) return null;
+	const cost = formatSpendUSD(numberOrNull(hiddenCost) ?? 0);
+	return cost === null ? `\u2026 +${Math.round(count)}` : `\u2026 +${Math.round(count)}  ${cost}`;
+}
+/** Summary of the finished section: `✓ 70 · $3.40 · 9 agentes`. `· $<soma>` is
+*  omitted when nothing was spent and `· 1 agente` when a single agent owns
+*  every finished child; `✓ <total>` always prints. Null when nothing finished.
+*  Pure. */
+function completedSummaryText(completed, cost, agents) {
+	const total = numberOrNull(completed) ?? 0;
+	if (total <= 0) return null;
+	const parts = [`✓ ${Math.round(total)}`];
+	const spend = numberOrNull(cost) ?? 0;
+	if (spend > 0) {
+		const formatted = formatSpendUSD(spend);
+		if (formatted !== null) parts.push(formatted);
+	}
+	const groups = Math.round(numberOrNull(agents) ?? 0);
+	if (groups > 1) parts.push(`${groups} agentes`);
+	return parts.join(SPEND_LINE_SEPARATOR);
+}
+/** The `· <F> falhas` suffix of the finished summary, null when nothing failed.
+*  Pure. */
+function failedSuffixText(failures) {
+	const count = numberOrNull(failures) ?? 0;
+	if (count <= 0) return null;
+	const rounded = Math.round(count);
+	return `${rounded} ${rounded === 1 ? "falha" : "falhas"}`;
+}
+/** One rendered live row: its text plus the session it navigates to. */
+/** Everything the `Dispatch` block renders, already joined and capped. */
+/** Newest activity first, so the live rows that just moved lead the section.
+*  Pure. */
+function lastActivity(view) {
+	return Math.max(numberOrNull(view?.updatedAt) ?? 0, numberOrNull(view?.startedAt) ?? 0);
+}
+/** Build the whole block from the child set. Null when there is no child, so
+*  the block (and its spacer) never renders empty. Live work is capped at
+*  `DISPATCH_RUNNING_CEILING` and the finished rollup at
+*  `DISPATCH_AGENT_CEILING`, with the rollup giving up rows first to keep the
+*  block inside `DISPATCH_MAX_LINES`. Pure. */
+function buildDispatchBlock(views, now = Date.now(), frame = 0, max = 34) {
+	const list = Array.isArray(views) ? views.filter((view) => view && typeof view.id === "string") : [];
+	if (list.length === 0) return null;
+	const running = list.filter((view) => view.state === "running").sort((a, b) => lastActivity(b) - lastActivity(a));
+	const finished = list.filter((view) => view.state !== "running");
+	const groups = collectChildAgentUsage(finished);
+	const finishedCost = groups.reduce((sum, group) => sum + group.cost, 0);
+	const failures = finished.filter((view) => view.state === "failed").length;
+	const totalCost = dispatchTotalCost(list);
+	const runningSlots = Math.min(3, running.length);
+	const runningHidden = running.length - runningSlots;
+	const runningLines = running.map((view) => ({
+		id: view.id,
+		text: runningChildRowText(view, now, frame, max)
+	}));
+	const summary = completedSummaryText(finished.length, finishedCost, groups.length);
+	const runningRows = runningSlots + (runningHidden > 0 ? 1 : 0);
+	const room = Math.max(0, 7 - runningRows - (summary === null ? 0 : 1));
+	const wanted = Math.min(3, groups.length);
+	const agentSlots = groups.length > wanted ? Math.min(wanted, Math.max(0, room - 1)) : Math.min(wanted, room);
+	const visibleAgents = groups.slice(0, agentSlots);
+	const hiddenAgents = groups.slice(agentSlots);
+	return {
+		runningCount: running.length,
+		completedCount: finished.length,
+		agentCount: groups.length,
+		failures,
+		totalCost,
+		running: runningLines.slice(0, runningSlots),
+		runningHidden,
+		summary,
+		agents: visibleAgents,
+		agentsHidden: hiddenAgents.length,
+		agentsHiddenCost: hiddenAgents.reduce((sum, group) => sum + group.cost, 0)
+	};
+}
+/** Panel content name, registered by the `session.panel` claim and passed to
+*  `ui.panel.open`. */
+const DISPATCH_PANEL_NAME = "pantheon.dispatch";
+/** Toast shown when `ui.panel.open` refuses (no session route is active). The
+*  panel only exists inside a session, so there is no alternative route. */
+const DISPATCH_PANEL_TOAST = "Abra uma sessão para ver o Dispatch";
+/** Panel title marker — the same glyph the sidebar block header uses. */
+const DISPATCH_PANEL_HEADER_MARKER = "◈";
+/** Selected-row gutter marker (`▸`, one cell). */
+const DISPATCH_PANEL_SELECTION_MARKER = "▸";
+/** Cells the selection gutter occupies before a row's own text. */
+const DISPATCH_PANEL_SELECTION_GUTTER = 2;
+/** Column of the horizontal rule under the header. */
+const DISPATCH_PANEL_RULE_CHAR = "─";
+/** Em dash for any datum the host did not publish. */
+const DISPATCH_PANEL_DASH = "—";
+/** Body of an empty panel (the claim still renders, the list is just empty). */
+const DISPATCH_PANEL_EMPTY_TEXT = "Nenhuma sessão delegada";
+/** Width at or above which the list and the detail sit side by side. */
+const DISPATCH_PANEL_WIDE_MIN_WIDTH = 72;
+/** Rows the viewport holds; pageup/pagedown move by exactly this many rows. */
+const DISPATCH_PANEL_PAGE_SIZE = 10;
+/** Panel row columns: marker(2) + agent(12) + kind(4) + cost(≥7) + duration(8).
+*  The cost column is at least this wide; a sub-cent cost widens it per row. */
+const DISPATCH_PANEL_AGENT_WIDTH = 12;
+const DISPATCH_PANEL_MIN_AGENT_WIDTH = 6;
+const DISPATCH_PANEL_KIND_WIDTH = 4;
+const DISPATCH_PANEL_COST_WIDTH = 7;
+const DISPATCH_PANEL_DURATION_WIDTH = 8;
+/** Title column budget (`◈ Dispatch — <sessão>`). */
+const DISPATCH_PANEL_TITLE_WIDTH = 44;
+/** Badge appended to the title while the host presents the panel full screen. */
+const DISPATCH_PANEL_FULLSCREEN_BADGE = "[fullscreen]";
+/** Columns a row spends before the agent cell, cost column excluded
+*  (2 marker + 1 + 4 kind + 1 + 8 duration). The cost is measured per row
+*  because `<$0.0001` is one cell wider than `DISPATCH_PANEL_COST_WIDTH`. */
+const DISPATCH_PANEL_ROW_FIXED_WIDTH = 16;
+/** Human labels of a kind's evidence, as the detail line prints them. */
+const DISPATCH_KIND_ORIGIN_LABELS = {
+	prefix: "prefixo",
+	agent: "agente",
+	unavailable: "indisponível"
+};
+/** Entries in row order: live work first, then most recent activity — the same
+*  comparator the sidebar block uses. Pure. */
+function orderDispatchEntries(entries) {
+	return [...entries].sort((a, b) => compareDelegations(a.view, b.view));
+}
+/** `◈ Dispatch — <sessão>`, with the session title truncated (never wrapped),
+*  plus the `[fullscreen]` badge while the host presents the panel full screen.
+*  An absent title leaves the marker and the name alone. Pure. */
+function dispatchPanelTitle(sessionTitle, max = 44, presentation) {
+	const base = `◈ Dispatch`;
+	const badge = presentation === "fullscreen" ? ` ${DISPATCH_PANEL_FULLSCREEN_BADGE}` : "";
+	const title = typeof sessionTitle === "string" ? sessionTitle.trim() : "";
+	if (title === "") return `${base}${badge}`;
+	return `${base} — ${truncateLabel(title, Math.max(4, max))}${badge}`;
+}
+/** Header counters: `2 rodando · 70 concluídos · 1 falha · $3.59`. A zero
+*  counter is omitted (never `0 rodando`); the total spend is printed whenever
+*  the tree has a child, because `$0.00` is then a real answer. Null for an
+*  empty tree, so the header renders no counter line at all. Pure. */
+function dispatchPanelHeader(entries) {
+	const list = Array.isArray(entries) ? entries.filter((entry) => entry?.view) : [];
+	if (list.length === 0) return null;
+	let running = 0;
+	let completed = 0;
+	let failed = 0;
+	for (const entry of list) switch (entry.view.state) {
+		case "running":
+			running += 1;
+			break;
+		case "completed":
+			completed += 1;
+			break;
+		case "failed": failed += 1;
+	}
+	const parts = [];
+	if (running > 0) parts.push(`${running} rodando`);
+	if (completed > 0) parts.push(`${completed} ${completed === 1 ? "concluído" : "concluídos"}`);
+	if (failed > 0) parts.push(`${failed} ${failed === 1 ? "falha" : "falhas"}`);
+	const cost = formatSpendUSD(dispatchTotalCost(list.map((entry) => entry.view)));
+	if (cost !== null) parts.push(cost);
+	return parts.length === 0 ? null : parts.join(SPEND_LINE_SEPARATOR);
+}
+/** Horizontal rule under the header, clamped to the panel's own width. Pure. */
+function dispatchPanelRule(width, max = 200) {
+	const columns = Math.max(0, Math.min(max, Math.floor(numberOrNull(width) ?? 0)));
+	return "─".repeat(columns);
+}
+/** Row marker: animated spinner while running, `✓` done, `✗` failed, `○`
+*  cancelled/interrupted, `?` for a state the host never publishes. Every glyph
+*  is one cell wide and `?` is the only fallback, so an unknown state is visible
+*  instead of silently rendering as success. Pure. */
+function dispatchPanelMarker(state, frame = 0) {
+	switch (state) {
+		case "running": return `${spinnerFrame(frame)} `;
+		case "completed": return "✓ ";
+		case "failed": return "✗ ";
+		case "interrupted": return "○ ";
+		default: return "? ";
+	}
+}
+/** One padded, truncated cell: an absent/blank value becomes the em dash, and
+*  the value is cut to the cell's own width (never to the line's length, so one
+*  long cell cannot squeeze its neighbours out of alignment). Pure. */
+function dispatchPanelCell(value, width) {
+	const cells = Math.max(1, Math.floor(numberOrNull(width) ?? 1));
+	const text = typeof value === "string" ? value.trim() : "";
+	return padCell(text === "" ? "—" : text, cells);
+}
+/** One list row: `⠋ prometheus   plan   $0.09  14m34s`. The agent cell absorbs
+*  the width difference (down to `DISPATCH_PANEL_MIN_AGENT_WIDTH`), so a narrow
+*  panel truncates the label rather than the numbers; the cost column grows by
+*  itself for a sub-cent value so the row never spends more than its budget.
+*  Pure. */
+function dispatchPanelRowText(entry, options = {}) {
+	const view = entry?.view;
+	if (!view) return "";
+	const now = numberOrNull(options.now) ?? Date.now();
+	const frame = numberOrNull(options.frame) ?? 0;
+	const width = Math.floor(numberOrNull(options.max) ?? 35);
+	const costText = formatDispatchCost(view.cost);
+	const costWidth = Math.max(7, cellWidth(costText));
+	const agentWidth = Math.max(6, Math.min(12, width - (DISPATCH_PANEL_ROW_FIXED_WIDTH + costWidth)));
+	return `${dispatchPanelMarker(view.state, frame)}${dispatchPanelCell(dispatchAgentText(view, 12), agentWidth)} ${dispatchPanelCell(view.kind, 4)} ${costText.padStart(costWidth)}${truncateLabel(dispatchElapsed(view, now), 8).padStart(8)}`;
+}
+/** `ses_ab12cd`, short enough for a detail line. Full id when it already fits. */
+function shortSessionID(id, max = 10) {
+	const text = typeof id === "string" ? id.trim() : "";
+	if (text === "") return "—";
+	return text.length <= max ? text : `${text.slice(0, Math.max(1, max - 1))}\u2026`;
+}
+/** Token counters of one child on a single line (`in 1.2K · out 430 · r 120 ·
+*  cache 8K/1K`), or `tokens —` when the host published none. Pure. */
+function dispatchTokenLine(tokens) {
+	if (!tokens) return `tokens —`;
+	const value = (token) => token === null ? "—" : formatContextWindow(token) ?? String(token);
+	return [
+		`in ${value(tokens.input)}`,
+		`out ${value(tokens.output)}`,
+		`r ${value(tokens.reasoning)}`,
+		`cache ${value(tokens.cacheRead)}/${value(tokens.cacheWrite)}`
+	].join(SPEND_LINE_SEPARATOR);
+}
+/** Detail lines of the selected child: heading (title, else the spawning
+*  description, else the row label), short id + model, token counters, and the
+*  kind plus its evidence and the parent id. Two to four lines; `expanded:
+*  false` keeps only the heading. Every missing datum prints `—`. Pure. */
+function dispatchPanelDetail(entry, options = {}) {
+	if (!entry?.view) return ["—"];
+	const max = Math.max(8, Math.floor(numberOrNull(options.max) ?? 60));
+	const view = entry.view;
+	const lines = [truncateLabel(entry.title ?? entry.description ?? (typeof view.label === "string" && view.label !== "" ? view.label : null) ?? view.id, max)];
+	if (options.expanded === false) return lines;
+	lines.push(truncateLabel(`${shortSessionID(view.id)}${SPEND_LINE_SEPARATOR}${view.model ?? "—"}`, max));
+	lines.push(truncateLabel(dispatchTokenLine(entry.tokens), max));
+	const origin = DISPATCH_KIND_ORIGIN_LABELS[view.kindOrigin] ?? DISPATCH_KIND_ORIGIN_LABELS.unavailable;
+	lines.push(truncateLabel(`kind ${view.kind ?? "—"} (${origin})${SPEND_LINE_SEPARATOR}parent ${entry.parentID ?? "—"}`, max));
+	return lines;
+}
+/** Panel geometry for its input width: wide (≥72) puts the detail in a second
+*  column, narrow stacks it under the list. `rowWidth` is what a list row may
+*  spend after the selection gutter. Pure. */
+function dispatchPanelLayout(width) {
+	const columns = Math.max(20, Math.floor(numberOrNull(width) ?? 0));
+	if (columns >= 72) {
+		const listWidth = Math.max(40, Math.min(64, columns - 26));
+		return {
+			mode: "wide",
+			listWidth,
+			detailWidth: Math.max(24, columns - listWidth - 2),
+			rowWidth: listWidth - 2
 		};
 	}
-	result.sort(compareDelegationEntries);
-	return result;
-}
-/** Duck-typed subset of a tool part (SDK v2 `ToolPart` / `ToolState`). */
-/** One live delegation tracked in-memory, keyed by the task callID. */
-/** Result of parsing one tool part into lifecycle-relevant fields. */
-/** Alias in the task output: "Delegated to apollo: [apo-1] (task …)". */
-const DELEGATE_ALIAS_PATTERN = /\[([a-z]{2,8}-\d+)\]/i;
-/** Child task id in the task output: "(task ses_child_9)". */
-const DELEGATE_TASKID_PATTERN = /\(task\s+([a-z0-9_]+)\)/i;
-/** Extract the tool name + args from a `message.part.updated` part and
-*  reduce it to what the panel needs. Returns null for anything that is
-*  not the native `task` subagent tool (parentID === caller mechanism —
-*  its children render `nat:`), or is missing its callID. */
-function parseDelegationToolPart(part, now = Date.now()) {
-	if (part.type !== "tool") return null;
-	if (part.tool !== "task") return null;
-	const callID = part.callID;
-	if (callID === void 0 || callID === "") return null;
-	const sessionID = part.sessionID ?? "";
-	const state = part.state ?? {};
-	const status = state.status ?? "pending";
-	if (status !== "pending" && status !== "running" && status !== "completed" && status !== "error") return null;
-	const input = state.input ?? {};
-	const startedAt = state.time?.start ?? now;
-	const endAt = state.time?.end ?? null;
-	const agent = typeof input.agent === "string" ? input.agent : typeof input.subagent_type === "string" ? input.subagent_type : "agent";
-	const description = typeof input.description === "string" ? input.description : typeof input.prompt === "string" ? input.prompt.slice(0, 120) : "";
-	let alias = null;
-	let taskID = null;
-	if (status === "completed") {
-		const output = state.output ?? "";
-		alias = DELEGATE_ALIAS_PATTERN.exec(output)?.[1] ?? null;
-		taskID = DELEGATE_TASKID_PATTERN.exec(output)?.[1] ?? null;
-	}
 	return {
-		callID,
-		partID: part.id ?? "",
-		sessionID,
-		tool: "task",
-		agent,
-		description,
-		status,
-		alias,
-		taskID,
-		startedAt,
-		endAt
+		mode: "narrow",
+		listWidth: columns,
+		detailWidth: columns,
+		rowWidth: columns - 2
 	};
 }
-/** Apply one tool part to the live map. Returns true when the map changed.
-*  Pure w.r.t. I/O — only mutates `map`. */
-function reduceDelegationToolPart(map, part, now = Date.now()) {
-	const parsed = parseDelegationToolPart(part, now);
-	if (parsed === null) return false;
-	const existing = map.get(parsed.callID);
-	if (parsed.status === "error") {
-		if (existing !== void 0 && existing.state === "error" && existing.updatedAt === parsed.endAt) return false;
-		map.set(parsed.callID, {
-			callID: parsed.callID,
-			partID: parsed.partID,
-			sessionID: parsed.sessionID,
-			tool: parsed.tool,
-			agent: parsed.agent,
-			description: parsed.description,
-			alias: existing?.alias ?? null,
-			taskID: existing?.taskID ?? null,
-			state: "error",
-			startedAt: existing?.startedAt ?? parsed.startedAt,
-			updatedAt: parsed.endAt ?? now
-		});
-		return true;
-	}
-	if (existing === void 0) {
-		map.set(parsed.callID, {
-			callID: parsed.callID,
-			partID: parsed.partID,
-			sessionID: parsed.sessionID,
-			tool: parsed.tool,
-			agent: parsed.agent,
-			description: parsed.description,
-			alias: parsed.alias,
-			taskID: parsed.taskID,
-			state: "running",
-			startedAt: parsed.startedAt,
-			updatedAt: null
-		});
-		return true;
-	}
-	let changed = false;
-	if (parsed.alias !== null && existing.alias !== parsed.alias) {
-		existing.alias = parsed.alias;
-		changed = true;
-	}
-	if (parsed.taskID !== null && existing.taskID !== parsed.taskID) {
-		existing.taskID = parsed.taskID;
-		changed = true;
-	}
-	if (parsed.agent !== null && existing.agent !== parsed.agent) {
-		existing.agent = parsed.agent;
-		changed = true;
-	}
-	if (parsed.description !== "" && existing.description !== parsed.description) {
-		existing.description = parsed.description;
-		changed = true;
-	}
-	if (existing.partID === "" && parsed.partID !== "") {
-		existing.partID = parsed.partID;
-		changed = true;
-	}
-	return changed;
+/** Viewport of the list: the page holding the selection, scrolled so the
+*  selected row stays visible with its predecessors. Bounded, so a 71-child
+*  tree renders ten rows, never all of them. Pure. */
+function dispatchPanelWindow(total, selectedIndex, pageSize = 10) {
+	const count = Math.max(0, Math.floor(numberOrNull(total) ?? 0));
+	const size = Math.max(1, Math.floor(numberOrNull(pageSize) ?? 10));
+	if (count === 0) return {
+		start: 0,
+		end: 0,
+		size
+	};
+	const index = Math.min(count - 1, Math.max(0, Math.floor(numberOrNull(selectedIndex) ?? 0)));
+	const start = Math.min(Math.max(0, index - size + 1), Math.max(0, count - size));
+	return {
+		start,
+		end: Math.min(count, start + size),
+		size
+	};
 }
-/** Remove a live entry by part id (message.part.removed) or call id.
-*  Returns true when something was removed. */
-function removeDelegationEntry(map, partIDOrCallID) {
-	if (map.delete(partIDOrCallID)) return true;
-	for (const [key, entry] of map) if (entry.partID === partIDOrCallID) {
-		map.delete(key);
-		return true;
+/** `1-10 de 71` while the list is longer than one page; null when everything
+*  fits (and for an empty list), so the footer never pads itself. Pure. */
+function dispatchPanelRangeText(start, end, total) {
+	const count = Math.max(0, Math.floor(numberOrNull(total) ?? 0));
+	const first = Math.max(0, Math.floor(numberOrNull(start) ?? 0));
+	const last = Math.min(count, Math.floor(numberOrNull(end) ?? 0));
+	if (count === 0 || first === 0 && last >= count) return null;
+	return `${first + 1}-${last} de ${count}`;
+}
+/** One rendered list row, selection resolved by the view against the model's
+*  selected id. */
+/** Every entry as a row, ordered by the shared comparator. Pure. */
+function dispatchPanelRows(entries, options = {}) {
+	return orderDispatchEntries(Array.isArray(entries) ? entries.filter((entry) => entry?.view && typeof entry.view.id === "string") : []).map((entry) => ({
+		id: entry.view.id,
+		state: entry.view.state,
+		text: dispatchPanelRowText(entry, options)
+	}));
+}
+/** Panel action, one per command. */
+/** One namespaced command: stable id, explicit binding, and the action it runs. */
+/** The panel's whole keymap, in table order. `bind` is explicit for every
+*  command (no auto-binding), and every id is namespaced, so a `k`/`q`/`f`
+*  binding can never collide with the host's own keys. */
+const DISPATCH_PANEL_COMMANDS = [
+	{
+		action: "up",
+		id: "pantheon.dispatch.up",
+		title: "Dispatch: selecionar anterior",
+		bind: "k,up"
+	},
+	{
+		action: "down",
+		id: "pantheon.dispatch.down",
+		title: "Dispatch: selecionar próxima",
+		bind: "j,down"
+	},
+	{
+		action: "home",
+		id: "pantheon.dispatch.home",
+		title: "Dispatch: primeira",
+		bind: "home"
+	},
+	{
+		action: "end",
+		id: "pantheon.dispatch.end",
+		title: "Dispatch: última",
+		bind: "end"
+	},
+	{
+		action: "pageup",
+		id: "pantheon.dispatch.pageup",
+		title: "Dispatch: página acima",
+		bind: "pageup"
+	},
+	{
+		action: "pagedown",
+		id: "pantheon.dispatch.pagedown",
+		title: "Dispatch: página abaixo",
+		bind: "pagedown"
+	},
+	{
+		action: "toggle",
+		id: "pantheon.dispatch.toggle",
+		title: "Dispatch: expandir detalhe",
+		bind: "enter"
+	},
+	{
+		action: "fullscreen",
+		id: "pantheon.dispatch.fullscreen",
+		title: "Dispatch: tela cheia",
+		bind: "f"
+	},
+	{
+		action: "close",
+		id: "pantheon.dispatch.close",
+		title: "Dispatch: fechar",
+		bind: "escape,q"
 	}
+];
+/** Run one action against the model and the host-owned panel input. Kept apart
+*  from the keymap so the whole command surface is testable without a renderer.
+*/
+function performDispatchPanelAction(action, model, panel) {
+	switch (action) {
+		case "up":
+			model.move(-1);
+			return;
+		case "down":
+			model.move(1);
+			return;
+		case "home":
+			model.first();
+			return;
+		case "end":
+			model.last();
+			return;
+		case "pageup":
+			model.pageUp();
+			return;
+		case "pagedown":
+			model.pageDown();
+			return;
+		case "toggle":
+			model.toggle();
+			return;
+		case "fullscreen":
+			panel.toggleFullscreen();
+			return;
+		case "close":
+			panel.close();
+			return;
+		default: return;
+	}
+}
+/** Footer: the keys the host reports for each command (`keymap.shortcuts`) with
+*  an em dash whenever a command has no binding, so the hint can never advertise
+*  a key that does nothing. Pure. */
+function dispatchPanelFooter(shortcutsOf) {
+	const keys = (id) => {
+		let list = [];
+		try {
+			const result = shortcutsOf(id);
+			list = Array.isArray(result) ? result : [];
+		} catch {
+			list = [];
+		}
+		const text = list.map((key) => String(key ?? "").trim()).filter((key) => key !== "").join("/");
+		return text === "" ? "—" : text;
+	};
+	return [
+		`${keys("pantheon.dispatch.up")} ${keys("pantheon.dispatch.down")} mover`,
+		`${keys("pantheon.dispatch.toggle")} detalhe`,
+		`${keys("pantheon.dispatch.fullscreen")} fullscreen`,
+		`${keys("pantheon.dispatch.close")} fechar`
+	].join(SPEND_LINE_SEPARATOR);
+}
+/** The subset of `PanelInput` the model reads, so tests can drive it with a
+*  plain object. */
+/** `keymap.shortcuts` of one command; empty when the keymap is unavailable. */
+function keymapShortcuts(context, id) {
+	try {
+		const list = context?.keymap?.shortcuts?.(id);
+		return Array.isArray(list) ? list : [];
+	} catch {
+		return [];
+	}
+}
+/** Open the panel from the command palette / slash command. `ui.panel.open`
+*  only accepts a `session` route, so a refusal (no session open) is answered
+*  with a toast — never a fallback route, never a silent no-op. Returns whether
+*  the panel opened. */
+function openDispatchPanel(context) {
+	let opened = false;
+	try {
+		opened = context?.ui?.panel?.open?.(DISPATCH_PANEL_NAME) === true;
+	} catch {
+		opened = false;
+	}
+	if (opened) return true;
+	try {
+		context?.ui?.toast?.show?.({
+			message: DISPATCH_PANEL_TOAST,
+			variant: "warning"
+		});
+	} catch {}
 	return false;
 }
-/** Collect native task tool parts from a session's messages.
-*  Messages may carry their parts inline (duck-typed `msg.parts`); when
-*  they don't, the optional `getParts(messageID)` callback is used (the TUI
-*  SDK exposes `api.state.part(messageID)`). The native `task` tool spawns a
-*  child session with parentID = caller, so its parts feed the live-map as
-*  the refresh signal (rows come from the children channel). Pure w.r.t.
-*  I/O — used by the mount re-scan to re-seed the live map after
-*  compaction/attach. */
-function collectDelegationToolParts(messages, getParts) {
-	const out = [];
-	for (const msg of messages ?? []) {
-		let parts;
-		if (Array.isArray(msg?.parts)) parts = msg.parts;
-		else if (msg?.id !== void 0 && typeof getParts === "function") parts = getParts(msg.id);
-		if (!parts) continue;
-		for (const raw of parts) {
-			const part = raw;
-			if (part?.type === "tool" && part.tool === "task") out.push(part);
-		}
-	}
-	return out;
-}
-/** Apply a batch of tool parts (in message order) to the live map. Used on
-*  mount to re-seed entries that `message.part.removed` (compaction) wiped,
-*  from the session's existing tool parts. Returns how many parts changed
-*  the map (0 on the second identical seed — idempotent, no extra bumps). */
-function seedLiveDelegationMap(map, parts, now = Date.now()) {
-	let changed = 0;
-	for (const part of parts) if (reduceDelegationToolPart(map, part, now)) changed++;
-	return changed;
-}
-/** Convert a live entry into the shared display shape. Alias falls back to
-*  a `live-<callID>` prefix while the task call has not completed yet. */
-function toDelegationEntry(live) {
-	return {
-		alias: live.alias ?? `live-${live.callID.slice(0, 8)}`,
-		sessionID: live.sessionID,
-		...live.taskID !== null ? { taskID: live.taskID } : {},
-		agent: live.agent,
-		state: live.state,
-		startedAt: live.startedAt,
-		updatedAt: live.updatedAt,
-		timedOut: false,
-		description: live.description,
-		source: "live"
+/** Reactive state the panel view renders. Selection is held by session id, so
+*  it survives list updates; the index is derived (and falls back to the first
+*  row when the selected child disappears). */
+/** Model behind the panel. Mounted only while the panel claim renders (the
+*  `Show` in `session.panel`), so the 80 ms tick it arms exists exactly while
+*  the panel is open; it also stops on `isOpen()` going false and on dispose.
+*  It performs no `message.sync`, writes no `session.metadata` and makes no
+*  request: `collectDispatch` reads only host-cached state. */
+function createDispatchPanelModel(context, panel) {
+	const [revision, setRevision] = createSignal(0);
+	const [frame, setFrame] = createSignal(0);
+	const [expanded, setExpanded] = createSignal(true);
+	const [selectedID, setSelectedID] = createSignal(null);
+	const isOpen = () => panel().name === DISPATCH_PANEL_NAME;
+	const activeSessionID = () => {
+		const id = panel().sessionID;
+		return isValidSessionID(id) ? id : "";
 	};
-}
-/** Combine the live channel with the md (historical) channel into one
-*  display list. Dedupes by (sessionID, alias) — aliases are per-parent-
-*  session, so the same alias in different sessions stays separate. A
-*  terminal md entry is authoritative over a live running entry for the
-*  same job (it carries Finalized/timedOut/cancelled from finalize). */
-function mergeDelegationSources(live, md) {
-	const keyOf = (sessionID, alias) => `${sessionID}\u0000${alias}`;
-	const byKey = /* @__PURE__ */ new Map();
-	for (const m of md) {
-		const key = keyOf(m.sessionID, m.alias);
-		const existing = byKey.get(key);
-		if (existing === void 0 || existing.state === "running" && m.state !== "running") byKey.set(key, m);
-	}
-	const aliasless = [];
-	for (const l of live) {
-		const e = toDelegationEntry(l);
-		if (l.alias === null) {
-			aliasless.push(e);
-			continue;
-		}
-		const key = keyOf(l.sessionID, l.alias);
-		const mdEntry = byKey.get(key);
-		if (mdEntry !== void 0 && mdEntry.state !== "running") continue;
-		byKey.set(key, e);
-	}
-	const all = [...aliasless, ...byKey.values()];
-	all.sort(compareDelegationEntries);
-	return all;
-}
-/** Scope a fully-merged display list to the ACTIVE session only.
-*
-*  The panel is session-scoped: rows from other sessions (md history under
-*  `.pantheon/delegations/<other-session>/`) and rows with no
-*  attributable session (empty sessionID) are DROPPED. The previous
-*  cross-session behavior rendered those rows and clicking them led to
-*  "Session not found" — there is no cross-session channel anymore.
-*
-*  The md channel still feeds the merge UNFILTERED so it can ENRICH an
-*  active-session row with state/alias/agent (dedup by taskID), but it can
-*  never introduce a row for another session: this filter is applied
-*  ONCE, after every merge (children + live + md).
-*
-*  Returns [] when no active session resolves (null/placeholder) — there is no
-*  scope to show. Native children always carry the active session id (stamped
-*  by `childrenToDelegationEntries`), so they survive the filter. Pure. */
-function filterDelegationsToSession(entries, activeSessionID) {
-	if (!isValidSessionId(activeSessionID)) return [];
-	return entries.filter((entry) => entry.sessionID === activeSessionID);
-}
-/** Server-aligned session id validity: opencode rejects anything not starting
-*  with "ses" (SchemaError). This deliberately mirrors that exact contract —
-*  nothing stricter, nothing looser — so a template placeholder ("{sessionID}"),
-*  its URL-encoded form ("%7BsessionID%7D", what the server reported in the
-*  schema error), an empty/undefined value, or a foreign id (e.g. "wrk_") can
-*  never reach a path and error-spam the log. Confirmed: "{sessionID}" starts
-*  with "{" and "%7BsessionID%7D" with "%" — both fail startsWith("ses"), so
-*  the placeholder is rejected WITHOUT an explicit denylist (covered by tests). */
-function isValidSessionId(id) {
-	return typeof id === "string" && id.startsWith("ses");
-}
-/** Sources the sidebar can resolve the CURRENT session id from. Duck-typed
-*  subsets of TuiPluginApi / TuiState / TuiRouteCurrent so the helper stays
-*  pure and testable without the TUI runtime. */
-/** Resolve the current session id for the sidebar. Order: slot prop →
-*  api.state.sessionID (runtime superset) → api.route.current.params.sessionID
-*  (typed route). Every source is validated; invalid/absent → next source.
-*  NEVER returns a placeholder or non-ses id. Null → callers MUST skip the
-*  fetch (empty panel, zero errors). Pure — no I/O, no runtime required. */
-function resolveCurrentSessionID(sources) {
-	const candidates = [
-		sources?.sessionID,
-		sources?.api?.state?.sessionID,
-		sources?.api?.route?.current?.params?.sessionID
-	];
-	for (const candidate of candidates) if (isValidSessionId(candidate)) return candidate;
-	return null;
-}
-/** THE single choke point for every `session.children` / session-API path.
-*  Returns the v2 SDK parameter shape `{ sessionID }` ONLY for a
-*  server-valid session id; returns null for anything else (placeholder,
-*  empty, foreign id) so the caller skips the call entirely instead of
-*  sending an unsubstituted placeholder (the "%7BsessionID%7D" regression).
-*  The TUI client is `@opencode-ai/sdk/v2`, whose session methods take a
-*  FLAT parameter object (`{ sessionID }`), NOT the v1 `{ path: { id } }`
-*  envelope — passing the v1 shape left the v2 `{sessionID}` URL template
-*  unsubstituted (`/session/%7BsessionID%7D/children`). Every session-API
-*  call site MUST go through this function (enforced by the source-scan
-*  test in tests/pantheon/tui-delegations.test.ts). */
-function safeSessionPath(id) {
-	if (!isValidSessionId(id)) return null;
-	return { sessionID: id };
-}
-/** Build the `session.children` parameters ONLY from a validated session id.
-*  Delegates to {@link safeSessionPath} — the single choke point. Returns
-*  the v2 SDK shape `{ sessionID }`; null for null/invalid ids so the caller
-*  skips the fetch instead of sending an unsubstituted placeholder (the
-*  "%7BsessionID%7D" regression). */
-function buildChildrenPath(id) {
-	return safeSessionPath(id);
-}
-/** Duck-typed subset of a child Session (+ its live status type). */
-/** Map a child status type to a display state.
-*
-*  Only `busy`/`retry` are EXPLICIT live states. `idle` is terminal and so is
-*  any other/unknown status — a status the panel does not recognise is not
-*  evidence of activity. An ABSENT status is the historical case: the status
-*  map (`api.state.session.status`) contains only currently-alive sessions, so
-*  every finished child of a long session is missing from it. Defaulting that
-*  to running made the whole session history render as "active" (the
-*  "197 children, all active" regression), so an absent status is terminal
-*  (done) UNLESS the child was active within `graceMs` — a just-spawned child
-*  that the status API has not registered yet must still render as running.
-*
-*  @param status  the `api.state.session.status(id)?.type`, or undefined
-*  @param time    the child session time fields (`created`/`updated`)
-*  @param now     current wall-clock ms (injectable for tests)
-*  @param graceMs recency window for the absent-status running assumption
-*  Pure — no I/O. */
-function childStatusToState(status, time, now = Date.now(), graceMs = DELEGATION_CHILD_STATUS_GRACE_MS) {
-	if (status === "retry") return "retry";
-	if (status === "busy") {
-		if (time) {
-			const lastActivity = Math.max(time.updated ?? 0, time.created ?? 0);
-			if (lastActivity > 0 && now - lastActivity > 18e5) return "completed";
-		}
-		return "running";
-	}
-	if (status !== void 0) return "completed";
-	const lastActivity = Math.max(time?.updated ?? 0, time?.created ?? 0);
-	if (lastActivity > 0 && now - lastActivity < graceMs) return "running";
-	return "completed";
-}
-/** Status-only row model: ONE glyph + ONE identity per row.
-*
-*  A row is
-*  `{glyph} {alias:7} {elapsed:>5}` plus a muted description line. The short
-*  alias (`apo-1`) is the single identity; rows without a report alias show
-*  the agent instead (never both). */
-/** Map every FSM/display state to one of the 4 row kinds. reconciled never
-*  reaches the panel (the md parser drops it) but reads as done;
-*  cancelled reads as done; startup_failed reads as failed while
-*  startup_unknown (no error known) reads as retry. Pure. */
-function delegationRowStatus(state) {
-	switch (state) {
-		case "running":
-		case "stale-running": return "active";
-		case "retry":
-		case "startup_unknown": return "retry";
-		case "completed":
-		case "cancelled": return "done";
-		case "error":
-		case "startup_failed": return "failed";
-	}
-}
-/** The only 4 glyphs a row may show: animated active, done, failed, retry.
-*  Shape is redundant with color (never the only signal). Pure. */
-const DELEGATION_ROW_GLYPHS = {
-	active: "⠋",
-	done: "✓",
-	failed: "✕",
-	retry: "⟳"
-};
-function delegationRowGlyph(status) {
-	return DELEGATION_ROW_GLYPHS[status];
-}
-/** Row marker (`<glyph> `) — the single state channel. `active` animates
-*  through the spinner for the given frame counter (incremented every ~80ms);
-*  every other kind is static. Pure. */
-function delegationRowMarker(state, frame = 0) {
-	const status = delegationRowStatus(state);
-	return `${status === "active" ? delegationSpinnerFrame(frame) : delegationRowGlyph(status)} `;
-}
-/** ONE identity per row: the short report alias (`apo-1`); a row without a
-*  report alias (native task() child `native-task` / `native-<id>`, or an
-*  alias-less native live row `live-<callID>` kept as children-only) shows
-*  the agent instead — never alias + agent stacked. Pure. */
-function delegationRowIdentity(entry) {
-	if (entry.agent === "") return entry.alias;
-	if (entry.alias === "native-task" || entry.alias.startsWith("native-")) return entry.agent;
-	if (entry.alias.startsWith("live-") && entry.source === "children-only") return entry.agent;
-	return entry.alias;
-}
-/** Fixed alias cell, pad-right + hard-truncate to `width` (default 7) so
-*  identities line up across rows. Pure. */
-const DELEGATION_ALIAS_WIDTH = 7;
-function formatDelegationAlias(identity, width = 7) {
-	if (identity.length >= width) return identity.slice(0, width);
-	return `${identity}${" ".repeat(width - identity.length)}`;
-}
-/** Max description width on the row detail line — the old 180-char slice
-*  wrapped the sidebar; 44 keeps one readable line. */
-const DELEGATION_DESCRIPTION_MAX = 44;
-/** Lazily-built grapheme segmenter. `Intl.Segmenter` keeps ZWJ emoji families
-*  (and skin-tone/variation sequences) intact; `Array.from` (code points) is
-*  the fallback for runtimes without it. */
-let graphemeSegmenter;
-/** Split `text` into display graphemes so truncation never cuts a multi-unit
-*  emoji in half (surrogate pair → mojibake). */
-function splitGraphemes(text) {
-	if (typeof Intl !== "undefined" && typeof Intl.Segmenter === "function") {
-		graphemeSegmenter ??= new Intl.Segmenter("pt", { granularity: "grapheme" });
-		return Array.from(graphemeSegmenter.segment(text), (s) => s.segment);
-	}
-	return Array.from(text);
-}
-/** Truncate a description to `max` graphemes appending `…` when cut. Exact
-*  `max`-length text is left untouched. Grapheme-granular, so an emoji made of
-*  several code points is never split into mojibake at the boundary. Pure. */
-function truncateDelegationDescription(text, max = 44) {
-	const graphemes = splitGraphemes(text);
-	if (graphemes.length <= max) return text;
-	return `${graphemes.slice(0, Math.max(0, max - 1)).join("")}\u2026`;
-}
-/** Fixed elapsed-time box: right-aligned to `width` (default 5) so elapsed
-*  values line up across rows, e.g. `  12s`. A label that already fills
-*  the box is returned untouched. Pure. */
-const DELEGATION_ELAPSED_WIDTH = 5;
-function formatDelegationElapsed(entry, now, width = 5) {
-	const label = delegationElapsed(entry, now);
-	if (label.length >= width) return label;
-	return `${" ".repeat(width - label.length)}${label}`;
-}
-/** Colored left half of a row line: `<marker><alias:7> ` — the state glyph
-*  plus the single identity, padded so the muted elapsed column aligns. The
-*  row renders this colored lead separately from the muted elapsed tail. Pure. */
-function formatDelegationRowLead(entry, marker) {
-	return `${marker}${formatDelegationAlias(delegationRowIdentity(entry))} `;
-}
-/** Visible-row ceiling for the panel: the remainder collapses into a single
-*  "… +N more" line. Live rows render first, so a running job is never hidden
-*  by the cap. */
-const DELEGATION_VISIBLE_CEILING = 8;
-/** Header summary: `(N active · M done)` plus `· K failed` only when K > 0.
-*  Active counts running/retry AND display-only stale-running (a stale row is
-*  still a live job — it must never read as done); failed counts
-*  error/startup_failed; cancelled reads as done. Pure. */
-function formatDelegationHeader(entries) {
-	let active = 0;
-	let done = 0;
-	let failed = 0;
-	for (const e of entries) switch (delegationRowStatus(e.state)) {
-		case "active":
-		case "retry":
-			active++;
-			break;
-		case "failed":
-			failed++;
-			break;
-		case "done": done++;
-	}
-	const tail = failed > 0 ? ` · ${failed} failed` : "";
-	return `(${active} active · ${done} done${tail})`;
-}
-/** Cap the panel: live rows first, then most-recent retained terminal rows, at
-*  most `maxVisible` total. Hidden counts describe the retained render list,
-*  not expired history. */
-function ceilingDelegationList(all, maxVisible = 8, now = Date.now()) {
-	const { active, recent } = splitDelegationList(all, all.length, now);
-	const visibleActive = active.slice(0, maxVisible);
-	const visible = [...visibleActive, ...recent.slice(0, Math.max(0, maxVisible - visibleActive.length))];
-	const hiddenActive = Math.max(0, active.length - visibleActive.length);
-	const hiddenTerminal = Math.max(0, recent.length - (visible.length - visibleActive.length));
-	return {
-		visible,
-		hidden: hiddenActive + hiddenTerminal,
-		hiddenActive,
-		hiddenTerminal
-	};
-}
-/** Split a display list into native task() rows vs pantheon report rows.
-*  Native = source 'children-only' (no delegate report); everything else counts
-*  as pantheon. Pure — powers the hooks.log line. */
-function countDelegationSources(entries) {
-	let native = 0;
-	for (const e of entries) if (e.source === "children-only") native++;
-	return {
-		native,
-		pantheon: entries.length - native,
-		total: entries.length
-	};
-}
-/** Diagnostic hooks.log line for a panel re-fetch, with the children
-*  breakdown (pantheon = children WITH a delegate report, native = children
-*  WITHOUT one). Pure — the View logs the returned string verbatim. */
-function formatPanelLogLine(children, pantheon, native, md, events) {
-	return `panel: children=${children}(pantheon=${pantheon} native=${native}) md=${md} events=${events}`;
-}
-/** Turn child sessions (PRIMARY) enriched with md reports into the display
-*  list. One entry per child id (duplicates across re-fetches collapse).
-*  The md report is matched by `Task ID` (== child.id) and supplies alias,
-*  agent, description, terminal state and duration. A child without a
-*  report still renders: description from its title, agent from the child
-*  itself (fallback 'agent'), state derived from its status, startedAt from
-*  time.created. A report-less child is a NATIVE task() child (every
-*  child of the current session — the native `task()` tool — carries
-*  parentID = caller), so it gets source 'children-only', a
-*  per-child alias 'native-<last4 of the child id>' (one identity per native
-*  row) instead of a report alias. The 'task nativa' description fallback
-*  keeps the row non-empty when the child carries no title.
-*  A FRESH terminal md state wins over the derived state (a stale md report
-*  from a previous incarnation never flips a live child — see
-*  mdTerminalCoversChild); a running md defers to
-*  the child's live status. A running child is NEVER archived — it always
-*  lands in the active split (splitDelegationList active = running/retry).
-*  `parentSessionID` (the focused session id) is stamped on report-less
-*  children so the row carries its origin session; omit it and they stay
-*  unscoped ('').
-*  Children outside {@link DELEGATION_CHILDREN_RECENCY_MS} are dropped before
-*  they can enter the list (the per-session child list grows for the whole
-*  session lifetime); the survivors are sorted running-first, most recent
-*  first (compareDelegationEntries), so a ceiling hides the OLDEST rows.
-*  Pure — no I/O. */
-/** Temporal guard for the children channel (same recycled-alias class as the
-*  md merge): an md terminal report matched by taskID may still belong to
-*  a PREVIOUS job incarnation. Accept it only when its Finalized timestamp
-*  covers the child's latest activity, when either side has no timestamp to
-*  compare, or when both startedAt agree on a single job incarnation.
-*  Pure — no I/O. */
-function mdTerminalCoversChild(md, child) {
-	const childUpdated = child.time?.updated;
-	if (md.updatedAt !== null && childUpdated !== void 0) {
-		if (md.updatedAt >= childUpdated) return true;
-		return md.startedAt === child.time?.created;
-	}
-	return true;
-}
-function childrenToDelegationEntries(children, md, now = Date.now(), parentSessionID = "") {
-	const byTaskID = /* @__PURE__ */ new Map();
-	for (const m of md) if (m.taskID !== void 0 && !byTaskID.has(m.taskID)) byTaskID.set(m.taskID, m);
-	const out = [];
-	const seen = /* @__PURE__ */ new Set();
-	for (const child of children ?? []) {
-		if (child.id === "" || seen.has(child.id)) continue;
-		seen.add(child.id);
-		const mdEntry = byTaskID.get(child.id);
-		const lastActivity = Math.max(child.time?.updated ?? 0, child.time?.created ?? 0, mdEntry?.updatedAt ?? 0);
-		if (lastActivity > 0 && now - lastActivity > 864e5) continue;
-		const state = mdEntry !== void 0 && mdEntry.state !== "running" && mdTerminalCoversChild(mdEntry, child) ? mdEntry.state : childStatusToState(child.status, child.time, now);
-		out.push({
-			alias: mdEntry?.alias ?? `native-${child.id.slice(-4)}`,
-			sessionID: mdEntry?.sessionID ?? parentSessionID,
-			taskID: child.id,
-			agent: mdEntry?.agent ?? child.agent ?? "agent",
-			state,
-			startedAt: mdEntry?.startedAt ?? child.time?.created ?? now,
-			updatedAt: mdEntry?.updatedAt ?? (state === "running" || state === "stale-running" ? null : child.time?.updated ?? null),
-			timedOut: mdEntry?.timedOut ?? false,
-			description: mdEntry !== void 0 && mdEntry.description !== "" ? mdEntry.description : child.title !== void 0 && child.title !== "" ? child.title : "task nativa",
-			source: mdEntry !== void 0 ? "md" : "children-only"
+	const entries = createMemo(() => {
+		revision();
+		if (!isOpen()) return [];
+		return collectDispatch(context, activeSessionID());
+	});
+	const layout = createMemo(() => dispatchPanelLayout(panel().width));
+	const rows = createMemo(() => {
+		const mode = layout();
+		return dispatchPanelRows(entries(), {
+			now: Date.now(),
+			frame: frame(),
+			max: mode.rowWidth
 		});
-	}
-	out.sort(compareDelegationEntries);
-	return out;
+	});
+	const selectedIndex = createMemo(() => {
+		const list = rows();
+		if (list.length === 0) return 0;
+		const id = selectedID();
+		if (id === null) return 0;
+		const index = list.findIndex((row) => row.id === id);
+		return index === -1 ? 0 : index;
+	});
+	const selectedIDAccessor = createMemo(() => rows()[selectedIndex()]?.id ?? null);
+	const selectedEntry = createMemo(() => entries()[selectedIndex()] ?? null);
+	const session = createMemo(() => {
+		revision();
+		const id = activeSessionID();
+		if (id === "") return void 0;
+		try {
+			return context.data.session.get(id);
+		} catch {
+			return;
+		}
+	});
+	const title = createMemo(() => dispatchPanelTitle(session()?.title, 44, panel().presentation));
+	const header = createMemo(() => dispatchPanelHeader(entries()));
+	const detail = createMemo(() => dispatchPanelDetail(selectedEntry(), {
+		expanded: expanded(),
+		max: layout().detailWidth
+	}));
+	const visible = createMemo(() => {
+		const list = rows();
+		const window = dispatchPanelWindow(list.length, selectedIndex());
+		return {
+			start: window.start,
+			rows: list.slice(window.start, window.end)
+		};
+	});
+	const hasRunning = createMemo(() => rows().some((row) => row.state === "running"));
+	const footer = createMemo(() => {
+		const list = rows();
+		const window = dispatchPanelWindow(list.length, selectedIndex());
+		const range = dispatchPanelRangeText(window.start, window.end, list.length);
+		const hints = dispatchPanelFooter((id) => keymapShortcuts(context, id));
+		return range === null ? hints : `${range}${SPEND_LINE_SEPARATOR}${hints}`;
+	});
+	const select = (index) => {
+		const list = rows();
+		if (list.length === 0) return;
+		const clamped = Math.min(list.length - 1, Math.max(0, Math.round(index)));
+		setSelectedID(list[clamped]?.id ?? null);
+	};
+	onMount(() => {
+		onCleanup(subscribeSidebarRefresh(context, () => setRevision((value) => value + 1)));
+	});
+	createEffect(() => {
+		if (!isOpen() || !hasRunning()) return;
+		const spinner = setInterval(() => setFrame((value) => value + 1), SPINNER_INTERVAL_MS);
+		onCleanup(() => clearInterval(spinner));
+	});
+	return {
+		entries,
+		rows,
+		title,
+		header,
+		detail,
+		layout,
+		visible,
+		selectedID: selectedIDAccessor,
+		selectedIndex,
+		expanded,
+		hasRunning,
+		frame,
+		footer,
+		move: (delta) => select(selectedIndex() + (numberOrNull(delta) ?? 0)),
+		first: () => select(0),
+		last: () => select(rows().length - 1),
+		pageUp: () => select(selectedIndex() - 10),
+		pageDown: () => select(selectedIndex() + 10),
+		toggle: () => setExpanded((value) => !value)
+	};
 }
-/** Navigate the TUI to a child session (click/Enter on a delegation row).
-*  Returns false when the route API is unavailable or the target id is
-*  missing/placeholder — the row stays inert instead of crashing. Only a
-*  server-valid session id ("ses...") ever reaches the router, so an
-*  unsubstituted "{sessionID}" placeholder can never be routed. */
-function navigateToDelegationSession(route, taskID) {
-	if (typeof route?.navigate !== "function" || !isValidSessionId(taskID)) return false;
+/** Session ids to eagerly sync at load (deduped, bounded). Pure. */
+function collectWarmupTargets(sessions, limit = WARMUP_SESSION_LIMIT) {
+	const ids = [];
+	for (const session of sessions) {
+		if (!isValidSessionID(session?.id) || ids.includes(session.id)) continue;
+		ids.push(session.id);
+		if (ids.length >= limit) break;
+	}
+	return ids;
+}
+/** Body a sidebar instance renders when the host has not published a real
+*  session id yet. OpenCode V2 scopes the `sidebar.content` slot to a session
+*  (`SlotMap["sidebar.content"] = { sessionID: string }`), so before the first
+*  prompt the slot may not mount at all — see the `home.footer.status`
+*  contribution for the pre-prompt degradation. Pure. */
+function sidebarPlaceholder(sessionID) {
+	return isValidSessionID(sessionID) ? null : SIDEBAR_WAITING_LABEL;
+}
+/** Navigate to a session through the V2 router. Fail-open: an absent router or
+*  a removed session must never break the sidebar. Returns whether a valid
+*  navigation was dispatched. Pure. */
+function navigateToSession(router, sessionID) {
+	if (typeof router?.navigate !== "function" || !isValidSessionID(sessionID)) return false;
 	try {
-		const navigation = route.navigate("session", { sessionID: taskID });
-		if (navigation !== void 0) Promise.resolve(navigation).catch(() => void 0);
+		router.navigate({
+			type: "session",
+			sessionID
+		});
 		return true;
 	} catch {
 		return false;
 	}
 }
-/** Build the mouse handler used by each delegation row. */
-function createDelegationRowOpenHandler(route, taskID) {
-	return () => {
-		navigateToDelegationSession(route, taskID);
-	};
-}
-/** Silence-by-default panel logger.
-*  @param projectRoot the PROJECT ROOT — the logger appends to
-*  `<projectRoot>/.pantheon/logs/hooks.log` (tuiLogPath). Passing anything
-*  deeper (e.g. the delegations dir) used to double-nest the path into
-*  `<root>/.pantheon/.pantheon/logs/hooks.log` and never reach the real log;
-*  derive the root with {@link panelLogDir}. */
-function createTuiLogger(projectRoot, module = "pantheon-tui") {
-	const echo = (process.env.PANTHEON_HOOKS_LOG ?? "").trim() !== "";
-	const logPath = tuiLogPath(projectRoot ?? process.cwd());
-	const formatArg = (arg) => {
-		if (arg instanceof Error) return arg.stack ?? arg.message;
-		if (typeof arg === "string") return arg;
-		try {
-			return JSON.stringify(arg);
-		} catch {
-			return String(arg);
-		}
-	};
-	const write = (message, args) => {
-		const lines = [message, ...args.map(formatArg)].join(" ").split("\n").map((p) => p.trim()).filter((p) => p !== "");
-		if (lines.length === 0) return;
-		(async () => {
-			try {
-				await mkdir(dirname(logPath), { recursive: true });
-				const stamp = (/* @__PURE__ */ new Date()).toISOString();
-				await appendFile(logPath, `${lines.map((l) => `[${stamp}] [${module}] ${l}`).join("\n")}\n`, "utf8");
-			} catch (err) {
-				if (echo) try {
-					process.stderr.write(`[${module}] file-log failed: ${formatArg(err)}\n`);
-				} catch {}
-			}
-		})();
-		if (echo) for (const line of lines) console.log(`[${module}] ${line}`);
-	};
-	return { info: (message, ...args) => write(message, args) };
-}
-function SessionRow(props) {
-	const theme = () => props.api.theme.current;
-	const status = createMemo(() => {
-		if (!isValidSessionId(props.session?.id)) return null;
-		try {
-			const s = props.api.state.session?.status?.(props.session.id);
-			if (s?.type) return s.type;
-		} catch {}
-		return null;
-	});
-	const statusIcon = createMemo(() => {
-		switch (status()) {
-			case "busy": return "● ";
-			case "retry": return "⚠ ";
-			default: return "";
-		}
-	});
-	return (() => {
-		var _el$12 = createElement("text");
-		insert(_el$12, () => `${statusIcon()}${props.session?.id?.slice(0, 8) ?? "????"}... ${props.session?.title?.slice(0, 26) ?? "(untitled)"}`);
-		effect((_$p) => setProp(_el$12, "fg", theme().textMuted, _$p));
-		return _el$12;
-	})();
-}
-function DelegationRow(props) {
-	const theme = () => props.api.theme.current;
-	const tone = createMemo(() => {
-		const t = theme();
-		switch (delegationStateTone(props.job.state)) {
-			case "warning": return t.warning;
-			case "error": return t.error;
-			case "success": return t.success;
-			default: return t.textMuted;
-		}
-	});
-	const marker = createMemo(() => delegationRowMarker(props.job.state, props.frame));
-	const lead = createMemo(() => formatDelegationRowLead(props.job, marker()));
-	const elapsed = createMemo(() => formatDelegationElapsed(props.job, props.now));
-	const description = createMemo(() => truncateDelegationDescription(props.job.description));
-	const activity = createMemo(() => latestToolActivityFor(latestToolActivity, props.job.taskID, props.now));
-	const open = createDelegationRowOpenHandler(props.api.route, props.job.taskID);
-	return (() => {
-		var _el$13 = createElement("box"), _el$14 = createElement("box"), _el$15 = createElement("text"), _el$16 = createElement("span"), _el$17 = createElement("span");
-		insertNode(_el$13, _el$14);
-		setProp(_el$13, "onMouseDown", open);
-		insertNode(_el$14, _el$15);
-		setProp(_el$14, "flexDirection", "row");
-		insertNode(_el$15, _el$16);
-		insertNode(_el$15, _el$17);
-		insert(_el$16, lead);
-		insert(_el$17, elapsed);
-		insert(_el$13, createComponent(Show, {
-			get when() {
-				return description() !== "";
-			},
-			get children() {
-				var _el$18 = createElement("text");
-				insert(_el$18, () => `  ${description()}`);
-				effect((_$p) => setProp(_el$18, "fg", tone(), _$p));
-				return _el$18;
-			}
-		}), null);
-		insert(_el$13, createComponent(Show, {
-			get when() {
-				return activity();
-			},
-			children: (a) => (() => {
-				var _el$19 = createElement("text");
-				insert(_el$19, () => `  ↳ ${truncateDelegationDescription(`${a().tool}${a().summary !== "" ? ` ${a().summary}` : ""}`)}`);
-				effect((_$p) => setProp(_el$19, "fg", tone(), _$p));
-				return _el$19;
-			})()
-		}), null);
-		effect((_p$) => {
-			var _v$5 = tone(), _v$6 = tone();
-			_v$5 !== _p$.e && (_p$.e = setProp(_el$16, "fg", _v$5, _p$.e));
-			_v$6 !== _p$.t && (_p$.t = setProp(_el$17, "fg", _v$6, _p$.t));
-			return _p$;
-		}, {
-			e: void 0,
-			t: void 0
-		});
-		return _el$13;
-	})();
-}
-/** Plugin-level live delegation store shared by event subscriptions and View.
-*  Mutations notify subscribers so the View can refresh its durable child
-*  list while also reading the map as an optimistic live source. */
-/** Create the observable live store shared by task events and the sidebar. */
-function createLiveDelegationStore() {
-	const listeners = /* @__PURE__ */ new Set();
+/** Diff two delegation observations: entries that were `running` and are no
+*  longer running count as completions, fired once per transition. Returns the
+*  next snapshot so callers can keep a single tracker. First observation never
+*  reports a completion (no toast spam on mount). Pure. */
+function detectDelegationCompletions(previous, current) {
+	const snapshot = /* @__PURE__ */ new Map();
+	const completed = [];
+	for (const entry of current) {
+		snapshot.set(entry.id, entry.state);
+		if (previous.get(entry.id) === "running" && entry.state !== "running") completed.push(entry);
+	}
 	return {
-		map: /* @__PURE__ */ new Map(),
-		subscribe(listener) {
-			listeners.add(listener);
-			return () => listeners.delete(listener);
-		},
-		bump() {
-			for (const listener of listeners) listener();
-		}
+		completed,
+		snapshot
 	};
 }
-/** Register the live task-part events that invalidate the sidebar store. */
-function registerLiveDelegationEvents(api, liveStore) {
-	const unsubLive = [];
+function resolveLocation(context) {
 	try {
-		unsubLive.push(api.event.on("message.part.updated", (event) => {
-			const props = event?.properties ?? {};
-			const part = props.part ?? props.info?.part;
-			if (part === void 0) return;
-			const sample = extractToolActivity(part);
-			if (sample !== null) trackToolActivity(latestToolActivity, sample.sessionID, sample.activity);
-			if (reduceDelegationToolPart(liveStore.map, part)) liveStore.bump();
-		}));
-	} catch {}
+		return context?.location ?? context?.data?.location?.default();
+	} catch {
+		return;
+	}
+}
+function resolveSidebarCwd(context) {
+	const location = resolveLocation(context);
+	if (location && typeof location.directory === "string" && location.directory !== "") return location.directory;
+	return process.cwd();
+}
+function sessionStatusOf(context, sessionID) {
 	try {
-		unsubLive.push(api.event.on("message.part.removed", (event) => {
-			const props = event?.properties ?? {};
-			const partID = props.partID ?? props.part?.id;
-			if (partID !== void 0 && removeDelegationEntry(liveStore.map, partID)) liveStore.bump();
-		}));
+		const status = context?.data?.session?.status?.(sessionID);
+		return typeof status === "string" ? status : void 0;
+	} catch {
+		return;
+	}
+}
+/** Subscribe `refresh` to every V2 event that can change sidebar state. Returns
+*  a disposer that releases exactly the subscriptions the host handed out. The
+*  event names come from the V2 union; the cast turns an unknown name into a
+*  compile error instead of a silent no-op subscription. */
+function subscribeSidebarRefresh(context, refresh) {
+	const stop = [];
+	const data = context?.data;
+	if (typeof data?.on === "function") for (const type of SIDEBAR_REFRESH_EVENTS) try {
+		const unsubscribe = data.on(type, refresh);
+		if (typeof unsubscribe === "function") stop.push(unsubscribe);
 	} catch {}
 	return () => {
-		for (const unsub of unsubLive) try {
-			unsub();
-		} catch {}
+		for (const unsubscribe of stop) if (typeof unsubscribe === "function") unsubscribe();
 	};
 }
-function View(props) {
-	const [showSessions, setShowSessions] = createSignal(false);
-	const [showDelegations, setShowDelegations] = createSignal(true);
-	const theme = () => props.api.theme.current;
-	const branch = createMemo(() => props.api.state.vcs?.branch ? `\u2387 ${props.api.state.vcs.branch}` : null);
+/** Populate the cached data at load so the sidebar has content before the first
+*  prompt (Known Issue guard). Fire-and-forget: a missing API or a failed sync
+*  degrades silently and the sidebar still renders its static header. */
+function warmUpSidebarData(context, location) {
+	try {
+		Promise.resolve(context?.data?.location?.vcs?.sync?.(location)).catch(() => {});
+	} catch {}
+	let listed = [];
+	try {
+		const result = context?.data?.session?.list?.();
+		if (Array.isArray(result)) listed = result;
+	} catch {}
+	for (const id of collectWarmupTargets(listed)) try {
+		Promise.resolve(context?.data?.session?.sync?.(id)).catch(() => {});
+	} catch {}
+}
+function showDelegationToast(context, done) {
+	const variant = done.state === "failed" ? "error" : done.state === "interrupted" ? "warning" : "success";
+	const verb = done.state === "failed" ? "falhou" : done.state === "interrupted" ? "interrompida" : "concluída";
+	try {
+		context?.ui?.toast?.show?.({
+			title: TOAST_TITLE,
+			message: `${done.label} ${verb}`,
+			variant,
+			sessionID: done.id
+		});
+	} catch {}
+}
+/** Active preset signal with mount + 30s refresh. Shared by the sidebar and the
+*  home-screen status contribution. */
+function useActivePreset(context) {
 	const [preset, setPreset] = createSignal(presetFromEnv(process.env));
+	const [overrides, setOverrides] = createSignal(emptyOverrides());
 	onMount(() => {
-		const cwd = (props.api.state.path?.worktree ?? "") || process.cwd();
+		const cwd = resolveSidebarCwd(context);
 		let cancelled = false;
 		const refresh = async () => {
 			try {
-				const info = await resolvePresetForTui(process.env, cwd);
-				if (!cancelled) setPreset(info);
+				const detail = await resolveActivePresetForTui(process.env, cwd);
+				if (!cancelled) {
+					setPreset(detail.info);
+					setOverrides(detail.overrides);
+				}
 			} catch {}
 		};
 		refresh();
@@ -1870,373 +3036,1562 @@ function View(props) {
 			clearInterval(timer);
 		});
 	});
-	const [sessionList, { refetch: refetchSessions }] = createResource(async () => {
+	return {
+		preset,
+		overrides
+	};
+}
+/** Debounce for the git file-count revalidation. `vcs.status` is an HTTP call;
+*  session events arrive in bursts, so the row is refreshed at most once per
+*  window instead of on every event. */
+const GIT_CHANGES_DEBOUNCE_MS = 400;
+/** `context.client.vcs.status(input?, requestOptions?)` →
+*  `Promise<{ data: VcsFileStatus[] }>` (`GET /api/vcs/status`). Returns the
+*  callable or null when the host does not expose it, so callers degrade to
+*  the branch-only row instead of throwing. */
+function vcsStatusCall(context) {
+	const status = context?.client?.vcs?.status;
+	return typeof status === "function" ? status.bind(context.client.vcs) : null;
+}
+/** `context.client.session.stats(input?, requestOptions?)` →
+*  `Promise<SessionStatsInfo>` (`GET /api/experimental/session/stats`), served
+*  by the local process. Returns the callable or null when the host does not
+*  expose it, so the Context spend line simply does not render. */
+function statsCall(context) {
+	const stats = context?.client?.session?.stats;
+	return typeof stats === "function" ? stats.bind(context.client.session) : null;
+}
+/** Local IANA zone for the stats call (`America/Sao_Paulo`); omitted when the
+*  runtime cannot resolve one. */
+function localTimezone() {
+	try {
+		const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+		return typeof zone === "string" && zone !== "" ? zone : void 0;
+	} catch {
+		return;
+	}
+}
+/** Fields every stats call sends. `tools: 'none'` skips the tool aggregation
+*  the block never renders; `project` is omitted (no cheap id in hand) rather
+*  than guessed. */
+function statsInput() {
+	const timezone = localTimezone();
+	return timezone === void 0 ? { tools: "none" } : {
+		tools: "none",
+		timezone
+	};
+}
+/** Convert a millisecond instant to the unit the route accepted. */
+function spendInstant(ms, unit) {
+	return unit === "s" ? Math.floor(ms / 1e3) : ms;
+}
+/** Measure the `from`/`to` unit once: millisecond epoch first, then a single
+*  seconds attempt. Bounded to two calls and never throws; anything the route
+*  rejects (mismatch, throw, malformed echo) ends as `unavailable`, which hides
+*  the block for the rest of the process instead of retrying forever. */
+async function probeSpendUnit(call) {
+	const now = Date.now();
+	const fromMs = now - SPEND_PROBE_WINDOW_MS;
+	const attempts = [{
+		sent: {
+			from: fromMs,
+			to: now
+		},
+		scale: 1,
+		unit: "ms"
+	}, {
+		sent: {
+			from: Math.floor(fromMs / 1e3),
+			to: Math.floor(now / 1e3)
+		},
+		scale: 1e3,
+		unit: "s"
+	}];
+	for (const attempt of attempts) try {
+		if (statsRangeMatches((await call({
+			...statsInput(),
+			...attempt.sent
+		}))?.range, attempt.sent, attempt.scale)) return attempt.unit;
+	} catch {}
+	return "unavailable";
+}
+/** Resolve (and cache) the unit for this process. Concurrent callers share one
+*  probe, so a burst of refreshes cannot spend more than two calls on it. */
+function ensureSpendUnit(call) {
+	if (spendUnit !== null) return Promise.resolve(spendUnit);
+	if (spendProbe === null) spendProbe = probeSpendUnit(call).then((unit) => {
+		spendUnit = unit;
+		spendProbe = null;
+		return unit;
+	}, () => {
+		spendUnit = "unavailable";
+		spendProbe = null;
+		return "unavailable";
+	});
+	return spendProbe;
+}
+/** Reactive state the sidebar view renders. Accessors keep the view reactive
+*  while the model itself stays free of JSX, so its effects are exercisable
+*  without a TUI renderer. */
+/** Reactive wiring behind the sidebar: refresh subscription, warm syncs, the
+*  running-only spinner and the completion-toast effect. `context` stays loosely
+*  typed (the host API only exists at runtime) but the refresh event names are
+*  narrowed to the V2 union at the subscription site. */
+function createSidebarModel(context, sessionID, gitExec = defaultGitExec) {
+	const [revision, setRevision] = createSignal(0);
+	const [metricsRevision, setMetricsRevision] = createSignal(0);
+	const [frame, setFrame] = createSignal(0);
+	const location = resolveLocation(context);
+	const activePreset = useActivePreset(context);
+	const preset = activePreset.preset;
+	const presetOverrides = activePreset.overrides;
+	let observedStates = /* @__PURE__ */ new Map();
+	let metricsDebounce;
+	const scheduleMetrics = () => {
+		if (metricsDebounce !== void 0) clearTimeout(metricsDebounce);
+		metricsDebounce = setTimeout(() => {
+			metricsDebounce = void 0;
+			setMetricsRevision((value) => value + 1);
+		}, 400);
+	};
+	const refresh = () => {
+		setRevision((value) => value + 1);
+		scheduleMetrics();
+	};
+	const activeSessionID = () => {
+		const id = sessionID();
+		return isValidSessionID(id) ? id : "";
+	};
+	const session = createMemo(() => {
+		revision();
+		const id = activeSessionID();
+		if (id === "") return void 0;
 		try {
-			return await props.api.client?.session?.list?.({ limit: 100 }) ?? { data: [] };
+			return context.data.session.get(id);
 		} catch {
-			return { data: [] };
+			return;
 		}
 	});
-	const totalSessions = createMemo(() => {
-		const result = sessionList();
-		if (!result) return 0;
-		const data = result.data ?? result;
-		if (!Array.isArray(data)) return 0;
-		return data.filter((s) => !s.parentID).length;
+	const branch = createMemo(() => {
+		revision();
+		try {
+			return context.data.location.vcs.info(location)?.branch?.current ?? null;
+		} catch {
+			return null;
+		}
 	});
-	const recentSessions = createMemo(() => {
-		const result = sessionList();
-		if (!result) return [];
-		const data = result.data ?? result;
-		if (!Array.isArray(data)) return [];
-		return data.filter((s) => !s.parentID && s.id !== resolveCurrentSessionID({
-			sessionID: props.sessionID,
-			api: props.api
-		})).sort((a, b) => {
-			const ta = a.time?.updated ?? a.updated ?? 0;
-			return (b.time?.updated ?? b.updated ?? 0) - ta;
-		}).slice(0, 8);
+	const [gitChangesRead, setGitChangesRead] = createSignal({
+		session: activeSessionID(),
+		text: null
 	});
-	const projectRoot = createMemo(() => resolvePantheonRoot(props.api.state.path));
-	const panelLog = createTuiLogger(projectRoot());
-	const [childDelegations, setChildDelegations] = createSignal([]);
-	const [now, setNow] = createSignal(Date.now());
-	const [frame, setFrame] = createSignal(0);
-	let eventRefreshCount = 0;
-	let delegationsInflight = null;
-	const refreshDelegations = () => {
-		if (delegationsInflight !== null) return delegationsInflight;
-		delegationsInflight = (async () => {
-			try {
-				const state = props.api.state;
-				let md = [];
-				try {
-					md = await readAllDelegationEntries(projectRoot());
-				} catch {
-					md = [];
-				}
-				const sessionID = resolveCurrentSessionID({
-					sessionID: props.sessionID,
-					api: props.api
-				});
-				if (sessionID === null) {
-					setChildDelegations([]);
-					panelLog.info(`${formatPanelLogLine(0, 0, 0, md.length, eventRefreshCount)} (no sessionID — inactive panel)`);
-					return;
-				}
-				let children = [];
-				try {
-					const childrenPath = buildChildrenPath(sessionID);
-					const result = childrenPath ? await props.api.client.session.children(childrenPath) : void 0;
-					const data = result?.data ?? result;
-					children = Array.isArray(data) ? data : [];
-				} catch (err) {
-					children = [];
-					panelLog.info("panel: error children fetch", err);
-				}
-				const resolveStatus = (childID) => {
-					if (!isValidSessionId(childID)) return void 0;
-					try {
-						return state.session.status(childID)?.type;
-					} catch {
-						return;
-					}
-				};
-				const childEntries = childrenToDelegationEntries(children.map((c) => ({
-					...c,
-					status: resolveStatus(c.id)
-				})), md, now(), sessionID);
-				for (const [k, v] of props.liveStore.map) if (v.alias === null && v.taskID === null && Date.now() - v.startedAt > 3e4) props.liveStore.map.delete(k);
-				const liveEntries = [...props.liveStore.map.values()].filter((entry) => entry.sessionID === sessionID);
-				setChildDelegations(filterDelegationsToSession(mergeChildDelegationSources(childEntries, liveEntries), sessionID));
-				const counts = countDelegationSources(childEntries);
-				panelLog.info(formatPanelLogLine(children.length, counts.pantheon, counts.native, md.length, eventRefreshCount));
-			} finally {
-				delegationsInflight = null;
-			}
-		})();
-		return delegationsInflight;
-	};
-	const delegationCeiling = createMemo(() => ceilingDelegationList(childDelegations(), 8, now()));
-	const delegationHeader = createMemo(() => formatDelegationHeader(delegationCeiling().visible));
-	onMount(() => {
-		const cleanup = [];
+	const [gitCliRead, setGitCliRead] = createSignal({
+		session: activeSessionID(),
+		snapshot: null
+	});
+	const gitChanges = createMemo(() => {
+		const read = gitChangesRead();
+		return read.session === activeSessionID() ? read.text : null;
+	});
+	const gitCli = createMemo(() => {
+		const read = gitCliRead();
+		return read.session === activeSessionID() ? read.snapshot : null;
+	});
+	let gitRequest = 0;
+	let gitDebounce;
+	let gitProbeDebounce;
+	let gitProbeSessionID = activeSessionID();
+	let gitProbeStartedAt = null;
+	let gitProbeInFlight = false;
+	let disposed = false;
+	const loadGitChanges = async () => {
+		const status = vcsStatusCall(context);
+		if (status === null) return;
+		const session = activeSessionID();
+		const request = ++gitRequest;
 		try {
-			cleanup.push(props.api.event.on("session.status", refetchSessions));
-			cleanup.push(props.api.event.on("session.created", refetchSessions));
-			cleanup.push(props.api.event.on("session.updated", refetchSessions));
-			cleanup.push(props.api.event.on("session.deleted", refetchSessions));
-		} catch {}
-		try {
-			const eventRefresh = () => {
-				eventRefreshCount += 1;
-				refreshDelegations();
-			};
-			cleanup.push(props.api.event.on("session.created", eventRefresh));
-			cleanup.push(props.api.event.on("session.updated", eventRefresh));
-			cleanup.push(props.api.event.on("session.deleted", eventRefresh));
-			cleanup.push(props.api.event.on("session.status", eventRefresh));
-		} catch {}
-		cleanup.push(props.liveStore.subscribe(() => {
-			eventRefreshCount += 1;
-			refreshDelegations();
-		}));
-		eventRefreshCount += 1;
-		refreshDelegations();
-		const poll = setInterval(() => {
-			setNow(Date.now());
-			refreshDelegations();
-		}, 1e3);
-		cleanup.push(() => clearInterval(poll));
-		const animation = setInterval(() => setFrame((f) => f + 1), 80);
-		cleanup.push(() => clearInterval(animation));
-		try {
-			const sdk = props.api.state?.session;
-			const mountSessionID = resolveCurrentSessionID({
-				sessionID: props.sessionID,
-				api: props.api
+			const result = await status({ location: { directory: resolveSidebarCwd(context) } });
+			if (request !== gitRequest || session !== activeSessionID()) return;
+			const files = Array.isArray(result?.data) ? result.data : Array.isArray(result) ? result : [];
+			setGitChangesRead({
+				session,
+				text: formatGitChanges(files)
 			});
-			if (mountSessionID !== null && typeof sdk?.messages === "function") {
-				const messages = sdk.messages(mountSessionID) ?? [];
-				const state = props.api.state;
-				const parts = collectDelegationToolParts(messages, typeof state?.part === "function" ? (messageID) => state.part(messageID) : void 0);
-				if (parts.length > 0 && seedLiveDelegationMap(props.liveStore.map, parts) > 0) props.liveStore.bump();
+		} catch {}
+	};
+	const runGitProbe = async () => {
+		const session = activeSessionID();
+		if (session !== gitProbeSessionID) {
+			gitProbeSessionID = session;
+			gitProbeStartedAt = null;
+			gitProbeInFlight = false;
+		}
+		if (!gitProbeAllowed({
+			now: Date.now(),
+			lastRunAt: gitProbeStartedAt,
+			inFlight: gitProbeInFlight
+		})) return;
+		gitProbeInFlight = true;
+		gitProbeStartedAt = Date.now();
+		try {
+			const snapshot = await readGitSnapshot(resolveSidebarCwd(context), gitExec);
+			if (!disposed && session === activeSessionID()) setGitCliRead({
+				session,
+				snapshot
+			});
+		} catch {} finally {
+			if (session === gitProbeSessionID) gitProbeInFlight = false;
+		}
+	};
+	const scheduleGitChanges = () => {
+		if (vcsStatusCall(context) === null) return;
+		if (gitCli() !== null) return;
+		if (gitDebounce !== void 0) clearTimeout(gitDebounce);
+		gitDebounce = setTimeout(() => {
+			gitDebounce = void 0;
+			loadGitChanges();
+		}, 400);
+	};
+	const scheduleGitProbe = () => {
+		if (gitProbeDebounce !== void 0) clearTimeout(gitProbeDebounce);
+		gitProbeDebounce = setTimeout(() => {
+			gitProbeDebounce = void 0;
+			runGitProbe();
+		}, GIT_CLI_DEBOUNCE_MS);
+	};
+	const gitLine = createMemo(() => {
+		const snapshot = gitCli();
+		if (snapshot !== null) return formatGitSnapshot(snapshot);
+		return gitChanges();
+	});
+	createEffect(on(activeSessionID, (id) => {
+		if (disposed || id === "") return;
+		runGitProbe();
+		loadGitChanges();
+	}, { defer: true }));
+	const [spend, setSpend] = createSignal(null);
+	let spendTotals = {
+		today: null,
+		thirtyDays: null
+	};
+	let spendRequest = 0;
+	let spendDebounce;
+	const loadSpend = async () => {
+		const stats = statsCall(context);
+		if (stats === null) return;
+		try {
+			const unit = await ensureSpendUnit(stats);
+			if (unit === "unavailable") return;
+			const request = ++spendRequest;
+			const windows = spendWindows(Date.now());
+			const settled = await Promise.allSettled([stats({
+				...statsInput(),
+				from: spendInstant(windows.today.from, unit),
+				to: spendInstant(windows.today.to, unit)
+			}), stats({
+				...statsInput(),
+				from: spendInstant(windows.thirtyDays.from, unit),
+				to: spendInstant(windows.thirtyDays.to, unit)
+			})]);
+			if (request !== spendRequest) return;
+			const next = { ...spendTotals };
+			for (const [index, key] of ["today", "thirtyDays"].entries()) {
+				const result = settled[index];
+				if (result === void 0 || result.status !== "fulfilled") continue;
+				const cost = statsCost(result.value);
+				if (cost === null) continue;
+				next[key] = cost;
+			}
+			spendTotals = next;
+			setSpend(next);
+		} catch {}
+	};
+	const scheduleSpend = () => {
+		if (statsCall(context) === null) return;
+		if (spendDebounce !== void 0) clearTimeout(spendDebounce);
+		spendDebounce = setTimeout(() => {
+			spendDebounce = void 0;
+			loadSpend();
+		}, 400);
+	};
+	const messages = createMemo(() => {
+		revision();
+		const id = activeSessionID();
+		if (id === "") return [];
+		try {
+			const result = context.data.session.message?.list?.(id);
+			return Array.isArray(result) ? result : [];
+		} catch {
+			return [];
+		}
+	});
+	const familySessionIDs = createMemo(() => {
+		revision();
+		const id = activeSessionID();
+		if (id === "") return [];
+		const ids = [id];
+		try {
+			const result = context.data.session.family?.(id);
+			if (Array.isArray(result)) for (const childID of result) {
+				if (!isValidSessionID(childID) || ids.includes(childID)) continue;
+				ids.push(childID);
+				if (ids.length >= 8) break;
 			}
 		} catch {}
-		onCleanup(() => cleanup.forEach((fn) => {
-			fn();
-		}));
+		return ids;
 	});
-	const HR = () => (() => {
-		var _el$20 = createElement("text");
-		insertNode(_el$20, createTextNode(`────────────────────────────`));
-		effect((_$p) => setProp(_el$20, "fg", theme().textMuted, _$p));
-		return _el$20;
-	})();
+	const transcript = createMemo(() => {
+		metricsRevision();
+		const rootID = activeSessionID();
+		const collected = [];
+		let todo = [];
+		for (const id of familySessionIDs()) {
+			let list = [];
+			try {
+				const result = context.data.session.message?.list?.(id);
+				if (Array.isArray(result)) list = result;
+			} catch {}
+			collected.push(...list.slice(-400));
+			if (id === rootID) todo = latestTodoItems(list) ?? [];
+		}
+		return {
+			messages: collected,
+			todo
+		};
+	});
+	const usageMessages = createMemo(() => transcript().messages);
+	const todo = createMemo(() => ceilingTodoItems(transcript().todo, 6));
+	const messageCostTotal = createMemo(() => {
+		let total = 0;
+		for (const message of usageMessages()) {
+			if (message?.type !== "assistant") continue;
+			const cost = numberOrNull(message.cost);
+			if (cost !== null && cost > 0) total += cost;
+		}
+		return total;
+	});
+	const cost = createMemo(() => {
+		revision();
+		const ids = familySessionIDs();
+		if (ids.length === 0) return null;
+		let total = 0;
+		let found = false;
+		for (const id of ids) {
+			let value;
+			try {
+				value = context.data.session.cost?.(id);
+			} catch {
+				value = void 0;
+			}
+			let resolved = numberOrNull(value);
+			if (resolved === null) try {
+				resolved = numberOrNull(context.data.session.get(id)?.cost);
+			} catch {
+				resolved = null;
+			}
+			if (resolved !== null && resolved >= 0) {
+				total += resolved;
+				found = true;
+			}
+		}
+		if (found) return Math.max(total, messageCostTotal());
+		const fallback = messageCostTotal();
+		return fallback > 0 ? fallback : null;
+	});
+	const modelUsage = createMemo(() => {
+		metricsRevision();
+		return ceilingModelUsage(collectModelUsage(usageMessages()), 3);
+	});
+	const modelRefs = createMemo(() => {
+		revision();
+		const current = session();
+		const agent = typeof current?.agent === "string" && current.agent !== "" ? current.agent : "";
+		let agentRef;
+		if (agent !== "") try {
+			const agents = context.data.location?.agent?.list?.(location);
+			if (Array.isArray(agents)) agentRef = agents.find((entry) => entry?.id === agent)?.model;
+		} catch {}
+		const override = agent === "" ? void 0 : presetOverrides().agents[agent]?.model;
+		return {
+			agent,
+			sessionRef: current?.model,
+			agentRef,
+			override: typeof override === "string" && override !== "" ? override : null
+		};
+	});
+	const agentModel = createMemo(() => {
+		const { agent, sessionRef, agentRef, override } = modelRefs();
+		const model = shortModelID(override) ?? shortModelID(sessionRef) ?? shortModelID(agentRef);
+		if (model === null) return null;
+		return {
+			agent,
+			model,
+			overridden: override !== null
+		};
+	});
+	const provider = createMemo(() => {
+		revision();
+		const fromSession = providerIDFromRef(session()?.model);
+		if (fromSession !== null) return fromSession;
+		const list = messages();
+		for (let index = list.length - 1; index >= 0; index -= 1) {
+			const message = list[index];
+			if (message?.type !== "assistant") continue;
+			const fromMessage = providerIDFromRef(message.model);
+			if (fromMessage !== null) return fromMessage;
+		}
+		const { agentRef } = modelRefs();
+		const fromAgent = providerIDFromRef(agentRef);
+		if (fromAgent !== null) return fromAgent;
+		try {
+			return providerIDFromModels(context.data.location?.model?.list?.(location), agentRef);
+		} catch {
+			return null;
+		}
+	});
+	const contextUsage = createMemo(() => {
+		const list = messages().slice(-400);
+		if (list.length === 0) return null;
+		const refs = modelRefs();
+		const ref = resolveActiveModelRef(refs.sessionRef, list, refs.agentRef);
+		if (ref === null) return null;
+		let models = [];
+		try {
+			const result = context.data.location?.model?.list?.(location);
+			if (Array.isArray(result)) models = result;
+		} catch {}
+		return resolveModelContextSnapshot(list, ref, models, session()?.revert?.messageID);
+	});
+	const cachePerformance = createMemo(() => {
+		const message = lastAssistantWithTokens(messages(), session()?.revert?.messageID);
+		return message === null ? null : cacheHitPercent(message.tokens);
+	});
+	const turnPerformance = createMemo(() => {
+		const list = messages();
+		let anchor = -1;
+		for (let index = list.length - 1; index >= 0; index--) if (list[index]?.type === "assistant") {
+			anchor = index;
+			break;
+		}
+		return anchor === -1 ? null : turnTokensPerSecond(list, anchor);
+	});
+	const performance = createMemo(() => {
+		const cacheHit = cachePerformance();
+		const tokensPerSecond = turnPerformance();
+		if (cacheHit === null && tokensPerSecond === null) return null;
+		return {
+			cacheHit,
+			tokensPerSecond
+		};
+	});
+	const subagentCalls = createMemo(() => collectSubagentCalls(messages()));
+	const dispatchEntries = createMemo(() => {
+		revision();
+		const id = activeSessionID();
+		if (id === "") return [];
+		return collectDispatch(context, id, {
+			now: Date.now(),
+			calls: subagentCalls()
+		});
+	});
+	/** What the sidebar block renders: the collector's rows, nothing else. */
+	const allDelegations = createMemo(() => dispatchEntries().map((entry) => entry.view));
+	const hasRunning = createMemo(() => allDelegations().some((view) => view.state === "running"));
+	const dispatch = createMemo(() => {
+		frame();
+		return buildDispatchBlock(allDelegations(), Date.now(), frame());
+	});
+	const blocks = createMemo(() => {
+		const present = [];
+		if (contextBlockRows(contextUsage(), cost()) !== null || contextSpendLine(spend()) !== null) present.push("context");
+		if (branch() !== null || gitLine() !== null) present.push("git");
+		if (todo().visible.length > 0) present.push("todo");
+		if (dispatch() !== null) present.push("dispatch");
+		return withBlockSpacers(present);
+	});
+	onMount(() => {
+		const unsubscribeAll = subscribeSidebarRefresh(context, () => {
+			refresh();
+			scheduleGitChanges();
+			scheduleGitProbe();
+			scheduleSpend();
+		});
+		const id = activeSessionID();
+		if (id !== "") {
+			try {
+				Promise.resolve(context.data.session.sync(id)).then(refresh);
+			} catch {}
+			try {
+				Promise.resolve(context.data.session.message?.sync?.(id)).then(refresh);
+			} catch {}
+		}
+		try {
+			Promise.resolve(context.data.location.vcs.sync(location)).then(refresh);
+		} catch {}
+		loadGitChanges();
+		runGitProbe();
+		loadSpend();
+		createEffect(() => {
+			if (!hasRunning()) return;
+			const spinner = setInterval(() => setFrame((value) => value + 1), SPINNER_INTERVAL_MS);
+			onCleanup(() => clearInterval(spinner));
+		});
+		onCleanup(() => {
+			disposed = true;
+			if (gitDebounce !== void 0) clearTimeout(gitDebounce);
+			if (gitProbeDebounce !== void 0) clearTimeout(gitProbeDebounce);
+			if (spendDebounce !== void 0) clearTimeout(spendDebounce);
+			if (metricsDebounce !== void 0) clearTimeout(metricsDebounce);
+		});
+		onCleanup(unsubscribeAll);
+	});
+	let observedSessionID = activeSessionID();
+	createEffect(() => {
+		const id = activeSessionID();
+		const views = allDelegations();
+		if (id !== observedSessionID) {
+			observedSessionID = id;
+			observedStates = /* @__PURE__ */ new Map();
+		}
+		if (id === "") {
+			observedStates = /* @__PURE__ */ new Map();
+			return;
+		}
+		const { completed, snapshot } = detectDelegationCompletions(observedStates, views.map((view) => ({
+			id: view.id,
+			label: view.label,
+			state: view.state
+		})));
+		observedStates = snapshot;
+		for (const done of completed) showDelegationToast(context, done);
+	});
+	return {
+		activeSessionID,
+		session,
+		branch,
+		gitChanges,
+		gitLine,
+		gitCli,
+		performance,
+		dispatch,
+		blocks,
+		hasRunning,
+		frame,
+		preset,
+		provider,
+		presetOverrides,
+		cost,
+		modelUsage,
+		todo,
+		spend,
+		contextUsage,
+		agentModel
+	};
+}
+/** One `Context` row: an optional toned lead segment (the gauge's filled
+*  cells), the value, the muted gauge tail (empty cells) and the muted unit
+*  suffix (`tokens` / `of 200K` / `spent`). */
+function ContextRowView(props) {
+	const fullWidth = () => cellWidth(`${props.row.lead ?? ""}${props.row.tail ?? ""}${props.row.value}${props.row.suffix ?? ""}`);
+	return createComponent(Show, {
+		get when() {
+			return props.row.suffix !== " gasto na sessão";
+		},
+		get fallback() {
+			return (() => {
+				var _el$3 = createElement("box");
+				setProp(_el$3, "flexDirection", "column");
+				insert(_el$3, createComponent(For, {
+					get each() {
+						return sidebarMoneyLines("gasto na sessão", props.row.value);
+					},
+					children: (line) => (() => {
+						var _el$4 = createElement("text");
+						insert(_el$4, line);
+						effect((_$p) => setProp(_el$4, "fg", props.fg, _$p));
+						return _el$4;
+					})()
+				}));
+				return _el$3;
+			})();
+		},
+		get children() {
+			return createComponent(Show, {
+				get when() {
+					return fullWidth() <= 34;
+				},
+				get fallback() {
+					return (() => {
+						var _el$5 = createElement("box");
+						setProp(_el$5, "flexDirection", "column");
+						insert(_el$5, createComponent(For, {
+							get each() {
+								return sidebarTextLines(`${props.row.value.trim()}${props.row.suffix ?? ""}`);
+							},
+							children: (line) => (() => {
+								var _el$6 = createElement("text");
+								insert(_el$6, line);
+								effect((_$p) => setProp(_el$6, "fg", props.fg, _$p));
+								return _el$6;
+							})()
+						}));
+						return _el$5;
+					})();
+				},
+				get children() {
+					var _el$ = createElement("box"), _el$2 = createElement("text");
+					insertNode(_el$, _el$2);
+					setProp(_el$, "flexDirection", "row");
+					insert(_el$, createComponent(Show, {
+						get when() {
+							return props.row.lead;
+						},
+						children: (lead) => (() => {
+							var _el$7 = createElement("text");
+							insert(_el$7, lead);
+							effect((_$p) => setProp(_el$7, "fg", props.fg, _$p));
+							return _el$7;
+						})()
+					}), _el$2);
+					insert(_el$, createComponent(Show, {
+						get when() {
+							return props.row.tail;
+						},
+						children: (tail) => (() => {
+							var _el$8 = createElement("text");
+							insert(_el$8, tail);
+							effect((_$p) => setProp(_el$8, "fg", props.muted, _$p));
+							return _el$8;
+						})()
+					}), _el$2);
+					insert(_el$2, () => props.row.value);
+					insert(_el$, createComponent(Show, {
+						get when() {
+							return props.row.suffix;
+						},
+						children: (suffix) => (() => {
+							var _el$9 = createElement("text");
+							insert(_el$9, suffix);
+							effect((_$p) => setProp(_el$9, "fg", props.muted, _$p));
+							return _el$9;
+						})()
+					}), null);
+					effect((_$p) => setProp(_el$2, "fg", props.fg, _$p));
+					return _el$;
+				}
+			});
+		}
+	});
+}
+/** Block title: a muted single-width glyph, then the bold label. The fixed
+*  header at the top of the sidebar deliberately renders no icon. `summary` is
+*  the muted tail some blocks carry (`· 2 rodando · $0.47`), so the header
+*  stays one line. */
+function BlockHeader(props) {
 	return (() => {
-		var _el$22 = createElement("box"), _el$23 = createElement("text"), _el$24 = createElement("box"), _el$25 = createElement("text"), _el$26 = createElement("text"), _el$28 = createElement("box"), _el$29 = createElement("text"), _el$30 = createElement("text");
-		insertNode(_el$22, _el$23);
-		insertNode(_el$22, _el$24);
-		insertNode(_el$22, _el$28);
-		setProp(_el$22, "flexDirection", "column");
-		setProp(_el$22, "width", "100%");
-		setProp(_el$23, "attributes", 1);
-		insert(_el$23, () => `Pantheon${props.version ? ` v${props.version}` : ""}`);
-		insert(_el$22, createComponent(Show, {
+		var _el$0 = createElement("box"), _el$1 = createElement("text"), _el$10 = createElement("text");
+		insertNode(_el$0, _el$1);
+		insertNode(_el$0, _el$10);
+		setProp(_el$0, "flexDirection", "row");
+		insert(_el$1, () => `${props.icon} `);
+		setProp(_el$10, "attributes", 1);
+		insert(_el$10, () => props.label);
+		insert(_el$0, createComponent(Show, {
 			get when() {
-				return branch();
+				return props.summary;
 			},
-			children: (b) => (() => {
-				var _el$33 = createElement("text");
-				insert(_el$33, b);
-				effect((_$p) => setProp(_el$33, "fg", theme().textMuted, _$p));
-				return _el$33;
+			children: (summary) => (() => {
+				var _el$11 = createElement("text");
+				insert(_el$11, () => `${SPEND_LINE_SEPARATOR}${summary()}`);
+				effect((_$p) => setProp(_el$11, "fg", props.muted, _$p));
+				return _el$11;
 			})()
-		}), _el$24);
-		insert(_el$22, createComponent(Show, {
+		}), null);
+		effect((_p$) => {
+			var _v$ = props.muted, _v$2 = props.fg;
+			_v$ !== _p$.e && (_p$.e = setProp(_el$1, "fg", _v$, _p$.e));
+			_v$2 !== _p$.t && (_p$.t = setProp(_el$10, "fg", _v$2, _p$.t));
+			return _p$;
+		}, {
+			e: void 0,
+			t: void 0
+		});
+		return _el$0;
+	})();
+}
+function Sidebar(props) {
+	const { context } = props;
+	const model = createSidebarModel(context, () => props.sessionID);
+	const text = () => context.theme.text?.base;
+	const muted = () => context.theme.text?.muted ?? text();
+	const tone = (value) => context.theme?.text?.feedback?.[value]?.base ?? text();
+	const todoFg = (status) => {
+		const rowTone = todoTone(status);
+		if (rowTone === "accent") return tone("warning");
+		return rowTone === "muted" ? muted() : text();
+	};
+	const open = (sessionID) => () => navigateToSession(context.ui?.router, sessionID);
+	const block = (key) => model.blocks().find((entry) => entry.key === key);
+	const spacer = (key) => block(key)?.spacer === true;
+	const usageRows = () => modelUsageRows(model.modelUsage().visible);
+	const usageHidden = () => hiddenModelUsageText(model.modelUsage().hidden, model.modelUsage().hiddenCost);
+	const contextRows = () => contextBlockRows(model.contextUsage(), model.cost());
+	const spendLine = () => contextSpendLine(model.spend());
+	const performanceLine = () => contextPerformanceLine(model.performance());
+	const gaugeFg = (row) => contextProgressColor(row.tone ?? "warning", context.theme);
+	const dispatchView = () => model.dispatch();
+	const dispatchSummary = () => {
+		const view = dispatchView();
+		return view === null ? null : dispatchHeaderSummary(view.runningCount, view.totalCost);
+	};
+	const failedSuffix = () => failedSuffixText(dispatchView()?.failures);
+	return (() => {
+		var _el$12 = createElement("box"), _el$13 = createElement("text"), _el$14 = createElement("text");
+		insertNode(_el$12, _el$13);
+		insertNode(_el$12, _el$14);
+		setProp(_el$12, "flexDirection", "column");
+		setProp(_el$12, "width", "100%");
+		setProp(_el$12, "padding", 1);
+		setProp(_el$13, "attributes", 1);
+		insert(_el$13, `Pantheon v2.0.0-beta.1`);
+		insert(_el$14, () => presetHeaderLine(model.preset().name ?? "", model.provider()));
+		insert(_el$12, createComponent(Show, {
 			get when() {
-				return preset().name;
+				return memo(() => model.activeSessionID() !== "")() && model.session();
 			},
 			get fallback() {
 				return (() => {
-					var _el$34 = createElement("box"), _el$35 = createElement("text");
-					insertNode(_el$34, _el$35);
-					setProp(_el$34, "flexDirection", "row");
-					setProp(_el$34, "gap", 1);
-					insertNode(_el$35, createTextNode(`Preset: default`));
-					effect((_$p) => setProp(_el$35, "fg", theme().textMuted, _$p));
-					return _el$34;
+					var _el$25 = createElement("text");
+					insert(_el$25, () => sidebarPlaceholder(props.sessionID));
+					effect((_$p) => setProp(_el$25, "fg", muted(), _$p));
+					return _el$25;
 				})();
 			},
-			children: (name) => (() => {
-				var _el$37 = createElement("box"), _el$38 = createElement("text"), _el$40 = createElement("text"), _el$41 = createElement("text");
-				insertNode(_el$37, _el$38);
-				insertNode(_el$37, _el$40);
-				insertNode(_el$37, _el$41);
-				setProp(_el$37, "flexDirection", "row");
-				setProp(_el$37, "gap", 1);
-				insertNode(_el$38, createTextNode(`⚡ Preset:`));
-				insert(_el$40, name);
-				insert(_el$41, () => `(${preset().source ?? ""})`);
-				effect((_p$) => {
-					var _v$10 = theme().textMuted, _v$11 = theme().accent, _v$12 = theme().textMuted;
-					_v$10 !== _p$.e && (_p$.e = setProp(_el$38, "fg", _v$10, _p$.e));
-					_v$11 !== _p$.t && (_p$.t = setProp(_el$40, "fg", _v$11, _p$.t));
-					_v$12 !== _p$.a && (_p$.a = setProp(_el$41, "fg", _v$12, _p$.a));
-					return _p$;
-				}, {
-					e: void 0,
-					t: void 0,
-					a: void 0
-				});
-				return _el$37;
+			children: (current) => (() => {
+				var _el$26 = createElement("text");
+				insert(_el$26, () => `Sessão: ${truncateLabel(current().title || current().id)}`);
+				effect((_$p) => setProp(_el$26, "fg", text(), _$p));
+				return _el$26;
 			})()
-		}), _el$24);
-		insert(_el$22, createComponent(HR, {}), _el$24);
-		insertNode(_el$24, _el$25);
-		insertNode(_el$24, _el$26);
-		setProp(_el$24, "onMouseDown", () => setShowSessions((x) => !x));
-		setProp(_el$25, "attributes", 1);
-		insert(_el$25, () => `${showSessions() ? "▼" : "▶"} Sessions`);
-		insert(_el$26, () => ` (${String(totalSessions())})`);
-		insert(_el$22, createComponent(Show, {
+		}), null);
+		insert(_el$12, createComponent(Show, {
 			get when() {
-				return showSessions();
+				return model.blocks().length > 0;
 			},
 			get children() {
-				return createComponent(Show, {
-					get when() {
-						return recentSessions().length > 0;
-					},
-					get fallback() {
-						return (() => {
-							var _el$42 = createElement("box"), _el$43 = createElement("text");
-							insertNode(_el$42, _el$43);
-							setProp(_el$42, "marginLeft", 1);
-							insertNode(_el$43, createTextNode(`No recent sessions`));
-							effect((_$p) => setProp(_el$43, "fg", theme().textMuted, _$p));
-							return _el$42;
-						})();
-					},
-					get children() {
-						var _el$27 = createElement("box");
-						setProp(_el$27, "marginLeft", 1);
-						setProp(_el$27, "flexDirection", "column");
-						insert(_el$27, createComponent(For, {
-							get each() {
-								return recentSessions();
-							},
-							children: (ses) => createComponent(SessionRow, {
-								get api() {
-									return props.api;
-								},
-								session: ses
-							})
-						}));
-						return _el$27;
-					}
-				});
+				var _el$15 = createElement("box");
+				setProp(_el$15, "height", 1);
+				return _el$15;
 			}
-		}), _el$28);
-		insertNode(_el$28, _el$29);
-		insertNode(_el$28, _el$30);
-		setProp(_el$28, "onMouseDown", () => setShowDelegations((x) => !x));
-		setProp(_el$29, "attributes", 1);
-		insert(_el$29, () => `${showDelegations() ? "▼" : "▶"} Delegations`);
-		insert(_el$30, (() => {
-			var _c$ = memo(() => delegationCeiling().visible.length > 0);
-			return () => _c$() ? ` ${delegationHeader()}` : " — idle";
-		})());
-		insert(_el$22, createComponent(Show, {
+		}), null);
+		insert(_el$12, createComponent(Show, {
 			get when() {
-				return showDelegations();
+				return block("context");
 			},
 			get children() {
-				return createComponent(Show, {
+				var _el$16 = createElement("box");
+				setProp(_el$16, "flexDirection", "column");
+				insert(_el$16, createComponent(Show, {
 					get when() {
-						return delegationCeiling().visible.length > 0;
-					},
-					get fallback() {
-						return (() => {
-							var _el$45 = createElement("box"), _el$46 = createElement("text");
-							insertNode(_el$45, _el$46);
-							setProp(_el$45, "marginLeft", 1);
-							insertNode(_el$46, createTextNode(`No delegations`));
-							effect((_$p) => setProp(_el$46, "fg", theme().textMuted, _$p));
-							return _el$45;
-						})();
+						return spacer("context");
 					},
 					get children() {
-						var _el$31 = createElement("box");
-						setProp(_el$31, "marginLeft", 1);
-						setProp(_el$31, "flexDirection", "column");
-						insert(_el$31, createComponent(For, {
-							get each() {
-								return delegationCeiling().visible;
+						var _el$17 = createElement("box");
+						setProp(_el$17, "height", 1);
+						return _el$17;
+					}
+				}), null);
+				insert(_el$16, createComponent(BlockHeader, {
+					get icon() {
+						return BLOCK_ICONS.context;
+					},
+					label: "Context",
+					get fg() {
+						return text();
+					},
+					get muted() {
+						return muted();
+					}
+				}), null);
+				insert(_el$16, createComponent(Show, {
+					get when() {
+						return contextRows();
+					},
+					children: (rows) => (() => {
+						var _el$27 = createElement("box");
+						setProp(_el$27, "flexDirection", "column");
+						insert(_el$27, createComponent(Show, {
+							get when() {
+								return rows().tokens;
 							},
-							children: (job) => createComponent(DelegationRow, {
-								get api() {
-									return props.api;
+							children: (row) => createComponent(ContextRowView, {
+								get row() {
+									return row();
 								},
-								job,
-								get now() {
-									return now();
+								get fg() {
+									return text();
 								},
-								get frame() {
-									return frame();
+								get muted() {
+									return muted();
 								}
 							})
 						}), null);
-						insert(_el$31, createComponent(Show, {
+						insert(_el$27, createComponent(Show, {
 							get when() {
-								return delegationCeiling().hidden > 0;
+								return rows().percent;
+							},
+							children: (row) => createComponent(ContextRowView, {
+								get row() {
+									return row();
+								},
+								get fg() {
+									return gaugeFg(row());
+								},
+								get muted() {
+									return muted();
+								}
+							})
+						}), null);
+						insert(_el$27, createComponent(Show, {
+							get when() {
+								return rows().spent;
+							},
+							children: (row) => createComponent(ContextRowView, {
+								get row() {
+									return row();
+								},
+								get fg() {
+									return text();
+								},
+								get muted() {
+									return muted();
+								}
+							})
+						}), null);
+						insert(_el$27, createComponent(Show, {
+							get when() {
+								return usageRows().length > 0;
 							},
 							get children() {
-								var _el$32 = createElement("text");
-								insert(_el$32, (() => {
-									var _c$2 = memo(() => delegationCeiling().hiddenActive > 0);
-									return () => _c$2() ? `… +${delegationCeiling().hiddenActive} active` : `… +${delegationCeiling().hiddenTerminal} more`;
-								})());
-								effect((_$p) => setProp(_el$32, "fg", theme().textMuted, _$p));
-								return _el$32;
+								return [(() => {
+									var _el$28 = createElement("text");
+									insertNode(_el$28, createTextNode(`Sessão · custo reportado`));
+									effect((_$p) => setProp(_el$28, "fg", muted(), _$p));
+									return _el$28;
+								})(), (() => {
+									var _el$30 = createElement("text");
+									insertNode(_el$30, createTextNode(`Modelo        Tokens       USD`));
+									effect((_$p) => setProp(_el$30, "fg", muted(), _$p));
+									return _el$30;
+								})()];
 							}
 						}), null);
-						return _el$31;
+						insert(_el$27, createComponent(For, {
+							get each() {
+								return usageRows();
+							},
+							children: (row) => (() => {
+								var _el$32 = createElement("box");
+								setProp(_el$32, "flexDirection", "column");
+								insert(_el$32, createComponent(For, {
+									get each() {
+										return modelUsageRowLines(row);
+									},
+									children: (line) => (() => {
+										var _el$33 = createElement("text");
+										insert(_el$33, line);
+										effect((_$p) => setProp(_el$33, "fg", text(), _$p));
+										return _el$33;
+									})()
+								}));
+								return _el$32;
+							})()
+						}), null);
+						insert(_el$27, createComponent(Show, {
+							get when() {
+								return usageHidden();
+							},
+							children: (line) => createComponent(For, {
+								get each() {
+									return sidebarTextLines(line());
+								},
+								children: (part) => (() => {
+									var _el$34 = createElement("text");
+									insert(_el$34, part);
+									effect((_$p) => setProp(_el$34, "fg", muted(), _$p));
+									return _el$34;
+								})()
+							})
+						}), null);
+						return _el$27;
+					})()
+				}), null);
+				insert(_el$16, createComponent(Show, {
+					get when() {
+						return performanceLine();
+					},
+					children: (line) => (() => {
+						var _el$35 = createElement("text");
+						insert(_el$35, line);
+						effect((_$p) => setProp(_el$35, "fg", muted(), _$p));
+						return _el$35;
+					})()
+				}), null);
+				insert(_el$16, createComponent(Show, {
+					get when() {
+						return spendLine();
+					},
+					children: (line) => createComponent(For, {
+						get each() {
+							return contextSpendLines(line());
+						},
+						children: (part) => (() => {
+							var _el$36 = createElement("text");
+							insert(_el$36, part);
+							effect((_$p) => setProp(_el$36, "fg", muted(), _$p));
+							return _el$36;
+						})()
+					})
+				}), null);
+				return _el$16;
+			}
+		}), null);
+		insert(_el$12, createComponent(Show, {
+			get when() {
+				return block("git");
+			},
+			get children() {
+				var _el$18 = createElement("box");
+				setProp(_el$18, "flexDirection", "column");
+				insert(_el$18, createComponent(Show, {
+					get when() {
+						return spacer("git");
+					},
+					get children() {
+						var _el$19 = createElement("box");
+						setProp(_el$19, "height", 1);
+						return _el$19;
 					}
-				});
+				}), null);
+				insert(_el$18, createComponent(BlockHeader, {
+					get icon() {
+						return BLOCK_ICONS.git;
+					},
+					label: "Git status",
+					get fg() {
+						return text();
+					},
+					get muted() {
+						return muted();
+					}
+				}), null);
+				insert(_el$18, createComponent(Show, {
+					get when() {
+						return model.branch();
+					},
+					children: (value) => (() => {
+						var _el$37 = createElement("box"), _el$38 = createElement("text"), _el$40 = createElement("text");
+						insertNode(_el$37, _el$38);
+						insertNode(_el$37, _el$40);
+						setProp(_el$37, "flexDirection", "row");
+						insertNode(_el$38, createTextNode(`⎇ `));
+						insert(_el$40, () => truncateLabel(value(), 32));
+						effect((_p$) => {
+							var _v$5 = muted(), _v$6 = text();
+							_v$5 !== _p$.e && (_p$.e = setProp(_el$38, "fg", _v$5, _p$.e));
+							_v$6 !== _p$.t && (_p$.t = setProp(_el$40, "fg", _v$6, _p$.t));
+							return _p$;
+						}, {
+							e: void 0,
+							t: void 0
+						});
+						return _el$37;
+					})()
+				}), null);
+				insert(_el$18, createComponent(Show, {
+					get when() {
+						return model.gitLine();
+					},
+					children: (line) => (() => {
+						var _el$41 = createElement("text");
+						insert(_el$41, line);
+						effect((_$p) => setProp(_el$41, "fg", text(), _$p));
+						return _el$41;
+					})()
+				}), null);
+				return _el$18;
+			}
+		}), null);
+		insert(_el$12, createComponent(Show, {
+			get when() {
+				return block("todo");
+			},
+			get children() {
+				var _el$20 = createElement("box");
+				setProp(_el$20, "flexDirection", "column");
+				insert(_el$20, createComponent(Show, {
+					get when() {
+						return spacer("todo");
+					},
+					get children() {
+						var _el$21 = createElement("box");
+						setProp(_el$21, "height", 1);
+						return _el$21;
+					}
+				}), null);
+				insert(_el$20, createComponent(Show, {
+					get when() {
+						return model.todo().visible.length > 0;
+					},
+					get children() {
+						var _el$22 = createElement("box");
+						setProp(_el$22, "flexDirection", "column");
+						insert(_el$22, createComponent(BlockHeader, {
+							get icon() {
+								return BLOCK_ICONS.todo;
+							},
+							label: "Todo",
+							get fg() {
+								return tone("warning");
+							},
+							get muted() {
+								return muted();
+							}
+						}), null);
+						insert(_el$22, createComponent(For, {
+							get each() {
+								return model.todo().visible;
+							},
+							children: (item) => (() => {
+								var _el$42 = createElement("text");
+								insert(_el$42, () => todoRowText(item));
+								effect((_$p) => setProp(_el$42, "fg", todoFg(item.status), _$p));
+								return _el$42;
+							})()
+						}), null);
+						insert(_el$22, createComponent(Show, {
+							get when() {
+								return hiddenTodoText(model.todo().hidden);
+							},
+							children: (line) => (() => {
+								var _el$43 = createElement("text");
+								insert(_el$43, line);
+								effect((_$p) => setProp(_el$43, "fg", muted(), _$p));
+								return _el$43;
+							})()
+						}), null);
+						return _el$22;
+					}
+				}), null);
+				return _el$20;
+			}
+		}), null);
+		insert(_el$12, createComponent(Show, {
+			get when() {
+				return block("dispatch");
+			},
+			get children() {
+				var _el$23 = createElement("box");
+				setProp(_el$23, "flexDirection", "column");
+				insert(_el$23, createComponent(Show, {
+					get when() {
+						return spacer("dispatch");
+					},
+					get children() {
+						var _el$24 = createElement("box");
+						setProp(_el$24, "height", 1);
+						return _el$24;
+					}
+				}), null);
+				insert(_el$23, createComponent(Show, {
+					get when() {
+						return dispatchView();
+					},
+					children: (view) => (() => {
+						var _el$44 = createElement("box");
+						setProp(_el$44, "flexDirection", "column");
+						insert(_el$44, createComponent(BlockHeader, {
+							get icon() {
+								return BLOCK_ICONS.dispatch;
+							},
+							label: "Dispatch",
+							get fg() {
+								return memo(() => view().runningCount > 0)() ? tone("success") : muted();
+							},
+							get muted() {
+								return muted();
+							},
+							get summary() {
+								return dispatchSummary();
+							}
+						}), null);
+						insert(_el$44, createComponent(For, {
+							get each() {
+								return view().running;
+							},
+							children: (row) => (() => {
+								var _el$46 = createElement("box"), _el$47 = createElement("text");
+								insertNode(_el$46, _el$47);
+								setProp(_el$46, "flexShrink", 0);
+								insert(_el$47, () => row.text);
+								effect((_p$) => {
+									var _v$7 = open(row.id), _v$8 = tone("success");
+									_v$7 !== _p$.e && (_p$.e = setProp(_el$46, "onMouseDown", _v$7, _p$.e));
+									_v$8 !== _p$.t && (_p$.t = setProp(_el$47, "fg", _v$8, _p$.t));
+									return _p$;
+								}, {
+									e: void 0,
+									t: void 0
+								});
+								return _el$46;
+							})()
+						}), null);
+						insert(_el$44, createComponent(Show, {
+							get when() {
+								return view().runningHidden > 0;
+							},
+							get children() {
+								var _el$45 = createElement("text");
+								insert(_el$45, () => `\u2026 +${view().runningHidden} rodando`);
+								effect((_$p) => setProp(_el$45, "fg", muted(), _$p));
+								return _el$45;
+							}
+						}), null);
+						insert(_el$44, createComponent(Show, {
+							get when() {
+								return view().summary;
+							},
+							children: (line) => (() => {
+								var _el$48 = createElement("box"), _el$49 = createElement("text");
+								insertNode(_el$48, _el$49);
+								setProp(_el$48, "flexDirection", "row");
+								setProp(_el$48, "flexShrink", 0);
+								insert(_el$49, line);
+								insert(_el$48, createComponent(Show, {
+									get when() {
+										return failedSuffix();
+									},
+									children: (suffix) => (() => {
+										var _el$50 = createElement("text");
+										insert(_el$50, () => `${SPEND_LINE_SEPARATOR}${suffix()}`);
+										effect((_$p) => setProp(_el$50, "fg", tone("error"), _$p));
+										return _el$50;
+									})()
+								}), null);
+								effect((_$p) => setProp(_el$49, "fg", muted(), _$p));
+								return _el$48;
+							})()
+						}), null);
+						insert(_el$44, createComponent(For, {
+							get each() {
+								return view().agents;
+							},
+							children: (row) => (() => {
+								var _el$51 = createElement("text");
+								insert(_el$51, () => childAgentRowText(row));
+								effect((_$p) => setProp(_el$51, "fg", muted(), _$p));
+								return _el$51;
+							})()
+						}), null);
+						insert(_el$44, createComponent(Show, {
+							get when() {
+								return hiddenChildAgentsText(view().agentsHidden, view().agentsHiddenCost);
+							},
+							children: (line) => (() => {
+								var _el$52 = createElement("text");
+								insert(_el$52, line);
+								effect((_$p) => setProp(_el$52, "fg", muted(), _$p));
+								return _el$52;
+							})()
+						}), null);
+						return _el$44;
+					})()
+				}), null);
+				return _el$23;
 			}
 		}), null);
 		effect((_p$) => {
-			var _v$7 = theme().accent, _v$8 = theme().text, _v$9 = theme().textMuted, _v$0 = theme().text, _v$1 = theme().textMuted;
-			_v$7 !== _p$.e && (_p$.e = setProp(_el$23, "fg", _v$7, _p$.e));
-			_v$8 !== _p$.t && (_p$.t = setProp(_el$25, "fg", _v$8, _p$.t));
-			_v$9 !== _p$.a && (_p$.a = setProp(_el$26, "fg", _v$9, _p$.a));
-			_v$0 !== _p$.o && (_p$.o = setProp(_el$29, "fg", _v$0, _p$.o));
-			_v$1 !== _p$.i && (_p$.i = setProp(_el$30, "fg", _v$1, _p$.i));
+			var _v$3 = text(), _v$4 = muted();
+			_v$3 !== _p$.e && (_p$.e = setProp(_el$13, "fg", _v$3, _p$.e));
+			_v$4 !== _p$.t && (_p$.t = setProp(_el$14, "fg", _v$4, _p$.t));
+			return _p$;
+		}, {
+			e: void 0,
+			t: void 0
+		});
+		return _el$12;
+	})();
+}
+/** Panel actions that only make sense with a row selected. A panel over an
+*  empty tree still owns `f`/`escape`, but the navigation keys fall through
+*  instead of being swallowed by a no-op. */
+const DISPATCH_PANEL_ROW_ACTIONS = /* @__PURE__ */ new Set([
+	"up",
+	"down",
+	"home",
+	"end",
+	"pageup",
+	"pagedown",
+	"toggle"
+]);
+/** One command: runs only while the panel owns the keyboard, and reports
+*  `false` (the host keeps the key) when it cannot act. `undefined` means the
+*  key was consumed. */
+function runDispatchPanelCommand(action, panel, model) {
+	if (panel.focused !== true) return false;
+	if (DISPATCH_PANEL_ROW_ACTIONS.has(action) && model.rows().length === 0) return false;
+	performDispatchPanelAction(action, model, panel);
+}
+/** Keymap layer of the panel, as data. It is registered inside the
+*  `session.panel` claim, but the host mounts the effects of *every* panel
+*  contribution, so the layer itself is not proof of focus: without `enabled`
+*  the `j/k/f/q/enter/escape` bindings were consumed while the panel was not
+*  focused and the composer lost its keys. `enabled` (the documented gate) makes
+*  the whole layer inert until `panel.focused` is true. Pure. */
+function dispatchPanelKeymapLayer(panel, model) {
+	const focused = () => panel.focused === true;
+	return {
+		mode: "global",
+		enabled: focused,
+		commands: DISPATCH_PANEL_COMMANDS.map((spec) => ({
+			id: spec.id,
+			title: spec.title,
+			bind: spec.bind,
+			run: () => focused() ? runDispatchPanelCommand(spec.action, panel, model) : false
+		}))
+	};
+}
+/** Keymap layer of the panel. Created inside the `session.panel` claim, so the
+*  host removes it with the panel; it renders nothing. */
+function DispatchPanelKeymap(props) {
+	props.context.keymap.layer(() => dispatchPanelKeymapLayer(props.panel, props.model));
+	return null;
+}
+/** The full-width dispatch panel: header counters, one row per child session,
+*  the detail of the selected child and the key hints. Wide panels put the
+*  detail beside the list; narrow ones stack it under the list and every cell is
+*  truncated to its own column instead of wrapping. */
+function DispatchPanel(props) {
+	const model = createDispatchPanelModel(props.context, () => props.panel);
+	const text = () => props.context.theme.text?.base;
+	const muted = () => props.context.theme.text?.muted ?? text();
+	const tone = (value) => props.context.theme?.text?.feedback?.[value]?.base ?? text();
+	const rowFg = (state) => {
+		if (state === "failed") return tone("error");
+		if (state === "running") return tone("success");
+		if (state === "interrupted") return tone("warning");
+		return text();
+	};
+	const selected = (id) => id === model.selectedID();
+	const rows = () => createComponent(For, {
+		get each() {
+			return model.visible().rows;
+		},
+		children: (row) => (() => {
+			var _el$53 = createElement("box"), _el$54 = createElement("text"), _el$55 = createElement("text");
+			insertNode(_el$53, _el$54);
+			insertNode(_el$53, _el$55);
+			setProp(_el$53, "flexDirection", "row");
+			setProp(_el$53, "flexShrink", 0);
+			insert(_el$54, () => selected(row.id) ? `▸ ` : "  ");
+			insert(_el$55, () => row.text);
+			effect((_p$) => {
+				var _v$9 = selected(row.id) ? text() : muted(), _v$0 = rowFg(row.state), _v$1 = selected(row.id) ? 1 : 0;
+				_v$9 !== _p$.e && (_p$.e = setProp(_el$54, "fg", _v$9, _p$.e));
+				_v$0 !== _p$.t && (_p$.t = setProp(_el$55, "fg", _v$0, _p$.t));
+				_v$1 !== _p$.a && (_p$.a = setProp(_el$55, "attributes", _v$1, _p$.a));
+				return _p$;
+			}, {
+				e: void 0,
+				t: void 0,
+				a: void 0
+			});
+			return _el$53;
+		})()
+	});
+	const detail = () => createComponent(For, {
+		get each() {
+			return model.detail();
+		},
+		children: (line, index) => (() => {
+			var _el$56 = createElement("text");
+			insert(_el$56, line);
+			effect((_$p) => setProp(_el$56, "fg", index() === 0 ? text() : muted(), _$p));
+			return _el$56;
+		})()
+	});
+	const empty = () => (() => {
+		var _el$57 = createElement("text");
+		insertNode(_el$57, createTextNode(`Nenhuma sessão delegada`));
+		effect((_$p) => setProp(_el$57, "fg", muted(), _$p));
+		return _el$57;
+	})();
+	return (() => {
+		var _el$59 = createElement("box"), _el$60 = createElement("text"), _el$61 = createElement("text"), _el$65 = createElement("box"), _el$66 = createElement("text");
+		insertNode(_el$59, _el$60);
+		insertNode(_el$59, _el$61);
+		insertNode(_el$59, _el$65);
+		insertNode(_el$59, _el$66);
+		setProp(_el$59, "flexDirection", "column");
+		setProp(_el$59, "width", "100%");
+		setProp(_el$59, "padding", 1);
+		insert(_el$59, createComponent(DispatchPanelKeymap, {
+			get context() {
+				return props.context;
+			},
+			get panel() {
+				return props.panel;
+			},
+			model
+		}), _el$60);
+		setProp(_el$60, "attributes", 1);
+		insert(_el$60, () => model.title());
+		insert(_el$59, createComponent(Show, {
+			get when() {
+				return model.header();
+			},
+			children: (line) => (() => {
+				var _el$67 = createElement("text");
+				insert(_el$67, line);
+				effect((_$p) => setProp(_el$67, "fg", muted(), _$p));
+				return _el$67;
+			})()
+		}), _el$61);
+		insert(_el$61, () => dispatchPanelRule(props.panel.width - 2));
+		insert(_el$59, createComponent(Show, {
+			get when() {
+				return model.layout().mode === "wide";
+			},
+			get fallback() {
+				return (() => {
+					var _el$68 = createElement("box");
+					setProp(_el$68, "flexDirection", "column");
+					insert(_el$68, createComponent(Show, {
+						get when() {
+							return model.rows().length > 0;
+						},
+						get fallback() {
+							return empty();
+						},
+						get children() {
+							var _el$69 = createElement("box");
+							setProp(_el$69, "flexDirection", "column");
+							insert(_el$69, rows);
+							return _el$69;
+						}
+					}), null);
+					insert(_el$68, createComponent(Show, {
+						get when() {
+							return model.selectedID();
+						},
+						get children() {
+							var _el$70 = createElement("box"), _el$71 = createElement("box");
+							insertNode(_el$70, _el$71);
+							setProp(_el$70, "flexDirection", "column");
+							setProp(_el$71, "height", 1);
+							insert(_el$70, detail, null);
+							return _el$70;
+						}
+					}), null);
+					return _el$68;
+				})();
+			},
+			get children() {
+				var _el$62 = createElement("box"), _el$63 = createElement("box");
+				insertNode(_el$62, _el$63);
+				setProp(_el$62, "flexDirection", "row");
+				setProp(_el$63, "flexDirection", "column");
+				insert(_el$63, createComponent(Show, {
+					get when() {
+						return model.rows().length > 0;
+					},
+					get fallback() {
+						return empty();
+					},
+					get children() {
+						return rows();
+					}
+				}));
+				insert(_el$62, createComponent(Show, {
+					get when() {
+						return model.selectedID();
+					},
+					get children() {
+						var _el$64 = createElement("box");
+						setProp(_el$64, "flexDirection", "column");
+						insert(_el$64, detail);
+						effect((_$p) => setProp(_el$64, "width", model.layout().detailWidth, _$p));
+						return _el$64;
+					}
+				}), null);
+				effect((_$p) => setProp(_el$63, "width", model.layout().listWidth, _$p));
+				return _el$62;
+			}
+		}), _el$65);
+		setProp(_el$65, "height", 1);
+		insert(_el$66, () => model.footer());
+		effect((_p$) => {
+			var _v$10 = text(), _v$11 = muted(), _v$12 = muted();
+			_v$10 !== _p$.e && (_p$.e = setProp(_el$60, "fg", _v$10, _p$.e));
+			_v$11 !== _p$.t && (_p$.t = setProp(_el$61, "fg", _v$11, _p$.t));
+			_v$12 !== _p$.a && (_p$.a = setProp(_el$66, "fg", _v$12, _p$.a));
 			return _p$;
 		}, {
 			e: void 0,
 			t: void 0,
-			a: void 0,
-			o: void 0,
-			i: void 0
+			a: void 0
 		});
-		return _el$22;
+		return _el$59;
 	})();
 }
-const tui = (api, _options, _meta) => {
-	if (pantheonPluginOnce("pantheon:tui")) return;
-	const [version, setVersion] = createSignal(null);
-	detectVersion(api).then((detected) => setVersion(detected)).catch(() => setVersion(null));
-	setupUsageBar(api);
-	const liveStore = createLiveDelegationStore();
-	const unsubscribeLive = registerLiveDelegationEvents(api, liveStore);
-	api.lifecycle.onDispose(() => {
-		unsubscribeLive();
-		liveStore.map.clear();
+/** App-level command claim: the only way into the panel. It registers the
+*  `pantheon.dispatch.open` command (palette + `/dispatch`) and renders nothing;
+*  the panel itself lives behind its own `session.panel` claim. */
+function DispatchCommandLayer(props) {
+	props.context.keymap.layer(() => ({
+		mode: "global",
+		commands: [{
+			id: "pantheon.dispatch.open",
+			title: "Pantheon: Dispatch",
+			group: "Pantheon",
+			palette: true,
+			slash: {
+				name: "dispatch",
+				aliases: ["pantheon-dispatch"]
+			},
+			run: () => {
+				openDispatchPanel(props.context);
+			}
+		}]
+	}));
+	return null;
+}
+/** Home-screen status contribution. The sidebar slot is session-scoped, so
+*  before the first prompt the sidebar may not mount at all (Known Issue) —
+*  this keeps a compact Pantheon line visible on the home footer meanwhile. */
+function HomeStatus(props) {
+	const preset = useActivePreset(props.context).preset;
+	const muted = () => props.context.theme?.text?.muted ?? props.context.theme?.text?.base;
+	return (() => {
+		var _el$72 = createElement("text");
+		insert(_el$72, () => `Pantheon v2.0.0-beta.1${preset().name ? ` ▸ ${preset().name}` : ""}`);
+		effect((_$p) => setProp(_el$72, "fg", muted(), _$p));
+		return _el$72;
+	})();
+}
+/** Lean footer model: only the preset label and the live delegation count. It
+*  deliberately does not reuse `createSidebarModel` — that model owns the
+*  completion toasts and the spinner, and a second instance would double-toast.
+*  No session id in the slot input is a graceful no-op (count 0). */
+function createFooterModel(context, sessionID) {
+	const [revision, setRevision] = createSignal(0);
+	const preset = useActivePreset(context).preset;
+	const activeSessionID = () => {
+		const id = sessionID();
+		return isValidSessionID(id) ? id : "";
+	};
+	const running = createMemo(() => {
+		revision();
+		const id = activeSessionID();
+		if (id === "") return 0;
+		let family = [];
+		try {
+			const result = context.data.session.family?.(id);
+			if (Array.isArray(result)) family = result;
+		} catch {
+			return 0;
+		}
+		const now = Date.now();
+		let count = 0;
+		for (const childID of family) {
+			if (childID === id || !isValidSessionID(childID)) continue;
+			try {
+				const child = context.data.session.get(childID);
+				if (child?.parentID !== id) continue;
+				if (toDelegationView(child, sessionStatusOf(context, childID), now).state === "running") count += 1;
+			} catch {}
+		}
+		return count;
 	});
-	api.slots.register({
-		order: 900,
-		slots: { sidebar_content(_ctx, props) {
-			return createComponent(View, {
-				api,
-				get sessionID() {
-					return props.session_id;
-				},
-				get version() {
-					return version();
-				},
-				liveStore
-			});
-		} }
+	onMount(() => {
+		onCleanup(subscribeSidebarRefresh(context, () => setRevision((value) => value + 1)));
 	});
-};
-const plugin = {
+	return {
+		preset,
+		running
+	};
+}
+/** Prompt-footer contribution: `▸<preset> · ✦<n> ativos`, appended next to the
+*  native line (never replacing it) and only while a delegation is running. */
+function PromptFooter(props) {
+	const model = createFooterModel(props.context, () => props.sessionID);
+	const muted = () => props.context.theme?.text?.muted ?? props.context.theme?.text?.base;
+	return createComponent(Show, {
+		get when() {
+			return model.running() > 0;
+		},
+		get children() {
+			var _el$73 = createElement("text");
+			insert(_el$73, () => `▸${model.preset().name ?? "default"} · ✦${model.running()} ativos`);
+			effect((_$p) => setProp(_el$73, "fg", muted(), _$p));
+			return _el$73;
+		}
+	});
+}
+const plugin = Plugin.define({
 	id: "pantheon.tui",
-	tui,
-	setup: async () => {}
-};
+	setup(context) {
+		const globalState = globalThis;
+		if (globalState[SINGLETON]) return;
+		globalState[SINGLETON] = true;
+		warmUpSidebarData(context, resolveLocation(context));
+		const unregisterSidebar = context.ui.slot({
+			append: "sidebar.content",
+			render: ({ sessionID }) => createComponent(Sidebar, {
+				context,
+				sessionID
+			})
+		});
+		const unregisterHome = context.ui.slot({
+			append: "home.footer.status",
+			render: () => createComponent(HomeStatus, { context })
+		});
+		const unregisterPromptFooter = context.ui.slot({
+			append: "prompt.footer",
+			render: ({ sessionID }) => createComponent(PromptFooter, {
+				context,
+				sessionID
+			})
+		});
+		const unregisterPanel = context.ui.slot({
+			append: "session.panel",
+			render: (panel) => createComponent(Show, {
+				get when() {
+					return panel.name === DISPATCH_PANEL_NAME;
+				},
+				get children() {
+					return createComponent(DispatchPanel, {
+						context,
+						panel
+					});
+				}
+			})
+		});
+		const unregisterCommands = context.ui.slot({
+			append: "app",
+			render: () => createComponent(DispatchCommandLayer, { context })
+		});
+		maybeShowWhatsNewV2(context);
+		return () => {
+			if (typeof unregisterSidebar === "function") unregisterSidebar();
+			if (typeof unregisterHome === "function") unregisterHome();
+			if (typeof unregisterPromptFooter === "function") unregisterPromptFooter();
+			if (typeof unregisterPanel === "function") unregisterPanel();
+			if (typeof unregisterCommands === "function") unregisterCommands();
+			delete globalState[SINGLETON];
+		};
+	}
+});
 //#endregion
-export { DELEGATION_ALIAS_WIDTH, DELEGATION_CHILDREN_RECENCY_MS, DELEGATION_CHILD_STATUS_GRACE_MS, DELEGATION_DESCRIPTION_MAX, DELEGATION_DONE_RETENTION_MS, DELEGATION_ELAPSED_WIDTH, DELEGATION_FAILED_RETENTION_MS, DELEGATION_ROW_GLYPHS, DELEGATION_VISIBLE_CEILING, IDLE_SILENCE_MS, NATIVE_LIVE_ALIASLESS_TTL_MS, STALE_RUNNING_THRESHOLD_MS, buildChildrenPath, ceilingDelegationList, childStatusToState, childrenToDelegationEntries, collectDelegationToolParts, compareDelegationEntries, countDelegationSources, createDelegationRowOpenHandler, createLiveDelegationStore, plugin as default, delegationActivity, delegationActivityLabel, delegationElapsed, delegationRowGlyph, delegationRowIdentity, delegationRowMarker, delegationRowStatus, delegationSpinnerFrame, delegationStateTone, extractToolActivity, filterDelegationsToSession, fmtElapsed, formatDelegationAlias, formatDelegationElapsed, formatDelegationHeader, formatDelegationRowLead, formatPanelLogLine, isValidSessionId, latestToolActivityFor, markStaleIfRunning, mergeChildDelegationSources, mergeDelegationSources, navigateToDelegationSession, panelLogDir, parseDelegationMarkdown, parseDelegationToolPart, readAllDelegationEntries, readDelegationEntries, reduceDelegationToolPart, registerLiveDelegationEvents, removeDelegationEntry, resolveCurrentSessionID, resolveDelegationsDir, resolvePantheonRoot, safeSessionPath, seedLiveDelegationMap, splitDelegationList, toDelegationEntry, trackToolActivity, truncateDelegationDescription, tuiLogPath, visibleDelegationList };
+export { BLOCK_ICONS, CONTEXT_BAR_CELLS, CONTEXT_BAR_EMPTY_CELL, CONTEXT_BAR_FILLED_CELL, DELEGATION_CHILD_STATUS_GRACE_MS, DISPATCH_AGENT_CEILING, DISPATCH_AGENT_WIDTH, DISPATCH_COST_WIDTH, DISPATCH_COUNT_WIDTH, DISPATCH_DONE_MARKER, DISPATCH_DURATION_WIDTH, DISPATCH_GROUP_COST_WIDTH, DISPATCH_KIND_ORIGIN_LABELS, DISPATCH_MAX_LINES, DISPATCH_MAX_WIDTH, DISPATCH_MIN_AGENT_WIDTH, DISPATCH_MODEL_WIDTH, DISPATCH_PANEL_AGENT_WIDTH, DISPATCH_PANEL_COMMANDS, DISPATCH_PANEL_COST_WIDTH, DISPATCH_PANEL_DASH, DISPATCH_PANEL_DURATION_WIDTH, DISPATCH_PANEL_EMPTY_TEXT, DISPATCH_PANEL_FULLSCREEN_BADGE, DISPATCH_PANEL_HEADER_MARKER, DISPATCH_PANEL_KIND_WIDTH, DISPATCH_PANEL_MIN_AGENT_WIDTH, DISPATCH_PANEL_NAME, DISPATCH_PANEL_PAGE_SIZE, DISPATCH_PANEL_RULE_CHAR, DISPATCH_PANEL_SELECTION_GUTTER, DISPATCH_PANEL_SELECTION_MARKER, DISPATCH_PANEL_TITLE_WIDTH, DISPATCH_PANEL_TOAST, DISPATCH_PANEL_WIDE_MIN_WIDTH, DISPATCH_RUNNING_CEILING, GIT_ARROW_DOWN, GIT_ARROW_UP, GIT_CHANGES_DEBOUNCE_MS, GIT_CLI_DEBOUNCE_MS, GIT_CLI_MAX_BUFFER, GIT_CLI_MIN_INTERVAL_MS, GIT_CLI_TIMEOUT_MS, HEADER_MAX_WIDTH, MODEL_USAGE_COST_WIDTH, MODEL_USAGE_DEBOUNCE_MS, MODEL_USAGE_MESSAGE_LIMIT, MODEL_USAGE_MODEL_WIDTH, MODEL_USAGE_SESSION_LIMIT, MODEL_USAGE_TOKEN_WIDTH, MODEL_USAGE_VISIBLE_CEILING, PRESET_MARKER, SIDEBAR_REFRESH_EVENTS, SIDEBAR_WAITING_LABEL, SPEND_30D_LABEL, SPEND_30D_MS, SPEND_LINE_SEPARATOR, SPEND_PROBE_TOLERANCE_MS, SPEND_PROBE_WINDOW_MS, SPEND_REFRESH_DEBOUNCE_MS, SPEND_TODAY_LABEL, TODO_TEXT_WIDTH, TODO_VISIBLE_CEILING, UNKNOWN_AGENT, agentKey, buildDispatchBlock, cacheHitPercent, ceilingModelUsage, ceilingTodoItems, cellWidth, childAgentRowText, classifyDispatchKind, collectChildAgentUsage, collectDispatch, collectModelUsage, collectSubagentCalls, collectWarmupTargets, completedSummaryText, computeContextUsage, contextBar, contextBarFilled, contextBlockRows, contextPerformanceLine, contextProgressColor, contextSpendLine, contextSpendLines, contextUsageTone, countGitChanges, createDispatchPanelModel, createFooterModel, createSidebarModel, plugin as default, defaultGitExec, delegationStateFromOutcome, delegationStateFromStatus, detectDelegationCompletions, dispatchAgentText, dispatchElapsed, dispatchHeaderSummary, dispatchKindFromAgent, dispatchKindFromPrefix, dispatchKindSuffix, dispatchModelText, dispatchPanelCell, dispatchPanelDetail, dispatchPanelFooter, dispatchPanelHeader, dispatchPanelKeymapLayer, dispatchPanelLayout, dispatchPanelMarker, dispatchPanelRangeText, dispatchPanelRowText, dispatchPanelRows, dispatchPanelRule, dispatchPanelTitle, dispatchPanelWindow, dispatchTokenLine, dispatchTokens, dispatchTotalCost, failedSuffixText, formatContextWindow, formatDispatchCost, formatDispatchDuration, formatGitChanges, formatGitSnapshot, formatSpendUSD, formatSpent, formatTokenCount, formatUsageCost, formatUsageTokens, gitProbeAllowed, hiddenChildAgentsText, hiddenModelUsageText, hiddenTodoText, isTodoStatus, isValidSessionID, lastAssistantWithTokens, latestTodoItems, messageTokensTotal, modelRefID, modelUsageRowLines, modelUsageRowText, modelUsageRows, navigateToSession, openDispatchPanel, orderDispatchEntries, orderTodoItems, padCell, parseGitAheadBehind, parseGitStatusPorcelain, parsePresetOverrides, parseTodoItems, performDispatchPanelAction, presetFromEnv, presetHeaderLine, providerIDFromModels, providerIDFromRef, readGitSnapshot, resetSpendUnit, resolveActiveModelRef, resolveActivePresetForTui, resolveContextLimit, resolveModelContextSnapshot, resolvedSpendUnit, runDispatchPanelCommand, runningChildRowText, shortModelID, shortSessionID, sidebarMoneyLines, sidebarPlaceholder, sidebarTextLines, spendWindows, spinnerFrame, startOfLocalDay, statsCost, statsRangeMatches, toDelegationView, toDispatchEntry, todoRowText, todoTone, transcriptWindow, truncateLabel, turnTokensPerSecond, withBlockSpacers };
 
 //# sourceMappingURL=tui.js.map

@@ -18,15 +18,14 @@ import { test } from 'node:test'
 const CLI = join(process.cwd(), 'bin', 'pantheon-init.mjs')
 const HAS_SCRIPT = spawnSync('script', ['--version'], { encoding: 'utf8' }).status === 0
 
-// These fixtures model the V1 layout (.opencode/agents/...). Pin the host
-// generation so a preview never depends on which OpenCode binary happens to be
-// installed on the machine running the tests.
+// V2-only fixtures. The env pin keeps the run deterministic on machines
+// without a runnable OpenCode binary.
 function baseEnv(cwd) {
   return {
     ...process.env,
     HOME: cwd,
     XDG_CONFIG_HOME: join(cwd, '.config'),
-    OPENCODE_VERSION: 'v1',
+    OPENCODE_VERSION: 'v2',
   }
 }
 
@@ -136,7 +135,7 @@ test('init dry-run JSON is stdout-only structured output and writes no target fi
     assert.equal(report.schema_version, 1)
     assert.equal(report.command, 'init')
     assert.equal(report.status, 'planned')
-    assert.ok(report.files.some((file) => file.path === '.opencode/agents/zeus.md'))
+    assert.ok(report.files.some((file) => file.path === 'agents/zeus.md'))
     assert.equal(existsSync(join(target, '.opencode')), false)
     assert.deepEqual(readdirSync(target), [])
   } finally {
@@ -230,8 +229,8 @@ test('the default plan probes the host and matches an explicit V2 plan', () => {
       { cwd: target, encoding: 'utf8', env },
     )
   }
-  // The reviewed-plan timestamp embeds the second it ran; a default and a
-  // pinned preview may straddle a second boundary.
+  // The reviewed-plan timestamp embeds the second it ran; two previews may
+  // straddle a second boundary.
   const normalize = (files) => {
     const relative = (filePath) =>
       filePath.replace(/^\.pantheon\/backups\/[^/]+\//, '.pantheon/backups/<ts>/')
@@ -241,7 +240,7 @@ test('the default plan probes the host and matches an explicit V2 plan', () => {
   }
   try {
     const auto = invoke()
-    const pinned = invoke('--opencode-version', 'v2')
+    const pinned = invoke()
     assert.equal(auto.status, 0, auto.stderr)
     assert.equal(pinned.status, 0, pinned.stderr)
     const autoReport = JSON.parse(auto.stdout)
@@ -409,7 +408,7 @@ test('JSON dry-run reports plan-save failures as one JSON document', () => {
 test('JSON save-plan rejects a collision with a planned target and preserves its sentinel', () => {
   const root = mkdtempSync(join(tmpdir(), 'pantheon-init-plan-collision-'))
   const target = join(root, 'target')
-  const plannedFile = join(target, '.opencode', 'agents', 'zeus.md')
+  const plannedFile = join(target, 'agents', 'zeus.md')
   const sentinel = 'user-managed sentinel\n'
   try {
     mkdirSync(dirname(plannedFile), { recursive: true })
@@ -487,7 +486,7 @@ test('authorized saved plan applies reviewed files and creates its backup', () =
     const { target, plan } = savePlan(root)
     const result = run(target, '--apply-plan', plan, '--yes')
     assert.equal(result.status, 0, result.stderr)
-    assert.equal(existsSync(join(target, '.opencode', 'agents', 'zeus.md')), true)
+    assert.equal(existsSync(join(target, 'agents', 'zeus.md')), true)
     assert.equal(existsSync(join(target, '.pantheon', 'backups')), true)
   } finally {
     rmSync(root, { recursive: true, force: true })
@@ -501,11 +500,10 @@ test('saved plugin plan reviews legacy removals, detects drift, and preserves un
   const pluginDir = join(target, '.opencode', 'plugins', 'pantheon-tui')
   const distDir = join(pluginDir, 'dist')
   const plan = join(root, 'reviewed-plan.json')
-  const legacyPaths = [
-    join(pluginDir, 'index.tsx'),
-    join(distDir, 'tui.tsx'),
-    join(pluginDir, 'index.ts'),
-  ]
+  // V2 copy semantics: index.tsx and dist/tui.tsx are legacy raw copies that
+  // get REMOVED; index.ts is the V2 server shim the copy REWRITES (update).
+  const legacyPaths = [join(pluginDir, 'index.tsx'), join(distDir, 'tui.tsx')]
+  const rewrittenPath = join(pluginDir, 'index.ts')
   const unreviewedPath = join(distDir, 'user-extra.tsx')
 
   mkdirSync(fakeBin)
@@ -515,6 +513,7 @@ test('saved plugin plan reviews legacy removals, detects drift, and preserves un
   legacyPaths.forEach((file, index) => {
     writeFileSync(file, `legacy-${index}`)
   })
+  writeFileSync(rewrittenPath, 'stale V1 shim')
 
   const invoke = (...args) =>
     spawnSync(process.execPath, [CLI, 'init', ...args], {
@@ -525,9 +524,8 @@ test('saved plugin plan reviews legacy removals, detects drift, and preserves un
         HOME: target,
         XDG_CONFIG_HOME: join(target, '.config'),
         PATH: `${fakeBin}:${process.env.PATH}`,
-        // Legacy-removal semantics differ per generation: V1 drops the V2
-        // `index.ts` shim. Pin V1 rather than depend on the host binary.
-        OPENCODE_VERSION: 'v1',
+        // Pin the generation so the run does not depend on the host binary.
+        OPENCODE_VERSION: 'v2',
       },
     })
 
@@ -551,6 +549,8 @@ test('saved plugin plan reviews legacy removals, detects drift, and preserves un
       assert.equal(operation?.action, 'remove', `saved plan must review removal of ${file}`)
       assert.equal(operation.before.exists, true, `saved plan must snapshot ${file}`)
     }
+    const rewritten = saved.operations.find((item) => item.path === relative(target, rewrittenPath))
+    assert.equal(rewritten?.action, 'update', 'the V2 server shim is rewritten, not removed')
     assert.ok(
       legacyPaths.every((file) => existsSync(file)),
       'preview must not delete legacy files',
@@ -595,8 +595,8 @@ test('--force cleanup is rejected from JSON preview', () => {
   const root = mkdtempSync(join(tmpdir(), 'pantheon-json-force-'))
   const plan = join(root, 'force-plan.json')
   try {
-    mkdirSync(join(root, '.opencode', 'commands'), { recursive: true })
-    writeFileSync(join(root, '.opencode', 'commands', 'user.md'), 'user command')
+    mkdirSync(join(root, 'commands'), { recursive: true })
+    writeFileSync(join(root, 'commands', 'user.md'), 'user command')
     const savedPlan = run(
       root,
       '--project',
@@ -621,10 +621,7 @@ test('--force cleanup is rejected from JSON preview', () => {
     )
     assert.notEqual(result.status, 0)
     assert.match(`${result.stdout}${result.stderr}`, /--force.*--json|--json.*--force/i)
-    assert.equal(
-      readFileSync(join(root, '.opencode', 'commands', 'user.md'), 'utf8'),
-      'user command',
-    )
+    assert.equal(readFileSync(join(root, 'commands', 'user.md'), 'utf8'), 'user command')
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -634,7 +631,7 @@ test('--dry-run --force lists plugin, agent, and skill subtree removals without 
   const target = mkdtempSync(join(tmpdir(), 'pantheon-force-removal-preview-'))
   const extraFiles = [
     join(target, '.opencode', 'plugins', 'pantheon-tui', 'user-extra.js'),
-    join(target, '.opencode', 'agents', 'user-agent.md'),
+    join(target, 'agents', 'user-agent.md'),
     join(target, '.opencode', 'skills', 'user-skill', 'notes.txt'),
   ]
   try {

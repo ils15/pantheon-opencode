@@ -8,7 +8,7 @@
     "gitDiffHash": "288130e3e9220437987bd82ae625a01b2863f5d50c3053c64950f2a37cb70ff1",
     "opencodeVersion": "opencode v2.2.0",
     "pluginGeneration": "v2",
-    "pluginRef": "./src/plugin-v2",
+    "pluginRef": "./src/plugin",
     "hostConfigPath": "$HOME/.config/opencode/opencode.json",
     "hostConfigUsed": true,
     "shadowConfigDir": "<benchmark-temp>/shadow-config-candidate",

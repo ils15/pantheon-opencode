@@ -421,13 +421,15 @@ state keeps the shared `STATE_INVALID` token.
 
 ### `mode: "verify"` — check named claims, fail-closed
 
-Input: `{ schemaVersion: 1, mode: "verify", claims }` where `claims` is 1–4
-records `{ name, claim }` — `name` a strict bounded token (it becomes the
-predicate question's name, unique), `claim` a bounded 1–200-char instruction
-string. The verify mode takes NO state text (like review); the request's only
-input part is a fixed template, and each claim text rides its own predicate
-question's instructions. The tool returns `results`, one verdict per claim
-name:
+Input: `{ schemaVersion: 1, mode: "verify", claims, state? }` where `claims` is 1–4
+named `{ name, claim }` records (token names, bounded claim text). The optional
+`state` is caller-supplied EVIDENCE the claims are judged against (bounded,
+hostility-scanned) — field report beta.13: without it, environment-dependent
+claims are unanswerable and the honest verdict is `UNVERIFIABLE`, not `FAIL`.
+Verdicts: probability > 0.65 → `PASS`; 0.35–0.65 → `UNVERIFIABLE` (the model
+could not tell — inclusive band, QA beta.20); below → `FAIL`; and every
+refusal, timeout, or malformed answer is `BLOCK` (fail-closed — only `PASS`
+counts as passing).
 
 - probability ≥ 0.5 → `PASS`;
 - probability < 0.5 → `FAIL`;
@@ -529,6 +531,35 @@ Division of labor; trusting an install is never the model's job:
   becomes the approved, versioned library other projects pull from; the
   skills CLI resolves private repositories with existing git credentials.
 
+The **discovery pipeline** binds these steps into one measured ladder
+(zeus.md carries the same rules):
+
+1. `mode: "skills"` answers over the installed pool — the Jev call that
+   decides within existing skills.
+2. Only on a gap: one read-only search across the **trust cascade** —
+   `node scripts/skill-search.mjs "<query>" --limit 5` queries, in order:
+   the **canonical Anthropic catalog** (`anthropics/skills` — curated
+   upstream; checked first so the canonical `pdf`/`docx`/`mcp-builder`
+   skills outrank the third-party clones that popularity ranking surfaces),
+   the **skills.sh index** (breadth with install-count signal, unreviewed;
+   known-good community repos to try by name in the GitHub tier:
+   `mattpocock/skills` — engineering craft, still untrusted until reviewed),
+   and **raw GitHub** `filename:SKILL.md` code search (orders of magnitude
+   wider — 8,480 hits for "satellite" where the skills.sh index offered
+   three — and the weakest trust). Output is the merged parseable contract
+   (`{skill, installs, url, source}` JSON; pinned by
+   `tests/skill-search.test.mjs`), tier-ordered. The search is networked
+   egress by the agent, priced by attention — never a Jev question by
+   itself, and at most one per need.
+3. One typed Jev choice question ranks the returned candidates
+   (descriptions + install counts as choice text; "none of these fit" is a
+   valid answer). Only names, counts and short descriptions cross the
+   boundary — skill contents are untrusted and never enter a Jev call.
+4. The winning candidate is PROPOSED to the user with its URL and the exact
+   command (`npx skills add <owner/repo@skill> -a opencode` — project-scoped
+   by default). Pantheon never installs; the review is the user's, and the
+   installed skill joins the pool that step 1 answers over.
+
 ## Verification boundary
 
 The focused tests (`tests/pantheon/jev-decisions.test.ts`,
@@ -539,4 +570,41 @@ runs with `globalThis.fetch` replaced by a throwing spy to prove the native
 route never touches a transport. A real-host canary asserts the tool's
 registration. No live provider request, canary, or credential check has been
 performed. The manual `pantheon_local_decision` advisory tool remains
-local-only and separate.
+local-only and separate. Field validation evidence lives in dated records
+under `bench/results/` (see `jev-field-validation-2026-11-05.md` for the
+sandbox install, the live scorecard, the N4 re-test, and the verify field
+run).
+
+## Expansion verdicts (measured, 2026-11-05)
+
+Each expansion direction was weighed against the measured gate chain and the
+field validation; the verdicts below are the current standing answer, not a
+ban — new field evidence reopens them.
+
+- **Jev as the arbiter of native-MCP calls (memory recall/store, checkpoints,
+  code-mode reads): no.** The economics are negative — a decide call reserves
+  budget and spends a live route round-trip to gate a free, local, instant
+  call. Where the answer is a rule, the rule wins: usage policy lives in the
+  agent instructions (zeus first, then the roster reform), measured by the
+  MCP usage audit, not by paid arbitration.
+- **Jev as the spend gate for `pantheon-vision`: defer.** Vision is the only
+  gateway-costed native MCP, but volume is small (84 execute blocks, 54
+  calls over the whole field history) and the V1 permission tier (`ask`)
+  plus the one-pass-per-image usage policy already bound it. Revisit only if
+  the audit shows repeated abuse that rules cannot hold.
+- **Rank cap 8→20 (P4/P11 need 20+ candidates): blocked on a design change,
+  not a constant.** The host answers one scalar per question, so
+  winner-with-fit-score does not scale past roughly 10 candidates — at 20+
+  the single question cannot discriminate. Expansion implies a tiered or
+  tournament shape (two rounds of 8, or a shortlist round followed by a
+  winner round), each round its own reserved call; that doubles latency and
+  cost per decision, so it must be its own measured change, not a cap bump.
+- **Callers and routes: sufficient.** `PANTHEON_JEV_SPECIALIST_CALLERS`
+  (typed questions for allowlisted specialists), Zeus-only presets, and the
+  five supported routes cover the current usage; no evidence of demand for
+  more.
+- **Dead-route holds: releasable, narrowly.** `decision-router holds release
+  --provider <p> --reason` archives and releases unresolved holds of
+  providers that no longer exist (they can never reconcile and would freeze
+  budget forever). Live providers are refused; their holds settle by
+  reconciliation or roll off with the period.

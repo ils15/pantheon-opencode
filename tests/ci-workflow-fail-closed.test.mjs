@@ -197,7 +197,7 @@ test('CI wires explicit coverage and V2 isolation gates', () => {
   )
   assert.match(workflow, /python3 -m coverage report --fail-under=80/)
 
-  const testJob = workflow.match(/^ {2}test-suite:[\s\S]*?(?=^ {2}plugin-v2-ts-coverage:)/m)
+  const testJob = workflow.match(/^ {2}test-suite:[\s\S]*?(?=^ {2}plugin-ts-coverage:)/m)
   assert.ok(testJob, 'CI must run the test suite in its own parallel job')
   assert.match(testJob[0], /fetch-depth: 0/)
   assert.match(testJob[0], /npm run test:node/)
@@ -217,7 +217,7 @@ test('CI wires explicit coverage and V2 isolation gates', () => {
   )
   assert.match(
     sandboxStep[0],
-    /OPENCODE_DB:\s+\$\{\{\s*runner\.temp\s*\}\}\/pantheon-sandbox-v2\/opencode-v2\.db/,
+    /OPENCODE_DB:\s+\$\{\{\s*runner\.temp\s*\}\}\/pantheon-sandbox-v2\/opencode\.db/,
   )
   assert.doesNotMatch(
     sandboxStep[0],
@@ -226,7 +226,7 @@ test('CI wires explicit coverage and V2 isolation gates', () => {
   )
   assert.match(sandboxStep[0], /PANTHEON_V2_PORT:\s+'49376'/)
   assert.match(sandboxStep[0], /PORT:\s+'49376'/)
-  assert.match(sandboxStep[0], /bash scripts\/test-opencode-v2-sandbox\.sh --prepare --run v2/)
+  assert.match(sandboxStep[0], /bash scripts\/test-opencode-sandbox\.sh --prepare --run v2/)
   assert.doesNotMatch(
     sandboxStep[0],
     /serve --hostname 127\.0\.0\.1/,
@@ -237,7 +237,7 @@ test('CI wires explicit coverage and V2 isolation gates', () => {
 
 test('V2 harness isolates config, database, port, and waits for five MCP handshakes', () => {
   const harness = readFileSync(
-    fileURLToPath(new URL('../scripts/test-opencode-v2-sandbox.sh', import.meta.url)),
+    fileURLToPath(new URL('../scripts/test-opencode-sandbox.sh', import.meta.url)),
     'utf8',
   )
   const envHelper = readFileSync(
@@ -293,7 +293,7 @@ test('V2 harness isolates config, database, port, and waits for five MCP handsha
 
 test('V2 loader order starts mcp list before waiting for handshakes', () => {
   const harness = readFileSync(
-    fileURLToPath(new URL('../scripts/test-opencode-v2-sandbox.sh', import.meta.url)),
+    fileURLToPath(new URL('../scripts/test-opencode-sandbox.sh', import.meta.url)),
     'utf8',
   )
   const serviceBody = harness.match(/start_v2_service\(\) \{[\s\S]*?\n\}/)?.[0]
@@ -337,7 +337,7 @@ test('V2 loader order starts mcp list before waiting for handshakes', () => {
 
 test('V2 config merge rewrites stale MCP paths to the active sandbox', (t) => {
   const harness = readFileSync(
-    fileURLToPath(new URL('../scripts/test-opencode-v2-sandbox.sh', import.meta.url)),
+    fileURLToPath(new URL('../scripts/test-opencode-sandbox.sh', import.meta.url)),
     'utf8',
   )
   const sandboxRoot = mkdtempSync(join(tmpdir(), 'pantheon-v2-config-contract-'))

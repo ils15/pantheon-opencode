@@ -1,8 +1,8 @@
 # Architecture
 
 **Audience:** developers extending Pantheon and anyone who wants to know how the
-pieces fit. Setup is in [Installation](INSTALLATION.md); user-facing V2 behavior
-is in [OpenCode V2](opencode-v2.md).
+pieces fit. Setup is in [Installation](INSTALLATION.md); user-facing 2.x behavior
+is in [OpenCode 2.x](opencode.md).
 
 ## Agent flow
 
@@ -42,7 +42,7 @@ Pantheon delegates through the host's native child-session engine. The callable
 tool is `subagent` in the reported root runtime; host/API documentation calls
 the same mechanism `task()`. Tool availability, background options, and
 completion observability are properties of the active runtime, not of Pantheon.
-The former `pantheon_delegate` tool and the V1 delegation engine were removed.
+The former `pantheon_delegate` tool and its delegation engine were removed.
 
 Every root dispatch carries a concise handoff brief: objective/result, bounded
 scope and acceptance criteria, only the relevant inputs, constraints and safety
@@ -63,7 +63,7 @@ no completion/status tool is exposed, prefer synchronous dispatch or wait for a
 host notification; do not assume polling, cancellation, job tracking, or
 board-based recovery.
 
-On OpenCode V2, the plugin additionally enforces a caller/target matrix for
+On OpenCode 2.x, the plugin additionally enforces a caller/target matrix for
 Pantheon-managed `subagent` requests when the host exposes
 `ctx.permission.hook`. It matches the permission source's session, message, and
 tool-call ids to a short-lived record from `tool.execute.before`, then requires
@@ -72,63 +72,47 @@ origins fail closed. If the hook is unavailable, host permissions remain in
 control. The matrix itself is documented in
 [Permissions, Gates & Delegation](PERMISSIONS-QUALITY-DELEGATION.md).
 
-## What each generation registers
+## What the plugin registers
 
-The two plugin generations are exclusive. Each installation registers exactly
-one of them.
+There is a single generation: 2.0 removed the V1 plugin line, and the surface
+below is the only one.
 
-### V1
+The plugin is registered under the plural `plugins` key as the
+`<installed>/src/plugin` directory. `src/plugin/index.ts` re-exports the real
+entry at `src/plugin.ts`; the tool-hook registration in `src/plugin.ts` is fed
+by the tool definitions in `src/pantheon/tools.ts`.
 
-Registered under the singular `plugin` key as `src/plugin.ts` plus
-`src/plugins/pantheon-hooks.ts`. The tool map is declared in
-`src/plugin.ts:409-421`:
+Four unconditional tools:
 
-- `hashline_edit`
-- `pantheon_goal_create`
-- `pantheon_goal_update`
-- `pantheon_goal_get`
-- `pantheon_cost`
-- `pantheon_model`
-
-Six tools. V1 also registers the BackgroundJobBoard lifecycle, V1 event/tool
-hooks, and the V1 compaction path.
-
-### V2
-
-Registered under the plural `plugins` key as the `<installed>/src/plugin-v2`
-directory. `src/plugin-v2/index.ts` re-exports the real entry at
-`src/plugin-v2.ts`. The registration path is `registerV2Tools` in
-`src/plugin-v2.ts:476-519`, fed by `createV2ToolDefinitions` in
-`src/pantheon/v2-tools.ts:437-480`.
-
-Three unconditional tools:
-
-- `hashline_edit` — `src/pantheon/v2-tools.ts:440`
-- `pantheon_cost` — `src/pantheon/v2-tools.ts:452`
-- `pantheon_model` — `src/pantheon/v2-tools.ts:466`
+- `hashline_edit` — `src/pantheon/tools.ts`
+- `pantheon_cost` — `src/pantheon/tools.ts`
+- `pantheon_model` — `src/pantheon/tools.ts`
+- `pantheon_local_decision` — `src/pantheon/tools.ts`. The advisory local
+  selector; it rejects execution unless the host tool context identifies the
+  caller as Zeus.
 
 Up to two host-dependent tools:
 
 - `vision_describe` — added only when `ctx.model.list` is a function
-  (`src/plugin-v2.ts:492-495`; definition at `src/pantheon/v2-vision.ts:532`).
+  (`src/plugin.ts`; definition at `src/pantheon/native-vision.ts`).
 - `pantheon_bounded_read` — added only when the `tool.execute.before` hook
   registered and the host exposes the permission and session APIs
-  (`src/plugin-v2.ts:1846-1852`; definition at
-  `src/pantheon/v2-bounded-read.ts:451`). Root Zeus sessions only.
+  (`src/plugin.ts`; definition at `src/pantheon/bounded-read.ts`). Root Zeus
+  sessions only.
 
-The three goal tools are absent from V2 because the goal loop needs V1
-infrastructure the V2 `PluginContext` does not expose. The gap is reported as
-`goal-tools`.
+The three goal tools are absent because the goal loop needs infrastructure the
+host's `PluginContext` does not expose. The gap is reported as `goal-tools`.
 
-V2 also wires five event subscriptions (`session.created`, `session.idle`,
-`session.deleted`, `session.error`, `session.compacted`), session hooks
-(`prompt`, `context`, `compaction`), a read-only-enforcing `execute.before`
-hook (the same handler denies the orchestrator `read`/`glob`/`grep` of source,
-tests and scripts), an `execute.after` chain (`task-result-guard` →
-`context-sandbox` → `read-enhancer` → formatter + delegation audit), and a
-`permission.evaluate` hook when the host exposes it. The V1→V2 bridge is built
-in the V2 entry itself (`installV2Bridge`), so idle dispatch reaches the todo
-enforcer whenever the host's `session` domain supports it.
+The plugin also wires five event subscriptions (`session.created`,
+`session.idle`, `session.deleted`, `session.error`, `session.compacted`),
+session hooks (`prompt`, `context`, `compaction`), a read-only-enforcing
+`execute.before` hook (the same handler denies the orchestrator
+`read`/`glob`/`grep` of source, tests and scripts), an `execute.after` chain
+(`task-result-guard` → `context-sandbox` → `read-enhancer` → formatter +
+delegation audit), and a `permission.evaluate` hook when the host exposes it.
+The entry constructs the idle todo enforcer itself when the host's `session`
+domain exposes what it needs; where it does not, the gap is reported as
+`idle-todo-enforcer`.
 
 ## Installer and config model
 
@@ -138,17 +122,18 @@ target config. There is no runtime generation step.
 - The installer writes `opencode.json`, never `opencode.jsonc`. A host may merge
   a sibling `.jsonc`; see
   [Compatibility](COMPATIBILITY.md#config-registration-and-the-hosts-config-merge).
-- It strips Pantheon references from both config shapes before writing the
-  selected generation, so a V1 and a V2 Pantheon plugin never coexist.
+- It strips Pantheon references from the legacy singular `plugin` key and the
+  plural `plugins` key before writing the current registration, so two Pantheon
+  plugins never coexist. Legacy V1-shaped config keys are normalized to the
+  2.x shapes before the write.
 - Third-party plugin and MCP entries are preserved and never converted.
 - A versioned per-file ownership inventory records what the installer owns, so
   `reconcile` can find stale, unchanged installer files.
 
-The package exposes both contracts as importable exports:
-`pantheon-opencode/plugin` (V1), `pantheon-opencode/plugin-v2` (V2), and
-`pantheon-opencode/v2-bridge` (optional interop). The bridge passes V1
-infrastructure singletons through V2 `ctx.options`; V2 works standalone with
-graceful degradation.
+The package exposes the plugin as the importable export
+`pantheon-opencode/plugin`; the `pantheon-opencode/local-decision-router`
+subpath is the decision-router TypeScript source. There is no bridge export and
+no second contract: the plugin works standalone with graceful degradation.
 
 ## Memory and context stores
 
@@ -176,7 +161,7 @@ and registered at `:196-301`:
 
 The entrypoints were renamed away from the shared `*_server.py` token; the
 installer heals stale paths using the mapping in
-`scripts/install/config-migration.mjs:700-706`. Setup and allowlists are in
+`scripts/install/config-migration.mjs:521`. Setup and allowlists are in
 [MCP](MCP.md).
 
 ## Design principles

@@ -12,8 +12,8 @@ const BUNDLE = join(ROOT, 'scripts', 'decision-router-budget.mjs')
 /** Every prebuilt bundle the CLI imports; all must ship and stay TypeScript-free. */
 const BUNDLES = [
   BUNDLE,
-  join(ROOT, 'scripts', 'decision-router-v2-budget.mjs'),
-  join(ROOT, 'scripts', 'decision-router-v2-egress.mjs'),
+  join(ROOT, 'scripts', 'decision-router-budget-gates.mjs'),
+  join(ROOT, 'scripts', 'decision-router-egress.mjs'),
 ]
 
 /** Relative TypeScript specifiers that Node cannot load from a published .mjs. */
@@ -55,8 +55,8 @@ test('CLI runs from an installed package layout inside node_modules', () => {
     for (const rel of [
       'scripts/decision-router.mjs',
       'scripts/decision-router-budget.mjs',
-      'scripts/decision-router-v2-budget.mjs',
-      'scripts/decision-router-v2-egress.mjs',
+      'scripts/decision-router-budget-gates.mjs',
+      'scripts/decision-router-egress.mjs',
       'scripts/install/decision-router-config.mjs',
       'scripts/install/decision-layer-preview.mjs',
       'scripts/install/plan.mjs',

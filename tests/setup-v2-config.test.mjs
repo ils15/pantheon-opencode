@@ -6,7 +6,7 @@ import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { migrateV1toV2 } from '../scripts/install/config-migration.mjs'
+import { normalizeMcpConfigToV2 } from '../scripts/install/config-migration.mjs'
 import { planArtifactDigest } from '../scripts/install/plan-artifact.mjs'
 import { writeConfigWithBackup } from '../scripts/install/shared.mjs'
 import { runSetup } from '../scripts/setup.mjs'
@@ -95,28 +95,29 @@ function captureOutput() {
   return { lines, write: (text) => lines.push(String(text)) }
 }
 
-test('setup wrapper preserves init --yes and only offers V2 preparation on a detected V2 host', async () => {
+test('setup wrapper preserves init --yes, refuses a v1 pin, and offers V2 preparation on a v2 host', async () => {
   const calls = []
   const runInit = async (args) => {
     calls.push(args)
     return { status: 0 }
   }
   const prepared = []
-  await runSetupWithPreview({
+  const lines = []
+  const result = await runSetupWithPreview({
     args: ['--yes'],
     env: { OPENCODE_VERSION: 'v1' },
     interactive: true,
     runInit,
     prepare: async (options) => prepared.push(options),
-    output: { write() {} },
+    output: { write: (text) => lines.push(String(text)) },
   })
-  assert.deepEqual(calls, [
-    ['init', '--yes', '--headless', '--setup-approved-plan-stdin', '--version=v1'],
-  ])
+  assert.equal(result, 1, 'an explicit v1 pin must refuse setup before anything runs')
+  assert.deepEqual(calls, [], 'a refused host must never start init')
   assert.deepEqual(prepared, [])
+  assert.match(lines.join(''), /Pantheon 2\.0 requires OpenCode 2\.x/)
 
   await runSetupWithPreview({
-    args: [],
+    args: ['--yes'],
     env: { OPENCODE_VERSION: 'v2' },
     interactive: true,
     runInit,
@@ -301,29 +302,32 @@ test('V2 setup dry-run previews migration and invokes only init dry-run', async 
   ])
 })
 
-test('setup wrapper uses init version precedence for explicit CLI selections over environment', async () => {
+test('setup refuses an explicit v1 pin before any V2 config preparation', async () => {
   const prepared = []
-  const run = async (args, env) =>
-    runSetupWithPreview({
+  for (const args of [['--yes'], ['--headless'], ['--dry-run']]) {
+    const result = await runSetupWithPreview({
       args,
-      env,
+      env: { OPENCODE_VERSION: 'v1' },
       interactive: true,
       runInit: async () => ({ status: 0 }),
       prepare: async (options) => prepared.push(options),
       output: { write() {} },
     })
-
-  await run(['--opencode-version', 'v2'], { OPENCODE_VERSION: 'v1' })
+    assert.equal(result, 1, `${args.join(' ')} must not bypass the 1.x refusal`)
+  }
+  assert.equal(prepared.length, 0)
+  await runSetupWithPreview({
+    args: ['--yes'],
+    env: { OPENCODE_VERSION: 'v2' },
+    interactive: true,
+    runInit: async () => ({ status: 0 }),
+    prepare: async (options) => prepared.push(options),
+    output: { write() {} },
+  })
   assert.equal(prepared.length, 1)
-  await run(['--version=v1'], { OPENCODE_VERSION: 'v2' })
-  assert.equal(prepared.length, 1)
-  await run(['--version', 'v2'], { OPENCODE_VERSION: 'v1' })
-  assert.equal(prepared.length, 2)
-  await run(['--opencode-version', 'v2', '--version', 'v1'], { OPENCODE_VERSION: 'v2' })
-  assert.equal(prepared.length, 2)
 })
 
-test('setup resolves auto version once and pins that generation through preflight and init', async (t) => {
+test('setup resolves the generation gate exactly once and pins no version flag', async (t) => {
   const home = fixture(t)
   const xdg = join(home, 'xdg')
   fs.mkdirSync(xdg)
@@ -332,14 +336,14 @@ test('setup resolves auto version once and pins that generation through prefligh
   let finalArgs
 
   const result = await runSetup({
-    args: ['--version', 'auto'],
+    args: [],
     env: { XDG_CONFIG_HOME: xdg },
     home,
     cwd: home,
     interactive: true,
     resolveVersion: () => {
       resolutions += 1
-      return resolutions === 1 ? 'v2' : 'v1'
+      return 'v2'
     },
     prepare: async () => ({ status: 'unchanged', changes: [] }),
     previewInit: async (args) => {
@@ -355,10 +359,15 @@ test('setup resolves auto version once and pins that generation through prefligh
   })
 
   assert.equal(result, 0)
-  assert.equal(resolutions, 1)
-  assert.equal(previewArgs.filter((arg) => arg.startsWith('--version=')).join(), '--version=v2')
-  assert.equal(finalArgs.filter((arg) => arg.startsWith('--version=')).join(), '--version=v2')
-  assert.equal(finalArgs.includes('--version'), false)
+  assert.equal(resolutions, 1, 'the gate must run exactly once per setup')
+  assert.equal(
+    previewArgs.some((arg) => arg.startsWith('--version')),
+    false,
+  )
+  assert.equal(
+    finalArgs.some((arg) => arg.startsWith('--version')),
+    false,
+  )
 })
 
 test('config drift after authorization aborts before migration or init writes', async (t) => {
@@ -462,13 +471,8 @@ test('installer input drift after authorization stops before init and reports mi
   assert.match(output.lines.join(''), /pantheon-opencode restore/)
 })
 
-test('invalid explicit versions fail in headless and dry-run CLI modes without writes', (t) => {
-  for (const selector of [
-    ['--version', 'v3'],
-    ['--version=v3'],
-    ['--version', 'garbage'],
-    ['--version=garbage'],
-  ]) {
+test('invalid OPENCODE_VERSION pins fail in headless and dry-run CLI modes without writes', (t) => {
+  for (const pinned of ['v1', 'garbage']) {
     for (const mode of ['--headless', '--dry-run']) {
       const root = fixture(t)
       const xdg = join(root, 'xdg')
@@ -477,7 +481,7 @@ test('invalid explicit versions fail in headless and dry-run CLI modes without w
       fs.mkdirSync(cwd)
       const result = spawnSync(
         process.execPath,
-        [join(process.cwd(), 'scripts', 'setup.mjs'), ...selector, mode],
+        [join(process.cwd(), 'scripts', 'setup.mjs'), mode],
         {
           cwd,
           encoding: 'utf8',
@@ -485,43 +489,18 @@ test('invalid explicit versions fail in headless and dry-run CLI modes without w
             ...process.env,
             HOME: root,
             XDG_CONFIG_HOME: xdg,
-            OPENCODE_VERSION: 'v2',
+            OPENCODE_VERSION: pinned,
           },
         },
       )
-      assert.notEqual(result.status, 0, `${selector.join(' ')} ${mode} must fail`)
-      assert.match(`${result.stdout}\n${result.stderr}`, /expected v1, v2, or auto/)
+      assert.notEqual(result.status, 0, `OPENCODE_VERSION=${pinned} ${mode} must fail`)
+      assert.match(
+        `${result.stdout}\n${result.stderr}`,
+        /Pantheon 2\.0 requires OpenCode 2\.x|Invalid OPENCODE_VERSION/,
+      )
       assert.deepEqual(fs.readdirSync(xdg), [])
       assert.deepEqual(fs.readdirSync(cwd), [])
     }
-  }
-})
-
-test('setup rejects missing explicit version values before falling back to OPENCODE_VERSION', (t) => {
-  for (const selector of [['--version', '--dry-run'], ['--version=']]) {
-    const root = fixture(t)
-    const xdg = join(root, 'xdg')
-    const cwd = join(root, 'cwd')
-    fs.mkdirSync(xdg)
-    fs.mkdirSync(cwd)
-    const result = spawnSync(
-      process.execPath,
-      [join(process.cwd(), 'scripts', 'setup.mjs'), ...selector],
-      {
-        cwd,
-        encoding: 'utf8',
-        env: {
-          ...process.env,
-          HOME: root,
-          XDG_CONFIG_HOME: xdg,
-          OPENCODE_VERSION: 'v2',
-        },
-      },
-    )
-    assert.notEqual(result.status, 0, selector.join(' '))
-    assert.match(`${result.stdout}\n${result.stderr}`, /--version requires a value/i)
-    assert.deepEqual(fs.readdirSync(xdg), [])
-    assert.deepEqual(fs.readdirSync(cwd), [])
   }
 })
 
@@ -544,13 +523,14 @@ test('headless setup previews V2 config even with --yes and never applies it', a
   assert.equal(initCalls, 0)
 })
 
-test('headless setup never starts a writing init for V1 or unchanged V2 config', async () => {
-  for (const { env, args, prepare } of [
-    { env: { OPENCODE_VERSION: 'v1' }, args: ['--headless'] },
+test('headless setup never starts a writing init for a refused host or an unchanged V2 config', async () => {
+  for (const { env, args, prepare, expected } of [
+    { env: { OPENCODE_VERSION: 'v1' }, args: ['--headless'], prepare: undefined, expected: 1 },
     {
       env: { OPENCODE_VERSION: 'v2', CI: 'true' },
       args: ['--yes'],
       prepare: async () => ({ status: 'unchanged', changes: [] }),
+      expected: 0,
     },
   ]) {
     let initCalls = 0
@@ -565,7 +545,7 @@ test('headless setup never starts a writing init for V1 or unchanged V2 config',
       },
       output: { write() {} },
     })
-    assert.equal(result, 0)
+    assert.equal(result, expected)
     assert.equal(initCalls, 0)
   }
 })
@@ -768,7 +748,7 @@ test('inspection reports only exact Pantheon plugin and MCP identities with conf
     target,
     JSON.stringify({
       provider: { private: { apiKey: 'sk-secret-inspection-value' } },
-      plugins: ['src/plugin-v2', 'third-party-plugin'],
+      plugins: ['src/plugin', 'third-party-plugin'],
       mcp: {
         'pantheon-resources': {
           type: 'local',
@@ -1550,7 +1530,7 @@ test('safe JSONC managed plugin and MCP entries move without changing effective 
   writeFileSync(
     jsonc,
     JSON.stringify({
-      plugins: ['src/plugin-v2', 'jsonc-plugin'],
+      plugins: ['src/plugin', 'jsonc-plugin'],
       mcp: { servers: { 'pantheon-resources': managedServer } },
       theme: 'dark',
     }),
@@ -1564,7 +1544,7 @@ test('safe JSONC managed plugin and MCP entries move without changing effective 
   assert.equal(result.status, 'applied')
   const targetConfig = JSON.parse(readFileSync(json, 'utf8'))
   const sourceConfig = JSON.parse(readFileSync(jsonc, 'utf8'))
-  assert.deepEqual(targetConfig.plugins, ['existing-plugin', 'src/plugin-v2'])
+  assert.deepEqual(targetConfig.plugins, ['existing-plugin', 'src/plugin'])
   assert.deepEqual(Object.keys(targetConfig.mcp.servers), ['pantheon-resources'])
   assert.deepEqual(sourceConfig.plugins, ['jsonc-plugin'])
   assert.deepEqual(sourceConfig.mcp.servers, {})
@@ -1719,10 +1699,10 @@ test('exact cross-layer Pantheon plugin duplicates are removed from JSONC', asyn
   const root = fixture(t)
   const json = join(root, 'opencode.json')
   const jsonc = join(root, 'opencode.jsonc')
-  writeFileSync(json, JSON.stringify({ plugins: ['before', 'src/plugin-v2', 'after'] }))
+  writeFileSync(json, JSON.stringify({ plugins: ['before', 'src/plugin', 'after'] }))
   writeFileSync(
     jsonc,
-    JSON.stringify({ plugins: ['jsonc-before', 'src/plugin-v2', 'jsonc-middle', 'src/plugin-v2'] }),
+    JSON.stringify({ plugins: ['jsonc-before', 'src/plugin', 'jsonc-middle', 'src/plugin'] }),
   )
 
   const result = await prepareWithTestApply({
@@ -1734,7 +1714,7 @@ test('exact cross-layer Pantheon plugin duplicates are removed from JSONC', asyn
   assert.equal(result.status, 'applied')
   assert.deepEqual(JSON.parse(readFileSync(json, 'utf8')).plugins, [
     'before',
-    'src/plugin-v2',
+    'src/plugin',
     'after',
   ])
   assert.deepEqual(JSON.parse(readFileSync(jsonc, 'utf8')).plugins, [
@@ -1751,7 +1731,7 @@ test('setup moves one exact duplicate managed plugin and leaves no duplicate if 
   const json = join(configDir, 'opencode.json')
   const jsonc = join(configDir, 'opencode.jsonc')
   writeFileSync(json, JSON.stringify({ theme: 'dark' }))
-  writeFileSync(jsonc, JSON.stringify({ plugins: ['src/plugin-v2', 'src/plugin-v2', 'user'] }))
+  writeFileSync(jsonc, JSON.stringify({ plugins: ['src/plugin', 'src/plugin', 'user'] }))
 
   const result = await runSetup({
     args: ['--components', 'agents'],
@@ -1771,7 +1751,7 @@ test('setup moves one exact duplicate managed plugin and leaves no duplicate if 
   })
 
   assert.equal(result, 1)
-  assert.deepEqual(JSON.parse(readFileSync(json, 'utf8')).plugins, ['src/plugin-v2'])
+  assert.deepEqual(JSON.parse(readFileSync(json, 'utf8')).plugins, ['src/plugin'])
   assert.deepEqual(JSON.parse(readFileSync(jsonc, 'utf8')).plugins, ['user'])
 })
 
@@ -1782,8 +1762,8 @@ test('setup refuses differing duplicate managed plugin entries before any write'
   const originalJson = JSON.stringify({ theme: 'dark' })
   const originalJsonc = JSON.stringify({
     plugins: [
-      { package: 'src/plugin-v2', options: { mode: 'first' } },
-      { package: 'src/plugin-v2', options: { mode: 'second' } },
+      { package: 'src/plugin', options: { mode: 'first' } },
+      { package: 'src/plugin', options: { mode: 'second' } },
     ],
   })
   writeFileSync(json, originalJson)
@@ -1818,10 +1798,10 @@ test('cross-layer Pantheon plugin duplicates with differing options block before
   const json = join(root, 'opencode.json')
   const jsonc = join(root, 'opencode.jsonc')
   const originalJson = JSON.stringify({
-    plugins: [{ package: 'src/plugin-v2', options: { mode: 'json' } }],
+    plugins: [{ package: 'src/plugin', options: { mode: 'json' } }],
   })
   const originalJsonc = JSON.stringify({
-    plugins: [{ package: 'src/plugin-v2', options: { mode: 'jsonc' } }],
+    plugins: [{ package: 'src/plugin', options: { mode: 'jsonc' } }],
   })
   writeFileSync(json, originalJson)
   writeFileSync(jsonc, originalJsonc)
@@ -1878,7 +1858,7 @@ test('moving a nested Pantheon MCP entry preserves flat user servers in the V2 c
   const staged = JSON.parse(readFileSync(json, 'utf8'))
   assert.deepEqual(staged.mcp['user-server'], userServer)
   assert.deepEqual(staged.mcp.servers['pantheon-resources'], managedServer)
-  const converted = migrateV1toV2(staged)
+  const converted = { mcp: normalizeMcpConfigToV2(staged.mcp) }
   assert.deepEqual(converted.mcp.servers['user-server'], {
     type: 'remote',
     url: 'https://user.example/mcp',
@@ -1914,7 +1894,7 @@ test('moving a JSONC managed MCP entry preserves a flat server literally named s
   const targetConfig = JSON.parse(readFileSync(json, 'utf8'))
   assert.deepEqual(targetConfig.mcp.servers.servers, flatServers)
   assert.deepEqual(targetConfig.mcp.servers['pantheon-resources'], managedServer)
-  assert.deepEqual(migrateV1toV2(targetConfig).mcp.servers.servers, flatServers)
+  assert.deepEqual(normalizeMcpConfigToV2(targetConfig.mcp).servers.servers, flatServers)
 })
 
 test('ambiguous duplicate flat and nested MCP server names fail closed without writes', async (t) => {
@@ -1950,7 +1930,7 @@ test('unsafe plugin order and same-name MCP overrides fail closed when JSONC plu
     mcp: { servers: { 'pantheon-resources': override } },
   })
   const originalJsonc = JSON.stringify({
-    plugins: ['jsonc-plugin', 'src/plugin-v2'],
+    plugins: ['jsonc-plugin', 'src/plugin'],
     mcp: { servers: { 'pantheon-resources': managedServer } },
   })
   writeFileSync(json, originalJson)
@@ -1965,9 +1945,9 @@ test('unsafe plugin order and same-name MCP overrides fail closed when JSONC plu
   assert.equal(readFileSync(json, 'utf8'), originalJson)
   assert.equal(readFileSync(jsonc, 'utf8'), originalJsonc)
   assert.match(result.reason, /cannot be migrated or deduplicated safely in the V2 init preview/)
-  assert.equal(JSON.parse(readFileSync(json, 'utf8')).plugins.includes('src/plugin-v2'), false)
+  assert.equal(JSON.parse(readFileSync(json, 'utf8')).plugins.includes('src/plugin'), false)
   assert.equal(
-    JSON.parse(readFileSync(jsonc, 'utf8')).plugins.filter((p) => p === 'src/plugin-v2').length,
+    JSON.parse(readFileSync(jsonc, 'utf8')).plugins.filter((p) => p === 'src/plugin').length,
     1,
   )
   assert.deepEqual(fs.readdirSync(root).sort(), ['opencode.json', 'opencode.jsonc'])
@@ -1980,8 +1960,8 @@ test('a JSONC managed plugin behind a JSON selector fails closed before setup in
   fs.mkdirSync(configDir, { recursive: true })
   const json = join(configDir, 'opencode.json')
   const jsonc = join(configDir, 'opencode.jsonc')
-  const originalJson = '{"plugins":["-src/plugin-v2"]}\n'
-  const originalJsonc = '{"plugins":["src/plugin-v2"]}\n'
+  const originalJson = '{"plugins":["-src/plugin"]}\n'
+  const originalJsonc = '{"plugins":["src/plugin"]}\n'
   writeFileSync(json, originalJson)
   writeFileSync(jsonc, originalJsonc)
   const output = captureOutput()
@@ -2013,7 +1993,7 @@ test('a JSONC managed plugin behind a JSON selector fails closed before setup in
     /cannot be migrated or deduplicated safely in the V2 init preview/,
   )
   assert.equal(
-    JSON.parse(readFileSync(jsonc, 'utf8')).plugins.filter((p) => p === 'src/plugin-v2').length,
+    JSON.parse(readFileSync(jsonc, 'utf8')).plugins.filter((p) => p === 'src/plugin').length,
     1,
   )
 })

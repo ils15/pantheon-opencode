@@ -52,6 +52,11 @@ import {
 } from '../scripts/install/plan.mjs'
 import { seedHealthyRuntime } from './helpers/install-runtime-fixture.mjs'
 
+// test:node runs on machines without an OpenCode binary, so the host gate
+// could not confirm the generation it writes for. Pin it for this file: every
+// install in here targets the only supported host line. Gate-specific tests
+// that pass their own env/probe stay deterministic either way.
+process.env.OPENCODE_VERSION = 'v2'
 const ROOT = process.cwd()
 const BIN = join(ROOT, 'bin', 'pantheon-init.mjs')
 // Deterministic English strings for message assertions (strings() caches locale).
@@ -218,7 +223,7 @@ test('clean preview enumerates plugin, agent, and skill subtree removals with sn
   const target = mkdtempSync(join(tmpdir(), 'pantheon-clean-preview-'))
   const extraFiles = [
     join(target, '.opencode', 'plugins', 'pantheon-tui', 'user-extra.js'),
-    join(target, '.opencode', 'agents', 'user-agent.md'),
+    join(target, 'agents', 'user-agent.md'),
     join(target, '.opencode', 'skills', 'user-skill', 'notes.txt'),
   ]
   try {
@@ -230,7 +235,6 @@ test('clean preview enumerates plugin, agent, and skill subtree removals with sn
     const result = await installOpenCode(target, true, true, ['plugins', 'agents', 'skills'], {
       yes: true,
       headless: true,
-      version: 'v1',
     })
 
     for (const file of extraFiles) {
@@ -260,7 +264,6 @@ test('clean apply aborts on an unreviewed subtree addition before removing revie
     const result = await installOpenCode(target, false, true, ['plugins'], {
       yes: true,
       headless: true,
-      version: 'v1',
       deps: {
         betweenPlanAndApply: () => writeFileSync(unreviewedFile, 'unreviewed content'),
       },
@@ -278,7 +281,7 @@ test('clean apply aborts on an unreviewed subtree addition before removing revie
 test('clean apply removes reviewed agent and skill extras and reinstalls managed assets', async () => {
   const { installOpenCode } = await import('../scripts/install/opencode.mjs')
   const target = mkdtempSync(join(tmpdir(), 'pantheon-clean-apply-'))
-  const extraAgent = join(target, '.opencode', 'agents', 'user-agent.md')
+  const extraAgent = join(target, 'agents', 'user-agent.md')
   const extraSkill = join(target, '.opencode', 'skills', 'user-skill', 'notes.txt')
   try {
     mkdirSync(dirname(extraAgent), { recursive: true })
@@ -291,14 +294,13 @@ test('clean apply removes reviewed agent and skill extras and reinstalls managed
       result = await installOpenCode(target, false, true, ['agents', 'skills'], {
         yes: true,
         headless: true,
-        version: 'v1',
       })
     })
 
     assert.equal(result.applied, true)
     assert.equal(existsSync(extraAgent), false)
     assert.equal(existsSync(join(target, '.opencode', 'skills', 'user-skill')), false)
-    assert.equal(existsSync(join(target, '.opencode', 'agents', 'zeus.md')), true)
+    assert.equal(existsSync(join(target, 'agents', 'zeus.md')), true)
     assert.equal(
       existsSync(join(target, '.opencode', 'skills', 'agent-coordination', 'SKILL.md')),
       true,
@@ -470,16 +472,14 @@ test('cli: a re-run on an applied target previews as unchanged with no warning',
   const home = mkdtempSync(join(tmpdir(), 'pantheon-idem-home-'))
   const xdg = mkdtempSync(join(tmpdir(), 'pantheon-idem-xdg-'))
   try {
-    const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: xdg }
+    const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: xdg, OPENCODE_VERSION: 'v2' }
     // No runtime (--no-mcp) keeps the apply network-free; plugins still exercise
-    // the TUI unregister→register toggle that produced the phantom update.
+    // the idempotent TUI copy that produced the phantom update.
     const base = [
       'init',
       '--project',
       '--yes',
       '--headless',
-      '--version',
-      'v1',
       '--no-mcp',
       '--components',
       'agents,skills,instructions,commands,plugins',
@@ -504,11 +504,10 @@ test('cli: a re-run on an applied target previews as unchanged with no warning',
     assert.doesNotMatch(output, /consistency mismatch/i)
     assert.match(output, /Change plan/)
     // A re-run still creates a FRESH backup set (recorded unscored), but no new
-    // content files; the TUI toggle must net to unchanged, not update.
+    // content files; the TUI copy is idempotent and tui.json is never written.
     assert.match(output, /create\s+\.pantheon\/backups\//)
     assert.doesNotMatch(output, /create\s+\.opencode\//)
-    assert.doesNotMatch(output, /update\s+\.opencode\/tui\.json/)
-    assert.match(output, /unchanged\s+\.opencode\/tui\.json/)
+    assert.doesNotMatch(output, /tui\.json/)
   } finally {
     rmSync(target, { recursive: true, force: true })
     rmSync(home, { recursive: true, force: true })
@@ -609,7 +608,6 @@ test('init without --yes (non-TTY) prints the plan, applies nothing and exits 2'
 const driftOpts = (betweenPlanAndApply) => ({
   yes: true,
   headless: true,
-  version: 'v1',
   deps: { betweenPlanAndApply },
 })
 
@@ -617,22 +615,19 @@ test('drift: a planned file changed between plan and apply aborts with no writes
   const { installOpenCode } = await import('../scripts/install/opencode.mjs')
   const target = mkdtempSync(join(tmpdir(), 'pantheon-drift-file-'))
   try {
-    mkdirSync(join(target, '.opencode', 'agents'), { recursive: true })
-    writeFileSync(join(target, '.opencode', 'agents', 'hermes.md'), 'STALE\n')
+    mkdirSync(join(target, 'agents'), { recursive: true })
+    writeFileSync(join(target, 'agents', 'hermes.md'), 'STALE\n')
     const result = await installOpenCode(
       target,
       false,
       false,
       ['agents', 'commands'],
-      driftOpts(() => writeFileSync(join(target, '.opencode', 'agents', 'hermes.md'), 'MUTATED\n')),
+      driftOpts(() => writeFileSync(join(target, 'agents', 'hermes.md'), 'MUTATED\n')),
     )
     assert.equal(result.applied, false)
     assert.equal(result.reason, 'drift')
-    assert.deepEqual(result.drift, ['.opencode/agents/hermes.md'])
-    assert.equal(
-      readFileSync(join(target, '.opencode', 'agents', 'hermes.md'), 'utf8'),
-      'MUTATED\n',
-    )
+    assert.deepEqual(result.drift, ['agents/hermes.md'])
+    assert.equal(readFileSync(join(target, 'agents', 'hermes.md'), 'utf8'), 'MUTATED\n')
     assert.equal(existsSync(join(target, '.pantheon')), false, 'no backup/state written')
   } finally {
     rmSync(target, { recursive: true, force: true })
@@ -669,12 +664,12 @@ test('drift: a planned-new file appearing before apply is drift', async () => {
       false,
       ['agents'],
       driftOpts(() => {
-        mkdirSync(join(target, '.opencode', 'agents'), { recursive: true })
-        writeFileSync(join(target, '.opencode', 'agents', 'zeus.md'), 'SNEAKED\n')
+        mkdirSync(join(target, 'agents'), { recursive: true })
+        writeFileSync(join(target, 'agents', 'zeus.md'), 'SNEAKED\n')
       }),
     )
     assert.equal(result.reason, 'drift')
-    assert.deepEqual(result.drift, ['.opencode/agents/zeus.md'])
+    assert.deepEqual(result.drift, ['agents/zeus.md'])
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
@@ -711,7 +706,6 @@ test('failure: a mid-apply throw reports applied paths and preserves unrelated t
       await installOpenCode(target, false, false, ['agents', 'commands'], {
         yes: true,
         headless: true,
-        version: 'v1',
         deps: { failAfter: 3 },
       })
     } catch {
@@ -763,7 +757,6 @@ test('failure (default global target): report preserves unrelated temp-like file
       await installOpenCode(undefined, false, false, ['agents', 'commands'], {
         yes: true,
         headless: true,
-        version: 'v1',
         deps: { failAfter: 2 },
       })
     } catch {

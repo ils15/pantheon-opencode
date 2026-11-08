@@ -14,6 +14,11 @@ import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
+// test:node runs on machines without an OpenCode binary, so the host gate
+// could not confirm the generation it writes for. Pin it for this file: every
+// install in here targets the only supported host line. Gate-specific tests
+// that pass their own env/probe stay deterministic either way.
+process.env.OPENCODE_VERSION = 'v2'
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const CLI = join(ROOT, 'bin', 'pantheon-init.mjs')
 
@@ -75,14 +80,14 @@ exit 0
 
   const child = spawn(
     process.execPath,
-    [CLI, 'init', '--yes', '--project', '--components', 'runtime', '--opencode-version', 'v1'],
+    [CLI, 'init', '--yes', '--project', '--components', 'runtime'],
     {
       cwd: target,
       env: {
         ...process.env,
         HOME: home,
         XDG_CONFIG_HOME: join(home, '.config'),
-        OPENCODE_VERSION: 'v1',
+        OPENCODE_VERSION: 'v2',
         LANG: 'C',
         LC_ALL: 'C',
         PATH: `${fakeBin}:${process.env.PATH}`,

@@ -10,8 +10,8 @@
  *
  * Three entries, one output each:
  *   - `local-decision-budget.ts` → the transactional ledger (caps/period writes);
- *   - `v2-decision-budget.ts`    → the separated cap/period/ledger read surface;
- *   - `v2-decision-egress.ts`    → the opt-in-only egress posture (default off).
+ *   - `decision-budget.ts`    → the separated cap/period/ledger read surface;
+ *   - `decision-egress.ts`    → the opt-in-only egress posture (default off).
  */
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -33,13 +33,18 @@ export const DECISION_ROUTER_BUNDLES = Object.freeze([
   }),
   Object.freeze({
     name: 'v2-budget',
-    entry: join(ROOT, 'src', 'pantheon', 'v2-decision-budget.ts'),
-    output: join(ROOT, 'scripts', 'decision-router-v2-budget.mjs'),
+    entry: join(ROOT, 'src', 'pantheon', 'decision-budget.ts'),
+    output: join(ROOT, 'scripts', 'decision-router-budget-gates.mjs'),
   }),
   Object.freeze({
     name: 'v2-egress',
-    entry: join(ROOT, 'src', 'pantheon', 'v2-decision-egress.ts'),
-    output: join(ROOT, 'scripts', 'decision-router-v2-egress.mjs'),
+    entry: join(ROOT, 'src', 'pantheon', 'decision-egress.ts'),
+    output: join(ROOT, 'scripts', 'decision-router-egress.mjs'),
+  }),
+  Object.freeze({
+    name: 'behavior-overrides',
+    entry: join(ROOT, 'src', 'pantheon', 'behavior-overrides.ts'),
+    output: join(ROOT, 'scripts', 'install', 'behavior-overrides.bundle.mjs'),
   }),
 ])
 

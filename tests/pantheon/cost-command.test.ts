@@ -184,7 +184,7 @@ async function main() {
       // already-detected set: against a V2-only file, PANTHEON_OPENCODE_VERSION=v1
       // selects no family at all and fails on the fixture's shape rather than on
       // the path this test is about.
-      for (const version of [undefined, 'v1', 'v2'] as const) {
+      for (const version of [undefined, 'v2'] as const) {
         const home = join(dir, String(version ?? 'unset'))
         const db = join(home, 'opencode', 'opencode.db')
         mkdirSync(join(home, 'opencode'), { recursive: true })
@@ -206,8 +206,8 @@ async function main() {
               `${version} failed to open the default opencode.db: ${output.slice(0, 200)}`,
             )
             assert.ok(
-              !output.includes('opencode-v2.db'),
-              `${version} invented an opencode-v2.db default: ${output.slice(0, 200)}`,
+              output.includes('Source: opencode.db'),
+              `${version} must name the default opencode.db as its source: ${output.slice(0, 200)}`,
             )
           },
         )
@@ -220,11 +220,11 @@ async function main() {
   await testAsync('OPENCODE_DB redirects the default database path', async () => {
     const dir = freshDir()
     try {
-      // `opencode-v2.db` is what a SANDBOX names its state database (see
+      // `opencode.db` is what a SANDBOX names its state database (see
       // scripts/install/opencode.mjs and the CI V2 sandbox step). It exists
       // because the host isolates it via OPENCODE_DB — which is therefore the
       // override that actually selects a non-default file.
-      const sandboxDb = join(dir, 'opencode-v2.db')
+      const sandboxDb = join(dir, 'opencode.db')
       createV2Db(sandboxDb, [
         { type: 'assistant', agent: 'sandboxed', tokens: { input: 2, output: 5 } },
       ])

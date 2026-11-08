@@ -75,7 +75,7 @@ npx pantheon-opencode init --opencode-version auto
 `auto` é o padrão. `--version v1|v2` continua aceito depois de `init` como a
 grafia legada. A ordem de resolução e o comportamento de fallback estão
 documentados uma única vez em
-[Compatibilidade](COMPATIBILITY.md#how-the-generation-is-selected). `auto` nunca
+[Compatibilidade](COMPATIBILITY.md#the-host-gate). `auto` nunca
 instala as duas gerações do plugin Pantheon.
 
 ### Checklist de migração
@@ -109,7 +109,7 @@ explicitamente, ou defina `OPENCODE_VERSION=v2`. Para ver o que o gate lê, rode
   BackgroundJobBoard e os hooks V1 de evento/tool/compaction.
 - **V2:** não registra o BackgroundJobBoard, hooks V1 de evento/tool nem um hook
   de compaction V1. Ele adiciona os hooks V2 documentados em
-  [OpenCode V2](opencode-v2.md).
+  [OpenCode 2.x](opencode.md).
 - **Recuperação:** ao reiniciar, jobs antigos ou em execução do board V1 são
   marcados como erro; não são retomados automaticamente e o trabalho filho não
   reinicia sozinho. O V2 não adiciona retomada/reinício automático.

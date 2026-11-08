@@ -53,6 +53,11 @@ import { runRestore } from '../scripts/restore.mjs'
 import { scanText } from '../scripts/secret-scan.mjs'
 import { seedHealthyRuntime } from './helpers/install-runtime-fixture.mjs'
 
+// test:node runs on machines without an OpenCode binary, so the host gate
+// could not confirm the generation it writes for. Pin it for this file: every
+// install in here targets the only supported host line. Gate-specific tests
+// that pass their own env/probe stay deterministic either way.
+process.env.OPENCODE_VERSION = 'v2'
 // The installer-integration case imports scripts/install/*.mjs, which needs the
 // declared `js-yaml`. Detect it once: the case is skipped when the dependency is
 // absent (incomplete node_modules) and runs under the throwaway js-yaml→yaml
@@ -516,8 +521,6 @@ test('installer apply: exact backup before writes, warning once, no canary leak'
         '--dry-run',
         '--yes',
         '--headless',
-        '--version',
-        'v1',
         '--no-mcp',
         '--components',
         'agents,commands',
@@ -526,7 +529,7 @@ test('installer apply: exact backup before writes, warning once, no canary leak'
         cwd: configDir,
         encoding: 'utf8',
         timeout: 120_000,
-        env: { ...process.env, HOME: home, XDG_CONFIG_HOME: xdg },
+        env: { ...process.env, HOME: home, XDG_CONFIG_HOME: xdg, OPENCODE_VERSION: 'v2' },
       },
     )
     assert.equal(preview.status, 0, `preview must exit 0:\n${preview.stdout}\n${preview.stderr}`)
@@ -540,8 +543,6 @@ test('installer apply: exact backup before writes, warning once, no canary leak'
         '--project',
         '--yes',
         '--headless',
-        '--version',
-        'v1',
         '--components',
         'agents,skills,instructions,commands,plugins,runtime',
       ],
@@ -549,7 +550,7 @@ test('installer apply: exact backup before writes, warning once, no canary leak'
         cwd: configDir,
         encoding: 'utf8',
         timeout: 180_000,
-        env: { ...process.env, HOME: home, XDG_CONFIG_HOME: xdg },
+        env: { ...process.env, HOME: home, XDG_CONFIG_HOME: xdg, OPENCODE_VERSION: 'v2' },
       },
     )
     const output = `${result.stdout}\n${result.stderr}`
@@ -648,7 +649,6 @@ test('canary: drift-abort and failure paths never leak the secret', {
       result = await installOpenCode(target, false, false, ['agents', 'commands'], {
         yes: true,
         headless: true,
-        version: 'v1',
         deps: makeDeps(target),
       })
     } catch {

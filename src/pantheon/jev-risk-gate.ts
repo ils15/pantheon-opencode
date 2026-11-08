@@ -47,15 +47,15 @@
  */
 
 import { createHash } from 'node:crypto'
+import { observeShadow, type ShadowSink } from './decision-shadow.ts'
+import { secretScanApplies } from './hook-engine.ts'
 import {
   type GatedNativeJevFailure,
   type GatedNativeJevRuntime,
   runGatedNativeJevCall,
 } from './jev-decision-tool.ts'
 import { consumeJevDecisionResult } from './jev-decisions.ts'
-import { observeShadow, type ShadowSink } from './v2-decision-shadow.ts'
-import { secretScanApplies } from './v2-hook-engine.ts'
-import type { NativeDecisionRequest } from './v2-native-decisions.ts'
+import type { NativeDecisionRequest } from './native-decisions.ts'
 
 /** On/off switch read by the plugin wiring. Any other value means off. */
 export const J1_RISK_GATE_FLAG_ENV = 'PANTHEON_J1_RISK_SCORE'
@@ -89,7 +89,7 @@ export const J1_RISK_GATE_STATE_MAX_LENGTH = 512
 /** Predicate probability at or above which the intent counts as consistent. */
 export const RISK_GATE_INTENT_THRESHOLD = 0.5
 
-const FLAG_ON = new Set(['1', 'on', 'true'])
+const FLAG_ON = new Set(['1', 'on', 'true', 'shadow'])
 const TOOL_NAME_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/
 const SHA256_HEX = /^[0-9a-f]{64}$/
 const SCOPES: ReadonlySet<string> = new Set(['write', 'execute', 'read'])
@@ -120,12 +120,50 @@ const WRITE_TOOLS: ReadonlySet<string> = new Set([
   'hashline_edit',
 ])
 
-/** Whether the operator explicitly enabled the flag. Absence means off. */
+/**
+ * The escalation ladder (field beta.14: the operator wants iterative
+ * escalation, not a binary flag). `on`/`1`/`true` map to `shadow` for
+ * back-compatibility with the shipped setup.
+ *   off     — nothing fires (hard zero)
+ *   shadow  — observe + record; invisible in the session (today's behavior)
+ *   warn    — RESERVED (needs a V2 client channel; currently behaves as shadow)
+ *   enforce — an affirmative high-risk score DENIES the tool call (the host
+ *             surfaces the block message in the session); gate unavailability
+ *             never blocks (fail-open, documented)
+ */
+export type J1RiskGateMode = 'off' | 'shadow' | 'warn' | 'enforce'
+
+export const J1_ENFORCE_THRESHOLD_ENV = 'PANTHEON_J1_ENFORCE_THRESHOLD'
+export const J1_ENFORCE_THRESHOLD_DEFAULT = 0.8
+
+export function j1ModeFromEnv(
+  env: Record<string, string | undefined> = process.env,
+): J1RiskGateMode {
+  const raw = (env[J1_RISK_GATE_FLAG_ENV] ?? '').trim().toLowerCase()
+  if (raw === 'enforce') return 'enforce'
+  if (raw === 'warn') return 'warn'
+  return FLAG_ON.has(raw) ? 'shadow' : 'off'
+}
+
+/** Back-compatible: any non-off mode counts as enabled. */
 export function j1RiskGateEnabledFromEnv(
   env: Record<string, string | undefined> = process.env,
 ): boolean {
-  const raw = (env[J1_RISK_GATE_FLAG_ENV] ?? '').trim().toLowerCase()
-  return FLAG_ON.has(raw)
+  return j1ModeFromEnv(env) !== 'off'
+}
+
+/**
+ * The enforce-mode deny threshold (0..1). Invalid or out-of-range values fall
+ * back to the documented default — an operator typo must not disable the gate.
+ */
+export function j1EnforceThresholdFromEnv(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const text = (env[J1_ENFORCE_THRESHOLD_ENV] ?? '').trim()
+  if (text === '') return J1_ENFORCE_THRESHOLD_DEFAULT
+  const raw = Number(text)
+  if (!Number.isFinite(raw) || raw < 0 || raw > 1) return J1_ENFORCE_THRESHOLD_DEFAULT
+  return raw
 }
 
 /**
@@ -143,7 +181,7 @@ export function classifyRiskGateScope(tool: unknown): RiskGateScope {
 /**
  * Whether one tool call is a J1 observation target: a write/execute scope AND
  * the secret scan's own exfil-capable gate. The second condition reuses the
- * scan's read-only denylist (`v2-hook-engine.secretScanApplies`) so a tool the
+ * scan's read-only denylist (`hook-engine.secretScanApplies`) so a tool the
  * scan never inspects can never be observed either — one list, two consumers.
  */
 export function isRiskGateTarget(tool: unknown): tool is string {
@@ -154,7 +192,10 @@ export function isRiskGateTarget(tool: unknown): tool is string {
 
 /**
  * sha256 hex of the serialized tool input — an opaque correlation value, the
- * only content-derived field that ever leaves this process. Unserializable
+ * only content-derived field that ever leaves this process. The hash is a
+ * DETERMINISTIC pseudonymization (unsalted SHA-256 — same input, same hash by
+ * design, so approvals can be pinned to the exact call), NOT anonymization:
+ * someone holding the dictionary can reconstruct the input. Unserializable
  * inputs hash a stable marker; this never throws.
  */
 export function hashToolInput(input: unknown): string {
@@ -349,7 +390,10 @@ const SKIP_REASON_BY_GATE_FAILURE: Readonly<Record<GatedNativeJevFailure, string
   PRESET_INVALID: 'skip-request-invalid',
   RESERVATION_DENIED: 'skip-reservation-denied',
   DECISION_CALL_FAILED: 'skip-decision-call-failed',
+  USAGE_EVIDENCE_UNAVAILABLE: 'skip-usage-evidence-unavailable',
   USAGE_UNRECONCILED: 'skip-usage-unreconciled',
+  ORDER_INPUT_INVALID: 'skip-request-invalid',
+  ORDER_CANDIDATE_INVALID: 'skip-request-invalid',
 })
 
 /** Map a gate failure to its telemetry reason token; unknown → fail-open. */
@@ -407,15 +451,28 @@ function abortDeadline(signal: AbortSignal): Promise<'timeout'> {
  * settles its own ledger reservation in the background (settlement of an
  * already-fired call — not a retry, and it writes no record).
  */
+export interface J1Verdict {
+  /** 'block' only in enforce mode with an affirmative high-risk score. */
+  block: boolean
+  riskScore: number | null
+  reason: string
+}
+
 export function createJ1RiskGateObserver(
-  options: J1RiskGateObserverOptions,
-): (event: unknown) => Promise<void> {
+  options: J1RiskGateObserverOptions & {
+    /** enforce: the caller awaits and denies on { block: true }. */
+    mode?: J1RiskGateMode
+    threshold?: number
+  },
+): (event: unknown) => Promise<J1Verdict | undefined> {
   const timeoutMs = options.timeoutMs ?? J1_RISK_GATE_TIMEOUT_MS
   const sink = options.sink
-  return async (event: unknown): Promise<void> => {
+  const enforce = options.mode === 'enforce'
+  const threshold = options.threshold ?? J1_ENFORCE_THRESHOLD_DEFAULT
+  return async (event: unknown): Promise<J1Verdict | undefined> => {
     try {
       const payload = (event ?? {}) as J1ExecuteBeforeEvent
-      if (!isRiskGateTarget(payload.tool)) return
+      if (!isRiskGateTarget(payload.tool)) return undefined
       const tool = payload.tool
       const scope = classifyRiskGateScope(tool)
       const built = buildRiskGateRequest({
@@ -425,7 +482,7 @@ export function createJ1RiskGateObserver(
       })
       if (!built.ok) {
         recordSkip(sink, 'skip-input-invalid')
-        return
+        return undefined
       }
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -450,11 +507,11 @@ export function createJ1RiskGateObserver(
         ])
         if (outcome === 'timeout') {
           recordSkip(sink, 'skip-timeout')
-          return
+          return undefined
         }
         if (!outcome.ok) {
           recordSkip(sink, mapGateFailureToSkipReason(outcome.reasonCode))
-          return
+          return undefined
         }
         const evaluation = evaluateRiskGateDecision(outcome.call.response, outcome.call.request)
         observeShadow(
@@ -466,6 +523,18 @@ export function createJ1RiskGateObserver(
           }),
           sink,
         )
+        if (enforce) {
+          const risk = evaluation.riskScore
+          const block = risk !== null && risk >= threshold
+          return {
+            block,
+            riskScore: risk,
+            reason: block
+              ? `J1 enforce: risco ${risk.toFixed(2)} >= threshold ${threshold}`
+              : 'allow',
+          }
+        }
+        return
       } finally {
         clearTimeout(timer)
       }
@@ -474,6 +543,7 @@ export function createJ1RiskGateObserver(
       // be opened; any other unexpected failure lands here too. One skip
       // record, no detail, no propagation into the tool call.
       recordSkip(sink, 'skip-gate-unavailable')
+      return undefined
     }
   }
 }

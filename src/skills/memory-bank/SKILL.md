@@ -5,60 +5,13 @@ description: "Memory bank rules, structure, and optimization — complete guide 
 
 # Memory Bank
 
-Complete guide to Pantheon memory bank — structure, rules, optimization, and maintenance.
+Pantheon memory bank — rules, structure, and maintenance. The rules below change behavior; tables of detail live in `references/`.
 
 ---
 
-## Actual Storage Model
+## Storage Guardrail
 
-| System | Where | Owner | Lifetime | Purpose |
-|--------|-------|-------|----------|---------|
-| **Durable Memory** | `pantheon-memory` MCP (SQLite `memory.db`) | Agents with the relevant tool grant | No entry TTL; retained until explicitly forgotten | Reusable facts and decisions |
-| **Persistence** | `pantheon-persistence` MCP | Agents with the relevant tool grant | Optional, separate checkpoint/KV store; checkpoint TTLs apply | Explicit session/workflow checkpoints and temporary state |
-| **Memory Bank** | `.pantheon/memory-bank/` | Team | Files persist in the working tree; Git tracking depends on repository ignore/commit policy | Project context: architecture, patterns, progress, ADRs |
-
-Pantheon does not implement `/memories/repo/` or `/memories/session/` stores.
-Memory Bank files are read explicitly or on demand through
-`pantheon://memory-bank/{path}` from `pantheon-resources`; they are not
-auto-loaded. Memory namespaces are organizational filters, not access-control
-boundaries, and tools are available only when the active agent is granted them.
-
----
-
-## Memory Bank Structure
-
-```
-.pantheon/memory-bank/
-├── 00-project.md           ← What is this project? (fill once)
-├── 00-architecture.md      ← System design and agent hierarchy
-├── 00-components.md        ← Component breakdown and ownership
-├── 00-tech-stack.md        ← Tech stack, setup, environment
-├── 01-active-context.md    ← Current sprint focus, decisions, blockers (MOST IMPORTANT)
-├── 02-progress-log.md      ← What works, what's left, milestones (append-only)
-├── _tasks/
-│   ├── _index.md           ← Task master list
-│   └── TASK0001-name.md    ← Individual task records
-└── _notes/
-    ├── _index.md           ← Notes index
-    └── NOTE0001-topic.md   ← Architectural decisions, findings
-```
-
-Memory Bank files are not automatically synchronized across clones. In
-particular, `_tasks/` records may be Git-ignored; only files tracked and
-committed under the repository's policy are shared through Git.
-
-### File Update Frequency
-
-| File | Fill when | Update frequency |
-|------|-----------|-----------------|
-| `00-project.md` | Project start | Rarely |
-| `00-architecture.md` | Project start | On significant changes |
-| `00-components.md` | Project start | When components added/removed |
-| `00-tech-stack.md` | Project start | On stack changes |
-| `01-active-context.md` | Each sprint | Each sprint / major decision |
-| `02-progress-log.md` | First completion | Append-only per milestone |
-| `_tasks/` | Sprint tracking | Per task |
-| `_notes/` | Significant findings | Per finding |
+Pantheon has no `/memories/repo/` or `/memories/session/` stores. Memory Bank files under `.pantheon/memory-bank/` are read explicitly or on demand via `pantheon://memory-bank/{path}` — never auto-loaded — and are not automatically synchronized across clones; Git tracking follows the repository's ignore/commit policy.
 
 ---
 
@@ -107,45 +60,13 @@ targets, rewrite the archive automatically, or create one artifact per phase.
 
 ---
 
-## Anti-Patterns
+## Routing
 
-### ❌ Session output as files
-```
-# Wrong
-Create IMPLEMENTATION_SUMMARY.md
-Create STATUS.md
+| Action / trigger | Reference |
+|---|---|
+| Needing where each memory system stores data, ownership, or lifetime | [references/storage-model.md](references/storage-model.md) |
+| Creating/updating files and needing the layout or fill/update cadence | [references/structure-and-frequency.md](references/structure-and-frequency.md) |
+| Unsure whether a write pattern (session files, phase handoffs, duplication) is allowed | [references/anti-patterns.md](references/anti-patterns.md) |
+| Setting up the memory bank in a product repository | [references/product-adoption.md](references/product-adoption.md) |
 
-# Right
-@mnemosyne Append to 02-progress-log.md: [summary]
-```
-
-### ❌ Mandatory handoff after every phase
-```
-# Wrong: After every phase → handoff to @mnemosyne
-
-# Right: Agent appends to 01-active-context.md directly
-At sprint close → explicit @mnemosyne invocation
-```
-
-### ❌ Duplicating information
-```
-# Wrong: duplicate the same fact in both durable Memory and a project document
-
-# Right: Durable reusable fact → pantheon-memory (when warranted and granted)
-         Narrative context → 00-project.md (read on demand)
-```
-
----
-
-## Adopting in a Product
-
-```bash
-mkdir -p .pantheon/memory-bank/_tasks .pantheon/memory-bank/_notes
-touch .pantheon/memory-bank/_tasks/.gitkeep .pantheon/memory-bank/_notes/.gitkeep
-# @mnemosyne Initialize memory bank for this repository
-```
-
-Add to `.github/copilot-instructions.md`:
-```markdown
-Always read .pantheon/memory-bank/01-active-context.md before answering.
-```
+A missing reference interrupts the action — read nothing in its place, never improvise from memory.

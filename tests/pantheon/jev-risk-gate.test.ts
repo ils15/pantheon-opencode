@@ -23,6 +23,8 @@ import {
   DECISION_ROUTER_MODELS,
   writeUserDecisionRouterConfig,
 } from '../../scripts/install/decision-router-config.mjs'
+import { createTelemetrySink, sanitizeTelemetry } from '../../src/pantheon/decision-telemetry.ts'
+import { secretScanApplies } from '../../src/pantheon/hook-engine.ts'
 import {
   buildRiskGateRequest,
   classifyRiskGateScope,
@@ -31,9 +33,13 @@ import {
   evaluateRiskGateDecision,
   hashToolInput,
   isRiskGateTarget,
+  J1_ENFORCE_THRESHOLD_DEFAULT,
+  J1_ENFORCE_THRESHOLD_ENV,
   J1_RISK_GATE_FLAG_ENV,
   J1_RISK_GATE_POINT,
   J1_RISK_GATE_TIMEOUT_MS,
+  j1EnforceThresholdFromEnv,
+  j1ModeFromEnv,
   j1RiskGateEnabledFromEnv,
   mapGateFailureToSkipReason,
   RISK_GATE_FLAG_VERDICT,
@@ -43,9 +49,7 @@ import {
   openLocalDecisionBudgetLedger,
   resolveLocalDecisionBudgetDbPath,
 } from '../../src/pantheon/local-decision-budget.ts'
-import { createTelemetrySink, sanitizeTelemetry } from '../../src/pantheon/v2-decision-telemetry.ts'
-import { secretScanApplies } from '../../src/pantheon/v2-hook-engine.ts'
-import type { NativeDecisionRequest } from '../../src/pantheon/v2-native-decisions.ts'
+import type { NativeDecisionRequest } from '../../src/pantheon/native-decisions.ts'
 
 let checks = 0
 function check(name: string, fn: () => void | Promise<void>): void {
@@ -63,7 +67,7 @@ async function checkAsync(name: string, fn: () => Promise<void>): Promise<void> 
   void name
 }
 
-/** The telemetry reason token charset (mirrors v2-decision-telemetry). */
+/** The telemetry reason token charset (mirrors decision-telemetry). */
 const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/
 const HEX64 = /^[0-9a-f]{64}$/
 
@@ -936,7 +940,39 @@ check(
 check('reason encoding: bounded tokens for every evaluation', testReasonEncoding)
 check('skip-reason mapping: every gate failure maps to a token', testSkipReasonMapping)
 check('telemetry sink admits the J1 point under the same allowlist', testTelemetryAcceptsJ1)
+function testModeLadderAndEnforceVerdict(): void {
+  const previousFlag = process.env[J1_RISK_GATE_FLAG_ENV]
+  const previousThreshold = process.env[J1_ENFORCE_THRESHOLD_ENV]
+  try {
+    delete process.env[J1_RISK_GATE_FLAG_ENV]
+    delete process.env[J1_ENFORCE_THRESHOLD_ENV]
+    assert.equal(j1ModeFromEnv(), 'off')
+    process.env[J1_RISK_GATE_FLAG_ENV] = 'on'
+    assert.equal(j1ModeFromEnv(), 'shadow')
+    assert.equal(j1RiskGateEnabledFromEnv(), true, 'on maps to shadow and enables')
+    process.env[J1_RISK_GATE_FLAG_ENV] = 'warn'
+    assert.equal(j1ModeFromEnv(), 'warn')
+    process.env[J1_RISK_GATE_FLAG_ENV] = 'enforce'
+    assert.equal(j1ModeFromEnv(), 'enforce')
+    assert.equal(j1EnforceThresholdFromEnv(), J1_ENFORCE_THRESHOLD_DEFAULT)
+    process.env[J1_ENFORCE_THRESHOLD_ENV] = '0.9'
+    assert.equal(j1EnforceThresholdFromEnv(), 0.9)
+    process.env[J1_ENFORCE_THRESHOLD_ENV] = '1.7'
+    assert.equal(j1EnforceThresholdFromEnv(), J1_ENFORCE_THRESHOLD_DEFAULT)
+    process.env[J1_ENFORCE_THRESHOLD_ENV] = 'abc'
+    assert.equal(j1EnforceThresholdFromEnv(), J1_ENFORCE_THRESHOLD_DEFAULT)
+    const fn = createJ1RiskGateObserver({ runtime: {} as never, mode: 'enforce', threshold: 0.8 })
+    assert.equal(typeof fn, 'function')
+  } finally {
+    if (previousFlag === undefined) delete process.env[J1_RISK_GATE_FLAG_ENV]
+    else process.env[J1_RISK_GATE_FLAG_ENV] = previousFlag
+    if (previousThreshold === undefined) delete process.env[J1_ENFORCE_THRESHOLD_ENV]
+    else process.env[J1_ENFORCE_THRESHOLD_ENV] = previousThreshold
+  }
+}
+
 check('constants: flag name, point id, 2s deadline', testTimeoutConstant)
+check('mode ladder: off/shadow/warn/enforce + threshold guard', testModeLadderAndEnforceVerdict)
 await checkAsync(
   'observer: success path records one observe record with no user content',
   testObserverSuccessPath,

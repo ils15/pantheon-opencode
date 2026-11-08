@@ -2,7 +2,7 @@
  * Native Jev Decisions selection, preparation, and consumption.
  *
  * This is the production half of the offline scaffold in
- * `v2-native-decisions.ts`: it selects a decision-capable model route from the
+ * `native-decisions.ts`: it selects a decision-capable model route from the
  * user-level decision-router configuration, prepares a bounded typed request,
  * and consumes a host response as non-authoritative advice. It performs no
  * I/O of its own: no fetch, no credentials, no transport — egress happens only
@@ -22,14 +22,13 @@ import {
   DECISION_PROVIDER_ADAPTERS,
   type DecisionProviderId,
 } from './local-decision-provider-matrix.ts'
-import { selectPantheonSkills } from './local-decision-skills.ts'
-import { PANTHEON_AGENT_CATALOG, PANTHEON_SKILL_CATALOG } from './pantheon-decision-catalog.ts'
 import {
   findRouteKind,
   NATIVE_DECISION_MAX_PROMPT_LENGTH,
   type NativeDecisionRequest,
   type ResolvedNativeDecisionRoute,
-} from './v2-native-decisions.ts'
+} from './native-decisions.ts'
+import { PANTHEON_AGENT_CATALOG, PANTHEON_SKILL_CATALOG } from './pantheon-decision-catalog.ts'
 
 /** Config-level providers that have a native host Decisions route. */
 export type NativeJevProviderId = Extract<
@@ -185,7 +184,10 @@ export function resolveNativeJevRoute(
 
 export const JEV_DECISION_MAX_QUESTIONS = 4
 /** Wide enough for the full skill catalog (20) plus `none` in preset mode. */
-export const JEV_DECISION_MAX_CHOICES = 24
+// Sized for the full catalog + host-installed skills + `none`, with headroom:
+// the catalog grows as skills land, and host skills always ride (field report
+// beta.15). The merge reserves host slots before truncating the catalog.
+export const JEV_DECISION_MAX_CHOICES = 32
 export const JEV_DECISION_MIN_CHOICES = 2
 export const JEV_DECISION_MAX_SCORE_LEVELS = 10
 export const JEV_DECISION_MIN_SCORE_LEVELS = 2
@@ -224,13 +226,58 @@ export type JevDecisionPreparationDetail =
   | 'SCHEMA_VERSION_INVALID'
   | 'UNKNOWN_INPUT_KEYS'
 
+export type JevSkillCandidateSource = 'prefilter' | 'full-catalog' | 'host-skills'
+
 export type JevDecisionPreparation =
-  | { readonly ok: true; readonly request: NativeDecisionRequest }
+  | {
+      readonly ok: true
+      readonly request: NativeDecisionRequest
+      /** Skills mode only: which path produced the candidate pool. */
+      readonly candidateSource?: JevSkillCandidateSource
+    }
   | {
       readonly ok: false
       readonly reasonCode: JevDecisionPreparationFailure
       readonly detail?: JevDecisionPreparationDetail
     }
+
+/**
+ * The ONE envelope check every tool path passes through before its builder:
+ * `schemaVersion` is required (and must be 1) and unknown keys are rejected —
+ * the declared contract, now enforced uniformly (beta.10 claimed it; beta.12
+ * applies it to presets, review, rank and verify too).
+ */
+export type JevEnvelopeCheck = { ok: true } | { ok: false; detail: JevDecisionPreparationDetail }
+
+export function checkJevEnvelope(
+  input: unknown,
+  allowedKeys: ReadonlySet<string>,
+): JevEnvelopeCheck {
+  if (
+    input === null ||
+    typeof input !== 'object' ||
+    Array.isArray(input) ||
+    (input as Record<string, unknown>).schemaVersion !== 1
+  ) {
+    return { ok: false, detail: 'SCHEMA_VERSION_INVALID' }
+  }
+  const unknown = Object.keys(input as Record<string, unknown>).filter(
+    (key) => !allowedKeys.has(key),
+  )
+  if (unknown.length > 0) return { ok: false, detail: 'UNKNOWN_INPUT_KEYS' }
+  return { ok: true }
+}
+
+export const JEV_EXPLICIT_ENVELOPE_KEYS: ReadonlySet<string> = new Set([
+  'schemaVersion',
+  'state',
+  'questions',
+])
+export const JEV_PRESET_ENVELOPE_KEYS: ReadonlySet<string> = new Set([
+  'schemaVersion',
+  'mode',
+  'state',
+])
 
 function isBoundedNonBlankString(value: unknown, max: number): value is string {
   return typeof value === 'string' && value.trim().length > 0 && value.length <= max
@@ -420,11 +467,20 @@ export function isJevDecisionPreset(value: unknown): value is JevDecisionPreset 
 }
 
 /** Every canonical specialist except the orchestrator itself. */
-const SPECIALIST_CHOICES: ReadonlyArray<{ value: string }> = Object.freeze(
-  PANTHEON_AGENT_CATALOG.filter((agent) => agent.id !== 'zeus').map((agent) => ({
-    value: agent.id,
-  })),
+const SPECIALIST_CHOICES: ReadonlyArray<{ value: string; description?: string }> = Object.freeze(
+  PANTHEON_AGENT_CATALOG.filter((agent) => agent.id !== 'zeus').map((agent) => {
+    const description = boundedCatalogDescription(agent.description)
+    return description === undefined ? { value: agent.id } : { value: agent.id, description }
+  }),
 )
+
+/** Catalog descriptions are short; truncate defensively at the documented bound. */
+function boundedCatalogDescription(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.trim() === '') return undefined
+  return value.length > JEV_DECISION_MAX_DESCRIPTION_LENGTH
+    ? `${value.slice(0, JEV_DECISION_MAX_DESCRIPTION_LENGTH - 1)}…`
+    : value
+}
 
 const SKILL_DESCRIPTIONS = new Map(
   PANTHEON_SKILL_CATALOG.map((entry) => [entry.id, entry.description]),
@@ -465,9 +521,12 @@ export function mergeHostSkills(
   hostSkills: readonly JevHostSkill[] | undefined,
   descriptions: Map<string, string | undefined>,
 ): Array<{ value: string; description?: string }> {
-  const merged = [...pool]
-  const seen = new Set(merged)
   const bound = JEV_DECISION_MAX_CHOICES - 1
+  // Host skills always ride (field report beta.15): reserve one slot per
+  // host-installed skill so a full-catalog fallback can never evict them.
+  const catalogBound = hostSkills === undefined ? bound : Math.max(0, bound - hostSkills.length)
+  const merged = [...pool].slice(0, catalogBound)
+  const seen = new Set(merged)
   if (hostSkills !== undefined) {
     for (const skill of hostSkills) {
       if (merged.length >= bound) break
@@ -521,15 +580,25 @@ export function prepareJevPresetRequest(
           instructions:
             'Choose one listed specialist only when the described task clearly needs it; ' +
             'otherwise choose none. This is advisory only; nothing is dispatched.',
-          choices: [...SPECIALIST_CHOICES, { value: 'none' }],
+          choices: [
+            ...SPECIALIST_CHOICES,
+            { value: 'none', description: 'No specialist fits the described task.' },
+          ],
         },
       ],
     } satisfies NativeDecisionRequest
     return { ok: true, request: Object.freeze(request) }
   }
 
-  const shortlist = selectPantheonSkills(state).skillIds
-  const pool = shortlist.length > 0 ? shortlist : CATALOG_SKILL_IDS
+  // Field report beta.15 §skills: the lexical prefilter dropped the exact
+  // skill the state described (codemap → none 0.88 from a prefiltered pool).
+  // The local catalog is 12 entries and the choice bound is 24 — recall beats
+  // a filter that saves half of $0.00003. The full local catalog + host
+  // skills always ride; `candidateSource` keeps reporting which pool the
+  // caller got.
+  const hostHasSkills = Array.isArray(hostSkills) && hostSkills.length > 0
+  const candidateSource: JevSkillCandidateSource = hostHasSkills ? 'host-skills' : 'full-catalog'
+  const pool = CATALOG_SKILL_IDS
   const descriptions = new Map(PANTHEON_SKILL_CATALOG.map((entry) => [entry.id, entry.description]))
   const request = {
     model: route.model,
@@ -541,11 +610,14 @@ export function prepareJevPresetRequest(
         instructions:
           'Choose the skills worth stacking for the described task, or none when none apply. ' +
           'This is advisory only; nothing is loaded or executed by this decision.',
-        choices: [...mergeHostSkills(pool, hostSkills, descriptions), { value: 'none' }],
+        choices: [
+          ...mergeHostSkills(pool, hostSkills, descriptions),
+          { value: 'none', description: 'No skill stack fits the described task.' },
+        ],
       },
     ],
   } satisfies NativeDecisionRequest
-  return { ok: true, request: Object.freeze(request) }
+  return { ok: true, request: Object.freeze(request), candidateSource }
 }
 // ─── Response consumption ───────────────────────────────────────────────
 

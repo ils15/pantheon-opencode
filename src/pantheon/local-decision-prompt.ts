@@ -30,6 +30,8 @@ export type PromptApplicationReason =
   | 'skills.synthetic.narrowed'
 
 export interface PromptApplicationResult {
+  /** Deterministic: this turn's request looks vague/multi-concern — refine first. */
+  refineRecommended?: boolean
   /** Always false since beta.10: the visible marker is suppressed. */
   markerApplied: boolean
   skillsFiltered: boolean

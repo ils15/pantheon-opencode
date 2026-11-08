@@ -4,8 +4,9 @@ import { isDeepStrictEqual } from 'node:util'
 import * as clack from '@clack/prompts'
 import { createBackupSet } from './install/backup.mjs'
 import {
+  convertLegacyPermissionsToV2,
   MCP_ENTRYPOINT_RENAMES,
-  migrateV1toV2,
+  normalizeMcpConfigToV2,
   PANTHEON_MCP_ENTRYPOINTS,
   validateMcpV1toV2Source,
 } from './install/config-migration.mjs'
@@ -481,7 +482,7 @@ function inspectInstallerEntries(config) {
   const plugins = new Set()
   if (Array.isArray(config.plugins)) {
     for (const entry of config.plugins) {
-      if (pluginReferenceIdentity(entry) === 'src/plugin-v2') plugins.add('V2 plugin')
+      if (pluginReferenceIdentity(entry) === 'src/plugin') plugins.add('V2 plugin')
     }
   }
 
@@ -593,7 +594,7 @@ function managedEntryMovePlan(files) {
   const sourcePlugins = sourcePluginsProperty?.valueNode
   if (sourcePlugins?.type === 'array') {
     const pluginItems = sourcePlugins.items.filter(
-      (item) => pluginReferenceIdentity(item.value) === 'src/plugin-v2',
+      (item) => pluginReferenceIdentity(item.value) === 'src/plugin',
     )
     if (pluginItems.length > 0) {
       const targetPlugins = target.config?.plugins
@@ -606,7 +607,7 @@ function managedEntryMovePlan(files) {
       const prefixCount = pluginItems.length
       const prefixSafe = pluginItems.every((item, index) => sourcePlugins.items[index] === item)
       const targetManagedPlugins = Array.isArray(targetPlugins)
-        ? targetPlugins.filter((plugin) => pluginReferenceIdentity(plugin) === 'src/plugin-v2')
+        ? targetPlugins.filter((plugin) => pluginReferenceIdentity(plugin) === 'src/plugin')
         : []
       if (targetManagedPlugins.length > 0) {
         const exactDuplicate =
@@ -632,7 +633,7 @@ function managedEntryMovePlan(files) {
         const targetSafe =
           targetPlugins === undefined ||
           (Array.isArray(targetPlugins) &&
-            !targetPlugins.some((plugin) => pluginReferenceIdentity(plugin) === 'src/plugin-v2'))
+            !targetPlugins.some((plugin) => pluginReferenceIdentity(plugin) === 'src/plugin'))
         const canMove =
           prefixSafe &&
           exactSourceDuplicates &&
@@ -716,7 +717,7 @@ function addManagedEntriesToJson(config, moves, disabledMcpServers = []) {
     if (!isRecord(config.mcp)) throw new Error('Target MCP map is unsupported.')
     let targetShape = validateMcpV1toV2Source(config.mcp)
     if (move.nested && !targetShape.hasV2ServersMap && Object.hasOwn(config.mcp, 'servers')) {
-      config.mcp = migrateV1toV2({ mcp: config.mcp }).mcp
+      config.mcp = normalizeMcpConfigToV2(config.mcp)
       targetShape = validateMcpV1toV2Source(config.mcp)
     }
     const nested = move.nested || targetShape.hasV2ServersMap
@@ -855,8 +856,9 @@ function makeV2Policy(source, askChoices) {
   if (source.key === 'permission') {
     validateLegacyPolicy(source.value)
     const permission = applyAskChoices(source, askChoices)
-    const converted = migrateV1toV2({ permission }, { mcpServerNames: source.mcpServers ?? [] })
-    const policy = converted.permissions ?? []
+    const policy = convertLegacyPermissionsToV2(permission, {
+      mcpServerNames: source.mcpServers ?? [],
+    })
     validateV2Policy(policy)
     return policy
   }

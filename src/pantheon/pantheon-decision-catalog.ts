@@ -13,6 +13,10 @@ export interface DecisionCatalogEntry {
 
 export const PANTHEON_SKILL_CATALOG: readonly DecisionCatalogEntry[] = Object.freeze([
   { id: 'agent-coordination', description: 'Multi-agent orchestration, routing, and delegation.' },
+  {
+    id: 'agent-forge',
+    description: 'Forge a new OpenCode agent on demand — interview, draft, confirm.',
+  },
   { id: 'artifact-management', description: 'Structured artifacts for planned or risky work.' },
   { id: 'auto-continue', description: 'Continue multi-step todos while keeping safety gates.' },
   { id: 'clonedeps', description: 'Clone dependency source locally for inspection.' },
@@ -21,6 +25,10 @@ export const PANTHEON_SKILL_CATALOG: readonly DecisionCatalogEntry[] = Object.fr
   { id: 'context-compression', description: 'Explicit compaction and resumable checkpoints.' },
   { id: 'git-workflow-and-versioning', description: 'Atomic commits and versioning workflow.' },
   { id: 'incremental-implementation', description: 'Thin, testable, rollback-safe slices.' },
+  {
+    id: 'instruction-forge',
+    description: 'Write and maintain instructions — one home per rule, tested triggers.',
+  },
   { id: 'loop-engineering', description: 'Controlled iterative refinement cycles.' },
   { id: 'memory-bank', description: 'Memory-bank structure, rules, and maintenance.' },
   { id: 'reflect', description: 'Turn repeated workflow friction into reusable assets.' },
@@ -34,6 +42,10 @@ export const PANTHEON_SKILL_CATALOG: readonly DecisionCatalogEntry[] = Object.fr
   {
     id: 'tdd-with-agents',
     description: 'RED, GREEN, REFACTOR test-driven implementation.',
+  },
+  {
+    id: 'prompt-refinery',
+    description: 'Refine a vague multi-concern request — silent adjust, >> full contract.',
   },
   { id: 'verification-planning', description: 'Plan the evidence path before changing code.' },
   {
@@ -51,9 +63,16 @@ export const PANTHEON_AGENT_CATALOG: readonly DecisionCatalogEntry[] = Object.fr
   { id: 'aphrodite', description: 'Frontend specialist: React, TypeScript, WCAG.' },
   { id: 'demeter', description: 'Database specialist: SQLAlchemy, migrations, queries.' },
   { id: 'themis', description: 'Quality and security review gate.' },
-  { id: 'prometheus', description: 'Infrastructure, Docker, CI, and model providers.' },
+  {
+    id: 'prometheus',
+    description: 'Infrastructure, Docker, CI, model providers and cloud costs.',
+  },
   { id: 'hephaestus', description: 'AI pipelines: LangChain, RAG, vector stores.' },
-  { id: 'nyx', description: 'Observability, tracing, and cost analytics.' },
+  {
+    id: 'nyx',
+    description:
+      'Observability and cost analytics: tracing, per-agent metrics; chaos and fuzz testing.',
+  },
   { id: 'gaia', description: 'Remote sensing and geospatial analysis.' },
   { id: 'iris', description: 'GitHub branches, pull requests, issues, releases.' },
   { id: 'mnemosyne', description: 'Memory bank and ADR authoring on request.' },

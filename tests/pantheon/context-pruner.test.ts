@@ -24,7 +24,7 @@ import {
   pruneMessages,
   resolveContextPrunerConfig,
 } from '../../src/pantheon/context-pruner.ts'
-import { plugin } from '../../src/plugin-v2.ts'
+import { plugin } from '../../src/plugin.ts'
 
 // ─── Harness ─────────────────────────────────────────────────────────────
 

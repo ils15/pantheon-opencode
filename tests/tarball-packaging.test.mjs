@@ -15,6 +15,11 @@ import { tmpdir } from 'node:os'
 import { join, relative, resolve } from 'node:path'
 import { test } from 'node:test'
 
+// test:node runs on machines without an OpenCode binary, so the host gate
+// could not confirm the generation it writes for. Pin it for this file: every
+// install in here targets the only supported host line. Gate-specific tests
+// that pass their own env/probe stay deterministic either way.
+process.env.OPENCODE_VERSION = 'v2'
 const ROOT = process.cwd()
 const escapedRoot = ROOT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const forbidden = new RegExp(
@@ -207,11 +212,12 @@ test('tarball contains no machine paths and ships the runtime inputs', () => {
       assert.doesNotMatch(text, /\/tmp\//i, `temporary machine path in ${file}`)
       assert.doesNotMatch(text, privateUrl, `private URL in ${file}`)
     }
-    for (const file of ['package/scripts/doctor.mjs', 'package/src/plugins/pantheon-hooks.ts']) {
-      assert.match(listing, new RegExp(`^${file.replaceAll('/', '\\/')}$`, 'm'))
-    }
-    assert.match(listing, /^package\/src\/plugin-v2\/index\.ts$/m)
-    assert.match(listing, /^package\/src\/plugin-v2\.ts$/m)
+    assert.match(listing, /^package\/scripts\/doctor\.mjs$/m)
+    // The removed generation's hooks plugin must not ship.
+    assert.doesNotMatch(listing, /package\/src\/plugins\/pantheon-hooks\.ts/)
+    // The plugin export target and its directory shim both ship.
+    assert.match(listing, /^package\/src\/plugin\/index\.ts$/m)
+    assert.match(listing, /^package\/src\/plugin\.ts$/m)
     assert.match(listing, /^package\/bin\/pantheon-init\.mjs$/m)
     // The code-mode payload must ship inside the tarball so fresh installs
     // can seed the runtime scripts directory.
@@ -282,13 +288,14 @@ test('installed package resolves hooks to its installed absolute path', () => {
     assert.doesNotMatch(routerStatus.stderr, /ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING/)
     const result = spawnSync(
       process.execPath,
-      // --opencode-version v1 pins the generation: this asserts path resolution
-      // inside the INSTALLED package, not the host gate. Left on the default it
-      // resolves against the developer's real OpenCode and asserts nothing.
-      [cli, 'init', '--project', '--no-mcp', '--headless', '-y', '--opencode-version', 'v1'],
+      // OPENCODE_VERSION pins the gate: this asserts path resolution inside the
+      // INSTALLED package, not the host gate. Left on the default it would
+      // resolve against the developer's real OpenCode and assert nothing.
+      [cli, 'init', '--project', '--no-mcp', '--headless', '-y'],
       {
         cwd: project,
         encoding: 'utf8',
+        env: { ...process.env, OPENCODE_VERSION: 'v2' },
       },
     )
     assert.equal(result.status, 0, result.stderr || result.stdout)
@@ -302,20 +309,25 @@ test('installed package resolves hooks to its installed absolute path', () => {
       false,
       'installed package must not ship an opencode.json template',
     )
-    // Installer contract (this run is pinned to v1 above): both pantheon plugins
-    // are registered on the V1 branch — the root-level delegation plugin
-    // (src/plugin.ts) and the runtime hooks plugin (src/plugins/pantheon-hooks.ts)
-    // — resolved to absolute paths inside the INSTALLED package (never
-    // dev-machine paths). Not unconditional: the V2 branch registers only the
-    // src/plugin-v2 directory under the plural `plugins` key, and the default
-    // generation now comes from the host-version gate.
-    assert.deepEqual(config.plugin, [
-      join(installedRoot, 'src', 'plugin.ts'),
-      join(installedRoot, 'src', 'plugins', 'pantheon-hooks.ts'),
-    ])
-    for (const entry of config.plugin) {
-      assert.equal(existsSync(entry), true, `registered plugin must exist: ${entry}`)
-    }
+    // Installer contract: the plugin DIRECTORY inside the INSTALLED package is
+    // registered under the plural `plugins` key, in object form, resolved to an
+    // absolute path (never a dev-machine path). The singular `plugin` key is
+    // never written.
+    assert.ok(!('plugin' in config), 'the legacy singular plugin key must not be written')
+    const registered = (config.plugins ?? []).find(
+      (entry) =>
+        typeof entry === 'object' && entry?.package === join(installedRoot, 'src', 'plugin'),
+    )
+    assert.ok(
+      registered,
+      `the installed plugin directory must be registered: ${JSON.stringify(config.plugins)}`,
+    )
+    assert.equal(
+      existsSync(registered.package),
+      true,
+      `registered plugin must exist: ${registered.package}`,
+    )
+    assert.deepEqual(registered.options, {})
     // Regression guard (after the packaged opencode.json template was dropped
     // from `files`): the product defaults an install seeds are code constants in
     // scripts/install/opencode.mjs, NOT read from a template that no longer
@@ -331,41 +343,58 @@ test('installed package resolves hooks to its installed absolute path', () => {
       existsSync(join(project, '.opencode', 'skills')),
       'this install must select the skills component for the skill grant to apply',
     )
-    assert.equal(config.permission.skill['*'], 'allow')
-    // Regression guard: the default bash allowlist is the five commands
+    // The seeded grants are written in the host's plural `permissions` rule
+    // shape. The skills component IS selected by this install (`pantheon-init`
+    // default component list includes skills, and no --components narrows it),
+    // so the skill grant below is the gated one.
+    const rules = config.permissions ?? []
+    const ruleEffect = (action, resource) =>
+      rules.find((rule) => rule.action === action && rule.resource === resource)?.effect
+    assert.equal(ruleEffect('skill', '*'), 'allow')
+    // Regression guard: the default shell allowlist is the five commands
     // Pantheon's own agents must run unattended, and nothing else. Growing it
     // again is a silent product/security decision made for every installer, so
     // the allow-set and the deny-set are both pinned here.
-    const bashKeys = Object.keys(config.permission.bash ?? {})
+    const shellResources = rules
+      .filter((rule) => rule.action === 'shell')
+      .map((rule) => rule.resource)
     for (const required of ['git *', 'npm *', 'npx *', 'pytest *', 'ruff *']) {
-      assert.ok(bashKeys.includes(required), `permission.bash must allow \`${required}\``)
+      assert.equal(
+        ruleEffect('shell', required),
+        'allow',
+        `permissions must allow shell \`${required}\``,
+      )
     }
     for (const forbidden of ['black', 'pip', 'docker', 'curl', 'gh', 'make']) {
       assert.equal(
-        bashKeys.some((key) => key === `${forbidden} *` || key === forbidden),
+        shellResources.includes(`${forbidden} *`) || shellResources.includes(forbidden),
         false,
-        `permission.bash must NOT pre-allow \`${forbidden}\` — that is the installing user's call`,
+        `permissions must NOT pre-allow \`${forbidden}\` — that is the installing user's call`,
       )
     }
     assert.deepEqual(
-      bashKeys.sort(),
+      shellResources.slice().sort(),
       ['git *', 'npm *', 'npx *', 'pytest *', 'ruff *'],
-      'permission.bash must be exactly the five agent-required commands',
+      'shell grants must be exactly the five agent-required commands',
     )
     assert.doesNotMatch(JSON.stringify(config), executableForbidden)
-    const tui = JSON.parse(readFileSync(join(project, '.opencode', 'tui.json'), 'utf8'))
-    // Installer contract (af40321): the TUI plugin is COPIED to the target
-    // config's plugins/pantheon-tui and registered as that directory — never
+    // Installer contract: the TUI plugin is COPIED to the target config's
+    // plugins/pantheon-tui and the COPY is registered under `plugins` — never
     // the in-package src/plugins/tui — so installs stay hermetic and
-    // idempotent. Assert the registered entry is the absolute copied dir and
-    // it carries the loader contract (dist/tui.js).
+    // idempotent. No tui.json is written: the host loads the copy through its
+    // plugins entry, and the copy carries the loader contract (dist/tui.js).
     const tuiDir = join(project, '.opencode', 'plugins', 'pantheon-tui')
-    assert.deepEqual(tui.plugin, [tuiDir])
-    assert.equal(existsSync(tuiDir), true)
-    assert.equal(existsSync(join(tuiDir, 'dist', 'tui.js')), true)
     assert.equal(
-      tui.plugin.some((entry) => !entry.startsWith('/')),
+      existsSync(join(project, '.opencode', 'tui.json')),
       false,
+      'no tui.json is written',
+    )
+    assert.equal(existsSync(join(tuiDir, 'dist', 'tui.js')), true)
+    assert.ok(
+      (config.plugins ?? []).some((entry) =>
+        typeof entry === 'string' ? entry === tuiDir : entry?.package === tuiDir,
+      ),
+      'the copied TUI plugin must be registered under plugins',
     )
   } finally {
     rmSync(work, { recursive: true, force: true })
@@ -402,10 +431,10 @@ test('installed package leaves an explicit permission.skill choice alone', () =>
     const cli = join(work, 'node_modules', 'pantheon-opencode', 'bin', 'pantheon-init.mjs')
     const result = spawnSync(
       process.execPath,
-      // Pinned to v1 for the same reason as the test above: the subject is the
-      // permission merge, not the host-version gate.
-      [cli, 'init', '--project', '--no-mcp', '--headless', '-y', '--opencode-version', 'v1'],
-      { cwd: project, encoding: 'utf8' },
+      // Pinned to v2 for the same reason as the test above: the subject is the
+      // permission merge, not the host gate.
+      [cli, 'init', '--project', '--no-mcp', '--headless', '-y'],
+      { cwd: project, encoding: 'utf8', env: { ...process.env, OPENCODE_VERSION: 'v2' } },
     )
     assert.equal(result.status, 0, result.stderr || result.stdout)
     assert.ok(
@@ -415,10 +444,23 @@ test('installed package leaves an explicit permission.skill choice alone', () =>
     const config = JSON.parse(readFileSync(join(project, 'opencode.json'), 'utf8'))
     // The regression: an unconditional `config.permission.skill = {'*':'allow'}`
     // silently flipped this deny to allow on every install that selected skills.
-    assert.deepEqual(config.permission.skill, { '*': 'deny' }, 'explicit deny must survive')
-    // The user's own neighbouring values are untouched too — the merge is
-    // absent-only, not a wholesale replacement of the block.
-    assert.equal(config.permission.websearch, 'allow')
+    // The user's V1-spelled block is normalized to the host's rule array, and
+    // the deny must survive it verbatim.
+    const rules = config.permissions ?? []
+    assert.deepEqual(
+      rules.find((rule) => rule.action === 'skill'),
+      { action: 'skill', resource: '*', effect: 'deny' },
+      'explicit deny must survive',
+    )
+    assert.equal(
+      rules.find((rule) => rule.action === 'websearch')?.effect,
+      'allow',
+      'the neighbouring allow rule survives the normalization',
+    )
+    assert.equal(
+      rules.some((rule) => rule.action === 'skill' && rule.effect === 'allow'),
+      false,
+    )
     assert.equal(config.theme, 'user-theme')
     assert.equal(config.default_agent, 'zeus', 'unrelated defaults are still seeded')
   } finally {

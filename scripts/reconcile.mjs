@@ -118,12 +118,11 @@ function resolveTarget(args) {
   return resolve(join(homedir(), '.config', 'opencode'))
 }
 
-function layoutFor({ global, version }) {
+function layoutFor({ global }) {
+  // V2-only: a project target is always the project-v2 layout; the V1
+  // project-v1 layout no longer exists.
   return Object.fromEntries(
-    VALID_COMPONENTS.map((component) => [
-      component,
-      global ? 'global' : version === 'v2' ? 'project-v2' : 'project-v1',
-    ]),
+    VALID_COMPONENTS.map((component) => [component, global ? 'global' : 'project-v2']),
   )
 }
 
@@ -134,7 +133,6 @@ async function buildReview(target, components, global) {
     throw new Error('No readable installer state found; unowned legacy files will not be removed')
   const { installOpenCode } = await import('./install/opencode.mjs')
   const desired = await installOpenCode(target, true, false, components, {
-    version: 'auto',
     global,
     quiet: true,
     quietPlan: true,
@@ -146,7 +144,7 @@ async function buildReview(target, components, global) {
       .filter((file) => typeof file.outputFingerprint === 'string')
       .map((file) => [file.path, { sha256: file.outputFingerprint }]),
   )
-  const selectedLayouts = layoutFor({ global, version: desired?.openCodeVersion })
+  const selectedLayouts = layoutFor({ global })
   const report = classifyFileInventory(target, state, {
     desiredFiles,
     selectedComponents: components,

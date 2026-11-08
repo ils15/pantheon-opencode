@@ -1,4 +1,5 @@
 import { strict as assert } from 'node:assert'
+import { PANTHEON_AGENTS } from '../../src/pantheon/delegation-policy.ts'
 import {
   LOCAL_DECISION_ROUTER_ENV,
   type LocalDecisionInput,
@@ -10,7 +11,6 @@ import {
   loadLocalDecisionPolicy,
   recommendLocalOrchestration,
 } from '../../src/pantheon/local-orchestration.ts'
-import { PANTHEON_AGENTS } from '../../src/pantheon/v2-delegation-enforce.ts'
 
 const enabledEnv = { [LOCAL_DECISION_ROUTER_ENV]: '1' }
 
@@ -43,6 +43,35 @@ function testDisabledByDefault(): void {
     if (previousValue === undefined) delete process.env[LOCAL_DECISION_ROUTER_ENV]
     else process.env[LOCAL_DECISION_ROUTER_ENV] = previousValue
   }
+}
+
+function testGateStatusInfluencesTheDecision(): void {
+  // D1 (field report beta.11→12): the gate token is a contract input, not an
+  // echo — an open review/approval gate abstains, a quiet one routes.
+  const open = recommendLocalDecision(
+    sampleInput({ domains: ['hermes'], gateStatus: 'review_required' }),
+    enabledEnv,
+  )
+  assert.equal(open.decision, 'abstain')
+  assert.equal(open.reasonCode, 'GATE_OPEN')
+  assert.equal(open.gateStatus, 'review_required')
+  const approval = recommendLocalDecision(
+    sampleInput({ domains: ['hermes'], gateStatus: 'human_approval_required' }),
+    enabledEnv,
+  )
+  assert.equal(approval.decision, 'abstain')
+  assert.equal(approval.reasonCode, 'GATE_OPEN')
+  const quiet = recommendLocalDecision(
+    sampleInput({ domains: ['hermes'], gateStatus: 'none' }),
+    enabledEnv,
+  )
+  assert.equal(quiet.decision, 'route')
+  assert.equal(quiet.reasonCode, 'CANONICAL_ROLE')
+  const unresolved = recommendLocalDecision(
+    sampleInput({ domains: ['hermes'], gateStatus: 'unresolved' }),
+    enabledEnv,
+  )
+  assert.equal(unresolved.decision, 'route')
 }
 
 function testRoutesOnlyExactCanonicalSpecialistRoles(): void {
@@ -309,6 +338,7 @@ testRecommendationIsDeterministic()
 testOrchestrationFastPathIsAdvisoryAndCatalogFiltered()
 testOrchestrationAbstainsWhenCandidatesAreNotUniquelyResolved()
 testOrchestrationFiltersRoutingGrantsAndRequiresZeus()
+testGateStatusInfluencesTheDecision()
 await testLocalPolicyLoadsCanonicalRoutingAndGrantData()
 
 console.log('local decision router tests passed')

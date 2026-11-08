@@ -32,6 +32,11 @@ import { test as nodeTest } from 'node:test'
 import { installOpenCode } from '../scripts/install/opencode.mjs'
 import { ROOT } from '../scripts/install/shared.mjs'
 
+// test:node runs on machines without an OpenCode binary, so the host gate
+// could not confirm the generation it writes for. Pin it for this file: every
+// install in here targets the only supported host line. Gate-specific tests
+// that pass their own env/probe stay deterministic either way.
+process.env.OPENCODE_VERSION = 'v2'
 // Real-install tier: see tests/install-opencode.test.mjs. Excluded from
 // `test:node`, opted into by `npm run test:install` (mandatory in the release
 // gate).
@@ -45,12 +50,12 @@ const test = (name, fn) => nodeTest(name, { skip: SKIP_REASON }, fn)
 // Constants
 // ---------------------------------------------------------------------------
 
-const V2_PLUGIN = join(ROOT, 'src', 'plugin-v2')
+const V2_PLUGIN = join(ROOT, 'src', 'plugin')
 // Legacy V2 refs (migrated by the installer into V2_PLUGIN): the npm
 // shorthand the beta resolves via npm install (NpmInstallFailedError) and the
 // pre-directory-contract file path (loader warns "must be a directory").
-const V2_EXPORT = 'pantheon-opencode/plugin-v2'
-const V2_LEGACY_FILE = 'src/plugin-v2.ts'
+const V2_EXPORT = 'pantheon-opencode/plugin'
+const V2_LEGACY_FILE = 'src/plugin.ts'
 const THIRD_PARTY_PLUGIN = '/tmp/vendor/src/plugin.ts'
 
 /** Return the package/path referenced by a string or object-form plugin entry. */
@@ -108,7 +113,6 @@ test('fresh init records successful component states and leaves unselected compo
     await installOpenCode(target, false, false, ['agents', 'skills', 'commands'], {
       yes: true,
       headless: true,
-      version: 'v2',
     })
     const state = JSON.parse(readFileSync(join(target, '.pantheon', 'install-state.json'), 'utf8'))
     assert.equal(state.components.agents.status, 'installed')
@@ -199,23 +203,20 @@ for (const version of VERSIONS) {
         )
         assert.equal(
           readFileSync(join(tuiPluginDir, 'tui.ts'), 'utf8'),
-          readFileSync(join(ROOT, 'src', 'plugins', 'tui', 'tui-v2.ts'), 'utf8'),
+          readFileSync(join(ROOT, 'src', 'plugins', 'tui', 'tui.ts'), 'utf8'),
         )
         assert.equal(
           readFileSync(join(tuiPluginDir, 'index.ts'), 'utf8'),
-          readFileSync(join(ROOT, 'src', 'plugins', 'tui', 'index-v2.ts'), 'utf8'),
+          readFileSync(join(ROOT, 'src', 'plugins', 'tui', 'index.ts'), 'utf8'),
         )
         assert.equal(
           JSON.parse(readFileSync(join(tuiPluginDir, 'package.json'), 'utf8')).exports['./tui'],
-          './dist/tui-v2.js',
+          './dist/tui.js',
         )
       }
       assert.equal(
         readFileSync(join(tuiPluginDir, 'tui.ts'), 'utf8'),
-        readFileSync(
-          join(ROOT, 'src', 'plugins', 'tui', version === 'v2' ? 'tui-v2.ts' : 'tui.ts'),
-          'utf8',
-        ),
+        readFileSync(join(ROOT, 'src', 'plugins', 'tui', 'tui.ts'), 'utf8'),
         'installed TUI copy must use the entrypoint for the selected host generation',
       )
       const tuiPackage = JSON.parse(readFileSync(join(tuiPluginDir, 'package.json'), 'utf8'))
@@ -338,7 +339,7 @@ test('V1 fresh install does NOT include V2 plugin entry in plugin array', async 
   try {
     const config = await runInstall(target, 'v1')
     const hasV2Export = config.plugin.some((entry) =>
-      [V2_EXPORT, V2_LEGACY_FILE, join(ROOT, 'src', 'plugin-v2.ts'), V2_PLUGIN].includes(
+      [V2_EXPORT, V2_LEGACY_FILE, join(ROOT, 'src', 'plugin.ts'), V2_PLUGIN].includes(
         pluginReference(entry),
       ),
     )

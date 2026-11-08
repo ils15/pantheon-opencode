@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { load } from 'js-yaml'
+import { PANTHEON_AGENTS } from './delegation-policy.ts'
 import {
   classifyLocalDecisionComplexity,
   LOCAL_DECISION_COMPLEXITY_DIMENSIONS,
@@ -8,7 +9,6 @@ import {
   type LocalDecisionGateStatus,
 } from './local-decision-router.ts'
 import { isAgentAllowed, type PermissionTaskConfig } from './permission-globs.ts'
-import { PANTHEON_AGENTS } from './v2-delegation-enforce.ts'
 
 export interface LocalDecisionAgentPolicy {
   canDelegateTo: readonly string[]

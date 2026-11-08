@@ -9,7 +9,7 @@
  *
  * Claude Code stdin protocol: the hook scripts receive
  * `{tool_name, tool_input, agent_id, session_id}` as JSON on stdin. Scripts
- * that read env vars instead (log-session-start.sh, on-subagent-delegation-*)
+ * that read env vars instead (on-subagent-delegation-*)
  * get their fields mapped into the child env (SESSION_ID / AGENT_NAME /
  * TASK_DESC) so both protocols work end to end.
  *
@@ -63,7 +63,7 @@ export function resolveHooksDir(): string {
 
 /**
  * Map the Claude Code protocol payload into the child environment. Scripts
- * that read env vars (log-session-start.sh, delegation audit scripts) rely on
+ * that read env vars (delegation audit scripts) rely on
  * these; scripts that read stdin receive the full JSON via `input` in runHook.
  * PATH is always preserved so `python3`/`bash` resolution inside the scripts
  * is never affected by a stripped-down environment.
@@ -85,7 +85,7 @@ export function hookEnv(
 /**
  * Run one hook script with the Claude Code protocol payload on stdin.
  *
- * @param script  file name inside scripts/hooks/ (e.g. "validate-tool-safety.sh")
+ * @param script  file name inside scripts/hooks/ (e.g. "scan-secrets.sh")
  * @param payload protocol payload translated from the opencode hook event
  * @param opts    optional env overrides / cwd / timeout
  * @returns      HookResult — NEVER throws; resolve with a non-zero code instead

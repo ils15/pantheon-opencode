@@ -11,7 +11,7 @@
  *      scripts/changelog-extract.mjs section semantics, pinned by parity).
  *   3. `whats-new-open.ts`   — the show-once decision: first run shows,
  *      dismissal pins, second run does not, version bump shows again.
- *   Wiring (source-level assertions, same style as tui-v2-dispatch-panel):
+ *   Wiring (source-level assertions, same style as tui-dispatch-panel):
  *   the V1/V2 entries fire it fire-and-forget, and both installer copies ship
  *   CHANGELOG.md at the plugin copy root so the window can read it offline.
  *
@@ -47,7 +47,7 @@ const { extractSection } = await import(
 )
 
 /* Isolate the default state path: never read or write the developer's real
- * ~/.config (same discipline as tests/tui-v2-dispatch-panel.test.mjs). */
+ * ~/.config (same discipline as tests/tui-dispatch-panel.test.mjs). */
 const isolatedXdg = mkdtempSync(join(tmpdir(), 'pantheon-whatsnew-xdg-'))
 process.env.XDG_CONFIG_HOME = isolatedXdg
 process.on('exit', () => rmSync(isolatedXdg, { recursive: true, force: true }))
@@ -317,6 +317,58 @@ test('highlights: the title matches the sidebar convention and the lines carry b
   assert.equal(lines.filter((line) => line.startsWith('• ')).length, 3)
 })
 
+test("highlights: the 🆕 What's New summary block wins over the full section", () => {
+  const text = [
+    '## [v1.7.0] - 2026-11-05',
+    '',
+    "### 🆕 What's New",
+    '- Short curated highlight one',
+    '- Short curated highlight two',
+    '',
+    '### Added',
+    '',
+    '- Long added bullet that the window must NOT show because the summary exists',
+    '',
+  ].join('\n')
+  const result = highlights.extractHighlights(text, '1.7.0')
+  assert.equal(result.found, true)
+  assert.equal(result.totalItems, 2, 'summary bullets only')
+  assert.deepEqual(result.groups, [
+    { heading: null, items: ['Short curated highlight one', 'Short curated highlight two'] },
+  ])
+  // H2 level also parses.
+  const h2 = text.replace("### 🆕 What's New", "## 🆕 What's New")
+  assert.equal(highlights.extractHighlights(h2, '1.7.0').totalItems, 2)
+})
+
+test('highlights: the summary caps at six items and truncates long bullets', () => {
+  const bullets = []
+  for (let index = 0; index < 9; index += 1) {
+    bullets.push(`- highlight ${index} ${'x'.repeat(160)}`)
+  }
+  const text = ['## [v1.7.1] - 2026-11-05', '', "### 🆕 What's New", ...bullets, ''].join('\n')
+  const result = highlights.extractHighlights(text, '1.7.1')
+  const items = result.groups.flatMap((group) => group.items)
+  assert.equal(items.length, highlights.WHATS_NEW_SUMMARY_MAX_ITEMS)
+  for (const item of items) {
+    assert.ok(item.length <= highlights.WHATS_NEW_ITEM_MAX_CHARS, 'one-line rule enforced')
+    assert.ok(item.endsWith('…'), 'truncation is visible')
+  }
+})
+
+test('open: pagination slices fixed-size pages and the hint names the page keys', () => {
+  const { paginateWhatsNewLines, WHATS_NEW_PAGE_SIZE, wrapWhatsNewLine } = open
+  const lines = Array.from({ length: WHATS_NEW_PAGE_SIZE + 3 }, (_, i) => `line ${i}`)
+  const pages = paginateWhatsNewLines(lines)
+  assert.equal(pages.length, 2)
+  assert.equal(pages[0].length, WHATS_NEW_PAGE_SIZE)
+  assert.equal(pages[1].length, 3)
+  assert.deepEqual(paginateWhatsNewLines([]), [[]])
+  assert.deepEqual(wrapWhatsNewLine('short', 76), ['short'])
+  assert.equal(wrapWhatsNewLine('x'.repeat(160), 76).length, 3)
+  assert.equal(wrapWhatsNewLine('x'.repeat(100), 0).length, 2, 'width floor applies')
+})
+
 /* ─── Sources: where the CHANGELOG and the version come from ── */
 
 test('highlights: changelog candidates — copy root first, package root second', () => {
@@ -495,18 +547,16 @@ test('flow: nothing to show → no window and NO pin (the next start may still s
 
 /* ─── Wiring: the entries fire it fire-and-forget; installers ship the file ── */
 
-test('wiring: the V2 entry registers the window fire-and-forget; the V1 entry stays self-contained', async () => {
-  const v2 = readFileSync(join(root, 'src/plugins/tui/src/index-v2.tsx'), 'utf8')
-  assert.match(v2, /import \{ maybeShowWhatsNewV2 \} from '\.\/whats-new'/)
-  assert.match(v2, /void maybeShowWhatsNewV2\(context\)/, 'never awaited — startup never blocks')
+test('wiring: the canonical entry registers the window fire-and-forget', async () => {
+  const entry = readFileSync(join(root, 'src/plugins/tui/src/index.tsx'), 'utf8')
+  assert.match(entry, /import \{ maybeShowWhatsNewV2 \} from '\.\/whats-new'/)
+  assert.match(entry, /void maybeShowWhatsNewV2\(context\)/, 'never awaited — startup never blocks')
 
-  // The dist entries are deliberately self-contained: any module shared by
-  // both entries becomes a content-hashed chunk in dist/, changing the
-  // artifact shape the byte-reproducible-dist gate pins. The window is V2-only
-  // (the current generation); a V1 mirror would follow the inline-replica
-  // precedent instead of importing.
-  const v1 = readFileSync(join(root, 'src/plugins/tui/src/index.tsx'), 'utf8')
-  assert.equal(v1.includes('./whats-new'), false, 'the V1 entry shares no module with V2')
+  // There is one entry since 2.0: the dist stays single-file, so nothing
+  // else may import the whats-new module (coverage lives in the glue test
+  // below and in the sidebar/panel model suites).
+  const glue = readFileSync(join(root, 'src/plugins/tui/src/whats-new.tsx'), 'utf8')
+  assert.ok(glue.includes('pantheon.whats-new.close'))
 })
 
 test('wiring: the close bind is a gated keymap layer, dismissal marks seen', async () => {

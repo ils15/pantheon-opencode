@@ -315,9 +315,11 @@ unmeasured", and fails only when a measured row fails or a known-broken host is
 listed. See [Compatibility](COMPATIBILITY.md) for the support policy and the
 known-broken set. A measured row that cannot run is a failure — the release path
 has no `SKIP`. The automatic release matrix exercises four OpenCode 2.x hosts;
-it no longer proves compatibility with OpenCode 1.19.x. The 1.19.x support
-declaration is unchanged; this is a limit of automatic release validation, not a
-change to the support policy.
+it no longer proves compatibility with OpenCode 1.19.x. **1.7.0 is the last
+version supporting the OpenCode V1 contract** (owner decision, 2026-11-07): the
+1.19.x support declaration holds through the 1.7 line and is retired in the
+next minor. This is a limit of automatic release validation, not a change to
+the support policy.
 
 #### Python test environment (gate a)
 
@@ -392,6 +394,38 @@ installer copies the canonical source into the installed scripts directory.
 the same tool list as the canonical server.
 
 ---
+
+## Where a release may be cut (branch hygiene, 2026-11-05)
+
+Releases are cut **only** from the release line (`release/<X.Y.Z>`):
+
+1. Work happens on a feature branch — or in a task worktree at
+   `<project-parent>/.pantheon-worktrees/<repo>/<task>` (AGENTS.md
+   convention). A feature branch/worktree NEVER bumps versions, NEVER edits
+   the CHANGELOG's promoted sections, and NEVER runs `npm publish` — the
+   tarball must be the artifact of the release line's tip.
+2. Landing: PR into `release/<X.Y.Z>`; merge. The version bump
+   (`apply --beta`) and the curated `## [X.Y.Z-beta.N]` CHANGELOG section are
+   committed on the release line (as the `chore(release): ...` commit), then
+   the `release.yml` dispatch runs the sanctioned publish.
+3. Manual `npm publish` is a recovery exception only: when it has to happen
+   outside the workflow (e.g. the workflow's publish path was bypassed), the
+   very next step is the `release.yml` recovery dispatch (or, minimally, the
+   immutable `vX.Y.Z-beta.N` tag on the release SHA) so the published
+   artifact is always tag-backed.
+4. Worktrees are task-scoped and removed when the task lands; stale task
+   worktrees from finished work are deleted (branches: delete when fully
+   merged; keep unmerged refs for review).
+
+## The 🆕 What's New summary (window contract)
+
+Every promoted release section SHOULD open with a `### 🆕 What's New` block:
+at most **6 bullets, one terminal line each** (≤ ~140 chars) — the one-time
+TUI window shows ONLY this block, paginated, and points at CHANGELOG.md for
+the rest. Long prose belongs under `### Added / Changed / Fixed` (read by
+humans on GitHub/npm), never in the window block. `## ` level also parses,
+but `### ` is the convention so the section stays inside the extractor's
+boundaries.
 
 ## Beta Releases (explicit dispatch with `release_channel=beta`)
 

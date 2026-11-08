@@ -4,69 +4,119 @@ This roadmap records customer-visible themes and the readiness conditions for a
 stable release. Internal tracking identifiers, per-item evidence bundles, and
 per-commit history are intentionally not part of this page.
 
-## Road to 1.6.0 stable
+## Road to 2.0.0 stable
 
 Release readiness is organized as three workstreams. They may run in parallel
 when independent; the release gate depends on the first two.
 
-1. **Product and agent-workflow contract** — define what the product promises
-   and how agents plan, implement, review, and hand off work.
+1. **Contract and naming consolidation** — finish the V1 removal on the whole
+   user-facing surface: one plugin generation, canonical module names, the
+   native host install path, and documentation that describes a single
+   contract.
 2. **Runtime and distribution validation** — prove that the package, installer,
    plugins, and MCP servers fulfill that contract on the explicitly supported
-   host matrix. The compatibility matrix and a single candidate identity connect
-   this work to the rest.
+   host family (OpenCode 2.x, excluding the known-broken 2.0.22). The
+   compatibility policy and a single candidate identity connect this work to
+   the rest.
 3. **Stable release and evidence gate** — freeze an exact candidate, then
-   validate tests, compatibility, installation, package contents, changelog, and
-   metadata. A release is considered only when every applicable gate is
+   validate tests, compatibility, installation, package contents, changelog,
+   and metadata. A release is considered only when every applicable gate is
    explicitly `PASS`.
 
 A missing result, or a result marked `WARN`, `SKIP`, `NOT_TESTED`, or
 `AMBIENTAL`, is not a `PASS`. Unresolved risks are blockers or must be accepted
 explicitly — never approved silently.
 
-The 1.6.0 candidate in this checkout is **not published and not release-ready**.
+The 2.0.0 candidate in this checkout is **not published and not release-ready**.
 The manifests express the version being prepared. See
 [Compatibility](docs/COMPATIBILITY.md) for supported hosts and the
 [releases page](https://github.com/ils15/pantheon-opencode/releases) for what is
 actually published.
 
-## What 1.6.0 delivers
+## Registered decisions
 
-- **One installation, one plugin generation.** The installer selects V1 or V2
-  from the host and never registers both. See
-  [Compatibility](docs/COMPATIBILITY.md#how-the-generation-is-selected).
-- **A real V2 plugin surface.** Host-native tools, session hooks, read-only
-  enforcement, a delegation-matrix hook when the host exposes it, and the
-  `execute.after` result chain. See [OpenCode V2](docs/opencode-v2.md) and
-  [Architecture](docs/ARCHITECTURE.md).
-- **MCP servers on a pinned runtime.** Five local servers on MCP SDK 2.2.0 and
-  FastMCP 4.1.2, with isolated Python environments. See [MCP](docs/MCP.md).
+These are the decisions the 2.0 cycle records, so the next contributor does not
+relitigate them:
+
+- **2.0 is the complete removal of the OpenCode V1 contract plus canonical
+  nomenclature.** One plugin generation. The surface is named without a
+  generation suffix: `src/plugin.ts` is the entry, the `src/plugin/` directory
+  is what the host loads, `pantheon-opencode/plugin` is the package export, and
+  the TUI ships `./tui` and `./server` exports. There is no dual-generation
+  installer, no generation selector, and no fallback to a removed contract.
+- **The Python MCP servers remain.** The five local servers are the documented
+  memory, persistence, resources, code-mode, and vision surface. Migration to a
+  host-native primitive happens only where the host proves that primitive; a
+  host capability that merely exists is not a reason to move a working server.
+- **Goals are exposed; the board is not.** This answers the earlier hygiene
+  item about board/goal parity honestly: durable manual goals are the
+  Persistence MCP `goal_*` tools, granted to Zeus and partitioned by session.
+  The BackgroundJobBoard is not re-created on the 2.x surface, and no
+  board-equivalent UI is promised.
+- **Progressive disclosure with hard failure is the skill default.** A skill
+  ships a bounded `SKILL.md` core plus pinned `references/`; the lock records
+  every reference digest; a cited-but-missing reference fails the build, and a
+  missing reference interrupts the action instead of being improvised from
+  memory.
+- **Overrides are a named layer.** `routing.yml` declares the behaviors
+  registry, the only override surface. Project overrides win per id over
+  global, schema errors name the file and the id, unknown ids surface in
+  `doctor`, and security-critical behavior is deliberately not overridable.
+- **Structural evals run in CI.** Golden positive/negative cases exercise the
+  real generators (managed-region carving, zero-overlap artifacts, agent-scoped
+  instruction routing) in the regular node test tier, not as an ad-hoc script.
+- **instruction-forge is the doctrine skill** — the first client of the
+  references/ mechanism and the template the other skills are expected to
+  converge on.
+
+## What 2.0 delivers
+
+- **One installation, one contract.** The installer writes the plural `plugins`
+  registration with the plugin directory and refuses a host it cannot confirm
+  as OpenCode 2.x. See
+  [Compatibility](docs/COMPATIBILITY.md#the-host-gate).
+- **A canonical surface.** Generation-suffixed module names are gone from the
+  shipped surface and from the environment variables (`PANTHEON_V2_*` became
+  `PANTHEON_*`). See [Architecture](docs/ARCHITECTURE.md).
+- **The native install path.** The host's own plugin flow — an npm or git
+  package added through the host, or a directory under `.opencode/plugins/` —
+  is the recommended way to load the plugin; the installer remains the setup
+  path for agents, skills, instructions, commands, MCP, and the TUI. See
+  [Installation](docs/INSTALLATION.md).
+- **Skills that disclose progressively and fail hard.** The six heaviest skills
+  carry pinned references, the lock verifies them, and the decision catalog
+  mirrors the skill directory. See [Agents & Skills](docs/agents/README.md).
+- **A typed decision router with an advisory risk ladder.** The Jev decision
+  router answers `ask`/`rank`/`verify` questions; the J1 gate, J3 escalation,
+  and J4 review scoring are opt-in or shadow surfaces documented from measured
+  behavior. See the
+  [router reference](docs/reference/local-decision-router.md) and
+  [Native Decisions (Jev)](docs/reference/native-decisions.md).
+- **MCP servers on a pinned runtime.** Five local servers with isolated Python
+  environments. See [MCP](docs/MCP.md).
 - **Memory that stays bounded.** A 64 KiB per-entry cap, optional TTL, explicit
-  purge, and an opt-in V2 injection path. See [Memory](docs/MEMORY.md).
+  purge, and an opt-in injection path. See [Memory](docs/MEMORY.md).
 - **Cost that answers money questions.** USD by agent and phase, by model, and
   by session, with an offline gate that refuses every network request. See
   [MCP Tools](docs/mcp-tools.md#cost-backend-and-attribution).
-- **Context pruning before summarization.** Repeated tool output is replaced by
-  placeholders, without deleting or reordering messages. See
-  [OpenCode V2](docs/opencode-v2.md#context-pruning).
 - **A dispatch surface.** An aggregated sidebar block and a full-width
   `/dispatch` panel built from the same collector. See
-  [OpenCode V2](docs/opencode-v2.md#dispatch-sidebar-block).
+  [OpenCode 2.x](docs/opencode.md#dispatch-sidebar-block).
 - **Installer resilience and update.** Backups, restore, reconcile, drift
   detection, and a supported `update` path. See
   [Installation](docs/INSTALLATION.md).
 
 ## Support boundary
 
-**1.6.x is the last Pantheon line that supports an OpenCode 1.X host.** From 1.7
-onward Pantheon targets OpenCode 2 only. OpenCode 2 support — including the
-2.1.x line — is already present in 1.6.x, so the 1.7 change is the removal of
-the V1 path. See [Compatibility](docs/COMPATIBILITY.md#end-of-life-and-known-issues).
+**1.7.x is the last Pantheon line that supports an OpenCode 1.X host.** From
+2.0 onward Pantheon requires OpenCode 2.x; the V1 contract is removed, not
+deprecated. See
+[Compatibility](docs/COMPATIBILITY.md#end-of-life-and-known-issues).
 
 ## Next iteration themes
 
 These are customer-visible outcomes, not internal task identifiers. Ordering is
-by risk, not by promised date.
+by risk, not by promised date — no date on this page is a commitment.
 
 ### Safety and permissions
 
@@ -85,8 +135,8 @@ by risk, not by promised date.
 - Make a dead MCP server recoverable: when the process returns, its tools should
   reappear in the same session without a full restart.
 - Keep the tool-path matcher from suggesting the exact string it rejected.
-- Confirm the V2 `execute.after` guard and empty-result handling on the live
-  host matrix, without overstating what a canary proves.
+- Confirm the `execute.after` guard and empty-result handling on the live host
+  matrix, without overstating what a canary proves.
 
 ### Correctness of guidance
 
@@ -99,35 +149,74 @@ by risk, not by promised date.
 
 ### Architecture hygiene
 
-- Remove duplicated version-system logic from the installer.
 - Add a boundary test for the phase-name limit.
 - Reduce Wave 0 output size without losing required context.
 - Serialize edits to a shared file so two agents cannot silently overwrite each
   other.
-- Decide whether V2 should expose board/goal equivalents, and state the answer
-  honestly rather than implying parity.
 
 ### Validation
 
 - Gate `routing.yml` model identifiers against the provider catalog, so a model
   name is not treated as a fact of the project.
-- Extend the permission and compatibility checks to every host row before a
-  stable release.
+- Extend the permission and compatibility checks to every supported host minor
+  before a stable release.
 
 ## Delivered and supported
 
-- Dual-generation installation with a single selected contract.
-- V2 tools, hooks, guards, and the bounded-read path where the host supports it.
+- Single-contract installation for OpenCode 2.x, with backup, restore,
+  reconcile, uninstall, and drift detection.
+- The host-native tool, hook, and guard surface, including the bounded-read
+  path where the host supports it.
 - Five MCP servers with per-agent allowlists and deny-by-default behavior.
 - Memory, persistence, code-mode, and vision surfaces documented from behavior.
 - Cost reporting in USD, with per-model and per-session attribution.
-- Installer backup, restore, reconcile, uninstall, and drift detection.
-- A release process that publishes only through explicit dispatch and
-  fail-closed gates.
+- 23 skills with progressive disclosure, the behaviors registry, and
+  instruction-forge as the doctrine skill.
+- Structural instruction evals and the release process that publishes only
+  through explicit dispatch and fail-closed gates.
+
+## Backlog candidates — slop audit (2.x, unadjudged)
+
+Candidate themes from field discussion, each audited by the same standard as
+everything above: a candidate contributes when it changes behavior through a
+gate that fires — prose that asks nicely is the weakest tier and says so.
+
+1. **Step-ledger execution mode** — plan becomes a step chain; one session per
+   step, opened with only that step's summary, objective, ledger key, and
+   completion contract; a step may be marked done only when a verification
+   command exited 0 since the last edit; the harness — never the model — picks
+   the next step. Verdict: contributes if and only if the gates are
+   deterministic; as prose guidance it would be slop. Largest cost-payoff
+   claim to validate: harness scaffolding measured at up to 40x tokens per
+   task; cache hits an order of magnitude cheaper than misses.
+2. **Cache-stable prompt prefixes** — prompt assembly must keep the paid
+   prefix byte-stable across turns when inputs are unchanged. Verdict:
+   contributes; cheap, testable with the byte-stable generation machinery
+   that already exists.
+3. **A code-quality doctrine skill** — nine pillars, a table of common LLM
+   coding faults, a review checklist. Verdict: the most slop-prone candidate —
+   by our own eval doctrine, prose is the weakest enforcement tier. Only
+   admissible as `references/`-tier material for rules that gates cannot
+   already catch; anything a lint can enforce stays a lint.
+4. **Roster generator from a manifest** — roles bound to model+effort in one
+   manifest, generating agent files in batch under the existing frontmatter,
+   grant, and routing gates. Verdict: contributes — deterministic output
+   validated by gates that already fire; removes manual toil and makes the
+   model-tier mapping real.
+5. **Inline-vs-subagent economy** — prefer inline continuation on warm
+   context; reserve subagents for genuine isolation (review blindness is the
+   legitimate reason). Verdict: contributes only in its deterministic half —
+   an economy preference encoded as a budget or router rule; a prose
+   preference is slop.
+
+Not adopted: persuasion-engineering meta-skills (forced-function invocations
+and anti-rationalization tables). The failure mode is known — a capable model
+reconciles the directive and complies in the transcript, not in the diff;
+enforcement belongs in gates.
 
 ## Historical note
 
 Earlier roadmap revisions tracked individual defects with internal identifiers
-and commit references. Those records remain in the repository history. This
-page keeps the themes and the readiness rule; it does not restate the internal
-log.
+and commit references, and carried the dual-generation themes of the 1.6 line.
+Those records remain in the repository history. This page keeps the themes and
+the readiness rule; it does not restate the internal log.

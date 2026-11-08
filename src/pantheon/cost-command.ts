@@ -28,7 +28,7 @@
  *
  * dbPath resolution: explicit option > PANTHEON_COST_DB > OPENCODE_DB > the XDG
  * default `opencode.db`. OPENCODE_DB is what a SANDBOX uses to name its state
- * database `opencode-v2.db`, so it — not the host generation — is what selects
+ * database `opencode.db`, so it — not the host generation — is what selects
  * a non-default file. The tool is wired in plugin.ts alongside the delegation
  * toolset (usable by zeus and any agent with tool access — no routing change
  * needed).

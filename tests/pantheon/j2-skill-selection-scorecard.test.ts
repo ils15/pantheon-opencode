@@ -15,11 +15,8 @@
  * Run with: npx tsx tests/pantheon/j2-skill-selection-scorecard.test.ts
  */
 import { strict as assert } from 'node:assert'
+import { sanitizeTelemetry, type TelemetryPointId } from '../../src/pantheon/decision-telemetry.ts'
 import { PANTHEON_SKILL_IDS } from '../../src/pantheon/pantheon-decision-catalog.ts'
-import {
-  sanitizeTelemetry,
-  type TelemetryPointId,
-} from '../../src/pantheon/v2-decision-telemetry.ts'
 import {
   encodeJ2ScorecardReason,
   fakeJevReplyForState,
@@ -44,7 +41,7 @@ async function checkAsync(name: string, fn: () => Promise<void>): Promise<void> 
   void name
 }
 
-/** The telemetry token charset (mirrors v2-decision-telemetry). */
+/** The telemetry token charset (mirrors decision-telemetry). */
 const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/
 
 // ─── Scenario catalog ───────────────────────────────────────────────────

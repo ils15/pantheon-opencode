@@ -8,7 +8,7 @@
     "gitDiffHash": "7a10193a0942d2e045e49a9dd99456a145b2311a0cb596c8a5fa07d61c336004",
     "opencodeVersion": "opencode v2.0.29",
     "pluginGeneration": "v2",
-    "pluginRef": "/home/ils15/pantheon/src/plugin-v2",
+    "pluginRef": "/home/ils15/pantheon/src/plugin",
     "hostConfigPath": "/home/ils15/.config/opencode/opencode.json",
     "hostConfigUsed": true,
     "shadowConfigDir": "/tmp/opencode/bench-1792014000940/shadow-config",

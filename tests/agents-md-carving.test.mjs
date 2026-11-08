@@ -34,6 +34,11 @@ import {
   writeAgentsMdManaged,
 } from '../scripts/build-agents-md.mjs'
 
+// test:node runs on machines without an OpenCode binary, so the host gate
+// could not confirm the generation it writes for. Pin it for this file: every
+// install in here targets the only supported host line. Gate-specific tests
+// that pass their own env/probe stay deterministic either way.
+process.env.OPENCODE_VERSION = 'v2'
 const GIT = { sha: 'deadbee', date: '2026-10-14T12:00:00-03:00' }
 
 // ─── 1. Dual artifacts from one source pass ──────────────────────────────
@@ -254,7 +259,6 @@ test('installer instructions component emits the global artifact into a global c
     await installOpenCode(target, false, false, ['instructions'], {
       yes: true,
       headless: true,
-      version: 'v1',
     })
     const installed = readFileSync(join(target, 'AGENTS.md'), 'utf8')
     assert.equal(
@@ -287,7 +291,6 @@ test('installer instructions component preserves user content in a global config
     await installOpenCode(target, false, false, ['instructions'], {
       yes: true,
       headless: true,
-      version: 'v1',
     })
     const installed = readFileSync(join(target, 'AGENTS.md'), 'utf8')
     assert.ok(installed.startsWith(custom), 'user house rules preserved')

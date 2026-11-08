@@ -25,6 +25,11 @@ import { test } from 'node:test'
 import { checkInstallVersionDrift } from '../scripts/doctor.mjs'
 import { runUpdate } from '../scripts/update.mjs'
 
+// test:node runs on machines without an OpenCode binary, so the host gate
+// could not confirm the generation it writes for. Pin it for this file: every
+// install in here targets the only supported host line. Gate-specific tests
+// that pass their own env/probe stay deterministic either way.
+process.env.OPENCODE_VERSION = 'v2'
 const ROOT = process.cwd()
 const BIN = join(ROOT, 'bin', 'pantheon-init.mjs')
 const DOCTOR = join(ROOT, 'scripts', 'doctor.mjs')

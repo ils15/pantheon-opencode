@@ -4,8 +4,8 @@
       "**",
       "!src/plugins/tui/dist",
       "!scripts/decision-router-budget.mjs",
-      "!scripts/decision-router-v2-budget.mjs",
-      "!scripts/decision-router-v2-egress.mjs",
+      "!scripts/decision-router-budget-gates.mjs",
+      "!scripts/decision-router-egress.mjs",
       "!tests/integration",
       "!.mypy_cache",
       "!.pytest_cache",
@@ -22,7 +22,8 @@
       "!benchmarks/beta2/baseline-t1.json",
       "!bench/results/*.json",
       "!bench-run-A",
-      "!evals"
+      "!evals",
+      "!scripts/install/behavior-overrides.bundle.mjs"
     ]
   },
   "linter": {

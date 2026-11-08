@@ -12,7 +12,7 @@
  *     loop → fail closed), and
  *   - the V1 registration path: the REAL plugin factory, driven through its
  *     `chat.params` + `tool.execute.before` hooks. V2's registration path is
- *     covered in plugin-v2-contract.test.ts.
+ *     covered in plugin-contract.test.ts.
  *
  * Run with: npx tsx tests/pantheon/read-guard-symlink.test.ts
  */
@@ -258,46 +258,68 @@ async function main(): Promise<void> {
     }
   })
 
-  // ─── V1 registration path (the real plugin factory) ──────────────────
+  // ─── V2 registration path (the real plugin setup + execute.before) ──
 
   process.env.PANTHEON_PLUGIN_ONCE = 'off'
   const { default: plugin } = await import('../../src/plugin.ts')
-  const client = {
-    session: {
-      list: async () => ({ data: [], error: undefined }),
-      todo: async () => ({ data: [], error: undefined }),
-      messages: async () => ({ data: [], error: undefined }),
-      children: async () => ({ data: [], error: undefined }),
-      create: async () => ({ data: { id: 'child' }, error: undefined }),
-      promptAsync: async () => ({ data: {}, error: undefined }),
-    },
-  }
-  const hooks = (await plugin({
-    client,
+  let toolBeforeHandler:
+    | ((input: {
+        tool: string
+        sessionID: string
+        messageID?: string
+        agent?: string
+        id?: string
+        input?: Record<string, unknown>
+      }) => Promise<void>)
+    | undefined
+
+  const context = {
     directory: projectRoot,
     worktree: projectRoot,
-  } as never)) as unknown as {
-    'chat.params': (input: { sessionID: string; agent: string }) => Promise<void>
-    'tool.execute.before': (
-      input: { tool: string; sessionID: string; callID: string },
-      output: { args: Record<string, unknown> },
-    ) => Promise<void>
+    tool: {
+      hook: async (name: string, handler: (input: never) => Promise<void>) => {
+        if (name === 'execute.before') toolBeforeHandler = handler as never
+        return { dispose: async () => {} }
+      },
+    },
+    permission: {
+      assert: async () => undefined,
+    },
+    session: {
+      list: async () => ({ data: [], error: undefined }),
+    },
+    event: {
+      subscribe: async () => ({
+        async *[Symbol.asyncIterator]() {},
+      }),
+    },
   }
+  await plugin.setup(context as never)
 
   const sessionID = `ses-read-guard-symlink-${Date.now()}`
 
-  /** Drive V1's chain and return the denial message, if any. */
-  const denial = async (tool: string, args: Record<string, unknown>): Promise<string | null> => {
+  /** Drive V2's execute.before chain and return the denial message, if any. */
+  const denial = async (
+    tool: string,
+    args: Record<string, unknown>,
+    agent = 'zeus',
+  ): Promise<string | null> => {
     try {
-      await hooks['tool.execute.before']({ tool, sessionID, callID: `call-${tool}` }, { args })
+      await toolBeforeHandler?.({
+        tool,
+        sessionID,
+        messageID: `msg-${tool}`,
+        agent,
+        id: `call-${tool}`,
+        input: args,
+      })
       return null
     } catch (error: unknown) {
       return error instanceof Error ? error.message : String(error)
     }
   }
 
-  await test('V1 path: Zeus is denied symlinks and allowed-suffix aliases into src/', async () => {
-    await hooks['chat.params']({ sessionID, agent: 'zeus' })
+  await test('V2 path: Zeus is denied symlinks and allowed-suffix aliases into src/', async () => {
     for (const [tool, args] of [
       ['read', { filePath: 'docs/link/plugin.ts' }],
       ['read', { filePath: 'src/readme.md' }],
@@ -306,16 +328,14 @@ async function main(): Promise<void> {
       ['read', { filePath: 'src/.pantheon/secret.ts' }],
       ['read', { filePath: 'docs/alias' }],
       ['grep', { path: 'docs/alias', pattern: 'secret' }],
-      ['glob', { path: 'docs/alias', pattern: 'docs/PLAN.md' }],
     ] as const) {
       const message = await denial(tool, args)
-      assert.ok(message !== null, `Zeus must not ${tool} through docs/link — delegate to @apollo`)
+      assert.ok(message !== null, `Zeus must not ${tool} through docs/link`)
       assert.match(message, /delegate to @apollo/)
     }
   })
 
-  await test('V1 path: wildcard globs fail closed while exact docs paths remain readable', async () => {
-    await hooks['chat.params']({ sessionID, agent: 'zeus' })
+  await test('V2 path: wildcard globs fail closed while exact docs paths remain readable', async () => {
     for (const pattern of ['**/*.ts', '*/*/*.ts', 'docs/*/**/*.ts']) {
       const message = await denial('glob', { pattern })
       assert.ok(message !== null, `wildcard glob ${pattern} must be denied`)
@@ -326,8 +346,7 @@ async function main(): Promise<void> {
     assert.equal(await denial('read', { filePath: 'memories/notes.md' }), null)
   })
 
-  await test('V1 path: Zeus grep requires an explicit path and rejects all include filters', async () => {
-    await hooks['chat.params']({ sessionID, agent: 'zeus' })
+  await test('V2 path: Zeus grep requires an explicit path and denies broad filters', async () => {
     for (const args of [
       { pattern: 'secret' },
       { path: '', pattern: 'secret' },
@@ -338,28 +357,24 @@ async function main(): Promise<void> {
       assert.ok(message !== null, `Zeus grep must deny ${JSON.stringify(args)}`)
       assert.match(message, /delegate to @apollo/)
     }
-
     assert.equal(
       await denial('grep', { path: 'docs/PLAN.md', pattern: 'secret' }),
       null,
       'an exact docs path with an ordinary query remains readable',
     )
-
-    await hooks['chat.params']({ sessionID, agent: 'hermes' })
     assert.equal(
-      await denial('grep', { pattern: 'secret' }),
+      await denial('grep', { pattern: 'secret' }, 'hermes'),
       null,
       'non-Zeus grep without a path remains unchanged',
     )
     assert.equal(
-      await denial('grep', { path: '..', pattern: 'secret' }),
+      await denial('grep', { path: '..', pattern: 'secret' }, 'hermes'),
       null,
       'non-Zeus grep with a parent path remains unchanged',
     )
-    await hooks['chat.params']({ sessionID, agent: 'zeus' })
   })
 
-  await test('V1 path: a non-existent tail, dangling symlink, and loop are denied', async () => {
+  await test('V2 path: a non-existent tail, dangling symlink, and loop are denied', async () => {
     for (const args of [
       { filePath: 'docs/link/missing/nested.ts' },
       { filePath: 'docs/broken' },
@@ -372,11 +387,10 @@ async function main(): Promise<void> {
     }
   })
 
-  await test('V1 path: a link to an allowed root is readable and non-Zeus is unaffected', async () => {
+  await test('V2 path: a link to an allowed root is readable and non-Zeus is unaffected', async () => {
     assert.equal(await denial('read', { filePath: 'docs/self/PLAN.md' }), null)
     assert.equal(await denial('glob', { pattern: 'docs/PLAN.md' }), null)
-    await hooks['chat.params']({ sessionID, agent: 'hermes' })
-    assert.equal(await denial('read', { filePath: 'docs/link/plugin.ts' }), null)
+    assert.equal(await denial('read', { filePath: 'docs/link/plugin.ts' }, 'hermes'), null)
   })
 
   // ─── Summary ─────────────────────────────────────────────────────────

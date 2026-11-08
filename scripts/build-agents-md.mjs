@@ -2,9 +2,10 @@
 /**
  * build-agents-md.mjs — Generate BOTH AGENTS.md artifacts from canonical sources.
  *
- * AGENTS.md files are instruction files BOTH OpenCode V1 and V2 load (V1
- * auto-discovers them, V2 loads them explicitly; the `instructions` config
- * key is accepted-but-ignored by V2). Every session pays for global AND
+ * AGENTS.md files are instruction files the OpenCode 2.x host loads
+ * (auto-discovered in the project, loaded explicitly from the global config
+ * dir; the `instructions` config key is accepted-but-ignored by the host).
+ * Every session pays for global AND
  * project AGENTS.md content, so a single duplicated file is paid twice per
  * session. To keep the payload disjoint (beta-10 latency slice, phase 1),
  * this script emits TWO artifacts in ONE pass over the same sources:
@@ -133,6 +134,7 @@ const PROJECT_HEADER = `# Pantheon — Repository Setup
 
 Setup: [INSTALLATION.md](docs/INSTALLATION.md).
 
+- Requires a supported host: OpenCode 2.x (the V1 contract was removed in 2.0).
 - Test: focused checks by default; \`npm test\` for CI/release or broad/high-risk changes
 - Lint: \`npm run lint\`
 
@@ -143,12 +145,11 @@ Valide a instalação global COMO UM USUÁRIO REAL no sandbox \`~/pantheon-sandb
 - Rodar: \`bash ~/pantheon-sandbox/run-test.sh\` (MCPs, doctor, TUI)
 - Regra para agentes: valide instalação global (npm pack, \`init\`, MCPs, hooks) no sandbox — NUNCA no ambiente de dev
 - Descarte: \`rm -rf ~/pantheon-sandbox\`
-- Detalhes: \`~/pantheon-sandbox/README.md\`
 
 ## Worktrees
 
 - Nunca crie worktrees dentro do projeto principal; use \`<project-parent>/.pantheon-worktrees/<basename-do-repo>/<task>\`.
-- \`.pantheon/workflows/\` e \`.pantheon/worktrees/\` não são o padrão para worktrees.
+- worktrees não vivem dentro de \`.pantheon/\`.
 
 ## Conventions
 
@@ -163,7 +164,7 @@ const INSTRUCTIONS_PREAMBLE = `---
 
 # Agent Instructions
 
-Shared rules from \`src/instructions/*.instructions.md\`, identical for OpenCode V1 and V2 (V2 ignores \`instructions\`). Repo-specific setup stays in that project's AGENTS.md, so no rule loads twice; agent-scoped rules live only in the matching prompt.`
+Shared rules from \`src/instructions/*.instructions.md\`, embedded here because the OpenCode 2.x host ignores the \`instructions\` config key. Repo-specific setup stays in that project's AGENTS.md, so no rule loads twice; agent-scoped rules live only in the matching prompt.`
 
 // ---------------------------------------------------------------------------
 // Frontmatter parsing (stdlib only — no yaml dependency)

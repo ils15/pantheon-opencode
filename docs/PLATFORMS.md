@@ -72,7 +72,7 @@ Global install:
 ```
 
 The V2 TUI uses a local plugin directory instead of `tui.json`. See
-[OpenCode V2](opencode-v2.md).
+[OpenCode 2.x](opencode.md).
 
 ## Quick reference
 

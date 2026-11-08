@@ -31,6 +31,7 @@ if (!isSupportedNodeVersion(process.versions.node)) {
 }
 
 import { dump, load } from 'js-yaml'
+import { installDecision, mergeOverrides } from './behavior-overrides.bundle.mjs'
 
 import {
   ACTIONS,
@@ -530,6 +531,34 @@ function recordDirectoryOutcomes(srcDir, dstDir, recorder) {
   }
 }
 
+function readOptionalFile(path) {
+  try {
+    return readFileSync(path, 'utf8')
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Named-behavior overrides for one install target: the registry comes from
+ * routing.yml; the override file lives beside the install target (project:
+ * `.pantheon/overrides.json`; global config dir: `pantheon-overrides.json`).
+ * Override FILES are inputs — never inventoried, never written.
+ */
+function loadSkillsOverrideContext(target) {
+  let registry = []
+  try {
+    const routing = load(readFileSync(join(ROOT, 'src', 'routing.yml'), 'utf8'))
+    if (Array.isArray(routing?.behaviors)) registry = routing.behaviors
+  } catch {
+    registry = []
+  }
+  const globalRaw = readOptionalFile(join(target, 'pantheon-overrides.json'))
+  const projectRaw = readOptionalFile(join(target, '.pantheon', 'overrides.json'))
+  const { entries: effective } = mergeOverrides(globalRaw, projectRaw)
+  return { registry, effective }
+}
+
 export function installSkills(
   skills,
   target,
@@ -547,7 +576,14 @@ export function installSkills(
   let created = 0
   let skipped = 0
 
+  const { registry, effective } = loadSkillsOverrideContext(target)
   for (const skill of skills) {
+    const decision = installDecision(effective, registry, `skill-${skill}`)
+    if (decision === 'skip') continue
+    const contentOverride =
+      decision && typeof decision === 'object' && 'content' in decision
+        ? decision.content
+        : undefined
     const src = join(srcSkillsDir, skill)
     const dst = join(dstSkillsDir, skill)
 
@@ -572,7 +608,10 @@ export function installSkills(
           }
           copyDirRecursive(srcPath, dstPath)
         } else {
-          const content = readFileSync(srcPath, 'utf8')
+          const content =
+            entry === 'SKILL.md' && from === src && contentOverride !== undefined
+              ? contentOverride
+              : readFileSync(srcPath, 'utf8')
           const dstStat = lstatOrNull(dstPath)
           if (dstStat?.isSymbolicLink()) {
             throw new Error(`Refusing to read through symlink: ${dstPath}`)

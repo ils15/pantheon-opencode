@@ -191,3 +191,18 @@ on 2026-10-29. Vendor documentation is not independent benchmark evidence:
 - [TypeSafe models](https://docs.typesafe.ai/models)
 - [OpenAI Decisions](https://developers.openai.com/api/docs/guides/decisions)
 - [Cloudflare Workers AI: Clef-Flash](https://developers.cloudflare.com/workers-ai/models/clef-flash/)
+
+
+## Update — 2.0 cycle (2026-11)
+
+The structural track is now REAL: golden positive/negative evals over the
+actual generators run in the regular node tier
+(`tests/eval/instruction-golden.test.mjs` — managed-region carve, zero-overlap
+of shared instructions, agent-scoped routing, deterministic line budget). The
+model-in-the-loop track (routing slots, complexity rubric, hold-out metrics)
+remains gated by this protocol: it needs the curated dataset, ratified
+raters/adjudicator and an authorized provider before any run. The completion
+stub used by the host harness is now a shared fixture
+(`dev/tests/shared/fake-completion-server.mjs`); a nightly host-backed run
+stays behind `workflow_dispatch` with the SKIP-labeled convention (a skip is
+never a PASS).

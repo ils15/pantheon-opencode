@@ -20,10 +20,13 @@ import {
   type V2JevDecisionRuntime,
 } from '../../src/pantheon/jev-decision-tool.ts'
 import {
+  checkJevEnvelope,
   consumeJevDecisionResult,
   filterNativeCapValidCandidates,
   isJevDecisionPreset,
   isNativeJevProvider,
+  JEV_DECISION_MAX_CHOICES,
+  JEV_PRESET_ENVELOPE_KEYS,
   NATIVE_JEV_HOST_PROVIDERS,
   prepareJevDecisionRequest,
   prepareJevPresetRequest,
@@ -41,7 +44,7 @@ import {
   PANTHEON_AGENT_IDS,
   PANTHEON_SKILL_CATALOG,
 } from '../../src/pantheon/pantheon-decision-catalog.ts'
-import { createV2ToolDefinitions } from '../../src/pantheon/v2-tools.ts'
+import { createV2ToolDefinitions } from '../../src/pantheon/tools.ts'
 
 const CURRENT_PERIOD = new Date().toISOString().slice(0, 7)
 const CAPS = { monthlyCapMicros: 5_000_000, perDecisionCapMicros: 1_000_000 }
@@ -188,6 +191,40 @@ function testFilterNativeCandidates(): void {
     { provider: 'typesafe-jev', model: 'jev-1.14.0' },
   ])
   assert.deepEqual(filterNativeCapValidCandidates(candidates, ADMISSION_DENIED), [])
+}
+
+async function testToolEnvelopeAppliesToPresets(): Promise<void> {
+  const environment = sandbox()
+  await withEnvironment(environment, async () => {
+    const toolContext = { sessionID: 'ses_env', messageID: 'msg_env', agent: 'zeus' }
+    const cases: Array<[Record<string, unknown>, string, string]> = [
+      [{ mode: 'delegation', state: 'x' }, 'PRESET_INVALID', 'SCHEMA_VERSION_INVALID'],
+      [
+        { schemaVersion: 99, mode: 'delegation', state: 'x' },
+        'PRESET_INVALID',
+        'SCHEMA_VERSION_INVALID',
+      ],
+      [
+        { schemaVersion: 1, mode: 'delegation', state: 'x', bogus: true },
+        'PRESET_INVALID',
+        'UNKNOWN_INPUT_KEYS',
+      ],
+    ]
+    for (const [input, reasonCode, detail] of cases) {
+      const stub = stubRuntime()
+      const output = JSON.parse(await runJevDecision(input, toolContext, stub.runtime)) as {
+        reasonCode: string
+        detail?: string
+        advisory: boolean
+        effect: string
+      }
+      assert.equal(output.reasonCode, reasonCode, JSON.stringify(input))
+      assert.equal(output.detail, detail)
+      assert.equal(output.advisory, false)
+      assert.equal(output.effect, 'none')
+      assert.equal(stub.decideCalls.length, 0, 'no host call for a rejected envelope')
+    }
+  })
 }
 
 function testRouteSelection(): void {
@@ -377,7 +414,10 @@ function testPresets(): void {
     billing: 'OpenCode Console',
   }
 
-  // Skills preset: the local prefilter shortlist (≤ 4) plus `none`.
+  // Skills preset: the FULL local catalog (field report beta.15 §skills — the
+  // lexical prefilter dropped the exact skill the state described; the
+  // catalog is 12 entries and the choice bound is 24, so recall wins) + host
+  // skills + `none`.
   const stacked = prepareJevPresetRequest(route, 'skills', {
     state: 'implement a FastAPI backend endpoint with pytest',
   })
@@ -387,8 +427,13 @@ function testPresets(): void {
     assert.equal(question.type, 'choice')
     assert.equal(question.name === 'stack' && 'choices' in question, true)
     const choices = (question as { choices: Array<{ value: string }> }).choices
-    assert.ok(choices.length >= 2 && choices.length <= 5, `shortlist+none: ${choices.length}`)
+    assert.ok(choices.length >= 12 && choices.length <= 24, `catalog+none: ${choices.length}`)
     assert.ok(choices.some((option) => option.value === 'none'))
+    assert.ok(
+      choices.some((option) => option.value === 'codemap'),
+      'every local skill is offered — no lexical prefilter',
+    )
+    assert.equal(stacked.candidateSource, 'full-catalog')
   }
 
   // No local match: the whole skill catalog is offered instead, plus `none`.
@@ -407,10 +452,16 @@ function testPresets(): void {
   if (delegated.ok) {
     const question = delegated.request.questions[0] as {
       name: string
-      choices: Array<{ value: string }>
+      choices: Array<{ value: string; description?: string }>
     }
     assert.equal(question.name, 'specialist')
     assert.equal(question.choices.length, PANTHEON_AGENT_IDS.size - 1 + 1)
+    // Defect 1 (field report beta.11→12): descriptions ride with the values —
+    // the model cannot pick a domain it cannot see.
+    const hermes = question.choices.find((option) => option.value === 'hermes')
+    assert.ok(hermes?.description?.includes('FastAPI'), 'hermes carries its catalog description')
+    const none = question.choices.find((option) => option.value === 'none')
+    assert.ok(none?.description, 'none is described, not a bare token')
     assert.equal(
       question.choices.some((option) => option.value === 'zeus'),
       false,
@@ -456,7 +507,7 @@ function testPresets(): void {
       'over-long ids are skipped',
     )
     assert.ok(choices.some((option) => option.value === 'no-description'))
-    assert.ok(choices.length <= 24)
+    assert.ok(choices.length <= JEV_DECISION_MAX_CHOICES)
   }
 
   // Full-catalog fallback still respects the bound with many host skills.
@@ -465,7 +516,11 @@ function testPresets(): void {
   assert.ok(capped.ok)
   if (capped.ok) {
     const choices = (capped.request.questions[0] as { choices: Array<{ value: string }> }).choices
-    assert.equal(choices.length, 24, 'bound is catalog pool + host skills up to 23 + none')
+    assert.equal(
+      choices.length,
+      JEV_DECISION_MAX_CHOICES,
+      'the bound is catalog pool + host skills + none',
+    )
     assert.ok(choices.some((option) => option.value === 'none'))
   }
 
@@ -476,6 +531,29 @@ function testPresets(): void {
     'mode and questions are mutually exclusive',
   )
   assert.equal(prepareJevPresetRequest(route, 'skills', { state: '' }).ok, false)
+
+  // Defect 2: the candidate path is reported, never silent.
+  const stackedSource = prepareJevPresetRequest(route, 'skills', { state: 'qwertyuiop' })
+  assert.ok(stackedSource.ok)
+  if (stackedSource.ok) assert.equal(stackedSource.candidateSource, 'full-catalog') // always now
+
+  // Defect 3: the envelope applies to presets at the TOOL gate (the single
+  // point before any builder) — schemaVersion required, no unknown keys.
+  const missing = checkJevEnvelope({ mode: 'delegation', state: 'x' }, JEV_PRESET_ENVELOPE_KEYS)
+  assert.ok(!missing.ok)
+  if (!missing.ok) assert.equal(missing.detail, 'SCHEMA_VERSION_INVALID')
+  const bogus = checkJevEnvelope(
+    { schemaVersion: 1, mode: 'delegation', state: 'x', bogus: true },
+    JEV_PRESET_ENVELOPE_KEYS,
+  )
+  assert.ok(!bogus.ok)
+  if (!bogus.ok) assert.equal(bogus.detail, 'UNKNOWN_INPUT_KEYS')
+  const wrongVersion = checkJevEnvelope(
+    { schemaVersion: 99, mode: 'delegation', state: 'x' },
+    JEV_PRESET_ENVELOPE_KEYS,
+  )
+  assert.ok(!wrongVersion.ok)
+  if (!wrongVersion.ok) assert.equal(wrongVersion.detail, 'SCHEMA_VERSION_INVALID')
 }
 
 // ─── Response consumption ───────────────────────────────────────────────
@@ -659,12 +737,14 @@ async function testToolGateChain(): Promise<void> {
     assert.equal(await runJevDecision(TOOL_INPUT, toolContext, off.runtime), refusalOf('DISABLED'))
     assert.equal(off.decideCalls.length, 0)
 
-    // Non-Zeus callers are refused before anything else.
+    // Non-Zeus callers are refused before anything else — with the remedy
+    // named in the detail (field report beta.16: the refusal must teach the fix).
     const nonZeus = stubRuntime()
-    assert.equal(
+    const callerRefused = JSON.parse(
       await runJevDecision(TOOL_INPUT, { ...toolContext, agent: 'apollo' }, nonZeus.runtime),
-      refusalOf('CALLER_NOT_ALLOWED'),
-    )
+    ) as { reasonCode: string; detail?: string }
+    assert.equal(callerRefused.reasonCode, 'CALLER_NOT_ALLOWED')
+    assert.match(callerRefused.detail ?? '', /PANTHEON_JEV_SPECIALIST_CALLERS/)
     assert.equal(nonZeus.decideCalls.length, 0)
 
     // Consent missing is a refusal, never a host call (checked before the ledger).
@@ -899,6 +979,7 @@ function testRegistrationContract(): void {
     'review',
     'rank',
     'verify',
+    'order',
   ])
   const branches = (schema.anyOf ?? []).map((branch) => branch.required ?? [])
   const reviewBranch = branches.find((required) => required.includes('delegateId'))
@@ -1025,6 +1106,7 @@ testConsumption()
 testNativeEvidence()
 testLedgerSettlement()
 await testToolGateChain()
+await testToolEnvelopeAppliesToPresets()
 await testRefusalDetailIsSanitized()
 await testCallerMatrix()
 

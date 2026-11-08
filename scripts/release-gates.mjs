@@ -56,8 +56,8 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 const GATE_NAMES = ['host', 'install', 'package', 'changelog', 'metadata']
 
-/** Support is family-level: these are the families this release supports. */
-export const SUPPORTED_FAMILIES = Object.freeze(['1.19.x', '2.x'])
+/** Support is family-level: this is the family this release supports. */
+export const SUPPORTED_FAMILIES = Object.freeze(['2.x'])
 
 /** Known-broken hosts. Every other member of a supported family is supported. */
 export const KNOWN_BROKEN_HOSTS = Object.freeze(['2.0.22'])
@@ -78,9 +78,11 @@ const REQUIRED_TARBALL_PAYLOAD = [
   'package/package.json',
   'package/plugin.json',
   'package/pyproject.toml',
+  // The plugin export target and its directory shim (the registered entry).
   'package/src/plugin.ts',
-  'package/src/plugin-v2.ts',
+  'package/src/plugin/index.ts',
   'package/src/plugins/tui/dist/tui.js',
+  'package/src/plugins/tui/dist/server.js',
   'package/src/plugins/tui/package.json',
   'package/src/plugins/tui/package-lock.json',
   'package/bin/pantheon-init.mjs',
@@ -271,20 +273,11 @@ export function validateMatrix(matrix) {
         `matrix row ${row.host} has an undeclared family: ${JSON.stringify(row.line)}`,
       )
     }
-    if (row.line === '1.19.x' && !row.host.startsWith('1.19.')) {
-      throw new Error(`host ${row.host} does not belong to the 1.19.x family`)
-    }
-    if (row.line === '2.x' && !row.host.startsWith('2.')) {
+    if (!row.host.startsWith('2.')) {
       throw new Error(`host ${row.host} does not belong to the 2.x family`)
     }
-    if (row.line === '1.19.x' && row.kind !== 'v1-permission') {
-      throw new Error(`kind ${row.kind} cannot run on the 1.19.x family`)
-    }
-    if (row.line === '2.x' && row.kind !== 'sandbox-v2') {
+    if (row.kind !== 'sandbox-v2') {
       throw new Error(`kind ${row.kind} cannot run on the 2.x family`)
-    }
-    if (!['sandbox-v2', 'v1-permission'].includes(row.kind)) {
-      throw new Error(`matrix row ${row.host} has an unknown kind: ${JSON.stringify(row.kind)}`)
     }
   }
 }
@@ -295,34 +288,6 @@ export function hostEvidenceWarning(checks) {
     : null
 }
 
-function v1Proof(root, row) {
-  rmSync(root, { recursive: true, force: true })
-  const prefix = join(root, 'prefix')
-  const home = join(root, 'home')
-  mkdirSync(prefix, { recursive: true })
-  mkdirSync(home, { recursive: true })
-  run(
-    `host-${row.host}-install`,
-    'npm',
-    ['install', '--global', '--prefix', prefix, `opencode-ai@${row.host}`],
-    {
-      env: { HOME: home, npm_config_cache: join(root, 'npm-cache') },
-    },
-  )
-  const binary = join(prefix, 'bin', 'opencode')
-  return run(`host-${row.host}`, 'bash', ['tests/canary/run-v1-permission-proof.sh'], {
-    env: {
-      HOME: home,
-      XDG_CONFIG_HOME: join(root, 'config'),
-      XDG_DATA_HOME: join(root, 'data'),
-      XDG_STATE_HOME: join(root, 'state'),
-      XDG_CACHE_HOME: join(root, 'cache'),
-      PATH: `${join(prefix, 'bin')}:${process.env.PATH ?? ''}`,
-      PANTHEON_V1_CANARY_BIN: binary,
-    },
-  })
-}
-
 function hostGate(options) {
   const tarball = singleTarball(options)
   const matrix = matrixFromEnv()
@@ -330,21 +295,17 @@ function hostGate(options) {
   const checks = []
   matrix.forEach((row, index) => {
     const root = join(runnerTemp(), `pantheon-release-host-${safeName(row.host)}`)
-    if (row.kind === 'sandbox-v2') {
-      rmSync(root, { recursive: true, force: true })
-      checks.push(
-        run(
-          `host-${row.host}`,
-          'bash',
-          ['scripts/test-opencode-v2-sandbox.sh', '--prepare', '--run', 'v2'],
-          {
-            env: sandboxEnv(root, row.host, tarball, 49380 + index),
-          },
-        ),
-      )
-      return
-    }
-    checks.push(v1Proof(root, row))
+    rmSync(root, { recursive: true, force: true })
+    checks.push(
+      run(
+        `host-${row.host}`,
+        'bash',
+        ['scripts/test-opencode-sandbox.sh', '--prepare', '--run', 'v2'],
+        {
+          env: sandboxEnv(root, row.host, tarball, 49380 + index),
+        },
+      ),
+    )
   })
   const measuredFamilies = [...new Set(matrix.map((row) => row.line))]
   const unmeasuredFamilies = SUPPORTED_FAMILIES.filter(
@@ -380,7 +341,7 @@ function installGate(options) {
   const sandbox = run(
     'sandbox-install',
     'bash',
-    ['scripts/test-opencode-v2-sandbox.sh', '--prepare', '--run', 'v2'],
+    ['scripts/test-opencode-sandbox.sh', '--prepare', '--run', 'v2'],
     { env: sandboxEnv(root, host, tarball, port) },
   )
   const version = installedVersion(root)
@@ -457,6 +418,25 @@ function packageGate(options) {
   }
 
   const validate = run('package-validate', 'npm', ['run', 'package:validate'])
+
+  // TUI dist stamp gate (QA beta.20 "O artefato TUI"): the sidebar version is
+  // build-time baked into tui.js — a stale embed ships a footer lying about
+  // the running version. Extract the dist from THIS tarball and require the
+  // release version string to be present.
+  const stamp = run(
+    'tui-dist-read',
+    'tar',
+    ['-xzOf', tarball, 'package/src/plugins/tui/dist/tui.js'],
+    { echo: false },
+  )
+  const distText = stamp.output
+  if (!distText.includes(options.version)) {
+    throw new Error(
+      `TUI dist embed is stale: ${options.version} not found in the packaged tui.js — ` +
+        'rebuild the TUI workspace (npm run build --workspace=src/plugins/tui) at the release version and repack',
+    )
+  }
+
   return {
     checks: [validate],
     details: {

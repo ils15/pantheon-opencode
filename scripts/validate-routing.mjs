@@ -9,6 +9,7 @@
  * - Skills referenced exist in skills/
  * - Handoffs reference valid agents
  * - Routing matrix references valid agents
+ * - Skill references cited in SKILL.md exist and are routed (progressive disclosure)
  *
  * Usage:
  *   node scripts/validate-routing.mjs
@@ -127,9 +128,25 @@ if (skillLock && typeof skillLock === 'object' && !Array.isArray(skillLock)) {
         .map((d) => `src/skills/${d}/SKILL.md`)
         .sort()
     : []
-  console.log(`  Locked skills: ${lockedFiles.length} (on disk: ${skillFiles.length})`)
+  // references/ ride the same lock: every shipped reference must be pinned too.
+  const refFiles = existsSync(srcSkillsDir)
+    ? readdirSync(srcSkillsDir, { withFileTypes: true })
+        .filter(
+          (entry) =>
+            entry.isDirectory() && existsSync(join(srcSkillsDir, entry.name, 'references')),
+        )
+        .flatMap((entry) =>
+          readdirSync(join(srcSkillsDir, entry.name, 'references'))
+            .filter((f) => f.endsWith('.md'))
+            .map((f) => `src/skills/${entry.name}/references/${f}`),
+        )
+        .sort()
+    : []
+  console.log(
+    `  Locked skills: ${skillFiles.length} + ${refFiles.length} references (lock: ${lockedFiles.length})`,
+  )
 
-  for (const rel of skillFiles) {
+  for (const rel of [...skillFiles, ...refFiles]) {
     const actual = createHash('sha256')
       .update(readFileSync(join(ROOT, rel)))
       .digest('hex')
@@ -140,8 +157,8 @@ if (skillLock && typeof skillLock === 'object' && !Array.isArray(skillLock)) {
   }
   for (const rel of lockedFiles) {
     check(
-      skillFiles.includes(rel),
-      `skills-lock.json lists "${rel}" but that SKILL.md does not exist`,
+      skillFiles.includes(rel) || refFiles.includes(rel),
+      `skills-lock.json lists "${rel}" but that file does not exist`,
     )
   }
 }
@@ -365,6 +382,64 @@ for (const agentName of canonicalFiles) {
         actual[key] === val,
         `Agent "${agentName}" permission.task.${key}: expected "${val}", got "${actual[key]}"`,
       )
+    }
+  }
+}
+
+// ─── H. Skill references — progressive disclosure ───────────────────────
+
+const skillsDirH = join(ROOT, 'src', 'skills')
+const skillDirIds = readdirSync(skillsDirH, { withFileTypes: true })
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => entry.name)
+  .sort()
+console.log('\n📎 Skill references (progressive disclosure)...')
+for (const id of skillDirIds) {
+  const skillMdPath = join(skillsDirH, id, 'SKILL.md')
+  if (!existsSync(skillMdPath)) continue
+  const body = readFileSync(skillMdPath, 'utf8')
+  const cited = [...body.matchAll(/references\/([A-Za-z0-9][A-Za-z0-9._-]*\.md)/g)].map((m) => m[1])
+  const refDir = join(skillsDirH, id, 'references')
+  if (!existsSync(refDir)) {
+    check(
+      cited.length === 0,
+      `${id}: cites ${cited.length} reference(s) but ships no references/ directory`,
+    )
+    continue
+  }
+  const onDisk = readdirSync(refDir)
+    .filter((f) => f.endsWith('.md'))
+    .sort()
+  check(/##\s+Routing/.test(body), `${id}: ships references/ but has no "## Routing" section`)
+  for (const name of new Set(cited).values()) {
+    check(onDisk.includes(name), `${id}: cited reference missing on disk: references/${name}`)
+  }
+  for (const name of onDisk) {
+    if (!cited.includes(name)) warn(`${id}: orphan reference (never cited): references/${name}`)
+  }
+}
+
+// ─── I. Behavior registry — the override surface ────────────────────────
+
+const behaviors = routing.behaviors
+if (!Array.isArray(behaviors) || behaviors.length === 0) {
+  check(false, 'routing.yml must declare a non-empty behaviors: registry')
+} else {
+  console.log('\n🧩 Behavior registry...')
+  const seen = new Set()
+  for (const b of behaviors) {
+    check(typeof b?.id === 'string' && b.id.length > 0, 'behavior entry missing id')
+    if (typeof b?.id === 'string') {
+      check(!seen.has(b.id), `duplicate behavior id: ${b.id}`)
+      seen.add(b.id)
+    }
+    check(
+      b?.kind === 'install' || b?.kind === 'runtime',
+      `behavior ${b?.id}: kind must be install|runtime`,
+    )
+    check(typeof b?.owner === 'string' && b.owner.length > 0, `behavior ${b?.id}: owner required`)
+    if (b?.kind === 'install' && typeof b?.owner === 'string') {
+      check(existsSync(join(ROOT, b.owner)), `behavior ${b.id}: owner file missing: ${b.owner}`)
     }
   }
 }
