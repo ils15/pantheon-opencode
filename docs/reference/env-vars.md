@@ -8,12 +8,12 @@ noted.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `OPENCODE_VERSION` | unset | `v1` or `v2` selects the plugin generation. Overridden by an explicit `--opencode-version` flag. |
-| `OPENCODE_BIN` | `opencode` | Host binary used for the `--version` probe. A basename of `opencode2` selects V2 without probing. |
+| `OPENCODE_VERSION` | unset | `v2` pins the host gate and skips the probe. Any other value — including `v1` — is refused. |
+| `OPENCODE_BIN` | `opencode` | Host binary used for the `--version` probe. A basename of `opencode2` resolves to 2.x without probing. |
 | `OPENCODE_V2_SPEC` | `@opencode/cli@latest` | Sandbox spec that provides the `opencode2` binary. |
 
-Generation resolution and fallback are described once in
-[Compatibility](../COMPATIBILITY.md#how-the-generation-is-selected).
+The host gate is described once in
+[Compatibility](../COMPATIBILITY.md#the-host-gate).
 
 ## Sandbox runs
 
@@ -71,7 +71,7 @@ Model precedence and the degradation chain are in [MCP](../MCP.md#pantheon-visio
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `PANTHEON_MODEL_PRESET` | unset | V1 legacy preset selector. V2 ignores static presets and applies only explicit per-agent project overrides. |
+| `PANTHEON_MODEL_PRESET` | unset | Legacy preset selector. The runtime ignores static presets and applies only explicit per-agent project overrides. |
 
 ## Local decision recommendation
 

@@ -1,7 +1,7 @@
 # Pantheon Documentation
 
 Pantheon is a multi-agent orchestration framework for **OpenCode**: 14
-specialized agents, 22 skills, and one guided workflow from plan to reviewed
+specialized agents, 23 skills, and one guided workflow from plan to reviewed
 change. This page is the map. Each fact has one home; pages link to it instead
 of repeating it.
 
@@ -11,17 +11,17 @@ of repeating it.
 |---|---|
 | Install Pantheon, or review installer flags, backups, and uninstall | [Installation](INSTALLATION.md) |
 | Reach a first result in ten minutes | [Quick Start](QUICKSTART.md) |
-| Move an existing install to 1.6.0, or plan for 1.7+ | [Upgrading](UPGRADING.md) |
+| Move an existing install to a newer Pantheon line | [Upgrading](UPGRADING.md) |
 | Know which OpenCode and Node versions are supported | [Compatibility](COMPATIBILITY.md) |
 
 ## Understand the system
 
 | Topic | Page |
 |---|---|
-| Agent flow, delegation mechanics, and the V1/V2 plugin contract | [Architecture](ARCHITECTURE.md) |
+| Agent flow, delegation mechanics, and the plugin contract | [Architecture](ARCHITECTURE.md) |
 | The 14 agents and their canonical files | [Agents & Skills](agents/README.md) |
 | Permission layers, quality gates, and delegation rules | [Permissions, Gates & Delegation](PERMISSIONS-QUALITY-DELEGATION.md) |
-| OpenCode V2 behavior: detection, tools, Dispatch, pruning, goals | [OpenCode V2](opencode-v2.md) |
+| OpenCode 2.x behavior: host gate, tools, Dispatch, pruning, goals | [OpenCode 2.x](opencode.md) |
 
 ## Operate
 

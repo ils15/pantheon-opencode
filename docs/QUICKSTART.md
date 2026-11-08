@@ -29,11 +29,10 @@ install it. Canceling writes nothing.
 opencode
 ```
 
-Restart is required after installing or changing the plugin generation. A
-restart reloads the selected plugin; it is not an automatic resume of delegated
-work.
+Restart is required after installing or changing the plugin. A restart reloads
+the plugin; it is not an automatic resume of delegated work.
 
-With the V2 TUI installed, the sidebar shows the Pantheon version, active
+With the TUI installed, the sidebar shows the Pantheon version, active
 preset/source, git state, and a `Context` block with tokens, spend, and
 cache/speed. The TUI ships no quota panel: to see provider quota and usage,
 install the recommended community plugin
@@ -81,7 +80,7 @@ per child and detail for the selected child. It needs an open session.
 
 - [Installation](INSTALLATION.md) — flags, saved plans, backup, uninstall,
   reconcile, MCP pins.
-- [OpenCode V2](opencode-v2.md) — sidebar block, `/dispatch` panel, context
+- [OpenCode 2.x](opencode.md) — sidebar block, `/dispatch` panel, context
   pruning, native compaction, session goals.
 - [MCP](MCP.md) and [MCP Tools](mcp-tools.md) — servers and tool signatures.
 - [Memory](MEMORY.md) — what is stored, for how long, and when to search.

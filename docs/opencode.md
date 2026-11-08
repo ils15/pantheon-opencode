@@ -1,55 +1,60 @@
-# OpenCode V2
+# OpenCode 2.x
 
-OpenCode 2 gets the Pantheon **V2 plugin**: host-native tools, V2 hooks, and a
+OpenCode 2 gets the Pantheon **plugin**: host-native tools, hooks, and a
 native TUI surface. This page covers what a user sees. The plugin contract,
 tool-by-tool registration, and the delegation matrix are in
 [Architecture](ARCHITECTURE.md); supported hosts and evidence are in
 [Compatibility](COMPATIBILITY.md).
 
-## Generation detection
+## The host gate
 
-The installer selects one generation per installation. `auto` is the default
-and reads the host; `--opencode-version v1|v2|auto` overrides it. The resolution
-order and the exact fallback behavior live in
-[Compatibility](COMPATIBILITY.md#how-the-generation-is-selected). V1 and V2
-plugins are never registered together.
+The installer must confirm the host is OpenCode 2.x before writing. There is
+no generation to select and no fallback: `OPENCODE_VERSION=v2` pins the
+answer, an `OPENCODE_BIN` basename of `opencode2` is an explicit operator
+hint, and otherwise a `--version` probe decides. A confirmed 1.x host, a
+failed probe, or an unreadable version is a hard refusal before any write.
+The resolution order and the exact refusal behavior live in
+[Compatibility](COMPATIBILITY.md#the-host-gate). One plugin is registered; a
+host never loads two Pantheon plugins.
 
-## Tools on V2
+## Tools
 
-The V2 plugin registers tools through `ctx.tool.transform()`, not through the V1
-plugin path. The exact list per generation, with source locators, is in
-[Architecture](ARCHITECTURE.md#what-each-generation-registers). In user terms:
+The plugin registers tools through `ctx.tool.transform()`. The exact list,
+with source locators, is in
+[Architecture](ARCHITECTURE.md#what-the-plugin-registers). In user terms:
 
 - `hashline_edit` edits files by line-tag anchors instead of raw line numbers.
 - `pantheon_cost` reports tokens and USD by agent, model, and session.
 - `pantheon_model` shows, sets, or resets per-agent project-scoped model
   overrides.
+- `pantheon_local_decision` is the advisory local decision selector; it runs
+  only for Zeus.
 - `vision_describe` appears when the host exposes its model catalog.
 - `pantheon_bounded_read` appears when the host exposes its permission and
   session APIs, and only in a root Zeus session.
 
-The three legacy goal tools are not registered on V2. Use the Persistence MCP
+The three legacy goal tools are not registered. Use the Persistence MCP
 `goal_*` tools for durable manual goals; see [Memory](MEMORY.md#manual-session-goals).
 
 ## Per-agent MCP permissions
 
 The installer reads each agent's `mcp_tools` allowlist and generates native
-per-agent permissions for both generations. On OpenCode 2.x the host evaluates a
+per-agent permissions. On OpenCode 2.x the host evaluates a
 `permissions` rule whose action is `<server>_*` (or `<server>_<tool>`) with
-effect `deny`/`allow`. The V1-shaped `permission.mcp.<server>` key is not an
+effect `deny`/`allow`. The legacy `permission.mcp.<server>` key is not an
 action the host evaluates; the installer translates `allow`/`deny` into the
 former. `ask` is not expressible for MCP on that host — it hides the tool
 instead of prompting, so the installer emits no rule and warns.
 
-An existing native V2 `permissions` array remains authoritative. The installer
+An existing native `permissions` array remains authoritative. The installer
 does not append its legacy default grants to that array; it seeds those defaults
-only when the config has no native V2 permissions yet.
+only when the config has no native `permissions` array yet.
 
 Deny-by-default, the entrypoints, and custom-server setup are in [MCP](MCP.md).
 
 ## Dispatch sidebar block
 
-The native V2 sidebar shows the Pantheon version, active preset/source, git
+The native sidebar shows the Pantheon version, active preset/source, git
 state, a `Context` block with thousands-separated tokens and `<percent>% used of
 <window>` (blue ≤25%, green ≤50%, yellow ≤90%, red above), `$<spent> spent`, and
 a muted `cache <n>% · <n.n> tok/s` line.
@@ -78,7 +83,7 @@ own line, and Pantheon only appends `▸<preset> · ✦<n> ativos` while delegat
 are running.
 
 <!-- media: opencode-v2-dispatch-sidebar
-     alt: "Pantheon V2 sidebar with the aggregated Dispatch block: two live child rows and a finished roll-up"
+     alt: "Pantheon sidebar with the aggregated Dispatch block: two live child rows and a finished roll-up"
      source: docs/assets/tui/v2-sidebar.gif (recorded from docs/assets/tui/v2-sidebar.tape)
      status: pending — no image committed; the fenced sketch below is illustrative
 -->
@@ -204,7 +209,7 @@ conversation before the question, so approval never refers to a child's view.
 
 ## Context pruning
 
-The V2 `compaction` hook performs dynamic context pruning on the
+The `compaction` hook performs dynamic context pruning on the
 provider-bound message array immediately before summarization, so old tool
 output is not re-summarized into permanent context.
 
@@ -228,7 +233,7 @@ and arguments are not logged.
 
 The array is mutated in place: no message is deleted or reordered, `system` is
 untouched, and an unexpected shape fails open without throwing. The same engine
-is available per request only when the V2 plugin entry sets
+is available per request only when the plugin entry sets
 `options.context_pruner.enabled` to `true` (default `false`), because
 per-request pruning invalidates the provider prompt cache. `keepTurns`,
 `purgeAfterTurns`, `protectedTools`, `minSavingsTokens`, and `charsPerToken`
@@ -237,20 +242,20 @@ tune it.
 `init` writes the entry in its object form (`{ "package": …, "options": { … } }`),
 so there is a place to put that key without guessing the syntax — a bare-string
 entry leaves the host with no options at all. The context-pruner option and
-default are listed in the README's *V2 plugin options* table. Memory retrieval
+default are listed in the README's *Plugin options* table. Memory retrieval
 uses the `pantheon-memory` MCP only when an agent explicitly calls
 `memory_search`; see [Memory](MEMORY.md#recall-and-compaction-policy).
 
 ## Session goals
 
-Durable manual goals are Persistence MCP tools, not V2 plugin tools:
+Durable manual goals are Persistence MCP tools, not plugin tools:
 `goal_create`, `goal_get`, `goal_update`, and `goal_done`. They are granted only
 to Zeus, partitioned by OpenCode session id, and never continue a session
 automatically. See [Memory](MEMORY.md#manual-session-goals).
 
 ## Task-result guard
 
-The V2 `execute.after` chain runs `task-result-guard` → `context-sandbox` →
+The `execute.after` chain runs `task-result-guard` → `context-sandbox` →
 `read-enhancer`. The guard intercepts native child-session dispatch where the
 child returns an empty or missing result. Instead of surfacing a silent
 `completed` with no payload, it raises an explicit error. This catches the
@@ -262,30 +267,30 @@ status tool is visible, use synchronous `subagent` dispatch or wait for a
 host-provided completion notification; do not claim deterministic fan-in or job
 recovery without an exposed, verified mechanism.
 
-## Unsupported V2 features
+## Unsupported features
 
-The V2 plugin reports these gaps through `getUnsupportedFeatures()`:
+The plugin reports these gaps through `getUnsupportedFeatures()` (the seed in
+`src/pantheon/unsupported.mjs`):
 
-- Adapter scope choices: `legacy-hooks` (the V1-specific hook surface),
-  `catalog-transform`, `integration-transform`, `skill-transform`,
-  `goal-tools` (the goal loop needs V1 infrastructure the V2 context does not
-  expose).
+- Adapter scope choices: `legacy-hooks` (the hook surface of the removed V1
+  plugin line), `catalog-transform`, `integration-transform`,
+  `skill-transform`, `goal-tools` (the goal loop needs infrastructure the
+  host's plugin context does not expose).
 - Host-domain gaps: `idle-todo-enforcer` (the enforcer is constructed only when
   the host's `session` domain exposes `todo`/`messages`/`children`/`promptAsync`;
   the measured 2.x domain does not), `tool-ceiling` (no
   `message.updated` producer for the host-reported budget, so the
   `<tool_ceiling>` block is not injected), `todo-restore` (no todo API to
   snapshot across compaction), and `board-transitions` (the shared board is
-  reachable through the injected bridge, but the writers — terminal audit,
-  idle reports, dispatch mirror — live in V1's event hook and
-  `pantheon-hooks.ts`).
+  reachable through the injected board, but the writers — terminal audit,
+  idle reports, dispatch mirror — lived in the removed generation's event hook
+  and `pantheon-hooks.ts`).
 
-Everything else the V1 plugin wires is on V2: the Zeus read guard, the
+Everything else the removed generation wired is here: the Zeus read guard, the
 compaction context, vision history sanitization, the post-write formatter, and
 the delegation audit trail (start/stop records joined on `delegation_id`).
 Idle dispatch is wired but **conditional** — it reaches an enforcer only where
 `idle-todo-enforcer` is not in the seed, which is why that marker is listed
 above. `pantheon_bounded_read` applies the same code-root restriction as the
 read guard: `src/`, `tests/` and `scripts/` are refused; docs, config, the
-memory bank and `.pantheon/` remain readable. If bridge construction fails, the
-plugin keeps running without one and appends the runtime marker `v1-bridge`.
+memory bank and `.pantheon/` remain readable.

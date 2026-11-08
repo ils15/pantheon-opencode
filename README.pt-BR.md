@@ -36,9 +36,9 @@ o que importou. Você continua no controle de cada decisão e de cada merge.
 
 ## Comece em 2 minutos
 
-Requisitos: [OpenCode](https://opencode.ai/docs/) **1.19.x** (V1) ou **OpenCode
-2.x** (V2), e Node.js **>=26.4.0** para a CLI e as ferramentas. **OpenCode 2.0.22
-tem falha conhecida**; veja [Compatibilidade](docs/COMPATIBILITY.md).
+Requisitos: [OpenCode](https://opencode.ai/docs/) **2.x** e Node.js
+**>=26.4.0** para a CLI e as ferramentas. **OpenCode 2.0.22 tem falha
+conhecida**; veja [Compatibilidade](docs/COMPATIBILITY.md).
 
 No projeto onde você quer usar o Pantheon:
 
@@ -57,9 +57,8 @@ Quando você pede um plano, Athena devolve o plano a Zeus, que o exibe na
 conversa principal antes de pedir aprovação — nunca como um plano escondido na
 conversa de um agente filho.
 
-Reinicie o OpenCode depois de instalar ou trocar a geração do plugin. O
-instalador seleciona uma geração por instalação; plugins V1 e V2 nunca são
-registrados juntos.
+Reinicie o OpenCode depois de instalar ou trocar o plugin. O Pantheon registra
+um único plugin; o host nunca carrega dois plugins Pantheon.
 
 Flags do instalador, códigos de saída, planos salvos, backup e restore,
 desinstalação, reconcile e pins de MCP estão no
@@ -71,7 +70,7 @@ apenas — `init` → reiniciar → `/dispatch` → primeiro resultado — veja 
 
 - **14 agentes especializados**, com um orquestrador, especialistas de
   implementação, um gate de qualidade e papéis de apoio.
-- **22 skills** e instruções reutilizáveis para planejar, construir, revisar e
+- **23 skills** e instruções reutilizáveis para planejar, construir, revisar e
   documentar.
 - **5 servidores MCP locais** para memória de projeto, persistência, recursos,
   execução confinada de scripts e visão.
@@ -85,7 +84,7 @@ apenas — `init` → reiniciar → `/dispatch` → primeiro resultado — veja 
   [referência do roteador](docs/reference/local-decision-router.md) e o
   [Decisions nativas (Jev)](docs/reference/native-decisions.md).
 - **Uma TUI opcional**, com bloco de dispatch na sidebar e painel `/dispatch`
-  em largura total. A sidebar V2 mantém a versão do Pantheon, o preset/fonte
+  em largura total. A sidebar mantém a versão do Pantheon, o preset/fonte
   ativos, o estado do git e um bloco `Context` (tokens, medidor de percentual,
   `$<gasto> gastos` e uma linha mutada `cache <n>% · <n.n> tok/s`); o rodapé
   nativo do prompt segue intacto, e o Pantheon só acrescenta
@@ -105,16 +104,12 @@ Veja [Memória](docs/MEMORY.md).
 
 ## Compatibilidade
 
-OpenCode **1.19.x** (plugin V1) e **OpenCode 2.x** (plugin V2) são suportados.
-**OpenCode 2.0.22 tem falha conhecida.** A partir da 1.7, a linha abandona o
-contrato V1 e mira apenas o OpenCode 2.
+OpenCode **2.x** é suportado. **OpenCode 2.0.22 tem falha conhecida.** A 2.0
+remove o contrato V1 do OpenCode por completo — a 1.7.x foi a última linha com
+suporte V1.
 
 A política de suporte, a exceção conhecida e a evidência de versões verificadas
 têm um único lar: [Compatibilidade](docs/COMPATIBILITY.md).
-
-A matriz de suporte, o piso de Node e as notas de host/build, as regras de
-geração OpenCode 1.x/2.x, a posição de fim de vida e os problemas conhecidos têm
-um único lar: [Compatibilidade](docs/COMPATIBILITY.md).
 
 ## Delegação
 
@@ -144,7 +139,7 @@ O modelo de delegação, a matriz chamador/alvo e os gates de aprovação estão
 | [Instalação](docs/INSTALLATION.md) | [Arquitetura](docs/ARCHITECTURE.md) |
 | [Início rápido](docs/QUICKSTART.md) | [MCP](docs/MCP.md) · [Ferramentas MCP](docs/mcp-tools.md) |
 | [Atualização](docs/UPGRADING.pt-BR.md) | [Memória](docs/MEMORY.md) |
-| [Compatibilidade](docs/COMPATIBILITY.md) | [OpenCode V2](docs/opencode-v2.md) |
+| [Compatibilidade](docs/COMPATIBILITY.md) | [OpenCode 2.x](docs/opencode.md) |
 | [Agentes e Skills](docs/agents/README.md) | [Plataformas](docs/PLATFORMS.md) |
 | [Processo de release](docs/RELEASING.md) | [Proteção de branch](docs/BRANCH-PROTECTION.md) |
 | [Roteamento de modelos](docs/reference/model-routing.md) | [Variáveis de ambiente](docs/reference/env-vars.md) · [Code Mode](docs/reference/code-mode.md) |
@@ -165,7 +160,7 @@ para as mudanças publicadas mais recentes.
 ## Novidades
 
 Veja a [release no GitHub](https://github.com/ils15/pantheon-opencode/releases)
-e o [CHANGELOG.md](CHANGELOG.md) para as mudanças da 1.6.0.
+e o [CHANGELOG.md](CHANGELOG.md) para as mudanças da 1.7.0.
 
 ## Contribua
 
