@@ -666,3 +666,38 @@ full_auto:
   # for a bounded fix; use focused verification. This section documents guards
   # and defaults only; the plugin uses GOAL_LOOP_DEFAULTS directly.
   # Wave 3 (PR #46): one active goal per session (pending → in_progress → done).
+
+# ─── Named behaviors: the only override surface (2.0) ─────────────────────
+# Each id is the SINGLE addressable behavior a user may disable or replace
+# via .pantheon/overrides.json (project) or pantheon-overrides.json in the
+# global config dir (project wins per id). kind: install → owner is the file
+# the installer writes ("disable" skips the copy, "replace" writes content
+# instead of the canonical body, 8000-char cap). kind: runtime → a named gate
+# the plugin reads at setup ("disable" turns it off; "replace" is not
+# supported for runtime behaviors in 2.0).
+# Override FILES are never inventoried: reconcile, uninstall and upgrades
+# leave them alone. Anything not listed here is NOT overridable — add the id
+# here first, then the override. secret-scan is deliberately absent: it is
+# not user-overridable.
+behaviors:
+  - id: skill-auto-continue
+    kind: install
+    owner: src/skills/auto-continue/SKILL.md
+  - id: skill-tdd-with-agents
+    kind: install
+    owner: src/skills/tdd-with-agents/SKILL.md
+  - id: skill-code-review-checklist
+    kind: install
+    owner: src/skills/code-review-checklist/SKILL.md
+  - id: skill-prompt-refinery
+    kind: install
+    owner: src/skills/prompt-refinery/SKILL.md
+  - id: gate-idle-todo-enforcer
+    kind: runtime
+    owner: src/plugin.ts (idle todo enforcer)
+  - id: gate-context-pruner
+    kind: runtime
+    owner: src/pantheon/context-pruner.ts
+  - id: gate-j1-risk-gate
+    kind: runtime
+    owner: src/pantheon/jev-risk-gate.ts
