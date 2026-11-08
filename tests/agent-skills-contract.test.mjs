@@ -98,3 +98,32 @@ test('agent skill permissions default deny and grant only declared IDs', () => {
     /only through the skills list/i,
   )
 })
+
+test('SKILL.md cores stay under the progressive-disclosure budget (120 lines)', () => {
+  const BUDGET_LINES = 120
+  const ids = readdirSync(SKILLS_DIR, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+  for (const id of ids) {
+    const body = readFileSync(join(SKILLS_DIR, id, 'SKILL.md'), 'utf8')
+    const lines = body.split('\n').length
+    assert.ok(
+      lines <= BUDGET_LINES,
+      `${id}/SKILL.md is ${lines} lines — over the ${BUDGET_LINES}-line core budget; move depth to references/ and route it`,
+    )
+  }
+})
+
+test('the decision catalog mirrors the skill directory (one entry per skill)', async () => {
+  const { PANTHEON_SKILL_CATALOG } = await import('../src/pantheon/pantheon-decision-catalog.ts')
+  const onDisk = readdirSync(SKILLS_DIR, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort()
+  const inCatalog = PANTHEON_SKILL_CATALOG.map((entry) => entry.id).sort()
+  assert.deepEqual(
+    inCatalog,
+    onDisk,
+    'PANTHEON_SKILL_CATALOG must carry exactly one entry per skill directory',
+  )
+})

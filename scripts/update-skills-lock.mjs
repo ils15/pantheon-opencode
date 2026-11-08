@@ -11,20 +11,32 @@ const LOCK_PATH = join(ROOT, 'skills-lock.json')
 
 /** Rebuild the sorted SHA-256 inventory for every canonical skill file. */
 function updateSkillsLock() {
-  const skillFiles = readdirSync(SKILLS_DIR, { withFileTypes: true })
+  const skillDirs = readdirSync(SKILLS_DIR, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
-    .map((entry) => join(SKILLS_DIR, entry.name, 'SKILL.md'))
-    .filter((path) => existsSync(path))
-    .sort()
+    .map((entry) => entry.name)
 
-  const lock = Object.fromEntries(
-    skillFiles.map((path) => [
-      relative(ROOT, path).split('\\').join('/'),
-      createHash('sha256').update(readFileSync(path)).digest('hex'),
-    ]),
-  )
-  writeFileSync(LOCK_PATH, `${JSON.stringify(lock, null, 2)}\n`)
-  process.stdout.write(`Updated ${Object.keys(lock).length} skill digests in skills-lock.json\n`)
+  const lock = {}
+  for (const id of skillDirs) {
+    const skillMd = join(SKILLS_DIR, id, 'SKILL.md')
+    if (existsSync(skillMd)) {
+      lock[relative(ROOT, skillMd).split('\\').join('/')] = createHash('sha256')
+        .update(readFileSync(skillMd))
+        .digest('hex')
+    }
+    const refDir = join(SKILLS_DIR, id, 'references')
+    if (!existsSync(refDir)) continue
+    for (const name of readdirSync(refDir).sort()) {
+      if (!name.endsWith('.md')) continue
+      const refPath = join(refDir, name)
+      lock[relative(ROOT, refPath).split('\\').join('/')] = createHash('sha256')
+        .update(readFileSync(refPath))
+        .digest('hex')
+    }
+  }
+
+  const sorted = Object.fromEntries(Object.entries(lock).sort(([a], [b]) => a.localeCompare(b)))
+  writeFileSync(LOCK_PATH, `${JSON.stringify(sorted, null, 2)}\n`)
+  process.stdout.write(`Updated ${Object.keys(sorted).length} skill digests in skills-lock.json\n`)
 }
 
 updateSkillsLock()

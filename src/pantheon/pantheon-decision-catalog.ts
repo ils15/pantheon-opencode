@@ -13,6 +13,7 @@ export interface DecisionCatalogEntry {
 
 export const PANTHEON_SKILL_CATALOG: readonly DecisionCatalogEntry[] = Object.freeze([
   { id: 'agent-coordination', description: 'Multi-agent orchestration, routing, and delegation.' },
+  { id: 'agent-forge', description: 'Forge a new OpenCode agent on demand — interview, draft, confirm.' },
   { id: 'artifact-management', description: 'Structured artifacts for planned or risky work.' },
   { id: 'auto-continue', description: 'Continue multi-step todos while keeping safety gates.' },
   { id: 'clonedeps', description: 'Clone dependency source locally for inspection.' },
@@ -35,6 +36,7 @@ export const PANTHEON_SKILL_CATALOG: readonly DecisionCatalogEntry[] = Object.fr
     id: 'tdd-with-agents',
     description: 'RED, GREEN, REFACTOR test-driven implementation.',
   },
+  { id: 'prompt-refinery', description: 'Refine a vague multi-concern request — silent adjust, >> full contract.' },
   { id: 'verification-planning', description: 'Plan the evidence path before changing code.' },
   {
     id: 'visual-review-pipeline',
