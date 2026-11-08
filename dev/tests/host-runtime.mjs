@@ -1,3 +1,4 @@
+import { fakeCompletionServer } from './shared/fake-completion-server.mjs'
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import {
@@ -9,7 +10,6 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs'
-import { createServer } from 'node:http'
 import { createServer as createNetServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -34,57 +34,7 @@ function parseEvidence(path) {
     .map((line) => JSON.parse(line))
 }
 
-function fakeCompletionServer() {
-  let requestCount = 0
-  const server = createServer((request, response) => {
-    if (request.method !== 'POST' || !request.url?.endsWith('/chat/completions')) {
-      response.writeHead(404).end()
-      return
-    }
-    requestCount += 1
-    request.resume()
-    request.on('end', () => {
-      const id = `pickleball-stub-${Date.now()}`
-      const chunks = [
-        {
-          id,
-          object: 'chat.completion.chunk',
-          created: 1_700_000_000,
-          model: 'pickleball-local',
-          choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }],
-        },
-        {
-          id,
-          object: 'chat.completion.chunk',
-          created: 1_700_000_000,
-          model: 'pickleball-local',
-          choices: [{ index: 0, delta: { content: 'READY' }, finish_reason: null }],
-        },
-        {
-          id,
-          object: 'chat.completion.chunk',
-          created: 1_700_000_000,
-          model: 'pickleball-local',
-          choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
-        },
-      ]
-      response.writeHead(200, {
-        'content-type': 'text/event-stream',
-        'cache-control': 'no-cache',
-        connection: 'keep-alive',
-      })
-      for (const chunk of chunks) response.write(`data: ${JSON.stringify(chunk)}\n\n`)
-      response.end('data: [DONE]\n\n')
-    })
-  })
-  return new Promise((resolveServer, reject) => {
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', () => {
-      server.requestCount = () => requestCount
-      resolveServer(server)
-    })
-  })
-}
+
 
 async function closeServer(server) {
   if (!server.listening) return
