@@ -73,7 +73,7 @@ describe('mergeOverrides', () => {
       broken: { action: 'nope' },
     })
     const r = mergeOverrides(g, p)
-    assert.equal(r.entries['shared']?.action, 'replace')
+    assert.equal(r.entries.shared?.action, 'replace')
     assert.equal(r.entries['g-only']?.action, 'disable')
     assert.ok(r.errors.some((e) => e.includes('project overrides') && e.includes('"broken"')))
   })

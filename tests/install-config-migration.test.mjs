@@ -156,7 +156,7 @@ const V1_WITH_VARIANT = {
 }
 
 /** Expected V2 output of normalizeLegacyV1Config(V1_CONFIG), preserving V1 insertion order. */
-const V2_EXPECTED = {
+const _V2_EXPECTED = {
   $schema: 'https://opencode.ai/config.json',
   providers: {
     'opencode-go': {
@@ -1260,7 +1260,7 @@ describe('config-migration', () => {
         const copy = join(dir, 'config-migration.mjs')
         const original = readFileSync(MIGRATION_MODULE, 'utf8')
         const mutated = original.replace(
-          /(const MANAGED_AGENT_FIELDS = (?:Object\.freeze\(\s*)?\[)/,
+          /((?:export )?const MANAGED_AGENT_FIELDS = (?:Object\.freeze\(\s*)?\[)/,
           "$1\n  'model',",
         )
         assert.notEqual(mutated, original, 'the mutation must apply, or this test is vacuous')

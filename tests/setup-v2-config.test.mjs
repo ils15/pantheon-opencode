@@ -6,10 +6,7 @@ import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import {
-  normalizeLegacyV1Config,
-  normalizeMcpConfigToV2,
-} from '../scripts/install/config-migration.mjs'
+import { normalizeMcpConfigToV2 } from '../scripts/install/config-migration.mjs'
 import { planArtifactDigest } from '../scripts/install/plan-artifact.mjs'
 import { writeConfigWithBackup } from '../scripts/install/shared.mjs'
 import { runSetup } from '../scripts/setup.mjs'

@@ -195,10 +195,7 @@ test('legacy V1 plugin paths heal to the canonical directory, and the files are 
   // HEALS to the canonical directory identity (the only shape the loader
   // accepts), while non-entry legacy paths keep their verbatim identity so
   // cleanup can still strip them.
-  assert.equal(
-    resolveInstalledPlugin(join(ROOT, 'src', 'plugin.ts')),
-    join(ROOT, 'src', 'plugin'),
-  )
+  assert.equal(resolveInstalledPlugin(join(ROOT, 'src', 'plugin.ts')), join(ROOT, 'src', 'plugin'))
   assert.equal(
     resolveInstalledPlugin(join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts')),
     join(ROOT, 'src', 'plugins', 'pantheon-hooks.ts'),

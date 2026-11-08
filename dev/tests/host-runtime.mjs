@@ -1,4 +1,3 @@
-import { fakeCompletionServer } from './shared/fake-completion-server.mjs'
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import {
@@ -14,8 +13,8 @@ import { createServer as createNetServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-
 import { runOfflineDecision } from './offline-decision.mjs'
+import { fakeCompletionServer } from './shared/fake-completion-server.mjs'
 
 const TEST_ROOT = dirname(fileURLToPath(import.meta.url))
 const HOST_TIMEOUT_MS = 20_000

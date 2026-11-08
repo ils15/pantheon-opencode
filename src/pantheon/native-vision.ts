@@ -131,10 +131,7 @@ export function buildV2VisionPromptContext(
   // Under-the-hood contract (user feedback, 2.0 cycle): the block is a
   // minimal relay, not an essay — inspect silently, route UI work to
   // @aphrodite, never revert based on an image.
-  const lines = [
-    '<!-- pantheon-v2-visual-context -->',
-    `[Visual] ${images.join(' | ')}`,
-  ]
+  const lines = ['<!-- pantheon-v2-visual-context -->', `[Visual] ${images.join(' | ')}`]
   const question = truncateUserText(userText ?? '')
   if (question) {
     // JSON.stringify quotes/escapes the question so it cannot spoof the

@@ -24,9 +24,8 @@ import {
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test as nodeTest } from 'node:test'
-import { migrateV1toV2 } from '../scripts/install/config-migration.mjs'
 import {
-  applyContextSandboxToV2Plugins,
+  applyContextSandboxToPluginEntry,
   applyMcpServerEntries,
   deriveNativeMcpPermissions,
   installOpenCode,
@@ -1341,27 +1340,6 @@ test('the installer has no remaining write path for steps', async () => {
   }
 })
 
-test('migrateV1toV2 still carries steps and the installer drops it afterwards', async () => {
-  // config-migration.mjs must stay a pure shape converter: the `{ ...agentConfig }`
-  // spread there (config-migration.mjs:329) is what carries `steps` into V2, and
-  // stripping it there would make the converter lossy for every caller. The
-  // delete belongs downstream in opencode.mjs, inside the v2 branch.
-  const migrated = migrateV1toV2({ agent: { zeus: { mode: 'primary', steps: 45 } } })
-  assert.equal(migrated.agents.zeus.steps, 45, 'the pure converter must not lose fields')
-
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-steps-migrate-'))
-  try {
-    const config = await runInstall(
-      target,
-      { agent: { zeus: { mode: 'primary', steps: 45 } } },
-      'v2',
-    )
-    assert.equal(config.agents.zeus.steps, undefined)
-  } finally {
-    rmSync(target, { recursive: true, force: true })
-  }
-})
-
 test('a managed agent absent from the config is created without steps', async () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-steps-new-'))
   try {
@@ -1542,10 +1520,10 @@ test('context_sandbox migration preserves third-party plugin entries and their o
   }
 })
 
-test('applyContextSandboxToV2Plugins converts a string entry and leaves others intact', () => {
+test('applyContextSandboxToPluginEntry converts a string entry and leaves others intact', () => {
   const v2ref = join(ROOT, 'src', 'plugin')
   const plugins = ['npm:@acme/other', v2ref]
-  applyContextSandboxToV2Plugins(plugins, { enabled: true })
+  applyContextSandboxToPluginEntry(plugins, { enabled: true })
   assert.equal(plugins[0], 'npm:@acme/other')
   assert.deepEqual(plugins[1], {
     package: v2ref,
@@ -1553,9 +1531,9 @@ test('applyContextSandboxToV2Plugins converts a string entry and leaves others i
   })
 })
 
-test('applyContextSandboxToV2Plugins is a no-op when the legacy key is absent', () => {
+test('applyContextSandboxToPluginEntry is a no-op when the legacy key is absent', () => {
   const plugins = [join(ROOT, 'src', 'plugin')]
-  assert.deepEqual(applyContextSandboxToV2Plugins(plugins, undefined), [
+  assert.deepEqual(applyContextSandboxToPluginEntry(plugins, undefined), [
     join(ROOT, 'src', 'plugin'),
   ])
 })

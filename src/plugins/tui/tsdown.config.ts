@@ -50,8 +50,6 @@ function normalizeHqtuiBundlePaths(name: string, contents: string): string {
 export default defineConfig({
   entry: {
     tui: 'src/index.tsx',
-    tui: 'src/index.tsx',
-    server: 'src/server.ts',
     server: 'src/server.ts',
   },
   format: ['esm'],
