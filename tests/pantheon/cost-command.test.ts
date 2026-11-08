@@ -184,7 +184,7 @@ async function main() {
       // already-detected set: against a V2-only file, PANTHEON_OPENCODE_VERSION=v1
       // selects no family at all and fails on the fixture's shape rather than on
       // the path this test is about.
-      for (const version of [undefined, 'v1', 'v2'] as const) {
+      for (const version of [undefined, 'v2'] as const) {
         const home = join(dir, String(version ?? 'unset'))
         const db = join(home, 'opencode', 'opencode.db')
         mkdirSync(join(home, 'opencode'), { recursive: true })
@@ -206,8 +206,8 @@ async function main() {
               `${version} failed to open the default opencode.db: ${output.slice(0, 200)}`,
             )
             assert.ok(
-              !output.includes('opencode.db'),
-              `${version} invented an opencode.db default: ${output.slice(0, 200)}`,
+              output.includes('Source: opencode.db'),
+              `${version} must name the default opencode.db as its source: ${output.slice(0, 200)}`,
             )
           },
         )
@@ -739,7 +739,7 @@ async function main() {
             output.includes('opencode.db'),
             `expected the real default name: ${output.slice(0, 200)}`,
           )
-          assert.ok(!output.includes('opencode.db'), 'the bogus v2 filename is back')
+          assert.ok(!output.includes('opencode-v2.db'), 'the bogus v2 filename is back')
           assert.ok(output.includes('not found'))
         },
       )

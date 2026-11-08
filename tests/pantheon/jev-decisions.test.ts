@@ -22,6 +22,7 @@ import {
 import {
   checkJevEnvelope,
   consumeJevDecisionResult,
+  JEV_DECISION_MAX_CHOICES,
   filterNativeCapValidCandidates,
   isJevDecisionPreset,
   isNativeJevProvider,
@@ -506,7 +507,7 @@ function testPresets(): void {
       'over-long ids are skipped',
     )
     assert.ok(choices.some((option) => option.value === 'no-description'))
-    assert.ok(choices.length <= 24)
+    assert.ok(choices.length <= JEV_DECISION_MAX_CHOICES)
   }
 
   // Full-catalog fallback still respects the bound with many host skills.
@@ -515,7 +516,7 @@ function testPresets(): void {
   assert.ok(capped.ok)
   if (capped.ok) {
     const choices = (capped.request.questions[0] as { choices: Array<{ value: string }> }).choices
-    assert.equal(choices.length, 24, 'bound is catalog pool + host skills up to 23 + none')
+    assert.equal(choices.length, JEV_DECISION_MAX_CHOICES, 'the bound is catalog pool + host skills + none')
     assert.ok(choices.some((option) => option.value === 'none'))
   }
 

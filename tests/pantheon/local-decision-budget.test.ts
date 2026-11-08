@@ -80,17 +80,20 @@ function runConcurrentReserve(
   model: string,
 ): Promise<string> {
   const moduleUrl = new URL('../../src/pantheon/local-decision-budget.ts', import.meta.url).href
+  // CodeQL js/bad-code-sanitization: data crosses via argv, never via
+  // interpolated code. In `-e` mode process.argv[1] is the first extra arg.
   const script = `
-    const { openLocalDecisionBudgetLedger } = await import(${JSON.stringify(moduleUrl)});
-    const ledger = openLocalDecisionBudgetLedger({ dbPath: ${JSON.stringify(dbPath)} });
-    const result = ledger.reserve(${JSON.stringify(provider)}, ${JSON.stringify(model)});
+    const [moduleUrl, dbPath, provider, model] = process.argv.slice(1);
+    const { openLocalDecisionBudgetLedger } = await import(moduleUrl);
+    const ledger = openLocalDecisionBudgetLedger({ dbPath });
+    const result = ledger.reserve(provider, model);
     console.log(result.status);
     ledger.close();
   `
   return new Promise((resolve, reject) => {
     const child = spawn(
       process.execPath,
-      ['--import', 'tsx', '--input-type=module', '-e', script],
+      ['--import', 'tsx', '--input-type=module', '-e', script, moduleUrl, dbPath, provider, model],
       {
         stdio: ['ignore', 'pipe', 'pipe'],
       },
@@ -114,17 +117,21 @@ function runConcurrentConfirm(
 ): Promise<string> {
   const moduleUrl = new URL('../../src/pantheon/local-decision-budget.ts', import.meta.url).href
   const clockMs = Date.parse(`${targetPeriod}-01T00:00:00.000Z`)
+  // CodeQL js/bad-code-sanitization: data crosses via argv, never via
+  // interpolated code. In `-e` mode process.argv[1] is the first extra arg.
   const script = `
-    const { openLocalDecisionBudgetLedger } = await import(${JSON.stringify(moduleUrl)});
-    const ledger = openLocalDecisionBudgetLedger({ dbPath: ${JSON.stringify(dbPath)}, clock: () => ${clockMs} });
-    const result = ledger.confirmBudgetPeriod(${JSON.stringify(expectedPeriod)}, ${JSON.stringify(targetPeriod)});
+    const [moduleUrl, dbPath, clockMs, expectedPeriod, targetPeriod] =
+      process.argv.slice(1).map((value, index) => (index === 2 ? Number(value) : value));
+    const { openLocalDecisionBudgetLedger } = await import(moduleUrl);
+    const ledger = openLocalDecisionBudgetLedger({ dbPath, clock: () => clockMs });
+    const result = ledger.confirmBudgetPeriod(expectedPeriod, targetPeriod);
     console.log(result.status === 'confirmed' ? result.status : result.reason);
     ledger.close();
   `
   return new Promise((resolve, reject) => {
     const child = spawn(
       process.execPath,
-      ['--import', 'tsx', '--input-type=module', '-e', script],
+      ['--import', 'tsx', '--input-type=module', '-e', script, moduleUrl, dbPath, String(clockMs), expectedPeriod, targetPeriod],
       {
         stdio: ['ignore', 'pipe', 'pipe'],
       },

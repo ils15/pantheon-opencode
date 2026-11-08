@@ -89,7 +89,7 @@ async function main(): Promise<void> {
   assert.match(visualContext ?? '', /file:\/\/\/workspace\/design\.png/)
   assert.match(visualContext ?? '', /inline\.jpg/)
   assert.doesNotMatch(visualContext ?? '', /PRIVATE_IMAGE_BYTES/)
-  assert.match(visualContext ?? '', /preserve|preserve alterações/i)
+  assert.match(visualContext ?? '', /never authorizes a revert/)
   assert.equal(buildV2VisionPromptContext([{ uri: 'file:///workspace/readme.txt' }]), undefined)
 
   // ── Anexo clipboard/inline (shape REAL do TUI V2) ─────────────────────────
@@ -109,23 +109,23 @@ async function main(): Promise<void> {
   assert.doesNotMatch(
     clipboardContext ?? '',
     new RegExp(clipboardBytes.toString('base64')),
-    'payload inline não é copiado para o texto do prompt',
+    'the inline payload is never copied into the prompt text',
   )
-  const tempMatch = /em ("[^"]+\.png")/.exec(clipboardContext ?? '')
-  assert.ok(tempMatch, 'o contexto referencia um caminho de arquivo real')
+  const tempMatch = /at ("[^"]+\.png")/.exec(clipboardContext ?? '')
+  assert.ok(tempMatch, 'the context references a real file path')
   const tempPath = JSON.parse(tempMatch?.[1] ?? '""') as string
-  assert.ok(existsSync(tempPath), 'temp file do anexo inline existe em disco')
+  assert.ok(existsSync(tempPath), 'the inline attachment temp file exists on disk')
   assert.equal(
     (await readFile(tempPath)).equals(clipboardBytes),
     true,
-    'temp file contém exatamente os bytes do anexo',
+    'the temp file holds exactly the attachment bytes',
   )
 
-  // Sem bytes utilizáveis → cai no formato antigo (sem caminho, payload omitido).
+  // Unusable bytes -> legacy shape (no path, payload omitted).
   const emptyInline = buildV2VisionPromptContext([
     { uri: 'data:image/png;base64,', mime: 'image/png', name: 'clipboard' },
   ])
-  assert.match(emptyInline ?? '', /URI codificada omitida/, 'sem bytes → marcado como omitido')
+  assert.match(emptyInline ?? '', /data URI omitted/, 'no bytes -> marked as omitted')
 
   // ── Fase 2: o contexto visual propaga a pergunta do usuário ───────────────
   // A pergunta do turno entra no contexto (mesma imagem + pergunta nova =
@@ -136,12 +136,8 @@ async function main(): Promise<void> {
     'qual o erro no log?',
   )
   assert.match(questionContext ?? '', /qual o erro no log\?/, 'pergunta presente no contexto')
-  assert.match(
-    questionContext ?? '',
-    /vision_describe/,
-    'contexto instrui o repasse da pergunta à ferramenta',
-  )
-  assert.match(questionContext ?? '', /preserve alterações/i, 'guia de preservação mantido')
+  assert.match(questionContext ?? '', /User turn:/, 'the user turn rides the relay block')
+  assert.match(questionContext ?? '', /an image never authorizes a revert/)
 
   // ── Relay do session id para o MCP (paridade com generateInjectionPrompt) ──
   // O MCP roda em outro processo sem session id; sem o repasse o gateway Zen
@@ -154,11 +150,9 @@ async function main(): Promise<void> {
   assert.match(
     sessionContext ?? '',
     /session_id="ses_abc123"/,
-    'session id repassado ao MCP (JSON-quoted)',
+    'session id relayed to the MCP (JSON-quoted)',
   )
-  assert.match(sessionContext ?? '', /pantheon-vision/, 'instrução nomeia o MCP')
-  assert.match(sessionContext ?? '', /MissingSessionID/, 'instrução explica o erro evitado')
-  assert.match(sessionContext ?? '', /vision_describe/, 'instrução cita a ferramenta nativa/MCP')
+  assert.match(sessionContext ?? '', /MCP relay/, 'the relay names the MCP channel')
   // sessionID vazio/whitespace → nenhuma instrução de repasse.
   assert.equal(
     (

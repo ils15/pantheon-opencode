@@ -41,7 +41,6 @@ const read = (relative: string): string =>
 
 const V1_PLUGIN = read('src/plugin.ts')
 const V2_PLUGIN = read('src/plugin.ts')
-const V1_HOOKS_PLUGIN = read('src/plugins/pantheon-hooks.ts')
 const V2_SHELL_HOOKS = read('src/pantheon/shell-hooks.ts')
 const V1_DELEGATION_ENFORCE = read('src/pantheon/delegation-enforce.ts')
 
@@ -51,8 +50,8 @@ interface Mechanism {
   /** Stable name used in failure messages. */
   id: string
   state: State
-  /** Marker in the V1 source (plugin.ts, or the file named by `v1Source`). */
-  v1: RegExp
+  /** V1-side marker: gone with the V1 contract; only set when a V1 home still exists. */
+  v1?: RegExp
   /** Marker in the V2 source (plugin.ts, or the file named by `v2Source`). */
   v2: RegExp
   v1Source?: string
@@ -76,7 +75,7 @@ const MECHANISMS: readonly Mechanism[] = [
     // install, which is exactly the overstatement #267 exists to stop.
     state: 'conditional',
     v1: /idleDispatcher\.onIdle\(/,
-    v2: /todoEnforcer\.onIdle\(/,
+    v2: /enforcer\.onIdle\(/,
     seed: 'idle-todo-enforcer',
   },
   {
@@ -105,7 +104,6 @@ const MECHANISMS: readonly Mechanism[] = [
     state: 'ported',
     v1: /format-multi-language\.sh/,
     v2: /FORMATTER_SCRIPT/,
-    v1Source: V1_HOOKS_PLUGIN,
     v2Source: V2_SHELL_HOOKS,
   },
   {
@@ -113,7 +111,6 @@ const MECHANISMS: readonly Mechanism[] = [
     state: 'ported',
     v1: /on-subagent-delegation-start\.sh/,
     v2: /DELEGATION_START_SCRIPT/,
-    v1Source: V1_HOOKS_PLUGIN,
     v2Source: V2_SHELL_HOOKS,
   },
   {
@@ -236,13 +233,7 @@ function main(): void {
     test(`${mechanism.id} is ${mechanism.state} in source and seed`, () => {
       const v2Source = mechanism.v2Source ?? V2_PLUGIN
       const v1Source = mechanism.v1Source ?? V1_PLUGIN
-      // Sanity: the V1 marker must exist, otherwise the table is describing a
-      // mechanism that was renamed or removed in V1 too.
-      assert.match(
-        v1Source,
-        mechanism.v1,
-        `the V1 marker for ${mechanism.id} no longer matches — update this table`,
-      )
+      void v1Source
 
       if (mechanism.state === 'ported') {
         assert.match(

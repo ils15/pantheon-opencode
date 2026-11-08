@@ -416,9 +416,20 @@ function formatFromMime(mime: string | null): LocalImageFormat {
 }
 
 function mimeFromUrl(source: string): string | null {
-  const match = /\.([a-z0-9]+)(?:[?#].*)?$/i.exec(source)
-  if (!match) return null
-  const extension = (match[1] ?? '').toLowerCase()
+  // Linear by construction: no regex backtracking over attacker-controlled
+  // strings (CodeQL js/polynomial-redos) — split on the first ? or #, then
+  // take the last dot of the remaining path.
+  const fragmentIndex = Math.min(
+    ...['?', '#']
+      .map((ch) => source.indexOf(ch))
+      .filter((index) => index >= 0),
+    source.length,
+  )
+  const path = source.slice(0, fragmentIndex)
+  const dotIndex = path.lastIndexOf('.')
+  if (dotIndex < 0) return null
+  const extension = path.slice(dotIndex + 1).toLowerCase()
+  if (!/^[a-z0-9]+$/.test(extension)) return null
   if (extension === 'png') return 'image/png'
   if (extension === 'jpg' || extension === 'jpeg') return 'image/jpeg'
   if (extension === 'gif') return 'image/gif'

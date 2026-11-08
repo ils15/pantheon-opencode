@@ -74,13 +74,15 @@ const IMAGE_URI_PATTERN = /\.(?:png|jpe?g|webp|gif)(?:[?#].*)?$/i
  */
 function imageReference(uri: string, mime: string, name: string): string {
   if (!/^data:image\//i.test(uri)) {
-    return `${JSON.stringify(name)} em ${JSON.stringify(uri)}`
+    return `${JSON.stringify(name)} at ${JSON.stringify(uri)}`
   }
   const path = saveDataUrlImageSync(uri, mime)
   if (path) {
-    return `${JSON.stringify(name)} em ${JSON.stringify(path)} (anexo inline materializado em arquivo temporário local; use este caminho — o payload não é repetido no texto)`
+    // The payload is never repeated in text; the materialized temp path is
+    // the reference (and is swept with the session's temp files).
+    return `${JSON.stringify(name)} at ${JSON.stringify(path)}`
   }
-  return `${JSON.stringify(name)} (conteúdo anexado; URI codificada omitida)`
+  return `${JSON.stringify(name)} (inline attachment; data URI omitted)`
 }
 
 /**

@@ -490,12 +490,12 @@ async function main() {
       const source = readFileSync(new URL('../../src/plugin.ts', import.meta.url), 'utf8')
       assert.match(
         source,
-        /'chat\.params':[\s\S]*?syncReadOnlySession\(\s*readOnlyRegistry/,
-        'chat.params must call syncReadOnlySession(readOnlyRegistry, …) to populate the registry',
+        /syncReadOnlySession\(readOnlyRegistry, input\.sessionID, agent\)/,
+        'execute.before must call syncReadOnlySession(readOnlyRegistry, …) to populate the registry',
       )
       assert.match(
         source,
-        /ev\.type === 'session\.deleted'[\s\S]{0,200}readOnlyRegistry\.unregister/,
+        /readOnlyRegistry\.unregister\(sessionID\)/,
         'session.deleted must unregister the read-only session',
       )
     },

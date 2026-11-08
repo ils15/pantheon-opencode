@@ -376,7 +376,7 @@ check('every premise and deferred point names what blocks it', () => {
 check('no V2 decision module reads the absent host catalog', () => {
   const directory = new URL('../../src/pantheon/', import.meta.url)
   const modules = readdirSync(directory).filter(
-    (name) => name.startsWith('v2-decision-') && name.endsWith('.ts'),
+    (name) => name.startsWith('decision-') && name.endsWith('.ts'),
   )
   assert.equal(modules.length >= 7, true, 'expected the Phase 0b modules')
   for (const name of modules) {

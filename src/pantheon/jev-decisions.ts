@@ -184,7 +184,10 @@ export function resolveNativeJevRoute(
 
 export const JEV_DECISION_MAX_QUESTIONS = 4
 /** Wide enough for the full skill catalog (20) plus `none` in preset mode. */
-export const JEV_DECISION_MAX_CHOICES = 24
+// Sized for the full catalog + host-installed skills + `none`, with headroom:
+// the catalog grows as skills land, and host skills always ride (field report
+// beta.15). The merge reserves host slots before truncating the catalog.
+export const JEV_DECISION_MAX_CHOICES = 32
 export const JEV_DECISION_MIN_CHOICES = 2
 export const JEV_DECISION_MAX_SCORE_LEVELS = 10
 export const JEV_DECISION_MIN_SCORE_LEVELS = 2
@@ -518,9 +521,13 @@ export function mergeHostSkills(
   hostSkills: readonly JevHostSkill[] | undefined,
   descriptions: Map<string, string | undefined>,
 ): Array<{ value: string; description?: string }> {
-  const merged = [...pool]
-  const seen = new Set(merged)
   const bound = JEV_DECISION_MAX_CHOICES - 1
+  // Host skills always ride (field report beta.15): reserve one slot per
+  // host-installed skill so a full-catalog fallback can never evict them.
+  const catalogBound =
+    hostSkills === undefined ? bound : Math.max(0, bound - hostSkills.length)
+  const merged = [...pool].slice(0, catalogBound)
+  const seen = new Set(merged)
   if (hostSkills !== undefined) {
     for (const skill of hostSkills) {
       if (merged.length >= bound) break
