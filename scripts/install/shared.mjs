@@ -31,7 +31,7 @@ if (!isSupportedNodeVersion(process.versions.node)) {
 }
 
 import { dump, load } from 'js-yaml'
-import { installDecision, mergeOverrides } from '../../src/pantheon/behavior-overrides.ts'
+import { installDecision, mergeOverrides } from './behavior-overrides.bundle.mjs'
 
 import {
   ACTIONS,

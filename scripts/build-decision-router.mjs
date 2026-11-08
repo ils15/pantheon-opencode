@@ -41,6 +41,11 @@ export const DECISION_ROUTER_BUNDLES = Object.freeze([
     entry: join(ROOT, 'src', 'pantheon', 'decision-egress.ts'),
     output: join(ROOT, 'scripts', 'decision-router-egress.mjs'),
   }),
+  Object.freeze({
+    name: 'behavior-overrides',
+    entry: join(ROOT, 'src', 'pantheon', 'behavior-overrides.ts'),
+    output: join(ROOT, 'scripts', 'install', 'behavior-overrides.bundle.mjs'),
+  }),
 ])
 
 async function bundle({ entry, output }) {

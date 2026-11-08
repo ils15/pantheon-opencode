@@ -28,6 +28,8 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync }
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { load } from 'js-yaml'
+import { classifyOverrideFiles } from './install/behavior-overrides.bundle.mjs'
 
 import { listV2UnsupportedFeatures } from '../src/pantheon/unsupported.mjs'
 import { describePluginOptionsReachability } from './install/capabilities.mjs'
@@ -2827,6 +2829,65 @@ async function checkInstallerFileInventory(args) {
   }
 }
 
+
+// ─── Named-behavior overrides ───────────────────────────────────────────
+
+/**
+ * Validate the user's override files against the routing.yml behaviors
+ * registry: schema errors and unknown behavior ids surface as warnings
+ * (codes `override_schema_invalid` / `override_unknown_behavior`). With
+ * `--fix`, an offending file is quarantined (renamed with a timestamp) so
+ * the next install runs clean — never silently deleted.
+ */
+function checkBehaviorOverrides(args) {
+  section('K. Named-behavior overrides')
+
+  const readOptional = (path) => {
+    try {
+      return readFileSync(path, 'utf8')
+    } catch {
+      return undefined
+    }
+  }
+  const projectPath = join(args.target, '.pantheon', 'overrides.json')
+  const globalPath = join(args.target, 'pantheon-overrides.json')
+  const projectRaw = readOptional(projectPath)
+  const globalRaw = readOptional(globalPath)
+  if (projectRaw === undefined && globalRaw === undefined) {
+    info('no override files present (the default: every behavior ships as built)')
+    return
+  }
+
+  let registry = []
+  try {
+    const routing = load(readFileSync(join(ROOT, 'src', 'routing.yml'), 'utf8'))
+    if (Array.isArray(routing?.behaviors)) registry = routing.behaviors
+  } catch {
+    // routing.yml unreadable: the classification still runs (registry empty,
+    // every id warns) — never silently green.
+  }
+
+  const { warnings } = classifyOverrideFiles(registry, projectRaw, globalRaw)
+  for (const warning of warnings) {
+    warn(`${warning.message} [${warning.code}]`)
+  }
+  if (warnings.length === 0) {
+    pass('override files valid against the behaviors registry')
+    return
+  }
+
+  if (args.fix) {
+    for (const path of [projectPath, globalPath]) {
+      const raw = readOptional(path)
+      if (raw === undefined) continue
+      const quarantined = `${path}.quarantined-${Date.now()}`
+      renameSync(path, quarantined)
+      info(`quarantined ${path} -> ${quarantined} (review, fix, and rename back)`)
+    }
+    warn('override files quarantined — installs run on built-in defaults until reviewed')
+  }
+}
+
 async function main() {
   const args = parseArgs(process.argv)
   jsonMode = args.json
@@ -2916,6 +2977,7 @@ async function main() {
     await checkMcpRuntimeSmoke(args)
   }
   checkPermissionMismatches(args)
+  checkBehaviorOverrides(args)
   checkSyncStatus(args)
   checkGitStatus(args)
   checkAgentsMdFreshness(args)
