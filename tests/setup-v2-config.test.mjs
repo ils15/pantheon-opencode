@@ -6,7 +6,10 @@ import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { normalizeMcpConfigToV2, normalizeLegacyV1Config } from '../scripts/install/config-migration.mjs'
+import {
+  normalizeLegacyV1Config,
+  normalizeMcpConfigToV2,
+} from '../scripts/install/config-migration.mjs'
 import { planArtifactDigest } from '../scripts/install/plan-artifact.mjs'
 import { writeConfigWithBackup } from '../scripts/install/shared.mjs'
 import { runSetup } from '../scripts/setup.mjs'
@@ -360,8 +363,14 @@ test('setup resolves the generation gate exactly once and pins no version flag',
 
   assert.equal(result, 0)
   assert.equal(resolutions, 1, 'the gate must run exactly once per setup')
-  assert.equal(previewArgs.some((arg) => arg.startsWith('--version')), false)
-  assert.equal(finalArgs.some((arg) => arg.startsWith('--version')), false)
+  assert.equal(
+    previewArgs.some((arg) => arg.startsWith('--version')),
+    false,
+  )
+  assert.equal(
+    finalArgs.some((arg) => arg.startsWith('--version')),
+    false,
+  )
 })
 
 test('config drift after authorization aborts before migration or init writes', async (t) => {

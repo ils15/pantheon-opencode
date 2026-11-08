@@ -13,7 +13,10 @@ export interface DecisionCatalogEntry {
 
 export const PANTHEON_SKILL_CATALOG: readonly DecisionCatalogEntry[] = Object.freeze([
   { id: 'agent-coordination', description: 'Multi-agent orchestration, routing, and delegation.' },
-  { id: 'agent-forge', description: 'Forge a new OpenCode agent on demand — interview, draft, confirm.' },
+  {
+    id: 'agent-forge',
+    description: 'Forge a new OpenCode agent on demand — interview, draft, confirm.',
+  },
   { id: 'artifact-management', description: 'Structured artifacts for planned or risky work.' },
   { id: 'auto-continue', description: 'Continue multi-step todos while keeping safety gates.' },
   { id: 'clonedeps', description: 'Clone dependency source locally for inspection.' },
@@ -22,7 +25,10 @@ export const PANTHEON_SKILL_CATALOG: readonly DecisionCatalogEntry[] = Object.fr
   { id: 'context-compression', description: 'Explicit compaction and resumable checkpoints.' },
   { id: 'git-workflow-and-versioning', description: 'Atomic commits and versioning workflow.' },
   { id: 'incremental-implementation', description: 'Thin, testable, rollback-safe slices.' },
-  { id: 'instruction-forge', description: 'Write and maintain instructions — one home per rule, tested triggers.' },
+  {
+    id: 'instruction-forge',
+    description: 'Write and maintain instructions — one home per rule, tested triggers.',
+  },
   { id: 'loop-engineering', description: 'Controlled iterative refinement cycles.' },
   { id: 'memory-bank', description: 'Memory-bank structure, rules, and maintenance.' },
   { id: 'reflect', description: 'Turn repeated workflow friction into reusable assets.' },
@@ -37,7 +43,10 @@ export const PANTHEON_SKILL_CATALOG: readonly DecisionCatalogEntry[] = Object.fr
     id: 'tdd-with-agents',
     description: 'RED, GREEN, REFACTOR test-driven implementation.',
   },
-  { id: 'prompt-refinery', description: 'Refine a vague multi-concern request — silent adjust, >> full contract.' },
+  {
+    id: 'prompt-refinery',
+    description: 'Refine a vague multi-concern request — silent adjust, >> full contract.',
+  },
   { id: 'verification-planning', description: 'Plan the evidence path before changing code.' },
   {
     id: 'visual-review-pipeline',

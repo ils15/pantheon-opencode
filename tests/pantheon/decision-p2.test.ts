@@ -10,14 +10,14 @@
  * Run with: npx tsx tests/pantheon/decision-p2.test.ts
  */
 import { strict as assert } from 'node:assert'
+import { evaluateSkillPoint } from '../../src/pantheon/decision-points/p2-skill.ts'
+import type { ShadowRecord } from '../../src/pantheon/decision-shadow.ts'
 import {
   applyTurnDecisionToPrompt,
   normalizeMeasuredValue,
   resolveSkillSource,
 } from '../../src/pantheon/local-decision-prompt.ts'
 import type { TurnDecision } from '../../src/pantheon/local-decision-turn.ts'
-import { evaluateSkillPoint } from '../../src/pantheon/decision-points/p2-skill.ts'
-import type { ShadowRecord } from '../../src/pantheon/decision-shadow.ts'
 import { HOST_PROMPT_PAYLOAD_F08 } from './decision-fixtures.ts'
 
 let checks = 0

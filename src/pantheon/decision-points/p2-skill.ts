@@ -13,7 +13,6 @@
  * rethrown into admission.
  */
 
-import { resolveSkillSource, type SkillsSource } from '../local-decision-prompt.ts'
 import { rankCandidates } from '../decision-rank.ts'
 import {
   observeShadow,
@@ -21,6 +20,7 @@ import {
   type ShadowRecord,
   type ShadowSink,
 } from '../decision-shadow.ts'
+import { resolveSkillSource, type SkillsSource } from '../local-decision-prompt.ts'
 
 export interface SkillPointResult {
   readonly record: ShadowRecord

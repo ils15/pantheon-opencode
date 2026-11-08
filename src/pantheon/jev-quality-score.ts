@@ -54,8 +54,8 @@
  * @module jev-quality-score
  */
 
-import { consumeJevDecisionResult } from './jev-decisions.ts'
 import { PANTHEON_AGENTS } from './delegation-policy.ts'
+import { consumeJevDecisionResult } from './jev-decisions.ts'
 import type { NativeDecisionRequest, ResolvedNativeDecisionRoute } from './native-decisions.ts'
 
 /** Telemetry point id for the output-quality review (J-series: Jev uplift). */

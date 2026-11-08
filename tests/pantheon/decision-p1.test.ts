@@ -11,10 +11,10 @@
  * Run with: npx tsx tests/pantheon/decision-p1.test.ts
  */
 import { strict as assert } from 'node:assert'
-import { applyTurnDecisionToPrompt } from '../../src/pantheon/local-decision-prompt.ts'
-import type { TurnDecision } from '../../src/pantheon/local-decision-turn.ts'
 import { evaluateAgentPoint } from '../../src/pantheon/decision-points/p1-agent.ts'
 import type { ShadowRecord } from '../../src/pantheon/decision-shadow.ts'
+import { applyTurnDecisionToPrompt } from '../../src/pantheon/local-decision-prompt.ts'
+import type { TurnDecision } from '../../src/pantheon/local-decision-turn.ts'
 import { HOST_PROMPT_PAYLOAD_F08 } from './decision-fixtures.ts'
 
 let checks = 0

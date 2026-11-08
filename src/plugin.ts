@@ -95,6 +95,11 @@ import type {
   ReferenceDraft,
 } from '@opencode-ai/plugin/v2/promise'
 import { define } from '@opencode-ai/plugin/v2/promise'
+import {
+  BOUNDED_READ_TOOL,
+  createV2BoundedReadTool,
+  type V2BoundedReadOriginRegistry,
+} from './pantheon/bounded-read.ts'
 import { buildCompactionContext } from './pantheon/compaction-context.ts'
 import {
   CONTEXT_PRUNER_CONFIG_KEYS,
@@ -104,6 +109,16 @@ import {
   pruneMessages,
   resolveContextPrunerConfig,
 } from './pantheon/context-pruner.ts'
+import { createP7LoopPoint, p7LoopEnabledFromEnv } from './pantheon/decision-points/p7-loop.ts'
+import {
+  createP8Guardrail,
+  p8GuardrailEnabledFromEnv,
+} from './pantheon/decision-points/p8-guardrail.ts'
+import { evaluateCompactionMemoryPoint } from './pantheon/decision-points/p9-memory-compaction.ts'
+import { evaluateCatalogPoint } from './pantheon/decision-points/p11-catalog.ts'
+import { DECISION_POINT_REGISTRY } from './pantheon/decision-points.ts'
+import { observePromptSurface } from './pantheon/decision-prompt-surface.ts'
+import { createTelemetrySink, type TelemetrySink } from './pantheon/decision-telemetry.ts'
 import {
   createEnforcementGuard,
   normalizeDelegationAgent,
@@ -113,8 +128,18 @@ import {
   type ToolExecuteBeforeOutput,
   zeusReadGuard,
 } from './pantheon/delegation-enforce.ts'
+import {
+  type AuthoritativeSession,
+  evaluateV2Delegation,
+  PANTHEON_AGENTS,
+  type V2PermissionEvent,
+  V2SubagentOriginRegistry,
+  v2ResourceTarget,
+} from './pantheon/delegation-policy.ts'
+import { createV2ExecuteAfter, resolveV2SandboxConfig } from './pantheon/execute-after.ts'
 import { GOAL_LOOP_DEFAULTS, GoalStore } from './pantheon/goal-store.ts'
 import { createGuardPathResolver } from './pantheon/guard-path.ts'
+import { runSecretScanInProcess } from './pantheon/hook-engine.ts'
 import { createJTelemetryMirror } from './pantheon/j-telemetry-file.ts'
 import {
   approvalInputHash,
@@ -139,7 +164,11 @@ import {
 } from './pantheon/jev-risk-gate.ts'
 import { DECISION_EGRESS_ACTION } from './pantheon/local-decision-egress-gate.ts'
 import { applyDecisionRouterToPrompt } from './pantheon/local-decision-prompt.ts'
+import { applyV2ModelOverrides, readV2ModelConfiguration } from './pantheon/model-overrides.ts'
+import type { NativeDecisionRequest } from './pantheon/native-decisions.ts'
+import { buildV2VisionPromptContext, type V2VisionRuntime } from './pantheon/native-vision.ts'
 import { getSharedBoard } from './pantheon/shared-board.ts'
+import { createV2ShellHooks, type V2ShellRunner } from './pantheon/shell-hooks.ts'
 import {
   TODO_ENFORCER_DEFAULTS,
   TodoEnforcer,
@@ -149,37 +178,8 @@ import {
   type TodoLike,
   todoEnforcerEnabledFromEnv,
 } from './pantheon/todo-enforcer.ts'
-import {
-  BOUNDED_READ_TOOL,
-  createV2BoundedReadTool,
-  type V2BoundedReadOriginRegistry,
-} from './pantheon/bounded-read.ts'
-import { createP7LoopPoint, p7LoopEnabledFromEnv } from './pantheon/decision-points/p7-loop.ts'
-import {
-  createP8Guardrail,
-  p8GuardrailEnabledFromEnv,
-} from './pantheon/decision-points/p8-guardrail.ts'
-import { evaluateCompactionMemoryPoint } from './pantheon/decision-points/p9-memory-compaction.ts'
-import { evaluateCatalogPoint } from './pantheon/decision-points/p11-catalog.ts'
-import { DECISION_POINT_REGISTRY } from './pantheon/decision-points.ts'
-import { observePromptSurface } from './pantheon/decision-prompt-surface.ts'
-import { createTelemetrySink, type TelemetrySink } from './pantheon/decision-telemetry.ts'
-import {
-  type AuthoritativeSession,
-  evaluateV2Delegation,
-  PANTHEON_AGENTS,
-  type V2PermissionEvent,
-  V2SubagentOriginRegistry,
-  v2ResourceTarget,
-} from './pantheon/delegation-policy.ts'
-import { createV2ExecuteAfter, resolveV2SandboxConfig } from './pantheon/execute-after.ts'
-import { runSecretScanInProcess } from './pantheon/hook-engine.ts'
-import { applyV2ModelOverrides, readV2ModelConfiguration } from './pantheon/model-overrides.ts'
-import type { NativeDecisionRequest } from './pantheon/native-decisions.ts'
-import { createV2ShellHooks, type V2ShellRunner } from './pantheon/shell-hooks.ts'
 import { createV2ToolDefinitions, type V2ToolResult } from './pantheon/tools.ts'
 import { UNSUPPORTED_FEATURE_SEED } from './pantheon/unsupported.mjs'
-import { buildV2VisionPromptContext, type V2VisionRuntime } from './pantheon/native-vision.ts'
 import { sanitizeVisionHistory } from './pantheon/vision.ts'
 import type { HookPayload, HookResult } from './plugins/hook-runner.ts'
 

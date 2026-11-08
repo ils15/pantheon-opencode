@@ -13,7 +13,6 @@
  * rethrown into admission.
  */
 
-import { normalizeMeasuredValue } from '../local-decision-prompt.ts'
 import { decideHeuristic, type HeuristicOutcome } from '../decision-heuristic.ts'
 import {
   observeShadow,
@@ -21,6 +20,7 @@ import {
   type ShadowRecord,
   type ShadowSink,
 } from '../decision-shadow.ts'
+import { normalizeMeasuredValue } from '../local-decision-prompt.ts'
 
 export type AgentSource = 'agents' | 'none'
 

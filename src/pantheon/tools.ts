@@ -47,13 +47,13 @@
  */
 
 import { createCostCommand } from './cost-command.ts'
+import type { ShadowSink } from './decision-shadow.ts'
 import { createHashlineEditTool, type HashlineToolResult } from './hashline/tool.ts'
 import { createV2JevDecisionDefinition, type V2JevDecisionRuntime } from './jev-decision-tool.ts'
 import { createV2LocalDecisionDefinition } from './local-decision-tool.ts'
 import { createModelCommand } from './model-command.ts'
-import type { ToolContextLike } from './tool-context.ts'
-import type { ShadowSink } from './decision-shadow.ts'
 import { createV2VisionTool, type V2VisionRuntime } from './native-vision.ts'
+import type { ToolContextLike } from './tool-context.ts'
 
 // ─── Contract types ─────────────────────────────────────────────────────
 

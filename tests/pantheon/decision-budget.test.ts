@@ -4,10 +4,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import {
-  openLocalDecisionBudgetLedger,
-  resolveLocalDecisionBudgetDbPath,
-} from '../../src/pantheon/local-decision-budget.ts'
-import {
   evaluateCapGate,
   evaluateDecisionBudgetAdmission,
   evaluateLedgerGate,
@@ -17,6 +13,10 @@ import {
   readDecisionBudgetLedgerFacts,
   utcPeriodOf,
 } from '../../src/pantheon/decision-budget.ts'
+import {
+  openLocalDecisionBudgetLedger,
+  resolveLocalDecisionBudgetDbPath,
+} from '../../src/pantheon/local-decision-budget.ts'
 
 const CAPS = { monthlyCapMicros: 5_000_000, perDecisionCapMicros: 1_000_000 }
 

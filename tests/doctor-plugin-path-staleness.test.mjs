@@ -63,11 +63,7 @@ assert.equal(
   'src/plugins/pantheon-hooks.ts',
   'relative hooks identity is managed',
 )
-assert.equal(
-  managedPluginPath('src/plugin'),
-  'src/plugin',
-  'relative V2 directory is managed',
-)
+assert.equal(managedPluginPath('src/plugin'), 'src/plugin', 'relative V2 directory is managed')
 assert.equal(
   managedPluginPath('/home/u/.npm/_npx/abc/node_modules/pantheon-opencode/src/plugin'),
   '/home/u/.npm/_npx/abc/node_modules/pantheon-opencode/src/plugin',
@@ -82,11 +78,7 @@ assert.equal(
   true,
   'Windows-separated installed path is managed after normalization',
 )
-assert.equal(
-  managedPluginPath('src/plugin.ts'),
-  'src/plugin.ts',
-  'legacy V2 file ref is managed',
-)
+assert.equal(managedPluginPath('src/plugin.ts'), 'src/plugin.ts', 'legacy V2 file ref is managed')
 
 assert.equal(
   managedPluginPath('/opt/third-party/vendor/src/plugin.ts'),

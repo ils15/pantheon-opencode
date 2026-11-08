@@ -621,10 +621,7 @@ test('--force cleanup is rejected from JSON preview', () => {
     )
     assert.notEqual(result.status, 0)
     assert.match(`${result.stdout}${result.stderr}`, /--force.*--json|--json.*--force/i)
-    assert.equal(
-      readFileSync(join(root, 'commands', 'user.md'), 'utf8'),
-      'user command',
-    )
+    assert.equal(readFileSync(join(root, 'commands', 'user.md'), 'utf8'), 'user command')
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

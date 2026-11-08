@@ -27,7 +27,6 @@ import { installOpenCode } from '../scripts/install/opencode.mjs'
 import { formatChangePlan } from '../scripts/install/plan.mjs'
 import { ROOT } from '../scripts/install/shared.mjs'
 
-
 // test:node runs on machines without an OpenCode binary, so the host gate
 // could not confirm the generation it writes for. Pin it for this file: every
 // install in here targets the only supported host line. Gate-specific tests

@@ -8,13 +8,13 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
-  OVERRIDE_CONTENT_MAX,
+  type BehaviorSpec,
   installDecision,
   isRuntimeDisabled,
   mergeOverrides,
+  OVERRIDE_CONTENT_MAX,
   parseOverridesFile,
   unknownBehaviorIds,
-  type BehaviorSpec,
 } from '../../src/pantheon/behavior-overrides.ts'
 
 const REGISTRY: BehaviorSpec[] = [
@@ -66,7 +66,7 @@ describe('parseOverridesFile', () => {
 })
 
 describe('mergeOverrides', () => {
-  it('project wins per id and both files\' errors are collected', () => {
+  it("project wins per id and both files' errors are collected", () => {
     const g = JSON.stringify({ shared: { action: 'disable' }, 'g-only': { action: 'disable' } })
     const p = JSON.stringify({
       shared: { action: 'replace', content: 'project version' },

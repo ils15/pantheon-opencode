@@ -53,7 +53,6 @@ import { runRestore } from '../scripts/restore.mjs'
 import { scanText } from '../scripts/secret-scan.mjs'
 import { seedHealthyRuntime } from './helpers/install-runtime-fixture.mjs'
 
-
 // test:node runs on machines without an OpenCode binary, so the host gate
 // could not confirm the generation it writes for. Pin it for this file: every
 // install in here targets the only supported host line. Gate-specific tests

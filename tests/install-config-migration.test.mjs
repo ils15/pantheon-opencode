@@ -317,7 +317,8 @@ describe('config-migration', () => {
         read: { '*': 'deny', 'src/**': 'allow' },
         write: { '*': 'deny', 'src/**': 'allow' },
       }
-      const rules = normalizeLegacyV1Config({ agent: { athena: { permission } } }).agents.athena.permissions
+      const rules = normalizeLegacyV1Config({ agent: { athena: { permission } } }).agents.athena
+        .permissions
 
       assert.deepEqual(rules, [
         { action: 'subagent', resource: '*', effect: 'deny' },
@@ -572,8 +573,12 @@ describe('config-migration', () => {
           'pantheon-code-mode': 'deny',
           'pantheon-vision': 'allow',
         }
-        const first = withCapturedWarnings(() => normalizeLegacyV1Config({ permission: { mcp: forward } }))
-        const second = withCapturedWarnings(() => normalizeLegacyV1Config({ permission: { mcp: reversed } }))
+        const first = withCapturedWarnings(() =>
+          normalizeLegacyV1Config({ permission: { mcp: forward } }),
+        )
+        const second = withCapturedWarnings(() =>
+          normalizeLegacyV1Config({ permission: { mcp: reversed } }),
+        )
         assert.deepEqual(first.warnings, second.warnings)
         assert.deepEqual(first.value.permissions, [
           { action: 'pantheon-vision_*', resource: '*', effect: 'allow' },
@@ -646,7 +651,8 @@ describe('config-migration', () => {
       }
 
       const convert = (permission) =>
-        normalizeLegacyV1Config({ agent: { mnemosyne: { permission } } }).agents.mnemosyne.permissions
+        normalizeLegacyV1Config({ agent: { mnemosyne: { permission } } }).agents.mnemosyne
+          .permissions
 
       it('preserves shipped scoped write/edit exceptions in their original order', () => {
         const rules = convert(MNEMOSYNE_PERMISSION)
@@ -803,7 +809,9 @@ describe('config-migration', () => {
 
       it('does not throw on malformed entries and preserves them with a warning', () => {
         const malformed = [null, { action: 'read', resource: '*', effect: 'allow' }]
-        const v2Only = withCapturedWarnings(() => normalizeLegacyV1Config({ permissions: malformed }))
+        const v2Only = withCapturedWarnings(() =>
+          normalizeLegacyV1Config({ permissions: malformed }),
+        )
         assert.deepEqual(v2Only.value.permissions, malformed)
         assert.ok(
           v2Only.warnings.some((m) => /malformed/i.test(m)),
@@ -875,7 +883,8 @@ describe('config-migration', () => {
 
     it('rejects array-shaped MCP maps and preserves a flat server named servers', () => {
       assert.throws(
-        () => normalizeLegacyV1Config({ mcp: [{ type: 'remote', url: 'https://array.example/mcp' }] }),
+        () =>
+          normalizeLegacyV1Config({ mcp: [{ type: 'remote', url: 'https://array.example/mcp' }] }),
         /top-level mcp must be an object map/i,
       )
       assert.throws(

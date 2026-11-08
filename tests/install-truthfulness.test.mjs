@@ -25,6 +25,11 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+import {
+  describePluginOptionsReachability,
+  formatV2CapabilityNotice,
+  v2Capabilities,
+} from '../scripts/install/capabilities.mjs'
 import { createInterruptHandler } from '../scripts/install/interrupt.mjs'
 import {
   installOpenCode,
@@ -42,13 +47,7 @@ import {
   runRecordPath,
   writeRunRecord,
 } from '../scripts/install/run-record.mjs'
-import {
-  describePluginOptionsReachability,
-  formatV2CapabilityNotice,
-  v2Capabilities,
-} from '../scripts/install/capabilities.mjs'
 import { listV2UnsupportedFeatures } from '../src/pantheon/unsupported.mjs'
-
 
 // test:node runs on machines without an OpenCode binary, so the host gate
 // could not confirm the generation it writes for. Pin it for this file: every
@@ -147,9 +146,7 @@ async function installV2With(existingConfig, prepare = () => {}, { verbose = fal
 /** Every Pantheon V2 entry in a `plugins` list. */
 function pantheonEntries(plugins) {
   const identity = pluginReferenceIdentity(join(REPO_ROOT, 'src', 'plugin'))
-  return (plugins ?? []).filter(
-    (entry) => pluginReferenceIdentity(entry) === identity,
-  )
+  return (plugins ?? []).filter((entry) => pluginReferenceIdentity(entry) === identity)
 }
 
 // ─── #261: the notice states what the host actually does ────────────────

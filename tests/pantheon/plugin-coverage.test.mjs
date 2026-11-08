@@ -65,10 +65,7 @@ test('fails when more than one LCOV record resolves to the target', () => {
 })
 
 test('fails when a target LCOV record contains multiple SF entries', () => {
-  const record = makeRecord().replace(
-    'SF:src/plugin.ts',
-    'SF:src/plugin.ts\nSF:src/plugin.ts',
-  )
+  const record = makeRecord().replace('SF:src/plugin.ts', 'SF:src/plugin.ts\nSF:src/plugin.ts')
   assert.throws(() => parse(record), /exactly one SF entry/i)
 })
 

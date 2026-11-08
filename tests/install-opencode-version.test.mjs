@@ -95,7 +95,10 @@ test('the env pin accepts only v2 and refuses the v1 generation explicitly', () 
       return true
     },
   )
-  assert.throws(() => resolveOpenCodeVersion({ env: { OPENCODE_VERSION: 'banana' } }), /Invalid OPENCODE_VERSION/)
+  assert.throws(
+    () => resolveOpenCodeVersion({ env: { OPENCODE_VERSION: 'banana' } }),
+    /Invalid OPENCODE_VERSION/,
+  )
 })
 
 test('an opencode2 basename is a 2.x hint that skips the probe', () => {
@@ -241,8 +244,7 @@ test('a confirmed 1.x host is refused with the exact unsupported-host message', 
 })
 
 test('an anchored 2.x probe resolves quietly, and the probe decides when nothing else is set', () => {
-  const resolve = (options) =>
-    resolveOpenCodeVersion({ env: {}, warn: silentWarn, ...options })
+  const resolve = (options) => resolveOpenCodeVersion({ env: {}, warn: silentWarn, ...options })
 
   assert.equal(resolve({ probe: hostSays('2.0.22') }), 'v2')
   assert.equal(resolve({ probe: hostSays('v2.4.1') }), 'v2', 'a leading "v" is tolerated')
@@ -327,7 +329,10 @@ test('the tool-name match wins over later unrelated version-like tokens', () => 
   // Pins that we do NOT anchor to the last token: last-token anchoring matches
   // "2026.10.04" here and misreads this 1.x host — the refusal below proves the
   // host token decided.
-  assert.throws(() => resolveVersion({ probe: hostSays('opencode v1.18.33 built 2026.10.04') }), /this host is 1\.x/)
+  assert.throws(
+    () => resolveVersion({ probe: hostSays('opencode v1.18.33 built 2026.10.04') }),
+    /this host is 1\.x/,
+  )
   // Symmetric case, so the rule is not accidentally "always pick the first".
   assert.equal(resolveVersion({ probe: hostSays('opencode v2.0.22 built 2026.10.04') }), 'v2')
   // A leading runtime token must not outrank the tool's own version either way.
@@ -517,7 +522,10 @@ test('the probe reads stdout first and only falls back to stderr', () => {
   // When BOTH parse, stdout wins — stderr is the fallback, not a second vote.
   // If it were a second vote this 1.x host would slip past the refusal.
   assert.throws(
-    () => resolveVersion({ probe: hostStreams({ stdout: 'opencode v1.18.33\n', stderr: 'v2.0.22\n' }) }),
+    () =>
+      resolveVersion({
+        probe: hostStreams({ stdout: 'opencode v1.18.33\n', stderr: 'v2.0.22\n' }),
+      }),
     /this host is 1\.x/,
   )
   // stderr is consulted only when stdout yields nothing.
@@ -543,11 +551,14 @@ test('the probe reads stdout first and only falls back to stderr', () => {
 test('a corrupted stale-V1 install is repaired: V2 directory registered, both .ts paths purged', async () => {
   // Exact field state left behind by the old V1 branch: two .ts file paths in
   // the singular key, and nothing in the plural key.
-  const config = await installConfig({ plugin: V1_TS_PATHS, plugins: [] }, {
-    env: {},
-    probe: hostSays('2.0.22'),
-    warn: silentWarn,
-  })
+  const config = await installConfig(
+    { plugin: V1_TS_PATHS, plugins: [] },
+    {
+      env: {},
+      probe: hostSays('2.0.22'),
+      warn: silentWarn,
+    },
+  )
 
   assert.equal(v2EntryOf(config)?.package, V2_PLUGIN, 'the V2 directory must be registered')
   for (const tsPath of V1_TS_PATHS) {

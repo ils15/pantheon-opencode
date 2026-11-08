@@ -28,7 +28,6 @@ import { strict as assert } from 'node:assert'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createV2LocalDecisionDefinition } from '../../src/pantheon/local-decision-tool.ts'
 import {
   observePromptSurface,
   PROMPT_SURFACE_MODE,
@@ -40,6 +39,7 @@ import {
   type DecisionPoint,
 } from '../../src/pantheon/decision-registry.ts'
 import { createTelemetrySink } from '../../src/pantheon/decision-telemetry.ts'
+import { createV2LocalDecisionDefinition } from '../../src/pantheon/local-decision-tool.ts'
 import { HOST_PROMPT_PAYLOAD_F08 } from './decision-fixtures.ts'
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url))

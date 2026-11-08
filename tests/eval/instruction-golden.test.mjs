@@ -13,12 +13,12 @@ import { dirname, join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import {
-  MANAGED_BEGIN,
-  MANAGED_END,
   generateAgentPrompt,
   generateGlobalAgentsMd,
   generateProjectAgentsMd,
   logicalLineCount,
+  MANAGED_BEGIN,
+  MANAGED_END,
   readInstructions,
   writeAgentsMdManaged,
 } from '../../scripts/build-agents-md.mjs'
@@ -64,9 +64,15 @@ test('shared instructions land in the global artifact and never in the project o
     // Mirror the generator: the global artifact drops a duplicated leading H1
     // and renders `## <name>` as the section header.
     const bodyNoH1 = instr.body.replace(/^\s*#\s[^\n]*\n+/, '')
-    const signature = bodyNoH1.split('\n').find((l) => l.trim().length > 0).slice(0, 60)
+    const signature = bodyNoH1
+      .split('\n')
+      .find((l) => l.trim().length > 0)
+      .slice(0, 60)
     assert.ok(global.includes(signature), `shared ${instr.file} must ride the global artifact`)
-    assert.ok(global.includes(`## ${instr.name}`), `shared ${instr.file} must have its section header`)
+    assert.ok(
+      global.includes(`## ${instr.name}`),
+      `shared ${instr.file} must have its section header`,
+    )
     assert.ok(
       !project.includes(`## ${instr.name}\n`),
       `shared ${instr.file} must NOT have a section in the project artifact (zero-overlap)`,
@@ -86,7 +92,10 @@ test('agent-scoped instructions reach only their agents', () => {
     const agent = instr.agents[0]
     const promptBody = readFileSync(join(ROOT, 'src', 'agents', `${agent}.md`), 'utf8')
     const prompt = generateAgentPrompt(agent, promptBody, instructions)
-    const signature = instr.body.split('\n').find((l) => l.trim().length > 0).slice(0, 60)
+    const signature = instr.body
+      .split('\n')
+      .find((l) => l.trim().length > 0)
+      .slice(0, 60)
     assert.ok(prompt.includes(signature), `${instr.file} must ride ${agent}'s prompt`)
     const other = instr.agents.includes('zeus') ? 'aphrodite' : 'zeus'
     const otherBody = readFileSync(join(ROOT, 'src', 'agents', `${other}.md`), 'utf8')

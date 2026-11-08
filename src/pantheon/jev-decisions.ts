@@ -22,13 +22,13 @@ import {
   DECISION_PROVIDER_ADAPTERS,
   type DecisionProviderId,
 } from './local-decision-provider-matrix.ts'
-import { PANTHEON_AGENT_CATALOG, PANTHEON_SKILL_CATALOG } from './pantheon-decision-catalog.ts'
 import {
   findRouteKind,
   NATIVE_DECISION_MAX_PROMPT_LENGTH,
   type NativeDecisionRequest,
   type ResolvedNativeDecisionRoute,
 } from './native-decisions.ts'
+import { PANTHEON_AGENT_CATALOG, PANTHEON_SKILL_CATALOG } from './pantheon-decision-catalog.ts'
 
 /** Config-level providers that have a native host Decisions route. */
 export type NativeJevProviderId = Extract<

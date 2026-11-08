@@ -47,14 +47,14 @@
  */
 
 import { createHash } from 'node:crypto'
+import { observeShadow, type ShadowSink } from './decision-shadow.ts'
+import { secretScanApplies } from './hook-engine.ts'
 import {
   type GatedNativeJevFailure,
   type GatedNativeJevRuntime,
   runGatedNativeJevCall,
 } from './jev-decision-tool.ts'
 import { consumeJevDecisionResult } from './jev-decisions.ts'
-import { observeShadow, type ShadowSink } from './decision-shadow.ts'
-import { secretScanApplies } from './hook-engine.ts'
 import type { NativeDecisionRequest } from './native-decisions.ts'
 
 /** On/off switch read by the plugin wiring. Any other value means off. */

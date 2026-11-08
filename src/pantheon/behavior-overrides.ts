@@ -58,7 +58,10 @@ function validateEntry(id: string, value: unknown, label: string, errors: string
       )
     }
   }
-  if (entry.reason !== undefined && (typeof entry.reason !== 'string' || entry.reason.length > OVERRIDE_REASON_MAX)) {
+  if (
+    entry.reason !== undefined &&
+    (typeof entry.reason !== 'string' || entry.reason.length > OVERRIDE_REASON_MAX)
+  ) {
     errors.push(`${label}: "${id}".reason must be a string of at most ${OVERRIDE_REASON_MAX} chars`)
   }
 }
@@ -104,7 +107,10 @@ export function mergeOverrides(globalRaw?: string, projectRaw?: string): ParseRe
 }
 
 /** Ids present in the overrides but absent from the registry — doctor warns. */
-export function unknownBehaviorIds(effective: EffectiveOverrides, registry: readonly BehaviorSpec[]): string[] {
+export function unknownBehaviorIds(
+  effective: EffectiveOverrides,
+  registry: readonly BehaviorSpec[],
+): string[] {
   const known = new Set(registry.map((b) => b.id))
   return Object.keys(effective)
     .filter((id) => !known.has(id))

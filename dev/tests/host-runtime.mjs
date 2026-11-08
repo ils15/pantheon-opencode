@@ -34,8 +34,6 @@ function parseEvidence(path) {
     .map((line) => JSON.parse(line))
 }
 
-
-
 async function closeServer(server) {
   if (!server.listening) return
   await new Promise((resolveClose, reject) => {

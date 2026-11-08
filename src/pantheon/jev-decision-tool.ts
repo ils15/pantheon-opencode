@@ -23,6 +23,7 @@
  * minted. A failed or unreconciled call is a refusal, never a retry.
  */
 import { readUserDecisionRouterConfig } from '../../scripts/install/decision-router-config.mjs'
+import { observeShadow, type ShadowSink } from './decision-shadow.ts'
 import {
   checkJevEnvelope,
   consumeJevDecisionResult,
@@ -69,7 +70,6 @@ import {
   buildDecisionEgressRequest,
 } from './local-decision-egress-gate.ts'
 import { verifyNativeUsageForReservation } from './local-decision-usage-evidence.internal.ts'
-import { observeShadow, type ShadowSink } from './decision-shadow.ts'
 import type { NativeDecisionRequest, ResolvedNativeDecisionRoute } from './native-decisions.ts'
 import type { V2ToolDef } from './tools.ts'
 

@@ -15,11 +15,8 @@
  * Run with: npx tsx tests/pantheon/j2-skill-selection-scorecard.test.ts
  */
 import { strict as assert } from 'node:assert'
+import { sanitizeTelemetry, type TelemetryPointId } from '../../src/pantheon/decision-telemetry.ts'
 import { PANTHEON_SKILL_IDS } from '../../src/pantheon/pantheon-decision-catalog.ts'
-import {
-  sanitizeTelemetry,
-  type TelemetryPointId,
-} from '../../src/pantheon/decision-telemetry.ts'
 import {
   encodeJ2ScorecardReason,
   fakeJevReplyForState,

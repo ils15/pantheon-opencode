@@ -25,6 +25,7 @@ import {
   DECISION_ROUTER_MODELS,
   writeUserDecisionRouterConfig,
 } from '../../scripts/install/decision-router-config.mjs'
+import { createTelemetrySink, sanitizeTelemetry } from '../../src/pantheon/decision-telemetry.ts'
 import type { V2JevDecisionRuntime } from '../../src/pantheon/jev-decision-tool.ts'
 import {
   createV2JevDecisionDefinition,
@@ -50,7 +51,6 @@ import {
   openLocalDecisionBudgetLedger,
   resolveLocalDecisionBudgetDbPath,
 } from '../../src/pantheon/local-decision-budget.ts'
-import { createTelemetrySink, sanitizeTelemetry } from '../../src/pantheon/decision-telemetry.ts'
 import type {
   NativeDecisionRequest,
   ResolvedNativeDecisionRoute,

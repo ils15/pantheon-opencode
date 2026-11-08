@@ -5,7 +5,6 @@ import {
   DECISION_ROUTER_MODELS,
   DEFAULT_USER_DECISION_ROUTER_CONFIG,
 } from '../../scripts/install/decision-router-config.mjs'
-import { DECISION_PROVIDER_ADAPTERS } from '../../src/pantheon/local-decision-provider-matrix.ts'
 import {
   assertV2DecisionEgressOptIn,
   findUnverifiedEgressEndpoints,
@@ -15,6 +14,7 @@ import {
   V2_DECISION_EGRESS_TRANSPORT,
   v2DecisionEgressMaySend,
 } from '../../src/pantheon/decision-egress.ts'
+import { DECISION_PROVIDER_ADAPTERS } from '../../src/pantheon/local-decision-provider-matrix.ts'
 
 const OPENAI = { provider: 'openai-decisions', model: 'gpt-6-luna' }
 const JEV = { provider: 'typesafe-jev', model: 'jev-1.14.0' }

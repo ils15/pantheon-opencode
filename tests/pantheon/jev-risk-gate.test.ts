@@ -23,6 +23,8 @@ import {
   DECISION_ROUTER_MODELS,
   writeUserDecisionRouterConfig,
 } from '../../scripts/install/decision-router-config.mjs'
+import { createTelemetrySink, sanitizeTelemetry } from '../../src/pantheon/decision-telemetry.ts'
+import { secretScanApplies } from '../../src/pantheon/hook-engine.ts'
 import {
   buildRiskGateRequest,
   classifyRiskGateScope,
@@ -47,8 +49,6 @@ import {
   openLocalDecisionBudgetLedger,
   resolveLocalDecisionBudgetDbPath,
 } from '../../src/pantheon/local-decision-budget.ts'
-import { createTelemetrySink, sanitizeTelemetry } from '../../src/pantheon/decision-telemetry.ts'
-import { secretScanApplies } from '../../src/pantheon/hook-engine.ts'
 import type { NativeDecisionRequest } from '../../src/pantheon/native-decisions.ts'
 
 let checks = 0

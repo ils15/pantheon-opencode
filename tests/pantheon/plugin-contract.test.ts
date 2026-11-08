@@ -5,6 +5,7 @@ import Module, { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { writeUserDecisionRouterConfig } from '../../scripts/install/decision-router-config.mjs'
+import { DECISION_POINT_REGISTRY } from '../../src/pantheon/decision-points.ts'
 import { readOnlyRegistry, syncReadOnlySession } from '../../src/pantheon/delegation-enforce.ts'
 import {
   openLocalDecisionBudgetLedger,
@@ -15,7 +16,6 @@ import {
   decisionPermissionSource,
 } from '../../src/pantheon/local-decision-egress-gate.ts'
 import { TODO_CONTINUATION_PROMPT } from '../../src/pantheon/todo-enforcer.ts'
-import { DECISION_POINT_REGISTRY } from '../../src/pantheon/decision-points.ts'
 import type { HookResult } from '../../src/plugins/hook-runner.ts'
 
 type Registration = { dispose: () => Promise<void> }

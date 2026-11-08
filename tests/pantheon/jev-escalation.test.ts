@@ -26,6 +26,7 @@ import {
   DECISION_ROUTER_MODELS,
   writeUserDecisionRouterConfig,
 } from '../../scripts/install/decision-router-config.mjs'
+import { createTelemetrySink, sanitizeTelemetry } from '../../src/pantheon/decision-telemetry.ts'
 import {
   applyEscalationOverride,
   classifyTurnComplexity,
@@ -50,9 +51,8 @@ import {
   openLocalDecisionBudgetLedger,
   resolveLocalDecisionBudgetDbPath,
 } from '../../src/pantheon/local-decision-budget.ts'
-import { capabilityEntry } from '../../src/pantheon/presets.mjs'
-import { createTelemetrySink, sanitizeTelemetry } from '../../src/pantheon/decision-telemetry.ts'
 import type { NativeDecisionRequest } from '../../src/pantheon/native-decisions.ts'
+import { capabilityEntry } from '../../src/pantheon/presets.mjs'
 
 let checks = 0
 function check(name: string, fn: () => void | Promise<void>): void {

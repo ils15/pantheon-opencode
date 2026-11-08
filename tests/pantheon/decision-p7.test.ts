@@ -21,10 +21,7 @@
  * Run with: npx tsx tests/pantheon/decision-p7.test.ts
  */
 import { strict as assert } from 'node:assert'
-import type {
-  DecisionEventSource,
-  HostEventEnvelope,
-} from '../../src/pantheon/decision-events.ts'
+import type { DecisionEventSource, HostEventEnvelope } from '../../src/pantheon/decision-events.ts'
 import {
   createP7LoopPoint,
   P7_LOOP_MAX_EXECUTIONS,

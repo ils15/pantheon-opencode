@@ -1,4 +1,6 @@
 import { type ToolContext, tool } from '@opencode-ai/plugin'
+import { evaluateComplexityPoint } from './decision-points/p3-complexity.ts'
+import type { ShadowSink } from './decision-shadow.ts'
 import {
   LOCAL_DECISION_COMPLEXITY_DIMENSIONS,
   type LocalDecisionGateStatus,
@@ -8,8 +10,6 @@ import {
   loadLocalDecisionPolicy,
   recommendLocalOrchestration,
 } from './local-orchestration.ts'
-import { evaluateComplexityPoint } from './decision-points/p3-complexity.ts'
-import type { ShadowSink } from './decision-shadow.ts'
 
 const TOOL_DESCRIPTION =
   'Zeus-only local advisory selector. Use selectively only when specialist routing is genuinely ' +

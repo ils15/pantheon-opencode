@@ -55,7 +55,10 @@ test('the ./plugin export loads from a clean production-only consumer', () => {
     assert.equal(installedManifest.devDependencies?.['@opencode-ai/plugin'], undefined)
     // The single plugin export: ./plugin -> the entry file at src/plugin.ts.
     assert.equal(installedManifest.exports['./plugin'], './src/plugin.ts')
-    assert.equal(installedManifest.exports['./local-decision-router'], './src/pantheon/local-decision-router.ts')
+    assert.equal(
+      installedManifest.exports['./local-decision-router'],
+      './src/pantheon/local-decision-router.ts',
+    )
 
     const consumerLock = readJson(join(consumer, 'package-lock.json'))
     const runtimePlugin = consumerLock.packages['node_modules/@opencode-ai/plugin']

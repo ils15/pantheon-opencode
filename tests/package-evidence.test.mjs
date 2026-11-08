@@ -15,7 +15,6 @@ import { delimiter, join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-
 // test:node runs on machines without an OpenCode binary, so the host gate
 // could not confirm the generation it writes for. Pin it for this file: every
 // install in here targets the only supported host line. Gate-specific tests

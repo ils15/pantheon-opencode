@@ -115,9 +115,7 @@ test('reconcile honors explicit global targets and keeps explicit targets projec
 
     const projectTarget = join(root, 'custom-project')
     const projectPlan = join(root, 'project-review.json')
-    seedTarget(projectTarget, [
-      { path: 'agents/retired.md', content: 'old project agent' },
-    ])
+    seedTarget(projectTarget, [{ path: 'agents/retired.md', content: 'old project agent' }])
     const projectReview = run(
       ['--target', projectTarget, '--components', 'agents', '--save-plan', projectPlan],
       root,
@@ -181,16 +179,7 @@ test('init records a versioned per-file inventory after verified writes', () => 
   withRoot((root) => {
     const result = spawnSync(
       process.execPath,
-      [
-        INIT,
-        'init',
-        '--project',
-        '--components',
-        'agents',
-        '--no-mcp',
-        '--yes',
-        '--headless',
-      ],
+      [INIT, 'init', '--project', '--components', 'agents', '--no-mcp', '--yes', '--headless'],
       {
         cwd: root,
         encoding: 'utf8',

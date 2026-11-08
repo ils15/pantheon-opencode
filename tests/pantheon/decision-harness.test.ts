@@ -26,10 +26,7 @@ import {
   P7_TURN_END_EVENT_TYPE,
 } from '../../src/pantheon/decision-events.ts'
 import { decideHeuristic } from '../../src/pantheon/decision-heuristic.ts'
-import {
-  createDecisionBudget,
-  evaluateDecisionPolicy,
-} from '../../src/pantheon/decision-policy.ts'
+import { createDecisionBudget, evaluateDecisionPolicy } from '../../src/pantheon/decision-policy.ts'
 import {
   auditDecisionRegistry,
   DECISION_POINT_IDS,

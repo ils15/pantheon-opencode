@@ -52,7 +52,6 @@ import {
 } from '../scripts/install/plan.mjs'
 import { seedHealthyRuntime } from './helpers/install-runtime-fixture.mjs'
 
-
 // test:node runs on machines without an OpenCode binary, so the host gate
 // could not confirm the generation it writes for. Pin it for this file: every
 // install in here targets the only supported host line. Gate-specific tests
@@ -628,10 +627,7 @@ test('drift: a planned file changed between plan and apply aborts with no writes
     assert.equal(result.applied, false)
     assert.equal(result.reason, 'drift')
     assert.deepEqual(result.drift, ['agents/hermes.md'])
-    assert.equal(
-      readFileSync(join(target, 'agents', 'hermes.md'), 'utf8'),
-      'MUTATED\n',
-    )
+    assert.equal(readFileSync(join(target, 'agents', 'hermes.md'), 'utf8'), 'MUTATED\n')
     assert.equal(existsSync(join(target, '.pantheon')), false, 'no backup/state written')
   } finally {
     rmSync(target, { recursive: true, force: true })

@@ -235,18 +235,15 @@ test('direct init writes the global install to absolute XDG_CONFIG_HOME', () => 
   mkdirSync(home)
   mkdirSync(xdg)
   try {
-    const result = run(
-      ['init', '--headless', '--yes', '--no-mcp', '--components', 'agents'],
-      cwd,
-      { HOME: home, XDG_CONFIG_HOME: xdg, OPENCODE_VERSION: 'v2' },
-    )
+    const result = run(['init', '--headless', '--yes', '--no-mcp', '--components', 'agents'], cwd, {
+      HOME: home,
+      XDG_CONFIG_HOME: xdg,
+      OPENCODE_VERSION: 'v2',
+    })
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
     assert.ok(existsSync(join(target, 'agents', 'zeus.md')))
     const config = JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8'))
-    assert.ok(
-      Array.isArray(config.plugins),
-      'the global install registers the plural plugins list',
-    )
+    assert.ok(Array.isArray(config.plugins), 'the global install registers the plural plugins list')
     assert.equal(config.plugin, undefined)
     assert.equal(existsSync(join(home, '.config', 'opencode')), false)
     assert.deepEqual(readdirSync(cwd), [])
@@ -260,15 +257,11 @@ test('init rejects relative XDG_CONFIG_HOME before creating config files', () =>
   const home = mkdtempSync(join(tmpdir(), 'pantheon-init-relative-xdg-home-'))
   const relativeConfig = 'relative-config-home'
   try {
-    const result = run(
-      ['init', '--headless', '--yes', '--no-mcp', '--components', 'agents'],
-      cwd,
-      {
-        HOME: home,
-        XDG_CONFIG_HOME: relativeConfig,
-        OPENCODE_VERSION: 'v2',
-      },
-    )
+    const result = run(['init', '--headless', '--yes', '--no-mcp', '--components', 'agents'], cwd, {
+      HOME: home,
+      XDG_CONFIG_HOME: relativeConfig,
+      OPENCODE_VERSION: 'v2',
+    })
     assert.notEqual(result.status, 0)
     assert.match(`${result.stdout}\n${result.stderr}`, /XDG_CONFIG_HOME must be an absolute path/i)
     assert.equal(existsSync(join(cwd, relativeConfig)), false)
@@ -314,10 +307,7 @@ test('init rejects both --preset spellings before installation writes', () => {
         cwd,
       )
       assert.notEqual(result.status, 0)
-      assert.match(
-        `${result.stdout}\n${result.stderr}`,
-        /--preset is not supported/i,
-      )
+      assert.match(`${result.stdout}\n${result.stderr}`, /--preset is not supported/i)
       assert.deepEqual(readdirSync(cwd), ['.pantheon'])
       assert.deepEqual(readdirSync(join(cwd, '.pantheon')), ['last-run.json'])
       const runRecord = JSON.parse(readFileSync(join(cwd, '.pantheon', 'last-run.json'), 'utf8'))
@@ -338,15 +328,7 @@ test('direct V2 init safely warns and omits an untranslatable V1 MCP ask', () =>
       JSON.stringify({ permission: { mcp: { research: 'ask' } } }),
     )
     const result = run(
-      [
-        'init',
-        '--project',
-        '--headless',
-        '--yes',
-        '--no-mcp',
-        '--components',
-        'agents',
-              ],
+      ['init', '--project', '--headless', '--yes', '--no-mcp', '--components', 'agents'],
       cwd,
     )
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
@@ -366,10 +348,7 @@ test('missing or empty --preset value fails before writing', () => {
   for (const presetArgs of [['--preset'], ['--preset='], ['--preset', '--yes']]) {
     const cwd = mkdtempSync(join(tmpdir(), 'pantheon-init-preset-missing-'))
     try {
-      const result = run(
-        ['init', '--project', '--headless', '--no-mcp', ...presetArgs],
-        cwd,
-      )
+      const result = run(['init', '--project', '--headless', '--no-mcp', ...presetArgs], cwd)
       assert.notEqual(result.status, 0)
       assert.match(`${result.stdout}\n${result.stderr}`, /--preset requires a non-empty value/i)
       assert.deepEqual(readdirSync(cwd), [])

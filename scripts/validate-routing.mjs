@@ -131,7 +131,10 @@ if (skillLock && typeof skillLock === 'object' && !Array.isArray(skillLock)) {
   // references/ ride the same lock: every shipped reference must be pinned too.
   const refFiles = existsSync(srcSkillsDir)
     ? readdirSync(srcSkillsDir, { withFileTypes: true })
-        .filter((entry) => entry.isDirectory() && existsSync(join(srcSkillsDir, entry.name, 'references')))
+        .filter(
+          (entry) =>
+            entry.isDirectory() && existsSync(join(srcSkillsDir, entry.name, 'references')),
+        )
         .flatMap((entry) =>
           readdirSync(join(srcSkillsDir, entry.name, 'references'))
             .filter((f) => f.endsWith('.md'))
@@ -404,7 +407,9 @@ for (const id of skillDirIds) {
     )
     continue
   }
-  const onDisk = readdirSync(refDir).filter((f) => f.endsWith('.md')).sort()
+  const onDisk = readdirSync(refDir)
+    .filter((f) => f.endsWith('.md'))
+    .sort()
   check(/##\s+Routing/.test(body), `${id}: ships references/ but has no "## Routing" section`)
   for (const name of new Set(cited).values()) {
     check(onDisk.includes(name), `${id}: cited reference missing on disk: references/${name}`)
@@ -428,7 +433,10 @@ if (!Array.isArray(behaviors) || behaviors.length === 0) {
       check(!seen.has(b.id), `duplicate behavior id: ${b.id}`)
       seen.add(b.id)
     }
-    check(b?.kind === 'install' || b?.kind === 'runtime', `behavior ${b?.id}: kind must be install|runtime`)
+    check(
+      b?.kind === 'install' || b?.kind === 'runtime',
+      `behavior ${b?.id}: kind must be install|runtime`,
+    )
     check(typeof b?.owner === 'string' && b.owner.length > 0, `behavior ${b?.id}: owner required`)
     if (b?.kind === 'install' && typeof b?.owner === 'string') {
       check(existsSync(join(ROOT, b.owner)), `behavior ${b.id}: owner file missing: ${b.owner}`)

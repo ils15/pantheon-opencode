@@ -21,7 +21,6 @@ import { test } from 'node:test'
 import { setupRuntimePhase } from '../scripts/install/opencode.mjs'
 import { checkRuntimePrerequisites } from '../scripts/install/shared.mjs'
 
-
 // test:node runs on machines without an OpenCode binary, so the host gate
 // could not confirm the generation it writes for. Pin it for this file: every
 // install in here targets the only supported host line. Gate-specific tests
@@ -191,10 +190,7 @@ test('CLI accepts --components; the removed generation flag now warns as unknown
       timeout: 120_000,
     })
     assert.equal(auto.status, 0, `the removed flag must not fail the run: ${auto.stderr}`)
-    assert.match(
-      `${auto.stdout}\n${auto.stderr}`,
-      /Unknown option ignored: --opencode-version/,
-    )
+    assert.match(`${auto.stdout}\n${auto.stderr}`, /Unknown option ignored: --opencode-version/)
 
     const comps = spawnSync(process.execPath, [BIN, ...base, '--components', 'agents,skills'], {
       cwd: target,

@@ -18,16 +18,16 @@
  */
 
 import {
-  classifyLocalDecisionComplexity,
-  type LocalDecisionComplexityDimensions,
-  type LocalDecisionGateStatus,
-} from '../local-decision-router.ts'
-import {
   observeShadow,
   type ShadowDecision,
   type ShadowRecord,
   type ShadowSink,
 } from '../decision-shadow.ts'
+import {
+  classifyLocalDecisionComplexity,
+  type LocalDecisionComplexityDimensions,
+  type LocalDecisionGateStatus,
+} from '../local-decision-router.ts'
 
 export type ComplexityLabel = 'low' | 'medium' | 'high' | 'abstain'
 export type ComplexityLevel = 1 | 2 | 3

@@ -25,7 +25,6 @@ import { installPlugin } from '../scripts/install/plugin.mjs'
 import { ROOT } from '../scripts/install/shared.mjs'
 import { setupVenv } from '../scripts/install/venv.mjs'
 
-
 // test:node runs on machines without an OpenCode binary, so the host gate
 // could not confirm the generation it writes for. Pin it for this file: every
 // install in here targets the only supported host line. Gate-specific tests
@@ -242,21 +241,19 @@ test('init --doctor reports the health check result, duration and exit code', as
     const child = await withIsolatedHome(async ({ home, xdg }) =>
       spawnSync(
         process.execPath,
-        [
-          BIN,
-          'init',
-          '--project',
-          '--yes',
-          '--headless',
-          '--components',
-          'agents',
-          '--doctor',
-        ],
+        [BIN, 'init', '--project', '--yes', '--headless', '--components', 'agents', '--doctor'],
         {
           cwd: target,
           encoding: 'utf8',
           timeout: 300_000,
-          env: { ...process.env, HOME: home, XDG_CONFIG_HOME: xdg, OPENCODE_VERSION: 'v2', LANG: 'C', LC_ALL: 'C' },
+          env: {
+            ...process.env,
+            HOME: home,
+            XDG_CONFIG_HOME: xdg,
+            OPENCODE_VERSION: 'v2',
+            LANG: 'C',
+            LC_ALL: 'C',
+          },
         },
       ),
     )
@@ -408,7 +405,14 @@ function runInit(cwd, args) {
       cwd,
       encoding: 'utf8',
       timeout: 120_000,
-      env: { ...process.env, HOME: home, XDG_CONFIG_HOME: xdg, OPENCODE_VERSION: 'v2', LANG: 'C', LC_ALL: 'C' },
+      env: {
+        ...process.env,
+        HOME: home,
+        XDG_CONFIG_HOME: xdg,
+        OPENCODE_VERSION: 'v2',
+        LANG: 'C',
+        LC_ALL: 'C',
+      },
     })
   } finally {
     rmSync(home, { recursive: true, force: true })

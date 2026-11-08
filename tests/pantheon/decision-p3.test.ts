@@ -12,12 +12,12 @@
  * Run with: npx tsx tests/pantheon/decision-p3.test.ts
  */
 import { strict as assert } from 'node:assert'
-import { LOCAL_DECISION_COMPLEXITY_DIMENSIONS } from '../../src/pantheon/local-decision-router.ts'
 import {
   COMPLEXITY_LABEL_LEVEL,
   type ComplexityLabel,
   evaluateComplexityPoint,
 } from '../../src/pantheon/decision-points/p3-complexity.ts'
+import { LOCAL_DECISION_COMPLEXITY_DIMENSIONS } from '../../src/pantheon/local-decision-router.ts'
 
 let checks = 0
 const check = (name: string, fn: () => void): void => {

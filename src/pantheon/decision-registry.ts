@@ -49,10 +49,7 @@
 import type { AskMode } from './decision-contracts.ts'
 import { DECISION_POINT_REGISTRY } from './decision-points.ts'
 import { PREMISE_IDS, PREMISE_REGISTER, type PremiseEntry } from './decision-premises.ts'
-import {
-  decisionResourceRefs,
-  findDecisionResourceIdCollisions,
-} from './decision-resource-ids.ts'
+import { decisionResourceRefs, findDecisionResourceIdCollisions } from './decision-resource-ids.ts'
 
 export const DECISION_POINT_IDS = [
   'P1',

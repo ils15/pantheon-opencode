@@ -40,7 +40,6 @@ import {
 } from '../scripts/install/opencode.mjs'
 import { ROOT, writeConfigWithBackup, writeIfChanged } from '../scripts/install/shared.mjs'
 
-
 // test:node runs on machines without an OpenCode binary, so the host gate
 // could not confirm the generation it writes for. Pin it for this file: every
 // install in here targets the only supported host line. Gate-specific tests
@@ -182,10 +181,7 @@ test('resolveInstalledPlugin maps the V2 plugin directory into the installed pac
 
 test('resolveInstalledPlugin migrates the legacy V2 file ref to the plugin directory', () => {
   assert.equal(resolveInstalledPlugin('src/plugin.ts'), join(ROOT, 'src', 'plugin'))
-  assert.equal(
-    resolveInstalledPlugin(join(ROOT, 'src', 'plugin.ts')),
-    join(ROOT, 'src', 'plugin'),
-  )
+  assert.equal(resolveInstalledPlugin(join(ROOT, 'src', 'plugin.ts')), join(ROOT, 'src', 'plugin'))
 })
 
 test('V2 npm-shorthand and legacy refs share the directory identity', () => {

@@ -10,11 +10,8 @@
  */
 import { strict as assert } from 'node:assert'
 import { DEFAULT_CONFIG, resolveSandboxConfig } from '../../src/pantheon/context-sandbox.ts'
+import { createV2ExecuteAfter, resolveV2SandboxConfig } from '../../src/pantheon/execute-after.ts'
 import { EMPTY_TASK_ERROR, HOST_EMPTY_RESULT_TEXT } from '../../src/pantheon/task-result-guard.ts'
-import {
-  createV2ExecuteAfter,
-  resolveV2SandboxConfig,
-} from '../../src/pantheon/execute-after.ts'
 
 // ─── Harness ─────────────────────────────────────────────────────────────
 

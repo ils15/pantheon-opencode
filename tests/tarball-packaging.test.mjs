@@ -15,7 +15,6 @@ import { tmpdir } from 'node:os'
 import { join, relative, resolve } from 'node:path'
 import { test } from 'node:test'
 
-
 // test:node runs on machines without an OpenCode binary, so the host gate
 // could not confirm the generation it writes for. Pin it for this file: every
 // install in here targets the only supported host line. Gate-specific tests
@@ -316,10 +315,18 @@ test('installed package resolves hooks to its installed absolute path', () => {
     // never written.
     assert.ok(!('plugin' in config), 'the legacy singular plugin key must not be written')
     const registered = (config.plugins ?? []).find(
-      (entry) => typeof entry === 'object' && entry?.package === join(installedRoot, 'src', 'plugin'),
+      (entry) =>
+        typeof entry === 'object' && entry?.package === join(installedRoot, 'src', 'plugin'),
     )
-    assert.ok(registered, `the installed plugin directory must be registered: ${JSON.stringify(config.plugins)}`)
-    assert.equal(existsSync(registered.package), true, `registered plugin must exist: ${registered.package}`)
+    assert.ok(
+      registered,
+      `the installed plugin directory must be registered: ${JSON.stringify(config.plugins)}`,
+    )
+    assert.equal(
+      existsSync(registered.package),
+      true,
+      `registered plugin must exist: ${registered.package}`,
+    )
     assert.deepEqual(registered.options, {})
     // Regression guard (after the packaged opencode.json template was dropped
     // from `files`): the product defaults an install seeds are code constants in
@@ -348,9 +355,15 @@ test('installed package resolves hooks to its installed absolute path', () => {
     // Pantheon's own agents must run unattended, and nothing else. Growing it
     // again is a silent product/security decision made for every installer, so
     // the allow-set and the deny-set are both pinned here.
-    const shellResources = rules.filter((rule) => rule.action === 'shell').map((rule) => rule.resource)
+    const shellResources = rules
+      .filter((rule) => rule.action === 'shell')
+      .map((rule) => rule.resource)
     for (const required of ['git *', 'npm *', 'npx *', 'pytest *', 'ruff *']) {
-      assert.equal(ruleEffect('shell', required), 'allow', `permissions must allow shell \`${required}\``)
+      assert.equal(
+        ruleEffect('shell', required),
+        'allow',
+        `permissions must allow shell \`${required}\``,
+      )
     }
     for (const forbidden of ['black', 'pip', 'docker', 'curl', 'gh', 'make']) {
       assert.equal(
@@ -371,11 +384,15 @@ test('installed package resolves hooks to its installed absolute path', () => {
     // idempotent. No tui.json is written: the host loads the copy through its
     // plugins entry, and the copy carries the loader contract (dist/tui.js).
     const tuiDir = join(project, '.opencode', 'plugins', 'pantheon-tui')
-    assert.equal(existsSync(join(project, '.opencode', 'tui.json')), false, 'no tui.json is written')
+    assert.equal(
+      existsSync(join(project, '.opencode', 'tui.json')),
+      false,
+      'no tui.json is written',
+    )
     assert.equal(existsSync(join(tuiDir, 'dist', 'tui.js')), true)
     assert.ok(
-      (config.plugins ?? []).some(
-        (entry) => typeof entry === 'string' ? entry === tuiDir : entry?.package === tuiDir,
+      (config.plugins ?? []).some((entry) =>
+        typeof entry === 'string' ? entry === tuiDir : entry?.package === tuiDir,
       ),
       'the copied TUI plugin must be registered under plugins',
     )
@@ -440,7 +457,10 @@ test('installed package leaves an explicit permission.skill choice alone', () =>
       'allow',
       'the neighbouring allow rule survives the normalization',
     )
-    assert.equal(rules.some((rule) => rule.action === 'skill' && rule.effect === 'allow'), false)
+    assert.equal(
+      rules.some((rule) => rule.action === 'skill' && rule.effect === 'allow'),
+      false,
+    )
     assert.equal(config.theme, 'user-theme')
     assert.equal(config.default_agent, 'zeus', 'unrelated defaults are still seeded')
   } finally {

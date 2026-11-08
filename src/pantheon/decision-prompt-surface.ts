@@ -24,10 +24,10 @@
  * refusal from a surface that cannot feed them.
  */
 
-import type { SkillsSource } from './local-decision-prompt.ts'
 import { evaluateAgentPoint } from './decision-points/p1-agent.ts'
 import { evaluateSkillPoint } from './decision-points/p2-skill.ts'
 import type { ShadowRecord, ShadowSink } from './decision-shadow.ts'
+import type { SkillsSource } from './local-decision-prompt.ts'
 
 /** Registry ids wired at the prompt hook by this module. */
 export const PROMPT_SURFACE_POINT_IDS = Object.freeze(['P1', 'P2'] as const)

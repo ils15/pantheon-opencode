@@ -32,7 +32,6 @@ import { test as nodeTest } from 'node:test'
 import { installOpenCode } from '../scripts/install/opencode.mjs'
 import { ROOT } from '../scripts/install/shared.mjs'
 
-
 // test:node runs on machines without an OpenCode binary, so the host gate
 // could not confirm the generation it writes for. Pin it for this file: every
 // install in here targets the only supported host line. Gate-specific tests
@@ -217,10 +216,7 @@ for (const version of VERSIONS) {
       }
       assert.equal(
         readFileSync(join(tuiPluginDir, 'tui.ts'), 'utf8'),
-        readFileSync(
-          join(ROOT, 'src', 'plugins', 'tui', 'tui.ts'),
-          'utf8',
-        ),
+        readFileSync(join(ROOT, 'src', 'plugins', 'tui', 'tui.ts'), 'utf8'),
         'installed TUI copy must use the entrypoint for the selected host generation',
       )
       const tuiPackage = JSON.parse(readFileSync(join(tuiPluginDir, 'package.json'), 'utf8'))
