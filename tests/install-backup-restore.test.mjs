@@ -516,8 +516,6 @@ test('installer apply: exact backup before writes, warning once, no canary leak'
         '--dry-run',
         '--yes',
         '--headless',
-        '--version',
-        'v1',
         '--no-mcp',
         '--components',
         'agents,commands',
@@ -526,7 +524,7 @@ test('installer apply: exact backup before writes, warning once, no canary leak'
         cwd: configDir,
         encoding: 'utf8',
         timeout: 120_000,
-        env: { ...process.env, HOME: home, XDG_CONFIG_HOME: xdg },
+        env: { ...process.env, HOME: home, XDG_CONFIG_HOME: xdg, OPENCODE_VERSION: 'v2' },
       },
     )
     assert.equal(preview.status, 0, `preview must exit 0:\n${preview.stdout}\n${preview.stderr}`)
@@ -540,8 +538,6 @@ test('installer apply: exact backup before writes, warning once, no canary leak'
         '--project',
         '--yes',
         '--headless',
-        '--version',
-        'v1',
         '--components',
         'agents,skills,instructions,commands,plugins,runtime',
       ],
@@ -549,7 +545,7 @@ test('installer apply: exact backup before writes, warning once, no canary leak'
         cwd: configDir,
         encoding: 'utf8',
         timeout: 180_000,
-        env: { ...process.env, HOME: home, XDG_CONFIG_HOME: xdg },
+        env: { ...process.env, HOME: home, XDG_CONFIG_HOME: xdg, OPENCODE_VERSION: 'v2' },
       },
     )
     const output = `${result.stdout}\n${result.stderr}`
@@ -648,7 +644,6 @@ test('canary: drift-abort and failure paths never leak the secret', {
       result = await installOpenCode(target, false, false, ['agents', 'commands'], {
         yes: true,
         headless: true,
-        version: 'v1',
         deps: makeDeps(target),
       })
     } catch {

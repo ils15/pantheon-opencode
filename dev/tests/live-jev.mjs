@@ -6,7 +6,7 @@ import { createInterface } from 'node:readline/promises'
 import { fileURLToPath } from 'node:url'
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
-const projectPlugin = join(repoRoot, 'src', 'plugin-v2')
+const projectPlugin = join(repoRoot, 'src', 'plugin')
 const confirmPhrase = 'RUN PICKLEBALL JEV'
 
 function usage() {

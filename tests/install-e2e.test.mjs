@@ -45,12 +45,12 @@ const test = (name, fn) => nodeTest(name, { skip: SKIP_REASON }, fn)
 // Constants
 // ---------------------------------------------------------------------------
 
-const V2_PLUGIN = join(ROOT, 'src', 'plugin-v2')
+const V2_PLUGIN = join(ROOT, 'src', 'plugin')
 // Legacy V2 refs (migrated by the installer into V2_PLUGIN): the npm
 // shorthand the beta resolves via npm install (NpmInstallFailedError) and the
 // pre-directory-contract file path (loader warns "must be a directory").
-const V2_EXPORT = 'pantheon-opencode/plugin-v2'
-const V2_LEGACY_FILE = 'src/plugin-v2.ts'
+const V2_EXPORT = 'pantheon-opencode/plugin'
+const V2_LEGACY_FILE = 'src/plugin.ts'
 const THIRD_PARTY_PLUGIN = '/tmp/vendor/src/plugin.ts'
 
 /** Return the package/path referenced by a string or object-form plugin entry. */
@@ -108,7 +108,6 @@ test('fresh init records successful component states and leaves unselected compo
     await installOpenCode(target, false, false, ['agents', 'skills', 'commands'], {
       yes: true,
       headless: true,
-      version: 'v2',
     })
     const state = JSON.parse(readFileSync(join(target, '.pantheon', 'install-state.json'), 'utf8'))
     assert.equal(state.components.agents.status, 'installed')
@@ -338,7 +337,7 @@ test('V1 fresh install does NOT include V2 plugin entry in plugin array', async 
   try {
     const config = await runInstall(target, 'v1')
     const hasV2Export = config.plugin.some((entry) =>
-      [V2_EXPORT, V2_LEGACY_FILE, join(ROOT, 'src', 'plugin-v2.ts'), V2_PLUGIN].includes(
+      [V2_EXPORT, V2_LEGACY_FILE, join(ROOT, 'src', 'plugin.ts'), V2_PLUGIN].includes(
         pluginReference(entry),
       ),
     )

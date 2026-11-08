@@ -16,8 +16,7 @@ import {
   MANAGED_AGENT_FIELDS,
   managedAgentFieldDrift,
   mergeContextSandboxBlocks,
-  migrateV1toV2,
-  migrateV2toV1,
+  normalizeLegacyV1Config,
 } from '../scripts/install/config-migration.mjs'
 import {
   applyMcpServerEntries,
@@ -102,7 +101,7 @@ const V1_CONFIG = {
     },
   },
   default_agent: 'zeus',
-  plugins: ['src/plugin-v2'],
+  plugins: ['src/plugin'],
   experimental: { subagent_depth: 2 },
   permission: {
     skill: { '*': 'allow' },
@@ -156,7 +155,7 @@ const V1_WITH_VARIANT = {
   },
 }
 
-/** Expected V2 output of migrateV1toV2(V1_CONFIG), preserving V1 insertion order. */
+/** Expected V2 output of normalizeLegacyV1Config(V1_CONFIG), preserving V1 insertion order. */
 const V2_EXPECTED = {
   $schema: 'https://opencode.ai/config.json',
   providers: {
@@ -170,7 +169,7 @@ const V2_EXPECTED = {
     },
   },
   default_agent: 'zeus',
-  plugins: ['src/plugin-v2'],
+  plugins: ['src/plugin'],
   experimental: { subagent_depth: 2 },
   permissions: [
     { action: 'skill', resource: '*', effect: 'allow' },
@@ -214,9 +213,9 @@ const V2_EXPECTED = {
 // ---------------------------------------------------------------------------
 
 describe('config-migration', () => {
-  describe('migrateV1toV2', () => {
+  describe('normalizeLegacyV1Config', () => {
     it('should rename top-level keys', () => {
-      const v2 = migrateV1toV2(V1_CONFIG)
+      const v2 = normalizeLegacyV1Config(V1_CONFIG)
       assert.ok(v2.providers, 'provider → providers')
       assert.ok(v2.agents, 'agent → agents')
       assert.ok(v2.permissions, 'permission → permissions')
@@ -225,14 +224,14 @@ describe('config-migration', () => {
     })
 
     it('should remove old V1 top-level keys', () => {
-      const v2 = migrateV1toV2(V1_CONFIG)
+      const v2 = normalizeLegacyV1Config(V1_CONFIG)
       assert.equal(v2.provider, undefined, 'provider removed')
       assert.equal(v2.agent, undefined, 'agent removed')
       assert.equal(v2.permission, undefined, 'permission removed')
     })
 
     it('should convert permission object to array', () => {
-      const v2 = migrateV1toV2(V1_CONFIG)
+      const v2 = normalizeLegacyV1Config(V1_CONFIG)
       assert.ok(Array.isArray(v2.permissions), 'permissions is array')
       // shell commands
       const shellPerms = v2.permissions.filter((p) => p.action === 'shell')
@@ -248,7 +247,7 @@ describe('config-migration', () => {
     })
 
     it('should convert agent permissions (nested)', () => {
-      const v2 = migrateV1toV2(V1_CONFIG)
+      const v2 = normalizeLegacyV1Config(V1_CONFIG)
       const talos = v2.agents.talos
       assert.ok(Array.isArray(talos.permissions), 'agent permissions is array')
       assert.equal(talos.permissions.length, 8, '8 agent permissions')
@@ -267,12 +266,12 @@ describe('config-migration', () => {
       // `write` tool call under the action name `edit`, so a rule emitted as
       // `write` never decides that call — `permission.write: deny` must block
       // writes, which only an `edit` rule does.
-      const v2 = migrateV1toV2({ permission: { write: 'deny' } })
+      const v2 = normalizeLegacyV1Config({ permission: { write: 'deny' } })
       assert.deepEqual(v2.permissions, [{ action: 'edit', resource: '*', effect: 'deny' }])
     })
 
     it('maps agent-level permission.write to edit as well', () => {
-      const v2 = migrateV1toV2({
+      const v2 = normalizeLegacyV1Config({
         agent: { hermes: { permission: { write: { 'src/**': 'deny' } } } },
       })
       assert.deepEqual(v2.agents.hermes.permissions, [
@@ -286,13 +285,13 @@ describe('config-migration', () => {
         { bash: 'deny', shell: 'allow' },
       ]) {
         assert.throws(
-          () => migrateV1toV2({ permission }),
+          () => normalizeLegacyV1Config({ permission }),
           /distinct V1 permission sources overlap.*normalization/i,
         )
       }
       assert.throws(
         () =>
-          migrateV1toV2({
+          normalizeLegacyV1Config({
             agent: { hermes: { permission: { bash: 'deny', shell: 'allow' } } },
           }),
         /distinct V1 permission sources overlap.*normalization/i,
@@ -300,7 +299,7 @@ describe('config-migration', () => {
     })
 
     it('preserves an intentional same-key deny followed by a narrower allow in V1 order', () => {
-      const rules = migrateV1toV2({
+      const rules = normalizeLegacyV1Config({
         permission: { edit: { '*': 'deny', 'src/**': 'allow' } },
       }).permissions
 
@@ -318,7 +317,7 @@ describe('config-migration', () => {
         read: { '*': 'deny', 'src/**': 'allow' },
         write: { '*': 'deny', 'src/**': 'allow' },
       }
-      const rules = migrateV1toV2({ agent: { athena: { permission } } }).agents.athena.permissions
+      const rules = normalizeLegacyV1Config({ agent: { athena: { permission } } }).agents.athena.permissions
 
       assert.deepEqual(rules, [
         { action: 'subagent', resource: '*', effect: 'deny' },
@@ -333,7 +332,7 @@ describe('config-migration', () => {
     })
 
     it('keeps same-key disjoint deny and allow resource patterns supported', () => {
-      const v2 = migrateV1toV2({
+      const v2 = normalizeLegacyV1Config({
         permission: { edit: { 'src/**': 'deny', 'docs/**': 'allow' } },
       })
       assert.deepEqual(v2.permissions, [
@@ -343,7 +342,7 @@ describe('config-migration', () => {
     })
 
     it('keeps non-colliding write/edit resource rules as separate edit entries', () => {
-      const v2 = migrateV1toV2({
+      const v2 = normalizeLegacyV1Config({
         permission: { write: { '*.md': 'allow' }, edit: { '*.lock': 'deny' } },
       })
       assert.deepEqual(v2.permissions, [
@@ -357,14 +356,14 @@ describe('config-migration', () => {
         '{"edit":{"src/**":"allow","*":"deny"},"write":{"src/**":"deny","*":"allow"}}',
       )
       assert.throws(
-        () => migrateV1toV2({ permission }),
+        () => normalizeLegacyV1Config({ permission }),
         /distinct V1 permission sources overlap.*normalization/i,
       )
     })
 
     it('preserves equal-effect aliases without inventing a conflict', () => {
       const { value: v2, warnings } = withCapturedWarnings(() =>
-        migrateV1toV2({ permission: { edit: 'custom-effect', write: 'custom-effect' } }),
+        normalizeLegacyV1Config({ permission: { edit: 'custom-effect', write: 'custom-effect' } }),
       )
       assert.deepEqual(v2.permissions, [
         { action: 'edit', resource: '*', effect: 'custom-effect' },
@@ -379,7 +378,7 @@ describe('config-migration', () => {
       // object literal cannot. `map[key] || key` used to resolve the inherited
       // values and emit entries with a missing or object-valued `action`.
       const permission = JSON.parse('{"__proto__":"deny","constructor":"deny","toString":"deny"}')
-      const v2 = migrateV1toV2({ permission })
+      const v2 = normalizeLegacyV1Config({ permission })
       assert.equal(v2.permissions.length, 3)
       for (const entry of v2.permissions) {
         assert.equal(
@@ -402,7 +401,7 @@ describe('config-migration', () => {
     // so passing it through produced a config that protected nothing.
     describe('permission.mcp translation (P0-5 MCP gating evidence)', () => {
       it('translates permission.mcp.<server>: deny to the enforced <server>_* glob', () => {
-        const v2 = migrateV1toV2({
+        const v2 = normalizeLegacyV1Config({
           permission: { mcp: { 'pantheon-code-mode': 'deny' } },
         })
         assert.deepEqual(v2.permissions, [
@@ -417,7 +416,7 @@ describe('config-migration', () => {
       })
 
       it('translates permission.mcp.<server>: allow to an explicit allow glob', () => {
-        const v2 = migrateV1toV2({
+        const v2 = normalizeLegacyV1Config({
           permission: { mcp: { 'pantheon-memory': 'allow' } },
         })
         assert.deepEqual(v2.permissions, [
@@ -427,7 +426,7 @@ describe('config-migration', () => {
       })
 
       it('emits raw and normalized aliases so punctuation cannot make a deny inert', () => {
-        const permissions = migrateV1toV2({
+        const permissions = normalizeLegacyV1Config({
           permission: { mcp: { 'my-mcp.server': 'deny' } },
         }).permissions
         assert.deepEqual(permissions, [
@@ -444,7 +443,7 @@ describe('config-migration', () => {
       it('rejects a normalized policy scope that aliases a distinct configured MCP server', () => {
         assert.throws(
           () =>
-            migrateV1toV2({
+            normalizeLegacyV1Config({
               mcp: {
                 servers: {
                   'foo-bar': { type: 'remote', url: 'https://one.example/mcp' },
@@ -457,7 +456,7 @@ describe('config-migration', () => {
         )
 
         assert.deepEqual(
-          migrateV1toV2({
+          normalizeLegacyV1Config({
             mcp: { servers: { 'foo-bar': { type: 'remote', url: 'https://one.example/mcp' } } },
             permission: { mcp: { 'foo-bar': 'allow' } },
           }).permissions,
@@ -472,7 +471,7 @@ describe('config-migration', () => {
       it('fails closed when distinct MCP names normalize to the same V2 action', () => {
         assert.throws(
           () =>
-            migrateV1toV2({
+            normalizeLegacyV1Config({
               permission: { mcp: { 'my-mcp.server': 'deny', my_mcp_server: 'allow' } },
             }),
           /collide after OpenCode V2 permission normalization/i,
@@ -483,25 +482,25 @@ describe('config-migration', () => {
         assert.equal(globMatches('foo_bar_*', 'foo_bar_tool'), true)
         assert.equal(globMatches('foo_*', 'foo_bar_tool'), true)
         assert.throws(
-          () => migrateV1toV2({ permission: { mcp: { foo_bar: 'deny', foo: 'allow' } } }),
+          () => normalizeLegacyV1Config({ permission: { mcp: { foo_bar: 'deny', foo: 'allow' } } }),
           /distinct MCP permission server scopes overlap/i,
         )
         assert.throws(
-          () => migrateV1toV2({ permission: { mcp: { foo: 'deny', foo_bar: 'deny' } } }),
+          () => normalizeLegacyV1Config({ permission: { mcp: { foo: 'deny', foo_bar: 'deny' } } }),
           /distinct MCP permission server scopes overlap/i,
         )
         assert.doesNotThrow(() =>
-          migrateV1toV2({ permission: { mcp: { foo: 'deny', foobar: 'allow' } } }),
+          normalizeLegacyV1Config({ permission: { mcp: { foo: 'deny', foobar: 'allow' } } }),
         )
       })
 
       it('preserves same-server V1 order and blocks distinct server aliases that overlap', () => {
         assert.throws(
-          () => migrateV1toV2({ permission: { mcp: { foo: 'deny', foo_bar: 'allow' } } }),
+          () => normalizeLegacyV1Config({ permission: { mcp: { foo: 'deny', foo_bar: 'allow' } } }),
           /distinct MCP permission server scopes overlap/i,
         )
 
-        const safeOrder = migrateV1toV2({
+        const safeOrder = normalizeLegacyV1Config({
           permission: { mcp: { 'foo.bar': 'deny' } },
         }).permissions
         assert.deepEqual(safeOrder, [
@@ -514,7 +513,7 @@ describe('config-migration', () => {
       it('checks generated server aliases against all V1 action rules', () => {
         assert.throws(
           () =>
-            migrateV1toV2({
+            normalizeLegacyV1Config({
               permission: {
                 mcp: { 'pantheon-code-mode': 'deny' },
                 pantheon_code_mode_read_file: 'deny',
@@ -526,7 +525,7 @@ describe('config-migration', () => {
 
         assert.throws(
           () =>
-            migrateV1toV2({
+            normalizeLegacyV1Config({
               permission: {
                 pantheon_code_mode_read_file: 'deny',
                 mcp: { 'pantheon-code-mode': 'allow' },
@@ -539,7 +538,7 @@ describe('config-migration', () => {
       it('emits no rule for an invalid server name and says why (B7)', () => {
         for (const server of ['*', 'my server']) {
           const { value: v2, warnings } = withCapturedWarnings(() =>
-            migrateV1toV2({ permission: { mcp: { [server]: 'deny' } } }),
+            normalizeLegacyV1Config({ permission: { mcp: { [server]: 'deny' } } }),
           )
           assert.deepEqual(
             v2.permissions,
@@ -555,7 +554,7 @@ describe('config-migration', () => {
 
       it('warns and omits an untranslatable MCP ask for direct V2 init', () => {
         const { value: v2, warnings } = withCapturedWarnings(() =>
-          migrateV1toV2({ permission: { mcp: { 'pantheon-vision': 'ask' } } }),
+          normalizeLegacyV1Config({ permission: { mcp: { 'pantheon-vision': 'ask' } } }),
         )
         assert.deepEqual(v2.permissions, [])
         assert.match(warnings.join('\n'), /MCP ask policy cannot be enforced/i)
@@ -573,8 +572,8 @@ describe('config-migration', () => {
           'pantheon-code-mode': 'deny',
           'pantheon-vision': 'allow',
         }
-        const first = withCapturedWarnings(() => migrateV1toV2({ permission: { mcp: forward } }))
-        const second = withCapturedWarnings(() => migrateV1toV2({ permission: { mcp: reversed } }))
+        const first = withCapturedWarnings(() => normalizeLegacyV1Config({ permission: { mcp: forward } }))
+        const second = withCapturedWarnings(() => normalizeLegacyV1Config({ permission: { mcp: reversed } }))
         assert.deepEqual(first.warnings, second.warnings)
         assert.deepEqual(first.value.permissions, [
           { action: 'pantheon-vision_*', resource: '*', effect: 'allow' },
@@ -588,7 +587,7 @@ describe('config-migration', () => {
       })
 
       it('converts supported MCP effects and the remaining V1 policy', () => {
-        const v2 = migrateV1toV2({
+        const v2 = normalizeLegacyV1Config({
           permission: {
             mcp: { 'pantheon-code-mode': 'deny', 'pantheon-vision': 'allow' },
             read: 'allow',
@@ -610,7 +609,7 @@ describe('config-migration', () => {
           edit: { 'src/**': 'allow', 'src/index.ts': 'ask', '*': 'deny' },
           read: 'allow',
         }
-        assert.deepEqual(migrateV1toV2({ permission }).permissions, [
+        assert.deepEqual(normalizeLegacyV1Config({ permission }).permissions, [
           { action: 'edit', resource: 'src/**', effect: 'allow' },
           { action: 'edit', resource: 'src/index.ts', effect: 'ask' },
           { action: 'edit', resource: '*', effect: 'deny' },
@@ -619,7 +618,7 @@ describe('config-migration', () => {
       })
 
       it('does not reorder rules to invent a different last-match decision', () => {
-        const rules = migrateV1toV2({
+        const rules = normalizeLegacyV1Config({
           permission: { edit: { 'src/**': 'allow', '*': 'deny' } },
         }).permissions
         assert.equal(effectiveEffect(rules, 'edit', 'src/index.ts'), 'deny')
@@ -647,7 +646,7 @@ describe('config-migration', () => {
       }
 
       const convert = (permission) =>
-        migrateV1toV2({ agent: { mnemosyne: { permission } } }).agents.mnemosyne.permissions
+        normalizeLegacyV1Config({ agent: { mnemosyne: { permission } } }).agents.mnemosyne.permissions
 
       it('preserves shipped scoped write/edit exceptions in their original order', () => {
         const rules = convert(MNEMOSYNE_PERMISSION)
@@ -715,7 +714,7 @@ describe('config-migration', () => {
 
       it('does not reorder a V2-only array, so a literal deny stays deny', () => {
         const { value: v2, warnings } = withCapturedWarnings(() =>
-          migrateV1toV2({ permissions: literalDeny }),
+          normalizeLegacyV1Config({ permissions: literalDeny }),
         )
         assert.deepEqual(v2.permissions, literalDeny, 'V2-only order must be preserved')
         assert.equal(effectiveEffect(v2.permissions, 'edit', 'a.ts'), 'deny')
@@ -727,7 +726,7 @@ describe('config-migration', () => {
 
       it('does not reorder a V2-only array, so a glob deny stays deny', () => {
         const { value: v2, warnings } = withCapturedWarnings(() =>
-          migrateV1toV2({ permissions: globDeny }),
+          normalizeLegacyV1Config({ permissions: globDeny }),
         )
         assert.deepEqual(v2.permissions, globDeny)
         assert.equal(effectiveEffect(v2.permissions, 'edit', 'src/generated/client.ts'), 'deny')
@@ -744,7 +743,7 @@ describe('config-migration', () => {
         ]
         for (const { input, resource } of cases) {
           const { value: v2, warnings } = withCapturedWarnings(() =>
-            migrateV1toV2({ permission: {}, permissions: input }),
+            normalizeLegacyV1Config({ permission: {}, permissions: input }),
           )
           assert.deepEqual(v2.permissions, input, 'an empty V1 block must not touch the V2 array')
           assert.equal(effectiveEffect(v2.permissions, 'edit', resource), 'deny')
@@ -771,7 +770,7 @@ describe('config-migration', () => {
             { permissions: native, permission: { edit: legacyEffect } },
           ]) {
             assert.throws(
-              () => migrateV1toV2(config),
+              () => normalizeLegacyV1Config(config),
               /conflicting V1 and native V2 permission rules/i,
             )
           }
@@ -781,7 +780,7 @@ describe('config-migration', () => {
       it('uses exact host language intersection for action and resource conflict checks', () => {
         assert.throws(
           () =>
-            migrateV1toV2({
+            normalizeLegacyV1Config({
               permissions: [{ action: 'foo_*', resource: 'foo/*', effect: 'deny' }],
               permission: { foo_bar: { 'foo/bar': 'allow' } },
             }),
@@ -789,13 +788,13 @@ describe('config-migration', () => {
         )
 
         assert.doesNotThrow(() =>
-          migrateV1toV2({
+          normalizeLegacyV1Config({
             permissions: [{ action: 'foo_*', resource: 'foo/*', effect: 'deny' }],
             permission: { 'bar_*': { 'bar/*': 'allow' } },
           }),
         )
         assert.doesNotThrow(() =>
-          migrateV1toV2({
+          normalizeLegacyV1Config({
             permissions: [{ action: 'foo_*', resource: 'foo/*', effect: 'deny' }],
             permission: { foo_bar: { 'bar/*': 'allow' } },
           }),
@@ -804,7 +803,7 @@ describe('config-migration', () => {
 
       it('does not throw on malformed entries and preserves them with a warning', () => {
         const malformed = [null, { action: 'read', resource: '*', effect: 'allow' }]
-        const v2Only = withCapturedWarnings(() => migrateV1toV2({ permissions: malformed }))
+        const v2Only = withCapturedWarnings(() => normalizeLegacyV1Config({ permissions: malformed }))
         assert.deepEqual(v2Only.value.permissions, malformed)
         assert.ok(
           v2Only.warnings.some((m) => /malformed/i.test(m)),
@@ -812,7 +811,7 @@ describe('config-migration', () => {
         )
 
         const merged = withCapturedWarnings(() =>
-          migrateV1toV2({ permission: { read: 'allow' }, permissions: malformed }),
+          normalizeLegacyV1Config({ permission: { read: 'allow' }, permissions: malformed }),
         )
         assert.ok(merged.value.permissions.includes(null), 'malformed entry preserved')
         assert.ok(
@@ -823,7 +822,7 @@ describe('config-migration', () => {
     })
 
     it('should convert MCP format into the V2 servers map', () => {
-      const v2 = migrateV1toV2(V1_CONFIG)
+      const v2 = normalizeLegacyV1Config(V1_CONFIG)
       assert.ok(v2.mcp.servers.bifrost, 'nested mcp.servers.bifrost exists')
       const b = v2.mcp.servers.bifrost
       assert.equal(b.enabled, undefined, 'V2 does not emit the legacy enabled flag')
@@ -832,13 +831,13 @@ describe('config-migration', () => {
     })
 
     it('converts V1 disabled servers into native V2 disabled:true', () => {
-      const v2 = migrateV1toV2({ mcp: { local: { type: 'local', enabled: false } } })
+      const v2 = normalizeLegacyV1Config({ mcp: { local: { type: 'local', enabled: false } } })
       assert.equal(v2.mcp.servers.local.enabled, undefined)
       assert.equal(v2.mcp.servers.local.disabled, true)
     })
 
     it('normalizes legacy enabled fields inside an existing V2 servers map', () => {
-      const v2 = migrateV1toV2({
+      const v2 = normalizeLegacyV1Config({
         mcp: {
           servers: {
             legacyEnabled: { type: 'local', command: ['node', 'mcp.mjs'], enabled: true },
@@ -858,7 +857,7 @@ describe('config-migration', () => {
     it('rejects conflicting legacy enabled and native disabled values', () => {
       assert.throws(
         () =>
-          migrateV1toV2({
+          normalizeLegacyV1Config({
             mcp: {
               servers: {
                 conflict: {
@@ -876,19 +875,19 @@ describe('config-migration', () => {
 
     it('rejects array-shaped MCP maps and preserves a flat server named servers', () => {
       assert.throws(
-        () => migrateV1toV2({ mcp: [{ type: 'remote', url: 'https://array.example/mcp' }] }),
+        () => normalizeLegacyV1Config({ mcp: [{ type: 'remote', url: 'https://array.example/mcp' }] }),
         /top-level mcp must be an object map/i,
       )
       assert.throws(
         () =>
-          migrateV1toV2({
+          normalizeLegacyV1Config({
             mcp: { servers: [{ type: 'remote', url: 'https://array.example/mcp' }] },
           }),
         /mcp\.servers must be an object map/i,
       )
 
       const flatServersEntry = { type: 'remote', url: 'https://servers.example/mcp' }
-      const converted = migrateV1toV2({ mcp: { servers: flatServersEntry } })
+      const converted = normalizeLegacyV1Config({ mcp: { servers: flatServersEntry } })
       assert.deepEqual(converted.mcp.servers.servers, {
         type: 'remote',
         url: 'https://servers.example/mcp',
@@ -898,18 +897,18 @@ describe('config-migration', () => {
     it('rejects present null and falsy MCP values while allowing absent or valid maps', () => {
       for (const value of [undefined, null, false, 0, '']) {
         assert.throws(
-          () => migrateV1toV2({ mcp: value }),
+          () => normalizeLegacyV1Config({ mcp: value }),
           /top-level mcp must be an object map/i,
           `mcp=${JSON.stringify(value)} must not be normalized as absent`,
         )
       }
-      assert.deepEqual(migrateV1toV2({}), {})
-      assert.deepEqual(migrateV1toV2({ mcp: {} }), { mcp: { servers: {} } })
+      assert.deepEqual(normalizeLegacyV1Config({}), {})
+      assert.deepEqual(normalizeLegacyV1Config({ mcp: {} }), { mcp: { servers: {} } })
     })
 
     it('rejects malformed flat MCP entries instead of silently dropping them', () => {
       assert.throws(
-        () => migrateV1toV2({ mcp: { broken: 'not-a-server-config' } }),
+        () => normalizeLegacyV1Config({ mcp: { broken: 'not-a-server-config' } }),
         /malformed MCP server entry/i,
       )
     })
@@ -920,7 +919,7 @@ describe('config-migration', () => {
           myserver: { type: 'local', enabled: true, timeout: 30000 },
         },
       }
-      const v2 = migrateV1toV2(v1WithTimeout)
+      const v2 = normalizeLegacyV1Config(v1WithTimeout)
       assert.equal(v2.mcp.servers.myserver.timeout, 30000)
     })
 
@@ -934,7 +933,7 @@ describe('config-migration', () => {
           bifrost: { type: 'remote', url: 'https://example.com/mcp', enabled: true },
         },
       }
-      const v2 = migrateV1toV2(legacy)
+      const v2 = normalizeLegacyV1Config(legacy)
       assert.ok(v2.mcp.servers.bifrost, 'real server preserved')
       assert.equal(v2.mcp.servers.enabled, undefined, 'boolean toggle is not a server entry')
     })
@@ -952,7 +951,7 @@ describe('config-migration', () => {
           ['nested-user', 'flat-user'],
         ],
       ]) {
-        const v2 = migrateV1toV2({ mcp })
+        const v2 = normalizeLegacyV1Config({ mcp })
         assert.deepEqual(Object.keys(v2.mcp.servers), expectedOrder)
         assert.deepEqual(v2.mcp.servers['flat-user'], {
           type: 'remote',
@@ -960,17 +959,13 @@ describe('config-migration', () => {
           disabled: false,
         })
         assert.deepEqual(v2.mcp.servers['nested-user'], nestedUser)
-
-        const v1 = migrateV2toV1(v2)
-        assert.deepEqual(v1.mcp['flat-user'], flatUser)
-        assert.deepEqual(v1.mcp['nested-user'], nestedUser)
       }
     })
 
     it('fails closed on a malformed nested map instead of hiding valid servers', () => {
       assert.throws(
         () =>
-          migrateV1toV2({
+          normalizeLegacyV1Config({
             mcp: {
               servers: {
                 valid: { type: 'remote', url: 'https://valid.example/mcp' },
@@ -985,7 +980,7 @@ describe('config-migration', () => {
     it('fails closed when flat and nested MCP maps define the same server name', () => {
       assert.throws(
         () =>
-          migrateV1toV2({
+          normalizeLegacyV1Config({
             mcp: {
               research: { type: 'local', command: ['node', 'flat.mjs'] },
               servers: { research: { type: 'remote', url: 'https://nested.example/mcp' } },
@@ -996,7 +991,7 @@ describe('config-migration', () => {
     })
 
     it('should handle provider model variant → #suffix', () => {
-      const v2 = migrateV1toV2(V1_WITH_VARIANT)
+      const v2 = normalizeLegacyV1Config(V1_WITH_VARIANT)
       const modelKey = Object.keys(v2.providers.anthropic.models)[0]
       assert.equal(modelKey, 'claude-sonnet-4-5#high', 'variant becomes #suffix')
       const model = v2.providers.anthropic.models[modelKey]
@@ -1004,7 +999,7 @@ describe('config-migration', () => {
     })
 
     it('should rename model-level attachment → media', () => {
-      const v2 = migrateV1toV2(V1_CONFIG)
+      const v2 = normalizeLegacyV1Config(V1_CONFIG)
       const model = v2.providers['opencode-go'].models['mimo-v2.5']
       assert.equal(model.media, true, 'attachment renamed to media')
       assert.equal(model.attachment, undefined, 'attachment removed')
@@ -1012,7 +1007,7 @@ describe('config-migration', () => {
 
     it('should not mutate the original config (deep clone)', () => {
       const original = JSON.parse(JSON.stringify(V1_CONFIG))
-      migrateV1toV2(V1_CONFIG)
+      normalizeLegacyV1Config(V1_CONFIG)
       assert.deepEqual(V1_CONFIG, original, 'original unchanged')
     })
 
@@ -1022,19 +1017,19 @@ describe('config-migration', () => {
         my_custom_field: { nested: true },
         permission: { ...V1_CONFIG.permission, custom_action: { '*': 'allow' } },
       }
-      const v2 = migrateV1toV2(configWithUnknown)
+      const v2 = normalizeLegacyV1Config(configWithUnknown)
       assert.equal(v2.my_custom_field.nested, true, 'unknown top-level preserved')
       const customPerm = v2.permissions.find((p) => p.action === 'custom_action')
       assert.ok(customPerm, 'unknown permission action preserved')
     })
 
     it('should handle empty config', () => {
-      const v2 = migrateV1toV2({})
+      const v2 = normalizeLegacyV1Config({})
       assert.deepEqual(v2, {}, 'empty config returns empty')
     })
 
     it('should handle config with only $schema', () => {
-      const v2 = migrateV1toV2({ $schema: 'https://opencode.ai/config.json' })
+      const v2 = normalizeLegacyV1Config({ $schema: 'https://opencode.ai/config.json' })
       assert.equal(v2.$schema, 'https://opencode.ai/config.json')
     })
   })
@@ -1050,9 +1045,9 @@ describe('config-migration', () => {
   // install/opencode.mjs:881-884: the V2 `agents` block is the base and the
   // framework-managed fields coming from the V1 `agent` block overwrite it.
   // Everything the user set and Pantheon does not manage is preserved.
-  describe('migrateV1toV2 — agent and agents coexist', () => {
+  describe('normalizeLegacyV1Config — agent and agents coexist', () => {
     it('renames a pure V1 agent block into agents', () => {
-      const v2 = migrateV1toV2({
+      const v2 = normalizeLegacyV1Config({
         agent: { zeus: { mode: 'primary', source: 'agents/zeus.md' } },
       })
       assert.equal(v2.agent, undefined, 'singular block removed')
@@ -1061,12 +1056,12 @@ describe('config-migration', () => {
 
     it('leaves an already-V2 agents block untouched', () => {
       const agents = { zeus: { mode: 'subagent', steps: 53 } }
-      const v2 = migrateV1toV2({ agents })
+      const v2 = normalizeLegacyV1Config({ agents })
       assert.deepEqual(v2.agents, agents, 'no conversion needed, no rewrite')
     })
 
     it('merges both blocks for the same agent instead of clobbering', () => {
-      const v2 = migrateV1toV2({
+      const v2 = normalizeLegacyV1Config({
         agent: { zeus: { source: 'agents/zeus.md', temperature: 0.2 } },
         agents: { zeus: { mode: 'subagent', steps: 53 } },
       })
@@ -1077,7 +1072,7 @@ describe('config-migration', () => {
     })
 
     it('unions agents that appear in only one of the two blocks', () => {
-      const v2 = migrateV1toV2({
+      const v2 = normalizeLegacyV1Config({
         agent: { onlyV1: { mode: 'primary' }, both: { source: 'agents/both.md' } },
         agents: { onlyV2: { mode: 'subagent' }, both: { mode: 'subagent' } },
       })
@@ -1091,7 +1086,7 @@ describe('config-migration', () => {
     it('lets the framework-managed field win when both blocks set it', () => {
       // Same precedence as install/opencode.mjs:881-884 — managed fields are
       // framework-owned, so the V1 value is authoritative.
-      const v2 = migrateV1toV2({
+      const v2 = normalizeLegacyV1Config({
         agent: { zeus: { mode: 'primary', temperature: 0.2 } },
         agents: { zeus: { mode: 'subagent', temperature: 0.9 } },
       })
@@ -1102,18 +1097,18 @@ describe('config-migration', () => {
     it('still carries steps when it is present in the input', () => {
       // Agnosticism guard: the converter moves values, it never drops them.
       // Stripping the stale ceiling is the installer's job (opencode.mjs).
-      const v2 = migrateV1toV2({ agent: { zeus: { mode: 'primary', steps: 45 } } })
+      const v2 = normalizeLegacyV1Config({ agent: { zeus: { mode: 'primary', steps: 45 } } })
       assert.equal(v2.agents.zeus.steps, 45, 'the pure converter must not lose fields')
     })
 
     it('falls back to replacing when the existing agents block is not an object', () => {
-      const notAMap = migrateV1toV2({
+      const notAMap = normalizeLegacyV1Config({
         agent: { zeus: { mode: 'primary' } },
         agents: 'nope',
       })
       assert.deepEqual(notAMap.agents, { zeus: { mode: 'primary' } }, 'previous behaviour: replace')
 
-      const badEntry = migrateV1toV2({
+      const badEntry = normalizeLegacyV1Config({
         agent: { zeus: { mode: 'primary' } },
         agents: { zeus: 'nope' },
       })
@@ -1132,7 +1127,7 @@ describe('config-migration', () => {
       // the key loses the user's value outright, and nothing writes it back on
       // any later install. V1-only keys are therefore carried over; the base
       // still wins on conflict.
-      const migrated = migrateV1toV2({
+      const migrated = normalizeLegacyV1Config({
         agent: { zeus: { description: 'from V1' } },
         agents: { zeus: { model: 'x' } },
       })
@@ -1146,7 +1141,7 @@ describe('config-migration', () => {
     it('lets the V2 base keep its own value when both blocks set the field', () => {
       // Counterpart of the test above: carrying over is a gap fill, not a
       // takeover. `description` stays user-owned, so the base wins.
-      const migrated = migrateV1toV2({
+      const migrated = normalizeLegacyV1Config({
         agent: { zeus: { description: 'from V1' } },
         agents: { zeus: { description: 'from V2' } },
       })
@@ -1160,7 +1155,7 @@ describe('config-migration', () => {
       // user-customized ("Preserve user-customized fields (model, provider,
       // mcp, etc.)"). Once dropped, no later install writes them back.
       for (const field of USER_FIELDS) {
-        const migrated = migrateV1toV2({
+        const migrated = normalizeLegacyV1Config({
           agent: { zeus: { [field]: 'from V1' } },
           agents: { zeus: { mode: 'subagent' } },
         })
@@ -1179,7 +1174,7 @@ describe('config-migration', () => {
       // non-managed keeps a future list change from failing here for a reason
       // this test never claimed.
       for (const field of USER_FIELDS) {
-        const migrated = migrateV1toV2({
+        const migrated = normalizeLegacyV1Config({
           agent: { zeus: { [field]: 'from V1' } },
           agents: { zeus: { [field]: 'from V2' } },
         })
@@ -1206,8 +1201,8 @@ describe('config-migration', () => {
       // Literal insertion order in the literals below is the order the
       // migration iterates (`Object.entries` of the seed), so these two seeds
       // really do exercise the two orders.
-      const agentFirst = migrateV1toV2({ agent: v1Block, agents: v2Block })
-      const agentsFirst = migrateV1toV2({ agents: v2Block, agent: v1Block })
+      const agentFirst = normalizeLegacyV1Config({ agent: v1Block, agents: v2Block })
+      const agentsFirst = normalizeLegacyV1Config({ agents: v2Block, agent: v1Block })
       assert.deepEqual(agentFirst, agentsFirst, 'key order must not change the result')
       // Pin the content as well: "equal" on its own would also hold if both
       // orders dropped everything on the way through.
@@ -1223,7 +1218,7 @@ describe('config-migration', () => {
       // Behavioral half of the guard: whatever MANAGED_AGENT_FIELDS claims must
       // actually win over the base when both blocks are present.
       for (const field of MANAGED_AGENT_FIELDS) {
-        const merged = migrateV1toV2({
+        const merged = normalizeLegacyV1Config({
           agent: { zeus: { [field]: 'from-v1' } },
           agents: { zeus: { mode: 'subagent' } },
         }).agents.zeus
@@ -1294,7 +1289,7 @@ describe('config-migration', () => {
   // A config can carry V1 and V2 policy keys simultaneously. Safe combinations
   // preserve the native array before converted legacy rules; conflicting
   // overlapping effects require an explicit policy choice.
-  describe('migrateV1toV2 — permission and permissions coexist', () => {
+  describe('normalizeLegacyV1Config — permission and permissions coexist', () => {
     const V1_PERMISSION = { edit: 'deny', bash: { 'git *': 'allow' } }
     const V2_PERMISSIONS = [
       { action: 'edit', resource: '*', effect: 'deny' },
@@ -1305,7 +1300,7 @@ describe('config-migration', () => {
         { permission: V1_PERMISSION, permissions: V2_PERMISSIONS },
         { permissions: V2_PERMISSIONS, permission: V1_PERMISSION },
       ]
-      const results = orders.map((config) => migrateV1toV2(config).permissions)
+      const results = orders.map((config) => normalizeLegacyV1Config(config).permissions)
       assert.deepEqual(results[0], results[1])
       assert.deepEqual(results[0], [
         ...V2_PERMISSIONS,
@@ -1320,7 +1315,7 @@ describe('config-migration', () => {
         { permissions: V2_PERMISSIONS, permission: { edit: 'deny' } },
       ]
       for (const config of orders) {
-        const { value: v2 } = withCapturedWarnings(() => migrateV1toV2(config))
+        const { value: v2 } = withCapturedWarnings(() => normalizeLegacyV1Config(config))
         assert.deepEqual(v2.permissions.slice(0, V2_PERMISSIONS.length), V2_PERMISSIONS)
         assert.ok(v2.permissions.some((rule) => rule.effect === 'deny' && rule.action === 'edit'))
       }
@@ -1332,7 +1327,7 @@ describe('config-migration', () => {
         { permissions: [], permission: { bash: { 'git *': 'deny' } } },
       ]
       for (const config of orders) {
-        const v2 = migrateV1toV2(config)
+        const v2 = normalizeLegacyV1Config(config)
         assert.deepEqual(v2.permissions, [{ action: 'shell', resource: 'git *', effect: 'deny' }])
       }
     })
@@ -1345,7 +1340,7 @@ describe('config-migration', () => {
           { permissions: nativeDeny, permission: { edit: effect } },
         ]) {
           assert.throws(
-            () => migrateV1toV2(config),
+            () => normalizeLegacyV1Config(config),
             /conflicting V1 and native V2 permission rules/i,
           )
         }
@@ -1353,177 +1348,9 @@ describe('config-migration', () => {
     })
   })
 
-  describe('migrateV2toV1', () => {
-    it('should reverse top-level renames', () => {
-      const v1 = migrateV2toV1(V2_EXPECTED)
-      assert.ok(v1.provider, 'providers → provider')
-      assert.ok(v1.agent, 'agents → agent')
-      assert.ok(v1.permission, 'permissions → permission')
-    })
-
-    it('should remove V2-only keys', () => {
-      const v1 = migrateV2toV1(V2_EXPECTED)
-      assert.equal(v1.providers, undefined)
-      assert.equal(v1.agents, undefined)
-      assert.equal(v1.permissions, undefined)
-    })
-
-    it('should convert permissions array back to object', () => {
-      const v1 = migrateV2toV1(V2_EXPECTED)
-      assert.ok(typeof v1.permission === 'object' && !Array.isArray(v1.permission))
-      // bash (shell) permissions grouped
-      assert.deepEqual(v1.permission.bash, {
-        'git *': 'allow',
-        'npm *': 'allow',
-        'npx *': 'allow',
-        'pytest *': 'allow',
-        'ruff *': 'allow',
-        'pip *': 'allow',
-        'python3 *': 'allow',
-      })
-      // skill with only * resource → scalar
-      assert.equal(v1.permission.skill, 'allow')
-      // websearch with only * resource → scalar
-      assert.equal(v1.permission.websearch, 'deny')
-      assert.equal(v1.permission.task, 'allow')
-    })
-
-    it('should convert agent permissions back to nested object', () => {
-      const v1 = migrateV2toV1(V2_EXPECTED)
-      assert.ok(typeof v1.agent.talos.permission === 'object')
-      assert.deepEqual(v1.agent.talos.permission.edit, {
-        '*': 'allow',
-        '**/migrations/**': 'deny',
-        '**/alembic/**': 'deny',
-        '**/models/**': 'deny',
-        '**/auth/**': 'deny',
-        '**/*.sql': 'deny',
-      })
-    })
-
-    // ── P0-5 security review: the reverse map is not "last wins" ───────────
-    it('resolves duplicate V2 rules by restrictiveness, not array order', () => {
-      const orders = [
-        [
-          { action: 'edit', resource: '*', effect: 'deny' },
-          { action: 'edit', resource: '*', effect: 'allow' },
-        ],
-        [
-          { action: 'edit', resource: '*', effect: 'allow' },
-          { action: 'edit', resource: '*', effect: 'deny' },
-        ],
-      ]
-      for (const permissions of orders) {
-        const v1 = migrateV2toV1({ permissions })
-        assert.equal(v1.permission.edit, 'deny', JSON.stringify(permissions))
-      }
-    })
-
-    it('applies the same restrictiveness to resource-level collisions', () => {
-      const v1 = migrateV2toV1({
-        permissions: [
-          { action: 'edit', resource: 'src/**', effect: 'allow' },
-          { action: 'edit', resource: 'src/**', effect: 'deny' },
-        ],
-      })
-      assert.deepEqual(v1.permission.edit, { 'src/**': 'deny' })
-    })
-
-    it('keeps prototype-named V2 actions as literal own keys', () => {
-      const v1 = migrateV2toV1({
-        permissions: ['__proto__', 'constructor', 'toString'].map((action) => ({
-          action,
-          resource: '*',
-          effect: 'deny',
-        })),
-      })
-      for (const action of ['__proto__', 'constructor', 'toString']) {
-        assert.ok(Object.hasOwn(v1.permission, action), `${action} must be an own key`)
-        assert.equal(v1.permission[action], 'deny')
-      }
-      assert.equal(Object.getPrototypeOf(v1.permission), Object.prototype)
-      assert.equal(Object.hasOwn(v1.permission, '[object Object]'), false)
-    })
-
-    it('should reverse MCP format (disabled → enabled, no timeout passthrough)', () => {
-      const v1 = migrateV2toV1(V2_EXPECTED)
-      assert.ok(v1.mcp.bifrost, 'servers.bifrost → mcp.bifrost')
-      assert.equal(v1.mcp.bifrost.enabled, true, 'disabled:false → enabled:true')
-      assert.equal(v1.mcp.bifrost.timeout, undefined, 'no timeout when V2 had none')
-      assert.equal(v1.mcp.servers, undefined, 'servers removed')
-    })
-
-    it('should reverse MCP timeout object → flat number', () => {
-      const v2WithTimeout = {
-        mcp: {
-          servers: {
-            myserver: {
-              type: 'local',
-              disabled: false,
-              timeout: { catalog: 15000, execution: 30000 },
-            },
-          },
-        },
-      }
-      const v1 = migrateV2toV1(v2WithTimeout)
-      assert.equal(v1.mcp.myserver.timeout, 30000, 'execution timeout used')
-    })
-
-    it('should rename model-level media → attachment', () => {
-      const v2 = {
-        providers: { myprovider: { models: { 'gpt-4': { media: true } } } },
-      }
-      const v1 = migrateV2toV1(v2)
-      assert.equal(v1.provider.myprovider.models['gpt-4'].attachment, true)
-      assert.equal(v1.provider.myprovider.models['gpt-4'].media, undefined)
-    })
-
-    it('should not mutate the original config (deep clone)', () => {
-      const original = JSON.parse(JSON.stringify(V2_EXPECTED))
-      migrateV2toV1(V2_EXPECTED)
-      assert.deepEqual(V2_EXPECTED, original, 'original unchanged')
-    })
-
-    it('should handle empty V2 config', () => {
-      const v1 = migrateV2toV1({})
-      assert.deepEqual(v1, {})
-    })
-  })
-
-  describe('round-trip', () => {
-    it('V1 → V2 → V1 preserves core structure', () => {
-      const v2 = migrateV1toV2(V1_CONFIG)
-      const v1back = migrateV2toV1(v2)
-      // Top-level structure
-      assert.deepEqual(Object.keys(v1back).sort(), Object.keys(V1_CONFIG).sort())
-      // Permissions object structure — bash commands
-      assert.ok(typeof v1back.permission === 'object')
-      assert.deepEqual(v1back.permission.bash, V1_CONFIG.permission.bash)
-      // Agent permissions
-      assert.deepEqual(v1back.agent.talos.permission, V1_CONFIG.agent.talos.permission)
-      // MCP
-      assert.equal(v1back.mcp.bifrost.enabled, true)
-      assert.equal(v1back.mcp.bifrost.url, V1_CONFIG.mcp.bifrost.url)
-      // Provider
-      assert.deepEqual(Object.keys(v1back.provider), Object.keys(V1_CONFIG.provider))
-    })
-
-    it('V2 → V1 → V2 preserves data', () => {
-      const v1 = migrateV2toV1(V2_EXPECTED)
-      const v2back = migrateV1toV2(v1)
-      // Permissions (may differ in order but same content)
-      assert.deepEqual(
-        v2back.permissions.sort((a, b) => a.action.localeCompare(b.action)),
-        V2_EXPECTED.permissions.sort((a, b) => a.action.localeCompare(b.action)),
-      )
-      assert.deepEqual(v2back.agents, V2_EXPECTED.agents)
-      assert.deepEqual(v2back.mcp, V2_EXPECTED.mcp)
-    })
-  })
-
   describe('snapshot test — project opencode.json → V2', () => {
     it('matches expected V2 snapshot', () => {
-      const v2 = migrateV1toV2(JSON.parse(JSON.stringify(V1_CONFIG)))
+      const v2 = normalizeLegacyV1Config(JSON.parse(JSON.stringify(V1_CONFIG)))
       assert.equal(v2.$schema, 'https://opencode.ai/config.json')
       assert.ok(v2.providers['opencode-go'])
       assert.ok(v2.permissions)
@@ -1691,17 +1518,10 @@ describe('applyMcpServerEntries — MCP ask warning', () => {
     }
     applyMcpServerEntries(config, context)
 
-    const migrated = migrateV1toV2(config)
+    const migrated = normalizeLegacyV1Config(config)
     assert.equal(migrated.mcp.servers.enabled, undefined)
     assert.equal(migrated.mcp.servers.bifrost.url, 'https://example.com/mcp')
     assert.ok(migrated.mcp.servers['pantheon-resources'])
-  })
-
-  it('does not warn for V1, where the MCP permission semantics were not measured', () => {
-    const config = {}
-    const { warnings } = applyMcpServerEntries(config, { ...context, version: 'v1' })
-    assert.deepEqual(warnings, [])
-    assert.equal(config.permission.mcp['pantheon-code-mode'], 'ask')
   })
 
   it('does not repeat the installer ask warning during a V2 install', () => {
@@ -1709,12 +1529,12 @@ describe('applyMcpServerEntries — MCP ask warning', () => {
     const installer = applyMcpServerEntries(config, context)
     assert.equal(installer.warnings.length, 1, 'the installer reports the V2 default policy')
 
-    assert.doesNotThrow(() => migrateV1toV2(config))
+    assert.doesNotThrow(() => normalizeLegacyV1Config(config))
   })
 
   it('still warns from the migration path when the installer did not run', () => {
     const { value, warnings } = withCapturedWarnings(() =>
-      migrateV1toV2({ permission: { mcp: { 'custom-server': 'ask' } } }),
+      normalizeLegacyV1Config({ permission: { mcp: { 'custom-server': 'ask' } } }),
     )
     assert.deepEqual(value.permissions, [])
     assert.match(warnings.join('\n'), /ask policy cannot be enforced/i)

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Regenerate the terminal captures embedded in docs/opencode-v2.md.
+ * Regenerate the terminal captures embedded in docs/opencode.md.
  *
  * Every capture is recorded by VHS from a tape committed next to its output in
  * docs/assets/tui/. VHS shells out to ttyd (the terminal it drives) and ffmpeg

@@ -91,7 +91,7 @@ export function copyPluginFiles(
   // The root loader (tui.ts / tui-v2.ts) is only a re-export of the compiled
   // bundle. Writing it while the bundle is missing installs a plugin the host
   // loads and then fails to resolve — a silent broken install, so refuse.
-  const requiredBundle = join(srcDir, 'dist', version === 'v2' ? 'tui-v2.js' : 'tui.js')
+  const requiredBundle = join(srcDir, 'dist', 'tui.js')
   const bundleAvailable = existsSync(requiredBundle)
   if (!bundleAvailable) {
     result.errors++
@@ -100,7 +100,7 @@ export function copyPluginFiles(
         'plugin entrypoint that re-exports a missing bundle. Reinstall pantheon-opencode.',
     )
   }
-  const requiredServerBundle = join(srcDir, 'dist', 'server-v2.js')
+  const requiredServerBundle = join(srcDir, 'dist', 'server.js')
   const serverBundleAvailable = version !== 'v2' || existsSync(requiredServerBundle)
   if (!serverBundleAvailable) {
     result.errors++
@@ -142,17 +142,11 @@ export function copyPluginFiles(
   const pkgSrc = join(srcDir, 'package.json')
   if (existsSync(pkgSrc)) {
     const packageJson = JSON.parse(readFileSync(pkgSrc, 'utf8'))
-    if (version === 'v2' && packageJson.exports?.['./tui-v2']) {
-      packageJson.exports['./tui'] = packageJson.exports['./tui-v2']
-    }
     // The OpenCode host resolves the plugin server through the `./server` export.
     // In the V2 copy it must point at the V2 server entry so the host attaches
     // the copy's V2 server half (the TUI reactive channel depends on it);
     // otherwise the host loads the V1 server stub of the previous generation's
     // payload.
-    if (version === 'v2' && packageJson.exports?.['./server-v2']) {
-      packageJson.exports['./server'] = packageJson.exports['./server-v2']
-    }
     const pkgStatus = writeIfChanged(
       join(dstDir, 'package.json'),
       `${JSON.stringify(packageJson, null, 2)}\n`,
@@ -164,7 +158,7 @@ export function copyPluginFiles(
   }
 
   // Each host generation receives its own root loader and compiled bundle.
-  const tuiEntrySrc = join(srcDir, version === 'v2' ? 'tui-v2.ts' : 'tui.ts')
+  const tuiEntrySrc = join(srcDir, 'tui.ts')
   if (!existsSync(tuiEntrySrc)) {
     result.errors++
     result.problems.push(
@@ -181,19 +175,19 @@ export function copyPluginFiles(
     else result.skipped++
   }
 
-  const v2ServerEntry = join(srcDir, 'index-v2.ts')
-  const v2ServerDestination = join(dstDir, 'index.ts')
-  if (version === 'v2' && serverBundleAvailable && existsSync(v2ServerEntry)) {
+  const serverEntry = join(srcDir, 'index.ts')
+  const serverDestination = join(dstDir, 'index.ts')
+  if (serverBundleAvailable && existsSync(serverEntry)) {
     const entryStatus = writeIfChanged(
-      v2ServerDestination,
-      readFileSync(v2ServerEntry, 'utf8'),
+      serverDestination,
+      readFileSync(serverEntry, 'utf8'),
       dryRun,
       { recorder },
     )
     if (entryStatus === 'created') result.created++
     else result.skipped++
   } else {
-    removeLegacyFile(v2ServerDestination, dstDir, {
+    removeLegacyFile(serverDestination, dstDir, {
       dryRun,
       recorder,
       reviewedRemovals,

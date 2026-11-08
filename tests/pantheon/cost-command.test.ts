@@ -206,8 +206,8 @@ async function main() {
               `${version} failed to open the default opencode.db: ${output.slice(0, 200)}`,
             )
             assert.ok(
-              !output.includes('opencode-v2.db'),
-              `${version} invented an opencode-v2.db default: ${output.slice(0, 200)}`,
+              !output.includes('opencode.db'),
+              `${version} invented an opencode.db default: ${output.slice(0, 200)}`,
             )
           },
         )
@@ -220,11 +220,11 @@ async function main() {
   await testAsync('OPENCODE_DB redirects the default database path', async () => {
     const dir = freshDir()
     try {
-      // `opencode-v2.db` is what a SANDBOX names its state database (see
+      // `opencode.db` is what a SANDBOX names its state database (see
       // scripts/install/opencode.mjs and the CI V2 sandbox step). It exists
       // because the host isolates it via OPENCODE_DB — which is therefore the
       // override that actually selects a non-default file.
-      const sandboxDb = join(dir, 'opencode-v2.db')
+      const sandboxDb = join(dir, 'opencode.db')
       createV2Db(sandboxDb, [
         { type: 'assistant', agent: 'sandboxed', tokens: { input: 2, output: 5 } },
       ])
@@ -739,7 +739,7 @@ async function main() {
             output.includes('opencode.db'),
             `expected the real default name: ${output.slice(0, 200)}`,
           )
-          assert.ok(!output.includes('opencode-v2.db'), 'the bogus v2 filename is back')
+          assert.ok(!output.includes('opencode.db'), 'the bogus v2 filename is back')
           assert.ok(output.includes('not found'))
         },
       )

@@ -160,7 +160,6 @@ for (const [label, article, marker, status] of [
         installOpenCode(target, false, false, ['agents'], {
           yes: true,
           headless: true,
-          version: 'v2',
           global: true,
           quiet: true,
         }),

@@ -48,8 +48,8 @@
  */
 
 import { consumeJevDecisionResult, JEV_DECISION_MAX_QUESTIONS } from './jev-decisions.ts'
-import type { NativeDecisionRequest, ResolvedNativeDecisionRoute } from './v2-native-decisions.ts'
-import { NATIVE_DECISION_MAX_PROMPT_LENGTH } from './v2-native-decisions.ts'
+import type { NativeDecisionRequest, ResolvedNativeDecisionRoute } from './native-decisions.ts'
+import { NATIVE_DECISION_MAX_PROMPT_LENGTH } from './native-decisions.ts'
 
 // ─── Bounds ──────────────────────────────────────────────────────────────
 

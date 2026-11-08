@@ -148,7 +148,7 @@ jobs:
       # `tests/pantheon/*.mjs` glob. Keep `npm run test:hooks` as the focused
       # local command; do not execute the same canary twice in CI.
 
-      # V2 tool canary (tests/canary/plugin-v2-tool-canary.test.mjs). It is the
+      # V2 tool canary (tests/canary/plugin-tool-canary.test.mjs). It is the
       # only gate that drives a Pantheon tool through a REAL host — the hook
       # canary above only exercises the built-in `read` tool, which is how
       # `draft.add({ name, description, input, execute })` without `output`
@@ -177,7 +177,7 @@ jobs:
         run: >-
           node --test
           --test-name-pattern='the host environment is redirected into the sandbox|the mutation really removes output from draft.add'
-          tests/canary/plugin-v2-tool-canary.test.mjs
+          tests/canary/plugin-tool-canary.test.mjs
 
       - name: V2 tool canary (full host run)
         run: |
@@ -225,13 +225,13 @@ jobs:
       - name: V2 sandbox (isolated database and dedicated port)
         env:
           PANTHEON_SANDBOX_ROOT: ${{ runner.temp }}/pantheon-sandbox-v2
-          OPENCODE_DB: ${{ runner.temp }}/pantheon-sandbox-v2/opencode-v2.db
+          OPENCODE_DB: ${{ runner.temp }}/pantheon-sandbox-v2/opencode.db
           PANTHEON_V2_PORT: '49376'
           PORT: '49376'
         run: |
           set -euo pipefail
           mkdir -p "$PANTHEON_SANDBOX_ROOT"
-          bash scripts/test-opencode-v2-sandbox.sh --prepare --run v2
+          bash scripts/test-opencode-sandbox.sh --prepare --run v2
 
   test-suite:
     runs-on: ubuntu-latest
@@ -324,7 +324,7 @@ jobs:
       - name: TypeScript tests
         run: npm run test:ts
 
-  plugin-v2-ts-coverage:
+  plugin-ts-coverage:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -336,7 +336,7 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
       - name: TypeScript plugin coverage
-        run: npm run coverage:plugin-v2
+        run: npm run coverage:plugin
 
   docs:
     runs-on: ubuntu-latest

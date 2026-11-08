@@ -47,7 +47,7 @@ const { extractSection } = await import(
 )
 
 /* Isolate the default state path: never read or write the developer's real
- * ~/.config (same discipline as tests/tui-v2-dispatch-panel.test.mjs). */
+ * ~/.config (same discipline as tests/tui-dispatch-panel.test.mjs). */
 const isolatedXdg = mkdtempSync(join(tmpdir(), 'pantheon-whatsnew-xdg-'))
 process.env.XDG_CONFIG_HOME = isolatedXdg
 process.on('exit', () => rmSync(isolatedXdg, { recursive: true, force: true }))

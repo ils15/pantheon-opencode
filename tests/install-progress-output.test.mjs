@@ -117,7 +117,6 @@ test('an apply reports every phase through the gauge', async () => {
         installOpenCode(target, false, false, ['agents', 'runtime'], {
           yes: true,
           headless: true,
-          version: 'v1',
           quiet: true,
           deps: {
             setupVenv: () => {},
@@ -129,7 +128,6 @@ test('an apply reports every phase through the gauge', async () => {
         installOpenCode(target, false, false, ['agents', 'runtime'], {
           yes: true,
           headless: true,
-          version: 'v1',
           deps: {
             setupVenv: () => {},
             healthCheck: () => ({ passed: [], warnings: [], failed: [] }),
@@ -247,14 +245,12 @@ test('init --doctor reports the health check result, duration and exit code', as
           '--components',
           'agents',
           '--doctor',
-          '--version',
-          'v1',
         ],
         {
           cwd: target,
           encoding: 'utf8',
           timeout: 300_000,
-          env: { ...process.env, HOME: home, XDG_CONFIG_HOME: xdg, LANG: 'C', LC_ALL: 'C' },
+          env: { ...process.env, HOME: home, XDG_CONFIG_HOME: xdg, OPENCODE_VERSION: 'v2', LANG: 'C', LC_ALL: 'C' },
         },
       ),
     )
@@ -406,7 +402,7 @@ function runInit(cwd, args) {
       cwd,
       encoding: 'utf8',
       timeout: 120_000,
-      env: { ...process.env, HOME: home, XDG_CONFIG_HOME: xdg, LANG: 'C', LC_ALL: 'C' },
+      env: { ...process.env, HOME: home, XDG_CONFIG_HOME: xdg, OPENCODE_VERSION: 'v2', LANG: 'C', LC_ALL: 'C' },
     })
   } finally {
     rmSync(home, { recursive: true, force: true })
@@ -414,7 +410,7 @@ function runInit(cwd, args) {
   }
 }
 
-const DRY_ARGS = ['--project', '--dry-run', '--yes', '--headless', '--version', 'v1']
+const DRY_ARGS = ['--project', '--dry-run', '--yes', '--headless']
 
 test('--dry-run default is a summary: no per-file paths, MCP list, nothing written', () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-progress-dry-'))
@@ -451,7 +447,7 @@ test('--dry-run --verbose restores the per-file change list', () => {
     const result = runInit(target, [...DRY_ARGS, '--components', 'agents,skills', '--verbose'])
     const output = `${result.stdout}\n${result.stderr}`
     assert.equal(result.status, 0, output)
-    assert.match(output, /create\s+\.opencode\/agents\/zeus\.md/)
+    assert.match(output, /create\s+agents\/zeus\.md/)
     assert.match(output, /create\s+\.opencode\/skills\//)
     assert.match(output, /No files were written\./)
     // Verbose shows per-step detail instead of drawing the gauge.

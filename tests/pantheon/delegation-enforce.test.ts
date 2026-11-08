@@ -504,7 +504,7 @@ async function main() {
   // ═══════════════════════════════════════════════════════════════════════
   // S1 — pin the WHY behind the unenforced V2 delegation matrix.
   //
-  // `src/plugin-v2.ts` and `docs/UPGRADING.md` both used to justify omitting
+  // `src/plugin.ts` and `docs/UPGRADING.md` both used to justify omitting
   // the delegation predicates by saying that `isRoot` reports `true` while
   // unseeded, "which would deny every task() call". That chain is inverted:
   // `true` PASSES the root gate. These assertions lock the real mechanism so

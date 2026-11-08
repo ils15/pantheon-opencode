@@ -3,7 +3,7 @@ set -euo pipefail
 
 # V1 permission proof — the 1.19.x row of the P0-5 matrix.
 #
-# The V2 proof (`run-v2-permission-proof.sh`) drives `permission.evaluate` and
+# The V2 proof (`run-permission-proof.sh`) drives `permission.evaluate` and
 # `ctx.permission.assert`; neither exists on a V1 host. This wrapper gates the V1
 # line (1.19.*) and runs `tests/canary/v1-permission-canary.test.mjs`, which
 # registers a V1 `permission.ask` plugin against the real host.

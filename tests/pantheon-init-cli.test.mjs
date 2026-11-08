@@ -76,8 +76,6 @@ test('init repair hints normalize leading-dot USD caps without relaxing validati
         '--no-mcp',
         '--components',
         'agents',
-        '--version',
-        'v1',
         '--decision-model',
         'opencode-console-jev/not-a-model',
         '--decision-monthly-usd',
@@ -174,7 +172,7 @@ test('V2 project config uses the plural plugin key under isolated HOME/XDG', () 
   const home = mkdtempSync(join(tmpdir(), 'pantheon-home-'))
   const xdg = mkdtempSync(join(tmpdir(), 'pantheon-xdg-'))
   try {
-    const result = run(['init', '--project', '--no-mcp', '--version', 'v2', '-y'], cwd, {
+    const result = run(['init', '--project', '--no-mcp', '-y'], cwd, {
       HOME: home,
       XDG_CONFIG_HOME: xdg,
     })
@@ -238,16 +236,16 @@ test('direct init writes the global install to absolute XDG_CONFIG_HOME', () => 
   mkdirSync(xdg)
   try {
     const result = run(
-      ['init', '--headless', '--yes', '--no-mcp', '--components', 'agents', '--version', 'v2'],
+      ['init', '--headless', '--yes', '--no-mcp', '--components', 'agents'],
       cwd,
-      { HOME: home, XDG_CONFIG_HOME: xdg, OPENCODE_VERSION: 'v1' },
+      { HOME: home, XDG_CONFIG_HOME: xdg, OPENCODE_VERSION: 'v2' },
     )
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
     assert.ok(existsSync(join(target, 'agents', 'zeus.md')))
     const config = JSON.parse(readFileSync(join(target, 'opencode.json'), 'utf8'))
     assert.ok(
       Array.isArray(config.plugins),
-      'CLI --version=v2 takes precedence over OPENCODE_VERSION=v1',
+      'the global install registers the plural plugins list',
     )
     assert.equal(config.plugin, undefined)
     assert.equal(existsSync(join(home, '.config', 'opencode')), false)
@@ -263,7 +261,7 @@ test('init rejects relative XDG_CONFIG_HOME before creating config files', () =>
   const relativeConfig = 'relative-config-home'
   try {
     const result = run(
-      ['init', '--headless', '--yes', '--no-mcp', '--components', 'agents', '--version', 'v2'],
+      ['init', '--headless', '--yes', '--no-mcp', '--components', 'agents'],
       cwd,
       {
         HOME: home,
@@ -281,31 +279,6 @@ test('init rejects relative XDG_CONFIG_HOME before creating config files', () =>
   }
 })
 
-test('init rejects an explicit missing --version instead of defaulting to auto', () => {
-  for (const selector of [['--version', '--dry-run'], ['--version=']]) {
-    const root = mkdtempSync(join(tmpdir(), 'pantheon-init-missing-version-'))
-    const cwd = join(root, 'cwd')
-    const home = join(root, 'home')
-    const xdg = join(root, 'xdg')
-    mkdirSync(cwd)
-    mkdirSync(home)
-    mkdirSync(xdg)
-    try {
-      const result = run(
-        ['init', '--project', '--headless', '--no-mcp', '--components', 'agents', ...selector],
-        cwd,
-        { HOME: home, XDG_CONFIG_HOME: xdg, OPENCODE_VERSION: 'v2' },
-      )
-      assert.notEqual(result.status, 0, selector.join(' '))
-      assert.match(`${result.stdout}\n${result.stderr}`, /--version requires a value/i)
-      assert.deepEqual(readdirSync(cwd), [])
-      assert.deepEqual(readdirSync(xdg), [])
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
-  }
-})
-
 test('explicit --components does not add runtime to the CLI install plan', () => {
   const cwd = mkdtempSync(join(tmpdir(), 'pantheon-init-components-scope-'))
   try {
@@ -316,8 +289,6 @@ test('explicit --components does not add runtime to the CLI install plan', () =>
         '--headless',
         '--dry-run',
         '--verbose',
-        '--version',
-        'v1',
         '--components',
         'agents,skills',
       ],
@@ -334,18 +305,18 @@ test('explicit --components does not add runtime to the CLI install plan', () =>
   }
 })
 
-test('V2 rejects both --preset spellings before installation writes, while V1 accepts equals syntax', () => {
+test('init rejects both --preset spellings before installation writes', () => {
   for (const presetArgs of [['--preset', 'anthropic'], ['--preset=anthropic']]) {
     const cwd = mkdtempSync(join(tmpdir(), 'pantheon-init-v2-preset-'))
     try {
       const result = run(
-        ['init', '--project', '--headless', '--no-mcp', '--version', 'v2', ...presetArgs, '--yes'],
+        ['init', '--project', '--headless', '--no-mcp', ...presetArgs, '--yes'],
         cwd,
       )
       assert.notEqual(result.status, 0)
       assert.match(
         `${result.stdout}\n${result.stderr}`,
-        /--preset is not supported for OpenCode V2/i,
+        /--preset is not supported/i,
       )
       assert.deepEqual(readdirSync(cwd), ['.pantheon'])
       assert.deepEqual(readdirSync(join(cwd, '.pantheon')), ['last-run.json'])
@@ -356,32 +327,6 @@ test('V2 rejects both --preset spellings before installation writes, while V1 ac
     } finally {
       rmSync(cwd, { recursive: true, force: true })
     }
-  }
-
-  const cwd = mkdtempSync(join(tmpdir(), 'pantheon-init-v1-preset-equals-'))
-  try {
-    const result = run(
-      [
-        'init',
-        '--project',
-        '--headless',
-        '--no-mcp',
-        '--version',
-        'v1',
-        '--components',
-        'agents',
-        '--preset=anthropic',
-        '--yes',
-      ],
-      cwd,
-    )
-    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
-    assert.equal(
-      JSON.parse(readFileSync(join(cwd, '.pantheon', 'active-preset.json'), 'utf8')).preset,
-      'anthropic',
-    )
-  } finally {
-    rmSync(cwd, { recursive: true, force: true })
   }
 })
 
@@ -401,9 +346,7 @@ test('direct V2 init safely warns and omits an untranslatable V1 MCP ask', () =>
         '--no-mcp',
         '--components',
         'agents',
-        '--version',
-        'v2',
-      ],
+              ],
       cwd,
     )
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
@@ -424,7 +367,7 @@ test('missing or empty --preset value fails before writing', () => {
     const cwd = mkdtempSync(join(tmpdir(), 'pantheon-init-preset-missing-'))
     try {
       const result = run(
-        ['init', '--project', '--headless', '--no-mcp', '--version', 'v2', ...presetArgs],
+        ['init', '--project', '--headless', '--no-mcp', ...presetArgs],
         cwd,
       )
       assert.notEqual(result.status, 0)

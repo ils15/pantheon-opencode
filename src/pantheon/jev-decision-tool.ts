@@ -69,9 +69,9 @@ import {
   buildDecisionEgressRequest,
 } from './local-decision-egress-gate.ts'
 import { verifyNativeUsageForReservation } from './local-decision-usage-evidence.internal.ts'
-import { observeShadow, type ShadowSink } from './v2-decision-shadow.ts'
-import type { NativeDecisionRequest, ResolvedNativeDecisionRoute } from './v2-native-decisions.ts'
-import type { V2ToolDef } from './v2-tools.ts'
+import { observeShadow, type ShadowSink } from './decision-shadow.ts'
+import type { NativeDecisionRequest, ResolvedNativeDecisionRoute } from './native-decisions.ts'
+import type { V2ToolDef } from './tools.ts'
 
 export interface V2JevDecisionRuntime {
   /**

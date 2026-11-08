@@ -53,9 +53,9 @@ import {
   runGatedNativeJevCall,
 } from './jev-decision-tool.ts'
 import { consumeJevDecisionResult } from './jev-decisions.ts'
-import { observeShadow, type ShadowSink } from './v2-decision-shadow.ts'
-import { secretScanApplies } from './v2-hook-engine.ts'
-import type { NativeDecisionRequest } from './v2-native-decisions.ts'
+import { observeShadow, type ShadowSink } from './decision-shadow.ts'
+import { secretScanApplies } from './hook-engine.ts'
+import type { NativeDecisionRequest } from './native-decisions.ts'
 
 /** On/off switch read by the plugin wiring. Any other value means off. */
 export const J1_RISK_GATE_FLAG_ENV = 'PANTHEON_J1_RISK_SCORE'
@@ -181,7 +181,7 @@ export function classifyRiskGateScope(tool: unknown): RiskGateScope {
 /**
  * Whether one tool call is a J1 observation target: a write/execute scope AND
  * the secret scan's own exfil-capable gate. The second condition reuses the
- * scan's read-only denylist (`v2-hook-engine.secretScanApplies`) so a tool the
+ * scan's read-only denylist (`hook-engine.secretScanApplies`) so a tool the
  * scan never inspects can never be observed either — one list, two consumers.
  */
 export function isRiskGateTarget(tool: unknown): tool is string {

@@ -7,7 +7,7 @@
     "gitDirty": true,
     "opencodeVersion": "opencode v2.0.27",
     "pluginGeneration": "v2",
-    "pluginRef": "/home/ils15/pantheon/src/plugin-v2",
+    "pluginRef": "/home/ils15/pantheon/src/plugin",
     "hostConfigPath": "/tmp/opencode/f1-xdg/opencode/opencode.json",
     "hostConfigUsed": true,
     "shadowConfigDir": "/tmp/opencode/bench-1792005476726/shadow-config",
@@ -37,7 +37,7 @@
     ],
     "byteMathNotApplicable": "The loaded global payload GREW 11175 B -> 11410 B (+235 B, the Athena Plan Handoff section). The ~10.2 KB duplicate only exists in a real repo session where the global and project AGENTS.md are both loaded.",
     "confounders": [
-      "plugin-v2.ts changed (+291 lines) between 2575a41..112409a",
+      "plugin.ts changed (+291 lines) between 2575a41..112409a",
       "different host config dir (real vs the /tmp/opencode/f1-xdg lane)",
       "no same-day control"
     ],

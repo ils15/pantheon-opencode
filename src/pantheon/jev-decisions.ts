@@ -2,7 +2,7 @@
  * Native Jev Decisions selection, preparation, and consumption.
  *
  * This is the production half of the offline scaffold in
- * `v2-native-decisions.ts`: it selects a decision-capable model route from the
+ * `native-decisions.ts`: it selects a decision-capable model route from the
  * user-level decision-router configuration, prepares a bounded typed request,
  * and consumes a host response as non-authoritative advice. It performs no
  * I/O of its own: no fetch, no credentials, no transport — egress happens only
@@ -28,7 +28,7 @@ import {
   NATIVE_DECISION_MAX_PROMPT_LENGTH,
   type NativeDecisionRequest,
   type ResolvedNativeDecisionRoute,
-} from './v2-native-decisions.ts'
+} from './native-decisions.ts'
 
 /** Config-level providers that have a native host Decisions route. */
 export type NativeJevProviderId = Extract<

@@ -2,7 +2,7 @@
  * doctor-plugin-path-staleness.test.mjs — P0-6 regression (ADR-0014).
  *
  * The installer writes an ABSOLUTE path into the host config
- * (`resolveInstalledPlugin` → `join(ROOT, 'src/plugin-v2')`), and only `init`
+ * (`resolveInstalledPlugin` → `join(ROOT, 'src/plugin')`), and only `init`
  * re-resolves it. An upgrade route that does not run `init` (`npm i -g` into a
  * different prefix, a cleaned npx cache, a moved tree) leaves the config
  * pointing at a tree that no longer exists — and the host silently drops a
@@ -34,8 +34,8 @@ function makeFixture(refs, key = 'plugins') {
 
 /** Simulate an installed tree at `root` (dir + readable package.json). */
 function seedInstalledTree(root, version) {
-  mkdirSync(join(root, 'src', 'plugin-v2'), { recursive: true })
-  writeFileSync(join(root, 'src', 'plugin-v2', 'index.ts'), '// plugin entry\n')
+  mkdirSync(join(root, 'src', 'plugin'), { recursive: true })
+  writeFileSync(join(root, 'src', 'plugin', 'index.ts'), '// plugin entry\n')
   writeFileSync(join(root, 'src', 'plugin.ts'), '// plugin entry\n')
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'pantheon-opencode', version }))
   return root
@@ -64,13 +64,13 @@ assert.equal(
   'relative hooks identity is managed',
 )
 assert.equal(
-  managedPluginPath('src/plugin-v2'),
-  'src/plugin-v2',
+  managedPluginPath('src/plugin'),
+  'src/plugin',
   'relative V2 directory is managed',
 )
 assert.equal(
-  managedPluginPath('/home/u/.npm/_npx/abc/node_modules/pantheon-opencode/src/plugin-v2'),
-  '/home/u/.npm/_npx/abc/node_modules/pantheon-opencode/src/plugin-v2',
+  managedPluginPath('/home/u/.npm/_npx/abc/node_modules/pantheon-opencode/src/plugin'),
+  '/home/u/.npm/_npx/abc/node_modules/pantheon-opencode/src/plugin',
   'installed-package V2 directory is managed',
 )
 assert.equal(
@@ -83,8 +83,8 @@ assert.equal(
   'Windows-separated installed path is managed after normalization',
 )
 assert.equal(
-  managedPluginPath('src/plugin-v2.ts'),
-  'src/plugin-v2.ts',
+  managedPluginPath('src/plugin.ts'),
+  'src/plugin.ts',
   'legacy V2 file ref is managed',
 )
 
@@ -99,7 +99,7 @@ assert.equal(
   'similarly-named package is NOT managed',
 )
 assert.equal(
-  managedPluginPath('pantheon-opencode/plugin-v2'),
+  managedPluginPath('pantheon-opencode/plugin'),
   null,
   'npm package export is a spec, not a filesystem path',
 )
@@ -120,7 +120,7 @@ assert.equal(managedPluginPath(42), null, 'non-string ref is ignored')
     'node_modules',
     'pantheon-opencode',
   )
-  const staleRef = join(goneTree, 'src', 'plugin-v2')
+  const staleRef = join(goneTree, 'src', 'plugin')
   const fixture = makeFixture([staleRef])
   try {
     assert.equal(
@@ -174,7 +174,7 @@ assert.equal(managedPluginPath(42), null, 'non-string ref is ignored')
     'pantheon-opencode',
   )
   const fixture = makeFixture([
-    { package: join(goneTree, 'src', 'plugin-v2'), options: { context_sandbox: 7 } },
+    { package: join(goneTree, 'src', 'plugin'), options: { context_sandbox: 7 } },
   ])
   try {
     assert.equal(
@@ -202,7 +202,7 @@ assert.equal(managedPluginPath(42), null, 'non-string ref is ignored')
     join(scratch, '.nvm', 'v26', 'lib', 'node_modules', 'pantheon-opencode'),
     PACKAGE_VERSION,
   )
-  const fixture = makeFixture([join(oldTree, 'src', 'plugin-v2')])
+  const fixture = makeFixture([join(oldTree, 'src', 'plugin')])
   try {
     assert.equal(
       checkPluginVersionDrift({ target: fixture, env: { HOME: fixture } }),
@@ -214,7 +214,7 @@ assert.equal(managedPluginPath(42), null, 'non-string ref is ignored')
     // resolveInstalledPlugin does (ROOT + identity).
     writeFileSync(
       join(fixture, 'opencode.json'),
-      JSON.stringify({ plugins: [join(newTree, 'src', 'plugin-v2')] }),
+      JSON.stringify({ plugins: [join(newTree, 'src', 'plugin')] }),
     )
     assert.equal(
       checkPluginVersionDrift({ target: fixture, env: { HOME: fixture } }),

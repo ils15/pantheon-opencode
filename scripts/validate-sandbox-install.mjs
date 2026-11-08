@@ -4,13 +4,13 @@ import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const PACKAGE_REF = /^(?:npm:)?pantheon-opencode(?:@[^/]+)?(?:\/(?:plugin|plugin-v2))?$/
+const PACKAGE_REF = /^(?:npm:)?pantheon-opencode(?:@[^/]+)?(?:\/(?:plugin|plugin))?$/
 export const SANDBOX_SOURCE_FILES = [
   'bin/pantheon-init.mjs',
   'scripts/install/config-migration.mjs',
   'scripts/install/opencode.mjs',
   'scripts/validate-sandbox-install.mjs',
-  'src/plugin-v2.ts',
+  'src/plugin.ts',
 ]
 
 function readJson(path, label) {
@@ -69,7 +69,7 @@ export function validateSandboxInstall({ repoDir, installDir, projectConfig, con
     sourceHash.update(relativePath).update('\0').update(installed).update('\0')
   }
 
-  const expectedPluginPath = resolve(installDir, 'src', 'plugin-v2')
+  const expectedPluginPath = resolve(installDir, 'src', 'plugin')
   const allConfigPaths = [...new Set([projectConfig, ...configPaths].map((path) => resolve(path)))]
   let activeProjectPluginCount = 0
   for (const configPath of allConfigPaths) {

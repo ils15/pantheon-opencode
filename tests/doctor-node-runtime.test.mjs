@@ -25,7 +25,7 @@ function registeredToolFixture(names, extraRefs = []) {
     JSON.stringify({ name: 'pantheon-opencode', version: '0.0.0' }),
   )
   writeFileSync(
-    join(root, 'src', 'pantheon', 'v2-tools.ts'),
+    join(root, 'src', 'pantheon', 'tools.ts'),
     `export function createV2ToolDefinitions() {\n  return [\n${names
       .map((name) => `    { name: '${name}' },`)
       .join('\n')}\n  ]\n}\n`,
@@ -34,7 +34,7 @@ function registeredToolFixture(names, extraRefs = []) {
   mkdirSync(target, { recursive: true })
   writeFileSync(
     join(target, 'opencode.json'),
-    JSON.stringify({ plugins: [join(root, 'src', 'plugin-v2'), ...extraRefs] }),
+    JSON.stringify({ plugins: [join(root, 'src', 'plugin'), ...extraRefs] }),
   )
   return { root, target }
 }
@@ -52,8 +52,8 @@ function thirdPartyPluginFixture() {
 }
 
 /**
- * The 1.5.0 layout: the V2 entry itself (`<root>/src/plugin-v2.ts`) declares
- * the tools in a `toolNames` array, and there is no `src/pantheon/v2-tools.ts`.
+ * The 1.5.0 layout: the V2 entry itself (`<root>/src/plugin.ts`) declares
+ * the tools in a `toolNames` array, and there is no `src/pantheon/tools.ts`.
  */
 function pluginV2SurfaceFixture(names) {
   const root = mkdtempSync(join(tmpdir(), 'doctor-tool-surface-15-'))
@@ -63,7 +63,7 @@ function pluginV2SurfaceFixture(names) {
     JSON.stringify({ name: 'pantheon-opencode', version: '1.5.0' }),
   )
   writeFileSync(
-    join(root, 'src', 'plugin-v2.ts'),
+    join(root, 'src', 'plugin.ts'),
     `export function define() {}\n\nfunction createV2ToolDefinitionsFromContext() {\n  const toolNames = [\n${names
       .map((name) => `    '${name}',`)
       .join('\n')}\n  ]\n  return toolNames.map((name) => ({ name }))\n}\n`,
@@ -72,7 +72,7 @@ function pluginV2SurfaceFixture(names) {
   mkdirSync(target, { recursive: true })
   writeFileSync(
     join(target, 'opencode.json'),
-    JSON.stringify({ plugins: [join(root, 'src', 'plugin-v2.ts')] }),
+    JSON.stringify({ plugins: [join(root, 'src', 'plugin.ts')] }),
   )
   return { root, target }
 }
@@ -190,7 +190,7 @@ test('a third-party plugin registration is never a failing Pantheon tool surface
   // P0-3 false positive: the registration check iterated EVERY ref under
   // `plugins`, and any directory with a package.json counted as a V2 surface.
   // A third-party plugin therefore looked like a Pantheon tree whose
-  // `src/pantheon/v2-tools.ts` was missing, blocking a healthy installation.
+  // `src/pantheon/tools.ts` was missing, blocking a healthy installation.
   const thirdParty = thirdPartyPluginFixture()
   const healthy = registeredToolFixture(['hashline_edit', 'pantheon_cost', 'pantheon_model'])
   const withThirdParty = registeredToolFixture(
@@ -237,7 +237,7 @@ test('a third-party plugin registration is never a failing Pantheon tool surface
 })
 
 test('the 1.5.0 V2 entry counts as the registered tool surface', () => {
-  // 1.5.0 ships `src/plugin-v2.ts` as the V2 surface; `src/pantheon/v2-tools.ts`
+  // 1.5.0 ships `src/plugin.ts` as the V2 surface; `src/pantheon/tools.ts`
   // only exists from beta.3 of the following line. Reading just the latter made
   // a healthy 1.5 tree report a blocking "pantheon_cost is NOT declared".
   const fixture = pluginV2SurfaceFixture(['hashline_edit', 'pantheon_cost', 'pantheon_model'])
@@ -245,7 +245,7 @@ test('the 1.5.0 V2 entry counts as the registered tool surface', () => {
     const { report } = runDoctor(fixture.target)
     const finding = report.findings.find(({ code }) => code === 'tool_registration_present')
     assert.equal(finding?.category, 'pass', 'the 1.5.0 entry declares pantheon_cost')
-    assert.match(finding?.message ?? '', /plugin-v2\.ts/, 'the finding names the inspected surface')
+    assert.match(finding?.message ?? '', /plugin\.ts/, 'the finding names the inspected surface')
     assert.equal(
       report.findings.some(({ code }) => code === 'tool_registration_missing'),
       false,

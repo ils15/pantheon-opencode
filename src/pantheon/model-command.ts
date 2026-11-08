@@ -32,7 +32,7 @@ import {
   resolveActivePreset,
 } from './presets.mjs'
 import type { ToolContextLike } from './tool-context.ts'
-import { readV2ModelConfiguration } from './v2-model-overrides.ts'
+import { readV2ModelConfiguration } from './model-overrides.ts'
 
 export type { KnownAgent } from './model-agents.ts'
 export { KNOWN_AGENTS } from './model-agents.ts'

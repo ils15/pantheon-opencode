@@ -75,14 +75,14 @@ exit 0
 
   const child = spawn(
     process.execPath,
-    [CLI, 'init', '--yes', '--project', '--components', 'runtime', '--opencode-version', 'v1'],
+    [CLI, 'init', '--yes', '--project', '--components', 'runtime'],
     {
       cwd: target,
       env: {
         ...process.env,
         HOME: home,
         XDG_CONFIG_HOME: join(home, '.config'),
-        OPENCODE_VERSION: 'v1',
+        OPENCODE_VERSION: 'v2',
         LANG: 'C',
         LC_ALL: 'C',
         PATH: `${fakeBin}:${process.env.PATH}`,

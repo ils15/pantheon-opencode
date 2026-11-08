@@ -50,11 +50,11 @@ import {
   openLocalDecisionBudgetLedger,
   resolveLocalDecisionBudgetDbPath,
 } from '../../src/pantheon/local-decision-budget.ts'
-import { createTelemetrySink, sanitizeTelemetry } from '../../src/pantheon/v2-decision-telemetry.ts'
+import { createTelemetrySink, sanitizeTelemetry } from '../../src/pantheon/decision-telemetry.ts'
 import type {
   NativeDecisionRequest,
   ResolvedNativeDecisionRoute,
-} from '../../src/pantheon/v2-native-decisions.ts'
+} from '../../src/pantheon/native-decisions.ts'
 
 let checks = 0
 function check(name: string, fn: () => void | Promise<void>): void {
@@ -72,7 +72,7 @@ async function checkAsync(name: string, fn: () => Promise<void>): Promise<void> 
   void name
 }
 
-/** The telemetry reason token charset (mirrors v2-decision-telemetry). */
+/** The telemetry reason token charset (mirrors decision-telemetry). */
 const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/
 
 const ROUTE: ResolvedNativeDecisionRoute = Object.freeze({

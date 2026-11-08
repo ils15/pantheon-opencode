@@ -29,11 +29,11 @@ import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { listV2UnsupportedFeatures } from '../src/pantheon/v2-unsupported.mjs'
+import { listV2UnsupportedFeatures } from '../src/pantheon/unsupported.mjs'
 import { classifyFileInventory } from './install/file-inventory.mjs'
 import { staleTuiRefs } from './install/plugin.mjs'
 import { readState } from './install/state.mjs'
-import { describePluginOptionsReachability } from './install/v2-capabilities.mjs'
+import { describePluginOptionsReachability } from './install/capabilities.mjs'
 import { isSupportedNodeVersion, MIN_SUPPORTED_NODE_VERSION } from './node-engine-policy.mjs'
 
 // ---------------------------------------------------------------------------
@@ -1535,10 +1535,10 @@ export function resolveInstalledPackageRoot(pluginPath) {
 const MANAGED_PLUGIN_IDENTITIES = new Set([
   'src/plugin.ts',
   'src/plugins/pantheon-hooks.ts',
-  'src/plugin-v2',
+  'src/plugin',
   // Legacy V2 file ref from before the directory contract (still migrated by
   // the installer, so a pre-migration config is ours too).
-  'src/plugin-v2.ts',
+  'src/plugin.ts',
 ])
 
 /**
@@ -1551,7 +1551,7 @@ const MANAGED_PLUGIN_IDENTITIES = new Set([
  * check rather than a basename test — an unrelated user plugin may legitimately
  * end in `src/plugin.ts`.
  *
- * npm specs (`pantheon-opencode`, `pantheon-opencode/plugin-v2`) and
+ * npm specs (`pantheon-opencode`, `pantheon-opencode/plugin`) and
  * third-party paths are NOT paths this installer owns, so they return null and
  * are never reported.
  *
@@ -1742,9 +1742,9 @@ export function checkPluginVersionDrift(args) {
  * The V2 contract is the PLURAL `plugins` key; V1 is the singular `plugin` key.
  * So the key alone is not the test — a config can legitimately carry a
  * third-party entry in `plugins`. What identifies the generation is a Pantheon
- * V2 entry inside it. Matched on the `plugin-v2` marker so all three real
- * spellings are recognised: the canonical DIRECTORY (`src/plugin-v2`), an
- * absolute path to it, and the package export (`pantheon-opencode/plugin-v2`).
+ * V2 entry inside it. Matched on the `plugin` marker so all three real
+ * spellings are recognised: the canonical DIRECTORY (`src/plugin`), an
+ * absolute path to it, and the package export (`pantheon-opencode/plugin`).
  *
  * @param {unknown} ref
  * @returns {boolean}
@@ -1759,7 +1759,7 @@ function isV2PluginRef(ref) {
       : ref && typeof ref === 'object'
         ? (ref.package ?? ref.path ?? ref.source ?? ref.id ?? ref.name)
         : undefined
-  return typeof candidate === 'string' && candidate.includes('plugin-v2')
+  return typeof candidate === 'string' && candidate.includes('plugin')
 }
 
 /**
@@ -1785,7 +1785,7 @@ export function isV2GenerationRegistered(configs) {
  *
  * Returns the shared seed verbatim when ANY reachable config registers the V2
  * generation, and an empty list otherwise. The strings come from
- * `src/pantheon/v2-unsupported.mjs` — the same seed `getUnsupportedFeatures()`
+ * `src/pantheon/unsupported.mjs` — the same seed `getUnsupportedFeatures()`
  * is built from — so doctor cannot report a reduction the plugin does not, or
  * miss one it does. Nothing is reworded here.
  *
@@ -1804,10 +1804,13 @@ export function collectV2UnsupportedFeatures(configs) {
  * Decide what H4 prints, from the two distinct facts rather than from one list
  * length.
  *
- * Three cases, and the middle one used to be silently reported as the first:
+ * V2 is the only generation: an UNREGISTERED config is not a quiet "supported
+ * V1 install" anymore, it is a stale V1 install — a registration the host will
+ * not load — and it warns. Three cases, and the middle one used to be silently
+ * reported as the first:
  *
- *   - not registered → info. A V1 install is a supported configuration with
- *     nothing to reduce, and saying so plainly is correct.
+ *   - not registered → warn. The host ignores everything Pantheon 1.x wrote,
+ *     so this install runs with no Pantheon tool surface at all.
  *   - registered, seed EMPTY → warn. This is a packaging fault in THIS repo,
  *     not an absence of reduction: the V2 surface really is reduced and the
  *     report is missing. It must never claim "nothing reduced".
@@ -1824,8 +1827,11 @@ export function describeV2Reduction({ registered, features }) {
   if (!registered) {
     return {
       status: 'no-v2-generation',
-      level: 'info',
-      message: 'No V2 plugin generation registered — nothing reduced',
+      level: 'warn',
+      message:
+        'No V2 plugin generation registered — this looks like a stale V1 install: the host ' +
+        'ignores the singular `plugin` key Pantheon 1.x wrote, so no Pantheon plugin is ' +
+        'loading. Run `npx pantheon-opencode init` to register the V2 plugin.',
     }
   }
   if (features.length === 0) {
@@ -1836,8 +1842,8 @@ export function describeV2Reduction({ registered, features }) {
         'Pantheon IS registered on the V2 plugin generation, but the shared ' +
         'unsupported-feature seed is empty, so the reduction cannot be reported. ' +
         "That is a fault in this installation's reporting, not an absence of " +
-        'reduction: the V2 surface still registers fewer tools than V1 (the three ' +
-        'goal tools are absent), so a clean report would be false.',
+        'reduction: the V2 surface registers a reduced tool set, so a clean ' +
+        'report would be false.',
     }
   }
   return {
@@ -1846,17 +1852,55 @@ export function describeV2Reduction({ registered, features }) {
     message:
       'Pantheon is registered on the V2 plugin generation: 3 unconditional tools ' +
       '(hashline_edit, pantheon_cost, pantheon_model) plus the host-dependent ones, and a ' +
-      "real hook/transform surface, against the V1 surface's 6 tools plus the " +
-      'BackgroundJobBoard. Not provided on V2 (static seed — a live host can add runtime ' +
-      `markers on top): ${features.join(', ')}`,
+      'real hook/transform surface. Not provided on V2 (static seed — a live host can add ' +
+      `runtime markers on top): ${features.join(', ')}`,
   }
+}
+
+/**
+ * Whether a ref in the LEGACY singular `plugin` key is a Pantheon V1
+ * registration. The installer never writes that key anymore and the host
+ * ignores it entirely, so a hit is residue of a V1 install — drift worth
+ * naming, never a supported configuration.
+ * @param {unknown} ref
+ * @returns {boolean}
+ */
+export function isLegacyV1PluginRef(ref) {
+  const candidate =
+    typeof ref === 'string'
+      ? ref
+      : ref && typeof ref === 'object'
+        ? (ref.package ?? ref.path ?? ref.source ?? ref.id ?? ref.name)
+        : undefined
+  if (typeof candidate !== 'string') return false
+  const normalized = candidate.replaceAll('\\', '/').replace(/\/$/, '')
+  // The exact identities the V1 installer registered (see managedPluginPath for
+  // the installed-copy suffix match). A third-party path that merely ENDS in
+  // `src/plugin.ts` is not ours and is never flagged.
+  if (normalized === 'src/plugin.ts' || normalized === 'src/plugins/pantheon-hooks.ts') return true
+  if (/(^|\/)pantheon-opencode(@[^/]+)?\/plugin$/.test(normalized)) return true
+  // A path inside an INSTALLED pantheon-opencode copy: compare the suffix after
+  // the package marker (the shape the old installer wrote). Only the V1
+  // identities count; a V2 entry in the singular key would be odd, but it is
+  // not V1 residue and is reported by other checks.
+  const marker = '/node_modules/pantheon-opencode/'
+  const markerIndex = normalized.toLowerCase().lastIndexOf(marker)
+  if (markerIndex !== -1) {
+    const suffix = normalized.slice(markerIndex + marker.length)
+    return suffix === 'src/plugin.ts' || suffix === 'src/plugins/pantheon-hooks.ts'
+  }
+  return false
 }
 
 /**
  * Report the V2 feature reduction through doctor's own output shape
  * (section + warn/info), so it lands in the health summary like every other
- * finding and never changes the exit code: a V2 install is a supported
- * configuration, not a broken one.
+ * finding and never changes the exit code: a registered V2 install is a
+ * supported configuration, not a broken one.
+ *
+ * Pantheon refs in the legacy singular `plugin` key are named here too: that
+ * key is dead on this host, so they are stale V1-install residue, never a
+ * supported registration.
  *
  * @param {{target:string, env?:object}} args
  * @returns {'reported'|'empty-seed'|'no-v2-generation'|'no-config'}
@@ -1880,6 +1924,20 @@ export function checkV2UnsupportedFeatures(args) {
   })
   if (verdict.level === 'info') info(verdict.message)
   else warn(verdict.message)
+
+  // Stale V1-install residue: Pantheon refs in the singular key are ignored by
+  // the host, so a config carrying them runs without those plugins. Named
+  // explicitly (with or without a V2 registration beside them).
+  const legacyRefs = configs.flatMap((cfg) =>
+    Array.isArray(cfg.data?.plugin) ? cfg.data.plugin.filter(isLegacyV1PluginRef) : [],
+  )
+  if (legacyRefs.length > 0) {
+    warn(
+      `${legacyRefs.length} Pantheon reference(s) sit in the legacy singular \`plugin\` key, ` +
+        'which the host ignores — residue of a V1 install. ' +
+        'Run `npx pantheon-opencode init` to clean them and register the V2 plugin.',
+    )
+  }
 
   // Whether the installed entry can receive plugin `options` at all: the host
   // passes them only from the object form, and `context_pruner` reads that bag.
@@ -2294,15 +2352,14 @@ export function classifyNodeSqliteProbe(probe) {
  * These files are the surface the doctor already ships and can inspect without
  * importing or executing plugin code.
  *
- * The V2 generation has TWO surfaces: `src/pantheon/v2-tools.ts` from beta.3
- * and the 1.5.0+ entry `src/plugin-v2.ts`, which declares the tools itself.
+ * The V2 generation has TWO surfaces: `src/pantheon/tools.ts` from beta.3
+ * and the 1.5.0+ entry `src/plugin.ts`, which declares the tools itself.
  * Reading only the first reported a healthy 1.5 tree as "pantheon_cost is NOT
  * declared", so every declared surface of the generation is inspected and their
  * declarations are unioned.
  */
 const TOOL_SURFACE_FILES = Object.freeze({
-  v1: Object.freeze([join('src', 'plugin.ts')]),
-  v2: Object.freeze([join('src', 'plugin-v2.ts'), join('src', 'pantheon', 'v2-tools.ts')]),
+  v2: Object.freeze([join('src', 'plugin.ts'), join('src', 'pantheon', 'tools.ts')]),
 })
 
 /** The published package name — the only package identity this installer owns. */
@@ -2313,53 +2370,31 @@ function stripSourceComments(source) {
   return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 }
 
-/** Extract the first `key: { ... }` object-literal body, or null. */
-function extractObjectLiteralBody(source, key) {
-  const match = new RegExp(`\\b${key}\\s*:\\s*\\{`).exec(source)
-  if (!match) return null
-  let depth = 0
-  const start = match.index + match[0].length - 1
-  for (let index = start; index < source.length; index++) {
-    if (source[index] === '{') depth++
-    else if (source[index] === '}') {
-      depth--
-      if (depth === 0) return source.slice(start + 1, index)
-    }
-  }
-  return null
-}
-
 /**
- * Tool names declared by a plugin-generation source file.
- *
- * V2 declares each tool as `name: 'x'` in `createV2ToolDefinitions`, or — from
- * the 1.5.0 entry — as quoted elements of a `toolNames` array. V1 keys the
- * `tool:` object by tool name. Returns null when the generation's shape cannot
- * be located (unverifiable), which the classifier treats as a failure rather
- * than a pass: "cannot prove registration" is not "registered".
+ * Tool names declared by the V2 plugin surface: each tool as `name: 'x'` in
+ * `createV2ToolDefinitions`, or — from the 1.5.0 entry — as quoted elements of
+ * a `toolNames` array. Returns null when the shape cannot be located
+ * (unverifiable), which the classifier treats as a failure rather than a pass:
+ * "cannot prove registration" is not "registered".
  *
  * @param {string} source
- * @param {'v1'|'v2'} generation
+ * @param {'v2'} generation
  * @returns {string[]|null}
  */
 export function readDeclaredToolNames(source, generation) {
   const body = stripSourceComments(source)
-  if (generation === 'v2') {
-    const names = new Set(
-      [...body.matchAll(/\bname:\s*['"]([A-Za-z0-9_-]+)['"]/g)].map((match) => match[1]),
-    )
-    for (const match of body.matchAll(/^\s*['"]([A-Za-z0-9_-]+)['"],?\s*$/gm)) names.add(match[1])
-    return [...names]
-  }
-  const toolBlock = extractObjectLiteralBody(body, 'tool')
-  if (toolBlock === null) return null
-  return [...toolBlock.matchAll(/^\s*([a-z][a-z0-9_]*)\s*:/gm)].map((match) => match[1])
+  if (generation !== 'v2') return null
+  const names = new Set(
+    [...body.matchAll(/\bname:\s*['"]([A-Za-z0-9_-]+)['"]/g)].map((match) => match[1]),
+  )
+  for (const match of body.matchAll(/^\s*['"]([A-Za-z0-9_-]+)['"],?\s*$/gm)) names.add(match[1])
+  return [...names]
 }
 
 /**
  * Return the Pantheon package specifier a ref names, or null when it is not
  * one. Covers `pantheon-opencode`, `pantheon-opencode@1.2.3` and an export
- * subpath (`pantheon-opencode/plugin-v2`): the host resolves all of them
+ * subpath (`pantheon-opencode/plugin`): the host resolves all of them
  * through its own module graph, not from a path this process can inspect.
  *
  * @param {unknown} refPath
@@ -2397,7 +2432,7 @@ export function resolveRegisteredPluginRoot(ref) {
 
   const normalized = absolute.replaceAll('\\', '/').replace(/\/+$/, '')
   const marker =
-    /^(.*?)\/src\/plugin-v2(?:\/index\.ts|\.ts)?$/.exec(normalized) ??
+    /^(.*?)\/src\/plugin(?:\/index\.ts|\.ts)?$/.exec(normalized) ??
     /^(.*?)\/src\/plugin(?:-v2)?\.ts$/.exec(normalized)
   const root = marker ? marker[1] : normalized
   return existsSync(join(root, 'package.json')) ? root : null
@@ -2410,7 +2445,7 @@ export function resolveRegisteredPluginRoot(ref) {
  * writes (or a path inside an installed `pantheon-opencode` tree), or a
  * `package.json` naming this package. Everything else belongs to the user, so a
  * third-party plugin registered under `plugins` is ignored instead of being
- * read as a Pantheon surface with a missing `src/pantheon/v2-tools.ts` (which
+ * read as a Pantheon surface with a missing `src/pantheon/tools.ts` (which
  * failed a healthy installation as blocking).
  *
  * @param {{path:string, configPath:string}} ref
@@ -2442,7 +2477,7 @@ function describeSurface(surface) {
  * instead of being skipped or passed against the running package.
  *
  * @param {{target:string, env?:object}} args
- * @returns {{generation:'v1'|'v2'|null, root:string|null, files:string[], declared:string[]|null, unverifiable?:string}[]}
+ * @returns {{generation:'v2'|null, root:string|null, files:string[], declared:string[]|null, unverifiable?:string}[]}
  */
 export function resolveRegisteredToolSurfaces(args) {
   const refs = collectRegisteredPluginRefs(collectMcpConfigs(args))
@@ -2467,9 +2502,14 @@ export function resolveRegisteredToolSurfaces(args) {
       continue
     }
 
+    // V2 is the only generation. A legacy V1 ref in the singular `plugin` key
+    // is residue the host ignores ENTIRELY (H3/H4 name it), so it is not a
+    // surface this tool check can verify anything about — reading it as one
+    // failed a healthy checkout with "no tool surface" noise.
+    if (ref.key !== 'plugins' && !ref.path?.includes('plugin')) continue
     const root = resolveRegisteredPluginRoot(ref)
     if (!root) continue
-    const generation = ref.path?.includes('plugin-v2') || ref.key === 'plugins' ? 'v2' : 'v1'
+    const generation = 'v2'
     const key = `${generation}:${root}`
     if (seen.has(key)) continue
     seen.add(key)
@@ -2514,7 +2554,7 @@ export function resolveRegisteredToolSurfaces(args) {
  * `lite` is the only profile where no registration is expected: it describes a
  * checkout, not a managed OpenCode install.
  *
- * @param {{profile:string, surfaces:{generation:string|null, files:string[], root:string|null, declared:string[]|null, unverifiable?:string}[], toolName:string}} input
+ * @param {{profile:string, surfaces:{generation:'v2'|null, files:string[], root:string|null, declared:string[]|null, unverifiable?:string}[], toolName:string}} input
  * @returns {{status:'skip'|'unregistered'|'missing'|'registered'|'unverifiable'|'partially-verified', level:'info'|'error'|'pass', message:string}}
  */
 export function classifyToolRegistration({ profile, surfaces, toolName }) {

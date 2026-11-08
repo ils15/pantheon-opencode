@@ -12,7 +12,7 @@
  *     loop → fail closed), and
  *   - the V1 registration path: the REAL plugin factory, driven through its
  *     `chat.params` + `tool.execute.before` hooks. V2's registration path is
- *     covered in plugin-v2-contract.test.ts.
+ *     covered in plugin-contract.test.ts.
  *
  * Run with: npx tsx tests/pantheon/read-guard-symlink.test.ts
  */

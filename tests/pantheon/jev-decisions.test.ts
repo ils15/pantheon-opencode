@@ -43,7 +43,7 @@ import {
   PANTHEON_AGENT_IDS,
   PANTHEON_SKILL_CATALOG,
 } from '../../src/pantheon/pantheon-decision-catalog.ts'
-import { createV2ToolDefinitions } from '../../src/pantheon/v2-tools.ts'
+import { createV2ToolDefinitions } from '../../src/pantheon/tools.ts'
 
 const CURRENT_PERIOD = new Date().toISOString().slice(0, 7)
 const CAPS = { monthlyCapMicros: 5_000_000, perDecisionCapMicros: 1_000_000 }

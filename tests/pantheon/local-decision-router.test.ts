@@ -10,7 +10,7 @@ import {
   loadLocalDecisionPolicy,
   recommendLocalOrchestration,
 } from '../../src/pantheon/local-orchestration.ts'
-import { PANTHEON_AGENTS } from '../../src/pantheon/v2-delegation-enforce.ts'
+import { PANTHEON_AGENTS } from '../../src/pantheon/delegation-policy.ts'
 
 const enabledEnv = { [LOCAL_DECISION_ROUTER_ENV]: '1' }
 

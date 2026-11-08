@@ -8,7 +8,7 @@ import {
   type LocalDecisionGateStatus,
 } from './local-decision-router.ts'
 import { isAgentAllowed, type PermissionTaskConfig } from './permission-globs.ts'
-import { PANTHEON_AGENTS } from './v2-delegation-enforce.ts'
+import { PANTHEON_AGENTS } from './delegation-policy.ts'
 
 export interface LocalDecisionAgentPolicy {
   canDelegateTo: readonly string[]

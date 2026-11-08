@@ -88,9 +88,6 @@ function makeFixture() {
     }
   }
   for (const path of [
-    'src/plugin.ts',
-    'src/plugin-v2.ts',
-    'src/pantheon/v2-bridge.ts',
     'src/plugins/tui/dist/tui.js',
     'src/plugins/tui/dist/server.js',
     'src/plugins/tui/dist/server-v2.js',

@@ -8,7 +8,7 @@ test('the J1 enforce block is a handoff contract, not a bare error', () => {
   // each requirement is asserted as its own fragment (drift here regresses
   // the field requirement: risk hands off to the human, never a workaround).
   const source = readFileSync(
-    fileURLToPath(new URL('../../src/plugin-v2.ts', import.meta.url)),
+    fileURLToPath(new URL('../../src/plugin.ts', import.meta.url)),
     'utf8',
   )
   assert.ok(

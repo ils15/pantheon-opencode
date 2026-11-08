@@ -210,8 +210,8 @@ test('tarball contains no machine paths and ships the runtime inputs', () => {
     for (const file of ['package/scripts/doctor.mjs', 'package/src/plugins/pantheon-hooks.ts']) {
       assert.match(listing, new RegExp(`^${file.replaceAll('/', '\\/')}$`, 'm'))
     }
-    assert.match(listing, /^package\/src\/plugin-v2\/index\.ts$/m)
-    assert.match(listing, /^package\/src\/plugin-v2\.ts$/m)
+    assert.match(listing, /^package\/src\/plugin\/index\.ts$/m)
+    assert.match(listing, /^package\/src\/plugin\.ts$/m)
     assert.match(listing, /^package\/bin\/pantheon-init\.mjs$/m)
     // The code-mode payload must ship inside the tarball so fresh installs
     // can seed the runtime scripts directory.
@@ -307,7 +307,7 @@ test('installed package resolves hooks to its installed absolute path', () => {
     // (src/plugin.ts) and the runtime hooks plugin (src/plugins/pantheon-hooks.ts)
     // — resolved to absolute paths inside the INSTALLED package (never
     // dev-machine paths). Not unconditional: the V2 branch registers only the
-    // src/plugin-v2 directory under the plural `plugins` key, and the default
+    // src/plugin directory under the plural `plugins` key, and the default
     // generation now comes from the host-version gate.
     assert.deepEqual(config.plugin, [
       join(installedRoot, 'src', 'plugin.ts'),

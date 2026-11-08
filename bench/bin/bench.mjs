@@ -7,7 +7,7 @@
  *   Runs the installed `opencode` CLI headlessly (`opencode run --format json
  *   --standalone`) N times per scenario, interleaved (A,B,A,B,…), one fresh
  *   sandbox directory and one private opencode.db per run, with the REPO's V2
- *   plugin (src/plugin-v2) forced via OPENCODE_CONFIG_CONTENT. After each run
+ *   plugin (src/plugin) forced via OPENCODE_CONFIG_CONTENT. After each run
  *   it reads the run's db STRICTLY READ-ONLY (same ledger as pantheon_cost)
  *   and the run's .pantheon/logs/hooks.log, aggregates tokens over the root +
  *   child sessions without double counting, and writes
@@ -81,7 +81,7 @@ const RESULTS_DIR = join(REPO_ROOT, 'bench', 'results')
 const RUN_TIMEOUT_MS = 20 * 60_000
 const DEFAULT_MODEL = 'opencode-go/glm-5.3-flash'
 const PLUGIN_GENERATION = 'v2'
-const PLUGIN_REF = join(REPO_ROOT, 'src', 'plugin-v2')
+const PLUGIN_REF = join(REPO_ROOT, 'src', 'plugin')
 /**
  * Config-dir entries the bench shadow dir symlinks from the host config, so
  * the runs see the user's real injected content (AGENTS.md, agents,

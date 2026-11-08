@@ -17,7 +17,7 @@
  * decision is computed and recorded; applying it is the separately-reviewed
  * activation step. The mechanism — set the per-agent override for the delegate
  * BEFORE dispatch through the existing model-override mechanism
- * (`v2-model-overrides.applyV2ModelOverride`), restore the previous model
+ * (`model-overrides.applyV2ModelOverride`), restore the previous model
  * after — is implemented in {@link applyEscalationOverride} and
  * {@link clearEscalationOverride}, and the shadow observer has NO path to
  * them: its options carry no agent draft and its body never calls them. The
@@ -78,10 +78,10 @@ import { createHash } from 'node:crypto'
 import { type GatedNativeJevRuntime, runGatedNativeJevCall } from './jev-decision-tool.ts'
 import { consumeJevDecisionResult } from './jev-decisions.ts'
 import { mapGateFailureToSkipReason } from './jev-risk-gate.ts'
-import { observeShadow, type ShadowSink } from './v2-decision-shadow.ts'
-import { PANTHEON_AGENTS } from './v2-delegation-enforce.ts'
-import { applyV2ModelOverride, readV2ModelConfiguration } from './v2-model-overrides.ts'
-import type { NativeDecisionRequest } from './v2-native-decisions.ts'
+import { observeShadow, type ShadowSink } from './decision-shadow.ts'
+import { PANTHEON_AGENTS } from './delegation-policy.ts'
+import { applyV2ModelOverride, readV2ModelConfiguration } from './model-overrides.ts'
+import type { NativeDecisionRequest } from './native-decisions.ts'
 
 /** On/off switch read by the plugin wiring. Any other value means off. */
 export const J3_ESCALATION_FLAG_ENV = 'PANTHEON_J3_ESCALATION'
@@ -442,7 +442,7 @@ export interface EscalationOverrideHandle {
 /**
  * The ACTIVATION mechanism — never called by the shadow observer. Rides the
  * existing per-agent model-override mechanism
- * (`v2-model-overrides.applyV2ModelOverride`): for a `cheap` verdict, sets the
+ * (`model-overrides.applyV2ModelOverride`): for a `cheap` verdict, sets the
  * delegate's model to {@link J3_ESCALATION_CHEAP_MODEL} on the agent draft
  * BEFORE dispatch, exactly the way a project preset or `pantheon_model` does,
  * and returns a handle carrying the previous model. Any other verdict — and

@@ -270,8 +270,8 @@ export function formatChangePlan(target, plan, { perFile = true } = {}) {
   }
   if (plan.versionAssumed) {
     lines.push(
-      '  OpenCode host generation unknown — this plan assumes V1 and may diverge from the ' +
-        'apply. Pass --opencode-version v1|v2 to pin it.',
+      '  OpenCode host generation could not be verified — this plan targets OpenCode 2.x and ' +
+        'may diverge from the apply.',
     )
   }
   lines.push('  No files were written.')

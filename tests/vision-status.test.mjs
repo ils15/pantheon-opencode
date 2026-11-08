@@ -475,7 +475,7 @@ test('--list honors OPENCODE_DB for a relocated V2 credential store', {
   const { project, env, cleanup } = makeEnv()
   try {
     const { DatabaseSync } = require('node:sqlite')
-    const relocated = join(project, 'sandbox', 'opencode-v2.db')
+    const relocated = join(project, 'sandbox', 'opencode.db')
     mkdirSync(dirname(relocated), { recursive: true })
     const db = new DatabaseSync(relocated)
     db.exec('CREATE TABLE credential (integration_id TEXT, active INTEGER, value TEXT)')

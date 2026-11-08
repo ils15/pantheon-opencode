@@ -254,7 +254,6 @@ test('installer instructions component emits the global artifact into a global c
     await installOpenCode(target, false, false, ['instructions'], {
       yes: true,
       headless: true,
-      version: 'v1',
     })
     const installed = readFileSync(join(target, 'AGENTS.md'), 'utf8')
     assert.equal(
@@ -287,7 +286,6 @@ test('installer instructions component preserves user content in a global config
     await installOpenCode(target, false, false, ['instructions'], {
       yes: true,
       headless: true,
-      version: 'v1',
     })
     const installed = readFileSync(join(target, 'AGENTS.md'), 'utf8')
     assert.ok(installed.startsWith(custom), 'user house rules preserved')

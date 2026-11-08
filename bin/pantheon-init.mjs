@@ -7,16 +7,14 @@
  * Thin CLI wrapper that parses arguments and delegates to
  * installOpenCode() from scripts/install/opencode.mjs.
  *
- * Dual-version install (Phase 3): the generated config is V1-shaped and valid
- * under BOTH OpenCode V1 (`opencode` 1.18.x) and V2 (`opencode2`, OpenCode 2.x —
- * `opencode2 --version` prints "opencode v2.0.22"; an early 2.x prerelease
- * printed "0.0.0-next-17444", which is history and not a host observation).
- * V2 reads the same config locations and normalizes V1 fields in memory through
- * migrateV1toV2() (scripts/install/config-migration.mjs), then writes the
- * V2-native `plugins` list. `--version v2` selects that path.
+ * V2-only install: the host must be OpenCode 2.x. The generation gate in
+ * scripts/install/opencode-version.mjs refuses a confirmed 1.x host before any
+ * write; legacy V1-shaped config keys are normalized by
+ * normalizeLegacyV1Config() (scripts/install/config-migration.mjs) and the
+ * V2-native `plugins` list is what gets written.
  *
- * State is NOT isolated per generation: both host generations read one OpenCode
- * store, so this CLI claims neither a separate database nor a service port. The
+ * State is NOT isolated per generation: the host reads one OpenCode store, so
+ * this CLI claims neither a separate database nor a service port. The
  * installer prints the path an actual resolver returns
  * (scripts/install/opencode-state.mjs).
  */
@@ -28,7 +26,6 @@ import { resolveComponentSelection } from '../scripts/install/component-selectio
 import { resolveGlobalConfigDirectory } from '../scripts/install/config-paths.mjs'
 import { resolveInstallExitCode } from '../scripts/install/exit-codes.mjs'
 import { createInterruptHandler } from '../scripts/install/interrupt.mjs'
-import { parseOpenCodeVersion } from '../scripts/install/opencode-version.mjs'
 import {
   createPlanArtifact,
   loadPlanArtifact,
@@ -97,7 +94,6 @@ function printUsage() {
   console.log(
     '  npx pantheon-opencode init --decision-model opencode-console-jev/jev-1.13 --decision-monthly-usd 5 --decision-per-decision-usd 0.10',
   )
-  console.log('  npx pantheon-opencode init --opencode-version v1|v2|auto')
   console.log('  npx pantheon-opencode init --preset <name> # Install and activate model preset')
   console.log(
     '  npx pantheon-opencode init --merge-dev-config <path> # Merge a dev config (off by default)',
@@ -368,7 +364,7 @@ async function main() {
             ].includes(component),
         ) ||
         options.clean !== false ||
-        !['v1', 'v2', 'auto'].includes(options.version) ||
+        options.version !== 'v2' ||
         typeof options.isProject !== 'boolean'
       ) {
         console.error('❌ Install-plan options are invalid or unsupported')
@@ -446,8 +442,6 @@ async function main() {
       '--preset',
       '--model',
       '--small-model',
-      '--version',
-      '--opencode-version',
       '--components',
       '--merge-dev-config',
       '--apply-plan',
@@ -518,28 +512,6 @@ async function main() {
       : smallModelIndex >= 0
         ? (args[smallModelIndex + 1] ?? null)
         : null
-    // --version v1|v2|auto labels the install target. `auto` resolves the
-    // generation from the opencode binary at install time (see
-    // scripts/install/opencode-version.mjs). Invalid values fail fast.
-    const versionOpt = reviewedPlan ? reviewedPlan.options.version : parseOpenCodeVersion(args)
-    if (
-      versionOpt !== null &&
-      versionOpt !== 'v1' &&
-      versionOpt !== 'v2' &&
-      versionOpt !== 'auto'
-    ) {
-      console.error(`❌ Invalid --version "${versionOpt}" — expected v1, v2 or auto`)
-      process.exit(1)
-    }
-    // The 2.0 deprecation front-run: the legacy plugin line is end-of-life.
-    // Loud warning now (the v1 code path still exists for legacy installs);
-    // the 2.0 removal turns this into a hard refusal.
-    if (versionOpt === 'v1') {
-      console.error(
-        '⚠️  --opencode-version v1 is DEPRECATED and will be removed in Pantheon 2.0 — the legacy plugin line is end-of-life. OpenCode 2.x hosts are the supported generation; remove the flag (auto detects the host).',
-      )
-    }
-
     // Resolve the user's explicit selection separately from the defaults.
     // Runtime and prompt templates are opt-in in both TTY and headless mode.
     let componentSelection
@@ -743,7 +715,6 @@ async function main() {
         model: modelOpt,
         smallModel: smallModelOpt,
         preset: presetOpt,
-        version: versionOpt ?? 'auto',
         mergeDevConfig: mergeDevConfigOpt,
         expectedPlan: reviewedPlan ?? setupApprovedPlan?.plan ?? null,
         isProject,
@@ -881,8 +852,8 @@ async function main() {
           advisories: [
             ...(result.versionAssumed
               ? [
-                  'The OpenCode host generation could not be detected; this plan assumes V1 ' +
-                    'and may diverge from the apply. Pass --opencode-version v1|v2 to pin it.',
+                  'The OpenCode host generation could not be verified; this plan targets ' +
+                    'OpenCode 2.x and may diverge from the apply.',
                 ]
               : []),
             // Warnings printed in text mode are suppressed by --quiet, so the

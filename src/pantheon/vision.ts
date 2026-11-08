@@ -613,7 +613,7 @@ export async function fetchProvidersCatalog(
 function defaultAuthStateDir(): string {
   // Honor XDG_DATA_HOME so a relocated data root resolves the same auth store
   // (auth.json) and V2 credential db (opencode.db) as the plugin and the MCP.
-  // Mirrors v2-vision.ts; OPENCODE_DB still names the exact db file.
+  // Mirrors native-vision.ts; OPENCODE_DB still names the exact db file.
   const dataHome = process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share')
   return join(dataHome, 'opencode')
 }
@@ -1606,7 +1606,7 @@ function unescapeXml(text: string): string {
  * Payload bound for the user's question interpolated into vision prompts:
  * prompts longer than this are clipped (with an ellipsis marker) so a long
  * turn never bloats the gateway request. Exported because the V2 path
- * (v2-vision.ts) applies the same cap to its own describe prompt.
+ * (native-vision.ts) applies the same cap to its own describe prompt.
  */
 export const MAX_PROMPT_USER_TEXT_CHARS = 2000
 

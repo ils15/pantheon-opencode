@@ -360,7 +360,7 @@ function testFetchProviderPathIsRemoved(): void {
   assert.equal(Object.hasOwn(packageJson.exports, './local-decision-router'), true)
   const v1 = readFileSync(new URL('../../src/plugin.ts', import.meta.url), 'utf8')
   assert.doesNotMatch(v1, /local-decision-provider|runProviderDecision|decideForTurn/)
-  const v2 = readFileSync(new URL('../../src/plugin-v2.ts', import.meta.url), 'utf8')
+  const v2 = readFileSync(new URL('../../src/plugin.ts', import.meta.url), 'utf8')
   const promptModule = readFileSync(
     new URL('../../src/pantheon/local-decision-prompt.ts', import.meta.url),
     'utf8',

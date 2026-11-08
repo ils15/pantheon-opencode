@@ -167,7 +167,6 @@ test('non-interactive install (--yes --headless) never prompts nor writes vision
       await installOpenCode(target, false, false, ['agents'], {
         yes: true,
         headless: true,
-        version: 'v1',
       })
       assert.equal(existsSync(globalVisionConfigPath(env)), false)
     } finally {

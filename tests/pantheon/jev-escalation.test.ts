@@ -51,8 +51,8 @@ import {
   resolveLocalDecisionBudgetDbPath,
 } from '../../src/pantheon/local-decision-budget.ts'
 import { capabilityEntry } from '../../src/pantheon/presets.mjs'
-import { createTelemetrySink, sanitizeTelemetry } from '../../src/pantheon/v2-decision-telemetry.ts'
-import type { NativeDecisionRequest } from '../../src/pantheon/v2-native-decisions.ts'
+import { createTelemetrySink, sanitizeTelemetry } from '../../src/pantheon/decision-telemetry.ts'
+import type { NativeDecisionRequest } from '../../src/pantheon/native-decisions.ts'
 
 let checks = 0
 function check(name: string, fn: () => void | Promise<void>): void {
@@ -70,7 +70,7 @@ async function checkAsync(name: string, fn: () => Promise<void>): Promise<void> 
   void name
 }
 
-/** The telemetry reason token charset (mirrors v2-decision-telemetry). */
+/** The telemetry reason token charset (mirrors decision-telemetry). */
 const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/
 
 // ─── Flag semantics ─────────────────────────────────────────────────────
@@ -107,7 +107,7 @@ function testConstants(): void {
   assert.equal(J3_ESCALATION_CHEAP_THRESHOLD, 4)
   assert.ok(J3_CONTEXT_LENGTH_RAIL > 0, 'the context rail is a positive bound')
   // The cheap model must be a supported chat-model ref: the existing override
-  // mechanism (v2-model-overrides) validates it through capabilityEntry, and
+  // mechanism (model-overrides) validates it through capabilityEntry, and
   // decision models are not chat models — they are never escalation targets.
   assert.doesNotThrow(() => capabilityEntry(J3_ESCALATION_CHEAP_MODEL))
   assert.match(J3_ESCALATION_CHEAP_MODEL, /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:+-]*$/)

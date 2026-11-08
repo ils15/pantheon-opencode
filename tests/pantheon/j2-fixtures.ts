@@ -52,11 +52,11 @@ import {
   selectPantheonSkills,
 } from '../../src/pantheon/local-decision-skills.ts'
 import { PANTHEON_SKILL_CATALOG } from '../../src/pantheon/pantheon-decision-catalog.ts'
-import { observeShadow, type ShadowRecord } from '../../src/pantheon/v2-decision-shadow.ts'
+import { observeShadow, type ShadowRecord } from '../../src/pantheon/decision-shadow.ts'
 import type {
   NativeDecisionRequest,
   ResolvedNativeDecisionRoute,
-} from '../../src/pantheon/v2-native-decisions.ts'
+} from '../../src/pantheon/native-decisions.ts'
 
 /** Telemetry point id for the skill-selection scorecard (J-series). */
 export const J2_SCORECARD_POINT = 'J2'

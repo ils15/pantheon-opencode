@@ -354,7 +354,7 @@ test('installPlugin reports a missing bundle as an error instead of a partial in
     writeFileSync(join(src, 'package.json'), JSON.stringify({ name: 'pantheon-tui' }))
     writeFileSync(join(src, 'tui.ts'), "export { default } from './dist/tui.js'\n")
 
-    const result = installPlugin(src, dst, { version: 'v1', dryRun: true })
+    const result = installPlugin(src, dst, { dryRun: true })
 
     assert.equal(result.errors, 1)
     assert.equal(existsSync(join(dst, 'tui.ts')), false)
@@ -363,35 +363,7 @@ test('installPlugin reports a missing bundle as an error instead of a partial in
   }
 })
 
-test('installOpenCode with the plugins component installs the TUI payload and registers it (V1)', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-tui-install-v1-'))
-  try {
-    await withIsolatedHome(() =>
-      withFakeNpm(async () => {
-        const { installOpenCode } = await import('../scripts/install/opencode.mjs')
-        const result = await installOpenCode(target, false, false, ['plugins'], {
-          yes: true,
-          headless: true,
-          version: 'v1',
-          quiet: true,
-        })
-        assert.equal(result.applied, true)
-
-        const configDir = join(target, '.opencode')
-        const copyDir = join(configDir, 'plugins', 'pantheon-tui')
-        assert.ok(existsSync(join(copyDir, 'dist', 'tui.js')), 'the compiled V1 bundle is copied')
-        assert.ok(existsSync(join(copyDir, 'tui.ts')), 'the V1 loader is copied')
-
-        const tuiJson = JSON.parse(readFileSync(join(configDir, 'tui.json'), 'utf8'))
-        assert.deepEqual(tuiJson.plugin, [copyDir], 'V1 registers the copied directory')
-      }),
-    )
-  } finally {
-    rmSync(target, { recursive: true, force: true })
-  }
-})
-
-test('installOpenCode with the plugins component writes the V2 discovery files', async () => {
+test('installOpenCode with the plugins component installs the TUI copy with the V2 contract', async () => {
   const target = mkdtempSync(join(tmpdir(), 'pantheon-tui-install-v2-'))
   try {
     await withIsolatedHome(() =>
@@ -400,7 +372,6 @@ test('installOpenCode with the plugins component writes the V2 discovery files',
         await installOpenCode(target, false, false, ['plugins'], {
           yes: true,
           headless: true,
-          version: 'v2',
           quiet: true,
         })
 

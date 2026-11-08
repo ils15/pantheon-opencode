@@ -193,12 +193,15 @@ test('process.env.PANTHEON_HOOKS_LOG gates the console echo at creation time', a
   }
 })
 
-test('regression: src/plugin.ts has NO bare console.log/console.error/console.warn', () => {
+test('regression: src/plugin.ts stays console-clean apart from the two documented warns', () => {
   const src = readFileSync(new URL(PLUGIN_URL), 'utf8')
   const offenders = [...src.matchAll(/console\.(log|error|warn)\s*\(/g)].map((m) => m[0])
+  // The V2 entry deliberately keeps TWO exception-path warns (event-subscription
+  // failure and the double-registration guard) — both fire off the TUI render
+  // path. Anything beyond those must route through createPantheonLogger.
   assert.deepEqual(
     offenders,
-    [],
-    'plugin.ts must not write to the console directly (TUI pollution) — route through createPantheonLogger',
+    ['console.warn(', 'console.warn('],
+    'plugin.ts must not gain new bare console calls (TUI pollution) — route through createPantheonLogger',
   )
 })

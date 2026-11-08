@@ -7,7 +7,7 @@
     "gitDirty": true,
     "opencodeVersion": "opencode v2.0.27",
     "pluginGeneration": "v2",
-    "pluginRef": "/home/ils15/pantheon/src/plugin-v2",
+    "pluginRef": "/home/ils15/pantheon/src/plugin",
     "hostConfigPath": "/home/ils15/.config/opencode/opencode.json",
     "hostConfigUsed": true,
     "shadowConfigDir": "/tmp/opencode/bench-1791996077116/shadow-config",

@@ -59,7 +59,7 @@ import {
 import type {
   NativeDecisionRequest,
   ResolvedNativeDecisionRoute,
-} from '../../src/pantheon/v2-native-decisions.ts'
+} from '../../src/pantheon/native-decisions.ts'
 
 let checks = 0
 function check(name: string, fn: () => void | Promise<void>): void {

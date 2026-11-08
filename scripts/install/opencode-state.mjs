@@ -2,7 +2,7 @@
  * opencode-state.mjs — where an OpenCode host keeps its state, resolved once.
  *
  * WHY THIS MODULE EXISTS: the installer used to PRINT a hardcoded claim about
- * state isolation (`~/.local/share/opencode/opencode-v2.db`, "open service port
+ * state isolation (`~/.local/share/opencode/opencode.db`, "open service port
  * 49375"). Nothing in this package ever set `OPENCODE_DB`, no installer created
  * that file, and no code bound that port — it was a sentence about a
  * configuration that never existed outside a sandbox. A notice is a statement
@@ -13,7 +13,7 @@
  * and from the credential-store lookup in scripts/vision-status.mjs):
  *
  *   1. `OPENCODE_DB` — an explicit file override (what a SANDBOX uses; it is
- *      also the only reason an `opencode-v2.db` name ever appears anywhere);
+ *      also the only reason an `opencode.db` name ever appears anywhere);
  *   2. otherwise the XDG default `<data dir>/opencode.db`, where `<data dir>` is
  *      `$XDG_DATA_HOME/opencode` when `XDG_DATA_HOME` is set, else
  *      `~/.local/share/opencode`.

@@ -8,8 +8,8 @@ import {
   loadLocalDecisionPolicy,
   recommendLocalOrchestration,
 } from './local-orchestration.ts'
-import { evaluateComplexityPoint } from './v2-decision-points/p3-complexity.ts'
-import type { ShadowSink } from './v2-decision-shadow.ts'
+import { evaluateComplexityPoint } from './decision-points/p3-complexity.ts'
+import type { ShadowSink } from './decision-shadow.ts'
 
 const TOOL_DESCRIPTION =
   'Zeus-only local advisory selector. Use selectively only when specialist routing is genuinely ' +

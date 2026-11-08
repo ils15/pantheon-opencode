@@ -384,7 +384,7 @@ export function buildReport(scan, memory, persistence, durations) {
     '',
     '## Who decides (ambient vs initiated)',
     '',
-    'Code verdict: no ambient caller — v2-hook-engine/plugin contain no memory_*/context_*/kv_*',
+    'Code verdict: no ambient caller — hook-engine/plugin contain no memory_*/context_*/kv_*',
     'invocations, and the V2 memory contract test pins "explicit MCP call, no ambient injection',
     'hook". Every counted touch was model-initiated inside `execute`.',
     '',

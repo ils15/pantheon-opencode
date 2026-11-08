@@ -5,7 +5,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { isDeepStrictEqual } from 'node:util'
 import * as clack from '@clack/prompts'
-import { parseOpenCodeVersion, resolveOpenCodeVersion } from './install/opencode-version.mjs'
+import { resolveOpenCodeVersion } from './install/opencode-version.mjs'
 import { planArtifactDigest } from './install/plan-artifact.mjs'
 import {
   applyConfigChanges,
@@ -157,7 +157,11 @@ function safeOperationPath(value) {
   return parts.join('/')
 }
 
-/** Review and apply the opt-in V2 migration before allowing init to write. */
+/**
+ * Review and apply the opt-in config migration before allowing init to write.
+ * V2-only: setup exists for OpenCode 2.x hosts, and the generation gate refuses
+ * a confirmed 1.x host before anything runs.
+ */
 export async function runSetup({
   args = process.argv.slice(2),
   env = process.env,
@@ -196,33 +200,19 @@ export async function runSetup({
     return helpResult?.status ?? helpResult?.code ?? 0
   }
 
-  let detectionFallback = false
-  const warnings = []
-  let generation
   try {
-    const requested = parseOpenCodeVersion(args) ?? 'auto'
-    generation = resolveVersion(requested, {
-      env,
-      warn: () =>
-        warnings.push('OpenCode version detection was inconclusive; pass --version v1 or v2.'),
-      onFallback: () => {
-        detectionFallback = true
-      },
-    })
+    // Single-generation gate: refuse a confirmed 1.x host (and an explicit
+    // OPENCODE_VERSION=v1 pin) before any config review or init can run.
+    resolveVersion({ env })
   } catch (error) {
     writeOutput(
       output,
-      `${error instanceof Error ? error.message : 'OpenCode generation selection is invalid; pass --version v1, v2, or auto.'}\n`,
+      `${error instanceof Error ? error.message : 'OpenCode generation could not be resolved; install OpenCode 2.x and re-run setup.'}\n`,
     )
     return 1
   }
-  for (const warning of warnings) writeOutput(output, `${warning}\n`)
 
-  const migrationEnabled =
-    generation === 'v2' &&
-    !detectionFallback &&
-    !args.includes('--project') &&
-    !args.includes('--help')
+  const migrationEnabled = !args.includes('--project') && !args.includes('--help')
   const dryRun = args.includes('--dry-run')
   let initEnv = env
   let prepared = { status: 'unchanged', changes: [] }
@@ -265,7 +255,7 @@ export async function runSetup({
     initEnv = { ...env, PANTHEON_SETUP_TARGET: configDir }
   }
 
-  const pinnedArgs = [...passthroughArgs(args), `--version=${generation}`]
+  const pinnedArgs = [...passthroughArgs(args)]
   const previewArgs = [
     'init',
     '--dry-run',

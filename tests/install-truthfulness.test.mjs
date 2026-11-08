@@ -42,8 +42,8 @@ import {
   describePluginOptionsReachability,
   formatV2CapabilityNotice,
   v2Capabilities,
-} from '../scripts/install/v2-capabilities.mjs'
-import { listV2UnsupportedFeatures } from '../src/pantheon/v2-unsupported.mjs'
+} from '../scripts/install/capabilities.mjs'
+import { listV2UnsupportedFeatures } from '../src/pantheon/unsupported.mjs'
 
 const REPO_ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const CLI = join(REPO_ROOT, 'bin', 'pantheon-init.mjs')
@@ -118,7 +118,6 @@ async function installV2With(existingConfig, prepare = () => {}, { verbose = fal
       installOpenCode(target, false, false, [], {
         yes: true,
         headless: true,
-        version: 'v2',
         verbose,
       }),
     )
@@ -139,7 +138,7 @@ async function installV2With(existingConfig, prepare = () => {}, { verbose = fal
 function pantheonEntries(plugins) {
   return (plugins ?? []).filter((entry) => {
     const candidate = typeof entry === 'string' ? entry : entry?.package
-    return typeof candidate === 'string' && candidate.includes('plugin-v2')
+    return typeof candidate === 'string' && candidate.includes('plugin')
   })
 }
 
@@ -171,7 +170,7 @@ test('the shared-state sentence names the resolved store and claims no port', ()
   )
   assert.match(sentence, /no service port/)
   assert.doesNotMatch(sentence, /49375/)
-  assert.doesNotMatch(sentence, /opencode-v2\.db/)
+  assert.doesNotMatch(sentence, /opencode\.db/)
 })
 
 test('a V2 install prints the resolver path and no invented isolation claim', async () => {
@@ -180,7 +179,7 @@ test('a V2 install prints the resolver path and no invented isolation claim', as
     const { path: dbPath } = resolveOpenCodeStatePath()
     assert.ok(run.output.includes(dbPath), `notice must print ${dbPath}; got:\n${run.output}`)
     assert.doesNotMatch(run.output, /49375/)
-    assert.doesNotMatch(run.output, /opencode-v2\.db/)
+    assert.doesNotMatch(run.output, /opencode\.db/)
     assert.doesNotMatch(run.output, /state isolated via OPENCODE_DB/)
   } finally {
     run.cleanup()
@@ -190,7 +189,7 @@ test('a V2 install prints the resolver path and no invented isolation claim', as
 test('no drift-able state literal remains in the installer or the CLI entry point', () => {
   for (const file of ['scripts/install/opencode.mjs', 'bin/pantheon-init.mjs']) {
     const source = readFileSync(join(REPO_ROOT, file), 'utf8')
-    assert.doesNotMatch(source, /opencode-v2\.db/, `${file} must not name a per-generation db`)
+    assert.doesNotMatch(source, /opencode\.db/, `${file} must not name a per-generation db`)
     assert.doesNotMatch(source, /49375/, `${file} must not name a service port nothing binds`)
   }
 })
@@ -202,7 +201,6 @@ test('a canceled review prints exactly one line naming the review point', async 
   try {
     const { result, output } = await captureOutput(() =>
       installOpenCode(target, false, false, ['agents'], {
-        version: 'v1',
         deps: { promptReview: async () => PROMPT_CANCELED },
       }),
     )
@@ -222,7 +220,6 @@ test('declining the review names the point instead of printing "Nothing applied.
   try {
     const { result, output } = await captureOutput(() =>
       installOpenCode(target, false, false, ['agents'], {
-        version: 'v1',
         deps: { promptReview: async () => false },
       }),
     )
@@ -249,7 +246,6 @@ test('an interactive cancel names the step the user stopped at', async () => {
     const { result } = await captureOutput(() =>
       installOpenCode(target, false, false, ['agents'], {
         interactive: true,
-        version: 'v1',
         global: true,
         deps: { prompts, isTTY: true },
       }),
@@ -286,7 +282,6 @@ test('a cancel at final review reports THAT project target, not the global one',
   const { result } = await captureOutput(() =>
     installOpenCode(undefined, false, false, ['agents'], {
       interactive: true,
-      version: 'v1',
       deps: { prompts, isTTY: true },
       onTargetResolved: (target) => {
         resolvedTarget = target
@@ -324,7 +319,6 @@ test('a decline at final review reports the resolved global target', async () =>
   const { result } = await captureOutput(() =>
     installOpenCode('/tmp/pantheon-cancel-target-probe', false, false, ['agents'], {
       interactive: true,
-      version: 'v1',
       global: true,
       deps: { prompts, isTTY: true },
       onTargetResolved: (target) => {
@@ -485,10 +479,10 @@ test('a real SIGINT during an interactive install exits 130 with one message', {
   try {
     const scriptCmd =
       `exec sh -c 'echo $$ > ${pidFile}; exec ${process.execPath} ${CLI} ` +
-      "init --interactive --project --no-mcp --components agents --opencode-version v1'"
+      "init --interactive --project --no-mcp --components agents'"
     const child = spawn('script', ['-q', '-e', '-c', scriptCmd, '/dev/null'], {
       cwd: project,
-      env: sandboxEnv(home, { OPENCODE_VERSION: 'v1' }),
+      env: sandboxEnv(home, { OPENCODE_VERSION: 'v2' }),
     })
     let out = ''
     child.stdout.on('data', (chunk) => {
@@ -692,7 +686,7 @@ test('a fresh V2 install writes the object form with an options bag', async () =
     const entries = pantheonEntries(run.config.plugins)
     assert.equal(entries.length, 1)
     assert.equal(typeof entries[0], 'object', 'a fresh install must not emit a bare string')
-    assert.ok(entries[0].package.endsWith(join('src', 'plugin-v2')))
+    assert.ok(entries[0].package.endsWith(join('src', 'plugin')))
     assert.deepEqual(entries[0].options, {})
     assert.equal(run.result.pluginOptions.reachable, true)
   } finally {
@@ -715,7 +709,6 @@ test('a hand-added options key survives a re-run', async () => {
       installOpenCode(first.target, false, false, [], {
         yes: true,
         headless: true,
-        version: 'v2',
       }),
     )
     const rewritten = JSON.parse(readFileSync(join(first.target, 'opencode.json'), 'utf8'))
@@ -731,16 +724,16 @@ test('a hand-added options key survives a re-run', async () => {
 })
 
 test('a legacy bare-string Pantheon entry gains an installed object-form entry', async () => {
-  const run = await installV2With({ plugins: ['/old/install/src/plugin-v2'] })
+  const run = await installV2With({ plugins: ['/old/install/src/plugin'] })
   try {
     const entries = pantheonEntries(run.config.plugins)
     const installed = entries.find((entry) => typeof entry === 'object')
     assert.ok(installed, 'the installed entry must be the object form')
-    assert.ok(installed.package.endsWith(join('src', 'plugin-v2')))
+    assert.ok(installed.package.endsWith(join('src', 'plugin')))
     assert.deepEqual(installed.options, {})
     // An unrecognised absolute path is the user's data and is not silently
     // deleted; only the managed identity is rewritten.
-    assert.ok(run.config.plugins.includes('/old/install/src/plugin-v2'))
+    assert.ok(run.config.plugins.includes('/old/install/src/plugin'))
   } finally {
     run.cleanup()
   }
@@ -749,17 +742,17 @@ test('a legacy bare-string Pantheon entry gains an installed object-form entry',
 test('options reachability reports the three installed shapes honestly', () => {
   assert.equal(describePluginOptionsReachability([]).registered, false)
 
-  const bare = describePluginOptionsReachability(['/opt/pantheon/src/plugin-v2'])
+  const bare = describePluginOptionsReachability(['/opt/pantheon/src/plugin'])
   assert.equal(bare.reachable, false)
   assert.equal(bare.form, 'string')
   assert.match(bare.detail, /bare string/)
 
-  const noOptions = describePluginOptionsReachability([{ package: '/opt/pantheon/src/plugin-v2' }])
+  const noOptions = describePluginOptionsReachability([{ package: '/opt/pantheon/src/plugin' }])
   assert.equal(noOptions.reachable, false)
   assert.match(noOptions.detail, /no "options" object/)
 
   const ok = describePluginOptionsReachability([
-    { package: '/opt/pantheon/src/plugin-v2', options: { context_pruner: { enabled: true } } },
+    { package: '/opt/pantheon/src/plugin', options: { context_pruner: { enabled: true } } },
   ])
   assert.equal(ok.reachable, true)
 })
@@ -842,13 +835,13 @@ test('a provable relocated Pantheon install is retired, not registered twice', a
   // `managedPluginIdentity` recognizes a V2 entry inside any
   // node_modules/pantheon-opencode copy, so the stale one is provably Pantheon:
   // keeping both would run every hook twice.
-  const relocated = '/old/prefix/node_modules/pantheon-opencode/src/plugin-v2'
+  const relocated = '/old/prefix/node_modules/pantheon-opencode/src/plugin'
   const run = await installV2With({ plugins: [relocated] })
   try {
     const entries = pantheonEntries(run.config.plugins)
     assert.equal(entries.length, 1, 'exactly one Pantheon V2 entry may remain')
     assert.equal(typeof entries[0], 'object')
-    assert.ok(entries[0].package.endsWith(join('src', 'plugin-v2')))
+    assert.ok(entries[0].package.endsWith(join('src', 'plugin')))
     assert.ok(!run.config.plugins.includes(relocated), 'the stale copy is retired')
     assert.doesNotMatch(run.output, /another copy of the Pantheon V2 plugin/)
   } finally {
@@ -860,7 +853,7 @@ test('a Pantheon-lookalike this installer cannot prove it owns is kept and repor
   // Outside node_modules/pantheon-opencode the path is indistinguishable from a
   // third-party plugin that happens to share the name. Deleting it would be
   // destructive, so it stays — and the double-registration risk is announced.
-  const lookalike = '/old/install/src/plugin-v2'
+  const lookalike = '/old/install/src/plugin'
   const run = await installV2With({ plugins: [lookalike] })
   try {
     assert.ok(run.config.plugins.includes(lookalike))

@@ -79,7 +79,7 @@ const REQUIRED_TARBALL_PAYLOAD = [
   'package/plugin.json',
   'package/pyproject.toml',
   'package/src/plugin.ts',
-  'package/src/plugin-v2.ts',
+  'package/src/plugin.ts',
   'package/src/plugins/tui/dist/tui.js',
   'package/src/plugins/tui/package.json',
   'package/src/plugins/tui/package-lock.json',
@@ -336,7 +336,7 @@ function hostGate(options) {
         run(
           `host-${row.host}`,
           'bash',
-          ['scripts/test-opencode-v2-sandbox.sh', '--prepare', '--run', 'v2'],
+          ['scripts/test-opencode-sandbox.sh', '--prepare', '--run', 'v2'],
           {
             env: sandboxEnv(root, row.host, tarball, 49380 + index),
           },
@@ -380,7 +380,7 @@ function installGate(options) {
   const sandbox = run(
     'sandbox-install',
     'bash',
-    ['scripts/test-opencode-v2-sandbox.sh', '--prepare', '--run', 'v2'],
+    ['scripts/test-opencode-sandbox.sh', '--prepare', '--run', 'v2'],
     { env: sandboxEnv(root, host, tarball, port) },
   )
   const version = installedVersion(root)

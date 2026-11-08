@@ -14,12 +14,12 @@ import {
   inspectDecisionBudget,
   listDecisionHoldsReadOnly,
   utcPeriodOf,
-} from './decision-router-v2-budget.mjs'
+} from './decision-router-budget-gates.mjs'
 import {
   resolveV2DecisionEgress,
   V2_DECISION_EGRESS_DEFAULT,
   V2_DECISION_EGRESS_TRANSPORT,
-} from './decision-router-v2-egress.mjs'
+} from './decision-router-egress.mjs'
 import {
   applyDecisionLayerPlan,
   buildDecisionLayerPlan,

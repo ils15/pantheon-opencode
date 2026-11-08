@@ -75,7 +75,7 @@ export function requestedVersion(): OpenCodeVersion | undefined {
  * than being silently ignored.
  *
  * There is deliberately NO per-version filename. Deriving one from the host
- * generation pointed the V2 report at `opencode-v2.db`, which exists only
+ * generation pointed the V2 report at `opencode.db`, which exists only
  * because a sandbox sets OPENCODE_DB — hence OPENCODE_DB's place in this chain.
  */
 export function resolveCostDbPath(options?: { dbPath?: string }): string {
