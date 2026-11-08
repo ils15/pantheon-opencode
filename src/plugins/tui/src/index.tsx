@@ -3,6 +3,7 @@
 /** @jsxImportSource @opentui/solid */
 
 import { execFile } from 'node:child_process'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -24,6 +25,7 @@ import {
   MODEL_USAGE_VISIBLE_CEILING,
 } from './model-usage-limits'
 import { cellWidth, GRAPHEMES, SIDEBAR_CONTENT_WIDTH } from './sidebar-width'
+import { nextCheckState, pickUpdateNotice, type UpdateCheckState } from './update-notice.ts'
 import { maybeShowWhatsNewV2 } from './whats-new'
 
 export type { ContextProgressTone } from './context-gauge'
@@ -3030,6 +3032,45 @@ function subscribeSidebarRefresh(context: any, refresh: () => void): () => void 
   }
 }
 
+/** One update check per boot (TTL-cached on disk, offline-safe): query the
+ *  registry for the pinned package's latest, notify at most once per version
+ *  through the toast, and persist the state for the TTL. Never throws. */
+async function checkForPantheonUpdate(context: any): Promise<void> {
+  const stateDir = process.env.XDG_STATE_HOME ?? join(process.env.HOME ?? '', '.local', 'state')
+  const statePath = join(stateDir, 'pantheon', 'update-check.json')
+  const readState = (): UpdateCheckState => {
+    try {
+      return JSON.parse(readFileSync(statePath, 'utf8')) as UpdateCheckState
+    } catch {
+      return {}
+    }
+  }
+  const persist = (notice: ReturnType<typeof pickUpdateNotice>) => {
+    mkdirSync(join(stateDir, 'pantheon'), { recursive: true })
+    writeFileSync(
+      statePath,
+      JSON.stringify(nextCheckState(readState(), notice, Date.now()), null, 2) + '\n',
+    )
+  }
+  const response = await fetch('https://registry.npmjs.org/pantheon-opencode/latest', {
+    signal: AbortSignal.timeout(5000),
+  })
+  const latest = String(((await response.json()) as { version?: unknown })?.version ?? '')
+  if (!latest) return
+  const notice = pickUpdateNotice({
+    currentVersion: typeof __PANTHEON_VERSION__ !== 'undefined' ? __PANTHEON_VERSION__ : '',
+    latestVersion: latest,
+    state: readState(),
+    nowMs: Date.now(),
+  })
+  if (!notice) {
+    persist(null)
+    return
+  }
+  context?.ui?.toast?.show?.({ message: notice.message })
+  persist(notice)
+}
+
 /** Populate the cached data at load so the sidebar has content before the first
  *  prompt (Known Issue guard). Fire-and-forget: a missing API or a failed sync
  *  degrades silently and the sidebar still renders its static header. */
@@ -4452,6 +4493,11 @@ const plugin = Plugin.define({
       append: 'home.footer.status',
       render: () => <HomeStatus context={context} />,
     })
+    // Update notifier: pin + notify, once per version, TTL-cached (6h),
+    // offline-safe. A stable install is never advertised a beta.
+    const updateNoticeTimer = setTimeout(() => {
+      void checkForPantheonUpdate(context).catch(() => {})
+    }, 10_000)
     // Additive claim: the native prompt footer keeps its own tokens/cost line.
     const unregisterPromptFooter = context.ui.slot({
       append: 'prompt.footer',
@@ -4483,6 +4529,7 @@ const plugin = Plugin.define({
     // a missing changelog or unreadable state simply means no window.
     void maybeShowWhatsNewV2(context)
     return () => {
+      clearTimeout(updateNoticeTimer)
       if (typeof unregisterSidebar === 'function') unregisterSidebar()
       if (typeof unregisterHome === 'function') unregisterHome()
       if (typeof unregisterPromptFooter === 'function') unregisterPromptFooter()

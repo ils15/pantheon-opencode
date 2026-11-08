@@ -1,5 +1,6 @@
 import { createComponent, createElement, createTextNode, effect, insert, insertNode, memo, setProp } from "@opentui/solid";
 import { execFile } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -179,6 +180,46 @@ function cellWidth(value) {
 	let width = 0;
 	for (const { segment } of GRAPHEMES.segment(value)) width += graphemeWidth(segment);
 	return width;
+}
+/** Semver-ish compare for X.Y.Z[-beta.N]; betas sort before their release. */
+function comparePantheonVersions(left, right) {
+	const parse = (version) => {
+		const match = String(version).trim().match(/^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/);
+		if (!match) return null;
+		return {
+			core: [
+				+match[1],
+				+match[2],
+				+match[3]
+			],
+			beta: match[4] === void 0 ? Number.POSITIVE_INFINITY : +match[4]
+		};
+	};
+	const a = parse(left);
+	const b = parse(right);
+	if (!a || !b) return 0;
+	for (let index = 0; index < 3; index += 1) if (a.core[index] !== b.core[index]) return a.core[index] - b.core[index];
+	return a.beta - b.beta;
+}
+function pickUpdateNotice(input) {
+	const { currentVersion, latestVersion, state = {}, nowMs = Date.now() } = input;
+	const ttlMs = input.ttlMs ?? 216e5;
+	if (nowMs - (state.lastCheckMs ?? 0) < ttlMs) return null;
+	if (state.lastNotifiedVersion === latestVersion) return null;
+	const stable = (version) => !/-beta\.\d+$/.test(version);
+	if (stable(currentVersion) && !stable(latestVersion)) return null;
+	if (comparePantheonVersions(latestVersion, currentVersion) <= 0) return null;
+	return {
+		version: latestVersion,
+		message: `pantheon-opencode ${latestVersion} available — changelog in /pantheon-settings, adopt with \`pantheon-opencode update\``
+	};
+}
+/** The state to persist after a check (notified or not) for the TTL. */
+function nextCheckState(previous, notice, nowMs) {
+	return {
+		lastCheckMs: nowMs,
+		lastNotifiedVersion: notice?.version ?? previous.lastNotifiedVersion
+	};
 }
 /** Prefix of the "+N more" line appended when the bullet budget is exceeded. */
 const WHATS_NEW_MORE_PREFIX = "… +";
@@ -2984,6 +3025,39 @@ function subscribeSidebarRefresh(context, refresh) {
 		for (const unsubscribe of stop) if (typeof unsubscribe === "function") unsubscribe();
 	};
 }
+/** One update check per boot (TTL-cached on disk, offline-safe): query the
+*  registry for the pinned package's latest, notify at most once per version
+*  through the toast, and persist the state for the TTL. Never throws. */
+async function checkForPantheonUpdate(context) {
+	const stateDir = process.env.XDG_STATE_HOME ?? join(process.env.HOME ?? "", ".local", "state");
+	const statePath = join(stateDir, "pantheon", "update-check.json");
+	const readState = () => {
+		try {
+			return JSON.parse(readFileSync(statePath, "utf8"));
+		} catch {
+			return {};
+		}
+	};
+	const persist = (notice) => {
+		mkdirSync(join(stateDir, "pantheon"), { recursive: true });
+		writeFileSync(statePath, JSON.stringify(nextCheckState(readState(), notice, Date.now()), null, 2) + "\n");
+	};
+	const response = await fetch("https://registry.npmjs.org/pantheon-opencode/latest", { signal: AbortSignal.timeout(5e3) });
+	const latest = String((await response.json())?.version ?? "");
+	if (!latest) return;
+	const notice = pickUpdateNotice({
+		currentVersion: "2.0.0-beta.1",
+		latestVersion: latest,
+		state: readState(),
+		nowMs: Date.now()
+	});
+	if (!notice) {
+		persist(null);
+		return;
+	}
+	context?.ui?.toast?.show?.({ message: notice.message });
+	persist(notice);
+}
 /** Populate the cached data at load so the sidebar has content before the first
 *  prompt (Known Issue guard). Fire-and-forget: a missing API or a failed sync
 *  degrades silently and the sidebar still renders its static header. */
@@ -4555,6 +4629,9 @@ const plugin = Plugin.define({
 			append: "home.footer.status",
 			render: () => createComponent(HomeStatus, { context })
 		});
+		const updateNoticeTimer = setTimeout(() => {
+			checkForPantheonUpdate(context).catch(() => {});
+		}, 1e4);
 		const unregisterPromptFooter = context.ui.slot({
 			append: "prompt.footer",
 			render: ({ sessionID }) => createComponent(PromptFooter, {
@@ -4582,6 +4659,7 @@ const plugin = Plugin.define({
 		});
 		maybeShowWhatsNewV2(context);
 		return () => {
+			clearTimeout(updateNoticeTimer);
 			if (typeof unregisterSidebar === "function") unregisterSidebar();
 			if (typeof unregisterHome === "function") unregisterHome();
 			if (typeof unregisterPromptFooter === "function") unregisterPromptFooter();

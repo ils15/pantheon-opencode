@@ -96,6 +96,12 @@ import type {
 } from '@opencode-ai/plugin/v2/promise'
 import { define } from '@opencode-ai/plugin/v2/promise'
 import {
+  type EffectiveOverrides,
+  installDecision,
+  isRuntimeDisabled,
+  mergeOverrides,
+} from './pantheon/behavior-overrides.ts'
+import {
   BOUNDED_READ_TOOL,
   createV2BoundedReadTool,
   type V2BoundedReadOriginRegistry,
@@ -416,6 +422,48 @@ function hostDomains(context: PluginContext): HostPluginContext {
  * `idle-todo-enforcer` marker.
  */
 let idleTodoEnforcer: TodoEnforcer | undefined
+
+/**
+ * Named-behavior overrides loaded at setup (project `.pantheon/overrides.json`
+ * wins over the global config dir's `pantheon-overrides.json`). Runtime gates
+ * consult `isGateDisabled` before wiring; an override file that cannot be
+ * read or parsed degrades to no overrides (built-in behavior), never to a
+ * partial parse.
+ */
+let runtimeOverrides: EffectiveOverrides = {}
+let runtimeOverridesLoaded = false
+
+function loadRuntimeOverrides(): void {
+  if (runtimeOverridesLoaded) return
+  runtimeOverridesLoaded = true
+  try {
+    const read = (path: string): string | undefined => {
+      const fs = require('node:fs') as typeof import('node:fs')
+      try {
+        return fs.readFileSync(path, 'utf8')
+      } catch {
+        return undefined
+      }
+    }
+    const path = require('node:path') as typeof import('node:path')
+    const globalRaw = read(path.join(resolveGlobalOverrideDir(), 'pantheon-overrides.json'))
+    const projectRaw = read(path.join(process.cwd(), '.pantheon', 'overrides.json'))
+    runtimeOverrides = mergeOverrides(globalRaw, projectRaw).entries
+  } catch {
+    runtimeOverrides = {}
+  }
+}
+
+function resolveGlobalOverrideDir(): string {
+  const env = process.env.XDG_CONFIG_HOME
+  const base = env && env.startsWith('/') ? env : path.join(process.env.HOME ?? '', '.config')
+  return path.join(base, 'opencode')
+}
+
+/** True when a runtime gate behavior is disabled by override. */
+function gateDisabled(behaviorId: string): boolean {
+  return runtimeOverrides[behaviorId]?.action === 'disable'
+}
 
 /**
  * The subset of the host's `session` domain a `TodoEnforcerClient` needs.
@@ -1366,8 +1414,10 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
         // Opt-in DCP: same engine as the compaction site, but per-request
         // pruning invalidates the prompt cache, so it runs only when
         // `context_pruner.enabled` is explicitly true. Disabled = the hook is
-        // byte-for-byte the previous behaviour.
-        if (prunerConfig.enabled) {
+        // byte-for-byte the previous behaviour. The named-behavior override
+        // `gate-context-pruner` disables it entirely (2.0 overrides layer).
+        loadRuntimeOverrides()
+        if (prunerConfig.enabled && !gateDisabled('gate-context-pruner')) {
           try {
             const stats = pruneMessages(ctx.messages, prunerConfig, 'context')
             logContextPrune(stats, ctx.sessionID)
@@ -1914,8 +1964,15 @@ async function registerV2ToolHooks(
   // only — it is fired WITHOUT await inside the before-handler (fire-and-
   // observe), self-bounds at 2s with an AbortController, and never retries.
   const j1Mode = j1ModeFromEnv()
+  loadRuntimeOverrides()
+  const j1OverrideOff = gateDisabled('gate-j1-risk-gate')
+  if (j1OverrideOff) {
+    appendV2HookLog(
+      '[gate-j1-risk-gate] disabled by override — the J1 risk gate is off this session',
+    )
+  }
   let j1Observer: ((event: unknown) => Promise<J1Verdict | undefined>) | undefined
-  if (jevRuntime !== undefined && j1Mode !== 'off') {
+  if (jevRuntime !== undefined && j1Mode !== 'off' && !j1OverrideOff) {
     const j1Sink = createTelemetrySink()
     j1TelemetrySink = j1Sink
     j1Observer = createJ1RiskGateObserver({
@@ -2770,9 +2827,18 @@ export const plugin = define({
               // Observation must never reach the compaction request.
             }
             const prunerConfig = resolveContextPrunerConfig(context.options)
-            const stats = pruneMessages(payload?.messages, prunerConfig, 'compaction')
-            logContextPrune(stats, sessionID)
-            logPruneShapeIssue(stats, sessionID, 'compaction')
+            loadRuntimeOverrides()
+            if (gateDisabled('gate-context-pruner')) {
+              logPruneFailureOnce(
+                sessionID,
+                'compaction',
+                new Error('gate-context-pruner override'),
+              )
+            } else {
+              const stats = pruneMessages(payload?.messages, prunerConfig, 'compaction')
+              logContextPrune(stats, sessionID)
+              logPruneShapeIssue(stats, sessionID, 'compaction')
+            }
 
             // Compaction context (V1 `experimental.session.compacting`
             // parity, #266). The SAME builder V1 uses — directive +
