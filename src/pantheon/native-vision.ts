@@ -128,28 +128,26 @@ export function buildV2VisionPromptContext(
     return [reference]
   })
   if (images.length === 0) return undefined
+  // Under-the-hood contract (user feedback, 2.0 cycle): the block is a
+  // minimal relay, not an essay — inspect silently, route UI work to
+  // @aphrodite, never revert based on an image.
   const lines = [
     '<!-- pantheon-v2-visual-context -->',
-    '[Contexto visual do Pantheon]',
-    `O usuário anexou imagem(ns):\n${images.map((image) => `- ${image}`).join('\n')}`,
-    'Se a imagem orientar uma implementação, inspecione-a com vision_describe ou visão nativa antes de delegar. Inclua a referência e observações visuais relevantes no handoff para @aphrodite. Preserve alterações existentes fora do escopo: a imagem não autoriza apagar nem reverter trabalho; se a substituição for necessária e não estiver explícita, pergunte antes.',
+    `[Visual] ${images.join(' | ')}`,
   ]
   const question = truncateUserText(userText ?? '')
   if (question) {
     // JSON.stringify quotes/escapes the question so it cannot spoof the
     // surrounding instruction layout; the value is never re-expanded and
     // never logged.
-    lines.push(
-      `Pergunta do usuário neste turno: ${JSON.stringify(question)} — ao inspecionar com vision_describe, repasse essa pergunta no parâmetro \`prompt\` da ferramenta para uma análise direcionada.`,
-    )
+    lines.push(`Turno do usuário: ${JSON.stringify(question)}`)
   }
   // MCP session relay (see the doc comment above): JSON.stringify quotes the
   // id so it cannot spoof the surrounding instruction layout; never logged.
   if (isValidSessionId(sessionID)) {
-    lines.push(
-      `Prefira a ferramenta nativa \`vision_describe\` (ela já repassa a sessão automaticamente). Se usar o MCP pantheon-vision (\`vision_describe\`/\`vision_ocr\`/\`vision_analyze\`), repasse session_id=${JSON.stringify(sessionID)} no parâmetro \`session_id\` — sem ele o gateway Zen rejeita a chamada com MissingSessionID.`,
-    )
+    lines.push(`MCP relay: session_id=${JSON.stringify(sessionID)}`)
   }
+  lines.push('Handoff de UI → @aphrodite; a imagem não autoriza reverter trabalho.')
   return lines.join('\n')
 }
 
