@@ -115,7 +115,11 @@ export function runUpdate(
   const crossingToPrerelease = isPrerelease(latest) && !isPrerelease(currentVersion)
   if (crossingToPrerelease && !args.includes('--allow-prerelease')) {
     console.error(
-      '\u274c v' + latest + ' is a BETA and your installed v' + currentVersion + ' is stable. A stable\u2192beta jump needs explicit opt-in: rerun with `update --allow-prerelease`, or stay on the stable line with `update --stable`.',
+      '\u274c v' +
+        latest +
+        ' is a BETA and your installed v' +
+        currentVersion +
+        ' is stable. A stable\u2192beta jump needs explicit opt-in: rerun with `update --allow-prerelease`, or stay on the stable line with `update --stable`.',
     )
     return 1
   }
