@@ -77,12 +77,16 @@ Requirements: [OpenCode](https://opencode.ai/docs/) **2.x** and Node.js
 **>=26.4.0** for the CLI and tooling. **OpenCode 2.0.22 is known broken**; see
 [Compatibility](docs/COMPATIBILITY.md).
 
-From the project where you want to use Pantheon:
+From anywhere (global, all projects) or inside a project:
 
 ```bash
-npx pantheon-opencode init
+opencode plugin add pantheon-opencode
+# or pin it: opencode plugin add pantheon-opencode@<version>
 opencode
 ```
+
+Restart OpenCode when prompted. `npx pantheon-opencode init` remains only
+as the OpenCode 1.x migration path and an opt-in project scaffolding tool.
 
 Direct `init` uses the same component defaults in TTY and headless runs:
 `agents`, `skills`, `instructions`, `commands`, and `plugins`. `runtime` and

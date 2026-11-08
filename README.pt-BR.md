@@ -40,12 +40,17 @@ Requisitos: [OpenCode](https://opencode.ai/docs/) **2.x** e Node.js
 **>=26.4.0** para a CLI e as ferramentas. **OpenCode 2.0.22 tem falha
 conhecida**; veja [Compatibilidade](docs/COMPATIBILITY.md).
 
-No projeto onde você quer usar o Pantheon:
+Em qualquer lugar (global, todos os projetos) ou dentro de um projeto:
 
 ```bash
-npx pantheon-opencode init
+opencode plugin add pantheon-opencode
+# ou fixe a versão: opencode plugin add pantheon-opencode@<versão>
 opencode
 ```
+
+Reinicie o OpenCode quando solicitado. O `npx pantheon-opencode init`
+sobrevive apenas como caminho de migração do OpenCode 1.x e ferramenta
+opcional de scaffolding de projeto.
 
 Depois descreva o resultado desejado:
 
