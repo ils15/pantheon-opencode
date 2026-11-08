@@ -141,3 +141,51 @@ export function isRuntimeDisabled(
   if (spec === undefined || spec.kind !== 'runtime') return false
   return effective[id]?.action === 'disable'
 }
+
+export interface OverrideWarning {
+  code: 'override_schema_invalid' | 'override_unknown_behavior'
+  file: 'project' | 'global'
+  message: string
+}
+
+export interface OverrideClassification {
+  warnings: OverrideWarning[]
+  effective: EffectiveOverrides
+}
+
+/**
+ * Doctor-side classifier: parse both override files, collect schema errors
+ * and registry-unknown ids as warnings. Pure — the doctor supplies the raw
+ * file contents (or undefined when a file does not exist) and decides how to
+ * render or fix.
+ */
+export function classifyOverrideFiles(
+  registry: readonly BehaviorSpec[],
+  projectRaw?: string,
+  globalRaw?: string,
+): OverrideClassification {
+  const warnings: OverrideWarning[] = []
+  const global = globalRaw === undefined ? undefined : parseOverridesFile(globalRaw, 'global overrides')
+  const project = projectRaw === undefined ? undefined : parseOverridesFile(projectRaw, 'project overrides')
+  for (const parsed of [global, project]) {
+    if (parsed === undefined) continue
+    for (const error of parsed.errors) {
+      warnings.push({
+        code: 'override_schema_invalid',
+        file: parsed === project ? 'project' : 'global',
+        message: error,
+      })
+    }
+  }
+  const effective = mergeOverrides(globalRaw, projectRaw).entries
+  for (const id of unknownBehaviorIds(effective, registry)) {
+    warnings.push({
+      code: 'override_unknown_behavior',
+      file: (project?.entries[id] !== undefined ? 'project' : 'global') as
+        | 'project'
+        | 'global',
+      message: `override names unknown behavior "${id}" — it is not in the routing.yml behaviors registry`,
+    })
+  }
+  return { warnings, effective }
+}

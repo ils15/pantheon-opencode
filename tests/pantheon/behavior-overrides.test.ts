@@ -8,6 +8,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
+  classifyOverrideFiles,
   type BehaviorSpec,
   installDecision,
   isRuntimeDisabled,
@@ -76,6 +77,29 @@ describe('mergeOverrides', () => {
     assert.equal(r.entries.shared?.action, 'replace')
     assert.equal(r.entries['g-only']?.action, 'disable')
     assert.ok(r.errors.some((e) => e.includes('project overrides') && e.includes('"broken"')))
+  })
+})
+
+describe('classifyOverrideFiles', () => {
+  it('collects schema errors and unknown ids as typed warnings', () => {
+    const project = JSON.stringify({
+      'skill-tdd-with-agents': { action: 'disable', rogue: 1 },
+      ghost: { action: 'disable' },
+    })
+    const r = classifyOverrideFiles(REGISTRY, project, undefined)
+    assert.ok(r.warnings.some((w) => w.code === 'override_schema_invalid' && w.file === 'project'))
+    assert.ok(r.warnings.some((w) => w.code === 'override_unknown_behavior' && w.file === 'project'))
+    // Invalid entries are dropped; the valid-but-unknown one survives.
+    assert.equal(r.effective['skill-tdd-with-agents'], undefined)
+    assert.equal(r.effective['ghost']?.action, 'disable')
+  })
+
+  it('clean files produce no warnings and the merge still applies', () => {
+    const globalRaw = JSON.stringify({ 'gate-j1-risk-gate': { action: 'disable' } })
+    const projectRaw = JSON.stringify({ 'skill-tdd-with-agents': { action: 'disable' } })
+    const r = classifyOverrideFiles(REGISTRY, projectRaw, globalRaw)
+    assert.deepEqual(r.warnings, [])
+    assert.equal(r.effective['gate-j1-risk-gate']?.action, 'disable')
   })
 })
 
