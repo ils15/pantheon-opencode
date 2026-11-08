@@ -106,7 +106,10 @@ function printUsage() {
     '  npx pantheon-opencode decision-router select|enable|consent|caps|period  # explicit actions',
   )
   console.log(
-    '  npx pantheon-opencode update [--stable]    # Update package + re-run init (default: beta channel)',
+    '  npx pantheon-opencode update [--stable] [--allow-prerelease]',
+  )
+  console.log(
+    '                                                             # Update + re-run init. Default channel is beta; a stable install never jumps to a beta without --allow-prerelease.',
   )
   console.log(
     '  npx pantheon-opencode set-tier <name> --project  # Set active model preset (project)',
