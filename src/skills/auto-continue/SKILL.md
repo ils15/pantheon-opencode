@@ -84,6 +84,16 @@ placeholder.
 
 ---
 
+## Routing
+
+| Action / trigger | Reference |
+|---|---|
+| A delegation times out, you need a cooldown template or the tracking-table format, or you are about to checkpoint | [references/auto-continue-details.md](references/auto-continue-details.md) |
+
+A missing reference interrupts the action — read nothing in its place, never improvise from memory.
+
+---
+
 ## Details under demand
 
 The cooldown templates, timeout/retry enforcement (the single authority is

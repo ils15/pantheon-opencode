@@ -42,113 +42,12 @@ Use RED → GREEN → REFACTOR for behavior-changing implementation where a mean
 
 ---
 
-## Testing by Layer
-
-### Backend (Hermes)
-```python
-# Unit: service logic
-def test_calculate_discount_applies_percentage():
-    result = calculate_discount(100, 10)
-    assert result == 90.0
-
-# Integration: API endpoint
-def test_get_user_returns_404_for_missing():
-    response = client.get("/users/nonexistent")
-    assert response.status_code == 404
-
-# Database: repository
-def test_user_repository_saves_and_retrieves():
-    repo.save(User(id="1", name="Test"))
-    assert repo.find("1").name == "Test"
-```
-
-### Frontend (Aphrodite)
-```typescript
-// Test behavior, not implementation
-test('shows error message on invalid form', async () => {
-  render(<LoginForm />)
-  await userEvent.click(screen.getByText('Submit'))
-  expect(screen.getByText('Email is required')).toBeInTheDocument()
-})
-```
-
-### Database (Demeter)
-```python
-def test_migration_creates_users_table():
-    alembic upgrade(head)
-    assert inspector.has_table('users')
-
-def test_migration_rollback_drops_table():
-    alembic upgrade(head)
-    alembic downgrade(-1)
-    assert not inspector.has_table('users')
-```
-
----
-
-## Advanced Testing Patterns
-
-### E2E Testing (Playwright)
-```typescript
-test('user can complete full signup flow', async ({ page }) => {
-  await page.goto('/signup')
-  await page.fill('[name="email"]', 'test@example.com')
-  await page.fill('[name="password"]', 'secure123')
-  await page.click('button[type="submit"]')
-  await expect(page.locator('.welcome-banner')).toBeVisible()
-})
-```
-
-### Load Testing (k6/Locust)
-```javascript
-// k6 script
-export const options = { vus: 50, duration: '30s' }
-export default function () {
-  http.get('http://localhost:8000/api/users')
-}
-```
-
-### Contract Testing (Pact)
-```python
-# Provider verifies consumer contract
-@pact.verify_provider
-def test_provider_satisfies_consumer_contract():
-    # Verify all interactions from pact file
-    pass
-```
-
-### Mutation Testing (high-risk/critical logic only)
-- Mutate source code (change `>` to `<`, remove conditions)
-- Run tests → should fail (mutation killed)
-- If tests pass → test is weak; improve it
-
-### Visual Regression (visual behavior only)
-```typescript
-test('homepage looks the same', async ({ page }) => {
-  await page.goto('/')
-  await expect(page).toHaveScreenshot('homepage.png')
-})
-```
-
----
-
 ## Coverage Rules
 
 - Follow a repository's explicit coverage threshold when the changed code is in its measurement scope; do not manufacture a coverage target for docs, formatting, or a tiny isolated edit.
 - **Critical paths:** preserve project-required coverage and tests for auth, payments, and data integrity.
 - **No snapshot testing** — test behavior, not output shape
 - **Test edge cases**: empty input, null, boundary values, errors
-
----
-
-## Agent Responsibilities
-
-| Agent | Tests |
-|-------|-------|
-| **Hermes** | Unit + integration for FastAPI endpoints, services, middleware |
-| **Aphrodite** | Component behavior tests with React Testing Library |
-| **Demeter** | Migration upgrade/downgrade, query correctness |
-| **Themis** | Reviews the changed surface, relevant edge/error cases, and applicable repository coverage requirements; always review sensitive/material changes |
 
 ---
 
@@ -173,3 +72,14 @@ test('homepage looks the same', async ({ page }) => {
 - ❌ Mocking everything (test real behavior where possible)
 - ❌ Skipping RED step (test must fail first)
 - ❌ Ignoring flaky tests (fix or delete)
+
+---
+
+## Routing
+
+| Action / trigger | Reference |
+|---|---|
+| Writing tests for a specific layer (Hermes/Aphrodite/Demeter) or assigning per-agent test duties | [references/testing-by-layer.md](references/testing-by-layer.md) |
+| When risk or surface warrants E2E, load, contract, mutation, or visual-regression testing | [references/advanced-testing-patterns.md](references/advanced-testing-patterns.md) |
+
+A missing reference interrupts the action — read nothing in its place, never improvise from memory.
