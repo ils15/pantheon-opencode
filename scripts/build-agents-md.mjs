@@ -134,7 +134,7 @@ const PROJECT_HEADER = `# Pantheon — Repository Setup
 
 Setup: [INSTALLATION.md](docs/INSTALLATION.md).
 
-- Requires a supported host: OpenCode 2.x (the V1 contract was removed in 2.0) — see docs/COMPATIBILITY.md
+- Requires a supported host: OpenCode 2.x (the V1 contract was removed in 2.0).
 - Test: focused checks by default; \`npm test\` for CI/release or broad/high-risk changes
 - Lint: \`npm run lint\`
 
@@ -145,12 +145,11 @@ Valide a instalação global COMO UM USUÁRIO REAL no sandbox \`~/pantheon-sandb
 - Rodar: \`bash ~/pantheon-sandbox/run-test.sh\` (MCPs, doctor, TUI)
 - Regra para agentes: valide instalação global (npm pack, \`init\`, MCPs, hooks) no sandbox — NUNCA no ambiente de dev
 - Descarte: \`rm -rf ~/pantheon-sandbox\`
-- Detalhes: \`~/pantheon-sandbox/README.md\`
 
 ## Worktrees
 
 - Nunca crie worktrees dentro do projeto principal; use \`<project-parent>/.pantheon-worktrees/<basename-do-repo>/<task>\`.
-- \`.pantheon/workflows/\` e \`.pantheon/worktrees/\` não são o padrão para worktrees.
+- worktrees não vivem dentro de \`.pantheon/\`.
 
 ## Conventions
 
