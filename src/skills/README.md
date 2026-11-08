@@ -4,7 +4,7 @@
 
 Skills are reference modules loaded on demand by agents. Each skill provides domain-specific knowledge — architecture patterns, security checklists, optimization strategies, and implementation guides. Agents load skills when their task matches the skill's description, keeping context focused and token-efficient.
 
-There are **22 skills** divided into **6 domains**.
+There are **23 skills** divided into **6 domains**.
 
 ## Skills by Domain
 
@@ -106,6 +106,9 @@ There are **22 skills** divided into **6 domains**.
 22. **prompt-refinery** — `prompt-refinery/SKILL.md`
     - Turn a vague multi-concern request into a usable brief — silent internal adjust by default; the full contract is only via `>>`.
     - Used by: Zeus
+23. **instruction-forge** — `instruction-forge/SKILL.md`
+    - Write and maintain AI instructions — where a rule lives, the contract, and testing that it fires (references/ for the doctrine).
+    - Used by: Zeus
 
 ## Skills File Structure
 
@@ -156,6 +159,7 @@ agent grants, and skill inventory.
 | 20 | visual-review-pipeline | Frontend Development | Aphrodite |
 | 21 | agent-forge | Meta | Zeus |
 | 22 | prompt-refinery | Meta | Zeus |
+| 23 | instruction-forge | Meta | Zeus, Athena |
 
 ---
 

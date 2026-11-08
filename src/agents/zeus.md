@@ -21,6 +21,7 @@ mcp_tools:
 skills:
   - agent-coordination
   - agent-forge
+  - instruction-forge
   - artifact-management
   - auto-continue
   - prompt-refinery

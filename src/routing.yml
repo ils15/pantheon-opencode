@@ -179,6 +179,7 @@ agents:
     - auto-continue
     - codemap
     - prompt-refinery
+    - instruction-forge
     - context-compression
     - incremental-implementation
     - loop-engineering

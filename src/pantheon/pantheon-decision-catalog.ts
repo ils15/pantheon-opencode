@@ -22,6 +22,7 @@ export const PANTHEON_SKILL_CATALOG: readonly DecisionCatalogEntry[] = Object.fr
   { id: 'context-compression', description: 'Explicit compaction and resumable checkpoints.' },
   { id: 'git-workflow-and-versioning', description: 'Atomic commits and versioning workflow.' },
   { id: 'incremental-implementation', description: 'Thin, testable, rollback-safe slices.' },
+  { id: 'instruction-forge', description: 'Write and maintain instructions — one home per rule, tested triggers.' },
   { id: 'loop-engineering', description: 'Controlled iterative refinement cycles.' },
   { id: 'memory-bank', description: 'Memory-bank structure, rules, and maintenance.' },
   { id: 'reflect', description: 'Turn repeated workflow friction into reusable assets.' },
