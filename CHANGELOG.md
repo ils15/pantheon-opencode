@@ -66,6 +66,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v2.0.0-beta.1] - 2026-11-08
+
+### Added
+
+- **skills** — progressive disclosure across the corpus: `references/` + Routing tables, 120-line core budget, lock pins every reference; instruction-forge doctrine skill
+- **routing** — named-behavior overrides: registry in routing.yml, pure loader, installer skip/replace, doctor validation with --fix quarantine
+- **validate** — structural instruction evals (tests/eval) in the regular node tier; the secret-mask parity pins the single TypeScript copy
+- **install** — native plugin-add happy path (`opencode plugin add pantheon-opencode`); npx init demoted to the 1.x migration path
+- **routing** — Jev choice ceiling 32 with reserved host-skill slots (host skills always ride, field report beta.15)
+
+### Changed
+
+- **plugin** — one generation, canonical names: src/plugin.ts, decision-* modules, tui/server TUI, PANTHEON_* env vars
+- **installer** — the probe must confirm OpenCode 2.x before any write; the singular plugin key is legacy cleanup; version-gate tests speak the refusal contract
+- **doctor** — named-behavior override validation (check K) with --fix quarantine; the report names its source database
+
+### Removed
+
+- **plugin** — the OpenCode V1 contract (1.19.x hosts): V1 plugin, bridge, hooks, goal-loop lifecycle, tool-ceiling, presets application
+- **validate** — the v1-permission canary proofs and the dual-generation test branches
+
+### Security
+
+- vision-local mime detection linearized (js/polynomial-redos); budget child scripts pass data via argv (js/bad-code-sanitization); the egress endpoint assertion parses URLs
 ## [v1.7.0-beta.1] - 2026-11-07
 
 ## 🆕 What's New
