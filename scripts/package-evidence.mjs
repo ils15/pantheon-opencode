@@ -28,7 +28,7 @@ const REQUIRED_PAYLOAD = [
   'package/src/plugins/tui/package-lock.json',
   'package/src/plugins/tui/dist/tui.js',
   'package/src/plugins/tui/dist/server.js',
-  'package/src/plugins/tui/dist/server-v2.js',
+  'package/src/plugins/tui/dist/server.js',
   'package/bin/pantheon-init.mjs',
   'package/scripts/doctor.mjs',
   'package/scripts/node-engine-policy.mjs',

@@ -364,7 +364,6 @@ async function main() {
             ].includes(component),
         ) ||
         options.clean !== false ||
-        options.version !== 'v2' ||
         typeof options.isProject !== 'boolean'
       ) {
         console.error('❌ Install-plan options are invalid or unsupported')
@@ -785,7 +784,6 @@ async function main() {
           options: {
             clean: forceReinstall,
             components,
-            version: result.openCodeVersion,
             isProject,
             model: modelOpt,
             smallModel: smallModelOpt,
@@ -830,7 +828,6 @@ async function main() {
             options: {
               clean: forceReinstall,
               components,
-              version: result.openCodeVersion,
               isProject,
               model: modelOpt,
               smallModel: smallModelOpt,
@@ -850,19 +847,13 @@ async function main() {
           target: result.target,
           open_code_version: result.openCodeVersion,
           advisories: [
-            ...(result.versionAssumed
-              ? [
-                  'The OpenCode host generation could not be verified; this plan targets ' +
-                    'OpenCode 2.x and may diverge from the apply.',
-                ]
-              : []),
             // Warnings printed in text mode are suppressed by --quiet, so the
             // machine-readable plan carries them too (e.g. a sibling
             // opencode.jsonc the installer neither reads nor writes).
             ...(result.configAdvisories ?? []),
           ],
-          // A V2 plan carries the same capability facts the text notice prints:
-          // what the generation registers, what it does not (the static seed),
+          // The plan carries the same capability facts the text notice prints:
+          // what the install registers, what it does not (the static seed),
           // and whether the written plugin entry can receive `options` at all.
           v2_capabilities: result.v2Capabilities ?? null,
           plugin_options: result.pluginOptions ?? null,

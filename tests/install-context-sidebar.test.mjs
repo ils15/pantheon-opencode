@@ -33,6 +33,12 @@ import {
   withContextSidebarDisabled,
 } from '../scripts/install/opencode.mjs'
 
+
+// test:node runs on machines without an OpenCode binary, so the host gate
+// could not confirm the generation it writes for. Pin it for this file: every
+// install in here targets the only supported host line. Gate-specific tests
+// that pass their own env/probe stay deterministic either way.
+process.env.OPENCODE_VERSION = 'v2'
 const THIRD_PARTY_OBJECT = {
   package: './plugins/acme-local.ts',
   options: { enabled: true, retries: 2 },
@@ -83,7 +89,7 @@ function scratchDir() {
  * contract covered by install-context-capability.test.mjs.
  */
 function writeContextCapableBundle(dir) {
-  const bundlePath = join(dir, 'plugins', 'pantheon-tui', 'dist', 'tui-v2.js')
+  const bundlePath = join(dir, 'plugins', 'pantheon-tui', 'dist', 'tui.js')
   mkdirSync(dirname(bundlePath), { recursive: true })
   writeFileSync(bundlePath, 'export { contextBlockRows, plugin as default };\n')
 }
@@ -189,7 +195,7 @@ test('applyContextSidebarNegation never overwrites an unparseable or unexpected 
 
 test('the installer writes the negation for global installs, once per install', async () => {
   const projectTarget = mkdtempSync(join(tmpdir(), 'pantheon-sidebar-project-'))
-  const v2Target = mkdtempSync(join(tmpdir(), 'pantheon-sidebar-v2-'))
+  const globalTarget = mkdtempSync(join(tmpdir(), 'pantheon-sidebar-global-'))
   try {
     await withIsolatedHome(() =>
       withFakeNpm(async () => {
@@ -208,14 +214,14 @@ test('the installer writes the negation for global installs, once per install', 
         )
 
         // (a) global: the directive lands in the client config.
-        await installOpenCode(v2Target, false, false, ['plugins'], {
+        await installOpenCode(globalTarget, false, false, ['plugins'], {
           yes: true,
           headless: true,
           global: true,
           quiet: true,
         })
-        const cliConfigPath = join(v2Target, 'cli.json')
-        assert.ok(existsSync(cliConfigPath), 'V2 global install writes cli.json')
+        const cliConfigPath = join(globalTarget, 'cli.json')
+        assert.ok(existsSync(cliConfigPath), 'a global install writes cli.json')
         const afterFirst = readFileSync(cliConfigPath, 'utf8')
         const firstPlugins = JSON.parse(afterFirst).plugins
         assert.deepEqual(
@@ -225,7 +231,7 @@ test('the installer writes the negation for global installs, once per install', 
         )
 
         // (b) reinstall: same bytes, no duplicate.
-        await installOpenCode(v2Target, false, false, ['plugins'], {
+        await installOpenCode(globalTarget, false, false, ['plugins'], {
           yes: true,
           headless: true,
           global: true,
@@ -240,6 +246,6 @@ test('the installer writes the negation for global installs, once per install', 
     )
   } finally {
     rmSync(projectTarget, { recursive: true, force: true })
-    rmSync(v2Target, { recursive: true, force: true })
+    rmSync(globalTarget, { recursive: true, force: true })
   }
 })

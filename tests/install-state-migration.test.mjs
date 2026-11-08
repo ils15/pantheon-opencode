@@ -19,6 +19,12 @@ import { parseSemver, rollbackMigration, runMigrations } from '../scripts/instal
 import { installOpenCode } from '../scripts/install/opencode.mjs'
 import { createInitialState, readState, writeState } from '../scripts/install/state.mjs'
 
+
+// test:node runs on machines without an OpenCode binary, so the host gate
+// could not confirm the generation it writes for. Pin it for this file: every
+// install in here targets the only supported host line. Gate-specific tests
+// that pass their own env/probe stay deterministic either way.
+process.env.OPENCODE_VERSION = 'v2'
 /** Write the exact partial v2 marker shape produced by the buggy sync-tui. */
 function seedPartialMarker(target, version = '1.5.1') {
   mkdirSync(join(target, '.pantheon'), { recursive: true })

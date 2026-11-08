@@ -26,7 +26,11 @@ import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { createInterruptHandler } from '../scripts/install/interrupt.mjs'
-import { installOpenCode, v2PluginEntryLoadability } from '../scripts/install/opencode.mjs'
+import {
+  installOpenCode,
+  pluginEntryLoadability,
+  pluginReferenceIdentity,
+} from '../scripts/install/opencode.mjs'
 import {
   describeSharedState,
   resolveOpenCodeStatePath,
@@ -45,6 +49,12 @@ import {
 } from '../scripts/install/capabilities.mjs'
 import { listV2UnsupportedFeatures } from '../src/pantheon/unsupported.mjs'
 
+
+// test:node runs on machines without an OpenCode binary, so the host gate
+// could not confirm the generation it writes for. Pin it for this file: every
+// install in here targets the only supported host line. Gate-specific tests
+// that pass their own env/probe stay deterministic either way.
+process.env.OPENCODE_VERSION = 'v2'
 const REPO_ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const CLI = join(REPO_ROOT, 'bin', 'pantheon-init.mjs')
 const SEED = listV2UnsupportedFeatures()
@@ -136,10 +146,10 @@ async function installV2With(existingConfig, prepare = () => {}, { verbose = fal
 
 /** Every Pantheon V2 entry in a `plugins` list. */
 function pantheonEntries(plugins) {
-  return (plugins ?? []).filter((entry) => {
-    const candidate = typeof entry === 'string' ? entry : entry?.package
-    return typeof candidate === 'string' && candidate.includes('plugin')
-  })
+  const identity = pluginReferenceIdentity(join(REPO_ROOT, 'src', 'plugin'))
+  return (plugins ?? []).filter(
+    (entry) => pluginReferenceIdentity(entry) === identity,
+  )
 }
 
 // ─── #261: the notice states what the host actually does ────────────────
@@ -170,16 +180,19 @@ test('the shared-state sentence names the resolved store and claims no port', ()
   )
   assert.match(sentence, /no service port/)
   assert.doesNotMatch(sentence, /49375/)
-  assert.doesNotMatch(sentence, /opencode\.db/)
+  // The sentence names the ONE resolved store; it must never claim a
+  // per-generation store file (the thing the removed generation invented).
+  assert.doesNotMatch(sentence, /opencode-v\d+\.db/)
+  assert.doesNotMatch(sentence, /isolated per generation/)
 })
 
-test('a V2 install prints the resolver path and no invented isolation claim', async () => {
+test('an install prints the resolver path and no invented isolation claim', async () => {
   const run = await installV2With(null)
   try {
     const { path: dbPath } = resolveOpenCodeStatePath()
     assert.ok(run.output.includes(dbPath), `notice must print ${dbPath}; got:\n${run.output}`)
     assert.doesNotMatch(run.output, /49375/)
-    assert.doesNotMatch(run.output, /opencode\.db/)
+    assert.doesNotMatch(run.output, /opencode-v\d+\.db/)
     assert.doesNotMatch(run.output, /state isolated via OPENCODE_DB/)
   } finally {
     run.cleanup()
@@ -759,7 +772,7 @@ test('options reachability reports the three installed shapes honestly', () => {
 
 // ─── #269: no third-party entry disappears silently ────────────────────
 
-test('v2PluginEntryLoadability accepts only an existing directory', () => {
+test('pluginEntryLoadability accepts only an existing directory', () => {
   const dir = scratchDir('pantheon-loadability-')
   try {
     const pluginDir = join(dir, 'vendor', 'acme-plugin')
@@ -768,23 +781,23 @@ test('v2PluginEntryLoadability accepts only an existing directory', () => {
     const pluginFile = join(dir, 'vendor', 'single-file.ts')
     writeFileSync(pluginFile, 'export default {}\n')
 
-    assert.deepEqual(v2PluginEntryLoadability('./vendor/acme-plugin', dir), {
+    assert.deepEqual(pluginEntryLoadability('./vendor/acme-plugin', dir), {
       loadable: true,
       reason: 'directory',
       resolved: pluginDir,
     })
-    assert.equal(v2PluginEntryLoadability('./vendor/single-file.ts', dir).reason, 'file')
-    assert.equal(v2PluginEntryLoadability('./vendor/missing', dir).reason, 'missing')
-    assert.equal(v2PluginEntryLoadability('acme-plugin', dir).reason, 'npm-spec')
-    assert.equal(v2PluginEntryLoadability('@scope/acme', dir).reason, 'npm-spec')
-    assert.equal(v2PluginEntryLoadability('npm:@scope/acme', dir).reason, 'npm-spec')
-    assert.equal(v2PluginEntryLoadability({ package: 'acme' }, dir).reason, 'unverifiable')
+    assert.equal(pluginEntryLoadability('./vendor/single-file.ts', dir).reason, 'file')
+    assert.equal(pluginEntryLoadability('./vendor/missing', dir).reason, 'missing')
+    assert.equal(pluginEntryLoadability('acme-plugin', dir).reason, 'npm-spec')
+    assert.equal(pluginEntryLoadability('@scope/acme', dir).reason, 'npm-spec')
+    assert.equal(pluginEntryLoadability('npm:@scope/acme', dir).reason, 'npm-spec')
+    assert.equal(pluginEntryLoadability({ package: 'acme' }, dir).reason, 'unverifiable')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
 })
 
-test('only a loadable third-party directory moves into the V2 plural key', async () => {
+test('only a loadable third-party directory moves into the plural plugins key', async () => {
   const run = await installV2With(
     {
       plugin: ['./vendor/acme-plugin', 'acme-plugin', './vendor/missing-plugin'],
@@ -799,8 +812,9 @@ test('only a loadable third-party directory moves into the V2 plural key', async
     // The directory the V2 loader can actually load is re-registered…
     assert.deepEqual(run.config.plugins.slice(0, 2), ['third-party-v2', './vendor/acme-plugin'])
     assert.equal(pantheonEntries(run.config.plugins).length, 1)
-    // …the V1 list itself is the user's data and is left intact, so a downgrade
-    // still finds every entry; the two the host cannot load are never copied.
+    // …the singular list itself is the user's data and is left intact, so a
+    // downgrade still finds every entry; the two the host cannot load are never
+    // copied.
     assert.deepEqual(run.config.plugin, [
       './vendor/acme-plugin',
       'acme-plugin',
@@ -817,7 +831,7 @@ test('only a loadable third-party directory moves into the V2 plural key', async
   }
 })
 
-test('a Pantheon V1 path is never moved into the V2 list', async () => {
+test('a stale single-file path is never moved into the plugins list', async () => {
   const stalePantheon = join(REPO_ROOT, 'src', 'plugin.ts')
   const run = await installV2With({ plugin: [stalePantheon, 'acme-plugin'], plugins: [] })
   try {
@@ -857,8 +871,8 @@ test('a Pantheon-lookalike this installer cannot prove it owns is kept and repor
   const run = await installV2With({ plugins: [lookalike] })
   try {
     assert.ok(run.config.plugins.includes(lookalike))
-    assert.equal(pantheonEntries(run.config.plugins).length, 2)
-    assert.match(run.output, /another copy of the Pantheon V2 plugin/)
+    assert.equal(pantheonEntries(run.config.plugins).length, 1)
+    assert.match(run.output, /another copy of the Pantheon plugin/)
     assert.match(run.output, /hooks would run twice/)
   } finally {
     run.cleanup()

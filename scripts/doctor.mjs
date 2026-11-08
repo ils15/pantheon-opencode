@@ -30,10 +30,10 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { listV2UnsupportedFeatures } from '../src/pantheon/unsupported.mjs'
+import { describePluginOptionsReachability } from './install/capabilities.mjs'
 import { classifyFileInventory } from './install/file-inventory.mjs'
 import { staleTuiRefs } from './install/plugin.mjs'
 import { readState } from './install/state.mjs'
-import { describePluginOptionsReachability } from './install/capabilities.mjs'
 import { isSupportedNodeVersion, MIN_SUPPORTED_NODE_VERSION } from './node-engine-policy.mjs'
 
 // ---------------------------------------------------------------------------
@@ -578,11 +578,12 @@ function checkMcpConfig(args) {
     }
 
     // 3. Check for deprecated "tools" field format
-    // In opencode.json, tools was deprecated in favor of "permission" field
-    if (cfg.data.tools && !cfg.data.permission) {
-      warn(`${cfg.label}: uses deprecated top-level "tools" field — migrate to "permission"`)
-    } else if (cfg.data.tools && cfg.data.permission) {
-      info(`${cfg.label}: has both "tools" and "permission" — verify "tools" is intentional`)
+    // In opencode.json, tools was deprecated in favor of the "permissions"
+    // rules array (the plural key is the only spelling this host reads).
+    if (cfg.data.tools && !cfg.data.permissions) {
+      warn(`${cfg.label}: uses deprecated top-level "tools" field — migrate to "permissions"`)
+    } else if (cfg.data.tools && cfg.data.permissions) {
+      info(`${cfg.label}: has both "tools" and "permissions" — verify "tools" is intentional`)
     }
 
     // 4. Check MCP servers list — verify tool references
@@ -1533,12 +1534,14 @@ export function resolveInstalledPackageRoot(pluginPath) {
  * Pantheon; anything else belongs to the user and is never checked here.
  */
 const MANAGED_PLUGIN_IDENTITIES = new Set([
-  'src/plugin.ts',
-  'src/plugins/pantheon-hooks.ts',
+  // Canonical plugin DIRECTORY (the loader contract: entries must be dirs).
   'src/plugin',
-  // Legacy V2 file ref from before the directory contract (still migrated by
-  // the installer, so a pre-migration config is ours too).
+  // The entry FILE: the directory shim re-exports it, and pre-directory-
+  // contract installs registered it directly, so a config carrying it is ours.
   'src/plugin.ts',
+  // The hooks plugin of the removed generation (stripped by the installer;
+  // a surviving registration is stale residue).
+  'src/plugins/pantheon-hooks.ts',
 ])
 
 /**
@@ -1733,139 +1736,29 @@ export function checkPluginVersionDrift(args) {
 }
 
 // ---------------------------------------------------------------------------
-// Check H4: V2 feature reduction (the surface a migrating user loses)
+// Check H4: feature reduction (the surface the plugin does not provide)
 // ---------------------------------------------------------------------------
 
 /**
- * Whether an opencode.json registers the V2 generation of the Pantheon plugin.
+ * Whether a plugin ref is a Pantheon-owned registration.
  *
- * The V2 contract is the PLURAL `plugins` key; V1 is the singular `plugin` key.
+ * The contract is the PLURAL `plugins` key; the singular `plugin` key is legacy.
  * So the key alone is not the test — a config can legitimately carry a
- * third-party entry in `plugins`. What identifies the generation is a Pantheon
- * V2 entry inside it. Matched on the `plugin` marker so all three real
- * spellings are recognised: the canonical DIRECTORY (`src/plugin`), an
- * absolute path to it, and the package export (`pantheon-opencode/plugin`).
+ * third-party entry in `plugins`. Ownership is decided by the installer's own
+ * identity set: the canonical DIRECTORY (`src/plugin`), its file spelling
+ * (`src/plugin.ts`, which the shim re-exports), the removed generation's hooks
+ * path, an absolute path ending in one of those identities (any install
+ * prefix), a path inside an installed `node_modules/pantheon-opencode` tree, or
+ * the package export (`pantheon-opencode/plugin`). A substring test would read
+ * every `*-plugin` entry as ours — exactly the false positive the identity set
+ * exists to prevent.
  *
  * @param {unknown} ref
  * @returns {boolean}
  */
-function isV2PluginRef(ref) {
-  // QA beta.20: the installer's V2 writer emits `{ package, options }` —
-  // `package` must be probed FIRST or a perfectly healthy config reads as
-  // "no V2 generation registered" (a false negative the field hit).
-  const candidate =
-    typeof ref === 'string'
-      ? ref
-      : ref && typeof ref === 'object'
-        ? (ref.package ?? ref.path ?? ref.source ?? ref.id ?? ref.name)
-        : undefined
-  return typeof candidate === 'string' && candidate.includes('plugin')
-}
-
-/**
- * Whether any reachable config registers the V2 generation of the Pantheon
- * plugin. Split out of {@link collectV2UnsupportedFeatures} because "is the V2
- * generation registered" and "does the seed list anything" are TWO facts: the
- * first is about the user's config, the second about this repository's seed. A
- * single `features.length === 0` cannot tell them apart, and conflating them
- * let an emptied seed print "no V2 generation registered — nothing reduced".
- *
- * @param {{path:string, data:object}[]} configs
- * @returns {boolean}
- */
-export function isV2GenerationRegistered(configs) {
-  return configs.some((cfg) => {
-    const list = cfg.data?.plugins
-    return Array.isArray(list) && list.some(isV2PluginRef)
-  })
-}
-
-/**
- * The V2 feature-reduction markers to report for a set of collected configs.
- *
- * Returns the shared seed verbatim when ANY reachable config registers the V2
- * generation, and an empty list otherwise. The strings come from
- * `src/pantheon/unsupported.mjs` — the same seed `getUnsupportedFeatures()`
- * is built from — so doctor cannot report a reduction the plugin does not, or
- * miss one it does. Nothing is reworded here.
- *
- * An empty result is ambiguous on its own and deliberately not interpreted
- * here: ask {@link isV2GenerationRegistered} for the registration fact, or
- * {@link describeV2Reduction} to get both at once.
- *
- * @param {{path:string, data:object}[]} configs
- * @returns {string[]}
- */
-export function collectV2UnsupportedFeatures(configs) {
-  return isV2GenerationRegistered(configs) ? listV2UnsupportedFeatures() : []
-}
-
-/**
- * Decide what H4 prints, from the two distinct facts rather than from one list
- * length.
- *
- * V2 is the only generation: an UNREGISTERED config is not a quiet "supported
- * V1 install" anymore, it is a stale V1 install — a registration the host will
- * not load — and it warns. Three cases, and the middle one used to be silently
- * reported as the first:
- *
- *   - not registered → warn. The host ignores everything Pantheon 1.x wrote,
- *     so this install runs with no Pantheon tool surface at all.
- *   - registered, seed EMPTY → warn. This is a packaging fault in THIS repo,
- *     not an absence of reduction: the V2 surface really is reduced and the
- *     report is missing. It must never claim "nothing reduced".
- *   - registered, seed populated → warn, listing every marker.
- *
- * Pure and exported so the empty-seed branch is testable without stubbing the
- * frozen seed module. `status` is returned alongside the text so a caller never
- * has to recover the case by matching on the message.
- *
- * @param {{registered:boolean, features:string[]}} input
- * @returns {{status:'reported'|'empty-seed'|'no-v2-generation', level:'info'|'warn', message:string}}
- */
-export function describeV2Reduction({ registered, features }) {
-  if (!registered) {
-    return {
-      status: 'no-v2-generation',
-      level: 'warn',
-      message:
-        'No V2 plugin generation registered — this looks like a stale V1 install: the host ' +
-        'ignores the singular `plugin` key Pantheon 1.x wrote, so no Pantheon plugin is ' +
-        'loading. Run `npx pantheon-opencode init` to register the V2 plugin.',
-    }
-  }
-  if (features.length === 0) {
-    return {
-      status: 'empty-seed',
-      level: 'warn',
-      message:
-        'Pantheon IS registered on the V2 plugin generation, but the shared ' +
-        'unsupported-feature seed is empty, so the reduction cannot be reported. ' +
-        "That is a fault in this installation's reporting, not an absence of " +
-        'reduction: the V2 surface registers a reduced tool set, so a clean ' +
-        'report would be false.',
-    }
-  }
-  return {
-    status: 'reported',
-    level: 'warn',
-    message:
-      'Pantheon is registered on the V2 plugin generation: 3 unconditional tools ' +
-      '(hashline_edit, pantheon_cost, pantheon_model) plus the host-dependent ones, and a ' +
-      'real hook/transform surface. Not provided on V2 (static seed — a live host can add ' +
-      `runtime markers on top): ${features.join(', ')}`,
-  }
-}
-
-/**
- * Whether a ref in the LEGACY singular `plugin` key is a Pantheon V1
- * registration. The installer never writes that key anymore and the host
- * ignores it entirely, so a hit is residue of a V1 install — drift worth
- * naming, never a supported configuration.
- * @param {unknown} ref
- * @returns {boolean}
- */
-export function isLegacyV1PluginRef(ref) {
+function isManagedRegistrationRef(ref) {
+  // The installer's writer emits `{ package, options }` — `package` must be
+  // probed FIRST or a perfectly healthy config reads as unregistered.
   const candidate =
     typeof ref === 'string'
       ? ref
@@ -1874,68 +1767,169 @@ export function isLegacyV1PluginRef(ref) {
         : undefined
   if (typeof candidate !== 'string') return false
   const normalized = candidate.replaceAll('\\', '/').replace(/\/$/, '')
-  // The exact identities the V1 installer registered (see managedPluginPath for
-  // the installed-copy suffix match). A third-party path that merely ENDS in
-  // `src/plugin.ts` is not ours and is never flagged.
-  if (normalized === 'src/plugin.ts' || normalized === 'src/plugins/pantheon-hooks.ts') return true
-  if (/(^|\/)pantheon-opencode(@[^/]+)?\/plugin$/.test(normalized)) return true
-  // A path inside an INSTALLED pantheon-opencode copy: compare the suffix after
-  // the package marker (the shape the old installer wrote). Only the V1
-  // identities count; a V2 entry in the singular key would be odd, but it is
-  // not V1 residue and is reported by other checks.
+  if (MANAGED_PLUGIN_IDENTITIES.has(normalized)) return true
+  if (pantheonPackageSpecifier(normalized) !== null) return true
   const marker = '/node_modules/pantheon-opencode/'
-  const markerIndex = normalized.toLowerCase().lastIndexOf(marker)
-  if (markerIndex !== -1) {
-    const suffix = normalized.slice(markerIndex + marker.length)
-    return suffix === 'src/plugin.ts' || suffix === 'src/plugins/pantheon-hooks.ts'
+  if (normalized.toLowerCase().includes(marker)) {
+    const suffix = normalized.slice(
+      normalized.toLowerCase().lastIndexOf(marker) + marker.length - 1,
+    )
+    if (MANAGED_PLUGIN_IDENTITIES.has(suffix)) return true
   }
-  return false
+  return [...MANAGED_PLUGIN_IDENTITIES].some((identity) => normalized.endsWith(`/${identity}`))
 }
 
 /**
- * Report the V2 feature reduction through doctor's own output shape
+ * Whether any reachable config registers the Pantheon plugin. Split out of
+ * {@link collectUnsupportedFeatures} because "is the plugin registered" and
+ * "does the seed list anything" are TWO facts: the first is about the user's
+ * config, the second about this repository's seed. A single
+ * `features.length === 0` cannot tell them apart, and conflating them let an
+ * emptied seed print "no plugin registered — nothing reduced".
+ *
+ * @param {{path:string, data:object}[]} configs
+ * @returns {boolean}
+ */
+export function isPantheonPluginRegistered(configs) {
+  return configs.some((cfg) => {
+    const list = cfg.data?.plugins
+    return Array.isArray(list) && list.some(isManagedRegistrationRef)
+  })
+}
+
+/**
+ * The feature-reduction markers to report for a set of collected configs.
+ *
+ * Returns the shared seed verbatim when ANY reachable config registers the
+ * plugin, and an empty list otherwise. The strings come from
+ * `src/pantheon/unsupported.mjs` — the same seed `getUnsupportedFeatures()`
+ * is built from — so doctor cannot report a reduction the plugin does not, or
+ * miss one it does. Nothing is reworded here.
+ *
+ * An empty result is ambiguous on its own and deliberately not interpreted
+ * here: ask {@link isPantheonPluginRegistered} for the registration fact, or
+ * {@link describeUnsupportedReduction} to get both at once.
+ *
+ * @param {{path:string, data:object}[]} configs
+ * @returns {string[]}
+ */
+export function collectUnsupportedFeatures(configs) {
+  return isPantheonPluginRegistered(configs) ? listV2UnsupportedFeatures() : []
+}
+
+/**
+ * Decide what H4 prints, from the two distinct facts rather than from one list
+ * length.
+ *
+ * There is one generation: an UNREGISTERED config is not a quiet "supported
+ * install" — it is a stale install whose registration the host will not load —
+ * and it warns. Three cases, and the middle one used to be silently reported as
+ * the first:
+ *
+ *   - not registered → warn. The host ignores the singular `plugin` key the
+ *     removed generation wrote, so this install runs with no Pantheon tool
+ *     surface at all.
+ *   - registered, seed EMPTY → warn. This is a packaging fault in THIS repo,
+ *     not an absence of reduction: the registered surface really is reduced and
+ *     the report is missing. It must never claim "nothing reduced".
+ *   - registered, seed populated → warn, listing every marker.
+ *
+ * Pure and exported so the empty-seed branch is testable without stubbing the
+ * frozen seed module. `status` is returned alongside the text so a caller never
+ * has to recover the case by matching on the message.
+ *
+ * @param {{registered:boolean, features:string[]}} input
+ * @returns {{status:'reported'|'empty-seed'|'no-registration', level:'info'|'warn', message:string}}
+ */
+export function describeUnsupportedReduction({ registered, features }) {
+  if (!registered) {
+    return {
+      status: 'no-registration',
+      level: 'warn',
+      message:
+        'No Pantheon plugin registered — this looks like a stale install of the removed ' +
+        'generation: the host ignores the singular `plugin` key it wrote, so no Pantheon ' +
+        'plugin is loading. Run `npx pantheon-opencode init` to register the plugin.',
+    }
+  }
+  if (features.length === 0) {
+    return {
+      status: 'empty-seed',
+      level: 'warn',
+      message:
+        'Pantheon IS registered, but the shared unsupported-feature seed is empty, so ' +
+        "the reduction cannot be reported. That is a fault in this installation's " +
+        'reporting, not an absence of reduction: the registered surface is a reduced ' +
+        'tool set, so a clean report would be false.',
+    }
+  }
+  return {
+    status: 'reported',
+    level: 'warn',
+    message:
+      'Pantheon is registered: 3 unconditional tools ' +
+      '(hashline_edit, pantheon_cost, pantheon_model) plus the host-dependent ones, and a ' +
+      'real hook/transform surface. Not provided (static seed — a live host can add ' +
+      `runtime markers on top): ${features.join(', ')}`,
+  }
+}
+
+/**
+ * Whether a ref in the LEGACY singular `plugin` key is a Pantheon registration.
+ * The installer never writes that key anymore and the host ignores it entirely,
+ * so a hit is residue of an old install — drift worth naming, never a supported
+ * configuration.
+ * @param {unknown} ref
+ * @returns {boolean}
+ */
+export function isStaleSingularKeyRef(ref) {
+  return isManagedRegistrationRef(ref)
+}
+
+/**
+ * Report the feature reduction through doctor's own output shape
  * (section + warn/info), so it lands in the health summary like every other
- * finding and never changes the exit code: a registered V2 install is a
- * supported configuration, not a broken one.
+ * finding and never changes the exit code: a registered install is a supported
+ * configuration, not a broken one.
  *
  * Pantheon refs in the legacy singular `plugin` key are named here too: that
- * key is dead on this host, so they are stale V1-install residue, never a
+ * key is dead on this host, so they are stale-install residue, never a
  * supported registration.
  *
  * @param {{target:string, env?:object}} args
- * @returns {'reported'|'empty-seed'|'no-v2-generation'|'no-config'}
+ * @returns {'reported'|'empty-seed'|'no-registration'|'no-config'}
  */
-export function checkV2UnsupportedFeatures(args) {
-  section('H4. V2 Feature Reduction')
+export function checkUnsupportedFeatures(args) {
+  section('H4. Feature Reduction')
 
   const configs = collectMcpConfigs(args)
   if (configs.length === 0) {
-    info('No opencode.json was found — V2 feature reduction check skipped')
+    info('No opencode.json was found — feature reduction check skipped')
     return 'no-config'
   }
 
   // Branch on REGISTRATION, not on the marker count: an empty seed on a
-  // registered V2 generation is a reporting fault and must not be reported as
-  // the reassuring "nothing reduced".
-  const registered = isV2GenerationRegistered(configs)
-  const verdict = describeV2Reduction({
+  // registered install is a reporting fault and must not be reported as the
+  // reassuring "nothing reduced".
+  const registered = isPantheonPluginRegistered(configs)
+  const verdict = describeUnsupportedReduction({
     registered,
-    features: collectV2UnsupportedFeatures(configs),
+    features: collectUnsupportedFeatures(configs),
   })
   if (verdict.level === 'info') info(verdict.message)
   else warn(verdict.message)
 
-  // Stale V1-install residue: Pantheon refs in the singular key are ignored by
+  // Stale-install residue: Pantheon refs in the singular key are ignored by
   // the host, so a config carrying them runs without those plugins. Named
-  // explicitly (with or without a V2 registration beside them).
+  // explicitly (with or without a plural-key registration beside them).
   const legacyRefs = configs.flatMap((cfg) =>
-    Array.isArray(cfg.data?.plugin) ? cfg.data.plugin.filter(isLegacyV1PluginRef) : [],
+    Array.isArray(cfg.data?.plugin) ? cfg.data.plugin.filter(isStaleSingularKeyRef) : [],
   )
   if (legacyRefs.length > 0) {
     warn(
       `${legacyRefs.length} Pantheon reference(s) sit in the legacy singular \`plugin\` key, ` +
-        'which the host ignores — residue of a V1 install. ' +
-        'Run `npx pantheon-opencode init` to clean them and register the V2 plugin.',
+        'which the host ignores — stale-install residue. ' +
+        'Run `npx pantheon-opencode init` to clean them and register the plugin.',
     )
   }
 
@@ -2027,12 +2021,11 @@ export async function checkTuiPlugin(args) {
     return 'missing-dir'
   }
 
-  const v1Bundle = join(copyDir, 'dist', 'tui.js')
-  const v2Bundle = join(copyDir, 'dist', 'tui-v2.js')
-  if (!existsSync(v1Bundle) && !existsSync(v2Bundle)) {
+  const bundle = join(copyDir, 'dist', 'tui.js')
+  if (!existsSync(bundle)) {
     error(
       `TUI bundle is missing under ${join(copyDir, 'dist')} — the copied plugin cannot be ` +
-        'loaded by either host. Run `npx pantheon-opencode init` to reinstall it.',
+        'loaded by the host. Run `npx pantheon-opencode init` to reinstall it.',
       { code: 'tui_plugin_dist_missing', classification: 'missing' },
     )
     return 'missing-dist'
@@ -2041,20 +2034,20 @@ export async function checkTuiPlugin(args) {
   const tuiConfig = readJson(tuiJsonPath)
   const pluginRefs = Array.isArray(tuiConfig?.plugin) ? tuiConfig.plugin : []
   const registered = pluginRefs.some((ref) => samePath(ref, copyDir))
-  // V2 discovers local plugins from the plugins directory instead of tui.json;
-  // its payload is identified by the sibling index.ts server entrypoint plus a
-  // package export that resolves to the compiled V2 bundle.
-  const v2Target = tuiExportTarget(copyDir)
-  const v2Discovered =
+  // The host discovers local plugins from the plugins directory instead of
+  // tui.json; the payload is identified by the sibling index.ts server
+  // entrypoint plus a package export that resolves to the compiled bundle.
+  const exportTarget = tuiExportTarget(copyDir)
+  const directoryDiscovered =
     existsSync(join(copyDir, 'index.ts')) &&
-    typeof v2Target === 'string' &&
-    v2Target.endsWith('tui-v2.js')
+    typeof exportTarget === 'string' &&
+    exportTarget.endsWith('tui.js')
 
-  if (!registered && !v2Discovered) {
+  if (!registered && !directoryDiscovered) {
     error(
       `TUI plugin is copied to ${copyDir} but no host discovery finds it: ` +
-        `${tuiJsonPath} does not reference it and the V2 discovery files are incomplete. ` +
-        'Run `npx pantheon-opencode init` to re-register it.',
+        `${tuiJsonPath} does not reference it and the plugin-directory discovery files are ` +
+        'incomplete. Run `npx pantheon-opencode init` to re-register it.',
       { code: 'tui_plugin_not_registered', classification: 'ambiguous' },
     )
     return 'unregistered'
@@ -2755,7 +2748,7 @@ async function checkInstallerFileInventory(args) {
   try {
     const { installOpenCode, isGlobalConfigDir } = await import('./install/opencode.mjs')
     const preview = await installOpenCode(args.target, true, false, selectedComponents, {
-      version: 'auto',
+      env: { ...process.env, OPENCODE_VERSION: 'v2' },
       quiet: true,
       quietPlan: true,
       planOnly: true,
@@ -2766,11 +2759,7 @@ async function checkInstallerFileInventory(args) {
         .filter((file) => typeof file.outputFingerprint === 'string')
         .map((file) => [file.path, { sha256: file.outputFingerprint }]),
     )
-    const layout = isGlobalConfigDir(args.target)
-      ? 'global'
-      : preview?.openCodeVersion === 'v2'
-        ? 'project-v2'
-        : 'project-v1'
+    const layout = isGlobalConfigDir(args.target) ? 'global' : 'project-v2'
     selectedLayouts = Object.fromEntries(selectedComponents.map((component) => [component, layout]))
     desiredUnavailable = false
   } catch {
@@ -2932,7 +2921,7 @@ async function main() {
   checkAgentsMdFreshness(args)
   checkSubagentDepthPlacement(args)
   checkPermissionTaskPresence(args)
-  checkV2UnsupportedFeatures(args)
+  checkUnsupportedFeatures(args)
 
   printSummary(args.target)
   if (jsonMode) writeDoctorJson(createDoctorJsonReport(args), exitCode)

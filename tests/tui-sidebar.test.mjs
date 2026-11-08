@@ -1,5 +1,5 @@
 /**
- * Focused tests for the OpenCode V2 TUI sidebar bundle (dist/tui-v2.js).
+ * Focused tests for the OpenCode V2 TUI sidebar bundle (dist/tui.js).
  *
  * The packaged V2 plugin is imported with a fake `context` — the same pattern
  * as tests/tui-packaged-smoke.test.mjs — so no OpenCode TUI runtime is needed.
@@ -79,7 +79,7 @@ const contextRowText = (row) =>
     : `${row.lead ?? ''}${row.tail ?? ''}${row.value}${row.suffix ?? ''}`
 
 async function loadV2() {
-  return import(pathToFileURL(join(root, 'src/plugins/tui/dist/tui-v2.js')).href)
+  return import(pathToFileURL(join(root, 'src/plugins/tui/dist/tui.js')).href)
 }
 
 /* ─── OpenCode V2 event union ─────────────────────────────
@@ -316,7 +316,7 @@ test('preset resolution: env beats file, malformed/none fall back to default', a
 
 test('header: the self-promo line is gone; the preset row carries the provider', async () => {
   const { presetHeaderLine } = await loadV2()
-  const source = readFileSync(join(root, 'src/plugins/tui/src/index-v2.tsx'), 'utf8')
+  const source = readFileSync(join(root, 'src/plugins/tui/src/index.tsx'), 'utf8')
 
   assert.equal(
     source.includes('OpenCode V2 · plugin TUI ativo'),
@@ -766,7 +766,7 @@ test('packaged plugin registers additive TUI surfaces, warms up eagerly, and dis
     // Absence assertions for the removed native quota surface: the TUI source
     // registers no quota block and no `pantheon.quota` RPC anywhere, and setup
     // above already proved no RPC channel is opened (client.rpc throws).
-    const v2Source = readFileSync(join(root, 'src/plugins/tui/src/index-v2.tsx'), 'utf8')
+    const v2Source = readFileSync(join(root, 'src/plugins/tui/src/index.tsx'), 'utf8')
     assert.equal(v2Source.includes('QuotaSidebarSummary'), false, 'no quota sidebar block')
     assert.equal(/block\('quota'\)/.test(v2Source), false, 'no quota block key')
     assert.equal(v2Source.includes('pantheon.quota'), false, 'no pantheon.quota RPC reference')
@@ -1769,7 +1769,7 @@ test('sidebar model degrades without vcs, messages, models, agent info or cost A
 })
 
 test('prompt footer is additive only and counts running delegations without toasting', async () => {
-  const source = readFileSync(join(root, 'src/plugins/tui/src/index-v2.tsx'), 'utf8')
+  const source = readFileSync(join(root, 'src/plugins/tui/src/index.tsx'), 'utf8')
   assert.equal(
     /\breplace\s*:/.test(source),
     false,
@@ -2485,7 +2485,7 @@ test('spend line: absent client.session.stats hides it without calling or throwi
 
 test('sidebar renders Context → Git status → Todo → Dispatch and no quota block', async () => {
   const { BLOCK_ICONS } = await loadV2()
-  const source = readFileSync(join(root, 'src/plugins/tui/src/index-v2.tsx'), 'utf8')
+  const source = readFileSync(join(root, 'src/plugins/tui/src/index.tsx'), 'utf8')
 
   const contextAt = source.indexOf('{/* Context —')
   const gitAt = source.indexOf('{/* Git status —')
@@ -2553,7 +2553,7 @@ test('sidebar renders Context → Git status → Todo → Dispatch and no quota 
 })
 
 test('Dispatch is a single block: one header, the live rows and one rollup', async () => {
-  const source = readFileSync(join(root, 'src/plugins/tui/src/index-v2.tsx'), 'utf8')
+  const source = readFileSync(join(root, 'src/plugins/tui/src/index.tsx'), 'utf8')
 
   assert.equal(
     (source.match(/label="Dispatch"/g) ?? []).length,
@@ -2601,7 +2601,7 @@ test('sidebar icons are single-width glyphs; the fixed header has none', async (
     assert.equal(emoji.test(icon), false, `${key} glyph is never measured as wide`)
   }
 
-  const source = readFileSync(join(root, 'src/plugins/tui/src/index-v2.tsx'), 'utf8')
+  const source = readFileSync(join(root, 'src/plugins/tui/src/index.tsx'), 'utf8')
   for (const label of ['Context', 'Git status', 'Todo', 'Dispatch']) {
     assert.ok(
       source.includes(`label="${label}"`),
@@ -2764,7 +2764,7 @@ test('block spacing: one blank line between rendered blocks, never before the fi
 
   // The fixed header is separated from the first block by exactly one blank
   // line, and the block list itself never opens or closes with one.
-  const source = readFileSync(join(root, 'src/plugins/tui/src/index-v2.tsx'), 'utf8')
+  const source = readFileSync(join(root, 'src/plugins/tui/src/index.tsx'), 'utf8')
   assert.match(
     source,
     /<Show when=\{model\.blocks\(\)\.length > 0\}>\s*<box height=\{1\} \/>/,
@@ -4187,7 +4187,7 @@ test('Dispatch: a child with no agent lands in the ? bucket', async () => {
 })
 
 test('Dispatch keeps click-through on live rows and adds no replace claim', async () => {
-  const source = readFileSync(join(root, 'src/plugins/tui/src/index-v2.tsx'), 'utf8')
+  const source = readFileSync(join(root, 'src/plugins/tui/src/index.tsx'), 'utf8')
 
   assert.match(
     source,
@@ -4283,7 +4283,7 @@ test('gauge colors: blue → green → yellow → red, with the bar and the perc
     assert.ok(row?.lead !== null && row?.value !== undefined)
   }
 
-  const source = readFileSync(join(root, 'src/plugins/tui/src/index-v2.tsx'), 'utf8')
+  const source = readFileSync(join(root, 'src/plugins/tui/src/index.tsx'), 'utf8')
   const rowView = source.slice(
     source.indexOf('function ContextRowView'),
     source.indexOf('function BlockHeader'),
@@ -5115,7 +5115,7 @@ test('new glyphs are one terminal cell and never match emoji-regex', async () =>
     assert.equal(emoji.test(glyph), false, `${name} is never measured as two cells`)
   }
 
-  const source = readFileSync(join(root, 'src/plugins/tui/src/index-v2.tsx'), 'utf8')
+  const source = readFileSync(join(root, 'src/plugins/tui/src/index.tsx'), 'utf8')
   assert.equal(source.includes('\u26A1'), false, 'the two-cell preset bolt is gone from the source')
   assert.match(source, /'⎇ '/, 'the branch row keeps the git glyph')
   // The aggregated design dropped the tree vocabulary entirely.

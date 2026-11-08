@@ -15,7 +15,7 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
-import { migrateV1toV2 } from '../scripts/install/config-migration.mjs'
+import { normalizeMcpConfigToV2 } from '../scripts/install/config-migration.mjs'
 
 const ROOT = process.cwd()
 const RUNNER = join(ROOT, 'scripts', 'test-opencode-sandbox.sh')
@@ -1502,7 +1502,7 @@ test('sandbox V2 MCP rewriting keeps managed entries under mcp.servers', (t) => 
     command: [python, 'scripts/mcp_resources.py'],
     enabled: true,
   })
-  assert.equal(migrateV1toV2(config).mcp.servers['pantheon-resources'].cwd, runtime)
+  assert.equal(normalizeMcpConfigToV2(config.mcp).servers['pantheon-resources'].cwd, runtime)
 
   const generated = generate(join(workDir, 'repo'), join(workDir, 'generated'), defsFile)
   const generatedSource = readFileSync(generated, 'utf8')

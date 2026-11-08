@@ -21,17 +21,19 @@ import { assertNoSymlinkAncestors, verifyPathRemoved } from './verify.mjs'
 export const FILE_INVENTORY_VERSION = 1
 
 /** Map installer-owned copy layouts to their logical component without names heuristics. */
-export function componentForInstalledPath(target, filePath, { isGlobal, version = 'v1' } = {}) {
+export function componentForInstalledPath(target, filePath, { isGlobal } = {}) {
   let relPath
   try {
     relPath = relativeTargetPath(target, filePath)
   } catch {
     return null
   }
-  const layout = isGlobal ? 'global' : version === 'v2' ? 'project-v2' : 'project-v1'
-  const agentRoot = isGlobal || version === 'v2' ? 'agents' : '.opencode/agents'
+  // `project-v2` is the persisted layout label of every on-disk inventory; the
+  // removed generation's `project-v1` layout no longer exists.
+  const layout = isGlobal ? 'global' : 'project-v2'
+  const agentRoot = isGlobal ? 'agents' : '.opencode/agents'
   const skillRoot = isGlobal ? 'skills' : '.opencode/skills'
-  const commandRoot = isGlobal || version === 'v2' ? 'commands' : '.opencode/commands'
+  const commandRoot = isGlobal ? 'commands' : '.opencode/commands'
   const pluginRoot = isGlobal ? 'plugins/pantheon-tui' : '.opencode/plugins/pantheon-tui'
   const runtimeRoot = isGlobal ? '' : '.opencode'
   const startsIn = (prefix) => relPath.startsWith(`${prefix}/`)

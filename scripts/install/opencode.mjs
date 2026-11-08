@@ -2,9 +2,10 @@
 /**
  * opencode.mjs — OpenCode platform installer
  *
- * V2-only install: the host MUST be OpenCode 2.x (`opencode2 --version` prints
- * "opencode v2.0.22"; the gate in scripts/install/opencode-version.mjs refuses a
- * confirmed 1.x host before any write). The registry this installer writes is
+ * Single-generation install: the host must be OpenCode 2.x (`opencode --version`
+ * prints "opencode v2.0.22"; the gate in scripts/install/opencode-version.mjs
+ * refuses any host it cannot confirm as 2.x BEFORE any write). The registry this
+ * installer writes is
  * the plural `plugins` array with the plugin DIRECTORY `src/plugin` in
  * `{ package, options }` form. A singular `plugin` key is legacy: Pantheon refs
  * found there are stripped, third-party loadable entries are carried over to
@@ -26,6 +27,11 @@ import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { copyAgentPrompts, writeAgentsMdManaged } from '../build-agents-md.mjs'
 import { backupWarning, createBackupSet, previewBackupSet } from './backup.mjs'
+import {
+  describePluginOptionsReachability,
+  formatV2CapabilityNotice,
+  v2Capabilities,
+} from './capabilities.mjs'
 import {
   bullet,
   colors,
@@ -81,7 +87,7 @@ import {
   summarizeChanges,
 } from './plan.mjs'
 import { findPlanDrift } from './plan-artifact.mjs'
-import { copyPluginFiles, installPlugin, registerPlugin, unregisterPlugin } from './plugin.mjs'
+import { copyPluginFiles, installPlugin, unregisterPlugin } from './plugin.mjs'
 import { PROMPT_CANCELED } from './prompt-result.mjs'
 import {
   checkRuntimePrerequisites,
@@ -97,11 +103,6 @@ import {
 } from './shared.mjs'
 import { createInitialState, hasState, readState, setComponentState, writeState } from './state.mjs'
 import { strings } from './strings.mjs'
-import {
-  describePluginOptionsReachability,
-  formatV2CapabilityNotice,
-  v2Capabilities,
-} from './capabilities.mjs'
 import { setupVenv, venvPythonPath } from './venv.mjs'
 import { assertNoSymlinkAncestors, assertPathWithin, assertSafeRemoval } from './verify.mjs'
 
@@ -651,9 +652,10 @@ export function resolveInstalledPlugin(plugin) {
   const normalized = normalizePluginRef(plugin)
   const stable = resolveStablePantheonRoot()
   if (PANTHEON_PLUGIN_IDENTITIES.has(normalized)) return join(stable.root, normalized)
-  // Legacy V2 file ref (pre-directory-contract): migrate to the installed
-  // plugin directory so the beta loader accepts the entry.
-  if (normalized === PANTHEON_V2_LEGACY_FILE) return join(stable.root, PANTHEON_PLUGIN)
+  // The file spelling of the entry (pre-directory-contract installs and the
+  // `./plugin` package export target) resolves to the installed plugin
+  // DIRECTORY so the loader accepts it.
+  if (normalized === PANTHEON_PLUGIN_FILE) return join(stable.root, PANTHEON_PLUGIN)
   const identity = managedPluginIdentity(plugin)
   if (identity !== null && isAbsolute(normalized)) {
     return INSTALLED_PANTHEON_PLUGIN_PATHS.get(identity) ?? plugin
@@ -699,7 +701,7 @@ function looksLikePluginPath(value) {
  * @param {string} configDir the config directory the loader resolves against
  * @returns {{ loadable: boolean, reason: 'directory'|'file'|'missing'|'npm-spec'|'unverifiable', resolved: string|null }}
  */
-export function v2PluginEntryLoadability(entry, configDir) {
+export function pluginEntryLoadability(entry, configDir) {
   if (typeof entry !== 'string' || entry.trim() === '') {
     return { loadable: false, reason: 'unverifiable', resolved: null }
   }
@@ -737,32 +739,26 @@ function describePluginEntry(entry) {
   return typeof entry === 'string' ? entry : JSON.stringify(entry)
 }
 
-// LEGACY V1 registrations, recognized ONLY so stale refs can be stripped from
-// a config (cleanup of an old install). The installer NEVER registers them and
-// the files no longer exist in this package.
-const PANTHEON_V1_PLUGIN = 'src/plugin.ts'
-const PANTHEON_V1_HOOKS = 'src/plugins/pantheon-hooks.ts'
-// Canonical V2 entry is the plugin DIRECTORY (beta loader contract: entries
+// The removed single-file generation registered `src/plugin.ts` (today the
+// real entry FILE that the directory shim re-exports) and
+// `src/plugins/pantheon-hooks.ts` (gone from this package). The hooks identity
+// survives ONLY so stale refs can be stripped from a config (cleanup of an old
+// install); the installer NEVER registers it. The file spelling is an ALIAS of
+// the directory identity below, never a registration of its own.
+const PANTHEON_PLUGIN_FILE = 'src/plugin.ts'
+const PANTHEON_LEGACY_HOOKS = 'src/plugins/pantheon-hooks.ts'
+// Canonical entry is the plugin DIRECTORY (host loader contract: entries
 // must be dirs with a real index.ts — file paths warn "must be a directory",
 // symlinks are ignored). The shim at src/plugin/index.ts re-exports the
 // real entry src/plugin.ts (single source of truth).
 const PANTHEON_PLUGIN = 'src/plugin'
-// Legacy V2 file ref from before the directory contract (installer + template
-// used to register src/plugin.ts). Still recognized for migration.
-const PANTHEON_V2_LEGACY_FILE = 'src/plugin.ts'
-// Legacy V1 npm export spelling; recognized only for cleanup, like the paths.
-const PANTHEON_V1_EXPORT = 'pantheon-opencode/plugin'
-const PANTHEON_V2_EXPORT = 'pantheon-opencode/plugin'
+// Package export spelling; recognized as the same plugin for dedup/cleanup.
+const PANTHEON_EXPORT = 'pantheon-opencode/plugin'
 const PANTHEON_PACKAGE_REF = /^pantheon-opencode(?:@[^/]+)?(?:\/(plugin|plugin))?$/
-const PANTHEON_PLUGIN_IDENTITIES = new Set([
-  PANTHEON_V1_PLUGIN,
-  PANTHEON_V1_HOOKS,
-  PANTHEON_PLUGIN,
-])
+const PANTHEON_PLUGIN_IDENTITIES = new Set([PANTHEON_LEGACY_HOOKS, PANTHEON_PLUGIN])
 
 const INSTALLED_PANTHEON_PLUGIN_PATHS = new Map([
-  [PANTHEON_V1_PLUGIN, resolve(ROOT, PANTHEON_V1_PLUGIN)],
-  [PANTHEON_V1_HOOKS, resolve(ROOT, PANTHEON_V1_HOOKS)],
+  [PANTHEON_LEGACY_HOOKS, resolve(ROOT, PANTHEON_LEGACY_HOOKS)],
   [PANTHEON_PLUGIN, resolve(ROOT, PANTHEON_PLUGIN)],
 ])
 
@@ -788,17 +784,13 @@ function managedPluginIdentity(ref) {
   // copy before registering the current package path. Do not match similarly
   // named third-party packages such as `pantheon-opencode-fork`.
   const packageRef = normalized.match(PANTHEON_PACKAGE_REF)
-  if (packageRef !== null) {
-    if (packageRef[1] === 'plugin') return PANTHEON_V1_PLUGIN
-    return PANTHEON_PLUGIN
-  }
+  if (packageRef !== null) return PANTHEON_PLUGIN
 
   if (PANTHEON_PLUGIN_IDENTITIES.has(normalized)) return normalized
-  if (normalized === PANTHEON_V2_LEGACY_FILE) return PANTHEON_PLUGIN
-  if (normalized === PANTHEON_V1_EXPORT || normalized.startsWith(`${PANTHEON_V1_EXPORT}@`)) {
-    return PANTHEON_V1_PLUGIN
-  }
-  if (normalized === PANTHEON_V2_EXPORT || normalized.startsWith(`${PANTHEON_V2_EXPORT}@`)) {
+  // The entry FILE and the package export are spellings of the directory
+  // identity, so dedup and cleanup treat them as one plugin.
+  if (normalized === PANTHEON_PLUGIN_FILE) return PANTHEON_PLUGIN
+  if (normalized === PANTHEON_EXPORT || normalized.startsWith(`${PANTHEON_EXPORT}@`)) {
     return PANTHEON_PLUGIN
   }
 
@@ -807,10 +799,10 @@ function managedPluginIdentity(ref) {
     for (const [identity, installedPath] of INSTALLED_PANTHEON_PLUGIN_PATHS) {
       if (absolutePath === normalizePluginPath(installedPath)) return identity
     }
-    // Legacy absolute V2 file path inside OUR installed package (pre-
-    // directory-contract installs) migrates to the directory identity.
+    // A file path inside OUR installed package (pre-directory-contract
+    // installs registered src/plugin.ts) migrates to the directory identity.
     // ROOT-scoped: third-party paths ending in src/plugin.ts stay theirs.
-    if (absolutePath === normalizePluginPath(resolve(ROOT, PANTHEON_V2_LEGACY_FILE))) {
+    if (absolutePath === normalizePluginPath(resolve(ROOT, PANTHEON_PLUGIN_FILE))) {
       return PANTHEON_PLUGIN
     }
     // beta.5: stale refs from OTHER installed copies of this package (older
@@ -823,10 +815,9 @@ function managedPluginIdentity(ref) {
     const markerIndex = withSlashes.lastIndexOf(installedMarker)
     if (markerIndex !== -1) {
       const suffix = withSlashes.slice(markerIndex + installedMarker.length)
-      if (suffix === PANTHEON_V1_PLUGIN) return PANTHEON_V1_PLUGIN
-      if (suffix === PANTHEON_V1_HOOKS) return PANTHEON_V1_HOOKS
+      if (suffix === PANTHEON_LEGACY_HOOKS) return PANTHEON_LEGACY_HOOKS
       if (suffix === PANTHEON_PLUGIN) return PANTHEON_PLUGIN
-      if (suffix === PANTHEON_V2_LEGACY_FILE) return PANTHEON_PLUGIN
+      if (suffix === PANTHEON_PLUGIN_FILE) return PANTHEON_PLUGIN
     }
   }
 
@@ -927,7 +918,7 @@ export function ensureTuiCopyRegistered(config, { tuiCopyDir }) {
  * @throws {Error} when the legacy block or the existing V2 option is null or
  *   type-invalid (checked before any config write)
  */
-export function applyContextSandboxToV2Plugins(plugins, legacySandbox) {
+export function applyContextSandboxToPluginEntry(plugins, legacySandbox) {
   if (!Array.isArray(plugins)) return plugins
 
   const index = plugins.findIndex((ref) => pluginReferenceIdentity(ref) === PANTHEON_PLUGIN)
@@ -995,9 +986,8 @@ export function isGlobalConfigDir(target) {
  *
  *   <configDir>/plugins/pantheon-tui      (tui.ts + dist/ + package manifests)
  *
- * V1 registers that copy through tui.json. V2 loads the copy only through the
- * `plugins` entry (see ensureTuiCopyRegistered); the V2 shim re-exports
- * dist/tui-v2.js.
+ * The copy is loaded only through the `plugins` entry (see
+ * ensureTuiCopyRegistered); its local shim re-exports dist/tui.js.
  *
  * @param {string} configDir - OpenCode config directory (target for global
  *   installs, <target>/.opencode for project installs)
@@ -1050,7 +1040,7 @@ export const CONTEXT_SIDEBAR_NEGATION = '-opencode.sidebar.context'
  * i.e. the copy under the config dir — never the in-package build artifact,
  * which a package upgrade replaces independently of what was deployed.
  */
-export const TUI_V2_BUNDLE_RELATIVE_PATH = 'dist/tui-v2.js'
+export const TUI_BUNDLE_RELATIVE_PATH = 'dist/tui.js'
 
 /**
  * Stable marker proving the deployed TUI bundle renders Pantheon's own Context
@@ -1061,7 +1051,7 @@ export const TUI_V2_BUNDLE_RELATIVE_PATH = 'dist/tui-v2.js'
  * tsdown/rolldown (or any minifier): mangling renames only non-exported
  * bindings, because consumers resolve exports by name. The bundle also cannot
  * tree-shake it away — the sidebar imports it, and
- * `tests/tui-sidebar.test.mjs` imports it from `dist/tui-v2.js`, so a build
+ * `tests/tui-sidebar.test.mjs` imports it from `dist/tui.js`, so a build
  * that drops the export fails the suite.
  *
  * A rebuild that changes the block's user-facing copy or internals keeps the
@@ -1071,13 +1061,13 @@ export const TUI_V2_BUNDLE_RELATIVE_PATH = 'dist/tui-v2.js'
 export const CONTEXT_BLOCK_BUNDLE_MARKER = 'contextBlockRows'
 
 /**
- * Path of the V2 TUI bundle inside an installed config dir.
+ * Path of the TUI bundle inside an installed config dir.
  *
  * @param {string} configDir - OpenCode config directory
- * @returns {string} absolute path of the copied `dist/tui-v2.js`
+ * @returns {string} absolute path of the copied `dist/tui.js`
  */
 export function resolveInstalledTuiBundlePath(configDir) {
-  return join(resolveTuiCopyTarget(configDir), TUI_V2_BUNDLE_RELATIVE_PATH)
+  return join(resolveTuiCopyTarget(configDir), TUI_BUNDLE_RELATIVE_PATH)
 }
 
 /**
@@ -1086,7 +1076,7 @@ export function resolveInstalledTuiBundlePath(configDir) {
  * Deliberately a plain byte scan: the answer must not depend on importing the
  * bundle (the host API it needs is absent while installing).
  *
- * @param {unknown} bundleText - contents of the deployed `dist/tui-v2.js`
+ * @param {unknown} bundleText - contents of the deployed `dist/tui.js`
  * @returns {{ ok: boolean, reason: string }} `reason` is empty when `ok`
  */
 export function bundleProvidesContextBlock(bundleText) {
@@ -1119,7 +1109,7 @@ export function bundleProvidesContextBlock(bundleText) {
  */
 export function inspectContextBlockCapability(configDir, { dryRun = false } = {}) {
   const installedPath = resolveInstalledTuiBundlePath(configDir)
-  const sourcePath = join(ROOT, 'src', 'plugins', 'tui', TUI_V2_BUNDLE_RELATIVE_PATH)
+  const sourcePath = join(ROOT, 'src', 'plugins', 'tui', TUI_BUNDLE_RELATIVE_PATH)
   const bundlePath = dryRun && !existsSync(installedPath) ? sourcePath : installedPath
   let bundleText
   try {
@@ -1268,9 +1258,9 @@ export function applyContextSidebarNegation(
 }
 
 /**
- * Sync the Pantheon TUI plugin payload. V2 does not use a project tui.json;
- * it loads the copy's server ONLY through the config `plugins` entry written
- * by ensureTuiCopyRegistered().
+ * Sync the Pantheon TUI plugin payload. The host does not discover the copy
+ * through a tui.json; it loads the copy's server ONLY through the config
+ * `plugins` entry written by ensureTuiCopyRegistered().
  *
  * Contract (single source of truth):
  *   1. ALWAYS copy src/plugins/tui → <configDir>/plugins/pantheon-tui with the
@@ -1280,29 +1270,27 @@ export function applyContextSidebarNegation(
  *      <target>/.opencode — covering every old reference shape: dist file
  *      paths, in-package src/plugins/tui dirs, bare plugins/pantheon-tui
  *      copies, and npx paths. A stale ref left in the non-target location
- *      would still be loaded and break the TUI. tui.json is the legacy V1
- *      discovery file: cleaned, never written.
+ *      would still be loaded and break the TUI. tui.json is the legacy
+ *      discovery file of the removed generation: cleaned, never written.
  *
  * @param {string} target - install target directory
  * @param {object} [opts]
  * @param {boolean} [opts.isGlobal=false] - flat global layout vs .opencode/
  * @param {boolean} [opts.dryRun=false]
  * @param {(change: object) => void} [opts.recorder] - optional change recorder for preview
- * @returns {'created'|'skipped'} status for the target registration
+ * @returns {'skipped'} always — no tui.json registration is written
  */
 export function syncTuiRegistration(
   target,
   {
     isGlobal = false,
     dryRun = false,
-    version = 'v2',
     recorder = null,
     reviewedRemovals = null,
     reviewedSnapshots = null,
   } = {},
 ) {
   const configDir = isGlobal ? target : join(target, '.opencode')
-  const targetTuiConfigPath = join(configDir, 'tui.json')
 
   // 1. Copy the host-specific plugin into the target config's
   //    plugins/pantheon-tui. This keeps the installed entry hermetic.
@@ -1319,7 +1307,6 @@ export function syncTuiRegistration(
   }
   const copyResult = copyPluginFiles(tuiSrcDir, tuiCopyDir, {
     dryRun,
-    version,
     recorder,
     reviewedRemovals,
     reviewedSnapshots,
@@ -1344,14 +1331,10 @@ export function syncTuiRegistration(
     })
   }
 
-  // The V2 host loads the copy's server-side RPC only from the config
-  // `plugins` list — ensureTuiCopyRegistered writes that entry during the
-  // config merge, so no tui.json is written here. V1 still requires the
-  // explicit tui.json registration.
-  if (version === 'v2') return 'skipped'
-
-  // 3. Register the copied directory in the selected target only.
-  return registerPlugin(targetTuiConfigPath, tuiCopyDir, { dryRun, recorder })
+  // The host loads the copy's server-side RPC only from the config `plugins`
+  // list — ensureTuiCopyRegistered writes that entry during the config merge,
+  // so no tui.json is written here.
+  return 'skipped'
 }
 
 /**
@@ -1662,10 +1645,10 @@ async function installPass(
   let reviewedSnapshots = null
   const S = strings()
 
-  // Configure the UI channel BEFORE any output: the version resolver below
-  // warns when a dry run skips the host probe, and a quiet preview (doctor's
-  // internal preflight, --json) must not print it. Quiet used to be applied
-  // much later, so that one warning escaped every silent preview.
+  // Configure the UI channel BEFORE any output: the host gate below refuses an
+  // unconfirmable host, and a quiet preview (doctor's internal preflight,
+  // --json) must not print anything before its caller decides. Quiet used to be
+  // applied much later, so warnings escaped every silent preview.
   configure({ dryRun, quiet: opts.quiet === true })
 
   // Beta 11 (Setup phase 1): a dry pass records every writer's intended change
@@ -1711,35 +1694,28 @@ async function installPass(
     _lastRun = { target, entries: ownRecorder?.entries ?? [], backupDir: null, applied: false }
   }
 
-  // Single-generation gate: the host must be OpenCode 2.x. A CONFIRMED 1.x
-  // host throws HERE, before any file is written; an unreadable host falls
-  // back to the only supported generation with a visible warning, and
-  // `versionAssumed` marks a plan built on that fallback (text + --json).
-  // The resolver's seam (env/probe/binary) is forwarded explicitly so
-  // unrelated installer options can never leak into the probe input.
+  // Single-generation gate: the host must be OpenCode 2.x. Any host the probe
+  // cannot CONFIRM as 2.x throws HERE, before any file is written — there is
+  // no generation to fall back to and no assumed-version plan. The resolver's
+  // seam (env/probe/binary) is forwarded explicitly so unrelated installer
+  // options can never leak into the probe input.
   //
   // A DRY RUN probes the host too: plan and apply must make the SAME
   // decision. The probe runs in a throwaway state directory, and the dry run
   // bounds it with the shorter DRY_RUN_PROBE_TIMEOUT_MS so a hanging host
   // cannot stall a preview.
-  let versionFallback = null
   const version = resolveOpenCodeVersion({
     env: opts.env,
     binary: opts.binary,
     probe: opts.probe,
-    warn: opts.warn,
     probeTimeoutMs: dryRun ? DRY_RUN_PROBE_TIMEOUT_MS : undefined,
-    onFallback: (reason) => {
-      versionFallback = reason
-    },
   })
   if (opts.preset) {
     throw new Error(
-      '--preset is not supported because V2 ignores the legacy active-preset marker. ' +
-        'Configure models using V2-native OpenCode configuration instead.',
+      '--preset is not supported because the legacy active-preset marker is not read. ' +
+        'Configure models using native OpenCode configuration instead.',
     )
   }
-  const versionAssumed = dryRun && versionFallback !== null
   // Both V2 notices belong to the run the USER started, not to the internal
   // plan pass the gate spawns. That pass runs with the same output channel, so
   // an ungated notice printed twice on the unauthorized-preview path (`init`
@@ -1935,11 +1911,6 @@ async function installPass(
       // suppresses prompts, not the summary or integrity/drift checks.
       planned = await installOpenCode(target, true, clean, [...componentSet], {
         ...opts,
-        // Hand the RESOLVED generation to the plan pass. Re-resolving would
-        // probe the host a second time and could land on a different answer
-        // (a transient probe failure), making the plan disagree with the
-        // apply it is about to authorize.
-        version,
         planTimestamp,
         planOnly: true,
         quiet: autoYes,
@@ -1961,7 +1932,6 @@ async function installPass(
         options: {
           clean,
           components: [...components],
-          version,
           isProject: opts.isProject === true,
           model: opts.model ?? null,
           smallModel: opts.smallModel ?? null,
@@ -2339,7 +2309,6 @@ async function installPass(
     const pluginStats = installPlugin(srcPluginDir, dstPluginDir, {
       dryRun,
       clean,
-      version,
       recorder,
       reviewedRemovals,
       reviewedSnapshots,
@@ -2359,7 +2328,6 @@ async function installPass(
       tuiStatus = syncTuiRegistration(target, {
         isGlobal,
         dryRun,
-        version,
         recorder,
         reviewedRemovals,
         reviewedSnapshots,
@@ -2820,7 +2788,7 @@ async function installPass(
       const migrated = []
       const blocked = []
       for (const plugin of config.plugin) {
-        const verdict = v2PluginEntryLoadability(plugin, target)
+        const verdict = pluginEntryLoadability(plugin, target)
         if (!verdict.loadable) {
           blocked.push({ plugin, reason: verdict.reason })
           continue
@@ -2895,16 +2863,16 @@ async function installPass(
           'volatile cache and can break mid-session. Fix: npm install -g pantheon-opencode, then re-run init.',
       )
     }
-    const resolvedV2 = resolveInstalledPlugin(PANTHEON_PLUGIN)
+    const resolvedPlugin = resolveInstalledPlugin(PANTHEON_PLUGIN)
     config.plugins = config.plugins.filter(
-      (plugin) => pluginReferenceIdentity(plugin) !== pluginReferenceIdentity(resolvedV2),
+      (plugin) => pluginReferenceIdentity(plugin) !== pluginReferenceIdentity(resolvedPlugin),
     )
     // Always use object form, even on a fresh install. The host passes plugin
     // options only from `{ package, options }`, and `context_pruner` reads
     // `ctx.options`. A bare string left the option unreachable; an empty object
     // keeps the contract visible and preserves user-added keys on re-run.
     config.plugins.push({
-      package: resolvedV2,
+      package: resolvedPlugin,
       options: existingV2Options === null ? {} : deepClone(existingV2Options),
     })
 
@@ -2930,7 +2898,7 @@ async function installPass(
     )
     if (lookalikes.length > 0) {
       warning(
-        'This config also points at another copy of the Pantheon V2 plugin, which this ' +
+        'This config also points at another copy of the Pantheon plugin, which this ' +
           'installer cannot prove it owns: ' +
           `${lookalikes.map(describePluginEntry).join(', ')}. With the entry registered in ` +
           'this install, BOTH copies would load and their hooks would run twice. Remove that ' +
@@ -2943,9 +2911,9 @@ async function installPass(
   // Report whether the entry the host will read can actually carry options.
   // Computed here, from the config this pass is about to write, so it answers
   // the installed state rather than an assumption.
-  const v2PluginOptions = describePluginOptionsReachability(config.plugins)
-  if (!v2PluginOptions.reachable && !opts.planOnly) {
-    warning(`Pantheon V2 plugin options are not reachable: ${v2PluginOptions.detail}`)
+  const pluginOptions = describePluginOptionsReachability(config.plugins)
+  if (!pluginOptions.reachable && !opts.planOnly) {
+    warning(`Pantheon plugin options are not reachable: ${pluginOptions.detail}`)
   }
 
   if (pantheonConfig !== null) {
@@ -3128,7 +3096,7 @@ async function installPass(
   // without this the user's enabled/limits choice is lost on an upgrade.
   // The legacy block itself is preserved for reference.
   // A null/type-invalid block throws HERE, before any config write.
-  configToWrite.plugins = applyContextSandboxToV2Plugins(
+  configToWrite.plugins = applyContextSandboxToPluginEntry(
     configToWrite.plugins,
     config.context_sandbox,
   )
@@ -3233,7 +3201,6 @@ async function installPass(
     // when the runtime component is not selected or failed its prerequisites).
     plan.mcpServers = mcpServers
     if (componentSet.has('runtime')) plan.runtimeEffects = runtimeEffects
-    plan.versionAssumed = versionAssumed
     planFiles = plan.files
     planTotals = plan.totals
     plannedChanges = plan.totals.create + plan.totals.update + plan.totals.remove
@@ -3336,7 +3303,7 @@ async function installPass(
     const verifiedFiles = summarizeChanges(ownRecorder?.entries ?? []).files.flatMap((file) => {
       if (!['create', 'update', 'unchanged'].includes(file.action) || !file.outputFingerprint)
         return []
-      const owner = componentForInstalledPath(target, file.path, { isGlobal, version })
+      const owner = componentForInstalledPath(target, file.path, { isGlobal })
       if (!owner) return []
       return [
         {
@@ -3425,12 +3392,11 @@ async function installPass(
         removals: removalPaths,
         target,
         openCodeVersion: version,
-        versionAssumed,
         configAdvisories,
         v2Capabilities: v2Capabilities(),
         decisionModelActivation,
         decisionModelDeferredSetup,
-        pluginOptions: v2PluginOptions,
+        pluginOptions,
       }
     : {
         ...stats,
@@ -3443,6 +3409,6 @@ async function installPass(
         openCodeVersion: version,
         configAdvisories,
         v2Capabilities: v2Capabilities(),
-        pluginOptions: v2PluginOptions,
+        pluginOptions,
       }
 }

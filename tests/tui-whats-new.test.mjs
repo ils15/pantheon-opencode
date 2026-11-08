@@ -11,7 +11,7 @@
  *      scripts/changelog-extract.mjs section semantics, pinned by parity).
  *   3. `whats-new-open.ts`   — the show-once decision: first run shows,
  *      dismissal pins, second run does not, version bump shows again.
- *   Wiring (source-level assertions, same style as tui-v2-dispatch-panel):
+ *   Wiring (source-level assertions, same style as tui-dispatch-panel):
  *   the V1/V2 entries fire it fire-and-forget, and both installer copies ship
  *   CHANGELOG.md at the plugin copy root so the window can read it offline.
  *
@@ -548,7 +548,7 @@ test('flow: nothing to show → no window and NO pin (the next start may still s
 /* ─── Wiring: the entries fire it fire-and-forget; installers ship the file ── */
 
 test('wiring: the V2 entry registers the window fire-and-forget; the V1 entry stays self-contained', async () => {
-  const v2 = readFileSync(join(root, 'src/plugins/tui/src/index-v2.tsx'), 'utf8')
+  const v2 = readFileSync(join(root, 'src/plugins/tui/src/index.tsx'), 'utf8')
   assert.match(v2, /import \{ maybeShowWhatsNewV2 \} from '\.\/whats-new'/)
   assert.match(v2, /void maybeShowWhatsNewV2\(context\)/, 'never awaited — startup never blocks')
 

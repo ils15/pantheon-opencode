@@ -12,14 +12,14 @@ function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'))
 }
 
-test('V2 export loads from a clean production-only consumer', () => {
-  const work = mkdtempSync(join(tmpdir(), 'pantheon-v2-consumer-'))
+test('the ./plugin export loads from a clean production-only consumer', () => {
+  const work = mkdtempSync(join(tmpdir(), 'pantheon-plugin-consumer-'))
   const consumer = join(work, 'consumer')
   const loader = join(consumer, 'load-plugins.ts')
   mkdirSync(consumer)
   writeFileSync(
     join(consumer, 'package.json'),
-    `${JSON.stringify({ name: 'v2-pack-check', private: true })}\n`,
+    `${JSON.stringify({ name: 'plugin-pack-check', private: true })}\n`,
   )
 
   try {
@@ -53,23 +53,22 @@ test('V2 export loads from a clean production-only consumer', () => {
       readJson(join(ROOT, 'package.json')).dependencies['@opencode-ai/plugin'],
     )
     assert.equal(installedManifest.devDependencies?.['@opencode-ai/plugin'], undefined)
+    // The single plugin export: ./plugin -> the entry file at src/plugin.ts.
     assert.equal(installedManifest.exports['./plugin'], './src/plugin.ts')
-    assert.equal(installedManifest.exports['./plugin'], './src/plugin.ts')
+    assert.equal(installedManifest.exports['./local-decision-router'], './src/pantheon/local-decision-router.ts')
 
     const consumerLock = readJson(join(consumer, 'package-lock.json'))
     const runtimePlugin = consumerLock.packages['node_modules/@opencode-ai/plugin']
-    assert.ok(runtimePlugin, 'V2 runtime dependency must be installed')
-    assert.equal(runtimePlugin.dev, undefined, 'V2 runtime dependency must not be dev-only')
+    assert.ok(runtimePlugin, 'the runtime dependency must be installed')
+    assert.equal(runtimePlugin.dev, undefined, 'the runtime dependency must not be dev-only')
 
     writeFileSync(
       loader,
       [
-        "import v2Plugin from 'pantheon-opencode/plugin'",
-        "import v1Plugin from 'pantheon-opencode/plugin'",
-        "if (v2Plugin.id !== 'pantheon-opencode') throw new Error('invalid V2 default export')",
-        "if (typeof v2Plugin.setup !== 'function') throw new Error('V2 setup is not callable')",
-        "if (typeof v1Plugin !== 'function') throw new Error('V1 export changed')",
-        "console.log('V2 and V1 exports loaded')",
+        "import plugin from 'pantheon-opencode/plugin'",
+        "if (plugin.id !== 'pantheon-opencode') throw new Error('invalid default export')",
+        "if (typeof plugin.setup !== 'function') throw new Error('setup is not callable')",
+        "console.log('plugin export loaded')",
         '',
       ].join('\n'),
     )

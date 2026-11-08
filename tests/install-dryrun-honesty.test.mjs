@@ -27,6 +27,12 @@ import { installOpenCode } from '../scripts/install/opencode.mjs'
 import { formatChangePlan } from '../scripts/install/plan.mjs'
 import { ROOT } from '../scripts/install/shared.mjs'
 
+
+// test:node runs on machines without an OpenCode binary, so the host gate
+// could not confirm the generation it writes for. Pin it for this file: every
+// install in here targets the only supported host line. Gate-specific tests
+// that pass their own env/probe stay deterministic either way.
+process.env.OPENCODE_VERSION = 'v2'
 const REPO_ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 
 /** Run `fn` with console.log/warn/error captured instead of printed. */
@@ -317,7 +323,7 @@ function relativePlan(plan, target) {
     .sort((left, right) => left.path.localeCompare(right.path))
 }
 
-test('default dry-run plan matches the pinned V2 plan on a V2 host', async () => {
+test('default dry-run plan matches the env-pinned plan on a 2.x host', async () => {
   // Equal-length temp roots keep path-embedded byte counts comparable.
   const targetA = mkdtempSync(join(tmpdir(), 'pantheon-plan-a-'))
   const targetB = mkdtempSync(join(tmpdir(), 'pantheon-plan-b-'))
@@ -338,10 +344,9 @@ test('default dry-run plan matches the pinned V2 plan on a V2 host', async () =>
     })
     const pinned = await installOpenCode(targetB, true, false, ['agents', 'plugins'], {
       ...common,
-      env: {},
+      env: { OPENCODE_VERSION: 'v2' },
     })
     assert.equal(auto.openCodeVersion, 'v2', 'the probe must resolve the real host generation')
-    assert.equal(auto.versionAssumed, false, 'a successful probe is not an assumption')
     assert.deepEqual(
       relativePlan(auto, targetA),
       relativePlan(pinned, targetB),
@@ -363,26 +368,30 @@ test('default dry-run plan matches the pinned V2 plan on a V2 host', async () =>
   }
 })
 
-test('a failed host probe stays loud and marks the plan as unverified', async () => {
-  const target = mkdtempSync(join(tmpdir(), 'pantheon-plan-fallback-'))
+test('a failed host probe refuses the plan before anything is planned', async () => {
+  const target = mkdtempSync(join(tmpdir(), 'pantheon-plan-unprobed-'))
   try {
-    const plan = await installOpenCode(target, true, false, ['agents'], {
-      yes: true,
-      headless: true,
-      quiet: true,
-      quietPlan: true,
-      env: {},
-      probe: () => {
-        throw new Error('no such binary: opencode')
+    // There is no generation to fall back to, so an unprovable host fails the
+    // run BEFORE the plan exists — the pin is the deterministic escape hatch.
+    await assert.rejects(
+      () =>
+        installOpenCode(target, true, false, ['agents'], {
+          yes: true,
+          headless: true,
+          quiet: true,
+          quietPlan: true,
+          env: {},
+          probe: () => {
+            throw new Error('no such binary: opencode')
+          },
+        }),
+      (err) => {
+        assert.match(err.message, /Could not probe the host OpenCode version/)
+        assert.match(err.message, /pin OPENCODE_VERSION=v2/)
+        return true
       },
-    })
-    // An unknown host is not a refusal (that is a CONFIRMED 1.x host): the plan
-    // continues on the only supported generation and is marked as assumed.
-    assert.equal(plan.openCodeVersion, 'v2')
-    assert.equal(plan.versionAssumed, true)
-    const text = formatChangePlan(target, plan)
-    assert.match(text, /could not be verified/)
-    assert.match(text, /may diverge/)
+    )
+    assert.equal(existsSync(join(target, 'opencode.json')), false, 'nothing was written')
   } finally {
     rmSync(target, { recursive: true, force: true })
   }

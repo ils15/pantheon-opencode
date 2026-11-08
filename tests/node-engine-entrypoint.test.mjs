@@ -5,6 +5,12 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 
+
+// test:node runs on machines without an OpenCode binary, so the host gate
+// could not confirm the generation it writes for. Pin it for this file: every
+// install in here targets the only supported host line. Gate-specific tests
+// that pass their own env/probe stay deterministic either way.
+process.env.OPENCODE_VERSION = 'v2'
 const ROOT = resolve(import.meta.dirname, '..')
 const CLI = join(ROOT, 'bin', 'pantheon-init.mjs')
 const POSTINSTALL = join(ROOT, 'scripts', 'postinstall.mjs')

@@ -70,7 +70,7 @@
     "scripts/install/*.mjs",
     "scripts/*.py",
     "src/plugin",
-    "src/pantheon/bridge.ts",
+    "src/plugin.ts",
     "README.md",
     "src/mcp/*.txt",
     "commands/*.md",

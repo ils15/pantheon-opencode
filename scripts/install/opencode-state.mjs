@@ -19,9 +19,9 @@
  *      `~/.local/share/opencode`.
  *
  * There is deliberately NO per-generation filename and no per-generation port:
- * both host generations read the same store, and the schema — not the filename
- * — is what distinguishes their ledgers. `PANTHEON_COST_DB` is NOT part of this
- * rule: it redirects the cost REPORT only, never the host's store.
+ * one host generation reads one store, and the schema — not the filename — is
+ * what distinguishes ledgers. `PANTHEON_COST_DB` is NOT part of this rule: it
+ * redirects the cost REPORT only, never the host's store.
  *
  * Plain Node ESM on purpose: this is consumed by the installer (no TypeScript)
  * and by tests, and the equivalent TypeScript resolver is not importable there.
@@ -70,11 +70,12 @@ export function resolveOpenCodeStatePath(env = process.env, home = homedir()) {
 }
 
 /**
- * One honest sentence about state sharing for the generation being installed.
+ * One honest sentence about state sharing for the install being performed.
  *
- * Both generations read one store, so "isolated" is never the right word. The
- * sentence names the resolved path, says where that path came from, and states
- * that Pantheon binds no service port (there is nothing to name).
+ * The host reads one store, so "isolated" is never the right word. The sentence
+ * names the resolved path, says where that path came from, and states that
+ * Pantheon binds no service port (there is nothing to name) and writes no
+ * per-generation store file.
  *
  * @param {NodeJS.ProcessEnv} [env]
  * @param {string} [home]
@@ -84,8 +85,8 @@ export function describeSharedState(env = process.env, home = homedir()) {
   const { path: dbPath, source } = resolveOpenCodeStatePath(env, home)
   const origin = source === 'OPENCODE_DB' ? 'set by OPENCODE_DB' : 'the host default'
   return (
-    `State is shared, not isolated per generation: OpenCode V1 and V2 read the same ` +
-    `store (${dbPath}; ${origin}). Pantheon configures no separate database and binds ` +
-    'no service port.'
+    `State is shared, not isolated: OpenCode reads one store ` +
+    `(${dbPath}; ${origin}). Pantheon configures no separate database, writes no ` +
+    'per-generation store file and binds no service port.'
   )
 }

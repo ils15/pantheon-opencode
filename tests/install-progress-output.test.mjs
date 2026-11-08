@@ -25,6 +25,12 @@ import { installPlugin } from '../scripts/install/plugin.mjs'
 import { ROOT } from '../scripts/install/shared.mjs'
 import { setupVenv } from '../scripts/install/venv.mjs'
 
+
+// test:node runs on machines without an OpenCode binary, so the host gate
+// could not confirm the generation it writes for. Pin it for this file: every
+// install in here targets the only supported host line. Gate-specific tests
+// that pass their own env/probe stay deterministic either way.
+process.env.OPENCODE_VERSION = 'v2'
 const REPO_ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const BIN = join(REPO_ROOT, 'bin', 'pantheon-init.mjs')
 

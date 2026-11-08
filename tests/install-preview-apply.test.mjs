@@ -52,6 +52,12 @@ import {
 } from '../scripts/install/plan.mjs'
 import { seedHealthyRuntime } from './helpers/install-runtime-fixture.mjs'
 
+
+// test:node runs on machines without an OpenCode binary, so the host gate
+// could not confirm the generation it writes for. Pin it for this file: every
+// install in here targets the only supported host line. Gate-specific tests
+// that pass their own env/probe stay deterministic either way.
+process.env.OPENCODE_VERSION = 'v2'
 const ROOT = process.cwd()
 const BIN = join(ROOT, 'bin', 'pantheon-init.mjs')
 // Deterministic English strings for message assertions (strings() caches locale).

@@ -25,14 +25,20 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import {
-  checkV2UnsupportedFeatures,
-  collectV2UnsupportedFeatures,
-  describeV2Reduction,
-  isV2GenerationRegistered,
+  checkUnsupportedFeatures,
+  collectUnsupportedFeatures,
+  describeUnsupportedReduction,
+  isPantheonPluginRegistered,
 } from '../scripts/doctor.mjs'
 import { installOpenCode } from '../scripts/install/opencode.mjs'
 import { listV2UnsupportedFeatures } from '../src/pantheon/unsupported.mjs'
 
+
+// test:node runs on machines without an OpenCode binary, so the host gate
+// could not confirm the generation it writes for. Pin it for this file: every
+// install in here targets the only supported host line. Gate-specific tests
+// that pass their own env/probe stay deterministic either way.
+process.env.OPENCODE_VERSION = 'v2'
 /** The seed every reporter must surface. */
 const SEED = listV2UnsupportedFeatures()
 
@@ -107,16 +113,16 @@ function config(label, data) {
   return { label, path: join('/nonexistent', 'opencode.json'), data }
 }
 
-test('doctor collects the reduction for a V2-registered config', () => {
+test('doctor collects the reduction for a registered config', () => {
   const configs = [config('project root', { plugins: ['src/plugin'] })]
   assert.deepEqual(
-    collectV2UnsupportedFeatures(configs),
+    collectUnsupportedFeatures(configs),
     SEED,
     'doctor must collect the seed verbatim, not a reworded copy',
   )
 })
 
-test('doctor recognises the absolute and package-export forms of the V2 entry', () => {
+test('doctor recognises the absolute and package-export forms of the entry', () => {
   for (const ref of [
     'src/plugin',
     '/opt/pantheon/src/plugin',
@@ -124,32 +130,32 @@ test('doctor recognises the absolute and package-export forms of the V2 entry', 
     { path: '/opt/pantheon/src/plugin' },
   ]) {
     assert.deepEqual(
-      collectV2UnsupportedFeatures([config('project root', { plugins: [ref] })]),
+      collectUnsupportedFeatures([config('project root', { plugins: [ref] })]),
       SEED,
-      `doctor must treat ${JSON.stringify(ref)} as a V2 registration`,
+      `doctor must treat ${JSON.stringify(ref)} as a Pantheon registration`,
     )
   }
 })
 
-test('doctor collects nothing for a V1-registered config', () => {
+test('doctor collects nothing for a singular-key-only config', () => {
   const configs = [
     config('project root', {
       plugin: ['/opt/pantheon/src/plugin.ts', '/opt/pantheon/src/plugins/pantheon-hooks.ts'],
     }),
   ]
-  assert.deepEqual(collectV2UnsupportedFeatures(configs), [])
+  assert.deepEqual(collectUnsupportedFeatures(configs), [])
 })
 
 test('doctor reports the reduction through its own output shape', () => {
   const sandbox = mkdtempSync(join(tmpdir(), 'pantheon-v2-report-doctor-'))
   try {
-    // A V2-generation project config: the plural `plugins` key holds the V2 entry.
+    // A project config: the plural `plugins` key holds the plugin entry.
     writeFileSync(
       join(sandbox, 'opencode.json'),
       JSON.stringify({ plugins: ['/opt/pantheon/src/plugin'] }, null, 2),
     )
     const output = captureOutputSync(() =>
-      checkV2UnsupportedFeatures({
+      checkUnsupportedFeatures({
         target: sandbox,
         env: { HOME: sandbox, PANTHEON_HOME: sandbox },
       }),
@@ -160,7 +166,7 @@ test('doctor reports the reduction through its own output shape', () => {
   }
 })
 
-test('an unregistered config is reported as a stale V1 install, not a quiet pass', () => {
+test('an unregistered config is reported as a stale install, not a quiet pass', () => {
   const sandbox = mkdtempSync(join(tmpdir(), 'pantheon-v1-stale-doctor-'))
   try {
     writeFileSync(
@@ -168,15 +174,15 @@ test('an unregistered config is reported as a stale V1 install, not a quiet pass
       JSON.stringify({ plugin: ['/opt/pantheon/src/plugin.ts'] }, null, 2),
     )
     const output = captureOutputSync(() =>
-      checkV2UnsupportedFeatures({
+      checkUnsupportedFeatures({
         target: sandbox,
         env: { HOME: sandbox, PANTHEON_HOME: sandbox },
       }),
     )
     assert.match(
       output,
-      /stale V1 install/,
-      'doctor must name the stale V1 install instead of staying quiet',
+      /stale install/,
+      'doctor must name the stale install instead of staying quiet',
     )
     for (const feature of SEED) {
       assert.ok(
@@ -192,26 +198,34 @@ test('an unregistered config is reported as a stale V1 install, not a quiet pass
 // ─── Registration vs seed emptiness (N1) ────────────────────────────────
 
 test('registration and seed emptiness are separate facts, not one list length', () => {
-  const v2 = [config('project root', { plugins: ['src/plugin'] })]
-  const v1 = [config('project root', { plugin: ['/opt/pantheon/src/plugin.ts'] })]
-  assert.equal(isV2GenerationRegistered(v2), true, 'a V2 registration must be detected')
-  assert.equal(isV2GenerationRegistered(v1), false, 'a V1-only config must not read as V2')
+  const registered = [config('project root', { plugins: ['src/plugin'] })]
+  const singularOnly = [config('project root', { plugin: ['/opt/pantheon/src/plugin.ts'] })]
+  assert.equal(
+    isPantheonPluginRegistered(registered),
+    true,
+    'a plural-key registration must be detected',
+  )
+  assert.equal(
+    isPantheonPluginRegistered(singularOnly),
+    false,
+    'a singular-key-only config must not read as registered',
+  )
 })
 
-test('an EMPTY seed on a registered V2 generation never reports "nothing reduced"', () => {
+test('an EMPTY seed on a registered install never reports "nothing reduced"', () => {
   // The bug this pins: doctor branched on `features.length === 0`, which
-  // conflates "no V2 generation registered" with "the seed is empty". An emptied
-  // seed therefore printed the reassuring and FALSE "No V2 plugin generation
-  // registered — nothing reduced" on a V2 install, hiding the very reduction
-  // H4 exists to report.
-  const verdict = describeV2Reduction({ registered: true, features: [] })
+  // conflates "no plugin registered" with "the seed is empty". An emptied seed
+  // therefore printed the reassuring and FALSE "no plugin registered — nothing
+  // reduced" on a registered install, hiding the very reduction H4 exists to
+  // report.
+  const verdict = describeUnsupportedReduction({ registered: true, features: [] })
   assert.ok(
     !verdict.message.includes('nothing reduced'),
-    `a registered V2 generation with an empty seed must not be reported as reducing nothing; got: ${verdict.message}`,
+    `a registered install with an empty seed must not be reported as reducing nothing; got: ${verdict.message}`,
   )
   assert.ok(
-    !verdict.message.includes('No V2 plugin generation registered'),
-    'the message must not claim the generation is unregistered while it is registered',
+    !verdict.message.includes('No Pantheon plugin registered'),
+    'the message must not claim the plugin is unregistered while it is registered',
   )
   assert.match(
     verdict.message,
@@ -222,15 +236,15 @@ test('an EMPTY seed on a registered V2 generation never reports "nothing reduced
   assert.equal(verdict.status, 'empty-seed', "an emptied seed must not report as 'reported'")
 })
 
-test('no V2 generation registered warns as a stale V1 install', () => {
-  const verdict = describeV2Reduction({ registered: false, features: [] })
+test('no registration warns as a stale install', () => {
+  const verdict = describeUnsupportedReduction({ registered: false, features: [] })
   assert.equal(verdict.level, 'warn', 'an unregistered config no longer loads anything')
-  assert.equal(verdict.status, 'no-v2-generation')
-  assert.match(verdict.message, /stale V1 install/)
+  assert.equal(verdict.status, 'no-registration')
+  assert.match(verdict.message, /stale install/)
 })
 
-test('a registered V2 generation with a populated seed reports every marker', () => {
-  const verdict = describeV2Reduction({ registered: true, features: SEED })
+test('a registered install with a populated seed reports every marker', () => {
+  const verdict = describeUnsupportedReduction({ registered: true, features: SEED })
   assert.equal(verdict.level, 'warn')
   assert.equal(verdict.status, 'reported')
   assertReportsEveryFeature(verdict.message, "doctor's H4 verdict")

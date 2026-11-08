@@ -1,6 +1,6 @@
 /**
  * Focused tests for the `pantheon.dispatch` panel of the OpenCode V2 TUI
- * plugin (dist/tui-v2.js).
+ * plugin (dist/tui.js).
  *
  * The panel is the full-width counterpart of the sidebar's Dispatch block and
  * both render `collectDispatch` — one collector, so a child can never be listed
@@ -19,7 +19,7 @@ import test from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
-const source = () => readFileSync(join(root, 'src/plugins/tui/src/index-v2.tsx'), 'utf8')
+const source = () => readFileSync(join(root, 'src/plugins/tui/src/index.tsx'), 'utf8')
 
 /* Same shim as the sidebar suite: under `node --test` the bare `solid-js`
  * specifier resolves to the SSR build, where effects are no-ops. */
@@ -44,7 +44,7 @@ const { createRoot, createSignal } = await import('solid-js')
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 async function loadV2() {
-  return import(pathToFileURL(join(root, 'src/plugins/tui/dist/tui-v2.js')).href)
+  return import(pathToFileURL(join(root, 'src/plugins/tui/dist/tui.js')).href)
 }
 
 /* Isolate the preset file leg: never read the developer's real ~/.config. */

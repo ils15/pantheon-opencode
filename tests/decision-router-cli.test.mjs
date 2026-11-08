@@ -17,6 +17,12 @@ import { runDecisionRouterCommand } from '../scripts/decision-router.mjs'
 import { readUserDecisionRouterConfig } from '../scripts/install/decision-router-config.mjs'
 import { isSupportedNodeVersion } from '../scripts/node-engine-policy.mjs'
 
+
+// test:node runs on machines without an OpenCode binary, so the host gate
+// could not confirm the generation it writes for. Pin it for this file: every
+// install in here targets the only supported host line. Gate-specific tests
+// that pass their own env/probe stay deterministic either way.
+process.env.OPENCODE_VERSION = 'v2'
 const ROOT = process.cwd()
 
 function sandbox() {

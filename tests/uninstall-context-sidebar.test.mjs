@@ -23,6 +23,12 @@ import { test } from 'node:test'
 import { CONTEXT_SIDEBAR_NEGATION } from '../scripts/install/opencode.mjs'
 import { uninstallOpenCode } from '../scripts/uninstall.mjs'
 
+
+// test:node runs on machines without an OpenCode binary, so the host gate
+// could not confirm the generation it writes for. Pin it for this file: every
+// install in here targets the only supported host line. Gate-specific tests
+// that pass their own env/probe stay deterministic either way.
+process.env.OPENCODE_VERSION = 'v2'
 const THIRD_PARTY_OBJECT = { package: './plugins/acme-local.ts', options: { retries: 2 } }
 
 /**

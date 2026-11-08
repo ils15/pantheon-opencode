@@ -15,6 +15,12 @@ import { delimiter, join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
+
+// test:node runs on machines without an OpenCode binary, so the host gate
+// could not confirm the generation it writes for. Pin it for this file: every
+// install in here targets the only supported host line. Gate-specific tests
+// that pass their own env/probe stay deterministic either way.
+process.env.OPENCODE_VERSION = 'v2'
 const SCRIPT = fileURLToPath(new URL('../scripts/package-evidence.mjs', import.meta.url))
 const VERSION = '1.2.3'
 const TARGET_SHA = 'a'.repeat(40)
@@ -90,7 +96,7 @@ function makeFixture() {
   for (const path of [
     'src/plugins/tui/dist/tui.js',
     'src/plugins/tui/dist/server.js',
-    'src/plugins/tui/dist/server-v2.js',
+    'src/plugins/tui/dist/server.js',
     'bin/pantheon-init.mjs',
     'scripts/doctor.mjs',
     'scripts/node-engine-policy.mjs',
@@ -207,7 +213,7 @@ test('package evidence packs once, validates npm payload, hashes it, and uses lo
     assert.ok(entries.includes('package/src/plugins/tui/package-lock.json'))
     assert.ok(entries.includes('package/src/plugins/tui/dist/tui.js'))
     assert.ok(entries.includes('package/src/plugins/tui/dist/server.js'))
-    assert.ok(entries.includes('package/src/plugins/tui/dist/server-v2.js'))
+    assert.ok(entries.includes('package/src/plugins/tui/dist/server.js'))
     assert.equal(readFileSync(join(result.outputDir, 'target-sha'), 'utf8').trim(), TARGET_SHA)
     assert.equal(metadata.lockfilePolicy.rootPackageLockfile, 'omitted-by-npm-pack')
     assert.match(metadata.lockfilePolicy.note, /source evidence/i)
@@ -239,14 +245,14 @@ test('package evidence packs once, validates npm payload, hashes it, and uses lo
 test('package evidence rejects a tarball missing the V2 server bundle', () => {
   const root = makeFixture()
   try {
-    rmSync(join(root, 'package/src/plugins/tui/dist/server-v2.js'))
+    rmSync(join(root, 'package/src/plugins/tui/dist/server.js'))
 
     const result = runEvidence(root)
 
     assert.equal(result.status, 1)
     assert.match(
       result.stderr,
-      /required package payload is missing: package\/src\/plugins\/tui\/dist\/server-v2\.js/,
+      /required package payload is missing: package\/src\/plugins\/tui\/dist\/server\.js/,
     )
   } finally {
     rmSync(root, { recursive: true, force: true })

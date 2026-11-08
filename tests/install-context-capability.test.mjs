@@ -36,7 +36,7 @@ import {
   CONTEXT_SIDEBAR_NEGATION,
   inspectContextBlockCapability,
   resolveInstalledTuiBundlePath,
-  TUI_V2_BUNDLE_RELATIVE_PATH,
+  TUI_BUNDLE_RELATIVE_PATH,
 } from '../scripts/install/opencode.mjs'
 import { ROOT } from '../scripts/install/shared.mjs'
 
@@ -77,10 +77,10 @@ function readCliConfig(dir) {
 }
 
 test('the installed bundle path is the copied TUI plugin dist, not the package source', () => {
-  assert.equal(TUI_V2_BUNDLE_RELATIVE_PATH, 'dist/tui-v2.js')
+  assert.equal(TUI_BUNDLE_RELATIVE_PATH, 'dist/tui.js')
   assert.equal(
     resolveInstalledTuiBundlePath('/tmp/config'),
-    join('/tmp/config', 'plugins', 'pantheon-tui', 'dist', 'tui-v2.js'),
+    join('/tmp/config', 'plugins', 'pantheon-tui', 'dist', 'tui.js'),
     'the check must read the copy the host loads',
   )
 })
@@ -127,7 +127,7 @@ test('inspectContextBlockCapability evaluates the in-package bundle on a dry run
     const verdict = inspectContextBlockCapability(dir, { dryRun: true })
     assert.equal(
       verdict.bundlePath,
-      join(ROOT, 'src', 'plugins', 'tui', TUI_V2_BUNDLE_RELATIVE_PATH),
+      join(ROOT, 'src', 'plugins', 'tui', TUI_BUNDLE_RELATIVE_PATH),
       'the preview reads the package artifact, not the (still missing) copy',
     )
     assert.equal(
@@ -153,7 +153,7 @@ test('inspectContextBlockCapability fails closed when the bundle is missing', ()
     const verdict = inspectContextBlockCapability(dir)
     assert.equal(verdict.ok, false)
     assert.match(verdict.reason, /missing or unreadable/)
-    assert.match(verdict.reason, /tui-v2\.js/)
+    assert.match(verdict.reason, /tui\.js/)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

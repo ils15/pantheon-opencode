@@ -40,6 +40,12 @@ import {
 } from '../scripts/install/opencode.mjs'
 import { ROOT, writeConfigWithBackup, writeIfChanged } from '../scripts/install/shared.mjs'
 
+
+// test:node runs on machines without an OpenCode binary, so the host gate
+// could not confirm the generation it writes for. Pin it for this file: every
+// install in here targets the only supported host line. Gate-specific tests
+// that pass their own env/probe stay deterministic either way.
+process.env.OPENCODE_VERSION = 'v2'
 const THIRD_PARTY_PLUGIN = '/tmp/vendor/src/plugin.ts'
 const THIRD_PARTY_HOOKS = '/tmp/pantheon-opencode-vendor/src/plugins/pantheon-hooks.ts'
 const THIRD_PARTY_PANTHEON_OPENCODE_PLUGIN = '/tmp/vendor/pantheon-opencode/src/plugin.ts'

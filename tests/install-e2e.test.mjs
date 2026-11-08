@@ -32,6 +32,12 @@ import { test as nodeTest } from 'node:test'
 import { installOpenCode } from '../scripts/install/opencode.mjs'
 import { ROOT } from '../scripts/install/shared.mjs'
 
+
+// test:node runs on machines without an OpenCode binary, so the host gate
+// could not confirm the generation it writes for. Pin it for this file: every
+// install in here targets the only supported host line. Gate-specific tests
+// that pass their own env/probe stay deterministic either way.
+process.env.OPENCODE_VERSION = 'v2'
 // Real-install tier: see tests/install-opencode.test.mjs. Excluded from
 // `test:node`, opted into by `npm run test:install` (mandatory in the release
 // gate).
@@ -198,21 +204,21 @@ for (const version of VERSIONS) {
         )
         assert.equal(
           readFileSync(join(tuiPluginDir, 'tui.ts'), 'utf8'),
-          readFileSync(join(ROOT, 'src', 'plugins', 'tui', 'tui-v2.ts'), 'utf8'),
+          readFileSync(join(ROOT, 'src', 'plugins', 'tui', 'tui.ts'), 'utf8'),
         )
         assert.equal(
           readFileSync(join(tuiPluginDir, 'index.ts'), 'utf8'),
-          readFileSync(join(ROOT, 'src', 'plugins', 'tui', 'index-v2.ts'), 'utf8'),
+          readFileSync(join(ROOT, 'src', 'plugins', 'tui', 'index.ts'), 'utf8'),
         )
         assert.equal(
           JSON.parse(readFileSync(join(tuiPluginDir, 'package.json'), 'utf8')).exports['./tui'],
-          './dist/tui-v2.js',
+          './dist/tui.js',
         )
       }
       assert.equal(
         readFileSync(join(tuiPluginDir, 'tui.ts'), 'utf8'),
         readFileSync(
-          join(ROOT, 'src', 'plugins', 'tui', version === 'v2' ? 'tui-v2.ts' : 'tui.ts'),
+          join(ROOT, 'src', 'plugins', 'tui', 'tui.ts'),
           'utf8',
         ),
         'installed TUI copy must use the entrypoint for the selected host generation',
