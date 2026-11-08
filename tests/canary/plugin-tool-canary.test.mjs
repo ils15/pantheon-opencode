@@ -125,6 +125,7 @@ import { after, before, test } from 'node:test'
 // V1 is gone; the matrix keys are already V2 vocabulary, so the old
 // pure shape converter reduces to identity here.
 const migrateV1toV2 = ({ permission }) => ({ permissions: permission })
+
 import {
   assertOpenCodeVersion,
   canarySandboxCleanup,

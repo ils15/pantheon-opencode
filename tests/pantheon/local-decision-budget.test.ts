@@ -131,7 +131,18 @@ function runConcurrentConfirm(
   return new Promise((resolve, reject) => {
     const child = spawn(
       process.execPath,
-      ['--import', 'tsx', '--input-type=module', '-e', script, moduleUrl, dbPath, String(clockMs), expectedPeriod, targetPeriod],
+      [
+        '--import',
+        'tsx',
+        '--input-type=module',
+        '-e',
+        script,
+        moduleUrl,
+        dbPath,
+        String(clockMs),
+        expectedPeriod,
+        targetPeriod,
+      ],
       {
         stdio: ['ignore', 'pipe', 'pipe'],
       },

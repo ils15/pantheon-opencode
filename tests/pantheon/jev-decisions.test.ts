@@ -22,10 +22,10 @@ import {
 import {
   checkJevEnvelope,
   consumeJevDecisionResult,
-  JEV_DECISION_MAX_CHOICES,
   filterNativeCapValidCandidates,
   isJevDecisionPreset,
   isNativeJevProvider,
+  JEV_DECISION_MAX_CHOICES,
   JEV_PRESET_ENVELOPE_KEYS,
   NATIVE_JEV_HOST_PROVIDERS,
   prepareJevDecisionRequest,
@@ -516,7 +516,11 @@ function testPresets(): void {
   assert.ok(capped.ok)
   if (capped.ok) {
     const choices = (capped.request.questions[0] as { choices: Array<{ value: string }> }).choices
-    assert.equal(choices.length, JEV_DECISION_MAX_CHOICES, 'the bound is catalog pool + host skills + none')
+    assert.equal(
+      choices.length,
+      JEV_DECISION_MAX_CHOICES,
+      'the bound is catalog pool + host skills + none',
+    )
     assert.ok(choices.some((option) => option.value === 'none'))
   }
 

@@ -524,8 +524,7 @@ export function mergeHostSkills(
   const bound = JEV_DECISION_MAX_CHOICES - 1
   // Host skills always ride (field report beta.15): reserve one slot per
   // host-installed skill so a full-catalog fallback can never evict them.
-  const catalogBound =
-    hostSkills === undefined ? bound : Math.max(0, bound - hostSkills.length)
+  const catalogBound = hostSkills === undefined ? bound : Math.max(0, bound - hostSkills.length)
   const merged = [...pool].slice(0, catalogBound)
   const seen = new Set(merged)
   if (hostSkills !== undefined) {

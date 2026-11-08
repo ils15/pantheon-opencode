@@ -4212,9 +4212,7 @@ async function main(): Promise<void> {
     }
     // One TypeScript copy since 2.0: plugin.ts. The shell script stays
     // shipped as the parity witness.
-    const mask = extract(
-      readFileSync(new URL('../../src/plugin.ts', import.meta.url), 'utf8'),
-    )
+    const mask = extract(readFileSync(new URL('../../src/plugin.ts', import.meta.url), 'utf8'))
     assert.ok(mask !== null, 'plugin.ts must define SECRET_MASK_RE')
     const shellRef = readFileSync(
       new URL('../../scripts/hooks/scan-secrets.sh', import.meta.url),

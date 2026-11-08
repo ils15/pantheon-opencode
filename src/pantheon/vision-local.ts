@@ -420,9 +420,7 @@ function mimeFromUrl(source: string): string | null {
   // strings (CodeQL js/polynomial-redos) — split on the first ? or #, then
   // take the last dot of the remaining path.
   const fragmentIndex = Math.min(
-    ...['?', '#']
-      .map((ch) => source.indexOf(ch))
-      .filter((index) => index >= 0),
+    ...['?', '#'].map((ch) => source.indexOf(ch)).filter((index) => index >= 0),
     source.length,
   )
   const path = source.slice(0, fragmentIndex)
