@@ -102,7 +102,16 @@ test('provider endpoints are declared unwired and no gateway provider reaches eg
   for (const endpoint of V2_DECISION_EGRESS_TRANSPORT.endpoints) {
     assert.match(endpoint, /^https:\/\//)
   }
-  assert.ok(V2_DECISION_EGRESS_TRANSPORT.endpoints.includes('https://api.openai.com/v1/decisions'))
+  // Compare parsed components, not substrings (CodeQL
+  // js/incomplete-url-substring-sanitization): a suffix-match would accept
+  // `https://api.openai.com/v1/decisions.evil.test`.
+  const expected = new URL('https://api.openai.com/v1/decisions')
+  assert.ok(
+    V2_DECISION_EGRESS_TRANSPORT.endpoints.some((endpoint) => {
+      const parsed = new URL(endpoint)
+      return parsed.origin === expected.origin && parsed.pathname === expected.pathname
+    }),
+  )
   assert.ok(
     V2_DECISION_EGRESS_TRANSPORT.endpoints.some((endpoint) => {
       const parsed = new URL(endpoint)
