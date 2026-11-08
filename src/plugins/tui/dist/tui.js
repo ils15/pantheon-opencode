@@ -4632,7 +4632,6 @@ const plugin = Plugin.define({
 		const updateNoticeTimer = setTimeout(() => {
 			checkForPantheonUpdate(context).catch(() => {});
 		}, 1e4);
-		stop.push(() => clearTimeout(updateNoticeTimer));
 		const unregisterPromptFooter = context.ui.slot({
 			append: "prompt.footer",
 			render: ({ sessionID }) => createComponent(PromptFooter, {
@@ -4660,6 +4659,7 @@ const plugin = Plugin.define({
 		});
 		maybeShowWhatsNewV2(context);
 		return () => {
+			clearTimeout(updateNoticeTimer);
 			if (typeof unregisterSidebar === "function") unregisterSidebar();
 			if (typeof unregisterHome === "function") unregisterHome();
 			if (typeof unregisterPromptFooter === "function") unregisterPromptFooter();

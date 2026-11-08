@@ -4498,7 +4498,6 @@ const plugin = Plugin.define({
     const updateNoticeTimer = setTimeout(() => {
       void checkForPantheonUpdate(context).catch(() => {})
     }, 10_000)
-    stop.push(() => clearTimeout(updateNoticeTimer))
     // Additive claim: the native prompt footer keeps its own tokens/cost line.
     const unregisterPromptFooter = context.ui.slot({
       append: 'prompt.footer',
@@ -4530,6 +4529,7 @@ const plugin = Plugin.define({
     // a missing changelog or unreadable state simply means no window.
     void maybeShowWhatsNewV2(context)
     return () => {
+      clearTimeout(updateNoticeTimer)
       if (typeof unregisterSidebar === 'function') unregisterSidebar()
       if (typeof unregisterHome === 'function') unregisterHome()
       if (typeof unregisterPromptFooter === 'function') unregisterPromptFooter()
