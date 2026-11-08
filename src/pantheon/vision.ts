@@ -3,8 +3,10 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   renameSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs'
@@ -989,6 +991,114 @@ export async function enforceTempFileCap(
   return evicted
 }
 
+// ─── Temp-dir reconciliation (restart orphans) ────────────────────────────
+// The LRU registry is process memory: after a host restart it starts EMPTY,
+// so `enforceTempFileCap` cannot see — and can never evict — the content-hash
+// images a previous process left on disk (the V2 path has no session threading
+// to sweep them; see the deferred-idle note in plugin.ts). Reconciliation
+// makes those orphans VISIBLE again without inventing a new deletion policy:
+// adoption only adds registry entries, and eviction still goes through the
+// existing cap + grace. The one provably-safe unlink is a stray
+// `<hash>.<ext>.tmp-<pid>` from `writeFileAtomicSync` — crash detritus that is
+// never a valid file — still age-guarded so a concurrent write in ANOTHER live
+// process survives. The directory itself is still never blanket-removed.
+
+/** Filename shape written by `writeTempImageSync` (sha256 hex + known ext). */
+const TEMP_IMAGE_NAME = /^[0-9a-f]{64}\.(?:png|jpe?g|webp|gif)$/
+
+/** Crash stray from `writeFileAtomicSync`: `<hash>.<ext>.tmp-<pid>`. */
+const TEMP_STRAY_NAME = /^[0-9a-f]{64}\.(?:png|jpe?g|webp|gif)\.tmp-\d+$/
+
+function defaultTempDir(): string {
+  return join(tmpdir(), TEMP_DIR_NAME)
+}
+
+/**
+ * Register on-disk content-hash images from previous processes into the LRU,
+ * keyed by their on-disk mtime as recency — so the OLDEST file is inserted
+ * FIRST (insertion order = eviction order) and the next cap enforcement
+ * evicts restart orphans before files this process actually touched. Entries
+ * already in the registry are never clobbered: a live entry keeps the recency
+ * this process gave it regardless of how old the file looks on disk.
+ * Returns how many files were adopted. Never throws.
+ */
+export function adoptOrphanTempImages(
+  dir: string = defaultTempDir(),
+  now: number = Date.now(),
+): number {
+  let names: string[]
+  try {
+    names = readdirSync(dir)
+  } catch {
+    return 0 // dir absent — nothing to adopt
+  }
+  const candidates: { path: string; mtimeMs: number }[] = []
+  for (const name of names) {
+    if (!TEMP_IMAGE_NAME.test(name)) continue
+    const path = join(dir, name)
+    if (tempFileLRU.has(path)) continue
+    try {
+      candidates.push({ path, mtimeMs: statSync(path).mtimeMs })
+    } catch {
+      // Vanished between readdir and stat — nothing to adopt.
+    }
+  }
+  candidates.sort((a, b) => a.mtimeMs - b.mtimeMs)
+  for (const { path, mtimeMs } of candidates) {
+    tempFileLRU.set(path, Math.min(mtimeMs, now))
+  }
+  return candidates.length
+}
+
+/**
+ * Unlink crash strays (`<hash>.<ext>.tmp-<pid>`) older than `graceMs`. A
+ * young stray belongs to a write in flight — possibly in ANOTHER live
+ * process — so age is the only safe signal. Real content-hash images are
+ * never touched. Returns how many strays were unlinked. Never throws.
+ */
+export function sweepStrayTempWrites(
+  dir: string = defaultTempDir(),
+  now: number = Date.now(),
+  graceMs: number = TEMP_FILE_GRACE_MS,
+): number {
+  let names: string[]
+  try {
+    names = readdirSync(dir)
+  } catch {
+    return 0
+  }
+  let swept = 0
+  for (const name of names) {
+    if (!TEMP_STRAY_NAME.test(name)) continue
+    const path = join(dir, name)
+    try {
+      if (now - statSync(path).mtimeMs <= graceMs) continue
+      unlinkSync(path)
+      swept += 1
+    } catch {
+      // Best effort: vanished concurrently, or unlink refused — leave it.
+    }
+  }
+  return swept
+}
+
+/** Dirs already reconciled this process (one pass per dir, then no-op). */
+const reconciledDirs = new Set<string>()
+
+/**
+ * Run adoption + stray sweep once per directory per process. Called off the
+ * first temp write so a restarted host re-bounds its temp dir without a
+ * startup hook; every pass is read/stat/unlink on one small directory.
+ */
+export function reconcileTempImagesOnce(dir: string = defaultTempDir()): {
+  adopted: number
+  swept: number
+} {
+  if (reconciledDirs.has(dir)) return { adopted: 0, swept: 0 }
+  reconciledDirs.add(dir)
+  return { adopted: adoptOrphanTempImages(dir), swept: sweepStrayTempWrites(dir) }
+}
+
 /**
  * Decode a base64 image data URI to its bytes. The regex accepts OPTIONAL
  * parameters between the mime type and the `;base64` marker (e.g.
@@ -1050,6 +1160,14 @@ function fileHasContent(filePath: string, data: Buffer): boolean {
  * regardless of a permissive umask; the bytes are never logged.
  */
 export function writeTempImageSync(data: Buffer, mime: string): string {
+  // First write this process makes: adopt previous-process orphans into the
+  // LRU and sweep crash strays, so the disk cap keeps its meaning across a
+  // restart. Best-effort — the write itself must never be blocked by it.
+  try {
+    reconcileTempImagesOnce()
+  } catch {
+    // Fail-open.
+  }
   const dir = join(tmpdir(), TEMP_DIR_NAME)
   mkdirSync(dir, { recursive: true, mode: 0o700 })
   chmodSync(dir, 0o700)
