@@ -175,6 +175,45 @@ by risk, not by promised date — no date on this page is a commitment.
 - Structural instruction evals and the release process that publishes only
   through explicit dispatch and fail-closed gates.
 
+## Backlog candidates — slop audit (2.x, unadjudged)
+
+Candidate themes from field discussion, each audited by the same standard as
+everything above: a candidate contributes when it changes behavior through a
+gate that fires — prose that asks nicely is the weakest tier and says so.
+
+1. **Step-ledger execution mode** — plan becomes a step chain; one session per
+   step, opened with only that step's summary, objective, ledger key, and
+   completion contract; a step may be marked done only when a verification
+   command exited 0 since the last edit; the harness — never the model — picks
+   the next step. Verdict: contributes if and only if the gates are
+   deterministic; as prose guidance it would be slop. Largest cost-payoff
+   claim to validate: harness scaffolding measured at up to 40x tokens per
+   task; cache hits an order of magnitude cheaper than misses.
+2. **Cache-stable prompt prefixes** — prompt assembly must keep the paid
+   prefix byte-stable across turns when inputs are unchanged. Verdict:
+   contributes; cheap, testable with the byte-stable generation machinery
+   that already exists.
+3. **A code-quality doctrine skill** — nine pillars, a table of common LLM
+   coding faults, a review checklist. Verdict: the most slop-prone candidate —
+   by our own eval doctrine, prose is the weakest enforcement tier. Only
+   admissible as `references/`-tier material for rules that gates cannot
+   already catch; anything a lint can enforce stays a lint.
+4. **Roster generator from a manifest** — roles bound to model+effort in one
+   manifest, generating agent files in batch under the existing frontmatter,
+   grant, and routing gates. Verdict: contributes — deterministic output
+   validated by gates that already fire; removes manual toil and makes the
+   model-tier mapping real.
+5. **Inline-vs-subagent economy** — prefer inline continuation on warm
+   context; reserve subagents for genuine isolation (review blindness is the
+   legitimate reason). Verdict: contributes only in its deterministic half —
+   an economy preference encoded as a budget or router rule; a prose
+   preference is slop.
+
+Not adopted: persuasion-engineering meta-skills (forced-function invocations
+and anti-rationalization tables). The failure mode is known — a capable model
+reconciles the directive and complies in the transcript, not in the diff;
+enforcement belongs in gates.
+
 ## Historical note
 
 Earlier roadmap revisions tracked individual defects with internal identifiers
