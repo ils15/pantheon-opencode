@@ -20,7 +20,9 @@ function run(args, cwd, env = {}) {
   return spawnSync(process.execPath, [CLI, ...args], {
     cwd,
     encoding: 'utf8',
-    env: { ...process.env, ...env },
+    // CI has no host binary: pin the generation so the probe refusal
+    // (correct in production) cannot make these CLI assertions env-dependent.
+    env: { ...process.env, OPENCODE_VERSION: 'v2', ...env },
   })
 }
 

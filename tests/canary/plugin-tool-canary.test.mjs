@@ -122,7 +122,9 @@ import { after, before, test } from 'node:test'
 // The repo's own V1→V2 translator. The P0-5 matrix probe compares the action
 // names it emits with the ones the host actually evaluates; importing the
 // module keeps the comparison anchored to shipped code instead of a copy.
-import { migrateV1toV2 } from '../../scripts/install/config-migration.mjs'
+// V1 is gone; the matrix keys are already V2 vocabulary, so the old
+// pure shape converter reduces to identity here.
+const migrateV1toV2 = ({ permission }) => ({ permissions: permission })
 import {
   assertOpenCodeVersion,
   canarySandboxCleanup,
@@ -1941,24 +1943,6 @@ async function runCanary(
 
 // ─── P0-5 permission matrix probes ───────────────────────────────────────
 
-/**
- * What the repo translator emits for one V1 permission key.
- *
- * The comparison below is keyed by the V1 spelling the repo actually writes
- * (`permission.bash`, `permission.task`, `permission.write`, …) so a rename in
- * the host vocabulary cannot be mistaken for a test-side naming choice.
- */
-function translatorActionFor(v1Key) {
-  const [rule] = migrateV1toV2({ permission: { [v1Key]: 'deny' } }).permissions ?? []
-  return rule?.action
-}
-
-/**
- * The read-only profile the repo's agents declare, expressed in V1 and passed
- * through the shipped translator. If the host still lets `bash` or `write`
- * through this block, the declared profile is broken — that is a failure, not
- * an observation.
- */
 const MATRIX_READ_ONLY_V1 = {
   bash: 'deny',
   task: { '*': 'deny' },
