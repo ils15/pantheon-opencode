@@ -547,18 +547,16 @@ test('flow: nothing to show → no window and NO pin (the next start may still s
 
 /* ─── Wiring: the entries fire it fire-and-forget; installers ship the file ── */
 
-test('wiring: the V2 entry registers the window fire-and-forget; the V1 entry stays self-contained', async () => {
-  const v2 = readFileSync(join(root, 'src/plugins/tui/src/index.tsx'), 'utf8')
-  assert.match(v2, /import \{ maybeShowWhatsNewV2 \} from '\.\/whats-new'/)
-  assert.match(v2, /void maybeShowWhatsNewV2\(context\)/, 'never awaited — startup never blocks')
+test('wiring: the canonical entry registers the window fire-and-forget', async () => {
+  const entry = readFileSync(join(root, 'src/plugins/tui/src/index.tsx'), 'utf8')
+  assert.match(entry, /import \{ maybeShowWhatsNewV2 \} from '\.\/whats-new'/)
+  assert.match(entry, /void maybeShowWhatsNewV2\(context\)/, 'never awaited — startup never blocks')
 
-  // The dist entries are deliberately self-contained: any module shared by
-  // both entries becomes a content-hashed chunk in dist/, changing the
-  // artifact shape the byte-reproducible-dist gate pins. The window is V2-only
-  // (the current generation); a V1 mirror would follow the inline-replica
-  // precedent instead of importing.
-  const v1 = readFileSync(join(root, 'src/plugins/tui/src/index.tsx'), 'utf8')
-  assert.equal(v1.includes('./whats-new'), false, 'the V1 entry shares no module with V2')
+  // There is one entry since 2.0: the dist stays single-file, so nothing
+  // else may import the whats-new module (coverage lives in the glue test
+  // below and in the sidebar/panel model suites).
+  const glue = readFileSync(join(root, 'src/plugins/tui/src/whats-new.tsx'), 'utf8')
+  assert.ok(glue.includes('pantheon.whats-new.close'))
 })
 
 test('wiring: the close bind is a gated keymap layer, dismissal marks seen', async () => {

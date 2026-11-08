@@ -8,11 +8,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const root = fileURLToPath(new URL('..', import.meta.url))
 
 test('packaged TUI bundle registers its slots, handles a task event, and disposes cleanly', async () => {
-  const {
-    createLiveDelegationStore,
-    default: plugin,
-    registerLiveDelegationEvents,
-  } = await import(pathToFileURL(join(root, 'src/plugins/tui/dist/tui.js')).href)
+  // Since 2.0 the bundle is the plugin lifecycle: slots in, panels out,
+  // clean dispose. Delegation reactivity is collector-driven and covered by
+  // the sidebar/dispatch model suites, not by a client-side live store.
+  const { default: plugin } = await import(
+    pathToFileURL(join(root, 'src/plugins/tui/dist/tui.js')).href
+  )
   const project = mkdtempSync(join(tmpdir(), 'pantheon-tui-smoke-'))
   // Hermetic "What's new" state: the packaged window reads its last-seen
   // version under $XDG_CONFIG_HOME; a tmp config dir with the CURRENT version
@@ -66,66 +67,6 @@ test('packaged TUI bundle registers its slots, handles a task event, and dispose
       'function',
       'the packaged plugin contributes its prompt footer',
     )
-
-    const taskEvent = {
-      properties: {
-        part: {
-          id: 'part_smoke',
-          sessionID: 'ses_smoke',
-          messageID: 'msg_smoke',
-          type: 'tool',
-          callID: 'call_smoke',
-          tool: 'task',
-          state: {
-            status: 'running',
-            input: { subagent_type: 'apollo', prompt: 'smoke interaction' },
-            time: { start: Date.now() },
-          },
-        },
-      },
-    }
-
-    // The live event adapter notifies the same store subscription the sidebar
-    // uses, and an identical task part does not invalidate it twice.
-    const liveStore = createLiveDelegationStore()
-    let sidebarInvalidations = 0
-    const unsubscribeSidebar = liveStore.subscribe(() => {
-      sidebarInvalidations += 1
-    })
-    const liveHandlers = new Map()
-    const unsubscribeLive = registerLiveDelegationEvents(
-      {
-        event: {
-          on(name, callback) {
-            const registered = liveHandlers.get(name) ?? []
-            registered.push(callback)
-            liveHandlers.set(name, registered)
-            return () =>
-              liveHandlers.set(
-                name,
-                registered.filter((entry) => entry !== callback),
-              )
-          },
-        },
-      },
-      liveStore,
-    )
-    const taskUpdate = liveHandlers.get('message.part.updated')?.[0]
-    assert.equal(
-      typeof taskUpdate,
-      'function',
-      'the live store registers a task-part update handler',
-    )
-    taskUpdate(taskEvent)
-    assert.equal(sidebarInvalidations, 1, 'a task event invalidates the sidebar store once')
-    taskUpdate(taskEvent)
-    assert.equal(
-      sidebarInvalidations,
-      1,
-      'a duplicate task event does not invalidate the sidebar store',
-    )
-    unsubscribeLive()
-    unsubscribeSidebar()
 
     await dispose()
   } finally {
