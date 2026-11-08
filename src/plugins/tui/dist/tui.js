@@ -60,6 +60,322 @@ const MODEL_USAGE_VISIBLE_CEILING = 3;
 const MODEL_USAGE_MESSAGE_LIMIT = 400;
 const MODEL_USAGE_SESSION_LIMIT = 8;
 //#endregion
+//#region src/pantheon-settings-state.ts
+/** Mirrors routing.yml `behaviors:` — drift-pinned by the registry test. */
+const SETTINGS_BEHAVIORS = Object.freeze([
+	{
+		id: "skill-auto-continue",
+		kind: "install",
+		title: "Auto-continue skill",
+		description: "Continue multi-step todos while keeping safety gates."
+	},
+	{
+		id: "skill-tdd-with-agents",
+		kind: "install",
+		title: "TDD with agents skill",
+		description: "RED, GREEN, REFACTOR test-driven implementation."
+	},
+	{
+		id: "skill-code-review-checklist",
+		kind: "install",
+		title: "Code review checklist skill",
+		description: "Systematic code review and quality gates."
+	},
+	{
+		id: "skill-prompt-refinery",
+		kind: "install",
+		title: "Prompt refinery skill",
+		description: "Vague requests refined — silent adjust, >> full contract."
+	},
+	{
+		id: "gate-idle-todo-enforcer",
+		kind: "runtime",
+		title: "Idle todo enforcer",
+		description: "Continues pending todos when a session goes idle."
+	},
+	{
+		id: "gate-context-pruner",
+		kind: "runtime",
+		title: "Context pruner",
+		description: "Prunes repeated tool output before summarization."
+	},
+	{
+		id: "gate-j1-risk-gate",
+		kind: "runtime",
+		title: "J1 risk gate",
+		description: "High-risk tool calls demand explicit human approval."
+	}
+]);
+new Set(SETTINGS_BEHAVIORS.map((b) => b.id));
+function isBehaviorDisabled(effective, id) {
+	return effective[id]?.action === "disable";
+}
+/** Toggle: disabled -> enabled (entry removed); enabled -> disabled (entry written). */
+function toggledOverrides(effective, id, reason = "toggled in /pantheon-settings") {
+	const next = { ...effective };
+	if (next[id]?.action === "disable") delete next[id];
+	else next[id] = {
+		action: "disable",
+		reason
+	};
+	return next;
+}
+function serializeOverrides(effective) {
+	const ordered = {};
+	for (const id of Object.keys(effective).sort()) ordered[id] = effective[id];
+	return `${JSON.stringify(ordered, null, 2)}\n`;
+}
+//#endregion
+//#region src/pantheon-settings.tsx
+/** @jsxImportSource @opentui/solid */
+/**
+* pantheon-settings.tsx — the /pantheon-settings window.
+*
+* Three pages (Gates / Overrides+About), keyboard-first: `up`/`down` select,
+* `enter`/`space` toggles the selected behavior (writes the GLOBAL overrides
+* file — the same one the installer and doctor consume), `tab` flips pages,
+* `escape`/`q` closes. The gated-layer pattern mirrors the dispatch panel and
+* whats-new windows. Every failure path is silent (fail-open).
+*/
+function globalOverridesPath() {
+	const xdgConfig = process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? "", ".config");
+	return join(xdgConfig, "opencode", "pantheon-overrides.json");
+}
+function readOverridesFromDisk() {
+	try {
+		return JSON.parse(readFileSync(globalOverridesPath(), "utf8"));
+	} catch {
+		return {};
+	}
+}
+function writeOverridesToDisk(effective) {
+	writeFileSync(globalOverridesPath(), serializeOverrides(effective), "utf8");
+}
+/** Rows shown on the Gates page: behavior state from the overrides file. */
+function buildSettingsRows(effective) {
+	return SETTINGS_BEHAVIORS.map((behavior) => ({
+		id: behavior.id,
+		title: behavior.title,
+		description: behavior.description,
+		disabled: isBehaviorDisabled(effective, behavior.id)
+	}));
+}
+function SettingsContent(props) {
+	const marker = (row) => row.disabled ? "[x]" : "[ ]";
+	return (() => {
+		var _el$ = createElement("box"), _el$9 = createElement("box"), _el$0 = createElement("text"), _el$1 = createTextNode(`tab: page · up/down: select · enter: toggle · esc/q: close`);
+		insertNode(_el$, _el$9);
+		insertNode(_el$, _el$0);
+		setProp(_el$, "flexDirection", "column");
+		setProp(_el$, "paddingLeft", 1);
+		setProp(_el$, "paddingRight", 1);
+		setProp(_el$, "paddingTop", 1);
+		insert(_el$, createComponent(Show, {
+			get when() {
+				return props.page() === 0;
+			},
+			get fallback() {
+				return (() => {
+					var _el$10 = createElement("box"), _el$11 = createElement("text"), _el$13 = createElement("text");
+					insertNode(_el$10, _el$11);
+					insertNode(_el$10, _el$13);
+					setProp(_el$10, "flexDirection", "column");
+					insertNode(_el$11, createTextNode(`About`));
+					setProp(_el$11, "attributes", 1);
+					insertNode(_el$13, createTextNode(`──────────────────────────────────────`));
+					insert(_el$10, createComponent(For, {
+						get each() {
+							return props.about();
+						},
+						children: (line) => (() => {
+							var _el$15 = createElement("text");
+							insert(_el$15, line);
+							effect((_$p) => setProp(_el$15, "fg", props.muted, _$p));
+							return _el$15;
+						})()
+					}), null);
+					effect((_p$) => {
+						var _v$ = props.fg, _v$2 = props.muted;
+						_v$ !== _p$.e && (_p$.e = setProp(_el$11, "fg", _v$, _p$.e));
+						_v$2 !== _p$.t && (_p$.t = setProp(_el$13, "fg", _v$2, _p$.t));
+						return _p$;
+					}, {
+						e: void 0,
+						t: void 0
+					});
+					return _el$10;
+				})();
+			},
+			get children() {
+				return [
+					(() => {
+						var _el$2 = createElement("text");
+						insertNode(_el$2, createTextNode(`Gates &amp; Overrides`));
+						setProp(_el$2, "attributes", 1);
+						effect((_$p) => setProp(_el$2, "fg", props.fg, _$p));
+						return _el$2;
+					})(),
+					(() => {
+						var _el$4 = createElement("text");
+						insertNode(_el$4, createTextNode(`──────────────────────────────────────`));
+						effect((_$p) => setProp(_el$4, "fg", props.muted, _$p));
+						return _el$4;
+					})(),
+					createComponent(For, {
+						get each() {
+							return props.rows();
+						},
+						children: (row, index) => (() => {
+							var _el$16 = createElement("box"), _el$17 = createElement("text"), _el$18 = createElement("text");
+							insertNode(_el$16, _el$17);
+							insertNode(_el$16, _el$18);
+							setProp(_el$16, "flexDirection", "column");
+							insert(_el$17, () => `${marker(row)} ${row.title}${props.selected() === index() ? "  <-" : ""}`);
+							insert(_el$18, () => `    ${row.description}`);
+							effect((_p$) => {
+								var _v$3 = props.selected() === index() ? props.fg : props.muted, _v$4 = props.selected() === index() ? 1 : void 0, _v$5 = props.muted;
+								_v$3 !== _p$.e && (_p$.e = setProp(_el$17, "fg", _v$3, _p$.e));
+								_v$4 !== _p$.t && (_p$.t = setProp(_el$17, "attributes", _v$4, _p$.t));
+								_v$5 !== _p$.a && (_p$.a = setProp(_el$18, "fg", _v$5, _p$.a));
+								return _p$;
+							}, {
+								e: void 0,
+								t: void 0,
+								a: void 0
+							});
+							return _el$16;
+						})()
+					}),
+					(() => {
+						var _el$6 = createElement("box");
+						setProp(_el$6, "height", 1);
+						return _el$6;
+					})(),
+					(() => {
+						var _el$7 = createElement("text");
+						insertNode(_el$7, createTextNode(`enter: disable/enable · writes pantheon-overrides.json (global)`));
+						effect((_$p) => setProp(_el$7, "fg", props.muted, _$p));
+						return _el$7;
+					})()
+				];
+			}
+		}), _el$9);
+		setProp(_el$9, "height", 1);
+		insertNode(_el$0, _el$1);
+		insert(_el$0, () => `${props.page() + 1}/2 · `, _el$1);
+		effect((_$p) => setProp(_el$0, "fg", props.muted, _$p));
+		return _el$;
+	})();
+}
+/**
+* Entry glue: read the overrides state, then show the window through the host
+* dialog stack once. The gated keymap layer is inert while the window is
+* closed. Never throws.
+*/
+async function maybeShowPantheonSettings(context) {
+	try {
+		const [open, setOpen] = createSignal(false);
+		const [page, setPage] = createSignal(0);
+		const [selected, setSelected] = createSignal(0);
+		const [effective, setEffective] = createSignal(readOverridesFromDisk());
+		const rows = () => buildSettingsRows(effective());
+		const about = () => [
+			`Pantheon v${resolveRunningVersion$1()}`,
+			`${SETTINGS_BEHAVIORS.length} togglable behaviors · OpenCode 2.x only`,
+			"Docs: docs/design/2.0-settings-and-install.md"
+		];
+		let dismiss = () => {};
+		try {
+			context.keymap.layer(() => ({
+				mode: "global",
+				enabled: () => open(),
+				commands: [
+					{
+						id: "pantheon.settings.close",
+						title: "Close settings",
+						bind: "escape,q",
+						run: () => {
+							if (!open()) return false;
+							dismiss();
+						}
+					},
+					{
+						id: "pantheon.settings.down",
+						title: "Select next",
+						bind: "down,j",
+						run: () => {
+							if (!open()) return false;
+							setSelected((current) => Math.min(current + 1, rows().length - 1));
+						}
+					},
+					{
+						id: "pantheon.settings.up",
+						title: "Select previous",
+						bind: "up,k",
+						run: () => {
+							if (!open()) return false;
+							setSelected((current) => Math.max(current - 1, 0));
+						}
+					},
+					{
+						id: "pantheon.settings.toggle",
+						title: "Disable/enable the selected behavior",
+						bind: "enter,space",
+						run: () => {
+							if (!open()) return false;
+							const row = rows()[selected()];
+							if (row === void 0) return false;
+							setEffective(toggledOverrides(effective(), row.id));
+							writeOverridesToDisk(effective());
+						}
+					},
+					{
+						id: "pantheon.settings.page",
+						title: "Flip page",
+						bind: "tab",
+						run: () => {
+							if (!open()) return false;
+							setPage((current) => current === 0 ? 1 : 0);
+						}
+					}
+				]
+			}));
+		} catch {}
+		const close = () => {
+			setOpen(false);
+			try {
+				context.ui.dialog.clear();
+			} catch {}
+		};
+		dismiss = close;
+		setOpen(true);
+		setPage(0);
+		try {
+			const theme = context.theme?.text ?? {};
+			context.ui.dialog.show(() => createComponent(SettingsContent, {
+				rows,
+				selected,
+				page,
+				version: resolveRunningVersion$1,
+				about,
+				get fg() {
+					return theme.base;
+				},
+				get muted() {
+					return theme.muted;
+				}
+			}), close);
+		} catch {}
+	} catch {}
+}
+function resolveRunningVersion$1() {
+	try {
+		return JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version ?? "unknown";
+	} catch {
+		return "unknown";
+	}
+}
+//#endregion
 //#region src/sidebar-width.ts
 const GRAPHEMES = new Intl.Segmenter(void 0, { granularity: "grapheme" });
 /** A grapheme the host draws two cells wide: emoji presentation, an extended
@@ -4539,6 +4855,27 @@ function DispatchCommandLayer(props) {
 	}));
 	return null;
 }
+/** Command layer for the settings window: palette + `/pantheon-settings`
+*  entry, deliberately with no raw keybind — the host already owns a native
+*  `/settings` surface (verified against the host command list), so a blind
+*  bind would fight it. The window's in-dialog binds stay gated by
+*  `enabled: () => open()` inside pantheon-settings.tsx. */
+function PantheonSettingsCommandLayer(props) {
+	props.context.keymap.layer(() => ({
+		mode: "global",
+		commands: [{
+			id: "pantheon.settings.open",
+			title: "Pantheon: Settings",
+			group: "Pantheon",
+			palette: true,
+			slash: { name: "pantheon-settings" },
+			run: () => {
+				maybeShowPantheonSettings(props.context);
+			}
+		}]
+	}));
+	return null;
+}
 /** Home-screen status contribution. The sidebar slot is session-scoped, so
 *  before the first prompt the sidebar may not mount at all (Known Issue) —
 *  this keeps a compact Pantheon line visible on the home footer meanwhile. */
@@ -4657,6 +4994,10 @@ const plugin = Plugin.define({
 			append: "app",
 			render: () => createComponent(DispatchCommandLayer, { context })
 		});
+		const unregisterSettingsCommands = context.ui.slot({
+			append: "app",
+			render: () => createComponent(PantheonSettingsCommandLayer, { context })
+		});
 		maybeShowWhatsNewV2(context);
 		return () => {
 			clearTimeout(updateNoticeTimer);
@@ -4665,6 +5006,7 @@ const plugin = Plugin.define({
 			if (typeof unregisterPromptFooter === "function") unregisterPromptFooter();
 			if (typeof unregisterPanel === "function") unregisterPanel();
 			if (typeof unregisterCommands === "function") unregisterCommands();
+			if (typeof unregisterSettingsCommands === "function") unregisterSettingsCommands();
 			delete globalState[SINGLETON];
 		};
 	}
