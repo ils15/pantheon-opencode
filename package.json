@@ -16,7 +16,7 @@
   },
   "scripts": {
     "postinstall": "node scripts/postinstall.mjs && node scripts/sync-tui.mjs",
-    "prepare": "husky",
+    "prepare": "git rev-parse --is-inside-work-tree >/dev/null 2>&1 && husky",
     "setup": "node scripts/setup.mjs",
     "build:agents-md": "node scripts/build-agents-md.mjs",
     "build:decision-router": "node scripts/build-decision-router.mjs",
