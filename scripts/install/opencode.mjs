@@ -746,6 +746,12 @@ function describePluginEntry(entry) {
 // install); the installer NEVER registers it. The file spelling is an ALIAS of
 // the directory identity below, never a registration of its own.
 const PANTHEON_PLUGIN_FILE = 'src/plugin.ts'
+// The 1.7-era V2-bridge entry: shipped in beta.1 only, gone from every later
+// package, and still sitting in configs upgraded from 1.7 (the identity
+// survives ONLY so the stale ref is stripped on registration — never
+// re-registered; field evidence beta.5: every boot toasted
+// "Plugin failed: .../src/plugin-v2").
+const PANTHEON_PLUGIN_V2_BRIDGE = 'src/plugin-v2'
 const PANTHEON_LEGACY_HOOKS = 'src/plugins/pantheon-hooks.ts'
 // Canonical entry is the plugin DIRECTORY (host loader contract: entries
 // must be dirs with a real index.ts — file paths warn "must be a directory",
@@ -755,10 +761,15 @@ const PANTHEON_PLUGIN = 'src/plugin'
 // Package export spelling; recognized as the same plugin for dedup/cleanup.
 const PANTHEON_EXPORT = 'pantheon-opencode/plugin'
 const PANTHEON_PACKAGE_REF = /^pantheon-opencode(?:@[^/]+)?(?:\/(plugin|plugin))?$/
-const PANTHEON_PLUGIN_IDENTITIES = new Set([PANTHEON_LEGACY_HOOKS, PANTHEON_PLUGIN])
+const PANTHEON_PLUGIN_IDENTITIES = new Set([
+  PANTHEON_LEGACY_HOOKS,
+  PANTHEON_PLUGIN_V2_BRIDGE,
+  PANTHEON_PLUGIN,
+])
 
 const INSTALLED_PANTHEON_PLUGIN_PATHS = new Map([
   [PANTHEON_LEGACY_HOOKS, resolve(ROOT, PANTHEON_LEGACY_HOOKS)],
+  [PANTHEON_PLUGIN_V2_BRIDGE, resolve(ROOT, PANTHEON_PLUGIN_V2_BRIDGE)],
   [PANTHEON_PLUGIN, resolve(ROOT, PANTHEON_PLUGIN)],
 ])
 
@@ -816,6 +827,7 @@ function managedPluginIdentity(ref) {
     if (markerIndex !== -1) {
       const suffix = withSlashes.slice(markerIndex + installedMarker.length)
       if (suffix === PANTHEON_LEGACY_HOOKS) return PANTHEON_LEGACY_HOOKS
+      if (suffix === PANTHEON_PLUGIN_V2_BRIDGE) return PANTHEON_PLUGIN
       if (suffix === PANTHEON_PLUGIN) return PANTHEON_PLUGIN
       if (suffix === PANTHEON_PLUGIN_FILE) return PANTHEON_PLUGIN
     }

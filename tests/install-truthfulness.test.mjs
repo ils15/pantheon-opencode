@@ -818,6 +818,25 @@ test('a stale single-file path is never moved into the plugins list', async () =
   }
 })
 
+test('the 1.7-era src/plugin-v2 bridge ref is pruned on registration', async () => {
+  // beta.1 shipped src/plugin-v2; every later package dropped it, but configs
+  // upgraded from 1.7 kept the entry — every boot toasted
+  // "Plugin failed: .../src/plugin-v2" (field report beta.5).
+  const bridge = join(REPO_ROOT, 'src', 'plugin-v2')
+  const relocated = '/old/prefix/node_modules/pantheon-opencode/src/plugin-v2'
+  const run = await installV2With({ plugins: [bridge, relocated] })
+  try {
+    assert.ok(
+      !run.config.plugins.some((ref) => JSON.stringify(ref).includes('plugin-v2')),
+      'the dead bridge ref must not survive registration',
+    )
+    const entries = pantheonEntries(run.config.plugins)
+    assert.equal(entries.length, 1, 'exactly one Pantheon V2 entry may remain')
+  } finally {
+    run.cleanup()
+  }
+})
+
 test('a provable relocated Pantheon install is retired, not registered twice', async () => {
   // `managedPluginIdentity` recognizes a V2 entry inside any
   // node_modules/pantheon-opencode copy, so the stale one is provably Pantheon:
