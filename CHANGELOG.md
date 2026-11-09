@@ -66,6 +66,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v2.0.0-beta.3] - 2026-11-09
+
+### Fixed
+
+- **update** — the global-install guard refused npm's own symlinked bin layout: `prefix/bin/pantheon-opencode` is a symlink into the package, so `pantheon-opencode update` answered the checkout refusal on every symlink-creating install. The running side follows links now; `npm link` stays refused (the installed entry itself must be a regular directory).
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
+
+ Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
 ## [v2.0.0-beta.2] - 2026-11-09
 
 ### Added
