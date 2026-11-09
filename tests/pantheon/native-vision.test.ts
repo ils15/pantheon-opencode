@@ -152,7 +152,11 @@ async function main(): Promise<void> {
     /session_id="ses_abc123"/,
     'session id relayed to the MCP (JSON-quoted)',
   )
-  assert.match(sessionContext ?? '', /relay session_id=/, 'the relay names the MCP channel (compact)')
+  assert.match(
+    sessionContext ?? '',
+    /relay session_id=/,
+    'the relay names the MCP channel (compact)',
+  )
   // sessionID vazio/whitespace → nenhuma instrução de repasse.
   assert.equal(
     (
