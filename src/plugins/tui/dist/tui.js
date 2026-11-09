@@ -343,11 +343,13 @@ async function maybeShowPantheonSettings(context) {
 		} catch {}
 		const close = () => {
 			setOpen(false);
+		};
+		dismiss = () => {
 			try {
 				context.ui.dialog.clear();
 			} catch {}
+			close();
 		};
-		dismiss = close;
 		setOpen(true);
 		setPage(0);
 		try {

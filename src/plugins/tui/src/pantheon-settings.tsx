@@ -189,15 +189,21 @@ export async function maybeShowPantheonSettings(context: Context): Promise<void>
       /* keymap API unavailable — the host dialog chrome still dismisses (ESC) */
     }
 
+    // The host may dismiss the dialog on its own and call this callback from
+    // inside its dismissal; mutating the dialog stack there re-enters the host
+    // mid-close and the swallowed failure leaves the window unclosable (the
+    // whats-new split: clear() lives only in dismiss, never in close).
     const close = () => {
       setOpen(false)
+    }
+    dismiss = () => {
       try {
         context.ui.dialog.clear()
       } catch {
         /* already closed */
       }
+      close()
     }
-    dismiss = close
     setOpen(true)
     setPage(0)
     try {
