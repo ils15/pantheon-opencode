@@ -16,6 +16,12 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Context } from '@opencode/plugin/tui/context'
 import { createSignal, For, Show } from 'solid-js'
+import {
+  buildDecisionSection,
+  readDecisionRouterConfig,
+  setDecisionEnabled,
+  writeDecisionRouterConfig,
+} from './decision-router-state.ts'
 import { buildJ1Section } from './j1-gate-status.ts'
 import {
   buildAboutSection,
@@ -32,6 +38,14 @@ import {
   serializeOverrides,
   toggledOverrides,
 } from './pantheon-settings-state.ts'
+import {
+  buildPresetSection,
+  clearActivePreset,
+  globalActivePresetPath,
+  projectActivePresetPath,
+  readActivePresetMarker,
+  writeActivePreset,
+} from './preset-state.ts'
 import { nextCheckState, type UpdateCheckState } from './update-notice.ts'
 import {
   buildUpdatesSection,
@@ -191,6 +205,8 @@ export async function maybeShowPantheonSettings(context: Context): Promise<void>
     const [load, setLoad] = createSignal<OverridesLoad>(readOverridesLoad())
     const [lastChecked, setLastChecked] = createSignal<string | undefined>(undefined)
     const [checking, setChecking] = createSignal(false)
+    const [decision, setDecision] = createSignal(readDecisionRouterConfig())
+    const [presetTick, setPresetTick] = createSignal(0)
 
     const currentVersion = resolveRunningVersion()
 
@@ -206,8 +222,18 @@ export async function maybeShowPantheonSettings(context: Context): Promise<void>
       return input
     }
 
+    const presetInput = () => {
+      void presetTick()
+      return {
+        globalName: readActivePresetMarker(globalActivePresetPath())?.name ?? null,
+        projectName: readActivePresetMarker(projectActivePresetPath())?.name ?? null,
+      }
+    }
+
     const sections = (): SettingsSection[] => [
       buildGatesSection(load()),
+      buildDecisionSection(decision()),
+      buildPresetSection(presetInput()),
       buildJ1Section(process.env, isBehaviorDisabled(mergedOverrides(load()), 'gate-j1-risk-gate')),
       buildUpdatesSection(updatesInput()),
       buildAboutSection(currentVersion),
@@ -267,6 +293,36 @@ export async function maybeShowPantheonSettings(context: Context): Promise<void>
       return undefined
     }
 
+    const toggleDecisionEnabled = () => {
+      const current = decision()
+      if (current.corrupt) return undefined // invalid file — writes refused
+      const next = setDecisionEnabled(current.config, !current.config.enabled)
+      if (!next.ok) return undefined // guard refused (egress consent missing)
+      try {
+        writeDecisionRouterConfig(next.config)
+        setDecision({ config: next.config, corrupt: false })
+      } catch {
+        /* disk write failed — keep the in-memory state */
+      }
+      return undefined
+    }
+
+    const applySelectedPreset = () => {
+      const id = selectedId()
+      if (id === undefined) return undefined
+      const name = id.startsWith('preset.') ? id.slice('preset.'.length) : null
+      if (name === null || name === 'project') return undefined
+      const path = globalActivePresetPath()
+      try {
+        if (name === 'none') clearActivePreset(path)
+        else writeActivePreset(path, name)
+        setPresetTick((tick) => tick + 1)
+      } catch {
+        /* disk write failed — the section keeps showing the last read state */
+      }
+      return undefined
+    }
+
     let dismiss: () => void = () => {}
     try {
       context.keymap.layer(() => ({
@@ -311,6 +367,8 @@ export async function maybeShowPantheonSettings(context: Context): Promise<void>
               if (!open()) return false
               const id = selectedId()
               if (id?.startsWith('gate.')) return toggleSelectedGate()
+              if (id === 'decision.enabled') return toggleDecisionEnabled()
+              if (id?.startsWith('preset.')) return applySelectedPreset()
               if (id === 'update.check') return checkUpdatesNow()
               return undefined
             },
