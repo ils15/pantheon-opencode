@@ -181,7 +181,11 @@ import {
 } from './pantheon/todo-enforcer.ts'
 import { createV2ToolDefinitions, type V2ToolResult } from './pantheon/tools.ts'
 import { UNSUPPORTED_FEATURE_SEED } from './pantheon/unsupported.mjs'
-import { sanitizeVisionHistory } from './pantheon/vision.ts'
+import {
+  isNativeVisionSession,
+  modelAcceptsImages,
+  sanitizeVisionHistory,
+} from './pantheon/vision.ts'
 import type { HookPayload, HookResult } from './plugins/hook-runner.ts'
 
 // ─── Unsupported Features Registry ───────────────────────────────────────
@@ -1460,8 +1464,31 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
             typeof admission?.sessionID === 'string' && admission.sessionID.trim() !== ''
               ? admission.sessionID
               : undefined
-          const visualContext = buildV2VisionPromptContext(prompt.files, prompt.text, sessionID)
-          if (visualContext) prompt.text = `${prompt.text}\n\n${visualContext}`
+          // Native-vision sessions get ZERO injected text (field feedback
+          // beta.5: "zero coisas" — the image flows to the model directly and
+          // the relay block sat above the user's own words). The relay stays
+          // ONLY for intercepted (non-native) sessions, where it is the
+          // model's only bridge to the materialized file. Classification:
+          // the chat.message hook's per-session set, plus a direct session
+          // lookup when the host exposes one (first prompt of a session).
+          const nativeByLookup = await (async () => {
+            if (sessionID === undefined) return false
+            try {
+              const lookup = sessionCtx.get?.call(sessionCtx, { sessionID })
+              const session = lookup instanceof Promise ? await lookup : (lookup as unknown)
+              const model = (session as { model?: unknown } | undefined)?.model as
+                | { providerID?: string; modelID?: string }
+                | undefined
+              if (!model || typeof model.modelID !== 'string') return false
+              return modelAcceptsImages(model as never, model.providerID)
+            } catch {
+              return false
+            }
+          })()
+          if (sessionID !== undefined && !isNativeVisionSession(sessionID) && !nativeByLookup) {
+            const visualContext = buildV2VisionPromptContext(prompt.files, prompt.text, sessionID)
+            if (visualContext) prompt.text = `${prompt.text}\n\n${visualContext}`
+          }
         }
 
         // Local deterministic recommendations are advisory only. This path

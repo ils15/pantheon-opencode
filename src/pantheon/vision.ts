@@ -383,6 +383,20 @@ export function providerIsTextOnly(providerID: string): boolean {
 }
 
 /** Return whether OpenCode's current model is known to accept image input. */
+/**
+ * Sessions whose ACTIVE model accepts images natively (classified per user
+ * message by the chat.message hook). The prompt hook consults this to inject
+ * NOTHING for native sessions — the image flows to the model directly and
+ * the relay block was pure noise above the user's own words (field feedback
+ * beta.5: "zero coisas"). Intercepted (non-native) sessions keep the relay:
+ * there it is the model's only bridge to the materialized file.
+ */
+const nativeVisionSessions = new Set<string>()
+
+export function isNativeVisionSession(sessionID: string): boolean {
+  return nativeVisionSessions.has(sessionID)
+}
+
 export function modelAcceptsImages(model: ModelInfo | undefined, providerID?: string): boolean {
   if (!model) {
     // Fail-closed for known text-only providers
@@ -2342,7 +2356,6 @@ export function createVisionHandler(input: PluginInput) {
   // file is only unlinked when the LAST session releases it (P2-4).
   const tempFileRefs = new Map<string, Set<string>>()
   const sessionVisionText = new Map<string, Map<string, string>>()
-  const nativeVisionSessions = new Set<string>()
   const sessionDescriptionCache = new Map<string, Map<string, DescriptionCacheEntry>>()
   let configPromise: Promise<VisionConfig> | null = null
   let toolNamePromise: Promise<string | null> | null = null
