@@ -75,12 +75,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **validate** — structural instruction evals (tests/eval) in the regular node tier; the secret-mask parity pins the single TypeScript copy
 - **install** — native plugin-add happy path (`opencode plugin add pantheon-opencode`); npx init demoted to the 1.x migration path
 - **routing** — Jev choice ceiling 32 with reserved host-skill slots (host skills always ride, field report beta.15)
+- **tui** — `/pantheon-settings` window (palette: `Pantheon: Settings`): keyboard-first toggles for the runtime gates, writing the global `pantheon-overrides.json` the installer and doctor consume
 
 ### Changed
 
 - **plugin** — one generation, canonical names: src/plugin.ts, decision-* modules, tui/server TUI, PANTHEON_* env vars
 - **installer** — the probe must confirm OpenCode 2.x before any write; the singular plugin key is legacy cleanup; version-gate tests speak the refusal contract
 - **doctor** — named-behavior override validation (check K) with --fix quarantine; the report names its source database
+
+### Fixed
+
+- **vision** — temp-dir reconciliation: restart orphans in `pantheon-vision` become visible to the LRU disk cap again, and crash strays (`.tmp-<pid>`) are swept age-guarded
 
 ### Removed
 
