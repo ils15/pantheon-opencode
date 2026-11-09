@@ -35,8 +35,8 @@ import {
 import { nextCheckState, type UpdateCheckState } from './update-notice.ts'
 import {
   buildUpdatesSection,
-  type UpdatesSectionInput,
   registryUrlForChannel,
+  type UpdatesSectionInput,
   updateChannelFor,
 } from './update-status.ts'
 
