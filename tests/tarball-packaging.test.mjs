@@ -155,19 +155,9 @@ test('tarball contains no machine paths and ships the runtime inputs', () => {
       'plugin skill metadata must match the packaged skill inventory',
     )
 
-    const interactiveInstaller = readFileSync(
-      join(packageRoot, 'scripts', 'install', 'interactive.mjs'),
-      'utf8',
-    )
-    const installerDeclaredSkillCount = /Reusable skill workflows \(\$\{(\d+)\} skills\)/.exec(
-      interactiveInstaller,
-    )?.[1]
-    assert.ok(installerDeclaredSkillCount, 'interactive installer must declare its skill count')
-    assert.equal(
-      Number(installerDeclaredSkillCount),
-      actualSkills.length,
-      'interactive installer skill count must match the packaged skill inventory',
-    )
+    // beta.5: the interactive wizard is gone — the skill-count truthfulness
+    // check above (plugin.json description vs the packaged inventory) is the
+    // remaining contract.
 
     const codeModeRoot = join(packageRoot, '.pantheon', 'code-mode')
     const codeModeManifest = JSON.parse(readFileSync(join(codeModeRoot, 'manifest.json'), 'utf8'))
