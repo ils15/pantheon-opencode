@@ -1,6 +1,6 @@
 import { createComponent, createElement, createTextNode, effect, insert, insertNode, memo, mergeProps, setProp, spread } from "@opentui/solid";
 import { execFile } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -59,6 +59,176 @@ function formatSpent(cost) {
 const MODEL_USAGE_VISIBLE_CEILING = 3;
 const MODEL_USAGE_MESSAGE_LIMIT = 400;
 const MODEL_USAGE_SESSION_LIMIT = 8;
+/** Exact top-level key set — anything else fail-closes the runtime. */
+const DECISION_CONFIG_KEYS = Object.freeze([
+	"egress_consent",
+	"enabled",
+	"enabled_candidates",
+	"schema_version",
+	"selection"
+]);
+const DEFAULT_DECISION_CONFIG = Object.freeze({
+	schema_version: 2,
+	enabled: false,
+	selection: Object.freeze({ mode: "local" }),
+	egress_consent: false,
+	enabled_candidates: Object.freeze([])
+});
+Object.freeze([
+	"openai-decisions",
+	"typesafe-jev",
+	"opencode-console-jev",
+	"openrouter-jev",
+	"vercel-gateway-jev",
+	"cloudflare-workers-jev"
+]);
+function decisionRouterConfigPath(env = process.env) {
+	const xdg = env.XDG_CONFIG_HOME;
+	const home = env.HOME ?? "";
+	const root = xdg ?? join(home, ".config");
+	return join(root, "pantheon", "decision-router.json");
+}
+/** Fail-open read: a missing file is the default; an invalid one is reported, not guessed. */
+function readDecisionRouterConfig(env = process.env) {
+	let raw;
+	try {
+		raw = JSON.parse(readFileSync(decisionRouterConfigPath(env), "utf8"));
+	} catch (error) {
+		if (error?.code === "ENOENT") return {
+			config: cloneDefault(),
+			corrupt: false
+		};
+		return {
+			config: cloneDefault(),
+			corrupt: true
+		};
+	}
+	if (isValidDecisionConfig(raw)) return {
+		config: raw,
+		corrupt: false
+	};
+	return {
+		config: cloneDefault(),
+		corrupt: true
+	};
+}
+function cloneDefault() {
+	return {
+		schema_version: DEFAULT_DECISION_CONFIG.schema_version,
+		enabled: DEFAULT_DECISION_CONFIG.enabled,
+		selection: { ...DEFAULT_DECISION_CONFIG.selection },
+		egress_consent: DEFAULT_DECISION_CONFIG.egress_consent,
+		enabled_candidates: [...DEFAULT_DECISION_CONFIG.enabled_candidates]
+	};
+}
+/** The exact-key, exact-shape validation the runtime applies (fail-closed otherwise). */
+function isValidDecisionConfig(value) {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+	const record = value;
+	const keys = Object.keys(record).sort();
+	if (keys.length !== DECISION_CONFIG_KEYS.length) return false;
+	for (const key of DECISION_CONFIG_KEYS) if (!keys.includes(key)) return false;
+	if (record.schema_version !== 2) return false;
+	if (typeof record.enabled !== "boolean") return false;
+	if (typeof record.egress_consent !== "boolean") return false;
+	if (!isValidSelection(record.selection)) return false;
+	if (!Array.isArray(record.enabled_candidates)) return false;
+	for (const candidate of record.enabled_candidates) {
+		if (typeof candidate !== "object" || candidate === null) return false;
+		const entry = candidate;
+		if (typeof entry.provider !== "string" || typeof entry.model !== "string") return false;
+		if (Object.keys(entry).length !== 2) return false;
+	}
+	return true;
+}
+function isValidSelection(value) {
+	if (typeof value !== "object" || value === null) return false;
+	const selection = value;
+	if (selection.mode !== "local" && selection.mode !== "auto" && selection.mode !== "explicit") return false;
+	const keys = Object.keys(selection).sort();
+	for (const key of keys) if (key !== "mode" && key !== "provider" && key !== "model") return false;
+	if (selection.provider !== void 0 && typeof selection.provider !== "string") return false;
+	if (selection.model !== void 0 && typeof selection.model !== "string") return false;
+	return true;
+}
+/** Stable serializer: exact keys in sorted order, 2-space, trailing newline. */
+function serializeDecisionConfig(config) {
+	const ordered = {
+		egress_consent: config.egress_consent,
+		enabled: config.enabled,
+		enabled_candidates: config.enabled_candidates.map((candidate) => ({
+			model: candidate.model,
+			provider: candidate.provider
+		})),
+		schema_version: config.schema_version,
+		selection: {
+			mode: config.selection.mode,
+			...config.selection.model !== void 0 ? { model: config.selection.model } : {},
+			...config.selection.provider !== void 0 ? { provider: config.selection.provider } : {}
+		}
+	};
+	return `${JSON.stringify(ordered, null, 2)}\n`;
+}
+/**
+* Enable/disable the router in a config copy. The guard mirrors the runtime's
+* fail-close: with remote candidates and no egress consent, an enabled flag
+* would be a lie — enabling requires consent, or a local-only selection.
+* Never touches `egress_consent` (CLI-owned).
+*/
+function setDecisionEnabled(config, enabled) {
+	if (enabled) {
+		if (!(config.selection.mode === "local" || config.enabled_candidates.length === 0) && !config.egress_consent) return {
+			ok: false,
+			reason: "remote candidates need egress consent — grant via `decision-router setup-model`"
+		};
+	}
+	return {
+		ok: true,
+		config: {
+			...config,
+			enabled
+		}
+	};
+}
+/** Atomic-ish write mirroring the canonical writer's privacy posture (0600). */
+function writeDecisionRouterConfig(config, env = process.env) {
+	if (!isValidDecisionConfig(config)) throw new TypeError("Refusing to persist an invalid decision-router configuration");
+	const path = decisionRouterConfigPath(env);
+	mkdirSync(dirname(path), {
+		recursive: true,
+		mode: 448
+	});
+	const temp = `${path}.tui.tmp`;
+	writeFileSync(temp, serializeDecisionConfig(config), { mode: 384 });
+	renameSync(temp, path);
+	chmodSync(path, 384);
+}
+function buildDecisionSection(read) {
+	const { config, corrupt } = read;
+	const rows = [{
+		id: "decision.enabled",
+		title: `Decision router: ${config.enabled ? "enabled" : "disabled"}`,
+		description: corrupt ? "config file unreadable/invalid — the runtime fail-closes to disabled" : "the runtime re-reads this file on every gated call — applies live",
+		disabled: !config.enabled
+	}, {
+		id: "decision.selection",
+		title: `Selection: ${config.selection.mode}${config.selection.provider ? ` · ${config.selection.provider}` : ""}`,
+		description: "local routes on-device; auto/explicit pick a remote decision model",
+		selectable: false
+	}];
+	if (config.enabled_candidates.length > 0) rows.push({
+		id: "decision.candidates",
+		title: `Candidates: ${config.enabled_candidates.map((candidate) => `${candidate.provider}/${candidate.model}`).join(", ")}`,
+		description: config.egress_consent ? "egress consent granted" : "egress consent NOT granted — remote routes fail closed",
+		selectable: false
+	});
+	return {
+		id: "decision",
+		title: "Decision Model",
+		rows,
+		hint: corrupt ? "repair via `decision-router setup-model` — writes refused on an invalid file" : "enter: enable/disable · consent and candidates via `decision-router setup-model`"
+	};
+}
 //#endregion
 //#region src/j1-gate-status.ts
 const J1_FLAG_ENV = "PANTHEON_J1_RISK_SCORE";
@@ -275,6 +445,110 @@ function buildAboutSection(version) {
 			description: "Docs: docs/design/2.0-settings-and-install.md",
 			selectable: false
 		}]
+	};
+}
+//#endregion
+//#region src/preset-state.ts
+/**
+* preset-state.ts — the Model Preset section of the settings window.
+*
+* TUI-local replica (the bundle must stay self-contained). The preset NAMES
+* mirror routing.yml's `presets:` and are drift-pinned by
+* tests/tui-preset-state.test.mjs against `loadPresetDefs()`. The marker file
+* shape mirrors scripts/install/model-picker.mjs's `buildActivePresetFile`
+* (version 1), and the readers (`resolveActivePreset`, vision.ts candidates)
+* only consult `.preset`, so the window writes `source: 'tui-settings'`.
+*
+* Scope note: the window writes the GLOBAL marker only
+* (`<config-dir>/opencode/.pantheon/active-preset.json`). A project marker
+* wins (it precedes the global path in every runtime candidate list), so it
+* is displayed read-only. `none` DELETES the marker with a .bak backup — the
+* same contract as the CLI's `set-tier none`.
+*/
+/** Mirrors routing.yml `presets:` — drift-pinned against loadPresetDefs(). */
+const PRESET_NAMES = Object.freeze([
+	"go-free",
+	"go-fast",
+	"go-premium",
+	"go-hybrid",
+	"anthropic",
+	"openai"
+]);
+function globalActivePresetPath(env = process.env) {
+	const xdg = env.XDG_CONFIG_HOME;
+	const home = env.HOME ?? "";
+	const root = xdg ?? join(home, ".config");
+	return join(root, "opencode", ".pantheon", "active-preset.json");
+}
+function projectActivePresetPath() {
+	return join(process.cwd(), ".pantheon", "active-preset.json");
+}
+/** Fail-open read: missing/corrupt marker = no active preset. */
+function readActivePresetMarker(path) {
+	try {
+		const raw = JSON.parse(readFileSync(path, "utf8"));
+		if (typeof raw?.preset !== "string" || raw.preset === "" || raw.preset === "none") return null;
+		return {
+			name: raw.preset,
+			updatedAt: typeof raw.updated_at === "string" ? raw.updated_at : ""
+		};
+	} catch {
+		return null;
+	}
+}
+function writeMarkerAtomically(path, content) {
+	mkdirSync(dirname(path), { recursive: true });
+	const temp = `${path}.tui.tmp`;
+	writeFileSync(temp, content);
+	renameSync(temp, path);
+}
+/** Select a preset globally: .bak backup, atomic write, version-1 marker. */
+function writeActivePreset(path, name, nowIso = (/* @__PURE__ */ new Date()).toISOString()) {
+	if (!PRESET_NAMES.includes(name)) throw new TypeError(`Refusing to persist unknown preset "${name}"`);
+	backupMarker(path);
+	writeMarkerAtomically(path, `${JSON.stringify({
+		version: 1,
+		preset: name,
+		source: "tui-settings",
+		updated_at: nowIso
+	}, null, 2)}\n`);
+}
+/** Clear the global marker (the `none` contract): .bak backup, then remove. */
+function clearActivePreset(path) {
+	backupMarker(path);
+	rmSync(path, { force: true });
+}
+function backupMarker(path) {
+	if (!existsSync(path)) return;
+	mkdirSync(dirname(path), { recursive: true });
+	copyFileSync(path, `${path}.bak`);
+}
+function buildPresetSection(input) {
+	const rows = PRESET_NAMES.map((name) => ({
+		id: `preset.${name}`,
+		title: name,
+		description: input.globalName === name ? "active (global)" : "enter: activate globally",
+		disabled: input.globalName === name
+	}));
+	rows.push({
+		id: "preset.none",
+		title: "none",
+		description: "clear the global marker — opencode defaults",
+		disabled: input.globalName === null,
+		marker: input.globalName === null ? "[x]" : "[ ]"
+	});
+	if (input.projectName !== null) rows.push({
+		id: "preset.project",
+		title: `${input.projectName} (project)`,
+		description: `${projectActivePresetPath()} wins over the global marker`,
+		marker: "[!]",
+		selectable: false
+	});
+	return {
+		id: "preset",
+		title: "Model Preset",
+		rows,
+		hint: "enter: activate globally · writes <config>/opencode/.pantheon/active-preset.json"
 	};
 }
 //#endregion
@@ -568,6 +842,8 @@ async function maybeShowPantheonSettings(context) {
 		const [load, setLoad] = createSignal(readOverridesLoad());
 		const [lastChecked, setLastChecked] = createSignal(void 0);
 		const [checking, setChecking] = createSignal(false);
+		const [decision, setDecision] = createSignal(readDecisionRouterConfig());
+		const [presetTick, setPresetTick] = createSignal(0);
 		const currentVersion = resolveRunningVersion$1();
 		const updatesInput = () => {
 			const input = {
@@ -580,8 +856,17 @@ async function maybeShowPantheonSettings(context) {
 			if (seen !== void 0) input.lastCheckedVersion = seen;
 			return input;
 		};
+		const presetInput = () => {
+			presetTick();
+			return {
+				globalName: readActivePresetMarker(globalActivePresetPath())?.name ?? null,
+				projectName: readActivePresetMarker(projectActivePresetPath())?.name ?? null
+			};
+		};
 		const sections = () => [
 			buildGatesSection(load()),
+			buildDecisionSection(decision()),
+			buildPresetSection(presetInput()),
 			buildJ1Section(process.env, isBehaviorDisabled(mergedOverrides(load()), "gate-j1-risk-gate")),
 			buildUpdatesSection(updatesInput()),
 			buildAboutSection(currentVersion)
@@ -625,6 +910,31 @@ async function maybeShowPantheonSettings(context) {
 				persistUpdateCheckState(readUpdateCheckState(), latest);
 			}).catch(() => {}).finally(() => setChecking(false));
 		};
+		const toggleDecisionEnabled = () => {
+			const current = decision();
+			if (current.corrupt) return void 0;
+			const next = setDecisionEnabled(current.config, !current.config.enabled);
+			if (!next.ok) return void 0;
+			try {
+				writeDecisionRouterConfig(next.config);
+				setDecision({
+					config: next.config,
+					corrupt: false
+				});
+			} catch {}
+		};
+		const applySelectedPreset = () => {
+			const id = selectedId();
+			if (id === void 0) return void 0;
+			const name = id.startsWith("preset.") ? id.slice(7) : null;
+			if (name === null || name === "project") return void 0;
+			const path = globalActivePresetPath();
+			try {
+				if (name === "none") clearActivePreset(path);
+				else writeActivePreset(path, name);
+				setPresetTick((tick) => tick + 1);
+			} catch {}
+		};
 		let dismiss = () => {};
 		try {
 			context.keymap.layer(() => ({
@@ -666,6 +976,8 @@ async function maybeShowPantheonSettings(context) {
 							if (!open()) return false;
 							const id = selectedId();
 							if (id?.startsWith("gate.")) return toggleSelectedGate();
+							if (id === "decision.enabled") return toggleDecisionEnabled();
+							if (id?.startsWith("preset.")) return applySelectedPreset();
 							if (id === "update.check") return checkUpdatesNow();
 						}
 					},
