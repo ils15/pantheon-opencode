@@ -65,9 +65,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-<!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. -->
+<!-- Add new changes here.
+     Canonical sections (docs/RELEASING.md): ### 🆕 What's New (curated highlights, ≤6 bullets ≤140 chars) →
+     ### Added / Changed / Deprecated / Removed / Fixed / Security → ### ⚠️ Known Issues / ### ✅ Closed Issues.
+     `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
+     Running apply will move this section to a versioned entry and reset the template below. -->
 
+## [v2.0.0-beta.5] - 2026-11-09
+
+### Added
+
+- **tui** — the settings window gains a **TUI tab**: personalize the sidebar header lines, sidebar blocks (context/git/todo/dispatch), the Context block's detail rows, the gauge style (`both/bar/percent/off`), and the two Pantheon footer lines — persisted in the host's durable per-plugin storage, applied live on save, durable across TUI restarts
+
+### Changed
+
+- **install** — the interactive wizard is removed: a TTY `init` is banner → per-file plan preview → ONE authorization (default no). What the wizard asked lives in `/pantheon-settings` or explicit flags (`--components`, `--project`, `--decision-model`); the install-state also stops resetting an existing `decision_router` record on every run
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
 ## [v2.0.0-beta.4] - 2026-11-09
 
 ### Added
