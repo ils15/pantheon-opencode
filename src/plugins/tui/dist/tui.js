@@ -3356,7 +3356,7 @@ async function checkForPantheonUpdate(context) {
 	};
 	const persist = (notice) => {
 		mkdirSync(join(stateDir, "pantheon"), { recursive: true });
-		writeFileSync(statePath, JSON.stringify(nextCheckState(readState(), notice, Date.now()), null, 2) + "\n");
+		writeFileSync(statePath, `${JSON.stringify(nextCheckState(readState(), notice, Date.now()), null, 2)}\n`);
 	};
 	const response = await fetch("https://registry.npmjs.org/pantheon-opencode/latest", { signal: AbortSignal.timeout(5e3) });
 	const latest = String((await response.json())?.version ?? "");
