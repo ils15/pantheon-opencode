@@ -643,6 +643,43 @@ async function main(): Promise<void> {
     assert.doesNotMatch(admission.prompt.text, /PRIVATE_IMAGE_BYTES/)
 
     const previousText = admission.prompt.text
+
+    // ── ZERO injection for native-vision sessions (field feedback beta.5:
+    // "zero coisas" — the image flows to the model directly and the relay
+    // block sat above the user's own words). The gate reads the session's
+    // model via the host session API; a session whose model accepts images
+    // gets a byte-identical prompt. ──
+    let nativePromptHandler: ((event: unknown) => void | Promise<void>) | undefined
+    await plugin.setup(
+      makeBaseContext({
+        session: {
+          get: async ({ sessionID }: { sessionID: string }) => ({
+            sessionID,
+            model: { providerID: 'openai', modelID: 'gpt-4o' },
+          }),
+          hook: async (name: string, handler: typeof nativePromptHandler) => {
+            if (name === 'prompt') nativePromptHandler = handler
+            return { dispose: async () => {} }
+          },
+        },
+      }) as never,
+    )
+    assert.equal(typeof nativePromptHandler, 'function')
+    const nativeAdmission = {
+      sessionID: 'ses_native_vision',
+      prompt: {
+        text: 'Atualize esta tela usando a referência visual.',
+        files: [
+          { uri: 'file:///workspace/reference.png', mime: 'image/png', filename: 'reference.png' },
+        ],
+      },
+    }
+    await nativePromptHandler?.(nativeAdmission)
+    assert.equal(
+      nativeAdmission.prompt.text,
+      'Atualize esta tela usando a referência visual.',
+      'a native-vision session receives the prompt EXACTLY as typed — zero injected text',
+    )
     await promptHandler?.(admission)
     assert.equal(
       admission.prompt.text,
