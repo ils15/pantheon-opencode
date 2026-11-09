@@ -35,6 +35,7 @@ import {
   writeDecisionRouterConfig,
 } from './decision-router-state.ts'
 import { buildDoctorTab } from './doctor-state.ts'
+import { applyTuiRow, buildTuiTab, mutateTuiPrefs, tuiPrefs } from './tui-prefs.ts'
 import { buildJ1Tab } from './j1-gate-status.ts'
 import {
   applyDraft,
@@ -341,6 +342,7 @@ function createWindowController(
     buildGatesTab(load()),
     buildDecisionTab(decision()),
     buildPresetTab(presetInput()),
+    buildTuiTab(tuiPrefs()),
     buildJ1Tab(process.env, false),
     buildUpdatesTab(updatesInput()),
     buildDoctorTab({
@@ -430,6 +432,20 @@ function createWindowController(
           ok: false,
           reason: error instanceof Error ? error.message : 'preset marker write failed',
         }
+      }
+    }
+    if (id.startsWith('tui.')) {
+      // The prefs live in the host's durable reactive store: the mutation is
+      // async (persist), but the in-memory store flips immediately — the
+      // sidebar/footer/panel re-render on save, no restart. A persist
+      // failure surfaces in the notice line when it settles.
+      try {
+        mutateTuiPrefs((prefsDraft) => applyTuiRow(prefsDraft, id, value))
+          .then(() => setNotice(undefined))
+          .catch(() => setNotice('tui prefs: persist failed — the change is active for this session only'))
+        return { ok: true }
+      } catch {
+        return { ok: false, reason: 'tui prefs storage unavailable' }
       }
     }
     return { ok: false, reason: 'unknown staged row' }

@@ -1752,63 +1752,6 @@ async function installPass(
   const autoYes = opts.yes === true
   const interactive = !autoYes && (forceInteractive || (stdinTTY && !forceHeadless))
 
-  if (interactive && !dryRun) {
-    const { runInteractiveInstall } = await import('./interactive.mjs')
-    const hasRequestedComponents = Array.isArray(opts.requestedComponents)
-    const promptComponents = hasRequestedComponents ? opts.requestedComponents : components
-    const promptDefaults = (hasRequestedComponents ? opts.requestedComponents : components).filter(
-      (component) => !opts.noMcp || component !== 'runtime',
-    )
-    const result = await runInteractiveInstall({
-      components: promptComponents,
-      defaultComponents: promptDefaults,
-      noMcp: opts.noMcp === true,
-      getDecisionRouterConfig: (selection) => {
-        const selectionTarget = selection === 'project' ? process.cwd() : target
-        return readState(selectionTarget)?.decision_router
-      },
-      prompts: opts.deps?.prompts,
-      isTTY: opts.deps?.isTTY,
-      env: opts.deps?.env ?? opts.env ?? process.env,
-    })
-
-    // Resolve the location from the SELECTION before any cancel return: a
-    // cancel after the user picked "Current project" must record that
-    // directory, not the global default the caller would fall back to. The
-    // recorded target is where the user was installing, not where a file was
-    // written (nothing was written either way).
-    const selectedTarget = result.target === 'project' ? process.cwd() : target
-    opts.onTargetResolved?.(selectedTarget)
-
-    if (result.canceled) {
-      // The named point is what makes the message explainable. The interactive
-      // module already printed the single cancel line through the prompt
-      // library's own cancel channel, so printing another one here was the
-      // duplicate the issue reports: the user saw the same sentence twice and
-      // learned nothing about WHERE it stopped.
-      return {
-        ...stats,
-        applied: false,
-        reason: 'canceled',
-        cancelPoint: result.cancelPoint ?? 'components',
-        target: selectedTarget,
-      }
-    }
-
-    // Map target selection to actual path
-    const newComponents = [...result.components].filter(
-      (component) => !opts.noMcp || component !== 'runtime',
-    )
-    componentSet.clear()
-    for (const c of newComponents) componentSet.add(c)
-
-    target = selectedTarget
-    decisionRouterConfig = migrateDecisionRouterConfig(result.decisionRouterConfig)
-    opts.decisionRouterConfig = decisionRouterConfig
-    decisionModelActivation = result.decisionModelActivation ?? null
-    decisionModelDeferredSetup = result.decisionModelDeferredSetup ?? null
-    if (!dryRun && _lastRun) _lastRun.target = target
-  }
 
   // Reject invalid or newer persisted migration schemas before planning or
   // applying any target writes. The migration runner repeats this check at the
@@ -3263,21 +3206,10 @@ async function installPass(
   // -----------------------------------------------------------------------
 
   // -----------------------------------------------------------------------
-  // 5.5 Optional vision prompt (interactive TTY only). The default — automatic
-  //     discovery — writes nothing, and non-interactive flows (no TTY, --yes,
-  //     --headless, automated sandboxes) never reach this block, so no run
-  //     blocks on stdin and the default behavior is unchanged. A failure here
-  //     must never fail the install: vision stays optional.
+  // 5.5 Vision setup moved out of the wizard (beta.5): the default — automatic
+  //     discovery — writes nothing, and pinning is `/pantheon-vision`. The
+  //     install never blocks on stdin here.
   // -----------------------------------------------------------------------
-  if (interactive && !dryRun && !autoYes && stats.errors === 0) {
-    const runVisionPrompt =
-      opts.deps?.runVisionPrompt ?? (await import('./vision-prompt.mjs')).runVisionPrompt
-    try {
-      await runVisionPrompt({ logger: console })
-    } catch (err) {
-      warning(`Vision setup skipped: ${err instanceof Error ? err.message : String(err)}`)
-    }
-  }
 
   // Record component state even on a degraded runtime result so doctor and a
   // later init can distinguish a failed runtime from an installed one. The

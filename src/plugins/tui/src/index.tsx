@@ -29,6 +29,7 @@ import {
   pantheonSettingsBlocking,
   setupPantheonSettings,
 } from './pantheon-settings'
+import { initTuiPrefs, tuiPrefs } from './tui-prefs'
 import { cellWidth, GRAPHEMES, SIDEBAR_CONTENT_WIDTH } from './sidebar-width'
 import { nextCheckState, pickUpdateNotice, type UpdateCheckState } from './update-notice.ts'
 import { maybeShowWhatsNewV2 } from './whats-new'
@@ -686,10 +687,12 @@ export type ContextBlockRows = {
  *  `$<spent> spent`. The percentage row carries the only semantic tone, the
  *  gauge bar (12 cells) and is omitted entirely when the percentage is
  *  unavailable (never `undefined%`). A block with neither tokens nor cost
- *  yields null. Pure. */
+ *  yields null. `gaugeStyle` (the TUI tab's pref) picks the percent-row
+ *  shape: `both` (default), `bar`, `percent`, or `off` (row omitted). Pure. */
 export function contextBlockRows(
   usage: ContextUsage | null,
   cost: number | null | undefined,
+  gaugeStyle: 'both' | 'bar' | 'percent' | 'off' = 'both',
 ): ContextBlockRows | null {
   const spentValue = formatSpent(cost)
   const spent: ContextRow | null =
@@ -707,16 +710,24 @@ export function contextBlockRows(
   const percentValue = numberOrNull(usage.percent)
   const window = formatContextWindow(usage.limit)
   const bar = contextBar(percentValue)
-  const percent: ContextRow | null =
-    bar === null || percentValue === null
-      ? null
-      : {
-          lead: bar.filled,
-          value: ` ${Math.round(percentValue)}%`,
-          tail: bar.empty,
-          suffix: window === null ? null : ` of ${window}`,
-          tone: contextUsageTone(percentValue),
-        }
+  let percent: ContextRow | null = null
+  if (gaugeStyle !== 'off' && bar !== null && percentValue !== null) {
+    const suffix = window === null ? null : ` of ${window}`
+    const tone = contextUsageTone(percentValue)
+    if (gaugeStyle === 'bar') {
+      percent = { lead: bar.filled, value: '', tail: bar.empty, suffix, tone }
+    } else if (gaugeStyle === 'percent') {
+      percent = { lead: null, value: ` ${Math.round(percentValue)}%`, tail: null, suffix: null, tone }
+    } else {
+      percent = {
+        lead: bar.filled,
+        value: ` ${Math.round(percentValue)}%`,
+        tail: bar.empty,
+        suffix,
+        tone,
+      }
+    }
+  }
 
   if (tokens === null && percent === null && spent === null) return null
   return { tokens, percent, spent }
@@ -3792,16 +3803,23 @@ export function createSidebarModel(
 
   // Which blocks render, and where a blank line goes. The conditions mirror the
   // ones in the view's own `<Show>`s — both read these same memos, so a spacer
-  // can never outlive the block it separates.
+  // can never outlive the block it separates. The TUI tab's prefs gate first
+  // (a disabled block never renders, and the spacer math already tolerates
+  // absence), then the content conditions.
   const blocks = createMemo(() => {
+    const prefs = tuiPrefs()
     const present: SidebarBlockKey[] = []
     // Context also owns the spend line, so the stats totals alone keep it up.
-    if (contextBlockRows(contextUsage(), cost()) !== null || contextSpendLine(spend()) !== null) {
+    if (
+      prefs.sidebar.blocks.context &&
+      (contextBlockRows(contextUsage(), cost(), prefs.sidebar.context.gauge) !== null ||
+        (prefs.sidebar.context.localSpend && contextSpendLine(spend()) !== null))
+    ) {
       present.push('context')
     }
-    if (branch() !== null || gitLine() !== null) present.push('git')
-    if (todo().visible.length > 0) present.push('todo')
-    if (dispatch() !== null) present.push('dispatch')
+    if (prefs.sidebar.blocks.git && (branch() !== null || gitLine() !== null)) present.push('git')
+    if (prefs.sidebar.blocks.todo && todo().visible.length > 0) present.push('todo')
+    if (prefs.sidebar.blocks.dispatch && dispatch() !== null) present.push('dispatch')
     return withBlockSpacers(present)
   })
 
@@ -3994,12 +4012,29 @@ function Sidebar(props: SidebarProps): JSX.Element {
   /* Read the flag live (not through a captured entry) so a block that becomes
    * the first one loses its spacer instead of keeping a stale blank line. */
   const spacer = (key: SidebarBlockKey) => block(key)?.spacer === true
-  const usageRows = () => modelUsageRows(model.modelUsage().visible)
   const usageHidden = () =>
     hiddenModelUsageText(model.modelUsage().hidden, model.modelUsage().hiddenCost)
-  const contextRows = () => contextBlockRows(model.contextUsage(), model.cost())
-  const spendLine = () => contextSpendLine(model.spend())
-  const performanceLine = () => contextPerformanceLine(model.performance())
+  // The TUI tab's prefs gate the context rows: gauge style shapes the percent
+  // row; the token/spent lines drop entirely (the prefs live in the reactive
+  // host store, so a flip in /pantheon-settings re-renders here instantly).
+  const contextRows = () => {
+    const prefs = tuiPrefs()
+    const rows = contextBlockRows(model.contextUsage(), model.cost(), prefs.sidebar.context.gauge)
+    if (rows === null) return null
+    return {
+      tokens: prefs.sidebar.context.tokens ? rows.tokens : null,
+      percent: rows.percent,
+      spent: prefs.sidebar.context.spent ? rows.spent : null,
+    }
+  }
+  const spendLine = () =>
+    tuiPrefs().sidebar.context.localSpend ? contextSpendLine(model.spend()) : null
+  const performanceLine = () =>
+    tuiPrefs().sidebar.context.performance ? contextPerformanceLine(model.performance()) : null
+  const usageRows = () =>
+    tuiPrefs().sidebar.context.modelUsage
+      ? modelUsageRows(model.modelUsage().visible)
+      : []
   /* Filled cells and the percent value resolve through the same stage, so the
    * bar and its number can never disagree. */
   const gaugeFg = (row: ContextRow) => contextProgressColor(row.tone ?? 'warning', context.theme)
@@ -4010,16 +4045,27 @@ function Sidebar(props: SidebarProps): JSX.Element {
   }
   const failedSuffix = () => failedSuffixText(dispatchView()?.failures)
 
+  // The fixed header lines are prefs-gated too (TUI tab): version, preset and
+  // session each drop independently; nothing reflows — the column just shortens.
+  const header = () => tuiPrefs().sidebar.header
   return (
     <box flexDirection="column" width="100%" padding={1}>
-      <text fg={text()} attributes={1}>{`Pantheon v${__PANTHEON_VERSION__}`}</text>
+      <Show when={header().version}>
+        <text fg={text()} attributes={1}>{`Pantheon v${__PANTHEON_VERSION__}`}</text>
+      </Show>
       {/* Preset plus the provider of the model in use — both derived from host
           state. The provider is dropped when nothing resolves, so the row is
           never a placeholder. */}
-      <text fg={muted()}>{presetHeaderLine(model.preset().name ?? '', model.provider())}</text>
+      <Show when={header().preset}>
+        <text fg={muted()}>{presetHeaderLine(model.preset().name ?? '', model.provider())}</text>
+      </Show>
       <Show
-        when={model.activeSessionID() !== '' && model.session()}
-        fallback={<text fg={muted()}>{sidebarPlaceholder(props.sessionID)}</text>}
+        when={header().session && model.activeSessionID() !== '' && model.session()}
+        fallback={
+          <Show when={header().session} fallback={<box height={0} />}>
+            <text fg={muted()}>{sidebarPlaceholder(props.sessionID)}</text>
+          </Show>
+        }
       >
         {(current: any) => (
           <text fg={text()}>{`Sessão: ${truncateLabel(current().title || current().id)}`}</text>
@@ -4060,7 +4106,7 @@ function Sidebar(props: SidebarProps): JSX.Element {
                     numbers right-aligned; the gauge above remains the block's
                     single accent. When no message carries cost this loop is empty
                     and the block keeps its original token/spend rows. */}
-                <Show when={usageRows().length > 0}>
+                <Show when={tuiPrefs().sidebar.context.modelUsage && usageRows().length > 0}>
                   <text fg={muted()}>Sessão · custo reportado</text>
                   <text fg={muted()}>
                     {'Modelo'.padEnd(MODEL_USAGE_MODEL_WIDTH) +
@@ -4432,9 +4478,11 @@ function HomeStatus(props: { context: any }) {
   const preset = useActivePreset(props.context).preset
   const muted = () => props.context.theme?.text?.muted ?? props.context.theme?.text?.base
   return (
-    <text
-      fg={muted()}
-    >{`Pantheon v${__PANTHEON_VERSION__}${preset().name ? ` ${PRESET_MARKER} ${preset().name}` : ''}`}</text>
+    <Show when={tuiPrefs().footer.home}>
+      <text
+        fg={muted()}
+      >{`Pantheon v${__PANTHEON_VERSION__}${preset().name ? ` ${PRESET_MARKER} ${preset().name}` : ''}`}</text>
+    </Show>
   )
 }
 
@@ -4495,7 +4543,7 @@ function PromptFooter(props: { context: any; sessionID?: string | undefined }) {
   const model = createFooterModel(props.context, () => props.sessionID)
   const muted = () => props.context.theme?.text?.muted ?? props.context.theme?.text?.base
   return (
-    <Show when={model.running() > 0}>
+    <Show when={tuiPrefs().footer.prompt && model.running() > 0}>
       <text fg={muted()}>
         {`${PRESET_MARKER}${model.preset().name ?? 'default'} · ✦${model.running()} ativos`}
       </text>
@@ -4511,6 +4559,11 @@ const plugin = Plugin.define({
     const globalState = globalThis as unknown as Record<PropertyKey, unknown>
     if (globalState[SINGLETON]) return
     globalState[SINGLETON] = true
+
+    // The durable TUI prefs store — created before any consumer (sidebar,
+    // footers, dispatch panel, settings) reads it, so their first reactive
+    // read hits the live store instead of the defaults.
+    initTuiPrefs(context)
 
     const location = resolveLocation(context)
     // Eager load/sync at setup so the cache is warm before the slot's first

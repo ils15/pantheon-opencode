@@ -90,10 +90,15 @@ as the OpenCode 1.x migration path and an opt-in project scaffolding tool.
 
 Direct `init` uses the same component defaults in TTY and headless runs:
 `agents`, `skills`, `instructions`, `commands`, and `plugins`. `runtime` and
-`prompts` are opt-in. A TTY run selects components and target, shows a preview,
-then asks once for final authorization (default **no**). Without a TTY, `init`
-is preview-only unless `--yes` explicitly authorizes the apply; `--yes` skips
-prompts but still prints the preview and checks for drift.
+`prompts` are opt-in via `--components`. Since beta.5 the TTY run is
+prompt-light: banner → per-file plan preview → ONE final authorization
+(default **no**) — no component/target/decision-model questions. Everything
+those prompts used to configure lives in `/pantheon-settings` (gates,
+decision router, model preset, TUI personalization) or in explicit flags
+(`--components`, `--project`, `--decision-model`,
+`--decision-monthly-usd`, `--decision-per-decision-usd`). Without a TTY,
+`init` is preview-only unless `--yes` explicitly authorizes the apply;
+`--yes` skips prompts but still prints the preview and checks for drift.
 
 `npm run setup` is a separate repository setup wrapper. On a detected
 OpenCode 2.x host it reviews the global config before installer init: legacy
@@ -160,7 +165,10 @@ see [Quick Start](docs/QUICKSTART.md).
   [What's new window](docs/reference/whats-new.md). `/pantheon-settings`
   (also `Pantheon: Settings` in the command palette) opens the sectioned
   settings window — `tab` cycles sections, `up`/`down` selects,
-  `enter` applies, `esc`/`q` closes:
+  `enter` applies, `esc`/`q` closes — and since beta.4 it is a FULL-SCREEN
+  tabbed window (the OpenCode Quota shape): `←/→` cycles a row's value into a
+  staged draft, `ctrl+s` saves every staged change, `ctrl+r` resets the tab,
+  and a warning line surfaces every refusal:
 
   - **Gates & Overrides** — toggle the named behaviors, writing the global
     `pantheon-overrides.json` the installer and doctor consume. A corrupt
@@ -179,6 +187,11 @@ see [Quick Start](docs/QUICKSTART.md).
   - **Doctor** — file-derived health: install-version drift, Node floor,
     overrides and decision-config validation. The full check (MCP smoke,
     venv pins, git) remains `pantheon-opencode doctor`.
+  - **TUI** — personalize this window's surroundings: sidebar header lines
+    and blocks (context/git/todo/dispatch), the Context block's detail rows
+    and gauge style (`both/bar/percent/off`), and the two Pantheon footer
+    lines. Stored in the host's durable per-plugin storage — changes apply
+    live (the sidebar re-renders on save) and survive TUI restarts.
 
   The installer selects the `plugins` component by default; in interactive
   setup you can change the component selection. A component-scoped install

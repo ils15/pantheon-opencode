@@ -246,53 +246,27 @@ test('declining the review names the point instead of printing "Nothing applied.
 test('an interactive cancel names the step the user stopped at', async () => {
   const target = scratchDir('pantheon-cancel-point-')
   try {
-    const calls = []
-    const prompts = {
-      isCancel: (value) => value === Symbol.for('cancel'),
-      cancel: (message) => calls.push(message),
-      intro: () => {},
-      multiselect: async () => Symbol.for('cancel'),
-    }
     const { result } = await captureOutput(() =>
       installOpenCode(target, false, false, ['agents'], {
         interactive: true,
         global: true,
-        deps: { prompts, isTTY: true },
+        deps: { promptReview: async () => PROMPT_CANCELED, isTTY: true },
       }),
     )
     assert.equal(result.reason, 'canceled')
-    assert.equal(result.cancelPoint, 'components')
-    assert.equal(calls.length, 1, 'the prompt library prints the single line')
-    assert.match(calls[0], /canceled at component selection/)
+    assert.equal(result.cancelPoint, 'review', 'the review gate is the only cancel point now')
+    assert.equal(result.applied, false)
   } finally {
     rmSync(target, { recursive: true, force: true })
   }
 })
 
-test('a cancel at final review reports THAT project target, not the global one', async () => {
-  const canceled = Symbol.for('cancel')
-  let confirmationMessage
-  const prompts = {
-    isCancel: (value) => value === canceled,
-    cancel: () => {},
-    intro: () => {},
-    multiselect: async () => ['agents'],
-    select: async ({ message }) =>
-      message === 'Install location:'
-        ? 'project'
-        : message.startsWith('Decision-router')
-          ? 'local'
-          : undefined,
-    confirm: async ({ message }) => {
-      confirmationMessage = message
-      return canceled
-    },
-  }
+test('a cancel at final review reports THAT target, not a guessed one', async () => {
   let resolvedTarget
   const { result } = await captureOutput(() =>
-    installOpenCode(undefined, false, false, ['agents'], {
+    installOpenCode('/tmp/pantheon-cancel-target-probe', false, false, ['agents'], {
       interactive: true,
-      deps: { prompts, isTTY: true },
+      deps: { promptReview: async () => PROMPT_CANCELED, isTTY: true },
       onTargetResolved: (target) => {
         resolvedTarget = target
       },
@@ -300,11 +274,9 @@ test('a cancel at final review reports THAT project target, not the global one',
   )
   assert.equal(result.reason, 'canceled')
   assert.equal(result.cancelPoint, 'review')
-  assert.match(confirmationMessage, /^Apply these \d+ changes\?$/)
   assert.equal(result.applied, false)
-  assert.equal(result.target, process.cwd(), 'the chosen project directory must be recorded')
-  assert.equal(resolvedTarget, process.cwd(), 'run records must use the chosen project target')
-  assert.notEqual(result.target, join(process.env.HOME ?? '', '.config', 'opencode'))
+  assert.equal(result.target, '/tmp/pantheon-cancel-target-probe', 'the caller target is recorded')
+  assert.equal(resolvedTarget, '/tmp/pantheon-cancel-target-probe', 'run records use the same target')
 })
 
 test('a decline at final review reports the resolved global target', async () => {

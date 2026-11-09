@@ -190,8 +190,9 @@ export type ContextBlockRows = {
  *  `$<spent> spent`. The percentage row carries the only semantic tone, the
  *  gauge bar (12 cells) and is omitted entirely when the percentage is
  *  unavailable (never `undefined%`). A block with neither tokens nor cost
- *  yields null. Pure. */
-export declare function contextBlockRows(usage: ContextUsage | null, cost: number | null | undefined): ContextBlockRows | null;
+ *  yields null. `gaugeStyle` (the TUI tab's pref) picks the percent-row
+ *  shape: `both` (default), `bar`, `percent`, or `off` (row omitted). Pure. */
+export declare function contextBlockRows(usage: ContextUsage | null, cost: number | null | undefined, gaugeStyle?: 'both' | 'bar' | 'percent' | 'off'): ContextBlockRows | null;
 /** Column widths for one model row (labels are muted, numbers right-aligned). */
 export declare const MODEL_USAGE_MODEL_WIDTH = 12;
 export declare const MODEL_USAGE_TOKEN_WIDTH = 6;

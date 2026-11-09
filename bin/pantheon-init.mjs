@@ -523,7 +523,7 @@ async function main() {
       console.error(`❌ ${err.message}`)
       process.exit(1)
     }
-    const { components, requestedComponentsForPrompt, noMcp: skipMCP } = componentSelection
+    const { components, noMcp: skipMCP } = componentSelection
 
     // --merge-dev-config <path> opts IN to merging a contributor's personal
     // OpenCode config into the generated one. Only third-party plugin/provider/
@@ -718,7 +718,6 @@ async function main() {
         mergeDevConfig: mergeDevConfigOpt,
         expectedPlan: reviewedPlan ?? setupApprovedPlan?.plan ?? null,
         isProject,
-        requestedComponents: requestedComponentsForPrompt,
         noMcp: skipMCP,
         planTimestamp,
         quiet: isJson,
