@@ -66,6 +66,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v2.0.0-beta.4] - 2026-11-09
+
+### Added
+
+- **tui** — the settings window becomes a full-screen tabbed window (the OpenCode Quota shape): a tab header (`1-9`/`tab`), grouped setting rows with `←/→` value cyclers, a note column, and draft semantics — `ctrl+s` saves staged changes through the per-surface guards, `ctrl+r` resets the tab, `esc` with staged changes confirms before discarding, and every refusal (corrupt overrides, missing egress consent) surfaces in a warning notice line
+- **tui** — the settings surface moves to the host's router page: true full-screen, opens from the home route and sessions (`ui.router.register` + `navigate({type:'plugin'})`, the bundled opencode.diffs pattern); hosts without it fall back to the dialog with the same commands
+
+### Fixed
+
+- **tui** — settings navigation no longer loses keys to the dispatch panel: the settings keymap layers register once at setup with priority 1, and the dispatch panel's layer sleeps while a Pantheon settings surface is open (the beta.2 "navigation stopped working" field report, diagnosed from the host binary's conflict-resolution order)
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
 ## [v2.0.0-beta.3] - 2026-11-09
 
 ### Fixed
