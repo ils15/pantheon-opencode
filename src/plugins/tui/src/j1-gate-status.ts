@@ -10,7 +10,7 @@
  * writes, and the section says so. A file surface is a runtime-plugin change
  * (beta.3 candidate), not a window change.
  */
-import type { SettingsRow, SettingsSection } from './pantheon-settings-state.ts'
+import type { SettingsTab } from './pantheon-settings-state.ts'
 
 export const J1_FLAG_ENV = 'PANTHEON_J1_RISK_SCORE'
 export const J1_THRESHOLD_ENV = 'PANTHEON_J1_ENFORCE_THRESHOLD'
@@ -44,10 +44,10 @@ const MODE_DESCRIPTION: Record<J1Mode, string> = {
   enforce: 'high-risk scores DENY the tool call (fail-open on gate unavailability)',
 }
 
-export function buildJ1Section(
+export function buildJ1Tab(
   env: Record<string, string | undefined>,
   disabledByOverride: boolean,
-): SettingsSection {
+): SettingsTab {
   const mode = j1ModeFromEnv(env)
   const threshold = j1ThresholdFromEnv(env)
   const gateState = disabledByOverride
@@ -55,31 +55,33 @@ export function buildJ1Section(
     : mode === 'off'
       ? 'off (env unset)'
       : 'active'
-  const rows: SettingsRow[] = [
-    {
-      id: 'j1.mode',
-      title: `Mode: ${mode}`,
-      description: MODE_DESCRIPTION[mode],
-      ...(disabledByOverride ? { marker: '[!]' } : {}),
-      selectable: false,
-    },
-    {
-      id: 'j1.threshold',
-      title: `Enforce threshold: ${threshold}`,
-      description: 'deny at or above; 0..1, default 0.8',
-      selectable: false,
-    },
-    {
-      id: 'j1.gate',
-      title: `Gate: ${gateState}`,
-      description: 'the runtime plugin reads this once at startup',
-      selectable: false,
-    },
-  ]
   return {
     id: 'j1',
-    title: 'J1 Risk Gate',
-    hint: `set ${J1_FLAG_ENV} / ${J1_THRESHOLD_ENV} — restart applies`,
-    rows,
+    title: 'J1',
+    groups: [
+      {
+        title: 'Ladder (env-only — never written here)',
+        rows: [
+          {
+            id: 'j1.mode',
+            name: 'Mode',
+            value: mode,
+            note: `${MODE_DESCRIPTION[mode]} · restart applies`,
+          },
+          {
+            id: 'j1.threshold',
+            name: 'Enforce threshold',
+            value: String(threshold),
+            note: 'deny at or above · 0..1 · default 0.8',
+          },
+          {
+            id: 'j1.gate',
+            name: 'Gate',
+            value: gateState,
+            note: `${J1_FLAG_ENV} / ${J1_THRESHOLD_ENV} · read once at startup`,
+          },
+        ],
+      },
+    ],
   }
 }

@@ -24,7 +24,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { dirname, join } from 'node:path'
-import type { SettingsRow, SettingsSection } from './pantheon-settings-state.ts'
+import type { SettingsRow, SettingsTab } from './pantheon-settings-state.ts'
 
 /** Mirrors routing.yml `presets:` — drift-pinned against loadPresetDefs(). */
 export const PRESET_NAMES: readonly string[] = Object.freeze([
@@ -111,33 +111,32 @@ export interface PresetSectionInput {
   projectName: string | null
 }
 
-export function buildPresetSection(input: PresetSectionInput): SettingsSection {
-  const rows: SettingsRow[] = PRESET_NAMES.map((name) => ({
-    id: `preset.${name}`,
-    title: name,
-    description: input.globalName === name ? 'active (global)' : 'enter: activate globally',
-    disabled: input.globalName === name,
-  }))
-  rows.push({
-    id: 'preset.none',
-    title: 'none',
-    description: 'clear the global marker — opencode defaults',
-    disabled: input.globalName === null,
-    marker: input.globalName === null ? '[x]' : '[ ]',
-  })
+/** The staged value 'none' means: delete the global marker (the CLI contract). */
+export const PRESET_NONE = 'none'
+
+export const PRESET_CYCLE: readonly string[] = Object.freeze([PRESET_NONE, ...PRESET_NAMES])
+
+export function buildPresetTab(input: PresetSectionInput): SettingsTab {
+  const rows: SettingsRow[] = [
+    {
+      id: 'preset',
+      name: 'Preset',
+      value: input.globalName ?? PRESET_NONE,
+      cycle: PRESET_CYCLE,
+      note: 'global marker · atomic write, .bak backup · none = opencode defaults',
+    },
+  ]
   if (input.projectName !== null) {
     rows.push({
       id: 'preset.project',
-      title: `${input.projectName} (project)`,
-      description: `${projectActivePresetPath()} wins over the global marker`,
-      marker: '[!]',
-      selectable: false,
+      name: 'Project',
+      value: input.projectName,
+      note: `${projectActivePresetPath()} wins over the global marker — read-only here`,
     })
   }
   return {
     id: 'preset',
-    title: 'Model Preset',
-    rows,
-    hint: 'enter: activate globally · writes <config>/opencode/.pantheon/active-preset.json',
+    title: 'Preset',
+    groups: [{ title: 'Model preset', rows }],
   }
 }

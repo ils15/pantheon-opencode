@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import {
-  buildDoctorSection,
+  buildDoctorTab,
   classifyDecisionConfigHealth,
   classifyInstallVersion,
   classifyOverridesHealth,
@@ -129,23 +129,25 @@ describe('decision config health', () => {
 
 describe('doctor section rows', () => {
   it('renders the four file checks with the CLI pointer', () => {
-    const section = buildDoctorSection({
+    const section = buildDoctorTab({
       runningVersion: '2.0.0-beta.2',
       nodeVersion: '26.4.0',
       load: EMPTY_LOAD,
       env: { XDG_CONFIG_HOME: '/nonexistent-doctor-fixture' },
     })
+    const rows = section.groups.flatMap((group) => group.rows)
     assert.deepEqual(
-      section.rows.map((row) => row.id),
-      ['doctor.version', 'doctor.node', 'doctor.overrides', 'doctor.decision'],
+      rows.map((row) => row.id).filter((id) => id.startsWith('doctor.')),
+      ['doctor.version', 'doctor.node', 'doctor.overrides', 'doctor.decision', 'doctor.cli'],
     )
-    for (const row of section.rows) {
-      assert.equal(row.selectable, false, 'the section is read-only')
-    }
-    assert.match(section.hint, /pantheon-opencode doctor/)
-    const node = section.rows.find((row) => row.id === 'doctor.node')
-    assert.equal(node.marker, '[✓]')
-    const version = section.rows.find((row) => row.id === 'doctor.version')
-    assert.match(version.title, /unknown/, 'missing install-state reads as unknown')
+    assert.ok(
+      rows.some((row) => row.id === 'doctor.cli' && row.value.includes('pantheon-opencode doctor')),
+      'the CLI pointer row names the full doctor',
+    )
+    const node = rows.find((row) => row.id === 'doctor.node')
+    assert.equal(node.value, '26.4.0')
+    assert.match(node.note, /meets the >= 26\.4\.0 floor/)
+    const version = rows.find((row) => row.id === 'doctor.version')
+    assert.match(version.value, /unknown/, 'missing install-state reads as unknown')
   })
 })

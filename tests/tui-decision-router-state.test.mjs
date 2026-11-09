@@ -8,7 +8,7 @@ import {
   DECISION_ROUTER_PROVIDERS,
 } from '../scripts/install/decision-router-config.mjs'
 import {
-  buildDecisionSection,
+  buildDecisionTab,
   DECISION_CONFIG_KEYS,
   DECISION_CONFIG_SCHEMA_VERSION,
   DECISION_KNOWN_PROVIDERS,
@@ -194,14 +194,20 @@ describe('disk I/O', () => {
 
 describe('decision section rows', () => {
   it('surfaces live-apply and refuses writes on a corrupt file', () => {
-    const clean = buildDecisionSection({ config: config({ enabled: true }), corrupt: false })
-    const enabledRow = clean.rows.find((row) => row.id === 'decision.enabled')
-    assert.equal(enabledRow.disabled, false)
-    assert.match(enabledRow.description, /applies live/)
-    assert.match(clean.hint, /setup-model/)
+    const clean = buildDecisionTab({ config: config({ enabled: true }), corrupt: false })
+    const enabledRow = clean.groups
+      .flatMap((g) => g.rows)
+      .find((row) => row.id === 'decision.enabled')
+    assert.equal(enabledRow.value, 'enabled')
+    assert.deepEqual(enabledRow.cycle, ['enabled', 'disabled'])
+    assert.match(enabledRow.note, /applies live/)
 
-    const corrupt = buildDecisionSection({ config: DEFAULT_DECISION_CONFIG, corrupt: true })
-    assert.match(corrupt.hint, /writes refused/)
-    assert.match(corrupt.rows[0].description, /fail-closes/)
+    const corrupt = buildDecisionTab({ config: DEFAULT_DECISION_CONFIG, corrupt: true })
+    const corruptRow = corrupt.groups
+      .flatMap((g) => g.rows)
+      .find((row) => row.id === 'decision.enabled')
+    assert.equal(corruptRow.cycle, undefined, 'no staging on a corrupt file')
+    assert.match(corruptRow.note, /fail-closes/)
+    assert.match(corruptRow.note, /setup-model/)
   })
 })

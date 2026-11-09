@@ -19,7 +19,7 @@ import type { OverridesLoad } from './pantheon-settings-state.ts'
 import {
   SETTINGS_BEHAVIORS,
   type SettingsRow,
-  type SettingsSection,
+  type SettingsTab,
 } from './pantheon-settings-state.ts'
 import { comparePantheonVersions } from './update-notice.ts'
 
@@ -122,77 +122,86 @@ export interface DoctorSectionInput {
   env?: Record<string, string | undefined>
 }
 
-export function buildDoctorSection(input: DoctorSectionInput): SettingsSection {
+export function buildDoctorTab(input: DoctorSectionInput): SettingsTab {
   const env = input.env ?? process.env
   const rows: SettingsRow[] = []
 
   const version = classifyInstallVersion(input.runningVersion, env)
   rows.push({
     id: 'doctor.version',
-    title:
+    name: 'Install version',
+    value:
       version.status === 'ok'
-        ? `Installed version: v${version.installed} — matches`
+        ? `v${version.installed} — matches`
         : version.status === 'older'
-          ? `Installed v${version.installed} is older than the runtime v${input.runningVersion}`
+          ? `v${version.installed} older`
           : version.status === 'newer'
-            ? `Installed v${version.installed} is newer than the runtime v${input.runningVersion}`
-            : 'Installed version: unknown (no install-state)',
-    description:
+            ? `v${version.installed} newer`
+            : 'unknown',
+    note:
       version.status === 'older'
         ? 'refresh with `pantheon-opencode update`'
         : 'read from <config>/opencode/.pantheon/install-state.json',
-    marker: version.status === 'ok' ? '[✓]' : version.status === 'older' ? '[!]' : '[i]',
-    selectable: false,
   })
 
   const nodeOk = isSupportedNodeFloor(input.nodeVersion)
   rows.push({
     id: 'doctor.node',
-    title: `Node runtime: ${input.nodeVersion.replace(/^v/, '')}`,
-    description: nodeOk
+    name: 'Node runtime',
+    value: input.nodeVersion.replace(/^v/, ''),
+    note: nodeOk
       ? `meets the >= ${MIN_SUPPORTED_NODE_VERSION} floor`
       : `below the >= ${MIN_SUPPORTED_NODE_VERSION} floor — tooling may refuse`,
-    marker: nodeOk ? '[✓]' : '[!]',
-    selectable: false,
   })
 
   const overrides = classifyOverridesHealth(input.load)
   rows.push({
     id: 'doctor.overrides',
-    title:
+    name: 'Overrides',
+    value:
       overrides.status === 'clean'
-        ? 'Overrides: valid'
+        ? 'valid'
         : overrides.status === 'corrupt'
-          ? 'Overrides: global file unreadable'
-          : `Overrides: ${overrides.unknownIds.length} unknown id(s)`,
-    description:
+          ? 'unreadable'
+          : `${overrides.unknownIds.length} unknown id(s)`,
+    note:
       overrides.status === 'unknown-ids'
         ? `${overrides.unknownIds.join(', ')} — harmless; repair with doctor --fix`
         : overrides.status === 'corrupt'
           ? 'writes are refused until repaired (doctor --fix)'
           : 'both files parse against the behavior registry',
-    marker: overrides.status === 'clean' ? '[✓]' : overrides.status === 'corrupt' ? '[✗]' : '[!]',
-    selectable: false,
   })
 
   const decision = classifyDecisionConfigHealth(env)
   rows.push({
     id: 'doctor.decision',
-    title:
-      decision.status === 'ok'
-        ? 'Decision config: valid'
-        : decision.status === 'corrupt'
-          ? 'Decision config: unreadable — runtime fail-closes'
-          : 'Decision config: absent (local defaults)',
-    description: 'read from <config>/pantheon/decision-router.json',
-    marker: decision.status === 'corrupt' ? '[✗]' : '[✓]',
-    selectable: false,
+    name: 'Decision config',
+    value:
+      decision.status === 'ok' ? 'valid' : decision.status === 'corrupt' ? 'corrupt' : 'absent',
+    note:
+      decision.status === 'corrupt'
+        ? 'runtime fail-closes to disabled · read from <config>/pantheon/decision-router.json'
+        : 'read from <config>/pantheon/decision-router.json',
   })
 
   return {
     id: 'doctor',
     title: 'Doctor',
-    rows,
-    hint: 'file checks only — the full doctor (MCP smoke, venv, git) is `pantheon-opencode doctor`',
+    groups: [
+      {
+        title: 'Health (file-derived)',
+        rows,
+      },
+      {
+        rows: [
+          {
+            id: 'doctor.cli',
+            name: 'Full check',
+            value: '`pantheon-opencode doctor`',
+            note: 'MCP smoke, venv pins, git stay in the CLI',
+          },
+        ],
+      },
+    ],
   }
 }

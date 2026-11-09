@@ -3,57 +3,99 @@
 /** @jsxImportSource @opentui/solid */
 
 /**
- * pantheon-settings.tsx — the /pantheon-settings window.
+ * pantheon-settings.tsx — the /pantheon-settings window (2.0.0-beta.4).
  *
- * One section per page, keyboard-first: `tab` cycles sections, `up`/`down`
- * select, `enter`/`space` dispatches the selected row (the Gates section
- * writes the GLOBAL overrides file — the same one the installer and doctor
- * consume; Updates runs a registry check). `escape`/`q` closes. The
- * gated-layer pattern mirrors the dispatch panel and whats-new windows.
- * Every failure path is silent (fail-open).
+ * A FULL-SCREEN settings window in the OpenCode Quota shape: a tab header,
+ * grouped setting rows with ←/→ value cyclers, a note column, and a
+ * save/reset footer. The surface is a ROUTER PAGE (`ui.router.register` +
+ * `navigate({type:'plugin'})`) — true full-screen, reachable from the home
+ * route AND sessions, no focus dance (binary-verified precedent: the host's
+ * own opencode.diffs plugin). Hosts without a router fall back to the old
+ * dialog with the same commands (fail-open).
+ *
+ * Edits stage into a DRAFT: ←/→ cycles a row's value, `ctrl+s` saves every
+ * staged row through the per-surface guards, `ctrl+r` resets the current
+ * tab, `esc`/`q` confirms before discarding. The disk never changes before
+ * save, and every refusal surfaces in the notice line — never silent.
+ *
+ * The keymap layer is registered ONCE at setup with `priority: 1` (the host
+ * resolves bind conflicts by priority then registration order — a stale
+ * dispatch-panel layer must never win while this window is open; field
+ * report beta.2: navigation "stopped working" was exactly that theft).
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Context } from '@opencode/plugin/tui/context'
-import { createSignal, For, Show } from 'solid-js'
+import { createSignal, For, onCleanup, Show } from 'solid-js'
 import {
-  buildDecisionSection,
+  buildDecisionTab,
+  type DecisionConfigRead,
   readDecisionRouterConfig,
   setDecisionEnabled,
   writeDecisionRouterConfig,
 } from './decision-router-state.ts'
-import { buildDoctorSection } from './doctor-state.ts'
-import { buildJ1Section } from './j1-gate-status.ts'
+import { buildDoctorTab } from './doctor-state.ts'
+import { buildJ1Tab } from './j1-gate-status.ts'
 import {
-  buildAboutSection,
-  buildGatesSection,
+  applyDraft,
+  buildAboutTab,
+  buildGatesTab,
   canWriteOverrides,
+  type DraftWriter,
+  type DraftWriterResult,
+  draftCount,
+  draftDirty,
   type EffectiveOverrides,
-  firstSelectableId,
-  flatSelectableRows,
-  isBehaviorDisabled,
-  mergedOverrides,
+  EMPTY_TAB,
   type OverridesLoad,
+  resetTab,
+  type SettingsDraft,
   type SettingsRow,
-  type SettingsSection,
+  type SettingsTab,
   serializeOverrides,
-  toggledOverrides,
+  setOverrideState,
+  settledDraft,
+  stageValue,
+  tabDirty,
+  tabRows,
 } from './pantheon-settings-state.ts'
 import {
-  buildPresetSection,
+  buildPresetTab,
   clearActivePreset,
   globalActivePresetPath,
+  PRESET_NONE,
   projectActivePresetPath,
   readActivePresetMarker,
   writeActivePreset,
 } from './preset-state.ts'
 import { nextCheckState, type UpdateCheckState } from './update-notice.ts'
 import {
-  buildUpdatesSection,
+  buildUpdatesTab,
   registryUrlForChannel,
   type UpdatesSectionInput,
   updateChannelFor,
 } from './update-status.ts'
+
+export const ROUTE_NAME = 'pantheon-settings'
+
+/** Loose local shape of a host route (the real Route lives in the host typings). */
+type WindowRoute =
+  | { type: 'home' }
+  | { type: 'session'; sessionID: string }
+  | { type: 'plugin'; name: string; data?: Record<string, unknown> }
+
+// ── Shared blocking state (the dispatch panel gates on this) ───────────
+
+const [blocking, setBlocking] = createSignal(false)
+
+/** True while a Pantheon settings surface (page or fallback dialog) is open. */
+export function pantheonSettingsBlocking(): boolean {
+  return blocking()
+}
+
+let routerAvailable = false
+
+// ── Disk readers/writers (unchanged contracts from beta.2/3) ───────────
 
 function globalOverridesPath(): string {
   const xdgConfig = process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? '', '.config')
@@ -64,7 +106,6 @@ function projectOverridesPath(): string {
   return join(process.cwd(), '.pantheon', 'overrides.json')
 }
 
-/** Read one overrides file; a missing file is empty, an unreadable one is corrupt. */
 function readOneOverrides(path: string): { value: EffectiveOverrides; corrupt: boolean } {
   try {
     const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'))
@@ -104,10 +145,6 @@ function readUpdateCheckState(): UpdateCheckState {
   }
 }
 
-/**
- * Registry check for the RUNNING version's channel (beta installs ask the
- * beta dist-tag). Resolves with the latest version seen, or null offline.
- */
 async function fetchLatestForChannel(currentVersion: string): Promise<string | null> {
   try {
     const response = await fetch(registryUrlForChannel(updateChannelFor(currentVersion)), {
@@ -144,299 +181,596 @@ function resolveRunningVersion(): string {
   }
 }
 
-export function SettingsContent(props: {
-  sections: () => SettingsSection[]
+// ── The window view (presentational; both surfaces render it) ──────────
+
+const NAME_WIDTH = 26
+const VALUE_WIDTH = 22
+
+export function SettingsWindow(props: {
+  version: string
+  tabs: () => SettingsTab[]
   page: () => number
-  selectedId: () => string | undefined
+  selected: () => number
+  draft: () => SettingsDraft
+  notice: () => string | undefined
   fg?: any
   muted?: any
+  warn?: any
 }) {
-  const section = () =>
-    props.sections()[props.page()] ?? {
-      id: 'empty',
-      title: '',
-      rows: [],
-    }
+  const tab = () => props.tabs()[props.page()] ?? props.tabs()[0] ?? EMPTY_TAB
+  const rows = () => tabRows(tab())
   return (
     <box flexDirection="column" paddingLeft={1} paddingRight={1} paddingTop={1}>
-      <text attributes={1} fg={props.fg}>
-        {section().title}
-      </text>
-      <text fg={props.muted}>{'─'.repeat(38)}</text>
-      <For each={section().rows}>
-        {(row: SettingsRow) => {
-          const isSelected = () => row.selectable !== false && row.id === props.selectedId()
-          const marker = () => row.marker ?? (row.disabled ? '[x]' : '[ ]')
-          return (
-            <box flexDirection="column">
-              <text
-                fg={isSelected() ? props.fg : props.muted}
-                {...(isSelected() ? { attributes: 1 } : {})}
-              >
-                {`${marker()} ${row.title}${isSelected() ? '  <-' : ''}`}
+      <box flexDirection="row">
+        <text attributes={1} fg={props.fg}>
+          {`Pantheon v${props.version}`}
+        </text>
+        <For each={props.tabs()}>
+          {(t, index) => (
+            <text
+              fg={index() === props.page() ? props.fg : props.muted}
+              {...(index() === props.page() ? { attributes: 1 } : {})}
+            >
+              {`   ${t.title}${tabDirty(props.draft(), t) ? ' ●' : ''}`}
+            </text>
+          )}
+        </For>
+        <text fg={props.muted}>{'  esc'}</text>
+      </box>
+      <text fg={props.muted}>{'─'.repeat(72)}</text>
+      <For each={tab().groups}>
+        {(group) => (
+          <box flexDirection="column">
+            <Show when={group.title !== undefined}>
+              <text attributes={1} fg={props.fg}>
+                {group.title}
               </text>
-              <Show when={row.description !== ''}>
-                <text fg={props.muted}>{`    ${row.description}`}</text>
-              </Show>
-            </box>
-          )
-        }}
+            </Show>
+            <For each={group.rows}>
+              {(row: SettingsRow) => {
+                const isSelected = () => rows()[props.selected()]?.id === row.id
+                const display = () => props.draft()[row.id] ?? row.value
+                const staged = () => props.draft()[row.id] !== undefined
+                const gutter = () => (isSelected() ? '▸ ' : '  ')
+                const valueCell = () => (row.cycle !== undefined ? `< ${display()} >` : display())
+                return (
+                  <box flexDirection="row">
+                    <box width={NAME_WIDTH + 2}>
+                      <text fg={props.fg} {...(isSelected() ? { attributes: 1 } : {})}>
+                        {`${gutter()}${row.name}`.padEnd(NAME_WIDTH + 2)}
+                      </text>
+                    </box>
+                    <box width={VALUE_WIDTH}>
+                      <text
+                        fg={isSelected() || staged() ? props.fg : props.muted}
+                        {...(isSelected() ? { attributes: 1 } : {})}
+                      >
+                        {`${valueCell()}${staged() ? ' ●' : ''}`.padEnd(VALUE_WIDTH)}
+                      </text>
+                    </box>
+                    <Show when={row.note !== undefined}>
+                      <box flexGrow={1} flexShrink={1}>
+                        <text fg={props.muted}>{row.note}</text>
+                      </box>
+                    </Show>
+                  </box>
+                )
+              }}
+            </For>
+            <box height={1} />
+          </box>
+        )}
       </For>
-      <box height={1} />
-      <Show when={section().hint !== undefined}>
-        <text fg={props.muted}>{section().hint}</text>
+      <Show when={props.notice() !== undefined}>
+        <text fg={props.warn ?? props.muted}>{`⚠ ${props.notice()}`}</text>
       </Show>
+      <text fg={draftDirty(props.draft()) ? (props.warn ?? props.fg) : props.muted}>
+        {draftDirty(props.draft())
+          ? `● unsaved (${draftCount(props.draft())}) — ctrl+s save · ctrl+r reset page`
+          : 'no staged changes'}
+      </text>
       <text fg={props.muted}>
-        {`${props.page() + 1}/${props.sections().length} · `}tab: section · up/down: select · enter:
-        apply · esc/q: close
+        {
+          '1-9 tab · ←/→ change value · enter apply · tab next tab · ctrl+s save · ctrl+r reset page · esc/q close'
+        }
       </text>
     </box>
   )
 }
 
-/**
- * Entry glue: read both overrides files, then show the window through the
- * host dialog stack once. The gated keymap layer is inert while the window
- * is closed. Never throws.
- */
-export async function maybeShowPantheonSettings(context: Context): Promise<void> {
-  try {
-    const [open, setOpen] = createSignal(false)
-    const [page, setPage] = createSignal(0)
-    const [load, setLoad] = createSignal<OverridesLoad>(readOverridesLoad())
-    const [lastChecked, setLastChecked] = createSignal<string | undefined>(undefined)
-    const [checking, setChecking] = createSignal(false)
-    const [decision, setDecision] = createSignal(readDecisionRouterConfig())
-    const [presetTick, setPresetTick] = createSignal(0)
+// ── Shared window controller (signals + writers), mounted per surface ──
 
-    const currentVersion = resolveRunningVersion()
+interface PageApi {
+  move: (delta: number) => void
+  step: (direction: 1 | -1) => void
+  actuate: () => void
+  nextTab: () => void
+  jumpTab: (index: number) => void
+  save: () => void
+  resetPage: () => void
+  close: () => void
+}
 
-    const updatesInput = (): UpdatesSectionInput => {
-      const input: UpdatesSectionInput = {
-        currentVersion,
-        state: readUpdateCheckState(),
-        checking: checking(),
-        nowMs: Date.now(),
+let pageApi: PageApi | undefined
+
+function createWindowController(
+  context: Context,
+  exit: () => void,
+): {
+  tabs: () => SettingsTab[]
+  page: () => number
+  selected: () => number
+  draft: () => SettingsDraft
+  notice: () => string | undefined
+  api: PageApi
+  cleanup: () => void
+} {
+  const [page, setPage] = createSignal(0)
+  const [selected, setSelected] = createSignal(0)
+  const [load, setLoad] = createSignal(readOverridesLoad())
+  const [decision, setDecision] = createSignal<DecisionConfigRead>(readDecisionRouterConfig())
+  const [presetTick, setPresetTick] = createSignal(0)
+  const [lastChecked, setLastChecked] = createSignal<string | undefined>(undefined)
+  const [checking, setChecking] = createSignal(false)
+  const [draft, setDraft] = createSignal<SettingsDraft>({})
+  const [notice, setNotice] = createSignal<string | undefined>(undefined)
+
+  const currentVersion = resolveRunningVersion()
+
+  const presetInput = () => {
+    void presetTick()
+    return {
+      globalName: readActivePresetMarker(globalActivePresetPath())?.name ?? null,
+      projectName: readActivePresetMarker(projectActivePresetPath())?.name ?? null,
+    }
+  }
+
+  const updatesInput = (): UpdatesSectionInput => {
+    const input: UpdatesSectionInput = {
+      currentVersion,
+      state: readUpdateCheckState(),
+      checking: checking(),
+      nowMs: Date.now(),
+    }
+    const seen = lastChecked()
+    if (seen !== undefined) input.lastCheckedVersion = seen
+    return input
+  }
+
+  const tabs = (): SettingsTab[] => [
+    buildGatesTab(load()),
+    buildDecisionTab(decision()),
+    buildPresetTab(presetInput()),
+    buildJ1Tab(process.env, false),
+    buildUpdatesTab(updatesInput()),
+    buildDoctorTab({
+      runningVersion: currentVersion,
+      nodeVersion: process.versions.node,
+      load: load(),
+    }),
+    buildAboutTab(currentVersion),
+  ]
+
+  const rows = () => tabRows(tabs()[page()] ?? tabs()[0] ?? EMPTY_TAB)
+
+  const move = (delta: number) => {
+    const list = rows()
+    if (list.length === 0) return
+    setSelected((current) => Math.min(Math.max(current + delta, 0), list.length - 1))
+  }
+
+  const step = (direction: 1 | -1) => {
+    const row = rows()[selected()]
+    if (row === undefined) return
+    setNotice(undefined)
+    setDraft(stageValue(draft(), row, direction))
+  }
+
+  const checkUpdatesNow = () => {
+    if (checking()) return
+    setChecking(true)
+    setNotice(undefined)
+    void fetchLatestForChannel(currentVersion)
+      .then((latest) => {
+        if (latest) setLastChecked(latest)
+        persistUpdateCheckState(readUpdateCheckState(), latest)
+      })
+      .catch(() => {
+        /* offline — the row keeps the last known state */
+      })
+      .finally(() => setChecking(false))
+  }
+
+  const dispatchWrite = (id: string, value: string): DraftWriterResult => {
+    if (id.startsWith('gate.')) {
+      if (!canWriteOverrides(load())) {
+        return { ok: false, reason: 'overrides file unreadable — repair with `doctor --fix`' }
       }
-      const seen = lastChecked()
-      if (seen !== undefined) input.lastCheckedVersion = seen
-      return input
-    }
-
-    const presetInput = () => {
-      void presetTick()
-      return {
-        globalName: readActivePresetMarker(globalActivePresetPath())?.name ?? null,
-        projectName: readActivePresetMarker(projectActivePresetPath())?.name ?? null,
-      }
-    }
-
-    const sections = (): SettingsSection[] => [
-      buildGatesSection(load()),
-      buildDecisionSection(decision()),
-      buildPresetSection(presetInput()),
-      buildJ1Section(process.env, isBehaviorDisabled(mergedOverrides(load()), 'gate-j1-risk-gate')),
-      buildUpdatesSection(updatesInput()),
-      buildDoctorSection({
-        runningVersion: currentVersion,
-        nodeVersion: process.versions.node,
-        load: load(),
-      }),
-      buildAboutSection(currentVersion),
-    ]
-    const [selectedId, setSelectedId] = createSignal<string | undefined>(
-      firstSelectableId(sections()),
-    )
-
-    const move = (delta: number) => {
-      const list = flatSelectableRows(sections())
-      if (list.length === 0) return
-      const current = list.findIndex((row) => row.id === selectedId())
-      const nextIndex = current === -1 ? 0 : Math.min(Math.max(current + delta, 0), list.length - 1)
-      setSelectedId(list[nextIndex]?.id)
-    }
-
-    const flipSection = () => {
-      const count = sections().length
-      const next = (page() + 1) % count
-      setPage(next)
-      const target = sections()[next]
-      if (target === undefined) return
-      const within = flatSelectableRows([target])[0]
-      if (within) setSelectedId(within.id)
-    }
-
-    const toggleSelectedGate = () => {
-      const id = selectedId()
-      if (id === undefined || !id.startsWith('gate.')) return false
-      if (!canWriteOverrides(load())) return undefined // corrupt file — writes refused
       const behaviorId = id.slice('gate.'.length)
-      const next: OverridesLoad = {
-        ...load(),
-        global: toggledOverrides(load().global, behaviorId),
-      }
-      try {
-        writeOverridesToDisk(next)
-        setLoad(next)
-      } catch {
-        /* disk write failed — keep the in-memory state, stay open */
-      }
-      return undefined
-    }
-
-    const checkUpdatesNow = () => {
-      if (checking()) return undefined
-      setChecking(true)
-      void fetchLatestForChannel(currentVersion)
-        .then((latest) => {
-          if (latest) setLastChecked(latest)
-          persistUpdateCheckState(readUpdateCheckState(), latest)
-        })
-        .catch(() => {
-          /* offline — the row keeps the last known state */
-        })
-        .finally(() => setChecking(false))
-      return undefined
-    }
-
-    const toggleDecisionEnabled = () => {
-      const current = decision()
-      if (current.corrupt) return undefined // invalid file — writes refused
-      const next = setDecisionEnabled(current.config, !current.config.enabled)
-      if (!next.ok) return undefined // guard refused (egress consent missing)
-      try {
-        writeDecisionRouterConfig(next.config)
-        setDecision({ config: next.config, corrupt: false })
-      } catch {
-        /* disk write failed — keep the in-memory state */
-      }
-      return undefined
-    }
-
-    const applySelectedPreset = () => {
-      const id = selectedId()
-      if (id === undefined) return undefined
-      const name = id.startsWith('preset.') ? id.slice('preset.'.length) : null
-      if (name === null || name === 'project') return undefined
-      const path = globalActivePresetPath()
-      try {
-        if (name === 'none') clearActivePreset(path)
-        else writeActivePreset(path, name)
-        setPresetTick((tick) => tick + 1)
-      } catch {
-        /* disk write failed — the section keeps showing the last read state */
-      }
-      return undefined
-    }
-
-    let dismiss: () => void = () => {}
-    try {
-      context.keymap.layer(() => ({
-        mode: 'global',
-        enabled: () => open(),
-        commands: [
-          {
-            id: 'pantheon.settings.close',
-            title: 'Close settings',
-            bind: 'escape,q',
-            run: () => {
-              if (!open()) return false
-              dismiss()
-              return undefined
-            },
-          },
-          {
-            id: 'pantheon.settings.down',
-            title: 'Select next',
-            bind: 'down,j',
-            run: () => {
-              if (!open()) return false
-              move(1)
-              return undefined
-            },
-          },
-          {
-            id: 'pantheon.settings.up',
-            title: 'Select previous',
-            bind: 'up,k',
-            run: () => {
-              if (!open()) return false
-              move(-1)
-              return undefined
-            },
-          },
-          {
-            id: 'pantheon.settings.toggle',
-            title: 'Apply the selected row',
-            bind: 'enter,space',
-            run: () => {
-              if (!open()) return false
-              const id = selectedId()
-              if (id?.startsWith('gate.')) return toggleSelectedGate()
-              if (id === 'decision.enabled') return toggleDecisionEnabled()
-              if (id?.startsWith('preset.')) return applySelectedPreset()
-              if (id === 'update.check') return checkUpdatesNow()
-              return undefined
-            },
-          },
-          {
-            id: 'pantheon.settings.section',
-            title: 'Next section',
-            bind: 'tab',
-            run: () => {
-              if (!open()) return false
-              flipSection()
-              return undefined
-            },
-          },
-        ],
-      }))
-    } catch {
-      /* keymap API unavailable — the host dialog chrome still dismisses (ESC) */
-    }
-
-    // The host may dismiss the dialog on its own and call this callback from
-    // inside its dismissal; mutating the dialog stack there re-enters the host
-    // mid-close and the swallowed failure leaves the window unclosable (the
-    // whats-new split: clear() lives only in dismiss, never in close).
-    const close = () => {
-      setOpen(false)
-    }
-    dismiss = () => {
-      try {
-        context.ui.dialog.clear()
-      } catch {
-        /* already closed */
-      }
-      close()
-    }
-    setOpen(true)
-    setPage(0)
-    try {
-      const theme = context.theme?.text ?? {}
-      context.ui.dialog.show(
-        () => (
-          <SettingsContent
-            sections={sections}
-            page={page}
-            selectedId={selectedId}
-            fg={theme.base}
-            muted={theme.muted}
-          />
-        ),
-        close,
+      const nextGlobal = setOverrideState(
+        load().global,
+        behaviorId,
+        value === 'disabled' ? 'disabled' : 'enabled',
       )
-      // Roomier chrome for the sectioned window; older hosts without `set`
-      // keep the default size (fail-open).
+      if (nextGlobal === load().global) return { ok: true }
       try {
-        context.ui.dialog.set?.({ size: 'xlarge' })
+        writeOverridesToDisk({ ...load(), global: nextGlobal })
+        setLoad({ ...load(), global: nextGlobal })
+        return { ok: true }
       } catch {
-        /* size control unavailable */
+        return { ok: false, reason: 'overrides disk write failed' }
       }
+    }
+    if (id === 'decision.enabled') {
+      const current = decision()
+      if (current.corrupt) {
+        return {
+          ok: false,
+          reason: 'decision-router.json unreadable — repair via `decision-router setup-model`',
+        }
+      }
+      const guarded = setDecisionEnabled(current.config, value === 'enabled')
+      if (!guarded.ok) return { ok: false, reason: guarded.reason }
+      try {
+        writeDecisionRouterConfig(guarded.config)
+        setDecision({ config: guarded.config, corrupt: false })
+        return { ok: true }
+      } catch {
+        return { ok: false, reason: 'decision-router disk write failed' }
+      }
+    }
+    if (id === 'preset') {
+      try {
+        if (value === PRESET_NONE) clearActivePreset(globalActivePresetPath())
+        else writeActivePreset(globalActivePresetPath(), value)
+        setPresetTick((tick) => tick + 1)
+        return { ok: true }
+      } catch (error) {
+        return {
+          ok: false,
+          reason: error instanceof Error ? error.message : 'preset marker write failed',
+        }
+      }
+    }
+    return { ok: false, reason: 'unknown staged row' }
+  }
+
+  const save = () => {
+    if (!draftDirty(draft())) {
+      setNotice('nothing staged — ←/→ stages a change first')
+      return
+    }
+    const writer: DraftWriter = dispatchWrite
+    const { applied, failed } = applyDraft(draft(), writer)
+    if (applied.length > 0) {
+      setDraft(settledDraft(draft(), applied))
+      setLoad(readOverridesLoad())
+      setDecision(readDecisionRouterConfig())
+      setPresetTick((tick) => tick + 1)
+    }
+    if (failed.length > 0) {
+      setNotice(`${failed.map((f) => `${f.id}: ${f.reason}`).join(' · ')} — staged changes kept`)
+    } else {
+      setNotice(`saved ${applied.length} change${applied.length === 1 ? '' : 's'}`)
+    }
+  }
+
+  const resetPage = () => {
+    const tab = tabs()[page()]
+    if (tab === undefined) return
+    setDraft(resetTab(draft(), tab))
+    setNotice(undefined)
+  }
+
+  const nextTab = () => {
+    setPage((current) => (current + 1) % tabs().length)
+    setSelected(0)
+  }
+
+  const close = () => {
+    if (draftDirty(draft())) {
+      try {
+        void Promise.resolve(
+          context.ui.dialog.confirm({
+            title: 'Pantheon settings',
+            message: 'Discard unsaved settings changes?',
+          }),
+        ).then((confirmed) => {
+          if (confirmed === true) exit()
+        })
+      } catch {
+        /* confirm unavailable — stay open; the user can ctrl+r first */
+      }
+      return
+    }
+    exit()
+  }
+
+  const api: PageApi = {
+    move,
+    step,
+    actuate: () => {
+      const row = rows()[selected()]
+      if (row?.action === 'update-check') checkUpdatesNow()
+      else step(1)
+    },
+    nextTab,
+    jumpTab: (index) => {
+      if (index >= 0 && index < tabs().length) {
+        setPage(index)
+        setSelected(0)
+      }
+    },
+    save,
+    resetPage,
+    close,
+  }
+
+  return {
+    tabs,
+    page,
+    selected,
+    draft,
+    notice,
+    api,
+    cleanup: () => {
+      pageApi = undefined
+      setBlocking(false)
+    },
+  }
+}
+
+// ── The router page (the primary surface) ──────────────────────────────
+
+function SettingsPage(props: { context: Context; data: Record<string, any> | undefined }) {
+  const returnRoute = (props.data as { returnRoute?: WindowRoute } | undefined)?.returnRoute
+  const context = props.context
+  const controller = createWindowController(context, () =>
+    navigateBack(context, returnRoute !== undefined ? { returnRoute } : {}),
+  )
+  const theme = context.theme?.text ?? {}
+  const warn = (theme?.feedback as any)?.warning?.base ?? theme.muted
+  onCleanup(controller.cleanup)
+  setBlocking(true)
+  pageApi = controller.api
+  return (
+    <SettingsWindow
+      version={resolveRunningVersion()}
+      tabs={controller.tabs}
+      page={controller.page}
+      selected={controller.selected}
+      draft={controller.draft}
+      notice={controller.notice}
+      fg={theme.base}
+      muted={theme.muted}
+      warn={warn}
+    />
+  )
+}
+
+function navigateBack(context: Context, data?: { returnRoute?: WindowRoute }): void {
+  try {
+    const fallback: WindowRoute = { type: 'home' }
+    context.ui.router.navigate(data?.returnRoute ?? fallback)
+  } catch {
+    /* router unavailable — nothing to navigate back to */
+  }
+}
+
+// ── The fallback dialog (hosts without a router) ───────────────────────
+
+const [dialogOpen, setDialogOpen] = createSignal(false)
+let dialogDismiss: () => void = () => {}
+
+function openSettingsDialog(context: Context): void {
+  const controller = createWindowController(context, () => dialogDismiss())
+  const theme = context.theme?.text ?? {}
+  const warn = (theme?.feedback as any)?.warning?.base ?? theme.muted
+  controller.cleanup = () => {
+    pageApi = undefined
+    setBlocking(false)
+    setDialogOpen(false)
+  }
+  // The host may dismiss the dialog on its own and call this callback from
+  // inside its dismissal; clear() must never run there (the whats-new split).
+  const close = () => {
+    controller.cleanup()
+  }
+  dialogDismiss = () => {
+    try {
+      context.ui.dialog.clear()
     } catch {
-      /* dialog stack unavailable — fail-open */
+      /* already closed */
+    }
+    close()
+  }
+  setBlocking(true)
+  setDialogOpen(true)
+  pageApi = controller.api
+  try {
+    context.ui.dialog.show(
+      () => (
+        <SettingsWindow
+          version={resolveRunningVersion()}
+          tabs={controller.tabs}
+          page={controller.page}
+          selected={controller.selected}
+          draft={controller.draft}
+          notice={controller.notice}
+          fg={theme.base}
+          muted={theme.muted}
+          warn={warn}
+        />
+      ),
+      close,
+    )
+  } catch {
+    /* dialog stack unavailable — fail-open */
+  }
+}
+
+// ── Setup: register once, gate once, priority 1 (anti-theft) ───────────
+
+export function setupPantheonSettings(context: Context): void {
+  try {
+    context.ui.router?.register?.({
+      name: ROUTE_NAME,
+      render: ({ data }) => <SettingsPage context={context} data={data} />,
+    })
+    routerAvailable = true
+  } catch {
+    routerAvailable = false
+  }
+
+  const routeGated = () => {
+    try {
+      const route = context.ui?.router?.current?.()
+      return route?.type === 'plugin' && route.name === ROUTE_NAME
+    } catch {
+      return false
+    }
+  }
+  const commands = [
+    {
+      id: 'pantheon.settings.close',
+      title: 'Close settings',
+      bind: 'escape,q',
+      run: () => {
+        pageApi?.close()
+        return undefined
+      },
+    },
+    {
+      id: 'pantheon.settings.down',
+      title: 'Select next row',
+      bind: 'down,j',
+      run: () => {
+        pageApi?.move(1)
+        return undefined
+      },
+    },
+    {
+      id: 'pantheon.settings.up',
+      title: 'Select previous row',
+      bind: 'up,k',
+      run: () => {
+        pageApi?.move(-1)
+        return undefined
+      },
+    },
+    {
+      id: 'pantheon.settings.cycle.next',
+      title: 'Stage the next value',
+      bind: 'right,l',
+      run: () => {
+        pageApi?.step(1)
+        return undefined
+      },
+    },
+    {
+      id: 'pantheon.settings.cycle.prev',
+      title: 'Stage the previous value',
+      bind: 'left,h',
+      run: () => {
+        pageApi?.step(-1)
+        return undefined
+      },
+    },
+    {
+      id: 'pantheon.settings.actuate',
+      title: 'Apply / act on the row',
+      bind: 'enter,space',
+      run: () => {
+        pageApi?.actuate()
+        return undefined
+      },
+    },
+    {
+      id: 'pantheon.settings.next.tab',
+      title: 'Next settings tab',
+      bind: 'tab',
+      run: () => {
+        pageApi?.nextTab()
+        return undefined
+      },
+    },
+    {
+      id: 'pantheon.settings.save',
+      title: 'Save staged changes',
+      bind: 'ctrl+s',
+      run: () => {
+        pageApi?.save()
+        return undefined
+      },
+    },
+    {
+      id: 'pantheon.settings.reset.page',
+      title: 'Reset this tab',
+      bind: 'ctrl+r',
+      run: () => {
+        pageApi?.resetPage()
+        return undefined
+      },
+    },
+    ...Array.from({ length: 9 }, (_, index) => ({
+      id: `pantheon.settings.tab.${index + 1}`,
+      title: `Jump to tab ${index + 1}`,
+      bind: String(index + 1),
+      run: () => {
+        pageApi?.jumpTab(index)
+        return undefined
+      },
+    })),
+  ]
+  // The PAGE layer: gated on the route, priority 1 beats any stale
+  // same-bind layer while the window is open (beta.2 field report).
+  try {
+    context.keymap.layer(() => ({
+      mode: 'global' as const,
+      priority: 1,
+      enabled: () => routeGated(),
+      commands,
+    }))
+  } catch {
+    /* keymap API unavailable — the fallback dialog below still works */
+  }
+  // The FALLBACK DIALOG layer: same commands, gated on the dialog signal.
+  try {
+    context.keymap.layer(() => ({
+      mode: 'global' as const,
+      priority: 1,
+      enabled: () => dialogOpen(),
+      commands,
+    }))
+  } catch {
+    /* keymap API unavailable — host chrome still dismisses (ESC) */
+  }
+}
+
+// ── The entry point (command run) ──────────────────────────────────────
+
+export async function openPantheonSettings(context: Context): Promise<void> {
+  try {
+    if (routerAvailable && context.ui?.router?.navigate) {
+      let returnRoute: WindowRoute | undefined
+      try {
+        const current = context.ui.router.current()
+        // Never return INTO the settings page itself.
+        if (!(current.type === 'plugin' && current.name === ROUTE_NAME)) {
+          returnRoute = current as WindowRoute
+        }
+      } catch {
+        returnRoute = undefined
+      }
+      context.ui.router.navigate({
+        type: 'plugin',
+        name: ROUTE_NAME,
+        ...(returnRoute !== undefined ? { data: { returnRoute } } : {}),
+      })
+      return
     }
   } catch {
-    /* fail-open — the window must never block or break TUI startup */
+    /* router unusable — fall through to the dialog */
   }
+  openSettingsDialog(context)
 }
