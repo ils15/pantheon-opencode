@@ -394,7 +394,10 @@ test('update accepts npm symlinked bin entry (the running script may be a link)'
       if (args[0] === 'view') return { status: 0, stdout: '2.0.0-beta.3\n', stderr: '' }
       if (args[0] === 'install') {
         installCalls += 1
-        writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({ version: '2.0.0-beta.3' }))
+        writeFileSync(
+          join(packageRoot, 'package.json'),
+          JSON.stringify({ version: '2.0.0-beta.3' }),
+        )
         return { status: 0, stdout: '', stderr: '' }
       }
       throw new Error(`Unexpected command: ${args.join(' ')}`)
@@ -424,7 +427,7 @@ test('update still refuses an npm-linked package (symlinked global entry)', asyn
     mkdirSync(globalRoot, { recursive: true })
     symlinkSync(checkout, join(globalRoot, 'pantheon-opencode'))
 
-    let installCalls = 0
+    const installCalls = 0
     const spawnSyncImpl = (_command, args) => {
       if (args[0] === 'root') return { status: 0, stdout: `${globalRoot}\n`, stderr: '' }
       throw new Error(`Unexpected command: ${args.join(' ')}`)
