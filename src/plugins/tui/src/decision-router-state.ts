@@ -16,7 +16,9 @@
  */
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import type { SettingsRow, SettingsSection } from './pantheon-settings-state.ts'
+import type { SettingsRow, SettingsTab } from './pantheon-settings-state.ts'
+
+export const DECISION_ENABLED_CYCLE: readonly string[] = Object.freeze(['enabled', 'disabled'])
 
 export const DECISION_CONFIG_SCHEMA_VERSION = 2
 
@@ -203,40 +205,41 @@ export function writeDecisionRouterConfig(
   chmodSync(path, 0o600)
 }
 
-export function buildDecisionSection(read: DecisionConfigRead): SettingsSection {
+export function buildDecisionTab(read: DecisionConfigRead): SettingsTab {
   const { config, corrupt } = read
   const rows: SettingsRow[] = [
     {
       id: 'decision.enabled',
-      title: `Decision router: ${config.enabled ? 'enabled' : 'disabled'}`,
-      description: corrupt
-        ? 'config file unreadable/invalid — the runtime fail-closes to disabled'
-        : 'the runtime re-reads this file on every gated call — applies live',
-      disabled: !config.enabled,
+      name: 'Router',
+      value: config.enabled ? 'enabled' : 'disabled',
+      // Corrupt config → read-only; the notice (glue) carries the remedy.
+      ...(corrupt ? {} : { cycle: DECISION_ENABLED_CYCLE }),
+      note: corrupt
+        ? 'config unreadable/invalid — runtime fail-closes; repair via `decision-router setup-model`'
+        : 'applies live — the runtime re-reads this on every gated call',
     },
     {
       id: 'decision.selection',
-      title: `Selection: ${config.selection.mode}${config.selection.provider ? ` · ${config.selection.provider}` : ''}`,
-      description: 'local routes on-device; auto/explicit pick a remote decision model',
-      selectable: false,
+      name: 'Selection',
+      value: `${config.selection.mode}${config.selection.provider ? ` · ${config.selection.provider}` : ''}`,
+      note: 'local routes on-device; auto/explicit pick a remote decision model',
     },
   ]
   if (config.enabled_candidates.length > 0) {
     rows.push({
       id: 'decision.candidates',
-      title: `Candidates: ${config.enabled_candidates.map((candidate) => `${candidate.provider}/${candidate.model}`).join(', ')}`,
-      description: config.egress_consent
-        ? 'egress consent granted'
+      name: 'Candidates',
+      value: String(config.enabled_candidates.length),
+      note: config.egress_consent
+        ? config.enabled_candidates
+            .map((candidate) => `${candidate.provider}/${candidate.model}`)
+            .join(', ')
         : 'egress consent NOT granted — remote routes fail closed',
-      selectable: false,
     })
   }
   return {
     id: 'decision',
-    title: 'Decision Model',
-    rows,
-    hint: corrupt
-      ? 'repair via `decision-router setup-model` — writes refused on an invalid file'
-      : 'enter: enable/disable · consent and candidates via `decision-router setup-model`',
+    title: 'Decision',
+    groups: [{ title: 'Decision router', rows }],
   }
 }

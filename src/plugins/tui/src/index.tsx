@@ -24,7 +24,11 @@ import {
   MODEL_USAGE_SESSION_LIMIT,
   MODEL_USAGE_VISIBLE_CEILING,
 } from './model-usage-limits'
-import { maybeShowPantheonSettings } from './pantheon-settings'
+import {
+  openPantheonSettings,
+  pantheonSettingsBlocking,
+  setupPantheonSettings,
+} from './pantheon-settings'
 import { cellWidth, GRAPHEMES, SIDEBAR_CONTENT_WIDTH } from './sidebar-width'
 import { nextCheckState, pickUpdateNotice, type UpdateCheckState } from './update-notice.ts'
 import { maybeShowWhatsNewV2 } from './whats-new'
@@ -4253,7 +4257,12 @@ export function dispatchPanelKeymapLayer(
   panel: Pick<PanelInput, 'focused' | 'close' | 'toggleFullscreen'>,
   model: DispatchPanelModel,
 ): KeymapLayer {
-  const focused = () => panel.focused === true
+  // The dialog-suspension gate mirrors the host's own convention (global
+  // session layers sleep while a dialog holds the stack): `panel.focused`
+  // stays sticky after a `show()` blur-to-nothing, so without this gate the
+  // dispatch panel stole the settings window's up/down/enter (beta.2 field
+  // report — "navigation stopped working").
+  const focused = () => panel.focused === true && !pantheonSettingsBlocking()
   return {
     mode: 'global',
     enabled: focused,
@@ -4408,7 +4417,7 @@ function PantheonSettingsCommandLayer(props: { context: any }) {
         palette: true,
         slash: { name: 'pantheon-settings' },
         run: () => {
-          void maybeShowPantheonSettings(props.context)
+          void openPantheonSettings(props.context)
         },
       },
     ],
@@ -4554,6 +4563,15 @@ const plugin = Plugin.define({
       append: 'app',
       render: () => <PantheonSettingsCommandLayer context={context} />,
     })
+    // The settings window surfaces: the full-screen router page (primary),
+    // the legacy-host dialog fallback, and their keymap layers — registered
+    // ONCE here with priority 1 so a stale same-bind layer can never win
+    // while the window is open.
+    try {
+      setupPantheonSettings(context)
+    } catch {
+      /* settings unavailable on this host — the command toasts/fails open */
+    }
     // One-time "What's new" window (per Pantheon version) — fire-and-forget:
     // resolves the running version and the shipped CHANGELOG.md, then opens a
     // host dialog when the version changed since the last dismissal. Fail-open;

@@ -1,17 +1,16 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
-  buildAboutSection,
-  buildGatesSection,
+  buildAboutTab,
+  buildGatesTab,
   canWriteOverrides,
-  firstSelectableId,
-  flatSelectableRows,
+  GATES_ENABLED_CYCLE,
   isBehaviorDisabled,
   mergedOverrides,
   SETTINGS_BEHAVIORS,
   SETTINGS_TOGGLABLE_IDS,
-  selectableRows,
   serializeOverrides,
+  tabRows,
   toggledOverrides,
 } from '../src/plugins/tui/src/pantheon-settings-state.ts'
 
@@ -96,62 +95,51 @@ describe('overrides load model', () => {
   })
 })
 
-describe('gates section', () => {
-  it('marks project-owned rows and makes them non-selectable', () => {
-    const section = buildGatesSection(
-      load_fixture({}, { 'gate-j1-risk-gate': { action: 'disable' } }),
-    )
-    const row = section.rows.find((row) => row.id === 'gate.gate-j1-risk-gate')
-    assert.equal(row.title, 'J1 risk gate (project)')
-    assert.equal(row.selectable, false)
-    assert.equal(row.source, 'project')
-    assert.equal(row.disabled, true)
+describe('gates tab', () => {
+  it('marks project-owned rows as read-only (no cycle) with a winning note', () => {
+    const tab = buildGatesTab(load_fixture({}, { 'gate-j1-risk-gate': { action: 'disable' } }))
+    const row = tabRows(tab).find((row) => row.id === 'gate.gate-j1-risk-gate')
+    assert.equal(row.name, 'J1 risk gate (project)')
+    assert.equal(row.cycle, undefined)
+    assert.match(row.note, /project file wins at runtime/)
+    assert.equal(row.value, 'disabled')
   })
 
-  it('global rows stay selectable and reflect the merged state', () => {
-    const section = buildGatesSection(
-      load_fixture({ 'skill-auto-continue': { action: 'disable' } }, {}),
-    )
-    const row = section.rows.find((row) => row.id === 'gate.skill-auto-continue')
-    assert.equal(row.disabled, true)
-    assert.equal(row.selectable, true)
-    assert.equal(row.source, 'global')
+  it('global rows stay cyclable and reflect the merged state', () => {
+    const tab = buildGatesTab(load_fixture({ 'skill-auto-continue': { action: 'disable' } }, {}))
+    const row = tabRows(tab).find((row) => row.id === 'gate.skill-auto-continue')
+    assert.equal(row.value, 'disabled')
+    assert.deepEqual(row.cycle, GATES_ENABLED_CYCLE)
+    assert.equal(row.note, 'Continue multi-step todos while keeping safety gates.')
   })
 
-  it('the hint refuses writes while corrupt and points at doctor', () => {
-    const corrupt = buildGatesSection(load_fixture({}, {}, true))
-    assert.match(corrupt.hint, /writes refused/)
-    assert.match(corrupt.hint, /doctor --fix/)
-    const clean = buildGatesSection(load_fixture({}, {}))
-    assert.match(clean.hint, /enter: disable\/enable/)
+  it('a corrupt global file takes the cycle away (writes refused)', () => {
+    const tab = buildGatesTab(load_fixture({}, {}, true))
+    for (const row of tabRows(tab)) {
+      assert.equal(row.cycle, undefined, `${row.id} must not stage on a corrupt file`)
+    }
   })
 
-  it('every row is namespaced under gate. and selectable in registry order', () => {
-    const section = buildGatesSection(load_fixture({}, {}))
+  it('groups install skills then runtime gates, all namespaced under gate.', () => {
+    const tab = buildGatesTab(load_fixture({}, {}))
+    assert.equal(tab.groups.length, 2)
     assert.deepEqual(
-      selectableRows(section).map((row) => row.id),
+      tab.groups.map((group) => group.title),
+      ['Install skills', 'Runtime gates'],
+    )
+    assert.deepEqual(
+      tabRows(tab).map((row) => row.id),
       SETTINGS_BEHAVIORS.map((behavior) => `gate.${behavior.id}`),
     )
   })
 })
 
-describe('section model', () => {
-  it('flatSelectableRows concatenates sections in order and skips info rows', () => {
-    const a = buildGatesSection(load_fixture({}, {}))
-    const b = buildAboutSection('2.0.0-beta.1')
-    const flat = flatSelectableRows([a, b])
-    assert.equal(flat.length, 7, 'about rows are info-only')
-    assert.equal(firstSelectableId([a, b]), 'gate.skill-auto-continue')
-    assert.equal(firstSelectableId([]), undefined)
-  })
-})
-
-describe('about section', () => {
+describe('about tab', () => {
   it('names the version and the 2.x-only posture', () => {
-    const section = buildAboutSection('2.0.0-beta.2')
-    assert.equal(section.rows[0].title, 'Pantheon v2.0.0-beta.2')
-    assert.ok(section.rows.some((row) => row.description.includes('V1 contract is removed')))
-    for (const row of section.rows) assert.equal(row.selectable, false)
+    const tab = buildAboutTab('2.0.0-beta.2')
+    const rows = tabRows(tab)
+    assert.equal(rows[0].value, 'v2.0.0-beta.2')
+    assert.ok(rows.some((row) => row.note.includes('V1 contract is removed')))
   })
 })
 

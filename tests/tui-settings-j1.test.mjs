@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { describe, it } from 'node:test'
 import {
-  buildJ1Section,
+  buildJ1Tab,
   J1_FLAG_ENV,
   J1_THRESHOLD_DEFAULT,
   J1_THRESHOLD_ENV,
@@ -48,20 +48,29 @@ describe('j1 gate section (TUI-local replica)', () => {
   })
 
   it('reports override disablement and says the section is env-only', () => {
-    const active = buildJ1Section({ [J1_FLAG_ENV]: 'enforce' }, false)
-    assert.ok(active.rows.some((row) => row.title.includes('Mode: enforce')))
-    assert.ok(active.rows.some((row) => row.title === 'Gate: active'))
-    const killed = buildJ1Section({ [J1_FLAG_ENV]: 'enforce' }, true)
-    assert.ok(killed.rows.some((row) => row.title === 'Gate: disabled via overrides'))
-    assert.equal(killed.hint.includes('restart'), true, 'must say a restart applies')
-    for (const row of [...active.rows, ...killed.rows]) {
-      assert.equal(row.selectable, false, 'the section is read-only')
+    const active = buildJ1Tab({ [J1_FLAG_ENV]: 'enforce' }, false)
+    const rows = active.groups.flatMap((group) => group.rows)
+    const modeRow = rows.find((row) => row.id === 'j1.mode')
+    assert.equal(modeRow.value, 'enforce')
+    assert.ok(rows.some((row) => row.id === 'j1.gate' && row.value === 'active'))
+    const killed = buildJ1Tab({ [J1_FLAG_ENV]: 'enforce' }, true)
+    const killedRows = killed.groups.flatMap((group) => group.rows)
+    assert.ok(
+      killedRows.some((row) => row.id === 'j1.gate' && row.value === 'disabled via overrides'),
+    )
+    const hintRows = killedRows.filter((row) => row.note !== undefined)
+    assert.ok(
+      hintRows.some((row) => row.note.includes('restart')),
+      'must say a restart applies',
+    )
+    for (const row of rows) {
+      assert.equal(row.cycle, undefined, 'the tab is read-only — no cyclers here')
     }
   })
 
   it('warn is surfaced as reserved', () => {
-    const section = buildJ1Section({ [J1_FLAG_ENV]: 'warn' }, false)
-    const modeRow = section.rows.find((row) => row.id === 'j1.mode')
-    assert.match(modeRow.description, /RESERVED/)
+    const tab = buildJ1Tab({ [J1_FLAG_ENV]: 'warn' }, false)
+    const modeRow = tab.groups.flatMap((group) => group.rows).find((row) => row.id === 'j1.mode')
+    assert.match(modeRow.note, /RESERVED/)
   })
 })

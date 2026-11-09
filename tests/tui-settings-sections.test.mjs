@@ -1,13 +1,12 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
-  buildAboutSection,
-  buildGatesSection,
-  firstSelectableId,
-  flatSelectableRows,
+  buildAboutTab,
+  buildGatesTab,
+  tabRows,
 } from '../src/plugins/tui/src/pantheon-settings-state.ts'
 import {
-  buildUpdatesSection,
+  buildUpdatesTab,
   registryTagForChannel,
   registryUrlForChannel,
   updateChannelFor,
@@ -27,41 +26,40 @@ describe('update channel classification', () => {
 
 describe('updates section rows', () => {
   it('offers check-now and reports a never-checked state', () => {
-    const section = buildUpdatesSection({
+    const section = buildUpdatesTab({
       currentVersion: '2.0.0-beta.2',
       state: {},
       nowMs: 10 * HOUR,
     })
-    const check = section.rows.find((row) => row.id === 'update.check')
-    assert.equal(check.title, 'Check now')
-    assert.equal(check.description, 'never checked')
-    assert.equal(check.selectable, true)
-    assert.match(section.hint, /pantheon-opencode update/)
+    const check = section.groups.flatMap((g) => g.rows).find((row) => row.id === 'update.check')
+    assert.equal(check.name, 'Check now')
+    assert.equal(check.value, 'never checked')
+    assert.match(check.note, /enter probes the registry/)
+    assert.equal(check.action, 'update-check')
   })
 
   it('shows a newer version with the update remedy', () => {
-    const section = buildUpdatesSection({
+    const section = buildUpdatesTab({
       currentVersion: '2.0.0-beta.2',
       state: {},
       lastCheckedVersion: '2.0.0-beta.3',
       nowMs: 10 * HOUR,
     })
-    const latest = section.rows.find((row) => row.id === 'update.latest')
-    assert.match(latest.title, /Update available: v2\.0\.0-beta\.3/)
-    assert.match(latest.description, /pantheon-opencode update/)
+    const latest = section.groups.flatMap((g) => g.rows).find((row) => row.id === 'update.latest')
+    assert.equal(latest.value, 'v2.0.0-beta.3 available')
+    assert.match(latest.note, /pantheon-opencode update/)
   })
 
   it('shows up-to-date without advertising a downgrade', () => {
-    const section = buildUpdatesSection({
+    const section = buildUpdatesTab({
       currentVersion: '2.0.0-beta.3',
       state: { lastCheckMs: 10 * HOUR, lastNotifiedVersion: '2.0.0-beta.2' },
       nowMs: 11 * HOUR,
     })
-    const latest = section.rows.find((row) => row.id === 'update.latest')
-    assert.match(latest.title, /Up to date/)
-    assert.equal(latest.selectable, false)
-    const check = section.rows.find((row) => row.id === 'update.check')
-    assert.match(check.description, /1h ago/)
+    const latest = section.groups.flatMap((g) => g.rows).find((row) => row.id === 'update.latest')
+    assert.equal(latest.value, 'up to date')
+    const check = section.groups.flatMap((g) => g.rows).find((row) => row.id === 'update.check')
+    assert.match(check.value, /1h ago/)
   })
 
   it('never offers a beta to a stable install from the beta-tag fetch', () => {
@@ -69,32 +67,24 @@ describe('updates section rows', () => {
     // user runs stable only when they manually asked for beta — this window
     // asks the tag matching the RUNNING channel, so a stable current version
     // asking `latest` that returns a beta must not be shown as an upgrade.
-    const section = buildUpdatesSection({
+    const section = buildUpdatesTab({
       currentVersion: '2.0.0',
       state: {},
       lastCheckedVersion: '2.1.0-beta.1',
       nowMs: 10 * HOUR,
     })
-    const latest = section.rows.find((row) => row.id === 'update.latest')
-    assert.match(latest.title, /Up to date/)
-    assert.equal(latest.marker, '[✓]')
+    const latest = section.groups.flatMap((g) => g.rows).find((row) => row.id === 'update.latest')
+    assert.equal(latest.value, 'up to date')
   })
 })
 
 describe('window section composition (order contract)', () => {
   const load = { global: {}, project: {}, corruptGlobal: false }
-  const sections = (currentVersion) => [buildGatesSection(load), buildAboutSection(currentVersion)]
+  const sections = (currentVersion) => [buildGatesTab(load), buildAboutTab(currentVersion)]
 
-  it('selection lands on the first selectable row of the window', () => {
-    assert.equal(firstSelectableId(sections('2.0.0-beta.2')), 'gate.skill-auto-continue')
-  })
-
-  it('the flat order is stable so up/down cannot jump across renders', () => {
-    const flat = flatSelectableRows(sections('2.0.0-beta.2'))
-    assert.deepEqual(
-      flat.map((row) => row.id),
-      flat.map((row) => row.id),
-    )
+  it('the flat row order is stable so up/down cannot jump across renders', () => {
+    const flat = tabRows(sections('2.0.0-beta.2')[0])
     assert.equal(flat.length, 7)
+    assert.equal(flat[0].id, 'gate.skill-auto-continue')
   })
 })

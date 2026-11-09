@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import {
-  buildPresetSection,
+  buildPresetTab,
   clearActivePreset,
   globalActivePresetPath,
   PRESET_NAMES,
@@ -90,25 +90,21 @@ describe('marker I/O', () => {
 })
 
 describe('preset section rows', () => {
-  it('lists every preset plus none, marking the active one', () => {
-    const section = buildPresetSection({ globalName: 'go-fast', projectName: null })
-    const rows = section.rows
-    assert.deepEqual(
-      rows.map((row) => row.id),
-      [...PRESET_NAMES.map((name) => `preset.${name}`), 'preset.none'],
-    )
-    const active = rows.find((row) => row.id === 'preset.go-fast')
-    assert.equal(active.disabled, true)
-    assert.match(active.description, /active \(global\)/)
-    const none = rows.find((row) => row.id === 'preset.none')
-    assert.equal(none.disabled, false)
+  it('one cycler row carries none + every preset name, showing the active value', () => {
+    const section = buildPresetTab({ globalName: 'go-fast', projectName: null })
+    const rows = section.groups.flatMap((g) => g.rows)
+    const preset = rows.find((row) => row.id === 'preset')
+    assert.equal(preset.value, 'go-fast')
+    assert.deepEqual(preset.cycle, ['none', ...PRESET_NAMES])
+    assert.match(preset.note, /\.bak/)
+    assert.equal(rows.length, 1, 'no project override — one row only')
   })
 
   it('shows a project override as read-only context', () => {
-    const section = buildPresetSection({ globalName: 'go-fast', projectName: 'anthropic' })
-    const project = section.rows.find((row) => row.id === 'preset.project')
-    assert.equal(project.selectable, false)
-    assert.match(project.title, /\(project\)/)
-    assert.match(project.description, /wins over the global marker/)
+    const section = buildPresetTab({ globalName: 'go-fast', projectName: 'anthropic' })
+    const project = section.groups.flatMap((g) => g.rows).find((row) => row.id === 'preset.project')
+    assert.equal(project.cycle, undefined, 'read-only here')
+    assert.equal(project.value, 'anthropic')
+    assert.match(project.note, /wins over the global marker/)
   })
 })

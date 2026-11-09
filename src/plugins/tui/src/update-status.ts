@@ -7,10 +7,9 @@
  * whole thing is testable without network.
  */
 
-import type { SettingsRow, SettingsSection } from './pantheon-settings-state.ts'
+import type { SettingsRow, SettingsTab } from './pantheon-settings-state.ts'
 import {
   comparePantheonVersions,
-  UPDATE_CHECK_TTL_MS,
   type UpdateCheckState,
 } from './update-notice.ts'
 
@@ -47,7 +46,7 @@ export interface UpdatesSectionInput {
   nowMs?: number
 }
 
-export function buildUpdatesSection(input: UpdatesSectionInput): SettingsSection {
+export function buildUpdatesTab(input: UpdatesSectionInput): SettingsTab {
   const nowMs = input.nowMs ?? Date.now()
   const channel = updateChannelFor(input.currentVersion)
   const lastCheckMs = input.state.lastCheckMs
@@ -56,20 +55,20 @@ export function buildUpdatesSection(input: UpdatesSectionInput): SettingsSection
   const rows: SettingsRow[] = [
     {
       id: 'update.channel',
-      title: `Channel: ${channel}`,
-      description: 'stable tracks npm `latest`; beta tracks npm `beta`',
-      selectable: false,
+      name: 'Channel',
+      value: channel,
+      note: 'stable tracks npm `latest`; beta tracks npm `beta`',
     },
     {
       id: 'update.check',
-      title: 'Check now',
-      description: input.checking
+      name: 'Check now',
+      value: input.checking
         ? 'checking…'
         : lastCheckMs
           ? `last check ${formatAgo(nowMs - lastCheckMs)}`
           : 'never checked',
-      marker: ' → ',
-      selectable: true,
+      action: 'update-check',
+      note: 'enter probes the registry for the running channel',
     },
   ]
 
@@ -82,17 +81,15 @@ export function buildUpdatesSection(input: UpdatesSectionInput): SettingsSection
       !(stable(input.currentVersion) && !stable(latest))
     rows.push({
       id: 'update.latest',
-      title: newer ? `Update available: v${latest}` : `Up to date (latest seen v${latest})`,
-      description: newer ? 'adopt with `pantheon-opencode update`' : 'checked against the registry',
-      marker: newer ? '[!]' : '[✓]',
-      selectable: false,
+      name: 'Registry',
+      value: newer ? `v${latest} available` : 'up to date',
+      note: newer ? 'adopt with `pantheon-opencode update`' : 'no newer compatible version',
     })
   }
 
   return {
     id: 'updates',
     title: 'Updates',
-    hint: `refresh = \`pantheon-opencode update\` · notice TTL ${UPDATE_CHECK_TTL_MS / 3_600_000}h`,
-    rows,
+    groups: [{ title: 'Updates', rows }],
   }
 }

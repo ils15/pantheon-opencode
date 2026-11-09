@@ -59,6 +59,25 @@ function formatSpent(cost) {
 const MODEL_USAGE_VISIBLE_CEILING = 3;
 const MODEL_USAGE_MESSAGE_LIMIT = 400;
 const MODEL_USAGE_SESSION_LIMIT = 8;
+//#endregion
+//#region src/decision-router-state.ts
+/**
+* decision-router-state.ts — the Decision Model section of the settings window.
+*
+* TUI-local replica of the user-level decision-router config
+* (scripts/install/decision-router-config.mjs — the bundle must stay
+* self-contained); tests/tui-decision-router-state.test.mjs pins the schema
+* version, the exact key set and the provider matrix against that source.
+*
+* The runtime re-reads this file on EVERY gated call (jev-decision-tool.ts),
+* so a write here applies live — no restart. The strict exact-key schema is
+* load-bearing: any unknown key fail-closes the runtime to disabled/local,
+* so the writer validates before persisting.
+*
+* Egress consent is CLI-owned: the window never writes `egress_consent`, and
+* refuses to enable the router while remote candidates exist without it.
+*/
+const DECISION_ENABLED_CYCLE = Object.freeze(["enabled", "disabled"]);
 /** Exact top-level key set — anything else fail-closes the runtime. */
 const DECISION_CONFIG_KEYS = Object.freeze([
 	"egress_consent",
@@ -203,30 +222,33 @@ function writeDecisionRouterConfig(config, env = process.env) {
 	renameSync(temp, path);
 	chmodSync(path, 384);
 }
-function buildDecisionSection(read) {
+function buildDecisionTab(read) {
 	const { config, corrupt } = read;
 	const rows = [{
 		id: "decision.enabled",
-		title: `Decision router: ${config.enabled ? "enabled" : "disabled"}`,
-		description: corrupt ? "config file unreadable/invalid — the runtime fail-closes to disabled" : "the runtime re-reads this file on every gated call — applies live",
-		disabled: !config.enabled
+		name: "Router",
+		value: config.enabled ? "enabled" : "disabled",
+		...corrupt ? {} : { cycle: DECISION_ENABLED_CYCLE },
+		note: corrupt ? "config unreadable/invalid — runtime fail-closes; repair via `decision-router setup-model`" : "applies live — the runtime re-reads this on every gated call"
 	}, {
 		id: "decision.selection",
-		title: `Selection: ${config.selection.mode}${config.selection.provider ? ` · ${config.selection.provider}` : ""}`,
-		description: "local routes on-device; auto/explicit pick a remote decision model",
-		selectable: false
+		name: "Selection",
+		value: `${config.selection.mode}${config.selection.provider ? ` · ${config.selection.provider}` : ""}`,
+		note: "local routes on-device; auto/explicit pick a remote decision model"
 	}];
 	if (config.enabled_candidates.length > 0) rows.push({
 		id: "decision.candidates",
-		title: `Candidates: ${config.enabled_candidates.map((candidate) => `${candidate.provider}/${candidate.model}`).join(", ")}`,
-		description: config.egress_consent ? "egress consent granted" : "egress consent NOT granted — remote routes fail closed",
-		selectable: false
+		name: "Candidates",
+		value: String(config.enabled_candidates.length),
+		note: config.egress_consent ? config.enabled_candidates.map((candidate) => `${candidate.provider}/${candidate.model}`).join(", ") : "egress consent NOT granted — remote routes fail closed"
 	});
 	return {
 		id: "decision",
-		title: "Decision Model",
-		rows,
-		hint: corrupt ? "repair via `decision-router setup-model` — writes refused on an invalid file" : "enter: enable/disable · consent and candidates via `decision-router setup-model`"
+		title: "Decision",
+		groups: [{
+			title: "Decision router",
+			rows
+		}]
 	};
 }
 //#endregion
@@ -280,38 +302,11 @@ new Set(SETTINGS_BEHAVIORS.map((b) => b.id));
 function isBehaviorDisabled(effective, id) {
 	return effective[id]?.action === "disable";
 }
-/** The rows up/down can reach and enter can dispatch on, in order. */
-function selectableRows(section) {
-	return section.rows.filter((row) => row.selectable !== false);
-}
-/** Flat selection order across every section of the window. */
-function flatSelectableRows(sections) {
-	return sections.flatMap((section) => selectableRows(section));
-}
-function firstSelectableId(sections) {
-	return flatSelectableRows(sections)[0]?.id;
-}
-/**
-* Merge for DISPLAY only, mirroring the runtime precedence: the project file
-* wins per id (whole entry). The window still writes only the global file.
-*/
-function mergedOverrides(load) {
-	return {
-		...load.global,
-		...load.project
-	};
-}
-function canWriteOverrides(load) {
-	return !load.corruptGlobal;
-}
 const TOGGLE_REASON = "toggled in /pantheon-settings";
 /**
-* Toggle: disabled -> enabled; enabled -> disabled.
-*
-* A `replace` entry is never destroyed by a toggle ("never trap user state"):
-* disabling keeps its `content` under the disable entry, and re-enabling
-* restores the replace. A settings-written disable (no content) is removed
-* outright so the overrides file does not accumulate toggle noise.
+* Toggle (a targeted write keeps the toggle semantics: a `replace` entry is
+* never destroyed — disabling keeps its `content`, re-enabling restores the
+* replace; a settings-written disable is removed outright, no toggle noise).
 */
 function toggledOverrides(effective, id, reason = TOGGLE_REASON) {
 	const next = { ...effective };
@@ -336,64 +331,142 @@ function toggledOverrides(effective, id, reason = TOGGLE_REASON) {
 	};
 	return next;
 }
+/** Set an explicit on/off target (the cycler's save path) via the toggle semantics. */
+function setOverrideState(effective, id, target, reason = TOGGLE_REASON) {
+	const disabled = isBehaviorDisabled(effective, id);
+	if (target === "disabled" === disabled) return effective;
+	return toggledOverrides(effective, id, reason);
+}
 function serializeOverrides(effective) {
 	const ordered = {};
 	for (const id of Object.keys(effective).sort()) ordered[id] = effective[id];
 	return `${JSON.stringify(ordered, null, 2)}\n`;
 }
-/**
-* The Gates & Overrides page: behavior state from BOTH overrides files.
-* A project-owned entry wins the runtime merge and the window only writes
-* the global file, so project rows are marked and not togglable here.
-*/
-function buildGatesSection(load) {
-	const merged = mergedOverrides(load);
-	const rows = SETTINGS_BEHAVIORS.map((behavior) => {
-		const fromProject = load.project[behavior.id] !== void 0;
-		return {
-			id: `gate.${behavior.id}`,
-			title: fromProject ? `${behavior.title} (project)` : behavior.title,
-			description: behavior.description,
-			disabled: isBehaviorDisabled(merged, behavior.id),
-			selectable: !fromProject,
-			source: fromProject ? "project" : "global"
-		};
-	});
+/** Merge for DISPLAY only, mirroring the runtime precedence: project wins per id. */
+function mergedOverrides(load) {
 	return {
-		id: "gates",
-		title: "Gates & Overrides",
-		hint: canWriteOverrides(load) ? "enter: disable/enable · writes pantheon-overrides.json (global)" : "overrides file unreadable — writes refused; repair with `pantheon-opencode doctor --fix`",
-		rows
+		...load.global,
+		...load.project
 	};
 }
-function buildAboutSection(version) {
+function canWriteOverrides(load) {
+	return !load.corruptGlobal;
+}
+/** Neutral tab for out-of-range indexes (noUncheckedIndexedAccess guard). */
+const EMPTY_TAB = {
+	id: "empty",
+	title: "",
+	groups: []
+};
+/** Flat, in-order rows of a tab (the up/down navigation space). */
+function tabRows(tab) {
+	return tab.groups.flatMap((group) => group.rows);
+}
+/** Step through the cycle with wrap-around; non-cyclable rows return the input. */
+function cycleValue(value, cycle, direction) {
+	if (cycle.length === 0) return value;
+	const index = cycle.indexOf(value);
+	if (index === -1) return cycle[0] ?? value;
+	return cycle[(index + direction + cycle.length) % cycle.length] ?? value;
+}
+function stageValue(draft, row, direction) {
+	if (row.cycle === void 0) return draft;
+	const staged = cycleValue(draft[row.id] ?? row.value, row.cycle, direction);
+	if (staged === row.value) {
+		if (draft[row.id] === void 0) return draft;
+		const next = { ...draft };
+		delete next[row.id];
+		return next;
+	}
 	return {
-		id: "about",
-		title: "About",
-		rows: [{
-			id: "about.version",
-			title: `Pantheon v${version}`,
-			description: "OpenCode 2.x only — the V1 contract is removed.",
-			selectable: false
+		...draft,
+		[row.id]: staged
+	};
+}
+/** Drop every staged entry of one tab (ctrl+r). */
+function resetTab(draft, tab) {
+	const ids = new Set(tabRows(tab).map((row) => row.id));
+	const next = {};
+	for (const [id, value] of Object.entries(draft)) if (!ids.has(id)) next[id] = value;
+	return next;
+}
+function draftCount(draft) {
+	return Object.keys(draft).length;
+}
+function draftDirty(draft) {
+	return draftCount(draft) > 0;
+}
+function tabDirty(draft, tab) {
+	return tabRows(tab).some((row) => draft[row.id] !== void 0);
+}
+/** Apply every staged entry; failures are collected, never thrown. */
+function applyDraft(draft, writer) {
+	const applied = [];
+	const failed = [];
+	for (const [id, value] of Object.entries(draft)) {
+		const result = writer(id, value);
+		if (result.ok) applied.push(id);
+		else failed.push({
+			id,
+			reason: result.reason ?? "write failed"
+		});
+	}
+	return {
+		applied,
+		failed
+	};
+}
+/** The rows that succeeded and are still in the draft (failed ones stay staged). */
+function settledDraft(draft, applied) {
+	const next = {};
+	for (const [id, value] of Object.entries(draft)) if (!applied.includes(id)) next[id] = value;
+	return next;
+}
+const GATES_ENABLED_CYCLE = Object.freeze(["enabled", "disabled"]);
+function buildGatesTab(load) {
+	const merged = mergedOverrides(load);
+	const rowFor = (behavior) => {
+		const fromProject = load.project[behavior.id] !== void 0;
+		const writable = !fromProject && canWriteOverrides(load);
+		return {
+			id: `gate.${behavior.id}`,
+			name: fromProject ? `${behavior.title} (project)` : behavior.title,
+			value: isBehaviorDisabled(merged, behavior.id) ? "disabled" : "enabled",
+			...writable ? { cycle: GATES_ENABLED_CYCLE } : {},
+			note: fromProject ? "project file wins at runtime — edit .pantheon/overrides.json" : behavior.description
+		};
+	};
+	const install = SETTINGS_BEHAVIORS.filter((behavior) => behavior.kind === "install");
+	const runtime = SETTINGS_BEHAVIORS.filter((behavior) => behavior.kind === "runtime");
+	return {
+		id: "gates",
+		title: "Gates",
+		groups: [{
+			title: "Install skills",
+			rows: install.map(rowFor)
 		}, {
-			id: "about.behaviors",
-			title: `${SETTINGS_BEHAVIORS.length} togglable behaviors`,
-			description: "Docs: docs/design/2.0-settings-and-install.md",
-			selectable: false
+			title: "Runtime gates",
+			rows: runtime.map(rowFor)
 		}]
 	};
 }
-//#endregion
-//#region src/update-notice.ts
-/**
-* Update notifier core (TUI-local copy — the bundle must stay self-contained,
-* same precedent as cost-data.ts/model-pricing.ts).
-*
-* Pin + notify, never silent auto-update: one notice per newer version,
-* TTL-cached, offline-safe, and a stable install is never advertised a beta
-* (the update guard owns that crossing). docs/design/2.0-settings-and-install.md
-*/
-const UPDATE_CHECK_TTL_MS = 216e5;
+function buildAboutTab(version) {
+	return {
+		id: "about",
+		title: "About",
+		groups: [{ rows: [{
+			id: "about.version",
+			name: "Version",
+			value: `v${version}`,
+			note: "OpenCode 2.x only — the V1 contract is removed"
+		}, {
+			id: "about.behaviors",
+			name: "Behaviors",
+			value: String(SETTINGS_BEHAVIORS.length),
+			note: "docs/design/2.0-settings-and-install.md"
+		}] }]
+	};
+}
 /** Semver-ish compare for X.Y.Z[-beta.N]; betas sort before their release. */
 function comparePantheonVersions(left, right) {
 	const parse = (version) => {
@@ -536,46 +609,49 @@ function classifyDecisionConfigHealth(env = process.env) {
 	if (!existsSync(join(env.XDG_CONFIG_HOME ?? join(env.HOME ?? "", ".config"), "pantheon", "decision-router.json"))) return { status: "absent" };
 	return readDecisionRouterConfig(env).corrupt ? { status: "corrupt" } : { status: "ok" };
 }
-function buildDoctorSection(input) {
+function buildDoctorTab(input) {
 	const env = input.env ?? process.env;
 	const rows = [];
 	const version = classifyInstallVersion(input.runningVersion, env);
 	rows.push({
 		id: "doctor.version",
-		title: version.status === "ok" ? `Installed version: v${version.installed} — matches` : version.status === "older" ? `Installed v${version.installed} is older than the runtime v${input.runningVersion}` : version.status === "newer" ? `Installed v${version.installed} is newer than the runtime v${input.runningVersion}` : "Installed version: unknown (no install-state)",
-		description: version.status === "older" ? "refresh with `pantheon-opencode update`" : "read from <config>/opencode/.pantheon/install-state.json",
-		marker: version.status === "ok" ? "[✓]" : version.status === "older" ? "[!]" : "[i]",
-		selectable: false
+		name: "Install version",
+		value: version.status === "ok" ? `v${version.installed} — matches` : version.status === "older" ? `v${version.installed} older` : version.status === "newer" ? `v${version.installed} newer` : "unknown",
+		note: version.status === "older" ? "refresh with `pantheon-opencode update`" : "read from <config>/opencode/.pantheon/install-state.json"
 	});
 	const nodeOk = isSupportedNodeFloor(input.nodeVersion);
 	rows.push({
 		id: "doctor.node",
-		title: `Node runtime: ${input.nodeVersion.replace(/^v/, "")}`,
-		description: nodeOk ? `meets the >= ${MIN_SUPPORTED_NODE_VERSION} floor` : `below the >= ${MIN_SUPPORTED_NODE_VERSION} floor — tooling may refuse`,
-		marker: nodeOk ? "[✓]" : "[!]",
-		selectable: false
+		name: "Node runtime",
+		value: input.nodeVersion.replace(/^v/, ""),
+		note: nodeOk ? `meets the >= ${MIN_SUPPORTED_NODE_VERSION} floor` : `below the >= ${MIN_SUPPORTED_NODE_VERSION} floor — tooling may refuse`
 	});
 	const overrides = classifyOverridesHealth(input.load);
 	rows.push({
 		id: "doctor.overrides",
-		title: overrides.status === "clean" ? "Overrides: valid" : overrides.status === "corrupt" ? "Overrides: global file unreadable" : `Overrides: ${overrides.unknownIds.length} unknown id(s)`,
-		description: overrides.status === "unknown-ids" ? `${overrides.unknownIds.join(", ")} — harmless; repair with doctor --fix` : overrides.status === "corrupt" ? "writes are refused until repaired (doctor --fix)" : "both files parse against the behavior registry",
-		marker: overrides.status === "clean" ? "[✓]" : overrides.status === "corrupt" ? "[✗]" : "[!]",
-		selectable: false
+		name: "Overrides",
+		value: overrides.status === "clean" ? "valid" : overrides.status === "corrupt" ? "unreadable" : `${overrides.unknownIds.length} unknown id(s)`,
+		note: overrides.status === "unknown-ids" ? `${overrides.unknownIds.join(", ")} — harmless; repair with doctor --fix` : overrides.status === "corrupt" ? "writes are refused until repaired (doctor --fix)" : "both files parse against the behavior registry"
 	});
 	const decision = classifyDecisionConfigHealth(env);
 	rows.push({
 		id: "doctor.decision",
-		title: decision.status === "ok" ? "Decision config: valid" : decision.status === "corrupt" ? "Decision config: unreadable — runtime fail-closes" : "Decision config: absent (local defaults)",
-		description: "read from <config>/pantheon/decision-router.json",
-		marker: decision.status === "corrupt" ? "[✗]" : "[✓]",
-		selectable: false
+		name: "Decision config",
+		value: decision.status === "ok" ? "valid" : decision.status === "corrupt" ? "corrupt" : "absent",
+		note: decision.status === "corrupt" ? "runtime fail-closes to disabled · read from <config>/pantheon/decision-router.json" : "read from <config>/pantheon/decision-router.json"
 	});
 	return {
 		id: "doctor",
 		title: "Doctor",
-		rows,
-		hint: "file checks only — the full doctor (MCP smoke, venv, git) is `pantheon-opencode doctor`"
+		groups: [{
+			title: "Health (file-derived)",
+			rows
+		}, { rows: [{
+			id: "doctor.cli",
+			name: "Full check",
+			value: "`pantheon-opencode doctor`",
+			note: "MCP smoke, venv pins, git stay in the CLI"
+		}] }]
 	};
 }
 //#endregion
@@ -610,36 +686,36 @@ const MODE_DESCRIPTION = {
 	warn: "RESERVED — behaves as shadow in this release",
 	enforce: "high-risk scores DENY the tool call (fail-open on gate unavailability)"
 };
-function buildJ1Section(env, disabledByOverride) {
+function buildJ1Tab(env, disabledByOverride) {
 	const mode = j1ModeFromEnv(env);
 	const threshold = j1ThresholdFromEnv(env);
 	const gateState = disabledByOverride ? "disabled via overrides" : mode === "off" ? "off (env unset)" : "active";
-	const rows = [
-		{
-			id: "j1.mode",
-			title: `Mode: ${mode}`,
-			description: MODE_DESCRIPTION[mode],
-			...disabledByOverride ? { marker: "[!]" } : {},
-			selectable: false
-		},
-		{
-			id: "j1.threshold",
-			title: `Enforce threshold: ${threshold}`,
-			description: "deny at or above; 0..1, default 0.8",
-			selectable: false
-		},
-		{
-			id: "j1.gate",
-			title: `Gate: ${gateState}`,
-			description: "the runtime plugin reads this once at startup",
-			selectable: false
-		}
-	];
 	return {
 		id: "j1",
-		title: "J1 Risk Gate",
-		hint: `set ${J1_FLAG_ENV} / ${J1_THRESHOLD_ENV} — restart applies`,
-		rows
+		title: "J1",
+		groups: [{
+			title: "Ladder (env-only — never written here)",
+			rows: [
+				{
+					id: "j1.mode",
+					name: "Mode",
+					value: mode,
+					note: `${MODE_DESCRIPTION[mode]} · restart applies`
+				},
+				{
+					id: "j1.threshold",
+					name: "Enforce threshold",
+					value: String(threshold),
+					note: "deny at or above · 0..1 · default 0.8"
+				},
+				{
+					id: "j1.gate",
+					name: "Gate",
+					value: gateState,
+					note: `${J1_FLAG_ENV} / ${J1_THRESHOLD_ENV} · read once at startup`
+				}
+			]
+		}]
 	};
 }
 //#endregion
@@ -718,32 +794,28 @@ function backupMarker(path) {
 	mkdirSync(dirname(path), { recursive: true });
 	copyFileSync(path, `${path}.bak`);
 }
-function buildPresetSection(input) {
-	const rows = PRESET_NAMES.map((name) => ({
-		id: `preset.${name}`,
-		title: name,
-		description: input.globalName === name ? "active (global)" : "enter: activate globally",
-		disabled: input.globalName === name
-	}));
-	rows.push({
-		id: "preset.none",
-		title: "none",
-		description: "clear the global marker — opencode defaults",
-		disabled: input.globalName === null,
-		marker: input.globalName === null ? "[x]" : "[ ]"
-	});
+const PRESET_CYCLE = Object.freeze(["none", ...PRESET_NAMES]);
+function buildPresetTab(input) {
+	const rows = [{
+		id: "preset",
+		name: "Preset",
+		value: input.globalName ?? "none",
+		cycle: PRESET_CYCLE,
+		note: "global marker · atomic write, .bak backup · none = opencode defaults"
+	}];
 	if (input.projectName !== null) rows.push({
 		id: "preset.project",
-		title: `${input.projectName} (project)`,
-		description: `${projectActivePresetPath()} wins over the global marker`,
-		marker: "[!]",
-		selectable: false
+		name: "Project",
+		value: input.projectName,
+		note: `${projectActivePresetPath()} wins over the global marker — read-only here`
 	});
 	return {
 		id: "preset",
-		title: "Model Preset",
-		rows,
-		hint: "enter: activate globally · writes <config>/opencode/.pantheon/active-preset.json"
+		title: "Preset",
+		groups: [{
+			title: "Model preset",
+			rows
+		}]
 	};
 }
 //#endregion
@@ -765,54 +837,74 @@ function formatAgo(ms) {
 	if (ms < 864e5) return `${Math.floor(ms / 36e5)}h ago`;
 	return `${Math.floor(ms / 864e5)}d ago`;
 }
-function buildUpdatesSection(input) {
+function buildUpdatesTab(input) {
 	const nowMs = input.nowMs ?? Date.now();
 	const channel = updateChannelFor(input.currentVersion);
 	const lastCheckMs = input.state.lastCheckMs;
 	const latest = input.lastCheckedVersion ?? input.state.lastNotifiedVersion;
 	const rows = [{
 		id: "update.channel",
-		title: `Channel: ${channel}`,
-		description: "stable tracks npm `latest`; beta tracks npm `beta`",
-		selectable: false
+		name: "Channel",
+		value: channel,
+		note: "stable tracks npm `latest`; beta tracks npm `beta`"
 	}, {
 		id: "update.check",
-		title: "Check now",
-		description: input.checking ? "checking…" : lastCheckMs ? `last check ${formatAgo(nowMs - lastCheckMs)}` : "never checked",
-		marker: " → ",
-		selectable: true
+		name: "Check now",
+		value: input.checking ? "checking…" : lastCheckMs ? `last check ${formatAgo(nowMs - lastCheckMs)}` : "never checked",
+		action: "update-check",
+		note: "enter probes the registry for the running channel"
 	}];
 	if (latest) {
 		const stable = (version) => !/-beta\.\d+$/.test(version);
 		const newer = comparePantheonVersions(latest, input.currentVersion) > 0 && !(stable(input.currentVersion) && !stable(latest));
 		rows.push({
 			id: "update.latest",
-			title: newer ? `Update available: v${latest}` : `Up to date (latest seen v${latest})`,
-			description: newer ? "adopt with `pantheon-opencode update`" : "checked against the registry",
-			marker: newer ? "[!]" : "[✓]",
-			selectable: false
+			name: "Registry",
+			value: newer ? `v${latest} available` : "up to date",
+			note: newer ? "adopt with `pantheon-opencode update`" : "no newer compatible version"
 		});
 	}
 	return {
 		id: "updates",
 		title: "Updates",
-		hint: `refresh = \`pantheon-opencode update\` · notice TTL ${UPDATE_CHECK_TTL_MS / 36e5}h`,
-		rows
+		groups: [{
+			title: "Updates",
+			rows
+		}]
 	};
 }
 //#endregion
 //#region src/pantheon-settings.tsx
 /** @jsxImportSource @opentui/solid */
 /**
-* pantheon-settings.tsx — the /pantheon-settings window.
+* pantheon-settings.tsx — the /pantheon-settings window (2.0.0-beta.4).
 *
-* One section per page, keyboard-first: `tab` cycles sections, `up`/`down`
-* select, `enter`/`space` dispatches the selected row (the Gates section
-* writes the GLOBAL overrides file — the same one the installer and doctor
-* consume; Updates runs a registry check). `escape`/`q` closes. The
-* gated-layer pattern mirrors the dispatch panel and whats-new windows.
-* Every failure path is silent (fail-open).
+* A FULL-SCREEN settings window in the OpenCode Quota shape: a tab header,
+* grouped setting rows with ←/→ value cyclers, a note column, and a
+* save/reset footer. The surface is a ROUTER PAGE (`ui.router.register` +
+* `navigate({type:'plugin'})`) — true full-screen, reachable from the home
+* route AND sessions, no focus dance (binary-verified precedent: the host's
+* own opencode.diffs plugin). Hosts without a router fall back to the old
+* dialog with the same commands (fail-open).
+*
+* Edits stage into a DRAFT: ←/→ cycles a row's value, `ctrl+s` saves every
+* staged row through the per-surface guards, `ctrl+r` resets the current
+* tab, `esc`/`q` confirms before discarding. The disk never changes before
+* save, and every refusal surfaces in the notice line — never silent.
+*
+* The keymap layer is registered ONCE at setup with `priority: 1` (the host
+* resolves bind conflicts by priority then registration order — a stale
+* dispatch-panel layer must never win while this window is open; field
+* report beta.2: navigation "stopped working" was exactly that theft).
 */
+const ROUTE_NAME = "pantheon-settings";
+/** Loose local shape of a host route (the real Route lives in the host typings). */
+const [blocking, setBlocking] = createSignal(false);
+/** True while a Pantheon settings surface (page or fallback dialog) is open. */
+function pantheonSettingsBlocking() {
+	return blocking();
+}
+let routerAvailable = false;
 function globalOverridesPath() {
 	const xdgConfig = process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? "", ".config");
 	return join(xdgConfig, "opencode", "pantheon-overrides.json");
@@ -820,7 +912,6 @@ function globalOverridesPath() {
 function projectOverridesPath() {
 	return join(process.cwd(), ".pantheon", "overrides.json");
 }
-/** Read one overrides file; a missing file is empty, an unreadable one is corrupt. */
 function readOneOverrides(path) {
 	try {
 		const parsed = JSON.parse(readFileSync(path, "utf8"));
@@ -862,10 +953,6 @@ function readUpdateCheckState() {
 		return {};
 	}
 }
-/**
-* Registry check for the RUNNING version's channel (beta installs ask the
-* beta dist-tag). Resolves with the latest version seen, or null offline.
-*/
 async function fetchLatestForChannel(currentVersion) {
 	try {
 		const response = await fetch(registryUrlForChannel(updateChannelFor(currentVersion)), { signal: AbortSignal.timeout(5e3) });
@@ -891,280 +978,578 @@ function resolveRunningVersion$1() {
 		return "unknown";
 	}
 }
-function SettingsContent(props) {
-	const section = () => props.sections()[props.page()] ?? {
-		id: "empty",
-		title: "",
-		rows: []
-	};
+const VALUE_WIDTH = 22;
+function SettingsWindow(props) {
+	const tab = () => props.tabs()[props.page()] ?? props.tabs()[0] ?? EMPTY_TAB;
+	const rows = () => tabRows(tab());
 	return (() => {
-		var _el$ = createElement("box"), _el$2 = createElement("text"), _el$3 = createElement("text"), _el$5 = createElement("box"), _el$7 = createElement("text"), _el$8 = createTextNode(`tab: section · up/down: select · enter: apply · esc/q: close`);
+		var _el$ = createElement("box"), _el$2 = createElement("box"), _el$3 = createElement("text"), _el$4 = createElement("text"), _el$6 = createElement("text"), _el$9 = createElement("text"), _el$0 = createElement("text");
 		insertNode(_el$, _el$2);
-		insertNode(_el$, _el$3);
-		insertNode(_el$, _el$5);
-		insertNode(_el$, _el$7);
+		insertNode(_el$, _el$6);
+		insertNode(_el$, _el$9);
+		insertNode(_el$, _el$0);
 		setProp(_el$, "flexDirection", "column");
 		setProp(_el$, "paddingLeft", 1);
 		setProp(_el$, "paddingRight", 1);
 		setProp(_el$, "paddingTop", 1);
-		setProp(_el$2, "attributes", 1);
-		insert(_el$2, () => section().title);
-		insertNode(_el$3, createTextNode(`──────────────────────────────────────`));
+		insertNode(_el$2, _el$3);
+		insertNode(_el$2, _el$4);
+		setProp(_el$2, "flexDirection", "row");
+		setProp(_el$3, "attributes", 1);
+		insert(_el$3, () => `Pantheon v${props.version}`);
+		insert(_el$2, createComponent(For, {
+			get each() {
+				return props.tabs();
+			},
+			children: (t, index) => (() => {
+				var _el$10 = createElement("text");
+				spread(_el$10, mergeProps({ get fg() {
+					return memo(() => index() === props.page())() ? props.fg : props.muted;
+				} }, () => index() === props.page() ? { attributes: 1 } : {}), true);
+				insert(_el$10, () => `   ${t.title}${tabDirty(props.draft(), t) ? " ●" : ""}`);
+				return _el$10;
+			})()
+		}), _el$4);
+		insertNode(_el$4, createTextNode(`  esc`));
+		insertNode(_el$6, createTextNode(`────────────────────────────────────────────────────────────────────────`));
 		insert(_el$, createComponent(For, {
 			get each() {
-				return section().rows;
+				return tab().groups;
 			},
-			children: (row) => {
-				const isSelected = () => row.selectable !== false && row.id === props.selectedId();
-				const marker = () => row.marker ?? (row.disabled ? "[x]" : "[ ]");
-				return (() => {
-					var _el$9 = createElement("box"), _el$0 = createElement("text");
-					insertNode(_el$9, _el$0);
-					setProp(_el$9, "flexDirection", "column");
-					spread(_el$0, mergeProps({ get fg() {
-						return memo(() => !!isSelected())() ? props.fg : props.muted;
-					} }, () => isSelected() ? { attributes: 1 } : {}), true);
-					insert(_el$0, () => `${marker()} ${row.title}${isSelected() ? "  <-" : ""}`);
-					insert(_el$9, createComponent(Show, {
-						get when() {
-							return row.description !== "";
-						},
-						get children() {
-							var _el$1 = createElement("text");
-							insert(_el$1, () => `    ${row.description}`);
-							effect((_$p) => setProp(_el$1, "fg", props.muted, _$p));
-							return _el$1;
-						}
-					}), null);
-					return _el$9;
-				})();
-			}
-		}), _el$5);
-		setProp(_el$5, "height", 1);
+			children: (group) => (() => {
+				var _el$11 = createElement("box"), _el$13 = createElement("box");
+				insertNode(_el$11, _el$13);
+				setProp(_el$11, "flexDirection", "column");
+				insert(_el$11, createComponent(Show, {
+					get when() {
+						return group.title !== void 0;
+					},
+					get children() {
+						var _el$12 = createElement("text");
+						setProp(_el$12, "attributes", 1);
+						insert(_el$12, () => group.title);
+						effect((_$p) => setProp(_el$12, "fg", props.fg, _$p));
+						return _el$12;
+					}
+				}), _el$13);
+				insert(_el$11, createComponent(For, {
+					get each() {
+						return group.rows;
+					},
+					children: (row) => {
+						const isSelected = () => rows()[props.selected()]?.id === row.id;
+						const display = () => props.draft()[row.id] ?? row.value;
+						const staged = () => props.draft()[row.id] !== void 0;
+						const gutter = () => isSelected() ? "▸ " : "  ";
+						const valueCell = () => row.cycle !== void 0 ? `< ${display()} >` : display();
+						return (() => {
+							var _el$14 = createElement("box"), _el$15 = createElement("box"), _el$16 = createElement("text"), _el$17 = createElement("box"), _el$18 = createElement("text");
+							insertNode(_el$14, _el$15);
+							insertNode(_el$14, _el$17);
+							setProp(_el$14, "flexDirection", "row");
+							insertNode(_el$15, _el$16);
+							setProp(_el$15, "width", 28);
+							spread(_el$16, mergeProps({ get fg() {
+								return props.fg;
+							} }, () => isSelected() ? { attributes: 1 } : {}), true);
+							insert(_el$16, () => `${gutter()}${row.name}`.padEnd(28));
+							insertNode(_el$17, _el$18);
+							setProp(_el$17, "width", 22);
+							spread(_el$18, mergeProps({ get fg() {
+								return memo(() => !!(isSelected() || staged()))() ? props.fg : props.muted;
+							} }, () => isSelected() ? { attributes: 1 } : {}), true);
+							insert(_el$18, () => `${valueCell()}${staged() ? " ●" : ""}`.padEnd(VALUE_WIDTH));
+							insert(_el$14, createComponent(Show, {
+								get when() {
+									return row.note !== void 0;
+								},
+								get children() {
+									var _el$19 = createElement("box"), _el$20 = createElement("text");
+									insertNode(_el$19, _el$20);
+									setProp(_el$19, "flexGrow", 1);
+									setProp(_el$19, "flexShrink", 1);
+									insert(_el$20, () => row.note);
+									effect((_$p) => setProp(_el$20, "fg", props.muted, _$p));
+									return _el$19;
+								}
+							}), null);
+							return _el$14;
+						})();
+					}
+				}), _el$13);
+				setProp(_el$13, "height", 1);
+				return _el$11;
+			})()
+		}), _el$9);
 		insert(_el$, createComponent(Show, {
 			get when() {
-				return section().hint !== void 0;
+				return props.notice() !== void 0;
 			},
 			get children() {
-				var _el$6 = createElement("text");
-				insert(_el$6, () => section().hint);
-				effect((_$p) => setProp(_el$6, "fg", props.muted, _$p));
-				return _el$6;
+				var _el$8 = createElement("text");
+				insert(_el$8, () => `⚠ ${props.notice()}`);
+				effect((_$p) => setProp(_el$8, "fg", props.warn ?? props.muted, _$p));
+				return _el$8;
 			}
-		}), _el$7);
-		insertNode(_el$7, _el$8);
-		insert(_el$7, () => `${props.page() + 1}/${props.sections().length} · `, _el$8);
+		}), _el$9);
+		insert(_el$9, (() => {
+			var _c$ = memo(() => !!draftDirty(props.draft()));
+			return () => _c$() ? `● unsaved (${draftCount(props.draft())}) — ctrl+s save · ctrl+r reset page` : "no staged changes";
+		})());
+		insertNode(_el$0, createTextNode(`1-9 tab · ←/→ change value · enter apply · tab next tab · ctrl+s save · ctrl+r reset page · esc/q close`));
 		effect((_p$) => {
-			var _v$ = props.fg, _v$2 = props.muted, _v$3 = props.muted;
-			_v$ !== _p$.e && (_p$.e = setProp(_el$2, "fg", _v$, _p$.e));
-			_v$2 !== _p$.t && (_p$.t = setProp(_el$3, "fg", _v$2, _p$.t));
-			_v$3 !== _p$.a && (_p$.a = setProp(_el$7, "fg", _v$3, _p$.a));
+			var _v$ = props.fg, _v$2 = props.muted, _v$3 = props.muted, _v$4 = draftDirty(props.draft()) ? props.warn ?? props.fg : props.muted, _v$5 = props.muted;
+			_v$ !== _p$.e && (_p$.e = setProp(_el$3, "fg", _v$, _p$.e));
+			_v$2 !== _p$.t && (_p$.t = setProp(_el$4, "fg", _v$2, _p$.t));
+			_v$3 !== _p$.a && (_p$.a = setProp(_el$6, "fg", _v$3, _p$.a));
+			_v$4 !== _p$.o && (_p$.o = setProp(_el$9, "fg", _v$4, _p$.o));
+			_v$5 !== _p$.i && (_p$.i = setProp(_el$0, "fg", _v$5, _p$.i));
 			return _p$;
 		}, {
 			e: void 0,
 			t: void 0,
-			a: void 0
+			a: void 0,
+			o: void 0,
+			i: void 0
 		});
 		return _el$;
 	})();
 }
-/**
-* Entry glue: read both overrides files, then show the window through the
-* host dialog stack once. The gated keymap layer is inert while the window
-* is closed. Never throws.
-*/
-async function maybeShowPantheonSettings(context) {
-	try {
-		const [open, setOpen] = createSignal(false);
-		const [page, setPage] = createSignal(0);
-		const [load, setLoad] = createSignal(readOverridesLoad());
-		const [lastChecked, setLastChecked] = createSignal(void 0);
-		const [checking, setChecking] = createSignal(false);
-		const [decision, setDecision] = createSignal(readDecisionRouterConfig());
-		const [presetTick, setPresetTick] = createSignal(0);
-		const currentVersion = resolveRunningVersion$1();
-		const updatesInput = () => {
-			const input = {
-				currentVersion,
-				state: readUpdateCheckState(),
-				checking: checking(),
-				nowMs: Date.now()
+let pageApi;
+function createWindowController(context, exit) {
+	const [page, setPage] = createSignal(0);
+	const [selected, setSelected] = createSignal(0);
+	const [load, setLoad] = createSignal(readOverridesLoad());
+	const [decision, setDecision] = createSignal(readDecisionRouterConfig());
+	const [presetTick, setPresetTick] = createSignal(0);
+	const [lastChecked, setLastChecked] = createSignal(void 0);
+	const [checking, setChecking] = createSignal(false);
+	const [draft, setDraft] = createSignal({});
+	const [notice, setNotice] = createSignal(void 0);
+	const currentVersion = resolveRunningVersion$1();
+	const presetInput = () => {
+		presetTick();
+		return {
+			globalName: readActivePresetMarker(globalActivePresetPath())?.name ?? null,
+			projectName: readActivePresetMarker(projectActivePresetPath())?.name ?? null
+		};
+	};
+	const updatesInput = () => {
+		const input = {
+			currentVersion,
+			state: readUpdateCheckState(),
+			checking: checking(),
+			nowMs: Date.now()
+		};
+		const seen = lastChecked();
+		if (seen !== void 0) input.lastCheckedVersion = seen;
+		return input;
+	};
+	const tabs = () => [
+		buildGatesTab(load()),
+		buildDecisionTab(decision()),
+		buildPresetTab(presetInput()),
+		buildJ1Tab(process.env, false),
+		buildUpdatesTab(updatesInput()),
+		buildDoctorTab({
+			runningVersion: currentVersion,
+			nodeVersion: process.versions.node,
+			load: load()
+		}),
+		buildAboutTab(currentVersion)
+	];
+	const rows = () => tabRows(tabs()[page()] ?? tabs()[0] ?? EMPTY_TAB);
+	const move = (delta) => {
+		const list = rows();
+		if (list.length === 0) return;
+		setSelected((current) => Math.min(Math.max(current + delta, 0), list.length - 1));
+	};
+	const step = (direction) => {
+		const row = rows()[selected()];
+		if (row === void 0) return;
+		setNotice(void 0);
+		setDraft(stageValue(draft(), row, direction));
+	};
+	const checkUpdatesNow = () => {
+		if (checking()) return;
+		setChecking(true);
+		setNotice(void 0);
+		fetchLatestForChannel(currentVersion).then((latest) => {
+			if (latest) setLastChecked(latest);
+			persistUpdateCheckState(readUpdateCheckState(), latest);
+		}).catch(() => {}).finally(() => setChecking(false));
+	};
+	const dispatchWrite = (id, value) => {
+		if (id.startsWith("gate.")) {
+			if (!canWriteOverrides(load())) return {
+				ok: false,
+				reason: "overrides file unreadable — repair with `doctor --fix`"
 			};
-			const seen = lastChecked();
-			if (seen !== void 0) input.lastCheckedVersion = seen;
-			return input;
-		};
-		const presetInput = () => {
-			presetTick();
-			return {
-				globalName: readActivePresetMarker(globalActivePresetPath())?.name ?? null,
-				projectName: readActivePresetMarker(projectActivePresetPath())?.name ?? null
-			};
-		};
-		const sections = () => [
-			buildGatesSection(load()),
-			buildDecisionSection(decision()),
-			buildPresetSection(presetInput()),
-			buildJ1Section(process.env, isBehaviorDisabled(mergedOverrides(load()), "gate-j1-risk-gate")),
-			buildUpdatesSection(updatesInput()),
-			buildDoctorSection({
-				runningVersion: currentVersion,
-				nodeVersion: process.versions.node,
-				load: load()
-			}),
-			buildAboutSection(currentVersion)
-		];
-		const [selectedId, setSelectedId] = createSignal(firstSelectableId(sections()));
-		const move = (delta) => {
-			const list = flatSelectableRows(sections());
-			if (list.length === 0) return;
-			const current = list.findIndex((row) => row.id === selectedId());
-			const nextIndex = current === -1 ? 0 : Math.min(Math.max(current + delta, 0), list.length - 1);
-			setSelectedId(list[nextIndex]?.id);
-		};
-		const flipSection = () => {
-			const count = sections().length;
-			const next = (page() + 1) % count;
-			setPage(next);
-			const target = sections()[next];
-			if (target === void 0) return;
-			const within = flatSelectableRows([target])[0];
-			if (within) setSelectedId(within.id);
-		};
-		const toggleSelectedGate = () => {
-			const id = selectedId();
-			if (id === void 0 || !id.startsWith("gate.")) return false;
-			if (!canWriteOverrides(load())) return void 0;
 			const behaviorId = id.slice(5);
-			const next = {
-				...load(),
-				global: toggledOverrides(load().global, behaviorId)
+			const nextGlobal = setOverrideState(load().global, behaviorId, value === "disabled" ? "disabled" : "enabled");
+			if (nextGlobal === load().global) return { ok: true };
+			try {
+				writeOverridesToDisk({
+					...load(),
+					global: nextGlobal
+				});
+				setLoad({
+					...load(),
+					global: nextGlobal
+				});
+				return { ok: true };
+			} catch {
+				return {
+					ok: false,
+					reason: "overrides disk write failed"
+				};
+			}
+		}
+		if (id === "decision.enabled") {
+			const current = decision();
+			if (current.corrupt) return {
+				ok: false,
+				reason: "decision-router.json unreadable — repair via `decision-router setup-model`"
+			};
+			const guarded = setDecisionEnabled(current.config, value === "enabled");
+			if (!guarded.ok) return {
+				ok: false,
+				reason: guarded.reason
 			};
 			try {
-				writeOverridesToDisk(next);
-				setLoad(next);
-			} catch {}
-		};
-		const checkUpdatesNow = () => {
-			if (checking()) return void 0;
-			setChecking(true);
-			fetchLatestForChannel(currentVersion).then((latest) => {
-				if (latest) setLastChecked(latest);
-				persistUpdateCheckState(readUpdateCheckState(), latest);
-			}).catch(() => {}).finally(() => setChecking(false));
-		};
-		const toggleDecisionEnabled = () => {
-			const current = decision();
-			if (current.corrupt) return void 0;
-			const next = setDecisionEnabled(current.config, !current.config.enabled);
-			if (!next.ok) return void 0;
-			try {
-				writeDecisionRouterConfig(next.config);
+				writeDecisionRouterConfig(guarded.config);
 				setDecision({
-					config: next.config,
+					config: guarded.config,
 					corrupt: false
 				});
-			} catch {}
+				return { ok: true };
+			} catch {
+				return {
+					ok: false,
+					reason: "decision-router disk write failed"
+				};
+			}
+		}
+		if (id === "preset") try {
+			if (value === "none") clearActivePreset(globalActivePresetPath());
+			else writeActivePreset(globalActivePresetPath(), value);
+			setPresetTick((tick) => tick + 1);
+			return { ok: true };
+		} catch (error) {
+			return {
+				ok: false,
+				reason: error instanceof Error ? error.message : "preset marker write failed"
+			};
+		}
+		return {
+			ok: false,
+			reason: "unknown staged row"
 		};
-		const applySelectedPreset = () => {
-			const id = selectedId();
-			if (id === void 0) return void 0;
-			const name = id.startsWith("preset.") ? id.slice(7) : null;
-			if (name === null || name === "project") return void 0;
-			const path = globalActivePresetPath();
+	};
+	const save = () => {
+		if (!draftDirty(draft())) {
+			setNotice("nothing staged — ←/→ stages a change first");
+			return;
+		}
+		const writer = dispatchWrite;
+		const { applied, failed } = applyDraft(draft(), writer);
+		if (applied.length > 0) {
+			setDraft(settledDraft(draft(), applied));
+			setLoad(readOverridesLoad());
+			setDecision(readDecisionRouterConfig());
+			setPresetTick((tick) => tick + 1);
+		}
+		if (failed.length > 0) setNotice(`${failed.map((f) => `${f.id}: ${f.reason}`).join(" · ")} — staged changes kept`);
+		else setNotice(`saved ${applied.length} change${applied.length === 1 ? "" : "s"}`);
+	};
+	const resetPage = () => {
+		const tab = tabs()[page()];
+		if (tab === void 0) return;
+		setDraft(resetTab(draft(), tab));
+		setNotice(void 0);
+	};
+	const nextTab = () => {
+		setPage((current) => (current + 1) % tabs().length);
+		setSelected(0);
+	};
+	const close = () => {
+		if (draftDirty(draft())) {
 			try {
-				if (name === "none") clearActivePreset(path);
-				else writeActivePreset(path, name);
-				setPresetTick((tick) => tick + 1);
+				Promise.resolve(context.ui.dialog.confirm({
+					title: "Pantheon settings",
+					message: "Discard unsaved settings changes?"
+				})).then((confirmed) => {
+					if (confirmed === true) exit();
+				});
 			} catch {}
-		};
-		let dismiss = () => {};
-		try {
-			context.keymap.layer(() => ({
-				mode: "global",
-				enabled: () => open(),
-				commands: [
-					{
-						id: "pantheon.settings.close",
-						title: "Close settings",
-						bind: "escape,q",
-						run: () => {
-							if (!open()) return false;
-							dismiss();
-						}
-					},
-					{
-						id: "pantheon.settings.down",
-						title: "Select next",
-						bind: "down,j",
-						run: () => {
-							if (!open()) return false;
-							move(1);
-						}
-					},
-					{
-						id: "pantheon.settings.up",
-						title: "Select previous",
-						bind: "up,k",
-						run: () => {
-							if (!open()) return false;
-							move(-1);
-						}
-					},
-					{
-						id: "pantheon.settings.toggle",
-						title: "Apply the selected row",
-						bind: "enter,space",
-						run: () => {
-							if (!open()) return false;
-							const id = selectedId();
-							if (id?.startsWith("gate.")) return toggleSelectedGate();
-							if (id === "decision.enabled") return toggleDecisionEnabled();
-							if (id?.startsWith("preset.")) return applySelectedPreset();
-							if (id === "update.check") return checkUpdatesNow();
-						}
-					},
-					{
-						id: "pantheon.settings.section",
-						title: "Next section",
-						bind: "tab",
-						run: () => {
-							if (!open()) return false;
-							flipSection();
-						}
-					}
-				]
-			}));
-		} catch {}
-		const close = () => {
-			setOpen(false);
-		};
-		dismiss = () => {
-			try {
-				context.ui.dialog.clear();
-			} catch {}
-			close();
-		};
-		setOpen(true);
-		setPage(0);
-		try {
-			const theme = context.theme?.text ?? {};
-			context.ui.dialog.show(() => createComponent(SettingsContent, {
-				sections,
-				page,
-				selectedId,
-				get fg() {
-					return theme.base;
-				},
-				get muted() {
-					return theme.muted;
+			return;
+		}
+		exit();
+	};
+	return {
+		tabs,
+		page,
+		selected,
+		draft,
+		notice,
+		api: {
+			move,
+			step,
+			actuate: () => {
+				if (rows()[selected()]?.action === "update-check") checkUpdatesNow();
+				else step(1);
+			},
+			nextTab,
+			jumpTab: (index) => {
+				if (index >= 0 && index < tabs().length) {
+					setPage(index);
+					setSelected(0);
 				}
-			}), close);
-			try {
-				context.ui.dialog.set?.({ size: "xlarge" });
-			} catch {}
-		} catch {}
+			},
+			save,
+			resetPage,
+			close
+		},
+		cleanup: () => {
+			pageApi = void 0;
+			setBlocking(false);
+		}
+	};
+}
+function SettingsPage(props) {
+	const returnRoute = props.data?.returnRoute;
+	const context = props.context;
+	const controller = createWindowController(context, () => navigateBack(context, returnRoute !== void 0 ? { returnRoute } : {}));
+	const theme = context.theme?.text ?? {};
+	const warn = theme?.feedback?.warning?.base ?? theme.muted;
+	onCleanup(controller.cleanup);
+	setBlocking(true);
+	pageApi = controller.api;
+	return createComponent(SettingsWindow, {
+		get version() {
+			return resolveRunningVersion$1();
+		},
+		get tabs() {
+			return controller.tabs;
+		},
+		get page() {
+			return controller.page;
+		},
+		get selected() {
+			return controller.selected;
+		},
+		get draft() {
+			return controller.draft;
+		},
+		get notice() {
+			return controller.notice;
+		},
+		get fg() {
+			return theme.base;
+		},
+		get muted() {
+			return theme.muted;
+		},
+		warn
+	});
+}
+function navigateBack(context, data) {
+	try {
+		context.ui.router.navigate(data?.returnRoute ?? { type: "home" });
 	} catch {}
+}
+const [dialogOpen, setDialogOpen] = createSignal(false);
+let dialogDismiss = () => {};
+function openSettingsDialog(context) {
+	const controller = createWindowController(context, () => dialogDismiss());
+	const theme = context.theme?.text ?? {};
+	const warn = theme?.feedback?.warning?.base ?? theme.muted;
+	controller.cleanup = () => {
+		pageApi = void 0;
+		setBlocking(false);
+		setDialogOpen(false);
+	};
+	const close = () => {
+		controller.cleanup();
+	};
+	dialogDismiss = () => {
+		try {
+			context.ui.dialog.clear();
+		} catch {}
+		close();
+	};
+	setBlocking(true);
+	setDialogOpen(true);
+	pageApi = controller.api;
+	try {
+		context.ui.dialog.show(() => createComponent(SettingsWindow, {
+			get version() {
+				return resolveRunningVersion$1();
+			},
+			get tabs() {
+				return controller.tabs;
+			},
+			get page() {
+				return controller.page;
+			},
+			get selected() {
+				return controller.selected;
+			},
+			get draft() {
+				return controller.draft;
+			},
+			get notice() {
+				return controller.notice;
+			},
+			get fg() {
+				return theme.base;
+			},
+			get muted() {
+				return theme.muted;
+			},
+			warn
+		}), close);
+	} catch {}
+}
+function setupPantheonSettings(context) {
+	try {
+		context.ui.router?.register?.({
+			name: ROUTE_NAME,
+			render: ({ data }) => createComponent(SettingsPage, {
+				context,
+				data
+			})
+		});
+		routerAvailable = true;
+	} catch {
+		routerAvailable = false;
+	}
+	const routeGated = () => {
+		try {
+			const route = context.ui?.router?.current?.();
+			return route?.type === "plugin" && route.name === "pantheon-settings";
+		} catch {
+			return false;
+		}
+	};
+	const commands = [
+		{
+			id: "pantheon.settings.close",
+			title: "Close settings",
+			bind: "escape,q",
+			run: () => {
+				pageApi?.close();
+			}
+		},
+		{
+			id: "pantheon.settings.down",
+			title: "Select next row",
+			bind: "down,j",
+			run: () => {
+				pageApi?.move(1);
+			}
+		},
+		{
+			id: "pantheon.settings.up",
+			title: "Select previous row",
+			bind: "up,k",
+			run: () => {
+				pageApi?.move(-1);
+			}
+		},
+		{
+			id: "pantheon.settings.cycle.next",
+			title: "Stage the next value",
+			bind: "right,l",
+			run: () => {
+				pageApi?.step(1);
+			}
+		},
+		{
+			id: "pantheon.settings.cycle.prev",
+			title: "Stage the previous value",
+			bind: "left,h",
+			run: () => {
+				pageApi?.step(-1);
+			}
+		},
+		{
+			id: "pantheon.settings.actuate",
+			title: "Apply / act on the row",
+			bind: "enter,space",
+			run: () => {
+				pageApi?.actuate();
+			}
+		},
+		{
+			id: "pantheon.settings.next.tab",
+			title: "Next settings tab",
+			bind: "tab",
+			run: () => {
+				pageApi?.nextTab();
+			}
+		},
+		{
+			id: "pantheon.settings.save",
+			title: "Save staged changes",
+			bind: "ctrl+s",
+			run: () => {
+				pageApi?.save();
+			}
+		},
+		{
+			id: "pantheon.settings.reset.page",
+			title: "Reset this tab",
+			bind: "ctrl+r",
+			run: () => {
+				pageApi?.resetPage();
+			}
+		},
+		...Array.from({ length: 9 }, (_, index) => ({
+			id: `pantheon.settings.tab.${index + 1}`,
+			title: `Jump to tab ${index + 1}`,
+			bind: String(index + 1),
+			run: () => {
+				pageApi?.jumpTab(index);
+			}
+		}))
+	];
+	try {
+		context.keymap.layer(() => ({
+			mode: "global",
+			priority: 1,
+			enabled: () => routeGated(),
+			commands
+		}));
+	} catch {}
+	try {
+		context.keymap.layer(() => ({
+			mode: "global",
+			priority: 1,
+			enabled: () => dialogOpen(),
+			commands
+		}));
+	} catch {}
+}
+async function openPantheonSettings(context) {
+	try {
+		if (routerAvailable && context.ui?.router?.navigate) {
+			let returnRoute;
+			try {
+				const current = context.ui.router.current();
+				if (!(current.type === "plugin" && current.name === "pantheon-settings")) returnRoute = current;
+			} catch {
+				returnRoute = void 0;
+			}
+			context.ui.router.navigate({
+				type: "plugin",
+				name: ROUTE_NAME,
+				...returnRoute !== void 0 ? { data: { returnRoute } } : {}
+			});
+			return;
+		}
+	} catch {}
+	openSettingsDialog(context);
 }
 //#endregion
 //#region src/sidebar-width.ts
@@ -5389,7 +5774,7 @@ function runDispatchPanelCommand(action, panel, model) {
 *  focused and the composer lost its keys. `enabled` (the documented gate) makes
 *  the whole layer inert until `panel.focused` is true. Pure. */
 function dispatchPanelKeymapLayer(panel, model) {
-	const focused = () => panel.focused === true;
+	const focused = () => panel.focused === true && !pantheonSettingsBlocking();
 	return {
 		mode: "global",
 		enabled: focused,
@@ -5621,7 +6006,7 @@ function PantheonSettingsCommandLayer(props) {
 			palette: true,
 			slash: { name: "pantheon-settings" },
 			run: () => {
-				maybeShowPantheonSettings(props.context);
+				openPantheonSettings(props.context);
 			}
 		}]
 	}));
@@ -5749,6 +6134,9 @@ const plugin = Plugin.define({
 			append: "app",
 			render: () => createComponent(PantheonSettingsCommandLayer, { context })
 		});
+		try {
+			setupPantheonSettings(context);
+		} catch {}
 		maybeShowWhatsNewV2(context);
 		return () => {
 			clearTimeout(updateNoticeTimer);
