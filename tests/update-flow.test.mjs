@@ -370,3 +370,75 @@ test('update binary exists in usage output', () => {
   assert.equal(result.status, 0)
   assert.match(result.stdout, /update \[--stable\]/)
 })
+
+test('update accepts npm symlinked bin entry (the running script may be a link)', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-update-binlink-'))
+  const globalRoot = join(root, 'global', 'node_modules')
+  const packageRoot = join(globalRoot, 'pantheon-opencode')
+  const realScript = join(packageRoot, 'bin', 'pantheon-init.mjs')
+  try {
+    mkdirSync(join(packageRoot, 'bin'), { recursive: true })
+    writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({ version: '2.0.0-beta.2' }))
+    writeFileSync(realScript, '#!/usr/bin/env node\n')
+    // npm's POSIX bin layout on symlink-creating installs: prefix/bin/pantheon-opencode
+    // is a symlink INTO the package. argv[1] is that link, and node does not
+    // rewrite it — the guard must not read the link itself as an identity fault.
+    const binDir = join(root, 'bin')
+    mkdirSync(binDir)
+    const linkedScript = join(binDir, 'pantheon-opencode')
+    symlinkSync(realScript, linkedScript)
+
+    let installCalls = 0
+    const spawnSyncImpl = (_command, args) => {
+      if (args[0] === 'root') return { status: 0, stdout: `${globalRoot}\n`, stderr: '' }
+      if (args[0] === 'view') return { status: 0, stdout: '2.0.0-beta.3\n', stderr: '' }
+      if (args[0] === 'install') {
+        installCalls += 1
+        writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({ version: '2.0.0-beta.3' }))
+        return { status: 0, stdout: '', stderr: '' }
+      }
+      throw new Error(`Unexpected command: ${args.join(' ')}`)
+    }
+    const result = await runUpdate([], {
+      root: packageRoot,
+      currentVersion: '2.0.0-beta.2',
+      runningScript: linkedScript,
+      spawnSync: spawnSyncImpl,
+      refresh: () => ({ status: 0 }),
+    })
+    assert.equal(result, 0, 'a symlinked bin entry is npm-normal, not a checkout')
+    assert.equal(installCalls, 1)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('update still refuses an npm-linked package (symlinked global entry)', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-update-npm-link-'))
+  const globalRoot = join(root, 'global', 'node_modules')
+  const checkout = join(root, 'checkout')
+  try {
+    mkdirSync(join(checkout, 'bin'), { recursive: true })
+    writeFileSync(join(checkout, 'package.json'), JSON.stringify({ version: '2.0.0-beta.2' }))
+    writeFileSync(join(checkout, 'bin', 'pantheon-init.mjs'), '#!/usr/bin/env node\n')
+    mkdirSync(globalRoot, { recursive: true })
+    symlinkSync(checkout, join(globalRoot, 'pantheon-opencode'))
+
+    let installCalls = 0
+    const spawnSyncImpl = (_command, args) => {
+      if (args[0] === 'root') return { status: 0, stdout: `${globalRoot}\n`, stderr: '' }
+      throw new Error(`Unexpected command: ${args.join(' ')}`)
+    }
+    const result = await runUpdate([], {
+      root: checkout,
+      currentVersion: '2.0.0-beta.2',
+      runningScript: join(checkout, 'bin', 'pantheon-init.mjs'),
+      spawnSync: spawnSyncImpl,
+      refresh: () => ({ status: 0 }),
+    })
+    assert.equal(result, 1, 'npm link keeps the checkout identity — refused')
+    assert.equal(installCalls, 0)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})

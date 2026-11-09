@@ -54,16 +54,21 @@ export function runUpdate(
       const actualGlobalRoot = fs.realpathSync(npmGlobalRoot)
       const installedEntry = path.join(actualGlobalRoot, 'pantheon-opencode')
       const installedEntryStat = fs.lstatSync(installedEntry)
-      const runningRootStat = fs.lstatSync(path.resolve(root))
-      const runningScriptStat = fs.lstatSync(path.resolve(runningScript))
+      // The RUNNING side is statSync (follows links) on purpose: npm's POSIX
+      // bin layout symlinks prefix/bin/<name> into the package, so argv[1] is
+      // a link and node does not rewrite it (field report beta.2: the
+      // maintainer's own nvm install was refused). Identity is still enforced
+      // by the realpath equality comparisons below.
+      const runningRootStat = fs.statSync(path.resolve(root))
+      const runningScriptStat = fs.statSync(path.resolve(runningScript))
       // A global npm link into a checkout resolves to the same realpath as the
-      // running source. Do not treat that provenance as a global installation.
+      // running source. Do not treat that provenance as a global installation:
+      // the INSTALLED ENTRY itself must be a regular directory (npm link makes
+      // it a symlink), and that lstat check is what keeps the link refused.
       if (
         installedEntryStat.isSymbolicLink() ||
         !installedEntryStat.isDirectory() ||
-        runningRootStat.isSymbolicLink() ||
         !runningRootStat.isDirectory() ||
-        runningScriptStat.isSymbolicLink() ||
         !runningScriptStat.isFile()
       ) {
         throw new Error('Global package identity is not a regular installed package')
