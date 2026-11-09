@@ -621,8 +621,9 @@ function navigateBack(context: Context, data?: { returnRoute?: WindowRoute }): v
       message: `settings: navigating ${JSON.stringify(destination)}`,
     })
     context.ui.router.navigate(destination)
-    context.ui.toast?.show?.({ variant: 'info', message: 'settings: navigate returned' })
-  } catch (error) {}
+  } catch {
+    /* router unavailable — the failure is observable only as a stuck page */
+  }
 }
 
 // ── The fallback dialog (hosts without a router) ───────────────────────

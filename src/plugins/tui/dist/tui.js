@@ -1568,11 +1568,7 @@ function navigateBack(context, data) {
 			message: `settings: navigating ${JSON.stringify(destination)}`
 		});
 		context.ui.router.navigate(destination);
-		context.ui.toast?.show?.({
-			variant: "info",
-			message: "settings: navigate returned"
-		});
-	} catch (error) {}
+	} catch {}
 }
 const [dialogOpen, setDialogOpen] = createSignal(false);
 let dialogDismiss = () => {};
