@@ -95,12 +95,7 @@ import type {
   ReferenceDraft,
 } from '@opencode-ai/plugin/v2/promise'
 import { define } from '@opencode-ai/plugin/v2/promise'
-import {
-  type EffectiveOverrides,
-  installDecision,
-  isRuntimeDisabled,
-  mergeOverrides,
-} from './pantheon/behavior-overrides.ts'
+import { type EffectiveOverrides, mergeOverrides } from './pantheon/behavior-overrides.ts'
 import {
   BOUNDED_READ_TOOL,
   createV2BoundedReadTool,
@@ -456,7 +451,7 @@ function loadRuntimeOverrides(): void {
 
 function resolveGlobalOverrideDir(): string {
   const env = process.env.XDG_CONFIG_HOME
-  const base = env && env.startsWith('/') ? env : path.join(process.env.HOME ?? '', '.config')
+  const base = env?.startsWith('/') ? env : path.join(process.env.HOME ?? '', '.config')
   return path.join(base, 'opencode')
 }
 

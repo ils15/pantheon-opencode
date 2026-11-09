@@ -12,7 +12,7 @@
  * whats-new windows. Every failure path is silent (fail-open).
  */
 import { readFileSync, writeFileSync } from 'node:fs'
-import { homedir, join } from 'node:path'
+import { join } from 'node:path'
 import type { Context } from '@opencode/plugin/tui/context'
 import { createSignal, For, Show } from 'solid-js'
 import {

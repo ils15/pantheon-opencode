@@ -3050,7 +3050,7 @@ async function checkForPantheonUpdate(context: any): Promise<void> {
     mkdirSync(join(stateDir, 'pantheon'), { recursive: true })
     writeFileSync(
       statePath,
-      JSON.stringify(nextCheckState(readState(), notice, Date.now()), null, 2) + '\n',
+      `${JSON.stringify(nextCheckState(readState(), notice, Date.now()), null, 2)}\n`,
     )
   }
   const response = await fetch('https://registry.npmjs.org/pantheon-opencode/latest', {

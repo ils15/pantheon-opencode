@@ -93,7 +93,7 @@ describe('classifyOverrideFiles', () => {
     )
     // Invalid entries are dropped; the valid-but-unknown one survives.
     assert.equal(r.effective['skill-tdd-with-agents'], undefined)
-    assert.equal(r.effective['ghost']?.action, 'disable')
+    assert.equal(r.effective.ghost?.action, 'disable')
   })
 
   it('clean files produce no warnings and the merge still applies', () => {
