@@ -181,7 +181,11 @@ import {
 } from './pantheon/todo-enforcer.ts'
 import { createV2ToolDefinitions, type V2ToolResult } from './pantheon/tools.ts'
 import { UNSUPPORTED_FEATURE_SEED } from './pantheon/unsupported.mjs'
-import { isNativeVisionSession, modelAcceptsImages, sanitizeVisionHistory } from './pantheon/vision.ts'
+import {
+  isNativeVisionSession,
+  modelAcceptsImages,
+  sanitizeVisionHistory,
+} from './pantheon/vision.ts'
 import type { HookPayload, HookResult } from './plugins/hook-runner.ts'
 
 // ─── Unsupported Features Registry ───────────────────────────────────────
@@ -1471,8 +1475,7 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
             if (sessionID === undefined) return false
             try {
               const lookup = sessionCtx.get?.call(sessionCtx, { sessionID })
-              const session =
-                lookup instanceof Promise ? await lookup : (lookup as unknown)
+              const session = lookup instanceof Promise ? await lookup : (lookup as unknown)
               const model = (session as { model?: unknown } | undefined)?.model as
                 | { providerID?: string; modelID?: string }
                 | undefined
