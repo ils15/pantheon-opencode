@@ -66,6 +66,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
      move this section to a versioned entry and reset the template below. -->
 
+## [v2.0.0-beta.2] - 2026-11-09
+
+### Added
+
+- **tui** — the settings window becomes a sectioned window (`tab` cycles sections): Gates & Overrides, Decision Model, Model Preset, J1 Risk Gate, Updates, Doctor, About
+- **tui** — Decision Model section: enable/disable the decision router live — the runtime re-reads the config on every gated call; egress consent stays CLI-owned and enabling remote candidates without it is refused
+- **tui** — Model Preset section: activate any routing.yml preset globally (atomic write, `.bak` backup); `none` deletes the marker; a project marker wins every runtime candidate list and shows read-only
+- **tui** — J1 Risk Gate status section: ladder mode, enforce threshold, effective gate state — the env-only config is displayed, never written (a file surface is a runtime-plugin change, deferred)
+- **tui** — Updates section: channel classification (prerelease suffix → `beta`), last-check state, and a `Check now` action against the registry dist-tag matching the running channel; a stable install is never advertised a beta
+- **tui** — Doctor section: install-version drift (H2), Node floor, overrides-file validation (K), decision-config health — file-derived checks only; process/network checks stay in `pantheon-opencode doctor`
+
+### Changed
+
+- **tui** — the typecheck gate points at real files: the old includes referenced deleted V2 entries, so nothing had been type-checked since the rewrite; the settings modules typecheck under the repo's strict settings and update-notice's latent violations are fixed
+
+### Fixed
+
+- **tui** — the settings window is closable again: `dialog.clear()` inside the host's dismissal path re-entered the dialog stack and left the window permanent (beta.1 field report)
+- **tui** — overrides state guards: a corrupt global overrides file refuses writes instead of silently dropping the other entries on the next toggle; `replace` entries survive disable (content preserved) and restore on re-enable; project-file entries show a `(project)` marker and are not togglable from the window
+
+&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. --&gt;
 ## [v2.0.0-beta.1] - 2026-11-08
 
 ### Added

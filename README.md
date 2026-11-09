@@ -158,13 +158,32 @@ see [Quick Start](docs/QUICKSTART.md).
   "What's new" dialog lists that version's highlights from the shipped
   changelog — once per version, `esc`/`q` dismisses; see
   [What's new window](docs/reference/whats-new.md). `/pantheon-settings`
-  (also `Pantheon: Settings` in the command palette) opens the settings
-  window: `up`/`down` selects a Pantheon runtime gate, `enter` toggles it —
-  writing the global `pantheon-overrides.json` the installer and doctor
-  consume — `tab` flips to the About page, `esc`/`q` closes. The installer
-  selects the `plugins` component by default; in interactive setup you can
-  change the component selection. A component-scoped install includes the TUI
-  only when `plugins` is selected. The TUI ships no quota panel: for provider
+  (also `Pantheon: Settings` in the command palette) opens the sectioned
+  settings window — `tab` cycles sections, `up`/`down` selects,
+  `enter` applies, `esc`/`q` closes:
+
+  - **Gates & Overrides** — toggle the named behaviors, writing the global
+    `pantheon-overrides.json` the installer and doctor consume. A corrupt
+    overrides file refuses writes (repair with `doctor --fix`); entries in the
+    project `.pantheon/overrides.json` win at runtime and are shown read-only.
+  - **Decision Model** — enable/disable the advisory decision router live
+    (the runtime re-reads the config per call). Egress consent stays
+    CLI-owned (`decision-router setup-model`).
+  - **Model Preset** — activate any routing.yml preset globally (atomic
+    write with a `.bak` backup); `none` clears the marker. A project
+    `.pantheon/active-preset.json` wins and shows read-only.
+  - **J1 Risk Gate** — ladder mode/threshold status; env-only config
+    (`PANTHEON_J1_*`), read at startup, never written here.
+  - **Updates** — channel and a `Check now` registry probe for the running
+    channel; adopt with `pantheon-opencode update`.
+  - **Doctor** — file-derived health: install-version drift, Node floor,
+    overrides and decision-config validation. The full check (MCP smoke,
+    venv pins, git) remains `pantheon-opencode doctor`.
+
+  The installer selects the `plugins` component by default; in interactive
+  setup you can change the component selection. A component-scoped install
+  includes the TUI only when `plugins` is selected. The TUI ships no quota
+  panel: for provider
   quota and usage inside OpenCode, install the recommended community plugin
   [`@slkiser/opencode-quota`](https://github.com/slkiser/opencode-quota) — see
   [Quota & usage](docs/tui-v2-quota-providers.md). `pantheon_cost` and
