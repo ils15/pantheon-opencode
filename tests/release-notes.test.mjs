@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { validateSection } from '../scripts/changelog-format.mjs'
 import {
   collectEntries,
   getLastTag,
@@ -107,9 +108,10 @@ test('ignores non-conventional subjects', () => {
 })
 
 // ---------------------------------------------------------------------------
-// groupCommits — final groups: 🆕 What's New / 🐞 Fixed / ⚠️ Known Issues /
-// ✅ Closed Issues. Internal types (chore, refactor, test, ci, build, style,
-// revert, unknown) are omitted; breaking keeps its type bucket.
+// groupCommits — canonical sections: ### Added / ### Changed / ### Fixed /
+// ### Security / ### ⚠️ Known Issues / ### ✅ Closed Issues. Internal types
+// (chore, refactor, test, ci, build, style, revert, unknown) are omitted;
+// breaking keeps its section.
 // ---------------------------------------------------------------------------
 
 test('groups feat/fix/docs/breaking/merge/chore into the final buckets', () => {
@@ -123,13 +125,17 @@ test('groups feat/fix/docs/breaking/merge/chore into the final buckets', () => {
   ].filter(Boolean)
 
   const groups = groupCommits(entries)
-  // feat + docs → What's New (docs are user-facing, no dedicated group);
-  // breaking feat! keeps its type bucket (marked, not moved out)
+  // feat → Added; docs → Changed (user-facing, no dedicated commit type);
+  // breaking feat! keeps its section (marked, not moved out)
   assert.deepEqual(
-    groups.whatsNew.map((e) => e.subject),
-    ['real-time Delegations panel', 'document RELEASING', 'drop legacy API'],
+    groups.added.map((e) => e.subject),
+    ['real-time Delegations panel', 'drop legacy API'],
   )
-  assert.ok(groups.whatsNew.find((e) => e.subject === 'drop legacy API').breaking)
+  assert.ok(groups.added.find((e) => e.subject === 'drop legacy API').breaking)
+  assert.deepEqual(
+    groups.changed.map((e) => e.subject),
+    ['document RELEASING'],
+  )
   // fix → Fixed
   assert.deepEqual(
     groups.fixed.map((e) => e.subject),
@@ -140,15 +146,15 @@ test('groups feat/fix/docs/breaking/merge/chore into the final buckets', () => {
   assert.equal(groups.closedIssues.length, 0)
 })
 
-test('a breaking commit stays in its type group, marked breaking', () => {
+test('a breaking commit stays in its section, marked breaking', () => {
   const groups = groupCommits([parseCommitLine('feat(scope)!: drop legacy API|')])
-  assert.equal(groups.whatsNew.length, 1)
-  assert.equal(groups.whatsNew[0].breaking, true)
+  assert.equal(groups.added.length, 1)
+  assert.equal(groups.added[0].breaking, true)
 })
 
 test('unknown conventional types are omitted (internal)', () => {
   const groups = groupCommits([parseCommitLine('release: v1.2.1 (#13)|')])
-  assert.equal(groups.whatsNew.length, 0)
+  assert.equal(groups.added.length, 0)
   assert.equal(groups.fixed.length, 0)
 })
 
@@ -163,7 +169,8 @@ test('chore/refactor/test/ci/build/style/revert are all omitted', () => {
     'revert: undo change',
   ].map((s) => parseCommitLine(`${s}|`))
   const groups = groupCommits(entries)
-  assert.equal(groups.whatsNew.length, 0)
+  assert.equal(groups.added.length, 0)
+  assert.equal(groups.changed.length, 0)
   assert.equal(groups.fixed.length, 0)
   assert.equal(groups.closedIssues.length, 0)
 })
@@ -177,7 +184,7 @@ test('release-scoped fixes and docs are omitted while other scopes remain', () =
   ])
 
   assert.deepEqual(
-    groups.whatsNew.map((entry) => entry.subject),
+    groups.added.map((entry) => entry.subject),
     ['add route selection'],
   )
   assert.deepEqual(
@@ -194,21 +201,21 @@ test('release-scoped issue references are excluded but other scope references re
   ])
 
   assert.deepEqual(groups.closedIssues, [{ ref: 74, subject: 'handle request timeout' }])
-  assert.match(renderMarkdown(groups), /## ✅ Closed Issues\n- #74 - handle request timeout/)
+  assert.match(renderMarkdown(groups), /### ✅ Closed Issues\n- #74 - handle request timeout/)
   assert.doesNotMatch(renderMarkdown(groups), /#73/)
 })
 
-test("perf and docs map to What's New; security maps to Fixed", () => {
+test('perf and docs map to Changed; security maps to Security', () => {
   const groups = groupCommits([
     parseCommitLine('perf(core): cache lookups|'),
     parseCommitLine('security(auth): harden token parsing|'),
   ])
   assert.deepEqual(
-    groups.whatsNew.map((e) => e.type),
+    groups.changed.map((e) => e.type),
     ['perf'],
   )
   assert.deepEqual(
-    groups.fixed.map((e) => e.type),
+    groups.security.map((e) => e.type),
     ['security'],
   )
 })
@@ -241,7 +248,7 @@ test('knownIssues option populates the Known Issues group', () => {
 // renderMarkdown / renderChangelog
 // ---------------------------------------------------------------------------
 
-test('renderMarkdown emits the final emoji sections with the audited bullet format', () => {
+test('renderMarkdown emits the canonical sections with the audited bullet format', () => {
   const groups = groupCommits([
     parseCommitLine('feat(tui): real-time Delegations panel|'),
     parseCommitLine('docs: document RELEASING|'),
@@ -250,17 +257,19 @@ test('renderMarkdown emits the final emoji sections with the audited bullet form
   const markdown = renderMarkdown(groups)
   assert.match(
     markdown,
-    /^## 🆕 What's New\n- \*\*tui\*\* — real-time Delegations panel\n- \*\*document RELEASING\*\*/,
+    /^### Added\n- \*\*tui\*\* — real-time Delegations panel\n\n### Changed\n- \*\*document RELEASING\*\*/,
   )
-  assert.match(markdown, /## 🐞 Fixed\n- \*\*plugin\*\* — startup hang$/)
-  assert.doesNotMatch(markdown, /## ⚠️ Known Issues/)
-  assert.doesNotMatch(markdown, /## ✅ Closed Issues/)
+  assert.match(markdown, /### Fixed\n- \*\*plugin\*\* — startup hang$/)
+  assert.doesNotMatch(markdown, /### ⚠️ Known Issues/)
+  assert.doesNotMatch(markdown, /### ✅ Closed Issues/)
+  // The curated highlights block is never generated.
+  assert.doesNotMatch(markdown, /What's New/)
 })
 
-test("renderMarkdown marks breaking bullets with 💥 inside What's New", () => {
+test('renderMarkdown marks breaking bullets with 💥 inside their section', () => {
   const groups = groupCommits([parseCommitLine('feat(core)!: drop legacy API|')])
   const markdown = renderMarkdown(groups)
-  assert.match(markdown, /^## 🆕 What's New\n- 💥 \*\*core\*\* — drop legacy API$/)
+  assert.match(markdown, /^### Added\n- 💥 \*\*core\*\* — drop legacy API$/)
   assert.doesNotMatch(markdown, /Breaking/)
 })
 
@@ -268,20 +277,20 @@ test('renderMarkdown emits ⚠️ Known Issues only when provided', () => {
   const withIssues = groupCommits([parseCommitLine('feat: x|')], {
     knownIssues: ['Known: widget API is unstable'],
   })
-  assert.match(renderMarkdown(withIssues), /## ⚠️ Known Issues\n- Known: widget API is unstable/)
-  assert.match(renderMarkdown(withIssues), /## 🆕 What's New\n- \*\*x\*\*\n\n## ⚠️ Known Issues/)
+  assert.match(renderMarkdown(withIssues), /### ⚠️ Known Issues\n- Known: widget API is unstable/)
+  assert.match(renderMarkdown(withIssues), /### Added\n- \*\*x\*\*\n\n### ⚠️ Known Issues/)
 
   const withoutIssues = groupCommits([parseCommitLine('feat: x|')])
-  assert.doesNotMatch(renderMarkdown(withoutIssues), /## ⚠️ Known Issues/)
+  assert.doesNotMatch(renderMarkdown(withoutIssues), /### ⚠️ Known Issues/)
 })
 
 test('renderMarkdown emits ✅ Closed Issues with #N + subject when refs exist', () => {
   const groups = groupCommits([parseCommitLine('fix(plugin): startup hang|Closes #42')])
   const markdown = renderMarkdown(groups)
-  assert.match(markdown, /## ✅ Closed Issues\n- #42 - startup hang$/)
+  assert.match(markdown, /### ✅ Closed Issues\n- #42 - startup hang$/)
 
   const noRefs = groupCommits([parseCommitLine('fix: x|')])
-  assert.doesNotMatch(renderMarkdown(noRefs), /## ✅ Closed Issues/)
+  assert.doesNotMatch(renderMarkdown(noRefs), /### ✅ Closed Issues/)
 })
 
 test('renderMarkdown returns empty string for internal-only commits', () => {
@@ -292,7 +301,7 @@ test('renderMarkdown returns empty string for internal-only commits', () => {
   assert.equal(renderMarkdown(groups), '')
 })
 
-test('renderChangelog emits the same final emoji groups (apply --notes)', () => {
+test('renderChangelog emits canonical sections that pass the format validator', () => {
   const groups = groupCommits(
     [
       parseCommitLine('feat(tui): real-time Delegations panel|'),
@@ -307,13 +316,16 @@ test('renderChangelog emits the same final emoji groups (apply --notes)', () => 
   )
   const changelog = renderChangelog(groups)
   assert.equal(changelog, renderMarkdown(groups))
-  assert.match(changelog, /## 🆕 What's New/)
-  assert.match(changelog, /## 🐞 Fixed/)
-  assert.match(changelog, /## ⚠️ Known Issues/)
+  assert.match(changelog, /### Added/)
+  assert.match(changelog, /### Changed/)
+  assert.match(changelog, /### Fixed/)
+  assert.match(changelog, /### Security/)
+  assert.match(changelog, /### ⚠️ Known Issues/)
   // chore is omitted entirely
   assert.doesNotMatch(changelog, /release gates/)
-  assert.doesNotMatch(changelog, /### Added/)
   assert.match(changelog, /- 💥 \*\*core\*\* — drop legacy API/)
+  // Generated output is canonical by construction: no violations.
+  assert.deepEqual(validateSection(changelog, { label: 'generated' }), [])
 })
 
 // ---------------------------------------------------------------------------
@@ -351,14 +363,14 @@ test('CLI normal mode exits 0 and prints the final emoji sections (lastTag..HEAD
     return
   }
 
-  assert.match(stdout, /## (🆕 What's New|🐞 Fixed)/)
+  assert.match(stdout, /### (Added|Changed|Fixed|Security)/)
 })
 
 test('CLI --draft exits 0 without reading tags and prints markdown', () => {
   const { status, stdout, stderr } = runCli(['--draft'])
   assert.equal(status, 0, stderr)
   assert.match(stderr, /draft mode — last 30 commits \(no tag lookup\)/)
-  assert.match(stdout, /## (🆕 What's New|🐞 Fixed)/)
+  assert.match(stdout, /### (Added|Changed|Fixed|Security)/)
 })
 
 test('CLI --known-issues emits the ⚠️ Known Issues section', () => {
@@ -368,5 +380,5 @@ test('CLI --known-issues emits the ⚠️ Known Issues section', () => {
     'Upstream Gemini API may rate-limit',
   ])
   assert.equal(status, 0, stderr)
-  assert.match(stdout, /## ⚠️ Known Issues\n- Upstream Gemini API may rate-limit/)
+  assert.match(stdout, /### ⚠️ Known Issues\n- Upstream Gemini API may rate-limit/)
 })

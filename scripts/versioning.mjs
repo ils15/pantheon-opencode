@@ -343,7 +343,7 @@ function prepareUnreleased(newVersion, dateStr, notesBody = null) {
   // injection when interpolated next to the template's HTML comment.
   const writtenBody = sanitizeCommentDelimiters(cleanedBody)
 
-  const newTemplate = `\n\n<!-- Add new changes here. Running \`node scripts/versioning.mjs apply\` will\n     move this section to a versioned entry and reset the template below. -->`
+  const newTemplate = `\n\n<!-- Add new changes here.\n     Canonical sections (docs/RELEASING.md): ### 🆕 What's New (curated highlights, ≤6 bullets ≤140 chars) →\n     ### Added / Changed / Deprecated / Removed / Fixed / Security → ### ⚠️ Known Issues / ### ✅ Closed Issues.\n     \`node scripts/versioning.mjs apply --notes\` pre-fills the generated sections from conventional commits.\n     Running apply will move this section to a versioned entry and reset the template below. -->`
   const newVersionHeader = `## [v${newVersion}] - ${dateStr}`
 
   const before = content.slice(0, idx)

@@ -4,28 +4,27 @@
  *
  * Fails on:
  *   - a version heading with the wrong shape;
- *   - an H3 outside {Added, Changed, Deprecated, Removed, Fixed, Security}
- *     inside the maintained sections ([Unreleased] and the newest stable
- *     version section);
- *   - a bullet over 200 characters (including continuation lines) in those
- *     sections;
- *   - an empty subsection under [Unreleased];
  *   - any emoji H2 except the generated `🆕 What's New` and `🐞 Fixed` headings;
- *   - a missing Deprecated or Removed block in the newest stable version.
+ *   - a MAINTAINED section ([Unreleased] or the newest stable version) that
+ *     violates the canonical section format — allowed H3 set and order, the
+ *     What's New window contract (≤6 bullets, ≤140 chars, bold lead),
+ *     bullet shapes, empty subsections, and placeholders. The rules live in
+ *     scripts/changelog-format.mjs, shared with the release gate, so CI
+ *     catches at PR time exactly what the release would fail on.
  *
  * Historical sections are archived records: only their version-heading shape
- * and the emoji-H2 rule are enforced. The 200-character and H3 rules apply to
- * the maintained sections, where the new record is authored.
+ * and the emoji-H2 rule are enforced.
  */
 
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { extractSection } from './changelog-extract.mjs'
+import { splitSections, validateSection } from './changelog-format.mjs'
+
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const CHANGELOG = process.argv[2] ? process.argv[2] : join(ROOT, 'CHANGELOG.md')
-const MAX_BULLET = 200
-const ALLOWED_H3 = new Set(['Added', 'Changed', 'Deprecated', 'Removed', 'Fixed', 'Security'])
 const EMOJI_H2 =
   /^##\s+(?:\p{Extended_Pictographic}|\p{Regional_Indicator}{2}|[#*0-9]\uFE0F?\u20E3)/u
 const ALLOWED_GENERATED_H2 = /^##\s+(?:🆕 What's New|🐞 Fixed)\s*$/
@@ -37,10 +36,6 @@ const HISTORICAL_VERSION_HEADING =
 const UNRELEASED_HEADING = /^## \[Unreleased\]$/
 const LOOKS_LIKE_VERSION = /^##\s+(?:\[?v?\d+\.\d+)/
 
-function charCount(text) {
-  return [...text].length
-}
-
 function newestStableVersion(lines) {
   for (const line of lines) {
     const match = STABLE_VERSION_HEADING.exec(line)
@@ -50,9 +45,9 @@ function newestStableVersion(lines) {
 }
 
 function main() {
-  const lines = readFileSync(CHANGELOG, 'utf8').split(/\r?\n/)
+  const text = readFileSync(CHANGELOG, 'utf8')
+  const lines = text.split(/\r?\n/)
   const findings = []
-  const maintainedH3 = new Map() // section name -> Map<h3, empty>
   const newest = newestStableVersion(lines)
 
   if (newest === null) {
@@ -61,136 +56,40 @@ function main() {
     return
   }
 
-  let section = null // { name, maintained }
-  let currentH3 = null
-  let currentH3Empty = false
-  let currentBullet = null // { lineNo, parts: string[] }
-  let inComment = false
-
-  const headingsFor = (name) => {
-    if (!maintainedH3.has(name)) maintainedH3.set(name, new Map())
-    return maintainedH3.get(name)
-  }
-
-  const flushBullet = () => {
-    if (currentBullet === null) return
-    if (section?.maintained) {
-      const text = currentBullet.parts.join(' ')
-      if (charCount(text) > MAX_BULLET) {
-        findings.push(
-          `${currentBullet.lineNo}: bullet is ${charCount(text)} chars (max ${MAX_BULLET}): ${text.slice(0, 60)}…`,
-        )
-      }
-    }
-    currentBullet = null
-  }
-
-  const commitH3 = () => {
-    if (section?.maintained && currentH3 !== null) {
-      headingsFor(section.name).set(currentH3, currentH3Empty)
-    }
-    currentH3 = null
-    currentH3Empty = false
-  }
-
-  const closeSection = () => {
-    flushBullet()
-    commitH3()
-    section = null
-  }
-
+  // File-level pass: heading shapes and the emoji-H2 rule (all sections).
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i]
     const lineNo = i + 1
+    if (!line.startsWith('## ')) continue
 
-    if (line.startsWith('## ')) {
-      closeSection()
-
-      if (EMOJI_H2.test(line) && !ALLOWED_GENERATED_H2.test(line)) {
-        findings.push(`${lineNo}: emoji H2 is not allowed (${line.trim()})`)
-        continue
-      }
-      if (UNRELEASED_HEADING.test(line)) {
-        section = { name: 'Unreleased', maintained: true }
-        headingsFor('Unreleased')
-        continue
-      }
-      const stable = STABLE_VERSION_HEADING.exec(line)
-      if (stable) {
-        const name = stable[1]
-        section = { name, maintained: name === newest }
-        if (section.maintained) headingsFor(name)
-        continue
-      }
-      if (HISTORICAL_VERSION_HEADING.test(line)) {
-        const name = line.slice(4, line.indexOf(']')).replace(/^v/, '')
-        section = { name, maintained: false }
-        continue
-      }
-      if (line.startsWith('## [') || LOOKS_LIKE_VERSION.test(line)) {
-        findings.push(`${lineNo}: version heading has the wrong shape (${line.trim()})`)
-      }
-      // A plain legacy H2 (historical sections) or the wrong-shape heading.
+    if (EMOJI_H2.test(line) && !ALLOWED_GENERATED_H2.test(line)) {
+      findings.push(`${lineNo}: emoji H2 is not allowed (${line.trim()})`)
       continue
     }
-
-    if (line.startsWith('### ')) {
-      if (section?.maintained) {
-        flushBullet()
-        commitH3()
-        const name = line.slice(4).trim()
-        currentH3 = name
-        currentH3Empty = true
-        if (!ALLOWED_H3.has(name)) {
-          findings.push(`${lineNo}: H3 "${name}" is not in the allowed set`)
-        }
-      }
-      continue
+    if (UNRELEASED_HEADING.test(line)) continue
+    if (STABLE_VERSION_HEADING.test(line)) continue
+    if (HISTORICAL_VERSION_HEADING.test(line)) continue
+    if (line.startsWith('## [') || LOOKS_LIKE_VERSION.test(line)) {
+      findings.push(`${lineNo}: version heading has the wrong shape (${line.trim()})`)
     }
-
-    if (!section?.maintained) continue
-
-    if (inComment) {
-      if (line.includes('-->')) inComment = false
-      continue
-    }
-    if (line.includes('<!--')) {
-      if (!line.includes('-->')) inComment = true
-      continue
-    }
-
-    if (line.trim() === '') {
-      flushBullet()
-      continue
-    }
-
-    if (line.startsWith('- ')) {
-      flushBullet()
-      currentBullet = { lineNo, parts: [line] }
-      if (currentH3 !== null) currentH3Empty = false
-      continue
-    }
-
-    if (currentBullet !== null) {
-      currentBullet.parts.push(line.trim())
-      if (currentH3 !== null) currentH3Empty = false
-      continue
-    }
-
-    if (currentH3 !== null) currentH3Empty = false
-  }
-  closeSection()
-
-  for (const [heading, empty] of headingsFor('Unreleased')) {
-    if (empty) findings.push(`[Unreleased] has an empty "${heading}" subsection`)
   }
 
-  const newestHeadings = headingsFor(newest)
-  if (!newestHeadings.has('Deprecated')) {
-    findings.push(`[v${newest}] is missing the Deprecated block`)
+  // Maintained sections: the canonical format (shared with the release gate).
+  // An empty [Unreleased] is legitimate — nothing is pending yet.
+  const unreleased = splitSections(text).find((section) => section.name === 'Unreleased')
+  if (unreleased?.body.trim()) {
+    for (const violation of validateSection(unreleased.body, {
+      label: '[Unreleased]',
+      allowLeadingComment: true,
+    })) {
+      findings.push(violation)
+    }
   }
-  if (!newestHeadings.has('Removed')) {
-    findings.push(`[v${newest}] is missing the Removed block`)
+  const newestBody = extractSection(text, newest)
+  if (newestBody?.found && newestBody.body) {
+    for (const violation of validateSection(newestBody.body, { label: `[v${newest}]` })) {
+      findings.push(violation)
+    }
   }
 
   if (findings.length === 0) {

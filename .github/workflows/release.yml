@@ -305,10 +305,16 @@ jobs:
           mkdir -p "$RUNNER_TEMP/release-artifact"
           # Notes come from the committed CHANGELOG.md for BOTH channels. The
           # version is committed, so its section is authorable in the bump PR.
-          # Recovery keeps a static note because the original body is not
-          # regenerated.
+          # Recovery extracts the section at the recovery target as well, so a
+          # republished release keeps the canonical body; the static note is
+          # the last resort for tags predating the CHANGELOG section.
           if [ -n "$RECOVERY_VERSION" ]; then
-            printf '%s\n' "Recovery publish for existing tag $RECOVERY_VERSION." > "$RUNNER_TEMP/release-notes.md"
+            if node scripts/changelog-extract.mjs "v$RECOVERY_VERSION" > "$RUNNER_TEMP/release-notes.md" 2>/dev/null && [ -s "$RUNNER_TEMP/release-notes.md" ]; then
+              echo "Recovery notes extracted from the CHANGELOG section of v$RECOVERY_VERSION."
+            else
+              echo "No CHANGELOG section for v$RECOVERY_VERSION — publishing the static recovery note."
+              printf '%s\n' "Recovery publish for existing tag $RECOVERY_VERSION." > "$RUNNER_TEMP/release-notes.md"
+            fi
           elif ! node scripts/changelog-extract.mjs "$BASE_VERSION" > "$RUNNER_TEMP/release-notes.md"; then
             echo "::error::CHANGELOG.md has no [$BASE_VERSION] section."; exit 1
           fi
@@ -590,6 +596,22 @@ jobs:
           const release = JSON.parse(fs.readFileSync(process.env.RELEASE_BODY, 'utf8'));
           if (release.tag_name !== process.env.VERSION || release.target_commitish !== process.env.TARGET_SHA) {
             console.error('::error::Existing GitHub release is not bound to VERSION and TARGET_SHA.');
+            process.exit(1);
+          }
+          // The published body must equal the canonical CHANGELOG section (the
+          // validated artifact's release-notes.md). A hand-edited body breaks
+          // the release-notes contract and fails the re-run with the remedy.
+          const published = String(release.body ?? '').replace(/\s+$/, '');
+          const notesPath = 'release-artifact/release-notes.md';
+          const canonical = fs.existsSync(notesPath)
+            ? fs.readFileSync(notesPath, 'utf8').replace(/\s+$/, '')
+            : null;
+          if (canonical !== null && published !== canonical) {
+            console.error(
+              '::error::Published release body diverges from the canonical CHANGELOG section ' +
+              '(release-artifact/release-notes.md). Restore it with ' +
+              '`gh release edit ' + process.env.VERSION + ' --notes-file release-artifact/release-notes.md`.',
+            );
             process.exit(1);
           }
           NODE

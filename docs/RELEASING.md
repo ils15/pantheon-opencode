@@ -137,33 +137,62 @@ workflow-owned (see below).
 
 ## Release Notes
 
-Release notes are **generated from conventional commits**, never written
-from scratch. Commitlint (12 types / 40 scopes) validates every commit
-before it merges, so the generator can always group the history.
+Release notes live in the version's `CHANGELOG.md` section and that section —
+verbatim — **is** the GitHub Release body. The canonical format is the hybrid:
+curated `### 🆕 What's New` highlights on top, Keep a Changelog subsections
+below, in fixed order, in **English**:
+
+```markdown
+### 🆕 What's New        ← curated highlights (≤6 bullets, ≤140 chars each)
+### Added                ┐
+### Changed              │ Keep a Changelog — omit empty sections, keep this order
+### Deprecated           │
+### Removed              │
+### Fixed                │
+### Security             ┘
+### ⚠️ Known Issues      ← optional, last
+### ✅ Closed Issues     ← optional, last
+```
+
+Rules enforced by the tooling (see "Enforcement" below):
+
+- Only the headings above, in this relative order, no duplicates, no `## ` or
+  `####` inside the section.
+- Bullets open with a bold lead: `- **<scope>** — <text>` (breaking: a `💥`
+  prefix before the bold lead). Unscoped bullets may use `- **<subject>**`.
+- `### 🆕 What's New` is authored by hand (it is never generated): at most 6
+  bullets, one terminal line each (≤140 chars — the TUI window contract).
+- No `TODO`/`TBD`/`FIXME`/`XXX` placeholders, no empty subsections, no bullet
+  over 200 chars (continuation lines included).
 
 ### Type → section mapping
 
-Release notes use the final emoji group format — **🆕 What's New /
-🐞 Fixed / ⚠️ Known Issues / ✅ Closed Issues**:
+`node scripts/release-notes.mjs` (and `versioning.mjs apply --notes`) generate
+the KaC sections from conventional commits — never written from scratch.
+Commitlint (12 types / 40 scopes) validates every commit before it merges, so
+the generator can always group the history:
 
-| Commit type | Release notes section |
+| Commit type | Generated section |
 |---|---|
-| `feat`, `perf`, `docs` | `## 🆕 What's New` (docs are user-facing — no dedicated group) |
-| `fix`, `security` | `## 🐞 Fixed` |
-| `--known-issues "text"` (CLI flag, repeatable) | `## ⚠️ Known Issues` (omitted when the flag is absent — never emitted empty) |
-| `Closes #N` / `Fixes #N` / `Resolves #N` in the commit **body** | `## ✅ Closed Issues` — bullet `- #N - <subject>` (deduped; omitted when no refs exist) |
+| `feat` | `### Added` |
+| `perf`, `docs` | `### Changed` |
+| `fix` | `### Fixed` |
+| `security` | `### Security` |
+| `--known-issues "text"` (CLI flag, repeatable) | `### ⚠️ Known Issues` (omitted when the flag is absent — never emitted empty) |
+| `Closes #N` / `Fixes #N` / `Resolves #N` in the commit **body** | `### ✅ Closed Issues` — bullet `- #N - <subject>` (deduped; omitted when no refs exist) |
 | `release` scope (maintainer-only, any commit type) | **omitted** from all public notes, including Closed Issues references |
 | `chore`, `refactor`, `test`, `ci`, `build`, `style`, `revert` (and unknown types) | **omitted** — internal, never user-facing |
-| `BREAKING CHANGE` footer or `type!:` / `type(scope)!:` | `💥` prefix on the bullet **inside** What's New (e.g. `- 💥 **scope** — subject`) — no dedicated Breaking group |
+| `BREAKING CHANGE` footer or `type!:` / `type(scope)!:` | `💥` prefix on the bullet **inside** its section (e.g. `- 💥 **scope** — subject`) — no dedicated Breaking section |
+
+`### 🆕 What's New` is NOT generated — curate it by hand on top of the
+generated sections. `Deprecated` and `Removed` have no commit type; author
+them by hand when the release needs them.
 
 The `release` scope is reserved for maintainers' internal release tooling.
 Commits using it are excluded before both section grouping and issue-reference
-collection, so they cannot appear in What's New, Fixed, or Closed Issues.
+collection, so they cannot appear in any section.
 
-Merge commits ("Merge …") and empty-subject chores are skipped. Bullets use
-`- **<scope>** — <subject>` (the scope as the bold prefix; without a scope
-the whole subject is bolded). Section order is What's New → Fixed → Known
-Issues → Closed Issues.
+Merge commits ("Merge …") and empty-subject chores are skipped.
 
 ### Generate the notes
 
@@ -194,7 +223,22 @@ both dispatch channels; only the stable channel attaches it to a GitHub Release:
 |---------|--------------|
 | stable | `node scripts/changelog-extract.mjs X.Y.Z` reads the curated `## [X.Y.Z]` section from `CHANGELOG.md`; the dispatch fails if the section is missing. Used as the GitHub Release body. |
 | beta | `node scripts/changelog-extract.mjs X.Y.Z-beta.N` reads the curated `## [X.Y.Z-beta.N]` section from `CHANGELOG.md`; the dispatch fails if the section is missing. Carried in the release artifact only — beta creates no GitHub Release. The workflow does not regenerate notes at dispatch time. |
-| recovery | Static note (`Recovery publish for existing tag ...`); the original notes are not regenerated. |
+| recovery | `node scripts/changelog-extract.mjs v<recovery_version>` reads the section from the CHANGELOG at the recovery target SHA, so a republished release keeps the canonical body. The static note (`Recovery publish for existing tag ...`) is the last resort for tags predating the CHANGELOG section. |
+
+### Enforcement (the release body can never drift again)
+
+1. **Author time** — CI runs `npm run docs:check-changelog`, which validates
+   the `[Unreleased]` and newest-stable sections against the canonical format
+   (`scripts/changelog-format.mjs`) on every PR.
+2. **Release time** — release gate (e) validates the exact committed section
+   before anything is tagged; a format violation fails the dispatch.
+3. **After publication** — the title is always `Pantheon <tag>` (workflow-set),
+   and a re-run of the release workflow for a version whose GitHub Release
+   already exists compares the published body with the canonical section and
+   **fails on divergence** with the remedy
+   (`gh release edit <tag> --notes-file release-artifact/release-notes.md`).
+   Hand-editing a published body is not part of the process; a correction
+   goes into the CHANGELOG and a recovery dispatch republishes it.
 
 The version is committed, so a `CHANGELOG.md` section is authorable before the
 dispatch and is required for **both** channels. Stable `apply --notes` uses
@@ -213,15 +257,17 @@ committed changelog section and does not generate notes itself.
 3. **CHANGELOG** — `node scripts/versioning.mjs apply minor [--notes]` bumps
    the stable manifests and promotes `[Unreleased]` → `[vX.Y.Z]`; beta uses
    `apply --beta [--notes]` and promotes to `[vX.Y.Z-beta.N]`. With `--notes`
-   the promoted entry is pre-filled from grouped commits (the final emoji
-   groups `## 🆕 What's New / 🐞 Fixed / ⚠️ Known Issues / ✅ Closed Issues`);
-   it **replaces** any manual `[Unreleased]` content. Beta `--notes` fails
-   before writes when there is no beta baseline or the generated notes are
-   empty. Review the diff before committing.
+   the promoted entry is pre-filled from grouped commits (the canonical
+   `### Added / Changed / Fixed / Security / ⚠️ Known Issues / ✅ Closed Issues`
+   sections); it **replaces** any manual `[Unreleased]` content — add the
+   curated `### 🆕 What's New` block (and Deprecated/Removed when needed)
+   after generating. Beta `--notes` fails before writes when there is no beta
+   baseline or the generated notes are empty. Review the diff before committing.
 4. **Release body by channel** — `node scripts/changelog-extract.mjs <version>`
    pulls the curated versioned section into the GitHub Release body for both
    stable (`X.Y.Z`) and beta (`X.Y.Z-beta.N`), and fails if the section is
-   missing; recovery uses a static note and does not regenerate notes.
+   missing; recovery extracts the section at the recovery target (the static
+   note is the last resort for tags predating the section).
 5. **Publish** — the workflow tags the exact dispatch target SHA and publishes
    to npm (stable or beta per the `release_channel` input).
 
@@ -419,13 +465,14 @@ Releases are cut **only** from the release line (`release/<X.Y.Z>`):
 
 ## The 🆕 What's New summary (window contract)
 
-Every promoted release section SHOULD open with a `### 🆕 What's New` block:
-at most **6 bullets, one terminal line each** (≤ ~140 chars) — the one-time
-TUI window shows ONLY this block, paginated, and points at CHANGELOG.md for
-the rest. Long prose belongs under `### Added / Changed / Fixed` (read by
-humans on GitHub/npm), never in the window block. `## ` level also parses,
-but `### ` is the convention so the section stays inside the extractor's
-boundaries.
+Every promoted release section opens with a `### 🆕 What's New` block as its
+FIRST subsection: at most **6 bullets, one terminal line each** (≤140 chars,
+bold lead) — the one-time TUI window shows ONLY this block, paginated, and
+points at CHANGELOG.md for the rest. Long prose belongs under
+`### Added / Changed / Fixed` (read by humans on GitHub/npm), never in the
+window block. The `## ` heading level is rejected by the format validator
+(`scripts/changelog-format.mjs`) in maintained sections: `### ` keeps the
+block inside the extractor's boundaries.
 
 ## Beta Releases (explicit dispatch with `release_channel=beta`)
 
@@ -489,7 +536,16 @@ The pipeline is designed so **reruns are safe**:
 - **changelog-extract fails on a stable or beta dispatch** → the `[X.Y.Z]` /
   `[X.Y.Z-beta.N]` section is missing from `CHANGELOG.md`; add it in the bump PR
   and rerun. Both non-recovery channels extract the release body from the
-  committed `CHANGELOG.md`; recovery uses a static note.
+  committed `CHANGELOG.md`; recovery extracts the section at the recovery
+  target (the static note is the last resort for tags predating the section).
+- **Gate (e) rejects the section format** → the committed section violates the
+  canonical format (`scripts/changelog-format.mjs`); fix the section in a
+  follow-up PR and rerun. CI catches the same violations on every PR via
+  `npm run docs:check-changelog`.
+- **Re-run reports "body diverges from the canonical CHANGELOG section"** →
+  the published release body was hand-edited after creation. Restore it with
+  `gh release edit <tag> --notes-file release-artifact/release-notes.md` from
+  the failed run's artifact, or fix the CHANGELOG and dispatch a recovery.
 
 Before a manual rerun, verify the expected pre-run state (`git tag`, GitHub
 releases, and the npm version) directly against the live registries.
