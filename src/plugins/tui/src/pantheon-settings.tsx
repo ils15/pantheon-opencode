@@ -5,124 +5,267 @@
 /**
  * pantheon-settings.tsx — the /pantheon-settings window.
  *
- * Three pages (Gates / Overrides+About), keyboard-first: `up`/`down` select,
- * `enter`/`space` toggles the selected behavior (writes the GLOBAL overrides
- * file — the same one the installer and doctor consume), `tab` flips pages,
- * `escape`/`q` closes. The gated-layer pattern mirrors the dispatch panel and
- * whats-new windows. Every failure path is silent (fail-open).
+ * One section per page, keyboard-first: `tab` cycles sections, `up`/`down`
+ * select, `enter`/`space` dispatches the selected row (the Gates section
+ * writes the GLOBAL overrides file — the same one the installer and doctor
+ * consume; Updates runs a registry check). `escape`/`q` closes. The
+ * gated-layer pattern mirrors the dispatch panel and whats-new windows.
+ * Every failure path is silent (fail-open).
  */
-import { readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Context } from '@opencode/plugin/tui/context'
 import { createSignal, For, Show } from 'solid-js'
+import { buildJ1Section } from './j1-gate-status.ts'
 import {
+  buildAboutSection,
+  buildGatesSection,
+  canWriteOverrides,
   type EffectiveOverrides,
+  firstSelectableId,
+  flatSelectableRows,
   isBehaviorDisabled,
-  SETTINGS_BEHAVIORS,
+  mergedOverrides,
+  type OverridesLoad,
   type SettingsRow,
+  type SettingsSection,
   serializeOverrides,
   toggledOverrides,
 } from './pantheon-settings-state.ts'
+import { nextCheckState, type UpdateCheckState } from './update-notice.ts'
+import {
+  buildUpdatesSection,
+  registryUrlForChannel,
+  type UpdatesSectionInput,
+  updateChannelFor,
+} from './update-status.ts'
 
 function globalOverridesPath(): string {
   const xdgConfig = process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? '', '.config')
   return join(xdgConfig, 'opencode', 'pantheon-overrides.json')
 }
 
-function readOverridesFromDisk(): EffectiveOverrides {
+function projectOverridesPath(): string {
+  return join(process.cwd(), '.pantheon', 'overrides.json')
+}
+
+/** Read one overrides file; a missing file is empty, an unreadable one is corrupt. */
+function readOneOverrides(path: string): { value: EffectiveOverrides; corrupt: boolean } {
   try {
-    return JSON.parse(readFileSync(globalOverridesPath(), 'utf8')) as EffectiveOverrides
+    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'))
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return { value: {}, corrupt: true }
+    }
+    return { value: parsed as EffectiveOverrides, corrupt: false }
+  } catch (error) {
+    return { value: {}, corrupt: (error as NodeJS.ErrnoException)?.code !== 'ENOENT' }
+  }
+}
+
+function readOverridesLoad(): OverridesLoad {
+  const globalRead = readOneOverrides(globalOverridesPath())
+  const projectRead = readOneOverrides(projectOverridesPath())
+  return {
+    global: globalRead.value,
+    project: projectRead.value,
+    corruptGlobal: globalRead.corrupt,
+  }
+}
+
+function writeOverridesToDisk(load: OverridesLoad): void {
+  writeFileSync(globalOverridesPath(), serializeOverrides(load.global), 'utf8')
+}
+
+function updateCheckStatePath(): string {
+  const stateDir = process.env.XDG_STATE_HOME ?? join(process.env.HOME ?? '', '.local', 'state')
+  return join(stateDir, 'pantheon', 'update-check.json')
+}
+
+function readUpdateCheckState(): UpdateCheckState {
+  try {
+    return JSON.parse(readFileSync(updateCheckStatePath(), 'utf8')) as UpdateCheckState
   } catch {
     return {}
   }
 }
 
-function writeOverridesToDisk(effective: EffectiveOverrides): void {
-  writeFileSync(globalOverridesPath(), serializeOverrides(effective), 'utf8')
+/**
+ * Registry check for the RUNNING version's channel (beta installs ask the
+ * beta dist-tag). Resolves with the latest version seen, or null offline.
+ */
+async function fetchLatestForChannel(currentVersion: string): Promise<string | null> {
+  try {
+    const response = await fetch(registryUrlForChannel(updateChannelFor(currentVersion)), {
+      signal: AbortSignal.timeout(5000),
+    })
+    const latest = String(((await response.json()) as { version?: unknown })?.version ?? '')
+    return latest || null
+  } catch {
+    return null
+  }
 }
 
-/** Rows shown on the Gates page: behavior state from the overrides file. */
-export function buildSettingsRows(effective: EffectiveOverrides): SettingsRow[] {
-  return SETTINGS_BEHAVIORS.map((behavior) => ({
-    id: behavior.id,
-    title: behavior.title,
-    description: behavior.description,
-    disabled: isBehaviorDisabled(effective, behavior.id),
-  }))
+function persistUpdateCheckState(previous: UpdateCheckState, latest: string | null): void {
+  try {
+    const path = updateCheckStatePath()
+    mkdirSync(join(path, '..'), { recursive: true })
+    writeFileSync(
+      path,
+      `${JSON.stringify(nextCheckState(previous, latest ? { version: latest, message: '' } : null, Date.now()), null, 2)}\n`,
+    )
+  } catch {
+    /* state is a cache — never block on it */
+  }
+}
+
+function resolveRunningVersion(): string {
+  try {
+    const manifest = JSON.parse(
+      readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
+    ) as { version?: string }
+    return manifest.version ?? 'unknown'
+  } catch {
+    return 'unknown'
+  }
 }
 
 export function SettingsContent(props: {
-  rows: () => SettingsRow[]
-  selected: () => number
+  sections: () => SettingsSection[]
   page: () => number
-  version: () => string
-  about: () => string[]
+  selectedId: () => string | undefined
   fg?: any
   muted?: any
 }) {
-  const marker = (row: SettingsRow) => (row.disabled ? '[x]' : '[ ]')
+  const section = () =>
+    props.sections()[props.page()] ?? {
+      id: 'empty',
+      title: '',
+      rows: [],
+    }
   return (
     <box flexDirection="column" paddingLeft={1} paddingRight={1} paddingTop={1}>
-      <Show
-        when={props.page() === 0}
-        fallback={
-          <box flexDirection="column">
-            <text attributes={1} fg={props.fg}>
-              About
-            </text>
-            <text fg={props.muted}>{'─'.repeat(38)}</text>
-            <For each={props.about()}>{(line: string) => <text fg={props.muted}>{line}</text>}</For>
-          </box>
-        }
-      >
-        <text attributes={1} fg={props.fg}>
-          Gates &amp; Overrides
-        </text>
-        <text fg={props.muted}>{'─'.repeat(38)}</text>
-        <For each={props.rows()}>
-          {(row: SettingsRow, index: () => number) => (
+      <text attributes={1} fg={props.fg}>
+        {section().title}
+      </text>
+      <text fg={props.muted}>{'─'.repeat(38)}</text>
+      <For each={section().rows}>
+        {(row: SettingsRow) => {
+          const isSelected = () => row.selectable !== false && row.id === props.selectedId()
+          const marker = () => row.marker ?? (row.disabled ? '[x]' : '[ ]')
+          return (
             <box flexDirection="column">
               <text
-                fg={props.selected() === index() ? props.fg : props.muted}
-                attributes={props.selected() === index() ? 1 : undefined}
+                fg={isSelected() ? props.fg : props.muted}
+                {...(isSelected() ? { attributes: 1 } : {})}
               >
-                {`${marker(row)} ${row.title}${props.selected() === index() ? '  <-' : ''}`}
+                {`${marker()} ${row.title}${isSelected() ? '  <-' : ''}`}
               </text>
-              <text fg={props.muted}>{`    ${row.description}`}</text>
+              <Show when={row.description !== ''}>
+                <text fg={props.muted}>{`    ${row.description}`}</text>
+              </Show>
             </box>
-          )}
-        </For>
-        <box height={1} />
-        <text fg={props.muted}>
-          {'enter: disable/enable · writes pantheon-overrides.json (global)'}
-        </text>
-      </Show>
+          )
+        }}
+      </For>
       <box height={1} />
+      <Show when={section().hint !== undefined}>
+        <text fg={props.muted}>{section().hint}</text>
+      </Show>
       <text fg={props.muted}>
-        {`${props.page() + 1}/2 · `}tab: page · up/down: select · enter: toggle · esc/q: close
+        {`${props.page() + 1}/${props.sections().length} · `}tab: section · up/down: select · enter:
+        apply · esc/q: close
       </text>
     </box>
   )
 }
 
 /**
- * Entry glue: read the overrides state, then show the window through the host
- * dialog stack once. The gated keymap layer is inert while the window is
- * closed. Never throws.
+ * Entry glue: read both overrides files, then show the window through the
+ * host dialog stack once. The gated keymap layer is inert while the window
+ * is closed. Never throws.
  */
 export async function maybeShowPantheonSettings(context: Context): Promise<void> {
   try {
     const [open, setOpen] = createSignal(false)
     const [page, setPage] = createSignal(0)
-    const [selected, setSelected] = createSignal(0)
-    const [effective, setEffective] = createSignal<EffectiveOverrides>(readOverridesFromDisk())
+    const [load, setLoad] = createSignal<OverridesLoad>(readOverridesLoad())
+    const [lastChecked, setLastChecked] = createSignal<string | undefined>(undefined)
+    const [checking, setChecking] = createSignal(false)
 
-    const rows = () => buildSettingsRows(effective())
-    const about = () => [
-      `Pantheon v${resolveRunningVersion()}`,
-      `${SETTINGS_BEHAVIORS.length} togglable behaviors · OpenCode 2.x only`,
-      'Docs: docs/design/2.0-settings-and-install.md',
+    const currentVersion = resolveRunningVersion()
+
+    const updatesInput = (): UpdatesSectionInput => {
+      const input: UpdatesSectionInput = {
+        currentVersion,
+        state: readUpdateCheckState(),
+        checking: checking(),
+        nowMs: Date.now(),
+      }
+      const seen = lastChecked()
+      if (seen !== undefined) input.lastCheckedVersion = seen
+      return input
+    }
+
+    const sections = (): SettingsSection[] => [
+      buildGatesSection(load()),
+      buildJ1Section(process.env, isBehaviorDisabled(mergedOverrides(load()), 'gate-j1-risk-gate')),
+      buildUpdatesSection(updatesInput()),
+      buildAboutSection(currentVersion),
     ]
+    const [selectedId, setSelectedId] = createSignal<string | undefined>(
+      firstSelectableId(sections()),
+    )
+
+    const move = (delta: number) => {
+      const list = flatSelectableRows(sections())
+      if (list.length === 0) return
+      const current = list.findIndex((row) => row.id === selectedId())
+      const nextIndex = current === -1 ? 0 : Math.min(Math.max(current + delta, 0), list.length - 1)
+      setSelectedId(list[nextIndex]?.id)
+    }
+
+    const flipSection = () => {
+      const count = sections().length
+      const next = (page() + 1) % count
+      setPage(next)
+      const target = sections()[next]
+      if (target === undefined) return
+      const within = flatSelectableRows([target])[0]
+      if (within) setSelectedId(within.id)
+    }
+
+    const toggleSelectedGate = () => {
+      const id = selectedId()
+      if (id === undefined || !id.startsWith('gate.')) return false
+      if (!canWriteOverrides(load())) return undefined // corrupt file — writes refused
+      const behaviorId = id.slice('gate.'.length)
+      const next: OverridesLoad = {
+        ...load(),
+        global: toggledOverrides(load().global, behaviorId),
+      }
+      try {
+        writeOverridesToDisk(next)
+        setLoad(next)
+      } catch {
+        /* disk write failed — keep the in-memory state, stay open */
+      }
+      return undefined
+    }
+
+    const checkUpdatesNow = () => {
+      if (checking()) return undefined
+      setChecking(true)
+      void fetchLatestForChannel(currentVersion)
+        .then((latest) => {
+          if (latest) setLastChecked(latest)
+          persistUpdateCheckState(readUpdateCheckState(), latest)
+        })
+        .catch(() => {
+          /* offline — the row keeps the last known state */
+        })
+        .finally(() => setChecking(false))
+      return undefined
+    }
 
     let dismiss: () => void = () => {}
     try {
@@ -146,7 +289,7 @@ export async function maybeShowPantheonSettings(context: Context): Promise<void>
             bind: 'down,j',
             run: () => {
               if (!open()) return false
-              setSelected((current) => Math.min(current + 1, rows().length - 1))
+              move(1)
               return undefined
             },
           },
@@ -156,30 +299,29 @@ export async function maybeShowPantheonSettings(context: Context): Promise<void>
             bind: 'up,k',
             run: () => {
               if (!open()) return false
-              setSelected((current) => Math.max(current - 1, 0))
+              move(-1)
               return undefined
             },
           },
           {
             id: 'pantheon.settings.toggle',
-            title: 'Disable/enable the selected behavior',
+            title: 'Apply the selected row',
             bind: 'enter,space',
             run: () => {
               if (!open()) return false
-              const row = rows()[selected()]
-              if (row === undefined) return false
-              setEffective(toggledOverrides(effective(), row.id))
-              writeOverridesToDisk(effective())
+              const id = selectedId()
+              if (id?.startsWith('gate.')) return toggleSelectedGate()
+              if (id === 'update.check') return checkUpdatesNow()
               return undefined
             },
           },
           {
-            id: 'pantheon.settings.page',
-            title: 'Flip page',
+            id: 'pantheon.settings.section',
+            title: 'Next section',
             bind: 'tab',
             run: () => {
               if (!open()) return false
-              setPage((current) => (current === 0 ? 1 : 0))
+              flipSection()
               return undefined
             },
           },
@@ -211,32 +353,26 @@ export async function maybeShowPantheonSettings(context: Context): Promise<void>
       context.ui.dialog.show(
         () => (
           <SettingsContent
-            rows={rows}
-            selected={selected}
+            sections={sections}
             page={page}
-            version={resolveRunningVersion}
-            about={about}
+            selectedId={selectedId}
             fg={theme.base}
             muted={theme.muted}
           />
         ),
         close,
       )
+      // Roomier chrome for the sectioned window; older hosts without `set`
+      // keep the default size (fail-open).
+      try {
+        context.ui.dialog.set?.({ size: 'xlarge' })
+      } catch {
+        /* size control unavailable */
+      }
     } catch {
       /* dialog stack unavailable — fail-open */
     }
   } catch {
     /* fail-open — the window must never block or break TUI startup */
-  }
-}
-
-function resolveRunningVersion(): string {
-  try {
-    const manifest = JSON.parse(
-      readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
-    ) as { version?: string }
-    return manifest.version ?? 'unknown'
-  } catch {
-    return 'unknown'
   }
 }

@@ -1,4 +1,4 @@
-import { createComponent, createElement, createTextNode, effect, insert, insertNode, memo, setProp } from "@opentui/solid";
+import { createComponent, createElement, createTextNode, effect, insert, insertNode, memo, mergeProps, setProp, spread } from "@opentui/solid";
 import { execFile } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
@@ -60,6 +60,70 @@ const MODEL_USAGE_VISIBLE_CEILING = 3;
 const MODEL_USAGE_MESSAGE_LIMIT = 400;
 const MODEL_USAGE_SESSION_LIMIT = 8;
 //#endregion
+//#region src/j1-gate-status.ts
+const J1_FLAG_ENV = "PANTHEON_J1_RISK_SCORE";
+const J1_THRESHOLD_ENV = "PANTHEON_J1_ENFORCE_THRESHOLD";
+const J1_THRESHOLD_DEFAULT = .8;
+/** `1`/`on`/`true` map to `shadow` for back-compatibility with the shipped setup. */
+const FLAG_ON = /* @__PURE__ */ new Set([
+	"1",
+	"on",
+	"true",
+	"shadow"
+]);
+function j1ModeFromEnv(env = process.env) {
+	const raw = (env["PANTHEON_J1_RISK_SCORE"] ?? "").trim().toLowerCase();
+	if (raw === "enforce") return "enforce";
+	if (raw === "warn") return "warn";
+	return FLAG_ON.has(raw) ? "shadow" : "off";
+}
+/** Invalid or out-of-range values fall back to the default — a typo must not disable the gate. */
+function j1ThresholdFromEnv(env = process.env) {
+	const text = (env["PANTHEON_J1_ENFORCE_THRESHOLD"] ?? "").trim();
+	if (text === "") return J1_THRESHOLD_DEFAULT;
+	const raw = Number(text);
+	if (!Number.isFinite(raw) || raw < 0 || raw > 1) return J1_THRESHOLD_DEFAULT;
+	return raw;
+}
+const MODE_DESCRIPTION = {
+	off: "nothing fires (hard zero)",
+	shadow: "observe + record; invisible in the session",
+	warn: "RESERVED — behaves as shadow in this release",
+	enforce: "high-risk scores DENY the tool call (fail-open on gate unavailability)"
+};
+function buildJ1Section(env, disabledByOverride) {
+	const mode = j1ModeFromEnv(env);
+	const threshold = j1ThresholdFromEnv(env);
+	const gateState = disabledByOverride ? "disabled via overrides" : mode === "off" ? "off (env unset)" : "active";
+	const rows = [
+		{
+			id: "j1.mode",
+			title: `Mode: ${mode}`,
+			description: MODE_DESCRIPTION[mode],
+			...disabledByOverride ? { marker: "[!]" } : {},
+			selectable: false
+		},
+		{
+			id: "j1.threshold",
+			title: `Enforce threshold: ${threshold}`,
+			description: "deny at or above; 0..1, default 0.8",
+			selectable: false
+		},
+		{
+			id: "j1.gate",
+			title: `Gate: ${gateState}`,
+			description: "the runtime plugin reads this once at startup",
+			selectable: false
+		}
+	];
+	return {
+		id: "j1",
+		title: "J1 Risk Gate",
+		hint: `set ${J1_FLAG_ENV} / ${J1_THRESHOLD_ENV} — restart applies`,
+		rows
+	};
+}
+//#endregion
 //#region src/pantheon-settings-state.ts
 /** Mirrors routing.yml `behaviors:` — drift-pinned by the registry test. */
 const SETTINGS_BEHAVIORS = Object.freeze([
@@ -110,11 +174,57 @@ new Set(SETTINGS_BEHAVIORS.map((b) => b.id));
 function isBehaviorDisabled(effective, id) {
 	return effective[id]?.action === "disable";
 }
-/** Toggle: disabled -> enabled (entry removed); enabled -> disabled (entry written). */
-function toggledOverrides(effective, id, reason = "toggled in /pantheon-settings") {
+/** The rows up/down can reach and enter can dispatch on, in order. */
+function selectableRows(section) {
+	return section.rows.filter((row) => row.selectable !== false);
+}
+/** Flat selection order across every section of the window. */
+function flatSelectableRows(sections) {
+	return sections.flatMap((section) => selectableRows(section));
+}
+function firstSelectableId(sections) {
+	return flatSelectableRows(sections)[0]?.id;
+}
+/**
+* Merge for DISPLAY only, mirroring the runtime precedence: the project file
+* wins per id (whole entry). The window still writes only the global file.
+*/
+function mergedOverrides(load) {
+	return {
+		...load.global,
+		...load.project
+	};
+}
+function canWriteOverrides(load) {
+	return !load.corruptGlobal;
+}
+const TOGGLE_REASON = "toggled in /pantheon-settings";
+/**
+* Toggle: disabled -> enabled; enabled -> disabled.
+*
+* A `replace` entry is never destroyed by a toggle ("never trap user state"):
+* disabling keeps its `content` under the disable entry, and re-enabling
+* restores the replace. A settings-written disable (no content) is removed
+* outright so the overrides file does not accumulate toggle noise.
+*/
+function toggledOverrides(effective, id, reason = TOGGLE_REASON) {
 	const next = { ...effective };
-	if (next[id]?.action === "disable") delete next[id];
-	else next[id] = {
+	const entry = next[id];
+	if (entry?.action === "disable") {
+		if (entry.content !== void 0) next[id] = entry.reason === reason ? {
+			action: "replace",
+			content: entry.content
+		} : {
+			action: "replace",
+			content: entry.content,
+			...entry.reason !== void 0 ? { reason: entry.reason } : {}
+		};
+		else delete next[id];
+	} else next[id] = entry?.content !== void 0 ? {
+		action: "disable",
+		reason,
+		content: entry.content
+	} : {
 		action: "disable",
 		reason
 	};
@@ -125,165 +235,396 @@ function serializeOverrides(effective) {
 	for (const id of Object.keys(effective).sort()) ordered[id] = effective[id];
 	return `${JSON.stringify(ordered, null, 2)}\n`;
 }
+/**
+* The Gates & Overrides page: behavior state from BOTH overrides files.
+* A project-owned entry wins the runtime merge and the window only writes
+* the global file, so project rows are marked and not togglable here.
+*/
+function buildGatesSection(load) {
+	const merged = mergedOverrides(load);
+	const rows = SETTINGS_BEHAVIORS.map((behavior) => {
+		const fromProject = load.project[behavior.id] !== void 0;
+		return {
+			id: `gate.${behavior.id}`,
+			title: fromProject ? `${behavior.title} (project)` : behavior.title,
+			description: behavior.description,
+			disabled: isBehaviorDisabled(merged, behavior.id),
+			selectable: !fromProject,
+			source: fromProject ? "project" : "global"
+		};
+	});
+	return {
+		id: "gates",
+		title: "Gates & Overrides",
+		hint: canWriteOverrides(load) ? "enter: disable/enable · writes pantheon-overrides.json (global)" : "overrides file unreadable — writes refused; repair with `pantheon-opencode doctor --fix`",
+		rows
+	};
+}
+function buildAboutSection(version) {
+	return {
+		id: "about",
+		title: "About",
+		rows: [{
+			id: "about.version",
+			title: `Pantheon v${version}`,
+			description: "OpenCode 2.x only — the V1 contract is removed.",
+			selectable: false
+		}, {
+			id: "about.behaviors",
+			title: `${SETTINGS_BEHAVIORS.length} togglable behaviors`,
+			description: "Docs: docs/design/2.0-settings-and-install.md",
+			selectable: false
+		}]
+	};
+}
+//#endregion
+//#region src/update-notice.ts
+/**
+* Update notifier core (TUI-local copy — the bundle must stay self-contained,
+* same precedent as cost-data.ts/model-pricing.ts).
+*
+* Pin + notify, never silent auto-update: one notice per newer version,
+* TTL-cached, offline-safe, and a stable install is never advertised a beta
+* (the update guard owns that crossing). docs/design/2.0-settings-and-install.md
+*/
+const UPDATE_CHECK_TTL_MS = 216e5;
+/** Semver-ish compare for X.Y.Z[-beta.N]; betas sort before their release. */
+function comparePantheonVersions(left, right) {
+	const parse = (version) => {
+		const match = String(version).trim().match(/^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/);
+		if (!match) return null;
+		const [, major = "", minor = "", patch = "", beta = ""] = match;
+		return {
+			core: [
+				+major,
+				+minor,
+				+patch
+			],
+			beta: beta === "" ? Number.POSITIVE_INFINITY : +beta
+		};
+	};
+	const a = parse(left);
+	const b = parse(right);
+	if (!a || !b) return 0;
+	const [aMajor, aMinor, aPatch] = a.core;
+	const [bMajor, bMinor, bPatch] = b.core;
+	if (aMajor !== bMajor) return aMajor - bMajor;
+	if (aMinor !== bMinor) return aMinor - bMinor;
+	if (aPatch !== bPatch) return aPatch - bPatch;
+	return a.beta - b.beta;
+}
+function pickUpdateNotice(input) {
+	const { currentVersion, latestVersion, state = {}, nowMs = Date.now() } = input;
+	const ttlMs = input.ttlMs ?? 216e5;
+	if (nowMs - (state.lastCheckMs ?? 0) < ttlMs) return null;
+	if (state.lastNotifiedVersion === latestVersion) return null;
+	const stable = (version) => !/-beta\.\d+$/.test(version);
+	if (stable(currentVersion) && !stable(latestVersion)) return null;
+	if (comparePantheonVersions(latestVersion, currentVersion) <= 0) return null;
+	return {
+		version: latestVersion,
+		message: `pantheon-opencode ${latestVersion} available — changelog in /pantheon-settings, adopt with \`pantheon-opencode update\``
+	};
+}
+/** The state to persist after a check (notified or not) for the TTL. */
+function nextCheckState(previous, notice, nowMs) {
+	const lastNotifiedVersion = notice?.version ?? previous.lastNotifiedVersion;
+	return {
+		lastCheckMs: nowMs,
+		...lastNotifiedVersion !== void 0 ? { lastNotifiedVersion } : {}
+	};
+}
+//#endregion
+//#region src/update-status.ts
+/** The running version's channel: a `-beta.N` suffix rides the beta dist-tag. */
+function updateChannelFor(version) {
+	return /-beta\.\d+$/.test(version) ? "beta" : "stable";
+}
+/** The npm dist-tag the registry check should query for the channel. */
+function registryTagForChannel(channel) {
+	return channel === "beta" ? "beta" : "latest";
+}
+function registryUrlForChannel(channel) {
+	return `https://registry.npmjs.org/pantheon-opencode/${registryTagForChannel(channel)}`;
+}
+function formatAgo(ms) {
+	if (ms < 6e4) return "just now";
+	if (ms < 36e5) return `${Math.floor(ms / 6e4)}m ago`;
+	if (ms < 864e5) return `${Math.floor(ms / 36e5)}h ago`;
+	return `${Math.floor(ms / 864e5)}d ago`;
+}
+function buildUpdatesSection(input) {
+	const nowMs = input.nowMs ?? Date.now();
+	const channel = updateChannelFor(input.currentVersion);
+	const lastCheckMs = input.state.lastCheckMs;
+	const latest = input.lastCheckedVersion ?? input.state.lastNotifiedVersion;
+	const rows = [{
+		id: "update.channel",
+		title: `Channel: ${channel}`,
+		description: "stable tracks npm `latest`; beta tracks npm `beta`",
+		selectable: false
+	}, {
+		id: "update.check",
+		title: "Check now",
+		description: input.checking ? "checking…" : lastCheckMs ? `last check ${formatAgo(nowMs - lastCheckMs)}` : "never checked",
+		marker: " → ",
+		selectable: true
+	}];
+	if (latest) {
+		const stable = (version) => !/-beta\.\d+$/.test(version);
+		const newer = comparePantheonVersions(latest, input.currentVersion) > 0 && !(stable(input.currentVersion) && !stable(latest));
+		rows.push({
+			id: "update.latest",
+			title: newer ? `Update available: v${latest}` : `Up to date (latest seen v${latest})`,
+			description: newer ? "adopt with `pantheon-opencode update`" : "checked against the registry",
+			marker: newer ? "[!]" : "[✓]",
+			selectable: false
+		});
+	}
+	return {
+		id: "updates",
+		title: "Updates",
+		hint: `refresh = \`pantheon-opencode update\` · notice TTL ${UPDATE_CHECK_TTL_MS / 36e5}h`,
+		rows
+	};
+}
 //#endregion
 //#region src/pantheon-settings.tsx
 /** @jsxImportSource @opentui/solid */
 /**
 * pantheon-settings.tsx — the /pantheon-settings window.
 *
-* Three pages (Gates / Overrides+About), keyboard-first: `up`/`down` select,
-* `enter`/`space` toggles the selected behavior (writes the GLOBAL overrides
-* file — the same one the installer and doctor consume), `tab` flips pages,
-* `escape`/`q` closes. The gated-layer pattern mirrors the dispatch panel and
-* whats-new windows. Every failure path is silent (fail-open).
+* One section per page, keyboard-first: `tab` cycles sections, `up`/`down`
+* select, `enter`/`space` dispatches the selected row (the Gates section
+* writes the GLOBAL overrides file — the same one the installer and doctor
+* consume; Updates runs a registry check). `escape`/`q` closes. The
+* gated-layer pattern mirrors the dispatch panel and whats-new windows.
+* Every failure path is silent (fail-open).
 */
 function globalOverridesPath() {
 	const xdgConfig = process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? "", ".config");
 	return join(xdgConfig, "opencode", "pantheon-overrides.json");
 }
-function readOverridesFromDisk() {
+function projectOverridesPath() {
+	return join(process.cwd(), ".pantheon", "overrides.json");
+}
+/** Read one overrides file; a missing file is empty, an unreadable one is corrupt. */
+function readOneOverrides(path) {
 	try {
-		return JSON.parse(readFileSync(globalOverridesPath(), "utf8"));
+		const parsed = JSON.parse(readFileSync(path, "utf8"));
+		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {
+			value: {},
+			corrupt: true
+		};
+		return {
+			value: parsed,
+			corrupt: false
+		};
+	} catch (error) {
+		return {
+			value: {},
+			corrupt: error?.code !== "ENOENT"
+		};
+	}
+}
+function readOverridesLoad() {
+	const globalRead = readOneOverrides(globalOverridesPath());
+	const projectRead = readOneOverrides(projectOverridesPath());
+	return {
+		global: globalRead.value,
+		project: projectRead.value,
+		corruptGlobal: globalRead.corrupt
+	};
+}
+function writeOverridesToDisk(load) {
+	writeFileSync(globalOverridesPath(), serializeOverrides(load.global), "utf8");
+}
+function updateCheckStatePath() {
+	const stateDir = process.env.XDG_STATE_HOME ?? join(process.env.HOME ?? "", ".local", "state");
+	return join(stateDir, "pantheon", "update-check.json");
+}
+function readUpdateCheckState() {
+	try {
+		return JSON.parse(readFileSync(updateCheckStatePath(), "utf8"));
 	} catch {
 		return {};
 	}
 }
-function writeOverridesToDisk(effective) {
-	writeFileSync(globalOverridesPath(), serializeOverrides(effective), "utf8");
+/**
+* Registry check for the RUNNING version's channel (beta installs ask the
+* beta dist-tag). Resolves with the latest version seen, or null offline.
+*/
+async function fetchLatestForChannel(currentVersion) {
+	try {
+		const response = await fetch(registryUrlForChannel(updateChannelFor(currentVersion)), { signal: AbortSignal.timeout(5e3) });
+		return String((await response.json())?.version ?? "") || null;
+	} catch {
+		return null;
+	}
 }
-/** Rows shown on the Gates page: behavior state from the overrides file. */
-function buildSettingsRows(effective) {
-	return SETTINGS_BEHAVIORS.map((behavior) => ({
-		id: behavior.id,
-		title: behavior.title,
-		description: behavior.description,
-		disabled: isBehaviorDisabled(effective, behavior.id)
-	}));
+function persistUpdateCheckState(previous, latest) {
+	try {
+		const path = updateCheckStatePath();
+		mkdirSync(join(path, ".."), { recursive: true });
+		writeFileSync(path, `${JSON.stringify(nextCheckState(previous, latest ? {
+			version: latest,
+			message: ""
+		} : null, Date.now()), null, 2)}\n`);
+	} catch {}
+}
+function resolveRunningVersion$1() {
+	try {
+		return JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version ?? "unknown";
+	} catch {
+		return "unknown";
+	}
 }
 function SettingsContent(props) {
-	const marker = (row) => row.disabled ? "[x]" : "[ ]";
+	const section = () => props.sections()[props.page()] ?? {
+		id: "empty",
+		title: "",
+		rows: []
+	};
 	return (() => {
-		var _el$ = createElement("box"), _el$9 = createElement("box"), _el$0 = createElement("text"), _el$1 = createTextNode(`tab: page · up/down: select · enter: toggle · esc/q: close`);
-		insertNode(_el$, _el$9);
-		insertNode(_el$, _el$0);
+		var _el$ = createElement("box"), _el$2 = createElement("text"), _el$3 = createElement("text"), _el$5 = createElement("box"), _el$7 = createElement("text"), _el$8 = createTextNode(`tab: section · up/down: select · enter: apply · esc/q: close`);
+		insertNode(_el$, _el$2);
+		insertNode(_el$, _el$3);
+		insertNode(_el$, _el$5);
+		insertNode(_el$, _el$7);
 		setProp(_el$, "flexDirection", "column");
 		setProp(_el$, "paddingLeft", 1);
 		setProp(_el$, "paddingRight", 1);
 		setProp(_el$, "paddingTop", 1);
+		setProp(_el$2, "attributes", 1);
+		insert(_el$2, () => section().title);
+		insertNode(_el$3, createTextNode(`──────────────────────────────────────`));
+		insert(_el$, createComponent(For, {
+			get each() {
+				return section().rows;
+			},
+			children: (row) => {
+				const isSelected = () => row.selectable !== false && row.id === props.selectedId();
+				const marker = () => row.marker ?? (row.disabled ? "[x]" : "[ ]");
+				return (() => {
+					var _el$9 = createElement("box"), _el$0 = createElement("text");
+					insertNode(_el$9, _el$0);
+					setProp(_el$9, "flexDirection", "column");
+					spread(_el$0, mergeProps({ get fg() {
+						return memo(() => !!isSelected())() ? props.fg : props.muted;
+					} }, () => isSelected() ? { attributes: 1 } : {}), true);
+					insert(_el$0, () => `${marker()} ${row.title}${isSelected() ? "  <-" : ""}`);
+					insert(_el$9, createComponent(Show, {
+						get when() {
+							return row.description !== "";
+						},
+						get children() {
+							var _el$1 = createElement("text");
+							insert(_el$1, () => `    ${row.description}`);
+							effect((_$p) => setProp(_el$1, "fg", props.muted, _$p));
+							return _el$1;
+						}
+					}), null);
+					return _el$9;
+				})();
+			}
+		}), _el$5);
+		setProp(_el$5, "height", 1);
 		insert(_el$, createComponent(Show, {
 			get when() {
-				return props.page() === 0;
-			},
-			get fallback() {
-				return (() => {
-					var _el$10 = createElement("box"), _el$11 = createElement("text"), _el$13 = createElement("text");
-					insertNode(_el$10, _el$11);
-					insertNode(_el$10, _el$13);
-					setProp(_el$10, "flexDirection", "column");
-					insertNode(_el$11, createTextNode(`About`));
-					setProp(_el$11, "attributes", 1);
-					insertNode(_el$13, createTextNode(`──────────────────────────────────────`));
-					insert(_el$10, createComponent(For, {
-						get each() {
-							return props.about();
-						},
-						children: (line) => (() => {
-							var _el$15 = createElement("text");
-							insert(_el$15, line);
-							effect((_$p) => setProp(_el$15, "fg", props.muted, _$p));
-							return _el$15;
-						})()
-					}), null);
-					effect((_p$) => {
-						var _v$ = props.fg, _v$2 = props.muted;
-						_v$ !== _p$.e && (_p$.e = setProp(_el$11, "fg", _v$, _p$.e));
-						_v$2 !== _p$.t && (_p$.t = setProp(_el$13, "fg", _v$2, _p$.t));
-						return _p$;
-					}, {
-						e: void 0,
-						t: void 0
-					});
-					return _el$10;
-				})();
+				return section().hint !== void 0;
 			},
 			get children() {
-				return [
-					(() => {
-						var _el$2 = createElement("text");
-						insertNode(_el$2, createTextNode(`Gates &amp; Overrides`));
-						setProp(_el$2, "attributes", 1);
-						effect((_$p) => setProp(_el$2, "fg", props.fg, _$p));
-						return _el$2;
-					})(),
-					(() => {
-						var _el$4 = createElement("text");
-						insertNode(_el$4, createTextNode(`──────────────────────────────────────`));
-						effect((_$p) => setProp(_el$4, "fg", props.muted, _$p));
-						return _el$4;
-					})(),
-					createComponent(For, {
-						get each() {
-							return props.rows();
-						},
-						children: (row, index) => (() => {
-							var _el$16 = createElement("box"), _el$17 = createElement("text"), _el$18 = createElement("text");
-							insertNode(_el$16, _el$17);
-							insertNode(_el$16, _el$18);
-							setProp(_el$16, "flexDirection", "column");
-							insert(_el$17, () => `${marker(row)} ${row.title}${props.selected() === index() ? "  <-" : ""}`);
-							insert(_el$18, () => `    ${row.description}`);
-							effect((_p$) => {
-								var _v$3 = props.selected() === index() ? props.fg : props.muted, _v$4 = props.selected() === index() ? 1 : void 0, _v$5 = props.muted;
-								_v$3 !== _p$.e && (_p$.e = setProp(_el$17, "fg", _v$3, _p$.e));
-								_v$4 !== _p$.t && (_p$.t = setProp(_el$17, "attributes", _v$4, _p$.t));
-								_v$5 !== _p$.a && (_p$.a = setProp(_el$18, "fg", _v$5, _p$.a));
-								return _p$;
-							}, {
-								e: void 0,
-								t: void 0,
-								a: void 0
-							});
-							return _el$16;
-						})()
-					}),
-					(() => {
-						var _el$6 = createElement("box");
-						setProp(_el$6, "height", 1);
-						return _el$6;
-					})(),
-					(() => {
-						var _el$7 = createElement("text");
-						insertNode(_el$7, createTextNode(`enter: disable/enable · writes pantheon-overrides.json (global)`));
-						effect((_$p) => setProp(_el$7, "fg", props.muted, _$p));
-						return _el$7;
-					})()
-				];
+				var _el$6 = createElement("text");
+				insert(_el$6, () => section().hint);
+				effect((_$p) => setProp(_el$6, "fg", props.muted, _$p));
+				return _el$6;
 			}
-		}), _el$9);
-		setProp(_el$9, "height", 1);
-		insertNode(_el$0, _el$1);
-		insert(_el$0, () => `${props.page() + 1}/2 · `, _el$1);
-		effect((_$p) => setProp(_el$0, "fg", props.muted, _$p));
+		}), _el$7);
+		insertNode(_el$7, _el$8);
+		insert(_el$7, () => `${props.page() + 1}/${props.sections().length} · `, _el$8);
+		effect((_p$) => {
+			var _v$ = props.fg, _v$2 = props.muted, _v$3 = props.muted;
+			_v$ !== _p$.e && (_p$.e = setProp(_el$2, "fg", _v$, _p$.e));
+			_v$2 !== _p$.t && (_p$.t = setProp(_el$3, "fg", _v$2, _p$.t));
+			_v$3 !== _p$.a && (_p$.a = setProp(_el$7, "fg", _v$3, _p$.a));
+			return _p$;
+		}, {
+			e: void 0,
+			t: void 0,
+			a: void 0
+		});
 		return _el$;
 	})();
 }
 /**
-* Entry glue: read the overrides state, then show the window through the host
-* dialog stack once. The gated keymap layer is inert while the window is
-* closed. Never throws.
+* Entry glue: read both overrides files, then show the window through the
+* host dialog stack once. The gated keymap layer is inert while the window
+* is closed. Never throws.
 */
 async function maybeShowPantheonSettings(context) {
 	try {
 		const [open, setOpen] = createSignal(false);
 		const [page, setPage] = createSignal(0);
-		const [selected, setSelected] = createSignal(0);
-		const [effective, setEffective] = createSignal(readOverridesFromDisk());
-		const rows = () => buildSettingsRows(effective());
-		const about = () => [
-			`Pantheon v${resolveRunningVersion$1()}`,
-			`${SETTINGS_BEHAVIORS.length} togglable behaviors · OpenCode 2.x only`,
-			"Docs: docs/design/2.0-settings-and-install.md"
+		const [load, setLoad] = createSignal(readOverridesLoad());
+		const [lastChecked, setLastChecked] = createSignal(void 0);
+		const [checking, setChecking] = createSignal(false);
+		const currentVersion = resolveRunningVersion$1();
+		const updatesInput = () => {
+			const input = {
+				currentVersion,
+				state: readUpdateCheckState(),
+				checking: checking(),
+				nowMs: Date.now()
+			};
+			const seen = lastChecked();
+			if (seen !== void 0) input.lastCheckedVersion = seen;
+			return input;
+		};
+		const sections = () => [
+			buildGatesSection(load()),
+			buildJ1Section(process.env, isBehaviorDisabled(mergedOverrides(load()), "gate-j1-risk-gate")),
+			buildUpdatesSection(updatesInput()),
+			buildAboutSection(currentVersion)
 		];
+		const [selectedId, setSelectedId] = createSignal(firstSelectableId(sections()));
+		const move = (delta) => {
+			const list = flatSelectableRows(sections());
+			if (list.length === 0) return;
+			const current = list.findIndex((row) => row.id === selectedId());
+			const nextIndex = current === -1 ? 0 : Math.min(Math.max(current + delta, 0), list.length - 1);
+			setSelectedId(list[nextIndex]?.id);
+		};
+		const flipSection = () => {
+			const count = sections().length;
+			const next = (page() + 1) % count;
+			setPage(next);
+			const target = sections()[next];
+			if (target === void 0) return;
+			const within = flatSelectableRows([target])[0];
+			if (within) setSelectedId(within.id);
+		};
+		const toggleSelectedGate = () => {
+			const id = selectedId();
+			if (id === void 0 || !id.startsWith("gate.")) return false;
+			if (!canWriteOverrides(load())) return void 0;
+			const behaviorId = id.slice(5);
+			const next = {
+				...load(),
+				global: toggledOverrides(load().global, behaviorId)
+			};
+			try {
+				writeOverridesToDisk(next);
+				setLoad(next);
+			} catch {}
+		};
+		const checkUpdatesNow = () => {
+			if (checking()) return void 0;
+			setChecking(true);
+			fetchLatestForChannel(currentVersion).then((latest) => {
+				if (latest) setLastChecked(latest);
+				persistUpdateCheckState(readUpdateCheckState(), latest);
+			}).catch(() => {}).finally(() => setChecking(false));
+		};
 		let dismiss = () => {};
 		try {
 			context.keymap.layer(() => ({
@@ -305,7 +646,7 @@ async function maybeShowPantheonSettings(context) {
 						bind: "down,j",
 						run: () => {
 							if (!open()) return false;
-							setSelected((current) => Math.min(current + 1, rows().length - 1));
+							move(1);
 						}
 					},
 					{
@@ -314,28 +655,27 @@ async function maybeShowPantheonSettings(context) {
 						bind: "up,k",
 						run: () => {
 							if (!open()) return false;
-							setSelected((current) => Math.max(current - 1, 0));
+							move(-1);
 						}
 					},
 					{
 						id: "pantheon.settings.toggle",
-						title: "Disable/enable the selected behavior",
+						title: "Apply the selected row",
 						bind: "enter,space",
 						run: () => {
 							if (!open()) return false;
-							const row = rows()[selected()];
-							if (row === void 0) return false;
-							setEffective(toggledOverrides(effective(), row.id));
-							writeOverridesToDisk(effective());
+							const id = selectedId();
+							if (id?.startsWith("gate.")) return toggleSelectedGate();
+							if (id === "update.check") return checkUpdatesNow();
 						}
 					},
 					{
-						id: "pantheon.settings.page",
-						title: "Flip page",
+						id: "pantheon.settings.section",
+						title: "Next section",
 						bind: "tab",
 						run: () => {
 							if (!open()) return false;
-							setPage((current) => current === 0 ? 1 : 0);
+							flipSection();
 						}
 					}
 				]
@@ -355,11 +695,9 @@ async function maybeShowPantheonSettings(context) {
 		try {
 			const theme = context.theme?.text ?? {};
 			context.ui.dialog.show(() => createComponent(SettingsContent, {
-				rows,
-				selected,
+				sections,
 				page,
-				version: resolveRunningVersion$1,
-				about,
+				selectedId,
 				get fg() {
 					return theme.base;
 				},
@@ -367,15 +705,11 @@ async function maybeShowPantheonSettings(context) {
 					return theme.muted;
 				}
 			}), close);
+			try {
+				context.ui.dialog.set?.({ size: "xlarge" });
+			} catch {}
 		} catch {}
 	} catch {}
-}
-function resolveRunningVersion$1() {
-	try {
-		return JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version ?? "unknown";
-	} catch {
-		return "unknown";
-	}
 }
 //#endregion
 //#region src/sidebar-width.ts
@@ -498,46 +832,6 @@ function cellWidth(value) {
 	let width = 0;
 	for (const { segment } of GRAPHEMES.segment(value)) width += graphemeWidth(segment);
 	return width;
-}
-/** Semver-ish compare for X.Y.Z[-beta.N]; betas sort before their release. */
-function comparePantheonVersions(left, right) {
-	const parse = (version) => {
-		const match = String(version).trim().match(/^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/);
-		if (!match) return null;
-		return {
-			core: [
-				+match[1],
-				+match[2],
-				+match[3]
-			],
-			beta: match[4] === void 0 ? Number.POSITIVE_INFINITY : +match[4]
-		};
-	};
-	const a = parse(left);
-	const b = parse(right);
-	if (!a || !b) return 0;
-	for (let index = 0; index < 3; index += 1) if (a.core[index] !== b.core[index]) return a.core[index] - b.core[index];
-	return a.beta - b.beta;
-}
-function pickUpdateNotice(input) {
-	const { currentVersion, latestVersion, state = {}, nowMs = Date.now() } = input;
-	const ttlMs = input.ttlMs ?? 216e5;
-	if (nowMs - (state.lastCheckMs ?? 0) < ttlMs) return null;
-	if (state.lastNotifiedVersion === latestVersion) return null;
-	const stable = (version) => !/-beta\.\d+$/.test(version);
-	if (stable(currentVersion) && !stable(latestVersion)) return null;
-	if (comparePantheonVersions(latestVersion, currentVersion) <= 0) return null;
-	return {
-		version: latestVersion,
-		message: `pantheon-opencode ${latestVersion} available — changelog in /pantheon-settings, adopt with \`pantheon-opencode update\``
-	};
-}
-/** The state to persist after a check (notified or not) for the TTL. */
-function nextCheckState(previous, notice, nowMs) {
-	return {
-		lastCheckMs: nowMs,
-		lastNotifiedVersion: notice?.version ?? previous.lastNotifiedVersion
-	};
 }
 /** Prefix of the "+N more" line appended when the bullet budget is exceeded. */
 const WHATS_NEW_MORE_PREFIX = "… +";
