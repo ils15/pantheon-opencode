@@ -1617,13 +1617,13 @@ async function installPass(
   const componentSet = new Set(
     opts.noMcp ? components.filter((component) => component !== 'runtime') : components,
   )
-  let decisionRouterConfig = migrateDecisionRouterConfig(
+  const decisionRouterConfig = migrateDecisionRouterConfig(
     opts.decisionRouterConfig ?? readState(target)?.decision_router,
   )
   /** Wizard-confirmed Jev activation (target + caps), surfaced on the result. */
-  let decisionModelActivation = null
+  const decisionModelActivation = null
   /** Cloudflare needs a user-supplied account ID, so the wizard defers it. */
-  let decisionModelDeferredSetup = null
+  const decisionModelDeferredSetup = null
   const stats = summary.opencode
   // Per-call baseline. `stats` is the module-level cumulative summary, so the
   // consistency guard must compare against THIS call's delta, not the total.
@@ -1751,7 +1751,6 @@ async function installPass(
   const forceHeadless = opts.headless === true
   const autoYes = opts.yes === true
   const interactive = !autoYes && (forceInteractive || (stdinTTY && !forceHeadless))
-
 
   // Reject invalid or newer persisted migration schemas before planning or
   // applying any target writes. The migration runner repeats this check at the

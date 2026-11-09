@@ -29,8 +29,8 @@ import {
   pantheonSettingsBlocking,
   setupPantheonSettings,
 } from './pantheon-settings'
-import { initTuiPrefs, tuiPrefs } from './tui-prefs'
 import { cellWidth, GRAPHEMES, SIDEBAR_CONTENT_WIDTH } from './sidebar-width'
+import { initTuiPrefs, tuiPrefs } from './tui-prefs'
 import { nextCheckState, pickUpdateNotice, type UpdateCheckState } from './update-notice.ts'
 import { maybeShowWhatsNewV2 } from './whats-new'
 
@@ -717,7 +717,13 @@ export function contextBlockRows(
     if (gaugeStyle === 'bar') {
       percent = { lead: bar.filled, value: '', tail: bar.empty, suffix, tone }
     } else if (gaugeStyle === 'percent') {
-      percent = { lead: null, value: ` ${Math.round(percentValue)}%`, tail: null, suffix: null, tone }
+      percent = {
+        lead: null,
+        value: ` ${Math.round(percentValue)}%`,
+        tail: null,
+        suffix: null,
+        tone,
+      }
     } else {
       percent = {
         lead: bar.filled,
@@ -4032,9 +4038,7 @@ function Sidebar(props: SidebarProps): JSX.Element {
   const performanceLine = () =>
     tuiPrefs().sidebar.context.performance ? contextPerformanceLine(model.performance()) : null
   const usageRows = () =>
-    tuiPrefs().sidebar.context.modelUsage
-      ? modelUsageRows(model.modelUsage().visible)
-      : []
+    tuiPrefs().sidebar.context.modelUsage ? modelUsageRows(model.modelUsage().visible) : []
   /* Filled cells and the percent value resolve through the same stage, so the
    * bar and its number can never disagree. */
   const gaugeFg = (row: ContextRow) => contextProgressColor(row.tone ?? 'warning', context.theme)

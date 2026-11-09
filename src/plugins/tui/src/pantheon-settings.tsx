@@ -35,7 +35,6 @@ import {
   writeDecisionRouterConfig,
 } from './decision-router-state.ts'
 import { buildDoctorTab } from './doctor-state.ts'
-import { applyTuiRow, buildTuiTab, mutateTuiPrefs, tuiPrefs } from './tui-prefs.ts'
 import { buildJ1Tab } from './j1-gate-status.ts'
 import {
   applyDraft,
@@ -69,6 +68,7 @@ import {
   readActivePresetMarker,
   writeActivePreset,
 } from './preset-state.ts'
+import { applyTuiRow, buildTuiTab, mutateTuiPrefs, tuiPrefs } from './tui-prefs.ts'
 import { nextCheckState, type UpdateCheckState } from './update-notice.ts'
 import {
   buildUpdatesTab,
@@ -442,7 +442,9 @@ function createWindowController(
       try {
         mutateTuiPrefs((prefsDraft) => applyTuiRow(prefsDraft, id, value))
           .then(() => setNotice(undefined))
-          .catch(() => setNotice('tui prefs: persist failed — the change is active for this session only'))
+          .catch(() =>
+            setNotice('tui prefs: persist failed — the change is active for this session only'),
+          )
         return { ok: true }
       } catch {
         return { ok: false, reason: 'tui prefs storage unavailable' }

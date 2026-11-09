@@ -276,7 +276,11 @@ test('a cancel at final review reports THAT target, not a guessed one', async ()
   assert.equal(result.cancelPoint, 'review')
   assert.equal(result.applied, false)
   assert.equal(result.target, '/tmp/pantheon-cancel-target-probe', 'the caller target is recorded')
-  assert.equal(resolvedTarget, '/tmp/pantheon-cancel-target-probe', 'run records use the same target')
+  assert.equal(
+    resolvedTarget,
+    '/tmp/pantheon-cancel-target-probe',
+    'run records use the same target',
+  )
 })
 
 test('a decline at final review reports the resolved global target', async () => {

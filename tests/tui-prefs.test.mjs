@@ -9,6 +9,7 @@
  */
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
+import { tabRows } from '../src/plugins/tui/src/pantheon-settings-state.ts'
 import {
   applyTuiRow,
   buildTuiTab,
@@ -17,7 +18,6 @@ import {
   normalizeTuiPrefs,
   tuiRowValue,
 } from '../src/plugins/tui/src/tui-prefs.ts'
-import { tabRows } from '../src/plugins/tui/src/pantheon-settings-state.ts'
 
 describe('normalizeTuiPrefs', () => {
   it('returns the defaults for junk input', () => {

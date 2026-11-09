@@ -1,3 +1,4 @@
+// biome-ignore-all lint/suspicious/noExplicitAny: stored prefs are host JSON of a known shape.
 /**
  * tui-prefs.ts — the TUI personalization core (the settings window's TUI tab).
  *
@@ -20,10 +21,7 @@ import type { SettingsRow, SettingsTab } from './pantheon-settings-state.ts'
 // singleton doctrine as the plugin's SINGLETON guard).
 
 const PREFS_SYMBOL = Symbol.for('pantheon.tui.prefs.v1')
-type PrefsStore = readonly [
-  TuiPrefs,
-  (mutation: (draft: TuiPrefs) => void) => Promise<void>,
-]
+type PrefsStore = readonly [TuiPrefs, (mutation: (draft: TuiPrefs) => void) => Promise<void>]
 
 function stash(): PrefsStore | undefined {
   return (globalThis as Record<PropertyKey, unknown>)[PREFS_SYMBOL] as PrefsStore | undefined
@@ -103,21 +101,21 @@ function asBool(value: unknown, fallback: boolean): boolean {
 /** Deep-merge stored JSON over the defaults; unknown keys and junk are ignored. */
 export function normalizeTuiPrefs(raw: unknown): TuiPrefs {
   const stored = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, any>
-  const sidebar = (typeof stored.sidebar === 'object' && stored.sidebar !== null
-    ? stored.sidebar
-    : {}) as Record<string, any>
-  const header = (typeof sidebar.header === 'object' && sidebar.header !== null
-    ? sidebar.header
-    : {}) as Record<string, any>
-  const blocks = (typeof sidebar.blocks === 'object' && sidebar.blocks !== null
-    ? sidebar.blocks
-    : {}) as Record<string, any>
-  const context = (typeof sidebar.context === 'object' && sidebar.context !== null
-    ? sidebar.context
-    : {}) as Record<string, any>
-  const footer = (typeof stored.footer === 'object' && stored.footer !== null
-    ? stored.footer
-    : {}) as Record<string, any>
+  const sidebar = (
+    typeof stored.sidebar === 'object' && stored.sidebar !== null ? stored.sidebar : {}
+  ) as Record<string, any>
+  const header = (
+    typeof sidebar.header === 'object' && sidebar.header !== null ? sidebar.header : {}
+  ) as Record<string, any>
+  const blocks = (
+    typeof sidebar.blocks === 'object' && sidebar.blocks !== null ? sidebar.blocks : {}
+  ) as Record<string, any>
+  const context = (
+    typeof sidebar.context === 'object' && sidebar.context !== null ? sidebar.context : {}
+  ) as Record<string, any>
+  const footer = (
+    typeof stored.footer === 'object' && stored.footer !== null ? stored.footer : {}
+  ) as Record<string, any>
   const gauge = GAUGE_STYLES.includes(context.gauge as string)
     ? (context.gauge as GaugeStyle)
     : DEFAULT_TUI_PREFS.sidebar.context.gauge
@@ -154,12 +152,7 @@ export function normalizeTuiPrefs(raw: unknown): TuiPrefs {
 // ── The TUI tab (cycler rows over the dotted pref paths) ───────────────
 
 const onOff = ENABLED_CYCLE
-const row = (
-  id: string,
-  name: string,
-  value: boolean,
-  note: string,
-): SettingsRow => ({
+const row = (id: string, name: string, value: boolean, note: string): SettingsRow => ({
   id,
   name,
   value: value ? 'enabled' : 'disabled',
@@ -175,18 +168,53 @@ export function buildTuiTab(prefs: TuiPrefs): SettingsTab {
       {
         title: 'Sidebar header',
         rows: [
-          row('tui.sidebar.header.version', 'Version line', prefs.sidebar.header.version, 'the `Pantheon v…` line'),
-          row('tui.sidebar.header.preset', 'Preset line', prefs.sidebar.header.preset, 'the `▸ preset · provider` line'),
-          row('tui.sidebar.header.session', 'Session line', prefs.sidebar.header.session, 'the active session title'),
+          row(
+            'tui.sidebar.header.version',
+            'Version line',
+            prefs.sidebar.header.version,
+            'the `Pantheon v…` line',
+          ),
+          row(
+            'tui.sidebar.header.preset',
+            'Preset line',
+            prefs.sidebar.header.preset,
+            'the `▸ preset · provider` line',
+          ),
+          row(
+            'tui.sidebar.header.session',
+            'Session line',
+            prefs.sidebar.header.session,
+            'the active session title',
+          ),
         ],
       },
       {
         title: 'Sidebar blocks',
         rows: [
-          row('tui.sidebar.block.context', 'Context block', prefs.sidebar.blocks.context, 'tokens, gauge, spend, model usage'),
-          row('tui.sidebar.block.git', 'Git block', prefs.sidebar.blocks.git, 'branch + working-tree counts'),
-          row('tui.sidebar.block.todo', 'Todo block', prefs.sidebar.blocks.todo, 'the newest todowrite'),
-          row('tui.sidebar.block.dispatch', 'Dispatch block', prefs.sidebar.blocks.dispatch, 'live delegations + rollup'),
+          row(
+            'tui.sidebar.block.context',
+            'Context block',
+            prefs.sidebar.blocks.context,
+            'tokens, gauge, spend, model usage',
+          ),
+          row(
+            'tui.sidebar.block.git',
+            'Git block',
+            prefs.sidebar.blocks.git,
+            'branch + working-tree counts',
+          ),
+          row(
+            'tui.sidebar.block.todo',
+            'Todo block',
+            prefs.sidebar.blocks.todo,
+            'the newest todowrite',
+          ),
+          row(
+            'tui.sidebar.block.dispatch',
+            'Dispatch block',
+            prefs.sidebar.blocks.dispatch,
+            'live delegations + rollup',
+          ),
         ],
       },
       {
@@ -199,18 +227,53 @@ export function buildTuiTab(prefs: TuiPrefs): SettingsTab {
             cycle: GAUGE_STYLES,
             note: 'both | bar | percent | off — `▰▱ 42% of 200k`',
           },
-          row('tui.sidebar.context.tokens', 'Tokens row', prefs.sidebar.context.tokens, 'the raw token count line'),
-          row('tui.sidebar.context.spent', 'Spent row', prefs.sidebar.context.spent, 'the `$… gasto na sessão` line'),
-          row('tui.sidebar.context.modelUsage', 'Model usage table', prefs.sidebar.context.modelUsage, 'per-model tokens/USD'),
-          row('tui.sidebar.context.performance', 'Performance line', prefs.sidebar.context.performance, 'cache % + tok/s'),
-          row('tui.sidebar.context.localSpend', 'Local spend', prefs.sidebar.context.localSpend, 'hoje / 30d totals'),
+          row(
+            'tui.sidebar.context.tokens',
+            'Tokens row',
+            prefs.sidebar.context.tokens,
+            'the raw token count line',
+          ),
+          row(
+            'tui.sidebar.context.spent',
+            'Spent row',
+            prefs.sidebar.context.spent,
+            'the `$… gasto na sessão` line',
+          ),
+          row(
+            'tui.sidebar.context.modelUsage',
+            'Model usage table',
+            prefs.sidebar.context.modelUsage,
+            'per-model tokens/USD',
+          ),
+          row(
+            'tui.sidebar.context.performance',
+            'Performance line',
+            prefs.sidebar.context.performance,
+            'cache % + tok/s',
+          ),
+          row(
+            'tui.sidebar.context.localSpend',
+            'Local spend',
+            prefs.sidebar.context.localSpend,
+            'hoje / 30d totals',
+          ),
         ],
       },
       {
         title: 'Footers',
         rows: [
-          row('tui.footer.prompt', 'Prompt footer', prefs.footer.prompt, 'the `▸preset · ✦n ativos` line while delegations run'),
-          row('tui.footer.home', 'Home status', prefs.footer.home, 'the `Pantheon v…` line under the home prompt'),
+          row(
+            'tui.footer.prompt',
+            'Prompt footer',
+            prefs.footer.prompt,
+            'the `▸preset · ✦n ativos` line while delegations run',
+          ),
+          row(
+            'tui.footer.home',
+            'Home status',
+            prefs.footer.home,
+            'the `Pantheon v…` line under the home prompt',
+          ),
         ],
       },
     ],

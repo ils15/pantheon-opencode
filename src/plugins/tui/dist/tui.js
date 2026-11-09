@@ -655,6 +655,170 @@ function buildDoctorTab(input) {
 	};
 }
 //#endregion
+//#region src/j1-gate-status.ts
+const J1_FLAG_ENV = "PANTHEON_J1_RISK_SCORE";
+const J1_THRESHOLD_ENV = "PANTHEON_J1_ENFORCE_THRESHOLD";
+const J1_THRESHOLD_DEFAULT = .8;
+/** `1`/`on`/`true` map to `shadow` for back-compatibility with the shipped setup. */
+const FLAG_ON = /* @__PURE__ */ new Set([
+	"1",
+	"on",
+	"true",
+	"shadow"
+]);
+function j1ModeFromEnv(env = process.env) {
+	const raw = (env["PANTHEON_J1_RISK_SCORE"] ?? "").trim().toLowerCase();
+	if (raw === "enforce") return "enforce";
+	if (raw === "warn") return "warn";
+	return FLAG_ON.has(raw) ? "shadow" : "off";
+}
+/** Invalid or out-of-range values fall back to the default — a typo must not disable the gate. */
+function j1ThresholdFromEnv(env = process.env) {
+	const text = (env["PANTHEON_J1_ENFORCE_THRESHOLD"] ?? "").trim();
+	if (text === "") return J1_THRESHOLD_DEFAULT;
+	const raw = Number(text);
+	if (!Number.isFinite(raw) || raw < 0 || raw > 1) return J1_THRESHOLD_DEFAULT;
+	return raw;
+}
+const MODE_DESCRIPTION = {
+	off: "nothing fires (hard zero)",
+	shadow: "observe + record; invisible in the session",
+	warn: "RESERVED — behaves as shadow in this release",
+	enforce: "high-risk scores DENY the tool call (fail-open on gate unavailability)"
+};
+function buildJ1Tab(env, disabledByOverride) {
+	const mode = j1ModeFromEnv(env);
+	const threshold = j1ThresholdFromEnv(env);
+	const gateState = disabledByOverride ? "disabled via overrides" : mode === "off" ? "off (env unset)" : "active";
+	return {
+		id: "j1",
+		title: "J1",
+		groups: [{
+			title: "Ladder (env-only — never written here)",
+			rows: [
+				{
+					id: "j1.mode",
+					name: "Mode",
+					value: mode,
+					note: `${MODE_DESCRIPTION[mode]} · restart applies`
+				},
+				{
+					id: "j1.threshold",
+					name: "Enforce threshold",
+					value: String(threshold),
+					note: "deny at or above · 0..1 · default 0.8"
+				},
+				{
+					id: "j1.gate",
+					name: "Gate",
+					value: gateState,
+					note: `${J1_FLAG_ENV} / ${J1_THRESHOLD_ENV} · read once at startup`
+				}
+			]
+		}]
+	};
+}
+//#endregion
+//#region src/preset-state.ts
+/**
+* preset-state.ts — the Model Preset section of the settings window.
+*
+* TUI-local replica (the bundle must stay self-contained). The preset NAMES
+* mirror routing.yml's `presets:` and are drift-pinned by
+* tests/tui-preset-state.test.mjs against `loadPresetDefs()`. The marker file
+* shape mirrors scripts/install/model-picker.mjs's `buildActivePresetFile`
+* (version 1), and the readers (`resolveActivePreset`, vision.ts candidates)
+* only consult `.preset`, so the window writes `source: 'tui-settings'`.
+*
+* Scope note: the window writes the GLOBAL marker only
+* (`<config-dir>/opencode/.pantheon/active-preset.json`). A project marker
+* wins (it precedes the global path in every runtime candidate list), so it
+* is displayed read-only. `none` DELETES the marker with a .bak backup — the
+* same contract as the CLI's `set-tier none`.
+*/
+/** Mirrors routing.yml `presets:` — drift-pinned against loadPresetDefs(). */
+const PRESET_NAMES = Object.freeze([
+	"go-free",
+	"go-fast",
+	"go-premium",
+	"go-hybrid",
+	"anthropic",
+	"openai"
+]);
+function globalActivePresetPath(env = process.env) {
+	const xdg = env.XDG_CONFIG_HOME;
+	const home = env.HOME ?? "";
+	const root = xdg ?? join(home, ".config");
+	return join(root, "opencode", ".pantheon", "active-preset.json");
+}
+function projectActivePresetPath() {
+	return join(process.cwd(), ".pantheon", "active-preset.json");
+}
+/** Fail-open read: missing/corrupt marker = no active preset. */
+function readActivePresetMarker(path) {
+	try {
+		const raw = JSON.parse(readFileSync(path, "utf8"));
+		if (typeof raw?.preset !== "string" || raw.preset === "" || raw.preset === "none") return null;
+		return {
+			name: raw.preset,
+			updatedAt: typeof raw.updated_at === "string" ? raw.updated_at : ""
+		};
+	} catch {
+		return null;
+	}
+}
+function writeMarkerAtomically(path, content) {
+	mkdirSync(dirname(path), { recursive: true });
+	const temp = `${path}.tui.tmp`;
+	writeFileSync(temp, content);
+	renameSync(temp, path);
+}
+/** Select a preset globally: .bak backup, atomic write, version-1 marker. */
+function writeActivePreset(path, name, nowIso = (/* @__PURE__ */ new Date()).toISOString()) {
+	if (!PRESET_NAMES.includes(name)) throw new TypeError(`Refusing to persist unknown preset "${name}"`);
+	backupMarker(path);
+	writeMarkerAtomically(path, `${JSON.stringify({
+		version: 1,
+		preset: name,
+		source: "tui-settings",
+		updated_at: nowIso
+	}, null, 2)}\n`);
+}
+/** Clear the global marker (the `none` contract): .bak backup, then remove. */
+function clearActivePreset(path) {
+	backupMarker(path);
+	rmSync(path, { force: true });
+}
+function backupMarker(path) {
+	if (!existsSync(path)) return;
+	mkdirSync(dirname(path), { recursive: true });
+	copyFileSync(path, `${path}.bak`);
+}
+const PRESET_CYCLE = Object.freeze(["none", ...PRESET_NAMES]);
+function buildPresetTab(input) {
+	const rows = [{
+		id: "preset",
+		name: "Preset",
+		value: input.globalName ?? "none",
+		cycle: PRESET_CYCLE,
+		note: "global marker · atomic write, .bak backup · none = opencode defaults"
+	}];
+	if (input.projectName !== null) rows.push({
+		id: "preset.project",
+		name: "Project",
+		value: input.projectName,
+		note: `${projectActivePresetPath()} wins over the global marker — read-only here`
+	});
+	return {
+		id: "preset",
+		title: "Preset",
+		groups: [{
+			title: "Model preset",
+			rows
+		}]
+	};
+}
+//#endregion
 //#region src/tui-prefs.ts
 const PREFS_SYMBOL = Symbol.for("pantheon.tui.prefs.v1");
 function stash() {
@@ -822,170 +986,6 @@ function applyTuiRow(draft, id, value) {
 			return;
 		default: return;
 	}
-}
-//#endregion
-//#region src/j1-gate-status.ts
-const J1_FLAG_ENV = "PANTHEON_J1_RISK_SCORE";
-const J1_THRESHOLD_ENV = "PANTHEON_J1_ENFORCE_THRESHOLD";
-const J1_THRESHOLD_DEFAULT = .8;
-/** `1`/`on`/`true` map to `shadow` for back-compatibility with the shipped setup. */
-const FLAG_ON = /* @__PURE__ */ new Set([
-	"1",
-	"on",
-	"true",
-	"shadow"
-]);
-function j1ModeFromEnv(env = process.env) {
-	const raw = (env["PANTHEON_J1_RISK_SCORE"] ?? "").trim().toLowerCase();
-	if (raw === "enforce") return "enforce";
-	if (raw === "warn") return "warn";
-	return FLAG_ON.has(raw) ? "shadow" : "off";
-}
-/** Invalid or out-of-range values fall back to the default — a typo must not disable the gate. */
-function j1ThresholdFromEnv(env = process.env) {
-	const text = (env["PANTHEON_J1_ENFORCE_THRESHOLD"] ?? "").trim();
-	if (text === "") return J1_THRESHOLD_DEFAULT;
-	const raw = Number(text);
-	if (!Number.isFinite(raw) || raw < 0 || raw > 1) return J1_THRESHOLD_DEFAULT;
-	return raw;
-}
-const MODE_DESCRIPTION = {
-	off: "nothing fires (hard zero)",
-	shadow: "observe + record; invisible in the session",
-	warn: "RESERVED — behaves as shadow in this release",
-	enforce: "high-risk scores DENY the tool call (fail-open on gate unavailability)"
-};
-function buildJ1Tab(env, disabledByOverride) {
-	const mode = j1ModeFromEnv(env);
-	const threshold = j1ThresholdFromEnv(env);
-	const gateState = disabledByOverride ? "disabled via overrides" : mode === "off" ? "off (env unset)" : "active";
-	return {
-		id: "j1",
-		title: "J1",
-		groups: [{
-			title: "Ladder (env-only — never written here)",
-			rows: [
-				{
-					id: "j1.mode",
-					name: "Mode",
-					value: mode,
-					note: `${MODE_DESCRIPTION[mode]} · restart applies`
-				},
-				{
-					id: "j1.threshold",
-					name: "Enforce threshold",
-					value: String(threshold),
-					note: "deny at or above · 0..1 · default 0.8"
-				},
-				{
-					id: "j1.gate",
-					name: "Gate",
-					value: gateState,
-					note: `${J1_FLAG_ENV} / ${J1_THRESHOLD_ENV} · read once at startup`
-				}
-			]
-		}]
-	};
-}
-//#endregion
-//#region src/preset-state.ts
-/**
-* preset-state.ts — the Model Preset section of the settings window.
-*
-* TUI-local replica (the bundle must stay self-contained). The preset NAMES
-* mirror routing.yml's `presets:` and are drift-pinned by
-* tests/tui-preset-state.test.mjs against `loadPresetDefs()`. The marker file
-* shape mirrors scripts/install/model-picker.mjs's `buildActivePresetFile`
-* (version 1), and the readers (`resolveActivePreset`, vision.ts candidates)
-* only consult `.preset`, so the window writes `source: 'tui-settings'`.
-*
-* Scope note: the window writes the GLOBAL marker only
-* (`<config-dir>/opencode/.pantheon/active-preset.json`). A project marker
-* wins (it precedes the global path in every runtime candidate list), so it
-* is displayed read-only. `none` DELETES the marker with a .bak backup — the
-* same contract as the CLI's `set-tier none`.
-*/
-/** Mirrors routing.yml `presets:` — drift-pinned against loadPresetDefs(). */
-const PRESET_NAMES = Object.freeze([
-	"go-free",
-	"go-fast",
-	"go-premium",
-	"go-hybrid",
-	"anthropic",
-	"openai"
-]);
-function globalActivePresetPath(env = process.env) {
-	const xdg = env.XDG_CONFIG_HOME;
-	const home = env.HOME ?? "";
-	const root = xdg ?? join(home, ".config");
-	return join(root, "opencode", ".pantheon", "active-preset.json");
-}
-function projectActivePresetPath() {
-	return join(process.cwd(), ".pantheon", "active-preset.json");
-}
-/** Fail-open read: missing/corrupt marker = no active preset. */
-function readActivePresetMarker(path) {
-	try {
-		const raw = JSON.parse(readFileSync(path, "utf8"));
-		if (typeof raw?.preset !== "string" || raw.preset === "" || raw.preset === "none") return null;
-		return {
-			name: raw.preset,
-			updatedAt: typeof raw.updated_at === "string" ? raw.updated_at : ""
-		};
-	} catch {
-		return null;
-	}
-}
-function writeMarkerAtomically(path, content) {
-	mkdirSync(dirname(path), { recursive: true });
-	const temp = `${path}.tui.tmp`;
-	writeFileSync(temp, content);
-	renameSync(temp, path);
-}
-/** Select a preset globally: .bak backup, atomic write, version-1 marker. */
-function writeActivePreset(path, name, nowIso = (/* @__PURE__ */ new Date()).toISOString()) {
-	if (!PRESET_NAMES.includes(name)) throw new TypeError(`Refusing to persist unknown preset "${name}"`);
-	backupMarker(path);
-	writeMarkerAtomically(path, `${JSON.stringify({
-		version: 1,
-		preset: name,
-		source: "tui-settings",
-		updated_at: nowIso
-	}, null, 2)}\n`);
-}
-/** Clear the global marker (the `none` contract): .bak backup, then remove. */
-function clearActivePreset(path) {
-	backupMarker(path);
-	rmSync(path, { force: true });
-}
-function backupMarker(path) {
-	if (!existsSync(path)) return;
-	mkdirSync(dirname(path), { recursive: true });
-	copyFileSync(path, `${path}.bak`);
-}
-const PRESET_CYCLE = Object.freeze(["none", ...PRESET_NAMES]);
-function buildPresetTab(input) {
-	const rows = [{
-		id: "preset",
-		name: "Preset",
-		value: input.globalName ?? "none",
-		cycle: PRESET_CYCLE,
-		note: "global marker · atomic write, .bak backup · none = opencode defaults"
-	}];
-	if (input.projectName !== null) rows.push({
-		id: "preset.project",
-		name: "Project",
-		value: input.projectName,
-		note: `${projectActivePresetPath()} wins over the global marker — read-only here`
-	});
-	return {
-		id: "preset",
-		title: "Preset",
-		groups: [{
-			title: "Model preset",
-			rows
-		}]
-	};
 }
 //#endregion
 //#region src/update-status.ts

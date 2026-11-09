@@ -18,10 +18,7 @@ import { join } from 'node:path'
 import { after, test } from 'node:test'
 
 import { resolveComponentSelection } from '../scripts/install/component-selection.mjs'
-import {
-  PROMPT_CANCELED,
-  promptReview,
-} from '../scripts/install/interactive.mjs'
+import { PROMPT_CANCELED, promptReview } from '../scripts/install/interactive.mjs'
 
 // The host gate must confirm a supported 2.x generation for these installs.
 process.env.OPENCODE_VERSION = 'v2'
