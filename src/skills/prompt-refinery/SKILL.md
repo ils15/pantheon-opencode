@@ -39,7 +39,7 @@ O modelo ativo da sessão faz os dois níveis sem problema — o custo é contro
 4. **Premissas implícitas** — o que o pedido ASSUME que você sabe? (stack, ambiente, histórico)
 5. **Conflitos** — o pedido se contradiz? (peça X mas o aceite implica ¬X)
 
-Cada ponto do diagnóstico vira OU uma decisão no rewrite OU um default declarado OU uma pergunta bloqueante — nada fica implícito duas vezes. Quando o pedido tiver **duas leituras com resultados materialmente diferentes** ("atualizar o README" = patch ou reescrita?), é pergunta bloqueante — a leitura errada executa caro e errado.
+Cada ponto do diagnóstico vira OU uma decisão no rewrite OU um default declarado OU uma pergunta bloqueante — nada fica implícito duas vezes. Quando o pedido tiver **duas leituras com resultados materialmente diferentes** ("atualizar o README" = patch ou reescrita?), é bloqueante — a leitura errada executa caro e errado. E é aqui que o **Jev entra quando ativado** (ver a regra de desambiguação nas Operating rules): o decision model resolve a leitura como escalar tipado, e a interrupção do usuário vira exceção, não regra.
 
 **Restrições negativas entram no rewrite quando detectadas** — "não tocar em X", "sem nova dependência", "sem migrar ainda". O usuário raramente as diz; o agente que infere incorretamente é quem executa drift.
 
@@ -77,9 +77,14 @@ Produce ALL of the following sections, filling from the request and marking real
 - **Preserve the user's language** (a PT-BR request refines into PT-BR).
 - **Falha = fail-open**: qualquer erro no rewrite e o prompt ORIGINAL segue — nunca bloqueia.
 - **Nudge self-cancel cheap** (do claude-code-prompt-improver): perguntas abertas com "se isso não se aplicar ao seu caso, ignore" — o nudge barato se anula sozinho quando o palpite erra.
-- **Perguntas pela tool `question` nativa** (NUNCA Jev — decisão de paid/free; não prosa solta): uma lacuna que BLOQUEIA a execução vira uma pergunta com opções e o default recomendado. Lacuna não-bloqueante vira escolha com default declarado e segue.
+- **Desambiguação — Jev PRIMEIRO quando ativo, `question` como fallback** (revê a regra antiga "NUNCA Jev": com o decision router ATIVO e com budget o usuário já consentiu gastar; a leitura errada custa mais que o escalar):
+  1. Ambiguidade bloqueante (leitores materialmente diferentes) + decision router ATIVO → `jev_decide` modo `choice` — candidatos = as leituras, o default recomendado marcado como tal. Decisão interna, silenciosa (Tier 1).
+  2. Jev OFF / indisponível / veredito UNVERIFIABLE ou FAIL / timeout → tool `question` nativa com opções e o default recomendado — exatamente o comportamento anterior.
+  3. Lacuna NÃO-bloqueante vira escolha com default declarado e segue (nada de Jev nem pergunta — decisa é barata).
+  4. **Fail-open nos dois lados**: qualquer erro do Jev cai na `question`; qualquer erro da `question` segue com o default. Nada bloqueia além de uma pergunta legítima.
+  5. O Jev decide a LEITURA — nunca escreve o rewrite (prosa é do modelo de sessão).
 - **`extra_instructions` do projeto**: convenções do projeto (stack, hosts de deploy, domínios como cupons ML/AliExpress) têm PRIORIDADE sobre os defaults recomendados — leia o AGENTS.md do projeto antes de propor defaults.
 - **Referências**: `omkarxpatel/prompt-enhancer` (prefixo opt-in, cap de saída, fail-open) e `severity1/claude-code-prompt-improver` (nudges self-cancel, clarificação com opções) — os dois designs que este skill incorpora. Fundação teórica dos padrões de diagnóstico-e-rewrite: os prompt improvers oficiais (Anthropic/OpenAI), meta-prompting (LLMs guiando LLMs) e o loop de otimização com verificação (OPRO/DSPy) — esta skill é a versão agent-side de custo-controlado: um turno, sem loop de API.
 - **Modelo**: o rewrite roda no modelo ativo da sessão; o controle de custo é o CAP de cada nível (interno ~10-15 linhas; completo = as seis seções) — quando houver modelo free/rápido no preset ativo (ex.: mimo-v2.5-free, deepseek-v4-flash-free), prefira-o via routing para o turno de rewrite.
-- **One refinement turn.** The rewrite is a single planning pass on the session model — no extra provider call, no Jev needed for the rewrite itself (decision models answer typed scalars, they do not write prose).
+- **One refinement turn + no máx. um escalar.** The rewrite is a single planning pass on the session model — no extra provider call, no Jev for the rewrite itself (decision models answer typed scalars, they do not write prose). The ONE exception is the ambiguity `choice` above: quando o router está ativo, é um escalar a mais no budget — se o budget recusar, cai na `question` sem cerimônia.
 - **Cost honesty**: the refinement costs roughly one planning turn (~1–4K tokens each way). The expensive thing is executing a mis-specified request; this skill buys that back.
