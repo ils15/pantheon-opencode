@@ -7,7 +7,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [v1.7.0] - 2026-11-07
 
-- **Typed decision router with a real budget**: delegation, skills, ORDER, rank, verify and review modes — budgeted, reconciled, ~$0.000025 per call.
+### 🆕 What's New
+
+- **Typed decision router with a real budget**: delegation, skills, ORDER, rank, verify, review modes — budgeted, reconciled, ~$0.000025/call.
 - **J1 risk gate with a ladder**: off / shadow / warn / enforce — high-risk calls demand explicit human approval, never bypassed.
 - **agent-forge**: forge an OpenCode agent on demand — interview, draft, confirm, write to project or user scope.
 - **Skill discovery with a trust cascade**: Anthropic catalog → skills.sh → raw GitHub; Jev ranks; you install.

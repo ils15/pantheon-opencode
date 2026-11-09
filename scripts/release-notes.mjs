@@ -5,26 +5,34 @@
  * Bridges the conventional-commit pipeline (commitlint: 12 types / 40 scopes)
  * to the CHANGELOG / release-body content. Reads `git log <lastTag>..HEAD`
  * (subject + body per commit), groups commits by type, and prints markdown
- * ready to paste into the [Unreleased] CHANGELOG section.
+ * in the canonical CHANGELOG format (docs/RELEASING.md), ready to paste into
+ * the [Unreleased] CHANGELOG section.
  *
- * Groups (section order — user-facing first):
- *   🆕 What's New      feat | perf | docs
- *                       (docs are user-facing — no dedicated group)
- *   🐞 Fixed           fix | security
- *   ⚠️ Known Issues    manual — CLI flag `--known-issues "text"` (repeatable);
- *                       the group is OMITTED when the flag is absent (never
- *                       emitted empty)
- *   ✅ Closed Issues   issue refs parsed from commit BODIES (%b):
- *                       `Closes #N` / `Fixes #N` / `Resolves #N` — one
- *                       bullet `- #N - <subject>` per referenced issue
- *                       (deduped); the group is OMITTED when no refs exist
+ * Sections (Keep a Changelog, canonical order — empty ones omitted):
+ *   ### Added             feat
+ *   ### Changed           perf | docs
+ *   ### Fixed             fix
+ *   ### Security          security
+ *   ### ⚠️ Known Issues   manual — CLI flag `--known-issues "text"`
+ *                         (repeatable); omitted when the flag is absent
+ *   ### ✅ Closed Issues  issue refs parsed from commit BODIES (%b):
+ *                         `Closes #N` / `Fixes #N` / `Resolves #N` — one
+ *                         bullet `- #N - <subject>` per referenced issue
+ *                         (deduped); omitted when no refs exist
+ *
+ * The curated `### 🆕 What's New` highlights block is NOT generated: it is
+ * authored by hand on top of the generated sections in the bump PR (≤6
+ * bullets, ≤140 chars — the TUI window contract).
+ *
+ * Deprecated / Removed have no commit type; their sections are authored by
+ * hand when the release needs them.
  *
  * Omitted (internal, never user-facing): release scope and chore | refactor |
  * test | ci | build | style | revert (unknown conventional types too).
  *
  * Breaking: `BREAKING CHANGE` footer or `type!:` / `type(scope)!:` — the
- * commit keeps its type bucket and the bullet is prefixed with 💥
- * (e.g. `- 💥 **scope** — subject`). No dedicated Breaking group.
+ * commit keeps its section and the bullet is prefixed with 💥
+ * (e.g. `- 💥 **scope** — subject`). No dedicated Breaking section.
  *
  * Skipped: merge commits ("Merge ..."), empty-subject commits (trivial
  * chores), and non-conventional subjects (grandfathered history only).
@@ -178,45 +186,48 @@ export function parseCommitLine(line) {
 }
 
 /**
- * Conventional type → final release-note group. Types missing from this map
- * (chore, refactor, test, ci, build, style, revert, unknown) are internal
+ * Conventional type → canonical CHANGELOG section. Types missing from this
+ * map (chore, refactor, test, ci, build, style, revert, unknown) are internal
  * and omitted from the notes. The maintainer-only `release` scope is also
  * omitted, including its issue references.
  */
-const TYPE_GROUPS = {
-  feat: 'whatsNew',
-  perf: 'whatsNew',
-  docs: 'whatsNew',
+const TYPE_SECTIONS = {
+  feat: 'added',
+  perf: 'changed',
+  docs: 'changed',
   fix: 'fixed',
-  security: 'fixed',
+  security: 'security',
 }
 
 /**
- * Group parsed commits into the final release-note sections. Breaking
- * commits keep their type bucket (the 💥 marker is applied at render time);
- * internal types and the `release` scope are dropped; issue refs from remaining
- * commit bodies feed closedIssues (deduped, first occurrence wins). Entries
- * keep git log order.
+ * Group parsed commits into the canonical release-note sections. Breaking
+ * commits keep their section (the 💥 marker is applied at render time);
+ * internal types and the `release` scope are dropped; issue refs from
+ * remaining commit bodies feed closedIssues (deduped, first occurrence wins).
+ * Entries keep git log order.
  *
  * @param {Array<ReturnType<typeof parseCommitLine>>} entries
  * @param {{knownIssues?: string[]|string|null}} [options]
  *   knownIssues — manual Known Issues entries (CLI --known-issues). Omitted
  *   (empty array) when not provided.
- * @returns {{whatsNew: Array, fixed: Array, knownIssues: string[],
+ * @returns {{added: Array, changed: Array, fixed: Array, security: Array,
+ *            knownIssues: string[],
  *            closedIssues: Array<{ref: number, subject: string}>}}
  */
 export function groupCommits(entries, options = {}) {
   const { knownIssues = [] } = options
   const groups = {
-    whatsNew: [],
+    added: [],
+    changed: [],
     fixed: [],
+    security: [],
     knownIssues: Array.isArray(knownIssues) ? [...knownIssues] : knownIssues ? [knownIssues] : [],
     closedIssues: [],
   }
   const seenRefs = new Set()
   for (const entry of entries) {
     if (!entry || entry.scope === 'release') continue
-    const bucket = TYPE_GROUPS[entry.type]
+    const bucket = TYPE_SECTIONS[entry.type]
     if (bucket) groups[bucket].push(entry)
     for (const ref of entry.refs) {
       if (seenRefs.has(ref)) continue
@@ -245,10 +256,14 @@ function closedIssueBullet({ ref, subject }) {
   return subject ? `- #${ref} - ${subject}` : `- #${ref}`
 }
 
-/** Section order — user-facing first, Known Issues then Closed Issues. */
+/** Section order — canonical (docs/RELEASING.md): KaC first, Known/Closed
+ *  Issues last. Rendered as `### ` so the section stays inside the
+ *  changelog-extract boundaries. */
 const MARKDOWN_SECTIONS = [
-  ['whatsNew', "🆕 What's New"],
-  ['fixed', '🐞 Fixed'],
+  ['added', 'Added'],
+  ['changed', 'Changed'],
+  ['fixed', 'Fixed'],
+  ['security', 'Security'],
   ['knownIssues', '⚠️ Known Issues'],
   ['closedIssues', '✅ Closed Issues'],
 ]
@@ -261,7 +276,7 @@ function renderEntry(key, entry) {
 }
 
 /**
- * Render grouped commits as emoji-sectioned markdown (the CLI stdout and the
+ * Render grouped commits as canonical markdown (the CLI stdout and the
  * CHANGELOG body). Returns '' when there is nothing to report.
  *
  * @param {ReturnType<typeof groupCommits>} groups
@@ -271,7 +286,7 @@ export function renderMarkdown(groups) {
   const blocks = []
   for (const [key, heading] of MARKDOWN_SECTIONS) {
     if (!groups[key]?.length) continue
-    blocks.push(`## ${heading}\n${groups[key].map((entry) => renderEntry(key, entry)).join('\n')}`)
+    blocks.push(`### ${heading}\n${groups[key].map((entry) => renderEntry(key, entry)).join('\n')}`)
   }
   return blocks.join('\n\n')
 }
@@ -279,8 +294,8 @@ export function renderMarkdown(groups) {
 /**
  * Render grouped commits for a CHANGELOG version entry. Used by
  * `versioning.mjs apply --notes` to pre-fill the promoted [Unreleased] entry.
- * Emits the SAME final emoji groups as renderMarkdown — the CHANGELOG uses
- * the emoji format.
+ * Emits the SAME canonical sections as renderMarkdown — the curated
+ * `### 🆕 What's New` highlights block is authored by hand on top.
  *
  * @param {ReturnType<typeof groupCommits>} groups
  * @returns {string}

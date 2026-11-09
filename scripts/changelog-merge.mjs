@@ -7,16 +7,11 @@
 
 const UNRELEASED_TEMPLATE = `
 
-<!-- Add new changes here. Running \`node scripts/versioning.mjs apply\` will
-     move this section to a versioned entry and reset the template below. -->
-
-## 🆕 What's New
-
-## 🐞 Fixed
-
-## ⚠️ Known Issues
-
-## ✅ Closed Issues
+<!-- Add new changes here.
+     Canonical sections (docs/RELEASING.md): ### 🆕 What's New (curated highlights, ≤6 bullets ≤140 chars) →
+     ### Added / Changed / Deprecated / Removed / Fixed / Security → ### ⚠️ Known Issues / ### ✅ Closed Issues.
+     \`node scripts/versioning.mjs apply --notes\` pre-fills the generated sections from conventional commits.
+     Running apply will move this section to a versioned entry and reset the template below. -->
 `
 
 const TEMPLATE_COMMENT = /<!-- Add new changes here\.[\s\S]*?reset the template below\. -->/g

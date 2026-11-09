@@ -16,7 +16,8 @@
  *              headlessly, driven through a live host, and compared file-by-file
  *              against the checkout.
  *   package    The same .tgz re-hashed and inspected. No second `npm pack`.
- *   changelog  The committed `[version]` section exists and is non-empty.
+ *   changelog  The committed `[version]` section exists, is non-empty, and
+ *              follows the canonical format (scripts/changelog-format.mjs).
  *   metadata   Version manifests and the Node engine policy agree.
  *
  * Usage:
@@ -28,7 +29,7 @@
  *   --version <x.y.z>     Candidate version (default: package.json version).
  *   --target-sha <sha>    Full 40-hex candidate SHA (default: TARGET_SHA).
  *   --channel stable|beta Release channel (default: RELEASE_CHANNEL|stable).
- *   --recovery            Recovery dispatch: changelog is the static note.
+ *   --recovery            Recovery dispatch: changelog checks the recovery tag.
  *
  * Host evidence: PANTHEON_RELEASE_MATRIX overrides the built-in JSON array. The
  * override is still validated: rows must name a supported family and may not
@@ -51,6 +52,7 @@ import {
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { validateSection } from './changelog-format.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -93,7 +95,7 @@ const REQUIRED_TARBALL_PAYLOAD = [
 function usage(message) {
   console.error(`release-gates: ${message}`)
   console.error(
-    'usage: node scripts/release-gates.mjs <gate> --evidence-dir <dir> [--artifact-dir <dir>] [--version <v>] [--target-sha <sha>] [--channel stable|beta] [--recovery]',
+    'usage: node scripts/release-gates.mjs <gate> --evidence-dir <dir> [--artifact-dir <dir>] [--version <v>] [--target-sha <sha>] [--channel stable|beta] [--changelog-path <file>] [--recovery]',
   )
   process.exit(2)
 }
@@ -115,7 +117,14 @@ function parseArgs(argv) {
       continue
     }
     if (
-      ['--evidence-dir', '--artifact-dir', '--version', '--target-sha', '--channel'].includes(arg)
+      [
+        '--evidence-dir',
+        '--artifact-dir',
+        '--version',
+        '--target-sha',
+        '--channel',
+        '--changelog-path',
+      ].includes(arg)
     ) {
       const value = argv[i + 1]
       if (value === undefined) usage(`${arg} requires a value`)
@@ -450,7 +459,13 @@ function packageGate(options) {
 
 // ── Gate (e): changelog ──────────────────────────────────────────────────────
 
-function changelogGate(options) {
+/**
+ * The committed `[version]` section exists, is non-empty, and follows the
+ * canonical format (scripts/changelog-format.mjs). The section IS the release
+ * body — the workflow extracts it verbatim — so a format violation here is a
+ * malformed release, and the release fails before anything is tagged.
+ */
+export function changelogGate(options) {
   if (options.recovery) {
     const tag = run('recovery-tag', 'git', ['tag', '-l', `v${options.version}`], { echo: false })
     if (tag.output.trim() !== `v${options.version}`) {
@@ -463,16 +478,20 @@ function changelogGate(options) {
       details: { mode: 'recovery-static', version: options.version },
     }
   }
-  const extraction = run(
-    'changelog-section',
-    'node',
-    ['scripts/changelog-extract.mjs', options.version],
-    {
-      echo: false,
-    },
-  )
+  const extractArgs = ['scripts/changelog-extract.mjs', options.version]
+  if (options.changelogPath) extractArgs.push('--changelog', options.changelogPath)
+  const extraction = run('changelog-section', 'node', extractArgs, {
+    echo: false,
+  })
   if (!extraction.output.trim()) {
     throw new Error(`CHANGELOG.md has no non-empty [${options.version}] section`)
+  }
+  const violations = validateSection(extraction.output, { label: `v${options.version}` })
+  if (violations.length > 0) {
+    throw new Error(
+      `CHANGELOG section [${options.version}] violates the canonical format ` +
+        `(docs/RELEASING.md — the section IS the release body):\n- ${violations.join('\n- ')}`,
+    )
   }
   writeFileSync(join(options.evidenceDir, 'changelog.md'), extraction.output)
   return {
@@ -481,6 +500,7 @@ function changelogGate(options) {
       mode: 'committed-section',
       version: options.version,
       bytes: extraction.output.length,
+      formatViolations: 0,
     },
   }
 }
