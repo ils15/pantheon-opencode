@@ -1067,7 +1067,28 @@ function buildUpdatesTab(input) {
 * report beta.2: navigation "stopped working" was exactly that theft).
 */
 const ROUTE_NAME = "pantheon-settings";
+/** The input mode the page pushes while mounted (composer layers sleep). */
+const ROUTE_MODE = "pantheon-settings";
 /** Loose local shape of a host route (the real Route lives in the host typings). */
+/**
+* Strip a LIVE route object down to the plain shape the route store expects.
+* `router.current()` returns the host's live data (reactive proxies, location
+* objects with cycles) and the host's navigate deep-clones via JSON.stringify
+* — passing the live object through throws "cyclic structures" and the
+* window could never close (field report beta.5, root cause).
+*/
+function plainRoute(route) {
+	if (route === void 0) return { type: "home" };
+	if (route.type === "session" && "sessionID" in route && typeof route.sessionID === "string") return {
+		type: "session",
+		sessionID: route.sessionID
+	};
+	if (route.type === "plugin" && typeof route.name === "string") return {
+		type: "plugin",
+		name: route.name
+	};
+	return { type: "home" };
+}
 const [blocking, setBlocking] = createSignal(false);
 /** True while a Pantheon settings surface (page or fallback dialog) is open. */
 function pantheonSettingsBlocking() {
@@ -1141,29 +1162,27 @@ function persistUpdateCheckState(previous, latest) {
 	} catch {}
 }
 function resolveRunningVersion$1() {
-	try {
-		return JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version ?? "unknown";
-	} catch {
-		return "unknown";
-	}
+	return "2.0.0-beta.5";
 }
 const VALUE_WIDTH = 22;
 function SettingsWindow(props) {
 	const tab = () => props.tabs()[props.page()] ?? props.tabs()[0] ?? EMPTY_TAB;
 	const rows = () => tabRows(tab());
 	return (() => {
-		var _el$ = createElement("box"), _el$2 = createElement("box"), _el$3 = createElement("text"), _el$4 = createElement("text"), _el$6 = createElement("text"), _el$9 = createElement("text"), _el$0 = createElement("text");
+		var _el$ = createElement("box"), _el$2 = createElement("box"), _el$3 = createElement("text"), _el$4 = createElement("box"), _el$5 = createElement("text"), _el$7 = createElement("text"), _el$0 = createElement("text"), _el$1 = createElement("text");
 		insertNode(_el$, _el$2);
-		insertNode(_el$, _el$6);
-		insertNode(_el$, _el$9);
+		insertNode(_el$, _el$7);
 		insertNode(_el$, _el$0);
+		insertNode(_el$, _el$1);
 		setProp(_el$, "flexDirection", "column");
 		setProp(_el$, "paddingLeft", 1);
 		setProp(_el$, "paddingRight", 1);
 		setProp(_el$, "paddingTop", 1);
 		insertNode(_el$2, _el$3);
 		insertNode(_el$2, _el$4);
+		insertNode(_el$2, _el$5);
 		setProp(_el$2, "flexDirection", "row");
+		setProp(_el$3, "flexShrink", 0);
 		setProp(_el$3, "attributes", 1);
 		insert(_el$3, () => `Pantheon v${props.version}`);
 		insert(_el$2, createComponent(For, {
@@ -1171,37 +1190,40 @@ function SettingsWindow(props) {
 				return props.tabs();
 			},
 			children: (t, index) => (() => {
-				var _el$10 = createElement("text");
-				spread(_el$10, mergeProps({ get fg() {
+				var _el$11 = createElement("text");
+				setProp(_el$11, "flexShrink", 0);
+				spread(_el$11, mergeProps({ get fg() {
 					return memo(() => index() === props.page())() ? props.fg : props.muted;
 				} }, () => index() === props.page() ? { attributes: 1 } : {}), true);
-				insert(_el$10, () => `   ${t.title}${tabDirty(props.draft(), t) ? " ●" : ""}`);
-				return _el$10;
+				insert(_el$11, () => `   ${t.title}${tabDirty(props.draft(), t) ? " ●" : ""}`);
+				return _el$11;
 			})()
 		}), _el$4);
-		insertNode(_el$4, createTextNode(`  esc`));
-		insertNode(_el$6, createTextNode(`────────────────────────────────────────────────────────────────────────`));
+		setProp(_el$4, "flexGrow", 1);
+		insertNode(_el$5, createTextNode(`esc`));
+		setProp(_el$5, "flexShrink", 0);
+		insertNode(_el$7, createTextNode(`────────────────────────────────────────────────────────────────────────`));
 		insert(_el$, createComponent(For, {
 			get each() {
 				return tab().groups;
 			},
 			children: (group) => (() => {
-				var _el$11 = createElement("box"), _el$13 = createElement("box");
-				insertNode(_el$11, _el$13);
-				setProp(_el$11, "flexDirection", "column");
-				insert(_el$11, createComponent(Show, {
+				var _el$12 = createElement("box"), _el$14 = createElement("box");
+				insertNode(_el$12, _el$14);
+				setProp(_el$12, "flexDirection", "column");
+				insert(_el$12, createComponent(Show, {
 					get when() {
 						return group.title !== void 0;
 					},
 					get children() {
-						var _el$12 = createElement("text");
-						setProp(_el$12, "attributes", 1);
-						insert(_el$12, () => group.title);
-						effect((_$p) => setProp(_el$12, "fg", props.fg, _$p));
-						return _el$12;
+						var _el$13 = createElement("text");
+						setProp(_el$13, "attributes", 1);
+						insert(_el$13, () => group.title);
+						effect((_$p) => setProp(_el$13, "fg", props.fg, _$p));
+						return _el$13;
 					}
-				}), _el$13);
-				insert(_el$11, createComponent(For, {
+				}), _el$14);
+				insert(_el$12, createComponent(For, {
 					get each() {
 						return group.rows;
 					},
@@ -1212,67 +1234,70 @@ function SettingsWindow(props) {
 						const gutter = () => isSelected() ? "▸ " : "  ";
 						const valueCell = () => row.cycle !== void 0 ? `< ${display()} >` : display();
 						return (() => {
-							var _el$14 = createElement("box"), _el$15 = createElement("box"), _el$16 = createElement("text"), _el$17 = createElement("box"), _el$18 = createElement("text");
-							insertNode(_el$14, _el$15);
-							insertNode(_el$14, _el$17);
-							setProp(_el$14, "flexDirection", "row");
+							var _el$15 = createElement("box"), _el$16 = createElement("box"), _el$17 = createElement("text"), _el$18 = createElement("box"), _el$19 = createElement("text");
 							insertNode(_el$15, _el$16);
-							setProp(_el$15, "width", 28);
-							spread(_el$16, mergeProps({ get fg() {
+							insertNode(_el$15, _el$18);
+							setProp(_el$15, "flexDirection", "row");
+							insertNode(_el$16, _el$17);
+							setProp(_el$16, "width", 30);
+							spread(_el$17, mergeProps({ get fg() {
 								return props.fg;
 							} }, () => isSelected() ? { attributes: 1 } : {}), true);
-							insert(_el$16, () => `${gutter()}${row.name}`.padEnd(28));
-							insertNode(_el$17, _el$18);
-							setProp(_el$17, "width", 22);
-							spread(_el$18, mergeProps({ get fg() {
+							insert(_el$17, () => `${gutter()}${row.name}`.padEnd(30));
+							insertNode(_el$18, _el$19);
+							setProp(_el$18, "width", 22);
+							spread(_el$19, mergeProps({ get fg() {
 								return memo(() => !!(isSelected() || staged()))() ? props.fg : props.muted;
 							} }, () => isSelected() ? { attributes: 1 } : {}), true);
-							insert(_el$18, () => `${valueCell()}${staged() ? " ●" : ""}`.padEnd(VALUE_WIDTH));
-							insert(_el$14, createComponent(Show, {
+							insert(_el$19, () => `${valueCell()}${staged() ? " ●" : ""}`.padEnd(VALUE_WIDTH));
+							insert(_el$15, createComponent(Show, {
 								get when() {
 									return row.note !== void 0;
 								},
 								get children() {
-									var _el$19 = createElement("box"), _el$20 = createElement("text");
-									insertNode(_el$19, _el$20);
-									setProp(_el$19, "flexGrow", 1);
-									setProp(_el$19, "flexShrink", 1);
-									insert(_el$20, () => row.note);
-									effect((_$p) => setProp(_el$20, "fg", props.muted, _$p));
-									return _el$19;
+									var _el$20 = createElement("box"), _el$21 = createElement("text");
+									insertNode(_el$20, _el$21);
+									setProp(_el$20, "flexGrow", 1);
+									setProp(_el$20, "flexShrink", 1);
+									insert(_el$21, () => row.note);
+									effect((_$p) => setProp(_el$21, "fg", props.muted, _$p));
+									return _el$20;
 								}
 							}), null);
-							return _el$14;
+							return _el$15;
 						})();
 					}
-				}), _el$13);
-				setProp(_el$13, "height", 1);
-				return _el$11;
+				}), _el$14);
+				setProp(_el$14, "height", 1);
+				return _el$12;
 			})()
-		}), _el$9);
+		}), _el$0);
 		insert(_el$, createComponent(Show, {
 			get when() {
 				return props.notice() !== void 0;
 			},
 			get children() {
-				var _el$8 = createElement("text");
-				insert(_el$8, () => `⚠ ${props.notice()}`);
-				effect((_$p) => setProp(_el$8, "fg", props.warn ?? props.muted, _$p));
-				return _el$8;
+				var _el$9 = createElement("text");
+				insert(_el$9, (() => {
+					var _c$ = memo(() => !!props.notice()?.startsWith("saved"));
+					return () => _c$() ? props.notice() : `⚠ ${props.notice()}`;
+				})());
+				effect((_$p) => setProp(_el$9, "fg", props.notice()?.startsWith("saved") ? props.muted : props.warn ?? props.muted, _$p));
+				return _el$9;
 			}
-		}), _el$9);
-		insert(_el$9, (() => {
-			var _c$ = memo(() => !!draftDirty(props.draft()));
-			return () => _c$() ? `● unsaved (${draftCount(props.draft())}) — ctrl+s save · ctrl+r reset page` : "no staged changes";
+		}), _el$0);
+		insert(_el$0, (() => {
+			var _c$2 = memo(() => !!draftDirty(props.draft()));
+			return () => _c$2() ? `● unsaved (${draftCount(props.draft())}) — ctrl+s save · ctrl+r reset page` : "no staged changes";
 		})());
-		insertNode(_el$0, createTextNode(`1-9 tab · ←/→ change value · enter apply · tab next tab · ctrl+s save · ctrl+r reset page · esc/q close`));
+		insertNode(_el$1, createTextNode(`1-9 tab · ←/→ change value · enter apply · tab next tab · ctrl+s save · ctrl+r reset page · esc/q close`));
 		effect((_p$) => {
 			var _v$ = props.fg, _v$2 = props.muted, _v$3 = props.muted, _v$4 = draftDirty(props.draft()) ? props.warn ?? props.fg : props.muted, _v$5 = props.muted;
 			_v$ !== _p$.e && (_p$.e = setProp(_el$3, "fg", _v$, _p$.e));
-			_v$2 !== _p$.t && (_p$.t = setProp(_el$4, "fg", _v$2, _p$.t));
-			_v$3 !== _p$.a && (_p$.a = setProp(_el$6, "fg", _v$3, _p$.a));
-			_v$4 !== _p$.o && (_p$.o = setProp(_el$9, "fg", _v$4, _p$.o));
-			_v$5 !== _p$.i && (_p$.i = setProp(_el$0, "fg", _v$5, _p$.i));
+			_v$2 !== _p$.t && (_p$.t = setProp(_el$5, "fg", _v$2, _p$.t));
+			_v$3 !== _p$.a && (_p$.a = setProp(_el$7, "fg", _v$3, _p$.a));
+			_v$4 !== _p$.o && (_p$.o = setProp(_el$0, "fg", _v$4, _p$.o));
+			_v$5 !== _p$.i && (_p$.i = setProp(_el$1, "fg", _v$5, _p$.i));
 			return _p$;
 		}, {
 			e: void 0,
@@ -1452,16 +1477,15 @@ function createWindowController(context, exit) {
 		setSelected(0);
 	};
 	const close = () => {
-		if (draftDirty(draft())) {
+		const staged = draftCount(draft());
+		if (staged > 0) {
+			setDraft({});
 			try {
-				Promise.resolve(context.ui.dialog.confirm({
-					title: "Pantheon settings",
-					message: "Discard unsaved settings changes?"
-				})).then((confirmed) => {
-					if (confirmed === true) exit();
+				context.ui.toast?.show?.({
+					variant: "info",
+					message: `settings: ${staged} staged change${staged === 1 ? "" : "s"} discarded`
 				});
 			} catch {}
-			return;
 		}
 		exit();
 	};
@@ -1501,6 +1525,10 @@ function SettingsPage(props) {
 	const controller = createWindowController(context, () => navigateBack(context, returnRoute !== void 0 ? { returnRoute } : {}));
 	const theme = context.theme?.text ?? {};
 	const warn = theme?.feedback?.warning?.base ?? theme.muted;
+	try {
+		const popMode = context.keymap?.mode?.push?.(ROUTE_MODE);
+		if (popMode !== void 0) onCleanup(() => popMode());
+	} catch {}
 	onCleanup(controller.cleanup);
 	setBlocking(true);
 	pageApi = controller.api;
@@ -1534,7 +1562,12 @@ function SettingsPage(props) {
 }
 function navigateBack(context, data) {
 	try {
-		context.ui.router.navigate(data?.returnRoute ?? { type: "home" });
+		const destination = data?.returnRoute ?? { type: "home" };
+		context.ui.toast?.show?.({
+			variant: "info",
+			message: `settings: navigating ${JSON.stringify(destination)}`
+		});
+		context.ui.router.navigate(destination);
 	} catch {}
 }
 const [dialogOpen, setDialogOpen] = createSignal(false);
@@ -1617,7 +1650,22 @@ function setupPantheonSettings(context) {
 			title: "Close settings",
 			bind: "escape,q",
 			run: () => {
-				pageApi?.close();
+				try {
+					context.ui.toast?.show?.({
+						variant: "info",
+						message: "settings: close command fired"
+					});
+				} catch {}
+				if (pageApi === void 0) {
+					try {
+						context.ui.toast?.show?.({
+							variant: "warning",
+							message: "settings: no window controller bound"
+						});
+					} catch {}
+					return;
+				}
+				pageApi.close();
 			}
 		},
 		{
@@ -1695,7 +1743,7 @@ function setupPantheonSettings(context) {
 	];
 	try {
 		context.keymap.layer(() => ({
-			mode: "global",
+			mode: ROUTE_MODE,
 			priority: 1,
 			enabled: () => routeGated(),
 			commands
@@ -1716,7 +1764,7 @@ async function openPantheonSettings(context) {
 			let returnRoute;
 			try {
 				const current = context.ui.router.current();
-				if (!(current.type === "plugin" && current.name === "pantheon-settings")) returnRoute = current;
+				if (!(current.type === "plugin" && current.name === "pantheon-settings")) returnRoute = plainRoute(current);
 			} catch {
 				returnRoute = void 0;
 			}

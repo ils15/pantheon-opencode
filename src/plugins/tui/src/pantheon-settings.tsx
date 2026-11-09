@@ -79,11 +79,32 @@ import {
 
 export const ROUTE_NAME = 'pantheon-settings'
 
+/** The input mode the page pushes while mounted (composer layers sleep). */
+export const ROUTE_MODE = 'pantheon-settings'
+
 /** Loose local shape of a host route (the real Route lives in the host typings). */
 type WindowRoute =
   | { type: 'home' }
   | { type: 'session'; sessionID: string }
   | { type: 'plugin'; name: string; data?: Record<string, unknown> }
+
+/**
+ * Strip a LIVE route object down to the plain shape the route store expects.
+ * `router.current()` returns the host's live data (reactive proxies, location
+ * objects with cycles) and the host's navigate deep-clones via JSON.stringify
+ * — passing the live object through throws "cyclic structures" and the
+ * window could never close (field report beta.5, root cause).
+ */
+function plainRoute(route: WindowRoute | undefined): WindowRoute {
+  if (route === undefined) return { type: 'home' }
+  if (route.type === 'session' && 'sessionID' in route && typeof route.sessionID === 'string') {
+    return { type: 'session', sessionID: route.sessionID }
+  }
+  if (route.type === 'plugin' && typeof route.name === 'string') {
+    return { type: 'plugin', name: route.name }
+  }
+  return { type: 'home' }
+}
 
 // ── Shared blocking state (the dispatch panel gates on this) ───────────
 
@@ -172,9 +193,16 @@ function persistUpdateCheckState(previous: UpdateCheckState, latest: string | nu
 }
 
 function resolveRunningVersion(): string {
+  // The tsdown embed (same source the sidebar footer uses) is authoritative —
+  // the naive ../../package.json read breaks in every real layout (the dev
+  // tree and the installed TUI copy both put package.json one level above
+  // dist, not two — field report beta.5: the header showed vunknown).
+  if (typeof __PANTHEON_VERSION__ !== 'undefined' && __PANTHEON_VERSION__ !== '') {
+    return __PANTHEON_VERSION__
+  }
   try {
     const manifest = JSON.parse(
-      readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
+      readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
     ) as { version?: string }
     return manifest.version ?? 'unknown'
   } catch {
@@ -184,7 +212,7 @@ function resolveRunningVersion(): string {
 
 // ── The window view (presentational; both surfaces render it) ──────────
 
-const NAME_WIDTH = 26
+const NAME_WIDTH = 28
 const VALUE_WIDTH = 22
 
 export function SettingsWindow(props: {
@@ -203,12 +231,13 @@ export function SettingsWindow(props: {
   return (
     <box flexDirection="column" paddingLeft={1} paddingRight={1} paddingTop={1}>
       <box flexDirection="row">
-        <text attributes={1} fg={props.fg}>
+        <text flexShrink={0} attributes={1} fg={props.fg}>
           {`Pantheon v${props.version}`}
         </text>
         <For each={props.tabs()}>
           {(t, index) => (
             <text
+              flexShrink={0}
               fg={index() === props.page() ? props.fg : props.muted}
               {...(index() === props.page() ? { attributes: 1 } : {})}
             >
@@ -216,7 +245,10 @@ export function SettingsWindow(props: {
             </text>
           )}
         </For>
-        <text fg={props.muted}>{'  esc'}</text>
+        <box flexGrow={1} />
+        <text flexShrink={0} fg={props.muted}>
+          {'esc'}
+        </text>
       </box>
       <text fg={props.muted}>{'─'.repeat(72)}</text>
       <For each={tab().groups}>
@@ -263,7 +295,9 @@ export function SettingsWindow(props: {
         )}
       </For>
       <Show when={props.notice() !== undefined}>
-        <text fg={props.warn ?? props.muted}>{`⚠ ${props.notice()}`}</text>
+        <text fg={props.notice()?.startsWith('saved') ? props.muted : (props.warn ?? props.muted)}>
+          {props.notice()?.startsWith('saved') ? props.notice() : `⚠ ${props.notice()}`}
+        </text>
       </Show>
       <text fg={draftDirty(props.draft()) ? (props.warn ?? props.fg) : props.muted}>
         {draftDirty(props.draft())
@@ -486,20 +520,21 @@ function createWindowController(
   }
 
   const close = () => {
-    if (draftDirty(draft())) {
+    // A dialog.confirm here would render in the home/session view chrome,
+    // which a full-screen ROUTE page replaces — an invisible prompt that
+    // pends forever (field report beta.5: esc "did nothing" with staged
+    // changes). Close always exits; discarding is announced, never asked.
+    const staged = draftCount(draft())
+    if (staged > 0) {
+      setDraft({})
       try {
-        void Promise.resolve(
-          context.ui.dialog.confirm({
-            title: 'Pantheon settings',
-            message: 'Discard unsaved settings changes?',
-          }),
-        ).then((confirmed) => {
-          if (confirmed === true) exit()
+        context.ui.toast?.show?.({
+          variant: 'info',
+          message: `settings: ${staged} staged change${staged === 1 ? '' : 's'} discarded`,
         })
       } catch {
-        /* confirm unavailable — stay open; the user can ctrl+r first */
+        /* toast unavailable */
       }
-      return
     }
     exit()
   }
@@ -548,6 +583,17 @@ function SettingsPage(props: { context: Context; data: Record<string, any> | und
   )
   const theme = context.theme?.text ?? {}
   const warn = (theme?.feedback as any)?.warning?.base ?? theme.muted
+  // The page owns the keyboard while mounted: push an input MODE so the
+  // composer's base-mode layers sleep (they eat escape and plain letters —
+  // the host's own menus push a mode for exactly this). The page layer is
+  // scoped to this mode; cleanup pops it.
+  try {
+    const popMode = context.keymap?.mode?.push?.(ROUTE_MODE)
+    if (popMode !== undefined) onCleanup(() => popMode())
+  } catch {
+    /* mode API unavailable — composer layers stay active; keys still fall
+       through to the mode-less fallback layer below */
+  }
   onCleanup(controller.cleanup)
   setBlocking(true)
   pageApi = controller.api
@@ -569,9 +615,14 @@ function SettingsPage(props: { context: Context; data: Record<string, any> | und
 function navigateBack(context: Context, data?: { returnRoute?: WindowRoute }): void {
   try {
     const fallback: WindowRoute = { type: 'home' }
-    context.ui.router.navigate(data?.returnRoute ?? fallback)
+    const destination = data?.returnRoute ?? fallback
+    context.ui.toast?.show?.({
+      variant: 'info',
+      message: `settings: navigating ${JSON.stringify(destination)}`,
+    })
+    context.ui.router.navigate(destination)
   } catch {
-    /* router unavailable — nothing to navigate back to */
+    /* router unavailable — the failure is observable only as a stuck page */
   }
 }
 
@@ -654,7 +705,21 @@ export function setupPantheonSettings(context: Context): void {
       title: 'Close settings',
       bind: 'escape,q',
       run: () => {
-        pageApi?.close()
+        try {
+          context.ui.toast?.show?.({ variant: 'info', message: 'settings: close command fired' })
+        } catch {}
+        if (pageApi === undefined) {
+          try {
+            context.ui.toast?.show?.({
+              variant: 'warning',
+              message: 'settings: no window controller bound',
+            })
+          } catch {
+            /* toast unavailable */
+          }
+          return undefined
+        }
+        pageApi.close()
         return undefined
       },
     },
@@ -740,11 +805,14 @@ export function setupPantheonSettings(context: Context): void {
       },
     })),
   ]
-  // The PAGE layer: gated on the route, priority 1 beats any stale
-  // same-bind layer while the window is open (beta.2 field report).
+  // The PAGE layer: scoped to the mode the page pushes while mounted, so the
+  // composer's base-mode layers sleep and escape/q reach the close command
+  // (field report beta.5: a global layer on a route lost escape/q to the
+  // composer — the host's own menus push a mode for exactly this). The
+  // route gate stays as a belt-and-suspenders against stale modes.
   try {
     context.keymap.layer(() => ({
-      mode: 'global' as const,
+      mode: ROUTE_MODE,
       priority: 1,
       enabled: () => routeGated(),
       commands,
@@ -773,9 +841,10 @@ export async function openPantheonSettings(context: Context): Promise<void> {
       let returnRoute: WindowRoute | undefined
       try {
         const current = context.ui.router.current()
-        // Never return INTO the settings page itself.
+        // Never return INTO the settings page itself; always pass a PLAIN
+        // route (see plainRoute — live objects are cyclic).
         if (!(current.type === 'plugin' && current.name === ROUTE_NAME)) {
-          returnRoute = current as WindowRoute
+          returnRoute = plainRoute(current as WindowRoute)
         }
       } catch {
         returnRoute = undefined
