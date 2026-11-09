@@ -69,20 +69,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      Canonical sections (docs/RELEASING.md): ### 🆕 What's New (curated highlights, ≤6 bullets ≤140 chars) →
      ### Added / Changed / Deprecated / Removed / Fixed / Security → ### ⚠️ Known Issues / ### ✅ Closed Issues.
      `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
-     Running apply will move this section to a versioned entry and reset the template below. -->
 
 ## [v2.0.0-beta.5] - 2026-11-09
 
 ### Added
 
-- **tui** — the settings window gains a **TUI tab**: personalize the sidebar header lines, sidebar blocks (context/git/todo/dispatch), the Context block's detail rows, the gauge style (`both/bar/percent/off`), and the two Pantheon footer lines — persisted in the host's durable per-plugin storage, applied live on save, durable across TUI restarts
+- **tui** — settings gains a **TUI** tab: sidebar header lines/blocks, Context detail rows, gauge style (`both/bar/percent/off`), footer lines — durable storage, live on save
 
 ### Changed
 
-- **install** — the interactive wizard is removed: a TTY `init` is banner → per-file plan preview → ONE authorization (default no). What the wizard asked lives in `/pantheon-settings` or explicit flags (`--components`, `--project`, `--decision-model`); the install-state also stops resetting an existing `decision_router` record on every run
+- **install** — the interactive wizard is removed: a TTY `init` is banner → preview → ONE authorization (default no); runtime config lives in `/pantheon-settings` or explicit flags
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 ## [v2.0.0-beta.4] - 2026-11-09
 
 ### Added
@@ -94,19 +91,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **tui** — settings navigation no longer loses keys to the dispatch panel: the settings keymap layers register once at setup with priority 1, and the dispatch panel's layer sleeps while a Pantheon settings surface is open (the beta.2 "navigation stopped working" field report, diagnosed from the host binary's conflict-resolution order)
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 ## [v2.0.0-beta.3] - 2026-11-09
 
 ### Fixed
 
 - **update** — the global-install guard refused npm's own symlinked bin layout: `prefix/bin/pantheon-opencode` is a symlink into the package, so `pantheon-opencode update` answered the checkout refusal on every symlink-creating install. The running side follows links now; `npm link` stays refused (the installed entry itself must be a regular directory).
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 
  Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 ## [v2.0.0-beta.2] - 2026-11-09
 
 ### Added
@@ -127,8 +119,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **tui** — the settings window is closable again: `dialog.clear()` inside the host's dismissal path re-entered the dialog stack and left the window permanent (beta.1 field report)
 - **tui** — overrides state guards: a corrupt global overrides file refuses writes instead of silently dropping the other entries on the next toggle; `replace` entries survive disable (content preserved) and restore on re-enable; project-file entries show a `(project)` marker and are not togglable from the window
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 ## [v2.0.0-beta.1] - 2026-11-08
 
 ### Added
@@ -458,8 +448,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **routing** — The native Jev route no longer consults the host chat catalog. Decision models are not chat models: on a measured 2.2.5 host the catalog carries 561 entries and zero jev models, while the decisions API answers the exact same model ref directly (`jev-1.13-free` -> real answer at $0.00; the paid `jev-1.13` without a Zen workspace -> the host's own 404). The catalog-presence gate was a wrong assumption that sandbox mocks reinforced; route resolution is now config + budget admission, with consent, caps and the host permission assertion unchanged as the safety gates. `ROUTE_UNRESOLVED` and its inner verdicts are gone from the surface. Field-verified end to end: Zeus -> `pantheon_jev_decide` (mode skills) -> real Jev answer, usage reconciled.
 - **routing** — The `decision-router setup-model` checklist no longer tells users to verify the model in the host catalog (it is not there by design).
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 ## [v1.6.2-beta.13] - 2026-11-03
 
 ### Added
@@ -467,24 +455,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **install** — `init` now sweeps stale `pantheon-opencode` copies out of the npm cache's `_npx/` after a successful install (only the package subtree; unrelated packages and the just-installed copy survive). Field evidence: a 1.6.1 npx copy beside the registered 1.6.2-beta.12 made a bare `npx pantheon-opencode doctor` report the registered plugin as outdated, and old copies accumulate forever because npm never prunes them. Removal failures are swallowed and retried by the next init.
 - **routing** — `ROUTE_UNRESOLVED` refusals now carry the inner verdict in `detail` (`MODEL_NOT_IN_CATALOG`, `AMBIGUOUS_MODEL`, `MODEL_NOT_DECISION`): the class alone does not tell whether the configured decision model is absent from the host catalog or present but not decision-typed, and those have different fixes. Field-measured on 2.2.5: a host catalog without the Console Jev model (no OpenCode Console credential) reports `MODEL_NOT_IN_CATALOG`.
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 ## [v1.6.2-beta.12] - 2026-11-03
 
 ### Added
 
 - **routing** — `ROUTE_UNRESOLVED` refusals now carry the inner verdict in `detail` (`MODEL_NOT_IN_CATALOG`, `AMBIGUOUS_MODEL`, `MODEL_NOT_DECISION`): the class alone does not tell whether the configured decision model is absent from the host catalog or present but not decision-typed, and those have different fixes. Field-measured on 2.2.5: a host catalog without the Console Jev model (no OpenCode Console credential) reports `MODEL_NOT_IN_CATALOG`.
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 ## [v1.6.2-beta.11] - 2026-11-03
 
 ### Fixed
 
 - **routing** — `pantheon_jev_decide` now accepts the host's wrapped catalog shape. The 2.2.5 host returns `{ data: [...] }` from `model.list()`, not a bare array; requiring an array turned every real session into `CATALOG_UNAVAILABLE` (field evidence: the sanitized `detail: TypeError` under beta.10 once the receiver binding landed). Same tolerance as the vision surface, which already unwrapped the page object.
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 ## [v1.6.2-beta.10] - 2026-11-03
 
 ### Added
@@ -501,8 +483,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **routing** — The native Jev runtime now invokes host methods with their owning domain as receiver. `model.list()` was called detached from the host object and threw on real sessions, surfacing only as `CATALOG_UNAVAILABLE`; the canary always exercised the bound call and never caught it. `decisions()` and `skill.list()` are bound the same way, with a contract test that fails on any detached call.
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 ## [v1.6.2-beta.9] - 2026-11-02
 
 ### Added
@@ -530,8 +510,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **performance** — The in-process secret scan is gated to exfil-capable tools (shell, file writes, web); read-only tools skip it, unknown names stay scanned (fail-closed).
 - **agents** — Zeus must never ask the user to type terminal commands: terminal work dispatches to a bash-capable specialist.
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 ## [v1.6.2-beta.8] - 2026-11-02
 
 ### Added
@@ -558,8 +536,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **agents** — Zeus routing policy now prefers one typed `pantheon_jev_decide` call for genuinely ambiguous routing and skill stacking, with `pantheon_local_decision` as the offline fallback.
 - **docs** — Documented the skill-discovery loop (find, review, install, decide) and mapped the candidate MCP-gating expansions as deliberately unwired.
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 ## [v1.6.2-beta.6] - 2026-11-01
 
 ### Added
@@ -577,8 +553,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **security** — The budget ledger now treats a host-reported zero cost as a real zero (releasing the hold) while still freezing user/provider/model buckets when actual cost exceeds the reservation.
 - **docs** — Consolidated the decision-status narrative to one source of truth per surface, corrected stale env-var rows (no decision credential is read on any production path), and removed an orphan planning note (the tracked deepwork note stays: it is the checkout fixture the resources server resolves against).
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 ## [v1.6.2-beta.5] - 2026-11-01
 
 ## 🆕 What's New
@@ -619,8 +593,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **routing** — Reusing a cached provider decision does not re-prompt the same permission gate; a different or missing gate is still evaluated and denies fail-closed.
 - **docs** — Clarified that `decision-router holds` performs no reservation, reconciliation, release, or pruning, while opening an existing ledger may apply a forward-only schema migration.
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 ## [v1.6.2-beta.3] - 2026-10-29
 
 ### Changed
@@ -633,8 +605,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **install** — Explicit restore decline exits successfully; missing authorization fails closed, while cancellation exits `130`. Post-write interrupts and runtime failures record the selected target and partial/degraded state.
 - **install** — Migration schema version is tracked separately from the installed package version and remains idempotent across prerelease package versions.
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 ## [v1.6.2-beta.2] - 2026-10-28
 
 ### Added
@@ -646,8 +616,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **quota** — Future-dated usage rows are excluded from rolling windows and Total.
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 ## [v1.6.2-beta.1] - 2026-10-27
 
 ### Changed
@@ -662,8 +630,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **plugin** — Removed ambient V2 memory injection and its debug environment variable; the legacy `memory_injection` option is ignored if preserved in an existing config.
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 ## [v1.6.1] - 2026-10-24
 
 ### Added
@@ -808,8 +774,6 @@ Pre-release history (1.6.0-beta.*) is archived in [docs/internal/changelog-prere
 
 ## [v1.5.0-beta.20] - 2026-09-16
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 
 ## Fixed
 
@@ -819,8 +783,6 @@ Pre-release history (1.6.0-beta.*) is archived in [docs/internal/changelog-prere
   o TUI agora detecta e marca como done.
 ## [v1.5.0-beta.19] - 2026-09-16
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 
 ## Added
 
@@ -833,8 +795,6 @@ Pre-release history (1.6.0-beta.*) is archived in [docs/internal/changelog-prere
   "travado".
 ## [v1.5.0-beta.18] - 2026-09-16
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 
 ## Fixed
 
@@ -853,8 +813,6 @@ Pre-release history (1.6.0-beta.*) is archived in [docs/internal/changelog-prere
 
 ## [v1.5.0-beta.17] - 2026-09-15
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 
 ## Added
 
@@ -881,8 +839,6 @@ Pre-release history (1.6.0-beta.*) is archived in [docs/internal/changelog-prere
 
 ## [v1.5.0-beta.16] - 2026-09-15
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 
 ## Added
 
@@ -908,8 +864,6 @@ Pre-release history (1.6.0-beta.*) is archived in [docs/internal/changelog-prere
 
 ## [v1.5.0-beta.15] - 2026-09-15
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 
 ## Added
 
@@ -946,8 +900,6 @@ Pre-release history (1.6.0-beta.*) is archived in [docs/internal/changelog-prere
 
 ## [v1.5.0-beta.14] - 2026-09-14
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 
 ## Added
 
@@ -967,8 +919,6 @@ Pre-release history (1.6.0-beta.*) is archived in [docs/internal/changelog-prere
   recebem um aviso visual de stale no painel.
 ## [v1.5.0-beta.13] - 2026-09-14
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 
 ## Added
 
@@ -998,8 +948,6 @@ Pre-release history (1.6.0-beta.*) is archived in [docs/internal/changelog-prere
   `parentSessionID` vazio não sobrescreve mais a sessão já atribuída à linha.
 ## [v1.5.0-beta.12] - 2026-09-14
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 
 ## Added
 
@@ -1014,8 +962,6 @@ Pre-release history (1.6.0-beta.*) is archived in [docs/internal/changelog-prere
   117/117 passando, cobrindo board-read, split ativo/recente e toggle de escopo.
 ## [v1.5.0-beta.11] - 2026-09-14
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 
 ## Added
 
@@ -1042,8 +988,6 @@ Pre-release history (1.6.0-beta.*) is archived in [docs/internal/changelog-prere
   `next` obsoleto da linha de publicação.
 ## [v1.5.0-beta.10] - 2026-09-14
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 
 ## Added
 
@@ -1080,7 +1024,6 @@ Pre-release history (1.6.0-beta.*) is archived in [docs/internal/changelog-prere
 ## [v1.5.0-beta.9] - 2026-09-14
 
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. -->
 
 ## Added
 
@@ -1096,7 +1039,6 @@ Pre-release history (1.6.0-beta.*) is archived in [docs/internal/changelog-prere
 ## [v1.5.0-beta.8] - 2026-09-13
 
 <!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. -->
 
 ## Fixed
 
@@ -1127,8 +1069,6 @@ Pre-release history (1.6.0-beta.*) is archived in [docs/internal/changelog-prere
 
 ## [v1.5.0-beta.7] - 2026-09-13
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 
 ## Added
 
@@ -1172,8 +1112,6 @@ Pre-release history (1.6.0-beta.*) is archived in [docs/internal/changelog-prere
   logged and skipped instead of aborting the rest of the event handler.
 ## [v1.5.0-beta.6] - 2026-09-12
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 
 ## Added
 
@@ -1197,8 +1135,6 @@ Pre-release history (1.6.0-beta.*) is archived in [docs/internal/changelog-prere
   the installed TUI copy.
 ## [v1.5.0-beta.5] - 2026-09-12
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 
 ## Added
 
@@ -1233,8 +1169,6 @@ Pre-release history (1.6.0-beta.*) is archived in [docs/internal/changelog-prere
   script membership, and SHA-256 hashes without regenerating the manifest.
 ## [v1.5.0-beta.4] - 2026-09-11
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 
 ## Added
 
@@ -1261,8 +1195,6 @@ Pre-release history (1.6.0-beta.*) is archived in [docs/internal/changelog-prere
   message so the parent sees a failure. (`task-result-guard.ts`)
 ## [v1.5.0-beta.3] - 2026-09-10
 
-&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
-     move this section to a versioned entry and reset the template below. --&gt;
 
 ### Changed
 
