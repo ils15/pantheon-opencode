@@ -79,7 +79,6 @@ import {
 
 export const ROUTE_NAME = 'pantheon-settings'
 
-
 /** The input mode the page pushes while mounted (composer layers sleep). */
 export const ROUTE_MODE = 'pantheon-settings'
 
@@ -617,11 +616,13 @@ function navigateBack(context: Context, data?: { returnRoute?: WindowRoute }): v
   try {
     const fallback: WindowRoute = { type: 'home' }
     const destination = data?.returnRoute ?? fallback
-    context.ui.toast?.show?.({ variant: 'info', message: `settings: navigating ${JSON.stringify(destination)}` })
+    context.ui.toast?.show?.({
+      variant: 'info',
+      message: `settings: navigating ${JSON.stringify(destination)}`,
+    })
     context.ui.router.navigate(destination)
     context.ui.toast?.show?.({ variant: 'info', message: 'settings: navigate returned' })
-  } catch (error) {
-  }
+  } catch (error) {}
 }
 
 // ── The fallback dialog (hosts without a router) ───────────────────────
