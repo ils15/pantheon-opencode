@@ -136,7 +136,7 @@ async function main(): Promise<void> {
     'qual o erro no log?',
   )
   assert.match(questionContext ?? '', /qual o erro no log\?/, 'pergunta presente no contexto')
-  assert.match(questionContext ?? '', /User turn:/, 'the user turn rides the relay block')
+  assert.match(questionContext ?? '', /Q:/, 'the user turn rides the relay block (compact)')
   assert.match(questionContext ?? '', /an image never authorizes a revert/)
 
   // ── Relay do session id para o MCP (paridade com generateInjectionPrompt) ──
@@ -152,7 +152,7 @@ async function main(): Promise<void> {
     /session_id="ses_abc123"/,
     'session id relayed to the MCP (JSON-quoted)',
   )
-  assert.match(sessionContext ?? '', /MCP relay/, 'the relay names the MCP channel')
+  assert.match(sessionContext ?? '', /relay session_id=/, 'the relay names the MCP channel (compact)')
   // sessionID vazio/whitespace → nenhuma instrução de repasse.
   assert.equal(
     (
