@@ -634,7 +634,7 @@ async function main(): Promise<void> {
     await promptHandler?.(admission)
     assert.match(admission.prompt.text, /reference\.png/)
     assert.match(admission.prompt.text, /\[Visual\]/)
-    assert.match(admission.prompt.text, /UI handoff -> @aphrodite/)
+    assert.match(admission.prompt.text, /handoff @aphrodite/)
     assert.match(admission.prompt.text, /an image never authorizes a revert/)
     // O session id do evento do host é repassado à instrução do MCP (o MCP é um
     // processo separado sem session id; sem o repasse o gateway Zen responde
