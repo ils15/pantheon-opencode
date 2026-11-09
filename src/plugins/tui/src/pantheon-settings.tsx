@@ -22,6 +22,7 @@ import {
   setDecisionEnabled,
   writeDecisionRouterConfig,
 } from './decision-router-state.ts'
+import { buildDoctorSection } from './doctor-state.ts'
 import { buildJ1Section } from './j1-gate-status.ts'
 import {
   buildAboutSection,
@@ -236,6 +237,11 @@ export async function maybeShowPantheonSettings(context: Context): Promise<void>
       buildPresetSection(presetInput()),
       buildJ1Section(process.env, isBehaviorDisabled(mergedOverrides(load()), 'gate-j1-risk-gate')),
       buildUpdatesSection(updatesInput()),
+      buildDoctorSection({
+        runningVersion: currentVersion,
+        nodeVersion: process.versions.node,
+        load: load(),
+      }),
       buildAboutSection(currentVersion),
     ]
     const [selectedId, setSelectedId] = createSignal<string | undefined>(

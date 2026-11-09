@@ -230,70 +230,6 @@ function buildDecisionSection(read) {
 	};
 }
 //#endregion
-//#region src/j1-gate-status.ts
-const J1_FLAG_ENV = "PANTHEON_J1_RISK_SCORE";
-const J1_THRESHOLD_ENV = "PANTHEON_J1_ENFORCE_THRESHOLD";
-const J1_THRESHOLD_DEFAULT = .8;
-/** `1`/`on`/`true` map to `shadow` for back-compatibility with the shipped setup. */
-const FLAG_ON = /* @__PURE__ */ new Set([
-	"1",
-	"on",
-	"true",
-	"shadow"
-]);
-function j1ModeFromEnv(env = process.env) {
-	const raw = (env["PANTHEON_J1_RISK_SCORE"] ?? "").trim().toLowerCase();
-	if (raw === "enforce") return "enforce";
-	if (raw === "warn") return "warn";
-	return FLAG_ON.has(raw) ? "shadow" : "off";
-}
-/** Invalid or out-of-range values fall back to the default — a typo must not disable the gate. */
-function j1ThresholdFromEnv(env = process.env) {
-	const text = (env["PANTHEON_J1_ENFORCE_THRESHOLD"] ?? "").trim();
-	if (text === "") return J1_THRESHOLD_DEFAULT;
-	const raw = Number(text);
-	if (!Number.isFinite(raw) || raw < 0 || raw > 1) return J1_THRESHOLD_DEFAULT;
-	return raw;
-}
-const MODE_DESCRIPTION = {
-	off: "nothing fires (hard zero)",
-	shadow: "observe + record; invisible in the session",
-	warn: "RESERVED — behaves as shadow in this release",
-	enforce: "high-risk scores DENY the tool call (fail-open on gate unavailability)"
-};
-function buildJ1Section(env, disabledByOverride) {
-	const mode = j1ModeFromEnv(env);
-	const threshold = j1ThresholdFromEnv(env);
-	const gateState = disabledByOverride ? "disabled via overrides" : mode === "off" ? "off (env unset)" : "active";
-	const rows = [
-		{
-			id: "j1.mode",
-			title: `Mode: ${mode}`,
-			description: MODE_DESCRIPTION[mode],
-			...disabledByOverride ? { marker: "[!]" } : {},
-			selectable: false
-		},
-		{
-			id: "j1.threshold",
-			title: `Enforce threshold: ${threshold}`,
-			description: "deny at or above; 0..1, default 0.8",
-			selectable: false
-		},
-		{
-			id: "j1.gate",
-			title: `Gate: ${gateState}`,
-			description: "the runtime plugin reads this once at startup",
-			selectable: false
-		}
-	];
-	return {
-		id: "j1",
-		title: "J1 Risk Gate",
-		hint: `set ${J1_FLAG_ENV} / ${J1_THRESHOLD_ENV} — restart applies`,
-		rows
-	};
-}
-//#endregion
 //#region src/pantheon-settings-state.ts
 /** Mirrors routing.yml `behaviors:` — drift-pinned by the registry test. */
 const SETTINGS_BEHAVIORS = Object.freeze([
@@ -448,6 +384,265 @@ function buildAboutSection(version) {
 	};
 }
 //#endregion
+//#region src/update-notice.ts
+/**
+* Update notifier core (TUI-local copy — the bundle must stay self-contained,
+* same precedent as cost-data.ts/model-pricing.ts).
+*
+* Pin + notify, never silent auto-update: one notice per newer version,
+* TTL-cached, offline-safe, and a stable install is never advertised a beta
+* (the update guard owns that crossing). docs/design/2.0-settings-and-install.md
+*/
+const UPDATE_CHECK_TTL_MS = 216e5;
+/** Semver-ish compare for X.Y.Z[-beta.N]; betas sort before their release. */
+function comparePantheonVersions(left, right) {
+	const parse = (version) => {
+		const match = String(version).trim().match(/^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/);
+		if (!match) return null;
+		const [, major = "", minor = "", patch = "", beta = ""] = match;
+		return {
+			core: [
+				+major,
+				+minor,
+				+patch
+			],
+			beta: beta === "" ? Number.POSITIVE_INFINITY : +beta
+		};
+	};
+	const a = parse(left);
+	const b = parse(right);
+	if (!a || !b) return 0;
+	const [aMajor, aMinor, aPatch] = a.core;
+	const [bMajor, bMinor, bPatch] = b.core;
+	if (aMajor !== bMajor) return aMajor - bMajor;
+	if (aMinor !== bMinor) return aMinor - bMinor;
+	if (aPatch !== bPatch) return aPatch - bPatch;
+	return a.beta - b.beta;
+}
+function pickUpdateNotice(input) {
+	const { currentVersion, latestVersion, state = {}, nowMs = Date.now() } = input;
+	const ttlMs = input.ttlMs ?? 216e5;
+	if (nowMs - (state.lastCheckMs ?? 0) < ttlMs) return null;
+	if (state.lastNotifiedVersion === latestVersion) return null;
+	const stable = (version) => !/-beta\.\d+$/.test(version);
+	if (stable(currentVersion) && !stable(latestVersion)) return null;
+	if (comparePantheonVersions(latestVersion, currentVersion) <= 0) return null;
+	return {
+		version: latestVersion,
+		message: `pantheon-opencode ${latestVersion} available — changelog in /pantheon-settings, adopt with \`pantheon-opencode update\``
+	};
+}
+/** The state to persist after a check (notified or not) for the TTL. */
+function nextCheckState(previous, notice, nowMs) {
+	const lastNotifiedVersion = notice?.version ?? previous.lastNotifiedVersion;
+	return {
+		lastCheckMs: nowMs,
+		...lastNotifiedVersion !== void 0 ? { lastNotifiedVersion } : {}
+	};
+}
+//#endregion
+//#region src/doctor-state.ts
+/**
+* doctor-state.ts — the Doctor section of the settings window (read-only).
+*
+* TUI-local replica (the bundle must stay self-contained — the installed copy
+* physically lacks the repo tree, so doctor.mjs itself is unreachable). Only
+* the FILE-DERIVABLE checks are mirrored here; everything that spawns
+* processes, reads the network, or writes (MCP smoke, python validators, git,
+* venv pins, --fix quarantines) stays in the CLI and the section says so.
+*
+* The install-state path mirrors doctor's checkInstallVersionDrift
+* (`<config>/opencode/.pantheon/install-state.json`); the Node floor is
+* drift-pinned against scripts/node-engine-policy.mjs by
+* tests/tui-doctor-state.test.mjs.
+*/
+/** Drift-pinned against scripts/node-engine-policy.mjs MIN_SUPPORTED_NODE_VERSION. */
+const MIN_SUPPORTED_NODE_VERSION = "26.4.0";
+function opencodePantheonDir(env = process.env) {
+	const xdg = env.XDG_CONFIG_HOME;
+	const home = env.HOME ?? "";
+	const root = xdg ?? join(home, ".config");
+	return join(root, "opencode", ".pantheon");
+}
+/**
+* H2: the installed package version (install-state) vs the running one.
+* Fail-open: a missing/unreadable state file means "unknown", not a failure —
+* pre-2.0 installs may not have one.
+*/
+function classifyInstallVersion(runningVersion, env = process.env) {
+	let installed = null;
+	try {
+		const path = join(opencodePantheonDir(env), "install-state.json");
+		const raw = JSON.parse(readFileSync(path, "utf8"));
+		if (typeof raw?.pantheon_version === "string" && raw.pantheon_version !== "") installed = raw.pantheon_version;
+	} catch {
+		installed = null;
+	}
+	if (installed === null) return {
+		status: "unknown",
+		installed: null
+	};
+	const compared = comparePantheonVersions(installed, runningVersion);
+	if (compared === 0) return {
+		status: "ok",
+		installed
+	};
+	return {
+		status: compared < 0 ? "older" : "newer",
+		installed
+	};
+}
+function isSupportedNodeFloor(version) {
+	const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-([^+]+))?(?:\+([\w.-]+))?$/.exec(String(version));
+	const minimum = /^v?(\d+)\.(\d+)\.(\d+)/.exec(MIN_SUPPORTED_NODE_VERSION);
+	if (!match || !minimum) return false;
+	const [, major = "", minor = "", patch = "", prerelease = ""] = match;
+	if (prerelease !== "") return false;
+	const [, minMajor = "0", minMinor = "0", minPatch = "0"] = minimum;
+	const currentParts = [
+		+major,
+		+minor,
+		+patch
+	];
+	const minimumParts = [
+		+minMajor,
+		+minMinor,
+		+minPatch
+	];
+	for (let index = 0; index < 3; index += 1) {
+		const currentPart = currentParts[index] ?? 0;
+		const minimumPart = minimumParts[index] ?? 0;
+		if (currentPart !== minimumPart) return currentPart > minimumPart;
+	}
+	return true;
+}
+/** K: validate both overrides files against the window's registry. */
+function classifyOverridesHealth(load) {
+	if (load.corruptGlobal) return {
+		status: "corrupt",
+		unknownIds: []
+	};
+	const known = new Set(SETTINGS_BEHAVIORS.map((behavior) => behavior.id));
+	const unknownIds = Object.keys({
+		...load.global,
+		...load.project
+	}).filter((id) => !known.has(id));
+	return {
+		status: unknownIds.length > 0 ? "unknown-ids" : "clean",
+		unknownIds
+	};
+}
+function classifyDecisionConfigHealth(env = process.env) {
+	if (!existsSync(join(env.XDG_CONFIG_HOME ?? join(env.HOME ?? "", ".config"), "pantheon", "decision-router.json"))) return { status: "absent" };
+	return readDecisionRouterConfig(env).corrupt ? { status: "corrupt" } : { status: "ok" };
+}
+function buildDoctorSection(input) {
+	const env = input.env ?? process.env;
+	const rows = [];
+	const version = classifyInstallVersion(input.runningVersion, env);
+	rows.push({
+		id: "doctor.version",
+		title: version.status === "ok" ? `Installed version: v${version.installed} — matches` : version.status === "older" ? `Installed v${version.installed} is older than the runtime v${input.runningVersion}` : version.status === "newer" ? `Installed v${version.installed} is newer than the runtime v${input.runningVersion}` : "Installed version: unknown (no install-state)",
+		description: version.status === "older" ? "refresh with `pantheon-opencode update`" : "read from <config>/opencode/.pantheon/install-state.json",
+		marker: version.status === "ok" ? "[✓]" : version.status === "older" ? "[!]" : "[i]",
+		selectable: false
+	});
+	const nodeOk = isSupportedNodeFloor(input.nodeVersion);
+	rows.push({
+		id: "doctor.node",
+		title: `Node runtime: ${input.nodeVersion.replace(/^v/, "")}`,
+		description: nodeOk ? `meets the >= ${MIN_SUPPORTED_NODE_VERSION} floor` : `below the >= ${MIN_SUPPORTED_NODE_VERSION} floor — tooling may refuse`,
+		marker: nodeOk ? "[✓]" : "[!]",
+		selectable: false
+	});
+	const overrides = classifyOverridesHealth(input.load);
+	rows.push({
+		id: "doctor.overrides",
+		title: overrides.status === "clean" ? "Overrides: valid" : overrides.status === "corrupt" ? "Overrides: global file unreadable" : `Overrides: ${overrides.unknownIds.length} unknown id(s)`,
+		description: overrides.status === "unknown-ids" ? `${overrides.unknownIds.join(", ")} — harmless; repair with doctor --fix` : overrides.status === "corrupt" ? "writes are refused until repaired (doctor --fix)" : "both files parse against the behavior registry",
+		marker: overrides.status === "clean" ? "[✓]" : overrides.status === "corrupt" ? "[✗]" : "[!]",
+		selectable: false
+	});
+	const decision = classifyDecisionConfigHealth(env);
+	rows.push({
+		id: "doctor.decision",
+		title: decision.status === "ok" ? "Decision config: valid" : decision.status === "corrupt" ? "Decision config: unreadable — runtime fail-closes" : "Decision config: absent (local defaults)",
+		description: "read from <config>/pantheon/decision-router.json",
+		marker: decision.status === "corrupt" ? "[✗]" : "[✓]",
+		selectable: false
+	});
+	return {
+		id: "doctor",
+		title: "Doctor",
+		rows,
+		hint: "file checks only — the full doctor (MCP smoke, venv, git) is `pantheon-opencode doctor`"
+	};
+}
+//#endregion
+//#region src/j1-gate-status.ts
+const J1_FLAG_ENV = "PANTHEON_J1_RISK_SCORE";
+const J1_THRESHOLD_ENV = "PANTHEON_J1_ENFORCE_THRESHOLD";
+const J1_THRESHOLD_DEFAULT = .8;
+/** `1`/`on`/`true` map to `shadow` for back-compatibility with the shipped setup. */
+const FLAG_ON = /* @__PURE__ */ new Set([
+	"1",
+	"on",
+	"true",
+	"shadow"
+]);
+function j1ModeFromEnv(env = process.env) {
+	const raw = (env["PANTHEON_J1_RISK_SCORE"] ?? "").trim().toLowerCase();
+	if (raw === "enforce") return "enforce";
+	if (raw === "warn") return "warn";
+	return FLAG_ON.has(raw) ? "shadow" : "off";
+}
+/** Invalid or out-of-range values fall back to the default — a typo must not disable the gate. */
+function j1ThresholdFromEnv(env = process.env) {
+	const text = (env["PANTHEON_J1_ENFORCE_THRESHOLD"] ?? "").trim();
+	if (text === "") return J1_THRESHOLD_DEFAULT;
+	const raw = Number(text);
+	if (!Number.isFinite(raw) || raw < 0 || raw > 1) return J1_THRESHOLD_DEFAULT;
+	return raw;
+}
+const MODE_DESCRIPTION = {
+	off: "nothing fires (hard zero)",
+	shadow: "observe + record; invisible in the session",
+	warn: "RESERVED — behaves as shadow in this release",
+	enforce: "high-risk scores DENY the tool call (fail-open on gate unavailability)"
+};
+function buildJ1Section(env, disabledByOverride) {
+	const mode = j1ModeFromEnv(env);
+	const threshold = j1ThresholdFromEnv(env);
+	const gateState = disabledByOverride ? "disabled via overrides" : mode === "off" ? "off (env unset)" : "active";
+	const rows = [
+		{
+			id: "j1.mode",
+			title: `Mode: ${mode}`,
+			description: MODE_DESCRIPTION[mode],
+			...disabledByOverride ? { marker: "[!]" } : {},
+			selectable: false
+		},
+		{
+			id: "j1.threshold",
+			title: `Enforce threshold: ${threshold}`,
+			description: "deny at or above; 0..1, default 0.8",
+			selectable: false
+		},
+		{
+			id: "j1.gate",
+			title: `Gate: ${gateState}`,
+			description: "the runtime plugin reads this once at startup",
+			selectable: false
+		}
+	];
+	return {
+		id: "j1",
+		title: "J1 Risk Gate",
+		hint: `set ${J1_FLAG_ENV} / ${J1_THRESHOLD_ENV} — restart applies`,
+		rows
+	};
+}
+//#endregion
 //#region src/preset-state.ts
 /**
 * preset-state.ts — the Model Preset section of the settings window.
@@ -549,63 +744,6 @@ function buildPresetSection(input) {
 		title: "Model Preset",
 		rows,
 		hint: "enter: activate globally · writes <config>/opencode/.pantheon/active-preset.json"
-	};
-}
-//#endregion
-//#region src/update-notice.ts
-/**
-* Update notifier core (TUI-local copy — the bundle must stay self-contained,
-* same precedent as cost-data.ts/model-pricing.ts).
-*
-* Pin + notify, never silent auto-update: one notice per newer version,
-* TTL-cached, offline-safe, and a stable install is never advertised a beta
-* (the update guard owns that crossing). docs/design/2.0-settings-and-install.md
-*/
-const UPDATE_CHECK_TTL_MS = 216e5;
-/** Semver-ish compare for X.Y.Z[-beta.N]; betas sort before their release. */
-function comparePantheonVersions(left, right) {
-	const parse = (version) => {
-		const match = String(version).trim().match(/^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/);
-		if (!match) return null;
-		const [, major = "", minor = "", patch = "", beta = ""] = match;
-		return {
-			core: [
-				+major,
-				+minor,
-				+patch
-			],
-			beta: beta === "" ? Number.POSITIVE_INFINITY : +beta
-		};
-	};
-	const a = parse(left);
-	const b = parse(right);
-	if (!a || !b) return 0;
-	const [aMajor, aMinor, aPatch] = a.core;
-	const [bMajor, bMinor, bPatch] = b.core;
-	if (aMajor !== bMajor) return aMajor - bMajor;
-	if (aMinor !== bMinor) return aMinor - bMinor;
-	if (aPatch !== bPatch) return aPatch - bPatch;
-	return a.beta - b.beta;
-}
-function pickUpdateNotice(input) {
-	const { currentVersion, latestVersion, state = {}, nowMs = Date.now() } = input;
-	const ttlMs = input.ttlMs ?? 216e5;
-	if (nowMs - (state.lastCheckMs ?? 0) < ttlMs) return null;
-	if (state.lastNotifiedVersion === latestVersion) return null;
-	const stable = (version) => !/-beta\.\d+$/.test(version);
-	if (stable(currentVersion) && !stable(latestVersion)) return null;
-	if (comparePantheonVersions(latestVersion, currentVersion) <= 0) return null;
-	return {
-		version: latestVersion,
-		message: `pantheon-opencode ${latestVersion} available — changelog in /pantheon-settings, adopt with \`pantheon-opencode update\``
-	};
-}
-/** The state to persist after a check (notified or not) for the TTL. */
-function nextCheckState(previous, notice, nowMs) {
-	const lastNotifiedVersion = notice?.version ?? previous.lastNotifiedVersion;
-	return {
-		lastCheckMs: nowMs,
-		...lastNotifiedVersion !== void 0 ? { lastNotifiedVersion } : {}
 	};
 }
 //#endregion
@@ -869,6 +1007,11 @@ async function maybeShowPantheonSettings(context) {
 			buildPresetSection(presetInput()),
 			buildJ1Section(process.env, isBehaviorDisabled(mergedOverrides(load()), "gate-j1-risk-gate")),
 			buildUpdatesSection(updatesInput()),
+			buildDoctorSection({
+				runningVersion: currentVersion,
+				nodeVersion: process.versions.node,
+				load: load()
+			}),
 			buildAboutSection(currentVersion)
 		];
 		const [selectedId, setSelectedId] = createSignal(firstSelectableId(sections()));
