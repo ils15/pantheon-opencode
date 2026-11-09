@@ -8,10 +8,7 @@
  */
 
 import type { SettingsRow, SettingsTab } from './pantheon-settings-state.ts'
-import {
-  comparePantheonVersions,
-  type UpdateCheckState,
-} from './update-notice.ts'
+import { comparePantheonVersions, type UpdateCheckState } from './update-notice.ts'
 
 export type UpdateChannel = 'stable' | 'beta'
 
