@@ -36,17 +36,20 @@ export function comparePantheonVersions(left: string, right: string): number {
       .trim()
       .match(/^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/)
     if (!match) return null
+    const [, major = '', minor = '', patch = '', beta = ''] = match
     return {
-      core: [+match[1], +match[2], +match[3]],
-      beta: match[4] === undefined ? Number.POSITIVE_INFINITY : +match[4],
+      core: [+major, +minor, +patch] as [number, number, number],
+      beta: beta === '' ? Number.POSITIVE_INFINITY : +beta,
     }
   }
   const a = parse(left)
   const b = parse(right)
   if (!a || !b) return 0
-  for (let index = 0; index < 3; index += 1) {
-    if (a.core[index] !== b.core[index]) return a.core[index] - b.core[index]
-  }
+  const [aMajor, aMinor, aPatch] = a.core
+  const [bMajor, bMinor, bPatch] = b.core
+  if (aMajor !== bMajor) return aMajor - bMajor
+  if (aMinor !== bMinor) return aMinor - bMinor
+  if (aPatch !== bPatch) return aPatch - bPatch
   return a.beta - b.beta
 }
 
@@ -79,8 +82,9 @@ export function nextCheckState(
   notice: UpdateNotice | null,
   nowMs: number,
 ): UpdateCheckState {
+  const lastNotifiedVersion = notice?.version ?? previous.lastNotifiedVersion
   return {
     lastCheckMs: nowMs,
-    lastNotifiedVersion: notice?.version ?? previous.lastNotifiedVersion,
+    ...(lastNotifiedVersion !== undefined ? { lastNotifiedVersion } : {}),
   }
 }
