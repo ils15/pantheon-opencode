@@ -64,3 +64,4 @@ bench-run-A/
 
 # MCP usage audit reports carry bounded excerpts of local session content — local-only
 bench/results/mcp-usage-audit-*.md
+release-retrofit-backup.json
