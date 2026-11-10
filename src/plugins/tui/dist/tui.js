@@ -2090,12 +2090,7 @@ function SettingsPage(props) {
 }
 function navigateBack(context, data) {
 	try {
-		const destination = data?.returnRoute ?? { type: "home" };
-		context.ui.toast?.show?.({
-			variant: "info",
-			message: `settings: navigating ${JSON.stringify(destination)}`
-		});
-		context.ui.router.navigate(destination);
+		context.ui.router.navigate(data?.returnRoute ?? { type: "home" });
 	} catch {}
 }
 const [dialogOpen, setDialogOpen] = createSignal(false);

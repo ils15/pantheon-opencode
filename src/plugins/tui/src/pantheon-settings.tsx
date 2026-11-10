@@ -890,12 +890,7 @@ function SettingsPage(props: { context: Context; data: Record<string, any> | und
 function navigateBack(context: Context, data?: { returnRoute?: WindowRoute }): void {
   try {
     const fallback: WindowRoute = { type: 'home' }
-    const destination = data?.returnRoute ?? fallback
-    context.ui.toast?.show?.({
-      variant: 'info',
-      message: `settings: navigating ${JSON.stringify(destination)}`,
-    })
-    context.ui.router.navigate(destination)
+    context.ui.router.navigate(data?.returnRoute ?? fallback)
   } catch {
     /* router unavailable — the failure is observable only as a stuck page */
   }
