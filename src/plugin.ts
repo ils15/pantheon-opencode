@@ -138,7 +138,8 @@ import {
   v2ResourceTarget,
 } from './pantheon/delegation-policy.ts'
 import { createV2ExecuteAfter, resolveV2SandboxConfig } from './pantheon/execute-after.ts'
-import { GOAL_LOOP_DEFAULTS, GoalStore } from './pantheon/goal-store.ts'
+import { resolveGoalLoopConfig } from './pantheon/goal-loop-config.ts'
+import { GoalStore } from './pantheon/goal-store.ts'
 import { createGuardPathResolver } from './pantheon/guard-path.ts'
 import { runSecretScanInProcess } from './pantheon/hook-engine.ts'
 import { createJTelemetryMirror } from './pantheon/j-telemetry-file.ts'
@@ -2849,6 +2850,9 @@ export const plugin = define({
               // Observation must never reach the compaction request.
             }
             const prunerConfig = resolveContextPrunerConfig(context.options)
+            // The Goal Loop caps ride the same read: cooldown/continuations
+            // are enforced by the loop mechanics when enabled (goal-store).
+            const goalLoopConfig = resolveGoalLoopConfig(context.options)
             loadRuntimeOverrides()
             if (gateDisabled('gate-context-pruner')) {
               logPruneFailureOnce(
@@ -2875,9 +2879,10 @@ export const plugin = define({
             const blocks = await buildCompactionContext({
               ...(sessionID === undefined ? {} : { sessionID }),
               goals: {
-                // Same gate V1 uses: the goal loop is disabled in this build,
-                // so `<mission_context>` is omitted on both surfaces.
-                enabled: GOAL_LOOP_DEFAULTS.enabled,
+                // Enabled via `options.goal_loop.enabled` (beta.6): the Wave 3
+                // mechanics were hard-disabled by a constant since shipping;
+                // the settings window's Autonomy tab now writes this option.
+                enabled: goalLoopConfig.enabled,
                 list: (id: string) => goalStore.list(id),
               },
               ...(idleEnforcer === undefined

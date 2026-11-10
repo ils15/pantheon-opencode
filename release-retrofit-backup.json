@@ -1,0 +1,512 @@
+[
+  {
+    "body": "## 🆕 What's New\n- **Typed decision router with a real budget**: delegation, skills, ORDER (top-K), rank (≤20), verify (evidence + UNVERIFIABLE band) and review modes — every call budgeted, reconciled, and ~$0.000025 apiece.\n- **J1 risk gate with a ladder**: off / shadow / warn / enforce — high-risk tool calls demand EXPLICIT human approval (hash-pinned, 15-min TTL), never silently executed or bypassed.\n- **agent-forge**: forge a new OpenCode agent on demand — interview, canonical draft, confirm, project/user scope.\n- **Skill discovery with a trust cascade**: canonical Anthropic catalog → skills.sh → raw GitHub, ranked by Jev order; installation stays in YOUR hands.\n- **prompt-refinery in three tiers**: clear requests pass intact; vague ones get a silent internal adjust (≤15 lines); the full contract is `>>`-gated.\n- **The roster modernized**: nyx/chaos restored, agent descriptions aligned to the catalog, PT-BR delegations fed by the agent-scoped fallback.\n- **Local router debt paid**: gate influence (GATE_OPEN), artifact-management reachable, dimension polarity documented.\n- **Setup**: decision-layer extras ship pre-checked; the installer heals the stale agent-source poison in BOTH configs (.json + .jsonc).\n- **Last version supporting the OpenCode V1 contract (1.19.x)** — the next minor targets OpenCode 2.x only.\n\n### 🐞 Field bugs dead\n- \"Agent not found: zeus\" (cwd-relative source poison, both configs healed)\n- N4 USAGE_UNRECONCILED 100% (dead — field-verified reconcile)\n- The dead-route holds freezing budgets (released with schema v4 archive)\n- The TUI footer version drift (release gate now enforces the dist stamp)\n\n\n### 🆕 O que é a 1.7.0\n\nPrimeira minor da linha 1.7: orquestração completa com decisão tipada, gates de\nsegurança com aprovação humana, e ecossistema de skills com descoberta\nconsciente de custo. **Esta é a ÚLTIMA versão compatível com o contrato\nOpenCode V1 (1.19.x)** — a partir da próxima minor, a linha alvo é OpenCode 2.x.\n\n### Added — Jev (roteador de decisão)\n\n- **`mode: \"order\"`**: ordenação real de 2-4 candidatos com score por candidato (o rank escolhe vencedor; o order classifica a shortlist; score é ORDINAL na rubrica 2..10, nunca probabilidade).\n- **`mode: \"verify\"` com evidência**: envelope aceita `state` opcional que vira o texto-base do julgamento; vereditos PASS (>0.65) / UNVERIFIABLE (0.35-0.65) / FAIL (<0.35); ausente/recusado = BLOCK fail-closed.\n- **Rank até 20 candidatos** (contrato typesafe_rank) com o range nomeado na recusa (`RANK_CANDIDATE_COUNT_RANGE`).\n- **Envelope enforced em TODOS os caminhos** (explícito, presets, review, rank, verify): schemaVersion exigido, chaves desconhecidas rejeitadas, com `detail` exato por causa.\n- **Review aceita critérios-objeto** (`{id, description}`) além de strings; recusa com `CRITERIA_SHAPE` detalhado.\n- **`CALLER_NOT_ALLOWED` ensina o remédio**: `PANTHEON_JEV_SPECIALIST_CALLERS` ou rotear via Zeus.\n- Descrições de agentes nas choices do delegation (o viés \"none com confiança alta\" em tarefa clara morreu: live 5/5).\n\n### Added — J1 (gate de risco) com escada de escalada\n\n- **off / shadow / warn / enforce** via `PANTHEON_J1_RISK_SCORE` (on = shadow, retrocompatível).\n- **enforce**: chamada de risco alto (≥ threshold configurável) é NEGADA com o **contrato de handoff**: o agente apresenta a chamada ao usuário para decisão MANUAL — sem executar, sem contornar; aprovações positivas via tool question mintam passe hash-pinned com TTL.\n- Gate indisponível nunca bloqueia (fail-open documentado: budget morto não bricka shells).\n\n### Added — skills e ecossistema\n\n- **`agent-forge`**: cria agentes OpenCode sob demanda — entrevista, rascunho canônico, confirmação, gravação em escopo projeto/global, nunca sobrescreve.\n- **prompt-refinery em 3 níveis**: pedido claro passa intacto; o sinal determinístico dispara o AJUSTE MÍNIMO interno (≤15 linhas, silencioso); o contrato completo de 6 seções é EXCLUSIVO do prefixo `>>`. Perguntas de bloqueio pela tool `question` nativa.\n- **Descoberta de skills com cascata de confiança**: catálogo canônico Anthropic → skills.sh (parser K/M corrigido) → GitHub cru; ranking por Jev `mode: \"order\"`; instalação SEMPRE pelo usuário.\n\n### Added — governança e setup\n\n- **Setup com decision layer ligada por padrão**: J1/J3 shadow + chamadores especialistas pré-marcados (desmarcáveis).\n- **Heal do campo `source` cwd-relativo** nos dois configs (`.json` e `.jsonc`) — a causa raiz do \"Agent not found\".\n- **`test:ci` prefere o venv do repo** — o tier Python roda os pins, não o sistema.\n- **Gate de release**: o dist da TUI precisa carregar a versão da release — rodapé mentiroso não publica mais.\n\n### Fixed\n\n- **N4 (`USAGE_UNRECONCILED 100%`)**: morto — reconciliação verificada em campo na rota OpenRouter.\n- **\"Agent not found: zeus\"**: causa raiz curada (campo `source` cwd-relativo no config) + repair de vírgulas órfãs no heal do jsonc.\n- **D1/D2 do roteador local**: gateStatus influencia a decisão (`GATE_OPEN`); artifact-management alcançável via material-requirement.\n- **TUI**: dist rebuilt — o carimbo de versão acompanha a release (gate novo no workflow).\n- Doctor reconhece o shape V2 do installer (`{ package, options }`).\n- Verify: PASS com evidência no state (0.96) — o defeito \"palpite sem lastro\" da beta.13 fechado com evidência.\n\n### Changed\n\n- **Refino determinístico**: o roteador local marca `refineRecommended` por regras de texto puro (multi-concern sem critérios; PT+EN; one-liners nunca) — zero Jev, zero custo de modelo na decisão de refinar.\n- **nyx de volta à identidade observabilidade/custo** (chaos/fuzz como secundário); prometheus sem as palavras de observabilidade; TUI dist no carimbo da release.\n- **full-catalog no skills mode** — o prefilter lexical não derruba mais a skill exata que o estado descreve.\n\n### Security\n\n- Envelope fechado em todos os caminhos; hostile-scan no criteria/claims/candidates; never echo de input nas mensagens de gate; aprovação hash-pinned por chamada exata.\n\n### Compatibility\n\n- **Última versão com suporte ao contrato OpenCode V1 (1.19.x)** — a próxima minor alvo é OpenCode 2.x apenas. V2 continua o alvo principal desta linha.\n\n---\n",
+    "name": "Pantheon v1.7.0",
+    "prerelease": false,
+    "tag": "v1.7.0",
+    "expectedTitle": "Pantheon v1.7.0",
+    "titleAction": null,
+    "bodyAction": "REWRITE",
+    "bodySource": "CHANGELOG @ v1.7.0 (4555 bytes)"
+  },
+  {
+    "body": "### Added\n\n- **routing** — The Jev uplift: the native `pantheon_jev_decide` route works end to end (Console free variant field-verified), and TypeSafe direct is one `decision-router setup-model` command away.\n- **routing** — `decision-router doctor` is route-aware: Console routes pass host-native without a catalog probe; the TypeSafe route is checked against the provider entry.\n- **hooks** — J1 risk-score advisory gate (shadow): one Jev risk-score + intent observation per exfil-capable tool call when `PANTHEON_J1_RISK_SCORE` is on; never blocks; zero user content.\n- **hooks** — J3 turn-complexity escalation (shadow): cheap-vs-main per delegate dispatch with local rails, behind `PANTHEON_J3_ESCALATION`; the override is proven, never applied in shadow.\n- **routing** — J4 `mode: \"review\"` quality scoring: one round-trip quality + needs-review predicate for delegated results, on demand; the result never leaves the machine.\n- **routing** — The offline J2 skill-selection scorecard harness ships in `bench/results/` (29 scenarios, replies faked, honest negatives).\n- **install** — `init` sweeps stale `pantheon-opencode` copies from the npm cache's `_npx/` after a successful install (failures retry on the next init).\n\n### Deprecated\n\n- **install** — `--opencode-version v1` keeps its deprecation warning on this line; Pantheon 2.0 refuses it outright.\n\n### Removed\n\n- **tui** — The native `/quota` panel, the sidebar quota block, usage history, go-key diagnostics, and the `pantheon.quota` RPC; see the community replacement below.\n- **tui** — `/quota-go-check` and the undocumented `PANTHEON_TRUSTED_BL_EXECUTABLE` env var.\n- **docs** — The quota replacement is documented in `docs/tui-v2-quota-providers.md`: `@slkiser/opencode-quota`.\n\n### Fixed\n\n- **routing** — Three field-measured causes of a dead `pantheon_jev_decide` are fixed: the detached `model.list()` call, the wrapped `{ data: [...] }` shape, and the catalog-presence gate.\n- **routing** — Decision models are not chat models: route resolution reads config only; the visible `pantheon-decision-router:v1` prompt marker is suppressed.\n- **agents** — Zeus's decision-routing instructions no longer reference the removed `/quota-go-check` command.\n",
+    "name": "Pantheon v1.6.2",
+    "prerelease": false,
+    "tag": "v1.6.2",
+    "expectedTitle": "Pantheon v1.6.2",
+    "titleAction": null,
+    "bodyAction": "keep",
+    "bodySource": "CHANGELOG @ v1.6.2 (2219 bytes)"
+  },
+  {
+    "body": "### Added\n\n- **docs** — Corrected code-mode tool signatures and agent grants, polished 1.6.x docs with translations/evidence links, and fixed the docs-site entry point (#270).\n\n### Changed\n\n- **plugin** — V2 wires the read guard and bridge and restores supported context, image-history, formatter, and delegation-audit behavior (#264–#267).\n- **plugin** — V2 reports host gaps `idle-todo-enforcer`, `todo-restore`, `tool-ceiling`, and `board-transitions` instead of claiming full parity.\n- **install** — V2 notices report the resolved state path and shared V1/V2 state, not database isolation or a service port; capability output distinguishes the static seed and includes it in `--json`.\n- **install** — SIGINT during blocking `spawnSync` may still be swallowed; cancellation is deterministic during awaited phases.\n\n### Fixed\n\n- **plugin** — V1/V2 Zeus read guards normalize paths, resolve symlink targets, deny resolution failures, and align code-root checks with `pantheon_bounded_read` (#282).\n- **plugin** — `pantheon_cost` sums per-model prices for multi-model agents and reconciles partial/unpriced usage with model totals (#260).\n- **install** — Cancel/decline names the stopped step and records the run; Ctrl-C exits 130 during awaited phases (#261, #262).\n- **install** — Fresh V2 installs write options-bearing plugin entries; migration moves only loadable entries and warns about sibling `opencode.jsonc` (#268, #269).\n\n### Security\n\n- **deps** — Patched `zod` 4.6.6, `fastmcp` 4.1.2, `undici` 6.29.1/8.12.3, and `fast-uri` 3.1.9 to clear reported advisories (#275; PR #283).\n- The guard does not pin an inode or make check/open atomic, so concurrent workspace writers can race it; it is a policy boundary, not isolation from hostile local processes.\n\n### Deprecated\n\n### Removed\n",
+    "name": "Pantheon v1.6.1",
+    "prerelease": false,
+    "tag": "v1.6.1",
+    "expectedTitle": "Pantheon v1.6.1",
+    "titleAction": null,
+    "bodyAction": "keep",
+    "bodySource": "CHANGELOG @ v1.6.1 (1792 bytes)"
+  },
+  {
+    "body": "Release notes for the 1.6.0 candidate. This page is the short version; the\r\nchangelog is the complete record.\r\n\r\n## Highlights\r\n\r\n- OpenCode 2 works, and `auto` picks the plugin generation from the host.\r\n- V2 tools now run instead of only announcing success.\r\n- Three permission gaps are closed.\r\n- Cost reporting answers money questions by model and by session.\r\n- The installer is reviewable and reversible.\r\n\r\n## Upgrade actions\r\n\r\n- Update: `npm install -g pantheon-opencode@beta && pantheon-opencode update`.\r\n- Refresh config: `pantheon-opencode init --yes --headless`.\r\n- Verify: `pantheon-opencode doctor`.\r\n- Pin a generation: `npx pantheon-opencode init --opencode-version v2`.\r\n\r\n## What's new by capability\r\n\r\n- **V2 support:** `auto` prefers explicit input, then the environment, then a host probe; an unreadable host warns once.\r\n- **Permissions:** agent MCP allowlists become native rules that deny by default.\r\n- **Permissions:** read-only agents cannot reach mutating tools on either generation.\r\n- **Cost:** reports add USD, per-model and per-session views.\r\n- **Cost:** `session` scopes a report to a root session and its descendants.\r\n- **Memory:** entries are capped at 64 KiB and can expire; search failures return a typed error.\r\n- **Installer:** apply previews each file, detects drift, and keeps an exact backup.\r\n- **Installer:** `restore`, `reconcile` and `uninstall` cover recovery and removal.\r\n\r\n## Fixes\r\n\r\n- V2 tools no longer report success without executing.\r\n- Empty child dispatch results surface as errors.\r\n- Offline cost mode refuses an explicit price refresh.\r\n\r\n## V2 compatibility\r\n\r\nOpenCode **1.19.x** (V1) and **OpenCode 2.x** (V2) are supported; **2.0.22 is known broken**.\r\nSee [Compatibility](https://ils15.github.io/pantheon-opencode/compatibility/) for the policy and verified-version evidence.\r\n\r\n## Deprecated & removed\r\n\r\n- V1 goal tools are soft-deprecated and no longer auto-continue a session.\r\n- The legacy vector memory path and V2 goal tools are gone.\r\n- Persistence no longer exposes twelve KV/context-management tools.\r\n\r\nSee [UPGRADING.md](../UPGRADING.md) for the exact steps.\r\n\r\n## Known issues\r\n\r\n- `ask` is not expressible for MCP on OpenCode 2.x; the installer warns and emits no rule.\r\n- `hashline_edit` and `vision_describe` have no host permission gate.\r\n\r\n**Full changelog:** [CHANGELOG.md — v1.6.0](https://github.com/ils15/pantheon-opencode/blob/main/CHANGELOG.md#v160---2026-10-22)\r\n",
+    "name": "Pantheon v1.6.0",
+    "prerelease": false,
+    "tag": "v1.6.0",
+    "expectedTitle": "Pantheon v1.6.0",
+    "titleAction": null,
+    "bodyAction": "REWRITE",
+    "bodySource": "CHANGELOG @ v1.6.0 (3504 bytes)"
+  },
+  {
+    "body": "## 🐞 Fixed\n- **install** — guard undefined collection in init (#174)\n- **release** — compare Zenodo file checksum in the format the API returns (#173)\n\n<!-- zenodo-deposition:id=22905113;state=created -->\n",
+    "name": "Pantheon v1.5.2",
+    "prerelease": false,
+    "tag": "v1.5.2",
+    "expectedTitle": "Pantheon v1.5.2",
+    "titleAction": null,
+    "bodyAction": "REWRITE",
+    "bodySource": "CHANGELOG @ v1.5.2 (151 bytes)"
+  },
+  {
+    "body": "## 🐞 Fixed\n- **agents** — declare explicit read: allow for zeus\n- **ci** — drop fastembed from CI, keep pytest collection green (#163)\n- **plugin** — detect registered-plugin version drift after pantheon_delegate removal (#169)\n- **config** — correct node floor and warn on unsupported runtime (#168)\n- **mcp** — degrade gracefully when fastembed import fails (#165)\n- **mcp** — drop dead toon_codec module from published package (#167)\n- **tui** — remove dead pantheon_delegate refs after v1.5.0 V1 removal (#166)\n- **mnemosyne** — grant scoped write to memory-bank and deepwork paths (#164)\n\n## ✅ Closed Issues\n- #94 - drop fastembed from CI, keep pytest collection green (#163)\n- #158 - detect registered-plugin version drift after pantheon_delegate removal (#169)\n- #114 - correct node floor and warn on unsupported runtime (#168)\n- #160 - correct node floor and warn on unsupported runtime (#168)\n- #159 - degrade gracefully when fastembed import fails (#165)\n- #162 - drop dead toon_codec module from published package (#167)\n- #161 - remove dead pantheon_delegate refs after v1.5.0 V1 removal (#166)\n- #111 - grant scoped write to memory-bank and deepwork paths (#164)\n\n<!-- zenodo-deposition:id=22904505;state=created -->\n",
+    "name": "Pantheon v1.5.1",
+    "prerelease": false,
+    "tag": "v1.5.1",
+    "expectedTitle": "Pantheon v1.5.1",
+    "titleAction": null,
+    "bodyAction": "REWRITE",
+    "bodySource": "CHANGELOG @ v1.5.1 (1176 bytes)"
+  },
+  {
+    "body": "## 🆕 What's New\n\n- **Delegação nativa via `task()`** — o motor legado `pantheon_delegate` (~3.900 linhas) foi removido por completo. A delegação agora usa o `task()` nativo do host, com child sessions reais. Camada fina: `task-result-guard` (completion verification), `native-task-status` (status classification), read-only enforcement.\n\n- **TUI Delegations** — painel visual em tempo real no terminal. Status por estado (running/completed/failed), cores, spinner fluido (80ms/frame independente do poll), filtro por sessão ativa, recência 24h, ceiling dinâmico, retenção visual (done 2min, failed 10min).\n\n- **Read-only enforcement** — sessões de agentes read-only (apollo, gaia) bloqueiam todas as tools mutantes: `edit`, `write`, `bash`, `task`, `hashline_edit`. Enforcement duplo: registro + parity test com `routing.yml`.\n\n- **CI/CD modernizada** — 22 GitHub Actions SHA-pinned, gitleaks v3, Dependabot, CodeQL +python, permissões reduzidas, cache npm/pip.\n\n- **Lean codebase** — ~38% dos arquivos de teste consolidados, ~17 módulos mortos removidos, instructions deduplicadas (−660 tokens).\n\n## 🐞 Fixed\n\n- **Painel Delegations vazio (crítico, beta.18)** — canal `session.children` chamava API com shape v1 num cliente v2 → ~181k erros/s → painel vazio. Corrigido `safeSessionPath`/`buildChildrenPath`.\n\n- **Stale busy (beta.20)** — children com status `busy` stale (>30min) agora são `completed`. O opencode mantém entradas `busy` para sessões concluídas; TUI detecta e marca como done.\n\n- **Board corruption (beta.18)** — testes sem isolamento escreviam no board real. Fix: `chdir` para projeto temporário antes do import.\n\n- **Spinner travado (beta.19)** — animação acoplada ao poll cycle. Fix: timer independente 80ms/frame.\n\n- **Read-only bypass no retry (beta.7)** — child retried re-aplicava read-only enforcement, fechando bypass.\n\n- **State corruption (beta.8)** — board sem fsync/rename. Fix: temp file + fsync + rename atômico.\n\n- **Signal leak (beta.7)** — `.signal.json` órfãas. Fix: delete no finalize path.\n\n## ⚠️ Known Issues\n\n- Tarball CDN pode levar até 15 minutos para propagar após publish (provenance-signed).\n- `pantheon_delegate` pode aparecer em configs legadas — o host ignora silenciosamente.\n\n## ✅ Closed Issues\n\n- 20 betas publicadas e validadas em produção (beta.1→beta.20)\n- Motor legado completamente removido (zero referências em `src/`)\n- 6 módulos críticos revisados por Themis — **APPROVED** (OWASP, read-only, secrets, input validation, error handling, dead code)\n- ~881 testes relevantes consolidados (engine 72, App 10, TUI 61, delegation 315, task-result 163, native-status 260)\n- Node 22+ exigido",
+    "name": "v1.5.0",
+    "prerelease": false,
+    "tag": "v1.5.0",
+    "expectedTitle": "Pantheon v1.5.0",
+    "titleAction": "v1.5.0 → Pantheon v1.5.0",
+    "bodyAction": "REWRITE",
+    "bodySource": "CHANGELOG @ v1.5.0 (1615 bytes)"
+  },
+  {
+    "body": "&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will\n     move this section to a versioned entry and reset the template below. --&gt;\n\n## 🐞 Fixed\n\n- **Fixed — painel Delegations**: children com status `busy` stale (>30min sem\n  atualização) agora são classificadas como `completed` (não `running`). O\n  opencode mantém entradas `busy` no mapa de status para sessões já concluídas;\n  o TUI agora detecta e marca como done.\n",
+    "name": "Pantheon v1.5.0-beta.20",
+    "prerelease": true,
+    "tag": "v1.5.0-beta.20",
+    "expectedTitle": "Pantheon v1.5.0-beta.20",
+    "titleAction": null,
+    "bodyAction": "keep",
+    "bodySource": "pre-release: title only"
+  },
+  {
+    "body": "Painel Delegations: status ausente→done, recência 24h, spinner fluido (80ms/frame).\n\n<!-- zenodo-deposition:id=22794144;state=created -->\n",
+    "name": "v1.5.0-beta.19",
+    "prerelease": true,
+    "tag": "v1.5.0-beta.19",
+    "expectedTitle": "Pantheon v1.5.0-beta.19",
+    "titleAction": "v1.5.0-beta.19 → Pantheon v1.5.0-beta.19",
+    "bodyAction": "keep",
+    "bodySource": "pre-release: title only"
+  },
+  {
+    "body": "Fix do painel Delegations (shape v2 de session.children); isolamento de testes do board; 1.5.0-beta.18\n\n<!-- zenodo-deposition:id=22781921;state=created -->\n",
+    "name": "v1.5.0-beta.18",
+    "prerelease": true,
+    "tag": "v1.5.0-beta.18",
+    "expectedTitle": "Pantheon v1.5.0-beta.18",
+    "titleAction": "v1.5.0-beta.18 → Pantheon v1.5.0-beta.18",
+    "bodyAction": "keep",
+    "bodySource": "pre-release: title only"
+  },
+  {
+    "body": "Beta 17 — consolidação da camada fina sobre o motor nativo do OpenCode.\n\n- Remoção do motor próprio `pantheon_delegate` em favor do `task()` nativo do OpenCode.\n- TUI: exposição de `session.children` e `session.status`.\n- Enforcement read-only via `chat.params`.\n- Camada fina (thin layer) mantida sobre o runtime nativo.\n\n<!-- zenodo-deposition:id=22778023;state=created -->\n",
+    "name": "v1.5.0-beta.17",
+    "prerelease": true,
+    "tag": "v1.5.0-beta.17",
+    "expectedTitle": "Pantheon v1.5.0-beta.17",
+    "titleAction": "v1.5.0-beta.17 → Pantheon v1.5.0-beta.17",
+    "bodyAction": "keep",
+    "bodySource": "pre-release: title only"
+  },
+  {
+    "body": "&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will\n     move this section to a versioned entry and reset the template below. --&gt;\n\n## 🆕 What's New\n\n- **Modernização CI/supply-chain:** 22 actions SHA-pinadas; `gitleaks-action` v3\n  (fix crítico — a v2 morria com Node 20 em 2026-09-16) com CLI 8.30.1; cache\n  npm/pip; Dependabot; CodeQL `+python` e `codeql-config`; permissões reduzidas\n  no `docs.yml`; job `version-check` fundido no `validate`; `upload-artifact` v7\n  e `download-artifact` v8.\n- **Lean:** ~17 módulos mortos removidos de `src/pantheon/`, docs/scripts\n  obsoletos, `teste/`/`testes/`, `Dockerfile`/`docker-compose` (de outro projeto)\n  e caches; ~38% dos arquivos de teste removidos/consolidados; testes mínimos\n  readicionados para os módulos vivos (tool-ceiling, native-probe).\n- **Instructions:** deduplicação das instruções compartilhadas — contexto menor\n  sem perder nenhuma regra.\n\n## 🐞 Fixed\n\n- **2 flakes determinísticos eliminados:** TTL do MCP persistence\n  (`test_ttl_expiry_real_time`) e `logger.test.mjs` deixaram de depender de\n  timing/carga do host.\n- **Refs stale corrigidas:** referências de versão/ambiente atualizadas para\n  Node 22+.\n\n<!-- zenodo-deposition:id=22773046;state=created -->\n",
+    "name": "v1.5.0-beta.16",
+    "prerelease": true,
+    "tag": "v1.5.0-beta.16",
+    "expectedTitle": "Pantheon v1.5.0-beta.16",
+    "titleAction": "v1.5.0-beta.16 → Pantheon v1.5.0-beta.16",
+    "bodyAction": "keep",
+    "bodySource": "pre-release: title only"
+  },
+  {
+    "body": "## v1.5.0-beta.15\n\n### 🆕 What's New\n- **Delegation `read` devolve o relatório completo:** o retorno de `read` passa a ler o relatório integral do disco (com cap configurável e marker explícito de truncamento) em vez do recibo resumido — paridade garantida entre o caminho nativo e o legado.\n- **`sanitizeReceiptText` UTF-8-safe:** a sanitização de recibos deixou de corromper caracteres multibyte; acentuação e demais codepoints UTF-8 são preservados no caminho nativo e no legado.\n- **TUI — cor de status na row inteira:** cada linha do painel Delegations passa a ser pintada pelo estado — vermelho = falha, verde = concluído, amarelo = em andamento — com o glyph mantido como canal redundante para acessibilidade.\n\n### 🐞 Fixed\n- **TUI — painel Delegations só da sessão ativa:** o painel deixa de renderizar rows cross-session/órfãs que causavam \"Session not found\" ao clicar; a lista agora cobre apenas a sessão ativa, mantendo a retenção de concluídas (2 min) e falhas (10 min).\n- **Guards de estado e navegação órfã:** transições prematuras para `done` são bloqueadas e a navegação defensiva ignora alvos órfãos, evitando seleção inválida no painel.\n- **Isolamento do board nos testes:** testes que importam o plugin real agora isolam o BackgroundJobBoard, eliminando o fantasma \"preserve this running delegation\"; o board real foi limpo.\n- **Lean no core:** 17 módulos mortos de `src/pantheon/` removidos, ~38% dos arquivos de teste removidos/consolidados e docs/scripts órfãos limpos, com testes mínimos readicionados para os módulos vivos (tool-ceiling, native-probe).\n- **Flake de TTL determinístico:** `test_ttl_expiry_real_time` deixou de competir com a truncagem de microssegundos do SQLite — o teste agora espera o início de um segundo limpo antes do store e usa margem sobre o TTL, eliminando o flake dependente de carga (test-only).\n\n**Install:** `npm i -g pantheon-opencode@beta`\n**Dist-tag:** `beta`\n\n<!-- zenodo-deposition:id=22770184;state=created -->\n",
+    "name": "v1.5.0-beta.15",
+    "prerelease": true,
+    "tag": "v1.5.0-beta.15",
+    "expectedTitle": "Pantheon v1.5.0-beta.15",
+    "titleAction": "v1.5.0-beta.15 → Pantheon v1.5.0-beta.15",
+    "bodyAction": "keep",
+    "bodySource": "pre-release: title only"
+  },
+  {
+    "body": "## [v1.5.0-beta.9] - 2026-09-14\n\n## Novidades\n\n- **TUI delegations nativas (gated):** painel Delegations renderiza N delegacoes native + M pantheon com tag [native], live task em tempo real, click navega para sessao. Implementado em src/plugins/tui/src/index.tsx com dist rebuildado.\n- **93 testes TUI delegations:** suite tests/pantheon/tui-delegations.test.ts com 93/93 passando (tsc + biome OK).\n- **E2E beta.8 PASS (referencia):** baseline E2E da beta.8 mantido como referencia de estabilidade para beta.9.\n\n## Fixed\n\n- Removido diretorio testyes/ (artefato de teste).\n- Truncado hooks.log para baseline limpo de beta.9.\n\nPR: #128 (squash 8c54561) — release/1.5.0-beta.9 -> main\n\n<!-- zenodo-deposition:state=pending;claim=34803885418 -->\n",
+    "name": "v1.5.0-beta.9",
+    "prerelease": true,
+    "tag": "v1.5.0-beta.9",
+    "expectedTitle": "Pantheon v1.5.0-beta.9",
+    "titleAction": "v1.5.0-beta.9 → Pantheon v1.5.0-beta.9",
+    "bodyAction": "keep",
+    "bodySource": "pre-release: title only"
+  },
+  {
+    "body": "## [v1.5.0-beta.14] - 2026-09-14\n\n&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will\n     move this section to a versioned entry and reset the template below. --&gt;\n\n## 🆕 What's New\n\n- **Ordenação active-first:** delegações ativas aparecem antes das concluídas,\n  falhas e canceladas no painel TUI.\n- **Overflow active:** quando há mais delegações ativas que o teto visível, o\n  excedente ativo permanece representado na linha de overflow.\n\n## 🐞 Fixed\n\n- **Retenção visual:** concluídas permanecem visíveis por 2 min e falhas por\n  10 min antes de saírem do painel; canceladas seguem a retenção configurada.\n\n## ⚠️ Known Issues\n\n- **Stale running warning:** jobs em estado `running` além do limite esperado\n  recebem um aviso visual de stale no painel.\n\n<!-- zenodo-deposition:id=22759640;state=created -->\n",
+    "name": "v1.5.0-beta.14",
+    "prerelease": true,
+    "tag": "v1.5.0-beta.14",
+    "expectedTitle": "Pantheon v1.5.0-beta.14",
+    "titleAction": "v1.5.0-beta.14 → Pantheon v1.5.0-beta.14",
+    "bodyAction": "keep",
+    "bodySource": "pre-release: title only"
+  },
+  {
+    "body": "## [v1.5.0-beta.13] - 2026-09-14\n\n\n\n## 🆕 What's New\n\n- **TUI status-only — rows simplificadas:** cada linha do painel Delegations passa\n  a ser `{glyph} {alias} {elapsed}` + `desc` muted — um glyph de status, uma única\n  identidade e o tempo decorrido, com a descrição em tom muted. São 4 glyphs\n  (running animado, completed, error, cancelled/retry), sem toggle\n  `[Sessão]`/`[Tudo]`, sem prefixos `nat:`/`pan:` e sem losango ◇/◆.\n- **Header `active`/`done`/`failed`:** o cabeçalho do painel resume apenas esses\n  três contadores sobre a lista completa (todas as sessões), sem `nat:`/`pan:`.\n- **Ceiling 8:** no máximo 8 linhas visíveis (live-first); o excedente colapsa em\n  uma única linha `… +N more`.\n- **Board read (jobs de todas as sessões):** o painel lê o BackgroundJobBoard\n  (`.pantheon/board/state.json`), então jobs `pantheon_delegate` de qualquer\n  sessão aparecem — não só os filhos nativos da sessão focada.\n- **118 testes TUI delegations:** `tests/pantheon/tui-delegations.test.ts` com\n  118/118 passando, cobrindo rows status-only, header active/done/failed, ceiling\n  e board read cross-session.\n\n## 🐞 Fixed\n\n- **Sanitização de dead code:** removidos helpers, tipos e estado órfãos do\n  painel Delegations (toggle de escopo `[Sessão]`/`[Tudo]`, prefixos curtos\n  `nat:`/`pan:`, glyphs por estado e paginação de arquivo morto) que sobraram do\n  refactor status-only.\n- **Board merge preserva sessão conhecida:** um record do board com\n  `parentSessionID` vazio não sobrescreve mais a sessão já atribuída à linha.\n\n---\n\n**Full diff:** https://github.com/ils15/pantheon-opencode/compare/v1.5.0-beta.12...v1.5.0-beta.13\n\n<!-- zenodo-deposition:id=22756201;state=created -->\n",
+    "name": "v1.5.0-beta.13",
+    "prerelease": true,
+    "tag": "v1.5.0-beta.13",
+    "expectedTitle": "Pantheon v1.5.0-beta.13",
+    "titleAction": "v1.5.0-beta.13 → Pantheon v1.5.0-beta.13",
+    "bodyAction": "keep",
+    "bodySource": "pre-release: title only"
+  },
+  {
+    "body": "<!-- Add new changes here. Running `node scripts/versioning.mjs apply` will move this section to a versioned entry and reset the template below. -->\n\n## 🆕 What's New\n\n- **TUI lê o board (4º canal):** o painel Delegations passa a ler o BackgroundJobBoard via `readBoardState()` — jobs `pantheon_delegate` de todas as sessões aparecem, não só os filhos nativos da sessão focada.\n- **Toggle [Sessão]/[Tudo] + chips:** `[Sessão]` (default) mostra só a sessão focada, `[Tudo]` mostra jobs de todas as sessões; chips clicáveis no header.\n- **Raw `dist/tui.tsx` removido (bundle-only):** o dist passa a carregar só o bundle compilado (`tui.js`); o fonte raw sai do pacote publicado.\n- **117 testes TUI delegations:** `tests/pantheon/tui-delegations.test.ts` com 117/117 passando, cobrindo board-read, split ativo/recente e toggle de escopo.\n\n<!-- zenodo-deposition:id=22754850;state=created -->\n\n",
+    "name": "Pantheon v1.5.0-beta.12",
+    "prerelease": true,
+    "tag": "v1.5.0-beta.12",
+    "expectedTitle": "Pantheon v1.5.0-beta.12",
+    "titleAction": null,
+    "bodyAction": "keep",
+    "bodySource": "pre-release: title only"
+  },
+  {
+    "body": "&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will\n     move this section to a versioned entry and reset the template below. --&gt;\n\n## 🆕 What's New\n\n- **Glyphs da FSM real no painel Delegations:** cada estado do BackgroundJobBoard\n  tem agora um glifo Unicode geométrico próprio — `⠋` running (spinner 1s),\n  `⟳` retry, `⚠` stale/startup, `✓` completed, `✕` error, `−` cancelled. Forma e\n  cor são canais independentes: as linhas seguem legíveis sem cor e sem Nerd Font.\n- **Prefixo `nat:` / `pan:` documentado:** `docs/INSTALLATION.md` passa a\n  descrever os prefixos curtos das linhas nativas (`nat:<agent>`) e do board\n  (`pan:<alias>`) e o par de glyphs ◇/◆.\n- **`scripts/dev-tui.sh` (dev local sem publish):** instala, builda e registra o\n  caminho absoluto do repo em `.opencode/tui.json` (gitignored) com hint de\n  restart — sem tocar `opencode.json` e sem publicar.\n- **104 testes TUI delegations:** `tests/pantheon/tui-delegations.test.ts` com\n  104/104 passando, cobrindo glifos/marker/tone dos estados reais da FSM.\n\n## 🐞 Fixed\n\n- **Doctor F.2 (`hasUsableScripts`):** a resolução do diretório code-mode agora\n  exige um `.py`/`.sh` regular (paridade com `_has_usable_scripts` do MCP), então\n  um overlay de projeto vazio não mascara mais uma instalação que traz scripts.\n- **`publish:next` órfão removido:** nenhum workflow usava o script (o release\n  publica via `--tag beta`); removido do `package.json` para eliminar o dist-tag\n  `next` obsoleto da linha de publicação.\n",
+    "name": "Pantheon v1.5.0-beta.11",
+    "prerelease": true,
+    "tag": "v1.5.0-beta.11",
+    "expectedTitle": "Pantheon v1.5.0-beta.11",
+    "titleAction": null,
+    "bodyAction": "keep",
+    "bodySource": "pre-release: title only"
+  },
+  {
+    "body": "&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will\n     move this section to a versioned entry and reset the template below. --&gt;\n\n## 🆕 What's New\n\n- **TUI delegations com prefixos curtos `nat:` / `pan:`:** cada linha do painel passa\n  a usar `nat:<agent>` para child nativo do `task()` (sem report no board) ou\n  `pan:<alias>` para linha `pantheon_delegate` (ex. `pan:apo-1`) — os prefixos curtos\n  liberam largura no sidebar estreito.\n- **Glyph de 2 canais (◇/◆):** ◇ vazado (info/cyan) para child nativo e ◆ preenchido\n  (cor de estado) para linha do board — forma e cor são canais independentes, então o\n  split segue legível mesmo sem cor.\n- **Header resumido:** `(N active · M done · nat:K pan:M)` calculado sobre a lista\n  completa (active + recent + archived), no lugar do antigo `(N native + M pantheon)`.\n- **Elapsed em caixa fixa:** rótulo alinhado à direita em largura 8 e SEMPRE\n  renderizado, então um job ativo sem descrição nunca perde o timer.\n- **100 testes TUI delegations:** `tests/pantheon/tui-delegations.test.ts` com 100/100\n  passando (tsc + biome OK), acima dos 93 da beta.9.\n\n## 🐞 Fixed\n\n- **`appendFile` sem import (log do painel volta a escrever):** o log em arquivo do\n  painel parou de escrever silenciosamente porque `appendFile` era chamado sem import\n  (ReferenceError engolido pelo `catch` vazio); o import foi restaurado e o `catch`\n  agora reporta a falha (gated por echo) em vez de sumir.\n- **Truncamento grapheme-safe:** descrições truncam em fronteiras de grapheme\n  (`Intl.Segmenter` com fallback `Array.from`) em 44 graphemes, sem cortar emoji ou\n  sequências ZWJ ao meio (mojibake).\n- **Linhas stale-running ficam em Active:** um job stale ainda é um job vivo (estado do\n  backend inalterado), então não é mais arquivado — o que escondia a linha lançada.\n- **Spinner/animação de 140ms → 1000ms:** o tick rápido piscava sem adicionar informação.\n- **Dead code removido:** conectores de árvore (`isNestedDelegation` /\n  `delegationTreePrefix`) e campos `parentTaskID`/`childCount` removidos —\n  `session.children` só devolve filhos diretos, então nenhuma linha nested era\n  produzida (BACKLOG).\n",
+    "name": "Pantheon v1.5.0-beta.10",
+    "prerelease": true,
+    "tag": "v1.5.0-beta.10",
+    "expectedTitle": "Pantheon v1.5.0-beta.10",
+    "titleAction": null,
+    "bodyAction": "keep",
+    "bodySource": "pre-release: title only"
+  },
+  {
+    "body": "&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will\n     move this section to a versioned entry and reset the template below. --&gt;\n\n## 🆕 What's New\n\n- **Delegation panel v2:** live tool activity per running delegation\n  (`↳ bash npm test` — what the child is doing right now), a paginated\n  `Archived (n)` section for terminal reports beyond the recent 8, and a\n  distinct `retry` state (⟳ marker, RETRYING label) instead of lumping\n  retries into running.\n\n## 🐞 Fixed\n\n- **Stale plugin refs from old installs:** the installer now prunes\n  `pantheon-opencode` plugin references pointing at other installed copies of\n  the package (older nvm prefixes, npx cache hashes). Previously every init\n  accumulated refs from past installs and the oldest — without the newest\n  fixes — won the plugin load race, silently disabling native-task\n  mirroring. Third-party plugins sharing the same file names remain\n  protected.\n- **Docs:** `@beta` dist-tag guidance on all npx commands — plain\n  `npx pantheon-opencode` resolves the stable release and silently downgrades\n  the installed TUI copy.\n",
+    "name": "Pantheon v1.5.0-beta.6",
+    "prerelease": true,
+    "tag": "v1.5.0-beta.6",
+    "expectedTitle": "Pantheon v1.5.0-beta.6",
+    "titleAction": null,
+    "bodyAction": "keep",
+    "bodySource": "pre-release: title only"
+  },
+  {
+    "body": "&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will\n     move this section to a versioned entry and reset the template below. --&gt;\n\n## 🆕 What's New\n\n- **Native background tasks in the delegation panel:** tasks dispatched via\n  the native `task(background=true)` tool are now mirrored onto the shared\n  BackgroundJobBoard, so the TUI delegation panel tracks them while running\n  and the existing finalize path writes their terminal report.\n- **`pantheon-opencode update`:** one command updates the global package\n  (beta or stable channel) and re-runs init to refresh config, venv and MCP\n  entries. The installer stamps the installed version and `doctor` warns when\n  the package is newer than the last sync.\n- **Always-fresh artifacts:** the package postinstall now refreshes all\n  copy-only artifacts (agents, skills, AGENTS.md, commands, MCP scripts,\n  code-mode payload) into existing installations on every `npm install`; a CI\n  gate rebuilds the TUI bundle and fails if the committed `dist/` is stale.\n- **More resilient installer:** preflight checks for python3/npm before any\n  file is written, atomic `opencode.json` writes with a `.bak` backup,\n  non-fatal Python runtime setup (a venv failure now omits MCP entries with a\n  warning instead of pointing at a broken interpreter), `--components` /\n  `--clean` / `--opencode-version auto` flags, unknown-flag warnings and\n  pt-BR/EN message auto-detection via `LANG`.\n- **Roadmap zerado:** o plano ativo não tem mais itens pendentes. Sprints\n  nunca implementados dos planos v1.0/v1.0+ foram removidos; o contrato atual\n  passou a documentar o code-mode (manifest SHA-256, resolução project-first).\n\n## 🐞 Fixed\n\n- **Code-mode project resolution (#112):** the MCP now resolves project code-mode\n  scripts before global scripts, honors `PANTHEON_PROJECT`, and fails closed on\n  project manifest errors; the installer sets `cwd: \".\"`.\n- **Code-mode manifest doctor check (#113):** `doctor` validates manifest shape,\n  script membership, and SHA-256 hashes without regenerating the manifest.\n",
+    "name": "Pantheon v1.5.0-beta.5",
+    "prerelease": true,
+    "tag": "v1.5.0-beta.5",
+    "expectedTitle": "Pantheon v1.5.0-beta.5",
+    "titleAction": null,
+    "bodyAction": "keep",
+    "bodySource": "pre-release: title only"
+  },
+  {
+    "body": "&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will\n     move this section to a versioned entry and reset the template below. --&gt;\n\n## 🆕 What's New\n\n- **Native delegation contract (B3-05):** adds the nine-code `NativeTaskStatus` contract, a session-lazy cached capability probe, atomic board registration for native children, strict `PANTHEON_DELEGATE_MODE=native` without fallback/failover/retry, and status in delegation receipts.\n\n- **Cost backend (B3-06):** `pantheon_cost` now uses a single read-only `node:sqlite` backend; the CLI fallback was removed. The common contract reports `UNSUPPORTED` when `node:sqlite` is unavailable and `CORRUPT_DATA`/`UNAVAILABLE` with diagnostic details on stderr; includes a sandbox probe.\n\n- **Tool ceiling (B3-07):** C9/tool ceiling is fed only by real host data from `message.updated` plus `config.providers()`; lexical fallback is removed. Hosts without the capability report `UNSUPPORTED`, malformed data reports `CORRUPT_DATA`, and malformed events are guarded defensively.\n\n- **Code-mode explicit installation (B3-08):** `pantheon-code-mode` no longer executes scripts implicitly. A script runs only when listed in `.pantheon/code-mode/manifest.json` with a matching SHA-256; the installer seeds the manifest for bundled scripts and a new `approve_code_script` tool opts in or refreshes a script. Missing manifest reports `INVALID_STATE`, unlisted scripts `CONFLICT`, and hash mismatches `CORRUPT_DATA`.\n\n## 🐞 Fixed\n\n- **ECIGLOBAL fix (sync-tui):** `npm install -g` no longer fails with ECIGLOBAL — `scripts/sync-tui.mjs` now sanitizes `npm_config_*` global-context vars (case-insensitive) from the nested `npm ci` environment.\n- **npm tarball inclusion:** CHANGELOG.md is now included in the npm tarball\n  (added to the `files` allowlist in `package.json`).\n\n- **Task Result Guard**: native `task()` empty results are now detected and\n  converted to explicit errors in the `tool.execute.after` hook. Previously,\n  when a provider rejected a child session (e.g. `BackendAdmissionRejected`\n  from free-tier admission control), the error was silently swallowed — the\n  child completed with empty output and the parent LLM proceeded as if the\n  task succeeded. The guard replaces empty `task()` output with an error\n  message so the parent sees a failure. (`task-result-guard.ts`)\n",
+    "name": "Pantheon v1.5.0-beta.4",
+    "prerelease": true,
+    "tag": "v1.5.0-beta.4",
+    "expectedTitle": "Pantheon v1.5.0-beta.4",
+    "titleAction": null,
+    "bodyAction": "keep",
+    "bodySource": "pre-release: title only"
+  },
+  {
+    "body": "&lt;!-- Add new changes here. Running `node scripts/versioning.mjs apply` will\n     move this section to a versioned entry and reset the template below. --&gt;\n\n### Changed\n\n- **CI fail-closed:** `ci.yml` no longer falls back from `npm ci` to\n  `npm install`, and pytest/audit failures are no longer swallowed. The\n  workflow now runs lint, typecheck, `test:ts`, Python tests, Node tests and\n  `npm audit`/`pip-audit` as blocking gates.\n- **Release authorization is dispatch-only:** `release.yml` no longer triggers\n  on PR labels or any `pull_request` event. Publication is\n  authorized only by an explicit `workflow_dispatch`; the `release_channel`\n  input (`stable` default, `beta`) selects the channel. Beta versions are\n  committed sequential `X.Y.Z-beta.N` (bumped via\n  `node scripts/versioning.mjs apply --beta`); no runtime version computation.\n- **Sandbox gate is PASS-only:** `test-opencode-v1-v2-sandbox.sh` no longer\n  classifies failures as `AMBIENTAL`/`NOT_TESTED`, has no prompt retry, and\n  treats missing binaries/projects/probes, timeouts and auth/network/provider\n  failures as blocking. Exit 0 now requires an explicit PASS on every check.\n- **Validation policy is PASS-only:** `doctor` exit != 0 (including legacy\n  exit 1 warnings), unknown or non-numeric statuses block validation;\n  WARN/SKIP/AMBIENTAL/NOT_TESTED never produce exit 0.\n- **No npm install fallback in TUI/install paths:** `sync-tui.mjs` and the\n  plugin installer propagate `npm ci` failures instead of falling back to\n  `npm install`; `PANTHEON_ALLOW_NPM_INSTALL_FALLBACK` is not supported.\n- **Lockfile-backed installs:** the root (`package.json` + `package-lock.json`)\n  and TUI (`src/plugins/tui/package.json` + `src/plugins/tui/package-lock.json`)\n  are validated independently with `npm ci --ignore-scripts`. A failure blocks\n  the run; there is no `npm install` fallback.\n- **Release artifact identity:** each release carries one `.tgz` tarball and\n  the SHA-256 of that same file from validation through publication. The\n  tarball and release metadata are bound to the full `TARGET_SHA`; repacking is\n  not an equivalent artifact.\n- **Intentional MCP divergence:** `scripts/memory_mcp_server.py` keeps the\n  lightweight `memory_*` contract while `src/mcp/memory_mcp_server.py` also\n  exposes the optional codemap tools. The other shared MCP copies remain\n  identical; this pair is not to be overwritten by synchronization.\n- **Sandbox scope:** a PASS from the prepared isolated sandbox is not proof of\n  support for every real host or untested host configuration.\n\n### Breaking Changes\n\n- Release automation requires a manual `workflow_dispatch`; labeling a PR no\n  longer publishes anything.\n- The sandbox validator exits non-zero when environmental checks cannot run\n  (missing binaries, provider auth, timeouts) instead of reporting them as\n  non-blocking.\n- `PANTHEON_ALLOW_NPM_INSTALL_FALLBACK` has no effect; `npm ci` failures now\n  fail the install/sync step.\n",
+    "name": "Pantheon v1.5.0-beta.3",
+    "prerelease": true,
+    "tag": "v1.5.0-beta.3",
+    "expectedTitle": "Pantheon v1.5.0-beta.3",
+    "titleAction": null,
+    "bodyAction": "keep",
+    "bodySource": "pre-release: title only"
+  },
+  {
+    "body": "## v1.5.0-beta.1 (prerelease)\n\nBeta instalável da 1.5.0 para validação antes da stable.\n\n### Destaques\n- **Delegate relaunch**: retomada de delegações com reconciliação de estado (PR #94/#95)\n- **Smart compaction**: compactação consciente de prioridade com preservação de contexto downstream\n- **Token-opt**: otimizações de tokens medidas (TOON codec, medição WS3)\n- **Plugin fixes V2**: suporte ao plugin OpenCode V2 1.5 + normalização pós-1.5.0 (tool result shape + code-mode)\n\n### Instalação\n```bash\nnpm install -g pantheon-opencode@beta\n# ou versão exata:\nnpm install -g pantheon-opencode@1.5.0-beta.1\n```\nlatest permanece 1.4.3; beta aponta para 1.5.0-beta.1.\n\n### Validado\n- tests/validate-zenodo-release.test.mjs 11/11 (version-agnostic)\n- tests/release-beta-version.test.mjs 4/4\n- npm pack 235 arquivos, shasum 18852b2a7654a06842cc38ae48eb1f71cb0e9be1\n\n<!-- zenodo-deposition:id=22650139;state=created -->\n",
+    "name": "v1.5.0-beta.1",
+    "prerelease": true,
+    "tag": "v1.5.0-beta.1",
+    "expectedTitle": "Pantheon v1.5.0-beta.1",
+    "titleAction": "v1.5.0-beta.1 → Pantheon v1.5.0-beta.1",
+    "bodyAction": "keep",
+    "bodySource": "pre-release: title only"
+  },
+  {
+    "body": "## What's Changed\n* chore: release v1.4.3 by @ils15 in https://github.com/ils15/pantheon-opencode/pull/78\n\n\n**Full Changelog**: https://github.com/ils15/pantheon-opencode/compare/v1.4.2...v1.4.3\n\n<!-- zenodo-deposition:state=pending;claim=33870877804 -->\n",
+    "name": "v1.4.3",
+    "prerelease": false,
+    "tag": "v1.4.3",
+    "expectedTitle": "Pantheon v1.4.3",
+    "titleAction": "v1.4.3 → Pantheon v1.4.3",
+    "bodyAction": "keep",
+    "bodySource": "no section in the tag CHANGELOG"
+  },
+  {
+    "body": "## [v1.4.2] - 2026-08-27\n\n### Changed\n- Synchronized release metadata across project manifests (package.json, package-lock.json, plugin.json, pyproject.toml, src/plugins/tui/package.json → 1.4.2).\n\n### Added / Changed — Delegate Native Inheritance + 4 Presets (PR #74)\n\n**Herança nativa explícita (delegate):**\n- `pantheon_delegate` resolve `model` como: `explicit model` > `overrides.agents[agent]` em `active-preset.json` > `loadRoutingAgentModels` do preset ativo > **omitir `model`** (OpenCode herda nativamente do chat pai). Sem fallback para `model`/`small_model` top-level, sem lookup de parent messages.\n- `small_model` removido de `DelegationOptions`, `resolveChildModel`/`resolveUsableChildModel`, `zeus-delegate-with-retry` e host-required check — delegates nunca enviam `small_model`.\n- Validação **fail-closed** `MODEL_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*\\/[A-Za-z0-9][A-Za-z0-9._:+-]*$/` — rejeita whitespace/control/backslash/traversal com erro explícito.\n- Installer (`scripts/install/opencode.mjs`) fail-closed para JSON: throws em JSON malformado/top-level não-objeto, preserva falsy, sem validação de `extraCommandDirs`.\n\n**4 presets reconstruídos (`go-free`, `go-fast`, `go-premium`, `openai`):**\n- Removidos `go-deepseek`/`go-openai` Zen legados. IDs deprecated (`glm-5.1/5.2`, `kimi-k2.6`, `minimax-m2.5`, `ox-alpha`, `qwen3.7` variants) substituídos por `glm-5.3-flash`, `kimi-k2.7-code`, `kimi-k3`, `qwen3.8-max`, `qwen3.6-plus-free`, `nemotron-3-super-free`, `big-pickle`; `CAPABILITY_TABLE` atualizado 2026-08-27.\n- `openai` puro: planners/zeus `gpt-5.6-sol high`, implementers `gpt-5.6-luna` high→clamped low, scouts `gpt-5.6-luna-fast` low → fallback `luna` low (`https://api.openai.com/v1` via `OPENAI_API_KEY`).\n- `presets.mjs`: `providerDefKeyConfigured` aceita alias, `missingProviderKeyEnv` sem early-return para `opencode-go`, `applyPreset` resolve `PANTHEON_OPENCODE_API_KEY ?? OPENCODE_GO_API_KEY`.\n- `scripts/generate-preset-docs.mjs` (novo, 239 linhas): gera tabelas markdown a partir de `routing.yml` + `PRESET_PRICE` + `CAPABILITY_TABLE` (provider/baseURL/key, pricing 2026, vision, effort).\n- Docs `README.md`, `docs/INSTALLATION.md`, `docs/platforms/opencode.md` reescritos com tabelas geradas.\n\n**Default = herdar do chat (sem `active-preset.json`):**\n- `model-picker.mjs` Q1 `0=inherit` (default) não grava arquivo; `resolveActivePreset()` → `null`; `loadRoutingAgentModels()` → `{}`; `delegation.ts` omite `model`.\n- Precedência: `PANTHEON_MODEL_PRESET` env → `.pantheon/active-preset.json` (project→global→legacy) → `none` = herança nativa.\n\n**Wizard 3 perguntas + per-agent model (`/pantheon-model`):**\n- Q1 perfil (0/inherit + 4 presets) com tabela preço/modelos por papel; Q2 API key mascarada (`****`) sem escrever `.env`; Q3 escopo `project` (default, seguro) vs `global` com gravação atômica (`tmp`+`rename`, `.bak`, `fsync`).\n- `/pantheon-model` (`src/pantheon/model-command.ts` 858 linhas) opera exclusivamente em `active-preset.json` `overrides.agents[agent]` para 14 agentes canônicos, valida `MODEL_REF_PATTERN`/`CAPABILITY_TABLE`/`normalizeCapability`, exige `--confirm --authorize-global` para escopo global, persistência atômica com lock/`O_NOFOLLOW`/`mode 600`.\n\n**TUI / routing / docs:**\n- TUI `v1.4.2` header `⚡ Preset: go-fast (file)` vs `Preset: default` (herança nativa); `tsdown.config.ts` DCE; routing `deepseek free` removido, `themis/zeus flash` corrigidos; `loadRoutingAgentModels` sem fallback para primeiro preset.\n\n### Fixed\n- Empty child output → erro explícito `Child session produced no assistant or tool output`.\n- Toast TUI resiliente + deduplicado, gated por `PANTHEON_TOASTS`.\n- Merge de permissões não falha quando preset não define `permissions`.\n\n### Tests\n- `tests/test_presets.mjs` 51 OK, `scripts/validate-routing.mjs` 175 checks OK, 4 presets definidos.\n- Regressões: delegate herança nativa fail-closed, toast gating/dedupe, `active-preset` atômico, compaction context order.\n\n> Full commit: `a174bad` — `feat(delegate): native chat model inheritance and remove top-level defaults (1.4.2 deepwork) (#74)`\n\n",
+    "name": "v1.4.2 - delegate native inheritance + 4 presets",
+    "prerelease": false,
+    "tag": "v1.4.2",
+    "expectedTitle": "Pantheon v1.4.2",
+    "titleAction": "v1.4.2 - delegate native inheritance + 4 presets → Pantheon v1.4.2",
+    "bodyAction": "REWRITE",
+    "bodySource": "CHANGELOG @ v1.4.2 (69 bytes)"
+  },
+  {
+    "body": "### Changed\n\n- **Delegation output:** removed the legacy delegate echo path. Terminal visibility now uses the board, list/read tools, file-only audit logs, and TUI toasts; chat transcript delivery remains disabled.\n- **Model inheritance:** child sessions no longer receive a hardcoded `model` or `small_model`. Only an explicitly active routing profile (or an explicit delegate model) supplies an override; otherwise OpenCode inherits the parent model.\n- **Compaction carry-forward:** context is written through `output.context` during `experimental.session.compacting`, before `session.compacted` runs, preserving the correct lifecycle order without chat injection.\n\n### Fixed\n\n- **Empty child output:** a child marked completed without assistant or tool output now becomes an explicit error: `Child session produced no assistant or tool output`.\n- **Terminal toast delivery:** toast delivery is resilient to missing or failing TUI clients, is gated by `PANTHEON_TOASTS`, and deduplicates repeated terminal events for the same delegation.\n- **Chat noise:** removed the remaining transcript/reminder delivery paths for delegation completion and compaction state.\n\n### Tests\n\n- Added regression coverage for delegate output validation, terminal-toast gating/deduplication, native model inheritance, and compaction context ordering.\n- Updated the relevant Node/TypeScript tests and installation/model-routing checks; global-install behavior remains validated through the isolated sandbox when run.\n- Release verification caveat: `npm test` reported 240 passing tests and 1 environmental failure (`fork: Resource temporarily unavailable`); rerun on a host with sufficient process resources before treating the candidate as fully verified.\n",
+    "name": "Pantheon v1.4.1",
+    "prerelease": false,
+    "tag": "v1.4.1",
+    "expectedTitle": "Pantheon v1.4.1",
+    "titleAction": null,
+    "bodyAction": "keep",
+    "bodySource": "CHANGELOG @ v1.4.1 (1735 bytes)"
+  },
+  {
+    "body": "## Pantheon v1.4.0\n\nThis release adds codebase knowledge-graph tooling and reduces context-window output volume, while improving installed TUI version detection and Bash command portability.\n\n## What's New\n\n- **Codebase knowledge graph:** Added the `pantheon-memory` codemap module with code entities, relations, file hashes, FTS5 search, and the `code_index`, `code_query`, and `code_neighbors` tools for Python and TypeScript codebases.\n- **Context-window optimization:** Added `tool.execute.after` output sandboxing for `read`, `grep`, `glob`, and `webfetch`, with truncation markers and lower per-session output volume.\n\n## Fixed\n\n- **Installed TUI version display:** Version detection now checks the installed TUI package before the development-tree package, fixing null versions in global installs and the sandbox.\n- **Bash command portability:** Normalized `python` commands to `python3` where the host does not provide a `python` executable.\n\n## Tests / compatibility\n\nThe changelog records the implementation and coverage reported by the session; no additional release-level test result is asserted here.\n\nNo breaking change is recorded in the changelog.",
+    "name": "Pantheon v1.4.0",
+    "prerelease": false,
+    "tag": "v1.4.0",
+    "expectedTitle": "Pantheon v1.4.0",
+    "titleAction": null,
+    "bodyAction": "REWRITE",
+    "bodySource": "CHANGELOG @ v1.4.0 (1708 bytes)"
+  },
+  {
+    "body": "## 🆕 What's New\n\n- **Stale-running detector (src/pantheon/delegation-notify.ts)** — entries running >30min without activity now show a ⚠️ warning in the job board; running state is rejected in the MD parser (should only come from live channels).\n- **Auto-update mechanism (scripts/sync-tui.mjs)** — postinstall script syncs TUI plugin files from the main package; runtime version staleness check at plugin init ensures the TUI stays current.\n\n## 🐞 Fixed\n\n- **Delegate stale-running display (src/plugins/tui/src/index.tsx)** — resolved stale-running entries appearing in the TUI delegation view.\n- **finalizeIdleChildrenWithoutMd** — wired into periodic 30s scan at plugin init to clean up orphaned children.\n\n## ✅ Closed Issues\n\n- #68 — fix(tui): resolve delegate stale-running display and add auto-update\n\n<!-- Add new changes here. Running `node scripts/versioning.mjs apply` will\n     move this section to a versioned entry and reset the template below. -->\n\n## 🆕 What's New\n\n## 🐞 Fixed\n\n## ⚠️ Known Issues\n\n## ✅ Closed Issues\n",
+    "name": "Pantheon v1.3.7",
+    "prerelease": false,
+    "tag": "v1.3.7",
+    "expectedTitle": "Pantheon v1.3.7",
+    "titleAction": null,
+    "bodyAction": "keep",
+    "bodySource": "CHANGELOG @ v1.3.7 (1033 bytes)"
+  },
+  {
+    "body": "## 🆕 What's New\n\n- **Recency decay in `memory_search` (src/mcp/memory_mcp_server.py)** — new `decay_days` param (default `None`, backward compatible) applies a freshness half-life `2^(-days_since_created/decay_days)` to RRF-fused scores, so older memories rank lower when enabled. `_rrf_fuse` accepts an optional `created_at_map`; tool description and docs updated (docs/MEMORY.md, docs/MCP.md, docs/mcp-tools.md).\n- **Themis Comment Checker (src/agents/themis.md)** — Layer 1 review now flags generated code that is indistinguishable from human-written: excessive/obvious comments (`// increment i`, `# set x to 5`), commented-out dead code, and boilerplate headers.\n- **Doc drift fixes** — MEMORY.md/MCP.md/mcp-tools.md now describe the real sqlite-vec + fastembed implementation (6 tools) instead of the stale ChromaDB 14-tool design; freshness decay documented as opt-in via `decay_days`.\n- **scripts/ resynced with src/mcp/** — `mcp_resources_server.py` (routing project fallback), `code_mode_server.py` (comment drift), `memory_mcp_server.py`, `mcp_persistence_server.py`, `_pantheon_paths.py` regenerated from canonical source; tests now point at `src.mcp.*` so they exercise canonical code.\n- **mcp-registry.yml synced** — real tool names (`memory_store/search/recall/forget/list/stats`, `kv_*`, `execute_code_script`, `vision_*`) + `pantheon-vision` server added.\n- **Persistence MCP server test suite (tests/test_mcp_persistence_server.py)** — 32 tests covering kv_store/kv_get (incl. TTL expiry), kv_list, kv_search (FTS5), kv_delete, kv_delete_namespace, purge_expired (dry_run + deletelog), context_save/get/list/stats (latest pointer, session isolation) and namespace/scope isolation — the only previously untested MCP server now has full coverage.\n- **CRITICAL TTL expiry fix (src/mcp/mcp_persistence_server.py)** — ISO `expires_at` timestamps (with `T` separator) compared lexicographically against SQLite's space-separated `datetime('now')` were ALWAYS greater on the same date, so TTL entries never expired (kv_get never returned None, purge_expired never purged, the 4h checkpoint TTL never fired). All 9 comparison sites now normalize via `datetime(expires_at)` — restoring the crash-recovery checkpoint path.\n- **`_resolve_db_path` fix (src/mcp/mcp_persistence_server.py)** — with an explicit `--project-db`, deletelog writes and db_size stats pointed at the repo's real project.db instead of the actual DB path; the resolved path is now tracked at init.\n- **Code-mode script metadata (src/mcp/code_mode_server.py)** — optional comment-style YAML frontmatter (`# ---` delimiters) on scripts: `description`, `timeout` (per-script override, seconds), `allowed_args` (arg allowlist). Exposed via `pantheon://code-mode/scripts/{name}` and the new `json_output=true` structured result (stdout/stderr/exit_code/duration_ms/timed_out/metadata). Malformed/missing frontmatter fails open. Documented in `.pantheon/code-mode/README.md`.\n- **Per-script timeout override (src/mcp/code_mode_server.py)** — frontmatter `timeout` overrides the 30s default in the subprocess `wait_for`; kill-on-timeout preserved (tested: `timeout: 2` script killed at ~2s).\n- **`_parse_iso_ts` UTC fix (src/mcp/memory_mcp_server.py)** — legacy naive timestamps from `DEFAULT (datetime('now'))` (`YYYY-MM-DD HH:MM:SS`, no TZ) are now assumed UTC instead of local timezone before `.timestamp()`, keeping freshness decay correct.\n- **StepCapTracker permanent-per-process documented (src/pantheon/step-cap.ts)** — counters accumulate for the process lifetime and are intentionally not reset on success/session end; `reset()` remains a tested utility. Documented in routing.yml + README.\n- **High-level R1 integration tests (tests/pantheon/zeus-delegate-with-retry.test.ts)** — `zeusDelegateWithRetry` with retryPolicy/cooldown: policy-driven retry-then-success (empty → 1 retry → recovered content), 0-retry escalate, and cooldown skip.\n- **R4 per-agent step caps (src/pantheon/step-cap.ts + src/routing.yml)** — every routed agent gets a `max_steps` budget (explore 25, reviewer 25, oracle 15, hermes 40, zeus 60, …); at the cap the delegation is forced to summarize-and-stop via `buildStopInstruction`/`cappedSummary`; counters are permanent-per-process by design.\n- **O5 permission.task globs (src/pantheon/permission-globs.ts)** — allow/deny glob rules controlling which subagents may be delegated; deny rules remove the target from Zeus's task tool entirely (`delegation-enforce`), with matching filtering in finalize and the agent-list description.\n- **plugin-eval certification suite (.pantheon/code-mode/)** — `eval-static.py` (structural checks: frontmatter/secrets/file refs), `eval-llm-judge.py` (LLM quality layer), `eval-monte-carlo.py` (simulated-run reliability, exits 1 below 75%), `eval-run.py` (orchestrator emitting one report JSON; below-threshold layers still score), plus `eval_store` persistence and `pantheon://eval` resources exposing latest certification scores.\n\n## 🐞 Fixed\n\n- memory_search doc drift: freshness decay was documented but not implemented — now real via `decay_days`.\n- scripts/ copies stale vs src/mcp/ canonical sources (missing routing project fallback, stale comments).\n- .pantheon/mcp-registry.yml listed non-existent tools (memory_compress, memory_expand, list_agents) and missed pantheon-vision.\n",
+    "name": "Pantheon v1.3.6",
+    "prerelease": false,
+    "tag": "v1.3.6",
+    "expectedTitle": "Pantheon v1.3.6",
+    "titleAction": null,
+    "bodyAction": "keep",
+    "bodySource": "CHANGELOG @ v1.3.6 (5330 bytes)"
+  },
+  {
+    "body": "## 🆕 What's New\n\n- **PT patterns para delegação (routing.yml)** — adiciona 5 padrões PT (`procure`/`busque`/`encontre`/`localize`/`pesquise`) ao `intent_gate` research → apollo, corrigindo detecção de intenção para prompts em português (PR #61).\n- **Zeus read guard (delegation-enforce.ts + plugin.ts)** — `ZEUS_READ_DENY_PATTERNS` bloqueia `src`/`tests`/`scripts`/`glob`/`grep` por Zeus via `tool.execute.before` (primeiro guard da cadeia); `ALLOWED_PATHS` libera `.md` e `.pantheon/memories`; 10 casos de teste em `tests/pantheon/delegation-enforce.test.ts`; `apollo.md`/`gaia.md` com `visible:false` e `tools.task:false` para depth-1 (PR #61).\n\n## 🐞 Fixed\n\n- **session-guard + retry helper (session-guard.ts + zeus-delegate-with-retry.ts)** — guard de `session_id` e helper `zeusDelegateWithRetry` com retry/backoff para delegações; `goal-loop.ts`/`todo-enforcer.ts`/`todo-preserve.ts`/`delegation.ts` ajustados (PR #61).\n- **validate doctor filter (scripts/doctor.mjs)** — `isValidAgentFile` verifica frontmatter YAML (`name`/`description`/`mode`) para filtrar `README.md` e docs não-agente de `getCanonicalAgentNames`/`deriveInstalledAgentFiles`; evita contagem espúria no `doctor` (PR #61).\n- **README move (src/agents → docs/agents)** — move `README.md` para fora de `src/agents` para evitar agente espúrio; `docs/agents/README.md` criado (PR #61).\n- **TUI GC aliasless (src/plugins/tui)** — GC de delegações live sem alias para evitar estado `delegating` preso; `src/plugins/tui/src/index.tsx` + `dist/` atualizados (PR #61).\n- **routing fallback opencode-go (src/pantheon/presets.mjs + routing.yml)** — fallback do preset default para `opencode-go` quando API key do provider ausente; `resolveChildModel` com fallback para `opencode/deepseek-v4-flash-free` (PR #61).\n- **install README guard (scripts/install/*)** — `shared.mjs`/`opencode.mjs`/`agents-md.mjs` impedem cópia de `README.md` para diretório de agentes; `package.json` ajustado (PR #61).\n",
+    "name": "Pantheon v1.3.5",
+    "prerelease": false,
+    "tag": "v1.3.5",
+    "expectedTitle": "Pantheon v1.3.5",
+    "titleAction": null,
+    "bodyAction": "keep",
+    "bodySource": "CHANGELOG @ v1.3.5 (1960 bytes)"
+  },
+  {
+    "body": "## 🆕 What's New\n\n- **Compaction summary V2** (preservation directive + mission/todo/delegation sections): `buildCompactionContext` is now async and accepts goal/todo sources — `PANTHEON_COMPACTION_DIRECTIVE` prefix section (emitted before any other section, skipped on totally-empty state), `<mission_context>` with active goals (id/objective/status), `<todo_context>` with pending (not completed/cancelled) todos; delegation blocks byte-for-byte unchanged; failing/disabled sources are skipped fail-open (logged to hooks.log)\n- **Post-compaction todo preservation**: TodoPreserver captures the session's todo list on `experimental.session.compacting`, activates the snapshot on `session.compacted`, and rewrites the first post-compaction `todowrite` with the exact pre-compaction list — additive + fail-open (every step degrades to a logged warn, never throws in a hook)\n- **Post-compaction state re-assertion**: re-asserts session state after compaction so the rebuilt context reflects the live board\n- **agentModels wiring from routing.yml**: delegation toolset's `options.agentModels` is now wired from the routing.yml default (first) preset — a static per-agent model mapping built once at module load, so branch (b) of `resolveChildModel` (previously dead) gives delegated children a sane model even without an active preset; fail-open `{}` on missing/corrupt routing.yml\n- **Preemptive compaction threshold logic** (dormant/experimental): threshold-based preemptive compaction — not active by default\n- **File-first logging**: `createPantheonLogger` — console echo opt-in via `PANTHEON_HOOKS_LOG=1`, everything routed to `.pantheon/logs/hooks.log` (silences TUI console pollution)\n- **Real-time Delegations TUI panel**: sidebar panel sourced from `api.client.session.children` — shows `pantheon_delegate` children (board alias tag) AND native `task()` children (`[task]` tag, distinct info color); animated states (DELEGATING/WORKING/READING RESULT/DONE/DONE (TIMED OUT)/ERROR/CANCELLED) with a 140ms spinner; click-to-navigate into the child session; all-sessions history via `.pantheon/delegations/` reports; `panel: children=N md=N events=N` diagnostics in hooks.log\n- **README docs**: 1.3.4 compaction + delegation features documented\n- **Zero chat-notification policy**: removed the `chat.message` injection channel for delegation signals — completion visibility lives in the board `[unread]` marker, `pantheon_delegation_read`, TUI toasts and compaction carry-forward, never in the chat transcript\n\n## 🐞 Fixed\n\n- **Delegate dispatch with missing provider API key** (P1): `resolveChildModel` never checked whether the resolved model's provider had a configured API key — a child dispatched to a keyless provider (e.g. gpt-5.6-luna/opencode-go) died instantly with `AI_LoadAPIKeyError`. Auto-resolved models (agentModels/preset) whose provider key is missing now fall back to `opencode/deepseek-v4-flash-free`; explicit caller models are respected (warned); when nothing is usable the tool returns a clear error TEXT and registers NO job on the board\n- **delegations.log typing**: `task_id` was always `\"\"` (now omitted when empty) and `duration_ms` was logged as a STRING (now parsed to a number, null when unset), breaking downstream aggregation\n- **Idle-flush log duplication**: `flushIdleReminders` echoed the reminder body joined with `\" | \"` while chat.message delivery echoed the same body with `\"\\n\"` — the identical line appeared twice; idle-flush is now an audit summary (count + aggregated line count), content logged exactly once at chat-reminder delivery\n- **TUI console log pollution**: console output in the plugin/hooks rendered directly into the opencode TUI; now env-gated, log-file only by default\n",
+    "name": "Pantheon v1.3.5-beta.60.efa533f",
+    "prerelease": true,
+    "tag": "v1.3.5-beta.60.efa533f",
+    "expectedTitle": "Pantheon v1.3.5-beta.60.efa533f",
+    "titleAction": null,
+    "bodyAction": "keep",
+    "bodySource": "pre-release: title only"
+  },
+  {
+    "body": "## 🆕 What's New\n\n- **Compaction summary V2** (preservation directive + mission/todo/delegation sections): `buildCompactionContext` is now async and accepts goal/todo sources — `PANTHEON_COMPACTION_DIRECTIVE` prefix section (emitted before any other section, skipped on totally-empty state), `<mission_context>` with active goals (id/objective/status), `<todo_context>` with pending (not completed/cancelled) todos; delegation blocks byte-for-byte unchanged; failing/disabled sources are skipped fail-open (logged to hooks.log)\n- **Post-compaction todo preservation**: TodoPreserver captures the session's todo list on `experimental.session.compacting`, activates the snapshot on `session.compacted`, and rewrites the first post-compaction `todowrite` with the exact pre-compaction list — additive + fail-open (every step degrades to a logged warn, never throws in a hook)\n- **Post-compaction state re-assertion**: re-asserts session state after compaction so the rebuilt context reflects the live board\n- **agentModels wiring from routing.yml**: delegation toolset's `options.agentModels` is now wired from the routing.yml default (first) preset — a static per-agent model mapping built once at module load, so branch (b) of `resolveChildModel` (previously dead) gives delegated children a sane model even without an active preset; fail-open `{}` on missing/corrupt routing.yml\n- **Preemptive compaction threshold logic** (dormant/experimental): threshold-based preemptive compaction — not active by default\n- **File-first logging**: `createPantheonLogger` — console echo opt-in via `PANTHEON_HOOKS_LOG=1`, everything routed to `.pantheon/logs/hooks.log` (silences TUI console pollution)\n- **Real-time Delegations TUI panel**: sidebar panel sourced from `api.client.session.children` — shows `pantheon_delegate` children (board alias tag) AND native `task()` children (`[task]` tag, distinct info color); animated states (DELEGATING/WORKING/READING RESULT/DONE/DONE (TIMED OUT)/ERROR/CANCELLED) with a 140ms spinner; click-to-navigate into the child session; all-sessions history via `.pantheon/delegations/` reports; `panel: children=N md=N events=N` diagnostics in hooks.log\n- **README docs**: 1.3.4 compaction + delegation features documented\n- **Zero chat-notification policy**: removed the `chat.message` injection channel for delegation signals — completion visibility lives in the board `[unread]` marker, `pantheon_delegation_read`, TUI toasts and compaction carry-forward, never in the chat transcript\n\n## 🐞 Fixed\n\n- **Delegate dispatch with missing provider API key** (P1): `resolveChildModel` never checked whether the resolved model's provider had a configured API key — a child dispatched to a keyless provider (e.g. gpt-5.6-luna/opencode-go) died instantly with `AI_LoadAPIKeyError`. Auto-resolved models (agentModels/preset) whose provider key is missing now fall back to `opencode/deepseek-v4-flash-free`; explicit caller models are respected (warned); when nothing is usable the tool returns a clear error TEXT and registers NO job on the board\n- **delegations.log typing**: `task_id` was always `\"\"` (now omitted when empty) and `duration_ms` was logged as a STRING (now parsed to a number, null when unset), breaking downstream aggregation\n- **Idle-flush log duplication**: `flushIdleReminders` echoed the reminder body joined with `\" | \"` while chat.message delivery echoed the same body with `\"\\n\"` — the identical line appeared twice; idle-flush is now an audit summary (count + aggregated line count), content logged exactly once at chat-reminder delivery\n- **TUI console log pollution**: console output in the plugin/hooks rendered directly into the opencode TUI; now env-gated, log-file only by default\n",
+    "name": "Pantheon v1.3.5-beta.57.2e03676",
+    "prerelease": true,
+    "tag": "v1.3.5-beta.57.2e03676",
+    "expectedTitle": "Pantheon v1.3.5-beta.57.2e03676",
+    "titleAction": null,
+    "bodyAction": "keep",
+    "bodySource": "pre-release: title only"
+  },
+  {
+    "body": "## 🆕 What's New\n\n- **Compaction summary V2** (preservation directive + mission/todo/delegation sections): `buildCompactionContext` is now async and accepts goal/todo sources — `PANTHEON_COMPACTION_DIRECTIVE` prefix section (emitted before any other section, skipped on totally-empty state), `<mission_context>` with active goals (id/objective/status), `<todo_context>` with pending (not completed/cancelled) todos; delegation blocks byte-for-byte unchanged; failing/disabled sources are skipped fail-open (logged to hooks.log)\n- **Post-compaction todo preservation**: TodoPreserver captures the session's todo list on `experimental.session.compacting`, activates the snapshot on `session.compacted`, and rewrites the first post-compaction `todowrite` with the exact pre-compaction list — additive + fail-open (every step degrades to a logged warn, never throws in a hook)\n- **Post-compaction state re-assertion**: re-asserts session state after compaction so the rebuilt context reflects the live board\n- **agentModels wiring from routing.yml**: delegation toolset's `options.agentModels` is now wired from the routing.yml default (first) preset — a static per-agent model mapping built once at module load, so branch (b) of `resolveChildModel` (previously dead) gives delegated children a sane model even without an active preset; fail-open `{}` on missing/corrupt routing.yml\n- **Preemptive compaction threshold logic** (dormant/experimental): threshold-based preemptive compaction — not active by default\n- **File-first logging**: `createPantheonLogger` — console echo opt-in via `PANTHEON_HOOKS_LOG=1`, everything routed to `.pantheon/logs/hooks.log` (silences TUI console pollution)\n- **Real-time Delegations TUI panel**: sidebar panel sourced from `api.client.session.children` — shows `pantheon_delegate` children (board alias tag) AND native `task()` children (`[task]` tag, distinct info color); animated states (DELEGATING/WORKING/READING RESULT/DONE/DONE (TIMED OUT)/ERROR/CANCELLED) with a 140ms spinner; click-to-navigate into the child session; all-sessions history via `.pantheon/delegations/` reports; `panel: children=N md=N events=N` diagnostics in hooks.log\n- **README docs**: 1.3.4 compaction + delegation features documented\n- **Zero chat-notification policy**: removed the `chat.message` injection channel for delegation signals — completion visibility lives in the board `[unread]` marker, `pantheon_delegation_read`, TUI toasts and compaction carry-forward, never in the chat transcript\n\n## 🐞 Fixed\n\n- **Delegate dispatch with missing provider API key** (P1): `resolveChildModel` never checked whether the resolved model's provider had a configured API key — a child dispatched to a keyless provider (e.g. gpt-5.6-luna/opencode-go) died instantly with `AI_LoadAPIKeyError`. Auto-resolved models (agentModels/preset) whose provider key is missing now fall back to `opencode/deepseek-v4-flash-free`; explicit caller models are respected (warned); when nothing is usable the tool returns a clear error TEXT and registers NO job on the board\n- **delegations.log typing**: `task_id` was always `\"\"` (now omitted when empty) and `duration_ms` was logged as a STRING (now parsed to a number, null when unset), breaking downstream aggregation\n- **Idle-flush log duplication**: `flushIdleReminders` echoed the reminder body joined with `\" | \"` while chat.message delivery echoed the same body with `\"\\n\"` — the identical line appeared twice; idle-flush is now an audit summary (count + aggregated line count), content logged exactly once at chat-reminder delivery\n- **TUI console log pollution**: console output in the plugin/hooks rendered directly into the opencode TUI; now env-gated, log-file only by default\n",
+    "name": "Pantheon v1.3.5-beta.52.c75b04d",
+    "prerelease": true,
+    "tag": "v1.3.5-beta.52.c75b04d",
+    "expectedTitle": "Pantheon v1.3.5-beta.52.c75b04d",
+    "titleAction": null,
+    "bodyAction": "keep",
+    "bodySource": "pre-release: title only"
+  },
+  {
+    "body": "## 🆕 What's New\n\n- **Compaction summary V2** (preservation directive + mission/todo/delegation sections): `buildCompactionContext` is now async and accepts goal/todo sources — `PANTHEON_COMPACTION_DIRECTIVE` prefix section (emitted before any other section, skipped on totally-empty state), `<mission_context>` with active goals (id/objective/status), `<todo_context>` with pending (not completed/cancelled) todos; delegation blocks byte-for-byte unchanged; failing/disabled sources are skipped fail-open (logged to hooks.log)\n- **Post-compaction todo preservation**: TodoPreserver captures the session's todo list on `experimental.session.compacting`, activates the snapshot on `session.compacted`, and rewrites the first post-compaction `todowrite` with the exact pre-compaction list — additive + fail-open (every step degrades to a logged warn, never throws in a hook)\n- **Post-compaction state re-assertion**: re-asserts session state after compaction so the rebuilt context reflects the live board\n- **agentModels wiring from routing.yml**: delegation toolset's `options.agentModels` is now wired from the routing.yml default (first) preset — a static per-agent model mapping built once at module load, so branch (b) of `resolveChildModel` (previously dead) gives delegated children a sane model even without an active preset; fail-open `{}` on missing/corrupt routing.yml\n- **Preemptive compaction threshold logic** (dormant/experimental): threshold-based preemptive compaction — not active by default\n- **File-first logging**: `createPantheonLogger` — console echo opt-in via `PANTHEON_HOOKS_LOG=1`, everything routed to `.pantheon/logs/hooks.log` (silences TUI console pollution)\n- **Real-time Delegations TUI panel**: sidebar panel sourced from `api.client.session.children` — shows `pantheon_delegate` children (board alias tag) AND native `task()` children (`[task]` tag, distinct info color); animated states (DELEGATING/WORKING/READING RESULT/DONE/DONE (TIMED OUT)/ERROR/CANCELLED) with a 140ms spinner; click-to-navigate into the child session; all-sessions history via `.pantheon/delegations/` reports; `panel: children=N md=N events=N` diagnostics in hooks.log\n- **README docs**: 1.3.4 compaction + delegation features documented\n- **Zero chat-notification policy**: removed the `chat.message` injection channel for delegation signals — completion visibility lives in the board `[unread]` marker, `pantheon_delegation_read`, TUI toasts and compaction carry-forward, never in the chat transcript\n\n## 🐞 Fixed\n\n- **Delegate dispatch with missing provider API key** (P1): `resolveChildModel` never checked whether the resolved model's provider had a configured API key — a child dispatched to a keyless provider (e.g. gpt-5.6-luna/opencode-go) died instantly with `AI_LoadAPIKeyError`. Auto-resolved models (agentModels/preset) whose provider key is missing now fall back to `opencode/deepseek-v4-flash-free`; explicit caller models are respected (warned); when nothing is usable the tool returns a clear error TEXT and registers NO job on the board\n- **delegations.log typing**: `task_id` was always `\"\"` (now omitted when empty) and `duration_ms` was logged as a STRING (now parsed to a number, null when unset), breaking downstream aggregation\n- **Idle-flush log duplication**: `flushIdleReminders` echoed the reminder body joined with `\" | \"` while chat.message delivery echoed the same body with `\"\\n\"` — the identical line appeared twice; idle-flush is now an audit summary (count + aggregated line count), content logged exactly once at chat-reminder delivery\n- **TUI console log pollution**: console output in the plugin/hooks rendered directly into the opencode TUI; now env-gated, log-file only by default\n",
+    "name": "Pantheon v1.3.4",
+    "prerelease": false,
+    "tag": "v1.3.4",
+    "expectedTitle": "Pantheon v1.3.4",
+    "titleAction": null,
+    "bodyAction": "keep",
+    "bodySource": "CHANGELOG @ v1.3.4 (3729 bytes)"
+  },
+  {
+    "body": "## [v1.3.3] - 2026-08-11\n\n\n## 🆕 What's New\n\n- **Todo continuation enforcer**: auto-continues sessions with incomplete todos on `session.idle` (4 guards: board-running, in-flight, exponential cooldown, max-failures cap) + kill-switch `PANTHEON_TODO_ENFORCER=off`\n- **Hashline hash-anchored edits**: `hashline_edit` tool with sha256-truncated line tags, additive read enhancer, validate-before-write with `>>>` mismatch hints + Did-you-mean suggestions; blocked in read-only sessions\n- **Full-auto goal loop** (opt-in `full_auto.enabled: false`): `pantheon_goal_create/update/get` tools, atomic GoalStore, priority idle dispatcher (goal suppresses enforcer), max 25 continuations\n- **Dispatch retry-on-empty**: classifies empty results (mode 1: 0 tokens; mode 2: reasoning without text) with cap-1 automatic retry\n- **Cost tracking**: JSONL ledger + `pantheon_cost` command reading opencode.db (zero-dep, node:sqlite → scripts/cost.mjs fallback)\n- **Themis phase reviews** route to deepseek-v4-flash (pro reserved for final release gate); Athena stays premium (council red-line)\n- **Routing config**: `background_delegation`, `todo_enforcer`, `hashline`, `full_auto` sections\n\n## 🐞 Fixed\n\n- **Delegation killer**: chat.message hook injected reminders with empty messageID on the subagent promptAsync path — opencode schema rejected it, killing every background delegation in ~20ms (found by live E2E smoke)\n- **Delegation child model routing**: child sessions now inherit the routed model (explicit arg → routing.yml agent entry → active preset) instead of falling back to the key-gated default (E2E: AI_LoadAPIKeyError without an active preset)\n- **Installer `resolveInstalledPlugin`** mapped only `src/plugins/*` — `src/plugin.ts` resolved to the dev path, breaking global installs on non-dev machines and leaking the dev path (release-blocking)\n- **Todo enforcer invasiveness**: skips injection when native background children are active (`session.children`) and within 30s of user activity\n- **Hashline**: atomic write (tmp+rename), path containment guard, documented seed separator\n",
+    "name": "Pantheon v1.3.3",
+    "prerelease": false,
+    "tag": "v1.3.3",
+    "expectedTitle": "Pantheon v1.3.3",
+    "titleAction": null,
+    "bodyAction": "REWRITE",
+    "bodySource": "CHANGELOG @ v1.3.3 (2061 bytes)"
+  },
+  {
+    "body": "## [v1.3.2] - 2026-08-09\n\n\n## 🆕 What's New\n\n- **Sandbox validation**: added the `sandbox` doctor profile and regression coverage for npm tarball contents, installed hook resolution, doctor status handling, MCP runtime smoke checks, and related CLI/install contracts.\n- **Package portability**: distributed configuration no longer retains checkout-specific machine paths; managed hooks are resolved from the installed package during install/sync.\n- **Doctor contract**: exit statuses now distinguish success (`0`), advisory warnings (`1`), and blocking errors (`>=2`).\n\n## 🐞 Fixed\n\n- **Global installation diagnostics**: clarified the distinction between advisory doctor warnings and blocking failures.\n",
+    "name": "Pantheon v1.3.2",
+    "prerelease": false,
+    "tag": "v1.3.2",
+    "expectedTitle": "Pantheon v1.3.2",
+    "titleAction": null,
+    "bodyAction": "REWRITE",
+    "bodySource": "CHANGELOG @ v1.3.2 (751 bytes)"
+  },
+  {
+    "body": "## [v1.3.1] - 2026-08-08\n\n\n## 🆕 What's New\n\n- **Release validation coverage**: hook-runner spawn/timeout/SIGKILL handling with process-group cleanup; scanner fixtures that avoid accidental false positives; doctor `global`, `lite`, and `sandbox` profiles with explicit PASS/WARN/ERROR/SKIP statuses; `run-test.sh` exit semantics; and sandbox validation coverage.\n- Local validation logs are ignored via `logs/` because they are generated diagnostics, not release artifacts or source files.\n",
+    "name": "Pantheon v1.3.1",
+    "prerelease": false,
+    "tag": "v1.3.1",
+    "expectedTitle": "Pantheon v1.3.1",
+    "titleAction": null,
+    "bodyAction": "REWRITE",
+    "bodySource": "CHANGELOG @ v1.3.1 (467 bytes)"
+  },
+  {
+    "body": "## [v1.3.0] - 2026-08-06\n\n\n## 🆕 What's New\n\n- **Non-invasive TUI notifications**: hook failures no longer write to `console.error` (TUI pollution) — non-zero exits route to three non-TUI channels: deduped TUI toast (`client.tui.showToast`), structured `client.app.log` entry (service `pantheon-hooks`), and `.pantheon/logs/hooks.log` file append; `PANTHEON_HOOKS_LOG=1` opt-in preserved, routed to log channels only\n- **Delegation lifecycle toasts**: 🚀 `<agent> em execução` / ✅ `<agent> concluiu` with anti-spam (2000ms rate limiter + 3-agents-in-6s aggregation into a single summary toast)\n- **PANTHEON_TOASTS gate**: `off|errors|delegations|all` (default `delegations`), read once at plugin load; gates TUI display only, log channels always write; council toasts included in the default set\n- **Olympians groups**: wave→Olympians naming, 10s detection window, group completion\n- **Hybrid secret blocking**: high-confidence tokens blocked (throw), low-confidence advisory-only; `maskSecret()` redaction applied across hook outputs\n- **Honest delegation telemetry**: `delegation_id`/`task_id`/`duration_ms` fields, `dispatched` status for background agents, JSON round-trip stop hook (no TSV corruption)\n- **Bash exit-code monitoring**: `metadata.exit` → individual error notifications\n- **Talos scope enforcement**: session→agent map, native permission denies, content guard\n- `PANTHEON_HOOKS_LOG` opt-in with ISO timestamps per line\n- Routing disambiguation (project vs system docs), refusal taxonomy, delegation cache telemetry\n- Secret-scan hygiene: wildcard notation for credential references (no literal keys in versioned docs/comments)\n- README: hooks testing docs + `PANTHEON_TOASTS` table with council; AGENTS.md adds \"PRs always update the README\" convention\n\n## 🐞 Fixed\n\n- Council toast idle-flush race condition\n",
+    "name": "Pantheon v1.3.0",
+    "prerelease": false,
+    "tag": "v1.3.0",
+    "expectedTitle": "Pantheon v1.3.0",
+    "titleAction": null,
+    "bodyAction": "REWRITE",
+    "bodySource": "CHANGELOG @ v1.3.0 (1802 bytes)"
+  },
+  {
+    "body": "## [v1.2.2] - 2026-08-05\n\n\n## 🆕 What's New\n\n- **`pantheon prune`** (#22): legacy cleanup command — XDG-aware config resolution, `--dry-run` default (list only), `--apply` removes stale `opencode.json.bak*` backups (age threshold), `--apply --remove-dirs` for legacy dirs with dead configs; old global `pantheon` installs are suggested for manual `npm uninstall -g pantheon`, never removed (npm-managed)\n- **Release pipeline standardization** (PR #28): single source of truth for version in `scripts/versioning.mjs` (sem-tag aware); CHANGELOG repair (normalized broken `[5.0.0]` heading → `[1.0.0]`, stripped `[v` prefixes across 3.x history, added `[Unreleased]`); `release.yml` redesigned with idempotent gates (skips publish when version already exists); new `scripts/changelog-extract.mjs` and `scripts/version-check.mjs` (+ test suites) so release bodies use real changelog sections; commitlint extended to cover pushes; pre-commit gate added; `cliff.toml` (git-cliff) removed; `docs/RELEASING.md` added; ADR-0007\n- **Test wiring + install docs** (PR #31): `test:security` extended with `test_doctor_layers`; Node test suite wired via `npm run test:node` (`node --test tests/*.mjs` — prune, hook-runner, plugin-log-policy, install/vision contracts, changelog/version checks) into CI; global-install sandbox documented in AGENTS.md / INSTALLATION.md\n- Dead `src/mcp/requirements-mcp-core.txt` catalog duplicate (YAGNI — the installer uses `requirements-mcp.txt`)\n\n## 🐞 Fixed\n\n- **Reliable global install** (PR #26): hooks plugin recreated (`pantheon-hooks.ts` + `hook-runner.ts` with stdin JSON protocol, version-proof); MCP install made hermetic (absolute paths); packaging fix (`files[]` += `src/plugins/**`, `scripts/hooks/**`, self-reference removed, pinned `@opencode-ai/plugin` 1.18.11); `import uuid` hotfix in `scripts/mcp_persistence_server.py`\n- **Installer/plugin packaging paths** (PR #31): hooks plugin registered via `resolveInstalledPlugin` so the config points at the INSTALLED package path, never the developer's absolute path (#30); TUI registered with absolute dist path in `tui.json` (#32 — relative path caused NpmInstallFailedError); TUI reads its installed package version via `import.meta.url` (works from any cwd)\n- **Idempotent init** (#19): `subagent_depth` merged into the always-run config merge — run #1 already produces the final config (previously only the SECOND init added it); honest re-run stats (`routing.yml` no longer counted as created every run)\n- **Layered doctor** (#18): B.6 smoke JSON-RPC `initialize` + F venv/deps check with pinned requirements\n- **Pinned MCP dependencies** (#21): exact pins in `src/mcp/requirements-*.txt` (`mcp==1.29.0`, `fastmcp==3.4.6`, `pyyaml==6.0.3`, `sqlite-vec==0.1.9`, `fastembed==0.8.0`, `httpx==0.28.1`) — reproducible venv installs\n- **Silent hooks by default**: audit hooks no longer echo to the console on success (`PANTHEON_HOOKS_LOG=1` re-enables the debug echo; log FILES `sessions.log`/`delegations.log` continue to be written)\n",
+    "name": "Pantheon v1.2.2",
+    "prerelease": false,
+    "tag": "v1.2.2",
+    "expectedTitle": "Pantheon v1.2.2",
+    "titleAction": null,
+    "bodyAction": "REWRITE",
+    "bodySource": "CHANGELOG @ v1.2.2 (3004 bytes)"
+  },
+  {
+    "body": "## [v1.2.1] - 2026-08-03\n\n\n## 🆕 What's New\n\n- **Model routing presets + interactive picker**: 4 presets (go-deepseek, go-premium, go-fast, go-free), zero-mutation default (injects only when `active-preset.json` exists), `set-tier` CLI in `bin/pantheon-init.mjs` with API-key fail-fast, interactive picker in `scripts/install/model-picker.mjs` (atomic write + .bak), `validate-routing.mjs` preset validation, packaging fix so `src/pantheon/**` ships in the tarball\n- 4 new provider families — go-claude (Anthropic), go-openai, go-olympus, go-muses presets + `CAPABILITY_TABLE` (+11 entries: glm-5.1/5.2, kimi-k2.6, qwen3.7-max/plus, minimax-m2.7/m2.5, bare deepseek-v4-pro/flash, big-pickle, nemotron-3-ultra-free, north-mini-code-free)\n- **Vision routing**: per-turn multimodal fallback for image turns (`vision:` key per preset, `chat.message` hook), later evolved to native gateway vision (mimo-v2.5) with MCP-tool fallback, image-history normalization, description cache (sha256, TTL 30min) + intent-calibrated prompts, temp-image dedup/LRU\n- Canonical `pantheon-vision` MCP stdio server (`src/mcp/pantheon_vision_server.py`)\n- TUI: vendored todo-progress + usage-bar (v1.1.0, MIT attribution), active model preset shown in sidebar (30s refresh), OpenCode Go/Zen usage quota tracking (5h/7d/1m dollar windows, `[opencodego]` toml config)\n- **Unified `release.yml`**: single workflow handles beta (PR label) + stable (main push) with version-exists check\n- Secret scanning: fail-closed CI gates (gitleaks + custom scan), pre-commit hooks, secret-scan regression tests\n- docs: model routing presets documented (presets, commands, env vars)\n- Preset lineup refactored 8 → 6: go-deepseek routed via OpenCode Zen, go-fast via OpenCode Go, olympus/muses renamed go-premium/go-free — all presets now via OpenCode/Anthropic/OpenAI providers, `PANTHEON_DEEPSEEK_API_KEY` removed\n- Vision routing consolidated and legacy duplicates removed\n- commitlint: CodeQL auto-fix ignore pattern, body-max-line-length disabled, `security` type allowed, plugin/vision/presets/hooks scopes added; tsconfig dropped path aliases (+ `opencode.d.ts` ambient types)\n- install: pantheon-vision registered, `doctor.mjs` hardened\n- PR template added in English; coverage artifacts gitignored\n- CI workflow triggers synced with base develop; `release.yml` gained `workflow_dispatch` with `pr_number` input\n- Stale release workflows (release-beta.yml / release-stable.yml leftovers) brought back by merge\n- TUI todo-progress bar (redundant with native TODO + sidebar), v1.1.1\n- Duplicate `scripts/scrub_secrets.py` (canonical is `scrub-secrets.py`)\n\n## 🐞 Fixed\n\n- Plugin export as function for opencode 1.18.11 API (object export failed to load; hooks.config mutates config in place)\n- Vision pipeline: plugin boot failure (legacy loader), MCP tool ID (`pantheon_vision_vision_describe`), gateway 401 (provider prefix stripped from model ID), temp-file race (age-guarded cleanup, dir never removed), image stripping at source (deepseek-v4-flash declared image-capable), gateway-aware qwen interception, MCP availability verified, refcounted shared temp images, file URLs decoded via `fileURLToPath`, temp image permissions restricted\n- Default vision fallbacks: mimo-v2.5 (multimodal, cheaper) then minimax-m3 (qwen3.7-plus 500 on Go gateway); silent hook logs\n- `import uuid` in `mcp_persistence_server.py` (context_save NameError)\n- commitlint failures + typecheck narrowing; active preset applied in config hook\n- CI: `workflow_dispatch` treated as stable release; empty env block removed; `NODE_AUTH_TOKEN` restored (OIDC Trusted Publisher not configured on npm); `github_pat_` self-match in secret scan; fast-uri upgraded to patched version\n- Security: hardcoded provider credentials removed, preset error logging sanitized (CodeQL), dist artifacts untracked\n- install: project MCP commands point at real venv\n",
+    "name": "Pantheon v1.2.1",
+    "prerelease": false,
+    "tag": "v1.2.1",
+    "expectedTitle": "Pantheon v1.2.1",
+    "titleAction": null,
+    "bodyAction": "keep",
+    "bodySource": "no section in the tag CHANGELOG"
+  },
+  {
+    "body": "## [v1.2.0] - 2026-07-30\n\n\n## 🆕 What's New\n\n- **Fallback chains + auto CI retry**: per-agent fallback chains (hermes→talos→athena, apollo→athena→hermes, etc.), CI retry 1 → 2 with exponential backoff + fallback agent, token tracking in `subtask_summary`, `fallback_chains` section in routing.yml\n- Zeus Fusion-style delegation enforced — `edit:deny`, `bash:deny`, never touches files\n- Persistence performance: index on (namespace, expires_at) — O(n)→O(log n) TTL queries, `kv_stats` tool, opportunistic auto-purge (>500 entries), FTS soft-delete trigger (fixes phantom results), `re.escape()` query safety, `kv_delete_namespace` bulk cleanup\n- **Context checkpoint tools**: `context_save`, `context_get`, `context_list`, `context_stats` — session-scoped state in `checkpoint:{slug}` namespace, auto-TTL 4h, replaces file-based `checkpoint_session.py`\n- New release system: beta from PR label (release-beta.yml), stable from main push (release-stable.yml)\n- docs: `RELEASE.md` — beta from PR label, stable from main push\n- **Slash commands consolidated 16 → 5** — kept `/pantheon`, `/audit`, `/deepwork`, `/optimize`, `/consolidate`; deleted 11 (cancel, focus, forget, install, reflect, remember, search, sketch, status, update, verify) with Apollo audit verifying alternative coverage (ADR-006)\n- Removed redundant model configs — agents inherit default deepseek-v4-flash\n- Persistence docs updated for new tools and auto-purge behavior\n- commitlint scopes completed; auto-release skipped when version already exists\n\n## 🐞 Fixed\n\n- Council fixes: UUID session isolation in context checkpoints, pre-compaction state save trigger, flash summary quality floor (<10 chars → fallback to Zeus), agents recall `context_get(slug, 'latest')` on startup\n- CI: push triggers removed — validation workflows (CI, commitlint, CodeQL, hotfix, docs) now run on `pull_request` only, eliminating perma-pending duplicate checks\n",
+    "name": "Pantheon v1.2.0",
+    "prerelease": false,
+    "tag": "v1.2.0",
+    "expectedTitle": "Pantheon v1.2.0",
+    "titleAction": null,
+    "bodyAction": "keep",
+    "bodySource": "no section in the tag CHANGELOG"
+  },
+  {
+    "body": "Beta release from PR #9.",
+    "name": "Pantheon v1.2.0-beta.9.7bef03e (PR #9)",
+    "prerelease": true,
+    "tag": "v1.2.0-beta.9.7bef03e",
+    "expectedTitle": "Pantheon v1.2.0-beta.9.7bef03e",
+    "titleAction": "Pantheon v1.2.0-beta.9.7bef03e (PR #9) → Pantheon v1.2.0-beta.9.7bef03e",
+    "bodyAction": "keep",
+    "bodySource": "pre-release: title only"
+  },
+  {
+    "body": "## [v1.1.1] - 2026-07-30\n\n\n## 🆕 What's New\n\n- New release system — beta releases from PR labels, stable from main push (auto-release and beta-release workflows unified)\n- Interactive TUI mode for installer (Fases 1+2) — redesigned sidebar with context progress bar, live session data via events + API\n- Session-scoped context checkpoints in persistence (index, stats, auto-purge, `delete_namespace`); fallback chains, auto CI retry (2x), token tracking\n- Slash commands consolidated from 16 to 5; redundant model configs removed (agents inherit the default model)\n\n## 🐞 Fixed\n\n- Council: UUID session isolation in context checkpoints, pre-compaction state save, flash summary quality floor, agents recall `context_get(slug, 'latest')` on startup\n- TUI plugin/CI: OpenCode crash from missing plugin deps, version detection with git fallback, commitlint scopes, workflow YAML/MCP path repairs; `datetime.UTC` → `timezone.utc` for Python < 3.11\n",
+    "name": "Pantheon v1.1.1",
+    "prerelease": false,
+    "tag": "v1.1.1",
+    "expectedTitle": "Pantheon v1.1.1",
+    "titleAction": null,
+    "bodyAction": "keep",
+    "bodySource": "no section in the tag CHANGELOG"
+  },
+  {
+    "body": "## [v1.1.0] - 2026-07-26\n\n\n## 🆕 What's New\n\n- Council synthesis Fase 1+2 — Modo Desempate com Evidência + BackgroundJobBoard (#2)\n- Beta release workflow added (from develop)\n",
+    "name": "Pantheon v1.1.0",
+    "prerelease": false,
+    "tag": "v1.1.0",
+    "expectedTitle": "Pantheon v1.1.0",
+    "titleAction": null,
+    "bodyAction": "keep",
+    "bodySource": "no section in the tag CHANGELOG"
+  },
+  {
+    "body": "## [v1.0.7] - 2026-07-26\n\n\n## 🐞 Fixed\n\n- Installer: fixed `writeFileSync` not defined error\n",
+    "name": "Pantheon v1.0.7",
+    "prerelease": false,
+    "tag": "v1.0.7",
+    "expectedTitle": "Pantheon v1.0.7",
+    "titleAction": null,
+    "bodyAction": "keep",
+    "bodySource": "no section in the tag CHANGELOG"
+  },
+  {
+    "body": "## [v1.0.6] - 2026-07-26\n\n\n## 🆕 What's New\n\n- 7 new skills (codemap, simplify, reflect, worktrees, verification-planning, loop-engineering, clonedeps) + 7 matching commands; `background_subagents` enabled by default in canonical config\n- Release pipeline: quality gates, tag creation, pre-release, hotfix support\n- CI simplified from 10 to 6 workflows; agent/skill restructuring — 12 redundant instructions removed, unused commands dropped, gaia archived then restored\n\n## 🐞 Fixed\n\n- CI/commitlint config (YAML syntax, header-max-length, ignores function, scopes); 45 stale references cleaned across 18 files; invalid `opencode.json` fields removed; installer copies `routing.yml`; YAML frontmatter regenerated for 9 agents\n",
+    "name": "Pantheon v1.0.6",
+    "prerelease": false,
+    "tag": "v1.0.6",
+    "expectedTitle": "Pantheon v1.0.6",
+    "titleAction": null,
+    "bodyAction": "keep",
+    "bodySource": "no section in the tag CHANGELOG"
+  },
+  {
+    "body": "## [v1.0.5] - 2026-07-26\n\n\n## 🐞 Fixed\n\n- CI auto-release with OIDC trusted publisher + npm v12 (Node 22 upgrade, clean publish)\n- `doctor.mjs` paths + simplified `prepublishOnly`\n",
+    "name": "Pantheon v1.0.5",
+    "prerelease": false,
+    "tag": "v1.0.5",
+    "expectedTitle": "Pantheon v1.0.5",
+    "titleAction": null,
+    "bodyAction": "keep",
+    "bodySource": "no section in the tag CHANGELOG"
+  },
+  {
+    "body": "## [v1.0.2] - 2026-07-25\n\n\n## 🆕 What's New\n\n- TUI plugin: copy logic, stale skill cleanup, `tui.json` dedup; advanced plugin with version detection and 14 commands\n- Agents migrated from deprecated `tools:` to OpenCode `permission:` model; legacy multi-platform tests removed (OpenCode-only conformance); docs modernized (OpenCode-only, unified commands)\n\n## 🐞 Fixed\n\n- Hardcoded version fallback replaced with package.json version; routing aligned with actual skills (vscode platform removed)\n",
+    "name": "Pantheon v1.0.2",
+    "prerelease": false,
+    "tag": "v1.0.2",
+    "expectedTitle": "Pantheon v1.0.2",
+    "titleAction": null,
+    "bodyAction": "keep",
+    "bodySource": "no section in the tag CHANGELOG"
+  },
+  {
+    "body": "## [v1.0.1] - 2026-07-24\n\n\n## 🆕 What's New\n\n- Installer: unified setup flow, removed lifecycle install, fixed entry points\n",
+    "name": "Pantheon v1.0.1",
+    "prerelease": false,
+    "tag": "v1.0.1",
+    "expectedTitle": "Pantheon v1.0.1",
+    "titleAction": null,
+    "bodyAction": "keep",
+    "bodySource": "no section in the tag CHANGELOG"
+  },
+  {
+    "body": "## [v1.0.0] - 2026-07-24\n\n\n## 🆕 What's New\n\n- **OpenCode-only**: Removed all multi-platform support (Claude Code, Cursor, Windsurf, Cline, Continue.dev, VS Code Copilot). Pantheon v1.0 is exclusively for OpenCode.\n- **Global installation**: `npx pantheon-opencode init` installs agents globally to `~/.config/opencode/agents/`. Optional `--project` flag for project-local install.\n- **Background subagents**: Native OpenCode `task(background=true)` + `task_status()` delegation. Max 5 concurrent subagents. Requires `OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true`.\n- **Shared instructions**: Behavioral rules moved to `.instructions.md` files loaded via `instructions/*.instructions.md`. Eliminated duplicate rules between agents and instructions.\n- **TUI sidebar plugin**: Custom sidebar showing Pantheon version, sessions, commands, agents, config, and memory stats.\n- **Agent routing optimized**: Zeus routing decision tree prohibits `general`/`explore` subagent types. Each domain maps to a specialist.\n- Instructions tokens reduced 10.3k → 7.5k (-18%)\n- Zeus.md reduced 431 → 144 lines\n- Skills reduced to 14 (from 40), with merged content\n- `skills-lock.json` regenerated (40 → 14 entries)\n- 6 platform-specific installers (claude, cline, continue, copilot, cursor, windsurf)\n- 6 platform-specific docs files\n- Legacy scripts: `pantheon-install.mjs`, `pantheon-update.mjs`\n- `platform/opencode/agents/` (agents now in `src/agents/`)\n- `auto-continue-template.md`\n- `checkpoint-standards.instructions.md`\n- Updated command list: 14 → 11 commands\n- Added: `/pantheon-bg`, `/pantheon-doc`\n- Removed: install, update, cancel, sketch, consolidate\n",
+    "name": "Pantheon v1.0.0",
+    "prerelease": false,
+    "tag": "v1.0.0",
+    "expectedTitle": "Pantheon v1.0.0",
+    "titleAction": null,
+    "bodyAction": "keep",
+    "bodySource": "no section in the tag CHANGELOG"
+  }
+]
