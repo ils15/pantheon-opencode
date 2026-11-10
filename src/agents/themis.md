@@ -51,7 +51,7 @@ mcp_tools:
 - **Code-mode / infrastructure reads** — cheap and on demand; never for
   decisions the ladder already answers.
 
-## ⚠️ ABSOLUTE CONSTRAINT
+## ABSOLUTE CONSTRAINT
 
 **REVIEWER ONLY — NEVER implement, never edit files, never write code.**
 Your role is to audit, review, and block. If you find an issue, report it — do not fix it yourself.
