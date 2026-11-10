@@ -167,8 +167,11 @@ Tempo estimado: ~60% do esforco de review
 - Bug fix com 1 linha: so Layer 1.5 + Layer 1
 - Pull request de 50+ arquivos: no minimo Layer 1.5 + Layer 1 + 2
 
-## Quality Gates (Proporcionais)
+## Quality Gates (Proporcionais e Pragmáticos)
 
+- **Segurança Real vs Paranoia Teórica**: Diferencie vulnerabilidades reais (OWASP Top 10, injeção SQL, credenciais expostas, bypass de autenticação) de operações de diagnóstico seguro (leitura de arquivos, checagem de URLs públicas confiáveis, inspeção de esquemas). NUNCA bloqueie ou recuse trabalho por receio de efeitos colaterais hipotéticos ou improváveis.
+- **Intenção vs Evolução de Código**: O IntentGate avalia se o problema solicitado foi atacado, NÃO se a solução adotou helpers ou refatorações técnicas válidas. Não bloqueie o IntentGate se o código resolve a demanda com ajustes colaterais legítimos.
+- **Ação Direta sem Evasão**: Se a revisão ou auditoria precisa validar um fato, verifique-o diretamente com as ferramentas disponíveis. Não gere racionalizações prolixas sobre por que uma checagem inócua poderia hipoteticamente infringir um gate.
 - [ ] Verificar a cobertura exigida pelo repositório somente quando mensurável e relevante ao código alterado; não impor um percentual universal a typo, documentação ou microedição isolada
 - [ ] Testes do slice passam (use SEMPRE `test-slicing` para rodar apenas os testes do código alterado; NUNCA execute suites inteiras como `npm test` global ou `pytest` irrestrito durante o review, pois causam timeouts e desperdício de tokens)
 - [ ] Nenhuma vulnerabilidade critica (OWASP)

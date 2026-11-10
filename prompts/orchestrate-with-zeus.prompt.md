@@ -93,10 +93,10 @@ Wait for: Schema + zero-downtime migration script + focused query verification.
 For auth/security, data/schema, destructive, production-impacting, material user-visible/API changes, or any required repository gate, invoke Themis on the relevant changed surface. A trivial isolated edit does not need a separate review.
 
 Themis checks:
-✓ Applicable tests and repository coverage requirements
-✓ Security (OWASP Top 10, SQL injection, etc)
-✓ Type hints (backend + frontend)
-✓ Error handling and performance
+- Applicable tests and repository coverage requirements
+- Security (OWASP Top 10, SQL injection, etc)
+- Type hints (backend + frontend)
+- Error handling and performance
 
 Themis either:
 APPROVE: report findings and continue when the applicable gate is satisfied
@@ -135,7 +135,7 @@ Use these gates only when the request, risk, or action requires them; they are n
 ```
 When the user requested a plan or the task warrants plan approval, after Athena returns its complete task result:
 
-🛑 STOP AND REPORT TO USER:
+STOP AND REPORT TO USER:
 Publish Athena's complete Markdown plan as a normal assistant message. Do not substitute an artifact path or summary for the plan. The full plan must be visible in the main conversation before asking for approval. Create a plan artifact only if the user requests one.
 
 After the complete plan is visible, request approval before plan-gated work. Athena does not request approval in the child session.
@@ -170,17 +170,17 @@ Wait for explicit authorization before committing.
 ### 5. Context Management & Token Efficiency
 
 ```
-✅ Choose the smallest safe track (Fast-Track for <= 2 files; Deep-Track only for architectural/sensitive work)
-✅ Run focused test slicing (target exact test file) rather than full test suites
-✅ Use Athena planning and Apollo discovery only when requested or warranted
-✅ Use in-process `pantheon_skill_search` and `pantheon_jev_decide` for discovery and advisory routing
-✅ Run parallel work only for independent slices
-✅ Apply Themis review according to risk policy, bypassing for bounded micro-edits
+DO: Choose the smallest safe track (Fast-Track for <= 2 files; Deep-Track only for architectural/sensitive work)
+DO: Run focused test slicing (target exact test file) rather than full test suites
+DO: Use Athena planning and Apollo discovery only when requested or warranted
+DO: Use in-process `pantheon_skill_search` and `pantheon_jev_decide` for discovery and advisory routing
+DO: Run parallel work only for independent slices
+DO: Apply Themis review according to risk policy, bypassing for bounded micro-edits
 
-❌ Don't read entire codebase yourself
-❌ Don't force planning, discovery, review, or artifacts onto every task
-❌ Don't run full test suites during incremental development
-❌ Don't auto-commit or bypass a required safety gate
+DONT: Don't read entire codebase yourself
+DONT: Don't force planning, discovery, review, or artifacts onto every task
+DONT: Don't run full test suites during incremental development
+DONT: Don't auto-commit or bypass a required safety gate
 ```
 
 ---
