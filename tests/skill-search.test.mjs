@@ -121,6 +121,57 @@ test('searchGithubSkills: code-search items become repo@name entries', () => {
   assert.equal(bad.ok, false)
 })
 
+test('searchSkillSources: lexical relevance outranks the canonical boost (field bug beta.5)', () => {
+  // Field report: 'contract testing' ranked anthropics/skills@webapp-testing
+  // (one weak token hit) ABOVE petrkindlmann/qa-skills@contract-testing (the
+  // literal two-token match, 1.3K installs). Relevance now sorts first; the
+  // trust cascade is the tiebreaker.
+  const fakeSpawn = (bin, args) => {
+    if (bin === 'gh' && String(args[1]).startsWith('repos/')) {
+      return { status: 0, stdout: 'pdf\ndocx\nwebapp-testing\n', stderr: '' }
+    }
+    if (bin === 'gh') {
+      return {
+        status: 0,
+        stdout: '{"items":[{"repository":{"full_name":"o/r"},"path":"s/unrelated/SKILL.md"}]}',
+        stderr: '',
+      }
+    }
+    // skills.sh output: the literal match has 1300 installs
+    return {
+      status: 0,
+      stdout:
+        'petrkindlmann/qa-skills@contract-testing 1.3K installs\nsomeone/other@webapp-testing 12 installs',
+      stderr: '',
+    }
+  }
+  const result = searchSkillSources('contract testing', { limit: 5, spawn: fakeSpawn })
+  assert.ok(result.ok)
+  assert.equal(
+    result.entries[0].skill,
+    'petrkindlmann/qa-skills@contract-testing',
+    'the literal match leads',
+  )
+  assert.equal(
+    result.entries[1].skill,
+    'anthropics/skills@webapp-testing',
+    'the canonical weak match follows',
+  )
+  // Trust cascade still wins on EQUAL relevance (the pdf case):
+  const tieSpawn = (bin, args) => {
+    if (bin === 'gh' && String(args[1]).startsWith('repos/')) {
+      return { status: 0, stdout: 'pdf\n', stderr: '' }
+    }
+    if (bin === 'gh') {
+      return { status: 0, stdout: '{"items":[]}', stderr: '' }
+    }
+    return { status: 0, stdout: 'someone/other@pdf-tools 900 installs', stderr: '' }
+  }
+  const tie = searchSkillSources('pdf', { limit: 3, spawn: tieSpawn })
+  assert.equal(tie.entries[0].skill, 'anthropics/skills@pdf', 'equal relevance: canonical first')
+  assert.equal(tie.entries[1].skill, 'someone/other@pdf-tools', 'then installs desc')
+})
+
 test('searchSkillSources: tier order preserved, one failed source tolerated', () => {
   const fakeSpawn = (bin, args) => {
     if (bin === 'gh' && String(args[1]).startsWith('repos/')) {

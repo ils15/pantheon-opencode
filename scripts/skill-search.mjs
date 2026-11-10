@@ -31,6 +31,13 @@ const SKILL_LINE =
   /^([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+@[A-Za-z0-9._-]+)\s+([\d.,]+)\s*([KM]?)\s+installs$/
 const URL_LINE = /^└?\s*(https:\/\/skills\.sh\/\S+)$/
 
+/** Distinct query tokens the name actually matches (0 = no lexical tie). */
+export function nameMatchScore(name, tokens) {
+  const lower = String(name).toLowerCase()
+  const unique = [...new Set(tokens)]
+  return unique.reduce((score, token) => score + (lower.includes(token) ? 1 : 0), 0)
+}
+
 /** '578.8K' / '1.2M' / '489' → absolute integer installs (K=1e3, M=1e6). */
 export function parseInstallCount(digits, suffix) {
   const base = Number(String(digits).replaceAll(',', ''))
@@ -139,10 +146,18 @@ export function searchAnthropicCatalog(query, { limit = DEFAULT_LIMIT, spawn = s
     .split('\n')
     .map((name) => name.trim())
     .filter((name) => name.length > 0)
-  const matched = names.filter((name) => {
-    const lower = name.toLowerCase()
-    return tokens.some((token) => lower.includes(token))
-  })
+  // Field finding (beta.5 battery): the canonical boost must not bury the
+  // literal match — a single weak token hit ('webapp-testing' for a
+  // 'contract testing' query) ranked above a two-token third-party match.
+  // Within the tier, order by match quality; the merge sorts cross-tier.
+  const scored = names.map((name) => ({
+    name,
+    score: nameMatchScore(name, tokens),
+  }))
+  const matched = scored
+    .filter((entry) => entry.score > 0)
+    .sort((left, right) => right.score - left.score)
+    .map((entry) => entry.name)
   return {
     ok: true,
     entries: matched.slice(0, limit).map((name) => ({
@@ -224,6 +239,26 @@ export function searchSkillSources(
     if (result.ok) out.push(...result.entries.map((entry) => ({ ...entry, source })))
     else failures.push(`${source}: ${result.error}`)
   }
+  // Cross-tier order: lexical relevance first (the canonical boost must not
+  // bury the literal match — field finding, beta.5 battery: 'webapp-testing'
+  // outranked 'contract-testing' for a 'contract testing' query), then the
+  // trust cascade, then install count.
+  const tokens = String(query)
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length > 2)
+  const tierWeight = (source) => SKILL_SEARCH_SOURCES.indexOf(source)
+  const installsWeight = (entry) =>
+    typeof entry.installs === 'number' ? -entry.installs : Number.MAX_SAFE_INTEGER
+  const skillName = (entry) => String(entry.skill).split('@').at(-1) ?? ''
+  out.sort((left, right) => {
+    const lScore = nameMatchScore(skillName(left), tokens)
+    const rScore = nameMatchScore(skillName(right), tokens)
+    if (lScore !== rScore) return rScore - lScore
+    const tier = tierWeight(left.source) - tierWeight(right.source)
+    if (tier !== 0) return tier
+    return installsWeight(left) - installsWeight(right)
+  })
   return { ok: failures.length < sources.length, entries: out.slice(0, limit), failures }
 }
 
