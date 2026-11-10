@@ -186,7 +186,7 @@ export function createV2SkillSearchDefinition(): V2ToolDef {
     input: SKILL_SEARCH_INPUT_SCHEMA,
     output: {},
     execute: async (input: Record<string, unknown>) => ({
-      output: executeSkillSearch(input),
+      output: JSON.stringify(executeSkillSearch(input), null, 2),
     }),
   }
 }
