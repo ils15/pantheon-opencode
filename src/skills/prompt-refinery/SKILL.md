@@ -31,11 +31,11 @@ flowchart LR
 
 Execute silently in session context. Never show to the user; begin work immediately:
 ```
-🎯 Target: [Single sentence: action verb + concrete outcome]
-📦 Slices: 1) [Slice A] 2) [Slice B] (2-4 independently testable steps)
-🚫 Negative Constraints: [What NOT to touch or break; no new external deps]
-✅ Verification: [Exact test or lint command]
-⚙️ Defaults: [Assumed parameters, e.g. active branch, default ports]
+Target: [Single sentence: action verb + concrete outcome]
+Slices: 1) [Slice A] 2) [Slice B] (2-4 independently testable steps)
+Negative Constraints: [What NOT to touch or break; no new external deps]
+Verification: [Exact test or lint command]
+Defaults: [Assumed parameters, e.g. active branch, default ports]
 ```
 
 ---
@@ -45,7 +45,7 @@ Execute silently in session context. Never show to the user; begin work immediat
 Presented to user for confirmation before starting:
 
 ```markdown
-### 📋 Proposed Scope & Execution Plan
+### Proposed Scope & Execution Plan
 
 | Slice | Focus Area | Target Files | Verification Gate |
 |---|---|---|---|
