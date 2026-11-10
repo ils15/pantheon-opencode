@@ -181,11 +181,13 @@ agents:
     - prompt-refinery
     - instruction-forge
     - context-compression
+    - fast-path-execution
     - incremental-implementation
     - loop-engineering
     - reflect
     - session-goal
     - simplify
+    - test-slicing
     - verification-planning
     - worktrees
   athena:
@@ -252,12 +254,14 @@ agents:
     - pantheon_code_mode
     skills:
     - clonedeps
+    - fast-path-execution
     - git-workflow-and-versioning
     - incremental-implementation
     - loop-engineering
     - reflect
     - simplify
     - tdd-with-agents
+    - test-slicing
     - worktrees
   aphrodite:
     role: Frontend specialist
@@ -276,11 +280,13 @@ agents:
     - pantheon_resources_memory_bank
     - pantheon_code_mode
     skills:
+    - fast-path-execution
     - incremental-implementation
     - loop-engineering
     - reflect
     - simplify
     - tdd-with-agents
+    - test-slicing
     - visual-review-pipeline
     - worktrees
   demeter:
@@ -329,6 +335,7 @@ agents:
     - security-hardening
     - simplify
     - tdd-with-agents
+    - test-slicing
     - worktrees
   prometheus:
     role: Infrastructure specialist
@@ -478,10 +485,12 @@ agents:
     - pantheon_code_mode
     subagent_can_delegate_to: []
     skills:
+    - fast-path-execution
     - incremental-implementation
     - loop-engineering
     - reflect
     - simplify
+    - test-slicing
     - worktrees
 auto_continue:
   checkpoint_script: .pantheon/code-mode/checkpoint-session.sh

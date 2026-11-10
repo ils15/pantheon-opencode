@@ -8,8 +8,8 @@ abstract: >-
   tests. O Pantheon v1.7.0 é um plugin e instalador para OpenCode que
   coordena 14 agentes especializados, com skills reutilizáveis, comandos
   slash, servidores MCP, documentação e testes.
-version: 2.0.0-beta.6
-url: https://github.com/ils15/pantheon-opencode/releases/tag/v2.0.0-beta.6
+version: 2.0.0-beta.7
+url: https://github.com/ils15/pantheon-opencode/releases/tag/v2.0.0-beta.7
 doi: 10.5281/zenodo.22650136
 repository-code: https://github.com/ils15/pantheon-opencode
 license: MIT

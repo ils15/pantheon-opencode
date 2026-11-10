@@ -23,7 +23,7 @@
 import { spawnSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 
-const FIND_TIMEOUT_MS = 60_000
+const FIND_TIMEOUT_MS = 15_000
 const DEFAULT_LIMIT = 5
 /** SGR escape sequences are matched via the ESC codepoint (lint-clean, same semantics). */
 const ANSI_SGR = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g')
@@ -119,7 +119,7 @@ export function searchSkills(query, { limit = DEFAULT_LIMIT, owner, spawn = spaw
   return { ok: true, entries, raw, emptyIsAmbiguous: false }
 }
 
-const GITHUB_TIMEOUT_MS = 30_000
+const GITHUB_TIMEOUT_MS = 10_000
 const ANTHROPIC_SKILLS_REPO = 'anthropics/skills'
 
 /**

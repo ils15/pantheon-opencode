@@ -75,8 +75,10 @@ apenas — `init` → reiniciar → `/dispatch` → primeiro resultado — veja 
 
 - **14 agentes especializados**, com um orquestrador, especialistas de
   implementação, um gate de qualidade e papéis de apoio.
-- **23 skills** e instruções reutilizáveis para planejar, construir, revisar e
-  documentar.
+- **25 skills** e instruções reutilizáveis para planejar, construir, revisar e
+  documentar, incluindo `test-slicing` (execução direcionada de testes em submissegundos) e `fast-path-execution` (micro-edições rápidas).
+- **Protocolo Fast-Track** permitindo que correções pontuais (<= 2 arquivos, <= 50 linhas) pulem cerimônias multi-agente e validem via slices de teste em < 10s.
+- **Busca de skills in-process (`pantheon_skill_search`)** para descoberta local e em ecossistema aberto sem depender de permissões de shell.
 - **5 servidores MCP locais** para memória de projeto, persistência, recursos,
   execução confinada de scripts e visão.
 - **Um roteador de decisão seletivo e consultivo**, com resultados locais

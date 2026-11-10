@@ -1202,12 +1202,23 @@ function initTuiPrefs(context) {
 	if (stash() !== void 0) return;
 	try {
 		const handle = context.storage?.store?.("tui-prefs", { initial: DEFAULT_TUI_PREFS });
-		if (handle !== void 0) globalThis[PREFS_SYMBOL] = handle;
+		if (handle !== void 0) {
+			globalThis[PREFS_SYMBOL] = handle;
+			if (!handle[0]?.layout) handle[1]((draft) => {
+				if (!draft.layout) draft.layout = { ...DEFAULT_TUI_PREFS.layout };
+			}).catch(() => {});
+		}
 	} catch {}
 }
 /** The live reactive prefs (read properties inside memos/JSX — tracked). */
 function tuiPrefs() {
-	return stash()?.[0] ?? DEFAULT_TUI_PREFS;
+	const s = stash()?.[0];
+	if (!s) return DEFAULT_TUI_PREFS;
+	if (!s.layout) return {
+		...s,
+		layout: DEFAULT_TUI_PREFS.layout
+	};
+	return s;
 }
 /** Stage a mutation against the durable store; resolves when persisted. */
 function mutateTuiPrefs(mutation) {
@@ -1296,13 +1307,13 @@ function buildTuiTab(prefs) {
 				rows: [{
 					id: "tui.layout.preset",
 					name: "Layout preset",
-					value: prefs.layout.preset,
+					value: prefs.layout?.preset ?? DEFAULT_TUI_PREFS.layout.preset,
 					cycle: LAYOUT_PRESETS_CYCLE,
 					note: "comfortable | compact — sets spacing & borders"
 				}, {
 					id: "tui.layout.separator",
 					name: "Separator",
-					value: prefs.layout.separator,
+					value: prefs.layout?.separator ?? DEFAULT_TUI_PREFS.layout.separator,
 					cycle: SEPARATOR_STYLES_CYCLE,
 					note: "spaces | pipes | dots | slashes — status line glyphs"
 				}]
@@ -1376,10 +1387,16 @@ function applyTuiRow(draft, id, value) {
 	const enabled = value === "enabled";
 	switch (id) {
 		case "tui.layout.preset":
-			if (LAYOUT_PRESETS_CYCLE.includes(value)) draft.layout.preset = value;
+			if (LAYOUT_PRESETS_CYCLE.includes(value)) {
+				if (!draft.layout) draft.layout = { ...DEFAULT_TUI_PREFS.layout };
+				draft.layout.preset = value;
+			}
 			return;
 		case "tui.layout.separator":
-			if (SEPARATOR_STYLES_CYCLE.includes(value)) draft.layout.separator = value;
+			if (SEPARATOR_STYLES_CYCLE.includes(value)) {
+				if (!draft.layout) draft.layout = { ...DEFAULT_TUI_PREFS.layout };
+				draft.layout.separator = value;
+			}
 			return;
 		case "tui.sidebar.context.barShape":
 			if (BAR_SHAPES_CYCLE.includes(value)) draft.sidebar.context.barShape = value;
@@ -1694,7 +1711,7 @@ async function readChangelogForBundle(bundleUrl) {
 }
 /** The ambient build-time version, or null outside a tsdown build. */
 function embeddedVersion() {
-	return "2.0.0-beta.6";
+	return "2.0.0-beta.7";
 }
 /**
 * Resolve the running Pantheon version for the what's-new window: the plugin
@@ -1919,7 +1936,7 @@ function persistUpdateCheckState(previous, latest) {
 	} catch {}
 }
 function resolveRunningVersion() {
-	return "2.0.0-beta.6";
+	return "2.0.0-beta.7";
 }
 const VALUE_WIDTH = 22;
 function SettingsWindow(props) {
@@ -5699,7 +5716,7 @@ async function checkForPantheonUpdate(context) {
 	const latest = String((await response.json())?.version ?? "");
 	if (!latest) return;
 	const notice = pickUpdateNotice({
-		currentVersion: "2.0.0-beta.6",
+		currentVersion: "2.0.0-beta.7",
 		latestVersion: latest,
 		state: readState(),
 		nowMs: Date.now()
@@ -6500,7 +6517,7 @@ function Sidebar(props) {
 			get children() {
 				var _el$13 = createElement("text");
 				setProp(_el$13, "attributes", 1);
-				insert(_el$13, `Pantheon v2.0.0-beta.6`);
+				insert(_el$13, `Pantheon v2.0.0-beta.7`);
 				effect((_$p) => setProp(_el$13, "fg", text(), _$p));
 				return _el$13;
 			}
@@ -7272,7 +7289,7 @@ function HomeStatus(props) {
 		},
 		get children() {
 			var _el$73 = createElement("text");
-			insert(_el$73, () => `Pantheon v2.0.0-beta.6${preset().name ? ` ▸ ${preset().name}` : ""}`);
+			insert(_el$73, () => `Pantheon v2.0.0-beta.7${preset().name ? ` ▸ ${preset().name}` : ""}`);
 			effect((_$p) => setProp(_el$73, "fg", muted(), _$p));
 			return _el$73;
 		}

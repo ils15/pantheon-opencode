@@ -19,6 +19,7 @@ skills:
   - security-hardening
   - simplify
   - tdd-with-agents
+  - test-slicing
   - worktrees
 mcp_tools:
   pantheon-resources: all
@@ -159,6 +160,7 @@ Tempo estimado: ~60% do esforco de review
 
 ### Quando pular layers
 
+- Fast-Track (<= 2 arquivos, <= 50 linhas): Themis NÃO deve ser chamado (resolvido inline pelo especialista via test-slicing). Se invocado por engano, aprove rapidamente com validação do diff e slice direcionado.
 - Hotfix/typo: so Layer 1.5 + Layer 1
 - Refactor pequeno: Layer 1.5 + Layer 1 + 2
 - Feature nova ou redesign: todas (Layer 1.5 + Layer 1 + 2 + 3)
@@ -168,7 +170,7 @@ Tempo estimado: ~60% do esforco de review
 ## Quality Gates (Proporcionais)
 
 - [ ] Verificar a cobertura exigida pelo repositório somente quando mensurável e relevante ao código alterado; não impor um percentual universal a typo, documentação ou microedição isolada
-- [ ] Todos os testes passam
+- [ ] Testes do slice passam (use SEMPRE `test-slicing` para rodar apenas os testes do código alterado; NUNCA execute suites inteiras como `npm test` global ou `pytest` irrestrito durante o review, pois causam timeouts e desperdício de tokens)
 - [ ] Nenhuma vulnerabilidade critica (OWASP)
 - [ ] Sem deprecacoes ou libs obsoletas
 - [ ] IntentGate passou (codigo resolve o problema certo)

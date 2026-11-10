@@ -139,8 +139,10 @@ see [Quick Start](docs/QUICKSTART.md).
 
 - **14 specialized agents** with one orchestrator, implementation specialists,
   a quality gate, and supporting roles.
-- **23 skills** and reusable instructions for planning, building, reviewing,
-  and documenting work.
+- **25 skills** and reusable instructions for planning, building, reviewing,
+  and documenting work, including `test-slicing` (sub-second targeted runner execution) and `fast-path-execution` (bounded micro-edits).
+- **Fast-Track execution protocol** allowing bounded fixes (<= 2 files, <= 50 lines) to bypass multi-agent ceremony and verify via targeted test slices in < 10s.
+- **In-process skill discovery (`pantheon_skill_search`)** querying installed skills, the Anthropic catalog, and the ecosystem without requiring shell access.
 - **5 local MCP servers** for project memory, persistence, resources, confined
   script execution, and vision.
 - **A selective, advisory decision router** with structured local results and

@@ -11,55 +11,37 @@ REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 # Extracts file_path from Edit/Write or file paths from Bash commands.
 if [ -p /dev/stdin ]; then
   STDIN_JSON=$(cat)
-  TOOL_NAME=$(echo "$STDIN_JSON" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-print(d.get('tool_name', ''))
-" 2>/dev/null || echo "")
-  # Normalize to lowercase — opencode sends lowercase (edit/write/bash),
-  # Claude Code protocol may send capitalized (Edit/Write/Bash).
-  TOOL_NAME_LOWER=$(echo "$TOOL_NAME" | tr '[:upper:]' '[:lower:]')
-
-  case "$TOOL_NAME_LOWER" in
-    edit|write)
-      JSON_PATH=$(echo "$STDIN_JSON" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-print(d.get('tool_input', {}).get('file_path', ''))
-" 2>/dev/null || echo "")
-      if [ -n "$JSON_PATH" ]; then
-        FILE_PATH="$JSON_PATH"
-      fi
-      ;;
-    bash)
-      COMMAND=$(echo "$STDIN_JSON" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-print(d.get('tool_input', {}).get('command', ''))
-" 2>/dev/null || echo "")
-      if [ -n "$COMMAND" ]; then
-        # Extract first file-like path from bash command (supports relative and quoted paths)
-        CANDIDATE=$(python3 -c "
-import re, shlex, sys
-command = sys.argv[1]
+  EXTRACTED_PATH=$(python3 -c "
+import sys, json, re, shlex
 try:
-    tokens = shlex.split(command)
-except ValueError:
-    tokens = command.split()
-path_re = re.compile(r'^([^\\n]+\\.[A-Za-z0-9]+)$')
-for token in tokens:
-    if token.startswith('-'):
-        continue
-    if path_re.match(token):
-        print(token)
-        break
-" "$COMMAND" 2>/dev/null || echo "")
-        if [ -n "$CANDIDATE" ]; then
-          FILE_PATH="$CANDIDATE"
-        fi
-      fi
-      ;;
-  esac
+    d = json.load(sys.stdin)
+    t = str(d.get('tool_name', '')).lower()
+    inp = d.get('tool_input', {})
+    if not isinstance(inp, dict):
+        inp = {}
+    fp = ''
+    if t in ('edit', 'write', 'hashline_edit'):
+        fp = inp.get('file_path', '') or inp.get('filePath', '') or inp.get('path', '')
+    elif t == 'bash':
+        cmd = inp.get('command', '')
+        if cmd:
+            try:
+                tokens = shlex.split(cmd)
+            except ValueError:
+                tokens = cmd.split()
+            path_re = re.compile(r'^([^\\n]+\\.[A-Za-z0-9]+)$')
+            for tok in tokens:
+                if not tok.startswith('-') and path_re.match(tok):
+                    fp = tok
+                    break
+    if fp:
+        print(fp)
+except Exception:
+    pass
+" <<< "$STDIN_JSON" 2>/dev/null || echo "")
+  if [ -n "$EXTRACTED_PATH" ]; then
+    FILE_PATH="$EXTRACTED_PATH"
+  fi
 fi
 
 FILE_PATH="${FILE_PATH:-${1:-}}"

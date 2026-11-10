@@ -427,7 +427,10 @@ function testPresets(): void {
     assert.equal(question.type, 'choice')
     assert.equal(question.name === 'stack' && 'choices' in question, true)
     const choices = (question as { choices: Array<{ value: string }> }).choices
-    assert.ok(choices.length >= 12 && choices.length <= 24, `catalog+none: ${choices.length}`)
+    assert.ok(
+      choices.length >= 12 && choices.length <= PANTHEON_SKILL_CATALOG.length + 1,
+      `catalog+none: ${choices.length}`,
+    )
     assert.ok(choices.some((option) => option.value === 'none'))
     assert.ok(
       choices.some((option) => option.value === 'codemap'),

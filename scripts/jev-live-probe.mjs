@@ -168,7 +168,7 @@ function main(args = process.argv.slice(2)) {
         rows.push({ state: scenario.state, expect: scenario.expect, got: `ERROR: ${r.raw}` })
         continue
       }
-      const cost = r.data?.cost ?? 0
+      const cost = r.data?.data?.cost ?? r.data?.cost ?? 0
       totalCost += Number(cost) || 0
       rows.push({ state: scenario.state, expect: scenario.expect, got: answerChoice(r.data), cost })
     }

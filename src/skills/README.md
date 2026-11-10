@@ -4,7 +4,7 @@
 
 Skills are reference modules loaded on demand by agents. Each skill provides domain-specific knowledge — architecture patterns, security checklists, optimization strategies, and implementation guides. Agents load skills when their task matches the skill's description, keeping context focused and token-efficient.
 
-There are **23 skills** divided into **6 domains**.
+There are **25 skills** divided into **6 domains**.
 
 ## Skills by Domain
 
@@ -14,7 +14,11 @@ There are **23 skills** divided into **6 domains**.
    - Multi-agent orchestration with model routing, category delegation, and sprint management.
    - Used by: Zeus
 
-2. **artifact-management** — `artifact-management/SKILL.md`
+2. **fast-path-execution** — `fast-path-execution/SKILL.md`
+   - Fast-track execution protocol for bounded micro-edits (<= 2 files). Zero council overhead, direct specialist dispatch, inline verification.
+   - Used by: Zeus, Talos, Hermes, Aphrodite
+
+3. **artifact-management** — `artifact-management/SKILL.md`
    - Structured artifact trail for feature implementations — plans, implementations, reviews, and decisions.
    - Used by: Zeus, Mnemosyne, Iris
 
@@ -74,9 +78,13 @@ There are **23 skills** divided into **6 domains**.
     - Security gate — OWASP, SAST, secrets detection, MCP hardening, dependency audit.
     - Used by: Themis, Nyx
 
-16. **tdd-with-agents** — `tdd-with-agents/SKILL.md`
+17. **tdd-with-agents** — `tdd-with-agents/SKILL.md`
     - TDD enforcement with RED→GREEN→REFACTOR cycle and advanced testing patterns across all layers.
     - Used by: Hermes, Aphrodite, Demeter, Themis, Hephaestus
+
+18. **test-slicing** — `test-slicing/SKILL.md`
+    - Targeted test execution — map changed files directly to their narrow test slice instead of running full suites.
+    - Used by: Talos, Themis, Hermes, Aphrodite, Zeus
 
 ### Domain 4: Planning
 
@@ -138,28 +146,30 @@ agent grants, and skill inventory.
 | # | Skill Name | Domain | Used By |
 |---|------------|--------|---------|
 | 1 | agent-coordination | Orchestration & Workflow | Zeus |
-| 2 | artifact-management | Orchestration & Workflow | Zeus, Mnemosyne, Iris |
-| 3 | auto-continue | Orchestration & Workflow | Zeus, Apollo, Hephaestus, Nyx, Gaia |
-| 4 | context-compression | Orchestration & Workflow | Zeus, Mnemosyne |
-| 5 | memory-bank | Orchestration & Workflow | Mnemosyne, Athena |
-| 6 | session-goal | Orchestration & Workflow | Zeus, Mnemosyne |
-| 7 | clonedeps | Development Tools | Hermes, Hephaestus |
-| 8 | git-workflow-and-versioning | Development Tools | Hermes, Prometheus, Iris |
-| 9 | incremental-implementation | Development Tools | Zeus, Hermes, Aphrodite, Demeter, Prometheus, Talos |
-| 10 | loop-engineering | Development Tools | All agents |
-| 11 | reflect | Development Tools | All agents |
-| 12 | simplify | Development Tools | All agents |
-| 13 | worktrees | Development Tools | All agents |
-| 14 | code-review-checklist | Quality & Security | Themis |
-| 15 | security-hardening | Quality & Security | Themis, Nyx |
-| 16 | tdd-with-agents | Quality & Security | Hermes, Aphrodite, Demeter, Themis, Hephaestus |
-| 17 | codemap | Planning | Apollo, Zeus |
-| 18 | spec-driven-development | Planning | Athena |
-| 19 | verification-planning | Planning | Athena, Zeus |
-| 20 | visual-review-pipeline | Frontend Development | Aphrodite |
-| 21 | agent-forge | Meta | Zeus |
-| 22 | prompt-refinery | Meta | Zeus |
-| 23 | instruction-forge | Meta | Zeus, Athena |
+| 2 | fast-path-execution | Orchestration & Workflow | Zeus, Talos, Hermes, Aphrodite |
+| 3 | artifact-management | Orchestration & Workflow | Zeus, Mnemosyne, Iris |
+| 4 | auto-continue | Orchestration & Workflow | Zeus, Apollo, Hephaestus, Nyx, Gaia |
+| 5 | context-compression | Orchestration & Workflow | Zeus, Mnemosyne |
+| 6 | memory-bank | Orchestration & Workflow | Mnemosyne, Athena |
+| 7 | session-goal | Orchestration & Workflow | Zeus, Mnemosyne |
+| 8 | clonedeps | Development Tools | Hermes, Hephaestus |
+| 9 | git-workflow-and-versioning | Development Tools | Hermes, Prometheus, Iris |
+| 10 | incremental-implementation | Development Tools | Zeus, Hermes, Aphrodite, Demeter, Prometheus, Talos |
+| 11 | loop-engineering | Development Tools | All agents |
+| 12 | reflect | Development Tools | All agents |
+| 13 | simplify | Development Tools | All agents |
+| 14 | worktrees | Development Tools | All agents |
+| 15 | code-review-checklist | Quality & Security | Themis |
+| 16 | security-hardening | Quality & Security | Themis, Nyx |
+| 17 | tdd-with-agents | Quality & Security | Hermes, Aphrodite, Demeter, Themis, Hephaestus |
+| 18 | test-slicing | Quality & Security | Talos, Themis, Hermes, Aphrodite, Zeus |
+| 19 | codemap | Planning | Apollo, Zeus |
+| 20 | spec-driven-development | Planning | Athena |
+| 21 | verification-planning | Planning | Athena, Zeus |
+| 22 | visual-review-pipeline | Frontend Development | Aphrodite |
+| 23 | agent-forge | Meta | Zeus |
+| 24 | prompt-refinery | Meta | Zeus |
+| 25 | instruction-forge | Meta | Zeus, Athena |
 
 ---
 
