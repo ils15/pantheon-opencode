@@ -23,6 +23,7 @@
  * dispatch-panel layer must never win while this window is open; field
  * report beta.2: navigation "stopped working" was exactly that theft).
  */
+import { execFile } from 'node:child_process'
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Context } from '@opencode/plugin/tui/context'
@@ -33,7 +34,6 @@ import {
   DEFAULT_GOAL_LOOP_PREFS,
   type DecisionBudgets,
   type GoalLoopPrefs,
-  PER_DECISION_USD_CYCLE,
   parseUsd,
 } from './autonomy-state.ts'
 import {
@@ -49,7 +49,9 @@ import { buildJ1Tab } from './j1-gate-status.ts'
 import {
   applyDraft,
   buildAboutTab,
+  buildChangelogTab,
   buildGatesTab,
+  type ChangelogHighlightItem,
   canWriteOverrides,
   type DraftWriter,
   type DraftWriterResult,
@@ -84,9 +86,11 @@ import { nextCheckState, type UpdateCheckState } from './update-notice.ts'
 import {
   buildUpdatesTab,
   registryUrlForChannel,
+  type UpdateChannel,
   type UpdatesSectionInput,
   updateChannelFor,
 } from './update-status.ts'
+import { extractHighlights, readChangelogForBundle } from './whats-new-highlights.ts'
 
 export const ROUTE_NAME = 'pantheon-settings'
 
@@ -316,9 +320,9 @@ function readUpdateCheckState(): UpdateCheckState {
   }
 }
 
-async function fetchLatestForChannel(currentVersion: string): Promise<string | null> {
+async function fetchLatestForChannel(channel: UpdateChannel): Promise<string | null> {
   try {
-    const response = await fetch(registryUrlForChannel(updateChannelFor(currentVersion)), {
+    const response = await fetch(registryUrlForChannel(channel), {
       signal: AbortSignal.timeout(5000),
     })
     const latest = String(((await response.json()) as { version?: unknown })?.version ?? '')
@@ -371,6 +375,7 @@ export function SettingsWindow(props: {
   selectedId: () => string | undefined
   draft: () => SettingsDraft
   notice: () => string | undefined
+  confirmExit?: () => boolean
   fg?: any
   muted?: any
   warn?: any
@@ -378,54 +383,63 @@ export function SettingsWindow(props: {
   const tab = () => props.tabs()[props.page()] ?? props.tabs()[0] ?? EMPTY_TAB
   return (
     <box flexDirection="column" paddingLeft={1} paddingRight={1} paddingTop={1}>
-      <box flexDirection="row">
+      {/* ── Top Header bar: Title + Horizontal Tabs + ESC (matching image.png) ── */}
+      <box flexDirection="row" alignItems="center">
         <text attributes={1} fg={props.fg}>
           {`Pantheon v${props.version}`}
         </text>
-        <box flexGrow={1} />
-        <text fg={props.muted}>{'esc'}</text>
-      </box>
-      {/* ── MENU LATERAL (esquerda) + CONTEÚDO (direita) — o padrão do Quota ── */}
-      <box flexDirection="row" height={1}>
-        <box width={18} flexDirection="row">
+        <box width={2} />
+        <box flexDirection="row" flexGrow={1} flexShrink={1}>
           <For each={props.tabs()}>
-            {(t, index) => (
-              <text
-                flexShrink={0}
-                fg={index() === props.page() ? props.fg : props.muted}
-                {...(index() === props.page() ? { attributes: 1 } : {})}
-              >
-                {`${index() + 1} ${t.title}${tabDirty(props.draft(), t) ? ' ●' : ''}  `}
-              </text>
-            )}
+            {(t, index) => {
+              const isActive = () => index() === props.page()
+              return (
+                <text
+                  flexShrink={0}
+                  fg={isActive() ? (props.warn ?? props.fg) : props.muted}
+                  {...(isActive() ? { attributes: 1 } : {})}
+                >
+                  {`${t.title}${tabDirty(props.draft(), t) ? ' ●' : ''}  `}
+                </text>
+              )
+            }}
           </For>
         </box>
-        <box flexGrow={1} flexShrink={1}>
-          <text fg={props.muted}>{'─'.repeat(40)}</text>
+        <text fg={props.muted}>{'esc'}</text>
+      </box>
+
+      {/* ── Thin divider under header ── */}
+      <box flexDirection="row" height={1}>
+        <box flexGrow={1}>
+          <text fg={props.muted}>{'─'.repeat(78)}</text>
         </box>
       </box>
+
+      {/* ── Main Body: Left Rail + Content (matching image.png & image_2.png) ── */}
       <box flexDirection="row">
-        {/* Rail */}
+        {/* Left Rail: Tab list with active indicator */}
         <box width={18} flexDirection="column">
           <For each={props.tabs()}>
             {(t, index) => {
               const isActive = () => index() === props.page()
               return (
                 <text
-                  fg={isActive() ? props.fg : props.muted}
+                  fg={isActive() ? (props.warn ?? props.fg) : props.muted}
                   {...(isActive() ? { attributes: 1 } : {})}
                 >
-                  {`${isActive() ? '▸' : ' '}${index() + 1} ${t.title}${tabDirty(props.draft(), t) ? ' ●' : ''}`}
+                  {`${isActive() ? '▸ ' : '  '}${t.title}${tabDirty(props.draft(), t) ? ' ●' : ''}`}
                 </text>
               )
             }}
           </For>
           <box height={1} />
           <text fg={props.muted}>{'1-9: tab'}</text>
+          <text fg={props.muted}>{'tab: next'}</text>
         </box>
-        {/* Content */}
+
+        {/* Content panel */}
         <box flexGrow={1} flexShrink={1} flexDirection="column" paddingLeft={1}>
-          <text attributes={1} fg={props.fg}>
+          <text attributes={1} fg={props.warn ?? props.fg}>
             {tab().title}
           </text>
           <text fg={props.muted}>{'─'.repeat(40)}</text>
@@ -433,7 +447,7 @@ export function SettingsWindow(props: {
             {(group) => (
               <box flexDirection="column">
                 <Show when={group.title !== undefined}>
-                  <text attributes={1} fg={props.fg}>
+                  <text attributes={1} fg={props.warn ?? props.fg}>
                     {group.title}
                   </text>
                 </Show>
@@ -442,27 +456,39 @@ export function SettingsWindow(props: {
                     const isSelected = () => row.id === props.selectedId()
                     const display = () => props.draft()[row.id] ?? row.value
                     const staged = () => props.draft()[row.id] !== undefined
-                    const gutter = () => (isSelected() ? '▸ ' : '  ')
+                    const gutter = () => (isSelected() ? '  ' : '  ')
                     const valueCell = () =>
                       row.cycle !== undefined ? `< ${display()} >` : display()
                     return (
-                      <box flexDirection="row">
+                      <box
+                        flexDirection="row"
+                        backgroundColor={isSelected() ? (props.warn ?? '#f59e0b') : undefined}
+                      >
                         <box width={NAME_WIDTH + 2}>
-                          <text fg={props.fg} {...(isSelected() ? { attributes: 1 } : {})}>
+                          <text
+                            fg={isSelected() ? '#000000' : props.fg}
+                            {...(isSelected() ? { attributes: 1 } : {})}
+                          >
                             {`${gutter()}${row.name}`.padEnd(NAME_WIDTH + 2)}
                           </text>
                         </box>
                         <box width={VALUE_WIDTH}>
                           <text
-                            fg={isSelected() || staged() ? props.fg : props.muted}
-                            {...(isSelected() ? { attributes: 1 } : {})}
+                            fg={
+                              isSelected()
+                                ? '#000000'
+                                : staged()
+                                  ? (props.warn ?? props.fg)
+                                  : props.muted
+                            }
+                            {...(isSelected() || staged() ? { attributes: 1 } : {})}
                           >
                             {`${valueCell()}${staged() ? ' ●' : ''}`.padEnd(VALUE_WIDTH)}
                           </text>
                         </box>
                         <Show when={row.note !== undefined}>
                           <box flexGrow={1} flexShrink={1}>
-                            <text fg={props.muted}>{row.note}</text>
+                            <text fg={isSelected() ? '#111827' : props.muted}>{row.note}</text>
                           </box>
                         </Show>
                       </box>
@@ -475,34 +501,84 @@ export function SettingsWindow(props: {
           </For>
         </box>
       </box>
-      {/* ── Footer: notice + botões (chips) + keys ── */}
+
+      {/* ── Footer: notice + botões (chips) + keys (matching image.png & image_2.png) ── */}
       <Show when={props.notice() !== undefined}>
-        <text fg={props.warn ?? props.muted}>{`⚠ ${props.notice()}`}</text>
+        <text fg={props.notice()?.startsWith('✅') ? props.fg : (props.warn ?? props.muted)}>
+          {props.notice()?.startsWith('✅') || props.notice()?.startsWith('saved')
+            ? props.notice()
+            : `⚠ ${props.notice()}`}
+        </text>
       </Show>
-      <box flexDirection="row">
-        <text fg={props.fg} attributes={1}>
-          {'[ Save ]'}
-        </text>
-        <text fg={props.muted}>{'  '}</text>
-        <text fg={props.fg} attributes={1}>
-          {'[ Reset page ]'}
-        </text>
-        <text fg={props.muted}>{'  '}</text>
-        <text fg={props.fg} attributes={1}>
-          {'[ Defaults ]'}
-        </text>
-        <box flexGrow={1} />
-        <text fg={draftDirty(props.draft()) ? (props.warn ?? props.fg) : props.muted}>
-          {draftDirty(props.draft())
-            ? `● ${draftCount(props.draft())} unsaved`
-            : 'no staged changes'}
-        </text>
-      </box>
-      <text fg={props.muted}>
-        {
-          '←/→ change · enter apply · ↑/↓ row · 1-9/tab section · ctrl+s save · ctrl+r reset page · ctrl+d defaults · esc close'
+
+      <Show
+        when={props.confirmExit?.()}
+        fallback={
+          <box flexDirection="column">
+            <Show
+              when={draftDirty(props.draft())}
+              fallback={
+                <box flexDirection="row">
+                  <box backgroundColor="#262626">
+                    <text fg="#ffffff">{' Close '}</text>
+                  </box>
+                  <text fg={props.muted}>{'  '}</text>
+                  <box backgroundColor="#262626">
+                    <text fg="#ffffff">{' Reset page '}</text>
+                  </box>
+                  <text fg={props.muted}>{'  '}</text>
+                  <box backgroundColor="#262626">
+                    <text fg="#ffffff">{' Defaults '}</text>
+                  </box>
+                  <box flexGrow={1} />
+                  <text fg={props.muted}>{'no staged changes'}</text>
+                </box>
+              }
+            >
+              <box flexDirection="row">
+                <box backgroundColor="#fba970">
+                  <text fg="#000000">{' Save '}</text>
+                </box>
+                <text fg={props.muted}>{'  '}</text>
+                <box backgroundColor="#262626">
+                  <text fg="#ffffff">{' Discard '}</text>
+                </box>
+                <text fg={props.muted}>{'  '}</text>
+                <box backgroundColor="#262626">
+                  <text fg="#ffffff">{' Reset page '}</text>
+                </box>
+                <box flexGrow={1} />
+                <text fg={props.warn ?? '#f59e0b'}>{'unsaved changes'}</text>
+              </box>
+            </Show>
+            <text fg={props.muted}>
+              {
+                '› or ←/→ change · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close'
+              }
+            </text>
+          </box>
         }
-      </text>
+      >
+        <box flexDirection="column">
+          <box flexDirection="row">
+            <text fg={props.warn ?? '#f59e0b'} attributes={1}>
+              {'Keep your changes?  '}
+            </text>
+            <box backgroundColor="#fba970">
+              <text fg="#000000">{' Save '}</text>
+            </box>
+            <text fg={props.muted}>{'  '}</text>
+            <box backgroundColor="#262626">
+              <text fg="#ffffff">{' Discard '}</text>
+            </box>
+            <text fg={props.muted}>{'  '}</text>
+            <box backgroundColor="#262626">
+              <text fg="#ffffff">{' Keep editing '}</text>
+            </box>
+          </box>
+          <text fg={props.muted}>{'ctrl+s save · d discard the changes · esc keep editing'}</text>
+        </box>
+      </Show>
     </box>
   )
 }
@@ -519,6 +595,9 @@ interface PageApi {
   resetPage: () => void
   stageDefaults: () => void
   close: () => void
+  discard?: () => void
+  cancelExit?: () => void
+  confirmExit?: () => boolean
 }
 
 let pageApi: PageApi | undefined
@@ -532,9 +611,11 @@ function createWindowController(
   selectedId: () => string | undefined
   draft: () => SettingsDraft
   notice: () => string | undefined
+  confirmExit: () => boolean
   api: PageApi
   cleanup: () => void
 } {
+  const currentVersion = resolveRunningVersion()
   const [page, setPage] = createSignal(0)
   const [selected, setSelected] = createSignal(0)
   const [load, setLoad] = createSignal(readOverridesLoad())
@@ -543,12 +624,33 @@ function createWindowController(
   const [budgets, setBudgets] = createSignal<DecisionBudgets>(readDecisionBudgets())
   const [autonomyRestartPending, setAutonomyRestartPending] = createSignal(false)
   const [presetTick, setPresetTick] = createSignal(0)
+  const [selectedChannel, setSelectedChannel] = createSignal<UpdateChannel>(
+    updateChannelFor(currentVersion),
+  )
   const [lastChecked, setLastChecked] = createSignal<string | undefined>(undefined)
   const [checking, setChecking] = createSignal(false)
+  const [updating, setUpdating] = createSignal(false)
+  const [changelogItems, setChangelogItems] = createSignal<ChangelogHighlightItem[]>([])
   const [draft, setDraft] = createSignal<SettingsDraft>({})
   const [notice, setNotice] = createSignal<string | undefined>(undefined)
+  const [confirmExit, setConfirmExit] = createSignal(false)
 
-  const currentVersion = resolveRunningVersion()
+  // Load changelog highlights asynchronously
+  void readChangelogForBundle(import.meta.url).then((text) => {
+    if (!text) return
+    const hl = extractHighlights(text, currentVersion)
+    if (hl.found) {
+      const items: ChangelogHighlightItem[] = []
+      for (const group of hl.groups) {
+        for (const item of group.items) {
+          const dash = item.indexOf('—')
+          const title = dash !== -1 ? item.slice(0, dash).trim() : item.slice(0, 26)
+          items.push({ title, detail: item, group: group.heading ?? undefined })
+        }
+      }
+      setChangelogItems(items)
+    }
+  })
 
   const presetInput = () => {
     void presetTick()
@@ -562,7 +664,9 @@ function createWindowController(
     const input: UpdatesSectionInput = {
       currentVersion,
       state: readUpdateCheckState(),
+      selectedChannel: selectedChannel(),
       checking: checking(),
+      updating: updating(),
       nowMs: Date.now(),
     }
     const seen = lastChecked()
@@ -582,6 +686,7 @@ function createWindowController(
     }),
     buildJ1Tab(process.env, false),
     buildUpdatesTab(updatesInput()),
+    buildChangelogTab(currentVersion, changelogItems()),
     buildDoctorTab({
       runningVersion: currentVersion,
       nodeVersion: process.versions.node,
@@ -593,34 +698,77 @@ function createWindowController(
   const rows = () => tabRows(tabs()[page()] ?? tabs()[0] ?? EMPTY_TAB)
 
   const move = (delta: number) => {
+    if (confirmExit()) setConfirmExit(false)
     const list = rows()
     if (list.length === 0) return
     setSelected((current) => Math.min(Math.max(current + delta, 0), list.length - 1))
   }
 
   const step = (direction: 1 | -1) => {
+    if (confirmExit()) setConfirmExit(false)
     const row = rows()[selected()]
     if (row === undefined) return
     setNotice(undefined)
     setDraft(stageValue(draft(), row, direction))
   }
 
-  const checkUpdatesNow = () => {
+  const checkUpdatesNow = (targetChannel: UpdateChannel = selectedChannel()) => {
     if (checking()) return
     setChecking(true)
     setNotice(undefined)
-    void fetchLatestForChannel(currentVersion)
+    void fetchLatestForChannel(targetChannel)
       .then((latest) => {
-        if (latest) setLastChecked(latest)
-        persistUpdateCheckState(readUpdateCheckState(), latest)
+        if (latest) {
+          setLastChecked(latest)
+          persistUpdateCheckState(readUpdateCheckState(), latest)
+        }
       })
       .catch(() => {
-        /* offline — the row keeps the last known state */
+        /* offline */
       })
       .finally(() => setChecking(false))
   }
 
+  const runUpdateNow = () => {
+    if (updating()) return
+    setUpdating(true)
+    setNotice(`updating to ${selectedChannel()} channel…`)
+    execFile(
+      'npm',
+      ['install', '-g', `pantheon-opencode@${selectedChannel()}`],
+      { timeout: 60_000 },
+      (err) => {
+        setUpdating(false)
+        if (err) {
+          setNotice('run in terminal: pantheon-opencode update')
+          try {
+            context.ui.toast?.show?.({
+              variant: 'warning',
+              message: 'Update requires terminal permissions: run `pantheon-opencode update`',
+            })
+          } catch {}
+        } else {
+          setNotice('✅ update complete — restart OpenCode or run `npx pantheon-opencode init`')
+          try {
+            context.ui.toast?.show?.({
+              variant: 'info',
+              message: 'Pantheon updated successfully!',
+            })
+          } catch {}
+        }
+      },
+    )
+  }
+
   const dispatchWrite = (id: string, value: string): DraftWriterResult => {
+    if (id === 'update.channel') {
+      if (value === 'stable' || value === 'beta') {
+        setSelectedChannel(value as UpdateChannel)
+        checkUpdatesNow(value as UpdateChannel)
+        return { ok: true }
+      }
+      return { ok: false, reason: 'unknown channel' }
+    }
     if (id.startsWith('gate.')) {
       if (!canWriteOverrides(load())) {
         return { ok: false, reason: 'overrides file unreadable — repair with `doctor --fix`' }
@@ -734,10 +882,6 @@ function createWindowController(
       }
     }
     if (id.startsWith('tui.')) {
-      // The prefs live in the host's durable reactive store: the mutation is
-      // async (persist), but the in-memory store flips immediately — the
-      // sidebar/footer/panel re-render on save, no restart. A persist
-      // failure surfaces in the notice line when it settles.
       try {
         mutateTuiPrefs((prefsDraft) => applyTuiRow(prefsDraft, id, value))
           .then(() => setNotice(undefined))
@@ -769,10 +913,14 @@ function createWindowController(
       setNotice(`${failed.map((f) => `${f.id}: ${f.reason}`).join(' · ')} — staged changes kept`)
     } else {
       setNotice(`saved ${applied.length} change${applied.length === 1 ? '' : 's'}`)
+      if (confirmExit()) {
+        exit()
+      }
     }
   }
 
   const resetPage = () => {
+    if (confirmExit()) setConfirmExit(false)
     const tab = tabs()[page()]
     if (tab === undefined) return
     setDraft(resetTab(draft(), tab))
@@ -780,6 +928,7 @@ function createWindowController(
   }
 
   const stageDefaultsPage = () => {
+    if (confirmExit()) setConfirmExit(false)
     const tab = tabs()[page()]
     if (tab === undefined) return
     setNotice(undefined)
@@ -787,16 +936,17 @@ function createWindowController(
   }
 
   const nextTab = () => {
+    if (confirmExit()) setConfirmExit(false)
     setPage((current) => (current + 1) % tabs().length)
     setSelected(0)
   }
 
   const close = () => {
-    // A dialog.confirm here would render in the home/session view chrome,
-    // which a full-screen ROUTE page replaces — an invisible prompt that
-    // pends forever (field report beta.5: esc "did nothing" with staged
-    // changes). Close always exits; discarding is announced, never asked.
     const staged = draftCount(draft())
+    if (staged > 0 && !confirmExit()) {
+      setConfirmExit(true)
+      return
+    }
     if (staged > 0) {
       setDraft({})
       try {
@@ -811,18 +961,42 @@ function createWindowController(
     exit()
   }
 
+  const discard = () => {
+    const staged = draftCount(draft())
+    setDraft({})
+    setConfirmExit(false)
+    if (staged > 0) {
+      try {
+        context.ui.toast?.show?.({
+          variant: 'info',
+          message: `settings: ${staged} staged change${staged === 1 ? '' : 's'} discarded`,
+        })
+      } catch {
+        /* toast unavailable */
+      }
+    }
+    exit()
+  }
+
+  const cancelExit = () => {
+    setConfirmExit(false)
+  }
+
   const selectedId = () => rows()[selected()]?.id
 
   const api: PageApi = {
     move,
     step,
     actuate: () => {
+      if (confirmExit()) setConfirmExit(false)
       const row = rows()[selected()]
       if (row?.action === 'update-check') checkUpdatesNow()
+      else if (row?.action === 'update-run') runUpdateNow()
       else step(1)
     },
     nextTab,
     jumpTab: (index) => {
+      if (confirmExit()) setConfirmExit(false)
       if (index >= 0 && index < tabs().length) {
         setPage(index)
         setSelected(0)
@@ -832,6 +1006,9 @@ function createWindowController(
     resetPage,
     stageDefaults: stageDefaultsPage,
     close,
+    discard,
+    cancelExit,
+    confirmExit: () => confirmExit(),
   }
 
   return {
@@ -840,6 +1017,7 @@ function createWindowController(
     selectedId,
     draft,
     notice,
+    confirmExit: () => confirmExit(),
     api,
     cleanup: () => {
       pageApi = undefined
@@ -880,6 +1058,7 @@ function SettingsPage(props: { context: Context; data: Record<string, any> | und
       selectedId={controller.selectedId}
       draft={controller.draft}
       notice={controller.notice}
+      confirmExit={controller.confirmExit}
       fg={theme.base}
       muted={theme.muted}
       warn={warn}
@@ -936,6 +1115,7 @@ function openSettingsDialog(context: Context): void {
           selectedId={controller.selectedId}
           draft={controller.draft}
           notice={controller.notice}
+          confirmExit={controller.confirmExit}
           fg={theme.base}
           muted={theme.muted}
           warn={warn}
@@ -989,7 +1169,23 @@ export function setupPantheonSettings(context: Context): void {
           }
           return undefined
         }
+        if (pageApi.confirmExit?.()) {
+          pageApi.cancelExit?.()
+          return undefined
+        }
         pageApi.close()
+        return undefined
+      },
+    },
+    {
+      id: 'pantheon.settings.discard',
+      title: 'Discard staged changes and exit',
+      bind: 'd',
+      run: () => {
+        if (pageApi?.confirmExit?.()) {
+          pageApi.discard?.()
+          return undefined
+        }
         return undefined
       },
     },

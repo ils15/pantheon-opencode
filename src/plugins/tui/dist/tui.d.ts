@@ -6,11 +6,17 @@ type ContextProgressTone = 'info' | 'success' | 'warning' | 'error';
 export declare const CONTEXT_BAR_CELLS = 12;
 export declare const CONTEXT_BAR_FILLED_CELL = "▰";
 export declare const CONTEXT_BAR_EMPTY_CELL = "▱";
+type BarShape = 'block' | 'line' | 'smooth' | 'ascii' | 'dots' | 'braille';
+interface ContextBarOptions {
+  cells?: number;
+  shape?: BarShape;
+  evenMark?: boolean;
+}
 export declare function contextUsageTone(percent: number): ContextProgressTone;
 export declare function formatTokenCount(tokens: number | null | undefined): string | null;
 export declare function formatContextWindow(limit: number | null | undefined): string | null;
 export declare function contextBarFilled(percent: number, cells?: number): number;
-export declare function contextBar(percent: number | null | undefined, cells?: number): {
+export declare function contextBar(percent: number | null | undefined, options?: number | ContextBarOptions): {
   filled: string;
   empty: string;
 } | null;
@@ -192,7 +198,11 @@ export type ContextBlockRows = {
  *  unavailable (never `undefined%`). A block with neither tokens nor cost
  *  yields null. `gaugeStyle` (the TUI tab's pref) picks the percent-row
  *  shape: `both` (default), `bar`, `percent`, or `off` (row omitted). Pure. */
-export declare function contextBlockRows(usage: ContextUsage | null, cost: number | null | undefined, gaugeStyle?: 'both' | 'bar' | 'percent' | 'off'): ContextBlockRows | null;
+export declare function contextBlockRows(usage: ContextUsage | null, cost: number | null | undefined, gaugeStyle?: 'both' | 'bar' | 'percent' | 'off', barOptions?: number | {
+  shape?: any;
+  cells?: number;
+  evenMark?: boolean;
+}): ContextBlockRows | null;
 /** Column widths for one model row (labels are muted, numbers right-aligned). */
 export declare const MODEL_USAGE_MODEL_WIDTH = 12;
 export declare const MODEL_USAGE_TOKEN_WIDTH = 6;

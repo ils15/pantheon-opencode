@@ -383,3 +383,61 @@ export function buildAboutTab(version: string): SettingsTab {
     ],
   }
 }
+
+export interface ChangelogHighlightItem {
+  title: string
+  detail: string
+  group?: string | undefined
+}
+
+export function buildChangelogTab(
+  version: string,
+  items: ChangelogHighlightItem[] = [],
+): SettingsTab {
+  const rows: SettingsRow[] = []
+  if (items.length > 0) {
+    items.forEach((item, index) => {
+      rows.push({
+        id: `changelog.item.${index + 1}`,
+        name: item.title.slice(0, 26),
+        value: item.detail.length > 20 ? `${item.detail.slice(0, 19)}…` : item.detail,
+        note: item.detail,
+      })
+    })
+  } else {
+    rows.push({
+      id: 'changelog.info',
+      name: 'Release',
+      value: `v${version}`,
+      note: 'view full history in CHANGELOG.md or GitHub releases',
+    })
+  }
+
+  return {
+    id: 'changelog',
+    title: 'Changelog',
+    groups: [
+      {
+        title: `What's New in v${version}`,
+        rows,
+      },
+      {
+        title: 'Release References',
+        rows: [
+          {
+            id: 'changelog.docs',
+            name: 'Documentation',
+            value: 'CHANGELOG.md',
+            note: 'shipped at plugin root and repository root',
+          },
+          {
+            id: 'changelog.repo',
+            name: 'GitHub Repository',
+            value: 'ils15/pantheon-opencode',
+            note: 'releases, pull requests and discussion',
+          },
+        ],
+      },
+    ],
+  }
+}

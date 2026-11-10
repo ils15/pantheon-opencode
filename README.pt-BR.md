@@ -93,8 +93,12 @@ apenas — `init` → reiniciar → `/dispatch` → primeiro resultado — veja 
   ativos, o estado do git e um bloco `Context` (tokens, medidor de percentual,
   `$<gasto> gastos` e uma linha mutada `cache <n>% · <n.n> tok/s`); o rodapé
   nativo do prompt segue intacto, e o Pantheon só acrescenta
-  `▸<preset> · ✦<n> ativos` enquanto há delegações rodando. A TUI não traz mais
-  painel de quota: para ver quota e uso de provedores dentro do OpenCode,
+  `▸<preset> · ✦<n> ativos` enquanto há delegações rodando. O comando `/pantheon-settings`
+  (ou `Pantheon: Settings` na paleta) abre a janela de configurações inspirada no padrão OpenCode Quota:
+  - **Changelog**: destaques da versão e notas de lançamento integradas diretamente na janela.
+  - **Atualizações**: escolha de canal (`stable` ou `beta`), verificação em tempo real e ação de atualização direta (`Update now`) ou comandos CLI (`pantheon-opencode update`).
+  - **Personalização da TUI e Barras**: escolha o formato das barras de progresso (`line`, `block`, `smooth`, `ascii`, `dots`, `braille`), largura (`standard`, `compact`, `wide`, `full`), indicador de 50% (`evenMark`), separadores e presets de layout (`comfortable` ou `compact`), funcionando tanto no terminal CLI quanto no OpenCode Desktop.
+  A TUI não traz mais painel de quota: para ver quota e uso de provedores dentro do OpenCode,
   instale o plugin comunitário recomendado
   [`@slkiser/opencode-quota`](https://github.com/slkiser/opencode-quota) — veja
   [Quota & uso](docs/tui-v2-quota-providers.md). As tools `pantheon_cost` e

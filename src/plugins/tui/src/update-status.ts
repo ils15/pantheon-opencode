@@ -36,24 +36,35 @@ function formatAgo(ms: number): string {
 export interface UpdatesSectionInput {
   currentVersion: string
   state: UpdateCheckState
+  /** Selected channel (defaults to updateChannelFor(currentVersion)). */
+  selectedChannel?: UpdateChannel
   /** Latest version seen this session (a check-now inside this window). */
   lastCheckedVersion?: string
   /** A check-now is in flight (this window). */
   checking?: boolean
+  /** An update run is in flight (this window). */
+  updating?: boolean
   nowMs?: number
 }
 
 export function buildUpdatesTab(input: UpdatesSectionInput): SettingsTab {
   const nowMs = input.nowMs ?? Date.now()
-  const channel = updateChannelFor(input.currentVersion)
+  const channel = input.selectedChannel ?? updateChannelFor(input.currentVersion)
   const lastCheckMs = input.state.lastCheckMs
   const latest = input.lastCheckedVersion ?? input.state.lastNotifiedVersion
+
+  const stable = (version: string) => !/-beta\.\d+$/.test(version)
+  const newer =
+    latest !== undefined &&
+    comparePantheonVersions(latest, input.currentVersion) > 0 &&
+    !(stable(input.currentVersion) && !stable(latest))
 
   const rows: SettingsRow[] = [
     {
       id: 'update.channel',
       name: 'Channel',
       value: channel,
+      cycle: ['stable', 'beta'] as const,
       note: 'stable tracks npm `latest`; beta tracks npm `beta`',
     },
     {
@@ -70,23 +81,31 @@ export function buildUpdatesTab(input: UpdatesSectionInput): SettingsTab {
   ]
 
   if (latest) {
-    // Same guard as pickUpdateNotice: a stable install is never advertised a
-    // beta — the update CLI owns that crossing (explicit opt-in).
-    const stable = (version: string) => !/-beta\.\d+$/.test(version)
-    const newer =
-      comparePantheonVersions(latest, input.currentVersion) > 0 &&
-      !(stable(input.currentVersion) && !stable(latest))
     rows.push({
       id: 'update.latest',
       name: 'Registry',
       value: newer ? `v${latest} available` : 'up to date',
       note: newer ? 'adopt with `pantheon-opencode update`' : 'no newer compatible version',
     })
+    rows.push({
+      id: 'update.run',
+      name: 'Update now',
+      value: input.updating ? 'updating…' : newer ? `install v${latest}` : 'reinstall / refresh',
+      action: 'update-run',
+      note: newer ? 'enter runs `pantheon-opencode update`' : 'enter refreshes installed copy',
+    })
   }
+
+  rows.push({
+    id: 'update.command',
+    name: 'CLI command',
+    value: channel === 'beta' ? 'pantheon-opencode update' : 'pantheon-opencode update --stable',
+    note: 'run in terminal or OpenCode Desktop terminal',
+  })
 
   return {
     id: 'updates',
     title: 'Updates',
-    groups: [{ title: 'Updates', rows }],
+    groups: [{ title: 'Updates & Maintenance', rows }],
   }
 }
