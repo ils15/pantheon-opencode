@@ -170,7 +170,7 @@ by risk, not by promised date — no date on this page is a commitment.
 - Five MCP servers with per-agent allowlists and deny-by-default behavior.
 - Memory, persistence, code-mode, and vision surfaces documented from behavior.
 - Cost reporting in USD, with per-model and per-session attribution.
-- 23 skills with progressive disclosure, the behaviors registry, and
+- 25 skills with progressive disclosure, the behaviors registry, and
   instruction-forge as the doctrine skill.
 - Structural instruction evals and the release process that publishes only
   through explicit dispatch and fail-closed gates.
