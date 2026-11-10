@@ -324,7 +324,7 @@ jobs:
           const targetSha = String(process.env.TARGET_SHA || '').trim().toLowerCase();
           const tarball = process.env.TARBALL;
           const actualSha = createHash('sha256').update(fs.readFileSync(tarball)).digest('hex');
-          if (!/^\d+\.\d+\.\d+(?:-beta\.[1-9]\d*(?:\.[0-9a-f]+)?)?$/.test(metadata.version || '')) throw new Error('Invalid package evidence version.');
+          if (!/^\d+\.\d+\.\d+(?:-(?:beta|rc)\.[1-9]\d*(?:\.[0-9a-f]+)?)?$/.test(metadata.version || '')) throw new Error('Invalid package evidence version.');
           if (metadata.targetSha !== targetSha) throw new Error('Package evidence target SHA does not match TARGET_SHA.');
           if (!/^[0-9a-f]{64}$/.test(metadata.tarballSha256 || '') || metadata.tarballSha256 !== actualSha) throw new Error('Package evidence tarball SHA-256 is invalid.');
           if (metadata.tarball !== path.basename(tarball)) throw new Error('Package evidence tarball name is invalid.');
@@ -475,7 +475,7 @@ jobs:
           const packageJson = JSON.parse(fs.readFileSync(process.env.PACKAGE_JSON, 'utf8'));
           const expectedTarget = String(process.env.TARGET_SHA || '').trim().toLowerCase();
           const actualSha = createHash('sha256').update(fs.readFileSync(process.env.PACKAGE)).digest('hex');
-          if (!/^\d+\.\d+\.\d+(?:-beta\.[1-9]\d*(?:\.[0-9a-f]+)?)?$/.test(metadata.version || '')) throw new Error('Invalid artifact version.');
+          if (!/^\d+\.\d+\.\d+(?:-(?:beta|rc)\.[1-9]\d*(?:\.[0-9a-f]+)?)?$/.test(metadata.version || '')) throw new Error('Invalid artifact version.');
           if (!/^[0-9a-f]{40}$/.test(metadata.targetSha || '') || metadata.targetSha !== expectedTarget) throw new Error('Artifact target SHA does not match TARGET_SHA.');
           if (!/^[0-9a-f]{64}$/.test(metadata.tarballSha256 || '') || metadata.tarballSha256 !== actualSha) throw new Error('Downloaded tarball SHA-256 does not match metadata.');
           if (metadata.tarball !== path.basename(process.env.PACKAGE)) throw new Error('Artifact metadata tarball name does not match the downloaded file.');
