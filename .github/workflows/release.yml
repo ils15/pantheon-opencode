@@ -72,9 +72,9 @@ jobs:
             // Accept the committed sequential scheme (X.Y.Z-beta.N, current) and
             // the legacy PR+SHA scheme (X.Y.Z-beta.<pr>.<7-char-sha>). The new
             // scheme encodes no PR or SHA, so recovery_pr_number is optional.
-            const modern = /^(\d+\.\d+\.\d+)-beta\.([1-9]\d*)$/.exec(version);
-            const legacy = /^(\d+\.\d+\.\d+)-beta\.(\d+)\.([0-9a-f]{7})$/.exec(version);
-            if (!modern && !legacy) throw new Error('Recovery version must be <base>-beta.<N> or legacy <base>-beta.<pr>.<7-char-lowercase-sha>.');
+            const modern = /^(\d+\.\d+\.\d+)-(?:beta|rc)\.([1-9]\d*)$/.exec(version);
+            const legacy = /^(\d+\.\d+\.\d+)-(?:beta|rc)\.(\d+)\.([0-9a-f]{7})$/.exec(version);
+            if (!modern && !legacy) throw new Error('Recovery version must be <base>-(beta|rc).<N> or legacy <base>-(beta|rc).<pr>.<7-char-lowercase-sha>.');
             if (pr && !legacy) throw new Error('recovery_pr_number is only valid for the legacy <base>-beta.<pr>.<sha7> format.');
             if (!/^[0-9a-fA-F]{40}$/.test(sha)) throw new Error('Recovery target SHA must be a full 40-hex SHA.');
             if (legacy) {
@@ -418,8 +418,8 @@ jobs:
           if (version) {
             // Modern X.Y.Z-beta.N encodes no PR/SHA; the legacy
             // X.Y.Z-beta.<pr>.<sha7> form still requires all three inputs.
-            const modern = /^(\d+\.\d+\.\d+)-beta\.([1-9]\d*)$/.exec(version);
-            const legacy = /^(\d+\.\d+\.\d+)-beta\.(\d+)\.([0-9a-f]{7})$/.exec(version);
+            const modern = /^(\d+\.\d+\.\d+)-(?:beta|rc)\.([1-9]\d*)$/.exec(version);
+            const legacy = /^(\d+\.\d+\.\d+)-(?:beta|rc)\.(\d+)\.([0-9a-f]{7})$/.exec(version);
             if (!modern && !legacy) throw new Error('Invalid recovery version.');
             if (pr && !legacy) throw new Error('recovery_pr_number is only valid for the legacy <base>-beta.<pr>.<sha7> format.');
             if (!/^[0-9a-fA-F]{40}$/.test(sha)) throw new Error('Invalid recovery SHA.');
@@ -517,7 +517,7 @@ jobs:
           TAG_OBJECT_SHA=""
           TAG_REF="$TAG_REF" node <<'NODE'
           const tag = process.env.TAG_REF ?? '';
-          if (!/^v\d+\.\d+\.\d+(?:-beta\.[1-9]\d*(?:\.[0-9a-f]+)?)?$/.test(tag)) {
+          if (!/^v\d+\.\d+\.\d+(?:-(?:beta|rc)\.[1-9]\d*(?:\.[0-9a-f]+)?)?$/.test(tag)) {
             throw new Error('Release tag ref is invalid.');
           }
           NODE
