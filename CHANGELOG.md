@@ -69,7 +69,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      Canonical sections (docs/RELEASING.md): ### 🆕 What's New (curated highlights, ≤6 bullets ≤140 chars) →
      ### Added / Changed / Deprecated / Removed / Fixed / Security → ### ⚠️ Known Issues / ### ✅ Closed Issues.
      `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
+     Running apply will move this section to a versioned entry and reset the template below. -->
 
+## [v2.0.0-beta.6] - 2026-11-10
+
+### Added
+
+- **tui** — the Autonomy tab: goal loop reachable (persisted mission, cooldown, continuation cap via `options.goal_loop`), decision budgets in-window, and the decision gradient documented
+- **tui** — the Decision tab configures WHICH Jev: selection mode, explicit provider/model target, egress consent toggle, and per-provider key STATUS (values never enter the window)
+- **tui** — a TUI tab: personalize sidebar lines/blocks, Context detail rows, gauge style, footer lines — durable storage, applied live
+- **skills** — prompt-refinery: diagnose-first loop, blocking questions for materially-different readings (Jev `choice` when active), response format, self-check
+- **skills** — skill-search ranks lexical relevance before the canonical boost ('webapp-testing' buried 'contract-testing')
+
+### Changed
+
+- **install** — a TTY `init` is banner → preview → ONE authorization; runtime config lives in `/pantheon-settings` or explicit flags
+
+### Fixed
+
+- **tui** — settings closes again: composer mode layers ate escape/q, and close-with-staged dialog was invisible on a route page
+- **tui** — navigate-back threw "cyclic structures" (live route object): routes sanitized to the plain store shape
+- **tui** — header showed vunknown: the version embed is authoritative now
+- **tui** — Decision budgets write live; goal-loop caps bounded (1..200, cooldown ≥1s)
+- **install** — every boot toasted "Plugin failed: …/src/plugin-v2": the dead 1.7-era bridge path is pruned on registration
 ## [v2.0.0-beta.5] - 2026-11-09
 
 ### Added
