@@ -167,3 +167,44 @@ describe('draft row display contract', () => {
     assert.equal(row({ cycle: undefined, note: 'env · restart' }).cycle, undefined)
   })
 })
+
+describe('autonomy tab (goal loop + budgets)', () => {
+  it('builds cyclable rows for goal-loop and budgets with the restart note', async () => {
+    const { buildAutonomyTab } = await import('../src/plugins/tui/src/autonomy-state.ts')
+    const tab = buildAutonomyTab({
+      goalLoop: { enabled: false, cooldownMs: 5000, maxContinuations: 25 },
+      budgets: { monthlyUsd: 5, perDecisionUsd: 0.1 },
+    })
+    const rows = tab.groups.flatMap((g) => g.rows)
+    assert.equal(tab.id, 'autonomy')
+    const goal = rows.find((r) => r.id === 'autonomy.goal_loop.enabled')
+    assert.equal(goal.value, 'disabled')
+    assert.deepEqual(goal.cycle, ['enabled', 'disabled'])
+    assert.match(goal.note, /restart/)
+    const monthly = rows.find((r) => r.id === 'autonomy.budget.monthly')
+    assert.equal(monthly.value, '$5')
+    assert.ok(monthly.cycle?.includes('$10'))
+  })
+
+  it('the gradient rows document the decision ladder without cyclers', async () => {
+    const { buildAutonomyTab } = await import('../src/plugins/tui/src/autonomy-state.ts')
+    const rows = buildAutonomyTab({
+      goalLoop: { enabled: true, cooldownMs: 5000, maxContinuations: 25 },
+      budgets: { monthlyUsd: 5, perDecisionUsd: 0.1 },
+    }).groups.at(-1).rows
+    assert.equal(rows.length, 3)
+    for (const row of rows)
+      assert.equal(row.cycle, undefined, 'the gradient is documented, not enforced here')
+    assert.ok(rows.some((r) => r.name === 'Decide solo'))
+    assert.ok(rows.some((r) => r.name === 'Jev decides'))
+    assert.ok(rows.some((r) => r.name === 'Human decides'))
+  })
+
+  it('parseUsd accepts the cycle cells and rejects junk', async () => {
+    const { parseUsd } = await import('../src/plugins/tui/src/autonomy-state.ts')
+    assert.equal(parseUsd('$10'), 10)
+    assert.equal(parseUsd('$0.10'), 0.1)
+    assert.equal(parseUsd('junk'), null)
+    assert.equal(parseUsd(''), null)
+  })
+})

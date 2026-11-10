@@ -23,10 +23,20 @@
  * dispatch-panel layer must never win while this window is open; field
  * report beta.2: navigation "stopped working" was exactly that theft).
  */
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Context } from '@opencode/plugin/tui/context'
 import { createSignal, For, onCleanup, Show } from 'solid-js'
+import {
+  buildAutonomyTab,
+  DEFAULT_DECISION_BUDGETS,
+  DEFAULT_GOAL_LOOP_PREFS,
+  type DecisionBudgets,
+  type GoalLoopPrefs,
+  MONTHLY_USD_CYCLE,
+  PER_DECISION_USD_CYCLE,
+  parseUsd,
+} from './autonomy-state.ts'
 import {
   applyDecisionRow,
   buildDecisionTab,
@@ -153,6 +163,110 @@ function readOverridesLoad(): OverridesLoad {
 
 function writeOverridesToDisk(load: OverridesLoad): void {
   writeFileSync(globalOverridesPath(), serializeOverrides(load.global), 'utf8')
+}
+
+function userOpenCodeConfigPath(): string {
+  const xdgConfig = process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? '', '.config')
+  return join(xdgConfig, 'opencode', 'opencode.json')
+}
+
+/** Read options.goal_loop from the user's opencode.json (fail-open). */
+function readGoalLoopPrefs(): GoalLoopPrefs {
+  const fallback = { ...DEFAULT_GOAL_LOOP_PREFS }
+  try {
+    const parsed = JSON.parse(readFileSync(userOpenCodeConfigPath(), 'utf8')) as {
+      options?: { goal_loop?: Partial<GoalLoopPrefs> }
+    }
+    const raw = parsed?.options?.goal_loop
+    if (raw && typeof raw === 'object') {
+      return {
+        enabled: typeof raw.enabled === 'boolean' ? raw.enabled : fallback.enabled,
+        cooldownMs:
+          typeof raw.cooldownMs === 'number' && raw.cooldownMs >= 1000
+            ? Math.floor(raw.cooldownMs)
+            : fallback.cooldownMs,
+        maxContinuations:
+          typeof raw.maxContinuations === 'number' && raw.maxContinuations >= 1
+            ? Math.min(200, Math.floor(raw.maxContinuations))
+            : fallback.maxContinuations,
+      }
+    }
+  } catch {
+    /* fail-open */
+  }
+  return fallback
+}
+
+/** Read the decision budgets from decision-router.json's `budget` envelope (fail-open). */
+function readDecisionBudgets(): DecisionBudgets {
+  const fallback = { ...DEFAULT_DECISION_BUDGETS }
+  try {
+    const path = join(
+      process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? '', '.config'),
+      'pantheon',
+      'decision-router.json',
+    )
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as { budget?: Partial<DecisionBudgets> }
+    const raw = parsed?.budget
+    if (raw && typeof raw === 'object') {
+      return {
+        monthlyUsd:
+          typeof raw.monthlyUsd === 'number' && raw.monthlyUsd > 0
+            ? raw.monthlyUsd
+            : fallback.monthlyUsd,
+        perDecisionUsd:
+          typeof raw.perDecisionUsd === 'number' && raw.perDecisionUsd > 0
+            ? raw.perDecisionUsd
+            : fallback.perDecisionUsd,
+      }
+    }
+  } catch {
+    /* fail-open */
+  }
+  return fallback
+}
+
+/**
+ * Surgically set one key under `options` in the user's opencode.json
+ * (preserving every other key). Startup-applied options live here — the
+ * runtime resolves them once at plugin setup.
+ */
+function writeUserOption(key: string, value: unknown): void {
+  const path = userOpenCodeConfigPath()
+  let doc: Record<string, unknown> = {}
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) doc = parsed
+  } catch {
+    /* start a fresh object — nothing parseable to preserve */
+  }
+  const options =
+    typeof doc.options === 'object' && doc.options !== null && !Array.isArray(doc.options)
+      ? { ...(doc.options as Record<string, unknown>) }
+      : {}
+  options[key] = value
+  doc.options = options
+  writeFileSync(path, `${JSON.stringify(doc, null, 2)}\n`)
+}
+
+/** Merge the `budget` envelope into decision-router.json (0600 preserved). */
+function writeDecisionBudget(budgets: { monthlyUsd: number; perDecisionUsd: number }): void {
+  const path = join(
+    process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? '', '.config'),
+    'pantheon',
+    'decision-router.json',
+  )
+  let doc: Record<string, unknown> = {}
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) doc = parsed
+  } catch (error) {
+    throw new Error(`decision-router.json unreadable — repair via \`decision-router setup-model\``)
+  }
+  doc.budget = { ...budgets }
+  const temp = `${path}.tui.tmp`
+  writeFileSync(temp, `${JSON.stringify(doc, null, 2)}\n`, { mode: 0o600 })
+  renameSync(temp, path)
 }
 
 function updateCheckStatePath(): string {
@@ -345,6 +459,9 @@ function createWindowController(
   const [selected, setSelected] = createSignal(0)
   const [load, setLoad] = createSignal(readOverridesLoad())
   const [decision, setDecision] = createSignal<DecisionConfigRead>(readDecisionRouterConfig())
+  const [goalLoop, setGoalLoop] = createSignal<GoalLoopPrefs>(readGoalLoopPrefs())
+  const [budgets, setBudgets] = createSignal<DecisionBudgets>(readDecisionBudgets())
+  const [autonomyRestartPending, setAutonomyRestartPending] = createSignal(false)
   const [presetTick, setPresetTick] = createSignal(0)
   const [lastChecked, setLastChecked] = createSignal<string | undefined>(undefined)
   const [checking, setChecking] = createSignal(false)
@@ -489,6 +606,46 @@ function createWindowController(
           ok: false,
           reason: error instanceof Error ? error.message : 'preset marker write failed',
         }
+      }
+    }
+    if (id.startsWith('autonomy.goal_loop.')) {
+      const next = { ...goalLoop() }
+      if (id === 'autonomy.goal_loop.enabled') {
+        next.enabled = value === 'enabled'
+      } else if (id === 'autonomy.goal_loop.maxContinuations') {
+        const parsed = Number(value)
+        if (!Number.isFinite(parsed) || parsed < 1 || parsed > 200) {
+          return { ok: false, reason: 'max continuations must be 1..200' }
+        }
+        next.maxContinuations = Math.floor(parsed)
+      } else if (id === 'autonomy.goal_loop.cooldownMs') {
+        const parsed = Number(value)
+        if (!Number.isFinite(parsed) || parsed < 1000) {
+          return { ok: false, reason: 'cooldown must be >= 1000ms' }
+        }
+        next.cooldownMs = Math.floor(parsed)
+      }
+      try {
+        writeUserOption('goal_loop', next)
+        setGoalLoop(next)
+        setAutonomyRestartPending(true)
+        return { ok: true }
+      } catch {
+        return { ok: false, reason: 'opencode.json write failed' }
+      }
+    }
+    if (id === 'autonomy.budget.monthly' || id === 'autonomy.budget.perDecision') {
+      const parsed = parseUsd(value)
+      if (parsed === null) return { ok: false, reason: 'invalid USD value' }
+      const next = { ...budgets() }
+      if (id === 'autonomy.budget.monthly') next.monthlyUsd = parsed
+      else next.perDecisionUsd = parsed
+      try {
+        writeDecisionBudget(next)
+        setBudgets(next)
+        return { ok: true }
+      } catch {
+        return { ok: false, reason: 'budget write failed' }
       }
     }
     if (id.startsWith('tui.')) {

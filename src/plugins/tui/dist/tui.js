@@ -60,6 +60,45 @@ const MODEL_USAGE_VISIBLE_CEILING = 3;
 const MODEL_USAGE_MESSAGE_LIMIT = 400;
 const MODEL_USAGE_SESSION_LIMIT = 8;
 //#endregion
+//#region src/autonomy-state.ts
+const DEFAULT_GOAL_LOOP_PREFS = {
+	enabled: false,
+	cooldownMs: 5e3,
+	maxContinuations: 25
+};
+Object.freeze(["enabled", "disabled"]);
+const DEFAULT_DECISION_BUDGETS = {
+	monthlyUsd: 5,
+	perDecisionUsd: .1
+};
+/** Format USD compactly for a cycler cell ("$5", "$0.10"). */
+function formatUsd(value) {
+	return `$${value < 1 ? value.toFixed(2) : String(Math.round(value))}`;
+}
+Object.freeze([
+	1,
+	2,
+	5,
+	10,
+	20,
+	50,
+	100
+].map((value) => formatUsd(value)));
+Object.freeze([
+	.01,
+	.025,
+	.05,
+	.1,
+	.25,
+	.5,
+	1
+].map((value) => formatUsd(value)));
+/** Parse a staged USD cell back to a number; junk keeps the input. */
+function parseUsd(cell) {
+	const value = Number(cell.replace("$", ""));
+	return Number.isFinite(value) && value > 0 ? value : null;
+}
+//#endregion
 //#region src/decision-router-state.ts
 /**
 * decision-router-state.ts — the Decision Model section of the settings window.
@@ -1240,6 +1279,68 @@ function readOverridesLoad() {
 function writeOverridesToDisk(load) {
 	writeFileSync(globalOverridesPath(), serializeOverrides(load.global), "utf8");
 }
+function userOpenCodeConfigPath() {
+	const xdgConfig = process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? "", ".config");
+	return join(xdgConfig, "opencode", "opencode.json");
+}
+/** Read options.goal_loop from the user's opencode.json (fail-open). */
+function readGoalLoopPrefs() {
+	const fallback = { ...DEFAULT_GOAL_LOOP_PREFS };
+	try {
+		const raw = JSON.parse(readFileSync(userOpenCodeConfigPath(), "utf8"))?.options?.goal_loop;
+		if (raw && typeof raw === "object") return {
+			enabled: typeof raw.enabled === "boolean" ? raw.enabled : fallback.enabled,
+			cooldownMs: typeof raw.cooldownMs === "number" && raw.cooldownMs >= 1e3 ? Math.floor(raw.cooldownMs) : fallback.cooldownMs,
+			maxContinuations: typeof raw.maxContinuations === "number" && raw.maxContinuations >= 1 ? Math.min(200, Math.floor(raw.maxContinuations)) : fallback.maxContinuations
+		};
+	} catch {}
+	return fallback;
+}
+/** Read the decision budgets from decision-router.json's `budget` envelope (fail-open). */
+function readDecisionBudgets() {
+	const fallback = { ...DEFAULT_DECISION_BUDGETS };
+	try {
+		const path = join(process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? "", ".config"), "pantheon", "decision-router.json");
+		const raw = JSON.parse(readFileSync(path, "utf8"))?.budget;
+		if (raw && typeof raw === "object") return {
+			monthlyUsd: typeof raw.monthlyUsd === "number" && raw.monthlyUsd > 0 ? raw.monthlyUsd : fallback.monthlyUsd,
+			perDecisionUsd: typeof raw.perDecisionUsd === "number" && raw.perDecisionUsd > 0 ? raw.perDecisionUsd : fallback.perDecisionUsd
+		};
+	} catch {}
+	return fallback;
+}
+/**
+* Surgically set one key under `options` in the user's opencode.json
+* (preserving every other key). Startup-applied options live here — the
+* runtime resolves them once at plugin setup.
+*/
+function writeUserOption(key, value) {
+	const path = userOpenCodeConfigPath();
+	let doc = {};
+	try {
+		const parsed = JSON.parse(readFileSync(path, "utf8"));
+		if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) doc = parsed;
+	} catch {}
+	const options = typeof doc.options === "object" && doc.options !== null && !Array.isArray(doc.options) ? { ...doc.options } : {};
+	options[key] = value;
+	doc.options = options;
+	writeFileSync(path, `${JSON.stringify(doc, null, 2)}\n`);
+}
+/** Merge the `budget` envelope into decision-router.json (0600 preserved). */
+function writeDecisionBudget(budgets) {
+	const path = join(process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? "", ".config"), "pantheon", "decision-router.json");
+	let doc = {};
+	try {
+		const parsed = JSON.parse(readFileSync(path, "utf8"));
+		if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) doc = parsed;
+	} catch (error) {
+		throw new Error(`decision-router.json unreadable — repair via \`decision-router setup-model\``);
+	}
+	doc.budget = { ...budgets };
+	const temp = `${path}.tui.tmp`;
+	writeFileSync(temp, `${JSON.stringify(doc, null, 2)}\n`, { mode: 384 });
+	renameSync(temp, path);
+}
 function updateCheckStatePath() {
 	const stateDir = process.env.XDG_STATE_HOME ?? join(process.env.HOME ?? "", ".local", "state");
 	return join(stateDir, "pantheon", "update-check.json");
@@ -1423,6 +1524,9 @@ function createWindowController(context, exit) {
 	const [selected, setSelected] = createSignal(0);
 	const [load, setLoad] = createSignal(readOverridesLoad());
 	const [decision, setDecision] = createSignal(readDecisionRouterConfig());
+	const [goalLoop, setGoalLoop] = createSignal(readGoalLoopPrefs());
+	const [budgets, setBudgets] = createSignal(readDecisionBudgets());
+	const [autonomyRestartPending, setAutonomyRestartPending] = createSignal(false);
 	const [presetTick, setPresetTick] = createSignal(0);
 	const [lastChecked, setLastChecked] = createSignal(void 0);
 	const [checking, setChecking] = createSignal(false);
@@ -1568,6 +1672,56 @@ function createWindowController(context, exit) {
 				ok: false,
 				reason: error instanceof Error ? error.message : "preset marker write failed"
 			};
+		}
+		if (id.startsWith("autonomy.goal_loop.")) {
+			const next = { ...goalLoop() };
+			if (id === "autonomy.goal_loop.enabled") next.enabled = value === "enabled";
+			else if (id === "autonomy.goal_loop.maxContinuations") {
+				const parsed = Number(value);
+				if (!Number.isFinite(parsed) || parsed < 1 || parsed > 200) return {
+					ok: false,
+					reason: "max continuations must be 1..200"
+				};
+				next.maxContinuations = Math.floor(parsed);
+			} else if (id === "autonomy.goal_loop.cooldownMs") {
+				const parsed = Number(value);
+				if (!Number.isFinite(parsed) || parsed < 1e3) return {
+					ok: false,
+					reason: "cooldown must be >= 1000ms"
+				};
+				next.cooldownMs = Math.floor(parsed);
+			}
+			try {
+				writeUserOption("goal_loop", next);
+				setGoalLoop(next);
+				setAutonomyRestartPending(true);
+				return { ok: true };
+			} catch {
+				return {
+					ok: false,
+					reason: "opencode.json write failed"
+				};
+			}
+		}
+		if (id === "autonomy.budget.monthly" || id === "autonomy.budget.perDecision") {
+			const parsed = parseUsd(value);
+			if (parsed === null) return {
+				ok: false,
+				reason: "invalid USD value"
+			};
+			const next = { ...budgets() };
+			if (id === "autonomy.budget.monthly") next.monthlyUsd = parsed;
+			else next.perDecisionUsd = parsed;
+			try {
+				writeDecisionBudget(next);
+				setBudgets(next);
+				return { ok: true };
+			} catch {
+				return {
+					ok: false,
+					reason: "budget write failed"
+				};
+			}
 		}
 		if (id.startsWith("tui.")) try {
 			mutateTuiPrefs((prefsDraft) => applyTuiRow(prefsDraft, id, value)).then(() => setNotice(void 0)).catch(() => setNotice("tui prefs: persist failed — the change is active for this session only"));
