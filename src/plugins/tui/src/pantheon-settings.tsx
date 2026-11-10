@@ -33,7 +33,6 @@ import {
   DEFAULT_GOAL_LOOP_PREFS,
   type DecisionBudgets,
   type GoalLoopPrefs,
-  MONTHLY_USD_CYCLE,
   PER_DECISION_USD_CYCLE,
   parseUsd,
 } from './autonomy-state.ts'
@@ -66,6 +65,7 @@ import {
   serializeOverrides,
   setOverrideState,
   settledDraft,
+  stageDefaults,
   stageValue,
   tabDirty,
   tabRows,
@@ -269,6 +269,40 @@ function writeDecisionBudget(budgets: { monthlyUsd: number; perDecisionUsd: numb
   renameSync(temp, path)
 }
 
+function decisionAuthStorePath(): string {
+  const xdgData = process.env.XDG_DATA_HOME ?? join(process.env.HOME ?? '', '.local', 'share')
+  return join(xdgData, 'opencode', 'auth.json')
+}
+
+/** Provider ids registered in the host auth store (existence only — never values). */
+function readAuthProviders(): Set<string> {
+  const names = new Set<string>()
+  try {
+    const parsed = JSON.parse(readFileSync(decisionAuthStorePath(), 'utf8')) as Record<
+      string,
+      unknown
+    >
+    for (const key of Object.keys(parsed)) names.add(key)
+  } catch {
+    /* no auth store — nothing recognized */
+  }
+  return names
+}
+
+/** Provider ids present in opencode.json `providers` (the config copy the host reads). */
+function readConfigProviders(): Set<string> {
+  const names = new Set<string>()
+  try {
+    const parsed = JSON.parse(readFileSync(userOpenCodeConfigPath(), 'utf8')) as {
+      providers?: Record<string, unknown>
+    }
+    for (const key of Object.keys(parsed?.providers ?? {})) names.add(key)
+  } catch {
+    /* no config providers */
+  }
+  return names
+}
+
 function updateCheckStatePath(): string {
   const stateDir = process.env.XDG_STATE_HOME ?? join(process.env.HOME ?? '', '.local', 'state')
   return join(stateDir, 'pantheon', 'update-check.json')
@@ -334,7 +368,7 @@ export function SettingsWindow(props: {
   version: string
   tabs: () => SettingsTab[]
   page: () => number
-  selected: () => number
+  selectedId: () => string | undefined
   draft: () => SettingsDraft
   notice: () => string | undefined
   fg?: any
@@ -342,86 +376,131 @@ export function SettingsWindow(props: {
   warn?: any
 }) {
   const tab = () => props.tabs()[props.page()] ?? props.tabs()[0] ?? EMPTY_TAB
-  const rows = () => tabRows(tab())
   return (
     <box flexDirection="column" paddingLeft={1} paddingRight={1} paddingTop={1}>
       <box flexDirection="row">
-        <text flexShrink={0} attributes={1} fg={props.fg}>
+        <text attributes={1} fg={props.fg}>
           {`Pantheon v${props.version}`}
         </text>
-        <For each={props.tabs()}>
-          {(t, index) => (
-            <text
-              flexShrink={0}
-              fg={index() === props.page() ? props.fg : props.muted}
-              {...(index() === props.page() ? { attributes: 1 } : {})}
-            >
-              {`   ${t.title}${tabDirty(props.draft(), t) ? ' ●' : ''}`}
-            </text>
-          )}
-        </For>
         <box flexGrow={1} />
-        <text flexShrink={0} fg={props.muted}>
-          {'esc'}
+        <text fg={props.muted}>{'esc'}</text>
+      </box>
+      {/* ── MENU LATERAL (esquerda) + CONTEÚDO (direita) — o padrão do Quota ── */}
+      <box flexDirection="row" height={1}>
+        <box width={18} flexDirection="row">
+          <For each={props.tabs()}>
+            {(t, index) => (
+              <text
+                flexShrink={0}
+                fg={index() === props.page() ? props.fg : props.muted}
+                {...(index() === props.page() ? { attributes: 1 } : {})}
+              >
+                {`${index() + 1} ${t.title}${tabDirty(props.draft(), t) ? ' ●' : ''}  `}
+              </text>
+            )}
+          </For>
+        </box>
+        <box flexGrow={1} flexShrink={1}>
+          <text fg={props.muted}>{'─'.repeat(40)}</text>
+        </box>
+      </box>
+      <box flexDirection="row">
+        {/* Rail */}
+        <box width={18} flexDirection="column">
+          <For each={props.tabs()}>
+            {(t, index) => {
+              const isActive = () => index() === props.page()
+              return (
+                <text
+                  fg={isActive() ? props.fg : props.muted}
+                  {...(isActive() ? { attributes: 1 } : {})}
+                >
+                  {`${isActive() ? '▸' : ' '}${index() + 1} ${t.title}${tabDirty(props.draft(), t) ? ' ●' : ''}`}
+                </text>
+              )
+            }}
+          </For>
+          <box height={1} />
+          <text fg={props.muted}>{'1-9: tab'}</text>
+        </box>
+        {/* Content */}
+        <box flexGrow={1} flexShrink={1} flexDirection="column" paddingLeft={1}>
+          <text attributes={1} fg={props.fg}>
+            {tab().title}
+          </text>
+          <text fg={props.muted}>{'─'.repeat(40)}</text>
+          <For each={tab().groups}>
+            {(group) => (
+              <box flexDirection="column">
+                <Show when={group.title !== undefined}>
+                  <text attributes={1} fg={props.fg}>
+                    {group.title}
+                  </text>
+                </Show>
+                <For each={group.rows}>
+                  {(row: SettingsRow) => {
+                    const isSelected = () => row.id === props.selectedId()
+                    const display = () => props.draft()[row.id] ?? row.value
+                    const staged = () => props.draft()[row.id] !== undefined
+                    const gutter = () => (isSelected() ? '▸ ' : '  ')
+                    const valueCell = () =>
+                      row.cycle !== undefined ? `< ${display()} >` : display()
+                    return (
+                      <box flexDirection="row">
+                        <box width={NAME_WIDTH + 2}>
+                          <text fg={props.fg} {...(isSelected() ? { attributes: 1 } : {})}>
+                            {`${gutter()}${row.name}`.padEnd(NAME_WIDTH + 2)}
+                          </text>
+                        </box>
+                        <box width={VALUE_WIDTH}>
+                          <text
+                            fg={isSelected() || staged() ? props.fg : props.muted}
+                            {...(isSelected() ? { attributes: 1 } : {})}
+                          >
+                            {`${valueCell()}${staged() ? ' ●' : ''}`.padEnd(VALUE_WIDTH)}
+                          </text>
+                        </box>
+                        <Show when={row.note !== undefined}>
+                          <box flexGrow={1} flexShrink={1}>
+                            <text fg={props.muted}>{row.note}</text>
+                          </box>
+                        </Show>
+                      </box>
+                    )
+                  }}
+                </For>
+                <box height={1} />
+              </box>
+            )}
+          </For>
+        </box>
+      </box>
+      {/* ── Footer: notice + botões (chips) + keys ── */}
+      <Show when={props.notice() !== undefined}>
+        <text fg={props.warn ?? props.muted}>{`⚠ ${props.notice()}`}</text>
+      </Show>
+      <box flexDirection="row">
+        <text fg={props.fg} attributes={1}>
+          {'[ Save ]'}
+        </text>
+        <text fg={props.muted}>{'  '}</text>
+        <text fg={props.fg} attributes={1}>
+          {'[ Reset page ]'}
+        </text>
+        <text fg={props.muted}>{'  '}</text>
+        <text fg={props.fg} attributes={1}>
+          {'[ Defaults ]'}
+        </text>
+        <box flexGrow={1} />
+        <text fg={draftDirty(props.draft()) ? (props.warn ?? props.fg) : props.muted}>
+          {draftDirty(props.draft())
+            ? `● ${draftCount(props.draft())} unsaved`
+            : 'no staged changes'}
         </text>
       </box>
-      <text fg={props.muted}>{'─'.repeat(72)}</text>
-      <For each={tab().groups}>
-        {(group) => (
-          <box flexDirection="column">
-            <Show when={group.title !== undefined}>
-              <text attributes={1} fg={props.fg}>
-                {group.title}
-              </text>
-            </Show>
-            <For each={group.rows}>
-              {(row: SettingsRow) => {
-                const isSelected = () => rows()[props.selected()]?.id === row.id
-                const display = () => props.draft()[row.id] ?? row.value
-                const staged = () => props.draft()[row.id] !== undefined
-                const gutter = () => (isSelected() ? '▸ ' : '  ')
-                const valueCell = () => (row.cycle !== undefined ? `< ${display()} >` : display())
-                return (
-                  <box flexDirection="row">
-                    <box width={NAME_WIDTH + 2}>
-                      <text fg={props.fg} {...(isSelected() ? { attributes: 1 } : {})}>
-                        {`${gutter()}${row.name}`.padEnd(NAME_WIDTH + 2)}
-                      </text>
-                    </box>
-                    <box width={VALUE_WIDTH}>
-                      <text
-                        fg={isSelected() || staged() ? props.fg : props.muted}
-                        {...(isSelected() ? { attributes: 1 } : {})}
-                      >
-                        {`${valueCell()}${staged() ? ' ●' : ''}`.padEnd(VALUE_WIDTH)}
-                      </text>
-                    </box>
-                    <Show when={row.note !== undefined}>
-                      <box flexGrow={1} flexShrink={1}>
-                        <text fg={props.muted}>{row.note}</text>
-                      </box>
-                    </Show>
-                  </box>
-                )
-              }}
-            </For>
-            <box height={1} />
-          </box>
-        )}
-      </For>
-      <Show when={props.notice() !== undefined}>
-        <text fg={props.notice()?.startsWith('saved') ? props.muted : (props.warn ?? props.muted)}>
-          {props.notice()?.startsWith('saved') ? props.notice() : `⚠ ${props.notice()}`}
-        </text>
-      </Show>
-      <text fg={draftDirty(props.draft()) ? (props.warn ?? props.fg) : props.muted}>
-        {draftDirty(props.draft())
-          ? `● unsaved (${draftCount(props.draft())}) — ctrl+s save · ctrl+r reset page`
-          : 'no staged changes'}
-      </text>
       <text fg={props.muted}>
         {
-          '1-9 tab · ←/→ change value · enter apply · tab next tab · ctrl+s save · ctrl+r reset page · esc/q close'
+          '←/→ change · enter apply · ↑/↓ row · 1-9/tab section · ctrl+s save · ctrl+r reset page · ctrl+d defaults · esc close'
         }
       </text>
     </box>
@@ -438,6 +517,7 @@ interface PageApi {
   jumpTab: (index: number) => void
   save: () => void
   resetPage: () => void
+  stageDefaults: () => void
   close: () => void
 }
 
@@ -449,7 +529,7 @@ function createWindowController(
 ): {
   tabs: () => SettingsTab[]
   page: () => number
-  selected: () => number
+  selectedId: () => string | undefined
   draft: () => SettingsDraft
   notice: () => string | undefined
   api: PageApi
@@ -492,7 +572,7 @@ function createWindowController(
 
   const tabs = (): SettingsTab[] => [
     buildGatesTab(load()),
-    buildDecisionTab(decision()),
+    buildDecisionTab(decision(), process.env, readAuthProviders(), readConfigProviders()),
     buildPresetTab(presetInput()),
     buildTuiTab(tuiPrefs()),
     buildAutonomyTab({
@@ -699,6 +779,13 @@ function createWindowController(
     setNotice(undefined)
   }
 
+  const stageDefaultsPage = () => {
+    const tab = tabs()[page()]
+    if (tab === undefined) return
+    setNotice(undefined)
+    setDraft(stageDefaults(draft(), tab))
+  }
+
   const nextTab = () => {
     setPage((current) => (current + 1) % tabs().length)
     setSelected(0)
@@ -724,6 +811,8 @@ function createWindowController(
     exit()
   }
 
+  const selectedId = () => rows()[selected()]?.id
+
   const api: PageApi = {
     move,
     step,
@@ -741,13 +830,14 @@ function createWindowController(
     },
     save,
     resetPage,
+    stageDefaults: stageDefaultsPage,
     close,
   }
 
   return {
     tabs,
     page,
-    selected,
+    selectedId,
     draft,
     notice,
     api,
@@ -787,7 +877,7 @@ function SettingsPage(props: { context: Context; data: Record<string, any> | und
       version={resolveRunningVersion()}
       tabs={controller.tabs}
       page={controller.page}
-      selected={controller.selected}
+      selectedId={controller.selectedId}
       draft={controller.draft}
       notice={controller.notice}
       fg={theme.base}
@@ -848,7 +938,7 @@ function openSettingsDialog(context: Context): void {
           version={resolveRunningVersion()}
           tabs={controller.tabs}
           page={controller.page}
-          selected={controller.selected}
+          selectedId={controller.selectedId}
           draft={controller.draft}
           notice={controller.notice}
           fg={theme.base}
@@ -977,6 +1067,15 @@ export function setupPantheonSettings(context: Context): void {
       bind: 'ctrl+r',
       run: () => {
         pageApi?.resetPage()
+        return undefined
+      },
+    },
+    {
+      id: 'pantheon.settings.defaults',
+      title: 'Stage defaults for this tab',
+      bind: 'ctrl+d',
+      run: () => {
+        pageApi?.stageDefaults()
         return undefined
       },
     },

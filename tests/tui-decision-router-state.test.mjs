@@ -310,7 +310,7 @@ describe('credential status surface', () => {
     )
     const rows = tab.groups.flatMap((g) => g.rows)
     const typesafe = rows.find((row) => row.id === 'decision.key.typesafe-jev')
-    assert.equal(typesafe.value, 'set')
+    assert.equal(typesafe.value, 'env')
     const missing = rows.find((row) => row.id === 'decision.key.openrouter-jev')
     assert.equal(missing.value, 'MISSING')
     const whole = JSON.stringify(tab)

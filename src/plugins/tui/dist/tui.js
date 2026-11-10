@@ -414,7 +414,31 @@ function applyDecisionRow(config, id, value) {
 		default: return config;
 	}
 }
-function buildDecisionTab(read, env = process.env) {
+/** Provider ids as they appear in the host auth store / config providers. */
+const PROVIDER_AUTH_NAMES = Object.freeze({
+	"openai-decisions": Object.freeze(["openai"]),
+	"typesafe-jev": Object.freeze(["typesafe-ai"]),
+	"opencode-console-jev": Object.freeze([]),
+	"openrouter-jev": Object.freeze(["openrouter"]),
+	"vercel-gateway-jev": Object.freeze(["vercel-ai-gateway", "vercel"]),
+	"cloudflare-workers-jev": Object.freeze(["cloudflare-workers-ai"])
+});
+/**
+* TWO recognition forms (field feedback beta.6: keys registered via
+* `opencode auth login` showed MISSING because only env vars were checked):
+* env var set → 'env'; provider present in the host auth store → 'auth
+* store'; provider entry in opencode.json providers → 'config'. Values are
+* NEVER read — existence only.
+*/
+function credentialStatus(provider, env, authProviders, configProviders) {
+	const credential = DECISION_PROVIDER_CREDENTIALS[provider];
+	if (credential?.env !== void 0 && env[credential.env]) return "env";
+	for (const name of PROVIDER_AUTH_NAMES[provider] ?? []) if (authProviders.has(name)) return "auth store";
+	for (const name of PROVIDER_AUTH_NAMES[provider] ?? []) if (configProviders.has(name)) return "config";
+	if (provider === "opencode-console-jev") return "auth store";
+	return "missing";
+}
+function buildDecisionTab(read, env = process.env, authProviders = /* @__PURE__ */ new Set(), configProviders = /* @__PURE__ */ new Set()) {
 	const { config, corrupt } = read;
 	const rows = [{
 		id: "decision.enabled",
@@ -458,12 +482,12 @@ function buildDecisionTab(read, env = process.env) {
 		}, {
 			title: "Credentials (status only — values never enter the window)",
 			rows: DECISION_KNOWN_PROVIDERS.map((provider) => {
+				const status = credentialStatus(provider, env, authProviders, configProviders);
 				const credential = DECISION_PROVIDER_CREDENTIALS[provider] ?? { note: "" };
-				const isSet = credential.env === void 0 ? true : Boolean(env[credential.env]);
 				return {
 					id: `decision.key.${provider}`,
 					name: provider,
-					value: credential.env === void 0 ? "n/a" : isSet ? "set" : "MISSING",
+					value: status === "missing" ? "MISSING" : status,
 					note: credential.note
 				};
 			})
@@ -601,6 +625,45 @@ function stageValue(draft, row, direction) {
 		...draft,
 		[row.id]: staged
 	};
+}
+/** Stage an explicit target value for one row (the Defaults action path). */
+function stageRowToValue(draft, row, target) {
+	if (!row.cycle?.includes(target)) return draft;
+	if (target === row.value) {
+		if (draft[row.id] === void 0) return draft;
+		const next = { ...draft };
+		delete next[row.id];
+		return next;
+	}
+	return {
+		...draft,
+		[row.id]: target
+	};
+}
+/**
+* Stage every cyclable row's DEFAULT value of a tab. Rows already at their
+* default have their staged entry dropped; rows staged elsewhere keep it
+* until the Defaults action targets them.
+*/
+function stageDefaults(draft, tab) {
+	let next = draft;
+	for (const row of tabRows(tab)) {
+		if (row.cycle === void 0 || row.def === void 0) continue;
+		const candidate = next[row.id] ?? row.value;
+		if (candidate === row.def) {
+			if (next[row.id] !== void 0) {
+				const copy = { ...next };
+				delete copy[row.id];
+				next = copy;
+			}
+			continue;
+		}
+		next = stageRowToValue(next, {
+			...row,
+			value: candidate
+		}, row.def);
+	}
+	return next;
 }
 /** Drop every staged entry of one tab (ctrl+r). */
 function resetTab(draft, tab) {
@@ -1413,6 +1476,28 @@ function writeDecisionBudget(budgets) {
 	writeFileSync(temp, `${JSON.stringify(doc, null, 2)}\n`, { mode: 384 });
 	renameSync(temp, path);
 }
+function decisionAuthStorePath() {
+	const xdgData = process.env.XDG_DATA_HOME ?? join(process.env.HOME ?? "", ".local", "share");
+	return join(xdgData, "opencode", "auth.json");
+}
+/** Provider ids registered in the host auth store (existence only — never values). */
+function readAuthProviders() {
+	const names = /* @__PURE__ */ new Set();
+	try {
+		const parsed = JSON.parse(readFileSync(decisionAuthStorePath(), "utf8"));
+		for (const key of Object.keys(parsed)) names.add(key);
+	} catch {}
+	return names;
+}
+/** Provider ids present in opencode.json `providers` (the config copy the host reads). */
+function readConfigProviders() {
+	const names = /* @__PURE__ */ new Set();
+	try {
+		const parsed = JSON.parse(readFileSync(userOpenCodeConfigPath(), "utf8"));
+		for (const key of Object.keys(parsed?.providers ?? {})) names.add(key);
+	} catch {}
+	return names;
+}
 function updateCheckStatePath() {
 	const stateDir = process.env.XDG_STATE_HOME ?? join(process.env.HOME ?? "", ".local", "state");
 	return join(stateDir, "pantheon", "update-check.json");
@@ -1448,13 +1533,13 @@ function resolveRunningVersion$1() {
 const VALUE_WIDTH = 22;
 function SettingsWindow(props) {
 	const tab = () => props.tabs()[props.page()] ?? props.tabs()[0] ?? EMPTY_TAB;
-	const rows = () => tabRows(tab());
 	return (() => {
-		var _el$ = createElement("box"), _el$2 = createElement("box"), _el$3 = createElement("text"), _el$4 = createElement("box"), _el$5 = createElement("text"), _el$7 = createElement("text"), _el$0 = createElement("text"), _el$1 = createElement("text");
+		var _el$ = createElement("box"), _el$2 = createElement("box"), _el$3 = createElement("text"), _el$4 = createElement("box"), _el$5 = createElement("text"), _el$7 = createElement("box"), _el$8 = createElement("box"), _el$9 = createElement("box"), _el$0 = createElement("text"), _el$10 = createElement("box"), _el$11 = createElement("box"), _el$12 = createElement("box"), _el$13 = createElement("text"), _el$15 = createElement("box"), _el$16 = createElement("text"), _el$17 = createElement("text"), _el$20 = createElement("box"), _el$21 = createElement("text"), _el$23 = createElement("text"), _el$25 = createElement("text"), _el$27 = createElement("text"), _el$29 = createElement("text"), _el$31 = createElement("box"), _el$32 = createElement("text"), _el$33 = createElement("text");
 		insertNode(_el$, _el$2);
 		insertNode(_el$, _el$7);
-		insertNode(_el$, _el$0);
-		insertNode(_el$, _el$1);
+		insertNode(_el$, _el$10);
+		insertNode(_el$, _el$20);
+		insertNode(_el$, _el$33);
 		setProp(_el$, "flexDirection", "column");
 		setProp(_el$, "paddingLeft", 1);
 		setProp(_el$, "paddingRight", 1);
@@ -1463,129 +1548,200 @@ function SettingsWindow(props) {
 		insertNode(_el$2, _el$4);
 		insertNode(_el$2, _el$5);
 		setProp(_el$2, "flexDirection", "row");
-		setProp(_el$3, "flexShrink", 0);
 		setProp(_el$3, "attributes", 1);
 		insert(_el$3, () => `Pantheon v${props.version}`);
-		insert(_el$2, createComponent(For, {
+		setProp(_el$4, "flexGrow", 1);
+		insertNode(_el$5, createTextNode(`esc`));
+		insertNode(_el$7, _el$8);
+		insertNode(_el$7, _el$9);
+		setProp(_el$7, "flexDirection", "row");
+		setProp(_el$7, "height", 1);
+		setProp(_el$8, "width", 18);
+		setProp(_el$8, "flexDirection", "row");
+		insert(_el$8, createComponent(For, {
 			get each() {
 				return props.tabs();
 			},
 			children: (t, index) => (() => {
-				var _el$11 = createElement("text");
-				setProp(_el$11, "flexShrink", 0);
-				spread(_el$11, mergeProps({ get fg() {
+				var _el$35 = createElement("text");
+				setProp(_el$35, "flexShrink", 0);
+				spread(_el$35, mergeProps({ get fg() {
 					return memo(() => index() === props.page())() ? props.fg : props.muted;
 				} }, () => index() === props.page() ? { attributes: 1 } : {}), true);
-				insert(_el$11, () => `   ${t.title}${tabDirty(props.draft(), t) ? " ●" : ""}`);
-				return _el$11;
+				insert(_el$35, () => `${index() + 1} ${t.title}${tabDirty(props.draft(), t) ? " ●" : ""}  `);
+				return _el$35;
 			})()
-		}), _el$4);
-		setProp(_el$4, "flexGrow", 1);
-		insertNode(_el$5, createTextNode(`esc`));
-		setProp(_el$5, "flexShrink", 0);
-		insertNode(_el$7, createTextNode(`────────────────────────────────────────────────────────────────────────`));
-		insert(_el$, createComponent(For, {
+		}));
+		insertNode(_el$9, _el$0);
+		setProp(_el$9, "flexGrow", 1);
+		setProp(_el$9, "flexShrink", 1);
+		insertNode(_el$0, createTextNode(`────────────────────────────────────────`));
+		insertNode(_el$10, _el$11);
+		insertNode(_el$10, _el$15);
+		setProp(_el$10, "flexDirection", "row");
+		insertNode(_el$11, _el$12);
+		insertNode(_el$11, _el$13);
+		setProp(_el$11, "width", 18);
+		setProp(_el$11, "flexDirection", "column");
+		insert(_el$11, createComponent(For, {
+			get each() {
+				return props.tabs();
+			},
+			children: (t, index) => {
+				const isActive = () => index() === props.page();
+				return (() => {
+					var _el$36 = createElement("text");
+					spread(_el$36, mergeProps({ get fg() {
+						return memo(() => !!isActive())() ? props.fg : props.muted;
+					} }, () => isActive() ? { attributes: 1 } : {}), true);
+					insert(_el$36, () => `${isActive() ? "▸" : " "}${index() + 1} ${t.title}${tabDirty(props.draft(), t) ? " ●" : ""}`);
+					return _el$36;
+				})();
+			}
+		}), _el$12);
+		setProp(_el$12, "height", 1);
+		insertNode(_el$13, createTextNode(`1-9: tab`));
+		insertNode(_el$15, _el$16);
+		insertNode(_el$15, _el$17);
+		setProp(_el$15, "flexGrow", 1);
+		setProp(_el$15, "flexShrink", 1);
+		setProp(_el$15, "flexDirection", "column");
+		setProp(_el$15, "paddingLeft", 1);
+		setProp(_el$16, "attributes", 1);
+		insert(_el$16, () => tab().title);
+		insertNode(_el$17, createTextNode(`────────────────────────────────────────`));
+		insert(_el$15, createComponent(For, {
 			get each() {
 				return tab().groups;
 			},
 			children: (group) => (() => {
-				var _el$12 = createElement("box"), _el$14 = createElement("box");
-				insertNode(_el$12, _el$14);
-				setProp(_el$12, "flexDirection", "column");
-				insert(_el$12, createComponent(Show, {
+				var _el$37 = createElement("box"), _el$39 = createElement("box");
+				insertNode(_el$37, _el$39);
+				setProp(_el$37, "flexDirection", "column");
+				insert(_el$37, createComponent(Show, {
 					get when() {
 						return group.title !== void 0;
 					},
 					get children() {
-						var _el$13 = createElement("text");
-						setProp(_el$13, "attributes", 1);
-						insert(_el$13, () => group.title);
-						effect((_$p) => setProp(_el$13, "fg", props.fg, _$p));
-						return _el$13;
+						var _el$38 = createElement("text");
+						setProp(_el$38, "attributes", 1);
+						insert(_el$38, () => group.title);
+						effect((_$p) => setProp(_el$38, "fg", props.fg, _$p));
+						return _el$38;
 					}
-				}), _el$14);
-				insert(_el$12, createComponent(For, {
+				}), _el$39);
+				insert(_el$37, createComponent(For, {
 					get each() {
 						return group.rows;
 					},
 					children: (row) => {
-						const isSelected = () => rows()[props.selected()]?.id === row.id;
+						const isSelected = () => row.id === props.selectedId();
 						const display = () => props.draft()[row.id] ?? row.value;
 						const staged = () => props.draft()[row.id] !== void 0;
 						const gutter = () => isSelected() ? "▸ " : "  ";
 						const valueCell = () => row.cycle !== void 0 ? `< ${display()} >` : display();
 						return (() => {
-							var _el$15 = createElement("box"), _el$16 = createElement("box"), _el$17 = createElement("text"), _el$18 = createElement("box"), _el$19 = createElement("text");
-							insertNode(_el$15, _el$16);
-							insertNode(_el$15, _el$18);
-							setProp(_el$15, "flexDirection", "row");
-							insertNode(_el$16, _el$17);
-							setProp(_el$16, "width", 30);
-							spread(_el$17, mergeProps({ get fg() {
+							var _el$40 = createElement("box"), _el$41 = createElement("box"), _el$42 = createElement("text"), _el$43 = createElement("box"), _el$44 = createElement("text");
+							insertNode(_el$40, _el$41);
+							insertNode(_el$40, _el$43);
+							setProp(_el$40, "flexDirection", "row");
+							insertNode(_el$41, _el$42);
+							setProp(_el$41, "width", 30);
+							spread(_el$42, mergeProps({ get fg() {
 								return props.fg;
 							} }, () => isSelected() ? { attributes: 1 } : {}), true);
-							insert(_el$17, () => `${gutter()}${row.name}`.padEnd(30));
-							insertNode(_el$18, _el$19);
-							setProp(_el$18, "width", 22);
-							spread(_el$19, mergeProps({ get fg() {
+							insert(_el$42, () => `${gutter()}${row.name}`.padEnd(30));
+							insertNode(_el$43, _el$44);
+							setProp(_el$43, "width", 22);
+							spread(_el$44, mergeProps({ get fg() {
 								return memo(() => !!(isSelected() || staged()))() ? props.fg : props.muted;
 							} }, () => isSelected() ? { attributes: 1 } : {}), true);
-							insert(_el$19, () => `${valueCell()}${staged() ? " ●" : ""}`.padEnd(VALUE_WIDTH));
-							insert(_el$15, createComponent(Show, {
+							insert(_el$44, () => `${valueCell()}${staged() ? " ●" : ""}`.padEnd(VALUE_WIDTH));
+							insert(_el$40, createComponent(Show, {
 								get when() {
 									return row.note !== void 0;
 								},
 								get children() {
-									var _el$20 = createElement("box"), _el$21 = createElement("text");
-									insertNode(_el$20, _el$21);
-									setProp(_el$20, "flexGrow", 1);
-									setProp(_el$20, "flexShrink", 1);
-									insert(_el$21, () => row.note);
-									effect((_$p) => setProp(_el$21, "fg", props.muted, _$p));
-									return _el$20;
+									var _el$45 = createElement("box"), _el$46 = createElement("text");
+									insertNode(_el$45, _el$46);
+									setProp(_el$45, "flexGrow", 1);
+									setProp(_el$45, "flexShrink", 1);
+									insert(_el$46, () => row.note);
+									effect((_$p) => setProp(_el$46, "fg", props.muted, _$p));
+									return _el$45;
 								}
 							}), null);
-							return _el$15;
+							return _el$40;
 						})();
 					}
-				}), _el$14);
-				setProp(_el$14, "height", 1);
-				return _el$12;
+				}), _el$39);
+				setProp(_el$39, "height", 1);
+				return _el$37;
 			})()
-		}), _el$0);
+		}), null);
 		insert(_el$, createComponent(Show, {
 			get when() {
 				return props.notice() !== void 0;
 			},
 			get children() {
-				var _el$9 = createElement("text");
-				insert(_el$9, (() => {
-					var _c$ = memo(() => !!props.notice()?.startsWith("saved"));
-					return () => _c$() ? props.notice() : `⚠ ${props.notice()}`;
-				})());
-				effect((_$p) => setProp(_el$9, "fg", props.notice()?.startsWith("saved") ? props.muted : props.warn ?? props.muted, _$p));
-				return _el$9;
+				var _el$19 = createElement("text");
+				insert(_el$19, () => `⚠ ${props.notice()}`);
+				effect((_$p) => setProp(_el$19, "fg", props.warn ?? props.muted, _$p));
+				return _el$19;
 			}
-		}), _el$0);
-		insert(_el$0, (() => {
-			var _c$2 = memo(() => !!draftDirty(props.draft()));
-			return () => _c$2() ? `● unsaved (${draftCount(props.draft())}) — ctrl+s save · ctrl+r reset page` : "no staged changes";
+		}), _el$20);
+		insertNode(_el$20, _el$21);
+		insertNode(_el$20, _el$23);
+		insertNode(_el$20, _el$25);
+		insertNode(_el$20, _el$27);
+		insertNode(_el$20, _el$29);
+		insertNode(_el$20, _el$31);
+		insertNode(_el$20, _el$32);
+		setProp(_el$20, "flexDirection", "row");
+		insertNode(_el$21, createTextNode(`[ Save ]`));
+		setProp(_el$21, "attributes", 1);
+		insertNode(_el$23, createTextNode(`  `));
+		insertNode(_el$25, createTextNode(`[ Reset page ]`));
+		setProp(_el$25, "attributes", 1);
+		insertNode(_el$27, createTextNode(`  `));
+		insertNode(_el$29, createTextNode(`[ Defaults ]`));
+		setProp(_el$29, "attributes", 1);
+		setProp(_el$31, "flexGrow", 1);
+		insert(_el$32, (() => {
+			var _c$ = memo(() => !!draftDirty(props.draft()));
+			return () => _c$() ? `● ${draftCount(props.draft())} unsaved` : "no staged changes";
 		})());
-		insertNode(_el$1, createTextNode(`1-9 tab · ←/→ change value · enter apply · tab next tab · ctrl+s save · ctrl+r reset page · esc/q close`));
+		insertNode(_el$33, createTextNode(`←/→ change · enter apply · ↑/↓ row · 1-9/tab section · ctrl+s save · ctrl+r reset page · ctrl+d defaults · esc close`));
 		effect((_p$) => {
-			var _v$ = props.fg, _v$2 = props.muted, _v$3 = props.muted, _v$4 = draftDirty(props.draft()) ? props.warn ?? props.fg : props.muted, _v$5 = props.muted;
+			var _v$ = props.fg, _v$2 = props.muted, _v$3 = props.muted, _v$4 = props.muted, _v$5 = props.fg, _v$6 = props.muted, _v$7 = props.fg, _v$8 = props.muted, _v$9 = props.fg, _v$0 = props.muted, _v$1 = props.fg, _v$10 = draftDirty(props.draft()) ? props.warn ?? props.fg : props.muted, _v$11 = props.muted;
 			_v$ !== _p$.e && (_p$.e = setProp(_el$3, "fg", _v$, _p$.e));
 			_v$2 !== _p$.t && (_p$.t = setProp(_el$5, "fg", _v$2, _p$.t));
-			_v$3 !== _p$.a && (_p$.a = setProp(_el$7, "fg", _v$3, _p$.a));
-			_v$4 !== _p$.o && (_p$.o = setProp(_el$0, "fg", _v$4, _p$.o));
-			_v$5 !== _p$.i && (_p$.i = setProp(_el$1, "fg", _v$5, _p$.i));
+			_v$3 !== _p$.a && (_p$.a = setProp(_el$0, "fg", _v$3, _p$.a));
+			_v$4 !== _p$.o && (_p$.o = setProp(_el$13, "fg", _v$4, _p$.o));
+			_v$5 !== _p$.i && (_p$.i = setProp(_el$16, "fg", _v$5, _p$.i));
+			_v$6 !== _p$.n && (_p$.n = setProp(_el$17, "fg", _v$6, _p$.n));
+			_v$7 !== _p$.s && (_p$.s = setProp(_el$21, "fg", _v$7, _p$.s));
+			_v$8 !== _p$.h && (_p$.h = setProp(_el$23, "fg", _v$8, _p$.h));
+			_v$9 !== _p$.r && (_p$.r = setProp(_el$25, "fg", _v$9, _p$.r));
+			_v$0 !== _p$.d && (_p$.d = setProp(_el$27, "fg", _v$0, _p$.d));
+			_v$1 !== _p$.l && (_p$.l = setProp(_el$29, "fg", _v$1, _p$.l));
+			_v$10 !== _p$.u && (_p$.u = setProp(_el$32, "fg", _v$10, _p$.u));
+			_v$11 !== _p$.c && (_p$.c = setProp(_el$33, "fg", _v$11, _p$.c));
 			return _p$;
 		}, {
 			e: void 0,
 			t: void 0,
 			a: void 0,
 			o: void 0,
-			i: void 0
+			i: void 0,
+			n: void 0,
+			s: void 0,
+			h: void 0,
+			r: void 0,
+			d: void 0,
+			l: void 0,
+			u: void 0,
+			c: void 0
 		});
 		return _el$;
 	})();
@@ -1625,7 +1781,7 @@ function createWindowController(context, exit) {
 	};
 	const tabs = () => [
 		buildGatesTab(load()),
-		buildDecisionTab(decision()),
+		buildDecisionTab(decision(), process.env, readAuthProviders(), readConfigProviders()),
 		buildPresetTab(presetInput()),
 		buildTuiTab(tuiPrefs()),
 		buildAutonomyTab({
@@ -1836,6 +1992,12 @@ function createWindowController(context, exit) {
 		setDraft(resetTab(draft(), tab));
 		setNotice(void 0);
 	};
+	const stageDefaultsPage = () => {
+		const tab = tabs()[page()];
+		if (tab === void 0) return;
+		setNotice(void 0);
+		setDraft(stageDefaults(draft(), tab));
+	};
 	const nextTab = () => {
 		setPage((current) => (current + 1) % tabs().length);
 		setSelected(0);
@@ -1853,10 +2015,11 @@ function createWindowController(context, exit) {
 		}
 		exit();
 	};
+	const selectedId = () => rows()[selected()]?.id;
 	return {
 		tabs,
 		page,
-		selected,
+		selectedId,
 		draft,
 		notice,
 		api: {
@@ -1875,6 +2038,7 @@ function createWindowController(context, exit) {
 			},
 			save,
 			resetPage,
+			stageDefaults: stageDefaultsPage,
 			close
 		},
 		cleanup: () => {
@@ -1906,8 +2070,8 @@ function SettingsPage(props) {
 		get page() {
 			return controller.page;
 		},
-		get selected() {
-			return controller.selected;
+		get selectedId() {
+			return controller.selectedId;
 		},
 		get draft() {
 			return controller.draft;
@@ -1968,8 +2132,8 @@ function openSettingsDialog(context) {
 			get page() {
 				return controller.page;
 			},
-			get selected() {
-				return controller.selected;
+			get selectedId() {
+				return controller.selectedId;
 			},
 			get draft() {
 				return controller.draft;
@@ -2094,6 +2258,14 @@ function setupPantheonSettings(context) {
 			bind: "ctrl+r",
 			run: () => {
 				pageApi?.resetPage();
+			}
+		},
+		{
+			id: "pantheon.settings.defaults",
+			title: "Stage defaults for this tab",
+			bind: "ctrl+d",
+			run: () => {
+				pageApi?.stageDefaults();
 			}
 		},
 		...Array.from({ length: 9 }, (_, index) => ({
