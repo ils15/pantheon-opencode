@@ -290,9 +290,56 @@ export function applyDecisionRow(
   }
 }
 
+/** The host's provider auth store (`opencode auth login` writes here). */
+export function decisionAuthStorePath(env: Record<string, string | undefined> = process.env) {
+  const xdgData = env.XDG_DATA_HOME
+  const home = env.HOME ?? ''
+  const root = xdgData ?? join(home, '.local', 'share')
+  return join(root, 'opencode', 'auth.json')
+}
+
+/** Provider ids as they appear in the host auth store / config providers. */
+const PROVIDER_AUTH_NAMES: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  'openai-decisions': Object.freeze(['openai']),
+  'typesafe-jev': Object.freeze(['typesafe-ai']),
+  'opencode-console-jev': Object.freeze([]),
+  'openrouter-jev': Object.freeze(['openrouter']),
+  'vercel-gateway-jev': Object.freeze(['vercel-ai-gateway', 'vercel']),
+  'cloudflare-workers-jev': Object.freeze(['cloudflare-workers-ai']),
+})
+
+export type CredentialForm = 'env' | 'auth store' | 'config' | 'missing'
+
+/**
+ * TWO recognition forms (field feedback beta.6: keys registered via
+ * `opencode auth login` showed MISSING because only env vars were checked):
+ * env var set → 'env'; provider present in the host auth store → 'auth
+ * store'; provider entry in opencode.json providers → 'config'. Values are
+ * NEVER read — existence only.
+ */
+export function credentialStatus(
+  provider: string,
+  env: Record<string, string | undefined>,
+  authProviders: ReadonlySet<string>,
+  configProviders: ReadonlySet<string>,
+): CredentialForm {
+  const credential = DECISION_PROVIDER_CREDENTIALS[provider]
+  if (credential?.env !== undefined && env[credential.env]) return 'env'
+  for (const name of PROVIDER_AUTH_NAMES[provider] ?? []) {
+    if (authProviders.has(name)) return 'auth store'
+  }
+  for (const name of PROVIDER_AUTH_NAMES[provider] ?? []) {
+    if (configProviders.has(name)) return 'config'
+  }
+  if (provider === 'opencode-console-jev') return 'auth store'
+  return 'missing'
+}
+
 export function buildDecisionTab(
   read: DecisionConfigRead,
   env: Record<string, string | undefined> = process.env,
+  authProviders: ReadonlySet<string> = new Set(),
+  configProviders: ReadonlySet<string> = new Set(),
 ): SettingsTab {
   const { config, corrupt } = read
   const rows: SettingsRow[] = [
@@ -352,12 +399,12 @@ export function buildDecisionTab(
       {
         title: 'Credentials (status only — values never enter the window)',
         rows: DECISION_KNOWN_PROVIDERS.map((provider) => {
+          const status = credentialStatus(provider, env, authProviders, configProviders)
           const credential = DECISION_PROVIDER_CREDENTIALS[provider] ?? { note: '' }
-          const isSet = credential.env === undefined ? true : Boolean(env[credential.env])
           return {
             id: `decision.key.${provider}`,
             name: provider,
-            value: credential.env === undefined ? 'n/a' : isSet ? 'set' : 'MISSING',
+            value: status === 'missing' ? 'MISSING' : status,
             note: credential.note,
           }
         }),

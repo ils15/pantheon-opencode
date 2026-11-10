@@ -162,6 +162,8 @@ export interface SettingsRow {
   value: string
   /** Allowed values for ←/→; presence marks the row as editable. */
   cycle?: readonly string[]
+  /** The row's DEFAULT value — what the Defaults action stages. */
+  def?: string
   /** Right-column note (writes-where, applies-live, from-where). */
   note?: string
   /** Enter triggers this action instead of cycling (e.g. `update-check`). */
@@ -223,6 +225,45 @@ export function stageValue(
     return next
   }
   return { ...draft, [row.id]: staged }
+}
+
+/** Stage an explicit target value for one row (the Defaults action path). */
+export function stageRowToValue(
+  draft: SettingsDraft,
+  row: SettingsRow,
+  target: string,
+): SettingsDraft {
+  if (!row.cycle?.includes(target)) return draft
+  if (target === row.value) {
+    if (draft[row.id] === undefined) return draft
+    const next = { ...draft }
+    delete next[row.id]
+    return next
+  }
+  return { ...draft, [row.id]: target }
+}
+
+/**
+ * Stage every cyclable row's DEFAULT value of a tab. Rows already at their
+ * default have their staged entry dropped; rows staged elsewhere keep it
+ * until the Defaults action targets them.
+ */
+export function stageDefaults(draft: SettingsDraft, tab: SettingsTab): SettingsDraft {
+  let next = draft
+  for (const row of tabRows(tab)) {
+    if (row.cycle === undefined || row.def === undefined) continue
+    const candidate = next[row.id] ?? row.value
+    if (candidate === row.def) {
+      if (next[row.id] !== undefined) {
+        const copy = { ...next }
+        delete copy[row.id]
+        next = copy
+      }
+      continue
+    }
+    next = stageRowToValue(next, { ...row, value: candidate }, row.def)
+  }
+  return next
 }
 
 /** Drop every staged entry of one tab (ctrl+r). */
