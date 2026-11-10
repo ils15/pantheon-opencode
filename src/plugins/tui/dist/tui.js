@@ -11,6 +11,38 @@ import { fileURLToPath } from "node:url";
 const CONTEXT_BAR_CELLS = 12;
 const CONTEXT_BAR_FILLED_CELL = "▰";
 const CONTEXT_BAR_EMPTY_CELL = "▱";
+const BAR_SHAPES = {
+	block: {
+		filled: "▰",
+		empty: "▱",
+		mark: "│"
+	},
+	line: {
+		filled: "━",
+		empty: "─",
+		mark: "┼"
+	},
+	smooth: {
+		filled: "█",
+		empty: "░",
+		mark: "┆"
+	},
+	ascii: {
+		filled: "=",
+		empty: "-",
+		mark: "|"
+	},
+	dots: {
+		filled: "●",
+		empty: "○",
+		mark: "│"
+	},
+	braille: {
+		filled: "⣿",
+		empty: "⣀",
+		mark: "⡇"
+	}
+};
 function numberOrNull$1(value) {
 	return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
@@ -38,14 +70,34 @@ function contextBarFilled(percent, cells = 12) {
 	if (!Number.isFinite(filled)) return 0;
 	return Math.min(total, Math.max(0, filled));
 }
-function contextBar(percent, cells = 12) {
+function contextBar(percent, options = 12) {
 	const value = numberOrNull$1(percent);
 	if (value === null) return null;
-	const total = Math.max(1, Math.floor(cells));
-	const filled = contextBarFilled(value, total);
+	const total = Math.max(1, Math.floor(typeof options === "number" ? options : options?.cells ?? 12));
+	const shapeKey = typeof options === "object" && options?.shape && options.shape in BAR_SHAPES ? options.shape : "block";
+	const glyphs = BAR_SHAPES[shapeKey] ?? BAR_SHAPES.block;
+	const evenMark = typeof options === "object" ? Boolean(options?.evenMark) : false;
+	const filledCount = contextBarFilled(value, total);
+	const emptyCount = total - filledCount;
+	if (!evenMark || total < 4) return {
+		filled: glyphs.filled.repeat(filledCount),
+		empty: glyphs.empty.repeat(emptyCount)
+	};
+	const mid = Math.floor(total / 2);
+	const mark = glyphs.mark ?? "|";
+	if (filledCount <= mid) {
+		const emptyBefore = mid - filledCount;
+		const emptyAfter = Math.max(0, emptyCount - emptyBefore - 1);
+		return {
+			filled: glyphs.filled.repeat(filledCount),
+			empty: `${glyphs.empty.repeat(emptyBefore)}${mark}${glyphs.empty.repeat(emptyAfter)}`
+		};
+	}
+	const filledBefore = mid;
+	const filledAfter = Math.max(0, filledCount - filledBefore - 1);
 	return {
-		filled: "▰".repeat(filled),
-		empty: "▱".repeat(total - filled)
+		filled: `${glyphs.filled.repeat(filledBefore)}${mark}${glyphs.filled.repeat(filledAfter)}`,
+		empty: glyphs.empty.repeat(emptyCount)
 	};
 }
 function formatSpent(cost) {
@@ -749,6 +801,44 @@ function buildAboutTab(version) {
 		}] }]
 	};
 }
+function buildChangelogTab(version, items = []) {
+	const rows = [];
+	if (items.length > 0) items.forEach((item, index) => {
+		rows.push({
+			id: `changelog.item.${index + 1}`,
+			name: item.title.slice(0, 26),
+			value: item.detail.length > 20 ? `${item.detail.slice(0, 19)}…` : item.detail,
+			note: item.detail
+		});
+	});
+	else rows.push({
+		id: "changelog.info",
+		name: "Release",
+		value: `v${version}`,
+		note: "view full history in CHANGELOG.md or GitHub releases"
+	});
+	return {
+		id: "changelog",
+		title: "Changelog",
+		groups: [{
+			title: `What's New in v${version}`,
+			rows
+		}, {
+			title: "Release References",
+			rows: [{
+				id: "changelog.docs",
+				name: "Documentation",
+				value: "CHANGELOG.md",
+				note: "shipped at plugin root and repository root"
+			}, {
+				id: "changelog.repo",
+				name: "GitHub Repository",
+				value: "ils15/pantheon-opencode",
+				note: "releases, pull requests and discussion"
+			}]
+		}]
+	};
+}
 /** Semver-ish compare for X.Y.Z[-beta.N]; betas sort before their release. */
 function comparePantheonVersions(left, right) {
 	const parse = (version) => {
@@ -1132,8 +1222,33 @@ const GAUGE_STYLES = Object.freeze([
 	"off"
 ]);
 const ENABLED_CYCLE = Object.freeze(["enabled", "disabled"]);
+const BAR_SHAPES_CYCLE = Object.freeze([
+	"line",
+	"block",
+	"smooth",
+	"ascii",
+	"dots",
+	"braille"
+]);
+const BAR_WIDTHS_CYCLE = Object.freeze([
+	"standard",
+	"compact",
+	"wide",
+	"full"
+]);
+const LAYOUT_PRESETS_CYCLE = Object.freeze(["comfortable", "compact"]);
+const SEPARATOR_STYLES_CYCLE = Object.freeze([
+	"spaces",
+	"pipes",
+	"dots",
+	"slashes"
+]);
 const DEFAULT_TUI_PREFS = {
 	version: 1,
+	layout: {
+		preset: "comfortable",
+		separator: "spaces"
+	},
 	sidebar: {
 		header: {
 			version: true,
@@ -1148,6 +1263,9 @@ const DEFAULT_TUI_PREFS = {
 		},
 		context: {
 			gauge: "both",
+			barShape: "line",
+			barWidth: "standard",
+			evenMark: false,
 			tokens: true,
 			spent: true,
 			modelUsage: true,
@@ -1174,6 +1292,49 @@ function buildTuiTab(prefs) {
 		title: "TUI",
 		groups: [
 			{
+				title: "Preset & Layout",
+				rows: [{
+					id: "tui.layout.preset",
+					name: "Layout preset",
+					value: prefs.layout.preset,
+					cycle: LAYOUT_PRESETS_CYCLE,
+					note: "comfortable | compact — sets spacing & borders"
+				}, {
+					id: "tui.layout.separator",
+					name: "Separator",
+					value: prefs.layout.separator,
+					cycle: SEPARATOR_STYLES_CYCLE,
+					note: "spaces | pipes | dots | slashes — status line glyphs"
+				}]
+			},
+			{
+				title: "Bars & Gauges",
+				rows: [
+					{
+						id: "tui.sidebar.context.barShape",
+						name: "Bar shape",
+						value: prefs.sidebar.context.barShape,
+						cycle: BAR_SHAPES_CYCLE,
+						note: "line (━─) | block (▰▱) | smooth (█░) | ascii (=) | dots (●○) | braille"
+					},
+					{
+						id: "tui.sidebar.context.barWidth",
+						name: "Bar width",
+						value: prefs.sidebar.context.barWidth,
+						cycle: BAR_WIDTHS_CYCLE,
+						note: "standard (12) | compact (8) | wide (16) | full (20 cells)"
+					},
+					row("tui.sidebar.context.evenMark", "Even-use mark", prefs.sidebar.context.evenMark, "| indicator at 50% midpoint in gauge bars"),
+					{
+						id: "tui.sidebar.context.gauge",
+						name: "Gauge style",
+						value: prefs.sidebar.context.gauge,
+						cycle: GAUGE_STYLES,
+						note: "both | bar | percent | off — `▰▱ 42% of 200k`"
+					}
+				]
+			},
+			{
 				title: "Sidebar header",
 				rows: [
 					row("tui.sidebar.header.version", "Version line", prefs.sidebar.header.version, "the `Pantheon v…` line"),
@@ -1193,13 +1354,6 @@ function buildTuiTab(prefs) {
 			{
 				title: "Context block detail",
 				rows: [
-					{
-						id: "tui.sidebar.context.gauge",
-						name: "Gauge style",
-						value: prefs.sidebar.context.gauge,
-						cycle: GAUGE_STYLES,
-						note: "both | bar | percent | off — `▰▱ 42% of 200k`"
-					},
 					row("tui.sidebar.context.tokens", "Tokens row", prefs.sidebar.context.tokens, "the raw token count line"),
 					row("tui.sidebar.context.spent", "Spent row", prefs.sidebar.context.spent, "the `$… gasto na sessão` line"),
 					row("tui.sidebar.context.modelUsage", "Model usage table", prefs.sidebar.context.modelUsage, "per-model tokens/USD"),
@@ -1221,6 +1375,21 @@ function buildTuiTab(prefs) {
 function applyTuiRow(draft, id, value) {
 	const enabled = value === "enabled";
 	switch (id) {
+		case "tui.layout.preset":
+			if (LAYOUT_PRESETS_CYCLE.includes(value)) draft.layout.preset = value;
+			return;
+		case "tui.layout.separator":
+			if (SEPARATOR_STYLES_CYCLE.includes(value)) draft.layout.separator = value;
+			return;
+		case "tui.sidebar.context.barShape":
+			if (BAR_SHAPES_CYCLE.includes(value)) draft.sidebar.context.barShape = value;
+			return;
+		case "tui.sidebar.context.barWidth":
+			if (BAR_WIDTHS_CYCLE.includes(value)) draft.sidebar.context.barWidth = value;
+			return;
+		case "tui.sidebar.context.evenMark":
+			draft.sidebar.context.evenMark = enabled;
+			return;
 		case "tui.sidebar.header.version":
 			draft.sidebar.header.version = enabled;
 			return;
@@ -1290,13 +1459,16 @@ function formatAgo(ms) {
 }
 function buildUpdatesTab(input) {
 	const nowMs = input.nowMs ?? Date.now();
-	const channel = updateChannelFor(input.currentVersion);
+	const channel = input.selectedChannel ?? updateChannelFor(input.currentVersion);
 	const lastCheckMs = input.state.lastCheckMs;
 	const latest = input.lastCheckedVersion ?? input.state.lastNotifiedVersion;
+	const stable = (version) => !/-beta\.\d+$/.test(version);
+	const newer = latest !== void 0 && comparePantheonVersions(latest, input.currentVersion) > 0 && !(stable(input.currentVersion) && !stable(latest));
 	const rows = [{
 		id: "update.channel",
 		name: "Channel",
 		value: channel,
+		cycle: ["stable", "beta"],
 		note: "stable tracks npm `latest`; beta tracks npm `beta`"
 	}, {
 		id: "update.check",
@@ -1306,23 +1478,242 @@ function buildUpdatesTab(input) {
 		note: "enter probes the registry for the running channel"
 	}];
 	if (latest) {
-		const stable = (version) => !/-beta\.\d+$/.test(version);
-		const newer = comparePantheonVersions(latest, input.currentVersion) > 0 && !(stable(input.currentVersion) && !stable(latest));
 		rows.push({
 			id: "update.latest",
 			name: "Registry",
 			value: newer ? `v${latest} available` : "up to date",
 			note: newer ? "adopt with `pantheon-opencode update`" : "no newer compatible version"
 		});
+		rows.push({
+			id: "update.run",
+			name: "Update now",
+			value: input.updating ? "updating…" : newer ? `install v${latest}` : "reinstall / refresh",
+			action: "update-run",
+			note: newer ? "enter runs `pantheon-opencode update`" : "enter refreshes installed copy"
+		});
 	}
+	rows.push({
+		id: "update.command",
+		name: "CLI command",
+		value: channel === "beta" ? "pantheon-opencode update" : "pantheon-opencode update --stable",
+		note: "run in terminal or OpenCode Desktop terminal"
+	});
 	return {
 		id: "updates",
 		title: "Updates",
 		groups: [{
-			title: "Updates",
+			title: "Updates & Maintenance",
 			rows
 		}]
 	};
+}
+/** Prefix of the "+N more" line appended when the bullet budget is exceeded. */
+const WHATS_NEW_MORE_PREFIX = "… +";
+const EMPTY_HIGHLIGHTS = {
+	version: null,
+	found: false,
+	groups: [],
+	totalItems: 0,
+	truncated: false
+};
+/** Escape regex metacharacters so a version like 1.0.0 matches literally. */
+function escapeRegExp(text) {
+	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+/**
+* Extract the body of a version section from changelog text — inline replica
+* of scripts/changelog-extract.mjs `extractSection` (see that file for the
+* full contract: `## [<version>] - YYYY-MM-DD`, leading `v` and the date
+* optional, `## [Unreleased]` never matched).
+*/
+function extractSection(changelogText, version) {
+	const normalized = String(version).trim().replace(/^v/i, "");
+	if (!normalized || /^unreleased$/i.test(normalized)) return {
+		found: false,
+		body: null
+	};
+	const escaped = escapeRegExp(normalized);
+	const match = new RegExp(`^##[ \\t]+\\[v?${escaped}\\](?:[ \\t]*-[ \\t]*\\d{4}-\\d{2}-\\d{2})?(?=[ \\t]|$)`, "m").exec(changelogText);
+	if (!match) return {
+		found: false,
+		body: null
+	};
+	const newline = changelogText.indexOf("\n", match.index);
+	const start = newline === -1 ? changelogText.length : newline + 1;
+	const nextHeading = /^##[ \t]+\[/m.exec(changelogText.slice(start));
+	const end = nextHeading ? start + nextHeading.index : changelogText.length;
+	return {
+		found: true,
+		body: changelogText.slice(start, end).trim()
+	};
+}
+/**
+* Reduce one markdown line to plain text: links keep their label, emphasis
+* and inline-code markers are dropped, HTML comment fragments are removed,
+* and whitespace collapses. Deliberately simple — the input is our own
+* CHANGELOG (lint-capped at 200 chars per bullet), not hostile input.
+*/
+function stripMarkdown(text) {
+	return text.replace(/<!--[\s\S]*?-->/g, " ").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/(\*\*|__)/g, "").replace(/`/g, "").replace(/\s+/g, " ").trim();
+}
+/** Strip the leading H3 marker (`### Added` → `Added`). */
+function stripHeading(text) {
+	return text.replace(/^#{1,6}[ \t]+/, "").trim();
+}
+/**
+* Extract the curated summary block (`### 🆕 What's New` or `## 🆕 What's New`)
+* from a section body: its bullets only, each truncated to
+* WHATS_NEW_ITEM_MAX_CHARS, capped to WHATS_NEW_SUMMARY_MAX_ITEMS. Null when
+* the section carries no summary block (the full-section fallback applies).
+*/
+function extractWhatsNewSummary(body) {
+	const lines = body.split("\n");
+	const start = lines.findIndex((line) => /^#{2,3}[ \t]+.*What'?s New/i.test(line.trim()));
+	if (start === -1) return null;
+	const items = [];
+	for (const rawLine of lines.slice(start + 1)) {
+		const line = rawLine.trim();
+		if (line === "" || line.startsWith("<!--")) continue;
+		if (/^#{1,6}[ \t]/.test(line)) break;
+		if (!/^[-*][ \t]/.test(line)) continue;
+		if (items.length >= 6) break;
+		const content = stripMarkdown(line.replace(/^[-*][ \t]+/, ""));
+		if (content === "") continue;
+		items.push(content.length > 140 ? `${content.slice(0, 139)}…` : content);
+	}
+	return items.length > 0 ? items : null;
+}
+/**
+* Extract the release highlights for `version`. When the section carries a
+* curated `🆕 What's New` summary block, THE WINDOW SHOWS ONLY THAT (the
+* full Added/Changed/Fixed walls are for the CHANGELOG readers, not the
+* dialog); otherwise it falls back to the H3-group extraction bounded to
+* WHATS_NEW_MAX_ITEMS bullets. A missing section, a bullet-less section or a
+* blank changelog all return EMPTY_HIGHLIGHTS (no window).
+*/
+function extractHighlights(changelogText, version) {
+	const { found, body } = extractSection(changelogText ?? "", version ?? "");
+	if (!found || !body) return { ...EMPTY_HIGHLIGHTS };
+	const summary = extractWhatsNewSummary(body);
+	if (summary !== null) return {
+		version: String(version).trim().replace(/^v/i, ""),
+		found: true,
+		groups: [{
+			heading: null,
+			items: summary
+		}],
+		totalItems: summary.length,
+		truncated: false
+	};
+	const groups = [];
+	let totalItems = 0;
+	let truncated = false;
+	for (const rawLine of body.split("\n")) {
+		const line = rawLine.trim();
+		if (line === "" || line.startsWith("<!--")) continue;
+		if (/^#{1,6}[ \t]/.test(line)) {
+			const heading = stripMarkdown(stripHeading(line));
+			if (heading === "") continue;
+			if (groups.at(-1)?.items.length === 0) groups.pop();
+			groups.push({
+				heading,
+				items: []
+			});
+			continue;
+		}
+		if (totalItems >= 12) {
+			if (/^[-*][ \t]/.test(line)) totalItems += 1;
+			continue;
+		}
+		const isBullet = /^[-*][ \t]/.test(line);
+		const continuation = (groups.at(-1)?.items.length ?? 0) > 0;
+		if (!isBullet && !continuation) continue;
+		const content = stripMarkdown(isBullet ? line.replace(/^[-*][ \t]+/, "") : line);
+		if (content === "") continue;
+		const bounded = content.length > 140 ? `${content.slice(0, 139)}…` : content;
+		const group = groups.at(-1);
+		if (group === void 0) groups.push({
+			heading: null,
+			items: [bounded]
+		});
+		else if (isBullet || group.items.length === 0) group.items.push(bounded);
+		else group.items[group.items.length - 1] = `${group.items.at(-1)} ${bounded}`.trim();
+		if (isBullet) totalItems += 1;
+	}
+	const kept = groups.filter((group) => group.items.length > 0);
+	truncated = totalItems > 12;
+	return {
+		version: found ? String(version).trim().replace(/^v/i, "") : null,
+		found,
+		groups: kept,
+		totalItems,
+		truncated
+	};
+}
+/** Window title — mirrors the sidebar's `Pantheon v<version>` convention. */
+function whatsNewTitle(version) {
+	return `O que há de novo — Pantheon v${String(version).trim().replace(/^v/i, "")}`;
+}
+/** Flat display lines for the window: group headings, `• ` bullets, `+N more`. */
+function whatsNewLines(highlights) {
+	const lines = [];
+	for (const group of highlights.groups) {
+		if (group.heading !== null) lines.push(group.heading);
+		for (const item of group.items) lines.push(`• ${item}`);
+	}
+	if (highlights.truncated) {
+		const hidden = Math.max(0, highlights.totalItems - 12);
+		if (hidden > 0) lines.push(`${WHATS_NEW_MORE_PREFIX}${hidden} mais`);
+	}
+	return lines;
+}
+/**
+* Candidate CHANGELOG.md locations for a bundle, first readable wins:
+*   1. the plugin copy root (`<configDir>/plugins/pantheon-tui/CHANGELOG.md`,
+*      shipped by both installers next to package.json);
+*   2. the package root (dev checkout; also an npm-package install when the
+*      bundle runs from `<pkg>/src/plugins/tui/dist/`).
+*/
+function changelogCandidates(bundlePath) {
+	const dist = dirname(bundlePath);
+	const copyRoot = dirname(dist);
+	const packageRoot = dirname(dirname(dirname(copyRoot)));
+	return [join(copyRoot, "CHANGELOG.md"), join(packageRoot, "CHANGELOG.md")];
+}
+/** Read the first existing candidate; null when none is readable (no window). */
+async function readChangelogForBundle(bundleUrl) {
+	try {
+		const bundlePath = fileURLToPath(bundleUrl);
+		for (const candidate of changelogCandidates(bundlePath)) try {
+			return await readFile(candidate, "utf8");
+		} catch {}
+		return null;
+	} catch {
+		return null;
+	}
+}
+/** The ambient build-time version, or null outside a tsdown build. */
+function embeddedVersion() {
+	return "2.0.0-beta.6";
+}
+/**
+* Resolve the running Pantheon version for the what's-new window: the plugin
+* copy's own package.json first (the copy root two levels above the bundle,
+* then the package root four levels above — the same legs as the V1 sidebar's
+* detectVersion try 0a/0b), falling back to the tsdown build embed. Null when
+* nothing resolves → no window (fail-open).
+*/
+async function resolveRunningVersion$1(bundleUrl, embedded = embeddedVersion()) {
+	try {
+		const bundlePath = fileURLToPath(bundleUrl);
+		const dist = dirname(bundlePath);
+		for (const root of [dirname(dist), dirname(dirname(dirname(dist)))]) try {
+			const raw = await readFile(join(root, "package.json"), "utf8");
+			const parsed = JSON.parse(raw);
+			if (typeof parsed.version === "string" && parsed.version.trim() !== "") return parsed.version;
+		} catch {}
+	} catch {}
+	return embedded;
 }
 //#endregion
 //#region src/pantheon-settings.tsx
@@ -1509,9 +1900,9 @@ function readUpdateCheckState() {
 		return {};
 	}
 }
-async function fetchLatestForChannel(currentVersion) {
+async function fetchLatestForChannel(channel) {
 	try {
-		const response = await fetch(registryUrlForChannel(updateChannelFor(currentVersion)), { signal: AbortSignal.timeout(5e3) });
+		const response = await fetch(registryUrlForChannel(channel), { signal: AbortSignal.timeout(5e3) });
 		return String((await response.json())?.version ?? "") || null;
 	} catch {
 		return null;
@@ -1527,19 +1918,17 @@ function persistUpdateCheckState(previous, latest) {
 		} : null, Date.now()), null, 2)}\n`);
 	} catch {}
 }
-function resolveRunningVersion$1() {
+function resolveRunningVersion() {
 	return "2.0.0-beta.6";
 }
 const VALUE_WIDTH = 22;
 function SettingsWindow(props) {
 	const tab = () => props.tabs()[props.page()] ?? props.tabs()[0] ?? EMPTY_TAB;
 	return (() => {
-		var _el$ = createElement("box"), _el$2 = createElement("box"), _el$3 = createElement("text"), _el$4 = createElement("box"), _el$5 = createElement("text"), _el$7 = createElement("box"), _el$8 = createElement("box"), _el$9 = createElement("box"), _el$0 = createElement("text"), _el$10 = createElement("box"), _el$11 = createElement("box"), _el$12 = createElement("box"), _el$13 = createElement("text"), _el$15 = createElement("box"), _el$16 = createElement("text"), _el$17 = createElement("text"), _el$20 = createElement("box"), _el$21 = createElement("text"), _el$23 = createElement("text"), _el$25 = createElement("text"), _el$27 = createElement("text"), _el$29 = createElement("text"), _el$31 = createElement("box"), _el$32 = createElement("text"), _el$33 = createElement("text");
+		var _el$ = createElement("box"), _el$2 = createElement("box"), _el$3 = createElement("text"), _el$4 = createElement("box"), _el$5 = createElement("box"), _el$6 = createElement("text"), _el$8 = createElement("box"), _el$9 = createElement("box"), _el$0 = createElement("text"), _el$10 = createElement("box"), _el$11 = createElement("box"), _el$12 = createElement("box"), _el$13 = createElement("text"), _el$15 = createElement("text"), _el$17 = createElement("box"), _el$18 = createElement("text"), _el$19 = createElement("text");
 		insertNode(_el$, _el$2);
-		insertNode(_el$, _el$7);
+		insertNode(_el$, _el$8);
 		insertNode(_el$, _el$10);
-		insertNode(_el$, _el$20);
-		insertNode(_el$, _el$33);
 		setProp(_el$, "flexDirection", "column");
 		setProp(_el$, "paddingLeft", 1);
 		setProp(_el$, "paddingRight", 1);
@@ -1547,40 +1936,45 @@ function SettingsWindow(props) {
 		insertNode(_el$2, _el$3);
 		insertNode(_el$2, _el$4);
 		insertNode(_el$2, _el$5);
+		insertNode(_el$2, _el$6);
 		setProp(_el$2, "flexDirection", "row");
+		setProp(_el$2, "alignItems", "center");
 		setProp(_el$3, "attributes", 1);
 		insert(_el$3, () => `Pantheon v${props.version}`);
-		setProp(_el$4, "flexGrow", 1);
-		insertNode(_el$5, createTextNode(`esc`));
-		insertNode(_el$7, _el$8);
-		insertNode(_el$7, _el$9);
-		setProp(_el$7, "flexDirection", "row");
-		setProp(_el$7, "height", 1);
-		setProp(_el$8, "width", 18);
-		setProp(_el$8, "flexDirection", "row");
-		insert(_el$8, createComponent(For, {
+		setProp(_el$4, "width", 2);
+		setProp(_el$5, "flexDirection", "row");
+		setProp(_el$5, "flexGrow", 1);
+		setProp(_el$5, "flexShrink", 1);
+		insert(_el$5, createComponent(For, {
 			get each() {
 				return props.tabs();
 			},
-			children: (t, index) => (() => {
-				var _el$35 = createElement("text");
-				setProp(_el$35, "flexShrink", 0);
-				spread(_el$35, mergeProps({ get fg() {
-					return memo(() => index() === props.page())() ? props.fg : props.muted;
-				} }, () => index() === props.page() ? { attributes: 1 } : {}), true);
-				insert(_el$35, () => `${index() + 1} ${t.title}${tabDirty(props.draft(), t) ? " ●" : ""}  `);
-				return _el$35;
-			})()
+			children: (t, index) => {
+				const isActive = () => index() === props.page();
+				return (() => {
+					var _el$41 = createElement("text");
+					setProp(_el$41, "flexShrink", 0);
+					spread(_el$41, mergeProps({ get fg() {
+						return memo(() => !!isActive())() ? props.warn ?? props.fg : props.muted;
+					} }, () => isActive() ? { attributes: 1 } : {}), true);
+					insert(_el$41, () => `${t.title}${tabDirty(props.draft(), t) ? " ●" : ""}  `);
+					return _el$41;
+				})();
+			}
 		}));
+		insertNode(_el$6, createTextNode(`esc`));
+		insertNode(_el$8, _el$9);
+		setProp(_el$8, "flexDirection", "row");
+		setProp(_el$8, "height", 1);
 		insertNode(_el$9, _el$0);
 		setProp(_el$9, "flexGrow", 1);
-		setProp(_el$9, "flexShrink", 1);
-		insertNode(_el$0, createTextNode(`────────────────────────────────────────`));
+		insertNode(_el$0, createTextNode(`──────────────────────────────────────────────────────────────────────────────`));
 		insertNode(_el$10, _el$11);
-		insertNode(_el$10, _el$15);
+		insertNode(_el$10, _el$17);
 		setProp(_el$10, "flexDirection", "row");
 		insertNode(_el$11, _el$12);
 		insertNode(_el$11, _el$13);
+		insertNode(_el$11, _el$15);
 		setProp(_el$11, "width", 18);
 		setProp(_el$11, "flexDirection", "column");
 		insert(_el$11, createComponent(For, {
@@ -1590,47 +1984,48 @@ function SettingsWindow(props) {
 			children: (t, index) => {
 				const isActive = () => index() === props.page();
 				return (() => {
-					var _el$36 = createElement("text");
-					spread(_el$36, mergeProps({ get fg() {
-						return memo(() => !!isActive())() ? props.fg : props.muted;
+					var _el$42 = createElement("text");
+					spread(_el$42, mergeProps({ get fg() {
+						return memo(() => !!isActive())() ? props.warn ?? props.fg : props.muted;
 					} }, () => isActive() ? { attributes: 1 } : {}), true);
-					insert(_el$36, () => `${isActive() ? "▸" : " "}${index() + 1} ${t.title}${tabDirty(props.draft(), t) ? " ●" : ""}`);
-					return _el$36;
+					insert(_el$42, () => `${isActive() ? "▸ " : "  "}${t.title}${tabDirty(props.draft(), t) ? " ●" : ""}`);
+					return _el$42;
 				})();
 			}
 		}), _el$12);
 		setProp(_el$12, "height", 1);
 		insertNode(_el$13, createTextNode(`1-9: tab`));
-		insertNode(_el$15, _el$16);
-		insertNode(_el$15, _el$17);
-		setProp(_el$15, "flexGrow", 1);
-		setProp(_el$15, "flexShrink", 1);
-		setProp(_el$15, "flexDirection", "column");
-		setProp(_el$15, "paddingLeft", 1);
-		setProp(_el$16, "attributes", 1);
-		insert(_el$16, () => tab().title);
-		insertNode(_el$17, createTextNode(`────────────────────────────────────────`));
-		insert(_el$15, createComponent(For, {
+		insertNode(_el$15, createTextNode(`tab: next`));
+		insertNode(_el$17, _el$18);
+		insertNode(_el$17, _el$19);
+		setProp(_el$17, "flexGrow", 1);
+		setProp(_el$17, "flexShrink", 1);
+		setProp(_el$17, "flexDirection", "column");
+		setProp(_el$17, "paddingLeft", 1);
+		setProp(_el$18, "attributes", 1);
+		insert(_el$18, () => tab().title);
+		insertNode(_el$19, createTextNode(`────────────────────────────────────────`));
+		insert(_el$17, createComponent(For, {
 			get each() {
 				return tab().groups;
 			},
 			children: (group) => (() => {
-				var _el$37 = createElement("box"), _el$39 = createElement("box");
-				insertNode(_el$37, _el$39);
-				setProp(_el$37, "flexDirection", "column");
-				insert(_el$37, createComponent(Show, {
+				var _el$43 = createElement("box"), _el$45 = createElement("box");
+				insertNode(_el$43, _el$45);
+				setProp(_el$43, "flexDirection", "column");
+				insert(_el$43, createComponent(Show, {
 					get when() {
 						return group.title !== void 0;
 					},
 					get children() {
-						var _el$38 = createElement("text");
-						setProp(_el$38, "attributes", 1);
-						insert(_el$38, () => group.title);
-						effect((_$p) => setProp(_el$38, "fg", props.fg, _$p));
-						return _el$38;
+						var _el$44 = createElement("text");
+						setProp(_el$44, "attributes", 1);
+						insert(_el$44, () => group.title);
+						effect((_$p) => setProp(_el$44, "fg", props.warn ?? props.fg, _$p));
+						return _el$44;
 					}
-				}), _el$39);
-				insert(_el$37, createComponent(For, {
+				}), _el$45);
+				insert(_el$43, createComponent(For, {
 					get each() {
 						return group.rows;
 					},
@@ -1638,45 +2033,46 @@ function SettingsWindow(props) {
 						const isSelected = () => row.id === props.selectedId();
 						const display = () => props.draft()[row.id] ?? row.value;
 						const staged = () => props.draft()[row.id] !== void 0;
-						const gutter = () => isSelected() ? "▸ " : "  ";
+						const gutter = () => isSelected() ? "  " : "  ";
 						const valueCell = () => row.cycle !== void 0 ? `< ${display()} >` : display();
 						return (() => {
-							var _el$40 = createElement("box"), _el$41 = createElement("box"), _el$42 = createElement("text"), _el$43 = createElement("box"), _el$44 = createElement("text");
-							insertNode(_el$40, _el$41);
-							insertNode(_el$40, _el$43);
-							setProp(_el$40, "flexDirection", "row");
-							insertNode(_el$41, _el$42);
-							setProp(_el$41, "width", 30);
-							spread(_el$42, mergeProps({ get fg() {
-								return props.fg;
+							var _el$46 = createElement("box"), _el$47 = createElement("box"), _el$48 = createElement("text"), _el$49 = createElement("box"), _el$50 = createElement("text");
+							insertNode(_el$46, _el$47);
+							insertNode(_el$46, _el$49);
+							setProp(_el$46, "flexDirection", "row");
+							insertNode(_el$47, _el$48);
+							setProp(_el$47, "width", 30);
+							spread(_el$48, mergeProps({ get fg() {
+								return memo(() => !!isSelected())() ? "#000000" : props.fg;
 							} }, () => isSelected() ? { attributes: 1 } : {}), true);
-							insert(_el$42, () => `${gutter()}${row.name}`.padEnd(30));
-							insertNode(_el$43, _el$44);
-							setProp(_el$43, "width", 22);
-							spread(_el$44, mergeProps({ get fg() {
-								return memo(() => !!(isSelected() || staged()))() ? props.fg : props.muted;
-							} }, () => isSelected() ? { attributes: 1 } : {}), true);
-							insert(_el$44, () => `${valueCell()}${staged() ? " ●" : ""}`.padEnd(VALUE_WIDTH));
-							insert(_el$40, createComponent(Show, {
+							insert(_el$48, () => `${gutter()}${row.name}`.padEnd(30));
+							insertNode(_el$49, _el$50);
+							setProp(_el$49, "width", 22);
+							spread(_el$50, mergeProps({ get fg() {
+								return memo(() => !!isSelected())() ? "#000000" : memo(() => !!staged())() ? props.warn ?? props.fg : props.muted;
+							} }, () => isSelected() || staged() ? { attributes: 1 } : {}), true);
+							insert(_el$50, () => `${valueCell()}${staged() ? " ●" : ""}`.padEnd(VALUE_WIDTH));
+							insert(_el$46, createComponent(Show, {
 								get when() {
 									return row.note !== void 0;
 								},
 								get children() {
-									var _el$45 = createElement("box"), _el$46 = createElement("text");
-									insertNode(_el$45, _el$46);
-									setProp(_el$45, "flexGrow", 1);
-									setProp(_el$45, "flexShrink", 1);
-									insert(_el$46, () => row.note);
-									effect((_$p) => setProp(_el$46, "fg", props.muted, _$p));
-									return _el$45;
+									var _el$51 = createElement("box"), _el$52 = createElement("text");
+									insertNode(_el$51, _el$52);
+									setProp(_el$51, "flexGrow", 1);
+									setProp(_el$51, "flexShrink", 1);
+									insert(_el$52, () => row.note);
+									effect((_$p) => setProp(_el$52, "fg", isSelected() ? "#111827" : props.muted, _$p));
+									return _el$51;
 								}
 							}), null);
-							return _el$40;
+							effect((_$p) => setProp(_el$46, "backgroundColor", isSelected() ? props.warn ?? "#f59e0b" : void 0, _$p));
+							return _el$46;
 						})();
 					}
-				}), _el$39);
-				setProp(_el$39, "height", 1);
-				return _el$37;
+				}), _el$45);
+				setProp(_el$45, "height", 1);
+				return _el$43;
 			})()
 		}), null);
 		insert(_el$, createComponent(Show, {
@@ -1684,49 +2080,168 @@ function SettingsWindow(props) {
 				return props.notice() !== void 0;
 			},
 			get children() {
-				var _el$19 = createElement("text");
-				insert(_el$19, () => `⚠ ${props.notice()}`);
-				effect((_$p) => setProp(_el$19, "fg", props.warn ?? props.muted, _$p));
-				return _el$19;
+				var _el$21 = createElement("text");
+				insert(_el$21, (() => {
+					var _c$ = memo(() => !!(props.notice()?.startsWith("✅") || props.notice()?.startsWith("saved")));
+					return () => _c$() ? props.notice() : `⚠ ${props.notice()}`;
+				})());
+				effect((_$p) => setProp(_el$21, "fg", props.notice()?.startsWith("✅") ? props.fg : props.warn ?? props.muted, _$p));
+				return _el$21;
 			}
-		}), _el$20);
-		insertNode(_el$20, _el$21);
-		insertNode(_el$20, _el$23);
-		insertNode(_el$20, _el$25);
-		insertNode(_el$20, _el$27);
-		insertNode(_el$20, _el$29);
-		insertNode(_el$20, _el$31);
-		insertNode(_el$20, _el$32);
-		setProp(_el$20, "flexDirection", "row");
-		insertNode(_el$21, createTextNode(`[ Save ]`));
-		setProp(_el$21, "attributes", 1);
-		insertNode(_el$23, createTextNode(`  `));
-		insertNode(_el$25, createTextNode(`[ Reset page ]`));
-		setProp(_el$25, "attributes", 1);
-		insertNode(_el$27, createTextNode(`  `));
-		insertNode(_el$29, createTextNode(`[ Defaults ]`));
-		setProp(_el$29, "attributes", 1);
-		setProp(_el$31, "flexGrow", 1);
-		insert(_el$32, (() => {
-			var _c$ = memo(() => !!draftDirty(props.draft()));
-			return () => _c$() ? `● ${draftCount(props.draft())} unsaved` : "no staged changes";
-		})());
-		insertNode(_el$33, createTextNode(`←/→ change · enter apply · ↑/↓ row · 1-9/tab section · ctrl+s save · ctrl+r reset page · ctrl+d defaults · esc close`));
+		}), null);
+		insert(_el$, createComponent(Show, {
+			get when() {
+				return props.confirmExit?.();
+			},
+			get fallback() {
+				return (() => {
+					var _el$53 = createElement("box"), _el$71 = createElement("text");
+					insertNode(_el$53, _el$71);
+					setProp(_el$53, "flexDirection", "column");
+					insert(_el$53, createComponent(Show, {
+						get when() {
+							return draftDirty(props.draft());
+						},
+						get fallback() {
+							return (() => {
+								var _el$73 = createElement("box"), _el$74 = createElement("box"), _el$75 = createElement("text"), _el$77 = createElement("text"), _el$79 = createElement("box"), _el$80 = createElement("text"), _el$82 = createElement("text"), _el$84 = createElement("box"), _el$85 = createElement("text"), _el$87 = createElement("box"), _el$88 = createElement("text");
+								insertNode(_el$73, _el$74);
+								insertNode(_el$73, _el$77);
+								insertNode(_el$73, _el$79);
+								insertNode(_el$73, _el$82);
+								insertNode(_el$73, _el$84);
+								insertNode(_el$73, _el$87);
+								insertNode(_el$73, _el$88);
+								setProp(_el$73, "flexDirection", "row");
+								insertNode(_el$74, _el$75);
+								setProp(_el$74, "backgroundColor", "#262626");
+								insertNode(_el$75, createTextNode(` Close `));
+								setProp(_el$75, "fg", "#ffffff");
+								insertNode(_el$77, createTextNode(`  `));
+								insertNode(_el$79, _el$80);
+								setProp(_el$79, "backgroundColor", "#262626");
+								insertNode(_el$80, createTextNode(` Reset page `));
+								setProp(_el$80, "fg", "#ffffff");
+								insertNode(_el$82, createTextNode(`  `));
+								insertNode(_el$84, _el$85);
+								setProp(_el$84, "backgroundColor", "#262626");
+								insertNode(_el$85, createTextNode(` Defaults `));
+								setProp(_el$85, "fg", "#ffffff");
+								setProp(_el$87, "flexGrow", 1);
+								insertNode(_el$88, createTextNode(`no staged changes`));
+								effect((_p$) => {
+									var _v$13 = props.muted, _v$14 = props.muted, _v$15 = props.muted;
+									_v$13 !== _p$.e && (_p$.e = setProp(_el$77, "fg", _v$13, _p$.e));
+									_v$14 !== _p$.t && (_p$.t = setProp(_el$82, "fg", _v$14, _p$.t));
+									_v$15 !== _p$.a && (_p$.a = setProp(_el$88, "fg", _v$15, _p$.a));
+									return _p$;
+								}, {
+									e: void 0,
+									t: void 0,
+									a: void 0
+								});
+								return _el$73;
+							})();
+						},
+						get children() {
+							var _el$54 = createElement("box"), _el$55 = createElement("box"), _el$56 = createElement("text"), _el$58 = createElement("text"), _el$60 = createElement("box"), _el$61 = createElement("text"), _el$63 = createElement("text"), _el$65 = createElement("box"), _el$66 = createElement("text"), _el$68 = createElement("box"), _el$69 = createElement("text");
+							insertNode(_el$54, _el$55);
+							insertNode(_el$54, _el$58);
+							insertNode(_el$54, _el$60);
+							insertNode(_el$54, _el$63);
+							insertNode(_el$54, _el$65);
+							insertNode(_el$54, _el$68);
+							insertNode(_el$54, _el$69);
+							setProp(_el$54, "flexDirection", "row");
+							insertNode(_el$55, _el$56);
+							setProp(_el$55, "backgroundColor", "#fba970");
+							insertNode(_el$56, createTextNode(` Save `));
+							setProp(_el$56, "fg", "#000000");
+							insertNode(_el$58, createTextNode(`  `));
+							insertNode(_el$60, _el$61);
+							setProp(_el$60, "backgroundColor", "#262626");
+							insertNode(_el$61, createTextNode(` Discard `));
+							setProp(_el$61, "fg", "#ffffff");
+							insertNode(_el$63, createTextNode(`  `));
+							insertNode(_el$65, _el$66);
+							setProp(_el$65, "backgroundColor", "#262626");
+							insertNode(_el$66, createTextNode(` Reset page `));
+							setProp(_el$66, "fg", "#ffffff");
+							setProp(_el$68, "flexGrow", 1);
+							insertNode(_el$69, createTextNode(`unsaved changes`));
+							effect((_p$) => {
+								var _v$10 = props.muted, _v$11 = props.muted, _v$12 = props.warn ?? "#f59e0b";
+								_v$10 !== _p$.e && (_p$.e = setProp(_el$58, "fg", _v$10, _p$.e));
+								_v$11 !== _p$.t && (_p$.t = setProp(_el$63, "fg", _v$11, _p$.t));
+								_v$12 !== _p$.a && (_p$.a = setProp(_el$69, "fg", _v$12, _p$.a));
+								return _p$;
+							}, {
+								e: void 0,
+								t: void 0,
+								a: void 0
+							});
+							return _el$54;
+						}
+					}), _el$71);
+					insertNode(_el$71, createTextNode(`› or ←/→ change · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close`));
+					effect((_$p) => setProp(_el$71, "fg", props.muted, _$p));
+					return _el$53;
+				})();
+			},
+			get children() {
+				var _el$22 = createElement("box"), _el$23 = createElement("box"), _el$24 = createElement("text"), _el$26 = createElement("box"), _el$27 = createElement("text"), _el$29 = createElement("text"), _el$31 = createElement("box"), _el$32 = createElement("text"), _el$34 = createElement("text"), _el$36 = createElement("box"), _el$37 = createElement("text"), _el$39 = createElement("text");
+				insertNode(_el$22, _el$23);
+				insertNode(_el$22, _el$39);
+				setProp(_el$22, "flexDirection", "column");
+				insertNode(_el$23, _el$24);
+				insertNode(_el$23, _el$26);
+				insertNode(_el$23, _el$29);
+				insertNode(_el$23, _el$31);
+				insertNode(_el$23, _el$34);
+				insertNode(_el$23, _el$36);
+				setProp(_el$23, "flexDirection", "row");
+				insertNode(_el$24, createTextNode(`Keep your changes?  `));
+				setProp(_el$24, "attributes", 1);
+				insertNode(_el$26, _el$27);
+				setProp(_el$26, "backgroundColor", "#fba970");
+				insertNode(_el$27, createTextNode(` Save `));
+				setProp(_el$27, "fg", "#000000");
+				insertNode(_el$29, createTextNode(`  `));
+				insertNode(_el$31, _el$32);
+				setProp(_el$31, "backgroundColor", "#262626");
+				insertNode(_el$32, createTextNode(` Discard `));
+				setProp(_el$32, "fg", "#ffffff");
+				insertNode(_el$34, createTextNode(`  `));
+				insertNode(_el$36, _el$37);
+				setProp(_el$36, "backgroundColor", "#262626");
+				insertNode(_el$37, createTextNode(` Keep editing `));
+				setProp(_el$37, "fg", "#ffffff");
+				insertNode(_el$39, createTextNode(`ctrl+s save · d discard the changes · esc keep editing`));
+				effect((_p$) => {
+					var _v$ = props.warn ?? "#f59e0b", _v$2 = props.muted, _v$3 = props.muted, _v$4 = props.muted;
+					_v$ !== _p$.e && (_p$.e = setProp(_el$24, "fg", _v$, _p$.e));
+					_v$2 !== _p$.t && (_p$.t = setProp(_el$29, "fg", _v$2, _p$.t));
+					_v$3 !== _p$.a && (_p$.a = setProp(_el$34, "fg", _v$3, _p$.a));
+					_v$4 !== _p$.o && (_p$.o = setProp(_el$39, "fg", _v$4, _p$.o));
+					return _p$;
+				}, {
+					e: void 0,
+					t: void 0,
+					a: void 0,
+					o: void 0
+				});
+				return _el$22;
+			}
+		}), null);
 		effect((_p$) => {
-			var _v$ = props.fg, _v$2 = props.muted, _v$3 = props.muted, _v$4 = props.muted, _v$5 = props.fg, _v$6 = props.muted, _v$7 = props.fg, _v$8 = props.muted, _v$9 = props.fg, _v$0 = props.muted, _v$1 = props.fg, _v$10 = draftDirty(props.draft()) ? props.warn ?? props.fg : props.muted, _v$11 = props.muted;
-			_v$ !== _p$.e && (_p$.e = setProp(_el$3, "fg", _v$, _p$.e));
-			_v$2 !== _p$.t && (_p$.t = setProp(_el$5, "fg", _v$2, _p$.t));
-			_v$3 !== _p$.a && (_p$.a = setProp(_el$0, "fg", _v$3, _p$.a));
-			_v$4 !== _p$.o && (_p$.o = setProp(_el$13, "fg", _v$4, _p$.o));
-			_v$5 !== _p$.i && (_p$.i = setProp(_el$16, "fg", _v$5, _p$.i));
-			_v$6 !== _p$.n && (_p$.n = setProp(_el$17, "fg", _v$6, _p$.n));
-			_v$7 !== _p$.s && (_p$.s = setProp(_el$21, "fg", _v$7, _p$.s));
-			_v$8 !== _p$.h && (_p$.h = setProp(_el$23, "fg", _v$8, _p$.h));
-			_v$9 !== _p$.r && (_p$.r = setProp(_el$25, "fg", _v$9, _p$.r));
-			_v$0 !== _p$.d && (_p$.d = setProp(_el$27, "fg", _v$0, _p$.d));
-			_v$1 !== _p$.l && (_p$.l = setProp(_el$29, "fg", _v$1, _p$.l));
-			_v$10 !== _p$.u && (_p$.u = setProp(_el$32, "fg", _v$10, _p$.u));
-			_v$11 !== _p$.c && (_p$.c = setProp(_el$33, "fg", _v$11, _p$.c));
+			var _v$5 = props.fg, _v$6 = props.muted, _v$7 = props.muted, _v$8 = props.muted, _v$9 = props.muted, _v$0 = props.warn ?? props.fg, _v$1 = props.muted;
+			_v$5 !== _p$.e && (_p$.e = setProp(_el$3, "fg", _v$5, _p$.e));
+			_v$6 !== _p$.t && (_p$.t = setProp(_el$6, "fg", _v$6, _p$.t));
+			_v$7 !== _p$.a && (_p$.a = setProp(_el$0, "fg", _v$7, _p$.a));
+			_v$8 !== _p$.o && (_p$.o = setProp(_el$13, "fg", _v$8, _p$.o));
+			_v$9 !== _p$.i && (_p$.i = setProp(_el$15, "fg", _v$9, _p$.i));
+			_v$0 !== _p$.n && (_p$.n = setProp(_el$18, "fg", _v$0, _p$.n));
+			_v$1 !== _p$.s && (_p$.s = setProp(_el$19, "fg", _v$1, _p$.s));
 			return _p$;
 		}, {
 			e: void 0,
@@ -1735,19 +2250,14 @@ function SettingsWindow(props) {
 			o: void 0,
 			i: void 0,
 			n: void 0,
-			s: void 0,
-			h: void 0,
-			r: void 0,
-			d: void 0,
-			l: void 0,
-			u: void 0,
-			c: void 0
+			s: void 0
 		});
 		return _el$;
 	})();
 }
 let pageApi;
 function createWindowController(context, exit) {
+	const currentVersion = resolveRunningVersion();
 	const [page, setPage] = createSignal(0);
 	const [selected, setSelected] = createSignal(0);
 	const [load, setLoad] = createSignal(readOverridesLoad());
@@ -1756,11 +2266,31 @@ function createWindowController(context, exit) {
 	const [budgets, setBudgets] = createSignal(readDecisionBudgets());
 	const [autonomyRestartPending, setAutonomyRestartPending] = createSignal(false);
 	const [presetTick, setPresetTick] = createSignal(0);
+	const [selectedChannel, setSelectedChannel] = createSignal(updateChannelFor(currentVersion));
 	const [lastChecked, setLastChecked] = createSignal(void 0);
 	const [checking, setChecking] = createSignal(false);
+	const [updating, setUpdating] = createSignal(false);
+	const [changelogItems, setChangelogItems] = createSignal([]);
 	const [draft, setDraft] = createSignal({});
 	const [notice, setNotice] = createSignal(void 0);
-	const currentVersion = resolveRunningVersion$1();
+	const [confirmExit, setConfirmExit] = createSignal(false);
+	readChangelogForBundle(import.meta.url).then((text) => {
+		if (!text) return;
+		const hl = extractHighlights(text, currentVersion);
+		if (hl.found) {
+			const items = [];
+			for (const group of hl.groups) for (const item of group.items) {
+				const dash = item.indexOf("—");
+				const title = dash !== -1 ? item.slice(0, dash).trim() : item.slice(0, 26);
+				items.push({
+					title,
+					detail: item,
+					group: group.heading ?? void 0
+				});
+			}
+			setChangelogItems(items);
+		}
+	});
 	const presetInput = () => {
 		presetTick();
 		return {
@@ -1772,7 +2302,9 @@ function createWindowController(context, exit) {
 		const input = {
 			currentVersion,
 			state: readUpdateCheckState(),
+			selectedChannel: selectedChannel(),
 			checking: checking(),
+			updating: updating(),
 			nowMs: Date.now()
 		};
 		const seen = lastChecked();
@@ -1791,6 +2323,7 @@ function createWindowController(context, exit) {
 		}),
 		buildJ1Tab(process.env, false),
 		buildUpdatesTab(updatesInput()),
+		buildChangelogTab(currentVersion, changelogItems()),
 		buildDoctorTab({
 			runningVersion: currentVersion,
 			nodeVersion: process.versions.node,
@@ -1800,26 +2333,70 @@ function createWindowController(context, exit) {
 	];
 	const rows = () => tabRows(tabs()[page()] ?? tabs()[0] ?? EMPTY_TAB);
 	const move = (delta) => {
+		if (confirmExit()) setConfirmExit(false);
 		const list = rows();
 		if (list.length === 0) return;
 		setSelected((current) => Math.min(Math.max(current + delta, 0), list.length - 1));
 	};
 	const step = (direction) => {
+		if (confirmExit()) setConfirmExit(false);
 		const row = rows()[selected()];
 		if (row === void 0) return;
 		setNotice(void 0);
 		setDraft(stageValue(draft(), row, direction));
 	};
-	const checkUpdatesNow = () => {
+	const checkUpdatesNow = (targetChannel = selectedChannel()) => {
 		if (checking()) return;
 		setChecking(true);
 		setNotice(void 0);
-		fetchLatestForChannel(currentVersion).then((latest) => {
-			if (latest) setLastChecked(latest);
-			persistUpdateCheckState(readUpdateCheckState(), latest);
+		fetchLatestForChannel(targetChannel).then((latest) => {
+			if (latest) {
+				setLastChecked(latest);
+				persistUpdateCheckState(readUpdateCheckState(), latest);
+			}
 		}).catch(() => {}).finally(() => setChecking(false));
 	};
+	const runUpdateNow = () => {
+		if (updating()) return;
+		setUpdating(true);
+		setNotice(`updating to ${selectedChannel()} channel…`);
+		execFile("npm", [
+			"install",
+			"-g",
+			`pantheon-opencode@${selectedChannel()}`
+		], { timeout: 6e4 }, (err) => {
+			setUpdating(false);
+			if (err) {
+				setNotice("run in terminal: pantheon-opencode update");
+				try {
+					context.ui.toast?.show?.({
+						variant: "warning",
+						message: "Update requires terminal permissions: run `pantheon-opencode update`"
+					});
+				} catch {}
+			} else {
+				setNotice("✅ update complete — restart OpenCode or run `npx pantheon-opencode init`");
+				try {
+					context.ui.toast?.show?.({
+						variant: "info",
+						message: "Pantheon updated successfully!"
+					});
+				} catch {}
+			}
+		});
+	};
 	const dispatchWrite = (id, value) => {
+		if (id === "update.channel") {
+			if (value === "stable" || value === "beta") {
+				setSelectedChannel(value);
+				checkUpdatesNow(value);
+				return { ok: true };
+			}
+			return {
+				ok: false,
+				reason: "unknown channel"
+			};
+		}
 		if (id.startsWith("gate.")) {
 			if (!canWriteOverrides(load())) return {
 				ok: false,
@@ -1984,26 +2561,36 @@ function createWindowController(context, exit) {
 			setPresetTick((tick) => tick + 1);
 		}
 		if (failed.length > 0) setNotice(`${failed.map((f) => `${f.id}: ${f.reason}`).join(" · ")} — staged changes kept`);
-		else setNotice(`saved ${applied.length} change${applied.length === 1 ? "" : "s"}`);
+		else {
+			setNotice(`saved ${applied.length} change${applied.length === 1 ? "" : "s"}`);
+			if (confirmExit()) exit();
+		}
 	};
 	const resetPage = () => {
+		if (confirmExit()) setConfirmExit(false);
 		const tab = tabs()[page()];
 		if (tab === void 0) return;
 		setDraft(resetTab(draft(), tab));
 		setNotice(void 0);
 	};
 	const stageDefaultsPage = () => {
+		if (confirmExit()) setConfirmExit(false);
 		const tab = tabs()[page()];
 		if (tab === void 0) return;
 		setNotice(void 0);
 		setDraft(stageDefaults(draft(), tab));
 	};
 	const nextTab = () => {
+		if (confirmExit()) setConfirmExit(false);
 		setPage((current) => (current + 1) % tabs().length);
 		setSelected(0);
 	};
 	const close = () => {
 		const staged = draftCount(draft());
+		if (staged > 0 && !confirmExit()) {
+			setConfirmExit(true);
+			return;
+		}
 		if (staged > 0) {
 			setDraft({});
 			try {
@@ -2015,6 +2602,21 @@ function createWindowController(context, exit) {
 		}
 		exit();
 	};
+	const discard = () => {
+		const staged = draftCount(draft());
+		setDraft({});
+		setConfirmExit(false);
+		if (staged > 0) try {
+			context.ui.toast?.show?.({
+				variant: "info",
+				message: `settings: ${staged} staged change${staged === 1 ? "" : "s"} discarded`
+			});
+		} catch {}
+		exit();
+	};
+	const cancelExit = () => {
+		setConfirmExit(false);
+	};
 	const selectedId = () => rows()[selected()]?.id;
 	return {
 		tabs,
@@ -2022,15 +2624,20 @@ function createWindowController(context, exit) {
 		selectedId,
 		draft,
 		notice,
+		confirmExit: () => confirmExit(),
 		api: {
 			move,
 			step,
 			actuate: () => {
-				if (rows()[selected()]?.action === "update-check") checkUpdatesNow();
+				if (confirmExit()) setConfirmExit(false);
+				const row = rows()[selected()];
+				if (row?.action === "update-check") checkUpdatesNow();
+				else if (row?.action === "update-run") runUpdateNow();
 				else step(1);
 			},
 			nextTab,
 			jumpTab: (index) => {
+				if (confirmExit()) setConfirmExit(false);
 				if (index >= 0 && index < tabs().length) {
 					setPage(index);
 					setSelected(0);
@@ -2039,7 +2646,10 @@ function createWindowController(context, exit) {
 			save,
 			resetPage,
 			stageDefaults: stageDefaultsPage,
-			close
+			close,
+			discard,
+			cancelExit,
+			confirmExit: () => confirmExit()
 		},
 		cleanup: () => {
 			pageApi = void 0;
@@ -2062,7 +2672,7 @@ function SettingsPage(props) {
 	pageApi = controller.api;
 	return createComponent(SettingsWindow, {
 		get version() {
-			return resolveRunningVersion$1();
+			return resolveRunningVersion();
 		},
 		get tabs() {
 			return controller.tabs;
@@ -2078,6 +2688,9 @@ function SettingsPage(props) {
 		},
 		get notice() {
 			return controller.notice;
+		},
+		get confirmExit() {
+			return controller.confirmExit;
 		},
 		get fg() {
 			return theme.base;
@@ -2119,7 +2732,7 @@ function openSettingsDialog(context) {
 	try {
 		context.ui.dialog.show(() => createComponent(SettingsWindow, {
 			get version() {
-				return resolveRunningVersion$1();
+				return resolveRunningVersion();
 			},
 			get tabs() {
 				return controller.tabs;
@@ -2135,6 +2748,9 @@ function openSettingsDialog(context) {
 			},
 			get notice() {
 				return controller.notice;
+			},
+			get confirmExit() {
+				return controller.confirmExit;
 			},
 			get fg() {
 				return theme.base;
@@ -2188,7 +2804,22 @@ function setupPantheonSettings(context) {
 					} catch {}
 					return;
 				}
+				if (pageApi.confirmExit?.()) {
+					pageApi.cancelExit?.();
+					return;
+				}
 				pageApi.close();
+			}
+		},
+		{
+			id: "pantheon.settings.discard",
+			title: "Discard staged changes and exit",
+			bind: "d",
+			run: () => {
+				if (pageApi?.confirmExit?.()) {
+					pageApi.discard?.();
+					return;
+				}
 			}
 		},
 		{
@@ -2430,214 +3061,6 @@ function cellWidth(value) {
 	let width = 0;
 	for (const { segment } of GRAPHEMES.segment(value)) width += graphemeWidth(segment);
 	return width;
-}
-/** Prefix of the "+N more" line appended when the bullet budget is exceeded. */
-const WHATS_NEW_MORE_PREFIX = "… +";
-const EMPTY_HIGHLIGHTS = {
-	version: null,
-	found: false,
-	groups: [],
-	totalItems: 0,
-	truncated: false
-};
-/** Escape regex metacharacters so a version like 1.0.0 matches literally. */
-function escapeRegExp(text) {
-	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-/**
-* Extract the body of a version section from changelog text — inline replica
-* of scripts/changelog-extract.mjs `extractSection` (see that file for the
-* full contract: `## [<version>] - YYYY-MM-DD`, leading `v` and the date
-* optional, `## [Unreleased]` never matched).
-*/
-function extractSection(changelogText, version) {
-	const normalized = String(version).trim().replace(/^v/i, "");
-	if (!normalized || /^unreleased$/i.test(normalized)) return {
-		found: false,
-		body: null
-	};
-	const escaped = escapeRegExp(normalized);
-	const match = new RegExp(`^##[ \\t]+\\[v?${escaped}\\](?:[ \\t]*-[ \\t]*\\d{4}-\\d{2}-\\d{2})?(?=[ \\t]|$)`, "m").exec(changelogText);
-	if (!match) return {
-		found: false,
-		body: null
-	};
-	const newline = changelogText.indexOf("\n", match.index);
-	const start = newline === -1 ? changelogText.length : newline + 1;
-	const nextHeading = /^##[ \t]+\[/m.exec(changelogText.slice(start));
-	const end = nextHeading ? start + nextHeading.index : changelogText.length;
-	return {
-		found: true,
-		body: changelogText.slice(start, end).trim()
-	};
-}
-/**
-* Reduce one markdown line to plain text: links keep their label, emphasis
-* and inline-code markers are dropped, HTML comment fragments are removed,
-* and whitespace collapses. Deliberately simple — the input is our own
-* CHANGELOG (lint-capped at 200 chars per bullet), not hostile input.
-*/
-function stripMarkdown(text) {
-	return text.replace(/<!--[\s\S]*?-->/g, " ").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/(\*\*|__)/g, "").replace(/`/g, "").replace(/\s+/g, " ").trim();
-}
-/** Strip the leading H3 marker (`### Added` → `Added`). */
-function stripHeading(text) {
-	return text.replace(/^#{1,6}[ \t]+/, "").trim();
-}
-/**
-* Extract the curated summary block (`### 🆕 What's New` or `## 🆕 What's New`)
-* from a section body: its bullets only, each truncated to
-* WHATS_NEW_ITEM_MAX_CHARS, capped to WHATS_NEW_SUMMARY_MAX_ITEMS. Null when
-* the section carries no summary block (the full-section fallback applies).
-*/
-function extractWhatsNewSummary(body) {
-	const lines = body.split("\n");
-	const start = lines.findIndex((line) => /^#{2,3}[ \t]+.*What'?s New/i.test(line.trim()));
-	if (start === -1) return null;
-	const items = [];
-	for (const rawLine of lines.slice(start + 1)) {
-		const line = rawLine.trim();
-		if (line === "" || line.startsWith("<!--")) continue;
-		if (/^#{1,6}[ \t]/.test(line)) break;
-		if (!/^[-*][ \t]/.test(line)) continue;
-		if (items.length >= 6) break;
-		const content = stripMarkdown(line.replace(/^[-*][ \t]+/, ""));
-		if (content === "") continue;
-		items.push(content.length > 140 ? `${content.slice(0, 139)}…` : content);
-	}
-	return items.length > 0 ? items : null;
-}
-/**
-* Extract the release highlights for `version`. When the section carries a
-* curated `🆕 What's New` summary block, THE WINDOW SHOWS ONLY THAT (the
-* full Added/Changed/Fixed walls are for the CHANGELOG readers, not the
-* dialog); otherwise it falls back to the H3-group extraction bounded to
-* WHATS_NEW_MAX_ITEMS bullets. A missing section, a bullet-less section or a
-* blank changelog all return EMPTY_HIGHLIGHTS (no window).
-*/
-function extractHighlights(changelogText, version) {
-	const { found, body } = extractSection(changelogText ?? "", version ?? "");
-	if (!found || !body) return { ...EMPTY_HIGHLIGHTS };
-	const summary = extractWhatsNewSummary(body);
-	if (summary !== null) return {
-		version: String(version).trim().replace(/^v/i, ""),
-		found: true,
-		groups: [{
-			heading: null,
-			items: summary
-		}],
-		totalItems: summary.length,
-		truncated: false
-	};
-	const groups = [];
-	let totalItems = 0;
-	let truncated = false;
-	for (const rawLine of body.split("\n")) {
-		const line = rawLine.trim();
-		if (line === "" || line.startsWith("<!--")) continue;
-		if (/^#{1,6}[ \t]/.test(line)) {
-			const heading = stripMarkdown(stripHeading(line));
-			if (heading === "") continue;
-			if (groups.at(-1)?.items.length === 0) groups.pop();
-			groups.push({
-				heading,
-				items: []
-			});
-			continue;
-		}
-		if (totalItems >= 12) {
-			if (/^[-*][ \t]/.test(line)) totalItems += 1;
-			continue;
-		}
-		const isBullet = /^[-*][ \t]/.test(line);
-		const continuation = (groups.at(-1)?.items.length ?? 0) > 0;
-		if (!isBullet && !continuation) continue;
-		const content = stripMarkdown(isBullet ? line.replace(/^[-*][ \t]+/, "") : line);
-		if (content === "") continue;
-		const bounded = content.length > 140 ? `${content.slice(0, 139)}…` : content;
-		const group = groups.at(-1);
-		if (group === void 0) groups.push({
-			heading: null,
-			items: [bounded]
-		});
-		else if (isBullet || group.items.length === 0) group.items.push(bounded);
-		else group.items[group.items.length - 1] = `${group.items.at(-1)} ${bounded}`.trim();
-		if (isBullet) totalItems += 1;
-	}
-	const kept = groups.filter((group) => group.items.length > 0);
-	truncated = totalItems > 12;
-	return {
-		version: found ? String(version).trim().replace(/^v/i, "") : null,
-		found,
-		groups: kept,
-		totalItems,
-		truncated
-	};
-}
-/** Window title — mirrors the sidebar's `Pantheon v<version>` convention. */
-function whatsNewTitle(version) {
-	return `O que há de novo — Pantheon v${String(version).trim().replace(/^v/i, "")}`;
-}
-/** Flat display lines for the window: group headings, `• ` bullets, `+N more`. */
-function whatsNewLines(highlights) {
-	const lines = [];
-	for (const group of highlights.groups) {
-		if (group.heading !== null) lines.push(group.heading);
-		for (const item of group.items) lines.push(`• ${item}`);
-	}
-	if (highlights.truncated) {
-		const hidden = Math.max(0, highlights.totalItems - 12);
-		if (hidden > 0) lines.push(`${WHATS_NEW_MORE_PREFIX}${hidden} mais`);
-	}
-	return lines;
-}
-/**
-* Candidate CHANGELOG.md locations for a bundle, first readable wins:
-*   1. the plugin copy root (`<configDir>/plugins/pantheon-tui/CHANGELOG.md`,
-*      shipped by both installers next to package.json);
-*   2. the package root (dev checkout; also an npm-package install when the
-*      bundle runs from `<pkg>/src/plugins/tui/dist/`).
-*/
-function changelogCandidates(bundlePath) {
-	const dist = dirname(bundlePath);
-	const copyRoot = dirname(dist);
-	const packageRoot = dirname(dirname(dirname(copyRoot)));
-	return [join(copyRoot, "CHANGELOG.md"), join(packageRoot, "CHANGELOG.md")];
-}
-/** Read the first existing candidate; null when none is readable (no window). */
-async function readChangelogForBundle(bundleUrl) {
-	try {
-		const bundlePath = fileURLToPath(bundleUrl);
-		for (const candidate of changelogCandidates(bundlePath)) try {
-			return await readFile(candidate, "utf8");
-		} catch {}
-		return null;
-	} catch {
-		return null;
-	}
-}
-/** The ambient build-time version, or null outside a tsdown build. */
-function embeddedVersion() {
-	return "2.0.0-beta.6";
-}
-/**
-* Resolve the running Pantheon version for the what's-new window: the plugin
-* copy's own package.json first (the copy root two levels above the bundle,
-* then the package root four levels above — the same legs as the V1 sidebar's
-* detectVersion try 0a/0b), falling back to the tsdown build embed. Null when
-* nothing resolves → no window (fail-open).
-*/
-async function resolveRunningVersion(bundleUrl, embedded = embeddedVersion()) {
-	try {
-		const bundlePath = fileURLToPath(bundleUrl);
-		const dist = dirname(bundlePath);
-		for (const root of [dirname(dist), dirname(dirname(dirname(dist)))]) try {
-			const raw = await readFile(join(root, "package.json"), "utf8");
-			const parsed = JSON.parse(raw);
-			if (typeof parsed.version === "string" && parsed.version.trim() !== "") return parsed.version;
-		} catch {}
-	} catch {}
-	return embedded;
 }
 //#endregion
 //#region src/whats-new-state.ts
@@ -2905,7 +3328,7 @@ function WhatsNewContent(props) {
 */
 async function maybeShowWhatsNewV2(context) {
 	try {
-		const version = await resolveRunningVersion(import.meta.url);
+		const version = await resolveRunningVersion$1(import.meta.url);
 		if (!version) return;
 		const statePath = await defaultWhatsNewStatePath();
 		const changelogText = await readChangelogForBundle(import.meta.url);
@@ -3467,7 +3890,7 @@ function turnTokensPerSecond(messages, position) {
 *  unavailable (never `undefined%`). A block with neither tokens nor cost
 *  yields null. `gaugeStyle` (the TUI tab's pref) picks the percent-row
 *  shape: `both` (default), `bar`, `percent`, or `off` (row omitted). Pure. */
-function contextBlockRows(usage, cost, gaugeStyle = "both") {
+function contextBlockRows(usage, cost, gaugeStyle = "both", barOptions) {
 	const spentValue = formatSpent(cost);
 	const spent = spentValue === null ? null : {
 		lead: null,
@@ -3491,7 +3914,7 @@ function contextBlockRows(usage, cost, gaugeStyle = "both") {
 	};
 	const percentValue = numberOrNull(usage.percent);
 	const window = formatContextWindow(usage.limit);
-	const bar = contextBar(percentValue);
+	const bar = contextBar(percentValue, barOptions ?? 12);
 	let percent = null;
 	if (gaugeStyle !== "off" && bar !== null && percentValue !== null) {
 		const suffix = window === null ? null : ` of ${window}`;
@@ -6040,7 +6463,12 @@ function Sidebar(props) {
 	const usageHidden = () => hiddenModelUsageText(model.modelUsage().hidden, model.modelUsage().hiddenCost);
 	const contextRows = () => {
 		const prefs = tuiPrefs();
-		const rows = contextBlockRows(model.contextUsage(), model.cost(), prefs.sidebar.context.gauge);
+		const barCells = prefs.sidebar.context.barWidth === "compact" ? 8 : prefs.sidebar.context.barWidth === "wide" ? 16 : prefs.sidebar.context.barWidth === "full" ? 20 : 12;
+		const rows = contextBlockRows(model.contextUsage(), model.cost(), prefs.sidebar.context.gauge, {
+			shape: prefs.sidebar.context.barShape,
+			cells: barCells,
+			evenMark: prefs.sidebar.context.evenMark
+		});
 		if (rows === null) return null;
 		return {
 			tokens: prefs.sidebar.context.tokens ? rows.tokens : null,
@@ -6063,7 +6491,8 @@ function Sidebar(props) {
 		var _el$12 = createElement("box");
 		setProp(_el$12, "flexDirection", "column");
 		setProp(_el$12, "width", "100%");
-		setProp(_el$12, "padding", 1);
+		setProp(_el$12, "paddingLeft", 1);
+		setProp(_el$12, "paddingRight", 1);
 		insert(_el$12, createComponent(Show, {
 			get when() {
 				return header().version;
@@ -6341,9 +6770,9 @@ function Sidebar(props) {
 						insertNode(_el$39, createTextNode(`⎇ `));
 						insert(_el$41, () => truncateLabel(value(), 32));
 						effect((_p$) => {
-							var _v$3 = muted(), _v$4 = text();
-							_v$3 !== _p$.e && (_p$.e = setProp(_el$39, "fg", _v$3, _p$.e));
-							_v$4 !== _p$.t && (_p$.t = setProp(_el$41, "fg", _v$4, _p$.t));
+							var _v$5 = muted(), _v$6 = text();
+							_v$5 !== _p$.e && (_p$.e = setProp(_el$39, "fg", _v$5, _p$.e));
+							_v$6 !== _p$.t && (_p$.t = setProp(_el$41, "fg", _v$6, _p$.t));
 							return _p$;
 						}, {
 							e: void 0,
@@ -6479,9 +6908,9 @@ function Sidebar(props) {
 								setProp(_el$47, "flexShrink", 0);
 								insert(_el$48, () => row.text);
 								effect((_p$) => {
-									var _v$5 = open(row.id), _v$6 = tone("success");
-									_v$5 !== _p$.e && (_p$.e = setProp(_el$47, "onMouseDown", _v$5, _p$.e));
-									_v$6 !== _p$.t && (_p$.t = setProp(_el$48, "fg", _v$6, _p$.t));
+									var _v$7 = open(row.id), _v$8 = tone("success");
+									_v$7 !== _p$.e && (_p$.e = setProp(_el$47, "onMouseDown", _v$7, _p$.e));
+									_v$8 !== _p$.t && (_p$.t = setProp(_el$48, "fg", _v$8, _p$.t));
 									return _p$;
 								}, {
 									e: void 0,
@@ -6554,6 +6983,15 @@ function Sidebar(props) {
 				return _el$23;
 			}
 		}), null);
+		effect((_p$) => {
+			var _v$3 = tuiPrefs().layout.preset === "compact" ? 0 : 1, _v$4 = tuiPrefs().layout.preset === "compact" ? 0 : 1;
+			_v$3 !== _p$.e && (_p$.e = setProp(_el$12, "paddingTop", _v$3, _p$.e));
+			_v$4 !== _p$.t && (_p$.t = setProp(_el$12, "paddingBottom", _v$4, _p$.t));
+			return _p$;
+		}, {
+			e: void 0,
+			t: void 0
+		});
 		return _el$12;
 	})();
 }
@@ -6631,10 +7069,10 @@ function DispatchPanel(props) {
 			insert(_el$55, () => selected(row.id) ? `▸ ` : "  ");
 			insert(_el$56, () => row.text);
 			effect((_p$) => {
-				var _v$7 = selected(row.id) ? text() : muted(), _v$8 = rowFg(row.state), _v$9 = selected(row.id) ? 1 : 0;
-				_v$7 !== _p$.e && (_p$.e = setProp(_el$55, "fg", _v$7, _p$.e));
-				_v$8 !== _p$.t && (_p$.t = setProp(_el$56, "fg", _v$8, _p$.t));
-				_v$9 !== _p$.a && (_p$.a = setProp(_el$56, "attributes", _v$9, _p$.a));
+				var _v$9 = selected(row.id) ? text() : muted(), _v$0 = rowFg(row.state), _v$1 = selected(row.id) ? 1 : 0;
+				_v$9 !== _p$.e && (_p$.e = setProp(_el$55, "fg", _v$9, _p$.e));
+				_v$0 !== _p$.t && (_p$.t = setProp(_el$56, "fg", _v$0, _p$.t));
+				_v$1 !== _p$.a && (_p$.a = setProp(_el$56, "attributes", _v$1, _p$.a));
 				return _p$;
 			}, {
 				e: void 0,
@@ -6766,10 +7204,10 @@ function DispatchPanel(props) {
 		setProp(_el$66, "height", 1);
 		insert(_el$67, () => model.footer());
 		effect((_p$) => {
-			var _v$0 = text(), _v$1 = muted(), _v$10 = muted();
-			_v$0 !== _p$.e && (_p$.e = setProp(_el$61, "fg", _v$0, _p$.e));
-			_v$1 !== _p$.t && (_p$.t = setProp(_el$62, "fg", _v$1, _p$.t));
-			_v$10 !== _p$.a && (_p$.a = setProp(_el$67, "fg", _v$10, _p$.a));
+			var _v$10 = text(), _v$11 = muted(), _v$12 = muted();
+			_v$10 !== _p$.e && (_p$.e = setProp(_el$61, "fg", _v$10, _p$.e));
+			_v$11 !== _p$.t && (_p$.t = setProp(_el$62, "fg", _v$11, _p$.t));
+			_v$12 !== _p$.a && (_p$.a = setProp(_el$67, "fg", _v$12, _p$.a));
 			return _p$;
 		}, {
 			e: void 0,

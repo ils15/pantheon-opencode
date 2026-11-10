@@ -105,6 +105,21 @@ describe('applyTuiRow', () => {
     assert.deepEqual(draft, DEFAULT_TUI_PREFS)
   })
 
+  it('supports bar shapes, widths, even-mark, and layout preset', () => {
+    const draft = structuredClone(DEFAULT_TUI_PREFS)
+    applyTuiRow(draft, 'tui.sidebar.context.barShape', 'dots')
+    applyTuiRow(draft, 'tui.sidebar.context.barWidth', 'wide')
+    applyTuiRow(draft, 'tui.sidebar.context.evenMark', 'enabled')
+    applyTuiRow(draft, 'tui.layout.preset', 'compact')
+    applyTuiRow(draft, 'tui.layout.separator', 'pipes')
+
+    assert.equal(tuiRowValue(draft, 'tui.sidebar.context.barShape'), 'dots')
+    assert.equal(tuiRowValue(draft, 'tui.sidebar.context.barWidth'), 'wide')
+    assert.equal(tuiRowValue(draft, 'tui.sidebar.context.evenMark'), 'enabled')
+    assert.equal(tuiRowValue(draft, 'tui.layout.preset'), 'compact')
+    assert.equal(tuiRowValue(draft, 'tui.layout.separator'), 'pipes')
+  })
+
   it('a full stage→apply round trip lands every staged value', () => {
     const draft = structuredClone(DEFAULT_TUI_PREFS)
     applyTuiRow(draft, 'tui.sidebar.block.todo', 'disabled')

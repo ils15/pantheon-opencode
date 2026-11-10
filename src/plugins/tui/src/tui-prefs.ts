@@ -58,15 +58,48 @@ export function mutateTuiPrefs(mutation: (draft: TuiPrefs) => void): Promise<voi
 export const GAUGE_STYLES: readonly string[] = Object.freeze(['both', 'bar', 'percent', 'off'])
 export const ENABLED_CYCLE: readonly string[] = Object.freeze(['enabled', 'disabled'])
 
+export const BAR_SHAPES_CYCLE: readonly string[] = Object.freeze([
+  'line',
+  'block',
+  'smooth',
+  'ascii',
+  'dots',
+  'braille',
+])
+export const BAR_WIDTHS_CYCLE: readonly string[] = Object.freeze([
+  'standard',
+  'compact',
+  'wide',
+  'full',
+])
+export const LAYOUT_PRESETS_CYCLE: readonly string[] = Object.freeze(['comfortable', 'compact'])
+export const SEPARATOR_STYLES_CYCLE: readonly string[] = Object.freeze([
+  'spaces',
+  'pipes',
+  'dots',
+  'slashes',
+])
+
 export type GaugeStyle = 'both' | 'bar' | 'percent' | 'off'
+export type BarShapePref = 'line' | 'block' | 'smooth' | 'ascii' | 'dots' | 'braille'
+export type BarWidthPref = 'standard' | 'compact' | 'wide' | 'full'
+export type LayoutPresetPref = 'comfortable' | 'compact'
+export type SeparatorStylePref = 'spaces' | 'pipes' | 'dots' | 'slashes'
 
 export interface TuiPrefs {
   version: 1
+  layout: {
+    preset: LayoutPresetPref
+    separator: SeparatorStylePref
+  }
   sidebar: {
     header: { version: boolean; preset: boolean; session: boolean }
     blocks: { context: boolean; git: boolean; todo: boolean; dispatch: boolean }
     context: {
       gauge: GaugeStyle
+      barShape: BarShapePref
+      barWidth: BarWidthPref
+      evenMark: boolean
       tokens: boolean
       spent: boolean
       modelUsage: boolean
@@ -79,11 +112,18 @@ export interface TuiPrefs {
 
 export const DEFAULT_TUI_PREFS: TuiPrefs = {
   version: 1,
+  layout: {
+    preset: 'comfortable',
+    separator: 'spaces',
+  },
   sidebar: {
     header: { version: true, preset: true, session: true },
     blocks: { context: true, git: true, todo: true, dispatch: true },
     context: {
       gauge: 'both',
+      barShape: 'line',
+      barWidth: 'standard',
+      evenMark: false,
       tokens: true,
       spent: true,
       modelUsage: true,
@@ -101,6 +141,9 @@ function asBool(value: unknown, fallback: boolean): boolean {
 /** Deep-merge stored JSON over the defaults; unknown keys and junk are ignored. */
 export function normalizeTuiPrefs(raw: unknown): TuiPrefs {
   const stored = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, any>
+  const layout = (
+    typeof stored.layout === 'object' && stored.layout !== null ? stored.layout : {}
+  ) as Record<string, any>
   const sidebar = (
     typeof stored.sidebar === 'object' && stored.sidebar !== null ? stored.sidebar : {}
   ) as Record<string, any>
@@ -116,11 +159,29 @@ export function normalizeTuiPrefs(raw: unknown): TuiPrefs {
   const footer = (
     typeof stored.footer === 'object' && stored.footer !== null ? stored.footer : {}
   ) as Record<string, any>
+  const preset = LAYOUT_PRESETS_CYCLE.includes(layout.preset as string)
+    ? (layout.preset as LayoutPresetPref)
+    : DEFAULT_TUI_PREFS.layout.preset
+  const separator = SEPARATOR_STYLES_CYCLE.includes(layout.separator as string)
+    ? (layout.separator as SeparatorStylePref)
+    : DEFAULT_TUI_PREFS.layout.separator
   const gauge = GAUGE_STYLES.includes(context.gauge as string)
     ? (context.gauge as GaugeStyle)
     : DEFAULT_TUI_PREFS.sidebar.context.gauge
+  const barShape = BAR_SHAPES_CYCLE.includes(context.barShape as string)
+    ? (context.barShape as BarShapePref)
+    : DEFAULT_TUI_PREFS.sidebar.context.barShape
+  const barWidth = BAR_WIDTHS_CYCLE.includes(context.barWidth as string)
+    ? (context.barWidth as BarWidthPref)
+    : DEFAULT_TUI_PREFS.sidebar.context.barWidth
+  const evenMark = asBool(context.evenMark, DEFAULT_TUI_PREFS.sidebar.context.evenMark)
+
   return {
     version: 1,
+    layout: {
+      preset,
+      separator,
+    },
     sidebar: {
       header: {
         version: asBool(header.version, true),
@@ -135,6 +196,9 @@ export function normalizeTuiPrefs(raw: unknown): TuiPrefs {
       },
       context: {
         gauge,
+        barShape,
+        barWidth,
+        evenMark,
         tokens: asBool(context.tokens, true),
         spent: asBool(context.spent, true),
         modelUsage: asBool(context.modelUsage, true),
@@ -165,6 +229,57 @@ export function buildTuiTab(prefs: TuiPrefs): SettingsTab {
     id: 'tui',
     title: 'TUI',
     groups: [
+      {
+        title: 'Preset & Layout',
+        rows: [
+          {
+            id: 'tui.layout.preset',
+            name: 'Layout preset',
+            value: prefs.layout.preset,
+            cycle: LAYOUT_PRESETS_CYCLE,
+            note: 'comfortable | compact — sets spacing & borders',
+          },
+          {
+            id: 'tui.layout.separator',
+            name: 'Separator',
+            value: prefs.layout.separator,
+            cycle: SEPARATOR_STYLES_CYCLE,
+            note: 'spaces | pipes | dots | slashes — status line glyphs',
+          },
+        ],
+      },
+      {
+        title: 'Bars & Gauges',
+        rows: [
+          {
+            id: 'tui.sidebar.context.barShape',
+            name: 'Bar shape',
+            value: prefs.sidebar.context.barShape,
+            cycle: BAR_SHAPES_CYCLE,
+            note: 'line (━─) | block (▰▱) | smooth (█░) | ascii (=) | dots (●○) | braille',
+          },
+          {
+            id: 'tui.sidebar.context.barWidth',
+            name: 'Bar width',
+            value: prefs.sidebar.context.barWidth,
+            cycle: BAR_WIDTHS_CYCLE,
+            note: 'standard (12) | compact (8) | wide (16) | full (20 cells)',
+          },
+          row(
+            'tui.sidebar.context.evenMark',
+            'Even-use mark',
+            prefs.sidebar.context.evenMark,
+            '| indicator at 50% midpoint in gauge bars',
+          ),
+          {
+            id: 'tui.sidebar.context.gauge',
+            name: 'Gauge style',
+            value: prefs.sidebar.context.gauge,
+            cycle: GAUGE_STYLES,
+            note: 'both | bar | percent | off — `▰▱ 42% of 200k`',
+          },
+        ],
+      },
       {
         title: 'Sidebar header',
         rows: [
@@ -220,13 +335,6 @@ export function buildTuiTab(prefs: TuiPrefs): SettingsTab {
       {
         title: 'Context block detail',
         rows: [
-          {
-            id: 'tui.sidebar.context.gauge',
-            name: 'Gauge style',
-            value: prefs.sidebar.context.gauge,
-            cycle: GAUGE_STYLES,
-            note: 'both | bar | percent | off — `▰▱ 42% of 200k`',
-          },
           row(
             'tui.sidebar.context.tokens',
             'Tokens row',
@@ -287,6 +395,22 @@ export function buildTuiTab(prefs: TuiPrefs): SettingsTab {
 export function applyTuiRow(draft: TuiPrefs, id: string, value: string): void {
   const enabled = value === 'enabled'
   switch (id) {
+    case 'tui.layout.preset':
+      if (LAYOUT_PRESETS_CYCLE.includes(value)) draft.layout.preset = value as LayoutPresetPref
+      return
+    case 'tui.layout.separator':
+      if (SEPARATOR_STYLES_CYCLE.includes(value))
+        draft.layout.separator = value as SeparatorStylePref
+      return
+    case 'tui.sidebar.context.barShape':
+      if (BAR_SHAPES_CYCLE.includes(value)) draft.sidebar.context.barShape = value as BarShapePref
+      return
+    case 'tui.sidebar.context.barWidth':
+      if (BAR_WIDTHS_CYCLE.includes(value)) draft.sidebar.context.barWidth = value as BarWidthPref
+      return
+    case 'tui.sidebar.context.evenMark':
+      draft.sidebar.context.evenMark = enabled
+      return
     case 'tui.sidebar.header.version':
       draft.sidebar.header.version = enabled
       return
@@ -337,9 +461,15 @@ export function applyTuiRow(draft: TuiPrefs, id: string, value: string): void {
   }
 }
 
-/** Read the current pref value for a row id ('enabled'/'disabled'/gauge). */
+/** Read the current pref value for a row id ('enabled'/'disabled'/gauge/custom). */
 export function tuiRowValue(prefs: TuiPrefs, id: string): string | undefined {
+  if (id === 'tui.layout.preset') return prefs.layout.preset
+  if (id === 'tui.layout.separator') return prefs.layout.separator
+  if (id === 'tui.sidebar.context.barShape') return prefs.sidebar.context.barShape
+  if (id === 'tui.sidebar.context.barWidth') return prefs.sidebar.context.barWidth
   if (id === 'tui.sidebar.context.gauge') return prefs.sidebar.context.gauge
+  if (id === 'tui.sidebar.context.evenMark')
+    return prefs.sidebar.context.evenMark ? 'enabled' : 'disabled'
   const enabled = (() => {
     switch (id) {
       case 'tui.sidebar.header.version':

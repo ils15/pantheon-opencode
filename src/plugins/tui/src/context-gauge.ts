@@ -6,6 +6,29 @@ export const CONTEXT_BAR_CELLS = 12
 export const CONTEXT_BAR_FILLED_CELL = '\u25B0'
 export const CONTEXT_BAR_EMPTY_CELL = '\u25B1'
 
+export type BarShape = 'block' | 'line' | 'smooth' | 'ascii' | 'dots' | 'braille'
+
+export interface BarShapeGlyphs {
+  filled: string
+  empty: string
+  mark?: string
+}
+
+export const BAR_SHAPES: Record<BarShape, BarShapeGlyphs> = {
+  block: { filled: '\u25B0', empty: '\u25B1', mark: '│' },
+  line: { filled: '━', empty: '─', mark: '┼' },
+  smooth: { filled: '█', empty: '░', mark: '┆' },
+  ascii: { filled: '=', empty: '-', mark: '|' },
+  dots: { filled: '●', empty: '○', mark: '│' },
+  braille: { filled: '⣿', empty: '⣀', mark: '⡇' },
+}
+
+export interface ContextBarOptions {
+  cells?: number
+  shape?: BarShape
+  evenMark?: boolean
+}
+
 function numberOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
@@ -40,15 +63,51 @@ export function contextBarFilled(percent: number, cells = CONTEXT_BAR_CELLS): nu
 
 export function contextBar(
   percent: number | null | undefined,
-  cells = CONTEXT_BAR_CELLS,
+  options: number | ContextBarOptions = CONTEXT_BAR_CELLS,
 ): { filled: string; empty: string } | null {
   const value = numberOrNull(percent)
   if (value === null) return null
-  const total = Math.max(1, Math.floor(cells))
-  const filled = contextBarFilled(value, total)
+  const total = Math.max(
+    1,
+    Math.floor(typeof options === 'number' ? options : (options?.cells ?? CONTEXT_BAR_CELLS)),
+  )
+  const shapeKey =
+    typeof options === 'object' && options?.shape && options.shape in BAR_SHAPES
+      ? options.shape
+      : 'block'
+  const glyphs = BAR_SHAPES[shapeKey] ?? BAR_SHAPES.block
+  const evenMark = typeof options === 'object' ? Boolean(options?.evenMark) : false
+
+  const filledCount = contextBarFilled(value, total)
+  const emptyCount = total - filledCount
+
+  if (!evenMark || total < 4) {
+    return {
+      filled: glyphs.filled.repeat(filledCount),
+      empty: glyphs.empty.repeat(emptyCount),
+    }
+  }
+
+  // Insert even-use mark at the midpoint (50%)
+  const mid = Math.floor(total / 2)
+  const mark = glyphs.mark ?? '|'
+
+  if (filledCount <= mid) {
+    // Mark is in the empty portion
+    const emptyBefore = mid - filledCount
+    const emptyAfter = Math.max(0, emptyCount - emptyBefore - 1)
+    return {
+      filled: glyphs.filled.repeat(filledCount),
+      empty: `${glyphs.empty.repeat(emptyBefore)}${mark}${glyphs.empty.repeat(emptyAfter)}`,
+    }
+  }
+
+  // Mark is in the filled portion
+  const filledBefore = mid
+  const filledAfter = Math.max(0, filledCount - filledBefore - 1)
   return {
-    filled: CONTEXT_BAR_FILLED_CELL.repeat(filled),
-    empty: CONTEXT_BAR_EMPTY_CELL.repeat(total - filled),
+    filled: `${glyphs.filled.repeat(filledBefore)}${mark}${glyphs.filled.repeat(filledAfter)}`,
+    empty: glyphs.empty.repeat(emptyCount),
   }
 }
 

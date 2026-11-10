@@ -12,6 +12,7 @@ import type { Context, KeymapLayer, PanelInput } from '@opencode/plugin/tui/cont
 import type { Accessor, JSX } from 'solid-js'
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from 'solid-js'
 import {
+  CONTEXT_BAR_CELLS,
   type ContextProgressTone,
   contextBar,
   contextUsageTone,
@@ -693,6 +694,7 @@ export function contextBlockRows(
   usage: ContextUsage | null,
   cost: number | null | undefined,
   gaugeStyle: 'both' | 'bar' | 'percent' | 'off' = 'both',
+  barOptions?: number | { shape?: any; cells?: number; evenMark?: boolean },
 ): ContextBlockRows | null {
   const spentValue = formatSpent(cost)
   const spent: ContextRow | null =
@@ -709,7 +711,7 @@ export function contextBlockRows(
 
   const percentValue = numberOrNull(usage.percent)
   const window = formatContextWindow(usage.limit)
-  const bar = contextBar(percentValue)
+  const bar = contextBar(percentValue, barOptions ?? CONTEXT_BAR_CELLS)
   let percent: ContextRow | null = null
   if (gaugeStyle !== 'off' && bar !== null && percentValue !== null) {
     const suffix = window === null ? null : ` of ${window}`
@@ -4025,7 +4027,19 @@ function Sidebar(props: SidebarProps): JSX.Element {
   // host store, so a flip in /pantheon-settings re-renders here instantly).
   const contextRows = () => {
     const prefs = tuiPrefs()
-    const rows = contextBlockRows(model.contextUsage(), model.cost(), prefs.sidebar.context.gauge)
+    const barCells =
+      prefs.sidebar.context.barWidth === 'compact'
+        ? 8
+        : prefs.sidebar.context.barWidth === 'wide'
+          ? 16
+          : prefs.sidebar.context.barWidth === 'full'
+            ? 20
+            : 12
+    const rows = contextBlockRows(model.contextUsage(), model.cost(), prefs.sidebar.context.gauge, {
+      shape: prefs.sidebar.context.barShape,
+      cells: barCells,
+      evenMark: prefs.sidebar.context.evenMark,
+    })
     if (rows === null) return null
     return {
       tokens: prefs.sidebar.context.tokens ? rows.tokens : null,
@@ -4053,10 +4067,18 @@ function Sidebar(props: SidebarProps): JSX.Element {
   // session each drop independently; nothing reflows — the column just shortens.
   const header = () => tuiPrefs().sidebar.header
   return (
-    <box flexDirection="column" width="100%" padding={1}>
+    <box
+      flexDirection="column"
+      width="100%"
+      paddingLeft={1}
+      paddingRight={1}
+      paddingTop={tuiPrefs().layout.preset === 'compact' ? 0 : 1}
+      paddingBottom={tuiPrefs().layout.preset === 'compact' ? 0 : 1}
+    >
       <Show when={header().version}>
         <text fg={text()} attributes={1}>{`Pantheon v${__PANTHEON_VERSION__}`}</text>
       </Show>
+
       {/* Preset plus the provider of the model in use — both derived from host
           state. The provider is dropped when nothing resolves, so the row is
           never a placeholder. */}

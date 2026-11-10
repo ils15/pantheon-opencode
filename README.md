@@ -182,16 +182,21 @@ see [Quick Start](docs/QUICKSTART.md).
     `.pantheon/active-preset.json` wins and shows read-only.
   - **J1 Risk Gate** — ladder mode/threshold status; env-only config
     (`PANTHEON_J1_*`), read at startup, never written here.
-  - **Updates** — channel and a `Check now` registry probe for the running
-    channel; adopt with `pantheon-opencode update`.
+  - **Changelog** — browse release highlights and What's New notes directly inside
+    the settings window, with references to CHANGELOG.md and GitHub repository.
+  - **Updates** — channel selection (`stable` vs `beta`), registry checking, and an
+    in-window `Update now` action alongside CLI upgrade commands (`pantheon-opencode update`).
   - **Doctor** — file-derived health: install-version drift, Node floor,
     overrides and decision-config validation. The full check (MCP smoke,
     venv pins, git) remains `pantheon-opencode doctor`.
-  - **TUI** — personalize this window's surroundings: sidebar header lines
-    and blocks (context/git/todo/dispatch), the Context block's detail rows
-    and gauge style (`both/bar/percent/off`), and the two Pantheon footer
-    lines. Stored in the host's durable per-plugin storage — changes apply
-    live (the sidebar re-renders on save) and survive TUI restarts.
+  - **TUI** — personalize the UI and sidebar aesthetics across OpenCode Desktop and CLI:
+    - *Layout preset*: `comfortable` or `compact` spacing and borders.
+    - *Separator*: `spaces`, `pipes`, `dots`, or `slashes` for status lines.
+    - *Bar shape*: `line` (`━─`), `block` (`▰▱`), `smooth` (`█░`), `ascii` (`=-`), `dots` (`●○`), or `braille` (`⣿⣀`).
+    - *Bar width*: `standard` (12), `compact` (8), `wide` (16), or `full` (20 cells).
+    - *Even-use mark*: toggleable midpoint indicator (`|`) at 50% in gauge bars.
+    - *Header, blocks & details*: toggle version/preset/session rows, context/git/todo/dispatch blocks, tokens/spend/speed rows, and gauge style (`both`/`bar`/`percent`/`off`).
+    Stored in durable per-plugin storage; changes apply live without restarting.
 
   The installer selects the `plugins` component by default; in interactive
   setup you can change the component selection. A component-scoped install
