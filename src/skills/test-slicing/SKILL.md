@@ -32,6 +32,16 @@ description: "Targeted test execution — map changed files directly to their na
 
 ---
 
+## Lint-First Fast Gate (< 50ms)
+
+Before launching the test runner (which requires 1–5s of process bootstrapping and environment initialization), run a static syntax/linter check on the modified file:
+- **Python:** `ruff check <file>` (~20ms)
+- **TypeScript / JavaScript:** `npx biome check <file>` (~30ms) or `tsc --noEmit`
+
+Catching syntax errors, missing imports, and broken brackets at the lint gate saves up to 80% of test loop latency and avoids test runner crashes.
+
+---
+
 ## Execution Guardrails
 
 1. **Timeout Budget:** A sliced check must complete in < 10 seconds. If a test hangs or takes > 30s, abort immediately and check background task/locks.

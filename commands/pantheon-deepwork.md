@@ -30,10 +30,15 @@ Phase 1: DISCOVERY
 
 Phase 2-N: IMPLEMENTATION (parallel per phase)
   └─ @hermes, @aphrodite, @demeter, @hephaestus, @prometheus
+  └─ Concurrent Isolation: For 2+ specialists running in parallel, allocate isolated git worktrees via `worktrees` skill:
+     `<project-parent>/.pantheon-worktrees/<repo>/deepwork-<slug>-<agent>`
+     (prevents file collisions, race conditions, and test runner port conflicts)
   └─ Output: IMPL-phase-<N>-<agent>.md
 
 GATE after each phase:
-  └─ @themis reviews output → FAIL (fix + resubmit) or PASS (continue)
+  └─ @themis reviews output:
+     • PASS: Merge worktree/branch, update STATUS.md, advance to next phase.
+     • FAIL: Halt advancement. Revert broken edits to phase boundary or dispatch targeted fix subtask to responsible specialist. Never advance on FAIL.
 
 Phase FINAL: VERIFICATION
   └─ @themis full integration review → REVIEW.md
