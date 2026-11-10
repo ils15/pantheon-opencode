@@ -228,6 +228,12 @@ jobs:
           OPENCODE_DB: ${{ runner.temp }}/pantheon-sandbox-v2/opencode.db
           PANTHEON_V2_PORT: '49376'
           PORT: '49376'
+          # Pinned to a KNOWN-GOOD host: the unpinned @latest broke the MCP
+          # handshake when @opencode/cli 2.2.6 shipped (field evidence — the
+          # sandbox waited 60s and never saw five registrations). Bump this
+          # pin deliberately after validating the new host, like the release
+          # matrix does.
+          OPENCODE_V2_SPEC: '@opencode/cli@2.2.5'
         run: |
           set -euo pipefail
           mkdir -p "$PANTHEON_SANDBOX_ROOT"
