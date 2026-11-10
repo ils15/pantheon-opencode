@@ -527,7 +527,7 @@ function metadataGate(options) {
     throw new Error(`--version ${options.version} does not match package.json`)
   }
   const stable = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
-  const beta = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-beta\.[1-9]\d*$/
+  const beta = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-(?:beta|rc)\.[1-9]\d*$/
   if (!['stable', 'beta'].includes(options.channel)) {
     throw new Error(`unknown channel ${options.channel}`)
   }
@@ -535,7 +535,7 @@ function metadataGate(options) {
     throw new Error(`stable channel requires X.Y.Z, found ${options.version}`)
   }
   if (options.channel === 'beta' && !beta.test(options.version)) {
-    throw new Error(`beta channel requires X.Y.Z-beta.N, found ${options.version}`)
+    throw new Error(`beta channel requires X.Y.Z-beta.N or X.Y.Z-rc.N, found ${options.version}`)
   }
   const checks = [
     run('version-manifests', 'node', ['scripts/version-check.mjs']),
