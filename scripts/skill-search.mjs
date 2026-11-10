@@ -220,10 +220,26 @@ export function searchGithubSkills(query, { limit = DEFAULT_LIMIT, spawn = spawn
  */
 export const SKILL_SEARCH_SOURCES = Object.freeze(['anthropic', 'skills-sh', 'github'])
 
+const SEARCH_CACHE = new Map()
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000 // 24 hours
+
 export function searchSkillSources(
   query,
   { limit = DEFAULT_LIMIT, owner, sources = SKILL_SEARCH_SOURCES, spawn = spawnSync } = {},
 ) {
+  const cacheKey = JSON.stringify({
+    query: String(query).toLowerCase().trim(),
+    limit,
+    owner,
+    sources,
+  })
+  if (spawn === spawnSync && SEARCH_CACHE.has(cacheKey)) {
+    const cached = SEARCH_CACHE.get(cacheKey)
+    if (Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      return cached.result
+    }
+  }
+
   const perTier = Math.max(1, Math.ceil(limit / sources.length))
   const out = []
   const failures = []
@@ -259,7 +275,15 @@ export function searchSkillSources(
     if (tier !== 0) return tier
     return installsWeight(left) - installsWeight(right)
   })
-  return { ok: failures.length < sources.length, entries: out.slice(0, limit), failures }
+  const finalResult = {
+    ok: failures.length < sources.length,
+    entries: out.slice(0, limit),
+    failures,
+  }
+  if (spawn === spawnSync && finalResult.ok) {
+    SEARCH_CACHE.set(cacheKey, { timestamp: Date.now(), result: finalResult })
+  }
+  return finalResult
 }
 
 function main(args = process.argv.slice(2)) {
