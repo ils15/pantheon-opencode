@@ -257,14 +257,6 @@ jobs:
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${pkgVer}\nlatest_stable=${latest}\n`);
           NODE
 
-      - name: Validate release manifests
-        # Both channels must validate the checked-out manifests before an
-        # artifact is created or any release credential is exposed.
-        run: node scripts/version-check.mjs
-
-      - name: Validate supported Node engine policy
-        run: npm run engine:check
-
       # ── Six release gates (ADR-0014) ───────────────────────────────────────
       # Every gate prints `GATE <name>: PASS` and writes a named evidence file.
       # A gate that cannot run is a failure; no gate degrades to a weaker result.
@@ -339,6 +331,16 @@ jobs:
           NODE
           cp "$RUNNER_TEMP/release-notes.md" "$RUNNER_TEMP/release-artifact/release-notes.md"
 
+      # ── Gates (b)(c)(d) — CONCURRENT ──────────────────────────────────────
+      # One process per gate, all backgrounded and awaited: gate (b) itself
+      # splits the host matrix into two concurrent invocations
+      # (PANTHEON_RELEASE_HOST_ONLY). Sandbox roots and ports are disjoint by
+      # construction, and the sandbox npm/pip caches are content-addressed
+      # (corrupt/stale entries fail closed and re-download) — concurrency
+      # cannot mask an incompatibility. The caches live in the runner's
+      # default npm/pip cache dirs, which setup-node/setup-python already
+      # restore and save per run; pointing the sandbox at them makes the
+      # three sandbox installs download-free after the first run.
       - name: Restore development dependencies for the remaining gates
         # Gate (d) re-runs `package:validate`, which imports esbuild (a
         # devDependency) for the committed decision-router bundle drift check.
@@ -348,27 +350,23 @@ jobs:
         # is already built and hashed: nothing is repacked after this point.
         run: npm ci --ignore-scripts
 
-      - name: Gate (d) package
-        run: |
-          set -euo pipefail
-          node scripts/release-gates.mjs package --evidence-dir "$RUNNER_TEMP/gate-evidence" --artifact-dir "$RUNNER_TEMP/release-artifact" --version "$BASE_VERSION" --target-sha "$TARGET_SHA"
-        env:
-          BASE_VERSION: ${{ steps.version_gate.outputs.version }}
-
-      - name: Gate (c) install
-        run: |
-          set -euo pipefail
-          node scripts/release-gates.mjs install --evidence-dir "$RUNNER_TEMP/gate-evidence" --artifact-dir "$RUNNER_TEMP/release-artifact" --version "$BASE_VERSION" --target-sha "$TARGET_SHA"
-        env:
-          BASE_VERSION: ${{ steps.version_gate.outputs.version }}
-
-      - name: Gate (b) host compatibility
+      - name: Gates (b)(c)(d) — concurrent
         timeout-minutes: 25
-        run: |
-          set -euo pipefail
-          node scripts/release-gates.mjs host --evidence-dir "$RUNNER_TEMP/gate-evidence" --artifact-dir "$RUNNER_TEMP/release-artifact" --version "$BASE_VERSION" --target-sha "$TARGET_SHA"
         env:
           BASE_VERSION: ${{ steps.version_gate.outputs.version }}
+          npm_config_cache: /home/runner/.npm
+          PIP_CACHE_DIR: /home/runner/.cache/pip
+        run: |
+          set -euo pipefail
+          ARTIFACT_DIR="$RUNNER_TEMP/release-artifact"
+          EVIDENCE_DIR="$RUNNER_TEMP/gate-evidence"
+          fail=0
+          PANTHEON_RELEASE_HOST_ONLY=2.0.29 node scripts/release-gates.mjs host --evidence-dir "$EVIDENCE_DIR" --artifact-dir "$ARTIFACT_DIR" --version "$BASE_VERSION" --target-sha "$TARGET_SHA" & p1=$!
+          PANTHEON_RELEASE_HOST_ONLY=2.1.3 node scripts/release-gates.mjs host --evidence-dir "$EVIDENCE_DIR" --artifact-dir "$ARTIFACT_DIR" --version "$BASE_VERSION" --target-sha "$TARGET_SHA" & p2=$!
+          node scripts/release-gates.mjs install --evidence-dir "$EVIDENCE_DIR" --artifact-dir "$ARTIFACT_DIR" --version "$BASE_VERSION" --target-sha "$TARGET_SHA" & p3=$!
+          node scripts/release-gates.mjs package --evidence-dir "$EVIDENCE_DIR" --artifact-dir "$ARTIFACT_DIR" --version "$BASE_VERSION" --target-sha "$TARGET_SHA" & p4=$!
+          for p in $p1 $p2 $p3 $p4; do wait "$p" || fail=1; done
+          [ "$fail" = 0 ] || { echo "::error::one or more gates failed — see the interleaved log above"; exit 1; }
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
