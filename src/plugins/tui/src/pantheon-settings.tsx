@@ -376,7 +376,6 @@ export function SettingsWindow(props: {
   warn?: any
 }) {
   const tab = () => props.tabs()[props.page()] ?? props.tabs()[0] ?? EMPTY_TAB
-  const rows = () => tabRows(tab())
   return (
     <box flexDirection="column" paddingLeft={1} paddingRight={1} paddingTop={1}>
       <box flexDirection="row">
