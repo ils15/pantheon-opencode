@@ -8,10 +8,13 @@ import {
   DECISION_ROUTER_PROVIDERS,
 } from '../scripts/install/decision-router-config.mjs'
 import {
+  applyDecisionRow,
   buildDecisionTab,
   DECISION_CONFIG_KEYS,
   DECISION_CONFIG_SCHEMA_VERSION,
+  DECISION_KNOWN_MODELS,
   DECISION_KNOWN_PROVIDERS,
+  DECISION_PROVIDER_CREDENTIALS,
   DEFAULT_DECISION_CONFIG,
   isValidDecisionConfig,
   readDecisionRouterConfig,
@@ -209,5 +212,80 @@ describe('decision section rows', () => {
     assert.equal(corruptRow.cycle, undefined, 'no staging on a corrupt file')
     assert.match(corruptRow.note, /fail-closes/)
     assert.match(corruptRow.note, /setup-model/)
+  })
+})
+
+
+describe('selection / consent staging (applyDecisionRow)', () => {
+  it('selection.mode stages local (candidates cleared) and explicit (candidates set)', () => {
+    const remote = {
+      ...structuredClone(DEFAULT_DECISION_CONFIG),
+      selection: { mode: 'explicit', provider: 'cloudflare-workers-jev', model: 'clef' },
+      enabled_candidates: [{ provider: 'cloudflare-workers-jev', model: 'clef' }],
+    }
+    const local = applyDecisionRow(remote, 'decision.selection.mode', 'local')
+    assert.equal(local.selection.mode, 'local')
+    assert.deepEqual(local.enabled_candidates, [], 'local clears candidates')
+    const auto = applyDecisionRow(local, 'decision.selection.mode', 'auto')
+    assert.equal(auto.selection.mode, 'auto')
+    assert.equal(isValidDecisionConfig(auto), true)
+  })
+
+  it('selection.target stages the explicit provider/model pair + candidate', () => {
+    const next = applyDecisionRow(structuredClone(DEFAULT_DECISION_CONFIG), 'decision.selection.target', 'typesafe-jev/jev-1.14.0')
+    assert.deepEqual(next.selection, { mode: 'explicit', provider: 'typesafe-jev', model: 'jev-1.14.0' })
+    assert.deepEqual(next.enabled_candidates, [{ provider: 'typesafe-jev', model: 'jev-1.14.0' }])
+    assert.equal(isValidDecisionConfig(next), true)
+  })
+
+  it('target refuses unknown providers and wrong model pairs (fail-closed)', () => {
+    const base = structuredClone(DEFAULT_DECISION_CONFIG)
+    assert.equal(applyDecisionRow(base, 'decision.selection.target', 'bogus/jev-9'), base, 'unknown provider')
+    assert.equal(applyDecisionRow(base, 'decision.selection.target', 'typesafe-jev/WRONG'), base, 'wrong model')
+  })
+
+  it('consent stages granted/not-granted without touching anything else', () => {
+    const next = applyDecisionRow(structuredClone(DEFAULT_DECISION_CONFIG), 'decision.consent', 'granted')
+    assert.equal(next.egress_consent, true)
+    assert.equal(next.enabled, false, 'consent alone never enables the router')
+    const off = applyDecisionRow(next, 'decision.consent', 'not granted')
+    assert.equal(off.egress_consent, false)
+  })
+
+  it('unknown rows are no-ops', () => {
+    const base = structuredClone(DEFAULT_DECISION_CONFIG)
+    assert.equal(applyDecisionRow(base, 'decision.bogus', 'x'), base)
+  })
+})
+
+describe('credential status surface', () => {
+  it('drift pins the env var names against the installer/runtime sources', () => {
+    const installer = readFileSync(new URL('../scripts/decision-router.mjs', import.meta.url), 'utf8')
+    assert.ok(installer.includes('TYPESAFE_API_KEY'), 'TYPESAFE_API_KEY drifted')
+    assert.equal(DECISION_PROVIDER_CREDENTIALS['typesafe-jev'].env, 'TYPESAFE_API_KEY')
+    assert.ok(installer.includes('OPENROUTER_API_KEY'), 'OPENROUTER_API_KEY drifted')
+    assert.equal(DECISION_PROVIDER_CREDENTIALS['openrouter-jev'].env, 'OPENROUTER_API_KEY')
+    assert.ok(installer.includes('AI_GATEWAY_API_KEY'), 'AI_GATEWAY_API_KEY drifted')
+    assert.equal(DECISION_PROVIDER_CREDENTIALS['vercel-gateway-jev'].env, 'AI_GATEWAY_API_KEY')
+    assert.ok(installer.includes('CLOUDFLARE_API_TOKEN'), 'CLOUDFLARE_API_TOKEN drifted')
+    assert.equal(DECISION_PROVIDER_CREDENTIALS['cloudflare-workers-jev'].env, 'CLOUDFLARE_API_TOKEN')
+  })
+
+  it('console-jev rides the login (no env) — never invents a key var', () => {
+    assert.equal(DECISION_PROVIDER_CREDENTIALS['opencode-console-jev'].env, undefined)
+    assert.match(DECISION_PROVIDER_CREDENTIALS['opencode-console-jev'].note, /OpenCode login/)
+  })
+
+  it('the tab renders SET/MISSING from the injected env, never values', () => {
+    const tab = buildDecisionTab({ config: structuredClone(DEFAULT_DECISION_CONFIG), corrupt: false }, {
+      TYPESAFE_API_KEY: 'sk-secret-should-never-appear',
+    })
+    const rows = tab.groups.flatMap((g) => g.rows)
+    const typesafe = rows.find((row) => row.id === 'decision.key.typesafe-jev')
+    assert.equal(typesafe.value, 'set')
+    const missing = rows.find((row) => row.id === 'decision.key.openrouter-jev')
+    assert.equal(missing.value, 'MISSING')
+    const whole = JSON.stringify(tab)
+    assert.doesNotMatch(whole, /sk-secret-should-never-appear/, 'key values NEVER enter the window')
   })
 })

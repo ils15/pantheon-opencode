@@ -70,6 +70,41 @@ export const DECISION_KNOWN_PROVIDERS: readonly string[] = Object.freeze([
   'cloudflare-workers-jev',
 ])
 
+export const DECISION_CONSENT_CYCLE: readonly string[] = Object.freeze(['not granted', 'granted'])
+/** provider → model, straight from the runtime matrix (drift-pinned in tests). */
+export const DECISION_KNOWN_MODELS: Readonly<Record<string, string>> = Object.freeze({
+  'openai-decisions': 'gpt-6-luna',
+  'typesafe-jev': 'jev-1.14.0',
+  'opencode-console-jev': 'jev-1.13',
+  'openrouter-jev': 'typesafe/jev-1.13',
+  'vercel-gateway-jev': 'typesafe-ai/jev',
+  'cloudflare-workers-jev': 'clef',
+})
+
+/**
+ * Credential surface per provider: the ENV VAR the host provider entry reads
+ * (`{env:VAR}` indirection — the window NEVER holds key values) plus the setup
+ * note. Drift-pinned against the installer/runtime sources in tests.
+ */
+export const DECISION_PROVIDER_CREDENTIALS: Readonly<Record<string, { env?: string; note: string }>> =
+  Object.freeze({
+    'openai-decisions': {
+      note: 'host-configured model — provision via `decision-router setup-model openai-decisions`',
+    },
+    'typesafe-jev': { env: 'TYPESAFE_API_KEY', note: 'export TYPESAFE_API_KEY=… then restart' },
+    'opencode-console-jev': { note: 'rides your OpenCode login — no separate key' },
+    'openrouter-jev': { env: 'OPENROUTER_API_KEY', note: 'export OPENROUTER_API_KEY=… then restart' },
+    'vercel-gateway-jev': { env: 'AI_GATEWAY_API_KEY', note: 'export AI_GATEWAY_API_KEY=… then restart' },
+    'cloudflare-workers-jev': {
+      env: 'CLOUDFLARE_API_TOKEN',
+      note: 'needs accountId (setup-model --account-id=…) + CLOUDFLARE_API_TOKEN',
+    },
+  })
+
+export const DECISION_TARGET_CYCLE: readonly string[] = Object.freeze(
+  DECISION_KNOWN_PROVIDERS.map((provider) => `${provider}/${DECISION_KNOWN_MODELS[provider]}`),
+)
+
 export function decisionRouterConfigPath(env: Record<string, string | undefined> = process.env) {
   const xdg = env.XDG_CONFIG_HOME
   const home = env.HOME ?? ''
@@ -182,7 +217,7 @@ export function setDecisionEnabled(
     if (!localOnly && !config.egress_consent) {
       return {
         ok: false,
-        reason: 'remote candidates need egress consent — grant via `decision-router setup-model`',
+        reason: 'remote candidates need egress consent — toggle Egress consent in this tab, then enable',
       }
     }
   }
@@ -205,7 +240,55 @@ export function writeDecisionRouterConfig(
   chmodSync(path, 0o600)
 }
 
-export function buildDecisionTab(read: DecisionConfigRead): SettingsTab {
+export const DECISION_SELECTION_CYCLE: readonly string[] = Object.freeze([
+  'local',
+  'auto',
+  'explicit',
+])
+
+/** Stage a selection/consent row into a config copy; unknown rows are no-ops. */
+export function applyDecisionRow(
+  config: DecisionRouterConfig,
+  id: string,
+  value: string,
+): DecisionRouterConfig {
+  const next: DecisionRouterConfig = {
+    ...config,
+    selection: { ...config.selection },
+    enabled_candidates: [...config.enabled_candidates],
+  }
+  switch (id) {
+    case 'decision.selection.mode': {
+      const mode = value as DecisionSelectionMode
+      if (mode !== 'local' && mode !== 'auto' && mode !== 'explicit') return config
+      next.selection.mode = mode
+      if (mode === 'local') next.enabled_candidates = []
+      return next
+    }
+    case 'decision.selection.target': {
+      const separator = value.indexOf('/')
+      if (separator <= 0) return config
+      const provider = value.slice(0, separator)
+      const model = value.slice(separator + 1)
+      if (!DECISION_KNOWN_PROVIDERS.includes(provider)) return config
+      if (DECISION_KNOWN_MODELS[provider] !== model) return config
+      next.selection = { mode: 'explicit', provider, model }
+      next.enabled_candidates = [{ provider, model }]
+      return next
+    }
+    case 'decision.consent': {
+      next.egress_consent = value === 'granted'
+      return next
+    }
+    default:
+      return config
+  }
+}
+
+export function buildDecisionTab(
+  read: DecisionConfigRead,
+  env: Record<string, string | undefined> = process.env,
+): SettingsTab {
   const { config, corrupt } = read
   const rows: SettingsRow[] = [
     {
@@ -219,12 +302,24 @@ export function buildDecisionTab(read: DecisionConfigRead): SettingsTab {
         : 'applies live — the runtime re-reads this on every gated call',
     },
     {
-      id: 'decision.selection',
-      name: 'Selection',
-      value: `${config.selection.mode}${config.selection.provider ? ` · ${config.selection.provider}` : ''}`,
+      id: 'decision.selection.mode',
+      name: 'Selection mode',
+      value: config.selection.mode,
+      ...(corrupt ? {} : { cycle: DECISION_SELECTION_CYCLE }),
       note: 'local routes on-device; auto/explicit pick a remote decision model',
     },
   ]
+  if (config.selection.mode === 'explicit' || config.selection.provider !== undefined) {
+    rows.push({
+      id: 'decision.selection.target',
+      name: 'Explicit target',
+      value: config.selection.provider
+        ? `${config.selection.provider}/${config.selection.model ?? ''}`
+        : 'none',
+      ...(corrupt || config.selection.mode !== 'explicit' ? {} : { cycle: DECISION_TARGET_CYCLE }),
+      note: 'provider/model — sets the candidate list',
+    })
+  }
   if (config.enabled_candidates.length > 0) {
     rows.push({
       id: 'decision.candidates',
@@ -237,9 +332,32 @@ export function buildDecisionTab(read: DecisionConfigRead): SettingsTab {
         : 'egress consent NOT granted — remote routes fail closed',
     })
   }
+  rows.push({
+    id: 'decision.consent',
+    name: 'Egress consent',
+    value: config.egress_consent ? 'granted' : 'not granted',
+    ...(corrupt ? {} : { cycle: DECISION_CONSENT_CYCLE }),
+    note: 'granted = remote decision routes may call their gateway (budget-capped)',
+  })
   return {
     id: 'decision',
     title: 'Decision',
-    groups: [{ title: 'Decision router', rows }],
+    groups: [
+      { title: 'Decision router', rows },
+      {
+        title: 'Credentials (status only — values never enter the window)',
+        rows: DECISION_KNOWN_PROVIDERS.map((provider) => {
+          const credential = DECISION_PROVIDER_CREDENTIALS[provider] ?? { note: '' }
+          const isSet =
+            credential.env === undefined ? true : Boolean(env[credential.env])
+          return {
+            id: `decision.key.${provider}`,
+            name: provider,
+            value: credential.env === undefined ? 'n/a' : isSet ? 'set' : 'MISSING',
+            note: credential.note,
+          }
+        }),
+      },
+    ],
   }
 }
