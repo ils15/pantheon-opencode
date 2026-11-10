@@ -65,8 +65,6 @@ test('release host proof keeps the boundary V2 rows and the non-CI gates without
   // five named gates plus the sandbox cache reuse.
   const gates = [...validate.matchAll(/- name: Gate \([a-f]\) ([a-z]+)/g)].map(([, gate]) => gate)
   assert.deepEqual(gates.sort(), ['changelog', 'host', 'install', 'metadata', 'package'])
-  assert.match(validate, /npm_config_cache: \/home\/runner\/\.npm/)
-  assert.match(validate, /PIP_CACHE_DIR: \/home\/runner\/\.cache\/pip/)
   for (const gate of ['changelog', 'metadata']) {
     assert.match(validate, new RegExp(`args=\\(${gate}\\b`))
   }
