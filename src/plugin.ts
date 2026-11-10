@@ -138,8 +138,8 @@ import {
   v2ResourceTarget,
 } from './pantheon/delegation-policy.ts'
 import { createV2ExecuteAfter, resolveV2SandboxConfig } from './pantheon/execute-after.ts'
-import { GoalStore } from './pantheon/goal-store.ts'
 import { resolveGoalLoopConfig } from './pantheon/goal-loop-config.ts'
+import { GoalStore } from './pantheon/goal-store.ts'
 import { createGuardPathResolver } from './pantheon/guard-path.ts'
 import { runSecretScanInProcess } from './pantheon/hook-engine.ts'
 import { createJTelemetryMirror } from './pantheon/j-telemetry-file.ts'
@@ -1356,9 +1356,6 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
   // prompt cache and has no measured cost baseline. The compaction site below
   // applies the rules unconditionally.
   const prunerConfig = resolveContextPrunerConfig(context.options)
-  // The Goal Loop (Wave 3 mechanics) becomes user-reachable: `goal_loop` in
-  // the V2 config copy enables it — same read pattern as context_pruner.
-  const goalLoopConfig = resolveGoalLoopConfig(context.options)
 
   let registered = false
 
@@ -2853,6 +2850,8 @@ export const plugin = define({
               // Observation must never reach the compaction request.
             }
             const prunerConfig = resolveContextPrunerConfig(context.options)
+            // The Goal Loop caps ride the same read: cooldown/continuations
+            // are enforced by the loop mechanics when enabled (goal-store).
             const goalLoopConfig = resolveGoalLoopConfig(context.options)
             loadRuntimeOverrides()
             if (gateDisabled('gate-context-pruner')) {
