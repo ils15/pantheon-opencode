@@ -14,6 +14,7 @@
  * @module pantheon/skill-search-tool
  */
 
+// @ts-expect-error scripts/skill-search.mjs is a plain Node ESM script without bundled .d.ts
 import { searchSkillSources } from '../../scripts/skill-search.mjs'
 import { PANTHEON_SKILL_CATALOG } from './pantheon-decision-catalog.ts'
 import type { V2ToolDef } from './tools.ts'
