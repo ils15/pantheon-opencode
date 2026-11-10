@@ -260,8 +260,8 @@ function writeDecisionBudget(budgets: { monthlyUsd: number; perDecisionUsd: numb
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
     if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) doc = parsed
-  } catch (error) {
-    throw new Error(`decision-router.json unreadable — repair via \`decision-router setup-model\``)
+  } catch {
+    throw new Error('decision-router.json unreadable — repair via `decision-router setup-model`')
   }
   doc.budget = { ...budgets }
   const temp = `${path}.tui.tmp`

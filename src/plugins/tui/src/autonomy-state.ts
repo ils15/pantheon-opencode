@@ -70,9 +70,6 @@ export function buildAutonomyTab(input: {
   budgets: DecisionBudgets
   goalLoopRestartPending?: boolean
 }): SettingsTab {
-  const restartNote = input.goalLoopRestartPending
-    ? ' · ⚠ saved value applies after OpenCode restart'
-    : ' · saved value applies after OpenCode restart'
   return {
     id: 'autonomy',
     title: 'Autonomy',

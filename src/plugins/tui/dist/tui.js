@@ -100,7 +100,6 @@ function parseUsd(cell) {
 	return Number.isFinite(value) && value > 0 ? value : null;
 }
 function buildAutonomyTab(input) {
-	input.goalLoopRestartPending;
 	return {
 		id: "autonomy",
 		title: "Autonomy",
@@ -1406,8 +1405,8 @@ function writeDecisionBudget(budgets) {
 	try {
 		const parsed = JSON.parse(readFileSync(path, "utf8"));
 		if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) doc = parsed;
-	} catch (error) {
-		throw new Error(`decision-router.json unreadable — repair via \`decision-router setup-model\``);
+	} catch {
+		throw new Error("decision-router.json unreadable — repair via `decision-router setup-model`");
 	}
 	doc.budget = { ...budgets };
 	const temp = `${path}.tui.tmp`;
