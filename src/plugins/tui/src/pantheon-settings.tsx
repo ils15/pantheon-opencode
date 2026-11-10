@@ -33,7 +33,6 @@ import {
   DEFAULT_GOAL_LOOP_PREFS,
   type DecisionBudgets,
   type GoalLoopPrefs,
-  MONTHLY_USD_CYCLE,
   PER_DECISION_USD_CYCLE,
   parseUsd,
 } from './autonomy-state.ts'

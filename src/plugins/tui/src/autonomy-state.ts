@@ -20,7 +20,7 @@
  * enforced: J1 owns the risk axis, budgets own the money axis — this tab
  * shows where the thresholds sit today.
  */
-import type { SettingsRow, SettingsTab } from './pantheon-settings-state.ts'
+import type { SettingsTab } from './pantheon-settings-state.ts'
 
 export interface GoalLoopPrefs {
   enabled: boolean
