@@ -28,6 +28,7 @@ import { join } from 'node:path'
 import type { Context } from '@opencode/plugin/tui/context'
 import { createSignal, For, onCleanup, Show } from 'solid-js'
 import {
+  applyDecisionRow,
   buildDecisionTab,
   type DecisionConfigRead,
   readDecisionRouterConfig,
@@ -450,6 +451,28 @@ function createWindowController(
       try {
         writeDecisionRouterConfig(guarded.config)
         setDecision({ config: guarded.config, corrupt: false })
+        return { ok: true }
+      } catch {
+        return { ok: false, reason: 'decision-router disk write failed' }
+      }
+    }
+    if (
+      id === 'decision.selection.mode' ||
+      id === 'decision.selection.target' ||
+      id === 'decision.consent'
+    ) {
+      const current = decision()
+      if (current.corrupt) {
+        return {
+          ok: false,
+          reason: 'decision-router.json unreadable — repair via `decision-router setup-model`',
+        }
+      }
+      const staged = applyDecisionRow(current.config, id, value)
+      if (staged === current.config) return { ok: false, reason: 'unknown or invalid value' }
+      try {
+        writeDecisionRouterConfig(staged)
+        setDecision({ config: staged, corrupt: false })
         return { ok: true }
       } catch {
         return { ok: false, reason: 'decision-router disk write failed' }
