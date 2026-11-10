@@ -301,8 +301,17 @@ function hostGate(options) {
   const tarball = singleTarball(options)
   const matrix = matrixFromEnv()
   validateMatrix(matrix)
+  // PANTHEON_RELEASE_HOST_ONLY lets the workflow run the matrix CONCURRENTLY
+  // (one invocation per host — the sandbox roots and ports are already
+  // per-index disjoint). The full matrix is validated first; the filter only
+  // chooses which rows THIS invocation executes.
+  const only = process.env.PANTHEON_RELEASE_HOST_ONLY ?? ''
+  const selected = only ? matrix.filter((row) => row.host === only) : matrix
+  if (only && selected.length === 0) {
+    throw new Error(`PANTHEON_RELEASE_HOST_ONLY="${only}" matches no matrix row`)
+  }
   const checks = []
-  matrix.forEach((row, index) => {
+  selected.forEach((row, index) => {
     const root = join(runnerTemp(), `pantheon-release-host-${safeName(row.host)}`)
     rmSync(root, { recursive: true, force: true })
     checks.push(
@@ -316,7 +325,7 @@ function hostGate(options) {
       ),
     )
   })
-  const measuredFamilies = [...new Set(matrix.map((row) => row.line))]
+  const measuredFamilies = [...new Set(selected.map((row) => row.line))]
   const unmeasuredFamilies = SUPPORTED_FAMILIES.filter(
     (family) => !measuredFamilies.includes(family),
   )
