@@ -357,8 +357,6 @@ jobs:
           node scripts/release-gates.mjs install --evidence-dir "$RUNNER_TEMP/gate-evidence" --artifact-dir "$RUNNER_TEMP/release-artifact" --version "$BASE_VERSION" --target-sha "$TARGET_SHA"
         env:
           BASE_VERSION: ${{ steps.version_gate.outputs.version }}
-          npm_config_cache: /home/runner/.npm
-          PIP_CACHE_DIR: /home/runner/.cache/pip
           PANTHEON_V2_HANDSHAKE_TIMEOUT: '180'
 
       - name: Gate (b) host compatibility
@@ -368,8 +366,6 @@ jobs:
           node scripts/release-gates.mjs host --evidence-dir "$RUNNER_TEMP/gate-evidence" --artifact-dir "$RUNNER_TEMP/release-artifact" --version "$BASE_VERSION" --target-sha "$TARGET_SHA"
         env:
           BASE_VERSION: ${{ steps.version_gate.outputs.version }}
-          npm_config_cache: /home/runner/.npm
-          PIP_CACHE_DIR: /home/runner/.cache/pip
           PANTHEON_V2_HANDSHAKE_TIMEOUT: '180'
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
