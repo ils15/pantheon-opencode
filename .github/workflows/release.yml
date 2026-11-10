@@ -356,6 +356,9 @@ jobs:
           BASE_VERSION: ${{ steps.version_gate.outputs.version }}
           npm_config_cache: /home/runner/.npm
           PIP_CACHE_DIR: /home/runner/.cache/pip
+          # Three sandbox hosts boot concurrently on a 4-core runner: the
+          # MCP handshake wait needs headroom above the default 60s.
+          PANTHEON_V2_HANDSHAKE_TIMEOUT: '120'
         run: |
           set -euo pipefail
           ARTIFACT_DIR="$RUNNER_TEMP/release-artifact"
