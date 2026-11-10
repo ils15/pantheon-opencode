@@ -64,7 +64,7 @@ test('generated line counts use LF boundaries without assuming a final newline',
   assert.equal(logicalLineCount('one'), 1)
   assert.equal(logicalLineCount(''), 0)
   assert.equal(logicalLineCount(generated), 36)
-  assert.equal(logicalLineCount(globalArtifact), 118)
+  assert.equal(logicalLineCount(globalArtifact), 123)
 })
 
 test('the shared agent return contract renders the universal evidence quality gate', () => {

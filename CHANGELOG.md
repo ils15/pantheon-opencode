@@ -98,6 +98,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **council** — Assertive synthesis in `zeus-council-synthesis.instructions.md` with Domain Authority precedence and JEV arbitration.
+- **install** — Forward `--project`, `--no-mcp`, and `--verbose` in `scripts/update.mjs` to refresh config without overwriting user state.
+- **docs** — Streamlined `README.md` and `README.pt-BR.md`, trimming bloat and adding visual execution tracks (Fast-Track, Council, Deepwork).
 - **prompts** — Compacted `orchestrate-with-zeus.prompt.md` from 14.5 KB to 11.6 KB, incorporating Fast-Track and test-slicing rules.
 - **agents** — Updated `zeus.md`, `talos.md`, `hermes.md`, `aphrodite.md`, and `themis.md` with test-slicing mandates and Fast-Track bypass.
 - **hooks** — Optimized `format-multi-language.sh` to parse tool inputs in a single Python inline execution instead of 3 subprocess spawns.

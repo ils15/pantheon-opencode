@@ -171,9 +171,16 @@ export function runUpdate(
   }
 
   const globalEntry = path.join(refreshedPackageRoot, 'bin', 'pantheon-init.mjs')
+  const forwardedFlags = []
+  if (args.includes('--project')) forwardedFlags.push('--project')
+  if (args.includes('--no-mcp')) forwardedFlags.push('--no-mcp')
+  if (args.includes('--verbose')) forwardedFlags.push('--verbose')
+
   const init = refresh
-    ? refresh(globalEntry)
-    : spawnSync(execPath, [globalEntry, 'init', '--yes', '--headless'], { stdio: 'inherit' })
+    ? refresh(globalEntry, forwardedFlags)
+    : spawnSync(execPath, [globalEntry, 'init', '--yes', '--headless', ...forwardedFlags], {
+        stdio: 'inherit',
+      })
   if (init.status !== 0 || init.error) {
     console.error(
       '⚠️  Updated, but the config refresh did not complete — run `npx pantheon-opencode init` manually.',

@@ -1,11 +1,8 @@
-<!-- synced-from: README.md @ 0a6a8e2 -->
+<!-- synced-from: README.md -->
 # Pantheon
 
-**Uma forma mais clara de trabalhar com OpenCode em projetos de software
-reais.** O Pantheon reúne planejamento, implementação, revisão e documentação
-numa experiência guiada. É um plugin e instalador para OpenCode, feito para
-desenvolvedores e equipes que querem estrutura útil sem abrir mão do controle
-sobre o próprio código.
+**Uma forma mais clara, rápida e eficiente de trabalhar com OpenCode em projetos de software reais.**
+O Pantheon reúne planejamento, implementação, revisão e documentação numa experiência guiada e otimizada para tokens. É um plugin e instalador para OpenCode feito para desenvolvedores e equipes que querem estrutura útil sem abrir mão de velocidade ou do controle sobre seu código.
 
 [English](README.md) ·
 [Repositório](https://github.com/ils15/pantheon-opencode) · [Licença MIT](LICENSE)
@@ -16,184 +13,208 @@ sobre o próprio código.
 
 ## O que é?
 
-O Pantheon é um companheiro do [OpenCode](https://opencode.ai/) que ajuda a ir
-de uma ideia a uma mudança revisada. Quatorze agentes especializados
-compartilham um único fluxo: planejar, implementar, checar, revisar e registrar
-o que importou. Você continua no controle de cada decisão e de cada merge.
+O Pantheon é um companheiro do [OpenCode](https://opencode.ai/) que ajuda você a ir de uma ideia até uma alteração revisada e verificada. Quatorze agentes especializados compartilham um fluxo direto e consistente: planejar, implementar, checar, revisar e registrar o que foi importante. Você permanece no controle de cada decisão e de cada merge.
+
+```mermaid
+flowchart LR
+    U["👤 Você"] --> Z["⚡ Zeus<br/>orquestrador"]
+    Z -->|"delega"| S["14 especialistas<br/>hermes · aphrodite · demeter · themis …"]
+    Z -->|"rota ambígua"| J["🎲 Jev decision router<br/>tipado · com budget · reversível"]
+    J -->|"ordena · classifica · verifica"| S
+    S -->|"último recurso"| M["🔌 MCP nativo<br/>memória · persistência · visão<br/>code-mode · recursos"]
+    Z --> G["🛡️ J1 risk gate<br/>off / shadow / warn / enforce"]
+    G -->|"alto risco"| H["👤 Aprovação humana"]
+```
+
+**A escada de escalonamento que todo agente segue**: contexto da sessão primeiro → seletor local gratuito → uma decisão Jev tipada quando genuinamente ambíguo → chamada a MCP nativo apenas como último recurso para estado que a sessão não puder reconstruir.
+
+```mermaid
+flowchart LR
+    R["📝 pedido inicial"] --> T0{"claro e<br/>delimitado?"}
+    T0 -->|sim| X["⚡ executar diretamente"]
+    T0 -->|"vago /<br/>múltiplos tópicos"| T1["🔍 Tier 1 — interno<br/>ajuste mínimo ≤15 linhas<br/>(silencioso, sem aprovação)"]
+    T1 --> T2q{">> fornecido?"}
+    T2q -->|sim| T2["📜 Tier 2 — contrato completo<br/>6 seções, confirmar-ou-ajustar"]
+    T2q -->|não| X
+```
+
+**A descoberta de skills segue uma cascata de confiança** — canônicas primeiro, popularidade nunca compensa proveniência:
+
+```mermaid
+flowchart LR
+    L["📚 pool instalado<br/>(sempre primeiro)"] -->|"lacuna"| C1["🟢 anthropics/skills<br/>canônica"]
+    C1 -->|"sem ajuste"| C2["🔵 skills.sh<br/>sinal por instalações"]
+    C2 -->|"sem ajuste"| C3["🟠 GitHub raw<br/>mais ampla, menor confiança"]
+    C3 --> J["🎲 Jev ordena<br/>os candidatos"]
+    J --> P["👤 VOCÊ revisa<br/>e roda o install"]
+```
 
 ## Por que usar?
 
-- **Menos troca de contexto:** planejamento e construção no mesmo fluxo.
-- **Mudanças mais deliberadas:** peça revisões e checagens antes de considerar
-  o trabalho concluído.
-- **Um ponto de partida repetível:** o mesmo setup entre projetos e
-  colaboradores.
-- **Você no comando:** o Pantheon apoia seu julgamento; não o substitui.
-- **Coordenação na medida:** trabalho delimitado vai para um especialista, que
-  reúne o contexto necessário. Planejamento, descoberta separada, paralelismo e
-  revisão entram quando escopo e risco pedem. `/pantheon-deepwork` continua sendo
-  o fluxo com checkpoints para trabalho pesado em várias fases.
+- **Execução Fast-Track:** Micro-edições delimitadas (<= 2 arquivos, <= 50 linhas) pulam cerimônias pesadas e validam em < 10 segundos.
+- **Fatiamento mandatório de testes (test slicing):** Execução direcionada em submissegundos em vez de rodar suites lentas do repositório inteiro durante loops de desenvolvimento.
+- **Conselho assertivo (`/pantheon`):** Consultas paralelas entre especialistas resolvidas decisivamente via autoridade de domínio e decisões multi-critério JEV sem loops infinitos de debate.
+- **Você no comando:** O Pantheon apoia seu julgamento; ele nunca altera permissões silenciosamente nem executa ações destrutivas sem aprovação.
+- **Atualizações não-destrutivas:** Atualizar o Pantheon (`pantheon-opencode update`) renova skills, MCPs e instruções preservando rigorosamente todos os modelos do usuário, presets ativos, permissões e regras customizadas no `AGENTS.md`.
 
 ## Comece em 2 minutos
 
-Requisitos: [OpenCode](https://opencode.ai/docs/) **2.x** e Node.js
-**>=26.4.0** para a CLI e as ferramentas. **OpenCode 2.0.22 tem falha
-conhecida**; veja [Compatibilidade](docs/COMPATIBILITY.md).
+Requisitos: [OpenCode](https://opencode.ai/docs/) **2.x** e Node.js **>=26.4.0**. (Veja [Compatibilidade](docs/COMPATIBILITY.md)).
 
-Em qualquer lugar (global, todos os projetos) ou dentro de um projeto:
+### 1. Instalação
 
+**Opção A — Adição Rápida de Plugin (Global ou no Projeto):**
 ```bash
 opencode plugin add pantheon-opencode
-# ou fixe a versão: opencode plugin add pantheon-opencode@<versão>
-opencode
+# Ou fixe uma versão específica:
+opencode plugin add pantheon-opencode@2.0.0-beta.7
 ```
 
-Reinicie o OpenCode quando solicitado. O `npx pantheon-opencode init`
-sobrevive apenas como caminho de migração do OpenCode 1.x e ferramenta
-opcional de scaffolding de projeto.
-
-Depois descreva o resultado desejado:
-
-```text
-/pantheon Add CSV export to the reports page, including tests and a review.
+**Opção B — Instalação Global via CLI com Tooling MCP Completo:**
+```bash
+npm install -g pantheon-opencode@beta
+pantheon-opencode init --yes
 ```
 
-Quando você pede um plano, Athena devolve o plano a Zeus, que o exibe na
-conversa principal antes de pedir aprovação — nunca como um plano escondido na
-conversa de um agente filho.
+### 2. Verificação de Saúde
+```bash
+pantheon-opencode doctor
+```
+Executa um diagnóstico de 28 pontos checando inicialização de MCPs, ambientes virtuais Python, versão do Node, permissões e integridade de configuração.
 
-Reinicie o OpenCode depois de instalar ou trocar o plugin. O Pantheon registra
-um único plugin; o host nunca carrega dois plugins Pantheon.
-
-Flags do instalador, códigos de saída, planos salvos, backup e restore,
-desinstalação, reconcile e pins de MCP estão no
-[guia de instalação](docs/INSTALLATION.md). Para os primeiros dez minutos
-apenas — `init` → reiniciar → `/dispatch` → primeiro resultado — veja o
-[Início rápido](docs/QUICKSTART.md).
-
-## O que está incluído?
-
-- **14 agentes especializados**, com um orquestrador, especialistas de
-  implementação, um gate de qualidade e papéis de apoio.
-- **25 skills** e instruções reutilizáveis para planejar, construir, revisar e
-  documentar, incluindo `test-slicing` (execução direcionada de testes em submissegundos) e `fast-path-execution` (micro-edições rápidas).
-- **Protocolo Fast-Track** permitindo que correções pontuais (<= 2 arquivos, <= 50 linhas) pulem cerimônias multi-agente e validem via slices de teste em < 10s.
-- **Busca de skills in-process (`pantheon_skill_search`)** para descoberta local e em ecossistema aberto sem depender de permissões de shell.
-- **5 servidores MCP locais** para memória de projeto, persistência, recursos,
-  execução confinada de scripts e visão.
-- **Um roteador de decisão seletivo e consultivo**, com resultados locais
-  estruturados e recomendações por turno quando habilitado. O egress direto
-  pertencente ao Pantheon é inativo; o egress nativo existe apenas na tool
-  explícita `pantheon_jev_decide` (só para o Zeus), que chama a API nativa de
-  Decisions do host (Jev/TypeSafe via OpenCode Console ou modelo configurado)
-  atrás do consentimento e dos limites de orçamento do usuário — ela nunca
-  despacha agentes, executa skills ou altera permissões. Veja a
-  [referência do roteador](docs/reference/local-decision-router.md) e o
-  [Decisions nativas (Jev)](docs/reference/native-decisions.md).
-- **Uma TUI opcional**, com bloco de dispatch na sidebar e painel `/dispatch`
-  em largura total. A sidebar mantém a versão do Pantheon, o preset/fonte
-  ativos, o estado do git e um bloco `Context` (tokens, medidor de percentual,
-  `$<gasto> gastos` e uma linha mutada `cache <n>% · <n.n> tok/s`); o rodapé
-  nativo do prompt segue intacto, e o Pantheon só acrescenta
-  `▸<preset> · ✦<n> ativos` enquanto há delegações rodando. O comando `/pantheon-settings`
-  (ou `Pantheon: Settings` na paleta) abre a janela de configurações inspirada no padrão OpenCode Quota:
-  - **Changelog**: destaques da versão e notas de lançamento integradas diretamente na janela.
-  - **Atualizações**: escolha de canal (`stable` ou `beta`), verificação em tempo real e ação de atualização direta (`Update now`) ou comandos CLI (`pantheon-opencode update`).
-  - **Personalização da TUI e Barras**: escolha o formato das barras de progresso (`line`, `block`, `smooth`, `ascii`, `dots`, `braille`), largura (`standard`, `compact`, `wide`, `full`), indicador de 50% (`evenMark`), separadores e presets de layout (`comfortable` ou `compact`), funcionando tanto no terminal CLI quanto no OpenCode Desktop.
-  A TUI não traz mais painel de quota: para ver quota e uso de provedores dentro do OpenCode,
-  instale o plugin comunitário recomendado
-  [`@slkiser/opencode-quota`](https://github.com/slkiser/opencode-quota) — veja
-  [Quota & uso](docs/tui-v2-quota-providers.md). As tools `pantheon_cost` e
-  `pantheon_model` seguem funcionando sem alterações.
-
-A memória MCP fica disponível para busca explícita: o coordenador consulta o
-histórico uma vez quando ele pode mudar a tarefa e repassa apenas resultados
-úteis. Checkpoints de sessão servem para retomadas entre sessões; memória
-durável só é gravada quando solicitada ou autorizada. A compactação nativa do
-OpenCode resume a conversa atual, sem salvar cada fase em outro MCP.
-Veja [Memória](docs/MEMORY.md).
-
-## Compatibilidade
-
-OpenCode **2.x** é suportado. **OpenCode 2.0.22 tem falha conhecida.** A 2.0
-remove o contrato V1 do OpenCode por completo — a 1.7.x foi a última linha com
-suporte V1.
-
-A política de suporte, a exceção conhecida e a evidência de versões verificadas
-têm um único lar: [Compatibilidade](docs/COMPATIBILITY.md).
-
-## Delegação
-
-O Pantheon delega pelo motor nativo de sessões filhas do host: `subagent` no
-runtime raiz relatado pelo usuário, chamado de `task()` na documentação de
-host/API. Disponibilidade de ferramenta, suporte a background e observabilidade
-de conclusão dependem do runtime; quando a conclusão não é observável, use
-dispatch síncrono ou aguarde uma notificação do host.
-
-Todo dispatch raiz leva um briefing conciso — objetivo, escopo limitado,
-entradas relevantes, restrições, formato de retorno esperado e verificação. Os
-contratos de retorno são específicos por papel: implementação usa
-`## subtask_summary`, investigação devolve achados estruturados, Athena devolve
-o plano completo e respostas de conselho usam `## specialist_response`.
-Trabalho delegado tem no máximo uma retentativa após falha transitória, e o
-Pantheon nunca alega fan-in determinístico ou recuperação de job sem um
-mecanismo exposto.
-
-O modelo de delegação, a matriz chamador/alvo e os gates de aprovação estão em
-[Arquitetura](docs/ARCHITECTURE.md) e
-[Permissões, Gates e Delegação](docs/PERMISSIONS-QUALITY-DELEGATION.md).
-
-## Documentação
-
-| Comece aqui | Aprofunde |
-|---|---|
-| [Instalação](docs/INSTALLATION.md) | [Arquitetura](docs/ARCHITECTURE.md) |
-| [Início rápido](docs/QUICKSTART.md) | [MCP](docs/MCP.md) · [Ferramentas MCP](docs/mcp-tools.md) |
-| [Atualização](docs/UPGRADING.pt-BR.md) | [Memória](docs/MEMORY.md) |
-| [Compatibilidade](docs/COMPATIBILITY.md) | [OpenCode 2.x](docs/opencode.md) |
-| [Agentes e Skills](docs/agents/README.md) | [Plataformas](docs/PLATFORMS.md) |
-| [Processo de release](docs/RELEASING.md) | [Proteção de branch](docs/BRANCH-PROTECTION.md) |
-| [Roteamento de modelos](docs/reference/model-routing.md) | [Variáveis de ambiente](docs/reference/env-vars.md) · [Code Mode](docs/reference/code-mode.md) |
-| [Contribuição](CONTRIBUTING.md) | [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) |
-
-> Os demais documentos são publicados apenas em inglês, que é a fonte canônica.
-> Este README e o [guia de atualização](docs/UPGRADING.pt-BR.md) são as duas
-> páginas mantidas em português.
-
-## Status
-
-Os manifests neste checkout expressam a versão em preparação, não uma publicação
-confirmada. Consulte a dist-tag `beta` do npm para saber o que está realmente
-publicado. Veja [Compatibilidade](docs/COMPATIBILITY.md) para os hosts
-suportados e as [releases](https://github.com/ils15/pantheon-opencode/releases)
-para as mudanças publicadas mais recentes.
-
-## Novidades
-
-Veja a [release no GitHub](https://github.com/ils15/pantheon-opencode/releases)
-e o [CHANGELOG.md](CHANGELOG.md) para as mudanças da 1.7.0.
-
-## Contribua
-
-Ideias, relatos de bugs, melhorias de documentação e contribuições de código são
-bem-vindos. Leia o [CONTRIBUTING.md](CONTRIBUTING.md) antes de abrir uma issue ou
-pull request. Esse arquivo também define a regra de documentação: um único lar
-por fato, com uma lista curta de fatos que não devem ser duplicados.
-
-Em mudanças de código, comece pela verificação relevante mais pequena e amplie
-conforme o risco. `npm test` executa a suíte completa do repositório; veja o
-[CONTRIBUTING.md](CONTRIBUTING.md) para saber quando usá-la.
-
-## Citação e DOI
-
-O Pantheon é distribuído sob a [Licença MIT](LICENSE). Cite o
-[DOI de conceito do Zenodo](https://doi.org/10.5281/zenodo.22650136), que sempre
-resolve para a release arquivada mais recente; cada release também tem seu
-próprio DOI de versão. Os metadados de citação estão em
-[CITATION.cff](CITATION.cff).
-
-Repositório canônico: <https://github.com/ils15/pantheon-opencode>
+### 3. Atualizando o Pantheon sem Sobrescrever Configurações
+Quando uma nova versão for lançada:
+```bash
+pantheon-opencode update
+```
+O atualizador valida a identidade do pacote, baixa a versão mais recente e executa uma atualização de configuração totalmente não-destrutiva. **Seus modelos personalizados, preset ativo, permissões customizadas, opções de plugins e seções próprias no AGENTS.md são preservados sem alterações.**
 
 ---
 
-[Read in English](README.md)
+## Modos de Execução & Fluxo Ótimo
+
+O Pantheon equilibra velocidade e rigor através de três modos de execução:
+
+```mermaid
+flowchart TD
+    Req["Pedido do Usuário"] --> Size{"Escopo / Risco"}
+    Size -->|"≤ 2 arquivos · ≤ 50 linhas<br/>correção / typo / CSS"| Fast["⚡ Fast-Track<br/>(Sub-10s · Test Slicing Inline)"]
+    Size -->|"Arquitetura / Escolha técnica<br/>Segurança / Multi-stakeholders"| Council["🏛️ Síntese do Conselho (/pantheon)<br/>(2-3 Especialistas em Paralelo · Autoridade de Domínio)"]
+    Size -->|"Feature multi-fases<br/>Refatoração pesada · Breaking change"| Deep["🏗️ Deepwork (/pantheon-deepwork)<br/>(Plano da Athena · Gates de Fase · Checkpoints)"]
+```
+
+### 1. Fast-Track & Test Slicing (Micro-Edições < 10s)
+Para correções de bugs pontuais, ajustes de estilo ou refatorações localizadas:
+- **Sem cerimônia de planejamento:** Executa diretamente as alterações delimitadas.
+- **Fatiamento direcionado de testes:** Executa APENAS a fatia de testes correspondente ao arquivo modificado (ex: `node --test tests/foo.test.mjs` ou `pytest -k <func>`). Suites completas são reservadas para CI e release gates.
+- **Entrega em turno único:** Valida e finaliza em menos de 10 segundos.
+
+### 2. Síntese Assertiva do Conselho (`/pantheon`)
+Ao enfrentar encruzilhadas arquiteturais, avaliações tecnológicas ou trade-offs de segurança:
+```text
+/pantheon Devemos usar WebSockets ou Server-Sent Events para notificações push em tempo real?
+```
+- **Despacho Paralelo:** Dispara 2 a 3 especialistas simultaneamente com prompts independentes.
+- **Arbitragem Assertiva:** Em vez de travar em rodadas repetitivas de debate, divergências são resolvidas de imediato via **Precedência de Autoridade de Domínio**:
+  - **Segurança / Auth:** `@themis` tem poder de veto sobre propostas vulneráveis.
+  - **Banco de Dados / Schema:** `@demeter` tem autoridade técnica sobre consultas e integridade transacional.
+  - **Frontend / UX / A11y:** `@aphrodite` rege acessibilidade e ergonomia visual.
+  - **Infraestrutura / CI:** `@prometheus` rege limites de runtime, containers e pipelines.
+  - **API / Protocolos:** `@hermes` rege conformidade contratual e esquemas de transporte.
+  - **Arquitetura / Modularidade:** `@athena` rege desacoplamento e manutenibilidade a longo prazo.
+- **Decisões Multi-Critério JEV:** Se os trade-offs equilibrarem demandas concorrentes de mesmo peso, Zeus invoca `pantheon_jev_decide` (ou a matriz de decisão local) para ordenar as opções deterministicamente em uma única chamada.
+
+### 3. Deepwork com Checkpoints (`/pantheon-deepwork`)
+Para tarefas complexas com mais de 10 turnos ou distribuídas em várias sessões:
+```text
+/pantheon-deepwork "Implementar autenticação OAuth2 PKCE"
+```
+- **Fase 0 (Plano):** Athena mapeia os módulos e devolve o plano completo em Markdown exibido diretamente na conversa principal.
+- **Fase 1 (Descoberta):** Apollo realiza exploração estruturada.
+- **Fases 2–N (Implementação):** Especialistas implementam os módulos em fases paralelas.
+- **Gates de Revisão:** Themis audita cada fase (`PASS` ou `FAIL`).
+- **Resumibilidade:** Progresso salvo em `.pantheon/deepwork/<slug>/`. Retome a qualquer momento com `/pantheon-deepwork --resume <slug>`.
+
+---
+
+## Os 14 Agentes Especializados
+
+Toda delegação raiz carrega um brief conciso — objetivo, escopo delimitado, entradas relevantes, restrições, formato de retorno esperado e critérios de verificação. O trabalho é roteado de forma qualitativa — incerteza, especialidade de domínio, dependências, risco e verificação — nunca por limites arbitrários de linhas. Os contratos de retorno são específicos por papel: implementação usa `## subtask_summary`, investigações retornam achados estruturados, Athena entrega o plano completo e respostas ao conselho usam `## specialist_response`.
+
+| Agente | Autoridade de Domínio | Responsabilidades Principais |
+|---|---|---|
+| **@zeus** | Orquestrador Central | Direciona o fluxo, delega tarefas, arbitra decisões do conselho e garante economia de tokens. Nunca implementa código diretamente. |
+| **@athena** | Arquitetura e Planejamento | Planejamento research-first, fronteiras de sistema, LTS e análise de dependências. Plan-only; nunca implementa. |
+| **@hermes** | Backend e APIs | FastAPI, Python assíncrono, backends Node/TypeScript, contratos de API e conformidade de protocolos. |
+| **@aphrodite** | Frontend e UX | React 19, TypeScript estrito, design responsivo, acessibilidade WCAG e CSS moderno. |
+| **@demeter** | Banco de Dados e Persistência | Migrações de schema, otimização de queries, prevenção de queries N+1 e integridade transacional. |
+| **@themis** | Gate de Qualidade e Segurança | Auditorias OWASP, análise estática (Biome/ruff), autorização e limpeza de código legado. Revisa mudanças materiais. |
+| **@prometheus** | DevOps e Infraestrutura | Docker, pipelines CI/CD, configuração de runtime, abstração de provedores e infra de telemetria. |
+| **@talos** | Linha Rápida de Hotfixes | Correções rápidas e autônomas para bugs pequenos, typos e lógica simples sem sobrecarga de subagentes. |
+| **@apollo** | Batedor de Investigação | Descoberta somente-leitura: buscas paralelas no código e na documentação. Retorna achados estruturados. |
+| **@hephaestus**| Pipelines de IA e RAG | Embeddings, vector stores, engenharia de prompt e pipelines de agentes. |
+| **@gaia** | Sensoriamento e Geoespacial | Sensoriamento remoto, SAR, análise geoespacial e classificação raster ML/DL (somente-leitura). |
+| **@iris** | Operações Git e Release | Branches, PRs, triagem de issues e notas de lançamento. Nunca faz push ou merge sem aprovação humana explícita. |
+| **@mnemosyne** | Banco de Memória do Projeto | Mantém o `.pantheon/memory-bank/` e registra ADRs quando explicitamente solicitado. |
+| **@nyx** | Observabilidade e Telemetria| Rastreamento OpenTelemetry, monitoramento de tokens/custos e profiling de execução. |
+
+---
+
+## Skills & Ferramental MCP
+
+- **Busca de Skills In-Process (`pantheon_skill_search`):** Encontra rapidamente skills locais e do ecossistema aberto sem depender de permissões de shell.
+- **25 Skills de Produção:** Inclui `test-slicing`, `fast-path-execution`, `tdd-with-agents`, `instruction-forge` e `incremental-implementation`.
+- **5 Servidores MCP Locais:**
+  - `pantheon-memory`: Memória compartilhada com travas atômicas SQLite.
+  - `pantheon-persistence`: Persistência de contexto e arquivos de projeto.
+  - `pantheon-resources`: Disponibilização de documentação e recursos locais.
+  - `pantheon-code-mode`: Execução confinada de scripts Python.
+  - `pantheon-vision`: Análise e inspeção visual diagnóstica de imagens.
+- **Roteador Consultivo de Decisões JEV:** Avalia candidatos (`pantheon_jev_decide`), ordena trade-offs e fornece suporte a decisões multi-critério sem modificar permissões.
+
+---
+
+## Configurações & Janela TUI (`/pantheon-settings`)
+
+Execute `/pantheon-settings` (ou `Pantheon: Settings` na paleta de comandos) para abrir o painel de configurações:
+
+- **Gates & Overrides:** Habilite ou desabilite comportamentos nomeados em tempo real (salvo em `pantheon-overrides.json`).
+- **Presets de Modelos:** Alterne o tier de modelos ativo globalmente ou no projeto.
+- **Modelo de Decisão:** Configure o roteamento local e remoto das decisões JEV.
+- **Atualizações:** Verifique o canal do registro (`beta` / `stable`) e dispare upgrades.
+- **Doctor:** Execute o diagnóstico de saúde do sistema diretamente na interface.
+- **Personalização da TUI:** Ajuste espaçamento (`comfortable` vs `compact`), separadores, estilo das barras de progresso e linhas de contexto.
+
+---
+
+## Documentação
+
+| Comece por aqui | Arquitetura e Aprofundamento | Referência e Operações |
+|---|---|---|
+| [Início Rápido](docs/QUICKSTART.md) | [Arquitetura](docs/ARCHITECTURE.md) | [Ferramentas MCP](docs/mcp-tools.md) |
+| [Guia de Instalação](docs/INSTALLATION.md) | [Delegação & Gates](docs/PERMISSIONS-QUALITY-DELEGATION.md) | [Decisões Nativas (Jev)](docs/reference/native-decisions.md) |
+| [Compatibilidade](docs/COMPATIBILITY.md) | [Sistema de Memória](docs/MEMORY.md) | [Roteamento de Modelos](docs/reference/model-routing.md) |
+| [Atualização](docs/UPGRADING.md) | [Integração OpenCode 2.x](docs/opencode.md) | [Changelog](CHANGELOG.md) |
+
+---
+
+## O Que Há de Novo na v2.0.0-beta.7
+
+- **Skills Fast-Track e Test-Slicing:** Micro-edições em menos de 10 segundos e execução de testes em submissegundos.
+- **Síntese Assertiva do Conselho:** Resoluções rápidas via Autoridade de Domínio e avaliação multi-critério JEV.
+- **Busca de Skills In-Process:** Tool nativa `pantheon_skill_search` sem necessidade de permissão de shell.
+- **Pipeline de Atualização Não-Destrutivo:** Preservação estrita das configurações globais e de projetos no `pantheon-opencode update`.
+- **Otimização Completa para OpenCode 2.x:** Remoção de ganchos legados V1 e refinamento das regras de timing de memória e chamadas.
+
+Consulte o [CHANGELOG.md](CHANGELOG.md) para o histórico completo de lançamentos.
+
+## Contribuição
+
+Ideias, relatórios de bugs e contribuições de código são muito bem-vindos! Por favor, leia [CONTRIBUTING.md](CONTRIBUTING.md) antes de abrir um PR.
+
+## Citação e Licença
+
+O Pantheon é software de código aberto sob a [Licença MIT](LICENSE).
+Cite via Zenodo concept DOI: [10.5281/zenodo.22650136](https://doi.org/10.5281/zenodo.22650136). Metadados de citação disponíveis em [CITATION.cff](CITATION.cff).
+
+Repositório canônico: <https://github.com/ils15/pantheon-opencode>

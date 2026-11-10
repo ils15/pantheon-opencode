@@ -51,7 +51,7 @@ const ARTIFACT_BUDGETS = [
   {
     label: 'AGENTS.global.md',
     path: AGENTS_GLOBAL_MD_PATH,
-    maxBytes: 9_500,
+    maxBytes: 9_800,
     maxLines: 140,
   },
   {

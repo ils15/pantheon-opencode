@@ -246,6 +246,45 @@ test('authorized global update verifies the refreshed version before config refr
   }
 })
 
+test('authorized global update forwards optional flags to config refresh', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-update-flags-'))
+  const globalRoot = join(root, 'npm-global')
+  const packageRoot = join(globalRoot, 'pantheon-opencode')
+  const script = join(packageRoot, 'bin', 'pantheon-init.mjs')
+  try {
+    mkdirSync(join(packageRoot, 'bin'), { recursive: true })
+    writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({ version: '1.6.0-beta.11' }))
+    writeFileSync(script, '#!/usr/bin/env node\n')
+    let passedFlags = null
+    const spawnSyncImpl = (_command, args) => {
+      if (args[0] === 'root') return { status: 0, stdout: `${globalRoot}\n`, stderr: '' }
+      if (args[0] === 'view') return { status: 0, stdout: '1.6.0-beta.12\n', stderr: '' }
+      if (args[0] === 'install') {
+        writeFileSync(
+          join(packageRoot, 'package.json'),
+          JSON.stringify({ version: '1.6.0-beta.12' }),
+        )
+        return { status: 0, stdout: '', stderr: '' }
+      }
+      throw new Error(`Unexpected command: ${args.join(' ')}`)
+    }
+    const status = await runUpdate(['--project', '--no-mcp'], {
+      root: packageRoot,
+      currentVersion: '1.6.0-beta.11',
+      runningScript: script,
+      spawnSync: spawnSyncImpl,
+      refresh: (_entry, flags) => {
+        passedFlags = flags
+        return { status: 0 }
+      },
+    })
+    assert.equal(status, 0)
+    assert.deepEqual(passedFlags, ['--project', '--no-mcp'])
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('update refuses a global package symlink into a workspace before registry access', async () => {
   const root = mkdtempSync(join(tmpdir(), 'pantheon-update-global-symlink-'))
   const globalRoot = join(root, 'npm-global')
