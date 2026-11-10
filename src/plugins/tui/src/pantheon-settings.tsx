@@ -456,7 +456,11 @@ function createWindowController(
         return { ok: false, reason: 'decision-router disk write failed' }
       }
     }
-    if (id === 'decision.selection.mode' || id === 'decision.selection.target' || id === 'decision.consent') {
+    if (
+      id === 'decision.selection.mode' ||
+      id === 'decision.selection.target' ||
+      id === 'decision.consent'
+    ) {
       const current = decision()
       if (current.corrupt) {
         return {

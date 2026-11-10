@@ -215,7 +215,6 @@ describe('decision section rows', () => {
   })
 })
 
-
 describe('selection / consent staging (applyDecisionRow)', () => {
   it('selection.mode stages local (candidates cleared) and explicit (candidates set)', () => {
     const remote = {
@@ -232,20 +231,40 @@ describe('selection / consent staging (applyDecisionRow)', () => {
   })
 
   it('selection.target stages the explicit provider/model pair + candidate', () => {
-    const next = applyDecisionRow(structuredClone(DEFAULT_DECISION_CONFIG), 'decision.selection.target', 'typesafe-jev/jev-1.14.0')
-    assert.deepEqual(next.selection, { mode: 'explicit', provider: 'typesafe-jev', model: 'jev-1.14.0' })
+    const next = applyDecisionRow(
+      structuredClone(DEFAULT_DECISION_CONFIG),
+      'decision.selection.target',
+      'typesafe-jev/jev-1.14.0',
+    )
+    assert.deepEqual(next.selection, {
+      mode: 'explicit',
+      provider: 'typesafe-jev',
+      model: 'jev-1.14.0',
+    })
     assert.deepEqual(next.enabled_candidates, [{ provider: 'typesafe-jev', model: 'jev-1.14.0' }])
     assert.equal(isValidDecisionConfig(next), true)
   })
 
   it('target refuses unknown providers and wrong model pairs (fail-closed)', () => {
     const base = structuredClone(DEFAULT_DECISION_CONFIG)
-    assert.equal(applyDecisionRow(base, 'decision.selection.target', 'bogus/jev-9'), base, 'unknown provider')
-    assert.equal(applyDecisionRow(base, 'decision.selection.target', 'typesafe-jev/WRONG'), base, 'wrong model')
+    assert.equal(
+      applyDecisionRow(base, 'decision.selection.target', 'bogus/jev-9'),
+      base,
+      'unknown provider',
+    )
+    assert.equal(
+      applyDecisionRow(base, 'decision.selection.target', 'typesafe-jev/WRONG'),
+      base,
+      'wrong model',
+    )
   })
 
   it('consent stages granted/not-granted without touching anything else', () => {
-    const next = applyDecisionRow(structuredClone(DEFAULT_DECISION_CONFIG), 'decision.consent', 'granted')
+    const next = applyDecisionRow(
+      structuredClone(DEFAULT_DECISION_CONFIG),
+      'decision.consent',
+      'granted',
+    )
     assert.equal(next.egress_consent, true)
     assert.equal(next.enabled, false, 'consent alone never enables the router')
     const off = applyDecisionRow(next, 'decision.consent', 'not granted')
@@ -260,7 +279,10 @@ describe('selection / consent staging (applyDecisionRow)', () => {
 
 describe('credential status surface', () => {
   it('drift pins the env var names against the installer/runtime sources', () => {
-    const installer = readFileSync(new URL('../scripts/decision-router.mjs', import.meta.url), 'utf8')
+    const installer = readFileSync(
+      new URL('../scripts/decision-router.mjs', import.meta.url),
+      'utf8',
+    )
     assert.ok(installer.includes('TYPESAFE_API_KEY'), 'TYPESAFE_API_KEY drifted')
     assert.equal(DECISION_PROVIDER_CREDENTIALS['typesafe-jev'].env, 'TYPESAFE_API_KEY')
     assert.ok(installer.includes('OPENROUTER_API_KEY'), 'OPENROUTER_API_KEY drifted')
@@ -268,7 +290,10 @@ describe('credential status surface', () => {
     assert.ok(installer.includes('AI_GATEWAY_API_KEY'), 'AI_GATEWAY_API_KEY drifted')
     assert.equal(DECISION_PROVIDER_CREDENTIALS['vercel-gateway-jev'].env, 'AI_GATEWAY_API_KEY')
     assert.ok(installer.includes('CLOUDFLARE_API_TOKEN'), 'CLOUDFLARE_API_TOKEN drifted')
-    assert.equal(DECISION_PROVIDER_CREDENTIALS['cloudflare-workers-jev'].env, 'CLOUDFLARE_API_TOKEN')
+    assert.equal(
+      DECISION_PROVIDER_CREDENTIALS['cloudflare-workers-jev'].env,
+      'CLOUDFLARE_API_TOKEN',
+    )
   })
 
   it('console-jev rides the login (no env) — never invents a key var', () => {
@@ -277,9 +302,12 @@ describe('credential status surface', () => {
   })
 
   it('the tab renders SET/MISSING from the injected env, never values', () => {
-    const tab = buildDecisionTab({ config: structuredClone(DEFAULT_DECISION_CONFIG), corrupt: false }, {
-      TYPESAFE_API_KEY: 'sk-secret-should-never-appear',
-    })
+    const tab = buildDecisionTab(
+      { config: structuredClone(DEFAULT_DECISION_CONFIG), corrupt: false },
+      {
+        TYPESAFE_API_KEY: 'sk-secret-should-never-appear',
+      },
+    )
     const rows = tab.groups.flatMap((g) => g.rows)
     const typesafe = rows.find((row) => row.id === 'decision.key.typesafe-jev')
     assert.equal(typesafe.value, 'set')

@@ -86,20 +86,24 @@ export const DECISION_KNOWN_MODELS: Readonly<Record<string, string>> = Object.fr
  * (`{env:VAR}` indirection — the window NEVER holds key values) plus the setup
  * note. Drift-pinned against the installer/runtime sources in tests.
  */
-export const DECISION_PROVIDER_CREDENTIALS: Readonly<Record<string, { env?: string; note: string }>> =
-  Object.freeze({
-    'openai-decisions': {
-      note: 'host-configured model — provision via `decision-router setup-model openai-decisions`',
-    },
-    'typesafe-jev': { env: 'TYPESAFE_API_KEY', note: 'export TYPESAFE_API_KEY=… then restart' },
-    'opencode-console-jev': { note: 'rides your OpenCode login — no separate key' },
-    'openrouter-jev': { env: 'OPENROUTER_API_KEY', note: 'export OPENROUTER_API_KEY=… then restart' },
-    'vercel-gateway-jev': { env: 'AI_GATEWAY_API_KEY', note: 'export AI_GATEWAY_API_KEY=… then restart' },
-    'cloudflare-workers-jev': {
-      env: 'CLOUDFLARE_API_TOKEN',
-      note: 'needs accountId (setup-model --account-id=…) + CLOUDFLARE_API_TOKEN',
-    },
-  })
+export const DECISION_PROVIDER_CREDENTIALS: Readonly<
+  Record<string, { env?: string; note: string }>
+> = Object.freeze({
+  'openai-decisions': {
+    note: 'host-configured model — provision via `decision-router setup-model openai-decisions`',
+  },
+  'typesafe-jev': { env: 'TYPESAFE_API_KEY', note: 'export TYPESAFE_API_KEY=… then restart' },
+  'opencode-console-jev': { note: 'rides your OpenCode login — no separate key' },
+  'openrouter-jev': { env: 'OPENROUTER_API_KEY', note: 'export OPENROUTER_API_KEY=… then restart' },
+  'vercel-gateway-jev': {
+    env: 'AI_GATEWAY_API_KEY',
+    note: 'export AI_GATEWAY_API_KEY=… then restart',
+  },
+  'cloudflare-workers-jev': {
+    env: 'CLOUDFLARE_API_TOKEN',
+    note: 'needs accountId (setup-model --account-id=…) + CLOUDFLARE_API_TOKEN',
+  },
+})
 
 export const DECISION_TARGET_CYCLE: readonly string[] = Object.freeze(
   DECISION_KNOWN_PROVIDERS.map((provider) => `${provider}/${DECISION_KNOWN_MODELS[provider]}`),
@@ -217,7 +221,8 @@ export function setDecisionEnabled(
     if (!localOnly && !config.egress_consent) {
       return {
         ok: false,
-        reason: 'remote candidates need egress consent — toggle Egress consent in this tab, then enable',
+        reason:
+          'remote candidates need egress consent — toggle Egress consent in this tab, then enable',
       }
     }
   }
@@ -348,8 +353,7 @@ export function buildDecisionTab(
         title: 'Credentials (status only — values never enter the window)',
         rows: DECISION_KNOWN_PROVIDERS.map((provider) => {
           const credential = DECISION_PROVIDER_CREDENTIALS[provider] ?? { note: '' }
-          const isSet =
-            credential.env === undefined ? true : Boolean(env[credential.env])
+          const isSet = credential.env === undefined ? true : Boolean(env[credential.env])
           return {
             id: `decision.key.${provider}`,
             name: provider,
