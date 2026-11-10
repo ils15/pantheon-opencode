@@ -66,7 +66,7 @@ const DEFAULT_GOAL_LOOP_PREFS = {
 	cooldownMs: 5e3,
 	maxContinuations: 25
 };
-Object.freeze(["enabled", "disabled"]);
+const GOAL_LOOP_ENABLED_CYCLE = Object.freeze(["enabled", "disabled"]);
 const DEFAULT_DECISION_BUDGETS = {
 	monthlyUsd: 5,
 	perDecisionUsd: .1
@@ -75,7 +75,8 @@ const DEFAULT_DECISION_BUDGETS = {
 function formatUsd(value) {
 	return `$${value < 1 ? value.toFixed(2) : String(Math.round(value))}`;
 }
-Object.freeze([
+/** Build the USD step ladder used by the budget cyclers. */
+const MONTHLY_USD_CYCLE = Object.freeze([
 	1,
 	2,
 	5,
@@ -84,7 +85,7 @@ Object.freeze([
 	50,
 	100
 ].map((value) => formatUsd(value)));
-Object.freeze([
+const PER_DECISION_USD_CYCLE = Object.freeze([
 	.01,
 	.025,
 	.05,
@@ -97,6 +98,78 @@ Object.freeze([
 function parseUsd(cell) {
 	const value = Number(cell.replace("$", ""));
 	return Number.isFinite(value) && value > 0 ? value : null;
+}
+function buildAutonomyTab(input) {
+	input.goalLoopRestartPending;
+	return {
+		id: "autonomy",
+		title: "Autonomy",
+		groups: [
+			{
+				title: "Goal loop (persisted mission, long sessions)",
+				rows: [
+					{
+						id: "autonomy.goal_loop.enabled",
+						name: "Goal loop",
+						value: input.goalLoop.enabled ? "enabled" : "disabled",
+						cycle: GOAL_LOOP_ENABLED_CYCLE,
+						note: "mission persists in .pantheon/goals; auto-continues with cooldown" + (input.goalLoopRestartPending ? " · ⚠ saved value applies after OpenCode restart" : " · applies after OpenCode restart")
+					},
+					{
+						id: "autonomy.goal_loop.maxContinuations",
+						name: "Max continuations",
+						value: String(input.goalLoop.maxContinuations),
+						note: "1..200 — the anti-runaway cap per mission"
+					},
+					{
+						id: "autonomy.goal_loop.cooldownMs",
+						name: "Cooldown (ms)",
+						value: String(input.goalLoop.cooldownMs),
+						note: "min 1000ms · between continuations"
+					}
+				]
+			},
+			{
+				title: "Decision budgets (applies live)",
+				rows: [{
+					id: "autonomy.budget.monthly",
+					name: "Monthly cap",
+					value: formatUsd(input.budgets.monthlyUsd),
+					cycle: MONTHLY_USD_CYCLE,
+					note: "the ledger refuses gated calls past this"
+				}, {
+					id: "autonomy.budget.perDecision",
+					name: "Per-decision cap",
+					value: formatUsd(input.budgets.perDecisionUsd),
+					cycle: PER_DECISION_USD_CYCLE,
+					note: "each gated call above this is refused"
+				}]
+			},
+			{
+				title: "Decision gradient (documented — J1 owns the risk axis)",
+				rows: [
+					{
+						id: "autonomy.gradient.solo",
+						name: "Decide solo",
+						value: "reversible + low risk",
+						note: "edits, routine fixes, ordering ties — no gate"
+					},
+					{
+						id: "autonomy.gradient.jev",
+						name: "Jev decides",
+						value: "typed ambiguity",
+						note: "readings, ranking, verification — budget-capped"
+					},
+					{
+						id: "autonomy.gradient.human",
+						name: "Human decides",
+						value: "high risk (J1)",
+						note: "enforce ladder via PANTHEON_J1_* (J1 tab)"
+					}
+				]
+			}
+		]
+	};
 }
 //#endregion
 //#region src/decision-router-state.ts
@@ -1556,6 +1629,11 @@ function createWindowController(context, exit) {
 		buildDecisionTab(decision()),
 		buildPresetTab(presetInput()),
 		buildTuiTab(tuiPrefs()),
+		buildAutonomyTab({
+			goalLoop: goalLoop(),
+			budgets: budgets(),
+			goalLoopRestartPending: autonomyRestartPending()
+		}),
 		buildJ1Tab(process.env, false),
 		buildUpdatesTab(updatesInput()),
 		buildDoctorTab({

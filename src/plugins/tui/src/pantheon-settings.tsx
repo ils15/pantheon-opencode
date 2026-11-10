@@ -495,6 +495,11 @@ function createWindowController(
     buildDecisionTab(decision()),
     buildPresetTab(presetInput()),
     buildTuiTab(tuiPrefs()),
+    buildAutonomyTab({
+      goalLoop: goalLoop(),
+      budgets: budgets(),
+      goalLoopRestartPending: autonomyRestartPending(),
+    }),
     buildJ1Tab(process.env, false),
     buildUpdatesTab(updatesInput()),
     buildDoctorTab({
