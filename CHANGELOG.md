@@ -71,47 +71,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
      Running apply will move this section to a versioned entry and reset the template below. -->
 
-## [v2.0.0-beta.7] - 2026-11-10
-
-&lt;!-- Add new changes here.
-     Canonical sections (docs/RELEASING.md): ### 🆕 What's New (curated highlights, ≤6 bullets ≤140 chars) →
-     ### Added / Changed / Deprecated / Removed / Fixed / Security → ### ⚠️ Known Issues / ### ✅ Closed Issues.
-     `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
-     Running apply will move this section to a versioned entry and reset the template below. --&gt;
+## [v2.0.0-rc.1] - 2026-11-10
 
 ### 🆕 What's New
 
-- **test-slicing**: Targeted test execution (`node --test`), reducing validation time from 150s to ~50ms (~3,000x faster).
-- **fast-path**: Express protocol for bounded micro-edits (<= 2 files, <= 50 lines), bypassing heavy planning and review.
-- **skill-search**: In-process OpenCode tool searching local catalog, Anthropic, and ecosystem without shell permissions.
-- **tui-prefs**: Defensive layout deserialization prevents crashes on legacy user preference stores.
-- **live-jev**: 100% scorecard on 16 live scenarios across OpenCode and OpenRouter routes ($0.0000238/decision).
-- **prompts & hooks**: Compacted Zeus prompt by ~2.8 KB and reduced format hook subshells.
+- **Release Candidate 1**: Inaugurating the RC series for Pantheon on OpenCode 2.x with verified production performance and low latency.
+- **Agent token compaction**: Cleaned duplicated backend code from Prometheus and Apollo, reducing turn overhead by 8,150 tokens (-44.3%).
+- **Pragmatism directive**: Eliminates bureaucratic deadlocks by authorizing safe diagnostic operations across Zeus, Themis, and Apollo.
+- **Batched Suite TDD & test-slicing**: Full multi-endpoint suites implemented cohesively with deterministic test slicing in <100ms.
+- **Proactive skill discovery**: Native skill search tool with 24h query caching and automated domain recommendations without shell access.
+- **Live JEV verification**: 16/16 scorecard pass rate across local and remote providers ($0.0000238/decision) verified in sandbox app.
 
 ### Added
 
-- **skills** — `test-slicing` (`src/skills/test-slicing/SKILL.md`): focused test execution with 10s budget and log noise suppression.
-- **skills** — `fast-path-execution` (`src/skills/fast-path-execution/SKILL.md`): direct dispatch to specialists for bounded fixes.
-- **tools** — `pantheon_skill_search` (`src/pantheon/skill-search-tool.ts`): in-process discovery tool querying local and external skills.
-- **routing** — Registered `test-slicing` and `fast-path-execution` in catalog and `routing.yml` (total 25 skills, 41 locked digests).
-- **tests** — Regression tests in `tests/tui-prefs.test.mjs` (12 tests) and unit tests in `tests/pantheon/skill-search-tool.test.ts`.
+- **skills** — test-slicing (src/skills/test-slicing/SKILL.md): focused test execution with 10s budget and log noise suppression.
+- **skills** — fast-path-execution (src/skills/fast-path-execution/SKILL.md): direct dispatch to specialists for bounded fixes.
+- **skills** — batched-suite-tdd pattern added to tdd-with-agents: eliminates turn-inflation by validating multi-endpoint modules in a single sliced run.
+- **tools** — pantheon_skill_search (src/pantheon/skill-search-tool.ts): in-process discovery tool querying local and external skills without shell permissions.
+- **scripts** — in-memory search query cache with 24-hour TTL in scripts/skill-search.mjs to avoid redundant external CLI processes and latency.
+- **sandbox** — full telemetry and simulation suite in ~/pantheon-sandbox/project-v2/app with native HTTP server, UI dashboard, and latency benchmarking.
+- **tests** — regression tests in tests/tui-prefs.test.mjs (12 tests) and unit tests in tests/pantheon/skill-search-tool.test.ts.
 
 ### Changed
 
-- **council** — Assertive synthesis in `zeus-council-synthesis.instructions.md` with Domain Authority precedence and JEV arbitration.
-- **install** — Forward `--project`, `--no-mcp`, and `--verbose` in `scripts/update.mjs` to refresh config without overwriting user state.
-- **docs** — Streamlined `README.md` and `README.pt-BR.md`, trimming bloat and adding visual execution tracks (Fast-Track, Council, Deepwork).
-- **prompts** — Compacted `orchestrate-with-zeus.prompt.md` from 14.5 KB to 11.6 KB, incorporating Fast-Track and test-slicing rules.
-- **agents** — Updated `zeus.md`, `talos.md`, `hermes.md`, `aphrodite.md`, and `themis.md` with test-slicing mandates and Fast-Track bypass.
-- **hooks** — Optimized `format-multi-language.sh` to parse tool inputs in a single Python inline execution instead of 3 subprocess spawns.
-- **scripts** — Lowered timeouts in `scripts/skill-search.mjs` from 60s/30s to 15s/10s for fast fail-open behavior.
-- **bench** — Fixed cost extraction bug in `scripts/jev-live-probe.mjs` and generated live scorecard in `bench/results/j2-live-scorecard-2026-11-10.md`.
+- **agents** — Apollo and Prometheus token compaction: removed 203 duplicated lines of Hermes backend code, saving 5,500 tokens per turn.
+- **agents** — pragmatism directive: injected safe diagnostic authorization across Zeus, Themis, and Apollo to end analysis paralysis.
+- **agents** — Athena visual planning: adopted modern linear phase structure, ASCII progress diagrams, and 3-tier refinement.
+- **agents** — proactive skill discovery protocol in Zeus to propose ready-to-run package installations for specialized domains.
+- **council** — assertive synthesis in zeus-council-synthesis.instructions.md with Domain Authority precedence and JEV arbitration.
+- **install** — forward --project, --no-mcp, and --verbose in scripts/update.mjs to refresh configuration non-destructively.
+- **hooks** — optimized format-multi-language.sh to parse tool inputs in a single Python inline execution instead of 3 subprocess spawns.
+- **scripts** — lowered timeouts in scripts/skill-search.mjs from 60s/30s to 15s/10s for fast fail-open behavior.
+- **docs** — streamlined README.md and README.pt-BR.md, trimming obsolete sections and detailing three visual execution tracks.
 
 ### Fixed
 
-- **tui** — Resolved `TypeError` on undefined `prefs.layout.preset` in `src/plugins/tui/src/tui-prefs.ts`.
-- **agents** — Fixed Zeus unable to search external skills due to `shell: deny` by providing in-process `pantheon_skill_search` tool.
-- **tests** — Dynamically bound catalog length in `tests/pantheon/jev-decisions.test.ts`.
+- **tui** — resolved TypeError on undefined prefs.layout.preset in src/plugins/tui/src/tui-prefs.ts.
+- **agents** — fixed Zeus unable to search external skills under shell deny by providing in-process pantheon_skill_search tool.
+- **tests** — dynamically bound catalog length in tests/pantheon/jev-decisions.test.ts.
+- **bench** — fixed cost extraction bug in scripts/jev-live-probe.mjs and generated live scorecard in bench/results/j2-live-scorecard-2026-11-10.md.
+- **sandbox** — fixed OpenCode 2.2+ runtime log detection in scripts/test-opencode-sandbox.sh.
+
+### Security
+
+- The input envelope is closed on every path; strict shell-deny boundary preserved with in-process tools without arbitrary command execution.
+
 ## [v2.0.0-beta.6] - 2026-11-10
 
 ### Added

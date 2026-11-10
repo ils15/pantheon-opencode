@@ -21,24 +21,24 @@ You stay in charge of every decision and every merge.
 
 ```mermaid
 flowchart LR
-    U["👤 You"] --> Z["⚡ Zeus<br/>orchestrator"]
+    U["You"] --> Z["Zeus<br/>orchestrator"]
     Z -->|"delegates"| S["14 specialists<br/>hermes · aphrodite · demeter · themis …"]
-    Z -->|"ambiguous route"| J["🎲 Jev decision router<br/>typed · budgeted · reversible"]
+    Z -->|"ambiguous route"| J["Jev decision router<br/>typed · budgeted · reversible"]
     J -->|"orders · ranks · verifies"| S
-    S -->|"last resort"| M["🔌 Native MCP<br/>memory · persistence · vision<br/>code-mode · resources"]
-    Z --> G["🛡️ J1 risk gate<br/>off / shadow / warn / enforce"]
-    G -->|"high risk"| H["👤 Human approval"]
+    S -->|"last resort"| M["Native MCP<br/>memory · persistence · vision<br/>code-mode · resources"]
+    Z --> G["J1 risk gate<br/>off / shadow / warn / enforce"]
+    G -->|"high risk"| H["Human approval"]
 ```
 
 **The escalation ladder every agent follows**: session context first → free local selector → one typed Jev decision when genuinely ambiguous → native MCP call only as the last resort for state the session cannot reconstruct.
 
 ```mermaid
 flowchart LR
-    R["📝 rough request"] --> T0{"clear &<br/>bounded?"}
-    T0 -->|yes| X["⚡ execute directly"]
-    T0 -->|"vague /<br/>multi-concern"| T1["🔍 Tier 1 — internal<br/>minimal adjust ≤15 lines<br/>(silent, no approval)"]
+    R["rough request"] --> T0{"clear &<br/>bounded?"}
+    T0 -->|yes| X["execute directly"]
+    T0 -->|"vague /<br/>multi-concern"| T1["Tier 1 — internal<br/>minimal adjust ≤15 lines<br/>(silent, no approval)"]
     T1 --> T2q{">> given?"}
-    T2q -->|yes| T2["📜 Tier 2 — full contract<br/>6 sections, confirm-or-adjust"]
+    T2q -->|yes| T2["Tier 2 — full contract<br/>6 sections, confirm-or-adjust"]
     T2q -->|no| X
 ```
 
@@ -46,11 +46,11 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    L["📚 installed pool<br/>(always first)"] -->|"gap"| C1["🟢 anthropics/skills<br/>canonical"]
-    C1 -->|"no fit"| C2["🔵 skills.sh<br/>install-count signal"]
-    C2 -->|"no fit"| C3["🟠 GitHub raw<br/>widest, weakest"]
-    C3 --> J["🎲 Jev orders<br/>the candidates"]
-    J --> P["👤 YOU review<br/>and run the install"]
+    L["installed pool<br/>(always first)"] -->|"gap"| C1["anthropics/skills<br/>canonical"]
+    C1 -->|"no fit"| C2["skills.sh<br/>install-count signal"]
+    C2 -->|"no fit"| C3["GitHub raw<br/>widest, weakest"]
+    C3 --> J["Jev orders<br/>the candidates"]
+    J --> P["YOU review<br/>and run the install"]
 ```
 
 ## Why use it?
@@ -71,7 +71,7 @@ Requirements: [OpenCode](https://opencode.ai/docs/) **2.x** and Node.js **>=26.4
 ```bash
 opencode plugin add pantheon-opencode
 # Or pin a specific version:
-opencode plugin add pantheon-opencode@2.0.0-beta.7
+opencode plugin add pantheon-opencode@2.0.0-rc.1
 ```
 
 **Option B — Global CLI Install with Full MCP Tooling:**
@@ -102,9 +102,9 @@ Pantheon balances speed and rigor through three distinct execution modes:
 ```mermaid
 flowchart TD
     Req["User Request"] --> Size{"Scope / Risk"}
-    Size -->|"≤ 2 files · ≤ 50 lines<br/>routine fix / typo / CSS"| Fast["⚡ Fast-Track<br/>(Sub-10s · Inline Test Slicing)"]
-    Size -->|"Architecture / Tech choice<br/>Security / Multi-stakeholder"| Council["🏛️ Council Synthesis (/pantheon)<br/>(2-3 Specialists in Parallel · Domain Authority)"]
-    Size -->|"Multi-phase feature<br/>Heavy refactor · Breaking changes"| Deep["🏗️ Deepwork (/pantheon-deepwork)<br/>(Athena Plan · Phase Gates · Checkpoints)"]
+    Size -->|"≤ 2 files · ≤ 50 lines<br/>routine fix / typo / CSS"| Fast["Fast-Track<br/>(Sub-10s · Inline Test Slicing)"]
+    Size -->|"Architecture / Tech choice<br/>Security / Multi-stakeholder"| Council["Council Synthesis (/pantheon)<br/>(2-3 Specialists in Parallel · Domain Authority)"]
+    Size -->|"Multi-phase feature<br/>Heavy refactor · Breaking changes"| Deep["Deepwork (/pantheon-deepwork)<br/>(Athena Plan · Phase Gates · Checkpoints)"]
 ```
 
 ### 1. Fast-Track & Test Slicing (Micro-Edits < 10s)
@@ -202,13 +202,14 @@ Run `/pantheon-settings` (or `Pantheon: Settings` in the command palette) to ope
 
 ---
 
-## What's New in v2.0.0-beta.7
+## What's New in v2.0.0-rc.1
 
-- **Fast-Track & Test-Slicing Skills:** Sub-10s micro-edits and sub-second test execution.
-- **Assertive Council Synthesis:** Decisive Domain Authority arbitration and JEV decision evaluation.
-- **In-Process Skill Search:** Native `pantheon_skill_search` tool without shell permissions.
-- **Non-Destructive Update Pipeline:** Hardened global and project config preservation in `pantheon-opencode update`.
-- **Full OpenCode 2.x Optimization:** Cleaned legacy V1 hooks and streamlined memory timing instructions.
+- **Release Candidate Series Inauguration:** Production-ready multi-agent orchestration for OpenCode 2.x.
+- **Agent Token Compaction (-44.3%):** Removed duplicated backend code in Apollo/Prometheus, saving 8,150 tokens per turn (~29.3M tokens/month).
+- **Pragmatism & Anti-Pedantry Directive:** Safe diagnostic operations are authorized without bureaucratic gates, ending agent sluggishness.
+- **Batched Suite TDD & Test-Slicing:** Cohesive multi-endpoint testing and sub-100ms targeted test execution.
+- **Proactive Skill Discovery & Query Caching:** Cached skill lookups (24h TTL) and automated recommendation for external tools.
+- **Live JEV Scorecard & Sandbox Web App:** 16/16 pass rate ($0.0000238/decision) verified with an end-to-end sandbox application.
 
 See [CHANGELOG.md](CHANGELOG.md) for full historical release notes.
 
