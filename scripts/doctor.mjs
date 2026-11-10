@@ -1411,21 +1411,38 @@ export function resolveMcpCwd(entry, configPath = '') {
 // ---------------------------------------------------------------------------
 
 /**
- * Prerelease-aware comparison for pantheon versions (X.Y.Z or X.Y.Z-beta.N).
- * A stable release outranks any beta of the same core version. Returns
- * <0, 0, >0 (a - b). The shared compareVersions/parseVersion above ignores
- * the `-beta.N` suffix (it only reads 4 numeric groups), which would make
- * every beta pair compare equal.
+ * Prerelease-aware comparison for pantheon versions (X.Y.Z, X.Y.Z-rc.N, or X.Y.Z-beta.N).
+ * Stable releases outrank RCs and betas of the same core version; RCs outrank betas.
+ * Returns <0, 0, >0 (a - b).
  */
 function comparePantheonVersions(a, b) {
   const parse = (v) => {
     const m = String(v)
       .trim()
-      .match(/^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/)
+      .match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/)
     if (!m) return null
+    const prerelease = m[4]
+    if (prerelease === undefined) {
+      return {
+        core: [+m[1], +m[2], +m[3]],
+        tier: Number.POSITIVE_INFINITY,
+        num: Number.POSITIVE_INFINITY,
+        raw: '',
+      }
+    }
+    const preMatch = prerelease.match(/^(rc|beta|alpha)(?:\.(\d+))?$/)
+    let tier = 0
+    let num = 0
+    if (preMatch) {
+      const type = preMatch[1]
+      tier = type === 'rc' ? 2 : type === 'beta' ? 1 : 0
+      num = preMatch[2] !== undefined ? +preMatch[2] : 0
+    }
     return {
       core: [+m[1], +m[2], +m[3]],
-      beta: m[4] === undefined ? Number.POSITIVE_INFINITY : +m[4],
+      tier,
+      num,
+      raw: prerelease,
     }
   }
   const pa = parse(a)
@@ -1434,10 +1451,9 @@ function comparePantheonVersions(a, b) {
   for (let i = 0; i < 3; i++) {
     if (pa.core[i] !== pb.core[i]) return pa.core[i] - pb.core[i]
   }
-  // Infinity - Infinity is NaN, which would make equal stable versions compare
-  // as drift for any caller using a strict === 0 check.
-  if (pa.beta === pb.beta) return 0
-  return pa.beta < pb.beta ? -1 : 1
+  if (pa.tier !== pb.tier) return pa.tier - pb.tier
+  if (pa.num !== pb.num) return pa.num - pb.num
+  return pa.raw.localeCompare(pb.raw)
 }
 
 /**

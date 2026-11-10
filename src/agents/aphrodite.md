@@ -16,11 +16,13 @@ permission:
     "*": deny
 temperature: 0.3
 skills:
+  - fast-path-execution
   - incremental-implementation
   - loop-engineering
   - reflect
   - simplify
   - tdd-with-agents
+  - test-slicing
   - visual-review-pipeline
   - worktrees
 mcp_tools:

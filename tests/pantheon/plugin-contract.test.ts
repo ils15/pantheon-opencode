@@ -2836,6 +2836,7 @@ async function main(): Promise<void> {
       'pantheon_cost',
       'pantheon_local_decision',
       'pantheon_model',
+      'pantheon_skill_search',
       'todowrite',
     ])
   })
@@ -2961,6 +2962,7 @@ async function main(): Promise<void> {
       'pantheon_cost',
       'pantheon_local_decision',
       'pantheon_model',
+      'pantheon_skill_search',
       'todowrite',
     ])
 

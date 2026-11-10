@@ -47,6 +47,7 @@ Before making non-trivial changes, plan how you'll verify correctness. Define th
 | High | 5+ files, schema/API changes | Full plan + rollback test |
 
 ## Rules
-- Verification plan must be approved by @themis before implementation
-- Low risk: inline verification (1-2 lines in the task description)
-- Escalate to @athena if verification plan reveals unknown scope
+- **Fast-Track (Low Risk, 1–2 files)**: Self-contained inline verification (1–2 lines). **Zero pre-implementation approval or delegation needed** — run the targeted test and proceed directly.
+- **Medium Risk (3–5 files)**: Focused verification plan executed directly by the specialist. Run focused tests for changed paths; Themis review occurs after implementation only if behavioral ambiguity exists.
+- **Deep-Track / High Risk (5+ files, Auth, Schema/DB, Payments)**: Verification plan must be approved by @themis before implementation.
+- Escalate to @athena if verification planning reveals unknown scope.

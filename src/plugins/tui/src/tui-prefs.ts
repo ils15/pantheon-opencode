@@ -37,6 +37,14 @@ export function initTuiPrefs(context: Context): void {
       | undefined
     if (handle !== undefined) {
       ;(globalThis as unknown as Record<PropertyKey, unknown>)[PREFS_SYMBOL] = handle
+      // Self-heal: if store was persisted before layout existed, backfill missing top-level defaults
+      if (!handle[0]?.layout) {
+        handle[1]((draft: any) => {
+          if (!draft.layout) {
+            draft.layout = { ...DEFAULT_TUI_PREFS.layout }
+          }
+        }).catch(() => {})
+      }
     }
   } catch {
     /* no host storage — defaults stay read-only */
@@ -45,7 +53,15 @@ export function initTuiPrefs(context: Context): void {
 
 /** The live reactive prefs (read properties inside memos/JSX — tracked). */
 export function tuiPrefs(): TuiPrefs {
-  return stash()?.[0] ?? DEFAULT_TUI_PREFS
+  const s = stash()?.[0]
+  if (!s) return DEFAULT_TUI_PREFS
+  if (!s.layout) {
+    return {
+      ...s,
+      layout: DEFAULT_TUI_PREFS.layout,
+    }
+  }
+  return s
 }
 
 /** Stage a mutation against the durable store; resolves when persisted. */
@@ -235,14 +251,14 @@ export function buildTuiTab(prefs: TuiPrefs): SettingsTab {
           {
             id: 'tui.layout.preset',
             name: 'Layout preset',
-            value: prefs.layout.preset,
+            value: prefs.layout?.preset ?? DEFAULT_TUI_PREFS.layout.preset,
             cycle: LAYOUT_PRESETS_CYCLE,
             note: 'comfortable | compact — sets spacing & borders',
           },
           {
             id: 'tui.layout.separator',
             name: 'Separator',
-            value: prefs.layout.separator,
+            value: prefs.layout?.separator ?? DEFAULT_TUI_PREFS.layout.separator,
             cycle: SEPARATOR_STYLES_CYCLE,
             note: 'spaces | pipes | dots | slashes — status line glyphs',
           },
@@ -396,11 +412,16 @@ export function applyTuiRow(draft: TuiPrefs, id: string, value: string): void {
   const enabled = value === 'enabled'
   switch (id) {
     case 'tui.layout.preset':
-      if (LAYOUT_PRESETS_CYCLE.includes(value)) draft.layout.preset = value as LayoutPresetPref
+      if (LAYOUT_PRESETS_CYCLE.includes(value)) {
+        if (!draft.layout) draft.layout = { ...DEFAULT_TUI_PREFS.layout }
+        draft.layout.preset = value as LayoutPresetPref
+      }
       return
     case 'tui.layout.separator':
-      if (SEPARATOR_STYLES_CYCLE.includes(value))
+      if (SEPARATOR_STYLES_CYCLE.includes(value)) {
+        if (!draft.layout) draft.layout = { ...DEFAULT_TUI_PREFS.layout }
         draft.layout.separator = value as SeparatorStylePref
+      }
       return
     case 'tui.sidebar.context.barShape':
       if (BAR_SHAPES_CYCLE.includes(value)) draft.sidebar.context.barShape = value as BarShapePref
@@ -463,8 +484,9 @@ export function applyTuiRow(draft: TuiPrefs, id: string, value: string): void {
 
 /** Read the current pref value for a row id ('enabled'/'disabled'/gauge/custom). */
 export function tuiRowValue(prefs: TuiPrefs, id: string): string | undefined {
-  if (id === 'tui.layout.preset') return prefs.layout.preset
-  if (id === 'tui.layout.separator') return prefs.layout.separator
+  if (id === 'tui.layout.preset') return prefs.layout?.preset ?? DEFAULT_TUI_PREFS.layout.preset
+  if (id === 'tui.layout.separator')
+    return prefs.layout?.separator ?? DEFAULT_TUI_PREFS.layout.separator
   if (id === 'tui.sidebar.context.barShape') return prefs.sidebar.context.barShape
   if (id === 'tui.sidebar.context.barWidth') return prefs.sidebar.context.barWidth
   if (id === 'tui.sidebar.context.gauge') return prefs.sidebar.context.gauge

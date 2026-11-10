@@ -11,10 +11,12 @@ permission:
     "*": deny
 temperature: 0.3
 skills:
+  - fast-path-execution
   - incremental-implementation
   - loop-engineering
   - reflect
   - simplify
+  - test-slicing
   - worktrees
 mcp_tools:
   pantheon-resources: all

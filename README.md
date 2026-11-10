@@ -1,9 +1,9 @@
 # Pantheon
 
-**A clearer way to work with OpenCode on real software projects.** Pantheon
-brings planning, implementation, review, and documentation into one guided
-experience. It is an OpenCode plugin and installer for developers and teams who
-want useful structure without giving up control of their code.
+**A clearer, faster way to work with OpenCode on real software projects.** Pantheon
+brings planning, implementation, review, and documentation into one guided,
+token-efficient experience. It is an OpenCode plugin and installer for developers
+and teams who want useful structure without giving up speed or control of their code.
 
 [Português (Brasil)](README.pt-BR.md) ·
 [Repository](https://github.com/ils15/pantheon-opencode) · [MIT License](LICENSE)
@@ -15,557 +15,211 @@ want useful structure without giving up control of their code.
 ## What is it?
 
 Pantheon is a companion for [OpenCode](https://opencode.ai/) that helps you move
-from an idea to a reviewed change. Fourteen specialized agents share one
-workflow: plan, implement, check, review, and record what mattered. You stay in
-charge of every decision and every merge.
+from an idea to a reviewed, verified change. Fourteen specialized agents share one
+streamlined workflow: plan, implement, check, review, and record what mattered.
+You stay in charge of every decision and every merge.
 
 ```mermaid
 flowchart LR
-    U["👤 You"] --> Z["⚡ Zeus<br/>orchestrator"]
+    U["You"] --> Z["Zeus<br/>orchestrator"]
     Z -->|"delegates"| S["14 specialists<br/>hermes · aphrodite · demeter · themis …"]
-    Z -->|"ambiguous route"| J["🎲 Jev decision router<br/>typed · budgeted · reversible"]
+    Z -->|"ambiguous route"| J["Jev decision router<br/>typed · budgeted · reversible"]
     J -->|"orders · ranks · verifies"| S
-    S -->|"last resort"| M["🔌 Native MCP<br/>memory · persistence · vision<br/>code-mode · resources"]
-    Z --> G["🛡️ J1 risk gate<br/>off / shadow / warn / enforce"]
-    G -->|"high risk"| H["👤 Human approval"]
+    S -->|"last resort"| M["Native MCP<br/>memory · persistence · vision<br/>code-mode · resources"]
+    Z --> G["J1 risk gate<br/>off / shadow / warn / enforce"]
+    G -->|"high risk"| H["Human approval"]
 ```
 
-**The escalation ladder every agent follows** (the same block lives in all 14
-agent files): session context first → the free local selector → one typed Jev
-question when genuinely ambiguous → a native MCP call only as the LAST resort
-for state the session cannot reconstruct.
+**The escalation ladder every agent follows**: session context first → free local selector → one typed Jev decision when genuinely ambiguous → native MCP call only as the last resort for state the session cannot reconstruct.
 
 ```mermaid
 flowchart LR
-    R["📝 rough request"] --> T0{"clear &<br/>bounded?"}
-    T0 -->|yes| X["⚡ execute directly"]
-    T0 -->|"vague /<br/>multi-concern"| T1["🔍 Tier 1 — internal<br/>minimal adjust ≤15 lines<br/>(silent, no approval)"]
+    R["rough request"] --> T0{"clear &<br/>bounded?"}
+    T0 -->|yes| X["execute directly"]
+    T0 -->|"vague /<br/>multi-concern"| T1["Tier 1 — internal<br/>minimal adjust ≤15 lines<br/>(silent, no approval)"]
     T1 --> T2q{">> given?"}
-    T2q -->|yes| T2["📜 Tier 2 — full contract<br/>6 sections, confirm-or-adjust"]
+    T2q -->|yes| T2["Tier 2 — full contract<br/>6 sections, confirm-or-adjust"]
     T2q -->|no| X
 ```
 
-**Skill discovery runs a trust cascade** — canonical first, popularity never
-compensates for provenance:
+**Skill discovery runs a trust cascade** — canonical first, popularity never compensates for provenance:
 
 ```mermaid
 flowchart LR
-    L["📚 installed pool<br/>(always first)"] -->|"gap"| C1["🟢 anthropics/skills<br/>canonical"]
-    C1 -->|"no fit"| C2["🔵 skills.sh<br/>install-count signal"]
-    C2 -->|"no fit"| C3["🟠 GitHub raw<br/>widest, weakest"]
-    C3 --> J["🎲 Jev orders<br/>the candidates"]
-    J --> P["👤 YOU review<br/>and run the install"]
+    L["installed pool<br/>(always first)"] -->|"gap"| C1["anthropics/skills<br/>canonical"]
+    C1 -->|"no fit"| C2["skills.sh<br/>install-count signal"]
+    C2 -->|"no fit"| C3["GitHub raw<br/>widest, weakest"]
+    C3 --> J["Jev orders<br/>the candidates"]
+    J --> P["YOU review<br/>and run the install"]
 ```
 
 ## Why use it?
 
-- **Less context switching:** keep planning and building in the same workflow.
-- **More deliberate changes:** ask for reviews and checks before calling work
-  finished.
-- **A repeatable starting point:** use the same setup across projects and
-  collaborators.
-- **You stay in charge:** Pantheon supports your judgment; it does not replace
-  it.
-- **Right-sized coordination:** bounded work goes to one specialist, who
-  gathers the needed context. Planning, separate discovery, parallel work, and
-  review are added when scope and risk call for them. `/pantheon-deepwork`
-  remains the checkpointed workflow for heavy multi-phase work.
+- **Fast-Track execution:** Bounded micro-edits (<= 2 files, <= 50 lines) bypass all heavy ceremony and verify in < 10 seconds.
+- **Mandatory test slicing:** Sub-second targeted test execution instead of running sluggish repository-wide test suites during dev loops.
+- **Assertive council (`/pantheon`):** Parallel specialist consultations resolved decisively via domain authority and JEV multi-criteria decisions without endless debate turns.
+- **You stay in charge:** Pantheon supports your judgment; it never silently alters permissions or runs unapproved destructive actions.
+- **Non-destructive upgrades:** Updating Pantheon (`pantheon-opencode update`) refreshes skills, MCPs, and instructions while strictly preserving all user models, presets, permissions, and custom configs.
 
 ## Start in 2 minutes
 
-Requirements: [OpenCode](https://opencode.ai/docs/) **2.x** and Node.js
-**>=26.4.0** for the CLI and tooling. **OpenCode 2.0.22 is known broken**; see
-[Compatibility](docs/COMPATIBILITY.md).
+Requirements: [OpenCode](https://opencode.ai/docs/) **2.x** and Node.js **>=26.4.0**. (See [Compatibility](docs/COMPATIBILITY.md)).
 
-From anywhere (global, all projects) or inside a project:
+### 1. Install
 
+**Option A — Quick Plugin Add (Global or Project):**
 ```bash
 opencode plugin add pantheon-opencode
-# or pin it: opencode plugin add pantheon-opencode@<version>
-opencode
+# Or pin a specific version:
+opencode plugin add pantheon-opencode@2.0.0-rc.1
 ```
 
-Restart OpenCode when prompted. `npx pantheon-opencode init` remains only
-as the OpenCode 1.x migration path and an opt-in project scaffolding tool.
-
-Direct `init` uses the same component defaults in TTY and headless runs:
-`agents`, `skills`, `instructions`, `commands`, and `plugins`. `runtime` and
-`prompts` are opt-in via `--components`. Since beta.5 the TTY run is
-prompt-light: banner → per-file plan preview → ONE final authorization
-(default **no**) — no component/target/decision-model questions. Everything
-those prompts used to configure lives in `/pantheon-settings` (gates,
-decision router, model preset, TUI personalization) or in explicit flags
-(`--components`, `--project`, `--decision-model`,
-`--decision-monthly-usd`, `--decision-per-decision-usd`). Without a TTY,
-`init` is preview-only unless `--yes` explicitly authorizes the apply;
-`--yes` skips prompts but still prints the preview and checks for drift.
-
-`npm run setup` is a separate repository setup wrapper. On a detected
-OpenCode 2.x host it reviews the global config before installer init: legacy
-permission rules can be migrated after explicit review. Config migration and
-installer changes are preflighted before one final authorization; `--yes`
-alone does not authorize setup writes, and headless/CI setup remains
-preview-only. Direct `npx pantheon-opencode init` does not run that
-config-migration review. See the [installation guide](docs/INSTALLATION.md)
-for layer handling, conflict choices, backups, and recovery.
-Existing native `permissions` arrays remain authoritative. Unsafe MCP
-wildcard policies and ineffective `ask` rules require explicit resolution;
-third-party flat MCP entries in `opencode.jsonc` must be converted to
-`mcp.servers` or removed before setup.
-
-Global `init` and `setup` use `$XDG_CONFIG_HOME/opencode` when
-`XDG_CONFIG_HOME` is absolute; otherwise they use `~/.config/opencode`.
-Relative `XDG_CONFIG_HOME` values are rejected before writes.
-
-Then describe the outcome you want:
-
-```text
-/pantheon Add CSV export to the reports page, including tests and a review.
+**Option B — Global CLI Install with Full MCP Tooling:**
+```bash
+npm install -g pantheon-opencode@beta
+pantheon-opencode init --yes
 ```
 
-When you ask for a plan, Athena returns it to Zeus, who displays it in the main
-conversation before asking for approval — never as a plan hidden in a child
-agent's conversation.
-
-Restart OpenCode after installing or changing the plugin. Pantheon registers a
-single plugin; a host never loads two Pantheon plugins.
-
-Installer flags, exit codes, saved plans, backup and restore, uninstall,
-reconcile, and MCP pins are in the [installation guide](docs/INSTALLATION.md).
-For the first ten minutes only — `init` → restart → `/dispatch` → first result —
-see [Quick Start](docs/QUICKSTART.md).
-
-## What's included?
-
-- **14 specialized agents** with one orchestrator, implementation specialists,
-  a quality gate, and supporting roles.
-- **23 skills** and reusable instructions for planning, building, reviewing,
-  and documenting work.
-- **5 local MCP servers** for project memory, persistence, resources, confined
-  script execution, and vision.
-- **A selective, advisory decision router** with structured local results and
-  deterministic per-turn skill/specialist recommendations when enabled.
-  Pantheon-owned direct-provider egress is inactive; native egress exists only
-  via the explicit, Zeus-only `pantheon_jev_decide` advisory tool, which calls
-  the host's native Decisions API (TypeSafe Jev via OpenCode Console or a
-  configured decision model) behind the user's consent and budget gates — it
-  never dispatches agents, runs skills, or changes permissions. This does not
-  change the separately documented Vision integration. See the
-  [router reference](docs/reference/local-decision-router.md) and the
-  [Native Decisions (Jev)](docs/reference/native-decisions.md).
-- **An optional TUI** with a dispatch sidebar block and a full-width
-  `/dispatch` panel. The sidebar keeps the Pantheon version, the active
-  preset/source, git state, and a `Context` block (tokens, a percent gauge,
-  `$<spent> spent`, and a muted `cache <n>% · <n.n> tok/s` line); the native
-  prompt footer keeps its own line, and Pantheon only appends
-  `▸<preset> · ✦<n> ativos` while delegations are running. When the Pantheon
-  version changes since the last TUI start, a one-time dismissable
-  "What's new" dialog lists that version's highlights from the shipped
-  changelog — once per version, `esc`/`q` dismisses; see
-  [What's new window](docs/reference/whats-new.md). `/pantheon-settings`
-  (also `Pantheon: Settings` in the command palette) opens the sectioned
-  settings window — `tab` cycles sections, `up`/`down` selects,
-  `enter` applies, `esc`/`q` closes — and since beta.4 it is a FULL-SCREEN
-  tabbed window (the OpenCode Quota shape): `←/→` cycles a row's value into a
-  staged draft, `ctrl+s` saves every staged change, `ctrl+r` resets the tab,
-  and a warning line surfaces every refusal:
-
-  - **Gates & Overrides** — toggle the named behaviors, writing the global
-    `pantheon-overrides.json` the installer and doctor consume. A corrupt
-    overrides file refuses writes (repair with `doctor --fix`); entries in the
-    project `.pantheon/overrides.json` win at runtime and are shown read-only.
-  - **Decision Model** — enable/disable the advisory decision router live
-    (the runtime re-reads the config per call). Egress consent stays
-    CLI-owned (`decision-router setup-model`).
-  - **Model Preset** — activate any routing.yml preset globally (atomic
-    write with a `.bak` backup); `none` clears the marker. A project
-    `.pantheon/active-preset.json` wins and shows read-only.
-  - **J1 Risk Gate** — ladder mode/threshold status; env-only config
-    (`PANTHEON_J1_*`), read at startup, never written here.
-  - **Changelog** — browse release highlights and What's New notes directly inside
-    the settings window, with references to CHANGELOG.md and GitHub repository.
-  - **Updates** — channel selection (`stable` vs `beta`), registry checking, and an
-    in-window `Update now` action alongside CLI upgrade commands (`pantheon-opencode update`).
-  - **Doctor** — file-derived health: install-version drift, Node floor,
-    overrides and decision-config validation. The full check (MCP smoke,
-    venv pins, git) remains `pantheon-opencode doctor`.
-  - **TUI** — personalize the UI and sidebar aesthetics across OpenCode Desktop and CLI:
-    - *Layout preset*: `comfortable` or `compact` spacing and borders.
-    - *Separator*: `spaces`, `pipes`, `dots`, or `slashes` for status lines.
-    - *Bar shape*: `line` (`━─`), `block` (`▰▱`), `smooth` (`█░`), `ascii` (`=-`), `dots` (`●○`), or `braille` (`⣿⣀`).
-    - *Bar width*: `standard` (12), `compact` (8), `wide` (16), or `full` (20 cells).
-    - *Even-use mark*: toggleable midpoint indicator (`|`) at 50% in gauge bars.
-    - *Header, blocks & details*: toggle version/preset/session rows, context/git/todo/dispatch blocks, tokens/spend/speed rows, and gauge style (`both`/`bar`/`percent`/`off`).
-    Stored in durable per-plugin storage; changes apply live without restarting.
-
-  The installer selects the `plugins` component by default; in interactive
-  setup you can change the component selection. A component-scoped install
-  includes the TUI only when `plugins` is selected. The TUI ships no quota
-  panel: for provider
-  quota and usage inside OpenCode, install the recommended community plugin
-  [`@slkiser/opencode-quota`](https://github.com/slkiser/opencode-quota) — see
-  [Quota & usage](docs/tui-v2-quota-providers.md). `pantheon_cost` and
-  `pantheon_model` keep working unchanged.
-
-Vision requests to OpenCode Zen require a valid active session and are rejected
-before image fetching or model-catalog lookup when the session is missing or
-invalid. The Python vision MCP keeps its local metadata/OCR fallback when no
-gateway credential is configured. In the plugin, an explicit Vision model
-pin that is unavailable or ineligible returns an actionable error rather than
-silently switching models; remove the pin to use automatic model discovery.
-
-Memory is used selectively: the coordinator searches once only when project
-history could affect a task, then passes relevant results to specialists. Store
-one concise, reusable outcome at task completion when it will matter later;
-routine child summaries stay in the handoff. See [Memory](docs/MEMORY.md).
-
-## Compatibility
-
-OpenCode **2.x** is supported. **OpenCode 2.0.22 is known broken.** **2.0
-removes the OpenCode V1 contract entirely** — 1.7.x was the last line with V1
-support.
-
-The support policy, the known-broken exception, and the verified-version
-evidence have exactly one home: [Compatibility](docs/COMPATIBILITY.md).
-
-### Plugin options
-
-The host hands a plugin its `options` only from the object form of the entry.
-`init` writes that form for the optional per-request context pruner; memory
-retrieval stays an explicit `memory_search` MCP call.
-
-```json
-{
-  "plugins": [
-    {
-      "package": "/path/to/pantheon-opencode/src/plugin",
-      "options": {
-        "context_pruner": { "enabled": true }
-      }
-    }
-  ]
-}
+### 2. Verify Health
+```bash
+pantheon-opencode doctor
 ```
+Runs a 28-point diagnostic checking MCP initialization, Python virtual environments, Node version, permissions, and config integrity.
 
-Keep the `package` value `init` wrote and add keys inside `options`; custom
-options survive a re-run. The context pruner is off unless `enabled` is
-literally `true`.
-
-| Option | Default | Effect |
-|---|---|---|
-| `options.context_pruner.enabled` | `false` | Prune old turns from the request payload and at compaction. Off by default because per-request pruning invalidates the provider prompt cache. |
-
-`context_pruner` also accepts `keepTurns`, `purgeAfterTurns`, `protectedTools`,
-`minSavingsTokens` and `charsPerToken`. Unknown keys are ignored with a
-one-time warning in the hook log, so a typo cannot silently change behaviour. Run
-`npx pantheon-opencode doctor` to see whether the installed entry can receive
-options at all. An old `memory_injection` option may remain in an existing
-config because user options are preserved, but the plugin no longer reads it.
-Full rules: [OpenCode 2.x](docs/opencode.md) and [Memory](docs/MEMORY.md).
-
-## Delegation
-
-Pantheon delegates through the host's native child-session engine: `subagent`
-in the user-reported root runtime, referred to as `task()` in host/API
-documentation. Tool availability, background support, and completion
-observability are runtime-dependent; when completion is not observable, use
-synchronous dispatch or wait for a host notification.
-
-Every root dispatch carries a concise handoff brief — objective, bounded scope,
-relevant inputs, constraints, expected return format, and verification. Work is
-routed qualitatively — uncertainty, domain expertise, dependencies, risk, and
-verification — not by fixed file or line thresholds. Return
-contracts are role-specific: implementation uses `## subtask_summary`,
-investigation returns structured findings, Athena returns the complete plan,
-and council responses use `## specialist_response`. Delegated work gets at most
-one retry after a transient failure, and Pantheon never claims deterministic
-fan-in or job recovery without an exposed mechanism.
-
-The delegation model, caller/target matrix, and approval gates are documented
-in [Architecture](docs/ARCHITECTURE.md) and
-[Permissions, Gates & Delegation](docs/PERMISSIONS-QUALITY-DELEGATION.md).
-The [local decision router](docs/reference/local-decision-router.md) provides a
-default-off standalone local API (`PANTHEON_LOCAL_DECISION_ROUTER=1`), the
-separate manual `pantheon_local_decision` advisory tool, and deterministic
-per-turn local recommendations when the user-level `enabled` preference is on.
-The prompt hook may add an advisory marker and narrow an existing `prompt.skills`
-array only when identifiable skill IDs overlap the local selection; this never
-dispatches child sessions or changes permissions or approvals. Per-turn selection
-uses no provider egress: the formerly documented direct-provider route remains
-historical/inactive, and legacy consent, caps, period, provider selection, or
-credentials cannot activate it. Native child-session dispatch remains separate.
-
-The one native egress surface is the Zeus-only `pantheon_jev_decide` tool,
-available on hosts that expose the 2.2.5 native Decisions API; its full gate
-chain, routes, and settlement rules are documented once in
-[Native Decisions (Jev)](docs/reference/native-decisions.md). An opt-in second
-consumer of that chain, the J1 risk-score shadow gate, fires one bounded
-native decision per write/execute tool call behind `PANTHEON_J1_RISK_SCORE`
-(off by default, zero overhead when off): the request carries no user content
-(tool name token, scope class, input sha256 only), every failure mode skips
-silently with a reason token, and the shadow record is the whole effect — it
-never blocks, asks, or narrows a permission. A third opt-in consumer, the J3
-turn-complexity escalation, runs in shadow behind `PANTHEON_J3_ESCALATION`
-(off by default): it classifies each delegate dispatch with one bounded score
-question (Brief sha256, length and a risk-word flag only — the Brief text
-never leaves the machine), local rails (risk words, user-pinned models, large
-context) and every unsure answer always favor the main model, and the recorded
-verdict never changes the dispatched model — the per-agent override mechanism
-is proved by test and reserved for a separately reviewed activation with its
-own measured baseline. A fourth consumer needs no flag at all: the tool's
-`mode: "review"` (J4 output-quality scoring) runs only when Zeus explicitly
-asks, after a delegation completes — one typed round-trip returns an advisory
-quality score against named criteria plus a needs-review flag. The result
-content never leaves the machine (shape metrics and criteria only, hostile
-criteria rejected outright), and the verdict is advisory telemetry plus a
-flag: it never blocks, retries, or alters the delegated result. Two more
-orchestrator-owned tool modes round out the surface: `mode: "rank"` picks the
-best of 2–8 named candidates for a state in one typed round-trip (it returns
-the winner and that candidate's fit score — the host API answers one scalar
-per question, so no full ordering is returned), and `mode: "verify"` checks
-1–4 named claims with one predicate question per claim, mapping each answer to
-`PASS` / `FAIL` / `BLOCK` where every refusal, timeout or malformed answer is
-`BLOCK` (fail-closed); claims are bounded caller-provided strings, hostile
-shapes rejected outright, and neither mode adds a telemetry point.
-
-The installer may retain a legacy target-specific preference; it does not control
-runtime routing. `npx pantheon-opencode decision-router ...` manages stored
-user-level preferences and budget state: `enabled` gates the local per-turn
-recommendation only; provider-selection and budget/consent state do not activate
-egress. The separate SQLite ledger has no default caps. Installation does not
-contact a model provider or inspect credentials. The published CLI imports
-committed ESM bundles:
-`npm run build:decision-router` regenerates them and `npm run check:decision-router`
-(the `prepack`/`prepublishOnly` drift gate) fails when any is stale. The
-`pantheon-opencode/local-decision-router` subpath itself is TypeScript source, so
-it loads only in the host runtime or under a transpiler such as `tsx`.
-
-Decision-layer commands are separated by effect. `decision-router help`,
-`status`, `preview` and `holds` are read-only: they never create, migrate, or
-write the config or the SQLite ledger, and neither does `setup` without
-`--apply`. `select` records a preference and can never enable anything — moving
-the target also revokes consent recorded for the previous one. `setup` prints a
-**computed diff of the target artifacts** (snapshot + SHA-256 per file, compared
-against the exact bytes the writer would produce); `setup --apply` is the form
-that writes, and a second run reports `0 create · 0 update`. It is deliberately
-not the installer's "Change plan", which announced 112 creates for an apply that
-created nothing. `setup --target <dir>` also reconciles the
-`.pantheon/install-state.json` provider/consent record with the user-level config;
-that record is derived from the config and never asserts consent the config lacks.
-Neither path creates a backup: installer backup sets accumulate once per
-application and contain credential-bearing material (API keys/tokens), so no
-extra copy is made. Installer file-ownership tracking is partial and asymmetric —
-`file_inventory` indexes 53 PROJECT artifacts and no GLOBAL ones (F-15); the
-106-project / 107-global denominators are derived from the 213-artifact total and
-are not separately indexed — so this preview compares the decision-layer
-artifacts it owns, not "everything the installer touched".
-
-The old OpenAI/TypeSafe per-turn provider adapters and endpoint descriptions are
-retained as historical, inert code; no legacy consent, cap, period, provider, or
-permission setting wires them into the production prompt hook. The captured-hook
-boundary test supplies an isolated synthetic consent/provider config and fake
-test-only credential, verifies a local recommendation marker, and verifies zero
-native Decisions or global `fetch` calls. This is an offline regression check of
-that hook, not a claim about unexercised network paths or a live-provider test.
-Measured surface coverage is
-reported honestly rather than implied: P7 runs behind `PANTHEON_P7_LOOP` with
-an **advisory** execution cap (never described as enforcement), P2 is
-**advisory-only** (an empirical no-op on the default path), P9 was measured on
-top-level **and child** sessions with `reason:"overflow"` still unmeasured, and
-P8 is **advisory: not activatable by measurement** — its declared rules match no
-delivered permission payload, so it narrows nothing (PROBE-F).
-
-### The decision layer is declared in full and wired in part
-
-The decision layer declares eleven integration points (P1–P11) over three
-decision primitives — `ask`, `rank`, and `verify` — and a deterministic policy
-that decides which point may run. **Seven of the eleven have a production call
-site: two behind flags that are off by default, five in shadow.**
-
-- **P7 (loop)** is wired to `session.execution.succeeded` behind
-  `PANTHEON_P7_LOOP`, which is off. It writes each observation to an
-  in-memory, bounded telemetry collector that the plugin never reads back and
-  exposes only to tests, so "records" here does not mean an operator-visible log.
-- **P8 (guardrail)** is wired to `permission.evaluate` behind
-  `PANTHEON_P8_GUARDRAIL`, which is off. C8 is closed **by measurement**, and
-  the measurement is negative: PROBE-F delivered 24 real `permission.evaluate`
-  events and every declared rule matched none of them (a valid `action` token and
-  a top-level `sessionID` are always present), the host resolves an unrecognised
-  effect as `ask` and proceeds, and `permission.evaluate.egress` is unreachable
-  (a tool declaring it is never advertised to the provider). As declared, P8 does
-  not narrow. The flag stays off.
-- **P1 and P2** are registered on `session.hook('prompt')` in **shadow**. They
-  observe the same admission payload through a projection that carries only
-  `prompt.agents` and `prompt.skills`: no text, no file bytes, no metadata, no
-  mutation, no throw. Every record says `effect: none` and goes to an in-memory,
-  bounded collector the plugin never reads back (test-visible only).
-- **P3** is wired at its declared `tool.invoke` in **shadow**: the
-  `pantheon_local_decision` tool hands the adapter its own input, whose schema
-  requires `complexity` and `gateStatus`. It records a classification when the
-  tool is invoked — never a permanent `complexity.invalid` refusal from a payload
-  that cannot carry the vector — and applies nothing.
-- **P9** is wired at its declared `session.hook('compaction')` in **shadow**, on
-  the carrier that was actually measured: the top-level `sessionID` and the
-  `system` part array. It records the decision key and the payload shape and
-  pushes nothing — the injected compaction context is unchanged — and a payload
-  whose only session id is a nested `session.id` (a field the 2.2.5 host never
-  sends) produces no decision at all. The same shape was measured in a **child**
-  session (PROBE-G: hook fires 3/3, child `sessionID` at top level, `system` an
-  array of 4), so no child-specific branch exists. `reason:"overflow"` was not
-  inducible and is not designed for. No measured surface carries the memory
-  candidate list it would retain or discard, so its record states that absence
-  rather than a retention or a priority.
-- **P11** is wired inside `ctx.tool.transform` in **shadow**: it reads the draft
-  the host hands that callback and calls none of its mutators. Shadow has no
-  responder, so it records the validated `choice` question over the draft ids —
-  never a selection.
-
-**The other four — P4, P5, P6 and P10 — are library code with no production call
-site.** Nothing constructs or registers them outside the per-point test suites —
-the offline harness imports no adapter module. P6 and P10 declared the prompt
-hook, but that payload never carries council candidates or counsellor claims, so
-they stay unwired instead of recording a refusal from a surface that cannot feed
-them. P4 ranks a memory candidate array and the measured `context` payload
-carries `system` text parts, not candidates; P5 verifies a declared
-`{ requirements, responses }` pair and the `execute.after` event carries
-neither. On a host they do not read the turn, record no telemetry and have no
-switch to turn off, because nothing registers them.
-
-"Shadow" therefore means no behavioural change, not a claim of effect: the five
-shadow points read a narrow slice of their surface and decide nothing from it,
-and the two flag-gated points are off. No activation flag is set in a default
-install.
-
-The CLI separates effects: `npx pantheon-opencode decision-router help`, `status`,
-`preview` and `holds` never write, `setup` writes only under `--apply`, `preview`
-is an alias of `setup`, and `select` records a preference without enabling
-anything. Egress stays opt-in and off, and only the explicit `enable`, `consent`,
-`caps` and `period` actions can change that; no read-only command can.
-
-What the layer does **not** do today, stated as measured rather than implied:
-
-- **P2 (skills) is advisory-only and does not filter.** It is an empirical no-op
-  on the default path, because the host sends `prompt.skills` absent. Effective
-  project-skill filtering was cancelled by measurement, not emulated, and no
-  token reduction is claimed.
-- **P7 (loop) is behind `PANTHEON_P7_LOOP`, off by default, and does not
-  enforce loop limits.** It counts executions and writes an `effect: none`
-  observation to an in-memory collector that nothing reads back. Its
-  12-execution cap is **advisory**: no measured host surface signals a new user
-  turn, so nothing is claimed to reset the streak.
-- **P9 (compaction) is measured in top-level and child sessions.** PROBE-G fired
-  the hook in a real child 3/3 with the child's `sessionID` at top level and the
-  same payload shape. `reason: "overflow"` was **not inducible** in 6 error
-  shapes — the host retried and completed, and the one failure-recovery
-  compaction was persisted as `reason:"auto"` — so that path stays unmeasured;
-  the checkpoint reinjection inside a child was not exercised, and the `messages`
-  channel remains UNKNOWN. The memory candidate list is not available on any
-  measured surface, so the wired P9 record names that absence and claims no
-  retention or priority.
-- **P8 (guardrail) is not activatable by measurement.** PROBE-F delivered 24 real
-  `permission.evaluate` events: the payload is
-  `["sessionID","agent","action","resources","metadata","source","effect"]` with
-  `effect` an own writable data property pre-populated by the host, and a written
-  `deny` **is** honoured. But neither declared rule can match a delivered payload
-  (valid `action` token, `sessionID` always present), the host lets an
-  unrecognised effect resolve as `ask` and execute, and
-  `permission.evaluate.egress` is unreachable — so the current rule set matches
-  nothing and does not narrow. The point is recorded as **advisory**, not as
-  awaiting review, and the inertness is the measured verdict rather than a design
-  claim. `execute.before` remains the only hard barrier.
-- **The embeddings-versus-BM25 comparison has not been run.** The environment is
-  offline with no embedding model available, so BM25 remains the baseline and no
-  gain or loss in retrieval or tokens is claimed in either direction.
-
-Calibration that was run: the offline harness
-(`npx tsx tests/pantheon/decision-harness.test.ts`) executed 264 synthetic
-cases — 132 normal, 66 refusal, 66 adversarial — across the eleven points, with
-24 cases per point and the suite asserting at least 20 cases, 5 refusals and 5
-adversarial cases per point. All 264 cases passed on 2026-10-31. This harness is
-the only place all eleven points are exercised in one run, but it imports no
-adapter module: it iterates the registry and exercises the shared primitives,
-while the adapters are covered by their per-point suites
-(`decision-p1.test.ts` … `decision-p11.test.ts`). Passing it says nothing
-about whether a point is registered in a host.
-The harness measures contracts (admission, refusal, shadow no-op, telemetry
-redaction, offline discipline, registry integrity), **not** token use, quality,
-latency or any effect inside a host turn. Numbers and unmeasured surfaces are
-recorded in the [router reference](docs/reference/local-decision-router.md).
-
-## Documentation
-
-| Start here | Go deeper |
-|---|---|
-| [Installation](docs/INSTALLATION.md) | [Architecture](docs/ARCHITECTURE.md) |
-| [Quick Start](docs/QUICKSTART.md) | [MCP](docs/MCP.md) · [MCP tools](docs/mcp-tools.md) |
-| [Upgrading](docs/UPGRADING.md) | [Memory](docs/MEMORY.md) |
-| [Compatibility](docs/COMPATIBILITY.md) | [OpenCode 2.x](docs/opencode.md) |
-| [Agents & Skills](docs/agents/README.md) | [Platforms](docs/PLATFORMS.md) |
-| [Release Process](docs/RELEASING.md) | [Branch Protection](docs/BRANCH-PROTECTION.md) |
-| [Model Routing](docs/reference/model-routing.md) | [Local Decision Router](docs/reference/local-decision-router.md) · [Native Decisions (Jev)](docs/reference/native-decisions.md) · [Offline Evaluation Protocol](docs/reference/offline-evaluation.md) · [Env Vars](docs/reference/env-vars.md) · [Code Mode](docs/reference/code-mode.md) |
-| [Contributing](CONTRIBUTING.md) | [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) |
-
-Memory writes through `pantheon-memory` are serialized, and failed writes are
-reported as failures rather than as stored entries. Eval resources wait for
-SQLite locks and close their connections; project-specific resources resolve
-the current project root per request while preserving the trusted
-`PANTHEON_HOME` fallback. See [Memory](docs/MEMORY.md) for store separation and
-[MCP tools](docs/mcp-tools.md) for details.
-
-Native-MCP usage is measured, not assumed: `node bench/mcp-usage-audit.mjs`
-writes a dated audit of real memory/persistence/vision/code-mode/resource
-usage (reports stay local — they carry bounded session excerpts), and the
-agent usage policies derived from it are documented in
-[MCP tools](docs/mcp-tools.md).
-
-The release install gate's tool canary loads the installed tarball's plugin
-entry under OpenCode 2.0.30 and verifies `hashline_edit` registration, Code Mode
-visibility, and a bounded edit in an isolated project. It does not prove npm
-publication or compatibility with untested host versions; details are in the
-[release process](docs/RELEASING.md).
-
-Generate beta release notes from commits since the latest prior beta tag with
-`node scripts/versioning.mjs apply --beta --notes`. See the [release
-procedure](docs/RELEASING.md) for details.
-After the version bump, verify and rebuild the TUI workspace from the repository
-root with `npm run typecheck --workspace=src/plugins/tui` and
-`npm run build --workspace=src/plugins/tui`.
-The maintainer-only `release` scope is excluded from public notes and their
-Closed Issues references; see the [release-notes policy](docs/RELEASING.md#release-notes).
-
-## Status
-
-The manifests in this checkout express the version being prepared, not a
-confirmed publication. Check the npm `beta` dist-tag for what is actually
-published. See [Compatibility](docs/COMPATIBILITY.md) for the supported hosts
-and [releases](https://github.com/ils15/pantheon-opencode/releases) for the
-latest published changes.
-
-## What's new
-
-See the [GitHub release](https://github.com/ils15/pantheon-opencode/releases)
-and [CHANGELOG.md](CHANGELOG.md) for the changes in 1.7.0.
-
-## Contribute
-
-Ideas, bug reports, documentation improvements, and code contributions are
-welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue or pull
-request. That file also defines the documentation rule: one home per fact, with
-a short list of facts that must not be duplicated.
-
-For code changes, run the smallest relevant check and expand it to match the
-change's risk. `npm test` is the full repository suite; see
-[CONTRIBUTING.md](CONTRIBUTING.md) for when to use it.
-
-## Citation and DOI
-
-Pantheon is released under the [MIT License](LICENSE). Cite the
-[Zenodo concept DOI](https://doi.org/10.5281/zenodo.22650136), which always
-resolves to the latest archived release; each release also has its own version
-DOI. Citation metadata is in [CITATION.cff](CITATION.cff).
-
-Canonical repository: <https://github.com/ils15/pantheon-opencode>
+### 3. Updating Pantheon Without Overwriting Settings
+When a new version is released:
+```bash
+pantheon-opencode update
+```
+The updater verifies package identity, pulls the latest release, and runs a non-destructive configuration refresh. **Your custom models, active preset, custom permissions, plugin options, and user-defined AGENTS.md sections are preserved verbatim.**
 
 ---
 
-[Leia em português (Brasil)](README.pt-BR.md)
+## Optimal Workflow & Execution Modes
+
+Pantheon balances speed and rigor through three distinct execution modes:
+
+```mermaid
+flowchart TD
+    Req["User Request"] --> Size{"Scope / Risk"}
+    Size -->|"≤ 2 files · ≤ 50 lines<br/>routine fix / typo / CSS"| Fast["Fast-Track<br/>(Sub-10s · Inline Test Slicing)"]
+    Size -->|"Architecture / Tech choice<br/>Security / Multi-stakeholder"| Council["Council Synthesis (/pantheon)<br/>(2-3 Specialists in Parallel · Domain Authority)"]
+    Size -->|"Multi-phase feature<br/>Heavy refactor · Breaking changes"| Deep["Deepwork (/pantheon-deepwork)<br/>(Athena Plan · Phase Gates · Checkpoints)"]
+```
+
+### 1. Fast-Track & Test Slicing (Micro-Edits < 10s)
+For routine bug fixes, style adjustments, or localized refactors:
+- **No planning ceremony:** Directly executes bounded changes.
+- **Targeted test slicing:** Runs ONLY the test slice relevant to the modified file (e.g. `node --test tests/foo.test.mjs` or `pytest -k <func>`). Full repository test suites are reserved for CI and release gates.
+- **Single-turn delivery:** Verifies and completes in under 10 seconds.
+
+### 2. Assertive Council Synthesis (`/pantheon`)
+When confronting architectural crossroads, technology evaluations, or security tradeoffs:
+```text
+/pantheon Should we use WebSockets or Server-Sent Events for live push notifications?
+```
+- **Parallel Dispatch:** Dispatches 2–3 specialist agents simultaneously with independent prompts.
+- **Assertive Arbitration:** Rather than looping in repetitive debate rounds, divergences are resolved immediately via **Domain Authority Precedence**:
+  - **Security / Auth:** `@themis` has veto power over vulnerable designs.
+  - **Database / Schema:** `@demeter` carries authoritative weight on query performance and transaction safety.
+  - **Frontend / UX / A11y:** `@aphrodite` governs user interface responsiveness and accessibility.
+  - **Infrastructure / CI:** `@prometheus` governs deployment contracts and container isolation.
+  - **API / Protocols:** `@hermes` governs contract consistency and transport schemas.
+  - **Architecture / Modularity:** `@athena` governs separation of concerns.
+- **JEV Multi-Criteria Decision:** If trade-offs balance competing requirements equally, Zeus invokes `pantheon_jev_decide` (or local decision matrix) to rank candidates deterministically in one tool call.
+
+### 3. Checkpointed Deepwork (`/pantheon-deepwork`)
+For multi-phase tasks spanning 10+ turns or multiple sessions:
+```text
+/pantheon-deepwork "Implement OAuth2 PKCE authentication flow"
+```
+- **Phase 0 (Plan):** Athena maps affected modules and returns a complete Markdown plan displayed directly in the main conversation.
+- **Phase 1 (Discovery):** Apollo performs structured exploration.
+- **Phase 2–N (Implementation):** Specialists implement features in parallel phases.
+- **Phase Gates:** Themis audits each phase (`PASS` or `FAIL`).
+- **Resumability:** Checkpoints persisted to `.pantheon/deepwork/<slug>/`. Resume anytime with `/pantheon-deepwork --resume <slug>`.
+
+---
+
+## The 14 Specialized Agents
+
+Every root dispatch carries a concise handoff brief — objective, bounded scope, relevant inputs, constraints, expected return format, and verification. Work is routed qualitatively — uncertainty, domain expertise, dependencies, risk, and verification — not by fixed file or line thresholds. Return contracts are role-specific: implementation uses `## subtask_summary`, investigation returns structured findings, Athena returns the complete plan, and council responses use `## specialist_response`.
+
+| Agent | Domain Authority | Core Responsibilities |
+|---|---|---|
+| **@zeus** | Central Orchestrator | Directs workflow, manages delegations, arbitrates council decisions, enforces token efficiency. Never implements directly. |
+| **@athena** | Architecture & Planning | Research-first planning, system boundaries, LTS policy, dependency analysis. Plan-only; never implements. |
+| **@hermes** | Backend & APIs | FastAPI, Python async, Node/TypeScript backends, API contracts, protocol conformance. |
+| **@aphrodite** | Frontend & UX | React 19, strict TypeScript, responsive design, WCAG accessibility, CSS optimization. |
+| **@demeter** | Database & Persistence | Schema migrations, query optimization, N+1 query prevention, transaction integrity. |
+| **@themis** | Security & Quality Gate | OWASP audits, static analysis (Biome/ruff), authorization gates, dead code removal. Reviews material changes. |
+| **@prometheus** | DevOps & Infrastructure | Docker, CI/CD pipelines, runtime configuration, provider abstraction, telemetry infra. |
+| **@talos** | Hotfix Fast Lane | Rapid, standalone fixes for small bugs, typos, and minor logic without subagent overhead. |
+| **@apollo** | Investigation Scout | Read-only discovery: parallel codebase and web searches. Returns structured findings. |
+| **@hephaestus**| AI Pipelines & RAG | Embeddings, vector stores, prompt engineering, agent pipelines. |
+| **@gaia** | Geospatial & Sensing | Remote sensing, SAR, geospatial analysis, ML/DL raster classification (read-only). |
+| **@iris** | Git & Release Ops | Branching, PRs, issue triage, release notes. Never pushes or merges without human approval. |
+| **@mnemosyne** | Project Memory Bank | Maintains `.pantheon/memory-bank/` and records ADRs when explicitly requested. |
+| **@nyx** | Observability & Telemetry| OpenTelemetry tracing, token/cost monitoring, execution profiling. |
+
+---
+
+## Skills & MCP Tooling
+
+- **In-Process Skill Search (`pantheon_skill_search`):** Quickly discovers local skills and external ecosystem skills without requiring shell execution permissions.
+- **25 Production Skills:** Includes `test-slicing`, `fast-path-execution`, `tdd-with-agents`, `instruction-forge`, and `incremental-implementation`.
+- **5 Local MCP Servers:**
+  - `pantheon-memory`: Shared project memory with atomic SQLite locking.
+  - `pantheon-persistence`: File and context persistence.
+  - `pantheon-resources`: Local documentation and asset serving.
+  - `pantheon-code-mode`: Sandboxed Python execution.
+  - `pantheon-vision`: Image analysis and diagnostic visual inspection.
+- **Advisory JEV Decision Router:** Evaluates candidate options (`pantheon_jev_decide`), orders trade-offs, and provides formal multi-criteria decision making without modifying permissions.
+
+---
+
+## Settings & TUI Window (`/pantheon-settings`)
+
+Run `/pantheon-settings` (or `Pantheon: Settings` in the command palette) to open the interactive settings window:
+
+- **Gates & Overrides:** Toggle named behaviors live; persists to `pantheon-overrides.json`.
+- **Model Presets:** Switch active model tier globally or per project.
+- **Decision Model:** Configure local and remote JEV decision routing.
+- **Updates:** Check registry channel (`beta` / `stable`) and trigger upgrades.
+- **Doctor:** Run inline system health diagnostics.
+- **TUI Personalization:** Adjust spacing (`comfortable` vs `compact`), separators, gauge bar styles, and context display rows.
+
+---
+
+## Documentation
+
+| Start Here | Architecture & Deep Dives | Reference & Operations |
+|---|---|---|
+| [Quick Start](docs/QUICKSTART.md) | [Architecture](docs/ARCHITECTURE.md) | [MCP Tools](docs/mcp-tools.md) |
+| [Installation Guide](docs/INSTALLATION.md) | [Delegation & Gates](docs/PERMISSIONS-QUALITY-DELEGATION.md) | [Native Decisions (Jev)](docs/reference/native-decisions.md) |
+| [Compatibility](docs/COMPATIBILITY.md) | [Memory System](docs/MEMORY.md) | [Model Routing](docs/reference/model-routing.md) |
+| [Upgrading](docs/UPGRADING.md) | [OpenCode 2.x Integration](docs/opencode.md) | [Changelog](CHANGELOG.md) |
+
+---
+
+## What's New in v2.0.0-rc.1
+
+- **Release Candidate Series Inauguration:** Production-ready multi-agent orchestration for OpenCode 2.x.
+- **Agent Token Compaction (-44.3%):** Removed duplicated backend code in Apollo/Prometheus, saving 8,150 tokens per turn (~29.3M tokens/month).
+- **Pragmatism & Anti-Pedantry Directive:** Safe diagnostic operations are authorized without bureaucratic gates, ending agent sluggishness.
+- **Batched Suite TDD & Test-Slicing:** Cohesive multi-endpoint testing and sub-100ms targeted test execution.
+- **Proactive Skill Discovery & Query Caching:** Cached skill lookups (24h TTL) and automated recommendation for external tools.
+- **Live JEV Scorecard & Sandbox Web App:** 16/16 pass rate ($0.0000238/decision) verified with an end-to-end sandbox application.
+
+See [CHANGELOG.md](CHANGELOG.md) for full historical release notes.
+
+## Contributing
+
+Ideas, bug reports, and contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a PR.
+
+## Citation and License
+
+Pantheon is open-source software licensed under the [MIT License](LICENSE).
+Cite via Zenodo concept DOI: [10.5281/zenodo.22650136](https://doi.org/10.5281/zenodo.22650136). Citation metadata is available in [CITATION.cff](CITATION.cff).
+
+Canonical repository: <https://github.com/ils15/pantheon-opencode>

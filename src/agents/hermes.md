@@ -13,12 +13,14 @@ mcp_tools:
 temperature: 0.3
 skills:
   - clonedeps
+  - fast-path-execution
   - git-workflow-and-versioning
   - incremental-implementation
   - loop-engineering
   - reflect
   - simplify
   - tdd-with-agents
+  - test-slicing
   - worktrees
 permission:
   shell: allow
@@ -200,7 +202,7 @@ When creating a new feature:
        raise HTTPException(status_code=404, detail="Item not found")
    ```
 
-4. **Testing**: Write unit tests in `backend/tests/`
+4. **Testing**: Write focused unit tests in `backend/tests/` and verify using `test-slicing` (e.g. `pytest tests/test_item.py -k test_create -q --tb=short`). Never run full repository suites (`pytest`, `npm test`) during implementation loops.
 
 ## Code Quality Standards
 

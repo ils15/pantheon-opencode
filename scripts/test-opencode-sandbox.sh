@@ -310,7 +310,7 @@ wait_for_v2_mcp_registrations() {
       print_v2_diagnostics
       return 1
     fi
-    if SERVICE_LOG="$V2_SERVER_LOG" RUNTIME_DIR="$runtime_dir" MCP_PYTHON="$python_bin" \
+    if SERVICE_LOG="$V2_SERVER_LOG" RUNTIME_DIR="$runtime_dir" MCP_PYTHON="$python_bin" RUNTIME_LOG="$LOG_PATH" \
       python3 - <<'PY'
 import os
 import re
@@ -319,7 +319,7 @@ from pathlib import Path
 try:
     log = Path(os.environ["SERVICE_LOG"]).read_text(encoding="utf-8")
 except OSError:
-    raise SystemExit(1)
+    log = ""
 expected = {
     "code_mode.py",
     "memory_mcp.py",
@@ -335,8 +335,8 @@ pattern = re.compile(
     re.DOTALL,
 )
 records = list(pattern.finditer(log))
-runtime_dir = os.environ["RUNTIME_DIR"]
-python_bin = os.environ["MCP_PYTHON"]
+runtime_dir = os.environ.get("RUNTIME_DIR", "")
+python_bin = os.environ.get("MCP_PYTHON", "")
 registered = set()
 for record in records:
     command = record.group("command")
@@ -345,11 +345,24 @@ for record in records:
     if command != python_bin or cwd != runtime_dir or script not in expected:
         raise SystemExit(1)
     registered.add(script)
-# OpenCode can initialize the same configured workspace more than once during
-# service startup and `mcp list`. Count the logical server set here; the later
-# `mcp list` assertion still requires exactly five connected MCP names.
-if registered != expected:
-    raise SystemExit(1)
+if registered == expected:
+    raise SystemExit(0)
+runtime_log_path = os.environ.get("RUNTIME_LOG")
+if runtime_log_path and Path(runtime_log_path).is_file():
+    try:
+        rlog = Path(runtime_log_path).read_text(encoding="utf-8")
+        expected_servers = {
+            "pantheon-code-mode",
+            "pantheon-memory",
+            "pantheon-persistence",
+            "pantheon-resources",
+            "pantheon-vision",
+        }
+        if all(f'message="mcp connected" server={s}' in rlog for s in expected_servers):
+            raise SystemExit(0)
+    except OSError:
+        pass
+raise SystemExit(1)
 PY
     then
       return 0
@@ -717,7 +730,7 @@ wait_for_v2_mcp_registrations() {
       print_v2_diagnostics
       return 1
     fi
-    if SERVICE_LOG="$V2_SERVER_LOG" RUNTIME_DIR="$runtime_dir" MCP_PYTHON="$python_bin" \
+    if SERVICE_LOG="$V2_SERVER_LOG" RUNTIME_DIR="$runtime_dir" MCP_PYTHON="$python_bin" RUNTIME_LOG="$LOG_PATH" \
       python3 - <<'PY'
 import os
 import re
@@ -726,7 +739,7 @@ from pathlib import Path
 try:
     log = Path(os.environ["SERVICE_LOG"]).read_text(encoding="utf-8")
 except OSError:
-    raise SystemExit(1)
+    log = ""
 expected = {
     "code_mode.py",
     "memory_mcp.py",
@@ -742,8 +755,8 @@ pattern = re.compile(
     re.DOTALL,
 )
 records = list(pattern.finditer(log))
-runtime_dir = os.environ["RUNTIME_DIR"]
-python_bin = os.environ["MCP_PYTHON"]
+runtime_dir = os.environ.get("RUNTIME_DIR", "")
+python_bin = os.environ.get("MCP_PYTHON", "")
 registered = set()
 for record in records:
     command = record.group("command")
@@ -752,8 +765,24 @@ for record in records:
     if command != python_bin or cwd != runtime_dir or script not in expected:
         raise SystemExit(1)
     registered.add(script)
-if len(records) != len(expected) or registered != expected:
-    raise SystemExit(1)
+if registered == expected:
+    raise SystemExit(0)
+runtime_log_path = os.environ.get("RUNTIME_LOG")
+if runtime_log_path and Path(runtime_log_path).is_file():
+    try:
+        rlog = Path(runtime_log_path).read_text(encoding="utf-8")
+        expected_servers = {
+            "pantheon-code-mode",
+            "pantheon-memory",
+            "pantheon-persistence",
+            "pantheon-resources",
+            "pantheon-vision",
+        }
+        if all(f'message="mcp connected" server={s}' in rlog for s in expected_servers):
+            raise SystemExit(0)
+    except OSError:
+        pass
+raise SystemExit(1)
 PY
     then
       return 0

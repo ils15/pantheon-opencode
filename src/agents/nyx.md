@@ -50,7 +50,7 @@ mcp_tools:
 - **Code-mode / infrastructure reads** — cheap and on demand; never for
   decisions the ladder already answers.
 
-## ⚠️ ABSOLUTE CONSTRAINT
+## ABSOLUTE CONSTRAINT
 
 **ANALYSIS ONLY — NEVER implement, never edit files, never write fixes.**
 Your role is to break inputs, probe boundaries, and report findings. If you

@@ -110,46 +110,42 @@ Use `webfetch` to verify availability before proposing model updates to other ag
 
 **Only read Memory Bank files** (`.pantheon/memory-bank/00-project.md`, `00-project.md`) if they exist with content — skip research if documented.
 
-## Plan Structure (Detailed and Actionable)
+## Plan Structure (Visual, Actionable & Token-Efficient)
 
 Use this template whenever the user asks for a plan or Zeus requests one. Keep it
-proportional, but include enough information for the user to understand and
-approve the actual work rather than only its phase names:
+visual, actionable, and token-efficient — modeled after Claude Code and ChatGPT Agent plan modes:
 
 ```markdown
-##  Plan: [Feature Name]
+## Plan: [Feature Name]
 
-###  Goal
-One sentence describing what this plan achieves.
+### Architecture & Execution Flow
+```mermaid
+flowchart TD
+  P1["Phase 1: [Name] (@agent)"] --> P2["Phase 2: [Name] (@agent)"]
+  P2 --> P3["Phase 3: Verification (@themis)"]
+```
 
-### Scope and Assumptions
-- In scope: [concrete outcomes]
-- Out of scope: [important exclusions]
-- Assumptions / unknowns: [mark anything not verified]
+### Goal & Scope
+- **Goal:** One sentence describing what this plan achieves.
+- **In scope:** [Concrete outcomes]
+- **Out of scope:** [Important exclusions]
+- **Assumptions:** [Key assumptions; unverified facts]
+- **Open Questions:** [Critical decisions the user must make, with recommended defaults]
 
-###  Phases (3-5 max)
+### Phases (3-5 max)
 1. **[Phase Name] → @agent**
-   - Outcome and concrete steps
-   - Affected files or areas (use known paths; mark unknown paths instead of guessing)
-   - Dependencies on earlier phases or decisions
-   - Tests/checks and applicable quality gates
-   - Risk and mitigation
-...
+   - **Goal & Actions:** Outcome and concrete steps (TDD: RED → GREEN → REFACTOR)
+   - **Affected files or areas:** Known paths or explicitly mark unknown paths instead of guessing
+   - **Dependencies:** Earlier phases or external systems
+   - **Tests:** Focused checks, lint-first gate, and applicable quality gates
+   - **Risks & Mitigation:** Specific risk → concrete mitigation
 
-###  Verification Strategy
-- Focused tests and checks by phase
-- Integration / regression checks, when applicable
-- Use repository coverage thresholds; do not invent a target
+2. **[Phase Name] → @agent**
+   ...
 
-###  Risks and Mitigations
-- [Specific risk] → [mitigation]
-
-###  Open Questions
-- [Decision the user must make, or "None"]
-
-### [OK] Acceptance Criteria
+### Acceptance Criteria
 - [ ] Observable completion criterion
-- [ ] Verification criterion
+- [ ] Verification criterion (all tests green, 0 lint warnings)
 ```
 
 The complete plan is the deliverable. Include it in your final response to the

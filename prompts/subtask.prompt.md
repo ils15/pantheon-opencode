@@ -71,7 +71,7 @@ Implementation agents use this `## subtask_summary` contract and include each ap
 ## subtask_summary
 **files_changed:** [list of file paths, one per line]
 **summary:** What was done, in 2-3 sentences
-**tests:** ✅ All passing / ⚠️ X failing / ❌ Not run (reason)
+**tests:** All passing / X failing / Not run (reason)
 **coverage:** X% (if applicable)
 **tokens:** ~N input / ~M output (estimated)
 **status:** complete | partial (reason) | escalated (reason)

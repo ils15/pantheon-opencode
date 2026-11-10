@@ -85,6 +85,15 @@ describe('buildTuiTab', () => {
     assert.equal(rows.find((row) => row.id === 'tui.sidebar.block.dispatch').value, 'disabled')
     assert.equal(rows.find((row) => row.id === 'tui.sidebar.context.gauge').value, 'bar')
   })
+
+  it('handles legacy store shapes where layout is missing without throwing', () => {
+    const legacyPrefs = structuredClone(DEFAULT_TUI_PREFS)
+    delete legacyPrefs.layout
+    assert.doesNotThrow(() => {
+      const rows = tabRows(buildTuiTab(legacyPrefs))
+      assert.equal(rows.find((row) => row.id === 'tui.layout.preset').value, 'comfortable')
+    })
+  })
 })
 
 describe('applyTuiRow', () => {

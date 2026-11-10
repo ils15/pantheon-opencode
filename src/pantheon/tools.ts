@@ -53,6 +53,7 @@ import { createV2JevDecisionDefinition, type V2JevDecisionRuntime } from './jev-
 import { createV2LocalDecisionDefinition } from './local-decision-tool.ts'
 import { createModelCommand } from './model-command.ts'
 import { createV2VisionTool, type V2VisionRuntime } from './native-vision.ts'
+import { createV2SkillSearchDefinition } from './skill-search-tool.ts'
 import type { ToolContextLike } from './tool-context.ts'
 
 // ─── Contract types ─────────────────────────────────────────────────────
@@ -539,6 +540,7 @@ export function createV2ToolDefinitions(
     }),
   )
   definitions.push(todowriteTool)
+  definitions.push(createV2SkillSearchDefinition())
   if (visionRuntime) definitions.push(createV2VisionTool(visionRuntime))
   if (jevRuntime) definitions.push(createV2JevDecisionDefinition(jevRuntime))
   return definitions

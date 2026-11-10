@@ -23,6 +23,18 @@ Use RED → GREEN → REFACTOR for behavior-changing implementation where a mean
 
 ---
 
+## Batched Suite Implementation vs Micro-Iterative TDD
+
+- **Single Bug / Regression:** Use strict micro-iterative RED -> GREEN -> REFACTOR (write 1 test, confirm RED, write fix, confirm GREEN).
+- **Complete Feature Suites / Multi-Endpoint Modules:** Do NOT repeat a 3-turn RED-wait-GREEN loop for every single function (which causes turn explosion and sluggishness). Instead:
+  1. Author the cohesive test specification covering the new contract/suite.
+  2. Implement the module components satisfying that contract.
+  3. Run the targeted test slice ONCE via `test-slicing` (< 100ms).
+  4. Iterate only on assertions that fail.
+- **Lint-First Fast Gate:** Run static syntax/lint checks (`biome check`, `ruff check`) before launching test runners. Fixing typos and missing imports at the lint gate saves up to 80% of test turnaround time.
+
+---
+
 ## TDD Cycle (RED → GREEN → REFACTOR)
 
 ### RED — Write Failing Test
@@ -55,23 +67,23 @@ Use RED → GREEN → REFACTOR for behavior-changing implementation where a mean
 
 ```
 1. Use a plan/spec only when scope, risk, or ambiguity warrants it; a bounded fix may proceed directly
-2. Hermes writes failing test (RED)
-3. Hermes implements minimal code (GREEN)
-4. Hermes refactors (REFACTOR)
-5. Aphrodite writes frontend tests in parallel
+2. Author test specification (RED)
+3. Implement minimal code (GREEN)
+4. Refactor and optimize (REFACTOR)
+5. Run targeted test slice via test-slicing (< 100ms)
 6. Themis reviews sensitive or material changes, checking changed behavior and applicable quality gates
-7. Escalate unmet repository or safety-critical test requirements; do not fail a micro-edit against an unrelated global coverage figure
+7. Escalate unmet repository or safety-critical test requirements
 ```
 
 ---
 
 ## Anti-Patterns
 
-- ❌ Writing code before test
-- ❌ Testing implementation details (private methods, internal state)
-- ❌ Mocking everything (test real behavior where possible)
-- ❌ Skipping RED step (test must fail first)
-- ❌ Ignoring flaky tests (fix or delete)
+- Proibido: escrever codigo de producao sem teste correspondente
+- Anti-pattern: testar detalhes de implementacao privada ou acoplamento excessivo
+- Anti-pattern: mocking excessivo de I/O em vez de testes de integracao direta
+- Anti-pattern: ignorar falhas de teste sem diagnosticar o diff
+- Anti-pattern: executar a suite inteira para mudancas locais delimitadas
 
 ---
 

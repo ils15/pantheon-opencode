@@ -23,6 +23,10 @@ export const PANTHEON_SKILL_CATALOG: readonly DecisionCatalogEntry[] = Object.fr
   { id: 'code-review-checklist', description: 'Systematic code review and quality gates.' },
   { id: 'codemap', description: 'Map repository structure before deep reading.' },
   { id: 'context-compression', description: 'Explicit compaction and resumable checkpoints.' },
+  {
+    id: 'fast-path-execution',
+    description: 'Fast-track execution protocol for bounded micro-edits.',
+  },
   { id: 'git-workflow-and-versioning', description: 'Atomic commits and versioning workflow.' },
   { id: 'incremental-implementation', description: 'Thin, testable, rollback-safe slices.' },
   {
@@ -42,6 +46,10 @@ export const PANTHEON_SKILL_CATALOG: readonly DecisionCatalogEntry[] = Object.fr
   {
     id: 'tdd-with-agents',
     description: 'RED, GREEN, REFACTOR test-driven implementation.',
+  },
+  {
+    id: 'test-slicing',
+    description: 'Targeted test execution — run exact test slice instead of full suite.',
   },
   {
     id: 'prompt-refinery',

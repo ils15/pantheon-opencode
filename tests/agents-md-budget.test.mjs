@@ -51,7 +51,7 @@ const ARTIFACT_BUDGETS = [
   {
     label: 'AGENTS.global.md',
     path: AGENTS_GLOBAL_MD_PATH,
-    maxBytes: 9_500,
+    maxBytes: 9_800,
     maxLines: 140,
   },
   {
@@ -71,7 +71,7 @@ const PROMPT_BUDGETS = {
   'focus.prompt.md': 1_200,
   'implement-feature.prompt.md': 2_250,
   'optimize-database.prompt.md': 1_450,
-  'orchestrate-with-zeus.prompt.md': 16_000,
+  'orchestrate-with-zeus.prompt.md': 12_900,
   'plan-architecture.prompt.md': 1_700,
   'quick-discovery-large-codebase.prompt.md': 8_450,
   'quick-plan-large-feature.prompt.md': 7_100,

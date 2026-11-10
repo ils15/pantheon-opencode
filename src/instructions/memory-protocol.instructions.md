@@ -15,3 +15,7 @@ agents: ["*"]
 - Use only granted tools: Zeus has `memory_search` and temporary `context_save/get` checkpoints, but no durable writes; Mnemosyne has `memory_store` and other durable tools.
 - Let native OpenCode compaction summarize active context. Use `context_save/get` only for cross-session resume; keep the goal, phase, progress, next step, decisions, blockers, and uncertain outcomes — no transcripts or routine logs.
 - Store at most one concise, reusable top-level result only on explicit request. Never persist child summaries, test logs, or temporary state. Never store secrets, credentials, or tokens; confirm writes and state failures. Create ADRs only on request.
+
+### Tool Call Timing
+- Bounded reads: Prefer grep/ranges; avoid dumping large files.
+- Fast-Track: Edits ≤2 files skip planning/council; verify with inline test-slicing.

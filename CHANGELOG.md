@@ -71,6 +71,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
      Running apply will move this section to a versioned entry and reset the template below. -->
 
+## [v2.0.0-rc.1] - 2026-11-10
+
+### 🆕 What's New
+
+- **Release Candidate 1**: Inaugurating the RC series for Pantheon on OpenCode 2.x with verified production performance and low latency.
+- **Agent token compaction**: Cleaned duplicated backend code from Prometheus and Apollo, reducing turn overhead by 8,150 tokens (-44.3%).
+- **Pragmatism directive**: Eliminates bureaucratic deadlocks by authorizing safe diagnostic operations across Zeus, Themis, and Apollo.
+- **Batched Suite TDD & test-slicing**: Full multi-endpoint suites implemented cohesively with deterministic test slicing in <100ms.
+- **Proactive skill discovery**: Native skill search tool with 24h query caching and automated domain recommendations without shell access.
+- **Live JEV verification**: 16/16 scorecard pass rate across local and remote providers ($0.0000238/decision) verified in sandbox app.
+
+### Added
+
+- **skills** — test-slicing (src/skills/test-slicing/SKILL.md): focused test execution with 10s budget and log noise suppression.
+- **skills** — fast-path-execution (src/skills/fast-path-execution/SKILL.md): direct dispatch to specialists for bounded fixes.
+- **skills** — batched-suite-tdd pattern added to tdd-with-agents: eliminates turn-inflation by validating multi-endpoint modules in a single sliced run.
+- **tools** — pantheon_skill_search (src/pantheon/skill-search-tool.ts): in-process discovery tool querying local and external skills without shell permissions.
+- **scripts** — in-memory search query cache with 24-hour TTL in scripts/skill-search.mjs to avoid redundant external CLI processes and latency.
+- **sandbox** — full telemetry and simulation suite in ~/pantheon-sandbox/project-v2/app with native HTTP server, UI dashboard, and latency benchmarking.
+- **tests** — regression tests in tests/tui-prefs.test.mjs (12 tests) and unit tests in tests/pantheon/skill-search-tool.test.ts.
+
+### Changed
+
+- **agents** — Apollo and Prometheus token compaction: removed 203 duplicated lines of Hermes backend code, saving 5,500 tokens per turn.
+- **agents** — pragmatism directive: injected safe diagnostic authorization across Zeus, Themis, and Apollo to end analysis paralysis.
+- **agents** — Athena visual planning: adopted modern linear phase structure, ASCII progress diagrams, and 3-tier refinement.
+- **agents** — proactive skill discovery protocol in Zeus to propose ready-to-run package installations for specialized domains.
+- **council** — assertive synthesis in zeus-council-synthesis.instructions.md with Domain Authority precedence and JEV arbitration.
+- **install** — forward --project, --no-mcp, and --verbose in scripts/update.mjs to refresh configuration non-destructively.
+- **hooks** — optimized format-multi-language.sh to parse tool inputs in a single Python inline execution instead of 3 subprocess spawns.
+- **scripts** — lowered timeouts in scripts/skill-search.mjs from 60s/30s to 15s/10s for fast fail-open behavior.
+- **docs** — streamlined README.md and README.pt-BR.md, trimming obsolete sections and detailing three visual execution tracks.
+
+### Fixed
+
+- **tui** — resolved TypeError on undefined prefs.layout.preset in src/plugins/tui/src/tui-prefs.ts.
+- **agents** — fixed Zeus unable to search external skills under shell deny by providing in-process pantheon_skill_search tool.
+- **tests** — dynamically bound catalog length in tests/pantheon/jev-decisions.test.ts.
+- **bench** — fixed cost extraction bug in scripts/jev-live-probe.mjs and generated live scorecard in bench/results/j2-live-scorecard-2026-11-10.md.
+- **sandbox** — fixed OpenCode 2.2+ runtime log detection in scripts/test-opencode-sandbox.sh.
+
+### Security
+
+- The input envelope is closed on every path; strict shell-deny boundary preserved with in-process tools without arbitrary command execution.
+
 ## [v2.0.0-beta.6] - 2026-11-10
 
 ### Added

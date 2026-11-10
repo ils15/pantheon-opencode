@@ -67,7 +67,7 @@ permission:
 - **Code-mode / infrastructure reads** — cheap and on demand; never for
   decisions the ladder already answers.
 
-## ⚠️ SCOPE BOUNDARY
+## SCOPE BOUNDARY
 
 **Memory Bank ONLY — NEVER write files outside `.pantheon/memory-bank/` or `.pantheon/deepwork/`.**
 Your role is documentation, ADRs, artifacts, and memory management.
