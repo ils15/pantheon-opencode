@@ -227,7 +227,7 @@ jobs:
           const stable = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
           // Committed sequential beta line only. The version is never computed
           // at release time, so the gate trusts the manifest version as-is.
-          const beta = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-beta\.[1-9]\d*$/;
+          const beta = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-(?:beta|rc)\.[1-9]\d*$/;
           if (process.env.RECOVERY_VERSION) {
             if (pkgVer !== process.env.RECOVERY_VERSION) {
               console.error('::error::Recovery package version was not applied exactly.');
