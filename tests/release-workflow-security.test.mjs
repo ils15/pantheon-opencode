@@ -59,21 +59,14 @@ test('release host proof keeps the boundary V2 rows and the non-CI gates without
   ].map(([, host, line, kind]) => ({ host, line, kind }))
   assert.deepEqual(defaultMatrix, matrix)
 
-  // beta.6: gates (b)(c)(d) run CONCURRENTLY in one step (sandbox roots and
-  // ports are disjoint by construction; the sandbox caches are content-
-  // addressed). Gates (e)/(f) stay as named steps. The contract below pins
-  // that ALL five gates still execute: the two named steps, plus the host
-  // matrix split per host (PANTHEON_RELEASE_HOST_ONLY), plus install/package
-  // in the concurrent step.
+  // Gates (b)(c)(d) stay SERIAL in one job — the concurrent split failed in
+  // practice (three opencode hosts on a 4-core runner blew the MCP handshake
+  // wait; the experiment lives in the git history). The contract pins the
+  // five named gates plus the sandbox cache reuse.
   const gates = [...validate.matchAll(/- name: Gate \([a-f]\) ([a-z]+)/g)].map(([, gate]) => gate)
-  assert.deepEqual(gates.sort(), ['changelog', 'metadata'])
-  assert.match(validate, /- name: Gates \(b\)\(c\)\(d\) — concurrent/)
-  assert.doesNotMatch(validate, /release-gates\.mjs tests\b/)
-  assert.match(validate, /PANTHEON_RELEASE_HOST_ONLY=2\.0\.29/)
-  assert.match(validate, /PANTHEON_RELEASE_HOST_ONLY=2\.1\.3/)
-  for (const gate of ['host', 'install', 'package']) {
-    assert.match(validate, new RegExp(`release-gates\\.mjs ${gate}\\b`))
-  }
+  assert.deepEqual(gates.sort(), ['changelog', 'host', 'install', 'metadata', 'package'])
+  assert.match(validate, /npm_config_cache: \/home\/runner\/\.npm/)
+  assert.match(validate, /PIP_CACHE_DIR: \/home\/runner\/\.cache\/pip/)
   for (const gate of ['changelog', 'metadata']) {
     assert.match(validate, new RegExp(`args=\\(${gate}\\b`))
   }
