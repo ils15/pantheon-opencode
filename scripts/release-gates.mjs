@@ -311,7 +311,12 @@ function hostGate(options) {
     throw new Error(`PANTHEON_RELEASE_HOST_ONLY="${only}" matches no matrix row`)
   }
   const checks = []
-  selected.forEach((row, index) => {
+  selected.forEach((row) => {
+    // Port derives from the ORIGINAL matrix index — the concurrent
+    // PANTHEON_RELEASE_HOST_ONLY invocations each re-run this gate, and a
+    // filtered forEach index would collide both sandboxes on 49380 (field
+    // evidence: MCP-handshake timeout on the split-host CI run).
+    const matrixIndex = matrix.indexOf(row)
     const root = join(runnerTemp(), `pantheon-release-host-${safeName(row.host)}`)
     rmSync(root, { recursive: true, force: true })
     checks.push(
@@ -320,7 +325,7 @@ function hostGate(options) {
         'bash',
         ['scripts/test-opencode-sandbox.sh', '--prepare', '--run', 'v2'],
         {
-          env: sandboxEnv(root, row.host, tarball, 49380 + index),
+          env: sandboxEnv(root, row.host, tarball, 49380 + matrixIndex),
         },
       ),
     )
