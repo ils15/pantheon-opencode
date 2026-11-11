@@ -407,15 +407,13 @@ export function SettingsWindow(props: {
   const tab = () => props.tabs()[props.page()] ?? props.tabs()[0] ?? EMPTY_TAB
   return (
     <box
-      ref={props.boxRef}
+      {...(props.boxRef !== undefined ? { ref: props.boxRef } : {})}
       focusable
       flexDirection="column"
-      height={props.height}
-      flexGrow={props.height !== undefined ? undefined : 1}
-      flexBasis={props.height !== undefined ? undefined : 0}
+      {...(props.height !== undefined ? { height: props.height } : { flexGrow: 1, flexBasis: 0 })}
       minHeight={0}
       border={!props.isDialog}
-      borderStyle={props.isDialog ? undefined : 'rounded'}
+      {...(props.isDialog ? {} : { borderStyle: 'rounded' as const })}
       borderColor={
         props.isDialog
           ? undefined
@@ -427,7 +425,7 @@ export function SettingsWindow(props: {
       paddingRight={1}
       paddingTop={0}
       paddingBottom={0}
-      onMouseDown={props.onMouseDown}
+      {...(props.onMouseDown !== undefined ? { onMouseDown: props.onMouseDown } : {})}
     >
       {/* ── Top Header bar: Title + Horizontal Clickable Tabs + ESC (matching opencode-quota) ── */}
       <box
@@ -460,7 +458,7 @@ export function SettingsWindow(props: {
                   paddingLeft={1}
                   paddingRight={1}
                   flexShrink={0}
-                  backgroundColor={isActive() ? '#262626' : undefined}
+                  {...(isActive() ? { backgroundColor: '#262626' } : {})}
                 >
                   <text
                     wrapMode="none"
@@ -483,7 +481,12 @@ export function SettingsWindow(props: {
 
       {/* ── Main Body: Scrollable content panel ── */}
       <box flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0} overflow="hidden">
-        <scrollbox flexGrow={1} flexBasis={0} minHeight={0} maxHeight={props.maxHeight}>
+        <scrollbox
+          flexGrow={1}
+          flexBasis={0}
+          minHeight={0}
+          {...(props.maxHeight !== undefined ? { maxHeight: props.maxHeight } : {})}
+        >
           <For each={tab().groups}>
             {(group) => (
               <box flexDirection="column" marginBottom={1}>
@@ -507,7 +510,7 @@ export function SettingsWindow(props: {
                     return (
                       <box
                         flexDirection="row"
-                        backgroundColor={isSelected() ? '#262626' : undefined}
+                        {...(isSelected() ? { backgroundColor: '#262626' } : {})}
                         onMouseDown={() => {
                           props.onSelectRow?.(row.id)
                         }}
@@ -656,7 +659,7 @@ export function SettingsWindow(props: {
             </Show>
             <text fg={props.muted}>
               {(() => {
-                const currentRow = findRow(tab(), props.selectedId())
+                const currentRow = findRow(tab(), props.selectedId() ?? '')
                 if (currentRow?.cycle !== undefined) {
                   return 'click or ›/←/→ change · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close'
                 }

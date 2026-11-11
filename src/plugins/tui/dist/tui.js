@@ -1,4 +1,4 @@
-import { createComponent, createElement, createTextNode, effect, insert, insertNode, memo, mergeProps, setProp, spread, use } from "@opentui/solid";
+import { createComponent, createElement, createTextNode, effect, insert, insertNode, memo, mergeProps, setProp, spread } from "@opentui/solid";
 import { execFile } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
@@ -2127,15 +2127,26 @@ function SettingsWindow(props) {
 		var _el$ = createElement("box"), _el$2 = createElement("box"), _el$3 = createElement("text"), _el$4 = createElement("b"), _el$6 = createElement("span"), _el$7 = createElement("box"), _el$8 = createElement("box"), _el$9 = createElement("box"), _el$0 = createElement("text"), _el$10 = createElement("box"), _el$11 = createElement("scrollbox");
 		insertNode(_el$, _el$2);
 		insertNode(_el$, _el$10);
-		var _ref$ = props.boxRef;
-		typeof _ref$ === "function" ? use(_ref$, _el$) : props.boxRef = _el$;
-		setProp(_el$, "focusable", true);
-		setProp(_el$, "flexDirection", "column");
-		setProp(_el$, "minHeight", 0);
-		setProp(_el$, "paddingLeft", 1);
-		setProp(_el$, "paddingRight", 1);
-		setProp(_el$, "paddingTop", 0);
-		setProp(_el$, "paddingBottom", 0);
+		spread(_el$, mergeProps(() => props.boxRef !== void 0 ? { ref: props.boxRef } : {}, {
+			"focusable": true,
+			"flexDirection": "column"
+		}, () => props.height !== void 0 ? { height: props.height } : {
+			flexGrow: 1,
+			flexBasis: 0
+		}, {
+			"minHeight": 0,
+			get border() {
+				return !props.isDialog;
+			}
+		}, () => props.isDialog ? {} : { borderStyle: "rounded" }, {
+			get borderColor() {
+				return memo(() => !!props.isDialog)() ? void 0 : memo(() => !!props.hasKeyboard?.())() ? props.warn ?? "#fba970" : props.muted ?? "#52525b";
+			},
+			"paddingLeft": 1,
+			"paddingRight": 1,
+			"paddingTop": 0,
+			"paddingBottom": 0
+		}, () => props.onMouseDown !== void 0 ? { onMouseDown: props.onMouseDown } : {}), true);
 		insertNode(_el$2, _el$3);
 		insertNode(_el$2, _el$7);
 		insertNode(_el$2, _el$8);
@@ -2172,12 +2183,12 @@ function SettingsWindow(props) {
 					setProp(_el$32, "paddingLeft", 1);
 					setProp(_el$32, "paddingRight", 1);
 					setProp(_el$32, "flexShrink", 0);
+					spread(_el$32, mergeProps(() => isActive() ? { backgroundColor: "#262626" } : {}), true);
 					setProp(_el$33, "wrapMode", "none");
 					spread(_el$33, mergeProps({ get fg() {
 						return memo(() => !!isActive())() ? props.warn ?? "#fba970" : props.muted;
 					} }, () => isActive() ? { attributes: 1 } : {}), true);
 					insert(_el$33, () => `${t.title}${tabDirty(props.draft(), t) ? " ●" : ""}`);
-					effect((_$p) => setProp(_el$32, "backgroundColor", isActive() ? "#262626" : void 0, _$p));
 					return _el$32;
 				})();
 			}
@@ -2197,6 +2208,7 @@ function SettingsWindow(props) {
 		setProp(_el$11, "flexGrow", 1);
 		setProp(_el$11, "flexBasis", 0);
 		setProp(_el$11, "minHeight", 0);
+		spread(_el$11, mergeProps(() => props.maxHeight !== void 0 ? { maxHeight: props.maxHeight } : {}), true);
 		insert(_el$11, createComponent(For, {
 			get each() {
 				return tab().groups;
@@ -2237,9 +2249,9 @@ function SettingsWindow(props) {
 							insertNode(_el$36, _el$37);
 							insertNode(_el$36, _el$39);
 							setProp(_el$36, "flexDirection", "row");
-							setProp(_el$36, "onMouseDown", () => {
+							spread(_el$36, mergeProps(() => isSelected() ? { backgroundColor: "#262626" } : {}, { "onMouseDown": () => {
 								props.onSelectRow?.(row.id);
-							});
+							} }), true);
 							insertNode(_el$37, _el$38);
 							setProp(_el$37, "width", 28);
 							spread(_el$38, mergeProps({ get fg() {
@@ -2270,7 +2282,6 @@ function SettingsWindow(props) {
 									return _el$41;
 								}
 							}), null);
-							effect((_$p) => setProp(_el$36, "backgroundColor", isSelected() ? "#262626" : void 0, _$p));
 							return _el$36;
 						})();
 					}
@@ -2347,10 +2358,10 @@ function SettingsWindow(props) {
 								insertNode(_el$77, createTextNode(`no staged changes`));
 								setProp(_el$77, "flexShrink", 0);
 								effect((_p$) => {
-									var _v$17 = props.muted, _v$18 = props.muted, _v$19 = props.muted;
-									_v$17 !== _p$.e && (_p$.e = setProp(_el$66, "fg", _v$17, _p$.e));
-									_v$18 !== _p$.t && (_p$.t = setProp(_el$71, "fg", _v$18, _p$.t));
-									_v$19 !== _p$.a && (_p$.a = setProp(_el$77, "fg", _v$19, _p$.a));
+									var _v$1 = props.muted, _v$10 = props.muted, _v$11 = props.muted;
+									_v$1 !== _p$.e && (_p$.e = setProp(_el$66, "fg", _v$1, _p$.e));
+									_v$10 !== _p$.t && (_p$.t = setProp(_el$71, "fg", _v$10, _p$.t));
+									_v$11 !== _p$.a && (_p$.a = setProp(_el$77, "fg", _v$11, _p$.a));
 									return _p$;
 								}, {
 									e: void 0,
@@ -2401,10 +2412,10 @@ function SettingsWindow(props) {
 							insertNode(_el$59, createTextNode(`unsaved changes`));
 							setProp(_el$59, "flexShrink", 0);
 							effect((_p$) => {
-								var _v$14 = props.muted, _v$15 = props.muted, _v$16 = props.warn ?? "#f59e0b";
-								_v$14 !== _p$.e && (_p$.e = setProp(_el$48, "fg", _v$14, _p$.e));
-								_v$15 !== _p$.t && (_p$.t = setProp(_el$53, "fg", _v$15, _p$.t));
-								_v$16 !== _p$.a && (_p$.a = setProp(_el$59, "fg", _v$16, _p$.a));
+								var _v$8 = props.muted, _v$9 = props.muted, _v$0 = props.warn ?? "#f59e0b";
+								_v$8 !== _p$.e && (_p$.e = setProp(_el$48, "fg", _v$8, _p$.e));
+								_v$9 !== _p$.t && (_p$.t = setProp(_el$53, "fg", _v$9, _p$.t));
+								_v$0 !== _p$.a && (_p$.a = setProp(_el$59, "fg", _v$0, _p$.a));
 								return _p$;
 							}, {
 								e: void 0,
@@ -2415,7 +2426,7 @@ function SettingsWindow(props) {
 						}
 					}), _el$61);
 					insert(_el$61, () => {
-						const currentRow = findRow(tab(), props.selectedId());
+						const currentRow = findRow(tab(), props.selectedId() ?? "");
 						if (currentRow?.cycle !== void 0) return "click or ›/←/→ change · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close";
 						if (currentRow?.action !== void 0) return "enter or space run action · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close";
 						return "[ref] documented reference (read-only) · ↑↓ select · tab next tab · esc close";
@@ -2473,31 +2484,15 @@ function SettingsWindow(props) {
 			}
 		}), null);
 		effect((_p$) => {
-			var _v$5 = props.height, _v$6 = props.height !== void 0 ? void 0 : 1, _v$7 = props.height !== void 0 ? void 0 : 0, _v$8 = !props.isDialog, _v$9 = props.isDialog ? void 0 : "rounded", _v$0 = props.isDialog ? void 0 : props.hasKeyboard?.() ? props.warn ?? "#fba970" : props.muted ?? "#52525b", _v$1 = props.onMouseDown, _v$10 = props.fg, _v$11 = { fg: props.muted }, _v$12 = props.muted, _v$13 = props.maxHeight;
-			_v$5 !== _p$.e && (_p$.e = setProp(_el$, "height", _v$5, _p$.e));
-			_v$6 !== _p$.t && (_p$.t = setProp(_el$, "flexGrow", _v$6, _p$.t));
-			_v$7 !== _p$.a && (_p$.a = setProp(_el$, "flexBasis", _v$7, _p$.a));
-			_v$8 !== _p$.o && (_p$.o = setProp(_el$, "border", _v$8, _p$.o));
-			_v$9 !== _p$.i && (_p$.i = setProp(_el$, "borderStyle", _v$9, _p$.i));
-			_v$0 !== _p$.n && (_p$.n = setProp(_el$, "borderColor", _v$0, _p$.n));
-			_v$1 !== _p$.s && (_p$.s = setProp(_el$, "onMouseDown", _v$1, _p$.s));
-			_v$10 !== _p$.h && (_p$.h = setProp(_el$3, "fg", _v$10, _p$.h));
-			_v$11 !== _p$.r && (_p$.r = setProp(_el$6, "style", _v$11, _p$.r));
-			_v$12 !== _p$.d && (_p$.d = setProp(_el$0, "fg", _v$12, _p$.d));
-			_v$13 !== _p$.l && (_p$.l = setProp(_el$11, "maxHeight", _v$13, _p$.l));
+			var _v$5 = props.fg, _v$6 = { fg: props.muted }, _v$7 = props.muted;
+			_v$5 !== _p$.e && (_p$.e = setProp(_el$3, "fg", _v$5, _p$.e));
+			_v$6 !== _p$.t && (_p$.t = setProp(_el$6, "style", _v$6, _p$.t));
+			_v$7 !== _p$.a && (_p$.a = setProp(_el$0, "fg", _v$7, _p$.a));
 			return _p$;
 		}, {
 			e: void 0,
 			t: void 0,
-			a: void 0,
-			o: void 0,
-			i: void 0,
-			n: void 0,
-			s: void 0,
-			h: void 0,
-			r: void 0,
-			d: void 0,
-			l: void 0
+			a: void 0
 		});
 		return _el$;
 	})();
