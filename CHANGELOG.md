@@ -77,28 +77,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **OpenCode 2.x Architecture**: Official 2.0 release dedicated to OpenCode 2.x, removing legacy V1 shims for low latency.
 - **Fast-Path Direct Dispatch**: Zeus executes direct implementation requests in 1 turn without mandatory planning or approval cascades.
-- **Native Subagent Execution**: Parallel background subagents (`task(background: true)`) for non-blocking test and build workflows.
+- **Native Subagent Execution**: Parallel background subagents (task(background: true)) for non-blocking test and build workflows.
 - **Implementer Tool Grants**: Added native glob, grep, and bash access across all implementers to eliminate discovery round-trips.
 - **Prompt Diet & English Unification**: Condensed agent prompts by up to 70% and standardized instructions across all agents to English.
-- **TUI Settings Stability**: Fullscreen settings overlay with flexWrap anti-squish layout and live preference preview.
+- **Full TUI Settings Suite**: Fullscreen settings overlay (/pantheon-settings) with Autonomy, Decision, TUI, and Doctor tabs.
 
 ### Added
 
-- **agents** — Fast-Path Direct Implementation in Zeus routing direct coding requests immediately to domain specialists.
-- **agents** — Native glob and grep permissions granted to implementers (Talos, Prometheus, Demeter).
-- **agents** — Parallel background execution guidance for tests and builds using `task(background: true)`.
+- **agents** — Fast-Path Direct Implementation in Zeus routing direct coding requests immediately to domain specialists in 1 turn.
+- **agents** — Native glob, grep, and bash permissions granted to implementers (Talos, Prometheus, Demeter, Hermes, Aphrodite).
+- **agents** — Parallel background execution guidance for tests and builds using task(background: true).
+- **tui** — Full-screen settings overlay (/pantheon-settings) with tabs for Autonomy, Decision, TUI Personalization, and Doctor.
+- **tui** — Autonomy tab managing persisted goal loops, cooldown periods, and continuation caps.
+- **tui** — Decision tab configuring Jev routing model, candidate selection mode, provider status, and egress consent.
+- **skills** — In-process pantheon_skill_search with 24h query cache and test-slicing skill for fast bounded runs under 100ms.
+- **routing** — Named-behavior overrides registered in routing.yml with pure loader and quarantine fallback.
 
 ### Changed
 
-- **agents** — Condensed Hermes system prompt from 292 to 198 lines, eliminating tutorial boilerplate.
-- **agents** — Cleaned double-spaced headings and emoji remnants across Aphrodite instructions.
+- **agents** — Condensed Hermes, Zeus, and Apollo prompts by up to 70%, eliminating tutorial boilerplate and saving >8,000 tokens per turn.
 - **instructions** — Standardized all agent instructions and repository headers to English with zero-emoji enforcement.
+- **install** — Native opencode plugin add pantheon-opencode flow, lean init, and automated sibling opencode.jsonc sync.
+- **skills** — Progressive disclosure architecture separating core instructions (<120 lines) from references/.
+- **council** — Assertive synthesis protocol with Domain Authority precedence and JEV arbitration.
+
+### Removed
+
+- 💥 **host** — Removed OpenCode V1 runtime contract, shims, and legacy bridge per ADR-0014.
+- **install** — Removed interactive init wizard in favor of one-shot preview and /pantheon-settings configuration.
 
 ### Fixed
 
-- **release** — Corrected canonical changelog structure and bold scope formatting for Gate (e) compliance.
 - **tools** — Replaced legacy shell permissions with native OpenCode V2 bash across all implementers.
-- **tui** — Resolved tab squish and footer overlap on narrow viewports in settings window.
+- **tui** — Resolved tab squish and footer overlap on narrow viewports in settings window using flexWrap.
+- **tui** — Fixed settings navigation loss and cyclic route structure errors when closing dialogs.
+- **install** — Fixed missing pantheon tools caused by opencode.jsonc overriding opencode.json.
+- **vision** — Reconciled temp-dir restart orphans and crash strays with disk cap.
 
 ## [v2.0.0-rc.2] - 2026-11-11
 
