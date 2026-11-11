@@ -392,14 +392,21 @@ export function SettingsWindow(props: {
   onCancelExit?: () => void
   isDialog?: boolean
   maxHeight?: number
+  height?: number
+  boxRef?: (el: any) => void
+  onMouseDown?: () => void
 }) {
   const tab = () => props.tabs()[props.page()] ?? props.tabs()[0] ?? EMPTY_TAB
   return (
     <box
+      ref={props.boxRef}
+      focusable
       flexDirection="column"
-      flexGrow={1}
-      flexBasis={0}
+      height={props.height}
+      flexGrow={props.height !== undefined ? undefined : 1}
+      flexBasis={props.height !== undefined ? undefined : 0}
       minHeight={0}
+      border={!props.isDialog}
       borderStyle={props.isDialog ? undefined : 'rounded'}
       borderColor={
         props.isDialog
@@ -412,6 +419,7 @@ export function SettingsWindow(props: {
       paddingRight={1}
       paddingTop={0}
       paddingBottom={0}
+      onMouseDown={props.onMouseDown}
     >
       {/* ── Top Header bar: Title + Horizontal Clickable Tabs + ESC (matching opencode-quota) ── */}
       <box flexDirection="row" alignItems="center" flexShrink={0} height={1} marginBottom={1}>
@@ -451,76 +459,78 @@ export function SettingsWindow(props: {
       </box>
 
       {/* ── Main Body: Scrollable content panel ── */}
-      <scrollbox flexGrow={1} flexBasis={0} minHeight={0} maxHeight={props.maxHeight}>
-        <For each={tab().groups}>
-          {(group) => (
-            <box flexDirection="column" marginBottom={1}>
-              <Show when={group.title !== undefined}>
-                <text attributes={1} fg={props.warn ?? props.fg}>
-                  {group.title}
-                </text>
-              </Show>
-              <For each={group.rows}>
-                {(row: SettingsRow) => {
-                  const isSelected = () => row.id === props.selectedId()
-                  const display = () => props.draft()[row.id] ?? row.value
-                  const staged = () => props.draft()[row.id] !== undefined
-                  const gutter = () => (isSelected() ? '▸ ' : '  ')
-                  const valueCell = () => {
-                    if (row.cycle !== undefined) return `< ${display()} >`
-                    if (row.action !== undefined) return `[ ${display()} ]`
-                    if (row.id.startsWith('autonomy.gradient.')) return `[ref] ${display()}`
-                    return display()
-                  }
-                  return (
-                    <box
-                      flexDirection="row"
-                      backgroundColor={isSelected() ? '#262626' : undefined}
-                      onMouseDown={() => {
-                        props.onSelectRow?.(row.id)
-                      }}
-                    >
-                      <box width={NAME_WIDTH + 2}>
-                        <text
-                          fg={isSelected() ? (props.warn ?? '#fba970') : props.fg}
-                          {...(isSelected() ? { attributes: 1 } : {})}
-                        >
-                          {`${gutter()}${row.name}`.padEnd(NAME_WIDTH + 2)}
-                        </text>
-                      </box>
+      <box flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0} overflow="hidden">
+        <scrollbox flexGrow={1} flexBasis={0} minHeight={0} maxHeight={props.maxHeight}>
+          <For each={tab().groups}>
+            {(group) => (
+              <box flexDirection="column" marginBottom={1}>
+                <Show when={group.title !== undefined}>
+                  <text attributes={1} fg={props.warn ?? props.fg}>
+                    {group.title}
+                  </text>
+                </Show>
+                <For each={group.rows}>
+                  {(row: SettingsRow) => {
+                    const isSelected = () => row.id === props.selectedId()
+                    const display = () => props.draft()[row.id] ?? row.value
+                    const staged = () => props.draft()[row.id] !== undefined
+                    const gutter = () => (isSelected() ? '▸ ' : '  ')
+                    const valueCell = () => {
+                      if (row.cycle !== undefined) return `< ${display()} >`
+                      if (row.action !== undefined) return `[ ${display()} ]`
+                      if (row.id.startsWith('autonomy.gradient.')) return `[ref] ${display()}`
+                      return display()
+                    }
+                    return (
                       <box
-                        width={VALUE_WIDTH}
+                        flexDirection="row"
+                        backgroundColor={isSelected() ? '#262626' : undefined}
                         onMouseDown={() => {
                           props.onSelectRow?.(row.id)
-                          props.onCycleValue?.(row.id, 1)
                         }}
                       >
-                        <text
-                          fg={
-                            isSelected()
-                              ? '#ffffff'
-                              : staged()
-                                ? (props.warn ?? props.fg)
-                                : props.muted
-                          }
-                          {...(isSelected() || staged() ? { attributes: 1 } : {})}
-                        >
-                          {`${valueCell()}${staged() ? ' ●' : ''}`.padEnd(VALUE_WIDTH)}
-                        </text>
-                      </box>
-                      <Show when={row.note !== undefined}>
-                        <box flexGrow={1} flexShrink={1}>
-                          <text fg={isSelected() ? '#e5e7eb' : props.muted}>{row.note}</text>
+                        <box width={NAME_WIDTH + 2}>
+                          <text
+                            fg={isSelected() ? (props.warn ?? '#fba970') : props.fg}
+                            {...(isSelected() ? { attributes: 1 } : {})}
+                          >
+                            {`${gutter()}${row.name}`.padEnd(NAME_WIDTH + 2)}
+                          </text>
                         </box>
-                      </Show>
-                    </box>
-                  )
-                }}
-              </For>
-            </box>
-          )}
-        </For>
-      </scrollbox>
+                        <box
+                          width={VALUE_WIDTH}
+                          onMouseDown={() => {
+                            props.onSelectRow?.(row.id)
+                            props.onCycleValue?.(row.id, 1)
+                          }}
+                        >
+                          <text
+                            fg={
+                              isSelected()
+                                ? '#ffffff'
+                                : staged()
+                                  ? (props.warn ?? props.fg)
+                                  : props.muted
+                            }
+                            {...(isSelected() || staged() ? { attributes: 1 } : {})}
+                          >
+                            {`${valueCell()}${staged() ? ' ●' : ''}`.padEnd(VALUE_WIDTH)}
+                          </text>
+                        </box>
+                        <Show when={row.note !== undefined}>
+                          <box flexGrow={1} flexShrink={1}>
+                            <text fg={isSelected() ? '#e5e7eb' : props.muted}>{row.note}</text>
+                          </box>
+                        </Show>
+                      </box>
+                    )
+                  }}
+                </For>
+              </box>
+            )}
+          </For>
+        </scrollbox>
+      </box>
 
       {/* ── Footer: notice + botões (chips) + keys (matching image.png & image_2.png) ── */}
       <Show when={props.notice() !== undefined}>
@@ -1267,9 +1277,10 @@ export function PantheonSettingsSlot(props: { context: Context; sessionID: strin
 
 function InSessionSettingsWindow(props: { context: Context; sessionID: string }) {
   let windowBox: any
-  const [roomHeight, setRoomHeight] = createSignal<number>()
-  const [hasKeyboard, setHasKeyboard] = createSignal(false)
   const context = props.context
+  const initialRoom = () => Math.max(14, ((context as any).renderer?.height ?? 30) - 10)
+  const [roomHeight, setRoomHeight] = createSignal<number>(initialRoom())
+  const [hasKeyboard, setHasKeyboard] = createSignal(false)
 
   function measureRoom(): void {
     const box = windowBox
@@ -1328,53 +1339,45 @@ function InSessionSettingsWindow(props: { context: Context; sessionID: string })
   onCleanup(controller.cleanup)
   pageApi = controller.api
 
-  const effectiveHeight = () => roomHeight()
-
   const theme = (context as any).theme?.text ?? {}
   const warn = (theme?.feedback as any)?.warning?.base ?? '#fba970'
 
   return (
-    <box
-      ref={(el: any) => {
+    <SettingsWindow
+      boxRef={(el: any) => {
         windowBox = el
         if (el) {
           el.on?.('focused', () => setHasKeyboard(true))
           el.on?.('blurred', () => setHasKeyboard(false))
         }
       }}
-      focusable
-      height={effectiveHeight()}
-      flexDirection="column"
-      flexShrink={0}
+      height={roomHeight()}
+      version={resolveRunningVersion()}
+      tabs={controller.tabs}
+      page={controller.page}
+      selectedId={controller.selectedId}
+      draft={controller.draft}
+      notice={controller.notice}
+      confirmExit={controller.confirmExit}
+      fg={theme.base}
+      muted={theme.muted}
+      warn={warn}
+      hasKeyboard={hasKeyboard}
+      onJumpTab={(idx) => controller.api.jumpTab(idx)}
+      onSelectRow={(id) => controller.api.selectById?.(id)}
+      onCycleValue={(id, dir) => controller.api.cycleRowById?.(id, dir)}
+      onSave={() => controller.api.save()}
+      onResetPage={() => controller.api.resetPage()}
+      onStageDefaults={() => controller.api.stageDefaults()}
+      onClose={() => closePantheonSettings()}
+      onDiscard={() => controller.api.discard?.()}
+      onCancelExit={() => controller.api.cancelExit?.()}
       onMouseDown={() => {
         try {
           windowBox?.focus?.()
         } catch {}
       }}
-    >
-      <SettingsWindow
-        version={resolveRunningVersion()}
-        tabs={controller.tabs}
-        page={controller.page}
-        selectedId={controller.selectedId}
-        draft={controller.draft}
-        notice={controller.notice}
-        confirmExit={controller.confirmExit}
-        fg={theme.base}
-        muted={theme.muted}
-        warn={warn}
-        hasKeyboard={hasKeyboard}
-        onJumpTab={(idx) => controller.api.jumpTab(idx)}
-        onSelectRow={(id) => controller.api.selectById?.(id)}
-        onCycleValue={(id, dir) => controller.api.cycleRowById?.(id, dir)}
-        onSave={() => controller.api.save()}
-        onResetPage={() => controller.api.resetPage()}
-        onStageDefaults={() => controller.api.stageDefaults()}
-        onClose={() => closePantheonSettings()}
-        onDiscard={() => controller.api.discard?.()}
-        onCancelExit={() => controller.api.cancelExit?.()}
-      />
-    </box>
+    />
   )
 }
 

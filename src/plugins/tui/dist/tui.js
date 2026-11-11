@@ -2015,12 +2015,13 @@ const VALUE_WIDTH = 24;
 function SettingsWindow(props) {
 	const tab = () => props.tabs()[props.page()] ?? props.tabs()[0] ?? EMPTY_TAB;
 	return (() => {
-		var _el$ = createElement("box"), _el$2 = createElement("box"), _el$3 = createElement("text"), _el$4 = createElement("b"), _el$6 = createElement("span"), _el$7 = createElement("box"), _el$8 = createElement("box"), _el$9 = createElement("box"), _el$0 = createElement("text"), _el$10 = createElement("scrollbox");
+		var _el$ = createElement("box"), _el$2 = createElement("box"), _el$3 = createElement("text"), _el$4 = createElement("b"), _el$6 = createElement("span"), _el$7 = createElement("box"), _el$8 = createElement("box"), _el$9 = createElement("box"), _el$0 = createElement("text"), _el$10 = createElement("box"), _el$11 = createElement("scrollbox");
 		insertNode(_el$, _el$2);
 		insertNode(_el$, _el$10);
+		var _ref$ = props.boxRef;
+		typeof _ref$ === "function" ? use(_ref$, _el$) : props.boxRef = _el$;
+		setProp(_el$, "focusable", true);
 		setProp(_el$, "flexDirection", "column");
-		setProp(_el$, "flexGrow", 1);
-		setProp(_el$, "flexBasis", 0);
 		setProp(_el$, "minHeight", 0);
 		setProp(_el$, "paddingLeft", 1);
 		setProp(_el$, "paddingRight", 1);
@@ -2053,18 +2054,18 @@ function SettingsWindow(props) {
 			children: (t, index) => {
 				const isActive = () => index() === props.page();
 				return (() => {
-					var _el$31 = createElement("box"), _el$32 = createElement("text");
-					insertNode(_el$31, _el$32);
-					setProp(_el$31, "onMouseDown", () => props.onJumpTab?.(index()));
-					setProp(_el$31, "paddingLeft", 1);
-					setProp(_el$31, "paddingRight", 1);
-					setProp(_el$32, "wrapMode", "none");
-					spread(_el$32, mergeProps({ get fg() {
+					var _el$32 = createElement("box"), _el$33 = createElement("text");
+					insertNode(_el$32, _el$33);
+					setProp(_el$32, "onMouseDown", () => props.onJumpTab?.(index()));
+					setProp(_el$32, "paddingLeft", 1);
+					setProp(_el$32, "paddingRight", 1);
+					setProp(_el$33, "wrapMode", "none");
+					spread(_el$33, mergeProps({ get fg() {
 						return memo(() => !!isActive())() ? props.warn ?? "#fba970" : props.muted;
 					} }, () => isActive() ? { attributes: 1 } : {}), true);
-					insert(_el$32, () => `${t.title}${tabDirty(props.draft(), t) ? " ●" : ""}`);
-					effect((_$p) => setProp(_el$31, "backgroundColor", isActive() ? "#262626" : void 0, _$p));
-					return _el$31;
+					insert(_el$33, () => `${t.title}${tabDirty(props.draft(), t) ? " ●" : ""}`);
+					effect((_$p) => setProp(_el$32, "backgroundColor", isActive() ? "#262626" : void 0, _$p));
+					return _el$32;
 				})();
 			}
 		}));
@@ -2073,30 +2074,36 @@ function SettingsWindow(props) {
 		setProp(_el$9, "paddingLeft", 1);
 		insertNode(_el$0, createTextNode(`esc`));
 		setProp(_el$0, "wrapMode", "none");
+		insertNode(_el$10, _el$11);
+		setProp(_el$10, "flexDirection", "column");
 		setProp(_el$10, "flexGrow", 1);
 		setProp(_el$10, "flexBasis", 0);
 		setProp(_el$10, "minHeight", 0);
-		insert(_el$10, createComponent(For, {
+		setProp(_el$10, "overflow", "hidden");
+		setProp(_el$11, "flexGrow", 1);
+		setProp(_el$11, "flexBasis", 0);
+		setProp(_el$11, "minHeight", 0);
+		insert(_el$11, createComponent(For, {
 			get each() {
 				return tab().groups;
 			},
 			children: (group) => (() => {
-				var _el$33 = createElement("box");
-				setProp(_el$33, "flexDirection", "column");
-				setProp(_el$33, "marginBottom", 1);
-				insert(_el$33, createComponent(Show, {
+				var _el$34 = createElement("box");
+				setProp(_el$34, "flexDirection", "column");
+				setProp(_el$34, "marginBottom", 1);
+				insert(_el$34, createComponent(Show, {
 					get when() {
 						return group.title !== void 0;
 					},
 					get children() {
-						var _el$34 = createElement("text");
-						setProp(_el$34, "attributes", 1);
-						insert(_el$34, () => group.title);
-						effect((_$p) => setProp(_el$34, "fg", props.warn ?? props.fg, _$p));
-						return _el$34;
+						var _el$35 = createElement("text");
+						setProp(_el$35, "attributes", 1);
+						insert(_el$35, () => group.title);
+						effect((_$p) => setProp(_el$35, "fg", props.warn ?? props.fg, _$p));
+						return _el$35;
 					}
 				}), null);
-				insert(_el$33, createComponent(For, {
+				insert(_el$34, createComponent(For, {
 					get each() {
 						return group.rows;
 					},
@@ -2112,49 +2119,49 @@ function SettingsWindow(props) {
 							return display();
 						};
 						return (() => {
-							var _el$35 = createElement("box"), _el$36 = createElement("box"), _el$37 = createElement("text"), _el$38 = createElement("box"), _el$39 = createElement("text");
-							insertNode(_el$35, _el$36);
-							insertNode(_el$35, _el$38);
-							setProp(_el$35, "flexDirection", "row");
-							setProp(_el$35, "onMouseDown", () => {
+							var _el$36 = createElement("box"), _el$37 = createElement("box"), _el$38 = createElement("text"), _el$39 = createElement("box"), _el$40 = createElement("text");
+							insertNode(_el$36, _el$37);
+							insertNode(_el$36, _el$39);
+							setProp(_el$36, "flexDirection", "row");
+							setProp(_el$36, "onMouseDown", () => {
 								props.onSelectRow?.(row.id);
 							});
-							insertNode(_el$36, _el$37);
-							setProp(_el$36, "width", 28);
-							spread(_el$37, mergeProps({ get fg() {
+							insertNode(_el$37, _el$38);
+							setProp(_el$37, "width", 28);
+							spread(_el$38, mergeProps({ get fg() {
 								return memo(() => !!isSelected())() ? props.warn ?? "#fba970" : props.fg;
 							} }, () => isSelected() ? { attributes: 1 } : {}), true);
-							insert(_el$37, () => `${gutter()}${row.name}`.padEnd(28));
-							insertNode(_el$38, _el$39);
-							setProp(_el$38, "width", 24);
-							setProp(_el$38, "onMouseDown", () => {
+							insert(_el$38, () => `${gutter()}${row.name}`.padEnd(28));
+							insertNode(_el$39, _el$40);
+							setProp(_el$39, "width", 24);
+							setProp(_el$39, "onMouseDown", () => {
 								props.onSelectRow?.(row.id);
 								props.onCycleValue?.(row.id, 1);
 							});
-							spread(_el$39, mergeProps({ get fg() {
+							spread(_el$40, mergeProps({ get fg() {
 								return memo(() => !!isSelected())() ? "#ffffff" : memo(() => !!staged())() ? props.warn ?? props.fg : props.muted;
 							} }, () => isSelected() || staged() ? { attributes: 1 } : {}), true);
-							insert(_el$39, () => `${valueCell()}${staged() ? " ●" : ""}`.padEnd(VALUE_WIDTH));
-							insert(_el$35, createComponent(Show, {
+							insert(_el$40, () => `${valueCell()}${staged() ? " ●" : ""}`.padEnd(VALUE_WIDTH));
+							insert(_el$36, createComponent(Show, {
 								get when() {
 									return row.note !== void 0;
 								},
 								get children() {
-									var _el$40 = createElement("box"), _el$41 = createElement("text");
-									insertNode(_el$40, _el$41);
-									setProp(_el$40, "flexGrow", 1);
-									setProp(_el$40, "flexShrink", 1);
-									insert(_el$41, () => row.note);
-									effect((_$p) => setProp(_el$41, "fg", isSelected() ? "#e5e7eb" : props.muted, _$p));
-									return _el$40;
+									var _el$41 = createElement("box"), _el$42 = createElement("text");
+									insertNode(_el$41, _el$42);
+									setProp(_el$41, "flexGrow", 1);
+									setProp(_el$41, "flexShrink", 1);
+									insert(_el$42, () => row.note);
+									effect((_$p) => setProp(_el$42, "fg", isSelected() ? "#e5e7eb" : props.muted, _$p));
+									return _el$41;
 								}
 							}), null);
-							effect((_$p) => setProp(_el$35, "backgroundColor", isSelected() ? "#262626" : void 0, _$p));
-							return _el$35;
+							effect((_$p) => setProp(_el$36, "backgroundColor", isSelected() ? "#262626" : void 0, _$p));
+							return _el$36;
 						})();
 					}
 				}), null);
-				return _el$33;
+				return _el$34;
 			})()
 		}));
 		insert(_el$, createComponent(Show, {
@@ -2162,13 +2169,13 @@ function SettingsWindow(props) {
 				return props.notice() !== void 0;
 			},
 			get children() {
-				var _el$11 = createElement("text");
-				insert(_el$11, (() => {
+				var _el$12 = createElement("text");
+				insert(_el$12, (() => {
 					var _c$ = memo(() => !!(props.notice()?.startsWith("[OK]") || props.notice()?.startsWith("saved")));
 					return () => _c$() ? props.notice() : `[WARN] ${props.notice()}`;
 				})());
-				effect((_$p) => setProp(_el$11, "fg", props.notice()?.startsWith("[OK]") || props.notice()?.startsWith("saved") ? props.fg : props.warn ?? props.muted, _$p));
-				return _el$11;
+				effect((_$p) => setProp(_el$12, "fg", props.notice()?.startsWith("[OK]") || props.notice()?.startsWith("saved") ? props.fg : props.warn ?? props.muted, _$p));
+				return _el$12;
 			}
 		}), null);
 		insert(_el$, createComponent(Show, {
@@ -2177,148 +2184,148 @@ function SettingsWindow(props) {
 			},
 			get fallback() {
 				return (() => {
-					var _el$42 = createElement("box"), _el$60 = createElement("text");
-					insertNode(_el$42, _el$60);
-					setProp(_el$42, "flexDirection", "column");
-					insert(_el$42, createComponent(Show, {
+					var _el$43 = createElement("box"), _el$61 = createElement("text");
+					insertNode(_el$43, _el$61);
+					setProp(_el$43, "flexDirection", "column");
+					insert(_el$43, createComponent(Show, {
 						get when() {
 							return draftDirty(props.draft());
 						},
 						get fallback() {
 							return (() => {
-								var _el$61 = createElement("box"), _el$62 = createElement("box"), _el$63 = createElement("text"), _el$65 = createElement("text"), _el$67 = createElement("box"), _el$68 = createElement("text"), _el$70 = createElement("text"), _el$72 = createElement("box"), _el$73 = createElement("text"), _el$75 = createElement("box"), _el$76 = createElement("text");
-								insertNode(_el$61, _el$62);
-								insertNode(_el$61, _el$65);
-								insertNode(_el$61, _el$67);
-								insertNode(_el$61, _el$70);
-								insertNode(_el$61, _el$72);
-								insertNode(_el$61, _el$75);
-								insertNode(_el$61, _el$76);
-								setProp(_el$61, "flexDirection", "row");
+								var _el$62 = createElement("box"), _el$63 = createElement("box"), _el$64 = createElement("text"), _el$66 = createElement("text"), _el$68 = createElement("box"), _el$69 = createElement("text"), _el$71 = createElement("text"), _el$73 = createElement("box"), _el$74 = createElement("text"), _el$76 = createElement("box"), _el$77 = createElement("text");
 								insertNode(_el$62, _el$63);
-								setProp(_el$62, "backgroundColor", "#262626");
-								setProp(_el$62, "onMouseDown", () => props.onClose?.());
-								insertNode(_el$63, createTextNode(` Close `));
-								setProp(_el$63, "fg", "#ffffff");
-								insertNode(_el$65, createTextNode(`  `));
-								insertNode(_el$67, _el$68);
-								setProp(_el$67, "backgroundColor", "#262626");
-								setProp(_el$67, "onMouseDown", () => props.onResetPage?.());
-								insertNode(_el$68, createTextNode(` Reset page `));
-								setProp(_el$68, "fg", "#ffffff");
-								insertNode(_el$70, createTextNode(`  `));
-								insertNode(_el$72, _el$73);
-								setProp(_el$72, "backgroundColor", "#262626");
-								setProp(_el$72, "onMouseDown", () => props.onStageDefaults?.());
-								insertNode(_el$73, createTextNode(` Defaults `));
-								setProp(_el$73, "fg", "#ffffff");
-								setProp(_el$75, "flexGrow", 1);
-								insertNode(_el$76, createTextNode(`no staged changes`));
+								insertNode(_el$62, _el$66);
+								insertNode(_el$62, _el$68);
+								insertNode(_el$62, _el$71);
+								insertNode(_el$62, _el$73);
+								insertNode(_el$62, _el$76);
+								insertNode(_el$62, _el$77);
+								setProp(_el$62, "flexDirection", "row");
+								insertNode(_el$63, _el$64);
+								setProp(_el$63, "backgroundColor", "#262626");
+								setProp(_el$63, "onMouseDown", () => props.onClose?.());
+								insertNode(_el$64, createTextNode(` Close `));
+								setProp(_el$64, "fg", "#ffffff");
+								insertNode(_el$66, createTextNode(`  `));
+								insertNode(_el$68, _el$69);
+								setProp(_el$68, "backgroundColor", "#262626");
+								setProp(_el$68, "onMouseDown", () => props.onResetPage?.());
+								insertNode(_el$69, createTextNode(` Reset page `));
+								setProp(_el$69, "fg", "#ffffff");
+								insertNode(_el$71, createTextNode(`  `));
+								insertNode(_el$73, _el$74);
+								setProp(_el$73, "backgroundColor", "#262626");
+								setProp(_el$73, "onMouseDown", () => props.onStageDefaults?.());
+								insertNode(_el$74, createTextNode(` Defaults `));
+								setProp(_el$74, "fg", "#ffffff");
+								setProp(_el$76, "flexGrow", 1);
+								insertNode(_el$77, createTextNode(`no staged changes`));
 								effect((_p$) => {
-									var _v$12 = props.muted, _v$13 = props.muted, _v$14 = props.muted;
-									_v$12 !== _p$.e && (_p$.e = setProp(_el$65, "fg", _v$12, _p$.e));
-									_v$13 !== _p$.t && (_p$.t = setProp(_el$70, "fg", _v$13, _p$.t));
-									_v$14 !== _p$.a && (_p$.a = setProp(_el$76, "fg", _v$14, _p$.a));
+									var _v$17 = props.muted, _v$18 = props.muted, _v$19 = props.muted;
+									_v$17 !== _p$.e && (_p$.e = setProp(_el$66, "fg", _v$17, _p$.e));
+									_v$18 !== _p$.t && (_p$.t = setProp(_el$71, "fg", _v$18, _p$.t));
+									_v$19 !== _p$.a && (_p$.a = setProp(_el$77, "fg", _v$19, _p$.a));
 									return _p$;
 								}, {
 									e: void 0,
 									t: void 0,
 									a: void 0
 								});
-								return _el$61;
+								return _el$62;
 							})();
 						},
 						get children() {
-							var _el$43 = createElement("box"), _el$44 = createElement("box"), _el$45 = createElement("text"), _el$47 = createElement("text"), _el$49 = createElement("box"), _el$50 = createElement("text"), _el$52 = createElement("text"), _el$54 = createElement("box"), _el$55 = createElement("text"), _el$57 = createElement("box"), _el$58 = createElement("text");
-							insertNode(_el$43, _el$44);
-							insertNode(_el$43, _el$47);
-							insertNode(_el$43, _el$49);
-							insertNode(_el$43, _el$52);
-							insertNode(_el$43, _el$54);
-							insertNode(_el$43, _el$57);
-							insertNode(_el$43, _el$58);
-							setProp(_el$43, "flexDirection", "row");
+							var _el$44 = createElement("box"), _el$45 = createElement("box"), _el$46 = createElement("text"), _el$48 = createElement("text"), _el$50 = createElement("box"), _el$51 = createElement("text"), _el$53 = createElement("text"), _el$55 = createElement("box"), _el$56 = createElement("text"), _el$58 = createElement("box"), _el$59 = createElement("text");
 							insertNode(_el$44, _el$45);
-							setProp(_el$44, "backgroundColor", "#fba970");
-							setProp(_el$44, "onMouseDown", () => props.onSave?.());
-							insertNode(_el$45, createTextNode(` Save `));
-							setProp(_el$45, "fg", "#000000");
-							insertNode(_el$47, createTextNode(`  `));
-							insertNode(_el$49, _el$50);
-							setProp(_el$49, "backgroundColor", "#262626");
-							setProp(_el$49, "onMouseDown", () => props.onDiscard?.());
-							insertNode(_el$50, createTextNode(` Discard `));
-							setProp(_el$50, "fg", "#ffffff");
-							insertNode(_el$52, createTextNode(`  `));
-							insertNode(_el$54, _el$55);
-							setProp(_el$54, "backgroundColor", "#262626");
-							setProp(_el$54, "onMouseDown", () => props.onResetPage?.());
-							insertNode(_el$55, createTextNode(` Reset page `));
-							setProp(_el$55, "fg", "#ffffff");
-							setProp(_el$57, "flexGrow", 1);
-							insertNode(_el$58, createTextNode(`unsaved changes`));
+							insertNode(_el$44, _el$48);
+							insertNode(_el$44, _el$50);
+							insertNode(_el$44, _el$53);
+							insertNode(_el$44, _el$55);
+							insertNode(_el$44, _el$58);
+							insertNode(_el$44, _el$59);
+							setProp(_el$44, "flexDirection", "row");
+							insertNode(_el$45, _el$46);
+							setProp(_el$45, "backgroundColor", "#fba970");
+							setProp(_el$45, "onMouseDown", () => props.onSave?.());
+							insertNode(_el$46, createTextNode(` Save `));
+							setProp(_el$46, "fg", "#000000");
+							insertNode(_el$48, createTextNode(`  `));
+							insertNode(_el$50, _el$51);
+							setProp(_el$50, "backgroundColor", "#262626");
+							setProp(_el$50, "onMouseDown", () => props.onDiscard?.());
+							insertNode(_el$51, createTextNode(` Discard `));
+							setProp(_el$51, "fg", "#ffffff");
+							insertNode(_el$53, createTextNode(`  `));
+							insertNode(_el$55, _el$56);
+							setProp(_el$55, "backgroundColor", "#262626");
+							setProp(_el$55, "onMouseDown", () => props.onResetPage?.());
+							insertNode(_el$56, createTextNode(` Reset page `));
+							setProp(_el$56, "fg", "#ffffff");
+							setProp(_el$58, "flexGrow", 1);
+							insertNode(_el$59, createTextNode(`unsaved changes`));
 							effect((_p$) => {
-								var _v$1 = props.muted, _v$10 = props.muted, _v$11 = props.warn ?? "#f59e0b";
-								_v$1 !== _p$.e && (_p$.e = setProp(_el$47, "fg", _v$1, _p$.e));
-								_v$10 !== _p$.t && (_p$.t = setProp(_el$52, "fg", _v$10, _p$.t));
-								_v$11 !== _p$.a && (_p$.a = setProp(_el$58, "fg", _v$11, _p$.a));
+								var _v$14 = props.muted, _v$15 = props.muted, _v$16 = props.warn ?? "#f59e0b";
+								_v$14 !== _p$.e && (_p$.e = setProp(_el$48, "fg", _v$14, _p$.e));
+								_v$15 !== _p$.t && (_p$.t = setProp(_el$53, "fg", _v$15, _p$.t));
+								_v$16 !== _p$.a && (_p$.a = setProp(_el$59, "fg", _v$16, _p$.a));
 								return _p$;
 							}, {
 								e: void 0,
 								t: void 0,
 								a: void 0
 							});
-							return _el$43;
+							return _el$44;
 						}
-					}), _el$60);
-					insert(_el$60, () => {
+					}), _el$61);
+					insert(_el$61, () => {
 						const currentRow = findRow(tab(), props.selectedId());
 						if (currentRow?.cycle !== void 0) return "click or ›/←/→ change · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close";
 						if (currentRow?.action !== void 0) return "enter or space run action · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close";
 						return "[ref] documented reference (read-only) · ↑↓ select · tab next tab · esc close";
 					});
-					effect((_$p) => setProp(_el$60, "fg", props.muted, _$p));
-					return _el$42;
+					effect((_$p) => setProp(_el$61, "fg", props.muted, _$p));
+					return _el$43;
 				})();
 			},
 			get children() {
-				var _el$12 = createElement("box"), _el$13 = createElement("box"), _el$14 = createElement("text"), _el$16 = createElement("box"), _el$17 = createElement("text"), _el$19 = createElement("text"), _el$21 = createElement("box"), _el$22 = createElement("text"), _el$24 = createElement("text"), _el$26 = createElement("box"), _el$27 = createElement("text"), _el$29 = createElement("text");
-				insertNode(_el$12, _el$13);
-				insertNode(_el$12, _el$29);
-				setProp(_el$12, "flexDirection", "column");
+				var _el$13 = createElement("box"), _el$14 = createElement("box"), _el$15 = createElement("text"), _el$17 = createElement("box"), _el$18 = createElement("text"), _el$20 = createElement("text"), _el$22 = createElement("box"), _el$23 = createElement("text"), _el$25 = createElement("text"), _el$27 = createElement("box"), _el$28 = createElement("text"), _el$30 = createElement("text");
 				insertNode(_el$13, _el$14);
-				insertNode(_el$13, _el$16);
-				insertNode(_el$13, _el$19);
-				insertNode(_el$13, _el$21);
-				insertNode(_el$13, _el$24);
-				insertNode(_el$13, _el$26);
-				setProp(_el$13, "flexDirection", "row");
-				insertNode(_el$14, createTextNode(`Keep your changes?  `));
-				setProp(_el$14, "attributes", 1);
-				insertNode(_el$16, _el$17);
-				setProp(_el$16, "backgroundColor", "#fba970");
-				setProp(_el$16, "onMouseDown", () => props.onSave?.());
-				insertNode(_el$17, createTextNode(` Save `));
-				setProp(_el$17, "fg", "#000000");
-				insertNode(_el$19, createTextNode(`  `));
-				insertNode(_el$21, _el$22);
-				setProp(_el$21, "backgroundColor", "#262626");
-				setProp(_el$21, "onMouseDown", () => props.onDiscard?.());
-				insertNode(_el$22, createTextNode(` Discard `));
-				setProp(_el$22, "fg", "#ffffff");
-				insertNode(_el$24, createTextNode(`  `));
-				insertNode(_el$26, _el$27);
-				setProp(_el$26, "backgroundColor", "#262626");
-				setProp(_el$26, "onMouseDown", () => props.onCancelExit?.());
-				insertNode(_el$27, createTextNode(` Keep editing `));
-				setProp(_el$27, "fg", "#ffffff");
-				insertNode(_el$29, createTextNode(`ctrl+s save · d discard the changes · esc keep editing`));
+				insertNode(_el$13, _el$30);
+				setProp(_el$13, "flexDirection", "column");
+				insertNode(_el$14, _el$15);
+				insertNode(_el$14, _el$17);
+				insertNode(_el$14, _el$20);
+				insertNode(_el$14, _el$22);
+				insertNode(_el$14, _el$25);
+				insertNode(_el$14, _el$27);
+				setProp(_el$14, "flexDirection", "row");
+				insertNode(_el$15, createTextNode(`Keep your changes?  `));
+				setProp(_el$15, "attributes", 1);
+				insertNode(_el$17, _el$18);
+				setProp(_el$17, "backgroundColor", "#fba970");
+				setProp(_el$17, "onMouseDown", () => props.onSave?.());
+				insertNode(_el$18, createTextNode(` Save `));
+				setProp(_el$18, "fg", "#000000");
+				insertNode(_el$20, createTextNode(`  `));
+				insertNode(_el$22, _el$23);
+				setProp(_el$22, "backgroundColor", "#262626");
+				setProp(_el$22, "onMouseDown", () => props.onDiscard?.());
+				insertNode(_el$23, createTextNode(` Discard `));
+				setProp(_el$23, "fg", "#ffffff");
+				insertNode(_el$25, createTextNode(`  `));
+				insertNode(_el$27, _el$28);
+				setProp(_el$27, "backgroundColor", "#262626");
+				setProp(_el$27, "onMouseDown", () => props.onCancelExit?.());
+				insertNode(_el$28, createTextNode(` Keep editing `));
+				setProp(_el$28, "fg", "#ffffff");
+				insertNode(_el$30, createTextNode(`ctrl+s save · d discard the changes · esc keep editing`));
 				effect((_p$) => {
 					var _v$ = props.warn ?? "#f59e0b", _v$2 = props.muted, _v$3 = props.muted, _v$4 = props.muted;
-					_v$ !== _p$.e && (_p$.e = setProp(_el$14, "fg", _v$, _p$.e));
-					_v$2 !== _p$.t && (_p$.t = setProp(_el$19, "fg", _v$2, _p$.t));
-					_v$3 !== _p$.a && (_p$.a = setProp(_el$24, "fg", _v$3, _p$.a));
-					_v$4 !== _p$.o && (_p$.o = setProp(_el$29, "fg", _v$4, _p$.o));
+					_v$ !== _p$.e && (_p$.e = setProp(_el$15, "fg", _v$, _p$.e));
+					_v$2 !== _p$.t && (_p$.t = setProp(_el$20, "fg", _v$2, _p$.t));
+					_v$3 !== _p$.a && (_p$.a = setProp(_el$25, "fg", _v$3, _p$.a));
+					_v$4 !== _p$.o && (_p$.o = setProp(_el$30, "fg", _v$4, _p$.o));
 					return _p$;
 				}, {
 					e: void 0,
@@ -2326,17 +2333,22 @@ function SettingsWindow(props) {
 					a: void 0,
 					o: void 0
 				});
-				return _el$12;
+				return _el$13;
 			}
 		}), null);
 		effect((_p$) => {
-			var _v$5 = props.isDialog ? void 0 : "rounded", _v$6 = props.isDialog ? void 0 : props.hasKeyboard?.() ? props.warn ?? "#fba970" : props.muted ?? "#52525b", _v$7 = props.fg, _v$8 = { fg: props.muted }, _v$9 = props.muted, _v$0 = props.maxHeight;
-			_v$5 !== _p$.e && (_p$.e = setProp(_el$, "borderStyle", _v$5, _p$.e));
-			_v$6 !== _p$.t && (_p$.t = setProp(_el$, "borderColor", _v$6, _p$.t));
-			_v$7 !== _p$.a && (_p$.a = setProp(_el$3, "fg", _v$7, _p$.a));
-			_v$8 !== _p$.o && (_p$.o = setProp(_el$6, "style", _v$8, _p$.o));
-			_v$9 !== _p$.i && (_p$.i = setProp(_el$0, "fg", _v$9, _p$.i));
-			_v$0 !== _p$.n && (_p$.n = setProp(_el$10, "maxHeight", _v$0, _p$.n));
+			var _v$5 = props.height, _v$6 = props.height !== void 0 ? void 0 : 1, _v$7 = props.height !== void 0 ? void 0 : 0, _v$8 = !props.isDialog, _v$9 = props.isDialog ? void 0 : "rounded", _v$0 = props.isDialog ? void 0 : props.hasKeyboard?.() ? props.warn ?? "#fba970" : props.muted ?? "#52525b", _v$1 = props.onMouseDown, _v$10 = props.fg, _v$11 = { fg: props.muted }, _v$12 = props.muted, _v$13 = props.maxHeight;
+			_v$5 !== _p$.e && (_p$.e = setProp(_el$, "height", _v$5, _p$.e));
+			_v$6 !== _p$.t && (_p$.t = setProp(_el$, "flexGrow", _v$6, _p$.t));
+			_v$7 !== _p$.a && (_p$.a = setProp(_el$, "flexBasis", _v$7, _p$.a));
+			_v$8 !== _p$.o && (_p$.o = setProp(_el$, "border", _v$8, _p$.o));
+			_v$9 !== _p$.i && (_p$.i = setProp(_el$, "borderStyle", _v$9, _p$.i));
+			_v$0 !== _p$.n && (_p$.n = setProp(_el$, "borderColor", _v$0, _p$.n));
+			_v$1 !== _p$.s && (_p$.s = setProp(_el$, "onMouseDown", _v$1, _p$.s));
+			_v$10 !== _p$.h && (_p$.h = setProp(_el$3, "fg", _v$10, _p$.h));
+			_v$11 !== _p$.r && (_p$.r = setProp(_el$6, "style", _v$11, _p$.r));
+			_v$12 !== _p$.d && (_p$.d = setProp(_el$0, "fg", _v$12, _p$.d));
+			_v$13 !== _p$.l && (_p$.l = setProp(_el$11, "maxHeight", _v$13, _p$.l));
 			return _p$;
 		}, {
 			e: void 0,
@@ -2344,7 +2356,12 @@ function SettingsWindow(props) {
 			a: void 0,
 			o: void 0,
 			i: void 0,
-			n: void 0
+			n: void 0,
+			s: void 0,
+			h: void 0,
+			r: void 0,
+			d: void 0,
+			l: void 0
 		});
 		return _el$;
 	})();
@@ -2954,9 +2971,10 @@ function PantheonSettingsSlot(props) {
 }
 function InSessionSettingsWindow(props) {
 	let windowBox;
-	const [roomHeight, setRoomHeight] = createSignal();
-	const [hasKeyboard, setHasKeyboard] = createSignal(false);
 	const context = props.context;
+	const initialRoom = () => Math.max(14, (context.renderer?.height ?? 30) - 10);
+	const [roomHeight, setRoomHeight] = createSignal(initialRoom());
+	const [hasKeyboard, setHasKeyboard] = createSignal(false);
 	function measureRoom() {
 		const box = windowBox;
 		if (!box || box.isDestroyed) return;
@@ -2999,69 +3017,63 @@ function InSessionSettingsWindow(props) {
 	});
 	onCleanup(controller.cleanup);
 	pageApi = controller.api;
-	const effectiveHeight = () => roomHeight();
 	const theme = context.theme?.text ?? {};
 	const warn = theme?.feedback?.warning?.base ?? "#fba970";
-	return (() => {
-		var _el$78 = createElement("box");
-		use((el) => {
+	return createComponent(SettingsWindow, {
+		boxRef: (el) => {
 			windowBox = el;
 			if (el) {
 				el.on?.("focused", () => setHasKeyboard(true));
 				el.on?.("blurred", () => setHasKeyboard(false));
 			}
-		}, _el$78);
-		setProp(_el$78, "focusable", true);
-		setProp(_el$78, "flexDirection", "column");
-		setProp(_el$78, "flexShrink", 0);
-		setProp(_el$78, "onMouseDown", () => {
+		},
+		get height() {
+			return roomHeight();
+		},
+		get version() {
+			return resolveRunningVersion();
+		},
+		get tabs() {
+			return controller.tabs;
+		},
+		get page() {
+			return controller.page;
+		},
+		get selectedId() {
+			return controller.selectedId;
+		},
+		get draft() {
+			return controller.draft;
+		},
+		get notice() {
+			return controller.notice;
+		},
+		get confirmExit() {
+			return controller.confirmExit;
+		},
+		get fg() {
+			return theme.base;
+		},
+		get muted() {
+			return theme.muted;
+		},
+		warn,
+		hasKeyboard,
+		onJumpTab: (idx) => controller.api.jumpTab(idx),
+		onSelectRow: (id) => controller.api.selectById?.(id),
+		onCycleValue: (id, dir) => controller.api.cycleRowById?.(id, dir),
+		onSave: () => controller.api.save(),
+		onResetPage: () => controller.api.resetPage(),
+		onStageDefaults: () => controller.api.stageDefaults(),
+		onClose: () => closePantheonSettings(),
+		onDiscard: () => controller.api.discard?.(),
+		onCancelExit: () => controller.api.cancelExit?.(),
+		onMouseDown: () => {
 			try {
 				windowBox?.focus?.();
 			} catch {}
-		});
-		insert(_el$78, createComponent(SettingsWindow, {
-			get version() {
-				return resolveRunningVersion();
-			},
-			get tabs() {
-				return controller.tabs;
-			},
-			get page() {
-				return controller.page;
-			},
-			get selectedId() {
-				return controller.selectedId;
-			},
-			get draft() {
-				return controller.draft;
-			},
-			get notice() {
-				return controller.notice;
-			},
-			get confirmExit() {
-				return controller.confirmExit;
-			},
-			get fg() {
-				return theme.base;
-			},
-			get muted() {
-				return theme.muted;
-			},
-			warn,
-			hasKeyboard,
-			onJumpTab: (idx) => controller.api.jumpTab(idx),
-			onSelectRow: (id) => controller.api.selectById?.(id),
-			onCycleValue: (id, dir) => controller.api.cycleRowById?.(id, dir),
-			onSave: () => controller.api.save(),
-			onResetPage: () => controller.api.resetPage(),
-			onStageDefaults: () => controller.api.stageDefaults(),
-			onClose: () => closePantheonSettings(),
-			onDiscard: () => controller.api.discard?.(),
-			onCancelExit: () => controller.api.cancelExit?.()
-		}));
-		effect((_$p) => setProp(_el$78, "height", effectiveHeight(), _$p));
-		return _el$78;
-	})();
+		}
+	});
 }
 function setupPantheonSettings(context) {
 	try {
