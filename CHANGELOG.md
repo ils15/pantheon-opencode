@@ -71,6 +71,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
      Running apply will move this section to a versioned entry and reset the template below. -->
 
+## [v2.0.0] - 2026-11-11
+
+### 🆕 What's New
+
+- **OpenCode 2.x Architecture**: Official 2.0 release dedicated to OpenCode 2.x, removing legacy V1 shims for low latency.
+- **Fast-Path Direct Dispatch**: Zeus executes direct implementation requests in 1 turn without mandatory planning or approval cascades.
+- **Native Subagent Execution**: Parallel background subagents (`task(background: true)`) for non-blocking test and build workflows.
+- **Implementer Tool Grants**: Added native glob, grep, and bash access across all implementers to eliminate discovery round-trips.
+- **Prompt Diet & English Unification**: Condensed agent prompts by up to 70% and standardized instructions across all agents to English.
+- **TUI Settings Stability**: Fullscreen settings overlay with flexWrap anti-squish layout and live preference preview.
+
+### Added
+
+- **agents** — Fast-Path Direct Implementation in Zeus routing direct coding requests immediately to domain specialists.
+- **agents** — Native glob and grep permissions granted to implementers (Talos, Prometheus, Demeter).
+- **agents** — Parallel background execution guidance for tests and builds using `task(background: true)`.
+
+### Changed
+
+- **agents** — Condensed Hermes system prompt from 292 to 198 lines, eliminating tutorial boilerplate.
+- **agents** — Cleaned double-spaced headings and emoji remnants across Aphrodite instructions.
+- **instructions** — Standardized all agent instructions and repository headers to English with zero-emoji enforcement.
+
+### Fixed
+
+- **release** — Corrected canonical changelog structure and bold scope formatting for Gate (e) compliance.
+- **tools** — Replaced legacy shell permissions with native OpenCode V2 bash across all implementers.
+- **tui** — Resolved tab squish and footer overlap on narrow viewports in settings window.
+
 ## [v2.0.0-rc.2] - 2026-11-11
 
 ### 🆕 What's New
