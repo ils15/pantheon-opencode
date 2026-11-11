@@ -21,6 +21,7 @@
  * shows where the thresholds sit today.
  */
 import type { SettingsTab } from './pantheon-settings-state.ts'
+import { resolveLanguage } from './settings-i18n.ts'
 
 export interface GoalLoopPrefs {
   enabled: boolean
@@ -79,80 +80,108 @@ export function buildAutonomyTab(input: {
   goalLoop: GoalLoopPrefs
   budgets: DecisionBudgets
   goalLoopRestartPending?: boolean
+  languagePref?: string
 }): SettingsTab {
+  const lang = resolveLanguage(input.languagePref)
+  const isPt = lang === 'pt-BR'
+
   return {
     id: 'autonomy',
-    title: 'Autonomy',
+    title: isPt ? 'Autonomia' : 'Autonomy',
     groups: [
       {
-        title: 'Goal loop (multi-turn session auto-continuation)',
+        title: isPt
+          ? 'Goal loop (auto-continuação de sessões multi-turn)'
+          : 'Goal loop (multi-turn session auto-continuation)',
         rows: [
           {
             id: 'autonomy.goal_loop.enabled',
-            name: 'Goal loop',
+            name: isPt ? 'Goal loop' : 'Goal loop',
             value: input.goalLoop.enabled ? 'enabled' : 'disabled',
             cycle: GOAL_LOOP_ENABLED_CYCLE,
-            note:
-              'auto-continues multi-turn tasks when session goes idle' +
-              (input.goalLoopRestartPending
-                ? ' · [!] restart required to apply'
-                : ' · applies after OpenCode restart'),
+            note: isPt
+              ? 'continua tarefas multi-turn quando a sessão fica ociosa' +
+                (input.goalLoopRestartPending
+                  ? ' · [!] reinício necessário para aplicar (restart)'
+                  : ' · aplicado após reiniciar o OpenCode')
+              : 'auto-continues multi-turn tasks when session goes idle' +
+                (input.goalLoopRestartPending
+                  ? ' · [!] restart required to apply'
+                  : ' · applies after OpenCode restart'),
           },
           {
             id: 'autonomy.goal_loop.maxContinuations',
-            name: 'Max continuations',
+            name: isPt ? 'Limite continuações' : 'Max continuations',
             value: String(input.goalLoop.maxContinuations),
             cycle: MAX_CONTINUATIONS_CYCLE,
-            note: '1..200 — safety ceiling to prevent runaway tasks',
+            note: isPt
+              ? '1..200 — teto de segurança contra loops infinitos'
+              : '1..200 — safety ceiling to prevent runaway tasks',
           },
           {
             id: 'autonomy.goal_loop.cooldownMs',
-            name: 'Cooldown (ms)',
+            name: isPt ? 'Pausa entre turnos (ms)' : 'Cooldown (ms)',
             value: String(input.goalLoop.cooldownMs),
             cycle: COOLDOWN_MS_CYCLE,
-            note: 'delay between autonomous turns (min 1000ms)',
+            note: isPt
+              ? 'intervalo entre turnos autônomos (mín 1000ms)'
+              : 'delay between autonomous turns (min 1000ms)',
           },
         ],
       },
       {
-        title: 'Decision budgets (applies live per gated call)',
+        title: isPt
+          ? 'Orçamento Jev (aplicado em tempo real por decisão)'
+          : 'Decision budgets (applies live per gated call)',
         rows: [
           {
             id: 'autonomy.budget.monthly',
-            name: 'Monthly cap',
+            name: isPt ? 'Teto mensal' : 'Monthly cap',
             value: formatUsd(input.budgets.monthlyUsd),
             cycle: MONTHLY_USD_CYCLE,
-            note: 'monthly USD ceiling for gated arbitrator decisions',
+            note: isPt
+              ? 'teto mensal em USD para arbitragem do Jev'
+              : 'monthly USD ceiling for gated arbitrator decisions',
           },
           {
             id: 'autonomy.budget.perDecision',
-            name: 'Per-decision cap',
+            name: isPt ? 'Teto por decisão' : 'Per-decision cap',
             value: formatUsd(input.budgets.perDecisionUsd),
             cycle: PER_DECISION_USD_CYCLE,
-            note: 'price cap — gated decisions above this are refused',
+            note: isPt
+              ? 'teto de custo por decisão — acima disso é recusada'
+              : 'price cap — gated decisions above this are refused',
           },
         ],
       },
       {
-        title: 'Decision gradient (reference policy · J1 owns the risk axis)',
+        title: isPt
+          ? 'Gradiente de decisão (política de referência · J1 governa o risco)'
+          : 'Decision gradient (reference policy · J1 owns the risk axis)',
         rows: [
           {
             id: 'autonomy.gradient.solo',
             name: 'Decide solo',
             value: 'autonomous',
-            note: 'reversible & low-risk edits, routine fixes (no gate)',
+            note: isPt
+              ? 'edições reversíveis e rotineiras, sem travas (baixo risco)'
+              : 'reversible & low-risk edits, routine fixes (no gate)',
           },
           {
             id: 'autonomy.gradient.jev',
             name: 'Jev decides',
             value: 'arbitrated',
-            note: 'typed ambiguity & candidate ranking (budget-capped)',
+            note: isPt
+              ? 'ambiguidade de tipos e ranqueamento de candidatos (com teto de custo)'
+              : 'typed ambiguity & candidate ranking (budget-capped)',
           },
           {
             id: 'autonomy.gradient.human',
             name: 'Human decides',
             value: 'human review',
-            note: 'high-risk & destructive operations (J1 gate)',
+            note: isPt
+              ? 'operações de alto risco ou destrutivas (portão J1)'
+              : 'high-risk & destructive operations (J1 gate)',
           },
         ],
       },

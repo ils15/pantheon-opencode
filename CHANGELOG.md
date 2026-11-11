@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 
+## [v2.0.1] - 2026-11-11
+
+### 🆕 What's New
+
+- **Bilingual TUI Settings (PT-BR / EN)**: Visual localization for all settings tabs (Decision Assistant, Autonomy & Budgets, J1 Safety Gate), with intelligent auto-detection from system locale (`LANG` / `LC_ALL`) and manual preference cycling (`auto`, `pt-BR`, `en`) in the TUI tab.
+- **Interactive Remote Decision Model Selector**: Permanently visible in `/pantheon-settings`, allowing developers to cycle directly through all 6 supported remote decision models (`openrouter-jev`, `typesafe-jev`, `openai-decisions`, `opencode-console-jev`, `vercel-gateway-jev`, `cloudflare-workers-jev`) without manual JSON edits.
+- **Modernized Council Synthesis (`/pantheon`)**: Structured response artifacts featuring Domain Authority breakdown, Mermaid arbitration diagrams, and immediate action checklists.
+- **Modernized Athena Strategic Planning (`/pantheon-deepwork`)**: Plans now enforce mandatory sub-10s test slicing, Mermaid workflow diagrams, blast radius impact matrices, and rollback blueprints.
+- **Demystified J1 Safety Ladder & Risk Gate**: Humanized nomenclature and plain-language descriptions of safety modes (`shadow`, `enforce`, `off`) and telemetry accounting.
+
+### Added
+
+- **tui** — `src/plugins/tui/src/settings-i18n.ts`: bilingual dictionary and locale resolution helper for settings tabs.
+- **tui** — `tui.layout.language` preference in `TuiPrefs` with cycling options (`auto`, `pt-BR`, `en`), live preview, and storage persistence.
+- **tui** — `tests/tui-settings-i18n.test.mjs`: unit test suite validating locale detection, language overrides, and bilingual tab rendering.
+- **routing** — Permanent `decision.selection.target` cycler row in the Decision tab across all modes (`local`, `auto`, `explicit`), automatically switching mode to `explicit` when a remote model is chosen.
+
+### Changed
+
+- **council** — Modernized Zeus council synthesis template (`src/instructions/zeus-council-synthesis.instructions.md`) with Domain Authority matrices, Mermaid arbitration graphs, and actionable next steps.
+- **planning** — Modernized Athena strategic planning template (`src/agents/athena.md`) with explicit test-slicing contracts (<10s suites), blast radius matrices, and fail-safe rollback blueprints.
+- **tui** — Renamed confusing terminology: `Router` → `Roteador Jev / Decision Assistant`, `Selection mode` → `Modo de operação / Selection mode`, `Egress consent` → `Acesso à Nuvem / Cloud API access`, and `Ladder` → `Nível de Segurança e Portão de Risco J1 / Safety Level & Risk Gate (J1)`.
+- **tui** — Localized Autonomy tab notes for Goal Loop auto-continuation, monthly budgets, and risk gradient reference policies.
+
 ## [v1.7.0] - 2026-11-07
 
 ### 🆕 What's New

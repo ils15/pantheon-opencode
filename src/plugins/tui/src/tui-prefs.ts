@@ -180,6 +180,9 @@ export type BarWidthPref = 'standard' | 'compact' | 'wide' | 'full'
 export type LayoutPresetPref = 'comfortable' | 'compact'
 export type SeparatorStylePref = 'spaces' | 'pipes' | 'dots' | 'slashes'
 export type SettingsViewModePref = 'docked' | 'fullscreen' | 'dialog'
+export type LanguagePref = 'auto' | 'pt-BR' | 'en'
+
+export const LANGUAGE_CYCLE: readonly string[] = Object.freeze(['auto', 'pt-BR', 'en'])
 
 export interface TuiPrefs {
   version: 1
@@ -187,6 +190,7 @@ export interface TuiPrefs {
     preset: LayoutPresetPref
     separator: SeparatorStylePref
     settingsView?: SettingsViewModePref
+    language?: LanguagePref
   }
   sidebar: {
     header: { version: boolean; preset: boolean; session: boolean }
@@ -212,6 +216,7 @@ export const DEFAULT_TUI_PREFS: TuiPrefs = {
     preset: 'comfortable',
     separator: 'spaces',
     settingsView: 'fullscreen',
+    language: 'auto',
   },
   sidebar: {
     header: { version: true, preset: true, session: true },
@@ -267,6 +272,11 @@ export function normalizeTuiPrefs(raw: unknown): TuiPrefs {
       ? layout.settingsView
       : DEFAULT_TUI_PREFS.layout.settingsView
   ) as SettingsViewModePref
+  const language = (
+    LANGUAGE_CYCLE.includes(layout.language as string)
+      ? layout.language
+      : DEFAULT_TUI_PREFS.layout.language
+  ) as LanguagePref
   const gauge = GAUGE_STYLES.includes(context.gauge as string)
     ? (context.gauge as GaugeStyle)
     : DEFAULT_TUI_PREFS.sidebar.context.gauge
@@ -284,6 +294,7 @@ export function normalizeTuiPrefs(raw: unknown): TuiPrefs {
       preset,
       separator,
       settingsView,
+      language,
     },
     sidebar: {
       header: {
@@ -355,6 +366,13 @@ export function buildTuiTab(prefs: TuiPrefs): SettingsTab {
             value: tuiRowValue(prefs, 'tui.layout.settingsView') ?? 'docked',
             cycle: SETTINGS_VIEW_MODES,
             note: 'docked (above prompt) | fullscreen router page | dialog overlay',
+          },
+          {
+            id: 'tui.layout.language',
+            name: 'Language / Idioma',
+            value: tuiRowValue(prefs, 'tui.layout.language') ?? 'auto',
+            cycle: LANGUAGE_CYCLE,
+            note: 'auto (LANG/LC_ALL) | pt-BR (Português) | en (English)',
           },
         ],
       },
@@ -523,6 +541,12 @@ export function applyTuiRow(draft: TuiPrefs, id: string, value: string): void {
         draft.layout.settingsView = value as SettingsViewModePref
       }
       return
+    case 'tui.layout.language':
+      if (LANGUAGE_CYCLE.includes(value)) {
+        if (!draft.layout) draft.layout = { ...DEFAULT_TUI_PREFS.layout }
+        draft.layout.language = value as LanguagePref
+      }
+      return
     case 'tui.sidebar.context.barShape':
       if (BAR_SHAPES_CYCLE.includes(value)) draft.sidebar.context.barShape = value as BarShapePref
       return
@@ -589,6 +613,7 @@ export function tuiRowValue(prefs: TuiPrefs, id: string): string | undefined {
     return prefs.layout?.separator ?? DEFAULT_TUI_PREFS.layout.separator
   if (id === 'tui.layout.settingsView')
     return prefs.layout?.settingsView ?? DEFAULT_TUI_PREFS.layout.settingsView ?? 'docked'
+  if (id === 'tui.layout.language') return prefs.layout?.language ?? 'auto'
   if (id === 'tui.sidebar.context.barShape') return prefs.sidebar.context.barShape
   if (id === 'tui.sidebar.context.barWidth') return prefs.sidebar.context.barWidth
   if (id === 'tui.sidebar.context.gauge') return prefs.sidebar.context.gauge

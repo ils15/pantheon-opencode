@@ -116,13 +116,16 @@ Use this template whenever the user asks for a plan or Zeus requests one. Keep i
 visual, actionable, and token-efficient — modeled after Claude Code and ChatGPT Agent plan modes:
 
 ```markdown
-## Plan: [Feature Name]
+# 📐 Architecture Plan: [Feature Name]
+
+> **Architect:** @athena · **Review Gate:** @themis · **Execution Mode:** Strict TDD with Sub-10s Test Slicing
 
 ### Architecture & Execution Flow
 ```mermaid
-flowchart TD
-  P1["Phase 1: [Name] (@agent)"] --> P2["Phase 2: [Name] (@agent)"]
-  P2 --> P3["Phase 3: Verification (@themis)"]
+flowchart LR
+  P1["Phase 1: Model / Schema (@demeter)"] --> P2["Phase 2: Core Logic (@hermes)"]
+  P2 --> P3["Phase 3: UI / Interface (@aphrodite)"]
+  P3 --> P4["Phase 4: Verification (@themis)"]
 ```
 
 ### Goal & Scope
@@ -137,15 +140,19 @@ flowchart TD
    - **Goal & Actions:** Outcome and concrete steps (TDD: RED → GREEN → REFACTOR)
    - **Affected files or areas:** Known paths or explicitly mark unknown paths instead of guessing
    - **Dependencies:** Earlier phases or external systems
-   - **Tests:** Focused checks, lint-first gate, and applicable quality gates
+   - **Tests & Test Slicing:** Exact targeted slice (e.g. `node --test tests/foo.test.mjs`), focused checks, lint-first gate, and applicable quality gates
    - **Risks & Mitigation:** Specific risk → concrete mitigation
 
 2. **[Phase Name] → @agent**
    ...
 
-### Acceptance Criteria
+### Acceptance Criteria & Verification
 - [ ] Observable completion criterion
-- [ ] Verification criterion (all tests green, 0 lint warnings)
+- [ ] Verification criterion (all targeted tests green, 0 lint warnings)
+
+### Rollback & Contingency Plan
+- **Failure Trigger:** Conditions under which execution aborts (e.g. test slice failure, unexpected schema corruption).
+- **Rollback Steps:** Revert commit / feature flag toggle / database rollback migration.
 ```
 
 The complete plan is the deliverable. Include it in your final response to the

@@ -184,10 +184,11 @@ Run `/pantheon-settings` (or `Pantheon: Settings` in the command palette) to ope
 
 - **Gates & Overrides:** Toggle named behaviors live; persists to `pantheon-overrides.json`.
 - **Model Presets:** Switch active model tier globally or per project.
-- **Decision Model:** Configure local and remote JEV decision routing.
+- **Decision Model Selector:** Interactive selector to cycle across all remote decision models (`openrouter-jev`, `typesafe-jev`, `openai-decisions`, `vercel-gateway-jev`, etc.) directly from the UI.
+- **Bilingual Settings (PT-BR / EN):** Full visual localization for Decision, Autonomy, and Safety tabs, auto-detecting environment locale with manual toggle in the TUI tab.
 - **Updates:** Check registry channel (`beta` / `stable`) and trigger upgrades.
 - **Doctor:** Run inline system health diagnostics.
-- **TUI Personalization:** Adjust spacing (`comfortable` vs `compact`), separators, gauge bar styles, and context display rows.
+- **TUI Personalization:** Adjust spacing (`comfortable` vs `compact`), separators, gauge bar styles, context display rows, and language.
 - **Non-Destructive Overlay & Mouse Navigation:** Opens as a floating dialog overlay over the active session without blanking the workspace (configurable via `dialog` vs `fullscreen`), with full mouse click support for tabs, sidebar, rows, value cyclers, and actions.
 - **Modernized What's New Window:** Card layout with rounded border, pagination buttons, and a dedicated `[OK, Entendido]` button with keyboard (`Enter`/`Esc`/`Q`) and mouse click support.
 
@@ -201,6 +202,16 @@ Run `/pantheon-settings` (or `Pantheon: Settings` in the command palette) to ope
 | [Installation Guide](docs/INSTALLATION.md) | [Delegation & Gates](docs/PERMISSIONS-QUALITY-DELEGATION.md) | [Native Decisions (Jev)](docs/reference/native-decisions.md) |
 | [Compatibility](docs/COMPATIBILITY.md) | [Memory System](docs/MEMORY.md) | [Model Routing](docs/reference/model-routing.md) |
 | [Upgrading](docs/UPGRADING.md) | [OpenCode 2.x Integration](docs/opencode.md) | [Changelog](CHANGELOG.md) |
+
+---
+
+## What's New in v2.0.1
+
+- **Bilingual TUI Settings (PT-BR / EN):** Visual localization for Decision Router, Autonomy & Budgets, and J1 Safety Gate tabs, with intelligent system locale auto-detection (`LANG` / `LC_ALL`) and manual preference cycling (`auto`, `pt-BR`, `en`).
+- **Interactive Decision Model Selector:** Permanently accessible selector row in `/pantheon-settings` to cycle across all 6 remote decision models without manual JSON configuration.
+- **Modernized Council Synthesis (`/pantheon`):** Rich synthesis artifacts featuring Domain Authority breakdown, Mermaid arbitration diagrams, and immediate action checklists.
+- **Modernized Strategic Planning (`/pantheon-deepwork`):** Athena plans now enforce mandatory sub-10s test slicing, execution dependency diagrams, blast radius impact matrix, and rollback blueprints.
+- **Demystified J1 Safety Ladder:** Plain-language descriptions for J1 execution modes (`shadow`, `enforce`, `off`), making telemetry and protection gates clear.
 
 ---
 
