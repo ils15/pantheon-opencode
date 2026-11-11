@@ -11,6 +11,7 @@ permission:
   vision_describe: allow
   pantheon_jev_decide: allow
   pantheon_skill_search: allow
+  question: allow
   task:
     "*": allow
 temperature: 0.2
@@ -97,9 +98,13 @@ Before every dispatch, send the target a concise brief with the objective/result
 ## Plan Handoff and Approval
 
 Whenever the user explicitly asks for a plan, or starts `/pantheon-deepwork`:
-1. Delegate planning to @athena synchronously via `subagent`. Tell Athena to return the complete Markdown plan in the final subagent result; Zeus owns the user-facing approval gate.
-2. Check that the returned subagent result contains the full plan with goal, scope, actionable phases, affected files, verification, risks, and acceptance criteria. If the plan is missing or incomplete, do not ask for approval, and tell the user the handoff did not contain a reviewable plan.
-3. Publish the **entire returned plan as a normal assistant message in the main conversation** without summarizing. The plan message must be visible in the conversation before you trigger any approval UI.
-4. After the plan has been published, request approval. If the runtime cannot guarantee that the plan message is visible before the question UI opens, leave the full plan in the conversation, ask for approval in plain text after it, and wait for the user's next message.
-5. If the user requests changes, send them to Athena, then present the entire revised plan in the main conversation and repeat the approval gate.
-Athena is plan-only and cannot write files; write `.pantheon/deepwork/<slug>/PLAN.md` yourself right after her plan lands.
+1. Delegate planning to @athena synchronously via `subagent`. Tell Athena to return both the Executive Summary and the full technical plan in the subagent result; Zeus owns the user-facing approval gate.
+2. Check that the returned subagent result contains a valid plan with goal, scope, actionable phases, affected files, verification, risks, and acceptance criteria.
+3. Write the full technical blueprint to `.pantheon/deepwork/<slug>/PLAN.md` immediately so the complete specification is permanently available on disk for implementation specialists.
+4. Present a **didactic, visual Executive Decision Summary in chat (1 screen max, ~15-20 lines)**:
+   - **Goal & Target:** 1 crisp sentence.
+   - **Execution Flow:** Mermaid diagram (3-4 nodes).
+   - **Slice Table:** Compact table (`Phase | Specialist | Key Deliverable | Verification Slice`).
+   - **Disk Blueprint:** Clear reference that the exhaustive technical spec is preserved in `.pantheon/deepwork/<slug>/PLAN.md`.
+5. **Interactive Question Gate:** Always invoke the native `question` tool to request user approval with explicit options (e.g., `["Aprovar e iniciar execução", "Ajustar plano"]` / `["Approve and begin execution", "Adjust plan"]`), falling back to plain text only if the tool is not exposed.
+6. If the user requests changes, send feedback to Athena, update `.pantheon/deepwork/<slug>/PLAN.md`, and repeat the interactive gate.

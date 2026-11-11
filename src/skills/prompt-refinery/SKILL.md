@@ -70,7 +70,7 @@ Presented to user for confirmation before starting:
 2. **Tier 2 Requires `>>`:** Only explicit `>>` prefix requests trigger user-visible contract confirmation.
 3. **Language Consistency:** Always preserve the user's language (PT-BR requests produce PT-BR briefs).
 4. **Fail-Open:** Any error during refinement falls back to the original prompt without blocking.
-5. **Ambiguity Resolution:**
-   - With decision router active, use `pantheon_jev_decide` (mode: `choice`) for non-trivial architectural trade-offs.
-   - Fall back to native `question` tool with options and marked defaults if Jev is off or unavailable.
-   - Non-blocking gaps use sensible declared defaults.
+5. **Interactive Questioning & Ambiguity Resolution:**
+   - Whenever prompt refinement requires user disambiguation or confirmation of critical trade-offs, **always invoke the native `question` tool** with structured choices and marked defaults.
+   - With decision router active, use `pantheon_jev_decide` (mode: `choice`) for internal candidate scoring.
+   - Non-blocking minor gaps use sensible declared defaults without stalling the flow.

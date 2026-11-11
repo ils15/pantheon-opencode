@@ -194,11 +194,11 @@ function buildAutonomyTab(input) {
 		title: isPt ? "Autonomia" : "Autonomy",
 		groups: [
 			{
-				title: isPt ? "Goal loop (auto-continuação de sessões multi-turn)" : "Goal loop (multi-turn session auto-continuation)",
+				title: isPt ? "Loop Contínuo (auto-continuação de sessões multi-turn)" : "Auto-Continue Loop (multi-turn session auto-continuation)",
 				rows: [
 					{
 						id: "autonomy.goal_loop.enabled",
-						name: isPt ? "Goal loop" : "Goal loop",
+						name: isPt ? "Loop Contínuo" : "Auto-Continue Loop",
 						value: input.goalLoop.enabled ? "enabled" : "disabled",
 						cycle: GOAL_LOOP_ENABLED_CYCLE,
 						note: isPt ? "continua tarefas multi-turn quando a sessão fica ociosa" + (input.goalLoopRestartPending ? " · [!] reinício necessário para aplicar (restart)" : " · aplicado após reiniciar o OpenCode") : "auto-continues multi-turn tasks when session goes idle" + (input.goalLoopRestartPending ? " · [!] restart required to apply" : " · applies after OpenCode restart")
@@ -220,16 +220,16 @@ function buildAutonomyTab(input) {
 				]
 			},
 			{
-				title: isPt ? "Orçamento Jev (aplicado em tempo real por decisão)" : "Decision budgets (applies live per gated call)",
+				title: isPt ? "Orçamentos de Decisão (Jev)" : "Decision Budgets (Jev)",
 				rows: [{
 					id: "autonomy.budget.monthly",
-					name: isPt ? "Teto mensal" : "Monthly cap",
+					name: isPt ? "Teto Mensal (USD)" : "Monthly Budget Cap",
 					value: formatUsd(input.budgets.monthlyUsd),
 					cycle: MONTHLY_USD_CYCLE,
 					note: isPt ? "teto mensal em USD para arbitragem do Jev" : "monthly USD ceiling for gated arbitrator decisions"
 				}, {
 					id: "autonomy.budget.perDecision",
-					name: isPt ? "Teto por decisão" : "Per-decision cap",
+					name: isPt ? "Teto por Consulta" : "Per-Decision Cap",
 					value: formatUsd(input.budgets.perDecisionUsd),
 					cycle: PER_DECISION_USD_CYCLE,
 					note: isPt ? "teto de custo por decisão — acima disso é recusada" : "price cap — gated decisions above this are refused"
@@ -534,13 +534,13 @@ function buildDecisionTab(read, env = process.env, authProviders = /* @__PURE__ 
 	const { config, corrupt } = read;
 	const rows = [{
 		id: "decision.enabled",
-		name: isPt ? "Assistente Jev" : "Router",
+		name: isPt ? "Assistente Jev" : "Jev Assistant",
 		value: config.enabled ? "enabled" : "disabled",
 		...corrupt ? {} : { cycle: DECISION_ENABLED_CYCLE },
 		note: corrupt ? isPt ? "config inválida — runtime fail-closes; repair via `decision-router setup-model`" : "config unreadable/invalid — runtime fail-closes; repair via `decision-router setup-model`" : isPt ? "applies live — arbitragem de decisões relida em tempo real a cada chamada" : "applies live — the runtime re-reads this on every gated call"
 	}, {
 		id: "decision.selection.mode",
-		name: isPt ? "Modo de operação" : "Selection mode",
+		name: isPt ? "Modo de Operação" : "Operation Mode",
 		value: config.selection.mode,
 		...corrupt ? {} : { cycle: DECISION_SELECTION_CYCLE },
 		note: isPt ? "local = no seu PC (grátis); auto/explícito = modelo nuvem (OpenRouter)" : "local routes on-device; auto/explicit pick a remote decision model"
@@ -548,7 +548,7 @@ function buildDecisionTab(read, env = process.env, authProviders = /* @__PURE__ 
 	const explicitTarget = config.selection.provider ? `${config.selection.provider}/${config.selection.model ?? ""}` : DECISION_TARGET_CYCLE[0] ?? "openrouter-jev/typesafe/jev-1.13";
 	rows.push({
 		id: "decision.selection.target",
-		name: isPt ? "Modelo de decisão" : "Explicit target",
+		name: isPt ? "Modelo de Decisão" : "Decision Model",
 		value: config.selection.mode === "local" ? config.selection.provider ? `${config.selection.provider}/${config.selection.model ?? ""}` : "local (on-device)" : explicitTarget,
 		...corrupt ? {} : { cycle: DECISION_TARGET_CYCLE },
 		note: isPt ? config.selection.mode === "local" ? "ciclar seleciona modelo remoto e ativa modo explícito" : "provedor/modelo ativo — define candidato para arbitragem" : config.selection.mode === "local" ? "cycle to select a remote model and activate explicit mode" : "provider/model — sets the candidate list"
@@ -561,7 +561,7 @@ function buildDecisionTab(read, env = process.env, authProviders = /* @__PURE__ 
 	});
 	rows.push({
 		id: "decision.consent",
-		name: isPt ? "Acesso à nuvem (Egress)" : "Egress consent",
+		name: isPt ? "Acesso à Nuvem" : "Cloud API Access",
 		value: config.egress_consent ? "granted" : "not granted",
 		...corrupt ? {} : { cycle: DECISION_CONSENT_CYCLE },
 		note: isPt ? config.egress_consent ? "granted = rotas remotas podem consultar gateway de API (com teto de custo)" : "not granted = chamadas remotas bloqueadas; requer granted para nuvem" : config.egress_consent ? "granted = remote decision routes may call their gateway (budget-capped)" : "not granted = remote routes fail closed; grant to allow cloud calls"
@@ -570,7 +570,7 @@ function buildDecisionTab(read, env = process.env, authProviders = /* @__PURE__ 
 		id: "decision",
 		title: isPt ? "Decisão" : "Decision",
 		groups: [{
-			title: isPt ? "Assistente de Decisão" : "Decision router",
+			title: isPt ? "Assistente de Decisão (Jev)" : "Decision Assistant (Jev)",
 			rows
 		}, {
 			title: isPt ? "Credenciais (status apenas — valores nunca gravados na janela)" : "Credentials (status only — values never enter the window)",
@@ -1119,13 +1119,13 @@ function buildJ1Tab(env, disabledByOverride, languagePref) {
 	const desc = isPt ? MODE_DESCRIPTION_PT[mode] : MODE_DESCRIPTION_EN[mode];
 	return {
 		id: "j1",
-		title: isPt ? "Segurança J1" : "J1",
+		title: isPt ? "Segurança J1" : "J1 Safety",
 		groups: [{
-			title: isPt ? "Nível de Segurança e Portão de Risco J1 (env-only)" : "Safety Level & Risk Gate (J1) (env-only — never written here)",
+			title: isPt ? "Portão de Segurança (J1)" : "Safety Risk Gate (J1)",
 			rows: [
 				{
 					id: "j1.mode",
-					name: isPt ? "Modo de execução" : "Mode",
+					name: isPt ? "Modo de Operação" : "Operation Mode",
 					value: mode,
 					note: `${desc} · ${isPt ? "reinício necessário (restart applies)" : "restart applies"}`
 				},
@@ -1137,7 +1137,7 @@ function buildJ1Tab(env, disabledByOverride, languagePref) {
 				},
 				{
 					id: "j1.gate",
-					name: isPt ? "Estado do portão" : "Gate",
+					name: isPt ? "Portão de Segurança" : "Safety Risk Gate",
 					value: gateState,
 					note: `${J1_FLAG_ENV} / ${J1_THRESHOLD_ENV} · ${isPt ? "lido na inicialização" : "read once at startup"}`
 				}
@@ -1950,7 +1950,7 @@ async function readChangelogForBundle(bundleUrl) {
 }
 /** The ambient build-time version, or null outside a tsdown build. */
 function embeddedVersion() {
-	return "2.0.2";
+	return "2.0.3";
 }
 /**
 * Resolve the running Pantheon version for the what's-new window: the plugin
@@ -2175,7 +2175,7 @@ function persistUpdateCheckState(previous, latest) {
 	} catch {}
 }
 function resolveRunningVersion() {
-	return "2.0.2";
+	return "2.0.3";
 }
 const VALUE_WIDTH = 24;
 function SettingsWindow(props) {
@@ -6341,7 +6341,7 @@ async function checkForPantheonUpdate(context) {
 	const latest = String((await response.json())?.version ?? "");
 	if (!latest) return;
 	const notice = pickUpdateNotice({
-		currentVersion: "2.0.2",
+		currentVersion: "2.0.3",
 		latestVersion: latest,
 		state: readState(),
 		nowMs: Date.now()
@@ -7153,7 +7153,7 @@ function Sidebar(props) {
 			get children() {
 				var _el$13 = createElement("text");
 				setProp(_el$13, "attributes", 1);
-				insert(_el$13, `Pantheon v2.0.2`);
+				insert(_el$13, `Pantheon v2.0.3`);
 				effect((_$p) => setProp(_el$13, "fg", text(), _$p));
 				return _el$13;
 			}
@@ -7925,7 +7925,7 @@ function HomeStatus(props) {
 		},
 		get children() {
 			var _el$73 = createElement("text");
-			insert(_el$73, () => `Pantheon v2.0.2${preset().name ? ` ▸ ${preset().name}` : ""}`);
+			insert(_el$73, () => `Pantheon v2.0.3${preset().name ? ` ▸ ${preset().name}` : ""}`);
 			effect((_$p) => setProp(_el$73, "fg", muted(), _$p));
 			return _el$73;
 		}

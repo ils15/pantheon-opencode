@@ -70,16 +70,14 @@ export function buildJ1Tab(
 
   return {
     id: 'j1',
-    title: isPt ? 'Segurança J1' : 'J1',
+    title: isPt ? 'Segurança J1' : 'J1 Safety',
     groups: [
       {
-        title: isPt
-          ? 'Nível de Segurança e Portão de Risco J1 (env-only)'
-          : 'Safety Level & Risk Gate (J1) (env-only — never written here)',
+        title: isPt ? 'Portão de Segurança (J1)' : 'Safety Risk Gate (J1)',
         rows: [
           {
             id: 'j1.mode',
-            name: isPt ? 'Modo de execução' : 'Mode',
+            name: isPt ? 'Modo de Operação' : 'Operation Mode',
             value: mode,
             note: `${desc} · ${isPt ? 'reinício necessário (restart applies)' : 'restart applies'}`,
           },
@@ -93,7 +91,7 @@ export function buildJ1Tab(
           },
           {
             id: 'j1.gate',
-            name: isPt ? 'Estado do portão' : 'Gate',
+            name: isPt ? 'Portão de Segurança' : 'Safety Risk Gate',
             value: gateState,
             note: `${J1_FLAG_ENV} / ${J1_THRESHOLD_ENV} · ${isPt ? 'lido na inicialização' : 'read once at startup'}`,
           },

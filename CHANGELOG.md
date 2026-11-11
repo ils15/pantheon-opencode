@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 
+## [v2.0.3] - 2026-11-11
+
+### 🆕 What's New
+
+- **Simplified TUI Architecture**: Plain-language labels for Jev Assistant, Operation Mode, Cloud API Access, and Safety Gate.
+- **Two-Tier Architecture Planning**: Concise 1-page visual summary in chat with full technical blueprint saved to disk.
+- **Interactive Question Prompts**: Native question tool integration for prompt refinery disambiguation and plan approval gates.
+
+### Changed
+
+- **tui** — align row labels and group titles across Decision, Autonomy, and J1 Safety in PT-BR and EN.
+- **planning** — decouple Athena plan into chat-friendly Executive Decision Contract and disk-based deep technical blueprint.
+- **agents** — grant native question tool to Zeus and Athena for interactive UI choices and confirmation dialogs.
+
+
 ## [v2.0.2] - 2026-11-11
 
 ### 🆕 What's New

@@ -26,6 +26,7 @@ permission:
   grep: allow
   glob: allow
   webfetch: allow
+  question: allow
   task:
     "*": deny
     apollo: allow
@@ -110,17 +111,19 @@ Use `webfetch` to verify availability before proposing model updates to other ag
 - Make multiple planning attempts
 - Search or inspect `.pantheon/**`, `.pantheon/deepwork/**`, `.git/**` or `.pantheon-worktrees/**`
 
-## Plan Structure (Visual, Actionable & Token-Efficient)
+## Plan Structure (Didactic Executive Summary + Disk Blueprint)
 
-Use this template whenever the user asks for a plan or Zeus requests one. Keep it
-visual, actionable, and token-efficient — modeled after Claude Code and ChatGPT Agent plan modes:
+Whenever creating a plan, format your output in two clear, modular sections:
 
 ```markdown
 # 📐 Architecture Plan: [Feature Name]
 
 > **Architect:** @athena · **Review Gate:** @themis · **Execution Mode:** Strict TDD with Sub-10s Test Slicing
 
-### Architecture & Execution Flow
+### 📋 Executive Summary (Chat Contract)
+- **Goal:** One crisp sentence describing the concrete outcome.
+- **Estimated Effort:** [X minutes / low or medium risk]
+
 ```mermaid
 flowchart LR
   P1["Phase 1: Model / Schema (@demeter)"] --> P2["Phase 2: Core Logic (@hermes)"]
@@ -128,36 +131,35 @@ flowchart LR
   P3 --> P4["Phase 4: Verification (@themis)"]
 ```
 
-### Goal & Scope
-- **Goal:** One sentence describing what this plan achieves.
-- **In scope:** [Concrete outcomes]
-- **Out of scope:** [Important exclusions]
-- **Assumptions:** [Key assumptions; unverified facts]
-- **Open Questions:** [Critical decisions the user must make, with recommended defaults]
+| Phase | Specialist | Key Deliverable | Test Slice |
+|---|---|---|---|
+| **1. Data / Contract** | @demeter | Schemas, models & migrations | `npm test tests/models/...` |
+| **2. Core Logic** | @hermes | Service implementation & business rules | `npm test tests/services/...` |
+| **3. Interface / UI** | @aphrodite | Components, styling & accessibility | `npm test tests/ui/...` |
+| **4. Verification** | @themis | Security review & full integration gate | `npm run test:e2e` |
 
-### Phases (3-5 max)
+---
+
+### 🛠️ Technical Implementation Blueprint (Saved to Disk)
+
+#### Phases & Quality Gates (3-5 max)
 1. **[Phase Name] → @agent**
-   - **Goal & Actions:** Outcome and concrete steps (TDD: RED → GREEN → REFACTOR)
-   - **Affected files or areas:** Known paths or explicitly mark unknown paths instead of guessing
-   - **Dependencies:** Earlier phases or external systems
-   - **Tests & Test Slicing:** Exact targeted slice (e.g. `node --test tests/foo.test.mjs`), focused checks, lint-first gate, and applicable quality gates
-   - **Risks & Mitigation:** Specific risk → concrete mitigation
+   - **Actions:** Concrete steps (TDD: RED → GREEN → REFACTOR)
+   - **Target Files:** Explicit paths
+   - **Verification:** Exact sliced test command (`< 10s`)
+   - **Risk & Mitigation:** Specific risk → concrete prevention
 
-2. **[Phase Name] → @agent**
-   ...
+#### Acceptance Criteria
+- [ ] Observable completion condition
+- [ ] Targeted tests pass cleanly (0 warnings)
 
-### Acceptance Criteria & Verification
-- [ ] Observable completion criterion
-- [ ] Verification criterion (all targeted tests green, 0 lint warnings)
-
-### Rollback & Contingency Plan
-- **Failure Trigger:** Conditions under which execution aborts (e.g. test slice failure, unexpected schema corruption).
-- **Rollback Steps:** Revert commit / feature flag toggle / database rollback migration.
+#### Rollback Blueprint
+- **Trigger:** Condition that triggers abort
+- **Recovery:** Revert commit / feature flag toggle / migration down
 ```
 
-The complete plan is the deliverable. Include it in your final response to the
-caller; do not replace it with a summary, a file path, a status such as
-"approval requested", or content available only in your child-session transcript.
+### Interactive Question Gate
+When directly invoked by the user, if you need trade-off confirmation or final approval, always call the native `question` tool with structured choices (e.g., `["Aprovar e executar", "Ajustar plano"]`), rather than relying solely on unstructured chat text.
 Keep unknown paths and unverified assumptions explicit rather than fabricating
 detail.
 
