@@ -67,6 +67,11 @@ test('packaged TUI bundle registers its slots, handles a task event, and dispose
       'function',
       'the packaged plugin contributes its prompt footer',
     )
+    assert.equal(
+      typeof slotFor('session.composer.top')?.render,
+      'function',
+      'the packaged plugin exposes the in-session settings slot',
+    )
 
     await dispose()
   } finally {

@@ -484,3 +484,42 @@ test('update still refuses an npm-linked package (symlinked global entry)', asyn
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('authorized global update supports release candidates (rc)', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-update-rc-'))
+  const globalRoot = join(root, 'npm-global')
+  const packageRoot = join(globalRoot, 'pantheon-opencode')
+  const script = join(packageRoot, 'bin', 'pantheon-init.mjs')
+  try {
+    mkdirSync(join(packageRoot, 'bin'), { recursive: true })
+    writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({ version: '2.0.0-rc.1' }))
+    writeFileSync(script, '#!/usr/bin/env node\n')
+    let refreshes = 0
+    let installedTag = null
+    const spawnSyncImpl = (_command, args) => {
+      if (args[0] === 'root') return { status: 0, stdout: `${globalRoot}\n`, stderr: '' }
+      if (args[0] === 'view') return { status: 0, stdout: '2.0.0-rc.2\n', stderr: '' }
+      if (args[0] === 'install') {
+        installedTag = args[2]
+        writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({ version: '2.0.0-rc.2' }))
+        return { status: 0, stdout: '', stderr: '' }
+      }
+      throw new Error(`Unexpected command: ${args.join(' ')}`)
+    }
+    const status = await runUpdate([], {
+      root: packageRoot,
+      currentVersion: '2.0.0-rc.1',
+      runningScript: script,
+      spawnSync: spawnSyncImpl,
+      refresh: () => {
+        refreshes += 1
+        return { status: 0 }
+      },
+    })
+    assert.equal(status, 0)
+    assert.equal(refreshes, 1)
+    assert.equal(installedTag, 'pantheon-opencode@beta')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})

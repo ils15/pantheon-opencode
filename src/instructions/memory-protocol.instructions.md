@@ -4,7 +4,7 @@ name: "Memory Protocol"
 agents: ["*"]
 ---
 
-# 🧠 Memory Protocol — Universal Rules
+# Memory Protocol — Universal Rules
 
 ### Retrieval
 - Search only when prior project history could change the outcome; skip self-contained questions and bounded changes.

@@ -4,7 +4,7 @@ description: Strategic planner & architect — research-first, plan-only, never 
   Plans include quality gates (ruff/Biome, dep detection, LTS policy). Root Athena
   may call Apollo for discovery; child sessions do not delegate.
 mode: all
-reasoning_effort: high
+reasoning_effort: medium
 
 mcp_tools:
   pantheon-resources: all
@@ -88,8 +88,9 @@ Use `webfetch` to verify availability before proposing model updates to other ag
 ##  Bounded Research Strategy (Fast Planning)
 
 **Rules**:
-- Max 3 direct codebase searches; only a root Athena may delegate additional discovery to @apollo
-- Convergence rule: 80% understanding OR stop at 5 min
+- Max 1-2 direct codebase searches in src/ or docs/; only a root Athena may delegate additional discovery to @apollo
+- NEVER search or read files in `.pantheon/**`, `.pantheon/deepwork/**`, `.git/**`, or `.pantheon-worktrees/**`
+- Convergence rule: 80% understanding OR stop immediately (fast bounded planning)
 - Simple features: Direct search + plan (no Apollo)
 - Complex features: 1-2 targeted searches, then Apollo discovery only from a root Athena; a child reports remaining discovery needs to Zeus
 
@@ -107,8 +108,7 @@ Use `webfetch` to verify availability before proposing model updates to other ag
 - Spend time re-planning or iterating beyond 5 min
 - Wait for perfect understanding
 - Make multiple planning attempts
-
-**Only read Memory Bank files** (`.pantheon/memory-bank/00-project.md`, `00-project.md`) if they exist with content — skip research if documented.
+- Search or inspect `.pantheon/**`, `.pantheon/deepwork/**`, `.git/**` or `.pantheon-worktrees/**`
 
 ## Plan Structure (Visual, Actionable & Token-Efficient)
 

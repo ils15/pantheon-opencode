@@ -79,7 +79,8 @@ Use RED → GREEN → REFACTOR for behavior-changing implementation where a mean
 
 ## Anti-Patterns
 
-- Proibido: escrever codigo de producao sem teste correspondente
+- Proporcionalidade: TDD (RED->GREEN->REFACTOR) é mandatório para comportamento testável, lógica de negócio e segurança; código de cola, configurações, documentação e ajustes de interface/CSS não exigem criação prévia de testes
+- Anti-pattern: criar cerimônias de teste para tarefas triviais de configuração ou formatação
 - Anti-pattern: testar detalhes de implementacao privada ou acoplamento excessivo
 - Anti-pattern: mocking excessivo de I/O em vez de testes de integracao direta
 - Anti-pattern: ignorar falhas de teste sem diagnosticar o diff

@@ -12,8 +12,11 @@
  * sub-lines and gauge style, and the two Pantheon footer lines. Everything
  * defaults to on — the window exists to turn things OFF.
  */
+
 import type { Context } from '@opencode/plugin/tui/context'
-import type { SettingsRow, SettingsTab } from './pantheon-settings-state.ts'
+import type { Accessor, Setter } from 'solid-js'
+import { createSignal } from 'solid-js'
+import type { SettingsDraft, SettingsRow, SettingsTab } from './pantheon-settings-state.ts'
 
 // ── The durable store handle (host storage, one per plugin) ────────────
 // Created once at setup and stashed under a globalThis symbol so
@@ -21,10 +24,38 @@ import type { SettingsRow, SettingsTab } from './pantheon-settings-state.ts'
 // singleton doctrine as the plugin's SINGLETON guard).
 
 const PREFS_SYMBOL = Symbol.for('pantheon.tui.prefs.v1')
+const DRAFT_PREVIEW_SYMBOL = Symbol.for('pantheon.tui.draft_preview.v1')
 type PrefsStore = readonly [TuiPrefs, (mutation: (draft: TuiPrefs) => void) => Promise<void>]
+type DraftSignal = [Accessor<SettingsDraft | undefined>, Setter<SettingsDraft | undefined>]
 
 function stash(): PrefsStore | undefined {
   return (globalThis as Record<PropertyKey, unknown>)[PREFS_SYMBOL] as PrefsStore | undefined
+}
+
+function getDraftPreviewSignal(): DraftSignal {
+  const g = globalThis as Record<PropertyKey, unknown>
+  if (!g[DRAFT_PREVIEW_SYMBOL]) {
+    g[DRAFT_PREVIEW_SYMBOL] = createSignal<SettingsDraft | undefined>(undefined)
+  }
+  return g[DRAFT_PREVIEW_SYMBOL] as DraftSignal
+}
+
+/** Set the active draft preview overlay (used by settings window to provide live preview). */
+export function setTuiDraftPreview(draft: SettingsDraft | undefined): void {
+  const [, setDraft] = getDraftPreviewSignal()
+  setDraft(draft && Object.keys(draft).length > 0 ? { ...draft } : undefined)
+}
+
+/** Clear the active draft preview overlay. */
+export function clearTuiDraftPreview(): void {
+  const [, setDraft] = getDraftPreviewSignal()
+  setDraft(undefined)
+}
+
+/** The active draft preview accessor. */
+export function tuiDraftPreview(): SettingsDraft | undefined {
+  const [draft] = getDraftPreviewSignal()
+  return draft()
 }
 
 /** Create (or reuse) the durable prefs store. Fail-open: without host
@@ -51,8 +82,40 @@ export function initTuiPrefs(context: Context): void {
   }
 }
 
-/** The live reactive prefs (read properties inside memos/JSX — tracked). */
-export function tuiPrefs(): TuiPrefs {
+/** Deep clone and overlay staged settings draft onto base TuiPrefs. */
+export function previewTuiPrefs(base: TuiPrefs, draft?: SettingsDraft): TuiPrefs {
+  if (!draft || Object.keys(draft).length === 0) return base
+  let hasTui = false
+  for (const k of Object.keys(draft)) {
+    if (k.startsWith('tui.')) {
+      hasTui = true
+      break
+    }
+  }
+  if (!hasTui) return base
+
+  const normalized = normalizeTuiPrefs(base)
+  const effective: TuiPrefs = {
+    version: 1,
+    layout: { ...normalized.layout },
+    sidebar: {
+      header: { ...normalized.sidebar.header },
+      blocks: { ...normalized.sidebar.blocks },
+      context: { ...normalized.sidebar.context },
+    },
+    footer: { ...normalized.footer },
+  }
+
+  for (const [id, value] of Object.entries(draft)) {
+    if (id.startsWith('tui.')) {
+      applyTuiRow(effective, id, value)
+    }
+  }
+  return effective
+}
+
+/** The raw persisted prefs from host storage (no draft overlay). */
+export function savedTuiPrefs(): TuiPrefs {
   const s = stash()?.[0]
   if (!s) return DEFAULT_TUI_PREFS
   if (!s.layout) {
@@ -62,6 +125,16 @@ export function tuiPrefs(): TuiPrefs {
     }
   }
   return s
+}
+
+/** The live reactive prefs (read properties inside memos/JSX — tracked).
+ *  When a settings window has an active draft, preview overlays on top
+ *  of durable storage in real time. */
+export function tuiPrefs(): TuiPrefs {
+  const base = savedTuiPrefs()
+  const preview = tuiDraftPreview()
+  if (!preview) return base
+  return previewTuiPrefs(base, preview)
 }
 
 /** Stage a mutation against the durable store; resolves when persisted. */
@@ -95,18 +168,25 @@ export const SEPARATOR_STYLES_CYCLE: readonly string[] = Object.freeze([
   'dots',
   'slashes',
 ])
+export const SETTINGS_VIEW_MODES: readonly string[] = Object.freeze([
+  'docked',
+  'fullscreen',
+  'dialog',
+])
 
 export type GaugeStyle = 'both' | 'bar' | 'percent' | 'off'
 export type BarShapePref = 'line' | 'block' | 'smooth' | 'ascii' | 'dots' | 'braille'
 export type BarWidthPref = 'standard' | 'compact' | 'wide' | 'full'
 export type LayoutPresetPref = 'comfortable' | 'compact'
 export type SeparatorStylePref = 'spaces' | 'pipes' | 'dots' | 'slashes'
+export type SettingsViewModePref = 'docked' | 'fullscreen' | 'dialog'
 
 export interface TuiPrefs {
   version: 1
   layout: {
     preset: LayoutPresetPref
     separator: SeparatorStylePref
+    settingsView?: SettingsViewModePref
   }
   sidebar: {
     header: { version: boolean; preset: boolean; session: boolean }
@@ -131,6 +211,7 @@ export const DEFAULT_TUI_PREFS: TuiPrefs = {
   layout: {
     preset: 'comfortable',
     separator: 'spaces',
+    settingsView: 'fullscreen',
   },
   sidebar: {
     header: { version: true, preset: true, session: true },
@@ -181,6 +262,11 @@ export function normalizeTuiPrefs(raw: unknown): TuiPrefs {
   const separator = SEPARATOR_STYLES_CYCLE.includes(layout.separator as string)
     ? (layout.separator as SeparatorStylePref)
     : DEFAULT_TUI_PREFS.layout.separator
+  const settingsView = (
+    SETTINGS_VIEW_MODES.includes(layout.settingsView as string)
+      ? layout.settingsView
+      : DEFAULT_TUI_PREFS.layout.settingsView
+  ) as SettingsViewModePref
   const gauge = GAUGE_STYLES.includes(context.gauge as string)
     ? (context.gauge as GaugeStyle)
     : DEFAULT_TUI_PREFS.sidebar.context.gauge
@@ -197,6 +283,7 @@ export function normalizeTuiPrefs(raw: unknown): TuiPrefs {
     layout: {
       preset,
       separator,
+      settingsView,
     },
     sidebar: {
       header: {
@@ -261,6 +348,13 @@ export function buildTuiTab(prefs: TuiPrefs): SettingsTab {
             value: prefs.layout?.separator ?? DEFAULT_TUI_PREFS.layout.separator,
             cycle: SEPARATOR_STYLES_CYCLE,
             note: 'spaces | pipes | dots | slashes — status line glyphs',
+          },
+          {
+            id: 'tui.layout.settingsView',
+            name: 'Settings surface',
+            value: tuiRowValue(prefs, 'tui.layout.settingsView') ?? 'docked',
+            cycle: SETTINGS_VIEW_MODES,
+            note: 'docked (above prompt) | fullscreen router page | dialog overlay',
           },
         ],
       },
@@ -423,6 +517,12 @@ export function applyTuiRow(draft: TuiPrefs, id: string, value: string): void {
         draft.layout.separator = value as SeparatorStylePref
       }
       return
+    case 'tui.layout.settingsView':
+      if (SETTINGS_VIEW_MODES.includes(value)) {
+        if (!draft.layout) draft.layout = { ...DEFAULT_TUI_PREFS.layout }
+        draft.layout.settingsView = value as SettingsViewModePref
+      }
+      return
     case 'tui.sidebar.context.barShape':
       if (BAR_SHAPES_CYCLE.includes(value)) draft.sidebar.context.barShape = value as BarShapePref
       return
@@ -487,6 +587,8 @@ export function tuiRowValue(prefs: TuiPrefs, id: string): string | undefined {
   if (id === 'tui.layout.preset') return prefs.layout?.preset ?? DEFAULT_TUI_PREFS.layout.preset
   if (id === 'tui.layout.separator')
     return prefs.layout?.separator ?? DEFAULT_TUI_PREFS.layout.separator
+  if (id === 'tui.layout.settingsView')
+    return prefs.layout?.settingsView ?? DEFAULT_TUI_PREFS.layout.settingsView ?? 'docked'
   if (id === 'tui.sidebar.context.barShape') return prefs.sidebar.context.barShape
   if (id === 'tui.sidebar.context.barWidth') return prefs.sidebar.context.barWidth
   if (id === 'tui.sidebar.context.gauge') return prefs.sidebar.context.gauge

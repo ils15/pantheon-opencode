@@ -13,9 +13,15 @@ import { tabRows } from '../src/plugins/tui/src/pantheon-settings-state.ts'
 import {
   applyTuiRow,
   buildTuiTab,
+  clearTuiDraftPreview,
   DEFAULT_TUI_PREFS,
   GAUGE_STYLES,
   normalizeTuiPrefs,
+  previewTuiPrefs,
+  savedTuiPrefs,
+  setTuiDraftPreview,
+  tuiDraftPreview,
+  tuiPrefs,
   tuiRowValue,
 } from '../src/plugins/tui/src/tui-prefs.ts'
 
@@ -121,12 +127,14 @@ describe('applyTuiRow', () => {
     applyTuiRow(draft, 'tui.sidebar.context.evenMark', 'enabled')
     applyTuiRow(draft, 'tui.layout.preset', 'compact')
     applyTuiRow(draft, 'tui.layout.separator', 'pipes')
+    applyTuiRow(draft, 'tui.layout.settingsView', 'fullscreen')
 
     assert.equal(tuiRowValue(draft, 'tui.sidebar.context.barShape'), 'dots')
     assert.equal(tuiRowValue(draft, 'tui.sidebar.context.barWidth'), 'wide')
     assert.equal(tuiRowValue(draft, 'tui.sidebar.context.evenMark'), 'enabled')
     assert.equal(tuiRowValue(draft, 'tui.layout.preset'), 'compact')
     assert.equal(tuiRowValue(draft, 'tui.layout.separator'), 'pipes')
+    assert.equal(tuiRowValue(draft, 'tui.layout.settingsView'), 'fullscreen')
   })
 
   it('a full stage→apply round trip lands every staged value', () => {
@@ -137,5 +145,69 @@ describe('applyTuiRow', () => {
     assert.equal(tuiRowValue(draft, 'tui.footer.home'), 'disabled')
     assert.equal(tuiRowValue(draft, 'tui.sidebar.block.git'), 'enabled')
     assert.equal(tuiRowValue(draft, 'not.a.row'), undefined)
+  })
+})
+
+describe('previewTuiPrefs & live draft preview', () => {
+  it('returns base unchanged when draft is empty or undefined', () => {
+    assert.deepEqual(previewTuiPrefs(DEFAULT_TUI_PREFS, undefined), DEFAULT_TUI_PREFS)
+    assert.deepEqual(previewTuiPrefs(DEFAULT_TUI_PREFS, {}), DEFAULT_TUI_PREFS)
+  })
+
+  it('overlays staged tui draft changes without mutating base', () => {
+    const base = structuredClone(DEFAULT_TUI_PREFS)
+    const draft = {
+      'tui.sidebar.context.barShape': 'braille',
+      'tui.sidebar.context.barWidth': 'compact',
+      'tui.sidebar.context.evenMark': 'enabled',
+      'tui.layout.preset': 'compact',
+      'tui.sidebar.header.session': 'disabled',
+    }
+    const preview = previewTuiPrefs(base, draft)
+
+    assert.equal(preview.sidebar.context.barShape, 'braille')
+    assert.equal(preview.sidebar.context.barWidth, 'compact')
+    assert.equal(preview.sidebar.context.evenMark, true)
+    assert.equal(preview.layout.preset, 'compact')
+    assert.equal(preview.sidebar.header.session, false)
+
+    // Base remains completely untouched
+    assert.equal(base.sidebar.context.barShape, 'line')
+    assert.equal(base.sidebar.context.barWidth, 'standard')
+    assert.equal(base.sidebar.context.evenMark, false)
+    assert.equal(base.layout.preset, 'comfortable')
+    assert.equal(base.sidebar.header.session, true)
+  })
+
+  it('ignores non-tui keys in draft', () => {
+    const preview = previewTuiPrefs(DEFAULT_TUI_PREFS, {
+      'gate.foo': 'disabled',
+      'decision.mode': 'auto',
+    })
+    assert.deepEqual(preview, DEFAULT_TUI_PREFS)
+  })
+
+  it('tuiPrefs reacts live to setTuiDraftPreview and clearTuiDraftPreview', () => {
+    clearTuiDraftPreview()
+    assert.equal(tuiDraftPreview(), undefined)
+    assert.equal(tuiPrefs().sidebar.context.barShape, 'line')
+
+    setTuiDraftPreview({
+      'tui.sidebar.context.barShape': 'braille',
+      'tui.sidebar.context.barWidth': 'compact',
+      'tui.sidebar.context.evenMark': 'enabled',
+    })
+
+    assert.equal(tuiPrefs().sidebar.context.barShape, 'braille')
+    assert.equal(tuiPrefs().sidebar.context.barWidth, 'compact')
+    assert.equal(tuiPrefs().sidebar.context.evenMark, true)
+    // savedTuiPrefs still shows base
+    assert.equal(savedTuiPrefs().sidebar.context.barShape, 'line')
+
+    clearTuiDraftPreview()
+    assert.equal(tuiDraftPreview(), undefined)
+    assert.equal(tuiPrefs().sidebar.context.barShape, 'line')
+    assert.equal(tuiPrefs().sidebar.context.barWidth, 'standard')
+    assert.equal(tuiPrefs().sidebar.context.evenMark, false)
   })
 })

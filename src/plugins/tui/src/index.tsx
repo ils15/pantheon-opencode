@@ -27,11 +27,13 @@ import {
 } from './model-usage-limits'
 import {
   openPantheonSettings,
+  PantheonSettingsSlot,
   pantheonSettingsBlocking,
   setupPantheonSettings,
 } from './pantheon-settings'
+import { PRESET_NONE } from './preset-state'
 import { cellWidth, GRAPHEMES, SIDEBAR_CONTENT_WIDTH } from './sidebar-width'
-import { initTuiPrefs, tuiPrefs } from './tui-prefs'
+import { initTuiPrefs, tuiDraftPreview, tuiPrefs } from './tui-prefs'
 import { nextCheckState, pickUpdateNotice, type UpdateCheckState } from './update-notice.ts'
 import { maybeShowWhatsNewV2 } from './whats-new'
 
@@ -3166,7 +3168,18 @@ function useActivePreset(context: any): {
       clearInterval(timer)
     })
   })
-  return { preset, overrides }
+  const effectivePreset = () => {
+    const preview = tuiDraftPreview()
+    if (preview && 'preset' in preview) {
+      const stagedName = preview.preset
+      return {
+        ...preset(),
+        name: stagedName === PRESET_NONE ? null : stagedName,
+      }
+    }
+    return preset()
+  }
+  return { preset: effectivePreset, overrides }
 }
 
 /** Debounce for the git file-count revalidation. `vcs.status` is an HTTP call;
@@ -4651,6 +4664,13 @@ const plugin = Plugin.define({
     } catch {
       /* settings unavailable on this host — the command toasts/fails open */
     }
+    // In-session settings docked above prompt (session.composer.top)
+    const unregisterSettingsSlot = context.ui.slot({
+      append: 'session.composer.top',
+      render: ({ sessionID }: { sessionID: string }) => (
+        <PantheonSettingsSlot context={context} sessionID={sessionID} />
+      ),
+    })
     // One-time "What's new" window (per Pantheon version) — fire-and-forget:
     // resolves the running version and the shipped CHANGELOG.md, then opens a
     // host dialog when the version changed since the last dismissal. Fail-open;
@@ -4662,6 +4682,7 @@ const plugin = Plugin.define({
       if (typeof unregisterHome === 'function') unregisterHome()
       if (typeof unregisterPromptFooter === 'function') unregisterPromptFooter()
       if (typeof unregisterPanel === 'function') unregisterPanel()
+      if (typeof unregisterSettingsSlot === 'function') unregisterSettingsSlot()
       if (typeof unregisterCommands === 'function') unregisterCommands()
       if (typeof unregisterSettingsCommands === 'function') unregisterSettingsCommands()
       delete globalState[SINGLETON]

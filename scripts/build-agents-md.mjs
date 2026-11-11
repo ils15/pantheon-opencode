@@ -603,14 +603,14 @@ function main() {
     }
     if (stale.length > 0) {
       console.error(
-        `❌ ${stale.join(' and ')} ${
+        `[ERROR] ${stale.join(' and ')} ${
           stale.length > 1 ? 'are' : 'is'
         } stale — run: node scripts/build-agents-md.mjs`,
       )
       process.exit(1)
     }
     console.log(
-      `✅ AGENTS.md and AGENTS.global.md are up to date (${sharedCount} shared instruction sections)`,
+      `[OK] AGENTS.md and AGENTS.global.md are up to date (${sharedCount} shared instruction sections)`,
     )
     return
   }
@@ -620,7 +620,7 @@ function main() {
   verifyRegularFile(AGENTS_GLOBAL_MD_PATH, global)
   verifyRegularFile(AGENTS_MD_PATH, project)
   console.log(
-    `✅ Generated AGENTS.md (${logicalLineCount(project)} lines) + AGENTS.global.md ` +
+    `[OK] Generated AGENTS.md (${logicalLineCount(project)} lines) + AGENTS.global.md ` +
       `(${logicalLineCount(global)} lines, ${sharedCount} shared instruction sections)`,
   )
 }

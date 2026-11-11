@@ -2587,10 +2587,17 @@ async function installPass(
             let healed = raw.replace(/,?\s*"source":\s*"agents\/[A-Za-z0-9_-]+\.md"/g, '')
             // A source-first entry leaves `"name": {,` — repair the orphan.
             healed = healed.replace(/("[A-Za-z0-9_-]+": \{),/g, '$1')
+            if (healed.includes('"plugins":') && !healed.includes('pantheon-opencode')) {
+              const pluginPkg = join(packageDir, 'src', 'plugin')
+              healed = healed.replace(
+                /"plugins":\s*\[/,
+                `"plugins": [\n    {\n      "package": "${pluginPkg}",\n      "options": {}\n    },`,
+              )
+            }
             if (healed !== raw) {
               writeFileSync(jsoncPath, healed)
               warning(
-                'Healed the sibling opencode.jsonc: removed stale cwd-relative agent "source" fields ' +
+                'Healed the sibling opencode.jsonc: synchronized plugins and removed stale cwd-relative agent "source" fields ' +
                   '(the field that made agents vanish outside the config dir). Review the file if you hand-edit it.',
               )
             }

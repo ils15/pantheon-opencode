@@ -132,11 +132,11 @@ test('generated Zeus prompt avoids duplicating canonical memory and stall protoc
   assert.doesNotMatch(zeusSource, /DelegationCacheDecision/)
   assert.match(
     zeusSource,
-    /Para um entregável delimitado, delegue uma vez ao especialista final; ele pode reunir os fatos necessários/i,
+    /(?:Para um entregável delimitado, delegue uma vez ao especialista final; ele pode reunir os fatos necessários|For a bounded deliverable, delegate once to the final specialist; the specialist can gather the necessary facts)/i,
   )
   assert.match(
     zeusSource,
-    /Use Apollo à parte apenas se a pesquisa for o entregável ou bloquear a escolha do especialista/i,
+    /(?:Use Apollo à parte apenas se a pesquisa for o entregável ou bloquear a escolha do especialista|Use Apollo separately only if research is the deliverable itself or blocks choosing the specialist)/i,
   )
 })
 

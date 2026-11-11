@@ -60,7 +60,10 @@ test('memory retrieval and storage are selective rather than automatic', () => {
     /pantheon-persistence:\s*\[context_save, context_get, goal_create, goal_get, goal_update, goal_done\]/i,
   )
   assert.doesNotMatch(zeus, /kv_(?:get|store|search)/i)
-  assert.match(zeus, /Não use KV compartilhado para contar profundidade/i)
+  assert.match(
+    zeus,
+    /(?:Não use KV compartilhado para contar profundidade|Do not use shared KV to track depth)/i,
+  )
   assert.doesNotMatch(mnemosyne, /Called automatically by Zeus when any agent returns/i)
   assert.match(mnemosyne, /Never auto-index a `subtask_summary`/i)
   for (const agent of sessionAgents) {
@@ -68,7 +71,7 @@ test('memory retrieval and storage are selective rather than automatic', () => {
   }
   assert.doesNotMatch(generatedAgents, /memory_search\(query=task_prompt|memory-wal/i)
 
-  assert.match(zeus, /no máximo um especialista auxiliar/i)
+  assert.match(zeus, /(?:no máximo um especialista auxiliar|at most one auxiliary specialist)/i)
   assert.doesNotMatch(zeus, /deleg:depth/)
   assert.doesNotMatch(zeus, /memory_recall\(\)/, 'do not direct generic no-key recall')
 })

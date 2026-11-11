@@ -1,71 +1,126 @@
-# Artifact Management — Templates
+# Artifact Management — High-Density Templates
 
-Detail companion for `SKILL.md`. Read on demand when creating an artifact and
-you need the `.tmp/` layout or a PLAN/IMPL/REVIEW template. Artifact types,
-who-generates-what, proportional-use rules, pause points, and cleanup stay in
-`SKILL.md`.
+Companion reference for `SKILL.md`. Contains templates for architectural plans, executive reports, and ADRs.
 
 ---
 
-## Temp Folder
+## 1. Architectural Plan (`.pantheon/deepwork/<slug>/PLAN.md`)
 
-All ephemeral artifacts live in `.pantheon/memory-bank/.tmp/` — gitignored and wiped on sprint close.
+Produced by `@athena`. Opens with an immediate Mermaid diagram and follows with dense, actionable phases:
 
+```markdown
+# Architectural Plan: [Feature / Refactor Title]
+
+> [!NOTE]
+> High-level context, background problem, and target outcome.
+
+> [!IMPORTANT]
+> Non-negotiable safety constraints, auth boundaries, or database schema requirements.
+
+## 1. Visual Execution Flow
+
+\`\`\`mermaid
+flowchart TD
+  A["Requirement"] --> B["Phase 1: Backend (@hermes)"]
+  B --> C{"Lint & Slice Test Gate"}
+  C -- PASS --> D["Phase 2: Frontend (@aphrodite)"]
+  D --> E["Phase 3: Security & Code Audit (@themis)"]
+\`\`\`
+
+## 2. Quantitative Baseline & Impact
+
+| Dimension | Before | Target | Verification Method |
+|---|---|---|---|
+| Latency | ~150s | < 2s | Sliced test runner |
+| Token Overhead | ~20k | < 8k | Context telemetry |
+| Affected Files | — | 3 files | Git diff check |
+
+## 3. Implementation Phases
+
+### Phase 1: Core Implementation (@hermes)
+- **Target Files:** `src/server/auth.ts`, `tests/auth.test.ts`
+- **Actions:** RED -> GREEN -> REFACTOR implementation of the auth handler.
+- **Validation Gate:** `node --test tests/auth.test.ts`
+- **Exit Criteria:** All tests green; no Biome/Ruff lint warnings.
+
+### Phase 2: Interface & Client (@aphrodite)
+- **Target Files:** `src/ui/login.tsx`
+- **Actions:** Connect UI state to new auth endpoint; ensure WCAG AA keyboard access.
+- **Validation Gate:** `npx biome check src/ui/login.tsx`
+
+## 4. Risks & Contingency
+
+| Identified Risk | Impact | Contingency / Mitigation |
+|---|---|---|
+| Breaking change to legacy clients | High | Preserve backwards-compatible endpoint alias for 1 release |
+| Token spike in subagent cascade | Medium | Use direct specialist dispatch without intermediate hops |
 ```
-.pantheon/memory-bank/
-├── .tmp/                  ← GITIGNORED — ephemeral artifacts
-│   ├── PLAN-<feature>.md
-│   ├── IMPL-phase1-hermes.md
-│   ├── IMPL-phase1-aphrodite.md
-│   └── REVIEW-<feature>.md
-├── _notes/                ← permanent ADRs; Git tracking follows repository policy
-│   └── ADR-<topic>.md
-├── 01-active-context.md
-└── 02-progress-log.md
-```
-
-Memory Bank files are not automatically versioned or shared across clones.
-Check the repository's ignore/commit policy before relying on `_tasks/` records
-or other files being tracked; `_tasks/` may be Git-ignored.
 
 ---
 
-### PLAN
+## 2. Executive Report & Analysis (`.pantheon/reports/<YYYY-MM-DD>-<topic>.md`)
+
+Produced by `@apollo` (deep discovery) or `@themis` (quality/security audits):
+
 ```markdown
-# PLAN-<feature>
-**Date:** YYYY-MM-DD  **Status:** Awaiting Approval
+# Executive Report: [Analysis Topic]
 
-## Goal
-[One sentence]
+> [!NOTE]
+> Summary of findings and systemic conclusions.
 
-## Phases
-1. Phase 1 — @hermes
-2. Phase 2 — @aphrodite
+> [!TIP]
+> Key optimization opportunities and quick wins.
 
-## Risks
-- [Risk]
+## 1. Architecture / System Topology
+
+\`\`\`mermaid
+graph LR
+  Client["Client Host"] --> Gateway["Decision Router"]
+  Gateway --> Specialist["Domain Specialist"]
+\`\`\`
+
+## 2. Metrics & Comparison
+
+| Metric | Current State | Target / Proposed | Delta (%) |
+|---|---|---|---|
+| Test Latency | 150.000ms | 50ms | -99.9% |
+| Initial Context | 19.877 tokens | 7.500 tokens | -62.2% |
+
+## 3. Findings & Evidence
+- Detailed finding 1 with exact file citations.
+- Detailed finding 2 with reproducible evidence.
+
+## 4. Prioritized Recommendations
+1. Actionable item 1 (low effort, high impact)
+2. Actionable item 2 (medium effort)
 ```
 
-### IMPL
+---
+
+## 3. Architectural Decision Record (`docs/adr/<NNN>-<slug>.md`)
+
+Produced by `@mnemosyne`:
+
 ```markdown
-# IMPL-<phase>-<agent>
-**Date:** YYYY-MM-DD  **Status:** Awaiting Themis Review
+# ADR-[NNN]: [Decision Title]
 
-## What Was Implemented
-- [file] — [what changed]
+**Date:** YYYY-MM-DD
+**Status:** [Proposed | Accepted | Superseded]
 
-## Tests
-- ✅ X tests / Coverage: Y%
-```
+> [!IMPORTANT]
+> Decision impacts: [Core systems / architecture / protocols].
 
-### REVIEW
-```markdown
-# REVIEW-<feature>
-**Status:** APPROVED | NEEDS_REVISION | FAILED
+## Context
+What problem was being solved? What forces or constraints applied?
 
-## Verdict
-[APPROVED | NEEDS_REVISION | FAILED]
+## Decision
+What was decided? Which approach was chosen over the alternatives?
 
-## Issues
-- CRITICAL: X / HIGH: Y / MEDIUM: Z
+## Alternatives Considered
+- **Alternative A:** [Reason rejected]
+- **Alternative B:** [Reason rejected]
+
+## Consequences
+- **Positive:** [Benefits gained]
+- **Negative / Trade-offs:** [Costs or constraints accepted]
 ```

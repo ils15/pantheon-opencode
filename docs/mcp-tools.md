@@ -229,9 +229,9 @@ The server also registers `pantheon://code-mode/scripts` and
 | `execute_code_script` | `(script_name: str, args?: list[str], json_output?: bool)` | Run an approved script from `.pantheon/code-mode/`. Returns a plain-text summary, or with `json_output=true` a structured dict with `stdout`, `stderr`, `exit_code`, `duration_ms`, `timed_out` and frontmatter metadata | Agents that grant `pantheon-code-mode: [execute_code_script]` |
 | `approve_code_script` | `(script_name: str, json_output?: bool)` | Record or refresh the script's SHA-256 in the approval manifest. Execution is opt-in: only approved scripts whose hash matches run | No bundled agent — see [Unreachable by any agent](#unreachable-by-any-agent) |
 
-**Agents granted:** `aphrodite`, `demeter`, `hephaestus`, `hermes`, `mnemosyne`, `nyx`, `prometheus`, `talos`, `themis`
+**Agents granted:** `aphrodite`, `demeter`, `hephaestus`, `hermes`, `mnemosyne`, `nyx`, `prometheus`, `talos`
 
-**Agents without a grant:** `apollo`, `athena`, `gaia`, `iris`, `zeus`
+**Agents without a grant:** `apollo`, `athena`, `gaia`, `iris`, `themis`, `zeus`
 
 These are exact `mcp_tools.pantheon-code-mode` frontmatter grants, not a bash
 permission: `mnemosyne` holds the grant while declaring `bash: deny`, and `iris`
@@ -245,7 +245,6 @@ delegated.
 | hermes | `pytest`, `ruff check`, `ruff format` |
 | aphrodite | Focused tests for the changed surface; full `npm test` only when the scope or risk warrants it; `biome check` |
 | demeter | `alembic upgrade head && pytest` |
-| themis | Lint/quality check scripts during review |
 | prometheus | Docker builds, CI/CD pipeline scripts |
 | talos | Automated hotfix sequences, batch fixes |
 

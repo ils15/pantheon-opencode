@@ -61,6 +61,7 @@ logs/
 .zcode/
 .playwright-mcp/
 bench-run-A/
+.pantheon-worktrees/
 
 # MCP usage audit reports carry bounded excerpts of local session content — local-only
 bench/results/mcp-usage-audit-*.md

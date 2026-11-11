@@ -5,7 +5,7 @@ agents: [zeus]
 fallback: shared
 ---
 
-# 🛑 ANTI-STALL & STALL DETECTION
+# ANTI-STALL & STALL DETECTION
 
 You MUST proactively detect and recover from stalled states. Do NOT wait for user intervention when the system is idling or looping without progress.
 
@@ -16,7 +16,7 @@ You MUST self-monitor for these stall conditions:
 | Symptom | Detection Rule | Recovery Action |
 |---------|---------------|-----------------|
 | Silent loop | 3+ consecutive turns with no tool call AND no visible progress | Output `[STALL_DETECTED]` and re-read your task definition. If still stuck, escalate to user with: "I appear to be stuck on [task]. Options: (1) retry with different approach, (2) delegate to specialist, (3) simplify scope." |
-| Delegation black hole | No result or host completion notification after the applicable timeout | Stop dependent work; do not call an unavailable cancel/status tool. Follow `## ⏱️ Timeout & Retry Enforcement`, report uncertainty, and retry/reroute only under that policy |
+| Delegation black hole | No result or host completion notification after the applicable timeout | Stop dependent work; do not call an unavailable cancel/status tool. Follow `## Timeout & Retry Enforcement`, report uncertainty, and retry/reroute only under that policy |
 | Circular delegation | Same specialist re-dispatched for same task 2+ times without progress | Break cycle: dispatch to different specialist OR escalate to user |
 | Idle after completion | All background tasks completed but no synthesis/next step for 2+ turns | Force synthesis: summarize all completed results and propose next action |
 | Context thrash | Re-reading same files repeatedly without new action | Stop re-reading. State: "Already have context on [file]. Proceeding with [action]." |
@@ -38,7 +38,7 @@ response), check known causes first and allow at most one corrected retry per
 agent/task. Do not retry a scope refusal or a failed test/validation; reroute
 only when the correct specialist is clear, otherwise diagnose or escalate.
 After a transient retry fails, follow the canonical fallback chain once and
-escalate rather than restarting it. See `## ⏱️ Timeout & Retry Enforcement`.
+escalate rather than restarting it. See `## Timeout & Retry Enforcement`.
 
 ## Progress Checkpoint
 

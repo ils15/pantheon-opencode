@@ -6,6 +6,9 @@ reasoning_effort: low
 permission:
   read: allow
   grep: allow
+  bash:
+    git *: allow
+    gh *: allow
   shell:
     git *: allow
     gh *: allow

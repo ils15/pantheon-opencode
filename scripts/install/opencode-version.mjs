@@ -1,8 +1,8 @@
 /** OpenCode host gate shared by the CLI and installer. */
 
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 /**
@@ -202,6 +202,19 @@ function parseHostMajor(text) {
   return { ambiguous: [...majors].sort((a, b) => a - b) }
 }
 
+function resolveCandidateBinary(explicitBinary, env) {
+  if (explicitBinary) return explicitBinary
+  if (env.OPENCODE_BIN) return env.OPENCODE_BIN
+  if (process.platform !== 'win32') {
+    const userHome = env.HOME || homedir()
+    const standardBin = join(userHome, '.opencode', 'bin', 'opencode')
+    if (existsSync(standardBin)) {
+      return standardBin
+    }
+  }
+  return 'opencode'
+}
+
 /**
  * Resolve the target OpenCode generation. There is exactly one, and the probe
  * must CONFIRM the host is 2.x before any write: there is no generation to fall
@@ -237,11 +250,10 @@ export function resolveOpenCodeVersion(options = {}) {
       `Invalid OPENCODE_VERSION "${env.OPENCODE_VERSION}" — only "${SUPPORTED_GENERATION}" can be pinned`,
     )
   }
-  const binary = options.binary ?? env.OPENCODE_BIN ?? ''
+  const binary = resolveCandidateBinary(options.binary, env)
   if (/(?:^|[\\/])opencode2(?:\.exe)?$/i.test(binary)) return SUPPORTED_GENERATION
 
-  const probe =
-    options.probe ?? (() => probeHostVersion(binary || 'opencode', options.probeTimeoutMs))
+  const probe = options.probe ?? (() => probeHostVersion(binary, options.probeTimeoutMs))
   let raw
   try {
     raw = probe()

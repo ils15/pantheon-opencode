@@ -5,7 +5,7 @@ agents: [zeus]
 fallback: shared
 ---
 
-# ⏱️ TIMEOUT & RETRY ENFORCEMENT
+# TIMEOUT & RETRY ENFORCEMENT
 
 When a delegated agent does not respond in time, enforce the timeout policy from `routing.yml`.
 
@@ -20,12 +20,12 @@ only; do not claim persistent job tracking.
 
 | Agent Role | Timeout | Retry Policy | Partial Results OK? | Reasoning Effort |
 |------------|---------|--------------|---------------------|------------------|
-| Explorer (@apollo) | 60s | 1 retry | ✅ Yes | low |
-| Implementer (@hermes, @aphrodite, @demeter) | 180s | 1 retry | ❌ No | medium |
-| Reviewer (@themis) | 120s | 1 retry | ❌ No | high |
-| Infrastructure (@prometheus) | 300s | 1 retry | ❌ No | medium |
-| Hotfix (@talos) | 30s | 1 retry | ✅ Yes | low |
-| Remote Sensing (@gaia) | 120s | 1 retry | ✅ Yes | high |
+| Explorer (@apollo) | 60s | 1 retry | Yes | low |
+| Implementer (@hermes, @aphrodite, @demeter) | 180s | 1 retry | No | medium |
+| Reviewer (@themis) | 120s | 1 retry | No | high |
+| Infrastructure (@prometheus) | 300s | 1 retry | No | medium |
+| Hotfix (@talos) | 30s | 1 retry | Yes | low |
+| Remote Sensing (@gaia) | 120s | 1 retry | Yes | high |
 
 ## Retry Flow
 
@@ -65,7 +65,7 @@ as policy context, not as a claim that Zeus can enumerate sessions.
 
 ---
 
-# 📦 SUBTASK DISPATCH (Lightweight Delegation)
+# SUBTASK DISPATCH (Lightweight Delegation)
 
 Subtask is a bounded, low-risk delegation mode that **skips** the standard artifact lifecycle. Choose it by risk and need for review, not by a fixed file/line count.
 
@@ -105,11 +105,11 @@ Implementation agents use the `## subtask_summary` fields defined in `## Agent R
 
 ## Timeout Parcial (Partial Results)
 
-Only agents marked ✅ in the Timeout Behavior table above may return partial results: @apollo (partial file list, e.g. "found 7 of 12 files before timeout"), @gaia (partial literature findings) and @talos (confirm progress if a hotfix times out). Never for implementers or reviewers — they must complete or fail. When dispatching with partial-OK, set the expectation: `@apollo Search for auth files. Timeout parcial OK — return whatever you have.`
+Only agents marked Yes in the Timeout Behavior table above may return partial results: @apollo (partial file list, e.g. "found 7 of 12 files before timeout"), @gaia (partial literature findings) and @talos (confirm progress if a hotfix times out). Never for implementers or reviewers — they must complete or fail. When dispatching with partial-OK, set the expectation: `@apollo Search for auth files. Timeout partial OK — return whatever you have.`
 
 ---
 
-# 📊 TIMEOUT TRACKING
+# TIMEOUT TRACKING
 
 Keep only an in-context list of active delegations and already-tried agents when
 needed. Use results returned by `subagent` or host completion notifications; do

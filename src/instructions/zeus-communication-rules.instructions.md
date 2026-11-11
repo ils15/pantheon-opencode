@@ -3,7 +3,7 @@ description: "Communication rules for Zeus and all Pantheon agents — clarity, 
 name: "Zeus Communication Rules"
 ---
 
-# 🗣️ COMMUNICATION RULES
+# COMMUNICATION RULES
 
 Applies to Zeus and all agents:
 

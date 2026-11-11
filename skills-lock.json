@@ -1,8 +1,8 @@
 {
   "src/skills/agent-coordination/SKILL.md": "ffa4cfc9c778dd9619665010de32d82d49ae5bb803c985dc99417eb6fc7c3d1c",
   "src/skills/agent-forge/SKILL.md": "cbe09946a59fa45b471828d9de6e7bc5c4b2fa29e0ce48e21d188593ece6c046",
-  "src/skills/artifact-management/references/artifact-templates.md": "6eedbcbc7bb466f64fe1ebf2622f905ea8a0f247b69c473f80edcf01b5caf4cf",
-  "src/skills/artifact-management/SKILL.md": "9de4488115b3d862d6989f958712f3369787be98e6df22ae413d20064da43721",
+  "src/skills/artifact-management/references/artifact-templates.md": "d1a5d082266311c362e63e097f461fe993a4eac7485c4a445fba7993c404e1c7",
+  "src/skills/artifact-management/SKILL.md": "d11bc6a9968758294bd9ae56dfa8df43090c5f1f7c4f706861687d8ac3bb88a2",
   "src/skills/auto-continue/references/auto-continue-details.md": "630844448b0a5a69d23a1c270bbbf5312a4d7554d84cea0459fc8a1430a60798",
   "src/skills/auto-continue/SKILL.md": "7bfddd84f96b657043074a35ef2f524913ccbed2689fc8a26ad425167f4b77c5",
   "src/skills/clonedeps/SKILL.md": "3e0b43cf96da98c83699dc48db3fd58fbfda84b9022bb70d3747875c81c3e124",
@@ -33,11 +33,11 @@
   "src/skills/spec-driven-development/SKILL.md": "ccfbc0c32116a1d144f5c12a4187c053322ed31625a622a58c59739a57a86743",
   "src/skills/tdd-with-agents/references/advanced-testing-patterns.md": "4aac82748bb670a61d67732168f8a265d5e66895a9183029e3da03de8e024788",
   "src/skills/tdd-with-agents/references/testing-by-layer.md": "545291301661e57d846b2db2acca1edb1219a102dce4aad7e0c3cc1a250b570a",
-  "src/skills/tdd-with-agents/SKILL.md": "825d5e5eadbe487db382918a2181a4a993d8f722c38bd7f104f89b00004d6223",
+  "src/skills/tdd-with-agents/SKILL.md": "3deaaeb51b76f34d33aed82ea65f4652f6e0584d4c04e53388c7d5d922d8fea1",
   "src/skills/test-slicing/SKILL.md": "ff70cddc66261049250b82f7aeabbfd6bcd00f9abe34cc8d5f20aa35333b1590",
   "src/skills/verification-planning/SKILL.md": "6a3c6cb5bd5076862d369885bf0b3ba086b625495fe7a42f3f5116d07b470f3e",
   "src/skills/visual-review-pipeline/references/findings-schema.md": "776511757c0d8387fab232fced8ac9ce031a03f62b6ca539e3c38b0d45035c8e",
-  "src/skills/visual-review-pipeline/references/workflow-steps.md": "1f763f39d9218263bfb10f575d739d9eb62d89cd9f00d38c21cd729b078b44c8",
-  "src/skills/visual-review-pipeline/SKILL.md": "7f66f0426868535db891bccd8e21c719b7dcbb16625ea75edbf436ccb1896ac1",
+  "src/skills/visual-review-pipeline/references/workflow-steps.md": "13796a32076dd4d04d37a50927169929ba44a332302bd98f72ec61482ceedc09",
+  "src/skills/visual-review-pipeline/SKILL.md": "f218252c0773c2f880a736493d7e0630e7d0678fe27beb9687053e6db6054e27",
   "src/skills/worktrees/SKILL.md": "9cf2b036e90d9ff7c6deb786ad7bab2cb78d6bf39166a67d5cbeafc29f593c6e"
 }

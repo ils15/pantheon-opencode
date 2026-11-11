@@ -28,4 +28,4 @@ Zero tokens, <2s. Checks: ruff, biome, anti-pattern slop, anti-overengineering (
 ~500 tokens. Confidence scoring, regression prediction, OWASP Top 10.
 
 ### Layer 3 — Verification Planning
-For N>5 file changes. Sugere plano de verificação antes de implementar.
+For N>5 file changes. Proposes a verification plan before implementing.

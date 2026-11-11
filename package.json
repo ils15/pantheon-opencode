@@ -1,6 +1,6 @@
 {
   "name": "pantheon-opencode",
-  "version": "2.0.0-rc.1",
+  "version": "2.0.0-rc.2",
   "description": "Multi-agent orchestration for OpenCode \u2014 14 specialized agents, TDD, Themis review gates.",
   "type": "module",
   "workspaces": [
@@ -20,6 +20,7 @@
     "setup": "node scripts/setup.mjs",
     "build:agents-md": "node scripts/build-agents-md.mjs",
     "build:decision-router": "node scripts/build-decision-router.mjs",
+    "build:plugin": "node scripts/build-plugin.mjs",
     "check:decision-router": "node scripts/build-decision-router.mjs --check",
     "skills:lock": "node scripts/update-skills-lock.mjs",
     "setup:lite": "node bin/pantheon-init.mjs init --yes --clean --components agents,skills,instructions",
@@ -28,8 +29,8 @@
     "init": "node bin/pantheon-init.mjs init --yes",
     "opencode": "OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true opencode",
     "start": "OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true opencode",
-    "prepack": "npm run check:decision-router",
-    "prepublishOnly": "node scripts/validate-routing.mjs && npm run check:decision-router",
+    "prepack": "npm run build:plugin && npm run check:decision-router",
+    "prepublishOnly": "node scripts/validate-routing.mjs && npm run build:plugin && npm run check:decision-router",
     "postpublish": "node -e \"console.log('\u2705 Published pantheon-opencode v' + require('./package.json').version + ' to npm')\"",
     "version:status": "node scripts/versioning.mjs status",
     "version:apply": "node scripts/versioning.mjs apply",

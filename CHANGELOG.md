@@ -71,6 +71,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
      Running apply will move this section to a versioned entry and reset the template below. -->
 
+## [v2.0.0-rc.2] - 2026-11-11
+
+### What's New
+
+- Release Candidate 2: Comprehensive token optimization, V2 tool permissions alignment, English instructions unification, and TUI settings stability.
+- Zeus Fast Greeting & Direct Query Bypass: Casual greetings and direct queries are answered instantly in 1 turn without subagent dispatches, council invocations, or tool calls.
+- English agent instructions: Standardized all agent instructions across src/agents/*.md into clear, idiomatic English.
+- OpenCode V2 tool permissions: Replaced legacy `shell: allow` with native `bash: allow` across all implementers; preserved read-only boundaries on scouts and orchestrator.
+- TUI settings layout & anti-squish: Defaulted settings view to fullscreen router page (matching opencode-quota); added flexWrap to tabs and footer to prevent compression and prompt overlap.
+- Sibling config synchronization: Automated opencode.jsonc plugin synchronization during installation to guarantee pantheon tools availability.
+- Deepwork and worktree pruning: Enhanced scripts/prune.mjs with --deepwork and --worktrees options.
+
+### Changed
+
+- agents — Zeus prompt condensed to 73 lines with fast bypass and bounded read permissions.
+- agents — Themis, Apollo, Athena, Hermes, and Zeus instructions standardized to English.
+- agents — Cleaned emojis from all instruction headers and tables across src/instructions/.
+- install — opencode.mjs synchronizes pantheon-opencode into sibling opencode.jsonc.
+- tui — src/plugins/tui/src/pantheon-settings.tsx wrapped tabs and footer with flexWrap and capped dialog maxHeight.
+- scripts — scripts/prune.mjs added findStaleDeepwork and findStaleWorktrees with zero emojis.
+
+### Fixed
+
+- tools — Fixed "No tool named 'shell' is currently available" by updating agent permission frontmatters to `bash: allow`.
+- tui — Fixed squished tab labels (G De P T Au...) and footer button overlap (--no staged changes--) under narrow viewport widths.
+- install — Fixed missing pantheon tools caused by opencode.jsonc overriding opencode.json.
+
 ## [v2.0.0-rc.1] - 2026-11-10
 
 ### 🆕 What's New

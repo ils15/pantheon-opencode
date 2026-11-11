@@ -15,9 +15,15 @@ const implementers = ['hermes', 'aphrodite', 'demeter', 'hephaestus', 'prometheu
 )
 
 test('small bounded changes use direct, proportionate execution', () => {
-  assert.match(zeus, /trabalho delimitado ao especialista/i)
-  assert.match(zeus, /não force planejamento/i)
-  assert.match(zeus, /Nunca dispare council para correção pequena/i)
+  assert.match(
+    zeus,
+    /(?:trabalho delimitado ao especialista|route directly to the specialist|bounded deliverable)/i,
+  )
+  assert.match(zeus, /(?:não force planejamento|do not force planning)/i)
+  assert.match(
+    zeus,
+    /(?:Nunca dispare council para correção pequena|never invoke council for small fixes)/i,
+  )
   assert.match(artifacts, /trivial|bounded/i)
   assert.match(artifacts, /read-only/i)
   assert.match(tdd, /micro|small|proportionate/i)

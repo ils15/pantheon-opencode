@@ -119,6 +119,19 @@ const DEFAULT_GOAL_LOOP_PREFS = {
 	maxContinuations: 25
 };
 const GOAL_LOOP_ENABLED_CYCLE = Object.freeze(["enabled", "disabled"]);
+const MAX_CONTINUATIONS_CYCLE = Object.freeze([
+	"10",
+	"25",
+	"50",
+	"100",
+	"200"
+]);
+const COOLDOWN_MS_CYCLE = Object.freeze([
+	"1000",
+	"2000",
+	"5000",
+	"10000"
+]);
 const DEFAULT_DECISION_BUDGETS = {
 	monthlyUsd: 5,
 	perDecisionUsd: .1
@@ -157,65 +170,67 @@ function buildAutonomyTab(input) {
 		title: "Autonomy",
 		groups: [
 			{
-				title: "Goal loop (persisted mission, long sessions)",
+				title: "Goal loop (multi-turn session auto-continuation)",
 				rows: [
 					{
 						id: "autonomy.goal_loop.enabled",
 						name: "Goal loop",
 						value: input.goalLoop.enabled ? "enabled" : "disabled",
 						cycle: GOAL_LOOP_ENABLED_CYCLE,
-						note: "mission persists in .pantheon/goals; auto-continues with cooldown" + (input.goalLoopRestartPending ? " · ⚠ saved value applies after OpenCode restart" : " · applies after OpenCode restart")
+						note: "auto-continues multi-turn tasks when session goes idle" + (input.goalLoopRestartPending ? " · [!] restart required to apply" : " · applies after OpenCode restart")
 					},
 					{
 						id: "autonomy.goal_loop.maxContinuations",
 						name: "Max continuations",
 						value: String(input.goalLoop.maxContinuations),
-						note: "1..200 — the anti-runaway cap per mission"
+						cycle: MAX_CONTINUATIONS_CYCLE,
+						note: "1..200 — safety ceiling to prevent runaway tasks"
 					},
 					{
 						id: "autonomy.goal_loop.cooldownMs",
 						name: "Cooldown (ms)",
 						value: String(input.goalLoop.cooldownMs),
-						note: "min 1000ms · between continuations"
+						cycle: COOLDOWN_MS_CYCLE,
+						note: "delay between autonomous turns (min 1000ms)"
 					}
 				]
 			},
 			{
-				title: "Decision budgets (applies live)",
+				title: "Decision budgets (applies live per gated call)",
 				rows: [{
 					id: "autonomy.budget.monthly",
 					name: "Monthly cap",
 					value: formatUsd(input.budgets.monthlyUsd),
 					cycle: MONTHLY_USD_CYCLE,
-					note: "the ledger refuses gated calls past this"
+					note: "monthly USD ceiling for gated arbitrator decisions"
 				}, {
 					id: "autonomy.budget.perDecision",
 					name: "Per-decision cap",
 					value: formatUsd(input.budgets.perDecisionUsd),
 					cycle: PER_DECISION_USD_CYCLE,
-					note: "each gated call above this is refused"
+					note: "price cap — gated decisions above this are refused"
 				}]
 			},
 			{
-				title: "Decision gradient (documented — J1 owns the risk axis)",
+				title: "Decision gradient (reference policy · J1 owns the risk axis)",
 				rows: [
 					{
 						id: "autonomy.gradient.solo",
 						name: "Decide solo",
-						value: "reversible + low risk",
-						note: "edits, routine fixes, ordering ties — no gate"
+						value: "autonomous",
+						note: "reversible & low-risk edits, routine fixes (no gate)"
 					},
 					{
 						id: "autonomy.gradient.jev",
 						name: "Jev decides",
-						value: "typed ambiguity",
-						note: "readings, ranking, verification — budget-capped"
+						value: "arbitrated",
+						note: "typed ambiguity & candidate ranking (budget-capped)"
 					},
 					{
 						id: "autonomy.gradient.human",
 						name: "Human decides",
-						value: "high risk (J1)",
-						note: "enforce ladder via PANTHEON_J1_* (J1 tab)"
+						value: "human review",
+						note: "high-risk & destructive operations (J1 gate)"
 					}
 				]
 			}
@@ -657,6 +672,9 @@ const EMPTY_TAB = {
 function tabRows(tab) {
 	return tab.groups.flatMap((group) => group.rows);
 }
+function findRow(tab, id) {
+	return tabRows(tab).find((row) => row.id === id);
+}
 /** Step through the cycle with wrap-around; non-cyclable rows return the input. */
 function cycleValue(value, cycle, direction) {
 	if (cycle.length === 0) return value;
@@ -839,19 +857,21 @@ function buildChangelogTab(version, items = []) {
 		}]
 	};
 }
-/** Semver-ish compare for X.Y.Z[-beta.N]; betas sort before their release. */
+/** Semver-ish compare for X.Y.Z[-(beta|rc).N]; prereleases sort before their release. */
 function comparePantheonVersions(left, right) {
 	const parse = (version) => {
-		const match = String(version).trim().match(/^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/);
+		const match = String(version).trim().match(/^(\d+)\.(\d+)\.(\d+)(?:-(beta|rc)\.(\d+))?$/);
 		if (!match) return null;
-		const [, major = "", minor = "", patch = "", beta = ""] = match;
+		const [, major = "", minor = "", patch = "", stage = "", stageNum = ""] = match;
+		const stageRank = stage === "beta" ? 1 : stage === "rc" ? 2 : 3;
 		return {
 			core: [
 				+major,
 				+minor,
 				+patch
 			],
-			beta: beta === "" ? Number.POSITIVE_INFINITY : +beta
+			stageRank,
+			stageNum: stage !== "" ? +stageNum : Number.POSITIVE_INFINITY
 		};
 	};
 	const a = parse(left);
@@ -862,14 +882,15 @@ function comparePantheonVersions(left, right) {
 	if (aMajor !== bMajor) return aMajor - bMajor;
 	if (aMinor !== bMinor) return aMinor - bMinor;
 	if (aPatch !== bPatch) return aPatch - bPatch;
-	return a.beta - b.beta;
+	if (a.stageRank !== b.stageRank) return a.stageRank - b.stageRank;
+	return a.stageNum - b.stageNum;
 }
 function pickUpdateNotice(input) {
 	const { currentVersion, latestVersion, state = {}, nowMs = Date.now() } = input;
 	const ttlMs = input.ttlMs ?? 216e5;
 	if (nowMs - (state.lastCheckMs ?? 0) < ttlMs) return null;
 	if (state.lastNotifiedVersion === latestVersion) return null;
-	const stable = (version) => !/-beta\.\d+$/.test(version);
+	const stable = (version) => !/-(?:beta|rc)\.\d+$/.test(version);
 	if (stable(currentVersion) && !stable(latestVersion)) return null;
 	if (comparePantheonVersions(latestVersion, currentVersion) <= 0) return null;
 	return {
@@ -1193,8 +1214,29 @@ function buildPresetTab(input) {
 //#endregion
 //#region src/tui-prefs.ts
 const PREFS_SYMBOL = Symbol.for("pantheon.tui.prefs.v1");
+const DRAFT_PREVIEW_SYMBOL = Symbol.for("pantheon.tui.draft_preview.v1");
 function stash() {
 	return globalThis[PREFS_SYMBOL];
+}
+function getDraftPreviewSignal() {
+	const g = globalThis;
+	if (!g[DRAFT_PREVIEW_SYMBOL]) g[DRAFT_PREVIEW_SYMBOL] = createSignal(void 0);
+	return g[DRAFT_PREVIEW_SYMBOL];
+}
+/** Set the active draft preview overlay (used by settings window to provide live preview). */
+function setTuiDraftPreview(draft) {
+	const [, setDraft] = getDraftPreviewSignal();
+	setDraft(draft && Object.keys(draft).length > 0 ? { ...draft } : void 0);
+}
+/** Clear the active draft preview overlay. */
+function clearTuiDraftPreview() {
+	const [, setDraft] = getDraftPreviewSignal();
+	setDraft(void 0);
+}
+/** The active draft preview accessor. */
+function tuiDraftPreview() {
+	const [draft] = getDraftPreviewSignal();
+	return draft();
 }
 /** Create (or reuse) the durable prefs store. Fail-open: without host
 *  storage the consumers fall back to DEFAULT_TUI_PREFS (read-only). */
@@ -1210,8 +1252,31 @@ function initTuiPrefs(context) {
 		}
 	} catch {}
 }
-/** The live reactive prefs (read properties inside memos/JSX — tracked). */
-function tuiPrefs() {
+/** Deep clone and overlay staged settings draft onto base TuiPrefs. */
+function previewTuiPrefs(base, draft) {
+	if (!draft || Object.keys(draft).length === 0) return base;
+	let hasTui = false;
+	for (const k of Object.keys(draft)) if (k.startsWith("tui.")) {
+		hasTui = true;
+		break;
+	}
+	if (!hasTui) return base;
+	const normalized = normalizeTuiPrefs(base);
+	const effective = {
+		version: 1,
+		layout: { ...normalized.layout },
+		sidebar: {
+			header: { ...normalized.sidebar.header },
+			blocks: { ...normalized.sidebar.blocks },
+			context: { ...normalized.sidebar.context }
+		},
+		footer: { ...normalized.footer }
+	};
+	for (const [id, value] of Object.entries(draft)) if (id.startsWith("tui.")) applyTuiRow(effective, id, value);
+	return effective;
+}
+/** The raw persisted prefs from host storage (no draft overlay). */
+function savedTuiPrefs() {
 	const s = stash()?.[0];
 	if (!s) return DEFAULT_TUI_PREFS;
 	if (!s.layout) return {
@@ -1219,6 +1284,15 @@ function tuiPrefs() {
 		layout: DEFAULT_TUI_PREFS.layout
 	};
 	return s;
+}
+/** The live reactive prefs (read properties inside memos/JSX — tracked).
+*  When a settings window has an active draft, preview overlays on top
+*  of durable storage in real time. */
+function tuiPrefs() {
+	const base = savedTuiPrefs();
+	const preview = tuiDraftPreview();
+	if (!preview) return base;
+	return previewTuiPrefs(base, preview);
 }
 /** Stage a mutation against the durable store; resolves when persisted. */
 function mutateTuiPrefs(mutation) {
@@ -1254,11 +1328,17 @@ const SEPARATOR_STYLES_CYCLE = Object.freeze([
 	"dots",
 	"slashes"
 ]);
+const SETTINGS_VIEW_MODES = Object.freeze([
+	"docked",
+	"fullscreen",
+	"dialog"
+]);
 const DEFAULT_TUI_PREFS = {
 	version: 1,
 	layout: {
 		preset: "comfortable",
-		separator: "spaces"
+		separator: "spaces",
+		settingsView: "fullscreen"
 	},
 	sidebar: {
 		header: {
@@ -1289,6 +1369,62 @@ const DEFAULT_TUI_PREFS = {
 		home: true
 	}
 };
+function asBool(value, fallback) {
+	return typeof value === "boolean" ? value : fallback;
+}
+/** Deep-merge stored JSON over the defaults; unknown keys and junk are ignored. */
+function normalizeTuiPrefs(raw) {
+	const stored = typeof raw === "object" && raw !== null ? raw : {};
+	const layout = typeof stored.layout === "object" && stored.layout !== null ? stored.layout : {};
+	const sidebar = typeof stored.sidebar === "object" && stored.sidebar !== null ? stored.sidebar : {};
+	const header = typeof sidebar.header === "object" && sidebar.header !== null ? sidebar.header : {};
+	const blocks = typeof sidebar.blocks === "object" && sidebar.blocks !== null ? sidebar.blocks : {};
+	const context = typeof sidebar.context === "object" && sidebar.context !== null ? sidebar.context : {};
+	const footer = typeof stored.footer === "object" && stored.footer !== null ? stored.footer : {};
+	const preset = LAYOUT_PRESETS_CYCLE.includes(layout.preset) ? layout.preset : DEFAULT_TUI_PREFS.layout.preset;
+	const separator = SEPARATOR_STYLES_CYCLE.includes(layout.separator) ? layout.separator : DEFAULT_TUI_PREFS.layout.separator;
+	const settingsView = SETTINGS_VIEW_MODES.includes(layout.settingsView) ? layout.settingsView : DEFAULT_TUI_PREFS.layout.settingsView;
+	const gauge = GAUGE_STYLES.includes(context.gauge) ? context.gauge : DEFAULT_TUI_PREFS.sidebar.context.gauge;
+	const barShape = BAR_SHAPES_CYCLE.includes(context.barShape) ? context.barShape : DEFAULT_TUI_PREFS.sidebar.context.barShape;
+	const barWidth = BAR_WIDTHS_CYCLE.includes(context.barWidth) ? context.barWidth : DEFAULT_TUI_PREFS.sidebar.context.barWidth;
+	const evenMark = asBool(context.evenMark, DEFAULT_TUI_PREFS.sidebar.context.evenMark);
+	return {
+		version: 1,
+		layout: {
+			preset,
+			separator,
+			settingsView
+		},
+		sidebar: {
+			header: {
+				version: asBool(header.version, true),
+				preset: asBool(header.preset, true),
+				session: asBool(header.session, true)
+			},
+			blocks: {
+				context: asBool(blocks.context, true),
+				git: asBool(blocks.git, true),
+				todo: asBool(blocks.todo, true),
+				dispatch: asBool(blocks.dispatch, true)
+			},
+			context: {
+				gauge,
+				barShape,
+				barWidth,
+				evenMark,
+				tokens: asBool(context.tokens, true),
+				spent: asBool(context.spent, true),
+				modelUsage: asBool(context.modelUsage, true),
+				performance: asBool(context.performance, true),
+				localSpend: asBool(context.localSpend, true)
+			}
+		},
+		footer: {
+			prompt: asBool(footer.prompt, true),
+			home: asBool(footer.home, true)
+		}
+	};
+}
 const onOff = ENABLED_CYCLE;
 const row = (id, name, value, note) => ({
 	id,
@@ -1304,19 +1440,29 @@ function buildTuiTab(prefs) {
 		groups: [
 			{
 				title: "Preset & Layout",
-				rows: [{
-					id: "tui.layout.preset",
-					name: "Layout preset",
-					value: prefs.layout?.preset ?? DEFAULT_TUI_PREFS.layout.preset,
-					cycle: LAYOUT_PRESETS_CYCLE,
-					note: "comfortable | compact — sets spacing & borders"
-				}, {
-					id: "tui.layout.separator",
-					name: "Separator",
-					value: prefs.layout?.separator ?? DEFAULT_TUI_PREFS.layout.separator,
-					cycle: SEPARATOR_STYLES_CYCLE,
-					note: "spaces | pipes | dots | slashes — status line glyphs"
-				}]
+				rows: [
+					{
+						id: "tui.layout.preset",
+						name: "Layout preset",
+						value: prefs.layout?.preset ?? DEFAULT_TUI_PREFS.layout.preset,
+						cycle: LAYOUT_PRESETS_CYCLE,
+						note: "comfortable | compact — sets spacing & borders"
+					},
+					{
+						id: "tui.layout.separator",
+						name: "Separator",
+						value: prefs.layout?.separator ?? DEFAULT_TUI_PREFS.layout.separator,
+						cycle: SEPARATOR_STYLES_CYCLE,
+						note: "spaces | pipes | dots | slashes — status line glyphs"
+					},
+					{
+						id: "tui.layout.settingsView",
+						name: "Settings surface",
+						value: tuiRowValue(prefs, "tui.layout.settingsView") ?? "docked",
+						cycle: SETTINGS_VIEW_MODES,
+						note: "docked (above prompt) | fullscreen router page | dialog overlay"
+					}
+				]
 			},
 			{
 				title: "Bars & Gauges",
@@ -1398,6 +1544,12 @@ function applyTuiRow(draft, id, value) {
 				draft.layout.separator = value;
 			}
 			return;
+		case "tui.layout.settingsView":
+			if (SETTINGS_VIEW_MODES.includes(value)) {
+				if (!draft.layout) draft.layout = { ...DEFAULT_TUI_PREFS.layout };
+				draft.layout.settingsView = value;
+			}
+			return;
 		case "tui.sidebar.context.barShape":
 			if (BAR_SHAPES_CYCLE.includes(value)) draft.sidebar.context.barShape = value;
 			return;
@@ -1454,6 +1606,36 @@ function applyTuiRow(draft, id, value) {
 			return;
 		default: return;
 	}
+}
+/** Read the current pref value for a row id ('enabled'/'disabled'/gauge/custom). */
+function tuiRowValue(prefs, id) {
+	if (id === "tui.layout.preset") return prefs.layout?.preset ?? DEFAULT_TUI_PREFS.layout.preset;
+	if (id === "tui.layout.separator") return prefs.layout?.separator ?? DEFAULT_TUI_PREFS.layout.separator;
+	if (id === "tui.layout.settingsView") return prefs.layout?.settingsView ?? DEFAULT_TUI_PREFS.layout.settingsView ?? "docked";
+	if (id === "tui.sidebar.context.barShape") return prefs.sidebar.context.barShape;
+	if (id === "tui.sidebar.context.barWidth") return prefs.sidebar.context.barWidth;
+	if (id === "tui.sidebar.context.gauge") return prefs.sidebar.context.gauge;
+	if (id === "tui.sidebar.context.evenMark") return prefs.sidebar.context.evenMark ? "enabled" : "disabled";
+	const enabled = (() => {
+		switch (id) {
+			case "tui.sidebar.header.version": return prefs.sidebar.header.version;
+			case "tui.sidebar.header.preset": return prefs.sidebar.header.preset;
+			case "tui.sidebar.header.session": return prefs.sidebar.header.session;
+			case "tui.sidebar.block.context": return prefs.sidebar.blocks.context;
+			case "tui.sidebar.block.git": return prefs.sidebar.blocks.git;
+			case "tui.sidebar.block.todo": return prefs.sidebar.blocks.todo;
+			case "tui.sidebar.block.dispatch": return prefs.sidebar.blocks.dispatch;
+			case "tui.sidebar.context.tokens": return prefs.sidebar.context.tokens;
+			case "tui.sidebar.context.spent": return prefs.sidebar.context.spent;
+			case "tui.sidebar.context.modelUsage": return prefs.sidebar.context.modelUsage;
+			case "tui.sidebar.context.performance": return prefs.sidebar.context.performance;
+			case "tui.sidebar.context.localSpend": return prefs.sidebar.context.localSpend;
+			case "tui.footer.prompt": return prefs.footer.prompt;
+			case "tui.footer.home": return prefs.footer.home;
+			default: return;
+		}
+	})();
+	return enabled === void 0 ? void 0 : enabled ? "enabled" : "disabled";
 }
 //#endregion
 //#region src/update-status.ts
@@ -1711,7 +1893,7 @@ async function readChangelogForBundle(bundleUrl) {
 }
 /** The ambient build-time version, or null outside a tsdown build. */
 function embeddedVersion() {
-	return "2.0.0-rc.1";
+	return "2.0.0-rc.2";
 }
 /**
 * Resolve the running Pantheon version for the what's-new window: the plugin
@@ -1936,113 +2118,118 @@ function persistUpdateCheckState(previous, latest) {
 	} catch {}
 }
 function resolveRunningVersion() {
-	return "2.0.0-rc.1";
+	return "2.0.0-rc.2";
 }
-const VALUE_WIDTH = 22;
+const VALUE_WIDTH = 24;
 function SettingsWindow(props) {
 	const tab = () => props.tabs()[props.page()] ?? props.tabs()[0] ?? EMPTY_TAB;
 	return (() => {
-		var _el$ = createElement("box"), _el$2 = createElement("box"), _el$3 = createElement("text"), _el$4 = createElement("box"), _el$5 = createElement("box"), _el$6 = createElement("text"), _el$8 = createElement("box"), _el$9 = createElement("box"), _el$0 = createElement("text"), _el$10 = createElement("box"), _el$11 = createElement("box"), _el$12 = createElement("box"), _el$13 = createElement("text"), _el$15 = createElement("text"), _el$17 = createElement("box"), _el$18 = createElement("text"), _el$19 = createElement("text");
+		var _el$ = createElement("box"), _el$2 = createElement("box"), _el$3 = createElement("text"), _el$4 = createElement("b"), _el$6 = createElement("span"), _el$7 = createElement("box"), _el$8 = createElement("box"), _el$9 = createElement("box"), _el$0 = createElement("text"), _el$10 = createElement("box"), _el$11 = createElement("scrollbox");
 		insertNode(_el$, _el$2);
-		insertNode(_el$, _el$8);
 		insertNode(_el$, _el$10);
-		setProp(_el$, "flexDirection", "column");
-		setProp(_el$, "paddingLeft", 1);
-		setProp(_el$, "paddingRight", 1);
-		setProp(_el$, "paddingTop", 1);
+		spread(_el$, mergeProps(() => props.boxRef !== void 0 ? { ref: props.boxRef } : {}, {
+			"focusable": true,
+			"flexDirection": "column"
+		}, () => props.height !== void 0 ? { height: props.height } : {
+			flexGrow: 1,
+			flexBasis: 0
+		}, {
+			"minHeight": 0,
+			get border() {
+				return !props.isDialog;
+			}
+		}, () => props.isDialog ? {} : { borderStyle: "rounded" }, {
+			get borderColor() {
+				return memo(() => !!props.isDialog)() ? void 0 : memo(() => !!props.hasKeyboard?.())() ? props.warn ?? "#fba970" : props.muted ?? "#52525b";
+			},
+			"paddingLeft": 1,
+			"paddingRight": 1,
+			"paddingTop": 0,
+			"paddingBottom": 0
+		}, () => props.onMouseDown !== void 0 ? { onMouseDown: props.onMouseDown } : {}), true);
 		insertNode(_el$2, _el$3);
-		insertNode(_el$2, _el$4);
-		insertNode(_el$2, _el$5);
-		insertNode(_el$2, _el$6);
+		insertNode(_el$2, _el$7);
+		insertNode(_el$2, _el$8);
+		insertNode(_el$2, _el$9);
 		setProp(_el$2, "flexDirection", "row");
+		setProp(_el$2, "flexWrap", "wrap");
 		setProp(_el$2, "alignItems", "center");
+		setProp(_el$2, "flexShrink", 0);
+		setProp(_el$2, "marginBottom", 1);
+		setProp(_el$2, "rowGap", 1);
+		insertNode(_el$3, _el$4);
+		insertNode(_el$3, _el$6);
 		setProp(_el$3, "attributes", 1);
-		insert(_el$3, () => `Pantheon v${props.version}`);
-		setProp(_el$4, "width", 2);
-		setProp(_el$5, "flexDirection", "row");
-		setProp(_el$5, "flexGrow", 1);
-		setProp(_el$5, "flexShrink", 1);
-		insert(_el$5, createComponent(For, {
+		setProp(_el$3, "wrapMode", "none");
+		insertNode(_el$4, createTextNode(`Pantheon`));
+		insert(_el$6, () => ` v${props.version}`);
+		setProp(_el$7, "width", 2);
+		setProp(_el$8, "flexDirection", "row");
+		setProp(_el$8, "flexWrap", "wrap");
+		setProp(_el$8, "flexGrow", 1);
+		setProp(_el$8, "flexShrink", 0);
+		setProp(_el$8, "columnGap", 1);
+		setProp(_el$8, "rowGap", 1);
+		insert(_el$8, createComponent(For, {
 			get each() {
 				return props.tabs();
 			},
 			children: (t, index) => {
 				const isActive = () => index() === props.page();
 				return (() => {
-					var _el$41 = createElement("text");
-					setProp(_el$41, "flexShrink", 0);
-					spread(_el$41, mergeProps({ get fg() {
-						return memo(() => !!isActive())() ? props.warn ?? props.fg : props.muted;
+					var _el$32 = createElement("box"), _el$33 = createElement("text");
+					insertNode(_el$32, _el$33);
+					setProp(_el$32, "onMouseDown", () => props.onJumpTab?.(index()));
+					setProp(_el$32, "paddingLeft", 1);
+					setProp(_el$32, "paddingRight", 1);
+					setProp(_el$32, "flexShrink", 0);
+					spread(_el$32, mergeProps(() => isActive() ? { backgroundColor: "#262626" } : {}), true);
+					setProp(_el$33, "wrapMode", "none");
+					spread(_el$33, mergeProps({ get fg() {
+						return memo(() => !!isActive())() ? props.warn ?? "#fba970" : props.muted;
 					} }, () => isActive() ? { attributes: 1 } : {}), true);
-					insert(_el$41, () => `${t.title}${tabDirty(props.draft(), t) ? " ●" : ""}  `);
-					return _el$41;
+					insert(_el$33, () => `${t.title}${tabDirty(props.draft(), t) ? " ●" : ""}`);
+					return _el$32;
 				})();
 			}
 		}));
-		insertNode(_el$6, createTextNode(`esc`));
-		insertNode(_el$8, _el$9);
-		setProp(_el$8, "flexDirection", "row");
-		setProp(_el$8, "height", 1);
 		insertNode(_el$9, _el$0);
-		setProp(_el$9, "flexGrow", 1);
-		insertNode(_el$0, createTextNode(`──────────────────────────────────────────────────────────────────────────────`));
+		setProp(_el$9, "onMouseDown", () => props.onClose?.());
+		setProp(_el$9, "paddingLeft", 1);
+		setProp(_el$9, "flexShrink", 0);
+		insertNode(_el$0, createTextNode(`esc`));
+		setProp(_el$0, "wrapMode", "none");
 		insertNode(_el$10, _el$11);
-		insertNode(_el$10, _el$17);
-		setProp(_el$10, "flexDirection", "row");
-		insertNode(_el$11, _el$12);
-		insertNode(_el$11, _el$13);
-		insertNode(_el$11, _el$15);
-		setProp(_el$11, "width", 18);
-		setProp(_el$11, "flexDirection", "column");
+		setProp(_el$10, "flexDirection", "column");
+		setProp(_el$10, "flexGrow", 1);
+		setProp(_el$10, "flexBasis", 0);
+		setProp(_el$10, "minHeight", 0);
+		setProp(_el$10, "overflow", "hidden");
+		setProp(_el$11, "flexGrow", 1);
+		setProp(_el$11, "flexBasis", 0);
+		setProp(_el$11, "minHeight", 0);
+		spread(_el$11, mergeProps(() => props.maxHeight !== void 0 ? { maxHeight: props.maxHeight } : {}), true);
 		insert(_el$11, createComponent(For, {
-			get each() {
-				return props.tabs();
-			},
-			children: (t, index) => {
-				const isActive = () => index() === props.page();
-				return (() => {
-					var _el$42 = createElement("text");
-					spread(_el$42, mergeProps({ get fg() {
-						return memo(() => !!isActive())() ? props.warn ?? props.fg : props.muted;
-					} }, () => isActive() ? { attributes: 1 } : {}), true);
-					insert(_el$42, () => `${isActive() ? "▸ " : "  "}${t.title}${tabDirty(props.draft(), t) ? " ●" : ""}`);
-					return _el$42;
-				})();
-			}
-		}), _el$12);
-		setProp(_el$12, "height", 1);
-		insertNode(_el$13, createTextNode(`1-9: tab`));
-		insertNode(_el$15, createTextNode(`tab: next`));
-		insertNode(_el$17, _el$18);
-		insertNode(_el$17, _el$19);
-		setProp(_el$17, "flexGrow", 1);
-		setProp(_el$17, "flexShrink", 1);
-		setProp(_el$17, "flexDirection", "column");
-		setProp(_el$17, "paddingLeft", 1);
-		setProp(_el$18, "attributes", 1);
-		insert(_el$18, () => tab().title);
-		insertNode(_el$19, createTextNode(`────────────────────────────────────────`));
-		insert(_el$17, createComponent(For, {
 			get each() {
 				return tab().groups;
 			},
 			children: (group) => (() => {
-				var _el$43 = createElement("box"), _el$45 = createElement("box");
-				insertNode(_el$43, _el$45);
-				setProp(_el$43, "flexDirection", "column");
-				insert(_el$43, createComponent(Show, {
+				var _el$34 = createElement("box");
+				setProp(_el$34, "flexDirection", "column");
+				setProp(_el$34, "marginBottom", 1);
+				insert(_el$34, createComponent(Show, {
 					get when() {
 						return group.title !== void 0;
 					},
 					get children() {
-						var _el$44 = createElement("text");
-						setProp(_el$44, "attributes", 1);
-						insert(_el$44, () => group.title);
-						effect((_$p) => setProp(_el$44, "fg", props.warn ?? props.fg, _$p));
-						return _el$44;
+						var _el$35 = createElement("text");
+						setProp(_el$35, "attributes", 1);
+						insert(_el$35, () => group.title);
+						effect((_$p) => setProp(_el$35, "fg", props.warn ?? props.fg, _$p));
+						return _el$35;
 					}
-				}), _el$45);
-				insert(_el$43, createComponent(For, {
+				}), null);
+				insert(_el$34, createComponent(For, {
 					get each() {
 						return group.rows;
 					},
@@ -2050,60 +2237,70 @@ function SettingsWindow(props) {
 						const isSelected = () => row.id === props.selectedId();
 						const display = () => props.draft()[row.id] ?? row.value;
 						const staged = () => props.draft()[row.id] !== void 0;
-						const gutter = () => isSelected() ? "  " : "  ";
-						const valueCell = () => row.cycle !== void 0 ? `< ${display()} >` : display();
+						const gutter = () => isSelected() ? "▸ " : "  ";
+						const valueCell = () => {
+							if (row.cycle !== void 0) return `< ${display()} >`;
+							if (row.action !== void 0) return `[ ${display()} ]`;
+							if (row.id.startsWith("autonomy.gradient.")) return `[ref] ${display()}`;
+							return display();
+						};
 						return (() => {
-							var _el$46 = createElement("box"), _el$47 = createElement("box"), _el$48 = createElement("text"), _el$49 = createElement("box"), _el$50 = createElement("text");
-							insertNode(_el$46, _el$47);
-							insertNode(_el$46, _el$49);
-							setProp(_el$46, "flexDirection", "row");
-							insertNode(_el$47, _el$48);
-							setProp(_el$47, "width", 30);
-							spread(_el$48, mergeProps({ get fg() {
-								return memo(() => !!isSelected())() ? "#000000" : props.fg;
+							var _el$36 = createElement("box"), _el$37 = createElement("box"), _el$38 = createElement("text"), _el$39 = createElement("box"), _el$40 = createElement("text");
+							insertNode(_el$36, _el$37);
+							insertNode(_el$36, _el$39);
+							setProp(_el$36, "flexDirection", "row");
+							spread(_el$36, mergeProps(() => isSelected() ? { backgroundColor: "#262626" } : {}, { "onMouseDown": () => {
+								props.onSelectRow?.(row.id);
+							} }), true);
+							insertNode(_el$37, _el$38);
+							setProp(_el$37, "width", 28);
+							spread(_el$38, mergeProps({ get fg() {
+								return memo(() => !!isSelected())() ? props.warn ?? "#fba970" : props.fg;
 							} }, () => isSelected() ? { attributes: 1 } : {}), true);
-							insert(_el$48, () => `${gutter()}${row.name}`.padEnd(30));
-							insertNode(_el$49, _el$50);
-							setProp(_el$49, "width", 22);
-							spread(_el$50, mergeProps({ get fg() {
-								return memo(() => !!isSelected())() ? "#000000" : memo(() => !!staged())() ? props.warn ?? props.fg : props.muted;
+							insert(_el$38, () => `${gutter()}${row.name}`.padEnd(28));
+							insertNode(_el$39, _el$40);
+							setProp(_el$39, "width", 24);
+							setProp(_el$39, "onMouseDown", () => {
+								props.onSelectRow?.(row.id);
+								props.onCycleValue?.(row.id, 1);
+							});
+							spread(_el$40, mergeProps({ get fg() {
+								return memo(() => !!isSelected())() ? "#ffffff" : memo(() => !!staged())() ? props.warn ?? props.fg : props.muted;
 							} }, () => isSelected() || staged() ? { attributes: 1 } : {}), true);
-							insert(_el$50, () => `${valueCell()}${staged() ? " ●" : ""}`.padEnd(VALUE_WIDTH));
-							insert(_el$46, createComponent(Show, {
+							insert(_el$40, () => `${valueCell()}${staged() ? " ●" : ""}`.padEnd(VALUE_WIDTH));
+							insert(_el$36, createComponent(Show, {
 								get when() {
 									return row.note !== void 0;
 								},
 								get children() {
-									var _el$51 = createElement("box"), _el$52 = createElement("text");
-									insertNode(_el$51, _el$52);
-									setProp(_el$51, "flexGrow", 1);
-									setProp(_el$51, "flexShrink", 1);
-									insert(_el$52, () => row.note);
-									effect((_$p) => setProp(_el$52, "fg", isSelected() ? "#111827" : props.muted, _$p));
-									return _el$51;
+									var _el$41 = createElement("box"), _el$42 = createElement("text");
+									insertNode(_el$41, _el$42);
+									setProp(_el$41, "flexGrow", 1);
+									setProp(_el$41, "flexShrink", 1);
+									insert(_el$42, () => row.note);
+									effect((_$p) => setProp(_el$42, "fg", isSelected() ? "#e5e7eb" : props.muted, _$p));
+									return _el$41;
 								}
 							}), null);
-							effect((_$p) => setProp(_el$46, "backgroundColor", isSelected() ? props.warn ?? "#f59e0b" : void 0, _$p));
-							return _el$46;
+							return _el$36;
 						})();
 					}
-				}), _el$45);
-				setProp(_el$45, "height", 1);
-				return _el$43;
+				}), null);
+				return _el$34;
 			})()
-		}), null);
+		}));
 		insert(_el$, createComponent(Show, {
 			get when() {
 				return props.notice() !== void 0;
 			},
 			get children() {
-				var _el$21 = createElement("text");
-				insert(_el$21, (() => {
-					var _c$ = memo(() => !!(props.notice()?.startsWith("✅") || props.notice()?.startsWith("saved")));
-					return () => _c$() ? props.notice() : `⚠ ${props.notice()}`;
+				var _el$12 = createElement("text");
+				insert(_el$12, (() => {
+					var _c$ = memo(() => !!(props.notice()?.startsWith("[OK]") || props.notice()?.startsWith("saved")));
+					return () => _c$() ? props.notice() : `[WARN] ${props.notice()}`;
 				})());
-				effect((_$p) => setProp(_el$21, "fg", props.notice()?.startsWith("✅") ? props.fg : props.warn ?? props.muted, _$p));
-				return _el$21;
+				effect((_$p) => setProp(_el$12, "fg", props.notice()?.startsWith("[OK]") || props.notice()?.startsWith("saved") ? props.fg : props.warn ?? props.muted, _$p));
+				return _el$12;
 			}
 		}), null);
 		insert(_el$, createComponent(Show, {
@@ -2112,134 +2309,170 @@ function SettingsWindow(props) {
 			},
 			get fallback() {
 				return (() => {
-					var _el$53 = createElement("box"), _el$71 = createElement("text");
-					insertNode(_el$53, _el$71);
-					setProp(_el$53, "flexDirection", "column");
-					insert(_el$53, createComponent(Show, {
+					var _el$43 = createElement("box"), _el$61 = createElement("text");
+					insertNode(_el$43, _el$61);
+					setProp(_el$43, "flexDirection", "column");
+					insert(_el$43, createComponent(Show, {
 						get when() {
 							return draftDirty(props.draft());
 						},
 						get fallback() {
 							return (() => {
-								var _el$73 = createElement("box"), _el$74 = createElement("box"), _el$75 = createElement("text"), _el$77 = createElement("text"), _el$79 = createElement("box"), _el$80 = createElement("text"), _el$82 = createElement("text"), _el$84 = createElement("box"), _el$85 = createElement("text"), _el$87 = createElement("box"), _el$88 = createElement("text");
+								var _el$62 = createElement("box"), _el$63 = createElement("box"), _el$64 = createElement("text"), _el$66 = createElement("text"), _el$68 = createElement("box"), _el$69 = createElement("text"), _el$71 = createElement("text"), _el$73 = createElement("box"), _el$74 = createElement("text"), _el$76 = createElement("box"), _el$77 = createElement("text");
+								insertNode(_el$62, _el$63);
+								insertNode(_el$62, _el$66);
+								insertNode(_el$62, _el$68);
+								insertNode(_el$62, _el$71);
+								insertNode(_el$62, _el$73);
+								insertNode(_el$62, _el$76);
+								insertNode(_el$62, _el$77);
+								setProp(_el$62, "flexDirection", "row");
+								setProp(_el$62, "flexWrap", "wrap");
+								setProp(_el$62, "alignItems", "center");
+								setProp(_el$62, "flexShrink", 0);
+								setProp(_el$62, "rowGap", 1);
+								insertNode(_el$63, _el$64);
+								setProp(_el$63, "backgroundColor", "#262626");
+								setProp(_el$63, "flexShrink", 0);
+								setProp(_el$63, "onMouseDown", () => props.onClose?.());
+								insertNode(_el$64, createTextNode(` Close `));
+								setProp(_el$64, "fg", "#ffffff");
+								insertNode(_el$66, createTextNode(`  `));
+								setProp(_el$66, "flexShrink", 0);
+								insertNode(_el$68, _el$69);
+								setProp(_el$68, "backgroundColor", "#262626");
+								setProp(_el$68, "flexShrink", 0);
+								setProp(_el$68, "onMouseDown", () => props.onResetPage?.());
+								insertNode(_el$69, createTextNode(` Reset page `));
+								setProp(_el$69, "fg", "#ffffff");
+								insertNode(_el$71, createTextNode(`  `));
+								setProp(_el$71, "flexShrink", 0);
 								insertNode(_el$73, _el$74);
-								insertNode(_el$73, _el$77);
-								insertNode(_el$73, _el$79);
-								insertNode(_el$73, _el$82);
-								insertNode(_el$73, _el$84);
-								insertNode(_el$73, _el$87);
-								insertNode(_el$73, _el$88);
-								setProp(_el$73, "flexDirection", "row");
-								insertNode(_el$74, _el$75);
-								setProp(_el$74, "backgroundColor", "#262626");
-								insertNode(_el$75, createTextNode(` Close `));
-								setProp(_el$75, "fg", "#ffffff");
-								insertNode(_el$77, createTextNode(`  `));
-								insertNode(_el$79, _el$80);
-								setProp(_el$79, "backgroundColor", "#262626");
-								insertNode(_el$80, createTextNode(` Reset page `));
-								setProp(_el$80, "fg", "#ffffff");
-								insertNode(_el$82, createTextNode(`  `));
-								insertNode(_el$84, _el$85);
-								setProp(_el$84, "backgroundColor", "#262626");
-								insertNode(_el$85, createTextNode(` Defaults `));
-								setProp(_el$85, "fg", "#ffffff");
-								setProp(_el$87, "flexGrow", 1);
-								insertNode(_el$88, createTextNode(`no staged changes`));
+								setProp(_el$73, "backgroundColor", "#262626");
+								setProp(_el$73, "flexShrink", 0);
+								setProp(_el$73, "onMouseDown", () => props.onStageDefaults?.());
+								insertNode(_el$74, createTextNode(` Defaults `));
+								setProp(_el$74, "fg", "#ffffff");
+								setProp(_el$76, "flexGrow", 1);
+								setProp(_el$76, "minWidth", 1);
+								insertNode(_el$77, createTextNode(`no staged changes`));
+								setProp(_el$77, "flexShrink", 0);
 								effect((_p$) => {
-									var _v$13 = props.muted, _v$14 = props.muted, _v$15 = props.muted;
-									_v$13 !== _p$.e && (_p$.e = setProp(_el$77, "fg", _v$13, _p$.e));
-									_v$14 !== _p$.t && (_p$.t = setProp(_el$82, "fg", _v$14, _p$.t));
-									_v$15 !== _p$.a && (_p$.a = setProp(_el$88, "fg", _v$15, _p$.a));
+									var _v$1 = props.muted, _v$10 = props.muted, _v$11 = props.muted;
+									_v$1 !== _p$.e && (_p$.e = setProp(_el$66, "fg", _v$1, _p$.e));
+									_v$10 !== _p$.t && (_p$.t = setProp(_el$71, "fg", _v$10, _p$.t));
+									_v$11 !== _p$.a && (_p$.a = setProp(_el$77, "fg", _v$11, _p$.a));
 									return _p$;
 								}, {
 									e: void 0,
 									t: void 0,
 									a: void 0
 								});
-								return _el$73;
+								return _el$62;
 							})();
 						},
 						get children() {
-							var _el$54 = createElement("box"), _el$55 = createElement("box"), _el$56 = createElement("text"), _el$58 = createElement("text"), _el$60 = createElement("box"), _el$61 = createElement("text"), _el$63 = createElement("text"), _el$65 = createElement("box"), _el$66 = createElement("text"), _el$68 = createElement("box"), _el$69 = createElement("text");
-							insertNode(_el$54, _el$55);
-							insertNode(_el$54, _el$58);
-							insertNode(_el$54, _el$60);
-							insertNode(_el$54, _el$63);
-							insertNode(_el$54, _el$65);
-							insertNode(_el$54, _el$68);
-							insertNode(_el$54, _el$69);
-							setProp(_el$54, "flexDirection", "row");
+							var _el$44 = createElement("box"), _el$45 = createElement("box"), _el$46 = createElement("text"), _el$48 = createElement("text"), _el$50 = createElement("box"), _el$51 = createElement("text"), _el$53 = createElement("text"), _el$55 = createElement("box"), _el$56 = createElement("text"), _el$58 = createElement("box"), _el$59 = createElement("text");
+							insertNode(_el$44, _el$45);
+							insertNode(_el$44, _el$48);
+							insertNode(_el$44, _el$50);
+							insertNode(_el$44, _el$53);
+							insertNode(_el$44, _el$55);
+							insertNode(_el$44, _el$58);
+							insertNode(_el$44, _el$59);
+							setProp(_el$44, "flexDirection", "row");
+							setProp(_el$44, "flexWrap", "wrap");
+							setProp(_el$44, "alignItems", "center");
+							setProp(_el$44, "flexShrink", 0);
+							setProp(_el$44, "rowGap", 1);
+							insertNode(_el$45, _el$46);
+							setProp(_el$45, "backgroundColor", "#fba970");
+							setProp(_el$45, "flexShrink", 0);
+							setProp(_el$45, "onMouseDown", () => props.onSave?.());
+							insertNode(_el$46, createTextNode(` Save `));
+							setProp(_el$46, "fg", "#000000");
+							insertNode(_el$48, createTextNode(`  `));
+							setProp(_el$48, "flexShrink", 0);
+							insertNode(_el$50, _el$51);
+							setProp(_el$50, "backgroundColor", "#262626");
+							setProp(_el$50, "flexShrink", 0);
+							setProp(_el$50, "onMouseDown", () => props.onDiscard?.());
+							insertNode(_el$51, createTextNode(` Discard `));
+							setProp(_el$51, "fg", "#ffffff");
+							insertNode(_el$53, createTextNode(`  `));
+							setProp(_el$53, "flexShrink", 0);
 							insertNode(_el$55, _el$56);
-							setProp(_el$55, "backgroundColor", "#fba970");
-							insertNode(_el$56, createTextNode(` Save `));
-							setProp(_el$56, "fg", "#000000");
-							insertNode(_el$58, createTextNode(`  `));
-							insertNode(_el$60, _el$61);
-							setProp(_el$60, "backgroundColor", "#262626");
-							insertNode(_el$61, createTextNode(` Discard `));
-							setProp(_el$61, "fg", "#ffffff");
-							insertNode(_el$63, createTextNode(`  `));
-							insertNode(_el$65, _el$66);
-							setProp(_el$65, "backgroundColor", "#262626");
-							insertNode(_el$66, createTextNode(` Reset page `));
-							setProp(_el$66, "fg", "#ffffff");
-							setProp(_el$68, "flexGrow", 1);
-							insertNode(_el$69, createTextNode(`unsaved changes`));
+							setProp(_el$55, "backgroundColor", "#262626");
+							setProp(_el$55, "flexShrink", 0);
+							setProp(_el$55, "onMouseDown", () => props.onResetPage?.());
+							insertNode(_el$56, createTextNode(` Reset page `));
+							setProp(_el$56, "fg", "#ffffff");
+							setProp(_el$58, "flexGrow", 1);
+							setProp(_el$58, "minWidth", 1);
+							insertNode(_el$59, createTextNode(`unsaved changes`));
+							setProp(_el$59, "flexShrink", 0);
 							effect((_p$) => {
-								var _v$10 = props.muted, _v$11 = props.muted, _v$12 = props.warn ?? "#f59e0b";
-								_v$10 !== _p$.e && (_p$.e = setProp(_el$58, "fg", _v$10, _p$.e));
-								_v$11 !== _p$.t && (_p$.t = setProp(_el$63, "fg", _v$11, _p$.t));
-								_v$12 !== _p$.a && (_p$.a = setProp(_el$69, "fg", _v$12, _p$.a));
+								var _v$8 = props.muted, _v$9 = props.muted, _v$0 = props.warn ?? "#f59e0b";
+								_v$8 !== _p$.e && (_p$.e = setProp(_el$48, "fg", _v$8, _p$.e));
+								_v$9 !== _p$.t && (_p$.t = setProp(_el$53, "fg", _v$9, _p$.t));
+								_v$0 !== _p$.a && (_p$.a = setProp(_el$59, "fg", _v$0, _p$.a));
 								return _p$;
 							}, {
 								e: void 0,
 								t: void 0,
 								a: void 0
 							});
-							return _el$54;
+							return _el$44;
 						}
-					}), _el$71);
-					insertNode(_el$71, createTextNode(`› or ←/→ change · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close`));
-					effect((_$p) => setProp(_el$71, "fg", props.muted, _$p));
-					return _el$53;
+					}), _el$61);
+					insert(_el$61, () => {
+						const currentRow = findRow(tab(), props.selectedId() ?? "");
+						if (currentRow?.cycle !== void 0) return "click or ›/←/→ change · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close";
+						if (currentRow?.action !== void 0) return "enter or space run action · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close";
+						return "[ref] documented reference (read-only) · ↑↓ select · tab next tab · esc close";
+					});
+					effect((_$p) => setProp(_el$61, "fg", props.muted, _$p));
+					return _el$43;
 				})();
 			},
 			get children() {
-				var _el$22 = createElement("box"), _el$23 = createElement("box"), _el$24 = createElement("text"), _el$26 = createElement("box"), _el$27 = createElement("text"), _el$29 = createElement("text"), _el$31 = createElement("box"), _el$32 = createElement("text"), _el$34 = createElement("text"), _el$36 = createElement("box"), _el$37 = createElement("text"), _el$39 = createElement("text");
+				var _el$13 = createElement("box"), _el$14 = createElement("box"), _el$15 = createElement("text"), _el$17 = createElement("box"), _el$18 = createElement("text"), _el$20 = createElement("text"), _el$22 = createElement("box"), _el$23 = createElement("text"), _el$25 = createElement("text"), _el$27 = createElement("box"), _el$28 = createElement("text"), _el$30 = createElement("text");
+				insertNode(_el$13, _el$14);
+				insertNode(_el$13, _el$30);
+				setProp(_el$13, "flexDirection", "column");
+				insertNode(_el$14, _el$15);
+				insertNode(_el$14, _el$17);
+				insertNode(_el$14, _el$20);
+				insertNode(_el$14, _el$22);
+				insertNode(_el$14, _el$25);
+				insertNode(_el$14, _el$27);
+				setProp(_el$14, "flexDirection", "row");
+				insertNode(_el$15, createTextNode(`Keep your changes?  `));
+				setProp(_el$15, "attributes", 1);
+				insertNode(_el$17, _el$18);
+				setProp(_el$17, "backgroundColor", "#fba970");
+				setProp(_el$17, "onMouseDown", () => props.onSave?.());
+				insertNode(_el$18, createTextNode(` Save `));
+				setProp(_el$18, "fg", "#000000");
+				insertNode(_el$20, createTextNode(`  `));
 				insertNode(_el$22, _el$23);
-				insertNode(_el$22, _el$39);
-				setProp(_el$22, "flexDirection", "column");
-				insertNode(_el$23, _el$24);
-				insertNode(_el$23, _el$26);
-				insertNode(_el$23, _el$29);
-				insertNode(_el$23, _el$31);
-				insertNode(_el$23, _el$34);
-				insertNode(_el$23, _el$36);
-				setProp(_el$23, "flexDirection", "row");
-				insertNode(_el$24, createTextNode(`Keep your changes?  `));
-				setProp(_el$24, "attributes", 1);
-				insertNode(_el$26, _el$27);
-				setProp(_el$26, "backgroundColor", "#fba970");
-				insertNode(_el$27, createTextNode(` Save `));
-				setProp(_el$27, "fg", "#000000");
-				insertNode(_el$29, createTextNode(`  `));
-				insertNode(_el$31, _el$32);
-				setProp(_el$31, "backgroundColor", "#262626");
-				insertNode(_el$32, createTextNode(` Discard `));
-				setProp(_el$32, "fg", "#ffffff");
-				insertNode(_el$34, createTextNode(`  `));
-				insertNode(_el$36, _el$37);
-				setProp(_el$36, "backgroundColor", "#262626");
-				insertNode(_el$37, createTextNode(` Keep editing `));
-				setProp(_el$37, "fg", "#ffffff");
-				insertNode(_el$39, createTextNode(`ctrl+s save · d discard the changes · esc keep editing`));
+				setProp(_el$22, "backgroundColor", "#262626");
+				setProp(_el$22, "onMouseDown", () => props.onDiscard?.());
+				insertNode(_el$23, createTextNode(` Discard `));
+				setProp(_el$23, "fg", "#ffffff");
+				insertNode(_el$25, createTextNode(`  `));
+				insertNode(_el$27, _el$28);
+				setProp(_el$27, "backgroundColor", "#262626");
+				setProp(_el$27, "onMouseDown", () => props.onCancelExit?.());
+				insertNode(_el$28, createTextNode(` Keep editing `));
+				setProp(_el$28, "fg", "#ffffff");
+				insertNode(_el$30, createTextNode(`ctrl+s save · d discard the changes · esc keep editing`));
 				effect((_p$) => {
 					var _v$ = props.warn ?? "#f59e0b", _v$2 = props.muted, _v$3 = props.muted, _v$4 = props.muted;
-					_v$ !== _p$.e && (_p$.e = setProp(_el$24, "fg", _v$, _p$.e));
-					_v$2 !== _p$.t && (_p$.t = setProp(_el$29, "fg", _v$2, _p$.t));
-					_v$3 !== _p$.a && (_p$.a = setProp(_el$34, "fg", _v$3, _p$.a));
-					_v$4 !== _p$.o && (_p$.o = setProp(_el$39, "fg", _v$4, _p$.o));
+					_v$ !== _p$.e && (_p$.e = setProp(_el$15, "fg", _v$, _p$.e));
+					_v$2 !== _p$.t && (_p$.t = setProp(_el$20, "fg", _v$2, _p$.t));
+					_v$3 !== _p$.a && (_p$.a = setProp(_el$25, "fg", _v$3, _p$.a));
+					_v$4 !== _p$.o && (_p$.o = setProp(_el$30, "fg", _v$4, _p$.o));
 					return _p$;
 				}, {
 					e: void 0,
@@ -2247,27 +2480,19 @@ function SettingsWindow(props) {
 					a: void 0,
 					o: void 0
 				});
-				return _el$22;
+				return _el$13;
 			}
 		}), null);
 		effect((_p$) => {
-			var _v$5 = props.fg, _v$6 = props.muted, _v$7 = props.muted, _v$8 = props.muted, _v$9 = props.muted, _v$0 = props.warn ?? props.fg, _v$1 = props.muted;
+			var _v$5 = props.fg, _v$6 = { fg: props.muted }, _v$7 = props.muted;
 			_v$5 !== _p$.e && (_p$.e = setProp(_el$3, "fg", _v$5, _p$.e));
-			_v$6 !== _p$.t && (_p$.t = setProp(_el$6, "fg", _v$6, _p$.t));
+			_v$6 !== _p$.t && (_p$.t = setProp(_el$6, "style", _v$6, _p$.t));
 			_v$7 !== _p$.a && (_p$.a = setProp(_el$0, "fg", _v$7, _p$.a));
-			_v$8 !== _p$.o && (_p$.o = setProp(_el$13, "fg", _v$8, _p$.o));
-			_v$9 !== _p$.i && (_p$.i = setProp(_el$15, "fg", _v$9, _p$.i));
-			_v$0 !== _p$.n && (_p$.n = setProp(_el$18, "fg", _v$0, _p$.n));
-			_v$1 !== _p$.s && (_p$.s = setProp(_el$19, "fg", _v$1, _p$.s));
 			return _p$;
 		}, {
 			e: void 0,
 			t: void 0,
-			a: void 0,
-			o: void 0,
-			i: void 0,
-			n: void 0,
-			s: void 0
+			a: void 0
 		});
 		return _el$;
 	})();
@@ -2291,6 +2516,9 @@ function createWindowController(context, exit) {
 	const [draft, setDraft] = createSignal({});
 	const [notice, setNotice] = createSignal(void 0);
 	const [confirmExit, setConfirmExit] = createSignal(false);
+	createEffect(() => {
+		setTuiDraftPreview(draft());
+	});
 	readChangelogForBundle(import.meta.url).then((text) => {
 		if (!text) return;
 		const hl = extractHighlights(text, currentVersion);
@@ -2332,7 +2560,7 @@ function createWindowController(context, exit) {
 		buildGatesTab(load()),
 		buildDecisionTab(decision(), process.env, readAuthProviders(), readConfigProviders()),
 		buildPresetTab(presetInput()),
-		buildTuiTab(tuiPrefs()),
+		buildTuiTab(savedTuiPrefs()),
 		buildAutonomyTab({
 			goalLoop: goalLoop(),
 			budgets: budgets(),
@@ -2392,7 +2620,7 @@ function createWindowController(context, exit) {
 					});
 				} catch {}
 			} else {
-				setNotice("✅ update complete — restart OpenCode or run `npx pantheon-opencode init`");
+				setNotice("[OK] update complete — restart OpenCode or run `npx pantheon-opencode init`");
 				try {
 					context.ui.toast?.show?.({
 						variant: "info",
@@ -2609,6 +2837,7 @@ function createWindowController(context, exit) {
 			return;
 		}
 		if (staged > 0) {
+			clearTuiDraftPreview();
 			setDraft({});
 			try {
 				context.ui.toast?.show?.({
@@ -2621,6 +2850,7 @@ function createWindowController(context, exit) {
 	};
 	const discard = () => {
 		const staged = draftCount(draft());
+		clearTuiDraftPreview();
 		setDraft({});
 		setConfirmExit(false);
 		if (staged > 0) try {
@@ -2635,6 +2865,26 @@ function createWindowController(context, exit) {
 		setConfirmExit(false);
 	};
 	const selectedId = () => rows()[selected()]?.id;
+	const selectById = (id) => {
+		if (confirmExit()) setConfirmExit(false);
+		const index = rows().findIndex((r) => r.id === id);
+		if (index !== -1) setSelected(index);
+	};
+	const cycleRowById = (id, direction) => {
+		if (confirmExit()) setConfirmExit(false);
+		const list = rows();
+		const index = list.findIndex((r) => r.id === id);
+		if (index !== -1) {
+			setSelected(index);
+			const row = list[index];
+			if (row?.action === "update-check") checkUpdatesNow();
+			else if (row?.action === "update-run") runUpdateNow();
+			else if (row) {
+				setNotice(void 0);
+				setDraft(stageValue(draft(), row, direction));
+			}
+		}
+	};
 	return {
 		tabs,
 		page,
@@ -2645,6 +2895,8 @@ function createWindowController(context, exit) {
 		api: {
 			move,
 			step,
+			selectById,
+			cycleRowById,
 			actuate: () => {
 				if (confirmExit()) setConfirmExit(false);
 				const row = rows()[selected()];
@@ -2653,6 +2905,14 @@ function createWindowController(context, exit) {
 				else step(1);
 			},
 			nextTab,
+			prevTab: () => {
+				if (confirmExit()) setConfirmExit(false);
+				const count = tabs().length;
+				if (count > 0) {
+					setPage((current) => (current - 1 + count) % count);
+					setSelected(0);
+				}
+			},
 			jumpTab: (index) => {
 				if (confirmExit()) setConfirmExit(false);
 				if (index >= 0 && index < tabs().length) {
@@ -2669,6 +2929,7 @@ function createWindowController(context, exit) {
 			confirmExit: () => confirmExit()
 		},
 		cleanup: () => {
+			clearTuiDraftPreview();
 			pageApi = void 0;
 			setBlocking(false);
 		}
@@ -2715,7 +2976,16 @@ function SettingsPage(props) {
 		get muted() {
 			return theme.muted;
 		},
-		warn
+		warn,
+		onJumpTab: (idx) => controller.api.jumpTab(idx),
+		onSelectRow: (id) => controller.api.selectById?.(id),
+		onCycleValue: (id, dir) => controller.api.cycleRowById?.(id, dir),
+		onSave: () => controller.api.save(),
+		onResetPage: () => controller.api.resetPage(),
+		onStageDefaults: () => controller.api.stageDefaults(),
+		onClose: () => controller.api.close(),
+		onDiscard: () => controller.api.discard?.(),
+		onCancelExit: () => controller.api.cancelExit?.()
 	});
 }
 function navigateBack(context, data) {
@@ -2746,6 +3016,8 @@ function openSettingsDialog(context) {
 	setBlocking(true);
 	setDialogOpen(true);
 	pageApi = controller.api;
+	const rendererHeight = () => context.renderer?.height ?? 30;
+	const maxHeight = () => Math.min(16, Math.max(8, Math.floor(rendererHeight() * .55)));
 	try {
 		context.ui.dialog.show(() => createComponent(SettingsWindow, {
 			get version() {
@@ -2775,9 +3047,170 @@ function openSettingsDialog(context) {
 			get muted() {
 				return theme.muted;
 			},
-			warn
+			warn,
+			isDialog: true,
+			get maxHeight() {
+				return maxHeight();
+			},
+			onJumpTab: (idx) => controller.api.jumpTab(idx),
+			onSelectRow: (id) => controller.api.selectById?.(id),
+			onCycleValue: (id, dir) => controller.api.cycleRowById?.(id, dir),
+			onSave: () => controller.api.save(),
+			onResetPage: () => controller.api.resetPage(),
+			onStageDefaults: () => controller.api.stageDefaults(),
+			onClose: () => controller.api.close(),
+			onDiscard: () => controller.api.discard?.(),
+			onCancelExit: () => controller.api.cancelExit?.()
 		}), close);
+		context.ui.dialog.set({ size: "large" });
 	} catch {}
+}
+const [settingsOpen, setSettingsOpen] = createSignal(false);
+const [activeSessionId, setActiveSessionId] = createSignal();
+function routeSessionID(context) {
+	try {
+		const route = context?.ui?.router?.current?.();
+		return route?.type === "session" ? route?.sessionID : void 0;
+	} catch {
+		return;
+	}
+}
+function closePantheonSettings() {
+	if (pageApi) {
+		pageApi.close();
+		if (pageApi.confirmExit?.()) return;
+	}
+	setSettingsOpen(false);
+	setBlocking(false);
+}
+function PantheonSettingsSlot(props) {
+	onMount(() => {
+		setActiveSessionId(props.sessionID);
+	});
+	onCleanup(() => {
+		if (activeSessionId() === props.sessionID) setActiveSessionId(void 0);
+	});
+	return createComponent(Show, {
+		get when() {
+			return memo(() => !!settingsOpen())() && (activeSessionId() === props.sessionID || !activeSessionId());
+		},
+		get children() {
+			return createComponent(InSessionSettingsWindow, {
+				get context() {
+					return props.context;
+				},
+				get sessionID() {
+					return props.sessionID;
+				}
+			});
+		}
+	});
+}
+function InSessionSettingsWindow(props) {
+	let windowBox;
+	const context = props.context;
+	const initialRoom = () => Math.max(14, (context.renderer?.height ?? 30) - 10);
+	const [roomHeight, setRoomHeight] = createSignal(initialRoom());
+	const [hasKeyboard, setHasKeyboard] = createSignal(false);
+	function measureRoom() {
+		const box = windowBox;
+		if (!box || box.isDestroyed) return;
+		let child = box;
+		for (let parent = box.parent; parent; child = parent, parent = parent.parent) {
+			const siblings = parent.getChildren?.() ?? [];
+			const messages = siblings[0];
+			if (messages === child || !messages?.getChildren?.().some((item) => "scrollChildIntoView" in item)) continue;
+			const otherRows = siblings.filter((item) => item !== child && item !== messages).reduce((total, item) => total + (item.height ?? 0), 0);
+			const room = Math.max(12, (parent.height ?? 24) - 1 - otherRows - ((child.height ?? 0) - (box.height ?? 0)));
+			if (room !== roomHeight()) queueMicrotask(() => setRoomHeight(room));
+			return;
+		}
+	}
+	onMount(() => {
+		try {
+			context.renderer?.root?.on?.("layout-changed", measureRoom);
+			context.renderer?.on?.("resize", measureRoom);
+			onCleanup(() => {
+				try {
+					context.renderer?.root?.off?.("layout-changed", measureRoom);
+					context.renderer?.off?.("resize", measureRoom);
+				} catch {}
+			});
+		} catch {}
+		measureRoom();
+		setTimeout(() => {
+			try {
+				windowBox?.focus?.();
+			} catch {}
+		}, 50);
+	});
+	try {
+		const popMode = context.keymap?.mode?.push?.(ROUTE_MODE);
+		if (popMode !== void 0) onCleanup(() => popMode());
+	} catch {}
+	const controller = createWindowController(context, () => {
+		setSettingsOpen(false);
+		setBlocking(false);
+	});
+	onCleanup(controller.cleanup);
+	pageApi = controller.api;
+	const theme = context.theme?.text ?? {};
+	const warn = theme?.feedback?.warning?.base ?? "#fba970";
+	return createComponent(SettingsWindow, {
+		boxRef: (el) => {
+			windowBox = el;
+			if (el) {
+				el.on?.("focused", () => setHasKeyboard(true));
+				el.on?.("blurred", () => setHasKeyboard(false));
+			}
+		},
+		get height() {
+			return roomHeight();
+		},
+		get version() {
+			return resolveRunningVersion();
+		},
+		get tabs() {
+			return controller.tabs;
+		},
+		get page() {
+			return controller.page;
+		},
+		get selectedId() {
+			return controller.selectedId;
+		},
+		get draft() {
+			return controller.draft;
+		},
+		get notice() {
+			return controller.notice;
+		},
+		get confirmExit() {
+			return controller.confirmExit;
+		},
+		get fg() {
+			return theme.base;
+		},
+		get muted() {
+			return theme.muted;
+		},
+		warn,
+		hasKeyboard,
+		onJumpTab: (idx) => controller.api.jumpTab(idx),
+		onSelectRow: (id) => controller.api.selectById?.(id),
+		onCycleValue: (id, dir) => controller.api.cycleRowById?.(id, dir),
+		onSave: () => controller.api.save(),
+		onResetPage: () => controller.api.resetPage(),
+		onStageDefaults: () => controller.api.stageDefaults(),
+		onClose: () => closePantheonSettings(),
+		onDiscard: () => controller.api.discard?.(),
+		onCancelExit: () => controller.api.cancelExit?.(),
+		onMouseDown: () => {
+			try {
+				windowBox?.focus?.();
+			} catch {}
+		}
+	});
 }
 function setupPantheonSettings(context) {
 	try {
@@ -2806,26 +3239,15 @@ function setupPantheonSettings(context) {
 			title: "Close settings",
 			bind: "escape,q",
 			run: () => {
-				try {
-					context.ui.toast?.show?.({
-						variant: "info",
-						message: "settings: close command fired"
-					});
-				} catch {}
 				if (pageApi === void 0) {
-					try {
-						context.ui.toast?.show?.({
-							variant: "warning",
-							message: "settings: no window controller bound"
-						});
-					} catch {}
+					closePantheonSettings();
 					return;
 				}
 				if (pageApi.confirmExit?.()) {
 					pageApi.cancelExit?.();
 					return;
 				}
-				pageApi.close();
+				closePantheonSettings();
 			}
 		},
 		{
@@ -2888,6 +3310,14 @@ function setupPantheonSettings(context) {
 			}
 		},
 		{
+			id: "pantheon.settings.prev.tab",
+			title: "Previous settings tab",
+			bind: "shift+tab",
+			run: () => {
+				pageApi?.prevTab?.();
+			}
+		},
+		{
 			id: "pantheon.settings.save",
 			title: "Save staged changes",
 			bind: "ctrl+s",
@@ -2924,7 +3354,7 @@ function setupPantheonSettings(context) {
 		context.keymap.layer(() => ({
 			mode: ROUTE_MODE,
 			priority: 1,
-			enabled: () => routeGated(),
+			enabled: () => routeGated() || settingsOpen(),
 			commands
 		}));
 	} catch {}
@@ -2932,14 +3362,15 @@ function setupPantheonSettings(context) {
 		context.keymap.layer(() => ({
 			mode: "global",
 			priority: 1,
-			enabled: () => dialogOpen(),
+			enabled: () => dialogOpen() || settingsOpen(),
 			commands
 		}));
 	} catch {}
 }
 async function openPantheonSettings(context) {
 	try {
-		if (routerAvailable && context.ui?.router?.navigate) {
+		const viewMode = tuiPrefs().layout?.settingsView ?? "docked";
+		if (viewMode === "fullscreen" && routerAvailable && context.ui?.router?.navigate) {
 			let returnRoute;
 			try {
 				const current = context.ui.router.current();
@@ -2954,8 +3385,27 @@ async function openPantheonSettings(context) {
 			});
 			return;
 		}
+		if (viewMode === "dialog") {
+			openSettingsDialog(context);
+			return;
+		}
 	} catch {}
-	openSettingsDialog(context);
+	if (!(context?.sessionID ?? routeSessionID(context) ?? activeSessionId())) {
+		try {
+			context.ui?.toast?.show?.({
+				variant: "info",
+				title: "Pantheon",
+				message: "Open a session first: Pantheon settings opens above the prompt box."
+			});
+		} catch {}
+		return;
+	}
+	if (settingsOpen()) {
+		closePantheonSettings();
+		return;
+	}
+	setSettingsOpen(true);
+	setBlocking(true);
 }
 //#endregion
 //#region src/sidebar-width.ts
@@ -3287,54 +3737,154 @@ async function openWhatsNew(input) {
 * CHANGELOG.md, unreadable state, a host API that throws — the window simply
 * does not show (fail-open, like the rest of the plugin).
 */
-/** Window body: title, rule, the current page (wrapped), footer hint. */
+/** Window body: title, rule, the current page (wrapped), footer action bar with OK button. */
 function WhatsNewContent(props) {
 	const rows = () => {
 		const current = props.data.pages[Math.min(props.page(), props.pageCount() - 1)] ?? [];
 		const wrapped = [];
-		for (const line of current) wrapped.push(...wrapWhatsNewLine(line, 76));
+		for (const line of current) wrapped.push(...wrapWhatsNewLine(line, 72));
 		return wrapped;
 	};
 	return (() => {
-		var _el$ = createElement("box"), _el$2 = createElement("text"), _el$3 = createElement("text"), _el$5 = createElement("box"), _el$6 = createElement("text");
+		var _el$ = createElement("box"), _el$2 = createElement("box"), _el$3 = createElement("box"), _el$4 = createElement("box"), _el$5 = createElement("text"), _el$7 = createElement("text"), _el$8 = createElement("box"), _el$9 = createElement("text"), _el$1 = createElement("box"), _el$10 = createElement("text"), _el$12 = createElement("box"), _el$13 = createElement("box"), _el$14 = createElement("text"), _el$16 = createElement("box"), _el$17 = createElement("box"), _el$25 = createElement("text"), _el$27 = createElement("box"), _el$28 = createElement("text");
 		insertNode(_el$, _el$2);
-		insertNode(_el$, _el$3);
-		insertNode(_el$, _el$5);
-		insertNode(_el$, _el$6);
+		insertNode(_el$, _el$1);
+		insertNode(_el$, _el$12);
+		insertNode(_el$, _el$13);
+		insertNode(_el$, _el$16);
 		setProp(_el$, "flexDirection", "column");
-		setProp(_el$, "paddingLeft", 1);
-		setProp(_el$, "paddingRight", 1);
+		setProp(_el$, "borderStyle", "rounded");
+		setProp(_el$, "paddingLeft", 2);
+		setProp(_el$, "paddingRight", 2);
 		setProp(_el$, "paddingTop", 1);
-		setProp(_el$2, "attributes", 1);
-		insert(_el$2, () => props.data.title);
-		insertNode(_el$3, createTextNode(`──────────────────────────────────────`));
-		insert(_el$, createComponent(For, {
+		setProp(_el$, "paddingBottom", 1);
+		insertNode(_el$2, _el$3);
+		insertNode(_el$2, _el$8);
+		setProp(_el$2, "flexDirection", "row");
+		setProp(_el$2, "alignItems", "center");
+		setProp(_el$2, "justifyContent", "space-between");
+		insertNode(_el$3, _el$4);
+		insertNode(_el$3, _el$7);
+		setProp(_el$3, "flexDirection", "row");
+		setProp(_el$3, "alignItems", "center");
+		insertNode(_el$4, _el$5);
+		setProp(_el$4, "paddingLeft", 1);
+		setProp(_el$4, "paddingRight", 1);
+		setProp(_el$4, "marginRight", 1);
+		insertNode(_el$5, createTextNode(`NOVIDADES`));
+		setProp(_el$5, "fg", "#000000");
+		setProp(_el$5, "attributes", 1);
+		setProp(_el$7, "attributes", 1);
+		insert(_el$7, () => props.data.title);
+		insertNode(_el$8, _el$9);
+		setProp(_el$8, "onMouseDown", () => props.onClose?.());
+		insertNode(_el$9, createTextNode(`[ Esc / Q ]`));
+		insertNode(_el$1, _el$10);
+		setProp(_el$1, "flexDirection", "row");
+		setProp(_el$1, "height", 1);
+		setProp(_el$1, "marginTop", 1);
+		setProp(_el$1, "marginBottom", 1);
+		insertNode(_el$10, createTextNode(`────────────────────────────────────────────────────────────────────────`));
+		setProp(_el$12, "flexDirection", "column");
+		setProp(_el$12, "minHeight", 8);
+		insert(_el$12, createComponent(For, {
 			get each() {
 				return rows();
 			},
-			children: (line) => (() => {
-				var _el$7 = createElement("text");
-				insert(_el$7, line);
-				effect((_$p) => setProp(_el$7, "fg", line.startsWith("• ") ? props.fg : props.muted, _$p));
-				return _el$7;
-			})()
-		}), _el$5);
-		setProp(_el$5, "height", 1);
-		insert(_el$6, (() => {
-			var _c$ = memo(() => props.pageCount() > 1);
-			return () => _c$() ? `${props.page() + 1}/${props.pageCount()} · ` : "";
-		})(), null);
-		insert(_el$6, () => props.data.hint, null);
+			children: (line) => {
+				const isBullet = line.startsWith("• ");
+				return (() => {
+					var _el$30 = createElement("text");
+					spread(_el$30, mergeProps({ get fg() {
+						return isBullet ? props.fg : props.muted;
+					} }, isBullet ? { attributes: 1 } : {}), true);
+					insert(_el$30, line);
+					return _el$30;
+				})();
+			}
+		}));
+		insertNode(_el$13, _el$14);
+		setProp(_el$13, "flexDirection", "row");
+		setProp(_el$13, "height", 1);
+		setProp(_el$13, "marginTop", 1);
+		insertNode(_el$14, createTextNode(`────────────────────────────────────────────────────────────────────────`));
+		insertNode(_el$16, _el$17);
+		insertNode(_el$16, _el$27);
+		setProp(_el$16, "flexDirection", "row");
+		setProp(_el$16, "alignItems", "center");
+		setProp(_el$16, "justifyContent", "space-between");
+		setProp(_el$16, "marginTop", 1);
+		insertNode(_el$17, _el$25);
+		setProp(_el$17, "flexDirection", "row");
+		setProp(_el$17, "alignItems", "center");
+		insert(_el$17, createComponent(Show, {
+			get when() {
+				return props.pageCount() > 1;
+			},
+			get children() {
+				return [
+					(() => {
+						var _el$18 = createElement("box"), _el$19 = createElement("text");
+						insertNode(_el$18, _el$19);
+						setProp(_el$18, "backgroundColor", "#262626");
+						setProp(_el$18, "paddingLeft", 1);
+						setProp(_el$18, "paddingRight", 1);
+						setProp(_el$18, "marginRight", 1);
+						setProp(_el$18, "onMouseDown", () => props.onPrev?.());
+						insertNode(_el$19, createTextNode(`‹ Anterior`));
+						setProp(_el$19, "fg", "#ffffff");
+						return _el$18;
+					})(),
+					(() => {
+						var _el$21 = createElement("text");
+						setProp(_el$21, "marginRight", 1);
+						insert(_el$21, () => `${props.page() + 1} / ${props.pageCount()}`);
+						effect((_$p) => setProp(_el$21, "fg", props.muted, _$p));
+						return _el$21;
+					})(),
+					(() => {
+						var _el$22 = createElement("box"), _el$23 = createElement("text");
+						insertNode(_el$22, _el$23);
+						setProp(_el$22, "backgroundColor", "#262626");
+						setProp(_el$22, "paddingLeft", 1);
+						setProp(_el$22, "paddingRight", 1);
+						setProp(_el$22, "marginRight", 1);
+						setProp(_el$22, "onMouseDown", () => props.onNext?.());
+						insertNode(_el$23, createTextNode(`Próximo ›`));
+						setProp(_el$23, "fg", "#ffffff");
+						return _el$22;
+					})()
+				];
+			}
+		}), _el$25);
+		insertNode(_el$25, createTextNode(`Enter / Esc / Q fechar`));
+		insertNode(_el$27, _el$28);
+		setProp(_el$27, "paddingLeft", 2);
+		setProp(_el$27, "paddingRight", 2);
+		setProp(_el$27, "onMouseDown", () => props.onClose?.());
+		insertNode(_el$28, createTextNode(`OK, Entendido`));
+		setProp(_el$28, "fg", "#000000");
+		setProp(_el$28, "attributes", 1);
 		effect((_p$) => {
-			var _v$ = props.fg, _v$2 = props.muted, _v$3 = props.muted;
-			_v$ !== _p$.e && (_p$.e = setProp(_el$2, "fg", _v$, _p$.e));
-			_v$2 !== _p$.t && (_p$.t = setProp(_el$3, "fg", _v$2, _p$.t));
-			_v$3 !== _p$.a && (_p$.a = setProp(_el$6, "fg", _v$3, _p$.a));
+			var _v$ = props.warn ?? "#fba970", _v$2 = props.warn ?? "#fba970", _v$3 = props.fg, _v$4 = props.muted, _v$5 = props.muted, _v$6 = props.muted, _v$7 = props.muted, _v$8 = props.warn ?? "#fba970";
+			_v$ !== _p$.e && (_p$.e = setProp(_el$, "borderColor", _v$, _p$.e));
+			_v$2 !== _p$.t && (_p$.t = setProp(_el$4, "backgroundColor", _v$2, _p$.t));
+			_v$3 !== _p$.a && (_p$.a = setProp(_el$7, "fg", _v$3, _p$.a));
+			_v$4 !== _p$.o && (_p$.o = setProp(_el$9, "fg", _v$4, _p$.o));
+			_v$5 !== _p$.i && (_p$.i = setProp(_el$10, "fg", _v$5, _p$.i));
+			_v$6 !== _p$.n && (_p$.n = setProp(_el$14, "fg", _v$6, _p$.n));
+			_v$7 !== _p$.s && (_p$.s = setProp(_el$25, "fg", _v$7, _p$.s));
+			_v$8 !== _p$.h && (_p$.h = setProp(_el$27, "backgroundColor", _v$8, _p$.h));
 			return _p$;
 		}, {
 			e: void 0,
 			t: void 0,
-			a: void 0
+			a: void 0,
+			o: void 0,
+			i: void 0,
+			n: void 0,
+			s: void 0,
+			h: void 0
 		});
 		return _el$;
 	})();
@@ -3359,6 +3909,15 @@ async function maybeShowWhatsNewV2(context) {
 				mode: "global",
 				enabled: () => open(),
 				commands: [
+					{
+						id: "pantheon.whats-new.confirm",
+						title: "Confirmar e fechar o que há de novo",
+						bind: "enter,space",
+						run: () => {
+							if (!open()) return false;
+							dismiss();
+						}
+					},
 					{
 						id: "pantheon.whats-new.close",
 						title: "Fechar o que há de novo",
@@ -3409,6 +3968,7 @@ async function maybeShowWhatsNewV2(context) {
 				setOpen(true);
 				try {
 					const theme = context.theme?.text ?? {};
+					const warn = theme?.feedback?.warning?.base ?? "#fba970";
 					context.ui.dialog.show(() => createComponent(WhatsNewContent, {
 						data: viewData,
 						page,
@@ -3418,7 +3978,11 @@ async function maybeShowWhatsNewV2(context) {
 						},
 						get muted() {
 							return theme.muted;
-						}
+						},
+						warn,
+						onClose: dismiss,
+						onNext: () => setPage((current) => Math.min(current + 1, pageCount() - 1)),
+						onPrev: () => setPage((current) => Math.max(current - 1, 0))
 					}), close);
 				} catch {}
 			}
@@ -5716,7 +6280,7 @@ async function checkForPantheonUpdate(context) {
 	const latest = String((await response.json())?.version ?? "");
 	if (!latest) return;
 	const notice = pickUpdateNotice({
-		currentVersion: "2.0.0-rc.1",
+		currentVersion: "2.0.0-rc.2",
 		latestVersion: latest,
 		state: readState(),
 		nowMs: Date.now()
@@ -5780,8 +6344,19 @@ function useActivePreset(context) {
 			clearInterval(timer);
 		});
 	});
+	const effectivePreset = () => {
+		const preview = tuiDraftPreview();
+		if (preview && "preset" in preview) {
+			const stagedName = preview.preset;
+			return {
+				...preset(),
+				name: stagedName === "none" ? null : stagedName
+			};
+		}
+		return preset();
+	};
 	return {
-		preset,
+		preset: effectivePreset,
 		overrides
 	};
 }
@@ -6517,7 +7092,7 @@ function Sidebar(props) {
 			get children() {
 				var _el$13 = createElement("text");
 				setProp(_el$13, "attributes", 1);
-				insert(_el$13, `Pantheon v2.0.0-rc.1`);
+				insert(_el$13, `Pantheon v2.0.0-rc.2`);
 				effect((_$p) => setProp(_el$13, "fg", text(), _$p));
 				return _el$13;
 			}
@@ -7289,7 +7864,7 @@ function HomeStatus(props) {
 		},
 		get children() {
 			var _el$73 = createElement("text");
-			insert(_el$73, () => `Pantheon v2.0.0-rc.1${preset().name ? ` ▸ ${preset().name}` : ""}`);
+			insert(_el$73, () => `Pantheon v2.0.0-rc.2${preset().name ? ` ▸ ${preset().name}` : ""}`);
 			effect((_$p) => setProp(_el$73, "fg", muted(), _$p));
 			return _el$73;
 		}
@@ -7408,6 +7983,13 @@ const plugin = Plugin.define({
 		try {
 			setupPantheonSettings(context);
 		} catch {}
+		const unregisterSettingsSlot = context.ui.slot({
+			append: "session.composer.top",
+			render: ({ sessionID }) => createComponent(PantheonSettingsSlot, {
+				context,
+				sessionID
+			})
+		});
 		maybeShowWhatsNewV2(context);
 		return () => {
 			clearTimeout(updateNoticeTimer);
@@ -7415,6 +7997,7 @@ const plugin = Plugin.define({
 			if (typeof unregisterHome === "function") unregisterHome();
 			if (typeof unregisterPromptFooter === "function") unregisterPromptFooter();
 			if (typeof unregisterPanel === "function") unregisterPanel();
+			if (typeof unregisterSettingsSlot === "function") unregisterSettingsSlot();
 			if (typeof unregisterCommands === "function") unregisterCommands();
 			if (typeof unregisterSettingsCommands === "function") unregisterSettingsCommands();
 			delete globalState[SINGLETON];

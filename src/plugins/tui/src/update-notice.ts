@@ -29,17 +29,19 @@ export interface UpdateNotice {
   message: string
 }
 
-/** Semver-ish compare for X.Y.Z[-beta.N]; betas sort before their release. */
+/** Semver-ish compare for X.Y.Z[-(beta|rc).N]; prereleases sort before their release. */
 export function comparePantheonVersions(left: string, right: string): number {
   const parse = (version: string) => {
     const match = String(version)
       .trim()
-      .match(/^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/)
+      .match(/^(\d+)\.(\d+)\.(\d+)(?:-(beta|rc)\.(\d+))?$/)
     if (!match) return null
-    const [, major = '', minor = '', patch = '', beta = ''] = match
+    const [, major = '', minor = '', patch = '', stage = '', stageNum = ''] = match
+    const stageRank = stage === 'beta' ? 1 : stage === 'rc' ? 2 : 3
     return {
       core: [+major, +minor, +patch] as [number, number, number],
-      beta: beta === '' ? Number.POSITIVE_INFINITY : +beta,
+      stageRank,
+      stageNum: stage !== '' ? +stageNum : Number.POSITIVE_INFINITY,
     }
   }
   const a = parse(left)
@@ -50,7 +52,8 @@ export function comparePantheonVersions(left: string, right: string): number {
   if (aMajor !== bMajor) return aMajor - bMajor
   if (aMinor !== bMinor) return aMinor - bMinor
   if (aPatch !== bPatch) return aPatch - bPatch
-  return a.beta - b.beta
+  if (a.stageRank !== b.stageRank) return a.stageRank - b.stageRank
+  return a.stageNum - b.stageNum
 }
 
 export function pickUpdateNotice(input: UpdateNoticeInput): UpdateNotice | null {
@@ -61,7 +64,7 @@ export function pickUpdateNotice(input: UpdateNoticeInput): UpdateNotice | null 
   if (nowMs - lastCheck < ttlMs) return null
   if (state.lastNotifiedVersion === latestVersion) return null
 
-  const stable = (version: string) => !/-beta\.\d+$/.test(version)
+  const stable = (version: string) => !/-(?:beta|rc)\.\d+$/.test(version)
   // A stable install is never advertised a beta: the update guard owns that
   // crossing and requires explicit opt-in there.
   if (stable(currentVersion) && !stable(latestVersion)) return null

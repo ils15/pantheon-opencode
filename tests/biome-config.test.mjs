@@ -6,6 +6,10 @@ const root = new URL('../', import.meta.url)
 const biome = JSON.parse(readFileSync(new URL('biome.json', root), 'utf8'))
 
 const allowedExclusions = [
+  // Generated files: committed esbuild output / build artifacts that must not be
+  // reformatted away from their build output.
+  '!src/plugin/index.js',
+  '!dist',
   '!src/plugins/tui/dist',
   // Committed esbuild output for the installed decision-router CLI: Node cannot
   // type-strip inside node_modules, so this generated ESM bundle ships as-is

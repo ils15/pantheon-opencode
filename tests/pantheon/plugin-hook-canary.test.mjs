@@ -94,16 +94,17 @@ const PREFERRED_MODELS = [
 /** Label `plugin.ts` writes only when this env var is set. */
 const LIFETIME_PROOF_LABEL = 'plugin:session.hook:compaction'
 
-const BINARY_AVAILABLE = (() => {
+const RAW_HOST_VERSION = (() => {
   try {
-    return spawnSync(BIN, ['--version'], { stdio: 'ignore' }).status === 0
+    const res = spawnSync(BIN, ['--version'], { encoding: 'utf8' })
+    return res.status === 0 ? (res.stdout || '').trim() : ''
   } catch {
-    return false
+    return ''
   }
 })()
-const HOST_VERSION = BINARY_AVAILABLE
-  ? spawnSync(BIN, ['--version'], { encoding: 'utf8' }).stdout.trim()
-  : ''
+const MAJOR_VERSION = parseInt(RAW_HOST_VERSION.replace(/^v/, '').split('.')[0], 10)
+const BINARY_AVAILABLE = !Number.isNaN(MAJOR_VERSION) && MAJOR_VERSION >= 2
+const HOST_VERSION = BINARY_AVAILABLE ? RAW_HOST_VERSION : ''
 
 /** Result of {@link resolveCanaryModel}; `model` is empty when unusable. */
 function resolveCanaryModel() {

@@ -27,7 +27,7 @@ import { execFile } from 'node:child_process'
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Context } from '@opencode/plugin/tui/context'
-import { createSignal, For, onCleanup, Show } from 'solid-js'
+import { createEffect, createSignal, For, onCleanup, onMount, Show } from 'solid-js'
 import {
   buildAutonomyTab,
   DEFAULT_DECISION_BUDGETS,
@@ -59,6 +59,7 @@ import {
   draftDirty,
   type EffectiveOverrides,
   EMPTY_TAB,
+  findRow,
   type OverridesLoad,
   resetTab,
   type SettingsDraft,
@@ -81,7 +82,15 @@ import {
   readActivePresetMarker,
   writeActivePreset,
 } from './preset-state.ts'
-import { applyTuiRow, buildTuiTab, mutateTuiPrefs, tuiPrefs } from './tui-prefs.ts'
+import {
+  applyTuiRow,
+  buildTuiTab,
+  clearTuiDraftPreview,
+  mutateTuiPrefs,
+  savedTuiPrefs,
+  setTuiDraftPreview,
+  tuiPrefs,
+} from './tui-prefs.ts'
 import { nextCheckState, type UpdateCheckState } from './update-notice.ts'
 import {
   buildUpdatesTab,
@@ -365,8 +374,8 @@ function resolveRunningVersion(): string {
 
 // ── The window view (presentational; both surfaces render it) ──────────
 
-const NAME_WIDTH = 28
-const VALUE_WIDTH = 22
+const NAME_WIDTH = 26
+const VALUE_WIDTH = 24
 
 export function SettingsWindow(props: {
   version: string
@@ -379,73 +388,108 @@ export function SettingsWindow(props: {
   fg?: any
   muted?: any
   warn?: any
+  hasKeyboard?: () => boolean
+  onJumpTab?: (index: number) => void
+  onSelectRow?: (id: string) => void
+  onCycleValue?: (id: string, direction: 1 | -1) => void
+  onSave?: () => void
+  onResetPage?: () => void
+  onStageDefaults?: () => void
+  onClose?: () => void
+  onDiscard?: () => void
+  onCancelExit?: () => void
+  isDialog?: boolean
+  maxHeight?: number
+  height?: number
+  boxRef?: (el: any) => void
+  onMouseDown?: () => void
 }) {
   const tab = () => props.tabs()[props.page()] ?? props.tabs()[0] ?? EMPTY_TAB
   return (
-    <box flexDirection="column" paddingLeft={1} paddingRight={1} paddingTop={1}>
-      {/* ── Top Header bar: Title + Horizontal Tabs + ESC (matching image.png) ── */}
-      <box flexDirection="row" alignItems="center">
-        <text attributes={1} fg={props.fg}>
-          {`Pantheon v${props.version}`}
+    <box
+      {...(props.boxRef !== undefined ? { ref: props.boxRef } : {})}
+      focusable
+      flexDirection="column"
+      {...(props.height !== undefined ? { height: props.height } : { flexGrow: 1, flexBasis: 0 })}
+      minHeight={0}
+      border={!props.isDialog}
+      {...(props.isDialog ? {} : { borderStyle: 'rounded' as const })}
+      borderColor={
+        props.isDialog
+          ? undefined
+          : props.hasKeyboard?.()
+            ? (props.warn ?? '#fba970')
+            : (props.muted ?? '#52525b')
+      }
+      paddingLeft={1}
+      paddingRight={1}
+      paddingTop={0}
+      paddingBottom={0}
+      {...(props.onMouseDown !== undefined ? { onMouseDown: props.onMouseDown } : {})}
+    >
+      {/* ── Top Header bar: Title + Horizontal Clickable Tabs + ESC (matching opencode-quota) ── */}
+      <box
+        flexDirection="row"
+        flexWrap="wrap"
+        alignItems="center"
+        flexShrink={0}
+        marginBottom={1}
+        rowGap={1}
+      >
+        <text fg={props.fg} attributes={1} wrapMode="none">
+          <b>{'Pantheon'}</b>
+          <span style={{ fg: props.muted }}>{` v${props.version}`}</span>
         </text>
         <box width={2} />
-        <box flexDirection="row" flexGrow={1} flexShrink={1}>
+        <box
+          flexDirection="row"
+          flexWrap="wrap"
+          flexGrow={1}
+          flexShrink={0}
+          columnGap={1}
+          rowGap={1}
+        >
           <For each={props.tabs()}>
             {(t, index) => {
               const isActive = () => index() === props.page()
               return (
-                <text
+                <box
+                  onMouseDown={() => props.onJumpTab?.(index())}
+                  paddingLeft={1}
+                  paddingRight={1}
                   flexShrink={0}
-                  fg={isActive() ? (props.warn ?? props.fg) : props.muted}
-                  {...(isActive() ? { attributes: 1 } : {})}
+                  {...(isActive() ? { backgroundColor: '#262626' } : {})}
                 >
-                  {`${t.title}${tabDirty(props.draft(), t) ? ' ●' : ''}  `}
-                </text>
+                  <text
+                    wrapMode="none"
+                    fg={isActive() ? (props.warn ?? '#fba970') : props.muted}
+                    {...(isActive() ? { attributes: 1 } : {})}
+                  >
+                    {`${t.title}${tabDirty(props.draft(), t) ? ' ●' : ''}`}
+                  </text>
+                </box>
               )
             }}
           </For>
         </box>
-        <text fg={props.muted}>{'esc'}</text>
-      </box>
-
-      {/* ── Thin divider under header ── */}
-      <box flexDirection="row" height={1}>
-        <box flexGrow={1}>
-          <text fg={props.muted}>{'─'.repeat(78)}</text>
-        </box>
-      </box>
-
-      {/* ── Main Body: Left Rail + Content (matching image.png & image_2.png) ── */}
-      <box flexDirection="row">
-        {/* Left Rail: Tab list with active indicator */}
-        <box width={18} flexDirection="column">
-          <For each={props.tabs()}>
-            {(t, index) => {
-              const isActive = () => index() === props.page()
-              return (
-                <text
-                  fg={isActive() ? (props.warn ?? props.fg) : props.muted}
-                  {...(isActive() ? { attributes: 1 } : {})}
-                >
-                  {`${isActive() ? '▸ ' : '  '}${t.title}${tabDirty(props.draft(), t) ? ' ●' : ''}`}
-                </text>
-              )
-            }}
-          </For>
-          <box height={1} />
-          <text fg={props.muted}>{'1-9: tab'}</text>
-          <text fg={props.muted}>{'tab: next'}</text>
-        </box>
-
-        {/* Content panel */}
-        <box flexGrow={1} flexShrink={1} flexDirection="column" paddingLeft={1}>
-          <text attributes={1} fg={props.warn ?? props.fg}>
-            {tab().title}
+        <box onMouseDown={() => props.onClose?.()} paddingLeft={1} flexShrink={0}>
+          <text fg={props.muted} wrapMode="none">
+            {'esc'}
           </text>
-          <text fg={props.muted}>{'─'.repeat(40)}</text>
+        </box>
+      </box>
+
+      {/* ── Main Body: Scrollable content panel ── */}
+      <box flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0} overflow="hidden">
+        <scrollbox
+          flexGrow={1}
+          flexBasis={0}
+          minHeight={0}
+          {...(props.maxHeight !== undefined ? { maxHeight: props.maxHeight } : {})}
+        >
           <For each={tab().groups}>
             {(group) => (
-              <box flexDirection="column">
+              <box flexDirection="column" marginBottom={1}>
                 <Show when={group.title !== undefined}>
                   <text attributes={1} fg={props.warn ?? props.fg}>
                     {group.title}
@@ -456,27 +500,40 @@ export function SettingsWindow(props: {
                     const isSelected = () => row.id === props.selectedId()
                     const display = () => props.draft()[row.id] ?? row.value
                     const staged = () => props.draft()[row.id] !== undefined
-                    const gutter = () => (isSelected() ? '  ' : '  ')
-                    const valueCell = () =>
-                      row.cycle !== undefined ? `< ${display()} >` : display()
+                    const gutter = () => (isSelected() ? '▸ ' : '  ')
+                    const valueCell = () => {
+                      if (row.cycle !== undefined) return `< ${display()} >`
+                      if (row.action !== undefined) return `[ ${display()} ]`
+                      if (row.id.startsWith('autonomy.gradient.')) return `[ref] ${display()}`
+                      return display()
+                    }
                     return (
                       <box
                         flexDirection="row"
-                        backgroundColor={isSelected() ? (props.warn ?? '#f59e0b') : undefined}
+                        {...(isSelected() ? { backgroundColor: '#262626' } : {})}
+                        onMouseDown={() => {
+                          props.onSelectRow?.(row.id)
+                        }}
                       >
                         <box width={NAME_WIDTH + 2}>
                           <text
-                            fg={isSelected() ? '#000000' : props.fg}
+                            fg={isSelected() ? (props.warn ?? '#fba970') : props.fg}
                             {...(isSelected() ? { attributes: 1 } : {})}
                           >
                             {`${gutter()}${row.name}`.padEnd(NAME_WIDTH + 2)}
                           </text>
                         </box>
-                        <box width={VALUE_WIDTH}>
+                        <box
+                          width={VALUE_WIDTH}
+                          onMouseDown={() => {
+                            props.onSelectRow?.(row.id)
+                            props.onCycleValue?.(row.id, 1)
+                          }}
+                        >
                           <text
                             fg={
                               isSelected()
-                                ? '#000000'
+                                ? '#ffffff'
                                 : staged()
                                   ? (props.warn ?? props.fg)
                                   : props.muted
@@ -488,26 +545,31 @@ export function SettingsWindow(props: {
                         </box>
                         <Show when={row.note !== undefined}>
                           <box flexGrow={1} flexShrink={1}>
-                            <text fg={isSelected() ? '#111827' : props.muted}>{row.note}</text>
+                            <text fg={isSelected() ? '#e5e7eb' : props.muted}>{row.note}</text>
                           </box>
                         </Show>
                       </box>
                     )
                   }}
                 </For>
-                <box height={1} />
               </box>
             )}
           </For>
-        </box>
+        </scrollbox>
       </box>
 
       {/* ── Footer: notice + botões (chips) + keys (matching image.png & image_2.png) ── */}
       <Show when={props.notice() !== undefined}>
-        <text fg={props.notice()?.startsWith('✅') ? props.fg : (props.warn ?? props.muted)}>
-          {props.notice()?.startsWith('✅') || props.notice()?.startsWith('saved')
+        <text
+          fg={
+            props.notice()?.startsWith('[OK]') || props.notice()?.startsWith('saved')
+              ? props.fg
+              : (props.warn ?? props.muted)
+          }
+        >
+          {props.notice()?.startsWith('[OK]') || props.notice()?.startsWith('saved')
             ? props.notice()
-            : `⚠ ${props.notice()}`}
+            : `[WARN] ${props.notice()}`}
         </text>
       </Show>
 
@@ -518,43 +580,94 @@ export function SettingsWindow(props: {
             <Show
               when={draftDirty(props.draft())}
               fallback={
-                <box flexDirection="row">
-                  <box backgroundColor="#262626">
+                <box
+                  flexDirection="row"
+                  flexWrap="wrap"
+                  alignItems="center"
+                  flexShrink={0}
+                  rowGap={1}
+                >
+                  <box
+                    backgroundColor="#262626"
+                    flexShrink={0}
+                    onMouseDown={() => props.onClose?.()}
+                  >
                     <text fg="#ffffff">{' Close '}</text>
                   </box>
-                  <text fg={props.muted}>{'  '}</text>
-                  <box backgroundColor="#262626">
+                  <text fg={props.muted} flexShrink={0}>
+                    {'  '}
+                  </text>
+                  <box
+                    backgroundColor="#262626"
+                    flexShrink={0}
+                    onMouseDown={() => props.onResetPage?.()}
+                  >
                     <text fg="#ffffff">{' Reset page '}</text>
                   </box>
-                  <text fg={props.muted}>{'  '}</text>
-                  <box backgroundColor="#262626">
+                  <text fg={props.muted} flexShrink={0}>
+                    {'  '}
+                  </text>
+                  <box
+                    backgroundColor="#262626"
+                    flexShrink={0}
+                    onMouseDown={() => props.onStageDefaults?.()}
+                  >
                     <text fg="#ffffff">{' Defaults '}</text>
                   </box>
-                  <box flexGrow={1} />
-                  <text fg={props.muted}>{'no staged changes'}</text>
+                  <box flexGrow={1} minWidth={1} />
+                  <text fg={props.muted} flexShrink={0}>
+                    {'no staged changes'}
+                  </text>
                 </box>
               }
             >
-              <box flexDirection="row">
-                <box backgroundColor="#fba970">
+              <box
+                flexDirection="row"
+                flexWrap="wrap"
+                alignItems="center"
+                flexShrink={0}
+                rowGap={1}
+              >
+                <box backgroundColor="#fba970" flexShrink={0} onMouseDown={() => props.onSave?.()}>
                   <text fg="#000000">{' Save '}</text>
                 </box>
-                <text fg={props.muted}>{'  '}</text>
-                <box backgroundColor="#262626">
+                <text fg={props.muted} flexShrink={0}>
+                  {'  '}
+                </text>
+                <box
+                  backgroundColor="#262626"
+                  flexShrink={0}
+                  onMouseDown={() => props.onDiscard?.()}
+                >
                   <text fg="#ffffff">{' Discard '}</text>
                 </box>
-                <text fg={props.muted}>{'  '}</text>
-                <box backgroundColor="#262626">
+                <text fg={props.muted} flexShrink={0}>
+                  {'  '}
+                </text>
+                <box
+                  backgroundColor="#262626"
+                  flexShrink={0}
+                  onMouseDown={() => props.onResetPage?.()}
+                >
                   <text fg="#ffffff">{' Reset page '}</text>
                 </box>
-                <box flexGrow={1} />
-                <text fg={props.warn ?? '#f59e0b'}>{'unsaved changes'}</text>
+                <box flexGrow={1} minWidth={1} />
+                <text fg={props.warn ?? '#f59e0b'} flexShrink={0}>
+                  {'unsaved changes'}
+                </text>
               </box>
             </Show>
             <text fg={props.muted}>
-              {
-                '› or ←/→ change · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close'
-              }
+              {(() => {
+                const currentRow = findRow(tab(), props.selectedId() ?? '')
+                if (currentRow?.cycle !== undefined) {
+                  return 'click or ›/←/→ change · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close'
+                }
+                if (currentRow?.action !== undefined) {
+                  return 'enter or space run action · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close'
+                }
+                return '[ref] documented reference (read-only) · ↑↓ select · tab next tab · esc close'
+              })()}
             </text>
           </box>
         }
@@ -564,15 +677,15 @@ export function SettingsWindow(props: {
             <text fg={props.warn ?? '#f59e0b'} attributes={1}>
               {'Keep your changes?  '}
             </text>
-            <box backgroundColor="#fba970">
+            <box backgroundColor="#fba970" onMouseDown={() => props.onSave?.()}>
               <text fg="#000000">{' Save '}</text>
             </box>
             <text fg={props.muted}>{'  '}</text>
-            <box backgroundColor="#262626">
+            <box backgroundColor="#262626" onMouseDown={() => props.onDiscard?.()}>
               <text fg="#ffffff">{' Discard '}</text>
             </box>
             <text fg={props.muted}>{'  '}</text>
-            <box backgroundColor="#262626">
+            <box backgroundColor="#262626" onMouseDown={() => props.onCancelExit?.()}>
               <text fg="#ffffff">{' Keep editing '}</text>
             </box>
           </box>
@@ -588,8 +701,11 @@ export function SettingsWindow(props: {
 interface PageApi {
   move: (delta: number) => void
   step: (direction: 1 | -1) => void
+  selectById?: (id: string) => void
+  cycleRowById?: (id: string, direction: 1 | -1) => void
   actuate: () => void
   nextTab: () => void
+  prevTab?: () => void
   jumpTab: (index: number) => void
   save: () => void
   resetPage: () => void
@@ -635,6 +751,11 @@ function createWindowController(
   const [notice, setNotice] = createSignal<string | undefined>(undefined)
   const [confirmExit, setConfirmExit] = createSignal(false)
 
+  // Real-time preview of staged draft preferences across open TUI views
+  createEffect(() => {
+    setTuiDraftPreview(draft())
+  })
+
   // Load changelog highlights asynchronously
   void readChangelogForBundle(import.meta.url).then((text) => {
     if (!text) return
@@ -678,7 +799,7 @@ function createWindowController(
     buildGatesTab(load()),
     buildDecisionTab(decision(), process.env, readAuthProviders(), readConfigProviders()),
     buildPresetTab(presetInput()),
-    buildTuiTab(tuiPrefs()),
+    buildTuiTab(savedTuiPrefs()),
     buildAutonomyTab({
       goalLoop: goalLoop(),
       budgets: budgets(),
@@ -748,7 +869,7 @@ function createWindowController(
             })
           } catch {}
         } else {
-          setNotice('✅ update complete — restart OpenCode or run `npx pantheon-opencode init`')
+          setNotice('[OK] update complete — restart OpenCode or run `npx pantheon-opencode init`')
           try {
             context.ui.toast?.show?.({
               variant: 'info',
@@ -948,6 +1069,7 @@ function createWindowController(
       return
     }
     if (staged > 0) {
+      clearTuiDraftPreview()
       setDraft({})
       try {
         context.ui.toast?.show?.({
@@ -963,6 +1085,7 @@ function createWindowController(
 
   const discard = () => {
     const staged = draftCount(draft())
+    clearTuiDraftPreview()
     setDraft({})
     setConfirmExit(false)
     if (staged > 0) {
@@ -984,9 +1107,34 @@ function createWindowController(
 
   const selectedId = () => rows()[selected()]?.id
 
+  const selectById = (id: string) => {
+    if (confirmExit()) setConfirmExit(false)
+    const list = rows()
+    const index = list.findIndex((r) => r.id === id)
+    if (index !== -1) setSelected(index)
+  }
+
+  const cycleRowById = (id: string, direction: 1 | -1) => {
+    if (confirmExit()) setConfirmExit(false)
+    const list = rows()
+    const index = list.findIndex((r) => r.id === id)
+    if (index !== -1) {
+      setSelected(index)
+      const row = list[index]
+      if (row?.action === 'update-check') checkUpdatesNow()
+      else if (row?.action === 'update-run') runUpdateNow()
+      else if (row) {
+        setNotice(undefined)
+        setDraft(stageValue(draft(), row, direction))
+      }
+    }
+  }
+
   const api: PageApi = {
     move,
     step,
+    selectById,
+    cycleRowById,
     actuate: () => {
       if (confirmExit()) setConfirmExit(false)
       const row = rows()[selected()]
@@ -995,6 +1143,14 @@ function createWindowController(
       else step(1)
     },
     nextTab,
+    prevTab: () => {
+      if (confirmExit()) setConfirmExit(false)
+      const count = tabs().length
+      if (count > 0) {
+        setPage((current) => (current - 1 + count) % count)
+        setSelected(0)
+      }
+    },
     jumpTab: (index) => {
       if (confirmExit()) setConfirmExit(false)
       if (index >= 0 && index < tabs().length) {
@@ -1020,6 +1176,7 @@ function createWindowController(
     confirmExit: () => confirmExit(),
     api,
     cleanup: () => {
+      clearTuiDraftPreview()
       pageApi = undefined
       setBlocking(false)
     },
@@ -1062,6 +1219,15 @@ function SettingsPage(props: { context: Context; data: Record<string, any> | und
       fg={theme.base}
       muted={theme.muted}
       warn={warn}
+      onJumpTab={(idx) => controller.api.jumpTab(idx)}
+      onSelectRow={(id) => controller.api.selectById?.(id)}
+      onCycleValue={(id, dir) => controller.api.cycleRowById?.(id, dir)}
+      onSave={() => controller.api.save()}
+      onResetPage={() => controller.api.resetPage()}
+      onStageDefaults={() => controller.api.stageDefaults()}
+      onClose={() => controller.api.close()}
+      onDiscard={() => controller.api.discard?.()}
+      onCancelExit={() => controller.api.cancelExit?.()}
     />
   )
 }
@@ -1105,6 +1271,8 @@ function openSettingsDialog(context: Context): void {
   setBlocking(true)
   setDialogOpen(true)
   pageApi = controller.api
+  const rendererHeight = () => (context as any).renderer?.height ?? 30
+  const maxHeight = () => Math.min(16, Math.max(8, Math.floor(rendererHeight() * 0.55)))
   try {
     context.ui.dialog.show(
       () => (
@@ -1119,13 +1287,176 @@ function openSettingsDialog(context: Context): void {
           fg={theme.base}
           muted={theme.muted}
           warn={warn}
+          isDialog={true}
+          maxHeight={maxHeight()}
+          onJumpTab={(idx) => controller.api.jumpTab(idx)}
+          onSelectRow={(id) => controller.api.selectById?.(id)}
+          onCycleValue={(id, dir) => controller.api.cycleRowById?.(id, dir)}
+          onSave={() => controller.api.save()}
+          onResetPage={() => controller.api.resetPage()}
+          onStageDefaults={() => controller.api.stageDefaults()}
+          onClose={() => controller.api.close()}
+          onDiscard={() => controller.api.discard?.()}
+          onCancelExit={() => controller.api.cancelExit?.()}
         />
       ),
       close,
     )
+    context.ui.dialog.set({ size: 'large' })
   } catch {
     /* dialog stack unavailable — fail-open */
   }
+}
+
+// ── In-session docked window (session.composer.top) ─────────────────────
+
+const [settingsOpen, setSettingsOpen] = createSignal(false)
+const [activeSessionId, setActiveSessionId] = createSignal<string | undefined>()
+
+export function isPantheonSettingsOpen(): boolean {
+  return settingsOpen()
+}
+
+export function routeSessionID(context: any): string | undefined {
+  try {
+    const route = context?.ui?.router?.current?.()
+    return route?.type === 'session' ? route?.sessionID : undefined
+  } catch {
+    return undefined
+  }
+}
+
+export function closePantheonSettings(): void {
+  if (pageApi) {
+    pageApi.close()
+    if (pageApi.confirmExit?.()) {
+      return
+    }
+  }
+  setSettingsOpen(false)
+  setBlocking(false)
+}
+
+export function PantheonSettingsSlot(props: { context: Context; sessionID: string }) {
+  onMount(() => {
+    setActiveSessionId(props.sessionID)
+  })
+  onCleanup(() => {
+    if (activeSessionId() === props.sessionID) {
+      setActiveSessionId(undefined)
+    }
+  })
+  return (
+    <Show when={settingsOpen() && (activeSessionId() === props.sessionID || !activeSessionId())}>
+      <InSessionSettingsWindow context={props.context} sessionID={props.sessionID} />
+    </Show>
+  )
+}
+
+function InSessionSettingsWindow(props: { context: Context; sessionID: string }) {
+  let windowBox: any
+  const context = props.context
+  const initialRoom = () => Math.max(14, ((context as any).renderer?.height ?? 30) - 10)
+  const [roomHeight, setRoomHeight] = createSignal<number>(initialRoom())
+  const [hasKeyboard, setHasKeyboard] = createSignal(false)
+
+  function measureRoom(): void {
+    const box = windowBox
+    if (!box || box.isDestroyed) return
+    let child = box
+    for (let parent = box.parent; parent; child = parent, parent = parent.parent) {
+      const siblings = parent.getChildren?.() ?? []
+      const messages = siblings[0]
+      if (
+        messages === child ||
+        !messages?.getChildren?.().some((item: any) => 'scrollChildIntoView' in item)
+      ) {
+        continue
+      }
+      const otherRows = siblings
+        .filter((item: any) => item !== child && item !== messages)
+        .reduce((total: number, item: any) => total + (item.height ?? 0), 0)
+      const room = Math.max(
+        12,
+        (parent.height ?? 24) - 1 - otherRows - ((child.height ?? 0) - (box.height ?? 0)),
+      )
+      if (room !== roomHeight()) queueMicrotask(() => setRoomHeight(room))
+      return
+    }
+  }
+
+  onMount(() => {
+    try {
+      ;(context as any).renderer?.root?.on?.('layout-changed', measureRoom)
+      ;(context as any).renderer?.on?.('resize', measureRoom)
+      onCleanup(() => {
+        try {
+          ;(context as any).renderer?.root?.off?.('layout-changed', measureRoom)
+          ;(context as any).renderer?.off?.('resize', measureRoom)
+        } catch {}
+      })
+    } catch {}
+    measureRoom()
+    setTimeout(() => {
+      try {
+        windowBox?.focus?.()
+      } catch {}
+    }, 50)
+  })
+
+  try {
+    const popMode = (context as any).keymap?.mode?.push?.(ROUTE_MODE)
+    if (popMode !== undefined) onCleanup(() => popMode())
+  } catch {}
+
+  const controller = createWindowController(context, () => {
+    setSettingsOpen(false)
+    setBlocking(false)
+  })
+
+  onCleanup(controller.cleanup)
+  pageApi = controller.api
+
+  const theme = (context as any).theme?.text ?? {}
+  const warn = (theme?.feedback as any)?.warning?.base ?? '#fba970'
+
+  return (
+    <SettingsWindow
+      boxRef={(el: any) => {
+        windowBox = el
+        if (el) {
+          el.on?.('focused', () => setHasKeyboard(true))
+          el.on?.('blurred', () => setHasKeyboard(false))
+        }
+      }}
+      height={roomHeight()}
+      version={resolveRunningVersion()}
+      tabs={controller.tabs}
+      page={controller.page}
+      selectedId={controller.selectedId}
+      draft={controller.draft}
+      notice={controller.notice}
+      confirmExit={controller.confirmExit}
+      fg={theme.base}
+      muted={theme.muted}
+      warn={warn}
+      hasKeyboard={hasKeyboard}
+      onJumpTab={(idx) => controller.api.jumpTab(idx)}
+      onSelectRow={(id) => controller.api.selectById?.(id)}
+      onCycleValue={(id, dir) => controller.api.cycleRowById?.(id, dir)}
+      onSave={() => controller.api.save()}
+      onResetPage={() => controller.api.resetPage()}
+      onStageDefaults={() => controller.api.stageDefaults()}
+      onClose={() => closePantheonSettings()}
+      onDiscard={() => controller.api.discard?.()}
+      onCancelExit={() => controller.api.cancelExit?.()}
+      onMouseDown={() => {
+        try {
+          windowBox?.focus?.()
+        } catch {}
+      }}
+    />
+  )
 }
 
 // ── Setup: register once, gate once, priority 1 (anti-theft) ───────────
@@ -1155,25 +1486,15 @@ export function setupPantheonSettings(context: Context): void {
       title: 'Close settings',
       bind: 'escape,q',
       run: () => {
-        try {
-          context.ui.toast?.show?.({ variant: 'info', message: 'settings: close command fired' })
-        } catch {}
         if (pageApi === undefined) {
-          try {
-            context.ui.toast?.show?.({
-              variant: 'warning',
-              message: 'settings: no window controller bound',
-            })
-          } catch {
-            /* toast unavailable */
-          }
+          closePantheonSettings()
           return undefined
         }
         if (pageApi.confirmExit?.()) {
           pageApi.cancelExit?.()
           return undefined
         }
-        pageApi.close()
+        closePantheonSettings()
         return undefined
       },
     },
@@ -1244,6 +1565,15 @@ export function setupPantheonSettings(context: Context): void {
       },
     },
     {
+      id: 'pantheon.settings.prev.tab',
+      title: 'Previous settings tab',
+      bind: 'shift+tab',
+      run: () => {
+        pageApi?.prevTab?.()
+        return undefined
+      },
+    },
+    {
       id: 'pantheon.settings.save',
       title: 'Save staged changes',
       bind: 'ctrl+s',
@@ -1289,7 +1619,7 @@ export function setupPantheonSettings(context: Context): void {
     context.keymap.layer(() => ({
       mode: ROUTE_MODE,
       priority: 1,
-      enabled: () => routeGated(),
+      enabled: () => routeGated() || settingsOpen(),
       commands,
     }))
   } catch {
@@ -1300,7 +1630,7 @@ export function setupPantheonSettings(context: Context): void {
     context.keymap.layer(() => ({
       mode: 'global' as const,
       priority: 1,
-      enabled: () => dialogOpen(),
+      enabled: () => dialogOpen() || settingsOpen(),
       commands,
     }))
   } catch {
@@ -1312,7 +1642,9 @@ export function setupPantheonSettings(context: Context): void {
 
 export async function openPantheonSettings(context: Context): Promise<void> {
   try {
-    if (routerAvailable && context.ui?.router?.navigate) {
+    const prefs = tuiPrefs()
+    const viewMode = prefs.layout?.settingsView ?? 'docked'
+    if (viewMode === 'fullscreen' && routerAvailable && context.ui?.router?.navigate) {
       let returnRoute: WindowRoute | undefined
       try {
         const current = context.ui.router.current()
@@ -1331,8 +1663,32 @@ export async function openPantheonSettings(context: Context): Promise<void> {
       })
       return
     }
+    if (viewMode === 'dialog') {
+      openSettingsDialog(context)
+      return
+    }
   } catch {
-    /* router unusable — fall through to the dialog */
+    /* preferences check failed — fall through to docked */
   }
-  openSettingsDialog(context)
+
+  // Primary mode: docked in session.composer.top
+  const sessionID = (context as any)?.sessionID ?? routeSessionID(context) ?? activeSessionId()
+  if (!sessionID) {
+    try {
+      context.ui?.toast?.show?.({
+        variant: 'info',
+        title: 'Pantheon',
+        message: 'Open a session first: Pantheon settings opens above the prompt box.',
+      })
+    } catch {}
+    return
+  }
+
+  if (settingsOpen()) {
+    closePantheonSettings()
+    return
+  }
+
+  setSettingsOpen(true)
+  setBlocking(true)
 }
