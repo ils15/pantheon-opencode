@@ -63,7 +63,7 @@ mcp_tools:
 
 ### 1. Codebase Discovery
 - Use direct targeted searches for straightforward questions; batch independent searches only when the discovery scope benefits from it
-- Search boundaries: NUNCA busque nem leia arquivos em `.pantheon/**`, `.pantheon/deepwork/**`, `.git/**`, `node_modules/**` ou `.pantheon-worktrees/**`
+- Search boundaries: NEVER search or read files in `.pantheon/**`, `.pantheon/deepwork/**`, `.git/**`, `node_modules/**`, or `.pantheon-worktrees/**`
 - Search for files, patterns, symbols, imports in application source (`src/`, `lib/`, `tests/`, `docs/`)
 - Generate structured summaries (not raw dumps)
 

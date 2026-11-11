@@ -33,7 +33,7 @@
 import { execSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -233,27 +233,103 @@ export function findLegacyInstallDir(configDir) {
 }
 
 // ---------------------------------------------------------------------------
+// Deepwork & Worktrees prune
+// ---------------------------------------------------------------------------
+
+export function findStaleDeepwork(repoDir, maxAgeDays, deepworkFlag = false) {
+  const deepworkDir = join(repoDir, '.pantheon', 'deepwork')
+  if (!existsSync(deepworkDir)) return
+  try {
+    const entries = readdirSync(deepworkDir, { withFileTypes: true })
+    const now = Date.now()
+    const maxAgeMs = maxAgeDays * 86_400_000
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const targetDir = join(deepworkDir, entry.name)
+      const st = statSync(targetDir)
+      const ageDays = Math.round((now - st.mtimeMs) / 86_400_000)
+      const isStale = now - st.mtimeMs > maxAgeMs
+      if (isStale || deepworkFlag) {
+        add(
+          'deepwork',
+          targetDir,
+          `deepwork session directory (${ageDays}d old)`,
+          deepworkFlag ? 'remove' : 'list',
+        )
+      }
+    }
+  } catch {
+    // best-effort
+  }
+}
+
+export function findStaleWorktrees(repoDir, worktreesFlag = false) {
+  const repoParent = dirname(resolve(repoDir))
+  const repoBase = basename(resolve(repoDir))
+  const worktreeParent = join(repoParent, '.pantheon-worktrees', repoBase)
+  if (!existsSync(worktreeParent)) return
+  try {
+    const entries = readdirSync(worktreeParent, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const targetDir = join(worktreeParent, entry.name)
+      add(
+        'worktree',
+        targetDir,
+        `worktree directory for task '${entry.name}'`,
+        worktreesFlag ? 'remove' : 'list',
+      )
+    }
+  } catch {
+    // best-effort
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Actions
 // ---------------------------------------------------------------------------
 
 function format(f) {
-  const icon =
-    f.action === 'remove' ? '🗑️' : f.action === 'suggest' ? '💡' : f.action === 'keep' ? '✅' : '🔎'
-  return `${icon} [${f.type}] ${f.target} — ${f.detail}`
+  const marker =
+    f.action === 'remove'
+      ? '[-]'
+      : f.action === 'suggest'
+        ? '[?]'
+        : f.action === 'keep'
+          ? '[+]'
+          : '[*]'
+  return `${marker} [${f.type}] ${f.target} — ${f.detail}`
 }
 
-export function runPrune({ configDir, maxAgeDays, apply, removeDirs }) {
+export function runPrune({
+  configDir,
+  repoDir,
+  maxAgeDays,
+  apply,
+  removeDirs,
+  deepwork,
+  worktrees,
+}) {
+  findings.length = 0
   findLegacyGlobalInstalls()
   findStaleBackups(configDir, maxAgeDays)
   findLegacyDirs(configDir)
   findLegacyInstallDir(configDir)
+  if (deepwork || repoDir) {
+    findStaleDeepwork(repoDir || _ROOT, maxAgeDays, deepwork)
+  }
+  if (worktrees || repoDir) {
+    findStaleWorktrees(repoDir || _ROOT, worktrees)
+  }
 
   console.log(`Pantheon prune — config dir: ${configDir}`)
-  console.log(`  mode: ${apply ? 'APPLY' : 'DRY-RUN'}${removeDirs ? ' + REMOVE-DIRS' : ''}`)
+  console.log(
+    `  mode: ${apply ? 'APPLY' : 'DRY-RUN'}${removeDirs ? ' + REMOVE-DIRS' : ''}${deepwork ? ' + DEEPWORK' : ''}${worktrees ? ' + WORKTREES' : ''}`,
+  )
   console.log('')
 
   if (findings.length === 0) {
-    console.log('  ✅ Nothing to clean.')
+    console.log('  Nothing to clean.')
     return { removed: 0, remain: 0 }
   }
 
@@ -263,12 +339,12 @@ export function runPrune({ configDir, maxAgeDays, apply, removeDirs }) {
     console.log(`  ${format(f)}`)
     if (f.action === 'remove' && apply) {
       try {
-        rmSync(f.target, { force: true })
-        console.log(`     → removed`)
+        rmSync(f.target, { recursive: true, force: true })
+        console.log('     → removed')
         removed++
         continue
       } catch (err) {
-        console.log(`     → ⚠️ failed: ${err.message}`)
+        console.log(`     → failed: ${err.message}`)
         remain++
         continue
       }
@@ -281,11 +357,11 @@ export function runPrune({ configDir, maxAgeDays, apply, removeDirs }) {
     if (f.action === 'list' && apply && removeDirs) {
       try {
         rmSync(f.target, { recursive: true, force: true })
-        console.log(`     → removed (--remove-dirs)`)
+        console.log('     → removed (--remove-dirs)')
         removed++
         continue
       } catch (err) {
-        console.log(`     → ⚠️ failed: ${err.message}`)
+        console.log(`     → failed: ${err.message}`)
         remain++
         continue
       }
@@ -323,7 +399,10 @@ Options:
   --apply            Remove stale backups (default: dry-run, list only)
   --remove-dirs      With --apply, also remove legacy directories
                      (explicit confirmation; default: list only)
+  --deepwork         Find and remove stale deepwork session artifacts
+  --worktrees        Find and clean up detached worktree directories
   --target <dir>     Override the config directory (XDG-aware by default)
+  --repo <dir>       Override the project repository directory
   --age <days>       Backup age threshold in days (default: ${DEFAULT_BACKUP_AGE_DAYS})
   --help             Show this help
 
@@ -344,17 +423,29 @@ function main() {
 
   const apply = args.includes('--apply') || args.includes('-y')
   const removeDirs = args.includes('--remove-dirs')
+  const deepwork = args.includes('--deepwork')
+  const worktrees = args.includes('--worktrees')
   const targetIdx = args.indexOf('--target')
   const target = targetIdx >= 0 ? args[targetIdx + 1] : undefined
+  const repoIdx = args.indexOf('--repo')
+  const repoDir = repoIdx >= 0 ? args[repoIdx + 1] : undefined
   const ageIdx = args.indexOf('--age')
   const age = ageIdx >= 0 ? Number(args[ageIdx + 1]) : DEFAULT_BACKUP_AGE_DAYS
   if (!Number.isFinite(age) || age < 0) {
-    console.error('❌ --age must be a non-negative number of days')
+    console.error('ERROR: --age must be a non-negative number of days')
     process.exit(2)
   }
 
   const configDir = resolveConfigDir(target)
-  const result = runPrune({ configDir, maxAgeDays: age, apply, removeDirs })
+  const result = runPrune({
+    configDir,
+    repoDir,
+    maxAgeDays: age,
+    apply,
+    removeDirs,
+    deepwork,
+    worktrees,
+  })
 
   // 0 = clean/cleaned; 1 = findings remain; 2 = usage error (handled above)
   process.exit(result.remain > 0 ? 1 : 0)

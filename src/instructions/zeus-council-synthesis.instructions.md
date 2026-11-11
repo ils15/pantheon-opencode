@@ -5,7 +5,7 @@ agents: [zeus]
 fallback: shared
 ---
 
-# 🏛️ INLINE COUNCIL SYNTHESIS — /pantheon
+# INLINE COUNCIL SYNTHESIS — /pantheon
 
 Use an inline specialist council for material trade-offs, architecture/security choices, technology selection, cost/quality decisions, or multi-stakeholder questions. Do not use it for ordinary implementation tasks.
 
@@ -54,7 +54,7 @@ Require `## specialist_response` from `## Agent Return Format`. The first round 
 ## User-Facing Synthesis
 
 ```text
-## 🏛️ Council Synthesis
+## Council Synthesis
 Question / date / response rate / timed-out agents / precedent / research context
 
 ### Specialist Perspectives

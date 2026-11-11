@@ -1338,7 +1338,7 @@ const DEFAULT_TUI_PREFS = {
 	layout: {
 		preset: "comfortable",
 		separator: "spaces",
-		settingsView: "docked"
+		settingsView: "fullscreen"
 	},
 	sidebar: {
 		header: {
@@ -1893,7 +1893,7 @@ async function readChangelogForBundle(bundleUrl) {
 }
 /** The ambient build-time version, or null outside a tsdown build. */
 function embeddedVersion() {
-	return "2.0.0-rc.1";
+	return "2.0.0-rc.2";
 }
 /**
 * Resolve the running Pantheon version for the what's-new window: the plugin
@@ -2118,7 +2118,7 @@ function persistUpdateCheckState(previous, latest) {
 	} catch {}
 }
 function resolveRunningVersion() {
-	return "2.0.0-rc.1";
+	return "2.0.0-rc.2";
 }
 const VALUE_WIDTH = 24;
 function SettingsWindow(props) {
@@ -2141,10 +2141,11 @@ function SettingsWindow(props) {
 		insertNode(_el$2, _el$8);
 		insertNode(_el$2, _el$9);
 		setProp(_el$2, "flexDirection", "row");
+		setProp(_el$2, "flexWrap", "wrap");
 		setProp(_el$2, "alignItems", "center");
 		setProp(_el$2, "flexShrink", 0);
-		setProp(_el$2, "height", 1);
 		setProp(_el$2, "marginBottom", 1);
+		setProp(_el$2, "rowGap", 1);
 		insertNode(_el$3, _el$4);
 		insertNode(_el$3, _el$6);
 		setProp(_el$3, "attributes", 1);
@@ -2153,9 +2154,11 @@ function SettingsWindow(props) {
 		insert(_el$6, () => ` v${props.version}`);
 		setProp(_el$7, "width", 2);
 		setProp(_el$8, "flexDirection", "row");
+		setProp(_el$8, "flexWrap", "wrap");
 		setProp(_el$8, "flexGrow", 1);
-		setProp(_el$8, "flexShrink", 1);
+		setProp(_el$8, "flexShrink", 0);
 		setProp(_el$8, "columnGap", 1);
+		setProp(_el$8, "rowGap", 1);
 		insert(_el$8, createComponent(For, {
 			get each() {
 				return props.tabs();
@@ -2168,6 +2171,7 @@ function SettingsWindow(props) {
 					setProp(_el$32, "onMouseDown", () => props.onJumpTab?.(index()));
 					setProp(_el$32, "paddingLeft", 1);
 					setProp(_el$32, "paddingRight", 1);
+					setProp(_el$32, "flexShrink", 0);
 					setProp(_el$33, "wrapMode", "none");
 					spread(_el$33, mergeProps({ get fg() {
 						return memo(() => !!isActive())() ? props.warn ?? "#fba970" : props.muted;
@@ -2181,6 +2185,7 @@ function SettingsWindow(props) {
 		insertNode(_el$9, _el$0);
 		setProp(_el$9, "onMouseDown", () => props.onClose?.());
 		setProp(_el$9, "paddingLeft", 1);
+		setProp(_el$9, "flexShrink", 0);
 		insertNode(_el$0, createTextNode(`esc`));
 		setProp(_el$0, "wrapMode", "none");
 		insertNode(_el$10, _el$11);
@@ -2311,25 +2316,36 @@ function SettingsWindow(props) {
 								insertNode(_el$62, _el$76);
 								insertNode(_el$62, _el$77);
 								setProp(_el$62, "flexDirection", "row");
+								setProp(_el$62, "flexWrap", "wrap");
+								setProp(_el$62, "alignItems", "center");
+								setProp(_el$62, "flexShrink", 0);
+								setProp(_el$62, "rowGap", 1);
 								insertNode(_el$63, _el$64);
 								setProp(_el$63, "backgroundColor", "#262626");
+								setProp(_el$63, "flexShrink", 0);
 								setProp(_el$63, "onMouseDown", () => props.onClose?.());
 								insertNode(_el$64, createTextNode(` Close `));
 								setProp(_el$64, "fg", "#ffffff");
 								insertNode(_el$66, createTextNode(`  `));
+								setProp(_el$66, "flexShrink", 0);
 								insertNode(_el$68, _el$69);
 								setProp(_el$68, "backgroundColor", "#262626");
+								setProp(_el$68, "flexShrink", 0);
 								setProp(_el$68, "onMouseDown", () => props.onResetPage?.());
 								insertNode(_el$69, createTextNode(` Reset page `));
 								setProp(_el$69, "fg", "#ffffff");
 								insertNode(_el$71, createTextNode(`  `));
+								setProp(_el$71, "flexShrink", 0);
 								insertNode(_el$73, _el$74);
 								setProp(_el$73, "backgroundColor", "#262626");
+								setProp(_el$73, "flexShrink", 0);
 								setProp(_el$73, "onMouseDown", () => props.onStageDefaults?.());
 								insertNode(_el$74, createTextNode(` Defaults `));
 								setProp(_el$74, "fg", "#ffffff");
 								setProp(_el$76, "flexGrow", 1);
+								setProp(_el$76, "minWidth", 1);
 								insertNode(_el$77, createTextNode(`no staged changes`));
+								setProp(_el$77, "flexShrink", 0);
 								effect((_p$) => {
 									var _v$17 = props.muted, _v$18 = props.muted, _v$19 = props.muted;
 									_v$17 !== _p$.e && (_p$.e = setProp(_el$66, "fg", _v$17, _p$.e));
@@ -2354,25 +2370,36 @@ function SettingsWindow(props) {
 							insertNode(_el$44, _el$58);
 							insertNode(_el$44, _el$59);
 							setProp(_el$44, "flexDirection", "row");
+							setProp(_el$44, "flexWrap", "wrap");
+							setProp(_el$44, "alignItems", "center");
+							setProp(_el$44, "flexShrink", 0);
+							setProp(_el$44, "rowGap", 1);
 							insertNode(_el$45, _el$46);
 							setProp(_el$45, "backgroundColor", "#fba970");
+							setProp(_el$45, "flexShrink", 0);
 							setProp(_el$45, "onMouseDown", () => props.onSave?.());
 							insertNode(_el$46, createTextNode(` Save `));
 							setProp(_el$46, "fg", "#000000");
 							insertNode(_el$48, createTextNode(`  `));
+							setProp(_el$48, "flexShrink", 0);
 							insertNode(_el$50, _el$51);
 							setProp(_el$50, "backgroundColor", "#262626");
+							setProp(_el$50, "flexShrink", 0);
 							setProp(_el$50, "onMouseDown", () => props.onDiscard?.());
 							insertNode(_el$51, createTextNode(` Discard `));
 							setProp(_el$51, "fg", "#ffffff");
 							insertNode(_el$53, createTextNode(`  `));
+							setProp(_el$53, "flexShrink", 0);
 							insertNode(_el$55, _el$56);
 							setProp(_el$55, "backgroundColor", "#262626");
+							setProp(_el$55, "flexShrink", 0);
 							setProp(_el$55, "onMouseDown", () => props.onResetPage?.());
 							insertNode(_el$56, createTextNode(` Reset page `));
 							setProp(_el$56, "fg", "#ffffff");
 							setProp(_el$58, "flexGrow", 1);
+							setProp(_el$58, "minWidth", 1);
 							insertNode(_el$59, createTextNode(`unsaved changes`));
+							setProp(_el$59, "flexShrink", 0);
 							effect((_p$) => {
 								var _v$14 = props.muted, _v$15 = props.muted, _v$16 = props.warn ?? "#f59e0b";
 								_v$14 !== _p$.e && (_p$.e = setProp(_el$48, "fg", _v$14, _p$.e));
@@ -2995,7 +3022,7 @@ function openSettingsDialog(context) {
 	setDialogOpen(true);
 	pageApi = controller.api;
 	const rendererHeight = () => context.renderer?.height ?? 30;
-	const maxHeight = () => Math.max(14, Math.floor(rendererHeight() * .75) - 6);
+	const maxHeight = () => Math.min(16, Math.max(8, Math.floor(rendererHeight() * .55)));
 	try {
 		context.ui.dialog.show(() => createComponent(SettingsWindow, {
 			get version() {
@@ -3040,7 +3067,7 @@ function openSettingsDialog(context) {
 			onDiscard: () => controller.api.discard?.(),
 			onCancelExit: () => controller.api.cancelExit?.()
 		}), close);
-		context.ui.dialog.set({ size: "xlarge" });
+		context.ui.dialog.set({ size: "large" });
 	} catch {}
 }
 const [settingsOpen, setSettingsOpen] = createSignal(false);
@@ -6258,7 +6285,7 @@ async function checkForPantheonUpdate(context) {
 	const latest = String((await response.json())?.version ?? "");
 	if (!latest) return;
 	const notice = pickUpdateNotice({
-		currentVersion: "2.0.0-rc.1",
+		currentVersion: "2.0.0-rc.2",
 		latestVersion: latest,
 		state: readState(),
 		nowMs: Date.now()
@@ -7070,7 +7097,7 @@ function Sidebar(props) {
 			get children() {
 				var _el$13 = createElement("text");
 				setProp(_el$13, "attributes", 1);
-				insert(_el$13, `Pantheon v2.0.0-rc.1`);
+				insert(_el$13, `Pantheon v2.0.0-rc.2`);
 				effect((_$p) => setProp(_el$13, "fg", text(), _$p));
 				return _el$13;
 			}
@@ -7842,7 +7869,7 @@ function HomeStatus(props) {
 		},
 		get children() {
 			var _el$73 = createElement("text");
-			insert(_el$73, () => `Pantheon v2.0.0-rc.1${preset().name ? ` ▸ ${preset().name}` : ""}`);
+			insert(_el$73, () => `Pantheon v2.0.0-rc.2${preset().name ? ` ▸ ${preset().name}` : ""}`);
 			effect((_$p) => setProp(_el$73, "fg", muted(), _$p));
 			return _el$73;
 		}

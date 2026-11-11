@@ -7,6 +7,7 @@ permission:
   read: allow
   grep: allow
   edit: allow
+  bash: allow
   shell: allow
   webfetch: allow
   task:

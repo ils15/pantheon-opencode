@@ -430,13 +430,27 @@ export function SettingsWindow(props: {
       onMouseDown={props.onMouseDown}
     >
       {/* ── Top Header bar: Title + Horizontal Clickable Tabs + ESC (matching opencode-quota) ── */}
-      <box flexDirection="row" alignItems="center" flexShrink={0} height={1} marginBottom={1}>
+      <box
+        flexDirection="row"
+        flexWrap="wrap"
+        alignItems="center"
+        flexShrink={0}
+        marginBottom={1}
+        rowGap={1}
+      >
         <text fg={props.fg} attributes={1} wrapMode="none">
           <b>{'Pantheon'}</b>
           <span style={{ fg: props.muted }}>{` v${props.version}`}</span>
         </text>
         <box width={2} />
-        <box flexDirection="row" flexGrow={1} flexShrink={1} columnGap={1}>
+        <box
+          flexDirection="row"
+          flexWrap="wrap"
+          flexGrow={1}
+          flexShrink={0}
+          columnGap={1}
+          rowGap={1}
+        >
           <For each={props.tabs()}>
             {(t, index) => {
               const isActive = () => index() === props.page()
@@ -445,6 +459,7 @@ export function SettingsWindow(props: {
                   onMouseDown={() => props.onJumpTab?.(index())}
                   paddingLeft={1}
                   paddingRight={1}
+                  flexShrink={0}
                   backgroundColor={isActive() ? '#262626' : undefined}
                 >
                   <text
@@ -459,7 +474,7 @@ export function SettingsWindow(props: {
             }}
           </For>
         </box>
-        <box onMouseDown={() => props.onClose?.()} paddingLeft={1}>
+        <box onMouseDown={() => props.onClose?.()} paddingLeft={1} flexShrink={0}>
           <text fg={props.muted} wrapMode="none">
             {'esc'}
           </text>
@@ -562,37 +577,81 @@ export function SettingsWindow(props: {
             <Show
               when={draftDirty(props.draft())}
               fallback={
-                <box flexDirection="row">
-                  <box backgroundColor="#262626" onMouseDown={() => props.onClose?.()}>
+                <box
+                  flexDirection="row"
+                  flexWrap="wrap"
+                  alignItems="center"
+                  flexShrink={0}
+                  rowGap={1}
+                >
+                  <box
+                    backgroundColor="#262626"
+                    flexShrink={0}
+                    onMouseDown={() => props.onClose?.()}
+                  >
                     <text fg="#ffffff">{' Close '}</text>
                   </box>
-                  <text fg={props.muted}>{'  '}</text>
-                  <box backgroundColor="#262626" onMouseDown={() => props.onResetPage?.()}>
+                  <text fg={props.muted} flexShrink={0}>
+                    {'  '}
+                  </text>
+                  <box
+                    backgroundColor="#262626"
+                    flexShrink={0}
+                    onMouseDown={() => props.onResetPage?.()}
+                  >
                     <text fg="#ffffff">{' Reset page '}</text>
                   </box>
-                  <text fg={props.muted}>{'  '}</text>
-                  <box backgroundColor="#262626" onMouseDown={() => props.onStageDefaults?.()}>
+                  <text fg={props.muted} flexShrink={0}>
+                    {'  '}
+                  </text>
+                  <box
+                    backgroundColor="#262626"
+                    flexShrink={0}
+                    onMouseDown={() => props.onStageDefaults?.()}
+                  >
                     <text fg="#ffffff">{' Defaults '}</text>
                   </box>
-                  <box flexGrow={1} />
-                  <text fg={props.muted}>{'no staged changes'}</text>
+                  <box flexGrow={1} minWidth={1} />
+                  <text fg={props.muted} flexShrink={0}>
+                    {'no staged changes'}
+                  </text>
                 </box>
               }
             >
-              <box flexDirection="row">
-                <box backgroundColor="#fba970" onMouseDown={() => props.onSave?.()}>
+              <box
+                flexDirection="row"
+                flexWrap="wrap"
+                alignItems="center"
+                flexShrink={0}
+                rowGap={1}
+              >
+                <box backgroundColor="#fba970" flexShrink={0} onMouseDown={() => props.onSave?.()}>
                   <text fg="#000000">{' Save '}</text>
                 </box>
-                <text fg={props.muted}>{'  '}</text>
-                <box backgroundColor="#262626" onMouseDown={() => props.onDiscard?.()}>
+                <text fg={props.muted} flexShrink={0}>
+                  {'  '}
+                </text>
+                <box
+                  backgroundColor="#262626"
+                  flexShrink={0}
+                  onMouseDown={() => props.onDiscard?.()}
+                >
                   <text fg="#ffffff">{' Discard '}</text>
                 </box>
-                <text fg={props.muted}>{'  '}</text>
-                <box backgroundColor="#262626" onMouseDown={() => props.onResetPage?.()}>
+                <text fg={props.muted} flexShrink={0}>
+                  {'  '}
+                </text>
+                <box
+                  backgroundColor="#262626"
+                  flexShrink={0}
+                  onMouseDown={() => props.onResetPage?.()}
+                >
                   <text fg="#ffffff">{' Reset page '}</text>
                 </box>
-                <box flexGrow={1} />
-                <text fg={props.warn ?? '#f59e0b'}>{'unsaved changes'}</text>
+                <box flexGrow={1} minWidth={1} />
+                <text fg={props.warn ?? '#f59e0b'} flexShrink={0}>
+                  {'unsaved changes'}
+                </text>
               </box>
             </Show>
             <text fg={props.muted}>
@@ -1210,7 +1269,7 @@ function openSettingsDialog(context: Context): void {
   setDialogOpen(true)
   pageApi = controller.api
   const rendererHeight = () => (context as any).renderer?.height ?? 30
-  const maxHeight = () => Math.max(14, Math.floor(rendererHeight() * 0.75) - 6)
+  const maxHeight = () => Math.min(16, Math.max(8, Math.floor(rendererHeight() * 0.55)))
   try {
     context.ui.dialog.show(
       () => (
@@ -1240,7 +1299,7 @@ function openSettingsDialog(context: Context): void {
       ),
       close,
     )
-    context.ui.dialog.set({ size: 'xlarge' })
+    context.ui.dialog.set({ size: 'large' })
   } catch {
     /* dialog stack unavailable — fail-open */
   }

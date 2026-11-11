@@ -23,6 +23,7 @@ skills:
   - test-slicing
   - worktrees
 permission:
+  bash: allow
   shell: allow
   read: allow
   grep: allow
@@ -272,14 +273,14 @@ When completing a task, provide:
 
 **Philosophy**: Clean code, clear error messages, proper async patterns, thorough testing.
 
-##  Verification Tiers (match the change, not a ritual)
+## Verification Tiers (match the change, not a ritual)
 
 - **Small bounded fix** (typo, config, copy, single-function tweak): make the change, run the one targeted test or command that proves it, report. No RED→GREEN→REFACTOR ceremony, no extra discovery passes.
 - **Material change** (new endpoint, schema, service, auth, public behavior): full TDD cycle via `skill: tdd-with-agents`, then the Themis handoff.
 - Auto-continue through the chosen tier for authorized work; stop for required Themis review; stop and diagnose when tests fail unexpectedly; no partial results.
 
 ## Skills
-Implementação: `tdd-with-agents`, `incremental-implementation`, `code-review-checklist`, `git-workflow-and-versioning`
+Implementation: `tdd-with-agents`, `incremental-implementation`, `code-review-checklist`, `git-workflow-and-versioning`
 
 ## Domain conventions doc
 

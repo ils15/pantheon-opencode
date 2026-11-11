@@ -6,6 +6,7 @@ reasoning_effort: low
 permission:
   read: allow
   grep: allow
+  bash: allow
   shell: allow
   webfetch: allow
   edit: deny
