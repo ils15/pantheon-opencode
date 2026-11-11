@@ -1,0 +1,8 @@
+# Ignore file for ripgrep / search tools
+# Keeps ephemeral session artifacts and internal state out of code searches.
+.pantheon/deepwork/
+.pantheon/backups/
+.pantheon/logs/
+.pantheon-worktrees/
+.cache/
+logs/

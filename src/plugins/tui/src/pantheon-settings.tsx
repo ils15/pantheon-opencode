@@ -408,10 +408,10 @@ export function SettingsWindow(props: {
             ? (props.warn ?? '#fba970')
             : (props.muted ?? '#52525b')
       }
-      paddingLeft={props.isDialog ? 1 : 2}
-      paddingRight={props.isDialog ? 1 : 2}
-      paddingTop={props.isDialog ? 0 : 1}
-      paddingBottom={1}
+      paddingLeft={1}
+      paddingRight={1}
+      paddingTop={0}
+      paddingBottom={0}
     >
       {/* ── Top Header bar: Title + Horizontal Clickable Tabs + ESC (matching opencode-quota) ── */}
       <box flexDirection="row" alignItems="center" flexShrink={0} height={1} marginBottom={1}>
@@ -1288,7 +1288,7 @@ function InSessionSettingsWindow(props: { context: Context; sessionID: string })
         .filter((item: any) => item !== child && item !== messages)
         .reduce((total: number, item: any) => total + (item.height ?? 0), 0)
       const room = Math.max(
-        14,
+        12,
         (parent.height ?? 24) - 1 - otherRows - ((child.height ?? 0) - (box.height ?? 0)),
       )
       if (room !== roomHeight()) queueMicrotask(() => setRoomHeight(room))
@@ -1299,9 +1299,11 @@ function InSessionSettingsWindow(props: { context: Context; sessionID: string })
   onMount(() => {
     try {
       ;(context as any).renderer?.root?.on?.('layout-changed', measureRoom)
+      ;(context as any).renderer?.on?.('resize', measureRoom)
       onCleanup(() => {
         try {
           ;(context as any).renderer?.root?.off?.('layout-changed', measureRoom)
+          ;(context as any).renderer?.off?.('resize', measureRoom)
         } catch {}
       })
     } catch {}
@@ -1326,8 +1328,7 @@ function InSessionSettingsWindow(props: { context: Context; sessionID: string })
   onCleanup(controller.cleanup)
   pageApi = controller.api
 
-  const fallbackHeight = () => Math.max(14, ((context as any).renderer?.height ?? 24) - 6)
-  const effectiveHeight = () => roomHeight() ?? fallbackHeight()
+  const effectiveHeight = () => roomHeight()
 
   const theme = (context as any).theme?.text ?? {}
   const warn = (theme?.feedback as any)?.warning?.base ?? '#fba970'

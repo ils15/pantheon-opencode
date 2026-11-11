@@ -138,7 +138,7 @@ export const DEFAULT_TUI_PREFS: TuiPrefs = {
   layout: {
     preset: 'comfortable',
     separator: 'spaces',
-    settingsView: 'dialog',
+    settingsView: 'docked',
   },
   sidebar: {
     header: { version: true, preset: true, session: true },
