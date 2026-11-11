@@ -17,6 +17,7 @@ import type { Context } from '@opencode/plugin/tui/context'
 import type { Accessor, Setter } from 'solid-js'
 import { createSignal } from 'solid-js'
 import type { SettingsDraft, SettingsRow, SettingsTab } from './pantheon-settings-state.ts'
+import { resolveLanguage } from './settings-i18n.ts'
 
 // ── The durable store handle (host storage, one per plugin) ────────────
 // Created once at setup and stashed under a globalThis symbol so
@@ -338,70 +339,83 @@ const row = (id: string, name: string, value: boolean, note: string): SettingsRo
   note,
 })
 
-export function buildTuiTab(prefs: TuiPrefs): SettingsTab {
+export function buildTuiTab(prefs: TuiPrefs, languagePref?: string): SettingsTab {
+  const isPt = resolveLanguage(languagePref ?? prefs.layout?.language) === 'pt-BR'
   return {
     id: 'tui',
     title: 'TUI',
     groups: [
       {
-        title: 'Preset & Layout',
+        title: isPt ? 'Predefinição & Layout' : 'Preset & Layout',
         rows: [
           {
             id: 'tui.layout.preset',
-            name: 'Layout preset',
+            name: isPt ? 'Predefinição de layout' : 'Layout preset',
             value: prefs.layout?.preset ?? DEFAULT_TUI_PREFS.layout.preset,
             cycle: LAYOUT_PRESETS_CYCLE,
-            note: 'comfortable | compact — sets spacing & borders',
+            note: isPt
+              ? 'comfortable | compact — define espaçamento e bordas'
+              : 'comfortable | compact — sets spacing & borders',
           },
           {
             id: 'tui.layout.separator',
-            name: 'Separator',
+            name: isPt ? 'Separador' : 'Separator',
             value: prefs.layout?.separator ?? DEFAULT_TUI_PREFS.layout.separator,
             cycle: SEPARATOR_STYLES_CYCLE,
-            note: 'spaces | pipes | dots | slashes — status line glyphs',
+            note: isPt
+              ? 'spaces | pipes | dots | slashes — glifos na linha de status'
+              : 'spaces | pipes | dots | slashes — status line glyphs',
           },
           {
             id: 'tui.layout.settingsView',
-            name: 'Settings surface',
+            name: isPt ? 'Superfície de configurações' : 'Settings surface',
             value: tuiRowValue(prefs, 'tui.layout.settingsView') ?? 'docked',
             cycle: SETTINGS_VIEW_MODES,
-            note: 'docked (above prompt) | fullscreen router page | dialog overlay',
+            note: isPt
+              ? 'docked (acima do prompt) | fullscreen | dialog'
+              : 'docked (above prompt) | fullscreen router page | dialog overlay',
           },
           {
             id: 'tui.layout.language',
-            name: 'Language / Idioma',
+            name: isPt ? 'Idioma / Language' : 'Language / Idioma',
             value: tuiRowValue(prefs, 'tui.layout.language') ?? 'auto',
             cycle: LANGUAGE_CYCLE,
-            note: 'auto (LANG/LC_ALL) | pt-BR (Português) | en (English)',
+            note: isPt
+              ? 'auto (detecta via fuso/locale) | pt-BR (Português) | en (English)'
+              : 'auto (detect via timezone/locale) | pt-BR (Português) | en (English)',
           },
         ],
       },
       {
-        title: 'Bars & Gauges',
+        title: isPt ? 'Barras & Medidores' : 'Bars & Gauges',
         rows: [
           {
             id: 'tui.sidebar.context.barShape',
-            name: 'Bar shape',
+            name: isPt ? 'Formato da barra' : 'Bar shape',
             value: prefs.sidebar.context.barShape,
             cycle: BAR_SHAPES_CYCLE,
             note: 'line (━─) | block (▰▱) | smooth (█░) | ascii (=) | dots (●○) | braille',
           },
           {
             id: 'tui.sidebar.context.barWidth',
-            name: 'Bar width',
+            name: isPt ? 'Largura da barra' : 'Bar width',
             value: prefs.sidebar.context.barWidth,
             cycle: BAR_WIDTHS_CYCLE,
-            note: 'standard (12) | compact (8) | wide (16) | full (20 cells)',
+            note: isPt
+              ? 'standard (12) | compact (8) | wide (16) | full (20 células)'
+              : 'standard (12) | compact (8) | wide (16) | full (20 cells)',
           },
           row(
             'tui.sidebar.context.evenMark',
-            'Even-use mark',
+            isPt ? 'Marca central (50%)' : 'Even-use mark',
             prefs.sidebar.context.evenMark,
-            '| indicator at 50% midpoint in gauge bars',
+            isPt
+              ? '| indicador aos 50% nas barras de medição'
+              : '| indicator at 50% midpoint in gauge bars',
           ),
           {
             id: 'tui.sidebar.context.gauge',
-            name: 'Gauge style',
+            name: isPt ? 'Estilo do medidor' : 'Gauge style',
             value: prefs.sidebar.context.gauge,
             cycle: GAUGE_STYLES,
             note: 'both | bar | percent | off — `▰▱ 42% of 200k`',
@@ -409,106 +423,110 @@ export function buildTuiTab(prefs: TuiPrefs): SettingsTab {
         ],
       },
       {
-        title: 'Sidebar header',
+        title: isPt ? 'Cabeçalho da barra lateral' : 'Sidebar header',
         rows: [
           row(
             'tui.sidebar.header.version',
-            'Version line',
+            isPt ? 'Linha de versão' : 'Version line',
             prefs.sidebar.header.version,
-            'the `Pantheon v…` line',
+            isPt ? 'linha `Pantheon v…`' : 'the `Pantheon v…` line',
           ),
           row(
             'tui.sidebar.header.preset',
-            'Preset line',
+            isPt ? 'Linha de preset' : 'Preset line',
             prefs.sidebar.header.preset,
-            'the `▸ preset · provider` line',
+            isPt ? 'linha `▸ preset · provider`' : 'the `▸ preset · provider` line',
           ),
           row(
             'tui.sidebar.header.session',
-            'Session line',
+            isPt ? 'Linha de sessão' : 'Session line',
             prefs.sidebar.header.session,
-            'the active session title',
+            isPt ? 'título da sessão ativa' : 'the active session title',
           ),
         ],
       },
       {
-        title: 'Sidebar blocks',
+        title: isPt ? 'Blocos da barra lateral' : 'Sidebar blocks',
         rows: [
           row(
             'tui.sidebar.block.context',
-            'Context block',
+            isPt ? 'Bloco de contexto' : 'Context block',
             prefs.sidebar.blocks.context,
-            'tokens, gauge, spend, model usage',
+            isPt ? 'tokens, medidor, custo, uso de modelos' : 'tokens, gauge, spend, model usage',
           ),
           row(
             'tui.sidebar.block.git',
-            'Git block',
+            isPt ? 'Bloco do Git' : 'Git block',
             prefs.sidebar.blocks.git,
-            'branch + working-tree counts',
+            isPt ? 'branch + contagem de alterações' : 'branch + working-tree counts',
           ),
           row(
             'tui.sidebar.block.todo',
-            'Todo block',
+            isPt ? 'Bloco Todo' : 'Todo block',
             prefs.sidebar.blocks.todo,
-            'the newest todowrite',
+            isPt ? 'tarefas pendentes mais recentes' : 'the newest todowrite',
           ),
           row(
             'tui.sidebar.block.dispatch',
-            'Dispatch block',
+            isPt ? 'Bloco Dispatch' : 'Dispatch block',
             prefs.sidebar.blocks.dispatch,
-            'live delegations + rollup',
+            isPt ? 'delegações em tempo real' : 'live delegations + rollup',
           ),
         ],
       },
       {
-        title: 'Context block detail',
+        title: isPt ? 'Detalhe do bloco de contexto' : 'Context block detail',
         rows: [
           row(
             'tui.sidebar.context.tokens',
-            'Tokens row',
+            isPt ? 'Linha de tokens' : 'Tokens row',
             prefs.sidebar.context.tokens,
-            'the raw token count line',
+            isPt ? 'contagem bruta de tokens' : 'the raw token count line',
           ),
           row(
             'tui.sidebar.context.spent',
-            'Spent row',
+            isPt ? 'Linha de custo' : 'Spent row',
             prefs.sidebar.context.spent,
-            'the `$… spent in session` line',
+            isPt ? 'linha `$… gastos na sessão`' : 'the `$… spent in session` line',
           ),
           row(
             'tui.sidebar.context.modelUsage',
-            'Model usage table',
+            isPt ? 'Tabela de uso de modelos' : 'Model usage table',
             prefs.sidebar.context.modelUsage,
-            'per-model tokens/USD',
+            isPt ? 'resumo de chamadas por modelo' : 'per-model tokens/USD',
           ),
           row(
             'tui.sidebar.context.performance',
-            'Performance line',
+            isPt ? 'Linha de desempenho' : 'Performance row',
             prefs.sidebar.context.performance,
-            'cache % + tok/s',
+            isPt ? 'tokens/segundo e latência' : 'cache % + tok/s',
           ),
           row(
             'tui.sidebar.context.localSpend',
-            'Local spend',
+            isPt ? 'Linha de custo local' : 'Local spend row',
             prefs.sidebar.context.localSpend,
-            'hoje / 30d totals',
+            isPt ? 'totais de hoje / 30 dias' : 'hoje / 30d totals',
           ),
         ],
       },
       {
-        title: 'Footers',
+        title: isPt ? 'Rodapés' : 'Footers',
         rows: [
           row(
             'tui.footer.prompt',
-            'Prompt footer',
+            isPt ? 'Prompt inferior' : 'Prompt footer',
             prefs.footer.prompt,
-            'the `▸preset · ✦n ativos` line while delegations run',
+            isPt
+              ? 'linha `▸preset · ✦n ativos` durante delegações'
+              : 'the `▸preset · ✦n ativos` line while delegations run',
           ),
           row(
             'tui.footer.home',
-            'Home status',
+            isPt ? 'Status inicial' : 'Home status',
             prefs.footer.home,
-            'the `Pantheon v…` line under the home prompt',
+            isPt
+              ? 'linha `Pantheon v…` sob o prompt inicial'
+              : 'the `Pantheon v…` line under the home prompt',
           ),
         ],
       },

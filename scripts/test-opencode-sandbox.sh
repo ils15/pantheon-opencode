@@ -1859,7 +1859,13 @@ run_cost_probe() { # v
     return 0
   fi
   set +e
-  raw="$(node "$probe" --version "$v" --fixture --json 2>&1)"
+  if command -v tsx >/dev/null 2>&1; then
+    raw="$(tsx "$probe" --version "$v" --fixture --json 2>&1)"
+  elif npx --no-install tsx --version >/dev/null 2>&1; then
+    raw="$(npx --no-install tsx "$probe" --version "$v" --fixture --json 2>&1)"
+  else
+    raw="$(node "$probe" --version "$v" --fixture --json 2>&1)"
+  fi
   local rc=$?
   set -e
   case "$raw" in
