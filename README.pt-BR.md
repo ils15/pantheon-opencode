@@ -184,6 +184,8 @@ Execute `/pantheon-settings` (ou `Pantheon: Settings` na paleta de comandos) par
 - **Atualizações:** Verifique o canal do registro (`beta` / `stable`) e dispare upgrades.
 - **Doctor:** Execute o diagnóstico de saúde do sistema diretamente na interface.
 - **Personalização da TUI:** Ajuste espaçamento (`comfortable` vs `compact`), separadores, estilo das barras de progresso e linhas de contexto.
+- **Overlay Não-Destrutivo e Navegação por Clique:** Abre como diálogo flutuante sobre a sessão ativa mantendo a TUI visível (configurável entre `dialog` e `fullscreen`), com suporte completo a cliques de mouse em abas, menu lateral, linhas, seletores e botões de ação.
+- **Janela de Novidades Modernizada:** Layout em card com bordas arredondadas, paginação visual e botão dedicado `[OK, Entendido]` com confirmação via mouse ou teclado (`Enter`/`Esc`/`Q`).
 
 ---
 

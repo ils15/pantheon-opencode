@@ -95,18 +95,21 @@ export const SEPARATOR_STYLES_CYCLE: readonly string[] = Object.freeze([
   'dots',
   'slashes',
 ])
+export const SETTINGS_VIEW_MODES: readonly string[] = Object.freeze(['dialog', 'fullscreen'])
 
 export type GaugeStyle = 'both' | 'bar' | 'percent' | 'off'
 export type BarShapePref = 'line' | 'block' | 'smooth' | 'ascii' | 'dots' | 'braille'
 export type BarWidthPref = 'standard' | 'compact' | 'wide' | 'full'
 export type LayoutPresetPref = 'comfortable' | 'compact'
 export type SeparatorStylePref = 'spaces' | 'pipes' | 'dots' | 'slashes'
+export type SettingsViewModePref = 'dialog' | 'fullscreen'
 
 export interface TuiPrefs {
   version: 1
   layout: {
     preset: LayoutPresetPref
     separator: SeparatorStylePref
+    settingsView?: SettingsViewModePref
   }
   sidebar: {
     header: { version: boolean; preset: boolean; session: boolean }
@@ -131,6 +134,7 @@ export const DEFAULT_TUI_PREFS: TuiPrefs = {
   layout: {
     preset: 'comfortable',
     separator: 'spaces',
+    settingsView: 'dialog',
   },
   sidebar: {
     header: { version: true, preset: true, session: true },
@@ -181,6 +185,11 @@ export function normalizeTuiPrefs(raw: unknown): TuiPrefs {
   const separator = SEPARATOR_STYLES_CYCLE.includes(layout.separator as string)
     ? (layout.separator as SeparatorStylePref)
     : DEFAULT_TUI_PREFS.layout.separator
+  const settingsView = (
+    SETTINGS_VIEW_MODES.includes(layout.settingsView as string)
+      ? layout.settingsView
+      : DEFAULT_TUI_PREFS.layout.settingsView
+  ) as SettingsViewModePref
   const gauge = GAUGE_STYLES.includes(context.gauge as string)
     ? (context.gauge as GaugeStyle)
     : DEFAULT_TUI_PREFS.sidebar.context.gauge
@@ -197,6 +206,7 @@ export function normalizeTuiPrefs(raw: unknown): TuiPrefs {
     layout: {
       preset,
       separator,
+      settingsView,
     },
     sidebar: {
       header: {
@@ -261,6 +271,13 @@ export function buildTuiTab(prefs: TuiPrefs): SettingsTab {
             value: prefs.layout?.separator ?? DEFAULT_TUI_PREFS.layout.separator,
             cycle: SEPARATOR_STYLES_CYCLE,
             note: 'spaces | pipes | dots | slashes — status line glyphs',
+          },
+          {
+            id: 'tui.layout.settingsView',
+            name: 'Settings surface',
+            value: tuiRowValue(prefs, 'tui.layout.settingsView') ?? 'dialog',
+            cycle: SETTINGS_VIEW_MODES,
+            note: 'dialog overlay (leaves TUI visible) or fullscreen router page',
           },
         ],
       },
@@ -423,6 +440,12 @@ export function applyTuiRow(draft: TuiPrefs, id: string, value: string): void {
         draft.layout.separator = value as SeparatorStylePref
       }
       return
+    case 'tui.layout.settingsView':
+      if (SETTINGS_VIEW_MODES.includes(value)) {
+        if (!draft.layout) draft.layout = { ...DEFAULT_TUI_PREFS.layout }
+        draft.layout.settingsView = value as SettingsViewModePref
+      }
+      return
     case 'tui.sidebar.context.barShape':
       if (BAR_SHAPES_CYCLE.includes(value)) draft.sidebar.context.barShape = value as BarShapePref
       return
@@ -487,6 +510,8 @@ export function tuiRowValue(prefs: TuiPrefs, id: string): string | undefined {
   if (id === 'tui.layout.preset') return prefs.layout?.preset ?? DEFAULT_TUI_PREFS.layout.preset
   if (id === 'tui.layout.separator')
     return prefs.layout?.separator ?? DEFAULT_TUI_PREFS.layout.separator
+  if (id === 'tui.layout.settingsView')
+    return prefs.layout?.settingsView ?? DEFAULT_TUI_PREFS.layout.settingsView ?? 'dialog'
   if (id === 'tui.sidebar.context.barShape') return prefs.sidebar.context.barShape
   if (id === 'tui.sidebar.context.barWidth') return prefs.sidebar.context.barWidth
   if (id === 'tui.sidebar.context.gauge') return prefs.sidebar.context.gauge

@@ -32,39 +32,126 @@
  * does not show (fail-open, like the rest of the plugin).
  */
 import type { Context } from '@opencode/plugin/tui/context'
-import { createSignal, For } from 'solid-js'
+import { createSignal, For, Show } from 'solid-js'
 import { readChangelogForBundle, resolveRunningVersion } from './whats-new-highlights.ts'
 import { openWhatsNew, type WhatsNewViewData, wrapWhatsNewLine } from './whats-new-open.ts'
 import { defaultWhatsNewStatePath } from './whats-new-state.ts'
 
-/** Window body: title, rule, the current page (wrapped), footer hint. */
+/** Window body: title, rule, the current page (wrapped), footer action bar with OK button. */
 export function WhatsNewContent(props: {
   data: WhatsNewViewData
   page: () => number
   pageCount: () => number
   fg?: any
   muted?: any
+  warn?: any
+  onClose?: () => void
+  onNext?: () => void
+  onPrev?: () => void
 }) {
   const rows = () => {
     const current = props.data.pages[Math.min(props.page(), props.pageCount() - 1)] ?? []
     const wrapped: string[] = []
-    for (const line of current) wrapped.push(...wrapWhatsNewLine(line, 76))
+    for (const line of current) wrapped.push(...wrapWhatsNewLine(line, 72))
     return wrapped
   }
   return (
-    <box flexDirection="column" paddingLeft={1} paddingRight={1} paddingTop={1}>
-      <text attributes={1} fg={props.fg}>
-        {props.data.title}
-      </text>
-      <text fg={props.muted}>{'─'.repeat(38)}</text>
-      <For each={rows()}>
-        {(line: string) => <text fg={line.startsWith('• ') ? props.fg : props.muted}>{line}</text>}
-      </For>
-      <box height={1} />
-      <text fg={props.muted}>
-        {props.pageCount() > 1 ? `${props.page() + 1}/${props.pageCount()} · ` : ''}
-        {props.data.hint}
-      </text>
+    <box
+      flexDirection="column"
+      borderStyle="rounded"
+      borderColor={props.warn ?? '#fba970'}
+      paddingLeft={2}
+      paddingRight={2}
+      paddingTop={1}
+      paddingBottom={1}
+    >
+      {/* Header with Title and close hint */}
+      <box flexDirection="row" alignItems="center" justifyContent="space-between">
+        <box flexDirection="row" alignItems="center">
+          <box
+            backgroundColor={props.warn ?? '#fba970'}
+            paddingLeft={1}
+            paddingRight={1}
+            marginRight={1}
+          >
+            <text fg="#000000" attributes={1}>
+              {'NOVIDADES'}
+            </text>
+          </box>
+          <text attributes={1} fg={props.fg}>
+            {props.data.title}
+          </text>
+        </box>
+        <box onMouseDown={() => props.onClose?.()}>
+          <text fg={props.muted}>{'[ Esc / Q ]'}</text>
+        </box>
+      </box>
+
+      {/* Divider */}
+      <box flexDirection="row" height={1} marginTop={1} marginBottom={1}>
+        <text fg={props.muted}>{'─'.repeat(72)}</text>
+      </box>
+
+      {/* Content items */}
+      <box flexDirection="column" minHeight={8}>
+        <For each={rows()}>
+          {(line: string) => {
+            const isBullet = line.startsWith('• ')
+            return (
+              <text fg={isBullet ? props.fg : props.muted} {...(isBullet ? { attributes: 1 } : {})}>
+                {line}
+              </text>
+            )
+          }}
+        </For>
+      </box>
+
+      {/* Divider before footer */}
+      <box flexDirection="row" height={1} marginTop={1}>
+        <text fg={props.muted}>{'─'.repeat(72)}</text>
+      </box>
+
+      {/* Bottom Action Bar: Pagination + Modern OK Button */}
+      <box flexDirection="row" alignItems="center" justifyContent="space-between" marginTop={1}>
+        <box flexDirection="row" alignItems="center">
+          <Show when={props.pageCount() > 1}>
+            <box
+              backgroundColor="#262626"
+              paddingLeft={1}
+              paddingRight={1}
+              marginRight={1}
+              onMouseDown={() => props.onPrev?.()}
+            >
+              <text fg="#ffffff">{'‹ Anterior'}</text>
+            </box>
+            <text fg={props.muted} marginRight={1}>
+              {`${props.page() + 1} / ${props.pageCount()}`}
+            </text>
+            <box
+              backgroundColor="#262626"
+              paddingLeft={1}
+              paddingRight={1}
+              marginRight={1}
+              onMouseDown={() => props.onNext?.()}
+            >
+              <text fg="#ffffff">{'Próximo ›'}</text>
+            </box>
+          </Show>
+          <text fg={props.muted}>{'Enter / Esc / Q fechar'}</text>
+        </box>
+
+        {/* Prominent OK Button */}
+        <box
+          backgroundColor={props.warn ?? '#fba970'}
+          paddingLeft={2}
+          paddingRight={2}
+          onMouseDown={() => props.onClose?.()}
+        >
+          <text fg="#000000" attributes={1}>
+            {'OK, Entendido'}
+          </text>
+        </box>
+      </box>
     </box>
   )
 }
@@ -91,6 +178,16 @@ export async function maybeShowWhatsNewV2(context: Context): Promise<void> {
         mode: 'global',
         enabled: () => open(),
         commands: [
+          {
+            id: 'pantheon.whats-new.confirm',
+            title: 'Confirmar e fechar o que há de novo',
+            bind: 'enter,space',
+            run: () => {
+              if (!open()) return false
+              dismiss()
+              return undefined
+            },
+          },
           {
             id: 'pantheon.whats-new.close',
             title: 'Fechar o que há de novo',
@@ -149,6 +246,7 @@ export async function maybeShowWhatsNewV2(context: Context): Promise<void> {
         setOpen(true)
         try {
           const theme = context.theme?.text ?? {}
+          const warn = (theme?.feedback as any)?.warning?.base ?? '#fba970'
           context.ui.dialog.show(
             () => (
               <WhatsNewContent
@@ -157,6 +255,10 @@ export async function maybeShowWhatsNewV2(context: Context): Promise<void> {
                 pageCount={pageCount}
                 fg={theme.base}
                 muted={theme.muted}
+                warn={warn}
+                onClose={dismiss}
+                onNext={() => setPage((current) => Math.min(current + 1, pageCount() - 1))}
+                onPrev={() => setPage((current) => Math.max(current - 1, 0))}
               />
             ),
             close,

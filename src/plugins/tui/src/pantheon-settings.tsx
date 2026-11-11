@@ -379,10 +379,27 @@ export function SettingsWindow(props: {
   fg?: any
   muted?: any
   warn?: any
+  onJumpTab?: (index: number) => void
+  onSelectRow?: (id: string) => void
+  onCycleValue?: (id: string, direction: 1 | -1) => void
+  onSave?: () => void
+  onResetPage?: () => void
+  onStageDefaults?: () => void
+  onClose?: () => void
+  onDiscard?: () => void
+  onCancelExit?: () => void
 }) {
   const tab = () => props.tabs()[props.page()] ?? props.tabs()[0] ?? EMPTY_TAB
   return (
-    <box flexDirection="column" paddingLeft={1} paddingRight={1} paddingTop={1}>
+    <box
+      flexDirection="column"
+      borderStyle="single"
+      borderColor={props.muted ?? '#404040'}
+      paddingLeft={1}
+      paddingRight={1}
+      paddingTop={1}
+      paddingBottom={1}
+    >
       {/* ── Top Header bar: Title + Horizontal Tabs + ESC (matching image.png) ── */}
       <box flexDirection="row" alignItems="center">
         <text attributes={1} fg={props.fg}>
@@ -394,18 +411,22 @@ export function SettingsWindow(props: {
             {(t, index) => {
               const isActive = () => index() === props.page()
               return (
-                <text
-                  flexShrink={0}
-                  fg={isActive() ? (props.warn ?? props.fg) : props.muted}
-                  {...(isActive() ? { attributes: 1 } : {})}
-                >
-                  {`${t.title}${tabDirty(props.draft(), t) ? ' ●' : ''}  `}
-                </text>
+                <box onMouseDown={() => props.onJumpTab?.(index())} paddingRight={1}>
+                  <text
+                    flexShrink={0}
+                    fg={isActive() ? (props.warn ?? props.fg) : props.muted}
+                    {...(isActive() ? { attributes: 1 } : {})}
+                  >
+                    {`${t.title}${tabDirty(props.draft(), t) ? ' ●' : ''} `}
+                  </text>
+                </box>
               )
             }}
           </For>
         </box>
-        <text fg={props.muted}>{'esc'}</text>
+        <box onMouseDown={() => props.onClose?.()}>
+          <text fg={props.muted}>{'[ esc ]'}</text>
+        </box>
       </box>
 
       {/* ── Thin divider under header ── */}
@@ -423,12 +444,14 @@ export function SettingsWindow(props: {
             {(t, index) => {
               const isActive = () => index() === props.page()
               return (
-                <text
-                  fg={isActive() ? (props.warn ?? props.fg) : props.muted}
-                  {...(isActive() ? { attributes: 1 } : {})}
-                >
-                  {`${isActive() ? '▸ ' : '  '}${t.title}${tabDirty(props.draft(), t) ? ' ●' : ''}`}
-                </text>
+                <box onMouseDown={() => props.onJumpTab?.(index())}>
+                  <text
+                    fg={isActive() ? (props.warn ?? props.fg) : props.muted}
+                    {...(isActive() ? { attributes: 1 } : {})}
+                  >
+                    {`${isActive() ? '▸ ' : '  '}${t.title}${tabDirty(props.draft(), t) ? ' ●' : ''}`}
+                  </text>
+                </box>
               )
             }}
           </For>
@@ -463,6 +486,9 @@ export function SettingsWindow(props: {
                       <box
                         flexDirection="row"
                         backgroundColor={isSelected() ? (props.warn ?? '#f59e0b') : undefined}
+                        onMouseDown={() => {
+                          props.onSelectRow?.(row.id)
+                        }}
                       >
                         <box width={NAME_WIDTH + 2}>
                           <text
@@ -472,7 +498,13 @@ export function SettingsWindow(props: {
                             {`${gutter()}${row.name}`.padEnd(NAME_WIDTH + 2)}
                           </text>
                         </box>
-                        <box width={VALUE_WIDTH}>
+                        <box
+                          width={VALUE_WIDTH}
+                          onMouseDown={() => {
+                            props.onSelectRow?.(row.id)
+                            props.onCycleValue?.(row.id, 1)
+                          }}
+                        >
                           <text
                             fg={
                               isSelected()
@@ -504,10 +536,16 @@ export function SettingsWindow(props: {
 
       {/* ── Footer: notice + botões (chips) + keys (matching image.png & image_2.png) ── */}
       <Show when={props.notice() !== undefined}>
-        <text fg={props.notice()?.startsWith('✅') ? props.fg : (props.warn ?? props.muted)}>
-          {props.notice()?.startsWith('✅') || props.notice()?.startsWith('saved')
+        <text
+          fg={
+            props.notice()?.startsWith('[OK]') || props.notice()?.startsWith('saved')
+              ? props.fg
+              : (props.warn ?? props.muted)
+          }
+        >
+          {props.notice()?.startsWith('[OK]') || props.notice()?.startsWith('saved')
             ? props.notice()
-            : `⚠ ${props.notice()}`}
+            : `[WARN] ${props.notice()}`}
         </text>
       </Show>
 
@@ -519,15 +557,15 @@ export function SettingsWindow(props: {
               when={draftDirty(props.draft())}
               fallback={
                 <box flexDirection="row">
-                  <box backgroundColor="#262626">
+                  <box backgroundColor="#262626" onMouseDown={() => props.onClose?.()}>
                     <text fg="#ffffff">{' Close '}</text>
                   </box>
                   <text fg={props.muted}>{'  '}</text>
-                  <box backgroundColor="#262626">
+                  <box backgroundColor="#262626" onMouseDown={() => props.onResetPage?.()}>
                     <text fg="#ffffff">{' Reset page '}</text>
                   </box>
                   <text fg={props.muted}>{'  '}</text>
-                  <box backgroundColor="#262626">
+                  <box backgroundColor="#262626" onMouseDown={() => props.onStageDefaults?.()}>
                     <text fg="#ffffff">{' Defaults '}</text>
                   </box>
                   <box flexGrow={1} />
@@ -536,15 +574,15 @@ export function SettingsWindow(props: {
               }
             >
               <box flexDirection="row">
-                <box backgroundColor="#fba970">
+                <box backgroundColor="#fba970" onMouseDown={() => props.onSave?.()}>
                   <text fg="#000000">{' Save '}</text>
                 </box>
                 <text fg={props.muted}>{'  '}</text>
-                <box backgroundColor="#262626">
+                <box backgroundColor="#262626" onMouseDown={() => props.onDiscard?.()}>
                   <text fg="#ffffff">{' Discard '}</text>
                 </box>
                 <text fg={props.muted}>{'  '}</text>
-                <box backgroundColor="#262626">
+                <box backgroundColor="#262626" onMouseDown={() => props.onResetPage?.()}>
                   <text fg="#ffffff">{' Reset page '}</text>
                 </box>
                 <box flexGrow={1} />
@@ -553,7 +591,7 @@ export function SettingsWindow(props: {
             </Show>
             <text fg={props.muted}>
               {
-                '› or ←/→ change · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close'
+                'click or ›/←/→ change · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close'
               }
             </text>
           </box>
@@ -564,15 +602,15 @@ export function SettingsWindow(props: {
             <text fg={props.warn ?? '#f59e0b'} attributes={1}>
               {'Keep your changes?  '}
             </text>
-            <box backgroundColor="#fba970">
+            <box backgroundColor="#fba970" onMouseDown={() => props.onSave?.()}>
               <text fg="#000000">{' Save '}</text>
             </box>
             <text fg={props.muted}>{'  '}</text>
-            <box backgroundColor="#262626">
+            <box backgroundColor="#262626" onMouseDown={() => props.onDiscard?.()}>
               <text fg="#ffffff">{' Discard '}</text>
             </box>
             <text fg={props.muted}>{'  '}</text>
-            <box backgroundColor="#262626">
+            <box backgroundColor="#262626" onMouseDown={() => props.onCancelExit?.()}>
               <text fg="#ffffff">{' Keep editing '}</text>
             </box>
           </box>
@@ -588,6 +626,8 @@ export function SettingsWindow(props: {
 interface PageApi {
   move: (delta: number) => void
   step: (direction: 1 | -1) => void
+  selectById?: (id: string) => void
+  cycleRowById?: (id: string, direction: 1 | -1) => void
   actuate: () => void
   nextTab: () => void
   jumpTab: (index: number) => void
@@ -748,7 +788,7 @@ function createWindowController(
             })
           } catch {}
         } else {
-          setNotice('✅ update complete — restart OpenCode or run `npx pantheon-opencode init`')
+          setNotice('[OK] update complete — restart OpenCode or run `npx pantheon-opencode init`')
           try {
             context.ui.toast?.show?.({
               variant: 'info',
@@ -984,9 +1024,34 @@ function createWindowController(
 
   const selectedId = () => rows()[selected()]?.id
 
+  const selectById = (id: string) => {
+    if (confirmExit()) setConfirmExit(false)
+    const list = rows()
+    const index = list.findIndex((r) => r.id === id)
+    if (index !== -1) setSelected(index)
+  }
+
+  const cycleRowById = (id: string, direction: 1 | -1) => {
+    if (confirmExit()) setConfirmExit(false)
+    const list = rows()
+    const index = list.findIndex((r) => r.id === id)
+    if (index !== -1) {
+      setSelected(index)
+      const row = list[index]
+      if (row?.action === 'update-check') checkUpdatesNow()
+      else if (row?.action === 'update-run') runUpdateNow()
+      else if (row) {
+        setNotice(undefined)
+        setDraft(stageValue(draft(), row, direction))
+      }
+    }
+  }
+
   const api: PageApi = {
     move,
     step,
+    selectById,
+    cycleRowById,
     actuate: () => {
       if (confirmExit()) setConfirmExit(false)
       const row = rows()[selected()]
@@ -1062,6 +1127,15 @@ function SettingsPage(props: { context: Context; data: Record<string, any> | und
       fg={theme.base}
       muted={theme.muted}
       warn={warn}
+      onJumpTab={(idx) => controller.api.jumpTab(idx)}
+      onSelectRow={(id) => controller.api.selectById?.(id)}
+      onCycleValue={(id, dir) => controller.api.cycleRowById?.(id, dir)}
+      onSave={() => controller.api.save()}
+      onResetPage={() => controller.api.resetPage()}
+      onStageDefaults={() => controller.api.stageDefaults()}
+      onClose={() => controller.api.close()}
+      onDiscard={() => controller.api.discard?.()}
+      onCancelExit={() => controller.api.cancelExit?.()}
     />
   )
 }
@@ -1119,6 +1193,15 @@ function openSettingsDialog(context: Context): void {
           fg={theme.base}
           muted={theme.muted}
           warn={warn}
+          onJumpTab={(idx) => controller.api.jumpTab(idx)}
+          onSelectRow={(id) => controller.api.selectById?.(id)}
+          onCycleValue={(id, dir) => controller.api.cycleRowById?.(id, dir)}
+          onSave={() => controller.api.save()}
+          onResetPage={() => controller.api.resetPage()}
+          onStageDefaults={() => controller.api.stageDefaults()}
+          onClose={() => controller.api.close()}
+          onDiscard={() => controller.api.discard?.()}
+          onCancelExit={() => controller.api.cancelExit?.()}
         />
       ),
       close,
@@ -1312,7 +1395,9 @@ export function setupPantheonSettings(context: Context): void {
 
 export async function openPantheonSettings(context: Context): Promise<void> {
   try {
-    if (routerAvailable && context.ui?.router?.navigate) {
+    const prefs = tuiPrefs()
+    const viewMode = prefs.layout?.settingsView ?? 'dialog'
+    if (viewMode === 'fullscreen' && routerAvailable && context.ui?.router?.navigate) {
       let returnRoute: WindowRoute | undefined
       try {
         const current = context.ui.router.current()

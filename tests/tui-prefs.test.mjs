@@ -121,12 +121,14 @@ describe('applyTuiRow', () => {
     applyTuiRow(draft, 'tui.sidebar.context.evenMark', 'enabled')
     applyTuiRow(draft, 'tui.layout.preset', 'compact')
     applyTuiRow(draft, 'tui.layout.separator', 'pipes')
+    applyTuiRow(draft, 'tui.layout.settingsView', 'fullscreen')
 
     assert.equal(tuiRowValue(draft, 'tui.sidebar.context.barShape'), 'dots')
     assert.equal(tuiRowValue(draft, 'tui.sidebar.context.barWidth'), 'wide')
     assert.equal(tuiRowValue(draft, 'tui.sidebar.context.evenMark'), 'enabled')
     assert.equal(tuiRowValue(draft, 'tui.layout.preset'), 'compact')
     assert.equal(tuiRowValue(draft, 'tui.layout.separator'), 'pipes')
+    assert.equal(tuiRowValue(draft, 'tui.layout.settingsView'), 'fullscreen')
   })
 
   it('a full stage→apply round trip lands every staged value', () => {

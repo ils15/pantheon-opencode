@@ -188,6 +188,8 @@ Run `/pantheon-settings` (or `Pantheon: Settings` in the command palette) to ope
 - **Updates:** Check registry channel (`beta` / `stable`) and trigger upgrades.
 - **Doctor:** Run inline system health diagnostics.
 - **TUI Personalization:** Adjust spacing (`comfortable` vs `compact`), separators, gauge bar styles, and context display rows.
+- **Non-Destructive Overlay & Mouse Navigation:** Opens as a floating dialog overlay over the active session without blanking the workspace (configurable via `dialog` vs `fullscreen`), with full mouse click support for tabs, sidebar, rows, value cyclers, and actions.
+- **Modernized What's New Window:** Card layout with rounded border, pagination buttons, and a dedicated `[OK, Entendido]` button with keyboard (`Enter`/`Esc`/`Q`) and mouse click support.
 
 ---
 
