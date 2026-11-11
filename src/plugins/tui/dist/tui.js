@@ -537,7 +537,7 @@ function buildDecisionTab(read, env = process.env, authProviders = /* @__PURE__ 
 		...corrupt ? {} : { cycle: DECISION_SELECTION_CYCLE },
 		note: isPt ? "local = no seu PC (grátis); auto/explícito = modelo nuvem (OpenRouter)" : "local routes on-device; auto/explicit pick a remote decision model"
 	}];
-	const explicitTarget = config.selection.provider ? `${config.selection.provider}/${config.selection.model ?? ""}` : DECISION_TARGET_CYCLE[0];
+	const explicitTarget = config.selection.provider ? `${config.selection.provider}/${config.selection.model ?? ""}` : DECISION_TARGET_CYCLE[0] ?? "openrouter-jev/typesafe/jev-1.13";
 	rows.push({
 		id: "decision.selection.target",
 		name: isPt ? "Modelo de decisão" : "Explicit target",
@@ -1941,7 +1941,7 @@ async function readChangelogForBundle(bundleUrl) {
 }
 /** The ambient build-time version, or null outside a tsdown build. */
 function embeddedVersion() {
-	return "2.0.0";
+	return "2.0.1";
 }
 /**
 * Resolve the running Pantheon version for the what's-new window: the plugin
@@ -2166,7 +2166,7 @@ function persistUpdateCheckState(previous, latest) {
 	} catch {}
 }
 function resolveRunningVersion() {
-	return "2.0.0";
+	return "2.0.1";
 }
 const VALUE_WIDTH = 24;
 function SettingsWindow(props) {
@@ -6332,7 +6332,7 @@ async function checkForPantheonUpdate(context) {
 	const latest = String((await response.json())?.version ?? "");
 	if (!latest) return;
 	const notice = pickUpdateNotice({
-		currentVersion: "2.0.0",
+		currentVersion: "2.0.1",
 		latestVersion: latest,
 		state: readState(),
 		nowMs: Date.now()
@@ -7144,7 +7144,7 @@ function Sidebar(props) {
 			get children() {
 				var _el$13 = createElement("text");
 				setProp(_el$13, "attributes", 1);
-				insert(_el$13, `Pantheon v2.0.0`);
+				insert(_el$13, `Pantheon v2.0.1`);
 				effect((_$p) => setProp(_el$13, "fg", text(), _$p));
 				return _el$13;
 			}
@@ -7916,7 +7916,7 @@ function HomeStatus(props) {
 		},
 		get children() {
 			var _el$73 = createElement("text");
-			insert(_el$73, () => `Pantheon v2.0.0${preset().name ? ` ▸ ${preset().name}` : ""}`);
+			insert(_el$73, () => `Pantheon v2.0.1${preset().name ? ` ▸ ${preset().name}` : ""}`);
 			effect((_$p) => setProp(_el$73, "fg", muted(), _$p));
 			return _el$73;
 		}

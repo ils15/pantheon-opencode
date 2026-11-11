@@ -341,7 +341,7 @@ export function buildDecisionTab(
   env: Record<string, string | undefined> = process.env,
   authProviders: ReadonlySet<string> = new Set(),
   configProviders: ReadonlySet<string> = new Set(),
-  languagePref?: string,
+  languagePref?: string | undefined,
 ): SettingsTab {
   const lang = resolveLanguage(languagePref, env)
   const isPt = lang === 'pt-BR'
@@ -375,7 +375,7 @@ export function buildDecisionTab(
   // Model selection row: always visible so the user can choose the decision model
   const explicitTarget = config.selection.provider
     ? `${config.selection.provider}/${config.selection.model ?? ''}`
-    : DECISION_TARGET_CYCLE[0]
+    : (DECISION_TARGET_CYCLE[0] ?? 'openrouter-jev/typesafe/jev-1.13')
   rows.push({
     id: 'decision.selection.target',
     name: isPt ? 'Modelo de decisão' : 'Explicit target',

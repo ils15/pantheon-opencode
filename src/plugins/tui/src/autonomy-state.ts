@@ -79,8 +79,8 @@ export function parseUsd(cell: string): number | null {
 export function buildAutonomyTab(input: {
   goalLoop: GoalLoopPrefs
   budgets: DecisionBudgets
-  goalLoopRestartPending?: boolean
-  languagePref?: string
+  goalLoopRestartPending?: boolean | undefined
+  languagePref?: string | undefined
 }): SettingsTab {
   const lang = resolveLanguage(input.languagePref)
   const isPt = lang === 'pt-BR'

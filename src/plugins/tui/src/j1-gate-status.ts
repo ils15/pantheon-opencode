@@ -55,7 +55,7 @@ const MODE_DESCRIPTION_PT: Record<J1Mode, string> = {
 export function buildJ1Tab(
   env: Record<string, string | undefined>,
   disabledByOverride: boolean,
-  languagePref?: string,
+  languagePref?: string | undefined,
 ): SettingsTab {
   const lang = resolveLanguage(languagePref)
   const isPt = lang === 'pt-BR'
