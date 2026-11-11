@@ -122,7 +122,7 @@ export function WhatsNewContent(props: {
               marginRight={1}
               onMouseDown={() => props.onPrev?.()}
             >
-              <text fg="#ffffff">{'‹ Anterior'}</text>
+              <text fg="#ffffff">{'‹ Prev'}</text>
             </box>
             <text fg={props.muted} marginRight={1}>
               {`${props.page() + 1} / ${props.pageCount()}`}
@@ -134,10 +134,10 @@ export function WhatsNewContent(props: {
               marginRight={1}
               onMouseDown={() => props.onNext?.()}
             >
-              <text fg="#ffffff">{'Próximo ›'}</text>
+              <text fg="#ffffff">{'Next ›'}</text>
             </box>
           </Show>
-          <text fg={props.muted}>{'Enter / Esc / Q fechar'}</text>
+          <text fg={props.muted}>{'Enter / Esc / Q close'}</text>
         </box>
 
         {/* Prominent OK Button */}
@@ -148,7 +148,7 @@ export function WhatsNewContent(props: {
           onMouseDown={() => props.onClose?.()}
         >
           <text fg="#000000" attributes={1}>
-            {'OK, Entendido'}
+            {'OK, Got it'}
           </text>
         </box>
       </box>
@@ -180,7 +180,7 @@ export async function maybeShowWhatsNewV2(context: Context): Promise<void> {
         commands: [
           {
             id: 'pantheon.whats-new.confirm',
-            title: 'Confirmar e fechar o que há de novo',
+            title: 'Confirm and close what is new',
             bind: 'enter,space',
             run: () => {
               if (!open()) return false
@@ -190,7 +190,7 @@ export async function maybeShowWhatsNewV2(context: Context): Promise<void> {
           },
           {
             id: 'pantheon.whats-new.close',
-            title: 'Fechar o que há de novo',
+            title: 'Close what is new',
             bind: 'escape,q',
             run: () => {
               if (!open()) return false

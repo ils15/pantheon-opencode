@@ -216,7 +216,7 @@ test('open: true is silent, false shows the session warning and does nothing els
   assert.equal(openDispatchPanel(host.context), false)
   assert.deepEqual(host.toasts, [{ message: DISPATCH_PANEL_TOAST, variant: 'warning' }])
   assert.equal(host.panelCalls.length, 2, 'the failed open is attempted once, never retried')
-  assert.equal(DISPATCH_PANEL_TOAST, 'Abra uma sessão para ver o Dispatch')
+  assert.equal(DISPATCH_PANEL_TOAST, 'Open a session to view Dispatch')
 
   // A host without the panel API (or one that throws) degrades to the same toast.
   assert.equal(openDispatchPanel({ ui: { toast: { show: () => {} } } }), false)
@@ -855,11 +855,11 @@ test('footer: host shortcuts, em dash when a command has no binding', async () =
   )
   assert.equal(
     bound,
-    'k/up — mover · — detalhe · — fullscreen · escape/q fechar',
+    'k/up — move · — detail · — fullscreen · escape/q close',
     'a command without a reported shortcut prints the em dash',
   )
   const bare = dispatchPanelFooter(() => [])
-  assert.equal(bare.startsWith('— — mover'), true)
+  assert.equal(bare.startsWith('— — move'), true)
   assert.equal(dispatchPanelFooter(() => null).includes('—'), true, 'a broken keymap never throws')
 })
 
@@ -1048,7 +1048,7 @@ test('render: empty, mixed and narrow panels keep their documented shape', async
   assert.deepEqual(empty, [
     '◈ Dispatch — refactor the dispatcher',
     '─'.repeat(60),
-    'Nenhuma sessão delegada',
+    'No delegated sessions',
   ])
 
   const running = entry('ses_a', 'running', {

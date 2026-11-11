@@ -1512,7 +1512,7 @@ function buildTuiTab(prefs) {
 				title: "Context block detail",
 				rows: [
 					row("tui.sidebar.context.tokens", "Tokens row", prefs.sidebar.context.tokens, "the raw token count line"),
-					row("tui.sidebar.context.spent", "Spent row", prefs.sidebar.context.spent, "the `$… gasto na sessão` line"),
+					row("tui.sidebar.context.spent", "Spent row", prefs.sidebar.context.spent, "the `$… spent in session` line"),
 					row("tui.sidebar.context.modelUsage", "Model usage table", prefs.sidebar.context.modelUsage, "per-model tokens/USD"),
 					row("tui.sidebar.context.performance", "Performance line", prefs.sidebar.context.performance, "cache % + tok/s"),
 					row("tui.sidebar.context.localSpend", "Local spend", prefs.sidebar.context.localSpend, "hoje / 30d totals")
@@ -3655,10 +3655,10 @@ async function defaultWhatsNewStatePath(env = process.env, home = homedir()) {
 *   - never throws on its own inputs; I/O failures inside the state module
 *     are fail-open there.
 */
-/** Muted footer hint teaching the dismiss bind (Portuguese, like the sidebar). */
-const WHATS_NEW_CLOSE_HINT = "esc/q fechar";
+/** Muted footer hint teaching the dismiss bind. */
+const WHATS_NEW_CLOSE_HINT = "esc/q close";
 /** Hint variant when the highlights span more than one page. */
-const WHATS_NEW_PAGES_HINT = "esc/q fechar · n próxima · p volta";
+const WHATS_NEW_PAGES_HINT = "esc/q close · n next · p back";
 /** Hard-wrap one display line into rows of at most `width` columns (>= 10). */
 function wrapWhatsNewLine(line, width) {
 	const bounded = Number.isInteger(width) && width > 10 ? width : 76;
@@ -3831,7 +3831,7 @@ function WhatsNewContent(props) {
 						setProp(_el$18, "paddingRight", 1);
 						setProp(_el$18, "marginRight", 1);
 						setProp(_el$18, "onMouseDown", () => props.onPrev?.());
-						insertNode(_el$19, createTextNode(`‹ Anterior`));
+						insertNode(_el$19, createTextNode(`‹ Prev`));
 						setProp(_el$19, "fg", "#ffffff");
 						return _el$18;
 					})(),
@@ -3850,19 +3850,19 @@ function WhatsNewContent(props) {
 						setProp(_el$22, "paddingRight", 1);
 						setProp(_el$22, "marginRight", 1);
 						setProp(_el$22, "onMouseDown", () => props.onNext?.());
-						insertNode(_el$23, createTextNode(`Próximo ›`));
+						insertNode(_el$23, createTextNode(`Next ›`));
 						setProp(_el$23, "fg", "#ffffff");
 						return _el$22;
 					})()
 				];
 			}
 		}), _el$25);
-		insertNode(_el$25, createTextNode(`Enter / Esc / Q fechar`));
+		insertNode(_el$25, createTextNode(`Enter / Esc / Q close`));
 		insertNode(_el$27, _el$28);
 		setProp(_el$27, "paddingLeft", 2);
 		setProp(_el$27, "paddingRight", 2);
 		setProp(_el$27, "onMouseDown", () => props.onClose?.());
-		insertNode(_el$28, createTextNode(`OK, Entendido`));
+		insertNode(_el$28, createTextNode(`OK, Got it`));
 		setProp(_el$28, "fg", "#000000");
 		setProp(_el$28, "attributes", 1);
 		effect((_p$) => {
@@ -3911,7 +3911,7 @@ async function maybeShowWhatsNewV2(context) {
 				commands: [
 					{
 						id: "pantheon.whats-new.confirm",
-						title: "Confirmar e fechar o que há de novo",
+						title: "Confirm and close what is new",
 						bind: "enter,space",
 						run: () => {
 							if (!open()) return false;
@@ -3920,7 +3920,7 @@ async function maybeShowWhatsNewV2(context) {
 					},
 					{
 						id: "pantheon.whats-new.close",
-						title: "Fechar o que há de novo",
+						title: "Close what is new",
 						bind: "escape,q",
 						run: () => {
 							if (!open()) return false;
@@ -4001,7 +4001,7 @@ const SPINNER_INTERVAL_MS = 80;
 /** Bounded warm-up: sync at most this many sessions at plugin load. */
 const WARMUP_SESSION_LIMIT = 24;
 /** Sidebar body shown while the host has not published a session yet. */
-const SIDEBAR_WAITING_LABEL = "Aguardando sessão…";
+const SIDEBAR_WAITING_LABEL = "Waiting for session…";
 /** Delegate-completion toast title. */
 const TOAST_TITLE = "Pantheon";
 /** Marker before the preset label (fixed header, home status, prompt footer).
@@ -4477,7 +4477,7 @@ function contextBlockRows(usage, cost, gaugeStyle = "both", barOptions) {
 		lead: null,
 		value: spentValue,
 		tail: null,
-		suffix: " gasto na sessão",
+		suffix: " spent in session",
 		tone: null
 	};
 	if (usage === null) return spent === null ? null : {
@@ -5701,7 +5701,7 @@ function buildDispatchBlock(views, now = Date.now(), frame = 0, max = 34) {
 const DISPATCH_PANEL_NAME = "pantheon.dispatch";
 /** Toast shown when `ui.panel.open` refuses (no session route is active). The
 *  panel only exists inside a session, so there is no alternative route. */
-const DISPATCH_PANEL_TOAST = "Abra uma sessão para ver o Dispatch";
+const DISPATCH_PANEL_TOAST = "Open a session to view Dispatch";
 /** Panel title marker — the same glyph the sidebar block header uses. */
 const DISPATCH_PANEL_HEADER_MARKER = "◈";
 /** Selected-row gutter marker (`▸`, one cell). */
@@ -5713,7 +5713,7 @@ const DISPATCH_PANEL_RULE_CHAR = "─";
 /** Em dash for any datum the host did not publish. */
 const DISPATCH_PANEL_DASH = "—";
 /** Body of an empty panel (the claim still renders, the list is just empty). */
-const DISPATCH_PANEL_EMPTY_TEXT = "Nenhuma sessão delegada";
+const DISPATCH_PANEL_EMPTY_TEXT = "No delegated sessions";
 /** Width at or above which the list and the detail sit side by side. */
 const DISPATCH_PANEL_WIDE_MIN_WIDTH = 72;
 /** Rows the viewport holds; pageup/pagedown move by exactly this many rows. */
@@ -5925,55 +5925,55 @@ const DISPATCH_PANEL_COMMANDS = [
 	{
 		action: "up",
 		id: "pantheon.dispatch.up",
-		title: "Dispatch: selecionar anterior",
+		title: "Dispatch: select previous",
 		bind: "k,up"
 	},
 	{
 		action: "down",
 		id: "pantheon.dispatch.down",
-		title: "Dispatch: selecionar próxima",
+		title: "Dispatch: select next",
 		bind: "j,down"
 	},
 	{
 		action: "home",
 		id: "pantheon.dispatch.home",
-		title: "Dispatch: primeira",
+		title: "Dispatch: first",
 		bind: "home"
 	},
 	{
 		action: "end",
 		id: "pantheon.dispatch.end",
-		title: "Dispatch: última",
+		title: "Dispatch: last",
 		bind: "end"
 	},
 	{
 		action: "pageup",
 		id: "pantheon.dispatch.pageup",
-		title: "Dispatch: página acima",
+		title: "Dispatch: page up",
 		bind: "pageup"
 	},
 	{
 		action: "pagedown",
 		id: "pantheon.dispatch.pagedown",
-		title: "Dispatch: página abaixo",
+		title: "Dispatch: page down",
 		bind: "pagedown"
 	},
 	{
 		action: "toggle",
 		id: "pantheon.dispatch.toggle",
-		title: "Dispatch: expandir detalhe",
+		title: "Dispatch: expand detail",
 		bind: "enter"
 	},
 	{
 		action: "fullscreen",
 		id: "pantheon.dispatch.fullscreen",
-		title: "Dispatch: tela cheia",
+		title: "Dispatch: fullscreen",
 		bind: "f"
 	},
 	{
 		action: "close",
 		id: "pantheon.dispatch.close",
-		title: "Dispatch: fechar",
+		title: "Dispatch: close",
 		bind: "escape,q"
 	}
 ];
@@ -6028,10 +6028,10 @@ function dispatchPanelFooter(shortcutsOf) {
 		return text === "" ? "—" : text;
 	};
 	return [
-		`${keys("pantheon.dispatch.up")} ${keys("pantheon.dispatch.down")} mover`,
-		`${keys("pantheon.dispatch.toggle")} detalhe`,
+		`${keys("pantheon.dispatch.up")} ${keys("pantheon.dispatch.down")} move`,
+		`${keys("pantheon.dispatch.toggle")} detail`,
 		`${keys("pantheon.dispatch.fullscreen")} fullscreen`,
-		`${keys("pantheon.dispatch.close")} fechar`
+		`${keys("pantheon.dispatch.close")} close`
 	].join(SPEND_LINE_SEPARATOR);
 }
 /** The subset of `PanelInput` the model reads, so tests can drive it with a
@@ -6914,7 +6914,7 @@ function ContextRowView(props) {
 	const fullWidth = () => cellWidth(`${props.row.lead ?? ""}${props.row.tail ?? ""}${props.row.value}${props.row.suffix ?? ""}`);
 	return createComponent(Show, {
 		get when() {
-			return props.row.suffix !== " gasto na sessão";
+			return props.row.suffix !== " spent in session";
 		},
 		get fallback() {
 			return (() => {
@@ -6922,7 +6922,7 @@ function ContextRowView(props) {
 				setProp(_el$3, "flexDirection", "column");
 				insert(_el$3, createComponent(For, {
 					get each() {
-						return sidebarMoneyLines("gasto na sessão", props.row.value);
+						return sidebarMoneyLines("spent in session", props.row.value);
 					},
 					children: (line) => (() => {
 						var _el$4 = createElement("text");
@@ -7134,7 +7134,7 @@ function Sidebar(props) {
 			},
 			children: (current) => (() => {
 				var _el$27 = createElement("text");
-				insert(_el$27, () => `Sessão: ${truncateLabel(current().title || current().id)}`);
+				insert(_el$27, () => `Session: ${truncateLabel(current().title || current().id)}`);
 				effect((_$p) => setProp(_el$27, "fg", text(), _$p));
 				return _el$27;
 			})()
@@ -7240,12 +7240,12 @@ function Sidebar(props) {
 							get children() {
 								return [(() => {
 									var _el$29 = createElement("text");
-									insertNode(_el$29, createTextNode(`Sessão · custo reportado`));
+									insertNode(_el$29, createTextNode(`Session · reported cost`));
 									effect((_$p) => setProp(_el$29, "fg", muted(), _$p));
 									return _el$29;
 								})(), (() => {
 									var _el$31 = createElement("text");
-									insertNode(_el$31, createTextNode(`Modelo        Tokens       USD`));
+									insertNode(_el$31, createTextNode(`Model         Tokens       USD`));
 									effect((_$p) => setProp(_el$31, "fg", muted(), _$p));
 									return _el$31;
 								})()];
@@ -7687,7 +7687,7 @@ function DispatchPanel(props) {
 	});
 	const empty = () => (() => {
 		var _el$58 = createElement("text");
-		insertNode(_el$58, createTextNode(`Nenhuma sessão delegada`));
+		insertNode(_el$58, createTextNode(`No delegated sessions`));
 		effect((_$p) => setProp(_el$58, "fg", muted(), _$p));
 		return _el$58;
 	})();

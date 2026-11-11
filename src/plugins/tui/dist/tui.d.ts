@@ -38,7 +38,7 @@ export declare function cellWidth(value: string): number;
 //#endregion
 //#region src/index.d.ts
 /** Sidebar body shown while the host has not published a session yet. */
-export declare const SIDEBAR_WAITING_LABEL = "Aguardando sessão…";
+export declare const SIDEBAR_WAITING_LABEL = "Waiting for session…";
 /** Marker before the preset label (fixed header, home status, prompt footer).
  *  `▸` U+25B8 is one cell; the previous bolt (U+26A1) carries
  *  Emoji_Presentation and is measured as two cells, which misaligned the line. */
@@ -759,7 +759,7 @@ export declare function buildDispatchBlock(views: readonly DelegationView[], now
 export declare const DISPATCH_PANEL_NAME = "pantheon.dispatch";
 /** Toast shown when `ui.panel.open` refuses (no session route is active). The
  *  panel only exists inside a session, so there is no alternative route. */
-export declare const DISPATCH_PANEL_TOAST = "Abra uma sessão para ver o Dispatch";
+export declare const DISPATCH_PANEL_TOAST = "Open a session to view Dispatch";
 /** Panel title marker — the same glyph the sidebar block header uses. */
 export declare const DISPATCH_PANEL_HEADER_MARKER = "◈";
 /** Selected-row gutter marker (`▸`, one cell). */
@@ -771,7 +771,7 @@ export declare const DISPATCH_PANEL_RULE_CHAR = "─";
 /** Em dash for any datum the host did not publish. */
 export declare const DISPATCH_PANEL_DASH = "—";
 /** Body of an empty panel (the claim still renders, the list is just empty). */
-export declare const DISPATCH_PANEL_EMPTY_TEXT = "Nenhuma sessão delegada";
+export declare const DISPATCH_PANEL_EMPTY_TEXT = "No delegated sessions";
 /** Width at or above which the list and the detail sit side by side. */
 export declare const DISPATCH_PANEL_WIDE_MIN_WIDTH = 72;
 /** Rows the viewport holds; pageup/pagedown move by exactly this many rows. */
