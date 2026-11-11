@@ -1,8 +1,8 @@
 {
   "src/skills/agent-coordination/SKILL.md": "ffa4cfc9c778dd9619665010de32d82d49ae5bb803c985dc99417eb6fc7c3d1c",
   "src/skills/agent-forge/SKILL.md": "cbe09946a59fa45b471828d9de6e7bc5c4b2fa29e0ce48e21d188593ece6c046",
-  "src/skills/artifact-management/references/artifact-templates.md": "6eedbcbc7bb466f64fe1ebf2622f905ea8a0f247b69c473f80edcf01b5caf4cf",
-  "src/skills/artifact-management/SKILL.md": "9de4488115b3d862d6989f958712f3369787be98e6df22ae413d20064da43721",
+  "src/skills/artifact-management/references/artifact-templates.md": "d1a5d082266311c362e63e097f461fe993a4eac7485c4a445fba7993c404e1c7",
+  "src/skills/artifact-management/SKILL.md": "d11bc6a9968758294bd9ae56dfa8df43090c5f1f7c4f706861687d8ac3bb88a2",
   "src/skills/auto-continue/references/auto-continue-details.md": "630844448b0a5a69d23a1c270bbbf5312a4d7554d84cea0459fc8a1430a60798",
   "src/skills/auto-continue/SKILL.md": "7bfddd84f96b657043074a35ef2f524913ccbed2689fc8a26ad425167f4b77c5",
   "src/skills/clonedeps/SKILL.md": "3e0b43cf96da98c83699dc48db3fd58fbfda84b9022bb70d3747875c81c3e124",

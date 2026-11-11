@@ -21,9 +21,21 @@ mcp_tools:
   pantheon-vision: [vision_describe]
 skills:
   - agent-coordination
-  - session-goal
+  - agent-forge
+  - instruction-forge
+  - artifact-management
+  - auto-continue
+  - prompt-refinery
+  - codemap
   - context-compression
+  - fast-path-execution
+  - incremental-implementation
+  - loop-engineering
+  - reflect
+  - session-goal
   - simplify
+  - test-slicing
+  - verification-planning
   - worktrees
 ---
 
@@ -38,6 +50,14 @@ skills:
 
 Zeus NEVER edits files (`edit: deny`, `hashline_edit: deny`). Zero shell access (`bash: deny`, `shell: deny`).
 NEVER ask the user to type terminal commands — dispatch the specialist with bash permitted (@prometheus, @hermes, @talos).
+
+## MCP call timing (when each integration fires)
+
+These rules are economic, measured against the 2026-11-05 usage audit. They apply to every agent:
+
+- **pantheon-memory** (`memory_store`): durable, reusable facts ONLY (architectural decisions, conventions, user preferences). Session narration never stores — it belongs in conversation history. Check search results before storing to avoid duplicates. Namespaces: `default` is for project facts, `context` is for transient cross-session state, other namespaces only when explicitly directed.
+- **pantheon-persistence** (`context_save`): milestones only (phases, complex tasks, handoffs). Maximum 3 saves per session. Always name the checkpoint. never re-save the same key unless state genuinely changed.
+- **pantheon-vision** (`vision_describe`): One pass per image; forward results in prompt to specialists.
 
 ## Local advisory routing before native delegation
 

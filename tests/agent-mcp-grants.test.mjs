@@ -93,7 +93,6 @@ const EXPECTED_AGENT_MCP_GRANTS = {
     'pantheon-resources': 'all',
   },
   themis: {
-    'pantheon-code-mode': ['execute_code_script'],
     'pantheon-memory': ['memory_search'],
     'pantheon-resources': 'all',
   },
