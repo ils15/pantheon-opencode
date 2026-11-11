@@ -95,14 +95,18 @@ export const SEPARATOR_STYLES_CYCLE: readonly string[] = Object.freeze([
   'dots',
   'slashes',
 ])
-export const SETTINGS_VIEW_MODES: readonly string[] = Object.freeze(['dialog', 'fullscreen'])
+export const SETTINGS_VIEW_MODES: readonly string[] = Object.freeze([
+  'docked',
+  'fullscreen',
+  'dialog',
+])
 
 export type GaugeStyle = 'both' | 'bar' | 'percent' | 'off'
 export type BarShapePref = 'line' | 'block' | 'smooth' | 'ascii' | 'dots' | 'braille'
 export type BarWidthPref = 'standard' | 'compact' | 'wide' | 'full'
 export type LayoutPresetPref = 'comfortable' | 'compact'
 export type SeparatorStylePref = 'spaces' | 'pipes' | 'dots' | 'slashes'
-export type SettingsViewModePref = 'dialog' | 'fullscreen'
+export type SettingsViewModePref = 'docked' | 'fullscreen' | 'dialog'
 
 export interface TuiPrefs {
   version: 1
@@ -134,7 +138,7 @@ export const DEFAULT_TUI_PREFS: TuiPrefs = {
   layout: {
     preset: 'comfortable',
     separator: 'spaces',
-    settingsView: 'dialog',
+    settingsView: 'docked',
   },
   sidebar: {
     header: { version: true, preset: true, session: true },
@@ -275,9 +279,9 @@ export function buildTuiTab(prefs: TuiPrefs): SettingsTab {
           {
             id: 'tui.layout.settingsView',
             name: 'Settings surface',
-            value: tuiRowValue(prefs, 'tui.layout.settingsView') ?? 'dialog',
+            value: tuiRowValue(prefs, 'tui.layout.settingsView') ?? 'docked',
             cycle: SETTINGS_VIEW_MODES,
-            note: 'dialog overlay (leaves TUI visible) or fullscreen router page',
+            note: 'docked (above prompt) | fullscreen router page | dialog overlay',
           },
         ],
       },
@@ -511,7 +515,7 @@ export function tuiRowValue(prefs: TuiPrefs, id: string): string | undefined {
   if (id === 'tui.layout.separator')
     return prefs.layout?.separator ?? DEFAULT_TUI_PREFS.layout.separator
   if (id === 'tui.layout.settingsView')
-    return prefs.layout?.settingsView ?? DEFAULT_TUI_PREFS.layout.settingsView ?? 'dialog'
+    return prefs.layout?.settingsView ?? DEFAULT_TUI_PREFS.layout.settingsView ?? 'docked'
   if (id === 'tui.sidebar.context.barShape') return prefs.sidebar.context.barShape
   if (id === 'tui.sidebar.context.barWidth') return prefs.sidebar.context.barWidth
   if (id === 'tui.sidebar.context.gauge') return prefs.sidebar.context.gauge

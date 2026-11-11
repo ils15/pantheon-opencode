@@ -1,4 +1,4 @@
-import { createComponent, createElement, createTextNode, effect, insert, insertNode, memo, mergeProps, setProp, spread } from "@opentui/solid";
+import { createComponent, createElement, createTextNode, effect, insert, insertNode, memo, mergeProps, setProp, spread, use } from "@opentui/solid";
 import { execFile } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
@@ -1275,13 +1275,17 @@ const SEPARATOR_STYLES_CYCLE = Object.freeze([
 	"dots",
 	"slashes"
 ]);
-const SETTINGS_VIEW_MODES = Object.freeze(["dialog", "fullscreen"]);
+const SETTINGS_VIEW_MODES = Object.freeze([
+	"docked",
+	"fullscreen",
+	"dialog"
+]);
 const DEFAULT_TUI_PREFS = {
 	version: 1,
 	layout: {
 		preset: "comfortable",
 		separator: "spaces",
-		settingsView: "dialog"
+		settingsView: "docked"
 	},
 	sidebar: {
 		header: {
@@ -1345,9 +1349,9 @@ function buildTuiTab(prefs) {
 					{
 						id: "tui.layout.settingsView",
 						name: "Settings surface",
-						value: tuiRowValue(prefs, "tui.layout.settingsView") ?? "dialog",
+						value: tuiRowValue(prefs, "tui.layout.settingsView") ?? "docked",
 						cycle: SETTINGS_VIEW_MODES,
-						note: "dialog overlay (leaves TUI visible) or fullscreen router page"
+						note: "docked (above prompt) | fullscreen router page | dialog overlay"
 					}
 				]
 			},
@@ -1498,7 +1502,7 @@ function applyTuiRow(draft, id, value) {
 function tuiRowValue(prefs, id) {
 	if (id === "tui.layout.preset") return prefs.layout?.preset ?? DEFAULT_TUI_PREFS.layout.preset;
 	if (id === "tui.layout.separator") return prefs.layout?.separator ?? DEFAULT_TUI_PREFS.layout.separator;
-	if (id === "tui.layout.settingsView") return prefs.layout?.settingsView ?? DEFAULT_TUI_PREFS.layout.settingsView ?? "dialog";
+	if (id === "tui.layout.settingsView") return prefs.layout?.settingsView ?? DEFAULT_TUI_PREFS.layout.settingsView ?? "docked";
 	if (id === "tui.sidebar.context.barShape") return prefs.sidebar.context.barShape;
 	if (id === "tui.sidebar.context.barWidth") return prefs.sidebar.context.barWidth;
 	if (id === "tui.sidebar.context.gauge") return prefs.sidebar.context.gauge;
@@ -2011,103 +2015,89 @@ const VALUE_WIDTH = 24;
 function SettingsWindow(props) {
 	const tab = () => props.tabs()[props.page()] ?? props.tabs()[0] ?? EMPTY_TAB;
 	return (() => {
-		var _el$ = createElement("box"), _el$2 = createElement("box"), _el$3 = createElement("box"), _el$4 = createElement("box"), _el$5 = createElement("text"), _el$7 = createElement("text"), _el$9 = createElement("text"), _el$0 = createElement("box"), _el$1 = createElement("text"), _el$11 = createElement("box"), _el$12 = createElement("box"), _el$13 = createElement("text"), _el$15 = createElement("box"), _el$16 = createElement("box"), _el$17 = createElement("box"), _el$18 = createElement("text"), _el$20 = createElement("text"), _el$22 = createElement("box"), _el$23 = createElement("text"), _el$25 = createElement("box");
+		var _el$ = createElement("box"), _el$2 = createElement("box"), _el$3 = createElement("text"), _el$4 = createElement("b"), _el$6 = createElement("span"), _el$7 = createElement("box"), _el$8 = createElement("box"), _el$9 = createElement("box"), _el$0 = createElement("text"), _el$10 = createElement("scrollbox");
 		insertNode(_el$, _el$2);
-		insertNode(_el$, _el$11);
-		insertNode(_el$, _el$15);
+		insertNode(_el$, _el$10);
 		setProp(_el$, "flexDirection", "column");
+		setProp(_el$, "flexGrow", 1);
+		setProp(_el$, "flexBasis", 0);
+		setProp(_el$, "minHeight", 0);
 		setProp(_el$, "borderStyle", "rounded");
 		setProp(_el$, "paddingLeft", 2);
 		setProp(_el$, "paddingRight", 2);
 		setProp(_el$, "paddingTop", 1);
 		setProp(_el$, "paddingBottom", 1);
 		insertNode(_el$2, _el$3);
-		insertNode(_el$2, _el$0);
+		insertNode(_el$2, _el$7);
+		insertNode(_el$2, _el$8);
+		insertNode(_el$2, _el$9);
 		setProp(_el$2, "flexDirection", "row");
 		setProp(_el$2, "alignItems", "center");
-		setProp(_el$2, "justifyContent", "space-between");
+		setProp(_el$2, "flexShrink", 0);
+		setProp(_el$2, "height", 1);
+		setProp(_el$2, "marginBottom", 1);
 		insertNode(_el$3, _el$4);
-		insertNode(_el$3, _el$7);
-		insertNode(_el$3, _el$9);
-		setProp(_el$3, "flexDirection", "row");
-		setProp(_el$3, "alignItems", "center");
-		insertNode(_el$4, _el$5);
-		setProp(_el$4, "paddingLeft", 1);
-		setProp(_el$4, "paddingRight", 1);
-		setProp(_el$4, "marginRight", 1);
-		insertNode(_el$5, createTextNode(`PANTHEON`));
-		setProp(_el$5, "fg", "#000000");
-		setProp(_el$5, "attributes", 1);
-		insertNode(_el$7, createTextNode(`Settings`));
-		setProp(_el$7, "attributes", 1);
-		insert(_el$9, () => ` · v${props.version}`);
-		insertNode(_el$0, _el$1);
-		setProp(_el$0, "onMouseDown", () => props.onClose?.());
-		insertNode(_el$1, createTextNode(`[ esc ]`));
-		insertNode(_el$11, _el$12);
-		setProp(_el$11, "flexDirection", "row");
-		setProp(_el$11, "height", 1);
-		insertNode(_el$12, _el$13);
-		setProp(_el$12, "flexGrow", 1);
-		insertNode(_el$13, createTextNode(`────────────────────────────────────────────────────────────────────────────`));
-		insertNode(_el$15, _el$16);
-		insertNode(_el$15, _el$22);
-		insertNode(_el$15, _el$25);
-		setProp(_el$15, "flexDirection", "row");
-		insertNode(_el$16, _el$17);
-		insertNode(_el$16, _el$18);
-		insertNode(_el$16, _el$20);
-		setProp(_el$16, "width", 18);
-		setProp(_el$16, "flexDirection", "column");
-		insert(_el$16, createComponent(For, {
+		insertNode(_el$3, _el$6);
+		setProp(_el$3, "attributes", 1);
+		setProp(_el$3, "wrapMode", "none");
+		insertNode(_el$4, createTextNode(`Pantheon`));
+		insert(_el$6, () => ` v${props.version}`);
+		setProp(_el$7, "width", 2);
+		setProp(_el$8, "flexDirection", "row");
+		setProp(_el$8, "flexGrow", 1);
+		setProp(_el$8, "flexShrink", 1);
+		setProp(_el$8, "columnGap", 1);
+		insert(_el$8, createComponent(For, {
 			get each() {
 				return props.tabs();
 			},
 			children: (t, index) => {
 				const isActive = () => index() === props.page();
 				return (() => {
-					var _el$46 = createElement("box"), _el$47 = createElement("text");
-					insertNode(_el$46, _el$47);
-					setProp(_el$46, "onMouseDown", () => props.onJumpTab?.(index()));
-					spread(_el$47, mergeProps({ get fg() {
+					var _el$31 = createElement("box"), _el$32 = createElement("text");
+					insertNode(_el$31, _el$32);
+					setProp(_el$31, "onMouseDown", () => props.onJumpTab?.(index()));
+					setProp(_el$31, "paddingLeft", 1);
+					setProp(_el$31, "paddingRight", 1);
+					setProp(_el$32, "wrapMode", "none");
+					spread(_el$32, mergeProps({ get fg() {
 						return memo(() => !!isActive())() ? props.warn ?? "#fba970" : props.muted;
 					} }, () => isActive() ? { attributes: 1 } : {}), true);
-					insert(_el$47, () => `${isActive() ? "▸ " : "  "}${t.title}${tabDirty(props.draft(), t) ? " ●" : ""}`);
-					return _el$46;
+					insert(_el$32, () => `${t.title}${tabDirty(props.draft(), t) ? " ●" : ""}`);
+					effect((_$p) => setProp(_el$31, "backgroundColor", isActive() ? "#262626" : void 0, _$p));
+					return _el$31;
 				})();
 			}
-		}), _el$17);
-		setProp(_el$17, "height", 1);
-		insertNode(_el$18, createTextNode(`1-9: tab`));
-		insertNode(_el$20, createTextNode(`tab: next`));
-		insertNode(_el$22, _el$23);
-		setProp(_el$22, "width", 1);
-		setProp(_el$22, "marginRight", 1);
-		insertNode(_el$23, createTextNode(`│`));
-		setProp(_el$25, "flexGrow", 1);
-		setProp(_el$25, "flexShrink", 1);
-		setProp(_el$25, "flexDirection", "column");
-		insert(_el$25, createComponent(For, {
+		}));
+		insertNode(_el$9, _el$0);
+		setProp(_el$9, "onMouseDown", () => props.onClose?.());
+		setProp(_el$9, "paddingLeft", 1);
+		insertNode(_el$0, createTextNode(`esc`));
+		setProp(_el$0, "wrapMode", "none");
+		setProp(_el$10, "flexGrow", 1);
+		setProp(_el$10, "flexBasis", 0);
+		setProp(_el$10, "minHeight", 0);
+		insert(_el$10, createComponent(For, {
 			get each() {
 				return tab().groups;
 			},
 			children: (group) => (() => {
-				var _el$48 = createElement("box"), _el$50 = createElement("box");
-				insertNode(_el$48, _el$50);
-				setProp(_el$48, "flexDirection", "column");
-				insert(_el$48, createComponent(Show, {
+				var _el$33 = createElement("box");
+				setProp(_el$33, "flexDirection", "column");
+				setProp(_el$33, "marginBottom", 1);
+				insert(_el$33, createComponent(Show, {
 					get when() {
 						return group.title !== void 0;
 					},
 					get children() {
-						var _el$49 = createElement("text");
-						setProp(_el$49, "attributes", 1);
-						insert(_el$49, () => group.title);
-						effect((_$p) => setProp(_el$49, "fg", props.warn ?? props.fg, _$p));
-						return _el$49;
+						var _el$34 = createElement("text");
+						setProp(_el$34, "attributes", 1);
+						insert(_el$34, () => group.title);
+						effect((_$p) => setProp(_el$34, "fg", props.warn ?? props.fg, _$p));
+						return _el$34;
 					}
-				}), _el$50);
-				insert(_el$48, createComponent(For, {
+				}), null);
+				insert(_el$33, createComponent(For, {
 					get each() {
 						return group.rows;
 					},
@@ -2123,50 +2113,49 @@ function SettingsWindow(props) {
 							return display();
 						};
 						return (() => {
-							var _el$51 = createElement("box"), _el$52 = createElement("box"), _el$53 = createElement("text"), _el$54 = createElement("box"), _el$55 = createElement("text");
-							insertNode(_el$51, _el$52);
-							insertNode(_el$51, _el$54);
-							setProp(_el$51, "flexDirection", "row");
-							setProp(_el$51, "onMouseDown", () => {
+							var _el$35 = createElement("box"), _el$36 = createElement("box"), _el$37 = createElement("text"), _el$38 = createElement("box"), _el$39 = createElement("text");
+							insertNode(_el$35, _el$36);
+							insertNode(_el$35, _el$38);
+							setProp(_el$35, "flexDirection", "row");
+							setProp(_el$35, "onMouseDown", () => {
 								props.onSelectRow?.(row.id);
 							});
-							insertNode(_el$52, _el$53);
-							setProp(_el$52, "width", 28);
-							spread(_el$53, mergeProps({ get fg() {
+							insertNode(_el$36, _el$37);
+							setProp(_el$36, "width", 28);
+							spread(_el$37, mergeProps({ get fg() {
 								return memo(() => !!isSelected())() ? props.warn ?? "#fba970" : props.fg;
 							} }, () => isSelected() ? { attributes: 1 } : {}), true);
-							insert(_el$53, () => `${gutter()}${row.name}`.padEnd(28));
-							insertNode(_el$54, _el$55);
-							setProp(_el$54, "width", 24);
-							setProp(_el$54, "onMouseDown", () => {
+							insert(_el$37, () => `${gutter()}${row.name}`.padEnd(28));
+							insertNode(_el$38, _el$39);
+							setProp(_el$38, "width", 24);
+							setProp(_el$38, "onMouseDown", () => {
 								props.onSelectRow?.(row.id);
 								props.onCycleValue?.(row.id, 1);
 							});
-							spread(_el$55, mergeProps({ get fg() {
+							spread(_el$39, mergeProps({ get fg() {
 								return memo(() => !!isSelected())() ? "#ffffff" : memo(() => !!staged())() ? props.warn ?? props.fg : props.muted;
 							} }, () => isSelected() || staged() ? { attributes: 1 } : {}), true);
-							insert(_el$55, () => `${valueCell()}${staged() ? " ●" : ""}`.padEnd(VALUE_WIDTH));
-							insert(_el$51, createComponent(Show, {
+							insert(_el$39, () => `${valueCell()}${staged() ? " ●" : ""}`.padEnd(VALUE_WIDTH));
+							insert(_el$35, createComponent(Show, {
 								get when() {
 									return row.note !== void 0;
 								},
 								get children() {
-									var _el$56 = createElement("box"), _el$57 = createElement("text");
-									insertNode(_el$56, _el$57);
-									setProp(_el$56, "flexGrow", 1);
-									setProp(_el$56, "flexShrink", 1);
-									insert(_el$57, () => row.note);
-									effect((_$p) => setProp(_el$57, "fg", isSelected() ? "#e5e7eb" : props.muted, _$p));
-									return _el$56;
+									var _el$40 = createElement("box"), _el$41 = createElement("text");
+									insertNode(_el$40, _el$41);
+									setProp(_el$40, "flexGrow", 1);
+									setProp(_el$40, "flexShrink", 1);
+									insert(_el$41, () => row.note);
+									effect((_$p) => setProp(_el$41, "fg", isSelected() ? "#e5e7eb" : props.muted, _$p));
+									return _el$40;
 								}
 							}), null);
-							effect((_$p) => setProp(_el$51, "backgroundColor", isSelected() ? "#262626" : void 0, _$p));
-							return _el$51;
+							effect((_$p) => setProp(_el$35, "backgroundColor", isSelected() ? "#262626" : void 0, _$p));
+							return _el$35;
 						})();
 					}
-				}), _el$50);
-				setProp(_el$50, "height", 1);
-				return _el$48;
+				}), null);
+				return _el$33;
 			})()
 		}));
 		insert(_el$, createComponent(Show, {
@@ -2174,13 +2163,13 @@ function SettingsWindow(props) {
 				return props.notice() !== void 0;
 			},
 			get children() {
-				var _el$26 = createElement("text");
-				insert(_el$26, (() => {
+				var _el$11 = createElement("text");
+				insert(_el$11, (() => {
 					var _c$ = memo(() => !!(props.notice()?.startsWith("[OK]") || props.notice()?.startsWith("saved")));
 					return () => _c$() ? props.notice() : `[WARN] ${props.notice()}`;
 				})());
-				effect((_$p) => setProp(_el$26, "fg", props.notice()?.startsWith("[OK]") || props.notice()?.startsWith("saved") ? props.fg : props.warn ?? props.muted, _$p));
-				return _el$26;
+				effect((_$p) => setProp(_el$11, "fg", props.notice()?.startsWith("[OK]") || props.notice()?.startsWith("saved") ? props.fg : props.warn ?? props.muted, _$p));
+				return _el$11;
 			}
 		}), null);
 		insert(_el$, createComponent(Show, {
@@ -2189,148 +2178,148 @@ function SettingsWindow(props) {
 			},
 			get fallback() {
 				return (() => {
-					var _el$58 = createElement("box"), _el$76 = createElement("text");
-					insertNode(_el$58, _el$76);
-					setProp(_el$58, "flexDirection", "column");
-					insert(_el$58, createComponent(Show, {
+					var _el$42 = createElement("box"), _el$60 = createElement("text");
+					insertNode(_el$42, _el$60);
+					setProp(_el$42, "flexDirection", "column");
+					insert(_el$42, createComponent(Show, {
 						get when() {
 							return draftDirty(props.draft());
 						},
 						get fallback() {
 							return (() => {
-								var _el$77 = createElement("box"), _el$78 = createElement("box"), _el$79 = createElement("text"), _el$81 = createElement("text"), _el$83 = createElement("box"), _el$84 = createElement("text"), _el$86 = createElement("text"), _el$88 = createElement("box"), _el$89 = createElement("text"), _el$91 = createElement("box"), _el$92 = createElement("text");
-								insertNode(_el$77, _el$78);
-								insertNode(_el$77, _el$81);
-								insertNode(_el$77, _el$83);
-								insertNode(_el$77, _el$86);
-								insertNode(_el$77, _el$88);
-								insertNode(_el$77, _el$91);
-								insertNode(_el$77, _el$92);
-								setProp(_el$77, "flexDirection", "row");
-								insertNode(_el$78, _el$79);
-								setProp(_el$78, "backgroundColor", "#262626");
-								setProp(_el$78, "onMouseDown", () => props.onClose?.());
-								insertNode(_el$79, createTextNode(` Close `));
-								setProp(_el$79, "fg", "#ffffff");
-								insertNode(_el$81, createTextNode(`  `));
-								insertNode(_el$83, _el$84);
-								setProp(_el$83, "backgroundColor", "#262626");
-								setProp(_el$83, "onMouseDown", () => props.onResetPage?.());
-								insertNode(_el$84, createTextNode(` Reset page `));
-								setProp(_el$84, "fg", "#ffffff");
-								insertNode(_el$86, createTextNode(`  `));
-								insertNode(_el$88, _el$89);
-								setProp(_el$88, "backgroundColor", "#262626");
-								setProp(_el$88, "onMouseDown", () => props.onStageDefaults?.());
-								insertNode(_el$89, createTextNode(` Defaults `));
-								setProp(_el$89, "fg", "#ffffff");
-								setProp(_el$91, "flexGrow", 1);
-								insertNode(_el$92, createTextNode(`no staged changes`));
+								var _el$61 = createElement("box"), _el$62 = createElement("box"), _el$63 = createElement("text"), _el$65 = createElement("text"), _el$67 = createElement("box"), _el$68 = createElement("text"), _el$70 = createElement("text"), _el$72 = createElement("box"), _el$73 = createElement("text"), _el$75 = createElement("box"), _el$76 = createElement("text");
+								insertNode(_el$61, _el$62);
+								insertNode(_el$61, _el$65);
+								insertNode(_el$61, _el$67);
+								insertNode(_el$61, _el$70);
+								insertNode(_el$61, _el$72);
+								insertNode(_el$61, _el$75);
+								insertNode(_el$61, _el$76);
+								setProp(_el$61, "flexDirection", "row");
+								insertNode(_el$62, _el$63);
+								setProp(_el$62, "backgroundColor", "#262626");
+								setProp(_el$62, "onMouseDown", () => props.onClose?.());
+								insertNode(_el$63, createTextNode(` Close `));
+								setProp(_el$63, "fg", "#ffffff");
+								insertNode(_el$65, createTextNode(`  `));
+								insertNode(_el$67, _el$68);
+								setProp(_el$67, "backgroundColor", "#262626");
+								setProp(_el$67, "onMouseDown", () => props.onResetPage?.());
+								insertNode(_el$68, createTextNode(` Reset page `));
+								setProp(_el$68, "fg", "#ffffff");
+								insertNode(_el$70, createTextNode(`  `));
+								insertNode(_el$72, _el$73);
+								setProp(_el$72, "backgroundColor", "#262626");
+								setProp(_el$72, "onMouseDown", () => props.onStageDefaults?.());
+								insertNode(_el$73, createTextNode(` Defaults `));
+								setProp(_el$73, "fg", "#ffffff");
+								setProp(_el$75, "flexGrow", 1);
+								insertNode(_el$76, createTextNode(`no staged changes`));
 								effect((_p$) => {
-									var _v$15 = props.muted, _v$16 = props.muted, _v$17 = props.muted;
-									_v$15 !== _p$.e && (_p$.e = setProp(_el$81, "fg", _v$15, _p$.e));
-									_v$16 !== _p$.t && (_p$.t = setProp(_el$86, "fg", _v$16, _p$.t));
-									_v$17 !== _p$.a && (_p$.a = setProp(_el$92, "fg", _v$17, _p$.a));
+									var _v$10 = props.muted, _v$11 = props.muted, _v$12 = props.muted;
+									_v$10 !== _p$.e && (_p$.e = setProp(_el$65, "fg", _v$10, _p$.e));
+									_v$11 !== _p$.t && (_p$.t = setProp(_el$70, "fg", _v$11, _p$.t));
+									_v$12 !== _p$.a && (_p$.a = setProp(_el$76, "fg", _v$12, _p$.a));
 									return _p$;
 								}, {
 									e: void 0,
 									t: void 0,
 									a: void 0
 								});
-								return _el$77;
+								return _el$61;
 							})();
 						},
 						get children() {
-							var _el$59 = createElement("box"), _el$60 = createElement("box"), _el$61 = createElement("text"), _el$63 = createElement("text"), _el$65 = createElement("box"), _el$66 = createElement("text"), _el$68 = createElement("text"), _el$70 = createElement("box"), _el$71 = createElement("text"), _el$73 = createElement("box"), _el$74 = createElement("text");
-							insertNode(_el$59, _el$60);
-							insertNode(_el$59, _el$63);
-							insertNode(_el$59, _el$65);
-							insertNode(_el$59, _el$68);
-							insertNode(_el$59, _el$70);
-							insertNode(_el$59, _el$73);
-							insertNode(_el$59, _el$74);
-							setProp(_el$59, "flexDirection", "row");
-							insertNode(_el$60, _el$61);
-							setProp(_el$60, "backgroundColor", "#fba970");
-							setProp(_el$60, "onMouseDown", () => props.onSave?.());
-							insertNode(_el$61, createTextNode(` Save `));
-							setProp(_el$61, "fg", "#000000");
-							insertNode(_el$63, createTextNode(`  `));
-							insertNode(_el$65, _el$66);
-							setProp(_el$65, "backgroundColor", "#262626");
-							setProp(_el$65, "onMouseDown", () => props.onDiscard?.());
-							insertNode(_el$66, createTextNode(` Discard `));
-							setProp(_el$66, "fg", "#ffffff");
-							insertNode(_el$68, createTextNode(`  `));
-							insertNode(_el$70, _el$71);
-							setProp(_el$70, "backgroundColor", "#262626");
-							setProp(_el$70, "onMouseDown", () => props.onResetPage?.());
-							insertNode(_el$71, createTextNode(` Reset page `));
-							setProp(_el$71, "fg", "#ffffff");
-							setProp(_el$73, "flexGrow", 1);
-							insertNode(_el$74, createTextNode(`unsaved changes`));
+							var _el$43 = createElement("box"), _el$44 = createElement("box"), _el$45 = createElement("text"), _el$47 = createElement("text"), _el$49 = createElement("box"), _el$50 = createElement("text"), _el$52 = createElement("text"), _el$54 = createElement("box"), _el$55 = createElement("text"), _el$57 = createElement("box"), _el$58 = createElement("text");
+							insertNode(_el$43, _el$44);
+							insertNode(_el$43, _el$47);
+							insertNode(_el$43, _el$49);
+							insertNode(_el$43, _el$52);
+							insertNode(_el$43, _el$54);
+							insertNode(_el$43, _el$57);
+							insertNode(_el$43, _el$58);
+							setProp(_el$43, "flexDirection", "row");
+							insertNode(_el$44, _el$45);
+							setProp(_el$44, "backgroundColor", "#fba970");
+							setProp(_el$44, "onMouseDown", () => props.onSave?.());
+							insertNode(_el$45, createTextNode(` Save `));
+							setProp(_el$45, "fg", "#000000");
+							insertNode(_el$47, createTextNode(`  `));
+							insertNode(_el$49, _el$50);
+							setProp(_el$49, "backgroundColor", "#262626");
+							setProp(_el$49, "onMouseDown", () => props.onDiscard?.());
+							insertNode(_el$50, createTextNode(` Discard `));
+							setProp(_el$50, "fg", "#ffffff");
+							insertNode(_el$52, createTextNode(`  `));
+							insertNode(_el$54, _el$55);
+							setProp(_el$54, "backgroundColor", "#262626");
+							setProp(_el$54, "onMouseDown", () => props.onResetPage?.());
+							insertNode(_el$55, createTextNode(` Reset page `));
+							setProp(_el$55, "fg", "#ffffff");
+							setProp(_el$57, "flexGrow", 1);
+							insertNode(_el$58, createTextNode(`unsaved changes`));
 							effect((_p$) => {
-								var _v$12 = props.muted, _v$13 = props.muted, _v$14 = props.warn ?? "#f59e0b";
-								_v$12 !== _p$.e && (_p$.e = setProp(_el$63, "fg", _v$12, _p$.e));
-								_v$13 !== _p$.t && (_p$.t = setProp(_el$68, "fg", _v$13, _p$.t));
-								_v$14 !== _p$.a && (_p$.a = setProp(_el$74, "fg", _v$14, _p$.a));
+								var _v$9 = props.muted, _v$0 = props.muted, _v$1 = props.warn ?? "#f59e0b";
+								_v$9 !== _p$.e && (_p$.e = setProp(_el$47, "fg", _v$9, _p$.e));
+								_v$0 !== _p$.t && (_p$.t = setProp(_el$52, "fg", _v$0, _p$.t));
+								_v$1 !== _p$.a && (_p$.a = setProp(_el$58, "fg", _v$1, _p$.a));
 								return _p$;
 							}, {
 								e: void 0,
 								t: void 0,
 								a: void 0
 							});
-							return _el$59;
+							return _el$43;
 						}
-					}), _el$76);
-					insert(_el$76, () => {
+					}), _el$60);
+					insert(_el$60, () => {
 						const currentRow = findRow(tab(), props.selectedId());
 						if (currentRow?.cycle !== void 0) return "click or ›/←/→ change · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close";
 						if (currentRow?.action !== void 0) return "enter or space run action · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close";
 						return "[ref] documented reference (read-only) · ↑↓ select · tab next tab · esc close";
 					});
-					effect((_$p) => setProp(_el$76, "fg", props.muted, _$p));
-					return _el$58;
+					effect((_$p) => setProp(_el$60, "fg", props.muted, _$p));
+					return _el$42;
 				})();
 			},
 			get children() {
-				var _el$27 = createElement("box"), _el$28 = createElement("box"), _el$29 = createElement("text"), _el$31 = createElement("box"), _el$32 = createElement("text"), _el$34 = createElement("text"), _el$36 = createElement("box"), _el$37 = createElement("text"), _el$39 = createElement("text"), _el$41 = createElement("box"), _el$42 = createElement("text"), _el$44 = createElement("text");
-				insertNode(_el$27, _el$28);
-				insertNode(_el$27, _el$44);
-				setProp(_el$27, "flexDirection", "column");
-				insertNode(_el$28, _el$29);
-				insertNode(_el$28, _el$31);
-				insertNode(_el$28, _el$34);
-				insertNode(_el$28, _el$36);
-				insertNode(_el$28, _el$39);
-				insertNode(_el$28, _el$41);
-				setProp(_el$28, "flexDirection", "row");
-				insertNode(_el$29, createTextNode(`Keep your changes?  `));
-				setProp(_el$29, "attributes", 1);
-				insertNode(_el$31, _el$32);
-				setProp(_el$31, "backgroundColor", "#fba970");
-				setProp(_el$31, "onMouseDown", () => props.onSave?.());
-				insertNode(_el$32, createTextNode(` Save `));
-				setProp(_el$32, "fg", "#000000");
-				insertNode(_el$34, createTextNode(`  `));
-				insertNode(_el$36, _el$37);
-				setProp(_el$36, "backgroundColor", "#262626");
-				setProp(_el$36, "onMouseDown", () => props.onDiscard?.());
-				insertNode(_el$37, createTextNode(` Discard `));
-				setProp(_el$37, "fg", "#ffffff");
-				insertNode(_el$39, createTextNode(`  `));
-				insertNode(_el$41, _el$42);
-				setProp(_el$41, "backgroundColor", "#262626");
-				setProp(_el$41, "onMouseDown", () => props.onCancelExit?.());
-				insertNode(_el$42, createTextNode(` Keep editing `));
-				setProp(_el$42, "fg", "#ffffff");
-				insertNode(_el$44, createTextNode(`ctrl+s save · d discard the changes · esc keep editing`));
+				var _el$12 = createElement("box"), _el$13 = createElement("box"), _el$14 = createElement("text"), _el$16 = createElement("box"), _el$17 = createElement("text"), _el$19 = createElement("text"), _el$21 = createElement("box"), _el$22 = createElement("text"), _el$24 = createElement("text"), _el$26 = createElement("box"), _el$27 = createElement("text"), _el$29 = createElement("text");
+				insertNode(_el$12, _el$13);
+				insertNode(_el$12, _el$29);
+				setProp(_el$12, "flexDirection", "column");
+				insertNode(_el$13, _el$14);
+				insertNode(_el$13, _el$16);
+				insertNode(_el$13, _el$19);
+				insertNode(_el$13, _el$21);
+				insertNode(_el$13, _el$24);
+				insertNode(_el$13, _el$26);
+				setProp(_el$13, "flexDirection", "row");
+				insertNode(_el$14, createTextNode(`Keep your changes?  `));
+				setProp(_el$14, "attributes", 1);
+				insertNode(_el$16, _el$17);
+				setProp(_el$16, "backgroundColor", "#fba970");
+				setProp(_el$16, "onMouseDown", () => props.onSave?.());
+				insertNode(_el$17, createTextNode(` Save `));
+				setProp(_el$17, "fg", "#000000");
+				insertNode(_el$19, createTextNode(`  `));
+				insertNode(_el$21, _el$22);
+				setProp(_el$21, "backgroundColor", "#262626");
+				setProp(_el$21, "onMouseDown", () => props.onDiscard?.());
+				insertNode(_el$22, createTextNode(` Discard `));
+				setProp(_el$22, "fg", "#ffffff");
+				insertNode(_el$24, createTextNode(`  `));
+				insertNode(_el$26, _el$27);
+				setProp(_el$26, "backgroundColor", "#262626");
+				setProp(_el$26, "onMouseDown", () => props.onCancelExit?.());
+				insertNode(_el$27, createTextNode(` Keep editing `));
+				setProp(_el$27, "fg", "#ffffff");
+				insertNode(_el$29, createTextNode(`ctrl+s save · d discard the changes · esc keep editing`));
 				effect((_p$) => {
 					var _v$ = props.warn ?? "#f59e0b", _v$2 = props.muted, _v$3 = props.muted, _v$4 = props.muted;
-					_v$ !== _p$.e && (_p$.e = setProp(_el$29, "fg", _v$, _p$.e));
-					_v$2 !== _p$.t && (_p$.t = setProp(_el$34, "fg", _v$2, _p$.t));
-					_v$3 !== _p$.a && (_p$.a = setProp(_el$39, "fg", _v$3, _p$.a));
-					_v$4 !== _p$.o && (_p$.o = setProp(_el$44, "fg", _v$4, _p$.o));
+					_v$ !== _p$.e && (_p$.e = setProp(_el$14, "fg", _v$, _p$.e));
+					_v$2 !== _p$.t && (_p$.t = setProp(_el$19, "fg", _v$2, _p$.t));
+					_v$3 !== _p$.a && (_p$.a = setProp(_el$24, "fg", _v$3, _p$.a));
+					_v$4 !== _p$.o && (_p$.o = setProp(_el$29, "fg", _v$4, _p$.o));
 					return _p$;
 				}, {
 					e: void 0,
@@ -2338,31 +2327,21 @@ function SettingsWindow(props) {
 					a: void 0,
 					o: void 0
 				});
-				return _el$27;
+				return _el$12;
 			}
 		}), null);
 		effect((_p$) => {
-			var _v$5 = props.warn ?? "#fba970", _v$6 = props.warn ?? "#fba970", _v$7 = props.fg, _v$8 = props.muted, _v$9 = props.muted, _v$0 = props.muted, _v$1 = props.muted, _v$10 = props.muted, _v$11 = props.muted;
+			var _v$5 = props.hasKeyboard?.() ? props.warn ?? "#fba970" : props.muted ?? "#52525b", _v$6 = props.fg, _v$7 = { fg: props.muted }, _v$8 = props.muted;
 			_v$5 !== _p$.e && (_p$.e = setProp(_el$, "borderColor", _v$5, _p$.e));
-			_v$6 !== _p$.t && (_p$.t = setProp(_el$4, "backgroundColor", _v$6, _p$.t));
-			_v$7 !== _p$.a && (_p$.a = setProp(_el$7, "fg", _v$7, _p$.a));
-			_v$8 !== _p$.o && (_p$.o = setProp(_el$9, "fg", _v$8, _p$.o));
-			_v$9 !== _p$.i && (_p$.i = setProp(_el$1, "fg", _v$9, _p$.i));
-			_v$0 !== _p$.n && (_p$.n = setProp(_el$13, "fg", _v$0, _p$.n));
-			_v$1 !== _p$.s && (_p$.s = setProp(_el$18, "fg", _v$1, _p$.s));
-			_v$10 !== _p$.h && (_p$.h = setProp(_el$20, "fg", _v$10, _p$.h));
-			_v$11 !== _p$.r && (_p$.r = setProp(_el$23, "fg", _v$11, _p$.r));
+			_v$6 !== _p$.t && (_p$.t = setProp(_el$3, "fg", _v$6, _p$.t));
+			_v$7 !== _p$.a && (_p$.a = setProp(_el$6, "style", _v$7, _p$.a));
+			_v$8 !== _p$.o && (_p$.o = setProp(_el$0, "fg", _v$8, _p$.o));
 			return _p$;
 		}, {
 			e: void 0,
 			t: void 0,
 			a: void 0,
-			o: void 0,
-			i: void 0,
-			n: void 0,
-			s: void 0,
-			h: void 0,
-			r: void 0
+			o: void 0
 		});
 		return _el$;
 	})();
@@ -2770,6 +2749,14 @@ function createWindowController(context, exit) {
 				else step(1);
 			},
 			nextTab,
+			prevTab: () => {
+				if (confirmExit()) setConfirmExit(false);
+				const count = tabs().length;
+				if (count > 0) {
+					setPage((current) => (current - 1 + count) % count);
+					setSelected(0);
+				}
+			},
 			jumpTab: (index) => {
 				if (confirmExit()) setConfirmExit(false);
 				if (index >= 0 && index < tabs().length) {
@@ -2914,6 +2901,157 @@ function openSettingsDialog(context) {
 		}), close);
 	} catch {}
 }
+const [settingsOpen, setSettingsOpen] = createSignal(false);
+const [activeSessionId, setActiveSessionId] = createSignal();
+function routeSessionID(context) {
+	try {
+		const route = context?.ui?.router?.current?.();
+		return route?.type === "session" ? route?.sessionID : void 0;
+	} catch {
+		return;
+	}
+}
+function closePantheonSettings() {
+	if (pageApi) {
+		pageApi.close();
+		if (pageApi.confirmExit?.()) return;
+	}
+	setSettingsOpen(false);
+	setBlocking(false);
+}
+function PantheonSettingsSlot(props) {
+	onMount(() => {
+		setActiveSessionId(props.sessionID);
+	});
+	onCleanup(() => {
+		if (activeSessionId() === props.sessionID) setActiveSessionId(void 0);
+	});
+	return createComponent(Show, {
+		get when() {
+			return memo(() => !!settingsOpen())() && (activeSessionId() === props.sessionID || !activeSessionId());
+		},
+		get children() {
+			return createComponent(InSessionSettingsWindow, {
+				get context() {
+					return props.context;
+				},
+				get sessionID() {
+					return props.sessionID;
+				}
+			});
+		}
+	});
+}
+function InSessionSettingsWindow(props) {
+	let windowBox;
+	const [roomHeight, setRoomHeight] = createSignal();
+	const [hasKeyboard, setHasKeyboard] = createSignal(false);
+	const context = props.context;
+	function measureRoom() {
+		const box = windowBox;
+		if (!box || box.isDestroyed) return;
+		let child = box;
+		for (let parent = box.parent; parent; child = parent, parent = parent.parent) {
+			const siblings = parent.getChildren?.() ?? [];
+			const messages = siblings[0];
+			if (messages === child || !messages?.getChildren?.().some((item) => "scrollChildIntoView" in item)) continue;
+			const otherRows = siblings.filter((item) => item !== child && item !== messages).reduce((total, item) => total + (item.height ?? 0), 0);
+			const room = Math.max(14, (parent.height ?? 24) - 1 - otherRows - ((child.height ?? 0) - (box.height ?? 0)));
+			if (room !== roomHeight()) queueMicrotask(() => setRoomHeight(room));
+			return;
+		}
+	}
+	onMount(() => {
+		try {
+			context.renderer?.root?.on?.("layout-changed", measureRoom);
+			onCleanup(() => {
+				try {
+					context.renderer?.root?.off?.("layout-changed", measureRoom);
+				} catch {}
+			});
+		} catch {}
+		measureRoom();
+		setTimeout(() => {
+			try {
+				windowBox?.focus?.();
+			} catch {}
+		}, 50);
+	});
+	try {
+		const popMode = context.keymap?.mode?.push?.(ROUTE_MODE);
+		if (popMode !== void 0) onCleanup(() => popMode());
+	} catch {}
+	const controller = createWindowController(context, () => {
+		setSettingsOpen(false);
+		setBlocking(false);
+	});
+	onCleanup(controller.cleanup);
+	pageApi = controller.api;
+	const fallbackHeight = () => Math.max(14, (context.renderer?.height ?? 24) - 6);
+	const effectiveHeight = () => roomHeight() ?? fallbackHeight();
+	const theme = context.theme?.text ?? {};
+	const warn = theme?.feedback?.warning?.base ?? "#fba970";
+	return (() => {
+		var _el$78 = createElement("box");
+		use((el) => {
+			windowBox = el;
+			if (el) {
+				el.on?.("focused", () => setHasKeyboard(true));
+				el.on?.("blurred", () => setHasKeyboard(false));
+			}
+		}, _el$78);
+		setProp(_el$78, "focusable", true);
+		setProp(_el$78, "flexDirection", "column");
+		setProp(_el$78, "flexShrink", 0);
+		setProp(_el$78, "onMouseDown", () => {
+			try {
+				windowBox?.focus?.();
+			} catch {}
+		});
+		insert(_el$78, createComponent(SettingsWindow, {
+			get version() {
+				return resolveRunningVersion();
+			},
+			get tabs() {
+				return controller.tabs;
+			},
+			get page() {
+				return controller.page;
+			},
+			get selectedId() {
+				return controller.selectedId;
+			},
+			get draft() {
+				return controller.draft;
+			},
+			get notice() {
+				return controller.notice;
+			},
+			get confirmExit() {
+				return controller.confirmExit;
+			},
+			get fg() {
+				return theme.base;
+			},
+			get muted() {
+				return theme.muted;
+			},
+			warn,
+			hasKeyboard,
+			onJumpTab: (idx) => controller.api.jumpTab(idx),
+			onSelectRow: (id) => controller.api.selectById?.(id),
+			onCycleValue: (id, dir) => controller.api.cycleRowById?.(id, dir),
+			onSave: () => controller.api.save(),
+			onResetPage: () => controller.api.resetPage(),
+			onStageDefaults: () => controller.api.stageDefaults(),
+			onClose: () => closePantheonSettings(),
+			onDiscard: () => controller.api.discard?.(),
+			onCancelExit: () => controller.api.cancelExit?.()
+		}));
+		effect((_$p) => setProp(_el$78, "height", effectiveHeight(), _$p));
+		return _el$78;
+	})();
+}
 function setupPantheonSettings(context) {
 	try {
 		context.ui.router?.register?.({
@@ -2941,26 +3079,15 @@ function setupPantheonSettings(context) {
 			title: "Close settings",
 			bind: "escape,q",
 			run: () => {
-				try {
-					context.ui.toast?.show?.({
-						variant: "info",
-						message: "settings: close command fired"
-					});
-				} catch {}
 				if (pageApi === void 0) {
-					try {
-						context.ui.toast?.show?.({
-							variant: "warning",
-							message: "settings: no window controller bound"
-						});
-					} catch {}
+					closePantheonSettings();
 					return;
 				}
 				if (pageApi.confirmExit?.()) {
 					pageApi.cancelExit?.();
 					return;
 				}
-				pageApi.close();
+				closePantheonSettings();
 			}
 		},
 		{
@@ -3023,6 +3150,14 @@ function setupPantheonSettings(context) {
 			}
 		},
 		{
+			id: "pantheon.settings.prev.tab",
+			title: "Previous settings tab",
+			bind: "shift+tab",
+			run: () => {
+				pageApi?.prevTab?.();
+			}
+		},
+		{
 			id: "pantheon.settings.save",
 			title: "Save staged changes",
 			bind: "ctrl+s",
@@ -3059,7 +3194,7 @@ function setupPantheonSettings(context) {
 		context.keymap.layer(() => ({
 			mode: ROUTE_MODE,
 			priority: 1,
-			enabled: () => routeGated(),
+			enabled: () => routeGated() || settingsOpen(),
 			commands
 		}));
 	} catch {}
@@ -3067,14 +3202,15 @@ function setupPantheonSettings(context) {
 		context.keymap.layer(() => ({
 			mode: "global",
 			priority: 1,
-			enabled: () => dialogOpen(),
+			enabled: () => dialogOpen() || settingsOpen(),
 			commands
 		}));
 	} catch {}
 }
 async function openPantheonSettings(context) {
 	try {
-		if ((tuiPrefs().layout?.settingsView ?? "dialog") === "fullscreen" && routerAvailable && context.ui?.router?.navigate) {
+		const viewMode = tuiPrefs().layout?.settingsView ?? "docked";
+		if (viewMode === "fullscreen" && routerAvailable && context.ui?.router?.navigate) {
 			let returnRoute;
 			try {
 				const current = context.ui.router.current();
@@ -3089,8 +3225,27 @@ async function openPantheonSettings(context) {
 			});
 			return;
 		}
+		if (viewMode === "dialog") {
+			openSettingsDialog(context);
+			return;
+		}
 	} catch {}
-	openSettingsDialog(context);
+	if (!(context?.sessionID ?? routeSessionID(context) ?? activeSessionId())) {
+		try {
+			context.ui?.toast?.show?.({
+				variant: "info",
+				title: "Pantheon",
+				message: "Open a session first: Pantheon settings opens above the prompt box."
+			});
+		} catch {}
+		return;
+	}
+	if (settingsOpen()) {
+		closePantheonSettings();
+		return;
+	}
+	setSettingsOpen(true);
+	setBlocking(true);
 }
 //#endregion
 //#region src/sidebar-width.ts
@@ -7657,6 +7812,13 @@ const plugin = Plugin.define({
 		try {
 			setupPantheonSettings(context);
 		} catch {}
+		const unregisterSettingsSlot = context.ui.slot({
+			append: "session.composer.top",
+			render: ({ sessionID }) => createComponent(PantheonSettingsSlot, {
+				context,
+				sessionID
+			})
+		});
 		maybeShowWhatsNewV2(context);
 		return () => {
 			clearTimeout(updateNoticeTimer);
@@ -7664,6 +7826,7 @@ const plugin = Plugin.define({
 			if (typeof unregisterHome === "function") unregisterHome();
 			if (typeof unregisterPromptFooter === "function") unregisterPromptFooter();
 			if (typeof unregisterPanel === "function") unregisterPanel();
+			if (typeof unregisterSettingsSlot === "function") unregisterSettingsSlot();
 			if (typeof unregisterCommands === "function") unregisterCommands();
 			if (typeof unregisterSettingsCommands === "function") unregisterSettingsCommands();
 			delete globalState[SINGLETON];
