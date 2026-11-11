@@ -349,7 +349,7 @@ export function buildDecisionTab(
   const rows: SettingsRow[] = [
     {
       id: 'decision.enabled',
-      name: isPt ? 'Assistente Jev' : 'Router',
+      name: isPt ? 'Assistente Jev' : 'Jev Assistant',
       value: config.enabled ? 'enabled' : 'disabled',
       // Corrupt config → read-only; the notice (glue) carries the remedy.
       ...(corrupt ? {} : { cycle: DECISION_ENABLED_CYCLE }),
@@ -363,7 +363,7 @@ export function buildDecisionTab(
     },
     {
       id: 'decision.selection.mode',
-      name: isPt ? 'Modo de operação' : 'Selection mode',
+      name: isPt ? 'Modo de Operação' : 'Operation Mode',
       value: config.selection.mode,
       ...(corrupt ? {} : { cycle: DECISION_SELECTION_CYCLE }),
       note: isPt
@@ -378,7 +378,7 @@ export function buildDecisionTab(
     : (DECISION_TARGET_CYCLE[0] ?? 'openrouter-jev/typesafe/jev-1.13')
   rows.push({
     id: 'decision.selection.target',
-    name: isPt ? 'Modelo de decisão' : 'Explicit target',
+    name: isPt ? 'Modelo de Decisão' : 'Decision Model',
     value:
       config.selection.mode === 'local'
         ? config.selection.provider
@@ -412,7 +412,7 @@ export function buildDecisionTab(
 
   rows.push({
     id: 'decision.consent',
-    name: isPt ? 'Acesso à nuvem (Egress)' : 'Egress consent',
+    name: isPt ? 'Acesso à Nuvem' : 'Cloud API Access',
     value: config.egress_consent ? 'granted' : 'not granted',
     ...(corrupt ? {} : { cycle: DECISION_CONSENT_CYCLE }),
     note: isPt
@@ -428,7 +428,7 @@ export function buildDecisionTab(
     id: 'decision',
     title: isPt ? 'Decisão' : 'Decision',
     groups: [
-      { title: isPt ? 'Assistente de Decisão' : 'Decision router', rows },
+      { title: isPt ? 'Assistente de Decisão (Jev)' : 'Decision Assistant (Jev)', rows },
       {
         title: isPt
           ? 'Credenciais (status apenas — valores nunca gravados na janela)'

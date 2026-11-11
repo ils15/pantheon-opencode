@@ -67,8 +67,11 @@ describe('Bilingual settings tabs rendering', () => {
 
     const targetRow = rows.find((r) => r.id === 'decision.selection.target')
     assert.ok(targetRow !== undefined, 'decision target is permanently visible in v2.0.1')
-    assert.equal(targetRow.name, 'Modelo de decisão')
+    assert.equal(targetRow.name, 'Modelo de Decisão')
     assert.match(targetRow.note, /ciclar seleciona modelo remoto/)
+
+    const consentRow = rows.find((r) => r.id === 'decision.consent')
+    assert.equal(consentRow.name, 'Acesso à Nuvem')
   })
 
   it('renders Autonomy tab localized in pt-BR', () => {
@@ -79,9 +82,13 @@ describe('Bilingual settings tabs rendering', () => {
     })
     assert.equal(tabPt.title, 'Autonomia')
     const rows = tabPt.groups.flatMap((g) => g.rows)
+    const goalLoop = rows.find((r) => r.id === 'autonomy.goal_loop.enabled')
+    assert.equal(goalLoop.name, 'Loop Contínuo')
     const monthly = rows.find((r) => r.id === 'autonomy.budget.monthly')
-    assert.equal(monthly.name, 'Teto mensal')
+    assert.equal(monthly.name, 'Teto Mensal (USD)')
     assert.match(monthly.note, /USD para arbitragem/)
+    const perDecision = rows.find((r) => r.id === 'autonomy.budget.perDecision')
+    assert.equal(perDecision.name, 'Teto por Consulta')
   })
 
   it('renders J1 safety tab localized in pt-BR', () => {
@@ -89,8 +96,10 @@ describe('Bilingual settings tabs rendering', () => {
     assert.equal(tabPt.title, 'Segurança J1')
     const rows = tabPt.groups.flatMap((g) => g.rows)
     const modeRow = rows.find((r) => r.id === 'j1.mode')
-    assert.equal(modeRow.name, 'Modo de execução')
+    assert.equal(modeRow.name, 'Modo de Operação')
     assert.match(modeRow.note, /telemetria/)
+    const gateRow = rows.find((r) => r.id === 'j1.gate')
+    assert.equal(gateRow.name, 'Portão de Segurança')
   })
 
   it('renders TUI tab localized in pt-BR', () => {

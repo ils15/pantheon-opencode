@@ -91,12 +91,12 @@ export function buildAutonomyTab(input: {
     groups: [
       {
         title: isPt
-          ? 'Goal loop (auto-continuação de sessões multi-turn)'
-          : 'Goal loop (multi-turn session auto-continuation)',
+          ? 'Loop Contínuo (auto-continuação de sessões multi-turn)'
+          : 'Auto-Continue Loop (multi-turn session auto-continuation)',
         rows: [
           {
             id: 'autonomy.goal_loop.enabled',
-            name: isPt ? 'Goal loop' : 'Goal loop',
+            name: isPt ? 'Loop Contínuo' : 'Auto-Continue Loop',
             value: input.goalLoop.enabled ? 'enabled' : 'disabled',
             cycle: GOAL_LOOP_ENABLED_CYCLE,
             note: isPt
@@ -130,13 +130,11 @@ export function buildAutonomyTab(input: {
         ],
       },
       {
-        title: isPt
-          ? 'Orçamento Jev (aplicado em tempo real por decisão)'
-          : 'Decision budgets (applies live per gated call)',
+        title: isPt ? 'Orçamentos de Decisão (Jev)' : 'Decision Budgets (Jev)',
         rows: [
           {
             id: 'autonomy.budget.monthly',
-            name: isPt ? 'Teto mensal' : 'Monthly cap',
+            name: isPt ? 'Teto Mensal (USD)' : 'Monthly Budget Cap',
             value: formatUsd(input.budgets.monthlyUsd),
             cycle: MONTHLY_USD_CYCLE,
             note: isPt
@@ -145,7 +143,7 @@ export function buildAutonomyTab(input: {
           },
           {
             id: 'autonomy.budget.perDecision',
-            name: isPt ? 'Teto por decisão' : 'Per-decision cap',
+            name: isPt ? 'Teto por Consulta' : 'Per-Decision Cap',
             value: formatUsd(input.budgets.perDecisionUsd),
             cycle: PER_DECISION_USD_CYCLE,
             note: isPt
