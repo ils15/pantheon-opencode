@@ -51,12 +51,12 @@ whether partial results are acceptable. It is force-fed into every session via `
 skill is opt-in. Do not restate those values here — a copy in this skill is precisely what drifted
 out of sync with them. If a dispatch times out, read the role's row from the instruction file.
 
-### Timeout Parcial (Partial Results)
+### Partial Results on Timeout
 
 Whether an agent may return partial results is the **Partial Results OK?** column in that table.
-Only agents marked ✅ there may return partial — never implementers, never reviewers.
+Only agents marked YES there may return partial — never implementers, never reviewers.
 
-**How to signal timeout parcial:**
+**How to signal partial timeout:**
 When dispatching, set the expectation explicitly:
 ```
 @apollo Search for all auth-related files. If you hit timeout, return whatever you have found so far — partial results are acceptable.
@@ -68,8 +68,8 @@ Maintain an in-context (not persistent/native) checklist of delegations when nee
 
 | Agent | Started | Timeout | Status | Partial OK? |
 |-------|---------|---------|--------|-------------|
-| apollo | T+0s | T+60s | ✅ complete | ✅ |
-| hermes | T+0s | T+180s | ⏳ in progress | ❌ |
+| apollo | T+0s | T+60s | complete | YES |
+| hermes | T+0s | T+180s | in progress | NO |
 
 ---
 
@@ -77,23 +77,23 @@ Maintain an in-context (not persistent/native) checklist of delegations when nee
 
 **Good (auto-continues):**
 ```
-✅ Wrote migration file.
-→ Running migration tests...
-✅ Tests pass (3/3).
-→ Next: write UserRepository query methods.
+Wrote migration file.
+-> Running migration tests...
+Tests pass (3/3).
+-> Next: write UserRepository query methods.
 ```
 
 **Good (stops at Gate 2):**
 ```
-✅ Phase 1 complete: migration + repository layer.
-⏸️ GATE 2 — Themis review summary:
-  - Coverage: 87% ✅ | No OWASP issues ✅
+Phase 1 complete: migration + repository layer.
+GATE 2 — Themis review summary:
+  - Coverage: 87% | No OWASP issues
 Ready for Phase 2? Waiting for go-ahead.
 ```
 
 **Bad (stops unnecessarily):**
 ```
-✅ Wrote the migration file.
+Wrote the migration file.
 Should I now run the migration tests? [waiting]
 ```
 

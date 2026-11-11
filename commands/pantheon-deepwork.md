@@ -56,7 +56,7 @@ Usage:  --resume <slug> | --status <slug> | --list
 
 ## Full-Auto Mode (`--full-auto`)
 
-> ⚠️ Automates only eligible review gates. Gate 1 and commit/deploy gates still require approval.
+> [!WARNING] Automates only eligible review gates. Gate 1 and commit/deploy gates still require approval.
 
 `--full-auto` does not hide the plan or skip Gate 1: Zeus still displays the
 complete plan in the main conversation and waits for explicit approval before

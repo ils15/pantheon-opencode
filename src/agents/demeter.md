@@ -6,6 +6,7 @@ reasoning_effort: medium
 permission:
   read: allow
   grep: allow
+  glob: allow
   edit: allow
   bash: allow
   shell: allow

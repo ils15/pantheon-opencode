@@ -12483,33 +12483,33 @@ async function renderStatus(options) {
 function buildWizardQuestions() {
   return [
     {
-      header: "Agente",
-      question: "Escolha o agente para configurar (um dos 14 can\xF4nicos)",
-      options: KNOWN_AGENTS.map((a) => ({ label: a, description: `Agente ${a}` })),
+      header: "Agent",
+      question: "Choose the agent to configure (one of the 14 canonical agents)",
+      options: KNOWN_AGENTS.map((a) => ({ label: a, description: `Agent ${a}` })),
       multiSelect: false
     },
     {
-      header: "Modelo",
-      question: "Informe o modelo em provider/model-id (ex: openai/gpt-5.6 ou opencode-go/kimi-k2.7-code)",
+      header: "Model",
+      question: "Enter model in provider/model-id format (e.g. openai/gpt-5.6 or opencode-go/kimi-k2.7-code)",
       kind: "text"
     },
     {
       header: "Effort",
-      question: "Escolha o reasoning effort",
+      question: "Choose reasoning effort",
       options: [
-        { label: "low", description: "Baixa lat\xEAncia, respostas curtas" },
-        { label: "medium", description: "Equil\xEDbrio custo/qualidade" },
-        { label: "high", description: "M\xE1xima qualidade/racioc\xEDnio" }
+        { label: "low", description: "Low latency, concise responses" },
+        { label: "medium", description: "Balanced cost and quality" },
+        { label: "high", description: "Maximum reasoning and quality" }
       ],
       multiSelect: false
     },
     {
-      header: "Escopo",
-      question: "Onde salvar o override?",
+      header: "Scope",
+      question: "Where should the override be saved?",
       options: [
         {
           label: "project",
-          description: "./.pantheon/active-preset.json (escopo do projeto, seguro)"
+          description: "./.pantheon/active-preset.json (project scope, safe)"
         },
         {
           label: "global",

@@ -45,11 +45,11 @@ tools: ['search', 'usages']
 - Replication lag (if applicable)
 
 ## Output
-- 📊 Performance baseline
-- 📈 Optimization recommendations
-- 🔧 Migration scripts
-- ⏱️ Estimated performance gains
-- 📋 Monitoring dashboard setup
+- Performance baseline
+- Optimization recommendations
+- Migration scripts
+- Estimated performance gains
+- Monitoring dashboard setup
 
 ## When to Use
 - Query is slow

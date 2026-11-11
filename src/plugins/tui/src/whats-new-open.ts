@@ -24,14 +24,14 @@ import {
 } from './whats-new-highlights.ts'
 import { markSeenWhatsNew, shouldShowWhatsNew } from './whats-new-state.ts'
 
-/** Muted footer hint teaching the dismiss bind (Portuguese, like the sidebar). */
-export const WHATS_NEW_CLOSE_HINT = 'esc/q fechar'
+/** Muted footer hint teaching the dismiss bind. */
+export const WHATS_NEW_CLOSE_HINT = 'esc/q close'
 
 /** Hint variant when the highlights span more than one page. */
-export const WHATS_NEW_PAGES_HINT = 'esc/q fechar · n próxima · p volta'
+export const WHATS_NEW_PAGES_HINT = 'esc/q close · n next · p back'
 
 /** The CHANGELOG pointer shown under the highlights (the window summarizes; the file is complete). */
-export const WHATS_NEW_MORE_HINT = 'CHANGELOG completo: CHANGELOG.md no pacote'
+export const WHATS_NEW_MORE_HINT = 'Full CHANGELOG: CHANGELOG.md in package'
 
 /** Rows per page — bounded so no changelog can overflow the terminal. */
 export const WHATS_NEW_PAGE_SIZE = 14

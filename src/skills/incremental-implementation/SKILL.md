@@ -5,23 +5,23 @@ description: "Implement in thin vertical slices — one commit per task, testabl
 
 # Incremental Implementation
 
-**Construa em fatias finas testáveis. Um commit por task.**
+Build in thin, testable vertical slices. One commit per task.
 
 ## Rules
-1. Cada slice entrega valor testável de forma independente
-2. Um commit por slice — sempre com tests passando
-3. Se o slice cresceu > 50 linhas, quebre em 2
-4. Rollback de um slice não quebra os anteriores
+1. Each slice delivers independently testable value.
+2. One commit per slice with tests passing.
+3. If a slice exceeds 50 changed lines, split it into smaller tasks.
+4. Rolling back a slice must not break previous slices.
 
 ## Slice Pattern
 ```
-Slice 1 — Schema + model (migration up/down testada)
-Slice 2 — API endpoint (teste → implementação → refactor)
-Slice 3 — Frontend component (mock API → UI → integração)
-Slice N — Integração E2E (caminho feliz + edge cases)
+Slice 1 — Schema and data model (migration up/down tested)
+Slice 2 — API endpoint (test -> implementation -> refactor)
+Slice 3 — Frontend component (mock API -> UI -> integration)
+Slice N — E2E integration (happy path + edge cases)
 ```
 
-## Anti-patterns
-- ❌ Slices horizontais (backend inteiro, depois frontend inteiro)
-- ❌ Commits de 500+ linhas
-- ❌ Implementar sem testar antes (RED → GREEN)
+## Anti-Patterns
+- Horizontal slicing (building the entire backend before touching frontend).
+- Mega-commits of 500+ lines.
+- Implementing changes without prior test verification (RED -> GREEN).

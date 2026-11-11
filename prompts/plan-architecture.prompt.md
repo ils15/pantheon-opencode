@@ -46,12 +46,12 @@ After plan, offer:
 "Ready to execute with @zeus? I can coordinate all agents..."
 
 ## Output Format
-- 📋 Requirements summary
-- 🔍 Codebase findings
-- 📝 Comprehensive TDD plan
-- ⚠️ Risk assessment
-- 🤔 Design decisions with rationale
-- ✋ Ready for @zeus handoff
+- Requirements summary
+- Codebase findings
+- Comprehensive TDD plan
+- Risk assessment
+- Design decisions with rationale
+- Ready for @zeus handoff
 
 ## When to Use
 - Planning complex features (payment, auth, etc)

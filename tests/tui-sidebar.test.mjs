@@ -1059,7 +1059,7 @@ test('Context block formats tokens, window, percent and spend like the native bl
     [
       '55,320 tokens',
       `${'\u25B0'.repeat(1)}${'\u25B1'.repeat(11)} 6% of 1.0M`,
-      '$0.18 gasto na sessão',
+      '$0.18 spent in session',
     ],
   )
   assert.equal(full?.tokens?.tone, null, 'only the percentage row is toned')
@@ -1088,14 +1088,14 @@ test('Context block formats tokens, window, percent and spend like the native bl
   assert.equal(noPercent?.percent, null)
   assert.deepEqual(
     [contextRowText(noPercent?.tokens ?? null), contextRowText(noPercent?.spent ?? null)],
-    ['12,345 tokens', '$1.50 gasto na sessão'],
+    ['12,345 tokens', '$1.50 spent in session'],
   )
 
   // Empty session: cost only, and nothing at all without a cost.
   assert.deepEqual(contextBlockRows(null, 0.18), {
     tokens: null,
     percent: null,
-    spent: { lead: null, value: '$0.18', tail: null, suffix: ' gasto na sessão', tone: null },
+    spent: { lead: null, value: '$0.18', tail: null, suffix: ' spent in session', tone: null },
   })
   assert.equal(contextBlockRows(null, null), null)
   assert.equal(contextBlockRows(null, Number.NaN), null)
@@ -1180,7 +1180,7 @@ test('long Context spend and model amounts fit without losing financial values',
   const lines = modelUsageRowLines(row)
   assert.ok(lines.every((line) => cellWidth(line) <= 34))
   for (const part of Object.values(row)) assert.ok(lines.join(' ').includes(part))
-  assert.equal(cellWidth(sidebarMoneyLines('gasto na sessão', '$0.42')[0]), 34)
+  assert.equal(cellWidth(sidebarMoneyLines('spent in session', '$0.42')[0]), 34)
   assert.equal(cellWidth(contextSpendLines('OpenCode · hoje $0.42 · 30d $9.80')[0]), 34)
 })
 
@@ -1560,7 +1560,7 @@ test('sidebar model exposes context, cost, agent→model and full delegation row
           [
             '78,000 tokens',
             `${'\u25B0'.repeat(5)}${'\u25B1'.repeat(7)} 39% of 200K`,
-            '$0.04 gasto na sessão',
+            '$0.04 spent in session',
           ],
         )
 

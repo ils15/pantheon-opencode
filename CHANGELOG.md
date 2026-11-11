@@ -71,32 +71,59 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
      Running apply will move this section to a versioned entry and reset the template below. -->
 
-## [v2.0.0-rc.2] - 2026-11-11
+## [v2.0.0] - 2026-11-11
 
-### What's New
+### 🆕 What's New
 
-- Release Candidate 2: Comprehensive token optimization, V2 tool permissions alignment, English instructions unification, and TUI settings stability.
-- Zeus Fast Greeting & Direct Query Bypass: Casual greetings and direct queries are answered instantly in 1 turn without subagent dispatches, council invocations, or tool calls.
-- English agent instructions: Standardized all agent instructions across src/agents/*.md into clear, idiomatic English.
-- OpenCode V2 tool permissions: Replaced legacy `shell: allow` with native `bash: allow` across all implementers; preserved read-only boundaries on scouts and orchestrator.
-- TUI settings layout & anti-squish: Defaulted settings view to fullscreen router page (matching opencode-quota); added flexWrap to tabs and footer to prevent compression and prompt overlap.
-- Sibling config synchronization: Automated opencode.jsonc plugin synchronization during installation to guarantee pantheon tools availability.
-- Deepwork and worktree pruning: Enhanced scripts/prune.mjs with --deepwork and --worktrees options.
+- **OpenCode 2.x Architecture**: Official 2.0 release dedicated to OpenCode 2.x, removing legacy V1 shims for low latency.
+- **Fast-Path Direct Dispatch**: Zeus executes direct implementation requests in 1 turn without mandatory planning or approval cascades.
+- **Native Subagent Execution**: Parallel background subagents (`task(background: true)`) for non-blocking test and build workflows.
+- **Implementer Tool Grants**: Added native glob, grep, and bash access across all implementers to eliminate discovery round-trips.
+- **Prompt Diet & English Unification**: Condensed agent prompts by up to 70% and standardized instructions across all agents to English.
+- **TUI Settings Stability**: Fullscreen settings overlay with flexWrap anti-squish layout and live preference preview.
+
+### Added
+
+- **agents** — Fast-Path Direct Implementation in Zeus routing direct coding requests immediately to domain specialists.
+- **agents** — Native glob and grep permissions granted to implementers (Talos, Prometheus, Demeter).
+- **agents** — Parallel background execution guidance for tests and builds using `task(background: true)`.
 
 ### Changed
 
-- agents — Zeus prompt condensed to 73 lines with fast bypass and bounded read permissions.
-- agents — Themis, Apollo, Athena, Hermes, and Zeus instructions standardized to English.
-- agents — Cleaned emojis from all instruction headers and tables across src/instructions/.
-- install — opencode.mjs synchronizes pantheon-opencode into sibling opencode.jsonc.
-- tui — src/plugins/tui/src/pantheon-settings.tsx wrapped tabs and footer with flexWrap and capped dialog maxHeight.
-- scripts — scripts/prune.mjs added findStaleDeepwork and findStaleWorktrees with zero emojis.
+- **agents** — Condensed Hermes system prompt from 292 to 198 lines, eliminating tutorial boilerplate.
+- **agents** — Cleaned double-spaced headings and emoji remnants across Aphrodite instructions.
+- **instructions** — Standardized all agent instructions and repository headers to English with zero-emoji enforcement.
 
 ### Fixed
 
-- tools — Fixed "No tool named 'shell' is currently available" by updating agent permission frontmatters to `bash: allow`.
-- tui — Fixed squished tab labels (G De P T Au...) and footer button overlap (--no staged changes--) under narrow viewport widths.
-- install — Fixed missing pantheon tools caused by opencode.jsonc overriding opencode.json.
+- **release** — Corrected canonical changelog structure and bold scope formatting for Gate (e) compliance.
+- **tools** — Replaced legacy shell permissions with native OpenCode V2 bash across all implementers.
+- **tui** — Resolved tab squish and footer overlap on narrow viewports in settings window.
+
+## [v2.0.0-rc.2] - 2026-11-11
+
+### 🆕 What's New
+
+- **Token optimization**: Unified English instructions and condensed Zeus prompt to 73 lines with fast 1-turn bypass.
+- **OpenCode V2 permissions**: Replaced legacy shell permissions with native bash across all implementers.
+- **TUI settings stability**: Fullscreen settings view with flexWrap tabs and footer to prevent compression and overlap.
+- **Sibling config sync**: Automated opencode.jsonc synchronization during install to guarantee pantheon tools.
+- **Pruning CLI**: Added --deepwork and --worktrees flags to scripts/prune.mjs with clean reporting.
+
+### Changed
+
+- **agents** — Zeus prompt condensed to 73 lines with fast bypass and bounded read permissions.
+- **agents** — Themis, Apollo, Athena, Hermes, and Zeus instructions standardized to English.
+- **agents** — Cleaned emojis from all instruction headers and tables across src/instructions/.
+- **install** — opencode.mjs synchronizes pantheon-opencode into sibling opencode.jsonc.
+- **tui** — src/plugins/tui/src/pantheon-settings.tsx wrapped tabs and footer with flexWrap and capped dialog maxHeight.
+- **scripts** — scripts/prune.mjs added findStaleDeepwork and findStaleWorktrees with zero emojis.
+
+### Fixed
+
+- **tools** — Fixed "No tool named 'shell' is currently available" by updating agent permission frontmatters to `bash: allow`.
+- **tui** — Fixed squished tab labels and footer button overlap under narrow viewport widths.
+- **install** — Fixed missing pantheon tools caused by opencode.jsonc overriding opencode.json.
 
 ## [v2.0.0-rc.1] - 2026-11-10
 

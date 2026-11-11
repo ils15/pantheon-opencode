@@ -132,7 +132,7 @@ test('global artifact: agent table + shared rules, no repo-specific setup', () =
 test('project artifact: repo-specific setup only, no shared rule bodies', () => {
   const project = readFileSync(AGENTS_MD_PATH, 'utf8')
   assert.ok(project.includes('## OpenCode Setup'), 'repo setup stays project-side')
-  assert.ok(project.includes('## Teste de Instalação Global (sandbox)'))
+  assert.ok(project.includes('## Global Installation Testing (Sandbox)'))
   assert.ok(project.includes('## Conventions'))
   assert.ok(!project.includes('## Available Agents'), 'agent table is not duplicated')
   assert.ok(!project.includes('## Agent Return Format'))

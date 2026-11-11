@@ -6,7 +6,7 @@ pattern violates the memory-bank rules. The golden rules themselves stay in
 
 ---
 
-### ❌ Session output as files
+### Anti-Pattern: Session output as files
 ```
 # Wrong
 Create IMPLEMENTATION_SUMMARY.md
@@ -16,7 +16,7 @@ Create STATUS.md
 @mnemosyne Append to 02-progress-log.md: [summary]
 ```
 
-### ❌ Mandatory handoff after every phase
+### Anti-Pattern: Mandatory handoff after every phase
 ```
 # Wrong: After every phase → handoff to @mnemosyne
 
@@ -24,7 +24,7 @@ Create STATUS.md
 At sprint close → explicit @mnemosyne invocation
 ```
 
-### ❌ Duplicating information
+### Anti-Pattern: Duplicating information
 ```
 # Wrong: duplicate the same fact in both durable Memory and a project document
 

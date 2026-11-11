@@ -68,7 +68,7 @@ const SPINNER_INTERVAL_MS = 80
 /** Bounded warm-up: sync at most this many sessions at plugin load. */
 const WARMUP_SESSION_LIMIT = 24
 /** Sidebar body shown while the host has not published a session yet. */
-export const SIDEBAR_WAITING_LABEL = 'Aguardando sessão…'
+export const SIDEBAR_WAITING_LABEL = 'Waiting for session…'
 /** Delegate-completion toast title. */
 const TOAST_TITLE = 'Pantheon'
 /** Marker before the preset label (fixed header, home status, prompt footer).
@@ -702,7 +702,7 @@ export function contextBlockRows(
   const spent: ContextRow | null =
     spentValue === null
       ? null
-      : { lead: null, value: spentValue, tail: null, suffix: ' gasto na sessão', tone: null }
+      : { lead: null, value: spentValue, tail: null, suffix: ' spent in session', tone: null }
   if (usage === null) return spent === null ? null : { tokens: null, percent: null, spent }
 
   const tokensValue = formatTokenCount(usage.tokens)
@@ -2325,7 +2325,7 @@ export function buildDispatchBlock(
 export const DISPATCH_PANEL_NAME = 'pantheon.dispatch'
 /** Toast shown when `ui.panel.open` refuses (no session route is active). The
  *  panel only exists inside a session, so there is no alternative route. */
-export const DISPATCH_PANEL_TOAST = 'Abra uma sessão para ver o Dispatch'
+export const DISPATCH_PANEL_TOAST = 'Open a session to view Dispatch'
 /** Panel title marker — the same glyph the sidebar block header uses. */
 export const DISPATCH_PANEL_HEADER_MARKER = '\u25C8'
 /** Selected-row gutter marker (`▸`, one cell). */
@@ -2337,7 +2337,7 @@ export const DISPATCH_PANEL_RULE_CHAR = '\u2500'
 /** Em dash for any datum the host did not publish. */
 export const DISPATCH_PANEL_DASH = '\u2014'
 /** Body of an empty panel (the claim still renders, the list is just empty). */
-export const DISPATCH_PANEL_EMPTY_TEXT = 'Nenhuma sessão delegada'
+export const DISPATCH_PANEL_EMPTY_TEXT = 'No delegated sessions'
 /** Width at or above which the list and the detail sit side by side. */
 export const DISPATCH_PANEL_WIDE_MIN_WIDTH = 72
 /** Rows the viewport holds; pageup/pagedown move by exactly this many rows. */
@@ -2645,42 +2645,42 @@ export const DISPATCH_PANEL_COMMANDS: readonly DispatchPanelCommandSpec[] = [
   {
     action: 'up',
     id: 'pantheon.dispatch.up',
-    title: 'Dispatch: selecionar anterior',
+    title: 'Dispatch: select previous',
     bind: 'k,up',
   },
   {
     action: 'down',
     id: 'pantheon.dispatch.down',
-    title: 'Dispatch: selecionar próxima',
+    title: 'Dispatch: select next',
     bind: 'j,down',
   },
-  { action: 'home', id: 'pantheon.dispatch.home', title: 'Dispatch: primeira', bind: 'home' },
-  { action: 'end', id: 'pantheon.dispatch.end', title: 'Dispatch: última', bind: 'end' },
+  { action: 'home', id: 'pantheon.dispatch.home', title: 'Dispatch: first', bind: 'home' },
+  { action: 'end', id: 'pantheon.dispatch.end', title: 'Dispatch: last', bind: 'end' },
   {
     action: 'pageup',
     id: 'pantheon.dispatch.pageup',
-    title: 'Dispatch: página acima',
+    title: 'Dispatch: page up',
     bind: 'pageup',
   },
   {
     action: 'pagedown',
     id: 'pantheon.dispatch.pagedown',
-    title: 'Dispatch: página abaixo',
+    title: 'Dispatch: page down',
     bind: 'pagedown',
   },
   {
     action: 'toggle',
     id: 'pantheon.dispatch.toggle',
-    title: 'Dispatch: expandir detalhe',
+    title: 'Dispatch: expand detail',
     bind: 'enter',
   },
   {
     action: 'fullscreen',
     id: 'pantheon.dispatch.fullscreen',
-    title: 'Dispatch: tela cheia',
+    title: 'Dispatch: fullscreen',
     bind: 'f',
   },
-  { action: 'close', id: 'pantheon.dispatch.close', title: 'Dispatch: fechar', bind: 'escape,q' },
+  { action: 'close', id: 'pantheon.dispatch.close', title: 'Dispatch: close', bind: 'escape,q' },
 ]
 
 /** Run one action against the model and the host-owned panel input. Kept apart
@@ -2743,10 +2743,10 @@ export function dispatchPanelFooter(shortcutsOf: (id: string) => readonly string
     return text === '' ? DISPATCH_PANEL_DASH : text
   }
   return [
-    `${keys('pantheon.dispatch.up')} ${keys('pantheon.dispatch.down')} mover`,
-    `${keys('pantheon.dispatch.toggle')} detalhe`,
+    `${keys('pantheon.dispatch.up')} ${keys('pantheon.dispatch.down')} move`,
+    `${keys('pantheon.dispatch.toggle')} detail`,
     `${keys('pantheon.dispatch.fullscreen')} fullscreen`,
-    `${keys('pantheon.dispatch.close')} fechar`,
+    `${keys('pantheon.dispatch.close')} close`,
   ].join(SPEND_LINE_SEPARATOR)
 }
 
@@ -3952,10 +3952,10 @@ function ContextRowView(props: { row: ContextRow; fg: string; muted: string }) {
     )
   return (
     <Show
-      when={props.row.suffix !== ' gasto na sessão'}
+      when={props.row.suffix !== ' spent in session'}
       fallback={
         <box flexDirection="column">
-          <For each={sidebarMoneyLines('gasto na sessão', props.row.value)}>
+          <For each={sidebarMoneyLines('spent in session', props.row.value)}>
             {(line) => <text fg={props.fg}>{line}</text>}
           </For>
         </box>
@@ -4107,7 +4107,7 @@ function Sidebar(props: SidebarProps): JSX.Element {
         }
       >
         {(current: any) => (
-          <text fg={text()}>{`Sessão: ${truncateLabel(current().title || current().id)}`}</text>
+          <text fg={text()}>{`Session: ${truncateLabel(current().title || current().id)}`}</text>
         )}
       </Show>
 
@@ -4146,9 +4146,9 @@ function Sidebar(props: SidebarProps): JSX.Element {
                     single accent. When no message carries cost this loop is empty
                     and the block keeps its original token/spend rows. */}
                 <Show when={tuiPrefs().sidebar.context.modelUsage && usageRows().length > 0}>
-                  <text fg={muted()}>Sessão · custo reportado</text>
+                  <text fg={muted()}>Session · reported cost</text>
                   <text fg={muted()}>
-                    {'Modelo'.padEnd(MODEL_USAGE_MODEL_WIDTH) +
+                    {'Model'.padEnd(MODEL_USAGE_MODEL_WIDTH) +
                       '  Tokens'.padStart(8) +
                       '  USD'.padStart(10)}
                   </text>

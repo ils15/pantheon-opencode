@@ -140,7 +140,7 @@ session id.
 The panel reads only host-cached state — no session sync, no child
 `message.list`, no HTTP — and its 80 ms spinner tick exists only while the panel
 is open with something running. Opening it requires an open session; otherwise
-Pantheon toasts `Abra uma sessão para ver o Dispatch` instead of inventing a
+Pantheon toasts `Open a session to view Dispatch` instead of inventing a
 route. Jumping from a row to the child session is a documented TODO: no
 `session` router destination is verified for a child id.
 

@@ -346,9 +346,8 @@ function coerceRefreshPricing(
 const costCommand = createCostCommand()
 
 /**
- * Executa a ferramenta `pantheon_cost`: gera relatório de uso de tokens e de
- * custo em USD por agente/fase, modelo e sessão nos últimos N dias, lendo o
- * opencode.db (somente leitura).
+ * Executes the `pantheon_cost` tool: generates token usage and cost report in USD
+ * per agent/phase, model, and session over the last N days, reading opencode.db (read-only).
  */
 async function executeCost(
   input: Record<string, unknown>,

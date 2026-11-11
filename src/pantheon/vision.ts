@@ -1762,18 +1762,18 @@ export function truncateUserText(
 
 const INTENT_TASK_INSTRUCTIONS: Record<VisionIntent, string> = {
   describe:
-    'Descreva cada imagem fielmente e em detalhes: texto visível verbatim, cores, layout, objetos.',
+    'Describe each image faithfully and in detail: visible text verbatim, colors, layout, and objects.',
   compare:
-    'Descreva cada imagem no seu próprio bloco <item>; depois coloque uma comparação direta e exaustiva no <context> (diferenças por região/elemento), terminando com um veredito claro.',
-  ocr: 'Transcreva literalmente todo o texto visível em cada imagem, preservando ordem e estrutura. A transcrição vai dentro do <description> da imagem correspondente.',
+    'Describe each image in its own <item> block; then provide a direct, exhaustive comparison in <context> (differences by region/element), concluding with a clear verdict.',
+  ocr: 'Transcribe literally all visible text in each image, preserving order and structure. Place the transcription inside the corresponding image <description>.',
   reconstruct:
-    'Descreva cada imagem com detalhe de reconstrução para reprodução em código: layout completo (regiões, alinhamento, espaçamento), todo texto visível verbatim, paleta de cores exata em hex, fontes/tamanhos/pesos por elemento, estrutura de componentes e estados.',
-  bugs: 'Descreva o sintoma visual observado em cada imagem: o que está errado, onde, esperado vs real, com referências de região precisas e contexto suficiente para localizar e reproduzir.',
+    'Describe each image with reconstruction-level detail for reproduction in code: complete layout (regions, alignment, spacing), all visible text verbatim, exact color palette in hex, fonts/sizes/weights per element, component structure, and states.',
+  bugs: 'Describe the visual bug or symptom observed in each image: what is wrong, where, expected vs actual, with precise region references and sufficient context to reproduce.',
 }
 
 const INTENT_CONTEXT_INSTRUCTIONS: Record<VisionIntent, string> = {
   compare:
-    'Depois dos itens, adicione UM bloco <context> com a análise cruzada das imagens (comparação, veredito).',
+    'After the items, add ONE <context> block with cross-image analysis (comparison, verdict).',
   describe: '',
   ocr: '',
   reconstruct: '',
@@ -1962,7 +1962,7 @@ export function buildNativeVisionPrompt(
   const count = Math.max(1, imageCount)
   const request =
     escapeXml(truncateUserText(userText)) ||
-    '(sem pedido explícito — descreva as imagens com precisão)'
+    '(no explicit request — describe the images accurately)'
   const contextInstruction = INTENT_CONTEXT_INSTRUCTIONS[intent]
   const contextLine = contextInstruction ? ` ${contextInstruction}` : ''
   return [
@@ -1976,26 +1976,26 @@ export function buildNativeVisionPrompt(
     INTENT_TASK_INSTRUCTIONS[intent],
     '',
     'OUTPUT FORMAT — binding, no exceptions:',
-    `Responda com UM bloco <item id="N"> para cada uma das ${count} imagens anexadas`,
-    `(N = 1..${count}), em ordem. Cada bloco contém um <description>.${contextLine}`,
+    `Reply with ONE <item id="N"> block for each of the ${count} attached images`,
+    `(N = 1..${count}), in order. Each block contains a <description>.${contextLine}`,
     '',
     '<item id="1">',
-    '<description>...apenas fatos sobre a imagem 1...</description>',
+    '<description>...facts only about image 1...</description>',
     '</item>',
     '<item id="2">',
-    '<description>...apenas fatos sobre a imagem 2...</description>',
+    '<description>...facts only about image 2...</description>',
     '</item>',
     '',
     'RULES',
-    '- O primeiro caractere da sua resposta deve ser "<". Sem preâmbulo, sem "Aqui está",',
-    '  sem observações finais, sem wrap em blocos de código.',
-    '- ESCAPING — obrigatório: dentro dos corpos de <description> e <context>, escape TODO',
-    '  "&", "<" e ">" literais como "&amp;", "&lt;", "&gt;". Isso vale para qualquer texto',
-    '  tag-like reproduzido verbatim (HTML, XML, erros com colchetes angulares). NÃO escape',
-    '  as tags estruturais <item>, <description>, <context>.',
-    '- Nunca invente detalhes que não consegue perceber. Se um texto estiver ilegível,',
-    '  escreva "ilegível". Coloque análises cruzadas (comparação, veredito) no <context>,',
-    '  nunca dentro de um <description>.',
+    '- The first character of your response MUST be "<". No preamble, no "Here is",',
+    '  no closing remarks, no code fence wrapping.',
+    '- ESCAPING — mandatory: inside the bodies of <description> and <context>, escape ALL',
+    '  literal "&", "<", and ">" as "&amp;", "&lt;", "&gt;". This applies to any verbatim',
+    '  tag-like text (HTML, XML, bracketed errors). Do NOT escape',
+    '  the structural tags <item>, <description>, <context>.',
+    '- Never hallucinate details you cannot perceive. If text is illegible,',
+    '  write "illegible". Place cross-image analysis (comparison, verdict) in <context>,',
+    '  never inside a <description>.',
     ...(orientationHint.trim()
       ? [
           '',

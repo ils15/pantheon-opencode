@@ -455,7 +455,7 @@ export function buildTuiTab(prefs: TuiPrefs): SettingsTab {
             'tui.sidebar.context.spent',
             'Spent row',
             prefs.sidebar.context.spent,
-            'the `$… gasto na sessão` line',
+            'the `$… spent in session` line',
           ),
           row(
             'tui.sidebar.context.modelUsage',
