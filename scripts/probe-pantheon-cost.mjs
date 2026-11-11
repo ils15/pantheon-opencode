@@ -341,6 +341,7 @@ async function main() {
       XDG_DATA_HOME: dataHome,
       PANTHEON_OPENCODE_VERSION: requestedVersion,
       PANTHEON_COST_DB: undefined,
+      OPENCODE_DB: undefined,
     })
     try {
       const selectedOutput = await createCostCommand().pantheon_cost.execute(
@@ -381,6 +382,7 @@ async function main() {
       XDG_DATA_HOME: dataHome,
       PANTHEON_OPENCODE_VERSION: requestedVersion,
       PANTHEON_COST_DB: envDb,
+      OPENCODE_DB: undefined,
     })
     try {
       const output = await createCostCommand().pantheon_cost.execute(
@@ -405,6 +407,7 @@ async function main() {
       XDG_DATA_HOME: dataHome,
       PANTHEON_OPENCODE_VERSION: requestedVersion,
       PANTHEON_COST_DB: envDb,
+      OPENCODE_DB: undefined,
     })
     try {
       const output = await createCostCommand({ dbPath: explicitDb }).pantheon_cost.execute(
@@ -426,6 +429,7 @@ async function main() {
       XDG_DATA_HOME: join(root, 'missing-data'),
       PANTHEON_OPENCODE_VERSION: requestedVersion,
       PANTHEON_COST_DB: undefined,
+      OPENCODE_DB: undefined,
     })
     try {
       const output = await createCostCommand().pantheon_cost.execute(

@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 
+## [v2.0.2] - 2026-11-11
+
+### 🆕 What's New
+
+- **Timezone Locale Auto-Detection**: Auto-detects Portuguese in Brazil (America/Sao_Paulo) even when Linux LANG defaults to C.UTF-8.
+- **Reactive Settings Live Preview**: Immediate real-time preview of language and layout changes across settings tabs before saving.
+- **Bilingual TUI Tab**: Localized layout presets, separator glyphs, bar shapes, and status toggles for PT-BR and EN.
+
+### Fixed
+
+- **tui** — auto-detect pt-BR via Intl timezone (America/Sao_Paulo and Brazilian states) when LANG/LC_ALL is C.UTF-8.
+- **tui** — use reactive tuiPrefs signal in settings tabs to enable instant live preview of language switching.
+- **tui** — fully localize TUI tab row labels, groups, and explanatory notes in Portuguese.
+
+
 ## [v2.0.1] - 2026-11-11
 
 ### 🆕 What's New

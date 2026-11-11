@@ -87,7 +87,6 @@ import {
   buildTuiTab,
   clearTuiDraftPreview,
   mutateTuiPrefs,
-  savedTuiPrefs,
   setTuiDraftPreview,
   tuiPrefs,
 } from './tui-prefs.ts'
@@ -796,12 +795,12 @@ function createWindowController(
   }
 
   const tabs = (): SettingsTab[] => {
-    const lang = savedTuiPrefs().layout?.language
+    const lang = tuiPrefs().layout?.language
     return [
       buildGatesTab(load()),
       buildDecisionTab(decision(), process.env, readAuthProviders(), readConfigProviders(), lang),
       buildPresetTab(presetInput()),
-      buildTuiTab(savedTuiPrefs()),
+      buildTuiTab(tuiPrefs(), lang),
       buildAutonomyTab({
         goalLoop: goalLoop(),
         budgets: budgets(),

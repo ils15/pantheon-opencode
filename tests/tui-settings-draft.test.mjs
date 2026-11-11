@@ -180,7 +180,7 @@ describe('autonomy tab (goal loop + budgets)', () => {
     const goal = rows.find((r) => r.id === 'autonomy.goal_loop.enabled')
     assert.equal(goal.value, 'disabled')
     assert.deepEqual(goal.cycle, ['enabled', 'disabled'])
-    assert.match(goal.note, /restart/)
+    assert.match(goal.note, /restart|reiniciar/)
     const monthly = rows.find((r) => r.id === 'autonomy.budget.monthly')
     assert.equal(monthly.value, '$5')
     assert.ok(monthly.cycle?.includes('$10'))

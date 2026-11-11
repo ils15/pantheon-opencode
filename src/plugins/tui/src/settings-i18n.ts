@@ -17,7 +17,8 @@ export const SUPPORTED_LANGUAGES = SETTINGS_LANGUAGES_CYCLE
 
 /**
  * Resolve effective language: 'pt-BR' or 'en'.
- * Defaults to 'pt-BR' if system locale contains 'pt', otherwise 'en'.
+ * Defaults to 'pt-BR' if system locale contains 'pt', if Intl locale is pt,
+ * or if system timezone is Brazilian/Portuguese; otherwise 'en'.
  */
 export function resolveLanguage(
   preference: string = 'auto',
@@ -26,9 +27,43 @@ export function resolveLanguage(
   if (preference === 'pt-BR') return 'pt-BR'
   if (preference === 'en') return 'en'
 
-  // Auto-detection based on environment locale
-  const lang = (env.LC_ALL ?? env.LC_MESSAGES ?? env.LANG ?? '').toLowerCase()
+  // 1. Auto-detection based on environment locale variables
+  const lang = (env.LC_ALL ?? env.LC_MESSAGES ?? env.LANG ?? env.LANGUAGE ?? '').toLowerCase()
   if (lang.startsWith('pt')) return 'pt-BR'
+
+  // 2. Auto-detection based on Intl locale
+  try {
+    const intlLocale = Intl.DateTimeFormat().resolvedOptions().locale.toLowerCase()
+    if (intlLocale.startsWith('pt')) return 'pt-BR'
+  } catch {}
+
+  // 3. Auto-detection based on timezone (Brazil & Portugal)
+  try {
+    const tz = (env.TZ ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? '').toLowerCase()
+    if (
+      tz.includes('sao_paulo') ||
+      tz.includes('brazil') ||
+      tz.includes('fortaleza') ||
+      tz.includes('recife') ||
+      tz.includes('manaus') ||
+      tz.includes('belem') ||
+      tz.includes('cuiaba') ||
+      tz.includes('campo_grande') ||
+      tz.includes('porto_velho') ||
+      tz.includes('rio_branco') ||
+      tz.includes('boa_vista') ||
+      tz.includes('maceio') ||
+      tz.includes('bahia') ||
+      tz.includes('noronha') ||
+      tz.includes('araguaina') ||
+      tz.includes('santarem') ||
+      tz.includes('lisbon') ||
+      tz.includes('madeira') ||
+      tz.includes('azores')
+    ) {
+      return 'pt-BR'
+    }
+  } catch {}
 
   return 'en'
 }

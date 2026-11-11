@@ -4,6 +4,7 @@ import { buildAutonomyTab } from '../src/plugins/tui/src/autonomy-state.ts'
 import { buildDecisionTab } from '../src/plugins/tui/src/decision-router-state.ts'
 import { buildJ1Tab } from '../src/plugins/tui/src/j1-gate-status.ts'
 import { resolveLanguage, SUPPORTED_LANGUAGES, t } from '../src/plugins/tui/src/settings-i18n.ts'
+import { buildTuiTab, DEFAULT_TUI_PREFS } from '../src/plugins/tui/src/tui-prefs.ts'
 
 describe('TUI settings i18n resolution', () => {
   it('exposes auto, pt-BR and en supported languages', () => {
@@ -22,9 +23,14 @@ describe('TUI settings i18n resolution', () => {
   })
 
   it('falls back to en when no Portuguese locale is detected', () => {
-    assert.equal(resolveLanguage('auto', { LANG: 'C.UTF-8' }), 'en')
-    assert.equal(resolveLanguage(undefined, {}), 'en')
-    assert.equal(resolveLanguage('unknown', { LANG: 'fr_FR.UTF-8' }), 'en')
+    assert.equal(resolveLanguage('auto', { LANG: 'C.UTF-8', TZ: 'UTC' }), 'en')
+    assert.equal(resolveLanguage(undefined, { TZ: 'UTC' }), 'en')
+    assert.equal(resolveLanguage('unknown', { LANG: 'fr_FR.UTF-8', TZ: 'UTC' }), 'en')
+  })
+
+  it('detects pt-BR from Brazilian timezone even when LANG is C.UTF-8', () => {
+    assert.equal(resolveLanguage('auto', { LANG: 'C.UTF-8', TZ: 'America/Sao_Paulo' }), 'pt-BR')
+    assert.equal(resolveLanguage(undefined, { TZ: 'America/Fortaleza' }), 'pt-BR')
   })
 
   it('translates known entries using t helper', async () => {
@@ -85,5 +91,15 @@ describe('Bilingual settings tabs rendering', () => {
     const modeRow = rows.find((r) => r.id === 'j1.mode')
     assert.equal(modeRow.name, 'Modo de execução')
     assert.match(modeRow.note, /telemetria/)
+  })
+
+  it('renders TUI tab localized in pt-BR', () => {
+    const tabPt = buildTuiTab(DEFAULT_TUI_PREFS, 'pt-BR')
+    assert.equal(tabPt.title, 'TUI')
+    assert.equal(tabPt.groups[0].title, 'Predefinição & Layout')
+    const rows = tabPt.groups.flatMap((g) => g.rows)
+    const langRow = rows.find((r) => r.id === 'tui.layout.language')
+    assert.equal(langRow.name, 'Idioma / Language')
+    assert.match(langRow.note, /fuso/)
   })
 })
