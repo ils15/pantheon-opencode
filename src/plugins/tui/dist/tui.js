@@ -111,6 +111,21 @@ function formatSpent(cost) {
 const MODEL_USAGE_VISIBLE_CEILING = 3;
 const MODEL_USAGE_MESSAGE_LIMIT = 400;
 const MODEL_USAGE_SESSION_LIMIT = 8;
+Object.freeze([
+	"auto",
+	"pt-BR",
+	"en"
+]);
+/**
+* Resolve effective language: 'pt-BR' or 'en'.
+* Defaults to 'pt-BR' if system locale contains 'pt', otherwise 'en'.
+*/
+function resolveLanguage(preference = "auto", env = process.env) {
+	if (preference === "pt-BR") return "pt-BR";
+	if (preference === "en") return "en";
+	if ((env.LC_ALL ?? env.LC_MESSAGES ?? env.LANG ?? "").toLowerCase().startsWith("pt")) return "pt-BR";
+	return "en";
+}
 //#endregion
 //#region src/autonomy-state.ts
 const DEFAULT_GOAL_LOOP_PREFS = {
@@ -165,72 +180,73 @@ function parseUsd(cell) {
 	return Number.isFinite(value) && value > 0 ? value : null;
 }
 function buildAutonomyTab(input) {
+	const isPt = resolveLanguage(input.languagePref) === "pt-BR";
 	return {
 		id: "autonomy",
-		title: "Autonomy",
+		title: isPt ? "Autonomia" : "Autonomy",
 		groups: [
 			{
-				title: "Goal loop (multi-turn session auto-continuation)",
+				title: isPt ? "Goal loop (auto-continuação de sessões multi-turn)" : "Goal loop (multi-turn session auto-continuation)",
 				rows: [
 					{
 						id: "autonomy.goal_loop.enabled",
-						name: "Goal loop",
+						name: isPt ? "Goal loop" : "Goal loop",
 						value: input.goalLoop.enabled ? "enabled" : "disabled",
 						cycle: GOAL_LOOP_ENABLED_CYCLE,
-						note: "auto-continues multi-turn tasks when session goes idle" + (input.goalLoopRestartPending ? " · [!] restart required to apply" : " · applies after OpenCode restart")
+						note: isPt ? "continua tarefas multi-turn quando a sessão fica ociosa" + (input.goalLoopRestartPending ? " · [!] reinício necessário para aplicar (restart)" : " · aplicado após reiniciar o OpenCode") : "auto-continues multi-turn tasks when session goes idle" + (input.goalLoopRestartPending ? " · [!] restart required to apply" : " · applies after OpenCode restart")
 					},
 					{
 						id: "autonomy.goal_loop.maxContinuations",
-						name: "Max continuations",
+						name: isPt ? "Limite continuações" : "Max continuations",
 						value: String(input.goalLoop.maxContinuations),
 						cycle: MAX_CONTINUATIONS_CYCLE,
-						note: "1..200 — safety ceiling to prevent runaway tasks"
+						note: isPt ? "1..200 — teto de segurança contra loops infinitos" : "1..200 — safety ceiling to prevent runaway tasks"
 					},
 					{
 						id: "autonomy.goal_loop.cooldownMs",
-						name: "Cooldown (ms)",
+						name: isPt ? "Pausa entre turnos (ms)" : "Cooldown (ms)",
 						value: String(input.goalLoop.cooldownMs),
 						cycle: COOLDOWN_MS_CYCLE,
-						note: "delay between autonomous turns (min 1000ms)"
+						note: isPt ? "intervalo entre turnos autônomos (mín 1000ms)" : "delay between autonomous turns (min 1000ms)"
 					}
 				]
 			},
 			{
-				title: "Decision budgets (applies live per gated call)",
+				title: isPt ? "Orçamento Jev (aplicado em tempo real por decisão)" : "Decision budgets (applies live per gated call)",
 				rows: [{
 					id: "autonomy.budget.monthly",
-					name: "Monthly cap",
+					name: isPt ? "Teto mensal" : "Monthly cap",
 					value: formatUsd(input.budgets.monthlyUsd),
 					cycle: MONTHLY_USD_CYCLE,
-					note: "monthly USD ceiling for gated arbitrator decisions"
+					note: isPt ? "teto mensal em USD para arbitragem do Jev" : "monthly USD ceiling for gated arbitrator decisions"
 				}, {
 					id: "autonomy.budget.perDecision",
-					name: "Per-decision cap",
+					name: isPt ? "Teto por decisão" : "Per-decision cap",
 					value: formatUsd(input.budgets.perDecisionUsd),
 					cycle: PER_DECISION_USD_CYCLE,
-					note: "price cap — gated decisions above this are refused"
+					note: isPt ? "teto de custo por decisão — acima disso é recusada" : "price cap — gated decisions above this are refused"
 				}]
 			},
 			{
-				title: "Decision gradient (reference policy · J1 owns the risk axis)",
+				title: isPt ? "Gradiente de decisão (política de referência · J1 governa o risco)" : "Decision gradient (reference policy · J1 owns the risk axis)",
 				rows: [
 					{
 						id: "autonomy.gradient.solo",
 						name: "Decide solo",
 						value: "autonomous",
-						note: "reversible & low-risk edits, routine fixes (no gate)"
+						note: isPt ? "edições reversíveis e rotineiras, sem travas (baixo risco)" : "reversible & low-risk edits, routine fixes (no gate)"
 					},
 					{
 						id: "autonomy.gradient.jev",
 						name: "Jev decides",
 						value: "arbitrated",
-						note: "typed ambiguity & candidate ranking (budget-capped)"
+						note: isPt ? "ambiguidade de tipos e ranqueamento de candidatos (com teto de custo)" : "typed ambiguity & candidate ranking (budget-capped)"
 					},
 					{
 						id: "autonomy.gradient.human",
 						name: "Human decides",
 						value: "human review",
-						note: "high-risk & destructive operations (J1 gate)"
+						note: isPt ? "operações de alto risco ou destrutivas (portão J1)" : "high-risk & destructive operations (J1 gate)"
 					}
 				]
 			}
@@ -505,49 +521,51 @@ function credentialStatus(provider, env, authProviders, configProviders) {
 	if (provider === "opencode-console-jev") return "auth store";
 	return "missing";
 }
-function buildDecisionTab(read, env = process.env, authProviders = /* @__PURE__ */ new Set(), configProviders = /* @__PURE__ */ new Set()) {
+function buildDecisionTab(read, env = process.env, authProviders = /* @__PURE__ */ new Set(), configProviders = /* @__PURE__ */ new Set(), languagePref) {
+	const isPt = resolveLanguage(languagePref, env) === "pt-BR";
 	const { config, corrupt } = read;
 	const rows = [{
 		id: "decision.enabled",
-		name: "Router",
+		name: isPt ? "Assistente Jev" : "Router",
 		value: config.enabled ? "enabled" : "disabled",
 		...corrupt ? {} : { cycle: DECISION_ENABLED_CYCLE },
-		note: corrupt ? "config unreadable/invalid — runtime fail-closes; repair via `decision-router setup-model`" : "applies live — the runtime re-reads this on every gated call"
+		note: corrupt ? isPt ? "config inválida — runtime fail-closes; repair via `decision-router setup-model`" : "config unreadable/invalid — runtime fail-closes; repair via `decision-router setup-model`" : isPt ? "applies live — arbitragem de decisões relida em tempo real a cada chamada" : "applies live — the runtime re-reads this on every gated call"
 	}, {
 		id: "decision.selection.mode",
-		name: "Selection mode",
+		name: isPt ? "Modo de operação" : "Selection mode",
 		value: config.selection.mode,
 		...corrupt ? {} : { cycle: DECISION_SELECTION_CYCLE },
-		note: "local routes on-device; auto/explicit pick a remote decision model"
+		note: isPt ? "local = no seu PC (grátis); auto/explícito = modelo nuvem (OpenRouter)" : "local routes on-device; auto/explicit pick a remote decision model"
 	}];
-	if (config.selection.mode === "explicit" || config.selection.provider !== void 0) rows.push({
+	const explicitTarget = config.selection.provider ? `${config.selection.provider}/${config.selection.model ?? ""}` : DECISION_TARGET_CYCLE[0] ?? "openrouter-jev/typesafe/jev-1.13";
+	rows.push({
 		id: "decision.selection.target",
-		name: "Explicit target",
-		value: config.selection.provider ? `${config.selection.provider}/${config.selection.model ?? ""}` : "none",
-		...corrupt || config.selection.mode !== "explicit" ? {} : { cycle: DECISION_TARGET_CYCLE },
-		note: "provider/model — sets the candidate list"
+		name: isPt ? "Modelo de decisão" : "Explicit target",
+		value: config.selection.mode === "local" ? config.selection.provider ? `${config.selection.provider}/${config.selection.model ?? ""}` : "local (on-device)" : explicitTarget,
+		...corrupt ? {} : { cycle: DECISION_TARGET_CYCLE },
+		note: isPt ? config.selection.mode === "local" ? "ciclar seleciona modelo remoto e ativa modo explícito" : "provedor/modelo ativo — define candidato para arbitragem" : config.selection.mode === "local" ? "cycle to select a remote model and activate explicit mode" : "provider/model — sets the candidate list"
 	});
-	if (config.enabled_candidates.length > 0) rows.push({
+	if ((config.enabled_candidates?.length ?? 0) > 0) rows.push({
 		id: "decision.candidates",
-		name: "Candidates",
+		name: isPt ? "Candidatos ativos" : "Candidates",
 		value: String(config.enabled_candidates.length),
-		note: config.egress_consent ? config.enabled_candidates.map((candidate) => `${candidate.provider}/${candidate.model}`).join(", ") : "egress consent NOT granted — remote routes fail closed"
+		note: config.egress_consent ? config.enabled_candidates.map((candidate) => `${candidate.provider}/${candidate.model}`).join(", ") : isPt ? "egress consent NÃO concedido — rotas remotas bloqueadas" : "egress consent NOT granted — remote routes fail closed"
 	});
 	rows.push({
 		id: "decision.consent",
-		name: "Egress consent",
+		name: isPt ? "Acesso à nuvem (Egress)" : "Egress consent",
 		value: config.egress_consent ? "granted" : "not granted",
 		...corrupt ? {} : { cycle: DECISION_CONSENT_CYCLE },
-		note: "granted = remote decision routes may call their gateway (budget-capped)"
+		note: isPt ? config.egress_consent ? "granted = rotas remotas podem consultar gateway de API (com teto de custo)" : "not granted = chamadas remotas bloqueadas; requer granted para nuvem" : config.egress_consent ? "granted = remote decision routes may call their gateway (budget-capped)" : "not granted = remote routes fail closed; grant to allow cloud calls"
 	});
 	return {
 		id: "decision",
-		title: "Decision",
+		title: isPt ? "Decisão" : "Decision",
 		groups: [{
-			title: "Decision router",
+			title: isPt ? "Assistente de Decisão" : "Decision router",
 			rows
 		}, {
-			title: "Credentials (status only — values never enter the window)",
+			title: isPt ? "Credenciais (status apenas — valores nunca gravados na janela)" : "Credentials (status only — values never enter the window)",
 			rows: DECISION_KNOWN_PROVIDERS.map((provider) => {
 				const status = credentialStatus(provider, env, authProviders, configProviders);
 				const credential = DECISION_PROVIDER_CREDENTIALS[provider] ?? { note: "" };
@@ -1073,39 +1091,47 @@ function j1ThresholdFromEnv(env = process.env) {
 	if (!Number.isFinite(raw) || raw < 0 || raw > 1) return J1_THRESHOLD_DEFAULT;
 	return raw;
 }
-const MODE_DESCRIPTION = {
+const MODE_DESCRIPTION_EN = {
 	off: "nothing fires (hard zero)",
 	shadow: "observe + record; invisible in the session",
 	warn: "RESERVED — behaves as shadow in this release",
 	enforce: "high-risk scores DENY the tool call (fail-open on gate unavailability)"
 };
-function buildJ1Tab(env, disabledByOverride) {
+const MODE_DESCRIPTION_PT = {
+	off: "desativado (hard zero)",
+	shadow: "observa + registra telemetria (modo silencioso)",
+	warn: "RESERVADO (RESERVED) — comporta-se como shadow nesta versão",
+	enforce: "alto risco bloqueia a ferramenta (fail-open se indisponível)"
+};
+function buildJ1Tab(env, disabledByOverride, languagePref) {
+	const isPt = resolveLanguage(languagePref) === "pt-BR";
 	const mode = j1ModeFromEnv(env);
 	const threshold = j1ThresholdFromEnv(env);
 	const gateState = disabledByOverride ? "disabled via overrides" : mode === "off" ? "off (env unset)" : "active";
+	const desc = isPt ? MODE_DESCRIPTION_PT[mode] : MODE_DESCRIPTION_EN[mode];
 	return {
 		id: "j1",
-		title: "J1",
+		title: isPt ? "Segurança J1" : "J1",
 		groups: [{
-			title: "Ladder (env-only — never written here)",
+			title: isPt ? "Nível de Segurança e Portão de Risco J1 (env-only)" : "Safety Level & Risk Gate (J1) (env-only — never written here)",
 			rows: [
 				{
 					id: "j1.mode",
-					name: "Mode",
+					name: isPt ? "Modo de execução" : "Mode",
 					value: mode,
-					note: `${MODE_DESCRIPTION[mode]} · restart applies`
+					note: `${desc} · ${isPt ? "reinício necessário (restart applies)" : "restart applies"}`
 				},
 				{
 					id: "j1.threshold",
-					name: "Enforce threshold",
+					name: isPt ? "Limiar de bloqueio" : "Enforce threshold",
 					value: String(threshold),
-					note: "deny at or above · 0..1 · default 0.8"
+					note: isPt ? "bloqueia em ou acima · 0..1 · padrão 0.8" : "deny at or above · 0..1 · default 0.8"
 				},
 				{
 					id: "j1.gate",
-					name: "Gate",
+					name: isPt ? "Estado do portão" : "Gate",
 					value: gateState,
-					note: `${J1_FLAG_ENV} / ${J1_THRESHOLD_ENV} · read once at startup`
+					note: `${J1_FLAG_ENV} / ${J1_THRESHOLD_ENV} · ${isPt ? "lido na inicialização" : "read once at startup"}`
 				}
 			]
 		}]
@@ -1333,12 +1359,18 @@ const SETTINGS_VIEW_MODES = Object.freeze([
 	"fullscreen",
 	"dialog"
 ]);
+const LANGUAGE_CYCLE = Object.freeze([
+	"auto",
+	"pt-BR",
+	"en"
+]);
 const DEFAULT_TUI_PREFS = {
 	version: 1,
 	layout: {
 		preset: "comfortable",
 		separator: "spaces",
-		settingsView: "fullscreen"
+		settingsView: "fullscreen",
+		language: "auto"
 	},
 	sidebar: {
 		header: {
@@ -1384,6 +1416,7 @@ function normalizeTuiPrefs(raw) {
 	const preset = LAYOUT_PRESETS_CYCLE.includes(layout.preset) ? layout.preset : DEFAULT_TUI_PREFS.layout.preset;
 	const separator = SEPARATOR_STYLES_CYCLE.includes(layout.separator) ? layout.separator : DEFAULT_TUI_PREFS.layout.separator;
 	const settingsView = SETTINGS_VIEW_MODES.includes(layout.settingsView) ? layout.settingsView : DEFAULT_TUI_PREFS.layout.settingsView;
+	const language = LANGUAGE_CYCLE.includes(layout.language) ? layout.language : DEFAULT_TUI_PREFS.layout.language;
 	const gauge = GAUGE_STYLES.includes(context.gauge) ? context.gauge : DEFAULT_TUI_PREFS.sidebar.context.gauge;
 	const barShape = BAR_SHAPES_CYCLE.includes(context.barShape) ? context.barShape : DEFAULT_TUI_PREFS.sidebar.context.barShape;
 	const barWidth = BAR_WIDTHS_CYCLE.includes(context.barWidth) ? context.barWidth : DEFAULT_TUI_PREFS.sidebar.context.barWidth;
@@ -1393,7 +1426,8 @@ function normalizeTuiPrefs(raw) {
 		layout: {
 			preset,
 			separator,
-			settingsView
+			settingsView,
+			language
 		},
 		sidebar: {
 			header: {
@@ -1461,6 +1495,13 @@ function buildTuiTab(prefs) {
 						value: tuiRowValue(prefs, "tui.layout.settingsView") ?? "docked",
 						cycle: SETTINGS_VIEW_MODES,
 						note: "docked (above prompt) | fullscreen router page | dialog overlay"
+					},
+					{
+						id: "tui.layout.language",
+						name: "Language / Idioma",
+						value: tuiRowValue(prefs, "tui.layout.language") ?? "auto",
+						cycle: LANGUAGE_CYCLE,
+						note: "auto (LANG/LC_ALL) | pt-BR (Português) | en (English)"
 					}
 				]
 			},
@@ -1550,6 +1591,12 @@ function applyTuiRow(draft, id, value) {
 				draft.layout.settingsView = value;
 			}
 			return;
+		case "tui.layout.language":
+			if (LANGUAGE_CYCLE.includes(value)) {
+				if (!draft.layout) draft.layout = { ...DEFAULT_TUI_PREFS.layout };
+				draft.layout.language = value;
+			}
+			return;
 		case "tui.sidebar.context.barShape":
 			if (BAR_SHAPES_CYCLE.includes(value)) draft.sidebar.context.barShape = value;
 			return;
@@ -1612,6 +1659,7 @@ function tuiRowValue(prefs, id) {
 	if (id === "tui.layout.preset") return prefs.layout?.preset ?? DEFAULT_TUI_PREFS.layout.preset;
 	if (id === "tui.layout.separator") return prefs.layout?.separator ?? DEFAULT_TUI_PREFS.layout.separator;
 	if (id === "tui.layout.settingsView") return prefs.layout?.settingsView ?? DEFAULT_TUI_PREFS.layout.settingsView ?? "docked";
+	if (id === "tui.layout.language") return prefs.layout?.language ?? "auto";
 	if (id === "tui.sidebar.context.barShape") return prefs.sidebar.context.barShape;
 	if (id === "tui.sidebar.context.barWidth") return prefs.sidebar.context.barWidth;
 	if (id === "tui.sidebar.context.gauge") return prefs.sidebar.context.gauge;
@@ -1893,7 +1941,7 @@ async function readChangelogForBundle(bundleUrl) {
 }
 /** The ambient build-time version, or null outside a tsdown build. */
 function embeddedVersion() {
-	return "2.0.0";
+	return "2.0.1";
 }
 /**
 * Resolve the running Pantheon version for the what's-new window: the plugin
@@ -2118,7 +2166,7 @@ function persistUpdateCheckState(previous, latest) {
 	} catch {}
 }
 function resolveRunningVersion() {
-	return "2.0.0";
+	return "2.0.1";
 }
 const VALUE_WIDTH = 24;
 function SettingsWindow(props) {
@@ -2556,26 +2604,30 @@ function createWindowController(context, exit) {
 		if (seen !== void 0) input.lastCheckedVersion = seen;
 		return input;
 	};
-	const tabs = () => [
-		buildGatesTab(load()),
-		buildDecisionTab(decision(), process.env, readAuthProviders(), readConfigProviders()),
-		buildPresetTab(presetInput()),
-		buildTuiTab(savedTuiPrefs()),
-		buildAutonomyTab({
-			goalLoop: goalLoop(),
-			budgets: budgets(),
-			goalLoopRestartPending: autonomyRestartPending()
-		}),
-		buildJ1Tab(process.env, false),
-		buildUpdatesTab(updatesInput()),
-		buildChangelogTab(currentVersion, changelogItems()),
-		buildDoctorTab({
-			runningVersion: currentVersion,
-			nodeVersion: process.versions.node,
-			load: load()
-		}),
-		buildAboutTab(currentVersion)
-	];
+	const tabs = () => {
+		const lang = savedTuiPrefs().layout?.language;
+		return [
+			buildGatesTab(load()),
+			buildDecisionTab(decision(), process.env, readAuthProviders(), readConfigProviders(), lang),
+			buildPresetTab(presetInput()),
+			buildTuiTab(savedTuiPrefs()),
+			buildAutonomyTab({
+				goalLoop: goalLoop(),
+				budgets: budgets(),
+				goalLoopRestartPending: autonomyRestartPending(),
+				languagePref: lang
+			}),
+			buildJ1Tab(process.env, false, lang),
+			buildUpdatesTab(updatesInput()),
+			buildChangelogTab(currentVersion, changelogItems()),
+			buildDoctorTab({
+				runningVersion: currentVersion,
+				nodeVersion: process.versions.node,
+				load: load()
+			}),
+			buildAboutTab(currentVersion)
+		];
+	};
 	const rows = () => tabRows(tabs()[page()] ?? tabs()[0] ?? EMPTY_TAB);
 	const move = (delta) => {
 		if (confirmExit()) setConfirmExit(false);
@@ -6280,7 +6332,7 @@ async function checkForPantheonUpdate(context) {
 	const latest = String((await response.json())?.version ?? "");
 	if (!latest) return;
 	const notice = pickUpdateNotice({
-		currentVersion: "2.0.0",
+		currentVersion: "2.0.1",
 		latestVersion: latest,
 		state: readState(),
 		nowMs: Date.now()
@@ -7092,7 +7144,7 @@ function Sidebar(props) {
 			get children() {
 				var _el$13 = createElement("text");
 				setProp(_el$13, "attributes", 1);
-				insert(_el$13, `Pantheon v2.0.0`);
+				insert(_el$13, `Pantheon v2.0.1`);
 				effect((_$p) => setProp(_el$13, "fg", text(), _$p));
 				return _el$13;
 			}
@@ -7864,7 +7916,7 @@ function HomeStatus(props) {
 		},
 		get children() {
 			var _el$73 = createElement("text");
-			insert(_el$73, () => `Pantheon v2.0.0${preset().name ? ` ▸ ${preset().name}` : ""}`);
+			insert(_el$73, () => `Pantheon v2.0.1${preset().name ? ` ▸ ${preset().name}` : ""}`);
 			effect((_$p) => setProp(_el$73, "fg", muted(), _$p));
 			return _el$73;
 		}

@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 
+## [v2.0.1] - 2026-11-11
+
+### 🆕 What's New
+
+- **Bilingual TUI Settings**: Portuguese (pt-BR) and English (en) with system locale auto-detection and manual toggle in the TUI menu.
+- **Decision Model Selector**: Interactive selector in TUI settings to cycle across all remote Jev models without manual JSON editing.
+- **Modernized Council Synthesis**: Domain Authority table, Mermaid arbitration diagram, and immediate action checklist.
+- **Modernized Strategic Planning**: Sub-10s test slicing, Mermaid workflow diagram, impact matrix, and rollback blueprint.
+- **Demystified J1 Safety Ladder**: Plain-language descriptions for execution modes (shadow, enforce, off) and safety limits.
+
+### Added
+
+- **tui** — bilingual dictionary and locale resolution helper (PT-BR / EN) in settings-i18n.ts.
+- **tui** — language preference in TuiPrefs with cycling options (auto, pt-BR, en) and live preview.
+- **tui** — unit test suite in tests/tui-settings-i18n.test.mjs validating locale and tab rendering.
+- **routing** — permanent interactive target selector cycler row in the Decision tab across all modes.
+
+### Changed
+
+- **council** — modernized Zeus council synthesis with Domain Authority matrix and Mermaid graph.
+- **planning** — modernized Athena strategic planning template with sub-10s test slicing.
+- **tui** — humanized settings labels for Decision Router, Selection mode, Egress, and J1 Ladder.
+- **tui** — localized Autonomy tab notes for Goal Loop continuation, budgets, and risk gradient.
+
 ## [v1.7.0] - 2026-11-07
 
 ### 🆕 What's New

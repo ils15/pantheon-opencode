@@ -11,6 +11,7 @@
  * (beta.3 candidate), not a window change.
  */
 import type { SettingsTab } from './pantheon-settings-state.ts'
+import { resolveLanguage } from './settings-i18n.ts'
 
 export const J1_FLAG_ENV = 'PANTHEON_J1_RISK_SCORE'
 export const J1_THRESHOLD_ENV = 'PANTHEON_J1_ENFORCE_THRESHOLD'
@@ -37,17 +38,27 @@ export function j1ThresholdFromEnv(env: Record<string, string | undefined> = pro
   return raw
 }
 
-const MODE_DESCRIPTION: Record<J1Mode, string> = {
+const MODE_DESCRIPTION_EN: Record<J1Mode, string> = {
   off: 'nothing fires (hard zero)',
   shadow: 'observe + record; invisible in the session',
   warn: 'RESERVED — behaves as shadow in this release',
   enforce: 'high-risk scores DENY the tool call (fail-open on gate unavailability)',
 }
 
+const MODE_DESCRIPTION_PT: Record<J1Mode, string> = {
+  off: 'desativado (hard zero)',
+  shadow: 'observa + registra telemetria (modo silencioso)',
+  warn: 'RESERVADO (RESERVED) — comporta-se como shadow nesta versão',
+  enforce: 'alto risco bloqueia a ferramenta (fail-open se indisponível)',
+}
+
 export function buildJ1Tab(
   env: Record<string, string | undefined>,
   disabledByOverride: boolean,
+  languagePref?: string | undefined,
 ): SettingsTab {
+  const lang = resolveLanguage(languagePref)
+  const isPt = lang === 'pt-BR'
   const mode = j1ModeFromEnv(env)
   const threshold = j1ThresholdFromEnv(env)
   const gateState = disabledByOverride
@@ -55,30 +66,36 @@ export function buildJ1Tab(
     : mode === 'off'
       ? 'off (env unset)'
       : 'active'
+  const desc = isPt ? MODE_DESCRIPTION_PT[mode] : MODE_DESCRIPTION_EN[mode]
+
   return {
     id: 'j1',
-    title: 'J1',
+    title: isPt ? 'Segurança J1' : 'J1',
     groups: [
       {
-        title: 'Ladder (env-only — never written here)',
+        title: isPt
+          ? 'Nível de Segurança e Portão de Risco J1 (env-only)'
+          : 'Safety Level & Risk Gate (J1) (env-only — never written here)',
         rows: [
           {
             id: 'j1.mode',
-            name: 'Mode',
+            name: isPt ? 'Modo de execução' : 'Mode',
             value: mode,
-            note: `${MODE_DESCRIPTION[mode]} · restart applies`,
+            note: `${desc} · ${isPt ? 'reinício necessário (restart applies)' : 'restart applies'}`,
           },
           {
             id: 'j1.threshold',
-            name: 'Enforce threshold',
+            name: isPt ? 'Limiar de bloqueio' : 'Enforce threshold',
             value: String(threshold),
-            note: 'deny at or above · 0..1 · default 0.8',
+            note: isPt
+              ? 'bloqueia em ou acima · 0..1 · padrão 0.8'
+              : 'deny at or above · 0..1 · default 0.8',
           },
           {
             id: 'j1.gate',
-            name: 'Gate',
+            name: isPt ? 'Estado do portão' : 'Gate',
             value: gateState,
-            note: `${J1_FLAG_ENV} / ${J1_THRESHOLD_ENV} · read once at startup`,
+            note: `${J1_FLAG_ENV} / ${J1_THRESHOLD_ENV} · ${isPt ? 'lido na inicialização' : 'read once at startup'}`,
           },
         ],
       },

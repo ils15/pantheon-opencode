@@ -795,26 +795,30 @@ function createWindowController(
     return input
   }
 
-  const tabs = (): SettingsTab[] => [
-    buildGatesTab(load()),
-    buildDecisionTab(decision(), process.env, readAuthProviders(), readConfigProviders()),
-    buildPresetTab(presetInput()),
-    buildTuiTab(savedTuiPrefs()),
-    buildAutonomyTab({
-      goalLoop: goalLoop(),
-      budgets: budgets(),
-      goalLoopRestartPending: autonomyRestartPending(),
-    }),
-    buildJ1Tab(process.env, false),
-    buildUpdatesTab(updatesInput()),
-    buildChangelogTab(currentVersion, changelogItems()),
-    buildDoctorTab({
-      runningVersion: currentVersion,
-      nodeVersion: process.versions.node,
-      load: load(),
-    }),
-    buildAboutTab(currentVersion),
-  ]
+  const tabs = (): SettingsTab[] => {
+    const lang = savedTuiPrefs().layout?.language
+    return [
+      buildGatesTab(load()),
+      buildDecisionTab(decision(), process.env, readAuthProviders(), readConfigProviders(), lang),
+      buildPresetTab(presetInput()),
+      buildTuiTab(savedTuiPrefs()),
+      buildAutonomyTab({
+        goalLoop: goalLoop(),
+        budgets: budgets(),
+        goalLoopRestartPending: autonomyRestartPending(),
+        languagePref: lang,
+      }),
+      buildJ1Tab(process.env, false, lang),
+      buildUpdatesTab(updatesInput()),
+      buildChangelogTab(currentVersion, changelogItems()),
+      buildDoctorTab({
+        runningVersion: currentVersion,
+        nodeVersion: process.versions.node,
+        load: load(),
+      }),
+      buildAboutTab(currentVersion),
+    ]
+  }
 
   const rows = () => tabRows(tabs()[page()] ?? tabs()[0] ?? EMPTY_TAB)
 

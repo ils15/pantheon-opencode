@@ -53,24 +53,43 @@ Require `## specialist_response` from `## Agent Return Format`. The first round 
 
 ## User-Facing Synthesis
 
-```text
-## Council Synthesis
-Question / date / response rate / timed-out agents / precedent / research context
+```markdown
+# 🏛️ Council Synthesis
+
+> **Question:** [Original Question]
+> **Date:** [ISO Timestamp] · **Response Rate:** [X/Y specialists] · **Precedent / Research:** [Context or None]
 
 ### Specialist Perspectives
-| Agent | Position | Trade-offs | Confidence |
+| Specialist | Domain Authority | Substantive Position | Trade-offs | Confidence |
+| :--- | :--- | :--- | :--- | :---: |
+| **@[agent]** | [Domain, e.g. Security / Auth] | [Core recommendation] | [Pros & Cons] | **[High / Med / Low]** |
 
 ### Agreements
-- Points shared by multiple specialists
+- [Key consensus point shared across specialists]
 
-### Divergences
-| Issue | Specialist positions (attribute each side to its agent) | Resolution |
+### Divergences & Arbitration
+| Issue | Specialist positions (attribute each side to its agent) | Arbitration Resolution |
+| :--- | :--- | :--- |
+| [Contested point] | **@[agentA]**: [Position A]<br/>**@[agentB]**: [Position B] | **Resolved via [Domain Authority / Jev Decision]**: [Outcome] |
+
+```mermaid
+flowchart TD
+  Q["Contested Issue"] --> A["@[agentA]: Position A"]
+  Q --> B["@[agentB]: Position B"]
+  A & B --> Arb{"Domain Authority & Jev Score"}
+  Arb --> Dec["Arbitrated Decision: [Outcome]"]
+```
 
 ### Evidence & Moderation (when used)
 Research points, evidence, moderator verdict, cited sources, unresolved issues
 
 ### Recommendation
-Decisive conclusion
+Decisive conclusion and immediate actionable next steps
+
+### Immediate Action Checklist
+- [ ] **@[specialistA]**: [Concrete implementation task]
+- [ ] **@[specialistB]**: [Verification or interface task]
+- [ ] **@themis**: [Audit gate verification]
 
 ### Audit Gate
 Themis approved, or issues corrected

@@ -17,6 +17,7 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { SettingsRow, SettingsTab } from './pantheon-settings-state.ts'
+import { resolveLanguage } from './settings-i18n.ts'
 
 export const DECISION_ENABLED_CYCLE: readonly string[] = Object.freeze(['enabled', 'disabled'])
 
@@ -340,64 +341,98 @@ export function buildDecisionTab(
   env: Record<string, string | undefined> = process.env,
   authProviders: ReadonlySet<string> = new Set(),
   configProviders: ReadonlySet<string> = new Set(),
+  languagePref?: string | undefined,
 ): SettingsTab {
+  const lang = resolveLanguage(languagePref, env)
+  const isPt = lang === 'pt-BR'
   const { config, corrupt } = read
   const rows: SettingsRow[] = [
     {
       id: 'decision.enabled',
-      name: 'Router',
+      name: isPt ? 'Assistente Jev' : 'Router',
       value: config.enabled ? 'enabled' : 'disabled',
       // Corrupt config → read-only; the notice (glue) carries the remedy.
       ...(corrupt ? {} : { cycle: DECISION_ENABLED_CYCLE }),
       note: corrupt
-        ? 'config unreadable/invalid — runtime fail-closes; repair via `decision-router setup-model`'
-        : 'applies live — the runtime re-reads this on every gated call',
+        ? isPt
+          ? 'config inválida — runtime fail-closes; repair via `decision-router setup-model`'
+          : 'config unreadable/invalid — runtime fail-closes; repair via `decision-router setup-model`'
+        : isPt
+          ? 'applies live — arbitragem de decisões relida em tempo real a cada chamada'
+          : 'applies live — the runtime re-reads this on every gated call',
     },
     {
       id: 'decision.selection.mode',
-      name: 'Selection mode',
+      name: isPt ? 'Modo de operação' : 'Selection mode',
       value: config.selection.mode,
       ...(corrupt ? {} : { cycle: DECISION_SELECTION_CYCLE }),
-      note: 'local routes on-device; auto/explicit pick a remote decision model',
+      note: isPt
+        ? 'local = no seu PC (grátis); auto/explícito = modelo nuvem (OpenRouter)'
+        : 'local routes on-device; auto/explicit pick a remote decision model',
     },
   ]
-  if (config.selection.mode === 'explicit' || config.selection.provider !== undefined) {
-    rows.push({
-      id: 'decision.selection.target',
-      name: 'Explicit target',
-      value: config.selection.provider
-        ? `${config.selection.provider}/${config.selection.model ?? ''}`
-        : 'none',
-      ...(corrupt || config.selection.mode !== 'explicit' ? {} : { cycle: DECISION_TARGET_CYCLE }),
-      note: 'provider/model — sets the candidate list',
-    })
-  }
-  if (config.enabled_candidates.length > 0) {
+
+  // Model selection row: always visible so the user can choose the decision model
+  const explicitTarget = config.selection.provider
+    ? `${config.selection.provider}/${config.selection.model ?? ''}`
+    : (DECISION_TARGET_CYCLE[0] ?? 'openrouter-jev/typesafe/jev-1.13')
+  rows.push({
+    id: 'decision.selection.target',
+    name: isPt ? 'Modelo de decisão' : 'Explicit target',
+    value:
+      config.selection.mode === 'local'
+        ? config.selection.provider
+          ? `${config.selection.provider}/${config.selection.model ?? ''}`
+          : 'local (on-device)'
+        : explicitTarget,
+    ...(corrupt ? {} : { cycle: DECISION_TARGET_CYCLE }),
+    note: isPt
+      ? config.selection.mode === 'local'
+        ? 'ciclar seleciona modelo remoto e ativa modo explícito'
+        : 'provedor/modelo ativo — define candidato para arbitragem'
+      : config.selection.mode === 'local'
+        ? 'cycle to select a remote model and activate explicit mode'
+        : 'provider/model — sets the candidate list',
+  })
+
+  if ((config.enabled_candidates?.length ?? 0) > 0) {
     rows.push({
       id: 'decision.candidates',
-      name: 'Candidates',
+      name: isPt ? 'Candidatos ativos' : 'Candidates',
       value: String(config.enabled_candidates.length),
       note: config.egress_consent
         ? config.enabled_candidates
             .map((candidate) => `${candidate.provider}/${candidate.model}`)
             .join(', ')
-        : 'egress consent NOT granted — remote routes fail closed',
+        : isPt
+          ? 'egress consent NÃO concedido — rotas remotas bloqueadas'
+          : 'egress consent NOT granted — remote routes fail closed',
     })
   }
+
   rows.push({
     id: 'decision.consent',
-    name: 'Egress consent',
+    name: isPt ? 'Acesso à nuvem (Egress)' : 'Egress consent',
     value: config.egress_consent ? 'granted' : 'not granted',
     ...(corrupt ? {} : { cycle: DECISION_CONSENT_CYCLE }),
-    note: 'granted = remote decision routes may call their gateway (budget-capped)',
+    note: isPt
+      ? config.egress_consent
+        ? 'granted = rotas remotas podem consultar gateway de API (com teto de custo)'
+        : 'not granted = chamadas remotas bloqueadas; requer granted para nuvem'
+      : config.egress_consent
+        ? 'granted = remote decision routes may call their gateway (budget-capped)'
+        : 'not granted = remote routes fail closed; grant to allow cloud calls',
   })
+
   return {
     id: 'decision',
-    title: 'Decision',
+    title: isPt ? 'Decisão' : 'Decision',
     groups: [
-      { title: 'Decision router', rows },
+      { title: isPt ? 'Assistente de Decisão' : 'Decision router', rows },
       {
-        title: 'Credentials (status only — values never enter the window)',
+        title: isPt
+          ? 'Credenciais (status apenas — valores nunca gravados na janela)'
+          : 'Credentials (status only — values never enter the window)',
         rows: DECISION_KNOWN_PROVIDERS.map((provider) => {
           const status = credentialStatus(provider, env, authProviders, configProviders)
           const credential = DECISION_PROVIDER_CREDENTIALS[provider] ?? { note: '' }

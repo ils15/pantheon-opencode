@@ -180,10 +180,11 @@ Execute `/pantheon-settings` (ou `Pantheon: Settings` na paleta de comandos) par
 
 - **Gates & Overrides:** Habilite ou desabilite comportamentos nomeados em tempo real (salvo em `pantheon-overrides.json`).
 - **Presets de Modelos:** Alterne o tier de modelos ativo globalmente ou no projeto.
-- **Modelo de Decisão:** Configure o roteamento local e remoto das decisões JEV.
+- **Seletor de Modelo de Decisão:** Alterne interativamente entre os modelos remotos de decisão (`openrouter-jev`, `typesafe-jev`, `openai-decisions`, etc.) diretamente na interface.
+- **Suporte Multilíngue (PT-BR / EN):** Tradução visual completa das abas Decisões, Autonomia e Segurança, com detecção automática da linguagem do sistema e troca manual na aba TUI.
 - **Atualizações:** Verifique o canal do registro (`beta` / `stable`) e dispare upgrades.
 - **Doctor:** Execute o diagnóstico de saúde do sistema diretamente na interface.
-- **Personalização da TUI:** Ajuste espaçamento (`comfortable` vs `compact`), separadores, estilo das barras de progresso e linhas de contexto.
+- **Personalização da TUI:** Ajuste espaçamento (`comfortable` vs `compact`), separadores, estilo das barras de progresso, linhas de contexto e idioma.
 - **Overlay Não-Destrutivo e Navegação por Clique:** Abre como diálogo flutuante sobre a sessão ativa mantendo a TUI visível (configurável entre `dialog` e `fullscreen`), com suporte completo a cliques de mouse em abas, menu lateral, linhas, seletores e botões de ação.
 - **Janela de Novidades Modernizada:** Layout em card com bordas arredondadas, paginação visual e botão dedicado `[OK, Entendido]` com confirmação via mouse ou teclado (`Enter`/`Esc`/`Q`).
 
@@ -197,6 +198,16 @@ Execute `/pantheon-settings` (ou `Pantheon: Settings` na paleta de comandos) par
 | [Guia de Instalação](docs/INSTALLATION.md) | [Delegação & Gates](docs/PERMISSIONS-QUALITY-DELEGATION.md) | [Decisões Nativas (Jev)](docs/reference/native-decisions.md) |
 | [Compatibilidade](docs/COMPATIBILITY.md) | [Sistema de Memória](docs/MEMORY.md) | [Roteamento de Modelos](docs/reference/model-routing.md) |
 | [Atualização](docs/UPGRADING.md) | [Integração OpenCode 2.x](docs/opencode.md) | [Changelog](CHANGELOG.md) |
+
+---
+
+## O Que Há de Novo na v2.0.1
+
+- **Configurações TUI Bilíngues (PT-BR / EN):** Localização visual para o Assistente de Decisão Jev, Autonomia & Orçamentos e Portão de Segurança J1, com detecção inteligente da linguagem do ambiente (`LANG` / `LC_ALL`) e seleção manual (`auto`, `pt-BR`, `en`).
+- **Seletor Interativo de Modelos Jev:** Linha de seleção sempre visível em `/pantheon-settings` para alternar entre os 6 modelos remotos suportados sem editar arquivos JSON manualmente.
+- **Síntese do Conselho Modernizada (`/pantheon`):** Artefatos com Autoridade por Domínio, diagrama visual de arbitragem em Mermaid e checklist de ações imediatas.
+- **Planejamento Estratégico Modernizado (`/pantheon-deepwork`):** Planos da Athena com fluxo visual em Mermaid, fatiamento rigoroso de testes (< 10s), análise de raio de impacto e plano de rollback.
+- **Desmistificação da Escala de Segurança J1:** Descrições claras dos modos de execução (`shadow`, `enforce`, `off`), eliminando ambiguidades sobre bloqueio e telemetria.
 
 ---
 
