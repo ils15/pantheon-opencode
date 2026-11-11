@@ -8,6 +8,8 @@ permission:
   edit: allow
   bash: allow
   shell: allow
+  glob: allow
+  grep: allow
   task:
     "*": deny
 temperature: 0.3
