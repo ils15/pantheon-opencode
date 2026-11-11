@@ -73,7 +73,7 @@ Zeus must be invoked when:
 - Use `browser/snapshot` for accessibility tree context
 - Fallback: If Playwright MCP is unavailable, skip with warning:
   ```
-  ⚠️ Playwright MCP unavailable — visual review skipped.
+  [WARN] Playwright MCP unavailable — visual review skipped.
   Install Playwright MCP server to enable visual review pipeline.
   ```
 For UI implementation review, Aphrodite self-reviews.

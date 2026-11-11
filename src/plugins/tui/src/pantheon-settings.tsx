@@ -365,8 +365,8 @@ function resolveRunningVersion(): string {
 
 // ── The window view (presentational; both surfaces render it) ──────────
 
-const NAME_WIDTH = 28
-const VALUE_WIDTH = 22
+const NAME_WIDTH = 26
+const VALUE_WIDTH = 24
 
 export function SettingsWindow(props: {
   version: string
@@ -393,36 +393,30 @@ export function SettingsWindow(props: {
   return (
     <box
       flexDirection="column"
-      borderStyle="single"
-      borderColor={props.muted ?? '#404040'}
-      paddingLeft={1}
-      paddingRight={1}
+      borderStyle="rounded"
+      borderColor={props.warn ?? '#fba970'}
+      paddingLeft={2}
+      paddingRight={2}
       paddingTop={1}
       paddingBottom={1}
     >
-      {/* ── Top Header bar: Title + Horizontal Tabs + ESC (matching image.png) ── */}
-      <box flexDirection="row" alignItems="center">
-        <text attributes={1} fg={props.fg}>
-          {`Pantheon v${props.version}`}
-        </text>
-        <box width={2} />
-        <box flexDirection="row" flexGrow={1} flexShrink={1}>
-          <For each={props.tabs()}>
-            {(t, index) => {
-              const isActive = () => index() === props.page()
-              return (
-                <box onMouseDown={() => props.onJumpTab?.(index())} paddingRight={1}>
-                  <text
-                    flexShrink={0}
-                    fg={isActive() ? (props.warn ?? props.fg) : props.muted}
-                    {...(isActive() ? { attributes: 1 } : {})}
-                  >
-                    {`${t.title}${tabDirty(props.draft(), t) ? ' ●' : ''} `}
-                  </text>
-                </box>
-              )
-            }}
-          </For>
+      {/* ── Top Header bar: Title badge + settings label + ESC ── */}
+      <box flexDirection="row" alignItems="center" justifyContent="space-between">
+        <box flexDirection="row" alignItems="center">
+          <box
+            backgroundColor={props.warn ?? '#fba970'}
+            paddingLeft={1}
+            paddingRight={1}
+            marginRight={1}
+          >
+            <text fg="#000000" attributes={1}>
+              {'PANTHEON'}
+            </text>
+          </box>
+          <text attributes={1} fg={props.fg}>
+            {'Settings'}
+          </text>
+          <text fg={props.muted}>{` · v${props.version}`}</text>
         </box>
         <box onMouseDown={() => props.onClose?.()}>
           <text fg={props.muted}>{'[ esc ]'}</text>
@@ -432,11 +426,11 @@ export function SettingsWindow(props: {
       {/* ── Thin divider under header ── */}
       <box flexDirection="row" height={1}>
         <box flexGrow={1}>
-          <text fg={props.muted}>{'─'.repeat(78)}</text>
+          <text fg={props.muted}>{'─'.repeat(76)}</text>
         </box>
       </box>
 
-      {/* ── Main Body: Left Rail + Content (matching image.png & image_2.png) ── */}
+      {/* ── Main Body: Left Rail + Content ── */}
       <box flexDirection="row">
         {/* Left Rail: Tab list with active indicator */}
         <box width={18} flexDirection="column">
@@ -446,7 +440,7 @@ export function SettingsWindow(props: {
               return (
                 <box onMouseDown={() => props.onJumpTab?.(index())}>
                   <text
-                    fg={isActive() ? (props.warn ?? props.fg) : props.muted}
+                    fg={isActive() ? (props.warn ?? '#fba970') : props.muted}
                     {...(isActive() ? { attributes: 1 } : {})}
                   >
                     {`${isActive() ? '▸ ' : '  '}${t.title}${tabDirty(props.draft(), t) ? ' ●' : ''}`}
@@ -460,12 +454,13 @@ export function SettingsWindow(props: {
           <text fg={props.muted}>{'tab: next'}</text>
         </box>
 
+        {/* Vertical divider */}
+        <box width={1} marginRight={1}>
+          <text fg={props.muted}>{'│'}</text>
+        </box>
+
         {/* Content panel */}
-        <box flexGrow={1} flexShrink={1} flexDirection="column" paddingLeft={1}>
-          <text attributes={1} fg={props.warn ?? props.fg}>
-            {tab().title}
-          </text>
-          <text fg={props.muted}>{'─'.repeat(40)}</text>
+        <box flexGrow={1} flexShrink={1} flexDirection="column">
           <For each={tab().groups}>
             {(group) => (
               <box flexDirection="column">
@@ -479,20 +474,20 @@ export function SettingsWindow(props: {
                     const isSelected = () => row.id === props.selectedId()
                     const display = () => props.draft()[row.id] ?? row.value
                     const staged = () => props.draft()[row.id] !== undefined
-                    const gutter = () => (isSelected() ? '  ' : '  ')
+                    const gutter = () => (isSelected() ? '▸ ' : '  ')
                     const valueCell = () =>
                       row.cycle !== undefined ? `< ${display()} >` : display()
                     return (
                       <box
                         flexDirection="row"
-                        backgroundColor={isSelected() ? (props.warn ?? '#f59e0b') : undefined}
+                        backgroundColor={isSelected() ? '#262626' : undefined}
                         onMouseDown={() => {
                           props.onSelectRow?.(row.id)
                         }}
                       >
                         <box width={NAME_WIDTH + 2}>
                           <text
-                            fg={isSelected() ? '#000000' : props.fg}
+                            fg={isSelected() ? (props.warn ?? '#fba970') : props.fg}
                             {...(isSelected() ? { attributes: 1 } : {})}
                           >
                             {`${gutter()}${row.name}`.padEnd(NAME_WIDTH + 2)}
@@ -508,7 +503,7 @@ export function SettingsWindow(props: {
                           <text
                             fg={
                               isSelected()
-                                ? '#000000'
+                                ? '#ffffff'
                                 : staged()
                                   ? (props.warn ?? props.fg)
                                   : props.muted
@@ -520,7 +515,7 @@ export function SettingsWindow(props: {
                         </box>
                         <Show when={row.note !== undefined}>
                           <box flexGrow={1} flexShrink={1}>
-                            <text fg={isSelected() ? '#111827' : props.muted}>{row.note}</text>
+                            <text fg={isSelected() ? '#e5e7eb' : props.muted}>{row.note}</text>
                           </box>
                         </Show>
                       </box>

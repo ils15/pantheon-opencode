@@ -85,7 +85,7 @@ export function buildAutonomyTab(input: {
             note:
               'mission persists in .pantheon/goals; auto-continues with cooldown' +
               (input.goalLoopRestartPending
-                ? ' · ⚠ saved value applies after OpenCode restart'
+                ? ' · [!] saved value applies after OpenCode restart'
                 : ' · applies after OpenCode restart'),
           },
           {

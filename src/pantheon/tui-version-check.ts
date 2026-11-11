@@ -61,7 +61,7 @@ export function checkTuiVersionStaleness(logger: (msg: string) => void = console
 
     if (copyVersion !== currentVersion) {
       logger(
-        `⚠️  TUI plugin v${copyVersion} is outdated. Current: v${currentVersion}. Run: npx pantheon-opencode init`,
+        `[WARN] TUI plugin v${copyVersion} is outdated. Current: v${currentVersion}. Run: npx pantheon-opencode init`,
       )
     }
   } catch {
