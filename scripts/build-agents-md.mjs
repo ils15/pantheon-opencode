@@ -138,18 +138,18 @@ Setup: [INSTALLATION.md](docs/INSTALLATION.md).
 - Test: focused checks by default; \`npm test\` for CI/release or broad/high-risk changes
 - Lint: \`npm run lint\`
 
-## Teste de Instalação Global (sandbox)
+## Global Installation Testing (Sandbox)
 
-Valide a instalação global COMO UM USUÁRIO REAL no sandbox \`~/pantheon-sandbox/\` (fora do repo; HOME, prefix npm e venv próprios); o ambiente de dev NÃO serve para empacotamento.
+Validate global installation AS A REAL USER in the sandbox \`~/pantheon-sandbox/\` (outside the repo; with dedicated HOME, npm prefix, and venv); the dev environment is NOT suitable for packaging tests.
 
-- Rodar: \`bash ~/pantheon-sandbox/run-test.sh\` (MCPs, doctor, TUI)
-- Regra para agentes: valide instalação global (npm pack, \`init\`, MCPs, hooks) no sandbox — NUNCA no ambiente de dev
-- Descarte: \`rm -rf ~/pantheon-sandbox\`
+- Run: \`bash ~/pantheon-sandbox/run-test.sh\` (MCPs, doctor, TUI)
+- Agent rule: validate global installation (npm pack, \`init\`, MCPs, hooks) in the sandbox — NEVER in the development environment
+- Teardown: \`rm -rf ~/pantheon-sandbox\`
 
 ## Worktrees
 
-- Nunca crie worktrees dentro do projeto principal; use \`<project-parent>/.pantheon-worktrees/<basename-do-repo>/<task>\`.
-- worktrees não vivem dentro de \`.pantheon/\`.
+- Never create worktrees inside the main project; use \`<project-parent>/.pantheon-worktrees/<repo-basename>/<task>\`.
+- Worktrees do not live inside \`.pantheon/\`.
 
 ## Conventions
 

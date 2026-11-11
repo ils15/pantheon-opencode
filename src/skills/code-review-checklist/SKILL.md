@@ -52,7 +52,7 @@ Run the itemized pass (Correctness, Code Quality, Testing, Security/OWASP, Docum
 - [HIGH] component.tsx:15 — Missing input validation
 - [MEDIUM] test_utils.py:8 — Edge case not covered
 
-### 🔍 Human Review Focus
+### Human Review Focus
 1. [Item AI cannot fully validate — e.g., business logic correctness]
 2. [Item 2 — e.g., UX flow matches requirements]
 ```
@@ -86,11 +86,11 @@ For comprehensive reviews, run 5 checks simultaneously:
 
 ## Anti-Patterns
 
-- ❌ Reviewing entire file instead of diff
-- ❌ Approving without running tests
-- ❌ Ignoring security implications
-- ❌ Vague feedback ("looks good", "needs work")
-- ❌ Nitpicking style over substance
+- Reviewing entire file instead of diff
+- Approving without running tests
+- Ignoring security implications
+- Vague feedback ("looks good", "needs work")
+- Nitpicking style over substance
 
 ---
 

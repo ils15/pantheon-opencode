@@ -46,7 +46,7 @@ Route tasks to optimized agents based on category instead of specifying agents m
 ## Parallel Execution Declaration
 
 ```
-🔀 PARALLEL EXECUTION — Phase 2
+PARALLEL EXECUTION — Phase 2
 Running simultaneously:
 - @hermes   → backend tests   → .tmp/IMPL-phase2-hermes.md
 - @aphrodite → frontend       → .tmp/IMPL-phase2-aphrodite.md
@@ -90,8 +90,8 @@ Model routing is handled by Prometheus and the platform configuration. Zeus dele
 
 ## Anti-Patterns
 
-- ❌ Zeus doing implementation work (orchestrates, doesn't code)
-- ❌ Skipping TDD cycle (RED → GREEN → REFACTOR)
-- ❌ Auto-committing without user approval
-- ❌ Parallel phases with dependencies (order matters)
-- ❌ Ignoring Themis CRITICAL findings
+- Zeus doing implementation work (orchestrates, doesn't code)
+- Skipping TDD cycle (RED → GREEN → REFACTOR)
+- Auto-committing without user approval
+- Parallel phases with dependencies (order matters)
+- Ignoring Themis CRITICAL findings
