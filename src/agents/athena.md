@@ -142,20 +142,26 @@ flowchart LR
 
 ### 🛠️ Technical Implementation Blueprint (Saved to Disk)
 
+#### Goal, Scope & Context
+- **Goal:** One sentence describing what this plan achieves.
+- **In scope / Out of scope:** Concrete outcomes and exclusions.
+- **Assumptions & Open Questions:** Key assumptions; critical decisions with recommended defaults.
+
 #### Phases & Quality Gates (3-5 max)
 1. **[Phase Name] → @agent**
-   - **Actions:** Concrete steps (TDD: RED → GREEN → REFACTOR)
-   - **Target Files:** Explicit paths
-   - **Verification:** Exact sliced test command (`< 10s`)
-   - **Risk & Mitigation:** Specific risk → concrete prevention
+   - **Goal & Actions:** Outcome and concrete steps (TDD: RED → GREEN → REFACTOR)
+   - **Affected files or areas:** Known paths or explicitly mark unknown paths instead of guessing
+   - **Dependencies:** Earlier phases or external systems
+   - **Tests & Test Slicing:** Exact targeted slice (< 10s), focused checks, lint-first gate
+   - **Risks & Mitigation:** Specific risk → concrete prevention
 
-#### Acceptance Criteria
-- [ ] Observable completion condition
-- [ ] Targeted tests pass cleanly (0 warnings)
+#### Acceptance Criteria & Verification
+- [ ] Observable completion criterion
+- [ ] Verification criterion (targeted tests green, 0 lint warnings)
 
-#### Rollback Blueprint
-- **Trigger:** Condition that triggers abort
-- **Recovery:** Revert commit / feature flag toggle / migration down
+#### Rollback & Contingency Plan
+- **Failure Trigger:** Conditions under which execution aborts
+- **Rollback Steps:** Revert commit / feature flag toggle / database rollback migration
 ```
 
 ### Interactive Question Gate

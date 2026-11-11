@@ -55,26 +55,15 @@ test('Athena returns the complete plan to Zeus without opening approval in the c
   )
 })
 
-test('Zeus shows Athena’s full plan in the main conversation before asking for approval', () => {
+test('Zeus presents didactic Executive Decision Summary and writes technical blueprint to disk before asking for approval', () => {
   const section = zeus.match(/## Plan Handoff and Approval([\s\S]*?)(?=\n## |\n---|$)/i)?.[1]
 
   assert.ok(section, 'Zeus must define a dedicated plan handoff contract')
-  assert.match(section, /publish the \*\*entire returned plan as a normal assistant message/i)
-  assert.match(section, /visible in the conversation before you trigger any\s+approval UI/i)
-  assert.match(section, /do not summarize|without summarizing/i)
-  // The slice reworded the handoff to the observed Beta-10 `subagent` dispatch;
-  // the equivalent guarantee is that Zeus, not the child session, owns the
-  // user-facing approval gate.
   assert.match(section, /Zeus owns the user-facing approval gate/)
-  const approval = section.indexOf('After the plan has been published')
-  assert.ok(
-    section.indexOf('normal assistant message') < approval,
-    'the full plan must be published before the approval UI is triggered',
-  )
-  assert.match(section, /If the runtime cannot guarantee[\s\S]*?plain text after it/i)
-  assert.match(section, /if the plan is missing[\s\S]*?do not ask for approval/i)
+  assert.match(section, /\.pantheon\/deepwork\/<slug>\/PLAN\.md/i)
+  assert.match(section, /Executive Decision Summary in chat/i)
+  assert.match(section, /question/i)
   assert.match(section, /if the user requests changes/i)
-  assert.match(section, /revised plan/i)
 })
 
 test('orchestration defaults to Athena task-result plans and keeps artifacts optional', () => {
