@@ -33,30 +33,35 @@ export interface UpdateNotice {
   message: string
 }
 
-/** Semver-ish compare for X.Y.Z[-beta.N]; betas sort before their release. */
+/** Semver-ish compare for X.Y.Z[-(beta|rc).N]; prereleases sort before their release. */
 export function comparePantheonVersions(left: string, right: string): number {
   const parse = (version: string) => {
     const match = String(version)
       .trim()
-      .match(/^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/)
+      .match(/^(\d+)\.(\d+)\.(\d+)(?:-(beta|rc)\.(\d+))?$/)
     if (!match) return null
     if (match[1] === undefined || match[2] === undefined || match[3] === undefined) {
       return null
     }
+    const stage = match[4]
+    const stageNum = match[5] !== undefined ? +match[5] : 0
+    const stageRank = stage === 'beta' ? 1 : stage === 'rc' ? 2 : 3
     return {
       core: [Number(match[1]), Number(match[2]), Number(match[3])],
-      beta: match[4] === undefined ? Number.POSITIVE_INFINITY : +match[4],
+      stageRank,
+      stageNum: stage ? stageNum : Number.POSITIVE_INFINITY,
     }
   }
   const a = parse(left)
   const b = parse(right)
   if (!a || !b) return 0
   for (let index = 0; index < 3; index += 1) {
-    const left = a.core[index] ?? 0
-    const right = b.core[index] ?? 0
-    if (left !== right) return left - right
+    const leftVal = a.core[index] ?? 0
+    const rightVal = b.core[index] ?? 0
+    if (leftVal !== rightVal) return leftVal - rightVal
   }
-  return a.beta - b.beta
+  if (a.stageRank !== b.stageRank) return a.stageRank - b.stageRank
+  return a.stageNum - b.stageNum
 }
 
 /**
@@ -73,7 +78,7 @@ export function pickUpdateNotice(input: UpdateNoticeInput): UpdateNotice | null 
   if (nowMs - lastCheck < ttlMs) return null
   if (state.lastNotifiedVersion === latestVersion) return null
 
-  const stable = (version: string) => !/-beta\.\d+$/.test(version)
+  const stable = (version: string) => !/-(?:beta|rc)\.\d+$/.test(version)
   // A stable install is never advertised a beta: the update guard owns that
   // crossing and requires explicit opt-in there.
   if (stable(currentVersion) && !stable(latestVersion)) return null

@@ -36,6 +36,16 @@ export const DEFAULT_GOAL_LOOP_PREFS: GoalLoopPrefs = {
 
 export const GOAL_LOOP_ENABLED_CYCLE: readonly string[] = Object.freeze(['enabled', 'disabled'])
 
+export const MAX_CONTINUATIONS_CYCLE: readonly string[] = Object.freeze([
+  '10',
+  '25',
+  '50',
+  '100',
+  '200',
+])
+
+export const COOLDOWN_MS_CYCLE: readonly string[] = Object.freeze(['1000', '2000', '5000', '10000'])
+
 export interface DecisionBudgets {
   monthlyUsd: number
   perDecisionUsd: number
@@ -75,7 +85,7 @@ export function buildAutonomyTab(input: {
     title: 'Autonomy',
     groups: [
       {
-        title: 'Goal loop (persisted mission, long sessions)',
+        title: 'Goal loop (multi-turn session auto-continuation)',
         rows: [
           {
             id: 'autonomy.goal_loop.enabled',
@@ -83,64 +93,66 @@ export function buildAutonomyTab(input: {
             value: input.goalLoop.enabled ? 'enabled' : 'disabled',
             cycle: GOAL_LOOP_ENABLED_CYCLE,
             note:
-              'mission persists in .pantheon/goals; auto-continues with cooldown' +
+              'auto-continues multi-turn tasks when session goes idle' +
               (input.goalLoopRestartPending
-                ? ' · [!] saved value applies after OpenCode restart'
+                ? ' · [!] restart required to apply'
                 : ' · applies after OpenCode restart'),
           },
           {
             id: 'autonomy.goal_loop.maxContinuations',
             name: 'Max continuations',
             value: String(input.goalLoop.maxContinuations),
-            note: '1..200 — the anti-runaway cap per mission',
+            cycle: MAX_CONTINUATIONS_CYCLE,
+            note: '1..200 — safety ceiling to prevent runaway tasks',
           },
           {
             id: 'autonomy.goal_loop.cooldownMs',
             name: 'Cooldown (ms)',
             value: String(input.goalLoop.cooldownMs),
-            note: 'min 1000ms · between continuations',
+            cycle: COOLDOWN_MS_CYCLE,
+            note: 'delay between autonomous turns (min 1000ms)',
           },
         ],
       },
       {
-        title: 'Decision budgets (applies live)',
+        title: 'Decision budgets (applies live per gated call)',
         rows: [
           {
             id: 'autonomy.budget.monthly',
             name: 'Monthly cap',
             value: formatUsd(input.budgets.monthlyUsd),
             cycle: MONTHLY_USD_CYCLE,
-            note: 'the ledger refuses gated calls past this',
+            note: 'monthly USD ceiling for gated arbitrator decisions',
           },
           {
             id: 'autonomy.budget.perDecision',
             name: 'Per-decision cap',
             value: formatUsd(input.budgets.perDecisionUsd),
             cycle: PER_DECISION_USD_CYCLE,
-            note: 'each gated call above this is refused',
+            note: 'price cap — gated decisions above this are refused',
           },
         ],
       },
       {
-        title: 'Decision gradient (documented — J1 owns the risk axis)',
+        title: 'Decision gradient (reference policy · J1 owns the risk axis)',
         rows: [
           {
             id: 'autonomy.gradient.solo',
             name: 'Decide solo',
-            value: 'reversible + low risk',
-            note: 'edits, routine fixes, ordering ties — no gate',
+            value: 'autonomous',
+            note: 'reversible & low-risk edits, routine fixes (no gate)',
           },
           {
             id: 'autonomy.gradient.jev',
             name: 'Jev decides',
-            value: 'typed ambiguity',
-            note: 'readings, ranking, verification — budget-capped',
+            value: 'arbitrated',
+            note: 'typed ambiguity & candidate ranking (budget-capped)',
           },
           {
             id: 'autonomy.gradient.human',
             name: 'Human decides',
-            value: 'high risk (J1)',
-            note: 'enforce ladder via PANTHEON_J1_* (J1 tab)',
+            value: 'human review',
+            note: 'high-risk & destructive operations (J1 gate)',
           },
         ],
       },

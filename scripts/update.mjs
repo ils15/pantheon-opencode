@@ -6,11 +6,15 @@ import { assertNoSymlinkAncestors } from './install/verify.mjs'
 function parseVersion(version) {
   const match = String(version)
     .trim()
-    .match(/^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/)
+    .match(/^(\d+)\.(\d+)\.(\d+)(?:-(beta|rc)\.(\d+))?$/)
   if (!match) return null
+  const stage = match[4]
+  const stageNum = match[5] !== undefined ? +match[5] : 0
+  const stageRank = stage === 'beta' ? 1 : stage === 'rc' ? 2 : 3
   return {
     core: [+match[1], +match[2], +match[3]],
-    beta: match[4] === undefined ? Number.POSITIVE_INFINITY : +match[4],
+    stageRank,
+    stageNum: stage ? stageNum : Number.POSITIVE_INFINITY,
   }
 }
 
@@ -21,7 +25,8 @@ function compareVersions(left, right) {
   for (let index = 0; index < 3; index += 1) {
     if (a.core[index] !== b.core[index]) return a.core[index] - b.core[index]
   }
-  return a.beta - b.beta
+  if (a.stageRank !== b.stageRank) return a.stageRank - b.stageRank
+  return a.stageNum - b.stageNum
 }
 
 /** Update only the authorized global installation, then refresh its config. */
@@ -36,7 +41,7 @@ export function runUpdate(
     refresh,
   },
 ) {
-  const channel = args.includes('--stable') ? 'latest' : 'beta'
+  const channel = args.includes('--stable') ? 'latest' : args.includes('--rc') ? 'rc' : 'beta'
   const globalRootResult = spawnSync('npm', ['root', '-g'], {
     encoding: 'utf8',
     timeout: 10_000,
@@ -87,7 +92,7 @@ export function runUpdate(
     runningScriptPath !== path.join(globalPackageRoot, 'bin', 'pantheon-init.mjs')
   ) {
     console.error(
-      '❌ update is available only from the global Pantheon installation; local, workspace, and npx copies are refused. ' +
+      '[ERROR] update is available only from the global Pantheon installation; local, workspace, and npx copies are refused. ' +
         'Install globally with `npm install -g pantheon-opencode@beta`, then run `pantheon-opencode update`.',
     )
     return 1
@@ -101,14 +106,14 @@ export function runUpdate(
   const latest = (view.stdout || '').trim().split('\n').filter(Boolean).pop()
   if (view.status !== 0 || !latest) {
     console.error(
-      `❌ Could not reach the npm registry: ${(view.stderr || view.stdout || '').trim() || 'no version returned'}`,
+      `[ERROR] Could not reach the npm registry: ${(view.stderr || view.stdout || '').trim() || 'no version returned'}`,
     )
     return 1
   }
 
   if (compareVersions(latest, currentVersion) <= 0) {
     console.log(
-      `\u2705 Already up to date (installed v${currentVersion}; ${channel} channel: v${latest}).`,
+      `[OK] Already up to date (installed v${currentVersion}; ${channel} channel: v${latest}).`,
     )
     return 0
   }
@@ -116,15 +121,15 @@ export function runUpdate(
   // A stable installation never jumps to a prerelease silently (you stay
   // in charge): the jump needs explicit opt-in via --allow-prerelease. The
   // remedy is printed, never guessed.
-  const isPrerelease = (version) => /-beta\.\d+$/.test(version)
+  const isPrerelease = (version) => /-(?:beta|rc)\.\d+$/.test(version)
   const crossingToPrerelease = isPrerelease(latest) && !isPrerelease(currentVersion)
   if (crossingToPrerelease && !args.includes('--allow-prerelease')) {
     console.error(
-      '\u274c v' +
+      '[ERROR] v' +
         latest +
-        ' is a BETA and your installed v' +
+        ' is a prerelease and your installed v' +
         currentVersion +
-        ' is stable. A stable\u2192beta jump needs explicit opt-in: rerun with `update --allow-prerelease`, or stay on the stable line with `update --stable`.',
+        ' is stable. A stable->prerelease jump needs explicit opt-in: rerun with `update --allow-prerelease`, or stay on the stable line with `update --stable`.',
     )
     return 1
   }
@@ -135,7 +140,7 @@ export function runUpdate(
   })
   if (install.status !== 0) {
     console.error(
-      '❌ npm install failed; npm global replacement is not atomic and may have partially changed the package. ' +
+      '[ERROR] npm install failed; npm global replacement is not atomic and may have partially changed the package. ' +
         'Verify the global install with `pantheon-opencode --version` or reinstall the package.',
     )
     return install.status ?? 1
@@ -165,7 +170,7 @@ export function runUpdate(
   }
   if (refreshedVersion !== latest || !refreshedPackageRoot) {
     console.error(
-      `❌ npm reported success, but the global package is v${refreshedVersion ?? 'unknown'} (expected v${latest}); config refresh was not run.`,
+      `[ERROR] npm reported success, but the global package is v${refreshedVersion ?? 'unknown'} (expected v${latest}); config refresh was not run.`,
     )
     return 1
   }
@@ -183,10 +188,10 @@ export function runUpdate(
       })
   if (init.status !== 0 || init.error) {
     console.error(
-      '⚠️  Updated, but the config refresh did not complete — run `npx pantheon-opencode init` manually.',
+      '[WARN] Updated, but the config refresh did not complete — run `npx pantheon-opencode init` manually.',
     )
     return init.status ?? 1
   }
-  console.log(`✅ Updated to v${latest}.`)
+  console.log(`[OK] Updated to v${latest}.`)
   return 0
 }

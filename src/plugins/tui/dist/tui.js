@@ -119,6 +119,19 @@ const DEFAULT_GOAL_LOOP_PREFS = {
 	maxContinuations: 25
 };
 const GOAL_LOOP_ENABLED_CYCLE = Object.freeze(["enabled", "disabled"]);
+const MAX_CONTINUATIONS_CYCLE = Object.freeze([
+	"10",
+	"25",
+	"50",
+	"100",
+	"200"
+]);
+const COOLDOWN_MS_CYCLE = Object.freeze([
+	"1000",
+	"2000",
+	"5000",
+	"10000"
+]);
 const DEFAULT_DECISION_BUDGETS = {
 	monthlyUsd: 5,
 	perDecisionUsd: .1
@@ -157,65 +170,67 @@ function buildAutonomyTab(input) {
 		title: "Autonomy",
 		groups: [
 			{
-				title: "Goal loop (persisted mission, long sessions)",
+				title: "Goal loop (multi-turn session auto-continuation)",
 				rows: [
 					{
 						id: "autonomy.goal_loop.enabled",
 						name: "Goal loop",
 						value: input.goalLoop.enabled ? "enabled" : "disabled",
 						cycle: GOAL_LOOP_ENABLED_CYCLE,
-						note: "mission persists in .pantheon/goals; auto-continues with cooldown" + (input.goalLoopRestartPending ? " · [!] saved value applies after OpenCode restart" : " · applies after OpenCode restart")
+						note: "auto-continues multi-turn tasks when session goes idle" + (input.goalLoopRestartPending ? " · [!] restart required to apply" : " · applies after OpenCode restart")
 					},
 					{
 						id: "autonomy.goal_loop.maxContinuations",
 						name: "Max continuations",
 						value: String(input.goalLoop.maxContinuations),
-						note: "1..200 — the anti-runaway cap per mission"
+						cycle: MAX_CONTINUATIONS_CYCLE,
+						note: "1..200 — safety ceiling to prevent runaway tasks"
 					},
 					{
 						id: "autonomy.goal_loop.cooldownMs",
 						name: "Cooldown (ms)",
 						value: String(input.goalLoop.cooldownMs),
-						note: "min 1000ms · between continuations"
+						cycle: COOLDOWN_MS_CYCLE,
+						note: "delay between autonomous turns (min 1000ms)"
 					}
 				]
 			},
 			{
-				title: "Decision budgets (applies live)",
+				title: "Decision budgets (applies live per gated call)",
 				rows: [{
 					id: "autonomy.budget.monthly",
 					name: "Monthly cap",
 					value: formatUsd(input.budgets.monthlyUsd),
 					cycle: MONTHLY_USD_CYCLE,
-					note: "the ledger refuses gated calls past this"
+					note: "monthly USD ceiling for gated arbitrator decisions"
 				}, {
 					id: "autonomy.budget.perDecision",
 					name: "Per-decision cap",
 					value: formatUsd(input.budgets.perDecisionUsd),
 					cycle: PER_DECISION_USD_CYCLE,
-					note: "each gated call above this is refused"
+					note: "price cap — gated decisions above this are refused"
 				}]
 			},
 			{
-				title: "Decision gradient (documented — J1 owns the risk axis)",
+				title: "Decision gradient (reference policy · J1 owns the risk axis)",
 				rows: [
 					{
 						id: "autonomy.gradient.solo",
 						name: "Decide solo",
-						value: "reversible + low risk",
-						note: "edits, routine fixes, ordering ties — no gate"
+						value: "autonomous",
+						note: "reversible & low-risk edits, routine fixes (no gate)"
 					},
 					{
 						id: "autonomy.gradient.jev",
 						name: "Jev decides",
-						value: "typed ambiguity",
-						note: "readings, ranking, verification — budget-capped"
+						value: "arbitrated",
+						note: "typed ambiguity & candidate ranking (budget-capped)"
 					},
 					{
 						id: "autonomy.gradient.human",
 						name: "Human decides",
-						value: "high risk (J1)",
-						note: "enforce ladder via PANTHEON_J1_* (J1 tab)"
+						value: "human review",
+						note: "high-risk & destructive operations (J1 gate)"
 					}
 				]
 			}
@@ -657,6 +672,9 @@ const EMPTY_TAB = {
 function tabRows(tab) {
 	return tab.groups.flatMap((group) => group.rows);
 }
+function findRow(tab, id) {
+	return tabRows(tab).find((row) => row.id === id);
+}
 /** Step through the cycle with wrap-around; non-cyclable rows return the input. */
 function cycleValue(value, cycle, direction) {
 	if (cycle.length === 0) return value;
@@ -839,19 +857,21 @@ function buildChangelogTab(version, items = []) {
 		}]
 	};
 }
-/** Semver-ish compare for X.Y.Z[-beta.N]; betas sort before their release. */
+/** Semver-ish compare for X.Y.Z[-(beta|rc).N]; prereleases sort before their release. */
 function comparePantheonVersions(left, right) {
 	const parse = (version) => {
-		const match = String(version).trim().match(/^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/);
+		const match = String(version).trim().match(/^(\d+)\.(\d+)\.(\d+)(?:-(beta|rc)\.(\d+))?$/);
 		if (!match) return null;
-		const [, major = "", minor = "", patch = "", beta = ""] = match;
+		const [, major = "", minor = "", patch = "", stage = "", stageNum = ""] = match;
+		const stageRank = stage === "beta" ? 1 : stage === "rc" ? 2 : 3;
 		return {
 			core: [
 				+major,
 				+minor,
 				+patch
 			],
-			beta: beta === "" ? Number.POSITIVE_INFINITY : +beta
+			stageRank,
+			stageNum: stage !== "" ? +stageNum : Number.POSITIVE_INFINITY
 		};
 	};
 	const a = parse(left);
@@ -862,14 +882,15 @@ function comparePantheonVersions(left, right) {
 	if (aMajor !== bMajor) return aMajor - bMajor;
 	if (aMinor !== bMinor) return aMinor - bMinor;
 	if (aPatch !== bPatch) return aPatch - bPatch;
-	return a.beta - b.beta;
+	if (a.stageRank !== b.stageRank) return a.stageRank - b.stageRank;
+	return a.stageNum - b.stageNum;
 }
 function pickUpdateNotice(input) {
 	const { currentVersion, latestVersion, state = {}, nowMs = Date.now() } = input;
 	const ttlMs = input.ttlMs ?? 216e5;
 	if (nowMs - (state.lastCheckMs ?? 0) < ttlMs) return null;
 	if (state.lastNotifiedVersion === latestVersion) return null;
-	const stable = (version) => !/-beta\.\d+$/.test(version);
+	const stable = (version) => !/-(?:beta|rc)\.\d+$/.test(version);
 	if (stable(currentVersion) && !stable(latestVersion)) return null;
 	if (comparePantheonVersions(latestVersion, currentVersion) <= 0) return null;
 	return {
@@ -2095,7 +2116,12 @@ function SettingsWindow(props) {
 						const display = () => props.draft()[row.id] ?? row.value;
 						const staged = () => props.draft()[row.id] !== void 0;
 						const gutter = () => isSelected() ? "▸ " : "  ";
-						const valueCell = () => row.cycle !== void 0 ? `< ${display()} >` : display();
+						const valueCell = () => {
+							if (row.cycle !== void 0) return `< ${display()} >`;
+							if (row.action !== void 0) return `[ ${display()} ]`;
+							if (row.id.startsWith("autonomy.gradient.")) return `[ref] ${display()}`;
+							return display();
+						};
 						return (() => {
 							var _el$51 = createElement("box"), _el$52 = createElement("box"), _el$53 = createElement("text"), _el$54 = createElement("box"), _el$55 = createElement("text");
 							insertNode(_el$51, _el$52);
@@ -2172,46 +2198,46 @@ function SettingsWindow(props) {
 						},
 						get fallback() {
 							return (() => {
-								var _el$78 = createElement("box"), _el$79 = createElement("box"), _el$80 = createElement("text"), _el$82 = createElement("text"), _el$84 = createElement("box"), _el$85 = createElement("text"), _el$87 = createElement("text"), _el$89 = createElement("box"), _el$90 = createElement("text"), _el$92 = createElement("box"), _el$93 = createElement("text");
+								var _el$77 = createElement("box"), _el$78 = createElement("box"), _el$79 = createElement("text"), _el$81 = createElement("text"), _el$83 = createElement("box"), _el$84 = createElement("text"), _el$86 = createElement("text"), _el$88 = createElement("box"), _el$89 = createElement("text"), _el$91 = createElement("box"), _el$92 = createElement("text");
+								insertNode(_el$77, _el$78);
+								insertNode(_el$77, _el$81);
+								insertNode(_el$77, _el$83);
+								insertNode(_el$77, _el$86);
+								insertNode(_el$77, _el$88);
+								insertNode(_el$77, _el$91);
+								insertNode(_el$77, _el$92);
+								setProp(_el$77, "flexDirection", "row");
 								insertNode(_el$78, _el$79);
-								insertNode(_el$78, _el$82);
-								insertNode(_el$78, _el$84);
-								insertNode(_el$78, _el$87);
-								insertNode(_el$78, _el$89);
-								insertNode(_el$78, _el$92);
-								insertNode(_el$78, _el$93);
-								setProp(_el$78, "flexDirection", "row");
-								insertNode(_el$79, _el$80);
-								setProp(_el$79, "backgroundColor", "#262626");
-								setProp(_el$79, "onMouseDown", () => props.onClose?.());
-								insertNode(_el$80, createTextNode(` Close `));
-								setProp(_el$80, "fg", "#ffffff");
-								insertNode(_el$82, createTextNode(`  `));
-								insertNode(_el$84, _el$85);
-								setProp(_el$84, "backgroundColor", "#262626");
-								setProp(_el$84, "onMouseDown", () => props.onResetPage?.());
-								insertNode(_el$85, createTextNode(` Reset page `));
-								setProp(_el$85, "fg", "#ffffff");
-								insertNode(_el$87, createTextNode(`  `));
-								insertNode(_el$89, _el$90);
-								setProp(_el$89, "backgroundColor", "#262626");
-								setProp(_el$89, "onMouseDown", () => props.onStageDefaults?.());
-								insertNode(_el$90, createTextNode(` Defaults `));
-								setProp(_el$90, "fg", "#ffffff");
-								setProp(_el$92, "flexGrow", 1);
-								insertNode(_el$93, createTextNode(`no staged changes`));
+								setProp(_el$78, "backgroundColor", "#262626");
+								setProp(_el$78, "onMouseDown", () => props.onClose?.());
+								insertNode(_el$79, createTextNode(` Close `));
+								setProp(_el$79, "fg", "#ffffff");
+								insertNode(_el$81, createTextNode(`  `));
+								insertNode(_el$83, _el$84);
+								setProp(_el$83, "backgroundColor", "#262626");
+								setProp(_el$83, "onMouseDown", () => props.onResetPage?.());
+								insertNode(_el$84, createTextNode(` Reset page `));
+								setProp(_el$84, "fg", "#ffffff");
+								insertNode(_el$86, createTextNode(`  `));
+								insertNode(_el$88, _el$89);
+								setProp(_el$88, "backgroundColor", "#262626");
+								setProp(_el$88, "onMouseDown", () => props.onStageDefaults?.());
+								insertNode(_el$89, createTextNode(` Defaults `));
+								setProp(_el$89, "fg", "#ffffff");
+								setProp(_el$91, "flexGrow", 1);
+								insertNode(_el$92, createTextNode(`no staged changes`));
 								effect((_p$) => {
 									var _v$15 = props.muted, _v$16 = props.muted, _v$17 = props.muted;
-									_v$15 !== _p$.e && (_p$.e = setProp(_el$82, "fg", _v$15, _p$.e));
-									_v$16 !== _p$.t && (_p$.t = setProp(_el$87, "fg", _v$16, _p$.t));
-									_v$17 !== _p$.a && (_p$.a = setProp(_el$93, "fg", _v$17, _p$.a));
+									_v$15 !== _p$.e && (_p$.e = setProp(_el$81, "fg", _v$15, _p$.e));
+									_v$16 !== _p$.t && (_p$.t = setProp(_el$86, "fg", _v$16, _p$.t));
+									_v$17 !== _p$.a && (_p$.a = setProp(_el$92, "fg", _v$17, _p$.a));
 									return _p$;
 								}, {
 									e: void 0,
 									t: void 0,
 									a: void 0
 								});
-								return _el$78;
+								return _el$77;
 							})();
 						},
 						get children() {
@@ -2257,7 +2283,12 @@ function SettingsWindow(props) {
 							return _el$59;
 						}
 					}), _el$76);
-					insertNode(_el$76, createTextNode(`click or ›/←/→ change · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close`));
+					insert(_el$76, () => {
+						const currentRow = findRow(tab(), props.selectedId());
+						if (currentRow?.cycle !== void 0) return "click or ›/←/→ change · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close";
+						if (currentRow?.action !== void 0) return "enter or space run action · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close";
+						return "[ref] documented reference (read-only) · ↑↓ select · tab next tab · esc close";
+					});
 					effect((_$p) => setProp(_el$76, "fg", props.muted, _$p));
 					return _el$58;
 				})();

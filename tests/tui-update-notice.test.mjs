@@ -12,7 +12,11 @@ const NOW = 1_800_000_000_000
 describe('tui update-notice core', () => {
   it('orders releases and betas semver-style', () => {
     assert.ok(comparePantheonVersions('2.0.0', '2.0.0-beta.1') > 0)
+    assert.ok(comparePantheonVersions('2.0.0-rc.1', '2.0.0-beta.7') > 0)
+    assert.ok(comparePantheonVersions('2.0.0-rc.2', '2.0.0-rc.1') > 0)
+    assert.ok(comparePantheonVersions('2.0.0', '2.0.0-rc.1') > 0)
     assert.equal(comparePantheonVersions('2.0.0-beta.1', '2.0.0-beta.1'), 0)
+    assert.equal(comparePantheonVersions('2.0.0-rc.1', '2.0.0-rc.1'), 0)
   })
 
   it('notifies once per newer version, silent in the TTL', () => {

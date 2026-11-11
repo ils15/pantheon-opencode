@@ -21,7 +21,11 @@ describe('comparePantheonVersions', () => {
     assert.ok(comparePantheonVersions('2.0.0-beta.1', '1.7.0') > 0)
     assert.ok(comparePantheonVersions('2.0.0', '2.0.0-beta.1') > 0)
     assert.ok(comparePantheonVersions('2.0.0-beta.2', '2.0.0-beta.1') > 0)
+    assert.ok(comparePantheonVersions('2.0.0-rc.1', '2.0.0-beta.7') > 0)
+    assert.ok(comparePantheonVersions('2.0.0-rc.2', '2.0.0-rc.1') > 0)
+    assert.ok(comparePantheonVersions('2.0.0', '2.0.0-rc.1') > 0)
     assert.equal(comparePantheonVersions('2.0.0-beta.1', '2.0.0-beta.1'), 0)
+    assert.equal(comparePantheonVersions('2.0.0-rc.1', '2.0.0-rc.1'), 0)
   })
 })
 

@@ -59,6 +59,7 @@ import {
   draftDirty,
   type EffectiveOverrides,
   EMPTY_TAB,
+  findRow,
   type OverridesLoad,
   resetTab,
   type SettingsDraft,
@@ -475,8 +476,12 @@ export function SettingsWindow(props: {
                     const display = () => props.draft()[row.id] ?? row.value
                     const staged = () => props.draft()[row.id] !== undefined
                     const gutter = () => (isSelected() ? '▸ ' : '  ')
-                    const valueCell = () =>
-                      row.cycle !== undefined ? `< ${display()} >` : display()
+                    const valueCell = () => {
+                      if (row.cycle !== undefined) return `< ${display()} >`
+                      if (row.action !== undefined) return `[ ${display()} ]`
+                      if (row.id.startsWith('autonomy.gradient.')) return `[ref] ${display()}`
+                      return display()
+                    }
                     return (
                       <box
                         flexDirection="row"
@@ -585,9 +590,16 @@ export function SettingsWindow(props: {
               </box>
             </Show>
             <text fg={props.muted}>
-              {
-                'click or ›/←/→ change · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close'
-              }
+              {(() => {
+                const currentRow = findRow(tab(), props.selectedId())
+                if (currentRow?.cycle !== undefined) {
+                  return 'click or ›/←/→ change · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close'
+                }
+                if (currentRow?.action !== undefined) {
+                  return 'enter or space run action · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close'
+                }
+                return '[ref] documented reference (read-only) · ↑↓ select · tab next tab · esc close'
+              })()}
             </text>
           </box>
         }
