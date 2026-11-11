@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 
+## [v2.1.0] - 2026-11-11
+
+### 🆕 What's New
+
+- **Container & JupyterHub Support**: Auto-detect environments and relax directory trust checks via `PANTHEON_ALLOW_GROUP_WRITABLE=1`.
+- **Decision Router Health Check**: New Section L in `doctor` validating router configuration and budget ledger accessibility.
+- **Fault-Tolerant CLI Diagnostics**: Non-crashing `decision-router status` and `doctor` reporting actionable remediation hints.
+- **Detailed JEV Gate Failure Details**: Surface actionable error detail instead of silently swallowing config exceptions.
+
+### Added
+
+- **routing** — add `PANTHEON_ALLOW_GROUP_WRITABLE` environment variable and auto-detection for container environments (JupyterHub, Docker, Kubernetes).
+- **doctor** — add Section L to `scripts/doctor.mjs` checking Decision Router configuration trust and budget ledger accessibility.
+
+### Fixed
+
+- **routing** — relax `assertTrustedDirectoryChain` and `validateDirectoryTrust` to accept root/sticky ownership and permitted group-writable ancestors.
+- **cli** — wrap `readUserDecisionRouterConfig` in `status` and `doctor` commands to report clean errors instead of crashing.
+- **jev** — surface specific failure details for `CONFIG_UNAVAILABLE` in `runGatedNativeJevCall`.
+
+
 ## [v2.0.3] - 2026-11-11
 
 ### 🆕 What's New

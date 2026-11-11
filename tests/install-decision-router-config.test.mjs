@@ -329,3 +329,44 @@ test('changing the selection revokes the previous consent and never enables', ()
     false,
   )
 })
+
+test('group-writable ancestor is rejected with actionable hint unless PANTHEON_ALLOW_GROUP_WRITABLE=1 or container env', () => {
+  const root = mkdtempSync(join(tmpdir(), 'pantheon-group-writable-test-'))
+  const home = join(root, 'jovyan')
+  mkdirSync(home, { recursive: true, mode: 0o755 })
+  // Simulate JupyterHub container home (group writable)
+  chmodSync(home, 0o775)
+  const env = { HOME: home, XDG_CONFIG_HOME: join(home, '.config') }
+  const config = {
+    schema_version: 2,
+    enabled: true,
+    selection: { mode: 'explicit', provider: 'openai-decisions', model: 'gpt-6-luna' },
+    egress_consent: true,
+    enabled_candidates: [{ provider: 'openai-decisions', model: 'gpt-6-luna' }],
+  }
+
+  try {
+    // 1. Without flag: throws actionable hint
+    assert.throws(
+      () => writeUserDecisionRouterConfig(config, { env }),
+      /In containers or JupyterHub, set PANTHEON_ALLOW_GROUP_WRITABLE=1/,
+    )
+
+    // 2. With PANTHEON_ALLOW_GROUP_WRITABLE=1: succeeds
+    const envAllowed = { ...env, PANTHEON_ALLOW_GROUP_WRITABLE: '1' }
+    const _target = writeUserDecisionRouterConfig(config, { env: envAllowed })
+    assert.equal(
+      readUserDecisionRouterConfig({ env: envAllowed }).selection.provider,
+      'openai-decisions',
+    )
+
+    // 3. With JUPYTERHUB_USER auto-detection: succeeds
+    const envJupyter = { ...env, JUPYTERHUB_USER: 'jovyan' }
+    assert.equal(
+      readUserDecisionRouterConfig({ env: envJupyter }).selection.provider,
+      'openai-decisions',
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})

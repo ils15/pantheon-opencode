@@ -4,7 +4,14 @@
 
 // src/pantheon/local-decision-budget.ts
 import { randomUUID } from "node:crypto";
-import { chmodSync, closeSync, lstatSync, mkdirSync, openSync } from "node:fs";
+import {
+  chmodSync,
+  closeSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  openSync
+} from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -858,20 +865,34 @@ function ensureTrustedDirectoryChain(directoryPath) {
     }
   }
 }
+function isPermittedGroupWritable(env = process.env) {
+  if (env.PANTHEON_ALLOW_GROUP_WRITABLE === "1" || env.PANTHEON_ALLOW_GROUP_WRITABLE === "true") {
+    return true;
+  }
+  if (env.JUPYTERHUB_USER || env.JUPYTER_IMAGE || env.JUPYTER_SERVER_ROOT || env.KUBERNETES_SERVICE_HOST || env.container || existsSync("/.dockerenv")) {
+    return true;
+  }
+  return false;
+}
 function validateDirectoryTrust(stat, uid, isFinalDirectory) {
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
     throw new Error("Budget ledger path contains a non-directory or symlink ancestor");
   }
-  if (stat.uid !== uid && stat.uid !== 0) {
+  const mode = stat.mode & 4095;
+  const isSticky = (mode & 512) !== 0;
+  const isSystemOrUser = stat.uid === uid || stat.uid === 0 || isSticky && stat.uid === 65534;
+  if (!isSystemOrUser) {
     throw new Error("Budget ledger path contains an untrusted owner");
   }
   if (isFinalDirectory && stat.uid !== uid) {
     throw new Error("Budget ledger directory must be owned by the current user");
   }
-  const mode = stat.mode & 4095;
-  const writableByOthers = (mode & 18) !== 0;
-  const rootStickyDirectory = stat.uid === 0 && (mode & 512) !== 0;
-  if (writableByOthers && !rootStickyDirectory) {
+  const worldWritable = (mode & 2) !== 0;
+  const groupWritable = (mode & 16) !== 0;
+  if (worldWritable && !isSticky) {
+    throw new Error("Budget ledger path contains a group/other-writable directory");
+  }
+  if (groupWritable && !isSticky && !isFinalDirectory && !isPermittedGroupWritable()) {
     throw new Error("Budget ledger path contains a group/other-writable directory");
   }
 }

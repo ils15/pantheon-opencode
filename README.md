@@ -84,7 +84,7 @@ pantheon-opencode init --yes
 ```bash
 pantheon-opencode doctor
 ```
-Runs a 28-point diagnostic checking MCP initialization, Python virtual environments, Node version, permissions, and config integrity.
+Runs a diagnostic checking Decision Router & budget ledger accessibility, MCP initialization, Python virtual environments, Node version, permissions, and config integrity. In containerized or JupyterHub environments with group-writable homes, set `PANTHEON_ALLOW_GROUP_WRITABLE=1` if needed.
 
 ### 3. Updating Pantheon Without Overwriting Settings
 When a new version is released:

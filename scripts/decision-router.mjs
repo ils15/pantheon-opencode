@@ -111,27 +111,50 @@ export async function runDecisionRouterCommand(
 
   if (command === 'status') {
     const options = parseNamedFlags(rest, ['--target'])
-    const config = readUserDecisionRouterConfig({ env })
+    let config = null
+    let configError = null
+    try {
+      config = readUserDecisionRouterConfig({ env })
+    } catch (err) {
+      configError = err
+    }
     const dbPath = resolveLocalDecisionBudgetDbPath(env)
-    const inspection = inspectDecisionBudget(dbPath)
+    let inspection = null
+    let ledgerError = null
+    try {
+      inspection = inspectDecisionBudget(dbPath)
+    } catch (err) {
+      ledgerError = err
+    }
     const wallPeriod = utcPeriodOf(Date.now())
-    const egress = describeEgress(config, inspection, wallPeriod)
+    const egress = config && inspection ? describeEgress(config, inspection, wallPeriod) : null
 
     stdout(`Config: ${resolveUserDecisionRouterConfigPath(env)}`)
     stdout(
       `Config file: ${existsSync(resolveUserDecisionRouterConfigPath(env)) ? 'present' : 'absent'}`,
     )
-    stdout(`Enabled: ${config.enabled ? 'yes' : 'no'}`)
-    stdout(`Selection: ${formatSelection(config.selection)}`)
-    stdout(`Egress consent: ${config.egress_consent ? 'yes' : 'no'}`)
-    stdout(
-      `Enabled candidates: ${config.enabled_candidates.length ? config.enabled_candidates.map(formatCandidate).join(', ') : 'none'}`,
-    )
-    stdout(describeEgressLine(egress))
-    stdout(`Ledger: ${formatLedger(inspection, dbPath)}`)
-    stdout(`Budget period: ${formatPeriod(inspection)}`)
-    stdout(`Caps: ${formatCaps(inspection)}`)
-    if (options['--target'] !== undefined) {
+    if (configError) {
+      stdout(`Config status: ERROR (${configError.message})`)
+      stdout('Enabled: unknown (blocked by security or configuration error)')
+    } else {
+      stdout(`Enabled: ${config.enabled ? 'yes' : 'no'}`)
+      stdout(`Selection: ${formatSelection(config.selection)}`)
+      stdout(`Egress consent: ${config.egress_consent ? 'yes' : 'no'}`)
+      stdout(
+        `Enabled candidates: ${config.enabled_candidates.length ? config.enabled_candidates.map(formatCandidate).join(', ') : 'none'}`,
+      )
+    }
+    if (egress) {
+      stdout(describeEgressLine(egress))
+    }
+    if (ledgerError) {
+      stdout(`Ledger: ERROR (${ledgerError.message})`)
+    } else if (inspection) {
+      stdout(`Ledger: ${formatLedger(inspection, dbPath)}`)
+      stdout(`Budget period: ${formatPeriod(inspection)}`)
+      stdout(`Caps: ${formatCaps(inspection)}`)
+    }
+    if (config && options['--target'] !== undefined) {
       stdout(`Install-state: ${formatInstallState(config, options['--target'])}`)
     }
     stdout('Mode: read-only — status and help never create, migrate or write anything.')
@@ -480,15 +503,34 @@ export async function runDecisionRouterCommand(
   if (command === 'doctor' && rest.length === 0) {
     // Read-only diagnosis. The host-catalog probe runs `opencode models` with a
     // timeout; a missing/unavailable binary is a warning, not a failure.
-    const config = readUserDecisionRouterConfig({ env })
-    const dbPath = resolveLocalDecisionBudgetDbPath(env)
-    const inspection = inspectDecisionBudget(dbPath)
-    const wallPeriod = utcPeriodOf(Date.now())
-    const egress = describeEgress(config, inspection, wallPeriod)
     const rows = []
     const fail = (name, detail, fix) => rows.push({ name, state: 'FAIL', detail, fix })
     const warn = (name, detail, fix) => rows.push({ name, state: 'WARN', detail, fix })
     const pass = (name, detail) => rows.push({ name, state: 'PASS', detail })
+
+    let config = null
+    try {
+      config = readUserDecisionRouterConfig({ env })
+    } catch (err) {
+      fail(
+        'config',
+        `configuration path unreadable: ${err.message}`,
+        'check permissions or set PANTHEON_ALLOW_GROUP_WRITABLE=1',
+      )
+    }
+    const dbPath = resolveLocalDecisionBudgetDbPath(env)
+    let inspection = null
+    try {
+      inspection = inspectDecisionBudget(dbPath)
+    } catch (err) {
+      fail(
+        'ledger',
+        `budget ledger unreadable: ${err.message}`,
+        'check permissions or set PANTHEON_ALLOW_GROUP_WRITABLE=1',
+      )
+    }
+    const wallPeriod = utcPeriodOf(Date.now())
+    const egress = config && inspection ? describeEgress(config, inspection, wallPeriod) : null
 
     if (!existsSync(resolveUserDecisionRouterConfigPath(env))) {
       fail(
@@ -496,34 +538,34 @@ export async function runDecisionRouterCommand(
         'no user-level config yet',
         'decision-router setup-model <provider>/<model> --monthly-usd N --per-decision-usd N',
       )
-    } else if (!config.enabled) {
+    } else if (config && !config.enabled) {
       fail('config', 'turn selection is disabled', 'decision-router enable')
-    } else {
+    } else if (config) {
       pass('config', 'enabled')
     }
-    if (config.enabled && !config.egress_consent) {
+    if (config?.enabled && !config.egress_consent) {
       fail(
         'consent',
         'egress consent missing',
         'decision-router consent yes (or rerun setup-model without --no-consent)',
       )
-    } else if (config.enabled) {
+    } else if (config?.enabled) {
       pass('consent', 'recorded')
     }
 
-    const selection = config.selection
-    if (config.enabled && selection.mode === 'local') {
+    const selection = config?.selection
+    if (config?.enabled && selection?.mode === 'local') {
       fail('selection', 'selection is local', 'decision-router select <provider>/<model>')
-    } else if (config.enabled && selection.mode === 'auto') {
-      if (egress.mode === 'opt-in')
+    } else if (config?.enabled && selection?.mode === 'auto') {
+      if (egress && egress.mode === 'opt-in')
         pass('selection', `auto resolved ${egress.provider}/${egress.candidate.model}`)
       else
         fail(
           'selection',
-          `auto did not resolve (${egress.reason})`,
+          `auto did not resolve (${egress ? egress.reason : 'config or ledger unreadable'})`,
           'enable exactly one cap-valid candidate, or select explicitly',
         )
-    } else if (config.enabled && selection.mode === 'explicit') {
+    } else if (config?.enabled && selection?.mode === 'explicit') {
       const enabled = config.enabled_candidates.some(
         (candidate) =>
           candidate.provider === selection.provider && candidate.model === selection.model,
@@ -539,16 +581,16 @@ export async function runDecisionRouterCommand(
       }
     }
 
-    if (config.enabled && egress.mode !== 'opt-in' && config.egress_consent) {
+    if (config?.enabled && egress && egress.mode !== 'opt-in' && config.egress_consent) {
       fail(
         'budget',
         `no cap- and period-eligible candidate (${egress.reason})`,
         'decision-router caps user|provider|model ... and decision-router period confirm',
       )
-    } else if (config.enabled && egress.mode === 'opt-in') {
+    } else if (config?.enabled && egress && egress.mode === 'opt-in') {
       pass('budget', `admission open for ${egress.provider}/${egress.candidate.model}`)
     }
-    if (inspection.ledger.present && inspection.ledger.readable && inspection.ledger.holds > 0) {
+    if (inspection?.ledger.present && inspection.ledger.readable && inspection.ledger.holds > 0) {
       warn(
         'holds',
         `${inspection.ledger.holds} unresolved hold(s) hold budget until reconciled`,
@@ -557,9 +599,9 @@ export async function runDecisionRouterCommand(
     }
 
     const target =
-      config.enabled && selection.mode === 'explicit'
+      config?.enabled && selection?.mode === 'explicit'
         ? selection
-        : egress.mode === 'opt-in'
+        : egress?.mode === 'opt-in'
           ? { provider: egress.provider, model: egress.candidate.model }
           : null
     if (target !== null) {
