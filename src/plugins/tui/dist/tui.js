@@ -1285,7 +1285,7 @@ const DEFAULT_TUI_PREFS = {
 	layout: {
 		preset: "comfortable",
 		separator: "spaces",
-		settingsView: "docked"
+		settingsView: "dialog"
 	},
 	sidebar: {
 		header: {
@@ -2022,10 +2022,6 @@ function SettingsWindow(props) {
 		setProp(_el$, "flexGrow", 1);
 		setProp(_el$, "flexBasis", 0);
 		setProp(_el$, "minHeight", 0);
-		setProp(_el$, "borderStyle", "rounded");
-		setProp(_el$, "paddingLeft", 2);
-		setProp(_el$, "paddingRight", 2);
-		setProp(_el$, "paddingTop", 1);
 		setProp(_el$, "paddingBottom", 1);
 		insertNode(_el$2, _el$3);
 		insertNode(_el$2, _el$7);
@@ -2216,10 +2212,10 @@ function SettingsWindow(props) {
 								setProp(_el$75, "flexGrow", 1);
 								insertNode(_el$76, createTextNode(`no staged changes`));
 								effect((_p$) => {
-									var _v$10 = props.muted, _v$11 = props.muted, _v$12 = props.muted;
-									_v$10 !== _p$.e && (_p$.e = setProp(_el$65, "fg", _v$10, _p$.e));
-									_v$11 !== _p$.t && (_p$.t = setProp(_el$70, "fg", _v$11, _p$.t));
-									_v$12 !== _p$.a && (_p$.a = setProp(_el$76, "fg", _v$12, _p$.a));
+									var _v$15 = props.muted, _v$16 = props.muted, _v$17 = props.muted;
+									_v$15 !== _p$.e && (_p$.e = setProp(_el$65, "fg", _v$15, _p$.e));
+									_v$16 !== _p$.t && (_p$.t = setProp(_el$70, "fg", _v$16, _p$.t));
+									_v$17 !== _p$.a && (_p$.a = setProp(_el$76, "fg", _v$17, _p$.a));
 									return _p$;
 								}, {
 									e: void 0,
@@ -2259,10 +2255,10 @@ function SettingsWindow(props) {
 							setProp(_el$57, "flexGrow", 1);
 							insertNode(_el$58, createTextNode(`unsaved changes`));
 							effect((_p$) => {
-								var _v$9 = props.muted, _v$0 = props.muted, _v$1 = props.warn ?? "#f59e0b";
-								_v$9 !== _p$.e && (_p$.e = setProp(_el$47, "fg", _v$9, _p$.e));
-								_v$0 !== _p$.t && (_p$.t = setProp(_el$52, "fg", _v$0, _p$.t));
-								_v$1 !== _p$.a && (_p$.a = setProp(_el$58, "fg", _v$1, _p$.a));
+								var _v$12 = props.muted, _v$13 = props.muted, _v$14 = props.warn ?? "#f59e0b";
+								_v$12 !== _p$.e && (_p$.e = setProp(_el$47, "fg", _v$12, _p$.e));
+								_v$13 !== _p$.t && (_p$.t = setProp(_el$52, "fg", _v$13, _p$.t));
+								_v$14 !== _p$.a && (_p$.a = setProp(_el$58, "fg", _v$14, _p$.a));
 								return _p$;
 							}, {
 								e: void 0,
@@ -2331,17 +2327,27 @@ function SettingsWindow(props) {
 			}
 		}), null);
 		effect((_p$) => {
-			var _v$5 = props.hasKeyboard?.() ? props.warn ?? "#fba970" : props.muted ?? "#52525b", _v$6 = props.fg, _v$7 = { fg: props.muted }, _v$8 = props.muted;
-			_v$5 !== _p$.e && (_p$.e = setProp(_el$, "borderColor", _v$5, _p$.e));
-			_v$6 !== _p$.t && (_p$.t = setProp(_el$3, "fg", _v$6, _p$.t));
-			_v$7 !== _p$.a && (_p$.a = setProp(_el$6, "style", _v$7, _p$.a));
-			_v$8 !== _p$.o && (_p$.o = setProp(_el$0, "fg", _v$8, _p$.o));
+			var _v$5 = props.isDialog ? void 0 : "rounded", _v$6 = props.isDialog ? void 0 : props.hasKeyboard?.() ? props.warn ?? "#fba970" : props.muted ?? "#52525b", _v$7 = props.isDialog ? 1 : 2, _v$8 = props.isDialog ? 1 : 2, _v$9 = props.isDialog ? 0 : 1, _v$0 = props.fg, _v$1 = { fg: props.muted }, _v$10 = props.muted, _v$11 = props.maxHeight;
+			_v$5 !== _p$.e && (_p$.e = setProp(_el$, "borderStyle", _v$5, _p$.e));
+			_v$6 !== _p$.t && (_p$.t = setProp(_el$, "borderColor", _v$6, _p$.t));
+			_v$7 !== _p$.a && (_p$.a = setProp(_el$, "paddingLeft", _v$7, _p$.a));
+			_v$8 !== _p$.o && (_p$.o = setProp(_el$, "paddingRight", _v$8, _p$.o));
+			_v$9 !== _p$.i && (_p$.i = setProp(_el$, "paddingTop", _v$9, _p$.i));
+			_v$0 !== _p$.n && (_p$.n = setProp(_el$3, "fg", _v$0, _p$.n));
+			_v$1 !== _p$.s && (_p$.s = setProp(_el$6, "style", _v$1, _p$.s));
+			_v$10 !== _p$.h && (_p$.h = setProp(_el$0, "fg", _v$10, _p$.h));
+			_v$11 !== _p$.r && (_p$.r = setProp(_el$10, "maxHeight", _v$11, _p$.r));
 			return _p$;
 		}, {
 			e: void 0,
 			t: void 0,
 			a: void 0,
-			o: void 0
+			o: void 0,
+			i: void 0,
+			n: void 0,
+			s: void 0,
+			h: void 0,
+			r: void 0
 		});
 		return _el$;
 	})();
@@ -2859,6 +2865,8 @@ function openSettingsDialog(context) {
 	setBlocking(true);
 	setDialogOpen(true);
 	pageApi = controller.api;
+	const rendererHeight = () => context.renderer?.height ?? 30;
+	const maxHeight = () => Math.max(14, Math.floor(rendererHeight() * .75) - 6);
 	try {
 		context.ui.dialog.show(() => createComponent(SettingsWindow, {
 			get version() {
@@ -2889,6 +2897,10 @@ function openSettingsDialog(context) {
 				return theme.muted;
 			},
 			warn,
+			isDialog: true,
+			get maxHeight() {
+				return maxHeight();
+			},
 			onJumpTab: (idx) => controller.api.jumpTab(idx),
 			onSelectRow: (id) => controller.api.selectById?.(id),
 			onCycleValue: (id, dir) => controller.api.cycleRowById?.(id, dir),
@@ -2899,6 +2911,7 @@ function openSettingsDialog(context) {
 			onDiscard: () => controller.api.discard?.(),
 			onCancelExit: () => controller.api.cancelExit?.()
 		}), close);
+		context.ui.dialog.set({ size: "xlarge" });
 	} catch {}
 }
 const [settingsOpen, setSettingsOpen] = createSignal(false);

@@ -3,6 +3,8 @@
     "includes": [
       "**",
       "!src/plugins/tui/dist",
+      "!src/plugin/index.js",
+      "!dist",
       "!scripts/decision-router-budget.mjs",
       "!scripts/decision-router-budget-gates.mjs",
       "!scripts/decision-router-egress.mjs",

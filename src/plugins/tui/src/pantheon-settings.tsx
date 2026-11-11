@@ -390,6 +390,8 @@ export function SettingsWindow(props: {
   onClose?: () => void
   onDiscard?: () => void
   onCancelExit?: () => void
+  isDialog?: boolean
+  maxHeight?: number
 }) {
   const tab = () => props.tabs()[props.page()] ?? props.tabs()[0] ?? EMPTY_TAB
   return (
@@ -398,11 +400,17 @@ export function SettingsWindow(props: {
       flexGrow={1}
       flexBasis={0}
       minHeight={0}
-      borderStyle="rounded"
-      borderColor={props.hasKeyboard?.() ? (props.warn ?? '#fba970') : (props.muted ?? '#52525b')}
-      paddingLeft={2}
-      paddingRight={2}
-      paddingTop={1}
+      borderStyle={props.isDialog ? undefined : 'rounded'}
+      borderColor={
+        props.isDialog
+          ? undefined
+          : props.hasKeyboard?.()
+            ? (props.warn ?? '#fba970')
+            : (props.muted ?? '#52525b')
+      }
+      paddingLeft={props.isDialog ? 1 : 2}
+      paddingRight={props.isDialog ? 1 : 2}
+      paddingTop={props.isDialog ? 0 : 1}
       paddingBottom={1}
     >
       {/* ── Top Header bar: Title + Horizontal Clickable Tabs + ESC (matching opencode-quota) ── */}
@@ -443,7 +451,7 @@ export function SettingsWindow(props: {
       </box>
 
       {/* ── Main Body: Scrollable content panel ── */}
-      <scrollbox flexGrow={1} flexBasis={0} minHeight={0}>
+      <scrollbox flexGrow={1} flexBasis={0} minHeight={0} maxHeight={props.maxHeight}>
         <For each={tab().groups}>
           {(group) => (
             <box flexDirection="column" marginBottom={1}>
@@ -1175,6 +1183,8 @@ function openSettingsDialog(context: Context): void {
   setBlocking(true)
   setDialogOpen(true)
   pageApi = controller.api
+  const rendererHeight = () => (context as any).renderer?.height ?? 30
+  const maxHeight = () => Math.max(14, Math.floor(rendererHeight() * 0.75) - 6)
   try {
     context.ui.dialog.show(
       () => (
@@ -1189,6 +1199,8 @@ function openSettingsDialog(context: Context): void {
           fg={theme.base}
           muted={theme.muted}
           warn={warn}
+          isDialog={true}
+          maxHeight={maxHeight()}
           onJumpTab={(idx) => controller.api.jumpTab(idx)}
           onSelectRow={(id) => controller.api.selectById?.(id)}
           onCycleValue={(id, dir) => controller.api.cycleRowById?.(id, dir)}
@@ -1202,6 +1214,7 @@ function openSettingsDialog(context: Context): void {
       ),
       close,
     )
+    context.ui.dialog.set({ size: 'xlarge' })
   } catch {
     /* dialog stack unavailable — fail-open */
   }

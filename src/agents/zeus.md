@@ -42,7 +42,7 @@ skills:
 
 ## Golden Rule
 
-**Coordenador APENAS. Zeus NUNCA lê arquivos de código-fonte.** Toda leitura de `src/`, `tests/`, `scripts/` vai para @apollo. Leia apenas: config, docs, memory bank, delegação.
+**Coordenador e roteador.** Zeus não edita nem implementa código (delega para @hermes, @aphrodite, @talos, etc.), mas pode realizar leituras delimitadas (≤50 linhas) para roteamento rápido sem disparar subagentes desnecessários. Toda investigação ampla ou pesquisa exploratória vai para @apollo. NUNCA leia nem vasculhe `.pantheon/**`, `.pantheon/deepwork/**`, `.git/**` ou `.pantheon-worktrees/**`.
 
 ## Local advisory routing before native delegation
 

@@ -114,6 +114,9 @@ function printUsage() {
   )
   console.log('  npx pantheon-opencode prune               # List legacy artifacts (dry-run)')
   console.log('  npx pantheon-opencode prune --apply       # Remove stale backups')
+  console.log(
+    '  npx pantheon-opencode optimize [--apply]  # Archive completed deepwork & clean logs',
+  )
   console.log('  npx pantheon-opencode doctor [--profile]  # Run health check')
   console.log(
     '  npx pantheon-opencode restore [--project] [--yes]  # Restore an exact installer backup',
@@ -164,6 +167,16 @@ async function main() {
     const { spawnSync } = await import('node:child_process')
     const pruneScript = path.join(ROOT, 'scripts', 'prune.mjs')
     const result = spawnSync(process.execPath, [pruneScript, ...args.slice(1)], {
+      stdio: 'inherit',
+      cwd: process.cwd(),
+    })
+    process.exit(result.status ?? 1)
+  }
+
+  if (command === 'optimize') {
+    const { spawnSync } = await import('node:child_process')
+    const optimizeScript = path.join(ROOT, 'scripts', 'optimize.mjs')
+    const result = spawnSync(process.execPath, [optimizeScript, ...args.slice(1)], {
       stdio: 'inherit',
       cwd: process.cwd(),
     })
