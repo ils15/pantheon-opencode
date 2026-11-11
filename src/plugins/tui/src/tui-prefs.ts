@@ -12,8 +12,11 @@
  * sub-lines and gauge style, and the two Pantheon footer lines. Everything
  * defaults to on — the window exists to turn things OFF.
  */
+
 import type { Context } from '@opencode/plugin/tui/context'
-import type { SettingsRow, SettingsTab } from './pantheon-settings-state.ts'
+import type { Accessor, Setter } from 'solid-js'
+import { createSignal } from 'solid-js'
+import type { SettingsDraft, SettingsRow, SettingsTab } from './pantheon-settings-state.ts'
 
 // ── The durable store handle (host storage, one per plugin) ────────────
 // Created once at setup and stashed under a globalThis symbol so
@@ -21,10 +24,38 @@ import type { SettingsRow, SettingsTab } from './pantheon-settings-state.ts'
 // singleton doctrine as the plugin's SINGLETON guard).
 
 const PREFS_SYMBOL = Symbol.for('pantheon.tui.prefs.v1')
+const DRAFT_PREVIEW_SYMBOL = Symbol.for('pantheon.tui.draft_preview.v1')
 type PrefsStore = readonly [TuiPrefs, (mutation: (draft: TuiPrefs) => void) => Promise<void>]
+type DraftSignal = [Accessor<SettingsDraft | undefined>, Setter<SettingsDraft | undefined>]
 
 function stash(): PrefsStore | undefined {
   return (globalThis as Record<PropertyKey, unknown>)[PREFS_SYMBOL] as PrefsStore | undefined
+}
+
+function getDraftPreviewSignal(): DraftSignal {
+  const g = globalThis as Record<PropertyKey, unknown>
+  if (!g[DRAFT_PREVIEW_SYMBOL]) {
+    g[DRAFT_PREVIEW_SYMBOL] = createSignal<SettingsDraft | undefined>(undefined)
+  }
+  return g[DRAFT_PREVIEW_SYMBOL] as DraftSignal
+}
+
+/** Set the active draft preview overlay (used by settings window to provide live preview). */
+export function setTuiDraftPreview(draft: SettingsDraft | undefined): void {
+  const [, setDraft] = getDraftPreviewSignal()
+  setDraft(draft && Object.keys(draft).length > 0 ? { ...draft } : undefined)
+}
+
+/** Clear the active draft preview overlay. */
+export function clearTuiDraftPreview(): void {
+  const [, setDraft] = getDraftPreviewSignal()
+  setDraft(undefined)
+}
+
+/** The active draft preview accessor. */
+export function tuiDraftPreview(): SettingsDraft | undefined {
+  const [draft] = getDraftPreviewSignal()
+  return draft()
 }
 
 /** Create (or reuse) the durable prefs store. Fail-open: without host
@@ -51,8 +82,40 @@ export function initTuiPrefs(context: Context): void {
   }
 }
 
-/** The live reactive prefs (read properties inside memos/JSX — tracked). */
-export function tuiPrefs(): TuiPrefs {
+/** Deep clone and overlay staged settings draft onto base TuiPrefs. */
+export function previewTuiPrefs(base: TuiPrefs, draft?: SettingsDraft): TuiPrefs {
+  if (!draft || Object.keys(draft).length === 0) return base
+  let hasTui = false
+  for (const k of Object.keys(draft)) {
+    if (k.startsWith('tui.')) {
+      hasTui = true
+      break
+    }
+  }
+  if (!hasTui) return base
+
+  const normalized = normalizeTuiPrefs(base)
+  const effective: TuiPrefs = {
+    version: 1,
+    layout: { ...normalized.layout },
+    sidebar: {
+      header: { ...normalized.sidebar.header },
+      blocks: { ...normalized.sidebar.blocks },
+      context: { ...normalized.sidebar.context },
+    },
+    footer: { ...normalized.footer },
+  }
+
+  for (const [id, value] of Object.entries(draft)) {
+    if (id.startsWith('tui.')) {
+      applyTuiRow(effective, id, value)
+    }
+  }
+  return effective
+}
+
+/** The raw persisted prefs from host storage (no draft overlay). */
+export function savedTuiPrefs(): TuiPrefs {
   const s = stash()?.[0]
   if (!s) return DEFAULT_TUI_PREFS
   if (!s.layout) {
@@ -62,6 +125,16 @@ export function tuiPrefs(): TuiPrefs {
     }
   }
   return s
+}
+
+/** The live reactive prefs (read properties inside memos/JSX — tracked).
+ *  When a settings window has an active draft, preview overlays on top
+ *  of durable storage in real time. */
+export function tuiPrefs(): TuiPrefs {
+  const base = savedTuiPrefs()
+  const preview = tuiDraftPreview()
+  if (!preview) return base
+  return previewTuiPrefs(base, preview)
 }
 
 /** Stage a mutation against the durable store; resolves when persisted. */

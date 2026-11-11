@@ -31,8 +31,9 @@ import {
   pantheonSettingsBlocking,
   setupPantheonSettings,
 } from './pantheon-settings'
+import { PRESET_NONE } from './preset-state'
 import { cellWidth, GRAPHEMES, SIDEBAR_CONTENT_WIDTH } from './sidebar-width'
-import { initTuiPrefs, tuiPrefs } from './tui-prefs'
+import { initTuiPrefs, tuiDraftPreview, tuiPrefs } from './tui-prefs'
 import { nextCheckState, pickUpdateNotice, type UpdateCheckState } from './update-notice.ts'
 import { maybeShowWhatsNewV2 } from './whats-new'
 
@@ -3167,7 +3168,18 @@ function useActivePreset(context: any): {
       clearInterval(timer)
     })
   })
-  return { preset, overrides }
+  const effectivePreset = () => {
+    const preview = tuiDraftPreview()
+    if (preview && 'preset' in preview) {
+      const stagedName = preview.preset
+      return {
+        ...preset(),
+        name: stagedName === PRESET_NONE ? null : stagedName,
+      }
+    }
+    return preset()
+  }
+  return { preset: effectivePreset, overrides }
 }
 
 /** Debounce for the git file-count revalidation. `vcs.status` is an HTTP call;

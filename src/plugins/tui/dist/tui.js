@@ -1214,8 +1214,29 @@ function buildPresetTab(input) {
 //#endregion
 //#region src/tui-prefs.ts
 const PREFS_SYMBOL = Symbol.for("pantheon.tui.prefs.v1");
+const DRAFT_PREVIEW_SYMBOL = Symbol.for("pantheon.tui.draft_preview.v1");
 function stash() {
 	return globalThis[PREFS_SYMBOL];
+}
+function getDraftPreviewSignal() {
+	const g = globalThis;
+	if (!g[DRAFT_PREVIEW_SYMBOL]) g[DRAFT_PREVIEW_SYMBOL] = createSignal(void 0);
+	return g[DRAFT_PREVIEW_SYMBOL];
+}
+/** Set the active draft preview overlay (used by settings window to provide live preview). */
+function setTuiDraftPreview(draft) {
+	const [, setDraft] = getDraftPreviewSignal();
+	setDraft(draft && Object.keys(draft).length > 0 ? { ...draft } : void 0);
+}
+/** Clear the active draft preview overlay. */
+function clearTuiDraftPreview() {
+	const [, setDraft] = getDraftPreviewSignal();
+	setDraft(void 0);
+}
+/** The active draft preview accessor. */
+function tuiDraftPreview() {
+	const [draft] = getDraftPreviewSignal();
+	return draft();
 }
 /** Create (or reuse) the durable prefs store. Fail-open: without host
 *  storage the consumers fall back to DEFAULT_TUI_PREFS (read-only). */
@@ -1231,8 +1252,31 @@ function initTuiPrefs(context) {
 		}
 	} catch {}
 }
-/** The live reactive prefs (read properties inside memos/JSX — tracked). */
-function tuiPrefs() {
+/** Deep clone and overlay staged settings draft onto base TuiPrefs. */
+function previewTuiPrefs(base, draft) {
+	if (!draft || Object.keys(draft).length === 0) return base;
+	let hasTui = false;
+	for (const k of Object.keys(draft)) if (k.startsWith("tui.")) {
+		hasTui = true;
+		break;
+	}
+	if (!hasTui) return base;
+	const normalized = normalizeTuiPrefs(base);
+	const effective = {
+		version: 1,
+		layout: { ...normalized.layout },
+		sidebar: {
+			header: { ...normalized.sidebar.header },
+			blocks: { ...normalized.sidebar.blocks },
+			context: { ...normalized.sidebar.context }
+		},
+		footer: { ...normalized.footer }
+	};
+	for (const [id, value] of Object.entries(draft)) if (id.startsWith("tui.")) applyTuiRow(effective, id, value);
+	return effective;
+}
+/** The raw persisted prefs from host storage (no draft overlay). */
+function savedTuiPrefs() {
 	const s = stash()?.[0];
 	if (!s) return DEFAULT_TUI_PREFS;
 	if (!s.layout) return {
@@ -1240,6 +1284,15 @@ function tuiPrefs() {
 		layout: DEFAULT_TUI_PREFS.layout
 	};
 	return s;
+}
+/** The live reactive prefs (read properties inside memos/JSX — tracked).
+*  When a settings window has an active draft, preview overlays on top
+*  of durable storage in real time. */
+function tuiPrefs() {
+	const base = savedTuiPrefs();
+	const preview = tuiDraftPreview();
+	if (!preview) return base;
+	return previewTuiPrefs(base, preview);
 }
 /** Stage a mutation against the durable store; resolves when persisted. */
 function mutateTuiPrefs(mutation) {
@@ -1316,6 +1369,62 @@ const DEFAULT_TUI_PREFS = {
 		home: true
 	}
 };
+function asBool(value, fallback) {
+	return typeof value === "boolean" ? value : fallback;
+}
+/** Deep-merge stored JSON over the defaults; unknown keys and junk are ignored. */
+function normalizeTuiPrefs(raw) {
+	const stored = typeof raw === "object" && raw !== null ? raw : {};
+	const layout = typeof stored.layout === "object" && stored.layout !== null ? stored.layout : {};
+	const sidebar = typeof stored.sidebar === "object" && stored.sidebar !== null ? stored.sidebar : {};
+	const header = typeof sidebar.header === "object" && sidebar.header !== null ? sidebar.header : {};
+	const blocks = typeof sidebar.blocks === "object" && sidebar.blocks !== null ? sidebar.blocks : {};
+	const context = typeof sidebar.context === "object" && sidebar.context !== null ? sidebar.context : {};
+	const footer = typeof stored.footer === "object" && stored.footer !== null ? stored.footer : {};
+	const preset = LAYOUT_PRESETS_CYCLE.includes(layout.preset) ? layout.preset : DEFAULT_TUI_PREFS.layout.preset;
+	const separator = SEPARATOR_STYLES_CYCLE.includes(layout.separator) ? layout.separator : DEFAULT_TUI_PREFS.layout.separator;
+	const settingsView = SETTINGS_VIEW_MODES.includes(layout.settingsView) ? layout.settingsView : DEFAULT_TUI_PREFS.layout.settingsView;
+	const gauge = GAUGE_STYLES.includes(context.gauge) ? context.gauge : DEFAULT_TUI_PREFS.sidebar.context.gauge;
+	const barShape = BAR_SHAPES_CYCLE.includes(context.barShape) ? context.barShape : DEFAULT_TUI_PREFS.sidebar.context.barShape;
+	const barWidth = BAR_WIDTHS_CYCLE.includes(context.barWidth) ? context.barWidth : DEFAULT_TUI_PREFS.sidebar.context.barWidth;
+	const evenMark = asBool(context.evenMark, DEFAULT_TUI_PREFS.sidebar.context.evenMark);
+	return {
+		version: 1,
+		layout: {
+			preset,
+			separator,
+			settingsView
+		},
+		sidebar: {
+			header: {
+				version: asBool(header.version, true),
+				preset: asBool(header.preset, true),
+				session: asBool(header.session, true)
+			},
+			blocks: {
+				context: asBool(blocks.context, true),
+				git: asBool(blocks.git, true),
+				todo: asBool(blocks.todo, true),
+				dispatch: asBool(blocks.dispatch, true)
+			},
+			context: {
+				gauge,
+				barShape,
+				barWidth,
+				evenMark,
+				tokens: asBool(context.tokens, true),
+				spent: asBool(context.spent, true),
+				modelUsage: asBool(context.modelUsage, true),
+				performance: asBool(context.performance, true),
+				localSpend: asBool(context.localSpend, true)
+			}
+		},
+		footer: {
+			prompt: asBool(footer.prompt, true),
+			home: asBool(footer.home, true)
+		}
+	};
+}
 const onOff = ENABLED_CYCLE;
 const row = (id, name, value, note) => ({
 	id,
@@ -2385,6 +2494,9 @@ function createWindowController(context, exit) {
 	const [draft, setDraft] = createSignal({});
 	const [notice, setNotice] = createSignal(void 0);
 	const [confirmExit, setConfirmExit] = createSignal(false);
+	createEffect(() => {
+		setTuiDraftPreview(draft());
+	});
 	readChangelogForBundle(import.meta.url).then((text) => {
 		if (!text) return;
 		const hl = extractHighlights(text, currentVersion);
@@ -2426,7 +2538,7 @@ function createWindowController(context, exit) {
 		buildGatesTab(load()),
 		buildDecisionTab(decision(), process.env, readAuthProviders(), readConfigProviders()),
 		buildPresetTab(presetInput()),
-		buildTuiTab(tuiPrefs()),
+		buildTuiTab(savedTuiPrefs()),
 		buildAutonomyTab({
 			goalLoop: goalLoop(),
 			budgets: budgets(),
@@ -2703,6 +2815,7 @@ function createWindowController(context, exit) {
 			return;
 		}
 		if (staged > 0) {
+			clearTuiDraftPreview();
 			setDraft({});
 			try {
 				context.ui.toast?.show?.({
@@ -2715,6 +2828,7 @@ function createWindowController(context, exit) {
 	};
 	const discard = () => {
 		const staged = draftCount(draft());
+		clearTuiDraftPreview();
 		setDraft({});
 		setConfirmExit(false);
 		if (staged > 0) try {
@@ -2793,6 +2907,7 @@ function createWindowController(context, exit) {
 			confirmExit: () => confirmExit()
 		},
 		cleanup: () => {
+			clearTuiDraftPreview();
 			pageApi = void 0;
 			setBlocking(false);
 		}
@@ -6207,8 +6322,19 @@ function useActivePreset(context) {
 			clearInterval(timer);
 		});
 	});
+	const effectivePreset = () => {
+		const preview = tuiDraftPreview();
+		if (preview && "preset" in preview) {
+			const stagedName = preview.preset;
+			return {
+				...preset(),
+				name: stagedName === "none" ? null : stagedName
+			};
+		}
+		return preset();
+	};
 	return {
-		preset,
+		preset: effectivePreset,
 		overrides
 	};
 }

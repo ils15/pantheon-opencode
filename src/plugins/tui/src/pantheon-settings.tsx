@@ -27,7 +27,7 @@ import { execFile } from 'node:child_process'
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Context } from '@opencode/plugin/tui/context'
-import { createSignal, For, onCleanup, onMount, Show } from 'solid-js'
+import { createEffect, createSignal, For, onCleanup, onMount, Show } from 'solid-js'
 import {
   buildAutonomyTab,
   DEFAULT_DECISION_BUDGETS,
@@ -82,7 +82,15 @@ import {
   readActivePresetMarker,
   writeActivePreset,
 } from './preset-state.ts'
-import { applyTuiRow, buildTuiTab, mutateTuiPrefs, tuiPrefs } from './tui-prefs.ts'
+import {
+  applyTuiRow,
+  buildTuiTab,
+  clearTuiDraftPreview,
+  mutateTuiPrefs,
+  savedTuiPrefs,
+  setTuiDraftPreview,
+  tuiPrefs,
+} from './tui-prefs.ts'
 import { nextCheckState, type UpdateCheckState } from './update-notice.ts'
 import {
   buildUpdatesTab,
@@ -681,6 +689,11 @@ function createWindowController(
   const [notice, setNotice] = createSignal<string | undefined>(undefined)
   const [confirmExit, setConfirmExit] = createSignal(false)
 
+  // Real-time preview of staged draft preferences across open TUI views
+  createEffect(() => {
+    setTuiDraftPreview(draft())
+  })
+
   // Load changelog highlights asynchronously
   void readChangelogForBundle(import.meta.url).then((text) => {
     if (!text) return
@@ -724,7 +737,7 @@ function createWindowController(
     buildGatesTab(load()),
     buildDecisionTab(decision(), process.env, readAuthProviders(), readConfigProviders()),
     buildPresetTab(presetInput()),
-    buildTuiTab(tuiPrefs()),
+    buildTuiTab(savedTuiPrefs()),
     buildAutonomyTab({
       goalLoop: goalLoop(),
       budgets: budgets(),
@@ -994,6 +1007,7 @@ function createWindowController(
       return
     }
     if (staged > 0) {
+      clearTuiDraftPreview()
       setDraft({})
       try {
         context.ui.toast?.show?.({
@@ -1009,6 +1023,7 @@ function createWindowController(
 
   const discard = () => {
     const staged = draftCount(draft())
+    clearTuiDraftPreview()
     setDraft({})
     setConfirmExit(false)
     if (staged > 0) {
@@ -1099,6 +1114,7 @@ function createWindowController(
     confirmExit: () => confirmExit(),
     api,
     cleanup: () => {
+      clearTuiDraftPreview()
       pageApi = undefined
       setBlocking(false)
     },
