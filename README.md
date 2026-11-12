@@ -57,6 +57,8 @@ flowchart LR
 
 - **Fast-Track execution:** Bounded micro-edits (<= 2 files, <= 50 lines) bypass all heavy ceremony and verify in < 10 seconds.
 - **Mandatory test slicing:** Sub-second targeted test execution instead of running sluggish repository-wide test suites during dev loops.
+- **Execution proof receipts:** Cryptographic SHA-256 fingerprinting on modified files and test slice exit codes prevents false-positive task reports.
+- **KV-cache prefix optimization:** Strict invariant-first prompt layering maximizes LLM cache hits (up to 90% cost and latency savings).
 - **Reactive event bus & zero polling:** Process-wide in-memory event bus delivers instant updates across jobs and agents without disk polling.
 - **Themis local reflex loops:** Specialist self-healing resolves isolated lint and test slice discrepancies before escalating to Zeus.
 - **Assertive council (`/pantheon`):** Parallel specialist consultations resolved decisively via domain authority and JEV multi-criteria decisions without endless debate turns.

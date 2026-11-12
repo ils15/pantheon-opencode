@@ -33,6 +33,23 @@ export interface ThemisReflexEventPayload {
   readonly resolved?: boolean | undefined
 }
 
+export interface ExecutionReceiptPayload {
+  readonly receiptId: string
+  readonly taskID: string
+  readonly agent: string
+  readonly status: 'VERIFIED' | 'UNVERIFIED' | 'FAILED'
+  readonly files: ReadonlyArray<{
+    readonly path: string
+    readonly hash: string
+    readonly sizeBytes: number
+  }>
+  readonly testSlice?:
+    | { readonly command: string; readonly exitCode: number; readonly durationMs: number }
+    | undefined
+  readonly timestamp: number
+  readonly signature: string
+}
+
 export interface PantheonEventMap {
   'job:created': JobEventPayload
   'job:updated': JobEventPayload
@@ -40,6 +57,7 @@ export interface PantheonEventMap {
   'job:reconciled': { readonly taskID: string; readonly alias: string; readonly timestamp: number }
   'themis:reflex:discrepancy': ThemisReflexEventPayload
   'themis:reflex:resolved': ThemisReflexEventPayload
+  'agent:execution:receipt': ExecutionReceiptPayload
 }
 
 export type PantheonEventName = keyof PantheonEventMap

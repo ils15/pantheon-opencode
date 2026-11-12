@@ -53,6 +53,8 @@ flowchart LR
 
 - **Execução Fast-Track:** Micro-edições delimitadas (<= 2 arquivos, <= 50 linhas) pulam cerimônias pesadas e validam em < 10 segundos.
 - **Fatiamento mandatório de testes (test slicing):** Execução direcionada em submissegundos em vez de rodar suites lentas do repositório inteiro durante loops de desenvolvimento.
+- **Recibos de execução comprováveis:** Assinatura criptográfica SHA-256 sobre arquivos modificados e fatias de teste elimina relatórios falsos-positivos de conclusão.
+- **Otimização de prefixo de cache KV:** Estruturação estrita de prompts invariantes maximiza reaproveitamento de cache em modelos modernos.
 - **Barramento reativo de eventos sem polling:** Event bus em memória distribui atualizações de jobs e agentes em tempo real com latência zero.
 - **Loops de reflexo local Themis:** Auto-remediação direta de falhas isoladas de lint ou fatias de teste antes de escalar para o Zeus.
 - **Conselho assertivo (`/pantheon`):** Consultas paralelas entre especialistas resolvidas decisivamente via autoridade de domínio e decisões multi-critério JEV sem loops infinitos de debate.
