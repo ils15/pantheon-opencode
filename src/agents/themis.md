@@ -10,6 +10,7 @@ permission:
   shell: allow
   edit: deny
   hashline_edit: deny
+  pantheon_deepwork: allow
   task:
     "*": deny
 temperature: 0.1

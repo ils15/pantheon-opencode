@@ -17,7 +17,6 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { SettingsRow, SettingsTab } from './pantheon-settings-state.ts'
-import { resolveLanguage } from './settings-i18n.ts'
 
 export const DECISION_ENABLED_CYCLE: readonly string[] = Object.freeze(['enabled', 'disabled'])
 
@@ -88,21 +87,35 @@ export const DECISION_KNOWN_MODELS: Readonly<Record<string, string>> = Object.fr
  * note. Drift-pinned against the installer/runtime sources in tests.
  */
 export const DECISION_PROVIDER_CREDENTIALS: Readonly<
-  Record<string, { env?: string; note: string }>
+  Record<string, { env?: string; note: string; notePt?: string }>
 > = Object.freeze({
   'openai-decisions': {
     note: 'host-configured model — provision via `decision-router setup-model openai-decisions`',
+    notePt: 'modelo do host — configure via `decision-router setup-model openai-decisions`',
   },
-  'typesafe-jev': { env: 'TYPESAFE_API_KEY', note: 'export TYPESAFE_API_KEY=… then restart' },
-  'opencode-console-jev': { note: 'rides your OpenCode login — no separate key' },
-  'openrouter-jev': { env: 'OPENROUTER_API_KEY', note: 'export OPENROUTER_API_KEY=… then restart' },
+  'typesafe-jev': {
+    env: 'TYPESAFE_API_KEY',
+    note: 'export TYPESAFE_API_KEY=… then restart',
+    notePt: 'export TYPESAFE_API_KEY=… e depois reinicie',
+  },
+  'opencode-console-jev': {
+    note: 'rides your OpenCode login — no separate key',
+    notePt: 'utiliza login do OpenCode — sem chave separada',
+  },
+  'openrouter-jev': {
+    env: 'OPENROUTER_API_KEY',
+    note: 'export OPENROUTER_API_KEY=… then restart',
+    notePt: 'export OPENROUTER_API_KEY=… e depois reinicie',
+  },
   'vercel-gateway-jev': {
     env: 'AI_GATEWAY_API_KEY',
     note: 'export AI_GATEWAY_API_KEY=… then restart',
+    notePt: 'export AI_GATEWAY_API_KEY=… e depois reinicie',
   },
   'cloudflare-workers-jev': {
     env: 'CLOUDFLARE_API_TOKEN',
     note: 'needs accountId (setup-model --account-id=…) + CLOUDFLARE_API_TOKEN',
+    notePt: 'requer accountId (setup-model --account-id=…) + CLOUDFLARE_API_TOKEN',
   },
 })
 
@@ -343,8 +356,7 @@ export function buildDecisionTab(
   configProviders: ReadonlySet<string> = new Set(),
   languagePref?: string | undefined,
 ): SettingsTab {
-  const lang = resolveLanguage(languagePref, env)
-  const isPt = lang === 'pt-BR'
+  const isPt = languagePref === 'pt-BR'
   const { config, corrupt } = read
   const rows: SettingsRow[] = [
     {
@@ -355,10 +367,10 @@ export function buildDecisionTab(
       ...(corrupt ? {} : { cycle: DECISION_ENABLED_CYCLE }),
       note: corrupt
         ? isPt
-          ? 'config inválida — runtime fail-closes; repair via `decision-router setup-model`'
+          ? 'config inválida — runtime fail-closes; repare via `decision-router setup-model`'
           : 'config unreadable/invalid — runtime fail-closes; repair via `decision-router setup-model`'
         : isPt
-          ? 'applies live — arbitragem de decisões relida em tempo real a cada chamada'
+          ? 'aplica em tempo real — arbitragem de decisões relida a cada chamada'
           : 'applies live — the runtime re-reads this on every gated call',
     },
     {
@@ -440,7 +452,7 @@ export function buildDecisionTab(
             id: `decision.key.${provider}`,
             name: provider,
             value: status === 'missing' ? 'MISSING' : status,
-            note: credential.note,
+            note: isPt ? (credential.notePt ?? credential.note) : credential.note,
           }
         }),
       },

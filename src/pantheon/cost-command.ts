@@ -296,7 +296,10 @@ const COST_AGGREGATE_SQL: Record<CostSource, (sessionId: boolean) => string> = {
   session_message: (sessionId) => `
     WITH valid AS (
       SELECT json_extract(data, '$.agent') AS agent,
-             'unknown' AS phase,
+             COALESCE(NULLIF(json_extract(data, '$.phase'), ''),
+                      NULLIF(json_extract(data, '$.metadata.phase'), ''),
+                      NULLIF(json_extract(data, '$.subtask.phase'), ''),
+                      'unknown') AS phase,
              COALESCE(json_extract(data, '$.model.providerID'),
                       json_extract(data, '$.providerID')) AS provider,
              COALESCE(json_extract(data, '$.model.id'),

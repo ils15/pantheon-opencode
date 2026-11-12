@@ -179,11 +179,10 @@ function readSource(db, source, since) {
     // too rather than inventing a column the reader never had.
     const metadata = info.metadata
     const phase =
-      source === 'session_message'
-        ? 'unknown'
-        : (typeof info.phase === 'string' && info.phase) ||
-          (typeof metadata?.phase === 'string' && metadata.phase) ||
-          'unknown'
+      (typeof info.phase === 'string' && info.phase) ||
+      (typeof metadata?.phase === 'string' && metadata.phase) ||
+      (typeof info.subtask?.phase === 'string' && info.subtask.phase) ||
+      'unknown'
     const tokensInput = toToken(info.tokens?.input)
     const tokensOutput = toToken(info.tokens?.output)
     const key = rowKey(agent, phase)

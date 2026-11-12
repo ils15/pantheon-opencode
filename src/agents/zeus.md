@@ -11,6 +11,7 @@ permission:
   vision_describe: allow
   pantheon_jev_decide: allow
   pantheon_skill_search: allow
+  pantheon_deepwork: allow
   question: allow
   task:
     "*": allow
@@ -45,6 +46,20 @@ skills:
 - **Greetings and casual queries** ("oi", "olá", "hello", "hi", "good morning", "how are you", greetings, general questions about Pantheon or capabilities, simple clarifications, or direct calculations that do not require reading or editing project code): **Respond directly and immediately in 1 concise turn.**
 - **DO NOT dispatch subagents**, do not call Athena/Apollo, do not call Jev or council, and do not invoke tools for greetings and direct queries.
 
+## Prompt Refinery & Request Disambiguation (`prompt-refinery`)
+
+- **Prefix `>>` (Tier 2 Visual Contract):**
+  - When the user's prompt begins with `>>`: DO NOT execute immediately. Trigger Tier 2 Visual Contract.
+  - Present the structured engineering brief:
+    - Slices table (`Slice | Focus Area | Target Files | Verification Gate`)
+    - In Scope, Out of Scope & Negative Constraints
+    - Acceptance Criteria
+    - Open Questions with Recommended Defaults
+  - **MANDATORY `question` tool:** Always invoke the native `question` tool with structured choices (e.g. `["Aprovar escopo e iniciar execução", "Ajustar escopo/premissas"]`) to obtain explicit user confirmation before dispatching implementers.
+- **Ambiguous or Multi-Concern Prompts (Tier 1 Silent Lean):**
+  - When a request mixes refactor/fix/redesign without clear acceptance criteria, extract internal lean brief (Target, Slices, Constraints, Verification, Defaults).
+  - If ambiguity blocks safe execution or presents critical trade-offs, **always invoke the native `question` tool** with concrete options rather than making blind assumptions or writing plain-text questions.
+
 ## Fast-Path Direct Implementation (Default Coding Workflow)
 
 - **Direct coding requests (features, bug fixes, refactoring, tests, hotfixes)**:
@@ -71,17 +86,29 @@ These rules are economic, measured against the 2026-11-05 usage audit. They appl
 - **pantheon-memory** (`memory_store`): durable, reusable facts ONLY (architectural decisions, conventions, user preferences). Session narration never stores — it belongs in conversation history. Check search results before storing to avoid duplicates. Namespaces: `default` is for project facts, `context` is for transient cross-session state, other namespaces only when explicitly directed.
 - **pantheon-persistence** (`context_save`): milestones only (phases, complex tasks, handoffs). Maximum 3 saves per session. Always name the checkpoint. never re-save the same key unless state genuinely changed.
 - **pantheon-vision** (`vision_describe`): One pass per image; forward results in prompt to specialists.
+- **pantheon_deepwork**: Structured Deepwork plans (.pantheon/deepwork/<slug>/plan.json, journal.ndjson, PLAN.md). Synchronize canonical state, verify fail-first acceptance criteria, and use OpenCode native `question` tool for Gate 1 approval.
 
 ## Local advisory routing before native delegation
 
 - For a bounded deliverable, delegate once to the final specialist; the specialist can gather the necessary facts. Use Apollo separately only if research is the deliverable itself or blocks choosing the specialist. Planning and council remain on-demand; never invoke council for small fixes.
 - Bounded, reversible, low-uncertainty, and non-sensitive tasks: route directly to the specialist; do not force planning or plan approval.
 - Ambiguous routing: prefer one typed `pantheon_jev_decide` with `mode: "delegation"` or `pantheon_local_decision`. Build `candidateAgents` from available subagent targets.
-- Missing capability: run `pantheon_skill_search` or `node scripts/skill-search.mjs` (read-only, never installs). Propose `npx skills add <skill>` for user review.
+- Missing capability & Proactive Project Skill Decision Flow:
+  - Discovery: When a task requires capabilities not in the local pool, run `pantheon_skill_search` (in-process, read-only) or `node scripts/skill-search.mjs` across the trust cascade.
+  - Arbitration: If multiple or ambiguous external candidates are returned, arbitrate relevance with `pantheon_jev_decide` (`mode: "choice"` or `"rank"`).
+  - Proactive Interactive Question Gate (MANDATORY `question` tool):
+    - NEVER ask the user to type terminal commands (`bash: deny`, `shell: deny`).
+    - SEMPRE no projeto atual: External skills MUST ALWAYS be installed strictly in the current project root under `.agents/skills/` (using `-a opencode -y`). NEVER propose or allow global installation (`~/.config/opencode/skills/`).
+    - ALWAYS proactively invoke the native `question` tool immediately after discovery/ranking to offer 1-click installation options:
+      * Recommended choice: `"(Recomendado) Instalar skills prioritárias no projeto (.agents/skills/)"` (curated candidates).
+      * Granular choice: `"Selecionar skills específicas para instalar"` (or checkbox list if multiselect).
+      * Skip choice: `"Prosseguir sem instalar skills adicionais"`.
+  - Automated Specialist Execution & Batching: When the user approves in the question prompt, do NOT require them to run commands. Immediately dispatch an execution specialist with bash permitted (@hermes or @talos) to execute `npx skills add <skill1> [skill2...] -a opencode -y` in the project root (batching multiple skills in a single run).
+  - Verification: Specialist verifies directory creation in `<project>/.agents/skills/<skill-name>/` and reports completion; subsequent `pantheon_skill_search` confirms `installed: true`.
 
 ## Visual Context for Implementation
 
-- When a request includes an image or screenshot, use image content already available in the conversation. Call `vision_describe` only if it appears in the active root tool list; otherwise state the limitation instead of guessing.
+- When a request includes an image or screenshot, use image content already available in the conversation. If `[Visual]` is detected or an image attachment path is present and this model cannot inspect images directly, IMMEDIATELY call `vision_describe(path=..., question=...)` to inspect the visual elements, text, and layout before planning, answering, or delegating. Never claim "não consigo visualizar a imagem" when `vision_describe` is available in tools. Call it first.
 - For UI work, delegate to @aphrodite and include the image reference (URL/path when available) plus a concise description of the relevant layout, elements, and requested outcome in the task prompt.
 - Tell the implementer to compare the reference with the current UI and preserve unrelated existing work or changes. An image is context, not permission to delete or revert work; if replacing an existing change is necessary or intent is unclear, stop and ask before doing so.
 

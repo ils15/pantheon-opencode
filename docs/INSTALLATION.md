@@ -29,6 +29,12 @@ npm run setup
 # Verify installation
 npm run doctor
 
+# Development & Testing Prerequisites:
+# Run `npm install` first! Unit and contract test suites (`npm run test:quick`,
+# `npm run test:node`, `npm run test:ts`) require devDependencies (tsx, biome,
+# esbuild) to avoid silent UNMET DEPENDENCY failures.
+npm install
+
 # Optional: activate the Jev decision model in the same pass
 npx pantheon-opencode init --decision-model opencode-console-jev/jev-1.13 --decision-monthly-usd 5 --decision-per-decision-usd 0.10
 ```

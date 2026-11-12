@@ -332,18 +332,21 @@ export function settledDraft(draft: SettingsDraft, applied: readonly string[]): 
 
 export const GATES_ENABLED_CYCLE: readonly string[] = Object.freeze(['enabled', 'disabled'])
 
-export function buildGatesTab(load: OverridesLoad): SettingsTab {
+export function buildGatesTab(load: OverridesLoad, languagePref?: string): SettingsTab {
+  const isPt = languagePref === 'pt-BR'
   const merged = mergedOverrides(load)
   const rowFor = (behavior: SettingsBehavior): SettingsRow => {
     const fromProject = load.project[behavior.id] !== undefined
     const writable = !fromProject && canWriteOverrides(load)
     return {
       id: `gate.${behavior.id}`,
-      name: fromProject ? `${behavior.title} (project)` : behavior.title,
+      name: fromProject ? `${behavior.title} (${isPt ? 'projeto' : 'project'})` : behavior.title,
       value: isBehaviorDisabled(merged, behavior.id) ? 'disabled' : 'enabled',
       ...(writable ? { cycle: GATES_ENABLED_CYCLE } : {}),
       note: fromProject
-        ? 'project file wins at runtime — edit .pantheon/overrides.json'
+        ? isPt
+          ? 'arquivo do projeto tem precedência · edite .pantheon/overrides.json'
+          : 'project file wins at runtime — edit .pantheon/overrides.json'
         : behavior.description,
     }
   }
@@ -353,34 +356,106 @@ export function buildGatesTab(load: OverridesLoad): SettingsTab {
     id: 'gates',
     title: 'Gates',
     groups: [
-      { title: 'Install skills', rows: install.map(rowFor) },
-      { title: 'Runtime gates', rows: runtime.map(rowFor) },
+      { title: isPt ? 'Skills instaladas' : 'Install skills', rows: install.map(rowFor) },
+      { title: isPt ? 'Portões de execução' : 'Runtime gates', rows: runtime.map(rowFor) },
     ],
   }
 }
 
-export function buildAboutTab(version: string): SettingsTab {
+export interface AboutTabExtra {
+  nodeVersion?: string
+  platform?: string
+  preset?: string | null
+  decisionEnabled?: boolean
+  j1Mode?: string
+  languagePref?: string
+}
+
+export function buildAboutTab(version: string, extra?: AboutTabExtra): SettingsTab {
+  const isPt = extra?.languagePref === 'pt-BR'
+
+  const sysRows: SettingsRow[] = [
+    {
+      id: 'about.version',
+      name: isPt ? 'Versão' : 'Version',
+      value: `v${version}`,
+      note: isPt
+        ? 'OpenCode 2.x nativo — contrato V1 descontinuado'
+        : 'OpenCode 2.x only — the V1 contract is removed',
+    },
+    {
+      id: 'about.behaviors',
+      name: isPt ? 'Comportamentos' : 'Behaviors',
+      value: String(SETTINGS_BEHAVIORS.length),
+      note: isPt
+        ? 'portões e skills de governança registradas'
+        : 'registered governance gates and skills',
+    },
+  ]
+
+  if (extra?.nodeVersion) {
+    sysRows.push({
+      id: 'about.runtime',
+      name: 'Runtime Node.js',
+      value: `v${extra.nodeVersion}`,
+      note: extra.platform ? `${isPt ? 'plataforma' : 'platform'}: ${extra.platform}` : '',
+    })
+  }
+
+  const govRows: SettingsRow[] = [
+    {
+      id: 'about.preset',
+      name: isPt ? 'Predefinição' : 'Active Preset',
+      value: extra?.preset ?? 'none',
+      note: isPt ? 'modelo global ativo do Pantheon' : 'global model preset active in Pantheon',
+    },
+    {
+      id: 'about.decision',
+      name: isPt ? 'Assistente Jev' : 'Decision Router',
+      value: extra?.decisionEnabled
+        ? isPt
+          ? 'ativado'
+          : 'enabled'
+        : isPt
+          ? 'desativado'
+          : 'disabled',
+      note: isPt ? 'arbitragem de modelos e candidatos' : 'model and candidate arbitration',
+    },
+    {
+      id: 'about.j1',
+      name: isPt ? 'Portão J1' : 'J1 Risk Gate',
+      value: extra?.j1Mode ?? 'shadow',
+      note: isPt
+        ? 'portão de risco de segurança operacional'
+        : 'operational safety risk score gate',
+    },
+  ]
+
+  const refRows: SettingsRow[] = [
+    {
+      id: 'about.license',
+      name: isPt ? 'Licença' : 'License',
+      value: 'MIT',
+      note: 'Open source · Pantheon Project',
+    },
+    {
+      id: 'about.repo',
+      name: isPt ? 'Repositório' : 'Repository',
+      value: 'ils15/pantheon-opencode',
+      note: 'github.com/ils15/pantheon-opencode',
+    },
+  ]
+
+  const groups = [{ title: isPt ? 'Sistema & Plataforma' : 'System & Platform', rows: sysRows }]
+  if (extra?.preset !== undefined || extra?.decisionEnabled !== undefined) {
+    groups.push({ title: isPt ? 'Governança & Roteamento' : 'Governance & Routing', rows: govRows })
+  }
+  groups.push({ title: isPt ? 'Projeto & Referências' : 'Project & References', rows: refRows })
+
   return {
     id: 'about',
-    title: 'About',
-    groups: [
-      {
-        rows: [
-          {
-            id: 'about.version',
-            name: 'Version',
-            value: `v${version}`,
-            note: 'OpenCode 2.x only — the V1 contract is removed',
-          },
-          {
-            id: 'about.behaviors',
-            name: 'Behaviors',
-            value: String(SETTINGS_BEHAVIORS.length),
-            note: 'docs/design/2.0-settings-and-install.md',
-          },
-        ],
-      },
-    ],
+    title: isPt ? 'Sobre' : 'About',
+    groups,
   }
 }
 
@@ -393,48 +468,57 @@ export interface ChangelogHighlightItem {
 export function buildChangelogTab(
   version: string,
   items: ChangelogHighlightItem[] = [],
+  languagePref?: string | undefined,
 ): SettingsTab {
+  const isPt = languagePref === 'pt-BR'
+
   const rows: SettingsRow[] = []
   if (items.length > 0) {
     items.forEach((item, index) => {
       rows.push({
         id: `changelog.item.${index + 1}`,
         name: item.title.slice(0, 26),
-        value: item.detail.length > 20 ? `${item.detail.slice(0, 19)}…` : item.detail,
+        value: '',
         note: item.detail,
       })
     })
   } else {
     rows.push({
       id: 'changelog.info',
-      name: 'Release',
+      name: isPt ? 'Versão' : 'Release',
       value: `v${version}`,
-      note: 'view full history in CHANGELOG.md or GitHub releases',
+      note: isPt
+        ? 'veja o histórico completo no CHANGELOG.md ou no GitHub'
+        : 'view full history in CHANGELOG.md or GitHub releases',
     })
   }
 
   return {
     id: 'changelog',
-    title: 'Changelog',
+    title: isPt ? 'Changelog' : 'Changelog',
     groups: [
       {
-        title: `What's New in v${version}`,
+        title: isPt ? `Novidades na versão v${version}` : `What's New in v${version}`,
         rows,
       },
       {
-        title: 'Release References',
+        title: isPt ? 'Referências de Versão' : 'Release References',
         rows: [
           {
             id: 'changelog.docs',
-            name: 'Documentation',
+            name: isPt ? 'Documentação' : 'Documentation',
             value: 'CHANGELOG.md',
-            note: 'shipped at plugin root and repository root',
+            note: isPt
+              ? 'incluído na raiz do plugin e do repositório'
+              : 'shipped at plugin root and repository root',
           },
           {
             id: 'changelog.repo',
-            name: 'GitHub Repository',
+            name: isPt ? 'Repositório GitHub' : 'GitHub Repository',
             value: 'ils15/pantheon-opencode',
-            note: 'releases, pull requests and discussion',
+            note: isPt
+              ? 'versões, pull requests e discussões'
+              : 'releases, pull requests and discussion',
           },
         ],
       },

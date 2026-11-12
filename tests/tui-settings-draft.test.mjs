@@ -195,9 +195,9 @@ describe('autonomy tab (goal loop + budgets)', () => {
     assert.equal(rows.length, 3)
     for (const row of rows)
       assert.equal(row.cycle, undefined, 'the gradient is documented, not enforced here')
-    assert.ok(rows.some((r) => r.name === 'Decide solo'))
-    assert.ok(rows.some((r) => r.name === 'Jev decides'))
-    assert.ok(rows.some((r) => r.name === 'Human decides'))
+    assert.ok(rows.some((r) => r.name === 'Decide solo' || r.name === 'Decisão solo'))
+    assert.ok(rows.some((r) => r.name === 'Jev decides' || r.name === 'Decisão Jev'))
+    assert.ok(rows.some((r) => r.name === 'Human decides' || r.name === 'Aprovação humana'))
   })
 
   it('parseUsd accepts the cycle cells and rejects junk', async () => {

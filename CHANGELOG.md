@@ -9,15 +9,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### 🆕 What's New
 
+- **Deepwork Canonical Plan**: Structured JSON ground truth (`plan.json`) and append-only event log with Mermaid DAG and zero HTML.
+- **Vision Modernization**: Configurable Vision Model row in TUI Settings synced to `opencode-vision.json` and explicit `vision_describe`.
+- **Project Skill Decision**: Proactive interactive question gate for external skills, strictly isolated into `.agents/skills/`.
+- **TUI Settings Polish**: Full pt-BR localization across tabs, formatted status badges, and resolved title collision in Changelog tab.
 - **Container & JupyterHub Support**: Auto-detect environments and relax directory trust checks via `PANTHEON_ALLOW_GROUP_WRITABLE=1`.
 - **Decision Router Diagnostics**: New Section L in `doctor` validating router configuration and fault-tolerant CLI diagnostics.
-- **Reactive Event Bus**: Zero-latency in-memory event bus replacing disk file polling for background job status updates.
-- **Themis Local Reflex**: Self-healing loop enabling implementers to remediate lint and test slice issues without coordinator.
-- **Execution Proof Receipts**: Cryptographic verification receipts with SHA-256 fingerprinting for completed agent subtasks.
-- **Prefix Cache & Prompt Diet**: Deterministic prompt layering and distilled instructions maximizing KV-cache hit rate.
 
 ### Added
 
+- **deepwork** — canonical JSON-driven plan architecture, `pantheon_deepwork` tool, fail-first acceptance criteria, native `question` gates, and Mermaid DAG projections.
+- **vision** — configurable vision model in TUI Settings (`Preset` tab), `.opencode/opencode-vision.json` support in Python MCP server, and explicit `vision_describe` guidance.
+- **skills** — proactive interactive question gate for 1-click project-scoped installation (`.agents/skills/`) with execution delegated to `@hermes`/`@talos`.
+- **tui** — Portuguese localization across tabs, rich system metadata in About tab, and formatted status badges (`< ativado >`, `< desativado >`).
 - **routing** — add `PANTHEON_ALLOW_GROUP_WRITABLE` environment variable and auto-detection for container environments (JupyterHub, Docker, Kubernetes).
 - **doctor** — add Section L to `scripts/doctor.mjs` checking Decision Router configuration trust and budget ledger accessibility.
 - **orchestration** — in-memory `PantheonBus` event dispatcher with zero-latency reactive notifications for background job lifecycles.
@@ -27,6 +31,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **agents** — updated Zeus rules in `src/agents/zeus.md` and prompts to forbid manual terminal commands and enforce project-isolated `.agents/skills/`.
 - **agents** — distilled system prompts for Talos and Apollo stripping generic MCP governance to maximize fast-path throughput.
 
 ### Removed
@@ -35,6 +40,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **vision** — eliminate prompt context clutter and raw HTML comment dumps (`<!-- pantheon-v2-visual-context -->`), ensuring models invoke `vision_describe`.
+- **tui** — resolved title collision visual bug in Changelog tab by splitting on delimiters and omitting empty middle box for highlight rows.
 - **routing** — relax `assertTrustedDirectoryChain` and `validateDirectoryTrust` to accept root/sticky ownership and permitted group-writable ancestors.
 - **cli** — wrap `readUserDecisionRouterConfig` in `status` and `doctor` commands to report clean errors instead of crashing.
 - **jev** — surface specific failure details for `CONFIG_UNAVAILABLE` in `runGatedNativeJevCall`.

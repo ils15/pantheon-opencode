@@ -45,14 +45,23 @@ Phase FINAL: VERIFICATION
   └─ All tests pass, coverage >80%
 ```
 
-## Checkpoints
+## Checkpoints & Canonical Storage
 
 ```
 Usage:  --resume <slug> | --status <slug> | --list
 
 .pantheon/deepwork/<slug>/
-├── PLAN.md  DISCOVERY.md  IMPL-phase-*-*.md  phase-*-review.md  REVIEW.md  STATUS.md
+├── plan.json         # Canonical ground truth (JSON DAG, tasks, acceptance criteria, decisions)
+├── journal.ndjson    # Append-only crash recovery event log (task updates, verified proofs)
+├── PLAN.md           # Markdown projection with Mermaid DAG (zero HTML, renders in TUI & Desktop)
+├── DISCOVERY.md  IMPL-phase-*-*.md  phase-*-review.md  REVIEW.md  STATUS.md
 ```
+
+### Native OpenCode Gates & Acceptance
+
+- **Approval Gate (Gate 1):** Uses OpenCode native `question` tool to prompt user approval directly in chat.
+- **Fail-First Acceptance:** Every task defines concrete acceptance criteria (`kind: test|command|file|manual`, `fails_now: true`). Verification is recorded with execution proof receipts.
+- **Deepwork Tool:** Managed natively via `pantheon_deepwork` tool (`init`, `status`, `update_task`, `verify_acceptance`, `resolve_decision`, `list`).
 
 ## Full-Auto Mode (`--full-auto`)
 

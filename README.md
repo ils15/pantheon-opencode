@@ -137,15 +137,18 @@ For multi-phase tasks spanning 10+ turns or multiple sessions:
 ```text
 /pantheon-deepwork "Implement OAuth2 PKCE authentication flow"
 ```
-- **Phase 0 (Plan):** Athena maps affected modules and returns a complete Markdown plan displayed directly in the main conversation.
-- **Phase 1 (Discovery):** Apollo performs structured exploration.
-- **Phase 2–N (Implementation):** Specialists implement features in parallel phases.
-- **Phase Gates:** Themis audits each phase (`PASS` or `FAIL`).
+- **The Plan is the Artifact:** The canonical ground truth is stored in `.pantheon/deepwork/<slug>/plan.json` with an append-only event log (`journal.ndjson`) for resilient crash recovery.
+- **Native OpenCode Gates (Strictly No HTML):** Approvals (Gate 1) and decision resolutions use OpenCode's native interactive `question` tool directly in the chat UI.
+- **Dependency DAG:** Automatically projects task dependencies into live Mermaid diagrams (`flowchart LR`) inside `PLAN.md` and chat status.
+- **Fail-First Acceptance:** Every task defines concrete acceptance criteria (`kind: test|command|file|manual`, `fails_now: true`) verified with cryptographic receipts.
+- **Tool Automation (`pantheon_deepwork`):** Structured tool for `init`, `status`, `update_task`, `verify_acceptance`, and `resolve_decision`.
 - **Resumability:** Checkpoints persisted to `.pantheon/deepwork/<slug>/`. Resume anytime with `/pantheon-deepwork --resume <slug>`.
 
 ---
 
 ## The 14 Specialized Agents
+
+For a complete breakdown of permissions, tools, MCP access, and boundary constraints per agent, see the [Agent Capability Matrix](docs/AGENT-CAPABILITY-MATRIX.md).
 
 Every root dispatch carries a concise handoff brief — objective, bounded scope, relevant inputs, constraints, expected return format, and verification. Work is routed qualitatively — uncertainty, domain expertise, dependencies, risk, and verification — not by fixed file or line thresholds. Return contracts are role-specific: implementation uses `## subtask_summary`, investigation returns structured findings, Athena returns the complete plan, and council responses use `## specialist_response`.
 
@@ -170,7 +173,7 @@ Every root dispatch carries a concise handoff brief — objective, bounded scope
 
 ## Skills & MCP Tooling
 
-- **In-Process Skill Search (`pantheon_skill_search`):** Quickly discovers local skills and external ecosystem skills without requiring shell execution permissions.
+- **In-Process Skill Search (`pantheon_skill_search`) & Proactive Installation:** Quickly discovers local and external ecosystem skills; when gaps are identified, Zeus proactively invokes the interactive `question` tool for 1-click project-scoped installation into `.agents/skills/` (via `npx skills add <skill> -a opencode -y`), delegated to execution specialists with zero manual shell typing required.
 - **25 Production Skills:** Includes `test-slicing`, `fast-path-execution`, `tdd-with-agents`, `instruction-forge`, and `incremental-implementation`.
 - **5 Local MCP Servers:**
   - `pantheon-memory`: Shared project memory with atomic SQLite locking.

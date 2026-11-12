@@ -106,9 +106,83 @@ function backupMarker(path: string): void {
   copyFileSync(path, `${path}.bak`)
 }
 
+export const VISION_MODEL_OPTIONS: readonly string[] = Object.freeze([
+  'auto',
+  'opencode-go/mimo-v2.6-flash',
+  'google/gemini-2.5-flash',
+  'openai/gpt-5-mini',
+  'anthropic/claude-3-5-haiku',
+  'opencode-go/mimo-v2.5',
+])
+
+export function visionConfigPaths(
+  cwd = process.cwd(),
+  env: Record<string, string | undefined> = process.env,
+): string[] {
+  const home = env.HOME ?? ''
+  const xdg = env.XDG_CONFIG_HOME ?? join(home, '.config')
+  return [
+    join(cwd, '.opencode', 'opencode-vision.json'),
+    join(xdg, 'opencode', 'opencode-vision.json'),
+  ]
+}
+
+export function readConfiguredVisionModel(
+  cwd = process.cwd(),
+  env: Record<string, string | undefined> = process.env,
+): string {
+  for (const path of visionConfigPaths(cwd, env)) {
+    try {
+      if (existsSync(path)) {
+        const parsed = JSON.parse(readFileSync(path, 'utf8')) as { visionModel?: unknown }
+        if (typeof parsed?.visionModel === 'string' && parsed.visionModel.trim()) {
+          return parsed.visionModel.trim()
+        }
+      }
+    } catch {
+      // ignore corrupt/missing
+    }
+  }
+  return 'auto'
+}
+
+export function writeConfiguredVisionModel(
+  model: string,
+  cwd = process.cwd(),
+  env: Record<string, string | undefined> = process.env,
+): void {
+  const home = env.HOME ?? ''
+  const xdg = env.XDG_CONFIG_HOME ?? join(home, '.config')
+  const projectDir = join(cwd, '.opencode')
+  const targetPath = existsSync(projectDir)
+    ? join(projectDir, 'opencode-vision.json')
+    : join(xdg, 'opencode', 'opencode-vision.json')
+
+  let current: Record<string, unknown> = {}
+  try {
+    if (existsSync(targetPath)) {
+      current = JSON.parse(readFileSync(targetPath, 'utf8')) as Record<string, unknown>
+    }
+  } catch {
+    current = {}
+  }
+
+  if (model === 'auto' || !model.trim()) {
+    delete current.visionModel
+  } else {
+    current.visionModel = model.trim()
+  }
+
+  mkdirSync(dirname(targetPath), { recursive: true })
+  const temp = `${targetPath}.tui.tmp`
+  writeFileSync(temp, `${JSON.stringify(current, null, 2)}\n`, 'utf8')
+  renameSync(temp, targetPath)
+}
+
 export interface PresetSectionInput {
   globalName: string | null
   projectName: string | null
+  visionModel?: string
 }
 
 /** The staged value 'none' means: delete the global marker (the CLI contract). */
@@ -116,27 +190,43 @@ export const PRESET_NONE = 'none'
 
 export const PRESET_CYCLE: readonly string[] = Object.freeze([PRESET_NONE, ...PRESET_NAMES])
 
-export function buildPresetTab(input: PresetSectionInput): SettingsTab {
+export function buildPresetTab(input: PresetSectionInput, languagePref?: string): SettingsTab {
+  const isPt = languagePref === 'pt-BR'
   const rows: SettingsRow[] = [
     {
       id: 'preset',
-      name: 'Preset',
+      name: isPt ? 'Predefinição' : 'Preset',
       value: input.globalName ?? PRESET_NONE,
       cycle: PRESET_CYCLE,
-      note: 'global marker · atomic write, .bak backup · none = opencode defaults',
+      note: isPt
+        ? 'marcador global · gravação atômica, backup .bak · none = padrão OpenCode'
+        : 'global marker · atomic write, .bak backup · none = opencode defaults',
     },
   ]
   if (input.projectName !== null) {
     rows.push({
       id: 'preset.project',
-      name: 'Project',
+      name: isPt ? 'Projeto' : 'Project',
       value: input.projectName,
-      note: `${projectActivePresetPath()} wins over the global marker — read-only here`,
+      note: isPt
+        ? `${projectActivePresetPath()} tem precedência sobre o global — somente leitura aqui`
+        : `${projectActivePresetPath()} wins over the global marker — read-only here`,
+    })
+  }
+  if (input.visionModel !== undefined) {
+    rows.push({
+      id: 'preset.vision_model',
+      name: isPt ? 'Modelo de Visão' : 'Vision Model',
+      value: input.visionModel || 'auto',
+      cycle: VISION_MODEL_OPTIONS,
+      note: isPt
+        ? 'modelo para inspeção de imagens (vision_describe) · salvo em opencode-vision.json'
+        : 'model for image inspection (vision_describe) · saved in opencode-vision.json',
     })
   }
   return {
     id: 'preset',
     title: 'Preset',
-    groups: [{ title: 'Model preset', rows }],
+    groups: [{ title: isPt ? 'Predefinição de modelo' : 'Model preset', rows }],
   }
 }

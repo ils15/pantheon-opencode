@@ -48,6 +48,7 @@
 
 import { createCostCommand } from './cost-command.ts'
 import type { ShadowSink } from './decision-shadow.ts'
+import { createDeepworkTool } from './deepwork/deepwork-tool.ts'
 import { createHashlineEditTool, type HashlineToolResult } from './hashline/tool.ts'
 import { createV2JevDecisionDefinition, type V2JevDecisionRuntime } from './jev-decision-tool.ts'
 import { createV2LocalDecisionDefinition } from './local-decision-tool.ts'
@@ -545,6 +546,7 @@ export function createV2ToolDefinitions(
   )
   definitions.push(todowriteTool)
   definitions.push(createV2SkillSearchDefinition())
+  definitions.push(createDeepworkTool())
   if (visionRuntime) definitions.push(createV2VisionTool(visionRuntime))
   if (jevRuntime) definitions.push(createV2JevDecisionDefinition(jevRuntime))
   return definitions

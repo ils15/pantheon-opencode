@@ -389,6 +389,37 @@ def _key_from_credential_db(provider: str) -> str | None:
         return None
 
 
+def _opencode_config_dir() -> Path:
+    """Locate the OpenCode configuration directory."""
+    xdg = os.getenv("XDG_CONFIG_HOME")
+    if xdg and xdg.strip():
+        return Path(xdg.strip()) / "opencode"
+    return Path.home() / ".config" / "opencode"
+
+
+def _configured_vision_model() -> str:
+    """Resolve configured vision model from env or opencode-vision.json."""
+    env_model = os.getenv("PANTHEON_VISION_MODEL")
+    if env_model and env_model.strip():
+        return env_model.strip()
+    candidates = [
+        Path.cwd() / ".opencode" / "opencode-vision.json",
+        _opencode_config_dir() / "opencode-vision.json",
+        Path.home() / ".opencode" / "opencode-vision.json",
+    ]
+    for path in candidates:
+        if path.is_file():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    val = data.get("visionModel")
+                    if isinstance(val, str) and val.strip() and val.strip() != "auto":
+                        return val.strip()
+            except (OSError, json.JSONDecodeError):
+                pass
+    return DEFAULT_MODEL
+
+
 def _resolve_auth() -> tuple[str | None, str]:
     """Resolve auth in env-first, then OpenCode credential-store order.
 
@@ -404,7 +435,7 @@ def _resolve_auth() -> tuple[str | None, str]:
     graceful callers (``vision_describe`` / ``vision_ocr``) degrade to local
     extraction, and only the fatal gateway path logs the paths/env vars tried.
     """
-    model = os.getenv("PANTHEON_VISION_MODEL") or DEFAULT_MODEL
+    model = _configured_vision_model()
     env_key = os.getenv("PANTHEON_OPENCODE_API_KEY") or os.getenv("OPENCODE_API_KEY")
     if env_key:
         return env_key, _endpoint_for_model(model)
@@ -437,7 +468,7 @@ def _resolve_auth() -> tuple[str | None, str]:
 
 def _model() -> str:
     """Return the configured model without exposing configuration secrets."""
-    return os.getenv("PANTHEON_VISION_MODEL") or DEFAULT_MODEL
+    return _configured_vision_model()
 
 
 def _metadata(image: ImageInput) -> dict[str, Any]:
