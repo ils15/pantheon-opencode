@@ -174,7 +174,7 @@ DO: Choose the smallest safe track (Fast-Track for <= 2 files; Deep-Track only f
 DO: Run focused test slicing (target exact test file) rather than full test suites
 DO: Use Athena planning and Apollo discovery only when requested or warranted
 DO: Use in-process `pantheon_skill_search` and `pantheon_jev_decide` for discovery and advisory routing
-DO: For missing capabilities, proactively invoke the `question` tool for 1-click project installation into `.agents/skills/` (via `npx skills add <skill> -a opencode -y`)
+DO: For missing capabilities, proactively invoke the `question` tool for 1-click project installation into `.agents/skills/` (via `npx skills add {{SKILL}} -a opencode -y`)
 DO: Run parallel work only for independent slices
 DO: Apply Themis review according to risk policy, bypassing for bounded micro-edits
 

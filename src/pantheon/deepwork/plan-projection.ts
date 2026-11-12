@@ -95,7 +95,11 @@ export function generateMermaidDag(plan: DeepworkPlan): string {
   // If no dependencies specified, link sequentially across phases for readable visual flow
   if (!hasEdges && plan.tasks.length > 1) {
     for (let i = 0; i < plan.tasks.length - 1; i++) {
-      lines.push(`  ${plan.tasks[i].id} -.-> ${plan.tasks[i + 1].id}`)
+      const current = plan.tasks[i]
+      const next = plan.tasks[i + 1]
+      if (current && next) {
+        lines.push(`  ${current.id} -.-> ${next.id}`)
+      }
     }
   }
 
@@ -115,8 +119,9 @@ export function generateMermaidDag(plan: DeepworkPlan): string {
   }
 
   for (const task of plan.tasks) {
-    if (byState[task.state]) {
-      byState[task.state].push(task.id)
+    const stateList = byState[task.state]
+    if (stateList) {
+      stateList.push(task.id)
     }
   }
 

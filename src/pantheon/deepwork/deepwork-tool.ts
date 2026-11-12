@@ -41,8 +41,8 @@ const DeepworkToolInputSchema = z.object({
   slug: z.string().optional(),
   title: z.string().optional(),
   intent: z.string().optional(),
-  tasks: z.array(z.record(z.unknown())).optional(),
-  decisions: z.array(z.record(z.unknown())).optional(),
+  tasks: z.array(z.record(z.string(), z.unknown())).optional(),
+  decisions: z.array(z.record(z.string(), z.unknown())).optional(),
   done_when: z.array(z.string()).optional(),
   taskId: z.string().optional(),
   state: z.enum(['pending', 'ready', 'in_progress', 'done', 'failed', 'blocked']).optional(),
@@ -290,9 +290,17 @@ export function createDeepworkTool(cwd = process.cwd()): V2ToolDef {
         if (!parsed.taskId) throw new Error("Parâmetro 'taskId' obrigatório para update_task.")
         if (!parsed.state) throw new Error("Parâmetro 'state' obrigatório para update_task.")
 
-        const updated = await updateTaskState(effectiveCwd, slug, parsed.taskId, parsed.state, {
-          summary: parsed.summary,
-        })
+        const resultMeta: { summary?: string } = {}
+        if (parsed.summary !== undefined) {
+          resultMeta.summary = parsed.summary
+        }
+        const updated = await updateTaskState(
+          effectiveCwd,
+          slug,
+          parsed.taskId,
+          parsed.state,
+          resultMeta,
+        )
         const projection = generateChatProjection(updated, effectiveCwd)
         return {
           output: [

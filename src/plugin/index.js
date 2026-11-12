@@ -11855,7 +11855,11 @@ function generateMermaidDag(plan) {
   }
   if (!hasEdges && plan.tasks.length > 1) {
     for (let i = 0; i < plan.tasks.length - 1; i++) {
-      lines.push(`  ${plan.tasks[i].id} -.-> ${plan.tasks[i + 1].id}`);
+      const current = plan.tasks[i];
+      const next = plan.tasks[i + 1];
+      if (current && next) {
+        lines.push(`  ${current.id} -.-> ${next.id}`);
+      }
     }
   }
   lines.push("  classDef done fill:#22c55e,stroke:#15803d,color:#ffffff;");
@@ -11871,8 +11875,9 @@ function generateMermaidDag(plan) {
     ready: []
   };
   for (const task of plan.tasks) {
-    if (byState[task.state]) {
-      byState[task.state].push(task.id);
+    const stateList = byState[task.state];
+    if (stateList) {
+      stateList.push(task.id);
     }
   }
   for (const [state, ids] of Object.entries(byState)) {
@@ -12125,13 +12130,15 @@ async function updateTaskState(cwd = process.cwd(), slug, taskId, state, result)
     throw new Error(`Deepwork plan "${slug}" not found`);
   }
   const taskIndex = plan.tasks.findIndex((t) => t.id === taskId);
-  if (taskIndex === -1) {
+  const existingTask = plan.tasks[taskIndex];
+  if (taskIndex === -1 || !existingTask) {
     throw new Error(`Task "${taskId}" not found in plan "${slug}"`);
   }
+  const updatedResult = result ? { ...existingTask.result ?? {}, ...result } : existingTask.result;
   const updatedTask = {
-    ...plan.tasks[taskIndex],
+    ...existingTask,
     state,
-    result: result ? { ...plan.tasks[taskIndex].result, ...result } : plan.tasks[taskIndex].result
+    ...updatedResult !== void 0 ? { result: updatedResult } : {}
   };
   const updatedTasks = [...plan.tasks];
   updatedTasks[taskIndex] = updatedTask;
@@ -12150,18 +12157,20 @@ async function verifyTaskAcceptance(cwd = process.cwd(), slug, taskId, checkInde
     throw new Error(`Deepwork plan "${slug}" not found`);
   }
   const taskIndex = plan.tasks.findIndex((t) => t.id === taskId);
-  if (taskIndex === -1) {
+  const task = plan.tasks[taskIndex];
+  if (taskIndex === -1 || !task) {
     throw new Error(`Task "${taskId}" not found in plan "${slug}"`);
   }
-  const task = plan.tasks[taskIndex];
-  if (!task.acceptance[checkIndex]) {
+  const currentAcc = task.acceptance[checkIndex];
+  if (!currentAcc) {
     throw new Error(`Acceptance criterion index ${checkIndex} not found in task "${taskId}"`);
   }
   const updatedAcceptance = [...task.acceptance];
+  const resolvedProof = proof ?? currentAcc.proof;
   updatedAcceptance[checkIndex] = {
-    ...updatedAcceptance[checkIndex],
+    ...currentAcc,
     verified,
-    proof: proof ?? updatedAcceptance[checkIndex].proof
+    ...resolvedProof !== void 0 ? { proof: resolvedProof } : {}
   };
   const allVerified = updatedAcceptance.every((acc) => acc.verified);
   const updatedTasks = [...plan.tasks];
@@ -12185,12 +12194,13 @@ async function resolvePlanDecision(cwd = process.cwd(), slug, decisionId, chosen
     throw new Error(`Deepwork plan "${slug}" not found`);
   }
   const decIndex = plan.decisions_needed.findIndex((d) => d.id === decisionId);
-  if (decIndex === -1) {
+  const existingDec = plan.decisions_needed[decIndex];
+  if (decIndex === -1 || !existingDec) {
     throw new Error(`Decision "${decisionId}" not found in plan "${slug}"`);
   }
   const updatedDecisions = [...plan.decisions_needed];
   updatedDecisions[decIndex] = {
-    ...updatedDecisions[decIndex],
+    ...existingDec,
     chosen,
     status: "resolved"
   };
@@ -12239,8 +12249,8 @@ var DeepworkToolInputSchema = z3.object({
   slug: z3.string().optional(),
   title: z3.string().optional(),
   intent: z3.string().optional(),
-  tasks: z3.array(z3.record(z3.unknown())).optional(),
-  decisions: z3.array(z3.record(z3.unknown())).optional(),
+  tasks: z3.array(z3.record(z3.string(), z3.unknown())).optional(),
+  decisions: z3.array(z3.record(z3.string(), z3.unknown())).optional(),
   done_when: z3.array(z3.string()).optional(),
   taskId: z3.string().optional(),
   state: z3.enum(["pending", "ready", "in_progress", "done", "failed", "blocked"]).optional(),
@@ -12451,9 +12461,17 @@ function createDeepworkTool(cwd = process.cwd()) {
       if (parsed.action === "update_task") {
         if (!parsed.taskId) throw new Error("Par\xE2metro 'taskId' obrigat\xF3rio para update_task.");
         if (!parsed.state) throw new Error("Par\xE2metro 'state' obrigat\xF3rio para update_task.");
-        const updated = await updateTaskState(effectiveCwd, slug, parsed.taskId, parsed.state, {
-          summary: parsed.summary
-        });
+        const resultMeta = {};
+        if (parsed.summary !== void 0) {
+          resultMeta.summary = parsed.summary;
+        }
+        const updated = await updateTaskState(
+          effectiveCwd,
+          slug,
+          parsed.taskId,
+          parsed.state,
+          resultMeta
+        );
         const projection = generateChatProjection(updated, effectiveCwd);
         return {
           output: [

@@ -42,7 +42,7 @@ test('orchestrate-with-zeus prompt guides proactive project skill installation',
 
   assert.match(prompt, /proactively invoke the `question` tool for 1-click project installation/i)
   assert.match(prompt, /\.agents\/skills\//i)
-  assert.match(prompt, /npx skills add <skill> -a opencode -y/i)
+  assert.match(prompt, /npx skills add \{\{SKILL\}\} -a opencode -y/i)
   assert.match(prompt, /Don't ask the user to run terminal commands for skill installation/i)
   assert.match(prompt, /never recommend or install global skills/i)
 })

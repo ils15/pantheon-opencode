@@ -170,14 +170,17 @@ export async function updateTaskState(
   }
 
   const taskIndex = plan.tasks.findIndex((t) => t.id === taskId)
-  if (taskIndex === -1) {
+  const existingTask = plan.tasks[taskIndex]
+  if (taskIndex === -1 || !existingTask) {
     throw new Error(`Task "${taskId}" not found in plan "${slug}"`)
   }
 
+  const updatedResult = result ? { ...(existingTask.result ?? {}), ...result } : existingTask.result
+
   const updatedTask: PlanTask = {
-    ...plan.tasks[taskIndex],
+    ...existingTask,
     state,
-    result: result ? { ...plan.tasks[taskIndex].result, ...result } : plan.tasks[taskIndex].result,
+    ...(updatedResult !== undefined ? { result: updatedResult } : {}),
   }
 
   const updatedTasks = [...plan.tasks]
@@ -212,20 +215,22 @@ export async function verifyTaskAcceptance(
   }
 
   const taskIndex = plan.tasks.findIndex((t) => t.id === taskId)
-  if (taskIndex === -1) {
+  const task = plan.tasks[taskIndex]
+  if (taskIndex === -1 || !task) {
     throw new Error(`Task "${taskId}" not found in plan "${slug}"`)
   }
 
-  const task = plan.tasks[taskIndex]
-  if (!task.acceptance[checkIndex]) {
+  const currentAcc = task.acceptance[checkIndex]
+  if (!currentAcc) {
     throw new Error(`Acceptance criterion index ${checkIndex} not found in task "${taskId}"`)
   }
 
   const updatedAcceptance = [...task.acceptance]
+  const resolvedProof = proof ?? currentAcc.proof
   updatedAcceptance[checkIndex] = {
-    ...updatedAcceptance[checkIndex],
+    ...currentAcc,
     verified,
-    proof: proof ?? updatedAcceptance[checkIndex].proof,
+    ...(resolvedProof !== undefined ? { proof: resolvedProof } : {}),
   }
 
   const allVerified = updatedAcceptance.every((acc) => acc.verified)
@@ -264,13 +269,14 @@ export async function resolvePlanDecision(
   }
 
   const decIndex = plan.decisions_needed.findIndex((d) => d.id === decisionId)
-  if (decIndex === -1) {
+  const existingDec = plan.decisions_needed[decIndex]
+  if (decIndex === -1 || !existingDec) {
     throw new Error(`Decision "${decisionId}" not found in plan "${slug}"`)
   }
 
   const updatedDecisions = [...plan.decisions_needed]
   updatedDecisions[decIndex] = {
-    ...updatedDecisions[decIndex],
+    ...existingDec,
     chosen,
     status: 'resolved',
   }
