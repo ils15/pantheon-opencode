@@ -13,6 +13,7 @@
 import { mkdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
+import { getSharedBus } from './bus.ts'
 import { createPantheonLogger } from './logger.ts'
 
 // Silence-by-default TUI policy (pantheon-hooks L42-58): console output in a
@@ -292,6 +293,14 @@ export class BackgroundJobBoard {
 
     this.jobs.set(input.taskID, record)
     await this.persistRecord(record)
+    getSharedBus().emit('job:created', {
+      taskID: record.taskID,
+      alias: record.alias,
+      agent: record.agent,
+      parentSessionID: record.parentSessionID,
+      state: record.state,
+      timestamp: now,
+    })
     return record
   }
 
@@ -364,6 +373,14 @@ export class BackgroundJobBoard {
 
     // --- write-ahead log: persist before notify ---
     await this.persistRecord(job)
+    getSharedBus().emit('job:updated', {
+      taskID: job.taskID,
+      alias: job.alias,
+      agent: job.agent,
+      state: job.state,
+      resultSummary: job.resultSummary,
+      timestamp: job.updatedAt,
+    })
 
     // --- signal on terminal states ---
     if (willBeTerminal) {
@@ -463,6 +480,11 @@ export class BackgroundJobBoard {
     // cycle deleted them. Instead, remove any still-pending wake signal so
     // reconcile leaves no `<alias>.signal.json` behind.
     await this.deleteSignal(job.alias)
+    getSharedBus().emit('job:reconciled', {
+      taskID: job.taskID,
+      alias: job.alias,
+      timestamp: job.updatedAt,
+    })
 
     return job
   }
@@ -728,6 +750,17 @@ export class BackgroundJobBoard {
   }
 
   private notifyTerminal(taskID: string): void {
+    const job = this.jobs.get(taskID)
+    if (job) {
+      getSharedBus().emit('job:terminal', {
+        taskID: job.taskID,
+        alias: job.alias,
+        agent: job.agent,
+        state: job.state,
+        resultSummary: job.resultSummary,
+        timestamp: job.completedAt ?? Date.now(),
+      })
+    }
     for (const listener of this.terminalListeners) {
       try {
         listener(taskID)

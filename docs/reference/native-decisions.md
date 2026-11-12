@@ -41,6 +41,13 @@ npx pantheon-opencode decision-router setup-model opencode-console-jev/jev-1.13 
 npx pantheon-opencode decision-router doctor   # read-only verification with fixes
 ```
 
+### Container & JupyterHub Environments
+
+When running in containerized environments (such as JupyterHub, Docker, Kubernetes, or HPC clusters) where `$HOME` or ancestor directories are group-writable (e.g. `/home/jovyan` with mode `2775 root:users`):
+- Pantheon automatically detects JupyterHub (`JUPYTERHUB_USER`, `JUPYTER_IMAGE`) and Kubernetes environments to permit group-writable ancestor directories.
+- In custom containers or environments, export `PANTHEON_ALLOW_GROUP_WRITABLE=1` in your container environment or shell profile to permit group-writable ancestors while keeping the private `0700`/`0600` requirements on the leaf configuration and budget ledger files.
+- The `decision-router status` and `doctor` commands diagnose directory trust issues read-only and report actionable remediation hints instead of failing unhandled.
+
 `setup-model` performs select + enable + consent + caps (user, provider, model)
 + period confirmation in one write and prints the verification checklist — and
 for the TypeSafe route it also merges the host provider entry into

@@ -2273,7 +2273,7 @@ function readUserDecisionRouterConfig({ env = process.env } = {}) {
   const filePath = resolveUserDecisionRouterConfigPath(env);
   try {
     assertNoSymlinkAncestors(filePath);
-    assertTrustedDirectoryChain(dirname2(filePath));
+    assertTrustedDirectoryChain(dirname2(filePath), { env });
     const stat2 = lstatSync2(filePath);
     assertPrivatePath(stat2, true);
     const parsed = JSON.parse(readFileSync2(filePath, "utf8"));
@@ -2349,7 +2349,16 @@ function assertPrivatePath(stat2, isFile) {
   if ((stat2.mode & 63) !== 0)
     throw new Error("Decision-router configuration permissions must be private");
 }
-function assertTrustedDirectoryChain(directory) {
+function isPermittedGroupWritable(_current, env = process.env) {
+  if (env.PANTHEON_ALLOW_GROUP_WRITABLE === "1" || env.PANTHEON_ALLOW_GROUP_WRITABLE === "true") {
+    return true;
+  }
+  if (env.JUPYTERHUB_USER || env.JUPYTER_IMAGE || env.JUPYTER_SERVER_ROOT || env.KUBERNETES_SERVICE_HOST || env.container || existsSync("/.dockerenv")) {
+    return true;
+  }
+  return false;
+}
+function assertTrustedDirectoryChain(directory, { env = process.env } = {}) {
   const absolute = resolve2(directory);
   const root = parse2(absolute).root;
   const parts = absolute.slice(root.length).split(sep2).filter(Boolean);
@@ -2369,13 +2378,21 @@ function assertTrustedDirectoryChain(directory) {
     if (!stat2.isDirectory() || stat2.isSymbolicLink()) {
       throw new Error("Decision-router configuration path contains a non-directory component");
     }
-    if (stat2.uid !== uid && stat2.uid !== 0) {
+    const mode = stat2.mode & 4095;
+    const isSticky = (mode & 512) !== 0;
+    const isSystemOrUser = stat2.uid === uid || stat2.uid === 0 || isSticky && stat2.uid === 65534;
+    if (!isSystemOrUser) {
       throw new Error("Decision-router configuration path has an untrusted owner");
     }
-    const mode = stat2.mode & 4095;
-    const rootStickyDirectory = stat2.uid === 0 && (mode & 512) !== 0;
-    if ((mode & 18) !== 0 && !rootStickyDirectory) {
+    const worldWritable = (mode & 2) !== 0;
+    const groupWritable = (mode & 16) !== 0;
+    if (worldWritable && !isSticky) {
       throw new Error("Decision-router configuration path is writable by other users");
+    }
+    if (groupWritable && !isSticky && !isPermittedGroupWritable(current, env)) {
+      throw new Error(
+        `Decision-router configuration path "${current}" is group-writable (mode ${(mode & 511).toString(8)}). In containers or JupyterHub, set PANTHEON_ALLOW_GROUP_WRITABLE=1 to permit group-writable ancestors, or run: chmod +t "${current}"`
+      );
     }
   }
 }
@@ -5837,7 +5854,14 @@ function createJ1RiskGateObserver(options) {
 
 // src/pantheon/local-decision-budget.ts
 import { randomUUID } from "node:crypto";
-import { chmodSync as chmodSync2, closeSync as closeSync2, lstatSync as lstatSync4, mkdirSync as mkdirSync3, openSync as openSync2 } from "node:fs";
+import {
+  chmodSync as chmodSync2,
+  closeSync as closeSync2,
+  existsSync as existsSync2,
+  lstatSync as lstatSync4,
+  mkdirSync as mkdirSync3,
+  openSync as openSync2
+} from "node:fs";
 import { homedir as homedir2 } from "node:os";
 import { basename, dirname as dirname4, isAbsolute as isAbsolute3, join as join6, parse as parse3, resolve as resolve3, sep as sep3 } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -6762,20 +6786,34 @@ function ensureTrustedDirectoryChain(directoryPath) {
     }
   }
 }
+function isPermittedGroupWritable2(env = process.env) {
+  if (env.PANTHEON_ALLOW_GROUP_WRITABLE === "1" || env.PANTHEON_ALLOW_GROUP_WRITABLE === "true") {
+    return true;
+  }
+  if (env.JUPYTERHUB_USER || env.JUPYTER_IMAGE || env.JUPYTER_SERVER_ROOT || env.KUBERNETES_SERVICE_HOST || env.container || existsSync2("/.dockerenv")) {
+    return true;
+  }
+  return false;
+}
 function validateDirectoryTrust(stat2, uid, isFinalDirectory) {
   if (!stat2.isDirectory() || stat2.isSymbolicLink()) {
     throw new Error("Budget ledger path contains a non-directory or symlink ancestor");
   }
-  if (stat2.uid !== uid && stat2.uid !== 0) {
+  const mode = stat2.mode & 4095;
+  const isSticky = (mode & 512) !== 0;
+  const isSystemOrUser = stat2.uid === uid || stat2.uid === 0 || isSticky && stat2.uid === 65534;
+  if (!isSystemOrUser) {
     throw new Error("Budget ledger path contains an untrusted owner");
   }
   if (isFinalDirectory && stat2.uid !== uid) {
     throw new Error("Budget ledger directory must be owned by the current user");
   }
-  const mode = stat2.mode & 4095;
-  const writableByOthers = (mode & 18) !== 0;
-  const rootStickyDirectory = stat2.uid === 0 && (mode & 512) !== 0;
-  if (writableByOthers && !rootStickyDirectory) {
+  const worldWritable = (mode & 2) !== 0;
+  const groupWritable = (mode & 16) !== 0;
+  if (worldWritable && !isSticky) {
+    throw new Error("Budget ledger path contains a group/other-writable directory");
+  }
+  if (groupWritable && !isSticky && !isFinalDirectory && !isPermittedGroupWritable2()) {
     throw new Error("Budget ledger path contains a group/other-writable directory");
   }
 }
@@ -6870,8 +6908,9 @@ async function runGatedNativeJevCall(params) {
   let config;
   try {
     config = readUserDecisionRouterConfig();
-  } catch {
-    return { ok: false, reasonCode: "CONFIG_UNAVAILABLE" };
+  } catch (error) {
+    const detail = error instanceof Error && error.message.includes("group-writable") ? "CONFIG_PATH_GROUP_WRITABLE" : error instanceof Error ? error.name : "ConfigError";
+    return { ok: false, reasonCode: "CONFIG_UNAVAILABLE", detail };
   }
   if (!config.enabled) return { ok: false, reasonCode: "DISABLED" };
   if (!config.egress_consent) return { ok: false, reasonCode: "CONSENT_MISSING" };
@@ -8045,7 +8084,7 @@ function safeSessionPath(id) {
 import { createHash as createHash5, randomUUID as randomUUID2 } from "node:crypto";
 import {
   chmodSync as chmodSync3,
-  existsSync as existsSync2,
+  existsSync as existsSync3,
   mkdirSync as mkdirSync4,
   readdirSync,
   readFileSync as readFileSync5,
@@ -8297,7 +8336,7 @@ function extractCredentialCellToken(value) {
 }
 async function readV2CredentialToken(providerIDs, stateDir, env) {
   const dbPath = v2CredentialDbPath(stateDir, env);
-  if (!existsSync2(dbPath)) return null;
+  if (!existsSync3(dbPath)) return null;
   let sqlite;
   try {
     sqlite = await import("node:sqlite");
@@ -10383,7 +10422,7 @@ var TodoEnforcer = class {
 
 // src/pantheon/cost-command.ts
 import { execFile } from "node:child_process";
-import { accessSync, constants as constants3, existsSync as existsSync4, statSync as statSync3 } from "node:fs";
+import { accessSync, constants as constants3, existsSync as existsSync5, statSync as statSync3 } from "node:fs";
 import { delimiter, dirname as dirname8, join as join14 } from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 import { z } from "zod";
@@ -10393,7 +10432,7 @@ import { homedir as homedir6 } from "node:os";
 import { join as join13 } from "node:path";
 
 // src/plugins/tui/src/model-pricing.ts
-import { existsSync as existsSync3, mkdirSync as mkdirSync5, readFileSync as readFileSync6, renameSync as renameSync3, writeFileSync as writeFileSync4 } from "node:fs";
+import { existsSync as existsSync4, mkdirSync as mkdirSync5, readFileSync as readFileSync6, renameSync as renameSync3, writeFileSync as writeFileSync4 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
 import { dirname as dirname7, join as join12 } from "node:path";
 var MODELS_DEV_URL = "https://models.dev/api.json";
@@ -10539,7 +10578,7 @@ function parseCachedCatalog(raw) {
 }
 function readPricingCache(cachePath) {
   try {
-    if (!existsSync3(cachePath)) return void 0;
+    if (!existsSync4(cachePath)) return void 0;
     return parseCachedCatalog(JSON.parse(readFileSync6(cachePath, "utf8")));
   } catch {
     return void 0;
@@ -10770,7 +10809,7 @@ var costArgs = {
 };
 function findExistingDb(override) {
   const candidate = override === void 0 ? resolveCostDbPath() : resolveCostDbPath({ dbPath: override });
-  return existsSync4(candidate) ? candidate : void 0;
+  return existsSync5(candidate) ? candidate : void 0;
 }
 var COST_AGGREGATE_SQL = {
   message: (sessionId) => `
@@ -11476,7 +11515,7 @@ async function queryWithCliFallback(dbPath, days, deps) {
   const execFileAsync = deps?.execFile ?? defaultExecFile;
   const isExecutable = deps?.isExecutable ?? defaultIsExecutable;
   const costScript = join14(__dirname, "..", "..", "scripts", "cost.mjs");
-  if (!existsSync4(costScript)) {
+  if (!existsSync5(costScript)) {
     throw new Error(`CLI fallback script not found: ${costScript}`);
   }
   const node = resolveNodeExecutable(env, isExecutable);

@@ -334,7 +334,7 @@ export function readUserDecisionRouterConfig({ env = process.env } = {}) {
   const filePath = resolveUserDecisionRouterConfigPath(env)
   try {
     assertNoSymlinkAncestors(filePath)
-    assertTrustedDirectoryChain(dirname(filePath))
+    assertTrustedDirectoryChain(dirname(filePath), { env })
     const stat = lstatSync(filePath)
     assertPrivatePath(stat, true)
     const parsed = JSON.parse(readFileSync(filePath, 'utf8'))
@@ -356,7 +356,7 @@ export function writeUserDecisionRouterConfig(config, { env = process.env } = {}
   assertNoSymlinkAncestors(directory, { includeLeaf: false })
   mkdirSync(directory, { recursive: true, mode: 0o700 })
   assertNoSymlinkAncestors(directory)
-  assertTrustedDirectoryChain(directory)
+  assertTrustedDirectoryChain(directory, { env })
   assertPrivateDirectory(directory)
   try {
     const existing = lstatSync(filePath)
@@ -535,7 +535,24 @@ function assertPrivateDirectory(directory) {
   assertPrivatePath(stat, false)
 }
 
-function assertTrustedDirectoryChain(directory) {
+function isPermittedGroupWritable(_current, env = process.env) {
+  if (env.PANTHEON_ALLOW_GROUP_WRITABLE === '1' || env.PANTHEON_ALLOW_GROUP_WRITABLE === 'true') {
+    return true
+  }
+  if (
+    env.JUPYTERHUB_USER ||
+    env.JUPYTER_IMAGE ||
+    env.JUPYTER_SERVER_ROOT ||
+    env.KUBERNETES_SERVICE_HOST ||
+    env.container ||
+    existsSync('/.dockerenv')
+  ) {
+    return true
+  }
+  return false
+}
+
+function assertTrustedDirectoryChain(directory, { env = process.env } = {}) {
   const absolute = resolve(directory)
   const root = parse(absolute).root
   const parts = absolute.slice(root.length).split(sep).filter(Boolean)
@@ -555,13 +572,21 @@ function assertTrustedDirectoryChain(directory) {
     if (!stat.isDirectory() || stat.isSymbolicLink()) {
       throw new Error('Decision-router configuration path contains a non-directory component')
     }
-    if (stat.uid !== uid && stat.uid !== 0) {
+    const mode = stat.mode & 0o7777
+    const isSticky = (mode & 0o1000) !== 0
+    const isSystemOrUser = stat.uid === uid || stat.uid === 0 || (isSticky && stat.uid === 65534)
+    if (!isSystemOrUser) {
       throw new Error('Decision-router configuration path has an untrusted owner')
     }
-    const mode = stat.mode & 0o7777
-    const rootStickyDirectory = stat.uid === 0 && (mode & 0o1000) !== 0
-    if ((mode & 0o022) !== 0 && !rootStickyDirectory) {
+    const worldWritable = (mode & 0o002) !== 0
+    const groupWritable = (mode & 0o020) !== 0
+    if (worldWritable && !isSticky) {
       throw new Error('Decision-router configuration path is writable by other users')
+    }
+    if (groupWritable && !isSticky && !isPermittedGroupWritable(current, env)) {
+      throw new Error(
+        `Decision-router configuration path "${current}" is group-writable (mode ${(mode & 0o777).toString(8)}). In containers or JupyterHub, set PANTHEON_ALLOW_GROUP_WRITABLE=1 to permit group-writable ancestors, or run: chmod +t "${current}"`,
+      )
     }
   }
 }

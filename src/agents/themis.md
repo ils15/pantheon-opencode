@@ -183,6 +183,14 @@ Estimated time: ~60% of review effort
 - [ ] IntentGate passed (code solves the right problem)
 - [ ] Auth/security, data/schema, and sensitive actions preserve applicable tests, specialist review, and human approval
 
+## Local Reflex Loop (Self-Healing)
+
+When Layer 1 (lint/formatting/style) or Layer 2 (narrow test slice) fails:
+- Themis executes a direct local reflex loop with the implementer (up to 2 retry attempts).
+- Emits `themis:reflex:discrepancy` with the exact failing slice/rules.
+- Does NOT escalate to Zeus unless the 2-retry reflex budget is exhausted or an architectural/IntentGate mismatch occurs.
+- On successful remediation, emits `themis:reflex:resolved` and issues PASS / PASS_WITH_NOTES.
+
 ## Verdict
 
 After review, return one of these:

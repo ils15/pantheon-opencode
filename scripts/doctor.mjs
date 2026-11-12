@@ -30,8 +30,14 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { load } from 'js-yaml'
 import { listV2UnsupportedFeatures } from '../src/pantheon/unsupported.mjs'
+import { resolveLocalDecisionBudgetDbPath } from './decision-router-budget.mjs'
+import { inspectDecisionBudget } from './decision-router-budget-gates.mjs'
 import { classifyOverrideFiles } from './install/behavior-overrides.bundle.mjs'
 import { describePluginOptionsReachability } from './install/capabilities.mjs'
+import {
+  readUserDecisionRouterConfig,
+  resolveUserDecisionRouterConfigPath,
+} from './install/decision-router-config.mjs'
 import { classifyFileInventory } from './install/file-inventory.mjs'
 import { staleTuiRefs } from './install/plugin.mjs'
 import { readState } from './install/state.mjs'
@@ -2902,6 +2908,73 @@ function checkBehaviorOverrides(args) {
   }
 }
 
+export function checkDecisionRouter(_args = {}) {
+  section('L. Decision Router & JEV Runtime')
+  const env = process.env
+  const configPath = resolveUserDecisionRouterConfigPath(env)
+  if (!existsSync(configPath)) {
+    pass('decision-router.json is not configured (optional JEV routing inactive)', {
+      code: 'decision_router_absent',
+      classification: 'config',
+    })
+    return
+  }
+
+  let config = null
+  try {
+    config = readUserDecisionRouterConfig({ env })
+    pass('decision-router.json is trusted and private', {
+      code: 'decision_router_config_trusted',
+      classification: 'config',
+    })
+  } catch (error) {
+    warn(`decision-router.json directory trust check failed: ${error.message}`, {
+      code: 'decision_router_trust_failed',
+      classification: 'config',
+    })
+    info(
+      'Hint: in container/JupyterHub environments, export PANTHEON_ALLOW_GROUP_WRITABLE=1 or run: chmod +t <path>',
+    )
+    return
+  }
+
+  if (config.enabled) {
+    if (!config.egress_consent) {
+      warn('decision-router is enabled but egress consent is missing', {
+        code: 'decision_router_consent_missing',
+        classification: 'config',
+      })
+    } else {
+      pass(`decision-router is enabled with selection: ${JSON.stringify(config.selection)}`, {
+        code: 'decision_router_enabled',
+        classification: 'config',
+      })
+    }
+
+    const dbPath = resolveLocalDecisionBudgetDbPath(env)
+    try {
+      const inspection = inspectDecisionBudget(dbPath)
+      if (inspection.ledger.readable) {
+        pass(`decision budget ledger is accessible (${dbPath})`, {
+          code: 'decision_budget_ledger_accessible',
+          classification: 'budget',
+        })
+      } else {
+        warn(`decision budget ledger is not initialized yet (${dbPath})`, {
+          code: 'decision_budget_ledger_uninitialized',
+          classification: 'budget',
+        })
+      }
+    } catch (error) {
+      warn(`decision budget ledger path error: ${error.message}`, {
+        code: 'decision_budget_ledger_error',
+        classification: 'budget',
+      })
+      info('Hint: export PANTHEON_ALLOW_GROUP_WRITABLE=1 or run setup-model')
+    }
+  }
+}
+
 async function main() {
   const args = parseArgs(process.argv)
   jsonMode = args.json
@@ -2998,6 +3071,7 @@ async function main() {
   checkSubagentDepthPlacement(args)
   checkPermissionTaskPresence(args)
   checkUnsupportedFeatures(args)
+  checkDecisionRouter(args)
 
   printSummary(args.target)
   if (jsonMode) writeDoctorJson(createDoctorJsonReport(args), exitCode)

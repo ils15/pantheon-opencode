@@ -288,8 +288,14 @@ export async function runGatedNativeJevCall(params: {
   let config: ReturnType<typeof readUserDecisionRouterConfig>
   try {
     config = readUserDecisionRouterConfig()
-  } catch {
-    return { ok: false, reasonCode: 'CONFIG_UNAVAILABLE' }
+  } catch (error) {
+    const detail =
+      error instanceof Error && error.message.includes('group-writable')
+        ? 'CONFIG_PATH_GROUP_WRITABLE'
+        : error instanceof Error
+          ? error.name
+          : 'ConfigError'
+    return { ok: false, reasonCode: 'CONFIG_UNAVAILABLE', detail }
   }
   if (!config.enabled) return { ok: false, reasonCode: 'DISABLED' }
   if (!config.egress_consent) return { ok: false, reasonCode: 'CONSENT_MISSING' }
