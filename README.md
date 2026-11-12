@@ -57,6 +57,8 @@ flowchart LR
 
 - **Fast-Track execution:** Bounded micro-edits (<= 2 files, <= 50 lines) bypass all heavy ceremony and verify in < 10 seconds.
 - **Mandatory test slicing:** Sub-second targeted test execution instead of running sluggish repository-wide test suites during dev loops.
+- **Reactive event bus & zero polling:** Process-wide in-memory event bus delivers instant updates across jobs and agents without disk polling.
+- **Themis local reflex loops:** Specialist self-healing resolves isolated lint and test slice discrepancies before escalating to Zeus.
 - **Assertive council (`/pantheon`):** Parallel specialist consultations resolved decisively via domain authority and JEV multi-criteria decisions without endless debate turns.
 - **You stay in charge:** Pantheon supports your judgment; it never silently alters permissions or runs unapproved destructive actions.
 - **Non-destructive upgrades:** Updating Pantheon (`pantheon-opencode update`) refreshes skills, MCPs, and instructions while strictly preserving all user models, presets, permissions, and custom configs.

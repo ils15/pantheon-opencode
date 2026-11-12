@@ -53,6 +53,8 @@ flowchart LR
 
 - **Execução Fast-Track:** Micro-edições delimitadas (<= 2 arquivos, <= 50 linhas) pulam cerimônias pesadas e validam em < 10 segundos.
 - **Fatiamento mandatório de testes (test slicing):** Execução direcionada em submissegundos em vez de rodar suites lentas do repositório inteiro durante loops de desenvolvimento.
+- **Barramento reativo de eventos sem polling:** Event bus em memória distribui atualizações de jobs e agentes em tempo real com latência zero.
+- **Loops de reflexo local Themis:** Auto-remediação direta de falhas isoladas de lint ou fatias de teste antes de escalar para o Zeus.
 - **Conselho assertivo (`/pantheon`):** Consultas paralelas entre especialistas resolvidas decisivamente via autoridade de domínio e decisões multi-critério JEV sem loops infinitos de debate.
 - **Você no comando:** O Pantheon apoia seu julgamento; ele nunca altera permissões silenciosamente nem executa ações destrutivas sem aprovação.
 - **Atualizações não-destrutivas:** Atualizar o Pantheon (`pantheon-opencode update`) renova skills, MCPs e instruções preservando rigorosamente todos os modelos do usuário, presets ativos, permissões e regras customizadas no `AGENTS.md`.

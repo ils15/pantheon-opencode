@@ -12,12 +12,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Container & JupyterHub Support**: Auto-detect environments and relax directory trust checks via `PANTHEON_ALLOW_GROUP_WRITABLE=1`.
 - **Decision Router Health Check**: New Section L in `doctor` validating router configuration and budget ledger accessibility.
 - **Fault-Tolerant CLI Diagnostics**: Non-crashing `decision-router status` and `doctor` reporting actionable remediation hints.
-- **Detailed JEV Gate Failure Details**: Surface actionable error detail instead of silently swallowing config exceptions.
+- **Reactive Event Bus**: Zero-latency in-memory event bus replacing disk file polling for background job status updates.
+- **Distilled Micro-Prompts**: Lean system instructions for Talos and Apollo slashing overhead and accelerating execution.
+- **Themis Local Reflex**: Self-healing loop enabling implementers to remediate lint and test slice issues without coordinator.
 
 ### Added
 
 - **routing** — add `PANTHEON_ALLOW_GROUP_WRITABLE` environment variable and auto-detection for container environments (JupyterHub, Docker, Kubernetes).
 - **doctor** — add Section L to `scripts/doctor.mjs` checking Decision Router configuration trust and budget ledger accessibility.
+- **orchestration** — in-memory `PantheonBus` event dispatcher with zero-latency reactive notifications for background job lifecycles.
+- **orchestration** — `ThemisReflexController` bounding inline implementer self-healing to 2 retries before escalating to Zeus.
+
+### Changed
+
+- **agents** — distilled system prompts for Talos and Apollo stripping generic MCP governance to maximize fast-path throughput.
 
 ### Fixed
 
