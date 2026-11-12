@@ -17,9 +17,9 @@ export interface JobEventPayload {
   readonly alias: string
   readonly agent: string
   readonly timestamp: number
-  readonly parentSessionID?: string
-  readonly state?: string
-  readonly resultSummary?: string | null
+  readonly parentSessionID?: string | undefined
+  readonly state?: string | undefined
+  readonly resultSummary?: string | null | undefined
 }
 
 export interface ThemisReflexEventPayload {
@@ -30,7 +30,7 @@ export interface ThemisReflexEventPayload {
   readonly attempt: number
   readonly maxAttempts: number
   readonly timestamp: number
-  readonly resolved?: boolean
+  readonly resolved?: boolean | undefined
 }
 
 export interface PantheonEventMap {
@@ -44,10 +44,11 @@ export interface PantheonEventMap {
 
 export type PantheonEventName = keyof PantheonEventMap
 
-type Listener<T> = (payload: T) => void | Promise<void>
+// biome-ignore lint/suspicious/noExplicitAny: internal heterogeneous event listener storage
+type AnyListener = (payload: any) => void | Promise<void>
 
 export class PantheonBus {
-  private readonly listeners: Map<string, Set<Listener<unknown>>> = new Map()
+  private readonly listeners: Map<string, Set<AnyListener>> = new Map()
 
   /**
    * Register a persistent listener for an event.

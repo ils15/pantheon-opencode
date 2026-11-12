@@ -105,8 +105,8 @@ export class ThemisReflexController {
     getSharedBus().emit('themis:reflex:discrepancy', {
       taskID,
       agent,
-      file: firstDisc.file,
-      error: firstDisc.error,
+      file: firstDisc?.file ?? 'unknown',
+      error: firstDisc?.error ?? 'unspecified',
       attempt: state.attempt,
       maxAttempts: this.maxRetries,
       timestamp: state.timestamp,
