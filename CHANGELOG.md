@@ -10,11 +10,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### 🆕 What's New
 
 - **Container & JupyterHub Support**: Auto-detect environments and relax directory trust checks via `PANTHEON_ALLOW_GROUP_WRITABLE=1`.
-- **Decision Router Health Check**: New Section L in `doctor` validating router configuration and budget ledger accessibility.
-- **Fault-Tolerant CLI Diagnostics**: Non-crashing `decision-router status` and `doctor` reporting actionable remediation hints.
+- **Decision Router Diagnostics**: New Section L in `doctor` validating router configuration and fault-tolerant CLI diagnostics.
 - **Reactive Event Bus**: Zero-latency in-memory event bus replacing disk file polling for background job status updates.
-- **Distilled Micro-Prompts**: Lean system instructions for Talos and Apollo slashing overhead and accelerating execution.
 - **Themis Local Reflex**: Self-healing loop enabling implementers to remediate lint and test slice issues without coordinator.
+- **Execution Proof Receipts**: Cryptographic verification receipts with SHA-256 fingerprinting for completed agent subtasks.
+- **Prefix Cache & Prompt Diet**: Deterministic prompt layering and distilled instructions maximizing KV-cache hit rate.
 
 ### Added
 
@@ -22,10 +22,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **doctor** — add Section L to `scripts/doctor.mjs` checking Decision Router configuration trust and budget ledger accessibility.
 - **orchestration** — in-memory `PantheonBus` event dispatcher with zero-latency reactive notifications for background job lifecycles.
 - **orchestration** — `ThemisReflexController` bounding inline implementer self-healing to 2 retries before escalating to Zeus.
+- **orchestration** — `createExecutionReceipt` and `verifyExecutionReceipt` with SHA-256 content hashes and verifiable test slices.
+- **orchestration** — `buildPrefixCachedPrompt` aligning agent prompts with provider KV-cache prefix retention specifications.
 
 ### Changed
 
 - **agents** — distilled system prompts for Talos and Apollo stripping generic MCP governance to maximize fast-path throughput.
+
+### Removed
+
+- **cli** — remove obsolete V1 legacy wizard documentation and comments in `model-command.ts`.
 
 ### Fixed
 

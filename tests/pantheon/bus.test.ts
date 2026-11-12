@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { getSharedBus, PantheonBus } from '../../src/pantheon/bus.ts'
+import { getSharedBus, type JobEventPayload, PantheonBus } from '../../src/pantheon/bus.ts'
 
 test('PantheonBus on/emit delivers typed events to listeners', () => {
   const bus = new PantheonBus()
-  const received: unknown[] = []
+  const received: JobEventPayload[] = []
 
   const unsubscribe = bus.on('job:created', (payload) => {
     received.push(payload)
@@ -18,7 +18,7 @@ test('PantheonBus on/emit delivers typed events to listeners', () => {
   })
 
   assert.equal(received.length, 1)
-  assert.equal((received[0] as any).alias, 'apo-1')
+  assert.equal(received[0]?.alias, 'apo-1')
 
   unsubscribe()
   bus.emit('job:created', {

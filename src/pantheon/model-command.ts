@@ -606,7 +606,7 @@ async function updateActivePreset(
     if (!options.v2Mode) {
       const env = envValue(options)
       fallbackPreset = defaultFallbackPreset()
-      // Prefer env preset if set and known (V1 legacy behavior only).
+      // Prefer env preset if set and known.
       const envPreset = env.PANTHEON_MODEL_PRESET?.trim()
       if (envPreset && envPreset !== '' && envPreset !== 'none') {
         try {
@@ -1031,9 +1031,7 @@ export function createModelCommand(options: ModelCommandOptions = {}): ModelTool
   const args = options.v2Mode
     ? {
         ...modelArgs,
-        action: modelArgs.action.describe(
-          'Operation: status/show, set, or reset. V1 no-args invocation runs the legacy wizard.',
-        ),
+        action: modelArgs.action.describe('Operation: status/show, set, or reset.'),
       }
     : modelArgs
 
