@@ -10,7 +10,10 @@ import {
   PRESET_NAMES,
   projectActivePresetPath,
   readActivePresetMarker,
+  readConfiguredVisionModel,
+  VISION_MODEL_OPTIONS,
   writeActivePreset,
+  writeConfiguredVisionModel,
 } from '../src/plugins/tui/src/preset-state.ts'
 
 describe('preset names (drift pin)', () => {
@@ -106,5 +109,34 @@ describe('preset section rows', () => {
     assert.equal(project.cycle, undefined, 'read-only here')
     assert.equal(project.value, 'anthropic')
     assert.match(project.note, /wins over the global marker/)
+  })
+
+  it('renders a vision model cycler row when visionModel is supplied', () => {
+    const section = buildPresetTab({
+      globalName: 'go-fast',
+      projectName: null,
+      visionModel: 'google/gemini-2.5-flash',
+    })
+    const rows = section.groups.flatMap((g) => g.rows)
+    const vision = rows.find((row) => row.id === 'preset.vision_model')
+    assert.ok(vision, 'vision model row present')
+    assert.equal(vision.value, 'google/gemini-2.5-flash')
+    assert.deepEqual(vision.cycle, VISION_MODEL_OPTIONS)
+  })
+})
+
+describe('vision model configuration I/O', () => {
+  it('reads auto by default and persists updates atomically', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pantheon-vision-conf-'))
+    const env = { XDG_CONFIG_HOME: join(dir, 'config'), HOME: dir }
+    try {
+      assert.equal(readConfiguredVisionModel(dir, env), 'auto')
+      writeConfiguredVisionModel('google/gemini-2.5-flash', dir, env)
+      assert.equal(readConfiguredVisionModel(dir, env), 'google/gemini-2.5-flash')
+      writeConfiguredVisionModel('auto', dir, env)
+      assert.equal(readConfiguredVisionModel(dir, env), 'auto')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

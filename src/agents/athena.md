@@ -26,6 +26,7 @@ permission:
   grep: allow
   glob: allow
   webfetch: allow
+  pantheon_deepwork: allow
   question: allow
   task:
     "*": deny

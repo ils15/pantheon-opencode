@@ -21,7 +21,6 @@
  * shows where the thresholds sit today.
  */
 import type { SettingsTab } from './pantheon-settings-state.ts'
-import { resolveLanguage } from './settings-i18n.ts'
 
 export interface GoalLoopPrefs {
   enabled: boolean
@@ -82,8 +81,7 @@ export function buildAutonomyTab(input: {
   goalLoopRestartPending?: boolean | undefined
   languagePref?: string | undefined
 }): SettingsTab {
-  const lang = resolveLanguage(input.languagePref)
-  const isPt = lang === 'pt-BR'
+  const isPt = input.languagePref === 'pt-BR'
 
   return {
     id: 'autonomy',
@@ -154,32 +152,32 @@ export function buildAutonomyTab(input: {
       },
       {
         title: isPt
-          ? 'Gradiente de decisão (política de referência · J1 governa o risco)'
-          : 'Decision gradient (reference policy · J1 owns the risk axis)',
+          ? 'Gradiente de Decisão (política de referência · governado por J1 e Orçamentos)'
+          : 'Decision Gradient (reference policy · governed by J1 & Budgets)',
         rows: [
           {
             id: 'autonomy.gradient.solo',
-            name: 'Decide solo',
-            value: 'autonomous',
+            name: isPt ? 'Decisão solo' : 'Decide solo',
+            value: isPt ? 'autônomo' : 'autonomous',
             note: isPt
-              ? 'edições reversíveis e rotineiras, sem travas (baixo risco)'
+              ? 'ações rotineiras de baixo risco · reversível sem travas (sem portão)'
               : 'reversible & low-risk edits, routine fixes (no gate)',
           },
           {
             id: 'autonomy.gradient.jev',
-            name: 'Jev decides',
-            value: 'arbitrated',
+            name: isPt ? 'Decisão Jev' : 'Jev decides',
+            value: isPt ? 'arbitrado' : 'arbitrated',
             note: isPt
-              ? 'ambiguidade de tipos e ranqueamento de candidatos (com teto de custo)'
-              : 'typed ambiguity & candidate ranking (budget-capped)',
+              ? 'ambiguidade de tipos e rotas · configurado nos Tetos de Orçamento acima'
+              : 'typed ambiguity & candidate ranking · configured via Budgets above',
           },
           {
             id: 'autonomy.gradient.human',
-            name: 'Human decides',
-            value: 'human review',
+            name: isPt ? 'Aprovação humana' : 'Human decides',
+            value: isPt ? 'revisão humana' : 'human review',
             note: isPt
-              ? 'operações de alto risco ou destrutivas (portão J1)'
-              : 'high-risk & destructive operations (J1 gate)',
+              ? 'ações destrutivas e de alto risco · configurado no limiar do Portão J1'
+              : 'high-risk & destructive operations · configured via J1 Gate',
           },
         ],
       },

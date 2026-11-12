@@ -2834,6 +2834,7 @@ async function main(): Promise<void> {
     assert.deepEqual(registered.map((t) => t.name).sort(), [
       'hashline_edit',
       'pantheon_cost',
+      'pantheon_deepwork',
       'pantheon_local_decision',
       'pantheon_model',
       'pantheon_skill_search',
@@ -2960,6 +2961,7 @@ async function main(): Promise<void> {
     assert.deepEqual(names, [
       'hashline_edit',
       'pantheon_cost',
+      'pantheon_deepwork',
       'pantheon_local_decision',
       'pantheon_model',
       'pantheon_skill_search',

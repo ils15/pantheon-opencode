@@ -80,8 +80,11 @@ import {
   PRESET_NONE,
   projectActivePresetPath,
   readActivePresetMarker,
+  readConfiguredVisionModel,
   writeActivePreset,
+  writeConfiguredVisionModel,
 } from './preset-state.ts'
+import { resolveLanguage } from './settings-i18n.ts'
 import {
   applyTuiRow,
   buildTuiTab,
@@ -403,6 +406,49 @@ export function SettingsWindow(props: {
   boxRef?: (el: any) => void
   onMouseDown?: () => void
 }) {
+  const isPt = () => resolveLanguage(tuiPrefs().layout?.language) === 'pt-BR'
+  const formatValueDisplay = (val: string) => {
+    if (!isPt()) return val
+    switch (val) {
+      case 'enabled':
+        return 'ativado'
+      case 'disabled':
+        return 'desativado'
+      case 'granted':
+        return 'permitido'
+      case 'not granted':
+        return 'não permitido'
+      case 'explicit':
+        return 'explícito'
+      case 'auto':
+        return 'automático'
+      case 'local':
+        return 'local'
+      case 'autonomous':
+        return 'autônomo'
+      case 'arbitrated':
+        return 'arbitrado'
+      case 'human review':
+        return 'revisão humana'
+      case 'MISSING':
+      case 'missing':
+        return 'PENDENTE'
+      case 'auth store':
+        return 'login opencode'
+      case 'env':
+        return 'variável env'
+      case 'config':
+        return 'configuração'
+      case 'never checked':
+        return 'nunca verificado'
+      case 'up to date':
+        return 'atualizado'
+      case 'none':
+        return 'nenhum'
+      default:
+        return val
+    }
+  }
   const tab = () => props.tabs()[props.page()] ?? props.tabs()[0] ?? EMPTY_TAB
   return (
     <box
@@ -501,10 +547,11 @@ export function SettingsWindow(props: {
                     const staged = () => props.draft()[row.id] !== undefined
                     const gutter = () => (isSelected() ? '▸ ' : '  ')
                     const valueCell = () => {
-                      if (row.cycle !== undefined) return `< ${display()} >`
-                      if (row.action !== undefined) return `[ ${display()} ]`
-                      if (row.id.startsWith('autonomy.gradient.')) return `[ref] ${display()}`
-                      return display()
+                      const formatted = formatValueDisplay(display())
+                      if (row.cycle !== undefined) return `< ${formatted} >`
+                      if (row.action !== undefined) return `[ ${formatted} ]`
+                      if (row.id.startsWith('autonomy.gradient.')) return `[ref] ${formatted}`
+                      return formatted
                     }
                     return (
                       <box
@@ -522,26 +569,28 @@ export function SettingsWindow(props: {
                             {`${gutter()}${row.name}`.padEnd(NAME_WIDTH + 2)}
                           </text>
                         </box>
-                        <box
-                          width={VALUE_WIDTH}
-                          onMouseDown={() => {
-                            props.onSelectRow?.(row.id)
-                            props.onCycleValue?.(row.id, 1)
-                          }}
-                        >
-                          <text
-                            fg={
-                              isSelected()
-                                ? '#ffffff'
-                                : staged()
-                                  ? (props.warn ?? props.fg)
-                                  : props.muted
-                            }
-                            {...(isSelected() || staged() ? { attributes: 1 } : {})}
+                        <Show when={row.value !== '' && row.value !== undefined}>
+                          <box
+                            width={VALUE_WIDTH}
+                            onMouseDown={() => {
+                              props.onSelectRow?.(row.id)
+                              props.onCycleValue?.(row.id, 1)
+                            }}
                           >
-                            {`${valueCell()}${staged() ? ' ●' : ''}`.padEnd(VALUE_WIDTH)}
-                          </text>
-                        </box>
+                            <text
+                              fg={
+                                isSelected()
+                                  ? '#ffffff'
+                                  : staged()
+                                    ? (props.warn ?? props.fg)
+                                    : props.muted
+                              }
+                              {...(isSelected() || staged() ? { attributes: 1 } : {})}
+                            >
+                              {`${valueCell()}${staged() ? ' ●' : ''}`.padEnd(VALUE_WIDTH)}
+                            </text>
+                          </box>
+                        </Show>
                         <Show when={row.note !== undefined}>
                           <box flexGrow={1} flexShrink={1}>
                             <text fg={isSelected() ? '#e5e7eb' : props.muted}>{row.note}</text>
@@ -615,7 +664,7 @@ export function SettingsWindow(props: {
                   </box>
                   <box flexGrow={1} minWidth={1} />
                   <text fg={props.muted} flexShrink={0}>
-                    {'no staged changes'}
+                    {isPt() ? 'sem alterações pendentes' : 'no staged changes'}
                   </text>
                 </box>
               }
@@ -628,7 +677,7 @@ export function SettingsWindow(props: {
                 rowGap={1}
               >
                 <box backgroundColor="#fba970" flexShrink={0} onMouseDown={() => props.onSave?.()}>
-                  <text fg="#000000">{' Save '}</text>
+                  <text fg="#000000">{isPt() ? ' Salvar ' : ' Save '}</text>
                 </box>
                 <text fg={props.muted} flexShrink={0}>
                   {'  '}
@@ -638,7 +687,7 @@ export function SettingsWindow(props: {
                   flexShrink={0}
                   onMouseDown={() => props.onDiscard?.()}
                 >
-                  <text fg="#ffffff">{' Discard '}</text>
+                  <text fg="#ffffff">{isPt() ? ' Descartar ' : ' Discard '}</text>
                 </box>
                 <text fg={props.muted} flexShrink={0}>
                   {'  '}
@@ -648,11 +697,11 @@ export function SettingsWindow(props: {
                   flexShrink={0}
                   onMouseDown={() => props.onResetPage?.()}
                 >
-                  <text fg="#ffffff">{' Reset page '}</text>
+                  <text fg="#ffffff">{isPt() ? ' Redefinir página ' : ' Reset page '}</text>
                 </box>
                 <box flexGrow={1} minWidth={1} />
                 <text fg={props.warn ?? '#f59e0b'} flexShrink={0}>
-                  {'unsaved changes'}
+                  {isPt() ? 'alterações não salvas' : 'unsaved changes'}
                 </text>
               </box>
             </Show>
@@ -660,12 +709,18 @@ export function SettingsWindow(props: {
               {(() => {
                 const currentRow = findRow(tab(), props.selectedId() ?? '')
                 if (currentRow?.cycle !== undefined) {
-                  return 'click or ›/←/→ change · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close'
+                  return isPt()
+                    ? 'clique ou ›/←/→ alterar · ↑↓ selecionar · tab próxima aba · ctrl+s salvar · ctrl+r redefinir · esc fechar'
+                    : 'click or ›/←/→ change · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close'
                 }
                 if (currentRow?.action !== undefined) {
-                  return 'enter or space run action · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close'
+                  return isPt()
+                    ? 'enter ou espaço executar · ↑↓ selecionar · tab próxima aba · ctrl+s salvar · ctrl+r redefinir · esc fechar'
+                    : 'enter or space run action · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close'
                 }
-                return '[ref] documented reference (read-only) · ↑↓ select · tab next tab · esc close'
+                return isPt()
+                  ? '[ref] política de referência (somente leitura) · ↑↓ selecionar · tab próxima aba · esc fechar'
+                  : '[ref] documented reference (read-only) · ↑↓ select · tab next tab · esc close'
               })()}
             </text>
           </box>
@@ -674,21 +729,25 @@ export function SettingsWindow(props: {
         <box flexDirection="column">
           <box flexDirection="row">
             <text fg={props.warn ?? '#f59e0b'} attributes={1}>
-              {'Keep your changes?  '}
+              {isPt() ? 'Deseja salvar as alterações?  ' : 'Keep your changes?  '}
             </text>
             <box backgroundColor="#fba970" onMouseDown={() => props.onSave?.()}>
-              <text fg="#000000">{' Save '}</text>
+              <text fg="#000000">{isPt() ? ' Salvar ' : ' Save '}</text>
             </box>
             <text fg={props.muted}>{'  '}</text>
             <box backgroundColor="#262626" onMouseDown={() => props.onDiscard?.()}>
-              <text fg="#ffffff">{' Discard '}</text>
+              <text fg="#ffffff">{isPt() ? ' Descartar ' : ' Discard '}</text>
             </box>
             <text fg={props.muted}>{'  '}</text>
             <box backgroundColor="#262626" onMouseDown={() => props.onCancelExit?.()}>
-              <text fg="#ffffff">{' Keep editing '}</text>
+              <text fg="#ffffff">{isPt() ? ' Continuar editando ' : ' Keep editing '}</text>
             </box>
           </box>
-          <text fg={props.muted}>{'ctrl+s save · d discard the changes · esc keep editing'}</text>
+          <text fg={props.muted}>
+            {isPt()
+              ? 'ctrl+s salvar · d descartar alterações · esc continuar editando'
+              : 'ctrl+s save · d discard the changes · esc keep editing'}
+          </text>
         </box>
       </Show>
     </box>
@@ -763,9 +822,12 @@ function createWindowController(
       const items: ChangelogHighlightItem[] = []
       for (const group of hl.groups) {
         for (const item of group.items) {
-          const dash = item.indexOf('—')
-          const title = dash !== -1 ? item.slice(0, dash).trim() : item.slice(0, 26)
-          items.push({ title, detail: item, group: group.heading ?? undefined })
+          const colon = item.indexOf(': ')
+          const emdash = item.indexOf('—')
+          const sep = colon !== -1 ? colon : emdash
+          const title = sep !== -1 ? item.slice(0, sep).trim() : item.slice(0, 26)
+          const detail = sep !== -1 ? item.slice(sep + (colon !== -1 ? 2 : 1)).trim() : item
+          items.push({ title, detail, group: group.heading ?? undefined })
         }
       }
       setChangelogItems(items)
@@ -777,6 +839,7 @@ function createWindowController(
     return {
       globalName: readActivePresetMarker(globalActivePresetPath())?.name ?? null,
       projectName: readActivePresetMarker(projectActivePresetPath())?.name ?? null,
+      visionModel: readConfiguredVisionModel(),
     }
   }
 
@@ -795,11 +858,12 @@ function createWindowController(
   }
 
   const tabs = (): SettingsTab[] => {
-    const lang = tuiPrefs().layout?.language
+    const rawLang = tuiPrefs().layout?.language
+    const lang = resolveLanguage(rawLang)
     return [
-      buildGatesTab(load()),
+      buildGatesTab(load(), lang),
       buildDecisionTab(decision(), process.env, readAuthProviders(), readConfigProviders(), lang),
-      buildPresetTab(presetInput()),
+      buildPresetTab(presetInput(), lang),
       buildTuiTab(tuiPrefs(), lang),
       buildAutonomyTab({
         goalLoop: goalLoop(),
@@ -808,14 +872,21 @@ function createWindowController(
         languagePref: lang,
       }),
       buildJ1Tab(process.env, false, lang),
-      buildUpdatesTab(updatesInput()),
-      buildChangelogTab(currentVersion, changelogItems()),
+      buildUpdatesTab({ ...updatesInput(), languagePref: lang }),
+      buildChangelogTab(currentVersion, changelogItems(), lang),
       buildDoctorTab({
         runningVersion: currentVersion,
         nodeVersion: process.versions.node,
         load: load(),
       }),
-      buildAboutTab(currentVersion),
+      buildAboutTab(currentVersion, {
+        nodeVersion: process.versions.node,
+        platform: process.platform,
+        preset: readActivePresetMarker(globalActivePresetPath())?.name ?? null,
+        decisionEnabled: decision().config.enabled,
+        j1Mode: process.env.PANTHEON_J1_RISK_SCORE ?? 'shadow',
+        languagePref: lang,
+      }),
     ]
   }
 
@@ -965,6 +1036,18 @@ function createWindowController(
         }
       }
     }
+    if (id === 'preset.vision_model') {
+      try {
+        writeConfiguredVisionModel(value)
+        setPresetTick((tick) => tick + 1)
+        return { ok: true }
+      } catch (error) {
+        return {
+          ok: false,
+          reason: error instanceof Error ? error.message : 'vision model config write failed',
+        }
+      }
+    }
     if (id.startsWith('autonomy.goal_loop.')) {
       const next = { ...goalLoop() }
       if (id === 'autonomy.goal_loop.enabled') {
@@ -1021,8 +1104,13 @@ function createWindowController(
   }
 
   const save = () => {
+    const isPt = resolveLanguage(tuiPrefs().layout?.language) === 'pt-BR'
     if (!draftDirty(draft())) {
-      setNotice('nothing staged — ←/→ stages a change first')
+      setNotice(
+        isPt
+          ? 'nada pendente — ←/→ altera um valor primeiro'
+          : 'nothing staged — ←/→ stages a change first',
+      )
       return
     }
     const writer: DraftWriter = dispatchWrite
@@ -1034,9 +1122,15 @@ function createWindowController(
       setPresetTick((tick) => tick + 1)
     }
     if (failed.length > 0) {
-      setNotice(`${failed.map((f) => `${f.id}: ${f.reason}`).join(' · ')} — staged changes kept`)
+      setNotice(
+        `${failed.map((f) => `${f.id}: ${f.reason}`).join(' · ')} — ${isPt ? 'alterações mantidas' : 'staged changes kept'}`,
+      )
     } else {
-      setNotice(`saved ${applied.length} change${applied.length === 1 ? '' : 's'}`)
+      setNotice(
+        isPt
+          ? `salva(s) ${applied.length} alteração(ões)`
+          : `saved ${applied.length} change${applied.length === 1 ? '' : 's'}`,
+      )
       if (confirmExit()) {
         exit()
       }

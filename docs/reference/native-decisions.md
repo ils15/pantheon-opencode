@@ -524,10 +524,10 @@ becomes decidable the moment it is installed, with no Pantheon change.
 
 Division of labor; trusting an install is never the model's job:
 
-- **Install** — manual and reviewed. `npx skills add <repo> -a opencode`
-  (the open skills ecosystem CLI) places the skill in the host's skill
-  directories (project `.opencode/skills/` or global). Pantheon never
-  installs, updates, or removes skills, and there is no auto-update.
+- **Install** — reviewed and project-isolated. `npx skills add <repo> -a opencode -y`
+  (the open skills ecosystem CLI) places the skill strictly in the project's
+  skill directory (`<project>/.agents/skills/`). Global installation is disallowed
+  for project capabilities to avoid environment contamination.
   Third-party skills are untrusted instructions: review the `SKILL.md` and
   any scripts before installing, prefer pinned versions, and keep production
   servers off ad-hoc installs.
@@ -562,10 +562,12 @@ The **discovery pipeline** binds these steps into one measured ladder
    (descriptions + install counts as choice text; "none of these fit" is a
    valid answer). Only names, counts and short descriptions cross the
    boundary — skill contents are untrusted and never enter a Jev call.
-4. The winning candidate is PROPOSED to the user with its URL and the exact
-   command (`npx skills add <owner/repo@skill> -a opencode` — project-scoped
-   by default). Pantheon never installs; the review is the user's, and the
-   installed skill joins the pool that step 1 answers over.
+4. The winning candidate(s) are PROACTIVELY presented to the user via the
+   native `question` tool with 1-click execution options. Zeus never instructs the
+   user to run terminal commands; upon the user's approval in the interactive gate,
+   Zeus dispatches an execution specialist with bash permissions (@hermes or @talos)
+   to execute `npx skills add <owner/repo@skill> -a opencode -y` strictly in the project
+   root (`.agents/skills/`). The installed skill joins the local pool that step 1 answers over.
 
 ## Verification boundary
 

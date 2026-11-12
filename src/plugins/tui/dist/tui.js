@@ -111,29 +111,6 @@ function formatSpent(cost) {
 const MODEL_USAGE_VISIBLE_CEILING = 3;
 const MODEL_USAGE_MESSAGE_LIMIT = 400;
 const MODEL_USAGE_SESSION_LIMIT = 8;
-Object.freeze([
-	"auto",
-	"pt-BR",
-	"en"
-]);
-/**
-* Resolve effective language: 'pt-BR' or 'en'.
-* Defaults to 'pt-BR' if system locale contains 'pt', if Intl locale is pt,
-* or if system timezone is Brazilian/Portuguese; otherwise 'en'.
-*/
-function resolveLanguage(preference = "auto", env = process.env) {
-	if (preference === "pt-BR") return "pt-BR";
-	if (preference === "en") return "en";
-	if ((env.LC_ALL ?? env.LC_MESSAGES ?? env.LANG ?? env.LANGUAGE ?? "").toLowerCase().startsWith("pt")) return "pt-BR";
-	try {
-		if (Intl.DateTimeFormat().resolvedOptions().locale.toLowerCase().startsWith("pt")) return "pt-BR";
-	} catch {}
-	try {
-		const tz = (env.TZ ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? "").toLowerCase();
-		if (tz.includes("sao_paulo") || tz.includes("brazil") || tz.includes("fortaleza") || tz.includes("recife") || tz.includes("manaus") || tz.includes("belem") || tz.includes("cuiaba") || tz.includes("campo_grande") || tz.includes("porto_velho") || tz.includes("rio_branco") || tz.includes("boa_vista") || tz.includes("maceio") || tz.includes("bahia") || tz.includes("noronha") || tz.includes("araguaina") || tz.includes("santarem") || tz.includes("lisbon") || tz.includes("madeira") || tz.includes("azores")) return "pt-BR";
-	} catch {}
-	return "en";
-}
 //#endregion
 //#region src/autonomy-state.ts
 const DEFAULT_GOAL_LOOP_PREFS = {
@@ -188,7 +165,7 @@ function parseUsd(cell) {
 	return Number.isFinite(value) && value > 0 ? value : null;
 }
 function buildAutonomyTab(input) {
-	const isPt = resolveLanguage(input.languagePref) === "pt-BR";
+	const isPt = input.languagePref === "pt-BR";
 	return {
 		id: "autonomy",
 		title: isPt ? "Autonomia" : "Autonomy",
@@ -236,25 +213,25 @@ function buildAutonomyTab(input) {
 				}]
 			},
 			{
-				title: isPt ? "Gradiente de decisão (política de referência · J1 governa o risco)" : "Decision gradient (reference policy · J1 owns the risk axis)",
+				title: isPt ? "Gradiente de Decisão (política de referência · governado por J1 e Orçamentos)" : "Decision Gradient (reference policy · governed by J1 & Budgets)",
 				rows: [
 					{
 						id: "autonomy.gradient.solo",
-						name: "Decide solo",
-						value: "autonomous",
-						note: isPt ? "edições reversíveis e rotineiras, sem travas (baixo risco)" : "reversible & low-risk edits, routine fixes (no gate)"
+						name: isPt ? "Decisão solo" : "Decide solo",
+						value: isPt ? "autônomo" : "autonomous",
+						note: isPt ? "ações rotineiras de baixo risco · reversível sem travas (sem portão)" : "reversible & low-risk edits, routine fixes (no gate)"
 					},
 					{
 						id: "autonomy.gradient.jev",
-						name: "Jev decides",
-						value: "arbitrated",
-						note: isPt ? "ambiguidade de tipos e ranqueamento de candidatos (com teto de custo)" : "typed ambiguity & candidate ranking (budget-capped)"
+						name: isPt ? "Decisão Jev" : "Jev decides",
+						value: isPt ? "arbitrado" : "arbitrated",
+						note: isPt ? "ambiguidade de tipos e rotas · configurado nos Tetos de Orçamento acima" : "typed ambiguity & candidate ranking · configured via Budgets above"
 					},
 					{
 						id: "autonomy.gradient.human",
-						name: "Human decides",
-						value: "human review",
-						note: isPt ? "operações de alto risco ou destrutivas (portão J1)" : "high-risk & destructive operations (J1 gate)"
+						name: isPt ? "Aprovação humana" : "Human decides",
+						value: isPt ? "revisão humana" : "human review",
+						note: isPt ? "ações destrutivas e de alto risco · configurado no limiar do Portão J1" : "high-risk & destructive operations · configured via J1 Gate"
 					}
 				]
 			}
@@ -320,23 +297,33 @@ const DECISION_KNOWN_MODELS = Object.freeze({
 * note. Drift-pinned against the installer/runtime sources in tests.
 */
 const DECISION_PROVIDER_CREDENTIALS = Object.freeze({
-	"openai-decisions": { note: "host-configured model — provision via `decision-router setup-model openai-decisions`" },
+	"openai-decisions": {
+		note: "host-configured model — provision via `decision-router setup-model openai-decisions`",
+		notePt: "modelo do host — configure via `decision-router setup-model openai-decisions`"
+	},
 	"typesafe-jev": {
 		env: "TYPESAFE_API_KEY",
-		note: "export TYPESAFE_API_KEY=… then restart"
+		note: "export TYPESAFE_API_KEY=… then restart",
+		notePt: "export TYPESAFE_API_KEY=… e depois reinicie"
 	},
-	"opencode-console-jev": { note: "rides your OpenCode login — no separate key" },
+	"opencode-console-jev": {
+		note: "rides your OpenCode login — no separate key",
+		notePt: "utiliza login do OpenCode — sem chave separada"
+	},
 	"openrouter-jev": {
 		env: "OPENROUTER_API_KEY",
-		note: "export OPENROUTER_API_KEY=… then restart"
+		note: "export OPENROUTER_API_KEY=… then restart",
+		notePt: "export OPENROUTER_API_KEY=… e depois reinicie"
 	},
 	"vercel-gateway-jev": {
 		env: "AI_GATEWAY_API_KEY",
-		note: "export AI_GATEWAY_API_KEY=… then restart"
+		note: "export AI_GATEWAY_API_KEY=… then restart",
+		notePt: "export AI_GATEWAY_API_KEY=… e depois reinicie"
 	},
 	"cloudflare-workers-jev": {
 		env: "CLOUDFLARE_API_TOKEN",
-		note: "needs accountId (setup-model --account-id=…) + CLOUDFLARE_API_TOKEN"
+		note: "needs accountId (setup-model --account-id=…) + CLOUDFLARE_API_TOKEN",
+		notePt: "requer accountId (setup-model --account-id=…) + CLOUDFLARE_API_TOKEN"
 	}
 });
 const DECISION_TARGET_CYCLE = Object.freeze(DECISION_KNOWN_PROVIDERS.map((provider) => `${provider}/${DECISION_KNOWN_MODELS[provider]}`));
@@ -530,14 +517,14 @@ function credentialStatus(provider, env, authProviders, configProviders) {
 	return "missing";
 }
 function buildDecisionTab(read, env = process.env, authProviders = /* @__PURE__ */ new Set(), configProviders = /* @__PURE__ */ new Set(), languagePref) {
-	const isPt = resolveLanguage(languagePref, env) === "pt-BR";
+	const isPt = languagePref === "pt-BR";
 	const { config, corrupt } = read;
 	const rows = [{
 		id: "decision.enabled",
 		name: isPt ? "Assistente Jev" : "Jev Assistant",
 		value: config.enabled ? "enabled" : "disabled",
 		...corrupt ? {} : { cycle: DECISION_ENABLED_CYCLE },
-		note: corrupt ? isPt ? "config inválida — runtime fail-closes; repair via `decision-router setup-model`" : "config unreadable/invalid — runtime fail-closes; repair via `decision-router setup-model`" : isPt ? "applies live — arbitragem de decisões relida em tempo real a cada chamada" : "applies live — the runtime re-reads this on every gated call"
+		note: corrupt ? isPt ? "config inválida — runtime fail-closes; repare via `decision-router setup-model`" : "config unreadable/invalid — runtime fail-closes; repair via `decision-router setup-model`" : isPt ? "aplica em tempo real — arbitragem de decisões relida a cada chamada" : "applies live — the runtime re-reads this on every gated call"
 	}, {
 		id: "decision.selection.mode",
 		name: isPt ? "Modo de Operação" : "Operation Mode",
@@ -581,7 +568,7 @@ function buildDecisionTab(read, env = process.env, authProviders = /* @__PURE__ 
 					id: `decision.key.${provider}`,
 					name: provider,
 					value: status === "missing" ? "MISSING" : status,
-					note: credential.note
+					note: isPt ? credential.notePt ?? credential.note : credential.note
 				};
 			})
 		}]
@@ -801,17 +788,18 @@ function settledDraft(draft, applied) {
 	return next;
 }
 const GATES_ENABLED_CYCLE = Object.freeze(["enabled", "disabled"]);
-function buildGatesTab(load) {
+function buildGatesTab(load, languagePref) {
+	const isPt = languagePref === "pt-BR";
 	const merged = mergedOverrides(load);
 	const rowFor = (behavior) => {
 		const fromProject = load.project[behavior.id] !== void 0;
 		const writable = !fromProject && canWriteOverrides(load);
 		return {
 			id: `gate.${behavior.id}`,
-			name: fromProject ? `${behavior.title} (project)` : behavior.title,
+			name: fromProject ? `${behavior.title} (${isPt ? "projeto" : "project"})` : behavior.title,
 			value: isBehaviorDisabled(merged, behavior.id) ? "disabled" : "enabled",
 			...writable ? { cycle: GATES_ENABLED_CYCLE } : {},
-			note: fromProject ? "project file wins at runtime — edit .pantheon/overrides.json" : behavior.description
+			note: fromProject ? isPt ? "arquivo do projeto tem precedência · edite .pantheon/overrides.json" : "project file wins at runtime — edit .pantheon/overrides.json" : behavior.description
 		};
 	};
 	const install = SETTINGS_BEHAVIORS.filter((behavior) => behavior.kind === "install");
@@ -820,65 +808,117 @@ function buildGatesTab(load) {
 		id: "gates",
 		title: "Gates",
 		groups: [{
-			title: "Install skills",
+			title: isPt ? "Skills instaladas" : "Install skills",
 			rows: install.map(rowFor)
 		}, {
-			title: "Runtime gates",
+			title: isPt ? "Portões de execução" : "Runtime gates",
 			rows: runtime.map(rowFor)
 		}]
 	};
 }
-function buildAboutTab(version) {
+function buildAboutTab(version, extra) {
+	const isPt = extra?.languagePref === "pt-BR";
+	const sysRows = [{
+		id: "about.version",
+		name: isPt ? "Versão" : "Version",
+		value: `v${version}`,
+		note: isPt ? "OpenCode 2.x nativo — contrato V1 descontinuado" : "OpenCode 2.x only — the V1 contract is removed"
+	}, {
+		id: "about.behaviors",
+		name: isPt ? "Comportamentos" : "Behaviors",
+		value: String(SETTINGS_BEHAVIORS.length),
+		note: isPt ? "portões e skills de governança registradas" : "registered governance gates and skills"
+	}];
+	if (extra?.nodeVersion) sysRows.push({
+		id: "about.runtime",
+		name: "Runtime Node.js",
+		value: `v${extra.nodeVersion}`,
+		note: extra.platform ? `${isPt ? "plataforma" : "platform"}: ${extra.platform}` : ""
+	});
+	const govRows = [
+		{
+			id: "about.preset",
+			name: isPt ? "Predefinição" : "Active Preset",
+			value: extra?.preset ?? "none",
+			note: isPt ? "modelo global ativo do Pantheon" : "global model preset active in Pantheon"
+		},
+		{
+			id: "about.decision",
+			name: isPt ? "Assistente Jev" : "Decision Router",
+			value: extra?.decisionEnabled ? isPt ? "ativado" : "enabled" : isPt ? "desativado" : "disabled",
+			note: isPt ? "arbitragem de modelos e candidatos" : "model and candidate arbitration"
+		},
+		{
+			id: "about.j1",
+			name: isPt ? "Portão J1" : "J1 Risk Gate",
+			value: extra?.j1Mode ?? "shadow",
+			note: isPt ? "portão de risco de segurança operacional" : "operational safety risk score gate"
+		}
+	];
+	const refRows = [{
+		id: "about.license",
+		name: isPt ? "Licença" : "License",
+		value: "MIT",
+		note: "Open source · Pantheon Project"
+	}, {
+		id: "about.repo",
+		name: isPt ? "Repositório" : "Repository",
+		value: "ils15/pantheon-opencode",
+		note: "github.com/ils15/pantheon-opencode"
+	}];
+	const groups = [{
+		title: isPt ? "Sistema & Plataforma" : "System & Platform",
+		rows: sysRows
+	}];
+	if (extra?.preset !== void 0 || extra?.decisionEnabled !== void 0) groups.push({
+		title: isPt ? "Governança & Roteamento" : "Governance & Routing",
+		rows: govRows
+	});
+	groups.push({
+		title: isPt ? "Projeto & Referências" : "Project & References",
+		rows: refRows
+	});
 	return {
 		id: "about",
-		title: "About",
-		groups: [{ rows: [{
-			id: "about.version",
-			name: "Version",
-			value: `v${version}`,
-			note: "OpenCode 2.x only — the V1 contract is removed"
-		}, {
-			id: "about.behaviors",
-			name: "Behaviors",
-			value: String(SETTINGS_BEHAVIORS.length),
-			note: "docs/design/2.0-settings-and-install.md"
-		}] }]
+		title: isPt ? "Sobre" : "About",
+		groups
 	};
 }
-function buildChangelogTab(version, items = []) {
+function buildChangelogTab(version, items = [], languagePref) {
+	const isPt = languagePref === "pt-BR";
 	const rows = [];
 	if (items.length > 0) items.forEach((item, index) => {
 		rows.push({
 			id: `changelog.item.${index + 1}`,
 			name: item.title.slice(0, 26),
-			value: item.detail.length > 20 ? `${item.detail.slice(0, 19)}…` : item.detail,
+			value: "",
 			note: item.detail
 		});
 	});
 	else rows.push({
 		id: "changelog.info",
-		name: "Release",
+		name: isPt ? "Versão" : "Release",
 		value: `v${version}`,
-		note: "view full history in CHANGELOG.md or GitHub releases"
+		note: isPt ? "veja o histórico completo no CHANGELOG.md ou no GitHub" : "view full history in CHANGELOG.md or GitHub releases"
 	});
 	return {
 		id: "changelog",
-		title: "Changelog",
+		title: isPt ? "Changelog" : "Changelog",
 		groups: [{
-			title: `What's New in v${version}`,
+			title: isPt ? `Novidades na versão v${version}` : `What's New in v${version}`,
 			rows
 		}, {
-			title: "Release References",
+			title: isPt ? "Referências de Versão" : "Release References",
 			rows: [{
 				id: "changelog.docs",
-				name: "Documentation",
+				name: isPt ? "Documentação" : "Documentation",
 				value: "CHANGELOG.md",
-				note: "shipped at plugin root and repository root"
+				note: isPt ? "incluído na raiz do plugin e do repositório" : "shipped at plugin root and repository root"
 			}, {
 				id: "changelog.repo",
-				name: "GitHub Repository",
+				name: isPt ? "Repositório GitHub" : "GitHub Repository",
 				value: "ils15/pantheon-opencode",
-				note: "releases, pull requests and discussion"
+				note: isPt ? "versões, pull requests e discussões" : "releases, pull requests and discussion"
 			}]
 		}]
 	};
@@ -1073,6 +1113,29 @@ function buildDoctorTab(input) {
 		}] }]
 	};
 }
+Object.freeze([
+	"auto",
+	"pt-BR",
+	"en"
+]);
+/**
+* Resolve effective language: 'pt-BR' or 'en'.
+* Defaults to 'pt-BR' if system locale contains 'pt', if Intl locale is pt,
+* or if system timezone is Brazilian/Portuguese; otherwise 'en'.
+*/
+function resolveLanguage(preference = "auto", env = process.env) {
+	if (preference === "pt-BR") return "pt-BR";
+	if (preference === "en") return "en";
+	if ((env.LC_ALL ?? env.LC_MESSAGES ?? env.LANG ?? env.LANGUAGE ?? "").toLowerCase().startsWith("pt")) return "pt-BR";
+	try {
+		if (Intl.DateTimeFormat().resolvedOptions().locale.toLowerCase().startsWith("pt")) return "pt-BR";
+	} catch {}
+	try {
+		const tz = (env.TZ ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? "").toLowerCase();
+		if (tz.includes("sao_paulo") || tz.includes("brazil") || tz.includes("fortaleza") || tz.includes("recife") || tz.includes("manaus") || tz.includes("belem") || tz.includes("cuiaba") || tz.includes("campo_grande") || tz.includes("porto_velho") || tz.includes("rio_branco") || tz.includes("boa_vista") || tz.includes("maceio") || tz.includes("bahia") || tz.includes("noronha") || tz.includes("araguaina") || tz.includes("santarem") || tz.includes("lisbon") || tz.includes("madeira") || tz.includes("azores")) return "pt-BR";
+	} catch {}
+	return "en";
+}
 //#endregion
 //#region src/j1-gate-status.ts
 const J1_FLAG_ENV = "PANTHEON_J1_RISK_SCORE";
@@ -1221,26 +1284,74 @@ function backupMarker(path) {
 	mkdirSync(dirname(path), { recursive: true });
 	copyFileSync(path, `${path}.bak`);
 }
+const VISION_MODEL_OPTIONS = Object.freeze([
+	"auto",
+	"opencode-go/mimo-v2.6-flash",
+	"google/gemini-2.5-flash",
+	"openai/gpt-5-mini",
+	"anthropic/claude-3-5-haiku",
+	"opencode-go/mimo-v2.5"
+]);
+function visionConfigPaths(cwd = process.cwd(), env = process.env) {
+	const home = env.HOME ?? "";
+	const xdg = env.XDG_CONFIG_HOME ?? join(home, ".config");
+	return [join(cwd, ".opencode", "opencode-vision.json"), join(xdg, "opencode", "opencode-vision.json")];
+}
+function readConfiguredVisionModel(cwd = process.cwd(), env = process.env) {
+	for (const path of visionConfigPaths(cwd, env)) try {
+		if (existsSync(path)) {
+			const parsed = JSON.parse(readFileSync(path, "utf8"));
+			if (typeof parsed?.visionModel === "string" && parsed.visionModel.trim()) return parsed.visionModel.trim();
+		}
+	} catch {}
+	return "auto";
+}
+function writeConfiguredVisionModel(model, cwd = process.cwd(), env = process.env) {
+	const home = env.HOME ?? "";
+	const xdg = env.XDG_CONFIG_HOME ?? join(home, ".config");
+	const projectDir = join(cwd, ".opencode");
+	const targetPath = existsSync(projectDir) ? join(projectDir, "opencode-vision.json") : join(xdg, "opencode", "opencode-vision.json");
+	let current = {};
+	try {
+		if (existsSync(targetPath)) current = JSON.parse(readFileSync(targetPath, "utf8"));
+	} catch {
+		current = {};
+	}
+	if (model === "auto" || !model.trim()) delete current.visionModel;
+	else current.visionModel = model.trim();
+	mkdirSync(dirname(targetPath), { recursive: true });
+	const temp = `${targetPath}.tui.tmp`;
+	writeFileSync(temp, `${JSON.stringify(current, null, 2)}\n`, "utf8");
+	renameSync(temp, targetPath);
+}
 const PRESET_CYCLE = Object.freeze(["none", ...PRESET_NAMES]);
-function buildPresetTab(input) {
+function buildPresetTab(input, languagePref) {
+	const isPt = languagePref === "pt-BR";
 	const rows = [{
 		id: "preset",
-		name: "Preset",
+		name: isPt ? "Predefinição" : "Preset",
 		value: input.globalName ?? "none",
 		cycle: PRESET_CYCLE,
-		note: "global marker · atomic write, .bak backup · none = opencode defaults"
+		note: isPt ? "marcador global · gravação atômica, backup .bak · none = padrão OpenCode" : "global marker · atomic write, .bak backup · none = opencode defaults"
 	}];
 	if (input.projectName !== null) rows.push({
 		id: "preset.project",
-		name: "Project",
+		name: isPt ? "Projeto" : "Project",
 		value: input.projectName,
-		note: `${projectActivePresetPath()} wins over the global marker — read-only here`
+		note: isPt ? `${projectActivePresetPath()} tem precedência sobre o global — somente leitura aqui` : `${projectActivePresetPath()} wins over the global marker — read-only here`
+	});
+	if (input.visionModel !== void 0) rows.push({
+		id: "preset.vision_model",
+		name: isPt ? "Modelo de Visão" : "Vision Model",
+		value: input.visionModel || "auto",
+		cycle: VISION_MODEL_OPTIONS,
+		note: isPt ? "modelo para inspeção de imagens (vision_describe) · salvo em opencode-vision.json" : "model for image inspection (vision_describe) · saved in opencode-vision.json"
 	});
 	return {
 		id: "preset",
 		title: "Preset",
 		groups: [{
-			title: "Model preset",
+			title: isPt ? "Predefinição de modelo" : "Model preset",
 			rows
 		}]
 	};
@@ -1707,13 +1818,14 @@ function registryTagForChannel(channel) {
 function registryUrlForChannel(channel) {
 	return `https://registry.npmjs.org/pantheon-opencode/${registryTagForChannel(channel)}`;
 }
-function formatAgo(ms) {
-	if (ms < 6e4) return "just now";
-	if (ms < 36e5) return `${Math.floor(ms / 6e4)}m ago`;
-	if (ms < 864e5) return `${Math.floor(ms / 36e5)}h ago`;
-	return `${Math.floor(ms / 864e5)}d ago`;
+function formatAgo(ms, isPt = false) {
+	if (ms < 6e4) return isPt ? "agora mesmo" : "just now";
+	if (ms < 36e5) return isPt ? `há ${Math.floor(ms / 6e4)}m` : `${Math.floor(ms / 6e4)}m ago`;
+	if (ms < 864e5) return isPt ? `há ${Math.floor(ms / 36e5)}h` : `${Math.floor(ms / 36e5)}h ago`;
+	return isPt ? `há ${Math.floor(ms / 864e5)}d` : `${Math.floor(ms / 864e5)}d ago`;
 }
 function buildUpdatesTab(input) {
+	const isPt = input.languagePref === "pt-BR";
 	const nowMs = input.nowMs ?? Date.now();
 	const channel = input.selectedChannel ?? updateChannelFor(input.currentVersion);
 	const lastCheckMs = input.state.lastCheckMs;
@@ -1722,43 +1834,43 @@ function buildUpdatesTab(input) {
 	const newer = latest !== void 0 && comparePantheonVersions(latest, input.currentVersion) > 0 && !(stable(input.currentVersion) && !stable(latest));
 	const rows = [{
 		id: "update.channel",
-		name: "Channel",
+		name: isPt ? "Canal" : "Channel",
 		value: channel,
 		cycle: ["stable", "beta"],
-		note: "stable tracks npm `latest`; beta tracks npm `beta`"
+		note: isPt ? "stable segue npm `latest`; beta segue npm `beta`" : "stable tracks npm `latest`; beta tracks npm `beta`"
 	}, {
 		id: "update.check",
-		name: "Check now",
-		value: input.checking ? "checking…" : lastCheckMs ? `last check ${formatAgo(nowMs - lastCheckMs)}` : "never checked",
+		name: isPt ? "Verificar agora" : "Check now",
+		value: input.checking ? isPt ? "verificando…" : "checking…" : lastCheckMs ? isPt ? `última verificação ${formatAgo(nowMs - lastCheckMs, true)}` : `last check ${formatAgo(nowMs - lastCheckMs, false)}` : isPt ? "nunca verificado" : "never checked",
 		action: "update-check",
-		note: "enter probes the registry for the running channel"
+		note: isPt ? "enter consulta o registro npm para o canal ativo" : "enter probes the registry for the running channel"
 	}];
 	if (latest) {
 		rows.push({
 			id: "update.latest",
-			name: "Registry",
-			value: newer ? `v${latest} available` : "up to date",
-			note: newer ? "adopt with `pantheon-opencode update`" : "no newer compatible version"
+			name: isPt ? "Registro (npm)" : "Registry",
+			value: newer ? `v${latest} ${isPt ? "disponível" : "available"}` : isPt ? "atualizado" : "up to date",
+			note: newer ? isPt ? "instale com `pantheon-opencode update`" : "adopt with `pantheon-opencode update`" : isPt ? "nenhuma versão mais recente compatível" : "no newer compatible version"
 		});
 		rows.push({
 			id: "update.run",
-			name: "Update now",
-			value: input.updating ? "updating…" : newer ? `install v${latest}` : "reinstall / refresh",
+			name: isPt ? "Atualizar agora" : "Update now",
+			value: input.updating ? isPt ? "atualizando…" : "updating…" : newer ? `${isPt ? "instalar" : "install"} v${latest}` : isPt ? "reinstalar / atualizar" : "reinstall / refresh",
 			action: "update-run",
-			note: newer ? "enter runs `pantheon-opencode update`" : "enter refreshes installed copy"
+			note: newer ? isPt ? "enter executa `pantheon-opencode update`" : "enter runs `pantheon-opencode update`" : isPt ? "enter atualiza a cópia instalada" : "enter refreshes installed copy"
 		});
 	}
 	rows.push({
 		id: "update.command",
-		name: "CLI command",
+		name: isPt ? "Comando CLI" : "CLI command",
 		value: channel === "beta" ? "pantheon-opencode update" : "pantheon-opencode update --stable",
-		note: "run in terminal or OpenCode Desktop terminal"
+		note: isPt ? "execute no terminal ou no terminal integrado do OpenCode" : "run in terminal or OpenCode Desktop terminal"
 	});
 	return {
 		id: "updates",
-		title: "Updates",
+		title: isPt ? "Atualizações" : "Updates",
 		groups: [{
-			title: "Updates & Maintenance",
+			title: isPt ? "Atualizações & Manutenção" : "Updates & Maintenance",
 			rows
 		}]
 	};
@@ -2179,6 +2291,31 @@ function resolveRunningVersion() {
 }
 const VALUE_WIDTH = 24;
 function SettingsWindow(props) {
+	const isPt = () => resolveLanguage(tuiPrefs().layout?.language) === "pt-BR";
+	const formatValueDisplay = (val) => {
+		if (!isPt()) return val;
+		switch (val) {
+			case "enabled": return "ativado";
+			case "disabled": return "desativado";
+			case "granted": return "permitido";
+			case "not granted": return "não permitido";
+			case "explicit": return "explícito";
+			case "auto": return "automático";
+			case "local": return "local";
+			case "autonomous": return "autônomo";
+			case "arbitrated": return "arbitrado";
+			case "human review": return "revisão humana";
+			case "MISSING":
+			case "missing": return "PENDENTE";
+			case "auth store": return "login opencode";
+			case "env": return "variável env";
+			case "config": return "configuração";
+			case "never checked": return "nunca verificado";
+			case "up to date": return "atualizado";
+			case "none": return "nenhum";
+			default: return val;
+		}
+	};
 	const tab = () => props.tabs()[props.page()] ?? props.tabs()[0] ?? EMPTY_TAB;
 	return (() => {
 		var _el$ = createElement("box"), _el$2 = createElement("box"), _el$3 = createElement("text"), _el$4 = createElement("b"), _el$6 = createElement("span"), _el$7 = createElement("box"), _el$8 = createElement("box"), _el$9 = createElement("box"), _el$0 = createElement("text"), _el$10 = createElement("box"), _el$11 = createElement("scrollbox");
@@ -2234,19 +2371,19 @@ function SettingsWindow(props) {
 			children: (t, index) => {
 				const isActive = () => index() === props.page();
 				return (() => {
-					var _el$32 = createElement("box"), _el$33 = createElement("text");
-					insertNode(_el$32, _el$33);
-					setProp(_el$32, "onMouseDown", () => props.onJumpTab?.(index()));
-					setProp(_el$32, "paddingLeft", 1);
-					setProp(_el$32, "paddingRight", 1);
-					setProp(_el$32, "flexShrink", 0);
-					spread(_el$32, mergeProps(() => isActive() ? { backgroundColor: "#262626" } : {}), true);
-					setProp(_el$33, "wrapMode", "none");
-					spread(_el$33, mergeProps({ get fg() {
+					var _el$27 = createElement("box"), _el$28 = createElement("text");
+					insertNode(_el$27, _el$28);
+					setProp(_el$27, "onMouseDown", () => props.onJumpTab?.(index()));
+					setProp(_el$27, "paddingLeft", 1);
+					setProp(_el$27, "paddingRight", 1);
+					setProp(_el$27, "flexShrink", 0);
+					spread(_el$27, mergeProps(() => isActive() ? { backgroundColor: "#262626" } : {}), true);
+					setProp(_el$28, "wrapMode", "none");
+					spread(_el$28, mergeProps({ get fg() {
 						return memo(() => !!isActive())() ? props.warn ?? "#fba970" : props.muted;
 					} }, () => isActive() ? { attributes: 1 } : {}), true);
-					insert(_el$33, () => `${t.title}${tabDirty(props.draft(), t) ? " ●" : ""}`);
-					return _el$32;
+					insert(_el$28, () => `${t.title}${tabDirty(props.draft(), t) ? " ●" : ""}`);
+					return _el$27;
 				})();
 			}
 		}));
@@ -2271,22 +2408,22 @@ function SettingsWindow(props) {
 				return tab().groups;
 			},
 			children: (group) => (() => {
-				var _el$34 = createElement("box");
-				setProp(_el$34, "flexDirection", "column");
-				setProp(_el$34, "marginBottom", 1);
-				insert(_el$34, createComponent(Show, {
+				var _el$29 = createElement("box");
+				setProp(_el$29, "flexDirection", "column");
+				setProp(_el$29, "marginBottom", 1);
+				insert(_el$29, createComponent(Show, {
 					get when() {
 						return group.title !== void 0;
 					},
 					get children() {
-						var _el$35 = createElement("text");
-						setProp(_el$35, "attributes", 1);
-						insert(_el$35, () => group.title);
-						effect((_$p) => setProp(_el$35, "fg", props.warn ?? props.fg, _$p));
-						return _el$35;
+						var _el$30 = createElement("text");
+						setProp(_el$30, "attributes", 1);
+						insert(_el$30, () => group.title);
+						effect((_$p) => setProp(_el$30, "fg", props.warn ?? props.fg, _$p));
+						return _el$30;
 					}
 				}), null);
-				insert(_el$34, createComponent(For, {
+				insert(_el$29, createComponent(For, {
 					get each() {
 						return group.rows;
 					},
@@ -2296,54 +2433,63 @@ function SettingsWindow(props) {
 						const staged = () => props.draft()[row.id] !== void 0;
 						const gutter = () => isSelected() ? "▸ " : "  ";
 						const valueCell = () => {
-							if (row.cycle !== void 0) return `< ${display()} >`;
-							if (row.action !== void 0) return `[ ${display()} ]`;
-							if (row.id.startsWith("autonomy.gradient.")) return `[ref] ${display()}`;
-							return display();
+							const formatted = formatValueDisplay(display());
+							if (row.cycle !== void 0) return `< ${formatted} >`;
+							if (row.action !== void 0) return `[ ${formatted} ]`;
+							if (row.id.startsWith("autonomy.gradient.")) return `[ref] ${formatted}`;
+							return formatted;
 						};
 						return (() => {
-							var _el$36 = createElement("box"), _el$37 = createElement("box"), _el$38 = createElement("text"), _el$39 = createElement("box"), _el$40 = createElement("text");
-							insertNode(_el$36, _el$37);
-							insertNode(_el$36, _el$39);
-							setProp(_el$36, "flexDirection", "row");
-							spread(_el$36, mergeProps(() => isSelected() ? { backgroundColor: "#262626" } : {}, { "onMouseDown": () => {
+							var _el$31 = createElement("box"), _el$32 = createElement("box"), _el$33 = createElement("text");
+							insertNode(_el$31, _el$32);
+							setProp(_el$31, "flexDirection", "row");
+							spread(_el$31, mergeProps(() => isSelected() ? { backgroundColor: "#262626" } : {}, { "onMouseDown": () => {
 								props.onSelectRow?.(row.id);
 							} }), true);
-							insertNode(_el$37, _el$38);
-							setProp(_el$37, "width", 28);
-							spread(_el$38, mergeProps({ get fg() {
+							insertNode(_el$32, _el$33);
+							setProp(_el$32, "width", 28);
+							spread(_el$33, mergeProps({ get fg() {
 								return memo(() => !!isSelected())() ? props.warn ?? "#fba970" : props.fg;
 							} }, () => isSelected() ? { attributes: 1 } : {}), true);
-							insert(_el$38, () => `${gutter()}${row.name}`.padEnd(28));
-							insertNode(_el$39, _el$40);
-							setProp(_el$39, "width", 24);
-							setProp(_el$39, "onMouseDown", () => {
-								props.onSelectRow?.(row.id);
-								props.onCycleValue?.(row.id, 1);
-							});
-							spread(_el$40, mergeProps({ get fg() {
-								return memo(() => !!isSelected())() ? "#ffffff" : memo(() => !!staged())() ? props.warn ?? props.fg : props.muted;
-							} }, () => isSelected() || staged() ? { attributes: 1 } : {}), true);
-							insert(_el$40, () => `${valueCell()}${staged() ? " ●" : ""}`.padEnd(VALUE_WIDTH));
-							insert(_el$36, createComponent(Show, {
+							insert(_el$33, () => `${gutter()}${row.name}`.padEnd(28));
+							insert(_el$31, createComponent(Show, {
+								get when() {
+									return memo(() => row.value !== "")() && row.value !== void 0;
+								},
+								get children() {
+									var _el$34 = createElement("box"), _el$35 = createElement("text");
+									insertNode(_el$34, _el$35);
+									setProp(_el$34, "width", 24);
+									setProp(_el$34, "onMouseDown", () => {
+										props.onSelectRow?.(row.id);
+										props.onCycleValue?.(row.id, 1);
+									});
+									spread(_el$35, mergeProps({ get fg() {
+										return memo(() => !!isSelected())() ? "#ffffff" : memo(() => !!staged())() ? props.warn ?? props.fg : props.muted;
+									} }, () => isSelected() || staged() ? { attributes: 1 } : {}), true);
+									insert(_el$35, () => `${valueCell()}${staged() ? " ●" : ""}`.padEnd(VALUE_WIDTH));
+									return _el$34;
+								}
+							}), null);
+							insert(_el$31, createComponent(Show, {
 								get when() {
 									return row.note !== void 0;
 								},
 								get children() {
-									var _el$41 = createElement("box"), _el$42 = createElement("text");
-									insertNode(_el$41, _el$42);
-									setProp(_el$41, "flexGrow", 1);
-									setProp(_el$41, "flexShrink", 1);
-									insert(_el$42, () => row.note);
-									effect((_$p) => setProp(_el$42, "fg", isSelected() ? "#e5e7eb" : props.muted, _$p));
-									return _el$41;
+									var _el$36 = createElement("box"), _el$37 = createElement("text");
+									insertNode(_el$36, _el$37);
+									setProp(_el$36, "flexGrow", 1);
+									setProp(_el$36, "flexShrink", 1);
+									insert(_el$37, () => row.note);
+									effect((_$p) => setProp(_el$37, "fg", isSelected() ? "#e5e7eb" : props.muted, _$p));
+									return _el$36;
 								}
 							}), null);
-							return _el$36;
+							return _el$31;
 						})();
 					}
 				}), null);
-				return _el$34;
+				return _el$29;
 			})()
 		}));
 		insert(_el$, createComponent(Show, {
@@ -2366,170 +2512,170 @@ function SettingsWindow(props) {
 			},
 			get fallback() {
 				return (() => {
-					var _el$43 = createElement("box"), _el$61 = createElement("text");
-					insertNode(_el$43, _el$61);
-					setProp(_el$43, "flexDirection", "column");
-					insert(_el$43, createComponent(Show, {
+					var _el$38 = createElement("box"), _el$52 = createElement("text");
+					insertNode(_el$38, _el$52);
+					setProp(_el$38, "flexDirection", "column");
+					insert(_el$38, createComponent(Show, {
 						get when() {
 							return draftDirty(props.draft());
 						},
 						get fallback() {
 							return (() => {
-								var _el$62 = createElement("box"), _el$63 = createElement("box"), _el$64 = createElement("text"), _el$66 = createElement("text"), _el$68 = createElement("box"), _el$69 = createElement("text"), _el$71 = createElement("text"), _el$73 = createElement("box"), _el$74 = createElement("text"), _el$76 = createElement("box"), _el$77 = createElement("text");
-								insertNode(_el$62, _el$63);
-								insertNode(_el$62, _el$66);
-								insertNode(_el$62, _el$68);
-								insertNode(_el$62, _el$71);
-								insertNode(_el$62, _el$73);
-								insertNode(_el$62, _el$76);
-								insertNode(_el$62, _el$77);
-								setProp(_el$62, "flexDirection", "row");
-								setProp(_el$62, "flexWrap", "wrap");
-								setProp(_el$62, "alignItems", "center");
+								var _el$53 = createElement("box"), _el$54 = createElement("box"), _el$55 = createElement("text"), _el$57 = createElement("text"), _el$59 = createElement("box"), _el$60 = createElement("text"), _el$62 = createElement("text"), _el$64 = createElement("box"), _el$65 = createElement("text"), _el$67 = createElement("box"), _el$68 = createElement("text");
+								insertNode(_el$53, _el$54);
+								insertNode(_el$53, _el$57);
+								insertNode(_el$53, _el$59);
+								insertNode(_el$53, _el$62);
+								insertNode(_el$53, _el$64);
+								insertNode(_el$53, _el$67);
+								insertNode(_el$53, _el$68);
+								setProp(_el$53, "flexDirection", "row");
+								setProp(_el$53, "flexWrap", "wrap");
+								setProp(_el$53, "alignItems", "center");
+								setProp(_el$53, "flexShrink", 0);
+								setProp(_el$53, "rowGap", 1);
+								insertNode(_el$54, _el$55);
+								setProp(_el$54, "backgroundColor", "#262626");
+								setProp(_el$54, "flexShrink", 0);
+								setProp(_el$54, "onMouseDown", () => props.onClose?.());
+								insertNode(_el$55, createTextNode(` Close `));
+								setProp(_el$55, "fg", "#ffffff");
+								insertNode(_el$57, createTextNode(`  `));
+								setProp(_el$57, "flexShrink", 0);
+								insertNode(_el$59, _el$60);
+								setProp(_el$59, "backgroundColor", "#262626");
+								setProp(_el$59, "flexShrink", 0);
+								setProp(_el$59, "onMouseDown", () => props.onResetPage?.());
+								insertNode(_el$60, createTextNode(` Reset page `));
+								setProp(_el$60, "fg", "#ffffff");
+								insertNode(_el$62, createTextNode(`  `));
 								setProp(_el$62, "flexShrink", 0);
-								setProp(_el$62, "rowGap", 1);
-								insertNode(_el$63, _el$64);
-								setProp(_el$63, "backgroundColor", "#262626");
-								setProp(_el$63, "flexShrink", 0);
-								setProp(_el$63, "onMouseDown", () => props.onClose?.());
-								insertNode(_el$64, createTextNode(` Close `));
-								setProp(_el$64, "fg", "#ffffff");
-								insertNode(_el$66, createTextNode(`  `));
-								setProp(_el$66, "flexShrink", 0);
-								insertNode(_el$68, _el$69);
-								setProp(_el$68, "backgroundColor", "#262626");
+								insertNode(_el$64, _el$65);
+								setProp(_el$64, "backgroundColor", "#262626");
+								setProp(_el$64, "flexShrink", 0);
+								setProp(_el$64, "onMouseDown", () => props.onStageDefaults?.());
+								insertNode(_el$65, createTextNode(` Defaults `));
+								setProp(_el$65, "fg", "#ffffff");
+								setProp(_el$67, "flexGrow", 1);
+								setProp(_el$67, "minWidth", 1);
 								setProp(_el$68, "flexShrink", 0);
-								setProp(_el$68, "onMouseDown", () => props.onResetPage?.());
-								insertNode(_el$69, createTextNode(` Reset page `));
-								setProp(_el$69, "fg", "#ffffff");
-								insertNode(_el$71, createTextNode(`  `));
-								setProp(_el$71, "flexShrink", 0);
-								insertNode(_el$73, _el$74);
-								setProp(_el$73, "backgroundColor", "#262626");
-								setProp(_el$73, "flexShrink", 0);
-								setProp(_el$73, "onMouseDown", () => props.onStageDefaults?.());
-								insertNode(_el$74, createTextNode(` Defaults `));
-								setProp(_el$74, "fg", "#ffffff");
-								setProp(_el$76, "flexGrow", 1);
-								setProp(_el$76, "minWidth", 1);
-								insertNode(_el$77, createTextNode(`no staged changes`));
-								setProp(_el$77, "flexShrink", 0);
+								insert(_el$68, () => isPt() ? "sem alterações pendentes" : "no staged changes");
 								effect((_p$) => {
 									var _v$1 = props.muted, _v$10 = props.muted, _v$11 = props.muted;
-									_v$1 !== _p$.e && (_p$.e = setProp(_el$66, "fg", _v$1, _p$.e));
-									_v$10 !== _p$.t && (_p$.t = setProp(_el$71, "fg", _v$10, _p$.t));
-									_v$11 !== _p$.a && (_p$.a = setProp(_el$77, "fg", _v$11, _p$.a));
+									_v$1 !== _p$.e && (_p$.e = setProp(_el$57, "fg", _v$1, _p$.e));
+									_v$10 !== _p$.t && (_p$.t = setProp(_el$62, "fg", _v$10, _p$.t));
+									_v$11 !== _p$.a && (_p$.a = setProp(_el$68, "fg", _v$11, _p$.a));
 									return _p$;
 								}, {
 									e: void 0,
 									t: void 0,
 									a: void 0
 								});
-								return _el$62;
+								return _el$53;
 							})();
 						},
 						get children() {
-							var _el$44 = createElement("box"), _el$45 = createElement("box"), _el$46 = createElement("text"), _el$48 = createElement("text"), _el$50 = createElement("box"), _el$51 = createElement("text"), _el$53 = createElement("text"), _el$55 = createElement("box"), _el$56 = createElement("text"), _el$58 = createElement("box"), _el$59 = createElement("text");
+							var _el$39 = createElement("box"), _el$40 = createElement("box"), _el$41 = createElement("text"), _el$42 = createElement("text"), _el$44 = createElement("box"), _el$45 = createElement("text"), _el$46 = createElement("text"), _el$48 = createElement("box"), _el$49 = createElement("text"), _el$50 = createElement("box"), _el$51 = createElement("text");
+							insertNode(_el$39, _el$40);
+							insertNode(_el$39, _el$42);
+							insertNode(_el$39, _el$44);
+							insertNode(_el$39, _el$46);
+							insertNode(_el$39, _el$48);
+							insertNode(_el$39, _el$50);
+							insertNode(_el$39, _el$51);
+							setProp(_el$39, "flexDirection", "row");
+							setProp(_el$39, "flexWrap", "wrap");
+							setProp(_el$39, "alignItems", "center");
+							setProp(_el$39, "flexShrink", 0);
+							setProp(_el$39, "rowGap", 1);
+							insertNode(_el$40, _el$41);
+							setProp(_el$40, "backgroundColor", "#fba970");
+							setProp(_el$40, "flexShrink", 0);
+							setProp(_el$40, "onMouseDown", () => props.onSave?.());
+							setProp(_el$41, "fg", "#000000");
+							insert(_el$41, () => isPt() ? " Salvar " : " Save ");
+							insertNode(_el$42, createTextNode(`  `));
+							setProp(_el$42, "flexShrink", 0);
 							insertNode(_el$44, _el$45);
-							insertNode(_el$44, _el$48);
-							insertNode(_el$44, _el$50);
-							insertNode(_el$44, _el$53);
-							insertNode(_el$44, _el$55);
-							insertNode(_el$44, _el$58);
-							insertNode(_el$44, _el$59);
-							setProp(_el$44, "flexDirection", "row");
-							setProp(_el$44, "flexWrap", "wrap");
-							setProp(_el$44, "alignItems", "center");
+							setProp(_el$44, "backgroundColor", "#262626");
 							setProp(_el$44, "flexShrink", 0);
-							setProp(_el$44, "rowGap", 1);
-							insertNode(_el$45, _el$46);
-							setProp(_el$45, "backgroundColor", "#fba970");
-							setProp(_el$45, "flexShrink", 0);
-							setProp(_el$45, "onMouseDown", () => props.onSave?.());
-							insertNode(_el$46, createTextNode(` Save `));
-							setProp(_el$46, "fg", "#000000");
-							insertNode(_el$48, createTextNode(`  `));
+							setProp(_el$44, "onMouseDown", () => props.onDiscard?.());
+							setProp(_el$45, "fg", "#ffffff");
+							insert(_el$45, () => isPt() ? " Descartar " : " Discard ");
+							insertNode(_el$46, createTextNode(`  `));
+							setProp(_el$46, "flexShrink", 0);
+							insertNode(_el$48, _el$49);
+							setProp(_el$48, "backgroundColor", "#262626");
 							setProp(_el$48, "flexShrink", 0);
-							insertNode(_el$50, _el$51);
-							setProp(_el$50, "backgroundColor", "#262626");
-							setProp(_el$50, "flexShrink", 0);
-							setProp(_el$50, "onMouseDown", () => props.onDiscard?.());
-							insertNode(_el$51, createTextNode(` Discard `));
-							setProp(_el$51, "fg", "#ffffff");
-							insertNode(_el$53, createTextNode(`  `));
-							setProp(_el$53, "flexShrink", 0);
-							insertNode(_el$55, _el$56);
-							setProp(_el$55, "backgroundColor", "#262626");
-							setProp(_el$55, "flexShrink", 0);
-							setProp(_el$55, "onMouseDown", () => props.onResetPage?.());
-							insertNode(_el$56, createTextNode(` Reset page `));
-							setProp(_el$56, "fg", "#ffffff");
-							setProp(_el$58, "flexGrow", 1);
-							setProp(_el$58, "minWidth", 1);
-							insertNode(_el$59, createTextNode(`unsaved changes`));
-							setProp(_el$59, "flexShrink", 0);
+							setProp(_el$48, "onMouseDown", () => props.onResetPage?.());
+							setProp(_el$49, "fg", "#ffffff");
+							insert(_el$49, () => isPt() ? " Redefinir página " : " Reset page ");
+							setProp(_el$50, "flexGrow", 1);
+							setProp(_el$50, "minWidth", 1);
+							setProp(_el$51, "flexShrink", 0);
+							insert(_el$51, () => isPt() ? "alterações não salvas" : "unsaved changes");
 							effect((_p$) => {
 								var _v$8 = props.muted, _v$9 = props.muted, _v$0 = props.warn ?? "#f59e0b";
-								_v$8 !== _p$.e && (_p$.e = setProp(_el$48, "fg", _v$8, _p$.e));
-								_v$9 !== _p$.t && (_p$.t = setProp(_el$53, "fg", _v$9, _p$.t));
-								_v$0 !== _p$.a && (_p$.a = setProp(_el$59, "fg", _v$0, _p$.a));
+								_v$8 !== _p$.e && (_p$.e = setProp(_el$42, "fg", _v$8, _p$.e));
+								_v$9 !== _p$.t && (_p$.t = setProp(_el$46, "fg", _v$9, _p$.t));
+								_v$0 !== _p$.a && (_p$.a = setProp(_el$51, "fg", _v$0, _p$.a));
 								return _p$;
 							}, {
 								e: void 0,
 								t: void 0,
 								a: void 0
 							});
-							return _el$44;
+							return _el$39;
 						}
-					}), _el$61);
-					insert(_el$61, () => {
+					}), _el$52);
+					insert(_el$52, () => {
 						const currentRow = findRow(tab(), props.selectedId() ?? "");
-						if (currentRow?.cycle !== void 0) return "click or ›/←/→ change · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close";
-						if (currentRow?.action !== void 0) return "enter or space run action · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close";
-						return "[ref] documented reference (read-only) · ↑↓ select · tab next tab · esc close";
+						if (currentRow?.cycle !== void 0) return isPt() ? "clique ou ›/←/→ alterar · ↑↓ selecionar · tab próxima aba · ctrl+s salvar · ctrl+r redefinir · esc fechar" : "click or ›/←/→ change · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close";
+						if (currentRow?.action !== void 0) return isPt() ? "enter ou espaço executar · ↑↓ selecionar · tab próxima aba · ctrl+s salvar · ctrl+r redefinir · esc fechar" : "enter or space run action · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close";
+						return isPt() ? "[ref] política de referência (somente leitura) · ↑↓ selecionar · tab próxima aba · esc fechar" : "[ref] documented reference (read-only) · ↑↓ select · tab next tab · esc close";
 					});
-					effect((_$p) => setProp(_el$61, "fg", props.muted, _$p));
-					return _el$43;
+					effect((_$p) => setProp(_el$52, "fg", props.muted, _$p));
+					return _el$38;
 				})();
 			},
 			get children() {
-				var _el$13 = createElement("box"), _el$14 = createElement("box"), _el$15 = createElement("text"), _el$17 = createElement("box"), _el$18 = createElement("text"), _el$20 = createElement("text"), _el$22 = createElement("box"), _el$23 = createElement("text"), _el$25 = createElement("text"), _el$27 = createElement("box"), _el$28 = createElement("text"), _el$30 = createElement("text");
+				var _el$13 = createElement("box"), _el$14 = createElement("box"), _el$15 = createElement("text"), _el$16 = createElement("box"), _el$17 = createElement("text"), _el$18 = createElement("text"), _el$20 = createElement("box"), _el$21 = createElement("text"), _el$22 = createElement("text"), _el$24 = createElement("box"), _el$25 = createElement("text"), _el$26 = createElement("text");
 				insertNode(_el$13, _el$14);
-				insertNode(_el$13, _el$30);
+				insertNode(_el$13, _el$26);
 				setProp(_el$13, "flexDirection", "column");
 				insertNode(_el$14, _el$15);
-				insertNode(_el$14, _el$17);
+				insertNode(_el$14, _el$16);
+				insertNode(_el$14, _el$18);
 				insertNode(_el$14, _el$20);
 				insertNode(_el$14, _el$22);
-				insertNode(_el$14, _el$25);
-				insertNode(_el$14, _el$27);
+				insertNode(_el$14, _el$24);
 				setProp(_el$14, "flexDirection", "row");
-				insertNode(_el$15, createTextNode(`Keep your changes?  `));
 				setProp(_el$15, "attributes", 1);
-				insertNode(_el$17, _el$18);
-				setProp(_el$17, "backgroundColor", "#fba970");
-				setProp(_el$17, "onMouseDown", () => props.onSave?.());
-				insertNode(_el$18, createTextNode(` Save `));
-				setProp(_el$18, "fg", "#000000");
-				insertNode(_el$20, createTextNode(`  `));
-				insertNode(_el$22, _el$23);
-				setProp(_el$22, "backgroundColor", "#262626");
-				setProp(_el$22, "onMouseDown", () => props.onDiscard?.());
-				insertNode(_el$23, createTextNode(` Discard `));
-				setProp(_el$23, "fg", "#ffffff");
-				insertNode(_el$25, createTextNode(`  `));
-				insertNode(_el$27, _el$28);
-				setProp(_el$27, "backgroundColor", "#262626");
-				setProp(_el$27, "onMouseDown", () => props.onCancelExit?.());
-				insertNode(_el$28, createTextNode(` Keep editing `));
-				setProp(_el$28, "fg", "#ffffff");
-				insertNode(_el$30, createTextNode(`ctrl+s save · d discard the changes · esc keep editing`));
+				insert(_el$15, () => isPt() ? "Deseja salvar as alterações?  " : "Keep your changes?  ");
+				insertNode(_el$16, _el$17);
+				setProp(_el$16, "backgroundColor", "#fba970");
+				setProp(_el$16, "onMouseDown", () => props.onSave?.());
+				setProp(_el$17, "fg", "#000000");
+				insert(_el$17, () => isPt() ? " Salvar " : " Save ");
+				insertNode(_el$18, createTextNode(`  `));
+				insertNode(_el$20, _el$21);
+				setProp(_el$20, "backgroundColor", "#262626");
+				setProp(_el$20, "onMouseDown", () => props.onDiscard?.());
+				setProp(_el$21, "fg", "#ffffff");
+				insert(_el$21, () => isPt() ? " Descartar " : " Discard ");
+				insertNode(_el$22, createTextNode(`  `));
+				insertNode(_el$24, _el$25);
+				setProp(_el$24, "backgroundColor", "#262626");
+				setProp(_el$24, "onMouseDown", () => props.onCancelExit?.());
+				setProp(_el$25, "fg", "#ffffff");
+				insert(_el$25, () => isPt() ? " Continuar editando " : " Keep editing ");
+				insert(_el$26, () => isPt() ? "ctrl+s salvar · d descartar alterações · esc continuar editando" : "ctrl+s save · d discard the changes · esc keep editing");
 				effect((_p$) => {
 					var _v$ = props.warn ?? "#f59e0b", _v$2 = props.muted, _v$3 = props.muted, _v$4 = props.muted;
 					_v$ !== _p$.e && (_p$.e = setProp(_el$15, "fg", _v$, _p$.e));
-					_v$2 !== _p$.t && (_p$.t = setProp(_el$20, "fg", _v$2, _p$.t));
-					_v$3 !== _p$.a && (_p$.a = setProp(_el$25, "fg", _v$3, _p$.a));
-					_v$4 !== _p$.o && (_p$.o = setProp(_el$30, "fg", _v$4, _p$.o));
+					_v$2 !== _p$.t && (_p$.t = setProp(_el$18, "fg", _v$2, _p$.t));
+					_v$3 !== _p$.a && (_p$.a = setProp(_el$22, "fg", _v$3, _p$.a));
+					_v$4 !== _p$.o && (_p$.o = setProp(_el$26, "fg", _v$4, _p$.o));
 					return _p$;
 				}, {
 					e: void 0,
@@ -2582,11 +2728,14 @@ function createWindowController(context, exit) {
 		if (hl.found) {
 			const items = [];
 			for (const group of hl.groups) for (const item of group.items) {
-				const dash = item.indexOf("—");
-				const title = dash !== -1 ? item.slice(0, dash).trim() : item.slice(0, 26);
+				const colon = item.indexOf(": ");
+				const emdash = item.indexOf("—");
+				const sep = colon !== -1 ? colon : emdash;
+				const title = sep !== -1 ? item.slice(0, sep).trim() : item.slice(0, 26);
+				const detail = sep !== -1 ? item.slice(sep + (colon !== -1 ? 2 : 1)).trim() : item;
 				items.push({
 					title,
-					detail: item,
+					detail,
 					group: group.heading ?? void 0
 				});
 			}
@@ -2597,7 +2746,8 @@ function createWindowController(context, exit) {
 		presetTick();
 		return {
 			globalName: readActivePresetMarker(globalActivePresetPath())?.name ?? null,
-			projectName: readActivePresetMarker(projectActivePresetPath())?.name ?? null
+			projectName: readActivePresetMarker(projectActivePresetPath())?.name ?? null,
+			visionModel: readConfiguredVisionModel()
 		};
 	};
 	const updatesInput = () => {
@@ -2614,11 +2764,12 @@ function createWindowController(context, exit) {
 		return input;
 	};
 	const tabs = () => {
-		const lang = tuiPrefs().layout?.language;
+		const rawLang = tuiPrefs().layout?.language;
+		const lang = resolveLanguage(rawLang);
 		return [
-			buildGatesTab(load()),
+			buildGatesTab(load(), lang),
 			buildDecisionTab(decision(), process.env, readAuthProviders(), readConfigProviders(), lang),
-			buildPresetTab(presetInput()),
+			buildPresetTab(presetInput(), lang),
 			buildTuiTab(tuiPrefs(), lang),
 			buildAutonomyTab({
 				goalLoop: goalLoop(),
@@ -2627,14 +2778,24 @@ function createWindowController(context, exit) {
 				languagePref: lang
 			}),
 			buildJ1Tab(process.env, false, lang),
-			buildUpdatesTab(updatesInput()),
-			buildChangelogTab(currentVersion, changelogItems()),
+			buildUpdatesTab({
+				...updatesInput(),
+				languagePref: lang
+			}),
+			buildChangelogTab(currentVersion, changelogItems(), lang),
 			buildDoctorTab({
 				runningVersion: currentVersion,
 				nodeVersion: process.versions.node,
 				load: load()
 			}),
-			buildAboutTab(currentVersion)
+			buildAboutTab(currentVersion, {
+				nodeVersion: process.versions.node,
+				platform: process.platform,
+				preset: readActivePresetMarker(globalActivePresetPath())?.name ?? null,
+				decisionEnabled: decision().config.enabled,
+				j1Mode: process.env.PANTHEON_J1_RISK_SCORE ?? "shadow",
+				languagePref: lang
+			})
 		];
 	};
 	const rows = () => tabRows(tabs()[page()] ?? tabs()[0] ?? EMPTY_TAB);
@@ -2789,6 +2950,16 @@ function createWindowController(context, exit) {
 				reason: error instanceof Error ? error.message : "preset marker write failed"
 			};
 		}
+		if (id === "preset.vision_model") try {
+			writeConfiguredVisionModel(value);
+			setPresetTick((tick) => tick + 1);
+			return { ok: true };
+		} catch (error) {
+			return {
+				ok: false,
+				reason: error instanceof Error ? error.message : "vision model config write failed"
+			};
+		}
 		if (id.startsWith("autonomy.goal_loop.")) {
 			const next = { ...goalLoop() };
 			if (id === "autonomy.goal_loop.enabled") next.enabled = value === "enabled";
@@ -2854,8 +3025,9 @@ function createWindowController(context, exit) {
 		};
 	};
 	const save = () => {
+		const isPt = resolveLanguage(tuiPrefs().layout?.language) === "pt-BR";
 		if (!draftDirty(draft())) {
-			setNotice("nothing staged — ←/→ stages a change first");
+			setNotice(isPt ? "nada pendente — ←/→ altera um valor primeiro" : "nothing staged — ←/→ stages a change first");
 			return;
 		}
 		const writer = dispatchWrite;
@@ -2866,9 +3038,9 @@ function createWindowController(context, exit) {
 			setDecision(readDecisionRouterConfig());
 			setPresetTick((tick) => tick + 1);
 		}
-		if (failed.length > 0) setNotice(`${failed.map((f) => `${f.id}: ${f.reason}`).join(" · ")} — staged changes kept`);
+		if (failed.length > 0) setNotice(`${failed.map((f) => `${f.id}: ${f.reason}`).join(" · ")} — ${isPt ? "alterações mantidas" : "staged changes kept"}`);
 		else {
-			setNotice(`saved ${applied.length} change${applied.length === 1 ? "" : "s"}`);
+			setNotice(isPt ? `salva(s) ${applied.length} alteração(ões)` : `saved ${applied.length} change${applied.length === 1 ? "" : "s"}`);
 			if (confirmExit()) exit();
 		}
 	};

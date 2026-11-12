@@ -3,6 +3,12 @@ import { describe, it } from 'node:test'
 import { buildAutonomyTab } from '../src/plugins/tui/src/autonomy-state.ts'
 import { buildDecisionTab } from '../src/plugins/tui/src/decision-router-state.ts'
 import { buildJ1Tab } from '../src/plugins/tui/src/j1-gate-status.ts'
+import {
+  buildAboutTab,
+  buildChangelogTab,
+  buildGatesTab,
+} from '../src/plugins/tui/src/pantheon-settings-state.ts'
+import { buildPresetTab } from '../src/plugins/tui/src/preset-state.ts'
 import { resolveLanguage, SUPPORTED_LANGUAGES, t } from '../src/plugins/tui/src/settings-i18n.ts'
 import { buildTuiTab, DEFAULT_TUI_PREFS } from '../src/plugins/tui/src/tui-prefs.ts'
 
@@ -89,6 +95,74 @@ describe('Bilingual settings tabs rendering', () => {
     assert.match(monthly.note, /USD para arbitragem/)
     const perDecision = rows.find((r) => r.id === 'autonomy.budget.perDecision')
     assert.equal(perDecision.name, 'Teto por Consulta')
+
+    const soloRow = rows.find((r) => r.id === 'autonomy.gradient.solo')
+    assert.equal(soloRow.name, 'Decisão solo')
+    assert.equal(soloRow.value, 'autônomo')
+
+    const jevRow = rows.find((r) => r.id === 'autonomy.gradient.jev')
+    assert.equal(jevRow.name, 'Decisão Jev')
+    assert.equal(jevRow.value, 'arbitrado')
+
+    const humanRow = rows.find((r) => r.id === 'autonomy.gradient.human')
+    assert.equal(humanRow.name, 'Aprovação humana')
+    assert.equal(humanRow.value, 'revisão humana')
+  })
+
+  it('renders Gates tab localized in pt-BR', () => {
+    const tabPt = buildGatesTab({ global: {}, project: {}, corruptGlobal: false }, 'pt-BR')
+    assert.equal(tabPt.title, 'Gates')
+    assert.equal(tabPt.groups[0].title, 'Skills instaladas')
+    assert.equal(tabPt.groups[1].title, 'Portões de execução')
+  })
+
+  it('renders Preset tab localized in pt-BR', () => {
+    const tabPt = buildPresetTab({ globalName: 'go-fast', projectName: null }, 'pt-BR')
+    assert.equal(tabPt.title, 'Preset')
+    assert.equal(tabPt.groups[0].title, 'Predefinição de modelo')
+    const presetRow = tabPt.groups[0].rows.find((r) => r.id === 'preset')
+    assert.equal(presetRow.name, 'Predefinição')
+    assert.match(presetRow.note, /gravação atômica/)
+  })
+
+  it('renders About tab localized in pt-BR with rich system metadata', () => {
+    const tabPt = buildAboutTab('2.0.4', {
+      nodeVersion: '26.4.0',
+      platform: 'linux',
+      preset: 'go-fast',
+      decisionEnabled: true,
+      j1Mode: 'enforce',
+      languagePref: 'pt-BR',
+    })
+    assert.equal(tabPt.title, 'Sobre')
+    assert.equal(tabPt.groups[0].title, 'Sistema & Plataforma')
+    assert.equal(tabPt.groups[1].title, 'Governança & Roteamento')
+    assert.equal(tabPt.groups[2].title, 'Projeto & Referências')
+
+    const rows = tabPt.groups.flatMap((g) => g.rows)
+    assert.equal(rows.find((r) => r.id === 'about.version').name, 'Versão')
+    assert.equal(rows.find((r) => r.id === 'about.behaviors').name, 'Comportamentos')
+    assert.equal(rows.find((r) => r.id === 'about.preset').value, 'go-fast')
+    assert.equal(rows.find((r) => r.id === 'about.decision').value, 'ativado')
+    assert.equal(rows.find((r) => r.id === 'about.j1').value, 'enforce')
+  })
+
+  it('renders Changelog tab cleanly without duplicated titles', () => {
+    const tabPt = buildChangelogTab(
+      '2.0.4',
+      [
+        {
+          title: 'Container & JupyterHub Support',
+          detail: 'Auto-detect environments and relax directory trust checks.',
+        },
+      ],
+      'pt-BR',
+    )
+    assert.equal(tabPt.title, 'Changelog')
+    assert.equal(tabPt.groups[0].title, 'Novidades na versão v2.0.4')
+    const itemRow = tabPt.groups[0].rows[0]
+    assert.equal(itemRow.value, '', 'value column is empty to avoid title overlap')
+    assert.equal(itemRow.note, 'Auto-detect environments and relax directory trust checks.')
   })
 
   it('renders J1 safety tab localized in pt-BR', () => {

@@ -41,7 +41,7 @@ const TOOL_DESCRIPTION =
   'Advisory discovery tool for skills. Queries installed Pantheon skills and external ' +
   'registries (Anthropic catalog, skills.sh, GitHub). Returns matched skill IDs, ' +
   'descriptions, install counts, and provenance tiers. Zeus uses this to recommend ' +
-  'skills before prompting the user to install.'
+  'project-scoped skills (.agents/skills/) before proactively prompting the user via the question tool.'
 
 const SKILL_SEARCH_INPUT_SCHEMA: Record<string, unknown> = {
   type: 'object',
@@ -159,7 +159,7 @@ export function executeSkillSearch(input: Record<string, unknown>): SkillSearchO
             installed: false,
             installs: entry.installs ?? null,
             url: entry.url,
-            installCommand: `npx skills add ${entry.skill} -a opencode`,
+            installCommand: `npx skills add ${entry.skill} -a opencode -y`,
           })
         }
       }
