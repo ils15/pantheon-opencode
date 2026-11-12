@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 
-## [v2.1.0] - 2026-11-11
+## [v2.0.4] - 2026-11-12
 
 ### 🆕 What's New
 
