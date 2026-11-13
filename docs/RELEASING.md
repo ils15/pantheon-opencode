@@ -1,6 +1,51 @@
 # Pantheon Release Process
 
-> How versioning, releases, and packaging work.
+> 🇧🇷 **Versão em Português disponível:** [Leia em Português](pt-BR/RELEASING.md)
+
+> How versioning, releases, branching strategy, and packaging work.
+
+---
+
+## Branching & Release Buffering Strategy (Trunk-Based Delivery)
+
+Pantheon adopts a **Trunk-Based Delivery with Release Buffering** workflow. All development occurs on short-lived feature branches, lands on `main` via reviewed Pull Requests, buffers new capabilities in the `[Unreleased]` changelog section, and releases to npm/GitHub exclusively when a maintainer explicitly decides to cut a release:
+
+```mermaid
+flowchart TD
+    subgraph FeatureBranches["🛠️ Short-Lived Feature Branches"]
+        B1["feat/cookbook-expansion"]
+        B2["feat/new-mcp-enhancement"]
+        B3["fix/session-cleanup"]
+    end
+
+    subgraph PullRequests["📋 Pull Requests & CI Verification"]
+        PR1["PR #432"]
+        PR2["PR #433"]
+        PR3["PR #434"]
+    end
+
+    B1 --> PR1
+    B2 --> PR2
+    B3 --> PR3
+
+    PR1 & PR2 & PR3 -->|"10/10 CI Checks PASS"| Main["🌿 main (Stable Trunk)"]
+
+    subgraph Buffer["📦 Release Buffer"]
+        Main -->|"Automated Accumulation"| Unreleased["CHANGELOG.md [Unreleased]"]
+    end
+
+    subgraph ReleaseGate["🔒 Explicit Release Cut Gate"]
+        Unreleased -->|"Human Maintainer Decision: CUT"| Script["node scripts/versioning.mjs apply minor"]
+        Script --> Tag["Git Tag: vX.Y.Z"]
+        Tag --> Publish["🚀 Release Workflow (npm + GitHub Release)"]
+    end
+```
+
+### Core Principles:
+1. **`main` is Always Tested & Deployable:** Code in `main` is never broken. Every merge must pass all 10 CI checks (`validate`, `test-suite`, `plugin-ts-coverage`, `security-scan`, `commitlint`, `CodeQL`, etc.).
+2. **Merges Do NOT Trigger Package Releases:** Merging a PR into `main` automatically triggers documentation updates on GitHub Pages (`latest`), but **never publishes to npm** or creates release tags.
+3. **Buffering in `[Unreleased]`:** Completed features accumulate in the `## [Unreleased]` section of `CHANGELOG.md` until the maintainer decides the milestone is complete.
+4. **Explicit Release Cutting:** A release is only triggered when the maintainer runs the release script (`node scripts/versioning.mjs apply [patch|minor|major]`), which promotes `[Unreleased]` to the new version header, synchronizes manifests, and creates the release tag.
 
 ---
 

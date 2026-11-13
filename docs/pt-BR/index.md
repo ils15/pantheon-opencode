@@ -56,3 +56,14 @@ O **Pantheon** é um framework de orquestração multi-agente para o **OpenCode*
 | Custos de desempenho e ajustes de velocidade | [Desempenho](../reference/performance.md) |
 | Variáveis de ambiente que configuram o comportamento do Pantheon | [Variáveis de Ambiente](../reference/env-vars.md) |
 | Execução em Code Mode para operações de alto volume | [Code Mode](../reference/code-mode.md) |
+
+---
+
+## Projeto & Governança
+
+| Tópico | Documento |
+|---|---|
+| Estratégia de branches e processo de corte de releases | [Processo de Release](RELEASING.md) |
+| Regras de proteção e validação na branch `main` | [Proteção de Branches](BRANCH-PROTECTION.md) |
+| Registro de versões e histórico de mudanças | [Changelog](https://github.com/ils15/pantheon-opencode/blob/main/CHANGELOG.md) |
+| Como contribuir com o projeto | [Como Contribuir](https://github.com/ils15/pantheon-opencode/blob/main/CONTRIBUTING.md) |

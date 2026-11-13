@@ -119,4 +119,7 @@ nav:
           - Arquitetura: pt-BR/ARCHITECTURE.md
           - Servidores MCP: pt-BR/MCP.md
           - Memória: pt-BR/MEMORY.md
+      - Governança & Release:
+          - Processo de Release: pt-BR/RELEASING.md
+          - Proteção da Branch main: pt-BR/BRANCH-PROTECTION.md
   - Contributing: https://github.com/ils15/pantheon-opencode/blob/main/CONTRIBUTING.md
