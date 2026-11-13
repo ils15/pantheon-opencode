@@ -42,6 +42,13 @@ plugins:
 extra:
   version:
     provider: mike
+  alternate:
+    - name: English
+      link: /pantheon-opencode/latest/
+      lang: en
+    - name: Português (Brasil)
+      link: /pantheon-opencode/latest/pt-BR/
+      lang: pt
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/ils15/pantheon-opencode
@@ -49,7 +56,11 @@ extra:
 markdown_extensions:
   - admonition
   - pymdownx.details
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
   - toc:
@@ -64,6 +75,7 @@ nav:
       - Upgrading (Português): UPGRADING.pt-BR.md
   - Guides & Tutorials:
       - First Project (End-to-End): guides/first-project.md
+      - Fast CLI Utility (@talos): guides/cli-tool.md
       - Agent Capability Matrix: AGENT-CAPABILITY-MATRIX.md
       - Deepwork Blueprint: guides/deepwork.md
       - Pantheon Vision: guides/vision.md
@@ -98,8 +110,13 @@ nav:
           - Atualização: UPGRADING.pt-BR.md
       - Guias & Tutoriais:
           - Primeiro Projeto (Ponta a Ponta): pt-BR/guides/first-project.md
+          - Utilitário CLI (@talos): pt-BR/guides/cli-tool.md
           - Matriz de Agentes: pt-BR/AGENT-CAPABILITY-MATRIX.md
           - Blueprint Deepwork: pt-BR/guides/deepwork.md
           - Visão Multimodal: pt-BR/guides/vision.md
           - Livro de Receitas (Cookbook): pt-BR/guides/cookbook.md
+      - Sistema & Ferramentas:
+          - Arquitetura: pt-BR/ARCHITECTURE.md
+          - Servidores MCP: pt-BR/MCP.md
+          - Memória: pt-BR/MEMORY.md
   - Contributing: https://github.com/ils15/pantheon-opencode/blob/main/CONTRIBUTING.md

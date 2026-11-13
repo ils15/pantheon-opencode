@@ -1,10 +1,34 @@
 # MCP Servers
 
+> 🇧🇷 **Versão em Português disponível:** [Leia em Português](pt-BR/MCP.md)
+
 Pantheon ships five local Python stdio MCP servers. They auto-start with
 OpenCode and cover project memory, persistence, resources, confined script
 execution, and vision. This page owns MCP setup, entrypoints, allowlists, and
 pins. Tool signatures live in [MCP Tools](mcp-tools.md); memory policy lives in
 [Memory](MEMORY.md).
+
+```mermaid
+flowchart LR
+    Host["💻 OpenCode 2.x Host Engine"]
+
+    subgraph MCP_Venv["🐍 Isolated Python venv (FastMCP 4.1.2 & MCP 2.2.0)"]
+        Res["📦 pantheon-resources<br/>(Templates, schemas & prompts)"]
+        Code["⚡ pantheon-code-mode<br/>(Confined scripts & approvals)"]
+        Mem["🧠 pantheon-memory<br/>(SQLite FTS5 durable facts)"]
+        Pers["💾 pantheon-persistence<br/>(Session checkpoints & goals)"]
+        Vis["👁️ pantheon-vision<br/>(Local image inspection)"]
+    end
+
+    Host <-->|"stdio (JSON-RPC)"| Res
+    Host <-->|"stdio (JSON-RPC)"| Code
+    Host <-->|"stdio (JSON-RPC)"| Mem
+    Host <-->|"stdio (JSON-RPC)"| Pers
+    Host <-->|"stdio (JSON-RPC)"| Vis
+
+    Mem <--> DB1[("memory.db")]
+    Pers <--> DB2[("persistence.db")]
+```
 
 ## Runtime pins
 

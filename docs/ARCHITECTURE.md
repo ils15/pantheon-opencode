@@ -1,5 +1,7 @@
 # Architecture
 
+> 🇧🇷 **Versão em Português disponível:** [Leia em Português](pt-BR/ARCHITECTURE.md)
+
 **Audience:** developers extending Pantheon and anyone who wants to know how the
 pieces fit. Setup is in [Installation](INSTALLATION.md); user-facing 2.x behavior
 is in [OpenCode 2.x](opencode.md).
@@ -9,19 +11,32 @@ is in [OpenCode 2.x](opencode.md).
 Pantheon replaces the single-agent coding loop with a conductor and
 specialists.
 
-```text
-User request
-    │
-    ▼
-  Zeus ──► Athena (plan) ──► implementation specialists ──► Themis (review)
-    │                              │
-    ├──► Apollo (discovery)        ├──► Hermes (backend)
-    ├──► Iris (GitHub)             ├──► Aphrodite (frontend)
-    ├──► Mnemosyne (memory)        ├──► Demeter (database)
-    └──► Talos (hotfix)            ├──► Prometheus (infrastructure)
-                                   ├──► Hephaestus (AI pipelines)
-                                   ├──► Nyx (observability)
-                                   └──► Gaia (remote sensing, read-only)
+```mermaid
+flowchart TD
+    User(["👤 User Request"]) --> Zeus["⚡ Zeus (Conductor)"]
+
+    Zeus -->|"Planning"| Athena["🏛️ Athena (Plan)"]
+    Zeus -->|"Discovery"| Apollo["🔍 Apollo (Discovery)"]
+    Zeus -->|"Hotfix (Express)"| Talos["🛡️ Talos (Hotfix)"]
+    Zeus -->|"Memory Management"| Mnemosyne["🧠 Mnemosyne (Memory)"]
+    Zeus -->|"Git/GitHub PRs"| Iris["🌈 Iris (GitHub)"]
+
+    Athena -.->|"Approved Plan"| Zeus
+    Zeus -->|"Implementation"| Specialists
+
+    subgraph Specialists["🛠️ Implementation Specialists"]
+        Hermes["✉️ Hermes (Backend)"]
+        Aphrodite["🎨 Aphrodite (Frontend)"]
+        Demeter["🌾 Demeter (Database)"]
+        Prometheus["🔥 Prometheus (Infra)"]
+        Hephaestus["🔨 Hephaestus (AI Pipelines)"]
+        Nyx["🌙 Nyx (Observability)"]
+        Gaia["🌍 Gaia (Remote Sensing)"]
+    end
+
+    Specialists -->|"Material & Sensitive Changes"| Themis["⚖️ Themis (Review & Audit)"]
+    Themis -->|"PASS Verdict"| Zeus
+    Zeus -->|"Delivery & Summary"| User
 ```
 
 Zeus orchestrates but never implements. He routes bounded work to one
@@ -113,6 +128,24 @@ delegation audit), and a `permission.evaluate` hook when the host exposes it.
 The entry constructs the idle todo enforcer itself when the host's `session`
 domain exposes what it needs; where it does not, the gap is reported as
 `idle-todo-enforcer`.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Host as OpenCode 2.x Host
+    participant Plugin as Pantheon Plugin
+    participant Guard as Execute Guards
+    participant Agent as Specialist Agent
+
+    Host->>Plugin: tool.execute.before
+    Plugin->>Guard: Read-only guard (blocks Zeus from direct source/test reads)
+    Guard-->>Host: Allow / Deny
+    Host->>Agent: Execute tool or subagent
+    Agent-->>Host: Return raw tool output
+    Host->>Plugin: tool.execute.after
+    Plugin->>Guard: task-result-guard → context-sandbox → read-enhancer
+    Guard-->>Host: Sanitized, bounded and enriched result
+```
 
 ## Installer and config model
 
