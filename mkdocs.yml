@@ -59,6 +59,12 @@ nav:
       - Quick Start: QUICKSTART.md
       - Upgrading: UPGRADING.md
       - Upgrading (Português): UPGRADING.pt-BR.md
+  - Guides & Tutorials:
+      - First Project (End-to-End): guides/first-project.md
+      - Agent Capability Matrix: AGENT-CAPABILITY-MATRIX.md
+      - Deepwork Blueprint: guides/deepwork.md
+      - Pantheon Vision: guides/vision.md
+      - Practical Cookbook: guides/cookbook.md
   - Compatibility: COMPATIBILITY.md
   - Architecture: ARCHITECTURE.md
   - Agents & Skills: agents/README.md

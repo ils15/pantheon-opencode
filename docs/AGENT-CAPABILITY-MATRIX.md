@@ -1,10 +1,36 @@
-# Matriz de Capacidades dos Agentes do Pantheon (OpenCode 2.x)
+# Matriz de Capacidades dos Agentes do Pantheon
 
-Esta matriz consolida a autoridade de domínio, permissões no host, MCPs permitidos e restrições absolutas de cada um dos 14 agentes canônicos do Pantheon.
+Esta matriz consolida a autoridade de domínio, permissões no host, MCPs permitidos e restrições absolutas de cada um dos 14 agentes canônicos do Pantheon no OpenCode.
 
 ---
 
-## 1. Visão Geral de Permissões e Ferramentas
+## 1. Fluxograma de Decisão: Quem Acionar?
+
+Use este guia visual para escolher o especialista certo para o seu objetivo:
+
+```mermaid
+flowchart TD
+    Start(["🎯 Qual é o seu objetivo?"]) --> Type{Tipo de Tarefa}
+
+    Type -->|"Feature grande / Múltiplos arquivos"| Zeus["⚡ @zeus (Orquestrador)"]
+    Type -->|"Planejamento / Arquitetura prévia"| Athena["🏛️ @athena (Arquiteta)"]
+    Type -->|"Bug pequeno / Typo / Ajuste cirúrgico"| Talos["⚡ @talos (Hotfix Express)"]
+    Type -->|"Backend / API / Regra de Negócio"| Hermes["✉️ @hermes (Backend TDD)"]
+    Type -->|"Frontend / React / CSS / Acessibilidade"| Aphrodite["🎨 @aphrodite (Frontend UX)"]
+    Type -->|"Banco de dados / SQL / Migrations"| Demeter["🌾 @demeter (Database)"]
+    Type -->|"Auditoria pré-PR / Testes / Segurança"| Themis["⚖️ @themis (Auditora)"]
+    Type -->|"Docker / CI/CD / GitHub Actions"| Prometheus["🔥 @prometheus (DevOps)"]
+    Type -->|"Investigar código sem alterar nada"| Apollo["🔍 @apollo (Read-Only)"]
+
+    Zeus -->|"Delega planejamento"| Athena
+    Athena -->|"Pesquisa de código"| Apollo
+    Zeus -->|"Despacha implementação"| Hermes & Aphrodite & Demeter & Prometheus
+    Hermes & Aphrodite & Demeter -->|"Submete para auditoria"| Themis
+```
+
+---
+
+## 2. Visão Geral de Permissões e Ferramentas
 
 | Agente | Domínio | Edit Code? | Bash / Shell? | Subagentes (`task`) | Question Tool? | MCPs Permitidos |
 |---|---|:---:|:---:|:---:|:---:|---|

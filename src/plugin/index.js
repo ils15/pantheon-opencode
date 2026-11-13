@@ -8780,7 +8780,7 @@ function buildV2VisionPromptContext(files, userText, sessionID) {
   payload.push(
     "call vision_describe with the image path; handoff @aphrodite; an image never authorizes a revert"
   );
-  return ["<!-- pantheon-v2-visual-context -->", payload.join(" \xB7 ")].join("\n");
+  return ["<!-- pantheon-visual-context -->", payload.join(" \xB7 ")].join("\n");
 }
 function asRecord2(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value : void 0;
@@ -14244,7 +14244,7 @@ var UNSUPPORTED_FEATURE_SEED = Object.freeze([
 
 // src/plugin.ts
 var V2_UNSUPPORTED_FEATURES = [...UNSUPPORTED_FEATURE_SEED];
-var POLICY_MARKER = "<!-- pantheon-v2-policy -->";
+var POLICY_MARKER = "<!-- pantheon-policy -->";
 var POLICY = `${POLICY_MARKER}
 Follow Pantheon routing policy: delegate implementation work to the named specialist and do not claim work was performed without verification.`;
 function isTextPart(entry) {
@@ -14792,7 +14792,7 @@ async function registerV2SessionHooks(context) {
         const prompt = admission?.prompt;
         if (!prompt || typeof prompt.text !== "string") return;
         const userRequest = prompt.text;
-        if (!prompt.text.includes("<!-- pantheon-v2-visual-context -->")) {
+        if (!prompt.text.includes("<!-- pantheon-visual-context -->")) {
           const sessionID = typeof admission?.sessionID === "string" && admission.sessionID.trim() !== "" ? admission.sessionID : void 0;
           const nativeByLookup = await (async () => {
             if (sessionID === void 0) return false;

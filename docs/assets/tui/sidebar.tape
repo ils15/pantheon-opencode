@@ -1,15 +1,15 @@
-# docs/assets/tui/v2-sidebar.tape
+# docs/assets/tui/sidebar.tape
 #
 # STATUS: UNVERIFIED — no image has been produced from this tape. See
 # docs/internal/validation.md#tui-media-gap for the blocker record.
 #
-# Target slot: docs/opencode-v2.md#dispatch-sidebar-block (media slug
-# `opencode-v2-dispatch-sidebar`).
-# Output: v2-sidebar.gif + sidebar-dispatch-block.png (this directory).
+# Target slot: docs/opencode.md#dispatch-sidebar-block (media slug
+# `opencode-dispatch-sidebar`).
+# Output: sidebar.gif + sidebar-dispatch-block.png (this directory).
 #
 # Requirements:
 #   - vhs, ttyd and ffmpeg on PATH (`npm run docs:media --check`);
-#   - an isolated install prepared by scripts/test-opencode-v2-sandbox.sh
+#   - an isolated install prepared by scripts/test-opencode-sandbox.sh
 #     --prepare, started by ~/pantheon-sandbox/start-pantheon.sh;
 #   - a provider credential *inside that sandbox HOME*.
 #
@@ -22,7 +22,7 @@
 # stable in shape, not in value. The prompt and sleeps may need retuning on a
 # slower host — do not shorten them to "make it fit".
 
-Output v2-sidebar.gif
+Output sidebar.gif
 
 Set Shell "bash"
 Set FontSize 14

@@ -1,0 +1,71 @@
+{
+  "plan_id": "PLAN_001_metrics-dashboard",
+  "created_at": "2026-11-13T08:00:00Z",
+  "intent": "Implementar dashboard SaaS com métricas operacionais e exportação CSV",
+  "tier": "lite",
+  "done_when": [
+    "npm test passa com 100% de sucesso",
+    "GET /api/metrics retorna dados formatados",
+    "GET /api/metrics/export gera streaming CSV com cabeçalhos corretos"
+  ],
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "Especificar modelo de métricas e testes unitários",
+      "specialist": "@hermes",
+      "touches": ["src/server/metrics.mjs", "tests/metrics-api.test.mjs"],
+      "depends_on": [],
+      "parallel_safe": true,
+      "gate": "test",
+      "state": "done",
+      "acceptance": [
+        { "kind": "must", "check": "node --test tests/metrics-api.test.mjs", "fails_now": false }
+      ]
+    },
+    {
+      "id": "T2",
+      "title": "Implementar rotas HTTP e streaming CSV",
+      "specialist": "@hermes",
+      "touches": ["src/server/index.mjs"],
+      "depends_on": ["T1"],
+      "parallel_safe": false,
+      "gate": "test",
+      "state": "done"
+    },
+    {
+      "id": "T3",
+      "title": "Criar componente de UI com Tailwind e acessibilidade WCAG",
+      "specialist": "@aphrodite",
+      "touches": ["src/client/MetricsDashboard.jsx"],
+      "depends_on": ["T2"],
+      "parallel_safe": false,
+      "gate": "lint",
+      "state": "done"
+    },
+    {
+      "id": "T4",
+      "title": "Auditoria de segurança, linters e conformidade pré-merge",
+      "specialist": "@themis",
+      "touches": ["examples/saas-dashboard/"],
+      "depends_on": ["T3"],
+      "parallel_safe": false,
+      "gate": "audit",
+      "state": "done"
+    }
+  ],
+  "decisions_needed": [
+    {
+      "id": "D1",
+      "question": "Formato de codificação do arquivo CSV:",
+      "options": ["(Recomendado) UTF-8 puro", "UTF-8 com BOM"],
+      "selected": "UTF-8 puro",
+      "blocks": ["T2"]
+    }
+  ],
+  "risks": [
+    {
+      "what": "Consumo excessivo de RAM ao exportar volumes massivos",
+      "mitigation": "Streaming por chunks com Readable Stream do Node.js"
+    }
+  ]
+}

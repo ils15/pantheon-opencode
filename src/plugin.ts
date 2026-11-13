@@ -211,7 +211,7 @@ export const V2_UNSUPPORTED_FEATURES: string[] = [...UNSUPPORTED_FEATURE_SEED]
 
 // ─── Constants ───────────────────────────────────────────────────────────
 
-const POLICY_MARKER = '<!-- pantheon-v2-policy -->'
+const POLICY_MARKER = '<!-- pantheon-policy -->'
 const POLICY = `${POLICY_MARKER}\nFollow Pantheon routing policy: delegate implementation work to the named specialist and do not claim work was performed without verification.`
 
 /** 2.0.16 `system` on a session hook payload is `Array<SystemPart>`. */
@@ -1460,7 +1460,7 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
         const prompt = admission?.prompt
         if (!prompt || typeof prompt.text !== 'string') return
         const userRequest = prompt.text
-        if (!prompt.text.includes('<!-- pantheon-v2-visual-context -->')) {
+        if (!prompt.text.includes('<!-- pantheon-visual-context -->')) {
           const sessionID =
             typeof admission?.sessionID === 'string' && admission.sessionID.trim() !== ''
               ? admission.sessionID

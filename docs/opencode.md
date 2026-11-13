@@ -84,7 +84,7 @@ are running.
 
 <!-- media: opencode-v2-dispatch-sidebar
      alt: "Pantheon sidebar with the aggregated Dispatch block: two live child rows and a finished roll-up"
-     source: docs/assets/tui/v2-sidebar.gif (recorded from docs/assets/tui/v2-sidebar.tape)
+     source: docs/assets/tui/sidebar.gif (recorded from docs/assets/tui/sidebar.tape)
      status: pending — no image committed; the fenced sketch below is illustrative
 -->
 

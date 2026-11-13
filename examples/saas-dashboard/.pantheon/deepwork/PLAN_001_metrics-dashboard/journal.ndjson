@@ -1,0 +1,11 @@
+{"event":"plan_created","plan_id":"PLAN_001_metrics-dashboard","timestamp":"2026-11-13T08:00:00Z","by":"@athena"}
+{"event":"decision_prompted","decision_id":"D1","question":"Formato de codificação do arquivo CSV:","timestamp":"2026-11-13T08:00:05Z","by":"@zeus"}
+{"event":"decision_resolved","decision_id":"D1","selection":"UTF-8 puro","timestamp":"2026-11-13T08:00:12Z","by":"user"}
+{"event":"task_started","task_id":"T1","specialist":"@hermes","timestamp":"2026-11-13T08:00:15Z"}
+{"event":"task_completed","task_id":"T1","evidence":{"check":"node --test tests/metrics-api.test.mjs","exit_code":0},"timestamp":"2026-11-13T08:02:10Z"}
+{"event":"task_started","task_id":"T2","specialist":"@hermes","timestamp":"2026-11-13T08:02:15Z"}
+{"event":"task_completed","task_id":"T2","evidence":{"check":"node --test tests/metrics-api.test.mjs","exit_code":0},"timestamp":"2026-11-13T08:03:40Z"}
+{"event":"task_started","task_id":"T3","specialist":"@aphrodite","timestamp":"2026-11-13T08:03:45Z"}
+{"event":"task_completed","task_id":"T3","evidence":{"wcag_check":"PASS"},"timestamp":"2026-11-13T08:05:00Z"}
+{"event":"task_started","task_id":"T4","specialist":"@themis","timestamp":"2026-11-13T08:05:05Z"}
+{"event":"task_completed","task_id":"T4","verdict":"PASS","timestamp":"2026-11-13T08:05:40Z"}

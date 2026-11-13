@@ -59,7 +59,7 @@ Presented to user for confirmation before starting:
   - [ ] Observable completion condition
   - [ ] Test verification passes cleanly
 - **Open Questions (with Recommended Defaults):**
-  - [Question]? *(Default: [Recommended choice] — proceed if no objections)*
+  - [Question]? *(Default: [Recommended choice] — interactively confirmed via question tool)*
 ```
 
 ---
@@ -70,7 +70,9 @@ Presented to user for confirmation before starting:
 2. **Tier 2 Requires `>>`:** Only explicit `>>` prefix requests trigger user-visible contract confirmation.
 3. **Language Consistency:** Always preserve the user's language (PT-BR requests produce PT-BR briefs).
 4. **Fail-Open:** Any error during refinement falls back to the original prompt without blocking.
-5. **Interactive Questioning & Ambiguity Resolution:**
-   - Whenever prompt refinement requires user disambiguation or confirmation of critical trade-offs, **always invoke the native `question` tool** with structured choices and marked defaults.
+5. **Interactive Questioning & Ambiguity Resolution (MANDATORY `question` tool):**
+   - Whenever prompt refinement or planning surfaces Open Questions (`decisions_needed`), trade-offs, or scope choices, **NEVER leave them as inert text bullets in chat** or assume "proceed if no objections".
+   - You **MUST ALWAYS invoke the native `question` tool** with structured choices, placing the recommended choice first and marking it with `(Recomendado)`.
+   - The user selects choices with 1 click/Enter, and the selections are recorded as audited decisions.
    - With decision router active, use `pantheon_jev_decide` (mode: `choice`) for internal candidate scoring.
-   - Non-blocking minor gaps use sensible declared defaults without stalling the flow.
+   - Non-blocking minor gaps without meaningful user trade-offs use sensible declared defaults without stalling the flow.
