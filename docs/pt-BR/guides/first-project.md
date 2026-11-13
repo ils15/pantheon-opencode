@@ -109,15 +109,44 @@ Com as setas do teclado e `Enter`, você responde em 3 segundos. Suas escolhas s
 
 O Zeus agora despacha as tarefas em paralelo ou em sequência:
 
-* **Backend com @hermes:**
-  - Escreve os testes unitários (`tests/metrics.test.ts`) em estado de falha (RED).
-  - Implementa a rota do endpoint (`src/api/metrics.ts`) até o teste ficar verde (GREEN).
-  - Refatora preservando tipos estritos no TypeScript.
+* **Backend com @hermes (TDD):**
+  - Escreve os testes unitários primeiro em `tests/metrics-api.test.mjs` (RED):
+    ```javascript
+    import { describe, it } from 'node:test'
+    import assert from 'node:assert/strict'
+    import { getMetricsSnapshot } from '../src/server/metrics.mjs'
+
+    describe('Metrics Service', () => {
+      it('retorna array de métricas válido', () => {
+        const metrics = getMetricsSnapshot()
+        assert.ok(Array.isArray(metrics), 'deve ser um array')
+        assert.strictEqual(metrics.length, 4, 'deve retornar 4 métricas chave')
+      })
+    })
+    ```
+  - Implementa a lógica e streaming em `src/server/metrics.mjs` (GREEN):
+    ```javascript
+    export function streamMetricsCsv(destination) {
+      const items = getMetricsSnapshot()
+      const header = 'id,name,category,value,unit,changePercent,updatedAt\n'
+      const stream = new Readable({
+        read() {
+          this.push(header)
+          for (const item of items) {
+            this.push(`"${item.id}","${item.name}","${item.category}",${item.value},"${item.unit}",${item.changePercent},"${item.updatedAt}"\n`)
+          }
+          this.push(null)
+        },
+      })
+      stream.pipe(destination)
+    }
+    ```
+  - Roda os testes: `node --test tests/metrics-api.test.mjs` passa 5/5.
 
 * **Frontend com @aphrodite:**
-  - Cria o componente do painel visual (`src/components/MetricsDashboard.tsx`).
-  - Aplica Tailwind CSS com suporte a dark mode e acessibilidade WCAG.
-  - Adiciona o botão de download do CSV com feedback visual de carregamento.
+  - Cria o componente visual (`src/client/MetricsDashboard.jsx`).
+  - Aplica Tailwind CSS com suporte a dark mode, navegação por teclado e conformidade WCAG AA.
+  - Adiciona botão de download com feedback visual de progresso.
 
 ---
 

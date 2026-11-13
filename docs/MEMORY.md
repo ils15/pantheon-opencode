@@ -1,6 +1,33 @@
 # Pantheon Memory
 
+> 🇧🇷 **Versão em Português disponível:** [Leia em Português](pt-BR/MEMORY.md)
+
 Pantheon has three separate context stores. Use the smallest one that fits:
+
+```mermaid
+flowchart TD
+    subgraph L1["📦 Tier 1: Session Checkpoints & Ephemeral State"]
+        Pers["💾 pantheon-persistence MCP<br/>(persistence.db)"]
+        Checkpoints["• Context checkpoints (context_save / get)<br/>• Session goals & transient key/values<br/>• Default TTL: 4 hours"]
+        Pers --- Checkpoints
+    end
+
+    subgraph L2["🧠 Tier 2: Durable Factual Memory (Long-Term)"]
+        Mem["SQLite FTS5 / BM25 (memory.db)"]
+        Facts["• Reusable project decisions & facts<br/>• Capped at 64 KiB per entry<br/>• Lexical BM25 search without vector overhead"]
+        Mem --- Facts
+    end
+
+    subgraph L3["📂 Tier 3: Human-Reviewed On-Disk Memory Bank"]
+        Bank[".pantheon/memory-bank/"]
+        Files["• ADRs (Architecture Decision Records)<br/>• Sprint & product context<br/>• Git-tracked files read on demand via pantheon-resources"]
+        Bank --- Files
+    end
+
+    Agents["🤖 Specialist Agents"] -->|"Phase state"| L1
+    Agents -->|"Fast fact retrieval"| L2
+    Agents -->|"On-demand reading"| L3
+```
 
 | Store | Lifetime | Use |
 |---|---|---|

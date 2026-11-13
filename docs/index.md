@@ -12,6 +12,7 @@ of repeating it.
 | If you want to… | Read |
 |---|---|
 | Build your first real project end-to-end (scaffold → UI → skills → deploy → metrics) | [First Project Guide](guides/first-project.md) |
+| Build a zero-dependency, testable CLI tool with the Fast Lane (`@talos`) | [Fast CLI Utility](guides/cli-tool.md) |
 | Know exactly what each of the 14 agents can and cannot do | [Agent Capability Matrix](AGENT-CAPABILITY-MATRIX.md) |
 | Master structured planning, Mermaid DAGs, and interactive approvals | [Deepwork Blueprint](guides/deepwork.md) |
 | Inspect images and screenshots without prompt clutter or artifacts | [Pantheon Vision](guides/vision.md) |

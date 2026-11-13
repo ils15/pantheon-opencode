@@ -93,14 +93,43 @@ Once you select your choice and approve the plan, implementation begins.
 
 `@zeus` dispatches implementation tasks:
 
-1. **Backend via `@hermes` (TDD)**:
-   - Writes test first: `tests/metrics-api.test.mjs` (RED).
-   - Implements endpoints and streaming CSV: `src/server/index.mjs` and `metrics.mjs` (GREEN).
-   - Runs tests: `npm test` passes 5/5.
+### 1. Backend via `@hermes` (TDD)
+- Writes unit tests first in `tests/metrics-api.test.mjs` (RED):
+```javascript
+import { describe, it } from 'node:test'
+import assert from 'node:assert/strict'
+import { getMetricsSnapshot } from '../src/server/metrics.mjs'
 
-2. **Frontend via `@aphrodite`**:
-   - Implements accessible React 19 component: `src/client/MetricsDashboard.jsx`.
-   - Ensures semantic markup, keyboard navigation, and WCAG AA contrast.
+describe('Metrics Service', () => {
+  it('returns valid metrics array', () => {
+    const metrics = getMetricsSnapshot()
+    assert.ok(Array.isArray(metrics), 'should be an array')
+    assert.strictEqual(metrics.length, 4, 'should return 4 key metrics')
+  })
+})
+```
+- Implements streaming CSV pipeline in `src/server/metrics.mjs` and Fastify routes in `src/server/index.mjs` (GREEN):
+```javascript
+export function streamMetricsCsv(destination) {
+  const items = getMetricsSnapshot()
+  const header = 'id,name,category,value,unit,changePercent,updatedAt\n'
+  const stream = new Readable({
+    read() {
+      this.push(header)
+      for (const item of items) {
+        this.push(`"${item.id}","${item.name}","${item.category}",${item.value},"${item.unit}",${item.changePercent},"${item.updatedAt}"\n`)
+      }
+      this.push(null)
+    },
+  })
+  stream.pipe(destination)
+}
+```
+- Runs test suite: `node --test tests/metrics-api.test.mjs` passes 5/5.
+
+### 2. Frontend via `@aphrodite`
+- Implements accessible React 19 component: `src/client/MetricsDashboard.jsx`.
+- Ensures semantic markup, keyboard navigation, and WCAG AA contrast.
 
 ---
 
