@@ -55,10 +55,10 @@ skills:
     - In Scope, Out of Scope & Negative Constraints
     - Acceptance Criteria
     - Open Questions with Recommended Defaults
-  - **MANDATORY `question` tool:** Always invoke the native `question` tool with structured choices (e.g. `["Aprovar escopo e iniciar execução", "Ajustar escopo/premissas"]`) to obtain explicit user confirmation before dispatching implementers.
+  - **MANDATORY `question` tool:** When Open Questions, decisions needed, or scope trade-offs are present, ALWAYS invoke the native `question` tool with structured choices (marking the recommended choice with `(Recomendado)`) alongside the execution approval question (e.g. `["(Recomendado) Aprovar escopo e iniciar execução", "Ajustar escopo/premissas"]`). NEVER leave open questions as inert text bullets in chat and proceed blindly.
 - **Ambiguous or Multi-Concern Prompts (Tier 1 Silent Lean):**
   - When a request mixes refactor/fix/redesign without clear acceptance criteria, extract internal lean brief (Target, Slices, Constraints, Verification, Defaults).
-  - If ambiguity blocks safe execution or presents critical trade-offs, **always invoke the native `question` tool** with concrete options rather than making blind assumptions or writing plain-text questions.
+  - If ambiguity blocks safe execution or presents critical trade-offs, **always invoke the native `question` tool** with concrete options (recommended option first) rather than making blind assumptions or writing plain-text questions.
 
 ## Fast-Path Direct Implementation (Default Coding Workflow)
 
@@ -133,5 +133,7 @@ Whenever the user explicitly asks for a plan, or starts `/pantheon-deepwork`:
    - **Execution Flow:** Mermaid diagram (3-4 nodes).
    - **Slice Table:** Compact table (`Phase | Specialist | Key Deliverable | Verification Slice`).
    - **Disk Blueprint:** Clear reference that the exhaustive technical spec is preserved in `.pantheon/deepwork/<slug>/PLAN.md`.
-5. **Interactive Question Gate:** Always invoke the native `question` tool to request user approval with explicit options (e.g., `["Aprovar e iniciar execução", "Ajustar plano"]` / `["Approve and begin execution", "Adjust plan"]`), falling back to plain text only if the tool is not exposed.
+5. **Interactive Question Gate (MANDATORY `question` tool):**
+   - **Open Questions & Decisions Needed:** If the plan, task brief, or refinement contains any Open Questions or `decisions_needed`, **NEVER leave them as inert text bullets** in chat or assume "proceed if no objections". You MUST decompose each open question into an interactive item in the native `question` tool with concrete options, marking the recommended choice with `(Recomendado)`.
+   - **Plan Approval Gate:** Alongside any open questions, include the approval question with explicit options (e.g., `["(Recomendado) Aprovar e iniciar execução", "Ajustar plano"]` / `["(Recommended) Approve and begin execution", "Adjust plan"]`), falling back to plain text only if the tool is not exposed.
 6. If the user requests changes, send feedback to Athena, update `.pantheon/deepwork/<slug>/PLAN.md`, and repeat the interactive gate.

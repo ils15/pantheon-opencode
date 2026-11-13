@@ -9,6 +9,7 @@ and teams who want useful structure without giving up speed or control of their 
 [Repository](https://github.com/ils15/pantheon-opencode) · [MIT License](LICENSE)
 
 [![Version](https://img.shields.io/github/v/release/ils15/pantheon-opencode?label=version)](https://github.com/ils15/pantheon-opencode/releases/latest)
+[![Docs](https://img.shields.io/badge/docs-portal-indigo)](https://ils15.github.io/pantheon-opencode/)
 [![CI](https://img.shields.io/github/actions/workflow/status/ils15/pantheon-opencode/ci.yml?branch=main&label=CI)](https://github.com/ils15/pantheon-opencode/actions)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22650136.svg)](https://doi.org/10.5281/zenodo.22650136)
 
@@ -201,14 +202,26 @@ Run `/pantheon-settings` (or `Pantheon: Settings` in the command palette) to ope
 
 ---
 
-## Documentation
+## Documentation & Tutorials
 
-| Start Here | Architecture & Deep Dives | Reference & Operations |
+> 📖 **Official Documentation Portal:** Explore full searchable guides, interactive Mermaid diagrams, and versioned releases at **[https://ils15.github.io/pantheon-opencode/](https://ils15.github.io/pantheon-opencode/)**.
+
+| Guides & Tutorials | Architecture & Deep Dives | Reference & Operations |
 |---|---|---|
-| [Quick Start](docs/QUICKSTART.md) | [Architecture](docs/ARCHITECTURE.md) | [MCP Tools](docs/mcp-tools.md) |
-| [Installation Guide](docs/INSTALLATION.md) | [Delegation & Gates](docs/PERMISSIONS-QUALITY-DELEGATION.md) | [Native Decisions (Jev)](docs/reference/native-decisions.md) |
-| [Compatibility](docs/COMPATIBILITY.md) | [Memory System](docs/MEMORY.md) | [Model Routing](docs/reference/model-routing.md) |
-| [Upgrading](docs/UPGRADING.md) | [OpenCode 2.x Integration](docs/opencode.md) | [Changelog](CHANGELOG.md) |
+| [First Project (End-to-End)](docs/guides/first-project.md) | [Architecture](docs/ARCHITECTURE.md) | [MCP Tools](docs/mcp-tools.md) |
+| [Agent Capability Matrix](docs/AGENT-CAPABILITY-MATRIX.md) | [Delegation & Gates](docs/PERMISSIONS-QUALITY-DELEGATION.md) | [Native Decisions (Jev)](docs/reference/native-decisions.md) |
+| [Deepwork Blueprint](docs/guides/deepwork.md) | [Memory System](docs/MEMORY.md) | [Model Routing](docs/reference/model-routing.md) |
+| [Pantheon Vision](docs/guides/vision.md) | [OpenCode Integration](docs/opencode.md) | [Changelog](CHANGELOG.md) |
+| [Cookbook](docs/guides/cookbook.md) | [Compatibility](docs/COMPATIBILITY.md) | [Wiki](wiki/Home.md) |
+
+---
+
+## Real-World Examples
+
+Working runnable reference projects demonstrating Pantheon orchestration in practice:
+
+* **[SaaS Performance Dashboard](examples/saas-dashboard/) (`examples/saas-dashboard`):** Fullstack web application with React 19, Fastify backend, streaming CSV export, automated tests, and a real Deepwork execution plan (`plan.json`, `journal.ndjson`, `PLAN.md`).
+* **[Repo Health CLI](examples/cli-tool/) (`examples/cli-tool`):** Sub-second diagnostic CLI tool demonstrating the fast-path execution of `@talos` and `@hermes`.
 
 ---
 

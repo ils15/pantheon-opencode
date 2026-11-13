@@ -8,6 +8,7 @@ O Pantheon reúne planejamento, implementação, revisão e documentação numa 
 [Repositório](https://github.com/ils15/pantheon-opencode) · [Licença MIT](LICENSE)
 
 [![Versão](https://img.shields.io/github/v/release/ils15/pantheon-opencode?label=version)](https://github.com/ils15/pantheon-opencode/releases/latest)
+[![Documentação](https://img.shields.io/badge/documenta%C3%A7%C3%A3o-portal-indigo)](https://ils15.github.io/pantheon-opencode/)
 [![CI](https://img.shields.io/github/actions/workflow/status/ils15/pantheon-opencode/ci.yml?branch=main&label=CI)](https://github.com/ils15/pantheon-opencode/actions)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22650136.svg)](https://doi.org/10.5281/zenodo.22650136)
 
@@ -197,14 +198,26 @@ Execute `/pantheon-settings` (ou `Pantheon: Settings` na paleta de comandos) par
 
 ---
 
-## Documentação
+## Documentação & Tutoriais
 
-| Comece por aqui | Arquitetura e Aprofundamento | Referência e Operações |
+> 📖 **Portal Oficial de Documentação:** Explore guias completos com pesquisa instantânea, diagramas interativos em Mermaid e histórico de versões em **[https://ils15.github.io/pantheon-opencode/](https://ils15.github.io/pantheon-opencode/)**.
+
+| Guias & Tutoriais | Arquitetura e Aprofundamento | Referência e Operações |
 |---|---|---|
-| [Início Rápido](docs/QUICKSTART.md) | [Arquitetura](docs/ARCHITECTURE.md) | [Ferramentas MCP](docs/mcp-tools.md) |
-| [Guia de Instalação](docs/INSTALLATION.md) | [Delegação & Gates](docs/PERMISSIONS-QUALITY-DELEGATION.md) | [Decisões Nativas (Jev)](docs/reference/native-decisions.md) |
-| [Compatibilidade](docs/COMPATIBILITY.md) | [Sistema de Memória](docs/MEMORY.md) | [Roteamento de Modelos](docs/reference/model-routing.md) |
-| [Atualização](docs/UPGRADING.md) | [Integração OpenCode 2.x](docs/opencode.md) | [Changelog](CHANGELOG.md) |
+| [Primeiro Projeto (End-to-End)](docs/guides/first-project.md) | [Arquitetura](docs/ARCHITECTURE.md) | [Ferramentas MCP](docs/mcp-tools.md) |
+| [Matriz de Agentes](docs/AGENT-CAPABILITY-MATRIX.md) | [Delegação & Gates](docs/PERMISSIONS-QUALITY-DELEGATION.md) | [Decisões Nativas (Jev)](docs/reference/native-decisions.md) |
+| [Guia do Deepwork](docs/guides/deepwork.md) | [Sistema de Memória](docs/MEMORY.md) | [Roteamento de Modelos](docs/reference/model-routing.md) |
+| [Pantheon Vision](docs/guides/vision.md) | [Integração OpenCode](docs/opencode.md) | [Changelog](CHANGELOG.md) |
+| [Cookbook de Receitas](docs/guides/cookbook.md) | [Compatibilidade](docs/COMPATIBILITY.md) | [Wiki](wiki/Home.md) |
+
+---
+
+## Exemplos Práticos do Mundo Real
+
+Projetos funcionais demonstrando a orquestração do Pantheon na prática:
+
+* **[SaaS Performance Dashboard](examples/saas-dashboard/) (`examples/saas-dashboard`):** Aplicação fullstack completa com React 19, backend Fastify, streaming de CSV, testes automatizados e plano Deepwork real com evidências (`plan.json`, `journal.ndjson`, `PLAN.md`).
+* **[Repo Health CLI](examples/cli-tool/) (`examples/cli-tool`):** Ferramenta de linha de comando para diagnóstico de repositórios em menos de 1 segundo, demonstrando o fluxo fast-path do `@talos` e `@hermes`.
 
 ---
 

@@ -9,6 +9,11 @@ of repeating it.
 
 | If you want to… | Read |
 |---|---|
+| Build your first real project end-to-end (scaffold → UI → skills → deploy → metrics) | [First Project Guide](guides/first-project.md) |
+| Know exactly what each of the 14 agents can and cannot do | [Agent Capability Matrix](AGENT-CAPABILITY-MATRIX.md) |
+| Master structured planning, Mermaid DAGs, and interactive approvals | [Deepwork Blueprint](guides/deepwork.md) |
+| Inspect images and screenshots without prompt clutter or artifacts | [Pantheon Vision](guides/vision.md) |
+| Find copy-paste recipes for everyday coding workflows | [Cookbook](guides/cookbook.md) |
 | Install Pantheon, or review installer flags, backups, and uninstall | [Installation](INSTALLATION.md) |
 | Reach a first result in ten minutes | [Quick Start](QUICKSTART.md) |
 | Move an existing install to a newer Pantheon line | [Upgrading](UPGRADING.md) |

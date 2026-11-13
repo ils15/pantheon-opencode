@@ -166,7 +166,9 @@ flowchart LR
 ```
 
 ### Interactive Question Gate
-When directly invoked by the user, if you need trade-off confirmation or final approval, always call the native `question` tool with structured choices (e.g., `["Aprovar e executar", "Ajustar plano"]`), rather than relying solely on unstructured chat text.
+When directly invoked by the user:
+- If the plan contains any Open Questions (`decisions_needed`), **NEVER leave them as plain text bullets in chat**. You MUST call the native `question` tool, decomposing every open question into an interactive multiple-choice item with concrete options (marking recommended choice with `(Recomendado)`).
+- Alongside open questions, always include the approval question with structured choices (e.g., `["(Recomendado) Aprovar e executar", "Ajustar plano"]`), rather than relying on unstructured chat text.
 Keep unknown paths and unverified assumptions explicit rather than fabricating
 detail.
 
@@ -196,14 +198,13 @@ approval.
 
 ## Approval Gate
 
-After the complete plan is visible in the current conversation, use
-`agent/askQuestions` only for a direct invocation:
-```
-Questions:
-- "Plan ready. Open questions: [list]. Approve? (yes/changes needed)"
-```
+After the complete plan is visible in the current conversation, use the native `question` tool for direct user invocations:
+- Decompose all Open Questions into interactive questions with concrete choices and marked `(Recomendado)` defaults.
+- Gate Question:
+  - Question: "Aprovar plano e iniciar execução?"
+  - Options: ["(Recomendado) Aprovar e executar", "Ajustar plano"]
 
-Only after explicit "yes" → delegate to @zeus with plan context.
+Only after explicit user approval → delegate to @zeus with plan context.
 
 ## When to Use Apollo
 

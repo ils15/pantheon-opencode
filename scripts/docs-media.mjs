@@ -9,7 +9,7 @@
  *
  * Usage:
  *   node scripts/docs-media.mjs                 # record every *.tape
- *   node scripts/docs-media.mjs v2-sidebar      # record one tape (name or file)
+ *   node scripts/docs-media.mjs sidebar      # record one tape (name or file)
  *   node scripts/docs-media.mjs --check         # verify prerequisites only
  */
 

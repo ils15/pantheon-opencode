@@ -37,7 +37,7 @@ preset/source, git state, and a `Context` block with tokens, spend, and
 cache/speed. The TUI ships no quota panel: to see provider quota and usage,
 install the recommended community plugin
 [`@slkiser/opencode-quota`](https://github.com/slkiser/opencode-quota) — see
-[Quota & usage](tui-v2-quota-providers.md).
+[Quota & usage](tui-quota-providers.md).
 
 ## 3. Check the install
 

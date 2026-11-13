@@ -512,7 +512,7 @@ async function main(): Promise<void> {
   })
 
   test('agent and command transforms preserve custom values and only default Pantheon commands', async () => {
-    const policyMarker = '<!-- pantheon-v2-policy -->'
+    const policyMarker = '<!-- pantheon-policy -->'
     const markedSystem = `Keep this text unchanged.\n${policyMarker}\nExisting policy.`
     const transformAgents = [
       { id: 'marked', mode: 'subagent', system: markedSystem },
@@ -3148,7 +3148,7 @@ async function main(): Promise<void> {
     const handler = fase4Handlers.context
     assert.ok(handler != null)
     const event = {
-      system: [null, '<!-- pantheon-v2-policy -->\nFollow Pantheon routing policy', 42],
+      system: [null, '<!-- pantheon-policy -->\nFollow Pantheon routing policy', 42],
       generation: {},
     }
     await handler(event) // must not throw
@@ -3179,9 +3179,7 @@ async function main(): Promise<void> {
     const handler = fase4Handlers.context
     assert.ok(handler != null)
     const event = {
-      system: [
-        { type: 'text', text: '<!-- pantheon-v2-policy -->\nFollow Pantheon routing policy' },
-      ],
+      system: [{ type: 'text', text: '<!-- pantheon-policy -->\nFollow Pantheon routing policy' }],
       generation: {},
     }
     await handler(event) // must not throw

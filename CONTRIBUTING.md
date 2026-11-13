@@ -130,7 +130,7 @@ install with a provider credential. Check and record:
 npm run docs:media -- --check   # names every missing prerequisite
 scripts/test-opencode-v2-sandbox.sh --prepare
 npm run docs:media              # records every docs/assets/tui/*.tape
-npm run docs:media v2-sidebar   # or one tape
+npm run docs:media sidebar   # or one tape
 ```
 
 Rules:
