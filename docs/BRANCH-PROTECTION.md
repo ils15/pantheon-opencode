@@ -1,5 +1,7 @@
 # Branch Protection: `main`
 
+> 🇧🇷 **Versão em Português disponível:** [Leia em Português](pt-BR/BRANCH-PROTECTION.md)
+
 > **Why this matters:** Branch protection prevents force-pushes, requires passing
 > CI checks before merge, enforces linear history, and ensures no one (not even
 > admins) can bypass the pipeline. Without it, the agent orchestration pipeline
@@ -31,7 +33,7 @@ job id when a job has no `name:` override):
 
 - `validate`
 - `test-suite`
-- `plugin-v2-ts-coverage`
+- `plugin-ts-coverage`
 - `commitlint`
 - `security-scan`
 - `CodeQL`
