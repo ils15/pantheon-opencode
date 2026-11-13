@@ -13,6 +13,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
      Running apply will move this section to a versioned entry and reset the template below. -->
 
+## [v2.1.1] - 2026-11-13
+
+### 🆕 What's New
+
+- **Interactive Question Gate**: Native OpenCode `question` tool strictly enforced for all open decisions in planning, with marked defaults.
+- **Runnable Real-World Examples**: Complete production examples (`examples/saas-dashboard` & `examples/cli-tool`) with automated test suites.
+- **Comprehensive Docs & Wiki**: Modernized guides portal (`docs/guides/`), interactive Mermaid capability matrix, and GitHub Wiki mirror.
+- **V2 Legacy Cleanup**: Removed obsolete "V2" naming clutter across internal policy markers, visual context tags, tape scripts, and docs.
+
+### Added
+
+- **docs** — modern guide collection (`first-project.md`, `deepwork.md`, `vision.md`, `cookbook.md`), bilingual README tables, and interactive Mermaid decision diagrams.
+- **examples** — `saas-dashboard` (React 19 + Fastify + CSV streaming + canonical Deepwork plan) and `cli-tool` (repo health checker CLI with tests).
+- **wiki** — comprehensive GitHub Wiki mirror in `wiki/` (`Home.md`, `Agent-Matrix.md`, `Deepwork-Guide.md`, `Pantheon-Vision.md`, `FAQ.md`).
+
+### Changed
+
+- **agents** — updated `@zeus`, `@athena`, and `prompt-refinery` to forbid dumping open questions into chat; required interactive `question` tool with marked `(Recomendado)` defaults.
+- **core** — renamed internal markers to `<!-- pantheon-policy -->` and `<!-- pantheon-visual-context -->`; cleaned up legacy V2 file names.
+
 ## [v2.1.0] - 2026-11-12
 
 ### 🆕 What's New
