@@ -1759,6 +1759,34 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#branching-release-buffering-strategy-trunk-based-delivery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Branching &amp; Release Buffering Strategy (Trunk-Based Delivery)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Branching &amp; Release Buffering Strategy (Trunk-Based Delivery)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#core-principles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Core Principles:
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#versioning-policy" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2256,6 +2284,8 @@
       
         
           
+        
+      
         
       
         
@@ -2864,6 +2894,128 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_16_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_16_5" id="__nav_16_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Governança & Release
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_16_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_16_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Governança & Release
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../pt-BR/RELEASING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Processo de Release
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../pt-BR/BRANCH-PROTECTION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Proteção da Branch main
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -2923,6 +3075,34 @@
       Table of contents
     </label>
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#branching-release-buffering-strategy-trunk-based-delivery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Branching &amp; Release Buffering Strategy (Trunk-Based Delivery)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Branching &amp; Release Buffering Strategy (Trunk-Based Delivery)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#core-principles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Core Principles:
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
       
         <li class="md-nav__item">
   <a href="#versioning-policy" class="md-nav__link">
@@ -3367,8 +3547,47 @@
 
 <h1 id="pantheon-release-process">Pantheon Release Process<a class="headerlink" href="#pantheon-release-process" title="Permanent link">&para;</a></h1>
 <blockquote>
-<p>How versioning, releases, and packaging work.</p>
+<p>🇧🇷 <strong>Versão em Português disponível:</strong> <a href="../pt-BR/RELEASING/">Leia em Português</a></p>
+<p>How versioning, releases, branching strategy, and packaging work.</p>
 </blockquote>
+<hr />
+<h2 id="branching-release-buffering-strategy-trunk-based-delivery">Branching &amp; Release Buffering Strategy (Trunk-Based Delivery)<a class="headerlink" href="#branching-release-buffering-strategy-trunk-based-delivery" title="Permanent link">&para;</a></h2>
+<p>Pantheon adopts a <strong>Trunk-Based Delivery with Release Buffering</strong> workflow. All development occurs on short-lived feature branches, lands on <code>main</code> via reviewed Pull Requests, buffers new capabilities in the <code>[Unreleased]</code> changelog section, and releases to npm/GitHub exclusively when a maintainer explicitly decides to cut a release:</p>
+<pre class="mermaid"><code>flowchart TD
+    subgraph FeatureBranches["🛠️ Short-Lived Feature Branches"]
+        B1["feat/cookbook-expansion"]
+        B2["feat/new-mcp-enhancement"]
+        B3["fix/session-cleanup"]
+    end
+
+    subgraph PullRequests["📋 Pull Requests &amp; CI Verification"]
+        PR1["PR #432"]
+        PR2["PR #433"]
+        PR3["PR #434"]
+    end
+
+    B1 --&gt; PR1
+    B2 --&gt; PR2
+    B3 --&gt; PR3
+
+    PR1 &amp; PR2 &amp; PR3 --&gt;|"10/10 CI Checks PASS"| Main["🌿 main (Stable Trunk)"]
+
+    subgraph Buffer["📦 Release Buffer"]
+        Main --&gt;|"Automated Accumulation"| Unreleased["CHANGELOG.md [Unreleased]"]
+    end
+
+    subgraph ReleaseGate["🔒 Explicit Release Cut Gate"]
+        Unreleased --&gt;|"Human Maintainer Decision: CUT"| Script["node scripts/versioning.mjs apply minor"]
+        Script --&gt; Tag["Git Tag: vX.Y.Z"]
+        Tag --&gt; Publish["🚀 Release Workflow (npm + GitHub Release)"]
+    end</code></pre>
+<h3 id="core-principles">Core Principles:<a class="headerlink" href="#core-principles" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong><code>main</code> is Always Tested &amp; Deployable:</strong> Code in <code>main</code> is never broken. Every merge must pass all 10 CI checks (<code>validate</code>, <code>test-suite</code>, <code>plugin-ts-coverage</code>, <code>security-scan</code>, <code>commitlint</code>, <code>CodeQL</code>, etc.).</li>
+<li><strong>Merges Do NOT Trigger Package Releases:</strong> Merging a PR into <code>main</code> automatically triggers documentation updates on GitHub Pages (<code>latest</code>), but <strong>never publishes to npm</strong> or creates release tags.</li>
+<li><strong>Buffering in <code>[Unreleased]</code>:</strong> Completed features accumulate in the <code>## [Unreleased]</code> section of <code>CHANGELOG.md</code> until the maintainer decides the milestone is complete.</li>
+<li><strong>Explicit Release Cutting:</strong> A release is only triggered when the maintainer runs the release script (<code>node scripts/versioning.mjs apply [patch|minor|major]</code>), which promotes <code>[Unreleased]</code> to the new version header, synchronizes manifests, and creates the release tag.</li>
+</ol>
 <hr />
 <h2 id="versioning-policy">Versioning Policy<a class="headerlink" href="#versioning-policy" title="Permanent link">&para;</a></h2>
 <p>Pantheon follows <strong>Semantic Versioning</strong> based on <a href="https://www.conventionalcommits.org/">Conventional Commits</a>:</p>
@@ -4175,7 +4394,7 @@ DOI, and the record metadata on Zenodo.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="November 9, 2026 16:47:13 UTC">November 9, 2026</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="November 13, 2026 21:39:37 UTC">November 13, 2026</span>
   </span>
 
     
