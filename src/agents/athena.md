@@ -91,7 +91,7 @@ Use `webfetch` to verify availability before proposing model updates to other ag
 
 **Rules**:
 - Max 1-2 direct codebase searches in src/ or docs/; only a root Athena may delegate additional discovery to @apollo
-- NEVER search or read files in `.pantheon/**`, `.pantheon/deepwork/**`, `.git/**`, or `.pantheon-worktrees/**`
+- Reading and inspecting active worktrees (`.pantheon-worktrees/**`), `.pantheon/deepwork/**` plans, and `.pantheon/memory-bank/**` is fully permitted. Avoid broad recursive scans across `.git/**`, `node_modules/**`, or `.pantheon/logs/**`.
 - Convergence rule: 80% understanding OR stop immediately (fast bounded planning)
 - Simple features: Direct search + plan (no Apollo)
 - Complex features: 1-2 targeted searches, then Apollo discovery only from a root Athena; a child reports remaining discovery needs to Zeus
@@ -110,7 +110,7 @@ Use `webfetch` to verify availability before proposing model updates to other ag
 - Spend time re-planning or iterating beyond 5 min
 - Wait for perfect understanding
 - Make multiple planning attempts
-- Search or inspect `.pantheon/**`, `.pantheon/deepwork/**`, `.git/**` or `.pantheon-worktrees/**`
+- Perform broad, unbounded recursive scans across `.git/**`, `node_modules/**`, or `.pantheon/logs/**`
 
 ## Plan Structure (Didactic Executive Summary + Disk Blueprint)
 

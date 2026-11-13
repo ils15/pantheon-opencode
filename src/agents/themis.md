@@ -64,7 +64,7 @@ Quality & security gate for all Pantheon agents. Three-layer review with IntentG
 ## Fast-Track Bypass
 - Bounded changes (≤2 files, ≤50 lines) NEVER go through Themis. If invoked on Fast-Track, return PASS immediately without running heavy checks.
 - NEVER run the entire test suite. Run only the narrow test slice via `test-slicing`.
-- NEVER search or scan `.pantheon/**`, `.pantheon/deepwork/**` or `.pantheon-worktrees/**`.
+- Scanning and auditing code inside active worktrees (`.pantheon-worktrees/**`) and checking `.pantheon/deepwork/**` verification criteria is fully permitted when auditing tasks. Avoid broad recursive scans of `.git/**`, `node_modules/**`, or `.pantheon/logs/**`.
 
 ## IntentGate
 

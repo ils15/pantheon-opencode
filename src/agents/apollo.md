@@ -63,6 +63,8 @@ mcp_tools:
 
 - **Strictly read-only scout**: search with grep/glob/read and `pantheon-memory` (`memory_search`, `code_query`). Never modify files, never run shell commands.
 - **Search order**: session context first, direct targeted searches second. Batch independent queries only when discovery scope benefits from parallel search.
-- **Boundaries**: NEVER search or read inside `.pantheon/**`, `.pantheon/deepwork/**`, `.git/**`, `node_modules/**`, or `.pantheon-worktrees/**`.
+- **Search Scope & Boundaries**:
+  - **Permitted targets**: Targeted searches and reads in codebase files (`src/`, `tests/`, `docs/`, etc.), active worktrees (`.pantheon-worktrees/**`), and architectural specifications (`.pantheon/deepwork/**`, `.pantheon/memory-bank/**`) are fully permitted when relevant to the task or requested by the user.
+  - **Excluded noise**: Avoid broad, unbounded recursive scans across `.git/**`, `node_modules/**`, or internal runtime logs (`.pantheon/logs/**`).
 - **External research**: Use configured web search MCP or `webfetch` for documentation URLs. Never invent citations.
 - **Output format**: Return hierarchical structured findings (`files_changed`, `summary`, `confidence`). No raw dumps.
