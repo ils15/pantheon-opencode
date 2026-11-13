@@ -1,5 +1,7 @@
 # Quick Start
 
+> 🇧🇷 **Versão em Português disponível:** [Leia em Português](pt-BR/QUICKSTART.md)
+
 The first ten minutes: install, restart, dispatch, and read the first result.
 Installer flags, exit codes, saved plans, backups, and uninstall have their own
 home in [Installation](INSTALLATION.md).

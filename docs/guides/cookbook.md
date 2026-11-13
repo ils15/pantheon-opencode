@@ -1,108 +1,122 @@
-# Pantheon Cookbook: Receitas Práticas do Dia a Dia
+# Pantheon Cookbook: Everyday Practical Recipes
 
-Este guia reúne os casos de uso mais comuns do desenvolvimento diário com o Pantheon, demonstrando os comandos exatos e qual especialista acionar para cada situação.
+> 🇧🇷 **Versão em Português disponível:** [Leia em Português](../pt-BR/guides/cookbook.md)
 
----
-
-## Receita 1: Nova Feature com TDD e Qualidade Total
-
-**Cenário:** Você precisa implementar uma funcionalidade completa (ex: endpoint de exportação de dados com testes e documentação).
-
-**Comando:**
-```text
-/pantheon Adicione suporte a exportação de dados em CSV na rota /reports, com testes unitários e validação de schema.
-```
-
-**Fluxo:**
-1. O `@zeus` detecta que a tarefa envolve múltiplos passos e aciona a `@athena` para o plano.
-2. Você aprova o plano pelo diálogo nativo `question`.
-3. O `@hermes` escreve o teste em falha (RED) e implementa o código até passar (GREEN).
-4. A `@themis` valida linters e segurança.
+This practical cookbook aggregates the most common everyday development workflows with Pantheon, showcasing exact prompts and which specialist to call for each scenario.
 
 ---
 
-## Receita 2: Hotfix Rápido em 1 Turno (Bugs e Typos)
+## Recipe 1: Full-Stack Feature with TDD & Quality Gates
 
-**Cenário:** Um erro de digitação, um ajuste simples de CSS, ou uma importação faltando que não requer cerimônia de planejamento.
+**Scenario:** Implement a complete feature (e.g., CSV export endpoint with schema validation and tests).
 
-**Comando:**
+**Prompt:**
 ```text
-@talos corrija a cor de fundo do botão de login de azul para verde esmeralda no arquivo login.css
+/pantheon Add CSV export support to /reports with unit tests and schema validation.
 ```
 
-**Por que usar o @talos?**
-O `@talos` é a faixa expressa do Pantheon. Ele não aciona subagentes, não cria planos de Deepwork e não roda cerimônias pesadas. Ele aplica a edição cirúrgica em 1 turno e termina.
+**Workflow:**
+1. `@zeus` analyzes scope and delegates planning to `@athena`.
+2. `@athena` defines phases and acceptance criteria; trade-offs are presented via the native `question` dialog.
+3. Upon approval, `@hermes` writes failing tests (RED) and implements until green (GREEN).
+4. `@themis` runs linters, security scans, and confirms coverage.
 
 ---
 
-## Receita 3: Migrações de Banco de Dados e Queries Otimizadas
+## Recipe 2: 1-Turn Express Hotfix (Bugs & Typos)
 
-**Cenário:** Criar uma nova tabela no banco ou adicionar colunas sem introduzir problemas de N+1 queries.
+**Scenario:** Fix a CSS styling bug, a typo, or a missing import that does not require architectural ceremony.
 
-**Comando:**
+**Prompt:**
 ```text
-@demeter crie uma migration no Alembic adicionando a tabela 'user_preferences' com chave estrangeira para 'users' e índice no campo 'created_at'.
+@talos Update the login submit button background from blue to emerald green in login.css
 ```
 
-**Por que usar a @demeter?**
-A `@demeter` é a especialista em persistência do Pantheon. Ela conhece as boas práticas de SQLAlchemy, Prisma, Alembic e PostgreSQL, garantindo integridade referencial e performance.
+**Why use @talos?**
+`@talos` is Pantheon's fast lane. It operates without subagents, skips Deepwork planning ceremonies, executes surgical single-turn edits, and finishes immediately.
 
 ---
 
-## Receita 4: Investigando Codebases Desconhecidas (Modo Seguro)
+## Recipe 3: Database Migrations & Query Optimization
 
-**Cenário:** Você entrou em um repositório legado grande e quer entender onde certas funções são chamadas sem risco de o agente alterar arquivos por engano.
+**Scenario:** Add a new table or column with proper indexing and foreign key constraints without N+1 query pitfalls.
 
-**Comando:**
+**Prompt:**
 ```text
-@apollo investigue onde o método calculateDiscount é invocado no projeto e me liste os arquivos e linhas com um resumo de uso.
+@demeter Create an Alembic migration adding the 'user_preferences' table with a foreign key to 'users' and an index on 'created_at'.
 ```
 
-**Por que usar o @apollo?**
-O `@apollo` tem permissão estrita `edit: deny` e `bash: deny`. Ele é um batedor puramente investigativo. Ele varre o código com `grep` e `glob` e sintetiza as respostas sem tocar em uma linha de código.
+**Why use @demeter?**
+`@demeter` is Pantheon's persistence specialist. It enforces SQLAlchemy, Prisma, Alembic, and PostgreSQL best practices, ensuring referential integrity and optimized indexes.
 
 ---
 
-## Receita 5: Auditoria Pré-PR e Validação de Segurança
+## Recipe 4: Visual Refactoring from a Screenshot
 
-**Cenário:** Você terminou suas alterações manuais ou do time e quer uma revisão rígida antes de abrir o Pull Request.
+**Scenario:** Rebuild or polish a frontend component to match a mockup.
 
-**Comando:**
+**Prompt:**
+*(Paste screenshot with Ctrl+V / Cmd+V into chat)*
 ```text
-@themis audite as alterações da branch atual contra o checklist de segurança OWASP, rode os testes e valide se há código legado ou segredos expostos.
+@aphrodite Refactor this metrics card component to match the visual styling, spacing, and typography in the pasted screenshot.
 ```
 
-**Veredicto da Themis:**
-A `@themis` emitirá um relatório categorizado com:
-* `PASS`: Pronto para merge.
-* `PASS_WITH_NOTES`: Observações não-bloqueantes de melhoria.
-* `BLOCK`: Erros de linter, testes falhando ou vulnerabilidades detectadas.
+**Workflow:**
+1. Pantheon Vision processes the screenshot silently via `session.context`.
+2. `@aphrodite` inspects colors, layout hierarchy, and typography, updating React and CSS components with WCAG AA compliance.
 
 ---
 
-## Receita 6: Descobrindo e Instalando Novas Skills
+## Recipe 5: Safe Codebase Investigation (Read-Only)
 
-**Cenário:** O projeto precisa de uma capacidade que o Pantheon ainda não possui instalada (ex: skill de deploy na AWS, análise de Dockerfiles, etc.).
+**Scenario:** Understand complex logic across multiple files without risking unintended modifications.
 
-**Comando:**
+**Prompt:**
 ```text
-@zeus pesquise se existe uma skill de terraform para o nosso projeto
+@apollo Search the repository and trace how authentication tokens are validated in incoming WebSocket connections.
 ```
 
-**O que acontece:**
-1. O Zeus executa a busca interna no catálogo de skills (`pantheon_skill_search`).
-2. Se encontrar, abre a pergunta interativa (`question` tool) oferecendo instalação em 1 clique no projeto atual (`.agents/skills/`).
-3. Ao confirmar, o especialista instala com `npx skills add -a opencode -y`.
+**Why use @apollo?**
+`@apollo` is strictly read-only (`edit: deny`, `bash: deny`). It performs fast parallel exploration, returning structured findings with exact file paths and line ranges.
 
 ---
 
-## Receita 7: Consultando Custos e Economia de Tokens
+## Recipe 6: Pre-PR Quality & Security Audit
 
-**Cenário:** Você quer saber quantos dólares gastou na sessão e quanto economizou com cache de prompt.
+**Scenario:** Review all changes on the current branch before opening a pull request.
 
-**Comando:**
+**Prompt:**
 ```text
-/pantheon_cost
+@themis Audit all changes on this branch against OWASP Top 10 security standards, run Biome and test suites, and generate a quality verdict.
 ```
 
-Também é possível acompanhar o medidor de contexto e spend diretamente no painel lateral da TUI (`pantheon tui`).
+**Why use @themis?**
+`@themis` has read-only audit permissions (`edit: deny`). It never modifies code directly; it runs test suites, checks linting rules, and issues clear compliance verdicts (`PASS`, `PASS_WITH_NOTES`, `BLOCK`).
+
+---
+
+## Recipe 7: AI Pipelines and RAG Tooling
+
+**Scenario:** Implement a semantic search service with vector embeddings.
+
+**Prompt:**
+```text
+@hephaestus Implement a vector search pipeline using LangChain and pgvector for document chunk retrieval.
+```
+
+**Why use @hephaestus?**
+`@hephaestus` specializes in embeddings, vector stores, prompt chaining, and AI model integrations.
+
+---
+
+## Recipe 8: Docker & CI/CD Pipelines
+
+**Scenario:** Create a multi-stage Dockerfile and a GitHub Actions workflow.
+
+**Prompt:**
+```text
+@prometheus Create a multi-stage Dockerfile for our Node.js application and a GitHub Actions CI workflow to run tests on pull requests.
+```
+
+**Why use @prometheus?**
+`@prometheus` owns containerization, GitHub Actions, build automation, and infrastructure configurations.

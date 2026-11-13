@@ -1,75 +1,69 @@
-# Pantheon Vision: Análise Visual e Inspeção de Telas
+# Pantheon Vision: Visual Inspection and Multimodal Debugging
 
-O **Pantheon Vision** conecta modelos multimodais de visão computacional ao OpenCode, permitindo que você compartilhe capturas de tela, designs e layouts para implementação, depuração e inspeção sem atrito.
+> 🇧🇷 **Versão em Português disponível:** [Leia em Português](../pt-BR/guides/vision.md)
+
+**Pantheon Vision** connects multimodal vision models to OpenCode, allowing you to paste screenshots, mockups, and UI layouts directly into chat for effortless implementation, debugging, and inspection.
 
 ---
 
-## 1. Como Usar no Dia a Dia
+## 1. Everyday Workflow
 
-Para inspecionar ou ajustar uma interface:
-1. Tire uma captura de tela da tela ou do componente com erro/design desejado.
-2. No OpenCode (TUI ou Desktop), **cole a imagem da área de transferência (`Ctrl+V` / `Cmd+V`)**.
-3. Digite sua instrução:
+To inspect or refine an interface:
+1. Capture a screenshot of the target screen, component, or visual bug.
+2. In OpenCode (TUI or Desktop), **paste the image from clipboard (`Ctrl+V` / `Cmd+V`)**.
+3. Type your instructions naturally:
    ```text
-   ajustar isso daqui, criar um menu lateral responsivo e atualizar as métricas
+   Adjust this layout: build a responsive sidebar navigation matching these metrics
    ```
 
 ---
 
-## 2. Zero Artefatos no Chat (Arquitetura Limpa)
+## 2. Zero Prompt Clutter (Clean Architecture)
 
-Nas versões legadas, colar uma imagem costumava injetar blocos confusos de texto e comentários HTML no meio da sua mensagem:
+In legacy versions, pasting an image injected raw comment blocks and temporary file paths directly into your message text:
 
 ```text
-<!-- pantheon-v2-visual-context -->
+<!-- pantheon-visual-context -->
 [Visual] "clipboard" at "/tmp/pantheon-vision/6ef92982...png" · Q: '...' · relay session_id=...
 ```
 
-Na versão moderna do Pantheon:
-* **Sua mensagem permanece 100% limpa:** A interface exibe apenas o texto que você digitou.
-* **Injeção Silenciosa em Contexto de Sistema:** As referências da imagem e os metadados de inspeção são injetados diretamente no hook `session.context` (`system`). O modelo de IA recebe todas as instruções nos bastidores, sem poluir visualmente a conversa.
+In modern Pantheon:
+* **Your message remains clean:** The chat only shows the text you typed.
+* **Silent Context Injection:** Image references and metadata are injected directly through the `session.context` (`system`) hook. The agent receives full visual context behind the scenes without polluting chat history.
 
 ---
 
-## 3. Fallback Automático para Modelos Textuais
+## 3. Automatic Fallback for Text-Only Models
 
-Se você estiver utilizando um modelo principal que é puramente textual (ou cujo gateway não aceita imagens diretamente):
-* O Pantheon **não falha** e não responde que é incapaz de ler a imagem.
-* O Pantheon invoca automaticamente o servidor multimodal configurado (`describeImagesNative` / Zen Go), extrai a descrição estruturada da interface (layout, textos visíveis, botões, métricas numéricas e cores) e entrega ao modelo textual.
-* O modelo textual passa a "enxergar" a tela por meio da descrição de alta fidelidade e prossegue com a implementação normalmente.
+If your active chat model does not natively support multimodal vision:
+* Pantheon **does not fail** or throw an unsupported model error.
+* Pantheon automatically delegates image inspection to the configured vision server (`describeImagesNative` / Zen Go), extracting layout structure, visible text, buttons, numbers, and color palettes.
+* The text model receives this high-fidelity description and implements the requested change seamlessly.
 
 ---
 
-## 4. Configurando seu Modelo de Visão Preferido
+## 4. Configuring Your Vision Model
 
-Você pode escolher qual modelo realiza a inspeção de imagens:
+You can configure which model handles visual inspection:
 
-### Opção A — Pela TUI (Interface Gráfica de Terminal)
-1. Abra a TUI com `pantheon tui` ou acesse a aba de configurações.
-2. Navegue até a aba **Settings** ➔ sub-aba **Preset**.
-3. Localize a linha **Vision Model** (`preset.vision_model`).
-4. Alterne para o modelo desejado (padrão `auto`, `opencode-go/mimo-v2.6-flash`, `anthropic/claude-3-5-sonnet`, `google/gemini-2.5-flash`, etc.).
-5. As alterações são salvas automaticamente no arquivo canônico `opencode-vision.json`.
+### Option A — Through the TUI
+1. Open the TUI with `pantheon tui`.
+2. Go to the **Settings** tab ➔ **Preset** sub-tab.
+3. Select **Vision Model** (`preset.vision_model`).
+4. Choose from supported providers (e.g., `gemini-2.5-flash`, `qwen3.7-vl`, `claude-3-5-sonnet`).
 
-### Opção B — Via Arquivo de Configuração
-Crie ou edite `.opencode/opencode-vision.json` no seu projeto:
+### Option B — Via CLI
+Configure the vision model directly from your terminal:
 
-```json
-{
-  "visionModel": "opencode-go/mimo-v2.6-flash"
-}
-```
-
-### Opção C — Via Variável de Ambiente
 ```bash
-export PANTHEON_VISION_MODEL="opencode-go/mimo-v2.6-flash"
+# List available vision-capable models
+npx pantheon-opencode vision --list
+
+# Set project-scoped vision model
+npx pantheon-opencode vision --set opencode-go/gemini-2.5-flash
+
+# Set globally for all projects
+npx pantheon-opencode vision --global --set opencode-go/gemini-2.5-flash
 ```
 
----
-
-## 5. Boas Práticas ao Trabalhar com a @aphrodite (Frontend)
-
-Ao enviar imagens para alterações visuais:
-* **Uma imagem é contexto, não autorização para reverter trabalho:** A `@aphrodite` compara a imagem com a UI existente e preserva o código funcional já implementado.
-* **Declare a intenção:** Indique se a imagem é um *design desejado (mockup)*, um *bug visual em produção* ou uma *referência estética de inspiração*.
-* **Acessibilidade primeiro:** Ao implementar uma tela baseada em imagem, a `@aphrodite` sempre aplica conformidade com WCAG (contraste adequado, tags semânticas e acessibilidade de teclado).
+Settings are persisted in `.opencode/opencode-vision.json`.

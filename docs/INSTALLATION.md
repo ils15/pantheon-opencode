@@ -1,5 +1,7 @@
 # Pantheon Installation Guide — 2.0 (OpenCode 2.x)
 
+> 🇧🇷 **Versão em Português disponível:** [Leia em Português](pt-BR/INSTALLATION.md)
+
 Pantheon 2.0 **requires OpenCode 2.x** — the OpenCode V1 contract was removed
 entirely (1.7.x was the last line with V1 support). There are two complementary
 ways to install. Loading the plugin through the host's native flow is the
