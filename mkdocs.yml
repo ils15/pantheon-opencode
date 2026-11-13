@@ -33,6 +33,7 @@ plugins:
   - search
   - git-revision-date-localized:
       enable_creation_date: true
+      enable_git_follow: false
   - mike:
       version_selector: true
 
@@ -87,4 +88,16 @@ nav:
       - Release Process: RELEASING.md
       - v1.6.0 Release Notes: releases/v1.6.0.md
   - Branch Protection: BRANCH-PROTECTION.md
+  - Documentação (Português):
+      - Início: pt-BR/index.md
+      - Começando:
+          - Início Rápido: pt-BR/QUICKSTART.md
+          - Instalação: pt-BR/INSTALLATION.md
+          - Atualização: UPGRADING.pt-BR.md
+      - Guias & Tutoriais:
+          - Primeiro Projeto (Ponta a Ponta): pt-BR/guides/first-project.md
+          - Matriz de Agentes: pt-BR/AGENT-CAPABILITY-MATRIX.md
+          - Blueprint Deepwork: pt-BR/guides/deepwork.md
+          - Visão Multimodal: pt-BR/guides/vision.md
+          - Livro de Receitas (Cookbook): pt-BR/guides/cookbook.md
   - Contributing: https://github.com/ils15/pantheon-opencode/blob/main/CONTRIBUTING.md

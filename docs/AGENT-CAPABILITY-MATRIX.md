@@ -1,103 +1,105 @@
-# Matriz de Capacidades dos Agentes do Pantheon
+# Pantheon Agent Capability Matrix
 
-Esta matriz consolida a autoridade de domínio, permissões no host, MCPs permitidos e restrições absolutas de cada um dos 14 agentes canônicos do Pantheon no OpenCode.
+> 🇧🇷 **Versão em Português disponível:** [Leia em Português](pt-BR/AGENT-CAPABILITY-MATRIX.md)
+
+This matrix consolidates the domain authority, host permissions, permitted MCP servers, and absolute constraints for each of the 14 canonical Pantheon agents in OpenCode.
 
 ---
 
-## 1. Fluxograma de Decisão: Quem Acionar?
+## 1. Decision Flowchart: Who to Call?
 
-Use este guia visual para escolher o especialista certo para o seu objetivo:
+Use this visual decision guide to pick the right specialist for your objective:
 
 ```mermaid
 flowchart TD
-    Start(["🎯 Qual é o seu objetivo?"]) --> Type{Tipo de Tarefa}
+    Start(["🎯 What is your objective?"]) --> Type{Task Type}
 
-    Type -->|"Feature grande / Múltiplos arquivos"| Zeus["⚡ @zeus (Orquestrador)"]
-    Type -->|"Planejamento / Arquitetura prévia"| Athena["🏛️ @athena (Arquiteta)"]
-    Type -->|"Bug pequeno / Typo / Ajuste cirúrgico"| Talos["⚡ @talos (Hotfix Express)"]
-    Type -->|"Backend / API / Regra de Negócio"| Hermes["✉️ @hermes (Backend TDD)"]
-    Type -->|"Frontend / React / CSS / Acessibilidade"| Aphrodite["🎨 @aphrodite (Frontend UX)"]
-    Type -->|"Banco de dados / SQL / Migrations"| Demeter["🌾 @demeter (Database)"]
-    Type -->|"Auditoria pré-PR / Testes / Segurança"| Themis["⚖️ @themis (Auditora)"]
+    Type -->|"Large feature / Multiple files"| Zeus["⚡ @zeus (Orchestrator)"]
+    Type -->|"Architecture / Planning first"| Athena["🏛️ @athena (Architect)"]
+    Type -->|"Small bug / Typo / Surgical edit"| Talos["⚡ @talos (Hotfix Express)"]
+    Type -->|"Backend / API / Business Logic"| Hermes["✉️ @hermes (Backend TDD)"]
+    Type -->|"Frontend / React / CSS / A11y"| Aphrodite["🎨 @aphrodite (Frontend UX)"]
+    Type -->|"Database / SQL / Migrations"| Demeter["🌾 @demeter (Database)"]
+    Type -->|"Pre-PR audit / Tests / Security"| Themis["⚖️ @themis (Auditor)"]
     Type -->|"Docker / CI/CD / GitHub Actions"| Prometheus["🔥 @prometheus (DevOps)"]
-    Type -->|"Investigar código sem alterar nada"| Apollo["🔍 @apollo (Read-Only)"]
+    Type -->|"Investigate code without modifying"| Apollo["🔍 @apollo (Read-Only)"]
 
-    Zeus -->|"Delega planejamento"| Athena
-    Athena -->|"Pesquisa de código"| Apollo
-    Zeus -->|"Despacha implementação"| Hermes & Aphrodite & Demeter & Prometheus
-    Hermes & Aphrodite & Demeter -->|"Submete para auditoria"| Themis
+    Zeus -->|"Delegates planning"| Athena
+    Athena -->|"Code research"| Apollo
+    Zeus -->|"Dispatches implementation"| Hermes & Aphrodite & Demeter & Prometheus
+    Hermes & Aphrodite & Demeter -->|"Submits for audit"| Themis
 ```
 
 ---
 
-## 2. Visão Geral de Permissões e Ferramentas
+## 2. Permissions and Tooling Overview
 
-| Agente | Domínio | Edit Code? | Bash / Shell? | Subagentes (`task`) | Question Tool? | MCPs Permitidos |
+| Agent | Domain Authority | Edit Code? | Bash / Shell? | Subagents (`task`) | Question Tool? | Permitted MCPs |
 |---|---|:---:|:---:|:---:|:---:|---|
-| **@zeus** | Orquestração Central & Roteamento | ❌ `deny` | ❌ `deny` | ✅ `all` | ✅ `allow` | `resources`, `memory_store`, `persistence`, `vision` |
-| **@athena** | Arquitetura & Planejamento | ❌ `deny` | ❌ `deny` | ❌ `deny` (filho) | ✅ `allow` | `resources`, `memory_search` |
-| **@hermes** | Backend, APIs & Lógica de Negócio | ✅ `allow` | ✅ `allow` | ⚠️ `@apollo` | ❌ `deny` | `resources`, `memory_search`, `code-mode` |
+| **@zeus** | Central Orchestration & Routing | ❌ `deny` | ❌ `deny` | ✅ `all` | ✅ `allow` | `resources`, `memory_store`, `persistence`, `vision` |
+| **@athena** | Architecture & Planning | ❌ `deny` | ❌ `deny` | ❌ `deny` (child) | ✅ `allow` | `resources`, `memory_search` |
+| **@hermes** | Backend, APIs & Business Logic | ✅ `allow` | ✅ `allow` | ⚠️ `@apollo` | ❌ `deny` | `resources`, `memory_search`, `code-mode` |
 | **@aphrodite** | Frontend, UX, React & CSS | ✅ `allow` | ✅ `allow` | ⚠️ `@apollo` | ✅ `allow` | `resources`, `memory_search`, `vision` |
-| **@demeter** | Banco de Dados, SQL & Migrações | ✅ `allow` | ✅ `allow` | ❌ `deny` | ❌ `deny` | `resources`, `memory_search` |
-| **@themis** | Auditoria de Segurança & Portão de Qualidade | ❌ `deny` | ✅ `allow` (read-only) | ❌ `deny` | ❌ `deny` | `resources`, `memory_search` |
+| **@demeter** | Database, SQL & Migrations | ✅ `allow` | ✅ `allow` | ❌ `deny` | ❌ `deny` | `resources`, `memory_search` |
+| **@themis** | Security Audit & Quality Gate | ❌ `deny` | ✅ `allow` (read-only) | ❌ `deny` | ❌ `deny` | `resources`, `memory_search` |
 | **@prometheus**| DevOps, Docker, CI/CD & Deploy | ✅ `allow` | ✅ `allow` | ⚠️ `@apollo` | ❌ `deny` | `resources`, `memory_search` |
-| **@talos** | Hotfixes Rápidos & Micro-edits | ✅ `allow` | ✅ `allow` | ❌ `deny` | ❌ `deny` | `resources`, `memory_search` |
-| **@apollo** | Investigação & Busca Exploratória | ❌ `deny` | ❌ `deny` | ❌ `deny` | ❌ `deny` | `resources`, `webfetch` |
-| **@hephaestus**| Pipelines de IA, RAG & Embeddings | ✅ `allow` | ✅ `allow` | ⚠️ `@apollo` | ❌ `deny` | `resources`, `memory_search`, `code-mode` |
-| **@gaia** | Sensoriamento Remoto & Geoespacial | ❌ `deny` | ❌ `deny` | ❌ `deny` | ❌ `deny` | `resources`, `memory_search` |
-| **@iris** | Git & Operações de Release | ✅ `allow` | ✅ `allow` (git) | ❌ `deny` | ❌ `deny` | `resources`, `memory_search` |
-| **@mnemosyne** | Custódia do Memory Bank & ADRs | ⚠️ `.pantheon/**` | ❌ `deny` | ❌ `deny` | ❌ `deny` | `memory_search`, `memory_store` |
-| **@nyx** | Telemetria, Métricas & Custos | ❌ `deny` | ❌ `deny` | ❌ `deny` | ❌ `deny` | `pantheon_cost`, `resources` |
+| **@talos** | Quick Hotfixes & Micro-edits | ✅ `allow` | ✅ `allow` | ❌ `deny` | ❌ `deny` | `resources`, `memory_search` |
+| **@apollo** | Codebase Research & Exploration | ❌ `deny` | ❌ `deny` | ❌ `deny` | ❌ `deny` | `resources`, `webfetch` |
+| **@hephaestus**| AI Pipelines, RAG & Embeddings | ✅ `allow` | ✅ `allow` | ⚠️ `@apollo` | ❌ `deny` | `resources`, `memory_search`, `code-mode` |
+| **@gaia** | Remote Sensing & Geospatial ML | ❌ `deny` | ❌ `deny` | ❌ `deny` | ❌ `deny` | `resources`, `memory_search` |
+| **@iris** | Git & Release Operations | ✅ `allow` | ✅ `allow` (git) | ❌ `deny` | ❌ `deny` | `resources`, `memory_search` |
+| **@mnemosyne** | Memory Bank Custody & ADRs | ⚠️ `.pantheon/**` | ❌ `deny` | ❌ `deny` | ❌ `deny` | `memory_search`, `memory_store` |
+| **@nyx** | Observability, Tracing & Costs | ❌ `deny` | ❌ `deny` | ❌ `deny` | ❌ `deny` | `pantheon_cost`, `resources` |
 
 ---
 
-## 2. O que Cada Agente PODE e NÃO PODE Fazer
+## 3. What Each Agent CAN and CANNOT Do
 
-### @zeus (Orquestrador)
-- **PODE:** Decidir fluxos, despachar especialistas, arbitrar dúvidas via Jev (`pantheon_jev_decide`), buscar skills (`pantheon_skill_search`), abrir perguntas interativas (`question`), ler até 50 linhas para roteamento rápido.
-- **NÃO PODE:** Editar código diretamente (`edit: deny`), executar comandos no terminal (`bash: deny`), pedir ao usuário para rodar comandos de terminal, ou ler arquivos em `.pantheon/deepwork/**` e `.git/**`.
+### @zeus (Orchestrator)
+- **CAN:** Decide task flow, dispatch specialists, arbitrate uncertainties via Jev (`pantheon_jev_decide`), discover project skills (`pantheon_skill_search`), prompt human decisions (`question`), read up to 50 lines for fast routing.
+- **CANNOT:** Edit code directly (`edit: deny`), execute commands in terminal (`bash: deny`), ask user to run terminal commands, or read files in `.pantheon/deepwork/**` and `.git/**`.
 
-### @athena (Arquiteta)
-- **PODE:** Criar especificações arquiteturais, analisar trade-offs, definir blueprints de implementação e planos técnicos detalhados (`PLAN.md`).
-- **NÃO PODE:** Implementar ou editar código (`edit: deny`), rodar testes/shell (`bash: deny`), ou abrir diálogos de aprovação dentro da sessão filha (retorna o plano ao Zeus).
+### @athena (Architect)
+- **CAN:** Create architectural specs, analyze trade-offs, define implementation blueprints and detailed technical plans (`PLAN.md`).
+- **CANNOT:** Implement or edit code (`edit: deny`), run tests/shell (`bash: deny`), or prompt approval dialogs within the child session (always hands the plan back to Zeus).
 
 ### @hermes (Backend)
-- **PODE:** Escrever endpoints FastAPI/Node, regras de negócio, testes unitários backend, executar comandos de teste e linting via bash.
-- **NÃO PODE:** Alterar schemas de banco de dados (delegar a `@demeter`), criar interfaces visuais (delegar a `@aphrodite`), ou configurar pipelines Docker/CI (delegar a `@prometheus`).
+- **CAN:** Write FastAPI/Node endpoints, business logic, unit tests in TDD, run testing and linting commands via bash.
+- **CANNOT:** Mutate database schemas (delegates to `@demeter`), create visual UIs (delegates to `@aphrodite`), or configure Docker/CI pipelines (delegates to `@prometheus`).
 
 ### @aphrodite (Frontend)
-- **PODE:** Criar componentes React/Next, estilizar com Tailwind/CSS, validar acessibilidade WCAG, rodar dev server e testes de interface (Vitest/Playwright).
-- **NÃO PODE:** Implementar rotas ou lógica interna de backend, alterar schemas de persistência, ou ignorar contrastes e padrões a11y.
+- **CAN:** Create React/Next components, style with Tailwind/CSS, enforce WCAG accessibility, run dev servers and UI tests (Vitest/Playwright).
+- **CANNOT:** Implement backend routes or persistence schemas, or ignore accessibility contrast guidelines.
 
-### @demeter (Banco de Dados)
-- **PODE:** Criar e alterar migrações (Alembic/Prisma), otimizar queries SQL, prevenir problemas N+1, validar integridade referencial.
-- **NÃO PODE:** Fazer alterações em componentes frontend ou implementar regras de negócio fora da camada de persistência.
+### @demeter (Database)
+- **CAN:** Create and migrate schemas (Alembic/Prisma), optimize SQL queries, prevent N+1 queries, assert referential integrity.
+- **CANNOT:** Touch frontend components or implement business logic outside data persistence.
 
-### @themis (Revisora & Auditora)
-- **PODE:** Executar suites de teste e linters em modo de leitura para avaliar conformidade (Biome, ruff, pytest), emitir veredictos (`PASS`, `PASS_WITH_NOTES`, `BLOCK`, `BLOCK_INTENT`).
-- **NÃO PODE:** Modificar arquivos ou corrigir código encontrado (`edit: deny` absoluto — separação estrita de poderes).
+### @themis (Auditor)
+- **CAN:** Run test suites and linters in read-only evaluation mode (Biome, ruff, pytest), issue compliance verdicts (`PASS`, `PASS_WITH_NOTES`, `BLOCK`, `BLOCK_INTENT`).
+- **CANNOT:** Modify files or fix issues found (`edit: deny` absolute — strict separation of powers).
 
 ### @prometheus (DevOps)
-- **PODE:** Configurar Dockerfile, docker-compose, GitHub Actions, scripts de build/deploy, infraestrutura de monitoramento.
-- **NÃO PODE:** Implementar features de produto ou alterar lógica interna de regras de negócio.
+- **CAN:** Maintain Dockerfile, docker-compose, GitHub Actions workflows, build/deploy scripts, monitoring configurations.
+- **CANNOT:** Implement feature code or business logic.
 
 ### @talos (Hotfixer)
-- **PODE:** Corrigir bugs pontuais, erros de digitação, imports ausentes e micro-edits de forma rápida e direta em 1 turno.
-- **NÃO PODE:** Executar refatorações estruturais ou tarefas de alta incerteza/risco.
+- **CAN:** Fix localized bugs, typos, missing imports, and micro-edits directly in a single turn without TDD ceremony.
+- **CANNOT:** Execute architectural refactoring or high-risk multi-file tasks.
 
-### @apollo (Investigador)
-- **PODE:** Varrer o código com `grep`, `glob` e `read`, pesquisar referências na web com `webfetch`, sintetizar descobertas estruturadas.
-- **NÃO PODE:** Modificar nenhum arquivo (`edit: deny`), executar scripts/comandos de terminal (`bash: deny`).
+### @apollo (Investigator)
+- **CAN:** Search codebase with `grep`, `glob`, and `read`, fetch external documentation with `webfetch`, synthesize structured findings.
+- **CANNOT:** Modify files (`edit: deny`), run arbitrary terminal commands (`bash: deny`).
 
 ### @mnemosyne (Memory Bank)
-- **PODE:** Ler e atualizar documentos estritamente dentro de `.pantheon/memory-bank/` e registrar ADRs acordados.
-- **NÃO PODE:** Modificar qualquer arquivo fora de `.pantheon/` (ex.: `README.md` é editado por `@hermes` ou `@talos`).
+- **CAN:** Read and update markdown files strictly inside `.pantheon/memory-bank/` and record approved ADRs.
+- **CANNOT:** Touch files outside `.pantheon/` (e.g. `README.md` is updated by `@hermes` or `@talos`).
 
 ---
 
-## 3. Subagentes e Arbitragem Jev
+## 4. Subagents and Jev Arbitration
 
-Por padrão, apenas o orquestrador `@zeus` invoca `pantheon_jev_decide`. Subagentes podem ser autorizados explicitamente definindo a variável de ambiente:
+By default, only the `@zeus` orchestrator invokes `pantheon_jev_decide`. Specialists can be explicitly authorized by setting the environment variable:
 
 ```bash
 export PANTHEON_JEV_SPECIALIST_CALLERS="athena,hermes,aphrodite,apollo"
