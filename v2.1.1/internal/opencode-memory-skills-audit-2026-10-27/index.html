@@ -1,0 +1,2766 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Multi-agent orchestration framework for OpenCode — 14 specialized agents and 25 skills">
+      
+      
+      
+        <link rel="canonical" href="https://ils15.github.io/pantheon-opencode/v2.1.1/internal/opencode-memory-skills-audit-2026-10-27/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+    
+    
+      
+        <title>Auditoria de memória, agentes e skills no OpenCode V2 - Pantheon</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#auditoria-de-memoria-agentes-e-skills-no-opencode-v2" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Pantheon" class="md-header__button md-logo" aria-label="Pantheon" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Pantheon
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Auditoria de memória, agentes e skills no OpenCode V2
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ils15/pantheon-opencode" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../INSTALLATION/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../guides/first-project/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Guides & Tutorials
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../COMPATIBILITY/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Compatibility
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../ARCHITECTURE/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Architecture
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../agents/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Agents & Skills
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../PERMISSIONS-QUALITY-DELEGATION/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Permissions, Gates & Delegation
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../opencode/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  OpenCode 2.x
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../MCP/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  MCP
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../mcp-tools/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  MCP Tools
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../MEMORY/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Memory
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../PLATFORMS/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Platforms
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/model-routing/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../RELEASING/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Release Process
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../BRANCH-PROTECTION/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Branch Protection
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../pt-BR/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Documentação (Português)
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="https://github.com/ils15/pantheon-opencode/blob/main/CONTRIBUTING.md" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Contributing
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Pantheon" class="md-nav__button md-logo" aria-label="Pantheon" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Pantheon
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ils15/pantheon-opencode" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../INSTALLATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../QUICKSTART/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../UPGRADING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Upgrading
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../UPGRADING.pt-BR/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Upgrading (Português)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides & Tutorials
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides & Tutorials
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/first-project/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Project (End-to-End)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../AGENT-CAPABILITY-MATRIX/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Capability Matrix
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/deepwork/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deepwork Blueprint
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/vision/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pantheon Vision
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/cookbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Practical Cookbook
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../COMPATIBILITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ARCHITECTURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents & Skills
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../PERMISSIONS-QUALITY-DELEGATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Permissions, Gates & Delegation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../opencode/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenCode 2.x
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../MCP/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MCP
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mcp-tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MCP Tools
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../MEMORY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../PLATFORMS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Platforms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_13" >
+        
+          
+          <label class="md-nav__link" for="__nav_13" id="__nav_13_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_13_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_13">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/model-routing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Routing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/local-decision-router/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Decision Router
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/native-decisions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native Decisions (Jev)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/offline-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Offline Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/performance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/skill-search-design/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Skill Search Design
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/env-vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment Variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/code-mode/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Code Mode
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_14" >
+        
+          
+          <label class="md-nav__link" for="__nav_14" id="__nav_14_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release Process
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_14_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_14">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Release Process
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../RELEASING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release Process
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v1.6.0/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v1.6.0 Release Notes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../BRANCH-PROTECTION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Branch Protection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_16" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../pt-BR/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Documentação (Português)
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_16" id="__nav_16_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_16_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_16">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Documentação (Português)
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_16_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_16_2" id="__nav_16_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Começando
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_16_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_16_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Começando
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/QUICKSTART/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Início Rápido
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/INSTALLATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Instalação
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../UPGRADING.pt-BR/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Upgrading (Português)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_16_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_16_3" id="__nav_16_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guias & Tutoriais
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_16_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_16_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guias & Tutoriais
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/guides/first-project/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Primeiro Projeto (Ponta a Ponta)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/AGENT-CAPABILITY-MATRIX/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Matriz de Agentes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/guides/deepwork/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blueprint Deepwork
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/guides/vision/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visão Multimodal
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/guides/cookbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Livro de Receitas (Cookbook)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://github.com/ils15/pantheon-opencode/blob/main/CONTRIBUTING.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#resumo-executivo" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resumo executivo
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#resultado-da-execucao-do-plano" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resultado da execução do plano
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#o-que-o-opencode-v2-atual-oferece" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        O que o OpenCode V2 atual oferece
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#evidencia-da-auditoria-pre-correcao" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Evidência da auditoria pré-correção
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Evidência da auditoria pré-correção">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#servidor-mcp-grants-e-chamadas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Servidor MCP, grants e chamadas
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#o-que-usar-memoria-deve-significar" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        O que “usar memória” deve significar
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#desempenho-e-limites-observados" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Desempenho e limites observados
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#skills-agentes-e-templates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Skills, agentes e templates
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Skills, agentes e templates">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#inconsistencias-verificadas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inconsistências verificadas
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#estrutura-alvo-recomendada" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Estrutura alvo recomendada
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#plano-de-simplificacao-e-execucao" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Plano de simplificação e execução
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Plano de simplificação e execução">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#p0-fazer-o-mcp-chegar-ao-host-concluido" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P0 — Fazer o MCP chegar ao host — concluído
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#p1-tornar-uma-politica-de-memoria-canonica-concluido" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P1 — Tornar uma política de memória canônica — concluído
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#p2-higienizar-skills-sem-apagar-especialidades-por-suposicao-concluido" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P2 — Higienizar skills sem apagar especialidades por suposição — concluído
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#p3-contrato-de-placeholders-e-testes-de-integridade-concluido" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P3 — Contrato de placeholders e testes de integridade — concluído
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#p4-avaliar-decisoes-reais-dos-agentes-aguardando-credencial-de-teste" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P4 — Avaliar decisões reais dos agentes — aguardando credencial de teste
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#criterios-de-aceite-e-estado" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Critérios de aceite e estado
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#conclusao" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conclusão
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/ils15/pantheon-opencode/edit/main/docs/internal/opencode-memory-skills-audit-2026-10-27.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="auditoria-de-memoria-agentes-e-skills-no-opencode-v2">Auditoria de memória, agentes e skills no OpenCode V2<a class="headerlink" href="#auditoria-de-memoria-agentes-e-skills-no-opencode-v2" title="Permanent link">&para;</a></h1>
+<p><strong>Data:</strong> 2026-10-27
+<strong>Workspace:</strong> <code>review/harness-optimization</code>
+<strong>Escopo:</strong> changelog/documentação oficial do OpenCode V2; configuração MCP e permissões dos agentes Pantheon; política de memória/compaction; catálogo de skills e templates.
+<strong>Natureza:</strong> auditoria estática inicial e execução das correções recomendadas. Os tempos MCP estão em <code>bench/results/memory-persistence-mcp-eval-20261027.md</code>. A verificação isolada não usa autenticação de provider; portanto, não houve avaliação de decisões reais do modelo.</p>
+<h2 id="resumo-executivo">Resumo executivo<a class="headerlink" href="#resumo-executivo" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>Disponibilidade de MCP e decisão de chamada são camadas diferentes.</strong> Configurar um servidor deixa as ferramentas acessíveis ao host. O agente só pode chamá-las quando suas permissões permitem; a política/instrução orienta quando deve fazê-lo. Instalar o MCP não causa, por si só, uma busca de memória em cada turno.</li>
+<li><strong>O problema de conexão MCP foi corrigido e verificado no host.</strong> A auditoria inicial encontrou <code>enabled: true</code> e <code>opencode mcp list</code> sem servidores. O instalador agora grava o schema V2 nativo; o sandbox limpo conectou exatamente cinco MCPs, <code>doctor</code> terminou com código 0 e <code>pantheon://agents</code> incluiu Zeus e Hermes.</li>
+<li><strong>A busca ambiente foi removida.</strong> O plugin não consulta SQLite na primeira mensagem; memória volta a ser uma chamada explícita de <code>memory_search</code>. Checkpoint de outra sessão e memória durável têm regras separadas de compaction nativa.</li>
+<li><strong>A política de chamada de memória já é razoável no texto, mas não foi validada com modelo ao vivo.</strong> A intenção é uma busca lexical curta quando o histórico pode mudar a resposta, checkpoint apenas ao retomar trabalho entre sessões e gravação durável só quando houver motivo de retenção.</li>
+<li><strong>O inventário de skills foi reconciliado.</strong> Os 14 agentes agora apontam apenas para IDs existentes; as 20 skills têm grants, metadados V2 válidos e permissões V1/V2 testadas. <code>src/routing.yml</code> e <code>skills-lock.json</code> têm validação de drift.</li>
+<li><strong>A política de compressão foi unificada.</strong> OpenCode resume a conversa ativa; checkpoints preservam somente retomadas entre sessões; memória durável continua explícita e separada.</li>
+</ol>
+<h2 id="resultado-da-execucao-do-plano">Resultado da execução do plano<a class="headerlink" href="#resultado-da-execucao-do-plano" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>MCP V2:</strong> serialização <code>enabled</code> → <code>disabled</code>, cinco handshakes em sandbox e <code>doctor</code> sem erros.</li>
+<li><strong>Memória:</strong> removidos o hook/plugin de injeção e o toggle de debug; atualizadas as instruções globais, Mnemosyne e documentação para busca seletiva, checkpoint enxuto e escrita durável explícita.</li>
+<li><strong>Skills:</strong> permissões por agente derivadas de <code>skills:</code> com <code>* deny</code> e grants explícitos; referências inválidas removidas; campos de frontmatter sem suporte removidos; routing e inventário verificados.</li>
+<li><strong>Templates:</strong> <code>$input</code> e exemplos <code>&lt;...&gt;</code> substituídos por <code>{{UPPER_SNAKE_CASE}}</code>; comandos usam expansão nativa <code>$ARGUMENTS</code>; teste de contrato cobre os dois formatos.</li>
+<li><strong>Gate de qualidade e orçamento:</strong> o gate anti-slop curto e os limites de artefatos já presentes na branch foram mantidos e cobertos pelo <code>npm test</code>.</li>
+<li><strong>Avaliação comportamental:</strong> não executada porque o sandbox isolado não contém autenticação de provider. Os tempos MCP sintéticos existentes medem servidores/chamadas diretas, não seleção de ferramenta pelo modelo, tokens ou latência fim a fim.</li>
+</ul>
+<h2 id="o-que-o-opencode-v2-atual-oferece">O que o OpenCode V2 atual oferece<a class="headerlink" href="#o-que-o-opencode-v2-atual-oferece" title="Permanent link">&para;</a></h2>
+<p>O changelog mais recente é <strong>v2.2.0 (2026-10-27)</strong>. As mudanças mais relevantes para o harness Pantheon são:</p>
+<ul>
+<li>Plugins podem anexar entradas de instrução nomeadas a uma sessão com <code>ctx.session.instructions.entry.put/list/remove</code>. O changelog diz que as alterações chegam como atualizações pequenas no próximo passo, sobrevivem à compaction e a reverts e não iniciam outro turno de modelo. Isso serve para estado curto da sessão; não substitui memória durável entre sessões.</li>
+<li>A compaction passou a usar a contagem de tokens informada pelo provider e o histórico da sessão começa na última compaction concluída. Isso torna menos necessário criar um gatilho percentual paralelo no Pantheon.</li>
+<li>O changelog registra correção para preservar <code>$0</code> e <code>$ARGUMENTS</code> literais em comandos personalizados e para recarregar skills de compatibilidade somente quando as fontes mudam.</li>
+<li>v2.1.4 introduziu background compaction experimental, mas resumos preparados e nunca usados ainda consomem tokens. Não recomendo ativá-la sem uma avaliação de qualidade/custo com os providers usados no Pantheon.</li>
+</ul>
+<p>Fontes primárias: <a href="https://github.com/anomalyco/opencode/blob/dev/CHANGELOG.md">changelog oficial do OpenCode</a>, <a href="https://dev.opencode.ai/v2/docs/mcp-servers/">MCP servers V2</a>, <a href="https://dev.opencode.ai/v2/docs/skills/">Agent Skills V2</a>, <a href="https://dev.opencode.ai/v2/docs/agents/">Agents V2</a> e <a href="https://dev.opencode.ai/v2/docs/build/plugins/server">API de plugins V2</a>.</p>
+<h2 id="evidencia-da-auditoria-pre-correcao">Evidência da auditoria pré-correção<a class="headerlink" href="#evidencia-da-auditoria-pre-correcao" title="Permanent link">&para;</a></h2>
+<p>Os itens abaixo registram o estado que motivou as mudanças. O resultado depois
+das correções está em <em>Resultado da execução do plano</em>.</p>
+<h3 id="servidor-mcp-grants-e-chamadas">Servidor MCP, grants e chamadas<a class="headerlink" href="#servidor-mcp-grants-e-chamadas" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>scripts/install/opencode.mjs</code> semeia <code>pantheon-resources</code>, <code>pantheon-code-mode</code>, <code>pantheon-memory</code>, <code>pantheon-persistence</code> e <code>pantheon-vision</code>. Para uma configuração V2, o código as põe em <code>mcp.servers</code>, mas ainda escreve <code>enabled: true</code>; <code>config-migration.mjs</code> preserva essa forma. A documentação V2 atual especifica que servidores conectam automaticamente e que <code>disabled: true</code> é a forma de mantê-los desconectados. Essa diferença de esquema precisa ser corrigida e comprovada no host instalado.</li>
+<li>O relatório anterior registrou que <code>opencode mcp list</code> no sandbox mostrou <strong>“No MCP servers configured”</strong>, apesar das entradas no <code>opencode.json</code>. A avaliação direta dos processos MCP mediu os servidores, mas não provou descoberta pelo host. O primeiro critério de aceite deve ser que o host liste, conecte e exponha cada servidor corretamente.</li>
+<li>Os 14 agentes Pantheon declaram <code>pantheon-memory: [memory_search]</code>. A instalação transforma <code>mcp_tools</code> em permissões por agente e por ferramenta; Mnemosyne, em particular, tem grants duráveis como <code>memory_store</code>. Isso limita gravações por função, mas a autorização técnica não causa uma chamada automática.</li>
+<li>A política compartilhada em <code>src/instructions/memory-protocol.instructions.md</code> é mais seletiva que o grant: buscar apenas se história anterior puder mudar o resultado, <code>top_k=2</code>, reutilizar achados passados pelo Zeus e ignorar resultados fracos. Essa é a orientação correta para não pesquisar em todo turno.</li>
+</ul>
+<p>OpenCode documenta servidor MCP como origem de ferramentas e permissões por ferramenta/agente; também documenta <code>disabled</code> como chave de conexão do servidor. Portanto, a configuração de conexão, os grants e a decisão do modelo devem continuar sendo avaliados separadamente.</p>
+<h3 id="o-que-usar-memoria-deve-significar">O que “usar memória” deve significar<a class="headerlink" href="#o-que-usar-memoria-deve-significar" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Camada</th>
+<th>Uso correto</th>
+<th>Pantheon hoje</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Contexto da conversa</td>
+<td>Fatos necessários para a tarefa atual</td>
+<td>Mensagens atuais e resultado de delegação</td>
+</tr>
+<tr>
+<td>Compaction nativa</td>
+<td>Resumir histórico quando o host atingir o limite</td>
+<td>OpenCode escolhe o momento; o plugin aplica poda estrutural antes do resumo</td>
+</tr>
+<tr>
+<td>Entrada de instrução da sessão (V2.2)</td>
+<td>Estado curto, atualizável e necessário após compaction, dentro da mesma sessão</td>
+<td>API nova ainda não usada pelo plugin</td>
+</tr>
+<tr>
+<td>Checkpoint de persistência</td>
+<td>Retomar uma tarefa longa em outra sessão</td>
+<td><code>context_save/get</code>, com regras de uso explícito/risco de perda</td>
+</tr>
+<tr>
+<td>Memória durável</td>
+<td>Fato ou decisão reutilizável em sessões futuras</td>
+<td><code>memory_store</code>, com escrita restrita a Mnemosyne</td>
+</tr>
+<tr>
+<td>Injeção ambiente</td>
+<td>Consultar SQLite e incluir resultados no primeiro prompt sem chamada MCP do modelo</td>
+<td><code>memory_injection.enabled</code>, desligada por padrão</td>
+</tr>
+</tbody>
+</table>
+<p>O toggle <code>memory_injection.enabled</code> não é um “liga/desliga do MCP”. Ele ativa essa última camada, que duplica parte da finalidade de <code>memory_search</code> com uma busca lexical feita pelo plugin. Como ela lê a primeira mensagem e acrescenta dados ao prompt automaticamente, tem efeitos diferentes de “a ferramenta está disponível”.</p>
+<p><strong>Recomendação:</strong> o usuário que instala Pantheon deve receber o servidor MCP de memória conectado por padrão (exceto se escolheu <code>--no-mcp</code>, o runtime não pôde ser configurado ou desativou o servidor na própria configuração OpenCode). Não criar um toggle Pantheon para bloquear <code>memory_search</code>; a política do agente e o grant por ferramenta são suficientes. Para simplificar, remover a injeção ambiente do caminho padrão e aposentar sua opção depois de uma migração compatível. Se ela for mantida como recurso experimental, documentá-la como “injeção automática no primeiro prompt”, com opt-in separado e limite explícito.</p>
+<h3 id="desempenho-e-limites-observados">Desempenho e limites observados<a class="headerlink" href="#desempenho-e-limites-observados" title="Permanent link">&para;</a></h3>
+<p>O benchmark MCP já registrado usou processos stdio isolados e dados sintéticos pequenos:</p>
+<ul>
+<li>Inicialização + <code>initialize</code>: memória <strong>1.284 ms</strong>, persistência <strong>674 ms</strong>.</li>
+<li>Chamadas aquecidas: <code>memory_search</code> mediana <strong>1,38 ms</strong>; <code>memory_recall</code> <strong>1,20 ms</strong>; <code>context_get</code> <strong>1,04 ms</strong>; gravações entre <strong>7,79 e 8,38 ms</strong> nas amostras medidas.</li>
+<li>A busca é FTS5/BM25 lexical; não é busca semântica/vetorial. Sinônimos sem termos em comum podem não retornar memória.</li>
+</ul>
+<p>Esses números indicam que SQLite/MCP aquecido não é o custo dominante de uma tarefa complexa. Não medem custo do provider, escolha do agente, geração de argumentos, chamadas em série, início do host ou tempo total de ACP/CLI. A falha de descoberta no sandbox também impede afirmar que a integração OpenCode está pronta.</p>
+<h2 id="skills-agentes-e-templates">Skills, agentes e templates<a class="headerlink" href="#skills-agentes-e-templates" title="Permanent link">&para;</a></h2>
+<h3 id="inconsistencias-verificadas">Inconsistências verificadas<a class="headerlink" href="#inconsistencias-verificadas" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>Inventário e referências:</strong> 20 diretórios de skill; <code>aphrodite</code> referencia <code>file-prompts</code>, <code>hermes</code> referencia <code>file-prompts</code> e <code>streaming-patterns</code>, nenhum dos quais existe em <code>src/skills</code>. <code>clonedeps</code>, <code>codemap</code>, <code>loop-engineering</code>, <code>reflect</code>, <code>simplify</code>, <code>verification-planning</code> e <code>worktrees</code> não são referenciadas nos blocos <code>skills:</code> dos 14 agentes. O README lista algumas como “All agents”, mas isso não equivale a uma permissão/runtime grant.</li>
+<li><strong>Formato V2:</strong> oito skills contêm <code>context: fork</code>, <code>globs</code> e <code>alwaysApply</code>. A documentação oficial V2 descreve a descoberta por <code>SKILL.md</code>, ID derivado do caminho, <code>description</code>, chamada explícita da ferramenta <code>skill</code> e regras de permissão por agente; campos não reconhecidos não devem ser tratados como controles do OpenCode. No V2, limitar um agente a skills específicas deve usar permissões <code>skill</code> por ID, não depender de <code>skills:</code> no frontmatter legado.</li>
+<li><strong>Proveniência de skill:</strong> hoje há uma lista manual em <code>src/skills/README.md</code>, listas manuais em agentes e os próprios diretórios. Sem uma verificação que compare as três fontes com o que o instalador grava, referências podem ficar inválidas silenciosamente.</li>
+<li><strong>Duplicação de memória/compaction:</strong> <code>memory-protocol.instructions.md</code>, <code>zeus-memory-operations.instructions.md</code>, <code>context-compression/SKILL.md</code>, <code>memory-bank/SKILL.md</code> e <code>mnemosyne.md</code> repetem regras sobre quando buscar, salvar checkpoint, gravar dado durável e não guardar segredos. A repetição aumenta chance de instruções divergentes.</li>
+<li><strong>Placeholder não tipado:</strong> em comandos como <code>/pantheon</code>, <code>$ARGUMENTS</code> é expansão do host. Em prompts e instruções, <code>&lt;target agent&gt;</code>, <code>&lt;safe key&gt;</code> e <code>{path}</code> são exemplos a preencher, não necessariamente variáveis avaliadas. Hoje isso está claro para quem leu as convenções, mas não existe um contrato único que diga nome, origem, obrigatoriedade, escape/quoting, default e se o literal deve sobreviver à expansão.</li>
+<li><strong>Gate de qualidade:</strong> este workspace já inclui um gate curto compartilhado no formato de retorno: comparar resultado com pedido/evidência, retirar conteúdo genérico ou sem suporte, declarar incerteza e preservar restrições. Isso atende melhor como instrução sempre ativa mínima; não é necessário carregar uma skill longa de “anti-slop” em todas as tarefas.</li>
+</ol>
+<h3 id="estrutura-alvo-recomendada">Estrutura alvo recomendada<a class="headerlink" href="#estrutura-alvo-recomendada" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Local</th>
+<th>Responsabilidade</th>
+<th>Deve conter</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/instructions/</code></td>
+<td>Regras pequenas e sempre ativas</td>
+<td>Segurança, escopo, qualidade de resposta e política mínima de memória</td>
+</tr>
+<tr>
+<td><code>src/agents/</code></td>
+<td>Papel, roteamento e grants</td>
+<td>Responsabilidade do agente, limites e ferramenta necessária; sem cópia integral de skills</td>
+</tr>
+<tr>
+<td><code>src/skills/&lt;id&gt;/SKILL.md</code></td>
+<td>Procedimento carregado sob demanda</td>
+<td>Descrição de seleção clara, passos específicos, limite de escopo, saída/checagem e referências auxiliares</td>
+</tr>
+<tr>
+<td><code>prompts/</code></td>
+<td>Briefs/templates de trabalho reutilizáveis</td>
+<td>Inputs nomeados e estruturados; não duplicar políticas globais ou comandos</td>
+</tr>
+<tr>
+<td><code>commands/</code></td>
+<td>Interfaces slash invocáveis</td>
+<td>Uso e variáveis que o host realmente expande (<code>$ARGUMENTS</code>, <code>$1</code> etc.)</td>
+</tr>
+<tr>
+<td>Gerador/validador</td>
+<td>Contrato único</td>
+<td>README de skills, referências de agente, frontmatter V2, IDs e placeholders consistentes</td>
+</tr>
+</tbody>
+</table>
+<p>Para skills V2, manter os campos portáveis aceitos e usados (<code>name</code>, <code>description</code>, opcionalmente <code>compatibility</code>, <code>license</code> e <code>metadata</code>). Especificar seleção no <code>description</code>; usar <code>permissions</code> para esconder/carregar por agente. IDs vêm do caminho da skill, então os diretórios devem ser únicos e consistentes. Placeholder de exemplo deve ser claramente marcado como valor ilustrativo; variáveis de runtime devem ser enumeradas e testadas com espaços, aspas e valores literais que contenham <code>$ARGUMENTS</code>.</p>
+<h2 id="plano-de-simplificacao-e-execucao">Plano de simplificação e execução<a class="headerlink" href="#plano-de-simplificacao-e-execucao" title="Permanent link">&para;</a></h2>
+<h3 id="p0-fazer-o-mcp-chegar-ao-host-concluido">P0 — Fazer o MCP chegar ao host — concluído<a class="headerlink" href="#p0-fazer-o-mcp-chegar-ao-host-concluido" title="Permanent link">&para;</a></h3>
+<ol>
+<li>✅ Serializador emite <code>disabled: false</code> e migra <code>enabled</code> legado.</li>
+<li>✅ Instalação global limpa: cinco MCPs conectados, <code>doctor</code> exit 0 e recurso <code>pantheon://agents</code> com Zeus/Hermes.</li>
+<li>✅ Grants do instalador cobertos por testes; o host reconheceu os servidores antes de qualquer interpretação sobre comportamento do modelo.</li>
+</ol>
+<h3 id="p1-tornar-uma-politica-de-memoria-canonica-concluido">P1 — Tornar uma política de memória canônica — concluído<a class="headerlink" href="#p1-tornar-uma-politica-de-memoria-canonica-concluido" title="Permanent link">&para;</a></h3>
+<ol>
+<li>✅ MCP disponível; chamada seletiva de <code>memory_search</code> em vez de busca em todo turno.</li>
+<li>✅ <code>context_save/get</code> para retomada entre sessões, <code>memory_store</code> para resultado durável autorizado e compaction nativa para histórico atual.</li>
+<li>✅ Removidos o recurso de injeção ambiente e o debug associado. Configuração antiga é preservada como opção desconhecida, mas ignorada.</li>
+<li>⏸️ API <code>ctx.session.instructions.entry</code> continua fora do escopo até haver cenário e avaliação de custo/qualidade.</li>
+</ol>
+<h3 id="p2-higienizar-skills-sem-apagar-especialidades-por-suposicao-concluido">P2 — Higienizar skills sem apagar especialidades por suposição — concluído<a class="headerlink" href="#p2-higienizar-skills-sem-apagar-especialidades-por-suposicao-concluido" title="Permanent link">&para;</a></h3>
+<ol>
+<li>✅ Inventário verificado; <code>file-prompts</code> e <code>streaming-patterns</code> foram removidas das listas porque não existem.</li>
+<li>✅ As sete skills antes sem grant receberam escopo conforme o README: quatro skills gerais para todos e skills especializadas nos agentes pertinentes.</li>
+<li>✅ Frontmatter V2 restrito a <code>name</code> e <code>description</code>; permissões do agente agora negam <code>*</code> e permitem apenas IDs declarados.</li>
+<li>✅ Mnemosyne e a skill <code>context-compression</code> seguem compaction nativa e checkpoints mínimos; removido pipeline duplicado de fase/indexação.</li>
+<li>✅ Gate anti-slop permanece curto e always-on; procedimentos continuam carregados sob demanda.</li>
+</ol>
+<h3 id="p3-contrato-de-placeholders-e-testes-de-integridade-concluido">P3 — Contrato de placeholders e testes de integridade — concluído<a class="headerlink" href="#p3-contrato-de-placeholders-e-testes-de-integridade-concluido" title="Permanent link">&para;</a></h3>
+<ol>
+<li>✅ <code>prompts/README.md</code> define variáveis do host versus entrada manual nomeada e quoting pelo caller.</li>
+<li>✅ Templates usam <code>{{UPPER_SNAKE_CASE}}</code>; comandos continuam com <code>$ARGUMENTS</code> nativo.</li>
+<li>✅ Contratos verificam skills ausentes, atribuições, metadados, routing drift, permissões e placeholders. <code>npm run skills:lock</code> atualiza os digests; <code>node scripts/validate-routing.mjs</code> valida o inventário.</li>
+</ol>
+<h3 id="p4-avaliar-decisoes-reais-dos-agentes-aguardando-credencial-de-teste">P4 — Avaliar decisões reais dos agentes — aguardando credencial de teste<a class="headerlink" href="#p4-avaliar-decisoes-reais-dos-agentes-aguardando-credencial-de-teste" title="Permanent link">&para;</a></h3>
+<p>Para executar cenários com provider isolado, é necessária autenticação de teste não presente no sandbox. Os cenários continuam definidos para uma sessão autenticada:</p>
+<ol>
+<li>pergunta independente — nenhuma chamada;</li>
+<li>alteração pequena sem relevância histórica — nenhuma busca/checkpoint;</li>
+<li>tarefa cuja decisão depende de ADR/histórico — uma busca focal e uso correto do resultado;</li>
+<li>tarefa longa retomada em nova sessão — um checkpoint e uma recuperação ao retomar;</li>
+<li>pedido explícito de memória durável — escrita concisa apenas por Mnemosyne;</li>
+<li>dado sensível apresentado — nenhum segredo persistido;</li>
+<li>pressão de contexto — observar compaction nativa e preservar objetivo/decisões sem chamadas de memória redundantes.</li>
+</ol>
+<p>Comparar políticas, não só latência. A métrica principal é decisão correta com o menor número suficiente de chamadas e sem perda de contexto. Manter uma baseline antes de alterar grants ou prompts.</p>
+<h2 id="criterios-de-aceite-e-estado">Critérios de aceite e estado<a class="headerlink" href="#criterios-de-aceite-e-estado" title="Permanent link">&para;</a></h2>
+<ul>
+<li>✅ Sandbox lista/conecta os cinco MCPs; <code>doctor</code> retorna zero erros.</li>
+<li>⏸️ Decisões reais de chamada por agentes requerem provider auth; nenhuma conclusão é inferida dos grants estáticos.</li>
+<li>✅ Política de escrita/retrieval está documentada; o comportamento real de armazenamento permanece sujeito à chamada observada do modelo.</li>
+<li>✅ Checkpoint tem escopo, forma e condições de uso explícitos; compaction nativa não dispara escrita MCP.</li>
+<li>✅ Skills existentes, metadados V2 reconhecidos e grants V1/V2 testados.</li>
+<li>✅ Placeholders têm formato e origem documentados; teste rejeita as formas antigas nos templates.</li>
+<li>⏸️ Tokens, latência por chamada do modelo e qualidade de recall não foram medidos sem provider auth.</li>
+</ul>
+<h2 id="conclusao">Conclusão<a class="headerlink" href="#conclusao" title="Permanent link">&para;</a></h2>
+<p>A arquitetura agora separa conexão MCP, grant por agente e decisão de chamada:
+<strong>MCP conectado por padrão, recuperação seletiva e gravação durável restrita</strong>.
+O sandbox provou a conexão dos cinco servidores, e testes de instalação
+confirmaram as permissões de skills por agente. Falta apenas uma avaliação
+model-backed com credencial de teste isolada para medir decisões de chamada,
+tokens e latência fim a fim; medições SQLite/MCP aquecidas não substituem esse
+ensaio.</p>
+
+
+
+
+
+
+
+  
+    
+  
+  
+    
+  
+
+
+  <aside class="md-source-file">
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Last update">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="November 13, 2026 18:13:59 UTC">November 13, 2026</span>
+  </span>
+
+    
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Created">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M14.47 15.08 11 13V7h1.5v5.25l3.08 1.83c-.41.28-.79.62-1.11 1m-1.39 4.84c-.36.05-.71.08-1.08.08-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8c0 .37-.03.72-.08 1.08.69.1 1.33.32 1.92.64.1-.56.16-1.13.16-1.72 0-5.5-4.5-10-10-10S2 6.5 2 12s4.47 10 10 10c.59 0 1.16-.06 1.72-.16-.32-.59-.54-1.23-.64-1.92M18 15v3h-3v2h3v3h2v-3h3v-2h-3v-3z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="October 27, 2026 20:28:39 UTC">October 27, 2026</span>
+  </span>
+
+    
+    
+    
+  </aside>
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/ils15/pantheon-opencode" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.indexes", "navigation.top", "search.highlight", "content.action.edit"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>

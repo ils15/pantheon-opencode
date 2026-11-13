@@ -1,0 +1,4022 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Multi-agent orchestration framework for OpenCode — 14 specialized agents and 25 skills">
+      
+      
+      
+        <link rel="canonical" href="https://ils15.github.io/pantheon-opencode/v2.1.1/RELEASING/">
+      
+      
+        <link rel="prev" href="../reference/code-mode/">
+      
+      
+        <link rel="next" href="../releases/v1.6.0/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+    
+    
+      
+        <title>Release Process - Pantheon</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#pantheon-release-process" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Pantheon" class="md-header__button md-logo" aria-label="Pantheon" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Pantheon
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Release Process
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ils15/pantheon-opencode" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../INSTALLATION/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../guides/first-project/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Guides & Tutorials
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../COMPATIBILITY/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Compatibility
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../ARCHITECTURE/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Architecture
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../agents/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Agents & Skills
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../PERMISSIONS-QUALITY-DELEGATION/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Permissions, Gates & Delegation
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../opencode/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  OpenCode 2.x
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../MCP/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  MCP
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../mcp-tools/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  MCP Tools
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../MEMORY/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Memory
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../PLATFORMS/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Platforms
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../reference/model-routing/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="./" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Release Process
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../BRANCH-PROTECTION/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Branch Protection
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../pt-BR/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Documentação (Português)
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="https://github.com/ils15/pantheon-opencode/blob/main/CONTRIBUTING.md" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Contributing
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Pantheon" class="md-nav__button md-logo" aria-label="Pantheon" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Pantheon
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ils15/pantheon-opencode" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../INSTALLATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../QUICKSTART/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../UPGRADING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Upgrading
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../UPGRADING.pt-BR/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Upgrading (Português)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides & Tutorials
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides & Tutorials
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/first-project/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Project (End-to-End)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../AGENT-CAPABILITY-MATRIX/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Capability Matrix
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/deepwork/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deepwork Blueprint
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/vision/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pantheon Vision
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/cookbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Practical Cookbook
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../COMPATIBILITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ARCHITECTURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents & Skills
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../PERMISSIONS-QUALITY-DELEGATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Permissions, Gates & Delegation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../opencode/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenCode 2.x
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../MCP/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MCP
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../mcp-tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MCP Tools
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../MEMORY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../PLATFORMS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Platforms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_13" >
+        
+          
+          <label class="md-nav__link" for="__nav_13" id="__nav_13_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_13_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_13">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/model-routing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Routing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/local-decision-router/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Decision Router
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/native-decisions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native Decisions (Jev)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/offline-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Offline Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/performance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/skill-search-design/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Skill Search Design
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/env-vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment Variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/code-mode/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Code Mode
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_14" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_14" id="__nav_14_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release Process
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_14_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_14">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Release Process
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release Process
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release Process
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#versioning-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Versioning Policy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#version-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Version Commands
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#version-bump-the-only-manual-step" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Version Bump (the only manual step)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#release-notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Release Notes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Release Notes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#type-section-mapping" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Type → section mapping
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#generate-the-notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Generate the notes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#release-body-by-channel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Release body by channel
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Release body by channel">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#enforcement-the-release-body-can-never-drift-again" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Enforcement (the release body can never drift again)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stable-release-manual-dispatch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stable Release (manual dispatch)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#package-and-evidence-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Package and evidence contract
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Package and evidence contract">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#six-release-gates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Six release gates
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Six release gates">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#python-test-environment-gate-a" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Python test environment (gate a)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#test-tiers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test tiers
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Test tiers">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#coverage-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Coverage contract
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#memory-mcp-packaging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory MCP packaging
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-a-release-may-be-cut-branch-hygiene-2026-11-05" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where a release may be cut (branch hygiene, 2026-11-05)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-whats-new-summary-window-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The 🆕 What's New summary (window contract)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#beta-releases-explicit-dispatch-with-release_channelbeta" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Beta Releases (explicit dispatch with release_channel=beta)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recovery-failure-handling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recovery / Failure Handling
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Recovery / Failure Handling">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#beta-npm-publish-recovery-explicit-dispatch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Beta npm-publish recovery (explicit dispatch)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#npm-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        npm Policy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rollback" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rollback
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Rollback">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#trigger" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Trigger
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#restore-the-stable-channel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Restore the stable channel
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#do-not" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Do not
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-a-rollback-does-not-undo" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What a rollback does not undo
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#required-record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Required record
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#retiring-the-next-dist-tag" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Retiring the next dist-tag
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#branch-protection-main" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Branch protection (main)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pre-release-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pre-Release Checklist
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#consumption-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consumption Options
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#release-assets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Release Assets
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#preserved-releases-zenodo" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Preserved Releases: Zenodo
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../releases/v1.6.0/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v1.6.0 Release Notes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../BRANCH-PROTECTION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Branch Protection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_16" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../pt-BR/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Documentação (Português)
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_16" id="__nav_16_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_16_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_16">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Documentação (Português)
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_16_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_16_2" id="__nav_16_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Começando
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_16_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_16_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Começando
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../pt-BR/QUICKSTART/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Início Rápido
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../pt-BR/INSTALLATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Instalação
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../UPGRADING.pt-BR/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Upgrading (Português)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_16_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_16_3" id="__nav_16_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guias & Tutoriais
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_16_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_16_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guias & Tutoriais
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../pt-BR/guides/first-project/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Primeiro Projeto (Ponta a Ponta)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../pt-BR/AGENT-CAPABILITY-MATRIX/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Matriz de Agentes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../pt-BR/guides/deepwork/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blueprint Deepwork
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../pt-BR/guides/vision/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visão Multimodal
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../pt-BR/guides/cookbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Livro de Receitas (Cookbook)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://github.com/ils15/pantheon-opencode/blob/main/CONTRIBUTING.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#versioning-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Versioning Policy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#version-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Version Commands
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#version-bump-the-only-manual-step" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Version Bump (the only manual step)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#release-notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Release Notes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Release Notes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#type-section-mapping" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Type → section mapping
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#generate-the-notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Generate the notes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#release-body-by-channel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Release body by channel
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Release body by channel">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#enforcement-the-release-body-can-never-drift-again" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Enforcement (the release body can never drift again)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stable-release-manual-dispatch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stable Release (manual dispatch)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#package-and-evidence-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Package and evidence contract
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Package and evidence contract">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#six-release-gates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Six release gates
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Six release gates">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#python-test-environment-gate-a" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Python test environment (gate a)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#test-tiers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test tiers
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Test tiers">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#coverage-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Coverage contract
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#memory-mcp-packaging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory MCP packaging
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-a-release-may-be-cut-branch-hygiene-2026-11-05" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where a release may be cut (branch hygiene, 2026-11-05)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-whats-new-summary-window-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The 🆕 What's New summary (window contract)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#beta-releases-explicit-dispatch-with-release_channelbeta" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Beta Releases (explicit dispatch with release_channel=beta)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recovery-failure-handling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recovery / Failure Handling
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Recovery / Failure Handling">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#beta-npm-publish-recovery-explicit-dispatch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Beta npm-publish recovery (explicit dispatch)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#npm-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        npm Policy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rollback" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rollback
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Rollback">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#trigger" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Trigger
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#restore-the-stable-channel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Restore the stable channel
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#do-not" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Do not
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-a-rollback-does-not-undo" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What a rollback does not undo
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#required-record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Required record
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#retiring-the-next-dist-tag" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Retiring the next dist-tag
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#branch-protection-main" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Branch protection (main)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pre-release-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pre-Release Checklist
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#consumption-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Consumption Options
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#release-assets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Release Assets
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#preserved-releases-zenodo" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Preserved Releases: Zenodo
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/ils15/pantheon-opencode/edit/main/docs/RELEASING.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="pantheon-release-process">Pantheon Release Process<a class="headerlink" href="#pantheon-release-process" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p>How versioning, releases, and packaging work.</p>
+</blockquote>
+<hr />
+<h2 id="versioning-policy">Versioning Policy<a class="headerlink" href="#versioning-policy" title="Permanent link">&para;</a></h2>
+<p>Pantheon follows <strong>Semantic Versioning</strong> based on <a href="https://www.conventionalcommits.org/">Conventional Commits</a>:</p>
+<table>
+<thead>
+<tr>
+<th>Commit pattern</th>
+<th>Version bump</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>BREAKING CHANGE</code> or <code>type!:</code> in scope</td>
+<td><strong>MAJOR</strong> (x.0.0)</td>
+</tr>
+<tr>
+<td><code>feat:</code></td>
+<td><strong>MINOR</strong> (x.y.0)</td>
+</tr>
+<tr>
+<td><code>fix:</code>, <code>chore:</code>, <code>docs:</code>, <code>refactor:</code>, etc.</td>
+<td><strong>PATCH</strong> (x.y.z)</td>
+</tr>
+</tbody>
+</table>
+<p>Candidate version: the manifests in this checkout express the version being
+prepared; they do not confirm a publication. A beta is published only after
+the Release workflow completes successfully. To check which version is
+actually published, consult the npm <code>beta</code> dist-tag.</p>
+<hr />
+<h2 id="version-commands">Version Commands<a class="headerlink" href="#version-commands" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="c1"># Show current version, latest stable git tag, and pending release status</span>
+node<span class="w"> </span>scripts/versioning.mjs<span class="w"> </span>status
+
+<span class="c1"># Sync all manifests + promote [Unreleased] → [vX.Y.Z] (recommended bump)</span>
+node<span class="w"> </span>scripts/versioning.mjs<span class="w"> </span>apply<span class="w">          </span><span class="c1"># type auto (from commits)</span>
+node<span class="w"> </span>scripts/versioning.mjs<span class="w"> </span>apply<span class="w"> </span>minor<span class="w">    </span><span class="c1"># explicit type: patch | minor | major</span>
+node<span class="w"> </span>scripts/versioning.mjs<span class="w"> </span>apply<span class="w"> </span>--notes<span class="w">  </span><span class="c1"># pre-fill the promoted entry with</span>
+<span class="w">                                           </span><span class="c1"># release notes generated from commits</span>
+
+<span class="c1"># Advance the committed beta line and promote the manual [Unreleased] body</span>
+node<span class="w"> </span>scripts/versioning.mjs<span class="w"> </span>apply<span class="w"> </span>--beta
+node<span class="w"> </span>scripts/versioning.mjs<span class="w"> </span>beta<span class="w">           </span><span class="c1"># alias for apply --beta</span>
+<span class="c1"># Replace [Unreleased] with generated notes since the latest beta tag</span>
+node<span class="w"> </span>scripts/versioning.mjs<span class="w"> </span>apply<span class="w"> </span>--beta<span class="w"> </span>--notes
+
+<span class="c1"># Merge pending notes into an already-promoted candidate without a version bump</span>
+node<span class="w"> </span>scripts/versioning.mjs<span class="w"> </span>changelog<span class="w"> </span><span class="m">1</span>.6.0-beta.10
+
+<span class="c1"># Generate release notes from conventional commits (lastTag..HEAD)</span>
+node<span class="w"> </span>scripts/release-notes.mjs<span class="w">             </span><span class="c1"># stable vX.Y.Z tags only</span>
+node<span class="w"> </span>scripts/release-notes.mjs<span class="w"> </span>--draft<span class="w">     </span><span class="c1"># last 30 commits, no tag lookup</span>
+
+<span class="c1"># CI-side consistency check (run in the `validate` job of ci.yml)</span>
+node<span class="w"> </span>scripts/version-check.mjs
+
+<span class="c1"># Dry-run of the release payload (status + release notes + pack)</span>
+npm<span class="w"> </span>run<span class="w"> </span>release:dry-run
+</code></pre></div>
+<p>After a beta version bump, typecheck and rebuild the TUI workspace from the
+repository root. The dist bundles embed the package version, and CI checks their
+freshness; do not install dependencies with a nested prefix.</p>
+<div class="highlight"><pre><span></span><code>npm<span class="w"> </span>run<span class="w"> </span>typecheck<span class="w"> </span>--workspace<span class="o">=</span>src/plugins/tui
+npm<span class="w"> </span>run<span class="w"> </span>build<span class="w"> </span>--workspace<span class="o">=</span>src/plugins/tui
+</code></pre></div>
+<p><code>apply</code> syncs the version manifests (<code>package.json</code>, <code>plugin.json</code>,
+<code>pyproject.toml</code>, <a href="https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/tui/package.json"><code>src/plugins/tui/package.json</code></a>) and promotes the
+<code>[Unreleased]</code> changelog section to a versioned entry. <code>apply --beta</code> (alias
+<code>beta</code>) syncs the manifests to the next committed <code>X.Y.Z-beta.N</code> <strong>and</strong>
+promotes <code>[Unreleased]</code> to <code>## [vX.Y.Z-beta.N]</code>; without <code>--notes</code>, it keeps
+the manual <code>[Unreleased]</code> body. With <code>--beta --notes</code>, the promoted body is
+generated from commits since the latest beta tag (not the latest stable tag),
+using the same release-notes parser and renderer as the stable path. It fails
+before writing files if no beta baseline exists or the generated notes are
+empty. Do not edit <code>CHANGELOG.md</code> by hand. When the target version section
+already exists, <code>versioning.mjs changelog &lt;version&gt;</code> merges <code>[Unreleased]</code>
+into that section and resets the template without advancing the package
+version or duplicating the release heading. Release validation also
+keeps the root pair (<code>package.json</code> + <code>package-lock.json</code>) and the TUI pair
+(<a href="https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/tui/package.json"><code>src/plugins/tui/package.json</code></a> + <a href="https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/tui/package-lock.json"><code>src/plugins/tui/package-lock.json</code></a>) in the
+same versioned inventory. The TUI is a root <strong>workspace</strong>, so CI installs both
+with a single <code>npm ci --ignore-scripts</code> at the root; the nested TUI lock is
+still versioned and still shipped because the user-facing postinstall syncs
+against it. <strong>It no longer creates git tags</strong> — tags are
+workflow-owned (see below).</p>
+<hr />
+<h2 id="version-bump-the-only-manual-step">Version Bump (the only manual step)<a class="headerlink" href="#version-bump-the-only-manual-step" title="Permanent link">&para;</a></h2>
+<ol>
+<li>Create a branch off <code>main</code>.</li>
+<li>Bump the version:
+   <div class="highlight"><pre><span></span><code>node<span class="w"> </span>scripts/versioning.mjs<span class="w"> </span>apply<span class="w"> </span>minor<span class="w">   </span><span class="c1"># or patch/major</span>
+</code></pre></div>
+   or edit <code>package.json</code> directly — the version is the release signal.
+   The TUI manifest (<a href="https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/tui/package.json"><code>src/plugins/tui/package.json</code></a>) carries the same version;
+   <code>npm run version:check</code> fails when the two drift. <code>node_modules/</code> state is
+   irrelevant here: the TUI is a root workspace, so one root <code>npm ci
+   --ignore-scripts</code> installs it.</li>
+<li>Fill in the promoted changelog section with the release notes for the
+   upcoming version. The release body is <strong>extracted from this section</strong>, so
+   it must exist and be accurate.</li>
+<li>Commit + push + open a PR to <code>main</code>. Review the <strong>complete</strong> working-tree
+   diff, then stage every intentional release change: all outputs produced by
+   <code>versioning.mjs</code> and any release docs deliberately edited. The paths below
+   are illustrative and incomplete; check the full diff rather than treating
+   this list as exhaustive. In particular, <strong>do not omit
+   <a href="https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/tui/dist/tui.js"><code>src/plugins/tui/dist/tui.js</code></a></strong>: the bundle embeds the package version and
+   CI checks TUI dist freshness. Leave unrelated changes and untracked RED
+   tests out of the release commit.</li>
+</ol>
+<div class="highlight"><pre><span></span><code>git<span class="w"> </span>status<span class="w"> </span>--short
+git<span class="w"> </span>diff
+git<span class="w"> </span>add<span class="w"> </span>CHANGELOG.md<span class="w"> </span>docs/RELEASING.md<span class="w"> </span>package.json<span class="w"> </span>package-lock.json<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>plugin.json<span class="w"> </span>pyproject.toml<span class="w"> </span>src/plugins/tui/package.json<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>src/plugins/tui/package-lock.json<span class="w"> </span>src/plugins/tui/dist/tui.js
+<span class="c1"># Add any other intentional paths found while reviewing the complete diff.</span>
+git<span class="w"> </span>diff<span class="w"> </span>--cached<span class="w"> </span>--check
+git<span class="w"> </span>diff<span class="w"> </span>--cached<span class="w"> </span>--name-only
+git<span class="w"> </span>diff<span class="w"> </span>--cached
+git<span class="w"> </span>commit<span class="w"> </span>-m<span class="w"> </span><span class="s2">"chore(release): vX.Y.Z"</span>
+git<span class="w"> </span>push<span class="w"> </span>-u<span class="w"> </span>origin<span class="w"> </span>&lt;branch&gt;
+</code></pre></div>
+<ol>
+<li>Wait for CI. The PR must pass <code>validate</code> (version manifests, engine,
+   packaging, sandbox), <code>test-suite</code>, <code>plugin-v2-ts-coverage</code>, <code>commitlint</code>,
+   <code>security-scan</code>, and <code>CodeQL</code> before merging. <code>ci.yml</code> also runs on pushes
+   to <code>main</code>, so the merged SHA carries its own CI evidence.</li>
+</ol>
+<blockquote>
+<p>No tag is created locally. Merging an ordinary PR does <strong>not</strong> release. To
+publish a stable version, use the explicit <code>Release</code> workflow dispatch after
+the intended commit is on <code>main</code>; it validates manifests and preserves the
+exact target-SHA/idempotency checks.</p>
+</blockquote>
+<hr />
+<h2 id="release-notes">Release Notes<a class="headerlink" href="#release-notes" title="Permanent link">&para;</a></h2>
+<p>Release notes live in the version's <code>CHANGELOG.md</code> section and that section —
+verbatim — <strong>is</strong> the GitHub Release body. The canonical format is the hybrid:
+curated <code>### 🆕 What's New</code> highlights on top, Keep a Changelog subsections
+below, in fixed order, in <strong>English</strong>:</p>
+<div class="highlight"><pre><span></span><code><span class="gu">### 🆕 What's New        ← curated highlights (≤6 bullets, ≤140 chars each)</span>
+<span class="gu">### Added                ┐</span>
+<span class="gu">### Changed              │ Keep a Changelog — omit empty sections, keep this order</span>
+<span class="gu">### Deprecated           │</span>
+<span class="gu">### Removed              │</span>
+<span class="gu">### Fixed                │</span>
+<span class="gu">### Security             ┘</span>
+<span class="gu">### ⚠️ Known Issues      ← optional, last</span>
+<span class="gu">### ✅ Closed Issues     ← optional, last</span>
+</code></pre></div>
+<p>Rules enforced by the tooling (see "Enforcement" below):</p>
+<ul>
+<li>Only the headings above, in this relative order, no duplicates, no <code>##</code> or
+  <code>####</code> inside the section.</li>
+<li>Bullets open with a bold lead: <code>- **&lt;scope&gt;** — &lt;text&gt;</code> (breaking: a <code>💥</code>
+  prefix before the bold lead). Unscoped bullets may use <code>- **&lt;subject&gt;**</code>.</li>
+<li><code>### 🆕 What's New</code> is authored by hand (it is never generated): at most 6
+  bullets, one terminal line each (≤140 chars — the TUI window contract).</li>
+<li>No <code>TODO</code>/<code>TBD</code>/<code>FIXME</code>/<code>XXX</code> placeholders, no empty subsections, no bullet
+  over 200 chars (continuation lines included).</li>
+</ul>
+<h3 id="type-section-mapping">Type → section mapping<a class="headerlink" href="#type-section-mapping" title="Permanent link">&para;</a></h3>
+<p><code>node scripts/release-notes.mjs</code> (and <code>versioning.mjs apply --notes</code>) generate
+the KaC sections from conventional commits — never written from scratch.
+Commitlint (12 types / 40 scopes) validates every commit before it merges, so
+the generator can always group the history:</p>
+<table>
+<thead>
+<tr>
+<th>Commit type</th>
+<th>Generated section</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>feat</code></td>
+<td><code>### Added</code></td>
+</tr>
+<tr>
+<td><code>perf</code>, <code>docs</code></td>
+<td><code>### Changed</code></td>
+</tr>
+<tr>
+<td><code>fix</code></td>
+<td><code>### Fixed</code></td>
+</tr>
+<tr>
+<td><code>security</code></td>
+<td><code>### Security</code></td>
+</tr>
+<tr>
+<td><code>--known-issues "text"</code> (CLI flag, repeatable)</td>
+<td><code>### ⚠️ Known Issues</code> (omitted when the flag is absent — never emitted empty)</td>
+</tr>
+<tr>
+<td><code>Closes #N</code> / <code>Fixes #N</code> / <code>Resolves #N</code> in the commit <strong>body</strong></td>
+<td><code>### ✅ Closed Issues</code> — bullet <code>- #N - &lt;subject&gt;</code> (deduped; omitted when no refs exist)</td>
+</tr>
+<tr>
+<td><code>release</code> scope (maintainer-only, any commit type)</td>
+<td><strong>omitted</strong> from all public notes, including Closed Issues references</td>
+</tr>
+<tr>
+<td><code>chore</code>, <code>refactor</code>, <code>test</code>, <code>ci</code>, <code>build</code>, <code>style</code>, <code>revert</code> (and unknown types)</td>
+<td><strong>omitted</strong> — internal, never user-facing</td>
+</tr>
+<tr>
+<td><code>BREAKING CHANGE</code> footer or <code>type!:</code> / <code>type(scope)!:</code></td>
+<td><code>💥</code> prefix on the bullet <strong>inside</strong> its section (e.g. <code>- 💥 **scope** — subject</code>) — no dedicated Breaking section</td>
+</tr>
+</tbody>
+</table>
+<p><code>### 🆕 What's New</code> is NOT generated — curate it by hand on top of the
+generated sections. <code>Deprecated</code> and <code>Removed</code> have no commit type; author
+them by hand when the release needs them.</p>
+<p>The <code>release</code> scope is reserved for maintainers' internal release tooling.
+Commits using it are excluded before both section grouping and issue-reference
+collection, so they cannot appear in any section.</p>
+<p>Merge commits ("Merge …") and empty-subject chores are skipped.</p>
+<h3 id="generate-the-notes">Generate the notes<a class="headerlink" href="#generate-the-notes" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Commits since the latest stable tag (strict vX.Y.Z, pre-releases excluded)</span>
+node<span class="w"> </span>scripts/release-notes.mjs
+
+<span class="c1"># Same output without reading git tags (last 30 commits) — quick preview or</span>
+<span class="c1"># pre-first-tag use</span>
+node<span class="w"> </span>scripts/release-notes.mjs<span class="w"> </span>--draft
+
+<span class="c1"># Add a manual Known Issues entry (repeatable; omitted from output when absent)</span>
+node<span class="w"> </span>scripts/release-notes.mjs<span class="w"> </span>--known-issues<span class="w"> </span><span class="s2">"widget API is unstable"</span>
+
+<span class="c1"># Pre-merge review: version status + generated notes + pack dry-run</span>
+npm<span class="w"> </span>run<span class="w"> </span>release:dry-run
+</code></pre></div>
+<p>The script exits 0 whenever it can generate. stdout is markdown ready to
+paste into the <code>[Unreleased]</code> CHANGELOG section (diagnostics go to stderr).</p>
+<h2 id="release-body-by-channel">Release body by channel<a class="headerlink" href="#release-body-by-channel" title="Permanent link">&para;</a></h2>
+<p><code>release.yml</code> extracts the release body from the committed <code>CHANGELOG.md</code> for
+both dispatch channels; only the stable channel attaches it to a GitHub Release:</p>
+<table>
+<thead>
+<tr>
+<th>Channel</th>
+<th>Notes source</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>stable</td>
+<td><code>node scripts/changelog-extract.mjs X.Y.Z</code> reads the curated <code>## [X.Y.Z]</code> section from <code>CHANGELOG.md</code>; the dispatch fails if the section is missing. Used as the GitHub Release body.</td>
+</tr>
+<tr>
+<td>beta</td>
+<td><code>node scripts/changelog-extract.mjs X.Y.Z-beta.N</code> reads the curated <code>## [X.Y.Z-beta.N]</code> section from <code>CHANGELOG.md</code>; the dispatch fails if the section is missing. Carried in the release artifact only — beta creates no GitHub Release. The workflow does not regenerate notes at dispatch time.</td>
+</tr>
+<tr>
+<td>recovery</td>
+<td><code>node scripts/changelog-extract.mjs v&lt;recovery_version&gt;</code> reads the section from the CHANGELOG at the recovery target SHA, so a republished release keeps the canonical body. The static note (<code>Recovery publish for existing tag ...</code>) is the last resort for tags predating the CHANGELOG section.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="enforcement-the-release-body-can-never-drift-again">Enforcement (the release body can never drift again)<a class="headerlink" href="#enforcement-the-release-body-can-never-drift-again" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>Author time</strong> — CI runs <code>npm run docs:check-changelog</code>, which validates
+   the <code>[Unreleased]</code> and newest-stable sections against the canonical format
+   (<code>scripts/changelog-format.mjs</code>) on every PR.</li>
+<li><strong>Release time</strong> — release gate (e) validates the exact committed section
+   before anything is tagged; a format violation fails the dispatch.</li>
+<li><strong>After publication</strong> — the title is always <code>Pantheon &lt;tag&gt;</code> (workflow-set),
+   and a re-run of the release workflow for a version whose GitHub Release
+   already exists compares the published body with the canonical section and
+   <strong>fails on divergence</strong> with the remedy
+   (<code>gh release edit &lt;tag&gt; --notes-file release-artifact/release-notes.md</code>).
+   Hand-editing a published body is not part of the process; a correction
+   goes into the CHANGELOG and a recovery dispatch republishes it.</li>
+</ol>
+<p>The version is committed, so a <code>CHANGELOG.md</code> section is authorable before the
+dispatch and is required for <strong>both</strong> channels. Stable <code>apply --notes</code> uses
+the latest stable tag; beta note generation is opt-in through
+<code>apply --beta --notes</code> and uses the latest beta tag. Without <code>--notes</code>, beta
+notes remain manually curated. In either channel, the dispatch extracts the
+committed changelog section and does not generate notes itself.</p>
+<h3 id="flow">Flow<a class="headerlink" href="#flow" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>Commit</strong> — Conventional Commits enforced by commitlint (local hook + CI).</li>
+<li><strong>Generate</strong> — For stable, <code>node scripts/release-notes.mjs</code> uses the latest
+   stable tag; paste its output into <code>[Unreleased]</code> or use <code>apply --notes</code>.
+   For beta, use <code>apply --beta --notes</code> to generate since the latest beta tag,
+   or leave <code>--notes</code> off to keep manually curated content.</li>
+<li><strong>CHANGELOG</strong> — <code>node scripts/versioning.mjs apply minor [--notes]</code> bumps
+   the stable manifests and promotes <code>[Unreleased]</code> → <code>[vX.Y.Z]</code>; beta uses
+   <code>apply --beta [--notes]</code> and promotes to <code>[vX.Y.Z-beta.N]</code>. With <code>--notes</code>
+   the promoted entry is pre-filled from grouped commits (the canonical
+   <code>### Added / Changed / Fixed / Security / ⚠️ Known Issues / ✅ Closed Issues</code>
+   sections); it <strong>replaces</strong> any manual <code>[Unreleased]</code> content — add the
+   curated <code>### 🆕 What's New</code> block (and Deprecated/Removed when needed)
+   after generating. Beta <code>--notes</code> fails before writes when there is no beta
+   baseline or the generated notes are empty. Review the diff before committing.</li>
+<li><strong>Release body by channel</strong> — <code>node scripts/changelog-extract.mjs &lt;version&gt;</code>
+   pulls the curated versioned section into the GitHub Release body for both
+   stable (<code>X.Y.Z</code>) and beta (<code>X.Y.Z-beta.N</code>), and fails if the section is
+   missing; recovery extracts the section at the recovery target (the static
+   note is the last resort for tags predating the section).</li>
+<li><strong>Publish</strong> — the workflow tags the exact dispatch target SHA and publishes
+   to npm (stable or beta per the <code>release_channel</code> input).</li>
+</ol>
+<hr />
+<h2 id="stable-release-manual-dispatch">Stable Release (manual dispatch)<a class="headerlink" href="#stable-release-manual-dispatch" title="Permanent link">&para;</a></h2>
+<p>Dispatching <a href="https://github.com/ils15/pantheon-opencode/blob/main/.github/workflows/release.yml"><code>.github/workflows/release.yml</code></a>
+without recovery inputs runs the stable release path:</p>
+<ol>
+<li><strong>Type</strong>: channel=<code>stable</code>, npm dist-tag=<code>latest</code>.</li>
+<li><strong>Version gate</strong> — package.json must be a clean <code>X.Y.Z</code> and not strictly
+   behind the latest stable git tag (exact <code>vX.Y.Z</code> tags only; <code>-beta.*</code>
+   pre-release tags are excluded from the comparison). Fails loudly if the
+   version was never bumped.</li>
+<li><strong>Pack and verify</strong> — the validation job packs exactly one immutable npm
+   tarball with lifecycle scripts disabled. It records that tarball's
+   SHA-256 together with the full <code>TARGET_SHA</code>; the release job recomputes the
+   digest and rejects any mismatch.</li>
+<li><strong>Idempotent guard</strong> — if tag <code>vX.Y.Z</code> exists AND its GitHub Release
+   exists, exit 0 (already released). If the tag exists but the release is
+   missing, continue and complete the release (tag creation is skipped).</li>
+<li><strong>Release body</strong> — <code>node scripts/changelog-extract.mjs X.Y.Z</code> extracts the
+   <code>## [X.Y.Z] - date</code> section from <code>CHANGELOG.md</code> into
+   the runner temp path <code>$RUNNER_TEMP/release-notes.md</code> (published as
+   <code>release-artifact/release-notes.md</code>); fails if the section is missing.</li>
+<li><strong>Tag creation (workflow-owned)</strong> — a tag ref is created through the
+   repository-scoped GitHub API <strong>on the exact dispatch target SHA</strong>.</li>
+<li><strong>GitHub Release</strong> —
+   <code>gh release create vX.Y.Z --target &lt;dispatch-sha&gt; --verify-tag --title "Pantheon vX.Y.Z" --notes-file release-artifact/release-notes.md</code>.</li>
+<li><strong>npm publish (final step)</strong> — gated by the idempotency
+   lookup, then that same tarball (without repacking) is published with
+   <code>--tag latest --access public --provenance</code>. The SHA-256 validated in the
+   validation job is therefore the SHA-256 of the file published to npm.</li>
+</ol>
+<p>A global concurrency group (<code>release</code>, no cancel-in-progress) serializes
+runs so beta and stable paths can never double-publish.</p>
+<hr />
+<h2 id="package-and-evidence-contract">Package and evidence contract<a class="headerlink" href="#package-and-evidence-contract" title="Permanent link">&para;</a></h2>
+<p>The release evidence is fail-closed and has one artifact identity:</p>
+<ul>
+<li>root dependencies and the TUI workspace use one <code>npm ci --ignore-scripts</code>
+  with <code>package.json</code> and <code>package-lock.json</code>;</li>
+<li>the TUI manifest and lockfile remain independently validated as package and
+  publish evidence;</li>
+<li>a release creates one npm <code>.tgz</code> tarball, computes one SHA-256, and carries
+  that exact file and digest from validation to publication; a second <code>npm
+  pack</code> is not a valid replacement;</li>
+<li>the tarball and GitHub tag/release are bound to the same full <code>TARGET_SHA</code>.</li>
+</ul>
+<p>Any <code>npm ci</code> failure blocks the run. There is no <code>npm install</code> fallback, and
+<code>PANTHEON_ALLOW_NPM_INSTALL_FALLBACK</code> is not part of the current contract.</p>
+<h3 id="six-release-gates">Six release gates<a class="headerlink" href="#six-release-gates" title="Permanent link">&para;</a></h3>
+<p>The <code>validate</code> job of <code>release.yml</code> runs six gates on the frozen <code>TARGET_SHA</code>.
+Each prints <code>GATE &lt;name&gt;: PASS</code> and writes a named evidence file to
+<code>$RUNNER_TEMP/gate-evidence/&lt;name&gt;.json</code>; the directory is uploaded as
+<code>release-gate-evidence-&lt;run_id&gt;</code> (90-day retention). There is no fallback: a
+command that cannot run, a missing artifact, an unsupported host, or a <code>SKIP</code>
+is a failed gate, and a failed gate aborts before the artifact upload and
+before any release credential is exposed.</p>
+<table>
+<thead>
+<tr>
+<th>Gate</th>
+<th>Executed by</th>
+<th>Fails when</th>
+<th>Evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>(a) tests</td>
+<td><code>scripts/release-gates.mjs tests</code>: pytest + <a href="https://github.com/ils15/pantheon-opencode/tree/main/src/mcp"><code>src/mcp</code></a> coverage ≥ 80, <code>test:node</code>, <code>test:ts</code>, <code>coverage:plugin-v2</code>, <code>test:install</code>; pytest runs in an isolated venv built from <a href="https://github.com/ils15/pantheon-opencode/blob/main/src/mcp/requirements-mcp.txt"><code>src/mcp/requirements-mcp.txt</code></a></td>
+<td>any suite, coverage threshold, or the mandatory install tier fails; an unsatisfiable or unverified pin set fails the gate</td>
+<td><code>tests.json</code></td>
+</tr>
+<tr>
+<td>(b) host compatibility</td>
+<td><code>scripts/release-gates.mjs host</code>: each <strong>measured</strong> host installed and exercised in an isolated sandbox; the gate reports a supported family with no row as "supported, unmeasured" instead of failing it</td>
+<td>a measured row fails, or a known-broken host is listed</td>
+<td><code>host.json</code></td>
+</tr>
+<tr>
+<td>(c) install</td>
+<td><code>scripts/release-gates.mjs install</code>: the immutable <code>.tgz</code> installed globally, headless init, <code>validate-sandbox-install.mjs</code>, and a host-backed tool canary on OpenCode 2.0.30</td>
+<td>install, init, source comparison, MCP/doctor checks, or canary fails or skips</td>
+<td><code>install.json</code>, <code>install-canary.log</code></td>
+</tr>
+<tr>
+<td>(d) package</td>
+<td><code>scripts/release-gates.mjs package</code>: SHA-256 recomputed over the same <code>.tgz</code>, payload inspected, <code>package:validate</code></td>
+<td>the digest, name, version, target SHA, or payload disagree; no second <code>npm pack</code> is accepted</td>
+<td><code>package.json</code></td>
+</tr>
+<tr>
+<td>(e) changelog</td>
+<td><code>scripts/release-gates.mjs changelog</code>: <code>changelog-extract.mjs</code></td>
+<td>the <code>[version]</code> section is missing or empty; recovery checks the tag instead</td>
+<td><code>changelog.json</code>, <code>changelog.md</code></td>
+</tr>
+<tr>
+<td>(f) metadata</td>
+<td><code>scripts/release-gates.mjs metadata</code>: <code>version-check.mjs</code> + <code>validate-node-engine-policy.mjs</code></td>
+<td>manifests drift, the channel/version shape is wrong, or the SHA is not 40 hex</td>
+<td><code>metadata.json</code></td>
+</tr>
+</tbody>
+</table>
+<p>The install canary configures the installed package's <code>src/plugin-v2</code> directory
+using the installer's object-form <code>plugins</code> entry, so imports resolve against the
+installed package's runtime dependencies rather than a checkout shim. A
+preflight turn fails the canary before catalog assertions if the installed plugin
+does not register <code>hashline_edit</code> with its output descriptor. The canary then
+checks the Code Mode catalog, a rejected hashline reference (no write), and one
+valid edit limited to a temporary project file. It mocks only the model endpoint
+with a local scripted SSE server. This proves behavior for the installed artifact
+on the gate's OpenCode 2.0.30 host; it does not prove npm publication, the GitHub
+Release workflow, or compatibility with host versions not run by that gate.</p>
+<p>The host evidence matrix is declared in <code>release.yml</code> (<code>PANTHEON_RELEASE_MATRIX</code>)
+and is validated by the gate, not trusted. Support is family-level: the gate
+requires no row per family, reports a family with no row as "supported,
+unmeasured", and fails only when a measured row fails or a known-broken host is
+listed. See <a href="../COMPATIBILITY/">Compatibility</a> for the support policy and the
+known-broken set. A measured row that cannot run is a failure — the release path
+has no <code>SKIP</code>. The automatic release matrix exercises four OpenCode 2.x hosts;
+it no longer proves compatibility with OpenCode 1.19.x. <strong>1.7.0 is the last
+version supporting the OpenCode V1 contract</strong> (owner decision, 2026-11-07): the
+1.19.x support declaration holds through the 1.7 line and is retired in the
+next minor. This is a limit of automatic release validation, not a change to
+the support policy.</p>
+<h4 id="python-test-environment-gate-a">Python test environment (gate a)<a class="headerlink" href="#python-test-environment-gate-a" title="Permanent link">&para;</a></h4>
+<p>The Python suite imports <code>fastmcp</code>/<code>mcp</code> at collection time, so its verdict only
+means something against the pins in <a href="https://github.com/ils15/pantheon-opencode/blob/main/src/mcp/requirements-mcp.txt"><code>src/mcp/requirements-mcp.txt</code></a>. Gate (a)
+therefore does <strong>not</strong> use the runner's ambient interpreter:</p>
+<ul>
+<li>the <code>validate</code> job creates <code>$RUNNER_TEMP/gate-venv</code> with <code>python3 -m venv</code>
+  from the interpreter pinned by <code>actions/setup-python</code>
+  (<code>python-version: '3.12'</code>, i.e. CPython 3.12.x on <code>ubuntu-latest</code>; the
+  package metadata declares <code>requires-python &gt;= 3.11</code>), installs
+  <code>coverage pytest pyyaml</code>, <code>pytest-asyncio==1.3.0</code>, and
+  <code>-r src/mcp/requirements-mcp.txt -r src/mcp/requirements-vision.txt</code>;</li>
+<li><code>PANTHEON_PYTHON</code> is exported to that venv and <code>release-gates.mjs</code> resolves
+  every Python command through it. A set-but-missing or non-executable
+  <code>PANTHEON_PYTHON</code> is a hard failure, never a fallback to the ambient
+  <code>python3</code>;</li>
+<li><code>pip check</code> and an explicit assertion that every <code>==</code> pin in both
+  requirements files is installed at exactly that version run <strong>before</strong> pytest.
+  A failed venv creation, download, install, or pin assertion aborts the job
+  (fail-closed via <code>set -euo pipefail</code>); no failure is downgraded to a skip;</li>
+<li><code>actions/setup-python</code>'s <code>cache: pip</code> still applies: the venv's pip shares
+  <code>~/.cache/pip</code>, so the download cache is reused while the install itself
+  stays isolated;</li>
+<li>the CI <code>test-suite</code> job builds the same venv (<code>$RUNNER_TEMP/ci-venv</code>) and
+  points <code>PANTHEON_PYTHON</code> at it, so CI and the release gate share one
+  environment contract;</li>
+<li><code>tests.json</code> records the interpreter path and <code>python --version</code> used for the
+  run.</li>
+</ul>
+<p>Local equivalent of the gate's Python step:</p>
+<div class="highlight"><pre><span></span><code>python3<span class="w"> </span>-m<span class="w"> </span>venv<span class="w"> </span>/tmp/pantheon-gate-venv
+/tmp/pantheon-gate-venv/bin/python<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-r<span class="w"> </span>src/mcp/requirements-mcp.txt<span class="w"> </span>-r<span class="w"> </span>src/mcp/requirements-vision.txt
+<span class="nv">PANTHEON_PYTHON</span><span class="o">=</span>/tmp/pantheon-gate-venv/bin/python<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>node<span class="w"> </span>scripts/release-gates.mjs<span class="w"> </span>tests<span class="w"> </span>--evidence-dir<span class="w"> </span>/tmp/gate-evidence
+</code></pre></div>
+<p>Running <code>pytest</code> on an interpreter without these pins is not evidence: with
+<code>fastmcp 3.4.2</code> / <code>mcp 1.28.0</code> on <code>PATH</code>, <code>tests/test_persistence_goals.py</code>
+fails at <strong>collection</strong> by design, which is an environment defect, not a
+product defect.</p>
+<h2 id="test-tiers">Test tiers<a class="headerlink" href="#test-tiers" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Default (developer loop):</strong> <code>npm run test:node</code> runs <code>tests/*.mjs</code> and
+  <code>tests/pantheon/*.mjs</code> <strong>excluding</strong> <code>tests/install-opencode.test.mjs</code> and
+  <code>tests/install-e2e.test.mjs</code>. A bare <code>node --test</code> over those files skips
+  their cases with an explicit reason unless the tier is opted into.</li>
+<li><strong>Heavy tier (optional locally, mandatory in release):</strong>
+  <code>npm run test:install</code> sets <code>PANTHEON_RUN_INSTALL_TESTS=1</code> and runs both
+  real-install files. <code>npm test</code> / <code>test:all</code> does not include it, so the local
+  loop stays fast; gate (a) always includes it.</li>
+</ul>
+<h3 id="coverage-contract">Coverage contract<a class="headerlink" href="#coverage-contract" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Required:</strong> Python <a href="https://github.com/ils15/pantheon-opencode/tree/main/src/mcp"><code>src/mcp</code></a> branch coverage <strong>≥ 80%</strong>
+  (<code>coverage report --fail-under=80</code>) and the <a href="https://github.com/ils15/pantheon-opencode/blob/main/src/plugin-v2.ts"><code>src/plugin-v2.ts</code></a> line
+  measurement (<code>npm run coverage:plugin-v2</code>). Both run in gate (a).</li>
+<li><strong>Not PASS:</strong> Node coverage (<code>npm run coverage</code>) is report-only and enforces
+  no threshold; TypeScript under <a href="https://github.com/ils15/pantheon-opencode/tree/main/src"><code>src/</code></a> outside the plugin-v2 measurement is
+  unmeasured. Neither may be cited as evidence that a threshold passed.</li>
+<li>No new threshold is introduced by this contract.</li>
+</ul>
+<h2 id="memory-mcp-packaging">Memory MCP packaging<a class="headerlink" href="#memory-mcp-packaging" title="Permanent link">&para;</a></h2>
+<p><a href="https://github.com/ils15/pantheon-opencode/blob/main/src/mcp/memory_mcp.py"><code>src/mcp/memory_mcp.py</code></a> is the canonical Memory MCP server. The
+<code>scripts/memory_mcp.py</code> source-tree entrypoint delegates to it, and the runtime
+installer copies the canonical source into the installed scripts directory.
+<code>tests/test_mcp_scripts_sync.py</code> checks that the compatibility entrypoint exposes
+the same tool list as the canonical server.</p>
+<hr />
+<h2 id="where-a-release-may-be-cut-branch-hygiene-2026-11-05">Where a release may be cut (branch hygiene, 2026-11-05)<a class="headerlink" href="#where-a-release-may-be-cut-branch-hygiene-2026-11-05" title="Permanent link">&para;</a></h2>
+<p>Releases are cut <strong>only</strong> from the release line (<code>release/&lt;X.Y.Z&gt;</code>):</p>
+<ol>
+<li>Work happens on a feature branch — or in a task worktree at
+   <code>&lt;project-parent&gt;/.pantheon-worktrees/&lt;repo&gt;/&lt;task&gt;</code> (AGENTS.md
+   convention). A feature branch/worktree NEVER bumps versions, NEVER edits
+   the CHANGELOG's promoted sections, and NEVER runs <code>npm publish</code> — the
+   tarball must be the artifact of the release line's tip.</li>
+<li>Landing: PR into <code>release/&lt;X.Y.Z&gt;</code>; merge. The version bump
+   (<code>apply --beta</code>) and the curated <code>## [X.Y.Z-beta.N]</code> CHANGELOG section are
+   committed on the release line (as the <code>chore(release): ...</code> commit), then
+   the <code>release.yml</code> dispatch runs the sanctioned publish.</li>
+<li>Manual <code>npm publish</code> is a recovery exception only: when it has to happen
+   outside the workflow (e.g. the workflow's publish path was bypassed), the
+   very next step is the <code>release.yml</code> recovery dispatch (or, minimally, the
+   immutable <code>vX.Y.Z-beta.N</code> tag on the release SHA) so the published
+   artifact is always tag-backed.</li>
+<li>Worktrees are task-scoped and removed when the task lands; stale task
+   worktrees from finished work are deleted (branches: delete when fully
+   merged; keep unmerged refs for review).</li>
+</ol>
+<h2 id="the-whats-new-summary-window-contract">The 🆕 What's New summary (window contract)<a class="headerlink" href="#the-whats-new-summary-window-contract" title="Permanent link">&para;</a></h2>
+<p>Every promoted release section opens with a <code>### 🆕 What's New</code> block as its
+FIRST subsection: at most <strong>6 bullets, one terminal line each</strong> (≤140 chars,
+bold lead) — the one-time TUI window shows ONLY this block, paginated, and
+points at CHANGELOG.md for the rest. Long prose belongs under
+<code>### Added / Changed / Fixed</code> (read by humans on GitHub/npm), never in the
+window block. The <code>##</code> heading level is rejected by the format validator
+(<code>scripts/changelog-format.mjs</code>) in maintained sections: <code>###</code> keeps the
+block inside the extractor's boundaries.</p>
+<h2 id="beta-releases-explicit-dispatch-with-release_channelbeta">Beta Releases (explicit dispatch with <code>release_channel=beta</code>)<a class="headerlink" href="#beta-releases-explicit-dispatch-with-release_channelbeta" title="Permanent link">&para;</a></h2>
+<p>Publication is authorized <strong>only</strong> by an explicit <code>workflow_dispatch</code> of
+<code>release.yml</code>. PR labels, pushes, merges, and tags never trigger or authorize a
+release. Dispatching with <code>release_channel=beta</code> runs the beta path; a beta
+recovery is triggered by a dispatch carrying <code>recovery_version</code> plus
+<code>recovery_target_sha</code> (and <code>recovery_pr_number</code> only for the legacy format); a
+dispatch without recovery inputs and <code>release_channel=stable</code> (the default) is
+the stable path.</p>
+<ol>
+<li>Type: channel=<code>beta</code>, npm dist-tag=<code>beta</code>.</li>
+<li><strong>Committed version</strong> — <code>apply --beta</code> advanced <code>package.json</code> (and the
+   other manifests) to <code>X.Y.Z-beta.N</code> before the dispatch. The workflow reads
+   the committed version; it never computes a beta version and never queries
+   npm for a baseline. A version that is not <code>X.Y.Z-beta.N</code> fails the gate.</li>
+<li><strong>CHANGELOG</strong> — the bump PR must contain a <code>## [X.Y.Z-beta.N] - date</code> section;
+   it may be manually curated with <code>apply --beta</code> or generated with
+   <code>apply --beta --notes</code>. The release body is extracted from this committed
+   section; the dispatch fails if it is missing and does not regenerate notes.</li>
+<li><strong>Tag</strong> — the immutable tag <code>vX.Y.Z-beta.N</code> is created on the <strong>dispatch
+   target SHA</strong>. Beta creates <strong>no</strong> GitHub Release: the official Zenodo ↔
+   GitHub integration archives every Release (pre-releases included), so a beta
+   Release would add an unwanted version to the Zenodo family. The git tag alone
+   backs by-tag recovery.</li>
+<li><code>npm publish --tag beta</code> publishes the immutable artifact. The workflow does
+   not create a PR comment.</li>
+</ol>
+<hr />
+<h2 id="recovery-failure-handling">Recovery / Failure Handling<a class="headerlink" href="#recovery-failure-handling" title="Permanent link">&para;</a></h2>
+<h3 id="beta-npm-publish-recovery-explicit-dispatch">Beta npm-publish recovery (explicit dispatch)<a class="headerlink" href="#beta-npm-publish-recovery-explicit-dispatch" title="Permanent link">&para;</a></h3>
+<p>If a beta's git tag already exists but npm publishing failed, rerun <code>Release</code>
+with <code>recovery_version</code> (the committed <code>X.Y.Z-beta.N</code>, without <code>v</code>) and
+<code>recovery_target_sha</code> (the full 40-hex commit SHA). The legacy
+<code>X.Y.Z-beta.&lt;pr&gt;.&lt;sha7&gt;</code> format is still accepted but additionally requires
+<code>recovery_pr_number</code> matching the version and the seven-character SHA suffix.
+For the current <code>X.Y.Z-beta.N</code> format only the version and SHA are needed. The
+workflow checks these values before checkout, requires the remote <code>v&lt;version&gt;</code>
+tag to exist on the recovery target SHA, and never creates or moves a tag or
+release in this mode (beta creates no GitHub Release, so recovery is bound to
+the tag alone). It packs the immutable checkout and publishes only when that
+exact npm version is absent; an existing npm version is a successful no-op.
+Partial or invalid inputs, a missing tag, API errors, and tag mismatches fail
+closed.</p>
+<p>The recovery path is beta-only and does not calculate a new version or change
+the normal stable dispatch and beta-channel dispatch paths.</p>
+<p>The pipeline is designed so <strong>reruns are safe</strong>:</p>
+<ul>
+<li><strong>Already fully released</strong> → the idempotent guard exits 0; nothing is
+  re-tagged, re-released, or re-published.</li>
+<li><strong>Crash between tag push and release create (stable)</strong> → tag exists but
+  release is missing; a rerun skips tag creation and completes the release.
+  Beta creates no Release, so its reruns proceed to the npm step.</li>
+<li><strong>Crash after npm publish</strong> → a rerun hits the idempotent guard (exit 0),
+  and the npm existence check prevents publishing the same version again.</li>
+<li><strong>changelog-extract fails on a stable or beta dispatch</strong> → the <code>[X.Y.Z]</code> /
+  <code>[X.Y.Z-beta.N]</code> section is missing from <code>CHANGELOG.md</code>; add it in the bump PR
+  and rerun. Both non-recovery channels extract the release body from the
+  committed <code>CHANGELOG.md</code>; recovery extracts the section at the recovery
+  target (the static note is the last resort for tags predating the section).</li>
+<li><strong>Gate (e) rejects the section format</strong> → the committed section violates the
+  canonical format (<code>scripts/changelog-format.mjs</code>); fix the section in a
+  follow-up PR and rerun. CI catches the same violations on every PR via
+  <code>npm run docs:check-changelog</code>.</li>
+<li><strong>Re-run reports "body diverges from the canonical CHANGELOG section"</strong> →
+  the published release body was hand-edited after creation. Restore it with
+  <code>gh release edit &lt;tag&gt; --notes-file release-artifact/release-notes.md</code> from
+  the failed run's artifact, or fix the CHANGELOG and dispatch a recovery.</li>
+</ul>
+<p>Before a manual rerun, verify the expected pre-run state (<code>git tag</code>, GitHub
+releases, and the npm version) directly against the live registries.</p>
+<hr />
+<h2 id="npm-policy">npm Policy<a class="headerlink" href="#npm-policy" title="Permanent link">&para;</a></h2>
+<p><strong>Deprecate, never unpublish.</strong> A published package version is permanent —
+removing it breaks downstream installs and the <code>npm_check</code> idempotency gate.
+To retire a broken version:</p>
+<div class="highlight"><pre><span></span><code>npm<span class="w"> </span>deprecate<span class="w"> </span>pantheon-opencode@&lt;ver&gt;<span class="w"> </span><span class="s2">"reason: &lt;why it should not be used&gt;"</span>
+</code></pre></div>
+<hr />
+<h2 id="rollback">Rollback<a class="headerlink" href="#rollback" title="Permanent link">&para;</a></h2>
+<blockquote>
+<p><strong>Manual step with human approval.</strong> The release workflow never rolls back —
+it publishes forward only. Re-pointing the npm <code>latest</code> tag is decided and
+executed by a maintainer, outside the automated path.</p>
+</blockquote>
+<p>A rollback re-points the <code>latest</code> dist-tag. It does not delete the released
+artifact and it does not rewrite history.</p>
+<h3 id="trigger">Trigger<a class="headerlink" href="#trigger" title="Permanent link">&para;</a></h3>
+<p>Roll back when a blocking defect is discovered <strong>after</strong> the stable publication
+and <code>latest</code> carries a regression that prevents use — for example an installer
+that cannot complete, or a package that does not start on the supported OpenCode
+line. A defect that can wait for the next patch does not qualify: publish
+forward instead.</p>
+<h3 id="restore-the-stable-channel">Restore the stable channel<a class="headerlink" href="#restore-the-stable-channel" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>npm<span class="w"> </span>dist-tag<span class="w"> </span>add<span class="w"> </span>pantheon-opencode@1.5.2<span class="w"> </span>latest
+</code></pre></div>
+<p>Syntax: <code>npm dist-tag add &lt;package-spec (with version)&gt; [&lt;tag&gt;]</code>
+(<code>npm dist-tag --help</code>).</p>
+<p><code>1.6.0</code> <strong>remains published</strong> on npm — only the <code>latest</code> pointer moves back to
+<code>1.5.2</code>. Consumers without a lockfile resolve <code>1.5.2</code> again, while the
+regressed version stays reachable by exact version. Nothing is re-tagged on
+git, and no workflow runs.</p>
+<h3 id="do-not">Do not<a class="headerlink" href="#do-not" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Do not <code>npm unpublish</code>.</strong> Unpublishing is destructive and irreversible: it
+  breaks every consumer whose lockfile pins the affected version, and it defeats
+  the <code>npm_check</code> idempotency gate. Versions are deprecated, never removed (see
+  <a href="#npm-policy">npm Policy</a>).</li>
+<li><strong>Do not rewrite the GitHub Release without a note.</strong> The Release is the
+  published record of what shipped; editing or deleting it silently hides the
+  incident from everyone who reads the changelog later.</li>
+</ul>
+<h3 id="what-a-rollback-does-not-undo">What a rollback does not undo<a class="headerlink" href="#what-a-rollback-does-not-undo" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Zenodo archival</strong> — once the GitHub Release exists, the Zenodo integration
+  has deposited the record and version DOI. That deposit is irreversible.</li>
+<li><strong>The git tag</strong> — <code>v1.6.0</code> stays on its commit. The tag is immutable and is
+  not moved or deleted during a rollback.</li>
+</ul>
+<h3 id="required-record">Required record<a class="headerlink" href="#required-record" title="Permanent link">&para;</a></h3>
+<p>Log the rollback on the release (or the tracking issue) before or immediately
+after the command runs:</p>
+<ul>
+<li>the defect that triggered it, with evidence;</li>
+<li>the command executed, verbatim;</li>
+<li>the resulting <code>npm view pantheon-opencode dist-tags</code> output.</li>
+</ul>
+<p>Without that record, a later reader cannot tell a rollback apart from a failed
+publication.</p>
+<hr />
+<h2 id="retiring-the-next-dist-tag">Retiring the <code>next</code> dist-tag<a class="headerlink" href="#retiring-the-next-dist-tag" title="Permanent link">&para;</a></h2>
+<blockquote>
+<p><strong>Manual step with human approval.</strong> Not part of the automated release
+workflow.</p>
+</blockquote>
+<p><code>next</code> was the pre-stable preview channel. Once stable <code>v1.6.0</code> is published and
+verified it has no remaining purpose, and leaving it in place invites new
+releases to be tagged into a channel nobody resolves. It is removed exactly
+once.</p>
+<p><strong>Prerequisite:</strong> the post-publication verification of the stable release
+passed — <code>npm view pantheon-opencode dist-tags</code> reports <code>latest</code> = <code>1.6.0</code>, and
+installing <code>pantheon-opencode@1.6.0</code> from the public registry works. Removing
+<code>next</code> before that check leaves consumers who follow <code>next</code> without a
+resolution target while the stable channel is still unproven.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Only after the post-publication verification passed.</span>
+npm<span class="w"> </span>dist-tag<span class="w"> </span>rm<span class="w"> </span>pantheon-opencode<span class="w"> </span>next
+
+<span class="c1"># Prove the result: latest = 1.6.0, beta preserved, next absent.</span>
+npm<span class="w"> </span>view<span class="w"> </span>pantheon-opencode<span class="w"> </span>dist-tags
+</code></pre></div>
+<p>Syntax: <code>npm dist-tag rm &lt;package-spec&gt; &lt;tag&gt;</code> (<code>npm dist-tag --help</code>).</p>
+<p>The removal only drops a tag — no published version is deleted. <code>beta</code>
+continues to point at the beta line and is <strong>not</strong> touched by this step.</p>
+<hr />
+<h2 id="branch-protection-main">Branch protection (main)<a class="headerlink" href="#branch-protection-main" title="Permanent link">&para;</a></h2>
+<p>The <code>main</code> protection policy — required checks, admin bypass, and the manual
+enable/verify procedure — lives in <a href="../BRANCH-PROTECTION/">Branch Protection</a>.
+The release job still re-runs the six gates on the frozen <code>TARGET_SHA</code>;
+protection does not replace them.</p>
+<h2 id="pre-release-checklist">Pre-Release Checklist<a class="headerlink" href="#pre-release-checklist" title="Permanent link">&para;</a></h2>
+<p>Before cutting a release, verify:</p>
+<ul>
+<li>[ ] <code>node scripts/versioning.mjs status</code> shows a pending release
+      (<code>tag &lt; pkg</code>)</li>
+<li>[ ] <code>CHANGELOG.md</code> has a <code>## [X.Y.Z] - date</code> entry for the new version</li>
+<li>[ ] Version manifests match: <code>package.json</code> == <code>plugin.json</code> ==
+      <code>pyproject.toml</code> == <a href="https://github.com/ils15/pantheon-opencode/blob/main/src/plugins/tui/package.json"><code>src/plugins/tui/package.json</code></a></li>
+<li>[ ] All required checks green on the bump PR <strong>and on the push run for the
+      merged <code>main</code> SHA</strong> (<code>validate</code>, <code>test-suite</code>, <code>plugin-v2-ts-coverage</code>,
+      <code>commitlint</code>, <code>security-scan</code>, <code>CodeQL</code>)</li>
+<li>[ ] The six release gates are expected to PASS for the frozen <code>TARGET_SHA</code>;
+      the dispatch's <code>validate</code> job is the authority (it re-runs all six)</li>
+<li>[ ] <code>npm run release:dry-run</code> passes (status + pack)</li>
+</ul>
+<hr />
+<h2 id="consumption-options">Consumption Options<a class="headerlink" href="#consumption-options" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Best for</th>
+<th>How</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>npm package</strong></td>
+<td>Dev workflow / CI</td>
+<td><code>npm install pantheon-opencode</code> (stable) or <code>npm install pantheon-opencode@beta</code></td>
+</tr>
+<tr>
+<td><strong>Pantheon Installer</strong></td>
+<td>New / existing projects</td>
+<td><code>npx pantheon-opencode init</code></td>
+</tr>
+<tr>
+<td><strong>GitHub Release</strong></td>
+<td>Downloads / CI</td>
+<td>Source archives from <a href="https://github.com/ils15/pantheon-opencode/releases">Releases page</a></td>
+</tr>
+<tr>
+<td><strong>GitHub Template</strong></td>
+<td>New projects</td>
+<td>"Use this template" on GitHub</td>
+</tr>
+<tr>
+<td><strong>Git clone + copy</strong></td>
+<td>Selective setup</td>
+<td><code>git clone</code> and copy only what you need</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="release-assets">Release Assets<a class="headerlink" href="#release-assets" title="Permanent link">&para;</a></h2>
+<p>Each release includes:</p>
+<table>
+<thead>
+<tr>
+<th>Asset</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Source code (zip)</code></td>
+<td>GitHub auto-generated</td>
+</tr>
+<tr>
+<td><code>Source code (tar.gz)</code></td>
+<td>GitHub auto-generated</td>
+</tr>
+<tr>
+<td><code>pantheon-opencode@&lt;ver&gt;</code> on npm</td>
+<td>Published with <code>latest</code> (stable) or <code>beta</code> dist-tag, provenance-signed</td>
+</tr>
+</tbody>
+</table>
+<h2 id="preserved-releases-zenodo">Preserved Releases: Zenodo<a class="headerlink" href="#preserved-releases-zenodo" title="Permanent link">&para;</a></h2>
+<p><a href="https://zenodo.org/">Zenodo</a> preserves releases for citation and long-term
+access through the <strong>official Zenodo ↔ GitHub integration</strong> on
+<a href="https://github.com/ils15/pantheon-opencode"><code>ils15/pantheon-opencode</code></a>. Each
+published GitHub Release is archived automatically as a new version, giving that
+release a <strong>version DOI</strong>; all versions share the stable <strong>concept DOI</strong>
+<a href="https://doi.org/10.5281/zenodo.22650136">10.5281/zenodo.22650136</a>
+(<code>conceptrecid 22650136</code>), which always resolves to the latest archived release.</p>
+<p>The integration has <strong>no pre-release filter</strong>: it archives <em>every</em> GitHub
+Release. Only the stable channel creates a GitHub Release, so only stable
+versions are archived. Beta releases create a git tag and publish to npm but no
+Release, and are therefore intentionally absent from the Zenodo family.</p>
+<p><a href="https://github.com/ils15/pantheon-opencode/blob/main/.zenodo.json"><code>.zenodo.json</code></a> is the source of the deposited metadata
+(title, creators/ORCID, description, license, keywords, and related
+identifiers). <code>scripts/versioning.mjs</code> bumps its <code>version</code>, <code>publication_date</code>,
+and <code>url</code> alongside the other manifests on every release, so the file must stay
+in sync for the next archive. The deposited <code>title</code> is read from <code>.zenodo.json</code>
+at the tagged commit and is <strong>not</strong> applied retroactively to versions already
+archived.</p>
+<p>The integration is configured in Zenodo and runs on Zenodo's side — no
+workflow, token, or protected environment is stored in this repository. If a
+Release is not archived automatically, trigger a sync from the repository's
+Zenodo GitHub settings, then verify the concept DOI, the per-release version
+DOI, and the record metadata on Zenodo.</p>
+
+
+
+
+
+
+
+  
+    
+  
+  
+    
+  
+
+
+  <aside class="md-source-file">
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Last update">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="November 13, 2026 18:13:59 UTC">November 13, 2026</span>
+  </span>
+
+    
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Created">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M14.47 15.08 11 13V7h1.5v5.25l3.08 1.83c-.41.28-.79.62-1.11 1m-1.39 4.84c-.36.05-.71.08-1.08.08-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8c0 .37-.03.72-.08 1.08.69.1 1.33.32 1.92.64.1-.56.16-1.13.16-1.72 0-5.5-4.5-10-10-10S2 6.5 2 12s4.47 10 10 10c.59 0 1.16-.06 1.72-.16-.32-.59-.54-1.23-.64-1.92M18 15v3h-3v2h3v3h2v-3h3v-2h-3v-3z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="July 24, 2026 23:09:40 UTC">July 24, 2026</span>
+  </span>
+
+    
+    
+    
+  </aside>
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/ils15/pantheon-opencode" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.indexes", "navigation.top", "search.highlight", "content.action.edit"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>
