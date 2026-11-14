@@ -13,6 +13,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
      Running apply will move this section to a versioned entry and reset the template below. -->
 
+### Fixed
+
+- **agents** — relaxed search boundaries in `@apollo`, `@themis`, `@athena`, and `@zeus` to permit reading active worktrees (`.pantheon-worktrees/**`) and Deepwork plans (`.pantheon/deepwork/**`).
+
 ## [v2.1.1] - 2026-11-13
 
 ### 🆕 What's New
