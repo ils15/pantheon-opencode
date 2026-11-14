@@ -19,7 +19,7 @@ O **Pantheon** é um framework de orquestração multi-agente para o **OpenCode*
 | Instalar o Pantheon, entender flags do instalador e gerenciar backups | [Instalação](INSTALLATION.md) |
 | Obter o primeiro resultado funcional em 10 minutos | [Início Rápido (Quick Start)](QUICKSTART.md) |
 | Atualizar uma instalação existente do Pantheon | [Guia de Atualização](../UPGRADING.pt-BR.md) |
-| Verificar suporte de versões do OpenCode e Node.js | [Compatibilidade](../COMPATIBILITY.md) |
+| Verificar suporte de versões do OpenCode e Node.js | [Compatibilidade](COMPATIBILITY.md) |
 
 ---
 

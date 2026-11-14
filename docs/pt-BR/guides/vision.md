@@ -31,6 +31,23 @@ Na versão moderna do Pantheon:
 * **Sua mensagem permanece 100% limpa:** A interface exibe apenas o texto que você digitou.
 * **Injeção Silenciosa em Contexto de Sistema:** As referências da imagem e os metadados de inspeção são injetados diretamente no hook `session.context` (`system`). O modelo de IA recebe todas as instruções nos bastidores, sem poluir visualmente a conversa.
 
+```mermaid
+flowchart TD
+    User(["👤 Desenvolvedor"]) -->|"Cola Screenshot (Ctrl+V)"| OpenCode["🖥️ Interface do OpenCode"]
+    OpenCode -->|"Hook de plugin session.context"| VisionHook["👁️ Subsistema Pantheon Vision"]
+
+    VisionHook --> ModelCheck{"Modelo ativo suporta Visão?"}
+    ModelCheck -->|Sim| NativePass["Envia imagem diretamente pela API multimodal"]
+    ModelCheck -->|Puramente Textual| FallbackServer["Aciona MCP pantheon_vision (describeImagesNative)"]
+
+    FallbackServer --> StructuralDesc["Extrai Estrutura, Textos, Cores e Métricas WCAG"]
+    StructuralDesc --> SystemContext["Injeta Descrição Estruturada no Contexto de Sistema"]
+    NativePass --> SystemContext
+
+    SystemContext --> Agent["🎨 @aphrodite (Frontend) / ⚡ @zeus"]
+    Agent --> Implementation["Implementa o código acessível com Zero Poluição no Chat"]
+```
+
 ---
 
 ## 3. Fallback Automático para Modelos Textuais

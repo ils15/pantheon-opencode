@@ -31,6 +31,23 @@ In modern Pantheon:
 * **Your message remains clean:** The chat only shows the text you typed.
 * **Silent Context Injection:** Image references and metadata are injected directly through the `session.context` (`system`) hook. The agent receives full visual context behind the scenes without polluting chat history.
 
+```mermaid
+flowchart TD
+    User(["👤 Developer"]) -->|"Pastes Screenshot (Ctrl+V)"| OpenCode["🖥️ OpenCode Interface"]
+    OpenCode -->|"Plugin session.context hook"| VisionHook["👁️ Pantheon Vision Subsystem"]
+
+    VisionHook --> ModelCheck{"Active Model supports Vision?"}
+    ModelCheck -->|Yes| NativePass["Pass image directly to model via multimodal API"]
+    ModelCheck -->|Text-only| FallbackServer["Invoke pantheon_vision MCP (describeImagesNative)"]
+
+    FallbackServer --> StructuralDesc["Extract Layout, Text, Colors, and WCAG Metrics"]
+    StructuralDesc --> SystemContext["Inject Structural Description into System Context"]
+    NativePass --> SystemContext
+
+    SystemContext --> Agent["🎨 @aphrodite (Frontend) / ⚡ @zeus"]
+    Agent --> Implementation["Implement clean, accessible code with Zero Chat Pollution"]
+```
+
 ---
 
 ## 3. Automatic Fallback for Text-Only Models

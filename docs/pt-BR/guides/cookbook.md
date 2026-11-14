@@ -1,110 +1,180 @@
-# Pantheon Cookbook: Receitas Práticas do Dia a Dia
+# Livro de Receitas do Pantheon: Casos Práticos do Dia a Dia
 
 > 🇺🇸 **English version available:** [Read in English](../../guides/cookbook.md)
 
-Este guia reúne os casos de uso mais comuns do desenvolvimento diário com o Pantheon, demonstrando os comandos exatos e qual especialista acionar para cada situação.
+Este livro de receitas reúne os fluxos de trabalho mais comuns no desenvolvimento diário com o Pantheon, apresentando os prompts exatos, ferramentas utilizadas e qual especialista acionar em cada cenário.
 
 ---
 
-## Receita 1: Nova Feature com TDD e Qualidade Total
+## Receita 1: Funcionalidade Full-Stack com TDD e Portão de Qualidade
 
-**Cenário:** Você precisa implementar uma funcionalidade completa (ex: endpoint de exportação de dados com testes e documentação).
+**Cenário:** Implementar uma nova funcionalidade de ponta a ponta (ex: endpoint de exportação de relatórios em CSV com validação de schema e testes).
 
-**Comando:**
+**Prompt:**
 ```text
-/pantheon Adicione suporte a exportação de dados em CSV na rota /reports, com testes unitários e validação de schema.
+@zeus Adicione suporte a exportação CSV em /reports com testes unitários e validação de schema.
 ```
 
-**Fluxo:**
-1. O `@zeus` detecta que a tarefa envolve múltiplos passos e aciona a `@athena` para o plano.
-2. Você aprova o plano pelo diálogo nativo `question`.
-3. O `@hermes` escreve o teste em falha (RED) e implementa o código até passar (GREEN).
-4. A `@themis` valida linters e segurança.
+**Fluxo de Execução:**
+1. O `@zeus` analisa o escopo e delega o planejamento para a `@athena`.
+2. A `@athena` estrutura as fases e critérios de aceite; dúvidas de design são apresentadas pela ferramenta interativa nativa `question`.
+3. Após aprovação, o `@hermes` escreve testes que falham (RED) e implementa até passarem (GREEN).
+4. A `@themis` roda linters, auditoria de segurança e valida a cobertura de testes antes da conclusão.
 
 ---
 
-## Receita 2: Hotfix Rápido em 1 Turno (Bugs e Typos)
+## Receita 2: Hotfix em 1 Turno (Bugs e Correções Pontuais)
 
-**Cenário:** Um erro de digitação, um ajuste simples de CSS, ou uma importação faltando que não requer cerimônia de planejamento.
+**Cenário:** Corrigir um erro visual de CSS, um erro de digitação ou um import quebrado sem cerimônia de planejamento.
 
-**Comando:**
+**Prompt:**
 ```text
-@talos corrija a cor de fundo do botão de login de azul para verde esmeralda no arquivo login.css
+@talos Altere a cor de fundo do botão de login de azul para verde esmeralda no arquivo login.css
 ```
 
 **Por que usar o @talos?**
-O `@talos` é a faixa expressa do Pantheon. Ele não aciona subagentes, não cria planos de Deepwork e não roda cerimônias pesadas. Ele aplica a edição cirúrgica em 1 turno e termina.
+O `@talos` é a faixa expressa do Pantheon. Ele opera sem subagentes, pula rituais de planejamento Deepwork, realiza edições cirúrgicas em um único turno e finaliza imediatamente.
 
 ---
 
-## Receita 3: Migrações de Banco de Dados e Queries Otimizadas
+## Receita 3: Migrações de Banco de Dados e Otimização de Consultas
 
-**Cenário:** Criar uma nova tabela no banco ou adicionar colunas sem introduzir problemas de N+1 queries.
+**Cenário:** Criar uma nova tabela ou coluna com índices adequados e integridade referencial.
 
-**Comando:**
+**Prompt:**
 ```text
-@demeter crie uma migration no Alembic adicionando a tabela 'user_preferences' com chave estrangeira para 'users' e índice no campo 'created_at'.
+@demeter Crie uma migration Alembic adicionando a tabela 'user_preferences' com chave estrangeira para 'users' e índice em 'created_at'.
 ```
 
-**Por que usar a @demeter?**
-A `@demeter` é a especialista em persistência do Pantheon. Ela conhece as boas práticas de SQLAlchemy, Prisma, Alembic e PostgreSQL, garantindo integridade referencial e performance.
+**Por que usar o @demeter?**
+O `@demeter` é o especialista em persistência do Pantheon. Ele domina SQLAlchemy, Prisma, Alembic e PostgreSQL, prevenindo problemas clássicos de consultas N+1 e índices ausentes.
 
 ---
 
-## Receita 4: Investigando Codebases Desconhecidas (Modo Seguro)
+## Receita 4: Refatoração Visual Baseada em Captura de Tela (Screenshot)
 
-**Cenário:** Você entrou em um repositório legado grande e quer entender onde certas funções são chamadas sem risco de o agente alterar arquivos por engano.
+**Cenário:** Reconstruir ou refinar um componente frontend para corresponder a um mockup.
 
-**Comando:**
+**Prompt:**
+*(Cole a imagem da área de transferência com Ctrl+V / Cmd+V no chat)*
 ```text
-@apollo investigue onde o método calculateDiscount é invocado no projeto e me liste os arquivos e linhas com um resumo de uso.
+@aphrodite Refatore este card de métricas para refletir fielmente o espaçamento, tipografia e cores da captura colada.
+```
+
+**Fluxo de Execução:**
+1. O Pantheon Vision processa a imagem silenciosamente via contexto de sistema (`session.context`).
+2. A `@aphrodite` analisa a hierarquia visual, espaçamentos e acessibilidade WCAG AA, atualizando os componentes React/Tailwind.
+
+---
+
+## Receita 5: Investigação Segura da Base de Código (Somente Leitura)
+
+**Cenário:** Compreender uma lógica complexa espalhada por vários arquivos sem risco de edições indesejadas.
+
+**Prompt:**
+```text
+@apollo Rastreie o repositório e explique como os tokens de autenticação são validados em conexões WebSocket ativas.
 ```
 
 **Por que usar o @apollo?**
-O `@apollo` tem permissão estrita `edit: deny` e `bash: deny`. Ele é um batedor puramente investigativo. Ele varre o código com `grep` e `glob` e sintetiza as respostas sem tocar em uma linha de código.
+O `@apollo` opera em modo estritamente somente leitura (`edit: deny`, `bash: deny`). Ele realiza buscas rápidas e paralelas, retornando caminhos exatos de arquivos e intervalos de linhas relevantes.
 
 ---
 
-## Receita 5: Auditoria Pré-PR e Validação de Segurança
+## Receita 6: Auditoria de Segurança e Qualidade Pré-PR
 
-**Cenário:** Você terminou suas alterações manuais ou do time e quer uma revisão rígida antes de abrir o Pull Request.
+**Cenário:** Fazer uma revisão completa de todas as alterações feitas na branch antes de abrir um Pull Request.
 
-**Comando:**
+**Prompt:**
 ```text
-@themis audite as alterações da branch atual contra o checklist de segurança OWASP, rode os testes e valide se há código legado ou segredos expostos.
+@themis Audite as mudanças desta branch contra o OWASP Top 10, execute os testes e o linter Biome, e emita o veredicto de qualidade.
 ```
 
-**Veredicto da Themis:**
-A `@themis` emitirá um relatório categorizado com:
-* `PASS`: Pronto para merge.
-* `PASS_WITH_NOTES`: Observações não-bloqueantes de melhoria.
-* `BLOCK`: Erros de linter, testes falhando ou vulnerabilidades detectadas.
+**Por que usar a @themis?**
+A `@themis` atua como auditora independente em modo read-only. Ela nunca altera código diretamente; executa suítes de teste, analisa regras estáticas e emite pareceres formais (`PASS`, `PASS_WITH_NOTES`, `BLOCK`).
 
 ---
 
-## Receita 6: Descobrindo e Instalando Novas Skills
+## Receita 7: Inteligência Artificial e Pipelines de RAG
 
-**Cenário:** O projeto precisa de uma capacidade que o Pantheon ainda não possui instalada (ex: skill de deploy na AWS, análise de Dockerfiles, etc.).
+**Cenário:** Implementar busca semântica com embeddings vetoriais.
 
-**Comando:**
+**Prompt:**
 ```text
-@zeus pesquise se existe uma skill de terraform para o nosso projeto
+@hephaestus Crie um pipeline de busca vetorial usando LangChain e pgvector para recuperação semântica de trechos de documentos.
 ```
 
-**O que acontece:**
-1. O Zeus executa a busca interna no catálogo de skills (`pantheon_skill_search`).
-2. Se encontrar, abre a pergunta interativa (`question` tool) oferecendo instalação em 1 clique no projeto atual (`.agents/skills/`).
-3. Ao confirmar, o especialista instala com `npx skills add -a opencode -y`.
+**Por que usar o @hephaestus?**
+O `@hephaestus` é especialista em embeddings, bancos de dados vetoriais, orquestração de LLMs e ferramentas de inteligência artificial.
 
 ---
 
-## Receita 7: Consultando Custos e Economia de Tokens
+## Receita 8: Docker e Automação de CI/CD
 
-**Cenário:** Você quer saber quantos dólares gastou na sessão e quanto economizou com cache de prompt.
+**Cenário:** Criar Dockerfile multi-stage e workflow do GitHub Actions.
 
-**Comando:**
+**Prompt:**
 ```text
-/pantheon_cost
+@prometheus Crie um Dockerfile multi-stage otimizado para produção em Node.js e um workflow do GitHub Actions para testar PRs.
 ```
 
-Também é possível acompanhar o medidor de contexto e spend diretamente no painel lateral da TUI (`pantheon tui`).
+**Por que usar o @prometheus?**
+O `@prometheus` é o especialista em DevOps, contêineres, pipelines de integração contínua e scripts de infraestrutura.
+
+---
+
+## Receita 9: Síntese de Conselho para Decisões de Arquitetura (`/pantheon`)
+
+**Cenário:** Decidir entre duas soluções arquiteturais com múltiplos prós e contras técnicos.
+
+**Prompt:**
+```text
+/pantheon Devemos utilizar Server-Sent Events (SSE) ou WebSockets para o feed de notificações em tempo real do dashboard?
+```
+
+**Por que usar /pantheon?**
+Dispara 2 ou 3 especialistas em paralelo (`@athena` para modularidade, `@hermes` para vazão/APIs, `@themis` para limites de conexões e segurança) e sintetiza uma decisão unificada com precedência de domínio.
+
+---
+
+## Receita 10: Projeto Multidisciplinar com Checkpoints (`/pantheon-deepwork`)
+
+**Cenário:** Migrar ou refatorar subsistemas complexos que levam múltiplos turnos e dias de trabalho.
+
+**Prompt:**
+```text
+/pantheon-deepwork Migre o armazenamento de sessões de usuário de memória para cookies JWT criptografados com lista de revogação no Redis.
+```
+
+**Fluxo de Execução:**
+1. O plano e o progresso são salvos em `.pantheon/deepwork/<slug>/` (`plan.json`, `PLAN.md`, logs).
+2. Especialistas trabalham concorrentemente em git worktrees isolados (`.pantheon-worktrees/`).
+3. Cada fase concluída passa pelo portão de aprovação da `@themis` antes do avanço.
+
+---
+
+## Receita 11: Tomada de Decisão Interativa via Portão de Perguntas
+
+**Cenário:** Resolver trade-offs técnicos durante o planejamento de forma dinâmica e interativa.
+
+**Fluxo de Execução:**
+Quando a `@athena` elabora um plano com caminhos técnicos alternativos, o `@zeus` aciona a ferramenta nativa `question` do OpenCode:
+- A interface exibe caixas interativas com opções claras.
+- A alternativa mais alinhada às boas práticas vem marcada como `(Recomendado)`.
+- O desenvolvedor clica na opção preferida e a orquestração prossegue imediatamente sem atrito de digitação no chat.
+
+---
+
+## Receita 12: Diagnóstico de Saúde e Detecção de Drift (`doctor`)
+
+**Cenário:** Verificar a saúde dos servidores MCP locais, permissões e integridade de arquivos do Pantheon.
+
+**Comando:**
+```bash
+npx pantheon-opencode doctor
+```
+
+**Quando Executar:**
+- Após alternar entre branches git ou sincronizar atualizações do repositório remoto.
+- Ao atualizar o Node.js ou o OpenCode.
+- Caso alguma ferramenta MCP relate falhas de conexão ou dependências ausentes.

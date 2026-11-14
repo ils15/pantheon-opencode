@@ -1,5 +1,7 @@
 # Compatibility and Support Policy
 
+> 🇧🇷 **Versão em Português disponível:** [Leia em Português](pt-BR/COMPATIBILITY.md)
+
 This page is the only home of the support policy, the host gate rules, the Node
 floor, and the known-issue list. Other pages state the support summary once and
 link here.
