@@ -1500,7 +1500,7 @@ const DEFAULT_TUI_PREFS = {
 		blocks: {
 			context: true,
 			git: true,
-			todo: true,
+			todo: false,
 			dispatch: true
 		},
 		context: {
@@ -1557,7 +1557,7 @@ function normalizeTuiPrefs(raw) {
 			blocks: {
 				context: asBool(blocks.context, true),
 				git: asBool(blocks.git, true),
-				todo: asBool(blocks.todo, true),
+				todo: asBool(blocks.todo, false),
 				dispatch: asBool(blocks.dispatch, true)
 			},
 			context: {
@@ -1665,7 +1665,6 @@ function buildTuiTab(prefs, languagePref) {
 				rows: [
 					row("tui.sidebar.block.context", isPt ? "Bloco de contexto" : "Context block", prefs.sidebar.blocks.context, isPt ? "tokens, medidor, custo, uso de modelos" : "tokens, gauge, spend, model usage"),
 					row("tui.sidebar.block.git", isPt ? "Bloco do Git" : "Git block", prefs.sidebar.blocks.git, isPt ? "branch + contagem de alterações" : "branch + working-tree counts"),
-					row("tui.sidebar.block.todo", isPt ? "Bloco Todo" : "Todo block", prefs.sidebar.blocks.todo, isPt ? "tarefas pendentes mais recentes" : "the newest todowrite"),
 					row("tui.sidebar.block.dispatch", isPt ? "Bloco Dispatch" : "Dispatch block", prefs.sidebar.blocks.dispatch, isPt ? "delegações em tempo real" : "live delegations + rollup")
 				]
 			},
@@ -5611,19 +5610,19 @@ function collectDispatch(context, sessionID, options = {}) {
 	return entries.sort((a, b) => compareDelegations(a.view, b.view));
 }
 /** Sidebar blocks in render order. Spacing is derived from this list instead of
-*  from the view, so a hidden block can never leave an empty gap behind. */
+*  from the view, so a hidden block can never leave an empty gap behind.
+*  Note: The custom Todo block was removed from the sidebar composition because
+*  OpenCode 2.x natively renders the Todo panel when `todowrite` is used. */
 /** One rendered block: its key, and whether a blank line precedes it. */
 /** Header glyph per block — one codepoint each, rendered muted before the bold
 *  label. The fixed header (version/preset/session) takes none.
 *  Measured as one terminal cell by the host (`@opentui/core` counts
-*  `emoji-regex` matches as two): ▤ U+25A4 (EAW=A), ◆ U+25C6 (A), ▾ U+25BE (N),
-*  ◈ U+25C8 (A). `☑` U+2611 was rejected for the Todo header because it matches
-*  `emoji-regex` and would occupy two cells; `⌁` U+2301 (the old Dispatch glyph)
-*  was replaced by the host's own Notice glyph. */
+*  `emoji-regex` matches as two): ▤ U+25A4 (EAW=A), ◆ U+25C6 (A),
+*  ◈ U+25C8 (A). `⌁` U+2301 (the old Dispatch glyph) was replaced by the host's
+*  own Notice glyph. */
 const BLOCK_ICONS = {
 	context: "▤",
 	git: "◆",
-	todo: "▾",
 	dispatch: "◈"
 };
 /** Tag every block that has content with its spacer: never before the first
@@ -7057,7 +7056,6 @@ function createSidebarModel(context, sessionID, gitExec = defaultGitExec) {
 		const present = [];
 		if (prefs.sidebar.blocks.context && (contextBlockRows(contextUsage(), cost(), prefs.sidebar.context.gauge) !== null || prefs.sidebar.context.localSpend && contextSpendLine(spend()) !== null)) present.push("context");
 		if (prefs.sidebar.blocks.git && (branch() !== null || gitLine() !== null)) present.push("git");
-		if (prefs.sidebar.blocks.todo && todo().visible.length > 0) present.push("todo");
 		if (prefs.sidebar.blocks.dispatch && dispatch() !== null) present.push("dispatch");
 		return withBlockSpacers(present);
 	});
@@ -7277,11 +7275,6 @@ function Sidebar(props) {
 	const text = () => context.theme.text?.base;
 	const muted = () => context.theme.text?.muted ?? text();
 	const tone = (value) => context.theme?.text?.feedback?.[value]?.base ?? text();
-	const todoFg = (status) => {
-		const rowTone = todoTone(status);
-		if (rowTone === "accent") return tone("warning");
-		return rowTone === "muted" ? muted() : text();
-	};
 	const open = (sessionID) => () => navigateToSession(context.ui?.router, sessionID);
 	const block = (key) => model.blocks().find((entry) => entry.key === key);
 	const spacer = (key) => block(key)?.spacer === true;
@@ -7352,24 +7345,24 @@ function Sidebar(props) {
 					},
 					get fallback() {
 						return (() => {
-							var _el$26 = createElement("box");
-							setProp(_el$26, "height", 0);
-							return _el$26;
+							var _el$23 = createElement("box");
+							setProp(_el$23, "height", 0);
+							return _el$23;
 						})();
 					},
 					get children() {
-						var _el$25 = createElement("text");
-						insert(_el$25, () => sidebarPlaceholder(props.sessionID));
-						effect((_$p) => setProp(_el$25, "fg", muted(), _$p));
-						return _el$25;
+						var _el$22 = createElement("text");
+						insert(_el$22, () => sidebarPlaceholder(props.sessionID));
+						effect((_$p) => setProp(_el$22, "fg", muted(), _$p));
+						return _el$22;
 					}
 				});
 			},
 			children: (current) => (() => {
-				var _el$27 = createElement("text");
-				insert(_el$27, () => `Session: ${truncateLabel(current().title || current().id)}`);
-				effect((_$p) => setProp(_el$27, "fg", text(), _$p));
-				return _el$27;
+				var _el$24 = createElement("text");
+				insert(_el$24, () => `Session: ${truncateLabel(current().title || current().id)}`);
+				effect((_$p) => setProp(_el$24, "fg", text(), _$p));
+				return _el$24;
 			})()
 		}), null);
 		insert(_el$12, createComponent(Show, {
@@ -7416,9 +7409,9 @@ function Sidebar(props) {
 						return contextRows();
 					},
 					children: (rows) => (() => {
-						var _el$28 = createElement("box");
-						setProp(_el$28, "flexDirection", "column");
-						insert(_el$28, createComponent(Show, {
+						var _el$25 = createElement("box");
+						setProp(_el$25, "flexDirection", "column");
+						insert(_el$25, createComponent(Show, {
 							get when() {
 								return rows().tokens;
 							},
@@ -7434,7 +7427,7 @@ function Sidebar(props) {
 								}
 							})
 						}), null);
-						insert(_el$28, createComponent(Show, {
+						insert(_el$25, createComponent(Show, {
 							get when() {
 								return rows().percent;
 							},
@@ -7450,7 +7443,7 @@ function Sidebar(props) {
 								}
 							})
 						}), null);
-						insert(_el$28, createComponent(Show, {
+						insert(_el$25, createComponent(Show, {
 							get when() {
 								return rows().spent;
 							},
@@ -7466,46 +7459,46 @@ function Sidebar(props) {
 								}
 							})
 						}), null);
-						insert(_el$28, createComponent(Show, {
+						insert(_el$25, createComponent(Show, {
 							get when() {
 								return memo(() => !!tuiPrefs().sidebar.context.modelUsage)() && usageRows().length > 0;
 							},
 							get children() {
 								return [(() => {
-									var _el$29 = createElement("text");
-									insertNode(_el$29, createTextNode(`Session · reported cost`));
-									effect((_$p) => setProp(_el$29, "fg", muted(), _$p));
-									return _el$29;
+									var _el$26 = createElement("text");
+									insertNode(_el$26, createTextNode(`Session · reported cost`));
+									effect((_$p) => setProp(_el$26, "fg", muted(), _$p));
+									return _el$26;
 								})(), (() => {
-									var _el$31 = createElement("text");
-									insertNode(_el$31, createTextNode(`Model         Tokens       USD`));
-									effect((_$p) => setProp(_el$31, "fg", muted(), _$p));
-									return _el$31;
+									var _el$28 = createElement("text");
+									insertNode(_el$28, createTextNode(`Model         Tokens       USD`));
+									effect((_$p) => setProp(_el$28, "fg", muted(), _$p));
+									return _el$28;
 								})()];
 							}
 						}), null);
-						insert(_el$28, createComponent(For, {
+						insert(_el$25, createComponent(For, {
 							get each() {
 								return usageRows();
 							},
 							children: (row) => (() => {
-								var _el$33 = createElement("box");
-								setProp(_el$33, "flexDirection", "column");
-								insert(_el$33, createComponent(For, {
+								var _el$30 = createElement("box");
+								setProp(_el$30, "flexDirection", "column");
+								insert(_el$30, createComponent(For, {
 									get each() {
 										return modelUsageRowLines(row);
 									},
 									children: (line) => (() => {
-										var _el$34 = createElement("text");
-										insert(_el$34, line);
-										effect((_$p) => setProp(_el$34, "fg", text(), _$p));
-										return _el$34;
+										var _el$31 = createElement("text");
+										insert(_el$31, line);
+										effect((_$p) => setProp(_el$31, "fg", text(), _$p));
+										return _el$31;
 									})()
 								}));
-								return _el$33;
+								return _el$30;
 							})()
 						}), null);
-						insert(_el$28, createComponent(Show, {
+						insert(_el$25, createComponent(Show, {
 							get when() {
 								return usageHidden();
 							},
@@ -7514,14 +7507,14 @@ function Sidebar(props) {
 									return sidebarTextLines(line());
 								},
 								children: (part) => (() => {
-									var _el$35 = createElement("text");
-									insert(_el$35, part);
-									effect((_$p) => setProp(_el$35, "fg", muted(), _$p));
-									return _el$35;
+									var _el$32 = createElement("text");
+									insert(_el$32, part);
+									effect((_$p) => setProp(_el$32, "fg", muted(), _$p));
+									return _el$32;
 								})()
 							})
 						}), null);
-						return _el$28;
+						return _el$25;
 					})()
 				}), null);
 				insert(_el$16, createComponent(Show, {
@@ -7529,10 +7522,10 @@ function Sidebar(props) {
 						return performanceLine();
 					},
 					children: (line) => (() => {
-						var _el$36 = createElement("text");
-						insert(_el$36, line);
-						effect((_$p) => setProp(_el$36, "fg", muted(), _$p));
-						return _el$36;
+						var _el$33 = createElement("text");
+						insert(_el$33, line);
+						effect((_$p) => setProp(_el$33, "fg", muted(), _$p));
+						return _el$33;
 					})()
 				}), null);
 				insert(_el$16, createComponent(Show, {
@@ -7544,10 +7537,10 @@ function Sidebar(props) {
 							return contextSpendLines(line());
 						},
 						children: (part) => (() => {
-							var _el$37 = createElement("text");
-							insert(_el$37, part);
-							effect((_$p) => setProp(_el$37, "fg", muted(), _$p));
-							return _el$37;
+							var _el$34 = createElement("text");
+							insert(_el$34, part);
+							effect((_$p) => setProp(_el$34, "fg", muted(), _$p));
+							return _el$34;
 						})()
 					})
 				}), null);
@@ -7588,22 +7581,22 @@ function Sidebar(props) {
 						return model.branch();
 					},
 					children: (value) => (() => {
-						var _el$38 = createElement("box"), _el$39 = createElement("text"), _el$41 = createElement("text");
-						insertNode(_el$38, _el$39);
-						insertNode(_el$38, _el$41);
-						setProp(_el$38, "flexDirection", "row");
-						insertNode(_el$39, createTextNode(`⎇ `));
-						insert(_el$41, () => truncateLabel(value(), 32));
+						var _el$35 = createElement("box"), _el$36 = createElement("text"), _el$38 = createElement("text");
+						insertNode(_el$35, _el$36);
+						insertNode(_el$35, _el$38);
+						setProp(_el$35, "flexDirection", "row");
+						insertNode(_el$36, createTextNode(`⎇ `));
+						insert(_el$38, () => truncateLabel(value(), 32));
 						effect((_p$) => {
 							var _v$5 = muted(), _v$6 = text();
-							_v$5 !== _p$.e && (_p$.e = setProp(_el$39, "fg", _v$5, _p$.e));
-							_v$6 !== _p$.t && (_p$.t = setProp(_el$41, "fg", _v$6, _p$.t));
+							_v$5 !== _p$.e && (_p$.e = setProp(_el$36, "fg", _v$5, _p$.e));
+							_v$6 !== _p$.t && (_p$.t = setProp(_el$38, "fg", _v$6, _p$.t));
 							return _p$;
 						}, {
 							e: void 0,
 							t: void 0
 						});
-						return _el$38;
+						return _el$35;
 					})()
 				}), null);
 				insert(_el$18, createComponent(Show, {
@@ -7611,10 +7604,10 @@ function Sidebar(props) {
 						return model.gitLine();
 					},
 					children: (line) => (() => {
-						var _el$42 = createElement("text");
-						insert(_el$42, line);
-						effect((_$p) => setProp(_el$42, "fg", text(), _$p));
-						return _el$42;
+						var _el$39 = createElement("text");
+						insert(_el$39, line);
+						effect((_$p) => setProp(_el$39, "fg", text(), _$p));
+						return _el$39;
 					})()
 				}), null);
 				return _el$18;
@@ -7622,14 +7615,14 @@ function Sidebar(props) {
 		}), null);
 		insert(_el$12, createComponent(Show, {
 			get when() {
-				return block("todo");
+				return block("dispatch");
 			},
 			get children() {
 				var _el$20 = createElement("box");
 				setProp(_el$20, "flexDirection", "column");
 				insert(_el$20, createComponent(Show, {
 					get when() {
-						return spacer("todo");
+						return spacer("dispatch");
 					},
 					get children() {
 						var _el$21 = createElement("box");
@@ -7639,76 +7632,12 @@ function Sidebar(props) {
 				}), null);
 				insert(_el$20, createComponent(Show, {
 					get when() {
-						return model.todo().visible.length > 0;
-					},
-					get children() {
-						var _el$22 = createElement("box");
-						setProp(_el$22, "flexDirection", "column");
-						insert(_el$22, createComponent(BlockHeader, {
-							get icon() {
-								return BLOCK_ICONS.todo;
-							},
-							label: "Todo",
-							get fg() {
-								return tone("warning");
-							},
-							get muted() {
-								return muted();
-							}
-						}), null);
-						insert(_el$22, createComponent(For, {
-							get each() {
-								return model.todo().visible;
-							},
-							children: (item) => (() => {
-								var _el$43 = createElement("text");
-								insert(_el$43, () => todoRowText(item));
-								effect((_$p) => setProp(_el$43, "fg", todoFg(item.status), _$p));
-								return _el$43;
-							})()
-						}), null);
-						insert(_el$22, createComponent(Show, {
-							get when() {
-								return hiddenTodoText(model.todo().hidden);
-							},
-							children: (line) => (() => {
-								var _el$44 = createElement("text");
-								insert(_el$44, line);
-								effect((_$p) => setProp(_el$44, "fg", muted(), _$p));
-								return _el$44;
-							})()
-						}), null);
-						return _el$22;
-					}
-				}), null);
-				return _el$20;
-			}
-		}), null);
-		insert(_el$12, createComponent(Show, {
-			get when() {
-				return block("dispatch");
-			},
-			get children() {
-				var _el$23 = createElement("box");
-				setProp(_el$23, "flexDirection", "column");
-				insert(_el$23, createComponent(Show, {
-					get when() {
-						return spacer("dispatch");
-					},
-					get children() {
-						var _el$24 = createElement("box");
-						setProp(_el$24, "height", 1);
-						return _el$24;
-					}
-				}), null);
-				insert(_el$23, createComponent(Show, {
-					get when() {
 						return dispatchView();
 					},
 					children: (view) => (() => {
-						var _el$45 = createElement("box");
-						setProp(_el$45, "flexDirection", "column");
-						insert(_el$45, createComponent(BlockHeader, {
+						var _el$40 = createElement("box");
+						setProp(_el$40, "flexDirection", "column");
+						insert(_el$40, createComponent(BlockHeader, {
 							get icon() {
 								return BLOCK_ICONS.dispatch;
 							},
@@ -7723,89 +7652,89 @@ function Sidebar(props) {
 								return dispatchSummary();
 							}
 						}), null);
-						insert(_el$45, createComponent(For, {
+						insert(_el$40, createComponent(For, {
 							get each() {
 								return view().running;
 							},
 							children: (row) => (() => {
-								var _el$47 = createElement("box"), _el$48 = createElement("text");
-								insertNode(_el$47, _el$48);
-								setProp(_el$47, "flexShrink", 0);
-								insert(_el$48, () => row.text);
+								var _el$42 = createElement("box"), _el$43 = createElement("text");
+								insertNode(_el$42, _el$43);
+								setProp(_el$42, "flexShrink", 0);
+								insert(_el$43, () => row.text);
 								effect((_p$) => {
 									var _v$7 = open(row.id), _v$8 = tone("success");
-									_v$7 !== _p$.e && (_p$.e = setProp(_el$47, "onMouseDown", _v$7, _p$.e));
-									_v$8 !== _p$.t && (_p$.t = setProp(_el$48, "fg", _v$8, _p$.t));
+									_v$7 !== _p$.e && (_p$.e = setProp(_el$42, "onMouseDown", _v$7, _p$.e));
+									_v$8 !== _p$.t && (_p$.t = setProp(_el$43, "fg", _v$8, _p$.t));
 									return _p$;
 								}, {
 									e: void 0,
 									t: void 0
 								});
-								return _el$47;
+								return _el$42;
 							})()
 						}), null);
-						insert(_el$45, createComponent(Show, {
+						insert(_el$40, createComponent(Show, {
 							get when() {
 								return view().runningHidden > 0;
 							},
 							get children() {
-								var _el$46 = createElement("text");
-								insert(_el$46, () => `\u2026 +${view().runningHidden} rodando`);
-								effect((_$p) => setProp(_el$46, "fg", muted(), _$p));
-								return _el$46;
+								var _el$41 = createElement("text");
+								insert(_el$41, () => `\u2026 +${view().runningHidden} rodando`);
+								effect((_$p) => setProp(_el$41, "fg", muted(), _$p));
+								return _el$41;
 							}
 						}), null);
-						insert(_el$45, createComponent(Show, {
+						insert(_el$40, createComponent(Show, {
 							get when() {
 								return view().summary;
 							},
 							children: (line) => (() => {
-								var _el$49 = createElement("box"), _el$50 = createElement("text");
-								insertNode(_el$49, _el$50);
-								setProp(_el$49, "flexDirection", "row");
-								setProp(_el$49, "flexShrink", 0);
-								insert(_el$50, line);
-								insert(_el$49, createComponent(Show, {
+								var _el$44 = createElement("box"), _el$45 = createElement("text");
+								insertNode(_el$44, _el$45);
+								setProp(_el$44, "flexDirection", "row");
+								setProp(_el$44, "flexShrink", 0);
+								insert(_el$45, line);
+								insert(_el$44, createComponent(Show, {
 									get when() {
 										return failedSuffix();
 									},
 									children: (suffix) => (() => {
-										var _el$51 = createElement("text");
-										insert(_el$51, () => `${SPEND_LINE_SEPARATOR}${suffix()}`);
-										effect((_$p) => setProp(_el$51, "fg", tone("error"), _$p));
-										return _el$51;
+										var _el$46 = createElement("text");
+										insert(_el$46, () => `${SPEND_LINE_SEPARATOR}${suffix()}`);
+										effect((_$p) => setProp(_el$46, "fg", tone("error"), _$p));
+										return _el$46;
 									})()
 								}), null);
-								effect((_$p) => setProp(_el$50, "fg", muted(), _$p));
-								return _el$49;
+								effect((_$p) => setProp(_el$45, "fg", muted(), _$p));
+								return _el$44;
 							})()
 						}), null);
-						insert(_el$45, createComponent(For, {
+						insert(_el$40, createComponent(For, {
 							get each() {
 								return view().agents;
 							},
 							children: (row) => (() => {
-								var _el$52 = createElement("text");
-								insert(_el$52, () => childAgentRowText(row));
-								effect((_$p) => setProp(_el$52, "fg", muted(), _$p));
-								return _el$52;
+								var _el$47 = createElement("text");
+								insert(_el$47, () => childAgentRowText(row));
+								effect((_$p) => setProp(_el$47, "fg", muted(), _$p));
+								return _el$47;
 							})()
 						}), null);
-						insert(_el$45, createComponent(Show, {
+						insert(_el$40, createComponent(Show, {
 							get when() {
 								return hiddenChildAgentsText(view().agentsHidden, view().agentsHiddenCost);
 							},
 							children: (line) => (() => {
-								var _el$53 = createElement("text");
-								insert(_el$53, line);
-								effect((_$p) => setProp(_el$53, "fg", muted(), _$p));
-								return _el$53;
+								var _el$48 = createElement("text");
+								insert(_el$48, line);
+								effect((_$p) => setProp(_el$48, "fg", muted(), _$p));
+								return _el$48;
 							})()
 						}), null);
-						return _el$45;
+						return _el$40;
 					})()
 				}), null);
-				return _el$23;
+				return _el$20;
 			}
 		}), null);
 		effect((_p$) => {
@@ -7886,25 +7815,25 @@ function DispatchPanel(props) {
 			return model.visible().rows;
 		},
 		children: (row) => (() => {
-			var _el$54 = createElement("box"), _el$55 = createElement("text"), _el$56 = createElement("text");
-			insertNode(_el$54, _el$55);
-			insertNode(_el$54, _el$56);
-			setProp(_el$54, "flexDirection", "row");
-			setProp(_el$54, "flexShrink", 0);
-			insert(_el$55, () => selected(row.id) ? `▸ ` : "  ");
-			insert(_el$56, () => row.text);
+			var _el$49 = createElement("box"), _el$50 = createElement("text"), _el$51 = createElement("text");
+			insertNode(_el$49, _el$50);
+			insertNode(_el$49, _el$51);
+			setProp(_el$49, "flexDirection", "row");
+			setProp(_el$49, "flexShrink", 0);
+			insert(_el$50, () => selected(row.id) ? `▸ ` : "  ");
+			insert(_el$51, () => row.text);
 			effect((_p$) => {
 				var _v$9 = selected(row.id) ? text() : muted(), _v$0 = rowFg(row.state), _v$1 = selected(row.id) ? 1 : 0;
-				_v$9 !== _p$.e && (_p$.e = setProp(_el$55, "fg", _v$9, _p$.e));
-				_v$0 !== _p$.t && (_p$.t = setProp(_el$56, "fg", _v$0, _p$.t));
-				_v$1 !== _p$.a && (_p$.a = setProp(_el$56, "attributes", _v$1, _p$.a));
+				_v$9 !== _p$.e && (_p$.e = setProp(_el$50, "fg", _v$9, _p$.e));
+				_v$0 !== _p$.t && (_p$.t = setProp(_el$51, "fg", _v$0, _p$.t));
+				_v$1 !== _p$.a && (_p$.a = setProp(_el$51, "attributes", _v$1, _p$.a));
 				return _p$;
 			}, {
 				e: void 0,
 				t: void 0,
 				a: void 0
 			});
-			return _el$54;
+			return _el$49;
 		})()
 	});
 	const detail = () => createComponent(For, {
@@ -7912,28 +7841,28 @@ function DispatchPanel(props) {
 			return model.detail();
 		},
 		children: (line, index) => (() => {
-			var _el$57 = createElement("text");
-			insert(_el$57, line);
-			effect((_$p) => setProp(_el$57, "fg", index() === 0 ? text() : muted(), _$p));
-			return _el$57;
+			var _el$52 = createElement("text");
+			insert(_el$52, line);
+			effect((_$p) => setProp(_el$52, "fg", index() === 0 ? text() : muted(), _$p));
+			return _el$52;
 		})()
 	});
 	const empty = () => (() => {
-		var _el$58 = createElement("text");
-		insertNode(_el$58, createTextNode(`No delegated sessions`));
-		effect((_$p) => setProp(_el$58, "fg", muted(), _$p));
-		return _el$58;
+		var _el$53 = createElement("text");
+		insertNode(_el$53, createTextNode(`No delegated sessions`));
+		effect((_$p) => setProp(_el$53, "fg", muted(), _$p));
+		return _el$53;
 	})();
 	return (() => {
-		var _el$60 = createElement("box"), _el$61 = createElement("text"), _el$62 = createElement("text"), _el$66 = createElement("box"), _el$67 = createElement("text");
-		insertNode(_el$60, _el$61);
-		insertNode(_el$60, _el$62);
-		insertNode(_el$60, _el$66);
-		insertNode(_el$60, _el$67);
-		setProp(_el$60, "flexDirection", "column");
-		setProp(_el$60, "width", "100%");
-		setProp(_el$60, "padding", 1);
-		insert(_el$60, createComponent(DispatchPanelKeymap, {
+		var _el$55 = createElement("box"), _el$56 = createElement("text"), _el$57 = createElement("text"), _el$61 = createElement("box"), _el$62 = createElement("text");
+		insertNode(_el$55, _el$56);
+		insertNode(_el$55, _el$57);
+		insertNode(_el$55, _el$61);
+		insertNode(_el$55, _el$62);
+		setProp(_el$55, "flexDirection", "column");
+		setProp(_el$55, "width", "100%");
+		setProp(_el$55, "padding", 1);
+		insert(_el$55, createComponent(DispatchPanelKeymap, {
 			get context() {
 				return props.context;
 			},
@@ -7941,30 +7870,30 @@ function DispatchPanel(props) {
 				return props.panel;
 			},
 			model
-		}), _el$61);
-		setProp(_el$61, "attributes", 1);
-		insert(_el$61, () => model.title());
-		insert(_el$60, createComponent(Show, {
+		}), _el$56);
+		setProp(_el$56, "attributes", 1);
+		insert(_el$56, () => model.title());
+		insert(_el$55, createComponent(Show, {
 			get when() {
 				return model.header();
 			},
 			children: (line) => (() => {
-				var _el$68 = createElement("text");
-				insert(_el$68, line);
-				effect((_$p) => setProp(_el$68, "fg", muted(), _$p));
-				return _el$68;
+				var _el$63 = createElement("text");
+				insert(_el$63, line);
+				effect((_$p) => setProp(_el$63, "fg", muted(), _$p));
+				return _el$63;
 			})()
-		}), _el$62);
-		insert(_el$62, () => dispatchPanelRule(props.panel.width - 2));
-		insert(_el$60, createComponent(Show, {
+		}), _el$57);
+		insert(_el$57, () => dispatchPanelRule(props.panel.width - 2));
+		insert(_el$55, createComponent(Show, {
 			get when() {
 				return model.layout().mode === "wide";
 			},
 			get fallback() {
 				return (() => {
-					var _el$69 = createElement("box");
-					setProp(_el$69, "flexDirection", "column");
-					insert(_el$69, createComponent(Show, {
+					var _el$64 = createElement("box");
+					setProp(_el$64, "flexDirection", "column");
+					insert(_el$64, createComponent(Show, {
 						get when() {
 							return model.rows().length > 0;
 						},
@@ -7972,34 +7901,34 @@ function DispatchPanel(props) {
 							return empty();
 						},
 						get children() {
-							var _el$70 = createElement("box");
-							setProp(_el$70, "flexDirection", "column");
-							insert(_el$70, rows);
-							return _el$70;
+							var _el$65 = createElement("box");
+							setProp(_el$65, "flexDirection", "column");
+							insert(_el$65, rows);
+							return _el$65;
 						}
 					}), null);
-					insert(_el$69, createComponent(Show, {
+					insert(_el$64, createComponent(Show, {
 						get when() {
 							return model.selectedID();
 						},
 						get children() {
-							var _el$71 = createElement("box"), _el$72 = createElement("box");
-							insertNode(_el$71, _el$72);
-							setProp(_el$71, "flexDirection", "column");
-							setProp(_el$72, "height", 1);
-							insert(_el$71, detail, null);
-							return _el$71;
+							var _el$66 = createElement("box"), _el$67 = createElement("box");
+							insertNode(_el$66, _el$67);
+							setProp(_el$66, "flexDirection", "column");
+							setProp(_el$67, "height", 1);
+							insert(_el$66, detail, null);
+							return _el$66;
 						}
 					}), null);
-					return _el$69;
+					return _el$64;
 				})();
 			},
 			get children() {
-				var _el$63 = createElement("box"), _el$64 = createElement("box");
-				insertNode(_el$63, _el$64);
-				setProp(_el$63, "flexDirection", "row");
-				setProp(_el$64, "flexDirection", "column");
-				insert(_el$64, createComponent(Show, {
+				var _el$58 = createElement("box"), _el$59 = createElement("box");
+				insertNode(_el$58, _el$59);
+				setProp(_el$58, "flexDirection", "row");
+				setProp(_el$59, "flexDirection", "column");
+				insert(_el$59, createComponent(Show, {
 					get when() {
 						return model.rows().length > 0;
 					},
@@ -8010,36 +7939,36 @@ function DispatchPanel(props) {
 						return rows();
 					}
 				}));
-				insert(_el$63, createComponent(Show, {
+				insert(_el$58, createComponent(Show, {
 					get when() {
 						return model.selectedID();
 					},
 					get children() {
-						var _el$65 = createElement("box");
-						setProp(_el$65, "flexDirection", "column");
-						insert(_el$65, detail);
-						effect((_$p) => setProp(_el$65, "width", model.layout().detailWidth, _$p));
-						return _el$65;
+						var _el$60 = createElement("box");
+						setProp(_el$60, "flexDirection", "column");
+						insert(_el$60, detail);
+						effect((_$p) => setProp(_el$60, "width", model.layout().detailWidth, _$p));
+						return _el$60;
 					}
 				}), null);
-				effect((_$p) => setProp(_el$64, "width", model.layout().listWidth, _$p));
-				return _el$63;
+				effect((_$p) => setProp(_el$59, "width", model.layout().listWidth, _$p));
+				return _el$58;
 			}
-		}), _el$66);
-		setProp(_el$66, "height", 1);
-		insert(_el$67, () => model.footer());
+		}), _el$61);
+		setProp(_el$61, "height", 1);
+		insert(_el$62, () => model.footer());
 		effect((_p$) => {
 			var _v$10 = text(), _v$11 = muted(), _v$12 = muted();
-			_v$10 !== _p$.e && (_p$.e = setProp(_el$61, "fg", _v$10, _p$.e));
-			_v$11 !== _p$.t && (_p$.t = setProp(_el$62, "fg", _v$11, _p$.t));
-			_v$12 !== _p$.a && (_p$.a = setProp(_el$67, "fg", _v$12, _p$.a));
+			_v$10 !== _p$.e && (_p$.e = setProp(_el$56, "fg", _v$10, _p$.e));
+			_v$11 !== _p$.t && (_p$.t = setProp(_el$57, "fg", _v$11, _p$.t));
+			_v$12 !== _p$.a && (_p$.a = setProp(_el$62, "fg", _v$12, _p$.a));
 			return _p$;
 		}, {
 			e: void 0,
 			t: void 0,
 			a: void 0
 		});
-		return _el$60;
+		return _el$55;
 	})();
 }
 /** App-level command claim: the only way into the panel. It registers the
@@ -8096,10 +8025,10 @@ function HomeStatus(props) {
 			return tuiPrefs().footer.home;
 		},
 		get children() {
-			var _el$73 = createElement("text");
-			insert(_el$73, () => `Pantheon v2.1.5${preset().name ? ` ▸ ${preset().name}` : ""}`);
-			effect((_$p) => setProp(_el$73, "fg", muted(), _$p));
-			return _el$73;
+			var _el$68 = createElement("text");
+			insert(_el$68, () => `Pantheon v2.1.5${preset().name ? ` ▸ ${preset().name}` : ""}`);
+			effect((_$p) => setProp(_el$68, "fg", muted(), _$p));
+			return _el$68;
 		}
 	});
 }
@@ -8155,10 +8084,10 @@ function PromptFooter(props) {
 			return memo(() => !!tuiPrefs().footer.prompt)() && model.running() > 0;
 		},
 		get children() {
-			var _el$74 = createElement("text");
-			insert(_el$74, () => `▸${model.preset().name ?? "default"} · ✦${model.running()} ativos`);
-			effect((_$p) => setProp(_el$74, "fg", muted(), _$p));
-			return _el$74;
+			var _el$69 = createElement("text");
+			insert(_el$69, () => `▸${model.preset().name ?? "default"} · ✦${model.running()} ativos`);
+			effect((_$p) => setProp(_el$69, "fg", muted(), _$p));
+			return _el$69;
 		}
 	});
 }

@@ -2483,19 +2483,30 @@ test('spend line: absent client.session.stats hides it without calling or throwi
   }
 })
 
-test('sidebar renders Context → Git status → Todo → Dispatch and no quota block', async () => {
+test('sidebar renders Context → Git status → Dispatch and no quota or duplicate todo block', async () => {
   const { BLOCK_ICONS } = await loadV2()
   const source = readFileSync(join(root, 'src/plugins/tui/src/index.tsx'), 'utf8')
 
   const contextAt = source.indexOf('{/* Context —')
   const gitAt = source.indexOf('{/* Git status —')
-  const todoAt = source.indexOf('{/* Todo —')
   const dispatchAt = source.indexOf('{/* Dispatch —')
 
-  assert.ok(contextAt > 0 && gitAt > 0 && todoAt > 0 && dispatchAt > 0, 'four blocks exist')
+  assert.ok(contextAt > 0 && gitAt > 0 && dispatchAt > 0, 'three blocks exist')
   assert.ok(contextAt < gitAt, 'Context renders before Git status')
-  assert.ok(gitAt < todoAt, 'Todo renders after Git status')
-  assert.ok(todoAt < dispatchAt, 'Dispatch follows Todo')
+  assert.ok(gitAt < dispatchAt, 'Dispatch follows Git status')
+
+  // The custom todo block was removed: OpenCode natively renders the Todo panel in the sidebar.
+  assert.equal(
+    source.includes('<BlockHeader\n                icon={BLOCK_ICONS.todo}'),
+    false,
+    'custom todo block is removed from the sidebar composition (native OpenCode Todo is used)',
+  )
+  assert.equal(/block\('todo'\)/.test(source), false, 'no `todo` block key is read')
+  assert.equal(
+    /SidebarBlockKey =[^\n]*'todo'/.test(source),
+    false,
+    "SidebarBlockKey no longer carries 'todo'",
+  )
 
   // The native quota surface was removed (external plugin instead):
   // no quota block, no quota summary component and no quota block key remain.
@@ -2535,8 +2546,8 @@ test('sidebar renders Context → Git status → Todo → Dispatch and no quota 
 
   assert.deepEqual(
     Object.keys(BLOCK_ICONS),
-    ['context', 'git', 'todo', 'dispatch'],
-    'only the four surviving blocks carry a header glyph',
+    ['context', 'git', 'dispatch'],
+    'only the three surviving blocks carry a header glyph',
   )
 
   // Spend is not a block (its numbers live inside Context) and the TUI still
@@ -2578,10 +2589,9 @@ test('sidebar icons are single-width glyphs; the fixed header has none', async (
     {
       context: '\u25A4',
       git: '\u25C6',
-      todo: '\u25BE',
       dispatch: '\u25C8',
     },
-    '▤ Context · ◆ Git status · ▾ Todo · ◈ Dispatch',
+    '▤ Context · ◆ Git status · ◈ Dispatch',
   )
   for (const [key, icon] of Object.entries(BLOCK_ICONS)) {
     assert.equal([...icon].length, 1, `${key} uses exactly one codepoint, never a sequence`)
@@ -2602,13 +2612,13 @@ test('sidebar icons are single-width glyphs; the fixed header has none', async (
   }
 
   const source = readFileSync(join(root, 'src/plugins/tui/src/index.tsx'), 'utf8')
-  for (const label of ['Context', 'Git status', 'Todo', 'Dispatch']) {
+  for (const label of ['Context', 'Git status', 'Dispatch']) {
     assert.ok(
       source.includes(`label="${label}"`),
       `the ${label} block renders its own labeled header`,
     )
   }
-  assert.equal((source.match(/<BlockHeader/g) ?? []).length, 4, 'exactly four block headers')
+  assert.equal((source.match(/<BlockHeader/g) ?? []).length, 3, 'exactly three block headers')
 
   // The fixed header (version / preset / session) takes no icon.
   const fixedHeader = source.slice(
@@ -2754,9 +2764,9 @@ test('block spacing: one blank line between rendered blocks, never before the fi
     'the first block carries no spacer; every later one does',
   )
   assert.deepEqual(
-    withBlockSpacers(['todo', 'todo', 'dispatch']),
+    withBlockSpacers(['git', 'git', 'dispatch']),
     [
-      { key: 'todo', spacer: false },
+      { key: 'git', spacer: false },
       { key: 'dispatch', spacer: true },
     ],
     'a repeated key collapses instead of stacking spacers',
@@ -2776,7 +2786,7 @@ test('block spacing: one blank line between rendered blocks, never before the fi
         .slice(source.indexOf('function Sidebar('), source.indexOf('/** Keymap layer of the panel'))
         .match(/<box height=\{1\} \/>/g) ?? []
     ).length,
-    5,
+    4,
     'one slot per block plus the one after the fixed header — no duplicates',
   )
 })
@@ -5101,7 +5111,6 @@ test('new glyphs are one terminal cell and never match emoji-regex', async () =>
     behind: GIT_ARROW_DOWN,
     contextHeader: BLOCK_ICONS.context,
     gitHeader: BLOCK_ICONS.git,
-    todoHeader: BLOCK_ICONS.todo,
     dispatchHeader: BLOCK_ICONS.dispatch,
     done: DISPATCH_DONE_MARKER,
     ...Object.fromEntries(spinner.map((glyph, index) => [`spinner${index}`, glyph])),
