@@ -2,9 +2,9 @@
 
 This roadmap records customer-visible themes, maintenance boundaries, and readiness conditions for stable releases. Internal tracking identifiers, per-item evidence bundles, and per-commit history are intentionally not part of this page.
 
-## Current State: 2.1.x Stable (v2.1.2)
+## Current State: 2.1.x Stable (v2.1.3)
 
-The `2.1.x` release series delivered the canonical Deepwork plan architecture, interactive native Question Gate enforcement, unrestricted `.pantheon/` and worktree access for analytical agents, bilingual documentation portals, and live session Todo synchronization.
+The `2.1.x` release series delivered the canonical Deepwork plan architecture, interactive native Question Gate enforcement, unrestricted `.pantheon/` and worktree access for analytical agents, bilingual documentation portals, live session Todo synchronization, observable test slicing, and workspace auto-permissions.
 
 See [Compatibility](docs/COMPATIBILITY.md) for supported hosts and the [releases page](https://github.com/ils15/pantheon-opencode/releases) for published packages.
 
@@ -14,24 +14,27 @@ See [Compatibility](docs/COMPATIBILITY.md) for supported hosts and the [releases
 
 Active development on the `2.1.x` line focuses on operational smoothness and developer ergonomics:
 
-### 2.1.3 Immediate Enhancements
-1. **Live TUI Todo Activation & Complete Todo Suite (`todowrite` + `todoread`)**
-   - Direct integration between `@zeus`/`@athena` coordination and the OpenCode V2 session todo tools.
-   - Restored `todoread` to inspect active session tasks programmatically alongside `todowrite` (matching `opencode-todolist`).
-   - Active plans and multi-step checklists automatically mirror to the Pantheon TUI sidebar Todo panel in real-time.
-2. **Declarative Agent Roster Generator & Forge**
-   - Centralized typed schema and manifest (`src/agents/roster.json`) driving all 14 specialist prompts (`src/agents/*.md`).
-   - Mechanical compiler (`scripts/build-roster.mjs`) with `--check` CI gate, eliminating copy-paste drift and ensuring frontmatter conformance.
-3. **Observable & Enforceable Test Slicing (Anti-Fatigue Guard — Issue #437)**
+### 2.1.3 Deliveries
+1. **Observable & Enforceable Test Slicing (Anti-Fatigue Guard — Issue #437)**
    - Hard negative constraint in `AGENTS.md` and agent prompts forbidding unconstrained repository test suites (`npm test`, full `pytest`) during incremental implementation loops.
    - Intelligent auto-permissions gate intercepting unconstrained full-suite commands (`npm test`, bare `pytest`) in dev loops to prevent silent token burn and multi-minute stalls.
    - Repository-first selector discovery and diff-aware slice engine via `scripts/test-slice.mjs` (`npm run test:slice`).
    - Failure/fix loop mandate: specialists rerun only failed tests without repeating unchanged passing checks.
    - Observable task receipt contract in agent summaries reporting command, target count, duration (<10s), and selection rationale.
    - Bounded static/lint fallback for mapping gaps instead of escalating to global suites.
-4. **Workspace Auto-Permissions (Scope Governance)**
+2. **Workspace Auto-Permissions (Scope Governance)**
    - Eliminate permission prompt fatigue during autonomous specialist runs.
    - Intelligent auto-approval of safe development commands (`node`, `python3`, `pytest`, `npm`, local test runners) within the workspace boundary while maintaining fail-closed blocks on destructive commands, privilege escalation (`sudo`), and read-only role violations.
+3. **Live TUI Todo Activation & Complete Todo Suite (`todowrite` + `todoread`)**
+   - Direct integration between `@zeus`/`@athena` coordination and the OpenCode V2 session todo tools.
+   - Restored `todoread` to inspect active session tasks programmatically alongside `todowrite` (matching `opencode-todolist`).
+   - Active plans and multi-step checklists automatically mirror to the Pantheon TUI sidebar Todo panel in real-time.
+4. **Declarative Agent Roster Generator & Forge**
+   - Centralized typed schema and manifest (`src/agents/roster.json`) driving all 14 specialist prompts (`src/agents/*.md`).
+   - Mechanical compiler (`scripts/build-roster.mjs`) with `--check` CI gate, eliminating copy-paste drift and ensuring frontmatter conformance.
+5. **Runtime Resilience & Guard Refinements**
+   - Added `shell` tool execution alias in V2 to eliminate `No tool named "shell" is currently available`.
+   - Refined `zeusReadGuard` to allow project-level metadata and configuration globbing (`*`, `**/package.json`) while strictly defending source code trees.
 
 ---
 
