@@ -13,6 +13,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
      Running apply will move this section to a versioned entry and reset the template below. -->
 
+## [v2.1.2] - 2026-11-14
+
+### 🆕 What's New
+
+- **Search & Worktree Freedom**: Removed search and read limits on .pantheon and active worktrees across Apollo, Themis, Athena, and Zeus.
+- **Bilingual Portal & SVG Diagrams**: Added native EN/PT-BR language switcher and interactive Mermaid SVG diagram rendering to documentation.
+- **Overhauled Quick Start**: Clarified Council vs Deepwork command roles, Fast-Track bypass, and interactive question gate in EN and PT-BR.
+
 ### Added
 
 - **docs** — added `pt-BR/COMPATIBILITY.md`, expanded `pt-BR/INSTALLATION.md` with CLI flag matrix and flowchart, and expanded `cookbook.md` to 12 practical recipes in EN and PT-BR.
