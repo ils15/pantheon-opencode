@@ -183,6 +183,7 @@ export const DEFAULT_BLOCKED_TOOLS: ReadonlySet<string> = new Set([
   'edit',
   'write',
   'bash',
+  'shell',
   'task',
   'hashline_edit',
   // `pantheon_model` writes active-preset.json in BOTH the project and the
@@ -278,13 +279,34 @@ function isDeniedReadPath(candidate: string, target: boolean): boolean {
 export type GuardPathResolver = (rawPath: string) => GuardPathResolution
 
 /**
- * Glob expansion is controlled by the host and its symlink-follow behavior is
- * not part of this guard's contract. Only exact, non-glob paths are safe to
- * preflight; fail closed on glob metacharacters rather than infer the host's
- * expansion semantics.
+ * File extensions that identify source code or test files. Zeus must delegate
+ * source code exploration and search to @apollo.
  */
-function hasGlobMeta(value: string): boolean {
-  return ['*', '?', '[', ']', '{', '}', '(', ')'].some((meta) => value.includes(meta))
+const CODE_FILE_EXTENSIONS =
+  /\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs|c|cpp|h|hpp|java|kt|rb|php|swift|cs|scala|vue|svelte)$/i
+
+// Glob patterns that Zeus is denied from evaluating.
+// Zeus is the orchestrator and must NOT read source code, tests, or scripts.
+//
+// Denied:
+// - Direct targets into denied code roots (src/, tests/, scripts/)
+// - Path traversal (../, ..)
+// - Source code extensions (.ts, .py, etc.)
+//
+// Allowed:
+// - Project-level metadata and non-code patterns: *, *.json, *.md, **/package.json, docs/**, .pantheon/**, memories/**
+export function isDeniedGlobPattern(pattern: string): boolean {
+  const normalized = normalizeGuardPath(pattern)
+  if (normalized.startsWith('../') || normalized === '..' || normalized.includes('/../')) {
+    return true
+  }
+  if (isDeniedReadPath(normalized, true)) {
+    return true
+  }
+  if (CODE_FILE_EXTENSIONS.test(normalized)) {
+    return true
+  }
+  return false
 }
 
 /**
@@ -372,10 +394,10 @@ export function zeusReadGuard(
       if (tool === 'grep' && candidate.target) deny()
       continue
     }
-    // Resolve every direct grep/glob path before any policy decision. Wildcard
-    // expansion itself cannot be safely preflighted using the host's unknown
-    // symlink semantics, so Zeus may glob exact paths only.
-    if (tool === 'glob' && candidate.target && hasGlobMeta(effectivePath)) deny()
+    // Resolve every direct grep/glob path before any policy decision.
+    // Zeus is allowed to glob project-level metadata and non-code files (*, **/package.json),
+    // but denied from globbing code roots (src/, tests/, scripts/) or source code files.
+    if (tool === 'glob' && candidate.target && isDeniedGlobPattern(effectivePath)) deny()
     if (isDeniedReadPath(effectivePath, candidate.target)) deny()
   }
 }

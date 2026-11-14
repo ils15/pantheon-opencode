@@ -3,20 +3,51 @@ name: test-slicing
 description: "Targeted test execution — map changed files directly to their narrow test slice instead of running full suites."
 ---
 
-# Test Slicing
+# Test Slicing (Observable & Enforceable)
 
-> **Never run the entire repository test suite for an isolated micro-edit. Map modified files directly to their narrow test slice to save time, tokens, and context window.**
+> **Never run unconstrained repository-wide test suites for isolated edits. Map modified files directly to their narrow, sub-10s test slice to eliminate test fatigue, conserve tokens, and maintain high developer velocity.**
 
 ---
 
-## When to Use
+## Core Rules & Protocol (Issue #437)
 
-- Verifying bug fixes, refactors, or feature additions touching <= 3 files.
-- Running focused checks during TDD (RED → GREEN → REFACTOR).
-- CI-like broad suites (`npm test`, `pytest`) are reserved exclusively for:
-  - User explicitly asks to run full test suite.
-  - Final pre-release or pre-PR validation.
-  - Changes affecting core cross-cutting infrastructure, migrations, or auth.
+### 1. Repository-First Selector Discovery
+Always prefer the repository's own focused selector or diff-aware command over guessing paths:
+1. Inspect `package.json` / `pyproject.toml` / `Makefile` for focused slice runners:
+   - Node/TypeScript: `npm run test:quick`, `npm run test:slice`, `npm run test:fast`, `node scripts/test-slice.mjs`
+   - Python: `pytest -k <selector>`, `pytest tests/test_<slice>.py`
+2. If a project-defined focused selector exists, execute it directly.
+3. If absent, map the modified file directly to its corresponding test file.
+
+### 2. Scope Escalation & Mapping Gap Protocol
+- **No Silent Escalation:** NEVER silently broaden a test run from a modified file to an entire package or global suite.
+- **Explicit Justification:** If an expansion beyond the narrow slice is genuinely warranted (e.g. cross-cutting auth change, schema migration affecting multiple handlers), state visibly before running:
+  `[Test Scope Expansion] Scope: <files> | Selected: <tests> | Reason: <concrete risk/integration rationale>`
+- **Mapping Gap Handling:** If a modified file has no direct test counterpart:
+  1. Report the mapping gap explicitly: `[Test Mapping Gap] No direct test file for <file>.`
+  2. Execute a bounded risk-appropriate fallback (static lint/typecheck gate e.g. `npx biome check <file>` or `ruff check <file>` plus the closest integration slice).
+  3. DO NOT escalate to running the entire repository test suite.
+
+### 3. Failure/Fix Loop (Rerun Only Failed Tests)
+- After an initial edit, run only the selected slice.
+- When an assertion or test fails:
+  1. Diagnose and apply the fix to the target file.
+  2. **Rerun ONLY the failed test** (e.g. `pytest tests/test_foo.py -k <failing_func>` or `node --test tests/foo.test.mjs --test-name-pattern="<failing_test>"`).
+  3. **DO NOT rerun checks that already passed** when their covered code did not change.
+  4. Once the targeted test passes, rerun the single slice file once to confirm no regressions within the file.
+
+### 4. Observable Task Receipt Summary
+Every implementation specialist MUST include the detailed test receipt in the `subtask_summary`:
+```markdown
+**tests:** [PASS | WARN | FAIL] `<command>` (targets: N, duration: <X>s, selection: <reason or repo selector>)
+**test_scope_justification:** <required ONLY if broader than a focused slice>
+```
+*Example:*
+`**tests:** [PASS] npx tsx tests/pantheon/auto-permissions.test.ts (targets: 10, duration: 0.12s, selection: direct file slice for auto-permissions.ts)`
+
+### 5. Preserving CI and Release Gates
+- Full-suite checks (`npm test`, unconstrained `pytest`, full CI pipelines) remain required and intact for release gates and PR validations.
+- Developer loops run narrow slices exclusively.
 
 ---
 
@@ -25,6 +56,7 @@ description: "Targeted test execution — map changed files directly to their na
 | Runtime / Framework | Changed Source File | Sliced Test Command |
 |---|---|---|
 | **Node.js (Built-in test runner)** | `src/foo.ts` / `src/foo.js` | `node --test tests/foo.test.mjs` (or `npm test -- tests/foo.test.mjs`) |
+| **Pantheon Engine** | `src/pantheon/<module>.ts` | `npx tsx tests/pantheon/<module>.test.ts` or `npm run test:quick` |
 | **Vitest** | `src/components/Button.tsx` | `npx vitest run src/components/Button.test.tsx` |
 | **Jest** | `src/utils/calc.ts` | `npx jest src/utils/calc.test.ts` |
 | **Pytest** | `src/service/auth.py` | `pytest tests/test_auth.py -k <test_func>` |
@@ -34,21 +66,18 @@ description: "Targeted test execution — map changed files directly to their na
 
 ## Lint-First Fast Gate (< 50ms)
 
-Before launching the test runner (which requires 1–5s of process bootstrapping and environment initialization), run a static syntax/linter check on the modified file:
+Before launching the test runner, run a static syntax/linter check on the modified file:
 - **Python:** `ruff check <file>` (~20ms)
 - **TypeScript / JavaScript:** `npx biome check <file>` (~30ms) or `tsc --noEmit`
 
-Catching syntax errors, missing imports, and broken brackets at the lint gate saves up to 80% of test loop latency and avoids test runner crashes.
+Catching syntax errors, missing imports, and broken brackets at the lint gate saves test loop latency and avoids test runner crashes.
 
 ---
 
 ## Execution Guardrails
 
 1. **Timeout Budget:** A sliced check must complete in < 10 seconds. If a test hangs or takes > 30s, abort immediately and check background task/locks.
-2. **Failure Isolation:** When a test fails in the slice:
-   - Read the exact assertion failure and stack trace.
-   - Do NOT run unrelated test suites hoping for clues.
-   - Fix the targeted failure and re-run only the failing slice.
+2. **Failure Isolation:** Read the exact assertion failure and stack trace. Do NOT run unrelated test suites hoping for clues.
 3. **No Flaky Re-runs:** Do not blindly re-run the same failing test in a loop without inspecting code or diffs.
 4. **Token Economy:** Pass flags that suppress noise:
    - Node: `node --test tests/foo.test.mjs` (clean output).

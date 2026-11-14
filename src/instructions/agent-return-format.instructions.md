@@ -11,12 +11,21 @@ All agents check each result against the request and evidence; remove unrelated 
 ## subtask_summary
 **files_changed:** [list of file paths, one per line]
 **summary:** What was done, in 2-3 sentences
-**tests:** [PASS] All passing / [WARN] X failing / [FAIL] Not run (reason)
+**tests:** [PASS | WARN | FAIL] `<command>` (targets: N, duration: <X>s, selection: <reason or repo selector>)
+**test_scope_justification:** <required only when run was broader than a focused slice>
 **coverage:** X% (if applicable)
 **tokens:** ~N input / ~M output (estimated)
 **status:** complete | partial (reason) | escalated (reason)
 **blockers:** [list any blockers or null]
 **memory_context:** {"refs":[{"namespace":"<safe namespace>","key":"<safe key>"}],"takeaway":"<concise relevant takeaway>"} (optional only if memory affected; non-sensitive refs/takeaway, no secrets or copied memory; only in this summary, not Apollo/Athena or council formats)
+
+### Test Slicing Receipt Contract (Observable Dev Loops)
+
+In accordance with Test Economy and Issue #437, the `tests:` entry in `subtask_summary` must be observable and specific:
+- Provide the exact command run (e.g. `npm run test:quick`, `node --test tests/<slice>.test.mjs`, `pytest tests/test_<slice>.py -k <func>`).
+- Specify executed targets (`targets: N`), execution duration (`duration: <X>s` or `<X>ms`), and selection rationale (`selection: <reason>`).
+- If an expansion beyond a localized slice was necessary, provide `**test_scope_justification:**` detailing the cross-cutting scope or risk.
+- During failure/fix loops, state the targeted failed test re-executed; do not repeat already-passed tests when code did not change.
 
 For investigation agents (Apollo, Athena), return structured findings: key findings as bullets, file paths with line numbers, code snippets of max 3 lines.
 

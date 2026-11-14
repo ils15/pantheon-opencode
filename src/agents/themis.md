@@ -3,6 +3,7 @@ name: themis
 description: "Quality & security gate — Ruff/Biome linting, dead/legacy code detection, OWASP Top 10, applicable coverage requirements, correctness, deprecation audit. Called for material/sensitive changes; escalates blockers to zeus."
 mode: all
 reasoning_effort: medium
+temperature: 0.1
 permission:
   read: allow
   grep: allow
@@ -13,7 +14,9 @@ permission:
   pantheon_deepwork: allow
   task:
     "*": deny
-temperature: 0.1
+mcp_tools:
+  pantheon-resources: all
+  pantheon-memory: [memory_search]
 skills:
   - code-review-checklist
   - loop-engineering
@@ -23,10 +26,12 @@ skills:
   - tdd-with-agents
   - test-slicing
   - worktrees
-mcp_tools:
-  pantheon-resources: all
-  pantheon-memory: [memory_search]
 ---
+
+## Strict Test Slicing Review Guard
+
+- **NEVER RUN GLOBAL TEST SUITES:** Running `npm test` or unconstrained suites during reviews is STRICTLY PROHIBITED.
+- **Run Slices Only:** Validate reviews using targeted single-file test slices (<10s).
 
 ## MCP governance (identical ladder, grant-aware)
 

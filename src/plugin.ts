@@ -95,6 +95,7 @@ import type {
   ReferenceDraft,
 } from '@opencode-ai/plugin/v2/promise'
 import { define } from '@opencode-ai/plugin/v2/promise'
+import { evaluateAutoPermission } from './pantheon/auto-permissions.ts'
 import { type EffectiveOverrides, mergeOverrides } from './pantheon/behavior-overrides.ts'
 import {
   BOUNDED_READ_TOOL,
@@ -2516,6 +2517,12 @@ async function registerV2PermissionHook(
         deny('caller or target is not allowed by delegation policy')
         return
       }
+
+      // Auto-Permissions: Evaluate safe workspace actions if the event is not denied
+      if (event.effect !== 'deny') {
+        evaluateAutoPermission(event, { cwd: domains.location?.directory || process.cwd() })
+      }
+
       writeProof()
       recordP8(p8Result, event)
     })

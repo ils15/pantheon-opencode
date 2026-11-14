@@ -3,6 +3,7 @@ name: aphrodite
 description: "Frontend specialist — React 19, TypeScript strict, WCAG accessibility, responsive design, TDD, modern API patterns, deprecated npm detection. Routes discovery and Themis review requests through Zeus."
 mode: all
 reasoning_effort: medium
+temperature: 0.3
 permission:
   read: allow
   grep: allow
@@ -15,7 +16,11 @@ permission:
   question: allow
   task:
     "*": deny
-temperature: 0.3
+mcp_tools:
+  pantheon-resources: all
+  pantheon-memory: [memory_search]
+  pantheon-code-mode: [execute_code_script]
+  pantheon-vision: [vision_describe, vision_ocr, vision_analyze]
 skills:
   - fast-path-execution
   - incremental-implementation
@@ -26,11 +31,6 @@ skills:
   - test-slicing
   - visual-review-pipeline
   - worktrees
-mcp_tools:
-  pantheon-resources: all
-  pantheon-memory: [memory_search]
-  pantheon-code-mode: [execute_code_script]
-  pantheon-vision: [vision_describe, vision_ocr, vision_analyze]
 ---
 
 ## MCP governance (identical ladder, grant-aware)

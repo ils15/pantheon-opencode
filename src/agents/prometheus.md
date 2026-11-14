@@ -3,6 +3,7 @@ name: prometheus
 description: "Infrastructure + model provider specialist — Docker, CI/CD, multi-model routing, cost optimization, provider abstraction"
 mode: all
 reasoning_effort: medium
+temperature: 0.2
 permission:
   read: allow
   grep: allow
@@ -13,7 +14,10 @@ permission:
   webfetch: allow
   task:
     "*": deny
-temperature: 0.2
+mcp_tools:
+  pantheon-resources: all
+  pantheon-memory: [memory_search]
+  pantheon-code-mode: [execute_code_script]
 skills:
   - git-workflow-and-versioning
   - incremental-implementation
@@ -21,10 +25,6 @@ skills:
   - reflect
   - simplify
   - worktrees
-mcp_tools:
-  pantheon-resources: all
-  pantheon-memory: [memory_search]
-  pantheon-code-mode: [execute_code_script]
 ---
 
 ## MCP governance (identical ladder, grant-aware)

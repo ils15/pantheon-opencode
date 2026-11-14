@@ -2838,6 +2838,8 @@ async function main(): Promise<void> {
       'pantheon_local_decision',
       'pantheon_model',
       'pantheon_skill_search',
+      'shell',
+      'todoread',
       'todowrite',
     ])
   })
@@ -2931,6 +2933,8 @@ async function main(): Promise<void> {
       'model',
       'scope',
     ])
+    assert.deepEqual(propertyNames(byName, 'shell'), ['command'])
+    assert.deepEqual(propertyNames(byName, 'todoread'), ['status'])
     const modelProperties = byName.get('pantheon_model')?.input.properties as
       | Record<string, { enum?: string[] }>
       | undefined
@@ -2965,6 +2969,8 @@ async function main(): Promise<void> {
       'pantheon_local_decision',
       'pantheon_model',
       'pantheon_skill_search',
+      'shell',
+      'todoread',
       'todowrite',
     ])
 
@@ -3517,8 +3523,8 @@ async function main(): Promise<void> {
     const v2WriteTools = [...DEFAULT_BLOCKED_TOOLS].filter((tool) => registeredNames.has(tool))
     assert.deepEqual(
       v2WriteTools.sort(),
-      ['hashline_edit', 'pantheon_model'],
-      'the V2 surface exposes two mutating tools; both must be in the blocked set',
+      ['hashline_edit', 'pantheon_model', 'shell'],
+      'the V2 surface exposes mutating tools; all must be in the blocked set',
     )
     for (const tool of v2WriteTools) {
       const denial = await denyMessage(apolloCaptured.before as (e: unknown) => Promise<void>, {

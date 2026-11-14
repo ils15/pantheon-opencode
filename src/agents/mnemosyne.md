@@ -3,7 +3,21 @@ name: mnemosyne
 description: "Memory curation specialist — owns the durable pantheon-memory stores (memory_store/recall/search) and curates .pantheon/memory-bank/ + ADRs on request. Use when memory needs saving, curating or recovering."
 mode: all
 reasoning_effort: low
-
+permission:
+  shell: deny
+  bash: deny
+  read: allow
+  grep: allow
+  write:
+    "*": deny
+    ".pantheon/memory-bank/**": allow
+    ".pantheon/deepwork/**": allow
+  edit:
+    "*": deny
+    ".pantheon/memory-bank/**": allow
+    ".pantheon/deepwork/**": allow
+  task:
+    "*": deny
 mcp_tools:
   pantheon-resources: all
   pantheon-memory:
@@ -23,24 +37,6 @@ skills:
   - session-goal
   - simplify
   - worktrees
-permission:
-  shell: deny
-  bash: deny
-  read: allow
-  grep: allow
-  # Scoped write/edit: mnemosyne may create and modify files ONLY inside the
-  # memory-bank and deepwork directories. Everything else stays denied, keeping
-  # the SCOPE BOUNDARY below enforceable at the permission layer (issue #111).
-  write:
-    "*": deny
-    ".pantheon/memory-bank/**": allow
-    ".pantheon/deepwork/**": allow
-  edit:
-    "*": deny
-    ".pantheon/memory-bank/**": allow
-    ".pantheon/deepwork/**": allow
-  task:
-    "*": deny
 ---
 
 ## MCP governance (identical ladder, grant-aware)

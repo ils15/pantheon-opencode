@@ -46,6 +46,8 @@
  * @module pantheon/tools
  */
 
+import { exec } from 'node:child_process'
+import { promisify } from 'node:util'
 import { createCostCommand } from './cost-command.ts'
 import type { ShadowSink } from './decision-shadow.ts'
 import { createDeepworkTool } from './deepwork/deepwork-tool.ts'
@@ -476,6 +478,16 @@ const TODOWRITE_INPUT = {
   },
 } as const
 
+let latestSessionTodos: unknown[] = []
+
+export function getLatestSessionTodos(): unknown[] {
+  return latestSessionTodos
+}
+
+export function setLatestSessionTodos(todos: unknown[]): void {
+  latestSessionTodos = todos
+}
+
 /** A V2 pass-through `todowrite`: the host stores the tool part in the
  * transcript, and the TUI todo panel renders the newest completed write. The
  * tool itself is stateless — the transcript IS the store. */
@@ -487,10 +499,95 @@ const todowriteTool: V2ToolDef = {
   input: TODOWRITE_INPUT,
   output: {},
   execute: async (input) => {
-    const todos = Array.isArray((input as Record<string, unknown>).todos)
-      ? (input as Record<string, unknown>).todos
-      : []
+    const rawTodos = (input as Record<string, unknown>).todos
+    const todos: unknown[] = Array.isArray(rawTodos) ? (rawTodos as unknown[]) : []
+    latestSessionTodos = todos
     return { ok: true, todos, output: JSON.stringify({ todos }) }
+  },
+}
+
+const TODOREAD_INPUT = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    status: {
+      type: 'string',
+      description: 'Optional filter by task status (pending, in_progress, completed, cancelled)',
+    },
+  },
+} as const
+
+/** A V2 `todoread`: returns the newest task list written via `todowrite`. */
+const todoreadTool: V2ToolDef = {
+  name: 'todoread',
+  description:
+    'Read the active session task checklist. Returns the newest list of tasks written via todowrite.',
+  input: TODOREAD_INPUT,
+  output: {},
+  execute: async (input) => {
+    const statusFilter = (input as Record<string, unknown>)?.status
+    let todos = latestSessionTodos
+    if (typeof statusFilter === 'string' && statusFilter.trim() !== '') {
+      todos = todos.filter(
+        (t) =>
+          typeof t === 'object' &&
+          t !== null &&
+          (t as Record<string, unknown>).status === statusFilter,
+      )
+    }
+    return {
+      ok: true,
+      todos,
+      output: JSON.stringify({ todos }),
+    }
+  },
+}
+
+const execAsync = promisify(exec)
+
+const SHELL_INPUT = {
+  type: 'object',
+  required: ['command'],
+  properties: {
+    command: {
+      type: 'string',
+      description: 'The shell command to execute in the workspace directory',
+    },
+  },
+} as const
+
+/**
+ * A V2 fallback shell tool alias. OpenCode registers `bash`, but models frequently
+ * attempt to invoke `shell` because of agent permission YAML conventions.
+ * This alias ensures terminal commands execute seamlessly without tool-not-found errors.
+ */
+const shellTool: V2ToolDef = {
+  name: 'shell',
+  description: 'Execute a shell command in the workspace directory. Alias for bash execution.',
+  input: SHELL_INPUT,
+  output: {},
+  execute: async (input, context) => {
+    const command = String((input as Record<string, unknown>).command ?? '')
+    if (!command.trim()) {
+      return { output: '', ok: false, error: 'Command cannot be empty' }
+    }
+    const toolCtx = toolContext(context)
+    const cwd = toolCtx.directory || process.cwd()
+    try {
+      const { stdout, stderr } = await execAsync(command, {
+        cwd,
+        maxBuffer: 10 * 1024 * 1024,
+        shell: '/bin/bash',
+      })
+      const output = [stdout, stderr].filter(Boolean).join('\n')
+      return { output, ok: true }
+    } catch (err: unknown) {
+      const execError = err as { stdout?: string; stderr?: string; message?: string }
+      const output = [execError.stdout, execError.stderr, execError.message]
+        .filter(Boolean)
+        .join('\n')
+      return { output, ok: false, error: output }
+    }
   },
 }
 
@@ -545,6 +642,8 @@ export function createV2ToolDefinitions(
     }),
   )
   definitions.push(todowriteTool)
+  definitions.push(todoreadTool)
+  definitions.push(shellTool)
   definitions.push(createV2SkillSearchDefinition())
   definitions.push(createDeepworkTool())
   if (visionRuntime) definitions.push(createV2VisionTool(visionRuntime))

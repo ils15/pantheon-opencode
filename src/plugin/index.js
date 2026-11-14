@@ -12,6 +12,168 @@ import path4 from "node:path";
 import { fileURLToPath as fileURLToPath5 } from "node:url";
 import { define } from "@opencode-ai/plugin/v2/promise";
 
+// src/pantheon/auto-permissions.ts
+var READ_ONLY_AGENTS = /* @__PURE__ */ new Set(["zeus", "athena", "apollo", "gaia"]);
+var SAFE_DEV_BINARIES = /* @__PURE__ */ new Set([
+  "git",
+  "npm",
+  "npx",
+  "node",
+  "python",
+  "python3",
+  "pytest",
+  "ruff",
+  "cat",
+  "ls",
+  "mkdir",
+  "cp",
+  "mv",
+  "touch",
+  "grep",
+  "find",
+  "head",
+  "tail",
+  "diff",
+  "echo",
+  "which",
+  "tar",
+  "zip",
+  "unzip",
+  "curl",
+  "jq",
+  "sed",
+  "awk",
+  "biome",
+  "tsc",
+  "pnpm",
+  "yarn",
+  "bun",
+  "cargo",
+  "go",
+  "sh",
+  "bash"
+]);
+function autoPermissionsEnabled(env = process.env) {
+  const val = (env.PANTHEON_AUTO_PERMISSIONS ?? "").trim().toLowerCase();
+  return val !== "off" && val !== "0" && val !== "false";
+}
+function isDangerousCommand(command) {
+  const trimmed = command.trim();
+  if (!trimmed) return false;
+  if (/\bsudo\b/.test(trimmed)) return true;
+  if (/\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r|--force)\s+(\/\s*$|\/\*\s*$|~\/?\s*$|\$HOME)/.test(
+    trimmed
+  ))
+    return true;
+  if (/(curl|wget)\b.*\|\s*(ba)?sh\b/.test(trimmed)) return true;
+  if (/\bmkfs(\.[a-z0-9]+)?\b/.test(trimmed)) return true;
+  if (/\bdd\s+if=/.test(trimmed)) return true;
+  if (/\bchmod\s+(-[a-zA-Z]*R[a-zA-Z]*\s+)?777\s+\//.test(trimmed)) return true;
+  if (/\b(>\s*|\bcp\b.*|\bmv\b.*)\s+\/(etc|boot|sys|proc|root|usr)(\/|$)/.test(trimmed)) return true;
+  return false;
+}
+function isSafeDevCommand(command) {
+  const trimmed = command.trim();
+  if (!trimmed) return false;
+  if (isDangerousCommand(trimmed)) return false;
+  const segments = trimmed.split(/[|&;]/);
+  for (const rawSeg of segments) {
+    const seg = rawSeg.trim();
+    if (!seg) continue;
+    const tokens = seg.split(/\s+/).filter(Boolean);
+    let binary = tokens[0] ?? "";
+    let tokenIdx = 0;
+    while (binary.includes("=") && tokenIdx < tokens.length - 1) {
+      tokenIdx += 1;
+      binary = tokens[tokenIdx] ?? "";
+    }
+    const cleanBinary = binary.replace(/^.*\//, "");
+    if (!SAFE_DEV_BINARIES.has(cleanBinary)) {
+      return false;
+    }
+  }
+  return true;
+}
+function isUnconstrainedTestSuite(command) {
+  const trimmed = command.trim();
+  if (!trimmed) return false;
+  if (/^(npm|pnpm|yarn|bun)\s+(run\s+)?(test|test:all)(\s+--)?\s*$/.test(trimmed)) {
+    return true;
+  }
+  if (/^(python3?\s+-m\s+)?pytest\s*$/.test(trimmed)) {
+    return true;
+  }
+  if (/^(npx\s+)?(vitest|jest)(\s+run)?\s*$/.test(trimmed)) {
+    return true;
+  }
+  if (/^cargo\s+test\s*$/.test(trimmed)) {
+    return true;
+  }
+  return false;
+}
+function evaluateAutoPermission(event, options = {}) {
+  const env = options.env ?? process.env;
+  if (!autoPermissionsEnabled(env)) {
+    return { decision: "disabled" };
+  }
+  if (event.effect === "deny") {
+    return { decision: "preserve-deny" };
+  }
+  if (event.effect === "allow") {
+    return { decision: "preserve-allow" };
+  }
+  const action = String(event.action ?? "").toLowerCase().trim();
+  const agent = String(event.agent ?? "").toLowerCase().trim();
+  if (action === "todowrite" || action === "todoread" || action === "pantheon_deepwork" || action.startsWith("pantheon_")) {
+    event.effect = "allow";
+    return { decision: "allow", reason: "pantheon-native-tool" };
+  }
+  if (READ_ONLY_AGENTS.has(agent)) {
+    if (["edit", "write", "hashline_edit", "bash", "shell"].includes(action)) {
+      event.effect = "deny";
+      event.message = `Pantheon auto-permissions denied: read-only agent '${agent}' cannot execute mutating action '${action}'`;
+      return { decision: "deny", reason: "read-only-role-violation" };
+    }
+  }
+  if (["read", "glob", "grep", "webfetch", "question"].includes(action)) {
+    const firstResource = Array.isArray(event.resources) && typeof event.resources[0] === "string" ? event.resources[0] : "";
+    if (firstResource.startsWith("http://") || firstResource.startsWith("https://")) {
+      return { decision: "passthrough" };
+    }
+    event.effect = "allow";
+    return { decision: "allow", reason: "safe-read-action" };
+  }
+  if (action === "bash" || action === "shell") {
+    const rawCmd = Array.isArray(event.resources) && typeof event.resources[0] === "string" ? event.resources[0] : "";
+    if (rawCmd) {
+      if (isDangerousCommand(rawCmd)) {
+        event.effect = "deny";
+        event.message = "Pantheon auto-permissions denied: destructive or privilege-escalating command";
+        return { decision: "deny", reason: "dangerous-command" };
+      }
+      if (isUnconstrainedTestSuite(rawCmd)) {
+        event.effect = "ask";
+        event.message = "Pantheon test-economy: unconstrained test suite detected in dev loop. Use a focused test slice (sub-10s) or provide scope justification.";
+        return {
+          decision: "unconstrained-suite",
+          reason: "unconstrained-test-suite-forbidden-in-dev-loop"
+        };
+      }
+      if (isSafeDevCommand(rawCmd)) {
+        event.effect = "allow";
+        return { decision: "allow", reason: "safe-dev-command" };
+      }
+    }
+  }
+  if (["edit", "write", "hashline_edit"].includes(action)) {
+    if (!READ_ONLY_AGENTS.has(agent)) {
+      event.effect = "allow";
+      return { decision: "allow", reason: "implementer-workspace-edit" };
+    }
+  }
+  return { decision: "passthrough" };
+}
+
 // src/pantheon/behavior-overrides.ts
 var OVERRIDE_CONTENT_MAX = 8e3;
 var OVERRIDE_REASON_MAX = 200;
@@ -3693,6 +3855,7 @@ var DEFAULT_BLOCKED_TOOLS = /* @__PURE__ */ new Set([
   "edit",
   "write",
   "bash",
+  "shell",
   "task",
   "hashline_edit",
   // `pantheon_model` writes active-preset.json in BOTH the project and the
@@ -3734,8 +3897,19 @@ function isDeniedReadPath(candidate, target) {
   }
   return false;
 }
-function hasGlobMeta(value) {
-  return ["*", "?", "[", "]", "{", "}", "(", ")"].some((meta) => value.includes(meta));
+var CODE_FILE_EXTENSIONS = /\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs|c|cpp|h|hpp|java|kt|rb|php|swift|cs|scala|vue|svelte)$/i;
+function isDeniedGlobPattern(pattern) {
+  const normalized = normalizeGuardPath(pattern);
+  if (normalized.startsWith("../") || normalized === ".." || normalized.includes("/../")) {
+    return true;
+  }
+  if (isDeniedReadPath(normalized, true)) {
+    return true;
+  }
+  if (CODE_FILE_EXTENSIONS.test(normalized)) {
+    return true;
+  }
+  return false;
 }
 function zeusReadGuard(tool2, args, agent, resolvePath) {
   if (agent !== "zeus") return;
@@ -3770,7 +3944,7 @@ function zeusReadGuard(tool2, args, agent, resolvePath) {
       if (tool2 === "grep" && candidate.target) deny();
       continue;
     }
-    if (tool2 === "glob" && candidate.target && hasGlobMeta(effectivePath)) deny();
+    if (tool2 === "glob" && candidate.target && isDeniedGlobPattern(effectivePath)) deny();
     if (isDeniedReadPath(effectivePath, candidate.target)) deny();
   }
 }
@@ -3804,8 +3978,8 @@ var ReadOnlySessionRegistry = class {
   }
 };
 var readOnlyRegistry = new ReadOnlySessionRegistry();
-var READ_ONLY_AGENTS = /* @__PURE__ */ new Set(["apollo", "gaia"]);
-function syncReadOnlySession(registry, sessionID, agent, readOnlyAgents = READ_ONLY_AGENTS) {
+var READ_ONLY_AGENTS2 = /* @__PURE__ */ new Set(["apollo", "gaia"]);
+function syncReadOnlySession(registry, sessionID, agent, readOnlyAgents = READ_ONLY_AGENTS2) {
   const normalized = normalizeDelegationAgent(agent);
   if (normalized === void 0 || !readOnlyAgents.has(normalized)) {
     registry.unregister(sessionID);
@@ -10558,6 +10732,10 @@ var TodoEnforcer = class {
   }
 };
 
+// src/pantheon/tools.ts
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
+
 // src/pantheon/cost-command.ts
 import { execFile } from "node:child_process";
 import { accessSync, constants as constants3, existsSync as existsSync5, statSync as statSync3 } from "node:fs";
@@ -12425,6 +12603,12 @@ function createDeepworkTool(cwd = process.cwd()) {
         });
         const projection = generateChatProjection(initialPlan, effectiveCwd);
         const approvalQ = buildApprovalQuestion(initialPlan);
+        const todoPayload = {
+          todos: tasks.map((t) => ({
+            content: `[${t.id}] ${t.title}`,
+            status: t.state === "done" ? "completed" : t.state === "in_progress" ? "in_progress" : "pending"
+          }))
+        };
         return {
           output: [
             `\u2705 Plano de Deepwork '${title}' inicializado com sucesso em \`.pantheon/deepwork/${slug}/\`!`,
@@ -12432,6 +12616,11 @@ function createDeepworkTool(cwd = process.cwd()) {
             `- \u{1F517} **Deeplink plan.json:** [Abrir plan.json](file://${deepworkPlanJsonPath(effectiveCwd, slug)})`,
             "",
             projection,
+            "",
+            "**TUI Todo Sync:** Espelhe as tarefas chamando `todowrite` com:",
+            `\`\`\`json
+${JSON.stringify(todoPayload, null, 2)}
+\`\`\``,
             "",
             "**Pergunta de Aprova\xE7\xE3o Nativa (Gate 1):**",
             `\`${JSON.stringify(approvalQ)}\``
@@ -14142,14 +14331,85 @@ var TODOWRITE_INPUT = {
     }
   }
 };
+var latestSessionTodos = [];
 var todowriteTool = {
   name: "todowrite",
   description: "Write the session task checklist (full replace). The TUI todo panel renders the newest list; mark each item in_progress/completed as soon as its state changes.",
   input: TODOWRITE_INPUT,
   output: {},
   execute: async (input) => {
-    const todos = Array.isArray(input.todos) ? input.todos : [];
+    const rawTodos = input.todos;
+    const todos = Array.isArray(rawTodos) ? rawTodos : [];
+    latestSessionTodos = todos;
     return { ok: true, todos, output: JSON.stringify({ todos }) };
+  }
+};
+var TODOREAD_INPUT = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    status: {
+      type: "string",
+      description: "Optional filter by task status (pending, in_progress, completed, cancelled)"
+    }
+  }
+};
+var todoreadTool = {
+  name: "todoread",
+  description: "Read the active session task checklist. Returns the newest list of tasks written via todowrite.",
+  input: TODOREAD_INPUT,
+  output: {},
+  execute: async (input) => {
+    const statusFilter = input?.status;
+    let todos = latestSessionTodos;
+    if (typeof statusFilter === "string" && statusFilter.trim() !== "") {
+      todos = todos.filter(
+        (t) => typeof t === "object" && t !== null && t.status === statusFilter
+      );
+    }
+    return {
+      ok: true,
+      todos,
+      output: JSON.stringify({ todos })
+    };
+  }
+};
+var execAsync = promisify(exec);
+var SHELL_INPUT = {
+  type: "object",
+  required: ["command"],
+  properties: {
+    command: {
+      type: "string",
+      description: "The shell command to execute in the workspace directory"
+    }
+  }
+};
+var shellTool = {
+  name: "shell",
+  description: "Execute a shell command in the workspace directory. Alias for bash execution.",
+  input: SHELL_INPUT,
+  output: {},
+  execute: async (input, context) => {
+    const command = String(input.command ?? "");
+    if (!command.trim()) {
+      return { output: "", ok: false, error: "Command cannot be empty" };
+    }
+    const toolCtx = toolContext(context);
+    const cwd = toolCtx.directory || process.cwd();
+    try {
+      const { stdout, stderr } = await execAsync(command, {
+        cwd,
+        maxBuffer: 10 * 1024 * 1024,
+        shell: "/bin/bash"
+      });
+      const output = [stdout, stderr].filter(Boolean).join("\n");
+      return { output, ok: true };
+    } catch (err) {
+      const execError = err;
+      const output = [execError.stdout, execError.stderr, execError.message].filter(Boolean).join("\n");
+      return { output, ok: false, error: output };
+    }
   }
 };
 function createV2ToolDefinitions(visionRuntime, shadow = {}, jevRuntime) {
@@ -14182,6 +14442,8 @@ function createV2ToolDefinitions(visionRuntime, shadow = {}, jevRuntime) {
     })
   );
   definitions.push(todowriteTool);
+  definitions.push(todoreadTool);
+  definitions.push(shellTool);
   definitions.push(createV2SkillSearchDefinition());
   definitions.push(createDeepworkTool());
   if (visionRuntime) definitions.push(createV2VisionTool(visionRuntime));
@@ -15259,6 +15521,9 @@ async function registerV2PermissionHook(context, subagentOrigins) {
       if (decision2 === "deny") {
         deny("caller or target is not allowed by delegation policy");
         return;
+      }
+      if (event.effect !== "deny") {
+        evaluateAutoPermission(event, { cwd: domains.location?.directory || process.cwd() });
       }
       writeProof();
       recordP8(p8Result, event);

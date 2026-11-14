@@ -135,7 +135,7 @@ const PROJECT_HEADER = `# Pantheon — Repository Setup
 Setup: [INSTALLATION.md](docs/INSTALLATION.md).
 
 - Requires a supported host: OpenCode 2.x (the V1 contract was removed in 2.0).
-- Test: focused checks by default; \`npm test\` for CI/release or broad/high-risk changes
+- Test: focused slice checks ONLY (\`node --test tests/<slice>.test.mjs\`, \`pytest -k\`); \`npm test\` is strictly prohibited during dev loops and reserved exclusively for final PR/release validation.
 - Lint: \`npm run lint\`
 
 ## Global Installation Testing (Sandbox)
@@ -153,7 +153,8 @@ Validate global installation AS A REAL USER in the sandbox \`~/pantheon-sandbox/
 
 ## Conventions
 
-- TDD: RED→GREEN→REFACTOR for testable behavior; use focused checks for micro-edits
+- TDD: RED→GREEN→REFACTOR for testable behavior; use focused checks for micro-edits (sub-10s test slices)
+- Never run unconstrained test suites (\`npm test\`) during implementation loops; full suites are for CI/release gates only
 - Stronger gates (auth, security, data-integrity, coverage) are canonical in the global \`Test Economy\` section
 - Async/await on all I/O
 - Type hints on all functions

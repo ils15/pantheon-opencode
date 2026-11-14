@@ -2,10 +2,8 @@
 name: apollo
 description: "Read-only investigation scout — broad multi-query discovery when independent searches materially reduce uncertainty. Called by: athena, zeus, hermes, aphrodite, demeter. No edits, no commands."
 mode: subagent
-visible: false
-tools:
-  task: false
 reasoning_effort: low
+temperature: 0.1
 permission:
   read: allow
   grep: allow
@@ -17,7 +15,12 @@ permission:
   bash: deny
   task:
     "*": deny
-temperature: 0.1
+mcp_tools:
+  pantheon-resources: all
+  pantheon-memory:
+    - memory_search
+    - code_query
+    - code_neighbors
 skills:
   - auto-continue
   - codemap
@@ -25,9 +28,6 @@ skills:
   - reflect
   - simplify
   - worktrees
-mcp_tools:
-  pantheon-resources: all
-  pantheon-memory: [memory_search, code_query, code_neighbors]
 ---
 
 ## When NOT to Use Apollo

@@ -2,39 +2,44 @@
 
 This roadmap records customer-visible themes, maintenance boundaries, and readiness conditions for stable releases. Internal tracking identifiers, per-item evidence bundles, and per-commit history are intentionally not part of this page.
 
-## Current State: 2.0.x Stable
+## Current State: 2.1.x Stable (v2.1.2)
 
-The 2.0.0 through 2.0.4 releases delivered the complete consolidation onto OpenCode 2.x, the unified Jev decision router, in-memory reactive event dispatch, fast-path reflex loops, prompt caching optimizations, and cryptographic execution receipts.
+The `2.1.x` release series delivered the canonical Deepwork plan architecture, interactive native Question Gate enforcement, unrestricted `.pantheon/` and worktree access for analytical agents, bilingual documentation portals, and live session Todo synchronization.
 
 See [Compatibility](docs/COMPATIBILITY.md) for supported hosts and the [releases page](https://github.com/ils15/pantheon-opencode/releases) for published packages.
 
 ---
 
-## 2.0.x Maintenance Policy: Feature Freeze
+## 2.1.x Maintenance & Active Deliveries
 
-Starting with **2.0.4** and continuing until the **2.1.0** minor milestone, the `2.0.x` line is placed under an **explicit feature freeze**.
+Active development on the `2.1.x` line focuses on operational smoothness and developer ergonomics:
 
-### The Rule
-- **No new features or architectural capabilities will be introduced in `2.0.x`.**
-- All active development on `2.0.x` is restricted strictly to:
-  1. **Bug fixes** in existing tools, agents, commands, and plugins.
-  2. **Security and permission hardening** (e.g., secret-scanner enforcement, file system boundaries).
-  3. **Runtime reliability and container compatibility** (e.g., JupyterHub, Docker, Kubernetes file trust edge cases).
-  4. **Test flakiness, CI gate resilience, and documentation correctness**.
-
-### Priority Maintenance Focus for 2.0.x Patches
-- **Concurrency integrity**: Serialize concurrent file modifications across subagents to eliminate silent overwrite race conditions.
-- **MCP process resilience**: Enable graceful in-session recovery of interrupted or dead MCP server processes without requiring a complete OpenCode host restart.
-- **Read-boundary secret scanning**: Ensure the secret scanner policy inspects file read operations with the same strictness applied to write operations.
-- **TUI state stability**: Eliminate edge cases in TUI viewport sizing, timezone detection, and real-time event subscription cleanup.
+### 2.1.3 Immediate Enhancements
+1. **Live TUI Todo Activation & Complete Todo Suite (`todowrite` + `todoread`)**
+   - Direct integration between `@zeus`/`@athena` coordination and the OpenCode V2 session todo tools.
+   - Restored `todoread` to inspect active session tasks programmatically alongside `todowrite` (matching `opencode-todolist`).
+   - Active plans and multi-step checklists automatically mirror to the Pantheon TUI sidebar Todo panel in real-time.
+2. **Declarative Agent Roster Generator & Forge**
+   - Centralized typed schema and manifest (`src/agents/roster.json`) driving all 14 specialist prompts (`src/agents/*.md`).
+   - Mechanical compiler (`scripts/build-roster.mjs`) with `--check` CI gate, eliminating copy-paste drift and ensuring frontmatter conformance.
+3. **Observable & Enforceable Test Slicing (Anti-Fatigue Guard — Issue #437)**
+   - Hard negative constraint in `AGENTS.md` and agent prompts forbidding unconstrained repository test suites (`npm test`, full `pytest`) during incremental implementation loops.
+   - Intelligent auto-permissions gate intercepting unconstrained full-suite commands (`npm test`, bare `pytest`) in dev loops to prevent silent token burn and multi-minute stalls.
+   - Repository-first selector discovery and diff-aware slice engine via `scripts/test-slice.mjs` (`npm run test:slice`).
+   - Failure/fix loop mandate: specialists rerun only failed tests without repeating unchanged passing checks.
+   - Observable task receipt contract in agent summaries reporting command, target count, duration (<10s), and selection rationale.
+   - Bounded static/lint fallback for mapping gaps instead of escalating to global suites.
+4. **Workspace Auto-Permissions (Scope Governance)**
+   - Eliminate permission prompt fatigue during autonomous specialist runs.
+   - Intelligent auto-approval of safe development commands (`node`, `python3`, `pytest`, `npm`, local test runners) within the workspace boundary while maintaining fail-closed blocks on destructive commands, privilege escalation (`sudo`), and read-only role violations.
 
 ---
 
-## Road to 2.1.0 Minor Milestone
+## Road to 2.2.0 Minor Milestone
 
-The `2.1.0` release will be the next minor feature cycle. It introduces structural enhancements designed to lower token consumption, scale multi-agent coordination, and eliminate runtime overhead.
+The `2.2.0` release will be the next minor architectural cycle. It introduces structural enhancements designed to lower token consumption, scale multi-agent coordination, and eliminate runtime overhead.
 
-### 2.1.0 Workstreams & Themes
+### 2.2.0 Workstreams & Themes
 
 1. **Step-Ledger Execution Mode**
    - Execute complex workflows via atomic, single-step sub-sessions.
@@ -47,12 +52,12 @@ The `2.1.0` release will be the next minor feature cycle. It introduces structur
    - Dynamically route low-complexity or high-volume tasks across providers (Gemini, Claude, GPT) with automated retry on quota exhaustion (HTTP 429) or transient degradation.
    - Integrated with the in-memory event bus (`PantheonBus`) for real-time observability of routing decisions and token spend.
 
-3. **Declarative Roster Generator & Forge**
-   - Centralize agent definitions into a typed role-and-capability manifest.
-   - Mechanically compile specialist system prompts and tool grants from declarative configurations, eliminating copy-paste drift and ensuring frontmatter conformance.
+3. **Dynamic Capability Synthesizer & Role Morphing**
+   - On-the-fly ephemeral specialist generation based on task profile.
+   - Compiles ad-hoc bounded sub-specialists dynamically from the declarative roster base with tailored tool allowlists.
 
-4. **Pre-Dispatch Scope Governance**
-   - Validate file-tree bounds, command allowlists, and tool grants *before* spawning a child subagent.
+4. **Deep Scope Governance & Sandboxing**
+   - Pre-flight validation of file-tree bounds, command allowlists, and tool grants *before* spawning a child subagent.
    - Prevents execution aborts caused by late-discovered permission mismatches.
 
 5. **Mechanized Code Quality Doctrine**
@@ -72,16 +77,25 @@ Prose that merely asks an LLM nicely to adhere to conventions is the weakest tie
 
 ---
 
-## What 2.0.x Delivered (Consolidated Record)
+## What 2.1.x Delivered (Consolidated Record)
 
-- **One installation, one contract**: The OpenCode V1 contract was removed; the plural `plugins` format on OpenCode 2.x is canonical. See [Compatibility](docs/COMPATIBILITY.md#the-host-gate).
-- **The native install path**: Recommended plugin installation via host package management alongside the installer for agents, skills, instructions, commands, MCP, and TUI. See [Installation](docs/INSTALLATION.md).
+- **Canonical Deepwork Plan Architecture**: Structured JSON ground truth (`plan.json`) and append-only event log (`journal.ndjson`) with Mermaid DAG rendering.
+- **Interactive Question Gate**: Native OpenCode `question` tool strictly enforced for open architectural trade-offs, requiring marked `(Recomendado)` defaults instead of unstructured chat questions.
+- **Search & Worktree Freedom**: Removed all search and read barriers on `.pantheon/` and active worktrees across `@apollo`, `@themis`, `@athena`, and `@zeus`.
+- **Declarative Agent Roster Generator**: Single typed manifest (`src/agents/roster.json`) mechanically compiling all 14 specialist prompts with `--check` CI gates.
+- **Complete Session Todo Suite (`todowrite` + `todoread`)**: Full programmatic session task management, mirroring active deepwork plans directly into the TUI sidebar Todo block.
+- **Strict Test Slicing Mandate**: Eliminated dev-loop agent stalls and context blowups by strictly prohibiting unconstrained test suites (`npm test`) during implementation and enforcing sub-10s targeted slices.
+- **Workspace Auto-Permissions**: Seamless auto-approval for routine dev commands within the workspace, ending prompt fatigue.
+- **Bilingual Documentation Portal**: Comprehensive English and Portuguese documentation with interactive SVG Mermaid diagrams and production recipes.
+
+---
+
+## What 2.0.x Delivered (Historical Foundation)
+
+- **One installation, one contract**: The OpenCode V1 contract was removed; the plural `plugins` format on OpenCode 2.x is canonical.
 - **High-speed reactive orchestration**: In-memory typed event bus (`PantheonBus`) with zero-latency background job tracking.
 - **Themis local reflex loop**: Bounded autonomous self-healing for fast-path implementers without coordinator round-trips.
 - **Cryptographic execution receipts**: SHA-256 fingerprinting of modified files and verification slices for delegated subagent tasks.
-- **Deterministic KV-cache prompt layering**: Prompt prefix stabilization maximizing provider KV-cache retention and lowering token latency.
-- **Container and JupyterHub resilience**: Relaxed directory trust chains for group-writable systems (`PANTHEON_ALLOW_GROUP_WRITABLE=1`).
-- **Five isolated Python MCP servers**: Pinned runtime environments with per-agent tool allowlists. See [MCP](docs/MCP.md).
-- **Skills with progressive disclosure**: Bounded `SKILL.md` cores with digest-locked `references/`. See [Agents & Skills](docs/agents/README.md).
-- **Typed Decision Router (Jev)**: Structural risk ladder with `ask`/`rank`/`verify` semantics. See [Native Decisions (Jev)](docs/reference/native-decisions.md).
-- **Plain-language TUI & 2-tier planning**: Intuitive Portuguese/English labels and concise executive decision summaries with disk-persisted blueprints.
+- **Deterministic KV-cache prompt layering**: Prompt prefix stabilization maximizing provider KV-cache retention.
+- **Five isolated Python MCP servers**: Pinned runtime environments with per-agent tool allowlists.
+- **Typed Decision Router (Jev)**: Structural risk ladder with `ask`/`rank`/`verify` semantics.

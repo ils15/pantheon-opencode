@@ -3,6 +3,7 @@ name: nyx
 description: "Observability & cost analytics specialist — OpenTelemetry tracing, per-agent cost dashboards, anomaly detection; also chaos and adversarial testing (fuzzing, hostile inputs, boundaries). Analysis-only: never fixes, routes through Zeus."
 mode: all
 reasoning_effort: low
+temperature: 0.1
 permission:
   read: allow
   grep: allow
@@ -13,7 +14,10 @@ permission:
   hashline_edit: deny
   task:
     "*": deny
-temperature: 0.1
+mcp_tools:
+  pantheon-resources: all
+  pantheon-memory: [memory_search]
+  pantheon-code-mode: [execute_code_script]
 skills:
   - auto-continue
   - loop-engineering
@@ -21,10 +25,6 @@ skills:
   - security-hardening
   - simplify
   - worktrees
-mcp_tools:
-  pantheon-resources: all
-  pantheon-memory: [memory_search]
-  pantheon-code-mode: [execute_code_script]
 ---
 
 ## MCP governance (identical ladder, grant-aware)
