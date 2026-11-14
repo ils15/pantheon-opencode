@@ -450,6 +450,22 @@ async function main() {
         () => zeusReadGuard('glob', { path: 'src', pattern: '*' }, 'zeus'),
         /delegate to @apollo/,
       )
+      assert.throws(
+        () => zeusReadGuard('glob', { pattern: '.git/**' }, 'zeus'),
+        /delegate to @apollo/,
+      )
+      assert.throws(
+        () => zeusReadGuard('glob', { pattern: 'node_modules/**' }, 'zeus'),
+        /delegate to @apollo/,
+      )
+      assert.throws(
+        () => zeusReadGuard('read', { filePath: '.git/HEAD' }, 'zeus'),
+        /delegate to @apollo/,
+      )
+      assert.throws(
+        () => zeusReadGuard('read', { filePath: 'node_modules/.package-lock.json' }, 'zeus'),
+        /delegate to @apollo/,
+      )
     },
   )
 

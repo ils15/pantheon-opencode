@@ -90,6 +90,26 @@ const SAFE_DEV_BINARIES: ReadonlySet<string> = new Set([
   'bash',
 ])
 
+/** Check if a resource target points to an excluded or sensitive path (.git, node_modules, traversal). */
+export function isExcludedReadPath(rawPath: string): boolean {
+  const trimmed = rawPath.trim()
+  if (!trimmed) return false
+  const normalized = trimmed.replace(/\\/g, '/')
+  // Traversal outside workspace
+  if (normalized.startsWith('../') || normalized === '..' || normalized.includes('/../')) {
+    return true
+  }
+  // Sensitive system paths
+  if (/^\/(etc|boot|sys|proc|root)(\/|$)/.test(normalized)) {
+    return true
+  }
+  // Excluded repository internal directories (.git and node_modules)
+  if (/(^|\/)(\.git|node_modules)(\/|$)/.test(normalized)) {
+    return true
+  }
+  return false
+}
+
 /** Check if auto-permissions engine is enabled in environment. */
 export function autoPermissionsEnabled(
   env: Record<string, string | undefined> = process.env,
@@ -245,7 +265,7 @@ export function evaluateAutoPermission(
     }
   }
 
-  // 3. Read-only inspection tools are safe within workspace (excluding network/external URLs)
+  // 3. Read-only inspection tools are safe within workspace (excluding network/external URLs and excluded directories)
   if (['read', 'glob', 'grep', 'webfetch', 'question'].includes(action)) {
     const firstResource =
       Array.isArray(event.resources) && typeof event.resources[0] === 'string'
@@ -253,6 +273,11 @@ export function evaluateAutoPermission(
         : ''
     if (firstResource.startsWith('http://') || firstResource.startsWith('https://')) {
       return { decision: 'passthrough' }
+    }
+    if (firstResource && isExcludedReadPath(firstResource)) {
+      event.effect = 'deny'
+      event.message = `Pantheon auto-permissions denied: reading '${firstResource}' is prohibited (.git and node_modules are excluded)`
+      return { decision: 'deny', reason: 'excluded-path' }
     }
     event.effect = 'allow'
     return { decision: 'allow', reason: 'safe-read-action' }

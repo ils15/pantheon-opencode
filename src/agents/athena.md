@@ -18,6 +18,7 @@ permission:
   task:
     "*": deny
     apollo: allow
+  todoread: allow
 mcp_tools:
   pantheon-resources: all
   pantheon-memory:

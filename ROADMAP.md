@@ -14,6 +14,20 @@ See [Compatibility](docs/COMPATIBILITY.md) for supported hosts and the [releases
 
 Active development on the `2.1.x` line focuses on operational smoothness and developer ergonomics:
 
+### 2.1.4 Deliveries & Hardening
+1. **Global Install Hygiene & PATH Shadowing Detection (Issue #424)**
+   - Doctor check (H2b) detects PATH shadowing, version drift, and dangling binary symlinks across multiple global npm prefixes (`~/.npm-global`, `~/.nvm`, etc.).
+   - Version skew validation in `resolveStablePantheonRoot` prevents `_npx` from silently registering a stale global package.
+   - `sanitizeNpmEnv` cleanses `npm_config_allow_scripts` and `npm_config_approve_scripts` from nested lifecycle calls, preventing `EALLOWSCRIPTS` failures during TUI sync.
+2. **Strict Test Slice Filter Ordering (Issue #442)**
+   - Reordered `--test-name-pattern` flag ahead of the test file path in `scripts/test-slice.mjs` invocations so Node's native test runner enforces regex filters during failure/fix loops.
+3. **Repository Internal & Traversal Exclusion in Permissions and Guards (Issue #441)**
+   - Enforced deterministic path checks in `auto-permissions.ts` and `zeusReadGuard` denying `.git/**`, `node_modules/**`, and path traversal, backing prompt rules with structural security boundaries.
+4. **Universal Session Todo Tool Availability (Issue #439)**
+   - Granted `todowrite` and `todoread` across all 14 specialist agent manifests in `src/agents/roster.json` and registered tool capabilities, enabling seamless session task tracking.
+5. **Session Auto-Discovery for Zen Vision (Issue #440)**
+   - Automated OpenCode session ID discovery from environment (`OPENCODE_SESSION_ID`) and SQLite `opencode.db` (`session_v2`) for `vision_describe`, resolving orchestration vision calls cleanly.
+
 ### 2.1.3 Deliveries
 1. **Observable & Enforceable Test Slicing (Anti-Fatigue Guard — Issue #437)**
    - Hard negative constraint in `AGENTS.md` and agent prompts forbidding unconstrained repository test suites (`npm test`, full `pytest`) during incremental implementation loops.

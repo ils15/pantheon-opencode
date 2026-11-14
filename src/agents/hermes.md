@@ -15,6 +15,8 @@ permission:
   task:
     "*": deny
     apollo: allow
+  todowrite: allow
+  todoread: allow
 mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_search]

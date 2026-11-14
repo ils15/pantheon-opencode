@@ -172,3 +172,43 @@ test('evaluateAutoPermission: kill-switch PANTHEON_AUTO_PERMISSIONS=off leaves a
   assert.equal(result.decision, 'disabled')
   assert.equal(event.effect, 'ask')
 })
+
+test('evaluateAutoPermission: read and glob deny .git, node_modules, and path traversal', () => {
+  const deniedTargets = [
+    '.git',
+    '.git/HEAD',
+    '.git/config',
+    'node_modules',
+    'node_modules/package.json',
+    'subproject/node_modules/foo.js',
+    '../outside.txt',
+    '/etc/shadow',
+  ]
+
+  for (const target of deniedTargets) {
+    const event = {
+      action: 'read',
+      resources: [target],
+      agent: 'apollo',
+      effect: 'ask',
+    }
+    const result = evaluateAutoPermission(event, { cwd: '/workspace' })
+    assert.equal(result.decision, 'deny', `expected deny for target: ${target}`)
+    assert.equal(event.effect, 'deny')
+    assert.match(String(event.message), /prohibited/)
+  }
+
+  // Safe read targets remain allowed
+  const safeTargets = ['README.md', 'src/index.ts', 'docs/guide.md', '.pantheon/deepwork/plan.md']
+  for (const target of safeTargets) {
+    const event = {
+      action: 'read',
+      resources: [target],
+      agent: 'apollo',
+      effect: 'ask',
+    }
+    const result = evaluateAutoPermission(event, { cwd: '/workspace' })
+    assert.equal(result.decision, 'allow', `expected allow for target: ${target}`)
+    assert.equal(event.effect, 'allow')
+  }
+})
