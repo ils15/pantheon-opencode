@@ -51,7 +51,8 @@ var SAFE_DEV_BINARIES = /* @__PURE__ */ new Set([
   "cargo",
   "go",
   "sh",
-  "bash"
+  "bash",
+  "opencode-quota"
 ]);
 function isExcludedReadPath(rawPath) {
   const trimmed = rawPath.trim();
@@ -144,7 +145,7 @@ function evaluateAutoPermission(event, options = {}) {
     return { decision: "allow", reason: "pantheon-native-tool" };
   }
   if (READ_ONLY_AGENTS.has(agent)) {
-    if (["edit", "write", "hashline_edit", "bash", "shell"].includes(action)) {
+    if (["edit", "write", "hashline_edit", "bash", "shell", "execute"].includes(action)) {
       event.effect = "deny";
       event.message = `Pantheon auto-permissions denied: read-only agent '${agent}' cannot execute mutating action '${action}'`;
       return { decision: "deny", reason: "read-only-role-violation" };
@@ -163,7 +164,7 @@ function evaluateAutoPermission(event, options = {}) {
     event.effect = "allow";
     return { decision: "allow", reason: "safe-read-action" };
   }
-  if (action === "bash" || action === "shell") {
+  if (action === "bash" || action === "shell" || action === "execute") {
     const rawCmd = Array.isArray(event.resources) && typeof event.resources[0] === "string" ? event.resources[0] : "";
     if (rawCmd) {
       if (isDangerousCommand(rawCmd)) {
@@ -14452,7 +14453,8 @@ var shellTool = {
   input: SHELL_INPUT,
   output: {},
   execute: async (input, context) => {
-    const command = String(input.command ?? "");
+    const raw = input ?? {};
+    const command = String(raw.command ?? raw.cmd ?? "");
     if (!command.trim()) {
       return { output: "", ok: false, error: "Command cannot be empty" };
     }

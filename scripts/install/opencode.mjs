@@ -2972,7 +2972,6 @@ async function installPass(
         'npx *': 'allow',
         'pytest *': 'allow',
         'ruff *': 'allow',
-        'opencode-quota *': 'allow',
       }
     }
   }
