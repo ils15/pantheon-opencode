@@ -57,7 +57,7 @@ flowchart TD
 
 ### @zeus (Orchestrator)
 - **CAN:** Decide task flow, dispatch specialists, arbitrate uncertainties via Jev (`pantheon_jev_decide`), discover project skills (`pantheon_skill_search`), prompt human decisions (`question`), read up to 50 lines for fast routing.
-- **CANNOT:** Edit code directly (`edit: deny`), execute commands in terminal (`bash: deny`), ask user to run terminal commands, or read files in `.pantheon/deepwork/**` and `.git/**`.
+- **CANNOT:** Edit code directly (`edit: deny`), execute commands in terminal (`bash: deny`), ask user to run terminal commands, or perform broad recursive scans across `.git/**` or `node_modules/**`.
 
 ### @athena (Architect)
 - **CAN:** Create architectural specs, analyze trade-offs, define implementation blueprints and detailed technical plans (`PLAN.md`).

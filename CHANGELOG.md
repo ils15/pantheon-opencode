@@ -23,7 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- **agents** — relaxed search boundaries in `@apollo`, `@themis`, `@athena`, and `@zeus` to permit reading active worktrees (`.pantheon-worktrees/**`) and Deepwork plans (`.pantheon/deepwork/**`).
+- **agents** — removed all search and read restrictions on the `.pantheon/` folder and active worktrees in `@apollo`, `@themis`, `@athena`, and `@zeus`, excluding only `.git` and `node_modules`.
 
 ## [v2.1.1] - 2026-11-13
 
