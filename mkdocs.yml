@@ -68,6 +68,7 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Overview: OVERVIEW.md
   - Getting Started:
       - Installation: INSTALLATION.md
       - Quick Start: QUICKSTART.md
@@ -80,7 +81,9 @@ nav:
       - Deepwork Blueprint: guides/deepwork.md
       - Pantheon Vision: guides/vision.md
       - Practical Cookbook: guides/cookbook.md
+      - Execution Modes: guides/execution-modes.md
   - Compatibility: COMPATIBILITY.md
+  - Settings & TUI: SETTINGS.md
   - Architecture: ARCHITECTURE.md
   - Agents & Skills: agents/README.md
   - Permissions, Gates & Delegation: PERMISSIONS-QUALITY-DELEGATION.md
@@ -101,6 +104,7 @@ nav:
   - Release Process:
       - Release Process: RELEASING.md
       - v1.6.0 Release Notes: releases/v1.6.0.md
+      - v2.x Highlights: releases/v2-highlights.md
   - Branch Protection: BRANCH-PROTECTION.md
   - Documentação (Português):
       - Início: pt-BR/index.md
