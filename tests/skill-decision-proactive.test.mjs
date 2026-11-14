@@ -35,6 +35,22 @@ test('Zeus instructions enforce proactive project-scoped skill decision flow', (
   assert.match(zeus, /\.agents\/skills\//i)
   assert.match(zeus, /-a opencode -y/i)
   assert.match(zeus, /NEVER propose or allow global installation/i)
+
+  // Hybrid internal & external skill handoff & verification
+  assert.match(zeus, /\.opencode\/skills\//i)
+  assert.match(zeus, /Skills \(Internal & External\)/i)
+  assert.match(zeus, /Skill: <name> \(Path: \.opencode\/skills\/<name>\/SKILL\.md\)/i)
+  assert.match(zeus, /instruct the specialist to read `SKILL\.md` before implementation/i)
+})
+
+test('Specialists are instructed to read SKILL.md before writing code', () => {
+  const hermes = read('../src/agents/hermes.md')
+  const aphrodite = read('../src/agents/aphrodite.md')
+  const demeter = read('../src/agents/demeter.md')
+
+  assert.match(hermes, /read its `SKILL\.md` first/i)
+  assert.match(aphrodite, /read its `SKILL\.md` before writing code/i)
+  assert.match(demeter, /read its `SKILL\.md` before generating migrations/i)
 })
 
 test('orchestrate-with-zeus prompt guides proactive project skill installation', () => {

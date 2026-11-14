@@ -14,6 +14,9 @@
  * @module pantheon/skill-search-tool
  */
 
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 // @ts-expect-error scripts/skill-search.mjs is a plain Node ESM script without bundled .d.ts
 import { searchSkillSources } from '../../scripts/skill-search.mjs'
 import { PANTHEON_SKILL_CATALOG } from './pantheon-decision-catalog.ts'
@@ -27,6 +30,101 @@ export interface SkillSearchResult {
   readonly installs?: number | null
   readonly url?: string
   readonly installCommand?: string | null
+  readonly path?: string | null
+  readonly scope?: 'internal' | 'project' | 'global'
+}
+
+export interface InstalledSkillRecord {
+  readonly id: string
+  readonly description: string
+  readonly path: string
+  readonly scope: 'internal' | 'project' | 'global'
+}
+
+export function extractSkillMetadata(
+  content: string,
+  fallbackName: string,
+): { name: string; description: string } {
+  let name = fallbackName
+  let description = ''
+  const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
+  const yaml = fmMatch?.[1]
+  if (yaml) {
+    const nameMatch = yaml.match(/^name:\s*["']?([^"'\r\n]+)["']?/m)
+    if (nameMatch?.[1]) name = nameMatch[1].trim()
+    const descMatch = yaml.match(/^description:\s*["']?([^"'\r\n]+)["']?/m)
+    if (descMatch?.[1]) description = descMatch[1].trim()
+  }
+  if (!description) {
+    const withoutFm = content.replace(/^---\r?\n[\s\S]*?\r?\n---/, '').trim()
+    const lines = withoutFm.split('\n')
+    for (const l of lines) {
+      const trimmed = l.trim()
+      if (trimmed && !trimmed.startsWith('#')) {
+        description = trimmed.slice(0, 160)
+        break
+      }
+    }
+  }
+  return { name, description }
+}
+
+export function scanInstalledSkills(
+  cwd: string = process.cwd(),
+): Map<string, InstalledSkillRecord> {
+  const map = new Map<string, InstalledSkillRecord>()
+
+  // 1. Built-in Pantheon catalog (internal base)
+  for (const entry of PANTHEON_SKILL_CATALOG) {
+    map.set(entry.id.toLowerCase(), {
+      id: entry.id,
+      description: entry.description,
+      path: `src/skills/${entry.id}/SKILL.md`,
+      scope: 'internal',
+    })
+  }
+
+  const scanDir = (baseDir: string, scope: 'project' | 'global') => {
+    try {
+      if (!existsSync(baseDir)) return
+      const entries = readdirSync(baseDir, { withFileTypes: true })
+      for (const entry of entries) {
+        if (!entry.isDirectory() && !entry.isSymbolicLink()) continue
+        const skillName = entry.name
+        if (skillName.startsWith('.')) continue
+        const skillMd = join(baseDir, skillName, 'SKILL.md')
+        if (existsSync(skillMd)) {
+          try {
+            const raw = readFileSync(skillMd, 'utf8')
+            const { name, description } = extractSkillMetadata(raw, skillName)
+            const id = (name || skillName).trim()
+            map.set(id.toLowerCase(), {
+              id,
+              description: description || skillName,
+              path: skillMd,
+              scope,
+            })
+          } catch {
+            // ignore unreadable files
+          }
+        }
+      }
+    } catch {
+      // ignore directory errors
+    }
+  }
+
+  // 2. Global directories
+  const xdgConfig = process.env.XDG_CONFIG_HOME || join(homedir(), '.config')
+  scanDir(join(xdgConfig, 'opencode', 'skills'), 'global')
+  scanDir(join(homedir(), '.agents', 'skills'), 'global')
+
+  // 3. Project directories (override global/internal)
+  scanDir(join(cwd, '.opencode', 'skills'), 'project')
+  scanDir(join(cwd, '.agents', 'skills'), 'project')
+  scanDir(join(cwd, 'skills'), 'project')
+
+  return map
 }
 
 export interface SkillSearchOutput {
@@ -74,7 +172,10 @@ const SKILL_SEARCH_INPUT_SCHEMA: Record<string, unknown> = {
   },
 }
 
-export function executeSkillSearch(input: Record<string, unknown>): SkillSearchOutput {
+export function executeSkillSearch(
+  input: Record<string, unknown>,
+  options: { cwd?: string } = {},
+): SkillSearchOutput {
   const query = typeof input.query === 'string' ? input.query.trim() : ''
   if (query.length === 0) {
     return { ok: false, query: '', count: 0, results: [], failures: ['query must be non-empty'] }
@@ -97,7 +198,10 @@ export function executeSkillSearch(input: Record<string, unknown>): SkillSearchO
   const results: SkillSearchResult[] = []
   const failures: string[] = []
 
-  // 1. Tier 1: Installed Pantheon catalog (in-memory, instant, zero-network)
+  const cwd = options.cwd ?? process.cwd()
+  const installedMap = scanInstalledSkills(cwd)
+
+  // 1. Tier 1: Installed skills (Pantheon catalog + local filesystem .opencode/skills and .agents/skills)
   if (sources.has('installed')) {
     const tokens = query
       .toLowerCase()
@@ -105,7 +209,7 @@ export function executeSkillSearch(input: Record<string, unknown>): SkillSearchO
       .filter((t) => t.length > 2)
 
     if (tokens.length > 0) {
-      for (const entry of PANTHEON_SKILL_CATALOG) {
+      for (const entry of installedMap.values()) {
         const idLower = entry.id.toLowerCase()
         const descLower = entry.description.toLowerCase()
         const matchScore = tokens.reduce((score, t) => {
@@ -129,6 +233,8 @@ export function executeSkillSearch(input: Record<string, unknown>): SkillSearchO
             installed: true,
             installs: null,
             installCommand: null,
+            path: entry.path,
+            scope: entry.scope,
           })
         }
       }
@@ -152,15 +258,26 @@ export function executeSkillSearch(input: Record<string, unknown>): SkillSearchO
 
       if (Array.isArray(extRes.entries)) {
         for (const entry of extRes.entries) {
-          results.push({
+          const bareName = (
+            entry.skill.includes('@') ? entry.skill.split('@')[1] : entry.skill
+          ).toLowerCase()
+          const isInstalled =
+            installedMap.has(entry.skill.toLowerCase()) || installedMap.has(bareName)
+          const installedRecord =
+            installedMap.get(entry.skill.toLowerCase()) || installedMap.get(bareName)
+
+          const pushItem: SkillSearchResult = {
             skill: entry.skill,
             description: entry.skill,
             source: entry.source as 'anthropic' | 'skills-sh' | 'github',
-            installed: false,
+            installed: isInstalled,
             installs: entry.installs ?? null,
-            url: entry.url,
-            installCommand: `npx skills add ${entry.skill} -a opencode -y`,
-          })
+            ...(entry.url ? { url: entry.url } : {}),
+            installCommand: isInstalled ? null : `npx skills add ${entry.skill} -a opencode -y`,
+            path: isInstalled && installedRecord ? installedRecord.path : null,
+            ...(isInstalled && installedRecord ? { scope: installedRecord.scope } : {}),
+          }
+          results.push(pushItem)
         }
       }
     } catch (err) {
@@ -186,8 +303,11 @@ export function createV2SkillSearchDefinition(): V2ToolDef {
     description: TOOL_DESCRIPTION,
     input: SKILL_SEARCH_INPUT_SCHEMA,
     output: {},
-    execute: async (input: Record<string, unknown>) => ({
-      output: JSON.stringify(executeSkillSearch(input), null, 2),
-    }),
+    execute: async (input: Record<string, unknown>, context?: unknown) => {
+      const cwd = (context as { directory?: string } | undefined)?.directory || process.cwd()
+      return {
+        output: JSON.stringify(executeSkillSearch(input, { cwd }), null, 2),
+      }
+    },
   }
 }
