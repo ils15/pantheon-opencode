@@ -117,6 +117,7 @@ nav:
           - Livro de Receitas (Cookbook): pt-BR/guides/cookbook.md
       - Sistema & Ferramentas:
           - Arquitetura: pt-BR/ARCHITECTURE.md
+          - Compatibilidade: pt-BR/COMPATIBILITY.md
           - Servidores MCP: pt-BR/MCP.md
           - Memória: pt-BR/MEMORY.md
       - Governança & Release:

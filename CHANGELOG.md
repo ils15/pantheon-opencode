@@ -13,6 +13,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
      Running apply will move this section to a versioned entry and reset the template below. -->
 
+### Added
+
+- **docs** — added `pt-BR/COMPATIBILITY.md`, expanded `pt-BR/INSTALLATION.md` with CLI flag matrix and flowchart, and expanded `cookbook.md` to 12 practical recipes in EN and PT-BR.
+
+### Changed
+
+- **docs** — revised Quick Start in EN and PT-BR with accurate routing, Fast-Track vs Deepwork distinction, native question gate flow, and Mermaid execution lifecycle diagrams.
+
 ### Fixed
 
 - **agents** — relaxed search boundaries in `@apollo`, `@themis`, `@athena`, and `@zeus` to permit reading active worktrees (`.pantheon-worktrees/**`) and Deepwork plans (`.pantheon/deepwork/**`).

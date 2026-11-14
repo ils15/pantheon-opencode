@@ -2,7 +2,7 @@
 
 > 🇧🇷 **Versão em Português disponível:** [Leia em Português](../pt-BR/guides/cookbook.md)
 
-This practical cookbook aggregates the most common everyday development workflows with Pantheon, showcasing exact prompts and which specialist to call for each scenario.
+This practical cookbook aggregates the most common everyday development workflows with Pantheon, showcasing exact prompts, tool dispatches, and which specialist to call for each scenario.
 
 ---
 
@@ -12,7 +12,7 @@ This practical cookbook aggregates the most common everyday development workflow
 
 **Prompt:**
 ```text
-/pantheon Add CSV export support to /reports with unit tests and schema validation.
+@zeus Add CSV export support to /reports with unit tests and schema validation.
 ```
 
 **Workflow:**
@@ -120,3 +120,61 @@ This practical cookbook aggregates the most common everyday development workflow
 
 **Why use @prometheus?**
 `@prometheus` owns containerization, GitHub Actions, build automation, and infrastructure configurations.
+
+---
+
+## Recipe 9: Council Synthesis for Architecture Decisions (`/pantheon`)
+
+**Scenario:** Arbitrate a technical trade-off across multiple architecture domains.
+
+**Prompt:**
+```text
+/pantheon Should we use Server-Sent Events (SSE) or WebSockets for live status updates in our dashboard?
+```
+
+**Why use /pantheon?**
+Dispatches 2-3 specialists in parallel (`@athena` for architecture, `@hermes` for backend scalability, `@themis` for security and connection limits). Divergences are synthesized into a decisive recommendation with domain authority precedence.
+
+---
+
+## Recipe 10: Multi-Phase Project with Persistent Checkpoints (`/pantheon-deepwork`)
+
+**Scenario:** Refactor a core system subsystem across multiple sessions without losing context.
+
+**Prompt:**
+```text
+/pantheon-deepwork Migrate user session management from server-side memory to encrypted JWT cookies with redis blacklist.
+```
+
+**Workflow:**
+1. Progress is written to `.pantheon/deepwork/<slug>/` (`plan.json`, `PLAN.md`, checkpoints).
+2. Parallel tasks execute in isolated git worktrees (`.pantheon-worktrees/`).
+3. Each phase boundary requires a PASS verdict from `@themis` before progressing.
+
+---
+
+## Recipe 11: Interactive Question Gate in Complex Planning
+
+**Scenario:** Clarify architectural ambiguities and design trade-offs interactively before code generation starts.
+
+**Workflow:**
+When `@athena` designs a system with multiple valid approaches, `@zeus` presents the choices via OpenCode's native `question` tool:
+- The UI displays structured options with clear trade-offs.
+- A marked `(Recommended)` choice highlights the best-practice path.
+- The developer selects their preferred option, and execution proceeds automatically without textual back-and-forth.
+
+---
+
+## Recipe 12: Health Validation & Drift Detection (`doctor`)
+
+**Scenario:** Verify that local MCP servers, plugins, and configurations are synchronized and healthy.
+
+**Command:**
+```bash
+npx pantheon-opencode doctor
+```
+
+**When to run:**
+- After git branch switches or pulling remote updates.
+- When upgrading Node.js or OpenCode.
+- If an MCP tool reports connection failures or missing dependencies.

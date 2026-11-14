@@ -12,17 +12,17 @@ Ensure your environment satisfies the following requirements:
 
 1. **OpenCode:** Version 2.x installed (native OpenCode 2.x host support).
 2. **Node.js:** Version `>=26.4.0` (required for Pantheon's CLI, packager, and TUI interface).
-3. **Python (Optional):** Version `3.11+` (only needed if using Python-based MCP servers).
+3. **Python (Optional):** Version `3.11+` (only needed if using Python-based bundled MCP servers).
 
 ---
 
 ## 1. Installation
 
-You can install Pantheon in two ways, depending on your preferred workflow:
+Pantheon is installed and configured using the native CLI installer:
 
-### Option A — Full Installation via CLI (Recommended)
+### Full Installation via CLI (Recommended)
 
-Installs all 14 specialized agents, 25 skills, context instructions (TDD, YAGNI), slash commands, and the modern TUI:
+Installs all 14 specialized agents, 25 skills, context instructions (TDD, YAGNI), slash commands, bundled MCP servers, and the modern TUI:
 
 ```bash
 # Global Installation (recommended — available across all your repositories)
@@ -34,13 +34,20 @@ npx pantheon-opencode init --project
 
 > **Automation / CI Tip:** Run `npx pantheon-opencode init -y` to apply default settings non-interactively without prompting.
 
-### Option B — Host-Native Plugin Installation via OpenCode
+### OpenCode Plugin Registration
 
-If you prefer to load only the plugin using OpenCode 2.x's built-in plugin manager:
+If you already use OpenCode's plugin manager or want to load the plugin via `opencode.json`, ensure the plugin entry is registered:
 
-```bash
-opencode plugin add pantheon-opencode
+```json
+{
+  "plugins": [
+    "pantheon-opencode"
+  ]
+}
 ```
+
+> [!NOTE]
+> `npx pantheon-opencode init` automatically configures `opencode.json` with the required plugin entry, agents, skills, and MCP servers.
 
 ---
 
@@ -53,11 +60,12 @@ npx pantheon-opencode doctor
 ```
 
 The `doctor` command verifies:
-- Connection and registration of all **5 native MCP servers** (`resources`, `memory_store`, `memory_search`, `persistence`, `vision` / `cost`).
+- Connection and health of all bundled MCP servers (`pantheon_resources`, `pantheon_memory`, `pantheon_persistence`, `pantheon_vision`, `pantheon_cost`).
 - Proper plugin registration in `opencode.json`.
 - Synchronization of agents, skills, and instruction files.
+- Local runtime Python and dependencies.
 
-A healthy installation outputs a **PASS** verdict with zero errors and zero warnings.
+A healthy installation outputs a **PASS** verdict with zero blocking errors.
 
 ---
 
@@ -69,67 +77,86 @@ Start OpenCode in your terminal or launch the desktop application:
 opencode
 ```
 
+> **Tip for Background Subagents:** If your OpenCode runtime documents support for background subagents, you can enable experimental background delegation:
+> ```bash
+> OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true opencode
+> ```
+
 ### What you will see:
 - **Rich Sidebar (TUI):** Displays the active Pantheon version (v2.1.1), the active model preset, Git repository state, and a live **Context** block with token counts, estimated cost, and cache speed.
 - **Native Multimodal Vision (Pantheon Vision):** If you capture a screenshot and paste it directly into chat (`Ctrl+V` / `Cmd+V`), Pantheon analyzes the image silently via system context without cluttering the chat with comments or HTML markup.
 
 ---
 
-## 4. Dispatching Your First Task in Chat
+## 4. Dispatching Tasks in Chat
 
-With OpenCode open, you have three canonical ways to interact with the Pantheon ecosystem:
+Pantheon gives you multiple distinct interaction patterns depending on the scope of your work:
 
-### 1. Full Orchestration via `/pantheon`
-Best for implementing new features, major refactorings, or tasks spanning multiple files:
-
+### A. General Feature Development via `@zeus`
+For new features, enhancements, and structured workflows:
 ```text
-/pantheon Add a GET /metrics endpoint with TDD unit tests and asynchronous CSV streaming export.
+@zeus Implement an authentication middleware with JWT verification, rate limiting, and unit tests.
 ```
+**How Zeus coordinates:**
+- **Fast-Track Bypass:** Bounded tasks (≤2 files, ≤50 lines) bypass planning and go straight to `@hermes` or `@aphrodite`.
+- **Architectural Planning:** Complex multi-part tasks are routed to `@athena` for phased blueprinting.
+- **Interactive Question Gate:** Any open design decisions (`decisions_needed`) trigger OpenCode's native interactive `question` tool with marked `(Recommended)` defaults.
+- **TDD Implementation:** After approval, Zeus dispatches `@hermes` in TDD mode (RED -> GREEN -> REFACTOR) and `@themis` for read-only compliance audit.
 
-### 2. Architectural Planning via `/pantheon-deepwork`
-Best for complex features requiring an auditable plan and a dependency DAG:
-
+### B. Heavy Multi-Phase Projects via `/pantheon-deepwork`
+For 10+ turns, multi-session tasks, or complex refactorings requiring persistent checkpoints:
 ```text
-/pantheon-deepwork Refactor the authentication layer to stateless JWT tokens with key rotation.
+/pantheon-deepwork Migrate the data access layer from Prisma to Kysely with zero-downtime migration scripts.
 ```
+- Persists progress to `.pantheon/deepwork/<task-slug>/` (with `plan.json`, `PLAN.md`, append-only checkpoints).
+- Spawns parallel specialists in dedicated Git worktrees (`.pantheon-worktrees/`).
+- Enforces `@themis` audit gates at each phase boundary before merging.
 
-### 3. Calling Specialist Agents Directly with `@`
-- **`@zeus` (Central Orchestrator):** Analyzes intent, delegates to specialists, and audits the delivery.
+### C. Architectural Council Arbitration via `/pantheon`
+For high-impact architectural trade-offs, technology evaluations, or security arbitrations:
+```text
+/pantheon Should we use Server-Sent Events (SSE) or WebSockets for the live notifications feed?
+```
+- Dispatches 2-3 specialists (e.g. `@athena`, `@hermes`, `@themis`) in parallel in a single turn.
+- Resolves divergences using domain authority precedence (Themis for Security, Demeter for DB, Hermes for API, Athena for Modularity).
+- Returns a single, assertive synthesis with clear recommendations.
+
+### D. Direct Specialist Invocations with `@`
+- **`@talos` (Fast Lane / Single-Turn Hotfixer):** For quick surgical edits, bug fixes, and typos without planning ceremony:
   ```text
-  @zeus Analyze API route resilience and suggest structured error-handling improvements.
+  @talos Fix the import path error in src/server.ts and update the port binding.
   ```
-- **`@talos` (Fast Lane / 1-Turn Hotfixer):** For quick bug fixes, typos, and surgical edits without planning ceremony.
-  ```text
-  @talos Fix the import path error in src/server.ts and update the function invocation.
-  ```
-- **`@apollo` (Read-Only Investigator):** For codebase exploration and architecture discovery without edit risk.
+- **`@apollo` (Read-Only Codebase Scout):** For deep codebase exploration, tracing references, and finding code locations without edit risk:
   ```text
   @apollo Find where incoming WebSocket connections are authenticated and summarize the flow with line numbers.
   ```
+- **`@hermes` (Backend Specialist):** Direct backend implementation in TDD (RED -> GREEN -> REFACTOR).
+- **`@aphrodite` (Frontend Specialist):** UI components, Tailwind CSS styling, and WCAG accessibility.
+- **`@themis` (Independent Auditor):** Manual quality, security, and test verification gate.
 
 ---
 
-## 5. How Execution Works (The Pantheon Lifecycle)
+## 5. Execution Architecture (The Pantheon Lifecycle)
 
-During task execution, Pantheon enforces strict separation of responsibilities:
+The following diagram illustrates how Zeus, Athena, implementation specialists, and Themis collaborate during a planned task:
 
 ```mermaid
 flowchart TD
-    User(["👤 Developer"]) -->|"/pantheon task"| Zeus["⚡ @zeus (Orchestrator)"]
-    Zeus -->|"Architectural planning"| Athena["🏛️ @athena (Architect)"]
-    Athena -->|"Read-only exploration"| Apollo["🔍 @apollo (Scout)"]
+    User(["👤 Developer"]) -->|"Task Request"| Zeus["⚡ @zeus (Orchestrator)"]
 
-    Athena -.->|"Plan with Open Questions"| Zeus
-    Zeus -->|"Interactive question tool"| User
-    User -.->|"Choice selection with (Recommended)"| Zeus
+    Zeus -->|Bounded task: ≤2 files, ≤50 lines| FastLane["⚡ Fast-Track (Direct to Hermes/Aphrodite)"]
 
-    Zeus -->|"Backend implementation (TDD)"| Hermes["✉️ @hermes (Backend)"]
-    Zeus -->|"Frontend implementation (WCAG)"| Aphrodite["🎨 @aphrodite (Frontend)"]
-    Zeus -->|"Migrations & Database"| Demeter["🌾 @demeter (Database)"]
+    Zeus -->|Complex feature| Athena["🏛️ @athena (Architect)"]
+    Athena -->|"Read-only discovery"| Apollo["🔍 @apollo (Scout)"]
+    Athena -.->|"Plan with Open Decisions"| Zeus
 
-    Hermes & Aphrodite & Demeter -->|"Submit for audit"| Themis["⚖️ @themis (Auditor)"]
+    Zeus -->|"Native interactive question tool"| User
+    User -.->|"Selected Choice with (Recommended)"| Zeus
+
+    Zeus -->|"TDD Implementation"| Specialists["🛠️ Specialists (@hermes, @aphrodite, @demeter)"]
+    Specialists -->|"Submit for independent audit"| Themis["⚖️ @themis (Auditor)"]
     Themis -->|"PASS / Complete validation"| Zeus
-    Zeus -->|"Final delivery with cost telemetry"| User
+    Zeus -->|"Final delivery with token & cost telemetry"| User
 ```
 
 1. **Intelligent Routing:** `@zeus` evaluates scope and complexity. Bounded changes go straight to a specialist; complex tasks receive architectural planning.
@@ -137,7 +164,7 @@ flowchart TD
 3. **Interactive Decision Gate:** Design trade-offs (`decisions_needed`) are **never** dumped as static text bullets in chat. `@zeus` invokes OpenCode's native `question` tool with structured choices and marked `(Recommended)` defaults.
 4. **TDD Implementation:** Specialists write tests first (RED) and implement code until tests pass (GREEN).
 5. **Rigorous Audit with `@themis`:** No code is completed without independent, read-only compliance verification (linters, regression tests, and security checks).
-6. **Live Tracking with `/dispatch`:** Type `/dispatch` in chat to open the visual delegation tree and monitor subagent progress in real time.
+6. **Real-Time Telemetry:** The TUI sidebar and status commands track subagent activity, active model presets, and token usage in real time.
 
 ---
 
@@ -149,5 +176,5 @@ Now that your first dispatch is complete, explore advanced guides:
 - **[First Project Guide (End-to-End)](guides/first-project.md):** Complete practical tutorial building a production full-stack application.
 - **[Deepwork Blueprint](guides/deepwork.md):** Understand canonical JSON plans, append-only logs, and Mermaid DAG visualization.
 - **[Pantheon Vision](guides/vision.md):** Inspect screenshots and debug visual interfaces without prompt clutter.
-- **[Cookbook](guides/cookbook.md):** 8 everyday recipes ready to copy and paste for common coding workflows.
+- **[Cookbook](guides/cookbook.md):** Practical everyday recipes ready to copy and paste for common coding workflows.
 - **[Installation Guide](INSTALLATION.md):** Advanced CLI flags, backups, `restore`, and uninstallation procedures.
