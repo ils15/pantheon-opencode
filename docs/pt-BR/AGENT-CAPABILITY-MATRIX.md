@@ -57,7 +57,7 @@ flowchart TD
 
 ### @zeus (Orquestrador)
 - **PODE:** Decidir fluxos, despachar especialistas, arbitrar dúvidas via Jev (`pantheon_jev_decide`), buscar skills (`pantheon_skill_search`), abrir perguntas interativas (`question`), ler até 50 linhas para roteamento rápido.
-- **NÃO PODE:** Editar código diretamente (`edit: deny`), executar comandos no terminal (`bash: deny`), pedir ao usuário para rodar comandos de terminal, ou ler arquivos em `.pantheon/deepwork/**` e `.git/**`.
+- **NÃO PODE:** Editar código diretamente (`edit: deny`), executar comandos no terminal (`bash: deny`), pedir ao usuário para rodar comandos de terminal, ou realizar varreduras recursivas em `.git/**` ou `node_modules/**`.
 
 ### @athena (Arquiteta)
 - **PODE:** Criar especificações arquiteturais, analisar trade-offs, definir blueprints de implementação e planos técnicos detalhados (`PLAN.md`).
