@@ -567,7 +567,8 @@ const shellTool: V2ToolDef = {
   input: SHELL_INPUT,
   output: {},
   execute: async (input, context) => {
-    const command = String((input as Record<string, unknown>).command ?? '')
+    const raw = (input as Record<string, unknown>) ?? {}
+    const command = String(raw.command ?? raw.cmd ?? '')
     if (!command.trim()) {
       return { output: '', ok: false, error: 'Command cannot be empty' }
     }

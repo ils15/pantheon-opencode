@@ -200,6 +200,15 @@ export function mapFileToSlice(filePath, cwd = process.cwd()) {
 export function resolveTestSlice(files = [], options = {}) {
   const cwd = options.cwd || process.cwd()
   const failedOnly = options.failedOnly
+  const trigger =
+    options.trigger ||
+    (options.crossModule
+      ? 'cross-module'
+      : options.security
+        ? 'security-boundary'
+        : options.migration
+          ? 'schema-migration'
+          : undefined)
 
   // Filter for relevant source or test files
   const relevantFiles = files.filter((f) => {
@@ -207,8 +216,19 @@ export function resolveTestSlice(files = [], options = {}) {
     return SOURCE_EXTENSIONS.has(ext) || TEST_EXTENSIONS.has(ext) || f.includes('.test.')
   })
 
-  // 1. If repo has a predefined focused script and multiple files changed, prefer it
+  // 1. If an explicit escalation trigger is present and repo has a suite selector, escalate (Issue #444)
   const repoScript = findRepoSliceScript(cwd)
+  if (trigger && repoScript) {
+    return {
+      command: repoScript.command,
+      type: 'package-suite-escalation',
+      selection: `package suite (escalation trigger: ${trigger})`,
+      files: relevantFiles,
+      scopeJustification: `Escalated from local slice due to ${trigger}`,
+    }
+  }
+
+  // 2. If repo has a predefined focused script and multiple files changed, prefer it
   if (repoScript && (relevantFiles.length === 0 || relevantFiles.length > 2)) {
     return {
       command: repoScript.command,
@@ -299,6 +319,16 @@ export function executeTestSlice(slicePlan, options = {}) {
   const passLines = output.split('\n').filter((line) => /✔|PASS|passed/i.test(line))
   const targets = Math.max(1, passLines.length)
 
+  const validationScope =
+    options.validationScope ||
+    (slicePlan.type === 'package-suite-escalation'
+      ? 'package_suite'
+      : slicePlan.type === 'repo-selector'
+        ? 'package_suite'
+        : 'focused_slice')
+  const pendingValidation =
+    options.pendingValidation || 'none (CI gates deferred to repository pipeline)'
+
   const receipt = {
     status: isPass ? 'PASS' : 'FAIL',
     command: slicePlan.command,
@@ -306,11 +336,13 @@ export function executeTestSlice(slicePlan, options = {}) {
     durationSec,
     durationMs,
     selection: slicePlan.selection,
+    validationScope,
+    pendingValidation,
     exitCode: result.status,
     output: isPass ? output.trim().split('\n').slice(-5).join('\n') : output,
   }
 
-  const summaryLine = `**tests:** [${receipt.status}] \`${receipt.command}\` (targets: ${receipt.targets}, duration: ${receipt.durationSec}s, selection: ${receipt.selection})`
+  const summaryLine = `**tests:** [${receipt.status}] \`${receipt.command}\` (targets: ${receipt.targets}, duration: ${receipt.durationSec}s, selection: ${receipt.selection})\n**validation_scope:** ${validationScope}\n**pending_validation:** ${pendingValidation}`
 
   return { ...receipt, summaryLine }
 }

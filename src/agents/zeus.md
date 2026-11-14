@@ -19,6 +19,7 @@ permission:
   todoread: allow
   task:
     "*": allow
+  execute: deny
 mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_search]
