@@ -96,6 +96,28 @@ test('evaluateAutoPermission: auto-allows safe workspace dev bash commands for i
   const result = evaluateAutoPermission(event, { cwd: '/workspace' })
   assert.equal(result.decision, 'allow')
   assert.equal(event.effect, 'allow')
+
+  // CLI tools like opencode-quota are auto-allowed
+  const quotaEvent = {
+    action: 'shell',
+    resources: ['opencode-quota --json'],
+    agent: 'aphrodite',
+    effect: 'ask',
+  }
+  const quotaResult = evaluateAutoPermission(quotaEvent, { cwd: '/workspace' })
+  assert.equal(quotaResult.decision, 'allow')
+  assert.equal(quotaEvent.effect, 'allow')
+
+  // execute action alias behaves as shell command for implementers
+  const execEvent = {
+    action: 'execute',
+    resources: ['git status'],
+    agent: 'talos',
+    effect: 'ask',
+  }
+  const execResult = evaluateAutoPermission(execEvent, { cwd: '/workspace' })
+  assert.equal(execResult.decision, 'allow')
+  assert.equal(execEvent.effect, 'allow')
 })
 
 test('isUnconstrainedTestSuite: detects full-suite invocations and allows narrow slices', () => {

@@ -78,4 +78,43 @@ test('Criterion 4: executeTestSlice formats observable task summary line', () =>
   assert.match(receipt.summaryLine, /^\*\*tests:\*\* \[PASS\] `node -e/)
   assert.match(receipt.summaryLine, /targets: 1/)
   assert.match(receipt.summaryLine, /selection: unit slice for mock/)
+  assert.equal(receipt.validationScope, 'focused_slice')
+  assert.match(receipt.pendingValidation, /CI gates deferred/)
+})
+
+test('Criterion 5 (Issue #444): resolveTestSlice escalates to package suite only on explicit risk triggers', () => {
+  // Single file without triggers stays on direct slice
+  const directPlan = resolveTestSlice(['src/pantheon/auto-permissions.ts'])
+  assert.equal(directPlan.type, 'ts-slice')
+
+  // Explicit risk trigger escalates to package suite
+  const authEscalation = resolveTestSlice(['src/pantheon/auto-permissions.ts'], {
+    trigger: 'authentication-boundary',
+  })
+  assert.equal(authEscalation.type, 'package-suite-escalation')
+  assert.equal(authEscalation.command, 'npm run test:quick')
+  assert.match(authEscalation.selection, /escalation trigger: authentication-boundary/)
+  assert.match(authEscalation.scopeJustification, /authentication-boundary/)
+
+  const migrationEscalation = resolveTestSlice(['src/pantheon/auto-permissions.ts'], {
+    migration: true,
+  })
+  assert.equal(migrationEscalation.type, 'package-suite-escalation')
+  assert.match(migrationEscalation.scopeJustification, /schema-migration/)
+})
+
+test('Criterion 6 (Issue #444): executeTestSlice distinguishes agent-executed tests from pending CI gates', () => {
+  const mockPlan = {
+    command: 'node -e "console.log(\'✔ test passed\')"',
+    selection: 'package suite (escalation trigger: cross-module)',
+    type: 'package-suite-escalation',
+  }
+  const receipt = executeTestSlice(mockPlan, {
+    pendingValidation: 'integration-e2e, release-package (CI pipeline)',
+  })
+  assert.equal(receipt.status, 'PASS')
+  assert.equal(receipt.validationScope, 'package_suite')
+  assert.equal(receipt.pendingValidation, 'integration-e2e, release-package (CI pipeline)')
+  assert.match(receipt.summaryLine, /\*\*validation_scope:\*\* package_suite/)
+  assert.match(receipt.summaryLine, /\*\*pending_validation:\*\* integration-e2e/)
 })

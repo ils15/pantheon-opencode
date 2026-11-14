@@ -547,11 +547,18 @@ const execAsync = promisify(exec)
 
 const SHELL_INPUT = {
   type: 'object',
-  required: ['command'],
   properties: {
     command: {
       type: 'string',
       description: 'The shell command to execute in the workspace directory',
+    },
+    code: {
+      type: 'string',
+      description: 'The shell command or script to execute',
+    },
+    cmd: {
+      type: 'string',
+      description: 'The command to execute',
     },
   },
 } as const
@@ -567,7 +574,8 @@ const shellTool: V2ToolDef = {
   input: SHELL_INPUT,
   output: {},
   execute: async (input, context) => {
-    const command = String((input as Record<string, unknown>).command ?? '')
+    const raw = (input as Record<string, unknown>) ?? {}
+    const command = String(raw.command ?? raw.code ?? raw.cmd ?? '')
     if (!command.trim()) {
       return { output: '', ok: false, error: 'Command cannot be empty' }
     }
@@ -588,6 +596,22 @@ const shellTool: V2ToolDef = {
         .join('\n')
       return { output, ok: false, error: output }
     }
+  },
+}
+
+/**
+ * A V2 fallback execute tool alias.
+ * Models and code-execution plugins frequently attempt to invoke `execute` with command or code strings.
+ * This alias ensures terminal commands and script invocations execute seamlessly in workspace.
+ */
+const executeFallbackTool: V2ToolDef = {
+  name: 'execute',
+  description:
+    'Execute a shell command or script in the workspace directory. Alias for terminal execution.',
+  input: SHELL_INPUT,
+  output: {},
+  execute: async (input, context) => {
+    return shellTool.execute(input, context)
   },
 }
 
@@ -644,6 +668,7 @@ export function createV2ToolDefinitions(
   definitions.push(todowriteTool)
   definitions.push(todoreadTool)
   definitions.push(shellTool)
+  definitions.push(executeFallbackTool)
   definitions.push(createV2SkillSearchDefinition())
   definitions.push(createDeepworkTool())
   if (visionRuntime) definitions.push(createV2VisionTool(visionRuntime))

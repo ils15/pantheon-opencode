@@ -225,6 +225,15 @@ Working runnable reference projects demonstrating Pantheon orchestration in prac
 
 ---
 
+## What's New in v2.1.5
+
+- **Risk-Based Validation Protocol (#444):** Explicit multi-tier protocol distinguishing focused test slices (<10s), package integration suites, and mandatory repository CI gates. Escalation to broad suites requires explicit triggers (cross-module, breaking contracts, auth, DB migrations).
+- **Tool Execution Resilience & Fallback:** Added `execute` fallback tool alias executing commands directly in `/bin/bash`, preventing `SyntaxError: Assigning to rvalue` when models call `execute` with CLI commands or scripts.
+- **CLI Execution Mandate:** Enforced CLI execution via `shell`/`bash` for binaries like `opencode-quota` with an anti-panic ban on speculative recursive `glob`/`grep` in `~/.config`.
+- **Validation Scope Transparency (#444):** `subtask_summary` observable receipts report `validation_scope` and deferred `pending_validation` repository CI pipeline gates.
+
+---
+
 ## What's New in v2.1.4
 
 - **Global Install Shadowing & PATH Hygiene (#424):** Doctor check (H2b) detects multiple global binaries, dangling symlinks, and prefix skew. Version skew validation prevents `_npx` from binding to older global packages.

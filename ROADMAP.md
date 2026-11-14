@@ -14,6 +14,18 @@ See [Compatibility](docs/COMPATIBILITY.md) for supported hosts and the [releases
 
 Active development on the `2.1.x` line focuses on operational smoothness and developer ergonomics:
 
+### 2.1.5 Deliveries & Tool Hardening (Issue #444)
+1. **Risk-Based Validation Protocol (Issue #444)**
+   - Multi-tier validation protocol distinguishing narrow test slices (<10s), package-level integration suites, and mandatory repository CI gates.
+   - Suite escalation strictly gated on explicit risk triggers (cross-module boundaries, breaking contract changes, auth/security boundary changes, or database migrations).
+   - Observable task receipts in `subtask_summary` explicitly reporting `validation_scope` and deferred `pending_validation` (CI pipeline gates).
+   - Anti-fatigue mandate: ban on removing tests solely to accelerate execution; failure/fix loops rerun only failed tests without repeating passing checks.
+2. **Tool Execution Resilience & CLI Alignment**
+   - Added `execute` fallback tool alias in V2 to execute workspace commands and scripts directly via `/bin/bash`, preventing `SyntaxError: Assigning to rvalue. Code must be plain JavaScript written as a program body` when models call `execute` with CLI commands or scripts.
+   - Enforced CLI execution mandate in agent instructions: CLI utilities (`opencode-quota`, `git`, `npm`, `node`, `pytest`, `cargo`, `bash`) must run via `shell`/`bash`, not JavaScript eval.
+   - Added anti-panic rule forbidding speculative recursive `glob`/`grep` in `~/.config` on execution errors.
+   - Whitelisted `opencode-quota` in auto-permissions `SAFE_DEV_BINARIES` and installer bash permissions.
+
 ### 2.1.4 Deliveries & Hardening
 1. **Global Install Hygiene & PATH Shadowing Detection (Issue #424)**
    - Doctor check (H2b) detects PATH shadowing, version drift, and dangling binary symlinks across multiple global npm prefixes (`~/.npm-global`, `~/.nvm`, etc.).

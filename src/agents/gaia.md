@@ -16,6 +16,7 @@ permission:
     "*": deny
   todowrite: allow
   todoread: allow
+  execute: deny
 mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_recall]

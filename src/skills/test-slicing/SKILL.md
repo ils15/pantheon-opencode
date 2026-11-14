@@ -19,13 +19,18 @@ Always prefer the repository's own focused selector or diff-aware command over g
 2. If a project-defined focused selector exists, execute it directly.
 3. If absent, map the modified file directly to its corresponding test file.
 
-### 2. Scope Escalation & Mapping Gap Protocol
-- **No Silent Escalation:** NEVER silently broaden a test run from a modified file to an entire package or global suite.
-- **Explicit Justification:** If an expansion beyond the narrow slice is genuinely warranted (e.g. cross-cutting auth change, schema migration affecting multiple handlers), state visibly before running:
-  `[Test Scope Expansion] Scope: <files> | Selected: <tests> | Reason: <concrete risk/integration rationale>`
+### 2. Scope Escalation & Risk-Based Protocol (Issue #444)
+- **Focused Slice First:** Identify affected files/behaviors and run the narrowest slice (<10s).
+- **Triggers for Package-Level Expansion:** Broaden beyond the local slice ONLY when changes:
+  1. Cross module/package boundaries
+  2. Alter public API/contracts or data schemas/migrations
+  3. Touch authentication, authorization, or security boundaries
+- **Broad Suite Distinction:** When running a broad suite, state explicitly whether it is an agent recommendation or a mandatory repository/CI gate.
+- **Never Delete Tests to Speed Up:** Propose test removal only with concrete evidence of duplication, flakiness, or zero detection value.
+- **CLI vs Code Execution:** Execute CLI binaries (`opencode-quota`, `git`, `npm`, `pytest`) via `shell`/`bash`, never JS eval (`execute`); on failure, never glob `~/.config`.
 - **Mapping Gap Handling:** If a modified file has no direct test counterpart:
   1. Report the mapping gap explicitly: `[Test Mapping Gap] No direct test file for <file>.`
-  2. Execute a bounded risk-appropriate fallback (static lint/typecheck gate e.g. `npx biome check <file>` or `ruff check <file>` plus the closest integration slice).
+  2. Execute a bounded risk-appropriate fallback (static lint/typecheck gate plus closest slice).
   3. DO NOT escalate to running the entire repository test suite.
 
 ### 3. Failure/Fix Loop (Rerun Only Failed Tests)
@@ -36,11 +41,12 @@ Always prefer the repository's own focused selector or diff-aware command over g
   3. **DO NOT rerun checks that already passed** when their covered code did not change.
   4. Once the targeted test passes, rerun the single slice file once to confirm no regressions within the file.
 
-### 4. Observable Task Receipt Summary
-Every implementation specialist MUST include the detailed test receipt in the `subtask_summary`:
+### 4. Observable Task Receipt Summary (Issue #444)
+Every implementation specialist MUST include the detailed test receipt in `subtask_summary`, distinguishing agent-executed tests from CI gates and pending validations:
 ```markdown
 **tests:** [PASS | WARN | FAIL] `<command>` (targets: N, duration: <X>s, selection: <reason or repo selector>)
-**test_scope_justification:** <required ONLY if broader than a focused slice>
+**validation_scope:** focused_slice | package_suite | ci_gate_required
+**pending_validation:** none | [deferred broad suites / CI gates]
 ```
 *Example:*
 `**tests:** [PASS] npx tsx tests/pantheon/auto-permissions.test.ts (targets: 10, duration: 0.12s, selection: direct file slice for auto-permissions.ts)`

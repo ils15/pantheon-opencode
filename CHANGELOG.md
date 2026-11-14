@@ -13,6 +13,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
      Running apply will move this section to a versioned entry and reset the template below. -->
 
+## [v2.1.5] - 2026-11-14
+
+### 🆕 What's New
+
+- **Risk-Based Validation (#444)**: Protocol distinguishes focused test slices, package suites, and mandatory repository CI gates.
+- **Tool Execution Fallback**: Added `execute` alias executing commands via bash, preventing JS eval syntax errors on CLI commands.
+- **CLI Execution Mandate**: Enforced CLI execution via `shell`/`bash` for binaries like `opencode-quota` with anti-panic search ban.
+- **Scope Transparency (#444)**: `subtask_summary` explicitly reports validation scope and deferred pending repository CI pipeline gates.
+
+### Added
+
+- **tools** — added `execute` fallback alias executing workspace commands and scripts via `/bin/bash` in `src/pantheon/tools.ts`.
+- **permissions** — whitelisted `opencode-quota` in `SAFE_DEV_BINARIES` and installer bash permission rules.
+
+### Changed
+
+- **tests (#444)** — enhanced `test-slice.mjs` with risk escalation triggers, validation scope reporting, and pending CI gate receipts.
+- **instructions (#444)** — updated `test-economy` and `test-slicing` with risk-based validation protocol, anti-panic rules, and CLI mandate.
+
+### ✅ Closed Issues
+
+- #444 - define risk-based validation protocol for pantheon agents
+
+&lt;!-- Add new changes here.
+     Canonical sections (docs/RELEASING.md): ### 🆕 What's New (curated highlights, ≤6 bullets ≤140 chars) →
+     ### Added / Changed / Deprecated / Removed / Fixed / Security → ### ⚠️ Known Issues / ### ✅ Closed Issues.
+     `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
+     Running apply will move this section to a versioned entry and reset the template below. --&gt;
 ## [v2.1.4] - 2026-11-14
 
 ### 🆕 What's New

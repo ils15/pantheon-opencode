@@ -88,6 +88,7 @@ const SAFE_DEV_BINARIES: ReadonlySet<string> = new Set([
   'go',
   'sh',
   'bash',
+  'opencode-quota',
 ])
 
 /** Check if a resource target points to an excluded or sensitive path (.git, node_modules, traversal). */
@@ -258,7 +259,7 @@ export function evaluateAutoPermission(
 
   // 2. Read-only agents are strictly prohibited from mutating tools or shell
   if (READ_ONLY_AGENTS.has(agent)) {
-    if (['edit', 'write', 'hashline_edit', 'bash', 'shell'].includes(action)) {
+    if (['edit', 'write', 'hashline_edit', 'bash', 'shell', 'execute'].includes(action)) {
       event.effect = 'deny'
       event.message = `Pantheon auto-permissions denied: read-only agent '${agent}' cannot execute mutating action '${action}'`
       return { decision: 'deny', reason: 'read-only-role-violation' }
@@ -283,8 +284,8 @@ export function evaluateAutoPermission(
     return { decision: 'allow', reason: 'safe-read-action' }
   }
 
-  // 4. Shell commands
-  if (action === 'bash' || action === 'shell') {
+  // 4. Shell and execution commands
+  if (action === 'bash' || action === 'shell' || action === 'execute') {
     const rawCmd =
       Array.isArray(event.resources) && typeof event.resources[0] === 'string'
         ? event.resources[0]
