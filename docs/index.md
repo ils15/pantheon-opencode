@@ -27,6 +27,8 @@ of repeating it.
 | Topic | Page |
 |---|---|
 | Agent flow, delegation mechanics, and the plugin contract | [Architecture](ARCHITECTURE.md) |
+| How work is routed: escalation ladder, request sizing, skill discovery | [Overview](OVERVIEW.md) |
+| Fast-Track, Council and Deepwork in detail | [Execution modes](guides/execution-modes.md) |
 | The 14 agents and their canonical files | [Agents & Skills](agents/README.md) |
 | Permission layers, quality gates, and delegation rules | [Permissions, Gates & Delegation](PERMISSIONS-QUALITY-DELEGATION.md) |
 | OpenCode 2.x behavior: host gate, tools, Dispatch, pruning, goals | [OpenCode 2.x](opencode.md) |
@@ -39,6 +41,7 @@ of repeating it.
 | Every shipped MCP tool, including `pantheon_cost` | [MCP Tools](mcp-tools.md) |
 | Memory stores, TTL, size caps, and session goals | [Memory](MEMORY.md) |
 | Platform overview (OpenCode-only) | [Platforms](PLATFORMS.md) |
+| Settings window and TUI (gates, presets, updates, personalization) | [Settings & TUI](SETTINGS.md) |
 
 ## Reference
 
@@ -62,6 +65,7 @@ of repeating it.
 | Customer-visible roadmap themes | [Roadmap](https://github.com/ils15/pantheon-opencode/blob/main/ROADMAP.md) |
 | How to contribute, and the documentation rule | [Contributing](https://github.com/ils15/pantheon-opencode/blob/main/CONTRIBUTING.md) |
 | Published changes | [Changelog](https://github.com/ils15/pantheon-opencode/blob/main/CHANGELOG.md) |
+| v2.x user-facing release highlights | [v2.x highlights](releases/v2-highlights.md) |
 
 ## Where things live
 
