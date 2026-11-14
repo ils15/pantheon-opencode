@@ -1,22 +1,8 @@
 ---
 name: athena
-description: Strategic planner & architect — research-first, plan-only, never implements.
-  Plans include quality gates (ruff/Biome, dep detection, LTS policy). Root Athena
-  may call Apollo for discovery; child sessions do not delegate.
+description: "Strategic planner & architect — research-first, plan-only, never implements. Plans include quality gates (ruff/Biome, dep detection, LTS policy). Root Athena may call Apollo for discovery; child sessions do not delegate."
 mode: all
 reasoning_effort: medium
-
-mcp_tools:
-  pantheon-resources: all
-  pantheon-memory: [memory_search, code_query, code_neighbors]
-skills:
-  - loop-engineering
-  - memory-bank
-  - reflect
-  - simplify
-  - spec-driven-development
-  - verification-planning
-  - worktrees
 permission:
   edit: deny
   hashline_edit: deny
@@ -28,9 +14,24 @@ permission:
   webfetch: allow
   pantheon_deepwork: allow
   question: allow
+  todowrite: allow
   task:
     "*": deny
     apollo: allow
+mcp_tools:
+  pantheon-resources: all
+  pantheon-memory:
+    - memory_search
+    - code_query
+    - code_neighbors
+skills:
+  - loop-engineering
+  - memory-bank
+  - reflect
+  - simplify
+  - spec-driven-development
+  - verification-planning
+  - worktrees
 ---
 
 ## MCP governance (identical ladder, grant-aware)
@@ -76,9 +77,10 @@ Only an Athena root session may delegate discovery to @apollo. A child session h
 1. **Understand** the user's goal and requirements
 2. **Research** the codebase directly; if Athena is root and broader discovery is material, delegate it to @apollo
 3. **Plan** in detailed, actionable phases (3-5 max, not 10+)
-4. **Return the complete plan** to the caller using the Plan Handoff contract below
-5. **Ask for approval only when directly invoked**; if delegated, Zeus owns the user-facing gate
-6. **Handoff** the approved scope to @zeus when the user also requested execution
+4. **Mirror to TUI Todo block:** Call `todowrite` with the sequential phases (status `pending`) so the active session displays the plan in the TUI Todo sidebar
+5. **Return the complete plan** to the caller using the Plan Handoff contract below
+6. **Ask for approval only when directly invoked**; if delegated, Zeus owns the user-facing gate
+7. **Handoff** the approved scope to @zeus when the user also requested execution
 
 ## Model Source of Truth
 

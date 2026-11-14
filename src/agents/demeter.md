@@ -3,6 +3,7 @@ name: demeter
 description: "Database specialist — SQLAlchemy 2.0, Alembic, query optimization, N+1 prevention, TDD migrations, modern DB libs. Requests Zeus to route broad discovery to Apollo; sends review needs to Zeus."
 mode: all
 reasoning_effort: medium
+temperature: 0.2
 permission:
   read: allow
   grep: allow
@@ -13,7 +14,10 @@ permission:
   webfetch: allow
   task:
     "*": deny
-temperature: 0.2
+mcp_tools:
+  pantheon-resources: all
+  pantheon-memory: [memory_search]
+  pantheon-code-mode: [execute_code_script]
 skills:
   - incremental-implementation
   - loop-engineering
@@ -21,10 +25,6 @@ skills:
   - simplify
   - tdd-with-agents
   - worktrees
-mcp_tools:
-  pantheon-resources: all
-  pantheon-memory: [memory_search]
-  pantheon-code-mode: [execute_code_script]
 ---
 
 ## MCP governance (identical ladder, grant-aware)

@@ -3,6 +3,7 @@ name: talos
 description: "Hotfix express lane — direct fixes for small bugs, CSS, typos, minor logic. No TDD ceremony, no orchestration overhead. Standalone, no subagents. Escalates complex issues to zeus."
 mode: all
 reasoning_effort: low
+temperature: 0.3
 permission:
   read: allow
   edit: allow
@@ -12,7 +13,10 @@ permission:
   grep: allow
   task:
     "*": deny
-temperature: 0.3
+mcp_tools:
+  pantheon-resources: all
+  pantheon-memory: [memory_recall]
+  pantheon-code-mode: [execute_code_script]
 skills:
   - fast-path-execution
   - incremental-implementation
@@ -21,11 +25,11 @@ skills:
   - simplify
   - test-slicing
   - worktrees
-mcp_tools:
-  pantheon-resources: all
-  pantheon-memory: [memory_recall]
-  pantheon-code-mode: [execute_code_script]
 ---
+
+## Test Slicing
+
+- Validate hotfixes using a single focused check (<5s). NEVER run full repo test suites.
 
 ## MCP governance (identical ladder, grant-aware)
 

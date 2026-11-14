@@ -2,10 +2,8 @@
 name: gaia
 description: "Remote sensing domain specialist — satellite image processing, spectral analysis, SAR, change detection, time series, ML/DL classification. Read-only analysis of geospatial data."
 mode: subagent
-visible: false
-tools:
-  task: false
 reasoning_effort: low
+temperature: 0.2
 permission:
   read: allow
   grep: allow
@@ -16,17 +14,16 @@ permission:
   bash: deny
   task:
     "*": deny
-temperature: 0.2
+mcp_tools:
+  pantheon-resources: all
+  pantheon-memory: [memory_recall]
+  pantheon-vision: [vision_describe, vision_ocr, vision_analyze]
 skills:
   - auto-continue
   - loop-engineering
   - reflect
   - simplify
   - worktrees
-mcp_tools:
-  pantheon-resources: all
-  pantheon-memory: [memory_recall]
-  pantheon-vision: [vision_describe, vision_ocr, vision_analyze]
 ---
 
 ## MCP governance (identical ladder, grant-aware)

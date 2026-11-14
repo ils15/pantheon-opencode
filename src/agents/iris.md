@@ -3,21 +3,24 @@ name: iris
 description: "GitHub operations specialist — branches, pull requests, issues, releases, tags. Called by zeus after review. Never pushes or merges without explicit human approval. Integrates with GitHub CLI (gh) for operations."
 mode: all
 reasoning_effort: low
+temperature: 0.2
 permission:
   read: allow
   grep: allow
   bash:
-    git *: allow
-    gh *: allow
+    "git *": allow
+    "gh *": allow
   shell:
-    git *: allow
-    gh *: allow
+    "git *": allow
+    "gh *": allow
   webfetch: allow
   edit: deny
   hashline_edit: deny
   task:
     "*": deny
-temperature: 0.2
+mcp_tools:
+  pantheon-resources: all
+  pantheon-memory: [memory_recall]
 skills:
   - artifact-management
   - git-workflow-and-versioning
@@ -25,9 +28,6 @@ skills:
   - reflect
   - simplify
   - worktrees
-mcp_tools:
-  pantheon-resources: all
-  pantheon-memory: [memory_recall]
 ---
 
 ## MCP governance (identical ladder, grant-aware)

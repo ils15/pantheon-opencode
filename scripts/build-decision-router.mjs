@@ -13,10 +13,21 @@
  *   - `decision-budget.ts`    → the separated cap/period/ledger read surface;
  *   - `decision-egress.ts`    → the opt-in-only egress posture (default off).
  */
-import { readFileSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { build } from 'esbuild'
+
+let esbuildModule
+async function getEsbuild() {
+  if (esbuildModule) return esbuildModule
+  try {
+    esbuildModule = await import('esbuild')
+    return esbuildModule
+  } catch {
+    return null
+  }
+}
 
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..')
 
@@ -49,22 +60,47 @@ export const DECISION_ROUTER_BUNDLES = Object.freeze([
 ])
 
 async function bundle({ entry, output }) {
-  const result = await build({
-    entryPoints: [entry],
-    bundle: true,
-    format: 'esm',
-    platform: 'node',
-    target: 'node22',
-    outfile: output,
-    write: false,
-    banner: { js: BANNER },
-    legalComments: 'none',
-    sourcemap: false,
-    logLevel: 'silent',
-  })
-  const [built] = result.outputFiles
-  if (!built) throw new Error(`esbuild produced no bundle for ${entry}`)
-  return built.text
+  const esbuild = await getEsbuild()
+  if (esbuild?.build) {
+    const result = await esbuild.build({
+      entryPoints: [entry],
+      bundle: true,
+      format: 'esm',
+      platform: 'node',
+      target: 'node22',
+      outfile: output,
+      write: false,
+      banner: { js: BANNER },
+      legalComments: 'none',
+      sourcemap: false,
+      logLevel: 'silent',
+    })
+    const [built] = result.outputFiles
+    if (!built) throw new Error(`esbuild produced no bundle for ${entry}`)
+    return built.text
+  }
+
+  const possibleBins = [
+    join(ROOT, 'node_modules', '.bin', 'esbuild'),
+    '/home/ils15/.npm/_npx/0c9ac6e560028c15/node_modules/esbuild/bin/esbuild',
+    '/home/ils15/.npm/_npx/fd45a72a545557e9/node_modules/esbuild/bin/esbuild',
+  ]
+  const bin = possibleBins.find((b) => existsSync(b))
+  if (!bin) throw new Error(`Cannot find esbuild to bundle ${entry}`)
+  const stdout = execFileSync(
+    bin,
+    [
+      entry,
+      '--bundle',
+      '--format=esm',
+      '--platform=node',
+      '--target=node22',
+      `--banner:js=${BANNER}`,
+      '--legal-comments=none',
+    ],
+    { encoding: 'utf8' },
+  )
+  return stdout
 }
 
 /** Bundle the budget ledger exactly as the CLI consumes it. */

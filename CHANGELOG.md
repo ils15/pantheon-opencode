@@ -13,6 +13,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
      Running apply will move this section to a versioned entry and reset the template below. -->
 
+## [v2.1.3] - 2026-11-14
+
+### 🆕 What's New
+
+- **Enforceable Test Slicing (#437)**: Added `test:slice` with selector discovery, duration tracking, and loop interception.
+- **Workspace Auto-Permissions**: Scope governance auto-approves safe commands while preserving strict security boundaries.
+- **Complete Todo Suite**: Activated `todoread` alongside `todowrite` with real-time TUI sidebar synchronization.
+- **Declarative Agent Roster**: Centralized manifest `src/agents/roster.json` mechanically compiling all 14 specialist prompts.
+- **Runtime Bug Fixes**: Added `shell` tool alias for OpenCode `bash` and removed wildcard restrictions in `zeusReadGuard`.
+
+### Added
+
+- **skills** — upgraded `test-slicing` skill with repo-first selector discovery, scope escalation protocol, failure/fix loop rules, and observable task receipts.
+- **scripts** — added `scripts/test-slice.mjs` CLI (`npm run test:slice`) and `scripts/build-roster.mjs` compiler (`npm run build:roster`, `npm run check:roster`).
+- **pantheon** — added `shell` execution tool alias and `todoread` session tool with status filtering in `src/pantheon/tools.ts`.
+- **auto-permissions** — added `src/pantheon/auto-permissions.ts` with unconstrained test suite interception (`isUnconstrainedTestSuite`).
+
+### Changed
+
+- **agents** — synchronized all 14 agent prompts from typed `src/agents/roster.json` manifest.
+- **instructions** — updated `test-economy.instructions.md` and `agent-return-format.instructions.md` to require observable test execution receipts.
+- **roadmap** — updated `ROADMAP.md` reflecting 2.1.3 active deliveries and 2.2.0 horizons.
+
+### Fixed
+
+- **tools** — added `shell` tool alias in V2 tools to eliminate `No tool named "shell" is currently available`.
+- **guards** — replaced `hasGlobMeta` with semantic `isDeniedGlobPattern` in `zeusReadGuard` to allow `glob("*")` and `glob("**/package.json")` while strictly defending code roots.
 ## [v2.1.2] - 2026-11-14
 
 ### 🆕 What's New

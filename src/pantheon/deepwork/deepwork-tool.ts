@@ -248,6 +248,17 @@ export function createDeepworkTool(cwd = process.cwd()): V2ToolDef {
 
         const projection = generateChatProjection(initialPlan, effectiveCwd)
         const approvalQ = buildApprovalQuestion(initialPlan)
+        const todoPayload = {
+          todos: tasks.map((t) => ({
+            content: `[${t.id}] ${t.title}`,
+            status:
+              t.state === 'done'
+                ? 'completed'
+                : t.state === 'in_progress'
+                  ? 'in_progress'
+                  : 'pending',
+          })),
+        }
 
         return {
           output: [
@@ -256,6 +267,9 @@ export function createDeepworkTool(cwd = process.cwd()): V2ToolDef {
             `- 🔗 **Deeplink plan.json:** [Abrir plan.json](file://${deepworkPlanJsonPath(effectiveCwd, slug)})`,
             '',
             projection,
+            '',
+            '**TUI Todo Sync:** Espelhe as tarefas chamando `todowrite` com:',
+            `\`\`\`json\n${JSON.stringify(todoPayload, null, 2)}\n\`\`\``,
             '',
             '**Pergunta de Aprovação Nativa (Gate 1):**',
             `\`${JSON.stringify(approvalQ)}\``,

@@ -412,6 +412,47 @@ async function main() {
     }))
   })
 
+  await testAsync(
+    'zeus read guard: Zeus + glob non-code project metadata (*, **/package.json, docs/**) → allowed',
+    async () => {
+      zeusReadGuard('glob', { pattern: '*' }, 'zeus')
+      zeusReadGuard('glob', { pattern: '**/package.json' }, 'zeus')
+      zeusReadGuard('glob', { pattern: '*.json' }, 'zeus')
+      zeusReadGuard('glob', { pattern: '*.md' }, 'zeus')
+      zeusReadGuard('glob', { path: '.', pattern: '*' }, 'zeus')
+      zeusReadGuard('glob', { path: '.', pattern: '**/package.json' }, 'zeus')
+      zeusReadGuard('glob', { pattern: '.pantheon/**' }, 'zeus')
+      zeusReadGuard('glob', { pattern: 'docs/**' }, 'zeus')
+    },
+  )
+
+  await testAsync(
+    'zeus read guard: Zeus + glob source code extensions and code roots → denied',
+    async () => {
+      assert.throws(
+        () => zeusReadGuard('glob', { pattern: '**/*.ts' }, 'zeus'),
+        /delegate to @apollo/,
+      )
+      assert.throws(() => zeusReadGuard('glob', { pattern: '*.py' }, 'zeus'), /delegate to @apollo/)
+      assert.throws(
+        () => zeusReadGuard('glob', { pattern: 'src/*' }, 'zeus'),
+        /delegate to @apollo/,
+      )
+      assert.throws(
+        () => zeusReadGuard('glob', { pattern: 'tests/**' }, 'zeus'),
+        /delegate to @apollo/,
+      )
+      assert.throws(
+        () => zeusReadGuard('glob', { pattern: '../**' }, 'zeus'),
+        /delegate to @apollo/,
+      )
+      assert.throws(
+        () => zeusReadGuard('glob', { path: 'src', pattern: '*' }, 'zeus'),
+        /delegate to @apollo/,
+      )
+    },
+  )
+
   // ═══════════════════════════════════════════════════════════════════════
   // Read-Only Registry Population (production path)
   // ═══════════════════════════════════════════════════════════════════════
@@ -426,9 +467,9 @@ async function main() {
 
       assert.deepEqual(
         [...DEFAULT_BLOCKED_TOOLS].sort(),
-        ['bash', 'edit', 'hashline_edit', 'pantheon_model', 'task', 'write'],
-        'host covers edit/write/bash/task — hashline_edit and pantheon_model are the plugin ' +
-          'tools the guard must add (both are write surfaces)',
+        ['bash', 'edit', 'hashline_edit', 'pantheon_model', 'shell', 'task', 'write'],
+        'host covers edit/write/bash/task — hashline_edit, pantheon_model, and shell are the plugin ' +
+          'tools the guard must add (all are write/execution surfaces)',
       )
 
       for (const agent of ['apollo', 'gaia']) {

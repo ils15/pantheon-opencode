@@ -11,7 +11,7 @@ All agents check each result against the request and evidence; remove unrelated 
 ## subtask_summary
 **files_changed:** [list of file paths, one per line]
 **summary:** What was done, in 2-3 sentences
-**tests:** [PASS] All passing / [WARN] X failing / [FAIL] Not run (reason)
+**tests:** [PASS | WARN | FAIL] `<command>` (targets: N, duration: <X>s, selection: <reason>)
 **coverage:** X% (if applicable)
 **tokens:** ~N input / ~M output (estimated)
 **status:** complete | partial (reason) | escalated (reason)

@@ -1,13 +1,13 @@
 ---
-description: "Test economy — write smaller, focused suites; heavy install/E2E suites are opt-in, never per-phase."
+description: "Test economy — sub-10s test slicing; heavy suites are opt-in."
 name: "Test Economy"
 ---
 
 Write one focused test per behavior; do not duplicate coverage.
 
-- Prefer unit/integration checks; use E2E, install, or network tests only when a change affects that path.
-- Avoid assertions on copy/formatting or tests that merely restate the implementation.
-- Default to focused tests; run the full suite only for scope, risk, or CI/release gates. Bug fixes need one regression test unless existing coverage catches them.
-- Test slicing: In dev loops, run ONLY the test slice for the changed file (`node --test tests/foo.test.mjs`, `pytest -k <func>`); avoid full suites.
-- Keep slow install/E2E suites opt-in, never per edit or phase; reserve them for release gates.
+- **Test Slicing**: In dev loops, run ONLY the narrowest slice (<10s) for changed code (`node --test <slice>`, `pytest -k`); avoid unconstrained suites.
+- **Repo Selector & Receipt**: Prefer repo selectors (`test:quick`, `test:slice`); record command, targets, duration, and selection reason in `subtask_summary`.
+- **Failure/Fix Loops**: Rerun ONLY failed checks; never rerun passing tests without code changes.
+- **Mapping Gaps**: If a file lacks tests, run static check fallback plus nearest slice.
+- Slow install/E2E suites are opt-in, never per edit; reserve for release gates.
 - Test economy does NOT weaken stronger gates: auth, security, data-integrity, and required coverage.
