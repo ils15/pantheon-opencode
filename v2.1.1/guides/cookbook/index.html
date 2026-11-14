@@ -1209,6 +1209,50 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#recipe-9-council-synthesis-for-architecture-decisions-pantheon" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 9: Council Synthesis for Architecture Decisions (/pantheon)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-10-multi-phase-project-with-persistent-checkpoints-pantheon-deepwork" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 10: Multi-Phase Project with Persistent Checkpoints (/pantheon-deepwork)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-11-interactive-question-gate-in-complex-planning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 11: Interactive Question Gate in Complex Planning
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-12-health-validation-drift-detection-doctor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 12: Health Validation &amp; Drift Detection (doctor)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -2401,6 +2445,8 @@
       
         
       
+        
+      
     
     
     
@@ -2461,6 +2507,34 @@
     
   
     Arquitetura
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/COMPATIBILITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibilidade
   
 
     
@@ -2808,6 +2882,50 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#recipe-9-council-synthesis-for-architecture-decisions-pantheon" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 9: Council Synthesis for Architecture Decisions (/pantheon)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-10-multi-phase-project-with-persistent-checkpoints-pantheon-deepwork" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 10: Multi-Phase Project with Persistent Checkpoints (/pantheon-deepwork)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-11-interactive-question-gate-in-complex-planning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 11: Interactive Question Gate in Complex Planning
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipe-12-health-validation-drift-detection-doctor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipe 12: Health Validation &amp; Drift Detection (doctor)
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -2837,12 +2955,12 @@
 <blockquote>
 <p>🇧🇷 <strong>Versão em Português disponível:</strong> <a href="../../pt-BR/guides/cookbook/">Leia em Português</a></p>
 </blockquote>
-<p>This practical cookbook aggregates the most common everyday development workflows with Pantheon, showcasing exact prompts and which specialist to call for each scenario.</p>
+<p>This practical cookbook aggregates the most common everyday development workflows with Pantheon, showcasing exact prompts, tool dispatches, and which specialist to call for each scenario.</p>
 <hr />
 <h2 id="recipe-1-full-stack-feature-with-tdd-quality-gates">Recipe 1: Full-Stack Feature with TDD &amp; Quality Gates<a class="headerlink" href="#recipe-1-full-stack-feature-with-tdd-quality-gates" title="Permanent link">&para;</a></h2>
 <p><strong>Scenario:</strong> Implement a complete feature (e.g., CSV export endpoint with schema validation and tests).</p>
 <p><strong>Prompt:</strong>
-<div class="highlight"><pre><span></span><code>/pantheon Add CSV export support to /reports with unit tests and schema validation.
+<div class="highlight"><pre><span></span><code>@zeus Add CSV export support to /reports with unit tests and schema validation.
 </code></pre></div></p>
 <p><strong>Workflow:</strong>
 1. <code>@zeus</code> analyzes scope and delegates planning to <code>@athena</code>.
@@ -2907,6 +3025,42 @@
 </code></pre></div></p>
 <p><strong>Why use @prometheus?</strong>
 <code>@prometheus</code> owns containerization, GitHub Actions, build automation, and infrastructure configurations.</p>
+<hr />
+<h2 id="recipe-9-council-synthesis-for-architecture-decisions-pantheon">Recipe 9: Council Synthesis for Architecture Decisions (<code>/pantheon</code>)<a class="headerlink" href="#recipe-9-council-synthesis-for-architecture-decisions-pantheon" title="Permanent link">&para;</a></h2>
+<p><strong>Scenario:</strong> Arbitrate a technical trade-off across multiple architecture domains.</p>
+<p><strong>Prompt:</strong>
+<div class="highlight"><pre><span></span><code>/pantheon Should we use Server-Sent Events (SSE) or WebSockets for live status updates in our dashboard?
+</code></pre></div></p>
+<p><strong>Why use /pantheon?</strong>
+Dispatches 2-3 specialists in parallel (<code>@athena</code> for architecture, <code>@hermes</code> for backend scalability, <code>@themis</code> for security and connection limits). Divergences are synthesized into a decisive recommendation with domain authority precedence.</p>
+<hr />
+<h2 id="recipe-10-multi-phase-project-with-persistent-checkpoints-pantheon-deepwork">Recipe 10: Multi-Phase Project with Persistent Checkpoints (<code>/pantheon-deepwork</code>)<a class="headerlink" href="#recipe-10-multi-phase-project-with-persistent-checkpoints-pantheon-deepwork" title="Permanent link">&para;</a></h2>
+<p><strong>Scenario:</strong> Refactor a core system subsystem across multiple sessions without losing context.</p>
+<p><strong>Prompt:</strong>
+<div class="highlight"><pre><span></span><code>/pantheon-deepwork Migrate user session management from server-side memory to encrypted JWT cookies with redis blacklist.
+</code></pre></div></p>
+<p><strong>Workflow:</strong>
+1. Progress is written to <code>.pantheon/deepwork/&lt;slug&gt;/</code> (<code>plan.json</code>, <code>PLAN.md</code>, checkpoints).
+2. Parallel tasks execute in isolated git worktrees (<code>.pantheon-worktrees/</code>).
+3. Each phase boundary requires a PASS verdict from <code>@themis</code> before progressing.</p>
+<hr />
+<h2 id="recipe-11-interactive-question-gate-in-complex-planning">Recipe 11: Interactive Question Gate in Complex Planning<a class="headerlink" href="#recipe-11-interactive-question-gate-in-complex-planning" title="Permanent link">&para;</a></h2>
+<p><strong>Scenario:</strong> Clarify architectural ambiguities and design trade-offs interactively before code generation starts.</p>
+<p><strong>Workflow:</strong>
+When <code>@athena</code> designs a system with multiple valid approaches, <code>@zeus</code> presents the choices via OpenCode's native <code>question</code> tool:
+- The UI displays structured options with clear trade-offs.
+- A marked <code>(Recommended)</code> choice highlights the best-practice path.
+- The developer selects their preferred option, and execution proceeds automatically without textual back-and-forth.</p>
+<hr />
+<h2 id="recipe-12-health-validation-drift-detection-doctor">Recipe 12: Health Validation &amp; Drift Detection (<code>doctor</code>)<a class="headerlink" href="#recipe-12-health-validation-drift-detection-doctor" title="Permanent link">&para;</a></h2>
+<p><strong>Scenario:</strong> Verify that local MCP servers, plugins, and configurations are synchronized and healthy.</p>
+<p><strong>Command:</strong>
+<div class="highlight"><pre><span></span><code>npx<span class="w"> </span>pantheon-opencode<span class="w"> </span>doctor
+</code></pre></div></p>
+<p><strong>When to run:</strong>
+- After git branch switches or pulling remote updates.
+- When upgrading Node.js or OpenCode.
+- If an MCP tool reports connection failures or missing dependencies.</p>
 
 
 
@@ -2929,7 +3083,7 @@
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="November 13, 2026 18:33:59 UTC">November 13, 2026</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="November 14, 2026 00:16:38 UTC">November 14, 2026</span>
   </span>
 
     

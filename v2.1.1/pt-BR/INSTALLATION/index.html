@@ -82,7 +82,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#guia-de-instalacao-do-pantheon-opencode-2x" class="md-skip">
+        <a href="#guia-completo-de-instalacao-do-pantheon-opencode-2x" class="md-skip">
           Skip to content
         </a>
       
@@ -2028,6 +2028,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#fluxo-do-instalador-ciclo-de-vida" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fluxo do Instalador (Ciclo de Vida)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#pre-requisitos-do-sistema" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2039,22 +2050,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#modos-de-instalacao" class="md-nav__link">
+  <a href="#escopos-de-instalacao-global-vs-projeto" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Modos de Instalação
+        Escopos de Instalação: Global vs. Projeto
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Modos de Instalação">
+    <nav class="md-nav" aria-label="Escopos de Instalação: Global vs. Projeto">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#1-instalacao-interativa-com-wizard" class="md-nav__link">
+  <a href="#1-instalacao-global-recomendada" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Instalação Interativa com Wizard
+        1. Instalação Global (Recomendada)
       
     </span>
   </a>
@@ -2062,10 +2073,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#2-instalacao-em-ci-automacao-headless" class="md-nav__link">
+  <a href="#2-instalacao-restrita-ao-projeto-project" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Instalação em CI / Automação (Headless)
+        2. Instalação Restrita ao Projeto (--project)
       
     </span>
   </a>
@@ -2078,10 +2089,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#validacao-e-diagnostico-doctor" class="md-nav__link">
+  <a href="#referencia-completa-de-flags-do-cli" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Validação e Diagnóstico (doctor)
+        Referência Completa de Flags do CLI
       
     </span>
   </a>
@@ -2089,10 +2100,77 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#backups-e-restauracao-segura" class="md-nav__link">
+  <a href="#codigos-de-saida-exit-codes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Backups e Restauração Segura
+        Códigos de Saída (Exit Codes)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validacao-de-integridade-doctor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validação de Integridade (doctor)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Validação de Integridade (doctor)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#o-que-o-doctor-verifica" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        O que o Doctor Verifica:
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#backups-atomicos-e-restauracao-segura" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backups Atômicos e Restauração Segura
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Backups Atômicos e Restauração Segura">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#restaurando-um-backup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Restaurando um Backup:
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#otimizacao-e-limpeza-do-espaco" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Otimização e Limpeza do Espaço
       
     </span>
   </a>
@@ -2415,6 +2493,8 @@
       
         
       
+        
+      
     
     
     
@@ -2478,6 +2558,34 @@
     
   
     Arquitetura
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../COMPATIBILITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibilidade
   
 
     
@@ -2752,6 +2860,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#fluxo-do-instalador-ciclo-de-vida" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fluxo do Instalador (Ciclo de Vida)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#pre-requisitos-do-sistema" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2763,22 +2882,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#modos-de-instalacao" class="md-nav__link">
+  <a href="#escopos-de-instalacao-global-vs-projeto" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Modos de Instalação
+        Escopos de Instalação: Global vs. Projeto
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Modos de Instalação">
+    <nav class="md-nav" aria-label="Escopos de Instalação: Global vs. Projeto">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#1-instalacao-interativa-com-wizard" class="md-nav__link">
+  <a href="#1-instalacao-global-recomendada" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Instalação Interativa com Wizard
+        1. Instalação Global (Recomendada)
       
     </span>
   </a>
@@ -2786,10 +2905,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#2-instalacao-em-ci-automacao-headless" class="md-nav__link">
+  <a href="#2-instalacao-restrita-ao-projeto-project" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Instalação em CI / Automação (Headless)
+        2. Instalação Restrita ao Projeto (--project)
       
     </span>
   </a>
@@ -2802,10 +2921,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#validacao-e-diagnostico-doctor" class="md-nav__link">
+  <a href="#referencia-completa-de-flags-do-cli" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Validação e Diagnóstico (doctor)
+        Referência Completa de Flags do CLI
       
     </span>
   </a>
@@ -2813,10 +2932,77 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#backups-e-restauracao-segura" class="md-nav__link">
+  <a href="#codigos-de-saida-exit-codes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Backups e Restauração Segura
+        Códigos de Saída (Exit Codes)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validacao-de-integridade-doctor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validação de Integridade (doctor)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Validação de Integridade (doctor)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#o-que-o-doctor-verifica" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        O que o Doctor Verifica:
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#backups-atomicos-e-restauracao-segura" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backups Atômicos e Restauração Segura
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Backups Atômicos e Restauração Segura">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#restaurando-um-backup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Restaurando um Backup:
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#otimizacao-e-limpeza-do-espaco" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Otimização e Limpeza do Espaço
       
     </span>
   </a>
@@ -2859,78 +3045,234 @@
   
 
 
-<h1 id="guia-de-instalacao-do-pantheon-opencode-2x">Guia de Instalação do Pantheon (OpenCode 2.x)<a class="headerlink" href="#guia-de-instalacao-do-pantheon-opencode-2x" title="Permanent link">&para;</a></h1>
+<h1 id="guia-completo-de-instalacao-do-pantheon-opencode-2x">Guia Completo de Instalação do Pantheon (OpenCode 2.x)<a class="headerlink" href="#guia-completo-de-instalacao-do-pantheon-opencode-2x" title="Permanent link">&para;</a></h1>
 <blockquote>
 <p>🇺🇸 <strong>English version available:</strong> <a href="../../INSTALLATION/">Read in English</a></p>
 </blockquote>
-<p>O Pantheon <strong>requer o OpenCode 2.x</strong> (o contrato legado do OpenCode V1 foi removido a partir da versão 2.0). Há duas maneiras complementares de instalação: carregar o plugin diretamente pelo fluxo nativo do OpenCode, ou usar o assistente interativo <code>npx pantheon-opencode init</code> para instalar todo o conjunto de agentes, skills, comandos e interface de terminal.</p>
+<p>O Pantheon <strong>requer o OpenCode 2.x</strong> como host (o contrato da geração OpenCode 1.x foi completamente removido). A instalação padrão é realizada através do instalador <code>npx pantheon-opencode init</code>, que implanta todo o ecossistema: 14 agentes especialistas, 25 skills, regras de contexto (TDD, YAGNI), comandos de chat, interface TUI e servidores MCP locais.</p>
 <hr />
 <h2 id="inicio-rapido-tldr">Início Rápido (TL;DR)<a class="headerlink" href="#inicio-rapido-tldr" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><span class="c1"># Recomendado: Carregar o plugin através do OpenCode nativo</span>
-opencode<span class="w"> </span>plugin<span class="w"> </span>add<span class="w"> </span>pantheon-opencode
-
-<span class="c1"># Conjunto completo: agentes, skills, instruções, comandos, TUI e MCPs</span>
+<div class="highlight"><pre><span></span><code><span class="c1"># Instalação Global (recomendada para todos os projetos da máquina)</span>
 npx<span class="w"> </span>pantheon-opencode<span class="w"> </span>init
 
-<span class="c1"># Prévia sem confirmação interativa (headless preview)</span>
-npx<span class="w"> </span>pantheon-opencode<span class="w"> </span>init<span class="w"> </span>--headless
+<span class="c1"># Instalação Restrita ao Projeto Atual</span>
+npx<span class="w"> </span>pantheon-opencode<span class="w"> </span>init<span class="w"> </span>--project
 
-<span class="c1"># Instalação automática com opções padrão (headless apply)</span>
-npx<span class="w"> </span>pantheon-opencode<span class="w"> </span>init<span class="w"> </span>--headless<span class="w"> </span>--yes
+<span class="c1"># Modo Não-Interativo (Headless) para Automação e CI</span>
+npx<span class="w"> </span>pantheon-opencode<span class="w"> </span>init<span class="w"> </span>-y
 
-<span class="c1"># Verificar integridade da instalação</span>
+<span class="c1"># Visualização de Plano sem Modificações em Disco (Dry-Run)</span>
+npx<span class="w"> </span>pantheon-opencode<span class="w"> </span>init<span class="w"> </span>--dry-run
+
+<span class="c1"># Diagnóstico de Integridade e Saúde</span>
 npx<span class="w"> </span>pantheon-opencode<span class="w"> </span>doctor
 </code></pre></div>
 <hr />
+<h2 id="fluxo-do-instalador-ciclo-de-vida">Fluxo do Instalador (Ciclo de Vida)<a class="headerlink" href="#fluxo-do-instalador-ciclo-de-vida" title="Permanent link">&para;</a></h2>
+<p>O diagrama abaixo ilustra o comportamento do instalador, desde a detecção do host até a escrita atômica com backup automático:</p>
+<pre class="mermaid"><code>flowchart TD
+    Start(["🚀 npx pantheon-opencode init"]) --&gt; HostCheck{"Verificar Host OpenCode"}
+    HostCheck --&gt;|Versão &lt; 2.x| RejectHost["❌ Erro: Requer OpenCode 2.x (Falha de geração)"]
+    HostCheck --&gt;|OpenCode 2.x OK| ModeChoice{"Interativo (TTY)?"}
+
+    ModeChoice --&gt;|Sim| PromptScope["Selecionar Escopo: Global ou Projeto"]
+    PromptScope --&gt; PromptComp["Selecionar Componentes (agents, skills, tui...)"]
+    PromptComp --&gt; BuildPlan["Construir Plano Atômico de Instalação"]
+
+    ModeChoice --&gt;|Não (Headless)| CheckYes{"Flag --yes fornecida?"}
+    CheckYes --&gt;|Não| DryRunOnly["Visualização do Plano (Exit Code 2 sem alterações)"]
+    CheckYes --&gt;|Sim| BuildPlan
+
+    BuildPlan --&gt; BackupPhase["📦 Criar Backup Exato (modo 0600) em .pantheon/backups/"]
+    BackupPhase --&gt; WriteFiles["✏️ Escrita Atômica dos Arquivos Selecionados"]
+    WriteFiles --&gt; DoctorCheck["🩺 Auto-diagnóstico de Saúde (Doctor)"]
+    DoctorCheck --&gt; Complete(["✅ Instalação Concluída com Sucesso"])</code></pre>
+<hr />
 <h2 id="pre-requisitos-do-sistema">Pré-requisitos do Sistema<a class="headerlink" href="#pre-requisitos-do-sistema" title="Permanent link">&para;</a></h2>
-<ol>
-<li><strong>Host:</strong> OpenCode 2.x suportado (consulte <a href="../../COMPATIBILITY/">Compatibilidade</a>).</li>
-<li><strong>Node.js:</strong> Versão <code>&gt;=26.4.0</code> para o CLI do Pantheon, ferramentas de empacotamento e compilação do TUI.</li>
-<li><strong>Python (Opcional):</strong> Versão <code>3.11+</code> para servidores MCP em Python.</li>
-</ol>
+<table>
+<thead>
+<tr>
+<th>Requisito</th>
+<th>Versão Mínima</th>
+<th>Finalidade</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>OpenCode</strong></td>
+<td><code>&gt;= 2.0.0</code></td>
+<td>Host nativo de execução dos agentes e do plugin.</td>
+</tr>
+<tr>
+<td><strong>Node.js</strong></td>
+<td><code>&gt;= 26.4.0</code></td>
+<td>Execução do CLI, scripts de empacotamento, compilação e TUI.</td>
+</tr>
+<tr>
+<td><strong>Python</strong></td>
+<td><code>&gt;= 3.11</code> <em>(Opcional)</em></td>
+<td>Ambiente virtual para servidores MCP locais em Python.</td>
+</tr>
+<tr>
+<td><strong>Git</strong></td>
+<td><code>&gt;= 2.30</code></td>
+<td>Suporte a worktrees para execução concorrente de subagentes.</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>[!WARNING]
+Versões anteriores do Node.js (Node 22, Node 24 e versões Node 26 inferiores a 26.4.0) não são suportadas pelo motor de regras e pelo CLI do Pantheon.</p>
+</blockquote>
 <hr />
-<h2 id="modos-de-instalacao">Modos de Instalação<a class="headerlink" href="#modos-de-instalacao" title="Permanent link">&para;</a></h2>
-<h3 id="1-instalacao-interativa-com-wizard">1. Instalação Interativa com Wizard<a class="headerlink" href="#1-instalacao-interativa-com-wizard" title="Permanent link">&para;</a></h3>
-<p>Ao executar <code>npx pantheon-opencode init</code>, um assistente no terminal guia a configuração:</p>
+<h2 id="escopos-de-instalacao-global-vs-projeto">Escopos de Instalação: Global vs. Projeto<a class="headerlink" href="#escopos-de-instalacao-global-vs-projeto" title="Permanent link">&para;</a></h2>
+<p>O Pantheon pode ser configurado em dois escopos distintos:</p>
+<h3 id="1-instalacao-global-recomendada">1. Instalação Global (Recomendada)<a class="headerlink" href="#1-instalacao-global-recomendada" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>Escopo:</strong> Escolha entre <strong>Global</strong> (<code>~/.config/opencode/</code>) para que todos os seus repositórios tenham acesso aos agentes, ou <strong>Projeto</strong> (<code>.opencode/</code>) para manter as configurações restritas ao repositório atual.</li>
-<li><strong>Componentes:</strong></li>
-<li><code>agents</code>: 14 personas de agentes especialistas (<code>@zeus</code>, <code>@athena</code>, <code>@hermes</code>, etc.).</li>
-<li><code>skills</code>: 25 habilidades modulares para workflows e ferramentas.</li>
-<li><code>instructions</code>: Regras canônicas de TDD, economia de contexto, YAGNI e comunicação.</li>
-<li><code>plugins</code>: Plugin do Pantheon e a interface TUI moderna.</li>
-<li><code>commands</code>: Comandos de atalho para o chat (<code>/pantheon</code>, <code>/pantheon-deepwork</code>, etc.).</li>
+<li><strong>Localização:</strong> <code>~/.config/opencode/</code> (ou <code>$XDG_CONFIG_HOME/opencode/</code>).</li>
+<li><strong>Comportamento:</strong> Fica disponível imediatamente para qualquer repositório ou pasta em que você abrir o OpenCode no seu sistema.</li>
+<li><strong>Estrutura de Pastas Gerada:</strong></li>
+<li><code>agents/</code>: Definições dos 14 agentes especialistas (<code>zeus.md</code>, <code>athena.md</code>, etc.).</li>
+<li><code>skills/</code>: Diretório com as 25 skills canônicas.</li>
+<li><code>commands/</code>: Comandos customizados do OpenCode (<code>/pantheon</code>, <code>/pantheon-deepwork</code>).</li>
+<li><code>plugins/pantheon-tui/</code>: Payload compilado da interface visual TUI.</li>
+<li><code>opencode.json</code>: Registro central de agentes, plugins e servidores MCP.</li>
 </ul>
-<h3 id="2-instalacao-em-ci-automacao-headless">2. Instalação em CI / Automação (Headless)<a class="headerlink" href="#2-instalacao-em-ci-automacao-headless" title="Permanent link">&para;</a></h3>
-<p>Para ambientes de integração contínua (CI), scripts de setup de máquina ou contêineres Docker:</p>
-<div class="highlight"><pre><span></span><code>npx<span class="w"> </span>pantheon-opencode<span class="w"> </span>init<span class="w"> </span>--headless<span class="w"> </span>--yes
-</code></pre></div>
-<p>Esse comando cria o backup do estado prévio, instala os componentes padrão e finaliza com código de saída <code>0</code> quando bem-sucedido.</p>
+<h3 id="2-instalacao-restrita-ao-projeto-project">2. Instalação Restrita ao Projeto (<code>--project</code>)<a class="headerlink" href="#2-instalacao-restrita-ao-projeto-project" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Localização:</strong> <code>.opencode/</code> na raiz do repositório atual.</li>
+<li><strong>Comportamento:</strong> As regras, agentes e configurações ficam limitados estritamente ao diretório corrente, ideal para projetos com restrições corporativas específicas ou times que compartilham configurações versionadas.</li>
+<li><strong>Comando:</strong>
+  <div class="highlight"><pre><span></span><code>npx<span class="w"> </span>pantheon-opencode<span class="w"> </span>init<span class="w"> </span>--project
+</code></pre></div></li>
+</ul>
 <hr />
-<h2 id="validacao-e-diagnostico-doctor">Validação e Diagnóstico (<code>doctor</code>)<a class="headerlink" href="#validacao-e-diagnostico-doctor" title="Permanent link">&para;</a></h2>
-<p>Após instalar ou atualizar, valide o ambiente:</p>
+<h2 id="referencia-completa-de-flags-do-cli">Referência Completa de Flags do CLI<a class="headerlink" href="#referencia-completa-de-flags-do-cli" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>Descrição</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--project</code></td>
+<td>Direciona a instalação para o diretório local do projeto atual (<code>.opencode/</code>).</td>
+</tr>
+<tr>
+<td><code>--dry-run</code></td>
+<td>Calcula e exibe todas as alterações planejadas em formato de tabela sem gravar nada em disco.</td>
+</tr>
+<tr>
+<td><code>--save-plan &lt;caminho&gt;</code></td>
+<td>Salva o plano auditado em um arquivo JSON canônico para aprovação em esteiras de segurança.</td>
+</tr>
+<tr>
+<td><code>--apply-plan &lt;caminho&gt;</code></td>
+<td>Executa a instalação estritamente baseada em um plano previamente auditado e salvo.</td>
+</tr>
+<tr>
+<td><code>--yes</code>, <code>-y</code></td>
+<td>Ignora prompts interativos e autoriza a execução com os padrões recomendados.</td>
+</tr>
+<tr>
+<td><code>--components &lt;lista&gt;</code></td>
+<td>Especifica uma lista separada por vírgulas de componentes (<code>agents,skills,instructions,commands,plugins</code>).</td>
+</tr>
+<tr>
+<td><code>--preset &lt;nome&gt;</code></td>
+<td>Instala e ativa imediatamente um preset de modelos (ex: <code>balanced</code>, <code>quality</code>, <code>budget</code>).</td>
+</tr>
+<tr>
+<td><code>--no-mcp</code></td>
+<td>Ignora a criação do ambiente virtual Python e a configuração dos servidores MCP.</td>
+</tr>
+<tr>
+<td><code>--force</code></td>
+<td>Sobrescreve arquivos gerenciados existentes e recria o ambiente virtual do zero.</td>
+</tr>
+<tr>
+<td><code>--clean</code></td>
+<td>Remove arquivos legados órfãos de versões anteriores durante a instalação.</td>
+</tr>
+<tr>
+<td><code>--verbose</code></td>
+<td>Exibe logs detalhados de cada fase de escrita e sincronização.</td>
+</tr>
+<tr>
+<td><code>--headless</code></td>
+<td>Força a execução não-interativa (útil para automações e contêineres).</td>
+</tr>
+<tr>
+<td><code>--decision-model &lt;id&gt;</code></td>
+<td>Configura o modelo Jev para roteamento de complexidade (ex: <code>opencode-console-jev/jev-1.13</code>).</td>
+</tr>
+<tr>
+<td><code>--decision-monthly-usd &lt;v&gt;</code></td>
+<td>Define o teto mensal de gastos em USD para o roteador de decisões.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="codigos-de-saida-exit-codes">Códigos de Saída (Exit Codes)<a class="headerlink" href="#codigos-de-saida-exit-codes" title="Permanent link">&para;</a></h2>
+<p>O CLI do Pantheon segue rigorosamente os códigos de saída do padrão POSIX para automações:</p>
+<ul>
+<li><strong><code>0</code> — Sucesso:</strong> Instalação concluída com sucesso ou plano exibido e recusado pelo usuário de forma segura.</li>
+<li><strong><code>1</code> — Falha Genérica:</strong> Erro de I/O, sintaxe inválida de flag ou dependência faltante.</li>
+<li><strong><code>2</code> — Aplicação Não Autorizada:</strong> Execução em modo headless/não-interativo sem a presença da flag <code>--yes</code>.</li>
+<li><strong><code>3</code> — Detecção de Drift:</strong> Um arquivo previsto no plano foi alterado externamente antes da execução (<code>fail-closed</code>).</li>
+<li><strong><code>130</code> — Interrupção pelo Usuário:</strong> O processo foi cancelado via <code>Ctrl+C</code> (SIGINT) sem alterar o disco.</li>
+</ul>
+<hr />
+<h2 id="validacao-de-integridade-doctor">Validação de Integridade (<code>doctor</code>)<a class="headerlink" href="#validacao-de-integridade-doctor" title="Permanent link">&para;</a></h2>
+<p>Após instalar ou atualizar o Pantheon, execute o diagnóstico de integridade:</p>
 <div class="highlight"><pre><span></span><code>npx<span class="w"> </span>pantheon-opencode<span class="w"> </span>doctor
 </code></pre></div>
-<p>O <code>doctor</code> verifica:
-- Permissões do sistema de arquivos e integridade dos manifestos.
-- Registro correto do plugin em <code>opencode.json</code>.
-- Conexão e status dos 5 servidores MCP embarcados.
-- Versões dos pacotes instalados vs executáveis em execução.</p>
+<h3 id="o-que-o-doctor-verifica">O que o Doctor Verifica:<a class="headerlink" href="#o-que-o-doctor-verifica" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>Manifestos e Integridade:</strong> Integridade dos hashes SHA256 dos scripts de runtime.</li>
+<li><strong>Registro de Plugins:</strong> Presença do pacote <code>pantheon-opencode</code> e da TUI em <code>opencode.json</code>.</li>
+<li><strong>Servidores MCP Locais:</strong> Conexão e handshake JSON-RPC dos 5 servidores locais em Python.</li>
+<li><strong>Permissões do Sistema:</strong> Conformidade das permissões nos diretórios de backup e configurações (modo <code>0600</code>).</li>
+<li><strong>Node Runtime:</strong> Disponibilidade do driver <code>node:sqlite</code> para o módulo de telemetria de custos (<code>pantheon_cost</code>).</li>
+</ol>
 <hr />
-<h2 id="backups-e-restauracao-segura">Backups e Restauração Segura<a class="headerlink" href="#backups-e-restauracao-segura" title="Permanent link">&para;</a></h2>
-<p>O instalador cria automaticamente um backup exato antes de qualquer modificação em:
-<code>~/.config/opencode/.pantheon/backups/&lt;timestamp&gt;/</code> (ou no diretório do projeto).</p>
-<p>Para restaurar um backup anterior a qualquer momento:</p>
-<div class="highlight"><pre><span></span><code>npx<span class="w"> </span>pantheon-opencode<span class="w"> </span>restore
+<h2 id="backups-atomicos-e-restauracao-segura">Backups Atômicos e Restauração Segura<a class="headerlink" href="#backups-atomicos-e-restauracao-segura" title="Permanent link">&para;</a></h2>
+<p>Antes de qualquer modificação no disco, o instalador cria um snapshot exato e completo em:
+<div class="highlight"><pre><span></span><code>~/.config/opencode/.pantheon/backups/&lt;timestamp&gt;/
+</code></pre></div>
+Cada backup é criado com permissões restritivas (modo <code>0600</code>) para proteger credenciais existentes.</p>
+<h3 id="restaurando-um-backup">Restaurando um Backup:<a class="headerlink" href="#restaurando-um-backup" title="Permanent link">&para;</a></h3>
+<p>Caso queira reverter sua configuração para um estado anterior:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Restaura o backup mais recente de forma interativa</span>
+npx<span class="w"> </span>pantheon-opencode<span class="w"> </span>restore
+
+<span class="c1"># Restaura o backup do projeto local</span>
+npx<span class="w"> </span>pantheon-opencode<span class="w"> </span>restore<span class="w"> </span>--project<span class="w"> </span>--yes
+</code></pre></div>
+<hr />
+<h2 id="otimizacao-e-limpeza-do-espaco">Otimização e Limpeza do Espaço<a class="headerlink" href="#otimizacao-e-limpeza-do-espaco" title="Permanent link">&para;</a></h2>
+<p>Projetos com muitas sessões de <code>/pantheon-deepwork</code> acumulam logs e checkpoints. O Pantheon oferece comandos seguros para manutenção:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Visualiza planos antigos arquiváveis e logs que podem ser limpos</span>
+npx<span class="w"> </span>pantheon-opencode<span class="w"> </span>optimize
+
+<span class="c1"># Aplica a otimização e limpeza</span>
+npx<span class="w"> </span>pantheon-opencode<span class="w"> </span>optimize<span class="w"> </span>--apply
+
+<span class="c1"># Remove backups obsoletos com mais de 30 dias</span>
+npx<span class="w"> </span>pantheon-opencode<span class="w"> </span>prune<span class="w"> </span>--apply
 </code></pre></div>
 <hr />
 <h2 id="desinstalacao">Desinstalação<a class="headerlink" href="#desinstalacao" title="Permanent link">&para;</a></h2>
-<p>Para remover os componentes gerenciados pelo Pantheon mantendo suas alterações manuais intactas:</p>
-<div class="highlight"><pre><span></span><code>npx<span class="w"> </span>pantheon-opencode<span class="w"> </span>uninstall
+<p>Para desinstalar o Pantheon mantendo suas configurações pessoais e projetos intactos:</p>
+<p><div class="highlight"><pre><span></span><code><span class="c1"># Remove os componentes globais com segurança</span>
+npx<span class="w"> </span>pantheon-opencode<span class="w"> </span>uninstall<span class="w"> </span>--global
+
+<span class="c1"># Remove as configurações restritas ao projeto atual</span>
+npx<span class="w"> </span>pantheon-opencode<span class="w"> </span>uninstall<span class="w"> </span>--project
 </code></pre></div>
-<p>Para uma remoção forçada sem prompts interativos:</p>
-<div class="highlight"><pre><span></span><code>npx<span class="w"> </span>pantheon-opencode<span class="w"> </span>uninstall<span class="w"> </span>--yes
-</code></pre></div>
+O processo de desinstalação remove apenas os arquivos catalogados como gerenciados pelo Pantheon, preservando configurações manuais e chaves de provedores em <code>opencode.json</code>.</p>
 
 
 
@@ -2953,7 +3295,7 @@ npx<span class="w"> </span>pantheon-opencode<span class="w"> </span>doctor
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="November 13, 2026 18:33:59 UTC">November 13, 2026</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="November 14, 2026 00:16:38 UTC">November 14, 2026</span>
   </span>
 
     

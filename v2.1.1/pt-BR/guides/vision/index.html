@@ -2415,6 +2415,8 @@
       
         
       
+        
+      
     
     
     
@@ -2478,6 +2480,34 @@
     
   
     Arquitetura
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../COMPATIBILITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibilidade
   
 
     
@@ -2881,6 +2911,20 @@
 <p>Na versão moderna do Pantheon:
 * <strong>Sua mensagem permanece 100% limpa:</strong> A interface exibe apenas o texto que você digitou.
 * <strong>Injeção Silenciosa em Contexto de Sistema:</strong> As referências da imagem e os metadados de inspeção são injetados diretamente no hook <code>session.context</code> (<code>system</code>). O modelo de IA recebe todas as instruções nos bastidores, sem poluir visualmente a conversa.</p>
+<pre class="mermaid"><code>flowchart TD
+    User(["👤 Desenvolvedor"]) --&gt;|"Cola Screenshot (Ctrl+V)"| OpenCode["🖥️ Interface do OpenCode"]
+    OpenCode --&gt;|"Hook de plugin session.context"| VisionHook["👁️ Subsistema Pantheon Vision"]
+
+    VisionHook --&gt; ModelCheck{"Modelo ativo suporta Visão?"}
+    ModelCheck --&gt;|Sim| NativePass["Envia imagem diretamente pela API multimodal"]
+    ModelCheck --&gt;|Puramente Textual| FallbackServer["Aciona MCP pantheon_vision (describeImagesNative)"]
+
+    FallbackServer --&gt; StructuralDesc["Extrai Estrutura, Textos, Cores e Métricas WCAG"]
+    StructuralDesc --&gt; SystemContext["Injeta Descrição Estruturada no Contexto de Sistema"]
+    NativePass --&gt; SystemContext
+
+    SystemContext --&gt; Agent["🎨 @aphrodite (Frontend) / ⚡ @zeus"]
+    Agent --&gt; Implementation["Implementa o código acessível com Zero Poluição no Chat"]</code></pre>
 <hr />
 <h2 id="3-fallback-automatico-para-modelos-textuais">3. Fallback Automático para Modelos Textuais<a class="headerlink" href="#3-fallback-automatico-para-modelos-textuais" title="Permanent link">&para;</a></h2>
 <p>Se você estiver utilizando um modelo principal que é puramente textual (ou cujo gateway não aceita imagens diretamente):
@@ -2935,7 +2979,7 @@
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="November 13, 2026 18:33:59 UTC">November 13, 2026</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="November 14, 2026 00:16:38 UTC">November 14, 2026</span>
   </span>
 
     
