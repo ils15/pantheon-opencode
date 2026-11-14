@@ -2,7 +2,7 @@
 
 This roadmap records customer-visible themes, maintenance boundaries, and readiness conditions for stable releases. Internal tracking identifiers, per-item evidence bundles, and per-commit history are intentionally not part of this page.
 
-## Current State: 2.1.x Stable (v2.1.3)
+## Current State: 2.1.x Stable (v2.1.4)
 
 The `2.1.x` release series delivered the canonical Deepwork plan architecture, interactive native Question Gate enforcement, unrestricted `.pantheon/` and worktree access for analytical agents, bilingual documentation portals, live session Todo synchronization, observable test slicing, and workspace auto-permissions.
 

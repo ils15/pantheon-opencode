@@ -2062,7 +2062,7 @@ async function readChangelogForBundle(bundleUrl) {
 }
 /** The ambient build-time version, or null outside a tsdown build. */
 function embeddedVersion() {
-	return "2.1.3";
+	return "2.1.4";
 }
 /**
 * Resolve the running Pantheon version for the what's-new window: the plugin
@@ -2287,7 +2287,7 @@ function persistUpdateCheckState(previous, latest) {
 	} catch {}
 }
 function resolveRunningVersion() {
-	return "2.1.3";
+	return "2.1.4";
 }
 const VALUE_WIDTH = 24;
 function SettingsWindow(props) {
@@ -6513,7 +6513,7 @@ async function checkForPantheonUpdate(context) {
 	const latest = String((await response.json())?.version ?? "");
 	if (!latest) return;
 	const notice = pickUpdateNotice({
-		currentVersion: "2.1.3",
+		currentVersion: "2.1.4",
 		latestVersion: latest,
 		state: readState(),
 		nowMs: Date.now()
@@ -7325,7 +7325,7 @@ function Sidebar(props) {
 			get children() {
 				var _el$13 = createElement("text");
 				setProp(_el$13, "attributes", 1);
-				insert(_el$13, `Pantheon v2.1.3`);
+				insert(_el$13, `Pantheon v2.1.4`);
 				effect((_$p) => setProp(_el$13, "fg", text(), _$p));
 				return _el$13;
 			}
@@ -8097,7 +8097,7 @@ function HomeStatus(props) {
 		},
 		get children() {
 			var _el$73 = createElement("text");
-			insert(_el$73, () => `Pantheon v2.1.3${preset().name ? ` ▸ ${preset().name}` : ""}`);
+			insert(_el$73, () => `Pantheon v2.1.4${preset().name ? ` ▸ ${preset().name}` : ""}`);
 			effect((_$p) => setProp(_el$73, "fg", muted(), _$p));
 			return _el$73;
 		}
