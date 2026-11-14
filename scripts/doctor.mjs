@@ -22,9 +22,17 @@
  * Exit codes: 0 = no blocking errors (warnings are allowed), 2 = errors.
  */
 
-import { spawn as spawnAsync, spawnSync } from 'node:child_process'
+import { execSync, spawn as spawnAsync, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+} from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -1512,6 +1520,106 @@ export function checkInstallVersionDrift(args) {
   }
   pass(`Installation in sync with package v${pkgVersion}`)
   return 'sync'
+}
+
+// ---------------------------------------------------------------------------
+// Check H2b: PATH shadowing across global npm prefixes (Issue #424)
+// ---------------------------------------------------------------------------
+
+/**
+ * Check H2b: PATH shadowing across global npm prefixes.
+ *
+ * When multiple copies of pantheon-opencode are installed globally (e.g. across nvm,
+ * ~/.npm-global, /usr/local), PATH may resolve an older or different version than the
+ * package running doctor or OpenCode.
+ */
+export function checkPathShadowing(args = {}) {
+  section('H2b. PATH Shadowing & Binary Resolution')
+  const env = args.env ?? process.env
+  const isWindows = process.platform === 'win32'
+  const whichCmd = isWindows ? 'where pantheon-opencode' : 'which -a pantheon-opencode'
+
+  let raw = ''
+  try {
+    raw = execSync(whichCmd, {
+      env,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim()
+  } catch {
+    info('No global pantheon-opencode binary found in PATH')
+    return 'no-binary'
+  }
+
+  const binaries = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  if (binaries.length === 0) {
+    info('No pantheon-opencode binary found in PATH')
+    return 'no-binary'
+  }
+
+  let danglingFound = false
+  const resolvedBinaries = []
+
+  for (const binPath of binaries) {
+    let real = null
+    try {
+      real = realpathSync(binPath)
+    } catch {
+      danglingFound = true
+      error(`Dangling binary symlink in PATH: ${binPath} points to a non-existent path`)
+      continue
+    }
+
+    let binVersion = null
+    let curDir = dirname(real)
+    for (let i = 0; i < 4; i++) {
+      const candidatePkg = join(curDir, 'package.json')
+      if (existsSync(candidatePkg)) {
+        try {
+          const p = readJson(candidatePkg)
+          if (p?.name === 'pantheon-opencode') {
+            binVersion = p.version
+            break
+          }
+        } catch {}
+      }
+      curDir = dirname(curDir)
+    }
+
+    resolvedBinaries.push({ path: binPath, real, version: binVersion })
+  }
+
+  if (danglingFound) return 'dangling'
+
+  if (resolvedBinaries.length > 1) {
+    const primary = resolvedBinaries[0]
+    const others = resolvedBinaries.slice(1)
+    const divergent = others.filter(
+      (b) => b.version && primary.version && b.version !== primary.version,
+    )
+
+    if (divergent.length > 0) {
+      warn(
+        `Multiple global pantheon-opencode installs detected across PATH prefixes:\n` +
+          resolvedBinaries
+            .map(
+              (b, idx) =>
+                `  ${idx === 0 ? '▶ (active)' : '  (shadowed)'} ${b.path} (v${b.version ?? 'unknown'})`,
+            )
+            .join('\n') +
+          `\nStale global copies cause version skew. Clean up stale prefixes with: npm uninstall -g pantheon-opencode`,
+        { code: 'path_shadowing_detected', classification: 'advisory' },
+      )
+      return 'shadowing'
+    }
+  }
+
+  pass(`Primary binary in PATH resolves cleanly (${binaries[0]})`)
+  return 'ok'
 }
 
 // ---------------------------------------------------------------------------
@@ -3053,6 +3161,7 @@ async function main() {
   checkCodeModeDir(args)
   checkCodeModeManifest(args)
   checkInstallVersionDrift(args)
+  checkPathShadowing(args)
   checkPluginVersionDrift(args)
   await checkTuiPlugin(args)
   await checkInstallerFileInventory(args)

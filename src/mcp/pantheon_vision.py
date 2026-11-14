@@ -295,9 +295,33 @@ def _validated_session_id(value: object) -> str | None:
     return value if isinstance(value, str) and value.startswith("ses") else None
 
 
+def _discover_active_session_id() -> str | None:
+    """Discover active session id from environment or opencode.db."""
+    for env_var in ("OPENCODE_SESSION_ID", "SESSION_ID"):
+        val = os.getenv(env_var, "").strip()
+        if _validated_session_id(val):
+            return val
+    opencode_db_env = os.getenv("OPENCODE_DB", "").strip()
+    if opencode_db_env:
+        try:
+            db_path = Path(opencode_db_env)
+            if db_path.exists():
+                with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+                    cur = conn.cursor()
+                    cur.execute("SELECT id FROM session_v2 ORDER BY time_created DESC LIMIT 1")
+                    row = cur.fetchone()
+                    if row and _validated_session_id(row[0]):
+                        return str(row[0])
+        except Exception:
+            pass
+    return None
+
+
 def _require_session_id(value: object) -> str:
     """Return a valid session id or fail before any Zen-bound work."""
     session_id = _validated_session_id(value)
+    if session_id is None and value is None:
+        session_id = _discover_active_session_id()
     if session_id is None:
         raise VisionError(
             "A valid OpenCode session id is required for Zen Vision; "

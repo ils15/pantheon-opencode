@@ -642,6 +642,22 @@ export function resolveStablePantheonRoot(root = ROOT) {
     'pantheon-opencode',
   )
   if (existsSync(join(globalCandidate, 'src', 'plugin', 'index.ts'))) {
+    try {
+      const rootPkg = readJsonConfig(join(root, 'package.json'))
+      const globalPkg = readJsonConfig(join(globalCandidate, 'package.json'))
+      if (rootPkg?.version && globalPkg?.version) {
+        if (rootPkg.version === globalPkg.version) {
+          return { root: globalCandidate, volatile: false }
+        }
+        return {
+          root,
+          volatile: true,
+          skew: { running: rootPkg.version, global: globalPkg.version },
+        }
+      }
+    } catch {
+      // Fallback if package.json read fails
+    }
     return { root: globalCandidate, volatile: false }
   }
   return { root, volatile: true }

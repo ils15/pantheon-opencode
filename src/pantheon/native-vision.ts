@@ -2,6 +2,7 @@
 
 import type { LookupAddress } from 'node:dns'
 import { lookup as dnsLookup } from 'node:dns/promises'
+import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
@@ -524,6 +525,53 @@ async function imageAttachment(
   return toImageAttachment(bytes, localPath.split(/[\\/]/).at(-1) || 'image')
 }
 
+/**
+ * Discover the active OpenCode session ID from environment or opencode.db.
+ */
+export function discoverActiveSessionId(directory?: string): string | undefined {
+  for (const envVar of ['OPENCODE_SESSION_ID', 'SESSION_ID']) {
+    const val = (process.env[envVar] ?? '').trim()
+    if (isValidSessionId(val)) return val
+  }
+  try {
+    const dataHome = process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share')
+    const dbPath = process.env.OPENCODE_DB || join(dataHome, 'opencode', 'opencode.db')
+    if (!existsSync(dbPath)) return undefined
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const sqlite = require('node:sqlite') as {
+      DatabaseSync: new (
+        path: string,
+        options: { readOnly: boolean },
+      ) => {
+        prepare: (query: string) => {
+          get: (...params: unknown[]) => Record<string, unknown> | undefined
+        }
+        close: () => void
+      }
+    }
+    const db = new sqlite.DatabaseSync(dbPath, { readOnly: true })
+    try {
+      if (directory) {
+        const row = db
+          .prepare(
+            'SELECT id FROM session_v2 WHERE directory = ? ORDER BY time_created DESC LIMIT 1',
+          )
+          .get(directory)
+        if (row && isValidSessionId(row.id)) return String(row.id)
+      }
+      const fallbackRow = db
+        .prepare('SELECT id FROM session_v2 ORDER BY time_created DESC LIMIT 1')
+        .get()
+      if (fallbackRow && isValidSessionId(fallbackRow.id)) return String(fallbackRow.id)
+    } finally {
+      db.close()
+    }
+  } catch {
+    // Graceful fallback when node:sqlite is unavailable or db schema differs
+  }
+  return undefined
+}
+
 export function createV2VisionTool(runtime: V2VisionRuntime): V2VisionToolDefinition {
   return {
     name: 'vision_describe',
@@ -551,7 +599,11 @@ export function createV2VisionTool(runtime: V2VisionRuntime): V2VisionToolDefini
       let stage = 'validate OpenCode session'
       try {
         const call = (asRecord(rawContext) ?? {}) as V2VisionToolContext
-        if (!isValidSessionId(call.sessionID)) {
+        let sessionID = isValidSessionId(call.sessionID) ? call.sessionID : undefined
+        if (!sessionID) {
+          sessionID = discoverActiveSessionId(call.directory || process.cwd())
+        }
+        if (!sessionID) {
           throw new Error(
             'a valid OpenCode session id is required; retry this tool from an active OpenCode session',
           )
@@ -594,7 +646,7 @@ export function createV2VisionTool(runtime: V2VisionRuntime): V2VisionToolDefini
         // header ONLY for Zen targets, never to a non-Zen provider.
         const requestTarget: NativeVisionTarget = {
           ...target,
-          sessionID: call.sessionID,
+          sessionID,
         }
         let failure: NativeVisionFailure | undefined
         const output = await describeImagesNative(

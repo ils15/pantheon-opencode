@@ -229,7 +229,7 @@ export function resolveTestSlice(files = [], options = {}) {
         if (slice.type.startsWith('python')) {
           finalCommand = `pytest ${slice.testFile} -k "${failedOnly}" -q --tb=short`
         } else if (slice.type.startsWith('node')) {
-          finalCommand = `node --test ${slice.testFile} --test-name-pattern="${failedOnly}"`
+          finalCommand = `node --test --test-name-pattern="${failedOnly}" ${slice.testFile}`
         }
       }
       return {

@@ -36,6 +36,11 @@ export const V2_REGISTERED_TOOLS = Object.freeze([
   'hashline_edit',
   'pantheon_cost',
   'pantheon_model',
+  'todowrite',
+  'todoread',
+  'shell',
+  'pantheon_deepwork',
+  'pantheon_skill_search',
 ])
 
 /** Tools registered only when the host exposes the API they need. */

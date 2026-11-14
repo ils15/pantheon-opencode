@@ -225,6 +225,16 @@ Working runnable reference projects demonstrating Pantheon orchestration in prac
 
 ---
 
+## What's New in v2.1.4
+
+- **Global Install Shadowing & PATH Hygiene (#424):** Doctor check (H2b) detects multiple global binaries, dangling symlinks, and prefix skew. Version skew validation prevents `_npx` from binding to older global packages.
+- **Strict Test Slice Ordering (#442):** Reordered `--test-name-pattern` flag ahead of the test file path in `scripts/test-slice.mjs` so Node's native test runner filters tests during failure/fix loops.
+- **Security Boundaries on Internal Folders (#441):** Hardened `auto-permissions` and `zeusReadGuard` to exclude `.git/` and `node_modules/` from autonomous reads.
+- **Universal Session Todo Tool Availability (#439):** Granted `todowrite` and `todoread` across all 14 specialist agent manifests.
+- **Session Auto-Discovery for Zen Vision (#440):** Automated active session discovery from environment (`OPENCODE_SESSION_ID`) and SQLite `opencode.db` (`session_v2`) for `vision_describe`.
+
+---
+
 ## What's New in v2.0.1
 
 - **Bilingual TUI Settings (PT-BR / EN):** Visual localization for Decision Router, Autonomy & Budgets, and J1 Safety Gate tabs, with intelligent system locale auto-detection (`LANG` / `LC_ALL`) and manual preference cycling (`auto`, `pt-BR`, `en`).

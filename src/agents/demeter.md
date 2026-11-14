@@ -14,6 +14,8 @@ permission:
   webfetch: allow
   task:
     "*": deny
+  todowrite: allow
+  todoread: allow
 mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_search]

@@ -14,6 +14,8 @@ permission:
   hashline_edit: deny
   task:
     "*": deny
+  todowrite: allow
+  todoread: allow
 mcp_tools:
   pantheon-resources: all
   pantheon-memory: [memory_search]

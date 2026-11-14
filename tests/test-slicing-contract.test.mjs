@@ -53,9 +53,18 @@ test('Criterion 1: resolveTestSlice targets single file directly for localized e
 })
 
 test('Criterion 3: resolveTestSlice supports failedOnly filter for failure/fix loop', () => {
-  const plan = resolveTestSlice(['tests/test_auth.py'], { failedOnly: 'test_token_expiry' })
-  assert.equal(plan.type, 'python-test')
-  assert.match(plan.command, /pytest tests\/test_auth\.py -k "test_token_expiry"/)
+  const pyPlan = resolveTestSlice(['tests/test_auth.py'], { failedOnly: 'test_token_expiry' })
+  assert.equal(pyPlan.type, 'python-test')
+  assert.match(pyPlan.command, /pytest tests\/test_auth\.py -k "test_token_expiry"/)
+
+  const nodePlan = resolveTestSlice(['tests/plan-visibility-contract.test.mjs'], {
+    failedOnly: 'Athena returns the complete plan',
+  })
+  assert.equal(nodePlan.type, 'node-test')
+  assert.equal(
+    nodePlan.command,
+    'node --test --test-name-pattern="Athena returns the complete plan" tests/plan-visibility-contract.test.mjs',
+  )
 })
 
 test('Criterion 4: executeTestSlice formats observable task summary line', () => {

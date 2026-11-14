@@ -53,6 +53,21 @@ var SAFE_DEV_BINARIES = /* @__PURE__ */ new Set([
   "sh",
   "bash"
 ]);
+function isExcludedReadPath(rawPath) {
+  const trimmed = rawPath.trim();
+  if (!trimmed) return false;
+  const normalized = trimmed.replace(/\\/g, "/");
+  if (normalized.startsWith("../") || normalized === ".." || normalized.includes("/../")) {
+    return true;
+  }
+  if (/^\/(etc|boot|sys|proc|root)(\/|$)/.test(normalized)) {
+    return true;
+  }
+  if (/(^|\/)(\.git|node_modules)(\/|$)/.test(normalized)) {
+    return true;
+  }
+  return false;
+}
 function autoPermissionsEnabled(env = process.env) {
   const val = (env.PANTHEON_AUTO_PERMISSIONS ?? "").trim().toLowerCase();
   return val !== "off" && val !== "0" && val !== "false";
@@ -139,6 +154,11 @@ function evaluateAutoPermission(event, options = {}) {
     const firstResource = Array.isArray(event.resources) && typeof event.resources[0] === "string" ? event.resources[0] : "";
     if (firstResource.startsWith("http://") || firstResource.startsWith("https://")) {
       return { decision: "passthrough" };
+    }
+    if (firstResource && isExcludedReadPath(firstResource)) {
+      event.effect = "deny";
+      event.message = `Pantheon auto-permissions denied: reading '${firstResource}' is prohibited (.git and node_modules are excluded)`;
+      return { decision: "deny", reason: "excluded-path" };
     }
     event.effect = "allow";
     return { decision: "allow", reason: "safe-read-action" };
@@ -3866,7 +3886,13 @@ var DEFAULT_BLOCKED_TOOLS = /* @__PURE__ */ new Set([
   // opencode.db.
   "pantheon_model"
 ]);
-var ZEUS_READ_DENY_PATTERNS = [/^src\//, /^tests?\//, /^scripts?\//];
+var ZEUS_READ_DENY_PATTERNS = [
+  /^src\//,
+  /^tests?\//,
+  /^scripts?\//,
+  /(^|\/)\.git(\/|$)/,
+  /(^|\/)node_modules(\/|$)/
+];
 function normalizeGuardPath(value) {
   let normalized = value.replace(/\\/g, "/");
   while (normalized.startsWith("./")) normalized = normalized.slice(2);
@@ -3901,6 +3927,9 @@ var CODE_FILE_EXTENSIONS = /\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs|c|cpp|h|hpp|java|k
 function isDeniedGlobPattern(pattern) {
   const normalized = normalizeGuardPath(pattern);
   if (normalized.startsWith("../") || normalized === ".." || normalized.includes("/../")) {
+    return true;
+  }
+  if (/(^|\/)(\.git|node_modules)(\/|$)/.test(normalized)) {
     return true;
   }
   if (isDeniedReadPath(normalized, true)) {
@@ -8237,6 +8266,7 @@ function createJ3EscalationObserver(options) {
 
 // src/pantheon/native-vision.ts
 import { lookup as dnsLookup } from "node:dns/promises";
+import { existsSync as existsSync4 } from "node:fs";
 import { readFile as readFile4 } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
@@ -9207,6 +9237,33 @@ async function imageAttachment(value, directory, signal) {
   }
   return toImageAttachment(bytes, localPath.split(/[\\/]/).at(-1) || "image");
 }
+function discoverActiveSessionId(directory) {
+  for (const envVar of ["OPENCODE_SESSION_ID", "SESSION_ID"]) {
+    const val = (process.env[envVar] ?? "").trim();
+    if (isValidSessionId(val)) return val;
+  }
+  try {
+    const dataHome = process.env.XDG_DATA_HOME || join10(homedir4(), ".local", "share");
+    const dbPath = process.env.OPENCODE_DB || join10(dataHome, "opencode", "opencode.db");
+    if (!existsSync4(dbPath)) return void 0;
+    const sqlite = __require("node:sqlite");
+    const db = new sqlite.DatabaseSync(dbPath, { readOnly: true });
+    try {
+      if (directory) {
+        const row = db.prepare(
+          "SELECT id FROM session_v2 WHERE directory = ? ORDER BY time_created DESC LIMIT 1"
+        ).get(directory);
+        if (row && isValidSessionId(row.id)) return String(row.id);
+      }
+      const fallbackRow = db.prepare("SELECT id FROM session_v2 ORDER BY time_created DESC LIMIT 1").get();
+      if (fallbackRow && isValidSessionId(fallbackRow.id)) return String(fallbackRow.id);
+    } finally {
+      db.close();
+    }
+  } catch {
+  }
+  return void 0;
+}
 function createV2VisionTool(runtime) {
   return {
     name: "vision_describe",
@@ -9229,7 +9286,11 @@ function createV2VisionTool(runtime) {
       let stage = "validate OpenCode session";
       try {
         const call = asRecord2(rawContext) ?? {};
-        if (!isValidSessionId(call.sessionID)) {
+        let sessionID = isValidSessionId(call.sessionID) ? call.sessionID : void 0;
+        if (!sessionID) {
+          sessionID = discoverActiveSessionId(call.directory || process.cwd());
+        }
+        if (!sessionID) {
           throw new Error(
             "a valid OpenCode session id is required; retry this tool from an active OpenCode session"
           );
@@ -9268,7 +9329,7 @@ function createV2VisionTool(runtime) {
         stage = "send image to the selected multimodal model";
         const requestTarget = {
           ...target,
-          sessionID: call.sessionID
+          sessionID
         };
         let failure;
         const output = await describeImagesNative(
@@ -10738,7 +10799,7 @@ import { promisify } from "node:util";
 
 // src/pantheon/cost-command.ts
 import { execFile } from "node:child_process";
-import { accessSync, constants as constants3, existsSync as existsSync5, statSync as statSync3 } from "node:fs";
+import { accessSync, constants as constants3, existsSync as existsSync6, statSync as statSync3 } from "node:fs";
 import { delimiter, dirname as dirname8, join as join14 } from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 import { z } from "zod";
@@ -10748,7 +10809,7 @@ import { homedir as homedir6 } from "node:os";
 import { join as join13 } from "node:path";
 
 // src/plugins/tui/src/model-pricing.ts
-import { existsSync as existsSync4, mkdirSync as mkdirSync5, readFileSync as readFileSync6, renameSync as renameSync3, writeFileSync as writeFileSync4 } from "node:fs";
+import { existsSync as existsSync5, mkdirSync as mkdirSync5, readFileSync as readFileSync6, renameSync as renameSync3, writeFileSync as writeFileSync4 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
 import { dirname as dirname7, join as join12 } from "node:path";
 var MODELS_DEV_URL = "https://models.dev/api.json";
@@ -10894,7 +10955,7 @@ function parseCachedCatalog(raw) {
 }
 function readPricingCache(cachePath) {
   try {
-    if (!existsSync4(cachePath)) return void 0;
+    if (!existsSync5(cachePath)) return void 0;
     return parseCachedCatalog(JSON.parse(readFileSync6(cachePath, "utf8")));
   } catch {
     return void 0;
@@ -11125,7 +11186,7 @@ var costArgs = {
 };
 function findExistingDb(override) {
   const candidate = override === void 0 ? resolveCostDbPath() : resolveCostDbPath({ dbPath: override });
-  return existsSync5(candidate) ? candidate : void 0;
+  return existsSync6(candidate) ? candidate : void 0;
 }
 var COST_AGGREGATE_SQL = {
   message: (sessionId) => `
@@ -11834,7 +11895,7 @@ async function queryWithCliFallback(dbPath, days, deps) {
   const execFileAsync = deps?.execFile ?? defaultExecFile;
   const isExecutable = deps?.isExecutable ?? defaultIsExecutable;
   const costScript = join14(__dirname, "..", "..", "scripts", "cost.mjs");
-  if (!existsSync5(costScript)) {
+  if (!existsSync6(costScript)) {
     throw new Error(`CLI fallback script not found: ${costScript}`);
   }
   const node = resolveNodeExecutable(env, isExecutable);
@@ -12160,7 +12221,7 @@ function buildApprovalQuestion(plan) {
 }
 
 // src/pantheon/deepwork/plan-tracker.ts
-import { existsSync as existsSync6 } from "node:fs";
+import { existsSync as existsSync7 } from "node:fs";
 import { appendFile as appendFile3, mkdir as mkdir6, readdir, readFile as readFile6, rename as rename5, writeFile as writeFile3 } from "node:fs/promises";
 import { join as join16 } from "node:path";
 
@@ -12393,7 +12454,7 @@ async function resolvePlanDecision(cwd = process.cwd(), slug, decisionId, chosen
 }
 async function listPlans(cwd = process.cwd()) {
   const root = deepworkRootDir(cwd);
-  if (!existsSync6(root)) return [];
+  if (!existsSync7(root)) return [];
   const entries = await readdir(root, { withFileTypes: true });
   const result = [];
   for (const entry of entries) {

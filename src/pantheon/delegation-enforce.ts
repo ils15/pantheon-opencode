@@ -200,9 +200,15 @@ export const DEFAULT_BLOCKED_TOOLS: ReadonlySet<string> = new Set([
 /**
  * Path patterns that Zeus must NOT read directly. Zeus must delegate
  * codebase reads to @apollo to avoid context bloat and enforce separation
- * of concerns.
+ * of concerns. .git and node_modules are excluded repository noise.
  */
-export const ZEUS_READ_DENY_PATTERNS: ReadonlyArray<RegExp> = [/^src\//, /^tests?\//, /^scripts?\//]
+export const ZEUS_READ_DENY_PATTERNS: ReadonlyArray<RegExp> = [
+  /^src\//,
+  /^tests?\//,
+  /^scripts?\//,
+  /(^|\/)\.git(\/|$)/,
+  /(^|\/)node_modules(\/|$)/,
+]
 
 /**
  * Normalize a tool-supplied path before it meets the deny patterns.
@@ -298,6 +304,9 @@ const CODE_FILE_EXTENSIONS =
 export function isDeniedGlobPattern(pattern: string): boolean {
   const normalized = normalizeGuardPath(pattern)
   if (normalized.startsWith('../') || normalized === '..' || normalized.includes('/../')) {
+    return true
+  }
+  if (/(^|\/)(\.git|node_modules)(\/|$)/.test(normalized)) {
     return true
   }
   if (isDeniedReadPath(normalized, true)) {

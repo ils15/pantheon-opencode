@@ -150,6 +150,8 @@ const GLOBAL_NPM_ENV_KEYS = new Set([
   'npm_config_globalconfig',
   'npm_config_prefix',
   'npm_config_location',
+  'npm_config_allow_scripts',
+  'npm_config_approve_scripts',
 ])
 
 /**

@@ -7,6 +7,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 🆕 What's New
+
+- **Global Install Shadowing (#424)**: Doctor check (H2b) detects multiple global binaries, dangling symlinks, and prefix skew.
+- **Strict Test Slice Ordering (#442)**: Fixed `--test-name-pattern` flag ordering in `test:slice` so regex filters work during fix loops.
+- **Security Boundaries (#441)**: Hardened `auto-permissions` and `zeusReadGuard` to exclude `.git/` and `node_modules/` from reads.
+- **Universal Session Todos (#439)**: Granted `todowrite` and `todoread` across all 14 specialist agent manifests.
+- **Session Auto-Discovery (#440)**: Automated active session discovery from environment and SQLite `opencode.db` for vision.
+
+### Fixed
+
+- **install (#424)** — added doctor check (H2b) for PATH shadowing, version skew check in `resolveStablePantheonRoot`, and sanitized npm env in `sync-tui.mjs`.
+- **tests (#442)** — reordered `--test-name-pattern` before test path in `scripts/test-slice.mjs` so Node's test runner enforces filters during fix loops.
+- **security (#441)** — enforced deterministic path checks in `auto-permissions.ts` and `zeusReadGuard` denying `.git/**`, `node_modules/**`, and traversal.
+- **tools (#439)** — granted `todowrite` and `todoread` across all 14 specialist agent manifests in `src/agents/roster.json` and registered tool capabilities.
+- **vision (#440)** — automated session ID resolution from `OPENCODE_SESSION_ID` and SQLite `opencode.db` (`session_v2`) for `vision_describe`.
+
+### ✅ Closed Issues
+
+- #424 - detect and prevent global install shadowing and prefix version skew
+- #439 - expose todowrite and todoread across specialist agents
+- #440 - auto-discover OpenCode session ID for vision_describe
+- #441 - enforce .git and node_modules exclusion in auto-permissions and guards
+- #442 - reorder test-name-pattern filter before file path in test:slice
+
 <!-- Add new changes here.
      Canonical sections (docs/RELEASING.md): ### 🆕 What's New (curated highlights, ≤6 bullets ≤140 chars) →
      ### Added / Changed / Deprecated / Removed / Fixed / Security → ### ⚠️ Known Issues / ### ✅ Closed Issues.
@@ -253,6 +277,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ---
 
 ## [Unreleased]
+
+### 🆕 What's New
+
+- **Global Install Shadowing (#424)**: Doctor check (H2b) detects multiple global binaries, dangling symlinks, and prefix skew.
+- **Strict Test Slice Ordering (#442)**: Fixed `--test-name-pattern` flag ordering in `test:slice` so regex filters work during fix loops.
+- **Security Boundaries (#441)**: Hardened `auto-permissions` and `zeusReadGuard` to exclude `.git/` and `node_modules/` from reads.
+- **Universal Session Todos (#439)**: Granted `todowrite` and `todoread` across all 14 specialist agent manifests.
+- **Session Auto-Discovery (#440)**: Automated active session discovery from environment and SQLite `opencode.db` for vision.
+
+### Fixed
+
+- **install (#424)** — added doctor check (H2b) for PATH shadowing, version skew check in `resolveStablePantheonRoot`, and sanitized npm env in `sync-tui.mjs`.
+- **tests (#442)** — reordered `--test-name-pattern` before test path in `scripts/test-slice.mjs` so Node's test runner enforces filters during fix loops.
+- **security (#441)** — enforced deterministic path checks in `auto-permissions.ts` and `zeusReadGuard` denying `.git/**`, `node_modules/**`, and traversal.
+- **tools (#439)** — granted `todowrite` and `todoread` across all 14 specialist agent manifests in `src/agents/roster.json` and registered tool capabilities.
+- **vision (#440)** — automated session ID resolution from `OPENCODE_SESSION_ID` and SQLite `opencode.db` (`session_v2`) for `vision_describe`.
+
+### ✅ Closed Issues
+
+- #424 - detect and prevent global install shadowing and prefix version skew
+- #439 - expose todowrite and todoread across specialist agents
+- #440 - auto-discover OpenCode session ID for vision_describe
+- #441 - enforce .git and node_modules exclusion in auto-permissions and guards
+- #442 - reorder test-name-pattern filter before file path in test:slice
 
 <!-- Add new changes here.
      Canonical sections (docs/RELEASING.md): ### 🆕 What's New (curated highlights, ≤6 bullets ≤140 chars) →

@@ -819,3 +819,26 @@ async def test_gateway_error_logs_sanitized_status_and_model(
     assert "not supported" in stderr
     assert secret not in stderr
     assert "data:image" not in stderr
+
+
+@pytest.mark.asyncio
+async def test_session_id_auto_discovered_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When session_id is omitted, it is auto-discovered from OPENCODE_SESSION_ID."""
+    monkeypatch.setenv("PANTHEON_OPENCODE_API_KEY", "test-key")
+    monkeypatch.setenv("OPENCODE_SESSION_ID", "ses_discovered_from_env")
+    monkeypatch.setattr(vision.httpx, "AsyncClient", FakeClient)
+    FakeClient.last_request = {}
+
+    result = await vision.mcp.call_tool(
+        "vision_describe",
+        {
+            "path": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+        },
+    )
+    assert (
+        FakeClient.last_request.get("headers", {}).get("x-opencode-session")
+        == "ses_discovered_from_env"
+    )
+    assert "description" in _tool_text(result).lower()
