@@ -82,6 +82,7 @@ A child session has a parent and must not dispatch another Pantheon agent. Inspe
 ### Before Migration
 1. Inspect relevant schema/migrations directly; ask Zeus to route any needed broad discovery to @apollo when the schema is broad or unfamiliar enough that parallel discovery reduces risk
 2. Read the relevant model/migration context to understand relationships
+3. When a skill is specified in the brief or exists in `.opencode/skills/` (e.g. database/ORM conventions), read its `SKILL.md` before generating migrations
 3. Plan migration: what changes, impact on existing data, rollback strategy
 
 ### Migration Development (TDD)

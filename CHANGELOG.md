@@ -21,16 +21,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Tool Execution Fallback**: Added `execute` alias executing commands via bash, preventing JS eval syntax errors on CLI commands.
 - **CLI Execution Mandate**: Enforced CLI execution via `shell`/`bash` for binaries like `opencode-quota` with anti-panic search ban.
 - **Scope Transparency (#444)**: `subtask_summary` explicitly reports validation scope and deferred pending repository CI pipeline gates.
+- **Unified Skill Discovery**: Dynamic filesystem indexing of local and global skills; Zeus handoff passes explicit skill file paths.
 
 ### Added
 
 - **tools** — added `execute` fallback alias executing workspace commands and scripts via `/bin/bash` in `src/pantheon/tools.ts`.
 - **permissions** — whitelisted `opencode-quota` in `SAFE_DEV_BINARIES` and installer bash permission rules.
+- **skills** — added dynamic filesystem scanner for `.opencode/skills` and `.agents/skills` returning real path and scope.
 
 ### Changed
 
 - **tests (#444)** — enhanced `test-slice.mjs` with risk escalation triggers, validation scope reporting, and pending CI gate receipts.
 - **instructions (#444)** — updated `test-economy` and `test-slicing` with risk-based validation protocol, anti-panic rules, and CLI mandate.
+- **agents** — updated Zeus and specialist agent prompts in `roster.json` to mandate `SKILL.md` inspection before implementation.
 
 ### ✅ Closed Issues
 

@@ -13800,6 +13800,11 @@ function createModelCommand(options = {}) {
   };
 }
 
+// src/pantheon/skill-search-tool.ts
+import { existsSync as existsSync8, readdirSync as readdirSync2, readFileSync as readFileSync7 } from "node:fs";
+import { homedir as homedir8 } from "node:os";
+import { join as join18 } from "node:path";
+
 // scripts/skill-search.mjs
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
@@ -14019,6 +14024,75 @@ var invokedDirectly = process.argv[1] !== void 0 && import.meta.url === pathToFi
 if (invokedDirectly) main();
 
 // src/pantheon/skill-search-tool.ts
+function extractSkillMetadata(content, fallbackName) {
+  let name = fallbackName;
+  let description = "";
+  const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  const yaml = fmMatch?.[1];
+  if (yaml) {
+    const nameMatch = yaml.match(/^name:\s*["']?([^"'\r\n]+)["']?/m);
+    if (nameMatch?.[1]) name = nameMatch[1].trim();
+    const descMatch = yaml.match(/^description:\s*["']?([^"'\r\n]+)["']?/m);
+    if (descMatch?.[1]) description = descMatch[1].trim();
+  }
+  if (!description) {
+    const withoutFm = content.replace(/^---\r?\n[\s\S]*?\r?\n---/, "").trim();
+    const lines = withoutFm.split("\n");
+    for (const l of lines) {
+      const trimmed = l.trim();
+      if (trimmed && !trimmed.startsWith("#")) {
+        description = trimmed.slice(0, 160);
+        break;
+      }
+    }
+  }
+  return { name, description };
+}
+function scanInstalledSkills(cwd = process.cwd()) {
+  const map = /* @__PURE__ */ new Map();
+  for (const entry of PANTHEON_SKILL_CATALOG) {
+    map.set(entry.id.toLowerCase(), {
+      id: entry.id,
+      description: entry.description,
+      path: `src/skills/${entry.id}/SKILL.md`,
+      scope: "internal"
+    });
+  }
+  const scanDir = (baseDir, scope) => {
+    try {
+      if (!existsSync8(baseDir)) return;
+      const entries = readdirSync2(baseDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+        const skillName = entry.name;
+        if (skillName.startsWith(".")) continue;
+        const skillMd = join18(baseDir, skillName, "SKILL.md");
+        if (existsSync8(skillMd)) {
+          try {
+            const raw = readFileSync7(skillMd, "utf8");
+            const { name, description } = extractSkillMetadata(raw, skillName);
+            const id = (name || skillName).trim();
+            map.set(id.toLowerCase(), {
+              id,
+              description: description || skillName,
+              path: skillMd,
+              scope
+            });
+          } catch {
+          }
+        }
+      }
+    } catch {
+    }
+  };
+  const xdgConfig = process.env.XDG_CONFIG_HOME || join18(homedir8(), ".config");
+  scanDir(join18(xdgConfig, "opencode", "skills"), "global");
+  scanDir(join18(homedir8(), ".agents", "skills"), "global");
+  scanDir(join18(cwd, ".opencode", "skills"), "project");
+  scanDir(join18(cwd, ".agents", "skills"), "project");
+  scanDir(join18(cwd, "skills"), "project");
+  return map;
+}
 var TOOL_DESCRIPTION3 = "Advisory discovery tool for skills. Queries installed Pantheon skills and external registries (Anthropic catalog, skills.sh, GitHub). Returns matched skill IDs, descriptions, install counts, and provenance tiers. Zeus uses this to recommend project-scoped skills (.agents/skills/) before proactively prompting the user via the question tool.";
 var SKILL_SEARCH_INPUT_SCHEMA = {
   type: "object",
@@ -14048,7 +14122,7 @@ var SKILL_SEARCH_INPUT_SCHEMA = {
     }
   }
 };
-function executeSkillSearch(input) {
+function executeSkillSearch(input, options = {}) {
   const query = typeof input.query === "string" ? input.query.trim() : "";
   if (query.length === 0) {
     return { ok: false, query: "", count: 0, results: [], failures: ["query must be non-empty"] };
@@ -14064,10 +14138,12 @@ function executeSkillSearch(input) {
   );
   const results = [];
   const failures = [];
+  const cwd = options.cwd ?? process.cwd();
+  const installedMap = scanInstalledSkills(cwd);
   if (sources.has("installed")) {
     const tokens = query.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 2);
     if (tokens.length > 0) {
-      for (const entry of PANTHEON_SKILL_CATALOG) {
+      for (const entry of installedMap.values()) {
         const idLower = entry.id.toLowerCase();
         const descLower = entry.description.toLowerCase();
         const matchScore = tokens.reduce((score, t) => {
@@ -14081,7 +14157,9 @@ function executeSkillSearch(input) {
             source: "installed",
             installed: true,
             installs: null,
-            installCommand: null
+            installCommand: null,
+            path: entry.path,
+            scope: entry.scope
           });
         }
       }
@@ -14100,15 +14178,21 @@ function executeSkillSearch(input) {
       }
       if (Array.isArray(extRes.entries)) {
         for (const entry of extRes.entries) {
-          results.push({
+          const bareName = (entry.skill.includes("@") ? entry.skill.split("@")[1] : entry.skill).toLowerCase();
+          const isInstalled = installedMap.has(entry.skill.toLowerCase()) || installedMap.has(bareName);
+          const installedRecord = installedMap.get(entry.skill.toLowerCase()) || installedMap.get(bareName);
+          const pushItem = {
             skill: entry.skill,
             description: entry.skill,
             source: entry.source,
-            installed: false,
+            installed: isInstalled,
             installs: entry.installs ?? null,
-            url: entry.url,
-            installCommand: `npx skills add ${entry.skill} -a opencode -y`
-          });
+            ...entry.url ? { url: entry.url } : {},
+            installCommand: isInstalled ? null : `npx skills add ${entry.skill} -a opencode -y`,
+            path: isInstalled && installedRecord ? installedRecord.path : null,
+            ...isInstalled && installedRecord ? { scope: installedRecord.scope } : {}
+          };
+          results.push(pushItem);
         }
       }
     } catch (err) {
@@ -14132,9 +14216,12 @@ function createV2SkillSearchDefinition() {
     description: TOOL_DESCRIPTION3,
     input: SKILL_SEARCH_INPUT_SCHEMA,
     output: {},
-    execute: async (input) => ({
-      output: JSON.stringify(executeSkillSearch(input), null, 2)
-    })
+    execute: async (input, context) => {
+      const cwd = context?.directory || process.cwd();
+      return {
+        output: JSON.stringify(executeSkillSearch(input, { cwd }), null, 2)
+      };
+    }
   };
 }
 

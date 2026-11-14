@@ -2,9 +2,9 @@
 
 This roadmap records customer-visible themes, maintenance boundaries, and readiness conditions for stable releases. Internal tracking identifiers, per-item evidence bundles, and per-commit history are intentionally not part of this page.
 
-## Current State: 2.1.x Stable (v2.1.4)
+## Current State: 2.1.x Stable (v2.1.5)
 
-The `2.1.x` release series delivered the canonical Deepwork plan architecture, interactive native Question Gate enforcement, unrestricted `.pantheon/` and worktree access for analytical agents, bilingual documentation portals, live session Todo synchronization, observable test slicing, and workspace auto-permissions.
+The `2.1.x` release series delivered the canonical Deepwork plan architecture, interactive native Question Gate enforcement, unrestricted `.pantheon/` and worktree access for analytical agents, bilingual documentation portals, live session Todo synchronization, observable test slicing, risk-based validation protocols, unified local/external skill discovery, and workspace auto-permissions.
 
 See [Compatibility](docs/COMPATIBILITY.md) for supported hosts and the [releases page](https://github.com/ils15/pantheon-opencode/releases) for published packages.
 
@@ -25,6 +25,10 @@ Active development on the `2.1.x` line focuses on operational smoothness and dev
    - Enforced CLI execution mandate in agent instructions: CLI utilities (`opencode-quota`, `git`, `npm`, `node`, `pytest`, `cargo`, `bash`) must run via `shell`/`bash`, not JavaScript eval.
    - Added anti-panic rule forbidding speculative recursive `glob`/`grep` in `~/.config` on execution errors.
    - Whitelisted `opencode-quota` in auto-permissions `SAFE_DEV_BINARIES` and installer bash permissions.
+3. **Unified Skill Discovery & Local/External Coexistence**
+   - Upgraded `pantheon_skill_search` with dynamic filesystem scanning (`scanInstalledSkills`), discovering project skills in `.opencode/skills/` and `.agents/skills/`, global skills, and internal Pantheon built-in skills.
+   - Skill search results report `path`, `scope` (`internal | project | global`), and mark already-downloaded skills as `installed: true` with zero-network instant discovery.
+   - Zeus coordination briefs include explicit skill paths (`Skill: <name> (Path: .opencode/skills/<name>/SKILL.md)`) and mandate specialist reading of `SKILL.md` prior to code generation.
 
 ### 2.1.4 Deliveries & Hardening
 1. **Global Install Hygiene & PATH Shadowing Detection (Issue #424)**

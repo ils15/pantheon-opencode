@@ -164,7 +164,7 @@ See `skill: tdd-with-agents` for the full TDD cycle.
 
 ## Implementation & Verification Workflow
 
-1. **Focused Context**: Inspect targeted files directly using `grep`, `glob`, and `read`.
+1. **Focused Context**: Inspect targeted files directly using `grep`, `glob`, and `read`. When the brief specifies a skill (or a relevant project skill exists in `.opencode/skills/`), **read its `SKILL.md` first** before implementing.
 2. **Implementation**: Implement clean async endpoints and services using Pydantic schemas, dependency injection, and parameterized queries.
 3. **Verification**: Run focused unit tests via `bash` using test slicing (e.g. `pytest tests/test_item.py -k test_create -q --tb=short`). Never run full unbounded repository suites during implementation loops.
 4. **Dependencies**: Use modern stdlib equivalents (`zoneinfo`, `tomllib`) where applicable; pin stable LTS versions.
