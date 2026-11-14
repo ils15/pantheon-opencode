@@ -27,8 +27,7 @@ export function formatFrontmatter(agent) {
 
   if (agent.name) lines.push(`name: ${agent.name}`)
   if (agent.description) {
-    const desc = agent.description.replace(/"/g, '\\"')
-    lines.push(`description: "${desc}"`)
+    lines.push(`description: ${JSON.stringify(agent.description)}`)
   }
   if (agent.mode) lines.push(`mode: ${agent.mode}`)
   if (agent.reasoning_effort) lines.push(`reasoning_effort: ${agent.reasoning_effort}`)
