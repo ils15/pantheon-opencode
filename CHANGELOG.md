@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+<!-- Add new changes here.
+     Canonical sections (docs/RELEASING.md): ### 🆕 What's New (curated highlights, ≤6 bullets ≤140 chars) →
+     ### Added / Changed / Deprecated / Removed / Fixed / Security → ### ⚠️ Known Issues / ### ✅ Closed Issues.
+     `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
+     Running apply will move this section to a versioned entry and reset the template below. -->
+
+## [v2.1.4] - 2026-11-14
+
 ### 🆕 What's New
 
 - **Global Install Shadowing (#424)**: Doctor check (H2b) detects multiple global binaries, dangling symlinks, and prefix skew.
@@ -30,12 +38,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - #440 - auto-discover OpenCode session ID for vision_describe
 - #441 - enforce .git and node_modules exclusion in auto-permissions and guards
 - #442 - reorder test-name-pattern filter before file path in test:slice
-
-<!-- Add new changes here.
-     Canonical sections (docs/RELEASING.md): ### 🆕 What's New (curated highlights, ≤6 bullets ≤140 chars) →
-     ### Added / Changed / Deprecated / Removed / Fixed / Security → ### ⚠️ Known Issues / ### ✅ Closed Issues.
-     `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
-     Running apply will move this section to a versioned entry and reset the template below. -->
 
 ## [v2.1.3] - 2026-11-14
 
