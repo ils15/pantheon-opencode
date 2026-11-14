@@ -30,25 +30,18 @@ try {
   })
   built = true
 } catch {
-  // Fallback to cached or binary esbuild
-  const possibleBins = [
-    join(root, 'node_modules', '.bin', 'esbuild'),
-    '/home/ils15/.npm/_npx/0c9ac6e560028c15/node_modules/esbuild/bin/esbuild',
-    '/home/ils15/.npm/_npx/fd45a72a545557e9/node_modules/esbuild/bin/esbuild',
-  ]
-  for (const bin of possibleBins) {
-    if (existsSync(bin)) {
-      execFileSync(bin, [
-        entry,
-        `--outfile=${outfile}`,
-        '--bundle',
-        '--platform=node',
-        '--format=esm',
-        '--packages=external',
-      ])
-      built = true
-      break
-    }
+  // Fallback to local node_modules binary
+  const localBin = join(root, 'node_modules', '.bin', 'esbuild')
+  if (existsSync(localBin)) {
+    execFileSync(localBin, [
+      entry,
+      `--outfile=${outfile}`,
+      '--bundle',
+      '--platform=node',
+      '--format=esm',
+      '--packages=external',
+    ])
+    built = true
   }
 }
 

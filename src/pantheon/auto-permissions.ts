@@ -35,7 +35,14 @@ export interface AutoPermissionOptions {
 }
 
 export interface AutoPermissionResult {
-  decision: 'allow' | 'deny' | 'preserve-deny' | 'preserve-allow' | 'passthrough' | 'disabled'
+  decision:
+    | 'allow'
+    | 'deny'
+    | 'preserve-deny'
+    | 'preserve-allow'
+    | 'passthrough'
+    | 'disabled'
+    | 'unconstrained-suite'
   reason?: string
 }
 
