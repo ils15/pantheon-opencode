@@ -17,8 +17,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### 🆕 What's New
 
-- **Observable & Enforceable Test Slicing (Issue #437)**: Added `test:slice` command with repo-first selector discovery, duration tracking, and auto-permission guard.
-- **Workspace Auto-Permissions**: Intelligent scope governance eliminates confirmation prompt fatigue while preserving strict security boundaries.
+- **Enforceable Test Slicing (#437)**: Added `test:slice` with selector discovery, duration tracking, and loop interception.
+- **Workspace Auto-Permissions**: Scope governance auto-approves safe commands while preserving strict security boundaries.
 - **Complete Todo Suite**: Activated `todoread` alongside `todowrite` with real-time TUI sidebar synchronization.
 - **Declarative Agent Roster**: Centralized manifest `src/agents/roster.json` mechanically compiling all 14 specialist prompts.
 - **Runtime Bug Fixes**: Added `shell` tool alias for OpenCode `bash` and removed wildcard restrictions in `zeusReadGuard`.
