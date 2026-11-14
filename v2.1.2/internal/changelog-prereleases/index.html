@@ -1,0 +1,3891 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Multi-agent orchestration framework for OpenCode — 14 specialized agents and 25 skills">
+      
+      
+      
+        <link rel="canonical" href="https://ils15.github.io/pantheon-opencode/v2.1.2/internal/changelog-prereleases/">
+      
+      
+      
+      
+        
+          <link rel="alternate" href="/pantheon-opencode/latest/" hreflang="en">
+        
+          <link rel="alternate" href="/pantheon-opencode/latest/pt-BR/" hreflang="pt">
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+    
+    
+      
+        <title>Changelog prereleases - Pantheon</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#pre-release-changelog-160-beta" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Pantheon" class="md-header__button md-logo" aria-label="Pantheon" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Pantheon
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Changelog prereleases
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="Select language">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m12.87 15.07-2.54-2.51.03-.03A17.5 17.5 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2zm-2.62 7 1.62-4.33L19.12 17z"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="/pantheon-opencode/latest/" hreflang="en" class="md-select__link">
+              English
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="/pantheon-opencode/latest/pt-BR/" hreflang="pt" class="md-select__link">
+              Português (Brasil)
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ils15/pantheon-opencode" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../INSTALLATION/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../guides/first-project/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Guides & Tutorials
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../COMPATIBILITY/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Compatibility
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../ARCHITECTURE/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Architecture
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../agents/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Agents & Skills
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../PERMISSIONS-QUALITY-DELEGATION/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Permissions, Gates & Delegation
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../opencode/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  OpenCode 2.x
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../MCP/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  MCP
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../mcp-tools/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  MCP Tools
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../MEMORY/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Memory
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../PLATFORMS/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Platforms
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/model-routing/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../RELEASING/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Release Process
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../BRANCH-PROTECTION/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Branch Protection
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../pt-BR/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Documentação (Português)
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="https://github.com/ils15/pantheon-opencode/blob/main/CONTRIBUTING.md" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Contributing
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Pantheon" class="md-nav__button md-logo" aria-label="Pantheon" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Pantheon
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ils15/pantheon-opencode" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../INSTALLATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../QUICKSTART/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../UPGRADING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Upgrading
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../UPGRADING.pt-BR/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Upgrading (Português)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides & Tutorials
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides & Tutorials
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/first-project/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Project (End-to-End)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/cli-tool/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fast CLI Utility (@talos)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../AGENT-CAPABILITY-MATRIX/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Capability Matrix
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/deepwork/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deepwork Blueprint
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/vision/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pantheon Vision
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/cookbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Practical Cookbook
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../COMPATIBILITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ARCHITECTURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents & Skills
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../PERMISSIONS-QUALITY-DELEGATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Permissions, Gates & Delegation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../opencode/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenCode 2.x
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../MCP/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MCP
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mcp-tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MCP Tools
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../MEMORY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../PLATFORMS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Platforms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_13" >
+        
+          
+          <label class="md-nav__link" for="__nav_13" id="__nav_13_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_13_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_13">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/model-routing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Routing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/local-decision-router/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Decision Router
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/native-decisions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native Decisions (Jev)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/offline-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Offline Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/performance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/skill-search-design/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Skill Search Design
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/env-vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment Variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/code-mode/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Code Mode
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_14" >
+        
+          
+          <label class="md-nav__link" for="__nav_14" id="__nav_14_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release Process
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_14_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_14">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Release Process
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../RELEASING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release Process
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v1.6.0/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v1.6.0 Release Notes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../BRANCH-PROTECTION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Branch Protection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_16" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../pt-BR/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Documentação (Português)
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_16" id="__nav_16_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_16_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_16">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Documentação (Português)
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_16_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_16_2" id="__nav_16_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Começando
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_16_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_16_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Começando
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/QUICKSTART/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Início Rápido
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/INSTALLATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Instalação
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../UPGRADING.pt-BR/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Upgrading (Português)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_16_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_16_3" id="__nav_16_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guias & Tutoriais
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_16_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_16_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guias & Tutoriais
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/guides/first-project/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Primeiro Projeto (Ponta a Ponta)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/guides/cli-tool/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Utilitário CLI (@talos)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/AGENT-CAPABILITY-MATRIX/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Matriz de Agentes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/guides/deepwork/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blueprint Deepwork
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/guides/vision/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visão Multimodal
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/guides/cookbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Livro de Receitas (Cookbook)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_16_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_16_4" id="__nav_16_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sistema & Ferramentas
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_16_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_16_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Sistema & Ferramentas
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/ARCHITECTURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Arquitetura
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/COMPATIBILITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibilidade
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/MCP/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Servidores MCP
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/MEMORY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memória
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_16_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_16_5" id="__nav_16_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Governança & Release
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_16_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_16_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Governança & Release
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/RELEASING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Processo de Release
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/BRANCH-PROTECTION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Proteção da Branch main
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://github.com/ils15/pantheon-opencode/blob/main/CONTRIBUTING.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#v160-beta18-2026-10-22" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [v1.6.0-beta.18] - 2026-10-22
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v160-beta17-2026-10-21" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [v1.6.0-beta.17] - 2026-10-21
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#whats-new" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🆕 What's New
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fixed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🐞 Fixed
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#known-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ⚠️ Known Issues
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#closed-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ✅ Closed Issues
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v160-beta15-2026-10-19" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [v1.6.0-beta.15] - 2026-10-19
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#whats-new_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🆕 What's New
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fixed_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🐞 Fixed
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v160-beta14-2026-10-17" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [v1.6.0-beta.14] - 2026-10-17
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#whats-new_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🆕 What's New
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fixed_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🐞 Fixed
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v160-beta13-2026-10-17" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [v1.6.0-beta.13] - 2026-10-17
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#whats-new_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🆕 What's New
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fixed_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🐞 Fixed
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v160-beta12-2026-10-17" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [v1.6.0-beta.12] - 2026-10-17
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#whats-new_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🆕 What's New
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fixed_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🐞 Fixed
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v160-beta11-2026-10-15" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [v1.6.0-beta.11] - 2026-10-15
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#whats-new_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🆕 What's New
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fixed_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🐞 Fixed
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v160-beta10-2026-10-12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [v1.6.0-beta.10] - 2026-10-12
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#whats-new_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🆕 What's New
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v160-beta9-2026-10-12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [v1.6.0-beta.9] - 2026-10-12
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#whats-new_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🆕 What's New
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fixed_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🐞 Fixed
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#known-issues_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ⚠️ Known Issues
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v160-beta8-2026-10-11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [v1.6.0-beta.8] - 2026-10-11
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fixed_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🐞 Fixed
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v160-beta7-2026-10-10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [v1.6.0-beta.7] - 2026-10-10
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#whats-new_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🆕 What's New
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fixed_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🐞 Fixed
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#known-issues_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ⚠️ Known Issues
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v160-beta6-2026-10-05" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [v1.6.0-beta.6] - 2026-10-05
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#whats-new_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🆕 What's New
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fixed_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🐞 Fixed
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v160-beta5-2026-10-05" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [v1.6.0-beta.5] - 2026-10-05
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#whats-new_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🆕 What's New
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fixed_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🐞 Fixed
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#known-issues_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ⚠️ Known Issues
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#closed-issues_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ✅ Closed Issues
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v160-beta4-2026-10-03" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [v1.6.0-beta.4] - 2026-10-03
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#whats-new_11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🆕 What's New
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fixed_11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🐞 Fixed
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#known-issues_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ⚠️ Known Issues
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v160-beta3-2026-10-03" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [v1.6.0-beta.3] - 2026-10-03
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#whats-new_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🆕 What's New
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fixed_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🐞 Fixed
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#known-issues_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ⚠️ Known Issues
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#closed-issues_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ✅ Closed Issues
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v160-beta2-2026-10-02" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [v1.6.0-beta.2] - 2026-10-02
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#whats-new_13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🆕 What's New
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fixed_13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🐞 Fixed
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#known-issues_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ⚠️ Known Issues
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v160-beta1-2026-09-30" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [v1.6.0-beta.1] - 2026-09-30
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#whats-new_14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🆕 What's New
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fixed_14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🐞 Fixed
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#archive-notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Archive notes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/ils15/pantheon-opencode/edit/main/docs/internal/changelog-prereleases.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<blockquote>
+<p>Internal engineering record — not user guidance.</p>
+</blockquote>
+<h1 id="pre-release-changelog-160-beta">Pre-release Changelog (1.6.0-beta.*)<a class="headerlink" href="#pre-release-changelog-160-beta" title="Permanent link">&para;</a></h1>
+<p>These sections were moved verbatim from <code>CHANGELOG.md</code>, newest first. Dates and order are unchanged.</p>
+<h2 id="v160-beta18-2026-10-22">[v1.6.0-beta.18] - 2026-10-22<a class="headerlink" href="#v160-beta18-2026-10-22" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Persistence goal-schema initialization and migration guidance:</strong> a pristine
+  project database now starts with both checkpoint and goal schemas; startup
+  does not add goal DDL to an existing database. Existing-DB migration is only
+  for users who want manual goal tools. When the schema is absent, the goal tools
+  themselves return the exact migration command. User-facing guidance covers
+  dry-run first, a stopped server, target confirmation, and verified <code>0600</code>
+  backups.</li>
+</ul>
+<h2 id="v160-beta17-2026-10-21">[v1.6.0-beta.17] - 2026-10-21<a class="headerlink" href="#v160-beta17-2026-10-21" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Persistence MCP reduced to six registered tools:</strong> only <code>context_save</code>,
+  <code>context_get</code>, and the four <code>goal_*</code> tools remain exposed; the twelve KV and
+  context-management tools were unregistered while internal SQLite KV helpers
+  remain for checkpoint storage. Goal tools are Zeus-only because goals are
+  session-scoped and cannot be read across sessions, so Athena/Themis cannot
+  read Zeus's goal or create one in their own root session.</li>
+<li><strong>Phase 7 — Memory search error contract:</strong> <code>memory_search</code> now returns a
+  typed, sanitized error when the memory store cannot be read instead of an
+  empty list; an empty result now means nothing matched. All-stopword queries
+  previously fell back to a literal FTS match and now return no results, making
+  the behavior uniform with queries whose stopwords are dropped.</li>
+<li><strong>Phase 8 — Memory MCP packaging:</strong> <code>scripts/memory_mcp.py</code> is now a thin shim
+  delegating to canonical <code>src/mcp/memory_mcp.py</code>, removing the stale divergent
+  copy; the sync test now asserts that their registered tool lists are equal.</li>
+</ul>
+<h2 id="whats-new">🆕 What's New<a class="headerlink" href="#whats-new" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>V1 goal tools soft-deprecated:</strong> <code>pantheon_goal_create</code>,
+  <code>pantheon_goal_update</code>, and <code>pantheon_goal_get</code> remain available with
+  unchanged behavior, but stored legacy goals are not automatically continued
+  in the current build. The durable manual replacement is the Persistence MCP
+  <code>goal_*</code> surface available in this branch. Tool removal is deferred to a
+  future release and requires explicit human approval.</li>
+</ul>
+<h2 id="fixed">🐞 Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Disabled goal loop does not suppress idle enforcement:</strong> <code>hasActiveGoal</code>
+  now returns false while the loop is disabled, so stored legacy goals do not
+  prevent the todo enforcer from receiving idle events.</li>
+<li><strong>Empty child-dispatch result is an explicit error:</strong> an empty result returned by a child dispatch is now surfaced as an error instead of being passed through as a normal result.</li>
+</ul>
+<h2 id="known-issues">⚠️ Known Issues<a class="headerlink" href="#known-issues" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong><code>pantheon_cost</code> aggregates by agent and phase:</strong> V1 reports both dimensions; V2 reports the literal phase <code>unknown</code>. The shipped tool has no per-session, per-model, per-provider or USD dimension; per-session aggregation exists only in the unpublished benchmark harness.</li>
+<li><strong>An empty child result can arrive as a completed call:</strong> the host supplies the placeholder <code>Subagent completed without a text response.</code>; Pantheon’s guard replaces the payload with its explicit error text, while the host’s completed status remains unchanged.</li>
+<li><strong>A user <code>opencode.jsonc</code> can change the effective plugin set:</strong> the host merges <code>opencode.json</code> with a sibling <code>opencode.jsonc</code> (scalars from <code>.jsonc</code> win, arrays are unioned), and Pantheon registers its plugin only in <code>opencode.json</code>.</li>
+</ul>
+<h2 id="closed-issues">✅ Closed Issues<a class="headerlink" href="#closed-issues" title="Permanent link">&para;</a></h2>
+<h2 id="v160-beta15-2026-10-19">[v1.6.0-beta.15] - 2026-10-19<a class="headerlink" href="#v160-beta15-2026-10-19" title="Permanent link">&para;</a></h2>
+<h2 id="whats-new_1">🆕 What's New<a class="headerlink" href="#whats-new_1" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Safe memory handoffs and agent contracts:</strong> delegation briefs can pass
+  minimized, non-sensitive memory references and takeaways as untrusted context;
+  return formats and discovery/review routing are clarified across agent roles.</li>
+<li><strong>Optional per-session token breakdowns:</strong> benchmark reports can show root and
+  descendant usage when session data is complete; incomplete data remains
+  unavailable rather than being zero-filled.</li>
+</ul>
+<h2 id="fixed_1">🐞 Fixed<a class="headerlink" href="#fixed_1" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Empty task/subagent results:</strong> empty child-dispatch results are surfaced as
+  explicit errors while non-empty structured results remain intact.</li>
+</ul>
+<h2 id="v160-beta14-2026-10-17">[v1.6.0-beta.14] - 2026-10-17<a class="headerlink" href="#v160-beta14-2026-10-17" title="Permanent link">&para;</a></h2>
+<p><em>Published manually to npm on 2026-10-17; source commit and tag unknown.</em></p>
+<h2 id="whats-new_2">🆕 What's New<a class="headerlink" href="#whats-new_2" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Installer model profiles:</strong> choose Inherit, OpenCode Go (hybrid), OpenAI, or
+  Anthropic. Inherit leaves the active preset unset; OpenCode Go combines the
+  premium lineup for Zeus, Athena, Themis, and Hephaestus with the Go lineup for
+  other agents. Existing <code>go-free</code>, <code>go-fast</code>, and <code>go-premium</code> preset IDs remain
+  available for compatibility.</li>
+<li><strong>Anthropic key guidance:</strong> the profile identifies <code>ANTHROPIC_API_KEY</code> as the
+  required environment variable. The installer does not collect or inspect API
+  keys; configure the key in your environment.</li>
+<li><strong>Modernized installer progress and terminal safety:</strong> Clack spinners are used
+  in interactive TTYs, with readable output in headless/non-TTY runs. Canceling
+  or selecting no components stops safely without writes; <code>--no-mcp</code> continues
+  to exclude runtime, and <code>--yes</code> does not override an explicit decline.</li>
+<li><strong>Proportional delegation guidance:</strong> prompts now route bounded work directly
+  to the relevant specialist and call for planning, broad discovery, review, or
+  parallel work only when the request, uncertainty, dependencies, or risk
+  warrant it.</li>
+</ul>
+<h2 id="fixed_2">🐞 Fixed<a class="headerlink" href="#fixed_2" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Reduce duplicated CI work:</strong> plugin V2 coverage now measures one focused
+  TypeScript contract test while retaining its required 80% line-coverage
+  threshold. The hook canary has one CI owner (<code>test:node</code>); its duplicate
+  standalone CI invocation was removed. This records the CI configuration
+  change, not a claim that the current CI run passed.</li>
+</ul>
+<h2 id="v160-beta13-2026-10-17">[v1.6.0-beta.13] - 2026-10-17<a class="headerlink" href="#v160-beta13-2026-10-17" title="Permanent link">&para;</a></h2>
+<h2 id="whats-new_3">🆕 What's New<a class="headerlink" href="#whats-new_3" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Modernize interactive TTY setup</strong> with <code>@clack/prompts</code> while keeping the
+  existing component, install-location, authorization, and worktree guidance
+  choices. Canceling the setup wizard leaves configuration unchanged; headless,
+  <code>--yes</code>, dry-run, and non-TTY behavior remain available.</li>
+</ul>
+<h2 id="fixed_3">🐞 Fixed<a class="headerlink" href="#fixed_3" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Let npm finish on an unsupported Node runtime:</strong> postinstall now warns and
+  skips Node-dependent TUI/config sync, leaving the CLI to show its explicit
+  Node &gt;=26.4.0 hard gate and user-managed upgrade instructions.</li>
+<li><strong>Synchronize Beta 13 package and release metadata</strong> across manifests and
+  lockfiles without changing the Node &gt;=26.4.0 engine floor.</li>
+</ul>
+<h2 id="v160-beta12-2026-10-17">[v1.6.0-beta.12] - 2026-10-17<a class="headerlink" href="#v160-beta12-2026-10-17" title="Permanent link">&para;</a></h2>
+<h2 id="whats-new_4">🆕 What's New<a class="headerlink" href="#whats-new_4" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Raise the Node.js support floor to 26.4.0</strong> for the package, CLI, installer,
+  and Node-based tooling. This release drops Node 22, Node 24, and Node
+  26.0–26.3; the npm <code>beta</code> dist-tag remains the intended publication channel.</li>
+<li><strong>Clarify runtime boundaries:</strong> this package requirement is not a universal
+  OpenCode host-runtime claim. Official OpenCode V2.0.31 has a Bun runtime path
+  and a separate Node build pinned to 26.4.0; no Bun minimum is asserted.</li>
+<li><strong>Keep <code>node:sqlite</code> as a separate capability threshold:</strong> Node &gt;=22.5 may
+  provide the optional <code>pantheon_cost</code> backend, but does not imply package
+  support on that Node version.</li>
+<li><strong>Recommend a persistent external Git worktree location</strong> in interactive TTY
+  setup summaries and the shipped worktrees skill. This is guidance only;
+  Pantheon does not create worktrees or directories automatically.</li>
+</ul>
+<h2 id="fixed_4">🐞 Fixed<a class="headerlink" href="#fixed_4" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Synchronize Beta 12 version metadata and Node engine policy</strong> across package
+  manifests, locks, citation/release metadata, CLI guards, doctor, and CI.</li>
+</ul>
+<h2 id="v160-beta11-2026-10-15">[v1.6.0-beta.11] - 2026-10-15<a class="headerlink" href="#v160-beta11-2026-10-15" title="Permanent link">&para;</a></h2>
+<h2 id="whats-new_5">🆕 What's New<a class="headerlink" href="#whats-new_5" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>record final Beta 11 scope decisions</strong></li>
+<li><strong>record Setup delivery and final-gate lessons in roadmap</strong></li>
+<li><strong>forbid hook bypass in Iris commit contract</strong></li>
+<li><strong>add installer failure reporting and secret-safe output audit</strong></li>
+<li><strong>detect drift between installer plan and apply</strong></li>
+<li><strong>require explicit --yes authorization before installer apply</strong></li>
+<li><strong>exact installer backup set with restore</strong></li>
+<li><strong>add Beta 11 test-economy requirement to shared instructions</strong></li>
+<li><strong>preview per-file change set in installer dry-run</strong></li>
+<li><strong>reconcile Beta 11 roadmap status with completed phases</strong></li>
+<li><strong>describe pantheon_cost window and aggregation limits</strong></li>
+<li><strong>align lean-flow guidance and cost wording</strong></li>
+<li><strong>add project-scoped V2 model overrides</strong></li>
+<li><strong>align host tool and background contracts</strong></li>
+</ul>
+<h2 id="fixed_5">🐞 Fixed<a class="headerlink" href="#fixed_5" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>restore explicit "both" in zeus memory operations instruction</strong></li>
+<li><strong>correct council protocol and persistence bounds</strong></li>
+</ul>
+<h2 id="v160-beta10-2026-10-12">[v1.6.0-beta.10] - 2026-10-12<a class="headerlink" href="#v160-beta10-2026-10-12" title="Permanent link">&para;</a></h2>
+<h2 id="whats-new_6">🆕 What's New<a class="headerlink" href="#whats-new_6" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Visible plan approval:</strong> Zeus displays Athena's complete plan in the main
+  conversation before requesting approval, including for <code>/pantheon-deepwork</code>.</li>
+<li>
+<p><strong>OpenCode V2 Vision:</strong> adds <code>vision_describe</code> using the live image-capable
+  model catalog and OpenCode Zen authentication; relative image paths resolve
+  from the active project directory.</p>
+</li>
+<li>
+<p><strong>Menos contexto de instruções duplicadas no OpenCode V2:</strong> regras comuns
+  entre as instruções globais e de projeto são emitidas uma vez, preservando
+  regras exclusivas. Na medição intercalada do beta-10 com OpenCode v2.0.29, o
+  proxy de contexto do primeiro request caiu 11,8%; input total e latência de
+  parede permanecem inconclusivos.</p>
+</li>
+<li>
+<p><strong>Admissão segura de subagents no OpenCode V2:</strong> quando o host registra o
+  hook de permissões, Pantheon correlaciona o
+  agente, a sessão e o alvo do evento nativo <code>subagent</code> com o <code>source</code> da
+  avaliação de permissão, antes da criação da sessão filha. A matriz permite
+  Zeus→Apollo em uma sessão root e nega dispatches fora da matriz ou originados
+  em uma sessão filha. A canary isolada passou em 18/18 verificações no
+  OpenCode v2.0.29.</p>
+</li>
+</ul>
+<p>Evidência de F1 e F4A: <code>bench/results/f1-di-v229-interleaved-2026-10-14.md</code> e
+<code>bench/results/f4a-v229-admission-identity-2026-10-14.md</code>. O resultado de
+latência total e wall de F1 segue inconclusivo.</p>
+<ul>
+<li>
+<p><strong>Especialista explícito como root no V2 (F3a):</strong> no cenário one-shot B,
+  Talos iniciado explicitamente como agente root produziu o artefato correto
+  sem child em 5/5 runs na amostra inicial. Um recheck de integração posterior
+  encontrou 4/5; a instrução de Talos passou a exigir que arquivos pedidos
+  sejam realmente gravados com a ferramenta nativa. Uma nova coorte
+  pré-registrada passou em 5/5, sem children nem chamadas <code>subagent</code>. Nessa
+  coorte, o proxy de contexto do primeiro request foi 9.675 tokens para Talos
+  e 13.009 para Zeus (−25,6%, confirmado contra o spread intra-braço). Input
+  total e wall permanecem sem claim de ganho; não há claim de economia
+  monetária ou roteamento geral. O primeiro recheck e o follow-up são mantidos
+  separadamente em <code>bench/results/beta10-final-integration-2026-10-15.md</code> e
+  <code>bench/results/beta10-final-integration-followup-2026-10-15.md</code>; a evidência
+  inicial está em <code>bench/results/f3a-root-paired-2026-10-14.md</code>.</p>
+</li>
+<li>
+<p><strong>Leitura bounded no OpenCode V2:</strong> adiciona <code>pantheon_bounded_read</code> para
+  sessões root do Zeus, com aprovação nativa por arquivo, sem grant persistente,
+  limites de chamadas/arquivos/linhas/bytes e scanner de segredos fail-closed.
+  Validado no OpenCode v2.0.29; detalhes e limitações em
+  <code>bench/results/f3b-v229-bounded-read-2026-10-15.md</code>.</p>
+</li>
+</ul>
+<h2 id="v160-beta9-2026-10-12">[v1.6.0-beta.9] - 2026-10-12<a class="headerlink" href="#v160-beta9-2026-10-12" title="Permanent link">&para;</a></h2>
+<p>&lt;!-- Add new changes here. Running <code>node scripts/versioning.mjs apply</code> will
+     move this section to a versioned entry and reset the template below. --&gt;</p>
+<h2 id="whats-new_7">🆕 What's New<a class="headerlink" href="#whats-new_7" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Entry point TUI dedicado ao OpenCode V2.</strong> O pacote agora compila e instala
+  separadamente os loaders V1/V2, e adiciona <code>/pantheon-focus</code> para foco de
+  sessão sem depender das goal-tools ausentes no host V2.</li>
+</ul>
+<h2 id="fixed_6">🐞 Fixed<a class="headerlink" href="#fixed_6" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Instalação V2:</strong> agentes e slash commands de projeto são instalados nos
+  diretórios descobertos pelo host; o TUI seleciona o bundle da geração correta
+  e o estado dos componentes só é marcado como instalado após sucesso.</li>
+<li><strong><code>/pantheon-audit</code>:</strong> inclui o scanner heurístico no pacote e localiza a cópia
+  instalada antes de executar a primeira camada.</li>
+<li><strong><code>/pantheon-consolidate</code>:</strong> delega a consolidação ao agente Mnemosyne, dono
+  da qualidade do banco de memória.</li>
+</ul>
+<h2 id="known-issues_1">⚠️ Known Issues<a class="headerlink" href="#known-issues_1" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Sidebar V2 na sessão inicial:</strong> a captura do TUI recém-aberto ainda não
+  mostra o conteúdo Pantheon antes do primeiro prompt; validar o render inicial
+  interativo continua sendo um gate aberto para a beta.</li>
+<li><strong>Goal persistente no OpenCode V2:</strong> as goal-tools não fazem parte da
+  superfície V2 suportada; <code>/pantheon-focus</code> não substitui uma goal-tool
+  persistente/removível do host.</li>
+</ul>
+<h2 id="v160-beta8-2026-10-11">[v1.6.0-beta.8] - 2026-10-11<a class="headerlink" href="#v160-beta8-2026-10-11" title="Permanent link">&para;</a></h2>
+<p>&lt;!-- Add new changes here. Running <code>node scripts/versioning.mjs apply</code> will
+     move this section to a versioned entry and reset the template below. --&gt;</p>
+<h2 id="fixed_7">🐞 Fixed<a class="headerlink" href="#fixed_7" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>opencode-v2</strong> — repair session lookup and beta sandbox reuse</li>
+<li><strong>scripts</strong> — isolate beta background service port</li>
+</ul>
+<h2 id="v160-beta7-2026-10-10">[v1.6.0-beta.7] - 2026-10-10<a class="headerlink" href="#v160-beta7-2026-10-10" title="Permanent link">&para;</a></h2>
+<p>&lt;!-- Add new changes here. Running <code>node scripts/versioning.mjs apply</code> will
+     move this section to a versioned entry and reset the template below. --&gt;</p>
+<h2 id="whats-new_8">🆕 What's New<a class="headerlink" href="#whats-new_8" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Permissões MCP nativas por agente no OpenCode V1 e V2.</strong> O instalador
+  converte a allowlist <code>mcp_tools</code> de cada agente em regras nativas: nega por
+  padrão os servidores Pantheon omitidos, libera apenas as ferramentas
+  declaradas e preserva MCPs de terceiros. O V2 mantém os servidores
+  conectados; as regras limitam quais ferramentas cada agente vê.</li>
+<li><strong>Guarda V2 de delegação alinhada ao contrato de permissões.</strong> Os hooks de
+  permissão e de sessão aplicam as restrições de sessão somente-leitura e a
+  matriz caller→target sem conceder acesso além do configurado pelo host.</li>
+<li><strong>Menos chamadas automáticas de memória e compressão.</strong> A busca de contexto
+  do Zeus reutiliza o resultado de início de tarefa, e o protocolo de
+  compressão deixa de recomendar pipelines automáticos extensos.</li>
+<li><strong>Prova de identidade da instalação do sandbox.</strong> O teste global compara a
+  versão e arquivos do pacote instalado com este checkout e rejeita referências
+  npm antigas nas configurações ativas antes de validar o runtime.</li>
+<li>O <code>--prepare</code> agora gera <code>start-pantheon.sh</code> para abrir o TUI interativo com o
+  beta instalado e HOME, configuração XDG, projeto e banco de dados isolados do
+  sandbox. O launcher fixa a porta do serviço gerenciado em <code>49376</code> e falha sem
+  parar serviços existentes se a porta dedicada já estiver ocupada.</li>
+</ul>
+<h2 id="fixed_8">🐞 Fixed<a class="headerlink" href="#fixed_8" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Referências versionadas/alias do pacote Pantheon que sobravam na lista
+  <code>plugins</code> agora são reconhecidas pelo instalador e substituídas pelo caminho
+  do plugin local correto, sem afetar plugins de terceiros com nomes parecidos.</li>
+<li>A suíte CI foi separada do caminho crítico de instalação/empacotamento para
+  reduzir o tempo até o resultado das verificações do pacote.</li>
+<li>O <code>run-test.sh</code> gerado agora define seu timeout do <code>mcp list</code> antes do uso
+  sob <code>set -u</code>; antes, a variável ausente interrompia o teste antes de chamar
+  o CLI. A saída do comando também fica disponível quando o gate falha.</li>
+</ul>
+<h2 id="known-issues_2">⚠️ Known Issues<a class="headerlink" href="#known-issues_2" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>A delegação real ainda precisa de confirmação nesta beta.</strong> O teste manual
+  anterior de <code>HERMES-PONG</code> foi negado com
+  <code>Pantheon delegation denied: authoritative caller session is unavailable</code>;
+  a correção de permissões e a instalação isolada precisam ser verificadas no
+  TUI OpenCode V2 antes de considerar a delegação validada.</li>
+</ul>
+<h2 id="v160-beta6-2026-10-05">[v1.6.0-beta.6] - 2026-10-05<a class="headerlink" href="#v160-beta6-2026-10-05" title="Permanent link">&para;</a></h2>
+<p>&lt;!-- Add new changes here. Running <code>node scripts/versioning.mjs apply</code> will
+     move this section to a versioned entry and reset the template below. --&gt;</p>
+<h2 id="whats-new_9">🆕 What's New<a class="headerlink" href="#whats-new_9" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Política de suporte documentada: a linha 1.6.x é a ÚLTIMA compatível com OpenCode 1.X.</strong> A partir de <strong>1.7, toda release é breaking change com alvo em OpenCode 2.</strong> O limite está escrito no <code>README.md</code> (seção "Compatibility and support policy", com matriz de suporte) e em <code>docs/INSTALLATION.md</code> (seção "OpenCode V1/V2 — contrato de plugin"), não duplicado em um documento novo: os dois arquivos já eram o ponto de entrada do contrato de plugin, e um terceiro documento seria um terceiro lugar para divergir. O texto distingue as duas células da linha 1.6.x — a célula 1.X é o contrato V1 (6 tools, lifecycle do board, hooks V1, compaction V1) e a célula OpenCode 2 é o contrato V2, que é real porém <strong>menor</strong>: 3 tools, sem as <code>pantheon_goal_*</code> e sem a matriz de delegação caller→target. <strong>O suporte a OpenCode 2 na linha 1.6 é documentado como parcial, e não como completo</strong>, por duas razões verificadas: (a) o canário de ferramentas V2 foi escrito contra <code>opencode 2.0.22</code>, host que não é publicado em nenhum canal npm — contra o <code>@opencode-ai/cli</code> instalável o mesmo canário falha 12/12, porque <code>/api/experimental/session/{id}/wait</code> foi promovido para <code>/api/session/{id}/wait</code> (404 no caminho antigo) e <code>ctx.tool.list</code> não existe mais; corrigindo apenas a rota, 10/12 passam no mesmo host, o que caracteriza descasamento canário/host e não regressão medida do plugin (issue #216, PR #213); (b) não existe perna V1 de validação end-to-end — <code>scripts/test-opencode-v2-sandbox.sh</code> é V2-only e rejeita <code>--run v1</code> — portanto a versão exata de host 1.X exercitada end-to-end pela linha 1.6 fica registrada como <strong>não verificada</strong>, e o caminho 1.X é sustentado pelo pin de dependência (<code>@opencode-ai/plugin</code> / <code>@opencode-ai/sdk</code> <code>1.18.33</code>), pelos testes unitários do gate de geração e pelos testes end-to-end do installer sobre a config emitida.</li>
+</ul>
+<h2 id="fixed_9">🐞 Fixed<a class="headerlink" href="#fixed_9" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Os exemplos de chamada MCP nos arquivos de prompt ensinavam um contrato que não existe no schema real.</strong> Um <code>pantheon-persistence.kv_get</code> ao vivo foi rejeitado com <code>namespace: Missing key</code>; a linha que o produziu foi <code>src/agents/zeus.md:189</code> (<code>depth = kv_get("deleg:depth") ?? 0</code>), cuja cópia instalada em <code>~/.config/opencode/agents/zeus.md</code> é a que executou. A causa não era o servidor MCP: os arquivos de agente e de instrução ensinavam chamadas posicionais sem <code>namespace</code>, enquanto o schema real é <code>kv_get({ namespace /* obrigatório, sem default */, key, scope? })</code> — <code>kv_store.namespace</code> é igualmente obrigatório e <code>kv_store.value</code> é <code>str</code>. <strong>A correção está nos docs, e não em adicionar um <code>namespace</code> default:</strong> um default escreveria estado de coordenação no namespace errado silenciosamente, então <em>obrigatório</em> é o desenho correto. A mesma classe de defeito foi corrigida em <code>context_save</code> (posicional, com um helper <code>json()</code> inexistente e sem o <code>session_id</code> obrigatório → forma por palavra-chave com <code>content=JSON.stringify(...)</code>), em <code>memory_store</code> (<code>value</code> precisa ser uma string JSON codificada → agora iguala o padrão já correto de <code>metadata</code>, o que resolveu uma aut contradição no mesmo arquivo), na aritmética de profundidade (envolvida em <code>String(...)</code>, porque <code>kv_store.value</code> é <code>str</code> e não <code>int</code>) e em <code>memory_search(query, ...)</code> → <code>query=</code> em todas as instâncias. <code>AGENTS.md</code> é artefato gerado e foi reconstruído, nunca editado à mão.</li>
+<li><strong>Um bypass de permissão vivo: <code>edit: deny</code> não cobria <code>hashline_edit</code>.</strong> A regra <code>edit: deny</code> é avaliada por nome de ferramenta, e <code>hashline_edit</code> não é <code>edit</code> — então os agentes restritos a <code>edit: deny</code> (<code>zeus</code>, <code>athena</code>, <code>iris</code>, <code>nyx</code>, <code>themis</code>) podiam editar arquivos assim mesmo, escrevendo no disco por um caminho que a negação não cobria. <code>hashline_edit: deny</code> foi adicionado a esses cinco agentes. <strong>Não era uma condição de corrida nem um erro de configuração: era uma tabela de permissões incompleta</strong>, o que significa que a negação nunca esteve de fato aplicada a quem só deveria ler.</li>
+<li><strong><code>test:node</code> reportava sucesso tendo coletado zero testes.</strong> <code>node --test &lt;glob&gt;</code> sai com 0 quando o glob não expande (Node &gt;= 22), e foi exatamente o que aconteceu: um glob que nunca expandiu produziu um gate verde que não executou nada. Pior, <code>tests/</code> estava ausente da allow-list <code>files</code> do pacote, então um consumidor que rodasse <code>npm test</code> recebia esse verde. Agora os scripts de teste falham em voz alta quando a coleta é zero, e a guarda tem teste próprio (<code>tests/run-node-tests.test.mjs</code>) que a dirige como subprocesso — o contrato é o código de saída, então testá-la em processo não provaria nada.</li>
+</ul>
+<h2 id="v160-beta5-2026-10-05">[v1.6.0-beta.5] - 2026-10-05<a class="headerlink" href="#v160-beta5-2026-10-05" title="Permanent link">&para;</a></h2>
+<p>&lt;!-- Add new changes here. Running <code>node scripts/versioning.mjs apply</code> will
+     move this section to a versioned entry and reset the template below. --&gt;</p>
+<h2 id="whats-new_10">🆕 What's New<a class="headerlink" href="#whats-new_10" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>O gate de geração do plugin passa a ler a versão do host — e a superfície de ferramentas deixa de desaparecer num host OpenCode 2.x.</strong> O seletor de geração tinha três defaults <code>'v1'</code> (<code>bin/pantheon-init.mjs</code>, <code>scripts/install/opencode.mjs</code> e a assinatura do resolver em <code>scripts/install/opencode-version.mjs</code>). Nesse ramo, o installer grava caminhos de arquivo <code>.ts</code> na chave singular <code>plugin</code>; um host 2.x rejeita caminhos de arquivo ali (<code>configured plugin path must be a directory</code>), <strong>descarta</strong> as entradas e, ao fazer isso, <strong>remove</strong> a entrada de diretório V2 que já estava registrada e funcionando. O sintoma era um host aparentemente saudável — a frota MCP subia normalmente — com um único WARN no log e <strong>nenhuma</strong> ferramenta do plugin no catálogo: sem <code>pantheon_cost</code>, sem <code>hashline_edit</code>, sem <code>pantheon_model</code>, sem BackgroundJobBoard e sem hooks. Os três defaults passam a <code>'auto'</code>, e <code>auto</code> consulta a versão do host. Precedência: flag explícita &gt; <code>OPENCODE_VERSION</code> &gt; basename <code>opencode2</code> &gt; probe de <code>--version</code> &gt; aviso e fallback <code>v1</code>. Isto restaura as <strong>3</strong> ferramentas que o contrato V2 registra (<code>hashline_edit</code>, <code>pantheon_cost</code>, <code>pantheon_model</code>); não é paridade com o V1 — ver <strong>Issues Conhecidas</strong>.</li>
+<li><strong>Uma instalação na geração V2 e o <code>doctor</code> agora declaram a superfície reduzida em vez de deixá-la ser descoberta.</strong> A lista de recursos não suportados no V2 (<code>getUnsupportedFeatures()</code>) não tinha nenhum consumidor em produção — só testes a liam. O installer passa a imprimi-la ao lado do aviso de destino V2, e o <code>doctor</code> a reporta como um achado próprio, sem alterar o código de saída (uma instalação V2 é uma configuração suportada, não quebrada). A V2 registra 3 ferramentas, não 6, e não tem BackgroundJobBoard; as 3 ferramentas de goal não são registradas na V2 por desenho. O texto agora é único, vindo de <code>src/pantheon/v2-unsupported.mjs</code>.</li>
+<li><strong>Renomeação dos entrypoints MCP (issue #198).</strong> Os cinco entrypoints Python deixaram de compartilhar o token <code>server.py</code>, então um <code>pkill -f server.py</code> amplo não derruba mais a frota inteira como efeito colateral. Inclui uma migração em tempo de instalação para que as instalações existentes não fiquem órfãs.</li>
+<li><strong>O pacote npm deixou de versionar e distribuir a configuração pessoal de desenvolvimento do OpenCode.</strong> <code>opencode.json</code> e <code>.opencode/</code> (comandos, plugins e skills) saíram do controle de versão: a config carregava um endpoint MCP privado e overrides de permissão por desenvolvedor, e o harness V1 de comandos/plugins foi substituído por <code>src/plugin-v2.ts</code>. O <code>init</code> continua gerando a config do projeto do usuário, então instalações não são afetadas; para contribuidores, um <code>opencode.json</code> pessoal deve ir em <code>.git/info/exclude</code>.</li>
+<li><strong>Documentação: <code>ROADMAP.md</code> reescrito e um novo documento de fronteira.</strong> O roadmap foi reescrito com as causas-raiz verificadas, e um novo documento — <code>docs/PERMISSIONS-QUALITY-DELEGATION.md</code> — mapeia os gates de qualidade, as quatro camadas de permissão e a delegação num só lugar, marcando explicitamente o que ainda não foi verificado.</li>
+</ul>
+<h2 id="fixed_10">🐞 Fixed<a class="headerlink" href="#fixed_10" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>A leitura do banner de versão do host era quadrática.</strong> Um banner longo custava <strong>11,1 s</strong> para ser interpretado, contra o timeout de <strong>5 s</strong> do spawn de <code>--version</code>; o timeout guarda o processo, não a leitura, então um host verboso conseguia estourá-lo. A interpretação passou a ser <strong>linear</strong>.</li>
+<li><strong>O <code>readOnlyRegistry</code> do V2 não era podado no <code>session.deleted</code>.</strong> O registro é global ao processo e nunca era limpo quando uma sessão do V2 terminava, então entradas de sessões encerradas acumulavam. O <code>session.deleted</code> do V2 passa a podar o registro, como a V1 já fazia.</li>
+</ul>
+<h2 id="known-issues_3">⚠️ Known Issues<a class="headerlink" href="#known-issues_3" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Ação necessária: re-executar o <code>init</code> numa instalação afetada.</strong> O <code>postinstall</code> <strong>não</strong> roda o <code>init</code>. Quem teve a configuração corrompida por uma instalação <code>v1</code> anterior <strong>não</strong> é auto-corrigido apenas por atualizar o pacote — é preciso rodar o installer de novo (<code>npx pantheon-opencode init</code>). Uma escolha correta de geração <strong>auto-corrige</strong> a configuração (o ramo V2 já remove as referências <code>.ts</code> do V1), mas só quando o installer roda. O mesmo vale para a renomeação dos entrypoints: instalações existentes continuam funcionando porque os arquivos antigos são mantidos, mas os caminhos só são corrigidos numa nova execução do installer; até lá, esses usuários permanecem nos entrypoints antigos e sujeitos ao efeito colateral do <code>server.py</code>.</li>
+<li><strong>A superfície V2 é menor que a V1 por desenho.</strong> A V2 registra 3 ferramentas (<code>hashline_edit</code>, <code>pantheon_cost</code>, <code>pantheon_model</code>), não 6, e não tem BackgroundJobBoard; as 3 <code>pantheon_goal_*</code> são V1-only e a matriz de delegação caller→target não é replicada. O installer e o <code>doctor</code> agora <strong>dizem</strong> isso (ver What's New), mas a funcionalidade ausente não é restaurada.</li>
+<li><strong>O fallback continua a ser <code>v1</code>.</strong> Quando o probe do host falha, não consegue ser interpretado, ou traz versões contraditórias, o resolver avisa <strong>uma vez</strong> e cai para <code>v1</code>, em vez de arriscar um host 1.x com uma entrada <code>plugins</code> que ele ignoraria. É um erro alto e visível, mas ainda é uma queda para a configuração V1.</li>
+</ul>
+<h2 id="closed-issues_1">✅ Closed Issues<a class="headerlink" href="#closed-issues_1" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>A justificativa da matriz de delegação V1→V2 foi corrigida.</strong> O texto dizia que o V2 "não expõe esse caminho de semeadura"; os tipos do SDK refutam isso. A causa real da matriz não replicada não é a ausência de um caminho de semeadura (<code>session.created</code> do V2 traz <code>properties.info: Session</code> com <code>parentID?</code>, o mesmo campo que a V1 semeia), mas a <em>segunda</em> fonte da V1 — o seed de <code>client.session.list()</code> para sessões anteriores ao carregamento do plugin — porque o <code>PluginContext</code> do V2 não expõe <code>client</code>. Se um host 2.0.22 ao vivo popula <code>info.parentID</code> nesse evento continua <strong>não verificado</strong> (nenhum canário lê payload de evento). A linha publicada em <code>v1.6.0-beta.4</code> fica como registro.</li>
+</ul>
+<h2 id="v160-beta4-2026-10-03">[v1.6.0-beta.4] - 2026-10-03<a class="headerlink" href="#v160-beta4-2026-10-03" title="Permanent link">&para;</a></h2>
+<p>&lt;!-- Add new changes here. Running <code>node scripts/versioning.mjs apply</code> will
+     move this section to a versioned entry and reset the template below. --&gt;</p>
+<h2 id="whats-new_11">🆕 What's New<a class="headerlink" href="#whats-new_11" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Canário host-backed que dirige <code>hashline_edit</code> end-to-end</strong> (<code>tests/canary/plugin-v2-tool-canary.test.mjs</code>, 12 casos): carrega <code>src/plugin-v2.ts</code> pelo loader real do host <code>opencode 2.0.22</code> e registra <code>Object.keys(ctx)</code> de dentro do host — medidos, <code>tool</code>/<code>event</code>/<code>permission</code>/<code>session</code> existem e <code>catalog</code> não. É o primeiro gate que dirige uma ferramenta do Pantheon por um host real. O canário existente só dirige o <code>read</code> embutido, e foi por isso que <code>draft.add()</code> sem <code>output</code> sobreviveu 26 dias com todos os testes verdes.</li>
+<li><strong>Os quatro domínios que o SDK <code>@opencode-ai/plugin</code> não tipa</strong> (<code>tool</code>, <code>event</code>, <code>permission</code>, <code>session</code>) passaram a uma declaração estrutural local (<code>HostPluginContext</code>) e <strong>um</strong> cast documentado (<code>hostDomains()</code>), no lugar de seis <code>as unknown as Record&lt;string, unknown&gt;</code> que não verificavam tipo nenhum. Todo membro continua opcional e todo chamador reconferir antes de usar. A linha estável do SDK é <code>1.18.x</code> e não carrega o contrato do host — <code>1.18.34</code> (<code>latest</code>) é idêntica a <code>1.18.33</code>, então seguir o <code>dev</code> diário resolveria pior, não melhor.</li>
+</ul>
+<h2 id="fixed_11">🐞 Fixed<a class="headerlink" href="#fixed_11" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>pantheon_cost</code> respondia <code>CORRUPT_DATA</code> em <strong>toda</strong> chamada contra o host 2.0.22: exigia a tabela <code>message</code>, que não existe nesse banco. Os tokens de assistant <strong>estão</strong> legíveis em <code>session_message</code>. <strong>Não é renomeação:</strong> <code>session_message</code> tem coluna <code>data</code>, mas não tem a chave <code>role</code> dentro dela — <code>json_type(data,'$.role')</code> é nulo em <strong>0 de 40 307</strong> linhas válidas. O V1 marca turnos de assistant com <code>data.role</code>; o V2 marca pela <strong>coluna</strong> <code>type</code>. Trocar apenas o nome da tabela casaria com nada e devolveria <code>status: OK</code> em silêncio. A detecção passa a ser por <strong>presença de tabela</strong>, porque as duas famílias coexistem em bancos migrados.</li>
+<li><code>PANTHEON_OPENCODE_VERSION</code> nunca selecionou o schema: só mudava o <strong>nome do arquivo</strong>, e <code>opencode-v2.db</code> é o isolamento do sandbox via <code>OPENCODE_DB</code>, não um banco de host 2.x. A distinção v1/v2 é o <strong>schema detectado</strong>; a variável agora apenas restringe um conjunto já detectado e falha rápido quando pede uma família ausente.</li>
+<li><code>scripts/cost.mjs</code> duplicava o mesmo bug literal, com o mesmo assert — o fallback continuava morto. <code>probe-pantheon-cost.mjs</code> acompanha.</li>
+<li>O report agora <strong>declara a cobertura temporal</strong> que ele mediu (janela varrida, linha mais antiga), em vez de apresentar totais como se cobrissem meses.</li>
+</ul>
+<h2 id="known-issues_4">⚠️ Known Issues<a class="headerlink" href="#known-issues_4" title="Permanent link">&para;</a></h2>
+<ul>
+<li>O canário <strong>host-backed pula no CI</strong>: o runner não tem binário <code>opencode</code>. O skip é <strong>visível</strong> no log (<code>::notice</code>), e os dois casos sem host rodam incondicionalmente, com <code>PANTHEON_TOOL_CANARY_BIN</code> apontado para um caminho inexistente. Rodar de verdade exige um modo no script de sandbox — <strong>não feito</strong>.</li>
+<li>A cobertura de custo do banco v2 é de <strong>~8,3 dias</strong> nesta máquina (primeiro registro em 2026-09-25). O histórico v1 (~96 dias) fica num diretório irmão com nome de epoch, que <strong>não</strong> é contrato e por isso não é descoberto automaticamente. Quem quiser aponta <code>PANTHEON_COST_DB</code>.</li>
+<li><code>metadata.phase</code> nunca existiu em v1 nem em v2 — medido: 0 linhas de <code>session_message</code> têm <code>$.metadata.phase</code> nem <code>$.phase</code>. A coluna Phase sempre foi <code>unknown</code>. Não é regressão, é feature que nunca funcionou.</li>
+</ul>
+<h2 id="v160-beta3-2026-10-03">[v1.6.0-beta.3] - 2026-10-03<a class="headerlink" href="#v160-beta3-2026-10-03" title="Permanent link">&para;</a></h2>
+<p>&lt;!-- Add new changes here. Running <code>node scripts/versioning.mjs apply</code> will
+     move this section to a versioned entry and reset the template below. --&gt;</p>
+<h2 id="whats-new_12">🆕 What's New<a class="headerlink" href="#whats-new_12" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Três ferramentas V2 agora executam de verdade</strong>: <code>hashline_edit</code>,
+  <code>pantheon_cost</code> e <code>pantheon_model</code> rodam no host <code>opencode v2.0.x</code>. Antes
+  eram placeholders que declaravam sucesso sem fazer nada.</li>
+<li><strong>Enforcement de sessão read-only no caminho V2</strong>: <code>apollo</code> e <code>gaia</code> voltam
+  a ter escrita bloqueada, com o guard registrado no próprio plugin V2 — sem
+  depender de uma ponte que a instalação V2 não monta.</li>
+<li><strong>Varredura de segredos de alta confiança no caminho V2</strong>: o único hard block
+  de segurança que a V1 tinha, e que estava inerte por viver num plugin que a
+  instalação V2 não carrega, passa a rodar.</li>
+</ul>
+<h2 id="fixed_12">🐞 Fixed<a class="headerlink" href="#fixed_12" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>As 6 ferramentas de plugin do V2 falhavam em 100% das chamadas</strong>:
+  <code>hashline_edit</code>, <code>pantheon_cost</code> e <code>pantheon_model</code> lançavam
+  <code>Tool result declared output without an output schema</code> em toda invocação. A
+  causa era assimetria local — <code>draft.add()</code> não declarava <code>output</code> enquanto o
+  <code>execute</code> resolvia <code>{ output: string }</code>. O host exige simetria nos dois
+  sentidos: resultado com <code>output</code> e nenhuma declaração lança, assim como
+  declaração sem <code>output</code> no resultado. <code>output</code> passou a ser <strong>obrigatório</strong> na
+  interface <code>V2ToolDef</code>, então o compilador exige a declaração daqui em diante.</li>
+<li><strong>A suíte exigia o defeito</strong>: <code>tests/pantheon/plugin-v2-contract.test.ts</code>
+  afirmava que o resultado carregava <code>.output</code> string — literalmente a condição
+  de falha, contra um mock que não reproduzia a exigência do host. O teste foi
+  reescrito para o invariante de simetria, contra um mock que constrói o
+  <code>outputSchema</code> a partir de <code>def.output</code> como o host faz
+  (<code>output: I.outputSchema ?? {}</code>), cobrindo as duas direções do bicondicional.</li>
+<li><strong>A imposição read-only não existia na superfície V2</strong>: <code>createEnforcementGuard</code>
+  só era instanciado em <code>src/plugin.ts</code>, que o <code>opencode.json</code> da release não
+  declara — V2 nunca carrega V1. Com <code>hashline_edit</code> funcional, uma sessão
+  somente-leitura podia escrever arquivos. O guard passou a ser registrado no
+  hook <code>execute.before</code> do V2, e <code>pantheon_model</code> — que escreve
+  <code>active-preset.json</code> em escopo project e global — foi acrescentado a
+  <code>DEFAULT_BLOCKED_TOOLS</code>, o que corrige também a V1. <code>pantheon_cost</code> ficou de
+  fora de propósito: só lê <code>opencode.db</code>.</li>
+<li><strong>O único hard block de segurança da V1 estava inerte</strong>: o scan de segredos de
+  alta confiança vivia em <code>src/plugins/pantheon-hooks.ts</code>, um plugin que a
+  instalação V2 não carrega — inerte por construção, não por má configuração.
+  Passou a rodar dentro do <code>execute.before</code> do V2
+  (<code>scripts/hooks/scan-secrets.sh</code>; exit 2 bloqueia, exit 1 é advisory e só
+  registra). O caminho do script foi verificado a partir do tarball instalado,
+  não só do repo.</li>
+<li><strong>Cinco comentários afirmavam cobertura que não existe</strong> ("wired through the
+  V1…"). Corrigidos — é o defeito "anunciado como vivo, morto no caminho", a
+  mesma classe do bug original, transferida do tool para o controle de segurança.</li>
+</ul>
+<h2 id="known-issues_5">⚠️ Known Issues<a class="headerlink" href="#known-issues_5" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>A release entrega 3 ferramentas V2 funcionais, não 6</strong>:
+  <code>pantheon_goal_create</code>, <code>pantheon_goal_get</code> e <code>pantheon_goal_update</code> foram
+  <strong>removidos</strong> da superfície V2. <code>GoalLoopDeps</code> exige <code>store</code>, <code>client</code> e
+  <code>board</code>, que não existem no <code>PluginContext</code> V2, e a bridge V1 resolve para
+  <code>null</code> fora da V1. Registrá-las como placeholders não funcionais seria pior
+  que a ausência: anunciá-las seria mentira silenciosa. Marcador <code>goal-tools</code>
+  em <code>V2_UNSUPPORTED_FEATURES</code>. <strong>Breaking</strong> para quem usava esses tools no
+  host V2 — o contrato V1 permanece disponível para o goal loop.</li>
+<li><strong>A matriz de delegação nativa da V1 não é replicada na V2</strong>: o guard V2 cobre
+  a lista de ferramentas bloqueadas, mas não a matriz caller→target nem a negação
+  de <code>task</code> em sessão filha. A matriz precisa de uma hierarquia de sessões
+  semeada a partir dos metadados de sessão, e o V2 não expõe esse caminho de
+  semeadura — <code>SessionHierarchyRegistry.isRoot</code> reporta <code>true</code> para sessões
+  desconhecidas enquanto não semeada, então semeá-la pela metade negaria todo
+  <code>task()</code>. O branch é pulado em vez de negado indiscriminadamente. Marcador
+  <code>delegation-matrix</code>. <code>task</code> continua negada em sessão somente-leitura pela
+  lista de ferramentas bloqueadas, então a profundidade 2 se sustenta; o que
+  não existe é a matriz. Coberto por <code>experimental.subagent_depth</code> nesta
+  configuração, mas a garantia do plugin não existe.</li>
+<li><strong>O log do scan de segredos escreve só em <code>.pantheon/logs/hooks.log</code></strong>: o
+  <code>PluginContext</code> V2 não expõe <code>client</code> nem <code>directory</code>, então os canais de log
+  estruturado e de toast da V1 não existem nessa superfície. É menos
+  observabilidade, não menos bloqueio.</li>
+<li><strong>Falha de infraestrutura do scanner é fail-open por decisão</strong>: script ausente
+  ou timeout não bloqueiam. <code>runHook</code> nunca rejeita e um erro de infraestrutura
+  não deve negar chamadas não relacionadas. Ausência do script não bloqueia.</li>
+</ul>
+<h2 id="closed-issues_2">✅ Closed Issues<a class="headerlink" href="#closed-issues_2" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Drift de documentação no <code>README.pt-BR.md</code></strong>: a tabela de contrato de
+  runtime e o parágrafo de superfície listavam 6 ferramentas V2 e as 3 de goal,
+  que não estão registradas. Corrigido para 3 ferramentas, com a razão da
+  ausência e o ponto de imposição read-only.</li>
+<li><strong>Cinco comentários de falsa cobertura</strong> sobre a imposição read-only e o scan
+  de segredos.</li>
+<li><strong>Shim do loader JSON do ajv elevado a bootstrap de módulo</strong>: o patch de
+  <code>Module._extensions['.json']</code> era aplicado de dentro de <code>loadAjv()</code> e ficava
+  vivo durante todo o run, podendo vazar entre arquivos de teste e se manifestar
+  longe da causa. Agora instala, carrega e restaura em nível de módulo, antes de
+  qualquer corpo de teste, com <code>finally</code>.</li>
+</ul>
+<h2 id="v160-beta2-2026-10-02">[v1.6.0-beta.2] - 2026-10-02<a class="headerlink" href="#v160-beta2-2026-10-02" title="Permanent link">&para;</a></h2>
+<h2 id="whats-new_13">🆕 What's New<a class="headerlink" href="#whats-new_13" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong><code>steps</code> não é mais definido pelo Pantheon</strong>: removido dos 14 agentes em
+  <code>src/agents/</code>. No OpenCode 2 o campo é opcional e <strong>sem default</strong> — ausente
+  significa <strong>sem teto nativo</strong>. O host não impõe teto; o Pantheon estava
+  escrevendo um.</li>
+<li><strong>Instalador v2 remove <code>steps</code> residual</strong>: configs já instalados passam a ter
+  o <code>steps</code> apagado dos agentes gerenciados. Escopo restrito aos agentes que o
+  Pantheon gerencia — um agente definido pelo usuário nunca é tocado. O bloco V1
+  singular <code>agent</code> é deliberadamente intocado (V1 em retirada).</li>
+<li><strong>Substitutos ao teto</strong>: <code>task(background=true)</code> para trabalho fora da
+  foreground, <code>experimental.subagent_depth</code> para aninhamento de subagentes e
+  paralelismo entre delegações independentes.</li>
+<li><strong>Limpeza</strong>: <code>max_steps</code> e <code>max_compaction_items</code> removidos de
+  <code>src/routing.yml</code>. <code>loadRoutingMaxSteps</code> nunca teve um único import — 2
+  matches no repo (definição e typedef), ambos removidos.</li>
+</ul>
+<h2 id="fixed_13">🐞 Fixed<a class="headerlink" href="#fixed_13" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong><code>migrateV1toV2</code> descartava campos gerenciados</strong>: com os blocos <code>agent</code> (V1)
+  e <code>agents</code> (V2) coexistindo — o caso de qualquer config já instalado — o
+  spread raso fazia um substituir o outro por inteiro. Na ordem de chaves do
+  <code>opencode.json</code> real, o lado perdedor era o do usuário. Agora <strong>mescla</strong>: a
+  base é o bloco V2, os campos gerenciados do V1 sobrescrevem, e os campos do
+  usuário são preservados. Mesma semântica já usada em <code>install/opencode.mjs</code>.</li>
+<li><strong><code>docs/platforms/README.md</code> tinha tabela de step limits errada</strong>: 14 linhas
+  listando limites por agente, <strong>nenhum valor batendo</strong> com <code>src/agents/</code>.
+  Tabela removida e a seção reescrita.</li>
+</ul>
+<h2 id="known-issues_6">⚠️ Known Issues<a class="headerlink" href="#known-issues_6" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Permissões de agente</strong>: V1 usa <code>permission</code> e V2 usa <code>permissions</code>; ao mesclar esses blocos, a chave legada <code>permission</code> pode permanecer inerte ao lado de <code>permissions</code>.</li>
+<li><strong>Migração — rode o init uma vez</strong>: <code>npx pantheon-opencode init
+  --opencode-version=v2</code> <strong>uma única vez</strong> limpa o <code>steps</code> residual. Sem isso o
+  config instalado continua carregando o teto antigo.</li>
+<li><strong>O <code>.md</code> de agente instalado é sobrescrito no próximo sync</strong>: editar
+  <code>~/.config/opencode/agents/*.md</code> esperando persistência <strong>não funciona</strong>.
+  Comportamento <strong>pré-existente</strong>, não é regressão desta mudança — mas agora
+  está documentado para não ser reportado como uma.</li>
+<li><strong><code>steps</code> definido à mão num agente gerenciado é removido a cada install v2</strong>:
+  o instalador não distingue um valor que ele escreveu de um valor que você
+  escreveu (mesma chave, mesmo valor). Workaround: definir no frontmatter do
+  agente — e lembrar que ele <strong>também</strong> é sobrescrito no próximo sync.</li>
+</ul>
+<h2 id="v160-beta1-2026-09-30">[v1.6.0-beta.1] - 2026-09-30<a class="headerlink" href="#v160-beta1-2026-09-30" title="Permanent link">&para;</a></h2>
+<!-- Add new changes here. Running `node scripts/versioning.mjs apply` will
+     move this section to a versioned entry and reset the template below. -->
+
+<h2 id="whats-new_14">🆕 What's New<a class="headerlink" href="#whats-new_14" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>OpenCode 2</strong> — first Pantheon beta compatible with the OpenCode 2 plugin
+  contract.</li>
+<li><strong>memory</strong> — preserve SQLite FTS5/BM25 keyword search and the <code>code_*</code> codemap
+  tools.</li>
+</ul>
+<h2 id="fixed_14">🐞 Fixed<a class="headerlink" href="#fixed_14" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>memory</strong> — remove the legacy vector-memory scripts and embedding/KNN/RRF
+  path.</li>
+<li><strong>CI/release</strong> — keep validation fail-closed; expand <code>doctor</code> checks and add
+  the OpenCode 2 V2-only sandbox validator.</li>
+</ul>
+<hr />
+<h2 id="archive-notes">Archive notes<a class="headerlink" href="#archive-notes" title="Permanent link">&para;</a></h2>
+<p>No <code>v1.6.0-beta.16</code> tag or section exists in this repository. <code>v1.6.0-beta.14</code> has a section but no local tag. This archive holds 17 sections for the 16 local <code>v1.6.0-beta.*</code> tags.</p>
+
+
+
+
+
+
+
+  
+    
+  
+  
+    
+  
+
+
+  <aside class="md-source-file">
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Last update">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="October 23, 2026 17:12:49 UTC">October 23, 2026</span>
+  </span>
+
+    
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Created">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M14.47 15.08 11 13V7h1.5v5.25l3.08 1.83c-.41.28-.79.62-1.11 1m-1.39 4.84c-.36.05-.71.08-1.08.08-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8c0 .37-.03.72-.08 1.08.69.1 1.33.32 1.92.64.1-.56.16-1.13.16-1.72 0-5.5-4.5-10-10-10S2 6.5 2 12s4.47 10 10 10c.59 0 1.16-.06 1.72-.16-.32-.59-.54-1.23-.64-1.92M18 15v3h-3v2h3v3h2v-3h3v-2h-3v-3z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="October 23, 2026 17:12:49 UTC">October 23, 2026</span>
+  </span>
+
+    
+    
+    
+  </aside>
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/ils15/pantheon-opencode" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.indexes", "navigation.top", "search.highlight", "content.action.edit"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>

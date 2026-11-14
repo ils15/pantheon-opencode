@@ -1,0 +1,3899 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Multi-agent orchestration framework for OpenCode — 14 specialized agents and 25 skills">
+      
+      
+      
+        <link rel="canonical" href="https://ils15.github.io/pantheon-opencode/v2.1.2/reference/native-decisions/">
+      
+      
+        <link rel="prev" href="../local-decision-router/">
+      
+      
+        <link rel="next" href="../offline-evaluation/">
+      
+      
+        
+          <link rel="alternate" href="/pantheon-opencode/latest/" hreflang="en">
+        
+          <link rel="alternate" href="/pantheon-opencode/latest/pt-BR/" hreflang="pt">
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+    
+    
+      
+        <title>Native Decisions (Jev) - Pantheon</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#native-decisions-jev" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Pantheon" class="md-header__button md-logo" aria-label="Pantheon" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Pantheon
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Native Decisions (Jev)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+      <div class="md-header__option">
+  <div class="md-select">
+    
+    <button class="md-header__button md-icon" aria-label="Select language">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m12.87 15.07-2.54-2.51.03-.03A17.5 17.5 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2zm-2.62 7 1.62-4.33L19.12 17z"/></svg>
+    </button>
+    <div class="md-select__inner">
+      <ul class="md-select__list">
+        
+          <li class="md-select__item">
+            <a href="/pantheon-opencode/latest/" hreflang="en" class="md-select__link">
+              English
+            </a>
+          </li>
+        
+          <li class="md-select__item">
+            <a href="/pantheon-opencode/latest/pt-BR/" hreflang="pt" class="md-select__link">
+              Português (Brasil)
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</div>
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ils15/pantheon-opencode" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../INSTALLATION/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../guides/first-project/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Guides & Tutorials
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../COMPATIBILITY/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Compatibility
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../ARCHITECTURE/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Architecture
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../agents/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Agents & Skills
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../PERMISSIONS-QUALITY-DELEGATION/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Permissions, Gates & Delegation
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../opencode/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  OpenCode 2.x
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../MCP/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  MCP
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../mcp-tools/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  MCP Tools
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../MEMORY/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Memory
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../PLATFORMS/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Platforms
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../model-routing/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../RELEASING/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Release Process
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../BRANCH-PROTECTION/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Branch Protection
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../pt-BR/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Documentação (Português)
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="https://github.com/ils15/pantheon-opencode/blob/main/CONTRIBUTING.md" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Contributing
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Pantheon" class="md-nav__button md-logo" aria-label="Pantheon" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Pantheon
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ils15/pantheon-opencode" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../INSTALLATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../QUICKSTART/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../UPGRADING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Upgrading
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../UPGRADING.pt-BR/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Upgrading (Português)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides & Tutorials
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides & Tutorials
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/first-project/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Project (End-to-End)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/cli-tool/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fast CLI Utility (@talos)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../AGENT-CAPABILITY-MATRIX/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Capability Matrix
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/deepwork/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deepwork Blueprint
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/vision/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pantheon Vision
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/cookbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Practical Cookbook
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../COMPATIBILITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ARCHITECTURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents & Skills
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../PERMISSIONS-QUALITY-DELEGATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Permissions, Gates & Delegation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../opencode/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenCode 2.x
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../MCP/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MCP
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mcp-tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MCP Tools
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../MEMORY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../PLATFORMS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Platforms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_13" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_13" id="__nav_13_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_13_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_13">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../model-routing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Routing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../local-decision-router/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Decision Router
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native Decisions (Jev)
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native Decisions (Jev)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#setup-and-decision-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Setup and decision models
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Setup and decision models">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#container-jupyterhub-environments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Container &amp; JupyterHub Environments
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ready-to-copy-provider-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ready-to-copy provider examples
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-explicit-pantheon_jev_decide-tool" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The explicit pantheon_jev_decide tool
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#j1-risk-score-gate-shadow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        J1 risk-score gate (shadow)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#j2-skill-selection-scorecard-offline-harness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        J2 skill-selection scorecard (offline harness)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#j3-turn-complexity-escalation-shadow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        J3 turn-complexity escalation (shadow)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#j4-output-quality-scoring-advisory-on-demand" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        J4 output quality scoring (advisory, on demand)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rank-and-verify-v31-primitives" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rank and verify (v3.1 primitives)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Rank and verify (v3.1 primitives)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#mode-rank-pick-the-best-candidate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mode: "rank" — pick the best candidate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mode-verify-check-named-claims-fail-closed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mode: "verify" — check named claims, fail-closed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fast-decision-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fast decision paths
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Fast decision paths">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#candidate-expansions-mapped-deliberately-unwired" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Candidate expansions (mapped, deliberately unwired)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#provider-matrix-measured-on-the-225-host-binary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Provider matrix (measured on the 2.2.5 host binary)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#candidate-expansions-2026-11-04-mapped-deliberately-unwired" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Candidate expansions (2026-11-04, mapped, deliberately unwired)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#specialist-callers-shipped" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Specialist callers (shipped)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#skill-ecosystem-hybrid-on-demand" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Skill ecosystem (hybrid, on-demand)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verification-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verification boundary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#expansion-verdicts-measured-2026-11-05" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Expansion verdicts (measured, 2026-11-05)
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../offline-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Offline Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../performance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../skill-search-design/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Skill Search Design
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../env-vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment Variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../code-mode/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Code Mode
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_14" >
+        
+          
+          <label class="md-nav__link" for="__nav_14" id="__nav_14_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release Process
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_14_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_14">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Release Process
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../RELEASING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release Process
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v1.6.0/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v1.6.0 Release Notes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../BRANCH-PROTECTION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Branch Protection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_16" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../pt-BR/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Documentação (Português)
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_16" id="__nav_16_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_16_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_16">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Documentação (Português)
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_16_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_16_2" id="__nav_16_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Começando
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_16_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_16_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Começando
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/QUICKSTART/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Início Rápido
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/INSTALLATION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Instalação
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../UPGRADING.pt-BR/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Upgrading (Português)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_16_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_16_3" id="__nav_16_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guias & Tutoriais
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_16_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_16_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guias & Tutoriais
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/guides/first-project/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Primeiro Projeto (Ponta a Ponta)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/guides/cli-tool/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Utilitário CLI (@talos)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/AGENT-CAPABILITY-MATRIX/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Matriz de Agentes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/guides/deepwork/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Blueprint Deepwork
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/guides/vision/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visão Multimodal
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/guides/cookbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Livro de Receitas (Cookbook)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_16_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_16_4" id="__nav_16_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sistema & Ferramentas
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_16_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_16_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Sistema & Ferramentas
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/ARCHITECTURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Arquitetura
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/COMPATIBILITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibilidade
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/MCP/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Servidores MCP
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/MEMORY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memória
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_16_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_16_5" id="__nav_16_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Governança & Release
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_16_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_16_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Governança & Release
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/RELEASING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Processo de Release
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pt-BR/BRANCH-PROTECTION/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Proteção da Branch main
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://github.com/ils15/pantheon-opencode/blob/main/CONTRIBUTING.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#setup-and-decision-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Setup and decision models
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Setup and decision models">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#container-jupyterhub-environments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Container &amp; JupyterHub Environments
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ready-to-copy-provider-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ready-to-copy provider examples
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-explicit-pantheon_jev_decide-tool" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The explicit pantheon_jev_decide tool
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#j1-risk-score-gate-shadow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        J1 risk-score gate (shadow)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#j2-skill-selection-scorecard-offline-harness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        J2 skill-selection scorecard (offline harness)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#j3-turn-complexity-escalation-shadow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        J3 turn-complexity escalation (shadow)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#j4-output-quality-scoring-advisory-on-demand" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        J4 output quality scoring (advisory, on demand)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rank-and-verify-v31-primitives" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rank and verify (v3.1 primitives)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Rank and verify (v3.1 primitives)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#mode-rank-pick-the-best-candidate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mode: "rank" — pick the best candidate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mode-verify-check-named-claims-fail-closed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mode: "verify" — check named claims, fail-closed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fast-decision-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fast decision paths
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Fast decision paths">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#candidate-expansions-mapped-deliberately-unwired" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Candidate expansions (mapped, deliberately unwired)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#provider-matrix-measured-on-the-225-host-binary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Provider matrix (measured on the 2.2.5 host binary)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#candidate-expansions-2026-11-04-mapped-deliberately-unwired" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Candidate expansions (2026-11-04, mapped, deliberately unwired)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#specialist-callers-shipped" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Specialist callers (shipped)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#skill-ecosystem-hybrid-on-demand" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Skill ecosystem (hybrid, on-demand)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verification-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verification boundary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#expansion-verdicts-measured-2026-11-05" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Expansion verdicts (measured, 2026-11-05)
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/ils15/pantheon-opencode/edit/main/docs/reference/native-decisions.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="native-decisions-jev">Native Decisions (Jev)<a class="headerlink" href="#native-decisions-jev" title="Permanent link">&para;</a></h1>
+<p><strong>Status: one explicit production call site — the <code>pantheon_jev_decide</code> tool.</strong>
+This targets the OpenCode host native Decisions API,
+<code>ctx.experimental.generate.decisions({ model, input, questions })</code>, available
+from OpenCode 2.2.0 and exercised on 2.2.5. Pantheon targets current OpenCode
+hosts only; a host without the API simply does not register the tool. All
+Pantheon features are built for the current host generation — there is no
+legacy plugin line to consider.</p>
+<p>The <strong>per-turn prompt hook</strong> remains local-only: no native call, no fetch, no
+provider request, no credential read, no prompt-content change, no permission
+narrowing, no agent dispatch, and no review/approval gate change. The local
+per-turn advisory recommendation is unchanged. The <strong>explicit Zeus-only tool</strong>
+below is the one consented production call site, running entirely through the
+host's own provider layer.</p>
+<h2 id="setup-and-decision-models">Setup and decision models<a class="headerlink" href="#setup-and-decision-models" title="Permanent link">&para;</a></h2>
+<p>Decision models are <strong>not chat models</strong>: they never appear in the host model
+catalog (<code>opencode models</code>) at all — field-measured on 2.2.5 (561 catalog
+entries, zero jev models, while the decisions API answers the same model ref
+directly). Route resolution therefore reads only your Pantheon config, never
+the catalog. Pantheon never maps or switches providers on your behalf.</p>
+<table>
+<thead>
+<tr>
+<th>Decision model</th>
+<th>Config candidate</th>
+<th>Host reference</th>
+<th>Billing / auth</th>
+<th>Route requirement</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>OpenCode Console Jev</td>
+<td><code>opencode-console-jev</code> / <code>jev-1.13</code></td>
+<td><code>{ providerID: "opencode", id: "jev-1.13" }</code></td>
+<td>Zen workspace credits, via <code>OPENCODE_API_KEY</code> (a Go subscription does not include Jev — the host answers 404 without the workspace key)</td>
+<td><code>OPENCODE_API_KEY</code> — host-native</td>
+</tr>
+<tr>
+<td>TypeSafe Jev direct</td>
+<td><code>typesafe-jev</code> / <code>jev-1.14.0</code></td>
+<td><code>{ providerID: "typesafe-ai", id: "jev-1.14.0" }</code></td>
+<td>Your TypeSafe key</td>
+<td><code>setup-model</code> merges the complete custom provider entry into <code>opencode.json</code> (adapter, baseURL, <code>apiKey: "{env:TYPESAFE_API_KEY}"</code>, type <code>"decision"</code>); then <code>export TYPESAFE_API_KEY=&lt;your key&gt;</code> and restart. <strong><code>/connect</code> and <code>opencode auth login</code> do not carry custom providers</strong> — models.dev has no typesafe-ai entry</td>
+</tr>
+<tr>
+<td>OpenRouter-hosted Jev</td>
+<td><code>openrouter-jev</code> / <code>typesafe/jev-1.13</code></td>
+<td><code>{ providerID: "openrouter", id: "typesafe/jev-1.13" }</code></td>
+<td>OpenRouter credits (<code>OPENROUTER_API_KEY</code>; host-native models.dev provider — <code>/connect</code> supports it)</td>
+<td>None — host-native</td>
+</tr>
+<tr>
+<td>Vercel AI Gateway Jev</td>
+<td><code>vercel-gateway-jev</code> / <code>typesafe-ai/jev</code></td>
+<td><code>{ providerID: "vercel-ai-gateway", id: "typesafe-ai/jev" }</code></td>
+<td>Vercel AI Gateway (<code>AI_GATEWAY_API_KEY</code>; host-native models.dev provider)</td>
+<td>None — host-native</td>
+</tr>
+<tr>
+<td>Cloudflare Workers AI (Clef)</td>
+<td><code>cloudflare-workers-jev</code> / <code>clef</code></td>
+<td><code>{ providerID: "cloudflare-workers-ai", id: "clef" }</code></td>
+<td>Workers AI (<code>CLOUDFLARE_API_TOKEN</code>, scoped)</td>
+<td>Custom entry with your accountId — models.dev does not carry it; the Calibrated-Jev calibration does not transfer to Clef</td>
+</tr>
+</tbody>
+</table>
+<p>Setup in one command (state lives in <code>~/.config/pantheon/decision-router.json</code>,
+budget in <code>~/.local/state/pantheon/decision-budget.sqlite</code>; the command requires
+explicit caps — there are no defaults):</p>
+<div class="highlight"><pre><span></span><code>npx<span class="w"> </span>pantheon-opencode<span class="w"> </span>decision-router<span class="w"> </span>setup-model<span class="w"> </span>opencode-console-jev/jev-1.13<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--monthly-usd<span class="w"> </span><span class="m">5</span><span class="w"> </span>--per-decision-usd<span class="w"> </span><span class="m">0</span>.10
+npx<span class="w"> </span>pantheon-opencode<span class="w"> </span>decision-router<span class="w"> </span>doctor<span class="w">   </span><span class="c1"># read-only verification with fixes</span>
+</code></pre></div>
+<h3 id="container-jupyterhub-environments">Container &amp; JupyterHub Environments<a class="headerlink" href="#container-jupyterhub-environments" title="Permanent link">&para;</a></h3>
+<p>When running in containerized environments (such as JupyterHub, Docker, Kubernetes, or HPC clusters) where <code>$HOME</code> or ancestor directories are group-writable (e.g. <code>/home/jovyan</code> with mode <code>2775 root:users</code>):
+- Pantheon automatically detects JupyterHub (<code>JUPYTERHUB_USER</code>, <code>JUPYTER_IMAGE</code>) and Kubernetes environments to permit group-writable ancestor directories.
+- In custom containers or environments, export <code>PANTHEON_ALLOW_GROUP_WRITABLE=1</code> in your container environment or shell profile to permit group-writable ancestors while keeping the private <code>0700</code>/<code>0600</code> requirements on the leaf configuration and budget ledger files.
+- The <code>decision-router status</code> and <code>doctor</code> commands diagnose directory trust issues read-only and report actionable remediation hints instead of failing unhandled.</p>
+<p><code>setup-model</code> performs select + enable + consent + caps (user, provider, model)
++ period confirmation in one write and prints the verification checklist — and
+for the TypeSafe route it also merges the host provider entry into
+<code>opencode.json</code> (additive, idempotent). <code>--no-consent</code> configures everything
+except egress consent. <code>doctor</code> walks the whole native route — config, consent,
+selection, budget admission, unresolved holds, and a route-aware native-route
+check (host-native pass for the Console routes; provider-entry check for
+TypeSafe) — and prints the exact command to run for each failing gate. The
+per-command fallbacks (<code>select</code>, <code>enable</code>, <code>consent</code>, <code>caps</code>, <code>period</code>) remain
+for one-change-at-a-time edits.</p>
+<h3 id="ready-to-copy-provider-examples">Ready-to-copy provider examples<a class="headerlink" href="#ready-to-copy-provider-examples" title="Permanent link">&para;</a></h3>
+<p>The stock route needs no <code>opencode.json</code> change. The others do — merge (never
+replace) into your own config:</p>
+<p><strong>TypeSafe direct</strong> (your TypeSafe key; the catalog id must equal the config
+candidate's model). <code>setup-model</code> merges exactly this — or merge manually:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">"providers"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"typesafe-ai"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">"npm"</span><span class="p">:</span><span class="w"> </span><span class="s2">"@ai-sdk/openai-compatible"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"TypeSafe AI"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"options"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nt">"baseURL"</span><span class="p">:</span><span class="w"> </span><span class="s2">"https://api.typesafe.ai/v1"</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"apiKey"</span><span class="p">:</span><span class="w"> </span><span class="s2">"{env:TYPESAFE_API_KEY}"</span>
+<span class="w">      </span><span class="p">},</span>
+<span class="w">      </span><span class="nt">"models"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nt">"jev-1.14.0"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Jev (TypeSafe direct)"</span><span class="p">,</span><span class="w"> </span><span class="nt">"modelID"</span><span class="p">:</span><span class="w"> </span><span class="s2">"jev-latest"</span><span class="p">,</span><span class="w"> </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"decision"</span><span class="w"> </span><span class="p">}</span>
+<span class="w">      </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>Then: <code>export TYPESAFE_API_KEY=&lt;your key&gt;</code>, restart OpenCode, and
+<code>decision-router setup-model typesafe-jev/jev-1.14.0 --monthly-usd 3 --per-decision-usd 0.05</code>.
+A models-only entry (no adapter/baseURL/apiKey) is inert: the host cannot
+resolve the provider and the decisions call 404s. <code>/connect</code> and
+<code>opencode auth login</code> list only registry (models.dev) providers — TypeSafe
+is not one.</p>
+<p><strong>OpenRouter-hosted Jev</strong> (billed by OpenRouter; the config candidate is not in
+Pantheon's matrix, so set an explicit selection through the host):</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">"providers"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"openrouter"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">"models"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nt">"typesafe/jev-1.13"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Jev (OpenRouter)"</span><span class="p">,</span><span class="w"> </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"decision"</span><span class="w"> </span><span class="p">}</span>
+<span class="w">      </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>Who can invoke: the orchestrator (<code>zeus</code>) always; allowlisted specialists for
+<strong>explicit typed questions only</strong> (owner/skill selection and result scoring
+stay orchestrator-owned). The allowlist comes from
+<code>PANTHEON_JEV_SPECIALIST_CALLERS</code> (CSV of agent ids, default empty = Zeus
+only; read at plugin registration). The permission assertion and the success
+output carry the real caller. Cost controls are the caps above (no defaults),
+the confirmed UTC period, and the host permission kill-switch on
+<code>decision.egress</code> — caps are enforced per call regardless of caller, so the
+allowlist is a consent-concentration policy, not a technical boundary.</p>
+<h2 id="the-explicit-pantheon_jev_decide-tool">The explicit <code>pantheon_jev_decide</code> tool<a class="headerlink" href="#the-explicit-pantheon_jev_decide-tool" title="Permanent link">&para;</a></h2>
+<p>Registered only when the host exposes BOTH the model catalog
+(<code>ctx.model.list</code>) and the native Decisions API. Execution requires the host
+tool context to identify the caller as Zeus, and runs this gate chain in
+order — every failure is a bounded refusal JSON, never a retry:</p>
+<ol>
+<li><strong>Config gate</strong> — the user-level decision-router config must be <code>enabled</code>
+   with <code>egress_consent: true</code>.</li>
+<li><strong>Route gate</strong> — the selection (explicit, or auto with exactly one eligible
+   candidate) must resolve to a native route through the frozen provider
+   table. The host chat catalog is deliberately NOT consulted (decision
+   models are not chat models); an unknown model surfaces as the host's own
+   call error. Direct OpenAI has no native route and is never substituted.</li>
+<li><strong>Budget gate</strong> — the ledger must admit a reservation (confirmed period,
+   positive monthly and per-decision caps). The reservation is taken before
+   the call and held (pending, fail-closed) if the call fails or the result
+   cannot be reconciled.</li>
+<li><strong>Permission kill-switch</strong> — <code>ctx.permission.assert</code> on <code>decision.egress</code>
+   with the logical resource <code>pantheon-native-decisions://&lt;providerID&gt;/&lt;id&gt;</code>;
+   a throw or explicit denial stops the call.</li>
+<li><strong>Payload preparer</strong> — exactly one of:</li>
+<li>a <strong>preset</strong>: <code>mode: "skills"</code> (stack skills for the state text — the
+     local prefilter shortlist when it matches, the whole catalog otherwise)
+     or <code>mode: "delegation"</code> (every canonical specialist except Zeus);</li>
+<li>the <strong>review mode</strong>: <code>mode: "review"</code> (J4 output-quality scoring — shape
+     metrics and named criteria in, a quality score and a needs-review flag
+     out, advisory only; detailed below);</li>
+<li>the <strong>rank mode</strong>: <code>mode: "rank"</code> (v3.1 primitive — pick the best of
+     2–8 named candidates for the state; detailed below);</li>
+<li>the <strong>verify mode</strong>: <code>mode: "verify"</code> (v3.1 primitive — check 1–4 named
+     claims; detailed below); or</li>
+<li><strong>explicit questions</strong>: 1–4 typed questions (<code>choice</code> with 2–24 unique
+     options, <code>score</code> with 2–10 unique levels, <code>predicate</code>), with bounded
+     names, instructions, and descriptions.</li>
+</ol>
+<p>The request carries only the <code>state</code> text (≤ 12,000 chars) as one text
+   part. No files, history, system instructions, memory, or metadata are
+   added. The state text is carried verbatim — it is not a secret-scanning
+   boundary.
+6. <strong>Host call</strong> — exactly one native Decisions invocation. Transport,
+   credentials, and endpoints are entirely the host's; this path contains no
+   fetch.
+7. <strong>Settlement</strong> — the host-reported <code>cost</code> (USD) and token counts mint an
+   opaque reconciliation capability; absent cost is a real zero (free
+   variants). Cost above the reservation freezes the buckets.
+8. <strong>Advice consumer</strong> — answers are validated against the prepared questions
+   (one per name; choices must be from the prepared options; duplicates become
+   errors) and returned with <code>effect: 'none'</code>.</p>
+<p>The tool never dispatches agents, runs skills, executes other tools, grants
+permissions, or alters review gates.</p>
+<h2 id="j1-risk-score-gate-shadow">J1 risk-score gate (shadow)<a class="headerlink" href="#j1-risk-score-gate-shadow" title="Permanent link">&para;</a></h2>
+<p>A second, opt-in consumer of the same gate chain: when
+<code>PANTHEON_J1_RISK_SCORE</code> is set to <code>1</code>, <code>on</code>, or <code>true</code> (anything else, or
+unset, leaves it off — and off means zero overhead: no sink, no observer, no
+per-call work), the plugin's <code>execute.before</code> hook fires ONE bounded native
+Decisions call per <strong>write/execute</strong> tool call — bash/shell and webfetch
+(execute), file writes (write). Read-only tools are never observed, and the
+target list intersects the secret scan's own exfil-capable gate, so a tool the
+scan never inspects is never observed either.</p>
+<p>Each observation runs the exact chain the <code>pantheon_jev_decide</code> tool runs —
+config <code>enabled</code> + <code>egress_consent</code>, route via the budget ledger's admission
+check, the <code>decision.egress</code> permission kill-switch, one reservation, one host
+call, cost reconciliation — through the shared runner
+(<code>runGatedNativeJevCall</code>); no gate logic is duplicated. The request asks two
+questions only: one <strong>score</strong> ("risk of this tool call for the current task",
+2–10 levels) and one <strong>predicate</strong> ("is this call consistent with the current
+task intent?").</p>
+<p><strong>Sanitization contract.</strong> The request carries NO user content: no task text,
+no file paths, no tool input values. The state text is a fixed template over
+three fields — the tool name (accepted only as a bounded <code>[A-Za-z0-9._:-]</code>
+token; paths, shell metacharacters, injection prose and oversize strings are
+rejected outright, never scrubbed), the scope class, and the sha256 of the
+serialized tool input (an opaque correlation value). The telemetry record
+carries the outcome as one bounded reason token, e.g. <code>risk-3-intent-yes</code> or
+<code>skip-timeout</code>.</p>
+<p><strong>Fail-open and fail-silent.</strong> Every failure mode — config disabled, consent
+missing, route or ledger denied, permission denied, the host call throwing,
+usage unreconciled, or the 2-second deadline — records a single
+<code>skip-…</code> reason and moves on. The hook fires the observation WITHOUT awaiting
+it: the tool call's latency is unchanged, the observer bounds its own wait at
+2s (AbortController), abandoned calls settle their own ledger reservation in
+the background, and nothing is ever retried or queued.</p>
+<p><strong>Shadow never blocks.</strong> The only verdict this phase can produce is
+<code>observe</code>, recorded as a shadow record (<code>point: 'J1'</code>, <code>mode: 'shadow'</code>,
+<code>effect: 'none'</code>) in the in-memory, bounded decision telemetry collector the
+plugin never reads back. A high risk score changes the recorded reason and
+nothing else. The <code>flag</code> verdict is a named constant reserved for a future
+active phase and is unreachable; there is no deny path, no ask path, and no
+permission narrowing on this surface.</p>
+<h2 id="j2-skill-selection-scorecard-offline-harness">J2 skill-selection scorecard (offline harness)<a class="headerlink" href="#j2-skill-selection-scorecard-offline-harness" title="Permanent link">&para;</a></h2>
+<p>The skill-selection surface — the P2 local prefilter plus the
+<code>mode: "skills"</code> preset — is measured by a dated, rerunnable scorecard
+(<code>bench/results/j2-skill-selection-scorecard-2026-11-03.md</code>), produced by the
+offline harness <code>tests/pantheon/j2-skill-selection-scorecard.test.ts</code> with its
+scenario catalog and canned-reply table in
+<code>tests/pantheon/j2-fixtures.ts</code>. Every scenario runs BOTH paths: the
+deterministic prefilter (<code>selectPantheonSkills</code>) and the full preset through
+the real gate chain (config → consent → budget reservation → permission
+kill-switch → one host call → settlement) on a sandboxed HOME, with
+<code>globalThis.fetch</code> a throwing spy.</p>
+<p><strong>Replies are faked offline.</strong> Every Jev answer in the harness comes from a
+canned, per-scenario table (successes, low confidence, refusals, duplicates,
+out-of-pool choices, timeouts, malformed payloads) — the harness measures the
+plumbing (preparation, gating, consumption, telemetry at point <code>J2</code>), not
+model quality. The states are synthetic by construction and the harness
+asserts injection prose planted in a state never escapes the state slot into
+the option pool, the question, the advice, the permission request, or
+telemetry (leak count 0), and that refusals and timeouts are handled without
+retrying or throwing into the host.</p>
+<p><strong>Activation gate.</strong> This phase measures only. The gate is: shadow → 2
+consecutive scorecards with the activation criterion met → then, and only
+then, discuss activation as a separately reviewed change. The criterion is
+deliberately not defined numerically here, and an offline scorecard proves
+nothing about the live model — a live, consented, clock-bounded scorecard is
+a future run.</p>
+<p><strong>Question-phrasing finding.</strong> One sentence distinguishing required vs
+preferred attributes measurably doubled answer accuracy in the source
+measurement (the <code>writing-a-jev-question</code> guide in the
+awesome-typesafe-jev repository, where the finding originates); apply it
+when phrasing or revising the <code>mode: "skills"</code> preset instructions.</p>
+<h2 id="j3-turn-complexity-escalation-shadow">J3 turn-complexity escalation (shadow)<a class="headerlink" href="#j3-turn-complexity-escalation-shadow" title="Permanent link">&para;</a></h2>
+<p>A third, opt-in consumer of the gate chain — and the first Jev uplift surface
+that computes (but does not apply) a routing decision. When
+<code>PANTHEON_J3_ESCALATION</code> is set to <code>1</code>, <code>on</code>, or <code>true</code> (anything else, or
+unset, leaves it off — off means zero overhead: no sink, no observer, no
+per-dispatch work), the plugin's <code>execute.before</code> hook fires ONE bounded
+native Jev decision per <strong>delegate dispatch</strong> — the native <code>subagent</code> tool
+assembling the Brief — through the same shared runner
+(<code>runGatedNativeJevCall</code>): config <code>enabled</code> + <code>egress_consent</code>, budget-ledger
+admission, the <code>decision.egress</code> permission kill-switch, one host call,
+settlement.</p>
+<p><strong>Classification.</strong> The request asks ONE <strong>score</strong> question — "complexity of
+this delegation for the current task" — over the full 2..10 level bound
+(labels <code>trivial</code> … <code>sprawling</code>). The consumer takes the reported score at
+face value under the tool's own strict validation (name and type must match
+the prepared question, score non-negative and finite, duplicates refused);
+anything else is <code>null</code>, never a guess.</p>
+<p><strong>Sanitization contract (identical to J1).</strong> The request carries NO user
+content: no Brief text, no task description, no paths. The state text is the
+exact bounded template over four structural fields — the delegate id
+(accepted only as a canonical Pantheon agent token; anything else is
+<code>INPUT_INVALID</code>), the sha256 of the Brief text, its character length, and the
+local risk-word boolean. The Brief text itself never leaves this machine.</p>
+<p><strong>Rails (all local, no Jev call).</strong> Three independent local rails force the
+verdict to the main model regardless of the reported score:</p>
+<ol>
+<li><strong>Risk words</strong> — the Brief mentioning any of <code>deploy</code>, <code>migrate</code>, <code>drop</code>,
+   <code>delete</code>, <code>prod</code>, <code>production</code>, <code>payment</code>, <code>secret</code>, <code>credential</code> never
+   goes cheap (case-insensitive substring match on purpose: inflections and
+   plurals rail too, and over-matching biases to the safe direction).</li>
+<li><strong>User-pinned model</strong> — an explicit per-agent override for the delegate in
+   the project model configuration (the same file <code>pantheon_model</code> writes)
+   is never overridden; a configuration that cannot be read counts as pinned.</li>
+<li><strong>Context length</strong> — a Brief longer than 8,000 chars never downgrades.</li>
+</ol>
+<p><strong>Verdict policy.</strong> Pure and fail-safe: complexity ≤ 4 (the documented cheap
+threshold — the lower third of the offered scale, deliberately conservative
+because a wrong <code>cheap</code> costs task quality while a wrong <code>main</code> only costs
+tokens) AND no rail tripped → <code>cheap</code>; anything else — including every
+unsure, malformed, refused or timed-out classification — → <code>main</code>. The main
+model is never downgraded by uncertainty.</p>
+<p><strong>Shadow contract.</strong> In this phase the verdict NEVER changes the dispatched
+model. The record (<code>point: 'J3'</code>, <code>mode: 'shadow'</code>, <code>effect: 'none'</code>, reason
+tokens like <code>esc-cheap-c2</code>, <code>esc-main-c7</code>, <code>esc-main-c-na</code>, <code>skip-timeout</code>)
+is the whole effect. The activation mechanism — set the per-agent override
+for the delegate BEFORE dispatch through the existing model-override
+mechanism (<code>v2-model-overrides</code>), restore the previous model after — exists
+in <code>jev-escalation.ts</code> (<code>applyEscalationOverride</code> / <code>clearEscalationOverride</code>)
+but the shadow observer has no path to it; the plugin wiring carries no
+reference to it (asserted structurally by the contract test). The mechanism
+is proved by direct test exercise only: a cheap override resolves to the
+documented cheap model (<code>opencode/mimo-v2.6-flash</code>, a supported chat model
+validated by the same capability table the override mechanism uses — decision
+models are not chat models and are never escalation targets, and the host
+catalog is never consulted), and clears to the exact previous model. The
+parent model is never touched by any of this: escalation applies only to
+delegate dispatches, explicitly.</p>
+<p><strong>No delay.</strong> Fired without awaiting the hook; self-bounded at 2s
+(AbortController); on timeout records <code>skip-timeout</code>. In an active phase the
+same deadline is the dispatch rule: a classification still in flight when the
+dispatch resolves the model is <code>main</code> — dispatch is never delayed. Exactly
+one call per dispatch: no retry, no queue.</p>
+<p><strong>Activation prerequisites.</strong> This phase measures only. Before anything
+activates: a measured baseline scorecard from replayed synthetic scenarios
+(the offline harness <code>tests/pantheon/jev-escalation.test.ts</code> proves the
+plumbing and the rails; it does NOT measure model quality — the request
+carries structural fields only, so the live classifier's accuracy against
+real Briefs is unknown until replayed with consented live replies), the
+shadow-record distribution reviewed, and the activation itself is a
+separately reviewed change. A quiet log proves nothing — the hermes gate this
+series adopts.</p>
+<h2 id="j4-output-quality-scoring-advisory-on-demand">J4 output quality scoring (advisory, on demand)<a class="headerlink" href="#j4-output-quality-scoring-advisory-on-demand" title="Permanent link">&para;</a></h2>
+<p>A fourth consumer of the gate chain — and the first with no flag and no hook:
+<code>pantheon_jev_decide</code> gains <code>mode: "review"</code>, and the review runs ONLY when
+Zeus explicitly requests it after a delegation completes. That is the
+reference design's (jev-dsh-decision) on-demand shape: one consented call site
+(the existing tool, unchanged Zeus-only caller contract and gate chain), one
+typed round-trip, no automatic observation of delegation traffic.</p>
+<p><strong>The review.</strong> The request asks TWO questions in the single round-trip: one
+<strong>score</strong> — "quality of this delegated result against the criteria", over the
+full 2..10 rubric bound — and one <strong>predicate</strong> (<code>noul</code>), "does this result
+need human review?". The consumer reuses the tool's strict validation (name
+and type must match the prepared questions, duplicates become errors);
+anything else is <code>null</code>, never a guess.</p>
+<p><strong>Sanitization: criteria in, content never out.</strong> The result itself NEVER
+leaves the machine — the request has no content field at all (structural, not
+a scrub). The state text is a fixed bounded template over shape metrics only:
+the delegate id (a canonical Pantheon agent token), the result kind
+(<code>ok</code> / <code>empty</code> / <code>error</code>), the output character count, the task duration
+(<code>na</code> when unknown), and the criteria count. The criteria are the ONLY free
+text admitted, riding the score question's instructions: they are
+caller-provided instruction strings from the tool schema (never user text),
+1–120 chars each. Hostile shapes — paths and path separators, credential
+assignments and key material (<code>password=…</code>, PEM headers, AWS/SDK/Git token
+literals, <code>*.key</code> files), control characters, over-length — are rejected
+<code>CRITERIA_INVALID</code> outright, never sanitized on the way in; any other
+malformed review input is <code>REVIEW_INPUT_INVALID</code>, refused before any gate work
+is spent.</p>
+<p><strong>DSH hard caps, mirrored.</strong> At most 4 criteria per review; bounded
+instruction strings; exactly ONE call per review (the shared settlement
+contract: no retry, no queue, fail-closed reservation); redacted errors
+everywhere — refusals carry reason codes, and a failing host call surfaces the
+error CLASS only (<code>TypeError</code>, <code>RangeError</code>), never host message text.</p>
+<p><strong>Verdict semantics: advisory flag only.</strong> The pure verdict
+(<code>qualityVerdict</code>) is <code>recorded</code> or <code>flag-for-review</code>. An affirmative
+<code>noul</code> answer is the ONE flagging condition; the flag is advisory telemetry
+plus a <code>verdict</code> field in the tool output Zeus may weigh — it NEVER blocks,
+retries, or alters the delegated result. A low quality score with an explicit
+no-review answer records without flagging: the score is surfaced for Zeus,
+not enforced. An unsure, malformed, or refused review records <code>na</code> and never
+flags on a hunch.</p>
+<p><strong>Telemetry.</strong> One shadow record per review run (<code>point: 'J4'</code>,
+<code>mode: 'shadow'</code>, <code>effect: 'none'</code>) with a bounded reason token —
+<code>q-7-review-yes</code>, <code>q-na-review-na</code>, or a <code>skip-…</code> token for every refusal
+path — into the in-memory, bounded decision telemetry collector the tool path
+never reads back.</p>
+<p><strong>P10 direction.</strong> The review's score and flag are the raw material the
+future P10 counselor-claims layer needs (per-counselor quality claims fed by
+on-demand reviews). This release wires nothing of the council: no claim is
+recorded, no counselor reads J4 records, and connecting the two is a
+separately reviewed change with its own consent surface.</p>
+<h2 id="rank-and-verify-v31-primitives">Rank and verify (v3.1 primitives)<a class="headerlink" href="#rank-and-verify-v31-primitives" title="Permanent link">&para;</a></h2>
+<p>Two further tool modes on <code>pantheon_jev_decide</code> — both built after the
+review-mode pattern (bounded request built before any gate work, the same
+shared gate chain, the same refusal contract, the tool's strict answer
+consumer) and both advisory only: <code>effect</code> stays <code>none</code>, nothing is blocked,
+dispatched, or altered, and neither mode has a telemetry point (they are tool
+modes, not shadow gates). Both stay orchestrator-owned: an allowlisted
+specialist may ask bounded typed questions only.</p>
+<h3 id="mode-rank-pick-the-best-candidate"><code>mode: "rank"</code> — pick the best candidate<a class="headerlink" href="#mode-rank-pick-the-best-candidate" title="Permanent link">&para;</a></h3>
+<p>Input: <code>{ schemaVersion: 1, mode: "rank", state, candidates }</code> where <code>state</code>
+is the usual bounded state text (≤ 12,000 chars, carried verbatim) and
+<code>candidates</code> is 2–8 records <code>{ id, description? }</code> — <code>id</code> a strict bounded
+token (<code>^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$</code>, unique), <code>description</code> optional
+bounded prose (≤ 500 chars). The request asks TWO questions in the single
+round-trip: one <strong>choice</strong> question (<code>winner</code>) over the candidate ids, and one
+<strong>score</strong> question (<code>fit</code>, the 2..10 rubric bound) rating the winner's fit.
+The tool returns <code>{ winner, winnerFit }</code> (each <code>null</code> when the answer is
+missing, mistyped, duplicated, or an error) plus the usual <code>answers</code>,
+<code>missing</code>, <code>usage</code>, and <code>frozen</code> fields.</p>
+<p><strong>The honest limitation.</strong> Rank does NOT return a full ordering, a runner-up,
+or per-candidate scores. The host Decisions API answers one scalar per
+question — one score question per candidate would break the 4-question bound
+above four candidates, and one ambiguous "score each candidate" question has
+no per-candidate answer structure to pair back. The winner + fit pair is what
+one typed round-trip can express truthfully; a caller that needs a deeper
+order uses the explicit-questions mode with its own typed questions.</p>
+<p>Sanitization: candidate ids are strict tokens (they become choice values);
+descriptions are the same sanitization class as J4 criteria — paths, control
+characters, credential assignments and key material are rejected
+<code>CANDIDATE_INVALID</code>, never scrubbed; a malformed envelope (unknown keys,
+missing candidates, count outside 2–8) is <code>RANK_INPUT_INVALID</code>; an invalid
+state keeps the shared <code>STATE_INVALID</code> token.</p>
+<h3 id="mode-verify-check-named-claims-fail-closed"><code>mode: "verify"</code> — check named claims, fail-closed<a class="headerlink" href="#mode-verify-check-named-claims-fail-closed" title="Permanent link">&para;</a></h3>
+<p>Input: <code>{ schemaVersion: 1, mode: "verify", claims, state? }</code> where <code>claims</code> is 1–4
+named <code>{ name, claim }</code> records (token names, bounded claim text). The optional
+<code>state</code> is caller-supplied EVIDENCE the claims are judged against (bounded,
+hostility-scanned) — field report beta.13: without it, environment-dependent
+claims are unanswerable and the honest verdict is <code>UNVERIFIABLE</code>, not <code>FAIL</code>.
+Verdicts: probability &gt; 0.65 → <code>PASS</code>; 0.35–0.65 → <code>UNVERIFIABLE</code> (the model
+could not tell — inclusive band, QA beta.20); below → <code>FAIL</code>; and every
+refusal, timeout, or malformed answer is <code>BLOCK</code> (fail-closed — only <code>PASS</code>
+counts as passing).</p>
+<ul>
+<li>probability ≥ 0.5 → <code>PASS</code>;</li>
+<li>probability &lt; 0.5 → <code>FAIL</code>;</li>
+<li>a host refusal answer, a timeout (missing answer), a duplicate, or any
+  malformed/out-of-range probability → <code>BLOCK</code>.</li>
+</ul>
+<p><code>BLOCK</code> is the fail-closed direction: an unanswered mandatory claim must never
+read as verified (or as refuted — an unverifiable claim is unverifiable, not
+false). The tool itself never acts on a verdict; a caller that REQUIRES a
+verdict (mandatory verification) treats every gate-chain refusal — which never
+reaches the consumer — as <code>BLOCK</code> at its own call site. Sanitization is the
+J4 criteria class: hostile claim shapes (paths, control characters,
+credential assignments, key material) are rejected <code>CLAIM_INVALID</code>, never
+scrubbed; a malformed envelope is <code>VERIFY_INPUT_INVALID</code>.</p>
+<h2 id="fast-decision-paths">Fast decision paths<a class="headerlink" href="#fast-decision-paths" title="Permanent link">&para;</a></h2>
+<p>The decision layers are ordered by cost; use the cheapest one that answers:</p>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Cost</th>
+<th>Use for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Local deterministic selector</td>
+<td>free, no network</td>
+<td>per-turn skill/specialist prefilter, marker, skill-array narrowing</td>
+</tr>
+<tr>
+<td>Jev preset (<code>mode: "skills"</code> / <code>"delegation"</code>)</td>
+<td>one typed call (~150 ms class)</td>
+<td>stacking skills for a task, picking a specialist with probabilities and confidence, on demand</td>
+</tr>
+<tr>
+<td>Explicit typed questions</td>
+<td>one typed call</td>
+<td>any bounded choice/score/yes-no the orchestrator wants judged</td>
+</tr>
+<tr>
+<td>Main chat model</td>
+<td>full model call</td>
+<td>open-ended reasoning — never replaced by the layers above</td>
+</tr>
+</tbody>
+</table>
+<h3 id="candidate-expansions-mapped-deliberately-unwired">Candidate expansions (mapped, deliberately unwired)<a class="headerlink" href="#candidate-expansions-mapped-deliberately-unwired" title="Permanent link">&para;</a></h3>
+<p>Each row names the decision, the Jev question, and what must be proven before
+wiring. None is authorized by this release; every one needs its own carrier
+measurement, consent/payload policy, and review — the same bar the tool
+itself went through.</p>
+<table>
+<thead>
+<tr>
+<th>Candidate</th>
+<th>Jev question</th>
+<th>Why it could help</th>
+<th>Must be proven first</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Memory persistence advisory</td>
+<td>predicate: "is this state worth a durable entry?"</td>
+<td>fewer missed saves and less noise</td>
+<td>the measured save-moment carrier; the advisory must never relax the explicit request/authorization rule</td>
+</tr>
+<tr>
+<td>Council pre-ranking</td>
+<td>choice over counselors</td>
+<td>cheaper assembly for genuinely multi-perspective work</td>
+<td>a real council carrier (the council point is still unwired)</td>
+</tr>
+<tr>
+<td>Vision-call gating</td>
+<td>predicate before <code>vision_describe</code></td>
+<td>probably none — vision already fires only for image jobs; an extra decision adds latency</td>
+<td>a measured case of vision invoked without an image driver</td>
+</tr>
+<tr>
+<td>Per-agent affordances</td>
+<td>specialists' own typed questions</td>
+<td>parallel small decisions off the main model</td>
+<td>caller-matrix policy, per-agent consent, review</td>
+</tr>
+<tr>
+<td>Skill discovery tool</td>
+<td>search the ecosystem from the session</td>
+<td>removes the manual <code>npx skills find</code> step</td>
+<td>its own networked-egress consent surface and a registry trust policy</td>
+</tr>
+</tbody>
+</table>
+<p>Until one of these is wired, the flow stays: local prefilter → Jev preset
+(consented) → main model, with MCP calls governed by their own documented
+policies (memory: explicit request/authorization; vision: image-driven;
+persistence: explicit checkpoints).</p>
+<h3 id="provider-matrix-measured-on-the-225-host-binary">Provider matrix (measured on the 2.2.5 host binary)<a class="headerlink" href="#provider-matrix-measured-on-the-225-host-binary" title="Permanent link">&para;</a></h3>
+<p>The host embeds decision modules for exactly 8 providerIDs: <code>opencode</code>,
+<code>typesafe-ai</code>, <code>openrouter</code>, <code>vercel-ai-gateway</code>, <code>cloudflare-workers-ai</code>,
+<code>cloudflare-ai-gateway</code>, <code>baseten</code>, <code>digitalocean</code>. <strong>There is no <code>openai</code>,
+<code>zen</code>, <code>microsoft</code> or <code>laya</code> module</strong> — those backends are only reachable via
+a plugin's own transport (the OpenAI Decisions protocol is a different one;
+the host does not speak it). Decision models are not chat models: none of the
+jev models appear in <code>opencode models</code> regardless of provider. Expansion is
+table-only on Pantheon's side — the host normalizes every embedded provider
+behind the same decisions call.</p>
+<h3 id="candidate-expansions-2026-11-04-mapped-deliberately-unwired">Candidate expansions (2026-11-04, mapped, deliberately unwired)<a class="headerlink" href="#candidate-expansions-2026-11-04-mapped-deliberately-unwired" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>OpenAI Decisions protocol</strong> — the host 2.2.5 has <strong>no</strong> openai decisions
+  module; OpenAI speaks a different protocol (<code>POST
+  api.openai.com/v1/decisions</code>, model <code>gpt-6-luna</code>, up to 400 questions,
+  refusal as an answer type). Wiring it means Pantheon running its own
+  transport for the first time — breaks the "egress only via the host native
+  route" principle. Deliberately unwired.</li>
+<li><strong>What's-new window</strong> — a one-time TUI notice on version change surfacing
+  the changelog highlights (the extractor exists:
+  <code>scripts/changelog-extract.mjs</code>). Planned.</li>
+</ul>
+<h3 id="specialist-callers-shipped">Specialist callers (shipped)<a class="headerlink" href="#specialist-callers-shipped" title="Permanent link">&para;</a></h3>
+<p><code>PANTHEON_JEV_SPECIALIST_CALLERS</code> (CSV, default empty = Zeus only) allowlists
+agents to call <code>pantheon_jev_decide</code> with explicit typed questions; preset
+modes (skills/delegation/review/rank/verify) stay orchestrator-owned. The
+permission assertion and the success output carry the real caller; caps and
+the <code>decision.egress</code> kill-switch are enforced per call regardless of caller.</p>
+<h2 id="skill-ecosystem-hybrid-on-demand">Skill ecosystem (hybrid, on-demand)<a class="headerlink" href="#skill-ecosystem-hybrid-on-demand" title="Permanent link">&para;</a></h2>
+<p>The stacking preset is open: its pool is the Pantheon catalog <strong>plus every
+skill the host has installed</strong> (<code>ctx.skill.list()</code>). Anything following the
+open Agent Skills format (<code>SKILL.md</code>) — Pantheon's own or third-party —
+becomes decidable the moment it is installed, with no Pantheon change.</p>
+<p>Division of labor; trusting an install is never the model's job:</p>
+<ul>
+<li><strong>Install</strong> — reviewed and project-isolated. <code>npx skills add &lt;repo&gt; -a opencode -y</code>
+  (the open skills ecosystem CLI) places the skill strictly in the project's
+  skill directory (<code>&lt;project&gt;/.agents/skills/</code>). Global installation is disallowed
+  for project capabilities to avoid environment contamination.
+  Third-party skills are untrusted instructions: review the <code>SKILL.md</code> and
+  any scripts before installing, prefer pinned versions, and keep production
+  servers off ad-hoc installs.</li>
+<li><strong>Decide</strong> — with the pool installed, <code>mode: "skills"</code> pre-filters local
+  candidates (or offers the whole pool) and Jev picks what to stack for the
+  current task in one typed call; the answer is advisory and loads nothing.</li>
+<li><strong>Share</strong> — a private skills repository (for example <code>ils15/pantheon-skills</code>)
+  becomes the approved, versioned library other projects pull from; the
+  skills CLI resolves private repositories with existing git credentials.</li>
+</ul>
+<p>The <strong>discovery pipeline</strong> binds these steps into one measured ladder
+(zeus.md carries the same rules):</p>
+<ol>
+<li><code>mode: "skills"</code> answers over the installed pool — the Jev call that
+   decides within existing skills.</li>
+<li>Only on a gap: one read-only search across the <strong>trust cascade</strong> —
+   <code>node scripts/skill-search.mjs "&lt;query&gt;" --limit 5</code> queries, in order:
+   the <strong>canonical Anthropic catalog</strong> (<code>anthropics/skills</code> — curated
+   upstream; checked first so the canonical <code>pdf</code>/<code>docx</code>/<code>mcp-builder</code>
+   skills outrank the third-party clones that popularity ranking surfaces),
+   the <strong>skills.sh index</strong> (breadth with install-count signal, unreviewed;
+   known-good community repos to try by name in the GitHub tier:
+   <code>mattpocock/skills</code> — engineering craft, still untrusted until reviewed),
+   and <strong>raw GitHub</strong> <code>filename:SKILL.md</code> code search (orders of magnitude
+   wider — 8,480 hits for "satellite" where the skills.sh index offered
+   three — and the weakest trust). Output is the merged parseable contract
+   (<code>{skill, installs, url, source}</code> JSON; pinned by
+   <code>tests/skill-search.test.mjs</code>), tier-ordered. The search is networked
+   egress by the agent, priced by attention — never a Jev question by
+   itself, and at most one per need.</li>
+<li>One typed Jev choice question ranks the returned candidates
+   (descriptions + install counts as choice text; "none of these fit" is a
+   valid answer). Only names, counts and short descriptions cross the
+   boundary — skill contents are untrusted and never enter a Jev call.</li>
+<li>The winning candidate(s) are PROACTIVELY presented to the user via the
+   native <code>question</code> tool with 1-click execution options. Zeus never instructs the
+   user to run terminal commands; upon the user's approval in the interactive gate,
+   Zeus dispatches an execution specialist with bash permissions (@hermes or @talos)
+   to execute <code>npx skills add &lt;owner/repo@skill&gt; -a opencode -y</code> strictly in the project
+   root (<code>.agents/skills/</code>). The installed skill joins the local pool that step 1 answers over.</li>
+</ol>
+<h2 id="verification-boundary">Verification boundary<a class="headerlink" href="#verification-boundary" title="Permanent link">&para;</a></h2>
+<p>The focused tests (<code>tests/pantheon/jev-decisions.test.ts</code>,
+<code>tests/pantheon/v2-native-decisions.test.ts</code>,
+<code>tests/pantheon/jev-rank-verify.test.ts</code>) are offline: the native API is a
+typed stub, the budget ledger runs on a temp database, and the success path
+runs with <code>globalThis.fetch</code> replaced by a throwing spy to prove the native
+route never touches a transport. A real-host canary asserts the tool's
+registration. No live provider request, canary, or credential check has been
+performed. The manual <code>pantheon_local_decision</code> advisory tool remains
+local-only and separate. Field validation evidence lives in dated records
+under <code>bench/results/</code> (see <code>jev-field-validation-2026-11-05.md</code> for the
+sandbox install, the live scorecard, the N4 re-test, and the verify field
+run).</p>
+<h2 id="expansion-verdicts-measured-2026-11-05">Expansion verdicts (measured, 2026-11-05)<a class="headerlink" href="#expansion-verdicts-measured-2026-11-05" title="Permanent link">&para;</a></h2>
+<p>Each expansion direction was weighed against the measured gate chain and the
+field validation; the verdicts below are the current standing answer, not a
+ban — new field evidence reopens them.</p>
+<ul>
+<li><strong>Jev as the arbiter of native-MCP calls (memory recall/store, checkpoints,
+  code-mode reads): no.</strong> The economics are negative — a decide call reserves
+  budget and spends a live route round-trip to gate a free, local, instant
+  call. Where the answer is a rule, the rule wins: usage policy lives in the
+  agent instructions (zeus first, then the roster reform), measured by the
+  MCP usage audit, not by paid arbitration.</li>
+<li><strong>Jev as the spend gate for <code>pantheon-vision</code>: defer.</strong> Vision is the only
+  gateway-costed native MCP, but volume is small (84 execute blocks, 54
+  calls over the whole field history) and the V1 permission tier (<code>ask</code>)
+  plus the one-pass-per-image usage policy already bound it. Revisit only if
+  the audit shows repeated abuse that rules cannot hold.</li>
+<li><strong>Rank cap 8→20 (P4/P11 need 20+ candidates): blocked on a design change,
+  not a constant.</strong> The host answers one scalar per question, so
+  winner-with-fit-score does not scale past roughly 10 candidates — at 20+
+  the single question cannot discriminate. Expansion implies a tiered or
+  tournament shape (two rounds of 8, or a shortlist round followed by a
+  winner round), each round its own reserved call; that doubles latency and
+  cost per decision, so it must be its own measured change, not a cap bump.</li>
+<li><strong>Callers and routes: sufficient.</strong> <code>PANTHEON_JEV_SPECIALIST_CALLERS</code>
+  (typed questions for allowlisted specialists), Zeus-only presets, and the
+  five supported routes cover the current usage; no evidence of demand for
+  more.</li>
+<li><strong>Dead-route holds: releasable, narrowly.</strong> <code>decision-router holds release
+  --provider &lt;p&gt; --reason</code> archives and releases unresolved holds of
+  providers that no longer exist (they can never reconcile and would freeze
+  budget forever). Live providers are refused; their holds settle by
+  reconciliation or roll off with the period.</li>
+</ul>
+
+
+
+
+
+
+
+  
+    
+  
+  
+    
+  
+
+
+  <aside class="md-source-file">
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Last update">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="November 12, 2026 23:41:50 UTC">November 12, 2026</span>
+  </span>
+
+    
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Created">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M14.47 15.08 11 13V7h1.5v5.25l3.08 1.83c-.41.28-.79.62-1.11 1m-1.39 4.84c-.36.05-.71.08-1.08.08-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8c0 .37-.03.72-.08 1.08.69.1 1.33.32 1.92.64.1-.56.16-1.13.16-1.72 0-5.5-4.5-10-10-10S2 6.5 2 12s4.47 10 10 10c.59 0 1.16-.06 1.72-.16-.32-.59-.54-1.23-.64-1.92M18 15v3h-3v2h3v3h2v-3h3v-2h-3v-3z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="November 1, 2026 23:21:04 UTC">November 1, 2026</span>
+  </span>
+
+    
+    
+    
+  </aside>
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/ils15/pantheon-opencode" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.indexes", "navigation.top", "search.highlight", "content.action.edit"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>
