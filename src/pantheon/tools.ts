@@ -57,7 +57,7 @@ import { createV2LocalDecisionDefinition } from './local-decision-tool.ts'
 import { createModelCommand } from './model-command.ts'
 import { createV2VisionTool, type V2VisionRuntime } from './native-vision.ts'
 import { createV2SkillSearchDefinition } from './skill-search-tool.ts'
-import type { ToolContextLike } from './tool-context.ts'
+import { resolveToolCwd, type ToolContextLike } from './tool-context.ts'
 
 // ─── Contract types ─────────────────────────────────────────────────────
 
@@ -557,40 +557,43 @@ const SHELL_INPUT = {
 } as const
 
 /**
- * A V2 fallback shell tool alias. OpenCode registers `bash`, but models frequently
+ * Shell tool execution. OpenCode registers `bash`, but models frequently
  * attempt to invoke `shell` because of agent permission YAML conventions.
- * This alias ensures terminal commands execute seamlessly without tool-not-found errors.
+ * This tool ensures terminal commands execute seamlessly in the workspace directory.
  */
-const shellTool: V2ToolDef = {
-  name: 'shell',
-  description: 'Execute a shell command in the workspace directory. Alias for bash execution.',
-  input: SHELL_INPUT,
-  output: {},
-  execute: async (input, context) => {
-    const raw = (input as Record<string, unknown>) ?? {}
-    const command = String(raw.command ?? raw.cmd ?? '')
-    if (!command.trim()) {
-      return { output: '', ok: false, error: 'Command cannot be empty' }
-    }
-    const toolCtx = toolContext(context)
-    const cwd = toolCtx.directory || process.cwd()
-    try {
-      const { stdout, stderr } = await execAsync(command, {
-        cwd,
-        maxBuffer: 10 * 1024 * 1024,
-        shell: '/bin/bash',
-      })
-      const output = [stdout, stderr].filter(Boolean).join('\n')
-      return { output, ok: true }
-    } catch (err: unknown) {
-      const execError = err as { stdout?: string; stderr?: string; message?: string }
-      const output = [execError.stdout, execError.stderr, execError.message]
-        .filter(Boolean)
-        .join('\n')
-      return { output, ok: false, error: output }
-    }
-  },
+export function createShellTool(fallbackDir?: string): V2ToolDef {
+  return {
+    name: 'shell',
+    description: 'Execute a shell command in the workspace directory. Alias for bash execution.',
+    input: SHELL_INPUT,
+    output: {},
+    execute: async (input, context) => {
+      const raw = (input as Record<string, unknown>) ?? {}
+      const command = String(raw.command ?? raw.cmd ?? '')
+      if (!command.trim()) {
+        return { output: '', ok: false, error: 'Command cannot be empty' }
+      }
+      const cwd = resolveToolCwd(context, fallbackDir)
+      try {
+        const { stdout, stderr } = await execAsync(command, {
+          cwd,
+          maxBuffer: 10 * 1024 * 1024,
+          shell: '/bin/bash',
+        })
+        const output = [stdout, stderr].filter(Boolean).join('\n')
+        return { output, ok: true }
+      } catch (err: unknown) {
+        const execError = err as { stdout?: string; stderr?: string; message?: string }
+        const output = [execError.stdout, execError.stderr, execError.message]
+          .filter(Boolean)
+          .join('\n')
+        return { output, ok: false, error: output }
+      }
+    },
+  }
 }
+
+export const shellTool = createShellTool()
 
 export function createV2ToolDefinitions(
   visionRuntime?: V2VisionRuntime,
@@ -645,7 +648,7 @@ export function createV2ToolDefinitions(
   )
   definitions.push(todowriteTool)
   definitions.push(todoreadTool)
-  definitions.push(shellTool)
+  definitions.push(createShellTool(hostLocationDirectory))
   definitions.push(createV2SkillSearchDefinition(hostLocationDirectory))
   definitions.push(createDeepworkTool(hostLocationDirectory))
   if (visionRuntime) definitions.push(createV2VisionTool(visionRuntime))

@@ -13,6 +13,11 @@ import { generateMarkdownDocument } from './plan-projection.ts'
 import {
   type DeepworkPlan,
   DeepworkPlanSchema,
+  type PlanAcceptanceCriterion,
+  type PlanAcceptanceKind,
+  type PlanDecision,
+  type PlanMetadata,
+  type PlanRisk,
   type PlanTask,
   type TaskState,
 } from './plan-schema.ts'
@@ -81,18 +86,264 @@ export function computeTaskReadiness(plan: DeepworkPlan): DeepworkPlan {
   return { ...plan, tasks: updatedTasks }
 }
 
+export function inferAcceptanceKind(check: string): PlanAcceptanceKind {
+  const lower = check.toLowerCase()
+  if (lower.includes('test') || lower.includes('pytest') || lower.includes('assert')) return 'test'
+  if (
+    lower.includes('file') ||
+    lower.includes('exist') ||
+    lower.includes('criado') ||
+    lower.includes('path')
+  )
+    return 'file'
+  if (
+    lower.startsWith('npm ') ||
+    lower.startsWith('bash ') ||
+    lower.startsWith('alembic ') ||
+    lower.startsWith('git ') ||
+    lower.includes(' && ') ||
+    lower.includes(' || ')
+  )
+    return 'command'
+  return 'manual'
+}
+
 /**
- * Read the canonical JSON plan. Returns null if absent or corrupt.
+ * Normalizes unstructured or loosely structured plan input into a canonical DeepworkPlan.
+ * Resilient to agent variations: owner vs agent, @-prefixes, array of strings for acceptance,
+ * choices in decisions, and string phases.
+ */
+export function normalizePlanData(data: unknown, fallbackSlug = 'plan'): DeepworkPlan {
+  const obj = (data && typeof data === 'object' ? data : {}) as Record<string, unknown>
+  const slug = String(obj.plan_id ?? obj.slug ?? fallbackSlug).trim() || fallbackSlug
+  const title = String(obj.title ?? slug).trim() || slug
+  const intent = String(obj.intent ?? '').trim() || 'Plano de deepwork estruturado.'
+  const done_when = Array.isArray(obj.done_when)
+    ? obj.done_when.map((s) => String(s).trim()).filter(Boolean)
+    : []
+
+  const rawDecisions = Array.isArray(obj.decisions_needed)
+    ? obj.decisions_needed
+    : Array.isArray(obj.decisions)
+      ? obj.decisions
+      : []
+
+  const decisions_needed: PlanDecision[] = rawDecisions.map((d: unknown, idx: number) => {
+    const dec = (d && typeof d === 'object' ? d : {}) as Record<string, unknown>
+    const id = String(dec.id ?? `D${String(idx + 1).padStart(2, '0')}`).trim()
+    const question = String(dec.question ?? dec.title ?? 'Decisão necessária').trim()
+    const rawOptions = Array.isArray(dec.options)
+      ? dec.options
+      : typeof dec.options === 'string'
+        ? [dec.options]
+        : []
+    const options = rawOptions.map((opt) => String(opt).trim()).filter(Boolean)
+    const chosenVal = dec.chosen ?? dec.choice
+    const chosen = typeof chosenVal === 'string' ? chosenVal : undefined
+    const statusVal = String(dec.status ?? '')
+      .trim()
+      .toLowerCase()
+    const status: 'pending' | 'resolved' =
+      statusVal === 'resolved' || chosen !== undefined ? 'resolved' : 'pending'
+    return {
+      id,
+      question,
+      options,
+      chosen,
+      choice: chosen,
+      status,
+      resolved_at: typeof dec.resolved_at === 'string' ? dec.resolved_at : undefined,
+    }
+  })
+
+  const rawRisks = Array.isArray(obj.risks) ? obj.risks : []
+  const risks: PlanRisk[] = rawRisks.map((r: unknown, idx: number) => {
+    const risk = (r && typeof r === 'object' ? r : {}) as Record<string, unknown>
+    return {
+      id: String(risk.id ?? `R${String(idx + 1).padStart(2, '0')}`).trim(),
+      description: String(risk.description ?? risk.risk ?? '').trim() || 'Risco não especificado',
+      mitigation: typeof risk.mitigation === 'string' ? risk.mitigation : undefined,
+    }
+  })
+
+  const out_of_scope = Array.isArray(obj.out_of_scope)
+    ? obj.out_of_scope.map((s) => String(s).trim()).filter(Boolean)
+    : []
+
+  const rawTasks = Array.isArray(obj.tasks) ? obj.tasks : []
+  const tasks: PlanTask[] = rawTasks.map((t: unknown, idx: number) => {
+    const task = (t && typeof t === 'object' ? t : {}) as Record<string, unknown>
+    const id = String(task.id ?? `T${String(idx + 1).padStart(2, '0')}`).trim()
+    const taskTitle = String(task.title ?? task.name ?? `Task ${idx + 1}`).trim()
+    const description = typeof task.description === 'string' ? task.description : undefined
+    const rawAgent = task.agent ?? task.owner ?? task.assignee
+    const agent =
+      typeof rawAgent === 'string' && rawAgent.trim().length > 0
+        ? rawAgent.replace(/^@/, '').trim()
+        : 'zeus'
+
+    const rawPhase = task.phase
+    let phase = 1
+    if (typeof rawPhase === 'number' && Number.isFinite(rawPhase)) {
+      phase = rawPhase
+    } else if (typeof rawPhase === 'string') {
+      const match = rawPhase.match(/\d+/)
+      if (match) phase = Number.parseInt(match[0], 10)
+    }
+
+    const rawState = String(task.state ?? task.status ?? 'pending')
+      .trim()
+      .toLowerCase()
+    const validStates: TaskState[] = [
+      'pending',
+      'ready',
+      'in_progress',
+      'done',
+      'failed',
+      'blocked',
+    ]
+    const state: TaskState = validStates.includes(rawState as TaskState)
+      ? (rawState as TaskState)
+      : 'pending'
+
+    const depends_on = Array.isArray(task.depends_on)
+      ? task.depends_on.map((dep) => String(dep).trim()).filter(Boolean)
+      : []
+    const parallel_safe = Boolean(task.parallel_safe ?? task.parallel)
+
+    const rawAcceptance = Array.isArray(task.acceptance)
+      ? task.acceptance
+      : Array.isArray(task.acceptance_criteria)
+        ? task.acceptance_criteria
+        : Array.isArray(task.criteria)
+          ? task.criteria
+          : []
+
+    const acceptance: PlanAcceptanceCriterion[] = rawAcceptance.map((a: unknown) => {
+      if (typeof a === 'string') {
+        const checkText = a.trim()
+        return {
+          kind: inferAcceptanceKind(checkText),
+          check: checkText,
+          fails_now: true,
+          verified: false,
+        }
+      }
+      const acc = (a && typeof a === 'object' ? a : {}) as Record<string, unknown>
+      const checkText = String(
+        acc.check ?? acc.description ?? acc.title ?? acc.name ?? 'verify',
+      ).trim()
+      const rawKind = String(acc.kind ?? '')
+        .trim()
+        .toLowerCase()
+      const validKinds = ['test', 'command', 'file', 'manual'] as const
+      const kind = (
+        validKinds.includes(rawKind as (typeof validKinds)[number])
+          ? rawKind
+          : inferAcceptanceKind(checkText)
+      ) as PlanAcceptanceKind
+      return {
+        kind,
+        check: checkText || 'verify',
+        fails_now: typeof acc.fails_now === 'boolean' ? acc.fails_now : true,
+        verified: Boolean(acc.verified),
+        proof: typeof acc.proof === 'string' ? acc.proof : undefined,
+      }
+    })
+
+    const rawResult =
+      task.result && typeof task.result === 'object'
+        ? (task.result as Record<string, unknown>)
+        : undefined
+    const result = rawResult
+      ? {
+          summary: typeof rawResult.summary === 'string' ? rawResult.summary : undefined,
+          verified_at:
+            typeof rawResult.verified_at === 'string' ? rawResult.verified_at : undefined,
+          artifacts: Array.isArray(rawResult.artifacts)
+            ? rawResult.artifacts.map((art) => String(art))
+            : undefined,
+        }
+      : undefined
+
+    return {
+      id,
+      title: taskTitle,
+      description,
+      agent,
+      phase,
+      state,
+      depends_on,
+      parallel_safe,
+      acceptance,
+      result,
+    }
+  })
+
+  const rawMeta =
+    obj.metadata && typeof obj.metadata === 'object'
+      ? (obj.metadata as Record<string, unknown>)
+      : {}
+  const now = new Date().toISOString()
+  const metadata: PlanMetadata = {
+    created_at: typeof rawMeta.created_at === 'string' ? rawMeta.created_at : now,
+    updated_at: typeof rawMeta.updated_at === 'string' ? rawMeta.updated_at : now,
+    version: typeof rawMeta.version === 'number' ? rawMeta.version : 1,
+  }
+
+  return computeTaskReadiness({
+    plan_id: slug,
+    title,
+    intent,
+    done_when,
+    decisions_needed,
+    risks,
+    out_of_scope,
+    tasks,
+    metadata,
+  })
+}
+
+/**
+ * Read the canonical JSON plan. Returns null if absent.
+ * Automatically normalizes minor schema variations (single options, string criteria, owner aliases).
  */
 export async function readPlan(cwd = process.cwd(), slug: string): Promise<DeepworkPlan | null> {
   const path = deepworkPlanJsonPath(cwd, slug)
+  let raw: string
   try {
-    const raw = await readFile(path, 'utf8')
-    const parsed = JSON.parse(raw)
-    return DeepworkPlanSchema.parse(parsed)
-  } catch {
-    return null
+    raw = await readFile(path, 'utf8')
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return null
+    }
+    throw err
   }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch (err: unknown) {
+    throw new Error(`Plano '${slug}' em ${path} contém JSON inválido: ${(err as Error).message}`)
+  }
+
+  const result = DeepworkPlanSchema.safeParse(parsed)
+  if (result.success) {
+    return result.data
+  }
+
+  try {
+    const normalized = normalizePlanData(parsed, slug)
+    const repairedResult = DeepworkPlanSchema.safeParse(normalized)
+    if (repairedResult.success) {
+      return repairedResult.data
+    }
+  } catch {
+    // fall through to schema issue reporting
+  }
+
+  const issues = result.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join(', ')
+  throw new Error(`Plano '${slug}' em ${path} falhou na validação de schema: ${issues}`)
 }
 
 const planLocks = new Map<string, Promise<unknown>>()
@@ -314,7 +565,9 @@ export async function resolvePlanDecision(
     updatedDecisions[decIndex] = {
       ...existingDec,
       chosen,
+      choice: chosen,
       status: 'resolved',
+      resolved_at: new Date().toISOString(),
     }
 
     const nextPlan: DeepworkPlan = { ...plan, decisions_needed: updatedDecisions }

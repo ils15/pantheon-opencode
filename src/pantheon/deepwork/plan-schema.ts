@@ -55,9 +55,11 @@ export type DecisionStatus = z.infer<typeof DecisionStatusSchema>
 export const PlanDecisionSchema = z.object({
   id: z.string().min(1),
   question: z.string().min(1),
-  options: z.array(z.string()).min(2),
+  options: z.array(z.string()).default([]),
   chosen: z.string().optional(),
+  choice: z.string().optional(),
   status: DecisionStatusSchema.default('pending'),
+  resolved_at: z.string().optional(),
 })
 export type PlanDecision = z.infer<typeof PlanDecisionSchema>
 
@@ -78,7 +80,7 @@ export type PlanMetadata = z.infer<typeof PlanMetadataSchema>
 export const DeepworkPlanSchema = z.object({
   plan_id: z.string().min(1),
   title: z.string().min(1),
-  intent: z.string().min(1),
+  intent: z.string().default('Plano de deepwork estruturado.'),
   done_when: z.array(z.string()).default([]),
   decisions_needed: z.array(PlanDecisionSchema).default([]),
   risks: z.array(PlanRiskSchema).default([]),

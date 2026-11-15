@@ -12273,9 +12273,11 @@ var DecisionStatusSchema = z2.enum(["pending", "resolved"]);
 var PlanDecisionSchema = z2.object({
   id: z2.string().min(1),
   question: z2.string().min(1),
-  options: z2.array(z2.string()).min(2),
+  options: z2.array(z2.string()).default([]),
   chosen: z2.string().optional(),
-  status: DecisionStatusSchema.default("pending")
+  choice: z2.string().optional(),
+  status: DecisionStatusSchema.default("pending"),
+  resolved_at: z2.string().optional()
 });
 var PlanRiskSchema = z2.object({
   id: z2.string().min(1),
@@ -12290,7 +12292,7 @@ var PlanMetadataSchema = z2.object({
 var DeepworkPlanSchema = z2.object({
   plan_id: z2.string().min(1),
   title: z2.string().min(1),
-  intent: z2.string().min(1),
+  intent: z2.string().default("Plano de deepwork estruturado."),
   done_when: z2.array(z2.string()).default([]),
   decisions_needed: z2.array(PlanDecisionSchema).default([]),
   risks: z2.array(PlanRiskSchema).default([]),
@@ -12335,15 +12337,175 @@ function computeTaskReadiness(plan) {
   });
   return { ...plan, tasks: updatedTasks };
 }
+function inferAcceptanceKind(check) {
+  const lower = check.toLowerCase();
+  if (lower.includes("test") || lower.includes("pytest") || lower.includes("assert")) return "test";
+  if (lower.includes("file") || lower.includes("exist") || lower.includes("criado") || lower.includes("path"))
+    return "file";
+  if (lower.startsWith("npm ") || lower.startsWith("bash ") || lower.startsWith("alembic ") || lower.startsWith("git ") || lower.includes(" && ") || lower.includes(" || "))
+    return "command";
+  return "manual";
+}
+function normalizePlanData(data, fallbackSlug = "plan") {
+  const obj = data && typeof data === "object" ? data : {};
+  const slug = String(obj.plan_id ?? obj.slug ?? fallbackSlug).trim() || fallbackSlug;
+  const title = String(obj.title ?? slug).trim() || slug;
+  const intent = String(obj.intent ?? "").trim() || "Plano de deepwork estruturado.";
+  const done_when = Array.isArray(obj.done_when) ? obj.done_when.map((s) => String(s).trim()).filter(Boolean) : [];
+  const rawDecisions = Array.isArray(obj.decisions_needed) ? obj.decisions_needed : Array.isArray(obj.decisions) ? obj.decisions : [];
+  const decisions_needed = rawDecisions.map((d, idx) => {
+    const dec = d && typeof d === "object" ? d : {};
+    const id = String(dec.id ?? `D${String(idx + 1).padStart(2, "0")}`).trim();
+    const question = String(dec.question ?? dec.title ?? "Decis\xE3o necess\xE1ria").trim();
+    const rawOptions = Array.isArray(dec.options) ? dec.options : typeof dec.options === "string" ? [dec.options] : [];
+    const options = rawOptions.map((opt) => String(opt).trim()).filter(Boolean);
+    const chosenVal = dec.chosen ?? dec.choice;
+    const chosen = typeof chosenVal === "string" ? chosenVal : void 0;
+    const statusVal = String(dec.status ?? "").trim().toLowerCase();
+    const status = statusVal === "resolved" || chosen !== void 0 ? "resolved" : "pending";
+    return {
+      id,
+      question,
+      options,
+      chosen,
+      choice: chosen,
+      status,
+      resolved_at: typeof dec.resolved_at === "string" ? dec.resolved_at : void 0
+    };
+  });
+  const rawRisks = Array.isArray(obj.risks) ? obj.risks : [];
+  const risks = rawRisks.map((r, idx) => {
+    const risk = r && typeof r === "object" ? r : {};
+    return {
+      id: String(risk.id ?? `R${String(idx + 1).padStart(2, "0")}`).trim(),
+      description: String(risk.description ?? risk.risk ?? "").trim() || "Risco n\xE3o especificado",
+      mitigation: typeof risk.mitigation === "string" ? risk.mitigation : void 0
+    };
+  });
+  const out_of_scope = Array.isArray(obj.out_of_scope) ? obj.out_of_scope.map((s) => String(s).trim()).filter(Boolean) : [];
+  const rawTasks = Array.isArray(obj.tasks) ? obj.tasks : [];
+  const tasks = rawTasks.map((t, idx) => {
+    const task = t && typeof t === "object" ? t : {};
+    const id = String(task.id ?? `T${String(idx + 1).padStart(2, "0")}`).trim();
+    const taskTitle = String(task.title ?? task.name ?? `Task ${idx + 1}`).trim();
+    const description = typeof task.description === "string" ? task.description : void 0;
+    const rawAgent = task.agent ?? task.owner ?? task.assignee;
+    const agent = typeof rawAgent === "string" && rawAgent.trim().length > 0 ? rawAgent.replace(/^@/, "").trim() : "zeus";
+    const rawPhase = task.phase;
+    let phase = 1;
+    if (typeof rawPhase === "number" && Number.isFinite(rawPhase)) {
+      phase = rawPhase;
+    } else if (typeof rawPhase === "string") {
+      const match = rawPhase.match(/\d+/);
+      if (match) phase = Number.parseInt(match[0], 10);
+    }
+    const rawState = String(task.state ?? task.status ?? "pending").trim().toLowerCase();
+    const validStates = [
+      "pending",
+      "ready",
+      "in_progress",
+      "done",
+      "failed",
+      "blocked"
+    ];
+    const state = validStates.includes(rawState) ? rawState : "pending";
+    const depends_on = Array.isArray(task.depends_on) ? task.depends_on.map((dep) => String(dep).trim()).filter(Boolean) : [];
+    const parallel_safe = Boolean(task.parallel_safe ?? task.parallel);
+    const rawAcceptance = Array.isArray(task.acceptance) ? task.acceptance : Array.isArray(task.acceptance_criteria) ? task.acceptance_criteria : Array.isArray(task.criteria) ? task.criteria : [];
+    const acceptance = rawAcceptance.map((a) => {
+      if (typeof a === "string") {
+        const checkText2 = a.trim();
+        return {
+          kind: inferAcceptanceKind(checkText2),
+          check: checkText2,
+          fails_now: true,
+          verified: false
+        };
+      }
+      const acc = a && typeof a === "object" ? a : {};
+      const checkText = String(
+        acc.check ?? acc.description ?? acc.title ?? acc.name ?? "verify"
+      ).trim();
+      const rawKind = String(acc.kind ?? "").trim().toLowerCase();
+      const validKinds = ["test", "command", "file", "manual"];
+      const kind = validKinds.includes(rawKind) ? rawKind : inferAcceptanceKind(checkText);
+      return {
+        kind,
+        check: checkText || "verify",
+        fails_now: typeof acc.fails_now === "boolean" ? acc.fails_now : true,
+        verified: Boolean(acc.verified),
+        proof: typeof acc.proof === "string" ? acc.proof : void 0
+      };
+    });
+    const rawResult = task.result && typeof task.result === "object" ? task.result : void 0;
+    const result = rawResult ? {
+      summary: typeof rawResult.summary === "string" ? rawResult.summary : void 0,
+      verified_at: typeof rawResult.verified_at === "string" ? rawResult.verified_at : void 0,
+      artifacts: Array.isArray(rawResult.artifacts) ? rawResult.artifacts.map((art) => String(art)) : void 0
+    } : void 0;
+    return {
+      id,
+      title: taskTitle,
+      description,
+      agent,
+      phase,
+      state,
+      depends_on,
+      parallel_safe,
+      acceptance,
+      result
+    };
+  });
+  const rawMeta = obj.metadata && typeof obj.metadata === "object" ? obj.metadata : {};
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const metadata = {
+    created_at: typeof rawMeta.created_at === "string" ? rawMeta.created_at : now,
+    updated_at: typeof rawMeta.updated_at === "string" ? rawMeta.updated_at : now,
+    version: typeof rawMeta.version === "number" ? rawMeta.version : 1
+  };
+  return computeTaskReadiness({
+    plan_id: slug,
+    title,
+    intent,
+    done_when,
+    decisions_needed,
+    risks,
+    out_of_scope,
+    tasks,
+    metadata
+  });
+}
 async function readPlan(cwd = process.cwd(), slug) {
   const path5 = deepworkPlanJsonPath(cwd, slug);
+  let raw;
   try {
-    const raw = await readFile6(path5, "utf8");
-    const parsed = JSON.parse(raw);
-    return DeepworkPlanSchema.parse(parsed);
-  } catch {
-    return null;
+    raw = await readFile6(path5, "utf8");
+  } catch (err) {
+    if (err.code === "ENOENT") {
+      return null;
+    }
+    throw err;
   }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`Plano '${slug}' em ${path5} cont\xE9m JSON inv\xE1lido: ${err.message}`);
+  }
+  const result = DeepworkPlanSchema.safeParse(parsed);
+  if (result.success) {
+    return result.data;
+  }
+  try {
+    const normalized = normalizePlanData(parsed, slug);
+    const repairedResult = DeepworkPlanSchema.safeParse(normalized);
+    if (repairedResult.success) {
+      return repairedResult.data;
+    }
+  } catch {
+  }
+  const issues = result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join(", ");
+  throw new Error(`Plano '${slug}' em ${path5} falhou na valida\xE7\xE3o de schema: ${issues}`);
 }
 var planLocks = /* @__PURE__ */ new Map();
 async function withPlanLock(cwd, slug, fn) {
@@ -12478,7 +12640,9 @@ async function resolvePlanDecision(cwd = process.cwd(), slug, decisionId, chosen
     updatedDecisions[decIndex] = {
       ...existingDec,
       chosen,
-      status: "resolved"
+      choice: chosen,
+      status: "resolved",
+      resolved_at: (/* @__PURE__ */ new Date()).toISOString()
     };
     const nextPlan = { ...plan, decisions_needed: updatedDecisions };
     await writePlan(cwd, nextPlan);
@@ -12650,69 +12814,36 @@ function createDeepworkTool(cwd = process.cwd()) {
         throw new Error(`O par\xE2metro 'slug' \xE9 obrigat\xF3rio para a a\xE7\xE3o '${parsed.action}'.`);
       }
       if (parsed.action === "init") {
-        const title = parsed.title?.trim() || slug;
-        const intent = parsed.intent?.trim() || "Plano de deepwork estruturado.";
-        const rawTasks = parsed.tasks ?? [];
-        const rawDecisions = parsed.decisions ?? [];
-        const doneWhen = parsed.done_when ?? [];
-        const tasks = rawTasks.map((t, idx) => ({
-          id: typeof t.id === "string" ? t.id : `T${String(idx + 1).padStart(2, "0")}`,
-          title: typeof t.title === "string" ? t.title : `Task ${idx + 1}`,
-          description: typeof t.description === "string" ? t.description : void 0,
-          agent: typeof t.agent === "string" ? t.agent : "zeus",
-          phase: typeof t.phase === "number" ? t.phase : 1,
-          state: typeof t.state === "string" ? t.state : "pending",
-          depends_on: Array.isArray(t.depends_on) ? t.depends_on : [],
-          parallel_safe: Boolean(t.parallel_safe),
-          acceptance: Array.isArray(t.acceptance) ? t.acceptance.map((a) => ({
-            kind: a.kind || "command",
-            check: a.check || "verify",
-            fails_now: a.fails_now ?? true,
-            verified: a.verified ?? false,
-            proof: a.proof
-          })) : []
-        }));
-        const decisions = rawDecisions.map((d, idx) => ({
-          id: typeof d.id === "string" ? d.id : `D${String(idx + 1).padStart(2, "0")}`,
-          question: typeof d.question === "string" ? d.question : "Decis\xE3o necess\xE1ria",
-          options: Array.isArray(d.options) ? d.options : ["Sim", "N\xE3o"],
-          chosen: typeof d.chosen === "string" ? d.chosen : void 0,
-          status: d.chosen ? "resolved" : "pending"
-        }));
-        const initialPlan = computeTaskReadiness({
-          plan_id: slug,
-          title,
-          intent,
-          done_when: doneWhen,
-          decisions_needed: decisions,
-          risks: [],
-          out_of_scope: [],
-          tasks,
-          metadata: {
-            created_at: (/* @__PURE__ */ new Date()).toISOString(),
-            updated_at: (/* @__PURE__ */ new Date()).toISOString(),
-            version: 1
-          }
-        });
+        const initialPlan = normalizePlanData(
+          {
+            plan_id: slug,
+            title: parsed.title,
+            intent: parsed.intent,
+            done_when: parsed.done_when,
+            decisions_needed: parsed.decisions,
+            tasks: parsed.tasks
+          },
+          slug
+        );
         await withPlanLock(effectiveCwd, slug, async () => {
           await writePlan(effectiveCwd, initialPlan);
           await appendJournal(effectiveCwd, slug, {
             type: "plan_created",
             timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-            payload: { slug, title, tasks_count: tasks.length }
+            payload: { slug, title: initialPlan.title, tasks_count: initialPlan.tasks.length }
           });
         });
         const projection = generateChatProjection(initialPlan, effectiveCwd);
         const approvalQ = buildApprovalQuestion(initialPlan);
         const todoPayload = {
-          todos: tasks.map((t) => ({
+          todos: initialPlan.tasks.map((t) => ({
             content: `[${t.id}] ${t.title}`,
             status: t.state === "done" ? "completed" : t.state === "in_progress" ? "in_progress" : "pending"
           }))
         };
         return {
           output: [
-            `\u2705 Plano de Deepwork '${title}' inicializado com sucesso em \`.pantheon/deepwork/${slug}/\`!`,
+            `\u2705 Plano de Deepwork '${initialPlan.title}' inicializado com sucesso em \`.pantheon/deepwork/${slug}/\`!`,
             `- \u{1F517} **Deeplink PLAN.md:** [Abrir PLAN.md](file://${deepworkPlanMdPath(effectiveCwd, slug)})`,
             `- \u{1F517} **Deeplink plan.json:** [Abrir plan.json](file://${deepworkPlanJsonPath(effectiveCwd, slug)})`,
             "",
@@ -14610,34 +14741,36 @@ var SHELL_INPUT = {
     }
   }
 };
-var shellTool = {
-  name: "shell",
-  description: "Execute a shell command in the workspace directory. Alias for bash execution.",
-  input: SHELL_INPUT,
-  output: {},
-  execute: async (input, context) => {
-    const raw = input ?? {};
-    const command = String(raw.command ?? raw.cmd ?? "");
-    if (!command.trim()) {
-      return { output: "", ok: false, error: "Command cannot be empty" };
+function createShellTool(fallbackDir) {
+  return {
+    name: "shell",
+    description: "Execute a shell command in the workspace directory. Alias for bash execution.",
+    input: SHELL_INPUT,
+    output: {},
+    execute: async (input, context) => {
+      const raw = input ?? {};
+      const command = String(raw.command ?? raw.cmd ?? "");
+      if (!command.trim()) {
+        return { output: "", ok: false, error: "Command cannot be empty" };
+      }
+      const cwd = resolveToolCwd(context, fallbackDir);
+      try {
+        const { stdout, stderr } = await execAsync(command, {
+          cwd,
+          maxBuffer: 10 * 1024 * 1024,
+          shell: "/bin/bash"
+        });
+        const output = [stdout, stderr].filter(Boolean).join("\n");
+        return { output, ok: true };
+      } catch (err) {
+        const execError = err;
+        const output = [execError.stdout, execError.stderr, execError.message].filter(Boolean).join("\n");
+        return { output, ok: false, error: output };
+      }
     }
-    const toolCtx = toolContext(context);
-    const cwd = toolCtx.directory || process.cwd();
-    try {
-      const { stdout, stderr } = await execAsync(command, {
-        cwd,
-        maxBuffer: 10 * 1024 * 1024,
-        shell: "/bin/bash"
-      });
-      const output = [stdout, stderr].filter(Boolean).join("\n");
-      return { output, ok: true };
-    } catch (err) {
-      const execError = err;
-      const output = [execError.stdout, execError.stderr, execError.message].filter(Boolean).join("\n");
-      return { output, ok: false, error: output };
-    }
-  }
-};
+  };
+}
+var shellTool = createShellTool();
 function createV2ToolDefinitions(visionRuntime, shadow = {}, jevRuntime, hostLocationDirectory) {
   const definitions = [
     {
@@ -14669,7 +14802,7 @@ function createV2ToolDefinitions(visionRuntime, shadow = {}, jevRuntime, hostLoc
   );
   definitions.push(todowriteTool);
   definitions.push(todoreadTool);
-  definitions.push(shellTool);
+  definitions.push(createShellTool(hostLocationDirectory));
   definitions.push(createV2SkillSearchDefinition(hostLocationDirectory));
   definitions.push(createDeepworkTool(hostLocationDirectory));
   if (visionRuntime) definitions.push(createV2VisionTool(visionRuntime));
