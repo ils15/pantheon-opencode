@@ -968,13 +968,19 @@ function testRegistrationContract(): void {
   const definition = createV2JevDecisionDefinition(runtime)
   assert.equal(definition.name, 'pantheon_jev_decide')
   const schema = definition.input as {
+    type?: string
     required?: string[]
     properties?: Record<string, { enum?: string[] }>
-    anyOf?: Array<{ required?: string[] }>
+    anyOf?: unknown
+    oneOf?: unknown
+    allOf?: unknown
   }
-  // One schema, four disjoint payloads: the state branch (presets and explicit
-  // questions), the review branch (J4 delegateId + metrics + criteria), and
-  // the v3.1 rank (candidates) and verify (claims) branches.
+  // Upstream LLM function schema invariant: must be object at top level and
+  // must not contain anyOf / oneOf / allOf at the root.
+  assert.equal(schema.type, 'object')
+  assert.equal(schema.anyOf, undefined, 'no top-level anyOf to prevent upstream llm rejection')
+  assert.equal(schema.oneOf, undefined, 'no top-level oneOf')
+  assert.equal(schema.allOf, undefined, 'no top-level allOf')
   assert.deepEqual(schema.required, ['schemaVersion'])
   assert.deepEqual(schema.properties?.mode?.enum, [
     'skills',
@@ -984,22 +990,10 @@ function testRegistrationContract(): void {
     'verify',
     'order',
   ])
-  const branches = (schema.anyOf ?? []).map((branch) => branch.required ?? [])
-  const reviewBranch = branches.find((required) => required.includes('delegateId'))
-  const stateBranch = branches.find((required) => required.includes('state'))
-  const rankBranch = branches.find((required) => required.includes('candidates'))
-  const verifyBranch = branches.find((required) => required.includes('claims'))
-  assert.ok(reviewBranch && stateBranch, 'both payload branches are declared')
-  assert.ok(rankBranch && verifyBranch, 'the v3.1 rank and verify branches are declared')
-  assert.deepEqual(rankBranch, ['candidates'])
-  assert.deepEqual(verifyBranch, ['claims'])
-  assert.deepEqual([...reviewBranch].sort(), [
-    'criteria',
-    'delegateId',
-    'resultMetrics',
-    'resultSummaryKind',
-  ])
-  assert.deepEqual(stateBranch, ['state'])
+  assert.ok(schema.properties?.state, 'state property declared')
+  assert.ok(schema.properties?.delegateId, 'delegateId property declared')
+  assert.ok(schema.properties?.candidates, 'candidates property declared')
+  assert.ok(schema.properties?.claims, 'claims property declared')
 }
 
 // ─── Source-level transport invariants ──────────────────────────────────

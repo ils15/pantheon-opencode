@@ -1317,9 +1317,16 @@ function testOrderConsume(): void {
 function testSchemaDeclaresRankAndVerify(): void {
   const definition = createV2JevDecisionDefinition(stubRuntime().runtime)
   const schema = definition.input as {
+    type?: string
     properties?: Record<string, unknown>
-    anyOf?: Array<{ required?: string[] }>
+    anyOf?: unknown
+    oneOf?: unknown
+    allOf?: unknown
   }
+  assert.equal(schema.type, 'object')
+  assert.equal(schema.anyOf, undefined, 'no top-level anyOf to prevent upstream llm rejection')
+  assert.equal(schema.oneOf, undefined, 'no top-level oneOf')
+  assert.equal(schema.allOf, undefined, 'no top-level allOf')
   const mode = schema.properties?.mode as { enum?: string[] } | undefined
   assert.ok(mode, 'the mode property is declared')
   assert.deepEqual(
@@ -1327,13 +1334,8 @@ function testSchemaDeclaresRankAndVerify(): void {
     ['skills', 'delegation', 'review', 'rank', 'verify', 'order'],
     'the mode enum gains rank and verify',
   )
-  const branches = (schema.anyOf ?? []).map((branch) => branch.required ?? [])
-  const rankBranch = branches.find((required) => required.includes('candidates'))
-  const verifyBranch = branches.find((required) => required.includes('claims'))
-  assert.ok(rankBranch, 'a rank branch is declared')
-  assert.ok(verifyBranch, 'a verify branch is declared')
-  assert.deepEqual(rankBranch, ['candidates'])
-  assert.deepEqual(verifyBranch, ['claims'])
+  assert.ok(schema.properties?.candidates, 'a rank candidates property is declared')
+  assert.ok(schema.properties?.claims, 'a verify claims property is declared')
 
   const candidates = schema.properties?.candidates as {
     minItems?: number

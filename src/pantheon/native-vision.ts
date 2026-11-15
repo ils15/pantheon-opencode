@@ -576,7 +576,7 @@ export function createV2VisionTool(runtime: V2VisionRuntime): V2VisionToolDefini
   return {
     name: 'vision_describe',
     description:
-      'Analyze an image with an OpenCode Zen multimodal model confirmed by the current V2 model catalog. ' +
+      'Analyze an image with an OpenCode Zen multimodal model confirmed by the current model catalog. ' +
       'Prefers the OpenCode Go MiMo 2.6 Flash model and falls back to another live image-capable Zen model. ' +
       'Free-tier models are excluded (the direct gateway rejects them). ' +
       'Accepts a local path, file URL, public HTTP(S) URL, or base64 image data URI.',

@@ -7532,14 +7532,8 @@ var JEV_INPUT_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: ["schemaVersion"],
-  anyOf: [
-    { required: ["state"] },
-    { required: ["delegateId", "resultSummaryKind", "resultMetrics", "criteria"] },
-    { required: ["candidates"] },
-    { required: ["claims"] }
-  ],
   properties: {
-    schemaVersion: { type: "integer", const: 1 },
+    schemaVersion: { type: "integer", enum: [1] },
     state: { type: "string", minLength: 1, maxLength: 12e3 },
     mode: { type: "string", enum: ["skills", "delegation", "review", "rank", "verify", "order"] },
     questions: { type: "array", minItems: 1, maxItems: 4, items: questionSchema },
@@ -9268,7 +9262,7 @@ function discoverActiveSessionId(directory) {
 function createV2VisionTool(runtime) {
   return {
     name: "vision_describe",
-    description: "Analyze an image with an OpenCode Zen multimodal model confirmed by the current V2 model catalog. Prefers the OpenCode Go MiMo 2.6 Flash model and falls back to another live image-capable Zen model. Free-tier models are excluded (the direct gateway rejects them). Accepts a local path, file URL, public HTTP(S) URL, or base64 image data URI.",
+    description: "Analyze an image with an OpenCode Zen multimodal model confirmed by the current model catalog. Prefers the OpenCode Go MiMo 2.6 Flash model and falls back to another live image-capable Zen model. Free-tier models are excluded (the direct gateway rejects them). Accepts a local path, file URL, public HTTP(S) URL, or base64 image data URI.",
     input: {
       type: "object",
       additionalProperties: false,
@@ -13058,7 +13052,7 @@ var v2InputSchema = {
     "complexity"
   ],
   properties: {
-    schemaVersion: { type: "integer", const: 1 },
+    schemaVersion: { type: "integer", enum: [1] },
     candidateAgents: { type: "array", maxItems: 14, items: { type: "string", minLength: 1 } },
     domain: { type: ["string", "null"] },
     candidateSkillIds: { type: "array", maxItems: 64, items: { type: "string", minLength: 1 } },
@@ -14521,18 +14515,18 @@ var MODEL_INPUT = {
     scope: {
       type: "string",
       enum: ["project"],
-      description: "Project scope only; global overrides are not supported in V2."
+      description: "Project scope only; global overrides are not supported."
     }
   }
 };
 var modelCommand = createModelCommand({ v2Mode: true });
 async function executeModel(input, context) {
   if (input.scope !== void 0 && input.scope !== "project") {
-    return { output: "Error: V2 pantheon_model is project-only; global scope is not supported." };
+    return { output: "Error: pantheon_model is project-only; global scope is not supported." };
   }
   if (Object.hasOwn(input, "confirm") || Object.hasOwn(input, "authorize_global")) {
     return {
-      output: "Error: V2 pantheon_model does not accept authorization flags; global authorization is not supported by this tool."
+      output: "Error: pantheon_model does not accept authorization flags; global authorization is not supported by this tool."
     };
   }
   const output = await modelCommand.pantheon_model.execute(
@@ -14655,14 +14649,14 @@ function createV2ToolDefinitions(visionRuntime, shadow = {}, jevRuntime, hostLoc
     },
     {
       name: "pantheon_cost",
-      description: "Report token usage and USD cost by agent and phase, by model, and by session, over the last N days from opencode.db (read-only). Costs come from the models.dev catalog cached on disk: a call reads that cache and never waits on the network unless refreshPricing is set, a stale cache is refreshed in the background and the report says so, and an unpriced model reads \u2014 and is excluded from the totals, which then say partial. Pass session=<root session id> to aggregate that session plus its descendant sessions. Phase may be unknown on V2; costs are catalog list prices, not an invoice.",
+      description: "Report token usage and USD cost by agent and phase, by model, and by session, over the last N days from opencode.db (read-only). Costs come from the models.dev catalog cached on disk: a call reads that cache and never waits on the network unless refreshPricing is set, a stale cache is refreshed in the background and the report says so, and an unpriced model reads \u2014 and is excluded from the totals, which then say partial. Pass session=<root session id> to aggregate that session plus its descendant sessions. Phase may be unknown; costs are catalog list prices, not an invoice.",
       input: COST_INPUT,
       output: {},
       execute: executeCost
     },
     {
       name: "pantheon_model",
-      description: 'Show, set, or reset explicit per-agent project-scoped model overrides in active-preset.json. V2 ignores static preset names and PANTHEON_MODEL_PRESET; no wizard or implicit model selection. Global overrides are not read or written in V2; future global support requires separate explicit authorization. Pass action="status" to read project-scoped overrides. Never writes .env or top-level model/small_model.',
+      description: 'Show, set, or reset explicit per-agent project-scoped model overrides in active-preset.json. Ignores static preset names and PANTHEON_MODEL_PRESET; no wizard or implicit model selection. Global overrides are not read or written; future global support requires separate explicit authorization. Pass action="status" to read project-scoped overrides. Never writes .env or top-level model/small_model.',
       input: MODEL_INPUT,
       output: {},
       execute: executeModel

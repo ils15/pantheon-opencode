@@ -872,14 +872,8 @@ const JEV_INPUT_SCHEMA: Record<string, unknown> = {
   type: 'object',
   additionalProperties: false,
   required: ['schemaVersion'],
-  anyOf: [
-    { required: ['state'] },
-    { required: ['delegateId', 'resultSummaryKind', 'resultMetrics', 'criteria'] },
-    { required: ['candidates'] },
-    { required: ['claims'] },
-  ],
   properties: {
-    schemaVersion: { type: 'integer', const: 1 },
+    schemaVersion: { type: 'integer', enum: [1] },
     state: { type: 'string', minLength: 1, maxLength: 12_000 },
     mode: { type: 'string', enum: ['skills', 'delegation', 'review', 'rank', 'verify', 'order'] },
     questions: { type: 'array', minItems: 1, maxItems: 4, items: questionSchema },
