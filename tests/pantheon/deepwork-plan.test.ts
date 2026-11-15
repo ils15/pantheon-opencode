@@ -361,4 +361,86 @@ describe('pantheon_deepwork Tool execution', () => {
       rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  it('prevents data loss and ENOENT during concurrent resolve_decision calls', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'deepwork-concurrency-'))
+    try {
+      const tool = createDeepworkTool(dir)
+      const slug = 'concurrent-decisions'
+      const decisions = Array.from({ length: 6 }, (_, i) => ({
+        id: `D0${i + 1}`,
+        question: `Decision question ${i + 1}?`,
+        options: ['Opt A', 'Opt B'],
+        status: 'pending',
+      }))
+
+      await tool.execute(
+        {
+          action: 'init',
+          slug,
+          title: 'Concurrency Test Plan',
+          decisions,
+          tasks: [{ id: 'T01', title: 'Task 1' }],
+        },
+        {},
+      )
+
+      // Fire 6 concurrent resolve_decision calls simultaneously
+      const results = await Promise.all(
+        decisions.map((d, i) =>
+          tool.execute(
+            {
+              action: 'resolve_decision',
+              slug,
+              decisionId: d.id,
+              choice: `Opt A choice ${i + 1}`,
+            },
+            {},
+          ),
+        ),
+      )
+
+      for (const res of results) {
+        assert.match(res.output, /resolvida com a opção/)
+      }
+
+      // Verify that all 6 decisions are resolved on disk with zero lost updates
+      const updated = await readPlan(dir, slug)
+      assert.ok(updated, 'Plan must exist')
+      assert.equal(updated.decisions_needed.length, 6)
+      for (const d of updated.decisions_needed) {
+        assert.equal(d.status, 'resolved', `Decision ${d.id} must be resolved`)
+        assert.match(d.chosen || '', /Opt A choice/)
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('resolves project workspace directory when tool context directory is omitted', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'deepwork-workspace-'))
+    try {
+      // Injected workspace directory (like host.location?.directory)
+      const tool = createDeepworkTool(dir)
+      const slug = 'workspace-plan'
+
+      const initResult = await tool.execute(
+        {
+          action: 'init',
+          slug,
+          title: 'Workspace Test',
+          tasks: [{ id: 'T01', title: 'T1' }],
+        },
+        {}, // Empty tool context without directory
+      )
+
+      assert.match(initResult.output, /inicializado com sucesso/)
+      // Must be written in dir, not process.cwd() or HOME
+      assert.ok(existsSync(join(dir, '.pantheon', 'deepwork', slug, 'plan.json')))
+      assert.ok(existsSync(join(dir, '.pantheon', 'deepwork', slug, 'PLAN.md')))
+      assert.match(initResult.output, new RegExp(join(dir, '.pantheon', 'deepwork', slug)))
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })

@@ -12036,6 +12036,21 @@ ${renderMarkdown(query, days, pricing)}`;
 // src/pantheon/deepwork/deepwork-tool.ts
 import { z as z3 } from "zod";
 
+// src/pantheon/tool-context.ts
+function resolveToolCwd(context, fallbackDir) {
+  const ctx = context ?? {};
+  if (typeof ctx.directory === "string" && ctx.directory.trim().length > 0) {
+    return ctx.directory;
+  }
+  if (typeof ctx.worktree === "string" && ctx.worktree.trim().length > 0) {
+    return ctx.worktree;
+  }
+  if (typeof fallbackDir === "string" && fallbackDir.trim().length > 0) {
+    return fallbackDir;
+  }
+  return process.cwd();
+}
+
 // src/pantheon/deepwork/plan-projection.ts
 import { join as join15 } from "node:path";
 function generateChatProjection(plan, cwd = process.cwd()) {
@@ -12336,6 +12351,25 @@ async function readPlan(cwd = process.cwd(), slug) {
     return null;
   }
 }
+var planLocks = /* @__PURE__ */ new Map();
+async function withPlanLock(cwd, slug, fn) {
+  const key = `${cwd}::${slug}`;
+  const prev = planLocks.get(key) ?? Promise.resolve();
+  let resolveCurrent;
+  const current = new Promise((resolve8) => {
+    resolveCurrent = resolve8;
+  });
+  planLocks.set(key, current);
+  try {
+    await prev;
+    return await fn();
+  } finally {
+    resolveCurrent?.();
+    if (planLocks.get(key) === current) {
+      planLocks.delete(key);
+    }
+  }
+}
 async function writePlan(cwd = process.cwd(), plan) {
   const dir = deepworkPlanDir(cwd, plan.plan_id);
   await mkdir6(dir, { recursive: true });
@@ -12347,14 +12381,17 @@ async function writePlan(cwd = process.cwd(), plan) {
       version: (plan.metadata.version || 1) + 1
     }
   });
+  const randomSuffix = `${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}`;
   const jsonPath = deepworkPlanJsonPath(cwd, plan.plan_id);
-  const jsonTmp = `${jsonPath}.tmp`;
+  const jsonTmp = `${jsonPath}.tmp.${randomSuffix}`;
   await writeFile3(jsonTmp, `${JSON.stringify(normalized, null, 2)}
 `, "utf8");
   await rename5(jsonTmp, jsonPath);
   const mdPath = deepworkPlanMdPath(cwd, plan.plan_id);
+  const mdTmp = `${mdPath}.tmp.${randomSuffix}`;
   const mdContent = generateMarkdownDocument(normalized);
-  await writeFile3(mdPath, mdContent, "utf8");
+  await writeFile3(mdTmp, mdContent, "utf8");
+  await rename5(mdTmp, mdPath);
 }
 async function appendJournal(cwd = process.cwd(), slug, event) {
   const dir = deepworkPlanDir(cwd, slug);
@@ -12365,93 +12402,99 @@ async function appendJournal(cwd = process.cwd(), slug, event) {
   await appendFile3(journalPath, line, "utf8");
 }
 async function updateTaskState(cwd = process.cwd(), slug, taskId, state, result) {
-  const plan = await readPlan(cwd, slug);
-  if (!plan) {
-    throw new Error(`Deepwork plan "${slug}" not found`);
-  }
-  const taskIndex = plan.tasks.findIndex((t) => t.id === taskId);
-  const existingTask = plan.tasks[taskIndex];
-  if (taskIndex === -1 || !existingTask) {
-    throw new Error(`Task "${taskId}" not found in plan "${slug}"`);
-  }
-  const updatedResult = result ? { ...existingTask.result ?? {}, ...result } : existingTask.result;
-  const updatedTask = {
-    ...existingTask,
-    state,
-    ...updatedResult !== void 0 ? { result: updatedResult } : {}
-  };
-  const updatedTasks = [...plan.tasks];
-  updatedTasks[taskIndex] = updatedTask;
-  const nextPlan = { ...plan, tasks: updatedTasks };
-  await writePlan(cwd, nextPlan);
-  await appendJournal(cwd, slug, {
-    type: "task_state_changed",
-    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-    payload: { taskId, state, result }
+  return withPlanLock(cwd, slug, async () => {
+    const plan = await readPlan(cwd, slug);
+    if (!plan) {
+      throw new Error(`Deepwork plan "${slug}" not found`);
+    }
+    const taskIndex = plan.tasks.findIndex((t) => t.id === taskId);
+    const existingTask = plan.tasks[taskIndex];
+    if (taskIndex === -1 || !existingTask) {
+      throw new Error(`Task "${taskId}" not found in plan "${slug}"`);
+    }
+    const updatedResult = result ? { ...existingTask.result ?? {}, ...result } : existingTask.result;
+    const updatedTask = {
+      ...existingTask,
+      state,
+      ...updatedResult !== void 0 ? { result: updatedResult } : {}
+    };
+    const updatedTasks = [...plan.tasks];
+    updatedTasks[taskIndex] = updatedTask;
+    const nextPlan = { ...plan, tasks: updatedTasks };
+    await writePlan(cwd, nextPlan);
+    await appendJournal(cwd, slug, {
+      type: "task_state_changed",
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      payload: { taskId, state, result }
+    });
+    return await readPlan(cwd, slug) ?? nextPlan;
   });
-  return await readPlan(cwd, slug) ?? nextPlan;
 }
 async function verifyTaskAcceptance(cwd = process.cwd(), slug, taskId, checkIndex, verified, proof) {
-  const plan = await readPlan(cwd, slug);
-  if (!plan) {
-    throw new Error(`Deepwork plan "${slug}" not found`);
-  }
-  const taskIndex = plan.tasks.findIndex((t) => t.id === taskId);
-  const task = plan.tasks[taskIndex];
-  if (taskIndex === -1 || !task) {
-    throw new Error(`Task "${taskId}" not found in plan "${slug}"`);
-  }
-  const currentAcc = task.acceptance[checkIndex];
-  if (!currentAcc) {
-    throw new Error(`Acceptance criterion index ${checkIndex} not found in task "${taskId}"`);
-  }
-  const updatedAcceptance = [...task.acceptance];
-  const resolvedProof = proof ?? currentAcc.proof;
-  updatedAcceptance[checkIndex] = {
-    ...currentAcc,
-    verified,
-    ...resolvedProof !== void 0 ? { proof: resolvedProof } : {}
-  };
-  const allVerified = updatedAcceptance.every((acc) => acc.verified);
-  const updatedTasks = [...plan.tasks];
-  updatedTasks[taskIndex] = {
-    ...task,
-    acceptance: updatedAcceptance,
-    state: allVerified ? "done" : task.state
-  };
-  const nextPlan = { ...plan, tasks: updatedTasks };
-  await writePlan(cwd, nextPlan);
-  await appendJournal(cwd, slug, {
-    type: "acceptance_verified",
-    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-    payload: { taskId, checkIndex, verified, proof, allVerified }
+  return withPlanLock(cwd, slug, async () => {
+    const plan = await readPlan(cwd, slug);
+    if (!plan) {
+      throw new Error(`Deepwork plan "${slug}" not found`);
+    }
+    const taskIndex = plan.tasks.findIndex((t) => t.id === taskId);
+    const task = plan.tasks[taskIndex];
+    if (taskIndex === -1 || !task) {
+      throw new Error(`Task "${taskId}" not found in plan "${slug}"`);
+    }
+    const currentAcc = task.acceptance[checkIndex];
+    if (!currentAcc) {
+      throw new Error(`Acceptance criterion index ${checkIndex} not found in task "${taskId}"`);
+    }
+    const updatedAcceptance = [...task.acceptance];
+    const resolvedProof = proof ?? currentAcc.proof;
+    updatedAcceptance[checkIndex] = {
+      ...currentAcc,
+      verified,
+      ...resolvedProof !== void 0 ? { proof: resolvedProof } : {}
+    };
+    const allVerified = updatedAcceptance.every((acc) => acc.verified);
+    const updatedTasks = [...plan.tasks];
+    updatedTasks[taskIndex] = {
+      ...task,
+      acceptance: updatedAcceptance,
+      state: allVerified ? "done" : task.state
+    };
+    const nextPlan = { ...plan, tasks: updatedTasks };
+    await writePlan(cwd, nextPlan);
+    await appendJournal(cwd, slug, {
+      type: "acceptance_verified",
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      payload: { taskId, checkIndex, verified, proof, allVerified }
+    });
+    return await readPlan(cwd, slug) ?? nextPlan;
   });
-  return await readPlan(cwd, slug) ?? nextPlan;
 }
 async function resolvePlanDecision(cwd = process.cwd(), slug, decisionId, chosen) {
-  const plan = await readPlan(cwd, slug);
-  if (!plan) {
-    throw new Error(`Deepwork plan "${slug}" not found`);
-  }
-  const decIndex = plan.decisions_needed.findIndex((d) => d.id === decisionId);
-  const existingDec = plan.decisions_needed[decIndex];
-  if (decIndex === -1 || !existingDec) {
-    throw new Error(`Decision "${decisionId}" not found in plan "${slug}"`);
-  }
-  const updatedDecisions = [...plan.decisions_needed];
-  updatedDecisions[decIndex] = {
-    ...existingDec,
-    chosen,
-    status: "resolved"
-  };
-  const nextPlan = { ...plan, decisions_needed: updatedDecisions };
-  await writePlan(cwd, nextPlan);
-  await appendJournal(cwd, slug, {
-    type: "decision_resolved",
-    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-    payload: { decisionId, chosen }
+  return withPlanLock(cwd, slug, async () => {
+    const plan = await readPlan(cwd, slug);
+    if (!plan) {
+      throw new Error(`Deepwork plan "${slug}" not found`);
+    }
+    const decIndex = plan.decisions_needed.findIndex((d) => d.id === decisionId);
+    const existingDec = plan.decisions_needed[decIndex];
+    if (decIndex === -1 || !existingDec) {
+      throw new Error(`Decision "${decisionId}" not found in plan "${slug}"`);
+    }
+    const updatedDecisions = [...plan.decisions_needed];
+    updatedDecisions[decIndex] = {
+      ...existingDec,
+      chosen,
+      status: "resolved"
+    };
+    const nextPlan = { ...plan, decisions_needed: updatedDecisions };
+    await writePlan(cwd, nextPlan);
+    await appendJournal(cwd, slug, {
+      type: "decision_resolved",
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      payload: { decisionId, chosen }
+    });
+    return await readPlan(cwd, slug) ?? nextPlan;
   });
-  return await readPlan(cwd, slug) ?? nextPlan;
 }
 async function listPlans(cwd = process.cwd()) {
   const root = deepworkRootDir(cwd);
@@ -12584,7 +12627,7 @@ function createDeepworkTool(cwd = process.cwd()) {
     output: {},
     async execute(input, context) {
       const parsed = DeepworkToolInputSchema.parse(input);
-      const effectiveCwd = typeof context?.directory === "string" ? context.directory : cwd;
+      const effectiveCwd = resolveToolCwd(context, cwd);
       if (parsed.action === "list") {
         const plans = await listPlans(effectiveCwd);
         if (plans.length === 0) {
@@ -12657,11 +12700,13 @@ function createDeepworkTool(cwd = process.cwd()) {
             version: 1
           }
         });
-        await writePlan(effectiveCwd, initialPlan);
-        await appendJournal(effectiveCwd, slug, {
-          type: "plan_created",
-          timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-          payload: { slug, title, tasks_count: tasks.length }
+        await withPlanLock(effectiveCwd, slug, async () => {
+          await writePlan(effectiveCwd, initialPlan);
+          await appendJournal(effectiveCwd, slug, {
+            type: "plan_created",
+            timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+            payload: { slug, title, tasks_count: tasks.length }
+          });
         });
         const projection = generateChatProjection(initialPlan, effectiveCwd);
         const approvalQ = buildApprovalQuestion(initialPlan);
@@ -14122,6 +14167,37 @@ var SKILL_SEARCH_INPUT_SCHEMA = {
     }
   }
 };
+function scoreSkillMatch(id, description, queryTokens) {
+  const idLower = id.toLowerCase();
+  const descLower = description.toLowerCase();
+  const idTokens = idLower.split(/[^a-z0-9]+/).filter(Boolean);
+  const descWords = descLower.split(/[^a-z0-9]+/).filter(Boolean);
+  let score = 0;
+  let matchedTokens = 0;
+  for (const t of queryTokens) {
+    let tokenScore = 0;
+    if (idLower === t) {
+      tokenScore += 20;
+    } else if (idTokens.includes(t)) {
+      tokenScore += 12;
+    } else if (idTokens.some((w) => w.length >= 4 && t.length >= 4 && (w.startsWith(t) || t.startsWith(w)))) {
+      tokenScore += 6;
+    }
+    if (descWords.includes(t)) {
+      tokenScore += 5;
+    } else if (descWords.some((w) => w.length >= 4 && t.length >= 4 && (w.startsWith(t) || t.startsWith(w)))) {
+      tokenScore += 2;
+    }
+    if (tokenScore > 0) {
+      score += tokenScore;
+      matchedTokens += 1;
+    }
+  }
+  if (matchedTokens > 1) {
+    score += matchedTokens * 5;
+  }
+  return { score, matchedTokens };
+}
 function executeSkillSearch(input, options = {}) {
   const query = typeof input.query === "string" ? input.query.trim() : "";
   if (query.length === 0) {
@@ -14136,39 +14212,34 @@ function executeSkillSearch(input, options = {}) {
       "skills-sh"
     ]
   );
-  const results = [];
   const failures = [];
   const cwd = options.cwd ?? process.cwd();
   const installedMap = scanInstalledSkills(cwd);
-  if (sources.has("installed")) {
-    const tokens = query.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 2);
-    if (tokens.length > 0) {
-      for (const entry of installedMap.values()) {
-        const idLower = entry.id.toLowerCase();
-        const descLower = entry.description.toLowerCase();
-        const matchScore = tokens.reduce((score, t) => {
-          const stem = t.length > 4 ? t.slice(0, 4) : t;
-          return score + (idLower.includes(t) || descLower.includes(t) || idLower.includes(stem) || descLower.includes(stem) ? 1 : 0);
-        }, 0);
-        if (matchScore > 0) {
-          results.push({
-            skill: entry.id,
-            description: entry.description,
-            source: "installed",
-            installed: true,
-            installs: null,
-            installCommand: null,
-            path: entry.path,
-            scope: entry.scope
-          });
-        }
+  const tokens = query.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 1);
+  const scoredResults = [];
+  if (sources.has("installed") && tokens.length > 0) {
+    const minThreshold = tokens.length > 1 ? 5 : 2;
+    for (const entry of installedMap.values()) {
+      const { score } = scoreSkillMatch(entry.id, entry.description, tokens);
+      if (score >= minThreshold) {
+        scoredResults.push({
+          skill: entry.id,
+          description: entry.description,
+          source: "installed",
+          installed: true,
+          installs: null,
+          installCommand: null,
+          path: entry.path,
+          scope: entry.scope,
+          score
+        });
       }
     }
   }
   const externalSources = ["anthropic", "skills-sh", "github"].filter((s) => sources.has(s));
-  if (externalSources.length > 0 && results.length < limit) {
+  if (externalSources.length > 0 && scoredResults.length < limit) {
     try {
-      const extLimit = limit - results.length;
+      const extLimit = limit - scoredResults.length;
       const extRes = searchSkillSources(query, {
         limit: extLimit,
         sources: externalSources
@@ -14177,11 +14248,21 @@ function executeSkillSearch(input, options = {}) {
         failures.push(...extRes.failures);
       }
       if (Array.isArray(extRes.entries)) {
+        const minThreshold = tokens.length > 1 ? 5 : 2;
         for (const entry of extRes.entries) {
           const bareName = (entry.skill.includes("@") ? entry.skill.split("@")[1] : entry.skill).toLowerCase();
           const isInstalled = installedMap.has(entry.skill.toLowerCase()) || installedMap.has(bareName);
           const installedRecord = installedMap.get(entry.skill.toLowerCase()) || installedMap.get(bareName);
-          const pushItem = {
+          const { score } = scoreSkillMatch(entry.skill, entry.skill, tokens);
+          if (score < minThreshold && !isInstalled) {
+            continue;
+          }
+          if (scoredResults.some(
+            (r) => r.skill.toLowerCase() === entry.skill.toLowerCase() || bareName && r.skill.toLowerCase() === bareName
+          )) {
+            continue;
+          }
+          scoredResults.push({
             skill: entry.skill,
             description: entry.skill,
             source: entry.source,
@@ -14190,9 +14271,9 @@ function executeSkillSearch(input, options = {}) {
             ...entry.url ? { url: entry.url } : {},
             installCommand: isInstalled ? null : `npx skills add ${entry.skill} -a opencode -y`,
             path: isInstalled && installedRecord ? installedRecord.path : null,
-            ...isInstalled && installedRecord ? { scope: installedRecord.scope } : {}
-          };
-          results.push(pushItem);
+            ...isInstalled && installedRecord ? { scope: installedRecord.scope } : {},
+            score: score || 1
+          });
         }
       }
     } catch (err) {
@@ -14201,7 +14282,8 @@ function executeSkillSearch(input, options = {}) {
       );
     }
   }
-  const bounded = results.slice(0, limit);
+  scoredResults.sort((a, b) => b.score - a.score);
+  const bounded = scoredResults.slice(0, limit).map(({ score: _, ...item }) => item);
   return {
     ok: true,
     query,
@@ -14210,14 +14292,14 @@ function executeSkillSearch(input, options = {}) {
     failures
   };
 }
-function createV2SkillSearchDefinition() {
+function createV2SkillSearchDefinition(defaultDir) {
   return {
     name: "pantheon_skill_search",
     description: TOOL_DESCRIPTION3,
     input: SKILL_SEARCH_INPUT_SCHEMA,
     output: {},
     execute: async (input, context) => {
-      const cwd = context?.directory || process.cwd();
+      const cwd = resolveToolCwd(context, defaultDir);
       return {
         output: JSON.stringify(executeSkillSearch(input, { cwd }), null, 2)
       };
@@ -14562,7 +14644,7 @@ var shellTool = {
     }
   }
 };
-function createV2ToolDefinitions(visionRuntime, shadow = {}, jevRuntime) {
+function createV2ToolDefinitions(visionRuntime, shadow = {}, jevRuntime, hostLocationDirectory) {
   const definitions = [
     {
       name: "hashline_edit",
@@ -14594,8 +14676,8 @@ function createV2ToolDefinitions(visionRuntime, shadow = {}, jevRuntime) {
   definitions.push(todowriteTool);
   definitions.push(todoreadTool);
   definitions.push(shellTool);
-  definitions.push(createV2SkillSearchDefinition());
-  definitions.push(createDeepworkTool());
+  definitions.push(createV2SkillSearchDefinition(hostLocationDirectory));
+  definitions.push(createDeepworkTool(hostLocationDirectory));
   if (visionRuntime) definitions.push(createV2VisionTool(visionRuntime));
   if (jevRuntime) definitions.push(createV2JevDecisionDefinition(jevRuntime));
   return definitions;
@@ -14923,7 +15005,8 @@ async function registerV2Tools(context, boundedRead, jevRuntime) {
           p3Sink.emit({ ...record2, mode: "shadow" });
         }
       },
-      runtime
+      runtime,
+      host.location?.directory
     );
     if (boundedRead !== void 0) toolDefs.push(boundedRead);
     const p11Sink = createTelemetrySink();

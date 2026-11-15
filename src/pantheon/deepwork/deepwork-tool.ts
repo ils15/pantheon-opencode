@@ -6,7 +6,7 @@
  */
 
 import { z } from 'zod'
-import type { ToolContextLike } from '../tool-context.ts'
+import { resolveToolCwd } from '../tool-context.ts'
 import type { V2ToolDef, V2ToolResult } from '../tools.ts'
 import {
   buildApprovalQuestion,
@@ -23,6 +23,7 @@ import {
   resolvePlanDecision,
   updateTaskState,
   verifyTaskAcceptance,
+  withPlanLock,
   writePlan,
 } from './plan-tracker.ts'
 
@@ -140,10 +141,7 @@ export function createDeepworkTool(cwd = process.cwd()): V2ToolDef {
     output: {},
     async execute(input: Record<string, unknown>, context: unknown): Promise<V2ToolResult> {
       const parsed = DeepworkToolInputSchema.parse(input)
-      const effectiveCwd =
-        typeof (context as ToolContextLike)?.directory === 'string'
-          ? (context as ToolContextLike).directory
-          : cwd
+      const effectiveCwd = resolveToolCwd(context, cwd)
 
       if (parsed.action === 'list') {
         const plans = await listPlans(effectiveCwd)
@@ -239,11 +237,13 @@ export function createDeepworkTool(cwd = process.cwd()): V2ToolDef {
           },
         })
 
-        await writePlan(effectiveCwd, initialPlan)
-        await appendJournal(effectiveCwd, slug, {
-          type: 'plan_created',
-          timestamp: new Date().toISOString(),
-          payload: { slug, title, tasks_count: tasks.length },
+        await withPlanLock(effectiveCwd, slug, async () => {
+          await writePlan(effectiveCwd, initialPlan)
+          await appendJournal(effectiveCwd, slug, {
+            type: 'plan_created',
+            timestamp: new Date().toISOString(),
+            payload: { slug, title, tasks_count: tasks.length },
+          })
         })
 
         const projection = generateChatProjection(initialPlan, effectiveCwd)

@@ -596,6 +596,7 @@ export function createV2ToolDefinitions(
   visionRuntime?: V2VisionRuntime,
   shadow: V2ToolShadowOptions = {},
   jevRuntime?: V2JevDecisionRuntime,
+  hostLocationDirectory?: string,
 ): V2ToolDef[] {
   const definitions: V2ToolDef[] = [
     {
@@ -645,8 +646,8 @@ export function createV2ToolDefinitions(
   definitions.push(todowriteTool)
   definitions.push(todoreadTool)
   definitions.push(shellTool)
-  definitions.push(createV2SkillSearchDefinition())
-  definitions.push(createDeepworkTool())
+  definitions.push(createV2SkillSearchDefinition(hostLocationDirectory))
+  definitions.push(createDeepworkTool(hostLocationDirectory))
   if (visionRuntime) definitions.push(createV2VisionTool(visionRuntime))
   if (jevRuntime) definitions.push(createV2JevDecisionDefinition(jevRuntime))
   return definitions

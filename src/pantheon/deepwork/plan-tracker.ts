@@ -95,6 +95,31 @@ export async function readPlan(cwd = process.cwd(), slug: string): Promise<Deepw
   }
 }
 
+const planLocks = new Map<string, Promise<unknown>>()
+
+/**
+ * Execute an async operation with serialized exclusivity per plan slug.
+ * Prevents concurrent read-modify-write race conditions and clashing tempfiles.
+ */
+export async function withPlanLock<T>(cwd: string, slug: string, fn: () => Promise<T>): Promise<T> {
+  const key = `${cwd}::${slug}`
+  const prev = planLocks.get(key) ?? Promise.resolve()
+  let resolveCurrent: (() => void) | undefined
+  const current = new Promise<void>((resolve) => {
+    resolveCurrent = resolve
+  })
+  planLocks.set(key, current)
+  try {
+    await prev
+    return await fn()
+  } finally {
+    resolveCurrent?.()
+    if (planLocks.get(key) === current) {
+      planLocks.delete(key)
+    }
+  }
+}
+
 /**
  * Write the canonical JSON plan atomically and update PLAN.md projection.
  */
@@ -111,16 +136,20 @@ export async function writePlan(cwd = process.cwd(), plan: DeepworkPlan): Promis
     },
   })
 
+  const randomSuffix = `${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}`
+
   // Atomic write for plan.json
   const jsonPath = deepworkPlanJsonPath(cwd, plan.plan_id)
-  const jsonTmp = `${jsonPath}.tmp`
+  const jsonTmp = `${jsonPath}.tmp.${randomSuffix}`
   await writeFile(jsonTmp, `${JSON.stringify(normalized, null, 2)}\n`, 'utf8')
   await rename(jsonTmp, jsonPath)
 
   // Projection write for PLAN.md
   const mdPath = deepworkPlanMdPath(cwd, plan.plan_id)
+  const mdTmp = `${mdPath}.tmp.${randomSuffix}`
   const mdContent = generateMarkdownDocument(normalized)
-  await writeFile(mdPath, mdContent, 'utf8')
+  await writeFile(mdTmp, mdContent, 'utf8')
+  await rename(mdTmp, mdPath)
 }
 
 /**
@@ -164,38 +193,42 @@ export async function updateTaskState(
   state: TaskState,
   result?: { summary?: string; verified_at?: string; artifacts?: string[] },
 ): Promise<DeepworkPlan> {
-  const plan = await readPlan(cwd, slug)
-  if (!plan) {
-    throw new Error(`Deepwork plan "${slug}" not found`)
-  }
+  return withPlanLock(cwd, slug, async () => {
+    const plan = await readPlan(cwd, slug)
+    if (!plan) {
+      throw new Error(`Deepwork plan "${slug}" not found`)
+    }
 
-  const taskIndex = plan.tasks.findIndex((t) => t.id === taskId)
-  const existingTask = plan.tasks[taskIndex]
-  if (taskIndex === -1 || !existingTask) {
-    throw new Error(`Task "${taskId}" not found in plan "${slug}"`)
-  }
+    const taskIndex = plan.tasks.findIndex((t) => t.id === taskId)
+    const existingTask = plan.tasks[taskIndex]
+    if (taskIndex === -1 || !existingTask) {
+      throw new Error(`Task "${taskId}" not found in plan "${slug}"`)
+    }
 
-  const updatedResult = result ? { ...(existingTask.result ?? {}), ...result } : existingTask.result
+    const updatedResult = result
+      ? { ...(existingTask.result ?? {}), ...result }
+      : existingTask.result
 
-  const updatedTask: PlanTask = {
-    ...existingTask,
-    state,
-    ...(updatedResult !== undefined ? { result: updatedResult } : {}),
-  }
+    const updatedTask: PlanTask = {
+      ...existingTask,
+      state,
+      ...(updatedResult !== undefined ? { result: updatedResult } : {}),
+    }
 
-  const updatedTasks = [...plan.tasks]
-  updatedTasks[taskIndex] = updatedTask
+    const updatedTasks = [...plan.tasks]
+    updatedTasks[taskIndex] = updatedTask
 
-  const nextPlan: DeepworkPlan = { ...plan, tasks: updatedTasks }
-  await writePlan(cwd, nextPlan)
+    const nextPlan: DeepworkPlan = { ...plan, tasks: updatedTasks }
+    await writePlan(cwd, nextPlan)
 
-  await appendJournal(cwd, slug, {
-    type: 'task_state_changed',
-    timestamp: new Date().toISOString(),
-    payload: { taskId, state, result },
+    await appendJournal(cwd, slug, {
+      type: 'task_state_changed',
+      timestamp: new Date().toISOString(),
+      payload: { taskId, state, result },
+    })
+
+    return (await readPlan(cwd, slug)) ?? nextPlan
   })
-
-  return (await readPlan(cwd, slug)) ?? nextPlan
 }
 
 /**
@@ -209,49 +242,51 @@ export async function verifyTaskAcceptance(
   verified: boolean,
   proof?: string,
 ): Promise<DeepworkPlan> {
-  const plan = await readPlan(cwd, slug)
-  if (!plan) {
-    throw new Error(`Deepwork plan "${slug}" not found`)
-  }
+  return withPlanLock(cwd, slug, async () => {
+    const plan = await readPlan(cwd, slug)
+    if (!plan) {
+      throw new Error(`Deepwork plan "${slug}" not found`)
+    }
 
-  const taskIndex = plan.tasks.findIndex((t) => t.id === taskId)
-  const task = plan.tasks[taskIndex]
-  if (taskIndex === -1 || !task) {
-    throw new Error(`Task "${taskId}" not found in plan "${slug}"`)
-  }
+    const taskIndex = plan.tasks.findIndex((t) => t.id === taskId)
+    const task = plan.tasks[taskIndex]
+    if (taskIndex === -1 || !task) {
+      throw new Error(`Task "${taskId}" not found in plan "${slug}"`)
+    }
 
-  const currentAcc = task.acceptance[checkIndex]
-  if (!currentAcc) {
-    throw new Error(`Acceptance criterion index ${checkIndex} not found in task "${taskId}"`)
-  }
+    const currentAcc = task.acceptance[checkIndex]
+    if (!currentAcc) {
+      throw new Error(`Acceptance criterion index ${checkIndex} not found in task "${taskId}"`)
+    }
 
-  const updatedAcceptance = [...task.acceptance]
-  const resolvedProof = proof ?? currentAcc.proof
-  updatedAcceptance[checkIndex] = {
-    ...currentAcc,
-    verified,
-    ...(resolvedProof !== undefined ? { proof: resolvedProof } : {}),
-  }
+    const updatedAcceptance = [...task.acceptance]
+    const resolvedProof = proof ?? currentAcc.proof
+    updatedAcceptance[checkIndex] = {
+      ...currentAcc,
+      verified,
+      ...(resolvedProof !== undefined ? { proof: resolvedProof } : {}),
+    }
 
-  const allVerified = updatedAcceptance.every((acc) => acc.verified)
+    const allVerified = updatedAcceptance.every((acc) => acc.verified)
 
-  const updatedTasks = [...plan.tasks]
-  updatedTasks[taskIndex] = {
-    ...task,
-    acceptance: updatedAcceptance,
-    state: allVerified ? 'done' : task.state,
-  }
+    const updatedTasks = [...plan.tasks]
+    updatedTasks[taskIndex] = {
+      ...task,
+      acceptance: updatedAcceptance,
+      state: allVerified ? 'done' : task.state,
+    }
 
-  const nextPlan: DeepworkPlan = { ...plan, tasks: updatedTasks }
-  await writePlan(cwd, nextPlan)
+    const nextPlan: DeepworkPlan = { ...plan, tasks: updatedTasks }
+    await writePlan(cwd, nextPlan)
 
-  await appendJournal(cwd, slug, {
-    type: 'acceptance_verified',
-    timestamp: new Date().toISOString(),
-    payload: { taskId, checkIndex, verified, proof, allVerified },
+    await appendJournal(cwd, slug, {
+      type: 'acceptance_verified',
+      timestamp: new Date().toISOString(),
+      payload: { taskId, checkIndex, verified, proof, allVerified },
+    })
+
+    return (await readPlan(cwd, slug)) ?? nextPlan
   })
-
-  return (await readPlan(cwd, slug)) ?? nextPlan
 }
 
 /**
@@ -263,34 +298,36 @@ export async function resolvePlanDecision(
   decisionId: string,
   chosen: string,
 ): Promise<DeepworkPlan> {
-  const plan = await readPlan(cwd, slug)
-  if (!plan) {
-    throw new Error(`Deepwork plan "${slug}" not found`)
-  }
+  return withPlanLock(cwd, slug, async () => {
+    const plan = await readPlan(cwd, slug)
+    if (!plan) {
+      throw new Error(`Deepwork plan "${slug}" not found`)
+    }
 
-  const decIndex = plan.decisions_needed.findIndex((d) => d.id === decisionId)
-  const existingDec = plan.decisions_needed[decIndex]
-  if (decIndex === -1 || !existingDec) {
-    throw new Error(`Decision "${decisionId}" not found in plan "${slug}"`)
-  }
+    const decIndex = plan.decisions_needed.findIndex((d) => d.id === decisionId)
+    const existingDec = plan.decisions_needed[decIndex]
+    if (decIndex === -1 || !existingDec) {
+      throw new Error(`Decision "${decisionId}" not found in plan "${slug}"`)
+    }
 
-  const updatedDecisions = [...plan.decisions_needed]
-  updatedDecisions[decIndex] = {
-    ...existingDec,
-    chosen,
-    status: 'resolved',
-  }
+    const updatedDecisions = [...plan.decisions_needed]
+    updatedDecisions[decIndex] = {
+      ...existingDec,
+      chosen,
+      status: 'resolved',
+    }
 
-  const nextPlan: DeepworkPlan = { ...plan, decisions_needed: updatedDecisions }
-  await writePlan(cwd, nextPlan)
+    const nextPlan: DeepworkPlan = { ...plan, decisions_needed: updatedDecisions }
+    await writePlan(cwd, nextPlan)
 
-  await appendJournal(cwd, slug, {
-    type: 'decision_resolved',
-    timestamp: new Date().toISOString(),
-    payload: { decisionId, chosen },
+    await appendJournal(cwd, slug, {
+      type: 'decision_resolved',
+      timestamp: new Date().toISOString(),
+      payload: { decisionId, chosen },
+    })
+
+    return (await readPlan(cwd, slug)) ?? nextPlan
   })
-
-  return (await readPlan(cwd, slug)) ?? nextPlan
 }
 
 /**
