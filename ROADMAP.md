@@ -2,9 +2,9 @@
 
 This roadmap records customer-visible themes, maintenance boundaries, and readiness conditions for stable releases. Internal tracking identifiers, per-item evidence bundles, and per-commit history are intentionally not part of this page.
 
-## Current State: 2.1.x Stable (v2.1.5)
+## Current State: 2.1.x Stable (v2.1.6)
 
-The `2.1.x` release series delivered the canonical Deepwork plan architecture, interactive native Question Gate enforcement, unrestricted `.pantheon/` and worktree access for analytical agents, bilingual documentation portals, live session Todo synchronization, observable test slicing, risk-based validation protocols, unified local/external skill discovery, and workspace auto-permissions.
+The `2.1.x` release series delivered the canonical Deepwork plan architecture, interactive native Question Gate enforcement, unrestricted `.pantheon/` and worktree access for analytical agents, bilingual documentation portals, live session Todo synchronization, observable test slicing, risk-based validation protocols, unified local/external skill discovery, deepwork resilience normalization, and workspace auto-permissions.
 
 See [Compatibility](docs/COMPATIBILITY.md) for supported hosts and the [releases page](https://github.com/ils15/pantheon-opencode/releases) for published packages.
 
@@ -13,6 +13,26 @@ See [Compatibility](docs/COMPATIBILITY.md) for supported hosts and the [releases
 ## 2.1.x Maintenance & Active Deliveries
 
 Active development on the `2.1.x` line focuses on operational smoothness and developer ergonomics:
+
+### 2.1.6 Deliveries & Resilience
+1. **Deepwork Resilient Normalization & Self-Healing**
+   - Tolerant normalization for legacy Deepwork structures (array phases, single-object plans, missing timestamps, and malformed task records).
+   - Decision slug normalization matching decisions irrespective of namespace prefixing.
+   - Automatic fallback plan generation on unrecoverable syntax corruption, preventing unhandled agent loop failures.
+2. **Tool Execution Workspace Root Binding**
+   - Structural directory binding in `pantheon_execute` and `pantheon_command_runner` ensuring shell commands and scripts run from the active project workspace root (`toolContext.directory`), eliminating silent script failures when invoked from subdirectories.
+3. **Strict JSON Schema Flattening**
+   - Replaced complex nested `$ref` definitions with flat scalar schemas across all decision and plan tools, guaranteeing compatibility with strict OpenAI/Anthropic/Gemini function calling engines.
+4. **Sequential Skill Installation Chaining**
+   - Updated Zeus handoff protocol to chain multi-skill installation atomically with `&&` (`npx skills add <s1> -a opencode -y && npx skills add <s2> -a opencode -y`), preventing silent argument dropping by package managers.
+5. **Fail-Fast Anti-Mocking Doctrine**
+   - Strict architectural ban on dummy mock servers occupying real service ports; agents must fail fast with actionable root causes rather than mock upstream dependencies.
+6. **Decoupled Background Server Processes**
+   - Standardized persistent server lifecycles using `setsid nohup <cmd> > <log> 2>&1 &` (or `disown`), preventing process termination upon shell turn exits.
+7. **Automated Project Git Initialization**
+   - Automated `git init -q` in `pantheon-opencode init --project` when initializing projects without an existing `.git` directory.
+8. **Native Vision Fallback Guidance**
+   - Updated `pantheon-vision` MCP gateway error handling to include HTTP status codes and provide immediate guidance to OpenCode's native `vision_describe` tool.
 
 ### 2.1.5 Deliveries & Tool Hardening (Issue #444)
 1. **Risk-Based Validation Protocol (Issue #444)**
@@ -70,30 +90,37 @@ Active development on the `2.1.x` line focuses on operational smoothness and dev
 
 ## Road to 2.2.0 Minor Milestone
 
-The `2.2.0` release will be the next minor architectural cycle. It introduces structural enhancements designed to lower token consumption, scale multi-agent coordination, and eliminate runtime overhead.
+The `2.2.0` release will be the next minor architectural cycle. It introduces structural enhancements designed to elevate real-time operational visibility, lower token consumption, scale multi-agent coordination, and eliminate runtime overhead.
 
 ### 2.2.0 Workstreams & Themes
 
-1. **Step-Ledger Execution Mode**
+1. **High-Density TUI Mission Control Cockpit (`Overview`, `Swarm`, `Flightdeck`)**
+   - Full specification: [TUI Mission Control Cockpit Design](docs/design/tui-mission-control-cockpit.md).
+   - Unified 3-page cockpit built on Ink (React for CLI), navigable via `Tab` / `1-3`:
+     - **Page 1 (`Overview`)**: Real-time token velocity histogram (Lead vs Subagent differentiation, context window utilization gauge, cache hit ratio, tokens/sec, and turn cost breakdown), live 5-server MCP health grid with latency and error highlighting, and box-drawing system topology work map.
+     - **Page 2 (`Swarm`)**: Hierarchical specialist delegation tree (`@zeus` → `@athena`, `@demeter`, `@hermes`, `@aphrodite`, `@themis`) with per-agent token burn, duration, and call count; concurrency Gantt timeline visualizing agent overlap; and semantic activity stream table with interactive detail expansion (`Enter`).
+     - **Page 3 (`Flightdeck`)**: Visual Gate Matrix tracking permission and safety checks (allowed, human-approved, pending approval, denied); active specialist progress gauges; turn-level delta telemetry; and unified semantically aggregated error log.
+
+2. **Step-Ledger Execution Mode**
    - Execute complex workflows via atomic, single-step sub-sessions.
    - Each sub-session opens strictly with the active step's summary, objective, ledger key, and completion contract.
    - Gated progress: a step may transition to `done` only when a verification command exited 0 since the last file mutation.
    - Eliminates cascading context buildup, targeting up to 40x context token savings on large tasks.
 
-2. **Dynamic Multi-Model & Fallback Routing (Jev)**
+3. **Dynamic Multi-Model & Fallback Routing (Jev)**
    - Introduce provider-aware fallback policies in the Jev Decision Router.
    - Dynamically route low-complexity or high-volume tasks across providers (Gemini, Claude, GPT) with automated retry on quota exhaustion (HTTP 429) or transient degradation.
    - Integrated with the in-memory event bus (`PantheonBus`) for real-time observability of routing decisions and token spend.
 
-3. **Dynamic Capability Synthesizer & Role Morphing**
+4. **Dynamic Capability Synthesizer & Role Morphing**
    - On-the-fly ephemeral specialist generation based on task profile.
    - Compiles ad-hoc bounded sub-specialists dynamically from the declarative roster base with tailored tool allowlists.
 
-4. **Deep Scope Governance & Sandboxing**
+5. **Deep Scope Governance & Sandboxing**
    - Pre-flight validation of file-tree bounds, command allowlists, and tool grants *before* spawning a child subagent.
    - Prevents execution aborts caused by late-discovered permission mismatches.
 
-5. **Mechanized Code Quality Doctrine**
+6. **Mechanized Code Quality Doctrine**
    - Enforce coding standards and anti-pattern detection through deterministic linters and test harnesses rather than advisory prompt instructions.
    - Zero tolerance for verbal-only coaxing: every rule must fire a machine-verifiable gate.
 
