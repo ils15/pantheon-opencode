@@ -671,7 +671,10 @@ def _gateway_http_error(status: int) -> str:
             "free-tier (usable only from inside OpenCode) or this account has "
             "no paid access to it."
         )
-    return "Vision gateway returned an HTTP error."
+    return (
+        f"Vision gateway returned HTTP error {status}. If running inside OpenCode, "
+        "use the native 'vision_describe' tool as fallback."
+    )
 
 
 async def _gateway(

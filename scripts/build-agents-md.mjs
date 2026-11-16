@@ -150,10 +150,13 @@ Validate global installation AS A REAL USER in the sandbox \`~/pantheon-sandbox/
 
 - Never create worktrees inside the main project; use \`<project-parent>/.pantheon-worktrees/<repo-basename>/<task>\`.
 - Worktrees do not live inside \`.pantheon/\`.
+- If the project is not a Git repository (no \`.git\` directory), worktrees cannot be used; specialists must use disjoint file paths and directory separation within the project workspace instead.
 
 ## Conventions
 
 - TDD: RED→GREEN→REFACTOR for testable behavior; use focused checks for micro-edits
+- Fail-Fast: Never create fake mock servers or listeners on real service/application ports to mask missing dependencies; fail fast with explicit error details.
+- Background processes: Long-running servers (FastAPI/uvicorn, Vite, dev servers) must always be decoupled from subshells using \`setsid nohup <cmd> > <log> 2>&1 &\` (or \`disown\`).
 - Stronger gates (auth, security, data-integrity, coverage) are canonical in the global \`Test Economy\` section
 - Async/await on all I/O
 - Type hints on all functions

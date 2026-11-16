@@ -45,3 +45,8 @@ fallback: shared
 - CSRF protection
 - Rate limiting for sensitive endpoints
 - Sanitize logs (never log passwords/tokens)
+
+## Fail-Fast & Infrastructure Honesty
+- Never create ad-hoc mock servers or fake listener stubs on real service/application ports to simulate missing dependencies.
+- If a required dependency, service, or upstream endpoint is absent: FAIL FAST with explicit error details (`DEPENDENCY_MISSING`) rather than masking it.
+- Long-running background processes (dev servers, uvicorn, vite): ALWAYS decouple from subshells using `setsid nohup <cmd> > <log> 2>&1 &` (or `disown`).

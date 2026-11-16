@@ -13,6 +13,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
      Running apply will move this section to a versioned entry and reset the template below. -->
 
+## [v2.1.6] - 2026-11-16
+
+### 🆕 What's New
+
+- **Deepwork Resilient Normalization**: Supported multi-decision blueprints, single-option policy constraints, and string acceptance criteria.
+- **Fail-Fast Anti-Mocking Rule**: Strictly prohibited mock servers on real service ports to fake missing dependencies; fail fast with explicit errors.
+- **Workspace Tool Working Directory**: Native shell tools dynamically resolve to the active project root rather than falling back to `$HOME`.
+- **Atomic Skill Installation**: Enforced sequential `&&` chaining for `npx skills add` to prevent silent dropping of trailing targets.
+- **Project Bootstrap Git Init**: `init --project` automatically initializes an empty Git repo when absent, enabling worktree and branch support.
+- **Decoupled Background Processes**: Mandated `setsid nohup <cmd> > <log> 2>&1 &` (or `disown`) for long-running service processes.
+
+### Fixed
+
+- **deepwork** — fixed `readPlan` schema rejection on single-option decision policies and auto-inferred acceptance criteria kinds (`test|command|file|manual`).
+- **deepwork** — added atomic plan locking and safe temp files preventing write race conditions during concurrent decision resolutions.
+- **tools** — flattened JSON schema for `pantheon_jev_decide` to eliminate upstream validator rejections on top-level `oneOf`/`anyOf`.
+- **tools** — bound `shellTool` fallback execution directory dynamically to `hostLocationDirectory`.
+- **mcp** — improved `pantheon-vision` error reporting with status code diagnostics and actionable fallback to native `vision_describe`.
+- **tui** — removed duplicate todo block from settings preferences in favor of native sidebar.
+- **agents** — updated Zeus and backend instructions with Fail-Fast, resource exclusivity, and decoupled server execution standards.
+
 ## [v2.1.5] - 2026-11-14
 
 ### 🆕 What's New

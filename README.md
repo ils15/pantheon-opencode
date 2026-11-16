@@ -226,6 +226,17 @@ Working runnable reference projects demonstrating Pantheon orchestration in prac
 
 ---
 
+## What's New in v2.1.6
+
+- **Deepwork Resilient Normalization:** Full support for multi-decision plans, single-option policy constraints, string criteria auto-inference, and agent handle normalization with atomic plan locking.
+- **Fail-Fast Anti-Mocking Rule:** Strict standard forbidding ad-hoc mock servers on production ports to mask missing dependencies; agents fail fast with explicit diagnostics.
+- **Project Tool Working Directory:** Dynamic binding of shell tools to the project workspace instead of falling back to `$HOME`.
+- **Atomic Skill Installation:** Sequential `&&` chaining for `npx skills add` commands preventing silent omissions when installing multiple skills.
+- **Project Bootstrap Git Init:** `init --project` automatically initializes an empty Git repo when absent, enabling worktree and branch isolation out of the box.
+- **Decoupled Background Processes:** Mandatory `setsid nohup <cmd> > <log> 2>&1 &` (or `disown`) for background servers surviving subshell termination.
+
+---
+
 ## What's New in v2.1.5
 
 - **Risk-Based Validation Protocol (#444):** Explicit multi-tier protocol distinguishing focused test slices (<10s), package integration suites, and mandatory repository CI gates. Escalation to broad suites requires explicit triggers (cross-module, breaking contracts, auth, DB migrations).
