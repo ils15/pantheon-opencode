@@ -114,7 +114,7 @@ const v2InputSchema: Record<string, unknown> = {
     'complexity',
   ],
   properties: {
-    schemaVersion: { type: 'integer', const: 1 },
+    schemaVersion: { type: 'integer', enum: [1] },
     candidateAgents: { type: 'array', maxItems: 14, items: { type: 'string', minLength: 1 } },
     domain: { type: ['string', 'null'] },
     candidateSkillIds: { type: 'array', maxItems: 64, items: { type: 'string', minLength: 1 } },

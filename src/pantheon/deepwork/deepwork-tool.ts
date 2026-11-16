@@ -6,7 +6,7 @@
  */
 
 import { z } from 'zod'
-import type { ToolContextLike } from '../tool-context.ts'
+import { resolveToolCwd } from '../tool-context.ts'
 import type { V2ToolDef, V2ToolResult } from '../tools.ts'
 import {
   buildApprovalQuestion,
@@ -15,14 +15,15 @@ import {
 } from './plan-projection.ts'
 import {
   appendJournal,
-  computeTaskReadiness,
   deepworkPlanJsonPath,
   deepworkPlanMdPath,
   listPlans,
+  normalizePlanData,
   readPlan,
   resolvePlanDecision,
   updateTaskState,
   verifyTaskAcceptance,
+  withPlanLock,
   writePlan,
 } from './plan-tracker.ts'
 
@@ -140,10 +141,7 @@ export function createDeepworkTool(cwd = process.cwd()): V2ToolDef {
     output: {},
     async execute(input: Record<string, unknown>, context: unknown): Promise<V2ToolResult> {
       const parsed = DeepworkToolInputSchema.parse(input)
-      const effectiveCwd =
-        typeof (context as ToolContextLike)?.directory === 'string'
-          ? (context as ToolContextLike).directory
-          : cwd
+      const effectiveCwd = resolveToolCwd(context, cwd)
 
       if (parsed.action === 'list') {
         const plans = await listPlans(effectiveCwd)
@@ -175,81 +173,31 @@ export function createDeepworkTool(cwd = process.cwd()): V2ToolDef {
       }
 
       if (parsed.action === 'init') {
-        const title = parsed.title?.trim() || slug
-        const intent = parsed.intent?.trim() || 'Plano de deepwork estruturado.'
-        const rawTasks = parsed.tasks ?? []
-        const rawDecisions = parsed.decisions ?? []
-        const doneWhen = parsed.done_when ?? []
-
-        const tasks = rawTasks.map((t, idx) => ({
-          id: typeof t.id === 'string' ? t.id : `T${String(idx + 1).padStart(2, '0')}`,
-          title: typeof t.title === 'string' ? t.title : `Task ${idx + 1}`,
-          description: typeof t.description === 'string' ? t.description : undefined,
-          agent: typeof t.agent === 'string' ? t.agent : 'zeus',
-          phase: typeof t.phase === 'number' ? t.phase : 1,
-          state: (typeof t.state === 'string' ? t.state : 'pending') as
-            | 'pending'
-            | 'ready'
-            | 'in_progress'
-            | 'done'
-            | 'failed'
-            | 'blocked',
-          depends_on: Array.isArray(t.depends_on) ? (t.depends_on as string[]) : [],
-          parallel_safe: Boolean(t.parallel_safe),
-          acceptance: Array.isArray(t.acceptance)
-            ? (
-                t.acceptance as Array<{
-                  kind: 'test' | 'command' | 'file' | 'manual'
-                  check: string
-                  fails_now?: boolean
-                  verified?: boolean
-                  proof?: string
-                }>
-              ).map((a) => ({
-                kind: a.kind || 'command',
-                check: a.check || 'verify',
-                fails_now: a.fails_now ?? true,
-                verified: a.verified ?? false,
-                proof: a.proof,
-              }))
-            : [],
-        }))
-
-        const decisions = rawDecisions.map((d, idx) => ({
-          id: typeof d.id === 'string' ? d.id : `D${String(idx + 1).padStart(2, '0')}`,
-          question: typeof d.question === 'string' ? d.question : 'Decisão necessária',
-          options: Array.isArray(d.options) ? (d.options as string[]) : ['Sim', 'Não'],
-          chosen: typeof d.chosen === 'string' ? d.chosen : undefined,
-          status: (d.chosen ? 'resolved' : 'pending') as 'pending' | 'resolved',
-        }))
-
-        const initialPlan = computeTaskReadiness({
-          plan_id: slug,
-          title,
-          intent,
-          done_when: doneWhen,
-          decisions_needed: decisions,
-          risks: [],
-          out_of_scope: [],
-          tasks,
-          metadata: {
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-            version: 1,
+        const initialPlan = normalizePlanData(
+          {
+            plan_id: slug,
+            title: parsed.title,
+            intent: parsed.intent,
+            done_when: parsed.done_when,
+            decisions_needed: parsed.decisions,
+            tasks: parsed.tasks,
           },
-        })
+          slug,
+        )
 
-        await writePlan(effectiveCwd, initialPlan)
-        await appendJournal(effectiveCwd, slug, {
-          type: 'plan_created',
-          timestamp: new Date().toISOString(),
-          payload: { slug, title, tasks_count: tasks.length },
+        await withPlanLock(effectiveCwd, slug, async () => {
+          await writePlan(effectiveCwd, initialPlan)
+          await appendJournal(effectiveCwd, slug, {
+            type: 'plan_created',
+            timestamp: new Date().toISOString(),
+            payload: { slug, title: initialPlan.title, tasks_count: initialPlan.tasks.length },
+          })
         })
 
         const projection = generateChatProjection(initialPlan, effectiveCwd)
         const approvalQ = buildApprovalQuestion(initialPlan)
         const todoPayload = {
-          todos: tasks.map((t) => ({
+          todos: initialPlan.tasks.map((t) => ({
             content: `[${t.id}] ${t.title}`,
             status:
               t.state === 'done'
@@ -262,7 +210,7 @@ export function createDeepworkTool(cwd = process.cwd()): V2ToolDef {
 
         return {
           output: [
-            `✅ Plano de Deepwork '${title}' inicializado com sucesso em \`.pantheon/deepwork/${slug}/\`!`,
+            `✅ Plano de Deepwork '${initialPlan.title}' inicializado com sucesso em \`.pantheon/deepwork/${slug}/\`!`,
             `- 🔗 **Deeplink PLAN.md:** [Abrir PLAN.md](file://${deepworkPlanMdPath(effectiveCwd, slug)})`,
             `- 🔗 **Deeplink plan.json:** [Abrir plan.json](file://${deepworkPlanJsonPath(effectiveCwd, slug)})`,
             '',

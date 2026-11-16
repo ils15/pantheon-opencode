@@ -21,3 +21,26 @@ export interface ToolContextLike {
    */
   agent?: string
 }
+
+/**
+ * Resolves the effective working directory for tool operations.
+ *
+ * Checks in order of precedence:
+ * 1. ctx.directory (explicit workspace directory on tool context)
+ * 2. ctx.worktree (worktree directory if isolated)
+ * 3. fallbackDir (injected location directory from host at plugin setup)
+ * 4. process.cwd() (fallback process directory)
+ */
+export function resolveToolCwd(context: unknown, fallbackDir?: string): string {
+  const ctx = (context ?? {}) as Partial<ToolContextLike>
+  if (typeof ctx.directory === 'string' && ctx.directory.trim().length > 0) {
+    return ctx.directory
+  }
+  if (typeof ctx.worktree === 'string' && ctx.worktree.trim().length > 0) {
+    return ctx.worktree
+  }
+  if (typeof fallbackDir === 'string' && fallbackDir.trim().length > 0) {
+    return fallbackDir
+  }
+  return process.cwd()
+}

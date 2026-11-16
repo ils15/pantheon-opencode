@@ -57,7 +57,7 @@ import { createV2LocalDecisionDefinition } from './local-decision-tool.ts'
 import { createModelCommand } from './model-command.ts'
 import { createV2VisionTool, type V2VisionRuntime } from './native-vision.ts'
 import { createV2SkillSearchDefinition } from './skill-search-tool.ts'
-import type { ToolContextLike } from './tool-context.ts'
+import { resolveToolCwd, type ToolContextLike } from './tool-context.ts'
 
 // ─── Contract types ─────────────────────────────────────────────────────
 
@@ -400,7 +400,7 @@ const MODEL_INPUT: Record<string, unknown> = {
     scope: {
       type: 'string',
       enum: ['project'],
-      description: 'Project scope only; global overrides are not supported in V2.',
+      description: 'Project scope only; global overrides are not supported.',
     },
   },
 }
@@ -412,12 +412,12 @@ async function executeModel(
   context: unknown,
 ): Promise<V2ToolResult> {
   if (input.scope !== undefined && input.scope !== 'project') {
-    return { output: 'Error: V2 pantheon_model is project-only; global scope is not supported.' }
+    return { output: 'Error: pantheon_model is project-only; global scope is not supported.' }
   }
   if (Object.hasOwn(input, 'confirm') || Object.hasOwn(input, 'authorize_global')) {
     return {
       output:
-        'Error: V2 pantheon_model does not accept authorization flags; global authorization is not supported by this tool.',
+        'Error: pantheon_model does not accept authorization flags; global authorization is not supported by this tool.',
     }
   }
   // The V1 tool validates its own args (zod) and reports failures as text.
@@ -557,45 +557,49 @@ const SHELL_INPUT = {
 } as const
 
 /**
- * A V2 fallback shell tool alias. OpenCode registers `bash`, but models frequently
+ * Shell tool execution. OpenCode registers `bash`, but models frequently
  * attempt to invoke `shell` because of agent permission YAML conventions.
- * This alias ensures terminal commands execute seamlessly without tool-not-found errors.
+ * This tool ensures terminal commands execute seamlessly in the workspace directory.
  */
-const shellTool: V2ToolDef = {
-  name: 'shell',
-  description: 'Execute a shell command in the workspace directory. Alias for bash execution.',
-  input: SHELL_INPUT,
-  output: {},
-  execute: async (input, context) => {
-    const raw = (input as Record<string, unknown>) ?? {}
-    const command = String(raw.command ?? raw.cmd ?? '')
-    if (!command.trim()) {
-      return { output: '', ok: false, error: 'Command cannot be empty' }
-    }
-    const toolCtx = toolContext(context)
-    const cwd = toolCtx.directory || process.cwd()
-    try {
-      const { stdout, stderr } = await execAsync(command, {
-        cwd,
-        maxBuffer: 10 * 1024 * 1024,
-        shell: '/bin/bash',
-      })
-      const output = [stdout, stderr].filter(Boolean).join('\n')
-      return { output, ok: true }
-    } catch (err: unknown) {
-      const execError = err as { stdout?: string; stderr?: string; message?: string }
-      const output = [execError.stdout, execError.stderr, execError.message]
-        .filter(Boolean)
-        .join('\n')
-      return { output, ok: false, error: output }
-    }
-  },
+export function createShellTool(fallbackDir?: string): V2ToolDef {
+  return {
+    name: 'shell',
+    description: 'Execute a shell command in the workspace directory. Alias for bash execution.',
+    input: SHELL_INPUT,
+    output: {},
+    execute: async (input, context) => {
+      const raw = (input as Record<string, unknown>) ?? {}
+      const command = String(raw.command ?? raw.cmd ?? '')
+      if (!command.trim()) {
+        return { output: '', ok: false, error: 'Command cannot be empty' }
+      }
+      const cwd = resolveToolCwd(context, fallbackDir)
+      try {
+        const { stdout, stderr } = await execAsync(command, {
+          cwd,
+          maxBuffer: 10 * 1024 * 1024,
+          shell: '/bin/bash',
+        })
+        const output = [stdout, stderr].filter(Boolean).join('\n')
+        return { output, ok: true }
+      } catch (err: unknown) {
+        const execError = err as { stdout?: string; stderr?: string; message?: string }
+        const output = [execError.stdout, execError.stderr, execError.message]
+          .filter(Boolean)
+          .join('\n')
+        return { output, ok: false, error: output }
+      }
+    },
+  }
 }
+
+export const shellTool = createShellTool()
 
 export function createV2ToolDefinitions(
   visionRuntime?: V2VisionRuntime,
   shadow: V2ToolShadowOptions = {},
   jevRuntime?: V2JevDecisionRuntime,
+  hostLocationDirectory?: string,
 ): V2ToolDef[] {
   const definitions: V2ToolDef[] = [
     {
@@ -618,8 +622,8 @@ export function createV2ToolDefinitions(
         'on disk: a call reads that cache and never waits on the network unless refreshPricing is ' +
         'set, a stale cache is refreshed in the background and the report says so, and an unpriced ' +
         'model reads — and is excluded from the totals, which then say partial. Pass session=<root ' +
-        'session id> to aggregate that session plus its descendant sessions. Phase may be unknown ' +
-        'on V2; costs are catalog list prices, not an invoice.',
+        'session id> to aggregate that session plus its descendant sessions. Phase may be unknown; ' +
+        'costs are catalog list prices, not an invoice.',
       input: COST_INPUT,
       output: {},
       execute: executeCost,
@@ -628,8 +632,8 @@ export function createV2ToolDefinitions(
       name: 'pantheon_model',
       description:
         'Show, set, or reset explicit per-agent project-scoped model overrides in active-preset.json. ' +
-        'V2 ignores static preset names and PANTHEON_MODEL_PRESET; no wizard or implicit model ' +
-        'selection. Global overrides are not read or written in V2; future global support requires ' +
+        'Ignores static preset names and PANTHEON_MODEL_PRESET; no wizard or implicit model ' +
+        'selection. Global overrides are not read or written; future global support requires ' +
         'separate explicit authorization. Pass action="status" to read project-scoped overrides. ' +
         'Never writes .env or top-level model/small_model.',
       input: MODEL_INPUT,
@@ -644,9 +648,9 @@ export function createV2ToolDefinitions(
   )
   definitions.push(todowriteTool)
   definitions.push(todoreadTool)
-  definitions.push(shellTool)
-  definitions.push(createV2SkillSearchDefinition())
-  definitions.push(createDeepworkTool())
+  definitions.push(createShellTool(hostLocationDirectory))
+  definitions.push(createV2SkillSearchDefinition(hostLocationDirectory))
+  definitions.push(createDeepworkTool(hostLocationDirectory))
   if (visionRuntime) definitions.push(createV2VisionTool(visionRuntime))
   if (jevRuntime) definitions.push(createV2JevDecisionDefinition(jevRuntime))
   return definitions

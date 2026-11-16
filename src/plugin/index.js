@@ -7532,14 +7532,8 @@ var JEV_INPUT_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: ["schemaVersion"],
-  anyOf: [
-    { required: ["state"] },
-    { required: ["delegateId", "resultSummaryKind", "resultMetrics", "criteria"] },
-    { required: ["candidates"] },
-    { required: ["claims"] }
-  ],
   properties: {
-    schemaVersion: { type: "integer", const: 1 },
+    schemaVersion: { type: "integer", enum: [1] },
     state: { type: "string", minLength: 1, maxLength: 12e3 },
     mode: { type: "string", enum: ["skills", "delegation", "review", "rank", "verify", "order"] },
     questions: { type: "array", minItems: 1, maxItems: 4, items: questionSchema },
@@ -9268,7 +9262,7 @@ function discoverActiveSessionId(directory) {
 function createV2VisionTool(runtime) {
   return {
     name: "vision_describe",
-    description: "Analyze an image with an OpenCode Zen multimodal model confirmed by the current V2 model catalog. Prefers the OpenCode Go MiMo 2.6 Flash model and falls back to another live image-capable Zen model. Free-tier models are excluded (the direct gateway rejects them). Accepts a local path, file URL, public HTTP(S) URL, or base64 image data URI.",
+    description: "Analyze an image with an OpenCode Zen multimodal model confirmed by the current model catalog. Prefers the OpenCode Go MiMo 2.6 Flash model and falls back to another live image-capable Zen model. Free-tier models are excluded (the direct gateway rejects them). Accepts a local path, file URL, public HTTP(S) URL, or base64 image data URI.",
     input: {
       type: "object",
       additionalProperties: false,
@@ -12036,6 +12030,21 @@ ${renderMarkdown(query, days, pricing)}`;
 // src/pantheon/deepwork/deepwork-tool.ts
 import { z as z3 } from "zod";
 
+// src/pantheon/tool-context.ts
+function resolveToolCwd(context, fallbackDir) {
+  const ctx = context ?? {};
+  if (typeof ctx.directory === "string" && ctx.directory.trim().length > 0) {
+    return ctx.directory;
+  }
+  if (typeof ctx.worktree === "string" && ctx.worktree.trim().length > 0) {
+    return ctx.worktree;
+  }
+  if (typeof fallbackDir === "string" && fallbackDir.trim().length > 0) {
+    return fallbackDir;
+  }
+  return process.cwd();
+}
+
 // src/pantheon/deepwork/plan-projection.ts
 import { join as join15 } from "node:path";
 function generateChatProjection(plan, cwd = process.cwd()) {
@@ -12264,9 +12273,11 @@ var DecisionStatusSchema = z2.enum(["pending", "resolved"]);
 var PlanDecisionSchema = z2.object({
   id: z2.string().min(1),
   question: z2.string().min(1),
-  options: z2.array(z2.string()).min(2),
+  options: z2.array(z2.string()).default([]),
   chosen: z2.string().optional(),
-  status: DecisionStatusSchema.default("pending")
+  choice: z2.string().optional(),
+  status: DecisionStatusSchema.default("pending"),
+  resolved_at: z2.string().optional()
 });
 var PlanRiskSchema = z2.object({
   id: z2.string().min(1),
@@ -12281,7 +12292,7 @@ var PlanMetadataSchema = z2.object({
 var DeepworkPlanSchema = z2.object({
   plan_id: z2.string().min(1),
   title: z2.string().min(1),
-  intent: z2.string().min(1),
+  intent: z2.string().default("Plano de deepwork estruturado."),
   done_when: z2.array(z2.string()).default([]),
   decisions_needed: z2.array(PlanDecisionSchema).default([]),
   risks: z2.array(PlanRiskSchema).default([]),
@@ -12326,14 +12337,193 @@ function computeTaskReadiness(plan) {
   });
   return { ...plan, tasks: updatedTasks };
 }
+function inferAcceptanceKind(check) {
+  const lower = check.toLowerCase();
+  if (lower.includes("test") || lower.includes("pytest") || lower.includes("assert")) return "test";
+  if (lower.includes("file") || lower.includes("exist") || lower.includes("criado") || lower.includes("path"))
+    return "file";
+  if (lower.startsWith("npm ") || lower.startsWith("bash ") || lower.startsWith("alembic ") || lower.startsWith("git ") || lower.includes(" && ") || lower.includes(" || "))
+    return "command";
+  return "manual";
+}
+function normalizePlanData(data, fallbackSlug = "plan") {
+  const obj = data && typeof data === "object" ? data : {};
+  const slug = String(obj.plan_id ?? obj.slug ?? fallbackSlug).trim() || fallbackSlug;
+  const title = String(obj.title ?? slug).trim() || slug;
+  const intent = String(obj.intent ?? "").trim() || "Plano de deepwork estruturado.";
+  const done_when = Array.isArray(obj.done_when) ? obj.done_when.map((s) => String(s).trim()).filter(Boolean) : [];
+  const rawDecisions = Array.isArray(obj.decisions_needed) ? obj.decisions_needed : Array.isArray(obj.decisions) ? obj.decisions : [];
+  const decisions_needed = rawDecisions.map((d, idx) => {
+    const dec = d && typeof d === "object" ? d : {};
+    const id = String(dec.id ?? `D${String(idx + 1).padStart(2, "0")}`).trim();
+    const question = String(dec.question ?? dec.title ?? "Decis\xE3o necess\xE1ria").trim();
+    const rawOptions = Array.isArray(dec.options) ? dec.options : typeof dec.options === "string" ? [dec.options] : [];
+    const options = rawOptions.map((opt) => String(opt).trim()).filter(Boolean);
+    const chosenVal = dec.chosen ?? dec.choice;
+    const chosen = typeof chosenVal === "string" ? chosenVal : void 0;
+    const statusVal = String(dec.status ?? "").trim().toLowerCase();
+    const status = statusVal === "resolved" || chosen !== void 0 ? "resolved" : "pending";
+    return {
+      id,
+      question,
+      options,
+      chosen,
+      choice: chosen,
+      status,
+      resolved_at: typeof dec.resolved_at === "string" ? dec.resolved_at : void 0
+    };
+  });
+  const rawRisks = Array.isArray(obj.risks) ? obj.risks : [];
+  const risks = rawRisks.map((r, idx) => {
+    const risk = r && typeof r === "object" ? r : {};
+    return {
+      id: String(risk.id ?? `R${String(idx + 1).padStart(2, "0")}`).trim(),
+      description: String(risk.description ?? risk.risk ?? "").trim() || "Risco n\xE3o especificado",
+      mitigation: typeof risk.mitigation === "string" ? risk.mitigation : void 0
+    };
+  });
+  const out_of_scope = Array.isArray(obj.out_of_scope) ? obj.out_of_scope.map((s) => String(s).trim()).filter(Boolean) : [];
+  const rawTasks = Array.isArray(obj.tasks) ? obj.tasks : [];
+  const tasks = rawTasks.map((t, idx) => {
+    const task = t && typeof t === "object" ? t : {};
+    const id = String(task.id ?? `T${String(idx + 1).padStart(2, "0")}`).trim();
+    const taskTitle = String(task.title ?? task.name ?? `Task ${idx + 1}`).trim();
+    const description = typeof task.description === "string" ? task.description : void 0;
+    const rawAgent = task.agent ?? task.owner ?? task.assignee;
+    const agent = typeof rawAgent === "string" && rawAgent.trim().length > 0 ? rawAgent.replace(/^@/, "").trim() : "zeus";
+    const rawPhase = task.phase;
+    let phase = 1;
+    if (typeof rawPhase === "number" && Number.isFinite(rawPhase)) {
+      phase = rawPhase;
+    } else if (typeof rawPhase === "string") {
+      const match = rawPhase.match(/\d+/);
+      if (match) phase = Number.parseInt(match[0], 10);
+    }
+    const rawState = String(task.state ?? task.status ?? "pending").trim().toLowerCase();
+    const validStates = [
+      "pending",
+      "ready",
+      "in_progress",
+      "done",
+      "failed",
+      "blocked"
+    ];
+    const state = validStates.includes(rawState) ? rawState : "pending";
+    const depends_on = Array.isArray(task.depends_on) ? task.depends_on.map((dep) => String(dep).trim()).filter(Boolean) : [];
+    const parallel_safe = Boolean(task.parallel_safe ?? task.parallel);
+    const rawAcceptance = Array.isArray(task.acceptance) ? task.acceptance : Array.isArray(task.acceptance_criteria) ? task.acceptance_criteria : Array.isArray(task.criteria) ? task.criteria : [];
+    const acceptance = rawAcceptance.map((a) => {
+      if (typeof a === "string") {
+        const checkText2 = a.trim();
+        return {
+          kind: inferAcceptanceKind(checkText2),
+          check: checkText2,
+          fails_now: true,
+          verified: false
+        };
+      }
+      const acc = a && typeof a === "object" ? a : {};
+      const checkText = String(
+        acc.check ?? acc.description ?? acc.title ?? acc.name ?? "verify"
+      ).trim();
+      const rawKind = String(acc.kind ?? "").trim().toLowerCase();
+      const validKinds = ["test", "command", "file", "manual"];
+      const kind = validKinds.includes(rawKind) ? rawKind : inferAcceptanceKind(checkText);
+      return {
+        kind,
+        check: checkText || "verify",
+        fails_now: typeof acc.fails_now === "boolean" ? acc.fails_now : true,
+        verified: Boolean(acc.verified),
+        proof: typeof acc.proof === "string" ? acc.proof : void 0
+      };
+    });
+    const rawResult = task.result && typeof task.result === "object" ? task.result : void 0;
+    const result = rawResult ? {
+      summary: typeof rawResult.summary === "string" ? rawResult.summary : void 0,
+      verified_at: typeof rawResult.verified_at === "string" ? rawResult.verified_at : void 0,
+      artifacts: Array.isArray(rawResult.artifacts) ? rawResult.artifacts.map((art) => String(art)) : void 0
+    } : void 0;
+    return {
+      id,
+      title: taskTitle,
+      description,
+      agent,
+      phase,
+      state,
+      depends_on,
+      parallel_safe,
+      acceptance,
+      result
+    };
+  });
+  const rawMeta = obj.metadata && typeof obj.metadata === "object" ? obj.metadata : {};
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const metadata = {
+    created_at: typeof rawMeta.created_at === "string" ? rawMeta.created_at : now,
+    updated_at: typeof rawMeta.updated_at === "string" ? rawMeta.updated_at : now,
+    version: typeof rawMeta.version === "number" ? rawMeta.version : 1
+  };
+  return computeTaskReadiness({
+    plan_id: slug,
+    title,
+    intent,
+    done_when,
+    decisions_needed,
+    risks,
+    out_of_scope,
+    tasks,
+    metadata
+  });
+}
 async function readPlan(cwd = process.cwd(), slug) {
   const path5 = deepworkPlanJsonPath(cwd, slug);
+  let raw;
   try {
-    const raw = await readFile6(path5, "utf8");
-    const parsed = JSON.parse(raw);
-    return DeepworkPlanSchema.parse(parsed);
+    raw = await readFile6(path5, "utf8");
+  } catch (err) {
+    if (err.code === "ENOENT") {
+      return null;
+    }
+    throw err;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`Plano '${slug}' em ${path5} cont\xE9m JSON inv\xE1lido: ${err.message}`);
+  }
+  const result = DeepworkPlanSchema.safeParse(parsed);
+  if (result.success) {
+    return result.data;
+  }
+  try {
+    const normalized = normalizePlanData(parsed, slug);
+    const repairedResult = DeepworkPlanSchema.safeParse(normalized);
+    if (repairedResult.success) {
+      return repairedResult.data;
+    }
   } catch {
-    return null;
+  }
+  const issues = result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join(", ");
+  throw new Error(`Plano '${slug}' em ${path5} falhou na valida\xE7\xE3o de schema: ${issues}`);
+}
+var planLocks = /* @__PURE__ */ new Map();
+async function withPlanLock(cwd, slug, fn) {
+  const key = `${cwd}::${slug}`;
+  const prev = planLocks.get(key) ?? Promise.resolve();
+  let resolveCurrent;
+  const current = new Promise((resolve8) => {
+    resolveCurrent = resolve8;
+  });
+  planLocks.set(key, current);
+  try {
+    await prev;
+    return await fn();
+  } finally {
+    resolveCurrent?.();
+    if (planLocks.get(key) === current) {
+      planLocks.delete(key);
+    }
   }
 }
 async function writePlan(cwd = process.cwd(), plan) {
@@ -12347,14 +12537,17 @@ async function writePlan(cwd = process.cwd(), plan) {
       version: (plan.metadata.version || 1) + 1
     }
   });
+  const randomSuffix = `${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}`;
   const jsonPath = deepworkPlanJsonPath(cwd, plan.plan_id);
-  const jsonTmp = `${jsonPath}.tmp`;
+  const jsonTmp = `${jsonPath}.tmp.${randomSuffix}`;
   await writeFile3(jsonTmp, `${JSON.stringify(normalized, null, 2)}
 `, "utf8");
   await rename5(jsonTmp, jsonPath);
   const mdPath = deepworkPlanMdPath(cwd, plan.plan_id);
+  const mdTmp = `${mdPath}.tmp.${randomSuffix}`;
   const mdContent = generateMarkdownDocument(normalized);
-  await writeFile3(mdPath, mdContent, "utf8");
+  await writeFile3(mdTmp, mdContent, "utf8");
+  await rename5(mdTmp, mdPath);
 }
 async function appendJournal(cwd = process.cwd(), slug, event) {
   const dir = deepworkPlanDir(cwd, slug);
@@ -12365,93 +12558,101 @@ async function appendJournal(cwd = process.cwd(), slug, event) {
   await appendFile3(journalPath, line, "utf8");
 }
 async function updateTaskState(cwd = process.cwd(), slug, taskId, state, result) {
-  const plan = await readPlan(cwd, slug);
-  if (!plan) {
-    throw new Error(`Deepwork plan "${slug}" not found`);
-  }
-  const taskIndex = plan.tasks.findIndex((t) => t.id === taskId);
-  const existingTask = plan.tasks[taskIndex];
-  if (taskIndex === -1 || !existingTask) {
-    throw new Error(`Task "${taskId}" not found in plan "${slug}"`);
-  }
-  const updatedResult = result ? { ...existingTask.result ?? {}, ...result } : existingTask.result;
-  const updatedTask = {
-    ...existingTask,
-    state,
-    ...updatedResult !== void 0 ? { result: updatedResult } : {}
-  };
-  const updatedTasks = [...plan.tasks];
-  updatedTasks[taskIndex] = updatedTask;
-  const nextPlan = { ...plan, tasks: updatedTasks };
-  await writePlan(cwd, nextPlan);
-  await appendJournal(cwd, slug, {
-    type: "task_state_changed",
-    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-    payload: { taskId, state, result }
+  return withPlanLock(cwd, slug, async () => {
+    const plan = await readPlan(cwd, slug);
+    if (!plan) {
+      throw new Error(`Deepwork plan "${slug}" not found`);
+    }
+    const taskIndex = plan.tasks.findIndex((t) => t.id === taskId);
+    const existingTask = plan.tasks[taskIndex];
+    if (taskIndex === -1 || !existingTask) {
+      throw new Error(`Task "${taskId}" not found in plan "${slug}"`);
+    }
+    const updatedResult = result ? { ...existingTask.result ?? {}, ...result } : existingTask.result;
+    const updatedTask = {
+      ...existingTask,
+      state,
+      ...updatedResult !== void 0 ? { result: updatedResult } : {}
+    };
+    const updatedTasks = [...plan.tasks];
+    updatedTasks[taskIndex] = updatedTask;
+    const nextPlan = { ...plan, tasks: updatedTasks };
+    await writePlan(cwd, nextPlan);
+    await appendJournal(cwd, slug, {
+      type: "task_state_changed",
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      payload: { taskId, state, result }
+    });
+    return await readPlan(cwd, slug) ?? nextPlan;
   });
-  return await readPlan(cwd, slug) ?? nextPlan;
 }
 async function verifyTaskAcceptance(cwd = process.cwd(), slug, taskId, checkIndex, verified, proof) {
-  const plan = await readPlan(cwd, slug);
-  if (!plan) {
-    throw new Error(`Deepwork plan "${slug}" not found`);
-  }
-  const taskIndex = plan.tasks.findIndex((t) => t.id === taskId);
-  const task = plan.tasks[taskIndex];
-  if (taskIndex === -1 || !task) {
-    throw new Error(`Task "${taskId}" not found in plan "${slug}"`);
-  }
-  const currentAcc = task.acceptance[checkIndex];
-  if (!currentAcc) {
-    throw new Error(`Acceptance criterion index ${checkIndex} not found in task "${taskId}"`);
-  }
-  const updatedAcceptance = [...task.acceptance];
-  const resolvedProof = proof ?? currentAcc.proof;
-  updatedAcceptance[checkIndex] = {
-    ...currentAcc,
-    verified,
-    ...resolvedProof !== void 0 ? { proof: resolvedProof } : {}
-  };
-  const allVerified = updatedAcceptance.every((acc) => acc.verified);
-  const updatedTasks = [...plan.tasks];
-  updatedTasks[taskIndex] = {
-    ...task,
-    acceptance: updatedAcceptance,
-    state: allVerified ? "done" : task.state
-  };
-  const nextPlan = { ...plan, tasks: updatedTasks };
-  await writePlan(cwd, nextPlan);
-  await appendJournal(cwd, slug, {
-    type: "acceptance_verified",
-    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-    payload: { taskId, checkIndex, verified, proof, allVerified }
+  return withPlanLock(cwd, slug, async () => {
+    const plan = await readPlan(cwd, slug);
+    if (!plan) {
+      throw new Error(`Deepwork plan "${slug}" not found`);
+    }
+    const taskIndex = plan.tasks.findIndex((t) => t.id === taskId);
+    const task = plan.tasks[taskIndex];
+    if (taskIndex === -1 || !task) {
+      throw new Error(`Task "${taskId}" not found in plan "${slug}"`);
+    }
+    const currentAcc = task.acceptance[checkIndex];
+    if (!currentAcc) {
+      throw new Error(`Acceptance criterion index ${checkIndex} not found in task "${taskId}"`);
+    }
+    const updatedAcceptance = [...task.acceptance];
+    const resolvedProof = proof ?? currentAcc.proof;
+    updatedAcceptance[checkIndex] = {
+      ...currentAcc,
+      verified,
+      ...resolvedProof !== void 0 ? { proof: resolvedProof } : {}
+    };
+    const allVerified = updatedAcceptance.every((acc) => acc.verified);
+    const updatedTasks = [...plan.tasks];
+    updatedTasks[taskIndex] = {
+      ...task,
+      acceptance: updatedAcceptance,
+      state: allVerified ? "done" : task.state
+    };
+    const nextPlan = { ...plan, tasks: updatedTasks };
+    await writePlan(cwd, nextPlan);
+    await appendJournal(cwd, slug, {
+      type: "acceptance_verified",
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      payload: { taskId, checkIndex, verified, proof, allVerified }
+    });
+    return await readPlan(cwd, slug) ?? nextPlan;
   });
-  return await readPlan(cwd, slug) ?? nextPlan;
 }
 async function resolvePlanDecision(cwd = process.cwd(), slug, decisionId, chosen) {
-  const plan = await readPlan(cwd, slug);
-  if (!plan) {
-    throw new Error(`Deepwork plan "${slug}" not found`);
-  }
-  const decIndex = plan.decisions_needed.findIndex((d) => d.id === decisionId);
-  const existingDec = plan.decisions_needed[decIndex];
-  if (decIndex === -1 || !existingDec) {
-    throw new Error(`Decision "${decisionId}" not found in plan "${slug}"`);
-  }
-  const updatedDecisions = [...plan.decisions_needed];
-  updatedDecisions[decIndex] = {
-    ...existingDec,
-    chosen,
-    status: "resolved"
-  };
-  const nextPlan = { ...plan, decisions_needed: updatedDecisions };
-  await writePlan(cwd, nextPlan);
-  await appendJournal(cwd, slug, {
-    type: "decision_resolved",
-    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-    payload: { decisionId, chosen }
+  return withPlanLock(cwd, slug, async () => {
+    const plan = await readPlan(cwd, slug);
+    if (!plan) {
+      throw new Error(`Deepwork plan "${slug}" not found`);
+    }
+    const decIndex = plan.decisions_needed.findIndex((d) => d.id === decisionId);
+    const existingDec = plan.decisions_needed[decIndex];
+    if (decIndex === -1 || !existingDec) {
+      throw new Error(`Decision "${decisionId}" not found in plan "${slug}"`);
+    }
+    const updatedDecisions = [...plan.decisions_needed];
+    updatedDecisions[decIndex] = {
+      ...existingDec,
+      chosen,
+      choice: chosen,
+      status: "resolved",
+      resolved_at: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    const nextPlan = { ...plan, decisions_needed: updatedDecisions };
+    await writePlan(cwd, nextPlan);
+    await appendJournal(cwd, slug, {
+      type: "decision_resolved",
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      payload: { decisionId, chosen }
+    });
+    return await readPlan(cwd, slug) ?? nextPlan;
   });
-  return await readPlan(cwd, slug) ?? nextPlan;
 }
 async function listPlans(cwd = process.cwd()) {
   const root = deepworkRootDir(cwd);
@@ -12584,7 +12785,7 @@ function createDeepworkTool(cwd = process.cwd()) {
     output: {},
     async execute(input, context) {
       const parsed = DeepworkToolInputSchema.parse(input);
-      const effectiveCwd = typeof context?.directory === "string" ? context.directory : cwd;
+      const effectiveCwd = resolveToolCwd(context, cwd);
       if (parsed.action === "list") {
         const plans = await listPlans(effectiveCwd);
         if (plans.length === 0) {
@@ -12613,67 +12814,36 @@ function createDeepworkTool(cwd = process.cwd()) {
         throw new Error(`O par\xE2metro 'slug' \xE9 obrigat\xF3rio para a a\xE7\xE3o '${parsed.action}'.`);
       }
       if (parsed.action === "init") {
-        const title = parsed.title?.trim() || slug;
-        const intent = parsed.intent?.trim() || "Plano de deepwork estruturado.";
-        const rawTasks = parsed.tasks ?? [];
-        const rawDecisions = parsed.decisions ?? [];
-        const doneWhen = parsed.done_when ?? [];
-        const tasks = rawTasks.map((t, idx) => ({
-          id: typeof t.id === "string" ? t.id : `T${String(idx + 1).padStart(2, "0")}`,
-          title: typeof t.title === "string" ? t.title : `Task ${idx + 1}`,
-          description: typeof t.description === "string" ? t.description : void 0,
-          agent: typeof t.agent === "string" ? t.agent : "zeus",
-          phase: typeof t.phase === "number" ? t.phase : 1,
-          state: typeof t.state === "string" ? t.state : "pending",
-          depends_on: Array.isArray(t.depends_on) ? t.depends_on : [],
-          parallel_safe: Boolean(t.parallel_safe),
-          acceptance: Array.isArray(t.acceptance) ? t.acceptance.map((a) => ({
-            kind: a.kind || "command",
-            check: a.check || "verify",
-            fails_now: a.fails_now ?? true,
-            verified: a.verified ?? false,
-            proof: a.proof
-          })) : []
-        }));
-        const decisions = rawDecisions.map((d, idx) => ({
-          id: typeof d.id === "string" ? d.id : `D${String(idx + 1).padStart(2, "0")}`,
-          question: typeof d.question === "string" ? d.question : "Decis\xE3o necess\xE1ria",
-          options: Array.isArray(d.options) ? d.options : ["Sim", "N\xE3o"],
-          chosen: typeof d.chosen === "string" ? d.chosen : void 0,
-          status: d.chosen ? "resolved" : "pending"
-        }));
-        const initialPlan = computeTaskReadiness({
-          plan_id: slug,
-          title,
-          intent,
-          done_when: doneWhen,
-          decisions_needed: decisions,
-          risks: [],
-          out_of_scope: [],
-          tasks,
-          metadata: {
-            created_at: (/* @__PURE__ */ new Date()).toISOString(),
-            updated_at: (/* @__PURE__ */ new Date()).toISOString(),
-            version: 1
-          }
-        });
-        await writePlan(effectiveCwd, initialPlan);
-        await appendJournal(effectiveCwd, slug, {
-          type: "plan_created",
-          timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-          payload: { slug, title, tasks_count: tasks.length }
+        const initialPlan = normalizePlanData(
+          {
+            plan_id: slug,
+            title: parsed.title,
+            intent: parsed.intent,
+            done_when: parsed.done_when,
+            decisions_needed: parsed.decisions,
+            tasks: parsed.tasks
+          },
+          slug
+        );
+        await withPlanLock(effectiveCwd, slug, async () => {
+          await writePlan(effectiveCwd, initialPlan);
+          await appendJournal(effectiveCwd, slug, {
+            type: "plan_created",
+            timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+            payload: { slug, title: initialPlan.title, tasks_count: initialPlan.tasks.length }
+          });
         });
         const projection = generateChatProjection(initialPlan, effectiveCwd);
         const approvalQ = buildApprovalQuestion(initialPlan);
         const todoPayload = {
-          todos: tasks.map((t) => ({
+          todos: initialPlan.tasks.map((t) => ({
             content: `[${t.id}] ${t.title}`,
             status: t.state === "done" ? "completed" : t.state === "in_progress" ? "in_progress" : "pending"
           }))
         };
         return {
           output: [
-            `\u2705 Plano de Deepwork '${title}' inicializado com sucesso em \`.pantheon/deepwork/${slug}/\`!`,
+            `\u2705 Plano de Deepwork '${initialPlan.title}' inicializado com sucesso em \`.pantheon/deepwork/${slug}/\`!`,
             `- \u{1F517} **Deeplink PLAN.md:** [Abrir PLAN.md](file://${deepworkPlanMdPath(effectiveCwd, slug)})`,
             `- \u{1F517} **Deeplink plan.json:** [Abrir plan.json](file://${deepworkPlanJsonPath(effectiveCwd, slug)})`,
             "",
@@ -13013,7 +13183,7 @@ var v2InputSchema = {
     "complexity"
   ],
   properties: {
-    schemaVersion: { type: "integer", const: 1 },
+    schemaVersion: { type: "integer", enum: [1] },
     candidateAgents: { type: "array", maxItems: 14, items: { type: "string", minLength: 1 } },
     domain: { type: ["string", "null"] },
     candidateSkillIds: { type: "array", maxItems: 64, items: { type: "string", minLength: 1 } },
@@ -14122,6 +14292,37 @@ var SKILL_SEARCH_INPUT_SCHEMA = {
     }
   }
 };
+function scoreSkillMatch(id, description, queryTokens) {
+  const idLower = id.toLowerCase();
+  const descLower = description.toLowerCase();
+  const idTokens = idLower.split(/[^a-z0-9]+/).filter(Boolean);
+  const descWords = descLower.split(/[^a-z0-9]+/).filter(Boolean);
+  let score = 0;
+  let matchedTokens = 0;
+  for (const t of queryTokens) {
+    let tokenScore = 0;
+    if (idLower === t) {
+      tokenScore += 20;
+    } else if (idTokens.includes(t)) {
+      tokenScore += 12;
+    } else if (idTokens.some((w) => w.length >= 4 && t.length >= 4 && (w.startsWith(t) || t.startsWith(w)))) {
+      tokenScore += 6;
+    }
+    if (descWords.includes(t)) {
+      tokenScore += 5;
+    } else if (descWords.some((w) => w.length >= 4 && t.length >= 4 && (w.startsWith(t) || t.startsWith(w)))) {
+      tokenScore += 2;
+    }
+    if (tokenScore > 0) {
+      score += tokenScore;
+      matchedTokens += 1;
+    }
+  }
+  if (matchedTokens > 1) {
+    score += matchedTokens * 5;
+  }
+  return { score, matchedTokens };
+}
 function executeSkillSearch(input, options = {}) {
   const query = typeof input.query === "string" ? input.query.trim() : "";
   if (query.length === 0) {
@@ -14136,39 +14337,34 @@ function executeSkillSearch(input, options = {}) {
       "skills-sh"
     ]
   );
-  const results = [];
   const failures = [];
   const cwd = options.cwd ?? process.cwd();
   const installedMap = scanInstalledSkills(cwd);
-  if (sources.has("installed")) {
-    const tokens = query.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 2);
-    if (tokens.length > 0) {
-      for (const entry of installedMap.values()) {
-        const idLower = entry.id.toLowerCase();
-        const descLower = entry.description.toLowerCase();
-        const matchScore = tokens.reduce((score, t) => {
-          const stem = t.length > 4 ? t.slice(0, 4) : t;
-          return score + (idLower.includes(t) || descLower.includes(t) || idLower.includes(stem) || descLower.includes(stem) ? 1 : 0);
-        }, 0);
-        if (matchScore > 0) {
-          results.push({
-            skill: entry.id,
-            description: entry.description,
-            source: "installed",
-            installed: true,
-            installs: null,
-            installCommand: null,
-            path: entry.path,
-            scope: entry.scope
-          });
-        }
+  const tokens = query.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 1);
+  const scoredResults = [];
+  if (sources.has("installed") && tokens.length > 0) {
+    const minThreshold = tokens.length > 1 ? 5 : 2;
+    for (const entry of installedMap.values()) {
+      const { score } = scoreSkillMatch(entry.id, entry.description, tokens);
+      if (score >= minThreshold) {
+        scoredResults.push({
+          skill: entry.id,
+          description: entry.description,
+          source: "installed",
+          installed: true,
+          installs: null,
+          installCommand: null,
+          path: entry.path,
+          scope: entry.scope,
+          score
+        });
       }
     }
   }
   const externalSources = ["anthropic", "skills-sh", "github"].filter((s) => sources.has(s));
-  if (externalSources.length > 0 && results.length < limit) {
+  if (externalSources.length > 0 && scoredResults.length < limit) {
     try {
-      const extLimit = limit - results.length;
+      const extLimit = limit - scoredResults.length;
       const extRes = searchSkillSources(query, {
         limit: extLimit,
         sources: externalSources
@@ -14177,11 +14373,21 @@ function executeSkillSearch(input, options = {}) {
         failures.push(...extRes.failures);
       }
       if (Array.isArray(extRes.entries)) {
+        const minThreshold = tokens.length > 1 ? 5 : 2;
         for (const entry of extRes.entries) {
           const bareName = (entry.skill.includes("@") ? entry.skill.split("@")[1] : entry.skill).toLowerCase();
           const isInstalled = installedMap.has(entry.skill.toLowerCase()) || installedMap.has(bareName);
           const installedRecord = installedMap.get(entry.skill.toLowerCase()) || installedMap.get(bareName);
-          const pushItem = {
+          const { score } = scoreSkillMatch(entry.skill, entry.skill, tokens);
+          if (score < minThreshold && !isInstalled) {
+            continue;
+          }
+          if (scoredResults.some(
+            (r) => r.skill.toLowerCase() === entry.skill.toLowerCase() || bareName && r.skill.toLowerCase() === bareName
+          )) {
+            continue;
+          }
+          scoredResults.push({
             skill: entry.skill,
             description: entry.skill,
             source: entry.source,
@@ -14190,9 +14396,9 @@ function executeSkillSearch(input, options = {}) {
             ...entry.url ? { url: entry.url } : {},
             installCommand: isInstalled ? null : `npx skills add ${entry.skill} -a opencode -y`,
             path: isInstalled && installedRecord ? installedRecord.path : null,
-            ...isInstalled && installedRecord ? { scope: installedRecord.scope } : {}
-          };
-          results.push(pushItem);
+            ...isInstalled && installedRecord ? { scope: installedRecord.scope } : {},
+            score: score || 1
+          });
         }
       }
     } catch (err) {
@@ -14201,7 +14407,8 @@ function executeSkillSearch(input, options = {}) {
       );
     }
   }
-  const bounded = results.slice(0, limit);
+  scoredResults.sort((a, b) => b.score - a.score);
+  const bounded = scoredResults.slice(0, limit).map(({ score: _, ...item }) => item);
   return {
     ok: true,
     query,
@@ -14210,14 +14417,14 @@ function executeSkillSearch(input, options = {}) {
     failures
   };
 }
-function createV2SkillSearchDefinition() {
+function createV2SkillSearchDefinition(defaultDir) {
   return {
     name: "pantheon_skill_search",
     description: TOOL_DESCRIPTION3,
     input: SKILL_SEARCH_INPUT_SCHEMA,
     output: {},
     execute: async (input, context) => {
-      const cwd = context?.directory || process.cwd();
+      const cwd = resolveToolCwd(context, defaultDir);
       return {
         output: JSON.stringify(executeSkillSearch(input, { cwd }), null, 2)
       };
@@ -14439,18 +14646,18 @@ var MODEL_INPUT = {
     scope: {
       type: "string",
       enum: ["project"],
-      description: "Project scope only; global overrides are not supported in V2."
+      description: "Project scope only; global overrides are not supported."
     }
   }
 };
 var modelCommand = createModelCommand({ v2Mode: true });
 async function executeModel(input, context) {
   if (input.scope !== void 0 && input.scope !== "project") {
-    return { output: "Error: V2 pantheon_model is project-only; global scope is not supported." };
+    return { output: "Error: pantheon_model is project-only; global scope is not supported." };
   }
   if (Object.hasOwn(input, "confirm") || Object.hasOwn(input, "authorize_global")) {
     return {
-      output: "Error: V2 pantheon_model does not accept authorization flags; global authorization is not supported by this tool."
+      output: "Error: pantheon_model does not accept authorization flags; global authorization is not supported by this tool."
     };
   }
   const output = await modelCommand.pantheon_model.execute(
@@ -14534,35 +14741,37 @@ var SHELL_INPUT = {
     }
   }
 };
-var shellTool = {
-  name: "shell",
-  description: "Execute a shell command in the workspace directory. Alias for bash execution.",
-  input: SHELL_INPUT,
-  output: {},
-  execute: async (input, context) => {
-    const raw = input ?? {};
-    const command = String(raw.command ?? raw.cmd ?? "");
-    if (!command.trim()) {
-      return { output: "", ok: false, error: "Command cannot be empty" };
+function createShellTool(fallbackDir) {
+  return {
+    name: "shell",
+    description: "Execute a shell command in the workspace directory. Alias for bash execution.",
+    input: SHELL_INPUT,
+    output: {},
+    execute: async (input, context) => {
+      const raw = input ?? {};
+      const command = String(raw.command ?? raw.cmd ?? "");
+      if (!command.trim()) {
+        return { output: "", ok: false, error: "Command cannot be empty" };
+      }
+      const cwd = resolveToolCwd(context, fallbackDir);
+      try {
+        const { stdout, stderr } = await execAsync(command, {
+          cwd,
+          maxBuffer: 10 * 1024 * 1024,
+          shell: "/bin/bash"
+        });
+        const output = [stdout, stderr].filter(Boolean).join("\n");
+        return { output, ok: true };
+      } catch (err) {
+        const execError = err;
+        const output = [execError.stdout, execError.stderr, execError.message].filter(Boolean).join("\n");
+        return { output, ok: false, error: output };
+      }
     }
-    const toolCtx = toolContext(context);
-    const cwd = toolCtx.directory || process.cwd();
-    try {
-      const { stdout, stderr } = await execAsync(command, {
-        cwd,
-        maxBuffer: 10 * 1024 * 1024,
-        shell: "/bin/bash"
-      });
-      const output = [stdout, stderr].filter(Boolean).join("\n");
-      return { output, ok: true };
-    } catch (err) {
-      const execError = err;
-      const output = [execError.stdout, execError.stderr, execError.message].filter(Boolean).join("\n");
-      return { output, ok: false, error: output };
-    }
-  }
-};
-function createV2ToolDefinitions(visionRuntime, shadow = {}, jevRuntime) {
+  };
+}
+var shellTool = createShellTool();
+function createV2ToolDefinitions(visionRuntime, shadow = {}, jevRuntime, hostLocationDirectory) {
   const definitions = [
     {
       name: "hashline_edit",
@@ -14573,14 +14782,14 @@ function createV2ToolDefinitions(visionRuntime, shadow = {}, jevRuntime) {
     },
     {
       name: "pantheon_cost",
-      description: "Report token usage and USD cost by agent and phase, by model, and by session, over the last N days from opencode.db (read-only). Costs come from the models.dev catalog cached on disk: a call reads that cache and never waits on the network unless refreshPricing is set, a stale cache is refreshed in the background and the report says so, and an unpriced model reads \u2014 and is excluded from the totals, which then say partial. Pass session=<root session id> to aggregate that session plus its descendant sessions. Phase may be unknown on V2; costs are catalog list prices, not an invoice.",
+      description: "Report token usage and USD cost by agent and phase, by model, and by session, over the last N days from opencode.db (read-only). Costs come from the models.dev catalog cached on disk: a call reads that cache and never waits on the network unless refreshPricing is set, a stale cache is refreshed in the background and the report says so, and an unpriced model reads \u2014 and is excluded from the totals, which then say partial. Pass session=<root session id> to aggregate that session plus its descendant sessions. Phase may be unknown; costs are catalog list prices, not an invoice.",
       input: COST_INPUT,
       output: {},
       execute: executeCost
     },
     {
       name: "pantheon_model",
-      description: 'Show, set, or reset explicit per-agent project-scoped model overrides in active-preset.json. V2 ignores static preset names and PANTHEON_MODEL_PRESET; no wizard or implicit model selection. Global overrides are not read or written in V2; future global support requires separate explicit authorization. Pass action="status" to read project-scoped overrides. Never writes .env or top-level model/small_model.',
+      description: 'Show, set, or reset explicit per-agent project-scoped model overrides in active-preset.json. Ignores static preset names and PANTHEON_MODEL_PRESET; no wizard or implicit model selection. Global overrides are not read or written; future global support requires separate explicit authorization. Pass action="status" to read project-scoped overrides. Never writes .env or top-level model/small_model.',
       input: MODEL_INPUT,
       output: {},
       execute: executeModel
@@ -14593,9 +14802,9 @@ function createV2ToolDefinitions(visionRuntime, shadow = {}, jevRuntime) {
   );
   definitions.push(todowriteTool);
   definitions.push(todoreadTool);
-  definitions.push(shellTool);
-  definitions.push(createV2SkillSearchDefinition());
-  definitions.push(createDeepworkTool());
+  definitions.push(createShellTool(hostLocationDirectory));
+  definitions.push(createV2SkillSearchDefinition(hostLocationDirectory));
+  definitions.push(createDeepworkTool(hostLocationDirectory));
   if (visionRuntime) definitions.push(createV2VisionTool(visionRuntime));
   if (jevRuntime) definitions.push(createV2JevDecisionDefinition(jevRuntime));
   return definitions;
@@ -14923,7 +15132,8 @@ async function registerV2Tools(context, boundedRead, jevRuntime) {
           p3Sink.emit({ ...record2, mode: "shadow" });
         }
       },
-      runtime
+      runtime,
+      host.location?.directory
     );
     if (boundedRead !== void 0) toolDefs.push(boundedRead);
     const p11Sink = createTelemetrySink();

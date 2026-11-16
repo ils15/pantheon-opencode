@@ -1116,10 +1116,17 @@ async function testToolReviewNoContentLeak(): Promise<void> {
 function testSchemaDeclaresReviewMode(): void {
   const definition = createV2JevDecisionDefinition(stubRuntime().runtime)
   const schema = definition.input as {
+    type?: string
     required?: string[]
     properties?: Record<string, { enum?: string[] }>
-    anyOf?: Array<{ required?: string[] }>
+    anyOf?: unknown
+    oneOf?: unknown
+    allOf?: unknown
   }
+  assert.equal(schema.type, 'object')
+  assert.equal(schema.anyOf, undefined, 'no top-level anyOf to prevent upstream llm rejection')
+  assert.equal(schema.oneOf, undefined, 'no top-level oneOf')
+  assert.equal(schema.allOf, undefined, 'no top-level allOf')
   assert.deepEqual(
     schema.required,
     ['schemaVersion'],
@@ -1131,21 +1138,13 @@ function testSchemaDeclaresReviewMode(): void {
     ['skills', 'delegation', 'review', 'rank', 'verify', 'order'],
     'the schema declares mode "review" (plus the v3.1 rank, verify and order modes)',
   )
-  // Four disjoint payloads in one schema: the state branch (presets and
-  // explicit questions), the review branch (delegateId + metrics + criteria),
-  // and the v3.1 rank (candidates) and verify (claims) branches.
-  const branches = (schema.anyOf ?? []).map((branch) => branch.required ?? [])
-  const reviewBranch = branches.find((required) => required.includes('delegateId'))
-  const stateBranch = branches.find((required) => required.includes('state'))
-  assert.ok(reviewBranch, 'a review branch is declared')
-  assert.ok(stateBranch, 'a state branch is declared')
-  assert.deepEqual([...reviewBranch].sort(), [
-    'criteria',
-    'delegateId',
-    'resultMetrics',
-    'resultSummaryKind',
-  ])
-  assert.deepEqual(stateBranch, ['state'])
+  assert.ok(schema.properties?.delegateId, 'the review delegateId property is declared')
+  assert.ok(
+    schema.properties?.resultSummaryKind,
+    'the review resultSummaryKind property is declared',
+  )
+  assert.ok(schema.properties?.resultMetrics, 'the review resultMetrics property is declared')
+  assert.ok(schema.properties?.criteria, 'the review criteria property is declared')
 }
 
 // ─── Runner ──────────────────────────────────────────────────────────────

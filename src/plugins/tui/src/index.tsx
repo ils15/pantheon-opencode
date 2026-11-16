@@ -1886,8 +1886,10 @@ export function collectDispatch(
 /* ─── Block layout ───────────────────────────────────────── */
 
 /** Sidebar blocks in render order. Spacing is derived from this list instead of
- *  from the view, so a hidden block can never leave an empty gap behind. */
-export type SidebarBlockKey = 'context' | 'git' | 'todo' | 'dispatch'
+ *  from the view, so a hidden block can never leave an empty gap behind.
+ *  Note: The custom Todo block was removed from the sidebar composition because
+ *  OpenCode 2.x natively renders the Todo panel when `todowrite` is used. */
+export type SidebarBlockKey = 'context' | 'git' | 'dispatch'
 
 /** One rendered block: its key, and whether a blank line precedes it. */
 export type SidebarBlock = { key: SidebarBlockKey; spacer: boolean }
@@ -1895,14 +1897,12 @@ export type SidebarBlock = { key: SidebarBlockKey; spacer: boolean }
 /** Header glyph per block — one codepoint each, rendered muted before the bold
  *  label. The fixed header (version/preset/session) takes none.
  *  Measured as one terminal cell by the host (`@opentui/core` counts
- *  `emoji-regex` matches as two): ▤ U+25A4 (EAW=A), ◆ U+25C6 (A), ▾ U+25BE (N),
- *  ◈ U+25C8 (A). `☑` U+2611 was rejected for the Todo header because it matches
- *  `emoji-regex` and would occupy two cells; `⌁` U+2301 (the old Dispatch glyph)
- *  was replaced by the host's own Notice glyph. */
+ *  `emoji-regex` matches as two): ▤ U+25A4 (EAW=A), ◆ U+25C6 (A),
+ *  ◈ U+25C8 (A). `⌁` U+2301 (the old Dispatch glyph) was replaced by the host's
+ *  own Notice glyph. */
 export const BLOCK_ICONS: Record<SidebarBlockKey, string> = {
   context: '\u25A4',
   git: '\u25C6',
-  todo: '\u25BE',
   dispatch: '\u25C8',
 }
 
@@ -3839,7 +3839,6 @@ export function createSidebarModel(
       present.push('context')
     }
     if (prefs.sidebar.blocks.git && (branch() !== null || gitLine() !== null)) present.push('git')
-    if (prefs.sidebar.blocks.todo && todo().visible.length > 0) present.push('todo')
     if (prefs.sidebar.blocks.dispatch && dispatch() !== null) present.push('dispatch')
     return withBlockSpacers(present)
   })
@@ -4019,13 +4018,6 @@ function Sidebar(props: SidebarProps): JSX.Element {
   const text = () => context.theme.text?.base
   const muted = () => context.theme.text?.muted ?? text()
   const tone = (value: DelegationTone) => context.theme?.text?.feedback?.[value]?.base ?? text()
-  /* Single accent: in-progress uses `theme.text.feedback.warning.base` when the
-   * theme ships it, so live work is the only colored row. */
-  const todoFg = (status: TodoStatus) => {
-    const rowTone = todoTone(status)
-    if (rowTone === 'accent') return tone('warning')
-    return rowTone === 'muted' ? muted() : text()
-  }
   const open = (sessionID: string) => () => navigateToSession(context.ui?.router, sessionID)
   /* Spacing comes from the block list, never from the view: a block with no
    * content is simply absent there, so it leaves no orphan gap behind. */
@@ -4209,36 +4201,6 @@ function Sidebar(props: SidebarProps): JSX.Element {
             )}
           </Show>
           <Show when={model.gitLine()}>{(line) => <text fg={text()}>{line()}</text>}</Show>
-        </box>
-      </Show>
-
-      {/* Todo — derived from the newest completed `todowrite` in the active
-          session's transcript (no todo API exists in the installed client).
-          Rows are grouped in_progress → pending → completed → cancelled, capped
-          at six, and every row keeps a single accent: live work only. The
-          header takes `warning` so the block reads apart from the neutral
-          reference blocks above it. */}
-      <Show when={block('todo')}>
-        <box flexDirection="column">
-          <Show when={spacer('todo')}>
-            <box height={1} />
-          </Show>
-          <Show when={model.todo().visible.length > 0}>
-            <box flexDirection="column">
-              <BlockHeader
-                icon={BLOCK_ICONS.todo}
-                label="Todo"
-                fg={tone('warning')}
-                muted={muted()}
-              />
-              <For each={model.todo().visible}>
-                {(item: TodoItem) => <text fg={todoFg(item.status)}>{todoRowText(item)}</text>}
-              </For>
-              <Show when={hiddenTodoText(model.todo().hidden)}>
-                {(line) => <text fg={muted()}>{line()}</text>}
-              </Show>
-            </box>
-          </Show>
         </box>
       </Show>
 

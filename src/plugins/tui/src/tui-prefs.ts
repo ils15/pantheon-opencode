@@ -195,7 +195,7 @@ export interface TuiPrefs {
   }
   sidebar: {
     header: { version: boolean; preset: boolean; session: boolean }
-    blocks: { context: boolean; git: boolean; todo: boolean; dispatch: boolean }
+    blocks: { context: boolean; git: boolean; todo?: boolean; dispatch: boolean }
     context: {
       gauge: GaugeStyle
       barShape: BarShapePref
@@ -221,7 +221,7 @@ export const DEFAULT_TUI_PREFS: TuiPrefs = {
   },
   sidebar: {
     header: { version: true, preset: true, session: true },
-    blocks: { context: true, git: true, todo: true, dispatch: true },
+    blocks: { context: true, git: true, todo: false, dispatch: true },
     context: {
       gauge: 'both',
       barShape: 'line',
@@ -306,7 +306,7 @@ export function normalizeTuiPrefs(raw: unknown): TuiPrefs {
       blocks: {
         context: asBool(blocks.context, true),
         git: asBool(blocks.git, true),
-        todo: asBool(blocks.todo, true),
+        todo: asBool(blocks.todo, false),
         dispatch: asBool(blocks.dispatch, true),
       },
       context: {
@@ -459,12 +459,6 @@ export function buildTuiTab(prefs: TuiPrefs, languagePref?: string): SettingsTab
             isPt ? 'Bloco do Git' : 'Git block',
             prefs.sidebar.blocks.git,
             isPt ? 'branch + contagem de alterações' : 'branch + working-tree counts',
-          ),
-          row(
-            'tui.sidebar.block.todo',
-            isPt ? 'Bloco Todo' : 'Todo block',
-            prefs.sidebar.blocks.todo,
-            isPt ? 'tarefas pendentes mais recentes' : 'the newest todowrite',
           ),
           row(
             'tui.sidebar.block.dispatch',

@@ -608,8 +608,10 @@ export declare function toDispatchEntry(child: any, status: string | undefined, 
  *  cost. */
 export declare function collectDispatch(context: any, sessionID: string | undefined, options?: CollectDispatchOptions): DispatchEntry[];
 /** Sidebar blocks in render order. Spacing is derived from this list instead of
- *  from the view, so a hidden block can never leave an empty gap behind. */
-export type SidebarBlockKey = 'context' | 'git' | 'todo' | 'dispatch';
+ *  from the view, so a hidden block can never leave an empty gap behind.
+ *  Note: The custom Todo block was removed from the sidebar composition because
+ *  OpenCode 2.x natively renders the Todo panel when `todowrite` is used. */
+export type SidebarBlockKey = 'context' | 'git' | 'dispatch';
 /** One rendered block: its key, and whether a blank line precedes it. */
 export type SidebarBlock = {
   key: SidebarBlockKey;
@@ -618,10 +620,9 @@ export type SidebarBlock = {
 /** Header glyph per block — one codepoint each, rendered muted before the bold
  *  label. The fixed header (version/preset/session) takes none.
  *  Measured as one terminal cell by the host (`@opentui/core` counts
- *  `emoji-regex` matches as two): ▤ U+25A4 (EAW=A), ◆ U+25C6 (A), ▾ U+25BE (N),
- *  ◈ U+25C8 (A). `☑` U+2611 was rejected for the Todo header because it matches
- *  `emoji-regex` and would occupy two cells; `⌁` U+2301 (the old Dispatch glyph)
- *  was replaced by the host's own Notice glyph. */
+ *  `emoji-regex` matches as two): ▤ U+25A4 (EAW=A), ◆ U+25C6 (A),
+ *  ◈ U+25C8 (A). `⌁` U+2301 (the old Dispatch glyph) was replaced by the host's
+ *  own Notice glyph. */
 export declare const BLOCK_ICONS: Record<SidebarBlockKey, string>;
 /** Tag every block that has content with its spacer: never before the first
  *  (the view puts a single blank line after the fixed header instead), one

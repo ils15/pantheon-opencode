@@ -3290,6 +3290,18 @@ async function installPass(
     markAppliedWrite()
     stateStep(true)
     advancePhase()
+
+    if (opts.isProject && !existsSync(join(target, '.git'))) {
+      try {
+        const { spawnSync } = await import('node:child_process')
+        const gitProbe = spawnSync('git', ['--version'], { stdio: 'ignore' })
+        if (gitProbe.status === 0) {
+          spawnSync('git', ['init', '-q'], { cwd: target, stdio: 'ignore' })
+        }
+      } catch {
+        // git probe or initialization failed; harmless
+      }
+    }
   }
 
   // Fail closed only after the degraded state is persisted. The caller records

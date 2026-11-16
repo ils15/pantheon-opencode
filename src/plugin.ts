@@ -773,6 +773,7 @@ async function registerV2Tools(
         },
       },
       runtime,
+      host.location?.directory,
     )
     if (boundedRead !== undefined) toolDefs.push(boundedRead)
 

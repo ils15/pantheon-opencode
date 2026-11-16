@@ -20,6 +20,7 @@ import { join } from 'node:path'
 // @ts-expect-error scripts/skill-search.mjs is a plain Node ESM script without bundled .d.ts
 import { searchSkillSources } from '../../scripts/skill-search.mjs'
 import { PANTHEON_SKILL_CATALOG } from './pantheon-decision-catalog.ts'
+import { resolveToolCwd } from './tool-context.ts'
 import type { V2ToolDef } from './tools.ts'
 
 export interface SkillSearchResult {
@@ -172,6 +173,72 @@ const SKILL_SEARCH_INPUT_SCHEMA: Record<string, unknown> = {
   },
 }
 
+export interface SkillScore {
+  readonly score: number
+  readonly matchedTokens: number
+}
+
+/**
+ * Score relevance of a skill against query tokens.
+ *
+ * Uses word-boundary and segment matching with tiered weighting:
+ * - Exact ID match: 20 pts
+ * - Exact segment match in hyphenated/slashed ID: 12 pts
+ * - Prefix match on ID segment (>=4 chars): 6 pts
+ * - Exact word match in description: 5 pts
+ * - Prefix match on description word (>=4 chars): 2 pts
+ * - Multi-token synergy bonus: + (matchedTokens * 5) pts
+ *
+ * Substrings inside words (e.g. "rate" inside "generates" or "migrate")
+ * receive ZERO points, completely eliminating false-positive lexical bleed.
+ */
+export function scoreSkillMatch(
+  id: string,
+  description: string,
+  queryTokens: readonly string[],
+): SkillScore {
+  const idLower = id.toLowerCase()
+  const descLower = description.toLowerCase()
+  const idTokens = idLower.split(/[^a-z0-9]+/).filter(Boolean)
+  const descWords = descLower.split(/[^a-z0-9]+/).filter(Boolean)
+
+  let score = 0
+  let matchedTokens = 0
+
+  for (const t of queryTokens) {
+    let tokenScore = 0
+
+    if (idLower === t) {
+      tokenScore += 20
+    } else if (idTokens.includes(t)) {
+      tokenScore += 12
+    } else if (
+      idTokens.some((w) => w.length >= 4 && t.length >= 4 && (w.startsWith(t) || t.startsWith(w)))
+    ) {
+      tokenScore += 6
+    }
+
+    if (descWords.includes(t)) {
+      tokenScore += 5
+    } else if (
+      descWords.some((w) => w.length >= 4 && t.length >= 4 && (w.startsWith(t) || t.startsWith(w)))
+    ) {
+      tokenScore += 2
+    }
+
+    if (tokenScore > 0) {
+      score += tokenScore
+      matchedTokens += 1
+    }
+  }
+
+  if (matchedTokens > 1) {
+    score += matchedTokens * 5
+  }
+
+  return { score, matchedTokens }
+}
+
 export function executeSkillSearch(
   input: Record<string, unknown>,
   options: { cwd?: string } = {},
@@ -195,48 +262,35 @@ export function executeSkillSearch(
     ],
   )
 
-  const results: SkillSearchResult[] = []
   const failures: string[] = []
 
   const cwd = options.cwd ?? process.cwd()
   const installedMap = scanInstalledSkills(cwd)
 
+  const tokens = query
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t.length > 1)
+
+  const scoredResults: Array<SkillSearchResult & { score: number }> = []
+
   // 1. Tier 1: Installed skills (Pantheon catalog + local filesystem .opencode/skills and .agents/skills)
-  if (sources.has('installed')) {
-    const tokens = query
-      .toLowerCase()
-      .split(/[^a-z0-9]+/)
-      .filter((t) => t.length > 2)
-
-    if (tokens.length > 0) {
-      for (const entry of installedMap.values()) {
-        const idLower = entry.id.toLowerCase()
-        const descLower = entry.description.toLowerCase()
-        const matchScore = tokens.reduce((score, t) => {
-          const stem = t.length > 4 ? t.slice(0, 4) : t
-          return (
-            score +
-            (idLower.includes(t) ||
-            descLower.includes(t) ||
-            idLower.includes(stem) ||
-            descLower.includes(stem)
-              ? 1
-              : 0)
-          )
-        }, 0)
-
-        if (matchScore > 0) {
-          results.push({
-            skill: entry.id,
-            description: entry.description,
-            source: 'installed',
-            installed: true,
-            installs: null,
-            installCommand: null,
-            path: entry.path,
-            scope: entry.scope,
-          })
-        }
+  if (sources.has('installed') && tokens.length > 0) {
+    const minThreshold = tokens.length > 1 ? 5 : 2
+    for (const entry of installedMap.values()) {
+      const { score } = scoreSkillMatch(entry.id, entry.description, tokens)
+      if (score >= minThreshold) {
+        scoredResults.push({
+          skill: entry.id,
+          description: entry.description,
+          source: 'installed',
+          installed: true,
+          installs: null,
+          installCommand: null,
+          path: entry.path,
+          scope: entry.scope,
+          score,
+        })
       }
     }
   }
@@ -244,9 +298,9 @@ export function executeSkillSearch(
   // 2. External tiers (Anthropic, skills.sh, GitHub)
   const externalSources = ['anthropic', 'skills-sh', 'github'].filter((s) => sources.has(s))
 
-  if (externalSources.length > 0 && results.length < limit) {
+  if (externalSources.length > 0 && scoredResults.length < limit) {
     try {
-      const extLimit = limit - results.length
+      const extLimit = limit - scoredResults.length
       const extRes = searchSkillSources(query, {
         limit: extLimit,
         sources: externalSources,
@@ -257,6 +311,7 @@ export function executeSkillSearch(
       }
 
       if (Array.isArray(extRes.entries)) {
+        const minThreshold = tokens.length > 1 ? 5 : 2
         for (const entry of extRes.entries) {
           const bareName = (
             entry.skill.includes('@') ? entry.skill.split('@')[1] : entry.skill
@@ -266,7 +321,22 @@ export function executeSkillSearch(
           const installedRecord =
             installedMap.get(entry.skill.toLowerCase()) || installedMap.get(bareName)
 
-          const pushItem: SkillSearchResult = {
+          const { score } = scoreSkillMatch(entry.skill, entry.skill, tokens)
+          if (score < minThreshold && !isInstalled) {
+            continue
+          }
+
+          if (
+            scoredResults.some(
+              (r) =>
+                r.skill.toLowerCase() === entry.skill.toLowerCase() ||
+                (bareName && r.skill.toLowerCase() === bareName),
+            )
+          ) {
+            continue
+          }
+
+          scoredResults.push({
             skill: entry.skill,
             description: entry.skill,
             source: entry.source as 'anthropic' | 'skills-sh' | 'github',
@@ -276,8 +346,8 @@ export function executeSkillSearch(
             installCommand: isInstalled ? null : `npx skills add ${entry.skill} -a opencode -y`,
             path: isInstalled && installedRecord ? installedRecord.path : null,
             ...(isInstalled && installedRecord ? { scope: installedRecord.scope } : {}),
-          }
-          results.push(pushItem)
+            score: score || 1,
+          })
         }
       }
     } catch (err) {
@@ -287,7 +357,11 @@ export function executeSkillSearch(
     }
   }
 
-  const bounded = results.slice(0, limit)
+  scoredResults.sort((a, b) => b.score - a.score)
+  const bounded: SkillSearchResult[] = scoredResults
+    .slice(0, limit)
+    .map(({ score: _, ...item }) => item)
+
   return {
     ok: true,
     query,
@@ -297,14 +371,14 @@ export function executeSkillSearch(
   }
 }
 
-export function createV2SkillSearchDefinition(): V2ToolDef {
+export function createV2SkillSearchDefinition(defaultDir?: string): V2ToolDef {
   return {
     name: 'pantheon_skill_search',
     description: TOOL_DESCRIPTION,
     input: SKILL_SEARCH_INPUT_SCHEMA,
     output: {},
     execute: async (input: Record<string, unknown>, context?: unknown) => {
-      const cwd = (context as { directory?: string } | undefined)?.directory || process.cwd()
+      const cwd = resolveToolCwd(context, defaultDir)
       return {
         output: JSON.stringify(executeSkillSearch(input, { cwd }), null, 2),
       }

@@ -361,4 +361,200 @@ describe('pantheon_deepwork Tool execution', () => {
       rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  it('prevents data loss and ENOENT during concurrent resolve_decision calls', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'deepwork-concurrency-'))
+    try {
+      const tool = createDeepworkTool(dir)
+      const slug = 'concurrent-decisions'
+      const decisions = Array.from({ length: 6 }, (_, i) => ({
+        id: `D0${i + 1}`,
+        question: `Decision question ${i + 1}?`,
+        options: ['Opt A', 'Opt B'],
+        status: 'pending',
+      }))
+
+      await tool.execute(
+        {
+          action: 'init',
+          slug,
+          title: 'Concurrency Test Plan',
+          decisions,
+          tasks: [{ id: 'T01', title: 'Task 1' }],
+        },
+        {},
+      )
+
+      // Fire 6 concurrent resolve_decision calls simultaneously
+      const results = await Promise.all(
+        decisions.map((d, i) =>
+          tool.execute(
+            {
+              action: 'resolve_decision',
+              slug,
+              decisionId: d.id,
+              choice: `Opt A choice ${i + 1}`,
+            },
+            {},
+          ),
+        ),
+      )
+
+      for (const res of results) {
+        assert.match(res.output, /resolvida com a opção/)
+      }
+
+      // Verify that all 6 decisions are resolved on disk with zero lost updates
+      const updated = await readPlan(dir, slug)
+      assert.ok(updated, 'Plan must exist')
+      assert.equal(updated.decisions_needed.length, 6)
+      for (const d of updated.decisions_needed) {
+        assert.equal(d.status, 'resolved', `Decision ${d.id} must be resolved`)
+        assert.match(d.chosen || '', /Opt A choice/)
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('resolves project workspace directory when tool context directory is omitted', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'deepwork-workspace-'))
+    try {
+      // Injected workspace directory (like host.location?.directory)
+      const tool = createDeepworkTool(dir)
+      const slug = 'workspace-plan'
+
+      const initResult = await tool.execute(
+        {
+          action: 'init',
+          slug,
+          title: 'Workspace Test',
+          tasks: [{ id: 'T01', title: 'T1' }],
+        },
+        {}, // Empty tool context without directory
+      )
+
+      assert.match(initResult.output, /inicializado com sucesso/)
+      // Must be written in dir, not process.cwd() or HOME
+      assert.ok(existsSync(join(dir, '.pantheon', 'deepwork', slug, 'plan.json')))
+      assert.ok(existsSync(join(dir, '.pantheon', 'deepwork', slug, 'PLAN.md')))
+      assert.match(initResult.output, new RegExp(join(dir, '.pantheon', 'deepwork', slug)))
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('handles multi-decision plans, single-option decisions, string acceptance criteria, and owner aliases', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'deepwork-multi-dec-'))
+    try {
+      const tool = createDeepworkTool(dir)
+      const slug = 'webhook-dispatcher-test'
+
+      // Blueprint-like payload: 9 decisions (one with single option), string criteria, owner with @
+      const decisions = [
+        { id: 'D01', question: 'Persistência?', options: ['A', 'B'] },
+        { id: 'D02', question: 'Assinatura?', options: ['HMAC', 'JWT'] },
+        { id: 'D03', question: 'Idempotência?', options: ['UUID', 'Key'] },
+        { id: 'D04', question: 'Backoff?', options: ['Fixo', 'Exponencial'] },
+        { id: 'D05', question: 'Classificação?', options: ['Retry', 'DLQ'] },
+        { id: 'D06', question: 'Concorrência?', options: ['Single', 'Worker pool'] },
+        { id: 'D07', question: 'Poisoning?', options: ['Nenhum', 'Tamanho e SSRF'] },
+        { id: 'D08', question: 'DLQ?', options: ['Flag', 'Tabela separada'] },
+        { id: 'D09', question: 'Isolamento?', options: ['Ownership estrito: Demeter e Hermes'] }, // 1 option!
+      ]
+
+      const tasks = [
+        {
+          id: 'T01',
+          title: 'Models e Migrations',
+          owner: '@demeter', // owner alias with @
+          phase: 1,
+          acceptance: [
+            'alembic upgrade head && alembic downgrade -1', // string criterion
+            'pytest tests/test_models.py -q', // string criterion
+            'WAL mode ativo', // string criterion
+          ],
+        },
+        {
+          id: 'T02',
+          title: 'Core Dispatcher',
+          agent: 'hermes',
+          phase: 2,
+          depends_on: ['T01'],
+          criteria: ['pytest tests/test_dispatcher.py -q'],
+        },
+      ]
+
+      const initResult = await tool.execute(
+        {
+          action: 'init',
+          slug,
+          title: 'Webhook Dispatcher',
+          intent: 'Dispatcher robusto',
+          decisions,
+          tasks,
+        },
+        {},
+      )
+
+      assert.match(initResult.output, /inicializado com sucesso/)
+
+      // Verify task normalization on disk
+      const loaded = await readPlan(dir, slug)
+      assert.ok(loaded, 'Plan must load successfully without null')
+      assert.equal(loaded.decisions_needed.length, 9)
+      assert.equal(loaded.decisions_needed[8].options.length, 1)
+
+      const t01 = loaded.tasks.find((t) => t.id === 'T01')
+      assert.ok(t01)
+      assert.equal(t01.agent, 'demeter', 'agent must be normalized from @demeter')
+      assert.equal(t01.acceptance.length, 3)
+      assert.equal(t01.acceptance[0].check, 'alembic upgrade head && alembic downgrade -1')
+      assert.equal(t01.acceptance[0].kind, 'command')
+      assert.equal(t01.acceptance[1].check, 'pytest tests/test_models.py -q')
+      assert.equal(t01.acceptance[1].kind, 'test')
+      assert.equal(t01.acceptance[2].check, 'WAL mode ativo')
+
+      const t02 = loaded.tasks.find((t) => t.id === 'T02')
+      assert.ok(t02)
+      assert.equal(t02.agent, 'hermes')
+      assert.equal(t02.acceptance.length, 1)
+      assert.equal(t02.acceptance[0].check, 'pytest tests/test_dispatcher.py -q')
+      assert.equal(t02.acceptance[0].kind, 'test')
+
+      // status must work without "Plano não encontrado"
+      const statusRes = await tool.execute({ action: 'status', slug }, {})
+      assert.match(statusRes.output, /Webhook Dispatcher/)
+      assert.match(statusRes.output, /Decisões necessárias \(9\)/)
+
+      // resolve_decision must resolve without "Plano não encontrado"
+      const resolveRes = await tool.execute(
+        {
+          action: 'resolve_decision',
+          slug,
+          decisionId: 'D09',
+          choice: 'Ownership estrito: Demeter e Hermes',
+        },
+        {},
+      )
+      assert.match(resolveRes.output, /resolvida/)
+
+      // update_task must update state without "Plano não encontrado"
+      const updateRes = await tool.execute(
+        {
+          action: 'update_task',
+          slug,
+          taskId: 'T01',
+          state: 'in_progress',
+        },
+        {},
+      )
+      assert.match(updateRes.output, /in_progress/)
+
+      const afterUpdate = await readPlan(dir, slug)
+      assert.equal(afterUpdate?.tasks.find((t) => t.id === 'T01')?.state, 'in_progress')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })

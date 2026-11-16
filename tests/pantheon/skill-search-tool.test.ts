@@ -110,3 +110,67 @@ test('createV2SkillSearchDefinition exports compliant V2ToolDef', async () => {
   }
   assert.ok(res !== null && typeof res === 'object' && 'output' in res)
 })
+
+test('lexical scoring rejects word-internal substring false positives (B4 fix)', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'pantheon-skill-lexical-'))
+  try {
+    const rateSkillDir = join(tmp, '.opencode', 'skills', 'rate-limiting-api')
+    mkdirSync(rateSkillDir, { recursive: true })
+    writeFileSync(
+      join(rateSkillDir, 'SKILL.md'),
+      '---\nname: rate-limiting-api\ndescription: Dynamic rate limiting and API quota management module\n---\nBody',
+    )
+
+    const res = executeSkillSearch(
+      { query: 'rate limiting api quota', sources: ['installed'] },
+      { cwd: tmp },
+    )
+    assert.ok(res.ok)
+    assert.ok(res.count > 0)
+    // #1 match must be rate-limiting-api
+    assert.equal(res.results[0]?.skill, 'rate-limiting-api')
+
+    // False positives like codemap (which has "generates") or sandbox-stable must NOT be in results
+    const codemapMatch = res.results.find((r) => r.skill === 'codemap')
+    assert.equal(codemapMatch, undefined, 'codemap must not match "rate limiting" via "generates"')
+    const sandboxMatch = res.results.find((r) => r.skill.startsWith('sandbox-'))
+    assert.equal(sandboxMatch, undefined, 'sandbox-* must not match "rate limiting" via "migrate"')
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+test('unrelated queries return empty results without low-confidence noise', () => {
+  const res = executeSkillSearch({
+    query: 'completely_unrelated_xyz_nonexistent_topic_404',
+    sources: ['installed'],
+  })
+  assert.ok(res.ok)
+  assert.equal(res.count, 0)
+  assert.deepEqual(res.results, [])
+})
+
+test('createV2SkillSearchDefinition respects defaultDir when context directory is empty (B1/B3 fix)', async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'pantheon-skill-cwd-'))
+  try {
+    const customSkillDir = join(tmp, '.opencode', 'skills', 'special-domain-skill')
+    mkdirSync(customSkillDir, { recursive: true })
+    writeFileSync(
+      join(customSkillDir, 'SKILL.md'),
+      '---\nname: special-domain-skill\ndescription: Special domain workflow skill\n---\nBody',
+    )
+
+    // Injected defaultDir (e.g. host.location?.directory)
+    const toolDef = createV2SkillSearchDefinition(tmp)
+    const raw = (await toolDef.execute(
+      { query: 'special domain workflow', sources: ['installed'] },
+      {}, // Empty tool context
+    )) as { output: string }
+
+    const parsed = JSON.parse(raw.output) as { count: number; results: Array<{ skill: string }> }
+    assert.ok(parsed.count > 0)
+    assert.ok(parsed.results.some((r) => r.skill === 'special-domain-skill'))
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+  }
+})

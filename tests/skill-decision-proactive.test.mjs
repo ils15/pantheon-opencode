@@ -24,7 +24,7 @@ test('Zeus instructions enforce proactive project-scoped skill decision flow', (
   assert.match(zeus, /NEVER ask the user to type terminal commands/i)
   assert.match(zeus, /Automated Specialist Execution/i)
   assert.match(zeus, /dispatch an execution specialist with bash permitted \(@hermes or @talos\)/i)
-  assert.match(zeus, /batching multiple skills in a single run/i)
+  assert.match(zeus, /one command per skill sequentially chained with `&&`/i)
 
   // Prompt Refinery & >> trigger
   assert.match(zeus, /Prompt Refinery & Request Disambiguation/i)
