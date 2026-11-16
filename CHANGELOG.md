@@ -17,11 +17,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### 🆕 What's New
 
-- **Deepwork Resilient Normalization**: Supported multi-decision blueprints, single-option policy constraints, and string acceptance criteria.
-- **Fail-Fast Anti-Mocking Rule**: Strictly prohibited mock servers on real service ports to fake missing dependencies; fail fast with explicit errors.
-- **Workspace Tool Working Directory**: Native shell tools dynamically resolve to the active project root rather than falling back to `$HOME`.
+- **Deepwork Resilient Normalization**: Supported multi-decision blueprints, single-option policies, and string acceptance criteria.
+- **Fail-Fast Anti-Mocking**: Prohibited fake mock servers on service ports to hide missing dependencies; fail fast with explicit errors.
+- **Workspace Tool Directory**: Native shell tools dynamically resolve to the active project root rather than falling back to `$HOME`.
 - **Atomic Skill Installation**: Enforced sequential `&&` chaining for `npx skills add` to prevent silent dropping of trailing targets.
-- **Project Bootstrap Git Init**: `init --project` automatically initializes an empty Git repo when absent, enabling worktree and branch support.
+- **Project Bootstrap Git Init**: `init --project` initializes an empty Git repo when absent, enabling worktree and branch support.
 - **Decoupled Background Processes**: Mandated `setsid nohup <cmd> > <log> 2>&1 &` (or `disown`) for long-running service processes.
 
 ### Fixed
