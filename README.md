@@ -1,289 +1,95 @@
 # Pantheon
 
-**A clearer, faster way to work with OpenCode on real software projects.** Pantheon
-brings planning, implementation, review, and documentation into one guided,
-token-efficient experience. It is an OpenCode plugin and installer for developers
-and teams who want useful structure without giving up speed or control of their code.
+A multi-agent orchestration plugin for OpenCode that carries a request from plan to
+reviewed change with 14 specialized agents, enforced TDD and explicit human approval
+gates — for developers and teams who want structure without giving up control of the code.
 
-[Português (Brasil)](README.pt-BR.md) ·
-[Repository](https://github.com/ils15/pantheon-opencode) · [MIT License](LICENSE)
+[Português (Brasil)](README.pt-BR.md) · [Repository](https://github.com/ils15/pantheon-opencode) · [MIT License](LICENSE)
 
-[![Version](https://img.shields.io/github/v/release/ils15/pantheon-opencode?label=version)](https://github.com/ils15/pantheon-opencode/releases/latest)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%E2%89%A526.4.0-339933)](package.json)
+[![OpenCode](https://img.shields.io/badge/opencode-2.x-black)](https://opencode.ai/)
 [![Docs](https://img.shields.io/badge/docs-portal-indigo)](https://ils15.github.io/pantheon-opencode/)
-[![CI](https://img.shields.io/github/actions/workflow/status/ils15/pantheon-opencode/ci.yml?branch=main&label=CI)](https://github.com/ils15/pantheon-opencode/actions)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22650136.svg)](https://doi.org/10.5281/zenodo.22650136)
 
-## What is it?
+## What it is
 
-Pantheon is a companion for [OpenCode](https://opencode.ai/) that helps you move
-from an idea to a reviewed, verified change. Fourteen specialized agents share one
-streamlined workflow: plan, implement, check, review, and record what mattered.
-You stay in charge of every decision and every merge.
+One agent planning, writing, testing, reviewing and documenting at the same time gives you
+fragmented context and skipped tests. Pantheon splits that work across specialists that
+share a single workflow: Zeus orchestrates, Athena plans, the implementation agents write,
+Themis reviews, and every phase stops for your approval. Bounded micro-edits skip the
+ceremony and verify in seconds; heavy multi-phase work runs as a checkpointed plan that
+resumes across sessions. It is an OpenCode plugin plus installer — no separate runtime, no
+auto-merge, no silent permission changes.
 
-```mermaid
-flowchart LR
-    U["You"] --> Z["Zeus<br/>orchestrator"]
-    Z -->|"delegates"| S["14 specialists<br/>hermes · aphrodite · demeter · themis …"]
-    Z -->|"ambiguous route"| J["Jev decision router<br/>typed · budgeted · reversible"]
-    J -->|"orders · ranks · verifies"| S
-    S -->|"last resort"| M["Native MCP<br/>memory · persistence · vision<br/>code-mode · resources"]
-    Z --> G["J1 risk gate<br/>off / shadow / warn / enforce"]
-    G -->|"high risk"| H["Human approval"]
-```
+Every dispatch carries a concise handoff brief — objective, bounded scope, relevant inputs,
+constraints, expected return format and verification — and work is routed **qualitatively**,
+by uncertainty, domain expertise, dependencies, risk and verification, not by fixed file or
+line thresholds.
 
-**The escalation ladder every agent follows**: session context first → free local selector → one typed Jev decision when genuinely ambiguous → native MCP call only as the last resort for state the session cannot reconstruct.
+## Installation
 
-```mermaid
-flowchart LR
-    R["rough request"] --> T0{"clear &<br/>bounded?"}
-    T0 -->|yes| X["execute directly"]
-    T0 -->|"vague /<br/>multi-concern"| T1["Tier 1 — internal<br/>minimal adjust ≤15 lines<br/>(silent, no approval)"]
-    T1 --> T2q{">> given?"}
-    T2q -->|yes| T2["Tier 2 — full contract<br/>6 sections, confirm-or-adjust"]
-    T2q -->|no| X
-```
+Requirements: [OpenCode](https://opencode.ai/docs/) **2.x** and Node.js **≥ 26.4.0**
+([compatibility](docs/COMPATIBILITY.md)).
 
-**Skill discovery runs a trust cascade** — canonical first, popularity never compensates for provenance:
-
-```mermaid
-flowchart LR
-    L["installed pool<br/>(always first)"] -->|"gap"| C1["anthropics/skills<br/>canonical"]
-    C1 -->|"no fit"| C2["skills.sh<br/>install-count signal"]
-    C2 -->|"no fit"| C3["GitHub raw<br/>widest, weakest"]
-    C3 --> J["Jev orders<br/>the candidates"]
-    J --> P["YOU review<br/>and run the install"]
-```
-
-## Why use it?
-
-- **Fast-Track execution:** Bounded micro-edits (<= 2 files, <= 50 lines) bypass all heavy ceremony and verify in < 10 seconds.
-- **Mandatory test slicing:** Sub-second targeted test execution instead of running sluggish repository-wide test suites during dev loops.
-- **Execution proof receipts:** Cryptographic SHA-256 fingerprinting on modified files and test slice exit codes prevents false-positive task reports.
-- **KV-cache prefix optimization:** Strict invariant-first prompt layering maximizes LLM cache hits (up to 90% cost and latency savings).
-- **Reactive event bus & zero polling:** Process-wide in-memory event bus delivers instant updates across jobs and agents without disk polling.
-- **Themis local reflex loops:** Specialist self-healing resolves isolated lint and test slice discrepancies before escalating to Zeus.
-- **Assertive council (`/pantheon`):** Parallel specialist consultations resolved decisively via domain authority and JEV multi-criteria decisions without endless debate turns.
-- **You stay in charge:** Pantheon supports your judgment; it never silently alters permissions or runs unapproved destructive actions.
-- **Non-destructive upgrades:** Updating Pantheon (`pantheon-opencode update`) refreshes skills, MCPs, and instructions while strictly preserving all user models, presets, permissions, and custom configs.
-
-## Start in 2 minutes
-
-Requirements: [OpenCode](https://opencode.ai/docs/) **2.x** and Node.js **>=26.4.0**. (See [Compatibility](docs/COMPATIBILITY.md)).
-
-### 1. Install
-
-**Option A — Quick Plugin Add (Global or Project):**
 ```bash
+# Option A — as an OpenCode plugin (global or project)
 opencode plugin add pantheon-opencode
-# Or pin a specific version:
-opencode plugin add pantheon-opencode@2.0.0-rc.1
-```
 
-**Option B — Global CLI Install with Full MCP Tooling:**
-```bash
+# Option B — global CLI install with full MCP tooling
 npm install -g pantheon-opencode@beta
 pantheon-opencode init --yes
-```
 
-### 2. Verify Health
-```bash
+# Verify the install
 pantheon-opencode doctor
-```
-Runs a diagnostic checking Decision Router & budget ledger accessibility, MCP initialization, Python virtual environments, Node version, permissions, and config integrity. In containerized or JupyterHub environments with group-writable homes, set `PANTHEON_ALLOW_GROUP_WRITABLE=1` if needed.
 
-### 3. Updating Pantheon Without Overwriting Settings
-When a new version is released:
-```bash
+# Later: update without losing models, presets or permissions
 pantheon-opencode update
 ```
-The updater verifies package identity, pulls the latest release, and runs a non-destructive configuration refresh. **Your custom models, active preset, custom permissions, plugin options, and user-defined AGENTS.md sections are preserved verbatim.**
 
----
+## Usage
 
-## Optimal Workflow & Execution Modes
+Inside OpenCode, dispatch the orchestrator or a workflow:
 
-Pantheon balances speed and rigor through three distinct execution modes:
-
-```mermaid
-flowchart TD
-    Req["User Request"] --> Size{"Scope / Risk"}
-    Size -->|"≤ 2 files · ≤ 50 lines<br/>routine fix / typo / CSS"| Fast["Fast-Track<br/>(Sub-10s · Inline Test Slicing)"]
-    Size -->|"Architecture / Tech choice<br/>Security / Multi-stakeholder"| Council["Council Synthesis (/pantheon)<br/>(2-3 Specialists in Parallel · Domain Authority)"]
-    Size -->|"Multi-phase feature<br/>Heavy refactor · Breaking changes"| Deep["Deepwork (/pantheon-deepwork)<br/>(Athena Plan · Phase Gates · Checkpoints)"]
-```
-
-### 1. Fast-Track & Test Slicing (Micro-Edits < 10s)
-For routine bug fixes, style adjustments, or localized refactors:
-- **No planning ceremony:** Directly executes bounded changes.
-- **Targeted test slicing:** Runs ONLY the test slice relevant to the modified file (e.g. `node --test tests/foo.test.mjs` or `pytest -k <func>`). Full repository test suites are reserved for CI and release gates.
-- **Single-turn delivery:** Verifies and completes in under 10 seconds.
-
-### 2. Assertive Council Synthesis (`/pantheon`)
-When confronting architectural crossroads, technology evaluations, or security tradeoffs:
 ```text
-/pantheon Should we use WebSockets or Server-Sent Events for live push notifications?
-```
-- **Parallel Dispatch:** Dispatches 2–3 specialist agents simultaneously with independent prompts.
-- **Assertive Arbitration:** Rather than looping in repetitive debate rounds, divergences are resolved immediately via **Domain Authority Precedence**:
-  - **Security / Auth:** `@themis` has veto power over vulnerable designs.
-  - **Database / Schema:** `@demeter` carries authoritative weight on query performance and transaction safety.
-  - **Frontend / UX / A11y:** `@aphrodite` governs user interface responsiveness and accessibility.
-  - **Infrastructure / CI:** `@prometheus` governs deployment contracts and container isolation.
-  - **API / Protocols:** `@hermes` governs contract consistency and transport schemas.
-  - **Architecture / Modularity:** `@athena` governs separation of concerns.
-- **JEV Multi-Criteria Decision:** If trade-offs balance competing requirements equally, Zeus invokes `pantheon_jev_decide` (or local decision matrix) to rank candidates deterministically in one tool call.
-
-### 3. Checkpointed Deepwork (`/pantheon-deepwork`)
-For multi-phase tasks spanning 10+ turns or multiple sessions:
-```text
+@zeus: Add CSV export to the reports page
 /pantheon-deepwork "Implement OAuth2 PKCE authentication flow"
 ```
-- **The Plan is the Artifact:** The canonical ground truth is stored in `.pantheon/deepwork/<slug>/plan.json` with an append-only event log (`journal.ndjson`) for resilient crash recovery.
-- **Native OpenCode Gates (Strictly No HTML):** Approvals (Gate 1) and decision resolutions use OpenCode's native interactive `question` tool directly in the chat UI.
-- **Dependency DAG:** Automatically projects task dependencies into live Mermaid diagrams (`flowchart LR`) inside `PLAN.md` and chat status.
-- **Fail-First Acceptance:** Every task defines concrete acceptance criteria (`kind: test|command|file|manual`, `fails_now: true`) verified with cryptographic receipts.
-- **Tool Automation (`pantheon_deepwork`):** Structured tool for `init`, `status`, `update_task`, `verify_acceptance`, and `resolve_decision`. Resiliently normalizes complex multi-decision plans, single-option constraints, string criteria, and agent aliases with atomic file locking.
-- **Resumability:** Checkpoints persisted to `.pantheon/deepwork/<slug>/`. Resume anytime with `/pantheon-deepwork --resume <slug>`.
 
----
+`@zeus` routes to the specialists; `/pantheon` arbitrates architectural choices across
+specialists; `/pantheon-deepwork` runs a multi-phase plan with checkpoints and gates. You
+approve each gate and you run every commit.
 
-## The 14 Specialized Agents
+## Structure
 
-For a complete breakdown of permissions, tools, MCP access, and boundary constraints per agent, see the [Agent Capability Matrix](docs/AGENT-CAPABILITY-MATRIX.md).
+```
+src/agents/       14 canonical agent definitions
+src/skills/       skills loaded on demand
+src/mcp/          local MCP servers (memory, persistence, resources, code-mode, vision)
+src/plugins/      OpenCode plugin + TUI
+scripts/          installer, doctor, test-slice, release tooling
+bin/              pantheon-opencode CLI
+docs/             documentation (also published as the docs portal)
+examples/         runnable reference projects
+tests/            Node and TypeScript test suites
+```
 
-Every root dispatch carries a concise handoff brief — objective, bounded scope, relevant inputs, constraints, expected return format, and verification. Work is routed qualitatively — uncertainty, domain expertise, dependencies, risk, and verification — not by fixed file or line thresholds. Return contracts are role-specific: implementation uses `## subtask_summary`, investigation returns structured findings, Athena returns the complete plan, and council responses use `## specialist_response`.
+## Documentation
 
-| Agent | Domain Authority | Core Responsibilities |
-|---|---|---|
-| **@zeus** | Central Orchestrator | Directs workflow, manages delegations, arbitrates council decisions, enforces token efficiency. Never implements directly. |
-| **@athena** | Architecture & Planning | Research-first planning, system boundaries, LTS policy, dependency analysis. Plan-only; never implements. |
-| **@hermes** | Backend & APIs | FastAPI, Python async, Node/TypeScript backends, API contracts, protocol conformance. |
-| **@aphrodite** | Frontend & UX | React 19, strict TypeScript, responsive design, WCAG accessibility, CSS optimization. |
-| **@demeter** | Database & Persistence | Schema migrations, query optimization, N+1 query prevention, transaction integrity. |
-| **@themis** | Security & Quality Gate | OWASP audits, static analysis (Biome/ruff), authorization gates, dead code removal. Reviews material changes. |
-| **@prometheus** | DevOps & Infrastructure | Docker, CI/CD pipelines, runtime configuration, provider abstraction, telemetry infra. |
-| **@talos** | Hotfix Fast Lane | Rapid, standalone fixes for small bugs, typos, and minor logic without subagent overhead. |
-| **@apollo** | Investigation Scout | Read-only discovery: parallel codebase and web searches. Returns structured findings. |
-| **@hephaestus**| AI Pipelines & RAG | Embeddings, vector stores, prompt engineering, agent pipelines. |
-| **@gaia** | Geospatial & Sensing | Remote sensing, SAR, geospatial analysis, ML/DL raster classification (read-only). |
-| **@iris** | Git & Release Ops | Branching, PRs, issue triage, release notes. Never pushes or merges without human approval. |
-| **@mnemosyne** | Project Memory Bank | Maintains `.pantheon/memory-bank/` and records ADRs when explicitly requested. |
-| **@nyx** | Observability & Telemetry| OpenTelemetry tracing, token/cost monitoring, execution profiling. |
+| Start here | Go deeper |
+|---|---|
+| [Docs portal](https://ils15.github.io/pantheon-opencode/) | [Architecture](docs/ARCHITECTURE.md) |
+| [Quick Start](docs/QUICKSTART.md) | [Overview and routing ladders](docs/OVERVIEW.md) |
+| [Installation](docs/INSTALLATION.md) | [Execution modes](docs/guides/execution-modes.md) |
+| [First project end-to-end](docs/guides/first-project.md) | [Agent Capability Matrix](docs/AGENT-CAPABILITY-MATRIX.md) |
+| [Settings & TUI window](docs/SETTINGS.md) | [Permissions, gates & delegation](docs/PERMISSIONS-QUALITY-DELEGATION.md) |
+| [v2.x highlights](docs/releases/v2-highlights.md) | [CHANGELOG](CHANGELOG.md) |
 
----
+Runnable examples: [SaaS performance dashboard](examples/saas-dashboard/) and
+[repo health CLI](examples/cli-tool/). Contributing:
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Skills & MCP Tooling
+## License
 
-- **In-Process Skill Search (`pantheon_skill_search`) & Proactive Installation:** Quickly discovers local and external ecosystem skills; when gaps are identified, Zeus proactively invokes the interactive `question` tool for 1-click project-scoped installation into `.agents/skills/` (via `npx skills add <skill> -a opencode -y`), delegated to execution specialists with zero manual shell typing required.
-- **25 Production Skills:** Includes `test-slicing`, `fast-path-execution`, `tdd-with-agents`, `instruction-forge`, and `incremental-implementation`.
-- **5 Local MCP Servers:**
-  - `pantheon-memory`: Shared project memory with atomic SQLite locking.
-  - `pantheon-persistence`: File and context persistence.
-  - `pantheon-resources`: Local documentation and asset serving.
-  - `pantheon-code-mode`: Sandboxed Python execution.
-  - `pantheon-vision`: Image analysis and diagnostic visual inspection.
-- **Advisory JEV Decision Router:** Evaluates candidate options (`pantheon_jev_decide`), orders trade-offs, and provides formal multi-criteria decision making with strict, flattened schema validation.
-- **Project Working Directory Awareness:** Native shell tool resolution dynamically binds to the active project workspace instead of defaulting to `$HOME`.
-
----
-
-## Settings & TUI Window (`/pantheon-settings`)
-
-Run `/pantheon-settings` (or `Pantheon: Settings` in the command palette) to open the interactive settings window:
-
-- **Gates & Overrides:** Toggle named behaviors live; persists to `pantheon-overrides.json`.
-- **Model Presets:** Switch active model tier globally or per project.
-- **Decision Model Selector:** Interactive selector to cycle across all remote decision models (`openrouter-jev`, `typesafe-jev`, `openai-decisions`, `vercel-gateway-jev`, etc.) directly from the UI.
-- **Bilingual Settings (PT-BR / EN):** Full visual localization for Decision, Autonomy, and Safety tabs, auto-detecting environment locale with manual toggle in the TUI tab.
-- **Updates:** Check registry channel (`beta` / `stable`) and trigger upgrades.
-- **Doctor:** Run inline system health diagnostics.
-- **TUI Personalization:** Adjust spacing (`comfortable` vs `compact`), separators, gauge bar styles, context display rows, and language.
-- **Non-Destructive Overlay & Mouse Navigation:** Opens as a floating dialog overlay over the active session without blanking the workspace (configurable via `dialog` vs `fullscreen`), with full mouse click support for tabs, sidebar, rows, value cyclers, and actions.
-- **Modernized What's New Window:** Card layout with rounded border, pagination buttons, and a dedicated `[OK, Entendido]` button with keyboard (`Enter`/`Esc`/`Q`) and mouse click support.
-
----
-
-## Documentation & Tutorials
-
-> 📖 **Official Documentation Portal:** Explore full searchable guides, interactive Mermaid diagrams, and versioned releases at **[https://ils15.github.io/pantheon-opencode/](https://ils15.github.io/pantheon-opencode/)**.
-
-| Guides & Tutorials | Architecture & Deep Dives | Reference & Operations |
-|---|---|---|
-| [First Project (End-to-End)](docs/guides/first-project.md) | [Architecture](docs/ARCHITECTURE.md) | [MCP Tools](docs/mcp-tools.md) |
-| [Agent Capability Matrix](docs/AGENT-CAPABILITY-MATRIX.md) | [Delegation & Gates](docs/PERMISSIONS-QUALITY-DELEGATION.md) | [Native Decisions (Jev)](docs/reference/native-decisions.md) |
-| [Deepwork Blueprint](docs/guides/deepwork.md) | [Memory System](docs/MEMORY.md) | [Model Routing](docs/reference/model-routing.md) |
-| [Pantheon Vision](docs/guides/vision.md) | [OpenCode Integration](docs/opencode.md) | [Changelog](CHANGELOG.md) |
-| [Cookbook](docs/guides/cookbook.md) | [Compatibility](docs/COMPATIBILITY.md) | [Wiki](wiki/Home.md) |
-
----
-
-## Real-World Examples
-
-Working runnable reference projects demonstrating Pantheon orchestration in practice:
-
-* **[SaaS Performance Dashboard](examples/saas-dashboard/) (`examples/saas-dashboard`):** Fullstack web application with React 19, Fastify backend, streaming CSV export, automated tests, and a real Deepwork execution plan (`plan.json`, `journal.ndjson`, `PLAN.md`).
-* **[Repo Health CLI](examples/cli-tool/) (`examples/cli-tool`):** Sub-second diagnostic CLI tool demonstrating the fast-path execution of `@talos` and `@hermes`.
-
----
-
-## What's New in v2.1.6
-
-- **Deepwork Resilient Normalization:** Full support for multi-decision plans, single-option policy constraints, string criteria auto-inference, and agent handle normalization with atomic plan locking.
-- **Fail-Fast Anti-Mocking Rule:** Strict standard forbidding ad-hoc mock servers on production ports to mask missing dependencies; agents fail fast with explicit diagnostics.
-- **Project Tool Working Directory:** Dynamic binding of shell tools to the project workspace instead of falling back to `$HOME`.
-- **Atomic Skill Installation:** Sequential `&&` chaining for `npx skills add` commands preventing silent omissions when installing multiple skills.
-- **Project Bootstrap Git Init:** `init --project` automatically initializes an empty Git repo when absent, enabling worktree and branch isolation out of the box.
-- **Decoupled Background Processes:** Mandatory `setsid nohup <cmd> > <log> 2>&1 &` (or `disown`) for background servers surviving subshell termination.
-
----
-
-## What's New in v2.1.5
-
-- **Risk-Based Validation Protocol (#444):** Explicit multi-tier protocol distinguishing focused test slices (<10s), package integration suites, and mandatory repository CI gates. Escalation to broad suites requires explicit triggers (cross-module, breaking contracts, auth, DB migrations).
-- **Tool Execution Resilience & Fallback:** Added `execute` fallback tool alias executing commands directly in `/bin/bash`, preventing `SyntaxError: Assigning to rvalue` when models call `execute` with CLI commands or scripts.
-- **CLI Execution Mandate:** Enforced CLI execution via `shell`/`bash` for binaries like `opencode-quota` with an anti-panic ban on speculative recursive `glob`/`grep` in `~/.config`.
-- **Validation Scope Transparency (#444):** `subtask_summary` observable receipts report `validation_scope` and deferred `pending_validation` repository CI pipeline gates.
-
----
-
-## What's New in v2.1.4
-
-- **Global Install Shadowing & PATH Hygiene (#424):** Doctor check (H2b) detects multiple global binaries, dangling symlinks, and prefix skew. Version skew validation prevents `_npx` from binding to older global packages.
-- **Strict Test Slice Ordering (#442):** Reordered `--test-name-pattern` flag ahead of the test file path in `scripts/test-slice.mjs` so Node's native test runner filters tests during failure/fix loops.
-- **Security Boundaries on Internal Folders (#441):** Hardened `auto-permissions` and `zeusReadGuard` to exclude `.git/` and `node_modules/` from autonomous reads.
-- **Universal Session Todo Tool Availability (#439):** Granted `todowrite` and `todoread` across all 14 specialist agent manifests.
-- **Session Auto-Discovery for Zen Vision (#440):** Automated active session discovery from environment (`OPENCODE_SESSION_ID`) and SQLite `opencode.db` (`session_v2`) for `vision_describe`.
-
----
-
-## What's New in v2.0.1
-
-- **Bilingual TUI Settings (PT-BR / EN):** Visual localization for Decision Router, Autonomy & Budgets, and J1 Safety Gate tabs, with intelligent system locale auto-detection (`LANG` / `LC_ALL`) and manual preference cycling (`auto`, `pt-BR`, `en`).
-- **Interactive Decision Model Selector:** Permanently accessible selector row in `/pantheon-settings` to cycle across all 6 remote decision models without manual JSON configuration.
-- **Modernized Council Synthesis (`/pantheon`):** Rich synthesis artifacts featuring Domain Authority breakdown, Mermaid arbitration diagrams, and immediate action checklists.
-- **Modernized Strategic Planning (`/pantheon-deepwork`):** Athena plans now enforce mandatory sub-10s test slicing, execution dependency diagrams, blast radius impact matrix, and rollback blueprints.
-- **Demystified J1 Safety Ladder:** Plain-language descriptions for J1 execution modes (`shadow`, `enforce`, `off`), making telemetry and protection gates clear.
-
----
-
-## What's New in v2.0.0-rc.1
-
-- **Release Candidate Series Inauguration:** Production-ready multi-agent orchestration for OpenCode 2.x.
-- **Agent Token Compaction (-44.3%):** Removed duplicated backend code in Apollo/Prometheus, saving 8,150 tokens per turn (~29.3M tokens/month).
-- **Pragmatism & Anti-Pedantry Directive:** Safe diagnostic operations are authorized without bureaucratic gates, ending agent sluggishness.
-- **Batched Suite TDD & Test-Slicing:** Cohesive multi-endpoint testing and sub-100ms targeted test execution.
-- **Proactive Skill Discovery & Query Caching:** Cached skill lookups (24h TTL) and automated recommendation for external tools.
-- **Live JEV Scorecard & Sandbox Web App:** 16/16 pass rate ($0.0000238/decision) verified with an end-to-end sandbox application.
-
-See [CHANGELOG.md](CHANGELOG.md) for full historical release notes.
-
-## Contributing
-
-Ideas, bug reports, and contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a PR.
-
-## Citation and License
-
-Pantheon is open-source software licensed under the [MIT License](LICENSE).
-Cite via Zenodo concept DOI: [10.5281/zenodo.22650136](https://doi.org/10.5281/zenodo.22650136). Citation metadata is available in [CITATION.cff](CITATION.cff).
-
-Canonical repository: <https://github.com/ils15/pantheon-opencode>
+MIT — see [LICENSE](LICENSE). Cite via Zenodo concept DOI
+[10.5281/zenodo.22650136](https://doi.org/10.5281/zenodo.22650136)
+([CITATION.cff](CITATION.cff)).

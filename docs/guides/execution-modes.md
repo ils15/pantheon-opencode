@@ -62,7 +62,8 @@ For multi-phase tasks spanning 10+ turns or multiple sessions:
 - **Fail-first acceptance:** every task defines concrete acceptance criteria
   (`kind: test|command|file|manual`, `fails_now: true`) verified with cryptographic receipts.
 - **Tool automation (`pantheon_deepwork`):** structured tool for `init`, `status`,
-  `update_task`, `verify_acceptance`, and `resolve_decision`.
+  `update_task`, `verify_acceptance`, and `resolve_decision`. Resiliently normalizes complex
+  multi-decision plans, single-option constraints, string criteria, and agent aliases with atomic file locking.
 - **Resumability:** checkpoints persisted to `.pantheon/deepwork/<slug>/`. Resume anytime
   with `/pantheon-deepwork --resume <slug>`.
 
