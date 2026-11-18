@@ -2334,7 +2334,7 @@ async function readChangelogForBundle(bundleUrl) {
 }
 /** The ambient build-time version, or null outside a tsdown build. */
 function embeddedVersion() {
-	return "2.2.0-beta.2";
+	return "2.2.0-beta.3";
 }
 /**
 * Resolve the running Pantheon version for the what's-new window: the plugin
@@ -2559,7 +2559,7 @@ function persistUpdateCheckState(previous, latest) {
 	} catch {}
 }
 function resolveRunningVersion() {
-	return "2.2.0-beta.2";
+	return "2.2.0-beta.3";
 }
 const VALUE_WIDTH = 24;
 function SettingsWindow(props) {
@@ -7030,7 +7030,7 @@ async function checkForPantheonUpdate(context) {
 	const latest = String((await response.json())?.version ?? "");
 	if (!latest) return;
 	const notice = pickUpdateNotice({
-		currentVersion: "2.2.0-beta.2",
+		currentVersion: "2.2.0-beta.3",
 		latestVersion: latest,
 		state: readState(),
 		nowMs: Date.now()
@@ -7858,7 +7858,7 @@ function Sidebar(props) {
 			setProp(_el$13, "paddingLeft", 1);
 			setProp(_el$13, "paddingRight", 1);
 			setProp(_el$14, "attributes", 1);
-			insert(_el$14, `Pantheon v2.2.0-beta.2`);
+			insert(_el$14, `Pantheon v2.2.0-beta.3`);
 			insert(_el$15, () => `Erro no painel: ${err?.message ?? "desconhecido"}`);
 			effect((_p$) => {
 				var _v$3 = text(), _v$4 = muted();
@@ -7929,7 +7929,7 @@ function SidebarInner(props) {
 			get children() {
 				var _el$18 = createElement("text");
 				setProp(_el$18, "attributes", 1);
-				insert(_el$18, `Pantheon v2.2.0-beta.2`);
+				insert(_el$18, `Pantheon v2.2.0-beta.3`);
 				effect((_$p) => setProp(_el$18, "fg", text(), _$p));
 				return _el$18;
 			}
@@ -8912,7 +8912,7 @@ function HomeStatus(props) {
 		},
 		get children() {
 			var _el$120 = createElement("text");
-			insert(_el$120, () => `Pantheon v2.2.0-beta.2${preset().name ? ` ▸ ${preset().name}` : ""}`);
+			insert(_el$120, () => `Pantheon v2.2.0-beta.3${preset().name ? ` ▸ ${preset().name}` : ""}`);
 			effect((_$p) => setProp(_el$120, "fg", muted(), _$p));
 			return _el$120;
 		}

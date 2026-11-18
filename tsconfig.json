@@ -29,7 +29,8 @@
     "tests/pantheon/native-memory-tools.test.ts",
     "tests/pantheon/codemap-and-ledger.test.ts",
     "tests/pantheon/swe-eval-harness.test.ts",
-    "tests/pantheon/agent-forge-tool.test.ts"
+    "tests/pantheon/agent-forge-tool.test.ts",
+    "tests/pantheon/legacy-store-migration.test.ts"
   ],
   "exclude": ["node_modules", "dist", "src/plugins/tui"]
 }

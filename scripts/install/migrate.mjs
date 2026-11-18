@@ -11,8 +11,11 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { migrateLegacyStoresAndPurgeStale } from '../../src/pantheon/legacy-store-migration.mjs'
 import { ACTIONS, fingerprintOutput, recordChange } from './plan.mjs'
 import { createInitialState, MIGRATION_SCHEMA_VERSION, readState, writeState } from './state.mjs'
+
+export { migrateLegacyStoresAndPurgeStale }
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, '..', '..')
@@ -67,6 +70,13 @@ export function runMigrations(target, options = {}, legacyOptions = {}) {
     if (compareSemver(parsedMarker, parseSemver(MIGRATION_SCHEMA_VERSION)) > 0) {
       return blockedMigration('unsupported', schemaMarker)
     }
+  }
+
+  let dataMigration = null
+  try {
+    dataMigration = migrateLegacyStoresAndPurgeStale(target, { dryRun })
+  } catch {
+    /* non-fatal data migration */
   }
 
   const currentVersion =
@@ -159,6 +169,7 @@ export function runMigrations(target, options = {}, legacyOptions = {}) {
       applied: applied.length,
       messages: applied.map((m) => `${m.from} → ${m.to}: ${m.description}`),
       plannedState: state,
+      ...(dataMigration ? { dataMigration } : {}),
     }
   }
 
@@ -166,6 +177,7 @@ export function runMigrations(target, options = {}, legacyOptions = {}) {
     applied: 0,
     messages: applied.map((m) => `${m.from} → ${m.to}: ${m.description}`),
     plannedState: null,
+    ...(dataMigration ? { dataMigration } : {}),
   }
 }
 

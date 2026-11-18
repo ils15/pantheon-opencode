@@ -1,0 +1,652 @@
+/**
+ * Legacy Data Migration & Stale Artifact Purge Engine (`legacy-store-migration.mjs`).
+ *
+ * Plain ESM `.mjs` module (with `.d.mts` types) so it runs natively both inside
+ * `node_modules/` during global `pantheon-opencode init` (where Node.js forbids
+ * `.ts` type-stripping) and inside the bundled TypeScript plugin.
+ *
+ * @module pantheon/legacy-store-migration
+ */
+
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
+
+const SAFE_SEGMENT_RE = /^[a-zA-Z0-9._:-]{1,128}$/
+
+function toSafeSegment(raw, fallback = 'default') {
+  const str = String(raw ?? '')
+    .trim()
+    .replace(/[^a-zA-Z0-9._:-]/g, '_')
+    .slice(0, 128)
+  if (!str || str === '.' || str === '..' || !SAFE_SEGMENT_RE.test(str)) {
+    return fallback
+  }
+  return str
+}
+
+function sameFileOrPath(a, b) {
+  if (resolve(a) === resolve(b)) return true
+  if (!existsSync(a) || !existsSync(b)) return false
+  try {
+    return realpathSync(a) === realpathSync(b)
+  } catch {
+    return false
+  }
+}
+
+function removeFileAndSqliteSidecars(filePath, deleted, dryRun = false) {
+  const dir = dirname(filePath)
+  const base = filePath.slice(dir.length + 1)
+  const candidates = [
+    filePath,
+    `${filePath}-wal`,
+    `${filePath}-shm`,
+    `${filePath}-journal`,
+    join(dir, `.${base}.init.lock`),
+  ]
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      if (!dryRun) {
+        rmSync(candidate, { recursive: true, force: true })
+      }
+      deleted.push(candidate)
+    }
+  }
+}
+
+function removeEmptyDirIfPossible(dirPath, deleted, dryRun = false) {
+  if (!existsSync(dirPath)) return
+  try {
+    const entries = readdirSync(dirPath)
+    if (entries.length === 0) {
+      if (!dryRun) {
+        rmSync(dirPath, { recursive: true, force: true })
+      }
+      deleted.push(dirPath)
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+const migratedWorkspaces = new Set()
+
+export function resetLegacyMigrationCacheForTests() {
+  migratedWorkspaces.clear()
+}
+
+export function ensureLegacyStoresMigratedOnce(workspaceDir, options = {}) {
+  const key = resolve(workspaceDir)
+  if (migratedWorkspaces.has(key)) return null
+  migratedWorkspaces.add(key)
+  return migrateLegacyStoresAndPurgeStale(key, options)
+}
+
+export function migrateLegacyStoresAndPurgeStale(workspaceDir, options = {}) {
+  const root = resolve(workspaceDir)
+  const dryRun = options.dryRun === true
+  const nowIso = new Date().toISOString()
+
+  let memoriesMigrated = 0
+  let memoriesExpiredPurged = 0
+  let vectorTablesDropped = 0
+  let contextsMigrated = 0
+  let goalsMigrated = 0
+  const staleFilesDeleted = []
+
+  const pantheonDir = join(root, '.pantheon')
+  const canonicalMemoryDir = join(pantheonDir, 'memory')
+  const canonicalMemoryDbPath = join(canonicalMemoryDir, 'memory.db')
+  const canonicalPersistenceDir = join(pantheonDir, 'persistence')
+  const canonicalGoalsDir = join(pantheonDir, 'goals')
+
+  // ── 1. Collect legacy memory SQLite DB candidates ────────────────────────
+  const legacyMemoryCandidates = [
+    { path: join(pantheonDir, 'memory.db'), deleteAfter: true },
+    { path: join(root, 'memory', 'memory.db'), deleteAfter: true },
+  ]
+  if (options.globalConfigDir) {
+    const globalRoot = resolve(options.globalConfigDir)
+    if (globalRoot !== root) {
+      legacyMemoryCandidates.push(
+        { path: join(globalRoot, 'memory', 'memory.db'), deleteAfter: true },
+        { path: join(globalRoot, '.pantheon', 'memory.db'), deleteAfter: true },
+      )
+    }
+  }
+
+  const existingLegacyMemDbs = legacyMemoryCandidates.filter(
+    (c) => existsSync(c.path) && !sameFileOrPath(c.path, canonicalMemoryDbPath),
+  )
+
+  if (existingLegacyMemDbs.length > 0 || existsSync(canonicalMemoryDbPath)) {
+    if (!dryRun) {
+      mkdirSync(canonicalMemoryDir, { recursive: true })
+    }
+    let targetDb = null
+    try {
+      if (!dryRun) {
+        targetDb = new DatabaseSync(canonicalMemoryDbPath)
+        targetDb.exec(`
+          CREATE TABLE IF NOT EXISTS memories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            namespace TEXT NOT NULL,
+            key TEXT NOT NULL,
+            value TEXT NOT NULL,
+            metadata TEXT,
+            created_at TEXT NOT NULL,
+            expires_at TEXT,
+            UNIQUE(namespace, key)
+          );
+          CREATE INDEX IF NOT EXISTS idx_memories_ns_key ON memories(namespace, key);
+        `)
+      }
+
+      for (const candidate of existingLegacyMemDbs) {
+        let srcDb = null
+        try {
+          srcDb = new DatabaseSync(candidate.path, { readOnly: true })
+          const hasTable = srcDb
+            .prepare(
+              "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'memories' LIMIT 1",
+            )
+            .get()
+          if (hasTable) {
+            const cols = srcDb.prepare('PRAGMA table_info(memories)').all()
+            const colNames = new Set(cols.map((c) => String(c.name ?? '')))
+            const hasExpires = colNames.has('expires_at')
+            const hasMeta = colNames.has('metadata')
+            const hasCreated = colNames.has('created_at')
+
+            const selectSql = `
+              SELECT
+                namespace,
+                key,
+                value,
+                ${hasMeta ? 'metadata' : 'NULL AS metadata'},
+                ${hasCreated ? 'created_at' : `'${nowIso}' AS created_at`},
+                ${hasExpires ? 'expires_at' : 'NULL AS expires_at'}
+              FROM memories
+              WHERE key IS NOT NULL AND trim(key) != ''
+            `
+            const rows = srcDb.prepare(selectSql).all()
+
+            for (const row of rows) {
+              const exp = typeof row.expires_at === 'string' ? row.expires_at : null
+              if (exp && exp <= nowIso) {
+                memoriesExpiredPurged += 1
+                continue
+              }
+              const ns = String(row.namespace ?? 'default').trim() || 'default'
+              const key = String(row.key ?? '').trim()
+              const val = String(row.value ?? '')
+              if (!key || !val) continue
+              if (!dryRun && targetDb) {
+                const res = targetDb
+                  .prepare(
+                    `INSERT OR IGNORE INTO memories (namespace, key, value, metadata, created_at, expires_at)
+                     VALUES (?, ?, ?, ?, ?, ?)`,
+                  )
+                  .run(
+                    ns,
+                    key,
+                    val,
+                    typeof row.metadata === 'string' ? row.metadata : null,
+                    typeof row.created_at === 'string' ? row.created_at : nowIso,
+                    exp,
+                  )
+                if (res.changes > 0) memoriesMigrated += 1
+              } else {
+                memoriesMigrated += 1
+              }
+            }
+          }
+        } catch {
+          /* corrupted legacy db — will still be cleaned up below */
+        } finally {
+          try {
+            srcDb?.close()
+          } catch {
+            /* ignore */
+          }
+        }
+
+        if (candidate.deleteAfter) {
+          removeFileAndSqliteSidecars(candidate.path, staleFilesDeleted, dryRun)
+          removeEmptyDirIfPossible(dirname(candidate.path), staleFilesDeleted, dryRun)
+        }
+      }
+
+      // Clean up canonical memory.db: purge expired rows, drop legacy vector tables, rebuild FTS5
+      if (!dryRun && targetDb) {
+        try {
+          const del = targetDb
+            .prepare('DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at <= ?')
+            .run(nowIso)
+          memoriesExpiredPurged += Number(del.changes ?? 0)
+        } catch {
+          /* ignore */
+        }
+
+        const legacyVectorObjects = [
+          { type: 'trigger', name: 'memories_vec_ai' },
+          { type: 'trigger', name: 'memories_vec_ad' },
+          { type: 'trigger', name: 'memories_vec_au' },
+          { type: 'table', name: 'memories_vec' },
+          { type: 'table', name: 'vec_memories' },
+          { type: 'table', name: 'memory_embeddings' },
+          { type: 'table', name: 'memory_vectors' },
+        ]
+        for (const obj of legacyVectorObjects) {
+          try {
+            const exists = targetDb
+              .prepare('SELECT 1 FROM sqlite_master WHERE type = ? AND name = ? LIMIT 1')
+              .get(obj.type, obj.name)
+            if (exists) {
+              targetDb.exec(
+                `DROP ${obj.type === 'trigger' ? 'TRIGGER' : 'TABLE'} IF EXISTS ${obj.name}`,
+              )
+              vectorTablesDropped += 1
+            }
+          } catch {
+            /* virtual table extension may not be loaded; ignore */
+          }
+        }
+
+        try {
+          targetDb.exec(`
+            CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+              namespace,
+              key,
+              value,
+              content='memories',
+              content_rowid='id',
+              tokenize='porter unicode61'
+            );
+            CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+              INSERT INTO memories_fts(rowid, namespace, key, value)
+              VALUES (new.id, new.namespace, new.key, new.value);
+            END;
+            CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+              INSERT INTO memories_fts(memories_fts, rowid, namespace, key, value)
+              VALUES ('delete', old.id, old.namespace, old.key, old.value);
+            END;
+            CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+              INSERT INTO memories_fts(memories_fts, rowid, namespace, key, value)
+              VALUES ('delete', old.id, old.namespace, old.key, old.value);
+              INSERT INTO memories_fts(rowid, namespace, key, value)
+              VALUES (new.id, new.namespace, new.key, new.value);
+            END;
+            INSERT INTO memories_fts(memories_fts) VALUES('rebuild');
+          `)
+        } catch {
+          /* FTS5 optional */
+        }
+      }
+    } finally {
+      try {
+        targetDb?.close()
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  // ── 2. Migrate legacy Persistence SQLite DBs (global.db & project.db) ────
+  const legacyPersistenceDbs = [
+    join(pantheonDir, 'persistence', 'project.db'),
+    join(pantheonDir, 'persistence', 'global.db'),
+    join(root, 'persistence', 'project.db'),
+    join(root, 'persistence', 'global.db'),
+  ]
+  if (options.globalConfigDir) {
+    const globalRoot = resolve(options.globalConfigDir)
+    if (globalRoot !== root) {
+      legacyPersistenceDbs.push(
+        join(globalRoot, 'persistence', 'global.db'),
+        join(globalRoot, 'persistence', 'project.db'),
+        join(globalRoot, '.pantheon', 'persistence', 'global.db'),
+        join(globalRoot, '.pantheon', 'persistence', 'project.db'),
+      )
+    }
+  }
+
+  const seenPersistenceDbs = new Set()
+  for (const dbPath of legacyPersistenceDbs) {
+    if (!existsSync(dbPath)) continue
+    const real = (() => {
+      try {
+        return realpathSync(dbPath)
+      } catch {
+        return resolve(dbPath)
+      }
+    })()
+    if (seenPersistenceDbs.has(real)) continue
+    seenPersistenceDbs.add(real)
+
+    let pDb = null
+    try {
+      pDb = new DatabaseSync(dbPath, { readOnly: true })
+
+      // 2a. Migrate kv_store rows (context_save / persistence checkpoints)
+      const hasKvStore = pDb
+        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'kv_store' LIMIT 1")
+        .get()
+      if (hasKvStore) {
+        const cols = pDb.prepare('PRAGMA table_info(kv_store)').all()
+        const colNames = new Set(cols.map((c) => String(c.name ?? '')))
+        const hasDeleted = colNames.has('deleted_at')
+        const hasExpires = colNames.has('expires_at')
+        const hasUpdated = colNames.has('updated_at')
+        const hasCreated = colNames.has('created_at')
+        const hasRevision = colNames.has('revision')
+
+        const rows = pDb
+          .prepare(
+            `SELECT
+               namespace,
+               key,
+               value,
+               ${hasExpires ? 'expires_at' : 'NULL AS expires_at'},
+               ${hasDeleted ? 'deleted_at' : 'NULL AS deleted_at'},
+               ${hasCreated ? 'created_at' : `'${nowIso}' AS created_at`},
+               ${hasUpdated ? 'updated_at' : `'${nowIso}' AS updated_at`},
+               ${hasRevision ? 'revision' : 'NULL AS revision'}
+             FROM kv_store`,
+          )
+          .all()
+
+        for (const row of rows) {
+          if (row.deleted_at != null) continue
+          const exp = typeof row.expires_at === 'string' ? row.expires_at : null
+          if (exp && exp <= nowIso) continue
+
+          const rawNs = String(row.namespace ?? 'checkpoints').trim() || 'checkpoints'
+          const safeNs = toSafeSegment(rawNs, 'checkpoints')
+          const safeKey = toSafeSegment(row.key, '')
+          if (!safeKey) continue
+
+          const valueStr = String(row.value ?? '')
+          const record = {
+            session_id: safeKey,
+            key: safeKey,
+            namespace: safeNs,
+            content: valueStr,
+            value: valueStr,
+            created_at: typeof row.created_at === 'string' ? row.created_at : nowIso,
+            updated_at: typeof row.updated_at === 'string' ? row.updated_at : nowIso,
+            ...(exp ? { expires_at: exp } : {}),
+            ...(typeof row.revision === 'number' ? { revision: row.revision } : {}),
+          }
+
+          const targetNamespaces = safeNs === 'context' ? ['context', 'checkpoints'] : [safeNs]
+          let wroteAny = false
+          for (const targetNs of targetNamespaces) {
+            const nsDir = join(canonicalPersistenceDir, targetNs)
+            const outFile = join(nsDir, `${safeKey}.json`)
+            if (!existsSync(outFile)) {
+              if (!dryRun) {
+                mkdirSync(nsDir, { recursive: true })
+                writeFileSync(
+                  outFile,
+                  JSON.stringify({ ...record, namespace: targetNs }, null, 2),
+                  'utf8',
+                )
+              }
+              wroteAny = true
+            }
+          }
+          if (wroteAny) contextsMigrated += 1
+        }
+      }
+
+      // 2b. Migrate pantheon_goals rows from project.db
+      const hasGoals = pDb
+        .prepare(
+          "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pantheon_goals' LIMIT 1",
+        )
+        .get()
+      if (hasGoals) {
+        const goalRows = pDb.prepare('SELECT * FROM pantheon_goals').all()
+        for (const row of goalRows) {
+          const rawId = String(row.goal_id ?? row.id ?? '').trim()
+          const safeId = toSafeSegment(rawId, '')
+          if (!safeId) continue
+          const outFile = join(canonicalGoalsDir, `${safeId}.json`)
+          if (!existsSync(outFile)) {
+            let criteria = []
+            if (typeof row.criteria_json === 'string') {
+              try {
+                const parsed = JSON.parse(row.criteria_json)
+                if (Array.isArray(parsed)) criteria = parsed.map(String)
+              } catch {
+                /* ignore */
+              }
+            }
+            let notes
+            if (typeof row.notes_json === 'string') {
+              try {
+                notes = JSON.parse(row.notes_json)
+              } catch {
+                notes = row.notes_json
+              }
+            }
+            const goalRecord = {
+              id: safeId,
+              ...(typeof row.session_id === 'string' ? { session_id: row.session_id } : {}),
+              title: String(row.title ?? ''),
+              criteria,
+              status: String(row.status ?? 'active'),
+              ...(notes !== undefined ? { notes } : {}),
+              created_at: typeof row.created_at === 'string' ? row.created_at : nowIso,
+              updated_at: typeof row.updated_at === 'string' ? row.updated_at : nowIso,
+              ...(typeof row.completed_at === 'string' ? { completed_at: row.completed_at } : {}),
+            }
+            if (!dryRun) {
+              mkdirSync(canonicalGoalsDir, { recursive: true })
+              writeFileSync(outFile, JSON.stringify(goalRecord, null, 2), 'utf8')
+            }
+            goalsMigrated += 1
+          }
+        }
+      }
+    } catch {
+      /* unreadable legacy SQLite persistence db — remove below */
+    } finally {
+      try {
+        pDb?.close()
+      } catch {
+        /* ignore */
+      }
+    }
+
+    removeFileAndSqliteSidecars(dbPath, staleFilesDeleted, dryRun)
+    const parentDir = dirname(dbPath)
+    if (parentDir !== canonicalPersistenceDir) {
+      removeEmptyDirIfPossible(parentDir, staleFilesDeleted, dryRun)
+    }
+  }
+
+  // ── 3. Migrate legacy flat checkpoint/context directories & goals.json ───
+  for (const legacyCheckpointDir of [
+    join(pantheonDir, 'checkpoints'),
+    join(pantheonDir, 'context'),
+  ]) {
+    if (!existsSync(legacyCheckpointDir)) continue
+    try {
+      for (const entry of readdirSync(legacyCheckpointDir)) {
+        const fullPath = join(legacyCheckpointDir, entry)
+        if (!entry.endsWith('.json') || !statSync(fullPath).isFile()) continue
+        const rawKey = entry.slice(0, -5)
+        const safeKey = toSafeSegment(rawKey, '')
+        if (!safeKey) continue
+        const targetDir = join(canonicalPersistenceDir, 'checkpoints')
+        const targetFile = join(targetDir, `${safeKey}.json`)
+        if (!existsSync(targetFile)) {
+          try {
+            const parsed = JSON.parse(readFileSync(fullPath, 'utf8'))
+            const normalized = {
+              session_id: safeKey,
+              namespace: 'checkpoints',
+              content:
+                typeof parsed.content === 'string'
+                  ? parsed.content
+                  : JSON.stringify(parsed.content ?? parsed),
+              updated_at: typeof parsed.updated_at === 'string' ? parsed.updated_at : nowIso,
+            }
+            if (!dryRun) {
+              mkdirSync(targetDir, { recursive: true })
+              writeFileSync(targetFile, JSON.stringify(normalized, null, 2), 'utf8')
+            }
+            contextsMigrated += 1
+          } catch {
+            /* corrupted checkpoint file */
+          }
+        }
+        if (!dryRun) rmSync(fullPath, { force: true })
+        staleFilesDeleted.push(fullPath)
+      }
+      removeEmptyDirIfPossible(legacyCheckpointDir, staleFilesDeleted, dryRun)
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // Migrate .pantheon/persistence/goals/*.json -> .pantheon/goals/*.json
+  const legacyPersistenceGoalsDir = join(canonicalPersistenceDir, 'goals')
+  if (existsSync(legacyPersistenceGoalsDir)) {
+    try {
+      for (const entry of readdirSync(legacyPersistenceGoalsDir)) {
+        const fullPath = join(legacyPersistenceGoalsDir, entry)
+        if (!entry.endsWith('.json') || !statSync(fullPath).isFile()) continue
+        const safeId = toSafeSegment(entry.slice(0, -5), '')
+        if (safeId) {
+          const targetFile = join(canonicalGoalsDir, `${safeId}.json`)
+          if (!existsSync(targetFile)) {
+            if (!dryRun) {
+              mkdirSync(canonicalGoalsDir, { recursive: true })
+              writeFileSync(targetFile, readFileSync(fullPath, 'utf8'), 'utf8')
+            }
+            goalsMigrated += 1
+          }
+        }
+        if (!dryRun) rmSync(fullPath, { force: true })
+        staleFilesDeleted.push(fullPath)
+      }
+      removeEmptyDirIfPossible(legacyPersistenceGoalsDir, staleFilesDeleted, dryRun)
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // Migrate legacy .pantheon/goals.json file -> .pantheon/goals/<id>.json
+  const legacyGoalsJsonPath = join(pantheonDir, 'goals.json')
+  if (existsSync(legacyGoalsJsonPath)) {
+    try {
+      const parsed = JSON.parse(readFileSync(legacyGoalsJsonPath, 'utf8'))
+      const list = Array.isArray(parsed)
+        ? parsed
+        : parsed && typeof parsed === 'object' && Array.isArray(parsed.goals)
+          ? (parsed.goals ?? [])
+          : []
+      for (const item of list) {
+        if (!item || typeof item !== 'object') continue
+        const safeId = toSafeSegment(item.id ?? item.goal_id, '')
+        if (!safeId) continue
+        const targetFile = join(canonicalGoalsDir, `${safeId}.json`)
+        if (!existsSync(targetFile)) {
+          if (!dryRun) {
+            mkdirSync(canonicalGoalsDir, { recursive: true })
+            writeFileSync(
+              targetFile,
+              JSON.stringify(
+                {
+                  id: safeId,
+                  title: String(item.title ?? item.description ?? ''),
+                  criteria: Array.isArray(item.criteria) ? item.criteria.map(String) : [],
+                  status: String(item.status ?? 'active'),
+                  created_at: typeof item.created_at === 'string' ? item.created_at : nowIso,
+                  updated_at: typeof item.updated_at === 'string' ? item.updated_at : nowIso,
+                },
+                null,
+                2,
+              ),
+              'utf8',
+            )
+          }
+          goalsMigrated += 1
+        }
+      }
+    } catch {
+      /* ignore corrupted goals.json */
+    }
+    if (!dryRun) rmSync(legacyGoalsJsonPath, { force: true })
+    staleFilesDeleted.push(legacyGoalsJsonPath)
+  }
+
+  // ── 4. Purge expired persistence JSON files & stale artifacts ────────────
+  if (existsSync(canonicalPersistenceDir)) {
+    try {
+      for (const nsEntry of readdirSync(canonicalPersistenceDir, { withFileTypes: true })) {
+        if (!nsEntry.isDirectory()) continue
+        const nsDir = join(canonicalPersistenceDir, nsEntry.name)
+        for (const fileEntry of readdirSync(nsDir)) {
+          if (!fileEntry.endsWith('.json')) continue
+          const filePath = join(nsDir, fileEntry)
+          try {
+            const data = JSON.parse(readFileSync(filePath, 'utf8'))
+            if (typeof data.expires_at === 'string' && data.expires_at <= nowIso) {
+              if (!dryRun) rmSync(filePath, { force: true })
+              staleFilesDeleted.push(filePath)
+            }
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const obsoleteTargets = [
+    join(canonicalMemoryDir, '.memory.db.init.lock'),
+    join(pantheonDir, '.memory.db.init.lock'),
+    join(canonicalPersistenceDir, '.global.db.init.lock'),
+    join(canonicalPersistenceDir, '.project.db.init.lock'),
+    join(pantheonDir, 'fastembed_cache'),
+    join(pantheonDir, '.fastembed'),
+    join(root, 'fastembed_cache'),
+    join(root, 'plugins', 'pantheon-hooks.ts'),
+    join(root, 'plugins', 'pantheon-hooks.js'),
+    join(root, '.opencode', 'plugins', 'pantheon-hooks.ts'),
+    join(root, '.opencode', 'plugins', 'pantheon-hooks.js'),
+    join(root, 'tiers.json'),
+    join(root, '.opencode', 'tiers.json'),
+  ]
+  for (const target of obsoleteTargets) {
+    if (existsSync(target)) {
+      if (!dryRun) rmSync(target, { recursive: true, force: true })
+      staleFilesDeleted.push(target)
+    }
+  }
+
+  return {
+    memoriesMigrated,
+    memoriesExpiredPurged,
+    vectorTablesDropped,
+    contextsMigrated,
+    goalsMigrated,
+    staleFilesDeleted,
+  }
+}
