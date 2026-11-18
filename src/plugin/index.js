@@ -278,9 +278,9 @@ function mergeOverrides(globalRaw, projectRaw) {
   const errors = [];
   const effective = {};
   if (globalRaw !== void 0) {
-    const g = parseOverridesFile(globalRaw, "global overrides");
-    errors.push(...g.errors);
-    Object.assign(effective, g.entries);
+    const g2 = parseOverridesFile(globalRaw, "global overrides");
+    errors.push(...g2.errors);
+    Object.assign(effective, g2.entries);
   }
   if (projectRaw !== void 0) {
     const p = parseOverridesFile(projectRaw, "project overrides");
@@ -8738,7 +8738,58 @@ function removeEmptyDirIfPossible(dirPath, deleted, dryRun = false) {
   } catch {
   }
 }
-var migratedWorkspaces = /* @__PURE__ */ new Set();
+var GLOBAL_CACHE_SYM = /* @__PURE__ */ Symbol.for("pantheon.legacy.migratedWorkspaces.v1");
+var g = globalThis;
+if (!(g[GLOBAL_CACHE_SYM] instanceof Set)) {
+  g[GLOBAL_CACHE_SYM] = /* @__PURE__ */ new Set();
+}
+var migratedWorkspaces = g[GLOBAL_CACHE_SYM];
+function safeMtimeMs(filePath) {
+  try {
+    return existsSync5(filePath) ? statSync2(filePath).mtimeMs : 0;
+  } catch {
+    return 0;
+  }
+}
+function hasPendingLegacyFiles(rootDir) {
+  const checks = [
+    join9(rootDir, ".pantheon", "memory.db"),
+    join9(rootDir, "memory", "memory.db"),
+    join9(rootDir, ".pantheon", "persistence", "global.db"),
+    join9(rootDir, ".pantheon", "persistence", "project.db"),
+    join9(rootDir, "persistence", "global.db"),
+    join9(rootDir, "persistence", "project.db"),
+    join9(rootDir, ".pantheon", "goals.json"),
+    join9(rootDir, ".pantheon", "persistence", "goals"),
+    join9(rootDir, "plugins", "pantheon-hooks.ts"),
+    join9(rootDir, "plugins", "pantheon-hooks.js"),
+    join9(rootDir, ".opencode", "plugins", "pantheon-hooks.ts"),
+    join9(rootDir, ".opencode", "plugins", "pantheon-hooks.js"),
+    join9(rootDir, "tiers.json"),
+    join9(rootDir, ".opencode", "tiers.json"),
+    join9(rootDir, ".pantheon", "fastembed_cache"),
+    join9(rootDir, ".pantheon", ".fastembed"),
+    join9(rootDir, "fastembed_cache")
+  ];
+  return checks.some((p) => existsSync5(p));
+}
+function canSkipMigrationViaStamp(workspaceDir, globalConfigDir) {
+  const stampPath = join9(workspaceDir, ".pantheon", ".migration-v2.json");
+  if (!existsSync5(stampPath)) return false;
+  try {
+    const stamp = JSON.parse(readFileSync6(stampPath, "utf8"));
+    if (stamp?.version !== 2) return false;
+    if (hasPendingLegacyFiles(workspaceDir)) return false;
+    if (globalConfigDir && existsSync5(globalConfigDir)) {
+      if (hasPendingLegacyFiles(globalConfigDir)) return false;
+      const globalMemDb = join9(globalConfigDir, ".pantheon", "memory", "memory.db");
+      if (safeMtimeMs(globalMemDb) !== Number(stamp.globalMtimeMs ?? -1)) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
 function ensureLegacyStoresMigratedOnce(workspaceDir, options = {}) {
   if (!workspaceDir || typeof workspaceDir !== "string") return null;
   const key = resolve5(workspaceDir);
@@ -8747,6 +8798,9 @@ function ensureLegacyStoresMigratedOnce(workspaceDir, options = {}) {
   const cacheKey = `${key}::${globalKey}`;
   if (migratedWorkspaces.has(cacheKey)) return null;
   migratedWorkspaces.add(cacheKey);
+  if (!options.dryRun && canSkipMigrationViaStamp(key, globalKey || void 0)) {
+    return null;
+  }
   return migrateLegacyStoresAndPurgeStale(key, options);
 }
 function migrateLegacyStoresAndPurgeStale(workspaceDir, options = {}) {
@@ -8803,10 +8857,14 @@ function migrateLegacyStoresAndPurgeStale(workspaceDir, options = {}) {
       mkdirSync4(canonicalMemoryDir, { recursive: true });
     }
     let targetDb = null;
+    let hadFtsBefore = false;
+    let droppedVecThisDb = 0;
     try {
       if (!dryRun) {
         targetDb = new DatabaseSync2(canonicalMemoryDbPath);
         targetDb.exec(`
+          PRAGMA busy_timeout = 3000;
+          PRAGMA journal_mode = WAL;
           CREATE TABLE IF NOT EXISTS memories (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             namespace TEXT NOT NULL,
@@ -8819,11 +8877,24 @@ function migrateLegacyStoresAndPurgeStale(workspaceDir, options = {}) {
           );
           CREATE INDEX IF NOT EXISTS idx_memories_ns_key ON memories(namespace, key);
         `);
+        try {
+          hadFtsBefore = Boolean(
+            targetDb.prepare(
+              "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'memories_fts' LIMIT 1"
+            ).get()
+          );
+        } catch {
+          hadFtsBefore = false;
+        }
       }
       for (const candidate of existingLegacyMemDbs) {
         let srcDb = null;
         try {
           srcDb = new DatabaseSync2(candidate.path, { readOnly: true });
+          try {
+            srcDb.exec("PRAGMA busy_timeout = 3000;");
+          } catch {
+          }
           const hasTable = srcDb.prepare(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'memories' LIMIT 1"
           ).get();
@@ -8845,30 +8916,51 @@ function migrateLegacyStoresAndPurgeStale(workspaceDir, options = {}) {
               WHERE key IS NOT NULL AND trim(key) != ''
             `;
             const rows = srcDb.prepare(selectSql).all();
-            for (const row of rows) {
-              const exp = typeof row.expires_at === "string" ? row.expires_at : null;
-              if (exp && exp <= nowIso) {
-                memoriesExpiredPurged += 1;
-                continue;
+            if (!dryRun && targetDb && rows.length > 0) {
+              const insertStmt = targetDb.prepare(
+                `INSERT OR IGNORE INTO memories (namespace, key, value, metadata, created_at, expires_at)
+                 VALUES (?, ?, ?, ?, ?, ?)`
+              );
+              targetDb.exec("BEGIN IMMEDIATE");
+              try {
+                for (const row of rows) {
+                  const exp = typeof row.expires_at === "string" ? row.expires_at : null;
+                  if (exp && exp <= nowIso) {
+                    memoriesExpiredPurged += 1;
+                    continue;
+                  }
+                  const ns = String(row.namespace ?? "default").trim() || "default";
+                  const key = String(row.key ?? "").trim();
+                  const val = String(row.value ?? "");
+                  if (!key || !val) continue;
+                  const res = insertStmt.run(
+                    ns,
+                    key,
+                    val,
+                    typeof row.metadata === "string" ? row.metadata : null,
+                    typeof row.created_at === "string" ? row.created_at : nowIso,
+                    exp
+                  );
+                  if (res.changes > 0) memoriesMigrated += 1;
+                }
+                targetDb.exec("COMMIT");
+              } catch (txErr) {
+                try {
+                  targetDb.exec("ROLLBACK");
+                } catch {
+                }
+                throw txErr;
               }
-              const ns = String(row.namespace ?? "default").trim() || "default";
-              const key = String(row.key ?? "").trim();
-              const val = String(row.value ?? "");
-              if (!key || !val) continue;
-              if (!dryRun && targetDb) {
-                const res = targetDb.prepare(
-                  `INSERT OR IGNORE INTO memories (namespace, key, value, metadata, created_at, expires_at)
-                     VALUES (?, ?, ?, ?, ?, ?)`
-                ).run(
-                  ns,
-                  key,
-                  val,
-                  typeof row.metadata === "string" ? row.metadata : null,
-                  typeof row.created_at === "string" ? row.created_at : nowIso,
-                  exp
-                );
-                if (res.changes > 0) memoriesMigrated += 1;
-              } else {
+            } else {
+              for (const row of rows) {
+                const exp = typeof row.expires_at === "string" ? row.expires_at : null;
+                if (exp && exp <= nowIso) {
+                  memoriesExpiredPurged += 1;
+                  continue;
+                }
+                const key = String(row.key ?? "").trim();
+                const val = String(row.value ?? "");
+                if (!key || !val) continue;
                 memoriesMigrated += 1;
               }
             }
@@ -8908,6 +9000,7 @@ function migrateLegacyStoresAndPurgeStale(workspaceDir, options = {}) {
                 `DROP ${obj.type === "trigger" ? "TRIGGER" : "TABLE"} IF EXISTS ${obj.name}`
               );
               vectorTablesDropped += 1;
+              droppedVecThisDb += 1;
             }
           } catch {
           }
@@ -8936,8 +9029,10 @@ function migrateLegacyStoresAndPurgeStale(workspaceDir, options = {}) {
               INSERT INTO memories_fts(rowid, namespace, key, value)
               VALUES (new.id, new.namespace, new.key, new.value);
             END;
-            INSERT INTO memories_fts(memories_fts) VALUES('rebuild');
           `);
+          if (!hadFtsBefore || droppedVecThisDb > 0) {
+            targetDb.exec("INSERT INTO memories_fts(memories_fts) VALUES('rebuild');");
+          }
         } catch {
         }
       }
@@ -9269,6 +9364,18 @@ function migrateLegacyStoresAndPurgeStale(workspaceDir, options = {}) {
         if (!dryRun) rmSync(migrationCp, { force: true });
         staleFilesDeleted.push(migrationCp);
       }
+    } catch {
+    }
+  }
+  if (!dryRun && existsSync5(pantheonDir)) {
+    try {
+      const globalMtimeMs = globalCanonicalMemDb ? safeMtimeMs(globalCanonicalMemDb) : 0;
+      writeFileSync3(
+        join9(pantheonDir, ".migration-v2.json"),
+        `${JSON.stringify({ version: 2, globalMtimeMs, migratedAt: nowIso })}
+`,
+        "utf8"
+      );
     } catch {
     }
   }
@@ -15993,6 +16100,8 @@ function getMemoryDb(workspaceDir) {
   if (cached) return cached;
   const db = new DatabaseSync4(dbPath);
   db.exec(`
+    PRAGMA busy_timeout = 3000;
+    PRAGMA journal_mode = WAL;
     CREATE TABLE IF NOT EXISTS memories (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       namespace TEXT NOT NULL,

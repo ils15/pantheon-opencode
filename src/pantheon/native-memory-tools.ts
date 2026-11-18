@@ -72,6 +72,8 @@ function getMemoryDb(workspaceDir: string): DatabaseSync {
 
   const db = new DatabaseSync(dbPath)
   db.exec(`
+    PRAGMA busy_timeout = 3000;
+    PRAGMA journal_mode = WAL;
     CREATE TABLE IF NOT EXISTS memories (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       namespace TEXT NOT NULL,
