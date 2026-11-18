@@ -174,10 +174,10 @@ import {
 import { DECISION_EGRESS_ACTION } from './pantheon/local-decision-egress-gate.ts'
 import { applyDecisionRouterToPrompt } from './pantheon/local-decision-prompt.ts'
 import {
-  applyV2ModelOverride,
-  applyV2ModelOverrides,
-  readV2ModelConfiguration,
-  type V2ModelOverride,
+  applyModelOverride,
+  applyModelOverrides,
+  type ModelOverride,
+  readModelConfiguration,
 } from './pantheon/model-overrides.ts'
 import type { NativeDecisionRequest } from './pantheon/native-decisions.ts'
 import { buildV2VisionPromptContext, type V2VisionRuntime } from './pantheon/native-vision.ts'
@@ -603,20 +603,20 @@ function transformAgents(draft: AgentDraft): void {
     markUnsupported('agent-transform-list')
     return
   }
-  let configuredOverrides: Record<string, V2ModelOverride> = {}
+  let configuredOverrides: Record<string, ModelOverride> = {}
   try {
-    const modelConfiguration = readV2ModelConfiguration({
+    const modelConfiguration = readModelConfiguration({
       candidates: [
         path.join(activeHostWorkspaceDir ?? process.cwd(), '.pantheon', 'active-preset.json'),
       ],
     })
     configuredOverrides = modelConfiguration.overrides
     if (modelConfiguration.warnings.length > 0) {
-      // The V2 server PluginContext has no documented user-visible notification
+      // The server PluginContext has no documented user-visible notification
       // or logging channel; preserve the degradation for status diagnostics.
       markUnsupported('agent-model-overrides')
     }
-    applyV2ModelOverrides(draft, modelConfiguration.overrides)
+    applyModelOverrides(draft, modelConfiguration.overrides)
   } catch {
     // Model configuration is optional. Preserve host models if it cannot be read.
     markUnsupported('agent-model-overrides')
@@ -654,7 +654,7 @@ function transformAgents(draft: AgentDraft): void {
             }
             const override = configuredOverrides[id]
             if (override) {
-              applyV2ModelOverride(current as { id: string; model?: unknown }, override)
+              applyModelOverride(current as { id: string; model?: unknown }, override)
             }
             const body = typeof def.body === 'string' ? def.body.trim() : ''
             current.system = body

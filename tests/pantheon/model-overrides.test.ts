@@ -4,10 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
-  applyV2ModelOverrides,
-  readV2ModelConfiguration,
-  readV2PresetFile,
-  type V2AgentDraftLike,
+  type AgentDraftLike,
+  applyModelOverrides,
+  readModelConfiguration,
+  readPresetFile,
 } from '../../src/pantheon/model-overrides.ts'
 
 async function main(): Promise<void> {
@@ -27,7 +27,7 @@ async function main(): Promise<void> {
       let openedFlags = 0
       assert.throws(
         () =>
-          readV2PresetFile('fake-active-preset.json', {
+          readPresetFile('fake-active-preset.json', {
             openSync: (_path, flags) => {
               calls.push('open')
               openedFlags = flags
@@ -69,7 +69,7 @@ async function main(): Promise<void> {
     // V2 ignores global overrides, even when the project file has no overrides.
     writeFileSync(projectFile, JSON.stringify({ version: 1, preset: 'go-free', overrides: {} }))
 
-    const configuration = readV2ModelConfiguration({
+    const configuration = readModelConfiguration({
       candidates: [projectFile, globalFile],
       env: { PANTHEON_MODEL_PRESET: 'go-fast' } as NodeJS.ProcessEnv,
     })
@@ -86,7 +86,7 @@ async function main(): Promise<void> {
         overrides: { agents: { hermes: { model: 'deepseek/deepseek-v4-pro', variant: 'high' } } },
       }),
     )
-    const merged = readV2ModelConfiguration({ candidates: [projectFile, globalFile], env: {} })
+    const merged = readModelConfiguration({ candidates: [projectFile, globalFile], env: {} })
     assert.deepEqual(merged.overrides.hermes, {
       model: 'deepseek/deepseek-v4-pro',
       variant: 'high',
@@ -106,7 +106,7 @@ async function main(): Promise<void> {
         },
       }),
     )
-    const variants = readV2ModelConfiguration({ candidates: [projectFile], env: {} })
+    const variants = readModelConfiguration({ candidates: [projectFile], env: {} })
     assert.deepEqual(variants.overrides, {
       hermes: { model: 'openai/gpt-5.6', variant: 'low' },
       gaia: { model: 'openai/gpt-5.6', variant: 'medium' },
@@ -131,7 +131,7 @@ async function main(): Promise<void> {
         },
       ],
     ])
-    const draft: V2AgentDraftLike = {
+    const draft: AgentDraftLike = {
       list: () => [...agents.values()] as Array<{ id: string }>,
       update: (id, update) => {
         const agent = agents.get(id)
@@ -140,7 +140,7 @@ async function main(): Promise<void> {
     }
     const hermesOverride = merged.overrides.hermes
     assert.ok(hermesOverride)
-    applyV2ModelOverrides(draft, {
+    applyModelOverrides(draft, {
       hermes: hermesOverride,
       'unsupported-secret-agent': { model: 'openai/gpt-5.6' },
     })
@@ -170,11 +170,11 @@ async function main(): Promise<void> {
       id: 'hermes',
       model: { providerID: 'old-provider', id: 'old-model', variant: 'high', temperature: 0.2 },
     }
-    const variantDraft: V2AgentDraftLike = {
+    const variantDraft: AgentDraftLike = {
       list: () => [variantAgent],
       update: (_id, update) => update(variantAgent),
     }
-    applyV2ModelOverrides(variantDraft, {
+    applyModelOverrides(variantDraft, {
       hermes: { model: 'openai/gpt-5.6', variant: 'low' },
     })
     assert.deepEqual(variantAgent.model, {
@@ -183,7 +183,7 @@ async function main(): Promise<void> {
       variant: 'low',
       temperature: 0.2,
     })
-    applyV2ModelOverrides(variantDraft, { hermes: { model: 'anthropic/claude-sonnet-4-6' } })
+    applyModelOverrides(variantDraft, { hermes: { model: 'anthropic/claude-sonnet-4-6' } })
     assert.deepEqual(variantAgent.model, {
       providerID: 'anthropic',
       id: 'claude-sonnet-4-6',
@@ -196,11 +196,11 @@ async function main(): Promise<void> {
       variant: 'host-variant',
     }
     const noOverrideAgent = { id: 'gaia', model: unchangedModel }
-    const noOverrideDraft: V2AgentDraftLike = {
+    const noOverrideDraft: AgentDraftLike = {
       list: () => [noOverrideAgent],
       update: (_id, update) => update(noOverrideAgent),
     }
-    applyV2ModelOverrides(noOverrideDraft, {})
+    applyModelOverrides(noOverrideDraft, {})
     assert.strictEqual(
       noOverrideAgent.model,
       unchangedModel,
@@ -213,11 +213,11 @@ async function main(): Promise<void> {
       variant: 'host-variant',
     }
     const unsupportedVariantAgent = { id: 'hermes', model: unsupportedVariantModel }
-    const unsupportedVariantDraft: V2AgentDraftLike = {
+    const unsupportedVariantDraft: AgentDraftLike = {
       list: () => [unsupportedVariantAgent],
       update: (_id, update) => update(unsupportedVariantAgent),
     }
-    applyV2ModelOverrides(unsupportedVariantDraft, {
+    applyModelOverrides(unsupportedVariantDraft, {
       hermes: { model: 'opencode/deepseek-v4-flash-free', variant: 'high' },
     })
     assert.strictEqual(
@@ -231,23 +231,23 @@ async function main(): Promise<void> {
       projectFile,
       JSON.stringify({ version: 1, preset: 'secret-marker-value', overrides: {} }),
     )
-    const legacyOnly = readV2ModelConfiguration({ candidates: [projectFile], env: {} })
+    const legacyOnly = readModelConfiguration({ candidates: [projectFile], env: {} })
     assert.deepEqual(legacyOnly.overrides, {})
     assert.deepEqual(legacyOnly.legacyPresetMarker, { source: 'file' })
     assert.doesNotMatch(JSON.stringify(legacyOnly), /secret-marker-value/)
     const unchanged = { id: 'hermes', model: originalModel }
-    const unchangedDraft: V2AgentDraftLike = {
+    const unchangedDraft: AgentDraftLike = {
       list: () => [unchanged],
       update: (_id, update) => update(unchanged),
     }
-    applyV2ModelOverrides(unchangedDraft, legacyOnly.overrides)
+    applyModelOverrides(unchangedDraft, legacyOnly.overrides)
     assert.strictEqual(unchanged.model, originalModel, 'no preset fallback writes a model')
 
     // Invalid project JSON fails closed, and the warning never includes the
     // config contents or falls through to a global file.
     const secretLikeContent = '{"token":"private-config-value"'
     writeFileSync(projectFile, secretLikeContent)
-    const malformed = readV2ModelConfiguration({ candidates: [projectFile, globalFile], env: {} })
+    const malformed = readModelConfiguration({ candidates: [projectFile, globalFile], env: {} })
     assert.deepEqual(malformed.overrides, {})
     assert.ok(malformed.warnings.some((warning) => /invalid JSON/i.test(warning)))
     assert.doesNotMatch(malformed.warnings.join('\n'), /private-config-value|token/i)
@@ -258,7 +258,7 @@ async function main(): Promise<void> {
       globalFile,
       JSON.stringify({ overrides: { agents: { gaia: { model: 'openai/gpt-5.6' } } } }),
     )
-    const invalidRoot = readV2ModelConfiguration({ candidates: [projectFile, globalFile], env: {} })
+    const invalidRoot = readModelConfiguration({ candidates: [projectFile, globalFile], env: {} })
     assert.deepEqual(invalidRoot.overrides, {})
     assert.equal(invalidRoot.warnings.length, 1)
     assert.match(invalidRoot.warnings[0] ?? '', /overrides\.agents.*expected an object/i)
@@ -282,7 +282,7 @@ async function main(): Promise<void> {
         },
       }),
     )
-    const invalidEntries = readV2ModelConfiguration({ candidates: [projectFile], env: {} })
+    const invalidEntries = readModelConfiguration({ candidates: [projectFile], env: {} })
     assert.deepEqual(invalidEntries.overrides, { gaia: { model: 'openai/gpt-5.6' } })
     assert.equal(invalidEntries.warnings.length, 3)
     assert.ok(invalidEntries.warnings.some((warning) => /unsupported agent/i.test(warning)))
@@ -304,11 +304,11 @@ async function main(): Promise<void> {
       id: 'hermes',
       model: { providerID: 'host-provider', id: 'host-default', variant: 'host-variant' },
     }
-    const invalidVariantDraft: V2AgentDraftLike = {
+    const invalidVariantDraft: AgentDraftLike = {
       list: () => [invalidVariantHost],
       update: (_id, update) => update(invalidVariantHost),
     }
-    applyV2ModelOverrides(invalidVariantDraft, invalidEntries.overrides)
+    applyModelOverrides(invalidVariantDraft, invalidEntries.overrides)
     assert.deepEqual(invalidVariantHost.model, {
       providerID: 'host-provider',
       id: 'host-default',
@@ -318,7 +318,7 @@ async function main(): Promise<void> {
     // A second candidate cannot inject a global read failure into project
     // status or override application.
     if (process.platform === 'linux') {
-      const combined = readV2ModelConfiguration({
+      const combined = readModelConfiguration({
         candidates: [projectFile, '/proc/self/mem'],
         env: {},
       })
@@ -334,7 +334,7 @@ async function main(): Promise<void> {
     // /proc/self/mem is a regular file whose read fails on Linux, exercising
     // the distinct filesystem-read failure path rather than the type guard.
     if (process.platform === 'linux') {
-      const unreadable = readV2ModelConfiguration({ candidates: ['/proc/self/mem'], env: {} })
+      const unreadable = readModelConfiguration({ candidates: ['/proc/self/mem'], env: {} })
       assert.deepEqual(unreadable.overrides, {})
       assert.ok(unreadable.warnings.some((warning) => /could not be read/i.test(warning)))
       assert.doesNotMatch(unreadable.warnings.join('\n'), /private-config-value|EIO|mem/i)
@@ -349,13 +349,13 @@ async function main(): Promise<void> {
       JSON.stringify({ overrides: { agents: { hermes: { model: 'openai/gpt-5.6' } } } }),
     )
     symlinkSync(symlinkTarget, symlinkPath)
-    const symlinkConfig = readV2ModelConfiguration({ candidates: [symlinkPath], env: {} })
+    const symlinkConfig = readModelConfiguration({ candidates: [symlinkPath], env: {} })
     assert.deepEqual(symlinkConfig.overrides, {})
     assert.equal(symlinkConfig.warnings.length, 1)
     assert.doesNotMatch(symlinkConfig.warnings.join('\n'), /symlink-target|openai\/gpt-5\.6/)
 
     console.log(
-      '✅ V2 model overrides: explicit models apply; host defaults and legacy markers stay inert',
+      '✅ Model overrides: explicit models apply; host defaults and legacy markers stay inert',
     )
   } finally {
     rmSync(root, { recursive: true, force: true })

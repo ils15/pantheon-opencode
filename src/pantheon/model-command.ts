@@ -24,7 +24,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
 import { KNOWN_AGENTS } from './model-agents.ts'
-import { readV2ModelConfiguration } from './model-overrides.ts'
+import { readModelConfiguration } from './model-overrides.ts'
 import {
   capabilityEntry,
   hasVision,
@@ -703,7 +703,7 @@ async function updateActivePreset(
       }
 
       const activation = options.v2Mode
-        ? 'V2 reads this override during the next agent-config transform on a subsequent OpenCode configuration load; the current session is unchanged.'
+        ? 'Pantheon reads this override during the next agent-config transform on a subsequent OpenCode configuration load; the current session is unchanged.'
         : 'Restart OpenCode for the change to take effect.'
       const base = `Model override set (${scope}): ${agentKey} → ${model} (effort: ${variantInfo.variant ?? 'none'}). ${activation}`
       return visionWarning ? `${base}\n${visionWarning}` : base
@@ -717,7 +717,7 @@ async function updateActivePreset(
       // Remove empty overrides if no agents and no providers etc? Keep minimal.
       await writeActivePresetAtomically(path, shaped, current)
       const activation = options.v2Mode
-        ? 'V2 reads overrides during the next agent-config transform on a subsequent OpenCode configuration load; the current session is unchanged.'
+        ? 'Pantheon reads overrides during the next agent-config transform on a subsequent OpenCode configuration load; the current session is unchanged.'
         : 'Restart OpenCode for the change to take effect.'
       return `Model override removed (${scope}): ${agentKey}. ${activation}`
     }
@@ -738,7 +738,7 @@ async function resolvePerAgentStatus(options: ModelCommandOptions): Promise<{
   const warnings: string[] = []
 
   if (options.v2Mode) {
-    const configuration = readV2ModelConfiguration({ candidates, env })
+    const configuration = readModelConfiguration({ candidates, env })
     warnings.push(...configuration.warnings)
     const agents = KNOWN_AGENTS.map((agent): AgentStatus => {
       const override = configuration.overrides[agent]
@@ -848,19 +848,19 @@ async function renderStatus(options: ModelCommandOptions): Promise<string> {
       : 'Pantheon model configuration per-agent (restart OpenCode after changes):',
   )
   if (options.v2Mode) {
-    lines.push('V2 manual override scope: project only; global overrides are not read or applied.')
+    lines.push('Manual override scope: project only; global overrides are not read or applied.')
     if (legacyPresetMarker) {
       const markerSource =
         legacyPresetMarker.source === 'env' ? 'PANTHEON_MODEL_PRESET' : 'active-preset.json'
       lines.push(
-        `Legacy preset marker present in ${markerSource} — ignored in V2; static presets are retired.`,
+        `Legacy preset marker present in ${markerSource} — ignored; static presets are retired.`,
       )
     } else {
-      lines.push('Legacy preset marker: none (static presets are retired and ignored in V2).')
+      lines.push('Legacy preset marker: none (static presets are retired and ignored).')
     }
     lines.push('Host default remains unchanged when no manual override is set.')
     lines.push(
-      'Manual project-scoped per-agent overrides are read by the V2 agent transform on the next OpenCode configuration load; the current session is unchanged.',
+      'Manual project-scoped per-agent overrides are read by the agent transform on the next OpenCode configuration load; the current session is unchanged.',
     )
   } else if (presetName) {
     const originLabel =
@@ -1038,7 +1038,7 @@ export function createModelCommand(options: ModelCommandOptions = {}): ModelTool
   return {
     pantheon_model: {
       description: options.v2Mode
-        ? 'Show, set, or reset explicit per-agent project-scoped model overrides in active-preset.json. Global overrides are not read or written in V2; future support requires separate explicit authorization. V2 ignores static preset names and PANTHEON_MODEL_PRESET; no wizard or implicit model selection. Status reports project-scoped configured values only and never writes .env or top-level model/small_model.'
+        ? 'Show, set, or reset explicit per-agent project-scoped model overrides in active-preset.json. Global overrides are not read or written; future support requires separate explicit authorization. Ignores static preset names and PANTHEON_MODEL_PRESET; no wizard or implicit model selection. Status reports project-scoped configured values only and never writes .env or top-level model/small_model.'
         : 'Show, set, or reset per-agent model overrides in active-preset.json (project or global). Overrides win over preset; env preset wins over file. Never writes .env or top-level model/small_model.',
       args,
       execute: async (args, _ctx) => {

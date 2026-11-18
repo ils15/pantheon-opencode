@@ -549,8 +549,8 @@ test('flow: nothing to show → no window and NO pin (the next start may still s
 
 test('wiring: the canonical entry registers the window fire-and-forget', async () => {
   const entry = readFileSync(join(root, 'src/plugins/tui/src/index.tsx'), 'utf8')
-  assert.match(entry, /import \{ maybeShowWhatsNewV2 \} from '\.\/whats-new'/)
-  assert.match(entry, /void maybeShowWhatsNewV2\(context\)/, 'never awaited — startup never blocks')
+  assert.match(entry, /import \{ maybeShowWhatsNew \} from '\.\/whats-new'/)
+  assert.match(entry, /void maybeShowWhatsNew\(context\)/, 'never awaited — startup never blocks')
 
   // There is one entry since 2.0: the dist stays single-file, so nothing
   // else may import the whats-new module (coverage lives in the glue test
