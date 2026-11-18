@@ -15,20 +15,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [v2.2.0-beta.9] - 2026-11-18
 
-&lt;!-- Add new changes here.
-     Canonical sections (docs/RELEASING.md): ### 🆕 What's New (curated highlights, ≤6 bullets ≤140 chars) →
-     ### Added / Changed / Deprecated / Removed / Fixed / Security → ### ⚠️ Known Issues / ### ✅ Closed Issues.
-     `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
-     Running apply will move this section to a versioned entry and reset the template below. --&gt;
-
 ### 🆕 What's New
 
-- **Unified Model Override Naming**: Removed legacy `V2` prefixes from model-override, escalation, and what's-new APIs and user messages.
+- **Unified Model Override Naming**: Removed legacy `V2` prefixes from model-override, escalation, and what's-new APIs and messages.
 
 ### Changed
 
-- **pantheon** — `model-overrides.ts`, `model-command.ts`, `jev-escalation.ts`, `plugin.ts`: rename `applyModelOverride`, `applyModelOverrides`, `readModelConfiguration`, `readPresetFile`, `ModelOverride`, `ModelConfiguration`, `AgentDraftLike` and drop `V2` wording from user diagnostics.
+- **pantheon** — `model-overrides.ts`, `model-command.ts`, `jev-escalation.ts`, `plugin.ts`: rename `applyModelOverride`, `applyModelOverrides`, `readModelConfiguration` and drop `V2` diagnostics.
 - **tui** — `whats-new.tsx`, `index.tsx`: rename `maybeShowWhatsNewV2` to `maybeShowWhatsNew`.
+- **tests** — `native-memory-tools.test.ts`: isolate `HOME`/`XDG_CONFIG_HOME` so host memories do not affect isolated test assertions.
+
 ## [v2.2.0-beta.8] - 2026-11-18
 
 ### 🆕 What's New
