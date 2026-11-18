@@ -13,6 +13,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
      Running apply will move this section to a versioned entry and reset the template below. -->
 
+## [v2.2.0-beta.8] - 2026-11-18
+
+### 🆕 What's New
+
+- **Bundled Asset Resolution**: Fixes `import.meta.url` lookup in `src/plugin/index.js` so all 14 agents and 25 skills load globally.
+- **Native Slash Command Dispatch**: `/pantheon*` commands registered via `command.transform` now dispatch their markdown templates.
+
+### Fixed
+
+- **plugin** — `src/plugin.ts`: add `../agents/roster.json`, `../skills`, `../commands`, and `../../AGENTS.global.md` paths for bundled `src/plugin/index.js`.
+- **plugin** — `src/plugin.ts` & `src/pantheon/local-orchestration.ts`: map roster permissions/models to V2 `Agent.Info` and add `../../routing.yml` fallback.
+- **tests** — `tests/package-consumer.test.mjs`: verify bundled `pantheon-opencode/server` provisions agents, skills, commands, and references outside the repo root.
+
 ## [v2.2.0-beta.7] - 2026-11-18
 
 ### 🆕 What's New

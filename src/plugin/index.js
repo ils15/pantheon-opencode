@@ -3268,13 +3268,18 @@ async function loadLocalDecisionPolicy() {
   return policyCache;
 }
 async function readLocalDecisionPolicy() {
-  try {
-    const routingUrl = new URL("../routing.yml", import.meta.url);
-    const parsed = load(await readFile(routingUrl, "utf8"));
-    return parsePolicy(parsed);
-  } catch {
-    return void 0;
+  const candidates = [
+    new URL("../routing.yml", import.meta.url),
+    new URL("../../routing.yml", import.meta.url)
+  ];
+  for (const routingUrl of candidates) {
+    try {
+      const parsed = load(await readFile(routingUrl, "utf8"));
+      return parsePolicy(parsed);
+    } catch {
+    }
   }
+  return void 0;
 }
 function isValidInput(value) {
   if (!isRecord10(value) || !exactKeys(value, INPUT_KEYS) || value.schemaVersion !== 1) return false;
@@ -9372,7 +9377,7 @@ function migrateLegacyStoresAndPurgeStale(workspaceDir, options = {}) {
       const globalMtimeMs = globalCanonicalMemDb ? safeMtimeMs(globalCanonicalMemDb) : 0;
       writeFileSync3(
         join9(pantheonDir, ".migration-v2.json"),
-        `${JSON.stringify({ version: 2, globalMtimeMs, migratedAt: nowIso })}
+        `${JSON.stringify({ version: 2, globalMtimeMs, migratedAt: nowIso }, null, 2)}
 `,
         "utf8"
       );
@@ -17965,7 +17970,9 @@ function readCanonicalRoster() {
   try {
     const candidates = [
       fileURLToPath5(new URL("agents/roster.json", import.meta.url)),
+      fileURLToPath5(new URL("../agents/roster.json", import.meta.url)),
       fileURLToPath5(new URL("../src/agents/roster.json", import.meta.url)),
+      fileURLToPath5(new URL("../../src/agents/roster.json", import.meta.url)),
       fileURLToPath5(new URL("src/agents/roster.json", import.meta.url)),
       path4.join(process.cwd(), "src", "agents", "roster.json")
     ];
@@ -17979,6 +17986,26 @@ function readCanonicalRoster() {
   } catch {
   }
   return {};
+}
+function buildRosterPermissionRules(rawPerm) {
+  if (!rawPerm || typeof rawPerm !== "object" || Array.isArray(rawPerm)) return [];
+  const rules = [];
+  const isEffect = (v) => v === "allow" || v === "deny" || v === "ask";
+  const pushAction = (action, resource, effect) => {
+    rules.push({ action, resource, effect });
+    if (action === "task") rules.push({ action: "subagent", resource, effect });
+    if (action === "bash") rules.push({ action: "shell", resource, effect });
+  };
+  for (const [action, val] of Object.entries(rawPerm)) {
+    if (isEffect(val)) {
+      pushAction(action, "*", val);
+    } else if (val && typeof val === "object" && !Array.isArray(val)) {
+      for (const [res, eff] of Object.entries(val)) {
+        if (isEffect(eff)) pushAction(action, res, eff);
+      }
+    }
+  }
+  return rules;
 }
 function transformAgents(draft) {
   let agents;
@@ -18028,11 +18055,28 @@ function transformAgents(draft) {
             current.name = def.name ?? id;
             current.description = def.description ?? "";
             current.mode = id === "zeus" ? "primary" : def.mode ?? "subagent";
-            if (def.temperature !== void 0) current.temperature = def.temperature;
+            if (def.temperature !== void 0) {
+              current.temperature = def.temperature;
+              const req = current.request;
+              if (req && typeof req === "object" && req.body && typeof req.body === "object") {
+                req.body.temperature = def.temperature;
+              }
+            }
+            if (typeof def.reasoning_effort === "string") {
+              const req = current.request;
+              if (req && typeof req === "object" && req.body && typeof req.body === "object") {
+                req.body.reasoning_effort = def.reasoning_effort;
+              }
+            }
             const override = configuredOverrides[id];
-            if (override?.model) {
-              current.model = override.model;
-              if (override.variant !== void 0) current.variant = override.variant;
+            if (override) {
+              applyV2ModelOverride(current, override);
+            }
+            if (Array.isArray(current.permissions)) {
+              const rules = buildRosterPermissionRules(def.permission);
+              if (rules.length > 0) {
+                current.permissions.push(...rules);
+              }
             }
             const body = typeof def.body === "string" ? def.body.trim() : "";
             current.system = body ? buildPrefixCachedPrompt({ identity: body, currentTurn: POLICY }).prompt : POLICY;
@@ -18103,16 +18147,71 @@ var CANONICAL_SLASH_COMMANDS = [
     description: "Inspect or configure multimodal vision gateway and model status"
   }
 ];
-function transformCommands(draft) {
+function resolveCanonicalCommandsDir() {
+  const candidates = [
+    fileURLToPath5(new URL("commands", import.meta.url)),
+    fileURLToPath5(new URL("../commands", import.meta.url)),
+    fileURLToPath5(new URL("../src/commands", import.meta.url)),
+    fileURLToPath5(new URL("../../src/commands", import.meta.url)),
+    fileURLToPath5(new URL("src/commands", import.meta.url)),
+    path4.join(activeHostWorkspaceDir ?? process.cwd(), "src", "commands")
+  ];
+  for (const candidate of candidates) {
+    if (existsSync16(candidate)) return candidate;
+  }
+  return void 0;
+}
+function readCanonicalCommandTemplate(commandName, fallbackDescription) {
+  try {
+    const dir = resolveCanonicalCommandsDir();
+    if (dir) {
+      const mdPath = path4.join(dir, `${commandName}.md`);
+      if (existsSync16(mdPath)) {
+        const raw = readFileSync14(mdPath, "utf8");
+        const body = raw.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim();
+        if (body) return body;
+      }
+    }
+  } catch {
+  }
+  return `${fallbackDescription}
+
+$ARGUMENTS`;
+}
+function expandCommandTemplate(template, rawArgs) {
+  const args = rawArgs.trim();
+  if (template.includes("$ARGUMENTS")) {
+    return template.replaceAll("$ARGUMENTS", args).trim();
+  }
+  return args ? `${template}
+
+${args}`.trim() : template.trim();
+}
+function transformCommands(draft, sessionDomain) {
   try {
     const maybeAdd = draft.add;
     if (typeof maybeAdd === "function") {
       for (const cmd of CANONICAL_SLASH_COMMANDS) {
+        const template = readCanonicalCommandTemplate(cmd.name, cmd.description);
         try {
           maybeAdd.call(draft, {
             name: cmd.name,
             description: cmd.description,
-            execute: async () => {
+            execute: async (invocation) => {
+              const promptFn = sessionDomain?.prompt;
+              if (typeof promptFn !== "function" || !invocation || typeof invocation !== "object") {
+                return;
+              }
+              const inv = invocation;
+              if (typeof inv.sessionID !== "string" || !inv.sessionID) return;
+              const rawArgs = typeof inv.prompt?.text === "string" ? inv.prompt.text : "";
+              const text2 = expandCommandTemplate(template, rawArgs);
+              await promptFn.call(sessionDomain, {
+                ...inv.prompt ?? {},
+                sessionID: inv.sessionID,
+                text: text2,
+                ...inv.delivery !== void 0 ? { delivery: inv.delivery } : {}
+              });
             }
           });
         } catch {
@@ -18151,18 +18250,25 @@ function transformCommands(draft) {
   }
 }
 function transformReferences(draft) {
-  const globalAgentsPath = fileURLToPath5(new URL("../AGENTS.global.md", import.meta.url));
-  const fallbackAgentsPath = fileURLToPath5(new URL("../AGENTS.md", import.meta.url));
+  const candidates = [
+    fileURLToPath5(new URL("../AGENTS.global.md", import.meta.url)),
+    fileURLToPath5(new URL("../../AGENTS.global.md", import.meta.url)),
+    fileURLToPath5(new URL("../AGENTS.md", import.meta.url)),
+    fileURLToPath5(new URL("../../AGENTS.md", import.meta.url))
+  ];
+  const resolvedPath = candidates.find((p) => existsSync16(p)) ?? fileURLToPath5(new URL("../AGENTS.md", import.meta.url));
   draft.add("pantheon-agents", {
     type: "local",
-    path: existsSync16(globalAgentsPath) ? globalAgentsPath : fallbackAgentsPath,
+    path: resolvedPath,
     description: "Pantheon agent and execution policy"
   });
 }
 function resolveCanonicalSkillsDir() {
   const candidates = [
     fileURLToPath5(new URL("skills", import.meta.url)),
+    fileURLToPath5(new URL("../skills", import.meta.url)),
     fileURLToPath5(new URL("../src/skills", import.meta.url)),
+    fileURLToPath5(new URL("../../src/skills", import.meta.url)),
     fileURLToPath5(new URL("src/skills", import.meta.url)),
     path4.join(activeHostWorkspaceDir ?? process.cwd(), "src", "skills")
   ];
@@ -19181,7 +19287,7 @@ var plugin = define({
       { feature: "agent-transform", register: () => context.agent.transform(transformAgents) },
       {
         feature: "command-transform",
-        register: () => context.command.transform(transformCommands)
+        register: () => context.command.transform((draft) => transformCommands(draft, setupHost.session))
       },
       {
         feature: "reference-transform",

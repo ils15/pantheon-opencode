@@ -184,13 +184,19 @@ export function clearLocalDecisionPolicyCache(): void {
 }
 
 async function readLocalDecisionPolicy(): Promise<LocalDecisionPolicy | undefined> {
-  try {
-    const routingUrl = new URL('../routing.yml', import.meta.url)
-    const parsed = load(await readFile(routingUrl, 'utf8'))
-    return parsePolicy(parsed)
-  } catch {
-    return undefined
+  const candidates = [
+    new URL('../routing.yml', import.meta.url),
+    new URL('../../routing.yml', import.meta.url),
+  ]
+  for (const routingUrl of candidates) {
+    try {
+      const parsed = load(await readFile(routingUrl, 'utf8'))
+      return parsePolicy(parsed)
+    } catch {
+      // try next candidate
+    }
   }
+  return undefined
 }
 
 function isValidInput(value: unknown): value is LocalOrchestrationInput {

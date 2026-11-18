@@ -173,7 +173,12 @@ import {
 } from './pantheon/legacy-store-migration.mjs'
 import { DECISION_EGRESS_ACTION } from './pantheon/local-decision-egress-gate.ts'
 import { applyDecisionRouterToPrompt } from './pantheon/local-decision-prompt.ts'
-import { applyV2ModelOverrides, readV2ModelConfiguration } from './pantheon/model-overrides.ts'
+import {
+  applyV2ModelOverride,
+  applyV2ModelOverrides,
+  readV2ModelConfiguration,
+  type V2ModelOverride,
+} from './pantheon/model-overrides.ts'
 import type { NativeDecisionRequest } from './pantheon/native-decisions.ts'
 import { buildV2VisionPromptContext, type V2VisionRuntime } from './pantheon/native-vision.ts'
 import { buildPrefixCachedPrompt } from './pantheon/prompt-cache-order.ts'
@@ -558,7 +563,9 @@ function readCanonicalRoster(): Record<string, Record<string, unknown>> {
   try {
     const candidates = [
       fileURLToPath(new URL('agents/roster.json', import.meta.url)),
+      fileURLToPath(new URL('../agents/roster.json', import.meta.url)),
       fileURLToPath(new URL('../src/agents/roster.json', import.meta.url)),
+      fileURLToPath(new URL('../../src/agents/roster.json', import.meta.url)),
       fileURLToPath(new URL('src/agents/roster.json', import.meta.url)),
       path.join(process.cwd(), 'src', 'agents', 'roster.json'),
     ]
@@ -571,6 +578,30 @@ function readCanonicalRoster(): Record<string, Record<string, unknown>> {
     }
   } catch {}
   return {}
+}
+
+function buildRosterPermissionRules(
+  rawPerm: unknown,
+): Array<{ action: string; resource: string; effect: 'allow' | 'deny' | 'ask' }> {
+  if (!rawPerm || typeof rawPerm !== 'object' || Array.isArray(rawPerm)) return []
+  const rules: Array<{ action: string; resource: string; effect: 'allow' | 'deny' | 'ask' }> = []
+  const isEffect = (v: unknown): v is 'allow' | 'deny' | 'ask' =>
+    v === 'allow' || v === 'deny' || v === 'ask'
+  const pushAction = (action: string, resource: string, effect: 'allow' | 'deny' | 'ask') => {
+    rules.push({ action, resource, effect })
+    if (action === 'task') rules.push({ action: 'subagent', resource, effect })
+    if (action === 'bash') rules.push({ action: 'shell', resource, effect })
+  }
+  for (const [action, val] of Object.entries(rawPerm as Record<string, unknown>)) {
+    if (isEffect(val)) {
+      pushAction(action, '*', val)
+    } else if (val && typeof val === 'object' && !Array.isArray(val)) {
+      for (const [res, eff] of Object.entries(val as Record<string, unknown>)) {
+        if (isEffect(eff)) pushAction(action, res, eff)
+      }
+    }
+  }
+  return rules
 }
 
 function transformAgents(draft: AgentDraft): void {
@@ -596,7 +627,7 @@ function transformAgents(draft: AgentDraft): void {
     markUnsupported('agent-transform-list')
     return
   }
-  let configuredOverrides: Record<string, { model: string; variant?: string }> = {}
+  let configuredOverrides: Record<string, V2ModelOverride> = {}
   try {
     const modelConfiguration = readV2ModelConfiguration({
       candidates: [
@@ -632,11 +663,28 @@ function transformAgents(draft: AgentDraft): void {
             current.name = def.name ?? id
             current.description = def.description ?? ''
             current.mode = id === 'zeus' ? 'primary' : (def.mode ?? 'subagent')
-            if (def.temperature !== undefined) current.temperature = def.temperature
+            if (def.temperature !== undefined) {
+              current.temperature = def.temperature
+              const req = current.request as { body?: Record<string, unknown> } | undefined
+              if (req && typeof req === 'object' && req.body && typeof req.body === 'object') {
+                req.body.temperature = def.temperature
+              }
+            }
+            if (typeof def.reasoning_effort === 'string') {
+              const req = current.request as { body?: Record<string, unknown> } | undefined
+              if (req && typeof req === 'object' && req.body && typeof req.body === 'object') {
+                req.body.reasoning_effort = def.reasoning_effort
+              }
+            }
             const override = configuredOverrides[id]
-            if (override?.model) {
-              current.model = override.model
-              if (override.variant !== undefined) current.variant = override.variant
+            if (override) {
+              applyV2ModelOverride(current as { id: string; model?: unknown }, override)
+            }
+            if (Array.isArray(current.permissions)) {
+              const rules = buildRosterPermissionRules(def.permission)
+              if (rules.length > 0) {
+                current.permissions.push(...rules)
+              }
             }
             const body = typeof def.body === 'string' ? def.body.trim() : ''
             current.system = body
@@ -721,18 +769,80 @@ const CANONICAL_SLASH_COMMANDS: ReadonlyArray<{ name: string; description: strin
   },
 ]
 
-function transformCommands(draft: CommandDraft): void {
+function resolveCanonicalCommandsDir(): string | undefined {
+  const candidates = [
+    fileURLToPath(new URL('commands', import.meta.url)),
+    fileURLToPath(new URL('../commands', import.meta.url)),
+    fileURLToPath(new URL('../src/commands', import.meta.url)),
+    fileURLToPath(new URL('../../src/commands', import.meta.url)),
+    fileURLToPath(new URL('src/commands', import.meta.url)),
+    path.join(activeHostWorkspaceDir ?? process.cwd(), 'src', 'commands'),
+  ]
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate
+  }
+  return undefined
+}
+
+function readCanonicalCommandTemplate(commandName: string, fallbackDescription: string): string {
+  try {
+    const dir = resolveCanonicalCommandsDir()
+    if (dir) {
+      const mdPath = path.join(dir, `${commandName}.md`)
+      if (existsSync(mdPath)) {
+        const raw = readFileSync(mdPath, 'utf8')
+        const body = raw.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '').trim()
+        if (body) return body
+      }
+    }
+  } catch {
+    /* fallback below */
+  }
+  return `${fallbackDescription}\n\n$ARGUMENTS`
+}
+
+function expandCommandTemplate(template: string, rawArgs: string): string {
+  const args = rawArgs.trim()
+  if (template.includes('$ARGUMENTS')) {
+    return template.replaceAll('$ARGUMENTS', args).trim()
+  }
+  return args ? `${template}\n\n${args}`.trim() : template.trim()
+}
+
+function transformCommands(draft: CommandDraft, sessionDomain?: V2SessionDomain): void {
   // OpenCode 2.2+ CommandEditor exposes `draft.add(definition)` to register
   // slash commands directly from the plugin (single-command install support).
   try {
     const maybeAdd = (draft as unknown as { add?: (def: unknown) => void }).add
     if (typeof maybeAdd === 'function') {
       for (const cmd of CANONICAL_SLASH_COMMANDS) {
+        const template = readCanonicalCommandTemplate(cmd.name, cmd.description)
         try {
           maybeAdd.call(draft, {
             name: cmd.name,
             description: cmd.description,
-            execute: async () => {},
+            execute: async (invocation?: unknown) => {
+              const promptFn = (
+                sessionDomain as { prompt?: (input: Record<string, unknown>) => Promise<unknown> }
+              )?.prompt
+              if (typeof promptFn !== 'function' || !invocation || typeof invocation !== 'object') {
+                return
+              }
+              const inv = invocation as {
+                sessionID?: string
+                prompt?: Record<string, unknown> & { text?: string }
+                delivery?: string
+              }
+              if (typeof inv.sessionID !== 'string' || !inv.sessionID) return
+              const rawArgs = typeof inv.prompt?.text === 'string' ? inv.prompt.text : ''
+              const text = expandCommandTemplate(template, rawArgs)
+              await promptFn.call(sessionDomain, {
+                ...(inv.prompt ?? {}),
+                sessionID: inv.sessionID,
+                text,
+                ...(inv.delivery !== undefined ? { delivery: inv.delivery } : {}),
+              })
+            },
           })
         } catch {
           /* ignore duplicate command registration */
@@ -779,11 +889,17 @@ function transformCommands(draft: CommandDraft): void {
 }
 
 function transformReferences(draft: ReferenceDraft): void {
-  const globalAgentsPath = fileURLToPath(new URL('../AGENTS.global.md', import.meta.url))
-  const fallbackAgentsPath = fileURLToPath(new URL('../AGENTS.md', import.meta.url))
+  const candidates = [
+    fileURLToPath(new URL('../AGENTS.global.md', import.meta.url)),
+    fileURLToPath(new URL('../../AGENTS.global.md', import.meta.url)),
+    fileURLToPath(new URL('../AGENTS.md', import.meta.url)),
+    fileURLToPath(new URL('../../AGENTS.md', import.meta.url)),
+  ]
+  const resolvedPath =
+    candidates.find((p) => existsSync(p)) ?? fileURLToPath(new URL('../AGENTS.md', import.meta.url))
   draft.add('pantheon-agents', {
     type: 'local',
-    path: existsSync(globalAgentsPath) ? globalAgentsPath : fallbackAgentsPath,
+    path: resolvedPath,
     description: 'Pantheon agent and execution policy',
   })
 }
@@ -791,7 +907,9 @@ function transformReferences(draft: ReferenceDraft): void {
 function resolveCanonicalSkillsDir(): string | undefined {
   const candidates = [
     fileURLToPath(new URL('skills', import.meta.url)),
+    fileURLToPath(new URL('../skills', import.meta.url)),
     fileURLToPath(new URL('../src/skills', import.meta.url)),
+    fileURLToPath(new URL('../../src/skills', import.meta.url)),
     fileURLToPath(new URL('src/skills', import.meta.url)),
     path.join(activeHostWorkspaceDir ?? process.cwd(), 'src', 'skills'),
   ]
@@ -3003,7 +3121,8 @@ export const plugin = define({
       { feature: 'agent-transform', register: () => context.agent.transform(transformAgents) },
       {
         feature: 'command-transform',
-        register: () => context.command.transform(transformCommands),
+        register: () =>
+          context.command.transform((draft) => transformCommands(draft, setupHost.session)),
       },
       {
         feature: 'reference-transform',
