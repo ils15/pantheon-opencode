@@ -178,6 +178,17 @@ async function main() {
       process.exit(0)
     }
 
+    // Automatically migrate legacy global memory/persistence/context/goals stores
+    // and purge obsolete files during npm install/update.
+    try {
+      const { ensureLegacyStoresMigratedOnce } = await import(
+        '../src/pantheon/legacy-store-migration.mjs'
+      )
+      ensureLegacyStoresMigratedOnce(configDir)
+    } catch {
+      /* best-effort during postinstall */
+    }
+
     const tuiCopyDir = join(configDir, 'plugins', 'pantheon-tui')
     if (!existsSync(tuiCopyDir)) {
       // beta.5: no TUI install (plugins component omitted) — skip the TUI

@@ -8318,15 +8318,634 @@ function createJ3EscalationObserver(options) {
   };
 }
 
+// src/pantheon/legacy-store-migration.mjs
+import {
+  existsSync as existsSync4,
+  mkdirSync as mkdirSync4,
+  readdirSync,
+  readFileSync as readFileSync6,
+  realpathSync as realpathSync2,
+  rmSync,
+  statSync as statSync2,
+  writeFileSync as writeFileSync3
+} from "node:fs";
+import { dirname as dirname5, join as join9, resolve as resolve4 } from "node:path";
+import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
+var SAFE_SEGMENT_RE = /^[a-zA-Z0-9._:-]{1,128}$/;
+function resolveSafeGlobalConfigDir(env = process.env) {
+  if (env.PANTHEON_HOME?.trim()) {
+    return resolve4(env.PANTHEON_HOME.trim());
+  }
+  if (env.XDG_CONFIG_HOME?.trim()) {
+    return join9(resolve4(env.XDG_CONFIG_HOME.trim()), "opencode");
+  }
+  if (env.NODE_TEST_CONTEXT) {
+    return void 0;
+  }
+  const home = env.HOME?.trim();
+  return home ? join9(resolve4(home), ".config", "opencode") : void 0;
+}
+function toSafeSegment(raw, fallback = "default") {
+  const str = String(raw ?? "").trim().replace(/[^a-zA-Z0-9._:-]/g, "_").slice(0, 128);
+  if (!str || str === "." || str === ".." || !SAFE_SEGMENT_RE.test(str)) {
+    return fallback;
+  }
+  return str;
+}
+function sameFileOrPath(a, b) {
+  if (resolve4(a) === resolve4(b)) return true;
+  if (!existsSync4(a) || !existsSync4(b)) return false;
+  try {
+    return realpathSync2(a) === realpathSync2(b);
+  } catch {
+    return false;
+  }
+}
+function removeFileAndSqliteSidecars(filePath, deleted, dryRun = false) {
+  const dir = dirname5(filePath);
+  const base = filePath.slice(dir.length + 1);
+  const candidates = [
+    filePath,
+    `${filePath}-wal`,
+    `${filePath}-shm`,
+    `${filePath}-journal`,
+    join9(dir, `.${base}.init.lock`)
+  ];
+  for (const candidate of candidates) {
+    if (existsSync4(candidate)) {
+      if (!dryRun) {
+        rmSync(candidate, { recursive: true, force: true });
+      }
+      deleted.push(candidate);
+    }
+  }
+}
+function removeEmptyDirIfPossible(dirPath, deleted, dryRun = false) {
+  if (!existsSync4(dirPath)) return;
+  try {
+    const entries = readdirSync(dirPath);
+    if (entries.length === 0) {
+      if (!dryRun) {
+        rmSync(dirPath, { recursive: true, force: true });
+      }
+      deleted.push(dirPath);
+    }
+  } catch {
+  }
+}
+var migratedWorkspaces = /* @__PURE__ */ new Set();
+function ensureLegacyStoresMigratedOnce(workspaceDir, options = {}) {
+  if (!workspaceDir || typeof workspaceDir !== "string") return null;
+  const key = resolve4(workspaceDir);
+  if (key === "/" || !existsSync4(key)) return null;
+  const globalKey = options.globalConfigDir ? resolve4(options.globalConfigDir) : "";
+  const cacheKey = `${key}::${globalKey}`;
+  if (migratedWorkspaces.has(cacheKey)) return null;
+  migratedWorkspaces.add(cacheKey);
+  return migrateLegacyStoresAndPurgeStale(key, options);
+}
+function migrateLegacyStoresAndPurgeStale(workspaceDir, options = {}) {
+  const root = resolve4(workspaceDir);
+  const dryRun = options.dryRun === true;
+  const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+  let memoriesMigrated = 0;
+  let memoriesExpiredPurged = 0;
+  let vectorTablesDropped = 0;
+  let contextsMigrated = 0;
+  let goalsMigrated = 0;
+  const staleFilesDeleted = [];
+  if (root === "/" || !existsSync4(root)) {
+    return {
+      memoriesMigrated,
+      memoriesExpiredPurged,
+      vectorTablesDropped,
+      contextsMigrated,
+      goalsMigrated,
+      staleFilesDeleted
+    };
+  }
+  let globalCanonicalMemDb = null;
+  if (options.globalConfigDir) {
+    const globalRoot = resolve4(options.globalConfigDir);
+    if (globalRoot !== "/" && globalRoot !== root && existsSync4(globalRoot)) {
+      const globalReport = migrateLegacyStoresAndPurgeStale(globalRoot, { dryRun });
+      memoriesMigrated += globalReport.memoriesMigrated;
+      memoriesExpiredPurged += globalReport.memoriesExpiredPurged;
+      vectorTablesDropped += globalReport.vectorTablesDropped;
+      contextsMigrated += globalReport.contextsMigrated;
+      goalsMigrated += globalReport.goalsMigrated;
+      staleFilesDeleted.push(...globalReport.staleFilesDeleted);
+      globalCanonicalMemDb = join9(globalRoot, ".pantheon", "memory", "memory.db");
+    }
+  }
+  const pantheonDir = join9(root, ".pantheon");
+  const canonicalMemoryDir = join9(pantheonDir, "memory");
+  const canonicalMemoryDbPath = join9(canonicalMemoryDir, "memory.db");
+  const canonicalPersistenceDir = join9(pantheonDir, "persistence");
+  const canonicalGoalsDir = join9(pantheonDir, "goals");
+  const legacyMemoryCandidates = [
+    { path: join9(pantheonDir, "memory.db"), deleteAfter: true },
+    { path: join9(root, "memory", "memory.db"), deleteAfter: true }
+  ];
+  if (globalCanonicalMemDb) {
+    legacyMemoryCandidates.push({ path: globalCanonicalMemDb, deleteAfter: false });
+  }
+  const existingLegacyMemDbs = legacyMemoryCandidates.filter(
+    (c) => existsSync4(c.path) && !sameFileOrPath(c.path, canonicalMemoryDbPath)
+  );
+  if (existingLegacyMemDbs.length > 0 || existsSync4(canonicalMemoryDbPath)) {
+    if (!dryRun) {
+      mkdirSync4(canonicalMemoryDir, { recursive: true });
+    }
+    let targetDb = null;
+    try {
+      if (!dryRun) {
+        targetDb = new DatabaseSync2(canonicalMemoryDbPath);
+        targetDb.exec(`
+          CREATE TABLE IF NOT EXISTS memories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            namespace TEXT NOT NULL,
+            key TEXT NOT NULL,
+            value TEXT NOT NULL,
+            metadata TEXT,
+            created_at TEXT NOT NULL,
+            expires_at TEXT,
+            UNIQUE(namespace, key)
+          );
+          CREATE INDEX IF NOT EXISTS idx_memories_ns_key ON memories(namespace, key);
+        `);
+      }
+      for (const candidate of existingLegacyMemDbs) {
+        let srcDb = null;
+        try {
+          srcDb = new DatabaseSync2(candidate.path, { readOnly: true });
+          const hasTable = srcDb.prepare(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'memories' LIMIT 1"
+          ).get();
+          if (hasTable) {
+            const cols = srcDb.prepare("PRAGMA table_info(memories)").all();
+            const colNames = new Set(cols.map((c) => String(c.name ?? "")));
+            const hasExpires = colNames.has("expires_at");
+            const hasMeta = colNames.has("metadata");
+            const hasCreated = colNames.has("created_at");
+            const selectSql = `
+              SELECT
+                namespace,
+                key,
+                value,
+                ${hasMeta ? "metadata" : "NULL AS metadata"},
+                ${hasCreated ? "created_at" : `'${nowIso}' AS created_at`},
+                ${hasExpires ? "expires_at" : "NULL AS expires_at"}
+              FROM memories
+              WHERE key IS NOT NULL AND trim(key) != ''
+            `;
+            const rows = srcDb.prepare(selectSql).all();
+            for (const row of rows) {
+              const exp = typeof row.expires_at === "string" ? row.expires_at : null;
+              if (exp && exp <= nowIso) {
+                memoriesExpiredPurged += 1;
+                continue;
+              }
+              const ns = String(row.namespace ?? "default").trim() || "default";
+              const key = String(row.key ?? "").trim();
+              const val = String(row.value ?? "");
+              if (!key || !val) continue;
+              if (!dryRun && targetDb) {
+                const res = targetDb.prepare(
+                  `INSERT OR IGNORE INTO memories (namespace, key, value, metadata, created_at, expires_at)
+                     VALUES (?, ?, ?, ?, ?, ?)`
+                ).run(
+                  ns,
+                  key,
+                  val,
+                  typeof row.metadata === "string" ? row.metadata : null,
+                  typeof row.created_at === "string" ? row.created_at : nowIso,
+                  exp
+                );
+                if (res.changes > 0) memoriesMigrated += 1;
+              } else {
+                memoriesMigrated += 1;
+              }
+            }
+          }
+        } catch {
+        } finally {
+          try {
+            srcDb?.close();
+          } catch {
+          }
+        }
+        if (candidate.deleteAfter) {
+          removeFileAndSqliteSidecars(candidate.path, staleFilesDeleted, dryRun);
+          removeEmptyDirIfPossible(dirname5(candidate.path), staleFilesDeleted, dryRun);
+        }
+      }
+      if (!dryRun && targetDb) {
+        try {
+          const del = targetDb.prepare("DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at <= ?").run(nowIso);
+          memoriesExpiredPurged += Number(del.changes ?? 0);
+        } catch {
+        }
+        const legacyVectorObjects = [
+          { type: "trigger", name: "memories_vec_ai" },
+          { type: "trigger", name: "memories_vec_ad" },
+          { type: "trigger", name: "memories_vec_au" },
+          { type: "table", name: "memories_vec" },
+          { type: "table", name: "vec_memories" },
+          { type: "table", name: "memory_embeddings" },
+          { type: "table", name: "memory_vectors" }
+        ];
+        for (const obj of legacyVectorObjects) {
+          try {
+            const exists = targetDb.prepare("SELECT 1 FROM sqlite_master WHERE type = ? AND name = ? LIMIT 1").get(obj.type, obj.name);
+            if (exists) {
+              targetDb.exec(
+                `DROP ${obj.type === "trigger" ? "TRIGGER" : "TABLE"} IF EXISTS ${obj.name}`
+              );
+              vectorTablesDropped += 1;
+            }
+          } catch {
+          }
+        }
+        try {
+          targetDb.exec(`
+            CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+              namespace,
+              key,
+              value,
+              content='memories',
+              content_rowid='id',
+              tokenize='porter unicode61'
+            );
+            CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+              INSERT INTO memories_fts(rowid, namespace, key, value)
+              VALUES (new.id, new.namespace, new.key, new.value);
+            END;
+            CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+              INSERT INTO memories_fts(memories_fts, rowid, namespace, key, value)
+              VALUES ('delete', old.id, old.namespace, old.key, old.value);
+            END;
+            CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+              INSERT INTO memories_fts(memories_fts, rowid, namespace, key, value)
+              VALUES ('delete', old.id, old.namespace, old.key, old.value);
+              INSERT INTO memories_fts(rowid, namespace, key, value)
+              VALUES (new.id, new.namespace, new.key, new.value);
+            END;
+            INSERT INTO memories_fts(memories_fts) VALUES('rebuild');
+          `);
+        } catch {
+        }
+      }
+    } finally {
+      try {
+        targetDb?.close();
+      } catch {
+      }
+    }
+  }
+  const legacyPersistenceDbs = [
+    join9(pantheonDir, "persistence", "project.db"),
+    join9(pantheonDir, "persistence", "global.db"),
+    join9(root, "persistence", "project.db"),
+    join9(root, "persistence", "global.db")
+  ];
+  if (options.globalConfigDir) {
+    const globalRoot = resolve4(options.globalConfigDir);
+    if (globalRoot !== root) {
+      legacyPersistenceDbs.push(
+        join9(globalRoot, "persistence", "global.db"),
+        join9(globalRoot, "persistence", "project.db"),
+        join9(globalRoot, ".pantheon", "persistence", "global.db"),
+        join9(globalRoot, ".pantheon", "persistence", "project.db")
+      );
+    }
+  }
+  const seenPersistenceDbs = /* @__PURE__ */ new Set();
+  for (const dbPath of legacyPersistenceDbs) {
+    if (!existsSync4(dbPath)) continue;
+    const real = (() => {
+      try {
+        return realpathSync2(dbPath);
+      } catch {
+        return resolve4(dbPath);
+      }
+    })();
+    if (seenPersistenceDbs.has(real)) continue;
+    seenPersistenceDbs.add(real);
+    let pDb = null;
+    try {
+      pDb = new DatabaseSync2(dbPath, { readOnly: true });
+      const hasKvStore = pDb.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'kv_store' LIMIT 1").get();
+      if (hasKvStore) {
+        const cols = pDb.prepare("PRAGMA table_info(kv_store)").all();
+        const colNames = new Set(cols.map((c) => String(c.name ?? "")));
+        const hasDeleted = colNames.has("deleted_at");
+        const hasExpires = colNames.has("expires_at");
+        const hasUpdated = colNames.has("updated_at");
+        const hasCreated = colNames.has("created_at");
+        const hasRevision = colNames.has("revision");
+        const rows = pDb.prepare(
+          `SELECT
+               namespace,
+               key,
+               value,
+               ${hasExpires ? "expires_at" : "NULL AS expires_at"},
+               ${hasDeleted ? "deleted_at" : "NULL AS deleted_at"},
+               ${hasCreated ? "created_at" : `'${nowIso}' AS created_at`},
+               ${hasUpdated ? "updated_at" : `'${nowIso}' AS updated_at`},
+               ${hasRevision ? "revision" : "NULL AS revision"}
+             FROM kv_store`
+        ).all();
+        for (const row of rows) {
+          if (row.deleted_at != null) continue;
+          const exp = typeof row.expires_at === "string" ? row.expires_at : null;
+          if (exp && exp <= nowIso) continue;
+          const rawNs = String(row.namespace ?? "checkpoints").trim() || "checkpoints";
+          const safeNs = toSafeSegment(rawNs, "checkpoints");
+          const safeKey = toSafeSegment(row.key, "");
+          if (!safeKey) continue;
+          const valueStr = String(row.value ?? "");
+          const record2 = {
+            session_id: safeKey,
+            key: safeKey,
+            namespace: safeNs,
+            content: valueStr,
+            value: valueStr,
+            created_at: typeof row.created_at === "string" ? row.created_at : nowIso,
+            updated_at: typeof row.updated_at === "string" ? row.updated_at : nowIso,
+            ...exp ? { expires_at: exp } : {},
+            ...typeof row.revision === "number" ? { revision: row.revision } : {}
+          };
+          const targetNamespaces = safeNs === "context" ? ["context", "checkpoints"] : [safeNs];
+          let wroteAny = false;
+          for (const targetNs of targetNamespaces) {
+            const nsDir = join9(canonicalPersistenceDir, targetNs);
+            const outFile = join9(nsDir, `${safeKey}.json`);
+            if (!existsSync4(outFile)) {
+              if (!dryRun) {
+                mkdirSync4(nsDir, { recursive: true });
+                writeFileSync3(
+                  outFile,
+                  JSON.stringify({ ...record2, namespace: targetNs }, null, 2),
+                  "utf8"
+                );
+              }
+              wroteAny = true;
+            }
+          }
+          if (wroteAny) contextsMigrated += 1;
+        }
+      }
+      const hasGoals = pDb.prepare(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pantheon_goals' LIMIT 1"
+      ).get();
+      if (hasGoals) {
+        const goalRows = pDb.prepare("SELECT * FROM pantheon_goals").all();
+        for (const row of goalRows) {
+          const rawId = String(row.goal_id ?? row.id ?? "").trim();
+          const safeId = toSafeSegment(rawId, "");
+          if (!safeId) continue;
+          const outFile = join9(canonicalGoalsDir, `${safeId}.json`);
+          if (!existsSync4(outFile)) {
+            let criteria = [];
+            if (typeof row.criteria_json === "string") {
+              try {
+                const parsed = JSON.parse(row.criteria_json);
+                if (Array.isArray(parsed)) criteria = parsed.map(String);
+              } catch {
+              }
+            }
+            let notes;
+            if (typeof row.notes_json === "string") {
+              try {
+                notes = JSON.parse(row.notes_json);
+              } catch {
+                notes = row.notes_json;
+              }
+            }
+            const goalRecord = {
+              id: safeId,
+              ...typeof row.session_id === "string" ? { session_id: row.session_id } : {},
+              title: String(row.title ?? ""),
+              criteria,
+              status: String(row.status ?? "active"),
+              ...notes !== void 0 ? { notes } : {},
+              created_at: typeof row.created_at === "string" ? row.created_at : nowIso,
+              updated_at: typeof row.updated_at === "string" ? row.updated_at : nowIso,
+              ...typeof row.completed_at === "string" ? { completed_at: row.completed_at } : {}
+            };
+            if (!dryRun) {
+              mkdirSync4(canonicalGoalsDir, { recursive: true });
+              writeFileSync3(outFile, JSON.stringify(goalRecord, null, 2), "utf8");
+            }
+            goalsMigrated += 1;
+          }
+        }
+      }
+    } catch {
+    } finally {
+      try {
+        pDb?.close();
+      } catch {
+      }
+    }
+    removeFileAndSqliteSidecars(dbPath, staleFilesDeleted, dryRun);
+    const parentDir = dirname5(dbPath);
+    if (parentDir !== canonicalPersistenceDir) {
+      removeEmptyDirIfPossible(parentDir, staleFilesDeleted, dryRun);
+    }
+  }
+  for (const legacyCheckpointDir of [
+    join9(pantheonDir, "checkpoints"),
+    join9(pantheonDir, "context")
+  ]) {
+    if (!existsSync4(legacyCheckpointDir)) continue;
+    try {
+      for (const entry of readdirSync(legacyCheckpointDir)) {
+        const fullPath = join9(legacyCheckpointDir, entry);
+        if (!entry.endsWith(".json") || !statSync2(fullPath).isFile()) continue;
+        const rawKey = entry.slice(0, -5);
+        const safeKey = toSafeSegment(rawKey, "");
+        if (!safeKey) continue;
+        const targetDir = join9(canonicalPersistenceDir, "checkpoints");
+        const targetFile = join9(targetDir, `${safeKey}.json`);
+        if (!existsSync4(targetFile)) {
+          try {
+            const parsed = JSON.parse(readFileSync6(fullPath, "utf8"));
+            const normalized = {
+              session_id: safeKey,
+              namespace: "checkpoints",
+              content: typeof parsed.content === "string" ? parsed.content : JSON.stringify(parsed.content ?? parsed),
+              updated_at: typeof parsed.updated_at === "string" ? parsed.updated_at : nowIso
+            };
+            if (!dryRun) {
+              mkdirSync4(targetDir, { recursive: true });
+              writeFileSync3(targetFile, JSON.stringify(normalized, null, 2), "utf8");
+            }
+            contextsMigrated += 1;
+          } catch {
+          }
+        }
+        if (!dryRun) rmSync(fullPath, { force: true });
+        staleFilesDeleted.push(fullPath);
+      }
+      removeEmptyDirIfPossible(legacyCheckpointDir, staleFilesDeleted, dryRun);
+    } catch {
+    }
+  }
+  const legacyPersistenceGoalsDir = join9(canonicalPersistenceDir, "goals");
+  if (existsSync4(legacyPersistenceGoalsDir)) {
+    try {
+      for (const entry of readdirSync(legacyPersistenceGoalsDir)) {
+        const fullPath = join9(legacyPersistenceGoalsDir, entry);
+        if (!entry.endsWith(".json") || !statSync2(fullPath).isFile()) continue;
+        const safeId = toSafeSegment(entry.slice(0, -5), "");
+        if (safeId) {
+          const targetFile = join9(canonicalGoalsDir, `${safeId}.json`);
+          if (!existsSync4(targetFile)) {
+            if (!dryRun) {
+              mkdirSync4(canonicalGoalsDir, { recursive: true });
+              writeFileSync3(targetFile, readFileSync6(fullPath, "utf8"), "utf8");
+            }
+            goalsMigrated += 1;
+          }
+        }
+        if (!dryRun) rmSync(fullPath, { force: true });
+        staleFilesDeleted.push(fullPath);
+      }
+      removeEmptyDirIfPossible(legacyPersistenceGoalsDir, staleFilesDeleted, dryRun);
+    } catch {
+    }
+  }
+  const legacyGoalsJsonPath = join9(pantheonDir, "goals.json");
+  if (existsSync4(legacyGoalsJsonPath)) {
+    try {
+      const parsed = JSON.parse(readFileSync6(legacyGoalsJsonPath, "utf8"));
+      const list = Array.isArray(parsed) ? parsed : parsed && typeof parsed === "object" && Array.isArray(parsed.goals) ? parsed.goals ?? [] : [];
+      for (const item of list) {
+        if (!item || typeof item !== "object") continue;
+        const safeId = toSafeSegment(item.id ?? item.goal_id, "");
+        if (!safeId) continue;
+        const targetFile = join9(canonicalGoalsDir, `${safeId}.json`);
+        if (!existsSync4(targetFile)) {
+          if (!dryRun) {
+            mkdirSync4(canonicalGoalsDir, { recursive: true });
+            writeFileSync3(
+              targetFile,
+              JSON.stringify(
+                {
+                  id: safeId,
+                  title: String(item.title ?? item.description ?? ""),
+                  criteria: Array.isArray(item.criteria) ? item.criteria.map(String) : [],
+                  status: String(item.status ?? "active"),
+                  created_at: typeof item.created_at === "string" ? item.created_at : nowIso,
+                  updated_at: typeof item.updated_at === "string" ? item.updated_at : nowIso
+                },
+                null,
+                2
+              ),
+              "utf8"
+            );
+          }
+          goalsMigrated += 1;
+        }
+      }
+    } catch {
+    }
+    if (!dryRun) rmSync(legacyGoalsJsonPath, { force: true });
+    staleFilesDeleted.push(legacyGoalsJsonPath);
+  }
+  if (existsSync4(canonicalPersistenceDir)) {
+    try {
+      for (const nsEntry of readdirSync(canonicalPersistenceDir, { withFileTypes: true })) {
+        if (!nsEntry.isDirectory()) continue;
+        const nsDir = join9(canonicalPersistenceDir, nsEntry.name);
+        for (const fileEntry of readdirSync(nsDir)) {
+          if (!fileEntry.endsWith(".json")) continue;
+          const filePath = join9(nsDir, fileEntry);
+          try {
+            const data = JSON.parse(readFileSync6(filePath, "utf8"));
+            if (typeof data.expires_at === "string" && data.expires_at <= nowIso) {
+              if (!dryRun) rmSync(filePath, { force: true });
+              staleFilesDeleted.push(filePath);
+            }
+          } catch {
+          }
+        }
+      }
+    } catch {
+    }
+  }
+  const obsoleteTargets = [
+    join9(canonicalMemoryDir, ".memory.db.init.lock"),
+    join9(pantheonDir, ".memory.db.init.lock"),
+    join9(canonicalPersistenceDir, ".global.db.init.lock"),
+    join9(canonicalPersistenceDir, ".project.db.init.lock"),
+    join9(pantheonDir, "fastembed_cache"),
+    join9(pantheonDir, ".fastembed"),
+    join9(root, "fastembed_cache"),
+    join9(root, "plugins", "pantheon-hooks.ts"),
+    join9(root, "plugins", "pantheon-hooks.js"),
+    join9(root, ".opencode", "plugins", "pantheon-hooks.ts"),
+    join9(root, ".opencode", "plugins", "pantheon-hooks.js"),
+    join9(root, "tiers.json"),
+    join9(root, ".opencode", "tiers.json")
+  ];
+  for (const target of obsoleteTargets) {
+    if (existsSync4(target)) {
+      if (!dryRun) rmSync(target, { recursive: true, force: true });
+      staleFilesDeleted.push(target);
+    }
+  }
+  const backupCutoffMs = Date.now() - 30 * 864e5;
+  for (const cfgDir of [root, join9(root, ".opencode")]) {
+    if (!existsSync4(cfgDir)) continue;
+    try {
+      for (const name of readdirSync(cfgDir)) {
+        if (!name.startsWith("opencode.json.bak")) continue;
+        const full = join9(cfgDir, name);
+        try {
+          const st = statSync2(full);
+          if (st.mtimeMs < backupCutoffMs) {
+            if (!dryRun) rmSync(full, { recursive: true, force: true });
+            staleFilesDeleted.push(full);
+          }
+        } catch {
+        }
+      }
+    } catch {
+    }
+  }
+  const migrationCp = join9(pantheonDir, ".migration-checkpoint");
+  if (existsSync4(migrationCp)) {
+    try {
+      const st = statSync2(migrationCp);
+      if (st.mtimeMs < Date.now() - 864e5) {
+        if (!dryRun) rmSync(migrationCp, { force: true });
+        staleFilesDeleted.push(migrationCp);
+      }
+    } catch {
+    }
+  }
+  return {
+    memoriesMigrated,
+    memoriesExpiredPurged,
+    vectorTablesDropped,
+    contextsMigrated,
+    goalsMigrated,
+    staleFilesDeleted
+  };
+}
+
 // src/pantheon/native-vision.ts
 import { lookup as dnsLookup } from "node:dns/promises";
-import { existsSync as existsSync5 } from "node:fs";
+import { existsSync as existsSync6 } from "node:fs";
 import { readFile as readFile4 } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { homedir as homedir4 } from "node:os";
-import { join as join10, resolve as resolve4 } from "node:path";
+import { join as join11, resolve as resolve5 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // src/pantheon/session-guard.ts
@@ -8342,18 +8961,18 @@ function safeSessionPath(id) {
 import { createHash as createHash5, randomUUID as randomUUID2 } from "node:crypto";
 import {
   chmodSync as chmodSync3,
-  existsSync as existsSync4,
-  mkdirSync as mkdirSync4,
-  readdirSync,
-  readFileSync as readFileSync6,
+  existsSync as existsSync5,
+  mkdirSync as mkdirSync5,
+  readdirSync as readdirSync2,
+  readFileSync as readFileSync7,
   renameSync as renameSync2,
-  statSync as statSync2,
+  statSync as statSync3,
   unlinkSync as unlinkSync2,
-  writeFileSync as writeFileSync3
+  writeFileSync as writeFileSync4
 } from "node:fs";
 import { readFile as readFile3, unlink } from "node:fs/promises";
 import { homedir as homedir3, tmpdir } from "node:os";
-import { join as join9 } from "node:path";
+import { join as join10 } from "node:path";
 
 // src/pantheon/vision-local.ts
 var PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -8556,12 +9175,12 @@ function legacyZenBaseURL(modelID) {
   return null;
 }
 function defaultAuthStateDir() {
-  const dataHome = process.env.XDG_DATA_HOME || join9(homedir3(), ".local", "share");
-  return join9(dataHome, "opencode");
+  const dataHome = process.env.XDG_DATA_HOME || join10(homedir3(), ".local", "share");
+  return join10(dataHome, "opencode");
 }
 function v2CredentialDbPath(stateDir, env) {
   const override = env.OPENCODE_DB?.trim();
-  return override ? override : join9(stateDir, "opencode.db");
+  return override ? override : join10(stateDir, "opencode.db");
 }
 var AUTH_TOKEN_FIELDS = [
   "access",
@@ -8594,7 +9213,7 @@ function extractCredentialCellToken(value) {
 }
 async function readV2CredentialToken(providerIDs, stateDir, env) {
   const dbPath = v2CredentialDbPath(stateDir, env);
-  if (!existsSync4(dbPath)) return null;
+  if (!existsSync5(dbPath)) return null;
   let sqlite;
   try {
     sqlite = await import("node:sqlite");
@@ -8626,7 +9245,7 @@ async function readV2CredentialToken(providerIDs, stateDir, env) {
 }
 async function readOpencodeAuthToken(providerIDs, statePath, env = process.env) {
   const stateDir = statePath ?? defaultAuthStateDir();
-  const raw = await readFile3(join9(stateDir, "auth.json"), "utf8").catch(() => null);
+  const raw = await readFile3(join10(stateDir, "auth.json"), "utf8").catch(() => null);
   if (raw !== null) {
     let auth = null;
     try {
@@ -8683,22 +9302,22 @@ async function enforceTempFileCap(maxFiles = TEMP_MAX_FILES, graceMs = TEMP_FILE
 var TEMP_IMAGE_NAME = /^[0-9a-f]{64}\.(?:png|jpe?g|webp|gif)$/;
 var TEMP_STRAY_NAME = /^[0-9a-f]{64}\.(?:png|jpe?g|webp|gif)\.tmp-\d+$/;
 function defaultTempDir() {
-  return join9(tmpdir(), TEMP_DIR_NAME);
+  return join10(tmpdir(), TEMP_DIR_NAME);
 }
 function adoptOrphanTempImages(dir = defaultTempDir(), now = Date.now()) {
   let names;
   try {
-    names = readdirSync(dir);
+    names = readdirSync2(dir);
   } catch {
     return 0;
   }
   const candidates = [];
   for (const name of names) {
     if (!TEMP_IMAGE_NAME.test(name)) continue;
-    const path5 = join9(dir, name);
+    const path5 = join10(dir, name);
     if (tempFileLRU.has(path5)) continue;
     try {
-      candidates.push({ path: path5, mtimeMs: statSync2(path5).mtimeMs });
+      candidates.push({ path: path5, mtimeMs: statSync3(path5).mtimeMs });
     } catch {
     }
   }
@@ -8711,16 +9330,16 @@ function adoptOrphanTempImages(dir = defaultTempDir(), now = Date.now()) {
 function sweepStrayTempWrites(dir = defaultTempDir(), now = Date.now(), graceMs = TEMP_FILE_GRACE_MS) {
   let names;
   try {
-    names = readdirSync(dir);
+    names = readdirSync2(dir);
   } catch {
     return 0;
   }
   let swept = 0;
   for (const name of names) {
     if (!TEMP_STRAY_NAME.test(name)) continue;
-    const path5 = join9(dir, name);
+    const path5 = join10(dir, name);
     try {
-      if (now - statSync2(path5).mtimeMs <= graceMs) continue;
+      if (now - statSync3(path5).mtimeMs <= graceMs) continue;
       unlinkSync2(path5);
       swept += 1;
     } catch {
@@ -8744,7 +9363,7 @@ function decodeDataUrlImage(dataUrl) {
 function writeFileAtomicSync(filePath, data) {
   const tempPath = `${filePath}.tmp-${process.pid}`;
   try {
-    writeFileSync3(tempPath, data, { mode: 384 });
+    writeFileSync4(tempPath, data, { mode: 384 });
     chmodSync3(tempPath, 384);
     renameSync2(tempPath, filePath);
   } catch (err) {
@@ -8757,7 +9376,7 @@ function writeFileAtomicSync(filePath, data) {
 }
 function fileHasContent(filePath, data) {
   try {
-    return readFileSync6(filePath).equals(data);
+    return readFileSync7(filePath).equals(data);
   } catch {
     return false;
   }
@@ -8767,10 +9386,10 @@ function writeTempImageSync(data, mime) {
     reconcileTempImagesOnce();
   } catch {
   }
-  const dir = join9(tmpdir(), TEMP_DIR_NAME);
-  mkdirSync4(dir, { recursive: true, mode: 448 });
+  const dir = join10(tmpdir(), TEMP_DIR_NAME);
+  mkdirSync5(dir, { recursive: true, mode: 448 });
   chmodSync3(dir, 448);
-  const filePath = join9(dir, `${hashContent(data)}.${getExtensionForMime(mime)}`);
+  const filePath = join10(dir, `${hashContent(data)}.${getExtensionForMime(mime)}`);
   if (!fileHasContent(filePath, data)) writeFileAtomicSync(filePath, data);
   chmodSync3(filePath, 384);
   touchTempFile(filePath);
@@ -9097,19 +9716,19 @@ function selectV2VisionModel(available, preferred) {
 }
 function activePresetCandidates2(directory) {
   const home = process.env.HOME || homedir4();
-  const xdg = process.env.XDG_CONFIG_HOME || join10(home, ".config");
+  const xdg = process.env.XDG_CONFIG_HOME || join11(home, ".config");
   return [
-    join10(directory, ".pantheon", "active-preset.json"),
-    join10(xdg, "opencode", ".pantheon", "active-preset.json"),
-    join10(home, ".opencode", ".pantheon", "active-preset.json")
+    join11(directory, ".pantheon", "active-preset.json"),
+    join11(xdg, "opencode", ".pantheon", "active-preset.json"),
+    join11(home, ".opencode", ".pantheon", "active-preset.json")
   ];
 }
 async function configuredVisionModel(directory) {
   const home = process.env.HOME || homedir4();
-  const xdg = process.env.XDG_CONFIG_HOME || join10(home, ".config");
+  const xdg = process.env.XDG_CONFIG_HOME || join11(home, ".config");
   const paths = [
-    join10(directory, ".opencode", "opencode-vision.json"),
-    join10(xdg, "opencode", "opencode-vision.json")
+    join11(directory, ".opencode", "opencode-vision.json"),
+    join11(xdg, "opencode", "opencode-vision.json")
   ];
   for (const path5 of paths) {
     try {
@@ -9275,8 +9894,8 @@ async function imageAttachment(value, directory, signal) {
   } else if (url) {
     throw new Error("only file, HTTP, HTTPS, and base64 image sources are supported");
   } else {
-    const expanded = source.startsWith("~/") ? join10(homedir4(), source.slice(2)) : source;
-    localPath = resolve4(directory, expanded);
+    const expanded = source.startsWith("~/") ? join11(homedir4(), source.slice(2)) : source;
+    localPath = resolve5(directory, expanded);
   }
   let bytes;
   try {
@@ -9297,9 +9916,9 @@ function discoverActiveSessionId(directory) {
     if (isValidSessionId(val)) return val;
   }
   try {
-    const dataHome = process.env.XDG_DATA_HOME || join10(homedir4(), ".local", "share");
-    const dbPath = process.env.OPENCODE_DB || join10(dataHome, "opencode", "opencode.db");
-    if (!existsSync5(dbPath)) return void 0;
+    const dataHome = process.env.XDG_DATA_HOME || join11(homedir4(), ".local", "share");
+    const dbPath = process.env.OPENCODE_DB || join11(dataHome, "opencode", "opencode.db");
+    if (!existsSync6(dbPath)) return void 0;
     const sqlite = __require("node:sqlite");
     const db = new sqlite.DatabaseSync(dbPath, { readOnly: true });
     try {
@@ -9369,11 +9988,11 @@ function createV2VisionTool(runtime) {
         }
         stage = "resolve OpenCode Zen authentication";
         const modelID = modelKey(model);
-        const dataHome = process.env.XDG_DATA_HOME || join10(homedir4(), ".local", "share");
+        const dataHome = process.env.XDG_DATA_HOME || join11(homedir4(), ".local", "share");
         const target = await resolveNativeVisionTarget({
           preset: { vision: { model: modelID } },
           env: { ...process.env, PANTHEON_VISION_MODEL: modelID },
-          authStatePath: join10(dataHome, "opencode")
+          authStatePath: join11(dataHome, "opencode")
         });
         if (!target) {
           throw new Error(
@@ -9452,7 +10071,7 @@ ${layers.history.map((h) => h.trim()).join("\n\n")}`
 
 // src/pantheon/background-job-board.ts
 import { mkdir as mkdir4, rename as rename3, unlink as unlink2, writeFile as writeFile2 } from "node:fs/promises";
-import { dirname as dirname5, join as join11 } from "node:path";
+import { dirname as dirname6, join as join12 } from "node:path";
 
 // src/pantheon/bus.ts
 var PantheonBus = class {
@@ -10004,7 +10623,7 @@ ${lines.join("\n")}`;
   async deleteSignal(alias) {
     const signalDir = this.options.signalDir;
     if (!signalDir) return false;
-    const signalPath = join11(signalDir, `${alias}.signal.json`);
+    const signalPath = join12(signalDir, `${alias}.signal.json`);
     try {
       await unlink2(signalPath);
       return true;
@@ -10086,8 +10705,8 @@ ${lines.join("\n")}`;
   async writeSignal(record2) {
     const signalDir = this.options.signalDir;
     if (!signalDir) return;
-    const signalPath = join11(signalDir, `${record2.alias}.signal.json`);
-    const tmpPath = join11(signalDir, `${record2.alias}.signal.tmp`);
+    const signalPath = join12(signalDir, `${record2.alias}.signal.json`);
+    const tmpPath = join12(signalDir, `${record2.alias}.signal.tmp`);
     const content = JSON.stringify({
       taskID: record2.taskID,
       alias: record2.alias,
@@ -10097,7 +10716,7 @@ ${lines.join("\n")}`;
       timestamp: Date.now()
     });
     try {
-      await mkdir4(dirname5(signalPath), { recursive: true });
+      await mkdir4(dirname6(signalPath), { recursive: true });
       await writeFile2(tmpPath, content, "utf-8");
       await rename3(tmpPath, signalPath);
     } catch (err) {
@@ -10108,7 +10727,7 @@ ${lines.join("\n")}`;
 
 // src/pantheon/file-persistence.ts
 import { mkdir as mkdir5, open as open2, readFile as readFile5, rename as rename4, unlink as unlink3 } from "node:fs/promises";
-import { dirname as dirname6, resolve as resolve5 } from "node:path";
+import { dirname as dirname7, resolve as resolve6 } from "node:path";
 
 // src/pantheon/file-persistence-salvage.ts
 function salvageRecords(content) {
@@ -10197,9 +10816,9 @@ var FilePersistenceAdapter = class {
    */
   constructor(statePath, ops = defaultFsOps) {
     this.statePath = statePath ?? DEFAULT_STATE_PATH;
-    this.dir = dirname6(this.statePath);
+    this.dir = dirname7(this.statePath);
     this.ops = ops;
-    this.lockKey = resolve5(this.statePath);
+    this.lockKey = resolve6(this.statePath);
   }
   /** Ensure the parent directory exists. */
   async ensureDir() {
@@ -10889,15 +11508,15 @@ import { promisify } from "node:util";
 
 // src/pantheon/agent-forge-tool.ts
 import {
-  existsSync as existsSync6,
-  mkdirSync as mkdirSync5,
-  readdirSync as readdirSync2,
-  readFileSync as readFileSync7,
-  realpathSync as realpathSync2,
-  rmSync,
-  writeFileSync as writeFileSync4
+  existsSync as existsSync7,
+  mkdirSync as mkdirSync6,
+  readdirSync as readdirSync3,
+  readFileSync as readFileSync8,
+  realpathSync as realpathSync3,
+  rmSync as rmSync2,
+  writeFileSync as writeFileSync5
 } from "node:fs";
-import { join as join12, resolve as resolve6, sep as sep4 } from "node:path";
+import { join as join13, resolve as resolve7, sep as sep4 } from "node:path";
 
 // src/pantheon/tool-context.ts
 function resolveToolCwd(context, fallbackDir) {
@@ -10920,12 +11539,12 @@ function isValidAgentSlug(value) {
   return typeof value === "string" && SAFE_AGENT_NAME_RE.test(value) && !value.includes("..") && !value.includes("/") && !value.includes("\\");
 }
 function resolveAgentsDir(workspaceDir) {
-  const dir = join12(workspaceDir, ".opencode", "agents");
-  mkdirSync5(dir, { recursive: true });
-  return realpathSync2(dir);
+  const dir = join13(workspaceDir, ".opencode", "agents");
+  mkdirSync6(dir, { recursive: true });
+  return realpathSync3(dir);
 }
 function resolveConfinedAgentFile(agentsDir, name) {
-  const filePath = resolve6(agentsDir, `${name}.md`);
+  const filePath = resolve7(agentsDir, `${name}.md`);
   const prefix = agentsDir.endsWith(sep4) ? agentsDir : `${agentsDir}${sep4}`;
   if (!filePath.startsWith(prefix)) {
     throw new Error("Path traversal denied: agent file escapes .opencode/agents");
@@ -11046,10 +11665,10 @@ function createAgentForgeTool(fallbackDir) {
         const cwd = resolveToolCwd(context, fallbackDir);
         const agentsDir = resolveAgentsDir(cwd);
         if (action === "list") {
-          const files = readdirSync2(agentsDir).filter((f) => f.endsWith(".md") && f.toLowerCase() !== "readme.md").sort();
+          const files = readdirSync3(agentsDir).filter((f) => f.endsWith(".md") && f.toLowerCase() !== "readme.md").sort();
           const agents = files.map((file) => {
             const id = file.replace(/\.md$/, "");
-            const raw = readFileSync7(join12(agentsDir, file), "utf8");
+            const raw = readFileSync8(join13(agentsDir, file), "utf8");
             const descMatch = raw.match(/^description:\s*(.+)$/m);
             return {
               name: id,
@@ -11068,21 +11687,21 @@ function createAgentForgeTool(fallbackDir) {
         }
         const filePath = resolveConfinedAgentFile(agentsDir, name);
         if (action === "inspect") {
-          if (!existsSync6(filePath)) {
+          if (!existsSync7(filePath)) {
             return jsonResult({ ok: false, error: "agent_not_found", name });
           }
           return jsonResult({
             ok: true,
             name,
             path: `.opencode/agents/${name}.md`,
-            content: readFileSync7(filePath, "utf8")
+            content: readFileSync8(filePath, "utf8")
           });
         }
         if (action === "remove") {
-          if (!existsSync6(filePath)) {
+          if (!existsSync7(filePath)) {
             return jsonResult({ ok: false, error: "agent_not_found", name });
           }
-          rmSync(filePath, { force: true });
+          rmSync2(filePath, { force: true });
           return jsonResult({ ok: true, removed: true, name });
         }
         if (action === "create") {
@@ -11115,7 +11734,7 @@ function createAgentForgeTool(fallbackDir) {
             testCommand,
             conventions
           });
-          writeFileSync4(filePath, markdown, "utf8");
+          writeFileSync5(filePath, markdown, "utf8");
           return jsonResult({
             ok: true,
             created: true,
@@ -11138,9 +11757,9 @@ function createAgentForgeTool(fallbackDir) {
 
 // src/pantheon/codemap-tools.ts
 import { createHash as createHash6 } from "node:crypto";
-import { existsSync as existsSync7, mkdirSync as mkdirSync6, readdirSync as readdirSync3, readFileSync as readFileSync8, realpathSync as realpathSync3, statSync as statSync3 } from "node:fs";
-import { extname, join as join13, relative as relative2, resolve as resolve7, sep as sep5 } from "node:path";
-import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
+import { existsSync as existsSync8, mkdirSync as mkdirSync7, readdirSync as readdirSync4, readFileSync as readFileSync9, realpathSync as realpathSync4, statSync as statSync4 } from "node:fs";
+import { extname, join as join14, relative as relative2, resolve as resolve8, sep as sep5 } from "node:path";
+import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
 var IGNORED_DIRS = /* @__PURE__ */ new Set([
   ".git",
   "node_modules",
@@ -11165,17 +11784,17 @@ var SUPPORTED_EXT_LANG = {
 };
 var codemapDbCache = /* @__PURE__ */ new Map();
 function getCodemapDb(workspaceDir) {
-  const memoryDir = join13(workspaceDir, ".pantheon", "memory");
-  mkdirSync6(memoryDir, { recursive: true });
-  const canonicalBase = realpathSync3(memoryDir);
-  const dbPath = resolve7(canonicalBase, "memory.db");
+  const memoryDir = join14(workspaceDir, ".pantheon", "memory");
+  mkdirSync7(memoryDir, { recursive: true });
+  const canonicalBase = realpathSync4(memoryDir);
+  const dbPath = resolve8(canonicalBase, "memory.db");
   const prefix = canonicalBase.endsWith(sep5) ? canonicalBase : `${canonicalBase}${sep5}`;
   if (!dbPath.startsWith(prefix)) {
     throw new Error("Path traversal denied for codemap database");
   }
   const cached = codemapDbCache.get(dbPath);
   if (cached) return cached;
-  const db = new DatabaseSync2(dbPath);
+  const db = new DatabaseSync3(dbPath);
   db.exec(`
     CREATE TABLE IF NOT EXISTS code_files (
       path TEXT PRIMARY KEY,
@@ -11361,7 +11980,7 @@ function collectSourceFiles(currentDir, maxFiles = 500) {
     if (results.length >= maxFiles) return;
     let entries;
     try {
-      entries = readdirSync3(dir, { withFileTypes: true });
+      entries = readdirSync4(dir, { withFileTypes: true });
     } catch {
       return;
     }
@@ -11370,12 +11989,12 @@ function collectSourceFiles(currentDir, maxFiles = 500) {
       const name = String(entry.name);
       if (entry.isDirectory()) {
         if (!IGNORED_DIRS.has(name) && !name.startsWith(".")) {
-          walk(join13(dir, name));
+          walk(join14(dir, name));
         }
       } else if (entry.isFile()) {
         const ext = extname(name).toLowerCase();
         if (ext in SUPPORTED_EXT_LANG) {
-          results.push(join13(dir, name));
+          results.push(join14(dir, name));
         }
       }
     }
@@ -11409,19 +12028,19 @@ function createCodemapTools(fallbackDir) {
       execute: async (input, context) => {
         try {
           const cwd = resolveToolCwd(context, fallbackDir);
-          const canonicalRoot = realpathSync3(cwd);
+          const canonicalRoot = realpathSync4(cwd);
           const subPath = typeof input.path === "string" && input.path.trim() ? input.path.trim() : ".";
-          const targetPath = resolve7(canonicalRoot, subPath);
+          const targetPath = resolve8(canonicalRoot, subPath);
           const rootPrefix = canonicalRoot.endsWith(sep5) ? canonicalRoot : `${canonicalRoot}${sep5}`;
           if (targetPath !== canonicalRoot && !targetPath.startsWith(rootPrefix)) {
             return jsonResult2({ ok: false, error: "path escapes workspace root" });
           }
-          if (!existsSync7(targetPath)) {
+          if (!existsSync8(targetPath)) {
             return jsonResult2({ ok: false, error: `path not found: ${subPath}` });
           }
           const force = input.force === true;
           const db = getCodemapDb(canonicalRoot);
-          const st = statSync3(targetPath);
+          const st = statSync4(targetPath);
           const files = st.isFile() ? [targetPath] : collectSourceFiles(targetPath);
           let indexed = 0;
           let skipped = 0;
@@ -11433,7 +12052,7 @@ function createCodemapTools(fallbackDir) {
             const lang = SUPPORTED_EXT_LANG[ext];
             if (!lang) continue;
             const relFile = relative2(canonicalRoot, filePath).replace(/\\/g, "/");
-            const content = readFileSync8(filePath, "utf8");
+            const content = readFileSync9(filePath, "utf8");
             const hash = createHash6("sha256").update(content).digest("hex");
             const existing = db.prepare("SELECT hash FROM code_files WHERE path = ?").get(relFile);
             if (!force && existing?.hash === hash) {
@@ -11580,19 +12199,19 @@ function createCodemapTools(fallbackDir) {
 
 // src/pantheon/cost-command.ts
 import { execFile } from "node:child_process";
-import { accessSync, constants as constants3, existsSync as existsSync9, statSync as statSync4 } from "node:fs";
-import { delimiter, dirname as dirname8, join as join16 } from "node:path";
+import { accessSync, constants as constants3, existsSync as existsSync10, statSync as statSync5 } from "node:fs";
+import { delimiter, dirname as dirname9, join as join17 } from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 import { z } from "zod";
 
 // src/plugins/tui/src/cost-data.ts
 import { homedir as homedir6 } from "node:os";
-import { join as join15 } from "node:path";
+import { join as join16 } from "node:path";
 
 // src/plugins/tui/src/model-pricing.ts
-import { existsSync as existsSync8, mkdirSync as mkdirSync7, readFileSync as readFileSync9, renameSync as renameSync3, writeFileSync as writeFileSync5 } from "node:fs";
+import { existsSync as existsSync9, mkdirSync as mkdirSync8, readFileSync as readFileSync10, renameSync as renameSync3, writeFileSync as writeFileSync6 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
-import { dirname as dirname7, join as join14 } from "node:path";
+import { dirname as dirname8, join as join15 } from "node:path";
 var MODELS_DEV_URL = "https://models.dev/api.json";
 var PRICING_CACHE_VERSION = 1;
 var PRICING_TTL_MS = 24 * 60 * 60 * 1e3;
@@ -11601,11 +12220,11 @@ function resolvePricingCacheDir(env = process.env) {
   const explicit = env.PANTHEON_HOME?.trim();
   if (explicit !== void 0 && explicit !== "") return explicit;
   const xdg = env.XDG_CONFIG_HOME?.trim();
-  const base = xdg !== void 0 && xdg !== "" ? xdg : join14(homedir5(), ".config");
-  return join14(base, "opencode");
+  const base = xdg !== void 0 && xdg !== "" ? xdg : join15(homedir5(), ".config");
+  return join15(base, "opencode");
 }
 function resolvePricingCachePath(env = process.env) {
-  return join14(resolvePricingCacheDir(env), "cache", "models-dev.json");
+  return join15(resolvePricingCacheDir(env), "cache", "models-dev.json");
 }
 function isRecord19(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -11736,8 +12355,8 @@ function parseCachedCatalog(raw) {
 }
 function readPricingCache(cachePath) {
   try {
-    if (!existsSync8(cachePath)) return void 0;
-    return parseCachedCatalog(JSON.parse(readFileSync9(cachePath, "utf8")));
+    if (!existsSync9(cachePath)) return void 0;
+    return parseCachedCatalog(JSON.parse(readFileSync10(cachePath, "utf8")));
   } catch {
     return void 0;
   }
@@ -11745,8 +12364,8 @@ function readPricingCache(cachePath) {
 function writePricingCache(cachePath, catalog) {
   const temp = `${cachePath}.tmp-${process.pid}`;
   try {
-    mkdirSync7(dirname7(cachePath), { recursive: true });
-    writeFileSync5(temp, `${JSON.stringify(catalog)}
+    mkdirSync8(dirname8(cachePath), { recursive: true });
+    writeFileSync6(temp, `${JSON.stringify(catalog)}
 `, "utf8");
     renameSync3(temp, cachePath);
     return true;
@@ -11895,8 +12514,8 @@ var VERSION_SOURCES = {
 };
 function defaultDbPath() {
   const xdg = process.env.XDG_DATA_HOME;
-  const dataHome = xdg !== void 0 && xdg !== "" ? xdg : join15(homedir6(), ".local", "share");
-  return join15(dataHome, "opencode", "opencode.db");
+  const dataHome = xdg !== void 0 && xdg !== "" ? xdg : join16(homedir6(), ".local", "share");
+  return join16(dataHome, "opencode", "opencode.db");
 }
 function requestedVersion() {
   const configured = process.env.PANTHEON_OPENCODE_VERSION;
@@ -11955,7 +12574,7 @@ function priceTokens(pricing, provider, model, tokens) {
 
 // src/pantheon/cost-command.ts
 var __filename = fileURLToPath4(import.meta.url);
-var __dirname = dirname8(__filename);
+var __dirname = dirname9(__filename);
 var costArgs = {
   days: z.number().int().min(1).max(365).optional().describe("Number of rolling 24-hour days of history to include (default 7)."),
   session: z.string().min(1).optional().describe(
@@ -11967,7 +12586,7 @@ var costArgs = {
 };
 function findExistingDb(override) {
   const candidate = override === void 0 ? resolveCostDbPath() : resolveCostDbPath({ dbPath: override });
-  return existsSync9(candidate) ? candidate : void 0;
+  return existsSync10(candidate) ? candidate : void 0;
 }
 var COST_AGGREGATE_SQL = {
   message: (sessionId) => `
@@ -12584,7 +13203,7 @@ var NODE_SQLITE_MIN_VERSION = "22.5";
 function defaultIsExecutable(path5) {
   try {
     accessSync(path5, constants3.X_OK);
-    return statSync4(path5).isFile();
+    return statSync5(path5).isFile();
   } catch {
     return false;
   }
@@ -12611,7 +13230,7 @@ function resolveNodeFromPath(env, isExecutable = defaultIsExecutable) {
   for (const dir of pathValue.split(delimiter)) {
     if (dir === "") continue;
     for (const ext of extensions) {
-      const candidate = join16(dir, `node${ext}`);
+      const candidate = join17(dir, `node${ext}`);
       if (isExecutable(candidate)) return candidate;
     }
   }
@@ -12675,8 +13294,8 @@ async function queryWithCliFallback(dbPath, days, deps) {
   const env = deps?.env ?? process.env;
   const execFileAsync = deps?.execFile ?? defaultExecFile;
   const isExecutable = deps?.isExecutable ?? defaultIsExecutable;
-  const costScript = join16(__dirname, "..", "..", "scripts", "cost.mjs");
-  if (!existsSync9(costScript)) {
+  const costScript = join17(__dirname, "..", "..", "scripts", "cost.mjs");
+  if (!existsSync10(costScript)) {
     throw new Error(`CLI fallback script not found: ${costScript}`);
   }
   const node = resolveNodeExecutable(env, isExecutable);
@@ -12817,7 +13436,7 @@ ${renderMarkdown(query, days, pricing)}`;
 import { z as z3 } from "zod";
 
 // src/pantheon/deepwork/plan-projection.ts
-import { join as join17 } from "node:path";
+import { join as join18 } from "node:path";
 function generateChatProjection(plan, cwd = process.cwd()) {
   const pendingDecisions = plan.decisions_needed.filter((d) => d.status === "pending");
   const totalTasks = plan.tasks.length;
@@ -12827,8 +13446,8 @@ function generateChatProjection(plan, cwd = process.cwd()) {
   const readyTasks = plan.tasks.filter((t) => t.state === "ready");
   const nextTask = inProgressTasks[0] || readyTasks[0] || plan.tasks.find((t) => t.state === "pending");
   const percent = totalTasks > 0 ? Math.round(doneTasks / totalTasks * 100) : 0;
-  const absPlanMd = join17(cwd, ".pantheon", "deepwork", plan.plan_id, "PLAN.md");
-  const absPlanJson = join17(cwd, ".pantheon", "deepwork", plan.plan_id, "plan.json");
+  const absPlanMd = join18(cwd, ".pantheon", "deepwork", plan.plan_id, "PLAN.md");
+  const absPlanJson = join18(cwd, ".pantheon", "deepwork", plan.plan_id, "plan.json");
   const lines = [];
   lines.push(`### Deepwork: ${plan.title} (\`${plan.plan_id}\`)`);
   lines.push(
@@ -13002,9 +13621,9 @@ function buildApprovalQuestion(plan) {
 }
 
 // src/pantheon/deepwork/plan-tracker.ts
-import { existsSync as existsSync10 } from "node:fs";
+import { existsSync as existsSync11 } from "node:fs";
 import { appendFile as appendFile3, mkdir as mkdir6, readdir, readFile as readFile6, rename as rename5, writeFile as writeFile3 } from "node:fs/promises";
-import { join as join18 } from "node:path";
+import { join as join19 } from "node:path";
 
 // src/pantheon/execution-receipt.ts
 import { createHash as createHash7 } from "node:crypto";
@@ -13214,7 +13833,7 @@ var DeepworkPlanSchema = z2.object({
 
 // src/pantheon/deepwork/plan-tracker.ts
 function deepworkRootDir(cwd = process.cwd()) {
-  return join18(cwd, ".pantheon", "deepwork");
+  return join19(cwd, ".pantheon", "deepwork");
 }
 function deepworkPlanDir(cwd = process.cwd(), slug) {
   const safeSlug = String(slug ?? "").trim();
@@ -13223,16 +13842,16 @@ function deepworkPlanDir(cwd = process.cwd(), slug) {
       `Invalid deepwork plan slug "${slug}": path traversal or separator characters are not allowed`
     );
   }
-  return join18(deepworkRootDir(cwd), safeSlug);
+  return join19(deepworkRootDir(cwd), safeSlug);
 }
 function deepworkPlanJsonPath(cwd = process.cwd(), slug) {
-  return join18(deepworkPlanDir(cwd, slug), "plan.json");
+  return join19(deepworkPlanDir(cwd, slug), "plan.json");
 }
 function deepworkPlanMdPath(cwd = process.cwd(), slug) {
-  return join18(deepworkPlanDir(cwd, slug), "PLAN.md");
+  return join19(deepworkPlanDir(cwd, slug), "PLAN.md");
 }
 function deepworkJournalPath(cwd = process.cwd(), slug) {
-  return join18(deepworkPlanDir(cwd, slug), "journal.ndjson");
+  return join19(deepworkPlanDir(cwd, slug), "journal.ndjson");
 }
 function computeTaskReadiness(plan) {
   const doneIds = new Set(plan.tasks.filter((t) => t.state === "done").map((t) => t.id));
@@ -13613,7 +14232,7 @@ async function resolvePlanDecision(cwd = process.cwd(), slug, decisionId, chosen
 }
 async function listPlans(cwd = process.cwd()) {
   const root = deepworkRootDir(cwd);
-  if (!existsSync10(root)) return [];
+  if (!existsSync11(root)) return [];
   const entries = await readdir(root, { withFileTypes: true });
   const result = [];
   for (const entry of entries) {
@@ -13913,7 +14532,7 @@ ${JSON.stringify(todoPayload, null, 2)}
 
 // src/pantheon/hashline/tool.ts
 import { readFile as readFile7, rename as rename6, rm, writeFile as writeFile4 } from "node:fs/promises";
-import { isAbsolute as isAbsolute4, resolve as resolve8, sep as sep6 } from "node:path";
+import { isAbsolute as isAbsolute4, resolve as resolve9, sep as sep6 } from "node:path";
 import { z as z4 } from "zod";
 var hashlineEditOpArgs = {
   op: z4.enum(["replace", "append", "prepend", "delete"]),
@@ -13927,9 +14546,9 @@ var hashlineEditArgs = {
   edits: z4.array(z4.object(hashlineEditOpArgs)).min(1)
 };
 function resolveFile(file, ctx) {
-  if (isAbsolute4(file)) return { ok: true, file: resolve8(file) };
-  const base = resolve8(ctx.worktree ?? ctx.directory ?? process.cwd());
-  const resolved = resolve8(base, file);
+  if (isAbsolute4(file)) return { ok: true, file: resolve9(file) };
+  const base = resolve9(ctx.worktree ?? ctx.directory ?? process.cwd());
+  const resolved = resolve9(base, file);
   if (resolved !== base && !resolved.startsWith(base + sep6)) {
     return {
       ok: false,
@@ -14180,7 +14799,7 @@ import { randomBytes } from "node:crypto";
 import { constants as constants4 } from "node:fs";
 import { lstat as lstat2, mkdir as mkdir7, open as open3, rename as rename7, unlink as unlink4 } from "node:fs/promises";
 import { homedir as homedir7 } from "node:os";
-import { basename as basename2, dirname as dirname9, join as join19, resolve as resolve9 } from "node:path";
+import { basename as basename2, dirname as dirname10, join as join20, resolve as resolve10 } from "node:path";
 import { z as z5 } from "zod";
 var MODEL_REF_PATTERN2 = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._:+-]*$/;
 var SAFE_PRESET_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -14265,11 +14884,11 @@ async function syncDirectory(path5) {
   }
 }
 async function createTemporaryFile(path5) {
-  const directory = dirname9(path5);
+  const directory = dirname10(path5);
   const prefix = `.${basename2(path5)}.tmp-`;
   const flags = constants4.O_WRONLY | constants4.O_CREAT | constants4.O_EXCL | NO_FOLLOW;
   for (let attempt = 0; attempt < 10; attempt += 1) {
-    const temporaryPath = join19(directory, `${prefix}${randomBytes(16).toString("hex")}`);
+    const temporaryPath = join20(directory, `${prefix}${randomBytes(16).toString("hex")}`);
     try {
       return { path: temporaryPath, file: await open3(temporaryPath, flags, DEFAULT_FILE_MODE) };
     } catch (error) {
@@ -14305,7 +14924,7 @@ async function atomicReplace(path5, content, mode, label, expectedExists) {
     }
     await rename7(temporaryPath, path5);
     renamed = true;
-    await syncDirectory(dirname9(path5));
+    await syncDirectory(dirname10(path5));
   } finally {
     await temporaryFile?.close().catch(() => void 0);
     if (temporaryPath !== void 0 && !renamed) {
@@ -14336,30 +14955,30 @@ function envValue(options) {
   return options.env ?? process.env;
 }
 function projectConfigPath(options) {
-  return options.projectConfigPath ?? join19(options.cwd ?? process.cwd(), "opencode.json");
+  return options.projectConfigPath ?? join20(options.cwd ?? process.cwd(), "opencode.json");
 }
 function defaultGlobalConfigPath(options) {
   const env = envValue(options);
   const home = env.HOME?.trim() || homedir7();
-  const xdg = env.XDG_CONFIG_HOME?.trim() || join19(home, ".config");
-  return join19(xdg, "opencode", "opencode.json");
+  const xdg = env.XDG_CONFIG_HOME?.trim() || join20(home, ".config");
+  return join20(xdg, "opencode", "opencode.json");
 }
 function globalConfigCandidates(options) {
   if (options.globalConfigPath !== void 0) return [options.globalConfigPath];
   const canonical = defaultGlobalConfigPath(options);
   const home = envValue(options).HOME?.trim() || homedir7();
-  const legacy = join19(home, ".opencode", "opencode.json");
+  const legacy = join20(home, ".opencode", "opencode.json");
   return [.../* @__PURE__ */ new Set([canonical, legacy])];
 }
 function activePresetCandidatesList(options) {
   if (options.activePresetCandidates !== void 0) {
-    return options.activePresetCandidates.map((p) => resolve9(p));
+    return options.activePresetCandidates.map((p) => resolve10(p));
   }
-  const projectPreset = join19(dirname9(projectConfigPath(options)), ".pantheon", "active-preset.json");
+  const projectPreset = join20(dirname10(projectConfigPath(options)), ".pantheon", "active-preset.json");
   const globalPresets = globalConfigCandidates(options).map(
-    (p) => join19(dirname9(p), ".pantheon", "active-preset.json")
+    (p) => join20(dirname10(p), ".pantheon", "active-preset.json")
   );
-  return [...new Set([projectPreset, ...globalPresets].map((p) => resolve9(p)))];
+  return [...new Set([projectPreset, ...globalPresets].map((p) => resolve10(p)))];
 }
 function presetPathForScope(options, scope) {
   const candidates = activePresetCandidatesList(options);
@@ -14371,7 +14990,7 @@ function presetPathForScope(options, scope) {
   const second = candidates[1];
   if (second) return second;
   const globalCandidates = globalConfigCandidates(options).map(
-    (p) => resolve9(join19(dirname9(p), ".pantheon", "active-preset.json"))
+    (p) => resolve10(join20(dirname10(p), ".pantheon", "active-preset.json"))
   );
   const fallback = globalCandidates[0] ?? candidates[0];
   if (!fallback) throw new ModelCommandError("global preset path is unavailable");
@@ -14501,7 +15120,7 @@ function validateMutationAuthorization(args, scope) {
 }
 async function writeActivePresetAtomically(path5, data, current) {
   const backupPath = `${path5}.bak`;
-  await mkdir7(dirname9(path5), { recursive: true });
+  await mkdir7(dirname10(path5), { recursive: true });
   const originalMode = current.mode ?? DEFAULT_FILE_MODE;
   const backupMode = originalMode & 384;
   const backup = await regularPath(backupPath, "configuration backup");
@@ -14938,562 +15557,6 @@ import {
 } from "node:fs";
 import { join as join21, resolve as resolve11, sep as sep7 } from "node:path";
 import { DatabaseSync as DatabaseSync4 } from "node:sqlite";
-
-// src/pantheon/legacy-store-migration.mjs
-import {
-  existsSync as existsSync11,
-  mkdirSync as mkdirSync8,
-  readdirSync as readdirSync4,
-  readFileSync as readFileSync10,
-  realpathSync as realpathSync4,
-  rmSync as rmSync2,
-  statSync as statSync5,
-  writeFileSync as writeFileSync6
-} from "node:fs";
-import { dirname as dirname10, join as join20, resolve as resolve10 } from "node:path";
-import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
-var SAFE_SEGMENT_RE = /^[a-zA-Z0-9._:-]{1,128}$/;
-function toSafeSegment(raw, fallback = "default") {
-  const str = String(raw ?? "").trim().replace(/[^a-zA-Z0-9._:-]/g, "_").slice(0, 128);
-  if (!str || str === "." || str === ".." || !SAFE_SEGMENT_RE.test(str)) {
-    return fallback;
-  }
-  return str;
-}
-function sameFileOrPath(a, b) {
-  if (resolve10(a) === resolve10(b)) return true;
-  if (!existsSync11(a) || !existsSync11(b)) return false;
-  try {
-    return realpathSync4(a) === realpathSync4(b);
-  } catch {
-    return false;
-  }
-}
-function removeFileAndSqliteSidecars(filePath, deleted, dryRun = false) {
-  const dir = dirname10(filePath);
-  const base = filePath.slice(dir.length + 1);
-  const candidates = [
-    filePath,
-    `${filePath}-wal`,
-    `${filePath}-shm`,
-    `${filePath}-journal`,
-    join20(dir, `.${base}.init.lock`)
-  ];
-  for (const candidate of candidates) {
-    if (existsSync11(candidate)) {
-      if (!dryRun) {
-        rmSync2(candidate, { recursive: true, force: true });
-      }
-      deleted.push(candidate);
-    }
-  }
-}
-function removeEmptyDirIfPossible(dirPath, deleted, dryRun = false) {
-  if (!existsSync11(dirPath)) return;
-  try {
-    const entries = readdirSync4(dirPath);
-    if (entries.length === 0) {
-      if (!dryRun) {
-        rmSync2(dirPath, { recursive: true, force: true });
-      }
-      deleted.push(dirPath);
-    }
-  } catch {
-  }
-}
-var migratedWorkspaces = /* @__PURE__ */ new Set();
-function ensureLegacyStoresMigratedOnce(workspaceDir, options = {}) {
-  const key = resolve10(workspaceDir);
-  if (migratedWorkspaces.has(key)) return null;
-  migratedWorkspaces.add(key);
-  return migrateLegacyStoresAndPurgeStale(key, options);
-}
-function migrateLegacyStoresAndPurgeStale(workspaceDir, options = {}) {
-  const root = resolve10(workspaceDir);
-  const dryRun = options.dryRun === true;
-  const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-  let memoriesMigrated = 0;
-  let memoriesExpiredPurged = 0;
-  let vectorTablesDropped = 0;
-  let contextsMigrated = 0;
-  let goalsMigrated = 0;
-  const staleFilesDeleted = [];
-  const pantheonDir = join20(root, ".pantheon");
-  const canonicalMemoryDir = join20(pantheonDir, "memory");
-  const canonicalMemoryDbPath = join20(canonicalMemoryDir, "memory.db");
-  const canonicalPersistenceDir = join20(pantheonDir, "persistence");
-  const canonicalGoalsDir = join20(pantheonDir, "goals");
-  const legacyMemoryCandidates = [
-    { path: join20(pantheonDir, "memory.db"), deleteAfter: true },
-    { path: join20(root, "memory", "memory.db"), deleteAfter: true }
-  ];
-  if (options.globalConfigDir) {
-    const globalRoot = resolve10(options.globalConfigDir);
-    if (globalRoot !== root) {
-      legacyMemoryCandidates.push(
-        { path: join20(globalRoot, "memory", "memory.db"), deleteAfter: true },
-        { path: join20(globalRoot, ".pantheon", "memory.db"), deleteAfter: true }
-      );
-    }
-  }
-  const existingLegacyMemDbs = legacyMemoryCandidates.filter(
-    (c) => existsSync11(c.path) && !sameFileOrPath(c.path, canonicalMemoryDbPath)
-  );
-  if (existingLegacyMemDbs.length > 0 || existsSync11(canonicalMemoryDbPath)) {
-    if (!dryRun) {
-      mkdirSync8(canonicalMemoryDir, { recursive: true });
-    }
-    let targetDb = null;
-    try {
-      if (!dryRun) {
-        targetDb = new DatabaseSync3(canonicalMemoryDbPath);
-        targetDb.exec(`
-          CREATE TABLE IF NOT EXISTS memories (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            namespace TEXT NOT NULL,
-            key TEXT NOT NULL,
-            value TEXT NOT NULL,
-            metadata TEXT,
-            created_at TEXT NOT NULL,
-            expires_at TEXT,
-            UNIQUE(namespace, key)
-          );
-          CREATE INDEX IF NOT EXISTS idx_memories_ns_key ON memories(namespace, key);
-        `);
-      }
-      for (const candidate of existingLegacyMemDbs) {
-        let srcDb = null;
-        try {
-          srcDb = new DatabaseSync3(candidate.path, { readOnly: true });
-          const hasTable = srcDb.prepare(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'memories' LIMIT 1"
-          ).get();
-          if (hasTable) {
-            const cols = srcDb.prepare("PRAGMA table_info(memories)").all();
-            const colNames = new Set(cols.map((c) => String(c.name ?? "")));
-            const hasExpires = colNames.has("expires_at");
-            const hasMeta = colNames.has("metadata");
-            const hasCreated = colNames.has("created_at");
-            const selectSql = `
-              SELECT
-                namespace,
-                key,
-                value,
-                ${hasMeta ? "metadata" : "NULL AS metadata"},
-                ${hasCreated ? "created_at" : `'${nowIso}' AS created_at`},
-                ${hasExpires ? "expires_at" : "NULL AS expires_at"}
-              FROM memories
-              WHERE key IS NOT NULL AND trim(key) != ''
-            `;
-            const rows = srcDb.prepare(selectSql).all();
-            for (const row of rows) {
-              const exp = typeof row.expires_at === "string" ? row.expires_at : null;
-              if (exp && exp <= nowIso) {
-                memoriesExpiredPurged += 1;
-                continue;
-              }
-              const ns = String(row.namespace ?? "default").trim() || "default";
-              const key = String(row.key ?? "").trim();
-              const val = String(row.value ?? "");
-              if (!key || !val) continue;
-              if (!dryRun && targetDb) {
-                const res = targetDb.prepare(
-                  `INSERT OR IGNORE INTO memories (namespace, key, value, metadata, created_at, expires_at)
-                     VALUES (?, ?, ?, ?, ?, ?)`
-                ).run(
-                  ns,
-                  key,
-                  val,
-                  typeof row.metadata === "string" ? row.metadata : null,
-                  typeof row.created_at === "string" ? row.created_at : nowIso,
-                  exp
-                );
-                if (res.changes > 0) memoriesMigrated += 1;
-              } else {
-                memoriesMigrated += 1;
-              }
-            }
-          }
-        } catch {
-        } finally {
-          try {
-            srcDb?.close();
-          } catch {
-          }
-        }
-        if (candidate.deleteAfter) {
-          removeFileAndSqliteSidecars(candidate.path, staleFilesDeleted, dryRun);
-          removeEmptyDirIfPossible(dirname10(candidate.path), staleFilesDeleted, dryRun);
-        }
-      }
-      if (!dryRun && targetDb) {
-        try {
-          const del = targetDb.prepare("DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at <= ?").run(nowIso);
-          memoriesExpiredPurged += Number(del.changes ?? 0);
-        } catch {
-        }
-        const legacyVectorObjects = [
-          { type: "trigger", name: "memories_vec_ai" },
-          { type: "trigger", name: "memories_vec_ad" },
-          { type: "trigger", name: "memories_vec_au" },
-          { type: "table", name: "memories_vec" },
-          { type: "table", name: "vec_memories" },
-          { type: "table", name: "memory_embeddings" },
-          { type: "table", name: "memory_vectors" }
-        ];
-        for (const obj of legacyVectorObjects) {
-          try {
-            const exists = targetDb.prepare("SELECT 1 FROM sqlite_master WHERE type = ? AND name = ? LIMIT 1").get(obj.type, obj.name);
-            if (exists) {
-              targetDb.exec(
-                `DROP ${obj.type === "trigger" ? "TRIGGER" : "TABLE"} IF EXISTS ${obj.name}`
-              );
-              vectorTablesDropped += 1;
-            }
-          } catch {
-          }
-        }
-        try {
-          targetDb.exec(`
-            CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
-              namespace,
-              key,
-              value,
-              content='memories',
-              content_rowid='id',
-              tokenize='porter unicode61'
-            );
-            CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
-              INSERT INTO memories_fts(rowid, namespace, key, value)
-              VALUES (new.id, new.namespace, new.key, new.value);
-            END;
-            CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
-              INSERT INTO memories_fts(memories_fts, rowid, namespace, key, value)
-              VALUES ('delete', old.id, old.namespace, old.key, old.value);
-            END;
-            CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
-              INSERT INTO memories_fts(memories_fts, rowid, namespace, key, value)
-              VALUES ('delete', old.id, old.namespace, old.key, old.value);
-              INSERT INTO memories_fts(rowid, namespace, key, value)
-              VALUES (new.id, new.namespace, new.key, new.value);
-            END;
-            INSERT INTO memories_fts(memories_fts) VALUES('rebuild');
-          `);
-        } catch {
-        }
-      }
-    } finally {
-      try {
-        targetDb?.close();
-      } catch {
-      }
-    }
-  }
-  const legacyPersistenceDbs = [
-    join20(pantheonDir, "persistence", "project.db"),
-    join20(pantheonDir, "persistence", "global.db"),
-    join20(root, "persistence", "project.db"),
-    join20(root, "persistence", "global.db")
-  ];
-  if (options.globalConfigDir) {
-    const globalRoot = resolve10(options.globalConfigDir);
-    if (globalRoot !== root) {
-      legacyPersistenceDbs.push(
-        join20(globalRoot, "persistence", "global.db"),
-        join20(globalRoot, "persistence", "project.db"),
-        join20(globalRoot, ".pantheon", "persistence", "global.db"),
-        join20(globalRoot, ".pantheon", "persistence", "project.db")
-      );
-    }
-  }
-  const seenPersistenceDbs = /* @__PURE__ */ new Set();
-  for (const dbPath of legacyPersistenceDbs) {
-    if (!existsSync11(dbPath)) continue;
-    const real = (() => {
-      try {
-        return realpathSync4(dbPath);
-      } catch {
-        return resolve10(dbPath);
-      }
-    })();
-    if (seenPersistenceDbs.has(real)) continue;
-    seenPersistenceDbs.add(real);
-    let pDb = null;
-    try {
-      pDb = new DatabaseSync3(dbPath, { readOnly: true });
-      const hasKvStore = pDb.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'kv_store' LIMIT 1").get();
-      if (hasKvStore) {
-        const cols = pDb.prepare("PRAGMA table_info(kv_store)").all();
-        const colNames = new Set(cols.map((c) => String(c.name ?? "")));
-        const hasDeleted = colNames.has("deleted_at");
-        const hasExpires = colNames.has("expires_at");
-        const hasUpdated = colNames.has("updated_at");
-        const hasCreated = colNames.has("created_at");
-        const hasRevision = colNames.has("revision");
-        const rows = pDb.prepare(
-          `SELECT
-               namespace,
-               key,
-               value,
-               ${hasExpires ? "expires_at" : "NULL AS expires_at"},
-               ${hasDeleted ? "deleted_at" : "NULL AS deleted_at"},
-               ${hasCreated ? "created_at" : `'${nowIso}' AS created_at`},
-               ${hasUpdated ? "updated_at" : `'${nowIso}' AS updated_at`},
-               ${hasRevision ? "revision" : "NULL AS revision"}
-             FROM kv_store`
-        ).all();
-        for (const row of rows) {
-          if (row.deleted_at != null) continue;
-          const exp = typeof row.expires_at === "string" ? row.expires_at : null;
-          if (exp && exp <= nowIso) continue;
-          const rawNs = String(row.namespace ?? "checkpoints").trim() || "checkpoints";
-          const safeNs = toSafeSegment(rawNs, "checkpoints");
-          const safeKey = toSafeSegment(row.key, "");
-          if (!safeKey) continue;
-          const valueStr = String(row.value ?? "");
-          const record2 = {
-            session_id: safeKey,
-            key: safeKey,
-            namespace: safeNs,
-            content: valueStr,
-            value: valueStr,
-            created_at: typeof row.created_at === "string" ? row.created_at : nowIso,
-            updated_at: typeof row.updated_at === "string" ? row.updated_at : nowIso,
-            ...exp ? { expires_at: exp } : {},
-            ...typeof row.revision === "number" ? { revision: row.revision } : {}
-          };
-          const targetNamespaces = safeNs === "context" ? ["context", "checkpoints"] : [safeNs];
-          let wroteAny = false;
-          for (const targetNs of targetNamespaces) {
-            const nsDir = join20(canonicalPersistenceDir, targetNs);
-            const outFile = join20(nsDir, `${safeKey}.json`);
-            if (!existsSync11(outFile)) {
-              if (!dryRun) {
-                mkdirSync8(nsDir, { recursive: true });
-                writeFileSync6(
-                  outFile,
-                  JSON.stringify({ ...record2, namespace: targetNs }, null, 2),
-                  "utf8"
-                );
-              }
-              wroteAny = true;
-            }
-          }
-          if (wroteAny) contextsMigrated += 1;
-        }
-      }
-      const hasGoals = pDb.prepare(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pantheon_goals' LIMIT 1"
-      ).get();
-      if (hasGoals) {
-        const goalRows = pDb.prepare("SELECT * FROM pantheon_goals").all();
-        for (const row of goalRows) {
-          const rawId = String(row.goal_id ?? row.id ?? "").trim();
-          const safeId = toSafeSegment(rawId, "");
-          if (!safeId) continue;
-          const outFile = join20(canonicalGoalsDir, `${safeId}.json`);
-          if (!existsSync11(outFile)) {
-            let criteria = [];
-            if (typeof row.criteria_json === "string") {
-              try {
-                const parsed = JSON.parse(row.criteria_json);
-                if (Array.isArray(parsed)) criteria = parsed.map(String);
-              } catch {
-              }
-            }
-            let notes;
-            if (typeof row.notes_json === "string") {
-              try {
-                notes = JSON.parse(row.notes_json);
-              } catch {
-                notes = row.notes_json;
-              }
-            }
-            const goalRecord = {
-              id: safeId,
-              ...typeof row.session_id === "string" ? { session_id: row.session_id } : {},
-              title: String(row.title ?? ""),
-              criteria,
-              status: String(row.status ?? "active"),
-              ...notes !== void 0 ? { notes } : {},
-              created_at: typeof row.created_at === "string" ? row.created_at : nowIso,
-              updated_at: typeof row.updated_at === "string" ? row.updated_at : nowIso,
-              ...typeof row.completed_at === "string" ? { completed_at: row.completed_at } : {}
-            };
-            if (!dryRun) {
-              mkdirSync8(canonicalGoalsDir, { recursive: true });
-              writeFileSync6(outFile, JSON.stringify(goalRecord, null, 2), "utf8");
-            }
-            goalsMigrated += 1;
-          }
-        }
-      }
-    } catch {
-    } finally {
-      try {
-        pDb?.close();
-      } catch {
-      }
-    }
-    removeFileAndSqliteSidecars(dbPath, staleFilesDeleted, dryRun);
-    const parentDir = dirname10(dbPath);
-    if (parentDir !== canonicalPersistenceDir) {
-      removeEmptyDirIfPossible(parentDir, staleFilesDeleted, dryRun);
-    }
-  }
-  for (const legacyCheckpointDir of [
-    join20(pantheonDir, "checkpoints"),
-    join20(pantheonDir, "context")
-  ]) {
-    if (!existsSync11(legacyCheckpointDir)) continue;
-    try {
-      for (const entry of readdirSync4(legacyCheckpointDir)) {
-        const fullPath = join20(legacyCheckpointDir, entry);
-        if (!entry.endsWith(".json") || !statSync5(fullPath).isFile()) continue;
-        const rawKey = entry.slice(0, -5);
-        const safeKey = toSafeSegment(rawKey, "");
-        if (!safeKey) continue;
-        const targetDir = join20(canonicalPersistenceDir, "checkpoints");
-        const targetFile = join20(targetDir, `${safeKey}.json`);
-        if (!existsSync11(targetFile)) {
-          try {
-            const parsed = JSON.parse(readFileSync10(fullPath, "utf8"));
-            const normalized = {
-              session_id: safeKey,
-              namespace: "checkpoints",
-              content: typeof parsed.content === "string" ? parsed.content : JSON.stringify(parsed.content ?? parsed),
-              updated_at: typeof parsed.updated_at === "string" ? parsed.updated_at : nowIso
-            };
-            if (!dryRun) {
-              mkdirSync8(targetDir, { recursive: true });
-              writeFileSync6(targetFile, JSON.stringify(normalized, null, 2), "utf8");
-            }
-            contextsMigrated += 1;
-          } catch {
-          }
-        }
-        if (!dryRun) rmSync2(fullPath, { force: true });
-        staleFilesDeleted.push(fullPath);
-      }
-      removeEmptyDirIfPossible(legacyCheckpointDir, staleFilesDeleted, dryRun);
-    } catch {
-    }
-  }
-  const legacyPersistenceGoalsDir = join20(canonicalPersistenceDir, "goals");
-  if (existsSync11(legacyPersistenceGoalsDir)) {
-    try {
-      for (const entry of readdirSync4(legacyPersistenceGoalsDir)) {
-        const fullPath = join20(legacyPersistenceGoalsDir, entry);
-        if (!entry.endsWith(".json") || !statSync5(fullPath).isFile()) continue;
-        const safeId = toSafeSegment(entry.slice(0, -5), "");
-        if (safeId) {
-          const targetFile = join20(canonicalGoalsDir, `${safeId}.json`);
-          if (!existsSync11(targetFile)) {
-            if (!dryRun) {
-              mkdirSync8(canonicalGoalsDir, { recursive: true });
-              writeFileSync6(targetFile, readFileSync10(fullPath, "utf8"), "utf8");
-            }
-            goalsMigrated += 1;
-          }
-        }
-        if (!dryRun) rmSync2(fullPath, { force: true });
-        staleFilesDeleted.push(fullPath);
-      }
-      removeEmptyDirIfPossible(legacyPersistenceGoalsDir, staleFilesDeleted, dryRun);
-    } catch {
-    }
-  }
-  const legacyGoalsJsonPath = join20(pantheonDir, "goals.json");
-  if (existsSync11(legacyGoalsJsonPath)) {
-    try {
-      const parsed = JSON.parse(readFileSync10(legacyGoalsJsonPath, "utf8"));
-      const list = Array.isArray(parsed) ? parsed : parsed && typeof parsed === "object" && Array.isArray(parsed.goals) ? parsed.goals ?? [] : [];
-      for (const item of list) {
-        if (!item || typeof item !== "object") continue;
-        const safeId = toSafeSegment(item.id ?? item.goal_id, "");
-        if (!safeId) continue;
-        const targetFile = join20(canonicalGoalsDir, `${safeId}.json`);
-        if (!existsSync11(targetFile)) {
-          if (!dryRun) {
-            mkdirSync8(canonicalGoalsDir, { recursive: true });
-            writeFileSync6(
-              targetFile,
-              JSON.stringify(
-                {
-                  id: safeId,
-                  title: String(item.title ?? item.description ?? ""),
-                  criteria: Array.isArray(item.criteria) ? item.criteria.map(String) : [],
-                  status: String(item.status ?? "active"),
-                  created_at: typeof item.created_at === "string" ? item.created_at : nowIso,
-                  updated_at: typeof item.updated_at === "string" ? item.updated_at : nowIso
-                },
-                null,
-                2
-              ),
-              "utf8"
-            );
-          }
-          goalsMigrated += 1;
-        }
-      }
-    } catch {
-    }
-    if (!dryRun) rmSync2(legacyGoalsJsonPath, { force: true });
-    staleFilesDeleted.push(legacyGoalsJsonPath);
-  }
-  if (existsSync11(canonicalPersistenceDir)) {
-    try {
-      for (const nsEntry of readdirSync4(canonicalPersistenceDir, { withFileTypes: true })) {
-        if (!nsEntry.isDirectory()) continue;
-        const nsDir = join20(canonicalPersistenceDir, nsEntry.name);
-        for (const fileEntry of readdirSync4(nsDir)) {
-          if (!fileEntry.endsWith(".json")) continue;
-          const filePath = join20(nsDir, fileEntry);
-          try {
-            const data = JSON.parse(readFileSync10(filePath, "utf8"));
-            if (typeof data.expires_at === "string" && data.expires_at <= nowIso) {
-              if (!dryRun) rmSync2(filePath, { force: true });
-              staleFilesDeleted.push(filePath);
-            }
-          } catch {
-          }
-        }
-      }
-    } catch {
-    }
-  }
-  const obsoleteTargets = [
-    join20(canonicalMemoryDir, ".memory.db.init.lock"),
-    join20(pantheonDir, ".memory.db.init.lock"),
-    join20(canonicalPersistenceDir, ".global.db.init.lock"),
-    join20(canonicalPersistenceDir, ".project.db.init.lock"),
-    join20(pantheonDir, "fastembed_cache"),
-    join20(pantheonDir, ".fastembed"),
-    join20(root, "fastembed_cache"),
-    join20(root, "plugins", "pantheon-hooks.ts"),
-    join20(root, "plugins", "pantheon-hooks.js"),
-    join20(root, ".opencode", "plugins", "pantheon-hooks.ts"),
-    join20(root, ".opencode", "plugins", "pantheon-hooks.js"),
-    join20(root, "tiers.json"),
-    join20(root, ".opencode", "tiers.json")
-  ];
-  for (const target of obsoleteTargets) {
-    if (existsSync11(target)) {
-      if (!dryRun) rmSync2(target, { recursive: true, force: true });
-      staleFilesDeleted.push(target);
-    }
-  }
-  return {
-    memoriesMigrated,
-    memoriesExpiredPurged,
-    vectorTablesDropped,
-    contextsMigrated,
-    goalsMigrated,
-    staleFilesDeleted
-  };
-}
-
-// src/pantheon/native-memory-tools.ts
 var SAFE_SEGMENT_RE2 = /^[a-zA-Z0-9._:-]{1,128}$/;
 var MAX_MEMORY_VALUE_BYTES = 65536;
 function isSafeSegment(value) {
@@ -15510,11 +15573,15 @@ function resolveConfinedPath(baseDir, ...segments) {
   return candidate;
 }
 var dbCache = /* @__PURE__ */ new Map();
-function getMemoryDb(workspaceDir) {
+function runAutoMigration(workspaceDir) {
   try {
-    ensureLegacyStoresMigratedOnce(workspaceDir);
+    const globalConfigDir = resolveSafeGlobalConfigDir();
+    ensureLegacyStoresMigratedOnce(workspaceDir, globalConfigDir ? { globalConfigDir } : {});
   } catch {
   }
+}
+function getMemoryDb(workspaceDir) {
+  runAutoMigration(workspaceDir);
   const memoryDir = join21(workspaceDir, ".pantheon", "memory");
   mkdirSync9(memoryDir, { recursive: true });
   const dbPath = resolveConfinedPath(memoryDir, "memory.db");
@@ -15874,10 +15941,7 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
             return jsonResult3({ ok: false, error: "content must be a non-empty string" });
           }
           const cwd = resolveToolCwd(context, fallbackDir);
-          try {
-            ensureLegacyStoresMigratedOnce(cwd);
-          } catch {
-          }
+          runAutoMigration(cwd);
           const baseDir = join21(cwd, ".pantheon", "persistence");
           const dir = resolveConfinedPath(baseDir, ns);
           mkdirSync9(dir, { recursive: true });
@@ -15935,14 +15999,21 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
             });
           }
           const cwd = resolveToolCwd(context, fallbackDir);
-          try {
-            ensureLegacyStoresMigratedOnce(cwd);
-          } catch {
-          }
+          runAutoMigration(cwd);
           const baseDir = join21(cwd, ".pantheon", "persistence");
           const dir = resolveConfinedPath(baseDir, ns);
           const filePath = resolveConfinedPath(dir, `${sessionId}.json`);
           if (!existsSync12(filePath)) {
+            const globalDir = resolveSafeGlobalConfigDir();
+            if (globalDir) {
+              const globalNsDir = join21(globalDir, ".pantheon", "persistence", ns);
+              if (existsSync12(join21(globalNsDir, `${sessionId}.json`))) {
+                const globalFile = resolveConfinedPath(globalNsDir, `${sessionId}.json`);
+                if (existsSync12(globalFile)) {
+                  return jsonResult3(JSON.parse(readFileSync11(globalFile, "utf8")));
+                }
+              }
+            }
             return jsonResult3({ ok: false, error: "not_found", session_id: sessionId });
           }
           return jsonResult3(JSON.parse(readFileSync11(filePath, "utf8")));
@@ -15981,10 +16052,7 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
             return jsonResult3({ ok: false, error: "id must be a safe identifier" });
           }
           const cwd = resolveToolCwd(context, fallbackDir);
-          try {
-            ensureLegacyStoresMigratedOnce(cwd);
-          } catch {
-          }
+          runAutoMigration(cwd);
           const goalsDir = join21(cwd, ".pantheon", "goals");
           const filePath = resolveConfinedPath(goalsDir, `${rawId}.json`);
           const nowIso = (/* @__PURE__ */ new Date()).toISOString();
@@ -16020,10 +16088,7 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
       execute: async (input, context) => {
         try {
           const cwd = resolveToolCwd(context, fallbackDir);
-          try {
-            ensureLegacyStoresMigratedOnce(cwd);
-          } catch {
-          }
+          runAutoMigration(cwd);
           const goalsDir = join21(cwd, ".pantheon", "goals");
           mkdirSync9(goalsDir, { recursive: true });
           if (typeof input.id === "string" && input.id.trim()) {
@@ -16068,10 +16133,7 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
             return jsonResult3({ ok: false, error: "valid goal id is required" });
           }
           const cwd = resolveToolCwd(context, fallbackDir);
-          try {
-            ensureLegacyStoresMigratedOnce(cwd);
-          } catch {
-          }
+          runAutoMigration(cwd);
           const goalsDir = join21(cwd, ".pantheon", "goals");
           const filePath = resolveConfinedPath(goalsDir, `${id}.json`);
           if (!existsSync12(filePath)) return jsonResult3({ ok: false, error: "not_found", id });
@@ -16112,10 +16174,7 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
             return jsonResult3({ ok: false, error: "valid goal id is required" });
           }
           const cwd = resolveToolCwd(context, fallbackDir);
-          try {
-            ensureLegacyStoresMigratedOnce(cwd);
-          } catch {
-          }
+          runAutoMigration(cwd);
           const goalsDir = join21(cwd, ".pantheon", "goals");
           const filePath = resolveConfinedPath(goalsDir, `${id}.json`);
           if (!existsSync12(filePath)) return jsonResult3({ ok: false, error: "not_found", id });
@@ -18486,6 +18545,23 @@ var activeCleanups = [];
 var plugin = define({
   id: "pantheon-opencode",
   async setup(context) {
+    const setupHost = hostDomains(context);
+    const hostLocationDir = setupHost.location?.directory;
+    const safeGlobalConfigDir = resolveSafeGlobalConfigDir();
+    if (hostLocationDir) {
+      try {
+        ensureLegacyStoresMigratedOnce(
+          hostLocationDir,
+          safeGlobalConfigDir ? { globalConfigDir: safeGlobalConfigDir } : {}
+        );
+      } catch {
+      }
+    } else if (safeGlobalConfigDir) {
+      try {
+        ensureLegacyStoresMigratedOnce(safeGlobalConfigDir);
+      } catch {
+      }
+    }
     let idleEnforcer;
     try {
       idleEnforcer = installV2TodoEnforcer(context);
@@ -18553,9 +18629,11 @@ var plugin = define({
       () => false
     );
     if (!toolsRegistered) markUnsupported("tool-transform");
-    const compactionCtx = hostDomains(context).session;
+    const compactionCtx = setupHost.session;
     if (compactionCtx?.hook) {
-      const goalStore = new GoalStore({ dir: ".pantheon/goals" });
+      const goalStore = new GoalStore({
+        dir: hostLocationDir ? path4.join(hostLocationDir, ".pantheon", "goals") : ".pantheon/goals"
+      });
       const p9Sink = createTelemetrySink();
       p9TelemetrySink = p9Sink;
       try {

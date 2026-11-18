@@ -23,6 +23,25 @@ import { DatabaseSync } from 'node:sqlite'
 
 const SAFE_SEGMENT_RE = /^[a-zA-Z0-9._:-]{1,128}$/
 
+/**
+ * Resolve the user's global OpenCode config directory safely.
+ * Inside Node's test runner (`NODE_TEST_CONTEXT`), returns `undefined` unless
+ * `PANTHEON_HOME` or `XDG_CONFIG_HOME` was explicitly redirected by the test.
+ */
+export function resolveSafeGlobalConfigDir(env = process.env) {
+  if (env.PANTHEON_HOME?.trim()) {
+    return resolve(env.PANTHEON_HOME.trim())
+  }
+  if (env.XDG_CONFIG_HOME?.trim()) {
+    return join(resolve(env.XDG_CONFIG_HOME.trim()), 'opencode')
+  }
+  if (env.NODE_TEST_CONTEXT) {
+    return undefined
+  }
+  const home = env.HOME?.trim()
+  return home ? join(resolve(home), '.config', 'opencode') : undefined
+}
+
 function toSafeSegment(raw, fallback = 'default') {
   const str = String(raw ?? '')
     .trim()
@@ -86,9 +105,13 @@ export function resetLegacyMigrationCacheForTests() {
 }
 
 export function ensureLegacyStoresMigratedOnce(workspaceDir, options = {}) {
+  if (!workspaceDir || typeof workspaceDir !== 'string') return null
   const key = resolve(workspaceDir)
-  if (migratedWorkspaces.has(key)) return null
-  migratedWorkspaces.add(key)
+  if (key === '/' || !existsSync(key)) return null
+  const globalKey = options.globalConfigDir ? resolve(options.globalConfigDir) : ''
+  const cacheKey = `${key}::${globalKey}`
+  if (migratedWorkspaces.has(cacheKey)) return null
+  migratedWorkspaces.add(cacheKey)
   return migrateLegacyStoresAndPurgeStale(key, options)
 }
 
@@ -104,6 +127,33 @@ export function migrateLegacyStoresAndPurgeStale(workspaceDir, options = {}) {
   let goalsMigrated = 0
   const staleFilesDeleted = []
 
+  if (root === '/' || !existsSync(root)) {
+    return {
+      memoriesMigrated,
+      memoriesExpiredPurged,
+      vectorTablesDropped,
+      contextsMigrated,
+      goalsMigrated,
+      staleFilesDeleted,
+    }
+  }
+
+  // Migrate and clean up global OpenCode config dir first (preserving its canonical .pantheon stores)
+  let globalCanonicalMemDb = null
+  if (options.globalConfigDir) {
+    const globalRoot = resolve(options.globalConfigDir)
+    if (globalRoot !== '/' && globalRoot !== root && existsSync(globalRoot)) {
+      const globalReport = migrateLegacyStoresAndPurgeStale(globalRoot, { dryRun })
+      memoriesMigrated += globalReport.memoriesMigrated
+      memoriesExpiredPurged += globalReport.memoriesExpiredPurged
+      vectorTablesDropped += globalReport.vectorTablesDropped
+      contextsMigrated += globalReport.contextsMigrated
+      goalsMigrated += globalReport.goalsMigrated
+      staleFilesDeleted.push(...globalReport.staleFilesDeleted)
+      globalCanonicalMemDb = join(globalRoot, '.pantheon', 'memory', 'memory.db')
+    }
+  }
+
   const pantheonDir = join(root, '.pantheon')
   const canonicalMemoryDir = join(pantheonDir, 'memory')
   const canonicalMemoryDbPath = join(canonicalMemoryDir, 'memory.db')
@@ -115,14 +165,9 @@ export function migrateLegacyStoresAndPurgeStale(workspaceDir, options = {}) {
     { path: join(pantheonDir, 'memory.db'), deleteAfter: true },
     { path: join(root, 'memory', 'memory.db'), deleteAfter: true },
   ]
-  if (options.globalConfigDir) {
-    const globalRoot = resolve(options.globalConfigDir)
-    if (globalRoot !== root) {
-      legacyMemoryCandidates.push(
-        { path: join(globalRoot, 'memory', 'memory.db'), deleteAfter: true },
-        { path: join(globalRoot, '.pantheon', 'memory.db'), deleteAfter: true },
-      )
-    }
+  if (globalCanonicalMemDb) {
+    // Non-destructively inherit global canonical memories into the workspace store
+    legacyMemoryCandidates.push({ path: globalCanonicalMemDb, deleteAfter: false })
   }
 
   const existingLegacyMemDbs = legacyMemoryCandidates.filter(
@@ -638,6 +683,43 @@ export function migrateLegacyStoresAndPurgeStale(workspaceDir, options = {}) {
     if (existsSync(target)) {
       if (!dryRun) rmSync(target, { recursive: true, force: true })
       staleFilesDeleted.push(target)
+    }
+  }
+
+  // Purge stale opencode.json.bak* sidecars older than 30 days in config roots
+  const backupCutoffMs = Date.now() - 30 * 86_400_000
+  for (const cfgDir of [root, join(root, '.opencode')]) {
+    if (!existsSync(cfgDir)) continue
+    try {
+      for (const name of readdirSync(cfgDir)) {
+        if (!name.startsWith('opencode.json.bak')) continue
+        const full = join(cfgDir, name)
+        try {
+          const st = statSync(full)
+          if (st.mtimeMs < backupCutoffMs) {
+            if (!dryRun) rmSync(full, { recursive: true, force: true })
+            staleFilesDeleted.push(full)
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // Purge abandoned migration checkpoints older than 24 hours
+  const migrationCp = join(pantheonDir, '.migration-checkpoint')
+  if (existsSync(migrationCp)) {
+    try {
+      const st = statSync(migrationCp)
+      if (st.mtimeMs < Date.now() - 86_400_000) {
+        if (!dryRun) rmSync(migrationCp, { force: true })
+        staleFilesDeleted.push(migrationCp)
+      }
+    } catch {
+      /* ignore */
     }
   }
 

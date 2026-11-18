@@ -9,6 +9,7 @@ import {
   resetLegacyMigrationCacheForTests,
 } from '../../src/pantheon/legacy-store-migration.mjs'
 import { createNativeMemoryAndPersistenceTools } from '../../src/pantheon/native-memory-tools.ts'
+import plugin from '../../src/plugin.ts'
 
 test('migrates legacy memory.db, persistence global/project.db, checkpoints, and goals while deleting stale artifacts', async () => {
   const workDir = mkdtempSync(join(tmpdir(), 'pantheon-legacy-migrate-'))
@@ -312,5 +313,124 @@ test('migrateLegacyStoresAndPurgeStale migrates legacy memory/memory.db and purg
     assert.equal(existsSync(join(targetDir, '.pantheon', 'memory', 'memory.db')), true)
   } finally {
     rmSync(targetDir, { recursive: true, force: true })
+  }
+})
+
+test('plugin.setup migrates global and workspace legacy stores without CLI init and preserves global data across workspaces', async () => {
+  const xdgConfig = mkdtempSync(join(tmpdir(), 'pantheon-plugin-xdg-'))
+  const globalDir = join(xdgConfig, 'opencode')
+  const workspaceA = mkdtempSync(join(tmpdir(), 'pantheon-plugin-ws-a-'))
+  const workspaceB = mkdtempSync(join(tmpdir(), 'pantheon-plugin-ws-b-'))
+  const prevXdg = process.env.XDG_CONFIG_HOME
+  const prevHome = process.env.PANTHEON_HOME
+  try {
+    resetLegacyMigrationCacheForTests()
+    delete process.env.PANTHEON_HOME
+    process.env.XDG_CONFIG_HOME = xdgConfig
+    mkdirSync(globalDir, { recursive: true })
+
+    // Seed global legacy memory/memory.db and persistence/global.db
+    const globalMemDir = join(globalDir, 'memory')
+    mkdirSync(globalMemDir, { recursive: true })
+    const gMem = new DatabaseSync(join(globalMemDir, 'memory.db'))
+    gMem.exec(
+      'CREATE TABLE memories (id INTEGER PRIMARY KEY AUTOINCREMENT, namespace TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, created_at TEXT NOT NULL);',
+    )
+    gMem
+      .prepare('INSERT INTO memories (namespace, key, value, created_at) VALUES (?, ?, ?, ?)')
+      .run('default', 'global-convention', 'Always use native SQLite', '2026-05-01T00:00:00.000Z')
+    gMem.close()
+
+    const globalPersDir = join(globalDir, 'persistence')
+    mkdirSync(globalPersDir, { recursive: true })
+    const gPers = new DatabaseSync(join(globalPersDir, 'global.db'))
+    gPers.exec(
+      'CREATE TABLE kv_store (id INTEGER PRIMARY KEY AUTOINCREMENT, namespace TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);',
+    )
+    gPers
+      .prepare(
+        'INSERT INTO kv_store (namespace, key, value, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+      )
+      .run(
+        'checkpoints',
+        'global-ses-1',
+        '{"step":"global-checkpoint"}',
+        '2026-05-01T00:00:00.000Z',
+        '2026-05-01T00:00:00.000Z',
+      )
+    gPers.close()
+
+    // Seed stale V1 hook + 35-day-old opencode.json.bak in globalDir
+    mkdirSync(join(globalDir, 'plugins'), { recursive: true })
+    writeFileSync(join(globalDir, 'plugins', 'pantheon-hooks.ts'), '// stale hook')
+
+    // Seed workspaceA legacy flat .pantheon/memory.db
+    mkdirSync(join(workspaceA, '.pantheon'), { recursive: true })
+    const wsMem = new DatabaseSync(join(workspaceA, '.pantheon', 'memory.db'))
+    wsMem.exec(
+      'CREATE TABLE memories (id INTEGER PRIMARY KEY AUTOINCREMENT, namespace TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, created_at TEXT NOT NULL);',
+    )
+    wsMem
+      .prepare('INSERT INTO memories (namespace, key, value, created_at) VALUES (?, ?, ?, ?)')
+      .run('default', 'ws-a-fact', 'Workspace A local memory', '2026-05-01T00:00:00.000Z')
+    wsMem.close()
+
+    // Simulate pure OpenCode plugin boot on workspaceA (no CLI init)
+    const noopDraft = () => ({ list: () => [], update: () => {}, add: () => {}, default: () => {} })
+    await plugin.setup({
+      agent: { transform: (fn: (d: unknown) => void) => fn(noopDraft()) },
+      command: { transform: (fn: (d: unknown) => void) => fn(noopDraft()) },
+      reference: { transform: (fn: (d: unknown) => void) => fn(noopDraft()) },
+      location: { directory: workspaceA },
+    } as unknown as Parameters<typeof plugin.setup>[0])
+
+    // Legacy files in both globalDir and workspaceA must be purged
+    assert.equal(existsSync(join(globalMemDir, 'memory.db')), false)
+    assert.equal(existsSync(join(globalPersDir, 'global.db')), false)
+    assert.equal(existsSync(join(globalDir, 'plugins', 'pantheon-hooks.ts')), false)
+    assert.equal(existsSync(join(workspaceA, '.pantheon', 'memory.db')), false)
+
+    // Canonical global store must persist for future workspaces
+    assert.equal(existsSync(join(globalDir, '.pantheon', 'memory', 'memory.db')), true)
+    assert.equal(
+      existsSync(join(globalDir, '.pantheon', 'persistence', 'checkpoints', 'global-ses-1.json')),
+      true,
+    )
+
+    // Simulate opening a brand-new workspaceB via plugin later — it still gets global data!
+    await plugin.setup({
+      agent: { transform: (fn: (d: unknown) => void) => fn(noopDraft()) },
+      command: { transform: (fn: (d: unknown) => void) => fn(noopDraft()) },
+      reference: { transform: (fn: (d: unknown) => void) => fn(noopDraft()) },
+      location: { directory: workspaceB },
+    } as unknown as Parameters<typeof plugin.setup>[0])
+
+    const toolsB = createNativeMemoryAndPersistenceTools(workspaceB)
+    const recallB = toolsB.find((t) => t.name === 'memory_recall')
+    const ctxGetB = toolsB.find((t) => t.name === 'context_get')
+    assert.ok(recallB && ctxGetB, 'native memory_recall and context_get tools must exist')
+
+    const globalMemInB = JSON.parse(
+      (
+        await recallB.execute(
+          { namespace: 'default', key: 'global-convention' },
+          { directory: workspaceB },
+        )
+      ).output,
+    )
+    assert.equal(globalMemInB.value, 'Always use native SQLite')
+
+    const globalCtxInB = JSON.parse(
+      (await ctxGetB.execute({ session_id: 'global-ses-1' }, { directory: workspaceB })).output,
+    )
+    assert.equal(globalCtxInB.content, '{"step":"global-checkpoint"}')
+  } finally {
+    if (prevXdg === undefined) delete process.env.XDG_CONFIG_HOME
+    else process.env.XDG_CONFIG_HOME = prevXdg
+    if (prevHome === undefined) delete process.env.PANTHEON_HOME
+    else process.env.PANTHEON_HOME = prevHome
+    rmSync(xdgConfig, { recursive: true, force: true })
+    rmSync(workspaceA, { recursive: true, force: true })
+    rmSync(workspaceB, { recursive: true, force: true })
   }
 })

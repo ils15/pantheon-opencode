@@ -165,6 +165,10 @@ import {
   j1EnforceThresholdFromEnv,
   j1ModeFromEnv,
 } from './pantheon/jev-risk-gate.ts'
+import {
+  ensureLegacyStoresMigratedOnce,
+  resolveSafeGlobalConfigDir,
+} from './pantheon/legacy-store-migration.mjs'
 import { DECISION_EGRESS_ACTION } from './pantheon/local-decision-egress-gate.ts'
 import { applyDecisionRouterToPrompt } from './pantheon/local-decision-prompt.ts'
 import { applyV2ModelOverrides, readV2ModelConfiguration } from './pantheon/model-overrides.ts'
@@ -2806,6 +2810,27 @@ export const plugin = define({
   id: 'pantheon-opencode',
 
   async setup(context: PluginContext): Promise<void> {
+    // ─── Phase -1: Legacy store migration & stale purge (plugin-native) ──
+    const setupHost = hostDomains(context)
+    const hostLocationDir = setupHost.location?.directory
+    const safeGlobalConfigDir = resolveSafeGlobalConfigDir()
+    if (hostLocationDir) {
+      try {
+        ensureLegacyStoresMigratedOnce(
+          hostLocationDir,
+          safeGlobalConfigDir ? { globalConfigDir: safeGlobalConfigDir } : {},
+        )
+      } catch {
+        /* fail-open: never block plugin startup */
+      }
+    } else if (safeGlobalConfigDir) {
+      try {
+        ensureLegacyStoresMigratedOnce(safeGlobalConfigDir)
+      } catch {
+        /* fail-open: never block plugin startup */
+      }
+    }
+
     // ─── Phase 0: idle todo enforcer ─────────────────────────────────────
     // First, because the event subscription below can deliver `session.idle`
     // as soon as it starts: an enforcer installed after it would lose the
@@ -2922,12 +2947,14 @@ export const plugin = define({
     if (!toolsRegistered) markUnsupported('tool-transform')
 
     // ─── Phase 7: V2 Compaction Hook (best-effort) ───────────────────
-    const compactionCtx = hostDomains(context).session
+    const compactionCtx = setupHost.session
     if (compactionCtx?.hook) {
       // File-based goal store, constructed once: the compaction context needs
       // active goals per session, and the store needs no host API (same
       // `.pantheon/goals` directory V1 uses).
-      const goalStore = new GoalStore({ dir: '.pantheon/goals' })
+      const goalStore = new GoalStore({
+        dir: hostLocationDir ? path.join(hostLocationDir, '.pantheon', 'goals') : '.pantheon/goals',
+      })
       // P9's record sink, created per registration (in-memory, bounded,
       // I/O-free) so one setup cannot observe another's records.
       const p9Sink = createTelemetrySink()
