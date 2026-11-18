@@ -580,30 +580,6 @@ function readCanonicalRoster(): Record<string, Record<string, unknown>> {
   return {}
 }
 
-function buildRosterPermissionRules(
-  rawPerm: unknown,
-): Array<{ action: string; resource: string; effect: 'allow' | 'deny' | 'ask' }> {
-  if (!rawPerm || typeof rawPerm !== 'object' || Array.isArray(rawPerm)) return []
-  const rules: Array<{ action: string; resource: string; effect: 'allow' | 'deny' | 'ask' }> = []
-  const isEffect = (v: unknown): v is 'allow' | 'deny' | 'ask' =>
-    v === 'allow' || v === 'deny' || v === 'ask'
-  const pushAction = (action: string, resource: string, effect: 'allow' | 'deny' | 'ask') => {
-    rules.push({ action, resource, effect })
-    if (action === 'task') rules.push({ action: 'subagent', resource, effect })
-    if (action === 'bash') rules.push({ action: 'shell', resource, effect })
-  }
-  for (const [action, val] of Object.entries(rawPerm as Record<string, unknown>)) {
-    if (isEffect(val)) {
-      pushAction(action, '*', val)
-    } else if (val && typeof val === 'object' && !Array.isArray(val)) {
-      for (const [res, eff] of Object.entries(val as Record<string, unknown>)) {
-        if (isEffect(eff)) pushAction(action, res, eff)
-      }
-    }
-  }
-  return rules
-}
-
 function transformAgents(draft: AgentDraft): void {
   // Beta 19192 guard (issue #92): draft may not have `list`, or list()
   // may return a non-iterable. Never throw — mark unsupported and return.
@@ -679,12 +655,6 @@ function transformAgents(draft: AgentDraft): void {
             const override = configuredOverrides[id]
             if (override) {
               applyV2ModelOverride(current as { id: string; model?: unknown }, override)
-            }
-            if (Array.isArray(current.permissions)) {
-              const rules = buildRosterPermissionRules(def.permission)
-              if (rules.length > 0) {
-                current.permissions.push(...rules)
-              }
             }
             const body = typeof def.body === 'string' ? def.body.trim() : ''
             current.system = body
