@@ -33,13 +33,14 @@
  * @module pantheon/execute-after
  */
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import {
   type ContextSandboxConfig,
   createContextSandbox,
   resolveSandboxConfig,
   DEFAULT_CONFIG as SANDBOX_DEFAULT_CONFIG,
 } from './context-sandbox.ts'
+import { type PostEditLintOptions, runPostEditLint } from './edit-guardrails.ts'
 import { createReadEnhancer } from './hashline/read-enhancer.ts'
 import {
   createTaskResultGuard,
@@ -71,6 +72,8 @@ export interface V2ExecuteAfterOptions {
    * {@link resolveSandboxConfig}. Defaults to the shared defaults.
    */
   sandbox?: ContextSandboxConfig
+  /** Configure or disable per-edit diff-scoped lint diagnostics. */
+  editLint?: boolean | PostEditLintOptions
 }
 
 /** Which `Tool.Result` field carries the (mutable) text this adapter enhances. */
@@ -270,22 +273,21 @@ export function createV2ExecuteAfter(
       await sandbox(input, output)
       await readEnhancer(input, output)
 
-      // Post-edit structural diagnostic check for JSON files: surfaces syntax
-      // corruption in the same turn so the specialist fixes it immediately.
+      // Per-edit deterministic lint check (biome/eslint/ruff/gofmt + JSON syntax):
+      // runs single-file, scoped to lines modified vs HEAD, and surfaces new
+      // violations inline so the specialist fixes them immediately.
       const lowerTool = tool.trim().toLowerCase()
-      if (lowerTool === 'edit' || lowerTool === 'write' || lowerTool === 'hashline_edit') {
+      if (
+        options.editLint !== false &&
+        (lowerTool === 'edit' || lowerTool === 'write' || lowerTool === 'hashline_edit')
+      ) {
         const rawArgs = (payload.input ?? {}) as Record<string, unknown>
         const editedPath = rawArgs.filePath ?? rawArgs.file_path ?? rawArgs.file
-        if (
-          typeof editedPath === 'string' &&
-          editedPath.endsWith('.json') &&
-          existsSync(editedPath)
-        ) {
-          try {
-            JSON.parse(readFileSync(editedPath, 'utf8'))
-          } catch (jsonErr) {
-            const msg = jsonErr instanceof Error ? jsonErr.message : String(jsonErr)
-            output.output = `${output.output}\n[Pantheon Diagnostic] JSON syntax error in ${editedPath}: ${msg}`
+        if (typeof editedPath === 'string' && existsSync(editedPath)) {
+          const lintOptions = typeof options.editLint === 'object' ? options.editLint : {}
+          const lintDiagnostic = await runPostEditLint(editedPath, lintOptions)
+          if (lintDiagnostic) {
+            output.output = `${output.output}\n${lintDiagnostic}`
           }
         }
       }

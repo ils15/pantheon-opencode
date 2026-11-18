@@ -146,7 +146,7 @@ export function createAgentForgeTool(fallbackDir?: string): PantheonToolDef {
   return {
     name: 'pantheon_agent_forge',
     description:
-      'Create, list, inspect, or remove custom project-scoped domain specialist agents in .opencode/agents/<name>.md.',
+      'Create, list, inspect, or remove custom project-scoped domain specialist agents in .opencode/agents/<name>.md. Always list first; when a project needs deep stack-specific conventions beyond the agnostic canonical roster, proactively use the question tool to ask before creating.',
     input: {
       type: 'object',
       additionalProperties: false,

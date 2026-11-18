@@ -139,6 +139,7 @@ import {
   V2SubagentOriginRegistry,
   v2ResourceTarget,
 } from './pantheon/delegation-policy.ts'
+import { evaluateEditGuardrail } from './pantheon/edit-guardrails.ts'
 import { createV2ExecuteAfter, resolveV2SandboxConfig } from './pantheon/execute-after.ts'
 import { resolveGoalLoopConfig } from './pantheon/goal-loop-config.ts'
 import { GoalStore } from './pantheon/goal-store.ts'
@@ -2394,6 +2395,18 @@ async function registerV2ToolHooks(
           blockError = new Error(SECRET_SCAN_UNAVAILABLE_MESSAGE)
         }
         if (blockError !== null) throw blockError
+
+        // Guard edit escape hatches (suppression comments & lint/tsconfig edits)
+        // before allowing mutating edit tools through. Explicit user approval
+        // via `question` (`guardrail-approval-<hash12>`) unlocks the exact edit.
+        const guardrailVerdict = evaluateEditGuardrail(input.tool, output.args)
+        if (!guardrailVerdict.allowed) {
+          const gSessionID = typeof input.sessionID === 'string' ? input.sessionID : ''
+          const gHash = guardrailVerdict.approvalHash ?? ''
+          if (!(gSessionID !== '' && gHash !== '' && hasApproval(gSessionID, gHash))) {
+            throw new Error(guardrailVerdict.message)
+          }
+        }
         const boundedReadOrigin = boundedReadOrigins?.capture(event)
         const eventTool = (event as V2ToolExecuteBeforeEvent | null)?.tool
         if (eventTool === BOUNDED_READ_TOOL && boundedReadOrigin === undefined) {
@@ -2507,30 +2520,41 @@ async function registerV2ToolHooks(
         // `j1-approval-<hash12>` question mints the hash-pinned, TTL-bounded
         // approval the enforce gate checks. Only the OBSERVED host result can
         // mint — the agent cannot fabricate an answer.
-        if (j1Mode === 'enforce') {
-          try {
-            const after = (event ?? {}) as {
-              tool?: unknown
-              sessionID?: unknown
-              output?: unknown
-              input?: unknown
-            }
-            if (after.tool === 'question') {
-              const sessionID = typeof after.sessionID === 'string' ? after.sessionID : ''
-              const serialized = JSON.stringify(after.output ?? {}) ?? ''
-              const markerMatch = serialized.match(/j1-approval-([0-9a-f]{12})/)
-              const markerHash = markerMatch?.[1]
-              if (sessionID !== '' && markerHash !== undefined) {
-                const name = `j1-approval-${markerHash}`
-                if (isAffirmativeAnswer(name, serialized)) {
-                  mintApproval(sessionID, markerHash)
+        // Mint explicit human approvals from `question` tool responses for both
+        // J1 risk-gate and edit-guardrail escape-hatch requests.
+        try {
+          const after = (event ?? {}) as {
+            tool?: unknown
+            sessionID?: unknown
+            output?: unknown
+            input?: unknown
+          }
+          if (after.tool === 'question') {
+            const sessionID = typeof after.sessionID === 'string' ? after.sessionID : ''
+            const serialized = JSON.stringify(after.output ?? {}) ?? ''
+            if (sessionID !== '') {
+              if (j1Mode === 'enforce') {
+                const j1Match = serialized.match(/j1-approval-([0-9a-f]{12})/)
+                const j1Hash = j1Match?.[1]
+                if (
+                  j1Hash !== undefined &&
+                  isAffirmativeAnswer(`j1-approval-${j1Hash}`, serialized)
+                ) {
+                  mintApproval(sessionID, j1Hash)
                 }
               }
+              const grMatch = serialized.match(/guardrail-approval-([0-9a-f]{12})/)
+              const grHash = grMatch?.[1]
+              if (
+                grHash !== undefined &&
+                isAffirmativeAnswer(`guardrail-approval-${grHash}`, serialized)
+              ) {
+                mintApproval(sessionID, grHash)
+              }
             }
-          } catch {
-            // The minter is best-effort; a parse failure just means no
-            // approval (fail-closed).
           }
+        } catch {
+          // The minter is best-effort; a parse failure just means no approval (fail-closed).
         }
         await v2ExecuteAfter(event)
         // Formatter + delegation audit STOP (#266). Awaited for the same
