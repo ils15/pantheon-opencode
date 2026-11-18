@@ -397,6 +397,7 @@ function ensureCanonicalMemoryDb(dbPath: string): DatabaseSync {
   mkdirSync(dirname(dbPath), { recursive: true })
   const db = new DatabaseSync(dbPath)
   db.exec(`
+    PRAGMA busy_timeout = 3000;
     PRAGMA journal_mode = WAL;
     CREATE TABLE IF NOT EXISTS memories (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -452,15 +453,26 @@ function migrateScopeBeforeDelete(baseRoot: string): number {
         const insert = dst.prepare(
           'INSERT OR IGNORE INTO memories (namespace, key, value, importance, created_at) VALUES (?, ?, ?, ?, ?)',
         )
-        for (const r of rows) {
-          insert.run(
-            String(r.namespace ?? 'default'),
-            String(r.key ?? ''),
-            String(r.value ?? ''),
-            0.5,
-            String(r.created_at ?? nowIso),
-          )
-          migrated += 1
+        dst.exec('BEGIN IMMEDIATE')
+        try {
+          for (const r of rows) {
+            insert.run(
+              String(r.namespace ?? 'default'),
+              String(r.key ?? ''),
+              String(r.value ?? ''),
+              0.5,
+              String(r.created_at ?? nowIso),
+            )
+            migrated += 1
+          }
+          dst.exec('COMMIT')
+        } catch (txErr) {
+          try {
+            dst.exec('ROLLBACK')
+          } catch {
+            /* ignore */
+          }
+          throw txErr
         }
       }
       src.close()

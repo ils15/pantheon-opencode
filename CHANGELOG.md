@@ -13,6 +13,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
      Running apply will move this section to a versioned entry and reset the template below. -->
 
+## [v2.2.0-beta.7] - 2026-11-18
+
+### 🆕 What's New
+
+- **Batched SQLite Migration**: Wraps legacy memory copies in one `BEGIN IMMEDIATE` transaction, fixing `ECONNRESET` on large DBs.
+- **Startup Stamp & WAL Locking**: `.pantheon/.migration-v2.json` and `PRAGMA busy_timeout = 3000` enable sub-millisecond cold boots.
+
+### Fixed
+
+- **persistence** — `legacy-store-migration.mjs` & `tui/src/legacy-audit.ts`: batch `memories` inserts in `BEGIN IMMEDIATE` ... `COMMIT` and skip redundant FTS5 rebuilds.
+- **memory** — `native-memory-tools.ts`, `legacy-store-migration.mjs`, `tui/src/legacy-audit.ts`: enable `PRAGMA busy_timeout = 3000` and `journal_mode = WAL` to prevent locks.
+- **plugin** — `legacy-store-migration.mjs`: share `globalThis[Symbol.for('pantheon.legacy.migratedWorkspaces.v1')]` cache and stamp `.pantheon/.migration-v2.json` across instances.
+
 ## [v2.2.0-beta.6] - 2026-11-18
 
 ### 🆕 What's New

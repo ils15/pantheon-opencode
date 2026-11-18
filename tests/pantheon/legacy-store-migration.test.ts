@@ -1,11 +1,20 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import test from 'node:test'
 import {
   cleanLegacyArtifacts,
+  ensureLegacyStoresMigratedOnce,
   migrateLegacyStoresAndPurgeStale,
   resetLegacyMigrationCacheForTests,
   scanLegacyArtifacts,
@@ -513,6 +522,94 @@ test('scanLegacyArtifacts and cleanLegacyArtifacts migrate stores first and pres
     // User custom files preserved untouched
     assert.equal(existsSync(join(globalDir, 'skills', 'my-custom-skill', 'SKILL.md')), true)
     assert.equal(existsSync(join(projectDir, '.opencode', 'agents', 'custom-geo.md')), true)
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+test('ensureLegacyStoresMigratedOnce batches 4000 global rows, writes stamp fast-path, and resyncs on global mtime change', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'pantheon-batch-stamp-'))
+  try {
+    resetLegacyMigrationCacheForTests()
+    const globalDir = join(tmp, 'global-opencode')
+    const projectDir = join(tmp, 'project')
+    const globalMemDir = join(globalDir, '.pantheon', 'memory')
+    mkdirSync(globalMemDir, { recursive: true })
+    mkdirSync(projectDir, { recursive: true })
+
+    const globalDbPath = join(globalMemDir, 'memory.db')
+    const gDb = new DatabaseSync(globalDbPath)
+    gDb.exec(`
+      CREATE TABLE memories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        namespace TEXT NOT NULL,
+        key TEXT NOT NULL,
+        value TEXT NOT NULL,
+        metadata TEXT,
+        created_at TEXT NOT NULL,
+        expires_at TEXT,
+        UNIQUE(namespace, key)
+      );
+      BEGIN IMMEDIATE;
+    `)
+    const ins = gDb.prepare(
+      'INSERT INTO memories (namespace, key, value, metadata, created_at) VALUES (?, ?, ?, ?, ?)',
+    )
+    const now = new Date().toISOString()
+    for (let i = 0; i < 4000; i += 1) {
+      ins.run('batch', `k-${i}`, `val-${i}`, '{}', now)
+    }
+    gDb.exec('COMMIT;')
+    gDb.close()
+
+    const t0 = performance.now()
+    const first = ensureLegacyStoresMigratedOnce(projectDir, { globalConfigDir: globalDir })
+    const elapsedFirstMs = performance.now() - t0
+    assert.ok(first !== null)
+    assert.equal(first.memoriesMigrated, 4000)
+    assert.ok(elapsedFirstMs < 2000, `expected batched migration < 2000ms, got ${elapsedFirstMs}ms`)
+
+    const stampPath = join(projectDir, '.pantheon', '.migration-v2.json')
+    assert.equal(existsSync(stampPath), true)
+    const stamp = JSON.parse(readFileSync(stampPath, 'utf8'))
+    assert.equal(stamp.version, 2)
+    assert.ok(typeof stamp.globalMtimeMs === 'number' && stamp.globalMtimeMs > 0)
+
+    // Cold startup (cleared in-memory cache) hits .migration-v2.json fast-path without copying
+    resetLegacyMigrationCacheForTests()
+    const t1 = performance.now()
+    const second = ensureLegacyStoresMigratedOnce(projectDir, { globalConfigDir: globalDir })
+    const elapsedSecondMs = performance.now() - t1
+    assert.equal(second, null)
+    assert.ok(elapsedSecondMs < 50, `expected stamp fast-path < 50ms, got ${elapsedSecondMs}ms`)
+
+    // New row in global memory DB bumps mtime -> stamp invalidates and syncs delta cleanly
+    const gDb2 = new DatabaseSync(globalDbPath)
+    gDb2
+      .prepare(
+        'INSERT INTO memories (namespace, key, value, metadata, created_at) VALUES (?, ?, ?, ?, ?)',
+      )
+      .run('batch', 'k-extra', 'val-extra', '{}', now)
+    gDb2.exec('PRAGMA wal_checkpoint(TRUNCATE);')
+    gDb2.close()
+    const bumpedTime = new Date(Date.now() + 5000)
+    utimesSync(globalDbPath, bumpedTime, bumpedTime)
+
+    resetLegacyMigrationCacheForTests()
+    const third = ensureLegacyStoresMigratedOnce(projectDir, { globalConfigDir: globalDir })
+    assert.ok(third !== null)
+    assert.equal(third.memoriesMigrated, 1)
+
+    const pDb = new DatabaseSync(join(projectDir, '.pantheon', 'memory', 'memory.db'), {
+      readOnly: true,
+    })
+    const countRow = pDb.prepare('SELECT COUNT(*) AS cnt FROM memories').get() as { cnt: number }
+    const extraRow = pDb
+      .prepare("SELECT value FROM memories WHERE namespace = 'batch' AND key = 'k-extra'")
+      .get() as { value: string } | undefined
+    pDb.close()
+    assert.equal(countRow.cnt, 4001)
+    assert.equal(extraRow?.value, 'val-extra')
   } finally {
     rmSync(tmp, { recursive: true, force: true })
   }
