@@ -942,6 +942,83 @@ function buildChangelogTab(version, items = [], languagePref) {
 		}]
 	};
 }
+//#endregion
+//#region src/update-notice.ts
+/**
+* Update notifier core (TUI-local copy — the bundle must stay self-contained,
+* same precedent as cost-data.ts/model-pricing.ts).
+*
+* Pin + notify, never silent auto-update: one notice per newer version,
+* TTL-cached, offline-safe, and a stable install is never advertised a beta
+* (the update guard owns that crossing). docs/design/2.0-settings-and-install.md
+*/
+const UPDATE_CHECK_TTL_MS = 216e5;
+const isBetaOrRc = (version) => /-(?:beta|rc)\.\d+$/.test(String(version).trim());
+/** True when `latestVersion` is strictly newer and compatible with `currentVersion` channel. */
+function isNewerUpdateAvailable(currentVersion, latestVersion) {
+	const current = String(currentVersion).trim();
+	const latest = String(latestVersion).trim();
+	if (!current || !latest) return false;
+	if (!isBetaOrRc(current) && isBetaOrRc(latest)) return false;
+	return comparePantheonVersions(latest, current) > 0;
+}
+/** Package specifier matching the running release line (`@beta` on prereleases). */
+function packageSpecForVersion(version) {
+	return isBetaOrRc(version) ? "pantheon-opencode@beta" : "pantheon-opencode";
+}
+/** Format a bilingual toast title + message for a newly discovered update. */
+function formatUpdateToast(currentVersion, latestVersion, isPt = false) {
+	const spec = packageSpecForVersion(currentVersion);
+	if (isPt) return {
+		title: `Pantheon v${latestVersion} disponível`,
+		message: `Atualize em /pantheon-settings (Atualizações) ou \`opencode plugin update ${spec}\``
+	};
+	return {
+		title: `Pantheon v${latestVersion} available`,
+		message: `Update in /pantheon-settings (Updates) or \`opencode plugin update ${spec}\``
+	};
+}
+/** Compact persistent badge rendered in Home footer and Sidebar header when an update exists. */
+function formatUpdateBadge(currentVersion, latestVersion, options = {}) {
+	if (!latestVersion || !isNewerUpdateAvailable(currentVersion, latestVersion)) return null;
+	const version = latestVersion.trim().replace(/^v/i, "");
+	if (options.compact) return `↑ v${version} (/pantheon-settings)`;
+	return options.isPt ? `↑ v${version} disponível · /pantheon-settings` : `↑ v${version} available · /pantheon-settings`;
+}
+/** Resolve cached newer version from persisted check state (no network call needed). */
+function resolveCachedAvailableUpdate(currentVersion, state) {
+	if (!state) return null;
+	const candidate = state.lastKnownLatestVersion ?? state.lastNotifiedVersion;
+	if (!candidate) return null;
+	return isNewerUpdateAvailable(currentVersion, candidate) ? candidate : null;
+}
+/** Stamp `lastKnownLatestVersion` onto an `UpdateCheckState` without altering TTL/notice fields. */
+function withKnownLatest(state, latestVersion) {
+	if (!latestVersion) return state;
+	return {
+		...state,
+		lastKnownLatestVersion: latestVersion
+	};
+}
+let availableUpdateState = null;
+const availableUpdateListeners = /* @__PURE__ */ new Set();
+function getAvailableUpdateVersion() {
+	return availableUpdateState;
+}
+function setAvailableUpdateVersion(version) {
+	const normalized = version && version.trim() !== "" ? version.trim() : null;
+	if (normalized === availableUpdateState) return;
+	availableUpdateState = normalized;
+	for (const listener of availableUpdateListeners) try {
+		listener(availableUpdateState);
+	} catch {}
+}
+function subscribeAvailableUpdate(listener) {
+	availableUpdateListeners.add(listener);
+	return () => {
+		availableUpdateListeners.delete(listener);
+	};
+}
 /** Semver-ish compare for X.Y.Z[-(beta|rc).N]; prereleases sort before their release. */
 function comparePantheonVersions(left, right) {
 	const parse = (version) => {
@@ -971,16 +1048,14 @@ function comparePantheonVersions(left, right) {
 	return a.stageNum - b.stageNum;
 }
 function pickUpdateNotice(input) {
-	const { currentVersion, latestVersion, state = {}, nowMs = Date.now() } = input;
+	const { currentVersion, latestVersion, state = {}, nowMs = Date.now(), isPt = false } = input;
 	const ttlMs = input.ttlMs ?? 216e5;
 	if (nowMs - (state.lastCheckMs ?? 0) < ttlMs) return null;
 	if (state.lastNotifiedVersion === latestVersion) return null;
-	const stable = (version) => !/-(?:beta|rc)\.\d+$/.test(version);
-	if (stable(currentVersion) && !stable(latestVersion)) return null;
-	if (comparePantheonVersions(latestVersion, currentVersion) <= 0) return null;
+	if (!isNewerUpdateAvailable(currentVersion, latestVersion)) return null;
 	return {
 		version: latestVersion,
-		message: `pantheon-opencode ${latestVersion} available — update in /pantheon-settings or \`opencode plugin add pantheon-opencode\``
+		message: formatUpdateToast(currentVersion, latestVersion, isPt).message
 	};
 }
 /** The state to persist after a check (notified or not) for the TTL. */
@@ -2878,7 +2953,7 @@ async function readChangelogForBundle(bundleUrl) {
 }
 /** The ambient build-time version, or null outside a tsdown build. */
 function embeddedVersion() {
-	return "2.2.0-beta.9";
+	return "2.2.0-beta.10";
 }
 /**
 * Resolve the running Pantheon version for the what's-new window: the plugin
@@ -3112,14 +3187,15 @@ function persistUpdateCheckState(previous, latest) {
 	try {
 		const path = updateCheckStatePath();
 		mkdirSync(join(path, ".."), { recursive: true });
-		writeFileSync(path, `${JSON.stringify(nextCheckState(previous, latest ? {
+		const next = withKnownLatest(nextCheckState(previous, latest ? {
 			version: latest,
 			message: ""
-		} : null, Date.now()), null, 2)}\n`);
+		} : null, Date.now()), latest);
+		writeFileSync(path, `${JSON.stringify(next, null, 2)}\n`);
 	} catch {}
 }
 function resolveRunningVersion() {
-	return "2.2.0-beta.9";
+	return "2.2.0-beta.10";
 }
 const VALUE_WIDTH = 24;
 function SettingsWindow(props) {
@@ -3676,6 +3752,7 @@ function createWindowController(context, exit) {
 		fetchLatestForChannel(targetChannel).then((latest) => {
 			if (latest) {
 				setLastChecked(latest);
+				setAvailableUpdateVersion(isNewerUpdateAvailable(currentVersion, latest) ? latest : null);
 				persistUpdateCheckState(readUpdateCheckState(), latest);
 			}
 		}).catch(() => {}).finally(() => setChecking(false));
@@ -3683,50 +3760,72 @@ function createWindowController(context, exit) {
 	const runUpdateNow = () => {
 		if (updating()) return;
 		const pkgSpec = selectedChannel() === "beta" ? "pantheon-opencode@beta" : "pantheon-opencode";
+		const finishSuccess = () => {
+			setUpdating(false);
+			setAvailableUpdateVersion(null);
+			setNotice("[OK] plugin updated — restart OpenCode to reload");
+			execFile("opencode", ["reload"], {
+				cwd: workspaceDir,
+				timeout: 15e3
+			}, () => {});
+			try {
+				context.ui.toast?.show?.({
+					variant: "info",
+					message: "Pantheon plugin updated! Restart OpenCode if the TUI footer does not refresh."
+				});
+			} catch {}
+		};
 		setUpdating(true);
 		setNotice(`updating plugin (${pkgSpec})…`);
 		execFile("opencode", [
 			"plugin",
-			"add",
+			"update",
 			pkgSpec
 		], {
 			cwd: workspaceDir,
 			timeout: 6e4
 		}, (err) => {
 			if (!err) {
-				setUpdating(false);
-				setNotice("[OK] plugin updated — restart OpenCode to reload");
-				try {
-					context.ui.toast?.show?.({
-						variant: "info",
-						message: "Pantheon plugin updated! Restart OpenCode to load the new version."
-					});
-				} catch {}
+				finishSuccess();
 				return;
 			}
-			execFile("npm", [
-				"install",
-				"-g",
+			execFile("opencode", [
+				"plugin",
+				"add",
 				pkgSpec
-			], { timeout: 6e4 }, (npmErr) => {
-				setUpdating(false);
-				if (npmErr) {
-					setNotice(`run in terminal: opencode plugin add ${pkgSpec}`);
-					try {
-						context.ui.toast?.show?.({
-							variant: "warning",
-							message: `Update requires terminal permissions: run \`opencode plugin add ${pkgSpec}\``
-						});
-					} catch {}
-				} else {
-					setNotice("[OK] update complete — restart OpenCode to reload the plugin");
-					try {
-						context.ui.toast?.show?.({
-							variant: "info",
-							message: "Pantheon updated successfully!"
-						});
-					} catch {}
+			], {
+				cwd: workspaceDir,
+				timeout: 6e4
+			}, (addErr) => {
+				if (!addErr) {
+					finishSuccess();
+					return;
 				}
+				execFile("npm", [
+					"install",
+					"-g",
+					pkgSpec
+				], { timeout: 6e4 }, (npmErr) => {
+					setUpdating(false);
+					if (npmErr) {
+						setNotice(`run in terminal: opencode plugin update ${pkgSpec}`);
+						try {
+							context.ui.toast?.show?.({
+								variant: "warning",
+								message: `Update requires terminal permissions: run \`opencode plugin update ${pkgSpec}\``
+							});
+						} catch {}
+					} else {
+						setAvailableUpdateVersion(null);
+						setNotice("[OK] update complete — restart OpenCode to reload the plugin");
+						try {
+							context.ui.toast?.show?.({
+								variant: "info",
+								message: "Pantheon updated successfully!"
+							});
+						} catch {}
+					}
+				});
 			});
 		});
 	};
@@ -7691,10 +7790,22 @@ function subscribeSidebarRefresh(context, refresh) {
 		for (const unsubscribe of stop) if (typeof unsubscribe === "function") unsubscribe();
 	};
 }
-/** One update check per boot (TTL-cached on disk, offline-safe): query the
-*  registry for the pinned package's latest, notify at most once per version
-*  through the toast, and persist the state for the TTL. Never throws. */
-async function checkForPantheonUpdate(context) {
+/** Reactive signal tracking whether a newer Pantheon version is available on the active channel. */
+function useAvailableUpdate(currentVersion) {
+	const [latest, setLatest] = createSignal((() => {
+		const candidate = getAvailableUpdateVersion();
+		return candidate && isNewerUpdateAvailable(currentVersion, candidate) ? candidate : null;
+	})());
+	onMount(() => {
+		const sync = (candidate) => {
+			setLatest(candidate && isNewerUpdateAvailable(currentVersion, candidate) ? candidate : null);
+		};
+		sync(getAvailableUpdateVersion());
+		onCleanup(subscribeAvailableUpdate(sync));
+	});
+	return latest;
+}
+function updateCheckStateFile() {
 	const stateDir = process.env.XDG_STATE_HOME ?? join(process.env.HOME ?? "", ".local", "state");
 	const statePath = join(stateDir, "pantheon", "update-check.json");
 	const readState = () => {
@@ -7704,26 +7815,46 @@ async function checkForPantheonUpdate(context) {
 			return {};
 		}
 	};
-	const persist = (notice) => {
-		mkdirSync(join(stateDir, "pantheon"), { recursive: true });
-		writeFileSync(statePath, `${JSON.stringify(nextCheckState(readState(), notice, Date.now()), null, 2)}\n`);
+	return {
+		statePath,
+		readState
 	};
-	const currentVersion = "2.2.0-beta.9";
+}
+/** One update check per boot + periodic TTL interval: hydrates cached badge
+*  immediately, queries the registry at most once per TTL, announces once per
+*  version via toast, and keeps the persistent Home/Sidebar badge updated. */
+async function checkForPantheonUpdate(context) {
+	const { statePath, readState } = updateCheckStateFile();
+	const currentVersion = "2.2.0-beta.10";
+	const initialState = readState();
+	setAvailableUpdateVersion(resolveCachedAvailableUpdate(currentVersion, initialState));
+	const nowMs = Date.now();
+	if (nowMs - (initialState.lastCheckMs ?? 0) < 216e5) return;
+	const persist = (notice, latest) => {
+		mkdirSync(join(statePath, ".."), { recursive: true });
+		const next = withKnownLatest(nextCheckState(readState(), notice, nowMs), latest);
+		writeFileSync(statePath, `${JSON.stringify(next, null, 2)}\n`);
+	};
 	const response = await fetch(registryUrlForChannel(updateChannelFor(currentVersion)), { signal: AbortSignal.timeout(5e3) });
 	const latest = String((await response.json())?.version ?? "");
 	if (!latest) return;
+	setAvailableUpdateVersion(isNewerUpdateAvailable(currentVersion, latest) ? latest : null);
+	const isPt = resolveLanguage(tuiPrefs().layout?.language) === "pt-BR";
 	const notice = pickUpdateNotice({
 		currentVersion,
 		latestVersion: latest,
 		state: readState(),
-		nowMs: Date.now()
+		nowMs,
+		isPt
 	});
-	if (!notice) {
-		persist(null);
-		return;
-	}
-	context?.ui?.toast?.show?.({ message: notice.message });
-	persist(notice);
+	persist(notice, latest);
+	if (!notice) return;
+	const toast = formatUpdateToast(currentVersion, latest, isPt);
+	context?.ui?.toast?.show?.({
+		title: toast.title,
+		message: toast.message,
+		variant: "info"
+	});
 }
 /** Populate the cached data at load so the sidebar has content before the first
 *  prompt (Known Issue guard). Fire-and-forget: a missing API or a failed sync
@@ -8541,7 +8672,7 @@ function Sidebar(props) {
 			setProp(_el$13, "paddingLeft", 1);
 			setProp(_el$13, "paddingRight", 1);
 			setProp(_el$14, "attributes", 1);
-			insert(_el$14, `Pantheon v2.2.0-beta.9`);
+			insert(_el$14, `Pantheon v2.2.0-beta.10`);
 			insert(_el$15, () => `Erro no painel: ${err?.message ?? "desconhecido"}`);
 			effect((_p$) => {
 				var _v$3 = text(), _v$4 = muted();
@@ -8595,6 +8726,8 @@ function SidebarInner(props) {
 	};
 	const failedSuffix = () => failedSuffixText(dispatchView()?.failures);
 	const header = () => tuiPrefs().sidebar.header;
+	const availableUpdate = useAvailableUpdate("2.2.0-beta.10");
+	const updateBadge = () => formatUpdateBadge("2.2.0-beta.10", availableUpdate(), { isPt: resolveLanguage(tuiPrefs().layout?.language) === "pt-BR" });
 	return (() => {
 		var _el$16 = createElement("box"), _el$17 = createElement("box"), _el$19 = createElement("box");
 		insertNode(_el$16, _el$17);
@@ -8612,7 +8745,7 @@ function SidebarInner(props) {
 			get children() {
 				var _el$18 = createElement("text");
 				setProp(_el$18, "attributes", 1);
-				insert(_el$18, `Pantheon v2.2.0-beta.9`);
+				insert(_el$18, `Pantheon v2.2.0-beta.10`);
 				effect((_$p) => setProp(_el$18, "fg", text(), _$p));
 				return _el$18;
 			}
@@ -8639,6 +8772,17 @@ function SidebarInner(props) {
 				effect((_$p) => setProp(_el$20, "fg", accent(), _$p));
 				return _el$20;
 			}
+		}), null);
+		insert(_el$16, createComponent(Show, {
+			get when() {
+				return memo(() => !!header().version)() && updateBadge();
+			},
+			children: (badge) => (() => {
+				var _el$39 = createElement("text");
+				insert(_el$39, badge);
+				effect((_$p) => setProp(_el$39, "fg", accent(), _$p));
+				return _el$39;
+			})()
 		}), null);
 		insert(_el$16, createComponent(Show, {
 			get when() {
@@ -8691,28 +8835,28 @@ function SidebarInner(props) {
 					}
 				};
 				return (() => {
-					var _el$39 = createElement("box"), _el$40 = createElement("text");
-					insertNode(_el$39, _el$40);
-					setProp(_el$39, "flexDirection", "row");
-					setProp(_el$39, "justifyContent", "space-between");
-					insert(_el$40, leftPreset);
-					insert(_el$39, createComponent(Show, {
+					var _el$40 = createElement("box"), _el$41 = createElement("text");
+					insertNode(_el$40, _el$41);
+					setProp(_el$40, "flexDirection", "row");
+					setProp(_el$40, "justifyContent", "space-between");
+					insert(_el$41, leftPreset);
+					insert(_el$40, createComponent(Show, {
 						get when() {
 							return badge();
 						},
 						children: (b) => (() => {
-							var _el$41 = createElement("box"), _el$42 = createElement("text");
-							insertNode(_el$41, _el$42);
-							setProp(_el$41, "onMouseDown", triggerCompaction);
-							setProp(_el$41, "flexShrink", 0);
-							setProp(_el$42, "attributes", 1);
-							insert(_el$42, b);
-							effect((_$p) => setProp(_el$42, "fg", accent(), _$p));
-							return _el$41;
+							var _el$42 = createElement("box"), _el$43 = createElement("text");
+							insertNode(_el$42, _el$43);
+							setProp(_el$42, "onMouseDown", triggerCompaction);
+							setProp(_el$42, "flexShrink", 0);
+							setProp(_el$43, "attributes", 1);
+							insert(_el$43, b);
+							effect((_$p) => setProp(_el$43, "fg", accent(), _$p));
+							return _el$42;
 						})()
 					}), null);
-					effect((_$p) => setProp(_el$40, "fg", muted(), _$p));
-					return _el$39;
+					effect((_$p) => setProp(_el$41, "fg", muted(), _$p));
+					return _el$40;
 				})();
 			}
 		}), null);
@@ -8727,40 +8871,40 @@ function SidebarInner(props) {
 					},
 					get fallback() {
 						return (() => {
-							var _el$44 = createElement("box");
-							setProp(_el$44, "height", 0);
-							return _el$44;
+							var _el$45 = createElement("box");
+							setProp(_el$45, "height", 0);
+							return _el$45;
 						})();
 					},
 					get children() {
-						var _el$43 = createElement("text");
-						insert(_el$43, () => sidebarPlaceholder(props.sessionID));
-						effect((_$p) => setProp(_el$43, "fg", muted(), _$p));
-						return _el$43;
+						var _el$44 = createElement("text");
+						insert(_el$44, () => sidebarPlaceholder(props.sessionID));
+						effect((_$p) => setProp(_el$44, "fg", muted(), _$p));
+						return _el$44;
 					}
 				});
 			},
 			children: (current) => (() => {
-				var _el$45 = createElement("box"), _el$46 = createElement("text"), _el$48 = createElement("text"), _el$50 = createElement("text");
-				insertNode(_el$45, _el$46);
-				insertNode(_el$45, _el$48);
-				insertNode(_el$45, _el$50);
-				setProp(_el$45, "flexDirection", "row");
-				insertNode(_el$46, createTextNode(`● `));
-				setProp(_el$46, "fg", "#22c55e");
-				insertNode(_el$48, createTextNode(`Session: `));
-				setProp(_el$50, "attributes", 1);
-				insert(_el$50, () => truncateLabel(current().title || current().id, 18));
+				var _el$46 = createElement("box"), _el$47 = createElement("text"), _el$49 = createElement("text"), _el$51 = createElement("text");
+				insertNode(_el$46, _el$47);
+				insertNode(_el$46, _el$49);
+				insertNode(_el$46, _el$51);
+				setProp(_el$46, "flexDirection", "row");
+				insertNode(_el$47, createTextNode(`● `));
+				setProp(_el$47, "fg", "#22c55e");
+				insertNode(_el$49, createTextNode(`Session: `));
+				setProp(_el$51, "attributes", 1);
+				insert(_el$51, () => truncateLabel(current().title || current().id, 18));
 				effect((_p$) => {
 					var _v$7 = muted(), _v$8 = text();
-					_v$7 !== _p$.e && (_p$.e = setProp(_el$48, "fg", _v$7, _p$.e));
-					_v$8 !== _p$.t && (_p$.t = setProp(_el$50, "fg", _v$8, _p$.t));
+					_v$7 !== _p$.e && (_p$.e = setProp(_el$49, "fg", _v$7, _p$.e));
+					_v$8 !== _p$.t && (_p$.t = setProp(_el$51, "fg", _v$8, _p$.t));
 					return _p$;
 				}, {
 					e: void 0,
 					t: void 0
 				});
-				return _el$45;
+				return _el$46;
 			})()
 		}), null);
 		insert(_el$16, createComponent(Show, {
@@ -8819,16 +8963,16 @@ function SidebarInner(props) {
 									return l;
 								};
 								return (() => {
-									var _el$51 = createElement("box"), _el$52 = createElement("text"), _el$54 = createElement("text");
-									insertNode(_el$51, _el$52);
-									insertNode(_el$51, _el$54);
-									setProp(_el$51, "flexDirection", "row");
-									insertNode(_el$52, createTextNode(`Turn: `));
-									setProp(_el$54, "fg", "#34d399");
-									setProp(_el$54, "attributes", 1);
-									insert(_el$54, () => display().replace(/^Turn:\s*/, ""));
-									effect((_$p) => setProp(_el$52, "fg", muted(), _$p));
-									return _el$51;
+									var _el$52 = createElement("box"), _el$53 = createElement("text"), _el$55 = createElement("text");
+									insertNode(_el$52, _el$53);
+									insertNode(_el$52, _el$55);
+									setProp(_el$52, "flexDirection", "row");
+									insertNode(_el$53, createTextNode(`Turn: `));
+									setProp(_el$55, "fg", "#34d399");
+									setProp(_el$55, "attributes", 1);
+									insert(_el$55, () => display().replace(/^Turn:\s*/, ""));
+									effect((_$p) => setProp(_el$53, "fg", muted(), _$p));
+									return _el$52;
 								})();
 							}
 						});
@@ -8839,17 +8983,17 @@ function SidebarInner(props) {
 						return contextRows();
 					},
 					children: (rows) => (() => {
-						var _el$55 = createElement("box");
-						setProp(_el$55, "flexDirection", "column");
-						insert(_el$55, createComponent(Show, {
+						var _el$56 = createElement("box");
+						setProp(_el$56, "flexDirection", "column");
+						insert(_el$56, createComponent(Show, {
 							get when() {
 								return rows().percent;
 							},
 							children: (row) => (() => {
-								var _el$56 = createElement("box");
-								setProp(_el$56, "flexDirection", "row");
-								setProp(_el$56, "justifyContent", "space-between");
-								insert(_el$56, createComponent(ContextRowView, {
+								var _el$57 = createElement("box");
+								setProp(_el$57, "flexDirection", "row");
+								setProp(_el$57, "justifyContent", "space-between");
+								insert(_el$57, createComponent(ContextRowView, {
 									get row() {
 										return memo(() => !!model.contextRatioLine())() ? {
 											...row(),
@@ -8863,30 +9007,30 @@ function SidebarInner(props) {
 										return muted();
 									}
 								}), null);
-								insert(_el$56, createComponent(Show, {
+								insert(_el$57, createComponent(Show, {
 									get when() {
 										return model.contextRatioLine();
 									},
 									children: (ratio) => {
 										const parts = ratio().split(" / ");
 										return (() => {
-											var _el$57 = createElement("box"), _el$58 = createElement("text"), _el$59 = createElement("text");
-											insertNode(_el$57, _el$58);
-											insertNode(_el$57, _el$59);
-											setProp(_el$57, "flexDirection", "row");
-											setProp(_el$58, "fg", "#f1f5f9");
-											setProp(_el$58, "attributes", 1);
-											insert(_el$58, () => parts[0]);
-											insert(_el$59, () => ` / ${parts[1] ?? ""}`);
-											effect((_$p) => setProp(_el$59, "fg", muted(), _$p));
-											return _el$57;
+											var _el$58 = createElement("box"), _el$59 = createElement("text"), _el$60 = createElement("text");
+											insertNode(_el$58, _el$59);
+											insertNode(_el$58, _el$60);
+											setProp(_el$58, "flexDirection", "row");
+											setProp(_el$59, "fg", "#f1f5f9");
+											setProp(_el$59, "attributes", 1);
+											insert(_el$59, () => parts[0]);
+											insert(_el$60, () => ` / ${parts[1] ?? ""}`);
+											effect((_$p) => setProp(_el$60, "fg", muted(), _$p));
+											return _el$58;
 										})();
 									}
 								}), null);
-								return _el$56;
+								return _el$57;
 							})()
 						}), null);
-						insert(_el$55, createComponent(Show, {
+						insert(_el$56, createComponent(Show, {
 							get when() {
 								return memo(() => !!rows().tokens)() && !rows().percent;
 							},
@@ -8902,7 +9046,7 @@ function SidebarInner(props) {
 								}
 							})
 						}), null);
-						insert(_el$55, createComponent(Show, {
+						insert(_el$56, createComponent(Show, {
 							get when() {
 								return rows().spent;
 							},
@@ -8918,7 +9062,7 @@ function SidebarInner(props) {
 								}
 							})
 						}), null);
-						return _el$55;
+						return _el$56;
 					})()
 				}), _el$25);
 				insert(_el$23, createComponent(Show, {
@@ -8926,57 +9070,57 @@ function SidebarInner(props) {
 						return memo(() => !!tuiPrefs().sidebar.context.tokenAnatomy)() && model.tokenAnatomySplit();
 					},
 					children: (anatomy) => (() => {
-						var _el$60 = createElement("box"), _el$61 = createElement("box"), _el$62 = createElement("text"), _el$64 = createElement("text");
-						insertNode(_el$60, _el$61);
-						setProp(_el$60, "flexDirection", "row");
-						setProp(_el$60, "justifyContent", "space-between");
+						var _el$61 = createElement("box"), _el$62 = createElement("box"), _el$63 = createElement("text"), _el$65 = createElement("text");
 						insertNode(_el$61, _el$62);
-						insertNode(_el$61, _el$64);
 						setProp(_el$61, "flexDirection", "row");
-						insertNode(_el$62, createTextNode(`↑`));
-						setProp(_el$62, "fg", "#60a5fa");
-						insert(_el$64, () => anatomy().inOut?.split(" · ")[0]?.replace(/^↑\s*/, "") ?? "");
-						insert(_el$61, createComponent(Show, {
+						setProp(_el$61, "justifyContent", "space-between");
+						insertNode(_el$62, _el$63);
+						insertNode(_el$62, _el$65);
+						setProp(_el$62, "flexDirection", "row");
+						insertNode(_el$63, createTextNode(`↑`));
+						setProp(_el$63, "fg", "#60a5fa");
+						insert(_el$65, () => anatomy().inOut?.split(" · ")[0]?.replace(/^↑\s*/, "") ?? "");
+						insert(_el$62, createComponent(Show, {
 							get when() {
 								return anatomy().inOut?.includes(" · ");
 							},
 							get children() {
 								return [
 									(() => {
-										var _el$65 = createElement("text");
-										insertNode(_el$65, createTextNode(` · `));
-										effect((_$p) => setProp(_el$65, "fg", muted(), _$p));
-										return _el$65;
+										var _el$66 = createElement("text");
+										insertNode(_el$66, createTextNode(` · `));
+										effect((_$p) => setProp(_el$66, "fg", muted(), _$p));
+										return _el$66;
 									})(),
 									(() => {
-										var _el$67 = createElement("text");
-										insertNode(_el$67, createTextNode(`↓`));
-										setProp(_el$67, "fg", "#4ade80");
-										return _el$67;
+										var _el$68 = createElement("text");
+										insertNode(_el$68, createTextNode(`↓`));
+										setProp(_el$68, "fg", "#4ade80");
+										return _el$68;
 									})(),
 									(() => {
-										var _el$69 = createElement("text");
-										insert(_el$69, () => anatomy().inOut?.split(" · ")[1]?.replace(/^↓\s*/, "") ?? "");
-										effect((_$p) => setProp(_el$69, "fg", muted(), _$p));
-										return _el$69;
+										var _el$70 = createElement("text");
+										insert(_el$70, () => anatomy().inOut?.split(" · ")[1]?.replace(/^↓\s*/, "") ?? "");
+										effect((_$p) => setProp(_el$70, "fg", muted(), _$p));
+										return _el$70;
 									})()
 								];
 							}
 						}), null);
-						insert(_el$60, createComponent(Show, {
+						insert(_el$61, createComponent(Show, {
 							get when() {
 								return anatomy().think;
 							},
 							children: (think) => (() => {
-								var _el$70 = createElement("text");
-								setProp(_el$70, "fg", "#c084fc");
-								setProp(_el$70, "attributes", 1);
-								insert(_el$70, think);
-								return _el$70;
+								var _el$71 = createElement("text");
+								setProp(_el$71, "fg", "#c084fc");
+								setProp(_el$71, "attributes", 1);
+								insert(_el$71, think);
+								return _el$71;
 							})()
 						}), null);
-						effect((_$p) => setProp(_el$64, "fg", muted(), _$p));
-						return _el$60;
+						effect((_$p) => setProp(_el$65, "fg", muted(), _$p));
+						return _el$61;
 					})()
 				}), _el$25);
 				insert(_el$23, createComponent(Show, {
@@ -8984,33 +9128,33 @@ function SidebarInner(props) {
 						return memo(() => !!tuiPrefs().sidebar.context.performance)() && model.performanceSplit();
 					},
 					children: (perf) => (() => {
-						var _el$71 = createElement("box"), _el$72 = createElement("box"), _el$73 = createElement("text"), _el$75 = createElement("text"), _el$76 = createElement("box"), _el$77 = createElement("text"), _el$79 = createElement("text");
-						insertNode(_el$71, _el$72);
-						insertNode(_el$71, _el$76);
-						setProp(_el$71, "flexDirection", "row");
-						setProp(_el$71, "justifyContent", "space-between");
+						var _el$72 = createElement("box"), _el$73 = createElement("box"), _el$74 = createElement("text"), _el$76 = createElement("text"), _el$77 = createElement("box"), _el$78 = createElement("text"), _el$80 = createElement("text");
 						insertNode(_el$72, _el$73);
-						insertNode(_el$72, _el$75);
+						insertNode(_el$72, _el$77);
 						setProp(_el$72, "flexDirection", "row");
-						insertNode(_el$73, createTextNode(`Cache: `));
-						setProp(_el$75, "fg", "#34d399");
-						insert(_el$75, () => perf().cache?.replace(/^Cache:\s*/, "") ?? "");
-						insertNode(_el$76, _el$77);
-						insertNode(_el$76, _el$79);
-						setProp(_el$76, "flexDirection", "row");
-						insertNode(_el$77, createTextNode(`Speed: `));
-						setProp(_el$79, "fg", "#38bdf8");
-						insert(_el$79, () => perf().speed?.replace(/^Speed:\s*/, "") ?? "");
+						setProp(_el$72, "justifyContent", "space-between");
+						insertNode(_el$73, _el$74);
+						insertNode(_el$73, _el$76);
+						setProp(_el$73, "flexDirection", "row");
+						insertNode(_el$74, createTextNode(`Cache: `));
+						setProp(_el$76, "fg", "#34d399");
+						insert(_el$76, () => perf().cache?.replace(/^Cache:\s*/, "") ?? "");
+						insertNode(_el$77, _el$78);
+						insertNode(_el$77, _el$80);
+						setProp(_el$77, "flexDirection", "row");
+						insertNode(_el$78, createTextNode(`Speed: `));
+						setProp(_el$80, "fg", "#38bdf8");
+						insert(_el$80, () => perf().speed?.replace(/^Speed:\s*/, "") ?? "");
 						effect((_p$) => {
 							var _v$9 = muted(), _v$0 = muted();
-							_v$9 !== _p$.e && (_p$.e = setProp(_el$73, "fg", _v$9, _p$.e));
-							_v$0 !== _p$.t && (_p$.t = setProp(_el$77, "fg", _v$0, _p$.t));
+							_v$9 !== _p$.e && (_p$.e = setProp(_el$74, "fg", _v$9, _p$.e));
+							_v$0 !== _p$.t && (_p$.t = setProp(_el$78, "fg", _v$0, _p$.t));
 							return _p$;
 						}, {
 							e: void 0,
 							t: void 0
 						});
-						return _el$71;
+						return _el$72;
 					})()
 				}), _el$25);
 				insertNode(_el$25, createTextNode(`──────────────────────────────`));
@@ -9024,17 +9168,17 @@ function SidebarInner(props) {
 					},
 					get fallback() {
 						return (() => {
-							var _el$80 = createElement("text");
-							insertNode(_el$80, createTextNode(`tools: 0 (0 err)`));
-							effect((_$p) => setProp(_el$80, "fg", muted(), _$p));
-							return _el$80;
+							var _el$81 = createElement("text");
+							insertNode(_el$81, createTextNode(`tools: 0 (0 err)`));
+							effect((_$p) => setProp(_el$81, "fg", muted(), _$p));
+							return _el$81;
 						})();
 					},
 					children: (line) => (() => {
-						var _el$82 = createElement("text");
-						insert(_el$82, line);
-						effect((_$p) => setProp(_el$82, "fg", muted(), _$p));
-						return _el$82;
+						var _el$83 = createElement("text");
+						insert(_el$83, line);
+						effect((_$p) => setProp(_el$83, "fg", muted(), _$p));
+						return _el$83;
 					})()
 				}), _el$28);
 				setProp(_el$28, "fg", "#22c55e");
@@ -9063,20 +9207,20 @@ function SidebarInner(props) {
 									return usageRows();
 								},
 								children: (row) => (() => {
-									var _el$83 = createElement("box");
-									setProp(_el$83, "flexDirection", "column");
-									insert(_el$83, createComponent(For, {
+									var _el$84 = createElement("box");
+									setProp(_el$84, "flexDirection", "column");
+									insert(_el$84, createComponent(For, {
 										get each() {
 											return modelUsageRowLines(row);
 										},
 										children: (line) => (() => {
-											var _el$84 = createElement("text");
-											insert(_el$84, line);
-											effect((_$p) => setProp(_el$84, "fg", text(), _$p));
-											return _el$84;
+											var _el$85 = createElement("text");
+											insert(_el$85, line);
+											effect((_$p) => setProp(_el$85, "fg", text(), _$p));
+											return _el$85;
 										})()
 									}));
-									return _el$83;
+									return _el$84;
 								})()
 							}),
 							createComponent(Show, {
@@ -9088,10 +9232,10 @@ function SidebarInner(props) {
 										return sidebarTextLines(line());
 									},
 									children: (part) => (() => {
-										var _el$85 = createElement("text");
-										insert(_el$85, part);
-										effect((_$p) => setProp(_el$85, "fg", muted(), _$p));
-										return _el$85;
+										var _el$86 = createElement("text");
+										insert(_el$86, part);
+										effect((_$p) => setProp(_el$86, "fg", muted(), _$p));
+										return _el$86;
 									})()
 								})
 							})
@@ -9107,10 +9251,10 @@ function SidebarInner(props) {
 							return contextSpendLines(line());
 						},
 						children: (part) => (() => {
-							var _el$86 = createElement("text");
-							insert(_el$86, part);
-							effect((_$p) => setProp(_el$86, "fg", muted(), _$p));
-							return _el$86;
+							var _el$87 = createElement("text");
+							insert(_el$87, part);
+							effect((_$p) => setProp(_el$87, "fg", muted(), _$p));
+							return _el$87;
 						})()
 					})
 				}), null);
@@ -9155,16 +9299,16 @@ function SidebarInner(props) {
 						return model.branch();
 					},
 					children: (value) => (() => {
-						var _el$87 = createElement("box"), _el$88 = createElement("text"), _el$90 = createElement("text");
-						insertNode(_el$87, _el$88);
-						insertNode(_el$87, _el$90);
-						setProp(_el$87, "flexDirection", "row");
-						insertNode(_el$88, createTextNode(`⎇ `));
-						setProp(_el$88, "fg", "#38bdf8");
-						setProp(_el$90, "attributes", 1);
-						insert(_el$90, () => truncateLabel(value(), 24));
-						effect((_$p) => setProp(_el$90, "fg", text(), _$p));
-						return _el$87;
+						var _el$88 = createElement("box"), _el$89 = createElement("text"), _el$91 = createElement("text");
+						insertNode(_el$88, _el$89);
+						insertNode(_el$88, _el$91);
+						setProp(_el$88, "flexDirection", "row");
+						insertNode(_el$89, createTextNode(`⎇ `));
+						setProp(_el$89, "fg", "#38bdf8");
+						setProp(_el$91, "attributes", 1);
+						insert(_el$91, () => truncateLabel(value(), 24));
+						effect((_$p) => setProp(_el$91, "fg", text(), _$p));
+						return _el$88;
 					})()
 				}), null);
 				insert(_el$35, createComponent(Show, {
@@ -9172,10 +9316,10 @@ function SidebarInner(props) {
 						return model.gitLine();
 					},
 					children: (line) => (() => {
-						var _el$91 = createElement("text");
-						setProp(_el$91, "fg", "#f59e0b");
-						insert(_el$91, line);
-						return _el$91;
+						var _el$92 = createElement("text");
+						setProp(_el$92, "fg", "#f59e0b");
+						insert(_el$92, line);
+						return _el$92;
 					})()
 				}), null);
 				return _el$33;
@@ -9203,9 +9347,9 @@ function SidebarInner(props) {
 						return dispatchView();
 					},
 					children: (view) => (() => {
-						var _el$92 = createElement("box");
-						setProp(_el$92, "flexDirection", "column");
-						insert(_el$92, createComponent(BlockHeader, {
+						var _el$93 = createElement("box");
+						setProp(_el$93, "flexDirection", "column");
+						insert(_el$93, createComponent(BlockHeader, {
 							get icon() {
 								return BLOCK_ICONS.dispatch;
 							},
@@ -9221,86 +9365,86 @@ function SidebarInner(props) {
 								return dispatchSummary();
 							}
 						}), null);
-						insert(_el$92, createComponent(For, {
+						insert(_el$93, createComponent(For, {
 							get each() {
 								return view().running;
 							},
 							children: (row) => (() => {
-								var _el$94 = createElement("box"), _el$95 = createElement("text");
-								insertNode(_el$94, _el$95);
-								setProp(_el$94, "flexShrink", 0);
-								insert(_el$95, () => row.text);
+								var _el$95 = createElement("box"), _el$96 = createElement("text");
+								insertNode(_el$95, _el$96);
+								setProp(_el$95, "flexShrink", 0);
+								insert(_el$96, () => row.text);
 								effect((_p$) => {
 									var _v$1 = open(row.id), _v$10 = tone("success");
-									_v$1 !== _p$.e && (_p$.e = setProp(_el$94, "onMouseDown", _v$1, _p$.e));
-									_v$10 !== _p$.t && (_p$.t = setProp(_el$95, "fg", _v$10, _p$.t));
+									_v$1 !== _p$.e && (_p$.e = setProp(_el$95, "onMouseDown", _v$1, _p$.e));
+									_v$10 !== _p$.t && (_p$.t = setProp(_el$96, "fg", _v$10, _p$.t));
 									return _p$;
 								}, {
 									e: void 0,
 									t: void 0
 								});
-								return _el$94;
+								return _el$95;
 							})()
 						}), null);
-						insert(_el$92, createComponent(Show, {
+						insert(_el$93, createComponent(Show, {
 							get when() {
 								return view().runningHidden > 0;
 							},
 							get children() {
-								var _el$93 = createElement("text");
-								insert(_el$93, () => `\u2026 +${view().runningHidden} rodando`);
-								effect((_$p) => setProp(_el$93, "fg", muted(), _$p));
-								return _el$93;
+								var _el$94 = createElement("text");
+								insert(_el$94, () => `\u2026 +${view().runningHidden} rodando`);
+								effect((_$p) => setProp(_el$94, "fg", muted(), _$p));
+								return _el$94;
 							}
 						}), null);
-						insert(_el$92, createComponent(Show, {
+						insert(_el$93, createComponent(Show, {
 							get when() {
 								return view().summary;
 							},
 							children: (line) => (() => {
-								var _el$96 = createElement("box"), _el$97 = createElement("text");
-								insertNode(_el$96, _el$97);
-								setProp(_el$96, "flexDirection", "row");
-								setProp(_el$96, "flexShrink", 0);
-								insert(_el$97, line);
-								insert(_el$96, createComponent(Show, {
+								var _el$97 = createElement("box"), _el$98 = createElement("text");
+								insertNode(_el$97, _el$98);
+								setProp(_el$97, "flexDirection", "row");
+								setProp(_el$97, "flexShrink", 0);
+								insert(_el$98, line);
+								insert(_el$97, createComponent(Show, {
 									get when() {
 										return failedSuffix();
 									},
 									children: (suffix) => (() => {
-										var _el$98 = createElement("text");
-										insert(_el$98, () => `${SPEND_LINE_SEPARATOR}${suffix()}`);
-										effect((_$p) => setProp(_el$98, "fg", tone("error"), _$p));
-										return _el$98;
+										var _el$99 = createElement("text");
+										insert(_el$99, () => `${SPEND_LINE_SEPARATOR}${suffix()}`);
+										effect((_$p) => setProp(_el$99, "fg", tone("error"), _$p));
+										return _el$99;
 									})()
 								}), null);
-								effect((_$p) => setProp(_el$97, "fg", muted(), _$p));
-								return _el$96;
+								effect((_$p) => setProp(_el$98, "fg", muted(), _$p));
+								return _el$97;
 							})()
 						}), null);
-						insert(_el$92, createComponent(For, {
+						insert(_el$93, createComponent(For, {
 							get each() {
 								return view().agents;
 							},
 							children: (row) => (() => {
-								var _el$99 = createElement("text");
-								insert(_el$99, () => childAgentRowText(row));
-								effect((_$p) => setProp(_el$99, "fg", muted(), _$p));
-								return _el$99;
-							})()
-						}), null);
-						insert(_el$92, createComponent(Show, {
-							get when() {
-								return hiddenChildAgentsText(view().agentsHidden, view().agentsHiddenCost);
-							},
-							children: (line) => (() => {
 								var _el$100 = createElement("text");
-								insert(_el$100, line);
+								insert(_el$100, () => childAgentRowText(row));
 								effect((_$p) => setProp(_el$100, "fg", muted(), _$p));
 								return _el$100;
 							})()
 						}), null);
-						return _el$92;
+						insert(_el$93, createComponent(Show, {
+							get when() {
+								return hiddenChildAgentsText(view().agentsHidden, view().agentsHiddenCost);
+							},
+							children: (line) => (() => {
+								var _el$101 = createElement("text");
+								insert(_el$101, line);
+								effect((_$p) => setProp(_el$101, "fg", muted(), _$p));
+								return _el$101;
+							})()
+						}), null);
+						return _el$93;
 					})()
 				}), null);
 				return _el$36;
@@ -9384,25 +9528,25 @@ function DispatchPanel(props) {
 			return model.visible().rows;
 		},
 		children: (row) => (() => {
-			var _el$101 = createElement("box"), _el$102 = createElement("text"), _el$103 = createElement("text");
-			insertNode(_el$101, _el$102);
-			insertNode(_el$101, _el$103);
-			setProp(_el$101, "flexDirection", "row");
-			setProp(_el$101, "flexShrink", 0);
-			insert(_el$102, () => selected(row.id) ? `▸ ` : "  ");
-			insert(_el$103, () => row.text);
+			var _el$102 = createElement("box"), _el$103 = createElement("text"), _el$104 = createElement("text");
+			insertNode(_el$102, _el$103);
+			insertNode(_el$102, _el$104);
+			setProp(_el$102, "flexDirection", "row");
+			setProp(_el$102, "flexShrink", 0);
+			insert(_el$103, () => selected(row.id) ? `▸ ` : "  ");
+			insert(_el$104, () => row.text);
 			effect((_p$) => {
 				var _v$11 = selected(row.id) ? text() : muted(), _v$12 = rowFg(row.state), _v$13 = selected(row.id) ? 1 : 0;
-				_v$11 !== _p$.e && (_p$.e = setProp(_el$102, "fg", _v$11, _p$.e));
-				_v$12 !== _p$.t && (_p$.t = setProp(_el$103, "fg", _v$12, _p$.t));
-				_v$13 !== _p$.a && (_p$.a = setProp(_el$103, "attributes", _v$13, _p$.a));
+				_v$11 !== _p$.e && (_p$.e = setProp(_el$103, "fg", _v$11, _p$.e));
+				_v$12 !== _p$.t && (_p$.t = setProp(_el$104, "fg", _v$12, _p$.t));
+				_v$13 !== _p$.a && (_p$.a = setProp(_el$104, "attributes", _v$13, _p$.a));
 				return _p$;
 			}, {
 				e: void 0,
 				t: void 0,
 				a: void 0
 			});
-			return _el$101;
+			return _el$102;
 		})()
 	});
 	const detail = () => createComponent(For, {
@@ -9410,28 +9554,28 @@ function DispatchPanel(props) {
 			return model.detail();
 		},
 		children: (line, index) => (() => {
-			var _el$104 = createElement("text");
-			insert(_el$104, line);
-			effect((_$p) => setProp(_el$104, "fg", index() === 0 ? text() : muted(), _$p));
-			return _el$104;
+			var _el$105 = createElement("text");
+			insert(_el$105, line);
+			effect((_$p) => setProp(_el$105, "fg", index() === 0 ? text() : muted(), _$p));
+			return _el$105;
 		})()
 	});
 	const empty = () => (() => {
-		var _el$105 = createElement("text");
-		insertNode(_el$105, createTextNode(`No delegated sessions`));
-		effect((_$p) => setProp(_el$105, "fg", muted(), _$p));
-		return _el$105;
+		var _el$106 = createElement("text");
+		insertNode(_el$106, createTextNode(`No delegated sessions`));
+		effect((_$p) => setProp(_el$106, "fg", muted(), _$p));
+		return _el$106;
 	})();
 	return (() => {
-		var _el$107 = createElement("box"), _el$108 = createElement("text"), _el$109 = createElement("text"), _el$113 = createElement("box"), _el$114 = createElement("text");
-		insertNode(_el$107, _el$108);
-		insertNode(_el$107, _el$109);
-		insertNode(_el$107, _el$113);
-		insertNode(_el$107, _el$114);
-		setProp(_el$107, "flexDirection", "column");
-		setProp(_el$107, "width", "100%");
-		setProp(_el$107, "padding", 1);
-		insert(_el$107, createComponent(DispatchPanelKeymap, {
+		var _el$108 = createElement("box"), _el$109 = createElement("text"), _el$110 = createElement("text"), _el$114 = createElement("box"), _el$115 = createElement("text");
+		insertNode(_el$108, _el$109);
+		insertNode(_el$108, _el$110);
+		insertNode(_el$108, _el$114);
+		insertNode(_el$108, _el$115);
+		setProp(_el$108, "flexDirection", "column");
+		setProp(_el$108, "width", "100%");
+		setProp(_el$108, "padding", 1);
+		insert(_el$108, createComponent(DispatchPanelKeymap, {
 			get context() {
 				return props.context;
 			},
@@ -9439,30 +9583,30 @@ function DispatchPanel(props) {
 				return props.panel;
 			},
 			model
-		}), _el$108);
-		setProp(_el$108, "attributes", 1);
-		insert(_el$108, () => model.title());
-		insert(_el$107, createComponent(Show, {
+		}), _el$109);
+		setProp(_el$109, "attributes", 1);
+		insert(_el$109, () => model.title());
+		insert(_el$108, createComponent(Show, {
 			get when() {
 				return model.header();
 			},
 			children: (line) => (() => {
-				var _el$115 = createElement("text");
-				insert(_el$115, line);
-				effect((_$p) => setProp(_el$115, "fg", muted(), _$p));
-				return _el$115;
+				var _el$116 = createElement("text");
+				insert(_el$116, line);
+				effect((_$p) => setProp(_el$116, "fg", muted(), _$p));
+				return _el$116;
 			})()
-		}), _el$109);
-		insert(_el$109, () => dispatchPanelRule(props.panel.width - 2));
-		insert(_el$107, createComponent(Show, {
+		}), _el$110);
+		insert(_el$110, () => dispatchPanelRule(props.panel.width - 2));
+		insert(_el$108, createComponent(Show, {
 			get when() {
 				return model.layout().mode === "wide";
 			},
 			get fallback() {
 				return (() => {
-					var _el$116 = createElement("box");
-					setProp(_el$116, "flexDirection", "column");
-					insert(_el$116, createComponent(Show, {
+					var _el$117 = createElement("box");
+					setProp(_el$117, "flexDirection", "column");
+					insert(_el$117, createComponent(Show, {
 						get when() {
 							return model.rows().length > 0;
 						},
@@ -9470,34 +9614,34 @@ function DispatchPanel(props) {
 							return empty();
 						},
 						get children() {
-							var _el$117 = createElement("box");
-							setProp(_el$117, "flexDirection", "column");
-							insert(_el$117, rows);
-							return _el$117;
+							var _el$118 = createElement("box");
+							setProp(_el$118, "flexDirection", "column");
+							insert(_el$118, rows);
+							return _el$118;
 						}
 					}), null);
-					insert(_el$116, createComponent(Show, {
+					insert(_el$117, createComponent(Show, {
 						get when() {
 							return model.selectedID();
 						},
 						get children() {
-							var _el$118 = createElement("box"), _el$119 = createElement("box");
-							insertNode(_el$118, _el$119);
-							setProp(_el$118, "flexDirection", "column");
-							setProp(_el$119, "height", 1);
-							insert(_el$118, detail, null);
-							return _el$118;
+							var _el$119 = createElement("box"), _el$120 = createElement("box");
+							insertNode(_el$119, _el$120);
+							setProp(_el$119, "flexDirection", "column");
+							setProp(_el$120, "height", 1);
+							insert(_el$119, detail, null);
+							return _el$119;
 						}
 					}), null);
-					return _el$116;
+					return _el$117;
 				})();
 			},
 			get children() {
-				var _el$110 = createElement("box"), _el$111 = createElement("box");
-				insertNode(_el$110, _el$111);
-				setProp(_el$110, "flexDirection", "row");
-				setProp(_el$111, "flexDirection", "column");
-				insert(_el$111, createComponent(Show, {
+				var _el$111 = createElement("box"), _el$112 = createElement("box");
+				insertNode(_el$111, _el$112);
+				setProp(_el$111, "flexDirection", "row");
+				setProp(_el$112, "flexDirection", "column");
+				insert(_el$112, createComponent(Show, {
 					get when() {
 						return model.rows().length > 0;
 					},
@@ -9508,36 +9652,36 @@ function DispatchPanel(props) {
 						return rows();
 					}
 				}));
-				insert(_el$110, createComponent(Show, {
+				insert(_el$111, createComponent(Show, {
 					get when() {
 						return model.selectedID();
 					},
 					get children() {
-						var _el$112 = createElement("box");
-						setProp(_el$112, "flexDirection", "column");
-						insert(_el$112, detail);
-						effect((_$p) => setProp(_el$112, "width", model.layout().detailWidth, _$p));
-						return _el$112;
+						var _el$113 = createElement("box");
+						setProp(_el$113, "flexDirection", "column");
+						insert(_el$113, detail);
+						effect((_$p) => setProp(_el$113, "width", model.layout().detailWidth, _$p));
+						return _el$113;
 					}
 				}), null);
-				effect((_$p) => setProp(_el$111, "width", model.layout().listWidth, _$p));
-				return _el$110;
+				effect((_$p) => setProp(_el$112, "width", model.layout().listWidth, _$p));
+				return _el$111;
 			}
-		}), _el$113);
-		setProp(_el$113, "height", 1);
-		insert(_el$114, () => model.footer());
+		}), _el$114);
+		setProp(_el$114, "height", 1);
+		insert(_el$115, () => model.footer());
 		effect((_p$) => {
 			var _v$14 = text(), _v$15 = muted(), _v$16 = muted();
-			_v$14 !== _p$.e && (_p$.e = setProp(_el$108, "fg", _v$14, _p$.e));
-			_v$15 !== _p$.t && (_p$.t = setProp(_el$109, "fg", _v$15, _p$.t));
-			_v$16 !== _p$.a && (_p$.a = setProp(_el$114, "fg", _v$16, _p$.a));
+			_v$14 !== _p$.e && (_p$.e = setProp(_el$109, "fg", _v$14, _p$.e));
+			_v$15 !== _p$.t && (_p$.t = setProp(_el$110, "fg", _v$15, _p$.t));
+			_v$16 !== _p$.a && (_p$.a = setProp(_el$115, "fg", _v$16, _p$.a));
 			return _p$;
 		}, {
 			e: void 0,
 			t: void 0,
 			a: void 0
 		});
-		return _el$107;
+		return _el$108;
 	})();
 }
 /** App-level command claim: the only way into the panel. It registers the
@@ -9588,16 +9732,35 @@ function PantheonSettingsCommandLayer(props) {
 *  this keeps a compact Pantheon line visible on the home footer meanwhile. */
 function HomeStatus(props) {
 	const preset = useActivePreset(props.context).preset;
+	const availableUpdate = useAvailableUpdate("2.2.0-beta.10");
+	const accent = () => resolveAccentColor(tuiDraftPreview()?.theme?.accent ?? tuiPrefs().theme?.accent, props.context.theme);
 	const muted = () => props.context.theme?.text?.muted ?? props.context.theme?.text?.base;
+	const updateBadge = () => formatUpdateBadge("2.2.0-beta.10", availableUpdate(), {
+		isPt: resolveLanguage(tuiPrefs().layout?.language) === "pt-BR",
+		compact: true
+	});
 	return createComponent(Show, {
 		get when() {
 			return tuiPrefs().footer.home;
 		},
 		get children() {
-			var _el$120 = createElement("text");
-			insert(_el$120, () => `Pantheon v2.2.0-beta.9${preset().name ? ` ▸ ${preset().name}` : ""}`);
-			effect((_$p) => setProp(_el$120, "fg", muted(), _$p));
-			return _el$120;
+			var _el$121 = createElement("box"), _el$122 = createElement("text");
+			insertNode(_el$121, _el$122);
+			setProp(_el$121, "flexDirection", "row");
+			insert(_el$122, () => `Pantheon v2.2.0-beta.10${preset().name ? ` ▸ ${preset().name}` : ""}`);
+			insert(_el$121, createComponent(Show, {
+				get when() {
+					return updateBadge();
+				},
+				children: (badge) => (() => {
+					var _el$123 = createElement("text");
+					insert(_el$123, () => ` · ${badge()}`);
+					effect((_$p) => setProp(_el$123, "fg", accent(), _$p));
+					return _el$123;
+				})()
+			}), null);
+			effect((_$p) => setProp(_el$122, "fg", muted(), _$p));
+			return _el$121;
 		}
 	});
 }
@@ -9653,10 +9816,10 @@ function PromptFooter(props) {
 			return memo(() => !!tuiPrefs().footer.prompt)() && model.running() > 0;
 		},
 		get children() {
-			var _el$121 = createElement("text");
-			insert(_el$121, () => `▸${model.preset().name ?? "default"} · ✦${model.running()} ativos`);
-			effect((_$p) => setProp(_el$121, "fg", muted(), _$p));
-			return _el$121;
+			var _el$124 = createElement("text");
+			insert(_el$124, () => `▸${model.preset().name ?? "default"} · ✦${model.running()} ativos`);
+			effect((_$p) => setProp(_el$124, "fg", muted(), _$p));
+			return _el$124;
 		}
 	});
 }
@@ -9681,9 +9844,13 @@ const plugin = Plugin.define({
 			append: "home.footer.status",
 			render: () => createComponent(HomeStatus, { context })
 		});
+		setAvailableUpdateVersion(resolveCachedAvailableUpdate("2.2.0-beta.10", updateCheckStateFile().readState()));
 		const updateNoticeTimer = setTimeout(() => {
 			checkForPantheonUpdate(context).catch(() => {});
-		}, 1e4);
+		}, 3e3);
+		const updateNoticeInterval = setInterval(() => {
+			checkForPantheonUpdate(context).catch(() => {});
+		}, UPDATE_CHECK_TTL_MS);
 		const unregisterPromptFooter = context.ui.slot({
 			append: "prompt.footer",
 			render: (slotProps) => createComponent(PromptFooter, {
@@ -9730,6 +9897,7 @@ const plugin = Plugin.define({
 		maybeShowWhatsNew(context);
 		return () => {
 			clearTimeout(updateNoticeTimer);
+			clearInterval(updateNoticeInterval);
 			if (typeof unregisterSidebar === "function") unregisterSidebar();
 			if (typeof unregisterHome === "function") unregisterHome();
 			if (typeof unregisterPromptFooter === "function") unregisterPromptFooter();

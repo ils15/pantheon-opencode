@@ -104,7 +104,13 @@ import {
   setTuiDraftPreview,
   tuiPrefs,
 } from './tui-prefs.ts'
-import { nextCheckState, type UpdateCheckState } from './update-notice.ts'
+import {
+  isNewerUpdateAvailable,
+  nextCheckState,
+  setAvailableUpdateVersion,
+  type UpdateCheckState,
+  withKnownLatest,
+} from './update-notice.ts'
 import {
   buildUpdatesTab,
   registryUrlForChannel,
@@ -386,10 +392,11 @@ function persistUpdateCheckState(previous: UpdateCheckState, latest: string | nu
   try {
     const path = updateCheckStatePath()
     mkdirSync(join(path, '..'), { recursive: true })
-    writeFileSync(
-      path,
-      `${JSON.stringify(nextCheckState(previous, latest ? { version: latest, message: '' } : null, Date.now()), null, 2)}\n`,
+    const next = withKnownLatest(
+      nextCheckState(previous, latest ? { version: latest, message: '' } : null, Date.now()),
+      latest,
     )
+    writeFileSync(path, `${JSON.stringify(next, null, 2)}\n`)
   } catch {
     /* state is a cache — never block on it */
   }
@@ -988,6 +995,7 @@ function createWindowController(
       .then((latest) => {
         if (latest) {
           setLastChecked(latest)
+          setAvailableUpdateVersion(isNewerUpdateAvailable(currentVersion, latest) ? latest : null)
           persistUpdateCheckState(readUpdateCheckState(), latest)
         }
       })
@@ -1001,44 +1009,61 @@ function createWindowController(
     if (updating()) return
     const channel = selectedChannel()
     const pkgSpec = channel === 'beta' ? 'pantheon-opencode@beta' : 'pantheon-opencode'
+    const finishSuccess = () => {
+      setUpdating(false)
+      setAvailableUpdateVersion(null)
+      setNotice('[OK] plugin updated — restart OpenCode to reload')
+      execFile('opencode', ['reload'], { cwd: workspaceDir, timeout: 15_000 }, () => {})
+      try {
+        context.ui.toast?.show?.({
+          variant: 'info',
+          message: 'Pantheon plugin updated! Restart OpenCode if the TUI footer does not refresh.',
+        })
+      } catch {}
+    }
     setUpdating(true)
     setNotice(`updating plugin (${pkgSpec})…`)
     execFile(
       'opencode',
-      ['plugin', 'add', pkgSpec],
+      ['plugin', 'update', pkgSpec],
       { cwd: workspaceDir, timeout: 60_000 },
       (err) => {
         if (!err) {
-          setUpdating(false)
-          setNotice('[OK] plugin updated — restart OpenCode to reload')
-          try {
-            context.ui.toast?.show?.({
-              variant: 'info',
-              message: 'Pantheon plugin updated! Restart OpenCode to load the new version.',
-            })
-          } catch {}
+          finishSuccess()
           return
         }
-        execFile('npm', ['install', '-g', pkgSpec], { timeout: 60_000 }, (npmErr) => {
-          setUpdating(false)
-          if (npmErr) {
-            setNotice(`run in terminal: opencode plugin add ${pkgSpec}`)
-            try {
-              context.ui.toast?.show?.({
-                variant: 'warning',
-                message: `Update requires terminal permissions: run \`opencode plugin add ${pkgSpec}\``,
-              })
-            } catch {}
-          } else {
-            setNotice('[OK] update complete — restart OpenCode to reload the plugin')
-            try {
-              context.ui.toast?.show?.({
-                variant: 'info',
-                message: 'Pantheon updated successfully!',
-              })
-            } catch {}
-          }
-        })
+        execFile(
+          'opencode',
+          ['plugin', 'add', pkgSpec],
+          { cwd: workspaceDir, timeout: 60_000 },
+          (addErr) => {
+            if (!addErr) {
+              finishSuccess()
+              return
+            }
+            execFile('npm', ['install', '-g', pkgSpec], { timeout: 60_000 }, (npmErr) => {
+              setUpdating(false)
+              if (npmErr) {
+                setNotice(`run in terminal: opencode plugin update ${pkgSpec}`)
+                try {
+                  context.ui.toast?.show?.({
+                    variant: 'warning',
+                    message: `Update requires terminal permissions: run \`opencode plugin update ${pkgSpec}\``,
+                  })
+                } catch {}
+              } else {
+                setAvailableUpdateVersion(null)
+                setNotice('[OK] update complete — restart OpenCode to reload the plugin')
+                try {
+                  context.ui.toast?.show?.({
+                    variant: 'info',
+                    message: 'Pantheon updated successfully!',
+                  })
+                } catch {}
+              }
+            })
+          },
+        )
       },
     )
   }
