@@ -17987,26 +17987,6 @@ function readCanonicalRoster() {
   }
   return {};
 }
-function buildRosterPermissionRules(rawPerm) {
-  if (!rawPerm || typeof rawPerm !== "object" || Array.isArray(rawPerm)) return [];
-  const rules = [];
-  const isEffect = (v) => v === "allow" || v === "deny" || v === "ask";
-  const pushAction = (action, resource, effect) => {
-    rules.push({ action, resource, effect });
-    if (action === "task") rules.push({ action: "subagent", resource, effect });
-    if (action === "bash") rules.push({ action: "shell", resource, effect });
-  };
-  for (const [action, val] of Object.entries(rawPerm)) {
-    if (isEffect(val)) {
-      pushAction(action, "*", val);
-    } else if (val && typeof val === "object" && !Array.isArray(val)) {
-      for (const [res, eff] of Object.entries(val)) {
-        if (isEffect(eff)) pushAction(action, res, eff);
-      }
-    }
-  }
-  return rules;
-}
 function transformAgents(draft) {
   let agents;
   try {
@@ -18071,12 +18051,6 @@ function transformAgents(draft) {
             const override = configuredOverrides[id];
             if (override) {
               applyV2ModelOverride(current, override);
-            }
-            if (Array.isArray(current.permissions)) {
-              const rules = buildRosterPermissionRules(def.permission);
-              if (rules.length > 0) {
-                current.permissions.push(...rules);
-              }
             }
             const body = typeof def.body === "string" ? def.body.trim() : "";
             current.system = body ? buildPrefixCachedPrompt({ identity: body, currentTurn: POLICY }).prompt : POLICY;

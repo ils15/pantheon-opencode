@@ -23,7 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - **plugin** — `src/plugin.ts`: add `../agents/roster.json`, `../skills`, `../commands`, and `../../AGENTS.global.md` paths for bundled `src/plugin/index.js`.
-- **plugin** — `src/plugin.ts` & `src/pantheon/local-orchestration.ts`: map roster permissions/models to V2 `Agent.Info` and add `../../routing.yml` fallback.
+- **plugin** — `src/plugin.ts` & `src/pantheon/local-orchestration.ts`: apply V2 `ModelRef` overrides on provisioned agents and add `../../routing.yml` fallback.
 - **tests** — `tests/package-consumer.test.mjs`: verify bundled `pantheon-opencode/server` provisions agents, skills, commands, and references outside the repo root.
 
 ## [v2.2.0-beta.7] - 2026-11-18
