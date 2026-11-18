@@ -13,6 +13,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
      Running apply will move this section to a versioned entry and reset the template below. -->
 
+## [v2.2.0-beta.4] - 2026-11-18
+
+### 🆕 What's New
+
+- **Plugin Startup Migration**: `opencode plugin add` and plugin boot now automatically migrate legacy stores and purge stale files.
+- **Cross-Workspace Global Continuity**: Migrated global memories and checkpoints persist in `~/.config/opencode/.pantheon` across all repos.
+
+### Added
+
+- **plugin** — `src/plugin.ts`: executes `ensureLegacyStoresMigratedOnce` during `setup()` (Phase -1) for both workspace and global OpenCode config roots.
+- **pantheon** — `src/pantheon/native-memory-tools.ts`: adds non-destructive global memory inheritance and global `context_get` checkpoint fallback.
+- **installer** — `scripts/sync-tui.mjs`: triggers legacy store migration and stale cleanup automatically during npm global `postinstall` upgrades.
+
 ## [v2.2.0-beta.3] - 2026-11-18
 
 ### 🆕 What's New

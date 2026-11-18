@@ -12,6 +12,8 @@ export interface MigrateLegacyStoresOptions {
   readonly dryRun?: boolean
 }
 
+export function resolveSafeGlobalConfigDir(env?: NodeJS.ProcessEnv): string | undefined
+
 export function resetLegacyMigrationCacheForTests(): void
 
 export function ensureLegacyStoresMigratedOnce(
