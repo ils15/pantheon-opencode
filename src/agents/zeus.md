@@ -131,6 +131,15 @@ These rules are economic, measured against the 2026-11-05 usage audit. They appl
       * Skip choice: `"Prosseguir sem instalar skills adicionais"`.
   - Automated Specialist Execution & Batching: When the user approves in the question prompt, do NOT require them to run commands. Immediately dispatch an execution specialist with bash permitted (@hermes or @talos) to execute one command per skill sequentially chained with `&&`: `npx skills add <skill1> -a opencode -y && npx skills add <skill2> -a opencode -y` in the project root (the skills CLI only accepts one target per invocation; never pass multiple skills as separate positional arguments to a single call).
   - Verification: Specialist verifies directory creation in `<project>/.agents/skills/<skill-name>/` or `<project>/.opencode/skills/<skill-name>/` (ensuring `.opencode/skills/<skill-name>` exists or links so OpenCode native discovery sees it); subsequent `pantheon_skill_search` confirms `installed: true`.
+- **Proactive Project Specialist Decision Flow (`pantheon_agent_forge`):**
+  - Keep the 14 canonical agents strictly **stack-agnostic**.
+  - When a project task hits deep domain/stack conventions (e.g., GeoServer/PostGIS, PyTorch/CUDA, Rust embedded, ERP/SAP adapters, custom compliance rules) that justify a dedicated specialist with fixed stack rules and test slice:
+    1. Inspect `.opencode/agents/` first via `pantheon_agent_forge(action="list")`.
+    2. If no custom project specialist covers that domain yet, **proactively invoke the native `question` tool** offering 1-click choices:
+       * Recommended: `"(Recomendado) Criar agente especialista no projeto (.opencode/agents/<nome>.md)"`
+       * Custom: `"Ajustar papel, permissões ou modelo antes de criar"`
+       * Skip: `"Prosseguir apenas com os agentes canônicos agnósticos"`
+    3. Only after explicit user confirmation, call `pantheon_agent_forge(action="create", ...)` scoped strictly to `<project>/.opencode/agents/` (NEVER propose global agent installs).
 
 ## Visual Context for Implementation
 

@@ -13,6 +13,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
      Running apply will move this section to a versioned entry and reset the template below. -->
 
+## [v2.2.0-beta.6] - 2026-11-18
+
+### 🆕 What's New
+
+- **Per-Edit Diff-Scoped Lint**: `execute.after` runs single-file lint (`biome`/`eslint`/`ruff`) scoped to lines changed vs `HEAD`.
+- **Escape-Hatch Guardrails**: Blocks unapproved lint suppressions (`eslint-disable`, `@ts-ignore`, `# noqa`) and lint config edits.
+- **Proactive Project Specialist Forge**: Zeus detects stack gaps and asks via `question` before forging `.opencode/agents/<name>.md`.
+
+### Added
+
+- **plugin** — `src/pantheon/edit-guardrails.ts`: adds `evaluateEditGuardrail` (before-hook) and diff-scoped `runPostEditLint` (after-hook) with approval markers.
+- **agents** — `src/agents/roster.json`, `src/agents/zeus.md`, `src/pantheon/agent-forge-tool.ts`: proactive project specialist discovery & confirmation gate.
+- **tests** — `tests/pantheon/edit-guardrails.test.ts` and `tests/skill-decision-proactive.test.mjs`: cover diff filtering, suppression blocks, and forge prompts.
+
 ## [v2.2.0-beta.5] - 2026-11-18
 
 ### 🆕 What's New

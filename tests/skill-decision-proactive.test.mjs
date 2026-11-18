@@ -41,6 +41,11 @@ test('Zeus instructions enforce proactive project-scoped skill decision flow', (
   assert.match(zeus, /Skills \(Internal & External\)/i)
   assert.match(zeus, /Skill: <name> \(Path: \.opencode\/skills\/<name>\/SKILL\.md\)/i)
   assert.match(zeus, /instruct the specialist to read `SKILL\.md` before implementation/i)
+
+  // Proactive Project Specialist Decision Flow (Agent Forge)
+  assert.match(zeus, /Proactive Project Specialist Decision Flow/i)
+  assert.match(zeus, /pantheon_agent_forge\(action="list"\)/i)
+  assert.match(zeus, /\(Recomendado\) Criar agente especialista no projeto/i)
 })
 
 test('Specialists are instructed to read SKILL.md before writing code', () => {
@@ -57,6 +62,7 @@ test('orchestrate-with-zeus prompt guides proactive project skill installation',
   const prompt = read('../prompts/orchestrate-with-zeus.prompt.md')
 
   assert.match(prompt, /proactively invoke the `question` tool for 1-click project installation/i)
+  assert.match(prompt, /pantheon_agent_forge\(action="list"\)/i)
   assert.match(prompt, /\.agents\/skills\//i)
   assert.match(prompt, /npx skills add \{\{SKILL\}\} -a opencode -y/i)
   assert.match(prompt, /Don't ask the user to run terminal commands for skill installation/i)
