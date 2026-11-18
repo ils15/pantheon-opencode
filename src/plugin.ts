@@ -621,9 +621,6 @@ function transformAgents(draft: AgentDraft): void {
             current.description = def.description ?? ''
             current.mode = id === 'zeus' ? 'primary' : (def.mode ?? 'subagent')
             if (def.temperature !== undefined) current.temperature = def.temperature
-            if (def.permission && typeof def.permission === 'object') {
-              current.permission = def.permission
-            }
             const override = configuredOverrides[id]
             if (override?.model) {
               current.model = override.model
