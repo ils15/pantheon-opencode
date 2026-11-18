@@ -103,8 +103,7 @@ nav:
       - Code Mode: reference/code-mode.md
   - Release Process:
       - Release Process: RELEASING.md
-      - v1.6.0 Release Notes: releases/v1.6.0.md
-      - v2.x Highlights: releases/v2-highlights.md
+      - Release Highlights: releases/highlights.md
   - Branch Protection: BRANCH-PROTECTION.md
   - Documentação (Português):
       - Início: pt-BR/index.md

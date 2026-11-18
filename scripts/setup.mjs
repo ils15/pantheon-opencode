@@ -12,7 +12,7 @@ import {
   prepareV2Config,
   resolveGlobalConfigDirectory,
   verifyConfigPreconditions,
-} from './setup-v2-config.mjs'
+} from './setup-config.mjs'
 
 const INIT_CLI = fileURLToPath(new URL('../bin/pantheon-init.mjs', import.meta.url))
 

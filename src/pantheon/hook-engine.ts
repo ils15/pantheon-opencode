@@ -294,7 +294,8 @@ export function formatterApplies(tool: string, input: unknown): boolean {
   const normalized = tool.trim().toLowerCase()
   if (normalized === 'edit' || normalized === 'write' || normalized === 'hashline_edit') {
     if (input !== null && typeof input === 'object') {
-      return formattablePath((input as Record<string, unknown>).file_path)
+      const rec = input as Record<string, unknown>
+      return formattablePath(rec.file_path ?? rec.filePath ?? rec.file ?? rec.path)
     }
     return false
   }

@@ -15,8 +15,7 @@ writes `.env` and never injects top-level `model`/`small_model` into `opencode.j
   `prometheus`, `hephaestus`, `nyx`, `gaia`, `iris`, `mnemosyne`, `talos`)
   with effective `model`, `effort`, and origin (`preset` | `override` | `env` | `none`)
   and the active preset, without showing secrets.
-- `/pantheon-model` (no args) — interactive wizard via `askQuestions`:
-  agente → modelo (`provider/model-id`) → effort (`low`/`medium`/`high`) → scope.
+- `/pantheon-model` (no args) — defaults to `status` (list active per-agent overrides).
 
 - `/pantheon-model set --agent <name> --model <provider/model-id> [--effort low|medium|high] [--scope project|global]`
   — set per-agent override. Validates agent is one of the 14, `provider/model-id`

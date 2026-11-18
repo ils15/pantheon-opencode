@@ -128,6 +128,8 @@ describe('applyTuiRow', () => {
     applyTuiRow(draft, 'tui.layout.preset', 'compact')
     applyTuiRow(draft, 'tui.layout.separator', 'pipes')
     applyTuiRow(draft, 'tui.layout.settingsView', 'fullscreen')
+    applyTuiRow(draft, 'tui.theme.mode', 'dark')
+    applyTuiRow(draft, 'tui.theme.accent', 'emerald')
 
     assert.equal(tuiRowValue(draft, 'tui.sidebar.context.barShape'), 'dots')
     assert.equal(tuiRowValue(draft, 'tui.sidebar.context.barWidth'), 'wide')
@@ -135,6 +137,8 @@ describe('applyTuiRow', () => {
     assert.equal(tuiRowValue(draft, 'tui.layout.preset'), 'compact')
     assert.equal(tuiRowValue(draft, 'tui.layout.separator'), 'pipes')
     assert.equal(tuiRowValue(draft, 'tui.layout.settingsView'), 'fullscreen')
+    assert.equal(tuiRowValue(draft, 'tui.theme.mode'), 'dark')
+    assert.equal(tuiRowValue(draft, 'tui.theme.accent'), 'emerald')
   })
 
   it('a full stage→apply round trip lands every staged value', () => {
@@ -172,7 +176,7 @@ describe('previewTuiPrefs & live draft preview', () => {
     assert.equal(preview.sidebar.header.session, false)
 
     // Base remains completely untouched
-    assert.equal(base.sidebar.context.barShape, 'line')
+    assert.equal(base.sidebar.context.barShape, 'smooth')
     assert.equal(base.sidebar.context.barWidth, 'standard')
     assert.equal(base.sidebar.context.evenMark, false)
     assert.equal(base.layout.preset, 'comfortable')
@@ -190,7 +194,7 @@ describe('previewTuiPrefs & live draft preview', () => {
   it('tuiPrefs reacts live to setTuiDraftPreview and clearTuiDraftPreview', () => {
     clearTuiDraftPreview()
     assert.equal(tuiDraftPreview(), undefined)
-    assert.equal(tuiPrefs().sidebar.context.barShape, 'line')
+    assert.equal(tuiPrefs().sidebar.context.barShape, 'smooth')
 
     setTuiDraftPreview({
       'tui.sidebar.context.barShape': 'braille',
@@ -202,11 +206,11 @@ describe('previewTuiPrefs & live draft preview', () => {
     assert.equal(tuiPrefs().sidebar.context.barWidth, 'compact')
     assert.equal(tuiPrefs().sidebar.context.evenMark, true)
     // savedTuiPrefs still shows base
-    assert.equal(savedTuiPrefs().sidebar.context.barShape, 'line')
+    assert.equal(savedTuiPrefs().sidebar.context.barShape, 'smooth')
 
     clearTuiDraftPreview()
     assert.equal(tuiDraftPreview(), undefined)
-    assert.equal(tuiPrefs().sidebar.context.barShape, 'line')
+    assert.equal(tuiPrefs().sidebar.context.barShape, 'smooth')
     assert.equal(tuiPrefs().sidebar.context.barWidth, 'standard')
     assert.equal(tuiPrefs().sidebar.context.evenMark, false)
   })

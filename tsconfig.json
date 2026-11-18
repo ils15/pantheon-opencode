@@ -23,6 +23,13 @@
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
-  "include": ["src", "tests/pantheon/native-decisions.test.ts"],
+  "include": [
+    "src",
+    "tests/pantheon/native-decisions.test.ts",
+    "tests/pantheon/native-memory-tools.test.ts",
+    "tests/pantheon/codemap-and-ledger.test.ts",
+    "tests/pantheon/swe-eval-harness.test.ts",
+    "tests/pantheon/agent-forge-tool.test.ts"
+  ],
   "exclude": ["node_modules", "dist", "src/plugins/tui"]
 }

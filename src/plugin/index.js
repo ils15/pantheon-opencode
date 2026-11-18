@@ -6,7 +6,7 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
 });
 
 // src/plugin.ts
-import { appendFileSync as appendFileSync2, mkdirSync as mkdirSync6 } from "node:fs";
+import { appendFileSync as appendFileSync2, existsSync as existsSync14, mkdirSync as mkdirSync10, readFileSync as readFileSync13 } from "node:fs";
 import { realpath as realpathAsync } from "node:fs/promises";
 import path4 from "node:path";
 import { fileURLToPath as fileURLToPath5 } from "node:url";
@@ -14,6 +14,22 @@ import { define } from "@opencode-ai/plugin/v2/promise";
 
 // src/pantheon/auto-permissions.ts
 var READ_ONLY_AGENTS = /* @__PURE__ */ new Set(["zeus", "athena", "apollo", "gaia"]);
+var NON_EDIT_AGENTS = /* @__PURE__ */ new Set([
+  "zeus",
+  "athena",
+  "apollo",
+  "gaia",
+  "themis",
+  "nyx",
+  "iris"
+]);
+var NON_SHELL_AGENTS = /* @__PURE__ */ new Set([
+  "zeus",
+  "athena",
+  "apollo",
+  "gaia",
+  "mnemosyne"
+]);
 var SAFE_DEV_BINARIES = /* @__PURE__ */ new Set([
   "git",
   "npm",
@@ -150,6 +166,16 @@ function evaluateAutoPermission(event, options = {}) {
       event.message = `Pantheon auto-permissions denied: read-only agent '${agent}' cannot execute mutating action '${action}'`;
       return { decision: "deny", reason: "read-only-role-violation" };
     }
+  }
+  if (NON_EDIT_AGENTS.has(agent) && ["edit", "write", "hashline_edit"].includes(action)) {
+    event.effect = "deny";
+    event.message = `Pantheon auto-permissions denied: agent '${agent}' cannot execute file mutation '${action}'`;
+    return { decision: "deny", reason: "read-only-role-violation" };
+  }
+  if (NON_SHELL_AGENTS.has(agent) && ["bash", "shell"].includes(action)) {
+    event.effect = "deny";
+    event.message = `Pantheon auto-permissions denied: agent '${agent}' cannot execute shell command '${action}'`;
+    return { decision: "deny", reason: "read-only-role-violation" };
   }
   if (["read", "glob", "grep", "webfetch", "question"].includes(action)) {
     const firstResource = Array.isArray(event.resources) && typeof event.resources[0] === "string" ? event.resources[0] : "";
@@ -467,8 +493,8 @@ function parseArgs(input) {
   return { path: filePath, offset, limit };
 }
 function isWithin(root, target) {
-  const relative2 = path.relative(root, target);
-  return relative2 === "" || !relative2.startsWith(`..${path.sep}`) && relative2 !== ".." && !path.isAbsolute(relative2);
+  const relative3 = path.relative(root, target);
+  return relative3 === "" || !relative3.startsWith(`..${path.sep}`) && relative3 !== ".." && !path.isAbsolute(relative3);
 }
 function sensitivePath(relativePath) {
   const components = relativePath.split("/").map((component) => component.toLowerCase());
@@ -4055,6 +4081,9 @@ function createEnforcementGuard(input) {
   };
 }
 
+// src/pantheon/execute-after.ts
+import { existsSync as existsSync2, readFileSync as readFileSync3 } from "node:fs";
+
 // src/pantheon/context-sandbox.ts
 var DEFAULT_LIMITS = {
   read: { maxLines: 200, keepHead: 50, keepTail: 10 },
@@ -4365,6 +4394,20 @@ function createV2ExecuteAfter(options = {}) {
       await taskResultGuard(input, output);
       await sandbox(input, output);
       await readEnhancer(input, output);
+      const lowerTool = tool2.trim().toLowerCase();
+      if (lowerTool === "edit" || lowerTool === "write" || lowerTool === "hashline_edit") {
+        const rawArgs = payload.input ?? {};
+        const editedPath = rawArgs.filePath ?? rawArgs.file_path ?? rawArgs.file;
+        if (typeof editedPath === "string" && editedPath.endsWith(".json") && existsSync2(editedPath)) {
+          try {
+            JSON.parse(readFileSync3(editedPath, "utf8"));
+          } catch (jsonErr) {
+            const msg = jsonErr instanceof Error ? jsonErr.message : String(jsonErr);
+            output.output = `${output.output}
+[Pantheon Diagnostic] JSON syntax error in ${editedPath}: ${msg}`;
+          }
+        }
+      }
       if (output.output !== original.text) {
         writeText(result, original.field, output.output, original.text, tool2);
       }
@@ -4495,8 +4538,8 @@ function isMissing(error) {
   return MISSING_CODES.has(errorCode(error));
 }
 function isWithin2(root, target) {
-  const relative2 = path2.relative(root, target);
-  return relative2 === "" || !relative2.startsWith(`..${path2.sep}`) && relative2 !== ".." && !path2.isAbsolute(relative2);
+  const relative3 = path2.relative(root, target);
+  return relative3 === "" || !relative3.startsWith(`..${path2.sep}`) && relative3 !== ".." && !path2.isAbsolute(relative3);
 }
 function resolveExistingPrefix(absolute) {
   let cursor = path2.resolve(absolute);
@@ -4522,8 +4565,8 @@ function resolveExistingPrefix(absolute) {
   return void 0;
 }
 function toGuardForm(resolvedAbsolute, rootReal) {
-  const relative2 = isWithin2(rootReal, resolvedAbsolute) ? path2.relative(rootReal, resolvedAbsolute) : resolvedAbsolute;
-  return relative2.split(path2.sep).join("/");
+  const relative3 = isWithin2(rootReal, resolvedAbsolute) ? path2.relative(rootReal, resolvedAbsolute) : resolvedAbsolute;
+  return relative3.split(path2.sep).join("/");
 }
 function canonicalProjectRoot(projectRoot) {
   try {
@@ -4749,7 +4792,8 @@ function formatterApplies(tool2, input) {
   const normalized = tool2.trim().toLowerCase();
   if (normalized === "edit" || normalized === "write" || normalized === "hashline_edit") {
     if (input !== null && typeof input === "object") {
-      return formattablePath(input.file_path);
+      const rec = input;
+      return formattablePath(rec.file_path ?? rec.filePath ?? rec.file ?? rec.path);
     }
     return false;
   }
@@ -5969,12 +6013,12 @@ function recordSkip(sink, skipReason) {
   );
 }
 function abortDeadline(signal) {
-  return new Promise((resolve8) => {
+  return new Promise((resolve12) => {
     if (signal.aborted) {
-      resolve8("timeout");
+      resolve12("timeout");
       return;
     }
-    signal.addEventListener("abort", () => resolve8("timeout"), { once: true });
+    signal.addEventListener("abort", () => resolve12("timeout"), { once: true });
   });
 }
 function createJ1RiskGateObserver(options) {
@@ -6061,7 +6105,7 @@ import { randomUUID } from "node:crypto";
 import {
   chmodSync as chmodSync2,
   closeSync as closeSync2,
-  existsSync as existsSync2,
+  existsSync as existsSync3,
   lstatSync as lstatSync4,
   mkdirSync as mkdirSync3,
   openSync as openSync2
@@ -6994,7 +7038,7 @@ function isPermittedGroupWritable2(env = process.env) {
   if (env.PANTHEON_ALLOW_GROUP_WRITABLE === "1" || env.PANTHEON_ALLOW_GROUP_WRITABLE === "true") {
     return true;
   }
-  if (env.JUPYTERHUB_USER || env.JUPYTER_IMAGE || env.JUPYTER_SERVER_ROOT || env.KUBERNETES_SERVICE_HOST || env.container || existsSync2("/.dockerenv")) {
+  if (env.JUPYTERHUB_USER || env.JUPYTER_IMAGE || env.JUPYTER_SERVER_ROOT || env.KUBERNETES_SERVICE_HOST || env.container || existsSync3("/.dockerenv")) {
     return true;
   }
   return false;
@@ -7593,7 +7637,7 @@ function createV2JevDecisionDefinition(runtime) {
 import { createHash as createHash4 } from "node:crypto";
 
 // src/pantheon/model-overrides.ts
-import { closeSync as closeSync3, constants as constants2, fstatSync, openSync as openSync3, readFileSync as readFileSync4 } from "node:fs";
+import { closeSync as closeSync3, constants as constants2, fstatSync, openSync as openSync3, readFileSync as readFileSync5 } from "node:fs";
 import { join as join8 } from "node:path";
 
 // src/pantheon/model-agents.ts
@@ -7615,7 +7659,7 @@ var KNOWN_AGENTS = [
 ];
 
 // src/pantheon/presets.mjs
-import { readFileSync as readFileSync3 } from "node:fs";
+import { readFileSync as readFileSync4 } from "node:fs";
 import { join as join7 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { load as load2 } from "js-yaml";
@@ -7668,7 +7712,22 @@ var CAPABILITY_TABLE = [
   { prefix: "big-pickle", maxEffort: "medium", stripEffort: false, vision: false },
   { prefix: "nemotron-3-super-free", maxEffort: "high", stripEffort: false, vision: false },
   { prefix: "nemotron-3-ultra-free", maxEffort: "high", stripEffort: false, vision: false },
-  { prefix: "north-mini-code-free", maxEffort: "high", stripEffort: false, vision: false }
+  { prefix: "north-mini-code-free", maxEffort: "high", stripEffort: false, vision: false },
+  // Multi-provider catalog extensions (Gemini, GPT-4o/4.1/5, Llama, Mistral, Grok, Ollama, OpenRouter)
+  { prefix: "gemini-2.0", maxEffort: "high", stripEffort: false, vision: true },
+  { prefix: "gemini-2.5", maxEffort: "high", stripEffort: false, vision: true },
+  { prefix: "gemini-3-", maxEffort: "high", stripEffort: false, vision: true },
+  { prefix: "gemini-3.0", maxEffort: "high", stripEffort: false, vision: true },
+  { prefix: "gemini-3.1", maxEffort: "high", stripEffort: false, vision: true },
+  { prefix: "gpt-4o", maxEffort: null, stripEffort: true, vision: true },
+  { prefix: "gpt-4.1", maxEffort: null, stripEffort: true, vision: true },
+  { prefix: "gpt-5", maxEffort: "high", stripEffort: false, vision: true },
+  { prefix: "llama", maxEffort: null, stripEffort: true, vision: false },
+  { prefix: "mistral", maxEffort: null, stripEffort: true, vision: false },
+  { prefix: "codestral", maxEffort: null, stripEffort: true, vision: false },
+  { prefix: "grok", maxEffort: "high", stripEffort: false, vision: true },
+  { prefix: "ollama/", maxEffort: null, stripEffort: true, vision: false },
+  { prefix: "openrouter/", maxEffort: "high", stripEffort: false, vision: true }
 ];
 function capabilityEntry(model) {
   const matches = CAPABILITY_TABLE.filter((entry) => {
@@ -7709,7 +7768,7 @@ function loadPresetDefs(routingPath) {
   const path5 = routingPath ?? fileURLToPath(new URL("../routing.yml", import.meta.url));
   let raw;
   try {
-    raw = readFileSync3(path5, "utf8");
+    raw = readFileSync4(path5, "utf8");
   } catch (err) {
     throw new Error(`presets: failed to load routing.yml: ${path5} \u2014 ${err.message}`);
   }
@@ -7744,7 +7803,7 @@ function resolveActivePreset({
     if (!candidate) continue;
     let exists;
     try {
-      exists = readFileSync3(candidate);
+      exists = readFileSync4(candidate);
     } catch {
       continue;
     }
@@ -7835,7 +7894,7 @@ var NonRegularPresetFileError = class extends Error {
     super("Preset file is not a regular file");
   }
 };
-function readV2PresetFile(candidate, fileSystem = { openSync: openSync3, fstatSync, readFileSync: readFileSync4, closeSync: closeSync3 }) {
+function readV2PresetFile(candidate, fileSystem = { openSync: openSync3, fstatSync, readFileSync: readFileSync5, closeSync: closeSync3 }) {
   const noFollowFlag = constants2.O_NOFOLLOW;
   const nonBlockFlag = constants2.O_NONBLOCK;
   if (noFollowFlag === void 0 || noFollowFlag === 0 || nonBlockFlag === void 0 || nonBlockFlag === 0) {
@@ -8172,12 +8231,12 @@ function recordSkip2(sink, skipReason) {
   );
 }
 function abortDeadline2(signal) {
-  return new Promise((resolve8) => {
+  return new Promise((resolve12) => {
     if (signal.aborted) {
-      resolve8("timeout");
+      resolve12("timeout");
       return;
     }
-    signal.addEventListener("abort", () => resolve8("timeout"), { once: true });
+    signal.addEventListener("abort", () => resolve12("timeout"), { once: true });
   });
 }
 function createJ3EscalationObserver(options) {
@@ -8261,7 +8320,7 @@ function createJ3EscalationObserver(options) {
 
 // src/pantheon/native-vision.ts
 import { lookup as dnsLookup } from "node:dns/promises";
-import { existsSync as existsSync4 } from "node:fs";
+import { existsSync as existsSync5 } from "node:fs";
 import { readFile as readFile4 } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
@@ -8283,10 +8342,10 @@ function safeSessionPath(id) {
 import { createHash as createHash5, randomUUID as randomUUID2 } from "node:crypto";
 import {
   chmodSync as chmodSync3,
-  existsSync as existsSync3,
+  existsSync as existsSync4,
   mkdirSync as mkdirSync4,
   readdirSync,
-  readFileSync as readFileSync5,
+  readFileSync as readFileSync6,
   renameSync as renameSync2,
   statSync as statSync2,
   unlinkSync as unlinkSync2,
@@ -8535,18 +8594,18 @@ function extractCredentialCellToken(value) {
 }
 async function readV2CredentialToken(providerIDs, stateDir, env) {
   const dbPath = v2CredentialDbPath(stateDir, env);
-  if (!existsSync3(dbPath)) return null;
+  if (!existsSync4(dbPath)) return null;
   let sqlite;
   try {
     sqlite = await import("node:sqlite");
   } catch {
     return null;
   }
-  const DatabaseSync2 = sqlite.DatabaseSync;
-  if (typeof DatabaseSync2 !== "function") return null;
+  const DatabaseSync4 = sqlite.DatabaseSync;
+  if (typeof DatabaseSync4 !== "function") return null;
   let db;
   try {
-    db = new DatabaseSync2(`file:${dbPath}?mode=ro`, { readOnly: true });
+    db = new DatabaseSync4(`file:${dbPath}?mode=ro`, { readOnly: true });
     const statement = db.prepare(
       "SELECT value FROM credential WHERE integration_id = ? AND active = 1 LIMIT 1"
     );
@@ -8698,7 +8757,7 @@ function writeFileAtomicSync(filePath, data) {
 }
 function fileHasContent(filePath, data) {
   try {
-    return readFileSync5(filePath).equals(data);
+    return readFileSync6(filePath).equals(data);
   } catch {
     return false;
   }
@@ -9240,7 +9299,7 @@ function discoverActiveSessionId(directory) {
   try {
     const dataHome = process.env.XDG_DATA_HOME || join10(homedir4(), ".local", "share");
     const dbPath = process.env.OPENCODE_DB || join10(dataHome, "opencode", "opencode.db");
-    if (!existsSync4(dbPath)) return void 0;
+    if (!existsSync5(dbPath)) return void 0;
     const sqlite = __require("node:sqlite");
     const db = new sqlite.DatabaseSync(dbPath, { readOnly: true });
     try {
@@ -9355,6 +9414,42 @@ function createV2VisionTool(runtime) {
   };
 }
 
+// src/pantheon/prompt-cache-order.ts
+var DEFAULT_CACHE_MIN_TOKENS = 1024;
+function buildPrefixCachedPrompt(layers, minCacheTokens = DEFAULT_CACHE_MIN_TOKENS) {
+  const invariantParts = [];
+  invariantParts.push(layers.identity.trim());
+  if (layers.tools && layers.tools.length > 0) {
+    invariantParts.push(`## Tool Specifications
+${layers.tools.map((t) => t.trim()).join("\n\n")}`);
+  }
+  if (layers.conventions && layers.conventions.length > 0) {
+    invariantParts.push(
+      `## Project Standards & Gates
+${layers.conventions.map((c) => c.trim()).join("\n\n")}`
+    );
+  }
+  const prefix = invariantParts.join("\n\n");
+  const prefixBoundaryIndex = prefix.length;
+  const volatileParts = [];
+  if (layers.history && layers.history.length > 0) {
+    volatileParts.push(
+      `## Conversation History
+${layers.history.map((h) => h.trim()).join("\n\n")}`
+    );
+  }
+  volatileParts.push(layers.currentTurn.trim());
+  const fullPrompt = [prefix, volatileParts.join("\n\n")].join("\n\n");
+  const estimatedTokens = Math.ceil(fullPrompt.length / 4);
+  const estimatedPrefixTokens = Math.ceil(prefix.length / 4);
+  return {
+    prompt: fullPrompt,
+    prefixBoundaryIndex,
+    estimatedTokens,
+    cacheEligible: estimatedPrefixTokens >= minCacheTokens
+  };
+}
+
 // src/pantheon/background-job-board.ts
 import { mkdir as mkdir4, rename as rename3, unlink as unlink2, writeFile as writeFile2 } from "node:fs/promises";
 import { dirname as dirname5, join as join11 } from "node:path";
@@ -9412,7 +9507,7 @@ var PantheonBus = class {
    * Wait asynchronously for a specific event matching a predicate, with an optional timeout.
    */
   waitFor(event, predicate, timeoutMs = 3e4) {
-    return new Promise((resolve8, reject) => {
+    return new Promise((resolve12, reject) => {
       let timer = null;
       let unsubscribe = null;
       if (timeoutMs > 0 && Number.isFinite(timeoutMs)) {
@@ -9426,7 +9521,7 @@ var PantheonBus = class {
           if (predicate(payload)) {
             if (timer) clearTimeout(timer);
             unsubscribe?.();
-            resolve8(payload);
+            resolve12(payload);
           }
         } catch (err) {
           if (timer) clearTimeout(timer);
@@ -9813,9 +9908,9 @@ var BackgroundJobBoard = class {
     if (existing && (TERMINAL_STATES.has(existing.state) || existing.state === "reconciled")) {
       return Promise.resolve(existing);
     }
-    return new Promise((resolve8, reject) => {
+    return new Promise((resolve12, reject) => {
       const waiter = {
-        resolve: resolve8,
+        resolve: resolve12,
         reject,
         timer: setTimeout(() => {
           this.removeTerminalWaiter(taskID, waiter);
@@ -10285,7 +10380,7 @@ function runHook(script, payload, opts = {}) {
       timedOut: false
     });
   }
-  return new Promise((resolve8) => {
+  return new Promise((resolve12) => {
     const stdoutBuf = { value: "" };
     const stderrBuf = { value: "" };
     let settled = false;
@@ -10295,7 +10390,7 @@ function runHook(script, payload, opts = {}) {
       if (!settled) {
         settled = true;
         if (timeoutHandle !== void 0) clearTimeout(timeoutHandle);
-        resolve8(result);
+        resolve12(result);
       }
     };
     const spawnOpts = {
@@ -10792,21 +10887,712 @@ var TodoEnforcer = class {
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 
+// src/pantheon/agent-forge-tool.ts
+import {
+  existsSync as existsSync6,
+  mkdirSync as mkdirSync5,
+  readdirSync as readdirSync2,
+  readFileSync as readFileSync7,
+  realpathSync as realpathSync2,
+  rmSync,
+  writeFileSync as writeFileSync4
+} from "node:fs";
+import { join as join12, resolve as resolve6, sep as sep4 } from "node:path";
+
+// src/pantheon/tool-context.ts
+function resolveToolCwd(context, fallbackDir) {
+  const ctx = context ?? {};
+  if (typeof ctx.directory === "string" && ctx.directory.trim().length > 0) {
+    return ctx.directory;
+  }
+  if (typeof ctx.worktree === "string" && ctx.worktree.trim().length > 0) {
+    return ctx.worktree;
+  }
+  if (typeof fallbackDir === "string" && fallbackDir.trim().length > 0) {
+    return fallbackDir;
+  }
+  return process.cwd();
+}
+
+// src/pantheon/agent-forge-tool.ts
+var SAFE_AGENT_NAME_RE = /^[a-z][a-z0-9-]{1,48}$/;
+function isValidAgentSlug(value) {
+  return typeof value === "string" && SAFE_AGENT_NAME_RE.test(value) && !value.includes("..") && !value.includes("/") && !value.includes("\\");
+}
+function resolveAgentsDir(workspaceDir) {
+  const dir = join12(workspaceDir, ".opencode", "agents");
+  mkdirSync5(dir, { recursive: true });
+  return realpathSync2(dir);
+}
+function resolveConfinedAgentFile(agentsDir, name) {
+  const filePath = resolve6(agentsDir, `${name}.md`);
+  const prefix = agentsDir.endsWith(sep4) ? agentsDir : `${agentsDir}${sep4}`;
+  if (!filePath.startsWith(prefix)) {
+    throw new Error("Path traversal denied: agent file escapes .opencode/agents");
+  }
+  return filePath;
+}
+function buildAgentMarkdown(params) {
+  const { name, description, archetype, stack, readOnly, testCommand, conventions } = params;
+  const stackLine = stack.length > 0 ? stack.join(", ") : "Polyglot project stack";
+  const permEdit = readOnly ? "deny" : "allow";
+  const permShell = readOnly ? "deny" : "allow";
+  const roleKind = readOnly ? "READ-ONLY ANALYSIS & AUDIT SPECIALIST" : "DOMAIN IMPLEMENTATION SPECIALIST";
+  const conventionBullets = conventions.length > 0 ? conventions.map((c) => `- ${c}`).join("\n") : [
+    `- Adapt idiomatic patterns to the active stack (${stackLine}).`,
+    "- Follow strict TDD (RED -> GREEN -> REFACTOR) for behavioral changes.",
+    "- Never introduce mock servers on real service ports; fail fast on missing dependencies."
+  ].join("\n");
+  return [
+    "---",
+    `name: ${name}`,
+    `description: ${JSON.stringify(description)}`,
+    "mode: subagent",
+    `temperature: ${readOnly ? "0.1" : "0.2"}`,
+    "permission:",
+    "  read: allow",
+    "  grep: allow",
+    "  glob: allow",
+    `  edit: ${permEdit}`,
+    `  hashline_edit: ${permEdit}`,
+    `  bash: ${permShell}`,
+    `  shell: ${permShell}`,
+    `  execute: ${permShell}`,
+    "  todowrite: allow",
+    "  todoread: allow",
+    "  task:",
+    '    "*": deny',
+    "---",
+    "",
+    `# @${name} \u2014 ${description}`,
+    "",
+    `- **Archetype:** \`${archetype}\` (${roleKind})`,
+    `- **Target Stack & Domain:** ${stackLine}`,
+    `- **Default Verification Slice:** \`${testCommand}\``,
+    "",
+    "## Role & Execution Boundaries",
+    "",
+    readOnly ? "You are a **READ-ONLY** domain specialist. Inspect files, analyze patterns, and return structured findings with file:line references. Never modify files or run mutating commands." : "You are a **bounded domain implementer**. Inspect relevant files directly, apply surgical edits using `hashline_edit` or `edit`, and verify every change using the narrowest test slice (<10s).",
+    "",
+    "## Domain Conventions & Quality Gates",
+    "",
+    conventionBullets,
+    "",
+    "## Strict Test Slicing & Return Contract",
+    "",
+    `- Run only the targeted slice (\`${testCommand}\`); never run unconstrained full-repository suites during iterative loops.`,
+    "- Return a concise `## subtask_summary` with `files_changed`, `summary`, `tests` (`[PASS|WARN|FAIL] <cmd>`), `status`, and `blockers`.",
+    ""
+  ].join("\n");
+}
+function jsonResult(payload) {
+  return { output: JSON.stringify(payload) };
+}
+function createAgentForgeTool(fallbackDir) {
+  return {
+    name: "pantheon_agent_forge",
+    description: "Create, list, inspect, or remove custom project-scoped domain specialist agents in .opencode/agents/<name>.md.",
+    input: {
+      type: "object",
+      additionalProperties: false,
+      required: ["action"],
+      properties: {
+        action: {
+          type: "string",
+          enum: ["create", "list", "inspect", "remove"],
+          description: "Forge operation to execute"
+        },
+        name: {
+          type: "string",
+          description: "Lowercase kebab-case agent identifier (e.g. rust-embedded, prisma-dba)"
+        },
+        description: {
+          type: "string",
+          description: "One-line role summary used for routing and @mention discovery"
+        },
+        archetype: {
+          type: "string",
+          enum: ["backend", "frontend", "data", "security", "ml-pipeline", "geospatial", "custom"],
+          description: "Base specialist template"
+        },
+        stack: {
+          type: "array",
+          items: { type: "string" },
+          description: "Technologies, frameworks, or domain libraries this specialist owns"
+        },
+        readOnly: {
+          type: "boolean",
+          description: "When true, denies edit/hashline_edit/bash/shell (investigation/audit only)"
+        },
+        testCommand: {
+          type: "string",
+          description: "Default targeted verification slice command (<10s)"
+        },
+        conventions: {
+          type: "array",
+          items: { type: "string" },
+          description: "Domain-specific rules and invariants enforced by this agent"
+        },
+        allowOverrideCanonical: {
+          type: "boolean",
+          description: "Allow creating a project override for a built-in Pantheon agent name"
+        }
+      }
+    },
+    output: {},
+    execute: async (input, context) => {
+      try {
+        const action = typeof input.action === "string" ? input.action : "list";
+        const cwd = resolveToolCwd(context, fallbackDir);
+        const agentsDir = resolveAgentsDir(cwd);
+        if (action === "list") {
+          const files = readdirSync2(agentsDir).filter((f) => f.endsWith(".md") && f.toLowerCase() !== "readme.md").sort();
+          const agents = files.map((file) => {
+            const id = file.replace(/\.md$/, "");
+            const raw = readFileSync7(join12(agentsDir, file), "utf8");
+            const descMatch = raw.match(/^description:\s*(.+)$/m);
+            return {
+              name: id,
+              path: `.opencode/agents/${file}`,
+              description: descMatch?.[1]?.replace(/^["']|["']$/g, "") ?? ""
+            };
+          });
+          return jsonResult({ ok: true, count: agents.length, agents });
+        }
+        const name = typeof input.name === "string" ? input.name.trim().toLowerCase() : "";
+        if (!isValidAgentSlug(name)) {
+          return jsonResult({
+            ok: false,
+            error: "name must be a lowercase kebab-case identifier (2..49 chars, [a-z0-9-])"
+          });
+        }
+        const filePath = resolveConfinedAgentFile(agentsDir, name);
+        if (action === "inspect") {
+          if (!existsSync6(filePath)) {
+            return jsonResult({ ok: false, error: "agent_not_found", name });
+          }
+          return jsonResult({
+            ok: true,
+            name,
+            path: `.opencode/agents/${name}.md`,
+            content: readFileSync7(filePath, "utf8")
+          });
+        }
+        if (action === "remove") {
+          if (!existsSync6(filePath)) {
+            return jsonResult({ ok: false, error: "agent_not_found", name });
+          }
+          rmSync(filePath, { force: true });
+          return jsonResult({ ok: true, removed: true, name });
+        }
+        if (action === "create") {
+          if (PANTHEON_AGENTS.has(name) && input.allowOverrideCanonical !== true) {
+            return jsonResult({
+              ok: false,
+              error: `"${name}" is a canonical Pantheon agent. Pass allowOverrideCanonical: true only if you intentionally want a project-local override.`
+            });
+          }
+          const description = typeof input.description === "string" && input.description.trim() ? input.description.trim() : `Custom ${name} specialist`;
+          const archetype = typeof input.archetype === "string" && [
+            "backend",
+            "frontend",
+            "data",
+            "security",
+            "ml-pipeline",
+            "geospatial",
+            "custom"
+          ].includes(input.archetype) ? input.archetype : "custom";
+          const readOnly = typeof input.readOnly === "boolean" ? input.readOnly : archetype === "security" || archetype === "geospatial";
+          const stack = Array.isArray(input.stack) ? input.stack.map(String) : [];
+          const testCommand = typeof input.testCommand === "string" && input.testCommand.trim() ? input.testCommand.trim() : "npm run test:slice";
+          const conventions = Array.isArray(input.conventions) ? input.conventions.map(String) : [];
+          const markdown = buildAgentMarkdown({
+            name,
+            description,
+            archetype,
+            stack,
+            readOnly,
+            testCommand,
+            conventions
+          });
+          writeFileSync4(filePath, markdown, "utf8");
+          return jsonResult({
+            ok: true,
+            created: true,
+            name,
+            path: `.opencode/agents/${name}.md`,
+            readOnly,
+            archetype
+          });
+        }
+        return jsonResult({ ok: false, error: `Unsupported action: ${action}` });
+      } catch (err) {
+        return jsonResult({
+          ok: false,
+          error: err instanceof Error ? err.message : String(err)
+        });
+      }
+    }
+  };
+}
+
+// src/pantheon/codemap-tools.ts
+import { createHash as createHash6 } from "node:crypto";
+import { existsSync as existsSync7, mkdirSync as mkdirSync6, readdirSync as readdirSync3, readFileSync as readFileSync8, realpathSync as realpathSync3, statSync as statSync3 } from "node:fs";
+import { extname, join as join13, relative as relative2, resolve as resolve7, sep as sep5 } from "node:path";
+import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
+var IGNORED_DIRS = /* @__PURE__ */ new Set([
+  ".git",
+  "node_modules",
+  "dist",
+  "build",
+  ".venv",
+  "__pycache__",
+  ".pytest_cache",
+  ".pantheon",
+  ".opencode",
+  "coverage"
+]);
+var SUPPORTED_EXT_LANG = {
+  ".ts": "typescript",
+  ".tsx": "typescript",
+  ".js": "javascript",
+  ".jsx": "javascript",
+  ".mjs": "javascript",
+  ".py": "python",
+  ".go": "go",
+  ".rs": "rust"
+};
+var codemapDbCache = /* @__PURE__ */ new Map();
+function getCodemapDb(workspaceDir) {
+  const memoryDir = join13(workspaceDir, ".pantheon", "memory");
+  mkdirSync6(memoryDir, { recursive: true });
+  const canonicalBase = realpathSync3(memoryDir);
+  const dbPath = resolve7(canonicalBase, "memory.db");
+  const prefix = canonicalBase.endsWith(sep5) ? canonicalBase : `${canonicalBase}${sep5}`;
+  if (!dbPath.startsWith(prefix)) {
+    throw new Error("Path traversal denied for codemap database");
+  }
+  const cached = codemapDbCache.get(dbPath);
+  if (cached) return cached;
+  const db = new DatabaseSync2(dbPath);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS code_files (
+      path TEXT PRIMARY KEY,
+      hash TEXT NOT NULL,
+      language TEXT NOT NULL,
+      indexed_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS code_entities (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      file TEXT NOT NULL,
+      line INTEGER NOT NULL,
+      signature TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_code_entities_name ON code_entities(name);
+    CREATE INDEX IF NOT EXISTS idx_code_entities_file ON code_entities(file);
+    CREATE TABLE IF NOT EXISTS code_relations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      source TEXT NOT NULL,
+      target TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      file TEXT NOT NULL,
+      line INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_code_relations_source ON code_relations(source);
+    CREATE INDEX IF NOT EXISTS idx_code_relations_target ON code_relations(target);
+  `);
+  codemapDbCache.set(dbPath, db);
+  return db;
+}
+function extractSymbolsAndRelations(relPath, content, language) {
+  const entities = [];
+  const relations = [];
+  const lines = content.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i] ?? "";
+    const trimmed = rawLine.trim();
+    const lineNo = i + 1;
+    if (!trimmed || trimmed.startsWith("//") || trimmed.startsWith("#") || trimmed.startsWith("*")) {
+      continue;
+    }
+    if (language === "typescript" || language === "javascript") {
+      const fnMatch = trimmed.match(
+        /^(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/
+      );
+      if (fnMatch?.[1]) {
+        entities.push({
+          name: fnMatch[1],
+          kind: "function",
+          file: relPath,
+          line: lineNo,
+          signature: trimmed.slice(0, 120)
+        });
+        continue;
+      }
+      const classMatch = trimmed.match(
+        /^(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)(?:\s+extends\s+([A-Za-z_$][\w$]*))?/
+      );
+      if (classMatch?.[1]) {
+        entities.push({
+          name: classMatch[1],
+          kind: "class",
+          file: relPath,
+          line: lineNo,
+          signature: trimmed.slice(0, 120)
+        });
+        if (classMatch[2]) {
+          relations.push({
+            source: classMatch[1],
+            target: classMatch[2],
+            kind: "extends",
+            file: relPath,
+            line: lineNo
+          });
+        }
+        continue;
+      }
+      const ifaceMatch = trimmed.match(/^(?:export\s+)?(interface|type)\s+([A-Za-z_$][\w$]*)/);
+      if (ifaceMatch?.[1] && ifaceMatch[2]) {
+        entities.push({
+          name: ifaceMatch[2],
+          kind: ifaceMatch[1] === "interface" ? "interface" : "type",
+          file: relPath,
+          line: lineNo,
+          signature: trimmed.slice(0, 120)
+        });
+        continue;
+      }
+      const constMatch = trimmed.match(/^export\s+(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=/);
+      if (constMatch?.[1]) {
+        entities.push({
+          name: constMatch[1],
+          kind: "variable",
+          file: relPath,
+          line: lineNo,
+          signature: trimmed.slice(0, 120)
+        });
+        continue;
+      }
+      const importMatch = trimmed.match(/from\s+['"]([^'"]+)['"]/);
+      if (importMatch?.[1] && trimmed.startsWith("import ")) {
+        relations.push({
+          source: relPath,
+          target: importMatch[1],
+          kind: "imports",
+          file: relPath,
+          line: lineNo
+        });
+      }
+    } else if (language === "python") {
+      const defMatch = trimmed.match(/^(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(/);
+      if (defMatch?.[1]) {
+        entities.push({
+          name: defMatch[1],
+          kind: "function",
+          file: relPath,
+          line: lineNo,
+          signature: trimmed.slice(0, 120)
+        });
+        continue;
+      }
+      const pyClassMatch = trimmed.match(/^class\s+([A-Za-z_]\w*)(?:\(([^)]+)\))?:/);
+      if (pyClassMatch?.[1]) {
+        entities.push({
+          name: pyClassMatch[1],
+          kind: "class",
+          file: relPath,
+          line: lineNo,
+          signature: trimmed.slice(0, 120)
+        });
+        if (pyClassMatch[2]) {
+          relations.push({
+            source: pyClassMatch[1],
+            target: pyClassMatch[2].split(",")[0]?.trim() ?? pyClassMatch[2],
+            kind: "extends",
+            file: relPath,
+            line: lineNo
+          });
+        }
+        continue;
+      }
+      const pyImportMatch = trimmed.match(/^(?:from\s+([\w.]+)\s+import|import\s+([\w.]+))/);
+      const targetMod = pyImportMatch?.[1] ?? pyImportMatch?.[2];
+      if (targetMod) {
+        relations.push({
+          source: relPath,
+          target: targetMod,
+          kind: "imports",
+          file: relPath,
+          line: lineNo
+        });
+      }
+    } else if (language === "go") {
+      const goFnMatch = trimmed.match(/^func\s+(?:\([^)]+\)\s+)?([A-Za-z_]\w*)\s*\(/);
+      if (goFnMatch?.[1]) {
+        entities.push({
+          name: goFnMatch[1],
+          kind: "function",
+          file: relPath,
+          line: lineNo,
+          signature: trimmed.slice(0, 120)
+        });
+      }
+    } else if (language === "rust") {
+      const rsFnMatch = trimmed.match(/^(?:pub\s+)?(?:async\s+)?fn\s+([A-Za-z_]\w*)/);
+      if (rsFnMatch?.[1]) {
+        entities.push({
+          name: rsFnMatch[1],
+          kind: "function",
+          file: relPath,
+          line: lineNo,
+          signature: trimmed.slice(0, 120)
+        });
+      }
+    }
+  }
+  return { entities, relations };
+}
+function collectSourceFiles(currentDir, maxFiles = 500) {
+  const results = [];
+  function walk(dir) {
+    if (results.length >= maxFiles) return;
+    let entries;
+    try {
+      entries = readdirSync3(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (results.length >= maxFiles) return;
+      const name = String(entry.name);
+      if (entry.isDirectory()) {
+        if (!IGNORED_DIRS.has(name) && !name.startsWith(".")) {
+          walk(join13(dir, name));
+        }
+      } else if (entry.isFile()) {
+        const ext = extname(name).toLowerCase();
+        if (ext in SUPPORTED_EXT_LANG) {
+          results.push(join13(dir, name));
+        }
+      }
+    }
+  }
+  walk(currentDir);
+  return results;
+}
+function jsonResult2(payload) {
+  return { output: JSON.stringify(payload) };
+}
+function createCodemapTools(fallbackDir) {
+  return [
+    {
+      name: "code_index",
+      description: "Index codebase symbols (functions, classes, interfaces, types) and import/inheritance edges into SQLite.",
+      input: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          path: {
+            type: "string",
+            description: "Optional relative subdirectory or file path within the workspace to index"
+          },
+          force: {
+            type: "boolean",
+            description: "Re-index files even when SHA-256 hash is unchanged"
+          }
+        }
+      },
+      output: {},
+      execute: async (input, context) => {
+        try {
+          const cwd = resolveToolCwd(context, fallbackDir);
+          const canonicalRoot = realpathSync3(cwd);
+          const subPath = typeof input.path === "string" && input.path.trim() ? input.path.trim() : ".";
+          const targetPath = resolve7(canonicalRoot, subPath);
+          const rootPrefix = canonicalRoot.endsWith(sep5) ? canonicalRoot : `${canonicalRoot}${sep5}`;
+          if (targetPath !== canonicalRoot && !targetPath.startsWith(rootPrefix)) {
+            return jsonResult2({ ok: false, error: "path escapes workspace root" });
+          }
+          if (!existsSync7(targetPath)) {
+            return jsonResult2({ ok: false, error: `path not found: ${subPath}` });
+          }
+          const force = input.force === true;
+          const db = getCodemapDb(canonicalRoot);
+          const st = statSync3(targetPath);
+          const files = st.isFile() ? [targetPath] : collectSourceFiles(targetPath);
+          let indexed = 0;
+          let skipped = 0;
+          let entitiesCount = 0;
+          let relationsCount = 0;
+          const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+          for (const filePath of files) {
+            const ext = extname(filePath).toLowerCase();
+            const lang = SUPPORTED_EXT_LANG[ext];
+            if (!lang) continue;
+            const relFile = relative2(canonicalRoot, filePath).replace(/\\/g, "/");
+            const content = readFileSync8(filePath, "utf8");
+            const hash = createHash6("sha256").update(content).digest("hex");
+            const existing = db.prepare("SELECT hash FROM code_files WHERE path = ?").get(relFile);
+            if (!force && existing?.hash === hash) {
+              skipped += 1;
+              continue;
+            }
+            const { entities, relations } = extractSymbolsAndRelations(relFile, content, lang);
+            db.prepare("DELETE FROM code_entities WHERE file = ?").run(relFile);
+            db.prepare("DELETE FROM code_relations WHERE file = ?").run(relFile);
+            const insertEnt = db.prepare(
+              "INSERT INTO code_entities (name, kind, file, line, signature) VALUES (?, ?, ?, ?, ?)"
+            );
+            for (const ent of entities) {
+              insertEnt.run(ent.name, ent.kind, ent.file, ent.line, ent.signature);
+              entitiesCount += 1;
+            }
+            const insertRel = db.prepare(
+              "INSERT INTO code_relations (source, target, kind, file, line) VALUES (?, ?, ?, ?, ?)"
+            );
+            for (const rel of relations) {
+              insertRel.run(rel.source, rel.target, rel.kind, rel.file, rel.line);
+              relationsCount += 1;
+            }
+            db.prepare(
+              "INSERT OR REPLACE INTO code_files (path, hash, language, indexed_at) VALUES (?, ?, ?, ?)"
+            ).run(relFile, hash, lang, nowIso);
+            indexed += 1;
+          }
+          return jsonResult2({
+            ok: true,
+            indexed,
+            skipped,
+            entities: entitiesCount,
+            relations: relationsCount
+          });
+        } catch (err) {
+          return jsonResult2({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
+      }
+    },
+    {
+      name: "code_query",
+      description: "Query indexed symbols (functions, classes, interfaces, types) by name prefix or substring.",
+      input: {
+        type: "object",
+        additionalProperties: false,
+        required: ["query"],
+        properties: {
+          query: { type: "string", description: "Symbol name or substring to search for" },
+          kind: {
+            type: "string",
+            description: "Optional filter: function, class, interface, type, variable"
+          },
+          limit: { type: "number", description: "Max results (default 25)" }
+        }
+      },
+      output: {},
+      execute: async (input, context) => {
+        try {
+          const q = typeof input.query === "string" ? input.query.trim() : "";
+          if (!q) return jsonResult2({ ok: false, error: "query is required", results: [] });
+          const limit = typeof input.limit === "number" && Number.isFinite(input.limit) && input.limit > 0 ? Math.min(Math.floor(input.limit), 100) : 25;
+          const cwd = resolveToolCwd(context, fallbackDir);
+          const db = getCodemapDb(cwd);
+          const escaped = q.replace(/[\\%_]/g, "\\$&");
+          let sql = `
+            SELECT name, kind, file, line, signature
+            FROM code_entities
+            WHERE name LIKE ? ESCAPE '\\'
+          `;
+          const params = [`%${escaped}%`];
+          if (typeof input.kind === "string" && input.kind.trim()) {
+            sql += " AND kind = ?";
+            params.push(input.kind.trim());
+          }
+          sql += " ORDER BY CASE WHEN name = ? THEN 0 WHEN name LIKE ? THEN 1 ELSE 2 END, file, line LIMIT ?";
+          params.push(q, `${escaped}%`, limit);
+          const rows = db.prepare(sql).all(...params);
+          return jsonResult2({ ok: true, count: rows.length, results: rows });
+        } catch (err) {
+          return jsonResult2({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
+      }
+    },
+    {
+      name: "code_neighbors",
+      description: "Find structural neighbors (imports, callers, subclasses) for a symbol or file path.",
+      input: {
+        type: "object",
+        additionalProperties: false,
+        required: ["target"],
+        properties: {
+          target: { type: "string", description: "Symbol name or relative file path" },
+          direction: {
+            type: "string",
+            enum: ["both", "outgoing", "incoming"],
+            description: "Edge direction to traverse (default both)"
+          }
+        }
+      },
+      output: {},
+      execute: async (input, context) => {
+        try {
+          const target = typeof input.target === "string" ? input.target.trim() : "";
+          if (!target) return jsonResult2({ ok: false, error: "target is required", neighbors: [] });
+          const direction = typeof input.direction === "string" ? input.direction : "both";
+          const cwd = resolveToolCwd(context, fallbackDir);
+          const db = getCodemapDb(cwd);
+          const escaped = target.replace(/[\\%_]/g, "\\$&");
+          const outgoing = direction === "incoming" ? [] : db.prepare(
+            `SELECT source, target, kind, file, line
+                     FROM code_relations
+                     WHERE source = ? OR source LIKE ? ESCAPE '\\'
+                     LIMIT 50`
+          ).all(target, `%${escaped}%`);
+          const incoming = direction === "outgoing" ? [] : db.prepare(
+            `SELECT source, target, kind, file, line
+                     FROM code_relations
+                     WHERE target = ? OR target LIKE ? ESCAPE '\\'
+                     LIMIT 50`
+          ).all(target, `%${escaped}%`);
+          return jsonResult2({
+            ok: true,
+            target,
+            outgoing,
+            incoming
+          });
+        } catch (err) {
+          return jsonResult2({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
+      }
+    }
+  ];
+}
+
 // src/pantheon/cost-command.ts
 import { execFile } from "node:child_process";
-import { accessSync, constants as constants3, existsSync as existsSync6, statSync as statSync3 } from "node:fs";
-import { delimiter, dirname as dirname8, join as join14 } from "node:path";
+import { accessSync, constants as constants3, existsSync as existsSync9, statSync as statSync4 } from "node:fs";
+import { delimiter, dirname as dirname8, join as join16 } from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 import { z } from "zod";
 
 // src/plugins/tui/src/cost-data.ts
 import { homedir as homedir6 } from "node:os";
-import { join as join13 } from "node:path";
+import { join as join15 } from "node:path";
 
 // src/plugins/tui/src/model-pricing.ts
-import { existsSync as existsSync5, mkdirSync as mkdirSync5, readFileSync as readFileSync6, renameSync as renameSync3, writeFileSync as writeFileSync4 } from "node:fs";
+import { existsSync as existsSync8, mkdirSync as mkdirSync7, readFileSync as readFileSync9, renameSync as renameSync3, writeFileSync as writeFileSync5 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
-import { dirname as dirname7, join as join12 } from "node:path";
+import { dirname as dirname7, join as join14 } from "node:path";
 var MODELS_DEV_URL = "https://models.dev/api.json";
 var PRICING_CACHE_VERSION = 1;
 var PRICING_TTL_MS = 24 * 60 * 60 * 1e3;
@@ -10815,11 +11601,11 @@ function resolvePricingCacheDir(env = process.env) {
   const explicit = env.PANTHEON_HOME?.trim();
   if (explicit !== void 0 && explicit !== "") return explicit;
   const xdg = env.XDG_CONFIG_HOME?.trim();
-  const base = xdg !== void 0 && xdg !== "" ? xdg : join12(homedir5(), ".config");
-  return join12(base, "opencode");
+  const base = xdg !== void 0 && xdg !== "" ? xdg : join14(homedir5(), ".config");
+  return join14(base, "opencode");
 }
 function resolvePricingCachePath(env = process.env) {
-  return join12(resolvePricingCacheDir(env), "cache", "models-dev.json");
+  return join14(resolvePricingCacheDir(env), "cache", "models-dev.json");
 }
 function isRecord19(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -10950,8 +11736,8 @@ function parseCachedCatalog(raw) {
 }
 function readPricingCache(cachePath) {
   try {
-    if (!existsSync5(cachePath)) return void 0;
-    return parseCachedCatalog(JSON.parse(readFileSync6(cachePath, "utf8")));
+    if (!existsSync8(cachePath)) return void 0;
+    return parseCachedCatalog(JSON.parse(readFileSync9(cachePath, "utf8")));
   } catch {
     return void 0;
   }
@@ -10959,8 +11745,8 @@ function readPricingCache(cachePath) {
 function writePricingCache(cachePath, catalog) {
   const temp = `${cachePath}.tmp-${process.pid}`;
   try {
-    mkdirSync5(dirname7(cachePath), { recursive: true });
-    writeFileSync4(temp, `${JSON.stringify(catalog)}
+    mkdirSync7(dirname7(cachePath), { recursive: true });
+    writeFileSync5(temp, `${JSON.stringify(catalog)}
 `, "utf8");
     renameSync3(temp, cachePath);
     return true;
@@ -11109,8 +11895,8 @@ var VERSION_SOURCES = {
 };
 function defaultDbPath() {
   const xdg = process.env.XDG_DATA_HOME;
-  const dataHome = xdg !== void 0 && xdg !== "" ? xdg : join13(homedir6(), ".local", "share");
-  return join13(dataHome, "opencode", "opencode.db");
+  const dataHome = xdg !== void 0 && xdg !== "" ? xdg : join15(homedir6(), ".local", "share");
+  return join15(dataHome, "opencode", "opencode.db");
 }
 function requestedVersion() {
   const configured = process.env.PANTHEON_OPENCODE_VERSION;
@@ -11181,7 +11967,7 @@ var costArgs = {
 };
 function findExistingDb(override) {
   const candidate = override === void 0 ? resolveCostDbPath() : resolveCostDbPath({ dbPath: override });
-  return existsSync6(candidate) ? candidate : void 0;
+  return existsSync9(candidate) ? candidate : void 0;
 }
 var COST_AGGREGATE_SQL = {
   message: (sessionId) => `
@@ -11798,13 +12584,13 @@ var NODE_SQLITE_MIN_VERSION = "22.5";
 function defaultIsExecutable(path5) {
   try {
     accessSync(path5, constants3.X_OK);
-    return statSync3(path5).isFile();
+    return statSync4(path5).isFile();
   } catch {
     return false;
   }
 }
 function defaultExecFile(file, args) {
-  return new Promise((resolve8, reject) => {
+  return new Promise((resolve12, reject) => {
     execFile(file, [...args], { encoding: "utf8" }, (error, stdout, stderr) => {
       if (error) {
         const failure = error;
@@ -11813,7 +12599,7 @@ function defaultExecFile(file, args) {
         reject(failure);
         return;
       }
-      resolve8({ stdout, stderr });
+      resolve12({ stdout, stderr });
     });
   });
 }
@@ -11825,7 +12611,7 @@ function resolveNodeFromPath(env, isExecutable = defaultIsExecutable) {
   for (const dir of pathValue.split(delimiter)) {
     if (dir === "") continue;
     for (const ext of extensions) {
-      const candidate = join14(dir, `node${ext}`);
+      const candidate = join16(dir, `node${ext}`);
       if (isExecutable(candidate)) return candidate;
     }
   }
@@ -11889,8 +12675,8 @@ async function queryWithCliFallback(dbPath, days, deps) {
   const env = deps?.env ?? process.env;
   const execFileAsync = deps?.execFile ?? defaultExecFile;
   const isExecutable = deps?.isExecutable ?? defaultIsExecutable;
-  const costScript = join14(__dirname, "..", "..", "scripts", "cost.mjs");
-  if (!existsSync6(costScript)) {
+  const costScript = join16(__dirname, "..", "..", "scripts", "cost.mjs");
+  if (!existsSync9(costScript)) {
     throw new Error(`CLI fallback script not found: ${costScript}`);
   }
   const node = resolveNodeExecutable(env, isExecutable);
@@ -12030,23 +12816,8 @@ ${renderMarkdown(query, days, pricing)}`;
 // src/pantheon/deepwork/deepwork-tool.ts
 import { z as z3 } from "zod";
 
-// src/pantheon/tool-context.ts
-function resolveToolCwd(context, fallbackDir) {
-  const ctx = context ?? {};
-  if (typeof ctx.directory === "string" && ctx.directory.trim().length > 0) {
-    return ctx.directory;
-  }
-  if (typeof ctx.worktree === "string" && ctx.worktree.trim().length > 0) {
-    return ctx.worktree;
-  }
-  if (typeof fallbackDir === "string" && fallbackDir.trim().length > 0) {
-    return fallbackDir;
-  }
-  return process.cwd();
-}
-
 // src/pantheon/deepwork/plan-projection.ts
-import { join as join15 } from "node:path";
+import { join as join17 } from "node:path";
 function generateChatProjection(plan, cwd = process.cwd()) {
   const pendingDecisions = plan.decisions_needed.filter((d) => d.status === "pending");
   const totalTasks = plan.tasks.length;
@@ -12056,8 +12827,8 @@ function generateChatProjection(plan, cwd = process.cwd()) {
   const readyTasks = plan.tasks.filter((t) => t.state === "ready");
   const nextTask = inProgressTasks[0] || readyTasks[0] || plan.tasks.find((t) => t.state === "pending");
   const percent = totalTasks > 0 ? Math.round(doneTasks / totalTasks * 100) : 0;
-  const absPlanMd = join15(cwd, ".pantheon", "deepwork", plan.plan_id, "PLAN.md");
-  const absPlanJson = join15(cwd, ".pantheon", "deepwork", plan.plan_id, "plan.json");
+  const absPlanMd = join17(cwd, ".pantheon", "deepwork", plan.plan_id, "PLAN.md");
+  const absPlanJson = join17(cwd, ".pantheon", "deepwork", plan.plan_id, "plan.json");
   const lines = [];
   lines.push(`### Deepwork: ${plan.title} (\`${plan.plan_id}\`)`);
   lines.push(
@@ -12231,9 +13002,149 @@ function buildApprovalQuestion(plan) {
 }
 
 // src/pantheon/deepwork/plan-tracker.ts
-import { existsSync as existsSync7 } from "node:fs";
+import { existsSync as existsSync10 } from "node:fs";
 import { appendFile as appendFile3, mkdir as mkdir6, readdir, readFile as readFile6, rename as rename5, writeFile as writeFile3 } from "node:fs/promises";
-import { join as join16 } from "node:path";
+import { join as join18 } from "node:path";
+
+// src/pantheon/execution-receipt.ts
+import { createHash as createHash7 } from "node:crypto";
+function hashContent2(content) {
+  return createHash7("sha256").update(content).digest("hex");
+}
+function computeReceiptSignature(taskID, agent, timestamp, files) {
+  const sortedFiles = [...files].sort((a, b) => a.path.localeCompare(b.path));
+  const payload = [
+    taskID,
+    agent,
+    String(timestamp),
+    sortedFiles.map((f) => `${f.path}:${f.hash}`).join(";")
+  ].join("|");
+  return createHash7("sha256").update(payload).digest("hex");
+}
+function createExecutionReceipt(input) {
+  const timestamp = Date.now();
+  const files = input.files.map((f) => {
+    const buf = typeof f.content === "string" ? Buffer.from(f.content, "utf8") : f.content;
+    return {
+      path: f.path,
+      hash: hashContent2(buf),
+      sizeBytes: buf.length
+    };
+  });
+  const signature = computeReceiptSignature(input.taskID, input.agent, timestamp, files);
+  const receiptId = `rcpt_${signature.slice(0, 16)}`;
+  let status = "UNVERIFIED";
+  if (input.testSlice) {
+    status = input.testSlice.exitCode === 0 ? "VERIFIED" : "FAILED";
+  }
+  const receipt = {
+    receiptId,
+    taskID: input.taskID,
+    agent: input.agent,
+    status,
+    files,
+    testSlice: input.testSlice,
+    timestamp,
+    signature
+  };
+  getSharedBus().emit("agent:execution:receipt", receipt);
+  return receipt;
+}
+
+// src/pantheon/themis-reflex.ts
+var ThemisReflexController = class {
+  states = /* @__PURE__ */ new Map();
+  maxRetries;
+  constructor(options = {}) {
+    this.maxRetries = options.maxRetries ?? 2;
+  }
+  /**
+   * Evaluate a task execution result against Themis verification findings.
+   * If discrepancies are found and attempts remain, returns an actionable retry directive.
+   */
+  evaluate(taskID, agent, discrepancies) {
+    if (discrepancies.length === 0) {
+      const existing = this.states.get(taskID);
+      if (existing) {
+        getSharedBus().emit("themis:reflex:resolved", {
+          taskID,
+          agent,
+          file: existing.discrepancies[0]?.file ?? "",
+          error: "",
+          attempt: existing.attempt,
+          maxAttempts: this.maxRetries,
+          timestamp: Date.now(),
+          resolved: true
+        });
+        this.states.delete(taskID);
+      }
+      return { action: "pass", verdict: "PASS" };
+    }
+    let state = this.states.get(taskID);
+    if (!state) {
+      state = {
+        taskID,
+        agent,
+        attempt: 0,
+        maxAttempts: this.maxRetries,
+        discrepancies: [...discrepancies],
+        timestamp: Date.now()
+      };
+      this.states.set(taskID, state);
+    }
+    state.attempt += 1;
+    state.discrepancies = [...discrepancies];
+    state.timestamp = Date.now();
+    const firstDisc = discrepancies[0];
+    getSharedBus().emit("themis:reflex:discrepancy", {
+      taskID,
+      agent,
+      file: firstDisc?.file ?? "unknown",
+      error: firstDisc?.error ?? "unspecified",
+      attempt: state.attempt,
+      maxAttempts: this.maxRetries,
+      timestamp: state.timestamp
+    });
+    if (state.attempt <= this.maxRetries) {
+      const prompt = this.formatReflexPrompt(state.attempt, this.maxRetries, discrepancies);
+      return {
+        action: "retry",
+        prompt,
+        attempt: state.attempt,
+        maxAttempts: this.maxRetries
+      };
+    }
+    this.states.delete(taskID);
+    return {
+      action: "escalate",
+      verdict: "FAIL",
+      reason: `themis.reflex.exhausted:${state.attempt - 1}_retries_failed`,
+      attempts: state.attempt
+    };
+  }
+  /**
+   * Format an inline, high-density reflex prompt directing the implementer to self-heal.
+   */
+  formatReflexPrompt(attempt, maxAttempts, discrepancies) {
+    const lines = [
+      `[THEMIS INLINE REFLEX \u2014 Attempt ${attempt}/${maxAttempts}]`,
+      "Themis automated audit detected discrepancies in your edits. Fix them directly before returning:"
+    ];
+    for (const d of discrepancies) {
+      lines.push(`- File: ${d.file}`);
+      lines.push(`  Error: ${d.error}`);
+      if (d.expected) lines.push(`  Expected: ${d.expected}`);
+      if (d.actual) lines.push(`  Actual: ${d.actual}`);
+      if (d.suggestedFix) lines.push(`  Fix hint: ${d.suggestedFix}`);
+    }
+    lines.push("Do NOT escalate to Zeus yet. Apply the targeted fix and re-verify your slice.");
+    return lines.join("\n");
+  }
+  /** Reset state for a taskID */
+  reset(taskID) {
+    this.states.delete(taskID);
+  }
+};
 
 // src/pantheon/deepwork/plan-schema.ts
 import { z as z2 } from "zod";
@@ -12303,19 +13214,25 @@ var DeepworkPlanSchema = z2.object({
 
 // src/pantheon/deepwork/plan-tracker.ts
 function deepworkRootDir(cwd = process.cwd()) {
-  return join16(cwd, ".pantheon", "deepwork");
+  return join18(cwd, ".pantheon", "deepwork");
 }
 function deepworkPlanDir(cwd = process.cwd(), slug) {
-  return join16(deepworkRootDir(cwd), slug);
+  const safeSlug = String(slug ?? "").trim();
+  if (!safeSlug || safeSlug === "." || safeSlug === ".." || safeSlug.includes("..") || safeSlug.includes("/") || safeSlug.includes("\\")) {
+    throw new Error(
+      `Invalid deepwork plan slug "${slug}": path traversal or separator characters are not allowed`
+    );
+  }
+  return join18(deepworkRootDir(cwd), safeSlug);
 }
 function deepworkPlanJsonPath(cwd = process.cwd(), slug) {
-  return join16(deepworkPlanDir(cwd, slug), "plan.json");
+  return join18(deepworkPlanDir(cwd, slug), "plan.json");
 }
 function deepworkPlanMdPath(cwd = process.cwd(), slug) {
-  return join16(deepworkPlanDir(cwd, slug), "PLAN.md");
+  return join18(deepworkPlanDir(cwd, slug), "PLAN.md");
 }
 function deepworkJournalPath(cwd = process.cwd(), slug) {
-  return join16(deepworkPlanDir(cwd, slug), "journal.ndjson");
+  return join18(deepworkPlanDir(cwd, slug), "journal.ndjson");
 }
 function computeTaskReadiness(plan) {
   const doneIds = new Set(plan.tasks.filter((t) => t.state === "done").map((t) => t.id));
@@ -12512,8 +13429,8 @@ async function withPlanLock(cwd, slug, fn) {
   const key = `${cwd}::${slug}`;
   const prev = planLocks.get(key) ?? Promise.resolve();
   let resolveCurrent;
-  const current = new Promise((resolve8) => {
-    resolveCurrent = resolve8;
+  const current = new Promise((resolve12) => {
+    resolveCurrent = resolve12;
   });
   planLocks.set(key, current);
   try {
@@ -12586,6 +13503,7 @@ async function updateTaskState(cwd = process.cwd(), slug, taskId, state, result)
     return await readPlan(cwd, slug) ?? nextPlan;
   });
 }
+var deepworkReflexController = new ThemisReflexController({ maxRetries: 2 });
 async function verifyTaskAcceptance(cwd = process.cwd(), slug, taskId, checkIndex, verified, proof) {
   return withPlanLock(cwd, slug, async () => {
     const plan = await readPlan(cwd, slug);
@@ -12617,10 +13535,49 @@ async function verifyTaskAcceptance(cwd = process.cwd(), slug, taskId, checkInde
     };
     const nextPlan = { ...plan, tasks: updatedTasks };
     await writePlan(cwd, nextPlan);
+    const taskKey = `${slug}:${taskId}`;
+    const agentId = task.agent ?? "specialist";
+    let receiptId;
+    let reflexAction;
+    try {
+      if (verified) {
+        deepworkReflexController.evaluate(taskKey, agentId, []);
+        const receipt = createExecutionReceipt({
+          taskID: taskKey,
+          agent: agentId,
+          files: [
+            { path: `${slug}/${taskId}#${checkIndex}`, content: resolvedProof ?? "verified" }
+          ],
+          testSlice: {
+            command: currentAcc.check,
+            exitCode: 0,
+            durationMs: 0
+          }
+        });
+        receiptId = receipt.receiptId;
+      } else {
+        const decision2 = deepworkReflexController.evaluate(taskKey, agentId, [
+          {
+            file: `${slug}/${taskId}`,
+            error: resolvedProof ?? `Acceptance check #${checkIndex} failed: ${currentAcc.check}`
+          }
+        ]);
+        reflexAction = decision2.action;
+      }
+    } catch {
+    }
     await appendJournal(cwd, slug, {
       type: "acceptance_verified",
       timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-      payload: { taskId, checkIndex, verified, proof, allVerified }
+      payload: {
+        taskId,
+        checkIndex,
+        verified,
+        proof,
+        allVerified,
+        ...receiptId ? { receiptId } : {},
+        ...reflexAction ? { reflexAction } : {}
+      }
     });
     return await readPlan(cwd, slug) ?? nextPlan;
   });
@@ -12656,7 +13613,7 @@ async function resolvePlanDecision(cwd = process.cwd(), slug, decisionId, chosen
 }
 async function listPlans(cwd = process.cwd()) {
   const root = deepworkRootDir(cwd);
-  if (!existsSync7(root)) return [];
+  if (!existsSync10(root)) return [];
   const entries = await readdir(root, { withFileTypes: true });
   const result = [];
   for (const entry of entries) {
@@ -12956,7 +13913,7 @@ ${JSON.stringify(todoPayload, null, 2)}
 
 // src/pantheon/hashline/tool.ts
 import { readFile as readFile7, rename as rename6, rm, writeFile as writeFile4 } from "node:fs/promises";
-import { isAbsolute as isAbsolute4, resolve as resolve6, sep as sep4 } from "node:path";
+import { isAbsolute as isAbsolute4, resolve as resolve8, sep as sep6 } from "node:path";
 import { z as z4 } from "zod";
 var hashlineEditOpArgs = {
   op: z4.enum(["replace", "append", "prepend", "delete"]),
@@ -12970,10 +13927,10 @@ var hashlineEditArgs = {
   edits: z4.array(z4.object(hashlineEditOpArgs)).min(1)
 };
 function resolveFile(file, ctx) {
-  if (isAbsolute4(file)) return { ok: true, file: resolve6(file) };
-  const base = resolve6(ctx.worktree ?? ctx.directory ?? process.cwd());
-  const resolved = resolve6(base, file);
-  if (resolved !== base && !resolved.startsWith(base + sep4)) {
+  if (isAbsolute4(file)) return { ok: true, file: resolve8(file) };
+  const base = resolve8(ctx.worktree ?? ctx.directory ?? process.cwd());
+  const resolved = resolve8(base, file);
+  if (resolved !== base && !resolved.startsWith(base + sep6)) {
     return {
       ok: false,
       error: `hashline_edit: file "${file}" escapes the worktree (resolved to "${resolved}") \u2014 path containment denied`
@@ -13223,7 +14180,7 @@ import { randomBytes } from "node:crypto";
 import { constants as constants4 } from "node:fs";
 import { lstat as lstat2, mkdir as mkdir7, open as open3, rename as rename7, unlink as unlink4 } from "node:fs/promises";
 import { homedir as homedir7 } from "node:os";
-import { basename as basename2, dirname as dirname9, join as join17, resolve as resolve7 } from "node:path";
+import { basename as basename2, dirname as dirname9, join as join19, resolve as resolve9 } from "node:path";
 import { z as z5 } from "zod";
 var MODEL_REF_PATTERN2 = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._:+-]*$/;
 var SAFE_PRESET_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -13312,7 +14269,7 @@ async function createTemporaryFile(path5) {
   const prefix = `.${basename2(path5)}.tmp-`;
   const flags = constants4.O_WRONLY | constants4.O_CREAT | constants4.O_EXCL | NO_FOLLOW;
   for (let attempt = 0; attempt < 10; attempt += 1) {
-    const temporaryPath = join17(directory, `${prefix}${randomBytes(16).toString("hex")}`);
+    const temporaryPath = join19(directory, `${prefix}${randomBytes(16).toString("hex")}`);
     try {
       return { path: temporaryPath, file: await open3(temporaryPath, flags, DEFAULT_FILE_MODE) };
     } catch (error) {
@@ -13379,30 +14336,30 @@ function envValue(options) {
   return options.env ?? process.env;
 }
 function projectConfigPath(options) {
-  return options.projectConfigPath ?? join17(options.cwd ?? process.cwd(), "opencode.json");
+  return options.projectConfigPath ?? join19(options.cwd ?? process.cwd(), "opencode.json");
 }
 function defaultGlobalConfigPath(options) {
   const env = envValue(options);
   const home = env.HOME?.trim() || homedir7();
-  const xdg = env.XDG_CONFIG_HOME?.trim() || join17(home, ".config");
-  return join17(xdg, "opencode", "opencode.json");
+  const xdg = env.XDG_CONFIG_HOME?.trim() || join19(home, ".config");
+  return join19(xdg, "opencode", "opencode.json");
 }
 function globalConfigCandidates(options) {
   if (options.globalConfigPath !== void 0) return [options.globalConfigPath];
   const canonical = defaultGlobalConfigPath(options);
   const home = envValue(options).HOME?.trim() || homedir7();
-  const legacy = join17(home, ".opencode", "opencode.json");
+  const legacy = join19(home, ".opencode", "opencode.json");
   return [.../* @__PURE__ */ new Set([canonical, legacy])];
 }
 function activePresetCandidatesList(options) {
   if (options.activePresetCandidates !== void 0) {
-    return options.activePresetCandidates.map((p) => resolve7(p));
+    return options.activePresetCandidates.map((p) => resolve9(p));
   }
-  const projectPreset = join17(dirname9(projectConfigPath(options)), ".pantheon", "active-preset.json");
+  const projectPreset = join19(dirname9(projectConfigPath(options)), ".pantheon", "active-preset.json");
   const globalPresets = globalConfigCandidates(options).map(
-    (p) => join17(dirname9(p), ".pantheon", "active-preset.json")
+    (p) => join19(dirname9(p), ".pantheon", "active-preset.json")
   );
-  return [...new Set([projectPreset, ...globalPresets].map((p) => resolve7(p)))];
+  return [...new Set([projectPreset, ...globalPresets].map((p) => resolve9(p)))];
 }
 function presetPathForScope(options, scope) {
   const candidates = activePresetCandidatesList(options);
@@ -13414,7 +14371,7 @@ function presetPathForScope(options, scope) {
   const second = candidates[1];
   if (second) return second;
   const globalCandidates = globalConfigCandidates(options).map(
-    (p) => resolve7(join17(dirname9(p), ".pantheon", "active-preset.json"))
+    (p) => resolve9(join19(dirname9(p), ".pantheon", "active-preset.json"))
   );
   const fallback = globalCandidates[0] ?? candidates[0];
   if (!fallback) throw new ModelCommandError("global preset path is unavailable");
@@ -13970,10 +14927,638 @@ function createModelCommand(options = {}) {
   };
 }
 
+// src/pantheon/native-memory-tools.ts
+import {
+  existsSync as existsSync11,
+  mkdirSync as mkdirSync8,
+  readdirSync as readdirSync4,
+  readFileSync as readFileSync10,
+  realpathSync as realpathSync4,
+  writeFileSync as writeFileSync6
+} from "node:fs";
+import { join as join20, resolve as resolve10, sep as sep7 } from "node:path";
+import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
+var SAFE_SEGMENT_RE = /^[a-zA-Z0-9._:-]{1,128}$/;
+var MAX_MEMORY_VALUE_BYTES = 65536;
+function isSafeSegment(value) {
+  return typeof value === "string" && SAFE_SEGMENT_RE.test(value) && value !== "." && value !== ".." && !value.includes("..") && !value.includes("/") && !value.includes("\\");
+}
+function resolveConfinedPath(baseDir, ...segments) {
+  mkdirSync8(baseDir, { recursive: true });
+  const canonicalBase = realpathSync4(baseDir);
+  const candidate = resolve10(canonicalBase, ...segments);
+  const prefix = canonicalBase.endsWith(sep7) ? canonicalBase : `${canonicalBase}${sep7}`;
+  if (candidate !== canonicalBase && !candidate.startsWith(prefix)) {
+    throw new Error("Path traversal denied: target escapes confined directory");
+  }
+  return candidate;
+}
+var dbCache = /* @__PURE__ */ new Map();
+function getMemoryDb(workspaceDir) {
+  const memoryDir = join20(workspaceDir, ".pantheon", "memory");
+  mkdirSync8(memoryDir, { recursive: true });
+  const dbPath = resolveConfinedPath(memoryDir, "memory.db");
+  const cached = dbCache.get(dbPath);
+  if (cached) return cached;
+  const db = new DatabaseSync3(dbPath);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS memories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      namespace TEXT NOT NULL,
+      key TEXT NOT NULL,
+      value TEXT NOT NULL,
+      metadata TEXT,
+      created_at TEXT NOT NULL,
+      expires_at TEXT,
+      UNIQUE(namespace, key)
+    );
+    CREATE INDEX IF NOT EXISTS idx_memories_ns_key ON memories(namespace, key);
+  `);
+  try {
+    db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+        namespace,
+        key,
+        value,
+        content='memories',
+        content_rowid='id',
+        tokenize='porter unicode61'
+      );
+      CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+        INSERT INTO memories_fts(rowid, namespace, key, value)
+        VALUES (new.id, new.namespace, new.key, new.value);
+      END;
+      CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+        INSERT INTO memories_fts(memories_fts, rowid, namespace, key, value)
+        VALUES ('delete', old.id, old.namespace, old.key, old.value);
+      END;
+      CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+        INSERT INTO memories_fts(memories_fts, rowid, namespace, key, value)
+        VALUES ('delete', old.id, old.namespace, old.key, old.value);
+        INSERT INTO memories_fts(rowid, namespace, key, value)
+        VALUES (new.id, new.namespace, new.key, new.value);
+      END;
+    `);
+  } catch {
+  }
+  dbCache.set(dbPath, db);
+  return db;
+}
+function jsonResult3(payload) {
+  return { output: JSON.stringify(payload) };
+}
+var NOT_EXPIRED_SQL = "(expires_at IS NULL OR expires_at > ?)";
+function createNativeMemoryAndPersistenceTools(fallbackDir) {
+  return [
+    {
+      name: "memory_store",
+      description: "Store a durable memory entry in .pantheon/memory/memory.db with FTS5 indexing and optional TTL.",
+      input: {
+        type: "object",
+        additionalProperties: false,
+        required: ["namespace", "key", "value"],
+        properties: {
+          namespace: { type: "string", description: "Project or domain namespace" },
+          key: { type: "string", description: "Unique key within the namespace" },
+          value: { type: "string", description: "Durable fact, ADR, or convention text (<=64KiB)" },
+          metadata: { type: "string", description: "Optional JSON metadata string" },
+          expires_at: { type: "string", description: "Optional ISO-8601 expiration timestamp" }
+        }
+      },
+      output: {},
+      execute: async (input, context) => {
+        try {
+          const ns = input.namespace;
+          const key = input.key;
+          const value = input.value;
+          if (typeof ns !== "string" || !ns.trim() || typeof key !== "string" || !key.trim()) {
+            return jsonResult3({
+              ok: false,
+              error: "namespace and key are required non-empty strings"
+            });
+          }
+          if (typeof value !== "string" || !value.trim()) {
+            return jsonResult3({
+              ok: false,
+              error: "value is required and must be a non-empty string"
+            });
+          }
+          if (Buffer.byteLength(value, "utf8") > MAX_MEMORY_VALUE_BYTES) {
+            return jsonResult3({ ok: false, error: "value exceeds maximum size of 64 KiB" });
+          }
+          const cwd = resolveToolCwd(context, fallbackDir);
+          const db = getMemoryDb(cwd);
+          const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+          db.prepare(
+            `INSERT INTO memories (namespace, key, value, metadata, created_at, expires_at)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT(namespace, key) DO UPDATE SET
+               value = excluded.value,
+               metadata = excluded.metadata,
+               created_at = excluded.created_at,
+               expires_at = excluded.expires_at`
+          ).run(
+            ns.trim(),
+            key.trim(),
+            value,
+            typeof input.metadata === "string" ? input.metadata : null,
+            nowIso,
+            typeof input.expires_at === "string" ? input.expires_at : null
+          );
+          return jsonResult3({ ok: true, status: "stored", namespace: ns.trim(), key: key.trim() });
+        } catch (err) {
+          return jsonResult3({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
+      }
+    },
+    {
+      name: "memory_recall",
+      description: "Recall a specific memory entry by exact namespace and key.",
+      input: {
+        type: "object",
+        additionalProperties: false,
+        required: ["namespace", "key"],
+        properties: {
+          namespace: { type: "string", description: "Memory namespace" },
+          key: { type: "string", description: "Memory key" }
+        }
+      },
+      output: {},
+      execute: async (input, context) => {
+        try {
+          const ns = input.namespace;
+          const key = input.key;
+          if (typeof ns !== "string" || !ns.trim() || typeof key !== "string" || !key.trim()) {
+            return jsonResult3({ ok: false, error: "namespace and key are required" });
+          }
+          const cwd = resolveToolCwd(context, fallbackDir);
+          const db = getMemoryDb(cwd);
+          const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+          const row = db.prepare(
+            `SELECT namespace, key, value, metadata, created_at, expires_at
+               FROM memories
+               WHERE namespace = ? AND key = ? AND ${NOT_EXPIRED_SQL}`
+          ).get(ns.trim(), key.trim(), nowIso);
+          return jsonResult3(row ?? { ok: false, error: "not_found" });
+        } catch (err) {
+          return jsonResult3({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
+      }
+    },
+    {
+      name: "memory_search",
+      description: "Search durable memories using SQLite FTS5 BM25 ranking with lexical fallback.",
+      input: {
+        type: "object",
+        additionalProperties: false,
+        required: ["query"],
+        properties: {
+          query: { type: "string", description: "Search query terms" },
+          namespace: { type: "string", description: "Optional namespace filter" },
+          top_k: { type: "number", description: "Maximum results to return (default 10)" }
+        }
+      },
+      output: {},
+      execute: async (input, context) => {
+        try {
+          const rawQuery = typeof input.query === "string" ? input.query.trim() : "";
+          if (!rawQuery) {
+            return jsonResult3({ ok: false, error: "query is required", count: 0, results: [] });
+          }
+          const limit = typeof input.top_k === "number" && Number.isFinite(input.top_k) && input.top_k > 0 ? Math.min(Math.floor(input.top_k), 100) : 10;
+          const ns = typeof input.namespace === "string" && input.namespace.trim() ? input.namespace.trim() : void 0;
+          const cwd = resolveToolCwd(context, fallbackDir);
+          const db = getMemoryDb(cwd);
+          const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+          const tokens = rawQuery.replace(/[^\p{L}\p{N}_-]+/gu, " ").trim().split(/\s+/).filter((t) => t.length >= 2);
+          if (tokens.length > 0) {
+            try {
+              const ftsExpr = tokens.map((t) => `"${t.replace(/"/g, '""')}"*`).join(" OR ");
+              let ftsSql = `
+                SELECT m.namespace, m.key, m.value, m.metadata, m.created_at, bm25(memories_fts) AS score
+                FROM memories_fts
+                JOIN memories m ON m.id = memories_fts.rowid
+                WHERE memories_fts MATCH ? AND (m.expires_at IS NULL OR m.expires_at > ?)
+              `;
+              const ftsParams = [ftsExpr, nowIso];
+              if (ns) {
+                ftsSql += " AND m.namespace = ?";
+                ftsParams.push(ns);
+              }
+              ftsSql += " ORDER BY score LIMIT ?";
+              ftsParams.push(limit);
+              const rows2 = db.prepare(ftsSql).all(...ftsParams);
+              if (rows2.length > 0) {
+                return jsonResult3({ ok: true, count: rows2.length, results: rows2 });
+              }
+            } catch {
+            }
+          }
+          const escaped = rawQuery.replace(/[\\%_]/g, "\\$&");
+          let sql = `
+            SELECT namespace, key, value, metadata, created_at
+            FROM memories
+            WHERE (value LIKE ? ESCAPE '\\' OR key LIKE ? ESCAPE '\\')
+              AND ${NOT_EXPIRED_SQL}
+          `;
+          const params = [`%${escaped}%`, `%${escaped}%`, nowIso];
+          if (ns) {
+            sql += " AND namespace = ?";
+            params.push(ns);
+          }
+          sql += " ORDER BY id DESC LIMIT ?";
+          params.push(limit);
+          const rows = db.prepare(sql).all(...params);
+          return jsonResult3({ ok: true, count: rows.length, results: rows });
+        } catch (err) {
+          return jsonResult3({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
+      }
+    },
+    {
+      name: "memory_forget",
+      description: "Delete a durable memory entry by namespace and key.",
+      input: {
+        type: "object",
+        additionalProperties: false,
+        required: ["namespace", "key"],
+        properties: {
+          namespace: { type: "string", description: "Memory namespace" },
+          key: { type: "string", description: "Memory key to delete" }
+        }
+      },
+      output: {},
+      execute: async (input, context) => {
+        try {
+          const ns = input.namespace;
+          const key = input.key;
+          if (typeof ns !== "string" || !ns.trim() || typeof key !== "string" || !key.trim()) {
+            return jsonResult3({ ok: false, error: "namespace and key are required" });
+          }
+          const cwd = resolveToolCwd(context, fallbackDir);
+          const db = getMemoryDb(cwd);
+          const info = db.prepare("DELETE FROM memories WHERE namespace = ? AND key = ?").run(ns.trim(), key.trim());
+          return jsonResult3({
+            ok: true,
+            deleted: info.changes > 0,
+            namespace: ns.trim(),
+            key: key.trim()
+          });
+        } catch (err) {
+          return jsonResult3({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
+      }
+    },
+    {
+      name: "memory_list",
+      description: "List active memory keys in a namespace.",
+      input: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          namespace: { type: "string", description: "Optional namespace filter" },
+          limit: { type: "number", description: "Maximum entries to list (default 50)" }
+        }
+      },
+      output: {},
+      execute: async (input, context) => {
+        try {
+          const cwd = resolveToolCwd(context, fallbackDir);
+          const db = getMemoryDb(cwd);
+          const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+          const limit = typeof input.limit === "number" && Number.isFinite(input.limit) && input.limit > 0 ? Math.min(Math.floor(input.limit), 200) : 50;
+          let sql = `SELECT namespace, key, created_at FROM memories WHERE ${NOT_EXPIRED_SQL}`;
+          const params = [nowIso];
+          if (typeof input.namespace === "string" && input.namespace.trim()) {
+            sql += " AND namespace = ?";
+            params.push(input.namespace.trim());
+          }
+          sql += " ORDER BY id DESC LIMIT ?";
+          params.push(limit);
+          const rows = db.prepare(sql).all(...params);
+          return jsonResult3({ ok: true, count: rows.length, entries: rows });
+        } catch (err) {
+          return jsonResult3({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
+      }
+    },
+    {
+      name: "memory_stats",
+      description: "Get counts of active durable memory entries by namespace.",
+      input: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          namespace: { type: "string", description: "Optional namespace filter" }
+        }
+      },
+      output: {},
+      execute: async (_input, context) => {
+        try {
+          const cwd = resolveToolCwd(context, fallbackDir);
+          const db = getMemoryDb(cwd);
+          const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+          const total = db.prepare(`SELECT count(*) as count FROM memories WHERE ${NOT_EXPIRED_SQL}`).get(nowIso);
+          const byNamespace = db.prepare(
+            `SELECT namespace, count(*) as count FROM memories WHERE ${NOT_EXPIRED_SQL} GROUP BY namespace`
+          ).all(nowIso);
+          return jsonResult3({ ok: true, total: total?.count ?? 0, byNamespace });
+        } catch (err) {
+          return jsonResult3({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
+      }
+    },
+    {
+      name: "context_save",
+      description: "Save a milestone session checkpoint under .pantheon/persistence.",
+      input: {
+        type: "object",
+        additionalProperties: false,
+        required: ["session_id", "content"],
+        properties: {
+          session_id: { type: "string", description: "Session identifier" },
+          content: { type: "string", description: "Serialized JSON state object" },
+          namespace: { type: "string", description: "Optional checkpoint namespace" }
+        }
+      },
+      output: {},
+      execute: async (input, context) => {
+        try {
+          const sessionId = input.session_id;
+          const ns = input.namespace ?? "checkpoints";
+          if (!isSafeSegment(sessionId) || !isSafeSegment(ns)) {
+            return jsonResult3({
+              ok: false,
+              error: "session_id and namespace must be safe identifiers without path traversal"
+            });
+          }
+          if (typeof input.content !== "string" || !input.content.trim()) {
+            return jsonResult3({ ok: false, error: "content must be a non-empty string" });
+          }
+          const cwd = resolveToolCwd(context, fallbackDir);
+          const baseDir = join20(cwd, ".pantheon", "persistence");
+          const dir = resolveConfinedPath(baseDir, ns);
+          mkdirSync8(dir, { recursive: true });
+          const filePath = resolveConfinedPath(dir, `${sessionId}.json`);
+          const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+          writeFileSync6(
+            filePath,
+            JSON.stringify(
+              {
+                session_id: sessionId,
+                namespace: ns,
+                content: input.content,
+                updated_at: nowIso
+              },
+              null,
+              2
+            ),
+            "utf8"
+          );
+          return jsonResult3({
+            ok: true,
+            status: "saved",
+            session_id: sessionId,
+            updated_at: nowIso
+          });
+        } catch (err) {
+          return jsonResult3({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
+      }
+    },
+    {
+      name: "context_get",
+      description: "Retrieve a saved session checkpoint by session_id.",
+      input: {
+        type: "object",
+        additionalProperties: false,
+        required: ["session_id"],
+        properties: {
+          session_id: { type: "string", description: "Session identifier" },
+          namespace: { type: "string", description: "Optional checkpoint namespace" }
+        }
+      },
+      output: {},
+      execute: async (input, context) => {
+        try {
+          const sessionId = input.session_id;
+          const ns = input.namespace ?? "checkpoints";
+          if (!isSafeSegment(sessionId) || !isSafeSegment(ns)) {
+            return jsonResult3({
+              ok: false,
+              error: "session_id and namespace must be safe identifiers without path traversal"
+            });
+          }
+          const cwd = resolveToolCwd(context, fallbackDir);
+          const baseDir = join20(cwd, ".pantheon", "persistence");
+          const dir = resolveConfinedPath(baseDir, ns);
+          const filePath = resolveConfinedPath(dir, `${sessionId}.json`);
+          if (!existsSync11(filePath)) {
+            return jsonResult3({ ok: false, error: "not_found", session_id: sessionId });
+          }
+          return jsonResult3(JSON.parse(readFileSync10(filePath, "utf8")));
+        } catch (err) {
+          return jsonResult3({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
+      }
+    },
+    {
+      name: "goal_create",
+      description: "Create a persistent session goal in .pantheon/goals (read by compaction hooks).",
+      input: {
+        type: "object",
+        additionalProperties: false,
+        required: ["title"],
+        properties: {
+          id: { type: "string", description: "Optional goal identifier" },
+          title: { type: "string", description: "Concise goal statement" },
+          criteria: {
+            type: "array",
+            items: { type: "string" },
+            description: "Completion criteria checklist"
+          }
+        }
+      },
+      output: {},
+      execute: async (input, context) => {
+        try {
+          const title = typeof input.title === "string" ? input.title.trim() : "";
+          if (!title) return jsonResult3({ ok: false, error: "title is required" });
+          const rawId = typeof input.id === "string" && input.id.trim() ? input.id.trim() : `goal-${Date.now()}`;
+          if (!isSafeSegment(rawId)) {
+            return jsonResult3({ ok: false, error: "id must be a safe identifier" });
+          }
+          const cwd = resolveToolCwd(context, fallbackDir);
+          const goalsDir = join20(cwd, ".pantheon", "goals");
+          const filePath = resolveConfinedPath(goalsDir, `${rawId}.json`);
+          const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+          const goal = {
+            id: rawId,
+            title,
+            criteria: Array.isArray(input.criteria) ? input.criteria.map(String) : [],
+            status: "active",
+            created_at: nowIso,
+            updated_at: nowIso
+          };
+          writeFileSync6(filePath, JSON.stringify(goal, null, 2), "utf8");
+          return jsonResult3({ ok: true, goal });
+        } catch (err) {
+          return jsonResult3({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
+      }
+    },
+    {
+      name: "goal_get",
+      description: "Retrieve an active session goal by id or latest.",
+      input: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          id: { type: "string", description: "Optional goal id (defaults to latest)" }
+        }
+      },
+      output: {},
+      execute: async (input, context) => {
+        try {
+          const cwd = resolveToolCwd(context, fallbackDir);
+          const goalsDir = join20(cwd, ".pantheon", "goals");
+          mkdirSync8(goalsDir, { recursive: true });
+          if (typeof input.id === "string" && input.id.trim()) {
+            const id = input.id.trim();
+            if (!isSafeSegment(id)) {
+              return jsonResult3({ ok: false, error: "id must be a safe identifier" });
+            }
+            const filePath = resolveConfinedPath(goalsDir, `${id}.json`);
+            if (!existsSync11(filePath)) return jsonResult3({ ok: false, error: "not_found", id });
+            return jsonResult3(JSON.parse(readFileSync10(filePath, "utf8")));
+          }
+          const files = readdirSync4(goalsDir).filter((f) => f.endsWith(".json")).sort();
+          const latest = files.at(-1);
+          if (!latest) return jsonResult3({ ok: false, error: "no_active_goals" });
+          return jsonResult3(JSON.parse(readFileSync10(resolveConfinedPath(goalsDir, latest), "utf8")));
+        } catch (err) {
+          return jsonResult3({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
+      }
+    },
+    {
+      name: "goal_update",
+      description: "Update progress or status on an active session goal.",
+      input: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id"],
+        properties: {
+          id: { type: "string", description: "Goal identifier" },
+          status: { type: "string", description: "Updated status (active, paused, completed)" },
+          notes: { type: "string", description: "Progress notes" }
+        }
+      },
+      output: {},
+      execute: async (input, context) => {
+        try {
+          const id = typeof input.id === "string" ? input.id.trim() : "";
+          if (!isSafeSegment(id)) {
+            return jsonResult3({ ok: false, error: "valid goal id is required" });
+          }
+          const cwd = resolveToolCwd(context, fallbackDir);
+          const goalsDir = join20(cwd, ".pantheon", "goals");
+          const filePath = resolveConfinedPath(goalsDir, `${id}.json`);
+          if (!existsSync11(filePath)) return jsonResult3({ ok: false, error: "not_found", id });
+          const existing = JSON.parse(readFileSync10(filePath, "utf8"));
+          const updated = {
+            ...existing,
+            status: typeof input.status === "string" ? input.status : existing.status,
+            ...typeof input.notes === "string" ? { notes: input.notes } : {},
+            updated_at: (/* @__PURE__ */ new Date()).toISOString()
+          };
+          writeFileSync6(filePath, JSON.stringify(updated, null, 2), "utf8");
+          return jsonResult3({ ok: true, goal: updated });
+        } catch (err) {
+          return jsonResult3({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
+      }
+    },
+    {
+      name: "goal_done",
+      description: "Mark a session goal as completed.",
+      input: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id"],
+        properties: {
+          id: { type: "string", description: "Goal identifier" },
+          summary: { type: "string", description: "Completion summary" }
+        }
+      },
+      output: {},
+      execute: async (input, context) => {
+        try {
+          const id = typeof input.id === "string" ? input.id.trim() : "";
+          if (!isSafeSegment(id)) {
+            return jsonResult3({ ok: false, error: "valid goal id is required" });
+          }
+          const cwd = resolveToolCwd(context, fallbackDir);
+          const goalsDir = join20(cwd, ".pantheon", "goals");
+          const filePath = resolveConfinedPath(goalsDir, `${id}.json`);
+          if (!existsSync11(filePath)) return jsonResult3({ ok: false, error: "not_found", id });
+          const existing = JSON.parse(readFileSync10(filePath, "utf8"));
+          const updated = {
+            ...existing,
+            status: "completed",
+            ...typeof input.summary === "string" ? { summary: input.summary } : {},
+            updated_at: (/* @__PURE__ */ new Date()).toISOString()
+          };
+          writeFileSync6(filePath, JSON.stringify(updated, null, 2), "utf8");
+          return jsonResult3({ ok: true, goal: updated });
+        } catch (err) {
+          return jsonResult3({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
+      }
+    }
+  ];
+}
+
 // src/pantheon/skill-search-tool.ts
-import { existsSync as existsSync8, readdirSync as readdirSync2, readFileSync as readFileSync7 } from "node:fs";
+import { existsSync as existsSync12, readdirSync as readdirSync5, readFileSync as readFileSync11 } from "node:fs";
 import { homedir as homedir8 } from "node:os";
-import { join as join18 } from "node:path";
+import { join as join21 } from "node:path";
 
 // scripts/skill-search.mjs
 import { spawnSync } from "node:child_process";
@@ -14230,16 +15815,16 @@ function scanInstalledSkills(cwd = process.cwd()) {
   }
   const scanDir = (baseDir, scope) => {
     try {
-      if (!existsSync8(baseDir)) return;
-      const entries = readdirSync2(baseDir, { withFileTypes: true });
+      if (!existsSync12(baseDir)) return;
+      const entries = readdirSync5(baseDir, { withFileTypes: true });
       for (const entry of entries) {
         if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
         const skillName = entry.name;
         if (skillName.startsWith(".")) continue;
-        const skillMd = join18(baseDir, skillName, "SKILL.md");
-        if (existsSync8(skillMd)) {
+        const skillMd = join21(baseDir, skillName, "SKILL.md");
+        if (existsSync12(skillMd)) {
           try {
-            const raw = readFileSync7(skillMd, "utf8");
+            const raw = readFileSync11(skillMd, "utf8");
             const { name, description } = extractSkillMetadata(raw, skillName);
             const id = (name || skillName).trim();
             map.set(id.toLowerCase(), {
@@ -14255,12 +15840,12 @@ function scanInstalledSkills(cwd = process.cwd()) {
     } catch {
     }
   };
-  const xdgConfig = process.env.XDG_CONFIG_HOME || join18(homedir8(), ".config");
-  scanDir(join18(xdgConfig, "opencode", "skills"), "global");
-  scanDir(join18(homedir8(), ".agents", "skills"), "global");
-  scanDir(join18(cwd, ".opencode", "skills"), "project");
-  scanDir(join18(cwd, ".agents", "skills"), "project");
-  scanDir(join18(cwd, "skills"), "project");
+  const xdgConfig = process.env.XDG_CONFIG_HOME || join21(homedir8(), ".config");
+  scanDir(join21(xdgConfig, "opencode", "skills"), "global");
+  scanDir(join21(homedir8(), ".agents", "skills"), "global");
+  scanDir(join21(cwd, ".opencode", "skills"), "project");
+  scanDir(join21(cwd, ".agents", "skills"), "project");
+  scanDir(join21(cwd, "skills"), "project");
   return map;
 }
 var TOOL_DESCRIPTION3 = "Advisory discovery tool for skills. Queries installed Pantheon skills and external registries (Anthropic catalog, skills.sh, GitHub). Returns matched skill IDs, descriptions, install counts, and provenance tiers. Zeus uses this to recommend project-scoped skills (.agents/skills/) before proactively prompting the user via the question tool.";
@@ -14432,6 +16017,196 @@ function createV2SkillSearchDefinition(defaultDir) {
   };
 }
 
+// src/pantheon/step-ledger.ts
+import { existsSync as existsSync13, mkdirSync as mkdirSync9, readFileSync as readFileSync12, realpathSync as realpathSync5, writeFileSync as writeFileSync7 } from "node:fs";
+import { join as join22, resolve as resolve11, sep as sep8 } from "node:path";
+var SAFE_STEP_KEY_RE = /^[a-zA-Z0-9._:-]{1,128}$/;
+var stepReflex = new ThemisReflexController({ maxRetries: 2 });
+function assertSafeStepKey(stepKey) {
+  if (typeof stepKey !== "string" || !SAFE_STEP_KEY_RE.test(stepKey) || stepKey.includes("..")) {
+    throw new Error("stepKey must be a safe alphanumeric identifier (1..128 chars)");
+  }
+  return stepKey;
+}
+function resolveLedgerPath(workspaceDir) {
+  const dir = join22(workspaceDir, ".pantheon", "ledger");
+  mkdirSync9(dir, { recursive: true });
+  const canonicalDir = realpathSync5(dir);
+  const filePath = resolve11(canonicalDir, "step-ledger.json");
+  const prefix = canonicalDir.endsWith(sep8) ? canonicalDir : `${canonicalDir}${sep8}`;
+  if (!filePath.startsWith(prefix)) {
+    throw new Error("Path traversal denied for step-ledger.json");
+  }
+  return filePath;
+}
+function readStepLedger(workspaceDir) {
+  const filePath = resolveLedgerPath(workspaceDir);
+  if (!existsSync13(filePath)) {
+    return { version: 1, steps: {} };
+  }
+  try {
+    const parsed = JSON.parse(readFileSync12(filePath, "utf8"));
+    if (parsed && typeof parsed.steps === "object" && parsed.steps !== null) {
+      return { version: 1, steps: parsed.steps };
+    }
+  } catch {
+  }
+  return { version: 1, steps: {} };
+}
+function writeStepLedger(workspaceDir, store2) {
+  const filePath = resolveLedgerPath(workspaceDir);
+  writeFileSync7(filePath, `${JSON.stringify(store2, null, 2)}
+`, "utf8");
+}
+function canTransitionStepToDone(step) {
+  if (step.verificationExitCode !== 0 || step.lastVerifiedAt === null) {
+    return {
+      allowed: false,
+      reason: `Step "${step.stepKey}" cannot transition to done: no passing verification command (exitCode === 0) has been recorded.`
+    };
+  }
+  if (step.lastMutationAt !== null && step.lastVerifiedAt < step.lastMutationAt) {
+    return {
+      allowed: false,
+      reason: `Step "${step.stepKey}" cannot transition to done: files were mutated after the last verification run. Re-run the verification slice first.`
+    };
+  }
+  return { allowed: true };
+}
+function jsonResult4(payload) {
+  return { output: JSON.stringify(payload) };
+}
+function createStepLedgerTool(fallbackDir) {
+  return {
+    name: "pantheon_step_ledger",
+    description: "Manage atomic Step-Ledger execution contracts with hard verification gates: a step can transition to done ONLY after a verification command exits 0 following the last file mutation.",
+    input: {
+      type: "object",
+      additionalProperties: false,
+      required: ["action"],
+      properties: {
+        action: {
+          type: "string",
+          enum: ["init_step", "record_mutation", "record_verification", "complete_step", "status"],
+          description: "Ledger operation to perform"
+        },
+        stepKey: { type: "string", description: "Unique atomic step identifier" },
+        objective: { type: "string", description: "Bounded step objective" },
+        agent: { type: "string", description: "Assigned specialist agent" },
+        files: {
+          type: "array",
+          items: { type: "string" },
+          description: "Mutated file paths for record_mutation"
+        },
+        command: { type: "string", description: "Executed verification slice command" },
+        exitCode: { type: "number", description: "Exit code of the verification command" },
+        durationMs: { type: "number", description: "Duration of verification command in ms" }
+      }
+    },
+    output: {},
+    execute: async (input, context) => {
+      try {
+        const action = typeof input.action === "string" ? input.action : "status";
+        const cwd = resolveToolCwd(context, fallbackDir);
+        const store2 = readStepLedger(cwd);
+        const now = Date.now();
+        const nowIso = new Date(now).toISOString();
+        if (action === "status") {
+          if (typeof input.stepKey === "string" && input.stepKey.trim()) {
+            const key2 = assertSafeStepKey(input.stepKey.trim());
+            const step2 = store2.steps[key2];
+            if (!step2) return jsonResult4({ ok: false, error: "step_not_found", stepKey: key2 });
+            return jsonResult4({ ok: true, step: step2, gate: canTransitionStepToDone(step2) });
+          }
+          return jsonResult4({ ok: true, steps: Object.values(store2.steps) });
+        }
+        const key = assertSafeStepKey(input.stepKey);
+        if (action === "init_step") {
+          const objective = typeof input.objective === "string" ? input.objective.trim() : "";
+          if (!objective) return jsonResult4({ ok: false, error: "objective is required" });
+          const agent = typeof input.agent === "string" && input.agent.trim() ? input.agent.trim() : "specialist";
+          const entry = {
+            stepKey: key,
+            objective,
+            agent,
+            state: "in_progress",
+            mutatedFiles: [],
+            lastMutationAt: null,
+            lastVerifiedAt: null,
+            updatedAt: nowIso
+          };
+          store2.steps[key] = entry;
+          writeStepLedger(cwd, store2);
+          return jsonResult4({ ok: true, step: entry });
+        }
+        const step = store2.steps[key];
+        if (!step) {
+          return jsonResult4({ ok: false, error: `Step "${key}" is not initialized` });
+        }
+        if (action === "record_mutation") {
+          const files = Array.isArray(input.files) ? input.files.map(String) : [];
+          const merged = Array.from(/* @__PURE__ */ new Set([...step.mutatedFiles, ...files]));
+          step.mutatedFiles = merged;
+          step.lastMutationAt = now;
+          if (step.state === "done") step.state = "in_progress";
+          step.updatedAt = nowIso;
+          writeStepLedger(cwd, store2);
+          return jsonResult4({ ok: true, step });
+        }
+        if (action === "record_verification") {
+          const command = typeof input.command === "string" ? input.command.trim() : "";
+          const exitCode = typeof input.exitCode === "number" ? input.exitCode : 1;
+          const durationMs = typeof input.durationMs === "number" ? input.durationMs : 0;
+          if (!command) return jsonResult4({ ok: false, error: "command is required" });
+          step.verificationCommand = command;
+          step.verificationExitCode = exitCode;
+          step.lastVerifiedAt = now;
+          step.updatedAt = nowIso;
+          if (exitCode === 0) {
+            stepReflex.evaluate(key, step.agent, []);
+            const receipt = createExecutionReceipt({
+              taskID: key,
+              agent: step.agent,
+              files: step.mutatedFiles.map((f) => ({ path: f, content: `${key}:${f}:${now}` })),
+              testSlice: { command, exitCode: 0, durationMs }
+            });
+            step.receiptId = receipt.receiptId;
+            writeStepLedger(cwd, store2);
+            return jsonResult4({ ok: true, verified: true, receiptId: receipt.receiptId, step });
+          }
+          const reflex = stepReflex.evaluate(key, step.agent, [
+            {
+              file: step.mutatedFiles[0] ?? key,
+              error: `Verification command "${command}" failed with exit code ${exitCode}`
+            }
+          ]);
+          if (reflex.action === "escalate") {
+            step.state = "blocked";
+          }
+          writeStepLedger(cwd, store2);
+          return jsonResult4({ ok: false, verified: false, reflex, step });
+        }
+        if (action === "complete_step") {
+          const gate = canTransitionStepToDone(step);
+          if (!gate.allowed) {
+            return jsonResult4({ ok: false, error: gate.reason, step });
+          }
+          step.state = "done";
+          step.updatedAt = nowIso;
+          writeStepLedger(cwd, store2);
+          return jsonResult4({ ok: true, status: "done", receiptId: step.receiptId, step });
+        }
+        return jsonResult4({ ok: false, error: `Unsupported action: ${action}` });
+      } catch (err) {
+        return jsonResult4({
+          ok: false,
+          error: err instanceof Error ? err.message : String(err)
+        });
+      }
+    }
+  };
+}
+
 // src/pantheon/tools.ts
 function toolContext(context) {
   const ctx = context ?? {};
@@ -14552,11 +16327,18 @@ function coerceHashlineEditArgs(input) {
 }
 var hashlineEdit = createHashlineEditTool();
 async function executeHashlineEdit(input, context) {
+  const ctx = toolContext(context);
+  const callerAgent = (ctx.agent ?? "").toLowerCase().trim();
+  if (callerAgent && NON_EDIT_AGENTS.has(callerAgent)) {
+    return {
+      output: `hashline_edit denied: agent '${callerAgent}' is not permitted to edit files directly.`
+    };
+  }
   const coerced = coerceHashlineEditArgs(input);
   if (!coerced.ok) return { output: coerced.error };
   let result;
   try {
-    result = await hashlineEdit.execute(coerced.args, toolContext(context));
+    result = await hashlineEdit.execute(coerced.args, ctx);
   } catch (err) {
     return { output: errorText("hashline_edit failed", err) };
   }
@@ -14688,15 +16470,41 @@ var TODOWRITE_INPUT = {
   }
 };
 var latestSessionTodos = [];
+var sessionTodosBySession = /* @__PURE__ */ new Map();
+function resolveTodoSessionKey(context) {
+  if (!context || typeof context !== "object") return void 0;
+  const ctx = context;
+  if (typeof ctx.sessionID === "string" && ctx.sessionID.trim() !== "") {
+    return ctx.sessionID.trim();
+  }
+  const sessionObj = ctx.session;
+  if (typeof sessionObj?.id === "string" && sessionObj.id.trim() !== "") {
+    return sessionObj.id.trim();
+  }
+  return void 0;
+}
+function getLatestSessionTodos(sessionID) {
+  if (sessionID && sessionTodosBySession.has(sessionID)) {
+    return sessionTodosBySession.get(sessionID) ?? [];
+  }
+  return latestSessionTodos;
+}
+function setLatestSessionTodos(todos, sessionID) {
+  latestSessionTodos = todos;
+  if (sessionID) {
+    sessionTodosBySession.set(sessionID, todos);
+  }
+}
 var todowriteTool = {
   name: "todowrite",
   description: "Write the session task checklist (full replace). The TUI todo panel renders the newest list; mark each item in_progress/completed as soon as its state changes.",
   input: TODOWRITE_INPUT,
   output: {},
-  execute: async (input) => {
+  execute: async (input, context) => {
     const rawTodos = input.todos;
     const todos = Array.isArray(rawTodos) ? rawTodos : [];
-    latestSessionTodos = todos;
+    const sessionKey = resolveTodoSessionKey(context);
+    setLatestSessionTodos(todos, sessionKey);
     return { ok: true, todos, output: JSON.stringify({ todos }) };
   }
 };
@@ -14715,9 +16523,10 @@ var todoreadTool = {
   description: "Read the active session task checklist. Returns the newest list of tasks written via todowrite.",
   input: TODOREAD_INPUT,
   output: {},
-  execute: async (input) => {
+  execute: async (input, context) => {
     const statusFilter = input?.status;
-    let todos = latestSessionTodos;
+    const sessionKey = resolveTodoSessionKey(context);
+    let todos = getLatestSessionTodos(sessionKey);
     if (typeof statusFilter === "string" && statusFilter.trim() !== "") {
       todos = todos.filter(
         (t) => typeof t === "object" && t !== null && t.status === statusFilter
@@ -14731,6 +16540,7 @@ var todoreadTool = {
   }
 };
 var execAsync = promisify(exec);
+var SHELL_TIMEOUT_MS = 12e4;
 var SHELL_INPUT = {
   type: "object",
   required: ["command"],
@@ -14748,16 +16558,27 @@ function createShellTool(fallbackDir) {
     input: SHELL_INPUT,
     output: {},
     execute: async (input, context) => {
+      const ctx = toolContext(context);
+      const callerAgent = (ctx.agent ?? "").toLowerCase().trim();
+      if (callerAgent && NON_SHELL_AGENTS.has(callerAgent)) {
+        const msg = `shell denied: agent '${callerAgent}' is not permitted to execute shell commands`;
+        return { output: msg, ok: false, error: msg };
+      }
       const raw = input ?? {};
       const command = String(raw.command ?? raw.cmd ?? "");
       if (!command.trim()) {
         return { output: "", ok: false, error: "Command cannot be empty" };
+      }
+      if (isDangerousCommand(command)) {
+        const msg = "shell denied: destructive or privilege-escalation command blocked by safety guard";
+        return { output: msg, ok: false, error: msg };
       }
       const cwd = resolveToolCwd(context, fallbackDir);
       try {
         const { stdout, stderr } = await execAsync(command, {
           cwd,
           maxBuffer: 10 * 1024 * 1024,
+          timeout: SHELL_TIMEOUT_MS,
           shell: "/bin/bash"
         });
         const output = [stdout, stderr].filter(Boolean).join("\n");
@@ -14805,6 +16626,10 @@ function createV2ToolDefinitions(visionRuntime, shadow = {}, jevRuntime, hostLoc
   definitions.push(createShellTool(hostLocationDirectory));
   definitions.push(createV2SkillSearchDefinition(hostLocationDirectory));
   definitions.push(createDeepworkTool(hostLocationDirectory));
+  definitions.push(createStepLedgerTool(hostLocationDirectory));
+  definitions.push(createAgentForgeTool(hostLocationDirectory));
+  definitions.push(...createNativeMemoryAndPersistenceTools(hostLocationDirectory));
+  definitions.push(...createCodemapTools(hostLocationDirectory));
   if (visionRuntime) definitions.push(createV2VisionTool(visionRuntime));
   if (jevRuntime) definitions.push(createV2JevDecisionDefinition(jevRuntime));
   return definitions;
@@ -14928,17 +16753,15 @@ function loadRuntimeOverrides() {
   if (runtimeOverridesLoaded) return;
   runtimeOverridesLoaded = true;
   try {
-    const read = (path6) => {
-      const fs = __require("node:fs");
+    const read = (filePath) => {
       try {
-        return fs.readFileSync(path6, "utf8");
+        return readFileSync13(filePath, "utf8");
       } catch {
         return void 0;
       }
     };
-    const path5 = __require("node:path");
-    const globalRaw = read(path5.join(resolveGlobalOverrideDir(), "pantheon-overrides.json"));
-    const projectRaw = read(path5.join(process.cwd(), ".pantheon", "overrides.json"));
+    const globalRaw = read(path4.join(resolveGlobalOverrideDir(), "pantheon-overrides.json"));
+    const projectRaw = read(path4.join(process.cwd(), ".pantheon", "overrides.json"));
     runtimeOverrides = mergeOverrides(globalRaw, projectRaw).entries;
   } catch {
     runtimeOverrides = {};
@@ -14984,6 +16807,25 @@ function installV2TodoEnforcer(context) {
   idleTodoEnforcer = todoEnforcer;
   return todoEnforcer;
 }
+function readCanonicalRoster() {
+  try {
+    const candidates = [
+      fileURLToPath5(new URL("agents/roster.json", import.meta.url)),
+      fileURLToPath5(new URL("../src/agents/roster.json", import.meta.url)),
+      fileURLToPath5(new URL("src/agents/roster.json", import.meta.url)),
+      path4.join(process.cwd(), "src", "agents", "roster.json")
+    ];
+    for (const p of candidates) {
+      if (existsSync14(p)) {
+        const raw = readFileSync13(p, "utf8");
+        const data = JSON.parse(raw);
+        if (data && typeof data.agents === "object") return data.agents;
+      }
+    }
+  } catch {
+  }
+  return {};
+}
 function transformAgents(draft) {
   let agents;
   try {
@@ -15002,8 +16844,10 @@ function transformAgents(draft) {
     markUnsupported("agent-transform-list");
     return;
   }
+  let configuredOverrides = {};
   try {
     const modelConfiguration = readV2ModelConfiguration();
+    configuredOverrides = modelConfiguration.overrides;
     if (modelConfiguration.warnings.length > 0) {
       markUnsupported("agent-model-overrides");
     }
@@ -15012,6 +16856,40 @@ function transformAgents(draft) {
     markUnsupported("agent-model-overrides");
   }
   try {
+    const roster = readCanonicalRoster();
+    const seenIds = /* @__PURE__ */ new Set();
+    for (const agent of agents) {
+      if (agent?.id) seenIds.add(agent.id);
+    }
+    for (const [id, def] of Object.entries(roster)) {
+      if (!seenIds.has(id) && typeof draft.update === "function") {
+        try {
+          draft.update(id, (current) => {
+            if (current.id && current.id !== id) return;
+            current.id = id;
+            current.name = def.name ?? id;
+            current.description = def.description ?? "";
+            current.mode = id === "zeus" ? "primary" : def.mode ?? "subagent";
+            if (def.temperature !== void 0) current.temperature = def.temperature;
+            if (def.permission && typeof def.permission === "object") {
+              current.permission = def.permission;
+            }
+            const override = configuredOverrides[id];
+            if (override?.model) {
+              current.model = override.model;
+              if (override.variant !== void 0) current.variant = override.variant;
+            }
+            const body = typeof def.body === "string" ? def.body.trim() : "";
+            current.system = body ? buildPrefixCachedPrompt({ identity: body, currentTurn: POLICY }).prompt : POLICY;
+          });
+        } catch {
+        }
+      }
+    }
+    try {
+      if (typeof draft.default === "function") draft.default("zeus");
+    } catch {
+    }
     for (const agent of agents) {
       draft.update(agent.id, (current) => {
         try {
@@ -15036,7 +16914,58 @@ ${POLICY}`;
     markUnsupported("agent-transform");
   }
 }
+var CANONICAL_SLASH_COMMANDS = [
+  {
+    name: "pantheon",
+    description: "Dispatch inline multi-specialist Council synthesis for architectural trade-offs"
+  },
+  {
+    name: "pantheon-deepwork",
+    description: "Execute multi-phase Deepwork plan with DAG checkpoints and verification gates"
+  },
+  {
+    name: "pantheon-audit",
+    description: "Run zero-token heuristic static scan and Themis 3-layer security review"
+  },
+  {
+    name: "pantheon-focus",
+    description: "Manage persistent session goals and focus boundaries across compactions"
+  },
+  {
+    name: "pantheon-model",
+    description: "Inspect or configure per-agent model overrides in active-preset.json"
+  },
+  {
+    name: "pantheon-optimize",
+    description: "Analyze and prune stale artifacts, worktrees, and context overhead"
+  },
+  {
+    name: "pantheon-settings",
+    description: "Open the interactive Pantheon TUI settings and Quotas & Spend window"
+  },
+  {
+    name: "pantheon-vision",
+    description: "Inspect or configure multimodal vision gateway and model status"
+  }
+];
 function transformCommands(draft) {
+  try {
+    const maybeAdd = draft.add;
+    if (typeof maybeAdd === "function") {
+      for (const cmd of CANONICAL_SLASH_COMMANDS) {
+        try {
+          maybeAdd.call(draft, {
+            name: cmd.name,
+            description: cmd.description,
+            execute: async () => {
+            }
+          });
+        } catch {
+        }
+      }
+    }
+  } catch {
+  }
   let commands;
   try {
     const maybeList = draft.list;
@@ -15067,9 +16996,11 @@ function transformCommands(draft) {
   }
 }
 function transformReferences(draft) {
+  const globalAgentsPath = fileURLToPath5(new URL("../AGENTS.global.md", import.meta.url));
+  const fallbackAgentsPath = fileURLToPath5(new URL("../AGENTS.md", import.meta.url));
   draft.add("pantheon-agents", {
     type: "local",
-    path: fileURLToPath5(new URL("../AGENTS.md", import.meta.url)),
+    path: existsSync14(globalAgentsPath) ? globalAgentsPath : fallbackAgentsPath,
     description: "Pantheon agent and execution policy"
   });
 }
@@ -15222,11 +17153,12 @@ function subscribeV2Events(context, onTurnEnd) {
           loopPoint.observe(event);
         } catch {
         }
-        if (event.type === "session.idle" || event.type === "session.deleted") {
+        if (event.type === "session.idle" || event.type === "session.deleted" || event.type === "session.execution.succeeded") {
           const properties = event.properties ?? {};
+          const data = event.data ?? {};
           const info = properties.info;
           const infoID = info !== null && typeof info === "object" ? info.id : void 0;
-          const sessionID = typeof properties.sessionID === "string" ? properties.sessionID : typeof infoID === "string" ? infoID : void 0;
+          const sessionID = typeof properties.sessionID === "string" ? properties.sessionID : typeof data.sessionID === "string" ? data.sessionID : typeof infoID === "string" ? infoID : void 0;
           if (sessionID) onTurnEnd?.(sessionID);
         }
       }
@@ -15243,15 +17175,19 @@ async function handleV2SessionEvent(event) {
       await onSessionCreated(event);
       break;
     case "session.idle":
+    case "session.execution.succeeded":
       await onSessionIdle(event);
       break;
     case "session.deleted":
       await onSessionDeleted(event);
       break;
     case "session.error":
+    case "session.execution.failed":
+    case "session.step.failed":
       await onSessionError(event);
       break;
     case "session.compacted":
+    case "session.compaction.ended":
       await onSessionCompacted(event);
       break;
     default:
@@ -15436,6 +17372,18 @@ ${visualContext}`;
           }
         }
         await applyDecisionRouterToPrompt(admission, userRequest);
+        try {
+          const sid = admission?.sessionID;
+          const instrEntry = sessionCtx.instructions?.entry;
+          if (typeof sid === "string" && typeof instrEntry?.put === "function") {
+            await instrEntry.put({
+              sessionID: sid,
+              key: "pantheon.policy",
+              text: POLICY
+            });
+          }
+        } catch {
+        }
         observePromptSurface(admission, (record2) => {
           promptSurfaceSink.emit({ ...record2, mode: "shadow" });
         });
@@ -15461,7 +17409,7 @@ function appendV2HookLog(line) {
   if (body === "") return false;
   try {
     const dir = path4.join(process.cwd(), ".pantheon", "logs");
-    mkdirSync6(dir, { recursive: true });
+    mkdirSync10(dir, { recursive: true });
     appendFileSync2(path4.join(dir, "hooks.log"), `${body}
 `, "utf8");
     return true;
@@ -16116,10 +18064,48 @@ function v2Dispose() {
 function getUnsupportedFeatures() {
   return V2_UNSUPPORTED_FEATURES;
 }
+var UNSUPPORTED_FEATURES = V2_UNSUPPORTED_FEATURES;
+var disposePlugin = v2Dispose;
+var resetIdleEnforcerForTests = resetV2IdleEnforcerForTests;
+var setSecretScanRunnerForTests = setV2SecretScanRunnerForTests;
+var setShellRunnerForTests = setV2ShellRunnerForTests;
 var plugin_default = plugin;
+
+// src/plugin/index.ts
+async function setupUnified(context) {
+  const ctx = context;
+  if (ctx?.ui && typeof ctx.ui.slot === "function") {
+    try {
+      const tuiPath = "../plugins/tui/dist/tui.js";
+      const tuiMod = await import(tuiPath);
+      const tui = tuiMod.default || tuiMod;
+      if (typeof tui === "function") return tui(context);
+      if (typeof tui?.setup === "function") return tui.setup(context);
+    } catch {
+    }
+  }
+  const srv = plugin_default;
+  if (typeof srv === "function") return srv(context);
+  if (typeof srv?.setup === "function") {
+    return srv.setup(context);
+  }
+  return void 0;
+}
+var unifiedPlugin = Object.assign(
+  async function pantheonPlugin(context) {
+    return setupUnified(context);
+  },
+  {
+    id: "pantheon-opencode",
+    setup: setupUnified
+  }
+);
+var index_default = unifiedPlugin;
 export {
+  UNSUPPORTED_FEATURES,
   V2_UNSUPPORTED_FEATURES,
-  plugin_default as default,
+  index_default as default,
+  disposePlugin,
   getJ1TelemetrySinkForTests,
   getJ3TelemetrySinkForTests,
   getJ4TelemetrySinkForTests,
@@ -16131,8 +18117,13 @@ export {
   getPromptSurfaceTelemetrySinkForTests,
   getUnsupportedFeatures,
   plugin,
+  resetIdleEnforcerForTests,
   resetV2IdleEnforcerForTests,
+  setSecretScanRunnerForTests,
+  setShellRunnerForTests,
   setV2SecretScanRunnerForTests,
   setV2ShellRunnerForTests,
+  setupUnified,
+  unifiedPlugin,
   v2Dispose
 };

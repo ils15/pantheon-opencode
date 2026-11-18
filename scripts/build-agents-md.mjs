@@ -435,18 +435,39 @@ export function writeAgentsMdManaged(filePath, generated, dryRun = false, record
 const GENERATED_AGENT_BLOCK =
   /\n?<!-- Pantheon selective instructions: generated -->[\s\S]*?<!-- \/Pantheon selective instructions -->\n?/g
 
+/** Default hard ceiling (in UTF-8 bytes) for a rendered agent prompt with inline instructions. */
+export const MAX_RENDERED_AGENT_PROMPT_BYTES = 32_000
+
+function compactInstructionBody(body, mode = 'examples') {
+  if (mode === 'examples') {
+    return body.replace(/\n```(?:markdown|text|mermaid)?\n[\s\S]*?\n```/g, '').trimEnd()
+  }
+  const firstHeading = body.match(/^#+\s+[^\n]+/m)?.[0] ?? '## Situational Reference'
+  return `${firstHeading}\n\n> Read the full situational protocol from the source instruction file when this workflow is invoked.`
+}
+
 /**
  * Render the agent-specific instruction set into the supported agent prompt.
  * The shared rules remain in AGENTS.md; file globs are retained as scope
  * guidance and are never used as agent selectors.
  *
+ * Supports an optional `options.maxBytes` (or `PANTHEON_MAX_AGENT_PROMPT_BYTES`)
+ * ceiling that progressively compacts verbose examples or switches situational
+ * sections to on-demand references when exceeded.
+ *
  * @param {string} agentName - Canonical agent name from the prompt filename
  * @param {string} prompt - Canonical source agent prompt
  * @param {Array<{ file: string, name: string, body: string, applyTo?: string | null,
  *   agents?: string[], fallback?: string | null }>} instructions
+ * @param {{ maxBytes?: number }} [options]
  * @returns {string}
  */
-export function generateAgentPrompt(agentName, prompt, instructions = readInstructions()) {
+export function generateAgentPrompt(
+  agentName,
+  prompt,
+  instructions = readInstructions(),
+  options = {},
+) {
   const basePrompt = prompt.replace(GENERATED_AGENT_BLOCK, '').trimEnd()
   const selected = instructions.filter(
     (instr) => instr.agents && !instr.agents.includes('*') && instr.agents.includes(agentName),
@@ -462,7 +483,15 @@ export function generateAgentPrompt(agentName, prompt, instructions = readInstru
     ].join('\n')
   }
 
-  const sections = selected.map((instr) => {
+  const envMax = Number(process.env.PANTHEON_MAX_AGENT_PROMPT_BYTES)
+  const maxBytes =
+    typeof options?.maxBytes === 'number' && options.maxBytes > 0
+      ? options.maxBytes
+      : Number.isFinite(envMax) && envMax > 0
+        ? envMax
+        : MAX_RENDERED_AGENT_PROMPT_BYTES
+
+  const renderSection = (instr, bodyText) => {
     const scope = instr.applyTo
       ? `\n\n> Apply only when a target workspace file matches \`${instr.applyTo}\`.`
       : ''
@@ -474,17 +503,49 @@ export function generateAgentPrompt(agentName, prompt, instructions = readInstru
       `<!-- Source: src/instructions/${instr.file} -->`,
       `## ${instr.name}${scope}`,
       '',
-      `${instr.body.trimEnd()}${fallback}`,
+      `${bodyText.trimEnd()}${fallback}`,
     ].join('\n')
-  })
-  return [
-    basePrompt,
-    '',
-    '<!-- Pantheon selective instructions: generated -->',
-    sections.join('\n\n'),
-    '<!-- /Pantheon selective instructions -->',
-    '',
-  ].join('\n')
+  }
+
+  const bodies = selected.map((instr) => instr.body)
+  const buildFull = () =>
+    [
+      basePrompt,
+      '',
+      '<!-- Pantheon selective instructions: generated -->',
+      selected.map((instr, i) => renderSection(instr, bodies[i])).join('\n\n'),
+      '<!-- /Pantheon selective instructions -->',
+      '',
+    ].join('\n')
+
+  let rendered = buildFull()
+  if (Buffer.byteLength(rendered, 'utf8') <= maxBytes) {
+    return rendered
+  }
+
+  // Pass 1: strip verbose fenced code-block templates from largest instructions first
+  const indicesBySize = selected
+    .map((_, idx) => idx)
+    .sort((a, b) => Buffer.byteLength(bodies[b], 'utf8') - Buffer.byteLength(bodies[a], 'utf8'))
+
+  for (const idx of indicesBySize) {
+    bodies[idx] = compactInstructionBody(bodies[idx], 'examples')
+    rendered = buildFull()
+    if (Buffer.byteLength(rendered, 'utf8') <= maxBytes) {
+      return rendered
+    }
+  }
+
+  // Pass 2: convert largest situational instructions to concise on-demand stubs
+  for (const idx of indicesBySize) {
+    bodies[idx] = compactInstructionBody(bodies[idx], 'stub')
+    rendered = buildFull()
+    if (Buffer.byteLength(rendered, 'utf8') <= maxBytes) {
+      return rendered
+    }
+  }
+
+  return rendered
 }
 
 /**

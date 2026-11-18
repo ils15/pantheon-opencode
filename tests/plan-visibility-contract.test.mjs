@@ -38,7 +38,7 @@ test('Athena returns the complete plan to Zeus without opening approval in the c
   )
   assert.match(
     athena,
-    /Do not call `agent\/askQuestions`, pause for user\s+input, or ask the user to approve from the child session/i,
+    /Do not call `question`, pause for user\s+input, or ask the user to approve from the child session/i,
   )
   assert.match(athena, /return the complete Markdown plan in[\s\S]*?final task result/i)
   assert.match(athena, /affected files or areas/i)
@@ -51,7 +51,7 @@ test('Athena returns the complete plan to Zeus without opening approval in the c
   )
   assert.match(
     agentReturnFormat,
-    /Athena must not call `agent\/askQuestions`, pause for user input, or ask for\s+approval in the child session/i,
+    /Athena must not call `question`, pause for user input, or ask for\s+approval in the child session/i,
   )
 })
 

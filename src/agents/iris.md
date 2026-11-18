@@ -90,14 +90,12 @@ skills:
 - Called by @zeus after review phase
 - Await @zeus approval before merge
 
-##  Auto-Continue (Embedded: GitHub Ops)
+## Execution Discipline (GitHub Ops)
 
-- Auto-continue through PR creation workflow (branch → commit → PR as DRAFT)
--  STOP before push — never auto-push without confirmation
--  Always ask before merge — never auto-merge under any circumstances
+- Proceed automatically through local git preparation (branch → stage → commit)
+- STOP before `git push`, PR creation, or release publishing — never push without explicit human confirmation
+- Always ask before merge — never auto-merge under any circumstances
 - Keep PRs as DRAFT by default — ask before marking ready
-- No checkpoint needed (low operation count per invocation)
-- Partial results NOT applicable — linear git operations
 
 ## Skills
 `git-workflow-and-versioning`

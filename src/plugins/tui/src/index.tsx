@@ -10,7 +10,17 @@ import { join } from 'node:path'
 import { Plugin } from '@opencode/plugin/tui'
 import type { Context, KeymapLayer, PanelInput } from '@opencode/plugin/tui/context'
 import type { Accessor, JSX } from 'solid-js'
-import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from 'solid-js'
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  ErrorBoundary,
+  For,
+  on,
+  onCleanup,
+  onMount,
+  Show,
+} from 'solid-js'
 import {
   CONTEXT_BAR_CELLS,
   type ContextProgressTone,
@@ -33,7 +43,13 @@ import {
 } from './pantheon-settings'
 import { PRESET_NONE } from './preset-state'
 import { cellWidth, GRAPHEMES, SIDEBAR_CONTENT_WIDTH } from './sidebar-width'
-import { initTuiPrefs, tuiDraftPreview, tuiPrefs } from './tui-prefs'
+import {
+  initTuiPrefs,
+  isSessionPinned,
+  resolveAccentColor,
+  tuiDraftPreview,
+  tuiPrefs,
+} from './tui-prefs'
 import { nextCheckState, pickUpdateNotice, type UpdateCheckState } from './update-notice.ts'
 import { maybeShowWhatsNewV2 } from './whats-new'
 
@@ -743,6 +759,256 @@ export function contextBlockRows(
   return { tokens, percent, spent }
 }
 
+/* ─── Turn metrics, token anatomy, tool health & compaction (v2.1.7) ──── */
+
+export type TurnCostSummary = {
+  current: number
+  previous: number | null
+}
+
+/** Custo do último turno do assistente e do turno anterior. Pure. */
+export function latestTurnCost(
+  messages: readonly any[] | null | undefined,
+): TurnCostSummary | null {
+  if (!Array.isArray(messages) || messages.length === 0) return null
+  let current: number | null = null
+  let previous: number | null = null
+  let anchor = -1
+
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]
+    if (message?.type !== 'assistant') continue
+    const cost = numberOrNull(message.cost)
+    if (cost !== null && cost >= 0) {
+      current = cost
+      anchor = index
+      break
+    }
+  }
+
+  if (current === null || anchor === -1) return null
+
+  for (let index = anchor - 1; index >= 0; index--) {
+    const message = messages[index]
+    if (message?.type !== 'assistant') continue
+    const cost = numberOrNull(message.cost)
+    if (cost !== null && cost >= 0) {
+      previous = cost
+      break
+    }
+  }
+
+  return { current, previous }
+}
+
+export function formatTurnCostUSD(cost: number | null | undefined): string | null {
+  const value = numberOrNull(cost)
+  if (value === null || value < 0) return null
+  if (value === 0) return '$0.00'
+  if (value >= 1) return `$${value.toFixed(2)}`
+  if (value >= 0.1) return `$${value.toFixed(2)}`
+  const val3 = value.toFixed(3)
+  if (val3.endsWith('0') && value >= 0.01) return `$${value.toFixed(2)}`
+  return `$${val3}`
+}
+
+export function formatTurnCostLine(summary: TurnCostSummary | null | undefined): string | null {
+  if (!summary || summary.current === null || summary.current < 0) return null
+  const curr = formatTurnCostUSD(summary.current)
+  if (!curr) return null
+  if (summary.previous !== null && summary.previous >= 0) {
+    const prev = formatTurnCostUSD(summary.previous)
+    if (prev) {
+      return `Turn: ${curr} (prev: ${prev})`
+    }
+  }
+  return `Turn: ${curr}`
+}
+
+export type TokenAnatomy = {
+  input: number
+  output: number
+  reasoning: number
+}
+
+/** Extrai desdobramento de tokens (input, output, reasoning/thinking). Pure. */
+export function extractTokenAnatomy(tokens: any): TokenAnatomy | null {
+  if (!tokens || typeof tokens !== 'object') return null
+  const input = Math.max(0, numberOrNull(tokens.input) ?? 0)
+  const output = Math.max(0, numberOrNull(tokens.output) ?? 0)
+  const reasoning = Math.max(
+    0,
+    numberOrNull(tokens.reasoning) ?? numberOrNull(tokens.thinking) ?? 0,
+  )
+  if (input === 0 && output === 0 && reasoning === 0) return null
+  return { input, output, reasoning }
+}
+
+export function formatTokenAnatomyLine(anatomy: TokenAnatomy | null | undefined): string | null {
+  if (!anatomy) return null
+  const parts: string[] = []
+  if (anatomy.input > 0) {
+    parts.push(`↑${formatContextWindow(anatomy.input)}`)
+  }
+  if (anatomy.output > 0) {
+    parts.push(`↓${formatContextWindow(anatomy.output)}`)
+  }
+  if (anatomy.reasoning > 0) {
+    parts.push(`✦${formatContextWindow(anatomy.reasoning)} think`)
+  }
+  return parts.length === 0 ? null : parts.join(' ')
+}
+
+export function formatTokenAnatomySplit(
+  anatomy: TokenAnatomy | null | undefined,
+): { inOut: string | null; think: string | null } | null {
+  if (!anatomy) return null
+  const inOutParts: string[] = []
+  if (anatomy.input > 0) inOutParts.push(`↑${formatContextWindow(anatomy.input)}`)
+  if (anatomy.output > 0) inOutParts.push(`↓${formatContextWindow(anatomy.output)}`)
+  const inOut = inOutParts.length > 0 ? inOutParts.join(' · ') : null
+  const think = anatomy.reasoning > 0 ? `✦ ${formatContextWindow(anatomy.reasoning)} think` : null
+  if (!inOut && !think) return null
+  return { inOut, think }
+}
+
+export type ToolCallSummary = {
+  total: number
+  failures: number
+}
+
+/** Conta chamadas de ferramentas e eventuais falhas/erros. Pure. */
+export function countToolCalls(messages: readonly any[] | null | undefined): ToolCallSummary {
+  if (!Array.isArray(messages)) return { total: 0, failures: 0 }
+  let total = 0
+  let failures = 0
+  for (const message of messages) {
+    if (message?.type !== 'assistant' || !Array.isArray(message.content)) continue
+    for (const part of message.content) {
+      if (part?.type !== 'tool') continue
+      total++
+      const state = part.state
+      if (
+        state?.status === 'error' ||
+        state?.status === 'failed' ||
+        state?.error !== undefined ||
+        (typeof state?.exitCode === 'number' && state.exitCode !== 0)
+      ) {
+        failures++
+      }
+    }
+  }
+  return { total, failures }
+}
+
+export function formatToolCallLine(
+  summary: ToolCallSummary | null | undefined,
+  locale = 'en',
+): string | null {
+  if (!summary || summary.total === 0) return null
+  const isPt = locale === 'pt-BR' || locale === 'pt'
+  if (summary.failures > 0) {
+    const errText = isPt
+      ? summary.failures === 1
+        ? '1 falha'
+        : `${summary.failures} falhas`
+      : `${summary.failures} err`
+    return `tools: ${summary.total} (${errText})`
+  }
+  const zeroText = isPt ? '0 falhas' : '0 err'
+  return `tools: ${summary.total} (${zeroText})`
+}
+
+export type CompactionInfo = {
+  count: number
+  prunedTokens: number
+}
+
+/** Extrai contagem de compactações e estimativa de tokens podados. Pure. */
+export function extractCompactionInfo(messages: readonly any[] | null | undefined): CompactionInfo {
+  if (!Array.isArray(messages) || messages.length === 0) return { count: 0, prunedTokens: 0 }
+  let count = 0
+  let prunedTokens = 0
+
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i]
+    if (msg?.type === 'compaction') {
+      count++
+      const directPruned =
+        numberOrNull(msg?.pruned) ??
+        numberOrNull(msg?.tokens?.pruned) ??
+        numberOrNull(msg?.data?.pruned)
+      if (directPruned !== null && directPruned > 0) {
+        prunedTokens += directPruned
+      } else {
+        let beforeSum = 0
+        for (let j = 0; j < i; j++) {
+          const prev = messages[j]
+          if (prev?.type === 'assistant' && prev?.tokens) {
+            beforeSum += messageTokensTotal(prev.tokens)
+          }
+        }
+        if (beforeSum > 0) {
+          prunedTokens = Math.max(prunedTokens, beforeSum)
+        }
+      }
+    }
+  }
+  return { count, prunedTokens }
+}
+
+/** Conta quantas vezes a sessão sofreu compactação nativa. Pure. */
+export function countSessionCompactions(messages: readonly any[] | null | undefined): number {
+  if (!Array.isArray(messages)) return 0
+  let count = 0
+  for (const message of messages) {
+    if (message?.type === 'compaction') count++
+  }
+  return count
+}
+
+export function formatCompactionBadge(
+  info: number | CompactionInfo | null | undefined,
+): string | null {
+  if (typeof info === 'number') {
+    if (info <= 0) return null
+    return `${info}x compact`
+  }
+  if (!info || info.count <= 0) return null
+  if (info.prunedTokens > 0) {
+    return `${info.count}x compact (-${formatContextWindow(info.prunedTokens)})`
+  }
+  return `${info.count}x compact`
+}
+
+/** Conta mensagens do usuário para mensurar turnos da sessão. Pure. */
+export function countUserTurns(messages: readonly any[] | null | undefined): number {
+  if (!Array.isArray(messages)) return 0
+  let count = 0
+  for (const message of messages) {
+    if (message?.type === 'user') count++
+  }
+  return count
+}
+
+export function formatTurnsBadge(count: number, locale = 'en'): string | null {
+  if (count <= 0) return null
+  if (locale === 'pt-BR' || locale === 'pt') {
+    return count === 1 ? '↻ 1 turno' : `↻ ${count} turnos`
+  }
+  return `↻ ${count} turn${count === 1 ? '' : 's'}`
+}
+
+export function resolveGateStatus(env: Record<string, string | undefined> = process.env): string {
+  const mode = (env.PANTHEON_J1_RISK_SCORE ?? '').trim().toLowerCase()
+  if (mode === 'enforce') return '✓ Gate: enforce'
+  if (mode === 'warn') return '✓ Gate: warn'
+  if (mode === 'shadow' || mode === '1' || mode === 'true' || mode === 'on') {
+    return '✓ Gate: active'
+  }
+  return '✓ Gate: shadow'
+}
+
 /* ─── Per-model real usage ────────────────────────────────
  * `SessionMessageAssistant` carries the real `model` (`ModelRef`), an optional
  * `cost` (`MoneyUSD` = number) and optional `tokens`, so the sidebar can show
@@ -992,7 +1258,15 @@ export function isTodoStatus(value: unknown): value is TodoStatus {
  *  absent `todos`, an unknown `status` or an empty/missing `content` drops the
  *  entry instead of throwing; a list with nothing readable yields `[]`. Pure. */
 export function parseTodoItems(input: unknown): TodoItem[] {
-  const raw = (input as { todos?: unknown } | null | undefined)?.todos
+  let parsed = input
+  if (typeof input === 'string') {
+    try {
+      parsed = JSON.parse(input)
+    } catch {
+      return []
+    }
+  }
+  const raw = (parsed as { todos?: unknown } | null | undefined)?.todos
   if (!Array.isArray(raw)) return []
   const items: TodoItem[] = []
   for (const entry of raw) {
@@ -3322,6 +3596,26 @@ export type SidebarModel = {
   contextUsage: Accessor<ContextUsage | null>
   /** Current agent and its resolved short model id (`*` = explicit override). */
   agentModel: Accessor<{ agent: string; model: string; overridden: boolean } | null>
+  /** Custo do último turno do assistente e do anterior. */
+  turnCostLine: Accessor<string | null>
+  /** Decomposição anatômica de tokens (in / out / reasoning think). */
+  tokenAnatomyLine: Accessor<string | null>
+  /** Contagem de chamadas de ferramentas e falhas. */
+  toolCallsLine: Accessor<string | null>
+  /** Badge de compactação (ex: "1x compact"). */
+  compactionBadge: Accessor<string | null>
+  /** Badge de turnos da sessão (ex: "↻ 4 turns"). */
+  turnsBadge: Accessor<string | null>
+  /** Decomposição dividida de tokens (in/out na esquerda, think na direita). */
+  tokenAnatomySplit: Accessor<{ inOut: string | null; think: string | null } | null>
+  /** Telemetria dividida (Cache % na esquerda, Speed na direita). */
+  performanceSplit: Accessor<{ cache: string | null; speed: string | null } | null>
+  /** Proporção do contexto (ex: "48K / 200K"). */
+  contextRatioLine: Accessor<string | null>
+  /** Status do portão de validação/segurança (ex: "✓ Gate: tests pass"). */
+  gateStatus: Accessor<string>
+  /** Se a sessão ativa está fixada. */
+  isPinned: Accessor<boolean>
 }
 
 /** Reactive wiring behind the sidebar: refresh subscription, warm syncs, the
@@ -3822,6 +4116,47 @@ export function createSidebarModel(
     return buildDispatchBlock(allDelegations(), Date.now(), frame())
   })
 
+  const turnCost = createMemo(() => latestTurnCost(messages()))
+  const turnCostLine = createMemo(() => formatTurnCostLine(turnCost()))
+  const tokenAnatomy = createMemo(() => {
+    const message = lastAssistantWithTokens(messages(), session()?.revert?.messageID)
+    return message === null ? null : extractTokenAnatomy(message.tokens)
+  })
+  const tokenAnatomyLine = createMemo(() => formatTokenAnatomyLine(tokenAnatomy()))
+  const tokenAnatomySplit = createMemo(() => formatTokenAnatomySplit(tokenAnatomy()))
+  const toolCalls = createMemo(() => countToolCalls(messages()))
+  const toolCallsLine = createMemo(() =>
+    formatToolCallLine(toolCalls(), tuiPrefs().layout.language),
+  )
+  const compactions = createMemo(() => extractCompactionInfo(messages()))
+  const compactionBadge = createMemo(() => {
+    const info = compactions()
+    const badge = formatCompactionBadge(info)
+    if (badge) return badge
+    return 'compact'
+  })
+  const userTurns = createMemo(() => countUserTurns(messages()))
+  const turnsBadge = createMemo(() => formatTurnsBadge(userTurns(), tuiPrefs().layout.language))
+  const performanceSplit = createMemo(() => {
+    const perf = performance()
+    if (!perf) return null
+    let cacheText: string | null = null
+    if (perf.cacheHit !== null) {
+      cacheText = `Cache: ${Math.round(perf.cacheHit)}%`
+    }
+    const speedText =
+      perf.tokensPerSecond !== null ? `Speed: ${perf.tokensPerSecond.toFixed(0)} t/s` : null
+    if (!cacheText && !speedText) return null
+    return { cache: cacheText, speed: speedText }
+  })
+  const contextRatioLine = createMemo(() => {
+    const usage = contextUsage()
+    if (!usage) return null
+    return `${formatTokenCount(usage.tokens)} / ${formatContextWindow(usage.limit)}`
+  })
+  const gateStatus = createMemo(() => resolveGateStatus())
+  const isPinned = createMemo(() => isSessionPinned(activeSessionID()))
+
   // Which blocks render, and where a blank line goes. The conditions mirror the
   // ones in the view's own `<Show>`s — both read these same memos, so a spacer
   // can never outlive the block it separates. The TUI tab's prefs gate first
@@ -3834,7 +4169,9 @@ export function createSidebarModel(
     if (
       prefs.sidebar.blocks.context &&
       (contextBlockRows(contextUsage(), cost(), prefs.sidebar.context.gauge) !== null ||
-        (prefs.sidebar.context.localSpend && contextSpendLine(spend()) !== null))
+        (prefs.sidebar.context.localSpend && contextSpendLine(spend()) !== null) ||
+        (prefs.sidebar.context.turnCost && turnCostLine() !== null) ||
+        (prefs.sidebar.context.tokenAnatomy && tokenAnatomyLine() !== null))
     ) {
       present.push('context')
     }
@@ -3936,6 +4273,16 @@ export function createSidebarModel(
     spend,
     contextUsage,
     agentModel,
+    turnCostLine,
+    tokenAnatomyLine,
+    toolCallsLine,
+    compactionBadge,
+    turnsBadge,
+    tokenAnatomySplit,
+    performanceSplit,
+    contextRatioLine,
+    gateStatus,
+    isPinned,
   }
 }
 
@@ -3992,17 +4339,22 @@ function BlockHeader(props: {
   label: string
   fg: string
   muted: string
+  iconFg?: string
   summary?: string | null
+  right?: JSX.Element
 }) {
   return (
-    <box flexDirection="row">
-      <text fg={props.muted}>{`${props.icon} `}</text>
-      <text fg={props.fg} attributes={1}>
-        {props.label}
-      </text>
-      <Show when={props.summary}>
-        {(summary) => <text fg={props.muted}>{`${SPEND_LINE_SEPARATOR}${summary()}`}</text>}
-      </Show>
+    <box flexDirection="row" justifyContent="space-between" width="100%">
+      <box flexDirection="row">
+        <text fg={props.iconFg ?? props.muted}>{`${props.icon} `}</text>
+        <text fg={props.fg} attributes={1}>
+          {props.label}
+        </text>
+        <Show when={props.summary}>
+          {(summary) => <text fg={props.muted}>{`${SPEND_LINE_SEPARATOR}${summary()}`}</text>}
+        </Show>
+      </box>
+      <Show when={props.right}>{props.right}</Show>
     </box>
   )
 }
@@ -4013,10 +4365,29 @@ interface SidebarProps {
 }
 
 function Sidebar(props: SidebarProps): JSX.Element {
+  const text = () => props.context.theme?.text?.base ?? '#ffffff'
+  const muted = () => props.context.theme?.text?.muted ?? '#888888'
+  return (
+    <ErrorBoundary
+      fallback={(err: any) => (
+        <box flexDirection="column" paddingLeft={1} paddingRight={1}>
+          <text fg={text()} attributes={1}>{`Pantheon v${__PANTHEON_VERSION__}`}</text>
+          <text fg={muted()}>{`Erro no painel: ${err?.message ?? 'desconhecido'}`}</text>
+        </box>
+      )}
+    >
+      <SidebarInner {...props} />
+    </ErrorBoundary>
+  )
+}
+
+function SidebarInner(props: SidebarProps): JSX.Element {
   const { context } = props
   const model = createSidebarModel(context, () => props.sessionID)
   const text = () => context.theme.text?.base
   const muted = () => context.theme.text?.muted ?? text()
+  const accent = () =>
+    resolveAccentColor(tuiDraftPreview()?.theme?.accent ?? tuiPrefs().theme?.accent, context.theme)
   const tone = (value: DelegationTone) => context.theme?.text?.feedback?.[value]?.base ?? text()
   const open = (sessionID: string) => () => navigateToSession(context.ui?.router, sessionID)
   /* Spacing comes from the block list, never from the view: a block with no
@@ -4054,8 +4425,6 @@ function Sidebar(props: SidebarProps): JSX.Element {
   }
   const spendLine = () =>
     tuiPrefs().sidebar.context.localSpend ? contextSpendLine(model.spend()) : null
-  const performanceLine = () =>
-    tuiPrefs().sidebar.context.performance ? contextPerformanceLine(model.performance()) : null
   const usageRows = () =>
     tuiPrefs().sidebar.context.modelUsage ? modelUsageRows(model.modelUsage().visible) : []
   /* Filled cells and the percent value resolve through the same stage, so the
@@ -4080,15 +4449,97 @@ function Sidebar(props: SidebarProps): JSX.Element {
       paddingTop={tuiPrefs().layout.preset === 'compact' ? 0 : 1}
       paddingBottom={tuiPrefs().layout.preset === 'compact' ? 0 : 1}
     >
-      <Show when={header().version}>
-        <text fg={text()} attributes={1}>{`Pantheon v${__PANTHEON_VERSION__}`}</text>
-      </Show>
+      <box flexDirection="row" justifyContent="space-between">
+        <Show when={header().version}>
+          <text fg={text()} attributes={1}>{`Pantheon v${__PANTHEON_VERSION__}`}</text>
+        </Show>
+        <box flexDirection="row">
+          <Show when={model.turnsBadge()}>{(turns) => <text fg={muted()}>{turns()}</text>}</Show>
+          <Show when={model.isPinned()}>
+            <text fg={accent()}> 📌 fixada</text>
+          </Show>
+        </box>
+      </box>
 
       {/* Preset plus the provider of the model in use — both derived from host
           state. The provider is dropped when nothing resolves, so the row is
           never a placeholder. */}
       <Show when={header().preset}>
-        <text fg={muted()}>{presetHeaderLine(model.preset().name ?? '', model.provider())}</text>
+        {() => {
+          const badge = () => (model.compactionBadge() ? `[${model.compactionBadge()}]` : null)
+          const leftPreset = () => {
+            const b = badge()
+            const maxCols = b ? Math.max(10, 31 - cellWidth(b) - 1) : HEADER_MAX_WIDTH
+            return truncateLabel(
+              presetHeaderLine(model.preset().name ?? '', model.provider()),
+              maxCols,
+            )
+          }
+          let compactInFlight = false
+          const triggerCompaction = () => {
+            if (compactInFlight) return
+            compactInFlight = true
+            try {
+              context.ui?.toast?.show?.({
+                title: 'Pantheon',
+                message: 'Iniciando compactação de contexto...',
+                variant: 'info',
+              })
+              const id = model.activeSessionID()
+              if (id) {
+                const compactCall = context.client?.session?.compact
+                const commandCall = context.client?.session?.command
+                const p =
+                  typeof compactCall === 'function'
+                    ? compactCall.call(context.client.session, { sessionID: id })
+                    : typeof commandCall === 'function'
+                      ? commandCall.call(context.client.session, {
+                          sessionID: id,
+                          name: 'compact',
+                          text: '',
+                        })
+                      : Promise.reject(new Error('compact indisponível'))
+                void Promise.resolve(p)
+                  .then(() => {
+                    context.ui?.toast?.show?.({
+                      title: 'Pantheon',
+                      message: 'Contexto compactado com sucesso!',
+                      variant: 'success',
+                    })
+                  })
+                  .catch((err: any) => {
+                    context.ui?.toast?.show?.({
+                      title: 'Pantheon',
+                      message: `Erro na compactação: ${err?.message ?? 'falhou'}`,
+                      variant: 'error',
+                    })
+                  })
+                  .finally(() => {
+                    compactInFlight = false
+                  })
+              } else {
+                compactInFlight = false
+              }
+            } catch {
+              compactInFlight = false
+              /* fail-open */
+            }
+          }
+          return (
+            <box flexDirection="row" justifyContent="space-between">
+              <text fg={muted()}>{leftPreset()}</text>
+              <Show when={badge()}>
+                {(b) => (
+                  <box onMouseDown={triggerCompaction} flexShrink={0}>
+                    <text fg={accent()} attributes={1}>
+                      {b()}
+                    </text>
+                  </box>
+                )}
+              </Show>
+            </box>
+          )
+        }}
       </Show>
       <Show
         when={header().session && model.activeSessionID() !== '' && model.session()}
@@ -4099,7 +4550,13 @@ function Sidebar(props: SidebarProps): JSX.Element {
         }
       >
         {(current: any) => (
-          <text fg={text()}>{`Session: ${truncateLabel(current().title || current().id)}`}</text>
+          <box flexDirection="row">
+            <text fg="#22c55e">{'● '}</text>
+            <text fg={muted()}>{'Session: '}</text>
+            <text fg={text()} attributes={1}>
+              {truncateLabel(current().title || current().id, 18)}
+            </text>
+          </box>
         )}
       </Show>
 
@@ -4120,56 +4577,147 @@ function Sidebar(props: SidebarProps): JSX.Element {
           <Show when={spacer('context')}>
             <box height={1} />
           </Show>
-          <BlockHeader icon={BLOCK_ICONS.context} label="Context" fg={text()} muted={muted()} />
+          <BlockHeader
+            icon={BLOCK_ICONS.context}
+            iconFg="#38bdf8"
+            label="Context"
+            fg={text()}
+            muted={muted()}
+            right={
+              <Show when={tuiPrefs().sidebar.context.turnCost && model.turnCostLine()}>
+                {(line) => {
+                  const display = () => {
+                    const l = line()
+                    if (cellWidth(l) + 11 > 31) {
+                      const cost = model.turnCost()
+                      return cost ? `Turn: ${formatTurnCostUSD(cost.current)}` : l
+                    }
+                    return l
+                  }
+                  return (
+                    <box flexDirection="row">
+                      <text fg={muted()}>Turn: </text>
+                      <text fg="#34d399" attributes={1}>
+                        {display().replace(/^Turn:\s*/, '')}
+                      </text>
+                    </box>
+                  )
+                }}
+              </Show>
+            }
+          />
           <Show when={contextRows()}>
             {(rows) => (
               <box flexDirection="column">
-                <Show when={rows().tokens}>
-                  {(row) => <ContextRowView row={row()} fg={text()} muted={muted()} />}
-                </Show>
                 <Show when={rows().percent}>
-                  {(row) => <ContextRowView row={row()} fg={gaugeFg(row())} muted={muted()} />}
+                  {(row) => (
+                    <box flexDirection="row" justifyContent="space-between">
+                      <ContextRowView
+                        row={model.contextRatioLine() ? { ...row(), suffix: null } : row()}
+                        fg={gaugeFg(row())}
+                        muted={muted()}
+                      />
+                      <Show when={model.contextRatioLine()}>
+                        {(ratio) => {
+                          const parts = ratio().split(' / ')
+                          return (
+                            <box flexDirection="row">
+                              <text fg="#f1f5f9" attributes={1}>
+                                {parts[0]}
+                              </text>
+                              <text fg={muted()}>{` / ${parts[1] ?? ''}`}</text>
+                            </box>
+                          )
+                        }}
+                      </Show>
+                    </box>
+                  )}
+                </Show>
+                <Show when={rows().tokens && !rows().percent}>
+                  {(row) => <ContextRowView row={row()} fg={text()} muted={muted()} />}
                 </Show>
                 <Show when={rows().spent}>
                   {(row) => <ContextRowView row={row()} fg={text()} muted={muted()} />}
                 </Show>
-                {/* Real per-model spend, only for models with cost > 0. Label muted,
-                    numbers right-aligned; the gauge above remains the block's
-                    single accent. When no message carries cost this loop is empty
-                    and the block keeps its original token/spend rows. */}
-                <Show when={tuiPrefs().sidebar.context.modelUsage && usageRows().length > 0}>
-                  <text fg={muted()}>Session · reported cost</text>
+              </box>
+            )}
+          </Show>
+          <Show when={tuiPrefs().sidebar.context.tokenAnatomy && model.tokenAnatomySplit()}>
+            {(anatomy) => (
+              <box flexDirection="row" justifyContent="space-between">
+                <box flexDirection="row">
+                  <text fg="#60a5fa">↑</text>
                   <text fg={muted()}>
-                    {'Model'.padEnd(MODEL_USAGE_MODEL_WIDTH) +
-                      '  Tokens'.padStart(8) +
-                      '  USD'.padStart(10)}
+                    {anatomy().inOut?.split(' · ')[0]?.replace(/^↑\s*/, '') ?? ''}
                   </text>
-                </Show>
-                <For each={usageRows()}>
-                  {(row: ModelUsageRow) => (
-                    <box flexDirection="column">
-                      <For each={modelUsageRowLines(row)}>
-                        {(line) => <text fg={text()}>{line}</text>}
-                      </For>
-                    </box>
-                  )}
-                </For>
-                <Show when={usageHidden()}>
-                  {(line) => (
-                    <For each={sidebarTextLines(line())}>
-                      {(part) => <text fg={muted()}>{part}</text>}
-                    </For>
+                  <Show when={anatomy().inOut?.includes(' · ')}>
+                    <text fg={muted()}> · </text>
+                    <text fg="#4ade80">↓</text>
+                    <text fg={muted()}>
+                      {anatomy().inOut?.split(' · ')[1]?.replace(/^↓\s*/, '') ?? ''}
+                    </text>
+                  </Show>
+                </box>
+                <Show when={anatomy().think}>
+                  {(think) => (
+                    <text fg="#c084fc" attributes={1}>
+                      {think()}
+                    </text>
                   )}
                 </Show>
               </box>
             )}
           </Show>
-          {/* Cache hit + output speed of the newest messages: already in the
-              transcript walk, so these cost no request. Muted, one line, and
-              absent entirely when neither number exists. */}
-          <Show when={performanceLine()}>{(line) => <text fg={muted()}>{line()}</text>}</Show>
-          {/* Spend, not budget: two local windows on one muted line. Absent
-              whenever stats is missing or the from/to unit probe failed. */}
+          <Show when={tuiPrefs().sidebar.context.performance && model.performanceSplit()}>
+            {(perf) => (
+              <box flexDirection="row" justifyContent="space-between">
+                <box flexDirection="row">
+                  <text fg={muted()}>Cache: </text>
+                  <text fg="#34d399">{perf().cache?.replace(/^Cache:\s*/, '') ?? ''}</text>
+                </box>
+                <box flexDirection="row">
+                  <text fg={muted()}>Speed: </text>
+                  <text fg="#38bdf8">{perf().speed?.replace(/^Speed:\s*/, '') ?? ''}</text>
+                </box>
+              </box>
+            )}
+          </Show>
+          <text fg="#374151">{'─'.repeat(30)}</text>
+          <box flexDirection="row" justifyContent="space-between">
+            <Show
+              when={model.toolCallsLine()}
+              fallback={<text fg={muted()}>tools: 0 (0 err)</text>}
+            >
+              {(line) => <text fg={muted()}>{line()}</text>}
+            </Show>
+            <text fg="#22c55e" attributes={1}>
+              {model.gateStatus()}
+            </text>
+          </box>
+          <Show when={tuiPrefs().sidebar.context.modelUsage && usageRows().length > 0}>
+            <text fg={muted()}>Session · reported cost</text>
+            <text fg={muted()}>
+              {'Model'.padEnd(MODEL_USAGE_MODEL_WIDTH) +
+                '  Tokens'.padStart(8) +
+                '  USD'.padStart(10)}
+            </text>
+            <For each={usageRows()}>
+              {(row: ModelUsageRow) => (
+                <box flexDirection="column">
+                  <For each={modelUsageRowLines(row)}>
+                    {(line) => <text fg={text()}>{line}</text>}
+                  </For>
+                </box>
+              )}
+            </For>
+            <Show when={usageHidden()}>
+              {(line) => (
+                <For each={sidebarTextLines(line())}>
+                  {(part) => <text fg={muted()}>{part}</text>}
+                </For>
+              )}
+            </Show>
+          </Show>
           <Show when={spendLine()}>
             {(line) => (
               <For each={contextSpendLines(line())}>
@@ -4191,16 +4739,26 @@ function Sidebar(props: SidebarProps): JSX.Element {
           <Show when={spacer('git')}>
             <box height={1} />
           </Show>
-          <BlockHeader icon={BLOCK_ICONS.git} label="Git status" fg={text()} muted={muted()} />
-          <Show when={model.branch()}>
-            {(value) => (
-              <box flexDirection="row">
-                <text fg={muted()}>{'⎇ '}</text>
-                <text fg={text()}>{truncateLabel(value(), 32)}</text>
-              </box>
-            )}
-          </Show>
-          <Show when={model.gitLine()}>{(line) => <text fg={text()}>{line()}</text>}</Show>
+          <BlockHeader
+            icon={BLOCK_ICONS.git}
+            iconFg="#f59e0b"
+            label="Git status"
+            fg={text()}
+            muted={muted()}
+          />
+          <box flexDirection="row" justifyContent="space-between">
+            <Show when={model.branch()}>
+              {(value) => (
+                <box flexDirection="row">
+                  <text fg="#38bdf8">{'⎇ '}</text>
+                  <text fg={text()} attributes={1}>
+                    {truncateLabel(value(), 24)}
+                  </text>
+                </box>
+              )}
+            </Show>
+            <Show when={model.gitLine()}>{(line) => <text fg="#f59e0b">{line()}</text>}</Show>
+          </box>
         </box>
       </Show>
 
@@ -4222,6 +4780,7 @@ function Sidebar(props: SidebarProps): JSX.Element {
               <box flexDirection="column">
                 <BlockHeader
                   icon={BLOCK_ICONS.dispatch}
+                  iconFg="#c084fc"
                   label="Dispatch"
                   fg={view().runningCount > 0 ? tone('success') : muted()}
                   muted={muted()}
@@ -4573,8 +5132,8 @@ const plugin = Plugin.define({
 
     const unregisterSidebar = context.ui.slot({
       append: 'sidebar.content',
-      render: ({ sessionID }: { sessionID: string }) => (
-        <Sidebar context={context} sessionID={sessionID} />
+      render: (slotProps?: { sessionID?: string }) => (
+        <Sidebar context={context} sessionID={slotProps?.sessionID} />
       ),
     })
     const unregisterHome = context.ui.slot({
@@ -4589,8 +5148,8 @@ const plugin = Plugin.define({
     // Additive claim: the native prompt footer keeps its own tokens/cost line.
     const unregisterPromptFooter = context.ui.slot({
       append: 'prompt.footer',
-      render: ({ sessionID }: { sessionID?: string }) => (
-        <PromptFooter context={context} sessionID={sessionID} />
+      render: (slotProps?: { sessionID?: string }) => (
+        <PromptFooter context={context} sessionID={slotProps?.sessionID} />
       ),
     })
     // The dispatch panel is a session-scoped slot: the claim renders only when
@@ -4622,15 +5181,17 @@ const plugin = Plugin.define({
     // ONCE here with priority 1 so a stale same-bind layer can never win
     // while the window is open.
     try {
-      setupPantheonSettings(context)
+      setupPantheonSettings(context, {
+        renderSidebar: (ctx) => <Sidebar context={ctx} />,
+      })
     } catch {
       /* settings unavailable on this host — the command toasts/fails open */
     }
     // In-session settings docked above prompt (session.composer.top)
     const unregisterSettingsSlot = context.ui.slot({
       append: 'session.composer.top',
-      render: ({ sessionID }: { sessionID: string }) => (
-        <PantheonSettingsSlot context={context} sessionID={sessionID} />
+      render: (slotProps?: { sessionID?: string }) => (
+        <PantheonSettingsSlot context={context} sessionID={slotProps?.sessionID ?? ''} />
       ),
     })
     // One-time "What's new" window (per Pantheon version) — fire-and-forget:

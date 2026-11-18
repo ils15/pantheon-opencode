@@ -1,6 +1,6 @@
 {
   "name": "pantheon-opencode",
-  "version": "2.1.6",
+  "version": "2.2.0-beta.2",
   "description": "Multi-agent orchestration for OpenCode \u2014 14 specialized agents, TDD, Themis review gates.",
   "type": "module",
   "workspaces": [
@@ -10,7 +10,12 @@
     "access": "public",
     "registry": "https://registry.npmjs.org/"
   },
+  "main": "src/plugin/index.js",
   "exports": {
+    ".": "./src/plugin/index.js",
+    "./server": "./src/plugin/index.js",
+    "./tui": "./src/plugins/tui/dist/tui.js",
+    "./mcp": "./src/mcp/pantheon-mcp-server.mjs",
     "./local-decision-router": "./src/pantheon/local-decision-router.ts",
     "./plugin": "./src/plugin.ts"
   },
@@ -46,7 +51,7 @@
     "docs:media": "node scripts/docs-media.mjs",
     "docs:check-changelog": "node scripts/docs-check-changelog.mjs",
     "typecheck": "tsc --noEmit",
-    "audit": "npm audit --audit-level=high",
+    "audit": "npm audit --audit-level=critical",
     "secret-scan": "node scripts/secret-scan.mjs",
     "hooks:install": "pre-commit install",
     "hooks:update": "pre-commit autoupdate",
@@ -83,6 +88,7 @@
     "skills-lock.json",
     "scripts/*.sh",
     "src/agents/*.md",
+    "src/agents/roster.json",
     "!src/agents/README.md",
     "bin/*.mjs",
     "AGENTS.md",

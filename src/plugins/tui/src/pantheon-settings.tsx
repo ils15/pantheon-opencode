@@ -60,6 +60,8 @@ import {
   type EffectiveOverrides,
   EMPTY_TAB,
   findRow,
+  isBehaviorDisabled,
+  mergedOverrides,
   type OverridesLoad,
   resetTab,
   type SettingsDraft,
@@ -84,12 +86,14 @@ import {
   writeActivePreset,
   writeConfiguredVisionModel,
 } from './preset-state.ts'
+import { applyQuotaRow, buildQuotaTab, readQuotaPrefs, writeQuotaPrefs } from './quota-state.ts'
 import { resolveLanguage } from './settings-i18n.ts'
 import {
   applyTuiRow,
   buildTuiTab,
   clearTuiDraftPreview,
   mutateTuiPrefs,
+  resolveAccentColor,
   setTuiDraftPreview,
   tuiPrefs,
 } from './tui-prefs.ts'
@@ -676,7 +680,11 @@ export function SettingsWindow(props: {
                 flexShrink={0}
                 rowGap={1}
               >
-                <box backgroundColor="#fba970" flexShrink={0} onMouseDown={() => props.onSave?.()}>
+                <box
+                  backgroundColor={props.warn ?? '#fba970'}
+                  flexShrink={0}
+                  onMouseDown={() => props.onSave?.()}
+                >
                   <text fg="#000000">{isPt() ? ' Salvar ' : ' Save '}</text>
                 </box>
                 <text fg={props.muted} flexShrink={0}>
@@ -731,7 +739,7 @@ export function SettingsWindow(props: {
             <text fg={props.warn ?? '#f59e0b'} attributes={1}>
               {isPt() ? 'Deseja salvar as alterações?  ' : 'Keep your changes?  '}
             </text>
-            <box backgroundColor="#fba970" onMouseDown={() => props.onSave?.()}>
+            <box backgroundColor={props.warn ?? '#fba970'} onMouseDown={() => props.onSave?.()}>
               <text fg="#000000">{isPt() ? ' Salvar ' : ' Save '}</text>
             </box>
             <text fg={props.muted}>{'  '}</text>
@@ -864,6 +872,7 @@ function createWindowController(
       buildGatesTab(load(), lang),
       buildDecisionTab(decision(), process.env, readAuthProviders(), readConfigProviders(), lang),
       buildPresetTab(presetInput(), lang),
+      buildQuotaTab(undefined, lang, readQuotaPrefs()),
       buildTuiTab(tuiPrefs(), lang),
       buildAutonomyTab({
         goalLoop: goalLoop(),
@@ -871,7 +880,11 @@ function createWindowController(
         goalLoopRestartPending: autonomyRestartPending(),
         languagePref: lang,
       }),
-      buildJ1Tab(process.env, false, lang),
+      buildJ1Tab(
+        process.env,
+        isBehaviorDisabled(mergedOverrides(load()), 'gate-j1-risk-gate'),
+        lang,
+      ),
       buildUpdatesTab({ ...updatesInput(), languagePref: lang }),
       buildChangelogTab(currentVersion, changelogItems(), lang),
       buildDoctorTab({
@@ -1100,6 +1113,16 @@ function createWindowController(
         return { ok: false, reason: 'tui prefs storage unavailable' }
       }
     }
+    if (id.startsWith('quota.')) {
+      try {
+        const current = readQuotaPrefs()
+        const updated = applyQuotaRow(current, id, value)
+        writeQuotaPrefs(updated)
+        return { ok: true }
+      } catch {
+        return { ok: false, reason: 'quota prefs disk write failed' }
+      }
+    }
     return { ok: false, reason: 'unknown staged row' }
   }
 
@@ -1282,14 +1305,19 @@ function createWindowController(
 
 // ── The router page (the primary surface) ──────────────────────────────
 
-function SettingsPage(props: { context: Context; data: Record<string, any> | undefined }) {
+function SettingsPage(props: {
+  context: Context
+  data: Record<string, any> | undefined
+  renderSidebar?: (context: Context) => any
+}) {
   const returnRoute = (props.data as { returnRoute?: WindowRoute } | undefined)?.returnRoute
   const context = props.context
   const controller = createWindowController(context, () =>
     navigateBack(context, returnRoute !== undefined ? { returnRoute } : {}),
   )
   const theme = context.theme?.text ?? {}
-  const warn = (theme?.feedback as any)?.warning?.base ?? theme.muted
+  const accent = () => resolveAccentColor(tuiPrefs().theme?.accent, context.theme)
+  const warn = () => accent()
   // The page owns the keyboard while mounted: push an input MODE so the
   // composer's base-mode layers sleep (they eat escape and plain letters —
   // the host's own menus push a mode for exactly this). The page layer is
@@ -1304,7 +1332,8 @@ function SettingsPage(props: { context: Context; data: Record<string, any> | und
   onCleanup(controller.cleanup)
   setBlocking(true)
   pageApi = controller.api
-  return (
+
+  const window = () => (
     <SettingsWindow
       version={resolveRunningVersion()}
       tabs={controller.tabs}
@@ -1315,7 +1344,7 @@ function SettingsPage(props: { context: Context; data: Record<string, any> | und
       confirmExit={controller.confirmExit}
       fg={theme.base}
       muted={theme.muted}
-      warn={warn}
+      warn={warn()}
       onJumpTab={(idx) => controller.api.jumpTab(idx)}
       onSelectRow={(id) => controller.api.selectById?.(id)}
       onCycleValue={(id, dir) => controller.api.cycleRowById?.(id, dir)}
@@ -1326,6 +1355,27 @@ function SettingsPage(props: { context: Context; data: Record<string, any> | und
       onDiscard={() => controller.api.discard?.()}
       onCancelExit={() => controller.api.cancelExit?.()}
     />
+  )
+
+  const sidebar = () => (props.renderSidebar ? props.renderSidebar(context) : null)
+
+  return (
+    <Show when={sidebar()} fallback={window()}>
+      <box flexDirection="row" flexGrow={1} flexBasis={0} minHeight={0} width="100%">
+        <box flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0} minWidth={0}>
+          {window()}
+        </box>
+        <box
+          width={32}
+          flexShrink={0}
+          border
+          borderStyle="single"
+          borderColor={theme.muted ?? '#333333'}
+        >
+          {sidebar()}
+        </box>
+      </box>
+    </Show>
   )
 }
 
@@ -1346,7 +1396,8 @@ let dialogDismiss: () => void = () => {}
 function openSettingsDialog(context: Context): void {
   const controller = createWindowController(context, () => dialogDismiss())
   const theme = context.theme?.text ?? {}
-  const warn = (theme?.feedback as any)?.warning?.base ?? theme.muted
+  const accent = () => resolveAccentColor(tuiPrefs().theme?.accent, context.theme)
+  const warn = () => accent()
   controller.cleanup = () => {
     pageApi = undefined
     setBlocking(false)
@@ -1383,7 +1434,7 @@ function openSettingsDialog(context: Context): void {
           confirmExit={controller.confirmExit}
           fg={theme.base}
           muted={theme.muted}
-          warn={warn}
+          warn={warn()}
           isDialog={true}
           maxHeight={maxHeight()}
           onJumpTab={(idx) => controller.api.jumpTab(idx)}
@@ -1399,7 +1450,7 @@ function openSettingsDialog(context: Context): void {
       ),
       close,
     )
-    context.ui.dialog.set({ size: 'large' })
+    context.ui.dialog.set({ size: 'medium', centered: true })
   } catch {
     /* dialog stack unavailable — fail-open */
   }
@@ -1515,7 +1566,8 @@ function InSessionSettingsWindow(props: { context: Context; sessionID: string })
   pageApi = controller.api
 
   const theme = (context as any).theme?.text ?? {}
-  const warn = (theme?.feedback as any)?.warning?.base ?? '#fba970'
+  const accent = () => resolveAccentColor(tuiPrefs().theme?.accent, context.theme)
+  const warn = () => accent()
 
   return (
     <SettingsWindow
@@ -1536,7 +1588,7 @@ function InSessionSettingsWindow(props: { context: Context; sessionID: string })
       confirmExit={controller.confirmExit}
       fg={theme.base}
       muted={theme.muted}
-      warn={warn}
+      warn={warn()}
       hasKeyboard={hasKeyboard}
       onJumpTab={(idx) => controller.api.jumpTab(idx)}
       onSelectRow={(id) => controller.api.selectById?.(id)}
@@ -1558,11 +1610,23 @@ function InSessionSettingsWindow(props: { context: Context; sessionID: string })
 
 // ── Setup: register once, gate once, priority 1 (anti-theft) ───────────
 
-export function setupPantheonSettings(context: Context): void {
+let registeredSidebarRenderer: ((context: Context) => any) | undefined
+
+export function setupPantheonSettings(
+  context: Context,
+  options?: { renderSidebar?: (context: Context) => any },
+): void {
+  registeredSidebarRenderer = options?.renderSidebar
   try {
     context.ui.router?.register?.({
       name: ROUTE_NAME,
-      render: ({ data }) => <SettingsPage context={context} data={data} />,
+      render: ({ data }) => (
+        <SettingsPage
+          context={context}
+          data={data}
+          {...(registeredSidebarRenderer ? { renderSidebar: registeredSidebarRenderer } : {})}
+        />
+      ),
     })
     routerAvailable = true
   } catch {

@@ -1,6 +1,6 @@
 ---
 name: demeter
-description: "Database specialist — SQLAlchemy 2.0, Alembic, query optimization, N+1 prevention, TDD migrations, modern DB libs. Requests Zeus to route broad discovery to Apollo; sends review needs to Zeus."
+description: "Database & data specialist — Polyglot SQL/NoSQL, PostgreSQL, SQLite, Prisma, Drizzle, TypeORM, SQLAlchemy 2.0, Alembic, query optimization, N+1 prevention, TDD migrations. Requests Zeus to route broad discovery to Apollo; sends review needs to Zeus."
 mode: all
 reasoning_effort: medium
 temperature: 0.2

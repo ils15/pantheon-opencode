@@ -233,6 +233,72 @@ export function findLegacyInstallDir(configDir) {
 }
 
 // ---------------------------------------------------------------------------
+// (d) Legacy Python / FastMCP artifacts and obsolete builds
+//     → With Pantheon v2.2+, all MCPs migrated to native TypeScript/Node.js.
+//       The config .venv, scripts/*.py, and standalone TUI clone are dead weight.
+// ---------------------------------------------------------------------------
+
+export function findLegacyPythonArtifacts(configDir, pythonFlag = false) {
+  if (!existsSync(configDir)) return
+
+  // 1. .venv in config dir
+  const venvDir = join(configDir, '.venv')
+  if (existsSync(venvDir)) {
+    add(
+      'legacy-python-venv',
+      venvDir,
+      'obsolete Python virtual environment (~150MB); MCP servers now run on native Node.js',
+      pythonFlag ? 'remove' : 'list',
+    )
+  }
+
+  // 2. scripts/ in config dir with .py files
+  const scriptsDir = join(configDir, 'scripts')
+  if (existsSync(scriptsDir)) {
+    try {
+      const files = readdirSync(scriptsDir)
+      const pyFiles = files.filter(
+        (f) => f.endsWith('.py') || f.endsWith('.pyc') || f === '__pycache__',
+      )
+      if (pyFiles.length > 0) {
+        add(
+          'legacy-python-scripts',
+          scriptsDir,
+          `legacy Python MCP scripts (${pyFiles.length} file(s) replaced by src/mcp/pantheon-mcp-server.mjs)`,
+          pythonFlag ? 'remove' : 'list',
+        )
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  // 3. requirements-vision.txt or requirements*.txt
+  for (const name of ['requirements-vision.txt', 'requirements.txt']) {
+    const reqFile = join(configDir, name)
+    if (existsSync(reqFile)) {
+      add(
+        'legacy-python-reqs',
+        reqFile,
+        'obsolete Python pip requirements file',
+        pythonFlag ? 'remove' : 'list',
+      )
+    }
+  }
+
+  // 4. legacy standalone pantheon-tui clone
+  const legacyTui = join(configDir, 'plugins', 'pantheon-tui')
+  if (existsSync(legacyTui)) {
+    add(
+      'legacy-tui-dir',
+      legacyTui,
+      'legacy standalone pantheon-tui clone (~500MB); now bundled directly in pantheon-opencode',
+      pythonFlag ? 'remove' : 'list',
+    )
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Deepwork & Worktrees prune
 // ---------------------------------------------------------------------------
 
@@ -309,12 +375,14 @@ export function runPrune({
   removeDirs,
   deepwork,
   worktrees,
+  python,
 }) {
   findings.length = 0
   findLegacyGlobalInstalls()
   findStaleBackups(configDir, maxAgeDays)
   findLegacyDirs(configDir)
   findLegacyInstallDir(configDir)
+  findLegacyPythonArtifacts(configDir, python)
   if (deepwork || repoDir) {
     findStaleDeepwork(repoDir || _ROOT, maxAgeDays, deepwork)
   }
@@ -324,7 +392,7 @@ export function runPrune({
 
   console.log(`Pantheon prune — config dir: ${configDir}`)
   console.log(
-    `  mode: ${apply ? 'APPLY' : 'DRY-RUN'}${removeDirs ? ' + REMOVE-DIRS' : ''}${deepwork ? ' + DEEPWORK' : ''}${worktrees ? ' + WORKTREES' : ''}`,
+    `  mode: ${apply ? 'APPLY' : 'DRY-RUN'}${removeDirs ? ' + REMOVE-DIRS' : ''}${deepwork ? ' + DEEPWORK' : ''}${worktrees ? ' + WORKTREES' : ''}${python ? ' + PYTHON' : ''}`,
   )
   console.log('')
 
@@ -337,6 +405,57 @@ export function runPrune({
   let remain = 0
   for (const f of findings) {
     console.log(`  ${format(f)}`)
+    if (f.type === 'legacy-python-scripts') {
+      if (apply && python) {
+        try {
+          const entries = readdirSync(f.target)
+          for (const entry of entries) {
+            if (entry.endsWith('.py') || entry.endsWith('.pyc') || entry === '__pycache__') {
+              rmSync(join(f.target, entry), { recursive: true, force: true })
+            }
+          }
+          if (readdirSync(f.target).length === 0) {
+            rmSync(f.target, { recursive: true, force: true })
+          }
+          console.log('     → removed (--python)')
+          removed++
+          continue
+        } catch (err) {
+          console.log(`     → failed: ${err.message}`)
+          remain++
+          continue
+        }
+      }
+      if (!apply && python) {
+        removed++
+        continue
+      }
+      console.log('     → kept: removal requires --apply --python')
+      remain++
+      continue
+    }
+    if (f.type.startsWith('legacy-python') || f.type === 'legacy-tui-dir') {
+      if (apply && python) {
+        try {
+          rmSync(f.target, { recursive: true, force: true })
+          console.log('     → removed (--python)')
+          removed++
+          continue
+        } catch (err) {
+          console.log(`     → failed: ${err.message}`)
+          remain++
+          continue
+        }
+      }
+      if (!apply && python) {
+        removed++
+        continue
+      }
+      console.log('     → kept: removal requires --apply --python')
+      remain++
+      continue
+    }
+
     if (f.action === 'remove' && apply) {
       try {
         rmSync(f.target, { recursive: true, force: true })
@@ -354,7 +473,7 @@ export function runPrune({
       removed++
       continue
     }
-    if (f.action === 'list' && apply && removeDirs) {
+    if (f.type === 'legacy-dir' && apply && removeDirs) {
       try {
         rmSync(f.target, { recursive: true, force: true })
         console.log('     → removed (--remove-dirs)')
@@ -399,6 +518,7 @@ Options:
   --apply            Remove stale backups (default: dry-run, list only)
   --remove-dirs      With --apply, also remove legacy directories
                      (explicit confirmation; default: list only)
+  --python           Find and remove obsolete Python artifacts (.venv, scripts, reqs)
   --deepwork         Find and remove stale deepwork session artifacts
   --worktrees        Find and clean up detached worktree directories
   --target <dir>     Override the config directory (XDG-aware by default)
@@ -423,6 +543,7 @@ function main() {
 
   const apply = args.includes('--apply') || args.includes('-y')
   const removeDirs = args.includes('--remove-dirs')
+  const python = args.includes('--python')
   const deepwork = args.includes('--deepwork')
   const worktrees = args.includes('--worktrees')
   const targetIdx = args.indexOf('--target')
@@ -445,6 +566,7 @@ function main() {
     removeDirs,
     deepwork,
     worktrees,
+    python,
   })
 
   // 0 = clean/cleaned; 1 = findings remain; 2 = usage error (handled above)

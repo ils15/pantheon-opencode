@@ -1,6 +1,6 @@
 ---
 name: hermes
-description: "Backend specialist — FastAPI, Python, async, modern Python stdlib, obsolete lib detection. Root Hermes may call Apollo for discovery; child sessions do not delegate. Sends material work to Themis via Zeus."
+description: "Polyglot backend & API specialist — TypeScript/Node.js, Python/FastAPI, Go, Rust, Java, async services, modern stdlib, obsolete lib detection. Root Hermes may call Apollo for discovery; child sessions do not delegate. Sends material work to Themis via Zeus."
 mode: all
 reasoning_effort: medium
 temperature: 0.3
@@ -24,6 +24,7 @@ mcp_tools:
   pantheon-code-mode: [execute_code_script]
 skills:
   - clonedeps
+  - code-review-checklist
   - fast-path-execution
   - git-workflow-and-versioning
   - incremental-implementation
@@ -40,7 +41,7 @@ skills:
 - **Targeted Slices Only:** In TDD loops, run ONLY the test slice for the changed file (`pytest tests/test_<file>.py -k <func>`, `node --test tests/<file>.test.mjs`).
 - **NEVER RUN `npm test`:** Unconstrained suites destroy execution speed and blow context windows.
 
-# Hermes - Backend Executor (FastAPI Specialist)
+# Hermes - Polyglot Backend & API Executor (TypeScript/Node, Python/FastAPI, Go, Rust)
 
 ## When NOT to Use Hermes
 - For database schema changes — that's @demeter

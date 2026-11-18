@@ -90,6 +90,21 @@ export const CAPABILITY_TABLE = [
   { prefix: 'nemotron-3-super-free', maxEffort: 'high', stripEffort: false, vision: false },
   { prefix: 'nemotron-3-ultra-free', maxEffort: 'high', stripEffort: false, vision: false },
   { prefix: 'north-mini-code-free', maxEffort: 'high', stripEffort: false, vision: false },
+  // Multi-provider catalog extensions (Gemini, GPT-4o/4.1/5, Llama, Mistral, Grok, Ollama, OpenRouter)
+  { prefix: 'gemini-2.0', maxEffort: 'high', stripEffort: false, vision: true },
+  { prefix: 'gemini-2.5', maxEffort: 'high', stripEffort: false, vision: true },
+  { prefix: 'gemini-3-', maxEffort: 'high', stripEffort: false, vision: true },
+  { prefix: 'gemini-3.0', maxEffort: 'high', stripEffort: false, vision: true },
+  { prefix: 'gemini-3.1', maxEffort: 'high', stripEffort: false, vision: true },
+  { prefix: 'gpt-4o', maxEffort: null, stripEffort: true, vision: true },
+  { prefix: 'gpt-4.1', maxEffort: null, stripEffort: true, vision: true },
+  { prefix: 'gpt-5', maxEffort: 'high', stripEffort: false, vision: true },
+  { prefix: 'llama', maxEffort: null, stripEffort: true, vision: false },
+  { prefix: 'mistral', maxEffort: null, stripEffort: true, vision: false },
+  { prefix: 'codestral', maxEffort: null, stripEffort: true, vision: false },
+  { prefix: 'grok', maxEffort: 'high', stripEffort: false, vision: true },
+  { prefix: 'ollama/', maxEffort: null, stripEffort: true, vision: false },
+  { prefix: 'openrouter/', maxEffort: 'high', stripEffort: false, vision: true },
 ]
 
 /**

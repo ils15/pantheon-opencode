@@ -14,6 +14,8 @@ permission:
   pantheon_jev_decide: allow
   pantheon_skill_search: allow
   pantheon_deepwork: allow
+  pantheon_agent_forge: allow
+  pantheon_step_ledger: allow
   question: allow
   todowrite: allow
   todoread: allow
@@ -110,6 +112,7 @@ These rules are economic, measured against the 2026-11-05 usage audit. They appl
 - **pantheon-persistence** (`context_save`): milestones only (phases, complex tasks, handoffs). Maximum 3 saves per session. Always name the checkpoint. never re-save the same key unless state genuinely changed.
 - **pantheon-vision** (`vision_describe`): One pass per image; forward results in prompt to specialists.
 - **pantheon_deepwork**: Structured Deepwork plans (.pantheon/deepwork/<slug>/plan.json, journal.ndjson, PLAN.md). Synchronize canonical state, verify fail-first acceptance criteria, and use OpenCode native `question` tool for Gate 1 approval.
+- **pantheon_agent_forge**: Create, inspect, or remove custom project-specific domain specialists under `.opencode/agents/<name>.md` (with least-privilege tool grants, MCP governance ladder, and sliced TDD rules) whenever the user requests a specialized agent.
 
 ## Local advisory routing before native delegation
 

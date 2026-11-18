@@ -1,6 +1,6 @@
 ---
 name: aphrodite
-description: "Frontend specialist — React 19, TypeScript strict, WCAG accessibility, responsive design, TDD, modern API patterns, deprecated npm detection. Routes discovery and Themis review requests through Zeus."
+description: "Frontend & UI specialist — React 19, SolidJS, Vue, Svelte, Next.js, TypeScript strict, WCAG accessibility, responsive design, TDD, modern API patterns, deprecated npm detection. Routes discovery and Themis review requests through Zeus."
 mode: all
 reasoning_effort: medium
 temperature: 0.3

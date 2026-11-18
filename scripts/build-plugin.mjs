@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = join(__dirname, '..')
-const entry = join(root, 'src', 'plugin.ts')
+const entry = join(root, 'src', 'plugin', 'index.ts')
 const outfile = join(root, 'src', 'plugin', 'index.js')
 
 let built = false
@@ -27,6 +27,7 @@ try {
     platform: 'node',
     format: 'esm',
     packages: 'external',
+    external: ['../plugins/tui/dist/tui.js'],
   })
   built = true
 } catch {
@@ -40,6 +41,7 @@ try {
       '--platform=node',
       '--format=esm',
       '--packages=external',
+      '--external:../plugins/tui/dist/tui.js',
     ])
     built = true
   }

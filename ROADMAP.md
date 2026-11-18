@@ -2,11 +2,48 @@
 
 This roadmap records customer-visible themes, maintenance boundaries, and readiness conditions for stable releases. Internal tracking identifiers, per-item evidence bundles, and per-commit history are intentionally not part of this page.
 
-## Current State: 2.1.x Stable (v2.1.6)
+## Current State: 2.2.0 Beta (`v2.2.0-beta.2`) & 2.1.x Stable (`v2.1.6`)
+
+The `2.2.0-beta.2` release consolidates the **100% Native OpenCode 2.2 (`@opencode/plugin@2.2.5`) Architecture**, eliminating legacy V1/V2 split nomenclature, moving durable memory/persistence/goal/codemap operations in-process via `node:sqlite` FTS5, making the core execution roster (`@hermes`, `@demeter`, `@aphrodite`) **polyglot and stack-agnostic**, and introducing **`pantheon_agent_forge`** for instant creation of custom domain specialists alongside **`pantheon_step_ledger`** for mechanical completion gates.
 
 The `2.1.x` release series delivered the canonical Deepwork plan architecture, interactive native Question Gate enforcement, unrestricted `.pantheon/` and worktree access for analytical agents, bilingual documentation portals, live session Todo synchronization, observable test slicing, risk-based validation protocols, unified local/external skill discovery, deepwork resilience normalization, and workspace auto-permissions.
 
 See [Compatibility](docs/COMPATIBILITY.md) for supported hosts and the [releases page](https://github.com/ils15/pantheon-opencode/releases) for published packages.
+
+---
+
+## 2.2.0-beta.2 Deliveries (Native Quality & Orchestration)
+
+1. **Clean `./server` vs `./tui` Bundle Separation & Zero-Init Provisioning**
+   - Decoupled `./server` (`src/plugin/index.js`) from `./tui` (`src/plugins/tui/dist/tui.js`) so the server plugin loads in pure Node without pulling `@opentui/solid` into the host runtime.
+   - Auto-provisioned all 12 core specialist agents (`ctx.agent.transform`) and 8 `/pantheon-*` slash commands (`ctx.command.transform`) with `AGENTS.global.md` reference registration (`ctx.reference.transform`) and KV-cache-preserving session instructions (`ctx.session.instructions.entry.put`).
+2. **In-Process Native SQLite FTS5 Memory, Persistence, Goals & Codemap Tools**
+   - Registered 15 native in-process plugin tools (`memory_store`, `memory_recall`, `memory_search`, `memory_forget`, `memory_list`, `memory_stats`, `context_save`, `context_get`, `goal_create`, `goal_get`, `goal_update`, `goal_done`, `code_index`, `code_query`, `code_neighbors`) backed by `node:sqlite` WAL + FTS5 BM25 ranking and secret redaction—eliminating external stdio MCP cold-start latency.
+3. **Polyglot Core Roster + First-Class Custom Specialist Forge (`pantheon_agent_forge`)**
+   - Upgraded `@hermes` (TypeScript/Node, Python/FastAPI, Go, Rust, Java), `@demeter` (SQL/NoSQL, PostgreSQL, SQLite, Prisma, Drizzle, SQLAlchemy 2.0/Alembic), and `@aphrodite` (React 19, SolidJS, Vue, Svelte, Next.js) to be stack-agnostic by default.
+   - Added the native `pantheon_agent_forge` tool (`create`, `list`, `inspect`, `remove`) allowing users or `@zeus` to scaffold custom domain specialists in `.opencode/agents/<name>.md` with least-privilege permissions (`read-only`, `implementer`, `reviewer`), automatic MCP governance ladder, and sliced TDD rules while protecting the 12 canonical Pantheon agent names.
+4. **Step-Ledger (`pantheon_step_ledger`) & Active Execution Receipts**
+   - Wired `execution-receipt.ts`, `themis-reflex.ts`, and `prompt-cache-order.ts` into the live `src/plugin.ts` runtime and `pantheon_step_ledger`.
+   - Enforced mechanical completion gates: a ledger step that mutates files (`edit`, `write`, `hashline_edit`) cannot transition to `done` unless a post-mutation verification command (`bash`/`shell`) exited with `0` and produced a matching SHA-256 execution receipt.
+5. **Post-Edit Structural Diagnostics & Hardened Plugin Tool Guards**
+   - Added immediate post-edit TypeScript/JSON/JS syntax & structural diagnostics in `execute-after.ts` so specialists fix syntax regressions in the same turn.
+   - Enforced role-based write/exec guards (`NON_EDIT_AGENTS`, `NON_SHELL_AGENTS`), `isDangerousCommand`, and 120s process timeouts on `shell` and `hashline_edit`, plus session-isolated `todowrite`/`todoread` stores.
+6. **Multi-File `RED → GREEN` Evaluation Harness (`swe-eval-harness.ts`)**
+   - Added a deterministic evaluation harness verifying multi-file mutations against both visible test slices and hidden anti-reward-hacking test suites.
+
+---
+
+## Next-Generation Orchestration Evolution Plan (2.2 GA → 2.3)
+
+The following high-leverage architectural capabilities are planned for the next iterations of Pantheon:
+
+| Architectural Pillar | Core Mechanism | Status in Pantheon `2.2.0-beta.2` | Planned Next-Gen Evolution (`2.2 GA` / `2.3`) |
+|---|---|---|---|
+| **Structural Editing & Diagnostics** | Hash-anchored edits (`LINE#ID`), post-edit `execute.after` diagnostics, structural AST search/rewrite, `experimental.idle` continuation | `hashline_edit` + post-edit syntax/brace diagnostics delivered in `beta.2` | **Full LSP Diagnostics Bridge + Native `ast_search` / `ast_rewrite` Tools**: Hook into workspace TypeScript/Pyright/Biome servers on `execute.after` and expose structural AST pattern rewriting without regex drift. |
+| **Step-Ledger & Sub-Session Isolation** | Pre-code validation matrix (Requirement → Test Slice), fresh sub-session per atomic task (`ctx.session.create`), atomic git commit checkpoints | `pantheon_step_ledger` + SHA-256 execution receipt gate delivered in `beta.2` | **Autonomous Sub-Session Step Runner & Atomic Git Checkpointing**: Spawn isolated `ctx.session.create` contexts per ledger step with automatic git tree snapshots and instant rollback on `themis:reflex:escalated`. |
+| **Spec-First Review & Worktree Isolation** | Interactive spec-refinement before planning, two-stage independent review (IntentGate → Code Quality), git worktree isolation per task | `>>` Prompt Refinery + `@themis` IntentGate & Layer 1-3 review active | **Native Worktree Orchestration (`ctx.worktree.transform`) & Typed Review Verdict Tool (`pantheon_review_verdict`)**: Provision isolated git worktrees per parallel specialist and trigger automatic `ctx.session.synthetic` remediation turns when `@themis` emits `BLOCK`. |
+| **Graph Localization & Reproduction Gates** | Graph-based localization before editing (`code_index` → candidate narrowing → reproduction test before patch) | `code_index`/`code_query`/`code_neighbors` + `swe-eval-harness.ts` delivered in `beta.2` | **Mandatory Fault-Localization & Reproduction Gate for Bugfixes**: Require a failing reproduction slice (`RED`) before unlocking `edit`/`hashline_edit` on bugfix tasks routed to `@hermes` or `@talos`. |
+| **Polyglot Core & Domain Extensibility** | Stack-agnostic core agents + zero-friction project specialist creation | Polyglot `@hermes`/`@demeter`/`@aphrodite` + `pantheon_agent_forge` delivered in `beta.2` | **Interactive `/pantheon-forge` Wizard & Stack Auto-Detection**: Automatically detect repository stack (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`) on `init` and suggest tailored project specialists + domain convention docs. |
 
 ---
 

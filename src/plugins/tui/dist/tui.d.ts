@@ -203,6 +203,46 @@ export declare function contextBlockRows(usage: ContextUsage | null, cost: numbe
   cells?: number;
   evenMark?: boolean;
 }): ContextBlockRows | null;
+export type TurnCostSummary = {
+  current: number;
+  previous: number | null;
+};
+/** Custo do último turno do assistente e do turno anterior. Pure. */
+export declare function latestTurnCost(messages: readonly any[] | null | undefined): TurnCostSummary | null;
+export declare function formatTurnCostUSD(cost: number | null | undefined): string | null;
+export declare function formatTurnCostLine(summary: TurnCostSummary | null | undefined): string | null;
+export type TokenAnatomy = {
+  input: number;
+  output: number;
+  reasoning: number;
+};
+/** Extrai desdobramento de tokens (input, output, reasoning/thinking). Pure. */
+export declare function extractTokenAnatomy(tokens: any): TokenAnatomy | null;
+export declare function formatTokenAnatomyLine(anatomy: TokenAnatomy | null | undefined): string | null;
+export declare function formatTokenAnatomySplit(anatomy: TokenAnatomy | null | undefined): {
+  inOut: string | null;
+  think: string | null;
+} | null;
+export type ToolCallSummary = {
+  total: number;
+  failures: number;
+};
+/** Conta chamadas de ferramentas e eventuais falhas/erros. Pure. */
+export declare function countToolCalls(messages: readonly any[] | null | undefined): ToolCallSummary;
+export declare function formatToolCallLine(summary: ToolCallSummary | null | undefined, locale?: string): string | null;
+export type CompactionInfo = {
+  count: number;
+  prunedTokens: number;
+};
+/** Extrai contagem de compactações e estimativa de tokens podados. Pure. */
+export declare function extractCompactionInfo(messages: readonly any[] | null | undefined): CompactionInfo;
+/** Conta quantas vezes a sessão sofreu compactação nativa. Pure. */
+export declare function countSessionCompactions(messages: readonly any[] | null | undefined): number;
+export declare function formatCompactionBadge(info: number | CompactionInfo | null | undefined): string | null;
+/** Conta mensagens do usuário para mensurar turnos da sessão. Pure. */
+export declare function countUserTurns(messages: readonly any[] | null | undefined): number;
+export declare function formatTurnsBadge(count: number, locale?: string): string | null;
+export declare function resolveGateStatus(env?: Record<string, string | undefined>): string;
 /** Column widths for one model row (labels are muted, numbers right-aligned). */
 export declare const MODEL_USAGE_MODEL_WIDTH = 12;
 export declare const MODEL_USAGE_TOKEN_WIDTH = 6;
@@ -1016,6 +1056,32 @@ export type SidebarModel = {
     model: string;
     overridden: boolean;
   } | null>;
+  /** Custo do último turno do assistente e do anterior. */
+  turnCostLine: Accessor<string | null>;
+  /** Decomposição anatômica de tokens (in / out / reasoning think). */
+  tokenAnatomyLine: Accessor<string | null>;
+  /** Contagem de chamadas de ferramentas e falhas. */
+  toolCallsLine: Accessor<string | null>;
+  /** Badge de compactação (ex: "1x compact"). */
+  compactionBadge: Accessor<string | null>;
+  /** Badge de turnos da sessão (ex: "↻ 4 turns"). */
+  turnsBadge: Accessor<string | null>;
+  /** Decomposição dividida de tokens (in/out na esquerda, think na direita). */
+  tokenAnatomySplit: Accessor<{
+    inOut: string | null;
+    think: string | null;
+  } | null>;
+  /** Telemetria dividida (Cache % na esquerda, Speed na direita). */
+  performanceSplit: Accessor<{
+    cache: string | null;
+    speed: string | null;
+  } | null>;
+  /** Proporção do contexto (ex: "48K / 200K"). */
+  contextRatioLine: Accessor<string | null>;
+  /** Status do portão de validação/segurança (ex: "✓ Gate: tests pass"). */
+  gateStatus: Accessor<string>;
+  /** Se a sessão ativa está fixada. */
+  isPinned: Accessor<boolean>;
 };
 /** Reactive wiring behind the sidebar: refresh subscription, warm syncs, the
  *  running-only spinner and the completion-toast effect. `context` stays loosely

@@ -55,20 +55,24 @@ Inside OpenCode, dispatch the orchestrator or a workflow:
 /pantheon-deepwork "Implement OAuth2 PKCE authentication flow"
 ```
 
-`@zeus` routes to the specialists; `/pantheon` arbitrates architectural choices across
-specialists; `/pantheon-deepwork` runs a multi-phase plan with checkpoints and gates. You
-approve each gate and you run every commit.
+`@zeus` routes to the polyglot specialists (`@hermes` for backend/APIs, `@aphrodite` for UI,
+`@demeter` for data/migrations, `@talos` for fast fixes, `@themis` for review); `/pantheon`
+arbitrates architectural choices across specialists; `/pantheon-deepwork` runs a multi-phase
+plan with `pantheon_step_ledger` mechanical receipts and gates; and `pantheon_agent_forge`
+creates custom project-specific domain specialists in `.opencode/agents/<name>.md` on demand.
+You approve each gate and you run every commit.
 
 ## Structure
 
 ```
-src/agents/       14 canonical agent definitions
-src/skills/       skills loaded on demand
-src/mcp/          local MCP servers (memory, persistence, resources, code-mode, vision)
-src/plugins/      OpenCode plugin + TUI
+src/agents/       14 canonical polyglot agent definitions (roster.json + build-roster)
+src/pantheon/     native TypeScript tools, Agent Forge, Step-Ledger, FTS5 memory, codemap, receipts
+src/skills/       25 skills loaded on demand
+src/mcp/          native Node.js MCP bridge (pantheon-mcp-server.mjs)
+src/plugins/      OpenCode plugin + high-density TUI sidebar & settings
 scripts/          installer, doctor, test-slice, release tooling
 bin/              pantheon-opencode CLI
-docs/             documentation (also published as the docs portal)
+docs/             bilingual documentation portal
 examples/         runnable reference projects
 tests/            Node and TypeScript test suites
 ```
@@ -82,7 +86,7 @@ tests/            Node and TypeScript test suites
 | [Installation](docs/INSTALLATION.md) | [Execution modes](docs/guides/execution-modes.md) |
 | [First project end-to-end](docs/guides/first-project.md) | [Agent Capability Matrix](docs/AGENT-CAPABILITY-MATRIX.md) |
 | [Settings & TUI window](docs/SETTINGS.md) | [Permissions, gates & delegation](docs/PERMISSIONS-QUALITY-DELEGATION.md) |
-| [v2.x highlights](docs/releases/v2-highlights.md) | [CHANGELOG](CHANGELOG.md) |
+| [Release highlights](docs/releases/highlights.md) | [CHANGELOG](CHANGELOG.md) |
 
 Runnable examples: [SaaS performance dashboard](examples/saas-dashboard/) and
 [repo health CLI](examples/cli-tool/). Contributing:
