@@ -42,6 +42,7 @@ import {
   setupPantheonSettings,
 } from './pantheon-settings'
 import { PRESET_NONE } from './preset-state'
+import { resolveLanguage } from './settings-i18n'
 import { cellWidth, GRAPHEMES, SIDEBAR_CONTENT_WIDTH } from './sidebar-width'
 import {
   initTuiPrefs,
@@ -50,7 +51,20 @@ import {
   tuiDraftPreview,
   tuiPrefs,
 } from './tui-prefs'
-import { nextCheckState, pickUpdateNotice, type UpdateCheckState } from './update-notice.ts'
+import {
+  formatUpdateBadge,
+  formatUpdateToast,
+  getAvailableUpdateVersion,
+  isNewerUpdateAvailable,
+  nextCheckState,
+  pickUpdateNotice,
+  resolveCachedAvailableUpdate,
+  setAvailableUpdateVersion,
+  subscribeAvailableUpdate,
+  UPDATE_CHECK_TTL_MS,
+  type UpdateCheckState,
+  withKnownLatest,
+} from './update-notice.ts'
 import { registryUrlForChannel, updateChannelFor } from './update-status.ts'
 import { maybeShowWhatsNew } from './whats-new'
 
@@ -3333,10 +3347,25 @@ function subscribeSidebarRefresh(context: any, refresh: () => void): () => void 
   }
 }
 
-/** One update check per boot (TTL-cached on disk, offline-safe): query the
- *  registry for the pinned package's latest, notify at most once per version
- *  through the toast, and persist the state for the TTL. Never throws. */
-async function checkForPantheonUpdate(context: any): Promise<void> {
+/** Reactive signal tracking whether a newer Pantheon version is available on the active channel. */
+function useAvailableUpdate(currentVersion: string): Accessor<string | null> {
+  const [latest, setLatest] = createSignal<string | null>(
+    (() => {
+      const candidate = getAvailableUpdateVersion()
+      return candidate && isNewerUpdateAvailable(currentVersion, candidate) ? candidate : null
+    })(),
+  )
+  onMount(() => {
+    const sync = (candidate: string | null) => {
+      setLatest(candidate && isNewerUpdateAvailable(currentVersion, candidate) ? candidate : null)
+    }
+    sync(getAvailableUpdateVersion())
+    onCleanup(subscribeAvailableUpdate(sync))
+  })
+  return latest
+}
+
+function updateCheckStateFile(): { statePath: string; readState: () => UpdateCheckState } {
   const stateDir = process.env.XDG_STATE_HOME ?? join(process.env.HOME ?? '', '.local', 'state')
   const statePath = join(stateDir, 'pantheon', 'update-check.json')
   const readState = (): UpdateCheckState => {
@@ -3346,31 +3375,48 @@ async function checkForPantheonUpdate(context: any): Promise<void> {
       return {}
     }
   }
-  const persist = (notice: ReturnType<typeof pickUpdateNotice>) => {
-    mkdirSync(join(stateDir, 'pantheon'), { recursive: true })
-    writeFileSync(
-      statePath,
-      `${JSON.stringify(nextCheckState(readState(), notice, Date.now()), null, 2)}\n`,
-    )
-  }
+  return { statePath, readState }
+}
+
+/** One update check per boot + periodic TTL interval: hydrates cached badge
+ *  immediately, queries the registry at most once per TTL, announces once per
+ *  version via toast, and keeps the persistent Home/Sidebar badge updated. */
+async function checkForPantheonUpdate(context: any): Promise<void> {
+  const { statePath, readState } = updateCheckStateFile()
   const currentVersion = typeof __PANTHEON_VERSION__ !== 'undefined' ? __PANTHEON_VERSION__ : ''
+  const initialState = readState()
+  const cached = resolveCachedAvailableUpdate(currentVersion, initialState)
+  setAvailableUpdateVersion(cached)
+
+  const nowMs = Date.now()
+  if (nowMs - (initialState.lastCheckMs ?? 0) < UPDATE_CHECK_TTL_MS) return
+
+  const persist = (notice: ReturnType<typeof pickUpdateNotice>, latest: string) => {
+    mkdirSync(join(statePath, '..'), { recursive: true })
+    const next = withKnownLatest(nextCheckState(readState(), notice, nowMs), latest)
+    writeFileSync(statePath, `${JSON.stringify(next, null, 2)}\n`)
+  }
   const response = await fetch(registryUrlForChannel(updateChannelFor(currentVersion)), {
     signal: AbortSignal.timeout(5000),
   })
   const latest = String(((await response.json()) as { version?: unknown })?.version ?? '')
   if (!latest) return
+
+  setAvailableUpdateVersion(isNewerUpdateAvailable(currentVersion, latest) ? latest : null)
+
+  const isPt = resolveLanguage(tuiPrefs().layout?.language) === 'pt-BR'
   const notice = pickUpdateNotice({
     currentVersion,
     latestVersion: latest,
     state: readState(),
-    nowMs: Date.now(),
+    nowMs,
+    isPt,
   })
-  if (!notice) {
-    persist(null)
-    return
-  }
-  context?.ui?.toast?.show?.({ message: notice.message })
-  persist(notice)
+  persist(notice, latest)
+  if (!notice) return
+
+  const toast = formatUpdateToast(currentVersion, latest, isPt)
+  context?.ui?.toast?.show?.({ title: toast.title, message: toast.message, variant: 'info' })
 }
 
 /** Populate the cached data at load so the sidebar has content before the first
@@ -4442,6 +4488,11 @@ function SidebarInner(props: SidebarProps): JSX.Element {
   // The fixed header lines are prefs-gated too (TUI tab): version, preset and
   // session each drop independently; nothing reflows — the column just shortens.
   const header = () => tuiPrefs().sidebar.header
+  const availableUpdate = useAvailableUpdate(__PANTHEON_VERSION__)
+  const updateBadge = () =>
+    formatUpdateBadge(__PANTHEON_VERSION__, availableUpdate(), {
+      isPt: resolveLanguage(tuiPrefs().layout?.language) === 'pt-BR',
+    })
   return (
     <box
       flexDirection="column"
@@ -4462,6 +4513,9 @@ function SidebarInner(props: SidebarProps): JSX.Element {
           </Show>
         </box>
       </box>
+      <Show when={header().version && updateBadge()}>
+        {(badge) => <text fg={accent()}>{badge()}</text>}
+      </Show>
 
       {/* Preset plus the provider of the model in use — both derived from host
           state. The provider is dropped when nothing resolves, so the row is
@@ -5038,12 +5092,26 @@ function PantheonSettingsCommandLayer(props: { context: any }) {
  *  this keeps a compact Pantheon line visible on the home footer meanwhile. */
 function HomeStatus(props: { context: any }) {
   const preset = useActivePreset(props.context).preset
+  const availableUpdate = useAvailableUpdate(__PANTHEON_VERSION__)
+  const accent = () =>
+    resolveAccentColor(
+      tuiDraftPreview()?.theme?.accent ?? tuiPrefs().theme?.accent,
+      props.context.theme,
+    )
   const muted = () => props.context.theme?.text?.muted ?? props.context.theme?.text?.base
+  const updateBadge = () =>
+    formatUpdateBadge(__PANTHEON_VERSION__, availableUpdate(), {
+      isPt: resolveLanguage(tuiPrefs().layout?.language) === 'pt-BR',
+      compact: true,
+    })
   return (
     <Show when={tuiPrefs().footer.home}>
-      <text
-        fg={muted()}
-      >{`Pantheon v${__PANTHEON_VERSION__}${preset().name ? ` ${PRESET_MARKER} ${preset().name}` : ''}`}</text>
+      <box flexDirection="row">
+        <text
+          fg={muted()}
+        >{`Pantheon v${__PANTHEON_VERSION__}${preset().name ? ` ${PRESET_MARKER} ${preset().name}` : ''}`}</text>
+        <Show when={updateBadge()}>{(badge) => <text fg={accent()}>{` · ${badge()}`}</text>}</Show>
+      </box>
     </Show>
   )
 }
@@ -5142,11 +5210,18 @@ const plugin = Plugin.define({
       append: 'home.footer.status',
       render: () => <HomeStatus context={context} />,
     })
-    // Update notifier: pin + notify, once per version, TTL-cached (6h),
-    // offline-safe. A stable install is never advertised a beta.
+    // Hydrate cached update announcement immediately on boot; probe npm after 3s
+    // and every TTL window (6h) while OpenCode remains open.
+    const currentVer = typeof __PANTHEON_VERSION__ !== 'undefined' ? __PANTHEON_VERSION__ : ''
+    setAvailableUpdateVersion(
+      resolveCachedAvailableUpdate(currentVer, updateCheckStateFile().readState()),
+    )
     const updateNoticeTimer = setTimeout(() => {
       void checkForPantheonUpdate(context).catch(() => {})
-    }, 10_000)
+    }, 3_000)
+    const updateNoticeInterval = setInterval(() => {
+      void checkForPantheonUpdate(context).catch(() => {})
+    }, UPDATE_CHECK_TTL_MS)
     // Additive claim: the native prompt footer keeps its own tokens/cost line.
     const unregisterPromptFooter = context.ui.slot({
       append: 'prompt.footer',
@@ -5203,6 +5278,7 @@ const plugin = Plugin.define({
     void maybeShowWhatsNew(context)
     return () => {
       clearTimeout(updateNoticeTimer)
+      clearInterval(updateNoticeInterval)
       if (typeof unregisterSidebar === 'function') unregisterSidebar()
       if (typeof unregisterHome === 'function') unregisterHome()
       if (typeof unregisterPromptFooter === 'function') unregisterPromptFooter()

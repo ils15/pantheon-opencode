@@ -13,6 +13,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
      Running apply will move this section to a versioned entry and reset the template below. -->
 
+## [v2.2.0-beta.10] - 2026-11-18
+
+### 🆕 What's New
+
+- **Persistent TUI Update Announcement**: Shows `↑ vX.Y.Z` in Home footer and Sidebar header plus localized toast notifications.
+
+### Changed
+
+- **tui** — `update-notice.ts`, `index.tsx`, `pantheon-settings.tsx`: hydrate cached update badges at boot, poll every 6h, and run `opencode plugin update` + reload.
+
 ## [v2.2.0-beta.9] - 2026-11-18
 
 ### 🆕 What's New
