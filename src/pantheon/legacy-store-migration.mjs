@@ -828,7 +828,7 @@ export function migrateLegacyStoresAndPurgeStale(workspaceDir, options = {}) {
       const globalMtimeMs = globalCanonicalMemDb ? safeMtimeMs(globalCanonicalMemDb) : 0
       writeFileSync(
         join(pantheonDir, '.migration-v2.json'),
-        `${JSON.stringify({ version: 2, globalMtimeMs, migratedAt: nowIso })}\n`,
+        `${JSON.stringify({ version: 2, globalMtimeMs, migratedAt: nowIso }, null, 2)}\n`,
         'utf8',
       )
     } catch {

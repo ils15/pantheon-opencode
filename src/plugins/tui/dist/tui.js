@@ -2878,7 +2878,7 @@ async function readChangelogForBundle(bundleUrl) {
 }
 /** The ambient build-time version, or null outside a tsdown build. */
 function embeddedVersion() {
-	return "2.2.0-beta.7";
+	return "2.2.0-beta.8";
 }
 /**
 * Resolve the running Pantheon version for the what's-new window: the plugin
@@ -3119,7 +3119,7 @@ function persistUpdateCheckState(previous, latest) {
 	} catch {}
 }
 function resolveRunningVersion() {
-	return "2.2.0-beta.7";
+	return "2.2.0-beta.8";
 }
 const VALUE_WIDTH = 24;
 function SettingsWindow(props) {
@@ -7708,7 +7708,7 @@ async function checkForPantheonUpdate(context) {
 		mkdirSync(join(stateDir, "pantheon"), { recursive: true });
 		writeFileSync(statePath, `${JSON.stringify(nextCheckState(readState(), notice, Date.now()), null, 2)}\n`);
 	};
-	const currentVersion = "2.2.0-beta.7";
+	const currentVersion = "2.2.0-beta.8";
 	const response = await fetch(registryUrlForChannel(updateChannelFor(currentVersion)), { signal: AbortSignal.timeout(5e3) });
 	const latest = String((await response.json())?.version ?? "");
 	if (!latest) return;
@@ -8541,7 +8541,7 @@ function Sidebar(props) {
 			setProp(_el$13, "paddingLeft", 1);
 			setProp(_el$13, "paddingRight", 1);
 			setProp(_el$14, "attributes", 1);
-			insert(_el$14, `Pantheon v2.2.0-beta.7`);
+			insert(_el$14, `Pantheon v2.2.0-beta.8`);
 			insert(_el$15, () => `Erro no painel: ${err?.message ?? "desconhecido"}`);
 			effect((_p$) => {
 				var _v$3 = text(), _v$4 = muted();
@@ -8612,7 +8612,7 @@ function SidebarInner(props) {
 			get children() {
 				var _el$18 = createElement("text");
 				setProp(_el$18, "attributes", 1);
-				insert(_el$18, `Pantheon v2.2.0-beta.7`);
+				insert(_el$18, `Pantheon v2.2.0-beta.8`);
 				effect((_$p) => setProp(_el$18, "fg", text(), _$p));
 				return _el$18;
 			}
@@ -9595,7 +9595,7 @@ function HomeStatus(props) {
 		},
 		get children() {
 			var _el$120 = createElement("text");
-			insert(_el$120, () => `Pantheon v2.2.0-beta.7${preset().name ? ` ▸ ${preset().name}` : ""}`);
+			insert(_el$120, () => `Pantheon v2.2.0-beta.8${preset().name ? ` ▸ ${preset().name}` : ""}`);
 			effect((_$p) => setProp(_el$120, "fg", muted(), _$p));
 			return _el$120;
 		}
