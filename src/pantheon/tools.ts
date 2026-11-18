@@ -277,7 +277,7 @@ async function executeHashlineEdit(
 ): Promise<V2ToolResult> {
   const ctx = toolContext(context)
   const callerAgent = (ctx.agent ?? '').toLowerCase().trim()
-  if (callerAgent && NON_EDIT_AGENTS.has(callerAgent)) {
+  if (callerAgent && callerAgent !== 'zeus' && NON_EDIT_AGENTS.has(callerAgent)) {
     return {
       output: `hashline_edit denied: agent '${callerAgent}' is not permitted to edit files directly.`,
     }

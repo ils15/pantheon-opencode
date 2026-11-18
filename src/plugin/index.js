@@ -16329,7 +16329,7 @@ var hashlineEdit = createHashlineEditTool();
 async function executeHashlineEdit(input, context) {
   const ctx = toolContext(context);
   const callerAgent = (ctx.agent ?? "").toLowerCase().trim();
-  if (callerAgent && NON_EDIT_AGENTS.has(callerAgent)) {
+  if (callerAgent && callerAgent !== "zeus" && NON_EDIT_AGENTS.has(callerAgent)) {
     return {
       output: `hashline_edit denied: agent '${callerAgent}' is not permitted to edit files directly.`
     };
@@ -16871,9 +16871,6 @@ function transformAgents(draft) {
             current.description = def.description ?? "";
             current.mode = id === "zeus" ? "primary" : def.mode ?? "subagent";
             if (def.temperature !== void 0) current.temperature = def.temperature;
-            if (def.permission && typeof def.permission === "object") {
-              current.permission = def.permission;
-            }
             const override = configuredOverrides[id];
             if (override?.model) {
               current.model = override.model;
@@ -18070,41 +18067,10 @@ var resetIdleEnforcerForTests = resetV2IdleEnforcerForTests;
 var setSecretScanRunnerForTests = setV2SecretScanRunnerForTests;
 var setShellRunnerForTests = setV2ShellRunnerForTests;
 var plugin_default = plugin;
-
-// src/plugin/index.ts
-async function setupUnified(context) {
-  const ctx = context;
-  if (ctx?.ui && typeof ctx.ui.slot === "function") {
-    try {
-      const tuiPath = "../plugins/tui/dist/tui.js";
-      const tuiMod = await import(tuiPath);
-      const tui = tuiMod.default || tuiMod;
-      if (typeof tui === "function") return tui(context);
-      if (typeof tui?.setup === "function") return tui.setup(context);
-    } catch {
-    }
-  }
-  const srv = plugin_default;
-  if (typeof srv === "function") return srv(context);
-  if (typeof srv?.setup === "function") {
-    return srv.setup(context);
-  }
-  return void 0;
-}
-var unifiedPlugin = Object.assign(
-  async function pantheonPlugin(context) {
-    return setupUnified(context);
-  },
-  {
-    id: "pantheon-opencode",
-    setup: setupUnified
-  }
-);
-var index_default = unifiedPlugin;
 export {
   UNSUPPORTED_FEATURES,
   V2_UNSUPPORTED_FEATURES,
-  index_default as default,
+  plugin_default as default,
   disposePlugin,
   getJ1TelemetrySinkForTests,
   getJ3TelemetrySinkForTests,
@@ -18123,7 +18089,5 @@ export {
   setShellRunnerForTests,
   setV2SecretScanRunnerForTests,
   setV2ShellRunnerForTests,
-  setupUnified,
-  unifiedPlugin,
   v2Dispose
 };
