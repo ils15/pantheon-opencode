@@ -172,6 +172,8 @@ const REGISTRATION_OWNERS: Readonly<Record<string, string>> = {
   'transform:command':
     'exempt: Phase 1 command transform; its reduction is already seeded (command-transform)',
   'transform:reference': 'exempt: Phase 1 reference transform; static, no reduction',
+  'transform:skill':
+    'exempt: Phase 1 skill transform; runtime marks skill-transform only when host lacks add/source',
   'transform:tool': 'exempt: tool registration, covered by the tool-transform runtime marker',
   'subscribe:event':
     'exempt: the event subscription itself; each handled event is a behaviour, not a registration',
@@ -192,6 +194,7 @@ function scanV2Registrations(source: string): string[] {
     for (const match of line.matchAll(/context\.(agent|command|reference)\.transform\(/g)) {
       if (match[1] !== undefined) found.push(`transform:${match[1]}`)
     }
+    if (/context\.skill\??\.transform\(/.test(line)) found.push('transform:skill')
     if (/toolCtx\.transform\(/.test(line)) found.push('transform:tool')
     if (/eventCtx\.subscribe!?\(/.test(line)) found.push('subscribe:event')
   }
@@ -207,7 +210,6 @@ const SEED_ENTRIES_OUTSIDE_THE_TABLE = new Set([
   'legacy-hooks',
   'catalog-transform',
   'integration-transform',
-  'skill-transform',
   'goal-tools',
 ])
 

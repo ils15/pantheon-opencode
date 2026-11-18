@@ -732,3 +732,344 @@ export function migrateLegacyStoresAndPurgeStale(workspaceDir, options = {}) {
     staleFilesDeleted,
   }
 }
+
+const CANONICAL_AGENT_MD_FILES = Object.freeze([
+  'aphrodite.md',
+  'apollo.md',
+  'artemis.md',
+  'athena.md',
+  'demeter.md',
+  'gaia.md',
+  'hephaestus.md',
+  'hermes.md',
+  'iris.md',
+  'mnemosyne.md',
+  'nyx.md',
+  'prometheus.md',
+  'talos.md',
+  'themis.md',
+  'zeus.md',
+])
+
+const CANONICAL_COMMAND_MD_FILES = Object.freeze([
+  'pantheon.md',
+  'pantheon-audit.md',
+  'pantheon-deepwork.md',
+  'pantheon-focus.md',
+  'pantheon-model.md',
+  'pantheon-optimize.md',
+  'pantheon-settings.md',
+  'pantheon-vision.md',
+])
+
+const CANONICAL_SKILL_IDS = Object.freeze([
+  'agent-coordination',
+  'agent-forge',
+  'artifact-management',
+  'auto-continue',
+  'clonedeps',
+  'code-review-checklist',
+  'codemap',
+  'context-compression',
+  'fast-path-execution',
+  'git-workflow-and-versioning',
+  'incremental-implementation',
+  'instruction-forge',
+  'loop-engineering',
+  'memory-bank',
+  'prompt-refinery',
+  'reflect',
+  'security-hardening',
+  'session-goal',
+  'simplify',
+  'spec-driven-development',
+  'tdd-with-agents',
+  'test-slicing',
+  'verification-planning',
+  'visual-review-pipeline',
+  'worktrees',
+])
+
+const LEGACY_INSTRUCTION_FILES = Object.freeze([
+  'zeus-execution-rules.instructions.md',
+  'zeus-orchestration.instructions.md',
+  'zeus-workflow.instructions.md',
+])
+
+function measurePathBytes(targetPath, depth = 0) {
+  if (depth > 8) return 0
+  try {
+    const st = statSync(targetPath)
+    if (st.isFile()) return st.size
+    if (!st.isDirectory()) return 0
+    let total = 0
+    for (const entry of readdirSync(targetPath, { withFileTypes: true })) {
+      total += measurePathBytes(join(targetPath, entry.name), depth + 1)
+    }
+    return total
+  } catch {
+    return 0
+  }
+}
+
+function isConfinedWithin(rootDir, targetPath) {
+  try {
+    const realRoot = realpathSync(rootDir)
+    const parentReal = realpathSync(dirname(targetPath))
+    return parentReal === realRoot || parentReal.startsWith(`${realRoot}/`)
+  } catch {
+    return false
+  }
+}
+
+function collectScopeArtifacts(scope, baseRoot, configRoot, options = {}) {
+  const items = []
+  const seen = new Set()
+  const addItem = (filePath, category, reason) => {
+    const resolved = resolve(filePath)
+    if (seen.has(resolved) || !existsSync(resolved)) return
+    seen.add(resolved)
+    items.push({
+      path: resolved,
+      scope,
+      category,
+      reason,
+      bytes: measurePathBytes(resolved),
+    })
+  }
+
+  // 1. Dead V1 hooks & backup sidecars (most specific categories first)
+  for (const hookName of ['pantheon-hooks.ts', 'pantheon-hooks.js', 'pantheon-hooks.mjs']) {
+    addItem(join(configRoot, 'plugins', hookName), 'hooks', 'Obsolete OpenCode V1 hook plugin')
+  }
+  addItem(join(configRoot, 'tiers.json'), 'v1Obsolete', 'Obsolete V1 model tiers registry')
+  addItem(join(baseRoot, 'tiers.json'), 'v1Obsolete', 'Obsolete V1 model tiers registry')
+
+  for (const bakDir of [configRoot, join(baseRoot, '.pantheon')]) {
+    if (!existsSync(bakDir)) continue
+    try {
+      for (const name of readdirSync(bakDir)) {
+        if (name.startsWith('opencode.json.bak') || name.startsWith('active-preset.json.bak')) {
+          addItem(join(bakDir, name), 'backup', 'Old configuration backup sidecar')
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // 2. Dry-run migration findings (unmigrated DBs, expired persistence, stale caches/locks)
+  const dryMigration = migrateLegacyStoresAndPurgeStale(baseRoot, { dryRun: true })
+  for (const stale of dryMigration.staleFilesDeleted) {
+    addItem(stale, 'legacyStore', 'Obsolete or migrated legacy store artifact')
+  }
+
+  // 3. Redundant copied Pantheon assets that native plugin transforms provide in-memory
+  if (options.includeRedundantCopiedAssets !== false) {
+    for (const agentFile of CANONICAL_AGENT_MD_FILES) {
+      addItem(
+        join(configRoot, 'agents', agentFile),
+        'redundantAsset',
+        'Canonical Pantheon agent copy shadowed by native plugin transform',
+      )
+      addItem(
+        join(configRoot, 'agent', agentFile),
+        'redundantAsset',
+        'Legacy singular agent directory copy shadowed by native plugin transform',
+      )
+      addItem(
+        join(configRoot, 'prompts', agentFile),
+        'redundantAsset',
+        'Legacy prompt template copy provided in package',
+      )
+    }
+
+    for (const cmdFile of CANONICAL_COMMAND_MD_FILES) {
+      addItem(
+        join(configRoot, 'commands', cmdFile),
+        'redundantAsset',
+        'Canonical Pantheon command copy shadowed by native plugin transform',
+      )
+      addItem(
+        join(configRoot, 'command', cmdFile),
+        'redundantAsset',
+        'Legacy singular command directory copy',
+      )
+    }
+
+    for (const instr of LEGACY_INSTRUCTION_FILES) {
+      addItem(
+        join(configRoot, 'instructions', instr),
+        'redundantAsset',
+        'Legacy instruction file superseded by AGENTS.global.md reference transform',
+      )
+    }
+
+    for (const skillId of CANONICAL_SKILL_IDS) {
+      addItem(
+        join(configRoot, 'skills', skillId),
+        'redundantAsset',
+        'Bundled Pantheon skill directory provided natively by plugin',
+      )
+    }
+
+    const tuiCopyDir = join(configRoot, 'plugins', 'pantheon-tui')
+    if (existsSync(tuiCopyDir)) {
+      let copiedVersion = ''
+      try {
+        copiedVersion = String(
+          JSON.parse(readFileSync(join(tuiCopyDir, 'package.json'), 'utf8')).version ?? '',
+        )
+      } catch {
+        copiedVersion = ''
+      }
+      const runningVersion = options.runningVersion ? String(options.runningVersion) : ''
+      const drifted = Boolean(runningVersion && copiedVersion && copiedVersion !== runningVersion)
+      addItem(
+        tuiCopyDir,
+        drifted ? 'drift' : 'redundantAsset',
+        drifted
+          ? `Copied TUI plugin v${copiedVersion} drifts from v${runningVersion}`
+          : 'Copied TUI directory superseded by npm package export',
+      )
+    }
+  }
+
+  return { items, dryMigration }
+}
+
+export function scanLegacyArtifacts(options = {}) {
+  const workspaceDir = options.workspaceDir ? resolve(options.workspaceDir) : undefined
+  const globalConfigDir = options.globalConfigDir
+    ? resolve(options.globalConfigDir)
+    : resolveSafeGlobalConfigDir()
+
+  const items = []
+  let unmigratedStores = 0
+
+  if (globalConfigDir && existsSync(globalConfigDir) && globalConfigDir !== '/') {
+    const res = collectScopeArtifacts('global', globalConfigDir, globalConfigDir, options)
+    items.push(...res.items)
+    unmigratedStores +=
+      res.dryMigration.memoriesMigrated +
+      res.dryMigration.contextsMigrated +
+      res.dryMigration.goalsMigrated +
+      res.dryMigration.vectorTablesDropped
+  }
+
+  if (
+    workspaceDir &&
+    existsSync(workspaceDir) &&
+    workspaceDir !== '/' &&
+    (!globalConfigDir || !sameFileOrPath(workspaceDir, globalConfigDir))
+  ) {
+    const res = collectScopeArtifacts(
+      'project',
+      workspaceDir,
+      join(workspaceDir, '.opencode'),
+      options,
+    )
+    items.push(...res.items)
+    unmigratedStores +=
+      res.dryMigration.memoriesMigrated +
+      res.dryMigration.contextsMigrated +
+      res.dryMigration.goalsMigrated +
+      res.dryMigration.vectorTablesDropped
+  }
+
+  const byScope = { global: 0, project: 0 }
+  const byCategory = {}
+  let totalBytes = 0
+  for (const item of items) {
+    byScope[item.scope] = (byScope[item.scope] ?? 0) + 1
+    byCategory[item.category] = (byCategory[item.category] ?? 0) + 1
+    totalBytes += item.bytes
+  }
+
+  return {
+    items,
+    summary: {
+      total: items.length,
+      totalBytes,
+      unmigratedStores,
+      byScope,
+      byCategory,
+    },
+  }
+}
+
+export function cleanLegacyArtifacts(options = {}) {
+  const workspaceDir = options.workspaceDir ? resolve(options.workspaceDir) : undefined
+  const globalConfigDir = options.globalConfigDir
+    ? resolve(options.globalConfigDir)
+    : resolveSafeGlobalConfigDir()
+
+  const preScan = scanLegacyArtifacts(options)
+  const categoryFilter = Array.isArray(options.categories) ? new Set(options.categories) : null
+  const scopeFilter = options.scope && options.scope !== 'all' ? options.scope : null
+  const bytesByPath = new Map(preScan.items.map((item) => [item.path, item.bytes]))
+
+  // Always run data migration BEFORE removing any legacy/obsolete files.
+  let migrated = null
+  if (
+    scopeFilter !== 'global' &&
+    workspaceDir &&
+    existsSync(workspaceDir) &&
+    workspaceDir !== '/'
+  ) {
+    migrated = migrateLegacyStoresAndPurgeStale(
+      workspaceDir,
+      scopeFilter !== 'project' && globalConfigDir ? { globalConfigDir } : {},
+    )
+  } else if (
+    scopeFilter !== 'project' &&
+    globalConfigDir &&
+    existsSync(globalConfigDir) &&
+    globalConfigDir !== '/'
+  ) {
+    migrated = migrateLegacyStoresAndPurgeStale(globalConfigDir)
+  }
+
+  const removedSet = new Set()
+  const errors = []
+  let reclaimedBytes = 0
+
+  for (const purgedPath of migrated?.staleFilesDeleted ?? []) {
+    const resolved = resolve(purgedPath)
+    if (!existsSync(resolved) && !removedSet.has(resolved)) {
+      removedSet.add(resolved)
+      reclaimedBytes += bytesByPath.get(resolved) ?? 0
+    }
+  }
+
+  for (const item of preScan.items) {
+    if (categoryFilter && !categoryFilter.has(item.category)) continue
+    if (scopeFilter && item.scope !== scopeFilter) continue
+    const scopeRoot = item.scope === 'global' ? globalConfigDir : workspaceDir
+    if (!scopeRoot || !isConfinedWithin(scopeRoot, item.path)) {
+      errors.push({ path: item.path, reason: 'Path escapes target scope root' })
+      continue
+    }
+    try {
+      if (existsSync(item.path)) {
+        rmSync(item.path, { recursive: true, force: true })
+        if (!removedSet.has(item.path)) {
+          removedSet.add(item.path)
+          reclaimedBytes += item.bytes
+        }
+      }
+    } catch (err) {
+      errors.push({
+        path: item.path,
+        reason: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
+  return {
+    removed: [...removedSet],
+    reclaimedBytes,
+    errors,
+    migrated,
+  }
+}

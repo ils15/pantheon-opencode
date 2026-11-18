@@ -331,34 +331,69 @@ export function settledDraft(draft: SettingsDraft, applied: readonly string[]): 
 // ── Gates / About tabs (behavior-native; the other tabs live in their modules) ──
 
 export const GATES_ENABLED_CYCLE: readonly string[] = Object.freeze(['enabled', 'disabled'])
+export type OverridesScope = 'global' | 'project'
+export const OVERRIDES_SCOPE_CYCLE: readonly OverridesScope[] = Object.freeze(['global', 'project'])
 
-export function buildGatesTab(load: OverridesLoad, languagePref?: string): SettingsTab {
+export function buildGatesTab(
+  load: OverridesLoad,
+  languagePref?: string,
+  overridesScope?: OverridesScope,
+): SettingsTab {
   const isPt = languagePref === 'pt-BR'
   const merged = mergedOverrides(load)
+  const editingProject = overridesScope === 'project'
   const rowFor = (behavior: SettingsBehavior): SettingsRow => {
     const fromProject = load.project[behavior.id] !== undefined
-    const writable = !fromProject && canWriteOverrides(load)
+    const effective = editingProject
+      ? isBehaviorDisabled({ ...load.global, ...load.project }, behavior.id)
+      : isBehaviorDisabled(load.global, behavior.id)
+    const writable = editingProject ? true : !fromProject && canWriteOverrides(load)
     return {
       id: `gate.${behavior.id}`,
       name: fromProject ? `${behavior.title} (${isPt ? 'projeto' : 'project'})` : behavior.title,
-      value: isBehaviorDisabled(merged, behavior.id) ? 'disabled' : 'enabled',
+      value: (editingProject ? effective : isBehaviorDisabled(merged, behavior.id))
+        ? 'disabled'
+        : 'enabled',
       ...(writable ? { cycle: GATES_ENABLED_CYCLE } : {}),
-      note: fromProject
-        ? isPt
-          ? 'arquivo do projeto tem precedência · edite .pantheon/overrides.json'
-          : 'project file wins at runtime — edit .pantheon/overrides.json'
-        : behavior.description,
+      note:
+        !editingProject && fromProject
+          ? isPt
+            ? 'arquivo do projeto tem precedência · edite .pantheon/overrides.json'
+            : 'project file wins at runtime — edit .pantheon/overrides.json'
+          : editingProject
+            ? isPt
+              ? 'salva em .pantheon/overrides.json (escopo do projeto)'
+              : 'saves to .pantheon/overrides.json (project scope)'
+            : behavior.description,
     }
   }
   const install = SETTINGS_BEHAVIORS.filter((behavior) => behavior.kind === 'install')
   const runtime = SETTINGS_BEHAVIORS.filter((behavior) => behavior.kind === 'runtime')
+  const groups: SettingsGroup[] = []
+  if (overridesScope !== undefined) {
+    groups.push({
+      title: isPt ? 'Escopo das regras' : 'Rules Scope',
+      rows: [
+        {
+          id: 'gates.scope',
+          name: isPt ? 'Escopo de edição' : 'Edit scope',
+          value: overridesScope,
+          cycle: OVERRIDES_SCOPE_CYCLE,
+          note: isPt
+            ? 'alterne entre global (~/.config/opencode) e projeto (.pantheon)'
+            : 'switch between global (~/.config/opencode) and project (.pantheon)',
+        },
+      ],
+    })
+  }
+  groups.push(
+    { title: isPt ? 'Skills instaladas' : 'Install skills', rows: install.map(rowFor) },
+    { title: isPt ? 'Portões de execução' : 'Runtime gates', rows: runtime.map(rowFor) },
+  )
   return {
     id: 'gates',
     title: 'Gates',
-    groups: [
-      { title: isPt ? 'Skills instaladas' : 'Install skills', rows: install.map(rowFor) },
-      { title: isPt ? 'Portões de execução' : 'Runtime gates', rows: runtime.map(rowFor) },
-    ],
+    groups,
   }
 }
 

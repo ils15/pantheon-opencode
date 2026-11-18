@@ -89,7 +89,7 @@ export function pickUpdateNotice(input: UpdateNoticeInput): UpdateNotice | null 
     version: latestVersion,
     message:
       `pantheon-opencode ${latestVersion} available (installed ${currentVersion}) — ` +
-      'changelog in /pantheon-settings, adopt with `pantheon-opencode update`',
+      'update in /pantheon-settings or `opencode plugin add pantheon-opencode`',
   }
 }
 

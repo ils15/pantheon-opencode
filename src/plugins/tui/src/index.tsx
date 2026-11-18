@@ -51,6 +51,7 @@ import {
   tuiPrefs,
 } from './tui-prefs'
 import { nextCheckState, pickUpdateNotice, type UpdateCheckState } from './update-notice.ts'
+import { registryUrlForChannel, updateChannelFor } from './update-status.ts'
 import { maybeShowWhatsNewV2 } from './whats-new'
 
 export type { ContextProgressTone } from './context-gauge'
@@ -3352,13 +3353,14 @@ async function checkForPantheonUpdate(context: any): Promise<void> {
       `${JSON.stringify(nextCheckState(readState(), notice, Date.now()), null, 2)}\n`,
     )
   }
-  const response = await fetch('https://registry.npmjs.org/pantheon-opencode/latest', {
+  const currentVersion = typeof __PANTHEON_VERSION__ !== 'undefined' ? __PANTHEON_VERSION__ : ''
+  const response = await fetch(registryUrlForChannel(updateChannelFor(currentVersion)), {
     signal: AbortSignal.timeout(5000),
   })
   const latest = String(((await response.json()) as { version?: unknown })?.version ?? '')
   if (!latest) return
   const notice = pickUpdateNotice({
-    currentVersion: typeof __PANTHEON_VERSION__ !== 'undefined' ? __PANTHEON_VERSION__ : '',
+    currentVersion,
     latestVersion: latest,
     state: readState(),
     nowMs: Date.now(),

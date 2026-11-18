@@ -300,10 +300,10 @@ async function main(): Promise<void> {
     rmSync(setupRoot, { recursive: true, force: true })
   }
 
-  test('mock records Phase 1/config transform registrations for agent, command, and reference', () => {
+  test('mock records Phase 1/config transform registrations for agent, command, reference, and skill', () => {
     // This mock proves only the adapter's current registration choices. Its
     // callbacks are synthetic and do not prove callback effects on a host.
-    assert.deepEqual(transforms, ['agent', 'command', 'reference'])
+    assert.deepEqual(transforms, ['agent', 'command', 'reference', 'skill'])
   })
 
   test('transform support notes distinguish host domains from Pantheon behavior', () => {
@@ -316,7 +316,7 @@ async function main(): Promise<void> {
     assert.match(pluginSource, /ctx\.tool\.transform\s+function/)
     assert.match(pluginSource, /ctx\.tool\.hook\s+function/)
     assert.match(pluginSource, /ctx\.catalog\s+absent/)
-    assert.match(pluginSource, /ctx\.integration and\s*\n?\s*ctx\.skill/)
+    assert.match(pluginSource, /ctx\.integration is present/)
     // The per-marker rationale (which marker means host-absent vs deliberate
     // Pantheon scope) now lives beside the markers themselves, in the shared
     // plain-`.mjs` seed that the installer and doctor report from — see S0 in
@@ -324,7 +324,7 @@ async function main(): Promise<void> {
     // claim must still be written down, and it must still be MEASURED wording.
     // Asserting it against plugin.ts alone would have forced the rationale
     // to be duplicated back into a file that no longer owns those strings.
-    assert.match(unsupportedSeedSource, /SkillEditor\.source\(\)/)
+    assert.match(unsupportedSeedSource, /SkillDraft\.source\(\)/)
     // The forbidden wording can now be written into EITHER file, because S0
     // moved the rationale out of plugin.ts and into the shared seed. Before
     // that move this guard ran against pluginSource alone and could not miss;
@@ -568,13 +568,59 @@ async function main(): Promise<void> {
     assert.equal(commandsToTransform[1].description, 'Pantheon orchestration command')
   })
 
-  test('catalog is host-absent while integration and skill transforms remain unimplemented here', () => {
+  test('catalog is host-absent while integration stays unimplemented and skill transform registers bundled skills', async () => {
     // These registry entries describe adapter support, not whether every
     // corresponding host context domain exists.
     assert.ok(V2_UNSUPPORTED_FEATURES.includes('catalog-transform'))
-    assert.ok(V2_UNSUPPORTED_FEATURES.includes('skill-transform'))
     assert.ok(V2_UNSUPPORTED_FEATURES.includes('integration-transform'))
-    assert.deepEqual(transforms, ['agent', 'command', 'reference'])
+    assert.deepEqual(transforms, ['agent', 'command', 'reference', 'skill'])
+
+    const addedSkills = new Map<string, { id: string; name: string; content: string }>()
+    await plugin.setup(
+      makeBaseContext({
+        skill: {
+          transform: async (callback: (draft: never) => void) => {
+            callback({
+              get: (id: string) =>
+                id === 'tdd-with-agents'
+                  ? { id, name: 'custom-tdd', path: '/custom/SKILL.md', content: '# custom' }
+                  : undefined,
+              add: (skill: { id: string; name: string; content: string }) => {
+                addedSkills.set(skill.id, skill)
+              },
+            } as never)
+            return { dispose: async () => {} }
+          },
+        },
+      }) as never,
+    )
+    assert.ok(addedSkills.size >= 24, `expected bundled skills registered, got ${addedSkills.size}`)
+    assert.equal(
+      addedSkills.has('tdd-with-agents'),
+      false,
+      'existing user/project skill must take precedence over bundled default',
+    )
+    assert.ok(addedSkills.has('session-goal'))
+
+    let sourceDirRegistered: string | undefined
+    await plugin.setup(
+      makeBaseContext({
+        skill: {
+          transform: async (callback: (draft: never) => void) => {
+            callback({
+              source: (src: { type: string; path: string }) => {
+                if (src.type === 'directory') sourceDirRegistered = src.path
+              },
+            } as never)
+            return { dispose: async () => {} }
+          },
+        },
+      }) as never,
+    )
+    assert.ok(
+      sourceDirRegistered?.endsWith('skills'),
+      `expected SkillDraft.source directory registration, got ${sourceDirRegistered}`,
+    )
   })
 
   test('transform registration rejection does not abort setup or later hook registration', () => {

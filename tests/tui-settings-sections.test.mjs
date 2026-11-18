@@ -47,7 +47,15 @@ describe('updates section rows', () => {
     })
     const latest = section.groups.flatMap((g) => g.rows).find((row) => row.id === 'update.latest')
     assert.equal(latest.value, 'v2.0.0-beta.3 available')
-    assert.match(latest.note, /pantheon-opencode update/)
+    assert.match(latest.note, /opencode plugin add pantheon-opencode/)
+    const legacyRows = section.groups
+      .flatMap((g) => g.rows)
+      .filter((row) => row.id.startsWith('legacy.'))
+    assert.deepEqual(
+      legacyRows.map((r) => r.id),
+      ['legacy.status', 'legacy.scan', 'legacy.clean'],
+    )
+    assert.equal(legacyRows.find((r) => r.id === 'legacy.clean')?.action, 'legacy-clean')
   })
 
   it('shows up-to-date without advertising a downgrade', () => {
@@ -86,5 +94,24 @@ describe('window section composition (order contract)', () => {
     const flat = tabRows(sections('2.0.0-beta.2')[0])
     assert.equal(flat.length, 7)
     assert.equal(flat[0].id, 'gate.skill-auto-continue')
+  })
+
+  it('supports explicit global vs project edit scope when provided', () => {
+    const projectLoad = {
+      global: {},
+      project: { 'gate-j1-risk-gate': { action: 'disable', reason: 'test' } },
+      corruptGlobal: false,
+    }
+    const projectRows = tabRows(buildGatesTab(projectLoad, 'en', 'project'))
+    assert.equal(projectRows[0]?.id, 'gates.scope')
+    assert.equal(projectRows[0]?.value, 'project')
+    const j1Project = projectRows.find((r) => r.id === 'gate.gate-j1-risk-gate')
+    assert.equal(j1Project?.value, 'disabled')
+    assert.ok(Array.isArray(j1Project?.cycle), 'project overrides are writable in project scope')
+
+    const globalRows = tabRows(buildGatesTab(projectLoad, 'en', 'global'))
+    assert.equal(globalRows[0]?.value, 'global')
+    const j1Global = globalRows.find((r) => r.id === 'gate.gate-j1-risk-gate')
+    assert.equal(j1Global?.cycle, undefined, 'shadowed row is read-only when viewing global scope')
   })
 })

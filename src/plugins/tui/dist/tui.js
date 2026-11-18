@@ -1,11 +1,12 @@
 import { createComponent, createElement, createTextNode, effect, insert, insertNode, memo, mergeProps, setProp, spread } from "@opentui/solid";
 import { execFile } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { Plugin } from "@opencode/plugin/tui";
 import { ErrorBoundary, For, Show, createEffect, createMemo, createSignal, on, onCleanup, onMount } from "solid-js";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 //#region src/context-gauge.ts
 const CONTEXT_BAR_CELLS = 12;
@@ -788,32 +789,50 @@ function settledDraft(draft, applied) {
 	return next;
 }
 const GATES_ENABLED_CYCLE = Object.freeze(["enabled", "disabled"]);
-function buildGatesTab(load, languagePref) {
+const OVERRIDES_SCOPE_CYCLE = Object.freeze(["global", "project"]);
+function buildGatesTab(load, languagePref, overridesScope) {
 	const isPt = languagePref === "pt-BR";
 	const merged = mergedOverrides(load);
+	const editingProject = overridesScope === "project";
 	const rowFor = (behavior) => {
 		const fromProject = load.project[behavior.id] !== void 0;
-		const writable = !fromProject && canWriteOverrides(load);
+		const effective = editingProject ? isBehaviorDisabled({
+			...load.global,
+			...load.project
+		}, behavior.id) : isBehaviorDisabled(load.global, behavior.id);
+		const writable = editingProject ? true : !fromProject && canWriteOverrides(load);
 		return {
 			id: `gate.${behavior.id}`,
 			name: fromProject ? `${behavior.title} (${isPt ? "projeto" : "project"})` : behavior.title,
-			value: isBehaviorDisabled(merged, behavior.id) ? "disabled" : "enabled",
+			value: (editingProject ? effective : isBehaviorDisabled(merged, behavior.id)) ? "disabled" : "enabled",
 			...writable ? { cycle: GATES_ENABLED_CYCLE } : {},
-			note: fromProject ? isPt ? "arquivo do projeto tem precedência · edite .pantheon/overrides.json" : "project file wins at runtime — edit .pantheon/overrides.json" : behavior.description
+			note: !editingProject && fromProject ? isPt ? "arquivo do projeto tem precedência · edite .pantheon/overrides.json" : "project file wins at runtime — edit .pantheon/overrides.json" : editingProject ? isPt ? "salva em .pantheon/overrides.json (escopo do projeto)" : "saves to .pantheon/overrides.json (project scope)" : behavior.description
 		};
 	};
 	const install = SETTINGS_BEHAVIORS.filter((behavior) => behavior.kind === "install");
 	const runtime = SETTINGS_BEHAVIORS.filter((behavior) => behavior.kind === "runtime");
+	const groups = [];
+	if (overridesScope !== void 0) groups.push({
+		title: isPt ? "Escopo das regras" : "Rules Scope",
+		rows: [{
+			id: "gates.scope",
+			name: isPt ? "Escopo de edição" : "Edit scope",
+			value: overridesScope,
+			cycle: OVERRIDES_SCOPE_CYCLE,
+			note: isPt ? "alterne entre global (~/.config/opencode) e projeto (.pantheon)" : "switch between global (~/.config/opencode) and project (.pantheon)"
+		}]
+	});
+	groups.push({
+		title: isPt ? "Skills instaladas" : "Install skills",
+		rows: install.map(rowFor)
+	}, {
+		title: isPt ? "Portões de execução" : "Runtime gates",
+		rows: runtime.map(rowFor)
+	});
 	return {
 		id: "gates",
 		title: "Gates",
-		groups: [{
-			title: isPt ? "Skills instaladas" : "Install skills",
-			rows: install.map(rowFor)
-		}, {
-			title: isPt ? "Portões de execução" : "Runtime gates",
-			rows: runtime.map(rowFor)
-		}]
+		groups
 	};
 }
 function buildAboutTab(version, extra) {
@@ -961,7 +980,7 @@ function pickUpdateNotice(input) {
 	if (comparePantheonVersions(latestVersion, currentVersion) <= 0) return null;
 	return {
 		version: latestVersion,
-		message: `pantheon-opencode ${latestVersion} available — changelog in /pantheon-settings, adopt with \`pantheon-opencode update\``
+		message: `pantheon-opencode ${latestVersion} available — update in /pantheon-settings or \`opencode plugin add pantheon-opencode\``
 	};
 }
 /** The state to persist after a check (notified or not) for the TTL. */
@@ -1206,6 +1225,486 @@ function buildJ1Tab(env, disabledByOverride, languagePref) {
 				}
 			]
 		}]
+	};
+}
+//#endregion
+//#region src/legacy-audit.ts
+/**
+* legacy-audit.ts — Self-contained Legacy & Drift Auditor for the TUI Settings panel.
+*
+* Scans global (~/.config/opencode) and workspace (<project>) scopes for:
+*   - Dead V1 hooks/files (pantheon-hooks.*, tiers.json, fastembed_cache, .migration-checkpoint)
+*   - Unmigrated legacy stores (memory.db, persistence/{global,project}.db, goals.json)
+*   - Redundant copied canonical Pantheon assets shadowed by native plugin transforms
+*   - Drifted copied TUI plugins (plugins/pantheon-tui version != running plugin version)
+*   - Old configuration backup sidecars (opencode.json.bak*, active-preset.json.bak*)
+*
+* Always migrates unmigrated legacy context/memory/goals BEFORE deleting obsolete stores,
+* and NEVER touches user-created custom agents or custom user skills.
+*/
+const SAFE_SEGMENT_RE = /^[a-zA-Z0-9._:-]{1,128}$/;
+const CANONICAL_AGENT_MD_FILES = Object.freeze([
+	"aphrodite.md",
+	"apollo.md",
+	"artemis.md",
+	"athena.md",
+	"demeter.md",
+	"gaia.md",
+	"hephaestus.md",
+	"hermes.md",
+	"iris.md",
+	"mnemosyne.md",
+	"nyx.md",
+	"prometheus.md",
+	"talos.md",
+	"themis.md",
+	"zeus.md"
+]);
+const CANONICAL_COMMAND_MD_FILES = Object.freeze([
+	"pantheon.md",
+	"pantheon-audit.md",
+	"pantheon-deepwork.md",
+	"pantheon-focus.md",
+	"pantheon-model.md",
+	"pantheon-optimize.md",
+	"pantheon-settings.md",
+	"pantheon-vision.md"
+]);
+const CANONICAL_SKILL_IDS = Object.freeze([
+	"agent-coordination",
+	"agent-forge",
+	"artifact-management",
+	"auto-continue",
+	"clonedeps",
+	"code-review-checklist",
+	"codemap",
+	"context-compression",
+	"fast-path-execution",
+	"git-workflow-and-versioning",
+	"incremental-implementation",
+	"instruction-forge",
+	"loop-engineering",
+	"memory-bank",
+	"prompt-refinery",
+	"reflect",
+	"security-hardening",
+	"session-goal",
+	"simplify",
+	"spec-driven-development",
+	"tdd-with-agents",
+	"test-slicing",
+	"verification-planning",
+	"visual-review-pipeline",
+	"worktrees"
+]);
+const LEGACY_INSTRUCTION_FILES = Object.freeze([
+	"zeus-execution-rules.instructions.md",
+	"zeus-orchestration.instructions.md",
+	"zeus-workflow.instructions.md"
+]);
+function resolveAuditGlobalDir(env = process.env) {
+	if (env.PANTHEON_HOME?.trim()) return resolve(env.PANTHEON_HOME.trim());
+	if (env.XDG_CONFIG_HOME?.trim()) return join(resolve(env.XDG_CONFIG_HOME.trim()), "opencode");
+	if (env.NODE_TEST_CONTEXT) return void 0;
+	const home = env.HOME?.trim();
+	return home ? join(resolve(home), ".config", "opencode") : void 0;
+}
+function formatBytes(bytes) {
+	if (bytes < 1024) return `${bytes} B`;
+	if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
+	return `${(bytes / 1048576).toFixed(2)} MB`;
+}
+function toSafeSegment(raw, fallback = "default") {
+	const str = String(raw ?? "").trim().replace(/[^a-zA-Z0-9._:-]/g, "_").slice(0, 128);
+	if (!str || str === "." || str === ".." || !SAFE_SEGMENT_RE.test(str)) return fallback;
+	return str;
+}
+function measurePathBytes(targetPath, depth = 0) {
+	if (depth > 8) return 0;
+	try {
+		const st = statSync(targetPath);
+		if (st.isFile()) return st.size;
+		if (!st.isDirectory()) return 0;
+		let total = 0;
+		for (const entry of readdirSync(targetPath, { withFileTypes: true })) total += measurePathBytes(join(targetPath, entry.name), depth + 1);
+		return total;
+	} catch {
+		return 0;
+	}
+}
+function samePath(a, b) {
+	if (resolve(a) === resolve(b)) return true;
+	if (!existsSync(a) || !existsSync(b)) return false;
+	try {
+		return realpathSync(a) === realpathSync(b);
+	} catch {
+		return false;
+	}
+}
+function isConfinedWithin(rootDir, targetPath) {
+	try {
+		const realRoot = realpathSync(rootDir);
+		const parentReal = realpathSync(dirname(targetPath));
+		return parentReal === realRoot || parentReal.startsWith(`${realRoot}/`);
+	} catch {
+		return false;
+	}
+}
+function countTableRows(db, tableName) {
+	try {
+		const row = db.prepare(`SELECT count(*) AS cnt FROM "${tableName.replace(/"/g, "\"\"")}"`).get();
+		return Number(row?.cnt ?? 0);
+	} catch {
+		return 0;
+	}
+}
+function tableExists(db, name) {
+	try {
+		const row = db.prepare("SELECT name FROM sqlite_master WHERE type IN ('table','view') AND name = ?").get(name);
+		return Boolean(row?.name);
+	} catch {
+		return false;
+	}
+}
+function collectScopeAudit(scope, baseRoot, configRoot, options) {
+	const items = [];
+	const seen = /* @__PURE__ */ new Set();
+	let unmigratedStores = 0;
+	const addItem = (filePath, category, reason) => {
+		const resolved = resolve(filePath);
+		if (seen.has(resolved) || !existsSync(resolved)) return;
+		seen.add(resolved);
+		items.push({
+			path: resolved,
+			scope,
+			category,
+			reason,
+			bytes: measurePathBytes(resolved)
+		});
+	};
+	for (const hookName of [
+		"pantheon-hooks.ts",
+		"pantheon-hooks.js",
+		"pantheon-hooks.mjs"
+	]) addItem(join(configRoot, "plugins", hookName), "hooks", "Obsolete OpenCode V1 hook plugin");
+	addItem(join(configRoot, "tiers.json"), "v1Obsolete", "Obsolete V1 model tiers registry");
+	addItem(join(baseRoot, "tiers.json"), "v1Obsolete", "Obsolete V1 model tiers registry");
+	const pantheonDir = join(baseRoot, ".pantheon");
+	addItem(join(pantheonDir, "fastembed_cache"), "v1Obsolete", "Unused legacy fastembed cache");
+	addItem(join(pantheonDir, ".fastembed"), "v1Obsolete", "Unused legacy fastembed cache");
+	addItem(join(baseRoot, "fastembed_cache"), "v1Obsolete", "Unused legacy fastembed cache");
+	addItem(join(pantheonDir, ".migration-checkpoint"), "v1Obsolete", "Stale migration checkpoint file");
+	for (const bakDir of [configRoot, pantheonDir]) {
+		if (!existsSync(bakDir)) continue;
+		try {
+			for (const name of readdirSync(bakDir)) if (name.startsWith("opencode.json.bak") || name.startsWith("active-preset.json.bak")) addItem(join(bakDir, name), "backup", "Old configuration backup sidecar");
+		} catch {}
+	}
+	const legacyFlatMemDb = join(pantheonDir, "memory.db");
+	if (existsSync(legacyFlatMemDb)) {
+		unmigratedStores += 1;
+		addItem(legacyFlatMemDb, "legacyStore", "Unmigrated flat .pantheon/memory.db");
+	}
+	const canonicalMemDb = join(pantheonDir, "memory", "memory.db");
+	if (existsSync(canonicalMemDb)) try {
+		const db = new DatabaseSync(canonicalMemDb, { readOnly: true });
+		const hasLegacyVec = [
+			"memories_vec",
+			"vec_memories",
+			"memory_embeddings",
+			"memory_vectors"
+		].some((t) => tableExists(db, t));
+		db.close();
+		if (hasLegacyVec) {
+			unmigratedStores += 1;
+			items.push({
+				path: `${canonicalMemDb}#legacy-vec`,
+				scope,
+				category: "legacyStore",
+				reason: "Legacy vector tables pending cleanup in memory.db",
+				bytes: 0
+			});
+		}
+	} catch {}
+	for (const dbName of ["global.db", "project.db"]) {
+		const persDbPath = join(pantheonDir, "persistence", dbName);
+		if (existsSync(persDbPath)) {
+			unmigratedStores += 1;
+			addItem(persDbPath, "legacyStore", `Unmigrated persistence/${dbName}`);
+		}
+	}
+	const legacyGoalsJson = join(pantheonDir, "goals.json");
+	if (existsSync(legacyGoalsJson)) {
+		unmigratedStores += 1;
+		addItem(legacyGoalsJson, "legacyStore", "Unmigrated legacy goals.json");
+	}
+	if (options.includeRedundantCopiedAssets !== false) {
+		for (const agentFile of CANONICAL_AGENT_MD_FILES) {
+			addItem(join(configRoot, "agents", agentFile), "redundantAsset", "Canonical Pantheon agent copy shadowed by native plugin transform");
+			addItem(join(configRoot, "agent", agentFile), "redundantAsset", "Legacy singular agent copy shadowed by native plugin transform");
+			addItem(join(configRoot, "prompts", agentFile), "redundantAsset", "Legacy prompt template copy provided in package");
+		}
+		for (const cmdFile of CANONICAL_COMMAND_MD_FILES) {
+			addItem(join(configRoot, "commands", cmdFile), "redundantAsset", "Canonical Pantheon command copy shadowed by native plugin transform");
+			addItem(join(configRoot, "command", cmdFile), "redundantAsset", "Legacy singular command directory copy");
+		}
+		for (const instr of LEGACY_INSTRUCTION_FILES) addItem(join(configRoot, "instructions", instr), "redundantAsset", "Legacy instruction file superseded by AGENTS.global.md");
+		for (const skillId of CANONICAL_SKILL_IDS) addItem(join(configRoot, "skills", skillId), "redundantAsset", "Bundled Pantheon skill directory provided natively by plugin");
+		const tuiCopyDir = join(configRoot, "plugins", "pantheon-tui");
+		if (existsSync(tuiCopyDir)) {
+			let copiedVersion = "";
+			try {
+				copiedVersion = String(JSON.parse(readFileSync(join(tuiCopyDir, "package.json"), "utf8")).version ?? "");
+			} catch {
+				copiedVersion = "";
+			}
+			const runningVersion = options.runningVersion ? String(options.runningVersion) : "";
+			const drifted = Boolean(runningVersion && copiedVersion && copiedVersion !== runningVersion);
+			addItem(tuiCopyDir, drifted ? "drift" : "redundantAsset", drifted ? `Copied TUI plugin v${copiedVersion} drifts from v${runningVersion}` : "Copied TUI directory superseded by npm package export");
+		}
+	}
+	return {
+		items,
+		unmigratedStores
+	};
+}
+function ensureCanonicalMemoryDb(dbPath) {
+	mkdirSync(dirname(dbPath), { recursive: true });
+	const db = new DatabaseSync(dbPath);
+	db.exec(`
+    PRAGMA journal_mode = WAL;
+    CREATE TABLE IF NOT EXISTS memories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      namespace TEXT NOT NULL DEFAULT 'default',
+      key TEXT NOT NULL,
+      value TEXT NOT NULL,
+      importance REAL NOT NULL DEFAULT 0.5,
+      created_at TEXT NOT NULL,
+      expires_at TEXT,
+      UNIQUE(namespace, key)
+    );
+    CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+      key, value, namespace,
+      content='memories',
+      content_rowid='id'
+    );
+    CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+      INSERT INTO memories_fts(rowid, key, value, namespace) VALUES (new.id, new.key, new.value, new.namespace);
+    END;
+    CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+      INSERT INTO memories_fts(memories_fts, rowid, key, value, namespace) VALUES('delete', old.id, old.key, old.value, old.namespace);
+    END;
+    CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+      INSERT INTO memories_fts(memories_fts, rowid, key, value, namespace) VALUES('delete', old.id, old.key, old.value, old.namespace);
+      INSERT INTO memories_fts(rowid, key, value, namespace) VALUES (new.id, new.key, new.value, new.namespace);
+    END;
+  `);
+	return db;
+}
+function migrateScopeBeforeDelete(baseRoot) {
+	const pantheonDir = join(baseRoot, ".pantheon");
+	if (!existsSync(pantheonDir)) return 0;
+	let migrated = 0;
+	const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+	const flatMemDbPath = join(pantheonDir, "memory.db");
+	const canonicalMemPath = join(pantheonDir, "memory", "memory.db");
+	if (existsSync(flatMemDbPath)) try {
+		const src = new DatabaseSync(flatMemDbPath, { readOnly: true });
+		const dst = ensureCanonicalMemoryDb(canonicalMemPath);
+		if (tableExists(src, "memories")) {
+			const rows = src.prepare("SELECT namespace, key, value, created_at FROM memories").all();
+			const insert = dst.prepare("INSERT OR IGNORE INTO memories (namespace, key, value, importance, created_at) VALUES (?, ?, ?, ?, ?)");
+			for (const r of rows) {
+				insert.run(String(r.namespace ?? "default"), String(r.key ?? ""), String(r.value ?? ""), .5, String(r.created_at ?? nowIso));
+				migrated += 1;
+			}
+		}
+		src.close();
+		dst.close();
+	} catch {}
+	if (existsSync(canonicalMemPath)) try {
+		const db = ensureCanonicalMemoryDb(canonicalMemPath);
+		for (const trig of [
+			"memories_vec_ai",
+			"memories_vec_ad",
+			"memories_vec_au"
+		]) db.exec(`DROP TRIGGER IF EXISTS ${trig}`);
+		for (const tbl of [
+			"memories_vec",
+			"vec_memories",
+			"memory_embeddings",
+			"memory_vectors"
+		]) if (tableExists(db, tbl)) {
+			db.exec(`DROP TABLE IF EXISTS ${tbl}`);
+			migrated += 1;
+		}
+		db.close();
+	} catch {}
+	const persDir = join(pantheonDir, "persistence");
+	for (const dbName of ["global.db", "project.db"]) {
+		const dbPath = join(persDir, dbName);
+		if (!existsSync(dbPath)) continue;
+		try {
+			const db = new DatabaseSync(dbPath, { readOnly: true });
+			for (const tbl of [
+				"kv",
+				"kv_store",
+				"context",
+				"checkpoints",
+				"sessions"
+			]) {
+				if (!tableExists(db, tbl) || countTableRows(db, tbl) === 0) continue;
+				const cols = db.prepare(`PRAGMA table_info(${tbl})`).all();
+				const colNames = new Set(cols.map((c) => c.name));
+				const keyCol = colNames.has("key") ? "key" : colNames.has("id") ? "id" : colNames.has("session_id") ? "session_id" : null;
+				const valCol = colNames.has("value") ? "value" : colNames.has("data") ? "data" : colNames.has("content") ? "content" : null;
+				if (!keyCol || !valCol) continue;
+				const nsSelect = colNames.has("namespace") ? "namespace" : `'${tbl === "checkpoints" || tbl === "sessions" ? "checkpoints" : "default"}' AS namespace`;
+				const rows = db.prepare(`SELECT ${nsSelect}, ${keyCol} AS k, ${valCol} AS v FROM ${tbl}`).all();
+				for (const r of rows) {
+					const ns = toSafeSegment(r.namespace, "default");
+					const key = toSafeSegment(r.k, "");
+					if (!key) continue;
+					const targetDir = join(persDir, ns);
+					const targetFile = join(targetDir, `${key}.json`);
+					if (!existsSync(targetFile)) {
+						mkdirSync(targetDir, { recursive: true });
+						writeFileSync(targetFile, JSON.stringify({
+							key,
+							namespace: ns,
+							value: String(r.v ?? ""),
+							updated_at: nowIso
+						}, null, 2), "utf8");
+						migrated += 1;
+					}
+				}
+			}
+			db.close();
+		} catch {}
+	}
+	const legacyGoalsPath = join(pantheonDir, "goals.json");
+	if (existsSync(legacyGoalsPath)) try {
+		const parsed = JSON.parse(readFileSync(legacyGoalsPath, "utf8"));
+		const list = Array.isArray(parsed) ? parsed : parsed && typeof parsed === "object" && Array.isArray(parsed.goals) ? parsed.goals ?? [] : [];
+		const goalsDir = join(pantheonDir, "goals");
+		for (const item of list) {
+			if (!item || typeof item !== "object") continue;
+			const rec = item;
+			const safeId = toSafeSegment(rec.id ?? rec.goal_id, "");
+			if (!safeId) continue;
+			const target = join(goalsDir, `${safeId}.json`);
+			if (!existsSync(target)) {
+				mkdirSync(goalsDir, { recursive: true });
+				writeFileSync(target, JSON.stringify({
+					id: safeId,
+					title: String(rec.title ?? rec.description ?? ""),
+					criteria: Array.isArray(rec.criteria) ? rec.criteria.map(String) : [],
+					status: String(rec.status ?? "active"),
+					created_at: typeof rec.created_at === "string" ? rec.created_at : nowIso,
+					updated_at: typeof rec.updated_at === "string" ? rec.updated_at : nowIso
+				}, null, 2), "utf8");
+				migrated += 1;
+			}
+		}
+	} catch {}
+	return migrated;
+}
+function scanLegacyArtifacts(options = {}) {
+	const workspaceDir = options.workspaceDir ? resolve(options.workspaceDir) : void 0;
+	const globalConfigDir = options.globalConfigDir ? resolve(options.globalConfigDir) : resolveAuditGlobalDir(options.env);
+	const items = [];
+	let unmigratedStores = 0;
+	if (globalConfigDir && existsSync(globalConfigDir) && globalConfigDir !== "/") {
+		const res = collectScopeAudit("global", globalConfigDir, globalConfigDir, options);
+		items.push(...res.items);
+		unmigratedStores += res.unmigratedStores;
+	}
+	if (workspaceDir && existsSync(workspaceDir) && workspaceDir !== "/" && (!globalConfigDir || !samePath(workspaceDir, globalConfigDir))) {
+		const res = collectScopeAudit("project", workspaceDir, join(workspaceDir, ".opencode"), options);
+		items.push(...res.items);
+		unmigratedStores += res.unmigratedStores;
+	}
+	const byScope = {
+		global: 0,
+		project: 0
+	};
+	const byCategory = {};
+	let totalBytes = 0;
+	for (const item of items) {
+		byScope[item.scope] = (byScope[item.scope] ?? 0) + 1;
+		byCategory[item.category] = (byCategory[item.category] ?? 0) + 1;
+		totalBytes += item.bytes;
+	}
+	return {
+		items,
+		summary: {
+			total: items.length,
+			totalBytes,
+			unmigratedStores,
+			byScope,
+			byCategory
+		}
+	};
+}
+function cleanLegacyArtifacts(options = {}) {
+	const workspaceDir = options.workspaceDir ? resolve(options.workspaceDir) : void 0;
+	const globalConfigDir = options.globalConfigDir ? resolve(options.globalConfigDir) : resolveAuditGlobalDir(options.env);
+	const scopeFilter = options.scope && options.scope !== "all" ? options.scope : null;
+	const scan = scanLegacyArtifacts(options);
+	let migratedRecords = 0;
+	if (scopeFilter !== "project" && globalConfigDir && existsSync(globalConfigDir) && globalConfigDir !== "/") migratedRecords += migrateScopeBeforeDelete(globalConfigDir);
+	if (scopeFilter !== "global" && workspaceDir && existsSync(workspaceDir) && workspaceDir !== "/" && (!globalConfigDir || !samePath(workspaceDir, globalConfigDir))) migratedRecords += migrateScopeBeforeDelete(workspaceDir);
+	const removed = [];
+	const errors = [];
+	let reclaimedBytes = 0;
+	for (const item of scan.items) {
+		if (scopeFilter && item.scope !== scopeFilter) continue;
+		if (item.path.endsWith("#legacy-vec")) {
+			removed.push(item.path);
+			continue;
+		}
+		const scopeRoot = item.scope === "global" ? globalConfigDir : workspaceDir;
+		if (!scopeRoot || !isConfinedWithin(scopeRoot, item.path)) {
+			errors.push({
+				path: item.path,
+				reason: "Path escapes target scope root"
+			});
+			continue;
+		}
+		try {
+			if (existsSync(item.path)) {
+				rmSync(item.path, {
+					recursive: true,
+					force: true
+				});
+				removed.push(item.path);
+				reclaimedBytes += item.bytes;
+			}
+			if (item.path.endsWith(".db")) for (const suffix of [
+				"-wal",
+				"-shm",
+				"-journal"
+			]) {
+				const sidecar = `${item.path}${suffix}`;
+				if (existsSync(sidecar) && isConfinedWithin(scopeRoot, sidecar)) {
+					const sidecarBytes = measurePathBytes(sidecar);
+					rmSync(sidecar, { force: true });
+					removed.push(sidecar);
+					reclaimedBytes += sidecarBytes;
+				}
+			}
+		} catch (err) {
+			errors.push({
+				path: item.path,
+				reason: err instanceof Error ? err.message : String(err)
+			});
+		}
+	}
+	return {
+		removed,
+		reclaimedBytes,
+		migratedRecords,
+		errors
 	};
 }
 //#endregion
@@ -2079,6 +2578,14 @@ function isSessionPinned(sessionID) {
 }
 //#endregion
 //#region src/update-status.ts
+/**
+* update-status.ts — the Updates section of the settings window.
+*
+* TUI-local; derives rows from the update-notice.ts primitives. The registry
+* fetch and state persistence stay in the .tsx glue (host side) — this module
+* only classifies the channel and builds rows from injected state, so the
+* whole thing is testable without network.
+*/
 /** The running version's channel: a `-beta.N` suffix rides the beta dist-tag. */
 function updateChannelFor(version) {
 	return /-beta\.\d+$/.test(version) ? "beta" : "stable";
@@ -2117,33 +2624,60 @@ function buildUpdatesTab(input) {
 		action: "update-check",
 		note: isPt ? "enter consulta o registro npm para o canal ativo" : "enter probes the registry for the running channel"
 	}];
+	const pluginCommand = channel === "beta" ? "opencode plugin add pantheon-opencode@beta" : "opencode plugin add pantheon-opencode";
 	if (latest) {
 		rows.push({
 			id: "update.latest",
 			name: isPt ? "Registro (npm)" : "Registry",
 			value: newer ? `v${latest} ${isPt ? "disponível" : "available"}` : isPt ? "atualizado" : "up to date",
-			note: newer ? isPt ? "instale com `pantheon-opencode update`" : "adopt with `pantheon-opencode update`" : isPt ? "nenhuma versão mais recente compatível" : "no newer compatible version"
+			note: newer ? isPt ? `atualize via \`${pluginCommand}\`` : `update via \`${pluginCommand}\`` : isPt ? "nenhuma versão mais recente compatível" : "no newer compatible version"
 		});
 		rows.push({
 			id: "update.run",
-			name: isPt ? "Atualizar agora" : "Update now",
+			name: isPt ? "Atualizar plugin" : "Update plugin",
 			value: input.updating ? isPt ? "atualizando…" : "updating…" : newer ? `${isPt ? "instalar" : "install"} v${latest}` : isPt ? "reinstalar / atualizar" : "reinstall / refresh",
 			action: "update-run",
-			note: newer ? isPt ? "enter executa `pantheon-opencode update`" : "enter runs `pantheon-opencode update`" : isPt ? "enter atualiza a cópia instalada" : "enter refreshes installed copy"
+			note: newer ? isPt ? `enter executa \`${pluginCommand}\`` : `enter runs \`${pluginCommand}\`` : isPt ? "enter atualiza o plugin instalado" : "enter refreshes the installed plugin"
 		});
 	}
 	rows.push({
 		id: "update.command",
-		name: isPt ? "Comando CLI" : "CLI command",
-		value: channel === "beta" ? "pantheon-opencode update" : "pantheon-opencode update --stable",
-		note: isPt ? "execute no terminal ou no terminal integrado do OpenCode" : "run in terminal or OpenCode Desktop terminal"
+		name: isPt ? "Comando Nativo" : "Plugin Command",
+		value: pluginCommand,
+		note: isPt ? "instalação nativa sem npx · funciona global ou no projeto" : "native plugin install (no npx) · works global or per-project"
 	});
+	const audit = input.legacyAudit;
+	const legacyRows = [
+		{
+			id: "legacy.status",
+			name: isPt ? "Auditoria legada" : "Legacy & Drift",
+			value: input.legacyScanning ? isPt ? "escaneando…" : "scanning…" : audit === void 0 || audit === null ? isPt ? "não escaneado" : "not scanned" : audit.total === 0 ? isPt ? "limpo (0 obsoletos)" : "clean (0 obsolete)" : isPt ? `${audit.total} arquivo(s) (${formatBytes(audit.totalBytes)})` : `${audit.total} file(s) (${formatBytes(audit.totalBytes)})`,
+			note: input.legacyNotice ? input.legacyNotice : audit && audit.total > 0 ? isPt ? `global: ${audit.byScope.global} · projeto: ${audit.byScope.project}${audit.unmigratedStores > 0 ? ` · ${audit.unmigratedStores} store(s) p/ migrar` : ""}` : `global: ${audit.byScope.global} · project: ${audit.byScope.project}${audit.unmigratedStores > 0 ? ` · ${audit.unmigratedStores} store(s) to migrate` : ""}` : isPt ? "verifica hooks V1, bancos não migrados e cópias redundantes" : "checks V1 hooks, unmigrated stores & redundant plugin copies"
+		},
+		{
+			id: "legacy.scan",
+			name: isPt ? "Escanear obsoletos" : "Scan legacy & drift",
+			value: input.legacyScanning ? isPt ? "escaneando…" : "scanning…" : isPt ? "verificar global + projeto" : "check global + project",
+			action: "legacy-scan",
+			note: isPt ? "enter escaneia sem modificar ou apagar nenhum arquivo" : "enter scans read-only without deleting anything"
+		},
+		{
+			id: "legacy.clean",
+			name: isPt ? "Migrar & limpar" : "Migrate & clean obsolete",
+			value: input.legacyCleaning ? isPt ? "limpando…" : "cleaning…" : audit && audit.total > 0 ? isPt ? `remover ${audit.total} (${formatBytes(audit.totalBytes)})` : `remove ${audit.total} (${formatBytes(audit.totalBytes)})` : isPt ? "nada para remover" : "nothing to remove",
+			action: "legacy-clean",
+			note: isPt ? "migra memória/contexto/goals antes e preserva agentes/skills custom" : "migrates memory/context/goals first · preserves custom agents/skills"
+		}
+	];
 	return {
 		id: "updates",
 		title: isPt ? "Atualizações" : "Updates",
 		groups: [{
-			title: isPt ? "Atualizações & Manutenção" : "Updates & Maintenance",
+			title: isPt ? "Atualizações do Plugin" : "Plugin Updates",
 			rows
+		}, {
+			title: isPt ? "Legados, Drift & Limpeza" : "Legacy, Drift & Cleanup",
+			rows: legacyRows
 		}]
 	};
 }
@@ -2334,7 +2868,7 @@ async function readChangelogForBundle(bundleUrl) {
 }
 /** The ambient build-time version, or null outside a tsdown build. */
 function embeddedVersion() {
-	return "2.2.0-beta.4";
+	return "2.2.0-beta.5";
 }
 /**
 * Resolve the running Pantheon version for the what's-new window: the plugin
@@ -2408,12 +2942,21 @@ function pantheonSettingsBlocking() {
 	return blocking();
 }
 let routerAvailable = false;
+function resolveWorkspaceDir(context) {
+	try {
+		const dataLoc = context.data?.location;
+		const def = dataLoc?.default?.();
+		const candidate = (def ? dataLoc?.info?.(def) : void 0)?.directory ?? def?.directory ?? def?.worktree;
+		if (typeof candidate === "string" && candidate.trim() !== "") return candidate;
+	} catch {}
+	return process.cwd();
+}
 function globalOverridesPath() {
 	const xdgConfig = process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? "", ".config");
 	return join(xdgConfig, "opencode", "pantheon-overrides.json");
 }
-function projectOverridesPath() {
-	return join(process.cwd(), ".pantheon", "overrides.json");
+function projectOverridesPath(workspaceDir = process.cwd()) {
+	return join(workspaceDir, ".pantheon", "overrides.json");
 }
 function readOneOverrides(path) {
 	try {
@@ -2433,9 +2976,9 @@ function readOneOverrides(path) {
 		};
 	}
 }
-function readOverridesLoad() {
+function readOverridesLoad(workspaceDir = process.cwd()) {
 	const globalRead = readOneOverrides(globalOverridesPath());
-	const projectRead = readOneOverrides(projectOverridesPath());
+	const projectRead = readOneOverrides(projectOverridesPath(workspaceDir));
 	return {
 		global: globalRead.value,
 		project: projectRead.value,
@@ -2443,7 +2986,14 @@ function readOverridesLoad() {
 	};
 }
 function writeOverridesToDisk(load) {
-	writeFileSync(globalOverridesPath(), serializeOverrides(load.global), "utf8");
+	const target = globalOverridesPath();
+	mkdirSync(dirname(target), { recursive: true });
+	writeFileSync(target, serializeOverrides(load.global), "utf8");
+}
+function writeProjectOverridesToDisk(workspaceDir, overrides) {
+	const target = projectOverridesPath(workspaceDir);
+	mkdirSync(dirname(target), { recursive: true });
+	writeFileSync(target, serializeOverrides(overrides), "utf8");
 }
 function userOpenCodeConfigPath() {
 	const xdgConfig = process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? "", ".config");
@@ -2559,7 +3109,7 @@ function persistUpdateCheckState(previous, latest) {
 	} catch {}
 }
 function resolveRunningVersion() {
-	return "2.2.0-beta.4";
+	return "2.2.0-beta.5";
 }
 const VALUE_WIDTH = 24;
 function SettingsWindow(props) {
@@ -2977,9 +3527,12 @@ function SettingsWindow(props) {
 let pageApi;
 function createWindowController(context, exit) {
 	const currentVersion = resolveRunningVersion();
+	const workspaceDir = resolveWorkspaceDir(context);
+	const initialLoad = readOverridesLoad(workspaceDir);
 	const [page, setPage] = createSignal(0);
 	const [selected, setSelected] = createSignal(0);
-	const [load, setLoad] = createSignal(readOverridesLoad());
+	const [load, setLoad] = createSignal(initialLoad);
+	const [overridesScope, setOverridesScope] = createSignal(Object.keys(initialLoad.project).length > 0 ? "project" : "global");
 	const [decision, setDecision] = createSignal(readDecisionRouterConfig());
 	const [goalLoop, setGoalLoop] = createSignal(readGoalLoopPrefs());
 	const [budgets, setBudgets] = createSignal(readDecisionBudgets());
@@ -2989,10 +3542,23 @@ function createWindowController(context, exit) {
 	const [lastChecked, setLastChecked] = createSignal(void 0);
 	const [checking, setChecking] = createSignal(false);
 	const [updating, setUpdating] = createSignal(false);
+	const [legacyAudit, setLegacyAudit] = createSignal(null);
+	const [legacyScanning, setLegacyScanning] = createSignal(false);
+	const [legacyCleaning, setLegacyCleaning] = createSignal(false);
+	const [legacyNotice, setLegacyNotice] = createSignal(void 0);
 	const [changelogItems, setChangelogItems] = createSignal([]);
 	const [draft, setDraft] = createSignal({});
 	const [notice, setNotice] = createSignal(void 0);
 	const [confirmExit, setConfirmExit] = createSignal(false);
+	queueMicrotask(() => {
+		try {
+			const scan = scanLegacyArtifacts({
+				workspaceDir,
+				runningVersion: currentVersion
+			});
+			setLegacyAudit(scan.summary);
+		} catch {}
+	});
 	createEffect(() => {
 		setTuiDraftPreview(draft());
 	});
@@ -3025,12 +3591,17 @@ function createWindowController(context, exit) {
 		};
 	};
 	const updatesInput = () => {
+		const noticeMsg = legacyNotice();
 		const input = {
 			currentVersion,
 			state: readUpdateCheckState(),
 			selectedChannel: selectedChannel(),
 			checking: checking(),
 			updating: updating(),
+			legacyAudit: legacyAudit(),
+			legacyScanning: legacyScanning(),
+			legacyCleaning: legacyCleaning(),
+			...noticeMsg !== void 0 ? { legacyNotice: noticeMsg } : {},
 			nowMs: Date.now()
 		};
 		const seen = lastChecked();
@@ -3040,8 +3611,9 @@ function createWindowController(context, exit) {
 	const tabs = () => {
 		const rawLang = tuiPrefs().layout?.language;
 		const lang = resolveLanguage(rawLang);
+		const activeScope = draft()["gates.scope"] ?? overridesScope();
 		return [
-			buildGatesTab(load(), lang),
+			buildGatesTab(load(), lang, activeScope),
 			buildDecisionTab(decision(), process.env, readAuthProviders(), readConfigProviders(), lang),
 			buildPresetTab(presetInput(), lang),
 			buildQuotaTab(void 0, lang, readQuotaPrefs()),
@@ -3100,32 +3672,101 @@ function createWindowController(context, exit) {
 	};
 	const runUpdateNow = () => {
 		if (updating()) return;
+		const pkgSpec = selectedChannel() === "beta" ? "pantheon-opencode@beta" : "pantheon-opencode";
 		setUpdating(true);
-		setNotice(`updating to ${selectedChannel()} channel…`);
-		execFile("npm", [
-			"install",
-			"-g",
-			`pantheon-opencode@${selectedChannel()}`
-		], { timeout: 6e4 }, (err) => {
-			setUpdating(false);
-			if (err) {
-				setNotice("run in terminal: pantheon-opencode update");
-				try {
-					context.ui.toast?.show?.({
-						variant: "warning",
-						message: "Update requires terminal permissions: run `pantheon-opencode update`"
-					});
-				} catch {}
-			} else {
-				setNotice("[OK] update complete — restart OpenCode or run `npx pantheon-opencode init`");
+		setNotice(`updating plugin (${pkgSpec})…`);
+		execFile("opencode", [
+			"plugin",
+			"add",
+			pkgSpec
+		], {
+			cwd: workspaceDir,
+			timeout: 6e4
+		}, (err) => {
+			if (!err) {
+				setUpdating(false);
+				setNotice("[OK] plugin updated — restart OpenCode to reload");
 				try {
 					context.ui.toast?.show?.({
 						variant: "info",
-						message: "Pantheon updated successfully!"
+						message: "Pantheon plugin updated! Restart OpenCode to load the new version."
 					});
 				} catch {}
+				return;
 			}
+			execFile("npm", [
+				"install",
+				"-g",
+				pkgSpec
+			], { timeout: 6e4 }, (npmErr) => {
+				setUpdating(false);
+				if (npmErr) {
+					setNotice(`run in terminal: opencode plugin add ${pkgSpec}`);
+					try {
+						context.ui.toast?.show?.({
+							variant: "warning",
+							message: `Update requires terminal permissions: run \`opencode plugin add ${pkgSpec}\``
+						});
+					} catch {}
+				} else {
+					setNotice("[OK] update complete — restart OpenCode to reload the plugin");
+					try {
+						context.ui.toast?.show?.({
+							variant: "info",
+							message: "Pantheon updated successfully!"
+						});
+					} catch {}
+				}
+			});
 		});
+	};
+	const scanLegacyNow = () => {
+		if (legacyScanning() || legacyCleaning()) return;
+		setLegacyScanning(true);
+		setLegacyNotice(void 0);
+		try {
+			const scan = scanLegacyArtifacts({
+				workspaceDir,
+				runningVersion: currentVersion
+			});
+			setLegacyAudit(scan.summary);
+			const isPt = resolveLanguage(tuiPrefs().layout?.language) === "pt-BR";
+			setNotice(scan.summary.total === 0 ? isPt ? "[OK] nenhum arquivo legado ou obsoleto encontrado" : "[OK] no legacy or obsolete files detected" : isPt ? `${scan.summary.total} arquivo(s) legado(s)/obsoleto(s) (${formatBytes(scan.summary.totalBytes)})` : `found ${scan.summary.total} legacy/obsolete file(s) (${formatBytes(scan.summary.totalBytes)})`);
+		} catch {
+			setNotice("legacy scan failed");
+		} finally {
+			setLegacyScanning(false);
+		}
+	};
+	const cleanLegacyNow = () => {
+		if (legacyCleaning() || legacyScanning()) return;
+		setLegacyCleaning(true);
+		const isPt = resolveLanguage(tuiPrefs().layout?.language) === "pt-BR";
+		try {
+			const res = cleanLegacyArtifacts({
+				workspaceDir,
+				runningVersion: currentVersion
+			});
+			const after = scanLegacyArtifacts({
+				workspaceDir,
+				runningVersion: currentVersion
+			});
+			setLegacyAudit(after.summary);
+			setLoad(readOverridesLoad(workspaceDir));
+			const summaryMsg = isPt ? `limpos ${res.removed.length} item(ns) (${formatBytes(res.reclaimedBytes)}), ${res.migratedRecords} registro(s) migrado(s)` : `removed ${res.removed.length} item(s) (${formatBytes(res.reclaimedBytes)}), ${res.migratedRecords} record(s) migrated`;
+			setLegacyNotice(summaryMsg);
+			setNotice(`[OK] ${summaryMsg}`);
+			try {
+				context.ui.toast?.show?.({
+					variant: res.errors.length > 0 ? "warning" : "info",
+					message: summaryMsg
+				});
+			} catch {}
+		} catch {
+			setNotice(isPt ? "falha ao limpar arquivos legados" : "legacy cleanup failed");
+		} finally {
+			setLegacyCleaning(false);
+		}
 	};
 	const dispatchWrite = (id, value) => {
 		if (id === "update.channel") {
@@ -3139,12 +3780,39 @@ function createWindowController(context, exit) {
 				reason: "unknown channel"
 			};
 		}
+		if (id === "gates.scope") {
+			if (value === "global" || value === "project") {
+				setOverridesScope(value);
+				return { ok: true };
+			}
+			return {
+				ok: false,
+				reason: "unknown scope"
+			};
+		}
 		if (id.startsWith("gate.")) {
+			const behaviorId = id.slice(5);
+			if ((draft()["gates.scope"] ?? overridesScope()) === "project") {
+				const nextProject = setOverrideState(load().project, behaviorId, value === "disabled" ? "disabled" : "enabled");
+				if (nextProject === load().project) return { ok: true };
+				try {
+					writeProjectOverridesToDisk(workspaceDir, nextProject);
+					setLoad({
+						...load(),
+						project: nextProject
+					});
+					return { ok: true };
+				} catch {
+					return {
+						ok: false,
+						reason: "project overrides disk write failed"
+					};
+				}
+			}
 			if (!canWriteOverrides(load())) return {
 				ok: false,
 				reason: "overrides file unreadable — repair with `doctor --fix`"
 			};
-			const behaviorId = id.slice(5);
 			const nextGlobal = setOverrideState(load().global, behaviorId, value === "disabled" ? "disabled" : "enabled");
 			if (nextGlobal === load().global) return { ok: true };
 			try {
@@ -3318,7 +3986,7 @@ function createWindowController(context, exit) {
 		const { applied, failed } = applyDraft(draft(), writer);
 		if (applied.length > 0) {
 			setDraft(settledDraft(draft(), applied));
-			setLoad(readOverridesLoad());
+			setLoad(readOverridesLoad(workspaceDir));
 			setDecision(readDecisionRouterConfig());
 			setPresetTick((tick) => tick + 1);
 		}
@@ -3396,6 +4064,8 @@ function createWindowController(context, exit) {
 			const row = list[index];
 			if (row?.action === "update-check") checkUpdatesNow();
 			else if (row?.action === "update-run") runUpdateNow();
+			else if (row?.action === "legacy-scan") scanLegacyNow();
+			else if (row?.action === "legacy-clean") cleanLegacyNow();
 			else if (row) {
 				setNotice(void 0);
 				setDraft(stageValue(draft(), row, direction));
@@ -3419,6 +4089,8 @@ function createWindowController(context, exit) {
 				const row = rows()[selected()];
 				if (row?.action === "update-check") checkUpdatesNow();
 				else if (row?.action === "update-run") runUpdateNow();
+				else if (row?.action === "legacy-scan") scanLegacyNow();
+				else if (row?.action === "legacy-clean") cleanLegacyNow();
 				else step(1);
 			},
 			nextTab,
@@ -7026,11 +7698,12 @@ async function checkForPantheonUpdate(context) {
 		mkdirSync(join(stateDir, "pantheon"), { recursive: true });
 		writeFileSync(statePath, `${JSON.stringify(nextCheckState(readState(), notice, Date.now()), null, 2)}\n`);
 	};
-	const response = await fetch("https://registry.npmjs.org/pantheon-opencode/latest", { signal: AbortSignal.timeout(5e3) });
+	const currentVersion = "2.2.0-beta.5";
+	const response = await fetch(registryUrlForChannel(updateChannelFor(currentVersion)), { signal: AbortSignal.timeout(5e3) });
 	const latest = String((await response.json())?.version ?? "");
 	if (!latest) return;
 	const notice = pickUpdateNotice({
-		currentVersion: "2.2.0-beta.4",
+		currentVersion,
 		latestVersion: latest,
 		state: readState(),
 		nowMs: Date.now()
@@ -7858,7 +8531,7 @@ function Sidebar(props) {
 			setProp(_el$13, "paddingLeft", 1);
 			setProp(_el$13, "paddingRight", 1);
 			setProp(_el$14, "attributes", 1);
-			insert(_el$14, `Pantheon v2.2.0-beta.4`);
+			insert(_el$14, `Pantheon v2.2.0-beta.5`);
 			insert(_el$15, () => `Erro no painel: ${err?.message ?? "desconhecido"}`);
 			effect((_p$) => {
 				var _v$3 = text(), _v$4 = muted();
@@ -7929,7 +8602,7 @@ function SidebarInner(props) {
 			get children() {
 				var _el$18 = createElement("text");
 				setProp(_el$18, "attributes", 1);
-				insert(_el$18, `Pantheon v2.2.0-beta.4`);
+				insert(_el$18, `Pantheon v2.2.0-beta.5`);
 				effect((_$p) => setProp(_el$18, "fg", text(), _$p));
 				return _el$18;
 			}
@@ -8912,7 +9585,7 @@ function HomeStatus(props) {
 		},
 		get children() {
 			var _el$120 = createElement("text");
-			insert(_el$120, () => `Pantheon v2.2.0-beta.4${preset().name ? ` ▸ ${preset().name}` : ""}`);
+			insert(_el$120, () => `Pantheon v2.2.0-beta.5${preset().name ? ` ▸ ${preset().name}` : ""}`);
 			effect((_$p) => setProp(_el$120, "fg", muted(), _$p));
 			return _el$120;
 		}

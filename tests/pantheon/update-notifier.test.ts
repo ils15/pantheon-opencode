@@ -38,7 +38,7 @@ describe('pickUpdateNotice', () => {
       nowMs: NOW,
     })
     assert.equal(first?.version, '2.0.0-beta.2')
-    assert.match(first?.message ?? '', /pantheon-opencode update/)
+    assert.match(first?.message ?? '', /opencode plugin add pantheon-opencode/)
   })
 
   it('stays silent inside the TTL and after notifying the same version', () => {

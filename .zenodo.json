@@ -8,7 +8,7 @@
       "orcid": "0000-0001-7787-7562"
     }
   ],
-  "version": "2.2.0-beta.4",
+  "version": "2.2.0-beta.5",
   "license": "MIT",
   "language": "eng",
   "keywords": ["opencode", "ai-agents", "multi-agent", "orchestration", "developer-tools"],

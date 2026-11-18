@@ -7,6 +7,7 @@
  * whole thing is testable without network.
  */
 
+import { formatBytes, type LegacyAuditSummary } from './legacy-audit.ts'
 import type { SettingsRow, SettingsTab } from './pantheon-settings-state.ts'
 import { comparePantheonVersions, type UpdateCheckState } from './update-notice.ts'
 
@@ -46,6 +47,14 @@ export interface UpdatesSectionInput {
   checking?: boolean
   /** An update run is in flight (this window). */
   updating?: boolean
+  /** Latest scan summary from legacy-audit.ts (global + project). */
+  legacyAudit?: LegacyAuditSummary | null
+  /** Whether a legacy scan is currently running. */
+  legacyScanning?: boolean
+  /** Whether a legacy cleanup is currently running. */
+  legacyCleaning?: boolean
+  /** Outcome notice from the last scan/clean action. */
+  legacyNotice?: string
   nowMs?: number
   languagePref?: string
 }
@@ -94,6 +103,11 @@ export function buildUpdatesTab(input: UpdatesSectionInput): SettingsTab {
     },
   ]
 
+  const pluginCommand =
+    channel === 'beta'
+      ? 'opencode plugin add pantheon-opencode@beta'
+      : 'opencode plugin add pantheon-opencode'
+
   if (latest) {
     rows.push({
       id: 'update.latest',
@@ -105,15 +119,15 @@ export function buildUpdatesTab(input: UpdatesSectionInput): SettingsTab {
           : 'up to date',
       note: newer
         ? isPt
-          ? 'instale com `pantheon-opencode update`'
-          : 'adopt with `pantheon-opencode update`'
+          ? `atualize via \`${pluginCommand}\``
+          : `update via \`${pluginCommand}\``
         : isPt
           ? 'nenhuma versão mais recente compatível'
           : 'no newer compatible version',
     })
     rows.push({
       id: 'update.run',
-      name: isPt ? 'Atualizar agora' : 'Update now',
+      name: isPt ? 'Atualizar plugin' : 'Update plugin',
       value: input.updating
         ? isPt
           ? 'atualizando…'
@@ -126,26 +140,95 @@ export function buildUpdatesTab(input: UpdatesSectionInput): SettingsTab {
       action: 'update-run',
       note: newer
         ? isPt
-          ? 'enter executa `pantheon-opencode update`'
-          : 'enter runs `pantheon-opencode update`'
+          ? `enter executa \`${pluginCommand}\``
+          : `enter runs \`${pluginCommand}\``
         : isPt
-          ? 'enter atualiza a cópia instalada'
-          : 'enter refreshes installed copy',
+          ? 'enter atualiza o plugin instalado'
+          : 'enter refreshes the installed plugin',
     })
   }
 
   rows.push({
     id: 'update.command',
-    name: isPt ? 'Comando CLI' : 'CLI command',
-    value: channel === 'beta' ? 'pantheon-opencode update' : 'pantheon-opencode update --stable',
+    name: isPt ? 'Comando Nativo' : 'Plugin Command',
+    value: pluginCommand,
     note: isPt
-      ? 'execute no terminal ou no terminal integrado do OpenCode'
-      : 'run in terminal or OpenCode Desktop terminal',
+      ? 'instalação nativa sem npx · funciona global ou no projeto'
+      : 'native plugin install (no npx) · works global or per-project',
   })
+
+  const audit = input.legacyAudit
+  const legacyRows: SettingsRow[] = [
+    {
+      id: 'legacy.status',
+      name: isPt ? 'Auditoria legada' : 'Legacy & Drift',
+      value: input.legacyScanning
+        ? isPt
+          ? 'escaneando…'
+          : 'scanning…'
+        : audit === undefined || audit === null
+          ? isPt
+            ? 'não escaneado'
+            : 'not scanned'
+          : audit.total === 0
+            ? isPt
+              ? 'limpo (0 obsoletos)'
+              : 'clean (0 obsolete)'
+            : isPt
+              ? `${audit.total} arquivo(s) (${formatBytes(audit.totalBytes)})`
+              : `${audit.total} file(s) (${formatBytes(audit.totalBytes)})`,
+      note: input.legacyNotice
+        ? input.legacyNotice
+        : audit && audit.total > 0
+          ? isPt
+            ? `global: ${audit.byScope.global} · projeto: ${audit.byScope.project}${audit.unmigratedStores > 0 ? ` · ${audit.unmigratedStores} store(s) p/ migrar` : ''}`
+            : `global: ${audit.byScope.global} · project: ${audit.byScope.project}${audit.unmigratedStores > 0 ? ` · ${audit.unmigratedStores} store(s) to migrate` : ''}`
+          : isPt
+            ? 'verifica hooks V1, bancos não migrados e cópias redundantes'
+            : 'checks V1 hooks, unmigrated stores & redundant plugin copies',
+    },
+    {
+      id: 'legacy.scan',
+      name: isPt ? 'Escanear obsoletos' : 'Scan legacy & drift',
+      value: input.legacyScanning
+        ? isPt
+          ? 'escaneando…'
+          : 'scanning…'
+        : isPt
+          ? 'verificar global + projeto'
+          : 'check global + project',
+      action: 'legacy-scan',
+      note: isPt
+        ? 'enter escaneia sem modificar ou apagar nenhum arquivo'
+        : 'enter scans read-only without deleting anything',
+    },
+    {
+      id: 'legacy.clean',
+      name: isPt ? 'Migrar & limpar' : 'Migrate & clean obsolete',
+      value: input.legacyCleaning
+        ? isPt
+          ? 'limpando…'
+          : 'cleaning…'
+        : audit && audit.total > 0
+          ? isPt
+            ? `remover ${audit.total} (${formatBytes(audit.totalBytes)})`
+            : `remove ${audit.total} (${formatBytes(audit.totalBytes)})`
+          : isPt
+            ? 'nada para remover'
+            : 'nothing to remove',
+      action: 'legacy-clean',
+      note: isPt
+        ? 'migra memória/contexto/goals antes e preserva agentes/skills custom'
+        : 'migrates memory/context/goals first · preserves custom agents/skills',
+    },
+  ]
 
   return {
     id: 'updates',
     title: isPt ? 'Atualizações' : 'Updates',
-    groups: [{ title: isPt ? 'Atualizações & Manutenção' : 'Updates & Maintenance', rows }],
+    groups: [
+      { title: isPt ? 'Atualizações do Plugin' : 'Plugin Updates', rows },
+      { title: isPt ? 'Legados, Drift & Limpeza' : 'Legacy, Drift & Cleanup', rows: legacyRows },
+    ],
   }
 }
