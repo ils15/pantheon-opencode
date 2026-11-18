@@ -177,7 +177,8 @@ export function createAgentForgeTool(fallbackDir?: string): PantheonToolDef {
         },
         readOnly: {
           type: 'boolean',
-          description: 'When true, denies edit/hashline_edit/bash/shell (investigation/audit only)',
+          description:
+            'When true, denies file edits and shell execution (investigation/audit only)',
         },
         testCommand: {
           type: 'string',
