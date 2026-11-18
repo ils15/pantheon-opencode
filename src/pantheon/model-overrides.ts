@@ -3,18 +3,18 @@ import { join } from 'node:path'
 import { KNOWN_AGENTS } from './model-agents.ts'
 import { capabilityEntry, normalizeCapability } from './presets.mjs'
 
-export interface V2ModelOverride {
+export interface ModelOverride {
   model: string
   variant?: 'low' | 'medium' | 'high'
 }
 
-export interface V2ModelConfiguration {
-  overrides: Record<string, V2ModelOverride>
+export interface ModelConfiguration {
+  overrides: Record<string, ModelOverride>
   legacyPresetMarker: { source: 'env' | 'file' } | null
   warnings: string[]
 }
 
-export interface V2AgentDraftLike {
+export interface AgentDraftLike {
   list(): readonly { id: string }[]
   update(id: string, update: (agent: { id: string; model?: unknown }) => void): void
 }
@@ -32,7 +32,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function isVariant(value: unknown): value is NonNullable<V2ModelOverride['variant']> {
+function isVariant(value: unknown): value is NonNullable<ModelOverride['variant']> {
   return typeof value === 'string' && VARIANTS.has(value)
 }
 
@@ -69,7 +69,7 @@ class NonRegularPresetFileError extends Error {
 }
 
 /** Open and read a regular preset file without following links or blocking on special files. */
-export function readV2PresetFile(
+export function readPresetFile(
   candidate: string,
   fileSystem: PresetFileSystem = { openSync, fstatSync, readFileSync, closeSync },
 ): string {
@@ -102,8 +102,8 @@ export function readV2PresetFile(
 function parseOverrides(
   value: Record<string, unknown>,
   warnings: string[],
-): Record<string, V2ModelOverride> {
-  const parsed: Record<string, V2ModelOverride> = {}
+): Record<string, ModelOverride> {
+  const parsed: Record<string, ModelOverride> = {}
   for (const [agent, raw] of Object.entries(value)) {
     if (!KNOWN_AGENTS_SET.has(agent)) {
       warnings.push(
@@ -121,7 +121,7 @@ function parseOverrides(
       )
       continue
     }
-    const override: V2ModelOverride = { model }
+    const override: ModelOverride = { model }
     if (isVariant(variant)) override.variant = variant
     parsed[agent] = override
   }
@@ -132,14 +132,14 @@ function defaultCandidates(): string[] {
   return [join(process.cwd(), '.pantheon', 'active-preset.json')]
 }
 
-/** Read explicit per-agent project overrides only; global files are ignored in V2. */
-export function readV2ModelConfiguration(
+/** Read explicit per-agent project overrides only. */
+export function readModelConfiguration(
   options: { candidates?: string[]; env?: NodeJS.ProcessEnv } = {},
-): V2ModelConfiguration {
+): ModelConfiguration {
   const env = options.env ?? process.env
   const envName = env.PANTHEON_MODEL_PRESET?.trim()
   let fileMarkerPresent = false
-  const configurations: Array<Record<string, V2ModelOverride>> = []
+  const configurations: Array<Record<string, ModelOverride>> = []
   const warnings: string[] = []
   let readFailure = false
 
@@ -149,12 +149,12 @@ export function readV2ModelConfiguration(
   for (const candidate of candidates.slice(0, 1)) {
     let rawContent: string
     try {
-      rawContent = readV2PresetFile(candidate)
+      rawContent = readPresetFile(candidate)
     } catch (error: unknown) {
       if (error instanceof Error && 'code' in error && error.code === 'ENOENT') continue
       if (error instanceof SecurePresetReadUnavailableError) {
         warnings.push(
-          'V2 project model configuration cannot be read securely on this platform; manual overrides were not applied.',
+          'Project model configuration cannot be read securely on this platform; manual overrides were not applied.',
         )
         readFailure = true
         break
@@ -164,13 +164,13 @@ export function readV2ModelConfiguration(
         (error instanceof Error && 'code' in error && error.code === 'ELOOP')
       ) {
         warnings.push(
-          'V2 project model configuration is not a regular file or is a symlink; check active-preset.json. Manual overrides were not applied.',
+          'Project model configuration is not a regular file or is a symlink; check active-preset.json. Manual overrides were not applied.',
         )
         readFailure = true
         break
       }
       warnings.push(
-        'V2 project model configuration could not be read; check active-preset.json file access. Manual overrides were not applied.',
+        'Project model configuration could not be read; check active-preset.json file access. Manual overrides were not applied.',
       )
       readFailure = true
       break
@@ -181,30 +181,30 @@ export function readV2ModelConfiguration(
       raw = JSON.parse(rawContent)
     } catch {
       warnings.push(
-        'V2 project model configuration contains invalid JSON; correct active-preset.json. Manual overrides were not applied.',
+        'Project model configuration contains invalid JSON; correct active-preset.json. Manual overrides were not applied.',
       )
       readFailure = true
       break
     }
     if (!isRecord(raw)) {
       warnings.push(
-        'V2 project model configuration has an invalid shape; correct active-preset.json. Manual overrides were not applied.',
+        'Project model configuration has an invalid shape; correct active-preset.json. Manual overrides were not applied.',
       )
       readFailure = true
       break
     }
 
     if (Object.hasOwn(raw, 'preset')) fileMarkerPresent = true
-    let parsedOverrides: Record<string, V2ModelOverride> = {}
+    let parsedOverrides: Record<string, ModelOverride> = {}
     if (Object.hasOwn(raw, 'overrides')) {
       if (!isRecord(raw.overrides)) {
         warnings.push(
-          'V2 project model configuration has an invalid `overrides` object; expected an object in active-preset.json. The project file contributed no manual overrides.',
+          'Project model configuration has an invalid `overrides` object; expected an object in active-preset.json. The project file contributed no manual overrides.',
         )
       } else if (Object.hasOwn(raw.overrides, 'agents')) {
         if (!isRecord(raw.overrides.agents)) {
           warnings.push(
-            'V2 project model configuration has invalid `overrides.agents`; expected an object in active-preset.json. The project file contributed no manual overrides.',
+            'Project model configuration has invalid `overrides.agents`; expected an object in active-preset.json. The project file contributed no manual overrides.',
           )
         } else {
           parsedOverrides = parseOverrides(raw.overrides.agents, warnings)
@@ -223,7 +223,7 @@ export function readV2ModelConfiguration(
 
   // A project-file read/parse failure fails closed. Malformed entries warn but
   // leave other valid project entries available.
-  const overrides: Record<string, V2ModelOverride> = {}
+  const overrides: Record<string, ModelOverride> = {}
   if (!readFailure) {
     Object.assign(overrides, configurations[0] ?? {})
   }
@@ -235,9 +235,9 @@ export function readV2ModelConfiguration(
 }
 
 /** Apply one explicit model override while leaving all other agent settings intact. */
-export function applyV2ModelOverride(
+export function applyModelOverride(
   agent: AgentModelLike,
-  override: V2ModelOverride | undefined,
+  override: ModelOverride | undefined,
 ): void {
   if (
     !KNOWN_AGENTS_SET.has(agent.id) ||
@@ -262,14 +262,14 @@ export function applyV2ModelOverride(
 }
 
 /** Apply explicit overrides to matching agents and leave unmatched host defaults untouched. */
-export function applyV2ModelOverrides(
-  draft: V2AgentDraftLike,
-  overrides: Record<string, V2ModelOverride>,
+export function applyModelOverrides(
+  draft: AgentDraftLike,
+  overrides: Record<string, ModelOverride>,
 ): void {
   for (const agent of draft.list()) {
     if (!KNOWN_AGENTS_SET.has(agent.id)) continue
     const override = overrides[agent.id]
     if (!override) continue
-    draft.update(agent.id, (current) => applyV2ModelOverride(current, override))
+    draft.update(agent.id, (current) => applyModelOverride(current, override))
   }
 }

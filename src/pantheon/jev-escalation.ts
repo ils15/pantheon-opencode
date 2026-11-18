@@ -17,7 +17,7 @@
  * decision is computed and recorded; applying it is the separately-reviewed
  * activation step. The mechanism — set the per-agent override for the delegate
  * BEFORE dispatch through the existing model-override mechanism
- * (`model-overrides.applyV2ModelOverride`), restore the previous model
+ * (`model-overrides.applyModelOverride`), restore the previous model
  * after — is implemented in {@link applyEscalationOverride} and
  * {@link clearEscalationOverride}, and the shadow observer has NO path to
  * them: its options carry no agent draft and its body never calls them. The
@@ -80,7 +80,7 @@ import { PANTHEON_AGENTS } from './delegation-policy.ts'
 import { type GatedNativeJevRuntime, runGatedNativeJevCall } from './jev-decision-tool.ts'
 import { consumeJevDecisionResult } from './jev-decisions.ts'
 import { mapGateFailureToSkipReason } from './jev-risk-gate.ts'
-import { applyV2ModelOverride, readV2ModelConfiguration } from './model-overrides.ts'
+import { applyModelOverride, readModelConfiguration } from './model-overrides.ts'
 import type { NativeDecisionRequest } from './native-decisions.ts'
 
 /** On/off switch read by the plugin wiring. Any other value means off. */
@@ -442,7 +442,7 @@ export interface EscalationOverrideHandle {
 /**
  * The ACTIVATION mechanism — never called by the shadow observer. Rides the
  * existing per-agent model-override mechanism
- * (`model-overrides.applyV2ModelOverride`): for a `cheap` verdict, sets the
+ * (`model-overrides.applyModelOverride`): for a `cheap` verdict, sets the
  * delegate's model to {@link J3_ESCALATION_CHEAP_MODEL} on the agent draft
  * BEFORE dispatch, exactly the way a project preset or `pantheon_model` does,
  * and returns a handle carrying the previous model. Any other verdict — and
@@ -457,7 +457,7 @@ export function applyEscalationOverride(
   if (verdict !== 'cheap') return undefined
   if (agent === null || typeof agent !== 'object') return undefined
   const previousModel = agent.model
-  applyV2ModelOverride(agent, { model: J3_ESCALATION_CHEAP_MODEL })
+  applyModelOverride(agent, { model: J3_ESCALATION_CHEAP_MODEL })
   // The mechanism refuses unknown agents and unsupported models by leaving
   // the draft untouched; only a real application returns a handle.
   if (agent.model === previousModel) return undefined
@@ -487,7 +487,7 @@ export function clearEscalationOverride(
  */
 function defaultIsPinnedModel(delegateId: string): boolean {
   try {
-    const configuration = readV2ModelConfiguration()
+    const configuration = readModelConfiguration()
     return Object.hasOwn(configuration.overrides, delegateId)
   } catch {
     return true

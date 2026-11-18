@@ -6,7 +6,7 @@
  * whats-new.tsx — the one-time "What's new" window (per Pantheon version).
  *
  * When the running Pantheon version changed since the last TUI start, the V2
- * entrypoint fires {@link maybeShowWhatsNewV2} (fire-and-forget, never
+ * entrypoint fires {@link maybeShowWhatsNew} (fire-and-forget, never
  * awaited — startup must never block). The decision lives in
  * whats-new-open.ts; this file is only the host glue + view:
  * `context.ui.dialog.show` plus a keymap layer gated on the open signal so
@@ -160,7 +160,7 @@ export function WhatsNewContent(props: {
  * Entry glue: resolve version + shipped CHANGELOG.md, then show the window
  * through the host dialog stack once. Never throws.
  */
-export async function maybeShowWhatsNewV2(context: Context): Promise<void> {
+export async function maybeShowWhatsNew(context: Context): Promise<void> {
   try {
     const version = await resolveRunningVersion(import.meta.url)
     if (!version) return

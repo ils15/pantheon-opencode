@@ -8244,7 +8244,7 @@ var NonRegularPresetFileError = class extends Error {
     super("Preset file is not a regular file");
   }
 };
-function readV2PresetFile(candidate, fileSystem = { openSync: openSync3, fstatSync, readFileSync: readFileSync5, closeSync: closeSync3 }) {
+function readPresetFile(candidate, fileSystem = { openSync: openSync3, fstatSync, readFileSync: readFileSync5, closeSync: closeSync3 }) {
   const noFollowFlag = constants2.O_NOFOLLOW;
   const nonBlockFlag = constants2.O_NONBLOCK;
   if (noFollowFlag === void 0 || noFollowFlag === 0 || nonBlockFlag === void 0 || nonBlockFlag === 0) {
@@ -8292,7 +8292,7 @@ function parseOverrides(value, warnings) {
 function defaultCandidates() {
   return [join8(process.cwd(), ".pantheon", "active-preset.json")];
 }
-function readV2ModelConfiguration(options = {}) {
+function readModelConfiguration(options = {}) {
   const env = options.env ?? process.env;
   const envName = env.PANTHEON_MODEL_PRESET?.trim();
   let fileMarkerPresent = false;
@@ -8303,25 +8303,25 @@ function readV2ModelConfiguration(options = {}) {
   for (const candidate of candidates.slice(0, 1)) {
     let rawContent;
     try {
-      rawContent = readV2PresetFile(candidate);
+      rawContent = readPresetFile(candidate);
     } catch (error) {
       if (error instanceof Error && "code" in error && error.code === "ENOENT") continue;
       if (error instanceof SecurePresetReadUnavailableError) {
         warnings.push(
-          "V2 project model configuration cannot be read securely on this platform; manual overrides were not applied."
+          "Project model configuration cannot be read securely on this platform; manual overrides were not applied."
         );
         readFailure = true;
         break;
       }
       if (error instanceof NonRegularPresetFileError || error instanceof Error && "code" in error && error.code === "ELOOP") {
         warnings.push(
-          "V2 project model configuration is not a regular file or is a symlink; check active-preset.json. Manual overrides were not applied."
+          "Project model configuration is not a regular file or is a symlink; check active-preset.json. Manual overrides were not applied."
         );
         readFailure = true;
         break;
       }
       warnings.push(
-        "V2 project model configuration could not be read; check active-preset.json file access. Manual overrides were not applied."
+        "Project model configuration could not be read; check active-preset.json file access. Manual overrides were not applied."
       );
       readFailure = true;
       break;
@@ -8331,14 +8331,14 @@ function readV2ModelConfiguration(options = {}) {
       raw = JSON.parse(rawContent);
     } catch {
       warnings.push(
-        "V2 project model configuration contains invalid JSON; correct active-preset.json. Manual overrides were not applied."
+        "Project model configuration contains invalid JSON; correct active-preset.json. Manual overrides were not applied."
       );
       readFailure = true;
       break;
     }
     if (!isRecord17(raw)) {
       warnings.push(
-        "V2 project model configuration has an invalid shape; correct active-preset.json. Manual overrides were not applied."
+        "Project model configuration has an invalid shape; correct active-preset.json. Manual overrides were not applied."
       );
       readFailure = true;
       break;
@@ -8348,12 +8348,12 @@ function readV2ModelConfiguration(options = {}) {
     if (Object.hasOwn(raw, "overrides")) {
       if (!isRecord17(raw.overrides)) {
         warnings.push(
-          "V2 project model configuration has an invalid `overrides` object; expected an object in active-preset.json. The project file contributed no manual overrides."
+          "Project model configuration has an invalid `overrides` object; expected an object in active-preset.json. The project file contributed no manual overrides."
         );
       } else if (Object.hasOwn(raw.overrides, "agents")) {
         if (!isRecord17(raw.overrides.agents)) {
           warnings.push(
-            "V2 project model configuration has invalid `overrides.agents`; expected an object in active-preset.json. The project file contributed no manual overrides."
+            "Project model configuration has invalid `overrides.agents`; expected an object in active-preset.json. The project file contributed no manual overrides."
           );
         } else {
           parsedOverrides = parseOverrides(raw.overrides.agents, warnings);
@@ -8374,7 +8374,7 @@ function readV2ModelConfiguration(options = {}) {
     warnings
   };
 }
-function applyV2ModelOverride(agent, override) {
+function applyModelOverride(agent, override) {
   if (!KNOWN_AGENTS_SET.has(agent.id) || !override || !isSupportedModelChoice(override.model, override.variant)) {
     return;
   }
@@ -8392,12 +8392,12 @@ function applyV2ModelOverride(agent, override) {
   }
   agent.model = model;
 }
-function applyV2ModelOverrides(draft, overrides) {
+function applyModelOverrides(draft, overrides) {
   for (const agent of draft.list()) {
     if (!KNOWN_AGENTS_SET.has(agent.id)) continue;
     const override = overrides[agent.id];
     if (!override) continue;
-    draft.update(agent.id, (current) => applyV2ModelOverride(current, override));
+    draft.update(agent.id, (current) => applyModelOverride(current, override));
   }
 }
 
@@ -8563,7 +8563,7 @@ function encodeEscalationReason(input) {
 }
 function defaultIsPinnedModel(delegateId) {
   try {
-    const configuration = readV2ModelConfiguration();
+    const configuration = readModelConfiguration();
     return Object.hasOwn(configuration.overrides, delegateId);
   } catch {
     return true;
@@ -15771,7 +15771,7 @@ async function updateActivePreset(options, args, action, scope) {
       } catch {
         options.logger?.warn?.("health-check: active-preset.json verification failed");
       }
-      const activation = options.v2Mode ? "V2 reads this override during the next agent-config transform on a subsequent OpenCode configuration load; the current session is unchanged." : "Restart OpenCode for the change to take effect.";
+      const activation = options.v2Mode ? "Pantheon reads this override during the next agent-config transform on a subsequent OpenCode configuration load; the current session is unchanged." : "Restart OpenCode for the change to take effect.";
       const base = `Model override set (${scope}): ${agentKey} \u2192 ${model} (effort: ${variantInfo.variant ?? "none"}). ${activation}`;
       return visionWarning ? `${base}
 ${visionWarning}` : base;
@@ -15781,7 +15781,7 @@ ${visionWarning}` : base;
       }
       delete agents[agentKey];
       await writeActivePresetAtomically(path5, shaped, current);
-      const activation = options.v2Mode ? "V2 reads overrides during the next agent-config transform on a subsequent OpenCode configuration load; the current session is unchanged." : "Restart OpenCode for the change to take effect.";
+      const activation = options.v2Mode ? "Pantheon reads overrides during the next agent-config transform on a subsequent OpenCode configuration load; the current session is unchanged." : "Restart OpenCode for the change to take effect.";
       return `Model override removed (${scope}): ${agentKey}. ${activation}`;
     }
   });
@@ -15791,7 +15791,7 @@ async function resolvePerAgentStatus(options) {
   const candidates = activePresetCandidatesList(options);
   const warnings = [];
   if (options.v2Mode) {
-    const configuration = readV2ModelConfiguration({ candidates, env });
+    const configuration = readModelConfiguration({ candidates, env });
     warnings.push(...configuration.warnings);
     const agents2 = KNOWN_AGENTS.map((agent) => {
       const override = configuration.overrides[agent];
@@ -15880,18 +15880,18 @@ async function renderStatus(options) {
     options.v2Mode ? "Pantheon model configuration per-agent (configured values only; not a readout of the model serving a completion):" : "Pantheon model configuration per-agent (restart OpenCode after changes):"
   );
   if (options.v2Mode) {
-    lines.push("V2 manual override scope: project only; global overrides are not read or applied.");
+    lines.push("Manual override scope: project only; global overrides are not read or applied.");
     if (legacyPresetMarker) {
       const markerSource = legacyPresetMarker.source === "env" ? "PANTHEON_MODEL_PRESET" : "active-preset.json";
       lines.push(
-        `Legacy preset marker present in ${markerSource} \u2014 ignored in V2; static presets are retired.`
+        `Legacy preset marker present in ${markerSource} \u2014 ignored; static presets are retired.`
       );
     } else {
-      lines.push("Legacy preset marker: none (static presets are retired and ignored in V2).");
+      lines.push("Legacy preset marker: none (static presets are retired and ignored).");
     }
     lines.push("Host default remains unchanged when no manual override is set.");
     lines.push(
-      "Manual project-scoped per-agent overrides are read by the V2 agent transform on the next OpenCode configuration load; the current session is unchanged."
+      "Manual project-scoped per-agent overrides are read by the agent transform on the next OpenCode configuration load; the current session is unchanged."
     );
   } else if (presetName) {
     const originLabel = presetSource === "env" ? "env" : presetSource === "file" ? "preset" : presetSource;
@@ -16029,7 +16029,7 @@ function createModelCommand(options = {}) {
   } : modelArgs;
   return {
     pantheon_model: {
-      description: options.v2Mode ? "Show, set, or reset explicit per-agent project-scoped model overrides in active-preset.json. Global overrides are not read or written in V2; future support requires separate explicit authorization. V2 ignores static preset names and PANTHEON_MODEL_PRESET; no wizard or implicit model selection. Status reports project-scoped configured values only and never writes .env or top-level model/small_model." : "Show, set, or reset per-agent model overrides in active-preset.json (project or global). Overrides win over preset; env preset wins over file. Never writes .env or top-level model/small_model.",
+      description: options.v2Mode ? "Show, set, or reset explicit per-agent project-scoped model overrides in active-preset.json. Global overrides are not read or written; future support requires separate explicit authorization. Ignores static preset names and PANTHEON_MODEL_PRESET; no wizard or implicit model selection. Status reports project-scoped configured values only and never writes .env or top-level model/small_model." : "Show, set, or reset per-agent model overrides in active-preset.json (project or global). Overrides win over preset; env preset wins over file. Never writes .env or top-level model/small_model.",
       args,
       execute: async (args2, _ctx) => {
         try {
@@ -18007,7 +18007,7 @@ function transformAgents(draft) {
   }
   let configuredOverrides = {};
   try {
-    const modelConfiguration = readV2ModelConfiguration({
+    const modelConfiguration = readModelConfiguration({
       candidates: [
         path4.join(activeHostWorkspaceDir ?? process.cwd(), ".pantheon", "active-preset.json")
       ]
@@ -18016,7 +18016,7 @@ function transformAgents(draft) {
     if (modelConfiguration.warnings.length > 0) {
       markUnsupported("agent-model-overrides");
     }
-    applyV2ModelOverrides(draft, modelConfiguration.overrides);
+    applyModelOverrides(draft, modelConfiguration.overrides);
   } catch {
     markUnsupported("agent-model-overrides");
   }
@@ -18050,7 +18050,7 @@ function transformAgents(draft) {
             }
             const override = configuredOverrides[id];
             if (override) {
-              applyV2ModelOverride(current, override);
+              applyModelOverride(current, override);
             }
             const body = typeof def.body === "string" ? def.body.trim() : "";
             current.system = body ? buildPrefixCachedPrompt({ identity: body, currentTurn: POLICY }).prompt : POLICY;

@@ -20,6 +20,10 @@ async function callTool(
 
 test('native memory tools store, recall, search via FTS5, filter expired entries, and delete', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'pantheon-native-mem-'))
+  const prevHome = process.env.HOME
+  const prevXdg = process.env.XDG_CONFIG_HOME
+  process.env.HOME = dir
+  process.env.XDG_CONFIG_HOME = join(dir, '.config')
   try {
     const tools = new Map(
       createNativeMemoryAndPersistenceTools(dir).map((tool) => [tool.name, tool]),
@@ -90,12 +94,20 @@ test('native memory tools store, recall, search via FTS5, filter expired entries
     )
     assert.equal(forgetRes.deleted, true)
   } finally {
+    if (prevHome === undefined) delete process.env.HOME
+    else process.env.HOME = prevHome
+    if (prevXdg === undefined) delete process.env.XDG_CONFIG_HOME
+    else process.env.XDG_CONFIG_HOME = prevXdg
     rmSync(dir, { recursive: true, force: true })
   }
 })
 
 test('native persistence and goal tools save/load state and block path traversal', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'pantheon-native-persist-'))
+  const prevHome = process.env.HOME
+  const prevXdg = process.env.XDG_CONFIG_HOME
+  process.env.HOME = dir
+  process.env.XDG_CONFIG_HOME = join(dir, '.config')
   try {
     const tools = new Map(
       createNativeMemoryAndPersistenceTools(dir).map((tool) => [tool.name, tool]),
@@ -154,6 +166,10 @@ test('native persistence and goal tools save/load state and block path traversal
     assert.equal(done.ok, true)
     assert.equal((done.goal as Record<string, unknown>).status, 'completed')
   } finally {
+    if (prevHome === undefined) delete process.env.HOME
+    else process.env.HOME = prevHome
+    if (prevXdg === undefined) delete process.env.XDG_CONFIG_HOME
+    else process.env.XDG_CONFIG_HOME = prevXdg
     rmSync(dir, { recursive: true, force: true })
   }
 })

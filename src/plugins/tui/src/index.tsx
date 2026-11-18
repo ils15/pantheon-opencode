@@ -52,7 +52,7 @@ import {
 } from './tui-prefs'
 import { nextCheckState, pickUpdateNotice, type UpdateCheckState } from './update-notice.ts'
 import { registryUrlForChannel, updateChannelFor } from './update-status.ts'
-import { maybeShowWhatsNewV2 } from './whats-new'
+import { maybeShowWhatsNew } from './whats-new'
 
 export type { ContextProgressTone } from './context-gauge'
 export {
@@ -5200,7 +5200,7 @@ const plugin = Plugin.define({
     // resolves the running version and the shipped CHANGELOG.md, then opens a
     // host dialog when the version changed since the last dismissal. Fail-open;
     // a missing changelog or unreadable state simply means no window.
-    void maybeShowWhatsNewV2(context)
+    void maybeShowWhatsNew(context)
     return () => {
       clearTimeout(updateNoticeTimer)
       if (typeof unregisterSidebar === 'function') unregisterSidebar()
