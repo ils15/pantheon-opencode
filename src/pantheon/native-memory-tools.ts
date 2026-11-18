@@ -18,6 +18,7 @@ import {
 } from 'node:fs'
 import { join, resolve, sep } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { ensureLegacyStoresMigratedOnce } from './legacy-store-migration.mjs'
 import { resolveToolCwd } from './tool-context.ts'
 import type { V2ToolDef, V2ToolResult } from './tools.ts'
 
@@ -50,6 +51,11 @@ function resolveConfinedPath(baseDir: string, ...segments: string[]): string {
 const dbCache = new Map<string, DatabaseSync>()
 
 function getMemoryDb(workspaceDir: string): DatabaseSync {
+  try {
+    ensureLegacyStoresMigratedOnce(workspaceDir)
+  } catch {
+    /* fail-open */
+  }
   const memoryDir = join(workspaceDir, '.pantheon', 'memory')
   mkdirSync(memoryDir, { recursive: true })
   const dbPath = resolveConfinedPath(memoryDir, 'memory.db')
@@ -440,6 +446,11 @@ export function createNativeMemoryAndPersistenceTools(fallbackDir?: string): V2T
             return jsonResult({ ok: false, error: 'content must be a non-empty string' })
           }
           const cwd = resolveToolCwd(context, fallbackDir)
+          try {
+            ensureLegacyStoresMigratedOnce(cwd)
+          } catch {
+            /* fail-open */
+          }
           const baseDir = join(cwd, '.pantheon', 'persistence')
           const dir = resolveConfinedPath(baseDir, ns)
           mkdirSync(dir, { recursive: true })
@@ -497,6 +508,11 @@ export function createNativeMemoryAndPersistenceTools(fallbackDir?: string): V2T
             })
           }
           const cwd = resolveToolCwd(context, fallbackDir)
+          try {
+            ensureLegacyStoresMigratedOnce(cwd)
+          } catch {
+            /* fail-open */
+          }
           const baseDir = join(cwd, '.pantheon', 'persistence')
           const dir = resolveConfinedPath(baseDir, ns)
           const filePath = resolveConfinedPath(dir, `${sessionId}.json`)
@@ -541,6 +557,11 @@ export function createNativeMemoryAndPersistenceTools(fallbackDir?: string): V2T
             return jsonResult({ ok: false, error: 'id must be a safe identifier' })
           }
           const cwd = resolveToolCwd(context, fallbackDir)
+          try {
+            ensureLegacyStoresMigratedOnce(cwd)
+          } catch {
+            /* fail-open */
+          }
           const goalsDir = join(cwd, '.pantheon', 'goals')
           const filePath = resolveConfinedPath(goalsDir, `${rawId}.json`)
           const nowIso = new Date().toISOString()
@@ -576,6 +597,11 @@ export function createNativeMemoryAndPersistenceTools(fallbackDir?: string): V2T
       execute: async (input, context) => {
         try {
           const cwd = resolveToolCwd(context, fallbackDir)
+          try {
+            ensureLegacyStoresMigratedOnce(cwd)
+          } catch {
+            /* fail-open */
+          }
           const goalsDir = join(cwd, '.pantheon', 'goals')
           mkdirSync(goalsDir, { recursive: true })
           if (typeof input.id === 'string' && input.id.trim()) {
@@ -622,6 +648,11 @@ export function createNativeMemoryAndPersistenceTools(fallbackDir?: string): V2T
             return jsonResult({ ok: false, error: 'valid goal id is required' })
           }
           const cwd = resolveToolCwd(context, fallbackDir)
+          try {
+            ensureLegacyStoresMigratedOnce(cwd)
+          } catch {
+            /* fail-open */
+          }
           const goalsDir = join(cwd, '.pantheon', 'goals')
           const filePath = resolveConfinedPath(goalsDir, `${id}.json`)
           if (!existsSync(filePath)) return jsonResult({ ok: false, error: 'not_found', id })
@@ -662,6 +693,11 @@ export function createNativeMemoryAndPersistenceTools(fallbackDir?: string): V2T
             return jsonResult({ ok: false, error: 'valid goal id is required' })
           }
           const cwd = resolveToolCwd(context, fallbackDir)
+          try {
+            ensureLegacyStoresMigratedOnce(cwd)
+          } catch {
+            /* fail-open */
+          }
           const goalsDir = join(cwd, '.pantheon', 'goals')
           const filePath = resolveConfinedPath(goalsDir, `${id}.json`)
           if (!existsSync(filePath)) return jsonResult({ ok: false, error: 'not_found', id })

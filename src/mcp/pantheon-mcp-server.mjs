@@ -29,6 +29,7 @@ import { basename, dirname, extname, join, resolve, sep } from 'node:path'
 import { createInterface } from 'node:readline'
 import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
+import { ensureLegacyStoresMigratedOnce } from '../pantheon/legacy-store-migration.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(__dirname, '..', '..')
@@ -108,7 +109,13 @@ function getProjectRoot() {
 let dbInstance = null
 function getMemoryDb() {
   if (dbInstance) return dbInstance
-  const memoryDir = join(getProjectRoot(), '.pantheon', 'memory')
+  const projectRoot = getProjectRoot()
+  try {
+    ensureLegacyStoresMigratedOnce(projectRoot)
+  } catch {
+    /* fail-open */
+  }
+  const memoryDir = join(projectRoot, '.pantheon', 'memory')
   mkdirSync(memoryDir, { recursive: true })
   const dbPath = join(memoryDir, 'memory.db')
   const db = new DatabaseSync(dbPath)
@@ -433,6 +440,11 @@ function isNotExpiredSql() {
 
 async function handleToolCall(name, params = {}) {
   const nowIso = new Date().toISOString()
+  try {
+    ensureLegacyStoresMigratedOnce(getProjectRoot())
+  } catch {
+    /* fail-open */
+  }
 
   switch (name) {
     case 'memory_store': {

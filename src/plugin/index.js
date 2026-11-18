@@ -6,7 +6,7 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
 });
 
 // src/plugin.ts
-import { appendFileSync as appendFileSync2, existsSync as existsSync14, mkdirSync as mkdirSync10, readFileSync as readFileSync13 } from "node:fs";
+import { appendFileSync as appendFileSync2, existsSync as existsSync15, mkdirSync as mkdirSync11, readFileSync as readFileSync14 } from "node:fs";
 import { realpath as realpathAsync } from "node:fs/promises";
 import path4 from "node:path";
 import { fileURLToPath as fileURLToPath5 } from "node:url";
@@ -6013,12 +6013,12 @@ function recordSkip(sink, skipReason) {
   );
 }
 function abortDeadline(signal) {
-  return new Promise((resolve12) => {
+  return new Promise((resolve13) => {
     if (signal.aborted) {
-      resolve12("timeout");
+      resolve13("timeout");
       return;
     }
-    signal.addEventListener("abort", () => resolve12("timeout"), { once: true });
+    signal.addEventListener("abort", () => resolve13("timeout"), { once: true });
   });
 }
 function createJ1RiskGateObserver(options) {
@@ -8231,12 +8231,12 @@ function recordSkip2(sink, skipReason) {
   );
 }
 function abortDeadline2(signal) {
-  return new Promise((resolve12) => {
+  return new Promise((resolve13) => {
     if (signal.aborted) {
-      resolve12("timeout");
+      resolve13("timeout");
       return;
     }
-    signal.addEventListener("abort", () => resolve12("timeout"), { once: true });
+    signal.addEventListener("abort", () => resolve13("timeout"), { once: true });
   });
 }
 function createJ3EscalationObserver(options) {
@@ -8601,11 +8601,11 @@ async function readV2CredentialToken(providerIDs, stateDir, env) {
   } catch {
     return null;
   }
-  const DatabaseSync4 = sqlite.DatabaseSync;
-  if (typeof DatabaseSync4 !== "function") return null;
+  const DatabaseSync5 = sqlite.DatabaseSync;
+  if (typeof DatabaseSync5 !== "function") return null;
   let db;
   try {
-    db = new DatabaseSync4(`file:${dbPath}?mode=ro`, { readOnly: true });
+    db = new DatabaseSync5(`file:${dbPath}?mode=ro`, { readOnly: true });
     const statement = db.prepare(
       "SELECT value FROM credential WHERE integration_id = ? AND active = 1 LIMIT 1"
     );
@@ -9507,7 +9507,7 @@ var PantheonBus = class {
    * Wait asynchronously for a specific event matching a predicate, with an optional timeout.
    */
   waitFor(event, predicate, timeoutMs = 3e4) {
-    return new Promise((resolve12, reject) => {
+    return new Promise((resolve13, reject) => {
       let timer = null;
       let unsubscribe = null;
       if (timeoutMs > 0 && Number.isFinite(timeoutMs)) {
@@ -9521,7 +9521,7 @@ var PantheonBus = class {
           if (predicate(payload)) {
             if (timer) clearTimeout(timer);
             unsubscribe?.();
-            resolve12(payload);
+            resolve13(payload);
           }
         } catch (err) {
           if (timer) clearTimeout(timer);
@@ -9908,9 +9908,9 @@ var BackgroundJobBoard = class {
     if (existing && (TERMINAL_STATES.has(existing.state) || existing.state === "reconciled")) {
       return Promise.resolve(existing);
     }
-    return new Promise((resolve12, reject) => {
+    return new Promise((resolve13, reject) => {
       const waiter = {
-        resolve: resolve12,
+        resolve: resolve13,
         reject,
         timer: setTimeout(() => {
           this.removeTerminalWaiter(taskID, waiter);
@@ -10380,7 +10380,7 @@ function runHook(script, payload, opts = {}) {
       timedOut: false
     });
   }
-  return new Promise((resolve12) => {
+  return new Promise((resolve13) => {
     const stdoutBuf = { value: "" };
     const stderrBuf = { value: "" };
     let settled = false;
@@ -10390,7 +10390,7 @@ function runHook(script, payload, opts = {}) {
       if (!settled) {
         settled = true;
         if (timeoutHandle !== void 0) clearTimeout(timeoutHandle);
-        resolve12(result);
+        resolve13(result);
       }
     };
     const spawnOpts = {
@@ -12590,7 +12590,7 @@ function defaultIsExecutable(path5) {
   }
 }
 function defaultExecFile(file, args) {
-  return new Promise((resolve12, reject) => {
+  return new Promise((resolve13, reject) => {
     execFile(file, [...args], { encoding: "utf8" }, (error, stdout, stderr) => {
       if (error) {
         const failure = error;
@@ -12599,7 +12599,7 @@ function defaultExecFile(file, args) {
         reject(failure);
         return;
       }
-      resolve12({ stdout, stderr });
+      resolve13({ stdout, stderr });
     });
   });
 }
@@ -13429,8 +13429,8 @@ async function withPlanLock(cwd, slug, fn) {
   const key = `${cwd}::${slug}`;
   const prev = planLocks.get(key) ?? Promise.resolve();
   let resolveCurrent;
-  const current = new Promise((resolve12) => {
-    resolveCurrent = resolve12;
+  const current = new Promise((resolve13) => {
+    resolveCurrent = resolve13;
   });
   planLocks.set(key, current);
   try {
@@ -14929,24 +14929,580 @@ function createModelCommand(options = {}) {
 
 // src/pantheon/native-memory-tools.ts
 import {
+  existsSync as existsSync12,
+  mkdirSync as mkdirSync9,
+  readdirSync as readdirSync5,
+  readFileSync as readFileSync11,
+  realpathSync as realpathSync5,
+  writeFileSync as writeFileSync7
+} from "node:fs";
+import { join as join21, resolve as resolve11, sep as sep7 } from "node:path";
+import { DatabaseSync as DatabaseSync4 } from "node:sqlite";
+
+// src/pantheon/legacy-store-migration.mjs
+import {
   existsSync as existsSync11,
   mkdirSync as mkdirSync8,
   readdirSync as readdirSync4,
   readFileSync as readFileSync10,
   realpathSync as realpathSync4,
+  rmSync as rmSync2,
+  statSync as statSync5,
   writeFileSync as writeFileSync6
 } from "node:fs";
-import { join as join20, resolve as resolve10, sep as sep7 } from "node:path";
+import { dirname as dirname10, join as join20, resolve as resolve10 } from "node:path";
 import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
 var SAFE_SEGMENT_RE = /^[a-zA-Z0-9._:-]{1,128}$/;
+function toSafeSegment(raw, fallback = "default") {
+  const str = String(raw ?? "").trim().replace(/[^a-zA-Z0-9._:-]/g, "_").slice(0, 128);
+  if (!str || str === "." || str === ".." || !SAFE_SEGMENT_RE.test(str)) {
+    return fallback;
+  }
+  return str;
+}
+function sameFileOrPath(a, b) {
+  if (resolve10(a) === resolve10(b)) return true;
+  if (!existsSync11(a) || !existsSync11(b)) return false;
+  try {
+    return realpathSync4(a) === realpathSync4(b);
+  } catch {
+    return false;
+  }
+}
+function removeFileAndSqliteSidecars(filePath, deleted, dryRun = false) {
+  const dir = dirname10(filePath);
+  const base = filePath.slice(dir.length + 1);
+  const candidates = [
+    filePath,
+    `${filePath}-wal`,
+    `${filePath}-shm`,
+    `${filePath}-journal`,
+    join20(dir, `.${base}.init.lock`)
+  ];
+  for (const candidate of candidates) {
+    if (existsSync11(candidate)) {
+      if (!dryRun) {
+        rmSync2(candidate, { recursive: true, force: true });
+      }
+      deleted.push(candidate);
+    }
+  }
+}
+function removeEmptyDirIfPossible(dirPath, deleted, dryRun = false) {
+  if (!existsSync11(dirPath)) return;
+  try {
+    const entries = readdirSync4(dirPath);
+    if (entries.length === 0) {
+      if (!dryRun) {
+        rmSync2(dirPath, { recursive: true, force: true });
+      }
+      deleted.push(dirPath);
+    }
+  } catch {
+  }
+}
+var migratedWorkspaces = /* @__PURE__ */ new Set();
+function ensureLegacyStoresMigratedOnce(workspaceDir, options = {}) {
+  const key = resolve10(workspaceDir);
+  if (migratedWorkspaces.has(key)) return null;
+  migratedWorkspaces.add(key);
+  return migrateLegacyStoresAndPurgeStale(key, options);
+}
+function migrateLegacyStoresAndPurgeStale(workspaceDir, options = {}) {
+  const root = resolve10(workspaceDir);
+  const dryRun = options.dryRun === true;
+  const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+  let memoriesMigrated = 0;
+  let memoriesExpiredPurged = 0;
+  let vectorTablesDropped = 0;
+  let contextsMigrated = 0;
+  let goalsMigrated = 0;
+  const staleFilesDeleted = [];
+  const pantheonDir = join20(root, ".pantheon");
+  const canonicalMemoryDir = join20(pantheonDir, "memory");
+  const canonicalMemoryDbPath = join20(canonicalMemoryDir, "memory.db");
+  const canonicalPersistenceDir = join20(pantheonDir, "persistence");
+  const canonicalGoalsDir = join20(pantheonDir, "goals");
+  const legacyMemoryCandidates = [
+    { path: join20(pantheonDir, "memory.db"), deleteAfter: true },
+    { path: join20(root, "memory", "memory.db"), deleteAfter: true }
+  ];
+  if (options.globalConfigDir) {
+    const globalRoot = resolve10(options.globalConfigDir);
+    if (globalRoot !== root) {
+      legacyMemoryCandidates.push(
+        { path: join20(globalRoot, "memory", "memory.db"), deleteAfter: true },
+        { path: join20(globalRoot, ".pantheon", "memory.db"), deleteAfter: true }
+      );
+    }
+  }
+  const existingLegacyMemDbs = legacyMemoryCandidates.filter(
+    (c) => existsSync11(c.path) && !sameFileOrPath(c.path, canonicalMemoryDbPath)
+  );
+  if (existingLegacyMemDbs.length > 0 || existsSync11(canonicalMemoryDbPath)) {
+    if (!dryRun) {
+      mkdirSync8(canonicalMemoryDir, { recursive: true });
+    }
+    let targetDb = null;
+    try {
+      if (!dryRun) {
+        targetDb = new DatabaseSync3(canonicalMemoryDbPath);
+        targetDb.exec(`
+          CREATE TABLE IF NOT EXISTS memories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            namespace TEXT NOT NULL,
+            key TEXT NOT NULL,
+            value TEXT NOT NULL,
+            metadata TEXT,
+            created_at TEXT NOT NULL,
+            expires_at TEXT,
+            UNIQUE(namespace, key)
+          );
+          CREATE INDEX IF NOT EXISTS idx_memories_ns_key ON memories(namespace, key);
+        `);
+      }
+      for (const candidate of existingLegacyMemDbs) {
+        let srcDb = null;
+        try {
+          srcDb = new DatabaseSync3(candidate.path, { readOnly: true });
+          const hasTable = srcDb.prepare(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'memories' LIMIT 1"
+          ).get();
+          if (hasTable) {
+            const cols = srcDb.prepare("PRAGMA table_info(memories)").all();
+            const colNames = new Set(cols.map((c) => String(c.name ?? "")));
+            const hasExpires = colNames.has("expires_at");
+            const hasMeta = colNames.has("metadata");
+            const hasCreated = colNames.has("created_at");
+            const selectSql = `
+              SELECT
+                namespace,
+                key,
+                value,
+                ${hasMeta ? "metadata" : "NULL AS metadata"},
+                ${hasCreated ? "created_at" : `'${nowIso}' AS created_at`},
+                ${hasExpires ? "expires_at" : "NULL AS expires_at"}
+              FROM memories
+              WHERE key IS NOT NULL AND trim(key) != ''
+            `;
+            const rows = srcDb.prepare(selectSql).all();
+            for (const row of rows) {
+              const exp = typeof row.expires_at === "string" ? row.expires_at : null;
+              if (exp && exp <= nowIso) {
+                memoriesExpiredPurged += 1;
+                continue;
+              }
+              const ns = String(row.namespace ?? "default").trim() || "default";
+              const key = String(row.key ?? "").trim();
+              const val = String(row.value ?? "");
+              if (!key || !val) continue;
+              if (!dryRun && targetDb) {
+                const res = targetDb.prepare(
+                  `INSERT OR IGNORE INTO memories (namespace, key, value, metadata, created_at, expires_at)
+                     VALUES (?, ?, ?, ?, ?, ?)`
+                ).run(
+                  ns,
+                  key,
+                  val,
+                  typeof row.metadata === "string" ? row.metadata : null,
+                  typeof row.created_at === "string" ? row.created_at : nowIso,
+                  exp
+                );
+                if (res.changes > 0) memoriesMigrated += 1;
+              } else {
+                memoriesMigrated += 1;
+              }
+            }
+          }
+        } catch {
+        } finally {
+          try {
+            srcDb?.close();
+          } catch {
+          }
+        }
+        if (candidate.deleteAfter) {
+          removeFileAndSqliteSidecars(candidate.path, staleFilesDeleted, dryRun);
+          removeEmptyDirIfPossible(dirname10(candidate.path), staleFilesDeleted, dryRun);
+        }
+      }
+      if (!dryRun && targetDb) {
+        try {
+          const del = targetDb.prepare("DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at <= ?").run(nowIso);
+          memoriesExpiredPurged += Number(del.changes ?? 0);
+        } catch {
+        }
+        const legacyVectorObjects = [
+          { type: "trigger", name: "memories_vec_ai" },
+          { type: "trigger", name: "memories_vec_ad" },
+          { type: "trigger", name: "memories_vec_au" },
+          { type: "table", name: "memories_vec" },
+          { type: "table", name: "vec_memories" },
+          { type: "table", name: "memory_embeddings" },
+          { type: "table", name: "memory_vectors" }
+        ];
+        for (const obj of legacyVectorObjects) {
+          try {
+            const exists = targetDb.prepare("SELECT 1 FROM sqlite_master WHERE type = ? AND name = ? LIMIT 1").get(obj.type, obj.name);
+            if (exists) {
+              targetDb.exec(
+                `DROP ${obj.type === "trigger" ? "TRIGGER" : "TABLE"} IF EXISTS ${obj.name}`
+              );
+              vectorTablesDropped += 1;
+            }
+          } catch {
+          }
+        }
+        try {
+          targetDb.exec(`
+            CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+              namespace,
+              key,
+              value,
+              content='memories',
+              content_rowid='id',
+              tokenize='porter unicode61'
+            );
+            CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+              INSERT INTO memories_fts(rowid, namespace, key, value)
+              VALUES (new.id, new.namespace, new.key, new.value);
+            END;
+            CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+              INSERT INTO memories_fts(memories_fts, rowid, namespace, key, value)
+              VALUES ('delete', old.id, old.namespace, old.key, old.value);
+            END;
+            CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+              INSERT INTO memories_fts(memories_fts, rowid, namespace, key, value)
+              VALUES ('delete', old.id, old.namespace, old.key, old.value);
+              INSERT INTO memories_fts(rowid, namespace, key, value)
+              VALUES (new.id, new.namespace, new.key, new.value);
+            END;
+            INSERT INTO memories_fts(memories_fts) VALUES('rebuild');
+          `);
+        } catch {
+        }
+      }
+    } finally {
+      try {
+        targetDb?.close();
+      } catch {
+      }
+    }
+  }
+  const legacyPersistenceDbs = [
+    join20(pantheonDir, "persistence", "project.db"),
+    join20(pantheonDir, "persistence", "global.db"),
+    join20(root, "persistence", "project.db"),
+    join20(root, "persistence", "global.db")
+  ];
+  if (options.globalConfigDir) {
+    const globalRoot = resolve10(options.globalConfigDir);
+    if (globalRoot !== root) {
+      legacyPersistenceDbs.push(
+        join20(globalRoot, "persistence", "global.db"),
+        join20(globalRoot, "persistence", "project.db"),
+        join20(globalRoot, ".pantheon", "persistence", "global.db"),
+        join20(globalRoot, ".pantheon", "persistence", "project.db")
+      );
+    }
+  }
+  const seenPersistenceDbs = /* @__PURE__ */ new Set();
+  for (const dbPath of legacyPersistenceDbs) {
+    if (!existsSync11(dbPath)) continue;
+    const real = (() => {
+      try {
+        return realpathSync4(dbPath);
+      } catch {
+        return resolve10(dbPath);
+      }
+    })();
+    if (seenPersistenceDbs.has(real)) continue;
+    seenPersistenceDbs.add(real);
+    let pDb = null;
+    try {
+      pDb = new DatabaseSync3(dbPath, { readOnly: true });
+      const hasKvStore = pDb.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'kv_store' LIMIT 1").get();
+      if (hasKvStore) {
+        const cols = pDb.prepare("PRAGMA table_info(kv_store)").all();
+        const colNames = new Set(cols.map((c) => String(c.name ?? "")));
+        const hasDeleted = colNames.has("deleted_at");
+        const hasExpires = colNames.has("expires_at");
+        const hasUpdated = colNames.has("updated_at");
+        const hasCreated = colNames.has("created_at");
+        const hasRevision = colNames.has("revision");
+        const rows = pDb.prepare(
+          `SELECT
+               namespace,
+               key,
+               value,
+               ${hasExpires ? "expires_at" : "NULL AS expires_at"},
+               ${hasDeleted ? "deleted_at" : "NULL AS deleted_at"},
+               ${hasCreated ? "created_at" : `'${nowIso}' AS created_at`},
+               ${hasUpdated ? "updated_at" : `'${nowIso}' AS updated_at`},
+               ${hasRevision ? "revision" : "NULL AS revision"}
+             FROM kv_store`
+        ).all();
+        for (const row of rows) {
+          if (row.deleted_at != null) continue;
+          const exp = typeof row.expires_at === "string" ? row.expires_at : null;
+          if (exp && exp <= nowIso) continue;
+          const rawNs = String(row.namespace ?? "checkpoints").trim() || "checkpoints";
+          const safeNs = toSafeSegment(rawNs, "checkpoints");
+          const safeKey = toSafeSegment(row.key, "");
+          if (!safeKey) continue;
+          const valueStr = String(row.value ?? "");
+          const record2 = {
+            session_id: safeKey,
+            key: safeKey,
+            namespace: safeNs,
+            content: valueStr,
+            value: valueStr,
+            created_at: typeof row.created_at === "string" ? row.created_at : nowIso,
+            updated_at: typeof row.updated_at === "string" ? row.updated_at : nowIso,
+            ...exp ? { expires_at: exp } : {},
+            ...typeof row.revision === "number" ? { revision: row.revision } : {}
+          };
+          const targetNamespaces = safeNs === "context" ? ["context", "checkpoints"] : [safeNs];
+          let wroteAny = false;
+          for (const targetNs of targetNamespaces) {
+            const nsDir = join20(canonicalPersistenceDir, targetNs);
+            const outFile = join20(nsDir, `${safeKey}.json`);
+            if (!existsSync11(outFile)) {
+              if (!dryRun) {
+                mkdirSync8(nsDir, { recursive: true });
+                writeFileSync6(
+                  outFile,
+                  JSON.stringify({ ...record2, namespace: targetNs }, null, 2),
+                  "utf8"
+                );
+              }
+              wroteAny = true;
+            }
+          }
+          if (wroteAny) contextsMigrated += 1;
+        }
+      }
+      const hasGoals = pDb.prepare(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pantheon_goals' LIMIT 1"
+      ).get();
+      if (hasGoals) {
+        const goalRows = pDb.prepare("SELECT * FROM pantheon_goals").all();
+        for (const row of goalRows) {
+          const rawId = String(row.goal_id ?? row.id ?? "").trim();
+          const safeId = toSafeSegment(rawId, "");
+          if (!safeId) continue;
+          const outFile = join20(canonicalGoalsDir, `${safeId}.json`);
+          if (!existsSync11(outFile)) {
+            let criteria = [];
+            if (typeof row.criteria_json === "string") {
+              try {
+                const parsed = JSON.parse(row.criteria_json);
+                if (Array.isArray(parsed)) criteria = parsed.map(String);
+              } catch {
+              }
+            }
+            let notes;
+            if (typeof row.notes_json === "string") {
+              try {
+                notes = JSON.parse(row.notes_json);
+              } catch {
+                notes = row.notes_json;
+              }
+            }
+            const goalRecord = {
+              id: safeId,
+              ...typeof row.session_id === "string" ? { session_id: row.session_id } : {},
+              title: String(row.title ?? ""),
+              criteria,
+              status: String(row.status ?? "active"),
+              ...notes !== void 0 ? { notes } : {},
+              created_at: typeof row.created_at === "string" ? row.created_at : nowIso,
+              updated_at: typeof row.updated_at === "string" ? row.updated_at : nowIso,
+              ...typeof row.completed_at === "string" ? { completed_at: row.completed_at } : {}
+            };
+            if (!dryRun) {
+              mkdirSync8(canonicalGoalsDir, { recursive: true });
+              writeFileSync6(outFile, JSON.stringify(goalRecord, null, 2), "utf8");
+            }
+            goalsMigrated += 1;
+          }
+        }
+      }
+    } catch {
+    } finally {
+      try {
+        pDb?.close();
+      } catch {
+      }
+    }
+    removeFileAndSqliteSidecars(dbPath, staleFilesDeleted, dryRun);
+    const parentDir = dirname10(dbPath);
+    if (parentDir !== canonicalPersistenceDir) {
+      removeEmptyDirIfPossible(parentDir, staleFilesDeleted, dryRun);
+    }
+  }
+  for (const legacyCheckpointDir of [
+    join20(pantheonDir, "checkpoints"),
+    join20(pantheonDir, "context")
+  ]) {
+    if (!existsSync11(legacyCheckpointDir)) continue;
+    try {
+      for (const entry of readdirSync4(legacyCheckpointDir)) {
+        const fullPath = join20(legacyCheckpointDir, entry);
+        if (!entry.endsWith(".json") || !statSync5(fullPath).isFile()) continue;
+        const rawKey = entry.slice(0, -5);
+        const safeKey = toSafeSegment(rawKey, "");
+        if (!safeKey) continue;
+        const targetDir = join20(canonicalPersistenceDir, "checkpoints");
+        const targetFile = join20(targetDir, `${safeKey}.json`);
+        if (!existsSync11(targetFile)) {
+          try {
+            const parsed = JSON.parse(readFileSync10(fullPath, "utf8"));
+            const normalized = {
+              session_id: safeKey,
+              namespace: "checkpoints",
+              content: typeof parsed.content === "string" ? parsed.content : JSON.stringify(parsed.content ?? parsed),
+              updated_at: typeof parsed.updated_at === "string" ? parsed.updated_at : nowIso
+            };
+            if (!dryRun) {
+              mkdirSync8(targetDir, { recursive: true });
+              writeFileSync6(targetFile, JSON.stringify(normalized, null, 2), "utf8");
+            }
+            contextsMigrated += 1;
+          } catch {
+          }
+        }
+        if (!dryRun) rmSync2(fullPath, { force: true });
+        staleFilesDeleted.push(fullPath);
+      }
+      removeEmptyDirIfPossible(legacyCheckpointDir, staleFilesDeleted, dryRun);
+    } catch {
+    }
+  }
+  const legacyPersistenceGoalsDir = join20(canonicalPersistenceDir, "goals");
+  if (existsSync11(legacyPersistenceGoalsDir)) {
+    try {
+      for (const entry of readdirSync4(legacyPersistenceGoalsDir)) {
+        const fullPath = join20(legacyPersistenceGoalsDir, entry);
+        if (!entry.endsWith(".json") || !statSync5(fullPath).isFile()) continue;
+        const safeId = toSafeSegment(entry.slice(0, -5), "");
+        if (safeId) {
+          const targetFile = join20(canonicalGoalsDir, `${safeId}.json`);
+          if (!existsSync11(targetFile)) {
+            if (!dryRun) {
+              mkdirSync8(canonicalGoalsDir, { recursive: true });
+              writeFileSync6(targetFile, readFileSync10(fullPath, "utf8"), "utf8");
+            }
+            goalsMigrated += 1;
+          }
+        }
+        if (!dryRun) rmSync2(fullPath, { force: true });
+        staleFilesDeleted.push(fullPath);
+      }
+      removeEmptyDirIfPossible(legacyPersistenceGoalsDir, staleFilesDeleted, dryRun);
+    } catch {
+    }
+  }
+  const legacyGoalsJsonPath = join20(pantheonDir, "goals.json");
+  if (existsSync11(legacyGoalsJsonPath)) {
+    try {
+      const parsed = JSON.parse(readFileSync10(legacyGoalsJsonPath, "utf8"));
+      const list = Array.isArray(parsed) ? parsed : parsed && typeof parsed === "object" && Array.isArray(parsed.goals) ? parsed.goals ?? [] : [];
+      for (const item of list) {
+        if (!item || typeof item !== "object") continue;
+        const safeId = toSafeSegment(item.id ?? item.goal_id, "");
+        if (!safeId) continue;
+        const targetFile = join20(canonicalGoalsDir, `${safeId}.json`);
+        if (!existsSync11(targetFile)) {
+          if (!dryRun) {
+            mkdirSync8(canonicalGoalsDir, { recursive: true });
+            writeFileSync6(
+              targetFile,
+              JSON.stringify(
+                {
+                  id: safeId,
+                  title: String(item.title ?? item.description ?? ""),
+                  criteria: Array.isArray(item.criteria) ? item.criteria.map(String) : [],
+                  status: String(item.status ?? "active"),
+                  created_at: typeof item.created_at === "string" ? item.created_at : nowIso,
+                  updated_at: typeof item.updated_at === "string" ? item.updated_at : nowIso
+                },
+                null,
+                2
+              ),
+              "utf8"
+            );
+          }
+          goalsMigrated += 1;
+        }
+      }
+    } catch {
+    }
+    if (!dryRun) rmSync2(legacyGoalsJsonPath, { force: true });
+    staleFilesDeleted.push(legacyGoalsJsonPath);
+  }
+  if (existsSync11(canonicalPersistenceDir)) {
+    try {
+      for (const nsEntry of readdirSync4(canonicalPersistenceDir, { withFileTypes: true })) {
+        if (!nsEntry.isDirectory()) continue;
+        const nsDir = join20(canonicalPersistenceDir, nsEntry.name);
+        for (const fileEntry of readdirSync4(nsDir)) {
+          if (!fileEntry.endsWith(".json")) continue;
+          const filePath = join20(nsDir, fileEntry);
+          try {
+            const data = JSON.parse(readFileSync10(filePath, "utf8"));
+            if (typeof data.expires_at === "string" && data.expires_at <= nowIso) {
+              if (!dryRun) rmSync2(filePath, { force: true });
+              staleFilesDeleted.push(filePath);
+            }
+          } catch {
+          }
+        }
+      }
+    } catch {
+    }
+  }
+  const obsoleteTargets = [
+    join20(canonicalMemoryDir, ".memory.db.init.lock"),
+    join20(pantheonDir, ".memory.db.init.lock"),
+    join20(canonicalPersistenceDir, ".global.db.init.lock"),
+    join20(canonicalPersistenceDir, ".project.db.init.lock"),
+    join20(pantheonDir, "fastembed_cache"),
+    join20(pantheonDir, ".fastembed"),
+    join20(root, "fastembed_cache"),
+    join20(root, "plugins", "pantheon-hooks.ts"),
+    join20(root, "plugins", "pantheon-hooks.js"),
+    join20(root, ".opencode", "plugins", "pantheon-hooks.ts"),
+    join20(root, ".opencode", "plugins", "pantheon-hooks.js"),
+    join20(root, "tiers.json"),
+    join20(root, ".opencode", "tiers.json")
+  ];
+  for (const target of obsoleteTargets) {
+    if (existsSync11(target)) {
+      if (!dryRun) rmSync2(target, { recursive: true, force: true });
+      staleFilesDeleted.push(target);
+    }
+  }
+  return {
+    memoriesMigrated,
+    memoriesExpiredPurged,
+    vectorTablesDropped,
+    contextsMigrated,
+    goalsMigrated,
+    staleFilesDeleted
+  };
+}
+
+// src/pantheon/native-memory-tools.ts
+var SAFE_SEGMENT_RE2 = /^[a-zA-Z0-9._:-]{1,128}$/;
 var MAX_MEMORY_VALUE_BYTES = 65536;
 function isSafeSegment(value) {
-  return typeof value === "string" && SAFE_SEGMENT_RE.test(value) && value !== "." && value !== ".." && !value.includes("..") && !value.includes("/") && !value.includes("\\");
+  return typeof value === "string" && SAFE_SEGMENT_RE2.test(value) && value !== "." && value !== ".." && !value.includes("..") && !value.includes("/") && !value.includes("\\");
 }
 function resolveConfinedPath(baseDir, ...segments) {
-  mkdirSync8(baseDir, { recursive: true });
-  const canonicalBase = realpathSync4(baseDir);
-  const candidate = resolve10(canonicalBase, ...segments);
+  mkdirSync9(baseDir, { recursive: true });
+  const canonicalBase = realpathSync5(baseDir);
+  const candidate = resolve11(canonicalBase, ...segments);
   const prefix = canonicalBase.endsWith(sep7) ? canonicalBase : `${canonicalBase}${sep7}`;
   if (candidate !== canonicalBase && !candidate.startsWith(prefix)) {
     throw new Error("Path traversal denied: target escapes confined directory");
@@ -14955,12 +15511,16 @@ function resolveConfinedPath(baseDir, ...segments) {
 }
 var dbCache = /* @__PURE__ */ new Map();
 function getMemoryDb(workspaceDir) {
-  const memoryDir = join20(workspaceDir, ".pantheon", "memory");
-  mkdirSync8(memoryDir, { recursive: true });
+  try {
+    ensureLegacyStoresMigratedOnce(workspaceDir);
+  } catch {
+  }
+  const memoryDir = join21(workspaceDir, ".pantheon", "memory");
+  mkdirSync9(memoryDir, { recursive: true });
   const dbPath = resolveConfinedPath(memoryDir, "memory.db");
   const cached = dbCache.get(dbPath);
   if (cached) return cached;
-  const db = new DatabaseSync3(dbPath);
+  const db = new DatabaseSync4(dbPath);
   db.exec(`
     CREATE TABLE IF NOT EXISTS memories (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -15314,12 +15874,16 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
             return jsonResult3({ ok: false, error: "content must be a non-empty string" });
           }
           const cwd = resolveToolCwd(context, fallbackDir);
-          const baseDir = join20(cwd, ".pantheon", "persistence");
+          try {
+            ensureLegacyStoresMigratedOnce(cwd);
+          } catch {
+          }
+          const baseDir = join21(cwd, ".pantheon", "persistence");
           const dir = resolveConfinedPath(baseDir, ns);
-          mkdirSync8(dir, { recursive: true });
+          mkdirSync9(dir, { recursive: true });
           const filePath = resolveConfinedPath(dir, `${sessionId}.json`);
           const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-          writeFileSync6(
+          writeFileSync7(
             filePath,
             JSON.stringify(
               {
@@ -15371,13 +15935,17 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
             });
           }
           const cwd = resolveToolCwd(context, fallbackDir);
-          const baseDir = join20(cwd, ".pantheon", "persistence");
+          try {
+            ensureLegacyStoresMigratedOnce(cwd);
+          } catch {
+          }
+          const baseDir = join21(cwd, ".pantheon", "persistence");
           const dir = resolveConfinedPath(baseDir, ns);
           const filePath = resolveConfinedPath(dir, `${sessionId}.json`);
-          if (!existsSync11(filePath)) {
+          if (!existsSync12(filePath)) {
             return jsonResult3({ ok: false, error: "not_found", session_id: sessionId });
           }
-          return jsonResult3(JSON.parse(readFileSync10(filePath, "utf8")));
+          return jsonResult3(JSON.parse(readFileSync11(filePath, "utf8")));
         } catch (err) {
           return jsonResult3({
             ok: false,
@@ -15413,7 +15981,11 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
             return jsonResult3({ ok: false, error: "id must be a safe identifier" });
           }
           const cwd = resolveToolCwd(context, fallbackDir);
-          const goalsDir = join20(cwd, ".pantheon", "goals");
+          try {
+            ensureLegacyStoresMigratedOnce(cwd);
+          } catch {
+          }
+          const goalsDir = join21(cwd, ".pantheon", "goals");
           const filePath = resolveConfinedPath(goalsDir, `${rawId}.json`);
           const nowIso = (/* @__PURE__ */ new Date()).toISOString();
           const goal = {
@@ -15424,7 +15996,7 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
             created_at: nowIso,
             updated_at: nowIso
           };
-          writeFileSync6(filePath, JSON.stringify(goal, null, 2), "utf8");
+          writeFileSync7(filePath, JSON.stringify(goal, null, 2), "utf8");
           return jsonResult3({ ok: true, goal });
         } catch (err) {
           return jsonResult3({
@@ -15448,21 +16020,25 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
       execute: async (input, context) => {
         try {
           const cwd = resolveToolCwd(context, fallbackDir);
-          const goalsDir = join20(cwd, ".pantheon", "goals");
-          mkdirSync8(goalsDir, { recursive: true });
+          try {
+            ensureLegacyStoresMigratedOnce(cwd);
+          } catch {
+          }
+          const goalsDir = join21(cwd, ".pantheon", "goals");
+          mkdirSync9(goalsDir, { recursive: true });
           if (typeof input.id === "string" && input.id.trim()) {
             const id = input.id.trim();
             if (!isSafeSegment(id)) {
               return jsonResult3({ ok: false, error: "id must be a safe identifier" });
             }
             const filePath = resolveConfinedPath(goalsDir, `${id}.json`);
-            if (!existsSync11(filePath)) return jsonResult3({ ok: false, error: "not_found", id });
-            return jsonResult3(JSON.parse(readFileSync10(filePath, "utf8")));
+            if (!existsSync12(filePath)) return jsonResult3({ ok: false, error: "not_found", id });
+            return jsonResult3(JSON.parse(readFileSync11(filePath, "utf8")));
           }
-          const files = readdirSync4(goalsDir).filter((f) => f.endsWith(".json")).sort();
+          const files = readdirSync5(goalsDir).filter((f) => f.endsWith(".json")).sort();
           const latest = files.at(-1);
           if (!latest) return jsonResult3({ ok: false, error: "no_active_goals" });
-          return jsonResult3(JSON.parse(readFileSync10(resolveConfinedPath(goalsDir, latest), "utf8")));
+          return jsonResult3(JSON.parse(readFileSync11(resolveConfinedPath(goalsDir, latest), "utf8")));
         } catch (err) {
           return jsonResult3({
             ok: false,
@@ -15492,17 +16068,21 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
             return jsonResult3({ ok: false, error: "valid goal id is required" });
           }
           const cwd = resolveToolCwd(context, fallbackDir);
-          const goalsDir = join20(cwd, ".pantheon", "goals");
+          try {
+            ensureLegacyStoresMigratedOnce(cwd);
+          } catch {
+          }
+          const goalsDir = join21(cwd, ".pantheon", "goals");
           const filePath = resolveConfinedPath(goalsDir, `${id}.json`);
-          if (!existsSync11(filePath)) return jsonResult3({ ok: false, error: "not_found", id });
-          const existing = JSON.parse(readFileSync10(filePath, "utf8"));
+          if (!existsSync12(filePath)) return jsonResult3({ ok: false, error: "not_found", id });
+          const existing = JSON.parse(readFileSync11(filePath, "utf8"));
           const updated = {
             ...existing,
             status: typeof input.status === "string" ? input.status : existing.status,
             ...typeof input.notes === "string" ? { notes: input.notes } : {},
             updated_at: (/* @__PURE__ */ new Date()).toISOString()
           };
-          writeFileSync6(filePath, JSON.stringify(updated, null, 2), "utf8");
+          writeFileSync7(filePath, JSON.stringify(updated, null, 2), "utf8");
           return jsonResult3({ ok: true, goal: updated });
         } catch (err) {
           return jsonResult3({
@@ -15532,17 +16112,21 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
             return jsonResult3({ ok: false, error: "valid goal id is required" });
           }
           const cwd = resolveToolCwd(context, fallbackDir);
-          const goalsDir = join20(cwd, ".pantheon", "goals");
+          try {
+            ensureLegacyStoresMigratedOnce(cwd);
+          } catch {
+          }
+          const goalsDir = join21(cwd, ".pantheon", "goals");
           const filePath = resolveConfinedPath(goalsDir, `${id}.json`);
-          if (!existsSync11(filePath)) return jsonResult3({ ok: false, error: "not_found", id });
-          const existing = JSON.parse(readFileSync10(filePath, "utf8"));
+          if (!existsSync12(filePath)) return jsonResult3({ ok: false, error: "not_found", id });
+          const existing = JSON.parse(readFileSync11(filePath, "utf8"));
           const updated = {
             ...existing,
             status: "completed",
             ...typeof input.summary === "string" ? { summary: input.summary } : {},
             updated_at: (/* @__PURE__ */ new Date()).toISOString()
           };
-          writeFileSync6(filePath, JSON.stringify(updated, null, 2), "utf8");
+          writeFileSync7(filePath, JSON.stringify(updated, null, 2), "utf8");
           return jsonResult3({ ok: true, goal: updated });
         } catch (err) {
           return jsonResult3({
@@ -15556,9 +16140,9 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
 }
 
 // src/pantheon/skill-search-tool.ts
-import { existsSync as existsSync12, readdirSync as readdirSync5, readFileSync as readFileSync11 } from "node:fs";
+import { existsSync as existsSync13, readdirSync as readdirSync6, readFileSync as readFileSync12 } from "node:fs";
 import { homedir as homedir8 } from "node:os";
-import { join as join21 } from "node:path";
+import { join as join22 } from "node:path";
 
 // scripts/skill-search.mjs
 import { spawnSync } from "node:child_process";
@@ -15815,16 +16399,16 @@ function scanInstalledSkills(cwd = process.cwd()) {
   }
   const scanDir = (baseDir, scope) => {
     try {
-      if (!existsSync12(baseDir)) return;
-      const entries = readdirSync5(baseDir, { withFileTypes: true });
+      if (!existsSync13(baseDir)) return;
+      const entries = readdirSync6(baseDir, { withFileTypes: true });
       for (const entry of entries) {
         if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
         const skillName = entry.name;
         if (skillName.startsWith(".")) continue;
-        const skillMd = join21(baseDir, skillName, "SKILL.md");
-        if (existsSync12(skillMd)) {
+        const skillMd = join22(baseDir, skillName, "SKILL.md");
+        if (existsSync13(skillMd)) {
           try {
-            const raw = readFileSync11(skillMd, "utf8");
+            const raw = readFileSync12(skillMd, "utf8");
             const { name, description } = extractSkillMetadata(raw, skillName);
             const id = (name || skillName).trim();
             map.set(id.toLowerCase(), {
@@ -15840,12 +16424,12 @@ function scanInstalledSkills(cwd = process.cwd()) {
     } catch {
     }
   };
-  const xdgConfig = process.env.XDG_CONFIG_HOME || join21(homedir8(), ".config");
-  scanDir(join21(xdgConfig, "opencode", "skills"), "global");
-  scanDir(join21(homedir8(), ".agents", "skills"), "global");
-  scanDir(join21(cwd, ".opencode", "skills"), "project");
-  scanDir(join21(cwd, ".agents", "skills"), "project");
-  scanDir(join21(cwd, "skills"), "project");
+  const xdgConfig = process.env.XDG_CONFIG_HOME || join22(homedir8(), ".config");
+  scanDir(join22(xdgConfig, "opencode", "skills"), "global");
+  scanDir(join22(homedir8(), ".agents", "skills"), "global");
+  scanDir(join22(cwd, ".opencode", "skills"), "project");
+  scanDir(join22(cwd, ".agents", "skills"), "project");
+  scanDir(join22(cwd, "skills"), "project");
   return map;
 }
 var TOOL_DESCRIPTION3 = "Advisory discovery tool for skills. Queries installed Pantheon skills and external registries (Anthropic catalog, skills.sh, GitHub). Returns matched skill IDs, descriptions, install counts, and provenance tiers. Zeus uses this to recommend project-scoped skills (.agents/skills/) before proactively prompting the user via the question tool.";
@@ -16018,8 +16602,8 @@ function createV2SkillSearchDefinition(defaultDir) {
 }
 
 // src/pantheon/step-ledger.ts
-import { existsSync as existsSync13, mkdirSync as mkdirSync9, readFileSync as readFileSync12, realpathSync as realpathSync5, writeFileSync as writeFileSync7 } from "node:fs";
-import { join as join22, resolve as resolve11, sep as sep8 } from "node:path";
+import { existsSync as existsSync14, mkdirSync as mkdirSync10, readFileSync as readFileSync13, realpathSync as realpathSync6, writeFileSync as writeFileSync8 } from "node:fs";
+import { join as join23, resolve as resolve12, sep as sep8 } from "node:path";
 var SAFE_STEP_KEY_RE = /^[a-zA-Z0-9._:-]{1,128}$/;
 var stepReflex = new ThemisReflexController({ maxRetries: 2 });
 function assertSafeStepKey(stepKey) {
@@ -16029,10 +16613,10 @@ function assertSafeStepKey(stepKey) {
   return stepKey;
 }
 function resolveLedgerPath(workspaceDir) {
-  const dir = join22(workspaceDir, ".pantheon", "ledger");
-  mkdirSync9(dir, { recursive: true });
-  const canonicalDir = realpathSync5(dir);
-  const filePath = resolve11(canonicalDir, "step-ledger.json");
+  const dir = join23(workspaceDir, ".pantheon", "ledger");
+  mkdirSync10(dir, { recursive: true });
+  const canonicalDir = realpathSync6(dir);
+  const filePath = resolve12(canonicalDir, "step-ledger.json");
   const prefix = canonicalDir.endsWith(sep8) ? canonicalDir : `${canonicalDir}${sep8}`;
   if (!filePath.startsWith(prefix)) {
     throw new Error("Path traversal denied for step-ledger.json");
@@ -16041,11 +16625,11 @@ function resolveLedgerPath(workspaceDir) {
 }
 function readStepLedger(workspaceDir) {
   const filePath = resolveLedgerPath(workspaceDir);
-  if (!existsSync13(filePath)) {
+  if (!existsSync14(filePath)) {
     return { version: 1, steps: {} };
   }
   try {
-    const parsed = JSON.parse(readFileSync12(filePath, "utf8"));
+    const parsed = JSON.parse(readFileSync13(filePath, "utf8"));
     if (parsed && typeof parsed.steps === "object" && parsed.steps !== null) {
       return { version: 1, steps: parsed.steps };
     }
@@ -16055,7 +16639,7 @@ function readStepLedger(workspaceDir) {
 }
 function writeStepLedger(workspaceDir, store2) {
   const filePath = resolveLedgerPath(workspaceDir);
-  writeFileSync7(filePath, `${JSON.stringify(store2, null, 2)}
+  writeFileSync8(filePath, `${JSON.stringify(store2, null, 2)}
 `, "utf8");
 }
 function canTransitionStepToDone(step) {
@@ -16755,7 +17339,7 @@ function loadRuntimeOverrides() {
   try {
     const read = (filePath) => {
       try {
-        return readFileSync13(filePath, "utf8");
+        return readFileSync14(filePath, "utf8");
       } catch {
         return void 0;
       }
@@ -16816,8 +17400,8 @@ function readCanonicalRoster() {
       path4.join(process.cwd(), "src", "agents", "roster.json")
     ];
     for (const p of candidates) {
-      if (existsSync14(p)) {
-        const raw = readFileSync13(p, "utf8");
+      if (existsSync15(p)) {
+        const raw = readFileSync14(p, "utf8");
         const data = JSON.parse(raw);
         if (data && typeof data.agents === "object") return data.agents;
       }
@@ -16997,7 +17581,7 @@ function transformReferences(draft) {
   const fallbackAgentsPath = fileURLToPath5(new URL("../AGENTS.md", import.meta.url));
   draft.add("pantheon-agents", {
     type: "local",
-    path: existsSync14(globalAgentsPath) ? globalAgentsPath : fallbackAgentsPath,
+    path: existsSync15(globalAgentsPath) ? globalAgentsPath : fallbackAgentsPath,
     description: "Pantheon agent and execution policy"
   });
 }
@@ -17406,7 +17990,7 @@ function appendV2HookLog(line) {
   if (body === "") return false;
   try {
     const dir = path4.join(process.cwd(), ".pantheon", "logs");
-    mkdirSync10(dir, { recursive: true });
+    mkdirSync11(dir, { recursive: true });
     appendFileSync2(path4.join(dir, "hooks.log"), `${body}
 `, "utf8");
     return true;

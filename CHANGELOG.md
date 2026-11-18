@@ -13,6 +13,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
      Running apply will move this section to a versioned entry and reset the template below. -->
 
+## [v2.2.0-beta.3] - 2026-11-18
+
+### 🆕 What's New
+
+- **Automatic Store Migration**: Transparently migrates legacy SQLite memory, persistence, checkpoints, and session goals.
+- **Stale Data & Vector Purge**: Automatically deletes obsolete SQLite persistence files, vector tables, locks, and expired entries.
+
+### Added
+
+- **pantheon** — `src/pantheon/legacy-store-migration.mjs`: automatic migration of legacy `memory.db`, `global.db`, `project.db`, `checkpoints/`, and `goals.json` into native stores.
+- **installer** — `scripts/install/migrate.mjs`: runs `migrateLegacyStoresAndPurgeStale` during installation and updates to purge obsolete SQLite/vector/lock files.
+- **tests** — `tests/pantheon/legacy-store-migration.test.ts`: end-to-end verification of legacy memory, context, persistence, and goal migration plus stale file deletion.
+
 ## [v2.2.0-beta.2] - 2026-11-18
 
 ### 🆕 What's New
