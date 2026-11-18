@@ -61,7 +61,7 @@ export function checkTuiVersionStaleness(logger: (msg: string) => void = console
 
     if (copyVersion !== currentVersion) {
       logger(
-        `[WARN] TUI plugin v${copyVersion} is outdated. Current: v${currentVersion}. Run: npx pantheon-opencode init`,
+        `[WARN] Copied TUI plugin v${copyVersion} drifts from v${currentVersion}. Remove stale copy or clean via /pantheon-settings -> Updates & Maintenance -> Legacy & Drift Cleanup.`,
       )
     }
   } catch {

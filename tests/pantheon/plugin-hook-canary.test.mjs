@@ -1087,8 +1087,8 @@ test('real plugin regression guards: honest transform support claims and correct
   )
   assert.match(
     source,
-    /ctx\.integration and\s*\n?\s*ctx\.skill/,
-    'host-supported integration and skill transform domains are not documented',
+    /ctx\.integration is present/,
+    'host-supported integration transform domain is not documented',
   )
   // The host-context claims must cite the host version the canary MEASURED, not
   // an older probe. A comment that says "2.0.18" here is exactly the drift that
@@ -1139,8 +1139,13 @@ test('real plugin regression guards: honest transform support claims and correct
   )
   assert.doesNotMatch(
     source,
-    /context\.(?:integration|skill)\.transform/,
-    'this S5b fix must not implement integration or skill transforms',
+    /context\.integration\.transform/,
+    'integration transform remains unimplemented',
+  )
+  assert.match(
+    source,
+    /context\.skill\?\.transform/,
+    'skill transform should register bundled skills via context.skill?.transform',
   )
   assert.doesNotMatch(
     source,

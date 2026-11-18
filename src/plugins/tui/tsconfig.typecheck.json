@@ -4,6 +4,7 @@
   "include": [
     "src/pantheon-settings.tsx",
     "src/pantheon-settings-state.ts",
+    "src/legacy-audit.ts",
     "src/j1-gate-status.ts",
     "src/update-status.ts",
     "src/update-notice.ts",

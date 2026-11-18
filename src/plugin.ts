@@ -84,7 +84,7 @@
  * @module plugin
  */
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import { realpath as realpathAsync } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -93,6 +93,7 @@ import type {
   CommandDraft,
   PluginContext,
   ReferenceDraft,
+  SkillDraft,
 } from '@opencode-ai/plugin/v2/promise'
 import { define } from '@opencode-ai/plugin/v2/promise'
 import { evaluateAutoPermission } from './pantheon/auto-permissions.ts'
@@ -437,11 +438,13 @@ let idleTodoEnforcer: TodoEnforcer | undefined
  * partial parse.
  */
 let runtimeOverrides: EffectiveOverrides = {}
-let runtimeOverridesLoaded = false
+let runtimeOverridesLoadedForDir: string | undefined
+let activeHostWorkspaceDir: string | undefined
 
-function loadRuntimeOverrides(): void {
-  if (runtimeOverridesLoaded) return
-  runtimeOverridesLoaded = true
+function loadRuntimeOverrides(workspaceDir?: string): void {
+  const effectiveDir = workspaceDir ?? activeHostWorkspaceDir ?? process.cwd()
+  if (runtimeOverridesLoadedForDir === effectiveDir) return
+  runtimeOverridesLoadedForDir = effectiveDir
   try {
     const read = (filePath: string): string | undefined => {
       try {
@@ -451,7 +454,7 @@ function loadRuntimeOverrides(): void {
       }
     }
     const globalRaw = read(path.join(resolveGlobalOverrideDir(), 'pantheon-overrides.json'))
-    const projectRaw = read(path.join(process.cwd(), '.pantheon', 'overrides.json'))
+    const projectRaw = read(path.join(effectiveDir, '.pantheon', 'overrides.json'))
     runtimeOverrides = mergeOverrides(globalRaw, projectRaw).entries
   } catch {
     runtimeOverrides = {}
@@ -594,7 +597,11 @@ function transformAgents(draft: AgentDraft): void {
   }
   let configuredOverrides: Record<string, { model: string; variant?: string }> = {}
   try {
-    const modelConfiguration = readV2ModelConfiguration()
+    const modelConfiguration = readV2ModelConfiguration({
+      candidates: [
+        path.join(activeHostWorkspaceDir ?? process.cwd(), '.pantheon', 'active-preset.json'),
+      ],
+    })
     configuredOverrides = modelConfiguration.overrides
     if (modelConfiguration.warnings.length > 0) {
       // The V2 server PluginContext has no documented user-visible notification
@@ -778,6 +785,102 @@ function transformReferences(draft: ReferenceDraft): void {
     path: existsSync(globalAgentsPath) ? globalAgentsPath : fallbackAgentsPath,
     description: 'Pantheon agent and execution policy',
   })
+}
+
+function resolveCanonicalSkillsDir(): string | undefined {
+  const candidates = [
+    fileURLToPath(new URL('skills', import.meta.url)),
+    fileURLToPath(new URL('../src/skills', import.meta.url)),
+    fileURLToPath(new URL('src/skills', import.meta.url)),
+    path.join(activeHostWorkspaceDir ?? process.cwd(), 'src', 'skills'),
+  ]
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate
+  }
+  return undefined
+}
+
+function parseSkillFrontmatter(
+  content: string,
+  fallbackId: string,
+): {
+  name: string
+  description: string
+} {
+  let name = fallbackId
+  let description = `Pantheon ${fallbackId} skill`
+  const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
+  const yaml = fmMatch?.[1]
+  if (yaml) {
+    const nameMatch = yaml.match(/^name:\s*["']?([^"'\r\n]+)["']?/m)
+    if (nameMatch?.[1]) name = nameMatch[1].trim()
+    const descMatch = yaml.match(/^description:\s*["']?([^"'\r\n]+)["']?/m)
+    if (descMatch?.[1]) description = descMatch[1].trim()
+  }
+  return { name, description }
+}
+
+function transformSkills(draft: SkillDraft): void {
+  const skillsDir = resolveCanonicalSkillsDir()
+  if (!skillsDir) {
+    markUnsupported('skill-transform')
+    return
+  }
+
+  const editor = draft as unknown as {
+    add?: (skill: {
+      id: string
+      name: string
+      description?: string
+      path: string
+      content: string
+    }) => void
+    get?: (id: string) => unknown
+    source?: (source: { type: 'directory'; path: string }) => void
+  }
+
+  if (typeof editor.add === 'function') {
+    try {
+      const entries = readdirSync(skillsDir, { withFileTypes: true })
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue
+        const skillId = entry.name
+        const skillMdPath = path.join(skillsDir, skillId, 'SKILL.md')
+        if (!existsSync(skillMdPath)) continue
+        try {
+          // User/project skills already registered take precedence over bundled defaults.
+          if (typeof editor.get === 'function' && editor.get(skillId)) continue
+          const content = readFileSync(skillMdPath, 'utf8')
+          const { name, description } = parseSkillFrontmatter(content, skillId)
+          editor.add({
+            id: skillId,
+            name,
+            description,
+            path: skillMdPath,
+            content,
+          })
+        } catch {
+          /* ignore individual skill collision/malformed file */
+        }
+      }
+      return
+    } catch {
+      markUnsupported('skill-transform')
+      return
+    }
+  }
+
+  if (typeof editor.source === 'function') {
+    try {
+      editor.source({ type: 'directory', path: skillsDir })
+      return
+    } catch {
+      markUnsupported('skill-transform')
+      return
+    }
+  }
+
+  markUnsupported('skill-transform')
 }
 
 // ─── V2 Tool Registration ───────────────────────────────────────────────
@@ -2813,6 +2916,8 @@ export const plugin = define({
     // ─── Phase -1: Legacy store migration & stale purge (plugin-native) ──
     const setupHost = hostDomains(context)
     const hostLocationDir = setupHost.location?.directory
+    activeHostWorkspaceDir = hostLocationDir || undefined
+    loadRuntimeOverrides(hostLocationDir)
     const safeGlobalConfigDir = resolveSafeGlobalConfigDir()
     if (hostLocationDir) {
       try {
@@ -2864,13 +2969,12 @@ export const plugin = define({
     // See issue #92.
     //
     // Pantheon's Phase 1/config transform registrations cover agent, command,
-    // and reference; ctx.tool.transform is attempted separately in Phase 2.
-    // ctx.integration and ctx.skill are present on a live 2.0.22 host and neither
-    // is registered here — that is a Pantheon scope choice, not a host gap.
-    // ctx.catalog is the one domain the host does not provide.
+    // reference, and skill; ctx.tool.transform is attempted separately in Phase 6.
+    // ctx.integration is present on a live 2.0.22 host and is not registered here;
+    // ctx.catalog is absent. That is a Pantheon scope choice, not a host gap.
     // Phase 1 registers against the SDK-typed `context.agent` / `.command` /
-    // `.reference` directly; the host domains the SDK omits are reached only
-    // through `hostDomains` (see the module header).
+    // `.reference` / `.skill` directly; the host domains the SDK omits are reached
+    // only through `hostDomains` (see the module header).
     const phase1Transforms: Array<{ feature: string; register: () => Promise<unknown> }> = [
       { feature: 'agent-transform', register: () => context.agent.transform(transformAgents) },
       {
@@ -2880,6 +2984,13 @@ export const plugin = define({
       {
         feature: 'reference-transform',
         register: () => context.reference.transform(transformReferences),
+      },
+      {
+        feature: 'skill-transform',
+        register: () =>
+          typeof context.skill?.transform === 'function'
+            ? context.skill.transform(transformSkills)
+            : Promise.reject(new Error('skill domain unavailable')),
       },
     ]
     const phase1Results = await Promise.allSettled(

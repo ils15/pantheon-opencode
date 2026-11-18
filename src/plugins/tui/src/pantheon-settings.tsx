@@ -25,7 +25,7 @@
  */
 import { execFile } from 'node:child_process'
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { Context } from '@opencode/plugin/tui/context'
 import { createEffect, createSignal, For, onCleanup, onMount, Show } from 'solid-js'
 import {
@@ -47,6 +47,12 @@ import {
 import { buildDoctorTab } from './doctor-state.ts'
 import { buildJ1Tab } from './j1-gate-status.ts'
 import {
+  cleanLegacyArtifacts,
+  formatBytes,
+  type LegacyAuditSummary,
+  scanLegacyArtifacts,
+} from './legacy-audit.ts'
+import {
   applyDraft,
   buildAboutTab,
   buildChangelogTab,
@@ -63,6 +69,7 @@ import {
   isBehaviorDisabled,
   mergedOverrides,
   type OverridesLoad,
+  type OverridesScope,
   resetTab,
   type SettingsDraft,
   type SettingsRow,
@@ -149,13 +156,33 @@ let routerAvailable = false
 
 // ── Disk readers/writers (unchanged contracts from beta.2/3) ───────────
 
+function resolveWorkspaceDir(context: Context): string {
+  try {
+    const dataLoc = (
+      context.data as {
+        location?: {
+          default?: () => { directory?: unknown; worktree?: unknown }
+          info?: (ref: unknown) => { directory?: unknown } | undefined
+        }
+      }
+    )?.location
+    const def = dataLoc?.default?.()
+    const info = def ? dataLoc?.info?.(def) : undefined
+    const candidate = info?.directory ?? def?.directory ?? def?.worktree
+    if (typeof candidate === 'string' && candidate.trim() !== '') return candidate
+  } catch {
+    /* fallback to process.cwd() */
+  }
+  return process.cwd()
+}
+
 function globalOverridesPath(): string {
   const xdgConfig = process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? '', '.config')
   return join(xdgConfig, 'opencode', 'pantheon-overrides.json')
 }
 
-function projectOverridesPath(): string {
-  return join(process.cwd(), '.pantheon', 'overrides.json')
+function projectOverridesPath(workspaceDir = process.cwd()): string {
+  return join(workspaceDir, '.pantheon', 'overrides.json')
 }
 
 function readOneOverrides(path: string): { value: EffectiveOverrides; corrupt: boolean } {
@@ -170,9 +197,9 @@ function readOneOverrides(path: string): { value: EffectiveOverrides; corrupt: b
   }
 }
 
-function readOverridesLoad(): OverridesLoad {
+function readOverridesLoad(workspaceDir = process.cwd()): OverridesLoad {
   const globalRead = readOneOverrides(globalOverridesPath())
-  const projectRead = readOneOverrides(projectOverridesPath())
+  const projectRead = readOneOverrides(projectOverridesPath(workspaceDir))
   return {
     global: globalRead.value,
     project: projectRead.value,
@@ -181,7 +208,15 @@ function readOverridesLoad(): OverridesLoad {
 }
 
 function writeOverridesToDisk(load: OverridesLoad): void {
-  writeFileSync(globalOverridesPath(), serializeOverrides(load.global), 'utf8')
+  const target = globalOverridesPath()
+  mkdirSync(dirname(target), { recursive: true })
+  writeFileSync(target, serializeOverrides(load.global), 'utf8')
+}
+
+function writeProjectOverridesToDisk(workspaceDir: string, overrides: EffectiveOverrides): void {
+  const target = projectOverridesPath(workspaceDir)
+  mkdirSync(dirname(target), { recursive: true })
+  writeFileSync(target, serializeOverrides(overrides), 'utf8')
 }
 
 function userOpenCodeConfigPath(): string {
@@ -798,9 +833,14 @@ function createWindowController(
   cleanup: () => void
 } {
   const currentVersion = resolveRunningVersion()
+  const workspaceDir = resolveWorkspaceDir(context)
+  const initialLoad = readOverridesLoad(workspaceDir)
   const [page, setPage] = createSignal(0)
   const [selected, setSelected] = createSignal(0)
-  const [load, setLoad] = createSignal(readOverridesLoad())
+  const [load, setLoad] = createSignal(initialLoad)
+  const [overridesScope, setOverridesScope] = createSignal<OverridesScope>(
+    Object.keys(initialLoad.project).length > 0 ? 'project' : 'global',
+  )
   const [decision, setDecision] = createSignal<DecisionConfigRead>(readDecisionRouterConfig())
   const [goalLoop, setGoalLoop] = createSignal<GoalLoopPrefs>(readGoalLoopPrefs())
   const [budgets, setBudgets] = createSignal<DecisionBudgets>(readDecisionBudgets())
@@ -812,10 +852,24 @@ function createWindowController(
   const [lastChecked, setLastChecked] = createSignal<string | undefined>(undefined)
   const [checking, setChecking] = createSignal(false)
   const [updating, setUpdating] = createSignal(false)
+  const [legacyAudit, setLegacyAudit] = createSignal<LegacyAuditSummary | null>(null)
+  const [legacyScanning, setLegacyScanning] = createSignal(false)
+  const [legacyCleaning, setLegacyCleaning] = createSignal(false)
+  const [legacyNotice, setLegacyNotice] = createSignal<string | undefined>(undefined)
   const [changelogItems, setChangelogItems] = createSignal<ChangelogHighlightItem[]>([])
   const [draft, setDraft] = createSignal<SettingsDraft>({})
   const [notice, setNotice] = createSignal<string | undefined>(undefined)
   const [confirmExit, setConfirmExit] = createSignal(false)
+
+  // Initial non-blocking audit scan for Updates & Maintenance panel
+  queueMicrotask(() => {
+    try {
+      const scan = scanLegacyArtifacts({ workspaceDir, runningVersion: currentVersion })
+      setLegacyAudit(scan.summary)
+    } catch {
+      /* fail-open */
+    }
+  })
 
   // Real-time preview of staged draft preferences across open TUI views
   createEffect(() => {
@@ -852,12 +906,17 @@ function createWindowController(
   }
 
   const updatesInput = (): UpdatesSectionInput => {
+    const noticeMsg = legacyNotice()
     const input: UpdatesSectionInput = {
       currentVersion,
       state: readUpdateCheckState(),
       selectedChannel: selectedChannel(),
       checking: checking(),
       updating: updating(),
+      legacyAudit: legacyAudit(),
+      legacyScanning: legacyScanning(),
+      legacyCleaning: legacyCleaning(),
+      ...(noticeMsg !== undefined ? { legacyNotice: noticeMsg } : {}),
       nowMs: Date.now(),
     }
     const seen = lastChecked()
@@ -868,8 +927,9 @@ function createWindowController(
   const tabs = (): SettingsTab[] => {
     const rawLang = tuiPrefs().layout?.language
     const lang = resolveLanguage(rawLang)
+    const activeScope = (draft()['gates.scope'] as OverridesScope | undefined) ?? overridesScope()
     return [
-      buildGatesTab(load(), lang),
+      buildGatesTab(load(), lang, activeScope),
       buildDecisionTab(decision(), process.env, readAuthProviders(), readConfigProviders(), lang),
       buildPresetTab(presetInput(), lang),
       buildQuotaTab(undefined, lang, readQuotaPrefs()),
@@ -939,33 +999,99 @@ function createWindowController(
 
   const runUpdateNow = () => {
     if (updating()) return
+    const channel = selectedChannel()
+    const pkgSpec = channel === 'beta' ? 'pantheon-opencode@beta' : 'pantheon-opencode'
     setUpdating(true)
-    setNotice(`updating to ${selectedChannel()} channel…`)
+    setNotice(`updating plugin (${pkgSpec})…`)
     execFile(
-      'npm',
-      ['install', '-g', `pantheon-opencode@${selectedChannel()}`],
-      { timeout: 60_000 },
+      'opencode',
+      ['plugin', 'add', pkgSpec],
+      { cwd: workspaceDir, timeout: 60_000 },
       (err) => {
-        setUpdating(false)
-        if (err) {
-          setNotice('run in terminal: pantheon-opencode update')
-          try {
-            context.ui.toast?.show?.({
-              variant: 'warning',
-              message: 'Update requires terminal permissions: run `pantheon-opencode update`',
-            })
-          } catch {}
-        } else {
-          setNotice('[OK] update complete — restart OpenCode or run `npx pantheon-opencode init`')
+        if (!err) {
+          setUpdating(false)
+          setNotice('[OK] plugin updated — restart OpenCode to reload')
           try {
             context.ui.toast?.show?.({
               variant: 'info',
-              message: 'Pantheon updated successfully!',
+              message: 'Pantheon plugin updated! Restart OpenCode to load the new version.',
             })
           } catch {}
+          return
         }
+        execFile('npm', ['install', '-g', pkgSpec], { timeout: 60_000 }, (npmErr) => {
+          setUpdating(false)
+          if (npmErr) {
+            setNotice(`run in terminal: opencode plugin add ${pkgSpec}`)
+            try {
+              context.ui.toast?.show?.({
+                variant: 'warning',
+                message: `Update requires terminal permissions: run \`opencode plugin add ${pkgSpec}\``,
+              })
+            } catch {}
+          } else {
+            setNotice('[OK] update complete — restart OpenCode to reload the plugin')
+            try {
+              context.ui.toast?.show?.({
+                variant: 'info',
+                message: 'Pantheon updated successfully!',
+              })
+            } catch {}
+          }
+        })
       },
     )
+  }
+
+  const scanLegacyNow = () => {
+    if (legacyScanning() || legacyCleaning()) return
+    setLegacyScanning(true)
+    setLegacyNotice(undefined)
+    try {
+      const scan = scanLegacyArtifacts({ workspaceDir, runningVersion: currentVersion })
+      setLegacyAudit(scan.summary)
+      const isPt = resolveLanguage(tuiPrefs().layout?.language) === 'pt-BR'
+      setNotice(
+        scan.summary.total === 0
+          ? isPt
+            ? '[OK] nenhum arquivo legado ou obsoleto encontrado'
+            : '[OK] no legacy or obsolete files detected'
+          : isPt
+            ? `${scan.summary.total} arquivo(s) legado(s)/obsoleto(s) (${formatBytes(scan.summary.totalBytes)})`
+            : `found ${scan.summary.total} legacy/obsolete file(s) (${formatBytes(scan.summary.totalBytes)})`,
+      )
+    } catch {
+      setNotice('legacy scan failed')
+    } finally {
+      setLegacyScanning(false)
+    }
+  }
+
+  const cleanLegacyNow = () => {
+    if (legacyCleaning() || legacyScanning()) return
+    setLegacyCleaning(true)
+    const isPt = resolveLanguage(tuiPrefs().layout?.language) === 'pt-BR'
+    try {
+      const res = cleanLegacyArtifacts({ workspaceDir, runningVersion: currentVersion })
+      const after = scanLegacyArtifacts({ workspaceDir, runningVersion: currentVersion })
+      setLegacyAudit(after.summary)
+      setLoad(readOverridesLoad(workspaceDir))
+      const summaryMsg = isPt
+        ? `limpos ${res.removed.length} item(ns) (${formatBytes(res.reclaimedBytes)}), ${res.migratedRecords} registro(s) migrado(s)`
+        : `removed ${res.removed.length} item(s) (${formatBytes(res.reclaimedBytes)}), ${res.migratedRecords} record(s) migrated`
+      setLegacyNotice(summaryMsg)
+      setNotice(`[OK] ${summaryMsg}`)
+      try {
+        context.ui.toast?.show?.({
+          variant: res.errors.length > 0 ? 'warning' : 'info',
+          message: summaryMsg,
+        })
+      } catch {}
+    } catch {
+      setNotice(isPt ? 'falha ao limpar arquivos legados' : 'legacy cleanup failed')
+    } finally {
+      setLegacyCleaning(false)
+    }
   }
 
   const dispatchWrite = (id: string, value: string): DraftWriterResult => {
@@ -977,11 +1103,34 @@ function createWindowController(
       }
       return { ok: false, reason: 'unknown channel' }
     }
+    if (id === 'gates.scope') {
+      if (value === 'global' || value === 'project') {
+        setOverridesScope(value)
+        return { ok: true }
+      }
+      return { ok: false, reason: 'unknown scope' }
+    }
     if (id.startsWith('gate.')) {
+      const behaviorId = id.slice('gate.'.length)
+      const targetScope = (draft()['gates.scope'] as OverridesScope | undefined) ?? overridesScope()
+      if (targetScope === 'project') {
+        const nextProject = setOverrideState(
+          load().project,
+          behaviorId,
+          value === 'disabled' ? 'disabled' : 'enabled',
+        )
+        if (nextProject === load().project) return { ok: true }
+        try {
+          writeProjectOverridesToDisk(workspaceDir, nextProject)
+          setLoad({ ...load(), project: nextProject })
+          return { ok: true }
+        } catch {
+          return { ok: false, reason: 'project overrides disk write failed' }
+        }
+      }
       if (!canWriteOverrides(load())) {
         return { ok: false, reason: 'overrides file unreadable — repair with `doctor --fix`' }
       }
-      const behaviorId = id.slice('gate.'.length)
       const nextGlobal = setOverrideState(
         load().global,
         behaviorId,
@@ -1140,7 +1289,7 @@ function createWindowController(
     const { applied, failed } = applyDraft(draft(), writer)
     if (applied.length > 0) {
       setDraft(settledDraft(draft(), applied))
-      setLoad(readOverridesLoad())
+      setLoad(readOverridesLoad(workspaceDir))
       setDecision(readDecisionRouterConfig())
       setPresetTick((tick) => tick + 1)
     }
@@ -1243,6 +1392,8 @@ function createWindowController(
       const row = list[index]
       if (row?.action === 'update-check') checkUpdatesNow()
       else if (row?.action === 'update-run') runUpdateNow()
+      else if (row?.action === 'legacy-scan') scanLegacyNow()
+      else if (row?.action === 'legacy-clean') cleanLegacyNow()
       else if (row) {
         setNotice(undefined)
         setDraft(stageValue(draft(), row, direction))
@@ -1260,6 +1411,8 @@ function createWindowController(
       const row = rows()[selected()]
       if (row?.action === 'update-check') checkUpdatesNow()
       else if (row?.action === 'update-run') runUpdateNow()
+      else if (row?.action === 'legacy-scan') scanLegacyNow()
+      else if (row?.action === 'legacy-clean') cleanLegacyNow()
       else step(1)
     },
     nextTab,

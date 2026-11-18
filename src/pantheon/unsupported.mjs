@@ -58,15 +58,11 @@ export const UNSUPPORTED_FEATURE_SEED = Object.freeze([
   // tests/canary/plugin-tool-canary.test.mjs. (`catalog` IS in the 1.18.33
   // SDK's PluginContext, so the SDK types it and the host does not provide it.)
   'catalog-transform',
-  // Adapter support, NOT host availability: 2.0.22 exposes ctx.integration and
-  // ctx.skill with callable transforms, and Pantheon deliberately registers
-  // neither. These entries record what this plugin does not implement.
+  // Adapter support, NOT host availability: Pantheon deliberately leaves
+  // `ctx.integration` unregistered (`integration-transform`). `ctx.skill` IS
+  // registered via `SkillEditor.add()` / `SkillDraft.source()` and only marks
+  // `'skill-transform'` at runtime when a host lacks both helpers.
   'integration-transform',
-  // The inspected SkillEditor shape has no `source()` helper — i.e. no
-  // `SkillEditor.source()` — for adding a directory source. This is narrower
-  // than (and distinct from) ctx.skill's host availability or callable
-  // transform, which a live 2.0.22 host does provide.
-  'skill-transform',
   // Adapter limitation, not a host gap: the goal loop needs a GoalStore, a
   // GoalLoopClient and a BackgroundJobBoard. V2 has no `client` to build the
   // loop's session calls, and the bridge the V2 entry injects deliberately

@@ -32,18 +32,14 @@ Requirements: [OpenCode](https://opencode.ai/docs/) **2.x** and Node.js **≥ 26
 ([compatibility](docs/COMPATIBILITY.md)).
 
 ```bash
-# Option A — as an OpenCode plugin (global or project)
-opencode plugin add pantheon-opencode
+# Primary (Recommended) — native OpenCode 2.x plugin (global or project, no npx init required)
+opencode plugin add pantheon-opencode@beta
 
-# Option B — global CLI install with full MCP tooling
-npm install -g pantheon-opencode@beta
-pantheon-opencode init --yes
+# Check health, updates & clean legacy/obsolete files inside OpenCode:
+#   /pantheon-settings -> Updates (or Legacy & Drift Cleanup)
 
-# Verify the install
-pantheon-opencode doctor
-
-# Later: update without losing models, presets or permissions
-pantheon-opencode update
+# Deprecated legacy CLI fallback (optional Python MCP runtime only):
+# npm install -g pantheon-opencode@beta && pantheon-opencode init --yes
 ```
 
 ## Usage

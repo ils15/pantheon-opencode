@@ -6,7 +6,7 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
 });
 
 // src/plugin.ts
-import { appendFileSync as appendFileSync2, existsSync as existsSync15, mkdirSync as mkdirSync11, readFileSync as readFileSync14 } from "node:fs";
+import { appendFileSync as appendFileSync2, existsSync as existsSync15, mkdirSync as mkdirSync11, readdirSync as readdirSync7, readFileSync as readFileSync14 } from "node:fs";
 import { realpath as realpathAsync } from "node:fs/promises";
 import path4 from "node:path";
 import { fileURLToPath as fileURLToPath5 } from "node:url";
@@ -8936,6 +8936,65 @@ function migrateLegacyStoresAndPurgeStale(workspaceDir, options = {}) {
     staleFilesDeleted
   };
 }
+var CANONICAL_AGENT_MD_FILES = Object.freeze([
+  "aphrodite.md",
+  "apollo.md",
+  "artemis.md",
+  "athena.md",
+  "demeter.md",
+  "gaia.md",
+  "hephaestus.md",
+  "hermes.md",
+  "iris.md",
+  "mnemosyne.md",
+  "nyx.md",
+  "prometheus.md",
+  "talos.md",
+  "themis.md",
+  "zeus.md"
+]);
+var CANONICAL_COMMAND_MD_FILES = Object.freeze([
+  "pantheon.md",
+  "pantheon-audit.md",
+  "pantheon-deepwork.md",
+  "pantheon-focus.md",
+  "pantheon-model.md",
+  "pantheon-optimize.md",
+  "pantheon-settings.md",
+  "pantheon-vision.md"
+]);
+var CANONICAL_SKILL_IDS = Object.freeze([
+  "agent-coordination",
+  "agent-forge",
+  "artifact-management",
+  "auto-continue",
+  "clonedeps",
+  "code-review-checklist",
+  "codemap",
+  "context-compression",
+  "fast-path-execution",
+  "git-workflow-and-versioning",
+  "incremental-implementation",
+  "instruction-forge",
+  "loop-engineering",
+  "memory-bank",
+  "prompt-refinery",
+  "reflect",
+  "security-hardening",
+  "session-goal",
+  "simplify",
+  "spec-driven-development",
+  "tdd-with-agents",
+  "test-slicing",
+  "verification-planning",
+  "visual-review-pipeline",
+  "worktrees"
+]);
+var LEGACY_INSTRUCTION_FILES = Object.freeze([
+  "zeus-execution-rules.instructions.md",
+  "zeus-orchestration.instructions.md",
+  "zeus-workflow.instructions.md"
+]);
 
 // src/pantheon/native-vision.ts
 import { lookup as dnsLookup } from "node:dns/promises";
@@ -17286,15 +17345,11 @@ var UNSUPPORTED_FEATURE_SEED = Object.freeze([
   // tests/canary/plugin-tool-canary.test.mjs. (`catalog` IS in the 1.18.33
   // SDK's PluginContext, so the SDK types it and the host does not provide it.)
   "catalog-transform",
-  // Adapter support, NOT host availability: 2.0.22 exposes ctx.integration and
-  // ctx.skill with callable transforms, and Pantheon deliberately registers
-  // neither. These entries record what this plugin does not implement.
+  // Adapter support, NOT host availability: Pantheon deliberately leaves
+  // `ctx.integration` unregistered (`integration-transform`). `ctx.skill` IS
+  // registered via `SkillEditor.add()` / `SkillDraft.source()` and only marks
+  // `'skill-transform'` at runtime when a host lacks both helpers.
   "integration-transform",
-  // The inspected SkillEditor shape has no `source()` helper — i.e. no
-  // `SkillEditor.source()` — for adding a directory source. This is narrower
-  // than (and distinct from) ctx.skill's host availability or callable
-  // transform, which a live 2.0.22 host does provide.
-  "skill-transform",
   // Adapter limitation, not a host gap: the goal loop needs a GoalStore, a
   // GoalLoopClient and a BackgroundJobBoard. V2 has no `client` to build the
   // loop's session calls, and the bridge the V2 entry injects deliberately
@@ -17391,10 +17446,12 @@ function hostDomains(context) {
 }
 var idleTodoEnforcer;
 var runtimeOverrides = {};
-var runtimeOverridesLoaded = false;
-function loadRuntimeOverrides() {
-  if (runtimeOverridesLoaded) return;
-  runtimeOverridesLoaded = true;
+var runtimeOverridesLoadedForDir;
+var activeHostWorkspaceDir;
+function loadRuntimeOverrides(workspaceDir) {
+  const effectiveDir = workspaceDir ?? activeHostWorkspaceDir ?? process.cwd();
+  if (runtimeOverridesLoadedForDir === effectiveDir) return;
+  runtimeOverridesLoadedForDir = effectiveDir;
   try {
     const read = (filePath) => {
       try {
@@ -17404,7 +17461,7 @@ function loadRuntimeOverrides() {
       }
     };
     const globalRaw = read(path4.join(resolveGlobalOverrideDir(), "pantheon-overrides.json"));
-    const projectRaw = read(path4.join(process.cwd(), ".pantheon", "overrides.json"));
+    const projectRaw = read(path4.join(effectiveDir, ".pantheon", "overrides.json"));
     runtimeOverrides = mergeOverrides(globalRaw, projectRaw).entries;
   } catch {
     runtimeOverrides = {};
@@ -17489,7 +17546,11 @@ function transformAgents(draft) {
   }
   let configuredOverrides = {};
   try {
-    const modelConfiguration = readV2ModelConfiguration();
+    const modelConfiguration = readV2ModelConfiguration({
+      candidates: [
+        path4.join(activeHostWorkspaceDir ?? process.cwd(), ".pantheon", "active-preset.json")
+      ]
+    });
     configuredOverrides = modelConfiguration.overrides;
     if (modelConfiguration.warnings.length > 0) {
       markUnsupported("agent-model-overrides");
@@ -17643,6 +17704,77 @@ function transformReferences(draft) {
     path: existsSync15(globalAgentsPath) ? globalAgentsPath : fallbackAgentsPath,
     description: "Pantheon agent and execution policy"
   });
+}
+function resolveCanonicalSkillsDir() {
+  const candidates = [
+    fileURLToPath5(new URL("skills", import.meta.url)),
+    fileURLToPath5(new URL("../src/skills", import.meta.url)),
+    fileURLToPath5(new URL("src/skills", import.meta.url)),
+    path4.join(activeHostWorkspaceDir ?? process.cwd(), "src", "skills")
+  ];
+  for (const candidate of candidates) {
+    if (existsSync15(candidate)) return candidate;
+  }
+  return void 0;
+}
+function parseSkillFrontmatter(content, fallbackId) {
+  let name = fallbackId;
+  let description = `Pantheon ${fallbackId} skill`;
+  const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  const yaml = fmMatch?.[1];
+  if (yaml) {
+    const nameMatch = yaml.match(/^name:\s*["']?([^"'\r\n]+)["']?/m);
+    if (nameMatch?.[1]) name = nameMatch[1].trim();
+    const descMatch = yaml.match(/^description:\s*["']?([^"'\r\n]+)["']?/m);
+    if (descMatch?.[1]) description = descMatch[1].trim();
+  }
+  return { name, description };
+}
+function transformSkills(draft) {
+  const skillsDir = resolveCanonicalSkillsDir();
+  if (!skillsDir) {
+    markUnsupported("skill-transform");
+    return;
+  }
+  const editor = draft;
+  if (typeof editor.add === "function") {
+    try {
+      const entries = readdirSync7(skillsDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const skillId = entry.name;
+        const skillMdPath = path4.join(skillsDir, skillId, "SKILL.md");
+        if (!existsSync15(skillMdPath)) continue;
+        try {
+          if (typeof editor.get === "function" && editor.get(skillId)) continue;
+          const content = readFileSync14(skillMdPath, "utf8");
+          const { name, description } = parseSkillFrontmatter(content, skillId);
+          editor.add({
+            id: skillId,
+            name,
+            description,
+            path: skillMdPath,
+            content
+          });
+        } catch {
+        }
+      }
+      return;
+    } catch {
+      markUnsupported("skill-transform");
+      return;
+    }
+  }
+  if (typeof editor.source === "function") {
+    try {
+      editor.source({ type: "directory", path: skillsDir });
+      return;
+    } catch {
+      markUnsupported("skill-transform");
+      return;
+    }
+  }
+  markUnsupported("skill-transform");
 }
 function buildV2JevRuntime(host) {
   const specialistCallers = specialistCallerAllowlist(process.env.PANTHEON_JEV_SPECIALIST_CALLERS);
@@ -18547,6 +18679,8 @@ var plugin = define({
   async setup(context) {
     const setupHost = hostDomains(context);
     const hostLocationDir = setupHost.location?.directory;
+    activeHostWorkspaceDir = hostLocationDir || void 0;
+    loadRuntimeOverrides(hostLocationDir);
     const safeGlobalConfigDir = resolveSafeGlobalConfigDir();
     if (hostLocationDir) {
       try {
@@ -18586,6 +18720,10 @@ var plugin = define({
       {
         feature: "reference-transform",
         register: () => context.reference.transform(transformReferences)
+      },
+      {
+        feature: "skill-transform",
+        register: () => typeof context.skill?.transform === "function" ? context.skill.transform(transformSkills) : Promise.reject(new Error("skill domain unavailable"))
       }
     ];
     const phase1Results = await Promise.allSettled(

@@ -13,6 +13,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
      Running apply will move this section to a versioned entry and reset the template below. -->
 
+## [v2.2.0-beta.5] - 2026-11-18
+
+### 🆕 What's New
+
+- **Native Bundled Skills (`ctx.skill.transform`)**: `opencode plugin add` now auto-provisions all 25 bundled skills without `npx init`.
+- **TUI Legacy & Drift Cleanup Panel**: `/pantheon-settings -> Updates` now scans and safely migrates/removes obsolete V1 & redundant files.
+- **Global & Project Scope Symmetry**: Edit behavior gates for global (`~/.config/opencode`) or project (`.pantheon`) right inside the TUI.
+
+### Added
+
+- **plugin** — `src/plugin.ts`: registers bundled skills via `context.skill.transform` and uses `location.directory` for project overrides/presets.
+- **tui** — `src/plugins/tui/src/legacy-audit.ts`: scans and cleans obsolete global/project files after safely migrating stores while keeping custom assets.
+- **pantheon** — `src/pantheon/legacy-store-migration.mjs`: adds `scanLegacyArtifacts` and `cleanLegacyArtifacts` with scope confinement.
+
+### Changed
+
+- **tui** — `update-status.ts`, `pantheon-settings.tsx`, `index.tsx`: channel-aware update check, `gates.scope` switcher, and Legacy & Drift panel.
+- **docs** — `README.md`, `README.pt-BR.md`, `bin/pantheon-init.mjs`: marks `npx pantheon-opencode init` deprecated in favor of `opencode plugin add`.
+
 ## [v2.2.0-beta.4] - 2026-11-18
 
 ### 🆕 What's New

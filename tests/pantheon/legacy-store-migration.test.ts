@@ -5,8 +5,10 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import test from 'node:test'
 import {
+  cleanLegacyArtifacts,
   migrateLegacyStoresAndPurgeStale,
   resetLegacyMigrationCacheForTests,
+  scanLegacyArtifacts,
 } from '../../src/pantheon/legacy-store-migration.mjs'
 import { createNativeMemoryAndPersistenceTools } from '../../src/pantheon/native-memory-tools.ts'
 import plugin from '../../src/plugin.ts'
@@ -432,5 +434,86 @@ test('plugin.setup migrates global and workspace legacy stores without CLI init 
     rmSync(xdgConfig, { recursive: true, force: true })
     rmSync(workspaceA, { recursive: true, force: true })
     rmSync(workspaceB, { recursive: true, force: true })
+  }
+})
+
+test('scanLegacyArtifacts and cleanLegacyArtifacts migrate stores first and preserve custom user agents/skills', async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'pantheon-legacy-audit-'))
+  try {
+    const globalDir = join(tmp, 'global-opencode')
+    const projectDir = join(tmp, 'project-ws')
+    mkdirSync(join(globalDir, 'plugins', 'pantheon-tui'), { recursive: true })
+    mkdirSync(join(globalDir, 'agents'), { recursive: true })
+    mkdirSync(join(globalDir, 'skills', 'tdd-with-agents'), { recursive: true })
+    mkdirSync(join(globalDir, 'skills', 'my-custom-skill'), { recursive: true })
+    mkdirSync(join(projectDir, '.opencode', 'agents'), { recursive: true })
+    mkdirSync(join(projectDir, '.opencode', 'commands'), { recursive: true })
+    mkdirSync(join(projectDir, '.pantheon'), { recursive: true })
+
+    // Seed global TUI drift copy + V1 hook + canonical skill + custom user skill
+    writeFileSync(
+      join(globalDir, 'plugins', 'pantheon-tui', 'package.json'),
+      JSON.stringify({ name: 'pantheon-tui', version: '2.1.6' }),
+    )
+    writeFileSync(join(globalDir, 'plugins', 'pantheon-hooks.ts'), '// obsolete v1')
+    writeFileSync(join(globalDir, 'agents', 'zeus.md'), '# legacy zeus copy')
+    writeFileSync(join(globalDir, 'skills', 'tdd-with-agents', 'SKILL.md'), '# canonical copy')
+    writeFileSync(join(globalDir, 'skills', 'my-custom-skill', 'SKILL.md'), '# user custom skill')
+    writeFileSync(join(globalDir, 'opencode.json.bak.1'), '{}')
+
+    // Seed project unmigrated goals.json + canonical command + custom user forged agent
+    writeFileSync(
+      join(projectDir, '.pantheon', 'goals.json'),
+      JSON.stringify([{ id: 'goal-keep', title: 'Preserve goal before cleanup' }]),
+    )
+    writeFileSync(join(projectDir, '.opencode', 'commands', 'pantheon-deepwork.md'), '# cmd copy')
+    writeFileSync(join(projectDir, '.opencode', 'agents', 'custom-geo.md'), '# user forged agent')
+
+    const scan = scanLegacyArtifacts({
+      workspaceDir: projectDir,
+      globalConfigDir: globalDir,
+      runningVersion: '2.2.0-beta.4',
+    })
+    assert.ok(scan.summary.total >= 6)
+    assert.ok(scan.summary.totalBytes > 0)
+    assert.ok(scan.items.some((i) => i.category === 'drift' && i.path.includes('pantheon-tui')))
+    assert.ok(scan.items.some((i) => i.category === 'hooks'))
+    assert.ok(scan.items.some((i) => i.category === 'redundantAsset'))
+    // Custom user files must NEVER appear in legacy scan
+    assert.equal(
+      scan.items.some(
+        (i) => i.path.includes('custom-geo.md') || i.path.includes('my-custom-skill'),
+      ),
+      false,
+    )
+
+    const result = cleanLegacyArtifacts({
+      workspaceDir: projectDir,
+      globalConfigDir: globalDir,
+      runningVersion: '2.2.0-beta.4',
+    })
+    assert.equal(result.errors.length, 0)
+    assert.ok(result.removed.length >= 6)
+    assert.ok(result.reclaimedBytes > 0)
+
+    // Goal must have been migrated to canonical .pantheon/goals/<id>.json BEFORE deletion
+    assert.equal(existsSync(join(projectDir, '.pantheon', 'goals', 'goal-keep.json')), true)
+    assert.equal(existsSync(join(projectDir, '.pantheon', 'goals.json')), false)
+
+    // Obsolete/redundant files deleted
+    assert.equal(existsSync(join(globalDir, 'plugins', 'pantheon-hooks.ts')), false)
+    assert.equal(existsSync(join(globalDir, 'plugins', 'pantheon-tui')), false)
+    assert.equal(existsSync(join(globalDir, 'agents', 'zeus.md')), false)
+    assert.equal(existsSync(join(globalDir, 'skills', 'tdd-with-agents')), false)
+    assert.equal(
+      existsSync(join(projectDir, '.opencode', 'commands', 'pantheon-deepwork.md')),
+      false,
+    )
+
+    // User custom files preserved untouched
+    assert.equal(existsSync(join(globalDir, 'skills', 'my-custom-skill', 'SKILL.md')), true)
+    assert.equal(existsSync(join(projectDir, '.opencode', 'agents', 'custom-geo.md')), true)
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
   }
 })
