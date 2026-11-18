@@ -15,11 +15,10 @@ agent: "zeus"
 ## Layers
 
 ### Layer 1 — Heuristic Scan
-Resolve the installed helper first (do not assume the current project contains
-Pantheon source). Check, in order: `$OPENCODE_CONFIG_DIR/.opencode/scripts/`,
-`$OPENCODE_CONFIG_DIR/scripts/`, `${XDG_CONFIG_HOME:-$HOME/.config}/opencode/scripts/`,
-`$HOME/.opencode/scripts/`, `.opencode/scripts/`, then
-`$(npm root -g)/pantheon-opencode/scripts/`. Resolve the first existing file to
+Delegate Layer 1 execution to `@themis` (who holds `bash`/`shell` access). Resolve the installed `themis_heuristic_scan.py` helper first (do not assume the current project contains Pantheon source). Check, in order: `$OPENCODE_CONFIG_DIR/.opencode/scripts/themis_heuristic_scan.py`,
+`$OPENCODE_CONFIG_DIR/scripts/themis_heuristic_scan.py`, `${XDG_CONFIG_HOME:-$HOME/.config}/opencode/scripts/themis_heuristic_scan.py`,
+`$HOME/.opencode/scripts/themis_heuristic_scan.py`, `.opencode/scripts/themis_heuristic_scan.py`, then
+`$(npm root -g)/pantheon-opencode/scripts/themis_heuristic_scan.py`. Resolve the first existing file to
 an absolute path and run `python3 "$helper" --path="$PWD"`; if none exists,
 report the helper as missing and stop Layer 1 rather than claiming it passed.
 Zero tokens, <2s. Checks: ruff, biome, anti-pattern slop, anti-overengineering (YAGNI), hash-anchored edits. Returns score 0-100 + APPROVED/BLOCKING.

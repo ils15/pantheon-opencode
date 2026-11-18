@@ -39,7 +39,10 @@ import { fileURLToPath } from 'node:url'
 import {
   AGENTS_GLOBAL_MD_PATH,
   AGENTS_MD_PATH,
+  generateAgentPrompt,
   logicalLineCount,
+  MAX_RENDERED_AGENT_PROMPT_BYTES,
+  readInstructions,
 } from '../scripts/build-agents-md.mjs'
 
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..')
@@ -106,6 +109,29 @@ test('always-loaded artifacts stay inside their byte and line ceilings', () => {
       )
     }
   }
+})
+
+test('rendered agent prompts (including zeus with inline instructions) stay under MAX_RENDERED_AGENT_PROMPT_BYTES and honor maxBytes', () => {
+  const agentsDir = join(ROOT, 'src', 'agents')
+  const instructions = readInstructions()
+  for (const file of readdirSync(agentsDir).filter((f) => f.endsWith('.md') && f !== 'README.md')) {
+    const agentName = basename(file, '.md')
+    const rawPrompt = read(join(agentsDir, file))
+    const rendered = generateAgentPrompt(agentName, rawPrompt, instructions)
+    const actualBytes = Buffer.byteLength(rendered, 'utf8')
+    assert.ok(
+      actualBytes <= MAX_RENDERED_AGENT_PROMPT_BYTES,
+      `rendered agent-${agentName}.md is ${actualBytes} bytes, over its ${MAX_RENDERED_AGENT_PROMPT_BYTES}-byte ceiling`,
+    )
+  }
+
+  // Verify configurable maxBytes parameter compacts zeus prompt when a tighter budget is requested
+  const zeusRaw = read(join(agentsDir, 'zeus.md'))
+  const compactedZeus = generateAgentPrompt('zeus', zeusRaw, instructions, { maxBytes: 24_000 })
+  assert.ok(
+    Buffer.byteLength(compactedZeus, 'utf8') <= 24_000,
+    `compacted zeus prompt (${Buffer.byteLength(compactedZeus, 'utf8')} B) must respect maxBytes=24000`,
+  )
 })
 
 test('every prompts/ file has a measured ceiling and stays under it', () => {

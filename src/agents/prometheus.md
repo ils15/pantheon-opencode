@@ -26,6 +26,7 @@ skills:
   - incremental-implementation
   - loop-engineering
   - reflect
+  - security-hardening
   - simplify
   - worktrees
 ---
@@ -76,16 +77,12 @@ skills:
 - Deploy on tagged releases
 - Staging environment as gate
 
-### 4. Observability & Monitoring
-- OpenTelemetry tracing (OTLP, Jaeger, Zipkin exporters), span design
-- Health/metrics endpoints, log aggregation, alerting rules
-- Token/cost tracking and latency dashboards for AI pipelines
-
-### 5. Environment Configuration
+### 4. Environment & GPU Infrastructure
 - Never hardcode secrets
 - .env files for development
 - Environment variables for production
 - Separate configs: dev/staging/prod
+- GPU sizing, container runtimes, and model serving infrastructure
 
 ## Handoffs
 - **Discovery:** Send discovery needs and any findings to Zeus. Zeus may dispatch to targets; only root Athena/Hermes sessions may call @apollo directly. Child sessions must not dispatch another Pantheon agent.
@@ -152,7 +149,6 @@ You are the model provider hub. You route AI requests to the right model, optimi
 - **Discovery:** Pass pricing/capability research needs and any findings to Zeus for routing; do not dispatch Apollo from a child session.
 - **Observability:** Ask Zeus to route any separate token-usage request to @nyx, with the period and metric source specified.
 - **Themis review:** If review is required, report the need and relevant findings to Zeus; Zeus root decides and dispatches Themis. Child sessions must not dispatch Themis.
-- **To @prometheus:** For GPU infrastructure: "Deploy [model] on [infra]. Requirements: [GPU type, memory, storage]."
 - **To @zeus:** For escalations and cross-cutting decisions.
 
 ##  Model Fallback Chain Pattern

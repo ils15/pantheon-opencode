@@ -48,6 +48,9 @@
 
 import { exec } from 'node:child_process'
 import { promisify } from 'node:util'
+import { createAgentForgeTool } from './agent-forge-tool.ts'
+import { isDangerousCommand, NON_EDIT_AGENTS, NON_SHELL_AGENTS } from './auto-permissions.ts'
+import { createCodemapTools } from './codemap-tools.ts'
 import { createCostCommand } from './cost-command.ts'
 import type { ShadowSink } from './decision-shadow.ts'
 import { createDeepworkTool } from './deepwork/deepwork-tool.ts'
@@ -55,8 +58,10 @@ import { createHashlineEditTool, type HashlineToolResult } from './hashline/tool
 import { createV2JevDecisionDefinition, type V2JevDecisionRuntime } from './jev-decision-tool.ts'
 import { createV2LocalDecisionDefinition } from './local-decision-tool.ts'
 import { createModelCommand } from './model-command.ts'
+import { createNativeMemoryAndPersistenceTools } from './native-memory-tools.ts'
 import { createV2VisionTool, type V2VisionRuntime } from './native-vision.ts'
 import { createV2SkillSearchDefinition } from './skill-search-tool.ts'
+import { createStepLedgerTool } from './step-ledger.ts'
 import { resolveToolCwd, type ToolContextLike } from './tool-context.ts'
 
 // ─── Contract types ─────────────────────────────────────────────────────
@@ -270,11 +275,18 @@ async function executeHashlineEdit(
   input: Record<string, unknown>,
   context: unknown,
 ): Promise<V2ToolResult> {
+  const ctx = toolContext(context)
+  const callerAgent = (ctx.agent ?? '').toLowerCase().trim()
+  if (callerAgent && NON_EDIT_AGENTS.has(callerAgent)) {
+    return {
+      output: `hashline_edit denied: agent '${callerAgent}' is not permitted to edit files directly.`,
+    }
+  }
   const coerced = coerceHashlineEditArgs(input)
   if (!coerced.ok) return { output: coerced.error }
   let result: HashlineToolResult
   try {
-    result = await hashlineEdit.execute(coerced.args, toolContext(context))
+    result = await hashlineEdit.execute(coerced.args, ctx)
   } catch (err: unknown) {
     // The V1 tool does not throw for user errors; this is defence in depth so
     // an unexpected throw surfaces as text instead of an absent tool result.
@@ -479,13 +491,33 @@ const TODOWRITE_INPUT = {
 } as const
 
 let latestSessionTodos: unknown[] = []
+const sessionTodosBySession = new Map<string, unknown[]>()
 
-export function getLatestSessionTodos(): unknown[] {
+function resolveTodoSessionKey(context: unknown): string | undefined {
+  if (!context || typeof context !== 'object') return undefined
+  const ctx = context as Record<string, unknown>
+  if (typeof ctx.sessionID === 'string' && ctx.sessionID.trim() !== '') {
+    return ctx.sessionID.trim()
+  }
+  const sessionObj = ctx.session as Record<string, unknown> | undefined
+  if (typeof sessionObj?.id === 'string' && sessionObj.id.trim() !== '') {
+    return sessionObj.id.trim()
+  }
+  return undefined
+}
+
+export function getLatestSessionTodos(sessionID?: string): unknown[] {
+  if (sessionID && sessionTodosBySession.has(sessionID)) {
+    return sessionTodosBySession.get(sessionID) ?? []
+  }
   return latestSessionTodos
 }
 
-export function setLatestSessionTodos(todos: unknown[]): void {
+export function setLatestSessionTodos(todos: unknown[], sessionID?: string): void {
   latestSessionTodos = todos
+  if (sessionID) {
+    sessionTodosBySession.set(sessionID, todos)
+  }
 }
 
 /** A V2 pass-through `todowrite`: the host stores the tool part in the
@@ -498,10 +530,11 @@ const todowriteTool: V2ToolDef = {
     'newest list; mark each item in_progress/completed as soon as its state changes.',
   input: TODOWRITE_INPUT,
   output: {},
-  execute: async (input) => {
+  execute: async (input, context) => {
     const rawTodos = (input as Record<string, unknown>).todos
     const todos: unknown[] = Array.isArray(rawTodos) ? (rawTodos as unknown[]) : []
-    latestSessionTodos = todos
+    const sessionKey = resolveTodoSessionKey(context)
+    setLatestSessionTodos(todos, sessionKey)
     return { ok: true, todos, output: JSON.stringify({ todos }) }
   },
 }
@@ -524,9 +557,10 @@ const todoreadTool: V2ToolDef = {
     'Read the active session task checklist. Returns the newest list of tasks written via todowrite.',
   input: TODOREAD_INPUT,
   output: {},
-  execute: async (input) => {
+  execute: async (input, context) => {
     const statusFilter = (input as Record<string, unknown>)?.status
-    let todos = latestSessionTodos
+    const sessionKey = resolveTodoSessionKey(context)
+    let todos = getLatestSessionTodos(sessionKey)
     if (typeof statusFilter === 'string' && statusFilter.trim() !== '') {
       todos = todos.filter(
         (t) =>
@@ -544,6 +578,7 @@ const todoreadTool: V2ToolDef = {
 }
 
 const execAsync = promisify(exec)
+const SHELL_TIMEOUT_MS = 120_000
 
 const SHELL_INPUT = {
   type: 'object',
@@ -568,16 +603,28 @@ export function createShellTool(fallbackDir?: string): V2ToolDef {
     input: SHELL_INPUT,
     output: {},
     execute: async (input, context) => {
+      const ctx = toolContext(context)
+      const callerAgent = (ctx.agent ?? '').toLowerCase().trim()
+      if (callerAgent && NON_SHELL_AGENTS.has(callerAgent)) {
+        const msg = `shell denied: agent '${callerAgent}' is not permitted to execute shell commands`
+        return { output: msg, ok: false, error: msg }
+      }
       const raw = (input as Record<string, unknown>) ?? {}
       const command = String(raw.command ?? raw.cmd ?? '')
       if (!command.trim()) {
         return { output: '', ok: false, error: 'Command cannot be empty' }
+      }
+      if (isDangerousCommand(command)) {
+        const msg =
+          'shell denied: destructive or privilege-escalation command blocked by safety guard'
+        return { output: msg, ok: false, error: msg }
       }
       const cwd = resolveToolCwd(context, fallbackDir)
       try {
         const { stdout, stderr } = await execAsync(command, {
           cwd,
           maxBuffer: 10 * 1024 * 1024,
+          timeout: SHELL_TIMEOUT_MS,
           shell: '/bin/bash',
         })
         const output = [stdout, stderr].filter(Boolean).join('\n')
@@ -651,7 +698,15 @@ export function createV2ToolDefinitions(
   definitions.push(createShellTool(hostLocationDirectory))
   definitions.push(createV2SkillSearchDefinition(hostLocationDirectory))
   definitions.push(createDeepworkTool(hostLocationDirectory))
+  definitions.push(createStepLedgerTool(hostLocationDirectory))
+  definitions.push(createAgentForgeTool(hostLocationDirectory))
+  definitions.push(...createNativeMemoryAndPersistenceTools(hostLocationDirectory))
+  definitions.push(...createCodemapTools(hostLocationDirectory))
   if (visionRuntime) definitions.push(createV2VisionTool(visionRuntime))
   if (jevRuntime) definitions.push(createV2JevDecisionDefinition(jevRuntime))
   return definitions
 }
+
+export type PantheonToolResult = V2ToolResult
+export type PantheonToolDef = V2ToolDef
+export const createToolDefinitions = createV2ToolDefinitions

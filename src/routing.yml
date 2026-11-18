@@ -207,6 +207,7 @@ agents:
     - memory_recall
     - pantheon_resources
     skills:
+    - artifact-management
     - loop-engineering
     - memory-bank
     - reflect
@@ -254,6 +255,7 @@ agents:
     - pantheon_code_mode
     skills:
     - clonedeps
+    - code-review-checklist
     - fast-path-execution
     - git-workflow-and-versioning
     - incremental-implementation
@@ -357,6 +359,7 @@ agents:
     - incremental-implementation
     - loop-engineering
     - reflect
+    - security-hardening
     - simplify
     - worktrees
   hephaestus:

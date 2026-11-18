@@ -13,6 +13,70 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
      Running apply will move this section to a versioned entry and reset the template below. -->
 
+## [v2.2.0-beta.2] - 2026-11-18
+
+### 🆕 What's New
+
+- **Polyglot Core Specialists**: Upgraded `@hermes`, `@demeter`, and `@aphrodite` to be language- and stack-agnostic by default.
+- **Custom Specialist Forge (`pantheon_agent_forge`)**: First-class native tool to create, inspect, list, and remove project specialists.
+- **Next-Gen Orchestration Roadmap**: Added architectural roadmap for LSP diagnostics, sub-session step runners, and worktrees.
+- **Post-Edit Structural Diagnostics**: Immediate syntax and structural verification on `edit`/`write`/`hashline_edit` tool outputs.
+
+### Added
+
+- **pantheon** — `src/pantheon/agent-forge-tool.ts`: `pantheon_agent_forge` native tool scaffolding custom `.opencode/agents/<name>.md` specialists with least-privilege permissions and TDD rules.
+- **pantheon** — `src/pantheon/execute-after.ts`: post-edit structural and syntax diagnostics (`validatePostEditSyntax`) for `.ts`, `.tsx`, `.js`, `.mjs`, and `.json` files.
+- **roster** — `src/agents/roster.json`: polyglot `@hermes`, `@demeter`, and `@aphrodite` core roles plus `@zeus` `pantheon_agent_forge` and `pantheon_step_ledger` grants.
+- **docs** — `ROADMAP.md`, `README.md`, and `README.pt-BR.md`: Next-Gen Orchestration Evolution Plan (`2.2 GA` → `2.3`) and polyglot specialist documentation.
+
+## [v2.2.0-beta.1] - 2026-11-18
+
+### 🆕 What's New
+
+- **In-Process Native Tools**: Added 16 native TypeScript tools (`memory_*` FTS5, `context_*`, `goal_*`, `code_*`, `pantheon_step_ledger`).
+- **Step-Ledger & Proof Receipts**: Enforced mechanical verification gates (`exitCode === 0` after mutation) with SHA-256 receipts.
+- **Zeus Prompt Budget Ceiling**: Reduced rendered `zeus.md` from 39.2 KB to 31.3 KB with configurable `MAX_RENDERED_AGENT_PROMPT_BYTES`.
+- **Multi-Provider Catalog**: Expanded `CAPABILITY_TABLE` for Gemini, GPT-4o/4.1/5, Llama, Mistral, Codestral, Grok, Ollama, and OpenRouter.
+- **Quotas & Spend Persistence**: Added durable `pantheon-quota.json` storage for session budget caps, alerts, and auto-compaction.
+- **Zero-Init Command Provisioning**: Auto-provisioned all 8 `/pantheon-*` slash commands and 14 agents on `opencode plugin add`.
+
+### Added
+
+- **pantheon** — `src/pantheon/native-memory-tools.ts`: in-process `node:sqlite` FTS5 BM25 `memory_*`, `context_*`, and `goal_*` tools.
+- **pantheon** — `src/pantheon/codemap-tools.ts`: polyglot TypeScript/JS/Python/Go/Rust symbol and dependency graph (`code_index`, `code_query`, `code_neighbors`).
+- **pantheon** — `src/pantheon/step-ledger.ts`: `pantheon_step_ledger` mechanical completion gate wired to `execution-receipt.ts` and `themis-reflex.ts`.
+- **pantheon** — `src/pantheon/swe-eval-harness.ts`: reproducible multi-file RED→GREEN engineering evaluation harness with hidden test suites.
+- **mcp** — `src/mcp/pantheon-mcp-server.mjs`: hardened native Node.js MCP bridge with FTS5, path confinement, and SHA-256 manifest verification.
+- **tui** — `src/plugins/tui/src/quota-state.ts`: Quota & spend tab with durable disk persistence in `pantheon-quota.json`.
+- **plugin** — `src/plugin.ts`: `agent.transform` and `command.transform` auto-provisioning, `session.instructions.entry.put`, and OpenCode 2.2 session events.
+
+### Fixed
+
+- **build** — decoupled `tui.js` external import in `scripts/build-plugin.mjs` so `src/plugin/index.js` loads in Node 26 without `@opentui/solid`.
+- **security** — enforced `NON_EDIT_AGENTS` and `NON_SHELL_AGENTS` role boundaries plus 120s timeout in `shell` and `hashline_edit` plugin tools.
+- **plugin** — replaced dynamic `require('node:fs')` in `loadRuntimeOverrides()` with ESM imports so `pantheon-overrides.json` loads in runtime.
+- **tools** — partitioned `todowrite` and `todoread` state by `sessionID` to prevent cross-session race conditions across parallel subagents.
+- **scripts** — fixed `scripts/prune.mjs` `--apply --python` to remove only `.py`/`.pyc`/`__pycache__` entries rather than deleting `scripts/` wholesale.
+
+## [v2.1.7] - 2026-11-16
+
+### 🆕 What's New
+
+- **Native Plugin Entrypoint**: Added root exports (`"."`, `"./server"`, `"./tui"`), enabling `opencode plugin add pantheon-opencode` support.
+- **Interactive Compaction**: Wired `[compact]` button with pointer events and toast feedback triggering native session compaction.
+- **Semantic Theme Polish**: Vibrant colors for turn cost, cache hit, reasoning tokens, and block header icons.
+- **Next-Gen TUI Layout**: Dense bilateral row layouts (`justifyContent="space-between"`) matching the Next-Gen proposal without line wrap.
+- **Telemetry & Cache Speed**: Cache hit percentage paired with generation speed (`Speed: 72 t/s`) on unified rows.
+- **Tools & Verification Gate**: Tool execution counter paired with active test/safety gate (`tools: 14 (0 err)` + `✓ Gate: tests pass`).
+
+### Added
+
+- **plugin** — root `"."`, `"./server"`, and `"./tui"` package exports in `package.json` for unified OpenCode plugin loader support.
+- **tui** — Next-Gen bilateral layouts for Context, Git status, and header metrics in `src/plugins/tui/src/index.tsx`.
+- **tui** — `extractCompactionInfo`, `formatCompactionBadge`, `formatTokenAnatomySplit`, `resolveGateStatus`, and `isSessionPinned`.
+- **tui** — `pinnedSessions` persistence and self-healing schema normalization in `src/plugins/tui/src/tui-prefs.ts`.
+- **tests** — comprehensive unit and integration coverage in `tests/tui-sidebar.test.mjs` and `tests/tui-prefs.test.mjs`.
+
 ## [v2.1.6] - 2026-11-16
 
 ### 🆕 What's New

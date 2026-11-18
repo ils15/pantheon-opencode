@@ -58,20 +58,24 @@ Dentro do OpenCode, acione o orquestrador ou um fluxo:
 /pantheon-deepwork "Implemente o fluxo de autenticação OAuth2 PKCE"
 ```
 
-`@zeus` roteia para os especialistas; `/pantheon` arbitra escolhas de arquitetura entre
-especialistas; `/pantheon-deepwork` executa um plano multifase com checkpoints e gates.
-Você aprova cada gate e executa cada commit.
+`@zeus` roteia para os especialistas poliglotas (`@hermes` para backend/APIs, `@aphrodite`
+para UI, `@demeter` para dados/migrações, `@talos` para correções rápidas, `@themis` para
+revisão); `/pantheon` arbitra escolhas de arquitetura entre especialistas; `/pantheon-deepwork`
+executa um plano multifase com recibos mecânicos via `pantheon_step_ledger` e gates; e
+`pantheon_agent_forge` cria especialistas customizados de domínio em `.opencode/agents/<name>.md`
+sob demanda. Você aprova cada gate e executa cada commit.
 
 ## Estrutura
 
 ```
-src/agents/       14 definições canônicas de agentes
-src/skills/       skills carregadas sob demanda
-src/mcp/          servidores MCP locais (memory, persistence, resources, code-mode, vision)
-src/plugins/      plugin do OpenCode + TUI
+src/agents/       14 definições canônicas de agentes poliglotas (roster.json + build-roster)
+src/pantheon/     tools nativas TypeScript, Agent Forge, Step-Ledger, memória FTS5, codemap, receipts
+src/skills/       25 skills carregadas sob demanda
+src/mcp/          ponte MCP nativa em Node.js (pantheon-mcp-server.mjs)
+src/plugins/      plugin do OpenCode + TUI de alta densidade e configurações
 scripts/          instalador, doctor, test-slice, ferramental de release
 bin/              CLI pantheon-opencode
-docs/             documentação (também publicada como portal de docs)
+docs/             portal de documentação bilíngue
 examples/         projetos de referência executáveis
 tests/            suítes de teste em Node e TypeScript
 ```
@@ -85,7 +89,7 @@ tests/            suítes de teste em Node e TypeScript
 | [Instalação](docs/pt-BR/INSTALLATION.md) | [Modos de execução](docs/guides/execution-modes.md) |
 | [Primeiro projeto ponta a ponta](docs/pt-BR/guides/first-project.md) | [Matriz de capacidade dos agentes](docs/pt-BR/AGENT-CAPABILITY-MATRIX.md) |
 | [Configurações e janela TUI](docs/SETTINGS.md) | [Permissões, gates e delegação](docs/PERMISSIONS-QUALITY-DELEGATION.md) |
-| [Novidades da v2.x](docs/releases/v2-highlights.md) | [CHANGELOG](CHANGELOG.md) |
+| [Destaques de versões](docs/releases/highlights.md) | [CHANGELOG](CHANGELOG.md) |
 
 Exemplos executáveis: [dashboard SaaS](examples/saas-dashboard/) e
 [CLI de saúde do repositório](examples/cli-tool/). Contribuição:

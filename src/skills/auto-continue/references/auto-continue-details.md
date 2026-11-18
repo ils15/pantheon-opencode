@@ -128,43 +128,14 @@ ID so the `latest` pointer survives compaction. `state` must be an object — ne
 
 ---
 
-## Safety Policy Configuration
-
-Configurable gates for different platforms and risk levels:
+## Safety Policy Summary
 
 | Gate | Default | Auto-Approval Condition |
-|------|---------|------------------------|
+|---|---|---|
 | Council | Only when explicitly invoked | Never auto-start a council for ordinary implementation |
 | Plan approval | Only for requested or risk-required plans | Skip for bounded, clear work |
 | Themis review | Required for sensitive/material changes | May omit for trivial isolated edits; never auto-bypass required findings |
 | Git / external actions | Never Auto | Commit, push, merge, deploy, destructive/global changes require explicit approval |
-| Deploy | Always Ask | N/A — always requires human |
-| Destructive DB Ops | Always Ask | N/A — always requires human |
-
-### Configuration Format (for agents/PLAN.md)
-
-```yaml
-auto-continue:
-  checkpoint_interval: 5     # turns between checkpoints
-  idle_warning: 60           # seconds before warning
-  idle_stall: 120            # seconds before stall detection
-  idle_pause: 300            # seconds before auto-pause
-  gates:
-    plan_approval: when_required_by_scope_or_risk
-    themis_review: required_for_sensitive_or_material_changes
-    git_commit: never_auto
-    deploy: always_ask
-    destructive_ops: always_ask
-```
-
-### Idle Detection
-
-| Condition | Action |
-|-----------|--------|
-| No tool call for 60s | Log warning heartbeat (status: warning) |
-| No tool call for 120s | Trigger anti-stall protocol |
-| No tool call for 300s | Auto-save checkpoint and pause session |
-| Resume | User must acknowledge and restart |
 
 ---
 

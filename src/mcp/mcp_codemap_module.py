@@ -544,11 +544,12 @@ def code_index(  # noqa: C901, PLR0912, PLR0915
                     [str(file_path), h, lang],
                 )
                 conn.commit()
-                try:
-                    ast.parse(content)
-                except SyntaxError:
-                    errors += 1
-                    continue
+                if lang == "python":
+                    try:
+                        ast.parse(content)
+                    except SyntaxError:
+                        errors += 1
+                        continue
                 skipped += 1
                 continue
             _insert_entities_and_relations(conn, ents, rels)

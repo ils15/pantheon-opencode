@@ -71,6 +71,10 @@ function resolveServerScript(relPath) {
 }
 
 const VENV_PYTHON = resolveVenvPython()
+const NODE_BIN = 'node'
+const PANTHEON_MCP_NODE_SERVER = resolveServerScript('src/mcp/pantheon-mcp-server.mjs')
+const USE_PYTHON_MCP = process.env.PANTHEON_USE_PYTHON_MCP === '1'
+
 const MCP_RESOURCES_SERVER = resolveServerScript('scripts/mcp_resources.py')
 const CODE_MODE_SERVER = resolveServerScript('scripts/code_mode.py')
 const MEMORY_MCP_SERVER = resolveServerScript('scripts/memory_mcp.py')
@@ -201,16 +205,21 @@ export const MCPS = {
     platforms: {
       opencode: {
         type: 'local',
-        command: VENV_PYTHON,
-        args: [MCP_RESOURCES_SERVER],
+        command: USE_PYTHON_MCP ? VENV_PYTHON : NODE_BIN,
+        args: USE_PYTHON_MCP
+          ? [MCP_RESOURCES_SERVER]
+          : [PANTHEON_MCP_NODE_SERVER, '--server', 'pantheon-resources'],
       },
     },
     validate: async () => {
-      const scriptPath = MCP_RESOURCES_SERVER
+      const scriptPath = USE_PYTHON_MCP ? MCP_RESOURCES_SERVER : PANTHEON_MCP_NODE_SERVER
       if (existsSync(scriptPath)) {
-        return { ok: true, message: 'server script present' }
+        return {
+          ok: true,
+          message: USE_PYTHON_MCP ? 'server script present' : 'Node native MCP server present',
+        }
       }
-      return { ok: false, message: 'mcp_resources.py not found at resolved path' }
+      return { ok: false, message: `${scriptPath} not found at resolved path` }
     },
   },
   'pantheon-code-mode': {
@@ -220,18 +229,23 @@ export const MCPS = {
     platforms: {
       opencode: {
         type: 'local',
-        command: VENV_PYTHON,
-        args: [CODE_MODE_SERVER],
+        command: USE_PYTHON_MCP ? VENV_PYTHON : NODE_BIN,
+        args: USE_PYTHON_MCP
+          ? [CODE_MODE_SERVER]
+          : [PANTHEON_MCP_NODE_SERVER, '--server', 'pantheon-code-mode'],
         cwd: '.',
       },
     },
     env: [],
     validate: async () => {
-      const scriptPath = CODE_MODE_SERVER
+      const scriptPath = USE_PYTHON_MCP ? CODE_MODE_SERVER : PANTHEON_MCP_NODE_SERVER
       if (existsSync(scriptPath)) {
-        return { ok: true, message: 'server script present' }
+        return {
+          ok: true,
+          message: USE_PYTHON_MCP ? 'server script present' : 'Node native MCP server present',
+        }
       }
-      return { ok: false, message: 'code_mode.py not found at resolved path' }
+      return { ok: false, message: `${scriptPath} not found at resolved path` }
     },
   },
   'pantheon-memory': {
@@ -242,17 +256,22 @@ export const MCPS = {
     platforms: {
       opencode: {
         type: 'local',
-        command: VENV_PYTHON,
-        args: [MEMORY_MCP_SERVER],
+        command: USE_PYTHON_MCP ? VENV_PYTHON : NODE_BIN,
+        args: USE_PYTHON_MCP
+          ? [MEMORY_MCP_SERVER]
+          : [PANTHEON_MCP_NODE_SERVER, '--server', 'pantheon-memory'],
       },
     },
     env: [],
     validate: async () => {
-      const scriptPath = MEMORY_MCP_SERVER
+      const scriptPath = USE_PYTHON_MCP ? MEMORY_MCP_SERVER : PANTHEON_MCP_NODE_SERVER
       if (existsSync(scriptPath)) {
-        return { ok: true, message: 'server script present' }
+        return {
+          ok: true,
+          message: USE_PYTHON_MCP ? 'server script present' : 'Node native MCP server present',
+        }
       }
-      return { ok: false, message: 'memory_mcp.py not found at resolved path' }
+      return { ok: false, message: `${scriptPath} not found at resolved path` }
     },
   },
   'pantheon-persistence': {
@@ -264,16 +283,21 @@ export const MCPS = {
     platforms: {
       opencode: {
         type: 'local',
-        command: VENV_PYTHON,
-        args: [MCP_PERSISTENCE_SERVER],
+        command: USE_PYTHON_MCP ? VENV_PYTHON : NODE_BIN,
+        args: USE_PYTHON_MCP
+          ? [MCP_PERSISTENCE_SERVER]
+          : [PANTHEON_MCP_NODE_SERVER, '--server', 'pantheon-persistence'],
       },
     },
     validate: async () => {
-      const scriptPath = MCP_PERSISTENCE_SERVER
+      const scriptPath = USE_PYTHON_MCP ? MCP_PERSISTENCE_SERVER : PANTHEON_MCP_NODE_SERVER
       if (existsSync(scriptPath)) {
-        return { ok: true, message: 'server script present' }
+        return {
+          ok: true,
+          message: USE_PYTHON_MCP ? 'server script present' : 'Node native MCP server present',
+        }
       }
-      return { ok: false, message: 'mcp_persistence.py not found at resolved path' }
+      return { ok: false, message: `${scriptPath} not found at resolved path` }
     },
   },
   'pantheon-vision': {
@@ -285,18 +309,22 @@ export const MCPS = {
     platforms: {
       opencode: {
         type: 'local',
-        command: VENV_PYTHON,
-        args: [PANTHEON_VISION_SERVER],
+        command: USE_PYTHON_MCP ? VENV_PYTHON : NODE_BIN,
+        args: USE_PYTHON_MCP
+          ? [PANTHEON_VISION_SERVER]
+          : [PANTHEON_MCP_NODE_SERVER, '--server', 'pantheon-vision'],
       },
     },
     env: [],
     validate: async () => {
-      const sourcePath = PANTHEON_VISION_SERVER
-      const requirementsPath = join(ROOT, 'src', 'mcp', 'requirements-vision.txt')
-      if (existsSync(sourcePath) && existsSync(requirementsPath)) {
-        return { ok: true, message: 'canonical server source and isolated requirements present' }
+      const sourcePath = USE_PYTHON_MCP ? PANTHEON_VISION_SERVER : PANTHEON_MCP_NODE_SERVER
+      if (existsSync(sourcePath)) {
+        return {
+          ok: true,
+          message: USE_PYTHON_MCP ? 'server script present' : 'Node native MCP server present',
+        }
       }
-      return { ok: false, message: 'canonical vision source or requirements not found' }
+      return { ok: false, message: `${sourcePath} not found` }
     },
   },
   docker: {

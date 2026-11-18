@@ -701,7 +701,7 @@ async function main() {
             throw new Error('invalid setup plan envelope')
           }
           if (envelope.configPreconditions.length > 0) {
-            const { verifyConfigPreconditions } = await import('../scripts/setup-v2-config.mjs')
+            const { verifyConfigPreconditions } = await import('../scripts/setup-config.mjs')
             if (
               !verifyConfigPreconditions(envelope.configPreconditions, {
                 configDir: setupTarget,

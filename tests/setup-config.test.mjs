@@ -15,7 +15,7 @@ import {
   inspectConfigFiles,
   prepareV2Config,
   resolveGlobalConfigDirectory,
-} from '../scripts/setup-v2-config.mjs'
+} from '../scripts/setup-config.mjs'
 
 const CANCEL = Symbol('cancel')
 function setupPlanFor(files = [], sourceFingerprint = 'a'.repeat(64)) {

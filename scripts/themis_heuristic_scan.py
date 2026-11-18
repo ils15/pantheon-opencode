@@ -148,8 +148,6 @@ class Scanner:
                     "npx",
                     "biome",
                     "check",
-                    "--write",
-                    "--unsafe",
                     *[str(f) for f in files],
                 ],
                 capture_output=True,
@@ -161,11 +159,11 @@ class Scanner:
             self.report.append("  ⏭️  biome: not available")
             return
 
-        if result.returncode == 0 or "safe fixes" in result.stdout:
-            self.report.append("  ✅ biome: clean or auto-fixed")
+        if result.returncode == 0:
+            self.report.append("  ✅ biome: clean")
         else:
             self.report.append("  ⚠️  biome: issues found")
-            # self.deduct(10)  # biome internal bug, not our code
+            self.deduct(10)
 
     def run_antipattern(self) -> None:
         hits = 0

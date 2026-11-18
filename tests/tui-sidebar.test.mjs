@@ -5132,3 +5132,84 @@ test('new glyphs are one terminal cell and never match emoji-regex', async () =>
   assert.equal(source.includes('\u2514\u2500'), false, 'no `└─` branch survives')
   assert.equal(source.includes('dispatchRowPrefix'), false, 'the branch helper is gone')
 })
+
+test('v2.1.7 TUI enhancements: turn cost delta, token anatomy, tool health and compaction', async () => {
+  const v2 = await loadV2()
+
+  // 1. Turn Cost & Delta
+  assert.equal(v2.latestTurnCost([]), null)
+  assert.equal(v2.latestTurnCost([{ type: 'assistant' }]), null)
+  assert.equal(v2.latestTurnCost([{ type: 'assistant', cost: null }]), null)
+  assert.deepEqual(v2.latestTurnCost([{ type: 'assistant', cost: 0 }]), {
+    current: 0,
+    previous: null,
+  })
+  assert.equal(v2.formatTurnCostLine({ current: 0, previous: null }), 'Turn: $0.00')
+  assert.equal(v2.formatTurnCostLine({ current: 0, previous: 0 }), 'Turn: $0.00 (prev: $0.00)')
+
+  const msgsCost = [
+    { type: 'user', content: 'first prompt' },
+    { type: 'assistant', cost: 0.008, tokens: { output: 200 } },
+    { type: 'user', content: 'second prompt' },
+    { type: 'assistant', cost: 0.012, tokens: { output: 300 } },
+  ]
+  const turnCost = v2.latestTurnCost(msgsCost)
+  assert.deepEqual(turnCost, { current: 0.012, previous: 0.008 })
+  assert.equal(v2.formatTurnCostLine(turnCost), 'Turn: $0.012 (prev: $0.008)')
+  assert.equal(v2.formatTurnCostLine({ current: 0.015, previous: null }), 'Turn: $0.015')
+
+  // 2. Token Anatomy (Input, Output, Reasoning)
+  assert.equal(v2.extractTokenAnatomy(null), null)
+  assert.equal(v2.extractTokenAnatomy({}), null)
+  const anatomy1 = v2.extractTokenAnatomy({ input: 32400, output: 4200, reasoning: 11600 })
+  assert.deepEqual(anatomy1, { input: 32400, output: 4200, reasoning: 11600 })
+  assert.equal(v2.formatTokenAnatomyLine(anatomy1), '↑32K ↓4K ✦11K think')
+
+  const anatomy2 = v2.extractTokenAnatomy({ input: 5000, output: 800, thinking: 2000 })
+  assert.deepEqual(anatomy2, { input: 5000, output: 800, reasoning: 2000 })
+  assert.equal(v2.formatTokenAnatomyLine(anatomy2), '↑5K ↓800 ✦2K think')
+
+  // 3. Tool Health & Call Counting
+  const msgsTools = [
+    {
+      type: 'assistant',
+      content: [
+        { type: 'tool', name: 'bash', state: { status: 'completed', exitCode: 0 } },
+        { type: 'tool', name: 'read_file', state: { status: 'completed' } },
+        { type: 'tool', name: 'edit_file', state: { status: 'error', error: 'file not found' } },
+      ],
+    },
+  ]
+  const tools = v2.countToolCalls(msgsTools)
+  assert.deepEqual(tools, { total: 3, failures: 1 })
+  assert.equal(v2.formatToolCallLine(tools), 'tools: 3 (1 err)')
+  assert.equal(v2.formatToolCallLine({ total: 4, failures: 0 }), 'tools: 4 (0 err)')
+
+  // 4. Session Compactions
+  const msgsCompaction = [
+    { type: 'user' },
+    { type: 'compaction' },
+    { type: 'assistant' },
+    { type: 'compaction' },
+  ]
+  assert.equal(v2.countSessionCompactions(msgsCompaction), 2)
+  assert.equal(v2.formatCompactionBadge(2), '2x compact')
+  assert.equal(v2.formatCompactionBadge(0), null)
+
+  // 5. User Turns
+  assert.equal(v2.countUserTurns(msgsCompaction), 1)
+  assert.equal(v2.formatTurnsBadge(1), '↻ 1 turn')
+  assert.equal(v2.formatTurnsBadge(4), '↻ 4 turns')
+
+  // 6. Resilient parseTodoItems (stringified JSON, object, or junk)
+  const jsonStringInput = JSON.stringify({
+    todos: [
+      { content: 'Tarefa A', status: 'pending' },
+      { content: 'Tarefa B', status: 'completed' },
+    ],
+  })
+  assert.equal(v2.parseTodoItems(jsonStringInput).length, 2)
+  assert.equal(v2.parseTodoItems('{invalid json}').length, 0)
+  assert.equal(v2.parseTodoItems(null).length, 0)
+  assert.equal(v2.parseTodoItems(undefined).length, 0)
+})

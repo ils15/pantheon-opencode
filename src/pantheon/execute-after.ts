@@ -33,6 +33,7 @@
  * @module pantheon/execute-after
  */
 
+import { existsSync, readFileSync } from 'node:fs'
 import {
   type ContextSandboxConfig,
   createContextSandbox,
@@ -268,6 +269,26 @@ export function createV2ExecuteAfter(
       await taskResultGuard(input, output)
       await sandbox(input, output)
       await readEnhancer(input, output)
+
+      // Post-edit structural diagnostic check for JSON files: surfaces syntax
+      // corruption in the same turn so the specialist fixes it immediately.
+      const lowerTool = tool.trim().toLowerCase()
+      if (lowerTool === 'edit' || lowerTool === 'write' || lowerTool === 'hashline_edit') {
+        const rawArgs = (payload.input ?? {}) as Record<string, unknown>
+        const editedPath = rawArgs.filePath ?? rawArgs.file_path ?? rawArgs.file
+        if (
+          typeof editedPath === 'string' &&
+          editedPath.endsWith('.json') &&
+          existsSync(editedPath)
+        ) {
+          try {
+            JSON.parse(readFileSync(editedPath, 'utf8'))
+          } catch (jsonErr) {
+            const msg = jsonErr instanceof Error ? jsonErr.message : String(jsonErr)
+            output.output = `${output.output}\n[Pantheon Diagnostic] JSON syntax error in ${editedPath}: ${msg}`
+          }
+        }
+      }
 
       if (output.output !== original.text) {
         writeText(result as V2ToolResult, original.field, output.output, original.text, tool)

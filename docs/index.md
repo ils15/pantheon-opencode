@@ -65,7 +65,7 @@ of repeating it.
 | Customer-visible roadmap themes | [Roadmap](https://github.com/ils15/pantheon-opencode/blob/main/ROADMAP.md) |
 | How to contribute, and the documentation rule | [Contributing](https://github.com/ils15/pantheon-opencode/blob/main/CONTRIBUTING.md) |
 | Published changes | [Changelog](https://github.com/ils15/pantheon-opencode/blob/main/CHANGELOG.md) |
-| v2.x user-facing release highlights | [v2.x highlights](releases/v2-highlights.md) |
+| Release highlights | [Release highlights](releases/highlights.md) |
 
 ## Where things live
 

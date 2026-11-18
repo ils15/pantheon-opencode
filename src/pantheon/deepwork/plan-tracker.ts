@@ -9,6 +9,8 @@
 import { existsSync } from 'node:fs'
 import { appendFile, mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { createExecutionReceipt } from '../execution-receipt.ts'
+import { ThemisReflexController } from '../themis-reflex.ts'
 import { generateMarkdownDocument } from './plan-projection.ts'
 import {
   type DeepworkPlan,
@@ -41,7 +43,20 @@ export function deepworkRootDir(cwd = process.cwd()): string {
 }
 
 export function deepworkPlanDir(cwd = process.cwd(), slug: string): string {
-  return join(deepworkRootDir(cwd), slug)
+  const safeSlug = String(slug ?? '').trim()
+  if (
+    !safeSlug ||
+    safeSlug === '.' ||
+    safeSlug === '..' ||
+    safeSlug.includes('..') ||
+    safeSlug.includes('/') ||
+    safeSlug.includes('\\')
+  ) {
+    throw new Error(
+      `Invalid deepwork plan slug "${slug}": path traversal or separator characters are not allowed`,
+    )
+  }
+  return join(deepworkRootDir(cwd), safeSlug)
 }
 
 export function deepworkPlanJsonPath(cwd = process.cwd(), slug: string): string {
@@ -482,8 +497,12 @@ export async function updateTaskState(
   })
 }
 
+const deepworkReflexController = new ThemisReflexController({ maxRetries: 2 })
+
 /**
  * Record verification of an acceptance criterion.
+ * Emits a cryptographic Execution Proof Receipt on PantheonBus when verified,
+ * and evaluates failed checks through ThemisReflexController for self-healing.
  */
 export async function verifyTaskAcceptance(
   cwd = process.cwd(),
@@ -530,10 +549,52 @@ export async function verifyTaskAcceptance(
     const nextPlan: DeepworkPlan = { ...plan, tasks: updatedTasks }
     await writePlan(cwd, nextPlan)
 
+    const taskKey = `${slug}:${taskId}`
+    const agentId = task.agent ?? 'specialist'
+    let receiptId: string | undefined
+    let reflexAction: string | undefined
+
+    try {
+      if (verified) {
+        deepworkReflexController.evaluate(taskKey, agentId, [])
+        const receipt = createExecutionReceipt({
+          taskID: taskKey,
+          agent: agentId,
+          files: [
+            { path: `${slug}/${taskId}#${checkIndex}`, content: resolvedProof ?? 'verified' },
+          ],
+          testSlice: {
+            command: currentAcc.check,
+            exitCode: 0,
+            durationMs: 0,
+          },
+        })
+        receiptId = receipt.receiptId
+      } else {
+        const decision = deepworkReflexController.evaluate(taskKey, agentId, [
+          {
+            file: `${slug}/${taskId}`,
+            error: resolvedProof ?? `Acceptance check #${checkIndex} failed: ${currentAcc.check}`,
+          },
+        ])
+        reflexAction = decision.action
+      }
+    } catch {
+      /* best-effort bus telemetry */
+    }
+
     await appendJournal(cwd, slug, {
       type: 'acceptance_verified',
       timestamp: new Date().toISOString(),
-      payload: { taskId, checkIndex, verified, proof, allVerified },
+      payload: {
+        taskId,
+        checkIndex,
+        verified,
+        proof,
+        allVerified,
+        ...(receiptId ? { receiptId } : {}),
+        ...(reflexAction ? { reflexAction } : {}),
+      },
     })
 
     return (await readPlan(cwd, slug)) ?? nextPlan

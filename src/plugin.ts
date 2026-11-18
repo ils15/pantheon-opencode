@@ -84,7 +84,7 @@
  * @module plugin
  */
 
-import { appendFileSync, mkdirSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { realpath as realpathAsync } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -170,6 +170,7 @@ import { applyDecisionRouterToPrompt } from './pantheon/local-decision-prompt.ts
 import { applyV2ModelOverrides, readV2ModelConfiguration } from './pantheon/model-overrides.ts'
 import type { NativeDecisionRequest } from './pantheon/native-decisions.ts'
 import { buildV2VisionPromptContext, type V2VisionRuntime } from './pantheon/native-vision.ts'
+import { buildPrefixCachedPrompt } from './pantheon/prompt-cache-order.ts'
 import { getSharedBoard } from './pantheon/shared-board.ts'
 import { createV2ShellHooks, type V2ShellRunner } from './pantheon/shell-hooks.ts'
 import {
@@ -438,15 +439,13 @@ function loadRuntimeOverrides(): void {
   if (runtimeOverridesLoaded) return
   runtimeOverridesLoaded = true
   try {
-    const read = (path: string): string | undefined => {
-      const fs = require('node:fs') as typeof import('node:fs')
+    const read = (filePath: string): string | undefined => {
       try {
-        return fs.readFileSync(path, 'utf8')
+        return readFileSync(filePath, 'utf8')
       } catch {
         return undefined
       }
     }
-    const path = require('node:path') as typeof import('node:path')
     const globalRaw = read(path.join(resolveGlobalOverrideDir(), 'pantheon-overrides.json'))
     const projectRaw = read(path.join(process.cwd(), '.pantheon', 'overrides.json'))
     runtimeOverrides = mergeOverrides(globalRaw, projectRaw).entries
@@ -547,6 +546,25 @@ function installV2TodoEnforcer(context: PluginContext): TodoEnforcer | undefined
 
 // ─── V2 Transform Functions ─────────────────────────────────────────────
 
+function readCanonicalRoster(): Record<string, Record<string, unknown>> {
+  try {
+    const candidates = [
+      fileURLToPath(new URL('agents/roster.json', import.meta.url)),
+      fileURLToPath(new URL('../src/agents/roster.json', import.meta.url)),
+      fileURLToPath(new URL('src/agents/roster.json', import.meta.url)),
+      path.join(process.cwd(), 'src', 'agents', 'roster.json'),
+    ]
+    for (const p of candidates) {
+      if (existsSync(p)) {
+        const raw = readFileSync(p, 'utf8')
+        const data = JSON.parse(raw) as { agents?: Record<string, Record<string, unknown>> }
+        if (data && typeof data.agents === 'object') return data.agents
+      }
+    }
+  } catch {}
+  return {}
+}
+
 function transformAgents(draft: AgentDraft): void {
   // Beta 19192 guard (issue #92): draft may not have `list`, or list()
   // may return a non-iterable. Never throw — mark unsupported and return.
@@ -570,8 +588,10 @@ function transformAgents(draft: AgentDraft): void {
     markUnsupported('agent-transform-list')
     return
   }
+  let configuredOverrides: Record<string, { model: string; variant?: string }> = {}
   try {
     const modelConfiguration = readV2ModelConfiguration()
+    configuredOverrides = modelConfiguration.overrides
     if (modelConfiguration.warnings.length > 0) {
       // The V2 server PluginContext has no documented user-visible notification
       // or logging channel; preserve the degradation for status diagnostics.
@@ -583,6 +603,48 @@ function transformAgents(draft: AgentDraft): void {
     markUnsupported('agent-model-overrides')
   }
   try {
+    const roster = readCanonicalRoster()
+    const seenIds = new Set<string>()
+    for (const agent of agents) {
+      if (agent?.id) seenIds.add(agent.id)
+    }
+
+    // Auto-provision any missing Pantheon agents (for single-command plugin add installs)
+    for (const [id, def] of Object.entries(roster)) {
+      if (!seenIds.has(id) && typeof draft.update === 'function') {
+        try {
+          draft.update(id, (current: Record<string, unknown>) => {
+            // If the host mock passed an existing different agent, do not mutate it
+            if (current.id && current.id !== id) return
+            current.id = id
+            current.name = def.name ?? id
+            current.description = def.description ?? ''
+            current.mode = id === 'zeus' ? 'primary' : (def.mode ?? 'subagent')
+            if (def.temperature !== undefined) current.temperature = def.temperature
+            if (def.permission && typeof def.permission === 'object') {
+              current.permission = def.permission
+            }
+            const override = configuredOverrides[id]
+            if (override?.model) {
+              current.model = override.model
+              if (override.variant !== undefined) current.variant = override.variant
+            }
+            const body = typeof def.body === 'string' ? def.body.trim() : ''
+            current.system = body
+              ? buildPrefixCachedPrompt({ identity: body, currentTurn: POLICY }).prompt
+              : POLICY
+          })
+        } catch {
+          /* fail-open */
+        }
+      }
+    }
+
+    // Default agent is Zeus
+    try {
+      if (typeof draft.default === 'function') draft.default('zeus')
+    } catch {}
+
     for (const agent of agents) {
       draft.update(agent.id, (current) => {
         // Beta 19192 hardening + SystemPart SKIP: `system` may be a non-string
@@ -615,7 +677,63 @@ function transformAgents(draft: AgentDraft): void {
   }
 }
 
+const CANONICAL_SLASH_COMMANDS: ReadonlyArray<{ name: string; description: string }> = [
+  {
+    name: 'pantheon',
+    description: 'Dispatch inline multi-specialist Council synthesis for architectural trade-offs',
+  },
+  {
+    name: 'pantheon-deepwork',
+    description: 'Execute multi-phase Deepwork plan with DAG checkpoints and verification gates',
+  },
+  {
+    name: 'pantheon-audit',
+    description: 'Run zero-token heuristic static scan and Themis 3-layer security review',
+  },
+  {
+    name: 'pantheon-focus',
+    description: 'Manage persistent session goals and focus boundaries across compactions',
+  },
+  {
+    name: 'pantheon-model',
+    description: 'Inspect or configure per-agent model overrides in active-preset.json',
+  },
+  {
+    name: 'pantheon-optimize',
+    description: 'Analyze and prune stale artifacts, worktrees, and context overhead',
+  },
+  {
+    name: 'pantheon-settings',
+    description: 'Open the interactive Pantheon TUI settings and Quotas & Spend window',
+  },
+  {
+    name: 'pantheon-vision',
+    description: 'Inspect or configure multimodal vision gateway and model status',
+  },
+]
+
 function transformCommands(draft: CommandDraft): void {
+  // OpenCode 2.2+ CommandEditor exposes `draft.add(definition)` to register
+  // slash commands directly from the plugin (single-command install support).
+  try {
+    const maybeAdd = (draft as unknown as { add?: (def: unknown) => void }).add
+    if (typeof maybeAdd === 'function') {
+      for (const cmd of CANONICAL_SLASH_COMMANDS) {
+        try {
+          maybeAdd.call(draft, {
+            name: cmd.name,
+            description: cmd.description,
+            execute: async () => {},
+          })
+        } catch {
+          /* ignore duplicate command registration */
+        }
+      }
+    }
+  } catch {
+    /* optional 2.2+ command registration */
+  }
+
   // Beta 19192 guard (issue #92): draft may not have `list`, or list()
   // may return a non-iterable. Never throw — mark unsupported and return.
   let commands: Iterable<{ name: string }>
@@ -652,9 +770,11 @@ function transformCommands(draft: CommandDraft): void {
 }
 
 function transformReferences(draft: ReferenceDraft): void {
+  const globalAgentsPath = fileURLToPath(new URL('../AGENTS.global.md', import.meta.url))
+  const fallbackAgentsPath = fileURLToPath(new URL('../AGENTS.md', import.meta.url))
   draft.add('pantheon-agents', {
     type: 'local',
-    path: fileURLToPath(new URL('../AGENTS.md', import.meta.url)),
+    path: existsSync(globalAgentsPath) ? globalAgentsPath : fallbackAgentsPath,
     description: 'Pantheon agent and execution policy',
   })
 }
@@ -1044,17 +1164,24 @@ function subscribeV2Events(
         // `session.compacted` 0/11 (PROBE-C, F-12). The live turn-end signal
         // is `session.execution.succeeded`, observed above. The branches are
         // left untouched on purpose; removing them is a separate change.
-        if (event.type === 'session.idle' || event.type === 'session.deleted') {
+        if (
+          event.type === 'session.idle' ||
+          event.type === 'session.deleted' ||
+          event.type === 'session.execution.succeeded'
+        ) {
           const properties = event.properties ?? {}
+          const data = (event as { data?: Record<string, unknown> }).data ?? {}
           const info = properties.info
           const infoID =
             info !== null && typeof info === 'object' ? (info as { id?: unknown }).id : undefined
           const sessionID =
             typeof properties.sessionID === 'string'
               ? properties.sessionID
-              : typeof infoID === 'string'
-                ? infoID
-                : undefined
+              : typeof data.sessionID === 'string'
+                ? data.sessionID
+                : typeof infoID === 'string'
+                  ? infoID
+                  : undefined
           if (sessionID) onTurnEnd?.(sessionID)
         }
       }
@@ -1077,15 +1204,19 @@ async function handleV2SessionEvent(event: V2SessionEvent): Promise<void> {
       await onSessionCreated(event)
       break
     case 'session.idle':
+    case 'session.execution.succeeded':
       await onSessionIdle(event)
       break
     case 'session.deleted':
       await onSessionDeleted(event)
       break
     case 'session.error':
+    case 'session.execution.failed':
+    case 'session.step.failed':
       await onSessionError(event)
       break
     case 'session.compacted':
+    case 'session.compaction.ended':
       await onSessionCompacted(event)
       break
     default:
@@ -1497,6 +1628,29 @@ async function registerV2SessionHooks(context: PluginContext): Promise<boolean> 
         // Local deterministic recommendations are advisory only. This path
         // never consults provider consent/credentials or invokes remote egress.
         await applyDecisionRouterToPrompt(admission, userRequest)
+
+        // When the OpenCode 2.2+ host exposes keyed session instructions,
+        // publish the Pantheon policy marker via `instructions.entry.put`
+        // so it stays KV-cache friendly.
+        try {
+          const sid = (admission as { sessionID?: unknown } | null)?.sessionID
+          const instrEntry = (
+            sessionCtx as unknown as {
+              instructions?: {
+                entry?: { put?: (arg: { sessionID: string; key: string; text: string }) => unknown }
+              }
+            }
+          ).instructions?.entry
+          if (typeof sid === 'string' && typeof instrEntry?.put === 'function') {
+            await instrEntry.put({
+              sessionID: sid,
+              key: 'pantheon.policy',
+              text: POLICY,
+            })
+          }
+        } catch {
+          /* optional host capability */
+        }
 
         // Shadow observation only. The projection carries `prompt.agents` and
         // `prompt.skills` and nothing else, so no prompt text or file bytes
@@ -2963,5 +3117,11 @@ export function v2Dispose(): void {
 export function getUnsupportedFeatures(): readonly string[] {
   return V2_UNSUPPORTED_FEATURES
 }
+
+export const UNSUPPORTED_FEATURES = V2_UNSUPPORTED_FEATURES
+export const disposePlugin = v2Dispose
+export const resetIdleEnforcerForTests = resetV2IdleEnforcerForTests
+export const setSecretScanRunnerForTests = setV2SecretScanRunnerForTests
+export const setShellRunnerForTests = setV2ShellRunnerForTests
 
 export default plugin

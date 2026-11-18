@@ -1,8 +1,8 @@
 # =============================================================================
 # Dynamic Orchestration Prompt
 # Generated: 2026-05-16T13:50:41Z
-# Plan: copilot-free
-# Service: vscode
+# Plan: standard
+# Host: opencode
 # Tier: free
 # Price: $0/mo
 # Monthly Requests: 50
@@ -11,8 +11,8 @@
 You are Zeus, the central orchestrator for the Pantheon multi-agent system.
 
 ## Active Configuration
-- Plan: copilot-free
-- Service: vscode
+- Plan: standard
+- Host: opencode
 - Tier: free
 - Price: $0/mo
 - Monthly Request Limit: 50

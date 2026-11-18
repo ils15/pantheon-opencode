@@ -69,11 +69,23 @@ export function initTuiPrefs(context: Context): void {
       | undefined
     if (handle !== undefined) {
       ;(globalThis as unknown as Record<PropertyKey, unknown>)[PREFS_SYMBOL] = handle
-      // Self-heal: if store was persisted before layout existed, backfill missing top-level defaults
-      if (!handle[0]?.layout) {
+      // Self-heal: if store was persisted before layout existed or lacks new fields, backfill defaults
+      if (
+        !handle[0]?.layout ||
+        typeof handle[0]?.sidebar?.context?.turnCost !== 'boolean' ||
+        typeof handle[0]?.sidebar?.context?.tokenAnatomy !== 'boolean'
+      ) {
         handle[1]((draft: any) => {
           if (!draft.layout) {
             draft.layout = { ...DEFAULT_TUI_PREFS.layout }
+          }
+          if (draft.sidebar?.context) {
+            if (typeof draft.sidebar.context.turnCost !== 'boolean') {
+              draft.sidebar.context.turnCost = true
+            }
+            if (typeof draft.sidebar.context.tokenAnatomy !== 'boolean') {
+              draft.sidebar.context.tokenAnatomy = true
+            }
           }
         }).catch(() => {})
       }
@@ -99,8 +111,12 @@ export function previewTuiPrefs(base: TuiPrefs, draft?: SettingsDraft): TuiPrefs
   const effective: TuiPrefs = {
     version: 1,
     layout: { ...normalized.layout },
+    ...(normalized.theme ? { theme: { ...normalized.theme } } : {}),
     sidebar: {
       header: { ...normalized.sidebar.header },
+      ...(normalized.sidebar.pinnedSessions
+        ? { pinnedSessions: [...normalized.sidebar.pinnedSessions] }
+        : {}),
       blocks: { ...normalized.sidebar.blocks },
       context: { ...normalized.sidebar.context },
     },
@@ -119,13 +135,7 @@ export function previewTuiPrefs(base: TuiPrefs, draft?: SettingsDraft): TuiPrefs
 export function savedTuiPrefs(): TuiPrefs {
   const s = stash()?.[0]
   if (!s) return DEFAULT_TUI_PREFS
-  if (!s.layout) {
-    return {
-      ...s,
-      layout: DEFAULT_TUI_PREFS.layout,
-    }
-  }
-  return s
+  return normalizeTuiPrefs(s)
 }
 
 /** The live reactive prefs (read properties inside memos/JSX — tracked).
@@ -149,9 +159,9 @@ export const GAUGE_STYLES: readonly string[] = Object.freeze(['both', 'bar', 'pe
 export const ENABLED_CYCLE: readonly string[] = Object.freeze(['enabled', 'disabled'])
 
 export const BAR_SHAPES_CYCLE: readonly string[] = Object.freeze([
+  'smooth',
   'line',
   'block',
-  'smooth',
   'ascii',
   'dots',
   'braille',
@@ -185,6 +195,40 @@ export type LanguagePref = 'auto' | 'pt-BR' | 'en'
 
 export const LANGUAGE_CYCLE: readonly string[] = Object.freeze(['auto', 'pt-BR', 'en'])
 
+export type ThemeModePref = 'auto' | 'dark' | 'light'
+export const THEME_MODES_CYCLE: readonly string[] = Object.freeze(['auto', 'dark', 'light'])
+
+export type AccentColorPref = 'host' | 'pantheon' | 'emerald' | 'cyan' | 'amber' | 'purple' | 'rose'
+export const ACCENT_COLORS_CYCLE: readonly string[] = Object.freeze([
+  'host',
+  'pantheon',
+  'emerald',
+  'cyan',
+  'amber',
+  'purple',
+  'rose',
+])
+
+export const ACCENT_PALETTE: Record<
+  AccentColorPref,
+  { primary: string; hover: string; muted: string }
+> = {
+  host: { primary: '#fba970', hover: '#fdba74', muted: '#a1a1aa' },
+  pantheon: { primary: '#fba970', hover: '#fdba74', muted: '#a1a1aa' },
+  emerald: { primary: '#10b981', hover: '#34d399', muted: '#059669' },
+  cyan: { primary: '#06b6d4', hover: '#22d3ee', muted: '#0891b2' },
+  amber: { primary: '#f59e0b', hover: '#fbbf24', muted: '#d97706' },
+  purple: { primary: '#a855f7', hover: '#c084fc', muted: '#9333ea' },
+  rose: { primary: '#f43f5e', hover: '#fb7185', muted: '#e11d48' },
+}
+
+export function resolveAccentColor(accent: AccentColorPref | undefined, contextTheme: any): string {
+  if (!accent || accent === 'host') {
+    return contextTheme?.text?.feedback?.warning?.base ?? contextTheme?.text?.base ?? '#fba970'
+  }
+  return ACCENT_PALETTE[accent]?.primary ?? '#fba970'
+}
+
 export interface TuiPrefs {
   version: 1
   layout: {
@@ -193,8 +237,13 @@ export interface TuiPrefs {
     settingsView?: SettingsViewModePref
     language?: LanguagePref
   }
+  theme?: {
+    mode?: ThemeModePref
+    accent?: AccentColorPref
+  }
   sidebar: {
     header: { version: boolean; preset: boolean; session: boolean }
+    pinnedSessions?: string[]
     blocks: { context: boolean; git: boolean; todo?: boolean; dispatch: boolean }
     context: {
       gauge: GaugeStyle
@@ -206,6 +255,8 @@ export interface TuiPrefs {
       modelUsage: boolean
       performance: boolean
       localSpend: boolean
+      turnCost: boolean
+      tokenAnatomy: boolean
     }
   }
   footer: { prompt: boolean; home: boolean }
@@ -216,15 +267,20 @@ export const DEFAULT_TUI_PREFS: TuiPrefs = {
   layout: {
     preset: 'comfortable',
     separator: 'spaces',
-    settingsView: 'fullscreen',
+    settingsView: 'docked',
     language: 'auto',
+  },
+  theme: {
+    mode: 'auto',
+    accent: 'host',
   },
   sidebar: {
     header: { version: true, preset: true, session: true },
+    pinnedSessions: [],
     blocks: { context: true, git: true, todo: false, dispatch: true },
     context: {
       gauge: 'both',
-      barShape: 'line',
+      barShape: 'smooth',
       barWidth: 'standard',
       evenMark: false,
       tokens: true,
@@ -232,6 +288,8 @@ export const DEFAULT_TUI_PREFS: TuiPrefs = {
       modelUsage: true,
       performance: true,
       localSpend: true,
+      turnCost: true,
+      tokenAnatomy: true,
     },
   },
   footer: { prompt: true, home: true },
@@ -262,6 +320,15 @@ export function normalizeTuiPrefs(raw: unknown): TuiPrefs {
   const footer = (
     typeof stored.footer === 'object' && stored.footer !== null ? stored.footer : {}
   ) as Record<string, any>
+  const rawTheme = (
+    typeof stored.theme === 'object' && stored.theme !== null ? stored.theme : {}
+  ) as Record<string, any>
+  const themeMode = THEME_MODES_CYCLE.includes(rawTheme.mode as string)
+    ? (rawTheme.mode as ThemeModePref)
+    : (DEFAULT_TUI_PREFS.theme?.mode ?? 'auto')
+  const themeAccent = ACCENT_COLORS_CYCLE.includes(rawTheme.accent as string)
+    ? (rawTheme.accent as AccentColorPref)
+    : (DEFAULT_TUI_PREFS.theme?.accent ?? 'host')
   const preset = LAYOUT_PRESETS_CYCLE.includes(layout.preset as string)
     ? (layout.preset as LayoutPresetPref)
     : DEFAULT_TUI_PREFS.layout.preset
@@ -297,12 +364,19 @@ export function normalizeTuiPrefs(raw: unknown): TuiPrefs {
       settingsView,
       language,
     },
+    theme: {
+      mode: themeMode,
+      accent: themeAccent,
+    },
     sidebar: {
       header: {
         version: asBool(header.version, true),
         preset: asBool(header.preset, true),
         session: asBool(header.session, true),
       },
+      pinnedSessions: Array.isArray(sidebar.pinnedSessions)
+        ? sidebar.pinnedSessions.filter((s: unknown) => typeof s === 'string')
+        : [],
       blocks: {
         context: asBool(blocks.context, true),
         git: asBool(blocks.git, true),
@@ -319,6 +393,8 @@ export function normalizeTuiPrefs(raw: unknown): TuiPrefs {
         modelUsage: asBool(context.modelUsage, true),
         performance: asBool(context.performance, true),
         localSpend: asBool(context.localSpend, true),
+        turnCost: asBool(context.turnCost, true),
+        tokenAnatomy: asBool(context.tokenAnatomy, true),
       },
     },
     footer: {
@@ -383,6 +459,29 @@ export function buildTuiTab(prefs: TuiPrefs, languagePref?: string): SettingsTab
             note: isPt
               ? 'auto (detecta via fuso/locale) | pt-BR (Português) | en (English)'
               : 'auto (detect via timezone/locale) | pt-BR (Português) | en (English)',
+          },
+        ],
+      },
+      {
+        title: isPt ? 'Cores & Tema' : 'Colors & Theme',
+        rows: [
+          {
+            id: 'tui.theme.mode',
+            name: isPt ? 'Modo do tema' : 'Theme mode',
+            value: tuiRowValue(prefs, 'tui.theme.mode') ?? 'auto',
+            cycle: THEME_MODES_CYCLE,
+            note: isPt
+              ? 'auto (segue o OpenCode) | dark | light'
+              : 'auto (follow OpenCode theme) | dark | light',
+          },
+          {
+            id: 'tui.theme.accent',
+            name: isPt ? 'Cor de destaque' : 'Accent color',
+            value: tuiRowValue(prefs, 'tui.theme.accent') ?? 'host',
+            cycle: ACCENT_COLORS_CYCLE,
+            note: isPt
+              ? 'host (segue tema) | pantheon | emerald | cyan | amber | purple | rose'
+              : 'host (follow theme) | pantheon | emerald | cyan | amber | purple | rose',
           },
         ],
       },
@@ -496,6 +595,18 @@ export function buildTuiTab(prefs: TuiPrefs, languagePref?: string): SettingsTab
             isPt ? 'tokens/segundo e latência' : 'cache % + tok/s',
           ),
           row(
+            'tui.sidebar.context.turnCost',
+            isPt ? 'Custo do turno' : 'Turn cost',
+            prefs.sidebar.context.turnCost,
+            isPt ? 'linha `Turn: $… (prev: $…)`' : 'the `Turn: $… (prev: $…)` line',
+          ),
+          row(
+            'tui.sidebar.context.tokenAnatomy',
+            isPt ? 'Anatomia de tokens' : 'Token anatomy',
+            prefs.sidebar.context.tokenAnatomy,
+            isPt ? 'linha `↑in ↓out ✦think`' : 'the `↑in ↓out ✦think` line',
+          ),
+          row(
             'tui.sidebar.context.localSpend',
             isPt ? 'Linha de custo local' : 'Local spend row',
             prefs.sidebar.context.localSpend,
@@ -559,6 +670,18 @@ export function applyTuiRow(draft: TuiPrefs, id: string, value: string): void {
         draft.layout.language = value as LanguagePref
       }
       return
+    case 'tui.theme.mode':
+      if (THEME_MODES_CYCLE.includes(value)) {
+        if (!draft.theme) draft.theme = { ...DEFAULT_TUI_PREFS.theme }
+        draft.theme.mode = value as ThemeModePref
+      }
+      return
+    case 'tui.theme.accent':
+      if (ACCENT_COLORS_CYCLE.includes(value)) {
+        if (!draft.theme) draft.theme = { ...DEFAULT_TUI_PREFS.theme }
+        draft.theme.accent = value as AccentColorPref
+      }
+      return
     case 'tui.sidebar.context.barShape':
       if (BAR_SHAPES_CYCLE.includes(value)) draft.sidebar.context.barShape = value as BarShapePref
       return
@@ -607,6 +730,12 @@ export function applyTuiRow(draft: TuiPrefs, id: string, value: string): void {
     case 'tui.sidebar.context.localSpend':
       draft.sidebar.context.localSpend = enabled
       return
+    case 'tui.sidebar.context.turnCost':
+      draft.sidebar.context.turnCost = enabled
+      return
+    case 'tui.sidebar.context.tokenAnatomy':
+      draft.sidebar.context.tokenAnatomy = enabled
+      return
     case 'tui.footer.prompt':
       draft.footer.prompt = enabled
       return
@@ -626,6 +755,9 @@ export function tuiRowValue(prefs: TuiPrefs, id: string): string | undefined {
   if (id === 'tui.layout.settingsView')
     return prefs.layout?.settingsView ?? DEFAULT_TUI_PREFS.layout.settingsView ?? 'docked'
   if (id === 'tui.layout.language') return prefs.layout?.language ?? 'auto'
+  if (id === 'tui.theme.mode') return prefs.theme?.mode ?? DEFAULT_TUI_PREFS.theme?.mode ?? 'auto'
+  if (id === 'tui.theme.accent')
+    return prefs.theme?.accent ?? DEFAULT_TUI_PREFS.theme?.accent ?? 'host'
   if (id === 'tui.sidebar.context.barShape') return prefs.sidebar.context.barShape
   if (id === 'tui.sidebar.context.barWidth') return prefs.sidebar.context.barWidth
   if (id === 'tui.sidebar.context.gauge') return prefs.sidebar.context.gauge
@@ -657,6 +789,10 @@ export function tuiRowValue(prefs: TuiPrefs, id: string): string | undefined {
         return prefs.sidebar.context.performance
       case 'tui.sidebar.context.localSpend':
         return prefs.sidebar.context.localSpend
+      case 'tui.sidebar.context.turnCost':
+        return prefs.sidebar.context.turnCost
+      case 'tui.sidebar.context.tokenAnatomy':
+        return prefs.sidebar.context.tokenAnatomy
       case 'tui.footer.prompt':
         return prefs.footer.prompt
       case 'tui.footer.home':
@@ -666,4 +802,25 @@ export function tuiRowValue(prefs: TuiPrefs, id: string): string | undefined {
     }
   })()
   return enabled === undefined ? undefined : enabled ? 'enabled' : 'disabled'
+}
+
+export function isSessionPinned(sessionID: string | undefined): boolean {
+  if (!sessionID) return false
+  const list = tuiPrefs().sidebar.pinnedSessions
+  return Array.isArray(list) && list.includes(sessionID)
+}
+
+export function togglePinSession(sessionID: string | undefined): Promise<void> {
+  if (!sessionID) return Promise.resolve()
+  return mutateTuiPrefs((draft) => {
+    if (!Array.isArray(draft.sidebar.pinnedSessions)) {
+      draft.sidebar.pinnedSessions = []
+    }
+    const idx = draft.sidebar.pinnedSessions.indexOf(sessionID)
+    if (idx >= 0) {
+      draft.sidebar.pinnedSessions.splice(idx, 1)
+    } else {
+      draft.sidebar.pinnedSessions.push(sessionID)
+    }
+  })
 }

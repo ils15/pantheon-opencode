@@ -2,7 +2,7 @@
 name: sketch
 description: "Turn a rough idea into a structured spec through a short Q&A interview — ask 3–5 targeted questions, then produce a complete feature spec"
 agent: athena
-tools: ['search', 'agent/askQuestions']
+tools: ['search', 'question']
 ---
 
 # Sketch — Idea to Spec (Athena)

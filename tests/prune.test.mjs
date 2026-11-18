@@ -181,6 +181,35 @@ test('old global ~/.npm-global pantheon install is SUGGESTED, never removed', ()
   }
 })
 
+// ─── --apply --python ─────────────────────────────────────────────────────
+
+test('--apply --python removes legacy python artifacts (.venv, scripts, reqs)', () => {
+  const { root, cfg } = makeFixture()
+  try {
+    // Add legacy scripts and reqs
+    const scriptsDir = join(cfg, 'scripts')
+    mkdirSync(scriptsDir, { recursive: true })
+    writeFileSync(join(scriptsDir, 'memory_mcp.py'), '# python mcp')
+    writeFileSync(join(cfg, 'requirements-vision.txt'), 'fastmcp')
+
+    // dry-run with --python lists them as remove candidates
+    const rDry = runPrune(['--target', cfg, '--python'])
+    assert.match(rDry.stdout, /legacy-python-venv/)
+    assert.match(rDry.stdout, /legacy-python-scripts/)
+    assert.ok(existsSync(join(cfg, '.venv')), '.venv still exists in dry-run')
+
+    // apply with --python removes them
+    const rApply = runPrune(['--target', cfg, '--apply', '--python'])
+    assert.match(rApply.stdout, /removed \(--python\)/)
+    assert.ok(!existsSync(join(cfg, '.venv')), '.venv removed with --apply --python')
+    assert.ok(!existsSync(join(cfg, 'scripts')), 'legacy scripts dir removed')
+    assert.ok(!existsSync(join(cfg, 'requirements-vision.txt')), 'reqs removed')
+    assert.ok(existsSync(join(cfg, 'opencode.json')), 'active config remains untouched')
+  } finally {
+    cleanup(root)
+  }
+})
+
 // ─── CLI wiring ───────────────────────────────────────────────────────────
 
 test('pantheon-init.mjs dispatches the prune subcommand (--help mentions it)', () => {

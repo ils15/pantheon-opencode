@@ -1,21 +1,51 @@
 /**
- * Pantheon V2 plugin — directory entry for the OpenCode V2 beta loader.
+ * Pantheon V2 unified plugin entry point.
  *
- * Loader contract (proven by sandbox probes in ~/pantheon-sandbox/v2):
- * the beta only accepts `plugins` entries that are DIRECTORIES containing a
- * real index.js/index.ts — a file path warns "must be a directory" and a
- * symlink is ignored. The installer therefore registers this directory
- * (`<pkg>/src/plugin`), never the `src/plugin.ts` file directly.
- *
- * This index is a thin re-export shim over the real entry at
- * `src/plugin.ts` (kept as the single source of truth so the
- * `./plugin` package export, unit tests, and V1 tooling keep working
- * unchanged). The shim shape mirrors the verified probe:
- * `export { default } from '<installed>/src/plugin.ts'` loads with zero
- * errors and exposes the full orchestration plugin (tools, events, hooks).
+ * When loaded in OpenCode TUI mode (where context.ui.slot exists),
+ * it mounts the Pantheon TUI sidebar, status and dispatch views.
+ * When loaded in OpenCode Server mode, it registers Pantheon tools,
+ * hooks, and permissions.
  *
  * @module plugin/index
  */
 
+import serverPlugin from '../plugin.ts'
+
 export * from '../plugin.ts'
-export { default } from '../plugin.ts'
+
+type MaybePlugin = {
+  setup?: (context: unknown) => unknown
+}
+
+export async function setupUnified(context: unknown): Promise<unknown> {
+  const ctx = context as Record<string, unknown> | undefined
+  if (ctx?.ui && typeof (ctx.ui as { slot?: unknown }).slot === 'function') {
+    try {
+      const tuiPath = '../plugins/tui/dist/tui.js'
+      const tuiMod = await import(tuiPath)
+      const tui = (tuiMod.default || tuiMod) as MaybePlugin | ((c: unknown) => unknown)
+      if (typeof tui === 'function') return tui(context)
+      if (typeof tui?.setup === 'function') return tui.setup(context)
+    } catch {
+      /* TUI bundle unavailable or failed to load */
+    }
+  }
+  const srv = serverPlugin as MaybePlugin | ((c: unknown) => unknown)
+  if (typeof srv === 'function') return srv(context)
+  if (typeof srv?.setup === 'function') {
+    return srv.setup(context)
+  }
+  return undefined
+}
+
+export const unifiedPlugin = Object.assign(
+  async function pantheonPlugin(context: unknown) {
+    return setupUnified(context)
+  },
+  {
+    id: 'pantheon-opencode',
+    setup: setupUnified,
+  },
+)
+
+export default unifiedPlugin

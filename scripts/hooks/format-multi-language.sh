@@ -11,34 +11,26 @@ REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 # Extracts file_path from Edit/Write or file paths from Bash commands.
 if [ -p /dev/stdin ]; then
   STDIN_JSON=$(cat)
-  EXTRACTED_PATH=$(python3 -c "
-import sys, json, re, shlex
-try:
-    d = json.load(sys.stdin)
-    t = str(d.get('tool_name', '')).lower()
-    inp = d.get('tool_input', {})
-    if not isinstance(inp, dict):
-        inp = {}
-    fp = ''
-    if t in ('edit', 'write', 'hashline_edit'):
-        fp = inp.get('file_path', '') or inp.get('filePath', '') or inp.get('path', '')
-    elif t == 'bash':
-        cmd = inp.get('command', '')
-        if cmd:
-            try:
-                tokens = shlex.split(cmd)
-            except ValueError:
-                tokens = cmd.split()
-            path_re = re.compile(r'^([^\\n]+\\.[A-Za-z0-9]+)$')
-            for tok in tokens:
-                if not tok.startswith('-') and path_re.match(tok):
-                    fp = tok
-                    break
-    if fp:
-        print(fp)
-except Exception:
-    pass
-" <<< "$STDIN_JSON" 2>/dev/null || echo "")
+  EXTRACTED_PATH=$(node -e '
+try {
+  const d = JSON.parse(process.argv[1] || "{}");
+  const t = String(d.tool_name || "").toLowerCase();
+  const inp = d.tool_input && typeof d.tool_input === "object" ? d.tool_input : {};
+  let fp = "";
+  if (["edit", "write", "hashline_edit"].includes(t)) {
+    fp = inp.file_path || inp.filePath || inp.file || inp.path || "";
+  } else if (t === "bash") {
+    const cmd = String(inp.command || "");
+    for (const tok of cmd.split(/\s+/)) {
+      if (tok && !tok.startsWith("-") && /^[^\n]+\.[A-Za-z0-9]+$/.test(tok)) {
+        fp = tok;
+        break;
+      }
+    }
+  }
+  if (fp) process.stdout.write(String(fp));
+} catch {}
+' "$STDIN_JSON" 2>/dev/null || echo "")
   if [ -n "$EXTRACTED_PATH" ]; then
     FILE_PATH="$EXTRACTED_PATH"
   fi
@@ -66,7 +58,16 @@ case "$EXT" in
             black -q "$FILE_PATH" || true
         fi
         ;;
-    js|jsx|ts|tsx|json|jsonc|md|yaml|yml|css|html)
+    js|jsx|ts|tsx|json|jsonc)
+        if command -v biome >/dev/null 2>&1; then
+            biome format --write "$FILE_PATH" || true
+        elif [[ -x "$REPO_ROOT/node_modules/.bin/biome" ]]; then
+            "$REPO_ROOT/node_modules/.bin/biome" format --write "$FILE_PATH" || true
+        elif command -v prettier >/dev/null 2>&1; then
+            prettier --write "$FILE_PATH" || true
+        fi
+        ;;
+    md|yaml|yml|css|html)
         if command -v prettier >/dev/null 2>&1; then
             prettier --write "$FILE_PATH" || true
         fi

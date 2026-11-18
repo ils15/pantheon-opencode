@@ -49,6 +49,26 @@ export interface AutoPermissionResult {
 /** Agents strictly forbidden from mutating workspace files or executing arbitrary shell commands. */
 const READ_ONLY_AGENTS: ReadonlySet<string> = new Set(['zeus', 'athena', 'apollo', 'gaia'])
 
+/** Agents forbidden from editing source files directly (reviewers, git/release ops, memory). */
+export const NON_EDIT_AGENTS: ReadonlySet<string> = new Set([
+  'zeus',
+  'athena',
+  'apollo',
+  'gaia',
+  'themis',
+  'nyx',
+  'iris',
+])
+
+/** Agents forbidden from executing arbitrary shell commands. */
+export const NON_SHELL_AGENTS: ReadonlySet<string> = new Set([
+  'zeus',
+  'athena',
+  'apollo',
+  'gaia',
+  'mnemosyne',
+])
+
 /** Allowed binary names for routine workspace development. */
 const SAFE_DEV_BINARIES: ReadonlySet<string> = new Set([
   'git',
@@ -257,13 +277,23 @@ export function evaluateAutoPermission(
     return { decision: 'allow', reason: 'pantheon-native-tool' }
   }
 
-  // 2. Read-only agents are strictly prohibited from mutating tools or shell
+  // 2. Read-only and role-restricted agents are strictly prohibited from mutating tools or shell
   if (READ_ONLY_AGENTS.has(agent)) {
     if (['edit', 'write', 'hashline_edit', 'bash', 'shell', 'execute'].includes(action)) {
       event.effect = 'deny'
       event.message = `Pantheon auto-permissions denied: read-only agent '${agent}' cannot execute mutating action '${action}'`
       return { decision: 'deny', reason: 'read-only-role-violation' }
     }
+  }
+  if (NON_EDIT_AGENTS.has(agent) && ['edit', 'write', 'hashline_edit'].includes(action)) {
+    event.effect = 'deny'
+    event.message = `Pantheon auto-permissions denied: agent '${agent}' cannot execute file mutation '${action}'`
+    return { decision: 'deny', reason: 'read-only-role-violation' }
+  }
+  if (NON_SHELL_AGENTS.has(agent) && ['bash', 'shell'].includes(action)) {
+    event.effect = 'deny'
+    event.message = `Pantheon auto-permissions denied: agent '${agent}' cannot execute shell command '${action}'`
+    return { decision: 'deny', reason: 'read-only-role-violation' }
   }
 
   // 3. Read-only inspection tools are safe within workspace (excluding network/external URLs and excluded directories)
