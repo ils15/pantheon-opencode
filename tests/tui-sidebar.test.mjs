@@ -5212,4 +5212,23 @@ test('v2.1.7 TUI enhancements: turn cost delta, token anatomy, tool health and c
   assert.equal(v2.parseTodoItems('{invalid json}').length, 0)
   assert.equal(v2.parseTodoItems(null).length, 0)
   assert.equal(v2.parseTodoItems(undefined).length, 0)
+
+  // 7. Regression: createSidebarModel must expose turnCost accessor alongside turnCostLine
+  //    (called when long turn cost lines overflow the 31-cell sidebar width).
+  const host = createSidebarHost({
+    children: [['ses_turn_cost', { id: 'ses_turn_cost', title: 'Turn Cost', agent: 'zeus' }]],
+    messages: [['ses_turn_cost', msgsCost]],
+  })
+  let model
+  const dispose = createRoot((disposeRoot) => {
+    model = v2.createSidebarModel(host.context, () => 'ses_turn_cost')
+    return disposeRoot
+  })
+  try {
+    assert.equal(typeof model.turnCost, 'function', 'createSidebarModel exposes turnCost accessor')
+    assert.deepEqual(model.turnCost(), { current: 0.012, previous: 0.008 })
+    assert.equal(model.turnCostLine(), 'Turn: $0.012 (prev: $0.008)')
+  } finally {
+    dispose()
+  }
 })

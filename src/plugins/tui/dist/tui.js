@@ -2953,7 +2953,7 @@ async function readChangelogForBundle(bundleUrl) {
 }
 /** The ambient build-time version, or null outside a tsdown build. */
 function embeddedVersion() {
-	return "2.2.0-beta.10";
+	return "2.2.0-beta.11";
 }
 /**
 * Resolve the running Pantheon version for the what's-new window: the plugin
@@ -3195,7 +3195,7 @@ function persistUpdateCheckState(previous, latest) {
 	} catch {}
 }
 function resolveRunningVersion() {
-	return "2.2.0-beta.10";
+	return "2.2.0-beta.11";
 }
 const VALUE_WIDTH = 24;
 function SettingsWindow(props) {
@@ -7825,7 +7825,7 @@ function updateCheckStateFile() {
 *  version via toast, and keeps the persistent Home/Sidebar badge updated. */
 async function checkForPantheonUpdate(context) {
 	const { statePath, readState } = updateCheckStateFile();
-	const currentVersion = "2.2.0-beta.10";
+	const currentVersion = "2.2.0-beta.11";
 	const initialState = readState();
 	setAvailableUpdateVersion(resolveCachedAvailableUpdate(currentVersion, initialState));
 	const nowMs = Date.now();
@@ -8505,6 +8505,7 @@ function createSidebarModel(context, sessionID, gitExec = defaultGitExec) {
 		spend,
 		contextUsage,
 		agentModel,
+		turnCost,
 		turnCostLine,
 		tokenAnatomyLine,
 		toolCallsLine,
@@ -8672,7 +8673,7 @@ function Sidebar(props) {
 			setProp(_el$13, "paddingLeft", 1);
 			setProp(_el$13, "paddingRight", 1);
 			setProp(_el$14, "attributes", 1);
-			insert(_el$14, `Pantheon v2.2.0-beta.10`);
+			insert(_el$14, `Pantheon v2.2.0-beta.11`);
 			insert(_el$15, () => `Erro no painel: ${err?.message ?? "desconhecido"}`);
 			effect((_p$) => {
 				var _v$3 = text(), _v$4 = muted();
@@ -8726,8 +8727,8 @@ function SidebarInner(props) {
 	};
 	const failedSuffix = () => failedSuffixText(dispatchView()?.failures);
 	const header = () => tuiPrefs().sidebar.header;
-	const availableUpdate = useAvailableUpdate("2.2.0-beta.10");
-	const updateBadge = () => formatUpdateBadge("2.2.0-beta.10", availableUpdate(), { isPt: resolveLanguage(tuiPrefs().layout?.language) === "pt-BR" });
+	const availableUpdate = useAvailableUpdate("2.2.0-beta.11");
+	const updateBadge = () => formatUpdateBadge("2.2.0-beta.11", availableUpdate(), { isPt: resolveLanguage(tuiPrefs().layout?.language) === "pt-BR" });
 	return (() => {
 		var _el$16 = createElement("box"), _el$17 = createElement("box"), _el$19 = createElement("box");
 		insertNode(_el$16, _el$17);
@@ -8745,7 +8746,7 @@ function SidebarInner(props) {
 			get children() {
 				var _el$18 = createElement("text");
 				setProp(_el$18, "attributes", 1);
-				insert(_el$18, `Pantheon v2.2.0-beta.10`);
+				insert(_el$18, `Pantheon v2.2.0-beta.11`);
 				effect((_$p) => setProp(_el$18, "fg", text(), _$p));
 				return _el$18;
 			}
@@ -9732,10 +9733,10 @@ function PantheonSettingsCommandLayer(props) {
 *  this keeps a compact Pantheon line visible on the home footer meanwhile. */
 function HomeStatus(props) {
 	const preset = useActivePreset(props.context).preset;
-	const availableUpdate = useAvailableUpdate("2.2.0-beta.10");
+	const availableUpdate = useAvailableUpdate("2.2.0-beta.11");
 	const accent = () => resolveAccentColor(tuiDraftPreview()?.theme?.accent ?? tuiPrefs().theme?.accent, props.context.theme);
 	const muted = () => props.context.theme?.text?.muted ?? props.context.theme?.text?.base;
-	const updateBadge = () => formatUpdateBadge("2.2.0-beta.10", availableUpdate(), {
+	const updateBadge = () => formatUpdateBadge("2.2.0-beta.11", availableUpdate(), {
 		isPt: resolveLanguage(tuiPrefs().layout?.language) === "pt-BR",
 		compact: true
 	});
@@ -9747,7 +9748,7 @@ function HomeStatus(props) {
 			var _el$121 = createElement("box"), _el$122 = createElement("text");
 			insertNode(_el$121, _el$122);
 			setProp(_el$121, "flexDirection", "row");
-			insert(_el$122, () => `Pantheon v2.2.0-beta.10${preset().name ? ` ▸ ${preset().name}` : ""}`);
+			insert(_el$122, () => `Pantheon v2.2.0-beta.11${preset().name ? ` ▸ ${preset().name}` : ""}`);
 			insert(_el$121, createComponent(Show, {
 				get when() {
 					return updateBadge();
@@ -9844,7 +9845,7 @@ const plugin = Plugin.define({
 			append: "home.footer.status",
 			render: () => createComponent(HomeStatus, { context })
 		});
-		setAvailableUpdateVersion(resolveCachedAvailableUpdate("2.2.0-beta.10", updateCheckStateFile().readState()));
+		setAvailableUpdateVersion(resolveCachedAvailableUpdate("2.2.0-beta.11", updateCheckStateFile().readState()));
 		const updateNoticeTimer = setTimeout(() => {
 			checkForPantheonUpdate(context).catch(() => {});
 		}, 3e3);

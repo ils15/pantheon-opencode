@@ -3644,6 +3644,8 @@ export type SidebarModel = {
   contextUsage: Accessor<ContextUsage | null>
   /** Current agent and its resolved short model id (`*` = explicit override). */
   agentModel: Accessor<{ agent: string; model: string; overridden: boolean } | null>
+  /** Custo estruturado do último turno do assistente e do anterior. */
+  turnCost: Accessor<TurnCostSummary | null>
   /** Custo do último turno do assistente e do anterior. */
   turnCostLine: Accessor<string | null>
   /** Decomposição anatômica de tokens (in / out / reasoning think). */
@@ -4321,6 +4323,7 @@ export function createSidebarModel(
     spend,
     contextUsage,
     agentModel,
+    turnCost,
     turnCostLine,
     tokenAnatomyLine,
     toolCallsLine,
