@@ -47,7 +47,8 @@ describe('updates section rows', () => {
     })
     const latest = section.groups.flatMap((g) => g.rows).find((row) => row.id === 'update.latest')
     assert.equal(latest.value, 'v2.0.0-beta.3 available')
-    assert.match(latest.note, /opencode plugin add pantheon-opencode/)
+    assert.equal(latest.action, 'update-run')
+    assert.match(latest.note, /opencode plugin update pantheon-opencode/)
     const legacyRows = section.groups
       .flatMap((g) => g.rows)
       .filter((row) => row.id.startsWith('legacy.'))

@@ -422,8 +422,8 @@ function resolveRunningVersion(): string {
 
 // ── The window view (presentational; both surfaces render it) ──────────
 
-const NAME_WIDTH = 26
-const VALUE_WIDTH = 24
+const NAME_WIDTH = 24
+const VALUE_WIDTH = 30
 
 export function SettingsWindow(props: {
   version: string
