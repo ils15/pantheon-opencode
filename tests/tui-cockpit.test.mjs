@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { getSharedBus } from '../src/pantheon/bus.ts'
+import { wireCockpitBusRecorder } from '../src/pantheon/cockpit-events.ts'
 import {
   buildCockpitSnapshot,
   formatCockpitReplayArtifact,
@@ -136,4 +138,23 @@ test('index.tsx wires /pantheon-cockpit command to openCockpit', () => {
   assert.match(indexSrc, /import \{[\s\S]*openPantheonCockpit[\s\S]*\} from '\.\/cockpit'/)
   assert.match(indexSrc, /id:\s*'pantheon\.cockpit\.open'/)
   assert.match(indexSrc, /name:\s*'pantheon-cockpit'/)
+})
+
+test('wireCockpitBusRecorder persists PantheonBus events for cross-process TUI Flightdeck stream', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-cockpit-bus-'))
+  const stop = wireCockpitBusRecorder(dir)
+  try {
+    getSharedBus().emit('review:verdict', {
+      verdict: 'APPROVE_WITH_NOTES',
+      targetAgent: 'hermes',
+      summary: 'Looks clean with minor naming note',
+      findingsCount: 1,
+      timestamp: 12_345,
+    })
+    const snap = buildCockpitSnapshot({ workspaceDir: dir, children: [] })
+    assert.ok(snap.flightdeck.logs.some((e) => e.kind === 'review:verdict' && e.agent === 'hermes'))
+  } finally {
+    stop()
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

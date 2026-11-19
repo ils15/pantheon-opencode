@@ -20,7 +20,15 @@ export interface ReviewFinding {
 }
 
 export interface ReviewSyntheticSessionDomain {
-  synthetic?: (input: { sessionID: string; text: string; agent?: string }) => Promise<unknown>
+  get?: (input: { readonly sessionID: string }) => Promise<unknown>
+  switchAgent?: (input: { readonly sessionID: string; readonly agent: string }) => Promise<unknown>
+  synthetic?: (input: {
+    readonly sessionID: string
+    readonly text: string
+    readonly description?: string
+    readonly metadata?: Readonly<Record<string, unknown>>
+    readonly resume?: boolean
+  }) => Promise<unknown>
 }
 
 const MAX_AUTO_REMEDIATIONS = 2
@@ -148,6 +156,7 @@ export function createReviewVerdictTool(
       })
 
       let syntheticTriggered = false
+      let syntheticSessionID: string | undefined
       let remediationAttempt = 0
       if (verdict === 'BLOCK' && sessionID && typeof sessionDomain?.synthetic === 'function') {
         const key = `${sessionID}:${targetAgent}`
@@ -157,8 +166,30 @@ export function createReviewVerdictTool(
           remediationCounts.set(key, remediationAttempt)
           const text = formatRemediationPrompt({ verdict, summary, targetAgent, findings })
           try {
-            await sessionDomain.synthetic({ sessionID, text, agent: targetAgent })
+            let dispatchSid = sessionID
+            if (typeof sessionDomain.get === 'function') {
+              const info = (await sessionDomain.get({ sessionID }).catch(() => undefined)) as
+                | { parentID?: unknown }
+                | null
+                | undefined
+              if (typeof info?.parentID === 'string' && info.parentID.trim()) {
+                dispatchSid = info.parentID.trim()
+              }
+            }
+            if (dispatchSid === sessionID && typeof sessionDomain.switchAgent === 'function') {
+              await sessionDomain
+                .switchAgent({ sessionID: dispatchSid, agent: targetAgent })
+                .catch(() => {})
+            }
+            await sessionDomain.synthetic({
+              sessionID: dispatchSid,
+              text,
+              description: `Themis BLOCK remediation -> @${targetAgent}`,
+              metadata: { targetAgent, verdict, remediationAttempt },
+              resume: true,
+            })
             syntheticTriggered = true
+            syntheticSessionID = dispatchSid
           } catch {
             syntheticTriggered = false
           }
@@ -173,6 +204,7 @@ export function createReviewVerdictTool(
         targetAgent,
         findingsCount: findings.length,
         syntheticTriggered,
+        ...(syntheticSessionID ? { syntheticSessionID } : {}),
         ...(remediationAttempt > 0
           ? { remediationAttempt, maxRemediations: MAX_AUTO_REMEDIATIONS }
           : {}),

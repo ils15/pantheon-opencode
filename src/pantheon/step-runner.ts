@@ -6,15 +6,27 @@
  * verification contract so multi-step executions avoid context blowup.
  */
 
-import { readStepLedger, type StepState, writeStepLedger } from './step-ledger.ts'
+import { captureGitCheckpoint } from './git-checkpoint.ts'
+import {
+  readStepLedger,
+  type StepState,
+  type StepTaskType,
+  writeStepLedger,
+} from './step-ledger.ts'
 
+/** Structural subset of OpenCode 2.x `ctx.session` (`SessionDomain`) aligned with `@opencode/client`. */
 export interface SubSessionDomainLike {
-  create?: (input: { title?: string; directory?: string; parentID?: string }) => Promise<{
+  create?: (input?: { title?: string; agent?: string; parentID?: string }) => Promise<{
     id?: string
   }>
-  prompt?: (input: { sessionID: string; agent?: string; text: string }) => Promise<unknown>
-  wait?: (sessionID: string, options?: { timeoutMs?: number }) => Promise<unknown>
-  remove?: (sessionID: string) => Promise<unknown>
+  prompt?: (input: {
+    sessionID: string
+    text: string
+    agents?: ReadonlyArray<{ readonly name: string }>
+    resume?: boolean
+  }) => Promise<unknown>
+  wait?: (input: { readonly sessionID: string }) => Promise<unknown>
+  remove?: (input: { readonly sessionID: string }) => Promise<unknown>
 }
 
 export interface AtomicStepRunInput {
@@ -23,9 +35,9 @@ export interface AtomicStepRunInput {
   readonly stepKey: string
   readonly objective: string
   readonly agent: string
+  readonly taskType?: StepTaskType
   readonly parentSessionID?: string
   readonly extraContext?: string
-  readonly timeoutMs?: number
   readonly cleanupSession?: boolean
 }
 
@@ -75,14 +87,17 @@ export async function runAtomicStepSubSession(
     return { ok: false, stepKey, error: 'host session.create/prompt domain unavailable' }
   }
 
-  // Ensure ledger entry exists cleanly before sub-session starts
+  // Ensure ledger entry + Git checkpoint baseline exist cleanly before sub-session starts
   const store = readStepLedger(cwd)
   if (!store.steps[stepKey]) {
+    const ckpt = await captureGitCheckpoint(cwd, stepKey)
     store.steps[stepKey] = {
       stepKey,
       objective,
       agent,
       state: 'in_progress',
+      ...(input.taskType ? { taskType: input.taskType } : {}),
+      ...(ckpt.ok && ckpt.treeHash ? { baselineTree: ckpt.treeHash } : {}),
       mutatedFiles: [],
       lastMutationAt: null,
       lastVerifiedAt: null,
@@ -95,7 +110,7 @@ export async function runAtomicStepSubSession(
   try {
     const created = await sessionDomain.create({
       title: `Step ${stepKey}: ${objective.slice(0, 60)}`,
-      directory: cwd,
+      agent,
       ...(input.parentSessionID ? { parentID: input.parentSessionID } : {}),
     })
     createdId = typeof created?.id === 'string' ? created.id : undefined
@@ -109,9 +124,14 @@ export async function runAtomicStepSubSession(
       agent,
       ...(input.extraContext !== undefined ? { extraContext: input.extraContext } : {}),
     })
-    await sessionDomain.prompt({ sessionID: createdId, agent, text })
+    await sessionDomain.prompt({
+      sessionID: createdId,
+      text,
+      agents: [{ name: agent }],
+      resume: true,
+    })
     if (typeof sessionDomain.wait === 'function') {
-      await sessionDomain.wait(createdId, { timeoutMs: input.timeoutMs ?? 120_000 })
+      await sessionDomain.wait({ sessionID: createdId })
     }
 
     const latest = readStepLedger(cwd).steps[stepKey]
@@ -132,7 +152,7 @@ export async function runAtomicStepSubSession(
   } finally {
     if (createdId && input.cleanupSession !== false && typeof sessionDomain.remove === 'function') {
       try {
-        await sessionDomain.remove(createdId)
+        await sessionDomain.remove({ sessionID: createdId })
       } catch {
         /* best-effort cleanup */
       }

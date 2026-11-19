@@ -60,7 +60,7 @@ skills:
 
 ## Fast-Path Execution Contract
 
-- **Micro-scope only**: single-file (< 10 lines) or max 2 files (CSS, typos, imports, isolated logic fixes).
+- **Micro-scope only**: single-file (< 10 lines) or max 2 files (CSS, typos, imports, isolated logic fixes). Use `ast_search`/`ast_rewrite` when doing structural symbol/call replacements; on `bugfix` Step-Ledger steps, record a failing `RED` reproduction probe first via `pantheon_step_ledger(action="record_reproduction", ...)`.
 - **Zero ceremony**: skip RED->GREEN->REFACTOR; run only the narrowest relevant test slice via `test-slicing`.
 - **Standalone execution**: no subagents, no orchestration overhead. Return `## subtask_summary` directly.
 

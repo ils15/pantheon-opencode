@@ -17,7 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### 🆕 What's New
 
-- **29 Native TypeScript Tools & Pillars 1–5**: LSP bridge, `ast_search`/`ast_rewrite`, git checkpoints, worktrees, and bugfix gates.
+- **30 Native TypeScript Tools & Pillars 1–5**: LSP bridge, `ast_search`/`ast_rewrite`, git checkpoints, worktrees, and bugfix gates.
 - **TUI Mission Control Cockpit (`/pantheon-cockpit`)**: 3-page dashboard (`Overview`, `Swarm` Gantt, `Flightdeck` gates) via `1–3`/`Tab`.
 - **Step-Ledger Checkpoints & Verdict Remediation**: Isolated `ctx.session.create` steps, git rollback, and `pantheon_review_verdict`.
 - **Interactive `/pantheon-forge` & Artifacts**: Stack detector (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`) & Mermaid viewer.
@@ -32,11 +32,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **ledger** — `git-checkpoint.ts`, `step-runner.ts`, `step-ledger.ts`: added temp-index git snapshots, auto-rollback, and `ctx.session.create` step runner.
 - **orchestration** — `worktree-orchestrator.ts`, `review-verdict.ts`, `reproduction-gate.ts`: wired `ctx.worktree.transform`, verdict tool, and bugfix `RED` gate.
 - **forge** — `stack-detector.ts`, `pantheon-forge.md`, `agent-forge-tool.ts`: added `/pantheon-forge` wizard, `detect_stack`, and `init --project` stack hints.
-- **tui** — `artifacts.tsx`, `mermaid-ascii.ts`, `legacy-audit.ts`: added `/pantheon-artifacts`, Unicode Mermaid rendering, `Native Tools (29)`, and cache cleanup.
+- **tui** — `artifacts.tsx`, `mermaid-ascii.ts`, `legacy-audit.ts`: added `/pantheon-artifacts`, Unicode Mermaid rendering, `Native Tools (30)`, and cache cleanup.
 
 ### Changed
 
-- **plugin** — `src/plugin.ts`, `roster.json`: registers 29 tools and 9 commands, preserves native `todowrite`/`todoread`, removes `/pantheon-settings` duplicate.
+- **plugin** — `src/plugin.ts`, `roster.json`: registers 30 tools and 9 commands, preserves native `todowrite`/`todoread`, removes `/pantheon-settings` duplicate.
 - **release** — `scripts/version-check.mjs`, `scripts/package-evidence.mjs`: validates `dist/tui.js` version match in `prepack` and package checks.
 - **docs** — updated `README.md`, `README.pt-BR.md`, `ROADMAP.md`, `docs/`, and `wiki/` with v2.2.0 Pillars 1–5, Cockpit, and live TUI screenshots.
 

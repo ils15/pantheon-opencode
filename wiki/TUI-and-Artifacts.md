@@ -24,13 +24,13 @@ Configure arbitragem Jev, tier global de modelos + modelo de visão, idioma (`pt
 ![Aba Autonomia no Pantheon Settings](../docs/assets/tui/settings-autonomy.png)
 
 ### `Atualizações`, `Doctor` & `Sobre`
-Verifique canal npm (`latest`/`beta`), execute limpeza segura de caches antigos e legado V1 (`~/.cache/opencode/npm/pantheon-opencode*`), cheque saúde do ambiente e consulte as **29 Native Tools** no inventário ao vivo:
+Verifique canal npm (`latest`/`beta`), execute limpeza segura de caches antigos e legado V1 (`~/.cache/opencode/npm/pantheon-opencode*`), cheque saúde do ambiente e consulte as **30 Native Tools** no inventário ao vivo:
 
 ![Atualizações e Limpeza de Legado](../docs/assets/tui/settings-updates.png)
 
 ![Doctor no Pantheon Settings](../docs/assets/tui/settings-doctor.png)
 
-![Aba Sobre listando as 29 ferramentas nativas](../docs/assets/tui/settings-about.png)
+![Aba Sobre listando as 30 ferramentas nativas](../docs/assets/tui/settings-about.png)
 
 ---
 

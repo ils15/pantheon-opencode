@@ -92,10 +92,10 @@ tetos mensais/por consulta em USD para o roteamento Jev.
 
 ![Aba Doctor no Pantheon Settings](../assets/tui/settings-doctor.png)
 
-- **Sobre:** resumo de plataforma/governança e inventário agrupado das **29
+- **Sobre:** resumo de plataforma/governança e inventário agrupado das **30
   Ferramentas Nativas TypeScript** registradas pelo plugin.
 
-![Aba Sobre listando as 29 ferramentas nativas](../assets/tui/settings-about.png)
+![Aba Sobre listando as 30 ferramentas nativas](../assets/tui/settings-about.png)
 
 ---
 

@@ -187,6 +187,7 @@ export const DEFAULT_BLOCKED_TOOLS: ReadonlySet<string> = new Set([
   'task',
   'hashline_edit',
   'ast_rewrite',
+  'pantheon_worktree',
   // `pantheon_model` writes active-preset.json in BOTH the project and the
   // global scope, so it is a write surface with the same blast radius as
   // `write`. Read-only agents have no reason to change agent models, and a

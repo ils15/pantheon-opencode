@@ -2925,6 +2925,7 @@ async function main(): Promise<void> {
       'pantheon_review_verdict',
       'pantheon_skill_search',
       'pantheon_step_ledger',
+      'pantheon_worktree',
       'shell',
       'todoread',
       'todowrite',
@@ -3104,6 +3105,7 @@ async function main(): Promise<void> {
       'pantheon_review_verdict',
       'pantheon_skill_search',
       'pantheon_step_ledger',
+      'pantheon_worktree',
       'shell',
       'todoread',
       'todowrite',
@@ -3658,7 +3660,7 @@ async function main(): Promise<void> {
     const v2WriteTools = [...DEFAULT_BLOCKED_TOOLS].filter((tool) => registeredNames.has(tool))
     assert.deepEqual(
       v2WriteTools.sort(),
-      ['ast_rewrite', 'hashline_edit', 'pantheon_model', 'shell'],
+      ['ast_rewrite', 'hashline_edit', 'pantheon_model', 'pantheon_worktree', 'shell'],
       'the V2 surface exposes mutating tools; all must be in the blocked set',
     )
     for (const tool of v2WriteTools) {

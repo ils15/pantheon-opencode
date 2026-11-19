@@ -103,7 +103,7 @@ test('step_ledger captures baselineTree on init_step and auto-rolls back on them
   }
 })
 
-test('runAtomicStepSubSession spawns isolated ctx.session.create, dispatches step contract, and removes child session', async () => {
+test('runAtomicStepSubSession and pantheon_step_ledger execute_step use real SDK shapes and clean up child session', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'pantheon-step-runner-'))
   try {
     initGitRepo(dir)
@@ -112,37 +112,47 @@ test('runAtomicStepSubSession spawns isolated ctx.session.create, dispatches ste
     const ledger = createStepLedgerTool(dir)
 
     const fakeSessionDomain = {
-      create: async (opts: { title?: string }) => {
-        calls.push(`create:${opts.title ?? ''}`)
+      create: async (opts?: { title?: string; agent?: string; parentID?: string }) => {
+        calls.push(`create:${opts?.agent ?? ''}:${opts?.title ?? ''}`)
+        assert.ok(opts?.agent, 'create must specify target agent matching SessionCreateInput')
         return { id: 'ses_atomic_1' }
       },
-      prompt: async (input: { sessionID: string; text: string }) => {
-        calls.push(`prompt:${input.sessionID}`)
-        assert.match(input.text, /stepKey:\s*sub-step-1/)
-        assert.match(input.text, /Implement health route/)
+      prompt: async (input: {
+        sessionID: string
+        text: string
+        agents?: ReadonlyArray<{ readonly name: string }>
+      }) => {
+        const keyMatch = /stepKey:\s*(\S+)/.exec(input.text)
+        const targetKey = keyMatch?.[1] ?? 'sub-step-1'
+        calls.push(`prompt:${input.sessionID}:${targetKey}`)
+        assert.equal(
+          input.agents?.[0]?.name,
+          'hermes',
+          'prompt must pass SessionPromptInput agents[]',
+        )
         // Simulate sub-session completing verification & ledger
         await ledger.execute(
-          { action: 'record_mutation', stepKey: 'sub-step-1', files: ['app.ts'] },
+          { action: 'record_mutation', stepKey: targetKey, files: ['app.ts'] },
           { directory: dir },
         )
         await ledger.execute(
           {
             action: 'record_verification',
-            stepKey: 'sub-step-1',
+            stepKey: targetKey,
             command: 'node --test',
             exitCode: 0,
           },
           { directory: dir },
         )
-        await ledger.execute({ action: 'complete_step', stepKey: 'sub-step-1' }, { directory: dir })
+        await ledger.execute({ action: 'complete_step', stepKey: targetKey }, { directory: dir })
         return { ok: true }
       },
-      wait: async (sessionID: string) => {
-        calls.push(`wait:${sessionID}`)
+      wait: async (input: { readonly sessionID: string }) => {
+        calls.push(`wait:${input.sessionID}`)
         return { status: 'completed' }
       },
-      remove: async (sessionID: string) => {
-        removed.push(sessionID)
+      remove: async (input: { readonly sessionID: string }) => {
+        removed.push(input.sessionID)
       },
     }
 
@@ -157,8 +167,27 @@ test('runAtomicStepSubSession spawns isolated ctx.session.create, dispatches ste
     assert.equal(res.sessionID, 'ses_atomic_1')
     assert.equal(res.stepState, 'done')
     assert.deepEqual(removed, ['ses_atomic_1'])
-    assert.ok(calls.some((c) => c.startsWith('create:')))
-    assert.ok(calls.includes('prompt:ses_atomic_1'))
+    assert.ok(calls.some((c) => c.startsWith('create:hermes:')))
+    assert.ok(calls.includes('wait:ses_atomic_1'))
+
+    // Now invoke directly via pantheon_step_ledger(action="execute_step")
+    const wiredLedger = createStepLedgerTool(dir, fakeSessionDomain)
+    const toolOut = JSON.parse(
+      (
+        await wiredLedger.execute(
+          {
+            action: 'execute_step',
+            stepKey: 'sub-step-2',
+            objective: 'Add readiness check',
+            agent: 'hermes',
+          },
+          { directory: dir, sessionID: 'ses_parent_zeus' },
+        )
+      ).output,
+    ) as { ok: boolean; stepState?: string; receiptId?: string }
+    assert.equal(toolOut.ok, true)
+    assert.equal(toolOut.stepState, 'done')
+    assert.ok(toolOut.receiptId)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

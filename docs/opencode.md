@@ -19,7 +19,7 @@ host never loads two Pantheon plugins.
 
 ## Tools
 
-The plugin registers **29 native TypeScript tools** through `ctx.tool.transform()`
+The plugin registers **30 native TypeScript tools** through `ctx.tool.transform()`
 with zero external Python dependency, automatically available in any workspace via
 `opencode plugin add pantheon-opencode` (check the live inventory in `/pantheon-settings`
 → **About**):

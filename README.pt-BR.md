@@ -65,7 +65,7 @@ A TUI do OpenCode 2.x exibe contadores ao vivo por domínio de ferramentas nativ
 `ctx`, `code`, `edit`, `shell`), atividade ao vivo e badges de atenção (`?` / `!`) no
 `Dispatch` e `/dispatch`, o **Mission Control Cockpit** (`/pantheon-cockpit` · `Overview`,
 `Swarm`, `Flightdeck`), `/pantheon-artifacts` para planos/relatórios/ADRs, o assistente
-`/pantheon-forge` com detecção de stack e o inventário completo de **29 tools nativas** em
+`/pantheon-forge` com detecção de stack e o inventário completo de **30 tools nativas** em
 `/pantheon-settings` → **Sobre** (incluindo diagnósticos LSP pós-edição,
 `ast_search`/`ast_rewrite`, `pantheon_review_verdict`, gate de reprodução `RED` para bugfix e
 worktrees nativas via `ctx.worktree.transform`). Worktrees Git compartilham automaticamente o

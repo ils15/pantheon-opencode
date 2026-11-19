@@ -489,6 +489,7 @@ async function main() {
           'edit',
           'hashline_edit',
           'pantheon_model',
+          'pantheon_worktree',
           'shell',
           'task',
           'write',

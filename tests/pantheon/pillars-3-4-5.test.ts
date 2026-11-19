@@ -12,6 +12,7 @@ import { detectRepositoryStacks } from '../../src/pantheon/stack-detector.ts'
 import { createStepLedgerTool } from '../../src/pantheon/step-ledger.ts'
 import {
   createPantheonWorktreeDefinition,
+  createWorktreeTool,
   resolvePantheonWorktreePath,
 } from '../../src/pantheon/worktree-orchestrator.ts'
 
@@ -51,20 +52,40 @@ test('worktree-orchestrator enforces sibling .pantheon-worktrees path and manage
 
     await def.remove({ directory: created.directory, force: true }, { signal: ac.signal })
     assert.equal(existsSync(created.directory), false)
+
+    // Also test direct agent tool interface `pantheon_worktree`
+    const wtTool = createWorktreeTool(repo)
+    const wtCreated = JSON.parse(
+      (await wtTool.execute({ action: 'create', task: 'feat-tool' }, { directory: repo })).output,
+    ) as { ok: boolean; directory: string }
+    assert.equal(wtCreated.ok, true)
+    assert.ok(existsSync(wtCreated.directory))
+    assert.equal(wtCreated.directory.startsWith(repo), false)
+    const wtRemoved = JSON.parse(
+      (
+        await wtTool.execute(
+          { action: 'remove', directory: wtCreated.directory, force: true },
+          { directory: repo },
+        )
+      ).output,
+    ) as { ok: boolean }
+    assert.equal(wtRemoved.ok, true)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
 })
 
-test('pantheon_review_verdict emits bus event and triggers bounded ctx.session.synthetic on BLOCK', async () => {
-  const syntheticCalls: Array<{ sessionID: string; text: string }> = []
+test('pantheon_review_verdict emits bus event and routes bounded SessionSyntheticInput to parent session on BLOCK', async () => {
+  const syntheticCalls: Array<Record<string, unknown>> = []
   const busVerdicts: string[] = []
   const off = getSharedBus().on('review:verdict', (e) => busVerdicts.push(e.verdict))
 
   try {
     const tool = createReviewVerdictTool({
-      synthetic: async (input: { sessionID: string; text: string }) => {
-        syntheticCalls.push(input)
+      get: async ({ sessionID }) =>
+        sessionID === 'ses_review_1' ? { parentID: 'ses_parent_zeus' } : undefined,
+      synthetic: async (input) => {
+        syntheticCalls.push(input as Record<string, unknown>)
       },
     })
     const res1 = JSON.parse(
@@ -81,15 +102,28 @@ test('pantheon_review_verdict emits bus event and triggers bounded ctx.session.s
           { sessionID: 'ses_review_1', agent: 'themis' },
         )
       ).output,
-    ) as { ok: boolean; verdict: string; syntheticTriggered: boolean }
+    ) as {
+      ok: boolean
+      verdict: string
+      syntheticTriggered: boolean
+      syntheticSessionID?: string
+    }
 
     assert.equal(res1.ok, true)
     assert.equal(res1.verdict, 'BLOCK')
     assert.equal(res1.syntheticTriggered, true)
+    assert.equal(res1.syntheticSessionID, 'ses_parent_zeus')
     assert.equal(busVerdicts[0], 'BLOCK')
     assert.equal(syntheticCalls.length, 1)
-    assert.match(syntheticCalls[0]?.text ?? '', /BLOCK/)
-    assert.match(syntheticCalls[0]?.text ?? '', /src\/auth\.ts/)
+    assert.equal(syntheticCalls[0]?.sessionID, 'ses_parent_zeus')
+    assert.equal(syntheticCalls[0]?.resume, true)
+    assert.equal(
+      'agent' in (syntheticCalls[0] ?? {}),
+      false,
+      'SessionSyntheticInput forbids bare agent field',
+    )
+    assert.match(String(syntheticCalls[0]?.text ?? ''), /BLOCK/)
+    assert.match(String(syntheticCalls[0]?.text ?? ''), /src\/auth\.ts/)
 
     // Bounded at 2 per session+agent so a third consecutive BLOCK stops auto-looping
     await tool.execute(

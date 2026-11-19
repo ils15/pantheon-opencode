@@ -103,6 +103,7 @@ import {
   createV2BoundedReadTool,
   type V2BoundedReadOriginRegistry,
 } from './pantheon/bounded-read.ts'
+import { wireCockpitBusRecorder } from './pantheon/cockpit-events.ts'
 import { buildCompactionContext } from './pantheon/compaction-context.ts'
 import {
   CONTEXT_PRUNER_CONFIG_KEYS,
@@ -2636,6 +2637,7 @@ async function registerV2ToolHooks(
     // the same resolver V1 uses.
     const v2ExecuteAfter = createV2ExecuteAfter({
       sandbox: resolveV2SandboxConfig(context.options),
+      cwd: () => activeHostWorkspaceDir ?? process.cwd(),
     })
     await toolCtx.hook('execute.after', async (event: unknown) => {
       const benchStartedAt = Date.now()
@@ -3218,6 +3220,10 @@ export const plugin = define({
       } catch {
         markUnsupported('worktree-transform')
       }
+    }
+
+    if (hostLocationDir) {
+      activeCleanups.push(wireCockpitBusRecorder(hostLocationDir))
     }
 
     // ─── Phase 7: V2 Compaction Hook (best-effort) ───────────────────

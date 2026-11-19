@@ -149,15 +149,15 @@ describe('about tab', () => {
     const codeEn = enRows.find((r) => r.id === 'about.tools.codemap')
     const govEn = enRows.find((r) => r.id === 'about.tools.governance')
     assert.ok(
-      enTab.groups.some((g) => g.title === 'Native Tools (29)'),
-      'EN inventory group displays Native Tools (29)',
+      enTab.groups.some((g) => g.title === 'Native Tools (30)'),
+      'EN inventory group displays Native Tools (30)',
     )
     assert.ok(memEn?.value.includes('6 tools'), 'EN memory tools row present')
     assert.ok(codeEn?.value.includes('5 tools'), 'EN codemap & AST tools row present')
     assert.ok(codeEn?.note.includes('ast_search'), 'EN codemap & AST row lists ast_search')
     assert.ok(
-      govEn?.note.includes('pantheon_review_verdict'),
-      'EN governance row lists review verdict',
+      govEn?.note.includes('pantheon_review_verdict') && govEn?.note.includes('pantheon_worktree'),
+      'EN governance row lists review verdict and worktree tool',
     )
     assert.ok(enRows.some((r) => r.id === 'about.tools.edit' && r.note.includes('hashline_edit')))
 

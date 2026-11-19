@@ -11,6 +11,8 @@ import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, realpathSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
+import { resolveSharedPantheonRoot, resolveToolCwd } from './tool-context.ts'
+import type { PantheonToolDef, PantheonToolResult } from './tools.ts'
 
 const execFileAsync = promisify(execFile)
 const SAFE_TASK_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/
@@ -149,6 +151,83 @@ export function createPantheonWorktreeDefinition(): {
         })
       }
       return entries
+    },
+  }
+}
+
+function jsonResult(payload: unknown): PantheonToolResult {
+  return { output: JSON.stringify(payload) }
+}
+
+/** Expose native worktree isolation (`create`, `list`, `remove`) directly as an agent tool. */
+export function createWorktreeTool(fallbackDir?: string): PantheonToolDef {
+  const driver = createPantheonWorktreeDefinition()
+  return {
+    name: 'pantheon_worktree',
+    description:
+      'Manage isolated git worktrees strictly outside the main repository under ' +
+      '<project-parent>/.pantheon-worktrees/<repo>/<task> (actions: create | list | remove).',
+    input: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['action'],
+      properties: {
+        action: { type: 'string', enum: ['create', 'list', 'remove'] },
+        task: { type: 'string', description: 'Short task slug for sibling worktree folder' },
+        branch: { type: 'string', description: 'Optional existing git branch/ref to check out' },
+        directory: { type: 'string', description: 'Target worktree directory (for remove)' },
+        force: { type: 'boolean', description: 'Force worktree removal even with dirty files' },
+      },
+    },
+    output: {},
+    execute: async (input, context) => {
+      try {
+        const action = typeof input.action === 'string' ? input.action : 'list'
+        const workspaceDir = resolveSharedPantheonRoot(resolveToolCwd(context, fallbackDir))
+        const ac = new AbortController()
+        if (action === 'list') {
+          const entries = await driver.list(workspaceDir, { signal: ac.signal })
+          return jsonResult({ ok: true, entries })
+        }
+        if (action === 'create') {
+          const task =
+            typeof input.task === 'string' && input.task.trim()
+              ? input.task.trim()
+              : `wt-${Date.now()}`
+          const targetDir = resolvePantheonWorktreePath(workspaceDir, task)
+          const res = await driver.create(
+            {
+              sourceDirectory: workspaceDir,
+              directory: targetDir,
+              ...(typeof input.branch === 'string' && input.branch.trim()
+                ? { branch: input.branch.trim() }
+                : {}),
+            },
+            { signal: ac.signal },
+          )
+          return jsonResult({ ok: true, action: 'create', directory: res.directory })
+        }
+        if (action === 'remove') {
+          const target =
+            typeof input.directory === 'string' && input.directory.trim()
+              ? input.directory.trim()
+              : typeof input.task === 'string' && input.task.trim()
+                ? resolvePantheonWorktreePath(workspaceDir, input.task.trim())
+                : ''
+          if (!target) return jsonResult({ ok: false, error: 'directory or task is required' })
+          await driver.remove(
+            { directory: target, force: input.force === true },
+            { signal: ac.signal },
+          )
+          return jsonResult({ ok: true, action: 'remove', directory: target })
+        }
+        return jsonResult({ ok: false, error: `Unsupported action: ${action}` })
+      } catch (err: unknown) {
+        return jsonResult({
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
     },
   }
 }

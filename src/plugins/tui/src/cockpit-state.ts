@@ -5,7 +5,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
-import { join, resolve, sep } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 import { scanPantheonArtifacts } from './artifacts-state.ts'
 
 export type CockpitTabId = 'overview' | 'swarm' | 'flightdeck'
@@ -172,6 +172,66 @@ function loadStepEntries(workspaceDir: string): CockpitStepEntry[] {
   }
 }
 
+function resolveSharedTelemetryRoot(workspaceDir: string): string {
+  try {
+    let cur = resolve(workspaceDir)
+    for (let i = 0; i < 10; i += 1) {
+      const gitEntry = join(cur, '.git')
+      if (existsSync(gitEntry)) {
+        const statText = readFileSync(gitEntry, 'utf8')
+        const gitDirMatch = /^gitdir:\s*(.+)$/m.exec(statText)
+        if (gitDirMatch?.[1]) {
+          const gitDir = resolve(cur, gitDirMatch[1].trim())
+          const commonPath = join(gitDir, 'commondir')
+          if (existsSync(commonPath)) {
+            const commonDir = resolve(gitDir, readFileSync(commonPath, 'utf8').trim())
+            if (commonDir.endsWith(`${sep}.git`)) return dirname(commonDir)
+          }
+        }
+        return cur
+      }
+      const parent = dirname(cur)
+      if (parent === cur) break
+      cur = parent
+    }
+  } catch {
+    /* ignore */
+  }
+  return workspaceDir
+}
+
+function loadPersistedCockpitEvents(workspaceDir: string): CockpitLogEntry[] {
+  try {
+    const root = resolveSharedTelemetryRoot(workspaceDir)
+    const filePath = join(root, '.pantheon', 'telemetry', 'cockpit-events.ndjson')
+    if (!existsSync(filePath)) return []
+    const lines = readFileSync(filePath, 'utf8').split(/\r?\n/).filter(Boolean)
+    const out: CockpitLogEntry[] = []
+    for (const line of lines.slice(-60)) {
+      try {
+        const parsed = JSON.parse(line) as Partial<CockpitLogEntry>
+        if (typeof parsed.kind === 'string' && typeof parsed.detail === 'string') {
+          out.push({
+            kind: parsed.kind,
+            timestamp: typeof parsed.timestamp === 'number' ? parsed.timestamp : Date.now(),
+            agent: typeof parsed.agent === 'string' ? parsed.agent : 'pantheon',
+            detail: parsed.detail,
+            severity:
+              parsed.severity === 'ok' || parsed.severity === 'warn' || parsed.severity === 'error'
+                ? parsed.severity
+                : 'info',
+          })
+        }
+      } catch {
+        /* ignore malformed event line */
+      }
+    }
+    return out
+  } catch {
+    return []
+  }
+}
+
 export function buildCockpitSnapshot(input: CockpitInput): CockpitSnapshot {
   const ctxTokens = Math.max(0, input.contextTokens ?? 0)
   const ctxWindow = Math.max(1, input.contextWindow ?? 200_000)
@@ -201,7 +261,15 @@ export function buildCockpitSnapshot(input: CockpitInput): CockpitSnapshot {
     ganttBar: formatGanttBar(c.startedAt, Math.max(c.startedAt + 1, c.updatedAt), safeMin, safeMax),
   }))
 
-  const events = [...(input.events ?? [])].sort((a, b) => b.timestamp - a.timestamp).slice(0, 40)
+  const persistedEvents = input.workspaceDir ? loadPersistedCockpitEvents(input.workspaceDir) : []
+  const mergedEvents = [...(input.events ?? []), ...persistedEvents]
+  const dedup = new Map<string, CockpitLogEntry>()
+  for (const ev of mergedEvents) {
+    dedup.set(`${ev.kind}:${ev.timestamp}:${ev.agent}:${ev.detail}`, ev)
+  }
+  const events = Array.from(dedup.values())
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, 40)
   const allowed = stepsDone + events.filter((e) => e.severity === 'ok').length + completedCount
   const approved = steps.filter((s) => Boolean(s.receiptId)).length
   const waiting =
@@ -241,7 +309,7 @@ export function buildCockpitSnapshot(input: CockpitInput): CockpitSnapshot {
         stepsTotal: steps.length,
       }),
       surfaces: [
-        { label: 'Native Tools (29)', status: 'active' },
+        { label: 'Native Tools (30)', status: 'active' },
         { label: 'FTS5 Memory + Worktree', status: 'ready' },
         { label: 'Step-Ledger & Checkpoints', status: `${stepsDone}/${steps.length} done` },
         { label: 'LSP + Per-Edit Guardrails', status: 'active' },

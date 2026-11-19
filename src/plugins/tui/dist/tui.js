@@ -1775,6 +1775,53 @@ function loadStepEntries(workspaceDir) {
 		return [];
 	}
 }
+function resolveSharedTelemetryRoot(workspaceDir) {
+	try {
+		let cur = resolve(workspaceDir);
+		for (let i = 0; i < 10; i += 1) {
+			const gitEntry = join(cur, ".git");
+			if (existsSync(gitEntry)) {
+				const statText = readFileSync(gitEntry, "utf8");
+				const gitDirMatch = /^gitdir:\s*(.+)$/m.exec(statText);
+				if (gitDirMatch?.[1]) {
+					const gitDir = resolve(cur, gitDirMatch[1].trim());
+					const commonPath = join(gitDir, "commondir");
+					if (existsSync(commonPath)) {
+						const commonDir = resolve(gitDir, readFileSync(commonPath, "utf8").trim());
+						if (commonDir.endsWith(`${sep}.git`)) return dirname(commonDir);
+					}
+				}
+				return cur;
+			}
+			const parent = dirname(cur);
+			if (parent === cur) break;
+			cur = parent;
+		}
+	} catch {}
+	return workspaceDir;
+}
+function loadPersistedCockpitEvents(workspaceDir) {
+	try {
+		const root = resolveSharedTelemetryRoot(workspaceDir);
+		const filePath = join(root, ".pantheon", "telemetry", "cockpit-events.ndjson");
+		if (!existsSync(filePath)) return [];
+		const lines = readFileSync(filePath, "utf8").split(/\r?\n/).filter(Boolean);
+		const out = [];
+		for (const line of lines.slice(-60)) try {
+			const parsed = JSON.parse(line);
+			if (typeof parsed.kind === "string" && typeof parsed.detail === "string") out.push({
+				kind: parsed.kind,
+				timestamp: typeof parsed.timestamp === "number" ? parsed.timestamp : Date.now(),
+				agent: typeof parsed.agent === "string" ? parsed.agent : "pantheon",
+				detail: parsed.detail,
+				severity: parsed.severity === "ok" || parsed.severity === "warn" || parsed.severity === "error" ? parsed.severity : "info"
+			});
+		} catch {}
+		return out;
+	} catch {
+		return [];
+	}
+}
 function buildCockpitSnapshot(input) {
 	const ctxTokens = Math.max(0, input.contextTokens ?? 0);
 	const ctxWindow = Math.max(1, input.contextWindow ?? 2e5);
@@ -1797,7 +1844,11 @@ function buildCockpitSnapshot(input) {
 		durationSec: Math.max(0, Math.round((c.updatedAt - c.startedAt) / 100) / 10),
 		ganttBar: formatGanttBar(c.startedAt, Math.max(c.startedAt + 1, c.updatedAt), safeMin, safeMax)
 	}));
-	const events = [...input.events ?? []].sort((a, b) => b.timestamp - a.timestamp).slice(0, 40);
+	const persistedEvents = input.workspaceDir ? loadPersistedCockpitEvents(input.workspaceDir) : [];
+	const mergedEvents = [...input.events ?? [], ...persistedEvents];
+	const dedup = /* @__PURE__ */ new Map();
+	for (const ev of mergedEvents) dedup.set(`${ev.kind}:${ev.timestamp}:${ev.agent}:${ev.detail}`, ev);
+	const events = Array.from(dedup.values()).sort((a, b) => b.timestamp - a.timestamp).slice(0, 40);
 	const allowed = stepsDone + events.filter((e) => e.severity === "ok").length + completedCount;
 	const approved = steps.filter((s) => Boolean(s.receiptId)).length;
 	const waiting = steps.filter((s) => s.state === "in_progress" || s.state === "pending").length + runningCount;
@@ -1824,7 +1875,7 @@ function buildCockpitSnapshot(input) {
 			}),
 			surfaces: [
 				{
-					label: "Native Tools (29)",
+					label: "Native Tools (30)",
 					status: "active"
 				},
 				{
@@ -3529,8 +3580,8 @@ function buildAboutTab(version, extra) {
 		{
 			id: "about.tools.governance",
 			name: isPt ? "Orquestração & Custos" : "Orchestration & Cost",
-			value: isPt ? "ativo · 8+ tools" : "active · 8+ tools",
-			note: "pantheon_cost, pantheon_model, pantheon_skill_search, pantheon_deepwork, pantheon_step_ledger, pantheon_agent_forge, pantheon_local_decision, pantheon_review_verdict"
+			value: isPt ? "ativo · 9 tools" : "active · 9 tools",
+			note: "pantheon_cost, pantheon_model, pantheon_skill_search, pantheon_deepwork, pantheon_step_ledger, pantheon_agent_forge, pantheon_local_decision, pantheon_review_verdict, pantheon_worktree"
 		}
 	];
 	const groups = [{
@@ -3546,7 +3597,7 @@ function buildAboutTab(version, extra) {
 		rows: refRows
 	});
 	groups.push({
-		title: isPt ? "Ferramentas Nativas (29)" : "Native Tools (29)",
+		title: isPt ? "Ferramentas Nativas (30)" : "Native Tools (30)",
 		rows: toolRows
 	});
 	return {

@@ -17,6 +17,7 @@ permission:
   pantheon_deepwork: allow
   pantheon_agent_forge: allow
   pantheon_step_ledger: allow
+  pantheon_worktree: allow
   question: allow
   todowrite: allow
   todoread: allow
@@ -113,7 +114,8 @@ These rules are economic, measured against the 2026-11-05 usage audit. They appl
 - **pantheon-persistence** (`context_save`): milestones only (phases, complex tasks, handoffs). Maximum 3 saves per session. Always name the checkpoint. never re-save the same key unless state genuinely changed.
 - **pantheon-vision** (`vision_describe`): One pass per image; forward results in prompt to specialists.
 - **pantheon_deepwork**: Structured Deepwork plans (.pantheon/deepwork/<slug>/plan.json, journal.ndjson, PLAN.md). Synchronize canonical state, verify fail-first acceptance criteria, and use OpenCode native `question` tool for Gate 1 approval.
-- **pantheon_agent_forge**: Create, inspect, or remove custom project-specific domain specialists under `.opencode/agents/<name>.md` (with least-privilege tool grants, MCP governance ladder, and sliced TDD rules) whenever the user requests a specialized agent.
+- **pantheon_agent_forge**: Create, inspect, `detect_stack`, or remove custom project-specific domain specialists under `.opencode/agents/<name>.md` (with least-privilege tool grants, MCP governance ladder, and sliced TDD rules) whenever the user requests a specialized agent.
+- **v2.2 Orchestration Tools**: Use `pantheon_step_ledger` (`init_step`, `execute_step` for isolated sub-sessions, `record_reproduction`, `rollback_step`), `pantheon_worktree` for sibling `.pantheon-worktrees/<repo>/<task>` isolation, `ast_search` for structural code discovery, and `memory_search(federated=true)` across peer repos when configured.
 
 ## Local advisory routing before native delegation
 

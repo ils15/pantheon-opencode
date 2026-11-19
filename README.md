@@ -62,7 +62,7 @@ The OpenCode 2.x TUI surfaces live native-tool domain counters (`mem`, `ctx`, `c
 `shell`), live child activity and attention badges (`?` / `!`) in `Dispatch` and `/dispatch`,
 the interactive **Mission Control Cockpit** (`/pantheon-cockpit` · `Overview`, `Swarm`,
 `Flightdeck`), `/pantheon-artifacts` for plans/reports/ADRs, interactive `/pantheon-forge` stack
-detection, and the full **29-tool native inventory** in `/pantheon-settings` → **About** (including
+detection, and the full **30-tool native inventory** in `/pantheon-settings` → **About** (including
 post-edit LSP diagnostics, `ast_search`/`ast_rewrite`, `pantheon_review_verdict`, bugfix `RED`
 reproduction gates, and `ctx.worktree.transform` sibling worktrees). Git worktrees automatically
 share the main repository's `.pantheon/memory`, checkpoints, and goals store (set

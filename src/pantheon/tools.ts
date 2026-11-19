@@ -64,7 +64,9 @@ import { createV2VisionTool, type V2VisionRuntime } from './native-vision.ts'
 import { createReviewVerdictTool, type ReviewSyntheticSessionDomain } from './review-verdict.ts'
 import { createV2SkillSearchDefinition } from './skill-search-tool.ts'
 import { createStepLedgerTool } from './step-ledger.ts'
+import type { SubSessionDomainLike } from './step-runner.ts'
 import { resolveToolCwd, type ToolContextLike } from './tool-context.ts'
+import { createWorktreeTool } from './worktree-orchestrator.ts'
 
 // ─── Contract types ─────────────────────────────────────────────────────
 
@@ -454,7 +456,7 @@ async function executeModel(
  */
 export interface V2ToolShadowOptions {
   readonly complexitySink?: ShadowSink
-  readonly sessionDomain?: ReviewSyntheticSessionDomain
+  readonly sessionDomain?: ReviewSyntheticSessionDomain & SubSessionDomainLike
 }
 
 /**
@@ -702,12 +704,13 @@ export function createV2ToolDefinitions(
   definitions.push(createShellTool(hostLocationDirectory))
   definitions.push(createV2SkillSearchDefinition(hostLocationDirectory))
   definitions.push(createDeepworkTool(hostLocationDirectory))
-  definitions.push(createStepLedgerTool(hostLocationDirectory))
+  definitions.push(createStepLedgerTool(hostLocationDirectory, shadow.sessionDomain))
   definitions.push(createAgentForgeTool(hostLocationDirectory))
   definitions.push(...createNativeMemoryAndPersistenceTools(hostLocationDirectory))
   definitions.push(...createCodemapTools(hostLocationDirectory))
   definitions.push(...createAstTools(hostLocationDirectory))
   definitions.push(createReviewVerdictTool(shadow.sessionDomain))
+  definitions.push(createWorktreeTool(hostLocationDirectory))
   if (visionRuntime) definitions.push(createV2VisionTool(visionRuntime))
   if (jevRuntime) definitions.push(createV2JevDecisionDefinition(jevRuntime))
   return definitions

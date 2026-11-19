@@ -509,8 +509,8 @@ export function buildAboutTab(version: string, extra?: AboutTabExtra): SettingsT
     {
       id: 'about.tools.governance',
       name: isPt ? 'Orquestração & Custos' : 'Orchestration & Cost',
-      value: isPt ? 'ativo · 8+ tools' : 'active · 8+ tools',
-      note: 'pantheon_cost, pantheon_model, pantheon_skill_search, pantheon_deepwork, pantheon_step_ledger, pantheon_agent_forge, pantheon_local_decision, pantheon_review_verdict',
+      value: isPt ? 'ativo · 9 tools' : 'active · 9 tools',
+      note: 'pantheon_cost, pantheon_model, pantheon_skill_search, pantheon_deepwork, pantheon_step_ledger, pantheon_agent_forge, pantheon_local_decision, pantheon_review_verdict, pantheon_worktree',
     },
   ]
 
@@ -520,7 +520,7 @@ export function buildAboutTab(version: string, extra?: AboutTabExtra): SettingsT
   }
   groups.push({ title: isPt ? 'Projeto & Referências' : 'Project & References', rows: refRows })
   groups.push({
-    title: isPt ? 'Ferramentas Nativas (29)' : 'Native Tools (29)',
+    title: isPt ? 'Ferramentas Nativas (30)' : 'Native Tools (30)',
     rows: toolRows,
   })
 

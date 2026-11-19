@@ -6,6 +6,8 @@ reasoning_effort: medium
 permission:
   edit: deny
   hashline_edit: deny
+  ast_rewrite: deny
+  pantheon_worktree: deny
   shell: deny
   bash: deny
   read: allow

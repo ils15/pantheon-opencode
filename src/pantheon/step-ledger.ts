@@ -19,6 +19,7 @@ import { join, resolve, sep } from 'node:path'
 import { getSharedBus } from './bus.ts'
 import { createExecutionReceipt } from './execution-receipt.ts'
 import { captureGitCheckpoint, restoreGitCheckpoint } from './git-checkpoint.ts'
+import { runAtomicStepSubSession, type SubSessionDomainLike } from './step-runner.ts'
 import { ThemisReflexController } from './themis-reflex.ts'
 import { resolveToolCwd } from './tool-context.ts'
 import type { PantheonToolDef, PantheonToolResult } from './tools.ts'
@@ -121,12 +122,15 @@ function jsonResult(payload: unknown): PantheonToolResult {
   return { output: JSON.stringify(payload) }
 }
 
-export function createStepLedgerTool(fallbackDir?: string): PantheonToolDef {
+export function createStepLedgerTool(
+  fallbackDir?: string,
+  sessionDomain?: SubSessionDomainLike,
+): PantheonToolDef {
   return {
     name: 'pantheon_step_ledger',
     description:
-      'Manage atomic Step-Ledger execution contracts with hard verification gates, Git checkpoints, and bugfix reproduction tracking. ' +
-      'Lifecycle: init_step -> [record_reproduction] -> record_mutation -> record_verification -> complete_step | rollback_step | status.',
+      'Manage atomic Step-Ledger execution contracts with hard verification gates, Git checkpoints, bugfix reproduction tracking, and isolated sub-session step runner. ' +
+      'Lifecycle: init_step | execute_step -> [record_reproduction] -> record_mutation -> record_verification -> complete_step | rollback_step | status.',
     input: {
       type: 'object',
       additionalProperties: false,
@@ -136,6 +140,7 @@ export function createStepLedgerTool(fallbackDir?: string): PantheonToolDef {
           type: 'string',
           enum: [
             'init_step',
+            'execute_step',
             'record_reproduction',
             'record_mutation',
             'record_verification',
@@ -144,7 +149,7 @@ export function createStepLedgerTool(fallbackDir?: string): PantheonToolDef {
             'status',
           ],
           description:
-            'Ledger operation (init_step | record_reproduction | record_mutation | record_verification | complete_step | rollback_step | status)',
+            'Ledger operation (init_step | execute_step | record_reproduction | record_mutation | record_verification | complete_step | rollback_step | status)',
         },
         stepKey: {
           type: 'string',
@@ -153,6 +158,14 @@ export function createStepLedgerTool(fallbackDir?: string): PantheonToolDef {
         },
         objective: { type: 'string', description: 'Bounded step objective' },
         agent: { type: 'string', description: 'Assigned specialist agent' },
+        extraContext: {
+          type: 'string',
+          description: 'Optional bounded context for isolated execute_step sub-session',
+        },
+        cleanupSession: {
+          type: 'boolean',
+          description: 'Remove ephemeral sub-session after execute_step (default: true)',
+        },
         taskType: {
           type: 'string',
           enum: ['feature', 'bugfix', 'refactor', 'chore'],
@@ -225,6 +238,47 @@ export function createStepLedgerTool(fallbackDir?: string): PantheonToolDef {
           store.steps[key] = entry
           writeStepLedger(cwd, store)
           return jsonResult({ ok: true, step: entry })
+        }
+
+        if (action === 'execute_step') {
+          if (!sessionDomain) {
+            return jsonResult({ ok: false, error: 'host session domain unavailable' })
+          }
+          const objective =
+            typeof input.objective === 'string' && input.objective.trim()
+              ? input.objective.trim()
+              : (store.steps[key]?.objective ?? '')
+          if (!objective) return jsonResult({ ok: false, error: 'objective is required' })
+          const agent =
+            typeof input.agent === 'string' && input.agent.trim()
+              ? input.agent.trim().replace(/^@/, '')
+              : (store.steps[key]?.agent ?? 'hermes')
+          const rawTaskType = input.taskType
+          const taskType: StepTaskType | undefined =
+            rawTaskType === 'feature' ||
+            rawTaskType === 'bugfix' ||
+            rawTaskType === 'refactor' ||
+            rawTaskType === 'chore'
+              ? rawTaskType
+              : store.steps[key]?.taskType
+          const parentSid =
+            typeof (context as { sessionID?: unknown } | undefined)?.sessionID === 'string'
+              ? ((context as { sessionID?: string }).sessionID ?? undefined)
+              : undefined
+          const runOut = await runAtomicStepSubSession({
+            sessionDomain,
+            cwd,
+            stepKey: key,
+            objective,
+            agent,
+            ...(taskType ? { taskType } : {}),
+            ...(parentSid ? { parentSessionID: parentSid } : {}),
+            ...(typeof input.extraContext === 'string' ? { extraContext: input.extraContext } : {}),
+            ...(typeof input.cleanupSession === 'boolean'
+              ? { cleanupSession: input.cleanupSession }
+              : {}),
+          })
+          return jsonResult(runOut)
         }
 
         const step = store.steps[key]

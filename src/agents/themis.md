@@ -12,6 +12,7 @@ permission:
   edit: deny
   hashline_edit: deny
   ast_rewrite: deny
+  pantheon_worktree: deny
   pantheon_review_verdict: allow
   pantheon_deepwork: allow
   task:
@@ -204,7 +205,7 @@ When Layer 1 (lint/formatting/style) or Layer 2 (narrow test slice) fails:
 
 ## Verdict
 
-After review, return one of these:
+Whenever closing a review, emit the structured verdict via `pantheon_review_verdict(verdict="APPROVE" | "APPROVE_WITH_NOTES" | "BLOCK", summary=..., targetAgent=..., findings=[...])` (which dispatches bounded remediation on `BLOCK`), and return one of these:
 
 ```
 PASS: no critical issues

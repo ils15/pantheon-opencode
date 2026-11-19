@@ -1,6 +1,6 @@
 # 🏛️ Bem-vindo à Wiki do Pantheon
 
-> **Pantheon v2.2.0** é um framework de orquestração multi-agente nativo para o **OpenCode 2.x**: 14 agentes especializados, 25 skills canônicas, 29 ferramentas TypeScript nativas, `/pantheon-cockpit` (3 páginas) e uma TUI completa no terminal e Desktop.
+> **Pantheon v2.2.0** é um framework de orquestração multi-agente nativo para o **OpenCode 2.x**: 14 agentes especializados, 25 skills canônicas, 30 ferramentas TypeScript nativas, `/pantheon-cockpit` (3 páginas) e uma TUI completa no terminal e Desktop.
 
 ---
 

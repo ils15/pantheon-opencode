@@ -33,7 +33,8 @@
  * @module pantheon/execute-after
  */
 
-import { existsSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
+import { resolve } from 'node:path'
 import {
   type ContextSandboxConfig,
   createContextSandbox,
@@ -73,6 +74,8 @@ export interface V2ExecuteAfterOptions {
    * {@link resolveSandboxConfig}. Defaults to the shared defaults.
    */
   sandbox?: ContextSandboxConfig
+  /** Active workspace root used to resolve relative edited paths. */
+  cwd?: string | (() => string | undefined)
   /** Configure or disable per-edit diff-scoped lint diagnostics. */
   editLint?: boolean | PostEditLintOptions
   /** Configure or disable post-edit LSP / compiler diagnostics bridge. */
@@ -286,19 +289,53 @@ export function createV2ExecuteAfter(
         lowerTool === 'hashline_edit' ||
         lowerTool === 'ast_rewrite'
       ) {
+        const explicitCwd = typeof options.cwd === 'function' ? options.cwd() : options.cwd
+        const baseCwd = explicitCwd ?? process.cwd()
         const rawArgs = (payload.input ?? {}) as Record<string, unknown>
-        const editedPath = rawArgs.filePath ?? rawArgs.file_path ?? rawArgs.file
-        if (typeof editedPath === 'string' && existsSync(editedPath)) {
+        const rawPath =
+          rawArgs.filePath ??
+          rawArgs.file_path ??
+          rawArgs.file ??
+          (lowerTool === 'ast_rewrite' ? rawArgs.path : undefined)
+
+        const candidateFiles: string[] = []
+        if (lowerTool === 'ast_rewrite') {
+          try {
+            const parsedOut = JSON.parse(original.text) as { filesModified?: unknown }
+            if (Array.isArray(parsedOut.filesModified)) {
+              for (const f of parsedOut.filesModified) {
+                if (typeof f === 'string' && f.trim()) candidateFiles.push(resolve(baseCwd, f))
+              }
+            }
+          } catch {
+            /* fallback to rawPath below */
+          }
+        }
+        if (candidateFiles.length === 0 && typeof rawPath === 'string' && rawPath.trim()) {
+          const absCandidate = resolve(baseCwd, rawPath)
+          if (existsSync(absCandidate) && statSync(absCandidate).isFile()) {
+            candidateFiles.push(absCandidate)
+          }
+        }
+
+        for (const editedFile of candidateFiles.slice(0, 4)) {
+          if (!existsSync(editedFile)) continue
           if (options.editLint !== false) {
-            const lintOptions = typeof options.editLint === 'object' ? options.editLint : {}
-            const lintDiagnostic = await runPostEditLint(editedPath, lintOptions)
+            const rawLint = typeof options.editLint === 'object' ? options.editLint : {}
+            const lintDiagnostic = await runPostEditLint(editedFile, {
+              ...(explicitCwd !== undefined ? { cwd: explicitCwd } : {}),
+              ...rawLint,
+            })
             if (lintDiagnostic) {
               output.output = `${output.output}\n${lintDiagnostic}`
             }
           }
           if (options.editLsp !== false) {
-            const lspOptions = typeof options.editLsp === 'object' ? options.editLsp : {}
-            const lspDiagnostic = await runPostEditDiagnostics(editedPath, lspOptions)
+            const rawLsp = typeof options.editLsp === 'object' ? options.editLsp : {}
+            const lspDiagnostic = await runPostEditDiagnostics(editedFile, {
+              ...(explicitCwd !== undefined ? { cwd: explicitCwd } : {}),
+              ...rawLsp,
+            })
             if (lspDiagnostic) {
               output.output = `${output.output}\n${lspDiagnostic}`
             }

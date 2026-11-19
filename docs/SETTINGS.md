@@ -91,9 +91,9 @@ monthly / per-decision USD caps alongside the read-only decision gradient refere
 ![Pantheon Settings Doctor tab](assets/tui/settings-doctor.png)
 
 - **Sobre / About:** live summary of runtime, active preset/Jev/J1 state, and
-  the grouped inventory of all **29 Native TypeScript Tools**.
+  the grouped inventory of all **30 Native TypeScript Tools**.
 
-![Pantheon Settings About tab showing 29 native tools inventory](assets/tui/settings-about.png)
+![Pantheon Settings About tab showing 30 native tools inventory](assets/tui/settings-about.png)
 
 ---
 

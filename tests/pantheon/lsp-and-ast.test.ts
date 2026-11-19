@@ -248,3 +248,45 @@ test('multi-IDE TCP LSP proxy pool parses endpoints and reuses initialized socke
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('execute.after resolves relative paths and ast_rewrite filesModified against options.cwd', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-exec-after-cwd-'))
+  try {
+    mkdirSync(join(dir, 'src'), { recursive: true })
+    const file = join(dir, 'src', 'broken.ts')
+    writeFileSync(file, 'export const bad: number = "still_broken"\n')
+
+    const handler = createV2ExecuteAfter({
+      cwd: dir,
+      editLint: false,
+      editLsp: true,
+    })
+
+    const rewriteEvent = {
+      tool: 'ast_rewrite',
+      sessionID: 'ses_after',
+      status: 'completed',
+      input: { path: 'src', pattern: 'foo', replacement: 'bar' },
+      result: {
+        output: JSON.stringify({
+          ok: true,
+          filesModified: ['src/broken.ts'],
+        }),
+      },
+    }
+    await handler(rewriteEvent)
+    assert.match(rewriteEvent.result.output, /\[LSP-Diagnostics\]/)
+
+    const hashlineEvent = {
+      tool: 'hashline_edit',
+      sessionID: 'ses_after',
+      status: 'completed',
+      input: { file: 'src/broken.ts', edits: [] },
+      result: { output: 'Applied 1 edit.' },
+    }
+    await handler(hashlineEvent)
+    assert.match(hashlineEvent.result.output, /\[LSP-Diagnostics\]/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
