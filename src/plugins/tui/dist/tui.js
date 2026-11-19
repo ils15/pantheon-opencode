@@ -1714,6 +1714,795 @@ function openArtifactsDialog(context, workspaceDir, options) {
 	}
 }
 //#endregion
+//#region src/cockpit-state.ts
+/**
+* cockpit-state.ts — Pure selectors, Gantt renderers, Work Map topology, and
+* Gate Matrix aggregation for the TUI Mission Control Cockpit (`Overview`,
+* `Swarm`, `Flightdeck`).
+*/
+function formatGanttBar(startMs, endMs, minMs, maxMs, width = 24) {
+	const span = Math.max(1, maxMs - minMs);
+	const s = Math.max(0, Math.min(width - 1, Math.floor((startMs - minMs) / span * width)));
+	const e = Math.max(s + 1, Math.min(width, Math.ceil((endMs - minMs) / span * width)));
+	const cells = [];
+	for (let i = 0; i < width; i += 1) cells.push(i >= s && i < e ? "█" : "░");
+	return cells.join("");
+}
+function formatGateMatrixGlyphs(allowed, approved, waiting, blocked) {
+	const cap = (n, ch) => ch.repeat(Math.min(12, Math.max(0, n)));
+	const parts = [
+		cap(allowed, "■"),
+		cap(approved, "▣"),
+		cap(waiting, "□"),
+		cap(blocked, "✗")
+	].filter(Boolean);
+	return parts.length > 0 ? parts.join(" ") : "■";
+}
+function renderWorkMapLines(counts) {
+	const subs = String(counts.subagents).padStart(2, " ");
+	const arts = String(counts.artifacts).padStart(2, " ");
+	const stps = `${counts.stepsDone}/${counts.stepsTotal}`;
+	return [
+		`  [You] ────── [Zeus] ────── [Swarm (${subs})]`,
+		`                 │                 │`,
+		`  [Artifacts ${arts}] ─┼─ [Step Ledger ${stps}] ─ [Review & Gates]`,
+		`                 │`,
+		`  [FTS5 Memory] ─┴─ [AST + LSP Diagnostics]`
+	];
+}
+function loadStepEntries(workspaceDir) {
+	const ledgerPath = join(workspaceDir, ".pantheon", "ledger", "step-ledger.json");
+	if (!existsSync(ledgerPath)) return [];
+	try {
+		const parsed = JSON.parse(readFileSync(ledgerPath, "utf8"));
+		return Object.values(parsed.steps ?? {}).map((s) => ({
+			stepKey: String(s.stepKey ?? ""),
+			objective: String(s.objective ?? ""),
+			agent: String(s.agent ?? "specialist"),
+			state: String(s.state ?? "pending"),
+			...typeof s.taskType === "string" ? { taskType: s.taskType } : {},
+			mutatedCount: Array.isArray(s.mutatedFiles) ? s.mutatedFiles.length : 0,
+			...typeof s.receiptId === "string" ? { receiptId: s.receiptId } : {},
+			hasBaselineTree: typeof s.baselineTree === "string" && s.baselineTree.length === 40,
+			updatedAt: String(s.updatedAt ?? "")
+		})).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+	} catch {
+		return [];
+	}
+}
+function buildCockpitSnapshot(input) {
+	const ctxTokens = Math.max(0, input.contextTokens ?? 0);
+	const ctxWindow = Math.max(1, input.contextWindow ?? 2e5);
+	const ctxPct = Math.min(100, Math.round(ctxTokens / ctxWindow * 100));
+	const filled = Math.min(20, Math.round(ctxPct / 100 * 20));
+	const gauge = `[${"█".repeat(filled)}${"░".repeat(20 - filled)}] ${ctxPct}%`;
+	const artifacts = input.workspaceDir ? scanPantheonArtifacts(input.workspaceDir) : [];
+	const steps = input.workspaceDir ? loadStepEntries(input.workspaceDir) : [];
+	const stepsDone = steps.filter((s) => s.state === "done").length;
+	const runningCount = input.children.filter((c) => c.status === "running").length;
+	const completedCount = input.children.filter((c) => c.status === "completed").length;
+	const failedCount = input.children.filter((c) => c.status === "failed" || c.status === "interrupted").length;
+	const childCost = input.children.reduce((acc, c) => acc + c.cost, 0);
+	const minMs = input.children.reduce((m, c) => Math.min(m, c.startedAt), Infinity);
+	const maxMs = input.children.reduce((m, c) => Math.max(m, c.updatedAt), 0);
+	const safeMin = Number.isFinite(minMs) ? minMs : 0;
+	const safeMax = maxMs > safeMin ? maxMs : safeMin + 1e3;
+	const swarmRows = input.children.map((c) => ({
+		...c,
+		durationSec: Math.max(0, Math.round((c.updatedAt - c.startedAt) / 100) / 10),
+		ganttBar: formatGanttBar(c.startedAt, Math.max(c.startedAt + 1, c.updatedAt), safeMin, safeMax)
+	}));
+	const events = [...input.events ?? []].sort((a, b) => b.timestamp - a.timestamp).slice(0, 40);
+	const allowed = stepsDone + events.filter((e) => e.severity === "ok").length + completedCount;
+	const approved = steps.filter((s) => Boolean(s.receiptId)).length;
+	const waiting = steps.filter((s) => s.state === "in_progress" || s.state === "pending").length + runningCount;
+	const blocked = steps.filter((s) => s.state === "blocked" || s.state === "rolled_back").length + events.filter((e) => e.severity === "error").length + failedCount;
+	const velocityBlocks = input.children.length > 0 ? input.children.slice(0, 14).map((c) => c.tokens > 2e4 ? "█" : c.tokens > 1e4 ? "▆" : c.tokens > 3e3 ? "▄" : "▂").join("") : "▁▃▅▆▄▂";
+	return {
+		sessionTitle: input.sessionTitle?.trim() || (input.isPt ? "Sessão ativa" : "Active Session"),
+		modelName: input.modelName?.trim() || "auto",
+		overview: {
+			contextTokens: ctxTokens,
+			contextWindow: ctxWindow,
+			contextPercent: ctxPct,
+			contextGauge: gauge,
+			sessionCost: input.sessionCost ?? childCost,
+			cacheRate: input.cacheRate ?? 0,
+			subagentCount: input.children.length,
+			runningCount,
+			velocityBars: velocityBlocks,
+			workMap: renderWorkMapLines({
+				subagents: input.children.length,
+				artifacts: artifacts.length,
+				stepsDone,
+				stepsTotal: steps.length
+			}),
+			surfaces: [
+				{
+					label: "Native Tools (29)",
+					status: "active"
+				},
+				{
+					label: "FTS5 Memory + Worktree",
+					status: "ready"
+				},
+				{
+					label: "Step-Ledger & Checkpoints",
+					status: `${stepsDone}/${steps.length} done`
+				},
+				{
+					label: "LSP + Per-Edit Guardrails",
+					status: "active"
+				},
+				{
+					label: "Artifacts & Mermaid",
+					status: `${artifacts.length} file(s)`
+				}
+			]
+		},
+		swarm: {
+			activeCount: runningCount,
+			completedCount,
+			failedCount,
+			totalCost: childCost,
+			rows: swarmRows
+		},
+		flightdeck: {
+			allowed,
+			approved,
+			waiting,
+			blocked,
+			gateGlyphs: formatGateMatrixGlyphs(allowed, approved, waiting, blocked),
+			gateSummary: `${allowed} allowed · ${approved} receipts · ${waiting} active · ${blocked} blocked`,
+			steps,
+			logs: events
+		}
+	};
+}
+//#endregion
+//#region src/cockpit.tsx
+/** @jsxImportSource @opentui/solid */
+/**
+* cockpit.tsx — High-Density TUI Mission Control Cockpit (Overview, Swarm,
+* Flightdeck) rendered natively on `@opentui/solid` via `ui.router.register`.
+*/
+const ROUTE_NAME$1 = "pantheon.cockpit";
+const ROUTE_MODE$1 = "pantheon-cockpit";
+const TABS = [
+	{
+		id: "overview",
+		label: "1 Overview",
+		key: "1"
+	},
+	{
+		id: "swarm",
+		label: "2 Swarm",
+		key: "2"
+	},
+	{
+		id: "flightdeck",
+		label: "3 Flightdeck",
+		key: "3"
+	}
+];
+let routerReady = false;
+let cockpitController;
+const [cockpitOpen, setCockpitOpen] = createSignal(false);
+function collectLiveChildren(context, rootSessionID) {
+	try {
+		const rawList = context?.data?.session?.list?.();
+		if (!Array.isArray(rawList)) return [];
+		return rawList.filter((s) => s && typeof s.id === "string" && (!rootSessionID || s.parentID === rootSessionID)).slice(0, 20).map((s) => {
+			const statusRaw = context?.data?.session?.status?.(s.id);
+			const status = statusRaw === "busy" || statusRaw === "running" ? "running" : statusRaw === "error" ? "failed" : statusRaw === "interrupted" ? "interrupted" : "completed";
+			const created = typeof s.time?.created === "number" ? s.time.created : Date.now();
+			const updated = typeof s.time?.updated === "number" ? s.time.updated : created;
+			return {
+				id: s.id,
+				agent: String(s.agent ?? s.title ?? "specialist").split(/\s+/)[0] ?? "specialist",
+				kind: String(s.kind ?? "task"),
+				status,
+				cost: typeof s.cost === "number" ? s.cost : 0,
+				startedAt: created,
+				updatedAt: updated,
+				tokens: typeof s.tokens?.input === "number" ? s.tokens.input + (s.tokens?.output ?? 0) : 0,
+				model: typeof s.model === "string" ? s.model : void 0
+			};
+		});
+	} catch {
+		return [];
+	}
+}
+function collectHostLogs() {
+	const g = globalThis;
+	if (!Array.isArray(g.__pantheonCockpitLogs)) return [];
+	return g.__pantheonCockpitLogs;
+}
+function collectSessionTelemetry(context, sessionID) {
+	const sInfo = sessionID ? context?.data?.session?.info?.(sessionID) : void 0;
+	const messages = sessionID ? context?.data?.session?.messages?.(sessionID) ?? [] : [];
+	let contextTokens = typeof sInfo?.tokens?.input === "number" ? sInfo.tokens.input : 0;
+	let modelName = typeof sInfo?.model === "string" ? sInfo.model : void 0;
+	let totalCost = typeof sInfo?.cost === "number" ? sInfo.cost : 0;
+	let sawMsgCost = false;
+	if (Array.isArray(messages) && messages.length > 0) {
+		for (const msg of messages) {
+			if (!msg || typeof msg !== "object") continue;
+			if (typeof msg.cost === "number" && Number.isFinite(msg.cost)) {
+				totalCost += msg.cost;
+				sawMsgCost = true;
+			}
+		}
+		for (let i = messages.length - 1; i >= 0; i--) {
+			const msg = messages[i];
+			if (msg?.role === "assistant" || msg?.type === "assistant") {
+				const t = msg.tokens;
+				if (t && typeof t === "object") {
+					const total = (Number(t.input) || 0) + (Number(t.output) || 0) + (Number(t.reasoning) || 0) + (Number(t.cache?.read) || 0) + (Number(t.cache?.write) || 0);
+					if (total > 0) {
+						contextTokens = total;
+						if (!modelName && typeof msg.modelID === "string") modelName = msg.modelID;
+						break;
+					}
+				}
+			}
+		}
+	}
+	const modelsCatalog = context?.data?.provider?.models?.() ?? [];
+	let contextWindow = 1e6;
+	if (Array.isArray(modelsCatalog) && modelName) {
+		const hit = modelsCatalog.find((m) => m?.id === modelName || m?.modelID === modelName);
+		if (typeof hit?.limit?.context === "number" && hit.limit.context > 0) contextWindow = hit.limit.context;
+	}
+	return {
+		title: typeof sInfo?.title === "string" ? sInfo.title : void 0,
+		modelName,
+		contextTokens,
+		contextWindow,
+		sessionCost: sawMsgCost || typeof sInfo?.cost === "number" ? totalCost : void 0
+	};
+}
+function CockpitView(props) {
+	const isPt = () => resolveLanguage(tuiPrefs().layout?.language) === "pt-BR";
+	const [tab, setTab] = createSignal("overview");
+	const [selectedRow, setSelectedRow] = createSignal(0);
+	const [showDetail, setShowDetail] = createSignal(false);
+	const [tick, setTick] = createSignal(0);
+	const activeSid = () => props.sessionID ?? (props.context?.ui?.router?.current?.()?.type === "session" ? props.context.ui.router.current().sessionID : void 0);
+	const snapshot = () => {
+		tick();
+		const sid = activeSid();
+		const telemetry = collectSessionTelemetry(props.context, sid);
+		return buildCockpitSnapshot({
+			workspaceDir: props.workspaceDir,
+			sessionTitle: telemetry.title,
+			modelName: telemetry.modelName,
+			contextTokens: telemetry.contextTokens,
+			contextWindow: telemetry.contextWindow,
+			sessionCost: telemetry.sessionCost,
+			children: collectLiveChildren(props.context, sid),
+			events: collectHostLogs(),
+			isPt: isPt()
+		});
+	};
+	const fg = () => props.context?.theme?.text?.base;
+	const muted = () => props.context?.theme?.text?.muted ?? fg();
+	const accent = () => resolveAccentColor(tuiPrefs().theme?.accent, props.context?.theme);
+	const success = () => props.context?.theme?.text?.feedback?.success?.base ?? accent();
+	const errFg = () => props.context?.theme?.text?.feedback?.error?.base ?? accent();
+	onMount(() => {
+		setCockpitOpen(true);
+		let popMode;
+		try {
+			popMode = props.context?.keymap?.mode?.push?.(ROUTE_MODE$1);
+		} catch {}
+		const timer = setInterval(() => setTick((t) => t + 1), 1500);
+		cockpitController = {
+			setTab: (id) => {
+				setTab(id);
+				setSelectedRow(0);
+			},
+			nextTab: () => {
+				const idx = TABS.findIndex((t) => t.id === tab());
+				const next = TABS[(idx + 1) % TABS.length];
+				if (next) setTab(next.id);
+			},
+			prevTab: () => {
+				const idx = TABS.findIndex((t) => t.id === tab());
+				const prev = TABS[(idx - 1 + TABS.length) % TABS.length];
+				if (prev) setTab(prev.id);
+			},
+			moveRow: (delta) => {
+				const snap = snapshot();
+				const max = tab() === "swarm" ? snap.swarm.rows.length : tab() === "flightdeck" ? Math.max(snap.flightdeck.steps.length, snap.flightdeck.logs.length) : 0;
+				if (max <= 0) return;
+				setSelectedRow((cur) => Math.max(0, Math.min(max - 1, cur + delta)));
+			},
+			toggleDetail: () => setShowDetail((v) => !v),
+			refresh: () => setTick((t) => t + 1),
+			close: props.onClose
+		};
+		onCleanup(() => {
+			clearInterval(timer);
+			cockpitController = void 0;
+			setCockpitOpen(false);
+			try {
+				popMode?.();
+			} catch {}
+		});
+	});
+	return (() => {
+		var _el$ = createElement("box"), _el$2 = createElement("box"), _el$3 = createElement("box"), _el$4 = createElement("text"), _el$6 = createElement("text"), _el$7 = createElement("box"), _el$8 = createElement("text"), _el$0 = createElement("box"), _el$1 = createElement("text"), _el$35 = createElement("text"), _el$37 = createElement("text");
+		insertNode(_el$, _el$2);
+		insertNode(_el$, _el$0);
+		insertNode(_el$, _el$1);
+		insertNode(_el$, _el$35);
+		insertNode(_el$, _el$37);
+		setProp(_el$, "flexDirection", "column");
+		setProp(_el$, "paddingLeft", 2);
+		setProp(_el$, "paddingRight", 2);
+		setProp(_el$, "paddingTop", 1);
+		setProp(_el$, "paddingBottom", 1);
+		insertNode(_el$2, _el$3);
+		insertNode(_el$2, _el$7);
+		setProp(_el$2, "flexDirection", "row");
+		setProp(_el$2, "justifyContent", "space-between");
+		insertNode(_el$3, _el$4);
+		insertNode(_el$3, _el$6);
+		setProp(_el$3, "flexDirection", "row");
+		insertNode(_el$4, createTextNode(`◈ PANTHEON COCKPIT `));
+		setProp(_el$4, "attributes", 1);
+		insert(_el$6, () => `· ${snapshot().sessionTitle} (${snapshot().modelName})`);
+		insertNode(_el$7, _el$8);
+		insertNode(_el$8, createTextNode(`[ Esc / Q ]`));
+		setProp(_el$0, "flexDirection", "row");
+		setProp(_el$0, "marginTop", 1);
+		setProp(_el$0, "gap", 2);
+		insert(_el$0, createComponent(For, {
+			each: TABS,
+			children: (t) => {
+				const active = () => tab() === t.id;
+				return (() => {
+					var _el$39 = createElement("box"), _el$40 = createElement("text");
+					insertNode(_el$39, _el$40);
+					setProp(_el$39, "onMouseDown", () => setTab(t.id));
+					insert(_el$40, () => `[${t.label}]`);
+					effect((_p$) => {
+						var _v$15 = active() ? accent() : muted(), _v$16 = active() ? 1 : 0;
+						_v$15 !== _p$.e && (_p$.e = setProp(_el$40, "fg", _v$15, _p$.e));
+						_v$16 !== _p$.t && (_p$.t = setProp(_el$40, "attributes", _v$16, _p$.t));
+						return _p$;
+					}, {
+						e: void 0,
+						t: void 0
+					});
+					return _el$39;
+				})();
+			}
+		}));
+		insertNode(_el$1, createTextNode(`────────────────────────────────────────────────────────────────────────`));
+		insert(_el$, createComponent(Show, {
+			get when() {
+				return tab() === "overview";
+			},
+			get children() {
+				var _el$11 = createElement("box"), _el$12 = createElement("text"), _el$14 = createElement("text"), _el$15 = createElement("box"), _el$16 = createElement("text"), _el$18 = createElement("box"), _el$19 = createElement("text");
+				insertNode(_el$11, _el$12);
+				insertNode(_el$11, _el$14);
+				insertNode(_el$11, _el$15);
+				insertNode(_el$11, _el$18);
+				setProp(_el$11, "flexDirection", "column");
+				setProp(_el$11, "marginTop", 1);
+				insertNode(_el$12, createTextNode(`Token Meter &amp; Context`));
+				setProp(_el$12, "attributes", 1);
+				insert(_el$14, () => `Velocity: ${snapshot().overview.velocityBars}   Context: ${snapshot().overview.contextGauge}   Spend: $${snapshot().overview.sessionCost.toFixed(4)}`);
+				insertNode(_el$15, _el$16);
+				setProp(_el$15, "marginTop", 1);
+				setProp(_el$15, "flexDirection", "column");
+				insertNode(_el$16, createTextNode(`Runtime Surfaces &amp; Health`));
+				setProp(_el$16, "attributes", 1);
+				insert(_el$15, createComponent(For, {
+					get each() {
+						return snapshot().overview.surfaces;
+					},
+					children: (item) => (() => {
+						var _el$41 = createElement("text");
+						insert(_el$41, () => `  ● ${item.label.padEnd(28)} ${item.status}`);
+						effect((_$p) => setProp(_el$41, "fg", fg(), _$p));
+						return _el$41;
+					})()
+				}), null);
+				insertNode(_el$18, _el$19);
+				setProp(_el$18, "marginTop", 1);
+				setProp(_el$18, "flexDirection", "column");
+				insertNode(_el$19, createTextNode(`Work Map (Topology)`));
+				setProp(_el$19, "attributes", 1);
+				insert(_el$18, createComponent(For, {
+					get each() {
+						return snapshot().overview.workMap;
+					},
+					children: (line) => (() => {
+						var _el$42 = createElement("text");
+						insert(_el$42, line);
+						effect((_$p) => setProp(_el$42, "fg", muted(), _$p));
+						return _el$42;
+					})()
+				}), null);
+				effect((_p$) => {
+					var _v$ = accent(), _v$2 = fg(), _v$3 = accent(), _v$4 = accent();
+					_v$ !== _p$.e && (_p$.e = setProp(_el$12, "fg", _v$, _p$.e));
+					_v$2 !== _p$.t && (_p$.t = setProp(_el$14, "fg", _v$2, _p$.t));
+					_v$3 !== _p$.a && (_p$.a = setProp(_el$16, "fg", _v$3, _p$.a));
+					_v$4 !== _p$.o && (_p$.o = setProp(_el$19, "fg", _v$4, _p$.o));
+					return _p$;
+				}, {
+					e: void 0,
+					t: void 0,
+					a: void 0,
+					o: void 0
+				});
+				return _el$11;
+			}
+		}), _el$35);
+		insert(_el$, createComponent(Show, {
+			get when() {
+				return tab() === "swarm";
+			},
+			get children() {
+				var _el$21 = createElement("box"), _el$22 = createElement("text"), _el$23 = createElement("box");
+				insertNode(_el$21, _el$22);
+				insertNode(_el$21, _el$23);
+				setProp(_el$21, "flexDirection", "column");
+				setProp(_el$21, "marginTop", 1);
+				setProp(_el$22, "attributes", 1);
+				insert(_el$22, () => `● ${snapshot().swarm.activeCount} active  ✓ ${snapshot().swarm.completedCount} done  ✗ ${snapshot().swarm.failedCount} failed  · $${snapshot().swarm.totalCost.toFixed(4)}`);
+				setProp(_el$23, "marginTop", 1);
+				setProp(_el$23, "flexDirection", "column");
+				insert(_el$23, createComponent(Show, {
+					get when() {
+						return snapshot().swarm.rows.length > 0;
+					},
+					get fallback() {
+						return (() => {
+							var _el$43 = createElement("text");
+							insert(_el$43, () => isPt() ? "Nenhum subagente registrado nesta sessão ainda." : "No subagent delegations recorded in this session yet.");
+							effect((_$p) => setProp(_el$43, "fg", muted(), _$p));
+							return _el$43;
+						})();
+					},
+					get children() {
+						return createComponent(For, {
+							get each() {
+								return snapshot().swarm.rows.slice(0, 12);
+							},
+							children: (row, idx) => {
+								const sel = () => idx() === selectedRow();
+								const marker = row.status === "running" ? "●" : row.status === "failed" ? "✗" : "✓";
+								return (() => {
+									var _el$44 = createElement("box"), _el$45 = createElement("text");
+									insertNode(_el$44, _el$45);
+									setProp(_el$44, "flexDirection", "column");
+									setProp(_el$44, "onMouseDown", () => {
+										setSelectedRow(idx());
+										setShowDetail((v) => !v);
+									});
+									insert(_el$45, () => `${sel() ? "▸" : " "} ${marker} @${row.agent.padEnd(11)} ${row.ganttBar}  ${String(row.durationSec).padStart(5)}s  $${row.cost.toFixed(3)}`);
+									insert(_el$44, createComponent(Show, {
+										get when() {
+											return memo(() => !!sel())() && showDetail();
+										},
+										get children() {
+											var _el$46 = createElement("text");
+											insert(_el$46, () => `    id=${row.id} kind=${row.kind} tokens=${row.tokens} model=${row.model ?? "inherited"}`);
+											effect((_$p) => setProp(_el$46, "fg", muted(), _$p));
+											return _el$46;
+										}
+									}), null);
+									effect((_$p) => setProp(_el$45, "fg", sel() ? accent() : fg(), _$p));
+									return _el$44;
+								})();
+							}
+						});
+					}
+				}));
+				effect((_$p) => setProp(_el$22, "fg", fg(), _$p));
+				return _el$21;
+			}
+		}), _el$35);
+		insert(_el$, createComponent(Show, {
+			get when() {
+				return tab() === "flightdeck";
+			},
+			get children() {
+				var _el$24 = createElement("box"), _el$25 = createElement("text"), _el$27 = createElement("text"), _el$28 = createElement("text"), _el$29 = createElement("box"), _el$30 = createElement("text"), _el$32 = createElement("box"), _el$33 = createElement("text");
+				insertNode(_el$24, _el$25);
+				insertNode(_el$24, _el$27);
+				insertNode(_el$24, _el$28);
+				insertNode(_el$24, _el$29);
+				insertNode(_el$24, _el$32);
+				setProp(_el$24, "flexDirection", "column");
+				setProp(_el$24, "marginTop", 1);
+				insertNode(_el$25, createTextNode(`GATE (Safety, Guardrails &amp; Step-Ledger)`));
+				setProp(_el$25, "attributes", 1);
+				insert(_el$27, () => `  ${snapshot().flightdeck.gateGlyphs}`);
+				insert(_el$28, () => `  ${snapshot().flightdeck.gateSummary}`);
+				insertNode(_el$29, _el$30);
+				setProp(_el$29, "marginTop", 1);
+				setProp(_el$29, "flexDirection", "column");
+				insertNode(_el$30, createTextNode(`Step-Ledger &amp; Active Tasks`));
+				setProp(_el$30, "attributes", 1);
+				insert(_el$29, createComponent(Show, {
+					get when() {
+						return snapshot().flightdeck.steps.length > 0;
+					},
+					get fallback() {
+						return (() => {
+							var _el$47 = createElement("text");
+							insertNode(_el$47, createTextNode(`  (no active step-ledger entries)`));
+							effect((_$p) => setProp(_el$47, "fg", muted(), _$p));
+							return _el$47;
+						})();
+					},
+					get children() {
+						return createComponent(For, {
+							get each() {
+								return snapshot().flightdeck.steps.slice(0, 6);
+							},
+							children: (st) => (() => {
+								var _el$49 = createElement("text");
+								insert(_el$49, () => `  ▸ ${st.stepKey.padEnd(20)} [${st.state.padEnd(11)}] @${st.agent}  ${st.objective.slice(0, 36)}`);
+								effect((_$p) => setProp(_el$49, "fg", st.state === "blocked" || st.state === "rolled_back" ? errFg() : success(), _$p));
+								return _el$49;
+							})()
+						});
+					}
+				}), null);
+				insertNode(_el$32, _el$33);
+				setProp(_el$32, "marginTop", 1);
+				setProp(_el$32, "flexDirection", "column");
+				insertNode(_el$33, createTextNode(`Semantic Event Stream`));
+				setProp(_el$33, "attributes", 1);
+				insert(_el$32, createComponent(Show, {
+					get when() {
+						return snapshot().flightdeck.logs.length > 0;
+					},
+					get fallback() {
+						return (() => {
+							var _el$50 = createElement("text");
+							insertNode(_el$50, createTextNode(`  (no bus telemetry events captured yet)`));
+							effect((_$p) => setProp(_el$50, "fg", muted(), _$p));
+							return _el$50;
+						})();
+					},
+					get children() {
+						return createComponent(For, {
+							get each() {
+								return snapshot().flightdeck.logs.slice(0, 8);
+							},
+							children: (ev) => (() => {
+								var _el$52 = createElement("text");
+								insert(_el$52, () => `  [${ev.kind}] @${ev.agent}: ${ev.detail.slice(0, 56)}`);
+								effect((_$p) => setProp(_el$52, "fg", ev.severity === "error" ? errFg() : muted(), _$p));
+								return _el$52;
+							})()
+						});
+					}
+				}), null);
+				effect((_p$) => {
+					var _v$5 = accent(), _v$6 = fg(), _v$7 = muted(), _v$8 = accent(), _v$9 = accent();
+					_v$5 !== _p$.e && (_p$.e = setProp(_el$25, "fg", _v$5, _p$.e));
+					_v$6 !== _p$.t && (_p$.t = setProp(_el$27, "fg", _v$6, _p$.t));
+					_v$7 !== _p$.a && (_p$.a = setProp(_el$28, "fg", _v$7, _p$.a));
+					_v$8 !== _p$.o && (_p$.o = setProp(_el$30, "fg", _v$8, _p$.o));
+					_v$9 !== _p$.i && (_p$.i = setProp(_el$33, "fg", _v$9, _p$.i));
+					return _p$;
+				}, {
+					e: void 0,
+					t: void 0,
+					a: void 0,
+					o: void 0,
+					i: void 0
+				});
+				return _el$24;
+			}
+		}), _el$35);
+		insertNode(_el$35, createTextNode(`────────────────────────────────────────────────────────────────────────`));
+		setProp(_el$35, "marginTop", 1);
+		insertNode(_el$37, createTextNode(`1-3 tabs · Tab/Shift+Tab switch · ↑↓ select · Enter detail · r refresh · Esc/q close`));
+		effect((_p$) => {
+			var _v$0 = accent(), _v$1 = fg(), _v$10 = props.onClose, _v$11 = muted(), _v$12 = muted(), _v$13 = muted(), _v$14 = muted();
+			_v$0 !== _p$.e && (_p$.e = setProp(_el$4, "fg", _v$0, _p$.e));
+			_v$1 !== _p$.t && (_p$.t = setProp(_el$6, "fg", _v$1, _p$.t));
+			_v$10 !== _p$.a && (_p$.a = setProp(_el$7, "onMouseDown", _v$10, _p$.a));
+			_v$11 !== _p$.o && (_p$.o = setProp(_el$8, "fg", _v$11, _p$.o));
+			_v$12 !== _p$.i && (_p$.i = setProp(_el$1, "fg", _v$12, _p$.i));
+			_v$13 !== _p$.n && (_p$.n = setProp(_el$35, "fg", _v$13, _p$.n));
+			_v$14 !== _p$.s && (_p$.s = setProp(_el$37, "fg", _v$14, _p$.s));
+			return _p$;
+		}, {
+			e: void 0,
+			t: void 0,
+			a: void 0,
+			o: void 0,
+			i: void 0,
+			n: void 0,
+			s: void 0
+		});
+		return _el$;
+	})();
+}
+function plainReturnRoute(cur) {
+	if (!cur || typeof cur.type !== "string") return void 0;
+	if (cur.type === "session" && typeof cur.sessionID === "string") return {
+		type: "session",
+		sessionID: cur.sessionID
+	};
+	if (cur.type === "home") return { type: "home" };
+}
+function setupPantheonCockpit(context, resolveCwd) {
+	const ui = context?.ui;
+	if (typeof ui?.router?.register === "function") try {
+		ui.router.register({
+			name: ROUTE_NAME$1,
+			render: ({ data }) => {
+				const ret = data?.returnRoute;
+				const onClose = () => {
+					if (ret) ui.router.navigate(ret);
+					else ui.router.navigate({ type: "home" });
+				};
+				return createComponent(CockpitView, {
+					context,
+					get workspaceDir() {
+						return resolveCwd();
+					},
+					get sessionID() {
+						return memo(() => !!(ret && ret.type === "session"))() ? ret.sessionID : void 0;
+					},
+					onClose
+				});
+			}
+		});
+		routerReady = true;
+	} catch {
+		routerReady = false;
+	}
+	const routeGated = () => {
+		try {
+			const r = ui?.router?.current?.();
+			return r?.type === "plugin" && r.name === ROUTE_NAME$1;
+		} catch {
+			return false;
+		}
+	};
+	const commands = [
+		{
+			id: "pantheon.cockpit.tab1",
+			title: "Overview tab",
+			bind: "1",
+			run: () => {
+				cockpitController?.setTab("overview");
+			}
+		},
+		{
+			id: "pantheon.cockpit.tab2",
+			title: "Swarm tab",
+			bind: "2",
+			run: () => {
+				cockpitController?.setTab("swarm");
+			}
+		},
+		{
+			id: "pantheon.cockpit.tab3",
+			title: "Flightdeck tab",
+			bind: "3",
+			run: () => {
+				cockpitController?.setTab("flightdeck");
+			}
+		},
+		{
+			id: "pantheon.cockpit.next",
+			title: "Next Cockpit tab",
+			bind: "tab",
+			run: () => {
+				cockpitController?.nextTab();
+			}
+		},
+		{
+			id: "pantheon.cockpit.prev",
+			title: "Previous Cockpit tab",
+			bind: "shift+tab",
+			run: () => {
+				cockpitController?.prevTab();
+			}
+		},
+		{
+			id: "pantheon.cockpit.up",
+			title: "Previous row",
+			bind: "up,k",
+			run: () => {
+				cockpitController?.moveRow(-1);
+			}
+		},
+		{
+			id: "pantheon.cockpit.down",
+			title: "Next row",
+			bind: "down,j",
+			run: () => {
+				cockpitController?.moveRow(1);
+			}
+		},
+		{
+			id: "pantheon.cockpit.detail",
+			title: "Toggle row detail",
+			bind: "enter",
+			run: () => {
+				cockpitController?.toggleDetail();
+			}
+		},
+		{
+			id: "pantheon.cockpit.refresh",
+			title: "Refresh Cockpit",
+			bind: "r",
+			run: () => {
+				cockpitController?.refresh();
+			}
+		},
+		{
+			id: "pantheon.cockpit.close",
+			title: "Close Cockpit",
+			bind: "escape,q",
+			run: () => {
+				cockpitController?.close();
+			}
+		}
+	];
+	try {
+		context.keymap?.layer?.(() => ({
+			mode: ROUTE_MODE$1,
+			priority: 1,
+			enabled: () => routeGated() || cockpitOpen(),
+			commands
+		}));
+		context.keymap?.layer?.(() => ({
+			mode: "global",
+			priority: 1,
+			enabled: () => cockpitOpen(),
+			commands
+		}));
+	} catch {}
+}
+function openPantheonCockpit(context, workspaceDir) {
+	const ui = context?.ui;
+	if (routerReady && typeof ui?.router?.navigate === "function") {
+		let returnRoute;
+		try {
+			const cur = ui.router.current();
+			if (!(cur?.type === "plugin" && cur.name === ROUTE_NAME$1)) returnRoute = plainReturnRoute(cur);
+		} catch {
+			returnRoute = void 0;
+		}
+		ui.router.navigate({
+			type: "plugin",
+			name: ROUTE_NAME$1,
+			...returnRoute ? { data: { returnRoute } } : {}
+		});
+		return;
+	}
+	try {
+		const curSid = ui?.router?.current?.()?.type === "session" ? ui.router.current().sessionID : void 0;
+		ui?.dialog?.show?.(() => createComponent(CockpitView, {
+			context,
+			workspaceDir,
+			sessionID: curSid,
+			onClose: () => ui?.dialog?.clear?.()
+		}), () => {});
+		ui?.dialog?.set?.({
+			size: "large",
+			centered: true
+		});
+	} catch {}
+}
+//#endregion
 //#region src/context-gauge.ts
 const CONTEXT_BAR_CELLS = 12;
 const CONTEXT_BAR_FILLED_CELL = "▰";
@@ -2606,9 +3395,9 @@ function buildAboutTab(version, extra) {
 		},
 		{
 			id: "about.tools.codemap",
-			name: "Codemap",
-			value: isPt ? "ativo · 3 tools" : "active · 3 tools",
-			note: "code_index, code_query, code_neighbors"
+			name: isPt ? "Codemap & AST" : "Codemap & AST",
+			value: isPt ? "ativo · 5 tools" : "active · 5 tools",
+			note: "code_index, code_query, code_neighbors, ast_search, ast_rewrite"
 		},
 		{
 			id: "about.tools.edit",
@@ -2619,8 +3408,8 @@ function buildAboutTab(version, extra) {
 		{
 			id: "about.tools.governance",
 			name: isPt ? "Orquestração & Custos" : "Orchestration & Cost",
-			value: isPt ? "ativo · 7+ tools" : "active · 7+ tools",
-			note: "pantheon_cost, pantheon_model, pantheon_skill_search, pantheon_deepwork, pantheon_step_ledger, pantheon_agent_forge, pantheon_local_decision"
+			value: isPt ? "ativo · 8+ tools" : "active · 8+ tools",
+			note: "pantheon_cost, pantheon_model, pantheon_skill_search, pantheon_deepwork, pantheon_step_ledger, pantheon_agent_forge, pantheon_local_decision, pantheon_review_verdict"
 		}
 	];
 	const groups = [{
@@ -2636,7 +3425,7 @@ function buildAboutTab(version, extra) {
 		rows: refRows
 	});
 	groups.push({
-		title: isPt ? "Ferramentas Nativas (26)" : "Native Tools (26)",
+		title: isPt ? "Ferramentas Nativas (29)" : "Native Tools (29)",
 		rows: toolRows
 	});
 	return {
@@ -11259,6 +12048,19 @@ function PantheonSettingsCommandLayer(props) {
 				run: () => {
 					openArtifactsDialog(props.context, resolveSidebarCwd(props.context));
 				}
+			},
+			{
+				id: "pantheon.cockpit.open",
+				title: "Pantheon: Mission Control Cockpit",
+				group: "Pantheon",
+				palette: true,
+				slash: {
+					name: "pantheon-cockpit",
+					aliases: ["cockpit"]
+				},
+				run: () => {
+					openPantheonCockpit(props.context, resolveSidebarCwd(props.context));
+				}
 			}
 		]
 	}));
@@ -11300,8 +12102,9 @@ function HomeStatus(props) {
 			return tuiPrefs().footer.home;
 		},
 		get children() {
-			var _el$128 = createElement("box"), _el$129 = createElement("text");
+			var _el$128 = createElement("box"), _el$129 = createElement("text"), _el$132 = createElement("box"), _el$133 = createElement("text");
 			insertNode(_el$128, _el$129);
+			insertNode(_el$128, _el$132);
 			setProp(_el$128, "flexDirection", "row");
 			insert(_el$129, () => `Pantheon v2.2.0${preset().name ? ` ▸ ${preset().name}` : ""}`);
 			insert(_el$128, createComponent(Show, {
@@ -11309,31 +12112,31 @@ function HomeStatus(props) {
 					return updateBadge();
 				},
 				children: (badge) => (() => {
-					var _el$132 = createElement("box"), _el$133 = createElement("text");
-					insertNode(_el$132, _el$133);
-					setProp(_el$132, "onMouseDown", () => {
+					var _el$135 = createElement("box"), _el$136 = createElement("text");
+					insertNode(_el$135, _el$136);
+					setProp(_el$135, "onMouseDown", () => {
 						openPantheonSettings(props.context, { initialTab: "updates" });
 					});
-					insert(_el$133, () => ` · ${badge()}`);
-					effect((_$p) => setProp(_el$133, "fg", accent(), _$p));
-					return _el$132;
+					insert(_el$136, () => ` · ${badge()}`);
+					effect((_$p) => setProp(_el$136, "fg", accent(), _$p));
+					return _el$135;
 				})()
-			}), null);
+			}), _el$132);
 			insert(_el$128, createComponent(Show, {
 				get when() {
 					return activePlan();
 				},
 				children: (plan) => (() => {
-					var _el$134 = createElement("box"), _el$135 = createElement("text");
-					insertNode(_el$134, _el$135);
-					setProp(_el$134, "onMouseDown", () => {
+					var _el$137 = createElement("box"), _el$138 = createElement("text");
+					insertNode(_el$137, _el$138);
+					setProp(_el$137, "onMouseDown", () => {
 						openArtifactsDialog(props.context, resolveSidebarCwd(props.context), { initialArtifactId: plan().id });
 					});
-					insert(_el$135, () => ` · ▸ Plan: ${truncateLabel(plan().title, 20)}`);
-					effect((_$p) => setProp(_el$135, "fg", accent(), _$p));
-					return _el$134;
+					insert(_el$138, () => ` · ▸ Plan: ${truncateLabel(plan().title, 20)}`);
+					effect((_$p) => setProp(_el$138, "fg", accent(), _$p));
+					return _el$137;
 				})()
-			}), null);
+			}), _el$132);
 			insert(_el$128, createComponent(Show, {
 				get when() {
 					return artifacts().length > 0;
@@ -11351,8 +12154,21 @@ function HomeStatus(props) {
 					effect((_$p) => setProp(_el$131, "fg", muted(), _$p));
 					return _el$130;
 				}
-			}), null);
-			effect((_$p) => setProp(_el$129, "fg", muted(), _$p));
+			}), _el$132);
+			insertNode(_el$132, _el$133);
+			setProp(_el$132, "onMouseDown", () => {
+				openPantheonCockpit(props.context, resolveSidebarCwd(props.context));
+			});
+			insertNode(_el$133, createTextNode(` · ◈ Cockpit`));
+			effect((_p$) => {
+				var _v$17 = muted(), _v$18 = muted();
+				_v$17 !== _p$.e && (_p$.e = setProp(_el$129, "fg", _v$17, _p$.e));
+				_v$18 !== _p$.t && (_p$.t = setProp(_el$133, "fg", _v$18, _p$.t));
+				return _p$;
+			}, {
+				e: void 0,
+				t: void 0
+			});
 			return _el$128;
 		}
 	});
@@ -11409,10 +12225,10 @@ function PromptFooter(props) {
 			return memo(() => !!tuiPrefs().footer.prompt)() && model.running() > 0;
 		},
 		get children() {
-			var _el$136 = createElement("text");
-			insert(_el$136, () => `▸${model.preset().name ?? "default"} · ✦${model.running()} ativos`);
-			effect((_$p) => setProp(_el$136, "fg", muted(), _$p));
-			return _el$136;
+			var _el$139 = createElement("text");
+			insert(_el$139, () => `▸${model.preset().name ?? "default"} · ✦${model.running()} ativos`);
+			effect((_$p) => setProp(_el$139, "fg", muted(), _$p));
+			return _el$139;
 		}
 	});
 }
@@ -11477,6 +12293,9 @@ const plugin = Plugin.define({
 		});
 		try {
 			setupPantheonSettings(context, { renderSidebar: (ctx) => createComponent(Sidebar, { context: ctx }) });
+		} catch {}
+		try {
+			setupPantheonCockpit(context, () => resolveSidebarCwd(context));
 		} catch {}
 		const unregisterSettingsSlot = context.ui.slot({
 			append: "session.composer.top",

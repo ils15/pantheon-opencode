@@ -1052,6 +1052,24 @@ async function main() {
     if (!isProject) {
       // The project-local hint only matters when this install was not one.
       console.log(`  ${S.nextProject}`)
+    } else {
+      try {
+        const { detectRepositoryStacks } = await import('../scripts/stack-detector.mjs')
+        const stackReport = detectRepositoryStacks(targetDir)
+        if (stackReport.stacks.length > 0) {
+          console.log('')
+          console.log(
+            `  Detected stack(s): ${stackReport.stacks.map((s) => `${s.id} (${s.manifest})`).join(', ')}`,
+          )
+          if (stackReport.suggestedSpecialists.length > 0) {
+            console.log(
+              `  Tip: run /pantheon-forge in OpenCode to scaffold: ${stackReport.suggestedSpecialists.map((s) => s.name).join(', ')}`,
+            )
+          }
+        }
+      } catch {
+        /* best-effort stack hint */
+      }
     }
     if (!decisionTarget) {
       console.log(`  ${S.nextJev}`)

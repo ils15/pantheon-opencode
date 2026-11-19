@@ -60,9 +60,12 @@ You approve each gate and you run every commit.
 
 The OpenCode 2.x TUI surfaces live native-tool domain counters (`mem`, `ctx`, `code`, `edit`,
 `shell`), live child activity and attention badges (`?` / `!`) in `Dispatch` and `/dispatch`,
-the interactive `/pantheon-artifacts` viewer for plans/reports/ADRs, and the full 26-tool
-native inventory in `/pantheon-settings` → **About**. Git worktrees automatically share the
-main repository's `.pantheon/memory`, checkpoints, and goals store (set
+the interactive **Mission Control Cockpit** (`/pantheon-cockpit` · `Overview`, `Swarm`,
+`Flightdeck`), `/pantheon-artifacts` for plans/reports/ADRs, interactive `/pantheon-forge` stack
+detection, and the full **29-tool native inventory** in `/pantheon-settings` → **About** (including
+post-edit LSP diagnostics, `ast_search`/`ast_rewrite`, `pantheon_review_verdict`, bugfix `RED`
+reproduction gates, and `ctx.worktree.transform` sibling worktrees). Git worktrees automatically
+share the main repository's `.pantheon/memory`, checkpoints, and goals store (set
 `PANTHEON_ISOLATE_WORKTREE_MEMORY=1` to keep a worktree's memory store isolated).
 
 ## Structure

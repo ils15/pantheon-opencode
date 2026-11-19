@@ -19,26 +19,31 @@ host never loads two Pantheon plugins.
 
 ## Tools
 
-The plugin registers **26 native TypeScript tools** through `ctx.tool.transform()`
+The plugin registers **29 native TypeScript tools** through `ctx.tool.transform()`
 with zero external Python dependency, automatically available in any workspace via
 `opencode plugin add pantheon-opencode` (check the live inventory in `/pantheon-settings`
 → **About**):
 
 - **Memory, context & goals:** `memory_store`, `memory_recall`, `memory_search`,
-  `memory_forget`, `memory_stats`, `context_save`, `context_get`, `goal_create`,
+  `memory_forget`, `memory_list`, `memory_stats`, `context_save`, `context_get`, `goal_create`,
   `goal_get`, `goal_update`, and `goal_done` — FTS5-backed persistence under `.pantheon/`
   that automatically shares the main repository root across linked git worktrees
   (override with `PANTHEON_ISOLATE_WORKTREE_MEMORY=1`). `goal_update` uses `notes`
   to append progress entries.
-- **Structural codemap:** `code_index`, `code_query`, and `code_neighbors` — AST-lite
-  symbol/relation graph with automatic orphan pruning whenever files are deleted on disk.
-- **Mechanical gates & agent forge:** `pantheon_step_ledger` (`init_step` →
-  `record_mutation` → `record_verification` → `complete_step` / `status`),
-  `pantheon_deepwork`, `pantheon_agent_forge`, and `pantheon_skill_search`.
-- **Editing, telemetry & routing:** `hashline_edit` (resolves relative paths against the
-  active workspace directory without fallback), `pantheon_cost`, `pantheon_model`, and
-  `pantheon_local_decision` (Zeus-only advisory selector; requires a structured payload
-  and returns `decision: "abstain"` fail-closed when no decision model is configured).
+- **Structural codemap & AST rewriting:** `code_index`, `code_query`, `code_neighbors`,
+  `ast_search`, and `ast_rewrite` — symbol/relation graph with automatic orphan pruning
+  plus comment-aware AST matching/rewriting (`$VAR` / `$$$ARGS`) confined to workspace bounds.
+- **Mechanical gates, atomic steps & agent forge:** `pantheon_step_ledger` (`init_step`,
+  `record_reproduction`, `record_mutation`, `record_verification`, `rollback_step`,
+  `complete_step`, `status` with isolated temp-index git checkpoints and bugfix `RED` gates),
+  `pantheon_review_verdict` (typed `@themis` verdict + bounded `ctx.session.synthetic` remediation),
+  `pantheon_deepwork`, `pantheon_agent_forge` (including `detect_stack`), and `pantheon_skill_search`.
+- **Editing, LSP diagnostics, telemetry & routing:** `hashline_edit` (workspace-confined
+  relative paths + post-edit TypeScript/Pyright/stdio LSP bridge), `shell`, `todowrite`/`todoread`,
+  `pantheon_cost`, `pantheon_model`, and `pantheon_local_decision` (Zeus-only advisory selector).
+- **Native worktree orchestration & commands:** `ctx.worktree.transform` (`create`, `remove`,
+  `list`) in `.pantheon-worktrees/<repo>/<task>`, plus **9 slash commands** including
+  `/pantheon-forge` and `/pantheon-cockpit`.
 - **Host-conditional tools:** `vision_describe` when the host exposes its model catalog,
   and `pantheon_bounded_read` when the host exposes its permission and session APIs
   (root Zeus sessions only).

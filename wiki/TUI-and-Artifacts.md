@@ -24,13 +24,25 @@ Configure arbitragem Jev, tier global de modelos + modelo de visão, idioma (`pt
 ![Aba Autonomia no Pantheon Settings](../docs/assets/tui/settings-autonomy.png)
 
 ### `Atualizações`, `Doctor` & `Sobre`
-Verifique canal npm (`latest`/`beta`), execute limpeza segura de caches antigos e legado V1 (`~/.cache/opencode/npm/pantheon-opencode*`), cheque saúde do ambiente e consulte as **26 Native Tools** no inventário ao vivo:
+Verifique canal npm (`latest`/`beta`), execute limpeza segura de caches antigos e legado V1 (`~/.cache/opencode/npm/pantheon-opencode*`), cheque saúde do ambiente e consulte as **29 Native Tools** no inventário ao vivo:
 
-![Aba Atualizações e Limpeza de Legado](../docs/assets/tui/settings-updates.png)
+![Atualizações e Limpeza de Legado](../docs/assets/tui/settings-updates.png)
 
-![Aba Doctor no Pantheon Settings](../docs/assets/tui/settings-doctor.png)
+![Doctor no Pantheon Settings](../docs/assets/tui/settings-doctor.png)
 
-![Aba Sobre listando as 26 ferramentas nativas](../docs/assets/tui/settings-about.png)
+![Aba Sobre listando as 29 ferramentas nativas](../docs/assets/tui/settings-about.png)
+
+---
+
+## 2. Mission Control Cockpit (`/pantheon-cockpit`)
+
+Painel de observabilidade ao vivo em 3 abas (`1–3` ou `Tab`), com `Overview` (tokens/velocidade, gauges, health/work map), `Swarm` (árvore de delegação, barras Gantt concorrentes e stream semântico) e `Flightdeck` (matriz de permissões/gates J1 e telemetria):
+
+![Cockpit Overview](../docs/assets/tui/cockpit-overview.png)
+
+![Cockpit Swarm](../docs/assets/tui/cockpit-swarm.png)
+
+![Cockpit Flightdeck](../docs/assets/tui/cockpit-flightdeck.png)
 
 ---
 

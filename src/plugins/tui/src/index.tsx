@@ -23,6 +23,7 @@ import {
 } from 'solid-js'
 import { openArtifactsDialog } from './artifacts'
 import { type PantheonArtifactEntry, scanPantheonArtifacts } from './artifacts-state.ts'
+import { openPantheonCockpit, setupPantheonCockpit } from './cockpit'
 import {
   CONTEXT_BAR_CELLS,
   type ContextProgressTone,
@@ -5585,6 +5586,16 @@ function PantheonSettingsCommandLayer(props: { context: any }) {
           openArtifactsDialog(props.context, resolveSidebarCwd(props.context))
         },
       },
+      {
+        id: 'pantheon.cockpit.open',
+        title: 'Pantheon: Mission Control Cockpit',
+        group: 'Pantheon',
+        palette: true,
+        slash: { name: 'pantheon-cockpit', aliases: ['cockpit'] },
+        run: () => {
+          openPantheonCockpit(props.context, resolveSidebarCwd(props.context))
+        },
+      },
     ],
   }))
   return null
@@ -5672,6 +5683,13 @@ function HomeStatus(props: { context: any }) {
             </text>
           </box>
         </Show>
+        <box
+          onMouseDown={() => {
+            openPantheonCockpit(props.context, resolveSidebarCwd(props.context))
+          }}
+        >
+          <text fg={muted()}>{' · ◈ Cockpit'}</text>
+        </box>
       </box>
     </Show>
   )
@@ -5824,6 +5842,11 @@ const plugin = Plugin.define({
       })
     } catch {
       /* settings unavailable on this host — the command toasts/fails open */
+    }
+    try {
+      setupPantheonCockpit(context, () => resolveSidebarCwd(context))
+    } catch {
+      /* cockpit unavailable on this host */
     }
     // In-session settings docked above prompt (session.composer.top)
     const unregisterSettingsSlot = context.ui.slot({

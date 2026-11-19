@@ -2,9 +2,9 @@
 
 This roadmap records customer-visible themes, maintenance boundaries, and readiness conditions for stable releases. Internal tracking identifiers, per-item evidence bundles, and per-commit history are intentionally not part of this page.
 
-## Current State: 2.2.0 Beta (`v2.2.0-beta.2`) & 2.1.x Stable (`v2.1.6`)
+## Current State: 2.2.0 Stable (`v2.2.0`) & 2.1.x Maintenance (`v2.1.6`)
 
-The `2.2.0-beta.2` release consolidates the **100% Native OpenCode 2.2 (`@opencode/plugin@2.2.5`) Architecture**, eliminating legacy V1/V2 split nomenclature, moving durable memory/persistence/goal/codemap operations in-process via `node:sqlite` FTS5, making the core execution roster (`@hermes`, `@demeter`, `@aphrodite`) **polyglot and stack-agnostic**, and introducing **`pantheon_agent_forge`** for instant creation of custom domain specialists alongside **`pantheon_step_ledger`** for mechanical completion gates.
+The `2.2.0` release consolidates the **100% Native OpenCode 2.x (`@opencode/plugin`) Architecture**, eliminating legacy V1/V2 split nomenclature, moving durable memory/persistence/goal/codemap operations in-process via `node:sqlite` FTS5, making the core execution roster (`@hermes`, `@demeter`, `@aphrodite`) **polyglot and stack-agnostic**, and delivering all **5 Orchestration Evolution Pillars** alongside the interactive **TUI Mission Control Cockpit** (`Overview`, `Swarm`, `Flightdeck`).
 
 The `2.1.x` release series delivered the canonical Deepwork plan architecture, interactive native Question Gate enforcement, unrestricted `.pantheon/` and worktree access for analytical agents, bilingual documentation portals, live session Todo synchronization, observable test slicing, risk-based validation protocols, unified local/external skill discovery, deepwork resilience normalization, and workspace auto-permissions.
 
@@ -12,38 +12,40 @@ See [Compatibility](docs/COMPATIBILITY.md) for supported hosts and the [releases
 
 ---
 
-## 2.2.0-beta.2 Deliveries (Native Quality & Orchestration)
+## 2.2.0 Deliveries (Native Quality, Pillars 1–5 & Cockpit)
 
 1. **Clean `./server` vs `./tui` Bundle Separation & Zero-Init Provisioning**
    - Decoupled `./server` (`src/plugin/index.js`) from `./tui` (`src/plugins/tui/dist/tui.js`) so the server plugin loads in pure Node without pulling `@opentui/solid` into the host runtime.
-   - Auto-provisioned all 12 core specialist agents (`ctx.agent.transform`) and 8 `/pantheon-*` slash commands (`ctx.command.transform`) with `AGENTS.global.md` reference registration (`ctx.reference.transform`) and KV-cache-preserving session instructions (`ctx.session.instructions.entry.put`).
-2. **In-Process Native SQLite FTS5 Memory, Persistence, Goals & Codemap Tools**
-   - Registered 15 native in-process plugin tools (`memory_store`, `memory_recall`, `memory_search`, `memory_forget`, `memory_list`, `memory_stats`, `context_save`, `context_get`, `goal_create`, `goal_get`, `goal_update`, `goal_done`, `code_index`, `code_query`, `code_neighbors`) backed by `node:sqlite` WAL + FTS5 BM25 ranking and secret redaction—eliminating external stdio MCP cold-start latency.
-3. **Polyglot Core Roster + First-Class Custom Specialist Forge (`pantheon_agent_forge`)**
-   - Upgraded `@hermes` (TypeScript/Node, Python/FastAPI, Go, Rust, Java), `@demeter` (SQL/NoSQL, PostgreSQL, SQLite, Prisma, Drizzle, SQLAlchemy 2.0/Alembic), and `@aphrodite` (React 19, SolidJS, Vue, Svelte, Next.js) to be stack-agnostic by default.
-   - Added the native `pantheon_agent_forge` tool (`create`, `list`, `inspect`, `remove`) allowing users or `@zeus` to scaffold custom domain specialists in `.opencode/agents/<name>.md` with least-privilege permissions (`read-only`, `implementer`, `reviewer`), automatic MCP governance ladder, and sliced TDD rules while protecting the 12 canonical Pantheon agent names.
-4. **Step-Ledger (`pantheon_step_ledger`) & Active Execution Receipts**
-   - Wired `execution-receipt.ts`, `themis-reflex.ts`, and `prompt-cache-order.ts` into the live `src/plugin.ts` runtime and `pantheon_step_ledger`.
-   - Enforced mechanical completion gates: a ledger step that mutates files (`edit`, `write`, `hashline_edit`) cannot transition to `done` unless a post-mutation verification command (`bash`/`shell`) exited with `0` and produced a matching SHA-256 execution receipt.
-5. **Post-Edit Structural Diagnostics & Hardened Plugin Tool Guards**
-   - Added immediate post-edit TypeScript/JSON/JS syntax & structural diagnostics in `execute-after.ts` so specialists fix syntax regressions in the same turn.
-   - Enforced role-based write/exec guards (`NON_EDIT_AGENTS`, `NON_SHELL_AGENTS`), `isDangerousCommand`, and 120s process timeouts on `shell` and `hashline_edit`, plus session-isolated `todowrite`/`todoread` stores.
-6. **Multi-File `RED → GREEN` Evaluation Harness (`swe-eval-harness.ts`)**
-   - Added a deterministic evaluation harness verifying multi-file mutations against both visible test slices and hidden anti-reward-hacking test suites.
+   - Auto-provisioned all core/specialist agents (`ctx.agent.transform`) and canonical `/pantheon-*` slash commands (`ctx.command.transform`) with `AGENTS.global.md` reference registration (`ctx.reference.transform`) and KV-cache-preserving session instructions (`ctx.session.instructions.entry.put`).
+2. **29 In-Process Native TypeScript Tools & SQLite FTS5 Persistence**
+   - Registered 29 native plugin tools in-process (`memory_*`, `context_*`, `goal_*`, `code_*`, `ast_search`, `ast_rewrite`, `hashline_edit`, `shell`, `todowrite`/`todoread`, `pantheon_cost`, `pantheon_model`, `pantheon_skill_search`, `pantheon_deepwork`, `pantheon_step_ledger`, `pantheon_agent_forge`, `pantheon_local_decision`, and `pantheon_review_verdict`) backed by `node:sqlite` WAL + FTS5 BM25 ranking and worktree-shared `.pantheon/` state.
+3. **Pillar 1 — Post-Edit LSP Diagnostics Bridge & Structural AST Tools (`ast_search`, `ast_rewrite`)**
+   - Hooked `execute.after` diagnostics into TypeScript (`tsc --noEmit`), Pyright (`--outputjson`), and optional stdio LSP framing (`PANTHEON_LSP_SERVER`) emitting `'lsp:diagnostics'`.
+   - Exposed comment-aware, dependency-free `ast_search` and `ast_rewrite` tools with workspace path confinement and pre-write edit guardrail checks.
+4. **Pillar 2 — Atomic Git Checkpointing & Sub-Session Step Runner (`ctx.session.create`)**
+   - Wired isolated temp `GIT_INDEX_FILE` snapshots (`captureGitCheckpoint` / `restoreGitCheckpoint`), SHA-256 execution receipts (`pantheon_step_ledger`), and automatic rollback on `themis:reflex:escalated`.
+   - Added `runAtomicStepSubSession` using `ctx.session.create` / `prompt` / `wait` / `remove` for single-step isolated execution.
+5. **Pillar 3 — Native Worktree Orchestration (`ctx.worktree.transform`) & Typed Review Verdict (`pantheon_review_verdict`)**
+   - Registered `ctx.worktree.transform` (`create`, `remove`, `list`) enforcing sibling `.pantheon-worktrees/<repo>/<task>` isolation.
+   - Exposed `pantheon_review_verdict` emitting `'review:verdict'` and triggering bounded `ctx.session.synthetic` remediation turns (max 2) when `@themis` emits `BLOCK`.
+6. **Pillar 4 — Mandatory Fault-Localization & Reproduction Gate**
+   - Enforces a failing `record_reproduction` (`exitCode !== 0`) on `taskType: 'bugfix'` steps before unlocking production file edits (`edit`/`hashline_edit`/`ast_rewrite`) for `@hermes` or `@talos`, while allowing `RED` test creation first.
+7. **Pillar 5 — Interactive `/pantheon-forge` Wizard & Stack Auto-Detection**
+   - Added `/pantheon-forge` command, `detect_stack` action in `pantheon_agent_forge`, and `--project` stack hints in `bin/pantheon-init.mjs` (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`).
+8. **TUI Mission Control Cockpit, `/pantheon-artifacts`, & Telemetry**
+   - Built the native `@opentui/solid` `/pantheon-cockpit` dialog with `Overview`, `Swarm` (concurrency Gantt + semantic stream), and `Flightdeck` (Gate Matrix + event log) tabs accessible via `1–3` / `Tab`, plus `/pantheon-artifacts` with Unicode Mermaid rendering and Sidebar/Home links.
 
 ---
 
-## Next-Generation Orchestration Evolution Plan (2.2 GA → 2.3)
+## Architecture Implementation Summary (v2.2.0)
 
-The following high-leverage architectural capabilities are planned for the next iterations of Pantheon:
-
-| Architectural Pillar | Core Mechanism | Status in Pantheon `2.2.0-beta.2` | Planned Next-Gen Evolution (`2.2 GA` / `2.3`) |
-|---|---|---|---|
-| **Structural Editing & Diagnostics** | Hash-anchored edits (`LINE#ID`), post-edit `execute.after` diagnostics, structural AST search/rewrite, `experimental.idle` continuation | `hashline_edit` + post-edit syntax/brace diagnostics delivered in `beta.2` | **Full LSP Diagnostics Bridge + Native `ast_search` / `ast_rewrite` Tools**: Hook into workspace TypeScript/Pyright/Biome servers on `execute.after` and expose structural AST pattern rewriting without regex drift. |
-| **Step-Ledger & Sub-Session Isolation** | Pre-code validation matrix (Requirement → Test Slice), fresh sub-session per atomic task (`ctx.session.create`), atomic git commit checkpoints | `pantheon_step_ledger` + SHA-256 execution receipt gate delivered in `beta.2` | **Autonomous Sub-Session Step Runner & Atomic Git Checkpointing**: Spawn isolated `ctx.session.create` contexts per ledger step with automatic git tree snapshots and instant rollback on `themis:reflex:escalated`. |
-| **Spec-First Review & Worktree Isolation** | Interactive spec-refinement before planning, two-stage independent review (IntentGate → Code Quality), git worktree isolation per task | `>>` Prompt Refinery + `@themis` IntentGate & Layer 1-3 review active | **Native Worktree Orchestration (`ctx.worktree.transform`) & Typed Review Verdict Tool (`pantheon_review_verdict`)**: Provision isolated git worktrees per parallel specialist and trigger automatic `ctx.session.synthetic` remediation turns when `@themis` emits `BLOCK`. |
-| **Graph Localization & Reproduction Gates** | Graph-based localization before editing (`code_index` → candidate narrowing → reproduction test before patch) | `code_index`/`code_query`/`code_neighbors` + `swe-eval-harness.ts` delivered in `beta.2` | **Mandatory Fault-Localization & Reproduction Gate for Bugfixes**: Require a failing reproduction slice (`RED`) before unlocking `edit`/`hashline_edit` on bugfix tasks routed to `@hermes` or `@talos`. |
-| **Polyglot Core & Domain Extensibility** | Stack-agnostic core agents + zero-friction project specialist creation | Polyglot `@hermes`/`@demeter`/`@aphrodite` + `pantheon_agent_forge` delivered in `beta.2` | **Interactive `/pantheon-forge` Wizard & Stack Auto-Detection**: Automatically detect repository stack (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`) on `init` and suggest tailored project specialists + domain convention docs. |
+| Architectural Pillar | Core Mechanism | Status in Pantheon `2.2.0` |
+|---|---|---|
+| **Structural Editing & Diagnostics** | `hashline_edit`, `execute.after` diagnostics + LSP bridge, `ast_search` / `ast_rewrite` | **Delivered (`v2.2.0`)** — `lsp-diagnostics.ts`, `ast-tools.ts`, `execute-after.ts`. |
+| **Step-Ledger & Sub-Session Isolation** | SHA-256 receipts, isolated `ctx.session.create` runner, temp-index git checkpoints & auto-rollback | **Delivered (`v2.2.0`)** — `step-ledger.ts`, `step-runner.ts`, `git-checkpoint.ts`, `themis-reflex.ts`. |
+| **Spec-First Review & Worktree Isolation** | `>>` Prompt Refinery, sibling `.pantheon-worktrees/` orchestration, `pantheon_review_verdict` + `ctx.session.synthetic` | **Delivered (`v2.2.0`)** — `worktree-orchestrator.ts`, `review-verdict.ts`, `plugin.ts`. |
+| **Graph Localization & Reproduction Gates** | `code_index`/`code_query`/`code_neighbors` auto-pruning, failing `RED` test gate for bugfixes | **Delivered (`v2.2.0`)** — `codemap-tools.ts`, `reproduction-gate.ts`, `swe-eval-harness.ts`. |
+| **Polyglot Core & Domain Extensibility** | Polyglot `@hermes`/`@demeter`/`@aphrodite`, `pantheon_agent_forge`, `/pantheon-forge`, deterministic stack detector | **Delivered (`v2.2.0`)** — `stack-detector.ts`, `agent-forge-tool.ts`, `commands/pantheon-forge.md`. |
 
 ---
 
@@ -125,41 +127,23 @@ Active development on the `2.1.x` line focuses on operational smoothness and dev
 
 ---
 
-## Road to 2.2.0 Minor Milestone
+## Transitioned to Delivered (`2.2.0`) & Future Horizon (`2.3.0` Candidates)
 
-The `2.2.0` release will be the next minor architectural cycle. It introduces structural enhancements designed to elevate real-time operational visibility, lower token consumption, scale multi-agent coordination, and eliminate runtime overhead.
+The workstreams originally chartered under `Road to 2.2.0` are now shipped in **`v2.2.0`**:
 
-### 2.2.0 Workstreams & Themes
-
-1. **High-Density TUI Mission Control Cockpit (`Overview`, `Swarm`, `Flightdeck`)**
-   - Full specification: [TUI Mission Control Cockpit Design](docs/design/tui-mission-control-cockpit.md).
-   - Unified 3-page cockpit built on Ink (React for CLI), navigable via `Tab` / `1-3`:
-     - **Page 1 (`Overview`)**: Real-time token velocity histogram (Lead vs Subagent differentiation, context window utilization gauge, cache hit ratio, tokens/sec, and turn cost breakdown), live 5-server MCP health grid with latency and error highlighting, and box-drawing system topology work map.
-     - **Page 2 (`Swarm`)**: Hierarchical specialist delegation tree (`@zeus` → `@athena`, `@demeter`, `@hermes`, `@aphrodite`, `@themis`) with per-agent token burn, duration, and call count; concurrency Gantt timeline visualizing agent overlap; and semantic activity stream table with interactive detail expansion (`Enter`).
-     - **Page 3 (`Flightdeck`)**: Visual Gate Matrix tracking permission and safety checks (allowed, human-approved, pending approval, denied); active specialist progress gauges; turn-level delta telemetry; and unified semantically aggregated error log.
-
-2. **Step-Ledger Execution Mode**
-   - Execute complex workflows via atomic, single-step sub-sessions.
-   - Each sub-session opens strictly with the active step's summary, objective, ledger key, and completion contract.
-   - Gated progress: a step may transition to `done` only when a verification command exited 0 since the last file mutation.
-   - Eliminates cascading context buildup, targeting up to 40x context token savings on large tasks.
-
-3. **Dynamic Multi-Model & Fallback Routing (Jev)**
-   - Introduce provider-aware fallback policies in the Jev Decision Router.
-   - Dynamically route low-complexity or high-volume tasks across providers (Gemini, Claude, GPT) with automated retry on quota exhaustion (HTTP 429) or transient degradation.
-   - Integrated with the in-memory event bus (`PantheonBus`) for real-time observability of routing decisions and token spend.
-
-4. **Dynamic Capability Synthesizer & Role Morphing**
-   - On-the-fly ephemeral specialist generation based on task profile.
-   - Compiles ad-hoc bounded sub-specialists dynamically from the declarative roster base with tailored tool allowlists.
-
-5. **Deep Scope Governance & Sandboxing**
-   - Pre-flight validation of file-tree bounds, command allowlists, and tool grants *before* spawning a child subagent.
-   - Prevents execution aborts caused by late-discovered permission mismatches.
-
-6. **Mechanized Code Quality Doctrine**
-   - Enforce coding standards and anti-pattern detection through deterministic linters and test harnesses rather than advisory prompt instructions.
-   - Zero tolerance for verbal-only coaxing: every rule must fire a machine-verifiable gate.
+1. **Delivered — High-Density TUI Mission Control Cockpit (`/pantheon-cockpit` · `Overview`, `Swarm`, `Flightdeck`)**
+   - Implemented natively using OpenCode's `@opentui/solid` UI engine (replacing the legacy Ink draft while preserving all 3 pages and interactive controls via `1–3` / `Tab` + clickable Home/Sidebar badges).
+   - Specification reference: [TUI Mission Control Cockpit Design](docs/design/tui-mission-control-cockpit.md).
+2. **Delivered — Step-Ledger Execution Mode (`pantheon_step_ledger` + `runAtomicStepSubSession` + Git Checkpoints)**
+   - Enforces SHA-256 verification receipts, isolated `ctx.session.create` sub-sessions per atomic step, and temp-index git snapshots with automatic rollback on `themis:reflex:escalated`.
+3. **Delivered — Multi-Provider Model Overrides & Jev Local Decision Router**
+   - `pantheon_local_decision` + `pantheon_model` + `PantheonBus` structured telemetry (`'lsp:diagnostics'`, `'review:verdict'`, `'step:rollback'`, `'reproduction:gate'`, `'themis:reflex:escalated'`).
+4. **Delivered — Polyglot Custom Specialist Forge (`pantheon_agent_forge` + `/pantheon-forge`)**
+   - Stack auto-detection (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`) and least-privilege specialist scaffolding in `.opencode/agents/<name>.md`.
+5. **Delivered — Deep Scope Governance & Reproduction Gates**
+   - Symlink-confined workspace path guards, role-based execution restrictions, pre-edit failing test gates (`record_reproduction`) for bugfixes, and `ctx.worktree.transform` sibling isolation.
+6. **Future Horizon (`2.3.0` Candidates)**
+   - Persistent multi-repo shared knowledge federation, multi-IDE LSP TCP proxy pooling, and visual replay export for Cockpit `Flightdeck` traces.
 
 ---
 

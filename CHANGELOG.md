@@ -17,25 +17,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### 🆕 What's New
 
-- **26 Native TypeScript Tools**: FTS5 memory, checkpoints, goals, codemap, Step-Ledger, and Agent Forge run natively anywhere.
-- **Worktree Memory & Codemap Pruning**: Git worktrees share `.pantheon/` state and codemap auto-prunes deleted files on query/index.
-- **Live Dispatch & Code Mode Telemetry**: Sidebar shows domain counters (`mem`/`ctx`/`code`), live child verbs, and `?`/`!` badges.
-- **Native Todo & Relative Hashline**: Preserves OpenCode's native `todowrite` panel and resolves relative `hashline_edit` paths.
-- **Interactive Updates & Cache Hygiene**: Clickable `↑ vX.Y.Z` badges, `/pantheon-whats-new`, and automatic stale cache cleanup.
-- **TUI `/pantheon-artifacts` Viewer**: Browse plans, reports, and ADRs with Unicode Mermaid diagrams and Sidebar/Home quick links.
+- **29 Native TypeScript Tools & Pillars 1–5**: LSP bridge, `ast_search`/`ast_rewrite`, git checkpoints, worktrees, and bugfix gates.
+- **TUI Mission Control Cockpit (`/pantheon-cockpit`)**: 3-page dashboard (`Overview`, `Swarm` Gantt, `Flightdeck` gates) via `1–3`/`Tab`.
+- **Step-Ledger Checkpoints & Verdict Remediation**: Isolated `ctx.session.create` steps, git rollback, and `pantheon_review_verdict`.
+- **Interactive `/pantheon-forge` & Artifacts**: Stack detector (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`) & Mermaid viewer.
+- **Live Dispatch Telemetry & Native Todo**: Sidebar counters (`mem`/`ctx`/`code`), child verbs, `?`/`!` badges, and Home/Sidebar links.
+- **Worktree Memory, Hashline & Cache Hygiene**: Shared `.pantheon/` store, confined `hashline_edit`, and automatic stale cache cleanup.
 
 ### Added
 
-- **tui** — `artifacts.tsx`, `mermaid-ascii.ts`: added `/pantheon-artifacts` viewer with Unicode Mermaid graphs and Sidebar/Home links.
-- **tui** — `pantheon-settings-state.ts`, `index.tsx`: added `Native Tools (26)` in **About**, clickable `↑ vX.Y.Z` badges, `/pantheon-updates`, and `/pantheon-whats-new`.
-- **tui** — `legacy-audit.ts`: detects and removes stale coexisting OpenCode npm caches (`~/.cache/opencode/npm/pantheon-opencode*`) while keeping the active revision.
-- **pantheon** — `tool-context.ts`, `codemap-tools.ts`: shared `.pantheon/` store across git worktrees (`PANTHEON_ISOLATE_WORKTREE_MEMORY=1` opts out); codemap auto-prunes deleted files.
+- **tui** — `cockpit.tsx`, `cockpit-state.ts`, `index.tsx`: added 3-page `/pantheon-cockpit` (`Overview`, `Swarm`, `Flightdeck`) and Home `◈ Cockpit` link.
+- **lsp-ast** — `lsp-diagnostics.ts`, `ast-tools.ts`, `execute-after.ts`: added post-edit TypeScript/Pyright/stdio LSP bridge and `ast_search`/`ast_rewrite`.
+- **ledger** — `git-checkpoint.ts`, `step-runner.ts`, `step-ledger.ts`: added temp-index git snapshots, auto-rollback, and `ctx.session.create` step runner.
+- **orchestration** — `worktree-orchestrator.ts`, `review-verdict.ts`, `reproduction-gate.ts`: wired `ctx.worktree.transform`, verdict tool, and bugfix `RED` gate.
+- **forge** — `stack-detector.ts`, `pantheon-forge.md`, `agent-forge-tool.ts`: added `/pantheon-forge` wizard, `detect_stack`, and `init --project` stack hints.
+- **tui** — `artifacts.tsx`, `mermaid-ascii.ts`, `legacy-audit.ts`: added `/pantheon-artifacts`, Unicode Mermaid rendering, `Native Tools (29)`, and cache cleanup.
 
 ### Changed
 
-- **plugin** — `src/plugin.ts`: preserves native `todowrite`/`todoread`, removes server `/pantheon-settings` duplicate, and resolves bundled commands anywhere.
+- **plugin** — `src/plugin.ts`, `roster.json`: registers 29 tools and 9 commands, preserves native `todowrite`/`todoread`, removes `/pantheon-settings` duplicate.
 - **release** — `scripts/version-check.mjs`, `scripts/package-evidence.mjs`: validates `dist/tui.js` version match in `prepack` and package checks.
-- **docs** — updated `README.md`, `README.pt-BR.md`, `docs/`, and `wiki/` with bilingual guides and 15 live TUI screenshots for v2.2.0.
+- **docs** — updated `README.md`, `README.pt-BR.md`, `ROADMAP.md`, `docs/`, and `wiki/` with v2.2.0 Pillars 1–5, Cockpit, and live TUI screenshots.
 
 ### Removed
 
@@ -43,8 +45,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- **hashline** — `src/pantheon/hashline/tool.ts`: resolves relative paths against the active workspace directory instead of drifting outside the project when `ctx.directory` is absent.
-- **tui** — `pantheon-settings.tsx`, `whats-new.tsx`: opens `/pantheon-settings` via full-width router on Home (`Tab` and all 10 tabs functional) and enlarges `What's New` dialog layout.
+- **hashline** — `src/pantheon/hashline/tool.ts`, `tool-context.ts`: confines relative paths to the active workspace root with symlink traversal checks.
+- **tui** — `pantheon-settings.tsx`, `whats-new.tsx`, `index.tsx`: fixes Home `Tab` in `/pantheon-settings` and enlarges the `What's New` dialog layout.
 ## [v2.2.0-beta.11] - 2026-11-19
 
 ### 🆕 What's New

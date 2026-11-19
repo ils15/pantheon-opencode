@@ -25,6 +25,7 @@ panel**, **`/pantheon-settings`**, **`/pantheon-artifacts`**, and **`What's New`
 | Command | Alias / Palette | What it opens |
 |---|---|---|
 | `/pantheon-settings` | `Pantheon: Settings` | 10-tab interactive settings window (`docked` / `dialog` / `fullscreen`) |
+| `/pantheon-cockpit` | `/cockpit` · `Pantheon: Mission Control Cockpit` | 3-page Mission Control Cockpit (`Overview`, `Swarm`, `Flightdeck`) |
 | `/pantheon-updates` | `Pantheon: Updates & Cleanup` | Jumps directly to the **Updates & Legacy Cleanup** tab |
 | `/pantheon-whats-new` | `/whats-new` · `Pantheon: What's New` | Reopens the paginated release highlights card dialog |
 | `/pantheon-artifacts` | `/artifacts` · `Pantheon: Artifacts` | Lists and paginates `PLAN`, `REPORT`, and `ADR` files |
@@ -90,13 +91,23 @@ monthly / per-decision USD caps alongside the read-only decision gradient refere
 ![Pantheon Settings Doctor tab](assets/tui/settings-doctor.png)
 
 - **Sobre / About:** live summary of runtime, active preset/Jev/J1 state, and
-  the grouped inventory of all **26 Native TypeScript Tools**.
+  the grouped inventory of all **29 Native TypeScript Tools**.
 
-![Pantheon Settings About tab showing 26 native tools inventory](assets/tui/settings-about.png)
+![Pantheon Settings About tab showing 29 native tools inventory](assets/tui/settings-about.png)
 
 ---
 
 ## 3. Related Interactive Dialogs & Panels
+
+- **TUI Mission Control Cockpit (`/pantheon-cockpit`):** unified 3-page operational
+  cockpit (`Overview`, `Swarm` Gantt & activity stream, `Flightdeck` Gate Matrix),
+  navigable via `1–3` or `Tab` and from the Home `◈ Cockpit` badge.
+
+![Pantheon Mission Control Cockpit Overview tab](assets/tui/cockpit-overview.png)
+
+![Pantheon Mission Control Cockpit Swarm tab](assets/tui/cockpit-swarm.png)
+
+![Pantheon Mission Control Cockpit Flightdeck tab](assets/tui/cockpit-flightdeck.png)
 
 - **What's New (`What's-New`):** rounded card layout with pagination (`‹ Anterior`
   / `Próxima ›`) and dedicated close button (`OK, Entendido` / `OK, Got it`). See

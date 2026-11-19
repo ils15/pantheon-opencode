@@ -496,9 +496,9 @@ export function buildAboutTab(version: string, extra?: AboutTabExtra): SettingsT
     },
     {
       id: 'about.tools.codemap',
-      name: 'Codemap',
-      value: isPt ? 'ativo · 3 tools' : 'active · 3 tools',
-      note: 'code_index, code_query, code_neighbors',
+      name: isPt ? 'Codemap & AST' : 'Codemap & AST',
+      value: isPt ? 'ativo · 5 tools' : 'active · 5 tools',
+      note: 'code_index, code_query, code_neighbors, ast_search, ast_rewrite',
     },
     {
       id: 'about.tools.edit',
@@ -509,8 +509,8 @@ export function buildAboutTab(version: string, extra?: AboutTabExtra): SettingsT
     {
       id: 'about.tools.governance',
       name: isPt ? 'Orquestração & Custos' : 'Orchestration & Cost',
-      value: isPt ? 'ativo · 7+ tools' : 'active · 7+ tools',
-      note: 'pantheon_cost, pantheon_model, pantheon_skill_search, pantheon_deepwork, pantheon_step_ledger, pantheon_agent_forge, pantheon_local_decision',
+      value: isPt ? 'ativo · 8+ tools' : 'active · 8+ tools',
+      note: 'pantheon_cost, pantheon_model, pantheon_skill_search, pantheon_deepwork, pantheon_step_ledger, pantheon_agent_forge, pantheon_local_decision, pantheon_review_verdict',
     },
   ]
 
@@ -520,7 +520,7 @@ export function buildAboutTab(version: string, extra?: AboutTabExtra): SettingsT
   }
   groups.push({ title: isPt ? 'Projeto & Referências' : 'Project & References', rows: refRows })
   groups.push({
-    title: isPt ? 'Ferramentas Nativas (26)' : 'Native Tools (26)',
+    title: isPt ? 'Ferramentas Nativas (29)' : 'Native Tools (29)',
     rows: toolRows,
   })
 

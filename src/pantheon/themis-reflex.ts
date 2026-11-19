@@ -123,6 +123,16 @@ export class ThemisReflexController {
     }
 
     // Retries exhausted — escalate to coordinator
+    getSharedBus().emit('themis:reflex:escalated', {
+      taskID,
+      agent,
+      file: firstDisc?.file ?? 'unknown',
+      error: firstDisc?.error ?? 'unspecified',
+      attempt: state.attempt,
+      maxAttempts: this.maxRetries,
+      timestamp: state.timestamp,
+      resolved: false,
+    })
     this.states.delete(taskID)
     return {
       action: 'escalate',

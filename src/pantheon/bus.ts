@@ -50,6 +50,39 @@ export interface ExecutionReceiptPayload {
   readonly signature: string
 }
 
+export interface LspDiagnosticEventPayload {
+  readonly file: string
+  readonly source: 'typescript' | 'pyright' | 'lsp-stdio' | 'biome'
+  readonly count: number
+  readonly errors: number
+  readonly timestamp: number
+}
+
+export interface ReviewVerdictEventPayload {
+  readonly verdict: 'APPROVE' | 'APPROVE_WITH_NOTES' | 'BLOCK'
+  readonly targetAgent: string
+  readonly sessionID?: string
+  readonly summary: string
+  readonly findingsCount: number
+  readonly timestamp: number
+}
+
+export interface StepRollbackEventPayload {
+  readonly stepKey: string
+  readonly reason: string
+  readonly restoredTree: string
+  readonly success: boolean
+  readonly timestamp: number
+}
+
+export interface ReproductionGateEventPayload {
+  readonly stepKey: string
+  readonly agent: string
+  readonly tool: string
+  readonly allowed: boolean
+  readonly timestamp: number
+}
+
 export interface PantheonEventMap {
   'job:created': JobEventPayload
   'job:updated': JobEventPayload
@@ -57,7 +90,12 @@ export interface PantheonEventMap {
   'job:reconciled': { readonly taskID: string; readonly alias: string; readonly timestamp: number }
   'themis:reflex:discrepancy': ThemisReflexEventPayload
   'themis:reflex:resolved': ThemisReflexEventPayload
+  'themis:reflex:escalated': ThemisReflexEventPayload
   'agent:execution:receipt': ExecutionReceiptPayload
+  'lsp:diagnostics': LspDiagnosticEventPayload
+  'review:verdict': ReviewVerdictEventPayload
+  'step:rollback': StepRollbackEventPayload
+  'reproduction:gate': ReproductionGateEventPayload
 }
 
 export type PantheonEventName = keyof PantheonEventMap

@@ -279,13 +279,18 @@ export function evaluateAutoPermission(
 
   // 2. Read-only and role-restricted agents are strictly prohibited from mutating tools or shell
   if (READ_ONLY_AGENTS.has(agent)) {
-    if (['edit', 'write', 'hashline_edit', 'bash', 'shell', 'execute'].includes(action)) {
+    if (
+      ['edit', 'write', 'hashline_edit', 'ast_rewrite', 'bash', 'shell', 'execute'].includes(action)
+    ) {
       event.effect = 'deny'
       event.message = `Pantheon auto-permissions denied: read-only agent '${agent}' cannot execute mutating action '${action}'`
       return { decision: 'deny', reason: 'read-only-role-violation' }
     }
   }
-  if (NON_EDIT_AGENTS.has(agent) && ['edit', 'write', 'hashline_edit'].includes(action)) {
+  if (
+    NON_EDIT_AGENTS.has(agent) &&
+    ['edit', 'write', 'hashline_edit', 'ast_rewrite'].includes(action)
+  ) {
     event.effect = 'deny'
     event.message = `Pantheon auto-permissions denied: agent '${agent}' cannot execute file mutation '${action}'`
     return { decision: 'deny', reason: 'read-only-role-violation' }
@@ -348,7 +353,7 @@ export function evaluateAutoPermission(
   }
 
   // 5. File mutations for implementation agents
-  if (['edit', 'write', 'hashline_edit'].includes(action)) {
+  if (['edit', 'write', 'hashline_edit', 'ast_rewrite'].includes(action)) {
     if (!READ_ONLY_AGENTS.has(agent)) {
       event.effect = 'allow'
       return { decision: 'allow', reason: 'implementer-workspace-edit' }

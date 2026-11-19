@@ -11,6 +11,8 @@ permission:
   shell: allow
   edit: deny
   hashline_edit: deny
+  ast_rewrite: deny
+  pantheon_review_verdict: allow
   pantheon_deepwork: allow
   task:
     "*": deny

@@ -28,6 +28,7 @@ import {
 } from 'node:fs'
 import { join, resolve, sep } from 'node:path'
 import { PANTHEON_AGENTS } from './delegation-policy.ts'
+import { detectRepositoryStacks } from './stack-detector.ts'
 import { resolveToolCwd } from './tool-context.ts'
 import type { PantheonToolDef, PantheonToolResult } from './tools.ts'
 
@@ -105,6 +106,7 @@ function buildAgentMarkdown(params: {
     '  glob: allow',
     `  edit: ${permEdit}`,
     `  hashline_edit: ${permEdit}`,
+    `  ast_rewrite: ${permEdit}`,
     `  bash: ${permShell}`,
     `  shell: ${permShell}`,
     `  execute: ${permShell}`,
@@ -154,7 +156,7 @@ export function createAgentForgeTool(fallbackDir?: string): PantheonToolDef {
       properties: {
         action: {
           type: 'string',
-          enum: ['create', 'list', 'inspect', 'remove'],
+          enum: ['create', 'list', 'inspect', 'remove', 'detect_stack'],
           description: 'Forge operation to execute',
         },
         name: {
@@ -200,6 +202,11 @@ export function createAgentForgeTool(fallbackDir?: string): PantheonToolDef {
       try {
         const action = typeof input.action === 'string' ? input.action : 'list'
         const cwd = resolveToolCwd(context, fallbackDir)
+        if (action === 'detect_stack') {
+          const report = detectRepositoryStacks(cwd)
+          return jsonResult({ ok: true, workspace: cwd, ...report })
+        }
+
         const agentsDir = resolveAgentsDir(cwd)
 
         if (action === 'list') {

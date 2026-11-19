@@ -16,18 +16,27 @@
 
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { join, resolve, sep } from 'node:path'
+import { getSharedBus } from './bus.ts'
 import { createExecutionReceipt } from './execution-receipt.ts'
+import { captureGitCheckpoint, restoreGitCheckpoint } from './git-checkpoint.ts'
 import { ThemisReflexController } from './themis-reflex.ts'
 import { resolveToolCwd } from './tool-context.ts'
 import type { PantheonToolDef, PantheonToolResult } from './tools.ts'
 
-export type StepState = 'pending' | 'in_progress' | 'done' | 'blocked'
+export type StepState = 'pending' | 'in_progress' | 'done' | 'blocked' | 'rolled_back'
+export type StepTaskType = 'feature' | 'bugfix' | 'refactor' | 'chore'
 
 export interface StepLedgerEntry {
   stepKey: string
   objective: string
   agent: string
   state: StepState
+  taskType?: StepTaskType
+  baselineTree?: string
+  rolledBackAt?: string
+  reproductionCommand?: string
+  reproductionExitCode?: number
+  reproductionRecordedAt?: number
   mutatedFiles: string[]
   lastMutationAt: number | null
   lastVerifiedAt: number | null
@@ -116,9 +125,8 @@ export function createStepLedgerTool(fallbackDir?: string): PantheonToolDef {
   return {
     name: 'pantheon_step_ledger',
     description:
-      'Manage atomic Step-Ledger execution contracts with hard verification gates. ' +
-      'Lifecycle: init_step -> record_mutation -> record_verification -> complete_step -> status ' +
-      '(there is no "record" action). A step completes only after verification exits 0 following the last mutation.',
+      'Manage atomic Step-Ledger execution contracts with hard verification gates, Git checkpoints, and bugfix reproduction tracking. ' +
+      'Lifecycle: init_step -> [record_reproduction] -> record_mutation -> record_verification -> complete_step | rollback_step | status.',
     input: {
       type: 'object',
       additionalProperties: false,
@@ -126,9 +134,17 @@ export function createStepLedgerTool(fallbackDir?: string): PantheonToolDef {
       properties: {
         action: {
           type: 'string',
-          enum: ['init_step', 'record_mutation', 'record_verification', 'complete_step', 'status'],
+          enum: [
+            'init_step',
+            'record_reproduction',
+            'record_mutation',
+            'record_verification',
+            'complete_step',
+            'rollback_step',
+            'status',
+          ],
           description:
-            'Ledger operation (init_step | record_mutation | record_verification | complete_step | status)',
+            'Ledger operation (init_step | record_reproduction | record_mutation | record_verification | complete_step | rollback_step | status)',
         },
         stepKey: {
           type: 'string',
@@ -137,13 +153,23 @@ export function createStepLedgerTool(fallbackDir?: string): PantheonToolDef {
         },
         objective: { type: 'string', description: 'Bounded step objective' },
         agent: { type: 'string', description: 'Assigned specialist agent' },
+        taskType: {
+          type: 'string',
+          enum: ['feature', 'bugfix', 'refactor', 'chore'],
+          description: 'Task classification (bugfix enforces reproduction RED before edits)',
+        },
+        autoRollback: {
+          type: 'boolean',
+          description:
+            'Auto-restore baselineTree when verification exhausts reflex retries (default: true)',
+        },
         files: {
           type: 'array',
           items: { type: 'string' },
           description: 'Mutated file paths for record_mutation',
         },
-        command: { type: 'string', description: 'Executed verification slice command' },
-        exitCode: { type: 'number', description: 'Exit code of the verification command' },
+        command: { type: 'string', description: 'Executed verification or reproduction command' },
+        exitCode: { type: 'number', description: 'Exit code of the command' },
         durationMs: { type: 'number', description: 'Duration of verification command in ms' },
       },
     },
@@ -175,11 +201,22 @@ export function createStepLedgerTool(fallbackDir?: string): PantheonToolDef {
             typeof input.agent === 'string' && input.agent.trim()
               ? input.agent.trim()
               : 'specialist'
+          const rawTaskType = input.taskType
+          const taskType: StepTaskType | undefined =
+            rawTaskType === 'feature' ||
+            rawTaskType === 'bugfix' ||
+            rawTaskType === 'refactor' ||
+            rawTaskType === 'chore'
+              ? rawTaskType
+              : undefined
+          const ckpt = await captureGitCheckpoint(cwd, key)
           const entry: StepLedgerEntry = {
             stepKey: key,
             objective,
             agent,
             state: 'in_progress',
+            ...(taskType ? { taskType } : {}),
+            ...(ckpt.ok && ckpt.treeHash ? { baselineTree: ckpt.treeHash } : {}),
             mutatedFiles: [],
             lastMutationAt: null,
             lastVerifiedAt: null,
@@ -193,6 +230,46 @@ export function createStepLedgerTool(fallbackDir?: string): PantheonToolDef {
         const step = store.steps[key]
         if (!step) {
           return jsonResult({ ok: false, error: `Step "${key}" is not initialized` })
+        }
+
+        if (action === 'record_reproduction') {
+          const command = typeof input.command === 'string' ? input.command.trim() : ''
+          const exitCode = typeof input.exitCode === 'number' ? input.exitCode : 1
+          if (!command) return jsonResult({ ok: false, error: 'command is required' })
+          if (exitCode === 0) {
+            return jsonResult({
+              ok: false,
+              error: 'Bugfix reproduction must demonstrate a failing test/probe (exitCode !== 0)',
+              step,
+            })
+          }
+          step.reproductionCommand = command
+          step.reproductionExitCode = exitCode
+          step.reproductionRecordedAt = now
+          step.updatedAt = nowIso
+          writeStepLedger(cwd, store)
+          return jsonResult({ ok: true, reproduced: true, step })
+        }
+
+        if (action === 'rollback_step') {
+          if (!step.baselineTree) {
+            return jsonResult({ ok: false, error: `Step "${key}" has no Git baselineTree`, step })
+          }
+          const rb = await restoreGitCheckpoint(cwd, step.baselineTree)
+          if (rb.ok) {
+            step.state = 'rolled_back'
+            step.rolledBackAt = nowIso
+            step.updatedAt = nowIso
+            writeStepLedger(cwd, store)
+          }
+          getSharedBus().emit('step:rollback', {
+            stepKey: key,
+            reason: 'manual_rollback_step',
+            restoredTree: step.baselineTree,
+            success: rb.ok,
+            timestamp: Date.now(),
+          })
+          return jsonResult({ ok: rb.ok, restoredTree: step.baselineTree, error: rb.reason, step })
         }
 
         if (action === 'record_mutation') {
@@ -236,11 +313,33 @@ export function createStepLedgerTool(fallbackDir?: string): PantheonToolDef {
               error: `Verification command "${command}" failed with exit code ${exitCode}`,
             },
           ])
+          let rollbackResult: { restoredTree?: string; ok?: boolean } | undefined
           if (reflex.action === 'escalate') {
             step.state = 'blocked'
+            if (input.autoRollback !== false && step.baselineTree) {
+              const rb = await restoreGitCheckpoint(cwd, step.baselineTree)
+              rollbackResult = { restoredTree: step.baselineTree, ok: rb.ok }
+              if (rb.ok) {
+                step.state = 'rolled_back'
+                step.rolledBackAt = nowIso
+              }
+              getSharedBus().emit('step:rollback', {
+                stepKey: key,
+                reason: reflex.reason,
+                restoredTree: step.baselineTree,
+                success: rb.ok,
+                timestamp: Date.now(),
+              })
+            }
           }
           writeStepLedger(cwd, store)
-          return jsonResult({ ok: false, verified: false, reflex, step })
+          return jsonResult({
+            ok: false,
+            verified: false,
+            reflex,
+            ...(rollbackResult ? { rollback: rollbackResult } : {}),
+            step,
+          })
         }
 
         if (action === 'complete_step') {

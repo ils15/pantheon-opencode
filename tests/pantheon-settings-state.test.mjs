@@ -143,11 +143,22 @@ describe('about tab', () => {
   })
 
   it('exposes the native 2.2 tool inventory in EN and pt-BR', () => {
-    const enRows = tabRows(buildAboutTab('2.2.0', { languagePref: 'en' }))
+    const enTab = buildAboutTab('2.2.0', { languagePref: 'en' })
+    const enRows = tabRows(enTab)
     const memEn = enRows.find((r) => r.id === 'about.tools.memory')
     const codeEn = enRows.find((r) => r.id === 'about.tools.codemap')
+    const govEn = enRows.find((r) => r.id === 'about.tools.governance')
+    assert.ok(
+      enTab.groups.some((g) => g.title === 'Native Tools (29)'),
+      'EN inventory group displays Native Tools (29)',
+    )
     assert.ok(memEn?.value.includes('6 tools'), 'EN memory tools row present')
-    assert.ok(codeEn?.value.includes('3 tools'), 'EN codemap tools row present')
+    assert.ok(codeEn?.value.includes('5 tools'), 'EN codemap & AST tools row present')
+    assert.ok(codeEn?.note.includes('ast_search'), 'EN codemap & AST row lists ast_search')
+    assert.ok(
+      govEn?.note.includes('pantheon_review_verdict'),
+      'EN governance row lists review verdict',
+    )
     assert.ok(enRows.some((r) => r.id === 'about.tools.edit' && r.note.includes('hashline_edit')))
 
     const ptRows = tabRows(buildAboutTab('2.2.0', { languagePref: 'pt-BR' }))

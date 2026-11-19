@@ -7,7 +7,7 @@ entirely; 1.7.x was the last line with V1 support).
 
 **Best-practice install (`opencode plugin add`):** loading Pantheon directly
 through OpenCode's native plugin manager registers all **14 agents, 25 skills,
-8 slash commands, 26 native TypeScript tools, and TUI** in-process with zero
+9 slash commands, 29 native TypeScript tools, and TUI** in-process with zero
 copied files on disk — so it works immediately in **any directory** (git repos,
 worktrees, or empty folders) and upgrades cleanly without leaving stale copied
 assets behind.

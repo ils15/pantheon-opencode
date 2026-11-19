@@ -63,11 +63,14 @@ sob demanda. Você aprova cada gate e executa cada commit.
 
 A TUI do OpenCode 2.x exibe contadores ao vivo por domínio de ferramentas nativas (`mem`,
 `ctx`, `code`, `edit`, `shell`), atividade ao vivo e badges de atenção (`?` / `!`) no
-`Dispatch` e `/dispatch`, o visualizador interativo `/pantheon-artifacts` para planos,
-relatórios e ADRs, e o inventário completo de 26 tools nativas em `/pantheon-settings` →
-**Sobre**. Worktrees Git compartilham automaticamente o repositório principal para
-`.pantheon/memory`, checkpoints e metas (defina `PANTHEON_ISOLATE_WORKTREE_MEMORY=1` para
-isolar uma worktree).
+`Dispatch` e `/dispatch`, o **Mission Control Cockpit** (`/pantheon-cockpit` · `Overview`,
+`Swarm`, `Flightdeck`), `/pantheon-artifacts` para planos/relatórios/ADRs, o assistente
+`/pantheon-forge` com detecção de stack e o inventário completo de **29 tools nativas** em
+`/pantheon-settings` → **Sobre** (incluindo diagnósticos LSP pós-edição,
+`ast_search`/`ast_rewrite`, `pantheon_review_verdict`, gate de reprodução `RED` para bugfix e
+worktrees nativas via `ctx.worktree.transform`). Worktrees Git compartilham automaticamente o
+repositório principal para `.pantheon/memory`, checkpoints e metas (defina
+`PANTHEON_ISOLATE_WORKTREE_MEMORY=1` para isolar uma worktree).
 
 ## Estrutura
 

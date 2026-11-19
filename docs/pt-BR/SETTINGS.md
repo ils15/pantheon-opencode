@@ -27,6 +27,7 @@ no card **`What's New`**.
 | Comando | Alias / Paleta | O que abre |
 |---|---|---|
 | `/pantheon-settings` | `Pantheon: Settings` | Janela interativa de 10 abas (`docked` / `dialog` / `fullscreen`) |
+| `/pantheon-cockpit` | `/cockpit` · `Pantheon: Mission Control Cockpit` | Cockpit de Controle em 3 páginas (`Overview`, `Swarm`, `Flightdeck`) |
 | `/pantheon-updates` | `Pantheon: Updates & Cleanup` | Abre direto na aba **Atualizações & Limpeza** |
 | `/pantheon-whats-new` | `/whats-new` · `Pantheon: What's New` | Reabre o card paginado com novidades da versão |
 | `/pantheon-artifacts` | `/artifacts` · `Pantheon: Artifacts` | Lista e pagina `PLAN.md`, relatórios e ADRs |
@@ -91,14 +92,24 @@ tetos mensais/por consulta em USD para o roteamento Jev.
 
 ![Aba Doctor no Pantheon Settings](../assets/tui/settings-doctor.png)
 
-- **Sobre:** resumo de plataforma/governança e inventário agrupado das **26
+- **Sobre:** resumo de plataforma/governança e inventário agrupado das **29
   Ferramentas Nativas TypeScript** registradas pelo plugin.
 
-![Aba Sobre listando as 26 ferramentas nativas](../assets/tui/settings-about.png)
+![Aba Sobre listando as 29 ferramentas nativas](../assets/tui/settings-about.png)
 
 ---
 
 ## 3. Diálogos e Painéis Relacionados
+
+- **TUI Mission Control Cockpit (`/pantheon-cockpit`):** cockpit operacional de 3
+  páginas (`Overview`, `Swarm` Gantt + trilha semântica, `Flightdeck` Gate Matrix)
+  navegável via `1–3` / `Tab` ou clicando no selo `◈ Cockpit` da tela inicial.
+
+![Cockpit Mission Control — aba Overview](../assets/tui/cockpit-overview.png)
+
+![Cockpit Mission Control — aba Swarm](../assets/tui/cockpit-swarm.png)
+
+![Cockpit Mission Control — aba Flightdeck](../assets/tui/cockpit-flightdeck.png)
 
 - **`What's New` (`/whats-new`):** card paginado com navegação (`‹ Anterior` /
   `Próxima ›`) e botão dedicado (`OK, Entendido`). Veja [The What's-new TUI window](../reference/whats-new.md).

@@ -42,6 +42,7 @@ import {
 } from './context-sandbox.ts'
 import { type PostEditLintOptions, runPostEditLint } from './edit-guardrails.ts'
 import { createReadEnhancer } from './hashline/read-enhancer.ts'
+import { type PostEditDiagnosticsOptions, runPostEditDiagnostics } from './lsp-diagnostics.ts'
 import {
   createTaskResultGuard,
   HOST_EMPTY_RESULT_TEXT,
@@ -74,6 +75,8 @@ export interface V2ExecuteAfterOptions {
   sandbox?: ContextSandboxConfig
   /** Configure or disable per-edit diff-scoped lint diagnostics. */
   editLint?: boolean | PostEditLintOptions
+  /** Configure or disable post-edit LSP / compiler diagnostics bridge. */
+  editLsp?: boolean | PostEditDiagnosticsOptions
 }
 
 /** Which `Tool.Result` field carries the (mutable) text this adapter enhances. */
@@ -278,16 +281,27 @@ export function createV2ExecuteAfter(
       // violations inline so the specialist fixes them immediately.
       const lowerTool = tool.trim().toLowerCase()
       if (
-        options.editLint !== false &&
-        (lowerTool === 'edit' || lowerTool === 'write' || lowerTool === 'hashline_edit')
+        lowerTool === 'edit' ||
+        lowerTool === 'write' ||
+        lowerTool === 'hashline_edit' ||
+        lowerTool === 'ast_rewrite'
       ) {
         const rawArgs = (payload.input ?? {}) as Record<string, unknown>
         const editedPath = rawArgs.filePath ?? rawArgs.file_path ?? rawArgs.file
         if (typeof editedPath === 'string' && existsSync(editedPath)) {
-          const lintOptions = typeof options.editLint === 'object' ? options.editLint : {}
-          const lintDiagnostic = await runPostEditLint(editedPath, lintOptions)
-          if (lintDiagnostic) {
-            output.output = `${output.output}\n${lintDiagnostic}`
+          if (options.editLint !== false) {
+            const lintOptions = typeof options.editLint === 'object' ? options.editLint : {}
+            const lintDiagnostic = await runPostEditLint(editedPath, lintOptions)
+            if (lintDiagnostic) {
+              output.output = `${output.output}\n${lintDiagnostic}`
+            }
+          }
+          if (options.editLsp !== false) {
+            const lspOptions = typeof options.editLsp === 'object' ? options.editLsp : {}
+            const lspDiagnostic = await runPostEditDiagnostics(editedPath, lspOptions)
+            if (lspDiagnostic) {
+              output.output = `${output.output}\n${lspDiagnostic}`
+            }
           }
         }
       }

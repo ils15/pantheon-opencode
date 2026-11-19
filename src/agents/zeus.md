@@ -8,6 +8,7 @@ permission:
   read: allow
   edit: deny
   hashline_edit: deny
+  ast_rewrite: deny
   shell: deny
   bash: deny
   vision_describe: allow

@@ -9,8 +9,8 @@
  * @module tool-context
  */
 
-import { existsSync, readFileSync, statSync } from 'node:fs'
-import { basename, dirname, join, resolve } from 'node:path'
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 
 /** Structural view of the tool context opencode passes to execute(). */
 export interface ToolContextLike {
@@ -94,4 +94,19 @@ export function resolveSharedPantheonRoot(cwd: string): string {
 
 export function resolveMemoryStoreCwd(context: unknown, fallbackDir?: string): string {
   return resolveSharedPantheonRoot(resolveToolCwd(context, fallbackDir))
+}
+
+/**
+ * Resolve a file/directory path strictly inside `workspaceDir`, resolving symlinks
+ * and throwing on path traversal outside the workspace boundary.
+ */
+export function resolveSafeToolPath(workspaceDir: string, targetPath: string): string {
+  const rootReal = realpathSync(resolve(workspaceDir))
+  const candidate = resolve(rootReal, targetPath)
+  const resolved = existsSync(candidate) ? realpathSync(candidate) : candidate
+  const rel = relative(rootReal, resolved)
+  if (rel === '..' || rel.startsWith(`..${sep}`) || (rel !== '' && rel.startsWith('..'))) {
+    throw new Error(`Path "${targetPath}" escapes workspace boundary`)
+  }
+  return resolved
 }

@@ -49,6 +49,7 @@
 import { exec } from 'node:child_process'
 import { promisify } from 'node:util'
 import { createAgentForgeTool } from './agent-forge-tool.ts'
+import { createAstTools } from './ast-tools.ts'
 import { isDangerousCommand, NON_EDIT_AGENTS, NON_SHELL_AGENTS } from './auto-permissions.ts'
 import { createCodemapTools } from './codemap-tools.ts'
 import { createCostCommand } from './cost-command.ts'
@@ -60,6 +61,7 @@ import { createV2LocalDecisionDefinition } from './local-decision-tool.ts'
 import { createModelCommand } from './model-command.ts'
 import { createNativeMemoryAndPersistenceTools } from './native-memory-tools.ts'
 import { createV2VisionTool, type V2VisionRuntime } from './native-vision.ts'
+import { createReviewVerdictTool, type ReviewSyntheticSessionDomain } from './review-verdict.ts'
 import { createV2SkillSearchDefinition } from './skill-search-tool.ts'
 import { createStepLedgerTool } from './step-ledger.ts'
 import { resolveToolCwd, type ToolContextLike } from './tool-context.ts'
@@ -452,6 +454,7 @@ async function executeModel(
  */
 export interface V2ToolShadowOptions {
   readonly complexitySink?: ShadowSink
+  readonly sessionDomain?: ReviewSyntheticSessionDomain
 }
 
 /**
@@ -703,6 +706,8 @@ export function createV2ToolDefinitions(
   definitions.push(createAgentForgeTool(hostLocationDirectory))
   definitions.push(...createNativeMemoryAndPersistenceTools(hostLocationDirectory))
   definitions.push(...createCodemapTools(hostLocationDirectory))
+  definitions.push(...createAstTools(hostLocationDirectory))
+  definitions.push(createReviewVerdictTool(shadow.sessionDomain))
   if (visionRuntime) definitions.push(createV2VisionTool(visionRuntime))
   if (jevRuntime) definitions.push(createV2JevDecisionDefinition(jevRuntime))
   return definitions

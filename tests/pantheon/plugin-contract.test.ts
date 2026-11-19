@@ -416,6 +416,7 @@ async function main(): Promise<void> {
       'pantheon-updates',
       'pantheon-whats-new',
       'pantheon-artifacts',
+      'pantheon-cockpit',
       'dispatch',
     ]) {
       assert.doesNotMatch(
@@ -2898,6 +2899,8 @@ async function main(): Promise<void> {
     // V2_UNSUPPORTED_FEATURES.
     // beta.29 adds `todowrite` (pass-through) so the TUI todo panel renders.
     assert.deepEqual(registered.map((t) => t.name).sort(), [
+      'ast_rewrite',
+      'ast_search',
       'code_index',
       'code_neighbors',
       'code_query',
@@ -2919,6 +2922,7 @@ async function main(): Promise<void> {
       'pantheon_deepwork',
       'pantheon_local_decision',
       'pantheon_model',
+      'pantheon_review_verdict',
       'pantheon_skill_search',
       'pantheon_step_ledger',
       'shell',
@@ -3074,6 +3078,8 @@ async function main(): Promise<void> {
     const registered = await registerToolsThroughHostMock()
     const names = registered.map((t) => t.name).sort()
     assert.deepEqual(names, [
+      'ast_rewrite',
+      'ast_search',
       'code_index',
       'code_neighbors',
       'code_query',
@@ -3095,6 +3101,7 @@ async function main(): Promise<void> {
       'pantheon_deepwork',
       'pantheon_local_decision',
       'pantheon_model',
+      'pantheon_review_verdict',
       'pantheon_skill_search',
       'pantheon_step_ledger',
       'shell',
@@ -3651,7 +3658,7 @@ async function main(): Promise<void> {
     const v2WriteTools = [...DEFAULT_BLOCKED_TOOLS].filter((tool) => registeredNames.has(tool))
     assert.deepEqual(
       v2WriteTools.sort(),
-      ['hashline_edit', 'pantheon_model', 'shell'],
+      ['ast_rewrite', 'hashline_edit', 'pantheon_model', 'shell'],
       'the V2 surface exposes mutating tools; all must be in the blocked set',
     )
     for (const tool of v2WriteTools) {
