@@ -1056,6 +1056,8 @@ export type SidebarModel = {
     model: string;
     overridden: boolean;
   } | null>;
+  /** Custo estruturado do último turno do assistente e do anterior. */
+  turnCost: Accessor<TurnCostSummary | null>;
   /** Custo do último turno do assistente e do anterior. */
   turnCostLine: Accessor<string | null>;
   /** Decomposição anatômica de tokens (in / out / reasoning think). */

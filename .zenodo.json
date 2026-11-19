@@ -8,11 +8,11 @@
       "orcid": "0000-0001-7787-7562"
     }
   ],
-  "version": "2.2.0-beta.10",
+  "version": "2.2.0-beta.11",
   "license": "MIT",
   "language": "eng",
   "keywords": ["opencode", "ai-agents", "multi-agent", "orchestration", "developer-tools"],
-  "url": "https://github.com/ils15/pantheon-opencode/releases/tag/v2.2.0-beta.10",
+  "url": "https://github.com/ils15/pantheon-opencode/releases/tag/v2.2.0-beta.11",
   "related_identifiers": [
     {
       "identifier": "https://github.com/ils15/pantheon-opencode",
@@ -20,5 +20,5 @@
       "resource_type": "software"
     }
   ],
-  "publication_date": "2026-11-18"
+  "publication_date": "2026-11-19"
 }
