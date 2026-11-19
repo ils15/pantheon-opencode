@@ -26,19 +26,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **tui** — `cockpit.tsx`, `cockpit-state.ts`, `index.tsx`: added 3-page `/pantheon-cockpit`, `◈ Cockpit` Home link, and `Flightdeck` replay export.
-- **lsp-ast** — `lsp-diagnostics.ts`, `ast-tools.ts`: added `tsc`/Pyright/stdio + pooled TCP LSP proxy (`PANTHEON_LSP_TCP_ENDPOINTS`) and `ast_search`/`ast_rewrite`.
-- **memory** — `memory-federation.ts`, `native-memory-tools.ts`: added read-only multi-repo knowledge federation via `PANTHEON_FEDERATED_REPOS`.
-- **ledger** — `git-checkpoint.ts`, `step-runner.ts`, `step-ledger.ts`: added temp-index git snapshots, auto-rollback, and `ctx.session.create` step runner.
-- **orchestration** — `worktree-orchestrator.ts`, `review-verdict.ts`, `reproduction-gate.ts`: wired `ctx.worktree.transform`, verdict tool, and bugfix `RED` gate.
-- **forge** — `stack-detector.ts`, `pantheon-forge.md`, `agent-forge-tool.ts`: added `/pantheon-forge` wizard, `detect_stack`, and `init --project` stack hints.
-- **tui** — `artifacts.tsx`, `mermaid-ascii.ts`, `legacy-audit.ts`: added `/pantheon-artifacts`, Unicode Mermaid rendering, `Native Tools (30)`, and cache cleanup.
+- **cockpit** — `cockpit.tsx`, `cockpit-state.ts`, `cockpit-events.ts`: added 3-page `/pantheon-cockpit`, Home `◈ Cockpit` link, `.pantheon/telemetry` bus stream, and Mermaid replay export.
+- **lsp-ast** — `lsp-diagnostics.ts`, `ast-tools.ts`: added `tsc`/Pyright/stdio + pooled TCP LSP proxy (`PANTHEON_LSP_TCP_ENDPOINTS`) and workspace-confined `ast_search`/`ast_rewrite`.
+- **memory** — `memory-federation.ts`, `native-memory-tools.ts`, `tool-context.ts`: added read-only multi-repo knowledge federation (`PANTHEON_FEDERATED_REPOS`) and worktree-shared `.pantheon/`.
+- **ledger** — `git-checkpoint.ts`, `step-runner.ts`, `step-ledger.ts`: added isolated `GIT_INDEX_FILE` snapshots, `execute_step` sub-sessions, `record_reproduction`, `rollback_step`, and auto-rollback.
+- **orchestration** — `worktree-orchestrator.ts`, `review-verdict.ts`, `reproduction-gate.ts`: wired `ctx.worktree.transform` + `pantheon_worktree`, `pantheon_review_verdict`, and bugfix `RED` gate.
+- **forge** — `scripts/stack-detector.mjs`, `stack-detector.ts`, `pantheon-forge.md`, `agent-forge-tool.ts`: added `/pantheon-forge` wizard, `detect_stack`, and `init --project` hints.
+- **tui** — `artifacts.tsx`, `mermaid-ascii.ts`, `legacy-audit.ts`: added `/pantheon-artifacts` Unicode Mermaid viewer, Sidebar/Home quick links, `Native Tools (30)`, and stale npm cache cleanup.
 
 ### Changed
 
-- **plugin** — `src/plugin.ts`, `roster.json`: registers 30 tools and 9 commands, preserves native `todowrite`/`todoread`, removes `/pantheon-settings` duplicate.
-- **release** — `scripts/version-check.mjs`, `scripts/package-evidence.mjs`: validates `dist/tui.js` version match in `prepack` and package checks.
-- **docs** — updated `README.md`, `README.pt-BR.md`, `ROADMAP.md`, `docs/`, and `wiki/` with v2.2.0 Pillars 1–5, Cockpit, and live TUI screenshots.
+- **plugin** — `src/plugin.ts`, `tools.ts`, `delegation-enforce.ts`: registers all 30 native tools and 9 server commands, preserves `todowrite`/`todoread`, removes `/pantheon-settings` duplicate.
+- **agents** — `src/agents/roster.json`: updated all 14 canonical agents with permissions and prompts for `ast_search`, `pantheon_worktree`, `execute_step`, and `pantheon_review_verdict`.
+- **release** — `scripts/version-check.mjs`, `scripts/package-evidence.mjs`: validates `dist/tui.js` version match in `prepack` and package consumer tests.
+- **docs** — updated `README.md`, `README.pt-BR.md`, `ROADMAP.md`, `docs/`, and `wiki/` with complete v2.2.0 architecture, 30 tools, Cockpit guides, and live TUI screenshots.
 
 ### Removed
 
@@ -46,8 +47,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **execute-after** — `src/pantheon/execute-after.ts`, `plugin.ts`: resolves `ast_rewrite` (`path`/`filesModified`) and relative `hashline_edit` paths against workspace `cwd` for post-edit lint & LSP.
+- **sdk-parity** — `step-runner.ts`, `review-verdict.ts`: aligns `SessionApi` calls (`create`, `prompt`, `wait`, `remove`, `synthetic`) with `@opencode/client` and routes `BLOCK` to parent session.
 - **hashline** — `src/pantheon/hashline/tool.ts`, `tool-context.ts`: confines relative paths to the active workspace root with symlink traversal checks.
-- **tui** — `pantheon-settings.tsx`, `whats-new.tsx`, `index.tsx`: fixes Home `Tab` in `/pantheon-settings` and enlarges the `What's New` dialog layout.
+- **tui** — `mermaid-ascii.ts`, `pantheon-settings.tsx`, `whats-new.tsx`, `index.tsx`: fixes CodeQL `js/bad-tag-filter` alert, Home `Tab` in `/pantheon-settings`, and enlarges `What's New` layout.
 ## [v2.2.0-beta.11] - 2026-11-19
 
 ### 🆕 What's New
