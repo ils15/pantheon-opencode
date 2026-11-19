@@ -134,3 +134,11 @@ Ou pedindo diretamente para o Zeus:
 ```
 
 O plano é sintetizado pela `@athena`, auditado pela `@themis` e apresentado a você para aprovação com links clicáveis `file://` para os arquivos gerados.
+
+---
+
+## 6. Lendo o Plano Direto no Terminal (`/pantheon-artifacts`)
+
+Para navegar e ler qualquer `PLAN.md`, relatório ou ADR direto na TUI (inclusive a partir de worktrees), execute `/pantheon-artifacts` (`/artifacts`) — veja [Artefatos & `/pantheon-artifacts`](../ARTIFACTS.md):
+
+![Leitor paginado de artefatos no OpenCode TUI](../../assets/tui/artifacts-reader.png)

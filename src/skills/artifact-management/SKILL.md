@@ -28,20 +28,21 @@ Note: Files in `.pantheon/deepwork/` are gitignored by default, while `.pantheon
 When generating plans, executive reports, or ADRs, agents must format documents using high density, visual clarity, and concrete data:
 
 ### 1. GitHub-Flavored Markdown (GFM) Alerts
-Use alerts to highlight background context, efficiency gains, and safety gates:
+Use alerts to highlight background context, efficiency gains, and safety gates (never nest or place alerts consecutively):
 - `> [!NOTE]` Background context, technical assumptions, and architecture decisions.
 - `> [!TIP]` Performance optimizations, token footprint savings, and latency wins.
 - `> [!IMPORTANT]` Mandatory requirements, verification gates, and human approval checkpoints.
 - `> [!WARNING]` Potential breaking changes, deprecation notices, or environment constraints.
+- `> [!CAUTION]` High-risk actions that could cause data loss or security vulnerabilities.
 
 ### 2. Native Mermaid Diagrams
-Include a visual flowchart (`flowchart TD` or `graph LR`) visualizing the execution graph, agent handoffs, and verification gates before code changes begin.
+Include a visual flowchart (`flowchart TD` / `graph LR` / `sequenceDiagram` / `stateDiagram-v2` / `erDiagram`) visualizing the execution graph, agent handoffs, and verification gates before code changes begin. Quote node labels containing parentheses or brackets (e.g., `B["Phase 1 (@hermes)"]`) and avoid HTML tags inside labels so both CLI and OpenCode Desktop render cleanly.
 
-### 3. Quantitative Diagnostics & Comparison Tables
-Provide real metrics rather than vague qualitative statements:
-- Tokens / context footprint (before vs after)
-- Test execution latency (e.g. global vs sliced test)
-- File counts and lines affected
+### 3. Quantitative Diagnostics, Clickable Links & No Chat Duplication
+Provide real metrics and direct navigation rather than vague prose:
+- Tokens / context footprint (before vs after) and sliced test latency.
+- Clickable file links using basenames and line ranges (`[tool.ts](file:///abs/path/to/tool.ts#L12-L40)`) for instant jump in OpenCode Desktop and readable paths in CLI.
+- **No chat duplication:** after saving an artifact, link to it and present only the concise executive decision summary (≤ 15 lines) and approval gate in chat instead of repeating the full document.
 
 ### 4. Sliced Actionable Phases
 Every implementation phase lists:

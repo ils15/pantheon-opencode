@@ -13,6 +13,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
      `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
      Running apply will move this section to a versioned entry and reset the template below. -->
 
+## [v2.2.0] - 2026-11-19
+
+### 🆕 What's New
+
+- **26 Native TypeScript Tools**: FTS5 memory, checkpoints, goals, codemap, Step-Ledger, and Agent Forge run natively anywhere.
+- **Worktree Memory & Codemap Pruning**: Git worktrees share `.pantheon/` state and codemap auto-prunes deleted files on query/index.
+- **Live Dispatch & Code Mode Telemetry**: Sidebar shows domain counters (`mem`/`ctx`/`code`), live child verbs, and `?`/`!` badges.
+- **Native Todo & Relative Hashline**: Preserves OpenCode's native `todowrite` panel and resolves relative `hashline_edit` paths.
+- **Interactive Updates & Cache Hygiene**: Clickable `↑ vX.Y.Z` badges, `/pantheon-whats-new`, and automatic stale cache cleanup.
+- **TUI `/pantheon-artifacts` Viewer**: Browse plans, reports, and ADRs with Unicode Mermaid diagrams and Sidebar/Home quick links.
+
+### Added
+
+- **tui** — `artifacts.tsx`, `mermaid-ascii.ts`: added `/pantheon-artifacts` viewer with Unicode Mermaid graphs and Sidebar/Home links.
+- **tui** — `pantheon-settings-state.ts`, `index.tsx`: added `Native Tools (26)` in **About**, clickable `↑ vX.Y.Z` badges, `/pantheon-updates`, and `/pantheon-whats-new`.
+- **tui** — `legacy-audit.ts`: detects and removes stale coexisting OpenCode npm caches (`~/.cache/opencode/npm/pantheon-opencode*`) while keeping the active revision.
+- **pantheon** — `tool-context.ts`, `codemap-tools.ts`: shared `.pantheon/` store across git worktrees (`PANTHEON_ISOLATE_WORKTREE_MEMORY=1` opts out); codemap auto-prunes deleted files.
+
+### Changed
+
+- **plugin** — `src/plugin.ts`: preserves native `todowrite`/`todoread`, removes server `/pantheon-settings` duplicate, and resolves bundled commands anywhere.
+- **release** — `scripts/version-check.mjs`, `scripts/package-evidence.mjs`: validates `dist/tui.js` version match in `prepack` and package checks.
+- **docs** — updated `README.md`, `README.pt-BR.md`, `docs/`, and `wiki/` with bilingual guides and 15 live TUI screenshots for v2.2.0.
+
+### Removed
+
+- **tui** — removed the placeholder `Quotas & Spend` (`Cotas & Gastos`) tab from `/pantheon-settings`.
+
+### Fixed
+
+- **hashline** — `src/pantheon/hashline/tool.ts`: resolves relative paths against the active workspace directory instead of drifting outside the project when `ctx.directory` is absent.
+- **tui** — `pantheon-settings.tsx`, `whats-new.tsx`: opens `/pantheon-settings` via full-width router on Home (`Tab` and all 10 tabs functional) and enlarges `What's New` dialog layout.
 ## [v2.2.0-beta.11] - 2026-11-19
 
 ### 🆕 What's New

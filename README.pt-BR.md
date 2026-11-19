@@ -35,14 +35,14 @@ Requisitos: [OpenCode](https://opencode.ai/docs/) **2.x** e Node.js **≥ 26.4.0
 ([compatibilidade](docs/COMPATIBILITY.md)).
 
 ```bash
-# Principal (Recomendado) — plugin nativo do OpenCode 2.x (global ou projeto, sem npx init)
-opencode plugin add pantheon-opencode@beta
+# Principal (Recomendado) — plugin nativo do OpenCode 2.x (funciona em qualquer pasta, sem init)
+opencode plugin add pantheon-opencode
 
-# Verificar atualizações e limpar arquivos legados/obsoletos dentro do OpenCode:
-#   /pantheon-settings -> Atualizações (seção Legados, Drift & Limpeza)
+# Verificar atualizações e limpar arquivos legados/caches obsoletos dentro do OpenCode:
+#   /pantheon-settings -> Atualizações (seção Legados, Drift & Limpeza), /pantheon-updates, /pantheon-whats-new
 
 # Fallback legado via CLI (em descontinuação — apenas se precisar de MCPs Python opcionais):
-# npm install -g pantheon-opencode@beta && pantheon-opencode init --yes
+# npm install -g pantheon-opencode && pantheon-opencode init --yes
 ```
 
 ## Uso
@@ -60,6 +60,14 @@ revisão); `/pantheon` arbitra escolhas de arquitetura entre especialistas; `/pa
 executa um plano multifase com recibos mecânicos via `pantheon_step_ledger` e gates; e
 `pantheon_agent_forge` cria especialistas customizados de domínio em `.opencode/agents/<name>.md`
 sob demanda. Você aprova cada gate e executa cada commit.
+
+A TUI do OpenCode 2.x exibe contadores ao vivo por domínio de ferramentas nativas (`mem`,
+`ctx`, `code`, `edit`, `shell`), atividade ao vivo e badges de atenção (`?` / `!`) no
+`Dispatch` e `/dispatch`, o visualizador interativo `/pantheon-artifacts` para planos,
+relatórios e ADRs, e o inventário completo de 26 tools nativas em `/pantheon-settings` →
+**Sobre**. Worktrees Git compartilham automaticamente o repositório principal para
+`.pantheon/memory`, checkpoints e metas (defina `PANTHEON_ISOLATE_WORKTREE_MEMORY=1` para
+isolar uma worktree).
 
 ## Estrutura
 
@@ -85,7 +93,8 @@ tests/            suítes de teste em Node e TypeScript
 | [Instalação](docs/pt-BR/INSTALLATION.md) | [Modos de execução](docs/guides/execution-modes.md) |
 | [Primeiro projeto ponta a ponta](docs/pt-BR/guides/first-project.md) | [Matriz de capacidade dos agentes](docs/pt-BR/AGENT-CAPABILITY-MATRIX.md) |
 | [Configurações e janela TUI](docs/SETTINGS.md) | [Permissões, gates e delegação](docs/PERMISSIONS-QUALITY-DELEGATION.md) |
-| [Destaques de versões](docs/releases/highlights.md) | [CHANGELOG](CHANGELOG.md) |
+| [Artefatos e `/pantheon-artifacts`](docs/ARTIFACTS.md) | [Destaques de versões](docs/releases/highlights.md) |
+| [CHANGELOG](CHANGELOG.md) | [Arquitetura](docs/pt-BR/ARCHITECTURE.md) |
 
 Exemplos executáveis: [dashboard SaaS](examples/saas-dashboard/) e
 [CLI de saúde do repositório](examples/cli-tool/). Contribuição:

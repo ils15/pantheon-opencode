@@ -13,10 +13,11 @@ import {
 
 const TOOL_DESCRIPTION =
   'Zeus-only local advisory selector. Use selectively only when specialist routing is genuinely ' +
-  'ambiguous; obvious work should go directly to native subagent without this tool. Accepts only ' +
-  'structured candidate IDs, never task text. It does not dispatch, run a skill/resource, search ' +
-  'memory, or authorize/alter grants or review gates. Provider egress is disabled; all decisions ' +
-  'remain local.'
+  'ambiguous; obvious work should go directly to native subagent without this tool. Accepts only a ' +
+  'structured object { schemaVersion: 1, candidateAgents, domain, candidateSkillIds, ' +
+  'candidateResourceIds, memorySearchRelevant, gateStatus, complexity: { boundedness, ' +
+  'reversibility, dependencies, uncertainty, verification } } — never raw prompt strings. Does not ' +
+  'dispatch or alter review gates; provider egress is disabled.'
 
 const gateStatuses: LocalDecisionGateStatus[] = [
   'none',

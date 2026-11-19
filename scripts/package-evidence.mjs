@@ -147,6 +147,15 @@ function validatePayload(packageRoot, inventory) {
     if (sha256(sourcePath) !== sha256(packagedPath))
       fail(`published package payload differs from source: ${entry.file}`)
   }
+  const tuiBundle = readFileSync(join(packageRoot, 'src/plugins/tui/dist/tui.js'), 'utf8')
+  if (
+    tuiBundle.includes('Pantheon v') &&
+    !tuiBundle.includes(`Pantheon v${inventory.sourceVersion}`)
+  ) {
+    fail(
+      `src/plugins/tui/dist/tui.js embeds a stale version (expected Pantheon v${inventory.sourceVersion})`,
+    )
+  }
 }
 
 function collectLockfileEvidence(inventory, entries, packageRoot) {

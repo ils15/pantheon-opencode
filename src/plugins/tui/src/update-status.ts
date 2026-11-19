@@ -152,8 +152,8 @@ export function buildUpdatesTab(input: UpdatesSectionInput): SettingsTab {
     name: isPt ? 'Comando no terminal' : 'CLI Command',
     value: 'opencode plugin update',
     note: isPt
-      ? `sem npx: \`${pluginCommand} && opencode reload\``
-      : `native CLI (no npx): \`${pluginCommand} && opencode reload\``,
+      ? `rode \`${pluginCommand} && opencode reload\` (sem npx)`
+      : `run \`${pluginCommand} && opencode reload\` (no npx)`,
   })
 
   const audit = input.legacyAudit
@@ -174,8 +174,8 @@ export function buildUpdatesTab(input: UpdatesSectionInput): SettingsTab {
               ? 'limpo (0 obsoletos)'
               : 'clean (0 obsolete)'
             : isPt
-              ? `${audit.total} arquivo(s) (${formatBytes(audit.totalBytes)})`
-              : `${audit.total} file(s) (${formatBytes(audit.totalBytes)})`,
+              ? `${audit.total} item(ns) (${formatBytes(audit.totalBytes)})`
+              : `${audit.total} item(s) (${formatBytes(audit.totalBytes)})`,
       note: input.legacyNotice
         ? input.legacyNotice
         : audit && audit.total > 0
@@ -183,8 +183,8 @@ export function buildUpdatesTab(input: UpdatesSectionInput): SettingsTab {
             ? `global: ${audit.byScope.global} · projeto: ${audit.byScope.project}${audit.unmigratedStores > 0 ? ` · ${audit.unmigratedStores} store(s) p/ migrar` : ''}`
             : `global: ${audit.byScope.global} · project: ${audit.byScope.project}${audit.unmigratedStores > 0 ? ` · ${audit.unmigratedStores} store(s) to migrate` : ''}`
           : isPt
-            ? 'verifica hooks V1, bancos não migrados e cópias redundantes'
-            : 'checks V1 hooks, unmigrated stores & redundant plugin copies',
+            ? 'verifica caches npm antigos, hooks V1, bancos e cópias redundantes'
+            : 'checks stale npm caches, V1 hooks, unmigrated stores & copied files',
     },
     {
       id: 'legacy.scan',
@@ -198,8 +198,8 @@ export function buildUpdatesTab(input: UpdatesSectionInput): SettingsTab {
           : 'scan global + project',
       action: 'legacy-scan',
       note: isPt
-        ? 'enter escaneia sem modificar ou apagar nenhum arquivo'
-        : 'enter scans read-only without deleting anything',
+        ? 'enter verifica global, projeto e cache npm sem apagar nada'
+        : 'enter scans global, project & npm cache read-only',
     },
     {
       id: 'legacy.clean',
@@ -210,14 +210,14 @@ export function buildUpdatesTab(input: UpdatesSectionInput): SettingsTab {
           : 'cleaning…'
         : audit && audit.total > 0
           ? isPt
-            ? `remover ${audit.total} (${formatBytes(audit.totalBytes)})`
+            ? `limpar ${audit.total} (${formatBytes(audit.totalBytes)})`
             : `remove ${audit.total} (${formatBytes(audit.totalBytes)})`
           : isPt
-            ? 'nada para remover'
+            ? 'nada a remover'
             : 'nothing to remove',
       action: 'legacy-clean',
       note: isPt
-        ? 'migra memória/contexto/goals antes e preserva agentes/skills custom'
+        ? 'migra memória/contexto/goals antes; preserva agentes/skills custom'
         : 'migrates memory/context/goals first · preserves custom agents/skills',
     },
   ]

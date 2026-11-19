@@ -39,6 +39,7 @@ import {
 import { createReadEnhancer } from '../../src/pantheon/hashline/read-enhancer.ts'
 import { createHashlineEditTool } from '../../src/pantheon/hashline/tool.ts'
 import { HASHLINE_DICT, hashTag } from '../../src/pantheon/hashline/xxhash.ts'
+import { createV2ToolDefinitions } from '../../src/pantheon/tools.ts'
 
 // ─── Harness ───────────────────────────────────────────────────────────
 
@@ -367,6 +368,62 @@ async function main() {
     assert.ok(threw, 'hashline_edit must throw in a read-only session')
     assert.match(threw.message, /read-only/i)
   })
+
+  // ── fallbackDir / hostLocationDirectory ──────────────────────────────
+  await testAsync(
+    'tool: relative path resolves against fallbackDir when ctx.directory/worktree are omitted',
+    async () => {
+      const tmp = mkdtempSync(join(tmpdir(), 'hashline-fallback-'))
+      try {
+        const target = join(tmp, 'probe.mjs')
+        writeFileSync(target, 'export function soma(a, b) {\n  return a + b\n}\n')
+        const tool = createHashlineEditTool(tmp)
+        const res = await tool.execute(
+          {
+            file: 'probe.mjs',
+            edits: [
+              {
+                op: 'prepend',
+                ref: `1#${hashTag('export function soma(a, b) {', 1)}`,
+                content: '// fallback probe',
+              },
+            ],
+          },
+          { sessionID: 'ses_hl_fallback', agent: 'zeus' },
+        )
+        assert.notEqual(typeof res, 'string', `expected success object, got: ${String(res)}`)
+        assert.equal(
+          readFileSync(target, 'utf8'),
+          '// fallback probe\nexport function soma(a, b) {\n  return a + b\n}\n',
+        )
+
+        // End-to-end via createV2ToolDefinitions(..., hostLocationDirectory)
+        const defs = createV2ToolDefinitions(undefined, {}, undefined, tmp)
+        const def = defs.find((d) => d.name === 'hashline_edit')
+        assert.ok(def, 'hashline_edit definition must exist')
+        const v2Res = await def.execute(
+          {
+            file: 'probe.mjs',
+            edits: [
+              {
+                op: 'replace',
+                ref: `1#${hashTag('// fallback probe', 1)}`,
+                lines: ['// v2 hostLocationDirectory ok'],
+              },
+            ],
+          },
+          { sessionID: 'ses_hl_fallback', agent: 'zeus' },
+        )
+        assert.match(v2Res.output, /^Updated /)
+        assert.equal(
+          readFileSync(target, 'utf8'),
+          '// v2 hostLocationDirectory ok\nexport function soma(a, b) {\n  return a + b\n}\n',
+        )
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    },
+  )
 
   // ── golden sanity ────────────────────────────────────────────────────
   await testAsync('golden: sha256 tag is stable across runs (same input → same tag)', async () => {

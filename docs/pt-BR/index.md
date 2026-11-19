@@ -42,6 +42,8 @@ O **Pantheon** é um framework de orquestração multi-agente para o **OpenCode*
 | Catálogo de ferramentas MCP disponíveis, incluindo telemetria de custos | [Ferramentas MCP](../mcp-tools.md) |
 | Gerenciamento de memória, TTL, limites de contexto e checkpoints de sessão | [Memória](MEMORY.md) |
 | Plataformas e ecossistema suportado | [Plataformas](../PLATFORMS.md) |
+| Janela de configurações e TUI (gates, presets, atualizações, personalização) | [Configurações & TUI](SETTINGS.md) |
+| Artefatos & visualizador `/pantheon-artifacts` na TUI | [Artefatos](ARTIFACTS.md) |
 
 ---
 
@@ -66,4 +68,5 @@ O **Pantheon** é um framework de orquestração multi-agente para o **OpenCode*
 | Estratégia de branches e processo de corte de releases | [Processo de Release](RELEASING.md) |
 | Regras de proteção e validação na branch `main` | [Proteção de Branches](BRANCH-PROTECTION.md) |
 | Registro de versões e histórico de mudanças | [Changelog](https://github.com/ils15/pantheon-opencode/blob/main/CHANGELOG.md) |
+| Destaques das versões v2.x | [Destaques de Versão](../releases/highlights.md) |
 | Como contribuir com o projeto | [Como Contribuir](https://github.com/ils15/pantheon-opencode/blob/main/CONTRIBUTING.md) |

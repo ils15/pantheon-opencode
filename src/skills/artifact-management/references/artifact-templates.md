@@ -14,6 +14,8 @@ Produced by `@athena`. Opens with an immediate Mermaid diagram and follows with 
 > [!NOTE]
 > High-level context, background problem, and target outcome.
 
+Overview paragraph separating consecutive alerts cleanly (never nest or stack alerts back-to-back).
+
 > [!IMPORTANT]
 > Non-negotiable safety constraints, auth boundaries, or database schema requirements.
 
@@ -38,13 +40,13 @@ flowchart TD
 ## 3. Implementation Phases
 
 ### Phase 1: Core Implementation (@hermes)
-- **Target Files:** `src/server/auth.ts`, `tests/auth.test.ts`
+- **Target Files:** [`auth.ts`](file:///abs/path/to/src/server/auth.ts#L1-L40), [`auth.test.ts`](file:///abs/path/to/tests/auth.test.ts#L1-L30)
 - **Actions:** RED -> GREEN -> REFACTOR implementation of the auth handler.
 - **Validation Gate:** `node --test tests/auth.test.ts`
 - **Exit Criteria:** All tests green; no Biome/Ruff lint warnings.
 
 ### Phase 2: Interface & Client (@aphrodite)
-- **Target Files:** `src/ui/login.tsx`
+- **Target Files:** [`login.tsx`](file:///abs/path/to/src/ui/login.tsx#L1-L50)
 - **Actions:** Connect UI state to new auth endpoint; ensure WCAG AA keyboard access.
 - **Validation Gate:** `npx biome check src/ui/login.tsx`
 
@@ -67,6 +69,8 @@ Produced by `@apollo` (deep discovery) or `@themis` (quality/security audits):
 
 > [!NOTE]
 > Summary of findings and systemic conclusions.
+
+Concise executive takeaway before optimization guidance.
 
 > [!TIP]
 > Key optimization opportunities and quick wins.

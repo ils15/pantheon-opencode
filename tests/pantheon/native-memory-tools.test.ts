@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -171,5 +172,75 @@ test('native persistence and goal tools save/load state and block path traversal
     if (prevXdg === undefined) delete process.env.XDG_CONFIG_HOME
     else process.env.XDG_CONFIG_HOME = prevXdg
     rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('worktree sessions share the main repository memory, checkpoints, and goals store', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'pantheon-wt-mem-'))
+  const mainRepo = join(base, 'repo')
+  const worktreeDir = join(base, 'wt-task')
+  const prevHome = process.env.HOME
+  const prevXdg = process.env.XDG_CONFIG_HOME
+  process.env.HOME = join(base, 'home')
+  process.env.XDG_CONFIG_HOME = join(base, 'home', '.config')
+  mkdirSync(mainRepo, { recursive: true })
+  try {
+    execFileSync('git', ['init'], { cwd: mainRepo, stdio: 'ignore' })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], {
+      cwd: mainRepo,
+      stdio: 'ignore',
+    })
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: mainRepo, stdio: 'ignore' })
+    writeFileSync(join(mainRepo, 'README.md'), '# test\n')
+    execFileSync('git', ['add', '.'], { cwd: mainRepo, stdio: 'ignore' })
+    execFileSync('git', ['commit', '-m', 'init'], { cwd: mainRepo, stdio: 'ignore' })
+    execFileSync('git', ['worktree', 'add', '-b', 'feat/wt', worktreeDir], {
+      cwd: mainRepo,
+      stdio: 'ignore',
+    })
+
+    const mainTools = new Map(
+      createNativeMemoryAndPersistenceTools(mainRepo).map((tool) => [tool.name, tool]),
+    )
+    const wtTools = new Map(
+      createNativeMemoryAndPersistenceTools(worktreeDir).map((tool) => [tool.name, tool]),
+    )
+
+    await callTool(
+      mainTools,
+      'memory_store',
+      { namespace: 'arch', key: 'solo-rule', value: 'Share memory across worktrees' },
+      { directory: mainRepo, sessionID: 'ses_main' },
+    )
+
+    const recalledFromWt = await callTool(
+      wtTools,
+      'memory_recall',
+      { namespace: 'arch', key: 'solo-rule' },
+      { directory: worktreeDir, worktree: worktreeDir, sessionID: 'ses_wt' },
+    )
+    assert.equal(recalledFromWt.key, 'solo-rule')
+    assert.equal(recalledFromWt.value, 'Share memory across worktrees')
+
+    await callTool(
+      wtTools,
+      'goal_create',
+      { id: 'wt-goal-1', title: 'Keep goals visible from main', criteria: ['Shared root'] },
+      { directory: worktreeDir, worktree: worktreeDir, sessionID: 'ses_wt' },
+    )
+    const goalFromMain = await callTool(
+      mainTools,
+      'goal_get',
+      { id: 'wt-goal-1' },
+      { directory: mainRepo, sessionID: 'ses_main' },
+    )
+    assert.equal(goalFromMain.id, 'wt-goal-1')
+    assert.equal(goalFromMain.title, 'Keep goals visible from main')
+  } finally {
+    if (prevHome === undefined) delete process.env.HOME
+    else process.env.HOME = prevHome
+    if (prevXdg === undefined) delete process.env.XDG_CONFIG_HOME
+    else process.env.XDG_CONFIG_HOME = prevXdg
+    rmSync(base, { recursive: true, force: true })
   }
 })

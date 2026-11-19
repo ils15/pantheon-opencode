@@ -19,22 +19,29 @@ host never loads two Pantheon plugins.
 
 ## Tools
 
-The plugin registers tools through `ctx.tool.transform()`. The exact list,
-with source locators, is in
-[Architecture](ARCHITECTURE.md#what-the-plugin-registers). In user terms:
+The plugin registers **26 native TypeScript tools** through `ctx.tool.transform()`
+with zero external Python dependency, automatically available in any workspace via
+`opencode plugin add pantheon-opencode` (check the live inventory in `/pantheon-settings`
+→ **About**):
 
-- `hashline_edit` edits files by line-tag anchors instead of raw line numbers.
-- `pantheon_cost` reports tokens and USD by agent, model, and session.
-- `pantheon_model` shows, sets, or resets per-agent project-scoped model
-  overrides.
-- `pantheon_local_decision` is the advisory local decision selector; it runs
-  only for Zeus.
-- `vision_describe` appears when the host exposes its model catalog.
-- `pantheon_bounded_read` appears when the host exposes its permission and
-  session APIs, and only in a root Zeus session.
-
-The three legacy goal tools are not registered. Use the Persistence MCP
-`goal_*` tools for durable manual goals; see [Memory](MEMORY.md#manual-session-goals).
+- **Memory, context & goals:** `memory_store`, `memory_recall`, `memory_search`,
+  `memory_forget`, `memory_stats`, `context_save`, `context_get`, `goal_create`,
+  `goal_get`, `goal_update`, and `goal_done` — FTS5-backed persistence under `.pantheon/`
+  that automatically shares the main repository root across linked git worktrees
+  (override with `PANTHEON_ISOLATE_WORKTREE_MEMORY=1`). `goal_update` uses `notes`
+  to append progress entries.
+- **Structural codemap:** `code_index`, `code_query`, and `code_neighbors` — AST-lite
+  symbol/relation graph with automatic orphan pruning whenever files are deleted on disk.
+- **Mechanical gates & agent forge:** `pantheon_step_ledger` (`init_step` →
+  `record_mutation` → `record_verification` → `complete_step` / `status`),
+  `pantheon_deepwork`, `pantheon_agent_forge`, and `pantheon_skill_search`.
+- **Editing, telemetry & routing:** `hashline_edit` (resolves relative paths against the
+  active workspace directory without fallback), `pantheon_cost`, `pantheon_model`, and
+  `pantheon_local_decision` (Zeus-only advisory selector; requires a structured payload
+  and returns `decision: "abstain"` fail-closed when no decision model is configured).
+- **Host-conditional tools:** `vision_describe` when the host exposes its model catalog,
+  and `pantheon_bounded_read` when the host exposes its permission and session APIs
+  (root Zeus sessions only).
 
 ## Per-agent MCP permissions
 
@@ -63,8 +70,10 @@ One aggregated `Dispatch` block covers the whole child set:
 
 - header `◈ Dispatch · <n> rodando · $<cost>`, summing every child, live and
   finished;
-- one row per live child (`⠸ <agent>·<kind> $<cost> <duration>`, newest first,
-  three then `… +N rodando`);
+- one row per live child (`⠸ <agent>·<kind>[·<verb>][?|!] $<cost> <duration>`,
+  newest first, three then `… +N rodando`), surfacing real-time activity verbs
+  (`edit`, `code`, `bash`, `ask`, `err`) and attention badges (`?` waiting for
+  permission/question, `!` error);
 - finished children rolled up per agent: `✓ <total> · $<sum> · <M> agentes`
   (plus `· <F> falhas` when any child failed), up to three
   `<agent> ×<count>·<kind>  $<sum>` rows and `… +K  $<sum>` beyond — never one
@@ -82,38 +91,9 @@ no child. It is added with `append` claims: the native prompt footer keeps its
 own line, and Pantheon only appends `▸<preset> · ✦<n> ativos` while delegations
 are running.
 
-<!-- media: opencode-v2-dispatch-sidebar
-     alt: "Pantheon sidebar with the aggregated Dispatch block: two live child rows and a finished roll-up"
-     source: docs/assets/tui/sidebar.gif (recorded from docs/assets/tui/sidebar.tape)
-     status: pending — no image committed; the fenced sketch below is illustrative
--->
+![Pantheon sidebar with the aggregated Dispatch block](assets/tui/session-sidebar.png)
 
-<!-- illustrative, not a screenshot; real capture pending -->
-
-```text
-Pantheon v1.6.0
-▸ teampro · anthropic
-Sessão: MCP permission audit
-
-▤ Context
-142.6K tokens
-▰▰▰▰▰▰▰▰▱▱▱▱ 71% of 200K
-$4.12 spent
-cache 92% · 42.3 tok/s
-
-◈ Dispatch · 2 rodando · $3.49
-⠸ prometheus·plan $0.09 14m34s
-⠸ apollo·disc $0.03 1m12s
-✓ 70 · $3.40 · 9 agentes
-prometheus   × 12·plan   $1.20
-hermes       × 31        $1.44
-athena       ×  9·plan   $0.76
-```
-
-*Illustrative layout — not a screenshot.* Live children lead the block; finished
-children collapse into one roll-up per agent, never one row per session.
-
-*OpenCode 2.x · pantheon-opencode 1.6.0*
+*OpenCode 2.3.2 · pantheon-opencode 2.2.0 — live session capture (`Dispatch` roll-up per agent, token telemetry, and git status).*
 
 ## `/dispatch` panel
 
@@ -144,32 +124,9 @@ Pantheon toasts `Open a session to view Dispatch` instead of inventing a
 route. Jumping from a row to the child session is a documented TODO: no
 `session` router destination is verified for a child id.
 
-<!-- media: opencode-v2-dispatch-panel
-     alt: "Full-width /dispatch panel mid-run: child list, tree counters and the selected child's detail pane"
-     source: docs/assets/tui/dispatch-panel.gif (recorded from docs/assets/tui/dispatch-panel.tape)
-     status: pending — no image committed; the fenced sketch below is illustrative
--->
+![Full-width /dispatch panel showing child tree and detail pane](assets/tui/dispatch-panel.png)
 
-<!-- illustrative, not a screenshot; real capture pending -->
-
-```text
-◈ Dispatch — MCP permission audit
-2 rodando · 70 concluídos · 1 falha · $3.59
-──────────────────────────────────────────────────────────────────────
-▸ ⠋ prometheus   plan   $0.09  14m34s    MCP permission audit
-  ✓ hermes       oth    $0.44   2m10s    ses_ab12cd · anthropic/claude-sonnet-4.5
-  ✓ apollo       disc   $0.12   1m02s    in 12.4K · out 430 · r 120 · cache 8.0K/1.0K
-  ✗ athena       plan   $0.01     48s    kind plan (prefixo) · parent ses_9f31aa
-  ✓ zeus         plan   $0.07   3m21s
-  ✓ demeter      oth    $0.05   1m45s
-
-1-10 de 71 · k/up j/down mover · enter detalhe · f fullscreen · escape/q fechar
-```
-
-*Illustrative layout — not a screenshot.* Above 72 columns the detail sits beside
-the list; narrower panels stack it underneath and truncate per column.
-
-*OpenCode 2.x · pantheon-opencode 1.6.0*
+*OpenCode 2.3.2 · pantheon-opencode 2.2.0 — live `[fullscreen]` `/dispatch` panel capture.*
 
 ## Plan before approval
 
@@ -205,7 +162,7 @@ Zeus · teampro
 *Illustrative layout — not a screenshot.* The plan is printed in the main
 conversation before the question, so approval never refers to a child's view.
 
-*OpenCode 2.x · pantheon-opencode 1.6.0*
+*OpenCode 2.x · pantheon-opencode 2.2.0*
 
 ## Context pruning
 
@@ -248,9 +205,9 @@ uses the `pantheon-memory` MCP only when an agent explicitly calls
 
 ## Session goals
 
-Durable manual goals are Persistence MCP tools, not plugin tools:
-`goal_create`, `goal_get`, `goal_update`, and `goal_done`. They are granted only
-to Zeus, partitioned by OpenCode session id, and never continue a session
+Durable manual goals are registered as native plugin tools (`goal_create`, `goal_get`,
+`goal_update`, and `goal_done`), backed by the shared `.pantheon/` store across
+worktrees. They are granted to Zeus, scoped cleanly, and never continue a session
 automatically. See [Memory](MEMORY.md#manual-session-goals).
 
 ## Task-result guard

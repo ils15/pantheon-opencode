@@ -481,11 +481,48 @@ export function buildAboutTab(version: string, extra?: AboutTabExtra): SettingsT
     },
   ]
 
+  const toolRows: SettingsRow[] = [
+    {
+      id: 'about.tools.memory',
+      name: isPt ? 'Memória FTS5' : 'FTS5 Memory',
+      value: isPt ? 'ativo · 6 tools' : 'active · 6 tools',
+      note: 'memory_store, memory_recall, memory_search, memory_forget, memory_list, memory_stats',
+    },
+    {
+      id: 'about.tools.persistence',
+      name: isPt ? 'Checkpoints & Metas' : 'Checkpoints & Goals',
+      value: isPt ? 'ativo · 6 tools' : 'active · 6 tools',
+      note: 'context_save, context_get, goal_create, goal_get, goal_update, goal_done',
+    },
+    {
+      id: 'about.tools.codemap',
+      name: 'Codemap',
+      value: isPt ? 'ativo · 3 tools' : 'active · 3 tools',
+      note: 'code_index, code_query, code_neighbors',
+    },
+    {
+      id: 'about.tools.edit',
+      name: isPt ? 'Edição & Execução' : 'Edit & Execution',
+      value: isPt ? 'ativo · 4 tools' : 'active · 4 tools',
+      note: 'hashline_edit, shell, todowrite, todoread',
+    },
+    {
+      id: 'about.tools.governance',
+      name: isPt ? 'Orquestração & Custos' : 'Orchestration & Cost',
+      value: isPt ? 'ativo · 7+ tools' : 'active · 7+ tools',
+      note: 'pantheon_cost, pantheon_model, pantheon_skill_search, pantheon_deepwork, pantheon_step_ledger, pantheon_agent_forge, pantheon_local_decision',
+    },
+  ]
+
   const groups = [{ title: isPt ? 'Sistema & Plataforma' : 'System & Platform', rows: sysRows }]
   if (extra?.preset !== undefined || extra?.decisionEnabled !== undefined) {
     groups.push({ title: isPt ? 'Governança & Roteamento' : 'Governance & Routing', rows: govRows })
   }
   groups.push({ title: isPt ? 'Projeto & Referências' : 'Project & References', rows: refRows })
+  groups.push({
+    title: isPt ? 'Ferramentas Nativas (26)' : 'Native Tools (26)',
+    rows: toolRows,
+  })
 
   return {
     id: 'about',

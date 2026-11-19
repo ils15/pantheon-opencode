@@ -30,6 +30,13 @@ for global + project exactly once; overlap is a defect pinned by
   that agent's prompt at build (`generateAgentPrompt`); it never rides
   another agent's.
 
+## External Projects & Solo-Dev Repositories
+
+When working outside the Pantheon repository (where `scripts/build-agents-md.mjs` does not exist):
+- Author or update the project's committed root `AGENTS.md` directly — keep it concise (stack, layout, exact test/lint/build commands, and worktree ownership rules).
+- Keep team/project architecture decisions in committed `docs/decisions/` rather than ignored `.pantheon/` artifacts so git history stays complete even across clones or worktrees.
+- Keep `.pantheon/memory/` for local operational recall (linked worktrees automatically share the main repository's `.pantheon/memory/memory.db` unless `PANTHEON_ISOLATE_WORKTREE_MEMORY=1` is set).
+
 ## Writing rules that survive
 
 - One imperative per line where possible; a threshold is a number, not "fast".

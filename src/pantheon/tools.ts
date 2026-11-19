@@ -261,8 +261,6 @@ function coerceHashlineEditArgs(input: Record<string, unknown>):
   return { ok: true, args: { file, edits } }
 }
 
-const hashlineEdit = createHashlineEditTool()
-
 /**
  * Wrap the V1 `hashline_edit` tool for the V2 surface.
  *
@@ -271,32 +269,35 @@ const hashlineEdit = createHashlineEditTool()
  * satisfies the host's declaration, and `title`/`metadata` survive because the
  * host spreads metadata through.
  */
-async function executeHashlineEdit(
-  input: Record<string, unknown>,
-  context: unknown,
-): Promise<V2ToolResult> {
-  const ctx = toolContext(context)
-  const callerAgent = (ctx.agent ?? '').toLowerCase().trim()
-  if (callerAgent && callerAgent !== 'zeus' && NON_EDIT_AGENTS.has(callerAgent)) {
-    return {
-      output: `hashline_edit denied: agent '${callerAgent}' is not permitted to edit files directly.`,
+function createHashlineEditExecutor(fallbackDir?: string) {
+  const hashlineTool = createHashlineEditTool(fallbackDir)
+  return async function executeHashlineEdit(
+    input: Record<string, unknown>,
+    context: unknown,
+  ): Promise<V2ToolResult> {
+    const ctx = toolContext(context)
+    const callerAgent = (ctx.agent ?? '').toLowerCase().trim()
+    if (callerAgent && callerAgent !== 'zeus' && NON_EDIT_AGENTS.has(callerAgent)) {
+      return {
+        output: `hashline_edit denied: agent '${callerAgent}' is not permitted to edit files directly.`,
+      }
     }
-  }
-  const coerced = coerceHashlineEditArgs(input)
-  if (!coerced.ok) return { output: coerced.error }
-  let result: HashlineToolResult
-  try {
-    result = await hashlineEdit.execute(coerced.args, ctx)
-  } catch (err: unknown) {
-    // The V1 tool does not throw for user errors; this is defence in depth so
-    // an unexpected throw surfaces as text instead of an absent tool result.
-    return { output: errorText('hashline_edit failed', err) }
-  }
-  if (typeof result === 'string') return { output: result }
-  return {
-    output: result.output,
-    ...(result.title === undefined ? {} : { title: result.title }),
-    ...(result.metadata === undefined ? {} : { metadata: result.metadata }),
+    const coerced = coerceHashlineEditArgs(input)
+    if (!coerced.ok) return { output: coerced.error }
+    let result: HashlineToolResult
+    try {
+      result = await hashlineTool.execute(coerced.args, ctx)
+    } catch (err: unknown) {
+      // The V1 tool does not throw for user errors; this is defence in depth so
+      // an unexpected throw surfaces as text instead of an absent tool result.
+      return { output: errorText('hashline_edit failed', err) }
+    }
+    if (typeof result === 'string') return { output: result }
+    return {
+      output: result.output,
+      ...(result.title === undefined ? {} : { title: result.title }),
+      ...(result.metadata === undefined ? {} : { metadata: result.metadata }),
+    }
   }
 }
 
@@ -659,7 +660,7 @@ export function createV2ToolDefinitions(
         'and a Did-you-mean suggestion, and nothing is modified.',
       input: HASHLINE_EDIT_INPUT,
       output: {},
-      execute: executeHashlineEdit,
+      execute: createHashlineEditExecutor(hostLocationDirectory),
     },
     {
       name: 'pantheon_cost',

@@ -141,6 +141,19 @@ describe('about tab', () => {
     assert.equal(rows[0].value, 'v2.0.0-beta.2')
     assert.ok(rows.some((row) => row.note.includes('V1 contract is removed')))
   })
+
+  it('exposes the native 2.2 tool inventory in EN and pt-BR', () => {
+    const enRows = tabRows(buildAboutTab('2.2.0', { languagePref: 'en' }))
+    const memEn = enRows.find((r) => r.id === 'about.tools.memory')
+    const codeEn = enRows.find((r) => r.id === 'about.tools.codemap')
+    assert.ok(memEn?.value.includes('6 tools'), 'EN memory tools row present')
+    assert.ok(codeEn?.value.includes('3 tools'), 'EN codemap tools row present')
+    assert.ok(enRows.some((r) => r.id === 'about.tools.edit' && r.note.includes('hashline_edit')))
+
+    const ptRows = tabRows(buildAboutTab('2.2.0', { languagePref: 'pt-BR' }))
+    const memPt = ptRows.find((r) => r.id === 'about.tools.memory')
+    assert.ok(memPt?.note.includes('memory_search'), 'pt-BR memory row lists native tools')
+  })
 })
 
 function load_fixture(global, project, corruptGlobal = false) {

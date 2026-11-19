@@ -299,6 +299,56 @@ function jsonResult(payload: unknown): PantheonToolResult {
   return { output: JSON.stringify(payload) }
 }
 
+function deleteIndexedFile(db: DatabaseSync, relFile: string): void {
+  db.prepare('DELETE FROM code_entities WHERE file = ?').run(relFile)
+  db.prepare('DELETE FROM code_relations WHERE file = ?').run(relFile)
+  db.prepare('DELETE FROM code_files WHERE path = ?').run(relFile)
+}
+
+function pruneMissingFilesInScope(db: DatabaseSync, canonicalRoot: string, subRel: string): number {
+  const cleanScope = subRel.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '')
+  const rows =
+    cleanScope === '' || cleanScope === '.'
+      ? (db.prepare('SELECT path FROM code_files').all() as Array<{ path: string }>)
+      : (db
+          .prepare("SELECT path FROM code_files WHERE path = ? OR path LIKE ? ESCAPE '\\'")
+          .all(cleanScope, `${cleanScope.replace(/[\\%_]/g, '\\$&')}/%`) as Array<{ path: string }>)
+  let pruned = 0
+  for (const row of rows) {
+    if (typeof row?.path !== 'string') continue
+    if (!existsSync(resolve(canonicalRoot, row.path))) {
+      deleteIndexedFile(db, row.path)
+      pruned += 1
+    }
+  }
+  return pruned
+}
+
+function filterAndPruneExistingRows<T extends { file?: unknown }>(
+  db: DatabaseSync,
+  canonicalRoot: string,
+  rows: T[],
+): T[] {
+  const kept: T[] = []
+  const missing = new Set<string>()
+  for (const row of rows) {
+    const file = typeof row.file === 'string' ? row.file : ''
+    if (!file) {
+      kept.push(row)
+      continue
+    }
+    if (missing.has(file) || !existsSync(resolve(canonicalRoot, file))) {
+      if (!missing.has(file)) {
+        missing.add(file)
+        deleteIndexedFile(db, file)
+      }
+      continue
+    }
+    kept.push(row)
+  }
+  return kept
+}
+
 export function createCodemapTools(fallbackDir?: string): PantheonToolDef[] {
   return [
     {
@@ -389,10 +439,15 @@ export function createCodemapTools(fallbackDir?: string): PantheonToolDef[] {
             indexed += 1
           }
 
+          const pruned = st.isFile()
+            ? 0
+            : pruneMissingFilesInScope(db, canonicalRoot, relative(canonicalRoot, targetPath))
+
           return jsonResult({
             ok: true,
             indexed,
             skipped,
+            pruned,
             entities: entitiesCount,
             relations: relationsCount,
           })
@@ -431,7 +486,8 @@ export function createCodemapTools(fallbackDir?: string): PantheonToolDef[] {
               ? Math.min(Math.floor(input.limit), 100)
               : 25
           const cwd = resolveToolCwd(context, fallbackDir)
-          const db = getCodemapDb(cwd)
+          const canonicalRoot = realpathSync(cwd)
+          const db = getCodemapDb(canonicalRoot)
           const escaped = q.replace(/[\\%_]/g, '\\$&')
           let sql = `
             SELECT name, kind, file, line, signature
@@ -446,7 +502,11 @@ export function createCodemapTools(fallbackDir?: string): PantheonToolDef[] {
           sql +=
             ' ORDER BY CASE WHEN name = ? THEN 0 WHEN name LIKE ? THEN 1 ELSE 2 END, file, line LIMIT ?'
           params.push(q, `${escaped}%`, limit)
-          const rows = db.prepare(sql).all(...params)
+          const rows = filterAndPruneExistingRows(
+            db,
+            canonicalRoot,
+            db.prepare(sql).all(...params) as Array<{ file?: unknown }>,
+          )
           return jsonResult({ ok: true, count: rows.length, results: rows })
         } catch (err) {
           return jsonResult({
@@ -480,32 +540,41 @@ export function createCodemapTools(fallbackDir?: string): PantheonToolDef[] {
           if (!target) return jsonResult({ ok: false, error: 'target is required', neighbors: [] })
           const direction = typeof input.direction === 'string' ? input.direction : 'both'
           const cwd = resolveToolCwd(context, fallbackDir)
-          const db = getCodemapDb(cwd)
+          const canonicalRoot = realpathSync(cwd)
+          const db = getCodemapDb(canonicalRoot)
           const escaped = target.replace(/[\\%_]/g, '\\$&')
 
           const outgoing =
             direction === 'incoming'
               ? []
-              : db
-                  .prepare(
-                    `SELECT source, target, kind, file, line
-                     FROM code_relations
-                     WHERE source = ? OR source LIKE ? ESCAPE '\\'
-                     LIMIT 50`,
-                  )
-                  .all(target, `%${escaped}%`)
+              : filterAndPruneExistingRows(
+                  db,
+                  canonicalRoot,
+                  db
+                    .prepare(
+                      `SELECT source, target, kind, file, line
+                       FROM code_relations
+                       WHERE source = ? OR source LIKE ? ESCAPE '\\'
+                       LIMIT 50`,
+                    )
+                    .all(target, `%${escaped}%`) as Array<{ file?: unknown }>,
+                )
 
           const incoming =
             direction === 'outgoing'
               ? []
-              : db
-                  .prepare(
-                    `SELECT source, target, kind, file, line
-                     FROM code_relations
-                     WHERE target = ? OR target LIKE ? ESCAPE '\\'
-                     LIMIT 50`,
-                  )
-                  .all(target, `%${escaped}%`)
+              : filterAndPruneExistingRows(
+                  db,
+                  canonicalRoot,
+                  db
+                    .prepare(
+                      `SELECT source, target, kind, file, line
+                       FROM code_relations
+                       WHERE target = ? OR target LIKE ? ESCAPE '\\'
+                       LIMIT 50`,
+                    )
+                    .all(target, `%${escaped}%`) as Array<{ file?: unknown }>,
+                )
 
           return jsonResult({
             ok: true,

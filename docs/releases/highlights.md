@@ -4,6 +4,14 @@
 > [CHANGELOG.md](https://github.com/ils15/pantheon-opencode/blob/main/CHANGELOG.md); this
 > page keeps the user-facing highlights that used to sit in the README.
 
+## v2.2.0
+
+- **26 Native TypeScript Tools in One Plugin:** FTS5 memory (`memory_*`), context checkpoints (`context_*`), durable goals (`goal_*`), structural codemap (`code_*`), Step-Ledger receipts (`pantheon_step_ledger`), and custom agent creation (`pantheon_agent_forge`) all run natively in-process—no Python runtime required and zero `init` needed when installed via `opencode plugin add pantheon-opencode`.
+- **Shared `.pantheon/` Store Across Git Worktrees:** Linked git worktrees automatically resolve back to the main repository's `.pantheon/` store for memory, checkpoints, and goals (opt out with `PANTHEON_ISOLATE_WORKTREE_MEMORY=1`).
+- **Codemap Orphan Pruning & Relative `hashline_edit`:** Deleted files are pruned automatically during `code_index`, `code_query`, and `code_neighbors`; `hashline_edit` resolves relative paths against the active workspace directory even when `ctx.directory` is omitted.
+- **High-Density TUI Telemetry, Artifacts Viewer & Interactive Updates:** Sidebar surfaces Code Mode domain counters (`mem`, `ctx`, `code`, `edit`, `shell`), live child action verbs and `?`/`!` attention badges in `Dispatch` / `/dispatch`, `/pantheon-artifacts` paginated viewer for plans/reports/ADRs, native `todowrite` integration, clickable `↑ vX.Y.Z` update badges, `/pantheon-updates`, `/pantheon-whats-new`, and the `Native Tools (26)` inventory in **About**.
+- **Anti-Stale Cache & Bundle Protections:** `Legacy & Drift` scans and removes stale coexisting OpenCode plugin caches (`~/.cache/opencode/npm/pantheon-opencode*`), and `version:check` / `package:validate` fail fast if `dist/tui.js` embeds a stale version.
+
 ## v2.1.6
 
 - **Deepwork Resilient Normalization:** Full support for multi-decision plans, single-option policy constraints, string criteria auto-inference, and agent handle normalization with atomic plan locking.

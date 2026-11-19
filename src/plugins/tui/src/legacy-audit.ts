@@ -65,7 +65,9 @@ export interface LegacyCleanResult {
 export interface LegacyAuditOptions {
   readonly workspaceDir?: string
   readonly globalConfigDir?: string
+  readonly cacheDir?: string
   readonly runningVersion?: string
+  readonly activeBundlePath?: string
   readonly includeRedundantCopiedAssets?: boolean
   readonly env?: Record<string, string | undefined>
 }
@@ -134,6 +136,124 @@ const LEGACY_INSTRUCTION_FILES: readonly string[] = Object.freeze([
   'zeus-orchestration.instructions.md',
   'zeus-workflow.instructions.md',
 ])
+
+export function resolveAuditCacheDir(
+  env: Record<string, string | undefined> = process.env,
+): string | undefined {
+  if (env.NODE_TEST_CONTEXT) return undefined
+  if (env.XDG_CACHE_HOME?.trim()) return join(resolve(env.XDG_CACHE_HOME.trim()), 'opencode', 'npm')
+  const home = env.HOME?.trim()
+  return home ? join(resolve(home), '.cache', 'opencode', 'npm') : undefined
+}
+
+function readCachedPackageVersion(candidateDir: string): string | null {
+  for (const manifest of [
+    join(candidateDir, 'node_modules', 'pantheon-opencode', 'package.json'),
+    join(candidateDir, 'package.json'),
+  ]) {
+    try {
+      if (!existsSync(manifest)) continue
+      const parsed = JSON.parse(readFileSync(manifest, 'utf8')) as { version?: unknown }
+      if (typeof parsed.version === 'string' && parsed.version.trim() !== '') {
+        return parsed.version.trim()
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return null
+}
+
+function isUnderPath(parentDir: string, targetPath: string): boolean {
+  try {
+    const parentReal = realpathSync(parentDir)
+    const targetReal = realpathSync(targetPath)
+    return targetReal === parentReal || targetReal.startsWith(`${parentReal}/`)
+  } catch {
+    return false
+  }
+}
+
+function collectCacheAudit(cacheNpmDir: string, options: LegacyAuditOptions): LegacyAuditItem[] {
+  const items: LegacyAuditItem[] = []
+  if (!existsSync(cacheNpmDir) || cacheNpmDir === '/') return items
+
+  const activeBundlePath = options.activeBundlePath ?? ''
+  const runningVersion = options.runningVersion ? String(options.runningVersion).trim() : ''
+  const runningIsStable = runningVersion !== '' && !/-(?:beta|rc)\./i.test(runningVersion)
+  const seen = new Set<string>()
+
+  const pushCacheItem = (targetPath: string, reason: string) => {
+    const resolved = resolve(targetPath)
+    if (seen.has(resolved) || !existsSync(resolved)) return
+    if (activeBundlePath && isUnderPath(resolved, activeBundlePath)) return
+    seen.add(resolved)
+    items.push({
+      path: resolved,
+      scope: 'global',
+      category: 'drift',
+      reason,
+      bytes: measurePathBytes(resolved),
+    })
+  }
+
+  let channelEntries: Array<{ name: string; isDirectory: () => boolean }> = []
+  try {
+    channelEntries = readdirSync(cacheNpmDir, { withFileTypes: true })
+  } catch {
+    return items
+  }
+
+  for (const entry of channelEntries) {
+    if (!entry.isDirectory()) continue
+    if (entry.name !== 'pantheon-opencode' && !entry.name.startsWith('pantheon-opencode@')) {
+      continue
+    }
+    const channelDir = join(cacheNpmDir, entry.name)
+
+    // Flag coexisting @beta channel cache once user runs a stable install.
+    if (runningIsStable && entry.name === 'pantheon-opencode@beta') {
+      pushCacheItem(channelDir, 'Stale @beta plugin cache coexisting with stable install')
+      continue
+    }
+
+    // Keep only the active (or newest) timestamp/version revision inside a channel directory.
+    try {
+      const revisions = readdirSync(channelDir, { withFileTypes: true })
+        .filter(
+          (sub) => sub.isDirectory() && sub.name !== 'node_modules' && !sub.name.startsWith('.'),
+        )
+        .map((sub) => {
+          const full = join(channelDir, sub.name)
+          let mtime = 0
+          try {
+            mtime = statSync(full).mtimeMs
+          } catch {}
+          return {
+            path: full,
+            mtime,
+            active: Boolean(activeBundlePath && isUnderPath(full, activeBundlePath)),
+          }
+        })
+      if (revisions.length > 1) {
+        revisions.sort((a, b) => Number(b.active) - Number(a.active) || b.mtime - a.mtime)
+        for (const stale of revisions.slice(1)) {
+          const ver = readCachedPackageVersion(stale.path)
+          pushCacheItem(
+            stale.path,
+            ver
+              ? `Stale cached Pantheon plugin revision (v${ver})`
+              : 'Stale cached Pantheon plugin revision',
+          )
+        }
+      }
+    } catch {
+      /* ignore unreadable cache dir */
+    }
+  }
+
+  return items
+}
 
 export function resolveAuditGlobalDir(
   env: Record<string, string | undefined> = process.env,
@@ -616,6 +736,9 @@ export function scanLegacyArtifacts(options: LegacyAuditOptions = {}): LegacyAud
   const globalConfigDir = options.globalConfigDir
     ? resolve(options.globalConfigDir)
     : resolveAuditGlobalDir(options.env)
+  const cacheNpmDir = options.cacheDir
+    ? resolve(options.cacheDir)
+    : resolveAuditCacheDir(options.env)
 
   const items: LegacyAuditItem[] = []
   let unmigratedStores = 0
@@ -624,6 +747,10 @@ export function scanLegacyArtifacts(options: LegacyAuditOptions = {}): LegacyAud
     const res = collectScopeAudit('global', globalConfigDir, globalConfigDir, options)
     items.push(...res.items)
     unmigratedStores += res.unmigratedStores
+  }
+
+  if (cacheNpmDir && existsSync(cacheNpmDir) && cacheNpmDir !== '/') {
+    items.push(...collectCacheAudit(cacheNpmDir, options))
   }
 
   if (
@@ -665,6 +792,9 @@ export function cleanLegacyArtifacts(
   const globalConfigDir = options.globalConfigDir
     ? resolve(options.globalConfigDir)
     : resolveAuditGlobalDir(options.env)
+  const cacheNpmDir = options.cacheDir
+    ? resolve(options.cacheDir)
+    : resolveAuditCacheDir(options.env)
   const scopeFilter = options.scope && options.scope !== 'all' ? options.scope : null
 
   const scan = scanLegacyArtifacts(options)
@@ -699,7 +829,11 @@ export function cleanLegacyArtifacts(
       continue
     }
     const scopeRoot = item.scope === 'global' ? globalConfigDir : workspaceDir
-    if (!scopeRoot || !isConfinedWithin(scopeRoot, item.path)) {
+    const confineRoot =
+      item.scope === 'global' && cacheNpmDir && isConfinedWithin(cacheNpmDir, item.path)
+        ? cacheNpmDir
+        : scopeRoot
+    if (!confineRoot || !isConfinedWithin(confineRoot, item.path)) {
       errors.push({ path: item.path, reason: 'Path escapes target scope root' })
       continue
     }
@@ -712,7 +846,7 @@ export function cleanLegacyArtifacts(
       if (item.path.endsWith('.db')) {
         for (const suffix of ['-wal', '-shm', '-journal']) {
           const sidecar = `${item.path}${suffix}`
-          if (existsSync(sidecar) && isConfinedWithin(scopeRoot, sidecar)) {
+          if (existsSync(sidecar) && isConfinedWithin(confineRoot, sidecar)) {
             const sidecarBytes = measurePathBytes(sidecar)
             rmSync(sidecar, { force: true })
             removed.push(sidecar)

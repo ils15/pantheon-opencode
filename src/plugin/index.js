@@ -6,7 +6,7 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
 });
 
 // src/plugin.ts
-import { appendFileSync as appendFileSync2, existsSync as existsSync16, mkdirSync as mkdirSync11, readdirSync as readdirSync7, readFileSync as readFileSync14 } from "node:fs";
+import { appendFileSync as appendFileSync2, existsSync as existsSync17, mkdirSync as mkdirSync11, readdirSync as readdirSync7, readFileSync as readFileSync15 } from "node:fs";
 import { realpath as realpathAsync } from "node:fs/promises";
 import path4 from "node:path";
 import { fileURLToPath as fileURLToPath5 } from "node:url";
@@ -6363,12 +6363,12 @@ function recordSkip(sink, skipReason) {
   );
 }
 function abortDeadline(signal) {
-  return new Promise((resolve14) => {
+  return new Promise((resolve15) => {
     if (signal.aborted) {
-      resolve14("timeout");
+      resolve15("timeout");
       return;
     }
-    signal.addEventListener("abort", () => resolve14("timeout"), { once: true });
+    signal.addEventListener("abort", () => resolve15("timeout"), { once: true });
   });
 }
 function createJ1RiskGateObserver(options) {
@@ -8581,12 +8581,12 @@ function recordSkip2(sink, skipReason) {
   );
 }
 function abortDeadline2(signal) {
-  return new Promise((resolve14) => {
+  return new Promise((resolve15) => {
     if (signal.aborted) {
-      resolve14("timeout");
+      resolve15("timeout");
       return;
     }
-    signal.addEventListener("abort", () => resolve14("timeout"), { once: true });
+    signal.addEventListener("abort", () => resolve15("timeout"), { once: true });
   });
 }
 function createJ3EscalationObserver(options) {
@@ -10642,7 +10642,7 @@ var PantheonBus = class {
    * Wait asynchronously for a specific event matching a predicate, with an optional timeout.
    */
   waitFor(event, predicate, timeoutMs = 3e4) {
-    return new Promise((resolve14, reject) => {
+    return new Promise((resolve15, reject) => {
       let timer = null;
       let unsubscribe = null;
       if (timeoutMs > 0 && Number.isFinite(timeoutMs)) {
@@ -10656,7 +10656,7 @@ var PantheonBus = class {
           if (predicate(payload)) {
             if (timer) clearTimeout(timer);
             unsubscribe?.();
-            resolve14(payload);
+            resolve15(payload);
           }
         } catch (err) {
           if (timer) clearTimeout(timer);
@@ -11043,9 +11043,9 @@ var BackgroundJobBoard = class {
     if (existing && (TERMINAL_STATES.has(existing.state) || existing.state === "reconciled")) {
       return Promise.resolve(existing);
     }
-    return new Promise((resolve14, reject) => {
+    return new Promise((resolve15, reject) => {
       const waiter = {
-        resolve: resolve14,
+        resolve: resolve15,
         reject,
         timer: setTimeout(() => {
           this.removeTerminalWaiter(taskID, waiter);
@@ -11515,7 +11515,7 @@ function runHook(script, payload, opts = {}) {
       timedOut: false
     });
   }
-  return new Promise((resolve14) => {
+  return new Promise((resolve15) => {
     const stdoutBuf = { value: "" };
     const stderrBuf = { value: "" };
     let settled = false;
@@ -11525,7 +11525,7 @@ function runHook(script, payload, opts = {}) {
       if (!settled) {
         settled = true;
         if (timeoutHandle !== void 0) clearTimeout(timeoutHandle);
-        resolve14(result);
+        resolve15(result);
       }
     };
     const spawnOpts = {
@@ -12024,17 +12024,19 @@ import { promisify as promisify2 } from "node:util";
 
 // src/pantheon/agent-forge-tool.ts
 import {
-  existsSync as existsSync8,
+  existsSync as existsSync9,
   mkdirSync as mkdirSync6,
   readdirSync as readdirSync3,
-  readFileSync as readFileSync8,
+  readFileSync as readFileSync9,
   realpathSync as realpathSync3,
   rmSync as rmSync2,
   writeFileSync as writeFileSync5
 } from "node:fs";
-import { join as join13, resolve as resolve8, sep as sep4 } from "node:path";
+import { join as join14, resolve as resolve9, sep as sep4 } from "node:path";
 
 // src/pantheon/tool-context.ts
+import { existsSync as existsSync8, readFileSync as readFileSync8, statSync as statSync4 } from "node:fs";
+import { basename as basename2, dirname as dirname9, join as join13, resolve as resolve8 } from "node:path";
 function resolveToolCwd(context, fallbackDir) {
   const ctx = context ?? {};
   if (typeof ctx.directory === "string" && ctx.directory.trim().length > 0) {
@@ -12048,6 +12050,45 @@ function resolveToolCwd(context, fallbackDir) {
   }
   return process.cwd();
 }
+function resolveSharedPantheonRoot(cwd) {
+  if (process.env.PANTHEON_ISOLATE_WORKTREE_MEMORY === "1") return cwd;
+  try {
+    let cur = resolve8(cwd);
+    for (let depth = 0; depth < 32; depth += 1) {
+      const dotGit = join13(cur, ".git");
+      if (existsSync8(dotGit)) {
+        const st = statSync4(dotGit);
+        if (st.isDirectory()) return cwd;
+        if (st.isFile()) {
+          const content = readFileSync8(dotGit, "utf8");
+          const match = /^gitdir:\s*(.+)$/m.exec(content);
+          if (!match?.[1]) return cwd;
+          const gitDir = resolve8(cur, match[1].trim());
+          const commonFile = join13(gitDir, "commondir");
+          let commonGitDir = null;
+          if (existsSync8(commonFile)) {
+            commonGitDir = resolve8(gitDir, readFileSync8(commonFile, "utf8").trim());
+          } else if (basename2(dirname9(gitDir)) === "worktrees") {
+            commonGitDir = dirname9(dirname9(gitDir));
+          }
+          if (commonGitDir && basename2(commonGitDir) === ".git") {
+            const mainRoot = dirname9(commonGitDir);
+            if (existsSync8(mainRoot)) return mainRoot;
+          }
+          return cwd;
+        }
+      }
+      const parent = dirname9(cur);
+      if (parent === cur) break;
+      cur = parent;
+    }
+  } catch {
+  }
+  return cwd;
+}
+function resolveMemoryStoreCwd(context, fallbackDir) {
+  return resolveSharedPantheonRoot(resolveToolCwd(context, fallbackDir));
+}
 
 // src/pantheon/agent-forge-tool.ts
 var SAFE_AGENT_NAME_RE = /^[a-z][a-z0-9-]{1,48}$/;
@@ -12055,12 +12096,12 @@ function isValidAgentSlug(value) {
   return typeof value === "string" && SAFE_AGENT_NAME_RE.test(value) && !value.includes("..") && !value.includes("/") && !value.includes("\\");
 }
 function resolveAgentsDir(workspaceDir) {
-  const dir = join13(workspaceDir, ".opencode", "agents");
+  const dir = join14(workspaceDir, ".opencode", "agents");
   mkdirSync6(dir, { recursive: true });
   return realpathSync3(dir);
 }
 function resolveConfinedAgentFile(agentsDir, name) {
-  const filePath = resolve8(agentsDir, `${name}.md`);
+  const filePath = resolve9(agentsDir, `${name}.md`);
   const prefix = agentsDir.endsWith(sep4) ? agentsDir : `${agentsDir}${sep4}`;
   if (!filePath.startsWith(prefix)) {
     throw new Error("Path traversal denied: agent file escapes .opencode/agents");
@@ -12184,7 +12225,7 @@ function createAgentForgeTool(fallbackDir) {
           const files = readdirSync3(agentsDir).filter((f) => f.endsWith(".md") && f.toLowerCase() !== "readme.md").sort();
           const agents = files.map((file) => {
             const id = file.replace(/\.md$/, "");
-            const raw = readFileSync8(join13(agentsDir, file), "utf8");
+            const raw = readFileSync9(join14(agentsDir, file), "utf8");
             const descMatch = raw.match(/^description:\s*(.+)$/m);
             return {
               name: id,
@@ -12203,18 +12244,18 @@ function createAgentForgeTool(fallbackDir) {
         }
         const filePath = resolveConfinedAgentFile(agentsDir, name);
         if (action === "inspect") {
-          if (!existsSync8(filePath)) {
+          if (!existsSync9(filePath)) {
             return jsonResult({ ok: false, error: "agent_not_found", name });
           }
           return jsonResult({
             ok: true,
             name,
             path: `.opencode/agents/${name}.md`,
-            content: readFileSync8(filePath, "utf8")
+            content: readFileSync9(filePath, "utf8")
           });
         }
         if (action === "remove") {
-          if (!existsSync8(filePath)) {
+          if (!existsSync9(filePath)) {
             return jsonResult({ ok: false, error: "agent_not_found", name });
           }
           rmSync2(filePath, { force: true });
@@ -12273,8 +12314,8 @@ function createAgentForgeTool(fallbackDir) {
 
 // src/pantheon/codemap-tools.ts
 import { createHash as createHash6 } from "node:crypto";
-import { existsSync as existsSync9, mkdirSync as mkdirSync7, readdirSync as readdirSync4, readFileSync as readFileSync9, realpathSync as realpathSync4, statSync as statSync4 } from "node:fs";
-import { extname as extname2, join as join14, relative as relative3, resolve as resolve9, sep as sep5 } from "node:path";
+import { existsSync as existsSync10, mkdirSync as mkdirSync7, readdirSync as readdirSync4, readFileSync as readFileSync10, realpathSync as realpathSync4, statSync as statSync5 } from "node:fs";
+import { extname as extname2, join as join15, relative as relative3, resolve as resolve10, sep as sep5 } from "node:path";
 import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
 var IGNORED_DIRS = /* @__PURE__ */ new Set([
   ".git",
@@ -12300,10 +12341,10 @@ var SUPPORTED_EXT_LANG = {
 };
 var codemapDbCache = /* @__PURE__ */ new Map();
 function getCodemapDb(workspaceDir) {
-  const memoryDir = join14(workspaceDir, ".pantheon", "memory");
+  const memoryDir = join15(workspaceDir, ".pantheon", "memory");
   mkdirSync7(memoryDir, { recursive: true });
   const canonicalBase = realpathSync4(memoryDir);
-  const dbPath = resolve9(canonicalBase, "memory.db");
+  const dbPath = resolve10(canonicalBase, "memory.db");
   const prefix = canonicalBase.endsWith(sep5) ? canonicalBase : `${canonicalBase}${sep5}`;
   if (!dbPath.startsWith(prefix)) {
     throw new Error("Path traversal denied for codemap database");
@@ -12505,12 +12546,12 @@ function collectSourceFiles(currentDir, maxFiles = 500) {
       const name = String(entry.name);
       if (entry.isDirectory()) {
         if (!IGNORED_DIRS.has(name) && !name.startsWith(".")) {
-          walk(join14(dir, name));
+          walk(join15(dir, name));
         }
       } else if (entry.isFile()) {
         const ext = extname2(name).toLowerCase();
         if (ext in SUPPORTED_EXT_LANG) {
-          results.push(join14(dir, name));
+          results.push(join15(dir, name));
         }
       }
     }
@@ -12520,6 +12561,44 @@ function collectSourceFiles(currentDir, maxFiles = 500) {
 }
 function jsonResult2(payload) {
   return { output: JSON.stringify(payload) };
+}
+function deleteIndexedFile(db, relFile) {
+  db.prepare("DELETE FROM code_entities WHERE file = ?").run(relFile);
+  db.prepare("DELETE FROM code_relations WHERE file = ?").run(relFile);
+  db.prepare("DELETE FROM code_files WHERE path = ?").run(relFile);
+}
+function pruneMissingFilesInScope(db, canonicalRoot, subRel) {
+  const cleanScope = subRel.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
+  const rows = cleanScope === "" || cleanScope === "." ? db.prepare("SELECT path FROM code_files").all() : db.prepare("SELECT path FROM code_files WHERE path = ? OR path LIKE ? ESCAPE '\\'").all(cleanScope, `${cleanScope.replace(/[\\%_]/g, "\\$&")}/%`);
+  let pruned = 0;
+  for (const row of rows) {
+    if (typeof row?.path !== "string") continue;
+    if (!existsSync10(resolve10(canonicalRoot, row.path))) {
+      deleteIndexedFile(db, row.path);
+      pruned += 1;
+    }
+  }
+  return pruned;
+}
+function filterAndPruneExistingRows(db, canonicalRoot, rows) {
+  const kept = [];
+  const missing = /* @__PURE__ */ new Set();
+  for (const row of rows) {
+    const file = typeof row.file === "string" ? row.file : "";
+    if (!file) {
+      kept.push(row);
+      continue;
+    }
+    if (missing.has(file) || !existsSync10(resolve10(canonicalRoot, file))) {
+      if (!missing.has(file)) {
+        missing.add(file);
+        deleteIndexedFile(db, file);
+      }
+      continue;
+    }
+    kept.push(row);
+  }
+  return kept;
 }
 function createCodemapTools(fallbackDir) {
   return [
@@ -12546,17 +12625,17 @@ function createCodemapTools(fallbackDir) {
           const cwd = resolveToolCwd(context, fallbackDir);
           const canonicalRoot = realpathSync4(cwd);
           const subPath = typeof input.path === "string" && input.path.trim() ? input.path.trim() : ".";
-          const targetPath = resolve9(canonicalRoot, subPath);
+          const targetPath = resolve10(canonicalRoot, subPath);
           const rootPrefix = canonicalRoot.endsWith(sep5) ? canonicalRoot : `${canonicalRoot}${sep5}`;
           if (targetPath !== canonicalRoot && !targetPath.startsWith(rootPrefix)) {
             return jsonResult2({ ok: false, error: "path escapes workspace root" });
           }
-          if (!existsSync9(targetPath)) {
+          if (!existsSync10(targetPath)) {
             return jsonResult2({ ok: false, error: `path not found: ${subPath}` });
           }
           const force = input.force === true;
           const db = getCodemapDb(canonicalRoot);
-          const st = statSync4(targetPath);
+          const st = statSync5(targetPath);
           const files = st.isFile() ? [targetPath] : collectSourceFiles(targetPath);
           let indexed = 0;
           let skipped = 0;
@@ -12568,7 +12647,7 @@ function createCodemapTools(fallbackDir) {
             const lang = SUPPORTED_EXT_LANG[ext];
             if (!lang) continue;
             const relFile = relative3(canonicalRoot, filePath).replace(/\\/g, "/");
-            const content = readFileSync9(filePath, "utf8");
+            const content = readFileSync10(filePath, "utf8");
             const hash = createHash6("sha256").update(content).digest("hex");
             const existing = db.prepare("SELECT hash FROM code_files WHERE path = ?").get(relFile);
             if (!force && existing?.hash === hash) {
@@ -12597,10 +12676,12 @@ function createCodemapTools(fallbackDir) {
             ).run(relFile, hash, lang, nowIso);
             indexed += 1;
           }
+          const pruned = st.isFile() ? 0 : pruneMissingFilesInScope(db, canonicalRoot, relative3(canonicalRoot, targetPath));
           return jsonResult2({
             ok: true,
             indexed,
             skipped,
+            pruned,
             entities: entitiesCount,
             relations: relationsCount
           });
@@ -12635,7 +12716,8 @@ function createCodemapTools(fallbackDir) {
           if (!q) return jsonResult2({ ok: false, error: "query is required", results: [] });
           const limit = typeof input.limit === "number" && Number.isFinite(input.limit) && input.limit > 0 ? Math.min(Math.floor(input.limit), 100) : 25;
           const cwd = resolveToolCwd(context, fallbackDir);
-          const db = getCodemapDb(cwd);
+          const canonicalRoot = realpathSync4(cwd);
+          const db = getCodemapDb(canonicalRoot);
           const escaped = q.replace(/[\\%_]/g, "\\$&");
           let sql = `
             SELECT name, kind, file, line, signature
@@ -12649,7 +12731,11 @@ function createCodemapTools(fallbackDir) {
           }
           sql += " ORDER BY CASE WHEN name = ? THEN 0 WHEN name LIKE ? THEN 1 ELSE 2 END, file, line LIMIT ?";
           params.push(q, `${escaped}%`, limit);
-          const rows = db.prepare(sql).all(...params);
+          const rows = filterAndPruneExistingRows(
+            db,
+            canonicalRoot,
+            db.prepare(sql).all(...params)
+          );
           return jsonResult2({ ok: true, count: rows.length, results: rows });
         } catch (err) {
           return jsonResult2({
@@ -12682,20 +12768,29 @@ function createCodemapTools(fallbackDir) {
           if (!target) return jsonResult2({ ok: false, error: "target is required", neighbors: [] });
           const direction = typeof input.direction === "string" ? input.direction : "both";
           const cwd = resolveToolCwd(context, fallbackDir);
-          const db = getCodemapDb(cwd);
+          const canonicalRoot = realpathSync4(cwd);
+          const db = getCodemapDb(canonicalRoot);
           const escaped = target.replace(/[\\%_]/g, "\\$&");
-          const outgoing = direction === "incoming" ? [] : db.prepare(
-            `SELECT source, target, kind, file, line
-                     FROM code_relations
-                     WHERE source = ? OR source LIKE ? ESCAPE '\\'
-                     LIMIT 50`
-          ).all(target, `%${escaped}%`);
-          const incoming = direction === "outgoing" ? [] : db.prepare(
-            `SELECT source, target, kind, file, line
-                     FROM code_relations
-                     WHERE target = ? OR target LIKE ? ESCAPE '\\'
-                     LIMIT 50`
-          ).all(target, `%${escaped}%`);
+          const outgoing = direction === "incoming" ? [] : filterAndPruneExistingRows(
+            db,
+            canonicalRoot,
+            db.prepare(
+              `SELECT source, target, kind, file, line
+                       FROM code_relations
+                       WHERE source = ? OR source LIKE ? ESCAPE '\\'
+                       LIMIT 50`
+            ).all(target, `%${escaped}%`)
+          );
+          const incoming = direction === "outgoing" ? [] : filterAndPruneExistingRows(
+            db,
+            canonicalRoot,
+            db.prepare(
+              `SELECT source, target, kind, file, line
+                       FROM code_relations
+                       WHERE target = ? OR target LIKE ? ESCAPE '\\'
+                       LIMIT 50`
+            ).all(target, `%${escaped}%`)
+          );
           return jsonResult2({
             ok: true,
             target,
@@ -12715,19 +12810,19 @@ function createCodemapTools(fallbackDir) {
 
 // src/pantheon/cost-command.ts
 import { execFile as execFile2 } from "node:child_process";
-import { accessSync, constants as constants3, existsSync as existsSync11, statSync as statSync5 } from "node:fs";
-import { delimiter, dirname as dirname10, join as join17 } from "node:path";
+import { accessSync, constants as constants3, existsSync as existsSync12, statSync as statSync6 } from "node:fs";
+import { delimiter, dirname as dirname11, join as join18 } from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 import { z } from "zod";
 
 // src/plugins/tui/src/cost-data.ts
 import { homedir as homedir6 } from "node:os";
-import { join as join16 } from "node:path";
+import { join as join17 } from "node:path";
 
 // src/plugins/tui/src/model-pricing.ts
-import { existsSync as existsSync10, mkdirSync as mkdirSync8, readFileSync as readFileSync10, renameSync as renameSync3, writeFileSync as writeFileSync6 } from "node:fs";
+import { existsSync as existsSync11, mkdirSync as mkdirSync8, readFileSync as readFileSync11, renameSync as renameSync3, writeFileSync as writeFileSync6 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
-import { dirname as dirname9, join as join15 } from "node:path";
+import { dirname as dirname10, join as join16 } from "node:path";
 var MODELS_DEV_URL = "https://models.dev/api.json";
 var PRICING_CACHE_VERSION = 1;
 var PRICING_TTL_MS = 24 * 60 * 60 * 1e3;
@@ -12736,11 +12831,11 @@ function resolvePricingCacheDir(env = process.env) {
   const explicit = env.PANTHEON_HOME?.trim();
   if (explicit !== void 0 && explicit !== "") return explicit;
   const xdg = env.XDG_CONFIG_HOME?.trim();
-  const base = xdg !== void 0 && xdg !== "" ? xdg : join15(homedir5(), ".config");
-  return join15(base, "opencode");
+  const base = xdg !== void 0 && xdg !== "" ? xdg : join16(homedir5(), ".config");
+  return join16(base, "opencode");
 }
 function resolvePricingCachePath(env = process.env) {
-  return join15(resolvePricingCacheDir(env), "cache", "models-dev.json");
+  return join16(resolvePricingCacheDir(env), "cache", "models-dev.json");
 }
 function isRecord19(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -12871,8 +12966,8 @@ function parseCachedCatalog(raw) {
 }
 function readPricingCache(cachePath) {
   try {
-    if (!existsSync10(cachePath)) return void 0;
-    return parseCachedCatalog(JSON.parse(readFileSync10(cachePath, "utf8")));
+    if (!existsSync11(cachePath)) return void 0;
+    return parseCachedCatalog(JSON.parse(readFileSync11(cachePath, "utf8")));
   } catch {
     return void 0;
   }
@@ -12880,7 +12975,7 @@ function readPricingCache(cachePath) {
 function writePricingCache(cachePath, catalog) {
   const temp = `${cachePath}.tmp-${process.pid}`;
   try {
-    mkdirSync8(dirname9(cachePath), { recursive: true });
+    mkdirSync8(dirname10(cachePath), { recursive: true });
     writeFileSync6(temp, `${JSON.stringify(catalog)}
 `, "utf8");
     renameSync3(temp, cachePath);
@@ -13030,8 +13125,8 @@ var VERSION_SOURCES = {
 };
 function defaultDbPath() {
   const xdg = process.env.XDG_DATA_HOME;
-  const dataHome = xdg !== void 0 && xdg !== "" ? xdg : join16(homedir6(), ".local", "share");
-  return join16(dataHome, "opencode", "opencode.db");
+  const dataHome = xdg !== void 0 && xdg !== "" ? xdg : join17(homedir6(), ".local", "share");
+  return join17(dataHome, "opencode", "opencode.db");
 }
 function requestedVersion() {
   const configured = process.env.PANTHEON_OPENCODE_VERSION;
@@ -13090,7 +13185,7 @@ function priceTokens(pricing, provider, model, tokens) {
 
 // src/pantheon/cost-command.ts
 var __filename = fileURLToPath4(import.meta.url);
-var __dirname = dirname10(__filename);
+var __dirname = dirname11(__filename);
 var costArgs = {
   days: z.number().int().min(1).max(365).optional().describe("Number of rolling 24-hour days of history to include (default 7)."),
   session: z.string().min(1).optional().describe(
@@ -13102,7 +13197,7 @@ var costArgs = {
 };
 function findExistingDb(override) {
   const candidate = override === void 0 ? resolveCostDbPath() : resolveCostDbPath({ dbPath: override });
-  return existsSync11(candidate) ? candidate : void 0;
+  return existsSync12(candidate) ? candidate : void 0;
 }
 var COST_AGGREGATE_SQL = {
   message: (sessionId) => `
@@ -13719,13 +13814,13 @@ var NODE_SQLITE_MIN_VERSION = "22.5";
 function defaultIsExecutable(path5) {
   try {
     accessSync(path5, constants3.X_OK);
-    return statSync5(path5).isFile();
+    return statSync6(path5).isFile();
   } catch {
     return false;
   }
 }
 function defaultExecFile(file, args) {
-  return new Promise((resolve14, reject) => {
+  return new Promise((resolve15, reject) => {
     execFile2(file, [...args], { encoding: "utf8" }, (error, stdout, stderr) => {
       if (error) {
         const failure = error;
@@ -13734,7 +13829,7 @@ function defaultExecFile(file, args) {
         reject(failure);
         return;
       }
-      resolve14({ stdout, stderr });
+      resolve15({ stdout, stderr });
     });
   });
 }
@@ -13746,7 +13841,7 @@ function resolveNodeFromPath(env, isExecutable = defaultIsExecutable) {
   for (const dir of pathValue.split(delimiter)) {
     if (dir === "") continue;
     for (const ext of extensions) {
-      const candidate = join17(dir, `node${ext}`);
+      const candidate = join18(dir, `node${ext}`);
       if (isExecutable(candidate)) return candidate;
     }
   }
@@ -13810,8 +13905,8 @@ async function queryWithCliFallback(dbPath, days, deps) {
   const env = deps?.env ?? process.env;
   const execFileAsync2 = deps?.execFile ?? defaultExecFile;
   const isExecutable = deps?.isExecutable ?? defaultIsExecutable;
-  const costScript = join17(__dirname, "..", "..", "scripts", "cost.mjs");
-  if (!existsSync11(costScript)) {
+  const costScript = join18(__dirname, "..", "..", "scripts", "cost.mjs");
+  if (!existsSync12(costScript)) {
     throw new Error(`CLI fallback script not found: ${costScript}`);
   }
   const node = resolveNodeExecutable(env, isExecutable);
@@ -13952,7 +14047,7 @@ ${renderMarkdown(query, days, pricing)}`;
 import { z as z3 } from "zod";
 
 // src/pantheon/deepwork/plan-projection.ts
-import { join as join18 } from "node:path";
+import { join as join19 } from "node:path";
 function generateChatProjection(plan, cwd = process.cwd()) {
   const pendingDecisions = plan.decisions_needed.filter((d) => d.status === "pending");
   const totalTasks = plan.tasks.length;
@@ -13962,8 +14057,8 @@ function generateChatProjection(plan, cwd = process.cwd()) {
   const readyTasks = plan.tasks.filter((t) => t.state === "ready");
   const nextTask = inProgressTasks[0] || readyTasks[0] || plan.tasks.find((t) => t.state === "pending");
   const percent = totalTasks > 0 ? Math.round(doneTasks / totalTasks * 100) : 0;
-  const absPlanMd = join18(cwd, ".pantheon", "deepwork", plan.plan_id, "PLAN.md");
-  const absPlanJson = join18(cwd, ".pantheon", "deepwork", plan.plan_id, "plan.json");
+  const absPlanMd = join19(cwd, ".pantheon", "deepwork", plan.plan_id, "PLAN.md");
+  const absPlanJson = join19(cwd, ".pantheon", "deepwork", plan.plan_id, "plan.json");
   const lines = [];
   lines.push(`### Deepwork: ${plan.title} (\`${plan.plan_id}\`)`);
   lines.push(
@@ -14137,9 +14232,9 @@ function buildApprovalQuestion(plan) {
 }
 
 // src/pantheon/deepwork/plan-tracker.ts
-import { existsSync as existsSync12 } from "node:fs";
+import { existsSync as existsSync13 } from "node:fs";
 import { appendFile as appendFile3, mkdir as mkdir6, readdir, readFile as readFile6, rename as rename5, writeFile as writeFile3 } from "node:fs/promises";
-import { join as join19 } from "node:path";
+import { join as join20 } from "node:path";
 
 // src/pantheon/execution-receipt.ts
 import { createHash as createHash7 } from "node:crypto";
@@ -14349,7 +14444,7 @@ var DeepworkPlanSchema = z2.object({
 
 // src/pantheon/deepwork/plan-tracker.ts
 function deepworkRootDir(cwd = process.cwd()) {
-  return join19(cwd, ".pantheon", "deepwork");
+  return join20(cwd, ".pantheon", "deepwork");
 }
 function deepworkPlanDir(cwd = process.cwd(), slug) {
   const safeSlug = String(slug ?? "").trim();
@@ -14358,16 +14453,16 @@ function deepworkPlanDir(cwd = process.cwd(), slug) {
       `Invalid deepwork plan slug "${slug}": path traversal or separator characters are not allowed`
     );
   }
-  return join19(deepworkRootDir(cwd), safeSlug);
+  return join20(deepworkRootDir(cwd), safeSlug);
 }
 function deepworkPlanJsonPath(cwd = process.cwd(), slug) {
-  return join19(deepworkPlanDir(cwd, slug), "plan.json");
+  return join20(deepworkPlanDir(cwd, slug), "plan.json");
 }
 function deepworkPlanMdPath(cwd = process.cwd(), slug) {
-  return join19(deepworkPlanDir(cwd, slug), "PLAN.md");
+  return join20(deepworkPlanDir(cwd, slug), "PLAN.md");
 }
 function deepworkJournalPath(cwd = process.cwd(), slug) {
-  return join19(deepworkPlanDir(cwd, slug), "journal.ndjson");
+  return join20(deepworkPlanDir(cwd, slug), "journal.ndjson");
 }
 function computeTaskReadiness(plan) {
   const doneIds = new Set(plan.tasks.filter((t) => t.state === "done").map((t) => t.id));
@@ -14564,8 +14659,8 @@ async function withPlanLock(cwd, slug, fn) {
   const key = `${cwd}::${slug}`;
   const prev = planLocks.get(key) ?? Promise.resolve();
   let resolveCurrent;
-  const current = new Promise((resolve14) => {
-    resolveCurrent = resolve14;
+  const current = new Promise((resolve15) => {
+    resolveCurrent = resolve15;
   });
   planLocks.set(key, current);
   try {
@@ -14748,7 +14843,7 @@ async function resolvePlanDecision(cwd = process.cwd(), slug, decisionId, chosen
 }
 async function listPlans(cwd = process.cwd()) {
   const root = deepworkRootDir(cwd);
-  if (!existsSync12(root)) return [];
+  if (!existsSync13(root)) return [];
   const entries = await readdir(root, { withFileTypes: true });
   const result = [];
   for (const entry of entries) {
@@ -15048,7 +15143,7 @@ ${JSON.stringify(todoPayload, null, 2)}
 
 // src/pantheon/hashline/tool.ts
 import { readFile as readFile7, rename as rename6, rm, writeFile as writeFile4 } from "node:fs/promises";
-import { isAbsolute as isAbsolute4, resolve as resolve10, sep as sep6 } from "node:path";
+import { isAbsolute as isAbsolute4, resolve as resolve11, sep as sep6 } from "node:path";
 import { z as z4 } from "zod";
 var hashlineEditOpArgs = {
   op: z4.enum(["replace", "append", "prepend", "delete"]),
@@ -15061,10 +15156,10 @@ var hashlineEditArgs = {
   file: z4.string().min(1),
   edits: z4.array(z4.object(hashlineEditOpArgs)).min(1)
 };
-function resolveFile(file, ctx) {
-  if (isAbsolute4(file)) return { ok: true, file: resolve10(file) };
-  const base = resolve10(ctx.worktree ?? ctx.directory ?? process.cwd());
-  const resolved = resolve10(base, file);
+function resolveFile(file, ctx, fallbackDir) {
+  if (isAbsolute4(file)) return { ok: true, file: resolve11(file) };
+  const base = resolve11(resolveToolCwd(ctx, fallbackDir));
+  const resolved = resolve11(base, file);
   if (resolved !== base && !resolved.startsWith(base + sep6)) {
     return {
       ok: false,
@@ -15121,12 +15216,12 @@ function validateEdits(args, file, lines) {
   }
   return resolved;
 }
-function createHashlineEditTool() {
+function createHashlineEditTool(fallbackDir) {
   return {
     description: "Edit a file anchored by hashline refs (LINE#TAG) instead of raw line numbers. Ops: replace (ref..endRef or single ref \u2192 lines), append/prepend (anchor ref \u2192 content), delete (ref..endRef). ALL refs must be validated against the ORIGINAL file before anything is written; on mismatch the tool returns an error with a re-tagged excerpt and a Did-you-mean suggestion, and nothing is modified.",
     args: hashlineEditArgs,
     execute: async (args, ctx) => {
-      const resolved = resolveFile(args.file, ctx);
+      const resolved = resolveFile(args.file, ctx, fallbackDir);
       if (!resolved.ok) return resolved.error;
       const file = resolved.file;
       let original;
@@ -15223,7 +15318,7 @@ function evaluateComplexityPoint(input, sink) {
 }
 
 // src/pantheon/local-decision-tool.ts
-var TOOL_DESCRIPTION2 = "Zeus-only local advisory selector. Use selectively only when specialist routing is genuinely ambiguous; obvious work should go directly to native subagent without this tool. Accepts only structured candidate IDs, never task text. It does not dispatch, run a skill/resource, search memory, or authorize/alter grants or review gates. Provider egress is disabled; all decisions remain local.";
+var TOOL_DESCRIPTION2 = "Zeus-only local advisory selector. Use selectively only when specialist routing is genuinely ambiguous; obvious work should go directly to native subagent without this tool. Accepts only a structured object { schemaVersion: 1, candidateAgents, domain, candidateSkillIds, candidateResourceIds, memorySearchRelevant, gateStatus, complexity: { boundedness, reversibility, dependencies, uncertainty, verification } } \u2014 never raw prompt strings. Does not dispatch or alter review gates; provider egress is disabled.";
 var gateStatuses = [
   "none",
   "review_required",
@@ -15315,7 +15410,7 @@ import { randomBytes } from "node:crypto";
 import { constants as constants4 } from "node:fs";
 import { lstat as lstat2, mkdir as mkdir7, open as open3, rename as rename7, unlink as unlink4 } from "node:fs/promises";
 import { homedir as homedir7 } from "node:os";
-import { basename as basename2, dirname as dirname11, join as join20, resolve as resolve11 } from "node:path";
+import { basename as basename3, dirname as dirname12, join as join21, resolve as resolve12 } from "node:path";
 import { z as z5 } from "zod";
 var MODEL_REF_PATTERN2 = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._:+-]*$/;
 var SAFE_PRESET_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -15400,11 +15495,11 @@ async function syncDirectory(path5) {
   }
 }
 async function createTemporaryFile(path5) {
-  const directory = dirname11(path5);
-  const prefix = `.${basename2(path5)}.tmp-`;
+  const directory = dirname12(path5);
+  const prefix = `.${basename3(path5)}.tmp-`;
   const flags = constants4.O_WRONLY | constants4.O_CREAT | constants4.O_EXCL | NO_FOLLOW;
   for (let attempt = 0; attempt < 10; attempt += 1) {
-    const temporaryPath = join20(directory, `${prefix}${randomBytes(16).toString("hex")}`);
+    const temporaryPath = join21(directory, `${prefix}${randomBytes(16).toString("hex")}`);
     try {
       return { path: temporaryPath, file: await open3(temporaryPath, flags, DEFAULT_FILE_MODE) };
     } catch (error) {
@@ -15440,7 +15535,7 @@ async function atomicReplace(path5, content, mode, label, expectedExists) {
     }
     await rename7(temporaryPath, path5);
     renamed = true;
-    await syncDirectory(dirname11(path5));
+    await syncDirectory(dirname12(path5));
   } finally {
     await temporaryFile?.close().catch(() => void 0);
     if (temporaryPath !== void 0 && !renamed) {
@@ -15471,30 +15566,30 @@ function envValue(options) {
   return options.env ?? process.env;
 }
 function projectConfigPath(options) {
-  return options.projectConfigPath ?? join20(options.cwd ?? process.cwd(), "opencode.json");
+  return options.projectConfigPath ?? join21(options.cwd ?? process.cwd(), "opencode.json");
 }
 function defaultGlobalConfigPath(options) {
   const env = envValue(options);
   const home = env.HOME?.trim() || homedir7();
-  const xdg = env.XDG_CONFIG_HOME?.trim() || join20(home, ".config");
-  return join20(xdg, "opencode", "opencode.json");
+  const xdg = env.XDG_CONFIG_HOME?.trim() || join21(home, ".config");
+  return join21(xdg, "opencode", "opencode.json");
 }
 function globalConfigCandidates(options) {
   if (options.globalConfigPath !== void 0) return [options.globalConfigPath];
   const canonical = defaultGlobalConfigPath(options);
   const home = envValue(options).HOME?.trim() || homedir7();
-  const legacy = join20(home, ".opencode", "opencode.json");
+  const legacy = join21(home, ".opencode", "opencode.json");
   return [.../* @__PURE__ */ new Set([canonical, legacy])];
 }
 function activePresetCandidatesList(options) {
   if (options.activePresetCandidates !== void 0) {
-    return options.activePresetCandidates.map((p) => resolve11(p));
+    return options.activePresetCandidates.map((p) => resolve12(p));
   }
-  const projectPreset = join20(dirname11(projectConfigPath(options)), ".pantheon", "active-preset.json");
+  const projectPreset = join21(dirname12(projectConfigPath(options)), ".pantheon", "active-preset.json");
   const globalPresets = globalConfigCandidates(options).map(
-    (p) => join20(dirname11(p), ".pantheon", "active-preset.json")
+    (p) => join21(dirname12(p), ".pantheon", "active-preset.json")
   );
-  return [...new Set([projectPreset, ...globalPresets].map((p) => resolve11(p)))];
+  return [...new Set([projectPreset, ...globalPresets].map((p) => resolve12(p)))];
 }
 function presetPathForScope(options, scope) {
   const candidates = activePresetCandidatesList(options);
@@ -15506,7 +15601,7 @@ function presetPathForScope(options, scope) {
   const second = candidates[1];
   if (second) return second;
   const globalCandidates = globalConfigCandidates(options).map(
-    (p) => resolve11(join20(dirname11(p), ".pantheon", "active-preset.json"))
+    (p) => resolve12(join21(dirname12(p), ".pantheon", "active-preset.json"))
   );
   const fallback = globalCandidates[0] ?? candidates[0];
   if (!fallback) throw new ModelCommandError("global preset path is unavailable");
@@ -15636,7 +15731,7 @@ function validateMutationAuthorization(args, scope) {
 }
 async function writeActivePresetAtomically(path5, data, current) {
   const backupPath = `${path5}.bak`;
-  await mkdir7(dirname11(path5), { recursive: true });
+  await mkdir7(dirname12(path5), { recursive: true });
   const originalMode = current.mode ?? DEFAULT_FILE_MODE;
   const backupMode = originalMode & 384;
   const backup = await regularPath(backupPath, "configuration backup");
@@ -16064,14 +16159,14 @@ function createModelCommand(options = {}) {
 
 // src/pantheon/native-memory-tools.ts
 import {
-  existsSync as existsSync13,
+  existsSync as existsSync14,
   mkdirSync as mkdirSync9,
   readdirSync as readdirSync5,
-  readFileSync as readFileSync11,
+  readFileSync as readFileSync12,
   realpathSync as realpathSync5,
   writeFileSync as writeFileSync7
 } from "node:fs";
-import { join as join21, resolve as resolve12, sep as sep7 } from "node:path";
+import { join as join22, resolve as resolve13, sep as sep7 } from "node:path";
 import { DatabaseSync as DatabaseSync4 } from "node:sqlite";
 var SAFE_SEGMENT_RE2 = /^[a-zA-Z0-9._:-]{1,128}$/;
 var MAX_MEMORY_VALUE_BYTES = 65536;
@@ -16081,7 +16176,7 @@ function isSafeSegment(value) {
 function resolveConfinedPath(baseDir, ...segments) {
   mkdirSync9(baseDir, { recursive: true });
   const canonicalBase = realpathSync5(baseDir);
-  const candidate = resolve12(canonicalBase, ...segments);
+  const candidate = resolve13(canonicalBase, ...segments);
   const prefix = canonicalBase.endsWith(sep7) ? canonicalBase : `${canonicalBase}${sep7}`;
   if (candidate !== canonicalBase && !candidate.startsWith(prefix)) {
     throw new Error("Path traversal denied: target escapes confined directory");
@@ -16098,7 +16193,7 @@ function runAutoMigration(workspaceDir) {
 }
 function getMemoryDb(workspaceDir) {
   runAutoMigration(workspaceDir);
-  const memoryDir = join21(workspaceDir, ".pantheon", "memory");
+  const memoryDir = join22(workspaceDir, ".pantheon", "memory");
   mkdirSync9(memoryDir, { recursive: true });
   const dbPath = resolveConfinedPath(memoryDir, "memory.db");
   const cached = dbCache.get(dbPath);
@@ -16191,7 +16286,7 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
           if (Buffer.byteLength(value, "utf8") > MAX_MEMORY_VALUE_BYTES) {
             return jsonResult3({ ok: false, error: "value exceeds maximum size of 64 KiB" });
           }
-          const cwd = resolveToolCwd(context, fallbackDir);
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
           const db = getMemoryDb(cwd);
           const nowIso = (/* @__PURE__ */ new Date()).toISOString();
           db.prepare(
@@ -16239,7 +16334,7 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
           if (typeof ns !== "string" || !ns.trim() || typeof key !== "string" || !key.trim()) {
             return jsonResult3({ ok: false, error: "namespace and key are required" });
           }
-          const cwd = resolveToolCwd(context, fallbackDir);
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
           const db = getMemoryDb(cwd);
           const nowIso = (/* @__PURE__ */ new Date()).toISOString();
           const row = db.prepare(
@@ -16278,7 +16373,7 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
           }
           const limit = typeof input.top_k === "number" && Number.isFinite(input.top_k) && input.top_k > 0 ? Math.min(Math.floor(input.top_k), 100) : 10;
           const ns = typeof input.namespace === "string" && input.namespace.trim() ? input.namespace.trim() : void 0;
-          const cwd = resolveToolCwd(context, fallbackDir);
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
           const db = getMemoryDb(cwd);
           const nowIso = (/* @__PURE__ */ new Date()).toISOString();
           const tokens = rawQuery.replace(/[^\p{L}\p{N}_-]+/gu, " ").trim().split(/\s+/).filter((t) => t.length >= 2);
@@ -16349,7 +16444,7 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
           if (typeof ns !== "string" || !ns.trim() || typeof key !== "string" || !key.trim()) {
             return jsonResult3({ ok: false, error: "namespace and key are required" });
           }
-          const cwd = resolveToolCwd(context, fallbackDir);
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
           const db = getMemoryDb(cwd);
           const info = db.prepare("DELETE FROM memories WHERE namespace = ? AND key = ?").run(ns.trim(), key.trim());
           return jsonResult3({
@@ -16380,7 +16475,7 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
       output: {},
       execute: async (input, context) => {
         try {
-          const cwd = resolveToolCwd(context, fallbackDir);
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
           const db = getMemoryDb(cwd);
           const nowIso = (/* @__PURE__ */ new Date()).toISOString();
           const limit = typeof input.limit === "number" && Number.isFinite(input.limit) && input.limit > 0 ? Math.min(Math.floor(input.limit), 200) : 50;
@@ -16415,7 +16510,7 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
       output: {},
       execute: async (_input, context) => {
         try {
-          const cwd = resolveToolCwd(context, fallbackDir);
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
           const db = getMemoryDb(cwd);
           const nowIso = (/* @__PURE__ */ new Date()).toISOString();
           const total = db.prepare(`SELECT count(*) as count FROM memories WHERE ${NOT_EXPIRED_SQL}`).get(nowIso);
@@ -16458,9 +16553,9 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
           if (typeof input.content !== "string" || !input.content.trim()) {
             return jsonResult3({ ok: false, error: "content must be a non-empty string" });
           }
-          const cwd = resolveToolCwd(context, fallbackDir);
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
           runAutoMigration(cwd);
-          const baseDir = join21(cwd, ".pantheon", "persistence");
+          const baseDir = join22(cwd, ".pantheon", "persistence");
           const dir = resolveConfinedPath(baseDir, ns);
           mkdirSync9(dir, { recursive: true });
           const filePath = resolveConfinedPath(dir, `${sessionId}.json`);
@@ -16516,25 +16611,25 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
               error: "session_id and namespace must be safe identifiers without path traversal"
             });
           }
-          const cwd = resolveToolCwd(context, fallbackDir);
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
           runAutoMigration(cwd);
-          const baseDir = join21(cwd, ".pantheon", "persistence");
+          const baseDir = join22(cwd, ".pantheon", "persistence");
           const dir = resolveConfinedPath(baseDir, ns);
           const filePath = resolveConfinedPath(dir, `${sessionId}.json`);
-          if (!existsSync13(filePath)) {
+          if (!existsSync14(filePath)) {
             const globalDir = resolveSafeGlobalConfigDir();
             if (globalDir) {
-              const globalNsDir = join21(globalDir, ".pantheon", "persistence", ns);
-              if (existsSync13(join21(globalNsDir, `${sessionId}.json`))) {
+              const globalNsDir = join22(globalDir, ".pantheon", "persistence", ns);
+              if (existsSync14(join22(globalNsDir, `${sessionId}.json`))) {
                 const globalFile = resolveConfinedPath(globalNsDir, `${sessionId}.json`);
-                if (existsSync13(globalFile)) {
-                  return jsonResult3(JSON.parse(readFileSync11(globalFile, "utf8")));
+                if (existsSync14(globalFile)) {
+                  return jsonResult3(JSON.parse(readFileSync12(globalFile, "utf8")));
                 }
               }
             }
             return jsonResult3({ ok: false, error: "not_found", session_id: sessionId });
           }
-          return jsonResult3(JSON.parse(readFileSync11(filePath, "utf8")));
+          return jsonResult3(JSON.parse(readFileSync12(filePath, "utf8")));
         } catch (err) {
           return jsonResult3({
             ok: false,
@@ -16569,9 +16664,9 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
           if (!isSafeSegment(rawId)) {
             return jsonResult3({ ok: false, error: "id must be a safe identifier" });
           }
-          const cwd = resolveToolCwd(context, fallbackDir);
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
           runAutoMigration(cwd);
-          const goalsDir = join21(cwd, ".pantheon", "goals");
+          const goalsDir = join22(cwd, ".pantheon", "goals");
           const filePath = resolveConfinedPath(goalsDir, `${rawId}.json`);
           const nowIso = (/* @__PURE__ */ new Date()).toISOString();
           const goal = {
@@ -16605,9 +16700,9 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
       output: {},
       execute: async (input, context) => {
         try {
-          const cwd = resolveToolCwd(context, fallbackDir);
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
           runAutoMigration(cwd);
-          const goalsDir = join21(cwd, ".pantheon", "goals");
+          const goalsDir = join22(cwd, ".pantheon", "goals");
           mkdirSync9(goalsDir, { recursive: true });
           if (typeof input.id === "string" && input.id.trim()) {
             const id = input.id.trim();
@@ -16615,13 +16710,13 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
               return jsonResult3({ ok: false, error: "id must be a safe identifier" });
             }
             const filePath = resolveConfinedPath(goalsDir, `${id}.json`);
-            if (!existsSync13(filePath)) return jsonResult3({ ok: false, error: "not_found", id });
-            return jsonResult3(JSON.parse(readFileSync11(filePath, "utf8")));
+            if (!existsSync14(filePath)) return jsonResult3({ ok: false, error: "not_found", id });
+            return jsonResult3(JSON.parse(readFileSync12(filePath, "utf8")));
           }
           const files = readdirSync5(goalsDir).filter((f) => f.endsWith(".json")).sort();
           const latest = files.at(-1);
           if (!latest) return jsonResult3({ ok: false, error: "no_active_goals" });
-          return jsonResult3(JSON.parse(readFileSync11(resolveConfinedPath(goalsDir, latest), "utf8")));
+          return jsonResult3(JSON.parse(readFileSync12(resolveConfinedPath(goalsDir, latest), "utf8")));
         } catch (err) {
           return jsonResult3({
             ok: false,
@@ -16632,7 +16727,7 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
     },
     {
       name: "goal_update",
-      description: "Update progress or status on an active session goal.",
+      description: 'Update progress notes or status on an active session goal. Use "notes" (not "progress") for progress text.',
       input: {
         type: "object",
         additionalProperties: false,
@@ -16640,7 +16735,7 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
         properties: {
           id: { type: "string", description: "Goal identifier" },
           status: { type: "string", description: "Updated status (active, paused, completed)" },
-          notes: { type: "string", description: "Progress notes" }
+          notes: { type: "string", description: 'Progress notes (use "notes", not "progress")' }
         }
       },
       output: {},
@@ -16650,12 +16745,12 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
           if (!isSafeSegment(id)) {
             return jsonResult3({ ok: false, error: "valid goal id is required" });
           }
-          const cwd = resolveToolCwd(context, fallbackDir);
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
           runAutoMigration(cwd);
-          const goalsDir = join21(cwd, ".pantheon", "goals");
+          const goalsDir = join22(cwd, ".pantheon", "goals");
           const filePath = resolveConfinedPath(goalsDir, `${id}.json`);
-          if (!existsSync13(filePath)) return jsonResult3({ ok: false, error: "not_found", id });
-          const existing = JSON.parse(readFileSync11(filePath, "utf8"));
+          if (!existsSync14(filePath)) return jsonResult3({ ok: false, error: "not_found", id });
+          const existing = JSON.parse(readFileSync12(filePath, "utf8"));
           const updated = {
             ...existing,
             status: typeof input.status === "string" ? input.status : existing.status,
@@ -16691,12 +16786,12 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
           if (!isSafeSegment(id)) {
             return jsonResult3({ ok: false, error: "valid goal id is required" });
           }
-          const cwd = resolveToolCwd(context, fallbackDir);
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir);
           runAutoMigration(cwd);
-          const goalsDir = join21(cwd, ".pantheon", "goals");
+          const goalsDir = join22(cwd, ".pantheon", "goals");
           const filePath = resolveConfinedPath(goalsDir, `${id}.json`);
-          if (!existsSync13(filePath)) return jsonResult3({ ok: false, error: "not_found", id });
-          const existing = JSON.parse(readFileSync11(filePath, "utf8"));
+          if (!existsSync14(filePath)) return jsonResult3({ ok: false, error: "not_found", id });
+          const existing = JSON.parse(readFileSync12(filePath, "utf8"));
           const updated = {
             ...existing,
             status: "completed",
@@ -16717,9 +16812,9 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
 }
 
 // src/pantheon/skill-search-tool.ts
-import { existsSync as existsSync14, readdirSync as readdirSync6, readFileSync as readFileSync12 } from "node:fs";
+import { existsSync as existsSync15, readdirSync as readdirSync6, readFileSync as readFileSync13 } from "node:fs";
 import { homedir as homedir8 } from "node:os";
-import { join as join22 } from "node:path";
+import { join as join23 } from "node:path";
 
 // scripts/skill-search.mjs
 import { spawnSync } from "node:child_process";
@@ -16976,16 +17071,16 @@ function scanInstalledSkills(cwd = process.cwd()) {
   }
   const scanDir = (baseDir, scope) => {
     try {
-      if (!existsSync14(baseDir)) return;
+      if (!existsSync15(baseDir)) return;
       const entries = readdirSync6(baseDir, { withFileTypes: true });
       for (const entry of entries) {
         if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
         const skillName = entry.name;
         if (skillName.startsWith(".")) continue;
-        const skillMd = join22(baseDir, skillName, "SKILL.md");
-        if (existsSync14(skillMd)) {
+        const skillMd = join23(baseDir, skillName, "SKILL.md");
+        if (existsSync15(skillMd)) {
           try {
-            const raw = readFileSync12(skillMd, "utf8");
+            const raw = readFileSync13(skillMd, "utf8");
             const { name, description } = extractSkillMetadata(raw, skillName);
             const id = (name || skillName).trim();
             map.set(id.toLowerCase(), {
@@ -17001,12 +17096,12 @@ function scanInstalledSkills(cwd = process.cwd()) {
     } catch {
     }
   };
-  const xdgConfig = process.env.XDG_CONFIG_HOME || join22(homedir8(), ".config");
-  scanDir(join22(xdgConfig, "opencode", "skills"), "global");
-  scanDir(join22(homedir8(), ".agents", "skills"), "global");
-  scanDir(join22(cwd, ".opencode", "skills"), "project");
-  scanDir(join22(cwd, ".agents", "skills"), "project");
-  scanDir(join22(cwd, "skills"), "project");
+  const xdgConfig = process.env.XDG_CONFIG_HOME || join23(homedir8(), ".config");
+  scanDir(join23(xdgConfig, "opencode", "skills"), "global");
+  scanDir(join23(homedir8(), ".agents", "skills"), "global");
+  scanDir(join23(cwd, ".opencode", "skills"), "project");
+  scanDir(join23(cwd, ".agents", "skills"), "project");
+  scanDir(join23(cwd, "skills"), "project");
   return map;
 }
 var TOOL_DESCRIPTION3 = "Advisory discovery tool for skills. Queries installed Pantheon skills and external registries (Anthropic catalog, skills.sh, GitHub). Returns matched skill IDs, descriptions, install counts, and provenance tiers. Zeus uses this to recommend project-scoped skills (.agents/skills/) before proactively prompting the user via the question tool.";
@@ -17179,8 +17274,8 @@ function createV2SkillSearchDefinition(defaultDir) {
 }
 
 // src/pantheon/step-ledger.ts
-import { existsSync as existsSync15, mkdirSync as mkdirSync10, readFileSync as readFileSync13, realpathSync as realpathSync6, writeFileSync as writeFileSync8 } from "node:fs";
-import { join as join23, resolve as resolve13, sep as sep8 } from "node:path";
+import { existsSync as existsSync16, mkdirSync as mkdirSync10, readFileSync as readFileSync14, realpathSync as realpathSync6, writeFileSync as writeFileSync8 } from "node:fs";
+import { join as join24, resolve as resolve14, sep as sep8 } from "node:path";
 var SAFE_STEP_KEY_RE = /^[a-zA-Z0-9._:-]{1,128}$/;
 var stepReflex = new ThemisReflexController({ maxRetries: 2 });
 function assertSafeStepKey(stepKey) {
@@ -17190,10 +17285,10 @@ function assertSafeStepKey(stepKey) {
   return stepKey;
 }
 function resolveLedgerPath(workspaceDir) {
-  const dir = join23(workspaceDir, ".pantheon", "ledger");
+  const dir = join24(workspaceDir, ".pantheon", "ledger");
   mkdirSync10(dir, { recursive: true });
   const canonicalDir = realpathSync6(dir);
-  const filePath = resolve13(canonicalDir, "step-ledger.json");
+  const filePath = resolve14(canonicalDir, "step-ledger.json");
   const prefix = canonicalDir.endsWith(sep8) ? canonicalDir : `${canonicalDir}${sep8}`;
   if (!filePath.startsWith(prefix)) {
     throw new Error("Path traversal denied for step-ledger.json");
@@ -17202,11 +17297,11 @@ function resolveLedgerPath(workspaceDir) {
 }
 function readStepLedger(workspaceDir) {
   const filePath = resolveLedgerPath(workspaceDir);
-  if (!existsSync15(filePath)) {
+  if (!existsSync16(filePath)) {
     return { version: 1, steps: {} };
   }
   try {
-    const parsed = JSON.parse(readFileSync13(filePath, "utf8"));
+    const parsed = JSON.parse(readFileSync14(filePath, "utf8"));
     if (parsed && typeof parsed.steps === "object" && parsed.steps !== null) {
       return { version: 1, steps: parsed.steps };
     }
@@ -17240,7 +17335,7 @@ function jsonResult4(payload) {
 function createStepLedgerTool(fallbackDir) {
   return {
     name: "pantheon_step_ledger",
-    description: "Manage atomic Step-Ledger execution contracts with hard verification gates: a step can transition to done ONLY after a verification command exits 0 following the last file mutation.",
+    description: 'Manage atomic Step-Ledger execution contracts with hard verification gates. Lifecycle: init_step -> record_mutation -> record_verification -> complete_step -> status (there is no "record" action). A step completes only after verification exits 0 following the last mutation.',
     input: {
       type: "object",
       additionalProperties: false,
@@ -17249,9 +17344,12 @@ function createStepLedgerTool(fallbackDir) {
         action: {
           type: "string",
           enum: ["init_step", "record_mutation", "record_verification", "complete_step", "status"],
-          description: "Ledger operation to perform"
+          description: "Ledger operation (init_step | record_mutation | record_verification | complete_step | status)"
         },
-        stepKey: { type: "string", description: "Unique atomic step identifier" },
+        stepKey: {
+          type: "string",
+          description: 'Unique atomic step id matching ^[a-zA-Z0-9._:-]{1,128}$ (no spaces or "..")'
+        },
         objective: { type: "string", description: "Bounded step objective" },
         agent: { type: "string", description: "Assigned specialist agent" },
         files: {
@@ -17486,28 +17584,30 @@ function coerceHashlineEditArgs(input) {
   }
   return { ok: true, args: { file, edits } };
 }
-var hashlineEdit = createHashlineEditTool();
-async function executeHashlineEdit(input, context) {
-  const ctx = toolContext(context);
-  const callerAgent = (ctx.agent ?? "").toLowerCase().trim();
-  if (callerAgent && callerAgent !== "zeus" && NON_EDIT_AGENTS.has(callerAgent)) {
+function createHashlineEditExecutor(fallbackDir) {
+  const hashlineTool = createHashlineEditTool(fallbackDir);
+  return async function executeHashlineEdit(input, context) {
+    const ctx = toolContext(context);
+    const callerAgent = (ctx.agent ?? "").toLowerCase().trim();
+    if (callerAgent && callerAgent !== "zeus" && NON_EDIT_AGENTS.has(callerAgent)) {
+      return {
+        output: `hashline_edit denied: agent '${callerAgent}' is not permitted to edit files directly.`
+      };
+    }
+    const coerced = coerceHashlineEditArgs(input);
+    if (!coerced.ok) return { output: coerced.error };
+    let result;
+    try {
+      result = await hashlineTool.execute(coerced.args, ctx);
+    } catch (err) {
+      return { output: errorText("hashline_edit failed", err) };
+    }
+    if (typeof result === "string") return { output: result };
     return {
-      output: `hashline_edit denied: agent '${callerAgent}' is not permitted to edit files directly.`
+      output: result.output,
+      ...result.title === void 0 ? {} : { title: result.title },
+      ...result.metadata === void 0 ? {} : { metadata: result.metadata }
     };
-  }
-  const coerced = coerceHashlineEditArgs(input);
-  if (!coerced.ok) return { output: coerced.error };
-  let result;
-  try {
-    result = await hashlineEdit.execute(coerced.args, ctx);
-  } catch (err) {
-    return { output: errorText("hashline_edit failed", err) };
-  }
-  if (typeof result === "string") return { output: result };
-  return {
-    output: result.output,
-    ...result.title === void 0 ? {} : { title: result.title },
-    ...result.metadata === void 0 ? {} : { metadata: result.metadata }
   };
 }
 var COST_INPUT = {
@@ -17760,7 +17860,7 @@ function createV2ToolDefinitions(visionRuntime, shadow = {}, jevRuntime, hostLoc
       description: "Edit a file anchored by hashline refs (LINE#TAG) instead of raw line numbers. Ops: replace (ref..endRef or single ref \u2192 lines), append/prepend (anchor ref \u2192 content), delete (ref..endRef). ALL refs must be validated against the ORIGINAL file before anything is written; on mismatch the tool returns an error with a re-tagged excerpt and a Did-you-mean suggestion, and nothing is modified.",
       input: HASHLINE_EDIT_INPUT,
       output: {},
-      execute: executeHashlineEdit
+      execute: createHashlineEditExecutor(hostLocationDirectory)
     },
     {
       name: "pantheon_cost",
@@ -17914,7 +18014,7 @@ function loadRuntimeOverrides(workspaceDir) {
   try {
     const read = (filePath) => {
       try {
-        return readFileSync14(filePath, "utf8");
+        return readFileSync15(filePath, "utf8");
       } catch {
         return void 0;
       }
@@ -17977,8 +18077,8 @@ function readCanonicalRoster() {
       path4.join(process.cwd(), "src", "agents", "roster.json")
     ];
     for (const p of candidates) {
-      if (existsSync16(p)) {
-        const raw = readFileSync14(p, "utf8");
+      if (existsSync17(p)) {
+        const raw = readFileSync15(p, "utf8");
         const data = JSON.parse(raw);
         if (data && typeof data.agents === "object") return data.agents;
       }
@@ -18101,6 +18201,10 @@ var CANONICAL_SLASH_COMMANDS = [
     description: "Run zero-token heuristic static scan and Themis 3-layer security review"
   },
   {
+    name: "pantheon-consolidate",
+    description: "Merge and consolidate memory entries"
+  },
+  {
     name: "pantheon-focus",
     description: "Manage persistent session goals and focus boundaries across compactions"
   },
@@ -18113,10 +18217,6 @@ var CANONICAL_SLASH_COMMANDS = [
     description: "Analyze and prune stale artifacts, worktrees, and context overhead"
   },
   {
-    name: "pantheon-settings",
-    description: "Open the interactive Pantheon TUI settings and Quotas & Spend window"
-  },
-  {
     name: "pantheon-vision",
     description: "Inspect or configure multimodal vision gateway and model status"
   }
@@ -18125,13 +18225,14 @@ function resolveCanonicalCommandsDir() {
   const candidates = [
     fileURLToPath5(new URL("commands", import.meta.url)),
     fileURLToPath5(new URL("../commands", import.meta.url)),
+    fileURLToPath5(new URL("../../commands", import.meta.url)),
     fileURLToPath5(new URL("../src/commands", import.meta.url)),
     fileURLToPath5(new URL("../../src/commands", import.meta.url)),
     fileURLToPath5(new URL("src/commands", import.meta.url)),
     path4.join(activeHostWorkspaceDir ?? process.cwd(), "src", "commands")
   ];
   for (const candidate of candidates) {
-    if (existsSync16(candidate)) return candidate;
+    if (existsSync17(candidate)) return candidate;
   }
   return void 0;
 }
@@ -18140,8 +18241,8 @@ function readCanonicalCommandTemplate(commandName, fallbackDescription) {
     const dir = resolveCanonicalCommandsDir();
     if (dir) {
       const mdPath = path4.join(dir, `${commandName}.md`);
-      if (existsSync16(mdPath)) {
-        const raw = readFileSync14(mdPath, "utf8");
+      if (existsSync17(mdPath)) {
+        const raw = readFileSync15(mdPath, "utf8");
         const body = raw.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim();
         if (body) return body;
       }
@@ -18227,10 +18328,12 @@ function transformReferences(draft) {
   const candidates = [
     fileURLToPath5(new URL("../AGENTS.global.md", import.meta.url)),
     fileURLToPath5(new URL("../../AGENTS.global.md", import.meta.url)),
+    fileURLToPath5(new URL("../../../AGENTS.global.md", import.meta.url)),
     fileURLToPath5(new URL("../AGENTS.md", import.meta.url)),
-    fileURLToPath5(new URL("../../AGENTS.md", import.meta.url))
+    fileURLToPath5(new URL("../../AGENTS.md", import.meta.url)),
+    fileURLToPath5(new URL("../../../AGENTS.md", import.meta.url))
   ];
-  const resolvedPath = candidates.find((p) => existsSync16(p)) ?? fileURLToPath5(new URL("../AGENTS.md", import.meta.url));
+  const resolvedPath = candidates.find((p) => existsSync17(p)) ?? fileURLToPath5(new URL("../AGENTS.md", import.meta.url));
   draft.add("pantheon-agents", {
     type: "local",
     path: resolvedPath,
@@ -18247,7 +18350,7 @@ function resolveCanonicalSkillsDir() {
     path4.join(activeHostWorkspaceDir ?? process.cwd(), "src", "skills")
   ];
   for (const candidate of candidates) {
-    if (existsSync16(candidate)) return candidate;
+    if (existsSync17(candidate)) return candidate;
   }
   return void 0;
 }
@@ -18278,10 +18381,10 @@ function transformSkills(draft) {
         if (!entry.isDirectory()) continue;
         const skillId = entry.name;
         const skillMdPath = path4.join(skillsDir, skillId, "SKILL.md");
-        if (!existsSync16(skillMdPath)) continue;
+        if (!existsSync17(skillMdPath)) continue;
         try {
           if (typeof editor.get === "function" && editor.get(skillId)) continue;
-          const content = readFileSync14(skillMdPath, "utf8");
+          const content = readFileSync15(skillMdPath, "utf8");
           const { name, description } = parseSkillFrontmatter(content, skillId);
           editor.add({
             id: skillId,
@@ -18378,6 +18481,9 @@ async function registerV2Tools(context, boundedRead, jevRuntime) {
     await toolCtx.transform((draft) => {
       draft.namespace({ name: "pantheon", description: "Pantheon orchestration tools" });
       for (const def of toolDefs) {
+        if ((def.name === "todowrite" || def.name === "todoread") && draft.get?.(def.name) !== void 0) {
+          continue;
+        }
         draft.add({
           name: def.name,
           description: def.description,

@@ -22,12 +22,12 @@ Do NOT fire for one-shot task instructions given in conversation; those stay in 
 
 | Rule kind | Home | Loaded when |
 |---|---|---|
-| Repo setup (commands, layout, gates of THIS repo) | `AGENTS.md` managed region | Every session in the repo |
+| Repo setup (commands, layout, gates of THIS repo) | `AGENTS.md` (managed region inside Pantheon; direct root `AGENTS.md` in external repos) | Every session in the repo |
 | Repo-agnostic behavior every session must pay for | `AGENTS.global.md` / shared instruction (`agents: ["*"]`) | Every session |
 | Behavior scoped to one agent | `src/instructions/*.instructions.md` with `agents:` selector | That agent's prompt, at build |
 | A recurring workflow a specialist executes | A skill (`SKILL.md`, ≤120-line core + `references/`) | On demand via grant |
 | A runtime gate the plugin owns | `behaviors:` registry in `routing.yml` (then env/override), never prose | Plugin setup |
-| Generated region content | `scripts/build-agents-md.mjs` (source of truth) — NEVER hand-edited | Regenerated |
+| Generated region content (Pantheon repo only) | `scripts/build-agents-md.mjs` (source of truth) — NEVER hand-edited | Regenerated |
 
 Two artifacts, zero overlap: the project `AGENTS.md` carries repo setup; `AGENTS.global.md` carries repo-agnostic rules. A session pays for global + project exactly once — a rule in both is a defect (`tests/eval/instruction-golden.test.mjs` pins this).
 
@@ -50,7 +50,8 @@ A missing reference interrupts the action — read nothing in its place, never i
 
 ## Rules
 
-- Generated regions (`pantheon:generated`) are machine-written: change the generator, never the output.
+- Generated regions (`pantheon:generated`) are machine-written: change the generator, never the output (applies inside the Pantheon repo; external projects without `scripts/build-agents-md.mjs` edit their committed root `AGENTS.md` directly).
+- For solo-dev external projects: keep project setup, verification commands, and worktree/branch boundaries in committed `AGENTS.md`, versioned architecture decisions in `docs/decisions/`, and personal cross-session notes in `.pantheon/memory/`.
 - Existing conventions of the codebase outrank personal preference — a rule that fights the grain gets rejected, not encoded.
 - Frontmatter contracts are enforced by tests (`tests/agent-skills-contract.test.mjs`); never add unlisted keys.
 - An instruction that says "always" but has a known exception must state the exception or it is a defect, not a style choice.

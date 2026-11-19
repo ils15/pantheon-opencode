@@ -26,6 +26,7 @@
 import { execFile } from 'node:child_process'
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { Context } from '@opencode/plugin/tui/context'
 import { createEffect, createSignal, For, onCleanup, onMount, Show } from 'solid-js'
 import {
@@ -93,7 +94,6 @@ import {
   writeActivePreset,
   writeConfiguredVisionModel,
 } from './preset-state.ts'
-import { applyQuotaRow, buildQuotaTab, readQuotaPrefs, writeQuotaPrefs } from './quota-state.ts'
 import { resolveLanguage } from './settings-i18n.ts'
 import {
   applyTuiRow,
@@ -423,7 +423,7 @@ function resolveRunningVersion(): string {
 // ── The window view (presentational; both surfaces render it) ──────────
 
 const NAME_WIDTH = 24
-const VALUE_WIDTH = 30
+const VALUE_WIDTH = 32
 
 export function SettingsWindow(props: {
   version: string
@@ -501,6 +501,8 @@ export function SettingsWindow(props: {
       {...(props.boxRef !== undefined ? { ref: props.boxRef } : {})}
       focusable
       flexDirection="column"
+      width="100%"
+      {...(props.isDialog ? { minWidth: 80 } : {})}
       {...(props.height !== undefined ? { height: props.height } : { flexGrow: 1, flexBasis: 0 })}
       minHeight={0}
       border={!props.isDialog}
@@ -536,7 +538,8 @@ export function SettingsWindow(props: {
           flexDirection="row"
           flexWrap="wrap"
           flexGrow={1}
-          flexShrink={0}
+          flexShrink={1}
+          minWidth={0}
           columnGap={1}
           rowGap={1}
         >
@@ -594,10 +597,16 @@ export function SettingsWindow(props: {
                     const gutter = () => (isSelected() ? '▸ ' : '  ')
                     const valueCell = () => {
                       const formatted = formatValueDisplay(display())
-                      if (row.cycle !== undefined) return `< ${formatted} >`
-                      if (row.action !== undefined) return `[ ${formatted} ]`
-                      if (row.id.startsWith('autonomy.gradient.')) return `[ref] ${formatted}`
-                      return formatted
+                      const raw =
+                        row.cycle !== undefined
+                          ? `< ${formatted} >`
+                          : row.action !== undefined
+                            ? `[ ${formatted} ]`
+                            : row.id.startsWith('autonomy.gradient.')
+                              ? `[ref] ${formatted}`
+                              : formatted
+                      const maxLen = VALUE_WIDTH - (staged() ? 2 : 0)
+                      return raw.length > maxLen ? `${raw.slice(0, maxLen - 1)}…` : raw
                     }
                     return (
                       <box
@@ -607,23 +616,27 @@ export function SettingsWindow(props: {
                           props.onSelectRow?.(row.id)
                         }}
                       >
-                        <box width={NAME_WIDTH + 2}>
+                        <box width={NAME_WIDTH + 2} flexShrink={0}>
                           <text
+                            wrapMode="none"
                             fg={isSelected() ? (props.warn ?? '#fba970') : props.fg}
                             {...(isSelected() ? { attributes: 1 } : {})}
                           >
                             {`${gutter()}${row.name}`.padEnd(NAME_WIDTH + 2)}
                           </text>
                         </box>
+                        <box width={2} flexShrink={0} />
                         <Show when={row.value !== '' && row.value !== undefined}>
                           <box
                             width={VALUE_WIDTH}
+                            flexShrink={0}
                             onMouseDown={() => {
                               props.onSelectRow?.(row.id)
                               props.onCycleValue?.(row.id, 1)
                             }}
                           >
                             <text
+                              wrapMode="none"
                               fg={
                                 isSelected()
                                   ? '#ffffff'
@@ -636,6 +649,7 @@ export function SettingsWindow(props: {
                               {`${valueCell()}${staged() ? ' ●' : ''}`.padEnd(VALUE_WIDTH)}
                             </text>
                           </box>
+                          <box width={2} flexShrink={0} />
                         </Show>
                         <Show when={row.note !== undefined}>
                           <box flexGrow={1} flexShrink={1}>
@@ -825,6 +839,7 @@ interface PageApi {
 }
 
 let pageApi: PageApi | undefined
+let pendingInitialTabId: string | undefined
 
 function createWindowController(
   context: Context,
@@ -869,9 +884,20 @@ function createWindowController(
   const [confirmExit, setConfirmExit] = createSignal(false)
 
   // Initial non-blocking audit scan for Updates & Maintenance panel
+  const activeBundlePath = (() => {
+    try {
+      return fileURLToPath(import.meta.url)
+    } catch {
+      return undefined
+    }
+  })()
   queueMicrotask(() => {
     try {
-      const scan = scanLegacyArtifacts({ workspaceDir, runningVersion: currentVersion })
+      const scan = scanLegacyArtifacts({
+        workspaceDir,
+        runningVersion: currentVersion,
+        ...(activeBundlePath ? { activeBundlePath } : {}),
+      })
       setLegacyAudit(scan.summary)
     } catch {
       /* fail-open */
@@ -939,7 +965,6 @@ function createWindowController(
       buildGatesTab(load(), lang, activeScope),
       buildDecisionTab(decision(), process.env, readAuthProviders(), readConfigProviders(), lang),
       buildPresetTab(presetInput(), lang),
-      buildQuotaTab(undefined, lang, readQuotaPrefs()),
       buildTuiTab(tuiPrefs(), lang),
       buildAutonomyTab({
         goalLoop: goalLoop(),
@@ -968,6 +993,13 @@ function createWindowController(
         languagePref: lang,
       }),
     ]
+  }
+
+  if (pendingInitialTabId !== undefined) {
+    const requestedTab = pendingInitialTabId
+    pendingInitialTabId = undefined
+    const targetIdx = tabs().findIndex((tab) => tab.id === requestedTab)
+    if (targetIdx >= 0) setPage(targetIdx)
   }
 
   const rows = () => tabRows(tabs()[page()] ?? tabs()[0] ?? EMPTY_TAB)
@@ -1073,7 +1105,11 @@ function createWindowController(
     setLegacyScanning(true)
     setLegacyNotice(undefined)
     try {
-      const scan = scanLegacyArtifacts({ workspaceDir, runningVersion: currentVersion })
+      const scan = scanLegacyArtifacts({
+        workspaceDir,
+        runningVersion: currentVersion,
+        ...(activeBundlePath ? { activeBundlePath } : {}),
+      })
       setLegacyAudit(scan.summary)
       const isPt = resolveLanguage(tuiPrefs().layout?.language) === 'pt-BR'
       setNotice(
@@ -1097,8 +1133,13 @@ function createWindowController(
     setLegacyCleaning(true)
     const isPt = resolveLanguage(tuiPrefs().layout?.language) === 'pt-BR'
     try {
-      const res = cleanLegacyArtifacts({ workspaceDir, runningVersion: currentVersion })
-      const after = scanLegacyArtifacts({ workspaceDir, runningVersion: currentVersion })
+      const auditOpts = {
+        workspaceDir,
+        runningVersion: currentVersion,
+        ...(activeBundlePath ? { activeBundlePath } : {}),
+      }
+      const res = cleanLegacyArtifacts(auditOpts)
+      const after = scanLegacyArtifacts(auditOpts)
       setLegacyAudit(after.summary)
       setLoad(readOverridesLoad(workspaceDir))
       const summaryMsg = isPt
@@ -1285,16 +1326,6 @@ function createWindowController(
         return { ok: true }
       } catch {
         return { ok: false, reason: 'tui prefs storage unavailable' }
-      }
-    }
-    if (id.startsWith('quota.')) {
-      try {
-        const current = readQuotaPrefs()
-        const updated = applyQuotaRow(current, id, value)
-        writeQuotaPrefs(updated)
-        return { ok: true }
-      } catch {
-        return { ok: false, reason: 'quota prefs disk write failed' }
       }
     }
     return { ok: false, reason: 'unknown staged row' }
@@ -1598,7 +1629,7 @@ function openSettingsDialog(context: Context): void {
   setDialogOpen(true)
   pageApi = controller.api
   const rendererHeight = () => (context as any).renderer?.height ?? 30
-  const maxHeight = () => Math.min(16, Math.max(8, Math.floor(rendererHeight() * 0.55)))
+  const maxHeight = () => Math.min(28, Math.max(14, Math.floor(rendererHeight() * 0.78)))
   try {
     context.ui.dialog.show(
       () => (
@@ -1628,7 +1659,7 @@ function openSettingsDialog(context: Context): void {
       ),
       close,
     )
-    context.ui.dialog.set({ size: 'medium', centered: true })
+    context.ui.dialog.set({ size: 'large', centered: true })
   } catch {
     /* dialog stack unavailable — fail-open */
   }
@@ -1897,7 +1928,7 @@ export function setupPantheonSettings(
     {
       id: 'pantheon.settings.next.tab',
       title: 'Next settings tab',
-      bind: 'tab',
+      bind: 'tab,]',
       run: () => {
         pageApi?.nextTab()
         return undefined
@@ -1906,7 +1937,7 @@ export function setupPantheonSettings(
     {
       id: 'pantheon.settings.prev.tab',
       title: 'Previous settings tab',
-      bind: 'shift+tab',
+      bind: 'shift+tab,[',
       run: () => {
         pageApi?.prevTab?.()
         return undefined
@@ -1979,11 +2010,20 @@ export function setupPantheonSettings(
 
 // ── The entry point (command run) ──────────────────────────────────────
 
-export async function openPantheonSettings(context: Context): Promise<void> {
+export async function openPantheonSettings(
+  context: Context,
+  options: { initialTab?: string } = {},
+): Promise<void> {
+  if (options.initialTab) {
+    pendingInitialTabId = options.initialTab
+  }
+  const sessionID = (context as any)?.sessionID ?? routeSessionID(context) ?? activeSessionId()
   try {
     const prefs = tuiPrefs()
     const viewMode = prefs.layout?.settingsView ?? 'docked'
-    if (viewMode === 'fullscreen' && routerAvailable && context.ui?.router?.navigate) {
+    const shouldUseRoute =
+      viewMode !== 'dialog' && (viewMode === 'fullscreen' || !sessionID) && routerAvailable
+    if (shouldUseRoute && context.ui?.router?.navigate) {
       let returnRoute: WindowRoute | undefined
       try {
         const current = context.ui.router.current()
@@ -2010,20 +2050,33 @@ export async function openPantheonSettings(context: Context): Promise<void> {
     /* preferences check failed — fall through to docked */
   }
 
-  // Primary mode: docked in session.composer.top
-  const sessionID = (context as any)?.sessionID ?? routeSessionID(context) ?? activeSessionId()
+  // Primary mode: docked in session.composer.top (fall back to dialog if no router/session)
   if (!sessionID) {
-    try {
-      context.ui?.toast?.show?.({
-        variant: 'info',
-        title: 'Pantheon',
-        message: 'Open a session first: Pantheon settings opens above the prompt box.',
-      })
-    } catch {}
+    openSettingsDialog(context)
     return
   }
 
   if (settingsOpen()) {
+    if (options.initialTab && pageApi) {
+      const tabOrder = [
+        'gates',
+        'decision',
+        'preset',
+        'tui',
+        'autonomy',
+        'j1',
+        'updates',
+        'changelog',
+        'doctor',
+        'about',
+      ]
+      const targetIdx = tabOrder.indexOf(options.initialTab)
+      if (targetIdx >= 0) {
+        pendingInitialTabId = undefined
+        pageApi.jumpTab(targetIdx)
+        return
+      }
+    }
     closePantheonSettings()
     return
   }

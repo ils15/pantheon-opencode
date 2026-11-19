@@ -718,6 +718,10 @@ const CANONICAL_SLASH_COMMANDS: ReadonlyArray<{ name: string; description: strin
     description: 'Run zero-token heuristic static scan and Themis 3-layer security review',
   },
   {
+    name: 'pantheon-consolidate',
+    description: 'Merge and consolidate memory entries',
+  },
+  {
     name: 'pantheon-focus',
     description: 'Manage persistent session goals and focus boundaries across compactions',
   },
@@ -730,10 +734,6 @@ const CANONICAL_SLASH_COMMANDS: ReadonlyArray<{ name: string; description: strin
     description: 'Analyze and prune stale artifacts, worktrees, and context overhead',
   },
   {
-    name: 'pantheon-settings',
-    description: 'Open the interactive Pantheon TUI settings and Quotas & Spend window',
-  },
-  {
     name: 'pantheon-vision',
     description: 'Inspect or configure multimodal vision gateway and model status',
   },
@@ -743,6 +743,7 @@ function resolveCanonicalCommandsDir(): string | undefined {
   const candidates = [
     fileURLToPath(new URL('commands', import.meta.url)),
     fileURLToPath(new URL('../commands', import.meta.url)),
+    fileURLToPath(new URL('../../commands', import.meta.url)),
     fileURLToPath(new URL('../src/commands', import.meta.url)),
     fileURLToPath(new URL('../../src/commands', import.meta.url)),
     fileURLToPath(new URL('src/commands', import.meta.url)),
@@ -862,8 +863,10 @@ function transformReferences(draft: ReferenceDraft): void {
   const candidates = [
     fileURLToPath(new URL('../AGENTS.global.md', import.meta.url)),
     fileURLToPath(new URL('../../AGENTS.global.md', import.meta.url)),
+    fileURLToPath(new URL('../../../AGENTS.global.md', import.meta.url)),
     fileURLToPath(new URL('../AGENTS.md', import.meta.url)),
     fileURLToPath(new URL('../../AGENTS.md', import.meta.url)),
+    fileURLToPath(new URL('../../../AGENTS.md', import.meta.url)),
   ]
   const resolvedPath =
     candidates.find((p) => existsSync(p)) ?? fileURLToPath(new URL('../AGENTS.md', import.meta.url))
@@ -1104,6 +1107,16 @@ async function registerV2Tools(
       // `adaptV2ExecuteBeforeEvent`.
       draft.namespace({ name: 'pantheon', description: 'Pantheon orchestration tools' })
       for (const def of toolDefs) {
+        // Never shadow host-provided native todowrite/todoread (which persist into
+        // OpenCode's native Todo panel); register Pantheon's fallback only when
+        // the host does not already ship them. Use `draft.get` (not `draft.list`)
+        // so P11 reads `draft.list()` exactly once.
+        if (
+          (def.name === 'todowrite' || def.name === 'todoread') &&
+          draft.get?.(def.name) !== undefined
+        ) {
+          continue
+        }
         draft.add({
           name: def.name,
           description: def.description,
@@ -2918,6 +2931,8 @@ async function registerV2PermissionHook(
  * field is mandatory here rather than optional.
  */
 interface V2ToolDraft {
+  list?(): ReadonlyArray<{ id?: string; name?: string }>
+  get?(id: string): unknown
   namespace(config: { name: string; description: string }): void
   add(tool: {
     name: string

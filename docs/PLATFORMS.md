@@ -8,71 +8,67 @@ and links out. It does not restate the support matrix — that is
 
 ## Form factors
 
-OpenCode ships as a terminal TUI, a desktop app, and an IDE extension. Pantheon's
-agents, skills, and instructions are discovered from the project directory the
-same way in each. The desktop app adds integrated diffs, file-tree browsing, and
-native notifications; it is not a separate installation model.
+OpenCode ships as a terminal TUI (`opencode`), a desktop app, and an IDE
+extension. All three share the same `opencode.json` (`plugins: ["pantheon-opencode"]`):
+
+- **CLI (TUI) & Desktop App (Shared backend `./server`):** all 14 agents, 25
+  skills, 8 slash commands, 26 native TypeScript tools, security/edit guardrails,
+  worktree shared `.pantheon/` stores, and GFM/Mermaid artifacts work in both.
+- **CLI-only (`./tui`):** the `@opentui/solid` sidebar (`Context`, `Todo`,
+  `Dispatch`), `/dispatch`, `/pantheon-settings`, `/pantheon-updates`, and
+  `/pantheon-whats-new` run in the terminal TUI only; Desktop uses its own native
+  GUI chrome (and renders Markdown/GFM artifacts inline).
+- **Windows:** WSL2 (Linux) is the fully supported environment today; native
+  `win32` outside WSL2 currently rejects POSIX `getuid`/`0o077` config guards in
+  `pantheon_model` / `pantheon_local_decision` and assumes `/bin/bash` in `shell`.
 
 ## Install
 
-Use the installer, not manual copying:
+Use OpenCode's native plugin manager (recommended — zero copied files on disk,
+works in any directory) or the optional CLI installer:
 
 ```bash
-npx pantheon-opencode init            # global
-npx pantheon-opencode init --project  # project-local
+# Recommended (global or project, works anywhere without init)
+opencode plugin add pantheon-opencode
+
+# Optional CLI installer (materializes .opencode/ files, AGENTS.md, or legacy MCPs)
+npx pantheon-opencode init --project --no-mcp
 ```
 
-The installer registers Pantheon's runtime integrations automatically. It
-writes the singular `plugin` key for OpenCode V1 and the plural `plugins` key
-for OpenCode V2; do not add either key by hand. Flags, backup, uninstall, and
-reconcile are in [Installation](INSTALLATION.md).
+Flags, backup, uninstall, and reconcile are in [Installation](INSTALLATION.md).
 
 ## Configuration
 
-OpenCode reads `opencode.json` (or `opencode.jsonc`) from the project root. The
-installer writes `opencode.json`; a V2 host may also merge a sibling
-`.jsonc` — see
-[Compatibility](COMPATIBILITY.md#config-registration-and-the-hosts-config-merge).
+OpenCode reads `opencode.json` (or `opencode.jsonc`) from the global config
+directory (`~/.config/opencode/`) or project root.
 
-`default_agent: zeus` and `permission.skill` are seeded by the installer, not
-shipped as a template file. The published package carries no `opencode.json`
-template. Contributors who keep a project-level config for their own sessions
-should leave it untracked.
+`default_agent: zeus` and `permission.skill` are seeded automatically in-process
+by the plugin (or materialized when running `init`). Contributors who keep a
+project-level `opencode.json` for their own sessions should leave it untracked.
 
-Agent definitions live in `src/agents/*.md`; the installer copies them into the
-selected config tree. Editing an installed copy does not persist — the next
-`init` overwrites it. Edit the canonical source instead.
+Agent definitions live in `src/agents/*.md` (loaded natively by the plugin); do
+not maintain duplicate manual copies under `.opencode/agents/` unless you
+intentionally override an agent locally.
 
 ## File locations
 
-Project install:
+Runtime state created on demand in any project or linked worktree (main repo
+`.pantheon/` is shared automatically across git worktrees):
 
 ```text
 your-project/
-├── opencode.json
-├── AGENTS.md
-├── .opencode/agents/
-├── .opencode/skills/
-├── .opencode/instructions/
-├── .opencode/prompts/
 └── .pantheon/
+    ├── memory/memory.db      # FTS5 memory, checkpoints & goals
+    ├── codemap/codemap.db    # structural symbol & relation index
+    ├── ledger/step-ledger.json
+    ├── deepwork/<slug>/PLAN.md
+    └── reports/
 ```
 
-Global install:
-
-```text
-~/.config/opencode/
-├── opencode.json
-├── AGENTS.md
-├── agents/
-├── skills/
-├── instructions/
-├── scripts/          # installed MCP entrypoints
-└── tui.json          # V1 TUI registration
-```
-
-The V2 TUI uses a local plugin directory instead of `tui.json`. See
-[OpenCode 2.x](opencode.md).
+With the recommended `opencode plugin add pantheon-opencode` install, agents,
+skills, commands, and the TUI bundle are loaded directly from OpenCode's npm
+plugin cache—no redundant copies in `~/.config/opencode/agents/` or
+`plugins/pantheon-tui/` are needed. See [OpenCode 2.x](opencode.md).
 
 ## Quick reference
 

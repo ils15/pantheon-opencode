@@ -35,16 +35,17 @@ flowchart TD
 
 ## 2. Step 1 — Installation and Setup
 
-In any project directory (new or existing):
+Install Pantheon once as a native OpenCode 2.x plugin (works in any directory, with no per-project copy clutter):
 
 ```bash
-# Initialize Pantheon agents, skills, and plugins in the project
-npx pantheon-opencode init
+# Recommended: register native plugin globally or in the project
+opencode plugin add pantheon-opencode
+
+# Optional: also inject project AGENTS.md / .opencode overrides if desired
+npx pantheon-opencode init --project --no-mcp
 ```
 
-The interactive installer lets you choose components (`agents`, `skills`, `instructions`, `plugins`). Selecting `plugins` installs the modern **TUI** (terminal dashboard).
-
-Verify installation health with the doctor diagnostic:
+Verify installation health inside OpenCode via `/pantheon-settings` (**Doctor**) or from the terminal:
 
 ```bash
 npx pantheon-opencode doctor

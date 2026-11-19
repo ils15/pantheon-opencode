@@ -190,3 +190,41 @@ test('step-ledger enforces mechanical completion gate and invalidates verificati
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('codemap prunes deleted files on query, neighbors, and re-index', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-codemap-prune-'))
+  try {
+    const fileA = join(dir, 'probe.mjs')
+    const fileB = join(dir, 'probe.test.mjs')
+    writeFileSync(fileA, 'export function orphanSum(a, b) { return a + b }\n', 'utf8')
+    writeFileSync(fileB, "import { orphanSum } from './probe.mjs'\n", 'utf8')
+
+    const tools = new Map(createCodemapTools(dir).map((t) => [t.name, t]))
+    const ctx = { directory: dir }
+    const idx1 = await callTool(tools, 'code_index', {}, ctx)
+    assert.equal(idx1.indexed, 2)
+
+    // Delete probe.mjs and probe.test.mjs from disk
+    rmSync(fileA)
+    rmSync(fileB)
+
+    // Query and neighbors must prune missing files instead of returning stale symbols
+    const q = await callTool(tools, 'code_query', { query: 'orphanSum' }, ctx)
+    assert.equal(q.count, 0)
+    assert.deepEqual(q.results, [])
+
+    const n = await callTool(tools, 'code_neighbors', { target: 'probe.mjs' }, ctx)
+    assert.deepEqual(n.outgoing, [])
+    assert.deepEqual(n.incoming, [])
+
+    // Re-create one file, delete it, then verify code_index reports pruned >= 1
+    writeFileSync(fileA, 'export function orphanSum2(a, b) { return a + b }\n', 'utf8')
+    await callTool(tools, 'code_index', {}, ctx)
+    rmSync(fileA)
+    const idx2 = await callTool(tools, 'code_index', {}, ctx)
+    assert.equal(idx2.ok, true)
+    assert.ok((idx2.pruned as number) >= 1, `expected pruned >= 1, got ${String(idx2.pruned)}`)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

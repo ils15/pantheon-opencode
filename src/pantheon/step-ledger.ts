@@ -116,7 +116,9 @@ export function createStepLedgerTool(fallbackDir?: string): PantheonToolDef {
   return {
     name: 'pantheon_step_ledger',
     description:
-      'Manage atomic Step-Ledger execution contracts with hard verification gates: a step can transition to done ONLY after a verification command exits 0 following the last file mutation.',
+      'Manage atomic Step-Ledger execution contracts with hard verification gates. ' +
+      'Lifecycle: init_step -> record_mutation -> record_verification -> complete_step -> status ' +
+      '(there is no "record" action). A step completes only after verification exits 0 following the last mutation.',
     input: {
       type: 'object',
       additionalProperties: false,
@@ -125,9 +127,14 @@ export function createStepLedgerTool(fallbackDir?: string): PantheonToolDef {
         action: {
           type: 'string',
           enum: ['init_step', 'record_mutation', 'record_verification', 'complete_step', 'status'],
-          description: 'Ledger operation to perform',
+          description:
+            'Ledger operation (init_step | record_mutation | record_verification | complete_step | status)',
         },
-        stepKey: { type: 'string', description: 'Unique atomic step identifier' },
+        stepKey: {
+          type: 'string',
+          description:
+            'Unique atomic step id matching ^[a-zA-Z0-9._:-]{1,128}$ (no spaces or "..")',
+        },
         objective: { type: 'string', description: 'Bounded step objective' },
         agent: { type: 'string', description: 'Assigned specialist agent' },
         files: {

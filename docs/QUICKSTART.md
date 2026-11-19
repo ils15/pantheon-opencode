@@ -11,59 +11,44 @@ This guide takes you from zero to your first working result with **Pantheon** in
 Ensure your environment satisfies the following requirements:
 
 1. **OpenCode:** Version 2.x installed (native OpenCode 2.x host support).
-2. **Node.js:** Version `>=26.4.0` (required for Pantheon's CLI, packager, and TUI interface).
-3. **Python (Optional):** Version `3.11+` (only needed if using Python-based bundled MCP servers).
+2. **Node.js:** Version `>=26.4.0` (required for Pantheon's tooling and TUI).
+3. **Python (Optional / Legacy):** Version `3.11+` only if you opt into legacy Python MCP servers (all 26 core Pantheon tools run natively in TypeScript/Node).
 
 ---
 
 ## 1. Installation
 
-Pantheon is installed and configured using the native CLI installer:
+### Native OpenCode Plugin Install (Recommended — Works Anywhere)
 
-### Full Installation via CLI (Recommended)
-
-Installs all 14 specialized agents, 25 skills, context instructions (TDD, YAGNI), slash commands, bundled MCP servers, and the modern TUI:
+One command registers the 14 agents, 25 skills, 8 slash commands, 26 native TypeScript tools, and TUI in-process with zero copied files on disk:
 
 ```bash
-# Global Installation (recommended — available across all your repositories)
-npx pantheon-opencode init
-
-# Or Project-Scoped Installation (restricted to the current directory)
-npx pantheon-opencode init --project
+opencode plugin add pantheon-opencode
 ```
 
-> **Automation / CI Tip:** Run `npx pantheon-opencode init -y` to apply default settings non-interactively without prompting.
+Why this is the best practice:
+- Works in **any directory** immediately (existing repos, git worktrees, or new folders) with no `init` step.
+- Updates cleanly via `opencode plugin update pantheon-opencode` (or `/pantheon-updates`) without leaving stale copied `.opencode/agents/` or `plugins/pantheon-tui/` files behind.
 
-### OpenCode Plugin Registration
+### Optional CLI Setup (`init`)
 
-If you already use OpenCode's plugin manager or want to load the plugin via `opencode.json`, ensure the plugin entry is registered:
+Use the CLI installer only when you specifically want project `AGENTS.md` injection, isolated `.opencode/` overrides, or optional legacy Python MCPs:
 
-```json
-{
-  "plugins": [
-    "pantheon-opencode"
-  ]
-}
+```bash
+npx pantheon-opencode init --project --no-mcp
 ```
-
-> [!NOTE]
-> `npx pantheon-opencode init` automatically configures `opencode.json` with the required plugin entry, agents, skills, and MCP servers.
 
 ---
 
-## 2. Validate Installation with `doctor`
+## 2. Validate Health & Clean Stale Caches
 
-Before starting work, run Pantheon's health diagnostic:
+Inside OpenCode, run `/pantheon-settings` (or `/pantheon-updates`) to inspect **Doctor** health checks and **Legacy & Drift Cleanup** (which scans and removes stale coexisting `@beta`/older plugin caches and redundant copied files).
+
+From the terminal, you can also run:
 
 ```bash
 npx pantheon-opencode doctor
 ```
-
-The `doctor` command verifies:
-- Connection and health of all bundled MCP servers (`pantheon_resources`, `pantheon_memory`, `pantheon_persistence`, `pantheon_vision`, `pantheon_cost`).
-- Proper plugin registration in `opencode.json`.
-- Synchronization of agents, skills, and instruction files.
-- Local runtime Python and dependencies.
 
 A healthy installation outputs a **PASS** verdict with zero blocking errors.
 
@@ -83,8 +68,9 @@ opencode
 > ```
 
 ### What you will see:
-- **Rich Sidebar (TUI):** Displays the active Pantheon version (v2.1.1), the active model preset, Git repository state, and a live **Context** block with token counts, estimated cost, and cache speed.
-- **Native Multimodal Vision (Pantheon Vision):** If you capture a screenshot and paste it directly into chat (`Ctrl+V` / `Cmd+V`), Pantheon analyzes the image silently via system context without cluttering the chat with comments or HTML markup.
+- **Rich Sidebar (TUI):** Displays the active Pantheon version (`v2.2.0`), active model preset, Git repository state, **Context** with native-tool domain counters (`mem`, `ctx`, `code`, `edit`, `shell`), **Todo**, and **Dispatch** with live child activity verbs and `?`/`!` attention badges.
+- **Interactive Update & What's New Dialogs:** Upgrading opens a dismissable **What's New** dialog (`/pantheon-whats-new` to reopen anytime), and clickable `↑ vX.Y.Z` badges jump straight to `/pantheon-updates`.
+- **Native Multimodal Vision (Pantheon Vision):** Paste a screenshot (`Ctrl+V` / `Cmd+V`) or call `vision_describe` when exposed by the host model catalog.
 
 ---
 

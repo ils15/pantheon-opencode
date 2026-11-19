@@ -84,6 +84,8 @@ export interface WhatsNewOpenInput {
   changelogText: string | null
   /** Host dialog opener; `onClose` fires on host dismissal (ESC / chrome). */
   show: WhatsNewShowFn
+  /** Re-open even when the version was already dismissed. */
+  force?: boolean
 }
 
 /**
@@ -92,9 +94,9 @@ export interface WhatsNewOpenInput {
  * (both host-initiated and local close binds) must funnel into marking seen.
  */
 export async function openWhatsNew(input: WhatsNewOpenInput): Promise<boolean> {
-  const { version, statePath, changelogText, show } = input
+  const { version, statePath, changelogText, show, force = false } = input
   if (typeof version !== 'string' || version.trim() === '') return false
-  if (!(await shouldShowWhatsNew(version, statePath))) return false
+  if (!force && !(await shouldShowWhatsNew(version, statePath))) return false
 
   const highlights: WhatsNewHighlights = changelogText
     ? extractHighlights(changelogText, version)
