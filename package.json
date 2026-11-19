@@ -50,6 +50,7 @@
     "docs:lint": "node scripts/docs-link-check.mjs",
     "docs:media": "node scripts/docs-media.mjs",
     "docs:check-changelog": "node scripts/docs-check-changelog.mjs",
+    "docs:check-cookbook": "node scripts/docs-check-cookbook.mjs",
     "typecheck": "tsc --noEmit",
     "audit": "npm audit --audit-level=critical",
     "secret-scan": "node scripts/secret-scan.mjs",

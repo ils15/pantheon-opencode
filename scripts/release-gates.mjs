@@ -541,6 +541,9 @@ function metadataGate(options) {
     run('version-manifests', 'node', ['scripts/version-check.mjs']),
     run('node-engine-policy', 'node', ['scripts/validate-node-engine-policy.mjs']),
   ]
+  if (!options.recovery) {
+    checks.push(run('cookbook-parity', 'node', ['scripts/docs-check-cookbook.mjs']))
+  }
   return {
     checks,
     details: {

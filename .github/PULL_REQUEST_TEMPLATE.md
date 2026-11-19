@@ -53,6 +53,7 @@ Title convention — Conventional Commits, in English:
 - [ ] Tests pass locally
 - [ ] Lint clean (`npm run lint`)
 - [ ] Typecheck clean (`npm run typecheck`)
+- [ ] Cookbooks synchronized (`npm run docs:check-cookbook`)
 - [ ] Secret scan clean (`npm run secret-scan`)
 - [ ] No new dependencies without justification
 - [ ] No secrets or credentials committed
