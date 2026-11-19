@@ -91,7 +91,7 @@ export function buildUpdatesTab(input: UpdatesSectionInput): SettingsTab {
           : 'checking…'
         : lastCheckMs
           ? isPt
-            ? `última verificação ${formatAgo(nowMs - lastCheckMs, true)}`
+            ? `verificado ${formatAgo(nowMs - lastCheckMs, true)}`
             : `last check ${formatAgo(nowMs - lastCheckMs, false)}`
           : isPt
             ? 'nunca verificado'
@@ -103,10 +103,8 @@ export function buildUpdatesTab(input: UpdatesSectionInput): SettingsTab {
     },
   ]
 
-  const pluginCommand =
-    channel === 'beta'
-      ? 'opencode plugin add pantheon-opencode@beta'
-      : 'opencode plugin add pantheon-opencode'
+  const pkgSpec = channel === 'beta' ? 'pantheon-opencode@beta' : 'pantheon-opencode'
+  const pluginCommand = `opencode plugin update ${pkgSpec}`
 
   if (latest) {
     rows.push({
@@ -117,10 +115,11 @@ export function buildUpdatesTab(input: UpdatesSectionInput): SettingsTab {
         : isPt
           ? 'atualizado'
           : 'up to date',
+      ...(newer ? { action: 'update-run' as const } : {}),
       note: newer
         ? isPt
-          ? `atualize via \`${pluginCommand}\``
-          : `update via \`${pluginCommand}\``
+          ? `enter atualiza agora · ou rode \`${pluginCommand}\``
+          : `enter updates now · or run \`${pluginCommand}\``
         : isPt
           ? 'nenhuma versão mais recente compatível'
           : 'no newer compatible version',
@@ -133,28 +132,28 @@ export function buildUpdatesTab(input: UpdatesSectionInput): SettingsTab {
           ? 'atualizando…'
           : 'updating…'
         : newer
-          ? `${isPt ? 'instalar' : 'install'} v${latest}`
+          ? `${isPt ? 'atualizar' : 'update'} v${latest}`
           : isPt
-            ? 'reinstalar / atualizar'
-            : 'reinstall / refresh',
+            ? 'reinstalar plugin'
+            : 'refresh plugin',
       action: 'update-run',
       note: newer
         ? isPt
-          ? `enter executa \`${pluginCommand}\``
-          : `enter runs \`${pluginCommand}\``
+          ? `enter executa \`${pluginCommand}\` + reload`
+          : `enter runs \`${pluginCommand}\` + reload`
         : isPt
-          ? 'enter atualiza o plugin instalado'
+          ? 'enter força atualização do plugin instalado'
           : 'enter refreshes the installed plugin',
     })
   }
 
   rows.push({
     id: 'update.command',
-    name: isPt ? 'Comando Nativo' : 'Plugin Command',
-    value: pluginCommand,
+    name: isPt ? 'Comando no terminal' : 'CLI Command',
+    value: 'opencode plugin update',
     note: isPt
-      ? 'instalação nativa sem npx · funciona global ou no projeto'
-      : 'native plugin install (no npx) · works global or per-project',
+      ? `sem npx: \`${pluginCommand} && opencode reload\``
+      : `native CLI (no npx): \`${pluginCommand} && opencode reload\``,
   })
 
   const audit = input.legacyAudit
@@ -195,8 +194,8 @@ export function buildUpdatesTab(input: UpdatesSectionInput): SettingsTab {
           ? 'escaneando…'
           : 'scanning…'
         : isPt
-          ? 'verificar global + projeto'
-          : 'check global + project',
+          ? 'escanear agora'
+          : 'scan global + project',
       action: 'legacy-scan',
       note: isPt
         ? 'enter escaneia sem modificar ou apagar nenhum arquivo'

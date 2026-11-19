@@ -2705,31 +2705,32 @@ function buildUpdatesTab(input) {
 	}, {
 		id: "update.check",
 		name: isPt ? "Verificar agora" : "Check now",
-		value: input.checking ? isPt ? "verificando…" : "checking…" : lastCheckMs ? isPt ? `última verificação ${formatAgo(nowMs - lastCheckMs, true)}` : `last check ${formatAgo(nowMs - lastCheckMs, false)}` : isPt ? "nunca verificado" : "never checked",
+		value: input.checking ? isPt ? "verificando…" : "checking…" : lastCheckMs ? isPt ? `verificado ${formatAgo(nowMs - lastCheckMs, true)}` : `last check ${formatAgo(nowMs - lastCheckMs, false)}` : isPt ? "nunca verificado" : "never checked",
 		action: "update-check",
 		note: isPt ? "enter consulta o registro npm para o canal ativo" : "enter probes the registry for the running channel"
 	}];
-	const pluginCommand = channel === "beta" ? "opencode plugin add pantheon-opencode@beta" : "opencode plugin add pantheon-opencode";
+	const pluginCommand = `opencode plugin update ${channel === "beta" ? "pantheon-opencode@beta" : "pantheon-opencode"}`;
 	if (latest) {
 		rows.push({
 			id: "update.latest",
 			name: isPt ? "Registro (npm)" : "Registry",
 			value: newer ? `v${latest} ${isPt ? "disponível" : "available"}` : isPt ? "atualizado" : "up to date",
-			note: newer ? isPt ? `atualize via \`${pluginCommand}\`` : `update via \`${pluginCommand}\`` : isPt ? "nenhuma versão mais recente compatível" : "no newer compatible version"
+			...newer ? { action: "update-run" } : {},
+			note: newer ? isPt ? `enter atualiza agora · ou rode \`${pluginCommand}\`` : `enter updates now · or run \`${pluginCommand}\`` : isPt ? "nenhuma versão mais recente compatível" : "no newer compatible version"
 		});
 		rows.push({
 			id: "update.run",
 			name: isPt ? "Atualizar plugin" : "Update plugin",
-			value: input.updating ? isPt ? "atualizando…" : "updating…" : newer ? `${isPt ? "instalar" : "install"} v${latest}` : isPt ? "reinstalar / atualizar" : "reinstall / refresh",
+			value: input.updating ? isPt ? "atualizando…" : "updating…" : newer ? `${isPt ? "atualizar" : "update"} v${latest}` : isPt ? "reinstalar plugin" : "refresh plugin",
 			action: "update-run",
-			note: newer ? isPt ? `enter executa \`${pluginCommand}\`` : `enter runs \`${pluginCommand}\`` : isPt ? "enter atualiza o plugin instalado" : "enter refreshes the installed plugin"
+			note: newer ? isPt ? `enter executa \`${pluginCommand}\` + reload` : `enter runs \`${pluginCommand}\` + reload` : isPt ? "enter força atualização do plugin instalado" : "enter refreshes the installed plugin"
 		});
 	}
 	rows.push({
 		id: "update.command",
-		name: isPt ? "Comando Nativo" : "Plugin Command",
-		value: pluginCommand,
-		note: isPt ? "instalação nativa sem npx · funciona global ou no projeto" : "native plugin install (no npx) · works global or per-project"
+		name: isPt ? "Comando no terminal" : "CLI Command",
+		value: "opencode plugin update",
+		note: isPt ? `sem npx: \`${pluginCommand} && opencode reload\`` : `native CLI (no npx): \`${pluginCommand} && opencode reload\``
 	});
 	const audit = input.legacyAudit;
 	const legacyRows = [
@@ -2742,7 +2743,7 @@ function buildUpdatesTab(input) {
 		{
 			id: "legacy.scan",
 			name: isPt ? "Escanear obsoletos" : "Scan legacy & drift",
-			value: input.legacyScanning ? isPt ? "escaneando…" : "scanning…" : isPt ? "verificar global + projeto" : "check global + project",
+			value: input.legacyScanning ? isPt ? "escaneando…" : "scanning…" : isPt ? "escanear agora" : "scan global + project",
 			action: "legacy-scan",
 			note: isPt ? "enter escaneia sem modificar ou apagar nenhum arquivo" : "enter scans read-only without deleting anything"
 		},
@@ -3197,7 +3198,7 @@ function persistUpdateCheckState(previous, latest) {
 function resolveRunningVersion() {
 	return "2.2.0-beta.11";
 }
-const VALUE_WIDTH = 24;
+const VALUE_WIDTH = 30;
 function SettingsWindow(props) {
 	const isPt = () => resolveLanguage(tuiPrefs().layout?.language) === "pt-BR";
 	const formatValueDisplay = (val) => {
@@ -3355,11 +3356,11 @@ function SettingsWindow(props) {
 								props.onSelectRow?.(row.id);
 							} }), true);
 							insertNode(_el$32, _el$33);
-							setProp(_el$32, "width", 28);
+							setProp(_el$32, "width", 26);
 							spread(_el$33, mergeProps({ get fg() {
 								return memo(() => !!isSelected())() ? props.warn ?? "#fba970" : props.fg;
 							} }, () => isSelected() ? { attributes: 1 } : {}), true);
-							insert(_el$33, () => `${gutter()}${row.name}`.padEnd(28));
+							insert(_el$33, () => `${gutter()}${row.name}`.padEnd(26));
 							insert(_el$31, createComponent(Show, {
 								get when() {
 									return memo(() => row.value !== "")() && row.value !== void 0;
@@ -3367,7 +3368,7 @@ function SettingsWindow(props) {
 								get children() {
 									var _el$34 = createElement("box"), _el$35 = createElement("text");
 									insertNode(_el$34, _el$35);
-									setProp(_el$34, "width", 24);
+									setProp(_el$34, "width", 30);
 									setProp(_el$34, "onMouseDown", () => {
 										props.onSelectRow?.(row.id);
 										props.onCycleValue?.(row.id, 1);
