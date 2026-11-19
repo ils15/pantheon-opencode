@@ -152,7 +152,7 @@ function parseFlowchart(lines: readonly string[]): {
     for (const stmt of stripped.split(';')) {
       const s = stmt.trim()
       if (!s) continue
-      if (EDGE_RE.test(` ${s} `) || /(-->|-\.->|==>|---)/.test(s)) {
+      if (EDGE_RE.test(` ${s} `) || ['-->', '-.->', '==>', '---'].some((tok) => s.includes(tok))) {
         const { parts, connectors } = splitChainOperands(s)
         if (parts.length >= 2 && connectors.length === parts.length - 1) {
           for (let i = 0; i < connectors.length; i += 1) {

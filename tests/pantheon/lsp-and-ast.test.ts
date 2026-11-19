@@ -1,14 +1,20 @@
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { pathToFileURL } from 'node:url'
 import { createAstTools } from '../../src/pantheon/ast-tools.ts'
 import { createV2ExecuteAfter } from '../../src/pantheon/execute-after.ts'
 import {
   encodeLspMessage,
+  getLspTcpPoolSize,
   parseLspMessages,
+  parseLspTcpEndpoints,
+  queryTcpLspDiagnostics,
   runPostEditDiagnostics,
+  shutdownLspTcpPool,
 } from '../../src/pantheon/lsp-diagnostics.ts'
 import { createV2ToolDefinitions } from '../../src/pantheon/tools.ts'
 
@@ -153,4 +159,92 @@ test('ast_search and ast_rewrite are exposed via createV2ToolDefinitions', () =>
   const names = new Set(createV2ToolDefinitions().map((t) => t.name))
   assert.ok(names.has('ast_search'))
   assert.ok(names.has('ast_rewrite'))
+})
+
+test('multi-IDE TCP LSP proxy pool parses endpoints and reuses initialized socket across queries', async () => {
+  const parsed = parseLspTcpEndpoints('typescript=127.0.0.1:4101,python=localhost:4102')
+  assert.equal(parsed.length, 2)
+  assert.equal(parsed[0]?.language, 'typescript')
+  assert.equal(parsed[1]?.port, 4102)
+
+  let connections = 0
+  let didOpenCount = 0
+  let didChangeCount = 0
+  const server = createServer((socket) => {
+    connections += 1
+    let buf = Buffer.alloc(0)
+    socket.on('data', (chunk) => {
+      buf = Buffer.concat([buf, chunk])
+      const decoded = parseLspMessages(buf)
+      buf = Buffer.from(decoded.remainder)
+      for (const raw of decoded.messages) {
+        const msg = raw as {
+          id?: number
+          method?: string
+          params?: { textDocument?: { uri?: string } }
+        }
+        if (msg.method === 'initialize') {
+          socket.write(
+            encodeLspMessage({ jsonrpc: '2.0', id: msg.id, result: { capabilities: {} } }),
+          )
+        } else if (
+          msg.method === 'textDocument/didOpen' ||
+          msg.method === 'textDocument/didChange'
+        ) {
+          if (msg.method === 'textDocument/didOpen') didOpenCount += 1
+          else didChangeCount += 1
+          socket.write(
+            encodeLspMessage({
+              jsonrpc: '2.0',
+              method: 'textDocument/publishDiagnostics',
+              params: {
+                uri: msg.params?.textDocument?.uri,
+                diagnostics: [
+                  {
+                    severity: 1,
+                    code: 'LSP99',
+                    message: 'Pooled proxy type mismatch',
+                    range: { start: { line: 0, character: 2 } },
+                  },
+                ],
+              },
+            }),
+          )
+        }
+      }
+    })
+  })
+
+  await new Promise<void>((res) => server.listen(0, '127.0.0.1', res))
+  const addr = server.address() as { port: number }
+  const dir = mkdtempSync(join(tmpdir(), 'pantheon-lsp-tcp-'))
+  try {
+    const file = join(dir, 'sample.ts')
+    writeFileSync(file, 'const x: number = "bad"\n')
+
+    const first = await queryTcpLspDiagnostics(file, {
+      host: '127.0.0.1',
+      port: addr.port,
+      cwd: dir,
+      timeoutMs: 2000,
+    })
+    assert.equal(first.length, 1)
+    assert.equal(first[0]?.code, 'LSP99')
+    assert.equal(getLspTcpPoolSize(), 1)
+
+    const second = await runPostEditDiagnostics(file, {
+      cwd: dir,
+      tcpEndpoint: { host: '127.0.0.1', port: addr.port },
+      timeoutMs: 2000,
+    })
+    assert.match(second ?? '', /Pooled proxy type mismatch/)
+    assert.equal(connections, 1, 'pooled TCP LSP client must reuse the single initialized socket')
+    assert.equal(didOpenCount, 1)
+    assert.equal(didChangeCount, 1)
+    assert.equal(pathToFileURL(file).href.startsWith('file://'), true)
+  } finally {
+    shutdownLspTcpPool()
+    await new Promise<void>((res) => server.close(() => res()))
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

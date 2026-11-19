@@ -4,8 +4,8 @@
  * `Swarm`, `Flightdeck`).
  */
 
-import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { join, resolve, sep } from 'node:path'
 import { scanPantheonArtifacts } from './artifacts-state.ts'
 
 export type CockpitTabId = 'overview' | 'swarm' | 'flightdeck'
@@ -266,4 +266,120 @@ export function buildCockpitSnapshot(input: CockpitInput): CockpitSnapshot {
       logs: events,
     },
   }
+}
+
+export interface CockpitReplayExport {
+  readonly filename: string
+  readonly relPath: string
+  readonly markdown: string
+}
+
+/**
+ * Render a deterministic Markdown + Mermaid Flightdeck replay trace ready for
+ * archival under `.pantheon/reports/` and inspection via `/pantheon-artifacts`.
+ */
+export function formatCockpitReplayArtifact(
+  snapshot: CockpitSnapshot,
+  now: Date = new Date(),
+): CockpitReplayExport {
+  const stamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 19)
+  const filename = `cockpit-replay-${stamp}.md`
+  const relPath = `.pantheon/reports/${filename}`
+  const seqLines: string[] = [
+    '```mermaid',
+    'sequenceDiagram',
+    '  participant You',
+    '  participant Zeus',
+  ]
+  const seenAgents = new Set<string>()
+  for (const row of snapshot.swarm.rows.slice(0, 12)) {
+    const cleanAgent = row.agent.replace(/[^A-Za-z0-9_-]/g, '') || 'specialist'
+    if (!seenAgents.has(cleanAgent)) {
+      seenAgents.add(cleanAgent)
+      seqLines.push(`  participant ${cleanAgent}`)
+    }
+    seqLines.push(
+      `  Zeus->>${cleanAgent}: ${row.kind} ($${row.cost.toFixed(3)}, ${row.durationSec}s)`,
+    )
+    seqLines.push(`  ${cleanAgent}-->>Zeus: ${row.status}`)
+  }
+  if (snapshot.swarm.rows.length === 0) {
+    seqLines.push('  You->>Zeus: active session telemetry snapshot')
+    seqLines.push('  Zeus-->>You: Flightdeck gate check')
+  }
+  seqLines.push('```')
+
+  const ganttRows =
+    snapshot.swarm.rows.length > 0
+      ? snapshot.swarm.rows
+          .map(
+            (r) =>
+              `| \`@${r.agent}\` | ${r.status} | \`${r.ganttBar}\` | ${r.durationSec}s | $${r.cost.toFixed(4)} |`,
+          )
+          .join('\n')
+      : '| _none_ | — | `░░░░░░░░░░░░` | 0s | $0.0000 |'
+
+  const stepLines =
+    snapshot.flightdeck.steps.length > 0
+      ? snapshot.flightdeck.steps
+          .map((s) => `- **${s.stepKey}** (\`${s.state}\`, \`@${s.agent}\`) — ${s.objective}`)
+          .join('\n')
+      : '- No step-ledger entries recorded.'
+
+  const eventLines =
+    snapshot.flightdeck.logs.length > 0
+      ? snapshot.flightdeck.logs
+          .map((e) => `- \`[${e.kind}]\` **@${e.agent}**: ${e.detail}`)
+          .join('\n')
+      : '- No semantic bus events recorded.'
+
+  const markdown = [
+    `# Pantheon Cockpit Flightdeck Replay`,
+    '',
+    `- **Session:** ${snapshot.sessionTitle}`,
+    `- **Model:** ${snapshot.modelName}`,
+    `- **Captured At:** ${now.toISOString()}`,
+    `- **Spend / Context:** $${snapshot.overview.sessionCost.toFixed(4)} · ${snapshot.overview.contextTokens} tokens (${snapshot.overview.contextPercent}%)`,
+    `- **Gate Matrix:** ${snapshot.flightdeck.gateSummary}`,
+    '',
+    '## Execution Replay Diagram',
+    '',
+    ...seqLines,
+    '',
+    '## Swarm Concurrency Timeline',
+    '',
+    '| Agent | Status | Gantt Window | Duration | Cost |',
+    '|---|---|---|---|---|',
+    ganttRows,
+    '',
+    '## Step-Ledger Checkpoints',
+    '',
+    stepLines,
+    '',
+    '## Semantic Event Stream',
+    '',
+    eventLines,
+    '',
+  ].join('\n')
+
+  return { filename, relPath, markdown }
+}
+
+/** Confined export helper writing a Cockpit replay trace under `<workspaceDir>/.pantheon/reports/`. */
+export function writeCockpitReplayArtifact(
+  workspaceDir: string,
+  snapshot: CockpitSnapshot,
+  now: Date = new Date(),
+): string {
+  const reportsDir = join(workspaceDir, '.pantheon', 'reports')
+  mkdirSync(reportsDir, { recursive: true })
+  const canonicalReports = realpathSync(reportsDir)
+  const artifact = formatCockpitReplayArtifact(snapshot, now)
+  const target = resolve(canonicalReports, artifact.filename)
+  const prefix = canonicalReports.endsWith(sep) ? canonicalReports : `${canonicalReports}${sep}`
+  if (!target.startsWith(prefix)) {
+    throw new Error('Cockpit replay target escaped .pantheon/reports')
+  }
+  writeFileSync(target, artifact.markdown, 'utf8')
+  return artifact.relPath
 }

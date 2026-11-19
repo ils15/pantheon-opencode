@@ -24,11 +24,12 @@ with zero external Python dependency, automatically available in any workspace v
 `opencode plugin add pantheon-opencode` (check the live inventory in `/pantheon-settings`
 → **About**):
 
-- **Memory, context & goals:** `memory_store`, `memory_recall`, `memory_search`,
+- **Memory, context, federation & goals:** `memory_store`, `memory_recall`, `memory_search`,
   `memory_forget`, `memory_list`, `memory_stats`, `context_save`, `context_get`, `goal_create`,
   `goal_get`, `goal_update`, and `goal_done` — FTS5-backed persistence under `.pantheon/`
   that automatically shares the main repository root across linked git worktrees
-  (override with `PANTHEON_ISOLATE_WORKTREE_MEMORY=1`). `goal_update` uses `notes`
+  (override with `PANTHEON_ISOLATE_WORKTREE_MEMORY=1`), plus optional read-only multi-repo
+  federation (`PANTHEON_FEDERATED_REPOS` / `~/.pantheon/federation.json`). `goal_update` uses `notes`
   to append progress entries.
 - **Structural codemap & AST rewriting:** `code_index`, `code_query`, `code_neighbors`,
   `ast_search`, and `ast_rewrite` — symbol/relation graph with automatic orphan pruning
@@ -39,8 +40,8 @@ with zero external Python dependency, automatically available in any workspace v
   `pantheon_review_verdict` (typed `@themis` verdict + bounded `ctx.session.synthetic` remediation),
   `pantheon_deepwork`, `pantheon_agent_forge` (including `detect_stack`), and `pantheon_skill_search`.
 - **Editing, LSP diagnostics, telemetry & routing:** `hashline_edit` (workspace-confined
-  relative paths + post-edit TypeScript/Pyright/stdio LSP bridge), `shell`, `todowrite`/`todoread`,
-  `pantheon_cost`, `pantheon_model`, and `pantheon_local_decision` (Zeus-only advisory selector).
+  relative paths + post-edit TypeScript/Pyright/stdio + pooled TCP LSP proxy via `PANTHEON_LSP_TCP_ENDPOINTS`),
+  `shell`, `todowrite`/`todoread`, `pantheon_cost`, `pantheon_model`, and `pantheon_local_decision` (Zeus-only advisory selector).
 - **Native worktree orchestration & commands:** `ctx.worktree.transform` (`create`, `remove`,
   `list`) in `.pantheon-worktrees/<repo>/<task>`, plus **9 slash commands** including
   `/pantheon-forge` and `/pantheon-cockpit`.

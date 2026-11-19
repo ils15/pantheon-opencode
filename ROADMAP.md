@@ -127,23 +127,23 @@ Active development on the `2.1.x` line focuses on operational smoothness and dev
 
 ---
 
-## Transitioned to Delivered (`2.2.0`) & Future Horizon (`2.3.0` Candidates)
+## Transitioned to Delivered (`2.2.0`)
 
-The workstreams originally chartered under `Road to 2.2.0` are now shipped in **`v2.2.0`**:
+100% of the workstreams chartered under `Road to 2.2.0` and the `2.3.0` evolution backlog are now shipped in **`v2.2.0`**:
 
-1. **Delivered — High-Density TUI Mission Control Cockpit (`/pantheon-cockpit` · `Overview`, `Swarm`, `Flightdeck`)**
-   - Implemented natively using OpenCode's `@opentui/solid` UI engine (replacing the legacy Ink draft while preserving all 3 pages and interactive controls via `1–3` / `Tab` + clickable Home/Sidebar badges).
+1. **Delivered — High-Density TUI Mission Control Cockpit (`/pantheon-cockpit` · `Overview`, `Swarm`, `Flightdeck`) + Flightdeck Visual Replay Export**
+   - Implemented natively using OpenCode's `@opentui/solid` UI engine (`1–3` / `Tab`, clickable Home `◈ Cockpit` link) with one-click / `x` **Flightdeck Replay Trace Export** writing Mermaid `sequenceDiagram` + Gantt reports into `.pantheon/reports/` for viewing in `/pantheon-artifacts`.
    - Specification reference: [TUI Mission Control Cockpit Design](docs/design/tui-mission-control-cockpit.md).
 2. **Delivered — Step-Ledger Execution Mode (`pantheon_step_ledger` + `runAtomicStepSubSession` + Git Checkpoints)**
    - Enforces SHA-256 verification receipts, isolated `ctx.session.create` sub-sessions per atomic step, and temp-index git snapshots with automatic rollback on `themis:reflex:escalated`.
-3. **Delivered — Multi-Provider Model Overrides & Jev Local Decision Router**
+3. **Delivered — Multi-Provider Model Overrides, Jev Decision Router & Multi-IDE TCP LSP Proxy Pooling**
    - `pantheon_local_decision` + `pantheon_model` + `PantheonBus` structured telemetry (`'lsp:diagnostics'`, `'review:verdict'`, `'step:rollback'`, `'reproduction:gate'`, `'themis:reflex:escalated'`).
-4. **Delivered — Polyglot Custom Specialist Forge (`pantheon_agent_forge` + `/pantheon-forge`)**
-   - Stack auto-detection (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`) and least-privilege specialist scaffolding in `.opencode/agents/<name>.md`.
+   - Post-edit diagnostics support `tsc --noEmit`, `pyright`, stdio LSP (`PANTHEON_LSP_SERVER`), and pooled TCP multi-IDE LSP sockets (`PANTHEON_LSP_TCP_ENDPOINTS`).
+4. **Delivered — Persistent Multi-Repo Knowledge Federation & Polyglot Custom Specialist Forge**
+   - Read-only cross-repository FTS5 memory lookup (`PANTHEON_FEDERATED_REPOS` / `~/.pantheon/federation.json`) with provenance in `memory_search` and `memory_stats`.
+   - Stack auto-detection (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`) and least-privilege specialist scaffolding via `/pantheon-forge` and `pantheon_agent_forge`.
 5. **Delivered — Deep Scope Governance & Reproduction Gates**
    - Symlink-confined workspace path guards, role-based execution restrictions, pre-edit failing test gates (`record_reproduction`) for bugfixes, and `ctx.worktree.transform` sibling isolation.
-6. **Future Horizon (`2.3.0` Candidates)**
-   - Persistent multi-repo shared knowledge federation, multi-IDE LSP TCP proxy pooling, and visual replay export for Cockpit `Flightdeck` traces.
 
 ---
 

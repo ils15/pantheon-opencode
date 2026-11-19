@@ -14,6 +14,7 @@ import {
   type CockpitChildEntry,
   type CockpitLogEntry,
   type CockpitTabId,
+  writeCockpitReplayArtifact,
 } from './cockpit-state.ts'
 import { resolveLanguage } from './settings-i18n'
 import { resolveAccentColor, tuiPrefs } from './tui-prefs'
@@ -38,6 +39,7 @@ let cockpitController:
       prevTab: () => void
       moveRow: (delta: number) => void
       toggleDetail: () => void
+      exportReplay: () => void
       refresh: () => void
       close: () => void
     }
@@ -161,6 +163,7 @@ export function CockpitView(props: {
   const [tab, setTab] = createSignal<CockpitTabId>('overview')
   const [selectedRow, setSelectedRow] = createSignal(0)
   const [showDetail, setShowDetail] = createSignal(false)
+  const [exportNote, setExportNote] = createSignal<string | null>(null)
   const [tick, setTick] = createSignal(0)
 
   const activeSid = () =>
@@ -228,6 +231,15 @@ export function CockpitView(props: {
         setSelectedRow((cur) => Math.max(0, Math.min(max - 1, cur + delta)))
       },
       toggleDetail: () => setShowDetail((v) => !v),
+      exportReplay: () => {
+        try {
+          const relPath = writeCockpitReplayArtifact(props.workspaceDir, snapshot())
+          setExportNote(relPath)
+          setTick((t) => t + 1)
+        } catch {
+          setExportNote('export_failed')
+        }
+      },
       refresh: () => setTick((t) => t + 1),
       close: props.onClose,
     }
@@ -400,6 +412,15 @@ export function CockpitView(props: {
               </For>
             </Show>
           </box>
+
+          <box marginTop={1} flexDirection="row" gap={2}>
+            <box onMouseDown={() => cockpitController?.exportReplay()}>
+              <text fg={accent()} attributes={1}>
+                {'[ x Export Replay Trace ]'}
+              </text>
+            </box>
+            <Show when={exportNote()}>{(note) => <text fg={success()}>{`✓ ${note()}`}</text>}</Show>
+          </box>
         </box>
       </Show>
 
@@ -407,7 +428,9 @@ export function CockpitView(props: {
         {'─'.repeat(72)}
       </text>
       <text fg={muted()}>
-        {'1-3 tabs · Tab/Shift+Tab switch · ↑↓ select · Enter detail · r refresh · Esc/q close'}
+        {
+          '1-3 tabs · Tab/Shift+Tab switch · ↑↓ select · Enter detail · x replay · r refresh · Esc/q close'
+        }
       </text>
     </box>
   )
@@ -529,6 +552,15 @@ export function setupPantheonCockpit(context: Context, resolveCwd: () => string)
       bind: 'enter',
       run: () => {
         cockpitController?.toggleDetail()
+        return undefined
+      },
+    },
+    {
+      id: 'pantheon.cockpit.export',
+      title: 'Export Flightdeck replay trace',
+      bind: 'x',
+      run: () => {
+        cockpitController?.exportReplay()
         return undefined
       },
     },

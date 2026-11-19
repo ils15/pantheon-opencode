@@ -52,7 +52,7 @@ export interface ExecutionReceiptPayload {
 
 export interface LspDiagnosticEventPayload {
   readonly file: string
-  readonly source: 'typescript' | 'pyright' | 'lsp-stdio' | 'biome'
+  readonly source: 'typescript' | 'pyright' | 'lsp-stdio' | 'lsp-tcp' | 'biome'
   readonly count: number
   readonly errors: number
   readonly timestamp: number

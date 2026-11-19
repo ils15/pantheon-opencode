@@ -22,6 +22,7 @@ import {
   ensureLegacyStoresMigratedOnce,
   resolveSafeGlobalConfigDir,
 } from './legacy-store-migration.mjs'
+import { getFederatedStats, searchFederatedMemories } from './memory-federation.ts'
 import { resolveMemoryStoreCwd } from './tool-context.ts'
 import type { V2ToolDef, V2ToolResult } from './tools.ts'
 
@@ -241,6 +242,10 @@ export function createNativeMemoryAndPersistenceTools(fallbackDir?: string): V2T
           query: { type: 'string', description: 'Search query terms' },
           namespace: { type: 'string', description: 'Optional namespace filter' },
           top_k: { type: 'number', description: 'Maximum results to return (default 10)' },
+          federated: {
+            type: 'boolean',
+            description: 'Include federated peer repositories (default true when configured)',
+          },
         },
       },
       output: {},
@@ -258,6 +263,7 @@ export function createNativeMemoryAndPersistenceTools(fallbackDir?: string): V2T
             typeof input.namespace === 'string' && input.namespace.trim()
               ? input.namespace.trim()
               : undefined
+          const useFederated = input.federated !== false
           const cwd = resolveMemoryStoreCwd(context, fallbackDir)
           const db = getMemoryDb(cwd)
           const nowIso = new Date().toISOString()
@@ -268,6 +274,8 @@ export function createNativeMemoryAndPersistenceTools(fallbackDir?: string): V2T
             .split(/\s+/)
             .filter((t) => t.length >= 2)
 
+          let localRows: Record<string, unknown>[] = []
+          let matchedFts = false
           if (tokens.length > 0) {
             try {
               const ftsExpr = tokens.map((t) => `"${t.replace(/"/g, '""')}"*`).join(' OR ')
@@ -284,31 +292,44 @@ export function createNativeMemoryAndPersistenceTools(fallbackDir?: string): V2T
               }
               ftsSql += ' ORDER BY score LIMIT ?'
               ftsParams.push(limit)
-              const rows = db.prepare(ftsSql).all(...ftsParams)
+              const rows = db.prepare(ftsSql).all(...ftsParams) as Record<string, unknown>[]
               if (rows.length > 0) {
-                return jsonResult({ ok: true, count: rows.length, results: rows })
+                localRows = rows
+                matchedFts = true
               }
             } catch {
               /* fallback to LIKE */
             }
           }
 
-          const escaped = rawQuery.replace(/[\\%_]/g, '\\$&')
-          let sql = `
-            SELECT namespace, key, value, metadata, created_at
-            FROM memories
-            WHERE (value LIKE ? ESCAPE '\\' OR key LIKE ? ESCAPE '\\')
-              AND ${NOT_EXPIRED_SQL}
-          `
-          const params: Array<string | number> = [`%${escaped}%`, `%${escaped}%`, nowIso]
-          if (ns) {
-            sql += ' AND namespace = ?'
-            params.push(ns)
+          if (!matchedFts) {
+            const escaped = rawQuery.replace(/[\\%_]/g, '\\$&')
+            let sql = `
+              SELECT namespace, key, value, metadata, created_at
+              FROM memories
+              WHERE (value LIKE ? ESCAPE '\\' OR key LIKE ? ESCAPE '\\')
+                AND ${NOT_EXPIRED_SQL}
+            `
+            const params: Array<string | number> = [`%${escaped}%`, `%${escaped}%`, nowIso]
+            if (ns) {
+              sql += ' AND namespace = ?'
+              params.push(ns)
+            }
+            sql += ' ORDER BY id DESC LIMIT ?'
+            params.push(limit)
+            localRows = db.prepare(sql).all(...params) as Record<string, unknown>[]
           }
-          sql += ' ORDER BY id DESC LIMIT ?'
-          params.push(limit)
-          const rows = db.prepare(sql).all(...params)
-          return jsonResult({ ok: true, count: rows.length, results: rows })
+
+          const remaining = Math.max(0, limit - localRows.length)
+          const peerRows =
+            useFederated && remaining > 0
+              ? searchFederatedMemories(cwd, rawQuery, {
+                  ...(ns ? { namespace: ns } : {}),
+                  limit: remaining,
+                })
+              : []
+          const combined = [...localRows, ...peerRows]
+          return jsonResult({ ok: true, count: combined.length, results: combined })
         } catch (err) {
           return jsonResult({
             ok: false,
@@ -419,7 +440,13 @@ export function createNativeMemoryAndPersistenceTools(fallbackDir?: string): V2T
               `SELECT namespace, count(*) as count FROM memories WHERE ${NOT_EXPIRED_SQL} GROUP BY namespace`,
             )
             .all(nowIso)
-          return jsonResult({ ok: true, total: total?.count ?? 0, byNamespace })
+          const fed = getFederatedStats(cwd)
+          return jsonResult({
+            ok: true,
+            total: total?.count ?? 0,
+            byNamespace,
+            ...(fed.repos.length > 0 ? { federated: fed } : {}),
+          })
         } catch (err) {
           return jsonResult({
             ok: false,

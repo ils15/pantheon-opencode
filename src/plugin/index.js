@@ -6,7 +6,7 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
 });
 
 // src/plugin.ts
-import { appendFileSync as appendFileSync2, existsSync as existsSync21, mkdirSync as mkdirSync13, readdirSync as readdirSync8, readFileSync as readFileSync18 } from "node:fs";
+import { appendFileSync as appendFileSync2, existsSync as existsSync22, mkdirSync as mkdirSync13, readdirSync as readdirSync8, readFileSync as readFileSync19 } from "node:fs";
 import { realpath as realpathAsync } from "node:fs/promises";
 import path4 from "node:path";
 import { fileURLToPath as fileURLToPath5 } from "node:url";
@@ -4685,6 +4685,7 @@ function createReadEnhancer() {
 // src/pantheon/lsp-diagnostics.ts
 import { execFile as execFile2, spawn } from "node:child_process";
 import { existsSync as existsSync3, readFileSync as readFileSync4 } from "node:fs";
+import { createConnection } from "node:net";
 import { basename, dirname as dirname4, extname as extname2, join as join3, relative as relative3, resolve as resolve4 } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify as promisify2 } from "node:util";
@@ -4742,7 +4743,7 @@ var PantheonBus = class {
    * Wait asynchronously for a specific event matching a predicate, with an optional timeout.
    */
   waitFor(event, predicate, timeoutMs = 3e4) {
-    return new Promise((resolve20, reject) => {
+    return new Promise((resolve21, reject) => {
       let timer = null;
       let unsubscribe = null;
       if (timeoutMs > 0 && Number.isFinite(timeoutMs)) {
@@ -4756,7 +4757,7 @@ var PantheonBus = class {
           if (predicate(payload)) {
             if (timer) clearTimeout(timer);
             unsubscribe?.();
-            resolve20(payload);
+            resolve21(payload);
           }
         } catch (err) {
           if (timer) clearTimeout(timer);
@@ -4795,6 +4796,190 @@ function getSharedBus() {
 var execFileAsync2 = promisify2(execFile2);
 var MAX_DIAGNOSTICS = 8;
 var TS_EXTENSIONS = /* @__PURE__ */ new Set([".ts", ".tsx", ".mts", ".cts"]);
+function resolveLanguageId(absFile) {
+  const ext = extname2(absFile).toLowerCase();
+  if (TS_EXTENSIONS.has(ext)) return ext.includes("x") ? "typescriptreact" : "typescript";
+  if (ext === ".py") return "python";
+  if (ext === ".go") return "go";
+  if (ext === ".rs") return "rust";
+  return "plaintext";
+}
+function extractPublishedDiagnostics(rawDiags, absFile) {
+  const items = [];
+  for (const d of rawDiags) {
+    if (!d || typeof d !== "object") continue;
+    const diag = d;
+    items.push({
+      file: absFile,
+      line: (diag.range?.start?.line ?? 0) + 1,
+      column: (diag.range?.start?.character ?? 0) + 1,
+      severity: diag.severity === 2 ? "warning" : "error",
+      ...diag.code !== void 0 ? { code: String(diag.code) } : {},
+      message: String(diag.message ?? "").trim()
+    });
+  }
+  return items;
+}
+function parseLspTcpEndpoints(raw = process.env.PANTHEON_LSP_TCP_ENDPOINTS ?? "") {
+  const endpoints = [];
+  for (const entry of raw.split(",")) {
+    const trimmed = entry.trim();
+    if (!trimmed) continue;
+    const eqIdx = trimmed.indexOf("=");
+    const language = eqIdx > 0 ? trimmed.slice(0, eqIdx).trim().toLowerCase() : "*";
+    const addr = eqIdx > 0 ? trimmed.slice(eqIdx + 1).trim() : trimmed;
+    const colonIdx = addr.lastIndexOf(":");
+    if (colonIdx <= 0) continue;
+    const host = addr.slice(0, colonIdx).trim();
+    const port = Number(addr.slice(colonIdx + 1).trim());
+    if (!host || !Number.isInteger(port) || port <= 0 || port > 65535) continue;
+    endpoints.push({ language, host, port });
+  }
+  return endpoints;
+}
+var tcpPool = /* @__PURE__ */ new Map();
+async function acquirePooledTcpSession(host, port, rootUri, timeoutMs) {
+  const key = `${host}:${port}`;
+  const existing = tcpPool.get(key);
+  if (existing && !existing.socket.destroyed && existing.initialized) {
+    if (existing.idleTimer) clearTimeout(existing.idleTimer);
+    return existing;
+  }
+  if (existing) {
+    tcpPool.delete(key);
+    try {
+      existing.socket.destroy();
+    } catch {
+    }
+  }
+  return new Promise((resolvePromise) => {
+    let settled = false;
+    const socket = createConnection({ host, port });
+    socket.unref();
+    const session = {
+      socket,
+      buffer: Buffer.alloc(0),
+      initialized: false,
+      docVersions: /* @__PURE__ */ new Map(),
+      listeners: /* @__PURE__ */ new Set()
+    };
+    const fail3 = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      tcpPool.delete(key);
+      try {
+        socket.destroy();
+      } catch {
+      }
+      resolvePromise(null);
+    };
+    const timer = setTimeout(fail3, timeoutMs);
+    socket.on("error", fail3);
+    socket.on("close", () => {
+      tcpPool.delete(key);
+      if (!settled) fail3();
+    });
+    socket.on("data", (chunk) => {
+      session.buffer = Buffer.concat([session.buffer, chunk]);
+      const parsed = parseLspMessages(session.buffer);
+      session.buffer = Buffer.from(parsed.remainder);
+      for (const msg of parsed.messages) {
+        if (!msg || typeof msg !== "object") continue;
+        const rec = msg;
+        if (!session.initialized && rec.id === 1 && rec.result !== void 0) {
+          session.initialized = true;
+          socket.write(encodeLspMessage({ jsonrpc: "2.0", method: "initialized", params: {} }));
+          tcpPool.set(key, session);
+          if (!settled) {
+            settled = true;
+            clearTimeout(timer);
+            resolvePromise(session);
+          }
+        }
+        for (const fn of session.listeners) fn(rec);
+      }
+    });
+    socket.on("connect", () => {
+      socket.write(
+        encodeLspMessage({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: { processId: process.pid, rootUri, capabilities: {} }
+        })
+      );
+    });
+  });
+}
+async function queryTcpLspDiagnostics(filePath, options) {
+  const absFile = resolve4(filePath);
+  const fileUri = pathToFileURL(absFile).href;
+  const rootUri = pathToFileURL(resolve4(options.cwd)).href;
+  const timeoutMs = options.timeoutMs ?? 4500;
+  const session = await acquirePooledTcpSession(options.host, options.port, rootUri, timeoutMs);
+  if (!session) return [];
+  const text2 = existsSync3(absFile) ? readFileSync4(absFile, "utf8") : "";
+  const languageId = resolveLanguageId(absFile);
+  const nextVer = (session.docVersions.get(fileUri) ?? 0) + 1;
+  session.docVersions.set(fileUri, nextVer);
+  return new Promise((resolvePromise) => {
+    let settled = false;
+    const onMsg = (rec) => {
+      if (rec.method !== "textDocument/publishDiagnostics") return;
+      const params = rec.params ?? {};
+      if (params.uri && params.uri !== fileUri) return;
+      finish(
+        extractPublishedDiagnostics(
+          Array.isArray(params.diagnostics) ? params.diagnostics : [],
+          absFile
+        )
+      );
+    };
+    const finish = (items) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      session.listeners.delete(onMsg);
+      const idleTtl = options.idleTtlMs ?? 6e4;
+      session.idleTimer = setTimeout(() => {
+        try {
+          session.socket.destroy();
+        } catch {
+        }
+        tcpPool.delete(`${options.host}:${options.port}`);
+      }, idleTtl);
+      session.idleTimer.unref?.();
+      resolvePromise(items);
+    };
+    const timer = setTimeout(() => finish([]), timeoutMs);
+    session.listeners.add(onMsg);
+    try {
+      if (nextVer === 1) {
+        session.socket.write(
+          encodeLspMessage({
+            jsonrpc: "2.0",
+            method: "textDocument/didOpen",
+            params: { textDocument: { uri: fileUri, languageId, version: nextVer, text: text2 } }
+          })
+        );
+      } else {
+        session.socket.write(
+          encodeLspMessage({
+            jsonrpc: "2.0",
+            method: "textDocument/didChange",
+            params: {
+              textDocument: { uri: fileUri, version: nextVer },
+              contentChanges: [{ text: text2 }]
+            }
+          })
+        );
+      }
+    } catch {
+      finish([]);
+    }
+  });
+}
 function encodeLspMessage(payload) {
   const json = JSON.stringify(payload);
   const len = Buffer.byteLength(json, "utf8");
@@ -5042,6 +5227,24 @@ async function runPostEditDiagnostics(filePath, options = {}) {
         timestamp: Date.now()
       });
       return lspItems.length > 0 ? formatDiagnosticsBlock(absFile, cwd, lspItems) : null;
+    }
+    const langId = resolveLanguageId(absFile);
+    const configuredTcp = options.tcpEndpoint ?? parseLspTcpEndpoints().find((ep) => ep.language === langId || ep.language === "*");
+    if (configuredTcp) {
+      const tcpItems = await queryTcpLspDiagnostics(absFile, {
+        host: configuredTcp.host,
+        port: configuredTcp.port,
+        cwd,
+        timeoutMs
+      });
+      getSharedBus().emit("lsp:diagnostics", {
+        file: relative3(cwd, absFile) || absFile,
+        source: "lsp-tcp",
+        count: tcpItems.length,
+        errors: tcpItems.filter((d) => d.severity === "error").length,
+        timestamp: Date.now()
+      });
+      return tcpItems.length > 0 ? formatDiagnosticsBlock(absFile, cwd, tcpItems) : null;
     }
     if (TS_EXTENSIONS.has(ext)) {
       const tscBin = findAncestorTool(cwd, ["node_modules", ".bin", "tsc"]);
@@ -6785,12 +6988,12 @@ function recordSkip(sink, skipReason) {
   );
 }
 function abortDeadline(signal) {
-  return new Promise((resolve20) => {
+  return new Promise((resolve21) => {
     if (signal.aborted) {
-      resolve20("timeout");
+      resolve21("timeout");
       return;
     }
-    signal.addEventListener("abort", () => resolve20("timeout"), { once: true });
+    signal.addEventListener("abort", () => resolve21("timeout"), { once: true });
   });
 }
 function createJ1RiskGateObserver(options) {
@@ -9003,12 +9206,12 @@ function recordSkip2(sink, skipReason) {
   );
 }
 function abortDeadline2(signal) {
-  return new Promise((resolve20) => {
+  return new Promise((resolve21) => {
     if (signal.aborted) {
-      resolve20("timeout");
+      resolve21("timeout");
       return;
     }
-    signal.addEventListener("abort", () => resolve20("timeout"), { once: true });
+    signal.addEventListener("abort", () => resolve21("timeout"), { once: true });
   });
 }
 function createJ3EscalationObserver(options) {
@@ -10158,11 +10361,11 @@ async function readV2CredentialToken(providerIDs, stateDir, env) {
   } catch {
     return null;
   }
-  const DatabaseSync5 = sqlite.DatabaseSync;
-  if (typeof DatabaseSync5 !== "function") return null;
+  const DatabaseSync6 = sqlite.DatabaseSync;
+  if (typeof DatabaseSync6 !== "function") return null;
   let db;
   try {
-    db = new DatabaseSync5(`file:${dbPath}?mode=ro`, { readOnly: true });
+    db = new DatabaseSync6(`file:${dbPath}?mode=ro`, { readOnly: true });
     const statement = db.prepare(
       "SELECT value FROM credential WHERE integration_id = ? AND active = 1 LIMIT 1"
     );
@@ -12011,9 +12214,9 @@ var BackgroundJobBoard = class {
     if (existing && (TERMINAL_STATES.has(existing.state) || existing.state === "reconciled")) {
       return Promise.resolve(existing);
     }
-    return new Promise((resolve20, reject) => {
+    return new Promise((resolve21, reject) => {
       const waiter = {
-        resolve: resolve20,
+        resolve: resolve21,
         reject,
         timer: setTimeout(() => {
           this.removeTerminalWaiter(taskID, waiter);
@@ -12483,7 +12686,7 @@ function runHook(script, payload, opts = {}) {
       timedOut: false
     });
   }
-  return new Promise((resolve20) => {
+  return new Promise((resolve21) => {
     const stdoutBuf = { value: "" };
     const stderrBuf = { value: "" };
     let settled = false;
@@ -12493,7 +12696,7 @@ function runHook(script, payload, opts = {}) {
       if (!settled) {
         settled = true;
         if (timeoutHandle !== void 0) clearTimeout(timeoutHandle);
-        resolve20(result);
+        resolve21(result);
       }
     };
     const spawnOpts = {
@@ -15308,7 +15511,7 @@ function defaultIsExecutable(path5) {
   }
 }
 function defaultExecFile(file, args) {
-  return new Promise((resolve20, reject) => {
+  return new Promise((resolve21, reject) => {
     execFile4(file, [...args], { encoding: "utf8" }, (error, stdout, stderr) => {
       if (error) {
         const failure = error;
@@ -15317,7 +15520,7 @@ function defaultExecFile(file, args) {
         reject(failure);
         return;
       }
-      resolve20({ stdout, stderr });
+      resolve21({ stdout, stderr });
     });
   });
 }
@@ -16007,8 +16210,8 @@ async function withPlanLock(cwd, slug, fn) {
   const key = `${cwd}::${slug}`;
   const prev = planLocks.get(key) ?? Promise.resolve();
   let resolveCurrent;
-  const current = new Promise((resolve20) => {
-    resolveCurrent = resolve20;
+  const current = new Promise((resolve21) => {
+    resolveCurrent = resolve21;
   });
   planLocks.set(key, current);
   try {
@@ -17507,15 +17710,165 @@ function createModelCommand(options = {}) {
 
 // src/pantheon/native-memory-tools.ts
 import {
-  existsSync as existsSync18,
+  existsSync as existsSync19,
   mkdirSync as mkdirSync11,
   readdirSync as readdirSync6,
-  readFileSync as readFileSync16,
-  realpathSync as realpathSync7,
+  readFileSync as readFileSync17,
+  realpathSync as realpathSync8,
   writeFileSync as writeFileSync9
 } from "node:fs";
-import { join as join27, resolve as resolve18, sep as sep9 } from "node:path";
+import { join as join28, resolve as resolve19, sep as sep9 } from "node:path";
+import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
+
+// src/pantheon/memory-federation.ts
+import { existsSync as existsSync18, readFileSync as readFileSync16, realpathSync as realpathSync7 } from "node:fs";
+import { homedir as homedir8 } from "node:os";
+import { basename as basename5, join as join27, resolve as resolve18 } from "node:path";
 import { DatabaseSync as DatabaseSync4 } from "node:sqlite";
+var NOT_EXPIRED_SQL = "(expires_at IS NULL OR expires_at > ?)";
+function safeRealpath(dir) {
+  try {
+    return realpathSync7(dir);
+  } catch {
+    return resolve18(dir);
+  }
+}
+function resolveFederatedRepoDirs(primaryWorkspaceDir, options = {}) {
+  const candidates = [];
+  if (Array.isArray(options.explicitRepos)) {
+    candidates.push(...options.explicitRepos);
+  }
+  const rawEnv = options.federatedEnv ?? process.env.PANTHEON_FEDERATED_REPOS ?? "";
+  if (rawEnv.trim()) {
+    for (const part of rawEnv.split(/[,;]/)) {
+      const trimmed = part.trim();
+      if (trimmed) candidates.push(trimmed);
+    }
+  }
+  const manifestFile = options.manifestPath ?? join27(homedir8(), ".pantheon", "federation.json");
+  if (existsSync18(manifestFile)) {
+    try {
+      const parsed = JSON.parse(readFileSync16(manifestFile, "utf8"));
+      if (Array.isArray(parsed.repos)) {
+        for (const item of parsed.repos) {
+          if (typeof item === "string" && item.trim()) candidates.push(item.trim());
+        }
+      }
+    } catch {
+    }
+  }
+  const primaryStore = safeRealpath(resolveSharedPantheonRoot(primaryWorkspaceDir));
+  const seenStores = /* @__PURE__ */ new Set([primaryStore]);
+  const peers = [];
+  for (const candidate of candidates) {
+    const abs = resolve18(candidate);
+    if (!existsSync18(abs)) continue;
+    const peerStore = safeRealpath(resolveSharedPantheonRoot(abs));
+    if (seenStores.has(peerStore)) continue;
+    const dbPath = join27(peerStore, ".pantheon", "memory", "memory.db");
+    if (!existsSync18(dbPath)) continue;
+    seenStores.add(peerStore);
+    peers.push(peerStore);
+  }
+  return peers;
+}
+function querySinglePeerDb(peerRoot, rawQuery, nowIso, limit, namespace) {
+  const dbPath = join27(peerRoot, ".pantheon", "memory", "memory.db");
+  if (!existsSync18(dbPath)) return [];
+  const repoName = basename5(peerRoot) || peerRoot;
+  let db;
+  try {
+    db = new DatabaseSync4(dbPath, { readOnly: true });
+    const tokens = rawQuery.replace(/[^\p{L}\p{N}_-]+/gu, " ").trim().split(/\s+/).filter((t) => t.length >= 2);
+    if (tokens.length > 0) {
+      try {
+        const ftsExpr = tokens.map((t) => `"${t.replace(/"/g, '""')}"*`).join(" OR ");
+        let ftsSql = `
+          SELECT m.namespace, m.key, m.value, m.metadata, m.created_at, bm25(memories_fts) AS score
+          FROM memories_fts
+          JOIN memories m ON m.id = memories_fts.rowid
+          WHERE memories_fts MATCH ? AND (m.expires_at IS NULL OR m.expires_at > ?)
+        `;
+        const ftsParams = [ftsExpr, nowIso];
+        if (namespace) {
+          ftsSql += " AND m.namespace = ?";
+          ftsParams.push(namespace);
+        }
+        ftsSql += " ORDER BY score LIMIT ?";
+        ftsParams.push(limit);
+        const rows2 = db.prepare(ftsSql).all(...ftsParams);
+        if (rows2.length > 0) {
+          return rows2.map((r) => ({ ...r, sourceRepo: repoName, sourcePath: peerRoot }));
+        }
+      } catch {
+      }
+    }
+    const escaped = rawQuery.replace(/[\\%_]/g, "\\$&");
+    let sql = `
+      SELECT namespace, key, value, metadata, created_at
+      FROM memories
+      WHERE (value LIKE ? ESCAPE '\\' OR key LIKE ? ESCAPE '\\')
+        AND ${NOT_EXPIRED_SQL}
+    `;
+    const params = [`%${escaped}%`, `%${escaped}%`, nowIso];
+    if (namespace) {
+      sql += " AND namespace = ?";
+      params.push(namespace);
+    }
+    sql += " ORDER BY id DESC LIMIT ?";
+    params.push(limit);
+    const rows = db.prepare(sql).all(...params);
+    return rows.map((r) => ({ ...r, sourceRepo: repoName, sourcePath: peerRoot }));
+  } catch {
+    return [];
+  } finally {
+    try {
+      db?.close();
+    } catch {
+    }
+  }
+}
+function searchFederatedMemories(primaryWorkspaceDir, query, options = {}) {
+  const peers = resolveFederatedRepoDirs(primaryWorkspaceDir, options);
+  if (peers.length === 0) return [];
+  const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+  const limit = Math.max(1, Math.min(options.limit ?? 10, 100));
+  const results = [];
+  for (const peer of peers) {
+    const hits = querySinglePeerDb(peer, query, nowIso, limit, options.namespace);
+    results.push(...hits);
+    if (results.length >= limit) break;
+  }
+  return results.slice(0, limit);
+}
+function getFederatedStats(primaryWorkspaceDir, options = {}) {
+  const peers = resolveFederatedRepoDirs(primaryWorkspaceDir, options);
+  const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+  const repos = [];
+  let total = 0;
+  for (const peer of peers) {
+    const dbPath = join27(peer, ".pantheon", "memory", "memory.db");
+    let count = 0;
+    let db;
+    try {
+      db = new DatabaseSync4(dbPath, { readOnly: true });
+      const row = db.prepare(`SELECT count(*) as count FROM memories WHERE ${NOT_EXPIRED_SQL}`).get(nowIso);
+      count = typeof row?.count === "number" ? row.count : 0;
+    } catch {
+      count = 0;
+    } finally {
+      try {
+        db?.close();
+      } catch {
+      }
+    }
+    repos.push({ repo: basename5(peer) || peer, path: peer, total: count });
+    total += count;
+  }
+  return { total, repos };
+}
+
+// src/pantheon/native-memory-tools.ts
 var SAFE_SEGMENT_RE2 = /^[a-zA-Z0-9._:-]{1,128}$/;
 var MAX_MEMORY_VALUE_BYTES = 65536;
 function isSafeSegment(value) {
@@ -17523,8 +17876,8 @@ function isSafeSegment(value) {
 }
 function resolveConfinedPath(baseDir, ...segments) {
   mkdirSync11(baseDir, { recursive: true });
-  const canonicalBase = realpathSync7(baseDir);
-  const candidate = resolve18(canonicalBase, ...segments);
+  const canonicalBase = realpathSync8(baseDir);
+  const candidate = resolve19(canonicalBase, ...segments);
   const prefix = canonicalBase.endsWith(sep9) ? canonicalBase : `${canonicalBase}${sep9}`;
   if (candidate !== canonicalBase && !candidate.startsWith(prefix)) {
     throw new Error("Path traversal denied: target escapes confined directory");
@@ -17541,12 +17894,12 @@ function runAutoMigration(workspaceDir) {
 }
 function getMemoryDb(workspaceDir) {
   runAutoMigration(workspaceDir);
-  const memoryDir = join27(workspaceDir, ".pantheon", "memory");
+  const memoryDir = join28(workspaceDir, ".pantheon", "memory");
   mkdirSync11(memoryDir, { recursive: true });
   const dbPath = resolveConfinedPath(memoryDir, "memory.db");
   const cached = dbCache.get(dbPath);
   if (cached) return cached;
-  const db = new DatabaseSync4(dbPath);
+  const db = new DatabaseSync5(dbPath);
   db.exec(`
     PRAGMA busy_timeout = 3000;
     PRAGMA journal_mode = WAL;
@@ -17595,7 +17948,7 @@ function getMemoryDb(workspaceDir) {
 function jsonResult5(payload) {
   return { output: JSON.stringify(payload) };
 }
-var NOT_EXPIRED_SQL = "(expires_at IS NULL OR expires_at > ?)";
+var NOT_EXPIRED_SQL2 = "(expires_at IS NULL OR expires_at > ?)";
 function createNativeMemoryAndPersistenceTools(fallbackDir) {
   return [
     {
@@ -17688,7 +18041,7 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
           const row = db.prepare(
             `SELECT namespace, key, value, metadata, created_at, expires_at
                FROM memories
-               WHERE namespace = ? AND key = ? AND ${NOT_EXPIRED_SQL}`
+               WHERE namespace = ? AND key = ? AND ${NOT_EXPIRED_SQL2}`
           ).get(ns.trim(), key.trim(), nowIso);
           return jsonResult5(row ?? { ok: false, error: "not_found" });
         } catch (err) {
@@ -17709,7 +18062,11 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
         properties: {
           query: { type: "string", description: "Search query terms" },
           namespace: { type: "string", description: "Optional namespace filter" },
-          top_k: { type: "number", description: "Maximum results to return (default 10)" }
+          top_k: { type: "number", description: "Maximum results to return (default 10)" },
+          federated: {
+            type: "boolean",
+            description: "Include federated peer repositories (default true when configured)"
+          }
         }
       },
       output: {},
@@ -17721,10 +18078,13 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
           }
           const limit = typeof input.top_k === "number" && Number.isFinite(input.top_k) && input.top_k > 0 ? Math.min(Math.floor(input.top_k), 100) : 10;
           const ns = typeof input.namespace === "string" && input.namespace.trim() ? input.namespace.trim() : void 0;
+          const useFederated = input.federated !== false;
           const cwd = resolveMemoryStoreCwd(context, fallbackDir);
           const db = getMemoryDb(cwd);
           const nowIso = (/* @__PURE__ */ new Date()).toISOString();
           const tokens = rawQuery.replace(/[^\p{L}\p{N}_-]+/gu, " ").trim().split(/\s+/).filter((t) => t.length >= 2);
+          let localRows = [];
+          let matchedFts = false;
           if (tokens.length > 0) {
             try {
               const ftsExpr = tokens.map((t) => `"${t.replace(/"/g, '""')}"*`).join(" OR ");
@@ -17741,29 +18101,38 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
               }
               ftsSql += " ORDER BY score LIMIT ?";
               ftsParams.push(limit);
-              const rows2 = db.prepare(ftsSql).all(...ftsParams);
-              if (rows2.length > 0) {
-                return jsonResult5({ ok: true, count: rows2.length, results: rows2 });
+              const rows = db.prepare(ftsSql).all(...ftsParams);
+              if (rows.length > 0) {
+                localRows = rows;
+                matchedFts = true;
               }
             } catch {
             }
           }
-          const escaped = rawQuery.replace(/[\\%_]/g, "\\$&");
-          let sql = `
-            SELECT namespace, key, value, metadata, created_at
-            FROM memories
-            WHERE (value LIKE ? ESCAPE '\\' OR key LIKE ? ESCAPE '\\')
-              AND ${NOT_EXPIRED_SQL}
-          `;
-          const params = [`%${escaped}%`, `%${escaped}%`, nowIso];
-          if (ns) {
-            sql += " AND namespace = ?";
-            params.push(ns);
+          if (!matchedFts) {
+            const escaped = rawQuery.replace(/[\\%_]/g, "\\$&");
+            let sql = `
+              SELECT namespace, key, value, metadata, created_at
+              FROM memories
+              WHERE (value LIKE ? ESCAPE '\\' OR key LIKE ? ESCAPE '\\')
+                AND ${NOT_EXPIRED_SQL2}
+            `;
+            const params = [`%${escaped}%`, `%${escaped}%`, nowIso];
+            if (ns) {
+              sql += " AND namespace = ?";
+              params.push(ns);
+            }
+            sql += " ORDER BY id DESC LIMIT ?";
+            params.push(limit);
+            localRows = db.prepare(sql).all(...params);
           }
-          sql += " ORDER BY id DESC LIMIT ?";
-          params.push(limit);
-          const rows = db.prepare(sql).all(...params);
-          return jsonResult5({ ok: true, count: rows.length, results: rows });
+          const remaining = Math.max(0, limit - localRows.length);
+          const peerRows = useFederated && remaining > 0 ? searchFederatedMemories(cwd, rawQuery, {
+            ...ns ? { namespace: ns } : {},
+            limit: remaining
+          }) : [];
+          const combined = [...localRows, ...peerRows];
+          return jsonResult5({ ok: true, count: combined.length, results: combined });
         } catch (err) {
           return jsonResult5({
             ok: false,
@@ -17827,7 +18196,7 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
           const db = getMemoryDb(cwd);
           const nowIso = (/* @__PURE__ */ new Date()).toISOString();
           const limit = typeof input.limit === "number" && Number.isFinite(input.limit) && input.limit > 0 ? Math.min(Math.floor(input.limit), 200) : 50;
-          let sql = `SELECT namespace, key, created_at FROM memories WHERE ${NOT_EXPIRED_SQL}`;
+          let sql = `SELECT namespace, key, created_at FROM memories WHERE ${NOT_EXPIRED_SQL2}`;
           const params = [nowIso];
           if (typeof input.namespace === "string" && input.namespace.trim()) {
             sql += " AND namespace = ?";
@@ -17861,11 +18230,17 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
           const cwd = resolveMemoryStoreCwd(context, fallbackDir);
           const db = getMemoryDb(cwd);
           const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-          const total = db.prepare(`SELECT count(*) as count FROM memories WHERE ${NOT_EXPIRED_SQL}`).get(nowIso);
+          const total = db.prepare(`SELECT count(*) as count FROM memories WHERE ${NOT_EXPIRED_SQL2}`).get(nowIso);
           const byNamespace = db.prepare(
-            `SELECT namespace, count(*) as count FROM memories WHERE ${NOT_EXPIRED_SQL} GROUP BY namespace`
+            `SELECT namespace, count(*) as count FROM memories WHERE ${NOT_EXPIRED_SQL2} GROUP BY namespace`
           ).all(nowIso);
-          return jsonResult5({ ok: true, total: total?.count ?? 0, byNamespace });
+          const fed = getFederatedStats(cwd);
+          return jsonResult5({
+            ok: true,
+            total: total?.count ?? 0,
+            byNamespace,
+            ...fed.repos.length > 0 ? { federated: fed } : {}
+          });
         } catch (err) {
           return jsonResult5({
             ok: false,
@@ -17903,7 +18278,7 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
           }
           const cwd = resolveMemoryStoreCwd(context, fallbackDir);
           runAutoMigration(cwd);
-          const baseDir = join27(cwd, ".pantheon", "persistence");
+          const baseDir = join28(cwd, ".pantheon", "persistence");
           const dir = resolveConfinedPath(baseDir, ns);
           mkdirSync11(dir, { recursive: true });
           const filePath = resolveConfinedPath(dir, `${sessionId}.json`);
@@ -17961,23 +18336,23 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
           }
           const cwd = resolveMemoryStoreCwd(context, fallbackDir);
           runAutoMigration(cwd);
-          const baseDir = join27(cwd, ".pantheon", "persistence");
+          const baseDir = join28(cwd, ".pantheon", "persistence");
           const dir = resolveConfinedPath(baseDir, ns);
           const filePath = resolveConfinedPath(dir, `${sessionId}.json`);
-          if (!existsSync18(filePath)) {
+          if (!existsSync19(filePath)) {
             const globalDir = resolveSafeGlobalConfigDir();
             if (globalDir) {
-              const globalNsDir = join27(globalDir, ".pantheon", "persistence", ns);
-              if (existsSync18(join27(globalNsDir, `${sessionId}.json`))) {
+              const globalNsDir = join28(globalDir, ".pantheon", "persistence", ns);
+              if (existsSync19(join28(globalNsDir, `${sessionId}.json`))) {
                 const globalFile = resolveConfinedPath(globalNsDir, `${sessionId}.json`);
-                if (existsSync18(globalFile)) {
-                  return jsonResult5(JSON.parse(readFileSync16(globalFile, "utf8")));
+                if (existsSync19(globalFile)) {
+                  return jsonResult5(JSON.parse(readFileSync17(globalFile, "utf8")));
                 }
               }
             }
             return jsonResult5({ ok: false, error: "not_found", session_id: sessionId });
           }
-          return jsonResult5(JSON.parse(readFileSync16(filePath, "utf8")));
+          return jsonResult5(JSON.parse(readFileSync17(filePath, "utf8")));
         } catch (err) {
           return jsonResult5({
             ok: false,
@@ -18014,7 +18389,7 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
           }
           const cwd = resolveMemoryStoreCwd(context, fallbackDir);
           runAutoMigration(cwd);
-          const goalsDir = join27(cwd, ".pantheon", "goals");
+          const goalsDir = join28(cwd, ".pantheon", "goals");
           const filePath = resolveConfinedPath(goalsDir, `${rawId}.json`);
           const nowIso = (/* @__PURE__ */ new Date()).toISOString();
           const goal = {
@@ -18050,7 +18425,7 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
         try {
           const cwd = resolveMemoryStoreCwd(context, fallbackDir);
           runAutoMigration(cwd);
-          const goalsDir = join27(cwd, ".pantheon", "goals");
+          const goalsDir = join28(cwd, ".pantheon", "goals");
           mkdirSync11(goalsDir, { recursive: true });
           if (typeof input.id === "string" && input.id.trim()) {
             const id = input.id.trim();
@@ -18058,13 +18433,13 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
               return jsonResult5({ ok: false, error: "id must be a safe identifier" });
             }
             const filePath = resolveConfinedPath(goalsDir, `${id}.json`);
-            if (!existsSync18(filePath)) return jsonResult5({ ok: false, error: "not_found", id });
-            return jsonResult5(JSON.parse(readFileSync16(filePath, "utf8")));
+            if (!existsSync19(filePath)) return jsonResult5({ ok: false, error: "not_found", id });
+            return jsonResult5(JSON.parse(readFileSync17(filePath, "utf8")));
           }
           const files = readdirSync6(goalsDir).filter((f) => f.endsWith(".json")).sort();
           const latest = files.at(-1);
           if (!latest) return jsonResult5({ ok: false, error: "no_active_goals" });
-          return jsonResult5(JSON.parse(readFileSync16(resolveConfinedPath(goalsDir, latest), "utf8")));
+          return jsonResult5(JSON.parse(readFileSync17(resolveConfinedPath(goalsDir, latest), "utf8")));
         } catch (err) {
           return jsonResult5({
             ok: false,
@@ -18095,10 +18470,10 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
           }
           const cwd = resolveMemoryStoreCwd(context, fallbackDir);
           runAutoMigration(cwd);
-          const goalsDir = join27(cwd, ".pantheon", "goals");
+          const goalsDir = join28(cwd, ".pantheon", "goals");
           const filePath = resolveConfinedPath(goalsDir, `${id}.json`);
-          if (!existsSync18(filePath)) return jsonResult5({ ok: false, error: "not_found", id });
-          const existing = JSON.parse(readFileSync16(filePath, "utf8"));
+          if (!existsSync19(filePath)) return jsonResult5({ ok: false, error: "not_found", id });
+          const existing = JSON.parse(readFileSync17(filePath, "utf8"));
           const updated = {
             ...existing,
             status: typeof input.status === "string" ? input.status : existing.status,
@@ -18136,10 +18511,10 @@ function createNativeMemoryAndPersistenceTools(fallbackDir) {
           }
           const cwd = resolveMemoryStoreCwd(context, fallbackDir);
           runAutoMigration(cwd);
-          const goalsDir = join27(cwd, ".pantheon", "goals");
+          const goalsDir = join28(cwd, ".pantheon", "goals");
           const filePath = resolveConfinedPath(goalsDir, `${id}.json`);
-          if (!existsSync18(filePath)) return jsonResult5({ ok: false, error: "not_found", id });
-          const existing = JSON.parse(readFileSync16(filePath, "utf8"));
+          if (!existsSync19(filePath)) return jsonResult5({ ok: false, error: "not_found", id });
+          const existing = JSON.parse(readFileSync17(filePath, "utf8"));
           const updated = {
             ...existing,
             status: "completed",
@@ -18285,9 +18660,9 @@ function createReviewVerdictTool(sessionDomain) {
 }
 
 // src/pantheon/skill-search-tool.ts
-import { existsSync as existsSync19, readdirSync as readdirSync7, readFileSync as readFileSync17 } from "node:fs";
-import { homedir as homedir8 } from "node:os";
-import { join as join28 } from "node:path";
+import { existsSync as existsSync20, readdirSync as readdirSync7, readFileSync as readFileSync18 } from "node:fs";
+import { homedir as homedir9 } from "node:os";
+import { join as join29 } from "node:path";
 
 // scripts/skill-search.mjs
 import { spawnSync } from "node:child_process";
@@ -18544,16 +18919,16 @@ function scanInstalledSkills(cwd = process.cwd()) {
   }
   const scanDir = (baseDir, scope) => {
     try {
-      if (!existsSync19(baseDir)) return;
+      if (!existsSync20(baseDir)) return;
       const entries = readdirSync7(baseDir, { withFileTypes: true });
       for (const entry of entries) {
         if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
         const skillName = entry.name;
         if (skillName.startsWith(".")) continue;
-        const skillMd = join28(baseDir, skillName, "SKILL.md");
-        if (existsSync19(skillMd)) {
+        const skillMd = join29(baseDir, skillName, "SKILL.md");
+        if (existsSync20(skillMd)) {
           try {
-            const raw = readFileSync17(skillMd, "utf8");
+            const raw = readFileSync18(skillMd, "utf8");
             const { name, description } = extractSkillMetadata(raw, skillName);
             const id = (name || skillName).trim();
             map.set(id.toLowerCase(), {
@@ -18569,12 +18944,12 @@ function scanInstalledSkills(cwd = process.cwd()) {
     } catch {
     }
   };
-  const xdgConfig = process.env.XDG_CONFIG_HOME || join28(homedir8(), ".config");
-  scanDir(join28(xdgConfig, "opencode", "skills"), "global");
-  scanDir(join28(homedir8(), ".agents", "skills"), "global");
-  scanDir(join28(cwd, ".opencode", "skills"), "project");
-  scanDir(join28(cwd, ".agents", "skills"), "project");
-  scanDir(join28(cwd, "skills"), "project");
+  const xdgConfig = process.env.XDG_CONFIG_HOME || join29(homedir9(), ".config");
+  scanDir(join29(xdgConfig, "opencode", "skills"), "global");
+  scanDir(join29(homedir9(), ".agents", "skills"), "global");
+  scanDir(join29(cwd, ".opencode", "skills"), "project");
+  scanDir(join29(cwd, ".agents", "skills"), "project");
+  scanDir(join29(cwd, "skills"), "project");
   return map;
 }
 var TOOL_DESCRIPTION3 = "Advisory discovery tool for skills. Queries installed Pantheon skills and external registries (Anthropic catalog, skills.sh, GitHub). Returns matched skill IDs, descriptions, install counts, and provenance tiers. Zeus uses this to recommend project-scoped skills (.agents/skills/) before proactively prompting the user via the question tool.";
@@ -19229,8 +19604,8 @@ var UNSUPPORTED_FEATURE_SEED = Object.freeze([
 
 // src/pantheon/worktree-orchestrator.ts
 import { execFile as execFile5 } from "node:child_process";
-import { existsSync as existsSync20, mkdirSync as mkdirSync12, realpathSync as realpathSync8 } from "node:fs";
-import { basename as basename5, dirname as dirname14, join as join29, resolve as resolve19 } from "node:path";
+import { existsSync as existsSync21, mkdirSync as mkdirSync12, realpathSync as realpathSync9 } from "node:fs";
+import { basename as basename6, dirname as dirname14, join as join30, resolve as resolve20 } from "node:path";
 import { promisify as promisify5 } from "node:util";
 var execFileAsync4 = promisify5(execFile5);
 var SAFE_TASK_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
@@ -19238,22 +19613,22 @@ function isAbortError(err) {
   return err instanceof Error && err.name === "AbortError";
 }
 function sanitizeTaskSlug(raw) {
-  const base = basename5(raw.trim()).replace(/[^a-zA-Z0-9._-]/g, "-");
+  const base = basename6(raw.trim()).replace(/[^a-zA-Z0-9._-]/g, "-");
   if (!base || !SAFE_TASK_RE.test(base) || base.includes("..")) {
     return `wt-${Date.now()}`;
   }
   return base;
 }
 function resolvePantheonWorktreePath(sourceDirectory, taskName) {
-  const sourceReal = existsSync20(sourceDirectory) ? realpathSync8(resolve19(sourceDirectory)) : resolve19(sourceDirectory);
+  const sourceReal = existsSync21(sourceDirectory) ? realpathSync9(resolve20(sourceDirectory)) : resolve20(sourceDirectory);
   const parent = dirname14(sourceReal);
-  const repoName = basename5(sourceReal) || "workspace";
+  const repoName = basename6(sourceReal) || "workspace";
   const taskSlug = sanitizeTaskSlug(taskName);
-  return join29(parent, ".pantheon-worktrees", repoName, taskSlug);
+  return join30(parent, ".pantheon-worktrees", repoName, taskSlug);
 }
 function isInsideOrDotPantheon(sourceDirectory, candidate) {
-  const srcReal = existsSync20(sourceDirectory) ? realpathSync8(resolve19(sourceDirectory)) : resolve19(sourceDirectory);
-  const candResolved = resolve19(candidate);
+  const srcReal = existsSync21(sourceDirectory) ? realpathSync9(resolve20(sourceDirectory)) : resolve20(sourceDirectory);
+  const candResolved = resolve20(candidate);
   return candResolved === srcReal || candResolved.startsWith(`${srcReal}/`) || candResolved.includes("/.pantheon/") || candResolved.includes("\\.pantheon\\");
 }
 async function runGit2(cwd, args, signal) {
@@ -19274,9 +19649,9 @@ function createPantheonWorktreeDefinition() {
   return {
     id: "pantheon-worktree",
     create: async (input, context) => {
-      const source = resolve19(input.sourceDirectory);
-      const requestedDir = input.directory ? resolve19(input.directory) : "";
-      const targetDir = !requestedDir || isInsideOrDotPantheon(source, requestedDir) ? resolvePantheonWorktreePath(source, basename5(requestedDir) || `wt-${Date.now()}`) : requestedDir;
+      const source = resolve20(input.sourceDirectory);
+      const requestedDir = input.directory ? resolve20(input.directory) : "";
+      const targetDir = !requestedDir || isInsideOrDotPantheon(source, requestedDir) ? resolvePantheonWorktreePath(source, basename6(requestedDir) || `wt-${Date.now()}`) : requestedDir;
       if (input.branch && (!SAFE_TASK_RE.test(input.branch) || input.branch.startsWith("-"))) {
         throw new Error(`Unsafe git ref "${input.branch}" for worktree creation`);
       }
@@ -19284,31 +19659,31 @@ function createPantheonWorktreeDefinition() {
       const args = ["worktree", "add", "--detach", targetDir];
       if (input.branch) args.push(input.branch);
       await runGit2(source, args, context.signal);
-      return { directory: existsSync20(targetDir) ? realpathSync8(targetDir) : targetDir };
+      return { directory: existsSync21(targetDir) ? realpathSync9(targetDir) : targetDir };
     },
     remove: async (input, context) => {
-      const dir = resolve19(input.directory);
+      const dir = resolve20(input.directory);
       const parent = dirname14(dir);
       const args = ["worktree", "remove"];
       if (input.force) args.push("--force");
       args.push(dir);
       try {
-        await runGit2(existsSync20(dir) ? dir : parent, args, context.signal);
+        await runGit2(existsSync21(dir) ? dir : parent, args, context.signal);
       } catch (err) {
         if (isAbortError(err)) throw err;
         throw err;
       }
     },
     list: async (sourceDirectory, context) => {
-      const source = resolve19(sourceDirectory);
+      const source = resolve20(sourceDirectory);
       const raw = await runGit2(source, ["worktree", "list", "--porcelain"], context.signal);
       const entries = [];
-      const srcReal = existsSync20(source) ? realpathSync8(source) : source;
+      const srcReal = existsSync21(source) ? realpathSync9(source) : source;
       for (const line of raw.split(/\r?\n/)) {
         if (!line.startsWith("worktree ")) continue;
         const wtPath = line.slice("worktree ".length).trim();
         if (!wtPath) continue;
-        const wtReal = existsSync20(wtPath) ? realpathSync8(wtPath) : wtPath;
+        const wtReal = existsSync21(wtPath) ? realpathSync9(wtPath) : wtPath;
         entries.push({
           directory: wtReal,
           type: wtReal === srcReal ? "root" : "worktree"
@@ -19388,7 +19763,7 @@ function loadRuntimeOverrides(workspaceDir) {
   try {
     const read = (filePath) => {
       try {
-        return readFileSync18(filePath, "utf8");
+        return readFileSync19(filePath, "utf8");
       } catch {
         return void 0;
       }
@@ -19451,8 +19826,8 @@ function readCanonicalRoster() {
       path4.join(process.cwd(), "src", "agents", "roster.json")
     ];
     for (const p of candidates) {
-      if (existsSync21(p)) {
-        const raw = readFileSync18(p, "utf8");
+      if (existsSync22(p)) {
+        const raw = readFileSync19(p, "utf8");
         const data = JSON.parse(raw);
         if (data && typeof data.agents === "object") return data.agents;
       }
@@ -19610,7 +19985,7 @@ function resolveCanonicalCommandsDir() {
     path4.join(activeHostWorkspaceDir ?? process.cwd(), "src", "commands")
   ];
   for (const candidate of candidates) {
-    if (existsSync21(candidate)) return candidate;
+    if (existsSync22(candidate)) return candidate;
   }
   return void 0;
 }
@@ -19619,8 +19994,8 @@ function readCanonicalCommandTemplate(commandName, fallbackDescription) {
     const dir = resolveCanonicalCommandsDir();
     if (dir) {
       const mdPath = path4.join(dir, `${commandName}.md`);
-      if (existsSync21(mdPath)) {
-        const raw = readFileSync18(mdPath, "utf8");
+      if (existsSync22(mdPath)) {
+        const raw = readFileSync19(mdPath, "utf8");
         const body = raw.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim();
         if (body) return body;
       }
@@ -19711,7 +20086,7 @@ function transformReferences(draft) {
     fileURLToPath5(new URL("../../AGENTS.md", import.meta.url)),
     fileURLToPath5(new URL("../../../AGENTS.md", import.meta.url))
   ];
-  const resolvedPath = candidates.find((p) => existsSync21(p)) ?? fileURLToPath5(new URL("../AGENTS.md", import.meta.url));
+  const resolvedPath = candidates.find((p) => existsSync22(p)) ?? fileURLToPath5(new URL("../AGENTS.md", import.meta.url));
   draft.add("pantheon-agents", {
     type: "local",
     path: resolvedPath,
@@ -19728,7 +20103,7 @@ function resolveCanonicalSkillsDir() {
     path4.join(activeHostWorkspaceDir ?? process.cwd(), "src", "skills")
   ];
   for (const candidate of candidates) {
-    if (existsSync21(candidate)) return candidate;
+    if (existsSync22(candidate)) return candidate;
   }
   return void 0;
 }
@@ -19759,10 +20134,10 @@ function transformSkills(draft) {
         if (!entry.isDirectory()) continue;
         const skillId = entry.name;
         const skillMdPath = path4.join(skillsDir, skillId, "SKILL.md");
-        if (!existsSync21(skillMdPath)) continue;
+        if (!existsSync22(skillMdPath)) continue;
         try {
           if (typeof editor.get === "function" && editor.get(skillId)) continue;
-          const content = readFileSync18(skillMdPath, "utf8");
+          const content = readFileSync19(skillMdPath, "utf8");
           const { name, description } = parseSkillFrontmatter(content, skillId);
           editor.add({
             id: skillId,

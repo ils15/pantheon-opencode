@@ -6,9 +6,11 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import {
   buildCockpitSnapshot,
+  formatCockpitReplayArtifact,
   formatGanttBar,
   formatGateMatrixGlyphs,
   renderWorkMapLines,
+  writeCockpitReplayArtifact,
 } from '../src/plugins/tui/src/cockpit-state.ts'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
@@ -115,6 +117,15 @@ test('cockpit-state builds Overview, Swarm Gantt bars, Work Map, and Flightdeck 
 
     const mapLines = renderWorkMapLines({ subagents: 2, artifacts: 3, stepsDone: 1, stepsTotal: 2 })
     assert.ok(mapLines.length >= 3)
+
+    const replay = formatCockpitReplayArtifact(snapshot, new Date('2026-11-19T18:00:00Z'))
+    assert.match(replay.filename, /^cockpit-replay-2026-11-19T18-00-00\.md$/)
+    assert.match(replay.markdown, /```mermaid\nsequenceDiagram/)
+    assert.match(replay.markdown, /athena/)
+    const relWritten = writeCockpitReplayArtifact(dir, snapshot, new Date('2026-11-19T18:00:00Z'))
+    assert.equal(relWritten, `.pantheon/reports/${replay.filename}`)
+    const saved = readFileSync(join(dir, relWritten), 'utf8')
+    assert.ok(saved.includes('## Execution Replay Diagram'))
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

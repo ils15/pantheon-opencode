@@ -13,6 +13,7 @@
 
 import { execFile, spawn } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
+import { createConnection, type Socket } from 'node:net'
 import { basename, dirname, extname, join, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
@@ -41,15 +42,271 @@ export type DiagnosticsRunner = (
   options: { cwd: string; timeoutMs: number },
 ) => Promise<DiagnosticsExecResult>
 
+export interface LspTcpEndpoint {
+  readonly language: string
+  readonly host: string
+  readonly port: number
+}
+
 export interface PostEditDiagnosticsOptions {
   readonly cwd?: string
   readonly runner?: DiagnosticsRunner
   readonly serverCommand?: readonly string[]
+  readonly tcpEndpoint?: { readonly host: string; readonly port: number }
   readonly timeoutMs?: number
 }
 
 const MAX_DIAGNOSTICS = 8
 const TS_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts'])
+
+function resolveLanguageId(absFile: string): string {
+  const ext = extname(absFile).toLowerCase()
+  if (TS_EXTENSIONS.has(ext)) return ext.includes('x') ? 'typescriptreact' : 'typescript'
+  if (ext === '.py') return 'python'
+  if (ext === '.go') return 'go'
+  if (ext === '.rs') return 'rust'
+  return 'plaintext'
+}
+
+function extractPublishedDiagnostics(rawDiags: unknown[], absFile: string): LspDiagnosticItem[] {
+  const items: LspDiagnosticItem[] = []
+  for (const d of rawDiags) {
+    if (!d || typeof d !== 'object') continue
+    const diag = d as {
+      severity?: number
+      code?: string | number
+      message?: string
+      range?: { start?: { line?: number; character?: number } }
+    }
+    items.push({
+      file: absFile,
+      line: (diag.range?.start?.line ?? 0) + 1,
+      column: (diag.range?.start?.character ?? 0) + 1,
+      severity: diag.severity === 2 ? 'warning' : 'error',
+      ...(diag.code !== undefined ? { code: String(diag.code) } : {}),
+      message: String(diag.message ?? '').trim(),
+    })
+  }
+  return items
+}
+
+/** Parse `PANTHEON_LSP_TCP_ENDPOINTS` (`typescript=127.0.0.1:4001,python=localhost:4002`). */
+export function parseLspTcpEndpoints(
+  raw = process.env.PANTHEON_LSP_TCP_ENDPOINTS ?? '',
+): LspTcpEndpoint[] {
+  const endpoints: LspTcpEndpoint[] = []
+  for (const entry of raw.split(',')) {
+    const trimmed = entry.trim()
+    if (!trimmed) continue
+    const eqIdx = trimmed.indexOf('=')
+    const language = eqIdx > 0 ? trimmed.slice(0, eqIdx).trim().toLowerCase() : '*'
+    const addr = eqIdx > 0 ? trimmed.slice(eqIdx + 1).trim() : trimmed
+    const colonIdx = addr.lastIndexOf(':')
+    if (colonIdx <= 0) continue
+    const host = addr.slice(0, colonIdx).trim()
+    const port = Number(addr.slice(colonIdx + 1).trim())
+    if (!host || !Number.isInteger(port) || port <= 0 || port > 65535) continue
+    endpoints.push({ language, host, port })
+  }
+  return endpoints
+}
+
+interface PooledTcpSession {
+  socket: Socket
+  buffer: Buffer
+  initialized: boolean
+  docVersions: Map<string, number>
+  listeners: Set<(msg: Record<string, unknown>) => void>
+  idleTimer?: ReturnType<typeof setTimeout>
+}
+
+const tcpPool = new Map<string, PooledTcpSession>()
+
+export function getLspTcpPoolSize(): number {
+  return tcpPool.size
+}
+
+export function shutdownLspTcpPool(): void {
+  for (const [key, entry] of tcpPool.entries()) {
+    if (entry.idleTimer) clearTimeout(entry.idleTimer)
+    try {
+      entry.socket.destroy()
+    } catch {
+      /* ignore */
+    }
+    tcpPool.delete(key)
+  }
+}
+
+async function acquirePooledTcpSession(
+  host: string,
+  port: number,
+  rootUri: string,
+  timeoutMs: number,
+): Promise<PooledTcpSession | null> {
+  const key = `${host}:${port}`
+  const existing = tcpPool.get(key)
+  if (existing && !existing.socket.destroyed && existing.initialized) {
+    if (existing.idleTimer) clearTimeout(existing.idleTimer)
+    return existing
+  }
+  if (existing) {
+    tcpPool.delete(key)
+    try {
+      existing.socket.destroy()
+    } catch {
+      /* ignore */
+    }
+  }
+
+  return new Promise((resolvePromise) => {
+    let settled = false
+    const socket = createConnection({ host, port })
+    socket.unref()
+    const session: PooledTcpSession = {
+      socket,
+      buffer: Buffer.alloc(0),
+      initialized: false,
+      docVersions: new Map(),
+      listeners: new Set(),
+    }
+
+    const fail = () => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      tcpPool.delete(key)
+      try {
+        socket.destroy()
+      } catch {
+        /* ignore */
+      }
+      resolvePromise(null)
+    }
+
+    const timer = setTimeout(fail, timeoutMs)
+    socket.on('error', fail)
+    socket.on('close', () => {
+      tcpPool.delete(key)
+      if (!settled) fail()
+    })
+    socket.on('data', (chunk: Buffer) => {
+      session.buffer = Buffer.concat([session.buffer, chunk])
+      const parsed = parseLspMessages(session.buffer)
+      session.buffer = Buffer.from(parsed.remainder)
+      for (const msg of parsed.messages) {
+        if (!msg || typeof msg !== 'object') continue
+        const rec = msg as Record<string, unknown>
+        if (!session.initialized && rec.id === 1 && rec.result !== undefined) {
+          session.initialized = true
+          socket.write(encodeLspMessage({ jsonrpc: '2.0', method: 'initialized', params: {} }))
+          tcpPool.set(key, session)
+          if (!settled) {
+            settled = true
+            clearTimeout(timer)
+            resolvePromise(session)
+          }
+        }
+        for (const fn of session.listeners) fn(rec)
+      }
+    })
+    socket.on('connect', () => {
+      socket.write(
+        encodeLspMessage({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: { processId: process.pid, rootUri, capabilities: {} },
+        }),
+      )
+    })
+  })
+}
+
+/** Query a pooled multi-IDE TCP LSP proxy endpoint, reusing an initialized socket. */
+export async function queryTcpLspDiagnostics(
+  filePath: string,
+  options: {
+    readonly host: string
+    readonly port: number
+    readonly cwd: string
+    readonly timeoutMs?: number
+    readonly idleTtlMs?: number
+  },
+): Promise<LspDiagnosticItem[]> {
+  const absFile = resolve(filePath)
+  const fileUri = pathToFileURL(absFile).href
+  const rootUri = pathToFileURL(resolve(options.cwd)).href
+  const timeoutMs = options.timeoutMs ?? 4500
+  const session = await acquirePooledTcpSession(options.host, options.port, rootUri, timeoutMs)
+  if (!session) return []
+
+  const text = existsSync(absFile) ? readFileSync(absFile, 'utf8') : ''
+  const languageId = resolveLanguageId(absFile)
+  const nextVer = (session.docVersions.get(fileUri) ?? 0) + 1
+  session.docVersions.set(fileUri, nextVer)
+
+  return new Promise((resolvePromise) => {
+    let settled = false
+    const onMsg = (rec: Record<string, unknown>) => {
+      if (rec.method !== 'textDocument/publishDiagnostics') return
+      const params = (rec.params ?? {}) as { uri?: string; diagnostics?: unknown[] }
+      if (params.uri && params.uri !== fileUri) return
+      finish(
+        extractPublishedDiagnostics(
+          Array.isArray(params.diagnostics) ? params.diagnostics : [],
+          absFile,
+        ),
+      )
+    }
+
+    const finish = (items: LspDiagnosticItem[]) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      session.listeners.delete(onMsg)
+      const idleTtl = options.idleTtlMs ?? 60_000
+      session.idleTimer = setTimeout(() => {
+        try {
+          session.socket.destroy()
+        } catch {
+          /* ignore */
+        }
+        tcpPool.delete(`${options.host}:${options.port}`)
+      }, idleTtl)
+      session.idleTimer.unref?.()
+      resolvePromise(items)
+    }
+
+    const timer = setTimeout(() => finish([]), timeoutMs)
+    session.listeners.add(onMsg)
+
+    try {
+      if (nextVer === 1) {
+        session.socket.write(
+          encodeLspMessage({
+            jsonrpc: '2.0',
+            method: 'textDocument/didOpen',
+            params: { textDocument: { uri: fileUri, languageId, version: nextVer, text } },
+          }),
+        )
+      } else {
+        session.socket.write(
+          encodeLspMessage({
+            jsonrpc: '2.0',
+            method: 'textDocument/didChange',
+            params: {
+              textDocument: { uri: fileUri, version: nextVer },
+              contentChanges: [{ text }],
+            },
+          }),
+        )
+      }
+    } catch {
+      finish([])
+    }
+  })
+}
 
 /** Encode a JSON-RPC 2.0 object using LSP Content-Length framing. */
 export function encodeLspMessage(payload: unknown): string {
@@ -370,6 +627,28 @@ export async function runPostEditDiagnostics(
         timestamp: Date.now(),
       })
       return lspItems.length > 0 ? formatDiagnosticsBlock(absFile, cwd, lspItems) : null
+    }
+
+    // 1b. Pooled TCP multi-IDE LSP proxy endpoint if configured
+    const langId = resolveLanguageId(absFile)
+    const configuredTcp =
+      options.tcpEndpoint ??
+      parseLspTcpEndpoints().find((ep) => ep.language === langId || ep.language === '*')
+    if (configuredTcp) {
+      const tcpItems = await queryTcpLspDiagnostics(absFile, {
+        host: configuredTcp.host,
+        port: configuredTcp.port,
+        cwd,
+        timeoutMs,
+      })
+      getSharedBus().emit('lsp:diagnostics', {
+        file: relative(cwd, absFile) || absFile,
+        source: 'lsp-tcp',
+        count: tcpItems.length,
+        errors: tcpItems.filter((d) => d.severity === 'error').length,
+        timestamp: Date.now(),
+      })
+      return tcpItems.length > 0 ? formatDiagnosticsBlock(absFile, cwd, tcpItems) : null
     }
 
     // 2. TypeScript / TSX semantic check via `tsc --noEmit`

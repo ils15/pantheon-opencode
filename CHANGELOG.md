@@ -26,8 +26,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **tui** — `cockpit.tsx`, `cockpit-state.ts`, `index.tsx`: added 3-page `/pantheon-cockpit` (`Overview`, `Swarm`, `Flightdeck`) and Home `◈ Cockpit` link.
-- **lsp-ast** — `lsp-diagnostics.ts`, `ast-tools.ts`, `execute-after.ts`: added post-edit TypeScript/Pyright/stdio LSP bridge and `ast_search`/`ast_rewrite`.
+- **tui** — `cockpit.tsx`, `cockpit-state.ts`, `index.tsx`: added 3-page `/pantheon-cockpit`, `◈ Cockpit` Home link, and `Flightdeck` replay export.
+- **lsp-ast** — `lsp-diagnostics.ts`, `ast-tools.ts`: added `tsc`/Pyright/stdio + pooled TCP LSP proxy (`PANTHEON_LSP_TCP_ENDPOINTS`) and `ast_search`/`ast_rewrite`.
+- **memory** — `memory-federation.ts`, `native-memory-tools.ts`: added read-only multi-repo knowledge federation via `PANTHEON_FEDERATED_REPOS`.
 - **ledger** — `git-checkpoint.ts`, `step-runner.ts`, `step-ledger.ts`: added temp-index git snapshots, auto-rollback, and `ctx.session.create` step runner.
 - **orchestration** — `worktree-orchestrator.ts`, `review-verdict.ts`, `reproduction-gate.ts`: wired `ctx.worktree.transform`, verdict tool, and bugfix `RED` gate.
 - **forge** — `stack-detector.ts`, `pantheon-forge.md`, `agent-forge-tool.ts`: added `/pantheon-forge` wizard, `detect_stack`, and `init --project` stack hints.
