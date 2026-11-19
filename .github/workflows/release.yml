@@ -292,11 +292,15 @@ jobs:
         env:
           BASE_VERSION: ${{ steps.version_gate.outputs.version }}
           RECOVERY_VERSION: ${{ inputs.recovery_version }}
+          RELEASE_CHANNEL: ${{ steps.type.outputs.channel }}
+          RELEASE_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/release-artifact"
-          # Notes come from the committed CHANGELOG.md for BOTH channels. The
-          # version is committed, so its section is authorable in the bump PR.
+          # Notes come from the committed CHANGELOG.md for BOTH channels. For
+          # stable non-recovery builds with a curated docs/releases/vX.Y.Z.md,
+          # scripts/release-body.mjs composes the visual release page plus the
+          # canonical CHANGELOG ledger into the single artifact release-notes.md.
           # Recovery extracts the section at the recovery target as well, so a
           # republished release keeps the canonical body; the static note is
           # the last resort for tags predating the CHANGELOG section.
@@ -307,8 +311,19 @@ jobs:
               echo "No CHANGELOG section for v$RECOVERY_VERSION — publishing the static recovery note."
               printf '%s\n' "Recovery publish for existing tag $RECOVERY_VERSION." > "$RUNNER_TEMP/release-notes.md"
             fi
-          elif ! node scripts/changelog-extract.mjs "$BASE_VERSION" > "$RUNNER_TEMP/release-notes.md"; then
-            echo "::error::CHANGELOG.md has no [$BASE_VERSION] section."; exit 1
+          else
+            if ! node scripts/changelog-extract.mjs "$BASE_VERSION" > "$RUNNER_TEMP/release-notes.md"; then
+              echo "::error::CHANGELOG.md has no [$BASE_VERSION] section."; exit 1
+            fi
+            if [ "$RELEASE_CHANNEL" = "stable" ] && [ -f "docs/releases/v$BASE_VERSION.md" ]; then
+              node scripts/release-body.mjs \
+                --version "$BASE_VERSION" \
+                --channel "$RELEASE_CHANNEL" \
+                --changelog-notes "$RUNNER_TEMP/release-notes.md" \
+                --repo "$RELEASE_REPO" \
+                --ref "v$BASE_VERSION" \
+                --out "$RUNNER_TEMP/release-notes.md"
+            fi
           fi
           npm run package:evidence -- --output-dir="$RUNNER_TEMP/release-artifact" --target-sha="$TARGET_SHA" > "$RUNNER_TEMP/package-evidence.json"
           TARBALLS=("$RUNNER_TEMP/release-artifact"/*.tgz)
