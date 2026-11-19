@@ -141,6 +141,30 @@ describe('about tab', () => {
     assert.equal(rows[0].value, 'v2.0.0-beta.2')
     assert.ok(rows.some((row) => row.note.includes('V1 contract is removed')))
   })
+
+  it('exposes the native 2.2 tool inventory in EN and pt-BR', () => {
+    const enTab = buildAboutTab('2.2.0', { languagePref: 'en' })
+    const enRows = tabRows(enTab)
+    const memEn = enRows.find((r) => r.id === 'about.tools.memory')
+    const codeEn = enRows.find((r) => r.id === 'about.tools.codemap')
+    const govEn = enRows.find((r) => r.id === 'about.tools.governance')
+    assert.ok(
+      enTab.groups.some((g) => g.title === 'Native Tools (30)'),
+      'EN inventory group displays Native Tools (30)',
+    )
+    assert.ok(memEn?.value.includes('6 tools'), 'EN memory tools row present')
+    assert.ok(codeEn?.value.includes('5 tools'), 'EN codemap & AST tools row present')
+    assert.ok(codeEn?.note.includes('ast_search'), 'EN codemap & AST row lists ast_search')
+    assert.ok(
+      govEn?.note.includes('pantheon_review_verdict') && govEn?.note.includes('pantheon_worktree'),
+      'EN governance row lists review verdict and worktree tool',
+    )
+    assert.ok(enRows.some((r) => r.id === 'about.tools.edit' && r.note.includes('hashline_edit')))
+
+    const ptRows = tabRows(buildAboutTab('2.2.0', { languagePref: 'pt-BR' }))
+    const memPt = ptRows.find((r) => r.id === 'about.tools.memory')
+    assert.ok(memPt?.note.includes('memory_search'), 'pt-BR memory row lists native tools')
+  })
 })
 
 function load_fixture(global, project, corruptGlobal = false) {

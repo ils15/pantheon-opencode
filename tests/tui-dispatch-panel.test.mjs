@@ -1083,3 +1083,78 @@ test('render: empty, mixed and narrow panels keep their documented shape', async
     'a narrow row keeps its columns instead of wrapping',
   )
 })
+
+test('peek & live activity: panel detail shows active tool, files touched and snippet when present', async () => {
+  const { collectDispatch, dispatchPanelDetail, dispatchPanelRowText } = await loadV2()
+  const host = createPanelHost({
+    children: [
+      ['ses_root', { id: 'ses_root' }],
+      [
+        'ses_child_live',
+        {
+          id: 'ses_child_live',
+          parentID: 'ses_root',
+          agent: 'hermes',
+          model: 'hy4-flash-free',
+          cost: 0.01,
+          time: { created: 1000, updated: 5000 },
+        },
+      ],
+    ],
+    statuses: [['ses_child_live', 'running']],
+    messages: [
+      [
+        'ses_root',
+        [
+          {
+            type: 'assistant',
+            content: [
+              {
+                type: 'tool',
+                name: 'subagent',
+                state: {
+                  status: 'running',
+                  metadata: { sessionID: 'ses_child_live' },
+                  input: { agent: 'hermes', description: 'Criar helper' },
+                },
+              },
+            ],
+          },
+        ],
+      ],
+      [
+        'ses_child_live',
+        [
+          {
+            type: 'assistant',
+            content: [
+              { type: 'tool', name: 'code_query', state: { status: 'completed' } },
+              {
+                type: 'tool',
+                name: 'hashline_edit',
+                state: { status: 'running', input: { file: 'src/soma.mjs' } },
+              },
+              { type: 'text', text: 'Atualizando função soma em src/soma.mjs' },
+            ],
+          },
+        ],
+      ],
+    ],
+  })
+
+  const entries = collectDispatch(host.context, 'ses_root', {
+    now: 6000,
+    includeChildActivity: true,
+  })
+  assert.equal(entries.length, 1)
+  assert.equal(entries[0].view.activity?.activeVerb, 'edit')
+  const rowText = dispatchPanelRowText(entries[0], { now: 6000, max: 50 })
+  assert.ok(rowText.includes('edit'), `live panel row should surface active verb: ${rowText}`)
+
+  const detail = dispatchPanelDetail(entries[0], { max: 60 })
+  assert.ok(detail.length >= 5, `expected peek detail lines, got ${detail.length}`)
+  const joined = detail.slice(4).join('\n')
+  assert.match(joined, /hashline_edit/)
+  assert.match(joined, /soma\.mjs/)
+  assert.match(joined, /Atualizando função soma/)
+})

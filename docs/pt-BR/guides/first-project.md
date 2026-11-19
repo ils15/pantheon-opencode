@@ -35,16 +35,17 @@ flowchart TD
 
 ## 2. Passo 1 — Instalação e Inicialização
 
-Em qualquer pasta de projeto (nova ou existente):
+Instale o Pantheon uma única vez como plugin nativo do OpenCode 2.x (funciona em qualquer diretório, sem gerar cópias redundantes por projeto):
 
 ```bash
-# Inicializa os agentes, skills e plugins do Pantheon no projeto
-npx pantheon-opencode init
+# Recomendado: registrar o plugin nativo globalmente ou no projeto
+opencode plugin add pantheon-opencode
+
+# Opcional: injetar AGENTS.md ou overrides locais em .opencode/
+npx pantheon-opencode init --project --no-mcp
 ```
 
-O instalador interativo permite selecionar componentes (`agents`, `skills`, `instructions`, `plugins`). A opção `plugins` instala a **TUI** (interface de terminal moderna).
-
-Verifique se tudo está íntegro executando o diagnóstico de integridade:
+Verifique a saúde da instalação dentro do OpenCode em `/pantheon-settings` (**Doctor**) ou pelo terminal:
 
 ```bash
 npx pantheon-opencode doctor

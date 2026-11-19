@@ -92,31 +92,31 @@ control. The matrix itself is documented in
 There is a single generation: 2.0 removed the V1 plugin line, and the surface
 below is the only one.
 
-The plugin is registered under the plural `plugins` key as the
-`<installed>/src/plugin` directory. `src/plugin/index.ts` re-exports the real
-entry at `src/plugin.ts`; the tool-hook registration in `src/plugin.ts` is fed
-by the tool definitions in `src/pantheon/tools.ts`.
+The plugin is registered under the plural `plugins` key (via
+`opencode plugin add pantheon-opencode` or `<installed>/src/plugin`).
+`src/plugin/index.js` is the bundled entrypoint built from `src/plugin.ts`; the
+tool-hook registration in `src/plugin.ts` is fed by the native tool definitions
+in `src/pantheon/tools.ts` and sibling TypeScript modules (**26 native tools**
+in total):
 
-Four unconditional tools:
-
-- `hashline_edit` — `src/pantheon/tools.ts`
-- `pantheon_cost` — `src/pantheon/tools.ts`
-- `pantheon_model` — `src/pantheon/tools.ts`
-- `pantheon_local_decision` — `src/pantheon/tools.ts`. The advisory local
-  selector; it rejects execution unless the host tool context identifies the
-  caller as Zeus.
-
-Up to two host-dependent tools:
-
-- `vision_describe` — added only when `ctx.model.list` is a function
-  (`src/plugin.ts`; definition at `src/pantheon/native-vision.ts`).
-- `pantheon_bounded_read` — added only when the `tool.execute.before` hook
-  registered and the host exposes the permission and session APIs
-  (`src/plugin.ts`; definition at `src/pantheon/bounded-read.ts`). Root Zeus
-  sessions only.
-
-The three goal tools are absent because the goal loop needs infrastructure the
-host's `PluginContext` does not expose. The gap is reported as `goal-tools`.
+- **Core editing, cost, model & routing:** `hashline_edit`, `pantheon_cost`,
+  `pantheon_model`, `pantheon_local_decision` (Zeus-only advisory selector),
+  and `shell`.
+- **FTS5 memory, checkpoints & goals (`native-memory-tools.ts`, shared across
+  linked git worktrees):** `memory_store`, `memory_recall`, `memory_search`,
+  `memory_forget`, `memory_stats`, `context_save`, `context_get`,
+  `goal_create`, `goal_get`, `goal_update`, and `goal_done`.
+- **Structural codemap, Step-Ledger & orchestration:** `code_index`,
+  `code_query`, `code_neighbors` (with automatic orphan pruning),
+  `pantheon_step_ledger`, `pantheon_deepwork`, `pantheon_agent_forge`, and
+  `pantheon_skill_search`.
+- **Host-dependent tools:**
+  - `vision_describe` — added when `ctx.model.list` is exposed (`src/pantheon/native-vision.ts`).
+  - `pantheon_bounded_read` — added when `tool.execute.before` and host
+    permission/session APIs are exposed (`src/pantheon/bounded-read.ts`; root
+    Zeus sessions only).
+  - Native `todowrite`/`todoread` are preserved from the host whenever already
+    registered so OpenCode's native Todo panel stays authoritative.
 
 The plugin also wires five event subscriptions (`session.created`,
 `session.idle`, `session.deleted`, `session.error`, `session.compacted`),

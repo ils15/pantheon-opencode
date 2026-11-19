@@ -32,14 +32,14 @@ Requirements: [OpenCode](https://opencode.ai/docs/) **2.x** and Node.js **≥ 26
 ([compatibility](docs/COMPATIBILITY.md)).
 
 ```bash
-# Primary (Recommended) — native OpenCode 2.x plugin (global or project, no npx init required)
-opencode plugin add pantheon-opencode@beta
+# Primary (Recommended) — native OpenCode 2.x plugin (works in any directory, no init required)
+opencode plugin add pantheon-opencode
 
-# Check health, updates & clean legacy/obsolete files inside OpenCode:
-#   /pantheon-settings -> Updates (or Legacy & Drift Cleanup)
+# Check health, updates & clean legacy/stale caches inside OpenCode:
+#   /pantheon-settings -> Updates (or Legacy & Drift Cleanup), /pantheon-updates, /pantheon-whats-new
 
 # Deprecated legacy CLI fallback (optional Python MCP runtime only):
-# npm install -g pantheon-opencode@beta && pantheon-opencode init --yes
+# npm install -g pantheon-opencode && pantheon-opencode init --yes
 ```
 
 ## Usage
@@ -57,6 +57,16 @@ arbitrates architectural choices across specialists; `/pantheon-deepwork` runs a
 plan with `pantheon_step_ledger` mechanical receipts and gates; and `pantheon_agent_forge`
 creates custom project-specific domain specialists in `.opencode/agents/<name>.md` on demand.
 You approve each gate and you run every commit.
+
+The OpenCode 2.x TUI surfaces live native-tool domain counters (`mem`, `ctx`, `code`, `edit`,
+`shell`), live child activity and attention badges (`?` / `!`) in `Dispatch` and `/dispatch`,
+the interactive **Mission Control Cockpit** (`/pantheon-cockpit` · `Overview`, `Swarm`,
+`Flightdeck`), `/pantheon-artifacts` for plans/reports/ADRs, interactive `/pantheon-forge` stack
+detection, and the full **30-tool native inventory** in `/pantheon-settings` → **About** (including
+post-edit LSP diagnostics, `ast_search`/`ast_rewrite`, `pantheon_review_verdict`, bugfix `RED`
+reproduction gates, and `ctx.worktree.transform` sibling worktrees). Git worktrees automatically
+share the main repository's `.pantheon/memory`, checkpoints, and goals store (set
+`PANTHEON_ISOLATE_WORKTREE_MEMORY=1` to keep a worktree's memory store isolated).
 
 ## Structure
 
@@ -82,7 +92,8 @@ tests/            Node and TypeScript test suites
 | [Installation](docs/INSTALLATION.md) | [Execution modes](docs/guides/execution-modes.md) |
 | [First project end-to-end](docs/guides/first-project.md) | [Agent Capability Matrix](docs/AGENT-CAPABILITY-MATRIX.md) |
 | [Settings & TUI window](docs/SETTINGS.md) | [Permissions, gates & delegation](docs/PERMISSIONS-QUALITY-DELEGATION.md) |
-| [Release highlights](docs/releases/highlights.md) | [CHANGELOG](CHANGELOG.md) |
+| [Artifacts & `/pantheon-artifacts`](docs/ARTIFACTS.md) | [Release highlights](docs/releases/highlights.md) |
+| [CHANGELOG](CHANGELOG.md) | [Architecture](docs/ARCHITECTURE.md) |
 
 Runnable examples: [SaaS performance dashboard](examples/saas-dashboard/) and
 [repo health CLI](examples/cli-tool/). Contributing:

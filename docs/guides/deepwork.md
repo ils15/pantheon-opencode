@@ -99,7 +99,15 @@ graph TD
 
 ---
 
-## 5. Reference Implementation
+## 5. Inspecting & Reading Plans (`/pantheon-artifacts`)
+
+Review generated `PLAN.md` files directly inside OpenCode CLI with `/pantheon-artifacts` (`/artifacts`) — see [Artifacts & `/pantheon-artifacts`](../ARTIFACTS.md):
+
+![Paginated artifact reader in OpenCode TUI](../assets/tui/artifacts-reader.png)
+
+---
+
+## 6. Reference Implementation
 
 Inspect a live Deepwork plan directory in the repository:
 - [`examples/saas-dashboard/.pantheon/deepwork/PLAN_001_metrics-dashboard/`](https://github.com/ils15/pantheon-opencode/tree/main/examples/saas-dashboard/.pantheon/deepwork/PLAN_001_metrics-dashboard)

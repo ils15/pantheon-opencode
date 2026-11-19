@@ -406,6 +406,27 @@ async function main(): Promise<void> {
     assert.equal(agents[0].mode, 'primary')
   })
 
+  test('CANONICAL_SLASH_COMMANDS does not duplicate TUI-only commands', () => {
+    const blockMatch = /const CANONICAL_SLASH_COMMANDS[\s\S]*?=\s*\[([\s\S]*?)\n\]/.exec(
+      pluginSource,
+    )
+    assert.ok(blockMatch !== null, 'CANONICAL_SLASH_COMMANDS must exist in plugin.ts')
+    for (const tuiCmd of [
+      'pantheon-settings',
+      'pantheon-updates',
+      'pantheon-whats-new',
+      'pantheon-artifacts',
+      'pantheon-cockpit',
+      'dispatch',
+    ]) {
+      assert.doesNotMatch(
+        blockMatch[1],
+        new RegExp(`name:\\s*'${tuiCmd}'`),
+        `server CANONICAL_SLASH_COMMANDS must not duplicate TUI command /${tuiCmd}`,
+      )
+    }
+  })
+
   test('V2 agent transform applies only manual per-agent overrides and ignores preset markers', () => {
     assert.equal(typeof agentTransformCallback, 'function')
     const root = mkdtempSync(join(tmpdir(), 'pantheon-v2-agent-transform-'))
@@ -2878,6 +2899,8 @@ async function main(): Promise<void> {
     // V2_UNSUPPORTED_FEATURES.
     // beta.29 adds `todowrite` (pass-through) so the TUI todo panel renders.
     assert.deepEqual(registered.map((t) => t.name).sort(), [
+      'ast_rewrite',
+      'ast_search',
       'code_index',
       'code_neighbors',
       'code_query',
@@ -2899,12 +2922,42 @@ async function main(): Promise<void> {
       'pantheon_deepwork',
       'pantheon_local_decision',
       'pantheon_model',
+      'pantheon_review_verdict',
       'pantheon_skill_search',
       'pantheon_step_ledger',
+      'pantheon_worktree',
       'shell',
       'todoread',
       'todowrite',
     ])
+  })
+
+  test('V2 preserves host-provided native todowrite/todoread instead of shadowing them', async () => {
+    const registeredNames: string[] = []
+    await plugin.setup(
+      makeBaseContext({
+        tool: {
+          transform: async (callback: (draft: unknown) => void) => {
+            callback({
+              list: () => [{ id: 'todowrite' }, { id: 'todoread' }, { id: 'read' }],
+              get: (id: string) => (id === 'todowrite' || id === 'todoread' ? { id } : undefined),
+              namespace: () => {},
+              add: (tool: { name: string }) => {
+                registeredNames.push(tool.name)
+              },
+            })
+            return { dispose: async () => {} }
+          },
+        },
+      }) as never,
+    )
+    assert.equal(registeredNames.includes('todowrite'), false, 'must not shadow native todowrite')
+    assert.equal(registeredNames.includes('todoread'), false, 'must not shadow native todoread')
+    assert.equal(
+      registeredNames.includes('hashline_edit'),
+      true,
+      'native pantheon tools still register',
+    )
   })
 
   test('every draft.add declares output — removing it fails this test', async () => {
@@ -3026,6 +3079,8 @@ async function main(): Promise<void> {
     const registered = await registerToolsThroughHostMock()
     const names = registered.map((t) => t.name).sort()
     assert.deepEqual(names, [
+      'ast_rewrite',
+      'ast_search',
       'code_index',
       'code_neighbors',
       'code_query',
@@ -3047,8 +3102,10 @@ async function main(): Promise<void> {
       'pantheon_deepwork',
       'pantheon_local_decision',
       'pantheon_model',
+      'pantheon_review_verdict',
       'pantheon_skill_search',
       'pantheon_step_ledger',
+      'pantheon_worktree',
       'shell',
       'todoread',
       'todowrite',
@@ -3603,7 +3660,7 @@ async function main(): Promise<void> {
     const v2WriteTools = [...DEFAULT_BLOCKED_TOOLS].filter((tool) => registeredNames.has(tool))
     assert.deepEqual(
       v2WriteTools.sort(),
-      ['hashline_edit', 'pantheon_model', 'shell'],
+      ['ast_rewrite', 'hashline_edit', 'pantheon_model', 'pantheon_worktree', 'shell'],
       'the V2 surface exposes mutating tools; all must be in the blocked set',
     )
     for (const tool of v2WriteTools) {

@@ -4,6 +4,13 @@
 > [CHANGELOG.md](https://github.com/ils15/pantheon-opencode/blob/main/CHANGELOG.md); this
 > page keeps the user-facing highlights that used to sit in the README.
 
+## v2.2.0
+
+- **30 Native TypeScript Tools & All Roadmap Pillars:** FTS5 memory + multi-repo read-only federation (`PANTHEON_FEDERATED_REPOS`), checkpoints (`context_*`), durable goals (`goal_*`), structural codemap + AST (`code_*`, `ast_search`, `ast_rewrite`), post-edit LSP diagnostics (`tsc`/`pyright`/stdio + pooled TCP `PANTHEON_LSP_TCP_ENDPOINTS`), atomic Step-Ledger git checkpoints + `ctx.session.create` runner (`pantheon_step_ledger`), native `pantheon_worktree` & `ctx.worktree.transform` isolation, typed `pantheon_review_verdict` + `ctx.session.synthetic` remediation, bugfix `RED` reproduction gates, and `/pantheon-forge` stack detection.
+- **High-Density TUI Mission Control Cockpit (`/pantheon-cockpit`) & Flightdeck Replay Export:** 3-page `@opentui/solid` cockpit (`Overview`, `Swarm` Gantt + stream, `Flightdeck` Gate Matrix + cross-process bus stream + `x` Mermaid replay export to `.pantheon/reports/`) navigable via `1–3`/`Tab` and Home links, alongside `/pantheon-artifacts`, Sidebar domain counters, `↑ vX.Y.Z` update badges, and `Native Tools (30)` in **About**.
+- **Shared `.pantheon/` Store Across Git Worktrees & Confinement:** Linked git worktrees automatically resolve back to the main repository's `.pantheon/` store (`PANTHEON_ISOLATE_WORKTREE_MEMORY=1` opts out); deleted files auto-prune from the codemap; `hashline_edit` and `ast_search`/`ast_rewrite` enforce workspace symlink confinement.
+- **Anti-Stale Cache & Bundle Protections:** `Legacy & Drift` scans and removes stale coexisting OpenCode plugin caches (`~/.cache/opencode/npm/pantheon-opencode*`), and `version:check` / `package:validate` fail fast if `dist/tui.js` embeds a stale version.
+
 ## v2.1.6
 
 - **Deepwork Resilient Normalization:** Full support for multi-decision plans, single-option policy constraints, string criteria auto-inference, and agent handle normalization with atomic plan locking.

@@ -103,6 +103,7 @@ import {
   createV2BoundedReadTool,
   type V2BoundedReadOriginRegistry,
 } from './pantheon/bounded-read.ts'
+import { wireCockpitBusRecorder } from './pantheon/cockpit-events.ts'
 import { buildCompactionContext } from './pantheon/compaction-context.ts'
 import {
   CONTEXT_PRUNER_CONFIG_KEYS,
@@ -182,6 +183,7 @@ import {
 import type { NativeDecisionRequest } from './pantheon/native-decisions.ts'
 import { buildV2VisionPromptContext, type V2VisionRuntime } from './pantheon/native-vision.ts'
 import { buildPrefixCachedPrompt } from './pantheon/prompt-cache-order.ts'
+import { evaluateReproductionGate } from './pantheon/reproduction-gate.ts'
 import { getSharedBoard } from './pantheon/shared-board.ts'
 import { createV2ShellHooks, type V2ShellRunner } from './pantheon/shell-hooks.ts'
 import {
@@ -200,6 +202,7 @@ import {
   modelAcceptsImages,
   sanitizeVisionHistory,
 } from './pantheon/vision.ts'
+import { createPantheonWorktreeDefinition } from './pantheon/worktree-orchestrator.ts'
 import type { HookPayload, HookResult } from './plugins/hook-runner.ts'
 
 // ─── Unsupported Features Registry ───────────────────────────────────────
@@ -375,6 +378,11 @@ interface V2PermissionDomain {
 interface V2SessionDomain {
   hook?: (name: string, handler: (event: unknown) => void | Promise<void>) => Promise<unknown>
   get?: (input: { sessionID: string }) => Promise<unknown>
+  synthetic?: (input: { sessionID: string; text: string; agent?: string }) => Promise<unknown>
+}
+
+interface V2WorktreeDomain {
+  transform?: (cb: (draft: { add: (def: unknown) => void }) => void) => Promise<unknown>
 }
 
 interface V2LocationDomain {
@@ -410,6 +418,7 @@ interface HostPluginContext extends PluginContext {
   generate?: V2GenerateDomain
   experimental?: V2ExperimentalDomain
   location?: V2LocationDomain
+  worktree?: V2WorktreeDomain
 }
 
 /**
@@ -718,8 +727,16 @@ const CANONICAL_SLASH_COMMANDS: ReadonlyArray<{ name: string; description: strin
     description: 'Run zero-token heuristic static scan and Themis 3-layer security review',
   },
   {
+    name: 'pantheon-consolidate',
+    description: 'Merge and consolidate memory entries',
+  },
+  {
     name: 'pantheon-focus',
     description: 'Manage persistent session goals and focus boundaries across compactions',
+  },
+  {
+    name: 'pantheon-forge',
+    description: 'Interactive wizard to detect repository stacks and forge tailored specialists',
   },
   {
     name: 'pantheon-model',
@@ -728,10 +745,6 @@ const CANONICAL_SLASH_COMMANDS: ReadonlyArray<{ name: string; description: strin
   {
     name: 'pantheon-optimize',
     description: 'Analyze and prune stale artifacts, worktrees, and context overhead',
-  },
-  {
-    name: 'pantheon-settings',
-    description: 'Open the interactive Pantheon TUI settings and Quotas & Spend window',
   },
   {
     name: 'pantheon-vision',
@@ -743,6 +756,7 @@ function resolveCanonicalCommandsDir(): string | undefined {
   const candidates = [
     fileURLToPath(new URL('commands', import.meta.url)),
     fileURLToPath(new URL('../commands', import.meta.url)),
+    fileURLToPath(new URL('../../commands', import.meta.url)),
     fileURLToPath(new URL('../src/commands', import.meta.url)),
     fileURLToPath(new URL('../../src/commands', import.meta.url)),
     fileURLToPath(new URL('src/commands', import.meta.url)),
@@ -862,8 +876,10 @@ function transformReferences(draft: ReferenceDraft): void {
   const candidates = [
     fileURLToPath(new URL('../AGENTS.global.md', import.meta.url)),
     fileURLToPath(new URL('../../AGENTS.global.md', import.meta.url)),
+    fileURLToPath(new URL('../../../AGENTS.global.md', import.meta.url)),
     fileURLToPath(new URL('../AGENTS.md', import.meta.url)),
     fileURLToPath(new URL('../../AGENTS.md', import.meta.url)),
+    fileURLToPath(new URL('../../../AGENTS.md', import.meta.url)),
   ]
   const resolvedPath =
     candidates.find((p) => existsSync(p)) ?? fileURLToPath(new URL('../AGENTS.md', import.meta.url))
@@ -1084,6 +1100,7 @@ async function registerV2Tools(
         complexitySink: (record) => {
           p3Sink.emit({ ...record, mode: 'shadow' })
         },
+        ...(host.session !== undefined ? { sessionDomain: host.session } : {}),
       },
       runtime,
       host.location?.directory,
@@ -1104,6 +1121,16 @@ async function registerV2Tools(
       // `adaptV2ExecuteBeforeEvent`.
       draft.namespace({ name: 'pantheon', description: 'Pantheon orchestration tools' })
       for (const def of toolDefs) {
+        // Never shadow host-provided native todowrite/todoread (which persist into
+        // OpenCode's native Todo panel); register Pantheon's fallback only when
+        // the host does not already ship them. Use `draft.get` (not `draft.list`)
+        // so P11 reads `draft.list()` exactly once.
+        if (
+          (def.name === 'todowrite' || def.name === 'todoread') &&
+          draft.get?.(def.name) !== undefined
+        ) {
+          continue
+        }
         draft.add({
           name: def.name,
           description: def.description,
@@ -2495,6 +2522,18 @@ async function registerV2ToolHooks(
             throw new Error(guardrailVerdict.message)
           }
         }
+        const reproAgent = agent !== undefined ? normalizeDelegationAgent(agent) : undefined
+        const reproVerdict = evaluateReproductionGate({
+          cwd: activeHostWorkspaceDir ?? process.cwd(),
+          tool: input.tool,
+          ...(reproAgent ? { agent: reproAgent } : {}),
+          ...(output.args !== null && typeof output.args === 'object' && !Array.isArray(output.args)
+            ? { args: output.args as Record<string, unknown> }
+            : {}),
+        })
+        if (!reproVerdict.allowed) {
+          throw new Error(reproVerdict.message)
+        }
         const boundedReadOrigin = boundedReadOrigins?.capture(event)
         const eventTool = (event as V2ToolExecuteBeforeEvent | null)?.tool
         if (eventTool === BOUNDED_READ_TOOL && boundedReadOrigin === undefined) {
@@ -2598,6 +2637,7 @@ async function registerV2ToolHooks(
     // the same resolver V1 uses.
     const v2ExecuteAfter = createV2ExecuteAfter({
       sandbox: resolveV2SandboxConfig(context.options),
+      cwd: () => activeHostWorkspaceDir ?? process.cwd(),
     })
     await toolCtx.hook('execute.after', async (event: unknown) => {
       const benchStartedAt = Date.now()
@@ -2918,6 +2958,8 @@ async function registerV2PermissionHook(
  * field is mandatory here rather than optional.
  */
 interface V2ToolDraft {
+  list?(): ReadonlyArray<{ id?: string; name?: string }>
+  get?(id: string): unknown
   namespace(config: { name: string; description: string }): void
   add(tool: {
     name: string
@@ -3169,6 +3211,20 @@ export const plugin = define({
       () => false,
     )
     if (!toolsRegistered) markUnsupported('tool-transform')
+
+    if (typeof setupHost.worktree?.transform === 'function') {
+      try {
+        await setupHost.worktree.transform((draft) => {
+          draft.add(createPantheonWorktreeDefinition())
+        })
+      } catch {
+        markUnsupported('worktree-transform')
+      }
+    }
+
+    if (hostLocationDir) {
+      activeCleanups.push(wireCockpitBusRecorder(hostLocationDir))
+    }
 
     // ─── Phase 7: V2 Compaction Hook (best-effort) ───────────────────
     const compactionCtx = setupHost.session

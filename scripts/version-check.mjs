@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /** Fail-closed version and lockfile validation. */
 
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
@@ -99,6 +99,15 @@ export function compareVersions(root) {
     validateInventory(root)
   } catch (error) {
     errors.push(error.message)
+  }
+  const tuiBundlePath = join(root, 'src', 'plugins', 'tui', 'dist', 'tui.js')
+  if (source !== null && existsSync(tuiBundlePath)) {
+    const tuiBundle = readFileSync(tuiBundlePath, 'utf8')
+    if (tuiBundle.includes('Pantheon v') && !tuiBundle.includes(`Pantheon v${source}`)) {
+      errors.push(
+        `src/plugins/tui/dist/tui.js: embedded version is stale (expected Pantheon v${source}; run npm --prefix src/plugins/tui run build)`,
+      )
+    }
   }
   return {
     source,

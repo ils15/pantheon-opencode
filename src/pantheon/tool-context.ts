@@ -9,6 +9,9 @@
  * @module tool-context
  */
 
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { basename, dirname, join, relative, resolve, sep } from 'node:path'
+
 /** Structural view of the tool context opencode passes to execute(). */
 export interface ToolContextLike {
   sessionID: string
@@ -43,4 +46,67 @@ export function resolveToolCwd(context: unknown, fallbackDir?: string): string {
     return fallbackDir
   }
   return process.cwd()
+}
+
+/**
+ * Resolve the shared repository root for `.pantheon/memory`, checkpoints, and
+ * goals when operating inside a linked git worktree (`.git` is a pointer file
+ * with `gitdir:` + `commondir`), falling back to `cwd` unchanged for regular
+ * checkouts and non-git directories.
+ */
+export function resolveSharedPantheonRoot(cwd: string): string {
+  if (process.env.PANTHEON_ISOLATE_WORKTREE_MEMORY === '1') return cwd
+  try {
+    let cur = resolve(cwd)
+    for (let depth = 0; depth < 32; depth += 1) {
+      const dotGit = join(cur, '.git')
+      if (existsSync(dotGit)) {
+        const st = statSync(dotGit)
+        if (st.isDirectory()) return cwd
+        if (st.isFile()) {
+          const content = readFileSync(dotGit, 'utf8')
+          const match = /^gitdir:\s*(.+)$/m.exec(content)
+          if (!match?.[1]) return cwd
+          const gitDir = resolve(cur, match[1].trim())
+          const commonFile = join(gitDir, 'commondir')
+          let commonGitDir: string | null = null
+          if (existsSync(commonFile)) {
+            commonGitDir = resolve(gitDir, readFileSync(commonFile, 'utf8').trim())
+          } else if (basename(dirname(gitDir)) === 'worktrees') {
+            commonGitDir = dirname(dirname(gitDir))
+          }
+          if (commonGitDir && basename(commonGitDir) === '.git') {
+            const mainRoot = dirname(commonGitDir)
+            if (existsSync(mainRoot)) return mainRoot
+          }
+          return cwd
+        }
+      }
+      const parent = dirname(cur)
+      if (parent === cur) break
+      cur = parent
+    }
+  } catch {
+    /* fail-open: fall back to cwd */
+  }
+  return cwd
+}
+
+export function resolveMemoryStoreCwd(context: unknown, fallbackDir?: string): string {
+  return resolveSharedPantheonRoot(resolveToolCwd(context, fallbackDir))
+}
+
+/**
+ * Resolve a file/directory path strictly inside `workspaceDir`, resolving symlinks
+ * and throwing on path traversal outside the workspace boundary.
+ */
+export function resolveSafeToolPath(workspaceDir: string, targetPath: string): string {
+  const rootReal = realpathSync(resolve(workspaceDir))
+  const candidate = resolve(rootReal, targetPath)
+  const resolved = existsSync(candidate) ? realpathSync(candidate) : candidate
+  const rel = relative(rootReal, resolved)
+  if (rel === '..' || rel.startsWith(`..${sep}`) || (rel !== '' && rel.startsWith('..'))) {
+    throw new Error(`Path "${targetPath}" escapes workspace boundary`)
+  }
+  return resolved
 }

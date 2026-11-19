@@ -182,8 +182,13 @@ workflow-owned (see below).
 
 ## Release Notes
 
-Release notes live in the version's `CHANGELOG.md` section and that section —
-verbatim — **is** the GitHub Release body. The canonical format is the hybrid:
+Release notes live in the version's `CHANGELOG.md` section and serve as the
+canonical GitHub Release body. For **stable** non-recovery releases, when an
+optional curated release document exists at `docs/releases/v<version>.md`,
+`scripts/release-body.mjs` composes that visual release page (rewriting
+relative image/doc links to immutable tag URLs) followed by the verbatim
+`CHANGELOG.md` section inside a collapsible ledger. Both formats require a
+valid canonical `CHANGELOG.md` section:
 curated `### 🆕 What's New` highlights on top, Keep a Changelog subsections
 below, in fixed order, in **English**:
 

@@ -193,6 +193,9 @@ test('beta gate trusts the committed X.Y.Z-beta.N and notes come from the change
   assert.match(validate, /Expected a committed X\.Y\.Z-beta\.N version/)
   // Both channels extract release notes from the committed CHANGELOG section.
   assert.match(validate, /node scripts\/changelog-extract\.mjs "\$BASE_VERSION"/)
+  // Stable releases with a curated docs/releases/vX.Y.Z.md compose via release-body.mjs.
+  assert.match(validate, /node scripts\/release-body\.mjs/)
+  assert.match(validate, /"\$RELEASE_CHANNEL" = "stable"/)
 })
 
 test('tag and release provenance remains bound to TARGET_SHA', () => {

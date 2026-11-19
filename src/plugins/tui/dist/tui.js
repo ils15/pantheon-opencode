@@ -3,11 +3,2678 @@ import { execFile } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { Plugin } from "@opencode/plugin/tui";
 import { ErrorBoundary, For, Show, createEffect, createMemo, createSignal, on, onCleanup, onMount } from "solid-js";
-import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
+//#region src/mermaid-ascii.ts
+function cleanLabel(raw) {
+	return raw.replace(/<br\s*\/?>/gi, " / ").replace(/^["'`]|["'`]$/g, "").replace(/\s+/g, " ").trim();
+}
+function splitOperandsOutsideDelimiters(text) {
+	const out = [];
+	let cur = "";
+	let quote = null;
+	let bracketDepth = 0;
+	for (let i = 0; i < text.length; i += 1) {
+		const ch = text[i] ?? "";
+		if (quote) {
+			if (ch === quote) quote = null;
+			cur += ch;
+			continue;
+		}
+		if (ch === "\"" || ch === "'") {
+			quote = ch;
+			cur += ch;
+			continue;
+		}
+		if (ch === "[" || ch === "(" || ch === "{") {
+			bracketDepth += 1;
+			cur += ch;
+			continue;
+		}
+		if ((ch === "]" || ch === ")" || ch === "}") && bracketDepth > 0) {
+			bracketDepth -= 1;
+			cur += ch;
+			continue;
+		}
+		if (ch === "&" && bracketDepth === 0) {
+			const part = cur.trim();
+			if (part) out.push(part);
+			cur = "";
+			continue;
+		}
+		cur += ch;
+	}
+	const tail = cur.trim();
+	if (tail) out.push(tail);
+	return out;
+}
+function parseNodeToken(token) {
+	const trimmed = token.trim();
+	if (trimmed === "[*]") return {
+		id: "__star__",
+		label: "●"
+	};
+	const match = /^([A-Za-z0-9_.:-]+)\s*(?:\[\[([^\]]*)\]\]|\(\(([^)]*)\)\)|\(\[([^\]]*)\]\)|\{\{([^}]*)\}\}|\[([^\]]*)\]|\(([^)]*)\)|\{([^}]*)\})?$/.exec(trimmed);
+	if (!match) return {
+		id: trimmed.replace(/[^A-Za-z0-9_.:-]/g, "") || trimmed,
+		label: cleanLabel(trimmed)
+	};
+	const id = match[1] ?? trimmed;
+	const rawLabel = match[2] ?? match[3] ?? match[4] ?? match[5] ?? match[6] ?? match[7] ?? match[8];
+	return rawLabel !== void 0 ? {
+		id,
+		label: cleanLabel(rawLabel)
+	} : { id };
+}
+function truncateText(text, maxLen) {
+	if (maxLen <= 1) return text.slice(0, Math.max(0, maxLen));
+	if (text.length <= maxLen) return text;
+	return `${text.slice(0, maxLen - 1)}…`;
+}
+function drawBox(label, maxWidth, indent = "") {
+	const text = truncateText(label, Math.max(8, maxWidth - indent.length - 4));
+	const bar = "─".repeat(text.length + 2);
+	return [
+		`${indent}╭${bar}╮`,
+		`${indent}│ ${text} │`,
+		`${indent}╰${bar}╯`
+	];
+}
+const ARROW_PATTERN = String.raw`(?:(?:-->|-\.->|==>)\|([^|]+)\||--\s+([^->\n]+?)\s+-->|-\.\s*([^.]+?)\s*\.->|==\s*([^=]+?)\s*==>|-->|-\.->|==>|---)`;
+const EDGE_RE = new RegExp(String.raw`^(.*?)\s+${ARROW_PATTERN}\s+(.*)$`);
+function splitChainOperands(line) {
+	const arrowTokenRe = new RegExp(String.raw`\s+(${ARROW_PATTERN})\s+`, "g");
+	const parts = [];
+	const connectors = [];
+	let lastIdx = 0;
+	for (const m of line.matchAll(arrowTokenRe)) {
+		const idx = m.index ?? 0;
+		parts.push(line.slice(lastIdx, idx).trim());
+		const arrow = m[1] ?? "";
+		const labelRaw = m[2] ?? m[3] ?? m[4] ?? m[5];
+		connectors.push({
+			label: labelRaw ? cleanLabel(labelRaw) : void 0,
+			dashed: arrow.includes("-.")
+		});
+		lastIdx = idx + m[0].length;
+	}
+	parts.push(line.slice(lastIdx).trim());
+	return {
+		parts,
+		connectors
+	};
+}
+function parseFlowchart(lines) {
+	const nodes = /* @__PURE__ */ new Map();
+	const edges = [];
+	let direction = "TD";
+	const ensureNode = (id, label) => {
+		const existing = nodes.get(id);
+		if (existing) {
+			if (label && existing.label === existing.id) existing.label = label;
+			return;
+		}
+		nodes.set(id, {
+			id,
+			label: label ?? id
+		});
+	};
+	for (const rawLine of lines) {
+		const stripped = rawLine.trim();
+		if (!stripped || stripped.startsWith("%%")) continue;
+		if (/^(flowchart|graph)\s+/i.test(stripped)) {
+			if (/\bLR\b|\bRL\b/i.test(stripped)) direction = "LR";
+			continue;
+		}
+		if (/^(classDef|style|linkStyle|click|class|direction|subgraph|end)\b/i.test(stripped)) continue;
+		for (const stmt of stripped.split(";")) {
+			const s = stmt.trim();
+			if (!s) continue;
+			if (EDGE_RE.test(` ${s} `) || [
+				"-->",
+				"-.->",
+				"==>",
+				"---"
+			].some((tok) => s.includes(tok))) {
+				const { parts, connectors } = splitChainOperands(s);
+				if (parts.length >= 2 && connectors.length === parts.length - 1) {
+					for (let i = 0; i < connectors.length; i += 1) {
+						const leftGroup = splitOperandsOutsideDelimiters(parts[i] ?? "");
+						const rightGroup = splitOperandsOutsideDelimiters(parts[i + 1] ?? "");
+						const conn = connectors[i];
+						for (const lTok of leftGroup) {
+							const left = parseNodeToken(lTok);
+							ensureNode(left.id, left.label);
+							for (const rTok of rightGroup) {
+								const right = parseNodeToken(rTok);
+								ensureNode(right.id, right.label);
+								edges.push({
+									from: left.id,
+									to: right.id,
+									label: conn?.label,
+									dashed: Boolean(conn?.dashed)
+								});
+							}
+						}
+					}
+					continue;
+				}
+			}
+			const single = parseNodeToken(s);
+			if (single.id) ensureNode(single.id, single.label);
+		}
+	}
+	return {
+		direction,
+		nodes,
+		edges
+	};
+}
+function renderHorizontalChain(chain, edges, maxWidth) {
+	if (chain.length < 2 || chain.length > 5) return null;
+	const boxes = chain.map((n) => drawBox(n.label, 28));
+	const edgeWidths = edges.map((e) => e.label ? Math.max(5, e.label.length + 4) : 4);
+	if (boxes.reduce((sum, b) => sum + (b[0]?.length ?? 0), 0) + edgeWidths.reduce((sum, w) => sum + w, 0) > maxWidth) return null;
+	const top = [];
+	const mid = [];
+	const bot = [];
+	for (let i = 0; i < boxes.length; i += 1) {
+		const box = boxes[i];
+		if (!box) continue;
+		top.push(box[0] ?? "");
+		mid.push(box[1] ?? "");
+		bot.push(box[2] ?? "");
+		if (i < edges.length) {
+			const ew = edgeWidths[i] ?? 4;
+			const lbl = edges[i]?.label;
+			const arrowMid = `${(edges[i]?.dashed ? "╌" : "─").repeat(ew - 1)}►`;
+			const arrowTop = lbl ? ` ${lbl}`.padEnd(ew, " ") : " ".repeat(ew);
+			top.push(arrowTop);
+			mid.push(arrowMid);
+			bot.push(" ".repeat(ew));
+		}
+	}
+	return [
+		top.join(""),
+		mid.join(""),
+		bot.join("")
+	];
+}
+function renderFlowchart(lines, maxWidth) {
+	const { direction, nodes, edges } = parseFlowchart(lines);
+	if (nodes.size === 0) return null;
+	const outEdges = /* @__PURE__ */ new Map();
+	const inDegree = /* @__PURE__ */ new Map();
+	const incomingSources = /* @__PURE__ */ new Map();
+	for (const id of nodes.keys()) {
+		outEdges.set(id, []);
+		inDegree.set(id, 0);
+		incomingSources.set(id, []);
+	}
+	for (const e of edges) {
+		outEdges.get(e.from)?.push(e);
+		inDegree.set(e.to, (inDegree.get(e.to) ?? 0) + 1);
+		incomingSources.get(e.to)?.push(e.from);
+	}
+	const isSimpleChain = edges.length === nodes.size - 1 && [...outEdges.values()].every((list) => list.length <= 1) && [...inDegree.values()].every((deg) => deg <= 1);
+	if (direction === "LR" && isSimpleChain) {
+		const startId = [...nodes.keys()].find((id) => (inDegree.get(id) ?? 0) === 0);
+		if (startId) {
+			const chain = [];
+			const chainEdges = [];
+			let cur = startId;
+			const seen = /* @__PURE__ */ new Set();
+			while (cur && !seen.has(cur)) {
+				seen.add(cur);
+				const node = nodes.get(cur);
+				if (!node) break;
+				chain.push(node);
+				const nextEdge = outEdges.get(cur)?.[0];
+				if (!nextEdge) break;
+				chainEdges.push(nextEdge);
+				cur = nextEdge.to;
+			}
+			const horiz = renderHorizontalChain(chain, chainEdges, maxWidth);
+			if (horiz) return horiz;
+		}
+	}
+	const out = [];
+	const visited = /* @__PURE__ */ new Set();
+	const renderedJoin = /* @__PURE__ */ new Set();
+	const renderSubtree = (nodeId, prefix, isRoot, edgeFromParent) => {
+		const node = nodes.get(nodeId);
+		if (!node) return;
+		const deg = inDegree.get(nodeId) ?? 0;
+		if (!isRoot && deg > 1 && !renderedJoin.has(nodeId)) {
+			if ((incomingSources.get(nodeId) ?? []).some((src) => !visited.has(src) && src !== edgeFromParent?.from)) {
+				const lbl = edgeFromParent?.label ? ` (${edgeFromParent.label})` : "";
+				out.push(`${prefix}  ╰─► converges at ${truncateText(node.label, Math.max(12, maxWidth - prefix.length - 20))}${lbl}`);
+				return;
+			}
+			renderedJoin.add(nodeId);
+		}
+		if (visited.has(nodeId)) {
+			const lbl = edgeFromParent?.label ? ` (${edgeFromParent.label})` : "";
+			out.push(`${prefix}  ╰─► ↺ ${truncateText(node.label, Math.max(12, maxWidth - prefix.length - 10))}${lbl}`);
+			return;
+		}
+		visited.add(nodeId);
+		if (!isRoot && deg > 1) {
+			const sources = (incomingSources.get(nodeId) ?? []).map((s) => nodes.get(s)?.id ?? s).filter((v, i, arr) => arr.indexOf(v) === i);
+			out.push(`${prefix}  (from ${sources.join(", ")})`);
+		}
+		const box = drawBox(node.label, maxWidth, prefix);
+		out.push(...box);
+		const children = outEdges.get(nodeId) ?? [];
+		if (children.length === 0) return;
+		if (children.length === 1 && children[0]) {
+			const child = children[0];
+			const stemX = `${prefix}    `;
+			const lineChar = child.dashed ? "┆" : "│";
+			const lbl = child.label ? ` ${child.label}` : "";
+			out.push(`${stemX}${lineChar}${lbl}`);
+			out.push(`${stemX}▼`);
+			renderSubtree(child.to, prefix, false, child);
+			return;
+		}
+		for (let i = 0; i < children.length; i += 1) {
+			const child = children[i];
+			if (!child) continue;
+			const isLast = i === children.length - 1;
+			const branch = isLast ? "└──►" : "├──►";
+			const edgeTag = child.label ? `[${child.label}] ` : "";
+			const childPrefix = `${prefix}  ${isLast ? "    " : "│   "}`;
+			out.push(`${prefix}  ${branch} ${edgeTag}${truncateText(nodes.get(child.to)?.label ?? child.to, Math.max(12, maxWidth - prefix.length - edgeTag.length - 8))}`);
+			const grandChildren = outEdges.get(child.to) ?? [];
+			if (!visited.has(child.to)) {
+				visited.add(child.to);
+				if (grandChildren.length > 0) for (let j = 0; j < grandChildren.length; j += 1) {
+					const gc = grandChildren[j];
+					if (!gc) continue;
+					if ((inDegree.get(gc.to) ?? 0) > 1) {
+						if ((incomingSources.get(gc.to) ?? []).some((s) => !visited.has(s))) {
+							out.push(`${childPrefix}  ╰─► converges at ${truncateText(nodes.get(gc.to)?.label ?? gc.to, Math.max(12, maxWidth - childPrefix.length - 20))}`);
+							continue;
+						}
+					}
+					out.push(`${childPrefix}  │`);
+					out.push(`${childPrefix}  ▼`);
+					renderSubtree(gc.to, childPrefix, false, gc);
+				}
+			}
+		}
+	};
+	const roots = [...nodes.keys()].filter((id) => (inDegree.get(id) ?? 0) === 0);
+	const queue = roots.length > 0 ? roots : [...nodes.keys()].slice(0, 1);
+	for (let i = 0; i < queue.length; i += 1) {
+		const rootId = queue[i];
+		if (!rootId || visited.has(rootId)) continue;
+		if (out.length > 0) out.push("");
+		renderSubtree(rootId, "", true);
+	}
+	for (const id of nodes.keys()) if (!visited.has(id)) {
+		if (out.length > 0) out.push("");
+		renderSubtree(id, "", true);
+	}
+	return out;
+}
+function renderSequence(lines, maxWidth) {
+	const participants = /* @__PURE__ */ new Map();
+	const messages = [];
+	const addParticipant = (id, label) => {
+		if (!participants.has(id)) participants.set(id, cleanLabel(label ?? id));
+		else if (label) participants.set(id, cleanLabel(label));
+	};
+	for (const raw of lines) {
+		const s = raw.trim();
+		if (!s || s.startsWith("%%") || /^sequenceDiagram\b/i.test(s)) continue;
+		const partMatch = /^(?:participant|actor)\s+([A-Za-z0-9_.-]+)(?:\s+as\s+(.+))?$/i.exec(s);
+		if (partMatch?.[1]) {
+			addParticipant(partMatch[1], partMatch[2]);
+			continue;
+		}
+		const msgMatch = /^([A-Za-z0-9_.-]+)\s*(-->>|->>|-->|->)\s*([A-Za-z0-9_.-]+)\s*:\s*(.*)$/.exec(s);
+		if (msgMatch?.[1] && msgMatch[2] && msgMatch[3]) {
+			addParticipant(msgMatch[1]);
+			addParticipant(msgMatch[3]);
+			messages.push({
+				from: msgMatch[1],
+				to: msgMatch[3],
+				text: cleanLabel(msgMatch[4] ?? ""),
+				dashed: msgMatch[2].startsWith("--")
+			});
+		}
+	}
+	if (participants.size === 0 || messages.length === 0) return null;
+	const ids = [...participants.keys()];
+	const count = ids.length;
+	const colStep = Math.floor((maxWidth - 4) / Math.max(1, count - 1));
+	if (count >= 2 && count <= 4 && colStep >= 18) {
+		const centers = ids.map((_, idx) => 5 + idx * Math.min(colStep, 22));
+		const totalW = (centers[count - 1] ?? 10) + 8;
+		const out = [];
+		const topLine = Array(totalW).fill(" ");
+		const midLine = Array(totalW).fill(" ");
+		const botLine = Array(totalW).fill(" ");
+		for (let i = 0; i < count; i += 1) {
+			const id = ids[i];
+			if (!id) continue;
+			const label = truncateText(participants.get(id) ?? id, 12);
+			const boxW = label.length + 4;
+			const start = Math.max(0, (centers[i] ?? 0) - Math.floor(boxW / 2));
+			const top = `╭${"─".repeat(label.length + 2)}╮`;
+			const mid = `│ ${label} │`;
+			const bot = `╰${"─".repeat(label.length + 2)}╯`;
+			for (let k = 0; k < boxW; k += 1) if (start + k < totalW) {
+				topLine[start + k] = top[k];
+				midLine[start + k] = mid[k];
+				botLine[start + k] = k === (centers[i] ?? 0) - start ? "┬" : bot[k];
+			}
+		}
+		out.push(topLine.join("").trimEnd(), midLine.join("").trimEnd(), botLine.join("").trimEnd());
+		const emptyLifelines = () => {
+			const arr = Array(totalW).fill(" ");
+			for (const c of centers) arr[c] = "│";
+			return arr;
+		};
+		for (const msg of messages) {
+			const iFrom = ids.indexOf(msg.from);
+			const iTo = ids.indexOf(msg.to);
+			if (iFrom < 0 || iTo < 0) continue;
+			const cFrom = centers[iFrom] ?? 0;
+			const cTo = centers[iTo] ?? 0;
+			const left = Math.min(cFrom, cTo);
+			const right = Math.max(cFrom, cTo);
+			const labelRow = emptyLifelines();
+			const msgText = truncateText(msg.text, Math.max(6, right - left - 2));
+			for (let k = 0; k < msgText.length; k += 1) if (left + 2 + k < totalW) labelRow[left + 2 + k] = msgText[k];
+			out.push(labelRow.join("").trimEnd());
+			const arrowRow = emptyLifelines();
+			const wire = msg.dashed ? "┄" : "─";
+			for (let x = left + 1; x < right; x += 1) arrowRow[x] = wire;
+			if (cFrom < cTo) {
+				arrowRow[left] = "├";
+				arrowRow[right - 1] = "►";
+			} else {
+				arrowRow[left + 1] = "◄";
+				arrowRow[right] = "┤";
+			}
+			out.push(arrowRow.join("").trimEnd());
+		}
+		out.push(emptyLifelines().join("").trimEnd());
+		return out;
+	}
+	return messages.map((m, idx) => {
+		const arrow = m.dashed ? "╌╌►" : "──►";
+		const fromLbl = participants.get(m.from) ?? m.from;
+		const toLbl = participants.get(m.to) ?? m.to;
+		return truncateText(`${idx + 1}. [${fromLbl}] ${arrow} [${toLbl}]: ${m.text}`, maxWidth);
+	});
+}
+function renderStateDiagram(lines, maxWidth) {
+	return renderFlowchart(lines.map((line) => {
+		const trimmed = line.trim();
+		if (/^stateDiagram(?:-v2)?$/i.test(trimmed)) return "flowchart TD";
+		const arrowWithLabel = /^(.+?)\s*-->\s*(.+?)\s*:\s*(.+)$/.exec(trimmed);
+		if (arrowWithLabel?.[1] && arrowWithLabel[2] && arrowWithLabel[3]) return `${arrowWithLabel[1].trim()} -->|${arrowWithLabel[3].trim()}| ${arrowWithLabel[2].trim()}`;
+		return line;
+	}), maxWidth);
+}
+function renderMermaidToUnicode(rawLines, maxWidth = 76) {
+	const firstMeaningful = rawLines.map((l) => l.trim()).find((l) => l && !l.startsWith("%%")) ?? "";
+	if (/^(?:flowchart|graph)\b/i.test(firstMeaningful)) {
+		const rendered = renderFlowchart(rawLines, maxWidth);
+		if (rendered && rendered.length > 0) return {
+			header: "[Diagram: Flowchart]",
+			lines: rendered
+		};
+	} else if (/^sequenceDiagram\b/i.test(firstMeaningful)) {
+		const rendered = renderSequence(rawLines, maxWidth);
+		if (rendered && rendered.length > 0) return {
+			header: "[Diagram: Sequence]",
+			lines: rendered
+		};
+	} else if (/^stateDiagram/i.test(firstMeaningful)) {
+		const rendered = renderStateDiagram(rawLines, maxWidth);
+		if (rendered && rendered.length > 0) return {
+			header: "[Diagram: State]",
+			lines: rendered
+		};
+	}
+	return {
+		header: "[Mermaid Diagram]",
+		lines: rawLines.map((l) => `  ${l.trim()}`).filter((l) => l.trim().length > 0)
+	};
+}
+const GFM_ALERT_RE = /^>\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*$/i;
+function resolveArtifactRoots(workspaceDir) {
+	const roots = [];
+	const seen = /* @__PURE__ */ new Set();
+	const pushRoot = (candidate) => {
+		try {
+			if (!existsSync(candidate)) return;
+			const real = realpathSync(candidate);
+			if (!seen.has(real)) {
+				seen.add(real);
+				roots.push(real);
+			}
+		} catch {}
+	};
+	pushRoot(workspaceDir);
+	try {
+		let cur = resolve(workspaceDir);
+		for (let depth = 0; depth < 24; depth += 1) {
+			const dotGit = join(cur, ".git");
+			if (existsSync(dotGit)) {
+				if (statSync(dotGit).isFile()) {
+					const content = readFileSync(dotGit, "utf8");
+					const match = /^gitdir:\s*(.+)$/m.exec(content);
+					if (match?.[1]) {
+						const gitDir = resolve(cur, match[1].trim());
+						const commonFile = join(gitDir, "commondir");
+						const commonGitDir = existsSync(commonFile) ? resolve(gitDir, readFileSync(commonFile, "utf8").trim()) : basename(dirname(gitDir)) === "worktrees" ? dirname(dirname(gitDir)) : null;
+						if (commonGitDir && basename(commonGitDir) === ".git") pushRoot(dirname(commonGitDir));
+					}
+				}
+				break;
+			}
+			const parent = dirname(cur);
+			if (parent === cur) break;
+			cur = parent;
+		}
+	} catch {}
+	return roots;
+}
+function extractTitle(content, fallbackFile) {
+	for (const line of content.split(/\r?\n/)) {
+		const match = /^#\s+(.+?)\s*$/.exec(line.trim());
+		if (match?.[1]) return match[1].trim();
+	}
+	return fallbackFile.replace(/\.md$/i, "");
+}
+function addArtifactFile(out, seenPaths, root, filePath, kind) {
+	try {
+		const real = realpathSync(filePath);
+		if (seenPaths.has(real)) return;
+		const st = statSync(real);
+		if (!st.isFile()) return;
+		const raw = readFileSync(real, "utf8");
+		const lineCount = raw === "" ? 0 : raw.split(/\r?\n/).length;
+		const relPath = relative(root, real).replace(/\\/g, "/");
+		const badge = kind === "plan" ? "PLAN" : kind === "report" ? "REPORT" : "ADR";
+		seenPaths.add(real);
+		out.push({
+			id: real,
+			kind,
+			badge,
+			title: extractTitle(raw, basename(real)),
+			path: real,
+			relPath,
+			modifiedMs: st.mtimeMs,
+			lineCount,
+			bytes: st.size
+		});
+	} catch {}
+}
+function scanPantheonArtifacts(workspaceDir) {
+	if (!workspaceDir || !existsSync(workspaceDir)) return [];
+	const roots = resolveArtifactRoots(workspaceDir);
+	const out = [];
+	const seenPaths = /* @__PURE__ */ new Set();
+	for (const root of roots) {
+		const deepworkDir = join(root, ".pantheon", "deepwork");
+		if (existsSync(deepworkDir)) try {
+			for (const entry of readdirSync(deepworkDir, { withFileTypes: true })) {
+				if (!entry.isDirectory()) continue;
+				const slugDir = join(deepworkDir, entry.name);
+				for (const file of readdirSync(slugDir, { withFileTypes: true })) {
+					if (!file.isFile() || !file.name.endsWith(".md")) continue;
+					const kind = file.name.startsWith("VERIFICATION") ? "report" : "plan";
+					addArtifactFile(out, seenPaths, root, join(slugDir, file.name), kind);
+				}
+			}
+		} catch {}
+		const reportsDir = join(root, ".pantheon", "reports");
+		if (existsSync(reportsDir)) try {
+			for (const file of readdirSync(reportsDir, { withFileTypes: true })) {
+				if (!file.isFile() || !file.name.endsWith(".md")) continue;
+				addArtifactFile(out, seenPaths, root, join(reportsDir, file.name), "report");
+			}
+		} catch {}
+		for (const adrDir of [join(root, "docs", "adr"), join(root, ".pantheon", "memory-bank", "adr")]) {
+			if (!existsSync(adrDir)) continue;
+			try {
+				for (const file of readdirSync(adrDir, { withFileTypes: true })) {
+					if (!file.isFile() || !file.name.endsWith(".md")) continue;
+					if (file.name.toLowerCase() === "readme.md") continue;
+					addArtifactFile(out, seenPaths, root, join(adrDir, file.name), "adr");
+				}
+			} catch {}
+		}
+	}
+	return out.sort((a, b) => b.modifiedMs - a.modifiedMs || a.relPath.localeCompare(b.relPath));
+}
+function wrapLine(text, width) {
+	const max = Number.isInteger(width) && width >= 20 ? width : 76;
+	if (text.length <= max) return [text];
+	const rows = [];
+	let rest = text;
+	while (rest.length > max) {
+		let split = rest.lastIndexOf(" ", max);
+		if (split < Math.floor(max * .4)) split = max;
+		rows.push(rest.slice(0, split).trimEnd());
+		rest = rest.slice(split).trimStart();
+	}
+	if (rest.length > 0) rows.push(rest);
+	return rows;
+}
+function simplifyLinks(line) {
+	return line.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_m, label, target) => {
+		if (target.startsWith("file://")) {
+			const clean = target.replace(/^file:\/\//, "");
+			const hashIdx = clean.indexOf("#");
+			const pathPart = hashIdx >= 0 ? clean.slice(0, hashIdx) : clean;
+			const anchor = hashIdx >= 0 ? clean.slice(hashIdx) : "";
+			const base = basename(pathPart);
+			return base === label ? `${label}${anchor}` : `${label} (${base}${anchor})`;
+		}
+		return label;
+	});
+}
+function formatArtifactLines(markdown, width = 76) {
+	const max = Number.isInteger(width) && width >= 20 ? width : 76;
+	const out = [];
+	let inMermaid = false;
+	let mermaidBuffer = [];
+	let inCode = false;
+	let activeAlert = null;
+	for (const rawLine of markdown.split(/\r?\n/)) {
+		const trimmed = rawLine.trim();
+		if (/^```mermaid/i.test(trimmed)) {
+			inMermaid = true;
+			inCode = true;
+			mermaidBuffer = [];
+			continue;
+		}
+		if (/^```/.test(trimmed)) {
+			if (inCode) {
+				if (inMermaid) {
+					const rendered = renderMermaidToUnicode(mermaidBuffer, max);
+					out.push(rendered.header);
+					for (const dLine of rendered.lines) out.push(dLine);
+					mermaidBuffer = [];
+				}
+				inCode = false;
+				inMermaid = false;
+				out.push("");
+			} else {
+				inCode = true;
+				const lang = trimmed.slice(3).trim();
+				out.push(lang ? `[Code: ${lang}]` : "[Code]");
+			}
+			continue;
+		}
+		if (inCode) {
+			if (inMermaid) mermaidBuffer.push(rawLine);
+			else out.push(...wrapLine(`  ${trimmed}`, max));
+			continue;
+		}
+		const alertMatch = GFM_ALERT_RE.exec(trimmed);
+		if (alertMatch?.[1]) {
+			activeAlert = alertMatch[1].toUpperCase();
+			out.push(`[${activeAlert}]`);
+			continue;
+		}
+		if (trimmed.startsWith(">")) {
+			const body = simplifyLinks(trimmed.replace(/^>\s?/, ""));
+			const prefix = activeAlert ? "  " : "> ";
+			if (body === "") continue;
+			out.push(...wrapLine(`${prefix}${body}`, max));
+			continue;
+		}
+		activeAlert = null;
+		if (trimmed === "---" || trimmed === "***") {
+			out.push("─".repeat(Math.min(max, 64)));
+			continue;
+		}
+		if (trimmed === "") {
+			if (out.length > 0 && out[out.length - 1] !== "") out.push("");
+			continue;
+		}
+		const cleaned = simplifyLinks(rawLine).replace(/\*\*/g, "");
+		const hMatch = /^(#{1,3})\s+(.+)$/.exec(cleaned.trim());
+		if (hMatch?.[1] && hMatch[2]) {
+			const level = hMatch[1].length;
+			const heading = level === 1 ? hMatch[2].toUpperCase() : hMatch[2];
+			if (out.length > 0 && out[out.length - 1] !== "") out.push("");
+			out.push(...wrapLine(level === 1 ? heading : `${"· ".repeat(level - 1)}${heading}`, max));
+			continue;
+		}
+		const bulletMatch = /^[-*]\s+(.+)$/.exec(cleaned.trim());
+		if (bulletMatch?.[1]) {
+			out.push(...wrapLine(`• ${bulletMatch[1]}`, max));
+			continue;
+		}
+		out.push(...wrapLine(cleaned.trimEnd(), max));
+	}
+	while (out.length > 0 && out[out.length - 1] === "") out.pop();
+	return out;
+}
+function paginateArtifactLines(lines, pageSize = 16) {
+	const size = Number.isInteger(pageSize) && pageSize > 0 ? pageSize : 16;
+	if (lines.length === 0) return [[]];
+	const pages = [];
+	for (let i = 0; i < lines.length; i += size) pages.push(lines.slice(i, i + size));
+	return pages;
+}
+function artifactKindLabel(kind, isPt = false) {
+	if (kind === "plan") return isPt ? "Plano" : "Plan";
+	if (kind === "report") return isPt ? "Relatório" : "Report";
+	return "ADR";
+}
+Object.freeze([
+	"auto",
+	"pt-BR",
+	"en"
+]);
+/**
+* Resolve effective language: 'pt-BR' or 'en'.
+* Defaults to 'pt-BR' if system locale contains 'pt', if Intl locale is pt,
+* or if system timezone is Brazilian/Portuguese; otherwise 'en'.
+*/
+function resolveLanguage(preference = "auto", env = process.env) {
+	if (preference === "pt-BR") return "pt-BR";
+	if (preference === "en") return "en";
+	if ((env.LC_ALL ?? env.LC_MESSAGES ?? env.LANG ?? env.LANGUAGE ?? "").toLowerCase().startsWith("pt")) return "pt-BR";
+	try {
+		if (Intl.DateTimeFormat().resolvedOptions().locale.toLowerCase().startsWith("pt")) return "pt-BR";
+	} catch {}
+	try {
+		const tz = (env.TZ ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? "").toLowerCase();
+		if (tz.includes("sao_paulo") || tz.includes("brazil") || tz.includes("fortaleza") || tz.includes("recife") || tz.includes("manaus") || tz.includes("belem") || tz.includes("cuiaba") || tz.includes("campo_grande") || tz.includes("porto_velho") || tz.includes("rio_branco") || tz.includes("boa_vista") || tz.includes("maceio") || tz.includes("bahia") || tz.includes("noronha") || tz.includes("araguaina") || tz.includes("santarem") || tz.includes("lisbon") || tz.includes("madeira") || tz.includes("azores")) return "pt-BR";
+	} catch {}
+	return "en";
+}
+//#endregion
+//#region src/tui-prefs.ts
+const PREFS_SYMBOL = Symbol.for("pantheon.tui.prefs.v1");
+const DRAFT_PREVIEW_SYMBOL = Symbol.for("pantheon.tui.draft_preview.v1");
+function stash() {
+	return globalThis[PREFS_SYMBOL];
+}
+function getDraftPreviewSignal() {
+	const g = globalThis;
+	if (!g[DRAFT_PREVIEW_SYMBOL]) g[DRAFT_PREVIEW_SYMBOL] = createSignal(void 0);
+	return g[DRAFT_PREVIEW_SYMBOL];
+}
+/** Set the active draft preview overlay (used by settings window to provide live preview). */
+function setTuiDraftPreview(draft) {
+	const [, setDraft] = getDraftPreviewSignal();
+	setDraft(draft && Object.keys(draft).length > 0 ? { ...draft } : void 0);
+}
+/** Clear the active draft preview overlay. */
+function clearTuiDraftPreview() {
+	const [, setDraft] = getDraftPreviewSignal();
+	setDraft(void 0);
+}
+/** The active draft preview accessor. */
+function tuiDraftPreview() {
+	const [draft] = getDraftPreviewSignal();
+	return draft();
+}
+/** Create (or reuse) the durable prefs store. Fail-open: without host
+*  storage the consumers fall back to DEFAULT_TUI_PREFS (read-only). */
+function initTuiPrefs(context) {
+	if (stash() !== void 0) return;
+	try {
+		const handle = context.storage?.store?.("tui-prefs", { initial: DEFAULT_TUI_PREFS });
+		if (handle !== void 0) {
+			globalThis[PREFS_SYMBOL] = handle;
+			if (!handle[0]?.layout || typeof handle[0]?.sidebar?.context?.turnCost !== "boolean" || typeof handle[0]?.sidebar?.context?.tokenAnatomy !== "boolean") handle[1]((draft) => {
+				if (!draft.layout) draft.layout = { ...DEFAULT_TUI_PREFS.layout };
+				if (draft.sidebar?.context) {
+					if (typeof draft.sidebar.context.turnCost !== "boolean") draft.sidebar.context.turnCost = true;
+					if (typeof draft.sidebar.context.tokenAnatomy !== "boolean") draft.sidebar.context.tokenAnatomy = true;
+				}
+			}).catch(() => {});
+		}
+	} catch {}
+}
+/** Deep clone and overlay staged settings draft onto base TuiPrefs. */
+function previewTuiPrefs(base, draft) {
+	if (!draft || Object.keys(draft).length === 0) return base;
+	let hasTui = false;
+	for (const k of Object.keys(draft)) if (k.startsWith("tui.")) {
+		hasTui = true;
+		break;
+	}
+	if (!hasTui) return base;
+	const normalized = normalizeTuiPrefs(base);
+	const effective = {
+		version: 1,
+		layout: { ...normalized.layout },
+		...normalized.theme ? { theme: { ...normalized.theme } } : {},
+		sidebar: {
+			header: { ...normalized.sidebar.header },
+			...normalized.sidebar.pinnedSessions ? { pinnedSessions: [...normalized.sidebar.pinnedSessions] } : {},
+			blocks: { ...normalized.sidebar.blocks },
+			context: { ...normalized.sidebar.context }
+		},
+		footer: { ...normalized.footer }
+	};
+	for (const [id, value] of Object.entries(draft)) if (id.startsWith("tui.")) applyTuiRow(effective, id, value);
+	return effective;
+}
+/** The raw persisted prefs from host storage (no draft overlay). */
+function savedTuiPrefs() {
+	const s = stash()?.[0];
+	if (!s) return DEFAULT_TUI_PREFS;
+	return normalizeTuiPrefs(s);
+}
+/** The live reactive prefs (read properties inside memos/JSX — tracked).
+*  When a settings window has an active draft, preview overlays on top
+*  of durable storage in real time. */
+function tuiPrefs() {
+	const base = savedTuiPrefs();
+	const preview = tuiDraftPreview();
+	if (!preview) return base;
+	return previewTuiPrefs(base, preview);
+}
+/** Stage a mutation against the durable store; resolves when persisted. */
+function mutateTuiPrefs(mutation) {
+	const handle = stash();
+	if (handle === void 0) return Promise.resolve();
+	return handle[1](mutation);
+}
+const GAUGE_STYLES = Object.freeze([
+	"both",
+	"bar",
+	"percent",
+	"off"
+]);
+const ENABLED_CYCLE = Object.freeze(["enabled", "disabled"]);
+const BAR_SHAPES_CYCLE = Object.freeze([
+	"smooth",
+	"line",
+	"block",
+	"ascii",
+	"dots",
+	"braille"
+]);
+const BAR_WIDTHS_CYCLE = Object.freeze([
+	"standard",
+	"compact",
+	"wide",
+	"full"
+]);
+const LAYOUT_PRESETS_CYCLE = Object.freeze(["comfortable", "compact"]);
+const SEPARATOR_STYLES_CYCLE = Object.freeze([
+	"spaces",
+	"pipes",
+	"dots",
+	"slashes"
+]);
+const SETTINGS_VIEW_MODES = Object.freeze([
+	"docked",
+	"fullscreen",
+	"dialog"
+]);
+const LANGUAGE_CYCLE = Object.freeze([
+	"auto",
+	"pt-BR",
+	"en"
+]);
+const THEME_MODES_CYCLE = Object.freeze([
+	"auto",
+	"dark",
+	"light"
+]);
+const ACCENT_COLORS_CYCLE = Object.freeze([
+	"host",
+	"pantheon",
+	"emerald",
+	"cyan",
+	"amber",
+	"purple",
+	"rose"
+]);
+const ACCENT_PALETTE = {
+	host: {
+		primary: "#fba970",
+		hover: "#fdba74",
+		muted: "#a1a1aa"
+	},
+	pantheon: {
+		primary: "#fba970",
+		hover: "#fdba74",
+		muted: "#a1a1aa"
+	},
+	emerald: {
+		primary: "#10b981",
+		hover: "#34d399",
+		muted: "#059669"
+	},
+	cyan: {
+		primary: "#06b6d4",
+		hover: "#22d3ee",
+		muted: "#0891b2"
+	},
+	amber: {
+		primary: "#f59e0b",
+		hover: "#fbbf24",
+		muted: "#d97706"
+	},
+	purple: {
+		primary: "#a855f7",
+		hover: "#c084fc",
+		muted: "#9333ea"
+	},
+	rose: {
+		primary: "#f43f5e",
+		hover: "#fb7185",
+		muted: "#e11d48"
+	}
+};
+function resolveAccentColor(accent, contextTheme) {
+	if (!accent || accent === "host") return contextTheme?.text?.feedback?.warning?.base ?? contextTheme?.text?.base ?? "#fba970";
+	return ACCENT_PALETTE[accent]?.primary ?? "#fba970";
+}
+const DEFAULT_TUI_PREFS = {
+	version: 1,
+	layout: {
+		preset: "comfortable",
+		separator: "spaces",
+		settingsView: "docked",
+		language: "auto"
+	},
+	theme: {
+		mode: "auto",
+		accent: "host"
+	},
+	sidebar: {
+		header: {
+			version: true,
+			preset: true,
+			session: true
+		},
+		pinnedSessions: [],
+		blocks: {
+			context: true,
+			git: true,
+			todo: false,
+			dispatch: true
+		},
+		context: {
+			gauge: "both",
+			barShape: "smooth",
+			barWidth: "standard",
+			evenMark: false,
+			tokens: true,
+			spent: true,
+			modelUsage: true,
+			performance: true,
+			localSpend: true,
+			turnCost: true,
+			tokenAnatomy: true
+		}
+	},
+	footer: {
+		prompt: true,
+		home: true
+	}
+};
+function asBool(value, fallback) {
+	return typeof value === "boolean" ? value : fallback;
+}
+/** Deep-merge stored JSON over the defaults; unknown keys and junk are ignored. */
+function normalizeTuiPrefs(raw) {
+	const stored = typeof raw === "object" && raw !== null ? raw : {};
+	const layout = typeof stored.layout === "object" && stored.layout !== null ? stored.layout : {};
+	const sidebar = typeof stored.sidebar === "object" && stored.sidebar !== null ? stored.sidebar : {};
+	const header = typeof sidebar.header === "object" && sidebar.header !== null ? sidebar.header : {};
+	const blocks = typeof sidebar.blocks === "object" && sidebar.blocks !== null ? sidebar.blocks : {};
+	const context = typeof sidebar.context === "object" && sidebar.context !== null ? sidebar.context : {};
+	const footer = typeof stored.footer === "object" && stored.footer !== null ? stored.footer : {};
+	const rawTheme = typeof stored.theme === "object" && stored.theme !== null ? stored.theme : {};
+	const themeMode = THEME_MODES_CYCLE.includes(rawTheme.mode) ? rawTheme.mode : DEFAULT_TUI_PREFS.theme?.mode ?? "auto";
+	const themeAccent = ACCENT_COLORS_CYCLE.includes(rawTheme.accent) ? rawTheme.accent : DEFAULT_TUI_PREFS.theme?.accent ?? "host";
+	const preset = LAYOUT_PRESETS_CYCLE.includes(layout.preset) ? layout.preset : DEFAULT_TUI_PREFS.layout.preset;
+	const separator = SEPARATOR_STYLES_CYCLE.includes(layout.separator) ? layout.separator : DEFAULT_TUI_PREFS.layout.separator;
+	const settingsView = SETTINGS_VIEW_MODES.includes(layout.settingsView) ? layout.settingsView : DEFAULT_TUI_PREFS.layout.settingsView;
+	const language = LANGUAGE_CYCLE.includes(layout.language) ? layout.language : DEFAULT_TUI_PREFS.layout.language;
+	const gauge = GAUGE_STYLES.includes(context.gauge) ? context.gauge : DEFAULT_TUI_PREFS.sidebar.context.gauge;
+	const barShape = BAR_SHAPES_CYCLE.includes(context.barShape) ? context.barShape : DEFAULT_TUI_PREFS.sidebar.context.barShape;
+	const barWidth = BAR_WIDTHS_CYCLE.includes(context.barWidth) ? context.barWidth : DEFAULT_TUI_PREFS.sidebar.context.barWidth;
+	const evenMark = asBool(context.evenMark, DEFAULT_TUI_PREFS.sidebar.context.evenMark);
+	return {
+		version: 1,
+		layout: {
+			preset,
+			separator,
+			settingsView,
+			language
+		},
+		theme: {
+			mode: themeMode,
+			accent: themeAccent
+		},
+		sidebar: {
+			header: {
+				version: asBool(header.version, true),
+				preset: asBool(header.preset, true),
+				session: asBool(header.session, true)
+			},
+			pinnedSessions: Array.isArray(sidebar.pinnedSessions) ? sidebar.pinnedSessions.filter((s) => typeof s === "string") : [],
+			blocks: {
+				context: asBool(blocks.context, true),
+				git: asBool(blocks.git, true),
+				todo: asBool(blocks.todo, false),
+				dispatch: asBool(blocks.dispatch, true)
+			},
+			context: {
+				gauge,
+				barShape,
+				barWidth,
+				evenMark,
+				tokens: asBool(context.tokens, true),
+				spent: asBool(context.spent, true),
+				modelUsage: asBool(context.modelUsage, true),
+				performance: asBool(context.performance, true),
+				localSpend: asBool(context.localSpend, true),
+				turnCost: asBool(context.turnCost, true),
+				tokenAnatomy: asBool(context.tokenAnatomy, true)
+			}
+		},
+		footer: {
+			prompt: asBool(footer.prompt, true),
+			home: asBool(footer.home, true)
+		}
+	};
+}
+const onOff = ENABLED_CYCLE;
+const row = (id, name, value, note) => ({
+	id,
+	name,
+	value: value ? "enabled" : "disabled",
+	cycle: onOff,
+	note
+});
+function buildTuiTab(prefs, languagePref) {
+	const isPt = resolveLanguage(languagePref ?? prefs.layout?.language) === "pt-BR";
+	return {
+		id: "tui",
+		title: "TUI",
+		groups: [
+			{
+				title: isPt ? "Predefinição & Layout" : "Preset & Layout",
+				rows: [
+					{
+						id: "tui.layout.preset",
+						name: isPt ? "Predefinição de layout" : "Layout preset",
+						value: prefs.layout?.preset ?? DEFAULT_TUI_PREFS.layout.preset,
+						cycle: LAYOUT_PRESETS_CYCLE,
+						note: isPt ? "comfortable | compact — define espaçamento e bordas" : "comfortable | compact — sets spacing & borders"
+					},
+					{
+						id: "tui.layout.separator",
+						name: isPt ? "Separador" : "Separator",
+						value: prefs.layout?.separator ?? DEFAULT_TUI_PREFS.layout.separator,
+						cycle: SEPARATOR_STYLES_CYCLE,
+						note: isPt ? "spaces | pipes | dots | slashes — glifos na linha de status" : "spaces | pipes | dots | slashes — status line glyphs"
+					},
+					{
+						id: "tui.layout.settingsView",
+						name: isPt ? "Superfície de configurações" : "Settings surface",
+						value: tuiRowValue(prefs, "tui.layout.settingsView") ?? "docked",
+						cycle: SETTINGS_VIEW_MODES,
+						note: isPt ? "docked (acima do prompt) | fullscreen | dialog" : "docked (above prompt) | fullscreen router page | dialog overlay"
+					},
+					{
+						id: "tui.layout.language",
+						name: isPt ? "Idioma / Language" : "Language / Idioma",
+						value: tuiRowValue(prefs, "tui.layout.language") ?? "auto",
+						cycle: LANGUAGE_CYCLE,
+						note: isPt ? "auto (detecta via fuso/locale) | pt-BR (Português) | en (English)" : "auto (detect via timezone/locale) | pt-BR (Português) | en (English)"
+					}
+				]
+			},
+			{
+				title: isPt ? "Cores & Tema" : "Colors & Theme",
+				rows: [{
+					id: "tui.theme.mode",
+					name: isPt ? "Modo do tema" : "Theme mode",
+					value: tuiRowValue(prefs, "tui.theme.mode") ?? "auto",
+					cycle: THEME_MODES_CYCLE,
+					note: isPt ? "auto (segue o OpenCode) | dark | light" : "auto (follow OpenCode theme) | dark | light"
+				}, {
+					id: "tui.theme.accent",
+					name: isPt ? "Cor de destaque" : "Accent color",
+					value: tuiRowValue(prefs, "tui.theme.accent") ?? "host",
+					cycle: ACCENT_COLORS_CYCLE,
+					note: isPt ? "host (segue tema) | pantheon | emerald | cyan | amber | purple | rose" : "host (follow theme) | pantheon | emerald | cyan | amber | purple | rose"
+				}]
+			},
+			{
+				title: isPt ? "Barras & Medidores" : "Bars & Gauges",
+				rows: [
+					{
+						id: "tui.sidebar.context.barShape",
+						name: isPt ? "Formato da barra" : "Bar shape",
+						value: prefs.sidebar.context.barShape,
+						cycle: BAR_SHAPES_CYCLE,
+						note: "line (━─) | block (▰▱) | smooth (█░) | ascii (=) | dots (●○) | braille"
+					},
+					{
+						id: "tui.sidebar.context.barWidth",
+						name: isPt ? "Largura da barra" : "Bar width",
+						value: prefs.sidebar.context.barWidth,
+						cycle: BAR_WIDTHS_CYCLE,
+						note: isPt ? "standard (12) | compact (8) | wide (16) | full (20 células)" : "standard (12) | compact (8) | wide (16) | full (20 cells)"
+					},
+					row("tui.sidebar.context.evenMark", isPt ? "Marca central (50%)" : "Even-use mark", prefs.sidebar.context.evenMark, isPt ? "| indicador aos 50% nas barras de medição" : "| indicator at 50% midpoint in gauge bars"),
+					{
+						id: "tui.sidebar.context.gauge",
+						name: isPt ? "Estilo do medidor" : "Gauge style",
+						value: prefs.sidebar.context.gauge,
+						cycle: GAUGE_STYLES,
+						note: "both | bar | percent | off — `▰▱ 42% of 200k`"
+					}
+				]
+			},
+			{
+				title: isPt ? "Cabeçalho da barra lateral" : "Sidebar header",
+				rows: [
+					row("tui.sidebar.header.version", isPt ? "Linha de versão" : "Version line", prefs.sidebar.header.version, isPt ? "linha `Pantheon v…`" : "the `Pantheon v…` line"),
+					row("tui.sidebar.header.preset", isPt ? "Linha de preset" : "Preset line", prefs.sidebar.header.preset, isPt ? "linha `▸ preset · provider`" : "the `▸ preset · provider` line"),
+					row("tui.sidebar.header.session", isPt ? "Linha de sessão" : "Session line", prefs.sidebar.header.session, isPt ? "título da sessão ativa" : "the active session title")
+				]
+			},
+			{
+				title: isPt ? "Blocos da barra lateral" : "Sidebar blocks",
+				rows: [
+					row("tui.sidebar.block.context", isPt ? "Bloco de contexto" : "Context block", prefs.sidebar.blocks.context, isPt ? "tokens, medidor, custo, uso de modelos" : "tokens, gauge, spend, model usage"),
+					row("tui.sidebar.block.git", isPt ? "Bloco do Git" : "Git block", prefs.sidebar.blocks.git, isPt ? "branch + contagem de alterações" : "branch + working-tree counts"),
+					row("tui.sidebar.block.dispatch", isPt ? "Bloco Dispatch" : "Dispatch block", prefs.sidebar.blocks.dispatch, isPt ? "delegações em tempo real" : "live delegations + rollup")
+				]
+			},
+			{
+				title: isPt ? "Detalhe do bloco de contexto" : "Context block detail",
+				rows: [
+					row("tui.sidebar.context.tokens", isPt ? "Linha de tokens" : "Tokens row", prefs.sidebar.context.tokens, isPt ? "contagem bruta de tokens" : "the raw token count line"),
+					row("tui.sidebar.context.spent", isPt ? "Linha de custo" : "Spent row", prefs.sidebar.context.spent, isPt ? "linha `$… gastos na sessão`" : "the `$… spent in session` line"),
+					row("tui.sidebar.context.modelUsage", isPt ? "Tabela de uso de modelos" : "Model usage table", prefs.sidebar.context.modelUsage, isPt ? "resumo de chamadas por modelo" : "per-model tokens/USD"),
+					row("tui.sidebar.context.performance", isPt ? "Linha de desempenho" : "Performance row", prefs.sidebar.context.performance, isPt ? "tokens/segundo e latência" : "cache % + tok/s"),
+					row("tui.sidebar.context.turnCost", isPt ? "Custo do turno" : "Turn cost", prefs.sidebar.context.turnCost, isPt ? "linha `Turn: $… (prev: $…)`" : "the `Turn: $… (prev: $…)` line"),
+					row("tui.sidebar.context.tokenAnatomy", isPt ? "Anatomia de tokens" : "Token anatomy", prefs.sidebar.context.tokenAnatomy, isPt ? "linha `↑in ↓out ✦think`" : "the `↑in ↓out ✦think` line"),
+					row("tui.sidebar.context.localSpend", isPt ? "Linha de custo local" : "Local spend row", prefs.sidebar.context.localSpend, isPt ? "totais de hoje / 30 dias" : "hoje / 30d totals")
+				]
+			},
+			{
+				title: isPt ? "Rodapés" : "Footers",
+				rows: [row("tui.footer.prompt", isPt ? "Prompt inferior" : "Prompt footer", prefs.footer.prompt, isPt ? "linha `▸preset · ✦n ativos` durante delegações" : "the `▸preset · ✦n ativos` line while delegations run"), row("tui.footer.home", isPt ? "Status inicial" : "Home status", prefs.footer.home, isPt ? "linha `Pantheon v…` sob o prompt inicial" : "the `Pantheon v…` line under the home prompt")]
+			}
+		]
+	};
+}
+/**
+* Apply one staged row INTO a prefs draft (in place — the storage mutate
+* callback hands an immer-style draft). Unknown ids or junk values are no-ops.
+*/
+function applyTuiRow(draft, id, value) {
+	const enabled = value === "enabled";
+	switch (id) {
+		case "tui.layout.preset":
+			if (LAYOUT_PRESETS_CYCLE.includes(value)) {
+				if (!draft.layout) draft.layout = { ...DEFAULT_TUI_PREFS.layout };
+				draft.layout.preset = value;
+			}
+			return;
+		case "tui.layout.separator":
+			if (SEPARATOR_STYLES_CYCLE.includes(value)) {
+				if (!draft.layout) draft.layout = { ...DEFAULT_TUI_PREFS.layout };
+				draft.layout.separator = value;
+			}
+			return;
+		case "tui.layout.settingsView":
+			if (SETTINGS_VIEW_MODES.includes(value)) {
+				if (!draft.layout) draft.layout = { ...DEFAULT_TUI_PREFS.layout };
+				draft.layout.settingsView = value;
+			}
+			return;
+		case "tui.layout.language":
+			if (LANGUAGE_CYCLE.includes(value)) {
+				if (!draft.layout) draft.layout = { ...DEFAULT_TUI_PREFS.layout };
+				draft.layout.language = value;
+			}
+			return;
+		case "tui.theme.mode":
+			if (THEME_MODES_CYCLE.includes(value)) {
+				if (!draft.theme) draft.theme = { ...DEFAULT_TUI_PREFS.theme };
+				draft.theme.mode = value;
+			}
+			return;
+		case "tui.theme.accent":
+			if (ACCENT_COLORS_CYCLE.includes(value)) {
+				if (!draft.theme) draft.theme = { ...DEFAULT_TUI_PREFS.theme };
+				draft.theme.accent = value;
+			}
+			return;
+		case "tui.sidebar.context.barShape":
+			if (BAR_SHAPES_CYCLE.includes(value)) draft.sidebar.context.barShape = value;
+			return;
+		case "tui.sidebar.context.barWidth":
+			if (BAR_WIDTHS_CYCLE.includes(value)) draft.sidebar.context.barWidth = value;
+			return;
+		case "tui.sidebar.context.evenMark":
+			draft.sidebar.context.evenMark = enabled;
+			return;
+		case "tui.sidebar.header.version":
+			draft.sidebar.header.version = enabled;
+			return;
+		case "tui.sidebar.header.preset":
+			draft.sidebar.header.preset = enabled;
+			return;
+		case "tui.sidebar.header.session":
+			draft.sidebar.header.session = enabled;
+			return;
+		case "tui.sidebar.block.context":
+			draft.sidebar.blocks.context = enabled;
+			return;
+		case "tui.sidebar.block.git":
+			draft.sidebar.blocks.git = enabled;
+			return;
+		case "tui.sidebar.block.todo":
+			draft.sidebar.blocks.todo = enabled;
+			return;
+		case "tui.sidebar.block.dispatch":
+			draft.sidebar.blocks.dispatch = enabled;
+			return;
+		case "tui.sidebar.context.gauge":
+			if (GAUGE_STYLES.includes(value)) draft.sidebar.context.gauge = value;
+			return;
+		case "tui.sidebar.context.tokens":
+			draft.sidebar.context.tokens = enabled;
+			return;
+		case "tui.sidebar.context.spent":
+			draft.sidebar.context.spent = enabled;
+			return;
+		case "tui.sidebar.context.modelUsage":
+			draft.sidebar.context.modelUsage = enabled;
+			return;
+		case "tui.sidebar.context.performance":
+			draft.sidebar.context.performance = enabled;
+			return;
+		case "tui.sidebar.context.localSpend":
+			draft.sidebar.context.localSpend = enabled;
+			return;
+		case "tui.sidebar.context.turnCost":
+			draft.sidebar.context.turnCost = enabled;
+			return;
+		case "tui.sidebar.context.tokenAnatomy":
+			draft.sidebar.context.tokenAnatomy = enabled;
+			return;
+		case "tui.footer.prompt":
+			draft.footer.prompt = enabled;
+			return;
+		case "tui.footer.home":
+			draft.footer.home = enabled;
+			return;
+		default: return;
+	}
+}
+/** Read the current pref value for a row id ('enabled'/'disabled'/gauge/custom). */
+function tuiRowValue(prefs, id) {
+	if (id === "tui.layout.preset") return prefs.layout?.preset ?? DEFAULT_TUI_PREFS.layout.preset;
+	if (id === "tui.layout.separator") return prefs.layout?.separator ?? DEFAULT_TUI_PREFS.layout.separator;
+	if (id === "tui.layout.settingsView") return prefs.layout?.settingsView ?? DEFAULT_TUI_PREFS.layout.settingsView ?? "docked";
+	if (id === "tui.layout.language") return prefs.layout?.language ?? "auto";
+	if (id === "tui.theme.mode") return prefs.theme?.mode ?? DEFAULT_TUI_PREFS.theme?.mode ?? "auto";
+	if (id === "tui.theme.accent") return prefs.theme?.accent ?? DEFAULT_TUI_PREFS.theme?.accent ?? "host";
+	if (id === "tui.sidebar.context.barShape") return prefs.sidebar.context.barShape;
+	if (id === "tui.sidebar.context.barWidth") return prefs.sidebar.context.barWidth;
+	if (id === "tui.sidebar.context.gauge") return prefs.sidebar.context.gauge;
+	if (id === "tui.sidebar.context.evenMark") return prefs.sidebar.context.evenMark ? "enabled" : "disabled";
+	const enabled = (() => {
+		switch (id) {
+			case "tui.sidebar.header.version": return prefs.sidebar.header.version;
+			case "tui.sidebar.header.preset": return prefs.sidebar.header.preset;
+			case "tui.sidebar.header.session": return prefs.sidebar.header.session;
+			case "tui.sidebar.block.context": return prefs.sidebar.blocks.context;
+			case "tui.sidebar.block.git": return prefs.sidebar.blocks.git;
+			case "tui.sidebar.block.todo": return prefs.sidebar.blocks.todo;
+			case "tui.sidebar.block.dispatch": return prefs.sidebar.blocks.dispatch;
+			case "tui.sidebar.context.tokens": return prefs.sidebar.context.tokens;
+			case "tui.sidebar.context.spent": return prefs.sidebar.context.spent;
+			case "tui.sidebar.context.modelUsage": return prefs.sidebar.context.modelUsage;
+			case "tui.sidebar.context.performance": return prefs.sidebar.context.performance;
+			case "tui.sidebar.context.localSpend": return prefs.sidebar.context.localSpend;
+			case "tui.sidebar.context.turnCost": return prefs.sidebar.context.turnCost;
+			case "tui.sidebar.context.tokenAnatomy": return prefs.sidebar.context.tokenAnatomy;
+			case "tui.footer.prompt": return prefs.footer.prompt;
+			case "tui.footer.home": return prefs.footer.home;
+			default: return;
+		}
+	})();
+	return enabled === void 0 ? void 0 : enabled ? "enabled" : "disabled";
+}
+function isSessionPinned(sessionID) {
+	if (!sessionID) return false;
+	const list = tuiPrefs().sidebar.pinnedSessions;
+	return Array.isArray(list) && list.includes(sessionID);
+}
+//#endregion
+//#region src/artifacts.tsx
+/** @jsxImportSource @opentui/solid */
+/**
+* artifacts.tsx — Interactive `/pantheon-artifacts` (and `/artifacts`) TUI dialog.
+*
+* Scans `.pantheon/deepwork/<slug>/*.md`, `.pantheon/reports/*.md`, and
+* `docs/adr/*.md` (resolving linked git worktrees back to the main repository),
+* lets users browse artifacts with keyboard or mouse, and renders paginated
+* terminal-friendly views of plans, reports, and ADRs.
+*/
+function readArtifactContent(entry) {
+	try {
+		return readFileSync(entry.path, "utf8");
+	} catch {
+		return "";
+	}
+}
+function lineColor(line, fg, muted, warn) {
+	if (/^\[(?:IMPORTANT|WARNING|CAUTION)\]/.test(line)) return warn ?? "#fba970";
+	if (/^\[(?:NOTE|TIP|Mermaid Diagram|Code)/.test(line)) return "#60a5fa";
+	if (line.startsWith("• ")) return fg;
+	if (line.startsWith("· ") || line === line.toUpperCase() && /[A-Z]/.test(line) && line.length > 3) return fg;
+	if (line.startsWith("─")) return muted;
+	return muted ?? fg;
+}
+function ArtifactsDialogContent(props) {
+	const activeEntry = () => props.entries[props.selected()];
+	const pageCount = () => Math.max(1, props.pages().length);
+	const currentRows = () => props.pages()[Math.min(props.page(), pageCount() - 1)] ?? [];
+	const rule = "─".repeat(76);
+	return (() => {
+		var _el$ = createElement("box"), _el$2 = createElement("box"), _el$3 = createElement("box"), _el$4 = createElement("box"), _el$5 = createElement("text"), _el$6 = createElement("text"), _el$7 = createElement("box"), _el$8 = createElement("text"), _el$0 = createElement("box"), _el$1 = createElement("text"), _el$12 = createElement("box"), _el$13 = createElement("text"), _el$14 = createElement("box"), _el$15 = createElement("box"), _el$23 = createElement("text"), _el$24 = createElement("box"), _el$25 = createElement("text");
+		insertNode(_el$, _el$2);
+		insertNode(_el$, _el$0);
+		insertNode(_el$, _el$12);
+		insertNode(_el$, _el$14);
+		setProp(_el$, "flexDirection", "column");
+		setProp(_el$, "borderStyle", "rounded");
+		setProp(_el$, "paddingLeft", 2);
+		setProp(_el$, "paddingRight", 2);
+		setProp(_el$, "paddingTop", 1);
+		setProp(_el$, "paddingBottom", 1);
+		insertNode(_el$2, _el$3);
+		insertNode(_el$2, _el$7);
+		setProp(_el$2, "flexDirection", "row");
+		setProp(_el$2, "alignItems", "center");
+		setProp(_el$2, "justifyContent", "space-between");
+		insertNode(_el$3, _el$4);
+		insertNode(_el$3, _el$6);
+		setProp(_el$3, "flexDirection", "row");
+		setProp(_el$3, "alignItems", "center");
+		insertNode(_el$4, _el$5);
+		setProp(_el$4, "paddingLeft", 1);
+		setProp(_el$4, "paddingRight", 1);
+		setProp(_el$4, "marginRight", 1);
+		setProp(_el$5, "fg", "#000000");
+		setProp(_el$5, "attributes", 1);
+		insert(_el$5, () => props.isPt ? "ARTEFATOS" : "ARTIFACTS");
+		setProp(_el$6, "attributes", 1);
+		insert(_el$6, (() => {
+			var _c$ = memo(() => !!(props.mode() === "read" && activeEntry()));
+			return () => _c$() ? activeEntry()?.title.slice(0, 52) : memo(() => !!props.isPt)() ? `Planos, Relatórios & ADRs (${props.entries.length})` : `Plans, Reports & ADRs (${props.entries.length})`;
+		})());
+		insertNode(_el$7, _el$8);
+		setProp(_el$7, "onMouseDown", () => props.onClose());
+		insertNode(_el$8, createTextNode(`[ Esc / Q ]`));
+		insertNode(_el$0, _el$1);
+		setProp(_el$0, "flexDirection", "row");
+		setProp(_el$0, "height", 1);
+		setProp(_el$0, "marginTop", 1);
+		setProp(_el$0, "marginBottom", 1);
+		insert(_el$1, rule);
+		insert(_el$, createComponent(Show, {
+			get when() {
+				return memo(() => props.mode() === "read")() && activeEntry() !== void 0;
+			},
+			get fallback() {
+				return (() => {
+					var _el$26 = createElement("box");
+					setProp(_el$26, "flexDirection", "column");
+					setProp(_el$26, "minHeight", 10);
+					insert(_el$26, createComponent(Show, {
+						get when() {
+							return props.entries.length > 0;
+						},
+						get fallback() {
+							return (() => {
+								var _el$27 = createElement("box"), _el$28 = createElement("text"), _el$29 = createElement("text"), _el$30 = createElement("text"), _el$32 = createElement("text"), _el$34 = createElement("text");
+								insertNode(_el$27, _el$28);
+								insertNode(_el$27, _el$29);
+								insertNode(_el$27, _el$30);
+								insertNode(_el$27, _el$32);
+								insertNode(_el$27, _el$34);
+								setProp(_el$27, "flexDirection", "column");
+								setProp(_el$28, "attributes", 1);
+								insert(_el$28, () => props.isPt ? "Nenhum artefato encontrado neste workspace." : "No artifacts found in this workspace.");
+								setProp(_el$29, "marginTop", 1);
+								insert(_el$29, () => props.isPt ? "Onde o Pantheon salva artefatos:" : "Where Pantheon stores artifacts:");
+								insertNode(_el$30, createTextNode(`• .pantheon/deepwork/&lt;slug>/PLAN.md  (/pantheon-deepwork / @athena)`));
+								insertNode(_el$32, createTextNode(`• .pantheon/reports/*.md             (@apollo / @themis)`));
+								insertNode(_el$34, createTextNode(`• docs/adr/*.md                      (@mnemosyne)`));
+								effect((_p$) => {
+									var _v$9 = props.fg, _v$0 = props.muted, _v$1 = props.muted, _v$10 = props.muted, _v$11 = props.muted;
+									_v$9 !== _p$.e && (_p$.e = setProp(_el$28, "fg", _v$9, _p$.e));
+									_v$0 !== _p$.t && (_p$.t = setProp(_el$29, "fg", _v$0, _p$.t));
+									_v$1 !== _p$.a && (_p$.a = setProp(_el$30, "fg", _v$1, _p$.a));
+									_v$10 !== _p$.o && (_p$.o = setProp(_el$32, "fg", _v$10, _p$.o));
+									_v$11 !== _p$.i && (_p$.i = setProp(_el$34, "fg", _v$11, _p$.i));
+									return _p$;
+								}, {
+									e: void 0,
+									t: void 0,
+									a: void 0,
+									o: void 0,
+									i: void 0
+								});
+								return _el$27;
+							})();
+						},
+						get children() {
+							return createComponent(For, {
+								get each() {
+									return props.entries.slice(0, 12);
+								},
+								children: (entry, idx) => {
+									const isSelected = () => idx() === props.selected();
+									const kindTag = `[${artifactKindLabel(entry.kind, props.isPt).toUpperCase()}]`.padEnd(13);
+									const title = (entry.title.length > 30 ? `${entry.title.slice(0, 29)}…` : entry.title).padEnd(32);
+									const pathTail = entry.relPath.length > 26 ? `…${entry.relPath.slice(-25)}` : entry.relPath;
+									return (() => {
+										var _el$36 = createElement("box"), _el$37 = createElement("text"), _el$38 = createElement("text"), _el$39 = createElement("text"), _el$40 = createElement("text");
+										insertNode(_el$36, _el$37);
+										insertNode(_el$36, _el$38);
+										insertNode(_el$36, _el$39);
+										insertNode(_el$36, _el$40);
+										setProp(_el$36, "flexDirection", "row");
+										spread(_el$36, mergeProps(() => isSelected() ? { backgroundColor: "#262626" } : {}, { "onMouseDown": () => {
+											if (isSelected()) props.onOpen(idx());
+											else props.onSelect(idx());
+										} }), true);
+										setProp(_el$37, "attributes", 1);
+										setProp(_el$37, "wrapMode", "none");
+										insert(_el$37, () => isSelected() ? "▸ " : "  ");
+										setProp(_el$38, "wrapMode", "none");
+										insert(_el$38, kindTag);
+										setProp(_el$39, "wrapMode", "none");
+										spread(_el$39, mergeProps({ get fg() {
+											return memo(() => !!isSelected())() ? props.fg : props.muted;
+										} }, () => isSelected() ? { attributes: 1 } : {}), true);
+										insert(_el$39, title);
+										setProp(_el$40, "wrapMode", "none");
+										insert(_el$40, () => `${pathTail} (${entry.lineCount}L)`);
+										effect((_p$) => {
+											var _v$12 = isSelected() ? props.warn ?? "#fba970" : props.muted, _v$13 = isSelected() ? props.warn ?? "#fba970" : "#60a5fa", _v$14 = props.muted;
+											_v$12 !== _p$.e && (_p$.e = setProp(_el$37, "fg", _v$12, _p$.e));
+											_v$13 !== _p$.t && (_p$.t = setProp(_el$38, "fg", _v$13, _p$.t));
+											_v$14 !== _p$.a && (_p$.a = setProp(_el$40, "fg", _v$14, _p$.a));
+											return _p$;
+										}, {
+											e: void 0,
+											t: void 0,
+											a: void 0
+										});
+										return _el$36;
+									})();
+								}
+							});
+						}
+					}));
+					return _el$26;
+				})();
+			},
+			get children() {
+				var _el$10 = createElement("box"), _el$11 = createElement("text");
+				insertNode(_el$10, _el$11);
+				setProp(_el$10, "flexDirection", "column");
+				setProp(_el$10, "minHeight", 12);
+				setProp(_el$11, "marginBottom", 1);
+				insert(_el$11, () => `${activeEntry()?.relPath ?? ""} · ${activeEntry()?.lineCount ?? 0} ${props.isPt ? "linhas" : "lines"}`);
+				insert(_el$10, createComponent(For, {
+					get each() {
+						return currentRows();
+					},
+					children: (line) => (() => {
+						var _el$41 = createElement("text");
+						insert(_el$41, line === "" ? " " : line);
+						effect((_$p) => setProp(_el$41, "fg", lineColor(line, props.fg, props.muted, props.warn), _$p));
+						return _el$41;
+					})()
+				}), null);
+				effect((_$p) => setProp(_el$11, "fg", props.muted, _$p));
+				return _el$10;
+			}
+		}), _el$12);
+		insertNode(_el$12, _el$13);
+		setProp(_el$12, "flexDirection", "row");
+		setProp(_el$12, "height", 1);
+		setProp(_el$12, "marginTop", 1);
+		insert(_el$13, rule);
+		insertNode(_el$14, _el$15);
+		insertNode(_el$14, _el$24);
+		setProp(_el$14, "flexDirection", "row");
+		setProp(_el$14, "alignItems", "center");
+		setProp(_el$14, "justifyContent", "space-between");
+		setProp(_el$14, "marginTop", 1);
+		insertNode(_el$15, _el$23);
+		setProp(_el$15, "flexDirection", "row");
+		setProp(_el$15, "alignItems", "center");
+		setProp(_el$15, "flexShrink", 1);
+		insert(_el$15, createComponent(Show, {
+			get when() {
+				return props.mode() === "read";
+			},
+			get children() {
+				return [(() => {
+					var _el$16 = createElement("box"), _el$17 = createElement("text");
+					insertNode(_el$16, _el$17);
+					setProp(_el$16, "backgroundColor", "#262626");
+					setProp(_el$16, "paddingLeft", 1);
+					setProp(_el$16, "paddingRight", 1);
+					setProp(_el$16, "marginRight", 1);
+					setProp(_el$16, "flexShrink", 0);
+					setProp(_el$16, "onMouseDown", () => props.onBack());
+					setProp(_el$17, "fg", "#ffffff");
+					setProp(_el$17, "wrapMode", "none");
+					insert(_el$17, () => props.isPt ? "‹ Lista" : "‹ List");
+					return _el$16;
+				})(), createComponent(Show, {
+					get when() {
+						return pageCount() > 1;
+					},
+					get children() {
+						return [
+							(() => {
+								var _el$18 = createElement("box"), _el$19 = createElement("text");
+								insertNode(_el$18, _el$19);
+								setProp(_el$18, "backgroundColor", "#262626");
+								setProp(_el$18, "paddingLeft", 1);
+								setProp(_el$18, "paddingRight", 1);
+								setProp(_el$18, "marginRight", 1);
+								setProp(_el$18, "flexShrink", 0);
+								setProp(_el$18, "onMouseDown", () => props.onPrevPage());
+								setProp(_el$19, "fg", "#ffffff");
+								setProp(_el$19, "wrapMode", "none");
+								insert(_el$19, () => props.isPt ? "‹ Anterior" : "‹ Prev");
+								return _el$18;
+							})(),
+							(() => {
+								var _el$20 = createElement("text");
+								setProp(_el$20, "marginRight", 1);
+								setProp(_el$20, "wrapMode", "none");
+								insert(_el$20, () => `${props.page() + 1}/${pageCount()}`);
+								effect((_$p) => setProp(_el$20, "fg", props.muted, _$p));
+								return _el$20;
+							})(),
+							(() => {
+								var _el$21 = createElement("box"), _el$22 = createElement("text");
+								insertNode(_el$21, _el$22);
+								setProp(_el$21, "backgroundColor", "#262626");
+								setProp(_el$21, "paddingLeft", 1);
+								setProp(_el$21, "paddingRight", 1);
+								setProp(_el$21, "marginRight", 1);
+								setProp(_el$21, "flexShrink", 0);
+								setProp(_el$21, "onMouseDown", () => props.onNextPage());
+								setProp(_el$22, "fg", "#ffffff");
+								setProp(_el$22, "wrapMode", "none");
+								insert(_el$22, () => props.isPt ? "Próxima ›" : "Next ›");
+								return _el$21;
+							})()
+						];
+					}
+				})];
+			}
+		}), _el$23);
+		setProp(_el$23, "wrapMode", "none");
+		insert(_el$23, (() => {
+			var _c$2 = memo(() => props.mode() === "read");
+			return () => _c$2() ? props.isPt ? "b lista · n/p pág · esc" : "b list · n/p page · esc" : props.isPt ? "↑/↓ mover · enter abrir · esc fechar" : "↑/↓ move · enter open · esc close";
+		})());
+		insertNode(_el$24, _el$25);
+		setProp(_el$24, "paddingLeft", 2);
+		setProp(_el$24, "paddingRight", 2);
+		setProp(_el$24, "flexShrink", 0);
+		setProp(_el$24, "onMouseDown", () => {
+			if (props.mode() === "list" && props.entries.length > 0) props.onOpen();
+			else props.onClose();
+		});
+		setProp(_el$25, "fg", "#000000");
+		setProp(_el$25, "attributes", 1);
+		setProp(_el$25, "wrapMode", "none");
+		insert(_el$25, (() => {
+			var _c$3 = memo(() => !!(props.mode() === "list" && props.entries.length > 0));
+			return () => _c$3() ? props.isPt ? "Abrir" : "Open" : props.isPt ? "Fechar" : "Close";
+		})());
+		effect((_p$) => {
+			var _v$ = props.warn ?? "#fba970", _v$2 = props.warn ?? "#fba970", _v$3 = props.fg, _v$4 = props.muted, _v$5 = props.muted, _v$6 = props.muted, _v$7 = props.muted, _v$8 = props.warn ?? "#fba970";
+			_v$ !== _p$.e && (_p$.e = setProp(_el$, "borderColor", _v$, _p$.e));
+			_v$2 !== _p$.t && (_p$.t = setProp(_el$4, "backgroundColor", _v$2, _p$.t));
+			_v$3 !== _p$.a && (_p$.a = setProp(_el$6, "fg", _v$3, _p$.a));
+			_v$4 !== _p$.o && (_p$.o = setProp(_el$8, "fg", _v$4, _p$.o));
+			_v$5 !== _p$.i && (_p$.i = setProp(_el$1, "fg", _v$5, _p$.i));
+			_v$6 !== _p$.n && (_p$.n = setProp(_el$13, "fg", _v$6, _p$.n));
+			_v$7 !== _p$.s && (_p$.s = setProp(_el$23, "fg", _v$7, _p$.s));
+			_v$8 !== _p$.h && (_p$.h = setProp(_el$24, "backgroundColor", _v$8, _p$.h));
+			return _p$;
+		}, {
+			e: void 0,
+			t: void 0,
+			a: void 0,
+			o: void 0,
+			i: void 0,
+			n: void 0,
+			s: void 0,
+			h: void 0
+		});
+		return _el$;
+	})();
+}
+function openArtifactsDialog(context, workspaceDir, options) {
+	const entries = scanPantheonArtifacts(workspaceDir);
+	const initialIndex = options?.initialArtifactId ? entries.findIndex((entry) => entry.id === options.initialArtifactId) : -1;
+	const resolvedIndex = initialIndex >= 0 ? initialIndex : 0;
+	const isPt = resolveLanguage(tuiPrefs().layout?.language) === "pt-BR";
+	const [open, setOpen] = createSignal(false);
+	const [selected, setSelected] = createSignal(resolvedIndex);
+	const [mode, setMode] = createSignal(initialIndex >= 0 || entries.length === 1 ? "read" : "list");
+	const [page, setPage] = createSignal(0);
+	const pages = () => {
+		const entry = entries[selected()];
+		if (!entry) return [[]];
+		return paginateArtifactLines(formatArtifactLines(readArtifactContent(entry), 76));
+	};
+	let dismiss = () => {};
+	const openSelected = (idx) => {
+		if (entries.length === 0) return;
+		if (typeof idx === "number") setSelected(Math.min(Math.max(idx, 0), entries.length - 1));
+		setPage(0);
+		setMode("read");
+	};
+	try {
+		context.keymap.layer(() => ({
+			mode: "global",
+			priority: 1,
+			enabled: () => open(),
+			commands: [
+				{
+					id: "pantheon.artifacts.close",
+					title: "Close artifacts viewer",
+					bind: "escape,q",
+					run: () => {
+						if (!open()) return false;
+						dismiss();
+					}
+				},
+				{
+					id: "pantheon.artifacts.up",
+					title: "Previous artifact",
+					bind: "up,k",
+					run: () => {
+						if (!open() || mode() !== "list" || entries.length === 0) return false;
+						setSelected((cur) => Math.max(0, cur - 1));
+					}
+				},
+				{
+					id: "pantheon.artifacts.down",
+					title: "Next artifact",
+					bind: "down,j",
+					run: () => {
+						if (!open() || mode() !== "list" || entries.length === 0) return false;
+						setSelected((cur) => Math.min(entries.length - 1, cur + 1));
+					}
+				},
+				{
+					id: "pantheon.artifacts.open-item",
+					title: "Open selected artifact",
+					bind: "enter,space",
+					run: () => {
+						if (!open()) return false;
+						if (mode() === "list" && entries.length > 0) openSelected();
+						else dismiss();
+					}
+				},
+				{
+					id: "pantheon.artifacts.back",
+					title: "Back to artifacts list",
+					bind: "b,backspace",
+					run: () => {
+						if (!open()) return false;
+						if (mode() === "read") setMode("list");
+					}
+				},
+				{
+					id: "pantheon.artifacts.next-page",
+					title: "Next artifact page",
+					bind: "n,right",
+					run: () => {
+						if (!open() || mode() !== "read") return false;
+						setPage((cur) => Math.min(cur + 1, Math.max(0, pages().length - 1)));
+					}
+				},
+				{
+					id: "pantheon.artifacts.prev-page",
+					title: "Previous artifact page",
+					bind: "p,left",
+					run: () => {
+						if (!open() || mode() !== "read") return false;
+						setPage((cur) => Math.max(0, cur - 1));
+					}
+				}
+			]
+		}));
+	} catch {}
+	const close = () => setOpen(false);
+	dismiss = () => {
+		try {
+			context.ui.dialog.clear();
+		} catch {}
+		close();
+	};
+	setOpen(true);
+	try {
+		const theme = context.theme?.text ?? {};
+		const warn = theme?.feedback?.warning?.base ?? "#fba970";
+		context.ui.dialog.show(() => createComponent(ArtifactsDialogContent, {
+			entries,
+			selected,
+			mode,
+			page,
+			pages,
+			isPt,
+			get fg() {
+				return theme.base;
+			},
+			get muted() {
+				return theme.muted;
+			},
+			warn,
+			onSelect: (idx) => setSelected(idx),
+			onOpen: (idx) => openSelected(idx),
+			onBack: () => setMode("list"),
+			onPrevPage: () => setPage((cur) => Math.max(0, cur - 1)),
+			onNextPage: () => setPage((cur) => Math.min(cur + 1, Math.max(0, pages().length - 1))),
+			onClose: dismiss
+		}), close);
+		context.ui.dialog.set({
+			size: "large",
+			centered: true
+		});
+	} catch {
+		setOpen(false);
+	}
+}
+//#endregion
+//#region src/cockpit-state.ts
+/**
+* cockpit-state.ts — Pure selectors, Gantt renderers, Work Map topology, and
+* Gate Matrix aggregation for the TUI Mission Control Cockpit (`Overview`,
+* `Swarm`, `Flightdeck`).
+*/
+function formatGanttBar(startMs, endMs, minMs, maxMs, width = 24) {
+	const span = Math.max(1, maxMs - minMs);
+	const s = Math.max(0, Math.min(width - 1, Math.floor((startMs - minMs) / span * width)));
+	const e = Math.max(s + 1, Math.min(width, Math.ceil((endMs - minMs) / span * width)));
+	const cells = [];
+	for (let i = 0; i < width; i += 1) cells.push(i >= s && i < e ? "█" : "░");
+	return cells.join("");
+}
+function formatGateMatrixGlyphs(allowed, approved, waiting, blocked) {
+	const cap = (n, ch) => ch.repeat(Math.min(12, Math.max(0, n)));
+	const parts = [
+		cap(allowed, "■"),
+		cap(approved, "▣"),
+		cap(waiting, "□"),
+		cap(blocked, "✗")
+	].filter(Boolean);
+	return parts.length > 0 ? parts.join(" ") : "■";
+}
+function renderWorkMapLines(counts) {
+	const subs = String(counts.subagents).padStart(2, " ");
+	const arts = String(counts.artifacts).padStart(2, " ");
+	const stps = `${counts.stepsDone}/${counts.stepsTotal}`;
+	return [
+		`  [You] ────── [Zeus] ────── [Swarm (${subs})]`,
+		`                 │                 │`,
+		`  [Artifacts ${arts}] ─┼─ [Step Ledger ${stps}] ─ [Review & Gates]`,
+		`                 │`,
+		`  [FTS5 Memory] ─┴─ [AST + LSP Diagnostics]`
+	];
+}
+function loadStepEntries(workspaceDir) {
+	const ledgerPath = join(workspaceDir, ".pantheon", "ledger", "step-ledger.json");
+	if (!existsSync(ledgerPath)) return [];
+	try {
+		const parsed = JSON.parse(readFileSync(ledgerPath, "utf8"));
+		return Object.values(parsed.steps ?? {}).map((s) => ({
+			stepKey: String(s.stepKey ?? ""),
+			objective: String(s.objective ?? ""),
+			agent: String(s.agent ?? "specialist"),
+			state: String(s.state ?? "pending"),
+			...typeof s.taskType === "string" ? { taskType: s.taskType } : {},
+			mutatedCount: Array.isArray(s.mutatedFiles) ? s.mutatedFiles.length : 0,
+			...typeof s.receiptId === "string" ? { receiptId: s.receiptId } : {},
+			hasBaselineTree: typeof s.baselineTree === "string" && s.baselineTree.length === 40,
+			updatedAt: String(s.updatedAt ?? "")
+		})).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+	} catch {
+		return [];
+	}
+}
+function resolveSharedTelemetryRoot(workspaceDir) {
+	try {
+		let cur = resolve(workspaceDir);
+		for (let i = 0; i < 10; i += 1) {
+			const gitEntry = join(cur, ".git");
+			if (existsSync(gitEntry)) {
+				const statText = readFileSync(gitEntry, "utf8");
+				const gitDirMatch = /^gitdir:\s*(.+)$/m.exec(statText);
+				if (gitDirMatch?.[1]) {
+					const gitDir = resolve(cur, gitDirMatch[1].trim());
+					const commonPath = join(gitDir, "commondir");
+					if (existsSync(commonPath)) {
+						const commonDir = resolve(gitDir, readFileSync(commonPath, "utf8").trim());
+						if (commonDir.endsWith(`${sep}.git`)) return dirname(commonDir);
+					}
+				}
+				return cur;
+			}
+			const parent = dirname(cur);
+			if (parent === cur) break;
+			cur = parent;
+		}
+	} catch {}
+	return workspaceDir;
+}
+function loadPersistedCockpitEvents(workspaceDir) {
+	try {
+		const root = resolveSharedTelemetryRoot(workspaceDir);
+		const filePath = join(root, ".pantheon", "telemetry", "cockpit-events.ndjson");
+		if (!existsSync(filePath)) return [];
+		const lines = readFileSync(filePath, "utf8").split(/\r?\n/).filter(Boolean);
+		const out = [];
+		for (const line of lines.slice(-60)) try {
+			const parsed = JSON.parse(line);
+			if (typeof parsed.kind === "string" && typeof parsed.detail === "string") out.push({
+				kind: parsed.kind,
+				timestamp: typeof parsed.timestamp === "number" ? parsed.timestamp : Date.now(),
+				agent: typeof parsed.agent === "string" ? parsed.agent : "pantheon",
+				detail: parsed.detail,
+				severity: parsed.severity === "ok" || parsed.severity === "warn" || parsed.severity === "error" ? parsed.severity : "info"
+			});
+		} catch {}
+		return out;
+	} catch {
+		return [];
+	}
+}
+function buildCockpitSnapshot(input) {
+	const ctxTokens = Math.max(0, input.contextTokens ?? 0);
+	const ctxWindow = Math.max(1, input.contextWindow ?? 2e5);
+	const ctxPct = Math.min(100, Math.round(ctxTokens / ctxWindow * 100));
+	const filled = Math.min(20, Math.round(ctxPct / 100 * 20));
+	const gauge = `[${"█".repeat(filled)}${"░".repeat(20 - filled)}] ${ctxPct}%`;
+	const artifacts = input.workspaceDir ? scanPantheonArtifacts(input.workspaceDir) : [];
+	const steps = input.workspaceDir ? loadStepEntries(input.workspaceDir) : [];
+	const stepsDone = steps.filter((s) => s.state === "done").length;
+	const runningCount = input.children.filter((c) => c.status === "running").length;
+	const completedCount = input.children.filter((c) => c.status === "completed").length;
+	const failedCount = input.children.filter((c) => c.status === "failed" || c.status === "interrupted").length;
+	const childCost = input.children.reduce((acc, c) => acc + c.cost, 0);
+	const minMs = input.children.reduce((m, c) => Math.min(m, c.startedAt), Infinity);
+	const maxMs = input.children.reduce((m, c) => Math.max(m, c.updatedAt), 0);
+	const safeMin = Number.isFinite(minMs) ? minMs : 0;
+	const safeMax = maxMs > safeMin ? maxMs : safeMin + 1e3;
+	const swarmRows = input.children.map((c) => ({
+		...c,
+		durationSec: Math.max(0, Math.round((c.updatedAt - c.startedAt) / 100) / 10),
+		ganttBar: formatGanttBar(c.startedAt, Math.max(c.startedAt + 1, c.updatedAt), safeMin, safeMax)
+	}));
+	const persistedEvents = input.workspaceDir ? loadPersistedCockpitEvents(input.workspaceDir) : [];
+	const mergedEvents = [...input.events ?? [], ...persistedEvents];
+	const dedup = /* @__PURE__ */ new Map();
+	for (const ev of mergedEvents) dedup.set(`${ev.kind}:${ev.timestamp}:${ev.agent}:${ev.detail}`, ev);
+	const events = Array.from(dedup.values()).sort((a, b) => b.timestamp - a.timestamp).slice(0, 40);
+	const allowed = stepsDone + events.filter((e) => e.severity === "ok").length + completedCount;
+	const approved = steps.filter((s) => Boolean(s.receiptId)).length;
+	const waiting = steps.filter((s) => s.state === "in_progress" || s.state === "pending").length + runningCount;
+	const blocked = steps.filter((s) => s.state === "blocked" || s.state === "rolled_back").length + events.filter((e) => e.severity === "error").length + failedCount;
+	const velocityBlocks = input.children.length > 0 ? input.children.slice(0, 14).map((c) => c.tokens > 2e4 ? "█" : c.tokens > 1e4 ? "▆" : c.tokens > 3e3 ? "▄" : "▂").join("") : "▁▃▅▆▄▂";
+	return {
+		sessionTitle: input.sessionTitle?.trim() || (input.isPt ? "Sessão ativa" : "Active Session"),
+		modelName: input.modelName?.trim() || "auto",
+		overview: {
+			contextTokens: ctxTokens,
+			contextWindow: ctxWindow,
+			contextPercent: ctxPct,
+			contextGauge: gauge,
+			sessionCost: input.sessionCost ?? childCost,
+			cacheRate: input.cacheRate ?? 0,
+			subagentCount: input.children.length,
+			runningCount,
+			velocityBars: velocityBlocks,
+			workMap: renderWorkMapLines({
+				subagents: input.children.length,
+				artifacts: artifacts.length,
+				stepsDone,
+				stepsTotal: steps.length
+			}),
+			surfaces: [
+				{
+					label: "Native Tools (30)",
+					status: "active"
+				},
+				{
+					label: "FTS5 Memory + Worktree",
+					status: "ready"
+				},
+				{
+					label: "Step-Ledger & Checkpoints",
+					status: `${stepsDone}/${steps.length} done`
+				},
+				{
+					label: "LSP + Per-Edit Guardrails",
+					status: "active"
+				},
+				{
+					label: "Artifacts & Mermaid",
+					status: `${artifacts.length} file(s)`
+				}
+			]
+		},
+		swarm: {
+			activeCount: runningCount,
+			completedCount,
+			failedCount,
+			totalCost: childCost,
+			rows: swarmRows
+		},
+		flightdeck: {
+			allowed,
+			approved,
+			waiting,
+			blocked,
+			gateGlyphs: formatGateMatrixGlyphs(allowed, approved, waiting, blocked),
+			gateSummary: `${allowed} allowed · ${approved} receipts · ${waiting} active · ${blocked} blocked`,
+			steps,
+			logs: events
+		}
+	};
+}
+/**
+* Render a deterministic Markdown + Mermaid Flightdeck replay trace ready for
+* archival under `.pantheon/reports/` and inspection via `/pantheon-artifacts`.
+*/
+function formatCockpitReplayArtifact(snapshot, now = /* @__PURE__ */ new Date()) {
+	const filename = `cockpit-replay-${now.toISOString().replace(/[:.]/g, "-").slice(0, 19)}.md`;
+	const relPath = `.pantheon/reports/${filename}`;
+	const seqLines = [
+		"```mermaid",
+		"sequenceDiagram",
+		"  participant You",
+		"  participant Zeus"
+	];
+	const seenAgents = /* @__PURE__ */ new Set();
+	for (const row of snapshot.swarm.rows.slice(0, 12)) {
+		const cleanAgent = row.agent.replace(/[^A-Za-z0-9_-]/g, "") || "specialist";
+		if (!seenAgents.has(cleanAgent)) {
+			seenAgents.add(cleanAgent);
+			seqLines.push(`  participant ${cleanAgent}`);
+		}
+		seqLines.push(`  Zeus->>${cleanAgent}: ${row.kind} ($${row.cost.toFixed(3)}, ${row.durationSec}s)`);
+		seqLines.push(`  ${cleanAgent}-->>Zeus: ${row.status}`);
+	}
+	if (snapshot.swarm.rows.length === 0) {
+		seqLines.push("  You->>Zeus: active session telemetry snapshot");
+		seqLines.push("  Zeus-->>You: Flightdeck gate check");
+	}
+	seqLines.push("```");
+	const ganttRows = snapshot.swarm.rows.length > 0 ? snapshot.swarm.rows.map((r) => `| \`@${r.agent}\` | ${r.status} | \`${r.ganttBar}\` | ${r.durationSec}s | $${r.cost.toFixed(4)} |`).join("\n") : "| _none_ | — | `░░░░░░░░░░░░` | 0s | $0.0000 |";
+	const stepLines = snapshot.flightdeck.steps.length > 0 ? snapshot.flightdeck.steps.map((s) => `- **${s.stepKey}** (\`${s.state}\`, \`@${s.agent}\`) — ${s.objective}`).join("\n") : "- No step-ledger entries recorded.";
+	const eventLines = snapshot.flightdeck.logs.length > 0 ? snapshot.flightdeck.logs.map((e) => `- \`[${e.kind}]\` **@${e.agent}**: ${e.detail}`).join("\n") : "- No semantic bus events recorded.";
+	return {
+		filename,
+		relPath,
+		markdown: [
+			`# Pantheon Cockpit Flightdeck Replay`,
+			"",
+			`- **Session:** ${snapshot.sessionTitle}`,
+			`- **Model:** ${snapshot.modelName}`,
+			`- **Captured At:** ${now.toISOString()}`,
+			`- **Spend / Context:** $${snapshot.overview.sessionCost.toFixed(4)} · ${snapshot.overview.contextTokens} tokens (${snapshot.overview.contextPercent}%)`,
+			`- **Gate Matrix:** ${snapshot.flightdeck.gateSummary}`,
+			"",
+			"## Execution Replay Diagram",
+			"",
+			...seqLines,
+			"",
+			"## Swarm Concurrency Timeline",
+			"",
+			"| Agent | Status | Gantt Window | Duration | Cost |",
+			"|---|---|---|---|---|",
+			ganttRows,
+			"",
+			"## Step-Ledger Checkpoints",
+			"",
+			stepLines,
+			"",
+			"## Semantic Event Stream",
+			"",
+			eventLines,
+			""
+		].join("\n")
+	};
+}
+/** Confined export helper writing a Cockpit replay trace under `<workspaceDir>/.pantheon/reports/`. */
+function writeCockpitReplayArtifact(workspaceDir, snapshot, now = /* @__PURE__ */ new Date()) {
+	const reportsDir = join(workspaceDir, ".pantheon", "reports");
+	mkdirSync(reportsDir, { recursive: true });
+	const canonicalReports = realpathSync(reportsDir);
+	const artifact = formatCockpitReplayArtifact(snapshot, now);
+	const target = resolve(canonicalReports, artifact.filename);
+	const prefix = canonicalReports.endsWith(sep) ? canonicalReports : `${canonicalReports}${sep}`;
+	if (!target.startsWith(prefix)) throw new Error("Cockpit replay target escaped .pantheon/reports");
+	writeFileSync(target, artifact.markdown, "utf8");
+	return artifact.relPath;
+}
+//#endregion
+//#region src/cockpit.tsx
+/** @jsxImportSource @opentui/solid */
+/**
+* cockpit.tsx — High-Density TUI Mission Control Cockpit (Overview, Swarm,
+* Flightdeck) rendered natively on `@opentui/solid` via `ui.router.register`.
+*/
+const ROUTE_NAME$1 = "pantheon.cockpit";
+const ROUTE_MODE$1 = "pantheon-cockpit";
+const TABS = [
+	{
+		id: "overview",
+		label: "1 Overview",
+		key: "1"
+	},
+	{
+		id: "swarm",
+		label: "2 Swarm",
+		key: "2"
+	},
+	{
+		id: "flightdeck",
+		label: "3 Flightdeck",
+		key: "3"
+	}
+];
+let routerReady = false;
+let cockpitController;
+const [cockpitOpen, setCockpitOpen] = createSignal(false);
+function collectLiveChildren(context, rootSessionID) {
+	try {
+		const rawList = context?.data?.session?.list?.();
+		if (!Array.isArray(rawList)) return [];
+		return rawList.filter((s) => s && typeof s.id === "string" && (!rootSessionID || s.parentID === rootSessionID)).slice(0, 20).map((s) => {
+			const statusRaw = context?.data?.session?.status?.(s.id);
+			const status = statusRaw === "busy" || statusRaw === "running" ? "running" : statusRaw === "error" ? "failed" : statusRaw === "interrupted" ? "interrupted" : "completed";
+			const created = typeof s.time?.created === "number" ? s.time.created : Date.now();
+			const updated = typeof s.time?.updated === "number" ? s.time.updated : created;
+			return {
+				id: s.id,
+				agent: String(s.agent ?? s.title ?? "specialist").split(/\s+/)[0] ?? "specialist",
+				kind: String(s.kind ?? "task"),
+				status,
+				cost: typeof s.cost === "number" ? s.cost : 0,
+				startedAt: created,
+				updatedAt: updated,
+				tokens: typeof s.tokens?.input === "number" ? s.tokens.input + (s.tokens?.output ?? 0) : 0,
+				model: typeof s.model === "string" ? s.model : void 0
+			};
+		});
+	} catch {
+		return [];
+	}
+}
+function collectHostLogs() {
+	const g = globalThis;
+	if (!Array.isArray(g.__pantheonCockpitLogs)) return [];
+	return g.__pantheonCockpitLogs;
+}
+function collectSessionTelemetry(context, sessionID) {
+	const sInfo = sessionID ? context?.data?.session?.info?.(sessionID) : void 0;
+	const messages = sessionID ? context?.data?.session?.messages?.(sessionID) ?? [] : [];
+	let contextTokens = typeof sInfo?.tokens?.input === "number" ? sInfo.tokens.input : 0;
+	let modelName = typeof sInfo?.model === "string" ? sInfo.model : void 0;
+	let totalCost = typeof sInfo?.cost === "number" ? sInfo.cost : 0;
+	let sawMsgCost = false;
+	if (Array.isArray(messages) && messages.length > 0) {
+		for (const msg of messages) {
+			if (!msg || typeof msg !== "object") continue;
+			if (typeof msg.cost === "number" && Number.isFinite(msg.cost)) {
+				totalCost += msg.cost;
+				sawMsgCost = true;
+			}
+		}
+		for (let i = messages.length - 1; i >= 0; i--) {
+			const msg = messages[i];
+			if (msg?.role === "assistant" || msg?.type === "assistant") {
+				const t = msg.tokens;
+				if (t && typeof t === "object") {
+					const total = (Number(t.input) || 0) + (Number(t.output) || 0) + (Number(t.reasoning) || 0) + (Number(t.cache?.read) || 0) + (Number(t.cache?.write) || 0);
+					if (total > 0) {
+						contextTokens = total;
+						if (!modelName && typeof msg.modelID === "string") modelName = msg.modelID;
+						break;
+					}
+				}
+			}
+		}
+	}
+	const modelsCatalog = context?.data?.provider?.models?.() ?? [];
+	let contextWindow = 1e6;
+	if (Array.isArray(modelsCatalog) && modelName) {
+		const hit = modelsCatalog.find((m) => m?.id === modelName || m?.modelID === modelName);
+		if (typeof hit?.limit?.context === "number" && hit.limit.context > 0) contextWindow = hit.limit.context;
+	}
+	return {
+		title: typeof sInfo?.title === "string" ? sInfo.title : void 0,
+		modelName,
+		contextTokens,
+		contextWindow,
+		sessionCost: sawMsgCost || typeof sInfo?.cost === "number" ? totalCost : void 0
+	};
+}
+function CockpitView(props) {
+	const isPt = () => resolveLanguage(tuiPrefs().layout?.language) === "pt-BR";
+	const [tab, setTab] = createSignal("overview");
+	const [selectedRow, setSelectedRow] = createSignal(0);
+	const [showDetail, setShowDetail] = createSignal(false);
+	const [exportNote, setExportNote] = createSignal(null);
+	const [tick, setTick] = createSignal(0);
+	const activeSid = () => props.sessionID ?? (props.context?.ui?.router?.current?.()?.type === "session" ? props.context.ui.router.current().sessionID : void 0);
+	const snapshot = () => {
+		tick();
+		const sid = activeSid();
+		const telemetry = collectSessionTelemetry(props.context, sid);
+		return buildCockpitSnapshot({
+			workspaceDir: props.workspaceDir,
+			sessionTitle: telemetry.title,
+			modelName: telemetry.modelName,
+			contextTokens: telemetry.contextTokens,
+			contextWindow: telemetry.contextWindow,
+			sessionCost: telemetry.sessionCost,
+			children: collectLiveChildren(props.context, sid),
+			events: collectHostLogs(),
+			isPt: isPt()
+		});
+	};
+	const fg = () => props.context?.theme?.text?.base;
+	const muted = () => props.context?.theme?.text?.muted ?? fg();
+	const accent = () => resolveAccentColor(tuiPrefs().theme?.accent, props.context?.theme);
+	const success = () => props.context?.theme?.text?.feedback?.success?.base ?? accent();
+	const errFg = () => props.context?.theme?.text?.feedback?.error?.base ?? accent();
+	onMount(() => {
+		setCockpitOpen(true);
+		let popMode;
+		try {
+			popMode = props.context?.keymap?.mode?.push?.(ROUTE_MODE$1);
+		} catch {}
+		const timer = setInterval(() => setTick((t) => t + 1), 1500);
+		cockpitController = {
+			setTab: (id) => {
+				setTab(id);
+				setSelectedRow(0);
+			},
+			nextTab: () => {
+				const idx = TABS.findIndex((t) => t.id === tab());
+				const next = TABS[(idx + 1) % TABS.length];
+				if (next) setTab(next.id);
+			},
+			prevTab: () => {
+				const idx = TABS.findIndex((t) => t.id === tab());
+				const prev = TABS[(idx - 1 + TABS.length) % TABS.length];
+				if (prev) setTab(prev.id);
+			},
+			moveRow: (delta) => {
+				const snap = snapshot();
+				const max = tab() === "swarm" ? snap.swarm.rows.length : tab() === "flightdeck" ? Math.max(snap.flightdeck.steps.length, snap.flightdeck.logs.length) : 0;
+				if (max <= 0) return;
+				setSelectedRow((cur) => Math.max(0, Math.min(max - 1, cur + delta)));
+			},
+			toggleDetail: () => setShowDetail((v) => !v),
+			exportReplay: () => {
+				try {
+					const relPath = writeCockpitReplayArtifact(props.workspaceDir, snapshot());
+					setExportNote(relPath);
+					setTick((t) => t + 1);
+				} catch {
+					setExportNote("export_failed");
+				}
+			},
+			refresh: () => setTick((t) => t + 1),
+			close: props.onClose
+		};
+		onCleanup(() => {
+			clearInterval(timer);
+			cockpitController = void 0;
+			setCockpitOpen(false);
+			try {
+				popMode?.();
+			} catch {}
+		});
+	});
+	return (() => {
+		var _el$ = createElement("box"), _el$2 = createElement("box"), _el$3 = createElement("box"), _el$4 = createElement("text"), _el$6 = createElement("text"), _el$7 = createElement("box"), _el$8 = createElement("text"), _el$0 = createElement("box"), _el$1 = createElement("text"), _el$39 = createElement("text"), _el$41 = createElement("text");
+		insertNode(_el$, _el$2);
+		insertNode(_el$, _el$0);
+		insertNode(_el$, _el$1);
+		insertNode(_el$, _el$39);
+		insertNode(_el$, _el$41);
+		setProp(_el$, "flexDirection", "column");
+		setProp(_el$, "paddingLeft", 2);
+		setProp(_el$, "paddingRight", 2);
+		setProp(_el$, "paddingTop", 1);
+		setProp(_el$, "paddingBottom", 1);
+		insertNode(_el$2, _el$3);
+		insertNode(_el$2, _el$7);
+		setProp(_el$2, "flexDirection", "row");
+		setProp(_el$2, "justifyContent", "space-between");
+		insertNode(_el$3, _el$4);
+		insertNode(_el$3, _el$6);
+		setProp(_el$3, "flexDirection", "row");
+		insertNode(_el$4, createTextNode(`◈ PANTHEON COCKPIT `));
+		setProp(_el$4, "attributes", 1);
+		insert(_el$6, () => `· ${snapshot().sessionTitle} (${snapshot().modelName})`);
+		insertNode(_el$7, _el$8);
+		insertNode(_el$8, createTextNode(`[ Esc / Q ]`));
+		setProp(_el$0, "flexDirection", "row");
+		setProp(_el$0, "marginTop", 1);
+		setProp(_el$0, "gap", 2);
+		insert(_el$0, createComponent(For, {
+			each: TABS,
+			children: (t) => {
+				const active = () => tab() === t.id;
+				return (() => {
+					var _el$43 = createElement("box"), _el$44 = createElement("text");
+					insertNode(_el$43, _el$44);
+					setProp(_el$43, "onMouseDown", () => setTab(t.id));
+					insert(_el$44, () => `[${t.label}]`);
+					effect((_p$) => {
+						var _v$16 = active() ? accent() : muted(), _v$17 = active() ? 1 : 0;
+						_v$16 !== _p$.e && (_p$.e = setProp(_el$44, "fg", _v$16, _p$.e));
+						_v$17 !== _p$.t && (_p$.t = setProp(_el$44, "attributes", _v$17, _p$.t));
+						return _p$;
+					}, {
+						e: void 0,
+						t: void 0
+					});
+					return _el$43;
+				})();
+			}
+		}));
+		insertNode(_el$1, createTextNode(`────────────────────────────────────────────────────────────────────────`));
+		insert(_el$, createComponent(Show, {
+			get when() {
+				return tab() === "overview";
+			},
+			get children() {
+				var _el$11 = createElement("box"), _el$12 = createElement("text"), _el$14 = createElement("text"), _el$15 = createElement("box"), _el$16 = createElement("text"), _el$18 = createElement("box"), _el$19 = createElement("text");
+				insertNode(_el$11, _el$12);
+				insertNode(_el$11, _el$14);
+				insertNode(_el$11, _el$15);
+				insertNode(_el$11, _el$18);
+				setProp(_el$11, "flexDirection", "column");
+				setProp(_el$11, "marginTop", 1);
+				insertNode(_el$12, createTextNode(`Token Meter &amp; Context`));
+				setProp(_el$12, "attributes", 1);
+				insert(_el$14, () => `Velocity: ${snapshot().overview.velocityBars}   Context: ${snapshot().overview.contextGauge}   Spend: $${snapshot().overview.sessionCost.toFixed(4)}`);
+				insertNode(_el$15, _el$16);
+				setProp(_el$15, "marginTop", 1);
+				setProp(_el$15, "flexDirection", "column");
+				insertNode(_el$16, createTextNode(`Runtime Surfaces &amp; Health`));
+				setProp(_el$16, "attributes", 1);
+				insert(_el$15, createComponent(For, {
+					get each() {
+						return snapshot().overview.surfaces;
+					},
+					children: (item) => (() => {
+						var _el$45 = createElement("text");
+						insert(_el$45, () => `  ● ${item.label.padEnd(28)} ${item.status}`);
+						effect((_$p) => setProp(_el$45, "fg", fg(), _$p));
+						return _el$45;
+					})()
+				}), null);
+				insertNode(_el$18, _el$19);
+				setProp(_el$18, "marginTop", 1);
+				setProp(_el$18, "flexDirection", "column");
+				insertNode(_el$19, createTextNode(`Work Map (Topology)`));
+				setProp(_el$19, "attributes", 1);
+				insert(_el$18, createComponent(For, {
+					get each() {
+						return snapshot().overview.workMap;
+					},
+					children: (line) => (() => {
+						var _el$46 = createElement("text");
+						insert(_el$46, line);
+						effect((_$p) => setProp(_el$46, "fg", muted(), _$p));
+						return _el$46;
+					})()
+				}), null);
+				effect((_p$) => {
+					var _v$ = accent(), _v$2 = fg(), _v$3 = accent(), _v$4 = accent();
+					_v$ !== _p$.e && (_p$.e = setProp(_el$12, "fg", _v$, _p$.e));
+					_v$2 !== _p$.t && (_p$.t = setProp(_el$14, "fg", _v$2, _p$.t));
+					_v$3 !== _p$.a && (_p$.a = setProp(_el$16, "fg", _v$3, _p$.a));
+					_v$4 !== _p$.o && (_p$.o = setProp(_el$19, "fg", _v$4, _p$.o));
+					return _p$;
+				}, {
+					e: void 0,
+					t: void 0,
+					a: void 0,
+					o: void 0
+				});
+				return _el$11;
+			}
+		}), _el$39);
+		insert(_el$, createComponent(Show, {
+			get when() {
+				return tab() === "swarm";
+			},
+			get children() {
+				var _el$21 = createElement("box"), _el$22 = createElement("text"), _el$23 = createElement("box");
+				insertNode(_el$21, _el$22);
+				insertNode(_el$21, _el$23);
+				setProp(_el$21, "flexDirection", "column");
+				setProp(_el$21, "marginTop", 1);
+				setProp(_el$22, "attributes", 1);
+				insert(_el$22, () => `● ${snapshot().swarm.activeCount} active  ✓ ${snapshot().swarm.completedCount} done  ✗ ${snapshot().swarm.failedCount} failed  · $${snapshot().swarm.totalCost.toFixed(4)}`);
+				setProp(_el$23, "marginTop", 1);
+				setProp(_el$23, "flexDirection", "column");
+				insert(_el$23, createComponent(Show, {
+					get when() {
+						return snapshot().swarm.rows.length > 0;
+					},
+					get fallback() {
+						return (() => {
+							var _el$47 = createElement("text");
+							insert(_el$47, () => isPt() ? "Nenhum subagente registrado nesta sessão ainda." : "No subagent delegations recorded in this session yet.");
+							effect((_$p) => setProp(_el$47, "fg", muted(), _$p));
+							return _el$47;
+						})();
+					},
+					get children() {
+						return createComponent(For, {
+							get each() {
+								return snapshot().swarm.rows.slice(0, 12);
+							},
+							children: (row, idx) => {
+								const sel = () => idx() === selectedRow();
+								const marker = row.status === "running" ? "●" : row.status === "failed" ? "✗" : "✓";
+								return (() => {
+									var _el$48 = createElement("box"), _el$49 = createElement("text");
+									insertNode(_el$48, _el$49);
+									setProp(_el$48, "flexDirection", "column");
+									setProp(_el$48, "onMouseDown", () => {
+										setSelectedRow(idx());
+										setShowDetail((v) => !v);
+									});
+									insert(_el$49, () => `${sel() ? "▸" : " "} ${marker} @${row.agent.padEnd(11)} ${row.ganttBar}  ${String(row.durationSec).padStart(5)}s  $${row.cost.toFixed(3)}`);
+									insert(_el$48, createComponent(Show, {
+										get when() {
+											return memo(() => !!sel())() && showDetail();
+										},
+										get children() {
+											var _el$50 = createElement("text");
+											insert(_el$50, () => `    id=${row.id} kind=${row.kind} tokens=${row.tokens} model=${row.model ?? "inherited"}`);
+											effect((_$p) => setProp(_el$50, "fg", muted(), _$p));
+											return _el$50;
+										}
+									}), null);
+									effect((_$p) => setProp(_el$49, "fg", sel() ? accent() : fg(), _$p));
+									return _el$48;
+								})();
+							}
+						});
+					}
+				}));
+				effect((_$p) => setProp(_el$22, "fg", fg(), _$p));
+				return _el$21;
+			}
+		}), _el$39);
+		insert(_el$, createComponent(Show, {
+			get when() {
+				return tab() === "flightdeck";
+			},
+			get children() {
+				var _el$24 = createElement("box"), _el$25 = createElement("text"), _el$27 = createElement("text"), _el$28 = createElement("text"), _el$29 = createElement("box"), _el$30 = createElement("text"), _el$32 = createElement("box"), _el$33 = createElement("text"), _el$35 = createElement("box"), _el$36 = createElement("box"), _el$37 = createElement("text");
+				insertNode(_el$24, _el$25);
+				insertNode(_el$24, _el$27);
+				insertNode(_el$24, _el$28);
+				insertNode(_el$24, _el$29);
+				insertNode(_el$24, _el$32);
+				insertNode(_el$24, _el$35);
+				setProp(_el$24, "flexDirection", "column");
+				setProp(_el$24, "marginTop", 1);
+				insertNode(_el$25, createTextNode(`GATE (Safety, Guardrails &amp; Step-Ledger)`));
+				setProp(_el$25, "attributes", 1);
+				insert(_el$27, () => `  ${snapshot().flightdeck.gateGlyphs}`);
+				insert(_el$28, () => `  ${snapshot().flightdeck.gateSummary}`);
+				insertNode(_el$29, _el$30);
+				setProp(_el$29, "marginTop", 1);
+				setProp(_el$29, "flexDirection", "column");
+				insertNode(_el$30, createTextNode(`Step-Ledger &amp; Active Tasks`));
+				setProp(_el$30, "attributes", 1);
+				insert(_el$29, createComponent(Show, {
+					get when() {
+						return snapshot().flightdeck.steps.length > 0;
+					},
+					get fallback() {
+						return (() => {
+							var _el$51 = createElement("text");
+							insertNode(_el$51, createTextNode(`  (no active step-ledger entries)`));
+							effect((_$p) => setProp(_el$51, "fg", muted(), _$p));
+							return _el$51;
+						})();
+					},
+					get children() {
+						return createComponent(For, {
+							get each() {
+								return snapshot().flightdeck.steps.slice(0, 6);
+							},
+							children: (st) => (() => {
+								var _el$53 = createElement("text");
+								insert(_el$53, () => `  ▸ ${st.stepKey.padEnd(20)} [${st.state.padEnd(11)}] @${st.agent}  ${st.objective.slice(0, 36)}`);
+								effect((_$p) => setProp(_el$53, "fg", st.state === "blocked" || st.state === "rolled_back" ? errFg() : success(), _$p));
+								return _el$53;
+							})()
+						});
+					}
+				}), null);
+				insertNode(_el$32, _el$33);
+				setProp(_el$32, "marginTop", 1);
+				setProp(_el$32, "flexDirection", "column");
+				insertNode(_el$33, createTextNode(`Semantic Event Stream`));
+				setProp(_el$33, "attributes", 1);
+				insert(_el$32, createComponent(Show, {
+					get when() {
+						return snapshot().flightdeck.logs.length > 0;
+					},
+					get fallback() {
+						return (() => {
+							var _el$54 = createElement("text");
+							insertNode(_el$54, createTextNode(`  (no bus telemetry events captured yet)`));
+							effect((_$p) => setProp(_el$54, "fg", muted(), _$p));
+							return _el$54;
+						})();
+					},
+					get children() {
+						return createComponent(For, {
+							get each() {
+								return snapshot().flightdeck.logs.slice(0, 8);
+							},
+							children: (ev) => (() => {
+								var _el$56 = createElement("text");
+								insert(_el$56, () => `  [${ev.kind}] @${ev.agent}: ${ev.detail.slice(0, 56)}`);
+								effect((_$p) => setProp(_el$56, "fg", ev.severity === "error" ? errFg() : muted(), _$p));
+								return _el$56;
+							})()
+						});
+					}
+				}), null);
+				insertNode(_el$35, _el$36);
+				setProp(_el$35, "marginTop", 1);
+				setProp(_el$35, "flexDirection", "row");
+				setProp(_el$35, "gap", 2);
+				insertNode(_el$36, _el$37);
+				setProp(_el$36, "onMouseDown", () => cockpitController?.exportReplay());
+				insertNode(_el$37, createTextNode(`[ x Export Replay Trace ]`));
+				setProp(_el$37, "attributes", 1);
+				insert(_el$35, createComponent(Show, {
+					get when() {
+						return exportNote();
+					},
+					children: (note) => (() => {
+						var _el$57 = createElement("text");
+						insert(_el$57, () => `✓ ${note()}`);
+						effect((_$p) => setProp(_el$57, "fg", success(), _$p));
+						return _el$57;
+					})()
+				}), null);
+				effect((_p$) => {
+					var _v$5 = accent(), _v$6 = fg(), _v$7 = muted(), _v$8 = accent(), _v$9 = accent(), _v$0 = accent();
+					_v$5 !== _p$.e && (_p$.e = setProp(_el$25, "fg", _v$5, _p$.e));
+					_v$6 !== _p$.t && (_p$.t = setProp(_el$27, "fg", _v$6, _p$.t));
+					_v$7 !== _p$.a && (_p$.a = setProp(_el$28, "fg", _v$7, _p$.a));
+					_v$8 !== _p$.o && (_p$.o = setProp(_el$30, "fg", _v$8, _p$.o));
+					_v$9 !== _p$.i && (_p$.i = setProp(_el$33, "fg", _v$9, _p$.i));
+					_v$0 !== _p$.n && (_p$.n = setProp(_el$37, "fg", _v$0, _p$.n));
+					return _p$;
+				}, {
+					e: void 0,
+					t: void 0,
+					a: void 0,
+					o: void 0,
+					i: void 0,
+					n: void 0
+				});
+				return _el$24;
+			}
+		}), _el$39);
+		insertNode(_el$39, createTextNode(`────────────────────────────────────────────────────────────────────────`));
+		setProp(_el$39, "marginTop", 1);
+		insertNode(_el$41, createTextNode(`1-3 tabs · Tab/Shift+Tab switch · ↑↓ select · Enter detail · x replay · r refresh · Esc/q close`));
+		effect((_p$) => {
+			var _v$1 = accent(), _v$10 = fg(), _v$11 = props.onClose, _v$12 = muted(), _v$13 = muted(), _v$14 = muted(), _v$15 = muted();
+			_v$1 !== _p$.e && (_p$.e = setProp(_el$4, "fg", _v$1, _p$.e));
+			_v$10 !== _p$.t && (_p$.t = setProp(_el$6, "fg", _v$10, _p$.t));
+			_v$11 !== _p$.a && (_p$.a = setProp(_el$7, "onMouseDown", _v$11, _p$.a));
+			_v$12 !== _p$.o && (_p$.o = setProp(_el$8, "fg", _v$12, _p$.o));
+			_v$13 !== _p$.i && (_p$.i = setProp(_el$1, "fg", _v$13, _p$.i));
+			_v$14 !== _p$.n && (_p$.n = setProp(_el$39, "fg", _v$14, _p$.n));
+			_v$15 !== _p$.s && (_p$.s = setProp(_el$41, "fg", _v$15, _p$.s));
+			return _p$;
+		}, {
+			e: void 0,
+			t: void 0,
+			a: void 0,
+			o: void 0,
+			i: void 0,
+			n: void 0,
+			s: void 0
+		});
+		return _el$;
+	})();
+}
+function plainReturnRoute(cur) {
+	if (!cur || typeof cur.type !== "string") return void 0;
+	if (cur.type === "session" && typeof cur.sessionID === "string") return {
+		type: "session",
+		sessionID: cur.sessionID
+	};
+	if (cur.type === "home") return { type: "home" };
+}
+function setupPantheonCockpit(context, resolveCwd) {
+	const ui = context?.ui;
+	if (typeof ui?.router?.register === "function") try {
+		ui.router.register({
+			name: ROUTE_NAME$1,
+			render: ({ data }) => {
+				const ret = data?.returnRoute;
+				const onClose = () => {
+					if (ret) ui.router.navigate(ret);
+					else ui.router.navigate({ type: "home" });
+				};
+				return createComponent(CockpitView, {
+					context,
+					get workspaceDir() {
+						return resolveCwd();
+					},
+					get sessionID() {
+						return memo(() => !!(ret && ret.type === "session"))() ? ret.sessionID : void 0;
+					},
+					onClose
+				});
+			}
+		});
+		routerReady = true;
+	} catch {
+		routerReady = false;
+	}
+	const routeGated = () => {
+		try {
+			const r = ui?.router?.current?.();
+			return r?.type === "plugin" && r.name === ROUTE_NAME$1;
+		} catch {
+			return false;
+		}
+	};
+	const commands = [
+		{
+			id: "pantheon.cockpit.tab1",
+			title: "Overview tab",
+			bind: "1",
+			run: () => {
+				cockpitController?.setTab("overview");
+			}
+		},
+		{
+			id: "pantheon.cockpit.tab2",
+			title: "Swarm tab",
+			bind: "2",
+			run: () => {
+				cockpitController?.setTab("swarm");
+			}
+		},
+		{
+			id: "pantheon.cockpit.tab3",
+			title: "Flightdeck tab",
+			bind: "3",
+			run: () => {
+				cockpitController?.setTab("flightdeck");
+			}
+		},
+		{
+			id: "pantheon.cockpit.next",
+			title: "Next Cockpit tab",
+			bind: "tab",
+			run: () => {
+				cockpitController?.nextTab();
+			}
+		},
+		{
+			id: "pantheon.cockpit.prev",
+			title: "Previous Cockpit tab",
+			bind: "shift+tab",
+			run: () => {
+				cockpitController?.prevTab();
+			}
+		},
+		{
+			id: "pantheon.cockpit.up",
+			title: "Previous row",
+			bind: "up,k",
+			run: () => {
+				cockpitController?.moveRow(-1);
+			}
+		},
+		{
+			id: "pantheon.cockpit.down",
+			title: "Next row",
+			bind: "down,j",
+			run: () => {
+				cockpitController?.moveRow(1);
+			}
+		},
+		{
+			id: "pantheon.cockpit.detail",
+			title: "Toggle row detail",
+			bind: "enter",
+			run: () => {
+				cockpitController?.toggleDetail();
+			}
+		},
+		{
+			id: "pantheon.cockpit.export",
+			title: "Export Flightdeck replay trace",
+			bind: "x",
+			run: () => {
+				cockpitController?.exportReplay();
+			}
+		},
+		{
+			id: "pantheon.cockpit.refresh",
+			title: "Refresh Cockpit",
+			bind: "r",
+			run: () => {
+				cockpitController?.refresh();
+			}
+		},
+		{
+			id: "pantheon.cockpit.close",
+			title: "Close Cockpit",
+			bind: "escape,q",
+			run: () => {
+				cockpitController?.close();
+			}
+		}
+	];
+	try {
+		context.keymap?.layer?.(() => ({
+			mode: ROUTE_MODE$1,
+			priority: 1,
+			enabled: () => routeGated() || cockpitOpen(),
+			commands
+		}));
+		context.keymap?.layer?.(() => ({
+			mode: "global",
+			priority: 1,
+			enabled: () => cockpitOpen(),
+			commands
+		}));
+	} catch {}
+}
+function openPantheonCockpit(context, workspaceDir) {
+	const ui = context?.ui;
+	if (routerReady && typeof ui?.router?.navigate === "function") {
+		let returnRoute;
+		try {
+			const cur = ui.router.current();
+			if (!(cur?.type === "plugin" && cur.name === ROUTE_NAME$1)) returnRoute = plainReturnRoute(cur);
+		} catch {
+			returnRoute = void 0;
+		}
+		ui.router.navigate({
+			type: "plugin",
+			name: ROUTE_NAME$1,
+			...returnRoute ? { data: { returnRoute } } : {}
+		});
+		return;
+	}
+	try {
+		const curSid = ui?.router?.current?.()?.type === "session" ? ui.router.current().sessionID : void 0;
+		ui?.dialog?.show?.(() => createComponent(CockpitView, {
+			context,
+			workspaceDir,
+			sessionID: curSid,
+			onClose: () => ui?.dialog?.clear?.()
+		}), () => {});
+		ui?.dialog?.set?.({
+			size: "large",
+			centered: true
+		});
+	} catch {}
+}
+//#endregion
 //#region src/context-gauge.ts
 const CONTEXT_BAR_CELLS = 12;
 const CONTEXT_BAR_FILLED_CELL = "▰";
@@ -885,6 +3552,38 @@ function buildAboutTab(version, extra) {
 		value: "ils15/pantheon-opencode",
 		note: "github.com/ils15/pantheon-opencode"
 	}];
+	const toolRows = [
+		{
+			id: "about.tools.memory",
+			name: isPt ? "Memória FTS5" : "FTS5 Memory",
+			value: isPt ? "ativo · 6 tools" : "active · 6 tools",
+			note: "memory_store, memory_recall, memory_search, memory_forget, memory_list, memory_stats"
+		},
+		{
+			id: "about.tools.persistence",
+			name: isPt ? "Checkpoints & Metas" : "Checkpoints & Goals",
+			value: isPt ? "ativo · 6 tools" : "active · 6 tools",
+			note: "context_save, context_get, goal_create, goal_get, goal_update, goal_done"
+		},
+		{
+			id: "about.tools.codemap",
+			name: isPt ? "Codemap & AST" : "Codemap & AST",
+			value: isPt ? "ativo · 5 tools" : "active · 5 tools",
+			note: "code_index, code_query, code_neighbors, ast_search, ast_rewrite"
+		},
+		{
+			id: "about.tools.edit",
+			name: isPt ? "Edição & Execução" : "Edit & Execution",
+			value: isPt ? "ativo · 4 tools" : "active · 4 tools",
+			note: "hashline_edit, shell, todowrite, todoread"
+		},
+		{
+			id: "about.tools.governance",
+			name: isPt ? "Orquestração & Custos" : "Orchestration & Cost",
+			value: isPt ? "ativo · 9 tools" : "active · 9 tools",
+			note: "pantheon_cost, pantheon_model, pantheon_skill_search, pantheon_deepwork, pantheon_step_ledger, pantheon_agent_forge, pantheon_local_decision, pantheon_review_verdict, pantheon_worktree"
+		}
+	];
 	const groups = [{
 		title: isPt ? "Sistema & Plataforma" : "System & Platform",
 		rows: sysRows
@@ -896,6 +3595,10 @@ function buildAboutTab(version, extra) {
 	groups.push({
 		title: isPt ? "Projeto & Referências" : "Project & References",
 		rows: refRows
+	});
+	groups.push({
+		title: isPt ? "Ferramentas Nativas (30)" : "Native Tools (30)",
+		rows: toolRows
 	});
 	return {
 		id: "about",
@@ -1207,29 +3910,6 @@ function buildDoctorTab(input) {
 		}] }]
 	};
 }
-Object.freeze([
-	"auto",
-	"pt-BR",
-	"en"
-]);
-/**
-* Resolve effective language: 'pt-BR' or 'en'.
-* Defaults to 'pt-BR' if system locale contains 'pt', if Intl locale is pt,
-* or if system timezone is Brazilian/Portuguese; otherwise 'en'.
-*/
-function resolveLanguage(preference = "auto", env = process.env) {
-	if (preference === "pt-BR") return "pt-BR";
-	if (preference === "en") return "en";
-	if ((env.LC_ALL ?? env.LC_MESSAGES ?? env.LANG ?? env.LANGUAGE ?? "").toLowerCase().startsWith("pt")) return "pt-BR";
-	try {
-		if (Intl.DateTimeFormat().resolvedOptions().locale.toLowerCase().startsWith("pt")) return "pt-BR";
-	} catch {}
-	try {
-		const tz = (env.TZ ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? "").toLowerCase();
-		if (tz.includes("sao_paulo") || tz.includes("brazil") || tz.includes("fortaleza") || tz.includes("recife") || tz.includes("manaus") || tz.includes("belem") || tz.includes("cuiaba") || tz.includes("campo_grande") || tz.includes("porto_velho") || tz.includes("rio_branco") || tz.includes("boa_vista") || tz.includes("maceio") || tz.includes("bahia") || tz.includes("noronha") || tz.includes("araguaina") || tz.includes("santarem") || tz.includes("lisbon") || tz.includes("madeira") || tz.includes("azores")) return "pt-BR";
-	} catch {}
-	return "en";
-}
 //#endregion
 //#region src/j1-gate-status.ts
 const J1_FLAG_ENV = "PANTHEON_J1_RISK_SCORE";
@@ -1377,6 +4057,87 @@ const LEGACY_INSTRUCTION_FILES = Object.freeze([
 	"zeus-orchestration.instructions.md",
 	"zeus-workflow.instructions.md"
 ]);
+function resolveAuditCacheDir(env = process.env) {
+	if (env.NODE_TEST_CONTEXT) return void 0;
+	if (env.XDG_CACHE_HOME?.trim()) return join(resolve(env.XDG_CACHE_HOME.trim()), "opencode", "npm");
+	const home = env.HOME?.trim();
+	return home ? join(resolve(home), ".cache", "opencode", "npm") : void 0;
+}
+function readCachedPackageVersion(candidateDir) {
+	for (const manifest of [join(candidateDir, "node_modules", "pantheon-opencode", "package.json"), join(candidateDir, "package.json")]) try {
+		if (!existsSync(manifest)) continue;
+		const parsed = JSON.parse(readFileSync(manifest, "utf8"));
+		if (typeof parsed.version === "string" && parsed.version.trim() !== "") return parsed.version.trim();
+	} catch {}
+	return null;
+}
+function isUnderPath(parentDir, targetPath) {
+	try {
+		const parentReal = realpathSync(parentDir);
+		const targetReal = realpathSync(targetPath);
+		return targetReal === parentReal || targetReal.startsWith(`${parentReal}/`);
+	} catch {
+		return false;
+	}
+}
+function collectCacheAudit(cacheNpmDir, options) {
+	const items = [];
+	if (!existsSync(cacheNpmDir) || cacheNpmDir === "/") return items;
+	const activeBundlePath = options.activeBundlePath ?? "";
+	const runningVersion = options.runningVersion ? String(options.runningVersion).trim() : "";
+	const runningIsStable = runningVersion !== "" && !/-(?:beta|rc)\./i.test(runningVersion);
+	const seen = /* @__PURE__ */ new Set();
+	const pushCacheItem = (targetPath, reason) => {
+		const resolved = resolve(targetPath);
+		if (seen.has(resolved) || !existsSync(resolved)) return;
+		if (activeBundlePath && isUnderPath(resolved, activeBundlePath)) return;
+		seen.add(resolved);
+		items.push({
+			path: resolved,
+			scope: "global",
+			category: "drift",
+			reason,
+			bytes: measurePathBytes(resolved)
+		});
+	};
+	let channelEntries = [];
+	try {
+		channelEntries = readdirSync(cacheNpmDir, { withFileTypes: true });
+	} catch {
+		return items;
+	}
+	for (const entry of channelEntries) {
+		if (!entry.isDirectory()) continue;
+		if (entry.name !== "pantheon-opencode" && !entry.name.startsWith("pantheon-opencode@")) continue;
+		const channelDir = join(cacheNpmDir, entry.name);
+		if (runningIsStable && entry.name === "pantheon-opencode@beta") {
+			pushCacheItem(channelDir, "Stale @beta plugin cache coexisting with stable install");
+			continue;
+		}
+		try {
+			const revisions = readdirSync(channelDir, { withFileTypes: true }).filter((sub) => sub.isDirectory() && sub.name !== "node_modules" && !sub.name.startsWith(".")).map((sub) => {
+				const full = join(channelDir, sub.name);
+				let mtime = 0;
+				try {
+					mtime = statSync(full).mtimeMs;
+				} catch {}
+				return {
+					path: full,
+					mtime,
+					active: Boolean(activeBundlePath && isUnderPath(full, activeBundlePath))
+				};
+			});
+			if (revisions.length > 1) {
+				revisions.sort((a, b) => Number(b.active) - Number(a.active) || b.mtime - a.mtime);
+				for (const stale of revisions.slice(1)) {
+					const ver = readCachedPackageVersion(stale.path);
+					pushCacheItem(stale.path, ver ? `Stale cached Pantheon plugin revision (v${ver})` : "Stale cached Pantheon plugin revision");
+				}
+			}
+		} catch {}
+	}
+	return items;
+}
 function resolveAuditGlobalDir(env = process.env) {
 	if (env.PANTHEON_HOME?.trim()) return resolve(env.PANTHEON_HOME.trim());
 	if (env.XDG_CONFIG_HOME?.trim()) return join(resolve(env.XDG_CONFIG_HOME.trim()), "opencode");
@@ -1697,6 +4458,7 @@ function migrateScopeBeforeDelete(baseRoot) {
 function scanLegacyArtifacts(options = {}) {
 	const workspaceDir = options.workspaceDir ? resolve(options.workspaceDir) : void 0;
 	const globalConfigDir = options.globalConfigDir ? resolve(options.globalConfigDir) : resolveAuditGlobalDir(options.env);
+	const cacheNpmDir = options.cacheDir ? resolve(options.cacheDir) : resolveAuditCacheDir(options.env);
 	const items = [];
 	let unmigratedStores = 0;
 	if (globalConfigDir && existsSync(globalConfigDir) && globalConfigDir !== "/") {
@@ -1704,6 +4466,7 @@ function scanLegacyArtifacts(options = {}) {
 		items.push(...res.items);
 		unmigratedStores += res.unmigratedStores;
 	}
+	if (cacheNpmDir && existsSync(cacheNpmDir) && cacheNpmDir !== "/") items.push(...collectCacheAudit(cacheNpmDir, options));
 	if (workspaceDir && existsSync(workspaceDir) && workspaceDir !== "/" && (!globalConfigDir || !samePath(workspaceDir, globalConfigDir))) {
 		const res = collectScopeAudit("project", workspaceDir, join(workspaceDir, ".opencode"), options);
 		items.push(...res.items);
@@ -1734,6 +4497,7 @@ function scanLegacyArtifacts(options = {}) {
 function cleanLegacyArtifacts(options = {}) {
 	const workspaceDir = options.workspaceDir ? resolve(options.workspaceDir) : void 0;
 	const globalConfigDir = options.globalConfigDir ? resolve(options.globalConfigDir) : resolveAuditGlobalDir(options.env);
+	const cacheNpmDir = options.cacheDir ? resolve(options.cacheDir) : resolveAuditCacheDir(options.env);
 	const scopeFilter = options.scope && options.scope !== "all" ? options.scope : null;
 	const scan = scanLegacyArtifacts(options);
 	let migratedRecords = 0;
@@ -1749,7 +4513,8 @@ function cleanLegacyArtifacts(options = {}) {
 			continue;
 		}
 		const scopeRoot = item.scope === "global" ? globalConfigDir : workspaceDir;
-		if (!scopeRoot || !isConfinedWithin(scopeRoot, item.path)) {
+		const confineRoot = item.scope === "global" && cacheNpmDir && isConfinedWithin(cacheNpmDir, item.path) ? cacheNpmDir : scopeRoot;
+		if (!confineRoot || !isConfinedWithin(confineRoot, item.path)) {
 			errors.push({
 				path: item.path,
 				reason: "Path escapes target scope root"
@@ -1771,7 +4536,7 @@ function cleanLegacyArtifacts(options = {}) {
 				"-journal"
 			]) {
 				const sidecar = `${item.path}${suffix}`;
-				if (existsSync(sidecar) && isConfinedWithin(scopeRoot, sidecar)) {
+				if (existsSync(sidecar) && isConfinedWithin(confineRoot, sidecar)) {
 					const sidecarBytes = measurePathBytes(sidecar);
 					rmSync(sidecar, { force: true });
 					removed.push(sidecar);
@@ -1941,727 +4706,6 @@ function buildPresetTab(input, languagePref) {
 	};
 }
 //#endregion
-//#region src/quota-state.ts
-/**
-* quota-state.ts — the Quotas & Spend tab (inspired by opencode-quota).
-*
-* Exposes live model token spending, daily budgets, rate-limits per provider,
-* and context token telemetry in a dedicated tab in the Pantheon Settings window.
-*/
-const DEFAULT_QUOTA_PREFS = {
-	sessionCap: "$5.00",
-	alertThreshold: "enabled",
-	autoCompact: "enabled"
-};
-function resolveQuotaPrefsPath() {
-	const xdg = process.env.XDG_CONFIG_HOME;
-	const base = xdg?.startsWith("/") ? xdg : join(homedir(), ".config");
-	return join(base, "opencode", "pantheon-quota.json");
-}
-function readQuotaPrefs(filePath = resolveQuotaPrefsPath()) {
-	try {
-		if (!existsSync(filePath)) return { ...DEFAULT_QUOTA_PREFS };
-		const raw = JSON.parse(readFileSync(filePath, "utf8"));
-		return {
-			sessionCap: typeof raw.sessionCap === "string" && [
-				"$1.00",
-				"$2.00",
-				"$5.00",
-				"$10.00",
-				"unlimited"
-			].includes(raw.sessionCap) ? raw.sessionCap : DEFAULT_QUOTA_PREFS.sessionCap,
-			alertThreshold: raw.alertThreshold === "disabled" ? "disabled" : "enabled",
-			autoCompact: raw.autoCompact === "disabled" ? "disabled" : "enabled"
-		};
-	} catch {
-		return { ...DEFAULT_QUOTA_PREFS };
-	}
-}
-function writeQuotaPrefs(prefs, filePath = resolveQuotaPrefsPath()) {
-	mkdirSync(dirname(filePath), { recursive: true });
-	writeFileSync(filePath, `${JSON.stringify(prefs, null, 2)}\n`, "utf8");
-}
-function applyQuotaRow(prefs, id, value) {
-	const next = { ...prefs };
-	if (id === "quota.budget.sessionCap") {
-		if ([
-			"$1.00",
-			"$2.00",
-			"$5.00",
-			"$10.00",
-			"unlimited"
-		].includes(value)) next.sessionCap = value;
-	} else if (id === "quota.budget.alertThreshold") next.alertThreshold = value === "disabled" ? "disabled" : "enabled";
-	else if (id === "quota.compaction.auto") next.autoCompact = value === "disabled" ? "disabled" : "enabled";
-	return next;
-}
-function buildQuotaTab(snapshot, languagePref, prefs = readQuotaPrefs()) {
-	const isPt = resolveLanguage(languagePref) === "pt-BR";
-	return {
-		id: "quota",
-		title: isPt ? "Cotas & Gastos" : "Quotas & Spend",
-		groups: [
-			{
-				title: isPt ? "Consumo & Gastos de Sessão" : "Session Spend & Tokens",
-				rows: [
-					{
-						id: "quota.spend.today",
-						name: isPt ? "Gasto hoje (00h-agora)" : "Spend today (00h-now)",
-						value: snapshot?.todaySpend ?? "—",
-						note: isPt ? "Calculado a partir de opencode.db" : "Derived from opencode.db ledger"
-					},
-					{
-						id: "quota.spend.month",
-						name: isPt ? "Gasto acumulado (30d)" : "Spend last 30 days",
-						value: snapshot?.monthSpend ?? "—",
-						note: isPt ? "Janela móvel de 30 dias" : "Rolling 30-day window"
-					},
-					{
-						id: "quota.spend.session",
-						name: isPt ? "Gasto na sessão ativa" : "Active session spend",
-						value: snapshot?.sessionSpend ?? "—",
-						note: isPt ? "Custo de todas as mensagens do turno" : "Sum of turn assistant messages"
-					},
-					{
-						id: "quota.tokens.context",
-						name: isPt ? "Tokens de contexto" : "Context tokens",
-						value: snapshot?.sessionTokens ?? "—",
-						note: isPt ? "Tokens consumidos vs janela do modelo" : "Tokens used vs model context limit"
-					},
-					{
-						id: "quota.tokens.cache",
-						name: isPt ? "Eficiência de cache" : "Prompt cache hit",
-						value: snapshot?.cacheHit ?? "—",
-						note: isPt ? "Desconto de leitura em cache aplicado" : "Cache read discount applied"
-					}
-				]
-			},
-			{
-				title: isPt ? "Limites & Teto de Orçamento" : "Rate Limits & Budget Caps",
-				rows: [
-					{
-						id: "quota.budget.sessionCap",
-						name: isPt ? "Teto por sessão" : "Session budget cap",
-						value: prefs.sessionCap,
-						cycle: [
-							"$1.00",
-							"$2.00",
-							"$5.00",
-							"$10.00",
-							"unlimited"
-						],
-						note: isPt ? "Avisa ou pausa ao atingir o teto" : "Warns or pauses when session spend reaches cap"
-					},
-					{
-						id: "quota.budget.alertThreshold",
-						name: isPt ? "Alerta em 80% do teto" : "Alert at 80% of cap",
-						value: prefs.alertThreshold,
-						cycle: ["enabled", "disabled"],
-						note: isPt ? "Emite aviso visual no footer da TUI" : "Shows visual notice in TUI footer"
-					},
-					{
-						id: "quota.compaction.auto",
-						name: isPt ? "Auto-compactar em 80% do contexto" : "Auto-compact at 80% context",
-						value: prefs.autoCompact,
-						cycle: ["enabled", "disabled"],
-						note: isPt ? "Aciona compressão automática de histórico" : "Triggers automatic context compaction"
-					}
-				]
-			},
-			{
-				title: isPt ? "Provedores & Janelas de Cota (Referência)" : "Providers & Quota Windows (Reference)",
-				rows: [
-					{
-						id: "quota.ref.anthropic",
-						name: "Anthropic (Claude 3.7)",
-						value: "Tier 4",
-						note: isPt ? "400k TPM · Reset diário às 00:00 UTC" : "400k TPM · Daily reset at 00:00 UTC"
-					},
-					{
-						id: "quota.ref.openai",
-						name: "OpenAI (GPT-4o)",
-						value: "Tier 4",
-						note: isPt ? "800k TPM · Reset por janela móvel de 1 min" : "800k TPM · 1-minute rolling window"
-					},
-					{
-						id: "quota.ref.google",
-						name: "Google (Gemini 2.5)",
-						value: "Pay-as-you-go",
-						note: isPt ? "4M TPM · Alta capacidade com cota flexível" : "4M TPM · High capacity with flexible quota"
-					}
-				]
-			}
-		]
-	};
-}
-//#endregion
-//#region src/tui-prefs.ts
-const PREFS_SYMBOL = Symbol.for("pantheon.tui.prefs.v1");
-const DRAFT_PREVIEW_SYMBOL = Symbol.for("pantheon.tui.draft_preview.v1");
-function stash() {
-	return globalThis[PREFS_SYMBOL];
-}
-function getDraftPreviewSignal() {
-	const g = globalThis;
-	if (!g[DRAFT_PREVIEW_SYMBOL]) g[DRAFT_PREVIEW_SYMBOL] = createSignal(void 0);
-	return g[DRAFT_PREVIEW_SYMBOL];
-}
-/** Set the active draft preview overlay (used by settings window to provide live preview). */
-function setTuiDraftPreview(draft) {
-	const [, setDraft] = getDraftPreviewSignal();
-	setDraft(draft && Object.keys(draft).length > 0 ? { ...draft } : void 0);
-}
-/** Clear the active draft preview overlay. */
-function clearTuiDraftPreview() {
-	const [, setDraft] = getDraftPreviewSignal();
-	setDraft(void 0);
-}
-/** The active draft preview accessor. */
-function tuiDraftPreview() {
-	const [draft] = getDraftPreviewSignal();
-	return draft();
-}
-/** Create (or reuse) the durable prefs store. Fail-open: without host
-*  storage the consumers fall back to DEFAULT_TUI_PREFS (read-only). */
-function initTuiPrefs(context) {
-	if (stash() !== void 0) return;
-	try {
-		const handle = context.storage?.store?.("tui-prefs", { initial: DEFAULT_TUI_PREFS });
-		if (handle !== void 0) {
-			globalThis[PREFS_SYMBOL] = handle;
-			if (!handle[0]?.layout || typeof handle[0]?.sidebar?.context?.turnCost !== "boolean" || typeof handle[0]?.sidebar?.context?.tokenAnatomy !== "boolean") handle[1]((draft) => {
-				if (!draft.layout) draft.layout = { ...DEFAULT_TUI_PREFS.layout };
-				if (draft.sidebar?.context) {
-					if (typeof draft.sidebar.context.turnCost !== "boolean") draft.sidebar.context.turnCost = true;
-					if (typeof draft.sidebar.context.tokenAnatomy !== "boolean") draft.sidebar.context.tokenAnatomy = true;
-				}
-			}).catch(() => {});
-		}
-	} catch {}
-}
-/** Deep clone and overlay staged settings draft onto base TuiPrefs. */
-function previewTuiPrefs(base, draft) {
-	if (!draft || Object.keys(draft).length === 0) return base;
-	let hasTui = false;
-	for (const k of Object.keys(draft)) if (k.startsWith("tui.")) {
-		hasTui = true;
-		break;
-	}
-	if (!hasTui) return base;
-	const normalized = normalizeTuiPrefs(base);
-	const effective = {
-		version: 1,
-		layout: { ...normalized.layout },
-		...normalized.theme ? { theme: { ...normalized.theme } } : {},
-		sidebar: {
-			header: { ...normalized.sidebar.header },
-			...normalized.sidebar.pinnedSessions ? { pinnedSessions: [...normalized.sidebar.pinnedSessions] } : {},
-			blocks: { ...normalized.sidebar.blocks },
-			context: { ...normalized.sidebar.context }
-		},
-		footer: { ...normalized.footer }
-	};
-	for (const [id, value] of Object.entries(draft)) if (id.startsWith("tui.")) applyTuiRow(effective, id, value);
-	return effective;
-}
-/** The raw persisted prefs from host storage (no draft overlay). */
-function savedTuiPrefs() {
-	const s = stash()?.[0];
-	if (!s) return DEFAULT_TUI_PREFS;
-	return normalizeTuiPrefs(s);
-}
-/** The live reactive prefs (read properties inside memos/JSX — tracked).
-*  When a settings window has an active draft, preview overlays on top
-*  of durable storage in real time. */
-function tuiPrefs() {
-	const base = savedTuiPrefs();
-	const preview = tuiDraftPreview();
-	if (!preview) return base;
-	return previewTuiPrefs(base, preview);
-}
-/** Stage a mutation against the durable store; resolves when persisted. */
-function mutateTuiPrefs(mutation) {
-	const handle = stash();
-	if (handle === void 0) return Promise.resolve();
-	return handle[1](mutation);
-}
-const GAUGE_STYLES = Object.freeze([
-	"both",
-	"bar",
-	"percent",
-	"off"
-]);
-const ENABLED_CYCLE = Object.freeze(["enabled", "disabled"]);
-const BAR_SHAPES_CYCLE = Object.freeze([
-	"smooth",
-	"line",
-	"block",
-	"ascii",
-	"dots",
-	"braille"
-]);
-const BAR_WIDTHS_CYCLE = Object.freeze([
-	"standard",
-	"compact",
-	"wide",
-	"full"
-]);
-const LAYOUT_PRESETS_CYCLE = Object.freeze(["comfortable", "compact"]);
-const SEPARATOR_STYLES_CYCLE = Object.freeze([
-	"spaces",
-	"pipes",
-	"dots",
-	"slashes"
-]);
-const SETTINGS_VIEW_MODES = Object.freeze([
-	"docked",
-	"fullscreen",
-	"dialog"
-]);
-const LANGUAGE_CYCLE = Object.freeze([
-	"auto",
-	"pt-BR",
-	"en"
-]);
-const THEME_MODES_CYCLE = Object.freeze([
-	"auto",
-	"dark",
-	"light"
-]);
-const ACCENT_COLORS_CYCLE = Object.freeze([
-	"host",
-	"pantheon",
-	"emerald",
-	"cyan",
-	"amber",
-	"purple",
-	"rose"
-]);
-const ACCENT_PALETTE = {
-	host: {
-		primary: "#fba970",
-		hover: "#fdba74",
-		muted: "#a1a1aa"
-	},
-	pantheon: {
-		primary: "#fba970",
-		hover: "#fdba74",
-		muted: "#a1a1aa"
-	},
-	emerald: {
-		primary: "#10b981",
-		hover: "#34d399",
-		muted: "#059669"
-	},
-	cyan: {
-		primary: "#06b6d4",
-		hover: "#22d3ee",
-		muted: "#0891b2"
-	},
-	amber: {
-		primary: "#f59e0b",
-		hover: "#fbbf24",
-		muted: "#d97706"
-	},
-	purple: {
-		primary: "#a855f7",
-		hover: "#c084fc",
-		muted: "#9333ea"
-	},
-	rose: {
-		primary: "#f43f5e",
-		hover: "#fb7185",
-		muted: "#e11d48"
-	}
-};
-function resolveAccentColor(accent, contextTheme) {
-	if (!accent || accent === "host") return contextTheme?.text?.feedback?.warning?.base ?? contextTheme?.text?.base ?? "#fba970";
-	return ACCENT_PALETTE[accent]?.primary ?? "#fba970";
-}
-const DEFAULT_TUI_PREFS = {
-	version: 1,
-	layout: {
-		preset: "comfortable",
-		separator: "spaces",
-		settingsView: "docked",
-		language: "auto"
-	},
-	theme: {
-		mode: "auto",
-		accent: "host"
-	},
-	sidebar: {
-		header: {
-			version: true,
-			preset: true,
-			session: true
-		},
-		pinnedSessions: [],
-		blocks: {
-			context: true,
-			git: true,
-			todo: false,
-			dispatch: true
-		},
-		context: {
-			gauge: "both",
-			barShape: "smooth",
-			barWidth: "standard",
-			evenMark: false,
-			tokens: true,
-			spent: true,
-			modelUsage: true,
-			performance: true,
-			localSpend: true,
-			turnCost: true,
-			tokenAnatomy: true
-		}
-	},
-	footer: {
-		prompt: true,
-		home: true
-	}
-};
-function asBool(value, fallback) {
-	return typeof value === "boolean" ? value : fallback;
-}
-/** Deep-merge stored JSON over the defaults; unknown keys and junk are ignored. */
-function normalizeTuiPrefs(raw) {
-	const stored = typeof raw === "object" && raw !== null ? raw : {};
-	const layout = typeof stored.layout === "object" && stored.layout !== null ? stored.layout : {};
-	const sidebar = typeof stored.sidebar === "object" && stored.sidebar !== null ? stored.sidebar : {};
-	const header = typeof sidebar.header === "object" && sidebar.header !== null ? sidebar.header : {};
-	const blocks = typeof sidebar.blocks === "object" && sidebar.blocks !== null ? sidebar.blocks : {};
-	const context = typeof sidebar.context === "object" && sidebar.context !== null ? sidebar.context : {};
-	const footer = typeof stored.footer === "object" && stored.footer !== null ? stored.footer : {};
-	const rawTheme = typeof stored.theme === "object" && stored.theme !== null ? stored.theme : {};
-	const themeMode = THEME_MODES_CYCLE.includes(rawTheme.mode) ? rawTheme.mode : DEFAULT_TUI_PREFS.theme?.mode ?? "auto";
-	const themeAccent = ACCENT_COLORS_CYCLE.includes(rawTheme.accent) ? rawTheme.accent : DEFAULT_TUI_PREFS.theme?.accent ?? "host";
-	const preset = LAYOUT_PRESETS_CYCLE.includes(layout.preset) ? layout.preset : DEFAULT_TUI_PREFS.layout.preset;
-	const separator = SEPARATOR_STYLES_CYCLE.includes(layout.separator) ? layout.separator : DEFAULT_TUI_PREFS.layout.separator;
-	const settingsView = SETTINGS_VIEW_MODES.includes(layout.settingsView) ? layout.settingsView : DEFAULT_TUI_PREFS.layout.settingsView;
-	const language = LANGUAGE_CYCLE.includes(layout.language) ? layout.language : DEFAULT_TUI_PREFS.layout.language;
-	const gauge = GAUGE_STYLES.includes(context.gauge) ? context.gauge : DEFAULT_TUI_PREFS.sidebar.context.gauge;
-	const barShape = BAR_SHAPES_CYCLE.includes(context.barShape) ? context.barShape : DEFAULT_TUI_PREFS.sidebar.context.barShape;
-	const barWidth = BAR_WIDTHS_CYCLE.includes(context.barWidth) ? context.barWidth : DEFAULT_TUI_PREFS.sidebar.context.barWidth;
-	const evenMark = asBool(context.evenMark, DEFAULT_TUI_PREFS.sidebar.context.evenMark);
-	return {
-		version: 1,
-		layout: {
-			preset,
-			separator,
-			settingsView,
-			language
-		},
-		theme: {
-			mode: themeMode,
-			accent: themeAccent
-		},
-		sidebar: {
-			header: {
-				version: asBool(header.version, true),
-				preset: asBool(header.preset, true),
-				session: asBool(header.session, true)
-			},
-			pinnedSessions: Array.isArray(sidebar.pinnedSessions) ? sidebar.pinnedSessions.filter((s) => typeof s === "string") : [],
-			blocks: {
-				context: asBool(blocks.context, true),
-				git: asBool(blocks.git, true),
-				todo: asBool(blocks.todo, false),
-				dispatch: asBool(blocks.dispatch, true)
-			},
-			context: {
-				gauge,
-				barShape,
-				barWidth,
-				evenMark,
-				tokens: asBool(context.tokens, true),
-				spent: asBool(context.spent, true),
-				modelUsage: asBool(context.modelUsage, true),
-				performance: asBool(context.performance, true),
-				localSpend: asBool(context.localSpend, true),
-				turnCost: asBool(context.turnCost, true),
-				tokenAnatomy: asBool(context.tokenAnatomy, true)
-			}
-		},
-		footer: {
-			prompt: asBool(footer.prompt, true),
-			home: asBool(footer.home, true)
-		}
-	};
-}
-const onOff = ENABLED_CYCLE;
-const row = (id, name, value, note) => ({
-	id,
-	name,
-	value: value ? "enabled" : "disabled",
-	cycle: onOff,
-	note
-});
-function buildTuiTab(prefs, languagePref) {
-	const isPt = resolveLanguage(languagePref ?? prefs.layout?.language) === "pt-BR";
-	return {
-		id: "tui",
-		title: "TUI",
-		groups: [
-			{
-				title: isPt ? "Predefinição & Layout" : "Preset & Layout",
-				rows: [
-					{
-						id: "tui.layout.preset",
-						name: isPt ? "Predefinição de layout" : "Layout preset",
-						value: prefs.layout?.preset ?? DEFAULT_TUI_PREFS.layout.preset,
-						cycle: LAYOUT_PRESETS_CYCLE,
-						note: isPt ? "comfortable | compact — define espaçamento e bordas" : "comfortable | compact — sets spacing & borders"
-					},
-					{
-						id: "tui.layout.separator",
-						name: isPt ? "Separador" : "Separator",
-						value: prefs.layout?.separator ?? DEFAULT_TUI_PREFS.layout.separator,
-						cycle: SEPARATOR_STYLES_CYCLE,
-						note: isPt ? "spaces | pipes | dots | slashes — glifos na linha de status" : "spaces | pipes | dots | slashes — status line glyphs"
-					},
-					{
-						id: "tui.layout.settingsView",
-						name: isPt ? "Superfície de configurações" : "Settings surface",
-						value: tuiRowValue(prefs, "tui.layout.settingsView") ?? "docked",
-						cycle: SETTINGS_VIEW_MODES,
-						note: isPt ? "docked (acima do prompt) | fullscreen | dialog" : "docked (above prompt) | fullscreen router page | dialog overlay"
-					},
-					{
-						id: "tui.layout.language",
-						name: isPt ? "Idioma / Language" : "Language / Idioma",
-						value: tuiRowValue(prefs, "tui.layout.language") ?? "auto",
-						cycle: LANGUAGE_CYCLE,
-						note: isPt ? "auto (detecta via fuso/locale) | pt-BR (Português) | en (English)" : "auto (detect via timezone/locale) | pt-BR (Português) | en (English)"
-					}
-				]
-			},
-			{
-				title: isPt ? "Cores & Tema" : "Colors & Theme",
-				rows: [{
-					id: "tui.theme.mode",
-					name: isPt ? "Modo do tema" : "Theme mode",
-					value: tuiRowValue(prefs, "tui.theme.mode") ?? "auto",
-					cycle: THEME_MODES_CYCLE,
-					note: isPt ? "auto (segue o OpenCode) | dark | light" : "auto (follow OpenCode theme) | dark | light"
-				}, {
-					id: "tui.theme.accent",
-					name: isPt ? "Cor de destaque" : "Accent color",
-					value: tuiRowValue(prefs, "tui.theme.accent") ?? "host",
-					cycle: ACCENT_COLORS_CYCLE,
-					note: isPt ? "host (segue tema) | pantheon | emerald | cyan | amber | purple | rose" : "host (follow theme) | pantheon | emerald | cyan | amber | purple | rose"
-				}]
-			},
-			{
-				title: isPt ? "Barras & Medidores" : "Bars & Gauges",
-				rows: [
-					{
-						id: "tui.sidebar.context.barShape",
-						name: isPt ? "Formato da barra" : "Bar shape",
-						value: prefs.sidebar.context.barShape,
-						cycle: BAR_SHAPES_CYCLE,
-						note: "line (━─) | block (▰▱) | smooth (█░) | ascii (=) | dots (●○) | braille"
-					},
-					{
-						id: "tui.sidebar.context.barWidth",
-						name: isPt ? "Largura da barra" : "Bar width",
-						value: prefs.sidebar.context.barWidth,
-						cycle: BAR_WIDTHS_CYCLE,
-						note: isPt ? "standard (12) | compact (8) | wide (16) | full (20 células)" : "standard (12) | compact (8) | wide (16) | full (20 cells)"
-					},
-					row("tui.sidebar.context.evenMark", isPt ? "Marca central (50%)" : "Even-use mark", prefs.sidebar.context.evenMark, isPt ? "| indicador aos 50% nas barras de medição" : "| indicator at 50% midpoint in gauge bars"),
-					{
-						id: "tui.sidebar.context.gauge",
-						name: isPt ? "Estilo do medidor" : "Gauge style",
-						value: prefs.sidebar.context.gauge,
-						cycle: GAUGE_STYLES,
-						note: "both | bar | percent | off — `▰▱ 42% of 200k`"
-					}
-				]
-			},
-			{
-				title: isPt ? "Cabeçalho da barra lateral" : "Sidebar header",
-				rows: [
-					row("tui.sidebar.header.version", isPt ? "Linha de versão" : "Version line", prefs.sidebar.header.version, isPt ? "linha `Pantheon v…`" : "the `Pantheon v…` line"),
-					row("tui.sidebar.header.preset", isPt ? "Linha de preset" : "Preset line", prefs.sidebar.header.preset, isPt ? "linha `▸ preset · provider`" : "the `▸ preset · provider` line"),
-					row("tui.sidebar.header.session", isPt ? "Linha de sessão" : "Session line", prefs.sidebar.header.session, isPt ? "título da sessão ativa" : "the active session title")
-				]
-			},
-			{
-				title: isPt ? "Blocos da barra lateral" : "Sidebar blocks",
-				rows: [
-					row("tui.sidebar.block.context", isPt ? "Bloco de contexto" : "Context block", prefs.sidebar.blocks.context, isPt ? "tokens, medidor, custo, uso de modelos" : "tokens, gauge, spend, model usage"),
-					row("tui.sidebar.block.git", isPt ? "Bloco do Git" : "Git block", prefs.sidebar.blocks.git, isPt ? "branch + contagem de alterações" : "branch + working-tree counts"),
-					row("tui.sidebar.block.dispatch", isPt ? "Bloco Dispatch" : "Dispatch block", prefs.sidebar.blocks.dispatch, isPt ? "delegações em tempo real" : "live delegations + rollup")
-				]
-			},
-			{
-				title: isPt ? "Detalhe do bloco de contexto" : "Context block detail",
-				rows: [
-					row("tui.sidebar.context.tokens", isPt ? "Linha de tokens" : "Tokens row", prefs.sidebar.context.tokens, isPt ? "contagem bruta de tokens" : "the raw token count line"),
-					row("tui.sidebar.context.spent", isPt ? "Linha de custo" : "Spent row", prefs.sidebar.context.spent, isPt ? "linha `$… gastos na sessão`" : "the `$… spent in session` line"),
-					row("tui.sidebar.context.modelUsage", isPt ? "Tabela de uso de modelos" : "Model usage table", prefs.sidebar.context.modelUsage, isPt ? "resumo de chamadas por modelo" : "per-model tokens/USD"),
-					row("tui.sidebar.context.performance", isPt ? "Linha de desempenho" : "Performance row", prefs.sidebar.context.performance, isPt ? "tokens/segundo e latência" : "cache % + tok/s"),
-					row("tui.sidebar.context.turnCost", isPt ? "Custo do turno" : "Turn cost", prefs.sidebar.context.turnCost, isPt ? "linha `Turn: $… (prev: $…)`" : "the `Turn: $… (prev: $…)` line"),
-					row("tui.sidebar.context.tokenAnatomy", isPt ? "Anatomia de tokens" : "Token anatomy", prefs.sidebar.context.tokenAnatomy, isPt ? "linha `↑in ↓out ✦think`" : "the `↑in ↓out ✦think` line"),
-					row("tui.sidebar.context.localSpend", isPt ? "Linha de custo local" : "Local spend row", prefs.sidebar.context.localSpend, isPt ? "totais de hoje / 30 dias" : "hoje / 30d totals")
-				]
-			},
-			{
-				title: isPt ? "Rodapés" : "Footers",
-				rows: [row("tui.footer.prompt", isPt ? "Prompt inferior" : "Prompt footer", prefs.footer.prompt, isPt ? "linha `▸preset · ✦n ativos` durante delegações" : "the `▸preset · ✦n ativos` line while delegations run"), row("tui.footer.home", isPt ? "Status inicial" : "Home status", prefs.footer.home, isPt ? "linha `Pantheon v…` sob o prompt inicial" : "the `Pantheon v…` line under the home prompt")]
-			}
-		]
-	};
-}
-/**
-* Apply one staged row INTO a prefs draft (in place — the storage mutate
-* callback hands an immer-style draft). Unknown ids or junk values are no-ops.
-*/
-function applyTuiRow(draft, id, value) {
-	const enabled = value === "enabled";
-	switch (id) {
-		case "tui.layout.preset":
-			if (LAYOUT_PRESETS_CYCLE.includes(value)) {
-				if (!draft.layout) draft.layout = { ...DEFAULT_TUI_PREFS.layout };
-				draft.layout.preset = value;
-			}
-			return;
-		case "tui.layout.separator":
-			if (SEPARATOR_STYLES_CYCLE.includes(value)) {
-				if (!draft.layout) draft.layout = { ...DEFAULT_TUI_PREFS.layout };
-				draft.layout.separator = value;
-			}
-			return;
-		case "tui.layout.settingsView":
-			if (SETTINGS_VIEW_MODES.includes(value)) {
-				if (!draft.layout) draft.layout = { ...DEFAULT_TUI_PREFS.layout };
-				draft.layout.settingsView = value;
-			}
-			return;
-		case "tui.layout.language":
-			if (LANGUAGE_CYCLE.includes(value)) {
-				if (!draft.layout) draft.layout = { ...DEFAULT_TUI_PREFS.layout };
-				draft.layout.language = value;
-			}
-			return;
-		case "tui.theme.mode":
-			if (THEME_MODES_CYCLE.includes(value)) {
-				if (!draft.theme) draft.theme = { ...DEFAULT_TUI_PREFS.theme };
-				draft.theme.mode = value;
-			}
-			return;
-		case "tui.theme.accent":
-			if (ACCENT_COLORS_CYCLE.includes(value)) {
-				if (!draft.theme) draft.theme = { ...DEFAULT_TUI_PREFS.theme };
-				draft.theme.accent = value;
-			}
-			return;
-		case "tui.sidebar.context.barShape":
-			if (BAR_SHAPES_CYCLE.includes(value)) draft.sidebar.context.barShape = value;
-			return;
-		case "tui.sidebar.context.barWidth":
-			if (BAR_WIDTHS_CYCLE.includes(value)) draft.sidebar.context.barWidth = value;
-			return;
-		case "tui.sidebar.context.evenMark":
-			draft.sidebar.context.evenMark = enabled;
-			return;
-		case "tui.sidebar.header.version":
-			draft.sidebar.header.version = enabled;
-			return;
-		case "tui.sidebar.header.preset":
-			draft.sidebar.header.preset = enabled;
-			return;
-		case "tui.sidebar.header.session":
-			draft.sidebar.header.session = enabled;
-			return;
-		case "tui.sidebar.block.context":
-			draft.sidebar.blocks.context = enabled;
-			return;
-		case "tui.sidebar.block.git":
-			draft.sidebar.blocks.git = enabled;
-			return;
-		case "tui.sidebar.block.todo":
-			draft.sidebar.blocks.todo = enabled;
-			return;
-		case "tui.sidebar.block.dispatch":
-			draft.sidebar.blocks.dispatch = enabled;
-			return;
-		case "tui.sidebar.context.gauge":
-			if (GAUGE_STYLES.includes(value)) draft.sidebar.context.gauge = value;
-			return;
-		case "tui.sidebar.context.tokens":
-			draft.sidebar.context.tokens = enabled;
-			return;
-		case "tui.sidebar.context.spent":
-			draft.sidebar.context.spent = enabled;
-			return;
-		case "tui.sidebar.context.modelUsage":
-			draft.sidebar.context.modelUsage = enabled;
-			return;
-		case "tui.sidebar.context.performance":
-			draft.sidebar.context.performance = enabled;
-			return;
-		case "tui.sidebar.context.localSpend":
-			draft.sidebar.context.localSpend = enabled;
-			return;
-		case "tui.sidebar.context.turnCost":
-			draft.sidebar.context.turnCost = enabled;
-			return;
-		case "tui.sidebar.context.tokenAnatomy":
-			draft.sidebar.context.tokenAnatomy = enabled;
-			return;
-		case "tui.footer.prompt":
-			draft.footer.prompt = enabled;
-			return;
-		case "tui.footer.home":
-			draft.footer.home = enabled;
-			return;
-		default: return;
-	}
-}
-/** Read the current pref value for a row id ('enabled'/'disabled'/gauge/custom). */
-function tuiRowValue(prefs, id) {
-	if (id === "tui.layout.preset") return prefs.layout?.preset ?? DEFAULT_TUI_PREFS.layout.preset;
-	if (id === "tui.layout.separator") return prefs.layout?.separator ?? DEFAULT_TUI_PREFS.layout.separator;
-	if (id === "tui.layout.settingsView") return prefs.layout?.settingsView ?? DEFAULT_TUI_PREFS.layout.settingsView ?? "docked";
-	if (id === "tui.layout.language") return prefs.layout?.language ?? "auto";
-	if (id === "tui.theme.mode") return prefs.theme?.mode ?? DEFAULT_TUI_PREFS.theme?.mode ?? "auto";
-	if (id === "tui.theme.accent") return prefs.theme?.accent ?? DEFAULT_TUI_PREFS.theme?.accent ?? "host";
-	if (id === "tui.sidebar.context.barShape") return prefs.sidebar.context.barShape;
-	if (id === "tui.sidebar.context.barWidth") return prefs.sidebar.context.barWidth;
-	if (id === "tui.sidebar.context.gauge") return prefs.sidebar.context.gauge;
-	if (id === "tui.sidebar.context.evenMark") return prefs.sidebar.context.evenMark ? "enabled" : "disabled";
-	const enabled = (() => {
-		switch (id) {
-			case "tui.sidebar.header.version": return prefs.sidebar.header.version;
-			case "tui.sidebar.header.preset": return prefs.sidebar.header.preset;
-			case "tui.sidebar.header.session": return prefs.sidebar.header.session;
-			case "tui.sidebar.block.context": return prefs.sidebar.blocks.context;
-			case "tui.sidebar.block.git": return prefs.sidebar.blocks.git;
-			case "tui.sidebar.block.todo": return prefs.sidebar.blocks.todo;
-			case "tui.sidebar.block.dispatch": return prefs.sidebar.blocks.dispatch;
-			case "tui.sidebar.context.tokens": return prefs.sidebar.context.tokens;
-			case "tui.sidebar.context.spent": return prefs.sidebar.context.spent;
-			case "tui.sidebar.context.modelUsage": return prefs.sidebar.context.modelUsage;
-			case "tui.sidebar.context.performance": return prefs.sidebar.context.performance;
-			case "tui.sidebar.context.localSpend": return prefs.sidebar.context.localSpend;
-			case "tui.sidebar.context.turnCost": return prefs.sidebar.context.turnCost;
-			case "tui.sidebar.context.tokenAnatomy": return prefs.sidebar.context.tokenAnatomy;
-			case "tui.footer.prompt": return prefs.footer.prompt;
-			case "tui.footer.home": return prefs.footer.home;
-			default: return;
-		}
-	})();
-	return enabled === void 0 ? void 0 : enabled ? "enabled" : "disabled";
-}
-function isSessionPinned(sessionID) {
-	if (!sessionID) return false;
-	const list = tuiPrefs().sidebar.pinnedSessions;
-	return Array.isArray(list) && list.includes(sessionID);
-}
-//#endregion
 //#region src/update-status.ts
 /**
 * update-status.ts — the Updates section of the settings window.
@@ -2730,29 +4774,29 @@ function buildUpdatesTab(input) {
 		id: "update.command",
 		name: isPt ? "Comando no terminal" : "CLI Command",
 		value: "opencode plugin update",
-		note: isPt ? `sem npx: \`${pluginCommand} && opencode reload\`` : `native CLI (no npx): \`${pluginCommand} && opencode reload\``
+		note: isPt ? `rode \`${pluginCommand} && opencode reload\` (sem npx)` : `run \`${pluginCommand} && opencode reload\` (no npx)`
 	});
 	const audit = input.legacyAudit;
 	const legacyRows = [
 		{
 			id: "legacy.status",
 			name: isPt ? "Auditoria legada" : "Legacy & Drift",
-			value: input.legacyScanning ? isPt ? "escaneando…" : "scanning…" : audit === void 0 || audit === null ? isPt ? "não escaneado" : "not scanned" : audit.total === 0 ? isPt ? "limpo (0 obsoletos)" : "clean (0 obsolete)" : isPt ? `${audit.total} arquivo(s) (${formatBytes(audit.totalBytes)})` : `${audit.total} file(s) (${formatBytes(audit.totalBytes)})`,
-			note: input.legacyNotice ? input.legacyNotice : audit && audit.total > 0 ? isPt ? `global: ${audit.byScope.global} · projeto: ${audit.byScope.project}${audit.unmigratedStores > 0 ? ` · ${audit.unmigratedStores} store(s) p/ migrar` : ""}` : `global: ${audit.byScope.global} · project: ${audit.byScope.project}${audit.unmigratedStores > 0 ? ` · ${audit.unmigratedStores} store(s) to migrate` : ""}` : isPt ? "verifica hooks V1, bancos não migrados e cópias redundantes" : "checks V1 hooks, unmigrated stores & redundant plugin copies"
+			value: input.legacyScanning ? isPt ? "escaneando…" : "scanning…" : audit === void 0 || audit === null ? isPt ? "não escaneado" : "not scanned" : audit.total === 0 ? isPt ? "limpo (0 obsoletos)" : "clean (0 obsolete)" : isPt ? `${audit.total} item(ns) (${formatBytes(audit.totalBytes)})` : `${audit.total} item(s) (${formatBytes(audit.totalBytes)})`,
+			note: input.legacyNotice ? input.legacyNotice : audit && audit.total > 0 ? isPt ? `global: ${audit.byScope.global} · projeto: ${audit.byScope.project}${audit.unmigratedStores > 0 ? ` · ${audit.unmigratedStores} store(s) p/ migrar` : ""}` : `global: ${audit.byScope.global} · project: ${audit.byScope.project}${audit.unmigratedStores > 0 ? ` · ${audit.unmigratedStores} store(s) to migrate` : ""}` : isPt ? "verifica caches npm antigos, hooks V1, bancos e cópias redundantes" : "checks stale npm caches, V1 hooks, unmigrated stores & copied files"
 		},
 		{
 			id: "legacy.scan",
 			name: isPt ? "Escanear obsoletos" : "Scan legacy & drift",
 			value: input.legacyScanning ? isPt ? "escaneando…" : "scanning…" : isPt ? "escanear agora" : "scan global + project",
 			action: "legacy-scan",
-			note: isPt ? "enter escaneia sem modificar ou apagar nenhum arquivo" : "enter scans read-only without deleting anything"
+			note: isPt ? "enter verifica global, projeto e cache npm sem apagar nada" : "enter scans global, project & npm cache read-only"
 		},
 		{
 			id: "legacy.clean",
 			name: isPt ? "Migrar & limpar" : "Migrate & clean obsolete",
-			value: input.legacyCleaning ? isPt ? "limpando…" : "cleaning…" : audit && audit.total > 0 ? isPt ? `remover ${audit.total} (${formatBytes(audit.totalBytes)})` : `remove ${audit.total} (${formatBytes(audit.totalBytes)})` : isPt ? "nada para remover" : "nothing to remove",
+			value: input.legacyCleaning ? isPt ? "limpando…" : "cleaning…" : audit && audit.total > 0 ? isPt ? `limpar ${audit.total} (${formatBytes(audit.totalBytes)})` : `remove ${audit.total} (${formatBytes(audit.totalBytes)})` : isPt ? "nada a remover" : "nothing to remove",
 			action: "legacy-clean",
-			note: isPt ? "migra memória/contexto/goals antes e preserva agentes/skills custom" : "migrates memory/context/goals first · preserves custom agents/skills"
+			note: isPt ? "migra memória/contexto/goals antes; preserva agentes/skills custom" : "migrates memory/context/goals first · preserves custom agents/skills"
 		}
 	];
 	return {
@@ -2954,7 +4998,7 @@ async function readChangelogForBundle(bundleUrl) {
 }
 /** The ambient build-time version, or null outside a tsdown build. */
 function embeddedVersion() {
-	return "2.2.0-beta.11";
+	return "2.2.0";
 }
 /**
 * Resolve the running Pantheon version for the what's-new window: the plugin
@@ -3196,9 +5240,9 @@ function persistUpdateCheckState(previous, latest) {
 	} catch {}
 }
 function resolveRunningVersion() {
-	return "2.2.0-beta.11";
+	return "2.2.0";
 }
-const VALUE_WIDTH = 30;
+const VALUE_WIDTH = 32;
 function SettingsWindow(props) {
 	const isPt = () => resolveLanguage(tuiPrefs().layout?.language) === "pt-BR";
 	const formatValueDisplay = (val) => {
@@ -3232,8 +5276,9 @@ function SettingsWindow(props) {
 		insertNode(_el$, _el$10);
 		spread(_el$, mergeProps(() => props.boxRef !== void 0 ? { ref: props.boxRef } : {}, {
 			"focusable": true,
-			"flexDirection": "column"
-		}, () => props.height !== void 0 ? { height: props.height } : {
+			"flexDirection": "column",
+			"width": "100%"
+		}, () => props.isDialog ? { minWidth: 80 } : {}, () => props.height !== void 0 ? { height: props.height } : {
 			flexGrow: 1,
 			flexBasis: 0
 		}, {
@@ -3270,7 +5315,8 @@ function SettingsWindow(props) {
 		setProp(_el$8, "flexDirection", "row");
 		setProp(_el$8, "flexWrap", "wrap");
 		setProp(_el$8, "flexGrow", 1);
-		setProp(_el$8, "flexShrink", 0);
+		setProp(_el$8, "flexShrink", 1);
+		setProp(_el$8, "minWidth", 0);
 		setProp(_el$8, "columnGap", 1);
 		setProp(_el$8, "rowGap", 1);
 		insert(_el$8, createComponent(For, {
@@ -3343,41 +5389,54 @@ function SettingsWindow(props) {
 						const gutter = () => isSelected() ? "▸ " : "  ";
 						const valueCell = () => {
 							const formatted = formatValueDisplay(display());
-							if (row.cycle !== void 0) return `< ${formatted} >`;
-							if (row.action !== void 0) return `[ ${formatted} ]`;
-							if (row.id.startsWith("autonomy.gradient.")) return `[ref] ${formatted}`;
-							return formatted;
+							const raw = row.cycle !== void 0 ? `< ${formatted} >` : row.action !== void 0 ? `[ ${formatted} ]` : row.id.startsWith("autonomy.gradient.") ? `[ref] ${formatted}` : formatted;
+							const maxLen = VALUE_WIDTH - (staged() ? 2 : 0);
+							return raw.length > maxLen ? `${raw.slice(0, maxLen - 1)}…` : raw;
 						};
 						return (() => {
-							var _el$31 = createElement("box"), _el$32 = createElement("box"), _el$33 = createElement("text");
+							var _el$31 = createElement("box"), _el$32 = createElement("box"), _el$33 = createElement("text"), _el$34 = createElement("box");
 							insertNode(_el$31, _el$32);
+							insertNode(_el$31, _el$34);
 							setProp(_el$31, "flexDirection", "row");
 							spread(_el$31, mergeProps(() => isSelected() ? { backgroundColor: "#262626" } : {}, { "onMouseDown": () => {
 								props.onSelectRow?.(row.id);
 							} }), true);
 							insertNode(_el$32, _el$33);
 							setProp(_el$32, "width", 26);
+							setProp(_el$32, "flexShrink", 0);
+							setProp(_el$33, "wrapMode", "none");
 							spread(_el$33, mergeProps({ get fg() {
 								return memo(() => !!isSelected())() ? props.warn ?? "#fba970" : props.fg;
 							} }, () => isSelected() ? { attributes: 1 } : {}), true);
 							insert(_el$33, () => `${gutter()}${row.name}`.padEnd(26));
+							setProp(_el$34, "width", 2);
+							setProp(_el$34, "flexShrink", 0);
 							insert(_el$31, createComponent(Show, {
 								get when() {
 									return memo(() => row.value !== "")() && row.value !== void 0;
 								},
 								get children() {
-									var _el$34 = createElement("box"), _el$35 = createElement("text");
-									insertNode(_el$34, _el$35);
-									setProp(_el$34, "width", 30);
-									setProp(_el$34, "onMouseDown", () => {
-										props.onSelectRow?.(row.id);
-										props.onCycleValue?.(row.id, 1);
-									});
-									spread(_el$35, mergeProps({ get fg() {
-										return memo(() => !!isSelected())() ? "#ffffff" : memo(() => !!staged())() ? props.warn ?? props.fg : props.muted;
-									} }, () => isSelected() || staged() ? { attributes: 1 } : {}), true);
-									insert(_el$35, () => `${valueCell()}${staged() ? " ●" : ""}`.padEnd(VALUE_WIDTH));
-									return _el$34;
+									return [(() => {
+										var _el$35 = createElement("box"), _el$36 = createElement("text");
+										insertNode(_el$35, _el$36);
+										setProp(_el$35, "width", 32);
+										setProp(_el$35, "flexShrink", 0);
+										setProp(_el$35, "onMouseDown", () => {
+											props.onSelectRow?.(row.id);
+											props.onCycleValue?.(row.id, 1);
+										});
+										setProp(_el$36, "wrapMode", "none");
+										spread(_el$36, mergeProps({ get fg() {
+											return memo(() => !!isSelected())() ? "#ffffff" : memo(() => !!staged())() ? props.warn ?? props.fg : props.muted;
+										} }, () => isSelected() || staged() ? { attributes: 1 } : {}), true);
+										insert(_el$36, () => `${valueCell()}${staged() ? " ●" : ""}`.padEnd(VALUE_WIDTH));
+										return _el$35;
+									})(), (() => {
+										var _el$37 = createElement("box");
+										setProp(_el$37, "width", 2);
+										setProp(_el$37, "flexShrink", 0);
+										return _el$37;
+									})()];
 								}
 							}), null);
 							insert(_el$31, createComponent(Show, {
@@ -3385,13 +5444,13 @@ function SettingsWindow(props) {
 									return row.note !== void 0;
 								},
 								get children() {
-									var _el$36 = createElement("box"), _el$37 = createElement("text");
-									insertNode(_el$36, _el$37);
-									setProp(_el$36, "flexGrow", 1);
-									setProp(_el$36, "flexShrink", 1);
-									insert(_el$37, () => row.note);
-									effect((_$p) => setProp(_el$37, "fg", isSelected() ? "#e5e7eb" : props.muted, _$p));
-									return _el$36;
+									var _el$38 = createElement("box"), _el$39 = createElement("text");
+									insertNode(_el$38, _el$39);
+									setProp(_el$38, "flexGrow", 1);
+									setProp(_el$38, "flexShrink", 1);
+									insert(_el$39, () => row.note);
+									effect((_$p) => setProp(_el$39, "fg", isSelected() ? "#e5e7eb" : props.muted, _$p));
+									return _el$38;
 								}
 							}), null);
 							return _el$31;
@@ -3421,113 +5480,113 @@ function SettingsWindow(props) {
 			},
 			get fallback() {
 				return (() => {
-					var _el$38 = createElement("box"), _el$52 = createElement("text");
-					insertNode(_el$38, _el$52);
-					setProp(_el$38, "flexDirection", "column");
-					insert(_el$38, createComponent(Show, {
+					var _el$40 = createElement("box"), _el$54 = createElement("text");
+					insertNode(_el$40, _el$54);
+					setProp(_el$40, "flexDirection", "column");
+					insert(_el$40, createComponent(Show, {
 						get when() {
 							return draftDirty(props.draft());
 						},
 						get fallback() {
 							return (() => {
-								var _el$53 = createElement("box"), _el$54 = createElement("box"), _el$55 = createElement("text"), _el$57 = createElement("text"), _el$59 = createElement("box"), _el$60 = createElement("text"), _el$62 = createElement("text"), _el$64 = createElement("box"), _el$65 = createElement("text"), _el$67 = createElement("box"), _el$68 = createElement("text");
-								insertNode(_el$53, _el$54);
-								insertNode(_el$53, _el$57);
-								insertNode(_el$53, _el$59);
-								insertNode(_el$53, _el$62);
-								insertNode(_el$53, _el$64);
-								insertNode(_el$53, _el$67);
-								insertNode(_el$53, _el$68);
-								setProp(_el$53, "flexDirection", "row");
-								setProp(_el$53, "flexWrap", "wrap");
-								setProp(_el$53, "alignItems", "center");
-								setProp(_el$53, "flexShrink", 0);
-								setProp(_el$53, "rowGap", 1);
-								insertNode(_el$54, _el$55);
-								setProp(_el$54, "backgroundColor", "#262626");
-								setProp(_el$54, "flexShrink", 0);
-								setProp(_el$54, "onMouseDown", () => props.onClose?.());
-								insertNode(_el$55, createTextNode(` Close `));
-								setProp(_el$55, "fg", "#ffffff");
-								insertNode(_el$57, createTextNode(`  `));
-								setProp(_el$57, "flexShrink", 0);
-								insertNode(_el$59, _el$60);
-								setProp(_el$59, "backgroundColor", "#262626");
+								var _el$55 = createElement("box"), _el$56 = createElement("box"), _el$57 = createElement("text"), _el$59 = createElement("text"), _el$61 = createElement("box"), _el$62 = createElement("text"), _el$64 = createElement("text"), _el$66 = createElement("box"), _el$67 = createElement("text"), _el$69 = createElement("box"), _el$70 = createElement("text");
+								insertNode(_el$55, _el$56);
+								insertNode(_el$55, _el$59);
+								insertNode(_el$55, _el$61);
+								insertNode(_el$55, _el$64);
+								insertNode(_el$55, _el$66);
+								insertNode(_el$55, _el$69);
+								insertNode(_el$55, _el$70);
+								setProp(_el$55, "flexDirection", "row");
+								setProp(_el$55, "flexWrap", "wrap");
+								setProp(_el$55, "alignItems", "center");
+								setProp(_el$55, "flexShrink", 0);
+								setProp(_el$55, "rowGap", 1);
+								insertNode(_el$56, _el$57);
+								setProp(_el$56, "backgroundColor", "#262626");
+								setProp(_el$56, "flexShrink", 0);
+								setProp(_el$56, "onMouseDown", () => props.onClose?.());
+								insertNode(_el$57, createTextNode(` Close `));
+								setProp(_el$57, "fg", "#ffffff");
+								insertNode(_el$59, createTextNode(`  `));
 								setProp(_el$59, "flexShrink", 0);
-								setProp(_el$59, "onMouseDown", () => props.onResetPage?.());
-								insertNode(_el$60, createTextNode(` Reset page `));
-								setProp(_el$60, "fg", "#ffffff");
-								insertNode(_el$62, createTextNode(`  `));
-								setProp(_el$62, "flexShrink", 0);
-								insertNode(_el$64, _el$65);
-								setProp(_el$64, "backgroundColor", "#262626");
+								insertNode(_el$61, _el$62);
+								setProp(_el$61, "backgroundColor", "#262626");
+								setProp(_el$61, "flexShrink", 0);
+								setProp(_el$61, "onMouseDown", () => props.onResetPage?.());
+								insertNode(_el$62, createTextNode(` Reset page `));
+								setProp(_el$62, "fg", "#ffffff");
+								insertNode(_el$64, createTextNode(`  `));
 								setProp(_el$64, "flexShrink", 0);
-								setProp(_el$64, "onMouseDown", () => props.onStageDefaults?.());
-								insertNode(_el$65, createTextNode(` Defaults `));
-								setProp(_el$65, "fg", "#ffffff");
-								setProp(_el$67, "flexGrow", 1);
-								setProp(_el$67, "minWidth", 1);
-								setProp(_el$68, "flexShrink", 0);
-								insert(_el$68, () => isPt() ? "sem alterações pendentes" : "no staged changes");
+								insertNode(_el$66, _el$67);
+								setProp(_el$66, "backgroundColor", "#262626");
+								setProp(_el$66, "flexShrink", 0);
+								setProp(_el$66, "onMouseDown", () => props.onStageDefaults?.());
+								insertNode(_el$67, createTextNode(` Defaults `));
+								setProp(_el$67, "fg", "#ffffff");
+								setProp(_el$69, "flexGrow", 1);
+								setProp(_el$69, "minWidth", 1);
+								setProp(_el$70, "flexShrink", 0);
+								insert(_el$70, () => isPt() ? "sem alterações pendentes" : "no staged changes");
 								effect((_p$) => {
 									var _v$11 = props.muted, _v$12 = props.muted, _v$13 = props.muted;
-									_v$11 !== _p$.e && (_p$.e = setProp(_el$57, "fg", _v$11, _p$.e));
-									_v$12 !== _p$.t && (_p$.t = setProp(_el$62, "fg", _v$12, _p$.t));
-									_v$13 !== _p$.a && (_p$.a = setProp(_el$68, "fg", _v$13, _p$.a));
+									_v$11 !== _p$.e && (_p$.e = setProp(_el$59, "fg", _v$11, _p$.e));
+									_v$12 !== _p$.t && (_p$.t = setProp(_el$64, "fg", _v$12, _p$.t));
+									_v$13 !== _p$.a && (_p$.a = setProp(_el$70, "fg", _v$13, _p$.a));
 									return _p$;
 								}, {
 									e: void 0,
 									t: void 0,
 									a: void 0
 								});
-								return _el$53;
+								return _el$55;
 							})();
 						},
 						get children() {
-							var _el$39 = createElement("box"), _el$40 = createElement("box"), _el$41 = createElement("text"), _el$42 = createElement("text"), _el$44 = createElement("box"), _el$45 = createElement("text"), _el$46 = createElement("text"), _el$48 = createElement("box"), _el$49 = createElement("text"), _el$50 = createElement("box"), _el$51 = createElement("text");
-							insertNode(_el$39, _el$40);
-							insertNode(_el$39, _el$42);
-							insertNode(_el$39, _el$44);
-							insertNode(_el$39, _el$46);
-							insertNode(_el$39, _el$48);
-							insertNode(_el$39, _el$50);
-							insertNode(_el$39, _el$51);
-							setProp(_el$39, "flexDirection", "row");
-							setProp(_el$39, "flexWrap", "wrap");
-							setProp(_el$39, "alignItems", "center");
-							setProp(_el$39, "flexShrink", 0);
-							setProp(_el$39, "rowGap", 1);
-							insertNode(_el$40, _el$41);
-							setProp(_el$40, "flexShrink", 0);
-							setProp(_el$40, "onMouseDown", () => props.onSave?.());
-							setProp(_el$41, "fg", "#000000");
-							insert(_el$41, () => isPt() ? " Salvar " : " Save ");
-							insertNode(_el$42, createTextNode(`  `));
+							var _el$41 = createElement("box"), _el$42 = createElement("box"), _el$43 = createElement("text"), _el$44 = createElement("text"), _el$46 = createElement("box"), _el$47 = createElement("text"), _el$48 = createElement("text"), _el$50 = createElement("box"), _el$51 = createElement("text"), _el$52 = createElement("box"), _el$53 = createElement("text");
+							insertNode(_el$41, _el$42);
+							insertNode(_el$41, _el$44);
+							insertNode(_el$41, _el$46);
+							insertNode(_el$41, _el$48);
+							insertNode(_el$41, _el$50);
+							insertNode(_el$41, _el$52);
+							insertNode(_el$41, _el$53);
+							setProp(_el$41, "flexDirection", "row");
+							setProp(_el$41, "flexWrap", "wrap");
+							setProp(_el$41, "alignItems", "center");
+							setProp(_el$41, "flexShrink", 0);
+							setProp(_el$41, "rowGap", 1);
+							insertNode(_el$42, _el$43);
 							setProp(_el$42, "flexShrink", 0);
-							insertNode(_el$44, _el$45);
-							setProp(_el$44, "backgroundColor", "#262626");
+							setProp(_el$42, "onMouseDown", () => props.onSave?.());
+							setProp(_el$43, "fg", "#000000");
+							insert(_el$43, () => isPt() ? " Salvar " : " Save ");
+							insertNode(_el$44, createTextNode(`  `));
 							setProp(_el$44, "flexShrink", 0);
-							setProp(_el$44, "onMouseDown", () => props.onDiscard?.());
-							setProp(_el$45, "fg", "#ffffff");
-							insert(_el$45, () => isPt() ? " Descartar " : " Discard ");
-							insertNode(_el$46, createTextNode(`  `));
+							insertNode(_el$46, _el$47);
+							setProp(_el$46, "backgroundColor", "#262626");
 							setProp(_el$46, "flexShrink", 0);
-							insertNode(_el$48, _el$49);
-							setProp(_el$48, "backgroundColor", "#262626");
+							setProp(_el$46, "onMouseDown", () => props.onDiscard?.());
+							setProp(_el$47, "fg", "#ffffff");
+							insert(_el$47, () => isPt() ? " Descartar " : " Discard ");
+							insertNode(_el$48, createTextNode(`  `));
 							setProp(_el$48, "flexShrink", 0);
-							setProp(_el$48, "onMouseDown", () => props.onResetPage?.());
-							setProp(_el$49, "fg", "#ffffff");
-							insert(_el$49, () => isPt() ? " Redefinir página " : " Reset page ");
-							setProp(_el$50, "flexGrow", 1);
-							setProp(_el$50, "minWidth", 1);
-							setProp(_el$51, "flexShrink", 0);
-							insert(_el$51, () => isPt() ? "alterações não salvas" : "unsaved changes");
+							insertNode(_el$50, _el$51);
+							setProp(_el$50, "backgroundColor", "#262626");
+							setProp(_el$50, "flexShrink", 0);
+							setProp(_el$50, "onMouseDown", () => props.onResetPage?.());
+							setProp(_el$51, "fg", "#ffffff");
+							insert(_el$51, () => isPt() ? " Redefinir página " : " Reset page ");
+							setProp(_el$52, "flexGrow", 1);
+							setProp(_el$52, "minWidth", 1);
+							setProp(_el$53, "flexShrink", 0);
+							insert(_el$53, () => isPt() ? "alterações não salvas" : "unsaved changes");
 							effect((_p$) => {
 								var _v$9 = props.warn ?? "#fba970", _v$0 = props.muted, _v$1 = props.muted, _v$10 = props.warn ?? "#f59e0b";
-								_v$9 !== _p$.e && (_p$.e = setProp(_el$40, "backgroundColor", _v$9, _p$.e));
-								_v$0 !== _p$.t && (_p$.t = setProp(_el$42, "fg", _v$0, _p$.t));
-								_v$1 !== _p$.a && (_p$.a = setProp(_el$46, "fg", _v$1, _p$.a));
-								_v$10 !== _p$.o && (_p$.o = setProp(_el$51, "fg", _v$10, _p$.o));
+								_v$9 !== _p$.e && (_p$.e = setProp(_el$42, "backgroundColor", _v$9, _p$.e));
+								_v$0 !== _p$.t && (_p$.t = setProp(_el$44, "fg", _v$0, _p$.t));
+								_v$1 !== _p$.a && (_p$.a = setProp(_el$48, "fg", _v$1, _p$.a));
+								_v$10 !== _p$.o && (_p$.o = setProp(_el$53, "fg", _v$10, _p$.o));
 								return _p$;
 							}, {
 								e: void 0,
@@ -3535,17 +5594,17 @@ function SettingsWindow(props) {
 								a: void 0,
 								o: void 0
 							});
-							return _el$39;
+							return _el$41;
 						}
-					}), _el$52);
-					insert(_el$52, () => {
+					}), _el$54);
+					insert(_el$54, () => {
 						const currentRow = findRow(tab(), props.selectedId() ?? "");
 						if (currentRow?.cycle !== void 0) return isPt() ? "clique ou ›/←/→ alterar · ↑↓ selecionar · tab próxima aba · ctrl+s salvar · ctrl+r redefinir · esc fechar" : "click or ›/←/→ change · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close";
 						if (currentRow?.action !== void 0) return isPt() ? "enter ou espaço executar · ↑↓ selecionar · tab próxima aba · ctrl+s salvar · ctrl+r redefinir · esc fechar" : "enter or space run action · ↑↓ select · tab next tab · ctrl+s save · ctrl+r reset page · esc close";
 						return isPt() ? "[ref] política de referência (somente leitura) · ↑↓ selecionar · tab próxima aba · esc fechar" : "[ref] documented reference (read-only) · ↑↓ select · tab next tab · esc close";
 					});
-					effect((_$p) => setProp(_el$52, "fg", props.muted, _$p));
-					return _el$38;
+					effect((_$p) => setProp(_el$54, "fg", props.muted, _$p));
+					return _el$40;
 				})();
 			},
 			get children() {
@@ -3612,6 +5671,7 @@ function SettingsWindow(props) {
 	})();
 }
 let pageApi;
+let pendingInitialTabId;
 function createWindowController(context, exit) {
 	const currentVersion = resolveRunningVersion();
 	const workspaceDir = resolveWorkspaceDir(context);
@@ -3637,11 +5697,19 @@ function createWindowController(context, exit) {
 	const [draft, setDraft] = createSignal({});
 	const [notice, setNotice] = createSignal(void 0);
 	const [confirmExit, setConfirmExit] = createSignal(false);
+	const activeBundlePath = (() => {
+		try {
+			return fileURLToPath(import.meta.url);
+		} catch {
+			return;
+		}
+	})();
 	queueMicrotask(() => {
 		try {
 			const scan = scanLegacyArtifacts({
 				workspaceDir,
-				runningVersion: currentVersion
+				runningVersion: currentVersion,
+				...activeBundlePath ? { activeBundlePath } : {}
 			});
 			setLegacyAudit(scan.summary);
 		} catch {}
@@ -3703,7 +5771,6 @@ function createWindowController(context, exit) {
 			buildGatesTab(load(), lang, activeScope),
 			buildDecisionTab(decision(), process.env, readAuthProviders(), readConfigProviders(), lang),
 			buildPresetTab(presetInput(), lang),
-			buildQuotaTab(void 0, lang, readQuotaPrefs()),
 			buildTuiTab(tuiPrefs(), lang),
 			buildAutonomyTab({
 				goalLoop: goalLoop(),
@@ -3732,6 +5799,12 @@ function createWindowController(context, exit) {
 			})
 		];
 	};
+	if (pendingInitialTabId !== void 0) {
+		const requestedTab = pendingInitialTabId;
+		pendingInitialTabId = void 0;
+		const targetIdx = tabs().findIndex((tab) => tab.id === requestedTab);
+		if (targetIdx >= 0) setPage(targetIdx);
+	}
 	const rows = () => tabRows(tabs()[page()] ?? tabs()[0] ?? EMPTY_TAB);
 	const move = (delta) => {
 		if (confirmExit()) setConfirmExit(false);
@@ -3837,7 +5910,8 @@ function createWindowController(context, exit) {
 		try {
 			const scan = scanLegacyArtifacts({
 				workspaceDir,
-				runningVersion: currentVersion
+				runningVersion: currentVersion,
+				...activeBundlePath ? { activeBundlePath } : {}
 			});
 			setLegacyAudit(scan.summary);
 			const isPt = resolveLanguage(tuiPrefs().layout?.language) === "pt-BR";
@@ -3853,14 +5927,13 @@ function createWindowController(context, exit) {
 		setLegacyCleaning(true);
 		const isPt = resolveLanguage(tuiPrefs().layout?.language) === "pt-BR";
 		try {
-			const res = cleanLegacyArtifacts({
+			const auditOpts = {
 				workspaceDir,
-				runningVersion: currentVersion
-			});
-			const after = scanLegacyArtifacts({
-				workspaceDir,
-				runningVersion: currentVersion
-			});
+				runningVersion: currentVersion,
+				...activeBundlePath ? { activeBundlePath } : {}
+			};
+			const res = cleanLegacyArtifacts(auditOpts);
+			const after = scanLegacyArtifacts(auditOpts);
 			setLegacyAudit(after.summary);
 			setLoad(readOverridesLoad(workspaceDir));
 			const summaryMsg = isPt ? `limpos ${res.removed.length} item(ns) (${formatBytes(res.reclaimedBytes)}), ${res.migratedRecords} registro(s) migrado(s)` : `removed ${res.removed.length} item(s) (${formatBytes(res.reclaimedBytes)}), ${res.migratedRecords} record(s) migrated`;
@@ -4070,15 +6143,6 @@ function createWindowController(context, exit) {
 			return {
 				ok: false,
 				reason: "tui prefs storage unavailable"
-			};
-		}
-		if (id.startsWith("quota.")) try {
-			writeQuotaPrefs(applyQuotaRow(readQuotaPrefs(), id, value));
-			return { ok: true };
-		} catch {
-			return {
-				ok: false,
-				reason: "quota prefs disk write failed"
 			};
 		}
 		return {
@@ -4298,27 +6362,27 @@ function SettingsPage(props) {
 			return window();
 		},
 		get children() {
-			var _el$69 = createElement("box"), _el$70 = createElement("box"), _el$71 = createElement("box");
-			insertNode(_el$69, _el$70);
-			insertNode(_el$69, _el$71);
-			setProp(_el$69, "flexDirection", "row");
-			setProp(_el$69, "flexGrow", 1);
-			setProp(_el$69, "flexBasis", 0);
-			setProp(_el$69, "minHeight", 0);
-			setProp(_el$69, "width", "100%");
-			setProp(_el$70, "flexDirection", "column");
-			setProp(_el$70, "flexGrow", 1);
-			setProp(_el$70, "flexBasis", 0);
-			setProp(_el$70, "minHeight", 0);
-			setProp(_el$70, "minWidth", 0);
-			insert(_el$70, window);
-			setProp(_el$71, "width", 32);
-			setProp(_el$71, "flexShrink", 0);
-			setProp(_el$71, "border", true);
-			setProp(_el$71, "borderStyle", "single");
-			insert(_el$71, sidebar);
-			effect((_$p) => setProp(_el$71, "borderColor", theme.muted ?? "#333333", _$p));
-			return _el$69;
+			var _el$71 = createElement("box"), _el$72 = createElement("box"), _el$73 = createElement("box");
+			insertNode(_el$71, _el$72);
+			insertNode(_el$71, _el$73);
+			setProp(_el$71, "flexDirection", "row");
+			setProp(_el$71, "flexGrow", 1);
+			setProp(_el$71, "flexBasis", 0);
+			setProp(_el$71, "minHeight", 0);
+			setProp(_el$71, "width", "100%");
+			setProp(_el$72, "flexDirection", "column");
+			setProp(_el$72, "flexGrow", 1);
+			setProp(_el$72, "flexBasis", 0);
+			setProp(_el$72, "minHeight", 0);
+			setProp(_el$72, "minWidth", 0);
+			insert(_el$72, window);
+			setProp(_el$73, "width", 32);
+			setProp(_el$73, "flexShrink", 0);
+			setProp(_el$73, "border", true);
+			setProp(_el$73, "borderStyle", "single");
+			insert(_el$73, sidebar);
+			effect((_$p) => setProp(_el$73, "borderColor", theme.muted ?? "#333333", _$p));
+			return _el$71;
 		}
 	});
 }
@@ -4352,7 +6416,7 @@ function openSettingsDialog(context) {
 	setDialogOpen(true);
 	pageApi = controller.api;
 	const rendererHeight = () => context.renderer?.height ?? 30;
-	const maxHeight = () => Math.min(16, Math.max(8, Math.floor(rendererHeight() * .55)));
+	const maxHeight = () => Math.min(28, Math.max(14, Math.floor(rendererHeight() * .78)));
 	try {
 		context.ui.dialog.show(() => createComponent(SettingsWindow, {
 			get version() {
@@ -4400,7 +6464,7 @@ function openSettingsDialog(context) {
 			onCancelExit: () => controller.api.cancelExit?.()
 		}), close);
 		context.ui.dialog.set({
-			size: "medium",
+			size: "large",
 			centered: true
 		});
 	} catch {}
@@ -4649,7 +6713,7 @@ function setupPantheonSettings(context, options) {
 		{
 			id: "pantheon.settings.next.tab",
 			title: "Next settings tab",
-			bind: "tab",
+			bind: "tab,]",
 			run: () => {
 				pageApi?.nextTab();
 			}
@@ -4657,7 +6721,7 @@ function setupPantheonSettings(context, options) {
 		{
 			id: "pantheon.settings.prev.tab",
 			title: "Previous settings tab",
-			bind: "shift+tab",
+			bind: "shift+tab,[",
 			run: () => {
 				pageApi?.prevTab?.();
 			}
@@ -4712,10 +6776,12 @@ function setupPantheonSettings(context, options) {
 		}));
 	} catch {}
 }
-async function openPantheonSettings(context) {
+async function openPantheonSettings(context, options = {}) {
+	if (options.initialTab) pendingInitialTabId = options.initialTab;
+	const sessionID = context?.sessionID ?? routeSessionID(context) ?? activeSessionId();
 	try {
 		const viewMode = tuiPrefs().layout?.settingsView ?? "docked";
-		if (viewMode === "fullscreen" && routerAvailable && context.ui?.router?.navigate) {
+		if (viewMode !== "dialog" && (viewMode === "fullscreen" || !sessionID) && routerAvailable && context.ui?.router?.navigate) {
 			let returnRoute;
 			try {
 				const current = context.ui.router.current();
@@ -4735,17 +6801,30 @@ async function openPantheonSettings(context) {
 			return;
 		}
 	} catch {}
-	if (!(context?.sessionID ?? routeSessionID(context) ?? activeSessionId())) {
-		try {
-			context.ui?.toast?.show?.({
-				variant: "info",
-				title: "Pantheon",
-				message: "Open a session first: Pantheon settings opens above the prompt box."
-			});
-		} catch {}
+	if (!sessionID) {
+		openSettingsDialog(context);
 		return;
 	}
 	if (settingsOpen()) {
+		if (options.initialTab && pageApi) {
+			const targetIdx = [
+				"gates",
+				"decision",
+				"preset",
+				"tui",
+				"autonomy",
+				"j1",
+				"updates",
+				"changelog",
+				"doctor",
+				"about"
+			].indexOf(options.initialTab);
+			if (targetIdx >= 0) {
+				pendingInitialTabId = void 0;
+				pageApi.jumpTab(targetIdx);
+				return;
+			}
+		}
 		closePantheonSettings();
 		return;
 	}
@@ -5032,9 +7111,9 @@ function paginateWhatsNewLines(lines, pageSize = 14) {
 * (both host-initiated and local close binds) must funnel into marking seen.
 */
 async function openWhatsNew(input) {
-	const { version, statePath, changelogText, show } = input;
+	const { version, statePath, changelogText, show, force = false } = input;
 	if (typeof version !== "string" || version.trim() === "") return false;
-	if (!await shouldShowWhatsNew(version, statePath)) return false;
+	if (!force && !await shouldShowWhatsNew(version, statePath)) return false;
 	const lines = whatsNewLines(changelogText ? extractHighlights(changelogText, version) : { ...EMPTY_HIGHLIGHTS });
 	if (lines.length === 0) return false;
 	const pages = paginateWhatsNewLines(lines);
@@ -5084,6 +7163,7 @@ async function openWhatsNew(input) {
 */
 /** Window body: title, rule, the current page (wrapped), footer action bar with OK button. */
 function WhatsNewContent(props) {
+	const isPt = () => props.isPt ?? resolveLanguage(tuiPrefs().layout?.language) === "pt-BR";
 	const rows = () => {
 		const current = props.data.pages[Math.min(props.page(), props.pageCount() - 1)] ?? [];
 		const wrapped = [];
@@ -5091,7 +7171,7 @@ function WhatsNewContent(props) {
 		return wrapped;
 	};
 	return (() => {
-		var _el$ = createElement("box"), _el$2 = createElement("box"), _el$3 = createElement("box"), _el$4 = createElement("box"), _el$5 = createElement("text"), _el$7 = createElement("text"), _el$8 = createElement("box"), _el$9 = createElement("text"), _el$1 = createElement("box"), _el$10 = createElement("text"), _el$12 = createElement("box"), _el$13 = createElement("box"), _el$14 = createElement("text"), _el$16 = createElement("box"), _el$17 = createElement("box"), _el$25 = createElement("text"), _el$27 = createElement("box"), _el$28 = createElement("text");
+		var _el$ = createElement("box"), _el$2 = createElement("box"), _el$3 = createElement("box"), _el$4 = createElement("box"), _el$5 = createElement("text"), _el$7 = createElement("text"), _el$8 = createElement("box"), _el$9 = createElement("text"), _el$1 = createElement("box"), _el$10 = createElement("text"), _el$12 = createElement("box"), _el$13 = createElement("box"), _el$14 = createElement("text"), _el$16 = createElement("box"), _el$17 = createElement("box"), _el$23 = createElement("text"), _el$24 = createElement("box"), _el$25 = createElement("text");
 		insertNode(_el$, _el$2);
 		insertNode(_el$, _el$1);
 		insertNode(_el$, _el$12);
@@ -5116,14 +7196,19 @@ function WhatsNewContent(props) {
 		setProp(_el$4, "paddingLeft", 1);
 		setProp(_el$4, "paddingRight", 1);
 		setProp(_el$4, "marginRight", 1);
+		setProp(_el$4, "flexShrink", 0);
 		insertNode(_el$5, createTextNode(`NOVIDADES`));
 		setProp(_el$5, "fg", "#000000");
 		setProp(_el$5, "attributes", 1);
+		setProp(_el$5, "wrapMode", "none");
 		setProp(_el$7, "attributes", 1);
+		setProp(_el$7, "wrapMode", "none");
 		insert(_el$7, () => props.data.title);
 		insertNode(_el$8, _el$9);
+		setProp(_el$8, "flexShrink", 0);
 		setProp(_el$8, "onMouseDown", () => props.onClose?.());
 		insertNode(_el$9, createTextNode(`[ Esc / Q ]`));
+		setProp(_el$9, "wrapMode", "none");
 		insertNode(_el$1, _el$10);
 		setProp(_el$1, "flexDirection", "row");
 		setProp(_el$1, "height", 1);
@@ -5139,12 +7224,12 @@ function WhatsNewContent(props) {
 			children: (line) => {
 				const isBullet = line.startsWith("• ");
 				return (() => {
-					var _el$30 = createElement("text");
-					spread(_el$30, mergeProps({ get fg() {
+					var _el$26 = createElement("text");
+					spread(_el$26, mergeProps({ get fg() {
 						return isBullet ? props.fg : props.muted;
 					} }, isBullet ? { attributes: 1 } : {}), true);
-					insert(_el$30, line);
-					return _el$30;
+					insert(_el$26, line);
+					return _el$26;
 				})();
 			}
 		}));
@@ -5154,12 +7239,12 @@ function WhatsNewContent(props) {
 		setProp(_el$13, "marginTop", 1);
 		insertNode(_el$14, createTextNode(`────────────────────────────────────────────────────────────────────────`));
 		insertNode(_el$16, _el$17);
-		insertNode(_el$16, _el$27);
+		insertNode(_el$16, _el$24);
 		setProp(_el$16, "flexDirection", "row");
 		setProp(_el$16, "alignItems", "center");
 		setProp(_el$16, "justifyContent", "space-between");
 		setProp(_el$16, "marginTop", 1);
-		insertNode(_el$17, _el$25);
+		insertNode(_el$17, _el$23);
 		setProp(_el$17, "flexDirection", "row");
 		setProp(_el$17, "alignItems", "center");
 		insert(_el$17, createComponent(Show, {
@@ -5176,40 +7261,40 @@ function WhatsNewContent(props) {
 						setProp(_el$18, "paddingRight", 1);
 						setProp(_el$18, "marginRight", 1);
 						setProp(_el$18, "onMouseDown", () => props.onPrev?.());
-						insertNode(_el$19, createTextNode(`‹ Prev`));
 						setProp(_el$19, "fg", "#ffffff");
+						insert(_el$19, () => isPt() ? "‹ Anterior" : "‹ Prev");
 						return _el$18;
 					})(),
 					(() => {
-						var _el$21 = createElement("text");
-						setProp(_el$21, "marginRight", 1);
-						insert(_el$21, () => `${props.page() + 1} / ${props.pageCount()}`);
-						effect((_$p) => setProp(_el$21, "fg", props.muted, _$p));
-						return _el$21;
+						var _el$20 = createElement("text");
+						setProp(_el$20, "marginRight", 1);
+						insert(_el$20, () => `${props.page() + 1} / ${props.pageCount()}`);
+						effect((_$p) => setProp(_el$20, "fg", props.muted, _$p));
+						return _el$20;
 					})(),
 					(() => {
-						var _el$22 = createElement("box"), _el$23 = createElement("text");
-						insertNode(_el$22, _el$23);
-						setProp(_el$22, "backgroundColor", "#262626");
-						setProp(_el$22, "paddingLeft", 1);
-						setProp(_el$22, "paddingRight", 1);
-						setProp(_el$22, "marginRight", 1);
-						setProp(_el$22, "onMouseDown", () => props.onNext?.());
-						insertNode(_el$23, createTextNode(`Next ›`));
-						setProp(_el$23, "fg", "#ffffff");
-						return _el$22;
+						var _el$21 = createElement("box"), _el$22 = createElement("text");
+						insertNode(_el$21, _el$22);
+						setProp(_el$21, "backgroundColor", "#262626");
+						setProp(_el$21, "paddingLeft", 1);
+						setProp(_el$21, "paddingRight", 1);
+						setProp(_el$21, "marginRight", 1);
+						setProp(_el$21, "onMouseDown", () => props.onNext?.());
+						setProp(_el$22, "fg", "#ffffff");
+						insert(_el$22, () => isPt() ? "Próxima ›" : "Next ›");
+						return _el$21;
 					})()
 				];
 			}
-		}), _el$25);
-		insertNode(_el$25, createTextNode(`Enter / Esc / Q close`));
-		insertNode(_el$27, _el$28);
-		setProp(_el$27, "paddingLeft", 2);
-		setProp(_el$27, "paddingRight", 2);
-		setProp(_el$27, "onMouseDown", () => props.onClose?.());
-		insertNode(_el$28, createTextNode(`OK, Got it`));
-		setProp(_el$28, "fg", "#000000");
-		setProp(_el$28, "attributes", 1);
+		}), _el$23);
+		insert(_el$23, () => isPt() ? "Enter / Esc / Q fechar" : "Enter / Esc / Q close");
+		insertNode(_el$24, _el$25);
+		setProp(_el$24, "paddingLeft", 2);
+		setProp(_el$24, "paddingRight", 2);
+		setProp(_el$24, "onMouseDown", () => props.onClose?.());
+		setProp(_el$25, "fg", "#000000");
+		setProp(_el$25, "attributes", 1);
+		insert(_el$25, () => isPt() ? "OK, Entendido" : "OK, Got it");
 		effect((_p$) => {
 			var _v$ = props.warn ?? "#fba970", _v$2 = props.warn ?? "#fba970", _v$3 = props.fg, _v$4 = props.muted, _v$5 = props.muted, _v$6 = props.muted, _v$7 = props.muted, _v$8 = props.warn ?? "#fba970";
 			_v$ !== _p$.e && (_p$.e = setProp(_el$, "borderColor", _v$, _p$.e));
@@ -5218,8 +7303,8 @@ function WhatsNewContent(props) {
 			_v$4 !== _p$.o && (_p$.o = setProp(_el$9, "fg", _v$4, _p$.o));
 			_v$5 !== _p$.i && (_p$.i = setProp(_el$10, "fg", _v$5, _p$.i));
 			_v$6 !== _p$.n && (_p$.n = setProp(_el$14, "fg", _v$6, _p$.n));
-			_v$7 !== _p$.s && (_p$.s = setProp(_el$25, "fg", _v$7, _p$.s));
-			_v$8 !== _p$.h && (_p$.h = setProp(_el$27, "backgroundColor", _v$8, _p$.h));
+			_v$7 !== _p$.s && (_p$.s = setProp(_el$23, "fg", _v$7, _p$.s));
+			_v$8 !== _p$.h && (_p$.h = setProp(_el$24, "backgroundColor", _v$8, _p$.h));
 			return _p$;
 		}, {
 			e: void 0,
@@ -5236,9 +7321,10 @@ function WhatsNewContent(props) {
 }
 /**
 * Entry glue: resolve version + shipped CHANGELOG.md, then show the window
-* through the host dialog stack once. Never throws.
+* through the host dialog stack once (or on demand when `options.force` is set).
+* Never throws.
 */
-async function maybeShowWhatsNew(context) {
+async function maybeShowWhatsNew(context, options = {}) {
 	try {
 		const version = await resolveRunningVersion$1(import.meta.url);
 		if (!version) return;
@@ -5297,6 +7383,7 @@ async function maybeShowWhatsNew(context) {
 			version,
 			statePath,
 			changelogText,
+			force: options.force === true,
 			show: (render, onClose) => {
 				const close = () => {
 					setOpen(false);
@@ -5329,6 +7416,10 @@ async function maybeShowWhatsNew(context) {
 						onNext: () => setPage((current) => Math.min(current + 1, pageCount() - 1)),
 						onPrev: () => setPage((current) => Math.max(current - 1, 0))
 					}), close);
+					context.ui.dialog.set({
+						size: "large",
+						centered: true
+					});
 				} catch {}
 			}
 		});
@@ -5374,7 +7465,19 @@ const SIDEBAR_REFRESH_EVENTS = [
 	"session.moved",
 	"session.idle",
 	"session.status",
-	"session.deleted"
+	"session.deleted",
+	"session.execution.started",
+	"session.execution.succeeded",
+	"session.execution.failed",
+	"session.execution.interrupted",
+	"session.message.content.updated",
+	"session.tool.input.started",
+	"session.tool.called",
+	"session.tool.success",
+	"session.tool.failed",
+	"session.step.ended",
+	"session.usage.updated",
+	"session.permissions"
 ];
 /** One `overrides.agents[<agent>]` entry from active-preset.json. */
 /** The override map the CLI wrote into active-preset.json. */
@@ -5959,27 +8062,175 @@ function formatTokenAnatomySplit(anatomy) {
 		think
 	};
 }
-/** Conta chamadas de ferramentas e eventuais falhas/erros. Pure. */
-function countToolCalls(messages) {
+const TOOL_DOMAIN_ORDER = [
+	"mem",
+	"ctx",
+	"code",
+	"edit",
+	"read",
+	"shell",
+	"agent",
+	"mcp"
+];
+function normalizeToolName(part) {
+	return (typeof part?.name === "string" ? part.name : typeof part?.tool === "string" ? part.tool : "").trim();
+}
+/** Extrai chamadas `tools.<nome>(...)` de dentro do Code Mode (`execute` / `search`)
+*  para revelar a tool real do Pantheon/OpenCode usada. Pure. */
+function resolveEffectiveToolNames(part) {
+	const outer = normalizeToolName(part);
+	if (outer === "") return [];
+	if (outer.toLowerCase() === "execute") {
+		const code = part?.state?.input?.code;
+		if (typeof code === "string" && code !== "") {
+			const inner = [];
+			for (const match of code.matchAll(/\btools\.([a-zA-Z0-9_]+)\s*\(/g)) if (match[1]) inner.push(match[1]);
+			if (inner.length > 0) return inner;
+		}
+	}
+	return [outer];
+}
+function extractToolFilePaths(part) {
+	const found = [];
+	const input = part?.state?.input && typeof part.state.input === "object" ? part.state.input : null;
+	if (!input) return found;
+	for (const candidate of [
+		input.file,
+		input.path,
+		input.filePath,
+		input.target
+	]) {
+		const base = fileBasename(candidate);
+		if (base && !found.includes(base)) found.push(base);
+	}
+	if (typeof input.code === "string" && input.code !== "") for (const match of input.code.matchAll(/\b(?:file|path|filePath|target)\s*:\s*["']([^"']+)["']/g)) {
+		const base = fileBasename(match[1]);
+		if (base && !found.includes(base)) found.push(base);
+	}
+	return found;
+}
+function isToolFailureState(state) {
+	return state?.status === "error" || state?.status === "failed" || state?.error !== void 0 || typeof state?.exitCode === "number" && state.exitCode !== 0;
+}
+function isToolActiveState(state) {
+	return state?.status === "running" || state?.status === "pending" || state?.status === "streaming";
+}
+/** Classifica uma tool (nativa, OpenCode ou MCP externa) em domínio curto e
+*  verbo de 3–4 caracteres para Sidebar/Dispatch. Pure. */
+function classifyToolPart(rawName) {
+	const name = typeof rawName === "string" ? rawName.trim().toLowerCase() : "";
+	if (name === "") return {
+		domain: "agent",
+		verb: "tool"
+	};
+	if (name === "question") return {
+		domain: "agent",
+		verb: "ask"
+	};
+	if (name.startsWith("memory_")) return {
+		domain: "mem",
+		verb: "mem"
+	};
+	if (name.startsWith("context_") || name.startsWith("goal_") || name === "pantheon_step_ledger" || name === "todowrite" || name === "todoread") return {
+		domain: "ctx",
+		verb: name.startsWith("todo") ? "todo" : "ctx"
+	};
+	if (name.startsWith("code_")) return {
+		domain: "code",
+		verb: "code"
+	};
+	if (name === "hashline_edit" || name === "edit" || name === "edit_file" || name === "write" || name === "write_file" || name === "patch") return {
+		domain: "edit",
+		verb: "edit"
+	};
+	if (name === "read" || name === "read_file" || name === "glob" || name === "grep" || name === "list") return {
+		domain: "read",
+		verb: "read"
+	};
+	if (name === "shell" || name === "bash" || name === "run_command" || name === "execute") return {
+		domain: "shell",
+		verb: name === "execute" ? "exec" : "bash"
+	};
+	if (name === "pantheon_deepwork") return {
+		domain: "agent",
+		verb: "plan"
+	};
+	if (name === "subagent" || name.startsWith("pantheon_") || name === "vision" || name === "webfetch" || name === "websearch" || name === "search") return {
+		domain: "agent",
+		verb: name.startsWith("web") ? "web" : "agnt"
+	};
+	if (name.includes("_") && !name.startsWith("pantheon_")) return {
+		domain: "mcp",
+		verb: "mcp"
+	};
+	return {
+		domain: "agent",
+		verb: "tool"
+	};
+}
+/** Resume chamadas de ferramentas por domínio nativo + tool em execução. Pure. */
+function summarizeToolDomains(messages) {
+	const byDomain = {};
 	if (!Array.isArray(messages)) return {
 		total: 0,
-		failures: 0
+		failures: 0,
+		byDomain,
+		activeTool: null
 	};
 	let total = 0;
 	let failures = 0;
+	let activeTool = null;
 	for (const message of messages) {
 		if (message?.type !== "assistant" || !Array.isArray(message.content)) continue;
 		for (const part of message.content) {
 			if (part?.type !== "tool") continue;
 			total++;
 			const state = part.state;
-			if (state?.status === "error" || state?.status === "failed" || state?.error !== void 0 || typeof state?.exitCode === "number" && state.exitCode !== 0) failures++;
+			if (isToolFailureState(state)) failures++;
+			const effectiveNames = resolveEffectiveToolNames(part);
+			for (const toolName of effectiveNames) {
+				const { domain } = classifyToolPart(toolName);
+				byDomain[domain] = (byDomain[domain] ?? 0) + 1;
+			}
+			if (isToolActiveState(state) && effectiveNames.length > 0) activeTool = effectiveNames[effectiveNames.length - 1] ?? null;
 		}
 	}
 	return {
 		total,
+		failures,
+		byDomain,
+		activeTool
+	};
+}
+/** Conta chamadas de ferramentas e eventuais falhas/erros. Pure. */
+function countToolCalls(messages) {
+	const { total, failures } = summarizeToolDomains(messages);
+	return {
+		total,
 		failures
 	};
+}
+/** Formata a quebra compacta por domínio (`mem:2 ctx:1 code:1 · ✦ memory_search`)
+*  para caber na largura da sidebar. Retorna null sem dados. Pure. */
+function formatToolDomainLine(summary, max = 34) {
+	if (!summary) return null;
+	const chunks = [];
+	for (const domain of TOOL_DOMAIN_ORDER) {
+		const count = summary.byDomain?.[domain] ?? 0;
+		if (count > 0) chunks.push(`${domain}:${count}`);
+	}
+	const active = typeof summary.activeTool === "string" && summary.activeTool.trim() !== "" ? `\u2726 ${summary.activeTool.trim()}` : null;
+	if (chunks.length === 0 && !active) return null;
+	const joined = chunks.join(" ");
+	const raw = active ? joined ? `${joined} \u00B7 ${active}` : active : joined;
+	if (cellWidth(raw) <= max) return raw;
+	if (active) {
+		const activeFit = truncateLabel(active, max);
+		const remaining = max - cellWidth(activeFit) - 3;
+		if (remaining >= 5 && joined !== "") return `${truncateLabel(joined, remaining)} \u00B7 ${activeFit}`;
+		return activeFit;
+	}
+	return truncateLabel(raw, max);
 }
 function formatToolCallLine(summary, locale = "en") {
 	if (!summary || summary.total === 0) return null;
@@ -6266,10 +8517,16 @@ function latestTodoItems(messages) {
 		const parts = message.content;
 		for (let position = parts.length - 1; position >= 0; position--) {
 			const part = parts[position];
-			if (part?.type !== "tool" || part?.name !== "todowrite") continue;
+			if (part?.type !== "tool") continue;
 			if (part?.state?.status !== "completed") continue;
-			const items = parseTodoItems(part.state.input);
-			return items.length === 0 ? null : items;
+			if (part?.name === "todowrite") {
+				const items = parseTodoItems(part.state.input);
+				return items.length === 0 ? null : items;
+			}
+			if (part?.name === "execute" && resolveEffectiveToolNames(part).includes("todowrite")) {
+				const fromOutput = parseTodoItems(part.state.output);
+				if (fromOutput.length > 0) return fromOutput;
+			}
 		}
 	}
 	return null;
@@ -6723,6 +8980,74 @@ function collectSubagentCalls(messages) {
 	}
 	return calls;
 }
+/** Atividade em tempo real extraída das mensagens em cache de um subagente. */
+function fileBasename(raw) {
+	if (typeof raw !== "string") return null;
+	const trimmed = raw.trim();
+	if (trimmed === "") return null;
+	const parts = trimmed.replaceAll("\\", "/").split("/").filter(Boolean);
+	return parts.length > 0 ? parts[parts.length - 1] ?? null : null;
+}
+/** Extrai atividade ao vivo, alertas de bloqueio e histórico recente de um filho
+*  a partir de suas mensagens em cache. Pure, fail-open. */
+function extractChildActivity(messages, status, hostAttention) {
+	let activeTool = null;
+	let activeVerb = null;
+	let latestTool = null;
+	let latestVerb = null;
+	let attention = hostAttention?.permission ? "permission" : hostAttention?.question ? "question" : status === "error" || status === "failed" ? "error" : null;
+	const recentTools = [];
+	const filesTouched = [];
+	let lastSnippet = null;
+	if (Array.isArray(messages)) for (const message of messages) {
+		if (message?.type !== "assistant" || !Array.isArray(message.content)) continue;
+		for (const part of message.content) {
+			if (part?.type === "text" && typeof part.text === "string") {
+				const clean = part.text.replace(/\s+/g, " ").trim();
+				if (clean !== "") lastSnippet = clean;
+				continue;
+			}
+			if (part?.type !== "tool") continue;
+			const effectiveNames = resolveEffectiveToolNames(part);
+			if (effectiveNames.length === 0) continue;
+			const name = effectiveNames[effectiveNames.length - 1] ?? "";
+			const state = part.state;
+			const { verb } = classifyToolPart(name);
+			latestTool = name;
+			latestVerb = verb;
+			for (const toolName of effectiveNames) {
+				const existingIdx = recentTools.indexOf(toolName);
+				if (existingIdx !== -1) recentTools.splice(existingIdx, 1);
+				recentTools.unshift(toolName);
+				if (recentTools.length > 4) recentTools.pop();
+			}
+			for (const base of extractToolFilePaths(part)) if (!filesTouched.includes(base)) {
+				filesTouched.unshift(base);
+				if (filesTouched.length > 3) filesTouched.pop();
+			}
+			if (isToolActiveState(state)) {
+				activeTool = name;
+				activeVerb = verb;
+				if (name.toLowerCase() === "question") attention = "question";
+			} else if (attention === null && isToolFailureState(state) && (status === "error" || status === "failed" || status === "retry")) attention = "error";
+		}
+	}
+	if (attention === "question" || attention === "permission") activeVerb = "ask";
+	else if (attention === "error") activeVerb = "err";
+	else if (activeVerb === null && (status === "running" || status === "busy")) {
+		activeVerb = latestVerb;
+		activeTool = latestTool;
+	}
+	if (activeVerb === null && activeTool === null && attention === null && recentTools.length === 0 && filesTouched.length === 0 && lastSnippet === null) return null;
+	return {
+		activeVerb,
+		activeTool,
+		attention,
+		recentTools,
+		filesTouched,
+		lastSnippet
+	};
+}
 /** Grace window for a child that has not started yet. V2's `session.status()`
 *  returns `idle` both for "created but not started" and for "finished", so an
 *  idle/unknown/absent child whose own last activity (`time.updated`, falling
@@ -6861,12 +9186,16 @@ function dispatchTokens(tokens) {
 /** One child `SessionInfo` + its live status → `DispatchEntry`. The call only
 *  ever adds the kind and the description; an absent one leaves the entry fully
 *  renderable. Pure. */
-function toDispatchEntry(child, status, now = Date.now(), call) {
+function toDispatchEntry(child, status, now = Date.now(), call, activity) {
 	const title = typeof child?.title === "string" && child.title !== "" ? child.title : null;
 	const parentID = typeof child?.parentID === "string" && child.parentID !== "" ? child.parentID : null;
 	const description = typeof call?.description === "string" && call.description !== "" ? call.description : null;
+	const baseView = toDelegationView(child, status, now, call);
 	return {
-		view: toDelegationView(child, status, now, call),
+		view: activity ? {
+			...baseView,
+			activity
+		} : baseView,
 		title,
 		description,
 		parentID,
@@ -6905,9 +9234,44 @@ function collectDispatch(context, sessionID, options = {}) {
 			continue;
 		}
 		if (!child) continue;
-		entries.push(toDispatchEntry(child, sessionStatusOf(context, childID), now, calls.get(childID) ?? null));
+		const status = sessionStatusOf(context, childID);
+		let hasPerm = false;
+		let hasQuest = false;
+		try {
+			const perms = context?.data?.session?.permission?.(childID);
+			if (Array.isArray(perms) && perms.length > 0) hasPerm = true;
+		} catch {}
+		try {
+			const quests = context?.data?.session?.question?.(childID);
+			if (Array.isArray(quests) && quests.length > 0) hasQuest = true;
+		} catch {}
+		let activity = options.activities?.get(childID) ?? null;
+		if (activity === null && options.includeChildActivity === true) activity = extractChildActivity(readSessionMessages(context, childID), status, {
+			permission: hasPerm,
+			question: hasQuest
+		});
+		else if (hasPerm || hasQuest) activity = extractChildActivity(void 0, status, {
+			permission: hasPerm,
+			question: hasQuest
+		}) ?? activity;
+		entries.push(toDispatchEntry(child, status, now, calls.get(childID) ?? null, activity));
 	}
 	return entries.sort((a, b) => compareDelegations(a.view, b.view));
+}
+/** Enrich pre-collected dispatch entries with live child activity from cached
+*  child transcripts (used by the full-width dispatch panel). */
+function enrichDispatchEntries(context, entries) {
+	return entries.map((entry) => {
+		if (entry.view.activity) return entry;
+		const activity = extractChildActivity(readSessionMessages(context, entry.view.id), sessionStatusOf(context, entry.view.id));
+		return activity ? {
+			...entry,
+			view: {
+				...entry.view,
+				activity
+			}
+		} : entry;
+	});
 }
 /** Sidebar blocks in render order. Spacing is derived from this list instead of
 *  from the view, so a hidden block can never leave an empty gap behind.
@@ -7052,6 +9416,21 @@ function dispatchTotalCost(views) {
 	}
 	return total;
 }
+function effectiveChildPresentation(view, frame = 0) {
+	const act = view.activity;
+	const attention = act?.attention ?? null;
+	const tone = attention === "error" ? "error" : attention === "question" || attention === "permission" ? "warning" : "success";
+	const marker = attention === "error" ? "! " : attention === "question" || attention === "permission" ? "? " : `${spinnerFrame(frame)} `;
+	let suffix = dispatchKindSuffix(view.kind, view.background);
+	if (attention === "question" || attention === "permission") suffix = `${DISPATCH_KIND_SEPARATOR}ask${view.background === true ? DISPATCH_BACKGROUND_MARKER : ""}`;
+	else if (attention === "error") suffix = `${DISPATCH_KIND_SEPARATOR}err${view.background === true ? DISPATCH_BACKGROUND_MARKER : ""}`;
+	else if ((view.kind === null || view.kind === "oth") && act?.activeVerb) suffix = `${DISPATCH_KIND_SEPARATOR}${act.activeVerb}${view.background === true ? DISPATCH_BACKGROUND_MARKER : ""}`;
+	return {
+		marker,
+		suffix,
+		tone
+	};
+}
 /** One live child: `⠸ <agent 12>·<kind> <custo> <duração>`, with the model as a
 *  fourth column only when the row still fits and the child is unclassified —
 *  the kind is the stronger evidence at this width, so it takes the model's
@@ -7060,11 +9439,10 @@ function dispatchTotalCost(views) {
 *  below `DISPATCH_MIN_AGENT_WIDTH`); the cost is always present — `$0.00` for a
 *  zero cost, an em dash for a missing one. Pure. */
 function runningChildRowText(view, now = Date.now(), frame = 0, max = 34) {
-	const marker = `${spinnerFrame(frame)} `;
+	const { marker, suffix } = effectiveChildPresentation(view, frame);
 	const duration = dispatchElapsed(view, now).padStart(5);
 	const cost = formatDispatchCost(view.cost).padStart(5);
 	const model = dispatchModelText(view);
-	const suffix = dispatchKindSuffix(view.kind, view.background);
 	const limit = Math.max(1, max);
 	const row = (agentWidth, withModel, withSuffix = true) => {
 		const kind = withSuffix ? suffix : "";
@@ -7180,7 +9558,7 @@ function failedSuffixText(failures) {
 	const rounded = Math.round(count);
 	return `${rounded} ${rounded === 1 ? "falha" : "falhas"}`;
 }
-/** One rendered live row: its text plus the session it navigates to. */
+/** One rendered live row: its text, attention tone and session id. */
 /** Everything the `Dispatch` block renders, already joined and capped. */
 /** Newest activity first, so the live rows that just moved lead the section.
 *  Pure. */
@@ -7205,7 +9583,8 @@ function buildDispatchBlock(views, now = Date.now(), frame = 0, max = 34) {
 	const runningHidden = running.length - runningSlots;
 	const runningLines = running.map((view) => ({
 		id: view.id,
-		text: runningChildRowText(view, now, frame, max)
+		text: runningChildRowText(view, now, frame, max),
+		tone: effectiveChildPresentation(view, frame).tone
 	}));
 	const summary = completedSummaryText(finished.length, finishedCost, groups.length);
 	const runningRows = runningSlots + (runningHidden > 0 ? 1 : 0);
@@ -7353,7 +9732,7 @@ function dispatchPanelRowText(entry, options = {}) {
 	const costText = formatDispatchCost(view.cost);
 	const costWidth = Math.max(7, cellWidth(costText));
 	const agentWidth = Math.max(6, Math.min(12, width - (DISPATCH_PANEL_ROW_FIXED_WIDTH + costWidth)));
-	return `${dispatchPanelMarker(view.state, frame)}${dispatchPanelCell(dispatchAgentText(view, 12), agentWidth)} ${dispatchPanelCell(view.kind, 4)} ${costText.padStart(costWidth)}${truncateLabel(dispatchElapsed(view, now), 8).padStart(8)}`;
+	return `${view.activity?.attention === "error" ? "! " : view.activity?.attention === "question" || view.activity?.attention === "permission" ? "? " : dispatchPanelMarker(view.state, frame)}${dispatchPanelCell(dispatchAgentText(view, 12), agentWidth)} ${dispatchPanelCell(view.activity?.attention === "question" || view.activity?.attention === "permission" ? "ask" : view.activity?.attention === "error" ? "err" : (view.kind === null || view.kind === "oth") && view.activity?.activeVerb ? view.activity.activeVerb : view.kind, 4)} ${costText.padStart(costWidth)}${truncateLabel(dispatchElapsed(view, now), 8).padStart(8)}`;
 }
 /** `ses_ab12cd`, short enough for a detail line. Full id when it already fits. */
 function shortSessionID(id, max = 10) {
@@ -7387,6 +9766,20 @@ function dispatchPanelDetail(entry, options = {}) {
 	lines.push(truncateLabel(dispatchTokenLine(entry.tokens), max));
 	const origin = DISPATCH_KIND_ORIGIN_LABELS[view.kindOrigin] ?? DISPATCH_KIND_ORIGIN_LABELS.unavailable;
 	lines.push(truncateLabel(`kind ${view.kind ?? "—"} (${origin})${SPEND_LINE_SEPARATOR}parent ${entry.parentID ?? "—"}`, max));
+	const activity = view.activity;
+	if (activity) {
+		if (activity.attention === "question") lines.push(truncateLabel("status ? aguardando resposta do usuário", max));
+		else if (activity.attention === "permission") lines.push(truncateLabel("status ? aguardando permissão", max));
+		else if (activity.attention === "error") lines.push(truncateLabel("status ! erro na execução", max));
+		else if (activity.activeTool) lines.push(truncateLabel(`status \u2726 ${activity.activeTool}`, max));
+		const toolsText = activity.recentTools.length > 0 ? activity.recentTools.join(", ") : "";
+		const filesText = activity.filesTouched.length > 0 ? activity.filesTouched.join(", ") : "";
+		if (toolsText || filesText) {
+			const joined = [toolsText, filesText].filter(Boolean).join(SPEND_LINE_SEPARATOR);
+			lines.push(truncateLabel(`tools ${joined}`, max));
+		}
+		if (activity.lastSnippet) lines.push(truncateLabel(`\u21B3 ${activity.lastSnippet}`, max));
+	}
 	return lines;
 }
 /** Panel geometry for its input width: wide (≥72) puts the detail in a second
@@ -7618,7 +10011,7 @@ function createDispatchPanelModel(context, panel) {
 	const entries = createMemo(() => {
 		revision();
 		if (!isOpen()) return [];
-		return collectDispatch(context, activeSessionID());
+		return enrichDispatchEntries(context, collectDispatch(context, activeSessionID()));
 	});
 	const layout = createMemo(() => dispatchPanelLayout(panel().width));
 	const rows = createMemo(() => {
@@ -7826,7 +10219,7 @@ function updateCheckStateFile() {
 *  version via toast, and keeps the persistent Home/Sidebar badge updated. */
 async function checkForPantheonUpdate(context) {
 	const { statePath, readState } = updateCheckStateFile();
-	const currentVersion = "2.2.0-beta.11";
+	const currentVersion = "2.2.0";
 	const initialState = readState();
 	setAvailableUpdateVersion(resolveCachedAvailableUpdate(currentVersion, initialState));
 	const nowMs = Date.now();
@@ -8228,6 +10621,7 @@ function createSidebarModel(context, sessionID, gitExec = defaultGitExec) {
 		const rootID = activeSessionID();
 		const collected = [];
 		let todo = [];
+		const activities = /* @__PURE__ */ new Map();
 		for (const id of familySessionIDs()) {
 			let list = [];
 			try {
@@ -8236,10 +10630,15 @@ function createSidebarModel(context, sessionID, gitExec = defaultGitExec) {
 			} catch {}
 			collected.push(...list.slice(-400));
 			if (id === rootID) todo = latestTodoItems(list) ?? [];
+			else {
+				const activity = extractChildActivity(list, sessionStatusOf(context, id));
+				if (activity) activities.set(id, activity);
+			}
 		}
 		return {
 			messages: collected,
-			todo
+			todo,
+			activities
 		};
 	});
 	const usageMessages = createMemo(() => transcript().messages);
@@ -8374,7 +10773,8 @@ function createSidebarModel(context, sessionID, gitExec = defaultGitExec) {
 		if (id === "") return [];
 		return collectDispatch(context, id, {
 			now: Date.now(),
-			calls: subagentCalls()
+			calls: subagentCalls(),
+			activities: transcript().activities
 		});
 	});
 	/** What the sidebar block renders: the collector's rows, nothing else. */
@@ -8392,8 +10792,9 @@ function createSidebarModel(context, sessionID, gitExec = defaultGitExec) {
 	});
 	const tokenAnatomyLine = createMemo(() => formatTokenAnatomyLine(tokenAnatomy()));
 	const tokenAnatomySplit = createMemo(() => formatTokenAnatomySplit(tokenAnatomy()));
-	const toolCalls = createMemo(() => countToolCalls(messages()));
+	const toolCalls = createMemo(() => summarizeToolDomains(messages()));
 	const toolCallsLine = createMemo(() => formatToolCallLine(toolCalls(), tuiPrefs().layout.language));
+	const toolCallsDetailLine = createMemo(() => formatToolDomainLine(toolCalls(), 34));
 	const compactions = createMemo(() => extractCompactionInfo(messages()));
 	const compactionBadge = createMemo(() => {
 		const badge = formatCompactionBadge(compactions());
@@ -8510,6 +10911,7 @@ function createSidebarModel(context, sessionID, gitExec = defaultGitExec) {
 		turnCostLine,
 		tokenAnatomyLine,
 		toolCallsLine,
+		toolCallsDetailLine,
 		compactionBadge,
 		turnsBadge,
 		tokenAnatomySplit,
@@ -8674,7 +11076,7 @@ function Sidebar(props) {
 			setProp(_el$13, "paddingLeft", 1);
 			setProp(_el$13, "paddingRight", 1);
 			setProp(_el$14, "attributes", 1);
-			insert(_el$14, `Pantheon v2.2.0-beta.11`);
+			insert(_el$14, `Pantheon v2.2.0`);
 			insert(_el$15, () => `Erro no painel: ${err?.message ?? "desconhecido"}`);
 			effect((_p$) => {
 				var _v$3 = text(), _v$4 = muted();
@@ -8728,8 +11130,11 @@ function SidebarInner(props) {
 	};
 	const failedSuffix = () => failedSuffixText(dispatchView()?.failures);
 	const header = () => tuiPrefs().sidebar.header;
-	const availableUpdate = useAvailableUpdate("2.2.0-beta.11");
-	const updateBadge = () => formatUpdateBadge("2.2.0-beta.11", availableUpdate(), { isPt: resolveLanguage(tuiPrefs().layout?.language) === "pt-BR" });
+	const availableUpdate = useAvailableUpdate("2.2.0");
+	const isPt = () => resolveLanguage(tuiPrefs().layout?.language) === "pt-BR";
+	const updateBadge = () => formatUpdateBadge("2.2.0", availableUpdate(), { isPt: isPt() });
+	const artifacts = useWorkspaceArtifacts(context);
+	const activePlan = () => artifacts().find((entry) => entry.kind === "plan");
 	return (() => {
 		var _el$16 = createElement("box"), _el$17 = createElement("box"), _el$19 = createElement("box");
 		insertNode(_el$16, _el$17);
@@ -8747,7 +11152,7 @@ function SidebarInner(props) {
 			get children() {
 				var _el$18 = createElement("text");
 				setProp(_el$18, "attributes", 1);
-				insert(_el$18, `Pantheon v2.2.0-beta.11`);
+				insert(_el$18, `Pantheon v2.2.0`);
 				effect((_$p) => setProp(_el$18, "fg", text(), _$p));
 				return _el$18;
 			}
@@ -8758,10 +11163,10 @@ function SidebarInner(props) {
 				return model.turnsBadge();
 			},
 			children: (turns) => (() => {
-				var _el$38 = createElement("text");
-				insert(_el$38, turns);
-				effect((_$p) => setProp(_el$38, "fg", muted(), _$p));
-				return _el$38;
+				var _el$41 = createElement("text");
+				insert(_el$41, turns);
+				effect((_$p) => setProp(_el$41, "fg", muted(), _$p));
+				return _el$41;
 			})()
 		}), null);
 		insert(_el$19, createComponent(Show, {
@@ -8780,10 +11185,14 @@ function SidebarInner(props) {
 				return memo(() => !!header().version)() && updateBadge();
 			},
 			children: (badge) => (() => {
-				var _el$39 = createElement("text");
-				insert(_el$39, badge);
-				effect((_$p) => setProp(_el$39, "fg", accent(), _$p));
-				return _el$39;
+				var _el$42 = createElement("box"), _el$43 = createElement("text");
+				insertNode(_el$42, _el$43);
+				setProp(_el$42, "onMouseDown", () => {
+					openPantheonSettings(context, { initialTab: "updates" });
+				});
+				insert(_el$43, badge);
+				effect((_$p) => setProp(_el$43, "fg", accent(), _$p));
+				return _el$42;
 			})()
 		}), null);
 		insert(_el$16, createComponent(Show, {
@@ -8837,28 +11246,28 @@ function SidebarInner(props) {
 					}
 				};
 				return (() => {
-					var _el$40 = createElement("box"), _el$41 = createElement("text");
-					insertNode(_el$40, _el$41);
-					setProp(_el$40, "flexDirection", "row");
-					setProp(_el$40, "justifyContent", "space-between");
-					insert(_el$41, leftPreset);
-					insert(_el$40, createComponent(Show, {
+					var _el$44 = createElement("box"), _el$45 = createElement("text");
+					insertNode(_el$44, _el$45);
+					setProp(_el$44, "flexDirection", "row");
+					setProp(_el$44, "justifyContent", "space-between");
+					insert(_el$45, leftPreset);
+					insert(_el$44, createComponent(Show, {
 						get when() {
 							return badge();
 						},
 						children: (b) => (() => {
-							var _el$42 = createElement("box"), _el$43 = createElement("text");
-							insertNode(_el$42, _el$43);
-							setProp(_el$42, "onMouseDown", triggerCompaction);
-							setProp(_el$42, "flexShrink", 0);
-							setProp(_el$43, "attributes", 1);
-							insert(_el$43, b);
-							effect((_$p) => setProp(_el$43, "fg", accent(), _$p));
-							return _el$42;
+							var _el$46 = createElement("box"), _el$47 = createElement("text");
+							insertNode(_el$46, _el$47);
+							setProp(_el$46, "onMouseDown", triggerCompaction);
+							setProp(_el$46, "flexShrink", 0);
+							setProp(_el$47, "attributes", 1);
+							insert(_el$47, b);
+							effect((_$p) => setProp(_el$47, "fg", accent(), _$p));
+							return _el$46;
 						})()
 					}), null);
-					effect((_$p) => setProp(_el$41, "fg", muted(), _$p));
-					return _el$40;
+					effect((_$p) => setProp(_el$45, "fg", muted(), _$p));
+					return _el$44;
 				})();
 			}
 		}), null);
@@ -8873,40 +11282,40 @@ function SidebarInner(props) {
 					},
 					get fallback() {
 						return (() => {
-							var _el$45 = createElement("box");
-							setProp(_el$45, "height", 0);
-							return _el$45;
+							var _el$49 = createElement("box");
+							setProp(_el$49, "height", 0);
+							return _el$49;
 						})();
 					},
 					get children() {
-						var _el$44 = createElement("text");
-						insert(_el$44, () => sidebarPlaceholder(props.sessionID));
-						effect((_$p) => setProp(_el$44, "fg", muted(), _$p));
-						return _el$44;
+						var _el$48 = createElement("text");
+						insert(_el$48, () => sidebarPlaceholder(props.sessionID));
+						effect((_$p) => setProp(_el$48, "fg", muted(), _$p));
+						return _el$48;
 					}
 				});
 			},
 			children: (current) => (() => {
-				var _el$46 = createElement("box"), _el$47 = createElement("text"), _el$49 = createElement("text"), _el$51 = createElement("text");
-				insertNode(_el$46, _el$47);
-				insertNode(_el$46, _el$49);
-				insertNode(_el$46, _el$51);
-				setProp(_el$46, "flexDirection", "row");
-				insertNode(_el$47, createTextNode(`● `));
-				setProp(_el$47, "fg", "#22c55e");
-				insertNode(_el$49, createTextNode(`Session: `));
-				setProp(_el$51, "attributes", 1);
-				insert(_el$51, () => truncateLabel(current().title || current().id, 18));
+				var _el$50 = createElement("box"), _el$51 = createElement("text"), _el$53 = createElement("text"), _el$55 = createElement("text");
+				insertNode(_el$50, _el$51);
+				insertNode(_el$50, _el$53);
+				insertNode(_el$50, _el$55);
+				setProp(_el$50, "flexDirection", "row");
+				insertNode(_el$51, createTextNode(`● `));
+				setProp(_el$51, "fg", "#22c55e");
+				insertNode(_el$53, createTextNode(`Session: `));
+				setProp(_el$55, "attributes", 1);
+				insert(_el$55, () => truncateLabel(current().title || current().id, 18));
 				effect((_p$) => {
 					var _v$7 = muted(), _v$8 = text();
-					_v$7 !== _p$.e && (_p$.e = setProp(_el$49, "fg", _v$7, _p$.e));
-					_v$8 !== _p$.t && (_p$.t = setProp(_el$51, "fg", _v$8, _p$.t));
+					_v$7 !== _p$.e && (_p$.e = setProp(_el$53, "fg", _v$7, _p$.e));
+					_v$8 !== _p$.t && (_p$.t = setProp(_el$55, "fg", _v$8, _p$.t));
 					return _p$;
 				}, {
 					e: void 0,
 					t: void 0
 				});
-				return _el$46;
+				return _el$50;
 			})()
 		}), null);
 		insert(_el$16, createComponent(Show, {
@@ -8965,16 +11374,16 @@ function SidebarInner(props) {
 									return l;
 								};
 								return (() => {
-									var _el$52 = createElement("box"), _el$53 = createElement("text"), _el$55 = createElement("text");
-									insertNode(_el$52, _el$53);
-									insertNode(_el$52, _el$55);
-									setProp(_el$52, "flexDirection", "row");
-									insertNode(_el$53, createTextNode(`Turn: `));
-									setProp(_el$55, "fg", "#34d399");
-									setProp(_el$55, "attributes", 1);
-									insert(_el$55, () => display().replace(/^Turn:\s*/, ""));
-									effect((_$p) => setProp(_el$53, "fg", muted(), _$p));
-									return _el$52;
+									var _el$56 = createElement("box"), _el$57 = createElement("text"), _el$59 = createElement("text");
+									insertNode(_el$56, _el$57);
+									insertNode(_el$56, _el$59);
+									setProp(_el$56, "flexDirection", "row");
+									insertNode(_el$57, createTextNode(`Turn: `));
+									setProp(_el$59, "fg", "#34d399");
+									setProp(_el$59, "attributes", 1);
+									insert(_el$59, () => display().replace(/^Turn:\s*/, ""));
+									effect((_$p) => setProp(_el$57, "fg", muted(), _$p));
+									return _el$56;
 								})();
 							}
 						});
@@ -8985,17 +11394,17 @@ function SidebarInner(props) {
 						return contextRows();
 					},
 					children: (rows) => (() => {
-						var _el$56 = createElement("box");
-						setProp(_el$56, "flexDirection", "column");
-						insert(_el$56, createComponent(Show, {
+						var _el$60 = createElement("box");
+						setProp(_el$60, "flexDirection", "column");
+						insert(_el$60, createComponent(Show, {
 							get when() {
 								return rows().percent;
 							},
 							children: (row) => (() => {
-								var _el$57 = createElement("box");
-								setProp(_el$57, "flexDirection", "row");
-								setProp(_el$57, "justifyContent", "space-between");
-								insert(_el$57, createComponent(ContextRowView, {
+								var _el$61 = createElement("box");
+								setProp(_el$61, "flexDirection", "row");
+								setProp(_el$61, "justifyContent", "space-between");
+								insert(_el$61, createComponent(ContextRowView, {
 									get row() {
 										return memo(() => !!model.contextRatioLine())() ? {
 											...row(),
@@ -9009,30 +11418,30 @@ function SidebarInner(props) {
 										return muted();
 									}
 								}), null);
-								insert(_el$57, createComponent(Show, {
+								insert(_el$61, createComponent(Show, {
 									get when() {
 										return model.contextRatioLine();
 									},
 									children: (ratio) => {
 										const parts = ratio().split(" / ");
 										return (() => {
-											var _el$58 = createElement("box"), _el$59 = createElement("text"), _el$60 = createElement("text");
-											insertNode(_el$58, _el$59);
-											insertNode(_el$58, _el$60);
-											setProp(_el$58, "flexDirection", "row");
-											setProp(_el$59, "fg", "#f1f5f9");
-											setProp(_el$59, "attributes", 1);
-											insert(_el$59, () => parts[0]);
-											insert(_el$60, () => ` / ${parts[1] ?? ""}`);
-											effect((_$p) => setProp(_el$60, "fg", muted(), _$p));
-											return _el$58;
+											var _el$62 = createElement("box"), _el$63 = createElement("text"), _el$64 = createElement("text");
+											insertNode(_el$62, _el$63);
+											insertNode(_el$62, _el$64);
+											setProp(_el$62, "flexDirection", "row");
+											setProp(_el$63, "fg", "#f1f5f9");
+											setProp(_el$63, "attributes", 1);
+											insert(_el$63, () => parts[0]);
+											insert(_el$64, () => ` / ${parts[1] ?? ""}`);
+											effect((_$p) => setProp(_el$64, "fg", muted(), _$p));
+											return _el$62;
 										})();
 									}
 								}), null);
-								return _el$57;
+								return _el$61;
 							})()
 						}), null);
-						insert(_el$56, createComponent(Show, {
+						insert(_el$60, createComponent(Show, {
 							get when() {
 								return memo(() => !!rows().tokens)() && !rows().percent;
 							},
@@ -9048,7 +11457,7 @@ function SidebarInner(props) {
 								}
 							})
 						}), null);
-						insert(_el$56, createComponent(Show, {
+						insert(_el$60, createComponent(Show, {
 							get when() {
 								return rows().spent;
 							},
@@ -9064,7 +11473,7 @@ function SidebarInner(props) {
 								}
 							})
 						}), null);
-						return _el$56;
+						return _el$60;
 					})()
 				}), _el$25);
 				insert(_el$23, createComponent(Show, {
@@ -9072,57 +11481,57 @@ function SidebarInner(props) {
 						return memo(() => !!tuiPrefs().sidebar.context.tokenAnatomy)() && model.tokenAnatomySplit();
 					},
 					children: (anatomy) => (() => {
-						var _el$61 = createElement("box"), _el$62 = createElement("box"), _el$63 = createElement("text"), _el$65 = createElement("text");
-						insertNode(_el$61, _el$62);
-						setProp(_el$61, "flexDirection", "row");
-						setProp(_el$61, "justifyContent", "space-between");
-						insertNode(_el$62, _el$63);
-						insertNode(_el$62, _el$65);
-						setProp(_el$62, "flexDirection", "row");
-						insertNode(_el$63, createTextNode(`↑`));
-						setProp(_el$63, "fg", "#60a5fa");
-						insert(_el$65, () => anatomy().inOut?.split(" · ")[0]?.replace(/^↑\s*/, "") ?? "");
-						insert(_el$62, createComponent(Show, {
+						var _el$65 = createElement("box"), _el$66 = createElement("box"), _el$67 = createElement("text"), _el$69 = createElement("text");
+						insertNode(_el$65, _el$66);
+						setProp(_el$65, "flexDirection", "row");
+						setProp(_el$65, "justifyContent", "space-between");
+						insertNode(_el$66, _el$67);
+						insertNode(_el$66, _el$69);
+						setProp(_el$66, "flexDirection", "row");
+						insertNode(_el$67, createTextNode(`↑`));
+						setProp(_el$67, "fg", "#60a5fa");
+						insert(_el$69, () => anatomy().inOut?.split(" · ")[0]?.replace(/^↑\s*/, "") ?? "");
+						insert(_el$66, createComponent(Show, {
 							get when() {
 								return anatomy().inOut?.includes(" · ");
 							},
 							get children() {
 								return [
 									(() => {
-										var _el$66 = createElement("text");
-										insertNode(_el$66, createTextNode(` · `));
-										effect((_$p) => setProp(_el$66, "fg", muted(), _$p));
-										return _el$66;
-									})(),
-									(() => {
-										var _el$68 = createElement("text");
-										insertNode(_el$68, createTextNode(`↓`));
-										setProp(_el$68, "fg", "#4ade80");
-										return _el$68;
-									})(),
-									(() => {
 										var _el$70 = createElement("text");
-										insert(_el$70, () => anatomy().inOut?.split(" · ")[1]?.replace(/^↓\s*/, "") ?? "");
+										insertNode(_el$70, createTextNode(` · `));
 										effect((_$p) => setProp(_el$70, "fg", muted(), _$p));
 										return _el$70;
+									})(),
+									(() => {
+										var _el$72 = createElement("text");
+										insertNode(_el$72, createTextNode(`↓`));
+										setProp(_el$72, "fg", "#4ade80");
+										return _el$72;
+									})(),
+									(() => {
+										var _el$74 = createElement("text");
+										insert(_el$74, () => anatomy().inOut?.split(" · ")[1]?.replace(/^↓\s*/, "") ?? "");
+										effect((_$p) => setProp(_el$74, "fg", muted(), _$p));
+										return _el$74;
 									})()
 								];
 							}
 						}), null);
-						insert(_el$61, createComponent(Show, {
+						insert(_el$65, createComponent(Show, {
 							get when() {
 								return anatomy().think;
 							},
 							children: (think) => (() => {
-								var _el$71 = createElement("text");
-								setProp(_el$71, "fg", "#c084fc");
-								setProp(_el$71, "attributes", 1);
-								insert(_el$71, think);
-								return _el$71;
+								var _el$75 = createElement("text");
+								setProp(_el$75, "fg", "#c084fc");
+								setProp(_el$75, "attributes", 1);
+								insert(_el$75, think);
+								return _el$75;
 							})()
 						}), null);
-						effect((_$p) => setProp(_el$65, "fg", muted(), _$p));
-						return _el$61;
+						effect((_$p) => setProp(_el$69, "fg", muted(), _$p));
+						return _el$65;
 					})()
 				}), _el$25);
 				insert(_el$23, createComponent(Show, {
@@ -9130,33 +11539,33 @@ function SidebarInner(props) {
 						return memo(() => !!tuiPrefs().sidebar.context.performance)() && model.performanceSplit();
 					},
 					children: (perf) => (() => {
-						var _el$72 = createElement("box"), _el$73 = createElement("box"), _el$74 = createElement("text"), _el$76 = createElement("text"), _el$77 = createElement("box"), _el$78 = createElement("text"), _el$80 = createElement("text");
-						insertNode(_el$72, _el$73);
-						insertNode(_el$72, _el$77);
-						setProp(_el$72, "flexDirection", "row");
-						setProp(_el$72, "justifyContent", "space-between");
-						insertNode(_el$73, _el$74);
-						insertNode(_el$73, _el$76);
-						setProp(_el$73, "flexDirection", "row");
-						insertNode(_el$74, createTextNode(`Cache: `));
-						setProp(_el$76, "fg", "#34d399");
-						insert(_el$76, () => perf().cache?.replace(/^Cache:\s*/, "") ?? "");
+						var _el$76 = createElement("box"), _el$77 = createElement("box"), _el$78 = createElement("text"), _el$80 = createElement("text"), _el$81 = createElement("box"), _el$82 = createElement("text"), _el$84 = createElement("text");
+						insertNode(_el$76, _el$77);
+						insertNode(_el$76, _el$81);
+						setProp(_el$76, "flexDirection", "row");
+						setProp(_el$76, "justifyContent", "space-between");
 						insertNode(_el$77, _el$78);
 						insertNode(_el$77, _el$80);
 						setProp(_el$77, "flexDirection", "row");
-						insertNode(_el$78, createTextNode(`Speed: `));
-						setProp(_el$80, "fg", "#38bdf8");
-						insert(_el$80, () => perf().speed?.replace(/^Speed:\s*/, "") ?? "");
+						insertNode(_el$78, createTextNode(`Cache: `));
+						setProp(_el$80, "fg", "#34d399");
+						insert(_el$80, () => perf().cache?.replace(/^Cache:\s*/, "") ?? "");
+						insertNode(_el$81, _el$82);
+						insertNode(_el$81, _el$84);
+						setProp(_el$81, "flexDirection", "row");
+						insertNode(_el$82, createTextNode(`Speed: `));
+						setProp(_el$84, "fg", "#38bdf8");
+						insert(_el$84, () => perf().speed?.replace(/^Speed:\s*/, "") ?? "");
 						effect((_p$) => {
 							var _v$9 = muted(), _v$0 = muted();
-							_v$9 !== _p$.e && (_p$.e = setProp(_el$74, "fg", _v$9, _p$.e));
-							_v$0 !== _p$.t && (_p$.t = setProp(_el$78, "fg", _v$0, _p$.t));
+							_v$9 !== _p$.e && (_p$.e = setProp(_el$78, "fg", _v$9, _p$.e));
+							_v$0 !== _p$.t && (_p$.t = setProp(_el$82, "fg", _v$0, _p$.t));
 							return _p$;
 						}, {
 							e: void 0,
 							t: void 0
 						});
-						return _el$72;
+						return _el$76;
 					})()
 				}), _el$25);
 				insertNode(_el$25, createTextNode(`──────────────────────────────`));
@@ -9170,22 +11579,33 @@ function SidebarInner(props) {
 					},
 					get fallback() {
 						return (() => {
-							var _el$81 = createElement("text");
-							insertNode(_el$81, createTextNode(`tools: 0 (0 err)`));
-							effect((_$p) => setProp(_el$81, "fg", muted(), _$p));
-							return _el$81;
+							var _el$85 = createElement("text");
+							insertNode(_el$85, createTextNode(`tools: 0 (0 err)`));
+							effect((_$p) => setProp(_el$85, "fg", muted(), _$p));
+							return _el$85;
 						})();
 					},
 					children: (line) => (() => {
-						var _el$83 = createElement("text");
-						insert(_el$83, line);
-						effect((_$p) => setProp(_el$83, "fg", muted(), _$p));
-						return _el$83;
+						var _el$87 = createElement("text");
+						insert(_el$87, line);
+						effect((_$p) => setProp(_el$87, "fg", muted(), _$p));
+						return _el$87;
 					})()
 				}), _el$28);
 				setProp(_el$28, "fg", "#22c55e");
 				setProp(_el$28, "attributes", 1);
 				insert(_el$28, () => model.gateStatus());
+				insert(_el$23, createComponent(Show, {
+					get when() {
+						return model.toolCallsDetailLine();
+					},
+					children: (line) => (() => {
+						var _el$88 = createElement("text");
+						insert(_el$88, line);
+						effect((_$p) => setProp(_el$88, "fg", muted(), _$p));
+						return _el$88;
+					})()
+				}), null);
 				insert(_el$23, createComponent(Show, {
 					get when() {
 						return memo(() => !!tuiPrefs().sidebar.context.modelUsage)() && usageRows().length > 0;
@@ -9209,20 +11629,20 @@ function SidebarInner(props) {
 									return usageRows();
 								},
 								children: (row) => (() => {
-									var _el$84 = createElement("box");
-									setProp(_el$84, "flexDirection", "column");
-									insert(_el$84, createComponent(For, {
+									var _el$89 = createElement("box");
+									setProp(_el$89, "flexDirection", "column");
+									insert(_el$89, createComponent(For, {
 										get each() {
 											return modelUsageRowLines(row);
 										},
 										children: (line) => (() => {
-											var _el$85 = createElement("text");
-											insert(_el$85, line);
-											effect((_$p) => setProp(_el$85, "fg", text(), _$p));
-											return _el$85;
+											var _el$90 = createElement("text");
+											insert(_el$90, line);
+											effect((_$p) => setProp(_el$90, "fg", text(), _$p));
+											return _el$90;
 										})()
 									}));
-									return _el$84;
+									return _el$89;
 								})()
 							}),
 							createComponent(Show, {
@@ -9234,10 +11654,10 @@ function SidebarInner(props) {
 										return sidebarTextLines(line());
 									},
 									children: (part) => (() => {
-										var _el$86 = createElement("text");
-										insert(_el$86, part);
-										effect((_$p) => setProp(_el$86, "fg", muted(), _$p));
-										return _el$86;
+										var _el$91 = createElement("text");
+										insert(_el$91, part);
+										effect((_$p) => setProp(_el$91, "fg", muted(), _$p));
+										return _el$91;
 									})()
 								})
 							})
@@ -9253,10 +11673,10 @@ function SidebarInner(props) {
 							return contextSpendLines(line());
 						},
 						children: (part) => (() => {
-							var _el$87 = createElement("text");
-							insert(_el$87, part);
-							effect((_$p) => setProp(_el$87, "fg", muted(), _$p));
-							return _el$87;
+							var _el$92 = createElement("text");
+							insert(_el$92, part);
+							effect((_$p) => setProp(_el$92, "fg", muted(), _$p));
+							return _el$92;
 						})()
 					})
 				}), null);
@@ -9301,16 +11721,16 @@ function SidebarInner(props) {
 						return model.branch();
 					},
 					children: (value) => (() => {
-						var _el$88 = createElement("box"), _el$89 = createElement("text"), _el$91 = createElement("text");
-						insertNode(_el$88, _el$89);
-						insertNode(_el$88, _el$91);
-						setProp(_el$88, "flexDirection", "row");
-						insertNode(_el$89, createTextNode(`⎇ `));
-						setProp(_el$89, "fg", "#38bdf8");
-						setProp(_el$91, "attributes", 1);
-						insert(_el$91, () => truncateLabel(value(), 24));
-						effect((_$p) => setProp(_el$91, "fg", text(), _$p));
-						return _el$88;
+						var _el$93 = createElement("box"), _el$94 = createElement("text"), _el$96 = createElement("text");
+						insertNode(_el$93, _el$94);
+						insertNode(_el$93, _el$96);
+						setProp(_el$93, "flexDirection", "row");
+						insertNode(_el$94, createTextNode(`⎇ `));
+						setProp(_el$94, "fg", "#38bdf8");
+						setProp(_el$96, "attributes", 1);
+						insert(_el$96, () => truncateLabel(value(), 24));
+						effect((_$p) => setProp(_el$96, "fg", text(), _$p));
+						return _el$93;
 					})()
 				}), null);
 				insert(_el$35, createComponent(Show, {
@@ -9318,10 +11738,10 @@ function SidebarInner(props) {
 						return model.gitLine();
 					},
 					children: (line) => (() => {
-						var _el$92 = createElement("text");
-						setProp(_el$92, "fg", "#f59e0b");
-						insert(_el$92, line);
-						return _el$92;
+						var _el$97 = createElement("text");
+						setProp(_el$97, "fg", "#f59e0b");
+						insert(_el$97, line);
+						return _el$97;
 					})()
 				}), null);
 				return _el$33;
@@ -9349,9 +11769,9 @@ function SidebarInner(props) {
 						return dispatchView();
 					},
 					children: (view) => (() => {
-						var _el$93 = createElement("box");
-						setProp(_el$93, "flexDirection", "column");
-						insert(_el$93, createComponent(BlockHeader, {
+						var _el$98 = createElement("box");
+						setProp(_el$98, "flexDirection", "column");
+						insert(_el$98, createComponent(BlockHeader, {
 							get icon() {
 								return BLOCK_ICONS.dispatch;
 							},
@@ -9367,89 +11787,127 @@ function SidebarInner(props) {
 								return dispatchSummary();
 							}
 						}), null);
-						insert(_el$93, createComponent(For, {
+						insert(_el$98, createComponent(For, {
 							get each() {
 								return view().running;
 							},
 							children: (row) => (() => {
-								var _el$95 = createElement("box"), _el$96 = createElement("text");
-								insertNode(_el$95, _el$96);
-								setProp(_el$95, "flexShrink", 0);
-								insert(_el$96, () => row.text);
+								var _el$100 = createElement("box"), _el$101 = createElement("text");
+								insertNode(_el$100, _el$101);
+								setProp(_el$100, "flexShrink", 0);
+								insert(_el$101, () => row.text);
 								effect((_p$) => {
-									var _v$1 = open(row.id), _v$10 = tone("success");
-									_v$1 !== _p$.e && (_p$.e = setProp(_el$95, "onMouseDown", _v$1, _p$.e));
-									_v$10 !== _p$.t && (_p$.t = setProp(_el$96, "fg", _v$10, _p$.t));
+									var _v$1 = open(row.id), _v$10 = tone(row.tone ?? "success");
+									_v$1 !== _p$.e && (_p$.e = setProp(_el$100, "onMouseDown", _v$1, _p$.e));
+									_v$10 !== _p$.t && (_p$.t = setProp(_el$101, "fg", _v$10, _p$.t));
 									return _p$;
 								}, {
 									e: void 0,
 									t: void 0
 								});
-								return _el$95;
+								return _el$100;
 							})()
 						}), null);
-						insert(_el$93, createComponent(Show, {
+						insert(_el$98, createComponent(Show, {
 							get when() {
 								return view().runningHidden > 0;
 							},
 							get children() {
-								var _el$94 = createElement("text");
-								insert(_el$94, () => `\u2026 +${view().runningHidden} rodando`);
-								effect((_$p) => setProp(_el$94, "fg", muted(), _$p));
-								return _el$94;
+								var _el$99 = createElement("text");
+								insert(_el$99, () => `\u2026 +${view().runningHidden} rodando`);
+								effect((_$p) => setProp(_el$99, "fg", muted(), _$p));
+								return _el$99;
 							}
 						}), null);
-						insert(_el$93, createComponent(Show, {
+						insert(_el$98, createComponent(Show, {
 							get when() {
 								return view().summary;
 							},
 							children: (line) => (() => {
-								var _el$97 = createElement("box"), _el$98 = createElement("text");
-								insertNode(_el$97, _el$98);
-								setProp(_el$97, "flexDirection", "row");
-								setProp(_el$97, "flexShrink", 0);
-								insert(_el$98, line);
-								insert(_el$97, createComponent(Show, {
+								var _el$102 = createElement("box"), _el$103 = createElement("text");
+								insertNode(_el$102, _el$103);
+								setProp(_el$102, "flexDirection", "row");
+								setProp(_el$102, "flexShrink", 0);
+								insert(_el$103, line);
+								insert(_el$102, createComponent(Show, {
 									get when() {
 										return failedSuffix();
 									},
 									children: (suffix) => (() => {
-										var _el$99 = createElement("text");
-										insert(_el$99, () => `${SPEND_LINE_SEPARATOR}${suffix()}`);
-										effect((_$p) => setProp(_el$99, "fg", tone("error"), _$p));
-										return _el$99;
+										var _el$104 = createElement("text");
+										insert(_el$104, () => `${SPEND_LINE_SEPARATOR}${suffix()}`);
+										effect((_$p) => setProp(_el$104, "fg", tone("error"), _$p));
+										return _el$104;
 									})()
 								}), null);
-								effect((_$p) => setProp(_el$98, "fg", muted(), _$p));
-								return _el$97;
+								effect((_$p) => setProp(_el$103, "fg", muted(), _$p));
+								return _el$102;
 							})()
 						}), null);
-						insert(_el$93, createComponent(For, {
+						insert(_el$98, createComponent(For, {
 							get each() {
 								return view().agents;
 							},
 							children: (row) => (() => {
-								var _el$100 = createElement("text");
-								insert(_el$100, () => childAgentRowText(row));
-								effect((_$p) => setProp(_el$100, "fg", muted(), _$p));
-								return _el$100;
+								var _el$105 = createElement("text");
+								insert(_el$105, () => childAgentRowText(row));
+								effect((_$p) => setProp(_el$105, "fg", muted(), _$p));
+								return _el$105;
 							})()
 						}), null);
-						insert(_el$93, createComponent(Show, {
+						insert(_el$98, createComponent(Show, {
 							get when() {
 								return hiddenChildAgentsText(view().agentsHidden, view().agentsHiddenCost);
 							},
 							children: (line) => (() => {
-								var _el$101 = createElement("text");
-								insert(_el$101, line);
-								effect((_$p) => setProp(_el$101, "fg", muted(), _$p));
-								return _el$101;
+								var _el$106 = createElement("text");
+								insert(_el$106, line);
+								effect((_$p) => setProp(_el$106, "fg", muted(), _$p));
+								return _el$106;
 							})()
 						}), null);
-						return _el$93;
+						return _el$98;
 					})()
 				}), null);
 				return _el$36;
+			}
+		}), null);
+		insert(_el$16, createComponent(Show, {
+			get when() {
+				return artifacts().length > 0;
+			},
+			get children() {
+				var _el$38 = createElement("box"), _el$39 = createElement("box"), _el$40 = createElement("text");
+				insertNode(_el$38, _el$39);
+				setProp(_el$38, "flexDirection", "column");
+				setProp(_el$38, "marginTop", 1);
+				insert(_el$38, createComponent(Show, {
+					get when() {
+						return activePlan();
+					},
+					children: (plan) => (() => {
+						var _el$107 = createElement("box"), _el$108 = createElement("text");
+						insertNode(_el$107, _el$108);
+						setProp(_el$107, "onMouseDown", () => {
+							openArtifactsDialog(context, resolveSidebarCwd(context), { initialArtifactId: plan().id });
+						});
+						setProp(_el$107, "flexShrink", 0);
+						insert(_el$108, () => `▸ Plan: ${truncateLabel(plan().title, 22)}`);
+						effect((_$p) => setProp(_el$108, "fg", accent(), _$p));
+						return _el$107;
+					})()
+				}), _el$39);
+				insertNode(_el$39, _el$40);
+				setProp(_el$39, "onMouseDown", () => {
+					openArtifactsDialog(context, resolveSidebarCwd(context));
+				});
+				setProp(_el$39, "flexShrink", 0);
+				insert(_el$40, (() => {
+					var _c$ = memo(() => !!isPt());
+					return () => _c$() ? `◈ Artefatos (${artifacts().length})` : `◈ Artifacts (${artifacts().length})`;
+				})());
+				effect((_$p) => setProp(_el$40, "fg", muted(), _$p));
+				return _el$38;
 			}
 		}), null);
 		effect((_p$) => {
@@ -9530,25 +11988,25 @@ function DispatchPanel(props) {
 			return model.visible().rows;
 		},
 		children: (row) => (() => {
-			var _el$102 = createElement("box"), _el$103 = createElement("text"), _el$104 = createElement("text");
-			insertNode(_el$102, _el$103);
-			insertNode(_el$102, _el$104);
-			setProp(_el$102, "flexDirection", "row");
-			setProp(_el$102, "flexShrink", 0);
-			insert(_el$103, () => selected(row.id) ? `▸ ` : "  ");
-			insert(_el$104, () => row.text);
+			var _el$109 = createElement("box"), _el$110 = createElement("text"), _el$111 = createElement("text");
+			insertNode(_el$109, _el$110);
+			insertNode(_el$109, _el$111);
+			setProp(_el$109, "flexDirection", "row");
+			setProp(_el$109, "flexShrink", 0);
+			insert(_el$110, () => selected(row.id) ? `▸ ` : "  ");
+			insert(_el$111, () => row.text);
 			effect((_p$) => {
 				var _v$11 = selected(row.id) ? text() : muted(), _v$12 = rowFg(row.state), _v$13 = selected(row.id) ? 1 : 0;
-				_v$11 !== _p$.e && (_p$.e = setProp(_el$103, "fg", _v$11, _p$.e));
-				_v$12 !== _p$.t && (_p$.t = setProp(_el$104, "fg", _v$12, _p$.t));
-				_v$13 !== _p$.a && (_p$.a = setProp(_el$104, "attributes", _v$13, _p$.a));
+				_v$11 !== _p$.e && (_p$.e = setProp(_el$110, "fg", _v$11, _p$.e));
+				_v$12 !== _p$.t && (_p$.t = setProp(_el$111, "fg", _v$12, _p$.t));
+				_v$13 !== _p$.a && (_p$.a = setProp(_el$111, "attributes", _v$13, _p$.a));
 				return _p$;
 			}, {
 				e: void 0,
 				t: void 0,
 				a: void 0
 			});
-			return _el$102;
+			return _el$109;
 		})()
 	});
 	const detail = () => createComponent(For, {
@@ -9556,28 +12014,28 @@ function DispatchPanel(props) {
 			return model.detail();
 		},
 		children: (line, index) => (() => {
-			var _el$105 = createElement("text");
-			insert(_el$105, line);
-			effect((_$p) => setProp(_el$105, "fg", index() === 0 ? text() : muted(), _$p));
-			return _el$105;
+			var _el$112 = createElement("text");
+			insert(_el$112, line);
+			effect((_$p) => setProp(_el$112, "fg", index() === 0 ? text() : muted(), _$p));
+			return _el$112;
 		})()
 	});
 	const empty = () => (() => {
-		var _el$106 = createElement("text");
-		insertNode(_el$106, createTextNode(`No delegated sessions`));
-		effect((_$p) => setProp(_el$106, "fg", muted(), _$p));
-		return _el$106;
+		var _el$113 = createElement("text");
+		insertNode(_el$113, createTextNode(`No delegated sessions`));
+		effect((_$p) => setProp(_el$113, "fg", muted(), _$p));
+		return _el$113;
 	})();
 	return (() => {
-		var _el$108 = createElement("box"), _el$109 = createElement("text"), _el$110 = createElement("text"), _el$114 = createElement("box"), _el$115 = createElement("text");
-		insertNode(_el$108, _el$109);
-		insertNode(_el$108, _el$110);
-		insertNode(_el$108, _el$114);
-		insertNode(_el$108, _el$115);
-		setProp(_el$108, "flexDirection", "column");
-		setProp(_el$108, "width", "100%");
-		setProp(_el$108, "padding", 1);
-		insert(_el$108, createComponent(DispatchPanelKeymap, {
+		var _el$115 = createElement("box"), _el$116 = createElement("text"), _el$117 = createElement("text"), _el$121 = createElement("box"), _el$122 = createElement("text");
+		insertNode(_el$115, _el$116);
+		insertNode(_el$115, _el$117);
+		insertNode(_el$115, _el$121);
+		insertNode(_el$115, _el$122);
+		setProp(_el$115, "flexDirection", "column");
+		setProp(_el$115, "width", "100%");
+		setProp(_el$115, "padding", 1);
+		insert(_el$115, createComponent(DispatchPanelKeymap, {
 			get context() {
 				return props.context;
 			},
@@ -9585,30 +12043,30 @@ function DispatchPanel(props) {
 				return props.panel;
 			},
 			model
-		}), _el$109);
-		setProp(_el$109, "attributes", 1);
-		insert(_el$109, () => model.title());
-		insert(_el$108, createComponent(Show, {
+		}), _el$116);
+		setProp(_el$116, "attributes", 1);
+		insert(_el$116, () => model.title());
+		insert(_el$115, createComponent(Show, {
 			get when() {
 				return model.header();
 			},
 			children: (line) => (() => {
-				var _el$116 = createElement("text");
-				insert(_el$116, line);
-				effect((_$p) => setProp(_el$116, "fg", muted(), _$p));
-				return _el$116;
+				var _el$123 = createElement("text");
+				insert(_el$123, line);
+				effect((_$p) => setProp(_el$123, "fg", muted(), _$p));
+				return _el$123;
 			})()
-		}), _el$110);
-		insert(_el$110, () => dispatchPanelRule(props.panel.width - 2));
-		insert(_el$108, createComponent(Show, {
+		}), _el$117);
+		insert(_el$117, () => dispatchPanelRule(props.panel.width - 2));
+		insert(_el$115, createComponent(Show, {
 			get when() {
 				return model.layout().mode === "wide";
 			},
 			get fallback() {
 				return (() => {
-					var _el$117 = createElement("box");
-					setProp(_el$117, "flexDirection", "column");
-					insert(_el$117, createComponent(Show, {
+					var _el$124 = createElement("box");
+					setProp(_el$124, "flexDirection", "column");
+					insert(_el$124, createComponent(Show, {
 						get when() {
 							return model.rows().length > 0;
 						},
@@ -9616,34 +12074,34 @@ function DispatchPanel(props) {
 							return empty();
 						},
 						get children() {
-							var _el$118 = createElement("box");
-							setProp(_el$118, "flexDirection", "column");
-							insert(_el$118, rows);
-							return _el$118;
+							var _el$125 = createElement("box");
+							setProp(_el$125, "flexDirection", "column");
+							insert(_el$125, rows);
+							return _el$125;
 						}
 					}), null);
-					insert(_el$117, createComponent(Show, {
+					insert(_el$124, createComponent(Show, {
 						get when() {
 							return model.selectedID();
 						},
 						get children() {
-							var _el$119 = createElement("box"), _el$120 = createElement("box");
-							insertNode(_el$119, _el$120);
-							setProp(_el$119, "flexDirection", "column");
-							setProp(_el$120, "height", 1);
-							insert(_el$119, detail, null);
-							return _el$119;
+							var _el$126 = createElement("box"), _el$127 = createElement("box");
+							insertNode(_el$126, _el$127);
+							setProp(_el$126, "flexDirection", "column");
+							setProp(_el$127, "height", 1);
+							insert(_el$126, detail, null);
+							return _el$126;
 						}
 					}), null);
-					return _el$117;
+					return _el$124;
 				})();
 			},
 			get children() {
-				var _el$111 = createElement("box"), _el$112 = createElement("box");
-				insertNode(_el$111, _el$112);
-				setProp(_el$111, "flexDirection", "row");
-				setProp(_el$112, "flexDirection", "column");
-				insert(_el$112, createComponent(Show, {
+				var _el$118 = createElement("box"), _el$119 = createElement("box");
+				insertNode(_el$118, _el$119);
+				setProp(_el$118, "flexDirection", "row");
+				setProp(_el$119, "flexDirection", "column");
+				insert(_el$119, createComponent(Show, {
 					get when() {
 						return model.rows().length > 0;
 					},
@@ -9654,36 +12112,36 @@ function DispatchPanel(props) {
 						return rows();
 					}
 				}));
-				insert(_el$111, createComponent(Show, {
+				insert(_el$118, createComponent(Show, {
 					get when() {
 						return model.selectedID();
 					},
 					get children() {
-						var _el$113 = createElement("box");
-						setProp(_el$113, "flexDirection", "column");
-						insert(_el$113, detail);
-						effect((_$p) => setProp(_el$113, "width", model.layout().detailWidth, _$p));
-						return _el$113;
+						var _el$120 = createElement("box");
+						setProp(_el$120, "flexDirection", "column");
+						insert(_el$120, detail);
+						effect((_$p) => setProp(_el$120, "width", model.layout().detailWidth, _$p));
+						return _el$120;
 					}
 				}), null);
-				effect((_$p) => setProp(_el$112, "width", model.layout().listWidth, _$p));
-				return _el$111;
+				effect((_$p) => setProp(_el$119, "width", model.layout().listWidth, _$p));
+				return _el$118;
 			}
-		}), _el$114);
-		setProp(_el$114, "height", 1);
-		insert(_el$115, () => model.footer());
+		}), _el$121);
+		setProp(_el$121, "height", 1);
+		insert(_el$122, () => model.footer());
 		effect((_p$) => {
 			var _v$14 = text(), _v$15 = muted(), _v$16 = muted();
-			_v$14 !== _p$.e && (_p$.e = setProp(_el$109, "fg", _v$14, _p$.e));
-			_v$15 !== _p$.t && (_p$.t = setProp(_el$110, "fg", _v$15, _p$.t));
-			_v$16 !== _p$.a && (_p$.a = setProp(_el$115, "fg", _v$16, _p$.a));
+			_v$14 !== _p$.e && (_p$.e = setProp(_el$116, "fg", _v$14, _p$.e));
+			_v$15 !== _p$.t && (_p$.t = setProp(_el$117, "fg", _v$15, _p$.t));
+			_v$16 !== _p$.a && (_p$.a = setProp(_el$122, "fg", _v$16, _p$.a));
 			return _p$;
 		}, {
 			e: void 0,
 			t: void 0,
 			a: void 0
 		});
-		return _el$108;
+		return _el$115;
 	})();
 }
 /** App-level command claim: the only way into the panel. It registers the
@@ -9716,29 +12174,99 @@ function DispatchCommandLayer(props) {
 function PantheonSettingsCommandLayer(props) {
 	props.context.keymap.layer(() => ({
 		mode: "global",
-		commands: [{
-			id: "pantheon.settings.open",
-			title: "Pantheon: Settings",
-			group: "Pantheon",
-			palette: true,
-			slash: { name: "pantheon-settings" },
-			run: () => {
-				openPantheonSettings(props.context);
+		commands: [
+			{
+				id: "pantheon.settings.open",
+				title: "Pantheon: Settings",
+				group: "Pantheon",
+				palette: true,
+				slash: { name: "pantheon-settings" },
+				run: () => {
+					openPantheonSettings(props.context);
+				}
+			},
+			{
+				id: "pantheon.updates.open",
+				title: "Pantheon: Updates & Cleanup",
+				group: "Pantheon",
+				palette: true,
+				slash: { name: "pantheon-updates" },
+				run: () => {
+					openPantheonSettings(props.context, { initialTab: "updates" });
+				}
+			},
+			{
+				id: "pantheon.whats-new.open",
+				title: "Pantheon: What's New",
+				group: "Pantheon",
+				palette: true,
+				slash: {
+					name: "pantheon-whats-new",
+					aliases: ["whats-new"]
+				},
+				run: () => {
+					maybeShowWhatsNew(props.context, { force: true });
+				}
+			},
+			{
+				id: "pantheon.artifacts.open",
+				title: "Pantheon: Artifacts",
+				group: "Pantheon",
+				palette: true,
+				slash: {
+					name: "pantheon-artifacts",
+					aliases: ["artifacts"]
+				},
+				run: () => {
+					openArtifactsDialog(props.context, resolveSidebarCwd(props.context));
+				}
+			},
+			{
+				id: "pantheon.cockpit.open",
+				title: "Pantheon: Mission Control Cockpit",
+				group: "Pantheon",
+				palette: true,
+				slash: {
+					name: "pantheon-cockpit",
+					aliases: ["cockpit"]
+				},
+				run: () => {
+					openPantheonCockpit(props.context, resolveSidebarCwd(props.context));
+				}
 			}
-		}]
+		]
 	}));
 	return null;
+}
+function useWorkspaceArtifacts(context) {
+	const [entries, setEntries] = createSignal(scanPantheonArtifacts(resolveSidebarCwd(context)));
+	let lastScan = Date.now();
+	const refresh = () => {
+		const now = Date.now();
+		if (now - lastScan < 1500) return;
+		lastScan = now;
+		setEntries(scanPantheonArtifacts(resolveSidebarCwd(context)));
+	};
+	onMount(() => {
+		setEntries(scanPantheonArtifacts(resolveSidebarCwd(context)));
+		const stop = subscribeSidebarRefresh(context, refresh);
+		onCleanup(stop);
+	});
+	return entries;
 }
 /** Home-screen status contribution. The sidebar slot is session-scoped, so
 *  before the first prompt the sidebar may not mount at all (Known Issue) —
 *  this keeps a compact Pantheon line visible on the home footer meanwhile. */
 function HomeStatus(props) {
 	const preset = useActivePreset(props.context).preset;
-	const availableUpdate = useAvailableUpdate("2.2.0-beta.11");
+	const availableUpdate = useAvailableUpdate("2.2.0");
+	const artifacts = useWorkspaceArtifacts(props.context);
+	const activePlan = () => artifacts().find((entry) => entry.kind === "plan");
+	const isPt = () => resolveLanguage(tuiPrefs().layout?.language) === "pt-BR";
 	const accent = () => resolveAccentColor(tuiDraftPreview()?.theme?.accent ?? tuiPrefs().theme?.accent, props.context.theme);
 	const muted = () => props.context.theme?.text?.muted ?? props.context.theme?.text?.base;
-	const updateBadge = () => formatUpdateBadge("2.2.0-beta.11", availableUpdate(), {
-		isPt: resolveLanguage(tuiPrefs().layout?.language) === "pt-BR",
+	const updateBadge = () => formatUpdateBadge("2.2.0", availableUpdate(), {
+		isPt: isPt(),
 		compact: true
 	});
 	return createComponent(Show, {
@@ -9746,23 +12274,74 @@ function HomeStatus(props) {
 			return tuiPrefs().footer.home;
 		},
 		get children() {
-			var _el$121 = createElement("box"), _el$122 = createElement("text");
-			insertNode(_el$121, _el$122);
-			setProp(_el$121, "flexDirection", "row");
-			insert(_el$122, () => `Pantheon v2.2.0-beta.11${preset().name ? ` ▸ ${preset().name}` : ""}`);
-			insert(_el$121, createComponent(Show, {
+			var _el$128 = createElement("box"), _el$129 = createElement("text"), _el$132 = createElement("box"), _el$133 = createElement("text");
+			insertNode(_el$128, _el$129);
+			insertNode(_el$128, _el$132);
+			setProp(_el$128, "flexDirection", "row");
+			insert(_el$129, () => `Pantheon v2.2.0${preset().name ? ` ▸ ${preset().name}` : ""}`);
+			insert(_el$128, createComponent(Show, {
 				get when() {
 					return updateBadge();
 				},
 				children: (badge) => (() => {
-					var _el$123 = createElement("text");
-					insert(_el$123, () => ` · ${badge()}`);
-					effect((_$p) => setProp(_el$123, "fg", accent(), _$p));
-					return _el$123;
+					var _el$135 = createElement("box"), _el$136 = createElement("text");
+					insertNode(_el$135, _el$136);
+					setProp(_el$135, "onMouseDown", () => {
+						openPantheonSettings(props.context, { initialTab: "updates" });
+					});
+					insert(_el$136, () => ` · ${badge()}`);
+					effect((_$p) => setProp(_el$136, "fg", accent(), _$p));
+					return _el$135;
 				})()
-			}), null);
-			effect((_$p) => setProp(_el$122, "fg", muted(), _$p));
-			return _el$121;
+			}), _el$132);
+			insert(_el$128, createComponent(Show, {
+				get when() {
+					return activePlan();
+				},
+				children: (plan) => (() => {
+					var _el$137 = createElement("box"), _el$138 = createElement("text");
+					insertNode(_el$137, _el$138);
+					setProp(_el$137, "onMouseDown", () => {
+						openArtifactsDialog(props.context, resolveSidebarCwd(props.context), { initialArtifactId: plan().id });
+					});
+					insert(_el$138, () => ` · ▸ Plan: ${truncateLabel(plan().title, 20)}`);
+					effect((_$p) => setProp(_el$138, "fg", accent(), _$p));
+					return _el$137;
+				})()
+			}), _el$132);
+			insert(_el$128, createComponent(Show, {
+				get when() {
+					return artifacts().length > 0;
+				},
+				get children() {
+					var _el$130 = createElement("box"), _el$131 = createElement("text");
+					insertNode(_el$130, _el$131);
+					setProp(_el$130, "onMouseDown", () => {
+						openArtifactsDialog(props.context, resolveSidebarCwd(props.context));
+					});
+					insert(_el$131, (() => {
+						var _c$2 = memo(() => !!isPt());
+						return () => _c$2() ? ` · Artefatos (${artifacts().length})` : ` · Artifacts (${artifacts().length})`;
+					})());
+					effect((_$p) => setProp(_el$131, "fg", muted(), _$p));
+					return _el$130;
+				}
+			}), _el$132);
+			insertNode(_el$132, _el$133);
+			setProp(_el$132, "onMouseDown", () => {
+				openPantheonCockpit(props.context, resolveSidebarCwd(props.context));
+			});
+			insertNode(_el$133, createTextNode(` · ◈ Cockpit`));
+			effect((_p$) => {
+				var _v$17 = muted(), _v$18 = muted();
+				_v$17 !== _p$.e && (_p$.e = setProp(_el$129, "fg", _v$17, _p$.e));
+				_v$18 !== _p$.t && (_p$.t = setProp(_el$133, "fg", _v$18, _p$.t));
+				return _p$;
+			}, {
+				e: void 0,
+				t: void 0
+			});
+			return _el$128;
 		}
 	});
 }
@@ -9818,10 +12397,10 @@ function PromptFooter(props) {
 			return memo(() => !!tuiPrefs().footer.prompt)() && model.running() > 0;
 		},
 		get children() {
-			var _el$124 = createElement("text");
-			insert(_el$124, () => `▸${model.preset().name ?? "default"} · ✦${model.running()} ativos`);
-			effect((_$p) => setProp(_el$124, "fg", muted(), _$p));
-			return _el$124;
+			var _el$139 = createElement("text");
+			insert(_el$139, () => `▸${model.preset().name ?? "default"} · ✦${model.running()} ativos`);
+			effect((_$p) => setProp(_el$139, "fg", muted(), _$p));
+			return _el$139;
 		}
 	});
 }
@@ -9846,7 +12425,7 @@ const plugin = Plugin.define({
 			append: "home.footer.status",
 			render: () => createComponent(HomeStatus, { context })
 		});
-		setAvailableUpdateVersion(resolveCachedAvailableUpdate("2.2.0-beta.11", updateCheckStateFile().readState()));
+		setAvailableUpdateVersion(resolveCachedAvailableUpdate("2.2.0", updateCheckStateFile().readState()));
 		const updateNoticeTimer = setTimeout(() => {
 			checkForPantheonUpdate(context).catch(() => {});
 		}, 3e3);
@@ -9887,6 +12466,9 @@ const plugin = Plugin.define({
 		try {
 			setupPantheonSettings(context, { renderSidebar: (ctx) => createComponent(Sidebar, { context: ctx }) });
 		} catch {}
+		try {
+			setupPantheonCockpit(context, () => resolveSidebarCwd(context));
+		} catch {}
 		const unregisterSettingsSlot = context.ui.slot({
 			append: "session.composer.top",
 			render: (slotProps) => createComponent(PantheonSettingsSlot, {
@@ -9912,6 +12494,6 @@ const plugin = Plugin.define({
 	}
 });
 //#endregion
-export { BLOCK_ICONS, CONTEXT_BAR_CELLS, CONTEXT_BAR_EMPTY_CELL, CONTEXT_BAR_FILLED_CELL, DELEGATION_CHILD_STATUS_GRACE_MS, DISPATCH_AGENT_CEILING, DISPATCH_AGENT_WIDTH, DISPATCH_COST_WIDTH, DISPATCH_COUNT_WIDTH, DISPATCH_DONE_MARKER, DISPATCH_DURATION_WIDTH, DISPATCH_GROUP_COST_WIDTH, DISPATCH_KIND_ORIGIN_LABELS, DISPATCH_MAX_LINES, DISPATCH_MAX_WIDTH, DISPATCH_MIN_AGENT_WIDTH, DISPATCH_MODEL_WIDTH, DISPATCH_PANEL_AGENT_WIDTH, DISPATCH_PANEL_COMMANDS, DISPATCH_PANEL_COST_WIDTH, DISPATCH_PANEL_DASH, DISPATCH_PANEL_DURATION_WIDTH, DISPATCH_PANEL_EMPTY_TEXT, DISPATCH_PANEL_FULLSCREEN_BADGE, DISPATCH_PANEL_HEADER_MARKER, DISPATCH_PANEL_KIND_WIDTH, DISPATCH_PANEL_MIN_AGENT_WIDTH, DISPATCH_PANEL_NAME, DISPATCH_PANEL_PAGE_SIZE, DISPATCH_PANEL_RULE_CHAR, DISPATCH_PANEL_SELECTION_GUTTER, DISPATCH_PANEL_SELECTION_MARKER, DISPATCH_PANEL_TITLE_WIDTH, DISPATCH_PANEL_TOAST, DISPATCH_PANEL_WIDE_MIN_WIDTH, DISPATCH_RUNNING_CEILING, GIT_ARROW_DOWN, GIT_ARROW_UP, GIT_CHANGES_DEBOUNCE_MS, GIT_CLI_DEBOUNCE_MS, GIT_CLI_MAX_BUFFER, GIT_CLI_MIN_INTERVAL_MS, GIT_CLI_TIMEOUT_MS, HEADER_MAX_WIDTH, MODEL_USAGE_COST_WIDTH, MODEL_USAGE_DEBOUNCE_MS, MODEL_USAGE_MESSAGE_LIMIT, MODEL_USAGE_MODEL_WIDTH, MODEL_USAGE_SESSION_LIMIT, MODEL_USAGE_TOKEN_WIDTH, MODEL_USAGE_VISIBLE_CEILING, PRESET_MARKER, SIDEBAR_REFRESH_EVENTS, SIDEBAR_WAITING_LABEL, SPEND_30D_LABEL, SPEND_30D_MS, SPEND_LINE_SEPARATOR, SPEND_PROBE_TOLERANCE_MS, SPEND_PROBE_WINDOW_MS, SPEND_REFRESH_DEBOUNCE_MS, SPEND_TODAY_LABEL, TODO_TEXT_WIDTH, TODO_VISIBLE_CEILING, UNKNOWN_AGENT, agentKey, buildDispatchBlock, cacheHitPercent, ceilingModelUsage, ceilingTodoItems, cellWidth, childAgentRowText, classifyDispatchKind, collectChildAgentUsage, collectDispatch, collectModelUsage, collectSubagentCalls, collectWarmupTargets, completedSummaryText, computeContextUsage, contextBar, contextBarFilled, contextBlockRows, contextPerformanceLine, contextProgressColor, contextSpendLine, contextSpendLines, contextUsageTone, countGitChanges, countSessionCompactions, countToolCalls, countUserTurns, createDispatchPanelModel, createFooterModel, createSidebarModel, plugin as default, defaultGitExec, delegationStateFromOutcome, delegationStateFromStatus, detectDelegationCompletions, dispatchAgentText, dispatchElapsed, dispatchHeaderSummary, dispatchKindFromAgent, dispatchKindFromPrefix, dispatchKindSuffix, dispatchModelText, dispatchPanelCell, dispatchPanelDetail, dispatchPanelFooter, dispatchPanelHeader, dispatchPanelKeymapLayer, dispatchPanelLayout, dispatchPanelMarker, dispatchPanelRangeText, dispatchPanelRowText, dispatchPanelRows, dispatchPanelRule, dispatchPanelTitle, dispatchPanelWindow, dispatchTokenLine, dispatchTokens, dispatchTotalCost, extractCompactionInfo, extractTokenAnatomy, failedSuffixText, formatCompactionBadge, formatContextWindow, formatDispatchCost, formatDispatchDuration, formatGitChanges, formatGitSnapshot, formatSpendUSD, formatSpent, formatTokenAnatomyLine, formatTokenAnatomySplit, formatTokenCount, formatToolCallLine, formatTurnCostLine, formatTurnCostUSD, formatTurnsBadge, formatUsageCost, formatUsageTokens, gitProbeAllowed, hiddenChildAgentsText, hiddenModelUsageText, hiddenTodoText, isTodoStatus, isValidSessionID, lastAssistantWithTokens, latestTodoItems, latestTurnCost, messageTokensTotal, modelRefID, modelUsageRowLines, modelUsageRowText, modelUsageRows, navigateToSession, openDispatchPanel, orderDispatchEntries, orderTodoItems, padCell, parseGitAheadBehind, parseGitStatusPorcelain, parsePresetOverrides, parseTodoItems, performDispatchPanelAction, presetFromEnv, presetHeaderLine, providerIDFromModels, providerIDFromRef, readGitSnapshot, resetSpendUnit, resolveActiveModelRef, resolveActivePresetForTui, resolveContextLimit, resolveGateStatus, resolveModelContextSnapshot, resolvedSpendUnit, runDispatchPanelCommand, runningChildRowText, shortModelID, shortSessionID, sidebarMoneyLines, sidebarPlaceholder, sidebarTextLines, spendWindows, spinnerFrame, startOfLocalDay, statsCost, statsRangeMatches, toDelegationView, toDispatchEntry, todoRowText, todoTone, transcriptWindow, truncateLabel, turnTokensPerSecond, withBlockSpacers };
+export { BLOCK_ICONS, CONTEXT_BAR_CELLS, CONTEXT_BAR_EMPTY_CELL, CONTEXT_BAR_FILLED_CELL, DELEGATION_CHILD_STATUS_GRACE_MS, DISPATCH_AGENT_CEILING, DISPATCH_AGENT_WIDTH, DISPATCH_COST_WIDTH, DISPATCH_COUNT_WIDTH, DISPATCH_DONE_MARKER, DISPATCH_DURATION_WIDTH, DISPATCH_GROUP_COST_WIDTH, DISPATCH_KIND_ORIGIN_LABELS, DISPATCH_MAX_LINES, DISPATCH_MAX_WIDTH, DISPATCH_MIN_AGENT_WIDTH, DISPATCH_MODEL_WIDTH, DISPATCH_PANEL_AGENT_WIDTH, DISPATCH_PANEL_COMMANDS, DISPATCH_PANEL_COST_WIDTH, DISPATCH_PANEL_DASH, DISPATCH_PANEL_DURATION_WIDTH, DISPATCH_PANEL_EMPTY_TEXT, DISPATCH_PANEL_FULLSCREEN_BADGE, DISPATCH_PANEL_HEADER_MARKER, DISPATCH_PANEL_KIND_WIDTH, DISPATCH_PANEL_MIN_AGENT_WIDTH, DISPATCH_PANEL_NAME, DISPATCH_PANEL_PAGE_SIZE, DISPATCH_PANEL_RULE_CHAR, DISPATCH_PANEL_SELECTION_GUTTER, DISPATCH_PANEL_SELECTION_MARKER, DISPATCH_PANEL_TITLE_WIDTH, DISPATCH_PANEL_TOAST, DISPATCH_PANEL_WIDE_MIN_WIDTH, DISPATCH_RUNNING_CEILING, GIT_ARROW_DOWN, GIT_ARROW_UP, GIT_CHANGES_DEBOUNCE_MS, GIT_CLI_DEBOUNCE_MS, GIT_CLI_MAX_BUFFER, GIT_CLI_MIN_INTERVAL_MS, GIT_CLI_TIMEOUT_MS, HEADER_MAX_WIDTH, MODEL_USAGE_COST_WIDTH, MODEL_USAGE_DEBOUNCE_MS, MODEL_USAGE_MESSAGE_LIMIT, MODEL_USAGE_MODEL_WIDTH, MODEL_USAGE_SESSION_LIMIT, MODEL_USAGE_TOKEN_WIDTH, MODEL_USAGE_VISIBLE_CEILING, PRESET_MARKER, SIDEBAR_REFRESH_EVENTS, SIDEBAR_WAITING_LABEL, SPEND_30D_LABEL, SPEND_30D_MS, SPEND_LINE_SEPARATOR, SPEND_PROBE_TOLERANCE_MS, SPEND_PROBE_WINDOW_MS, SPEND_REFRESH_DEBOUNCE_MS, SPEND_TODAY_LABEL, TODO_TEXT_WIDTH, TODO_VISIBLE_CEILING, UNKNOWN_AGENT, agentKey, buildDispatchBlock, cacheHitPercent, ceilingModelUsage, ceilingTodoItems, cellWidth, childAgentRowText, classifyDispatchKind, classifyToolPart, collectChildAgentUsage, collectDispatch, collectModelUsage, collectSubagentCalls, collectWarmupTargets, completedSummaryText, computeContextUsage, contextBar, contextBarFilled, contextBlockRows, contextPerformanceLine, contextProgressColor, contextSpendLine, contextSpendLines, contextUsageTone, countGitChanges, countSessionCompactions, countToolCalls, countUserTurns, createDispatchPanelModel, createFooterModel, createSidebarModel, plugin as default, defaultGitExec, delegationStateFromOutcome, delegationStateFromStatus, detectDelegationCompletions, dispatchAgentText, dispatchElapsed, dispatchHeaderSummary, dispatchKindFromAgent, dispatchKindFromPrefix, dispatchKindSuffix, dispatchModelText, dispatchPanelCell, dispatchPanelDetail, dispatchPanelFooter, dispatchPanelHeader, dispatchPanelKeymapLayer, dispatchPanelLayout, dispatchPanelMarker, dispatchPanelRangeText, dispatchPanelRowText, dispatchPanelRows, dispatchPanelRule, dispatchPanelTitle, dispatchPanelWindow, dispatchTokenLine, dispatchTokens, dispatchTotalCost, enrichDispatchEntries, extractChildActivity, extractCompactionInfo, extractTokenAnatomy, failedSuffixText, formatCompactionBadge, formatContextWindow, formatDispatchCost, formatDispatchDuration, formatGitChanges, formatGitSnapshot, formatSpendUSD, formatSpent, formatTokenAnatomyLine, formatTokenAnatomySplit, formatTokenCount, formatToolCallLine, formatToolDomainLine, formatTurnCostLine, formatTurnCostUSD, formatTurnsBadge, formatUsageCost, formatUsageTokens, gitProbeAllowed, hiddenChildAgentsText, hiddenModelUsageText, hiddenTodoText, isTodoStatus, isValidSessionID, lastAssistantWithTokens, latestTodoItems, latestTurnCost, messageTokensTotal, modelRefID, modelUsageRowLines, modelUsageRowText, modelUsageRows, navigateToSession, openDispatchPanel, orderDispatchEntries, orderTodoItems, padCell, parseGitAheadBehind, parseGitStatusPorcelain, parsePresetOverrides, parseTodoItems, performDispatchPanelAction, presetFromEnv, presetHeaderLine, providerIDFromModels, providerIDFromRef, readGitSnapshot, resetSpendUnit, resolveActiveModelRef, resolveActivePresetForTui, resolveContextLimit, resolveGateStatus, resolveModelContextSnapshot, resolvedSpendUnit, runDispatchPanelCommand, runningChildRowText, shortModelID, shortSessionID, sidebarMoneyLines, sidebarPlaceholder, sidebarTextLines, spendWindows, spinnerFrame, startOfLocalDay, statsCost, statsRangeMatches, summarizeToolDomains, toDelegationView, toDispatchEntry, todoRowText, todoTone, transcriptWindow, truncateLabel, turnTokensPerSecond, withBlockSpacers };
 
 //# sourceMappingURL=tui.js.map

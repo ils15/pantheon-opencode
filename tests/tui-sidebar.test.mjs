@@ -824,7 +824,7 @@ test('refresh subscription uses only names from the OpenCode V2 event union', as
 })
 
 test('createSidebarModel: subscription, toast, spinner and teardown (fake host)', async () => {
-  const { createSidebarModel } = await loadV2()
+  const { createSidebarModel, SIDEBAR_REFRESH_EVENTS } = await loadV2()
   const now = Date.now()
   const host = createSidebarHost({
     children: [
@@ -863,18 +863,7 @@ test('createSidebarModel: subscription, toast, spinner and teardown (fake host)'
   try {
     // The fake host throws on any name outside the union, so a passing mount
     // proves every subscription is a real V2 event.
-    assert.deepEqual(
-      [...host.registered.keys()],
-      [
-        'session.created',
-        'session.renamed',
-        'session.metadata.updated',
-        'session.moved',
-        'session.idle',
-        'session.status',
-        'session.deleted',
-      ],
-    )
+    assert.deepEqual([...host.registered.keys()], [...SIDEBAR_REFRESH_EVENTS])
     assert.deepEqual(host.toasts, [], 'mounting must not toast')
 
     // The sidebar no longer lists other sessions — only the active one.
@@ -5231,4 +5220,160 @@ test('v2.1.7 TUI enhancements: turn cost delta, token anatomy, tool health and c
   } finally {
     dispose()
   }
+
+  // 8. Native tool domain breakdown & live tool indicator (Slice 2)
+  const msgsNative = [
+    {
+      type: 'assistant',
+      content: [
+        { type: 'tool', name: 'memory_store', state: { status: 'completed' } },
+        { type: 'tool', name: 'memory_search', state: { status: 'running' } },
+        { type: 'tool', name: 'context_save', state: { status: 'completed' } },
+        { type: 'tool', name: 'code_query', state: { status: 'completed' } },
+        { type: 'tool', name: 'hashline_edit', state: { status: 'completed' } },
+      ],
+    },
+  ]
+  const domains = v2.summarizeToolDomains(msgsNative)
+  assert.equal(domains.total, 5)
+  assert.equal(domains.activeTool, 'memory_search')
+  assert.deepEqual(domains.byDomain, { mem: 2, ctx: 1, code: 1, edit: 1 })
+  const detailLine = v2.formatToolDomainLine(domains, 31)
+  assert.ok(detailLine?.includes('mem:2'), `expected mem:2 in ${detailLine}`)
+  assert.ok(detailLine.includes('✦'), `expected live marker in ${detailLine}`)
+  assert.ok(
+    v2.cellWidth(detailLine) <= 31,
+    `detail line fits 31 cols (${v2.cellWidth(detailLine)})`,
+  )
+
+  const hostNative = createSidebarHost({
+    children: [['ses_native_tools', { id: 'ses_native_tools', title: 'Native', agent: 'zeus' }]],
+    messages: [['ses_native_tools', msgsNative]],
+  })
+  let modelNative
+  const disposeNative = createRoot((disposeRoot) => {
+    modelNative = v2.createSidebarModel(hostNative.context, () => 'ses_native_tools')
+    return disposeRoot
+  })
+  try {
+    assert.equal(typeof modelNative.toolCallsDetailLine, 'function')
+    assert.ok(modelNative.toolCallsDetailLine()?.includes('mem:2'))
+  } finally {
+    disposeNative()
+  }
+
+  // 9. Dispatch 2026 live child activity & attention badges (Slice 4)
+  const childMsgsEdit = [
+    {
+      type: 'assistant',
+      content: [
+        {
+          type: 'tool',
+          name: 'hashline_edit',
+          state: { status: 'running', input: { file: 'src/probe.mjs' } },
+        },
+        { type: 'text', text: 'Applying edit to probe helper.' },
+      ],
+    },
+  ]
+  const actEdit = v2.extractChildActivity(childMsgsEdit, 'running')
+  assert.equal(actEdit.activeVerb, 'edit')
+  assert.equal(actEdit.activeTool, 'hashline_edit')
+  assert.equal(actEdit.attention, null)
+  assert.deepEqual(actEdit.filesTouched, ['probe.mjs'])
+
+  const childRowLive = v2.runningChildRowText(
+    {
+      id: 'ses_h',
+      label: 'hermes',
+      state: 'running',
+      startedAt: 1000,
+      updatedAt: 5000,
+      agent: 'hermes',
+      model: 'hy4-flash-free',
+      cost: 0,
+      kind: 'oth',
+      kindOrigin: 'agent',
+      background: false,
+      activity: actEdit,
+    },
+    13_400,
+    0,
+  )
+  assert.ok(childRowLive.includes('hermes·edit'), `live verb replaces ·oth: ${childRowLive}`)
+  assert.ok(v2.cellWidth(childRowLive) <= 34)
+
+  const actAsk = v2.extractChildActivity(
+    [
+      {
+        type: 'assistant',
+        content: [{ type: 'tool', name: 'question', state: { status: 'pending' } }],
+      },
+    ],
+    'running',
+  )
+  assert.equal(actAsk.attention, 'question')
+  assert.equal(actAsk.activeVerb, 'ask')
+  const blockAsk = v2.buildDispatchBlock([
+    {
+      id: 'ses_ask',
+      label: 'prometheus',
+      state: 'running',
+      startedAt: 1000,
+      updatedAt: 5000,
+      agent: 'prometheus',
+      model: 'kimi',
+      cost: 0,
+      kind: 'oth',
+      kindOrigin: 'agent',
+      background: false,
+      activity: actAsk,
+    },
+  ])
+  assert.equal(blockAsk?.running[0]?.tone, 'warning')
+  assert.ok(blockAsk?.running[0]?.text.startsWith('? '))
+  assert.ok(blockAsk?.running[0]?.text.includes('·ask'))
+
+  // 10. Code Mode `execute` unwrapping + separate `read` domain + live refresh events
+  assert.ok(v2.SIDEBAR_REFRESH_EVENTS.includes('session.tool.called'))
+  assert.ok(v2.SIDEBAR_REFRESH_EVENTS.includes('session.message.content.updated'))
+  assert.ok(v2.SIDEBAR_REFRESH_EVENTS.includes('session.usage.updated'))
+
+  const msgsCodeMode = [
+    {
+      type: 'assistant',
+      content: [
+        { type: 'tool', name: 'read', state: { status: 'completed', input: { path: 'a.js' } } },
+        {
+          type: 'tool',
+          name: 'execute',
+          state: {
+            status: 'completed',
+            input: { code: 'await tools.memory_store({ namespace: "a", key: "b", value: "c" })' },
+          },
+        },
+        {
+          type: 'tool',
+          name: 'execute',
+          state: {
+            status: 'running',
+            input: {
+              code: 'await tools.hashline_edit({ file: "src/probe.mjs", edits: [] })',
+            },
+          },
+        },
+      ],
+    },
+  ]
+  const cmDomains = v2.summarizeToolDomains(msgsCodeMode)
+  assert.equal(cmDomains.total, 3)
+  assert.equal(cmDomains.byDomain.read, 1)
+  assert.equal(cmDomains.byDomain.mem, 1)
+  assert.equal(cmDomains.byDomain.edit, 1)
+  assert.equal(cmDomains.activeTool, 'hashline_edit')
+
+  const cmChild = v2.extractChildActivity(msgsCodeMode, 'running')
+  assert.equal(cmChild?.activeVerb, 'edit')
+  assert.equal(cmChild?.activeTool, 'hashline_edit')
+  assert.deepEqual(cmChild?.filesTouched, ['probe.mjs', 'a.js'])
 })

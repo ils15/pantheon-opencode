@@ -22,7 +22,8 @@ import {
   ensureLegacyStoresMigratedOnce,
   resolveSafeGlobalConfigDir,
 } from './legacy-store-migration.mjs'
-import { resolveToolCwd } from './tool-context.ts'
+import { getFederatedStats, searchFederatedMemories } from './memory-federation.ts'
+import { resolveMemoryStoreCwd } from './tool-context.ts'
 import type { V2ToolDef, V2ToolResult } from './tools.ts'
 
 const SAFE_SEGMENT_RE = /^[a-zA-Z0-9._:-]{1,128}$/
@@ -163,7 +164,7 @@ export function createNativeMemoryAndPersistenceTools(fallbackDir?: string): V2T
           if (Buffer.byteLength(value, 'utf8') > MAX_MEMORY_VALUE_BYTES) {
             return jsonResult({ ok: false, error: 'value exceeds maximum size of 64 KiB' })
           }
-          const cwd = resolveToolCwd(context, fallbackDir)
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir)
           const db = getMemoryDb(cwd)
           const nowIso = new Date().toISOString()
           db.prepare(
@@ -211,7 +212,7 @@ export function createNativeMemoryAndPersistenceTools(fallbackDir?: string): V2T
           if (typeof ns !== 'string' || !ns.trim() || typeof key !== 'string' || !key.trim()) {
             return jsonResult({ ok: false, error: 'namespace and key are required' })
           }
-          const cwd = resolveToolCwd(context, fallbackDir)
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir)
           const db = getMemoryDb(cwd)
           const nowIso = new Date().toISOString()
           const row = db
@@ -241,6 +242,10 @@ export function createNativeMemoryAndPersistenceTools(fallbackDir?: string): V2T
           query: { type: 'string', description: 'Search query terms' },
           namespace: { type: 'string', description: 'Optional namespace filter' },
           top_k: { type: 'number', description: 'Maximum results to return (default 10)' },
+          federated: {
+            type: 'boolean',
+            description: 'Include federated peer repositories (default true when configured)',
+          },
         },
       },
       output: {},
@@ -258,7 +263,8 @@ export function createNativeMemoryAndPersistenceTools(fallbackDir?: string): V2T
             typeof input.namespace === 'string' && input.namespace.trim()
               ? input.namespace.trim()
               : undefined
-          const cwd = resolveToolCwd(context, fallbackDir)
+          const useFederated = input.federated !== false
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir)
           const db = getMemoryDb(cwd)
           const nowIso = new Date().toISOString()
 
@@ -268,6 +274,8 @@ export function createNativeMemoryAndPersistenceTools(fallbackDir?: string): V2T
             .split(/\s+/)
             .filter((t) => t.length >= 2)
 
+          let localRows: Record<string, unknown>[] = []
+          let matchedFts = false
           if (tokens.length > 0) {
             try {
               const ftsExpr = tokens.map((t) => `"${t.replace(/"/g, '""')}"*`).join(' OR ')
@@ -284,31 +292,44 @@ export function createNativeMemoryAndPersistenceTools(fallbackDir?: string): V2T
               }
               ftsSql += ' ORDER BY score LIMIT ?'
               ftsParams.push(limit)
-              const rows = db.prepare(ftsSql).all(...ftsParams)
+              const rows = db.prepare(ftsSql).all(...ftsParams) as Record<string, unknown>[]
               if (rows.length > 0) {
-                return jsonResult({ ok: true, count: rows.length, results: rows })
+                localRows = rows
+                matchedFts = true
               }
             } catch {
               /* fallback to LIKE */
             }
           }
 
-          const escaped = rawQuery.replace(/[\\%_]/g, '\\$&')
-          let sql = `
-            SELECT namespace, key, value, metadata, created_at
-            FROM memories
-            WHERE (value LIKE ? ESCAPE '\\' OR key LIKE ? ESCAPE '\\')
-              AND ${NOT_EXPIRED_SQL}
-          `
-          const params: Array<string | number> = [`%${escaped}%`, `%${escaped}%`, nowIso]
-          if (ns) {
-            sql += ' AND namespace = ?'
-            params.push(ns)
+          if (!matchedFts) {
+            const escaped = rawQuery.replace(/[\\%_]/g, '\\$&')
+            let sql = `
+              SELECT namespace, key, value, metadata, created_at
+              FROM memories
+              WHERE (value LIKE ? ESCAPE '\\' OR key LIKE ? ESCAPE '\\')
+                AND ${NOT_EXPIRED_SQL}
+            `
+            const params: Array<string | number> = [`%${escaped}%`, `%${escaped}%`, nowIso]
+            if (ns) {
+              sql += ' AND namespace = ?'
+              params.push(ns)
+            }
+            sql += ' ORDER BY id DESC LIMIT ?'
+            params.push(limit)
+            localRows = db.prepare(sql).all(...params) as Record<string, unknown>[]
           }
-          sql += ' ORDER BY id DESC LIMIT ?'
-          params.push(limit)
-          const rows = db.prepare(sql).all(...params)
-          return jsonResult({ ok: true, count: rows.length, results: rows })
+
+          const remaining = Math.max(0, limit - localRows.length)
+          const peerRows =
+            useFederated && remaining > 0
+              ? searchFederatedMemories(cwd, rawQuery, {
+                  ...(ns ? { namespace: ns } : {}),
+                  limit: remaining,
+                })
+              : []
+          const combined = [...localRows, ...peerRows]
+          return jsonResult({ ok: true, count: combined.length, results: combined })
         } catch (err) {
           return jsonResult({
             ok: false,
@@ -337,7 +358,7 @@ export function createNativeMemoryAndPersistenceTools(fallbackDir?: string): V2T
           if (typeof ns !== 'string' || !ns.trim() || typeof key !== 'string' || !key.trim()) {
             return jsonResult({ ok: false, error: 'namespace and key are required' })
           }
-          const cwd = resolveToolCwd(context, fallbackDir)
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir)
           const db = getMemoryDb(cwd)
           const info = db
             .prepare('DELETE FROM memories WHERE namespace = ? AND key = ?')
@@ -370,7 +391,7 @@ export function createNativeMemoryAndPersistenceTools(fallbackDir?: string): V2T
       output: {},
       execute: async (input, context) => {
         try {
-          const cwd = resolveToolCwd(context, fallbackDir)
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir)
           const db = getMemoryDb(cwd)
           const nowIso = new Date().toISOString()
           const limit =
@@ -408,7 +429,7 @@ export function createNativeMemoryAndPersistenceTools(fallbackDir?: string): V2T
       output: {},
       execute: async (_input, context) => {
         try {
-          const cwd = resolveToolCwd(context, fallbackDir)
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir)
           const db = getMemoryDb(cwd)
           const nowIso = new Date().toISOString()
           const total = db
@@ -419,7 +440,13 @@ export function createNativeMemoryAndPersistenceTools(fallbackDir?: string): V2T
               `SELECT namespace, count(*) as count FROM memories WHERE ${NOT_EXPIRED_SQL} GROUP BY namespace`,
             )
             .all(nowIso)
-          return jsonResult({ ok: true, total: total?.count ?? 0, byNamespace })
+          const fed = getFederatedStats(cwd)
+          return jsonResult({
+            ok: true,
+            total: total?.count ?? 0,
+            byNamespace,
+            ...(fed.repos.length > 0 ? { federated: fed } : {}),
+          })
         } catch (err) {
           return jsonResult({
             ok: false,
@@ -455,7 +482,7 @@ export function createNativeMemoryAndPersistenceTools(fallbackDir?: string): V2T
           if (typeof input.content !== 'string' || !input.content.trim()) {
             return jsonResult({ ok: false, error: 'content must be a non-empty string' })
           }
-          const cwd = resolveToolCwd(context, fallbackDir)
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir)
           runAutoMigration(cwd)
           const baseDir = join(cwd, '.pantheon', 'persistence')
           const dir = resolveConfinedPath(baseDir, ns)
@@ -513,7 +540,7 @@ export function createNativeMemoryAndPersistenceTools(fallbackDir?: string): V2T
               error: 'session_id and namespace must be safe identifiers without path traversal',
             })
           }
-          const cwd = resolveToolCwd(context, fallbackDir)
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir)
           runAutoMigration(cwd)
           const baseDir = join(cwd, '.pantheon', 'persistence')
           const dir = resolveConfinedPath(baseDir, ns)
@@ -568,7 +595,7 @@ export function createNativeMemoryAndPersistenceTools(fallbackDir?: string): V2T
           if (!isSafeSegment(rawId)) {
             return jsonResult({ ok: false, error: 'id must be a safe identifier' })
           }
-          const cwd = resolveToolCwd(context, fallbackDir)
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir)
           runAutoMigration(cwd)
           const goalsDir = join(cwd, '.pantheon', 'goals')
           const filePath = resolveConfinedPath(goalsDir, `${rawId}.json`)
@@ -604,7 +631,7 @@ export function createNativeMemoryAndPersistenceTools(fallbackDir?: string): V2T
       output: {},
       execute: async (input, context) => {
         try {
-          const cwd = resolveToolCwd(context, fallbackDir)
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir)
           runAutoMigration(cwd)
           const goalsDir = join(cwd, '.pantheon', 'goals')
           mkdirSync(goalsDir, { recursive: true })
@@ -633,7 +660,8 @@ export function createNativeMemoryAndPersistenceTools(fallbackDir?: string): V2T
     },
     {
       name: 'goal_update',
-      description: 'Update progress or status on an active session goal.',
+      description:
+        'Update progress notes or status on an active session goal. Use "notes" (not "progress") for progress text.',
       input: {
         type: 'object',
         additionalProperties: false,
@@ -641,7 +669,7 @@ export function createNativeMemoryAndPersistenceTools(fallbackDir?: string): V2T
         properties: {
           id: { type: 'string', description: 'Goal identifier' },
           status: { type: 'string', description: 'Updated status (active, paused, completed)' },
-          notes: { type: 'string', description: 'Progress notes' },
+          notes: { type: 'string', description: 'Progress notes (use "notes", not "progress")' },
         },
       },
       output: {},
@@ -651,7 +679,7 @@ export function createNativeMemoryAndPersistenceTools(fallbackDir?: string): V2T
           if (!isSafeSegment(id)) {
             return jsonResult({ ok: false, error: 'valid goal id is required' })
           }
-          const cwd = resolveToolCwd(context, fallbackDir)
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir)
           runAutoMigration(cwd)
           const goalsDir = join(cwd, '.pantheon', 'goals')
           const filePath = resolveConfinedPath(goalsDir, `${id}.json`)
@@ -692,7 +720,7 @@ export function createNativeMemoryAndPersistenceTools(fallbackDir?: string): V2T
           if (!isSafeSegment(id)) {
             return jsonResult({ ok: false, error: 'valid goal id is required' })
           }
-          const cwd = resolveToolCwd(context, fallbackDir)
+          const cwd = resolveMemoryStoreCwd(context, fallbackDir)
           runAutoMigration(cwd)
           const goalsDir = join(cwd, '.pantheon', 'goals')
           const filePath = resolveConfinedPath(goalsDir, `${id}.json`)

@@ -25,6 +25,7 @@ import { readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { isAbsolute, resolve, sep } from 'node:path'
 import { z } from 'zod'
 
+import { resolveToolCwd } from '../tool-context.ts'
 import { buildMismatchError, HASHLINE_REF_RE } from './core.ts'
 import { hashTag } from './xxhash.ts'
 
@@ -101,9 +102,10 @@ interface ResolvedEdit {
 function resolveFile(
   file: string,
   ctx: HashlineEditContext,
+  fallbackDir?: string,
 ): { ok: true; file: string } | { ok: false; error: string } {
   if (isAbsolute(file)) return { ok: true, file: resolve(file) }
-  const base = resolve(ctx.worktree ?? ctx.directory ?? process.cwd())
+  const base = resolve(resolveToolCwd(ctx, fallbackDir))
   const resolved = resolve(base, file)
   // Prefix check with a path.sep boundary: base + sep + name must not
   // match a sibling prefix (e.g. `/data/x` vs `/data2/x`).
@@ -186,7 +188,7 @@ function validateEdits(
  * partially); on success returns the summary with `{firstChangedLine,
  * changedCount}` metadata.
  */
-export function createHashlineEditTool() {
+export function createHashlineEditTool(fallbackDir?: string) {
   return {
     description:
       'Edit a file anchored by hashline refs (LINE#TAG) instead of raw line numbers. ' +
@@ -199,7 +201,7 @@ export function createHashlineEditTool() {
       args: z.infer<z.ZodObject<typeof hashlineEditArgs>>,
       ctx: HashlineEditContext,
     ): Promise<HashlineToolResult> => {
-      const resolved = resolveFile(args.file, ctx)
+      const resolved = resolveFile(args.file, ctx, fallbackDir)
       if (!resolved.ok) return resolved.error
       const file = resolved.file
 

@@ -69,19 +69,28 @@ No OpenCode 2.x, o plugin impõe adicionalmente uma matriz chamador/alvo para re
 
 Existe uma geração única: a linha de plugins V1 foi removida no 2.0, e a superfície abaixo é a única ativa.
 
-O plugin é registrado sob a chave plural `plugins` como o diretório `<installed>/src/plugin`. O arquivo `src/plugin/index.ts` reexporta o ponto de entrada real em `src/plugin.ts`; o registro de hooks de ferramentas em `src/plugin.ts` é alimentado pelas definições em `src/pantheon/tools.ts`.
+O plugin é registrado sob a chave plural `plugins` (via
+`opencode plugin add pantheon-opencode` ou `<installed>/src/plugin`). O bundle
+`src/plugin/index.js` é compilado a partir de `src/plugin.ts` e registra **26
+ferramentas nativas em TypeScript** (`src/pantheon/`), dispensando runtime Python:
 
-### Quatro Ferramentas Incondicionais:
-- `hashline_edit` — Edição precisa baseada em linhas de hash (`src/pantheon/tools.ts`).
-- `pantheon_cost` — Telemetria de tokens consumidos, custos estimados e velocidade de cache (`src/pantheon/tools.ts`).
-- `pantheon_model` — Roteamento dinâmico de modelos por especialista (`src/pantheon/tools.ts`).
-- `pantheon_local_decision` — Seletor consultivo local; rejeita execução a menos que o contexto do host identifique o chamador como Zeus (`src/pantheon/tools.ts`).
-
-### Até Duas Ferramentas Dependentes do Host:
-- `vision_describe` — Adicionada apenas quando `ctx.model.list` é uma função (`src/plugin.ts`; definição em `src/pantheon/native-vision.ts`).
-- `pantheon_bounded_read` — Adicionada apenas quando o hook `tool.execute.before` é registrado e o host expõe as APIs de permissão e sessão (`src/plugin.ts`; definição em `src/pantheon/bounded-read.ts`). Apenas para sessões raiz do Zeus.
-
-As ferramentas de metas automáticas são omitidas onde o `PluginContext` do host não as suporta (reportado como `goal-tools`).
+- **Edição, custo, modelo e roteamento:** `hashline_edit`, `pantheon_cost`,
+  `pantheon_model`, `pantheon_local_decision` (somente Zeus) e `shell`.
+- **Memória FTS5, checkpoints e metas (`native-memory-tools.ts`, compartilhado
+  entre worktrees Git):** `memory_store`, `memory_recall`, `memory_search`,
+  `memory_forget`, `memory_stats`, `context_save`, `context_get`, `goal_create`,
+  `goal_get`, `goal_update` e `goal_done`.
+- **Codemap, Step-Ledger e orquestração:** `code_index`, `code_query`,
+  `code_neighbors` (com poda automática de arquivos removidos),
+  `pantheon_step_ledger`, `pantheon_deepwork`, `pantheon_agent_forge` e
+  `pantheon_skill_search`.
+- **Ferramentas dependentes do host:**
+  - `vision_describe` — adicionada quando `ctx.model.list` está disponível (`src/pantheon/native-vision.ts`).
+  - `pantheon_bounded_read` — adicionada quando o hook `tool.execute.before` e
+    as APIs de permissão/sessão estão expostas (`src/pantheon/bounded-read.ts`;
+    apenas sessões raiz do Zeus).
+  - As ferramentas nativas `todowrite`/`todoread` do host são preservadas quando
+    já registradas para manter o painel nativo de Todo funcionando.
 
 O plugin também conecta cinco inscrições de eventos (`session.created`, `session.idle`, `session.deleted`, `session.error`, `session.compacted`), hooks de sessão (`prompt`, `context`, `compaction`), um hook `execute.before` que aplica modo somente-leitura (o mesmo manipulador impede o orquestrador de ler diretamente códigos-fonte, testes e scripts com `read`/`glob`/`grep`), e uma cadeia `execute.after` (`task-result-guard` → `context-sandbox` → `read-enhancer` → formatador + auditoria de delegação).
 

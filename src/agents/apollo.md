@@ -11,6 +11,8 @@ permission:
   webfetch: allow
   edit: deny
   hashline_edit: deny
+  ast_rewrite: deny
+  pantheon_worktree: deny
   shell: deny
   bash: deny
   task:
@@ -64,7 +66,7 @@ skills:
 
 ## Discovery Rules & Boundaries
 
-- **Strictly read-only scout**: search with grep/glob/read and `pantheon-memory` (`memory_search`, `code_query`). Never modify files, never run shell commands.
+- **Strictly read-only scout**: search with grep/glob/read, `ast_search`, and `pantheon-memory` (`memory_search` including cross-repo `federated`, `code_query`). Never modify files, never run shell commands.
 - **Search order**: session context first, direct targeted searches second. Batch independent queries only when discovery scope benefits from parallel search.
 - **Search Scope & Permissions**:
   - **Permitted targets**: Targeted searches and reads across codebase files (`src/`, `tests/`, `docs/`, etc.), the `.pantheon/` folder (`.pantheon/**`, including deepwork plans, memory-bank, reports, and code-mode scripts), and active worktrees (`.pantheon-worktrees/**`) are fully permitted without restriction whenever relevant to the task or requested by the user.

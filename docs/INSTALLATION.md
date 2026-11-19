@@ -1,49 +1,52 @@
-# Pantheon Installation Guide — 2.0 (OpenCode 2.x)
+# Pantheon Installation Guide — OpenCode 2.x
 
 > 🇧🇷 **Versão em Português disponível:** [Leia em Português](pt-BR/INSTALLATION.md)
 
-Pantheon 2.0 **requires OpenCode 2.x** — the OpenCode V1 contract was removed
-entirely (1.7.x was the last line with V1 support). There are two complementary
-ways to install. Loading the plugin through the host's native flow is the
-recommended path; `npx pantheon-opencode init` remains the installer for the
-full component set. `pantheon_model` offers only manual `status`, `show`,
-`set`, and `reset`, with no preset wizard: the host default stays intact
-without an explicit per-agent override, and preset markers and
-`PANTHEON_MODEL_PRESET` are ignored and preserved. Without an override,
-delegates inherit the parent chat model natively.
+Pantheon 2.2 **requires OpenCode 2.x** (the OpenCode V1 contract was removed
+entirely; 1.7.x was the last line with V1 support).
+
+**Best-practice install (`opencode plugin add`):** loading Pantheon directly
+through OpenCode's native plugin manager registers all **14 agents, 25 skills,
+9 slash commands, 30 native TypeScript tools, and TUI** in-process with zero
+copied files on disk — so it works immediately in **any directory** (git repos,
+worktrees, or empty folders) and upgrades cleanly without leaving stale copied
+assets behind.
+
+`npx pantheon-opencode init` remains available when you specifically want
+file-based `.opencode/` artifacts, `AGENTS.md` injection, or optional legacy
+Python MCPs. If migrating from an older `init` install, open
+`/pantheon-settings` → **Updates** (**Legacy & Drift Cleanup**) to remove
+redundant copied files and stale plugin caches safely.
 
 ## TL;DR (Quick Start)
 
 ```bash
-# Recommended: load the plugin through the host (npm package; a git URL works too)
+# Recommended: native OpenCode 2.x plugin (zero copied clutter, works anywhere)
 opencode plugin add pantheon-opencode
 
-# Full component set: agents, skills, instructions, commands, plugins (+ MCP/TUI)
-npx pantheon-opencode init
+# Upgrade later (also available interactively inside /pantheon-settings -> Updates)
+opencode plugin update pantheon-opencode
 
-# Headless preview; add --yes to authorize applying the same defaults
-npx pantheon-opencode init --headless
+# Optional CLI installer: explicit file-based install / project AGENTS.md / MCP
+npx pantheon-opencode init --project --no-mcp
 npx pantheon-opencode init --headless --yes
 
-# Separate repository wrapper: config migration review + installer preflight
-npm run setup
+# Verify installation & clean stale/legacy artifacts
+npx pantheon-opencode doctor
+node scripts/prune.mjs            # preview stale backups/caches/worktrees
 
-# Verify installation
-npm run doctor
-
-# Development & Testing Prerequisites:
-# Run `npm install` first! Unit and contract test suites (`npm run test:quick`,
-# `npm run test:node`, `npm run test:ts`) require devDependencies (tsx, biome,
-# esbuild) to avoid silent UNMET DEPENDENCY failures.
+# Development & Testing Prerequisites (repo checkout only):
 npm install
-
-# Optional: activate the Jev decision model in the same pass
-npx pantheon-opencode init --decision-model opencode-console-jev/jev-1.13 --decision-monthly-usd 5 --decision-per-decision-usd 0.10
+npm run setup                     # config migration review + installer preflight
 ```
 
-- **Requirements:** a supported host — **OpenCode 2.x** (Pantheon 2.0 does not
-  support an OpenCode 1.x host) — plus **Node.js >=26.4.0** for Pantheon's
-  CLI/installer/Node tooling and **Python 3.11+** (optional, MCP servers).
+- **Requirements:** a supported host — **OpenCode 2.x** (Pantheon 2.x does not
+  support OpenCode 1.x) — plus **Node.js >=26.4.0** for Pantheon's
+  CLI/installer/tooling and **Python 3.11+** (optional, legacy Python MCPs only;
+  the 26 native TypeScript tools require Node.js only).
+- **Per-agent model behavior:** `pantheon_model` provides manual `status`,
+  `show`, `set`, and `reset` overrides; without an explicit override, delegates
+  natively inherit the parent chat model.
 - **Known broken:** OpenCode 2.0.22 does not expose `ctx.permission.assert`. Node 22, Node 24, and Node 26.0–26.3 are outside the supported range.
 - **The host-native plugin flow.** `opencode plugin add <npm-package|git-url>`
   records the plugin under the plural `plugins` key as an object entry

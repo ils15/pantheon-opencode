@@ -76,10 +76,10 @@ function formatUsdCapForRepair(value) {
 function printUsage() {
   console.log('Pantheon OpenCode — Multi-agent orchestration platform')
   console.log('')
-  console.log('Recommended (OpenCode 2.2+ native plugin, global or project — no npx init needed):')
-  console.log('  opencode plugin add pantheon-opencode@beta')
+  console.log('Recommended (OpenCode 2.x native plugin, works in any directory — no init needed):')
+  console.log('  opencode plugin add pantheon-opencode')
   console.log('')
-  console.log('Deprecated CLI installer (legacy fallback — will be retired in future releases):')
+  console.log('Optional CLI installer (legacy fallback or project AGENTS.md / custom MCP setup):')
   console.log('  npx pantheon-opencode init              # Install globally (legacy)')
   console.log('  npx pantheon-opencode init --project    # Install in project (legacy)')
   console.log('  npx pantheon-opencode init --dry-run    # Preview only')
@@ -1052,6 +1052,24 @@ async function main() {
     if (!isProject) {
       // The project-local hint only matters when this install was not one.
       console.log(`  ${S.nextProject}`)
+    } else {
+      try {
+        const { detectRepositoryStacks } = await import('../scripts/stack-detector.mjs')
+        const stackReport = detectRepositoryStacks(targetDir)
+        if (stackReport.stacks.length > 0) {
+          console.log('')
+          console.log(
+            `  Detected stack(s): ${stackReport.stacks.map((s) => `${s.id} (${s.manifest})`).join(', ')}`,
+          )
+          if (stackReport.suggestedSpecialists.length > 0) {
+            console.log(
+              `  Tip: run /pantheon-forge in OpenCode to scaffold: ${stackReport.suggestedSpecialists.map((s) => s.name).join(', ')}`,
+            )
+          }
+        }
+      } catch {
+        /* best-effort stack hint */
+      }
     }
     if (!decisionTarget) {
       console.log(`  ${S.nextJev}`)

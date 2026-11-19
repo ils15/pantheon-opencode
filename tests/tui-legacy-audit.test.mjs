@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -93,6 +93,81 @@ describe('tui legacy-audit scanner & cleaner', () => {
       // Custom user files untouched
       assert.equal(existsSync(join(globalDir, 'skills', 'user-only-skill', 'SKILL.md')), true)
       assert.equal(existsSync(join(projectDir, '.opencode', 'agents', 'custom-ml.md')), true)
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  it('detects and cleans stale coexisting OpenCode plugin caches while keeping the active bundle', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'pantheon-tui-cache-'))
+    try {
+      const globalDir = join(tmp, 'global-opencode')
+      const cacheNpmDir = join(tmp, 'cache', 'opencode', 'npm')
+      const oldRev = join(cacheNpmDir, 'pantheon-opencode', '1000000')
+      const activeRev = join(cacheNpmDir, 'pantheon-opencode', '2000000')
+      const betaCache = join(cacheNpmDir, 'pantheon-opencode@beta', '1500000')
+
+      mkdirSync(globalDir, { recursive: true })
+      mkdirSync(join(oldRev, 'node_modules', 'pantheon-opencode'), { recursive: true })
+      mkdirSync(
+        join(activeRev, 'node_modules', 'pantheon-opencode', 'src', 'plugins', 'tui', 'dist'),
+        {
+          recursive: true,
+        },
+      )
+      mkdirSync(join(betaCache, 'node_modules', 'pantheon-opencode'), { recursive: true })
+
+      writeFileSync(
+        join(oldRev, 'node_modules', 'pantheon-opencode', 'package.json'),
+        JSON.stringify({ name: 'pantheon-opencode', version: '2.1.6' }),
+      )
+      writeFileSync(
+        join(activeRev, 'node_modules', 'pantheon-opencode', 'package.json'),
+        JSON.stringify({ name: 'pantheon-opencode', version: '2.2.0' }),
+      )
+      writeFileSync(
+        join(betaCache, 'node_modules', 'pantheon-opencode', 'package.json'),
+        JSON.stringify({ name: 'pantheon-opencode', version: '2.2.0-beta.11' }),
+      )
+      const activeBundlePath = join(
+        activeRev,
+        'node_modules',
+        'pantheon-opencode',
+        'src',
+        'plugins',
+        'tui',
+        'dist',
+        'tui.js',
+      )
+      writeFileSync(activeBundlePath, '// active tui bundle')
+
+      utimesSync(oldRev, new Date(1000), new Date(1000))
+      utimesSync(activeRev, new Date(2000), new Date(2000))
+
+      const scan = scanLegacyArtifacts({
+        globalConfigDir: globalDir,
+        cacheDir: cacheNpmDir,
+        runningVersion: '2.2.0',
+        activeBundlePath,
+      })
+      assert.equal(scan.summary.total, 2)
+      assert.equal(scan.summary.byCategory.drift, 2)
+      assert.equal(
+        scan.items.some((item) => item.path === activeRev),
+        false,
+        'active running cache revision must never be flagged',
+      )
+
+      const cleaned = cleanLegacyArtifacts({
+        globalConfigDir: globalDir,
+        cacheDir: cacheNpmDir,
+        runningVersion: '2.2.0',
+        activeBundlePath,
+      })
+      assert.equal(cleaned.errors.length, 0)
+      assert.equal(existsSync(oldRev), false)
+      assert.equal(existsSync(join(cacheNpmDir, 'pantheon-opencode@beta')), false)
+      assert.equal(existsSync(activeBundlePath), true)
     } finally {
       rmSync(tmp, { recursive: true, force: true })
     }

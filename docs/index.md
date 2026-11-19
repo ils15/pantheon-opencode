@@ -42,6 +42,7 @@ of repeating it.
 | Memory stores, TTL, size caps, and session goals | [Memory](MEMORY.md) |
 | Platform overview (OpenCode-only) | [Platforms](PLATFORMS.md) |
 | Settings window and TUI (gates, presets, updates, personalization) | [Settings & TUI](SETTINGS.md) |
+| Artifacts guide & `/pantheon-artifacts` TUI viewer | [Artifacts](ARTIFACTS.md) |
 
 ## Reference
 

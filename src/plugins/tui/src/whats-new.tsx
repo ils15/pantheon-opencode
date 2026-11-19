@@ -33,6 +33,8 @@
  */
 import type { Context } from '@opencode/plugin/tui/context'
 import { createSignal, For, Show } from 'solid-js'
+import { resolveLanguage } from './settings-i18n'
+import { tuiPrefs } from './tui-prefs'
 import { readChangelogForBundle, resolveRunningVersion } from './whats-new-highlights.ts'
 import { openWhatsNew, type WhatsNewViewData, wrapWhatsNewLine } from './whats-new-open.ts'
 import { defaultWhatsNewStatePath } from './whats-new-state.ts'
@@ -42,6 +44,7 @@ export function WhatsNewContent(props: {
   data: WhatsNewViewData
   page: () => number
   pageCount: () => number
+  isPt?: boolean
   fg?: any
   muted?: any
   warn?: any
@@ -49,6 +52,7 @@ export function WhatsNewContent(props: {
   onNext?: () => void
   onPrev?: () => void
 }) {
+  const isPt = () => props.isPt ?? resolveLanguage(tuiPrefs().layout?.language) === 'pt-BR'
   const rows = () => {
     const current = props.data.pages[Math.min(props.page(), props.pageCount() - 1)] ?? []
     const wrapped: string[] = []
@@ -73,17 +77,20 @@ export function WhatsNewContent(props: {
             paddingLeft={1}
             paddingRight={1}
             marginRight={1}
+            flexShrink={0}
           >
-            <text fg="#000000" attributes={1}>
+            <text fg="#000000" attributes={1} wrapMode="none">
               {'NOVIDADES'}
             </text>
           </box>
-          <text attributes={1} fg={props.fg}>
+          <text attributes={1} fg={props.fg} wrapMode="none">
             {props.data.title}
           </text>
         </box>
-        <box onMouseDown={() => props.onClose?.()}>
-          <text fg={props.muted}>{'[ Esc / Q ]'}</text>
+        <box flexShrink={0} onMouseDown={() => props.onClose?.()}>
+          <text fg={props.muted} wrapMode="none">
+            {'[ Esc / Q ]'}
+          </text>
         </box>
       </box>
 
@@ -122,7 +129,7 @@ export function WhatsNewContent(props: {
               marginRight={1}
               onMouseDown={() => props.onPrev?.()}
             >
-              <text fg="#ffffff">{'‹ Prev'}</text>
+              <text fg="#ffffff">{isPt() ? '‹ Anterior' : '‹ Prev'}</text>
             </box>
             <text fg={props.muted} marginRight={1}>
               {`${props.page() + 1} / ${props.pageCount()}`}
@@ -134,10 +141,12 @@ export function WhatsNewContent(props: {
               marginRight={1}
               onMouseDown={() => props.onNext?.()}
             >
-              <text fg="#ffffff">{'Next ›'}</text>
+              <text fg="#ffffff">{isPt() ? 'Próxima ›' : 'Next ›'}</text>
             </box>
           </Show>
-          <text fg={props.muted}>{'Enter / Esc / Q close'}</text>
+          <text fg={props.muted}>
+            {isPt() ? 'Enter / Esc / Q fechar' : 'Enter / Esc / Q close'}
+          </text>
         </box>
 
         {/* Prominent OK Button */}
@@ -148,7 +157,7 @@ export function WhatsNewContent(props: {
           onMouseDown={() => props.onClose?.()}
         >
           <text fg="#000000" attributes={1}>
-            {'OK, Got it'}
+            {isPt() ? 'OK, Entendido' : 'OK, Got it'}
           </text>
         </box>
       </box>
@@ -158,9 +167,13 @@ export function WhatsNewContent(props: {
 
 /**
  * Entry glue: resolve version + shipped CHANGELOG.md, then show the window
- * through the host dialog stack once. Never throws.
+ * through the host dialog stack once (or on demand when `options.force` is set).
+ * Never throws.
  */
-export async function maybeShowWhatsNew(context: Context): Promise<void> {
+export async function maybeShowWhatsNew(
+  context: Context,
+  options: { force?: boolean } = {},
+): Promise<void> {
   try {
     const version = await resolveRunningVersion(import.meta.url)
     if (!version) return
@@ -228,6 +241,7 @@ export async function maybeShowWhatsNew(context: Context): Promise<void> {
       version,
       statePath,
       changelogText,
+      force: options.force === true,
       show: (render, onClose) => {
         const close = () => {
           setOpen(false)
@@ -263,6 +277,7 @@ export async function maybeShowWhatsNew(context: Context): Promise<void> {
             ),
             close,
           )
+          context.ui.dialog.set({ size: 'large', centered: true })
         } catch {
           /* dialog stack unavailable — fail-open, retried on the next start */
         }

@@ -11,59 +11,44 @@ Este guia foi elaborado para levar você do zero ao seu primeiro resultado funci
 Certifique-se de que seu ambiente atende aos seguintes requisitos:
 
 1. **OpenCode:** Versão 2.x instalada (suporte nativo ao host 2.x).
-2. **Node.js:** Versão `>=26.4.0` (necessária para executar o CLI, empacotador e interface TUI do Pantheon).
-3. **Python (Opcional):** Versão `3.11+` (necessária apenas se você utilizar os servidores MCP nativos em Python).
+2. **Node.js:** Versão `>=26.4.0` (necessária para as ferramentas nativas e interface TUI do Pantheon).
+3. **Python (Opcional / Legado):** Versão `3.11+` apenas se você optar pelos servidores MCP legados em Python (todas as 26 ferramentas nativas rodam em TypeScript/Node).
 
 ---
 
 ## 1. Instalação
 
-O Pantheon é instalado e configurado através do seu instalador de linha de comando:
+### Instalação Nativa como Plugin do OpenCode (Recomendada — Funciona em Qualquer Lugar)
 
-### Instalação Completa com CLI (Recomendada)
-
-Instala os 14 agentes especialistas, 25 skills, regras de contexto (TDD, YAGNI), comandos de atalho, servidores MCP nativos e a interface visual TUI:
+Um único comando registra em memória os 14 agentes especialistas, 25 skills, 8 comandos, 26 tools nativas em TypeScript e a interface TUI, sem copiar arquivos redundantes para o disco:
 
 ```bash
-# Instalação Global (recomendada — disponível para todos os seus projetos)
-npx pantheon-opencode init
-
-# Ou Instalação Restrita ao Projeto Atual (apenas na pasta do projeto)
-npx pantheon-opencode init --project
+opencode plugin add pantheon-opencode
 ```
 
-> **Dica para automação ou CI:** Execute `npx pantheon-opencode init -y` para aplicar as configurações padrão imediatamente sem prompts interativos.
+Por que essa é a melhor prática:
+- Funciona imediatamente em **qualquer diretório** (repositórios existentes, worktrees Git ou pastas vazias) sem precisar rodar `init`.
+- Atualiza de forma limpa com `opencode plugin update pantheon-opencode` (ou `/pantheon-updates`) sem deixar cópias antigas em `.opencode/agents/` ou `plugins/pantheon-tui/` coexistindo.
 
-### Registro do Plugin no OpenCode
+### Instalação Opcional via CLI (`init`)
 
-Se você já utiliza o ecossistema de plugins do OpenCode ou deseja configurá-lo manualmente via `opencode.json`, certifique-se de registrar a entrada:
+Use o instalador CLI apenas quando quiser gravar arquivos de projeto (`AGENTS.md`, overrides em `.opencode/`) ou habilitar MCPs Python legados:
 
-```json
-{
-  "plugins": [
-    "pantheon-opencode"
-  ]
-}
+```bash
+npx pantheon-opencode init --project --no-mcp
 ```
-
-> [!NOTE]
-> O comando `npx pantheon-opencode init` já configura automaticamente o arquivo `opencode.json` com o plugin, agentes, skills e MCPs.
 
 ---
 
-## 2. Validar a Instalação com o `doctor`
+## 2. Validar Saúde e Limpar Caches Antigos
 
-Antes de iniciar seu trabalho, execute o diagnóstico de integridade do Pantheon:
+Dentro do OpenCode, use `/pantheon-settings` (ou `/pantheon-updates`) para rodar o **Doctor** e a seção **Legados, Drift & Limpeza** (que detecta e remove caches `@beta`/revisões antigas coexistentes e cópias obsoletas).
+
+Pelo terminal, você também pode executar:
 
 ```bash
 npx pantheon-opencode doctor
 ```
-
-O comando `doctor` valida:
-- A conexão e o funcionamento de todos os servidores MCP nativos (`pantheon_resources`, `pantheon_memory`, `pantheon_persistence`, `pantheon_vision`, `pantheon_cost`).
-- A correta inclusão do plugin no `opencode.json`.
-- A sincronização dos arquivos de agentes, skills e instruções.
-- O ambiente virtual Python e suas dependências.
 
 Uma instalação saudável exibirá veredicto **PASS** com zero erros bloqueantes.
 
@@ -83,8 +68,9 @@ opencode
 > ```
 
 ### O que você verá na interface:
-- **Barra Lateral Rica (TUI):** Exibe a versão ativa do Pantheon (v2.1.1), o preset de modelos em uso, o estado do repositório Git e um painel de **Contexto** em tempo real com contagem de tokens, custo estimado e velocidade de cache.
-- **Suporte Multimodal Nativo (Pantheon Vision):** Se você capturar uma tela e colar diretamente no chat (`Ctrl+V` / `Cmd+V`), o Pantheon analisa a imagem de forma silenciosa via contexto de sistema, sem poluir a conversa com comentários ou blocos HTML.
+- **Barra Lateral Rica (TUI):** Exibe a versão ativa do Pantheon (`v2.2.0`), o preset em uso, o estado do Git, o painel de **Contexto** com contadores por domínio (`mem`, `ctx`, `code`, `edit`, `shell`), **Todo** nativo e **Dispatch** com verbos ao vivo e badges `?`/`!`.
+- **Anúncios Interativos de Atualização e Novidades:** Ao atualizar, abre o diálogo **NOVIDADES** (`/pantheon-whats-new` para reabrir quando quiser) e o badge clicável `↑ vX.Y.Z` abre `/pantheon-updates`.
+- **Suporte Multimodal Nativo (Pantheon Vision):** Cole uma captura de tela (`Ctrl+V` / `Cmd+V`) ou use `vision_describe` quando o catálogo de modelos do host estiver exposto.
 
 ---
 

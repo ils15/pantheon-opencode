@@ -21,6 +21,9 @@ import {
   onMount,
   Show,
 } from 'solid-js'
+import { openArtifactsDialog } from './artifacts'
+import { type PantheonArtifactEntry, scanPantheonArtifacts } from './artifacts-state.ts'
+import { openPantheonCockpit, setupPantheonCockpit } from './cockpit'
 import {
   CONTEXT_BAR_CELLS,
   type ContextProgressTone,
@@ -129,6 +132,18 @@ export const SIDEBAR_REFRESH_EVENTS = [
   'session.idle',
   'session.status',
   'session.deleted',
+  'session.execution.started',
+  'session.execution.succeeded',
+  'session.execution.failed',
+  'session.execution.interrupted',
+  'session.message.content.updated',
+  'session.tool.input.started',
+  'session.tool.called',
+  'session.tool.success',
+  'session.tool.failed',
+  'session.step.ended',
+  'session.usage.updated',
+  'session.permissions',
 ] as const satisfies readonly SidebarDataEvent[]
 
 /* ─── Active Preset Detection ──────────────────────────────
@@ -892,28 +907,200 @@ export type ToolCallSummary = {
   failures: number
 }
 
-/** Conta chamadas de ferramentas e eventuais falhas/erros. Pure. */
-export function countToolCalls(messages: readonly any[] | null | undefined): ToolCallSummary {
-  if (!Array.isArray(messages)) return { total: 0, failures: 0 }
+export type ToolDomain = 'mem' | 'ctx' | 'code' | 'edit' | 'read' | 'shell' | 'agent' | 'mcp'
+
+export type ToolDomainSummary = ToolCallSummary & {
+  byDomain: Partial<Record<ToolDomain, number>>
+  activeTool: string | null
+}
+
+const TOOL_DOMAIN_ORDER: readonly ToolDomain[] = [
+  'mem',
+  'ctx',
+  'code',
+  'edit',
+  'read',
+  'shell',
+  'agent',
+  'mcp',
+]
+
+function normalizeToolName(part: any): string {
+  const raw =
+    typeof part?.name === 'string' ? part.name : typeof part?.tool === 'string' ? part.tool : ''
+  return raw.trim()
+}
+
+/** Extrai chamadas `tools.<nome>(...)` de dentro do Code Mode (`execute` / `search`)
+ *  para revelar a tool real do Pantheon/OpenCode usada. Pure. */
+function resolveEffectiveToolNames(part: any): string[] {
+  const outer = normalizeToolName(part)
+  if (outer === '') return []
+  if (outer.toLowerCase() === 'execute') {
+    const code = part?.state?.input?.code
+    if (typeof code === 'string' && code !== '') {
+      const inner: string[] = []
+      for (const match of code.matchAll(/\btools\.([a-zA-Z0-9_]+)\s*\(/g)) {
+        if (match[1]) inner.push(match[1])
+      }
+      if (inner.length > 0) return inner
+    }
+  }
+  return [outer]
+}
+
+function extractToolFilePaths(part: any): string[] {
+  const found: string[] = []
+  const input = part?.state?.input && typeof part.state.input === 'object' ? part.state.input : null
+  if (!input) return found
+  for (const candidate of [input.file, input.path, input.filePath, input.target]) {
+    const base = fileBasename(candidate)
+    if (base && !found.includes(base)) found.push(base)
+  }
+  if (typeof input.code === 'string' && input.code !== '') {
+    for (const match of input.code.matchAll(
+      /\b(?:file|path|filePath|target)\s*:\s*["']([^"']+)["']/g,
+    )) {
+      const base = fileBasename(match[1])
+      if (base && !found.includes(base)) found.push(base)
+    }
+  }
+  return found
+}
+
+function isToolFailureState(state: any): boolean {
+  return (
+    state?.status === 'error' ||
+    state?.status === 'failed' ||
+    state?.error !== undefined ||
+    (typeof state?.exitCode === 'number' && state.exitCode !== 0)
+  )
+}
+
+function isToolActiveState(state: any): boolean {
+  return state?.status === 'running' || state?.status === 'pending' || state?.status === 'streaming'
+}
+
+/** Classifica uma tool (nativa, OpenCode ou MCP externa) em domínio curto e
+ *  verbo de 3–4 caracteres para Sidebar/Dispatch. Pure. */
+export function classifyToolPart(rawName: unknown): { domain: ToolDomain; verb: string } {
+  const name = typeof rawName === 'string' ? rawName.trim().toLowerCase() : ''
+  if (name === '') return { domain: 'agent', verb: 'tool' }
+  if (name === 'question') return { domain: 'agent', verb: 'ask' }
+  if (name.startsWith('memory_')) return { domain: 'mem', verb: 'mem' }
+  if (
+    name.startsWith('context_') ||
+    name.startsWith('goal_') ||
+    name === 'pantheon_step_ledger' ||
+    name === 'todowrite' ||
+    name === 'todoread'
+  ) {
+    return { domain: 'ctx', verb: name.startsWith('todo') ? 'todo' : 'ctx' }
+  }
+  if (name.startsWith('code_')) return { domain: 'code', verb: 'code' }
+  if (
+    name === 'hashline_edit' ||
+    name === 'edit' ||
+    name === 'edit_file' ||
+    name === 'write' ||
+    name === 'write_file' ||
+    name === 'patch'
+  ) {
+    return { domain: 'edit', verb: 'edit' }
+  }
+  if (
+    name === 'read' ||
+    name === 'read_file' ||
+    name === 'glob' ||
+    name === 'grep' ||
+    name === 'list'
+  ) {
+    return { domain: 'read', verb: 'read' }
+  }
+  if (name === 'shell' || name === 'bash' || name === 'run_command' || name === 'execute') {
+    return { domain: 'shell', verb: name === 'execute' ? 'exec' : 'bash' }
+  }
+  if (name === 'pantheon_deepwork') return { domain: 'agent', verb: 'plan' }
+  if (
+    name === 'subagent' ||
+    name.startsWith('pantheon_') ||
+    name === 'vision' ||
+    name === 'webfetch' ||
+    name === 'websearch' ||
+    name === 'search'
+  ) {
+    return { domain: 'agent', verb: name.startsWith('web') ? 'web' : 'agnt' }
+  }
+  if (name.includes('_') && !name.startsWith('pantheon_')) {
+    return { domain: 'mcp', verb: 'mcp' }
+  }
+  return { domain: 'agent', verb: 'tool' }
+}
+
+/** Resume chamadas de ferramentas por domínio nativo + tool em execução. Pure. */
+export function summarizeToolDomains(
+  messages: readonly any[] | null | undefined,
+): ToolDomainSummary {
+  const byDomain: Partial<Record<ToolDomain, number>> = {}
+  if (!Array.isArray(messages)) return { total: 0, failures: 0, byDomain, activeTool: null }
   let total = 0
   let failures = 0
+  let activeTool: string | null = null
   for (const message of messages) {
     if (message?.type !== 'assistant' || !Array.isArray(message.content)) continue
     for (const part of message.content) {
       if (part?.type !== 'tool') continue
       total++
       const state = part.state
-      if (
-        state?.status === 'error' ||
-        state?.status === 'failed' ||
-        state?.error !== undefined ||
-        (typeof state?.exitCode === 'number' && state.exitCode !== 0)
-      ) {
-        failures++
+      if (isToolFailureState(state)) failures++
+      const effectiveNames = resolveEffectiveToolNames(part)
+      for (const toolName of effectiveNames) {
+        const { domain } = classifyToolPart(toolName)
+        byDomain[domain] = (byDomain[domain] ?? 0) + 1
+      }
+      if (isToolActiveState(state) && effectiveNames.length > 0) {
+        activeTool = effectiveNames[effectiveNames.length - 1] ?? null
       }
     }
   }
+  return { total, failures, byDomain, activeTool }
+}
+
+/** Conta chamadas de ferramentas e eventuais falhas/erros. Pure. */
+export function countToolCalls(messages: readonly any[] | null | undefined): ToolCallSummary {
+  const { total, failures } = summarizeToolDomains(messages)
   return { total, failures }
+}
+
+/** Formata a quebra compacta por domínio (`mem:2 ctx:1 code:1 · ✦ memory_search`)
+ *  para caber na largura da sidebar. Retorna null sem dados. Pure. */
+export function formatToolDomainLine(
+  summary: ToolDomainSummary | null | undefined,
+  max = SIDEBAR_CONTENT_WIDTH,
+): string | null {
+  if (!summary) return null
+  const chunks: string[] = []
+  for (const domain of TOOL_DOMAIN_ORDER) {
+    const count = summary.byDomain?.[domain] ?? 0
+    if (count > 0) chunks.push(`${domain}:${count}`)
+  }
+  const active =
+    typeof summary.activeTool === 'string' && summary.activeTool.trim() !== ''
+      ? `\u2726 ${summary.activeTool.trim()}`
+      : null
+  if (chunks.length === 0 && !active) return null
+  const joined = chunks.join(' ')
+  const raw = active ? (joined ? `${joined} \u00B7 ${active}` : active) : joined
+  if (cellWidth(raw) <= max) return raw
+  if (active) {
+    const activeFit = truncateLabel(active, max)
+    const remaining = max - cellWidth(activeFit) - 3
+    if (remaining >= 5 && joined !== '') {
+      return `${truncateLabel(joined, remaining)} \u00B7 ${activeFit}`
+    }
+    return activeFit
+  }
+  return truncateLabel(raw, max)
 }
 
 export function formatToolCallLine(
@@ -1307,10 +1494,16 @@ export function latestTodoItems(messages: readonly any[] | null | undefined): To
     const parts = message.content
     for (let position = parts.length - 1; position >= 0; position--) {
       const part = parts[position]
-      if (part?.type !== 'tool' || part?.name !== 'todowrite') continue
+      if (part?.type !== 'tool') continue
       if (part?.state?.status !== 'completed') continue
-      const items = parseTodoItems(part.state.input)
-      return items.length === 0 ? null : items
+      if (part?.name === 'todowrite') {
+        const items = parseTodoItems(part.state.input)
+        return items.length === 0 ? null : items
+      }
+      if (part?.name === 'execute' && resolveEffectiveToolNames(part).includes('todowrite')) {
+        const fromOutput = parseTodoItems(part.state.output)
+        if (fromOutput.length > 0) return fromOutput
+      }
     }
   }
   return null
@@ -1891,6 +2084,112 @@ export function collectSubagentCalls(
 
 export type DelegationState = 'running' | 'completed' | 'failed' | 'interrupted'
 export type DelegationTone = 'warning' | 'error' | 'success'
+export type ChildAttention = 'question' | 'permission' | 'error'
+
+/** Atividade em tempo real extraída das mensagens em cache de um subagente. */
+export type ChildActivity = {
+  activeVerb: string | null
+  activeTool: string | null
+  attention: ChildAttention | null
+  recentTools: string[]
+  filesTouched: string[]
+  lastSnippet: string | null
+}
+
+function fileBasename(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null
+  const trimmed = raw.trim()
+  if (trimmed === '') return null
+  const normalized = trimmed.replaceAll('\\', '/')
+  const parts = normalized.split('/').filter(Boolean)
+  return parts.length > 0 ? (parts[parts.length - 1] ?? null) : null
+}
+
+/** Extrai atividade ao vivo, alertas de bloqueio e histórico recente de um filho
+ *  a partir de suas mensagens em cache. Pure, fail-open. */
+export function extractChildActivity(
+  messages: readonly any[] | null | undefined,
+  status?: string,
+  hostAttention?: { permission?: boolean; question?: boolean },
+): ChildActivity | null {
+  let activeTool: string | null = null
+  let activeVerb: string | null = null
+  let latestTool: string | null = null
+  let latestVerb: string | null = null
+  let attention: ChildAttention | null = hostAttention?.permission
+    ? 'permission'
+    : hostAttention?.question
+      ? 'question'
+      : status === 'error' || status === 'failed'
+        ? 'error'
+        : null
+  const recentTools: string[] = []
+  const filesTouched: string[] = []
+  let lastSnippet: string | null = null
+
+  if (Array.isArray(messages)) {
+    for (const message of messages) {
+      if (message?.type !== 'assistant' || !Array.isArray(message.content)) continue
+      for (const part of message.content) {
+        if (part?.type === 'text' && typeof part.text === 'string') {
+          const clean = part.text.replace(/\s+/g, ' ').trim()
+          if (clean !== '') lastSnippet = clean
+          continue
+        }
+        if (part?.type !== 'tool') continue
+        const effectiveNames = resolveEffectiveToolNames(part)
+        if (effectiveNames.length === 0) continue
+        const name = effectiveNames[effectiveNames.length - 1] ?? ''
+        const state = part.state
+        const { verb } = classifyToolPart(name)
+        latestTool = name
+        latestVerb = verb
+        for (const toolName of effectiveNames) {
+          const existingIdx = recentTools.indexOf(toolName)
+          if (existingIdx !== -1) recentTools.splice(existingIdx, 1)
+          recentTools.unshift(toolName)
+          if (recentTools.length > 4) recentTools.pop()
+        }
+        for (const base of extractToolFilePaths(part)) {
+          if (!filesTouched.includes(base)) {
+            filesTouched.unshift(base)
+            if (filesTouched.length > 3) filesTouched.pop()
+          }
+        }
+        if (isToolActiveState(state)) {
+          activeTool = name
+          activeVerb = verb
+          if (name.toLowerCase() === 'question') attention = 'question'
+        } else if (
+          attention === null &&
+          isToolFailureState(state) &&
+          (status === 'error' || status === 'failed' || status === 'retry')
+        ) {
+          attention = 'error'
+        }
+      }
+    }
+  }
+
+  if (attention === 'question' || attention === 'permission') activeVerb = 'ask'
+  else if (attention === 'error') activeVerb = 'err'
+  else if (activeVerb === null && (status === 'running' || status === 'busy')) {
+    activeVerb = latestVerb
+    activeTool = latestTool
+  }
+
+  if (
+    activeVerb === null &&
+    activeTool === null &&
+    attention === null &&
+    recentTools.length === 0 &&
+    filesTouched.length === 0 &&
+    lastSnippet === null
+  ) {
+    return null
+  }
+  return { activeVerb, activeTool, attention, recentTools, filesTouched, lastSnippet }
+}
 
 /** Grace window for a child that has not started yet. V2's `session.status()`
  *  returns `idle` both for "created but not started" and for "finished", so an
@@ -1927,6 +2226,8 @@ export type DelegationView = {
   kindOrigin: DispatchKindOrigin
   /** The parent asked for this child to run in the background. */
   background: boolean
+  /** Atividade ao vivo extraída do filho (quando em cache). */
+  activity?: ChildActivity | null
 }
 
 /** Map the host's live session status to a display state. V2 exposes only
@@ -2065,6 +2366,8 @@ export type DispatchEntry = {
 export type CollectDispatchOptions = {
   now?: number
   calls?: Map<string, SubagentCall>
+  activities?: Map<string, ChildActivity>
+  includeChildActivity?: boolean
 }
 
 /** `message.list` of one session, degrades to an empty list. The host's list is
@@ -2111,14 +2414,16 @@ export function toDispatchEntry(
   status: string | undefined,
   now = Date.now(),
   call?: SubagentCall | null,
+  activity?: ChildActivity | null,
 ): DispatchEntry {
   const title = typeof child?.title === 'string' && child.title !== '' ? child.title : null
   const parentID =
     typeof child?.parentID === 'string' && child.parentID !== '' ? child.parentID : null
   const description =
     typeof call?.description === 'string' && call.description !== '' ? call.description : null
+  const baseView = toDelegationView(child, status, now, call)
   return {
-    view: toDelegationView(child, status, now, call),
+    view: activity ? { ...baseView, activity } : baseView,
     title,
     description,
     parentID,
@@ -2165,11 +2470,52 @@ export function collectDispatch(
       continue
     }
     if (!child) continue
-    entries.push(
-      toDispatchEntry(child, sessionStatusOf(context, childID), now, calls.get(childID) ?? null),
-    )
+    const status = sessionStatusOf(context, childID)
+    let hasPerm = false
+    let hasQuest = false
+    try {
+      const perms = context?.data?.session?.permission?.(childID)
+      if (Array.isArray(perms) && perms.length > 0) hasPerm = true
+    } catch {
+      /* host may omit permission accessor */
+    }
+    try {
+      const quests = context?.data?.session?.question?.(childID)
+      if (Array.isArray(quests) && quests.length > 0) hasQuest = true
+    } catch {
+      /* host may omit question accessor */
+    }
+    let activity = options.activities?.get(childID) ?? null
+    if (activity === null && options.includeChildActivity === true) {
+      activity = extractChildActivity(readSessionMessages(context, childID), status, {
+        permission: hasPerm,
+        question: hasQuest,
+      })
+    } else if (hasPerm || hasQuest) {
+      activity =
+        extractChildActivity(undefined, status, {
+          permission: hasPerm,
+          question: hasQuest,
+        }) ?? activity
+    }
+    entries.push(toDispatchEntry(child, status, now, calls.get(childID) ?? null, activity))
   }
   return entries.sort((a, b) => compareDelegations(a.view, b.view))
+}
+
+/** Enrich pre-collected dispatch entries with live child activity from cached
+ *  child transcripts (used by the full-width dispatch panel). */
+export function enrichDispatchEntries(
+  context: any,
+  entries: readonly DispatchEntry[],
+): DispatchEntry[] {
+  return entries.map((entry) => {
+    if (entry.view.activity) return entry
+    const childMsgs = readSessionMessages(context, entry.view.id)
+    const status = sessionStatusOf(context, entry.view.id)
+    const activity = extractChildActivity(childMsgs, status)
+    return activity ? { ...entry, view: { ...entry.view, activity } } : entry
+  })
 }
 
 /* ─── Block layout ───────────────────────────────────────── */
@@ -2346,6 +2692,36 @@ export function dispatchTotalCost(views: readonly DelegationView[]): number {
   return total
 }
 
+function effectiveChildPresentation(
+  view: Pick<DelegationView, 'kind' | 'background' | 'activity'>,
+  frame = 0,
+): { marker: string; suffix: string; tone: DelegationTone } {
+  const act = view.activity
+  const attention = act?.attention ?? null
+  const tone: DelegationTone =
+    attention === 'error'
+      ? 'error'
+      : attention === 'question' || attention === 'permission'
+        ? 'warning'
+        : 'success'
+  const marker =
+    attention === 'error'
+      ? '! '
+      : attention === 'question' || attention === 'permission'
+        ? '? '
+        : `${spinnerFrame(frame)} `
+
+  let suffix = dispatchKindSuffix(view.kind, view.background)
+  if (attention === 'question' || attention === 'permission') {
+    suffix = `${DISPATCH_KIND_SEPARATOR}ask${view.background === true ? DISPATCH_BACKGROUND_MARKER : ''}`
+  } else if (attention === 'error') {
+    suffix = `${DISPATCH_KIND_SEPARATOR}err${view.background === true ? DISPATCH_BACKGROUND_MARKER : ''}`
+  } else if ((view.kind === null || view.kind === 'oth') && act?.activeVerb) {
+    suffix = `${DISPATCH_KIND_SEPARATOR}${act.activeVerb}${view.background === true ? DISPATCH_BACKGROUND_MARKER : ''}`
+  }
+  return { marker, suffix, tone }
+}
+
 /** One live child: `⠸ <agent 12>·<kind> <custo> <duração>`, with the model as a
  *  fourth column only when the row still fits and the child is unclassified —
  *  the kind is the stronger evidence at this width, so it takes the model's
@@ -2359,11 +2735,10 @@ export function runningChildRowText(
   frame = 0,
   max = DISPATCH_MAX_WIDTH,
 ): string {
-  const marker = `${spinnerFrame(frame)} `
+  const { marker, suffix } = effectiveChildPresentation(view, frame)
   const duration = dispatchElapsed(view, now).padStart(DISPATCH_DURATION_WIDTH)
   const cost = formatDispatchCost(view.cost).padStart(DISPATCH_COST_WIDTH)
   const model = dispatchModelText(view)
-  const suffix = dispatchKindSuffix(view.kind, view.background)
   const limit = Math.max(1, max)
   const row = (agentWidth: number, withModel: boolean, withSuffix = true): string => {
     const kind = withSuffix ? suffix : ''
@@ -2515,8 +2890,8 @@ export function failedSuffixText(failures: number | null | undefined): string | 
   return `${rounded} ${rounded === 1 ? 'falha' : 'falhas'}`
 }
 
-/** One rendered live row: its text plus the session it navigates to. */
-export type DispatchRunningLine = { id: string; text: string }
+/** One rendered live row: its text, attention tone and session id. */
+export type DispatchRunningLine = { id: string; text: string; tone?: DelegationTone }
 
 /** Everything the `Dispatch` block renders, already joined and capped. */
 export type DispatchBlockView = {
@@ -2569,6 +2944,7 @@ export function buildDispatchBlock(
   const runningLines = running.map((view) => ({
     id: view.id,
     text: runningChildRowText(view, now, frame, max),
+    tone: effectiveChildPresentation(view, frame).tone,
   }))
   const summary = completedSummaryText(finished.length, finishedCost, groups.length)
 
@@ -2765,9 +3141,22 @@ export function dispatchPanelRowText(
     DISPATCH_PANEL_MIN_AGENT_WIDTH,
     Math.min(DISPATCH_PANEL_AGENT_WIDTH, width - (DISPATCH_PANEL_ROW_FIXED_WIDTH + costWidth)),
   )
-  const marker = dispatchPanelMarker(view.state, frame)
+  const marker =
+    view.activity?.attention === 'error'
+      ? '! '
+      : view.activity?.attention === 'question' || view.activity?.attention === 'permission'
+        ? '? '
+        : dispatchPanelMarker(view.state, frame)
   const agent = dispatchPanelCell(dispatchAgentText(view, DISPATCH_PANEL_AGENT_WIDTH), agentWidth)
-  const kind = dispatchPanelCell(view.kind, DISPATCH_PANEL_KIND_WIDTH)
+  const effectiveKind =
+    view.activity?.attention === 'question' || view.activity?.attention === 'permission'
+      ? 'ask'
+      : view.activity?.attention === 'error'
+        ? 'err'
+        : (view.kind === null || view.kind === 'oth') && view.activity?.activeVerb
+          ? view.activity.activeVerb
+          : view.kind
+  const kind = dispatchPanelCell(effectiveKind, DISPATCH_PANEL_KIND_WIDTH)
   const cost = costText.padStart(costWidth)
   const duration = truncateLabel(
     dispatchElapsed(view, now),
@@ -2830,6 +3219,27 @@ export function dispatchPanelDetail(
       max,
     ),
   )
+  const activity = view.activity
+  if (activity) {
+    if (activity.attention === 'question') {
+      lines.push(truncateLabel('status ? aguardando resposta do usuário', max))
+    } else if (activity.attention === 'permission') {
+      lines.push(truncateLabel('status ? aguardando permissão', max))
+    } else if (activity.attention === 'error') {
+      lines.push(truncateLabel('status ! erro na execução', max))
+    } else if (activity.activeTool) {
+      lines.push(truncateLabel(`status \u2726 ${activity.activeTool}`, max))
+    }
+    const toolsText = activity.recentTools.length > 0 ? activity.recentTools.join(', ') : ''
+    const filesText = activity.filesTouched.length > 0 ? activity.filesTouched.join(', ') : ''
+    if (toolsText || filesText) {
+      const joined = [toolsText, filesText].filter(Boolean).join(SPEND_LINE_SEPARATOR)
+      lines.push(truncateLabel(`tools ${joined}`, max))
+    }
+    if (activity.lastSnippet) {
+      lines.push(truncateLabel(`\u21B3 ${activity.lastSnippet}`, max))
+    }
+  }
   return lines
 }
 
@@ -3126,7 +3536,7 @@ export function createDispatchPanelModel(
   const entries = createMemo(() => {
     revision()
     if (!isOpen()) return []
-    return collectDispatch(context, activeSessionID())
+    return enrichDispatchEntries(context, collectDispatch(context, activeSessionID()))
   })
 
   const layout = createMemo(() => dispatchPanelLayout(panel().width))
@@ -3652,6 +4062,8 @@ export type SidebarModel = {
   tokenAnatomyLine: Accessor<string | null>
   /** Contagem de chamadas de ferramentas e falhas. */
   toolCallsLine: Accessor<string | null>
+  /** Quebra por domínio de tools nativas + tool ativa. */
+  toolCallsDetailLine: Accessor<string | null>
   /** Badge de compactação (ex: "1x compact"). */
   compactionBadge: Accessor<string | null>
   /** Badge de turnos da sessão (ex: "↻ 4 turns"). */
@@ -3950,6 +4362,7 @@ export function createSidebarModel(
     const rootID = activeSessionID()
     const collected: any[] = []
     let todo: TodoItem[] = []
+    const activities = new Map<string, ChildActivity>()
     for (const id of familySessionIDs()) {
       let list: any[] = []
       try {
@@ -3959,9 +4372,14 @@ export function createSidebarModel(
         /* one unreadable session must not hide the others */
       }
       collected.push(...list.slice(-MODEL_USAGE_MESSAGE_LIMIT))
-      if (id === rootID) todo = latestTodoItems(list) ?? []
+      if (id === rootID) {
+        todo = latestTodoItems(list) ?? []
+      } else {
+        const activity = extractChildActivity(list, sessionStatusOf(context, id))
+        if (activity) activities.set(id, activity)
+      }
     }
-    return { messages: collected, todo }
+    return { messages: collected, todo, activities }
   })
   const usageMessages = createMemo(() => transcript().messages)
   // Ordered + capped todo rows; empty when the transcript has no `todowrite`,
@@ -4147,7 +4565,11 @@ export function createSidebarModel(
     revision()
     const id = activeSessionID()
     if (id === '') return []
-    return collectDispatch(context, id, { now: Date.now(), calls: subagentCalls() })
+    return collectDispatch(context, id, {
+      now: Date.now(),
+      calls: subagentCalls(),
+      activities: transcript().activities,
+    })
   })
 
   /** What the sidebar block renders: the collector's rows, nothing else. */
@@ -4174,9 +4596,12 @@ export function createSidebarModel(
   })
   const tokenAnatomyLine = createMemo(() => formatTokenAnatomyLine(tokenAnatomy()))
   const tokenAnatomySplit = createMemo(() => formatTokenAnatomySplit(tokenAnatomy()))
-  const toolCalls = createMemo(() => countToolCalls(messages()))
+  const toolCalls = createMemo(() => summarizeToolDomains(messages()))
   const toolCallsLine = createMemo(() =>
     formatToolCallLine(toolCalls(), tuiPrefs().layout.language),
+  )
+  const toolCallsDetailLine = createMemo(() =>
+    formatToolDomainLine(toolCalls(), SIDEBAR_CONTENT_WIDTH),
   )
   const compactions = createMemo(() => extractCompactionInfo(messages()))
   const compactionBadge = createMemo(() => {
@@ -4327,6 +4752,7 @@ export function createSidebarModel(
     turnCostLine,
     tokenAnatomyLine,
     toolCallsLine,
+    toolCallsDetailLine,
     compactionBadge,
     turnsBadge,
     tokenAnatomySplit,
@@ -4492,10 +4918,13 @@ function SidebarInner(props: SidebarProps): JSX.Element {
   // session each drop independently; nothing reflows — the column just shortens.
   const header = () => tuiPrefs().sidebar.header
   const availableUpdate = useAvailableUpdate(__PANTHEON_VERSION__)
+  const isPt = () => resolveLanguage(tuiPrefs().layout?.language) === 'pt-BR'
   const updateBadge = () =>
     formatUpdateBadge(__PANTHEON_VERSION__, availableUpdate(), {
-      isPt: resolveLanguage(tuiPrefs().layout?.language) === 'pt-BR',
+      isPt: isPt(),
     })
+  const artifacts = useWorkspaceArtifacts(context)
+  const activePlan = () => artifacts().find((entry) => entry.kind === 'plan')
   return (
     <box
       flexDirection="column"
@@ -4517,7 +4946,15 @@ function SidebarInner(props: SidebarProps): JSX.Element {
         </box>
       </box>
       <Show when={header().version && updateBadge()}>
-        {(badge) => <text fg={accent()}>{badge()}</text>}
+        {(badge) => (
+          <box
+            onMouseDown={() => {
+              void openPantheonSettings(context, { initialTab: 'updates' })
+            }}
+          >
+            <text fg={accent()}>{badge()}</text>
+          </box>
+        )}
       </Show>
 
       {/* Preset plus the provider of the model in use — both derived from host
@@ -4753,6 +5190,9 @@ function SidebarInner(props: SidebarProps): JSX.Element {
               {model.gateStatus()}
             </text>
           </box>
+          <Show when={model.toolCallsDetailLine()}>
+            {(line) => <text fg={muted()}>{line()}</text>}
+          </Show>
           <Show when={tuiPrefs().sidebar.context.modelUsage && usageRows().length > 0}>
             <text fg={muted()}>Session · reported cost</text>
             <text fg={muted()}>
@@ -4848,7 +5288,7 @@ function SidebarInner(props: SidebarProps): JSX.Element {
                 <For each={view().running}>
                   {(row: DispatchRunningLine) => (
                     <box onMouseDown={open(row.id)} flexShrink={0}>
-                      <text fg={tone('success')}>{row.text}</text>
+                      <text fg={tone(row.tone ?? 'success')}>{row.text}</text>
                     </box>
                   )}
                 </For>
@@ -4876,6 +5316,37 @@ function SidebarInner(props: SidebarProps): JSX.Element {
               </box>
             )}
           </Show>
+        </box>
+      </Show>
+
+      <Show when={artifacts().length > 0}>
+        <box flexDirection="column" marginTop={1}>
+          <Show when={activePlan()}>
+            {(plan) => (
+              <box
+                onMouseDown={() => {
+                  openArtifactsDialog(context, resolveSidebarCwd(context), {
+                    initialArtifactId: plan().id,
+                  })
+                }}
+                flexShrink={0}
+              >
+                <text fg={accent()}>{`▸ Plan: ${truncateLabel(plan().title, 22)}`}</text>
+              </box>
+            )}
+          </Show>
+          <box
+            onMouseDown={() => {
+              openArtifactsDialog(context, resolveSidebarCwd(context))
+            }}
+            flexShrink={0}
+          >
+            <text fg={muted()}>
+              {isPt()
+                ? `◈ Artefatos (${artifacts().length})`
+                : `◈ Artifacts (${artifacts().length})`}
+            </text>
+          </box>
         </box>
       </Show>
     </box>
@@ -5085,9 +5556,68 @@ function PantheonSettingsCommandLayer(props: { context: any }) {
           void openPantheonSettings(props.context)
         },
       },
+      {
+        id: 'pantheon.updates.open',
+        title: 'Pantheon: Updates & Cleanup',
+        group: 'Pantheon',
+        palette: true,
+        slash: { name: 'pantheon-updates' },
+        run: () => {
+          void openPantheonSettings(props.context, { initialTab: 'updates' })
+        },
+      },
+      {
+        id: 'pantheon.whats-new.open',
+        title: "Pantheon: What's New",
+        group: 'Pantheon',
+        palette: true,
+        slash: { name: 'pantheon-whats-new', aliases: ['whats-new'] },
+        run: () => {
+          void maybeShowWhatsNew(props.context, { force: true })
+        },
+      },
+      {
+        id: 'pantheon.artifacts.open',
+        title: 'Pantheon: Artifacts',
+        group: 'Pantheon',
+        palette: true,
+        slash: { name: 'pantheon-artifacts', aliases: ['artifacts'] },
+        run: () => {
+          openArtifactsDialog(props.context, resolveSidebarCwd(props.context))
+        },
+      },
+      {
+        id: 'pantheon.cockpit.open',
+        title: 'Pantheon: Mission Control Cockpit',
+        group: 'Pantheon',
+        palette: true,
+        slash: { name: 'pantheon-cockpit', aliases: ['cockpit'] },
+        run: () => {
+          openPantheonCockpit(props.context, resolveSidebarCwd(props.context))
+        },
+      },
     ],
   }))
   return null
+}
+
+function useWorkspaceArtifacts(context: any): () => PantheonArtifactEntry[] {
+  const [entries, setEntries] = createSignal<PantheonArtifactEntry[]>(
+    scanPantheonArtifacts(resolveSidebarCwd(context)),
+  )
+  let lastScan = Date.now()
+  const refresh = () => {
+    const now = Date.now()
+    if (now - lastScan < 1500) return
+    lastScan = now
+    setEntries(scanPantheonArtifacts(resolveSidebarCwd(context)))
+  }
+  onMount(() => {
+    setEntries(scanPantheonArtifacts(resolveSidebarCwd(context)))
+    const stop = subscribeSidebarRefresh(context, refresh)
+    onCleanup(stop)
+  })
+  return entries
 }
 
 /** Home-screen status contribution. The sidebar slot is session-scoped, so
@@ -5096,6 +5626,9 @@ function PantheonSettingsCommandLayer(props: { context: any }) {
 function HomeStatus(props: { context: any }) {
   const preset = useActivePreset(props.context).preset
   const availableUpdate = useAvailableUpdate(__PANTHEON_VERSION__)
+  const artifacts = useWorkspaceArtifacts(props.context)
+  const activePlan = () => artifacts().find((entry) => entry.kind === 'plan')
+  const isPt = () => resolveLanguage(tuiPrefs().layout?.language) === 'pt-BR'
   const accent = () =>
     resolveAccentColor(
       tuiDraftPreview()?.theme?.accent ?? tuiPrefs().theme?.accent,
@@ -5104,7 +5637,7 @@ function HomeStatus(props: { context: any }) {
   const muted = () => props.context.theme?.text?.muted ?? props.context.theme?.text?.base
   const updateBadge = () =>
     formatUpdateBadge(__PANTHEON_VERSION__, availableUpdate(), {
-      isPt: resolveLanguage(tuiPrefs().layout?.language) === 'pt-BR',
+      isPt: isPt(),
       compact: true,
     })
   return (
@@ -5113,7 +5646,50 @@ function HomeStatus(props: { context: any }) {
         <text
           fg={muted()}
         >{`Pantheon v${__PANTHEON_VERSION__}${preset().name ? ` ${PRESET_MARKER} ${preset().name}` : ''}`}</text>
-        <Show when={updateBadge()}>{(badge) => <text fg={accent()}>{` · ${badge()}`}</text>}</Show>
+        <Show when={updateBadge()}>
+          {(badge) => (
+            <box
+              onMouseDown={() => {
+                void openPantheonSettings(props.context, { initialTab: 'updates' })
+              }}
+            >
+              <text fg={accent()}>{` · ${badge()}`}</text>
+            </box>
+          )}
+        </Show>
+        <Show when={activePlan()}>
+          {(plan) => (
+            <box
+              onMouseDown={() => {
+                openArtifactsDialog(props.context, resolveSidebarCwd(props.context), {
+                  initialArtifactId: plan().id,
+                })
+              }}
+            >
+              <text fg={accent()}>{` · ▸ Plan: ${truncateLabel(plan().title, 20)}`}</text>
+            </box>
+          )}
+        </Show>
+        <Show when={artifacts().length > 0}>
+          <box
+            onMouseDown={() => {
+              openArtifactsDialog(props.context, resolveSidebarCwd(props.context))
+            }}
+          >
+            <text fg={muted()}>
+              {isPt()
+                ? ` · Artefatos (${artifacts().length})`
+                : ` · Artifacts (${artifacts().length})`}
+            </text>
+          </box>
+        </Show>
+        <box
+          onMouseDown={() => {
+            openPantheonCockpit(props.context, resolveSidebarCwd(props.context))
+          }}
+        >
+          <text fg={muted()}>{' · ◈ Cockpit'}</text>
+        </box>
       </box>
     </Show>
   )
@@ -5266,6 +5842,11 @@ const plugin = Plugin.define({
       })
     } catch {
       /* settings unavailable on this host — the command toasts/fails open */
+    }
+    try {
+      setupPantheonCockpit(context, () => resolveSidebarCwd(context))
+    } catch {
+      /* cockpit unavailable on this host */
     }
     // In-session settings docked above prompt (session.composer.top)
     const unregisterSettingsSlot = context.ui.slot({

@@ -58,7 +58,7 @@ export type SidebarDataEvent = Parameters<Context['data']['on']>[0];
  *  the literals while making a name outside the union a type error (surfaced by
  *  `tsc -p tsconfig.build.json`), and the sidebar test asserts the same names
  *  against the installed union at runtime. */
-export declare const SIDEBAR_REFRESH_EVENTS: readonly ["session.created", "session.renamed", "session.metadata.updated", "session.moved", "session.idle", "session.status", "session.deleted"];
+export declare const SIDEBAR_REFRESH_EVENTS: readonly ["session.created", "session.renamed", "session.metadata.updated", "session.moved", "session.idle", "session.status", "session.deleted", "session.execution.started", "session.execution.succeeded", "session.execution.failed", "session.execution.interrupted", "session.message.content.updated", "session.tool.input.started", "session.tool.called", "session.tool.success", "session.tool.failed", "session.step.ended", "session.usage.updated", "session.permissions"];
 export type PresetInfo = {
   name: string | null;
   source: 'env' | 'file' | null;
@@ -227,8 +227,24 @@ export type ToolCallSummary = {
   total: number;
   failures: number;
 };
+export type ToolDomain = 'mem' | 'ctx' | 'code' | 'edit' | 'read' | 'shell' | 'agent' | 'mcp';
+export type ToolDomainSummary = ToolCallSummary & {
+  byDomain: Partial<Record<ToolDomain, number>>;
+  activeTool: string | null;
+};
+/** Classifica uma tool (nativa, OpenCode ou MCP externa) em domínio curto e
+ *  verbo de 3–4 caracteres para Sidebar/Dispatch. Pure. */
+export declare function classifyToolPart(rawName: unknown): {
+  domain: ToolDomain;
+  verb: string;
+};
+/** Resume chamadas de ferramentas por domínio nativo + tool em execução. Pure. */
+export declare function summarizeToolDomains(messages: readonly any[] | null | undefined): ToolDomainSummary;
 /** Conta chamadas de ferramentas e eventuais falhas/erros. Pure. */
 export declare function countToolCalls(messages: readonly any[] | null | undefined): ToolCallSummary;
+/** Formata a quebra compacta por domínio (`mem:2 ctx:1 code:1 · ✦ memory_search`)
+ *  para caber na largura da sidebar. Retorna null sem dados. Pure. */
+export declare function formatToolDomainLine(summary: ToolDomainSummary | null | undefined, max?: number): string | null;
 export declare function formatToolCallLine(summary: ToolCallSummary | null | undefined, locale?: string): string | null;
 export type CompactionInfo = {
   count: number;
@@ -545,6 +561,22 @@ export type SubagentCall = {
 export declare function collectSubagentCalls(messages: readonly any[] | null | undefined): Map<string, SubagentCall>;
 export type DelegationState = 'running' | 'completed' | 'failed' | 'interrupted';
 export type DelegationTone = 'warning' | 'error' | 'success';
+export type ChildAttention = 'question' | 'permission' | 'error';
+/** Atividade em tempo real extraída das mensagens em cache de um subagente. */
+export type ChildActivity = {
+  activeVerb: string | null;
+  activeTool: string | null;
+  attention: ChildAttention | null;
+  recentTools: string[];
+  filesTouched: string[];
+  lastSnippet: string | null;
+};
+/** Extrai atividade ao vivo, alertas de bloqueio e histórico recente de um filho
+ *  a partir de suas mensagens em cache. Pure, fail-open. */
+export declare function extractChildActivity(messages: readonly any[] | null | undefined, status?: string, hostAttention?: {
+  permission?: boolean;
+  question?: boolean;
+}): ChildActivity | null;
 /** Grace window for a child that has not started yet. V2's `session.status()`
  *  returns `idle` both for "created but not started" and for "finished", so an
  *  idle/unknown/absent child whose own last activity (`time.updated`, falling
@@ -579,6 +611,8 @@ export type DelegationView = {
   kindOrigin: DispatchKindOrigin;
   /** The parent asked for this child to run in the background. */
   background: boolean;
+  /** Atividade ao vivo extraída do filho (quando em cache). */
+  activity?: ChildActivity | null;
 };
 /** Map the host's live session status to a display state. V2 exposes only
  *  `"idle" | "running"` through the TUI context (the client union adds `retry`
@@ -631,13 +665,15 @@ export type DispatchEntry = {
 export type CollectDispatchOptions = {
   now?: number;
   calls?: Map<string, SubagentCall>;
+  activities?: Map<string, ChildActivity>;
+  includeChildActivity?: boolean;
 };
 /** Token counters of a child, null when the host published none of them. Pure. */
 export declare function dispatchTokens(tokens: unknown): DispatchTokens | null;
 /** One child `SessionInfo` + its live status → `DispatchEntry`. The call only
  *  ever adds the kind and the description; an absent one leaves the entry fully
  *  renderable. Pure. */
-export declare function toDispatchEntry(child: any, status: string | undefined, now?: number, call?: SubagentCall | null): DispatchEntry;
+export declare function toDispatchEntry(child: any, status: string | undefined, now?: number, call?: SubagentCall | null, activity?: ChildActivity | null): DispatchEntry;
 /** The delegation tree of `sessionID` — every child `session.family` returns,
  *  root excluded, each enriched from `session.get`/`session.status` and the
  *  parent's `subagent` calls. Empty when the family API is unavailable or the
@@ -647,6 +683,9 @@ export declare function toDispatchEntry(child: any, status: string | undefined, 
  *  deduplicated before the walk, so a duplicate can never double a row or its
  *  cost. */
 export declare function collectDispatch(context: any, sessionID: string | undefined, options?: CollectDispatchOptions): DispatchEntry[];
+/** Enrich pre-collected dispatch entries with live child activity from cached
+ *  child transcripts (used by the full-width dispatch panel). */
+export declare function enrichDispatchEntries(context: any, entries: readonly DispatchEntry[]): DispatchEntry[];
 /** Sidebar blocks in render order. Spacing is derived from this list instead of
  *  from the view, so a hidden block can never leave an empty gap behind.
  *  Note: The custom Todo block was removed from the sidebar composition because
@@ -770,10 +809,11 @@ export declare function completedSummaryText(completed: number | null | undefine
 /** The `· <F> falhas` suffix of the finished summary, null when nothing failed.
  *  Pure. */
 export declare function failedSuffixText(failures: number | null | undefined): string | null;
-/** One rendered live row: its text plus the session it navigates to. */
+/** One rendered live row: its text, attention tone and session id. */
 export type DispatchRunningLine = {
   id: string;
   text: string;
+  tone?: DelegationTone;
 };
 /** Everything the `Dispatch` block renders, already joined and capped. */
 export type DispatchBlockView = {
@@ -1064,6 +1104,8 @@ export type SidebarModel = {
   tokenAnatomyLine: Accessor<string | null>;
   /** Contagem de chamadas de ferramentas e falhas. */
   toolCallsLine: Accessor<string | null>;
+  /** Quebra por domínio de tools nativas + tool ativa. */
+  toolCallsDetailLine: Accessor<string | null>;
   /** Badge de compactação (ex: "1x compact"). */
   compactionBadge: Accessor<string | null>;
   /** Badge de turnos da sessão (ex: "↻ 4 turns"). */

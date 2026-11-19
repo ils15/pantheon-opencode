@@ -2,24 +2,26 @@
 
 > 🇺🇸 **English version available:** [Read in English](../INSTALLATION.md)
 
-O Pantheon **requer o OpenCode 2.x** como host (o contrato da geração OpenCode 1.x foi completamente removido). A instalação padrão é realizada através do instalador `npx pantheon-opencode init`, que implanta todo o ecossistema: 14 agentes especialistas, 25 skills, regras de contexto (TDD, YAGNI), comandos de chat, interface TUI e servidores MCP locais.
+O Pantheon 2.2 **requer o OpenCode 2.x** como host (o contrato da geração OpenCode 1.x foi completamente removido).
+
+**Instalação recomendada (boa prática via plugin nativo):** instalar com `opencode plugin add pantheon-opencode` registra nativamente os **14 agentes, 25 skills, 8 comandos, 26 tools nativas em TypeScript e a TUI** direto do pacote npm, **sem copiar arquivos duplicados para o disco**. Funciona imediatamente em **qualquer pasta** (com ou sem Git, worktrees ou diretórios novos) e evita arquivos legados/cópias antigas coexistindo após atualizações.
+
+O instalador CLI (`npx pantheon-opencode init`) continua disponível como opção para quem deseja materializar arquivos locais em `.opencode/`, injetar `AGENTS.md` ou configurar MCPs Python legados. Se você migrar de uma instalação antiga via `init`, use `/pantheon-settings` → **Atualizações** (**Legados, Drift & Limpeza**) para limpar cópias redundantes e caches antigos com segurança.
 
 ---
 
 ## Início Rápido (TL;DR)
 
 ```bash
-# Instalação Global (recomendada para todos os projetos da máquina)
-npx pantheon-opencode init
+# Recomendado: plugin nativo do OpenCode 2.x (zero cópias redundantes, funciona em qualquer pasta)
+opencode plugin add pantheon-opencode
 
-# Instalação Restrita ao Projeto Atual
-npx pantheon-opencode init --project
+# Atualizar depois (ou direto pela TUI em /pantheon-settings -> Atualizações)
+opencode plugin update pantheon-opencode
 
-# Modo Não-Interativo (Headless) para Automação e CI
-npx pantheon-opencode init -y
-
-# Visualização de Plano sem Modificações em Disco (Dry-Run)
-npx pantheon-opencode init --dry-run
+# Opcional (CLI): materializar configs locais, AGENTS.md ou flags de projeto
+npx pantheon-opencode init --project --no-mcp
+npx pantheon-opencode init --headless --yes
 
 # Diagnóstico de Integridade e Saúde
 npx pantheon-opencode doctor

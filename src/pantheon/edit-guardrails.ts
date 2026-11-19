@@ -23,7 +23,7 @@ import { approvalInputHash } from './j1-approvals.ts'
 
 const execFileAsync = promisify(execFile)
 
-const MUTATING_EDIT_TOOLS = new Set(['edit', 'write', 'hashline_edit', 'patch'])
+const MUTATING_EDIT_TOOLS = new Set(['edit', 'write', 'hashline_edit', 'patch', 'ast_rewrite'])
 
 const PROTECTED_LINT_CONFIG_BASENAMES = new Set([
   'biome.json',

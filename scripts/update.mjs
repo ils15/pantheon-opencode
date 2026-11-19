@@ -93,7 +93,7 @@ export function runUpdate(
   ) {
     console.error(
       '[ERROR] update is available only from the global Pantheon installation; local, workspace, and npx copies are refused. ' +
-        'Install globally with `npm install -g pantheon-opencode@beta`, then run `pantheon-opencode update`.',
+        'For OpenCode 2.x native installs run `opencode plugin update pantheon-opencode`; for legacy global CLI installs run `npm install -g pantheon-opencode`, then `pantheon-opencode update`.',
     )
     return 1
   }

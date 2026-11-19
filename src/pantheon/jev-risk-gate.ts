@@ -118,6 +118,7 @@ const WRITE_TOOLS: ReadonlySet<string> = new Set([
   'patch',
   'apply_patch',
   'hashline_edit',
+  'ast_rewrite',
 ])
 
 /**

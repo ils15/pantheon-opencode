@@ -483,8 +483,18 @@ async function main() {
 
       assert.deepEqual(
         [...DEFAULT_BLOCKED_TOOLS].sort(),
-        ['bash', 'edit', 'hashline_edit', 'pantheon_model', 'shell', 'task', 'write'],
-        'host covers edit/write/bash/task — hashline_edit, pantheon_model, and shell are the plugin ' +
+        [
+          'ast_rewrite',
+          'bash',
+          'edit',
+          'hashline_edit',
+          'pantheon_model',
+          'pantheon_worktree',
+          'shell',
+          'task',
+          'write',
+        ],
+        'host covers edit/write/bash/task — ast_rewrite, hashline_edit, pantheon_model, and shell are the plugin ' +
           'tools the guard must add (all are write/execution surfaces)',
       )
 

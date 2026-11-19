@@ -140,14 +140,13 @@ to the client instead (`permission.asked`, `GET /permission`, then
 
 ## The OpenCode 2 path
 
-The 2.x path is the only path: it registers tools with `input`/`output`
-schemas, event subscriptions, session hooks, a read-only-enforcing
-`execute.before` hook (which also denies the orchestrator `read`/`glob`/`grep`
-of source, tests and scripts), and — when the host exposes it — a
-`permission.evaluate` delegation-matrix hook. It is not full V1 feature parity:
-the three goal tools remain unsupported and are reported as `goal-tools`, as are
-the host-domain gaps the seed names (`idle-todo-enforcer`, `tool-ceiling`,
-`todo-restore`, `board-transitions`). See
+The 2.x path is the only path: it registers **26 native TypeScript tools**
+(including `memory_*`, `context_*`, `goal_*`, `code_*`, `pantheon_step_ledger`,
+`pantheon_agent_forge`, `hashline_edit`, `pantheon_cost`, `pantheon_model`, and
+`pantheon_local_decision`), event subscriptions, session hooks, a
+read-only-enforcing `execute.before` hook (which also denies the orchestrator
+`read`/`glob`/`grep` of source, tests and scripts), and — when the host exposes
+it — `permission.evaluate` delegation-matrix enforcement. See
 [Architecture](ARCHITECTURE.md) for the contract and
 [OpenCode 2.x](opencode.md) for user-facing behavior.
 
@@ -165,6 +164,7 @@ supported; it is simply unmeasured.
 | `2.1.0` | 2.x | `bench/results/p05-permission-matrix-2026-10-22.md` |
 | `2.1.2` | 2.x | `bench/results/p05-permission-matrix-2026-10-22.md`; `docs/internal/validation.md` |
 | `2.1.3` | 2.x | `bench/results/p05-permission-matrix-2026-10-22.md` |
+| `2.3.2` | 2.x | E2E sandbox verification for `v2.2.0` (`memory_*`, `goal_*`, `code_*`, `hashline_edit`, `step_ledger`, `worktrees`, TUI `Dispatch` & `Todo`) |
 
 The table above is a measurement record, not a release checklist. A new 2.x
 minor is supported on release day; measuring it is optional evidence work.

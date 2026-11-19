@@ -49,6 +49,7 @@
 import { exec } from 'node:child_process'
 import { promisify } from 'node:util'
 import { createAgentForgeTool } from './agent-forge-tool.ts'
+import { createAstTools } from './ast-tools.ts'
 import { isDangerousCommand, NON_EDIT_AGENTS, NON_SHELL_AGENTS } from './auto-permissions.ts'
 import { createCodemapTools } from './codemap-tools.ts'
 import { createCostCommand } from './cost-command.ts'
@@ -60,9 +61,12 @@ import { createV2LocalDecisionDefinition } from './local-decision-tool.ts'
 import { createModelCommand } from './model-command.ts'
 import { createNativeMemoryAndPersistenceTools } from './native-memory-tools.ts'
 import { createV2VisionTool, type V2VisionRuntime } from './native-vision.ts'
+import { createReviewVerdictTool, type ReviewSyntheticSessionDomain } from './review-verdict.ts'
 import { createV2SkillSearchDefinition } from './skill-search-tool.ts'
 import { createStepLedgerTool } from './step-ledger.ts'
+import type { SubSessionDomainLike } from './step-runner.ts'
 import { resolveToolCwd, type ToolContextLike } from './tool-context.ts'
+import { createWorktreeTool } from './worktree-orchestrator.ts'
 
 // ─── Contract types ─────────────────────────────────────────────────────
 
@@ -261,8 +265,6 @@ function coerceHashlineEditArgs(input: Record<string, unknown>):
   return { ok: true, args: { file, edits } }
 }
 
-const hashlineEdit = createHashlineEditTool()
-
 /**
  * Wrap the V1 `hashline_edit` tool for the V2 surface.
  *
@@ -271,32 +273,35 @@ const hashlineEdit = createHashlineEditTool()
  * satisfies the host's declaration, and `title`/`metadata` survive because the
  * host spreads metadata through.
  */
-async function executeHashlineEdit(
-  input: Record<string, unknown>,
-  context: unknown,
-): Promise<V2ToolResult> {
-  const ctx = toolContext(context)
-  const callerAgent = (ctx.agent ?? '').toLowerCase().trim()
-  if (callerAgent && callerAgent !== 'zeus' && NON_EDIT_AGENTS.has(callerAgent)) {
-    return {
-      output: `hashline_edit denied: agent '${callerAgent}' is not permitted to edit files directly.`,
+function createHashlineEditExecutor(fallbackDir?: string) {
+  const hashlineTool = createHashlineEditTool(fallbackDir)
+  return async function executeHashlineEdit(
+    input: Record<string, unknown>,
+    context: unknown,
+  ): Promise<V2ToolResult> {
+    const ctx = toolContext(context)
+    const callerAgent = (ctx.agent ?? '').toLowerCase().trim()
+    if (callerAgent && callerAgent !== 'zeus' && NON_EDIT_AGENTS.has(callerAgent)) {
+      return {
+        output: `hashline_edit denied: agent '${callerAgent}' is not permitted to edit files directly.`,
+      }
     }
-  }
-  const coerced = coerceHashlineEditArgs(input)
-  if (!coerced.ok) return { output: coerced.error }
-  let result: HashlineToolResult
-  try {
-    result = await hashlineEdit.execute(coerced.args, ctx)
-  } catch (err: unknown) {
-    // The V1 tool does not throw for user errors; this is defence in depth so
-    // an unexpected throw surfaces as text instead of an absent tool result.
-    return { output: errorText('hashline_edit failed', err) }
-  }
-  if (typeof result === 'string') return { output: result }
-  return {
-    output: result.output,
-    ...(result.title === undefined ? {} : { title: result.title }),
-    ...(result.metadata === undefined ? {} : { metadata: result.metadata }),
+    const coerced = coerceHashlineEditArgs(input)
+    if (!coerced.ok) return { output: coerced.error }
+    let result: HashlineToolResult
+    try {
+      result = await hashlineTool.execute(coerced.args, ctx)
+    } catch (err: unknown) {
+      // The V1 tool does not throw for user errors; this is defence in depth so
+      // an unexpected throw surfaces as text instead of an absent tool result.
+      return { output: errorText('hashline_edit failed', err) }
+    }
+    if (typeof result === 'string') return { output: result }
+    return {
+      output: result.output,
+      ...(result.title === undefined ? {} : { title: result.title }),
+      ...(result.metadata === undefined ? {} : { metadata: result.metadata }),
+    }
   }
 }
 
@@ -451,6 +456,7 @@ async function executeModel(
  */
 export interface V2ToolShadowOptions {
   readonly complexitySink?: ShadowSink
+  readonly sessionDomain?: ReviewSyntheticSessionDomain & SubSessionDomainLike
 }
 
 /**
@@ -659,7 +665,7 @@ export function createV2ToolDefinitions(
         'and a Did-you-mean suggestion, and nothing is modified.',
       input: HASHLINE_EDIT_INPUT,
       output: {},
-      execute: executeHashlineEdit,
+      execute: createHashlineEditExecutor(hostLocationDirectory),
     },
     {
       name: 'pantheon_cost',
@@ -698,10 +704,13 @@ export function createV2ToolDefinitions(
   definitions.push(createShellTool(hostLocationDirectory))
   definitions.push(createV2SkillSearchDefinition(hostLocationDirectory))
   definitions.push(createDeepworkTool(hostLocationDirectory))
-  definitions.push(createStepLedgerTool(hostLocationDirectory))
+  definitions.push(createStepLedgerTool(hostLocationDirectory, shadow.sessionDomain))
   definitions.push(createAgentForgeTool(hostLocationDirectory))
   definitions.push(...createNativeMemoryAndPersistenceTools(hostLocationDirectory))
   definitions.push(...createCodemapTools(hostLocationDirectory))
+  definitions.push(...createAstTools(hostLocationDirectory))
+  definitions.push(createReviewVerdictTool(shadow.sessionDomain))
+  definitions.push(createWorktreeTool(hostLocationDirectory))
   if (visionRuntime) definitions.push(createV2VisionTool(visionRuntime))
   if (jevRuntime) definitions.push(createV2JevDecisionDefinition(jevRuntime))
   return definitions
