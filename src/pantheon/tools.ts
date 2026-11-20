@@ -481,15 +481,17 @@ const TODOWRITE_INPUT = {
   properties: {
     todos: {
       type: 'array',
-      minItems: 1,
+      minItems: 0,
       maxItems: 50,
       items: {
         type: 'object',
-        additionalProperties: false,
+        additionalProperties: true,
         required: ['content', 'status'],
         properties: {
+          id: { type: 'string', maxLength: 200 },
           content: { type: 'string', minLength: 1, maxLength: 500 },
           status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'cancelled'] },
+          priority: { type: 'string', enum: ['high', 'medium', 'low'] },
         },
       },
     },

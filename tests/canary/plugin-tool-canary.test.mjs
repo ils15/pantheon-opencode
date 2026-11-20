@@ -118,6 +118,7 @@ import { createServer as createNetServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { after, before, test } from 'node:test'
+import { fileURLToPath } from 'node:url'
 
 // The repo's own V1→V2 translator. The P0-5 matrix probe compares the action
 // names it emits with the ones the host actually evaluates; importing the
@@ -133,9 +134,12 @@ import {
   redactDiagnosticSecret,
 } from './tool-canary-support.mjs'
 
+const CHECKOUT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const PACKAGE_ROOT = process.env.PANTHEON_TOOL_CANARY_PACKAGE_ROOT
   ? resolve(process.env.PANTHEON_TOOL_CANARY_PACKAGE_ROOT)
-  : null
+  : process.env.PANTHEON_RELEASE_CONTEXT === '1'
+    ? null
+    : CHECKOUT_ROOT
 const PACKAGE_ENTRY = PACKAGE_ROOT ? join(PACKAGE_ROOT, 'src', 'plugin') : null
 const REAL_PLUGIN_SRC = PACKAGE_ROOT ? join(PACKAGE_ROOT, 'src', 'plugin.ts') : null
 const PACKAGE_JSON_PATH = PACKAGE_ROOT ? join(PACKAGE_ROOT, 'package.json') : null

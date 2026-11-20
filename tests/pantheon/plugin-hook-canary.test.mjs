@@ -94,6 +94,11 @@ const PREFERRED_MODELS = [
 /** Label `plugin.ts` writes only when this env var is set. */
 const LIFETIME_PROOF_LABEL = 'plugin:session.hook:compaction'
 
+export function parseOpenCodeMajorVersion(rawOutput) {
+  const match = String(rawOutput ?? '').match(/(?:^|\s)v?(\d+)\.\d+\.\d+/)
+  return match ? Number.parseInt(match[1], 10) : Number.NaN
+}
+
 const RAW_HOST_VERSION = (() => {
   try {
     const res = spawnSync(BIN, ['--version'], { encoding: 'utf8' })
@@ -102,9 +107,10 @@ const RAW_HOST_VERSION = (() => {
     return ''
   }
 })()
-const MAJOR_VERSION = parseInt(RAW_HOST_VERSION.replace(/^v/, '').split('.')[0], 10)
+const MAJOR_VERSION = parseOpenCodeMajorVersion(RAW_HOST_VERSION)
 const BINARY_AVAILABLE = !Number.isNaN(MAJOR_VERSION) && MAJOR_VERSION >= 2
 const HOST_VERSION = BINARY_AVAILABLE ? RAW_HOST_VERSION : ''
+const REQUIRE_HOST = process.env.PANTHEON_HOOK_CANARY_REQUIRE_HOST === '1'
 
 /** Result of {@link resolveCanaryModel}; `model` is empty when unusable. */
 function resolveCanaryModel() {
@@ -146,7 +152,8 @@ let sessionID = ''
 let blockedReadPath = ''
 let allowedReadPath = ''
 let allowedReadNonce = ''
-const skipped = BINARY_AVAILABLE ? false : `opencode binary not found on PATH (${BIN})`
+const skipped =
+  BINARY_AVAILABLE || REQUIRE_HOST ? false : `opencode binary not found on PATH (${BIN})`
 
 function fixtureOnlySkip(reason) {
   return skipped || (IS_REAL ? reason : false)
@@ -249,7 +256,14 @@ async function seedCredentials(dbPath) {
 }
 
 before(async () => {
-  if (!BINARY_AVAILABLE) return
+  if (!BINARY_AVAILABLE) {
+    if (REQUIRE_HOST) {
+      throw new Error(
+        `Hook canary requires OpenCode v2+ binary (${BIN}); got version output ${JSON.stringify(RAW_HOST_VERSION)}`,
+      )
+    }
+    return
+  }
 
   if (!MODEL) {
     // Fail, never skip: a skip for "model unavailable" reports as green.
@@ -1165,6 +1179,14 @@ test('real plugin regression guards: honest transform support claims and correct
     /rawSystem\.push\(toSystemEntry/,
     'real plugin pushes non-normalized system entries',
   )
+})
+
+test('parseOpenCodeMajorVersion handles prefixed host versions like "opencode v2.3.2"', () => {
+  assert.equal(parseOpenCodeMajorVersion('opencode v2.3.2'), 2)
+  assert.equal(parseOpenCodeMajorVersion('v2.3.2'), 2)
+  assert.equal(parseOpenCodeMajorVersion('2.0.30'), 2)
+  assert.equal(parseOpenCodeMajorVersion('1.19.1'), 1)
+  assert.equal(Number.isNaN(parseOpenCodeMajorVersion('')), true)
 })
 
 test('real mode explicitly skips fixture-only execute/permission behavior', () => {

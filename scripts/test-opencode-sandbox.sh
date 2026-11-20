@@ -1467,7 +1467,7 @@ prepare_project() {
   pan="$(sandbox_bin_for "pantheon-opencode")" \
     || die "pantheon-opencode not installed in sandbox prefix — run $0 --prepare first"
   log "--- Regenerating config in $dir ---"
-  (cd "$dir" && "$pan" init --project --version "$TARGET_VERSION" --model "$PANTHEON_SANDBOX_MODEL" --components agents,skills,instructions,commands,plugins,runtime -y) \
+  (cd "$dir" && "$pan" init --project --model "$PANTHEON_SANDBOX_MODEL" --components agents,skills,instructions,commands,plugins,runtime -y) \
     || die "sandbox project initialization failed"
   rewrite_v2_mcp_config
   validate_sandbox_install
@@ -2010,13 +2010,25 @@ run_hooks() {
   # load src/plugin.ts itself, so a hook that registers under a dead name
   # fails here. Default `fixture` mode only proves the hook NAMES are real, so
   # without this the sandbox would never exercise the shipped plugin.
+  local tap_out
+  tap_out="$(mktemp "$SANDBOX_ROOT/hook-canary.XXXXXX.tap")"
   if PANTHEON_HOOK_CANARY_BIN="$bin" \
     PANTHEON_HOOK_CANARY_MODEL="$PANTHEON_SANDBOX_MODEL" \
     PANTHEON_HOOK_CANARY_AGENT="$agent" \
     PANTHEON_HOOK_CANARY_MODE=real \
-    node --test "$REPO_DIR/tests/pantheon/plugin-hook-canary.test.mjs"; then
+    PANTHEON_HOOK_CANARY_REQUIRE_HOST=1 \
+    node --test --test-reporter=spec --test-reporter-destination=stdout \
+      --test-reporter=tap "--test-reporter-destination=$tap_out" \
+      "$REPO_DIR/tests/pantheon/plugin-hook-canary.test.mjs"; then
+    if grep -qE '^# skipped [1-9]' "$tap_out" && ! grep -q '^ok .*lifetime proof' "$tap_out"; then
+      rm -f "$tap_out"
+      log "Hook canary: FAIL (host-gated tests skipped)."
+      exit 1
+    fi
+    rm -f "$tap_out"
     log "Hook canary: PASS."
   else
+    rm -f "$tap_out"
     log "Hook canary: FAIL."
     exit 1
   fi

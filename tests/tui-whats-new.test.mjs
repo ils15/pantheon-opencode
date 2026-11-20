@@ -577,7 +577,7 @@ test('installer: both plugin copies ship CHANGELOG.md at the copy root', async (
   )
   const syncTarget = tmpDir('sync-copy')
   try {
-    syncCopy(source, syncTarget, 'v1')
+    syncCopy(source, syncTarget)
     assert.equal(readFileSync(join(syncTarget, 'CHANGELOG.md'), 'utf8'), expected)
   } finally {
     rmSync(syncTarget, { recursive: true, force: true })
@@ -588,7 +588,7 @@ test('installer: both plugin copies ship CHANGELOG.md at the copy root', async (
   )
   const installTarget = tmpDir('install-copy')
   try {
-    installCopy(source, installTarget, { version: 'v1' })
+    installCopy(source, installTarget)
     assert.equal(readFileSync(join(installTarget, 'CHANGELOG.md'), 'utf8'), expected)
   } finally {
     rmSync(installTarget, { recursive: true, force: true })

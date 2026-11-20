@@ -38,6 +38,7 @@ import {
   MODEL_USAGE_SESSION_LIMIT,
   MODEL_USAGE_VISIBLE_CEILING,
 } from './model-usage-limits'
+import { handleMouseClick, stopMouseEvent } from './mouse-click'
 import {
   openPantheonSettings,
   PantheonSettingsSlot,
@@ -1456,19 +1457,94 @@ export function isTodoStatus(value: unknown): value is TodoStatus {
   )
 }
 
+function parseJsonValue(raw: unknown): unknown {
+  if (typeof raw !== 'string') return raw
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
+
+function extractTodoArray(payload: unknown): unknown[] | null {
+  const parsed = parseJsonValue(payload)
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    const rec = parsed as { todos?: unknown; output?: unknown }
+    if (Array.isArray(rec.todos)) return rec.todos
+    if (rec.output !== undefined) {
+      const nested = extractTodoArray(rec.output)
+      if (nested !== null) return nested
+    }
+  }
+  return null
+}
+
+function extractTodoArrayFromCode(code: unknown): unknown[] | null {
+  if (typeof code !== 'string' || code === '') return null
+  const callRe = /\btools\.todowrite\s*\(/g
+  let lastFound: unknown[] | null = null
+  for (const match of code.matchAll(callRe)) {
+    const startIdx = (match.index ?? 0) + match[0].length
+    const openBrace = code.indexOf('{', startIdx)
+    if (openBrace < 0) continue
+    let depth = 0
+    let quote: string | null = null
+    let escaped = false
+    let endBrace = -1
+    for (let i = openBrace; i < code.length; i += 1) {
+      const ch = code[i]
+      if (escaped) {
+        escaped = false
+        continue
+      }
+      if (quote !== null) {
+        if (ch === '\\') escaped = true
+        else if (ch === quote) quote = null
+        continue
+      }
+      if (ch === '"' || ch === "'" || ch === '`') {
+        quote = ch
+        continue
+      }
+      if (ch === '{') depth += 1
+      else if (ch === '}') {
+        depth -= 1
+        if (depth === 0) {
+          endBrace = i
+          break
+        }
+      }
+    }
+    if (endBrace < 0) continue
+    const snippet = code.slice(openBrace, endBrace + 1)
+    const direct = parseJsonValue(snippet)
+    if (
+      direct &&
+      typeof direct === 'object' &&
+      Array.isArray((direct as { todos?: unknown }).todos)
+    ) {
+      lastFound = (direct as { todos: unknown[] }).todos
+      continue
+    }
+    // Tolerate unquoted JS object keys like { todos: [{ content: "x", status: "pending" }] }
+    const jsonLike = snippet.replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:/g, '$1"$2":')
+    const normalized = parseJsonValue(jsonLike)
+    if (
+      normalized &&
+      typeof normalized === 'object' &&
+      Array.isArray((normalized as { todos?: unknown }).todos)
+    ) {
+      lastFound = (normalized as { todos: unknown[] }).todos
+    }
+  }
+  return lastFound
+}
+
 /** Items from a `todowrite` `input` payload. A missing/malformed `input`,
  *  absent `todos`, an unknown `status` or an empty/missing `content` drops the
  *  entry instead of throwing; a list with nothing readable yields `[]`. Pure. */
 export function parseTodoItems(input: unknown): TodoItem[] {
-  let parsed = input
-  if (typeof input === 'string') {
-    try {
-      parsed = JSON.parse(input)
-    } catch {
-      return []
-    }
-  }
-  const raw = (parsed as { todos?: unknown } | null | undefined)?.todos
+  const raw = extractTodoArray(input)
   if (!Array.isArray(raw)) return []
   const items: TodoItem[] = []
   for (const entry of raw) {
@@ -1496,13 +1572,18 @@ export function latestTodoItems(messages: readonly any[] | null | undefined): To
       const part = parts[position]
       if (part?.type !== 'tool') continue
       if (part?.state?.status !== 'completed') continue
-      if (part?.name === 'todowrite') {
+      const toolName = normalizeToolName(part).toLowerCase()
+      if (toolName === 'todowrite') {
         const items = parseTodoItems(part.state.input)
         return items.length === 0 ? null : items
       }
-      if (part?.name === 'execute' && resolveEffectiveToolNames(part).includes('todowrite')) {
-        const fromOutput = parseTodoItems(part.state.output)
-        if (fromOutput.length > 0) return fromOutput
+      if (toolName === 'execute' && resolveEffectiveToolNames(part).includes('todowrite')) {
+        const rawTodos =
+          extractTodoArray(part.state.output) ?? extractTodoArrayFromCode(part.state.input?.code)
+        if (rawTodos !== null) {
+          const items = parseTodoItems({ todos: rawTodos })
+          return items.length === 0 ? null : items
+        }
       }
     }
   }
@@ -4948,9 +5029,12 @@ function SidebarInner(props: SidebarProps): JSX.Element {
       <Show when={header().version && updateBadge()}>
         {(badge) => (
           <box
-            onMouseDown={() => {
-              void openPantheonSettings(context, { initialTab: 'updates' })
-            }}
+            onMouseDown={stopMouseEvent}
+            onMouseUp={(event: any) =>
+              handleMouseClick(event, () => {
+                void openPantheonSettings(context, { initialTab: 'updates' })
+              })
+            }
           >
             <text fg={accent()}>{badge()}</text>
           </box>
@@ -5324,11 +5408,14 @@ function SidebarInner(props: SidebarProps): JSX.Element {
           <Show when={activePlan()}>
             {(plan) => (
               <box
-                onMouseDown={() => {
-                  openArtifactsDialog(context, resolveSidebarCwd(context), {
-                    initialArtifactId: plan().id,
+                onMouseDown={stopMouseEvent}
+                onMouseUp={(event: any) =>
+                  handleMouseClick(event, () => {
+                    openArtifactsDialog(context, resolveSidebarCwd(context), {
+                      initialArtifactId: plan().id,
+                    })
                   })
-                }}
+                }
                 flexShrink={0}
               >
                 <text fg={accent()}>{`▸ Plan: ${truncateLabel(plan().title, 22)}`}</text>
@@ -5336,9 +5423,12 @@ function SidebarInner(props: SidebarProps): JSX.Element {
             )}
           </Show>
           <box
-            onMouseDown={() => {
-              openArtifactsDialog(context, resolveSidebarCwd(context))
-            }}
+            onMouseDown={stopMouseEvent}
+            onMouseUp={(event: any) =>
+              handleMouseClick(event, () => {
+                openArtifactsDialog(context, resolveSidebarCwd(context))
+              })
+            }
             flexShrink={0}
           >
             <text fg={muted()}>
@@ -5649,9 +5739,12 @@ function HomeStatus(props: { context: any }) {
         <Show when={updateBadge()}>
           {(badge) => (
             <box
-              onMouseDown={() => {
-                void openPantheonSettings(props.context, { initialTab: 'updates' })
-              }}
+              onMouseDown={stopMouseEvent}
+              onMouseUp={(event: any) =>
+                handleMouseClick(event, () => {
+                  void openPantheonSettings(props.context, { initialTab: 'updates' })
+                })
+              }
             >
               <text fg={accent()}>{` · ${badge()}`}</text>
             </box>
@@ -5660,11 +5753,14 @@ function HomeStatus(props: { context: any }) {
         <Show when={activePlan()}>
           {(plan) => (
             <box
-              onMouseDown={() => {
-                openArtifactsDialog(props.context, resolveSidebarCwd(props.context), {
-                  initialArtifactId: plan().id,
+              onMouseDown={stopMouseEvent}
+              onMouseUp={(event: any) =>
+                handleMouseClick(event, () => {
+                  openArtifactsDialog(props.context, resolveSidebarCwd(props.context), {
+                    initialArtifactId: plan().id,
+                  })
                 })
-              }}
+              }
             >
               <text fg={accent()}>{` · ▸ Plan: ${truncateLabel(plan().title, 20)}`}</text>
             </box>
@@ -5672,9 +5768,12 @@ function HomeStatus(props: { context: any }) {
         </Show>
         <Show when={artifacts().length > 0}>
           <box
-            onMouseDown={() => {
-              openArtifactsDialog(props.context, resolveSidebarCwd(props.context))
-            }}
+            onMouseDown={stopMouseEvent}
+            onMouseUp={(event: any) =>
+              handleMouseClick(event, () => {
+                openArtifactsDialog(props.context, resolveSidebarCwd(props.context))
+              })
+            }
           >
             <text fg={muted()}>
               {isPt()
@@ -5684,9 +5783,12 @@ function HomeStatus(props: { context: any }) {
           </box>
         </Show>
         <box
-          onMouseDown={() => {
-            openPantheonCockpit(props.context, resolveSidebarCwd(props.context))
-          }}
+          onMouseDown={stopMouseEvent}
+          onMouseUp={(event: any) =>
+            handleMouseClick(event, () => {
+              openPantheonCockpit(props.context, resolveSidebarCwd(props.context))
+            })
+          }
         >
           <text fg={muted()}>{' · ◈ Cockpit'}</text>
         </box>

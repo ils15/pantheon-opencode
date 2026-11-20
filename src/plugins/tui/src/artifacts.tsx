@@ -22,6 +22,7 @@ import {
   paginateArtifactLines,
   scanPantheonArtifacts,
 } from './artifacts-state.ts'
+import { handleMouseClick, stopMouseEvent } from './mouse-click'
 import { resolveLanguage } from './settings-i18n'
 import { tuiPrefs } from './tui-prefs'
 
@@ -100,7 +101,10 @@ export function ArtifactsDialogContent(props: {
                 : `Plans, Reports & ADRs (${props.entries.length})`}
           </text>
         </box>
-        <box onMouseDown={() => props.onClose()}>
+        <box
+          onMouseDown={stopMouseEvent}
+          onMouseUp={(event: any) => handleMouseClick(event, () => props.onClose())}
+        >
           <text fg={props.muted}>{'[ Esc / Q ]'}</text>
         </box>
       </box>
@@ -154,10 +158,13 @@ export function ArtifactsDialogContent(props: {
                     <box
                       flexDirection="row"
                       {...(isSelected() ? { backgroundColor: '#262626' } : {})}
-                      onMouseDown={() => {
-                        if (isSelected()) props.onOpen(idx())
-                        else props.onSelect(idx())
-                      }}
+                      onMouseDown={stopMouseEvent}
+                      onMouseUp={(event: any) =>
+                        handleMouseClick(event, () => {
+                          if (isSelected()) props.onOpen(idx())
+                          else props.onSelect(idx())
+                        })
+                      }
                     >
                       <text
                         fg={isSelected() ? (props.warn ?? '#fba970') : props.muted}
@@ -219,7 +226,8 @@ export function ArtifactsDialogContent(props: {
               paddingRight={1}
               marginRight={1}
               flexShrink={0}
-              onMouseDown={() => props.onBack()}
+              onMouseDown={stopMouseEvent}
+              onMouseUp={(event: any) => handleMouseClick(event, () => props.onBack())}
             >
               <text fg="#ffffff" wrapMode="none">
                 {props.isPt ? '‹ Lista' : '‹ List'}
@@ -232,7 +240,8 @@ export function ArtifactsDialogContent(props: {
                 paddingRight={1}
                 marginRight={1}
                 flexShrink={0}
-                onMouseDown={() => props.onPrevPage()}
+                onMouseDown={stopMouseEvent}
+                onMouseUp={(event: any) => handleMouseClick(event, () => props.onPrevPage())}
               >
                 <text fg="#ffffff" wrapMode="none">
                   {props.isPt ? '‹ Anterior' : '‹ Prev'}
@@ -247,7 +256,8 @@ export function ArtifactsDialogContent(props: {
                 paddingRight={1}
                 marginRight={1}
                 flexShrink={0}
-                onMouseDown={() => props.onNextPage()}
+                onMouseDown={stopMouseEvent}
+                onMouseUp={(event: any) => handleMouseClick(event, () => props.onNextPage())}
               >
                 <text fg="#ffffff" wrapMode="none">
                   {props.isPt ? 'Próxima ›' : 'Next ›'}
@@ -271,10 +281,13 @@ export function ArtifactsDialogContent(props: {
           paddingLeft={2}
           paddingRight={2}
           flexShrink={0}
-          onMouseDown={() => {
-            if (props.mode() === 'list' && props.entries.length > 0) props.onOpen()
-            else props.onClose()
-          }}
+          onMouseDown={stopMouseEvent}
+          onMouseUp={(event: any) =>
+            handleMouseClick(event, () => {
+              if (props.mode() === 'list' && props.entries.length > 0) props.onOpen()
+              else props.onClose()
+            })
+          }
         >
           <text fg="#000000" attributes={1} wrapMode="none">
             {props.mode() === 'list' && props.entries.length > 0

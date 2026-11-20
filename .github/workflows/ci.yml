@@ -330,6 +330,9 @@ jobs:
       - name: TypeScript tests
         run: npm run test:ts
 
+      - name: Real-install tests
+        run: npm run test:install
+
   plugin-ts-coverage:
     runs-on: ubuntu-latest
     permissions:

@@ -7,11 +7,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-<!-- Add new changes here.
-     Canonical sections (docs/RELEASING.md): ### 🆕 What's New (curated highlights, ≤6 bullets ≤140 chars) →
-     ### Added / Changed / Deprecated / Removed / Fixed / Security → ### ⚠️ Known Issues / ### ✅ Closed Issues.
-     `node scripts/versioning.mjs apply --notes` pre-fills the generated sections from conventional commits.
-     Running apply will move this section to a versioned entry and reset the template below. -->
+## [v2.2.1] - 2026-11-20
+
+### 🆕 What's New
+
+- **Release Battery Integrity (13 Findings Resolved)**: Fixed CI gates, deterministic install suite assertions, and hook canary execution.
+- **OpenCode Call Unification**: Fully eliminated legacy V1 residues and redundant version selection parameters (`opts.version`, `--version`).
+- **Code Mode `todowrite` Compatibility**: Fixed schema and auto-permission rules for `todowrite` in Code Mode, preventing failures.
+- **TUI Mouse Click Persistence**: Fixed artifact shortcut interaction where releasing mouse click closed windows prematurely.
+- **100% Hermetic Test Suites**: All suites (quick, node, ts, pytest, install, tool-canary, sandbox) verified 100% green.
+
+### Fixed
+
+- **ci/release** — `.github/workflows/ci.yml`, `release.yml`, `release-gates.mjs`: aligned release gates, enabled required test tiers, and fixed release context validation (GATE-01, GATE-02).
+- **install** — `scripts/install/opencode.mjs`, `setup.mjs`, `tests/install-*.test.mjs`: unified install target on native OpenCode 2.x, fixed 38 deterministic test failures, and removed obsolete V1 options (INSTALL-01, INSTALL-02).
+- **canary** — `tests/pantheon/plugin-hook-canary.test.mjs`, `tests/canary/plugin-tool-canary.test.mjs`: corrected OpenCode version string parsing for prefixed outputs and added PACKAGE_ROOT fallback (HOOKS-01, CANARY-01).
+- **test-runner** — `scripts/run-node-tests.mjs`: fixed argument parser order requirement and repaired `npm run coverage` (RUNNER-01).
+- **tui** — `src/plugins/tui/src/mouse-click.ts`, `index.tsx`: persistent window retention upon mouse click release in artifact shortcuts and dashboard elements.
+- **todowrite** — `src/pantheon/tools.ts`, `src/pantheon/auto-permissions.ts`, `src/plugin.ts`: enabled flexible schema handling and auto-permissions for Code Mode `todowrite` calls.
 
 ## [v2.2.0] - 2026-11-19
 

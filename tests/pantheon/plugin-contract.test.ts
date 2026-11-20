@@ -2960,6 +2960,42 @@ async function main(): Promise<void> {
     )
   })
 
+  test('V2 todowrite schema accepts id, priority, and empty todos list for Code Mode callers', async () => {
+    const registered = await registerToolsThroughHostMock()
+    const todowrite = registered.find((t) => t.name === 'todowrite')
+    assert.ok(todowrite, 'todowrite tool must be registered when host does not provide it')
+    const todosProp = (todowrite.input.properties as Record<string, Record<string, unknown>>).todos
+    assert.equal(
+      todosProp?.minItems,
+      0,
+      'todowrite must allow empty todos array to clear the checklist',
+    )
+    const itemProps = (todosProp?.items as Record<string, Record<string, unknown>>)?.properties
+    assert.ok(itemProps?.id, 'todowrite item schema must accept id')
+    assert.ok(itemProps?.priority, 'todowrite item schema must accept priority')
+  })
+
+  test('permission hook auto-allows todowrite, todoread, and Code Mode execute with empty resources', async () => {
+    const captured = await setupCapturingPermissionHooks()
+    assert.equal(typeof captured.evaluate, 'function')
+
+    for (const action of ['todowrite', 'todoread', 'execute']) {
+      const ev = {
+        action,
+        resources: [],
+        agent: 'zeus',
+        sessionID: 'root',
+        effect: 'ask',
+      }
+      await captured.evaluate?.(ev)
+      assert.equal(
+        ev.effect,
+        'allow',
+        `permission hook must allow ${action} for zeus with empty resources`,
+      )
+    }
+  })
+
   test('every draft.add declares output — removing it fails this test', async () => {
     const registered = await registerToolsThroughHostMock()
     assert.ok(registered.length > 0, 'expected at least one registered tool')

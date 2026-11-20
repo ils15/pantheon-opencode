@@ -40,6 +40,7 @@ jobs:
     env:
       EVENT_NAME: ${{ github.event_name }}
       RELEASE_CHANNEL: ${{ inputs.release_channel }}
+      PANTHEON_RELEASE_CONTEXT: '1'
       RECOVERY_VERSION: ${{ inputs.recovery_version }}
       RECOVERY_TARGET_SHA: ${{ inputs.recovery_target_sha }}
       RECOVERY_PR_NUMBER: ${{ inputs.recovery_pr_number }}
@@ -257,7 +258,7 @@ jobs:
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${pkgVer}\nlatest_stable=${latest}\n`);
           NODE
 
-      # ── Six release gates (ADR-0014) ───────────────────────────────────────
+      # ── Five release gates (ADR-0014; unit/install suites run in ci.yml) ──
       # Every gate prints `GATE <name>: PASS` and writes a named evidence file.
       # A gate that cannot run is a failure; no gate degrades to a weaker result.
 

@@ -23,7 +23,7 @@ function setupPlanFor(files = [], sourceFingerprint = 'a'.repeat(64)) {
     schema_version: 1,
     package: { source_fingerprint: sourceFingerprint },
     target: { path: '/private/target' },
-    options: { version: 'v2' },
+    options: {},
     operations: files.map(({ action, path }) => ({
       action,
       path,

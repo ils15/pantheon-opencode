@@ -35,7 +35,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import { test } from 'node:test'
 import { resolveInstallExitCode } from '../scripts/install/exit-codes.mjs'
@@ -62,6 +62,8 @@ const BIN = join(ROOT, 'bin', 'pantheon-init.mjs')
 // Deterministic English strings for message assertions (strings() caches locale).
 process.env.LANG = 'C'
 process.env.LC_ALL = 'C'
+process.env.npm_config_cache = process.env.npm_config_cache || join(homedir(), '.npm')
+process.env.npm_config_prefer_offline = 'true'
 
 const sha256 = (value) => createHash('sha256').update(value).digest('hex')
 
@@ -362,17 +364,7 @@ test('init --dry-run: prints the real plan and writes nothing', () => {
 
     const result = spawnSync(
       process.execPath,
-      [
-        BIN,
-        'init',
-        '--project',
-        '--dry-run',
-        '--yes',
-        '--headless',
-        '--version',
-        'v1',
-        '--verbose',
-      ],
+      [BIN, 'init', '--project', '--dry-run', '--yes', '--headless', '--verbose'],
       {
         cwd: target,
         encoding: 'utf8',
@@ -456,7 +448,7 @@ test('in-process: two dry passes in one process never warn (stats scoped per cal
   const { installOpenCode } = await import('../scripts/install/opencode.mjs')
   const target = mkdtempSync(join(tmpdir(), 'pantheon-inproc-'))
   try {
-    const opts = { yes: true, headless: true, version: 'v1' }
+    const opts = { yes: true, headless: true }
     const components = ['agents', 'skills', 'commands']
     await captureOutput(() => installOpenCode(target, true, false, components, opts))
     const second = await captureOutput(() => installOpenCode(target, true, false, components, opts))
@@ -528,8 +520,6 @@ test('cli: an idempotent runtime re-run previews manifest.json as unchanged', ()
       '--project',
       '--yes',
       '--headless',
-      '--version',
-      'v1',
       '--components',
       'agents,skills,instructions,commands,plugins,runtime',
     ]
@@ -570,17 +560,7 @@ test('init without --yes (non-TTY) prints the plan, applies nothing and exits 2'
   try {
     const result = spawnSync(
       process.execPath,
-      [
-        BIN,
-        'init',
-        '--project',
-        '--headless',
-        '--version',
-        'v1',
-        '--no-mcp',
-        '--components',
-        'agents,commands',
-      ],
+      [BIN, 'init', '--project', '--headless', '--no-mcp', '--components', 'agents,commands'],
       {
         cwd: target,
         encoding: 'utf8',
@@ -796,8 +776,6 @@ test('--yes shows a concise preview before applying without prompts', () => {
         '--project',
         '--yes',
         '--headless',
-        '--version',
-        'v1',
         '--no-mcp',
         '--components',
         'agents,commands',

@@ -2856,9 +2856,16 @@ async function registerV2PermissionHook(
         writeProof()
         return
       }
-      if (!Array.isArray(event.resources) || event.resources.length === 0) {
+      if (!Array.isArray(event.resources)) {
         deny('permission resources are missing or malformed')
         return
+      }
+      if (event.resources.length === 0) {
+        const action = typeof event.action === 'string' ? event.action.trim() : ''
+        if (action === '' || action === 'subagent' || action === 'task') {
+          deny('permission resources are missing or malformed')
+          return
+        }
       }
       const targets = event.resources.map(v2ResourceTarget)
       if (targets.some((target) => target === undefined)) {

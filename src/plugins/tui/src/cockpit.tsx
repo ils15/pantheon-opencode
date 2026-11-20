@@ -16,6 +16,7 @@ import {
   type CockpitTabId,
   writeCockpitReplayArtifact,
 } from './cockpit-state.ts'
+import { handleMouseClick, stopMouseEvent } from './mouse-click'
 import { resolveLanguage } from './settings-i18n'
 import { resolveAccentColor, tuiPrefs } from './tui-prefs'
 
@@ -265,7 +266,10 @@ export function CockpitView(props: {
           </text>
           <text fg={fg()}>{`· ${snapshot().sessionTitle} (${snapshot().modelName})`}</text>
         </box>
-        <box onMouseDown={props.onClose}>
+        <box
+          onMouseDown={stopMouseEvent}
+          onMouseUp={(event: any) => handleMouseClick(event, props.onClose)}
+        >
           <text fg={muted()}>{'[ Esc / Q ]'}</text>
         </box>
       </box>
@@ -276,7 +280,10 @@ export function CockpitView(props: {
           {(t) => {
             const active = () => tab() === t.id
             return (
-              <box onMouseDown={() => setTab(t.id)}>
+              <box
+                onMouseDown={stopMouseEvent}
+                onMouseUp={(event: any) => handleMouseClick(event, () => setTab(t.id))}
+              >
                 <text
                   fg={active() ? accent() : muted()}
                   attributes={active() ? 1 : 0}
@@ -344,10 +351,13 @@ export function CockpitView(props: {
                   return (
                     <box
                       flexDirection="column"
-                      onMouseDown={() => {
-                        setSelectedRow(idx())
-                        setShowDetail((v) => !v)
-                      }}
+                      onMouseDown={stopMouseEvent}
+                      onMouseUp={(event: any) =>
+                        handleMouseClick(event, () => {
+                          setSelectedRow(idx())
+                          setShowDetail((v) => !v)
+                        })
+                      }
                     >
                       <text fg={sel() ? accent() : fg()}>
                         {`${sel() ? '▸' : ' '} ${marker} @${row.agent.padEnd(11)} ${row.ganttBar}  ${String(row.durationSec).padStart(5)}s  $${row.cost.toFixed(3)}`}
@@ -414,7 +424,12 @@ export function CockpitView(props: {
           </box>
 
           <box marginTop={1} flexDirection="row" gap={2}>
-            <box onMouseDown={() => cockpitController?.exportReplay()}>
+            <box
+              onMouseDown={stopMouseEvent}
+              onMouseUp={(event: any) =>
+                handleMouseClick(event, () => cockpitController?.exportReplay())
+              }
+            >
               <text fg={accent()} attributes={1}>
                 {'[ x Export Replay Trace ]'}
               </text>

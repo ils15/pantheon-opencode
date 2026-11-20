@@ -33,6 +33,7 @@
  */
 import type { Context } from '@opencode/plugin/tui/context'
 import { createSignal, For, Show } from 'solid-js'
+import { handleMouseClick, stopMouseEvent } from './mouse-click'
 import { resolveLanguage } from './settings-i18n'
 import { tuiPrefs } from './tui-prefs'
 import { readChangelogForBundle, resolveRunningVersion } from './whats-new-highlights.ts'
@@ -87,7 +88,11 @@ export function WhatsNewContent(props: {
             {props.data.title}
           </text>
         </box>
-        <box flexShrink={0} onMouseDown={() => props.onClose?.()}>
+        <box
+          flexShrink={0}
+          onMouseDown={stopMouseEvent}
+          onMouseUp={(event: any) => handleMouseClick(event, props.onClose)}
+        >
           <text fg={props.muted} wrapMode="none">
             {'[ Esc / Q ]'}
           </text>
@@ -127,7 +132,8 @@ export function WhatsNewContent(props: {
               paddingLeft={1}
               paddingRight={1}
               marginRight={1}
-              onMouseDown={() => props.onPrev?.()}
+              onMouseDown={stopMouseEvent}
+              onMouseUp={(event: any) => handleMouseClick(event, props.onPrev)}
             >
               <text fg="#ffffff">{isPt() ? '‹ Anterior' : '‹ Prev'}</text>
             </box>
@@ -139,7 +145,8 @@ export function WhatsNewContent(props: {
               paddingLeft={1}
               paddingRight={1}
               marginRight={1}
-              onMouseDown={() => props.onNext?.()}
+              onMouseDown={stopMouseEvent}
+              onMouseUp={(event: any) => handleMouseClick(event, props.onNext)}
             >
               <text fg="#ffffff">{isPt() ? 'Próxima ›' : 'Next ›'}</text>
             </box>
@@ -154,7 +161,8 @@ export function WhatsNewContent(props: {
           backgroundColor={props.warn ?? '#fba970'}
           paddingLeft={2}
           paddingRight={2}
-          onMouseDown={() => props.onClose?.()}
+          onMouseDown={stopMouseEvent}
+          onMouseUp={(event: any) => handleMouseClick(event, props.onClose)}
         >
           <text fg="#000000" attributes={1}>
             {isPt() ? 'OK, Entendido' : 'OK, Got it'}

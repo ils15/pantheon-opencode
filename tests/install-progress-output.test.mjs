@@ -183,7 +183,7 @@ test('the TUI dependency install is reported, not silent', async () => {
   try {
     const dst = join(root, 'plugin')
     const { output } = await captureAsyncConsole(async () =>
-      installPlugin(join(ROOT, 'src', 'plugins', 'tui'), dst, { version: 'v1' }),
+      installPlugin(join(ROOT, 'src', 'plugins', 'tui'), dst),
     )
     assert.match(output, /Installing TUI dependencies/, output)
     assert.match(output, /Installing TUI dependencies — complete in \d+\.\ds/, output)

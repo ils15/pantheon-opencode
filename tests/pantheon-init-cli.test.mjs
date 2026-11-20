@@ -9,7 +9,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
@@ -22,7 +22,13 @@ function run(args, cwd, env = {}) {
     encoding: 'utf8',
     // CI has no host binary: pin the generation so the probe refusal
     // (correct in production) cannot make these CLI assertions env-dependent.
-    env: { ...process.env, OPENCODE_VERSION: 'v2', ...env },
+    env: {
+      ...process.env,
+      OPENCODE_VERSION: 'v2',
+      npm_config_cache: process.env.npm_config_cache || join(homedir(), '.npm'),
+      npm_config_prefer_offline: 'true',
+      ...env,
+    },
   })
 }
 
@@ -196,7 +202,7 @@ test('PANTHEON_SETUP_TARGET accepts only the selected global config directory', 
   const target = join(xdg, 'opencode')
   try {
     const accepted = run(
-      ['init', '--headless', '--yes', '--no-mcp', '--components', 'agents', '--version', 'v2'],
+      ['init', '--headless', '--yes', '--no-mcp', '--components', 'agents'],
       cwd,
       {
         HOME: home,
@@ -209,7 +215,7 @@ test('PANTHEON_SETUP_TARGET accepts only the selected global config directory', 
 
     const wrongTarget = join(home, 'wrong-config')
     const rejected = run(
-      ['init', '--headless', '--yes', '--no-mcp', '--components', 'agents', '--version', 'v2'],
+      ['init', '--headless', '--yes', '--no-mcp', '--components', 'agents'],
       cwd,
       {
         HOME: home,

@@ -175,7 +175,14 @@ export function evaluateV2Delegation(
 ): V2DelegationDecision {
   if (existingStatus === 'deny') return 'preserve-deny'
 
-  if (!Array.isArray(event.resources) || event.resources.length === 0) return 'deny'
+  if (!Array.isArray(event.resources)) return 'deny'
+  if (event.resources.length === 0) {
+    const action = typeof event.action === 'string' ? event.action.trim() : ''
+    if (action !== '' && action !== 'subagent' && action !== 'task') {
+      return 'passthrough'
+    }
+    return 'deny'
+  }
   const rawTargets = event.resources.map(v2ResourceTarget)
   if (rawTargets.some((target) => target === undefined)) return 'deny'
   const targets = rawTargets.filter((target): target is string => target !== undefined)

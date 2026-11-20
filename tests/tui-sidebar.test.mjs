@@ -1911,6 +1911,78 @@ test('latestTodoItems: the last completed todowrite wins and bad input is ignore
 
   assert.equal(latestTodoItems([todoMessage('m1', { not: 'a list' })]), null)
   assert.equal(latestTodoItems([toolMessage('m1', 'todowrite', null)]), null)
+  assert.deepEqual(
+    latestTodoItems([
+      {
+        id: 'm_exec_out',
+        type: 'assistant',
+        content: [
+          {
+            type: 'tool',
+            name: 'execute',
+            state: {
+              status: 'completed',
+              input: {
+                code: 'return await tools.todowrite({ todos: [{ content: "step 1", status: "in_progress" }] })',
+              },
+              output: JSON.stringify({
+                output: JSON.stringify({
+                  todos: [{ id: '1', content: 'step 1', status: 'in_progress', priority: 'high' }],
+                }),
+              }),
+            },
+          },
+        ],
+      },
+    ]),
+    [{ content: 'step 1', status: 'in_progress' }],
+    'Code Mode execute wrapping todowrite with nested output string updates the todo list',
+  )
+  assert.deepEqual(
+    latestTodoItems([
+      {
+        id: 'm_exec_code',
+        type: 'assistant',
+        content: [
+          {
+            type: 'tool',
+            name: 'execute',
+            state: {
+              status: 'completed',
+              input: {
+                code: 'await tools.todowrite({ todos: [{ id: "1", content: "from code", status: "pending", priority: "medium" }] }); return "ok";',
+              },
+              output: '"ok"',
+            },
+          },
+        ],
+      },
+    ]),
+    [{ content: 'from code', status: 'pending' }],
+    'Code Mode execute calling tools.todowrite without returning its result falls back to input.code',
+  )
+  assert.equal(
+    latestTodoItems([
+      todoMessage('m_prev', first),
+      {
+        id: 'm_exec_clear',
+        type: 'assistant',
+        content: [
+          {
+            type: 'tool',
+            name: 'execute',
+            state: {
+              status: 'completed',
+              input: { code: 'return await tools.todowrite({ todos: [] })' },
+              output: JSON.stringify({ todos: [] }),
+            },
+          },
+        ],
+      },
+    ]),
+    null,
+    'Code Mode execute calling tools.todowrite with empty todos clears the previous list',
+  )
   assert.equal(latestTodoItems([{ id: 'm1', type: 'assistant', content: 'nope' }]), null)
   assert.equal(latestTodoItems([{ id: 'u1', type: 'user' }]), null)
   assert.equal(latestTodoItems([]), null)

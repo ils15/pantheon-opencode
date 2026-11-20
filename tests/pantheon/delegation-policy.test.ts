@@ -148,6 +148,30 @@ assert.equal(
   'missing target is invalid',
 )
 assert.equal(
+  evaluateV2Delegation(
+    { action: 'todowrite', sessionID: 'root', resources: [] },
+    session('root', 'zeus'),
+  ),
+  'passthrough',
+  'non-delegation actions with empty resources pass through to host/auto-permissions',
+)
+assert.equal(
+  evaluateV2Delegation(
+    { action: 'execute', sessionID: 'root', resources: [] },
+    session('root', 'zeus'),
+  ),
+  'passthrough',
+  'Code Mode execute with empty resources passes through delegation policy',
+)
+assert.equal(
+  evaluateV2Delegation(
+    { action: 'subagent', sessionID: 'root', resources: [] },
+    session('root', 'zeus'),
+  ),
+  'deny',
+  'subagent delegation with empty resources still denies',
+)
+assert.equal(
   evaluateV2Delegation({ sessionID: 'root', resources: [42] }, session('root', 'zeus')),
   'deny',
   'non-string target is invalid',

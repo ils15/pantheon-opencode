@@ -374,9 +374,9 @@ The release evidence is fail-closed and has one artifact identity:
 Any `npm ci` failure blocks the run. There is no `npm install` fallback, and
 `PANTHEON_ALLOW_NPM_INSTALL_FALLBACK` is not part of the current contract.
 
-### Six release gates
+### Five release gates (+ CI test suites)
 
-The `validate` job of `release.yml` runs six gates on the frozen `TARGET_SHA`.
+The full unit and real-install suites (`pytest` + `src/mcp` branch coverage ≥ 80%, `test:node`, `test:ts`, `test:install`, `coverage:plugin`) run in `.github/workflows/ci.yml` on every PR and `main` commit so that evidence travels with the merged `TARGET_SHA`. The `validate` job of `release.yml` runs five release gates on the frozen `TARGET_SHA` (with `PANTHEON_RELEASE_CONTEXT=1`).
 Each prints `GATE <name>: PASS` and writes a named evidence file to
 `$RUNNER_TEMP/gate-evidence/<name>.json`; the directory is uploaded as
 `release-gate-evidence-<run_id>` (90-day retention). There is no fallback: a
@@ -386,12 +386,11 @@ before any release credential is exposed.
 
 | Gate | Executed by | Fails when | Evidence |
 |---|---|---|---|
-| (a) tests | `scripts/release-gates.mjs tests`: pytest + [`src/mcp`](https://github.com/ils15/pantheon-opencode/tree/main/src/mcp) coverage ≥ 80, `test:node`, `test:ts`, `coverage:plugin-v2`, `test:install`; pytest runs in an isolated venv built from [`src/mcp/requirements-mcp.txt`](https://github.com/ils15/pantheon-opencode/blob/main/src/mcp/requirements-mcp.txt) | any suite, coverage threshold, or the mandatory install tier fails; an unsatisfiable or unverified pin set fails the gate | `tests.json` |
 | (b) host compatibility | `scripts/release-gates.mjs host`: each **measured** host installed and exercised in an isolated sandbox; the gate reports a supported family with no row as "supported, unmeasured" instead of failing it | a measured row fails, or a known-broken host is listed | `host.json` |
-| (c) install | `scripts/release-gates.mjs install`: the immutable `.tgz` installed globally, headless init, `validate-sandbox-install.mjs`, and a host-backed tool canary on OpenCode 2.0.30 | install, init, source comparison, MCP/doctor checks, or canary fails or skips | `install.json`, `install-canary.log` |
+| (c) install | `scripts/release-gates.mjs install`: the immutable `.tgz` installed globally, headless init, `validate-sandbox-install.mjs`, and a host-backed tool canary (`PANTHEON_TOOL_CANARY_PACKAGE_ROOT` pointing at the installed package) | install, init, source comparison, MCP/doctor checks, or canary fails or skips | `install.json`, `install-canary.log` |
 | (d) package | `scripts/release-gates.mjs package`: SHA-256 recomputed over the same `.tgz`, payload inspected, `package:validate` | the digest, name, version, target SHA, or payload disagree; no second `npm pack` is accepted | `package.json` |
 | (e) changelog | `scripts/release-gates.mjs changelog`: `changelog-extract.mjs` | the `[version]` section is missing or empty; recovery checks the tag instead | `changelog.json`, `changelog.md` |
-| (f) metadata | `scripts/release-gates.mjs metadata`: `version-check.mjs` + `validate-node-engine-policy.mjs` | manifests drift, the channel/version shape is wrong, or the SHA is not 40 hex | `metadata.json` |
+| (f) metadata | `scripts/release-gates.mjs metadata`: `version-check.mjs` + `validate-node-engine-policy.mjs` + `docs:check-cookbook` | manifests drift, the channel/version shape is wrong, or the SHA is not 40 hex | `metadata.json` |
 
 The install canary configures the installed package's `src/plugin-v2` directory
 using the installer's object-form `plugins` entry, so imports resolve against the
@@ -417,20 +416,20 @@ version supporting the OpenCode V1 contract** (owner decision, 2026-11-07): the
 next minor. This is a limit of automatic release validation, not a change to
 the support policy.
 
-#### Python test environment (gate a)
+#### Python test environment (CI `test-suite`)
 
 The Python suite imports `fastmcp`/`mcp` at collection time, so its verdict only
-means something against the pins in [`src/mcp/requirements-mcp.txt`](https://github.com/ils15/pantheon-opencode/blob/main/src/mcp/requirements-mcp.txt). Gate (a)
+means something against the pins in [`src/mcp/requirements-mcp.txt`](https://github.com/ils15/pantheon-opencode/blob/main/src/mcp/requirements-mcp.txt). The CI `test-suite` job
 therefore does **not** use the runner's ambient interpreter:
 
-- the `validate` job creates `$RUNNER_TEMP/gate-venv` with `python3 -m venv`
+- the `test-suite` job creates `$RUNNER_TEMP/ci-venv` with `python3 -m venv`
   from the interpreter pinned by `actions/setup-python`
   (`python-version: '3.12'`, i.e. CPython 3.12.x on `ubuntu-latest`; the
   package metadata declares `requires-python >= 3.11`), installs
   `coverage pytest pyyaml`, `pytest-asyncio==1.3.0`, and
   `-r src/mcp/requirements-mcp.txt -r src/mcp/requirements-vision.txt`;
-- `PANTHEON_PYTHON` is exported to that venv and `release-gates.mjs` resolves
-  every Python command through it. A set-but-missing or non-executable
+- `PANTHEON_PYTHON` is exported to that venv and `npm run test:ci` / `doctor.mjs`
+  resolve Python through it. A set-but-missing or non-executable
   `PANTHEON_PYTHON` is a hard failure, never a fallback to the ambient
   `python3`;
 - `pip check` and an explicit assertion that every `==` pin in both
@@ -439,20 +438,14 @@ therefore does **not** use the runner's ambient interpreter:
   (fail-closed via `set -euo pipefail`); no failure is downgraded to a skip;
 - `actions/setup-python`'s `cache: pip` still applies: the venv's pip shares
   `~/.cache/pip`, so the download cache is reused while the install itself
-  stays isolated;
-- the CI `test-suite` job builds the same venv (`$RUNNER_TEMP/ci-venv`) and
-  points `PANTHEON_PYTHON` at it, so CI and the release gate share one
-  environment contract;
-- `tests.json` records the interpreter path and `python --version` used for the
-  run.
+  stays isolated.
 
-Local equivalent of the gate's Python step:
+Local equivalent of the CI Python step:
 
 ```bash
 python3 -m venv /tmp/pantheon-gate-venv
 /tmp/pantheon-gate-venv/bin/python -m pip install -r src/mcp/requirements-mcp.txt -r src/mcp/requirements-vision.txt
-PANTHEON_PYTHON=/tmp/pantheon-gate-venv/bin/python \
-  node scripts/release-gates.mjs tests --evidence-dir /tmp/gate-evidence
+PANTHEON_PYTHON=/tmp/pantheon-gate-venv/bin/python npm run test:ci
 ```
 
 Running `pytest` on an interpreter without these pins is not evidence: with
@@ -466,16 +459,16 @@ product defect.
   `tests/pantheon/*.mjs` **excluding** `tests/install-opencode.test.mjs` and
   `tests/install-e2e.test.mjs`. A bare `node --test` over those files skips
   their cases with an explicit reason unless the tier is opted into.
-- **Heavy tier (optional locally, mandatory in release):**
+- **Heavy tier (optional locally, mandatory in CI):**
   `npm run test:install` sets `PANTHEON_RUN_INSTALL_TESTS=1` and runs both
   real-install files. `npm test` / `test:all` does not include it, so the local
-  loop stays fast; gate (a) always includes it.
+  loop stays fast; `.github/workflows/ci.yml` (`test-suite`) always runs it.
 
 ### Coverage contract
 
 - **Required:** Python [`src/mcp`](https://github.com/ils15/pantheon-opencode/tree/main/src/mcp) branch coverage **≥ 80%**
-  (`coverage report --fail-under=80`) and the [`src/plugin-v2.ts`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin-v2.ts) line
-  measurement (`npm run coverage:plugin-v2`). Both run in gate (a).
+  (`coverage report --fail-under=80`) and the [`src/plugin.ts`](https://github.com/ils15/pantheon-opencode/blob/main/src/plugin.ts) line
+  measurement (`npm run coverage:plugin`). Both run in `ci.yml`.
 - **Not PASS:** Node coverage (`npm run coverage`) is report-only and enforces
   no threshold; TypeScript under [`src/`](https://github.com/ils15/pantheon-opencode/tree/main/src) outside the plugin-v2 measurement is
   unmeasured. Neither may be cited as evidence that a threshold passed.

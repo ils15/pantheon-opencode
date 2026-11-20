@@ -675,6 +675,23 @@ function artifactKindLabel(kind, isPt = false) {
 	if (kind === "report") return isPt ? "Relatório" : "Report";
 	return "ADR";
 }
+//#endregion
+//#region src/mouse-click.ts
+/** Shared mouse-event helpers for OpenTUI shortcuts and dialog controls.
+*
+*  Opening or closing a dialog inside `onMouseDown` lets the subsequent
+*  `mouseup` event hit the newly-mounted (or underlying) surface — e.g. the
+*  dialog backdrop's `onMouseUp` immediately dismisses a freshly opened modal.
+*  Handling clicks on `onMouseUp` after stopping propagation on both `down`
+*  and `up` keeps opened windows persistent across mouse release. */
+function stopMouseEvent(event) {
+	const stop = event?.stopPropagation;
+	if (typeof stop === "function") stop.call(event);
+}
+function handleMouseClick(event, action) {
+	stopMouseEvent(event);
+	action?.();
+}
 Object.freeze([
 	"auto",
 	"pt-BR",
@@ -1330,7 +1347,8 @@ function ArtifactsDialogContent(props) {
 			return () => _c$() ? activeEntry()?.title.slice(0, 52) : memo(() => !!props.isPt)() ? `Planos, Relatórios & ADRs (${props.entries.length})` : `Plans, Reports & ADRs (${props.entries.length})`;
 		})());
 		insertNode(_el$7, _el$8);
-		setProp(_el$7, "onMouseDown", () => props.onClose());
+		setProp(_el$7, "onMouseDown", stopMouseEvent);
+		setProp(_el$7, "onMouseUp", (event) => handleMouseClick(event, () => props.onClose()));
 		insertNode(_el$8, createTextNode(`[ Esc / Q ]`));
 		insertNode(_el$0, _el$1);
 		setProp(_el$0, "flexDirection", "row");
@@ -1402,10 +1420,13 @@ function ArtifactsDialogContent(props) {
 										insertNode(_el$36, _el$39);
 										insertNode(_el$36, _el$40);
 										setProp(_el$36, "flexDirection", "row");
-										spread(_el$36, mergeProps(() => isSelected() ? { backgroundColor: "#262626" } : {}, { "onMouseDown": () => {
-											if (isSelected()) props.onOpen(idx());
-											else props.onSelect(idx());
-										} }), true);
+										spread(_el$36, mergeProps(() => isSelected() ? { backgroundColor: "#262626" } : {}, {
+											"onMouseDown": stopMouseEvent,
+											"onMouseUp": (event) => handleMouseClick(event, () => {
+												if (isSelected()) props.onOpen(idx());
+												else props.onSelect(idx());
+											})
+										}), true);
 										setProp(_el$37, "attributes", 1);
 										setProp(_el$37, "wrapMode", "none");
 										insert(_el$37, () => isSelected() ? "▸ " : "  ");
@@ -1488,7 +1509,8 @@ function ArtifactsDialogContent(props) {
 					setProp(_el$16, "paddingRight", 1);
 					setProp(_el$16, "marginRight", 1);
 					setProp(_el$16, "flexShrink", 0);
-					setProp(_el$16, "onMouseDown", () => props.onBack());
+					setProp(_el$16, "onMouseDown", stopMouseEvent);
+					setProp(_el$16, "onMouseUp", (event) => handleMouseClick(event, () => props.onBack()));
 					setProp(_el$17, "fg", "#ffffff");
 					setProp(_el$17, "wrapMode", "none");
 					insert(_el$17, () => props.isPt ? "‹ Lista" : "‹ List");
@@ -1507,7 +1529,8 @@ function ArtifactsDialogContent(props) {
 								setProp(_el$18, "paddingRight", 1);
 								setProp(_el$18, "marginRight", 1);
 								setProp(_el$18, "flexShrink", 0);
-								setProp(_el$18, "onMouseDown", () => props.onPrevPage());
+								setProp(_el$18, "onMouseDown", stopMouseEvent);
+								setProp(_el$18, "onMouseUp", (event) => handleMouseClick(event, () => props.onPrevPage()));
 								setProp(_el$19, "fg", "#ffffff");
 								setProp(_el$19, "wrapMode", "none");
 								insert(_el$19, () => props.isPt ? "‹ Anterior" : "‹ Prev");
@@ -1529,7 +1552,8 @@ function ArtifactsDialogContent(props) {
 								setProp(_el$21, "paddingRight", 1);
 								setProp(_el$21, "marginRight", 1);
 								setProp(_el$21, "flexShrink", 0);
-								setProp(_el$21, "onMouseDown", () => props.onNextPage());
+								setProp(_el$21, "onMouseDown", stopMouseEvent);
+								setProp(_el$21, "onMouseUp", (event) => handleMouseClick(event, () => props.onNextPage()));
 								setProp(_el$22, "fg", "#ffffff");
 								setProp(_el$22, "wrapMode", "none");
 								insert(_el$22, () => props.isPt ? "Próxima ›" : "Next ›");
@@ -1549,10 +1573,11 @@ function ArtifactsDialogContent(props) {
 		setProp(_el$24, "paddingLeft", 2);
 		setProp(_el$24, "paddingRight", 2);
 		setProp(_el$24, "flexShrink", 0);
-		setProp(_el$24, "onMouseDown", () => {
+		setProp(_el$24, "onMouseDown", stopMouseEvent);
+		setProp(_el$24, "onMouseUp", (event) => handleMouseClick(event, () => {
 			if (props.mode() === "list" && props.entries.length > 0) props.onOpen();
 			else props.onClose();
-		});
+		}));
 		setProp(_el$25, "fg", "#000000");
 		setProp(_el$25, "attributes", 1);
 		setProp(_el$25, "wrapMode", "none");
@@ -2196,6 +2221,8 @@ function CockpitView(props) {
 		setProp(_el$4, "attributes", 1);
 		insert(_el$6, () => `· ${snapshot().sessionTitle} (${snapshot().modelName})`);
 		insertNode(_el$7, _el$8);
+		setProp(_el$7, "onMouseDown", stopMouseEvent);
+		setProp(_el$7, "onMouseUp", (event) => handleMouseClick(event, props.onClose));
 		insertNode(_el$8, createTextNode(`[ Esc / Q ]`));
 		setProp(_el$0, "flexDirection", "row");
 		setProp(_el$0, "marginTop", 1);
@@ -2207,12 +2234,13 @@ function CockpitView(props) {
 				return (() => {
 					var _el$43 = createElement("box"), _el$44 = createElement("text");
 					insertNode(_el$43, _el$44);
-					setProp(_el$43, "onMouseDown", () => setTab(t.id));
+					setProp(_el$43, "onMouseDown", stopMouseEvent);
+					setProp(_el$43, "onMouseUp", (event) => handleMouseClick(event, () => setTab(t.id)));
 					insert(_el$44, () => `[${t.label}]`);
 					effect((_p$) => {
-						var _v$16 = active() ? accent() : muted(), _v$17 = active() ? 1 : 0;
-						_v$16 !== _p$.e && (_p$.e = setProp(_el$44, "fg", _v$16, _p$.e));
-						_v$17 !== _p$.t && (_p$.t = setProp(_el$44, "attributes", _v$17, _p$.t));
+						var _v$15 = active() ? accent() : muted(), _v$16 = active() ? 1 : 0;
+						_v$15 !== _p$.e && (_p$.e = setProp(_el$44, "fg", _v$15, _p$.e));
+						_v$16 !== _p$.t && (_p$.t = setProp(_el$44, "attributes", _v$16, _p$.t));
 						return _p$;
 					}, {
 						e: void 0,
@@ -2324,10 +2352,11 @@ function CockpitView(props) {
 									var _el$48 = createElement("box"), _el$49 = createElement("text");
 									insertNode(_el$48, _el$49);
 									setProp(_el$48, "flexDirection", "column");
-									setProp(_el$48, "onMouseDown", () => {
+									setProp(_el$48, "onMouseDown", stopMouseEvent);
+									setProp(_el$48, "onMouseUp", (event) => handleMouseClick(event, () => {
 										setSelectedRow(idx());
 										setShowDetail((v) => !v);
-									});
+									}));
 									insert(_el$49, () => `${sel() ? "▸" : " "} ${marker} @${row.agent.padEnd(11)} ${row.ganttBar}  ${String(row.durationSec).padStart(5)}s  $${row.cost.toFixed(3)}`);
 									insert(_el$48, createComponent(Show, {
 										get when() {
@@ -2436,7 +2465,8 @@ function CockpitView(props) {
 				setProp(_el$35, "flexDirection", "row");
 				setProp(_el$35, "gap", 2);
 				insertNode(_el$36, _el$37);
-				setProp(_el$36, "onMouseDown", () => cockpitController?.exportReplay());
+				setProp(_el$36, "onMouseDown", stopMouseEvent);
+				setProp(_el$36, "onMouseUp", (event) => handleMouseClick(event, () => cockpitController?.exportReplay()));
 				insertNode(_el$37, createTextNode(`[ x Export Replay Trace ]`));
 				setProp(_el$37, "attributes", 1);
 				insert(_el$35, createComponent(Show, {
@@ -2474,14 +2504,13 @@ function CockpitView(props) {
 		setProp(_el$39, "marginTop", 1);
 		insertNode(_el$41, createTextNode(`1-3 tabs · Tab/Shift+Tab switch · ↑↓ select · Enter detail · x replay · r refresh · Esc/q close`));
 		effect((_p$) => {
-			var _v$1 = accent(), _v$10 = fg(), _v$11 = props.onClose, _v$12 = muted(), _v$13 = muted(), _v$14 = muted(), _v$15 = muted();
+			var _v$1 = accent(), _v$10 = fg(), _v$11 = muted(), _v$12 = muted(), _v$13 = muted(), _v$14 = muted();
 			_v$1 !== _p$.e && (_p$.e = setProp(_el$4, "fg", _v$1, _p$.e));
 			_v$10 !== _p$.t && (_p$.t = setProp(_el$6, "fg", _v$10, _p$.t));
-			_v$11 !== _p$.a && (_p$.a = setProp(_el$7, "onMouseDown", _v$11, _p$.a));
-			_v$12 !== _p$.o && (_p$.o = setProp(_el$8, "fg", _v$12, _p$.o));
-			_v$13 !== _p$.i && (_p$.i = setProp(_el$1, "fg", _v$13, _p$.i));
-			_v$14 !== _p$.n && (_p$.n = setProp(_el$39, "fg", _v$14, _p$.n));
-			_v$15 !== _p$.s && (_p$.s = setProp(_el$41, "fg", _v$15, _p$.s));
+			_v$11 !== _p$.a && (_p$.a = setProp(_el$8, "fg", _v$11, _p$.a));
+			_v$12 !== _p$.o && (_p$.o = setProp(_el$1, "fg", _v$12, _p$.o));
+			_v$13 !== _p$.i && (_p$.i = setProp(_el$39, "fg", _v$13, _p$.i));
+			_v$14 !== _p$.n && (_p$.n = setProp(_el$41, "fg", _v$14, _p$.n));
 			return _p$;
 		}, {
 			e: void 0,
@@ -2489,8 +2518,7 @@ function CockpitView(props) {
 			a: void 0,
 			o: void 0,
 			i: void 0,
-			n: void 0,
-			s: void 0
+			n: void 0
 		});
 		return _el$;
 	})();
@@ -4998,7 +5026,7 @@ async function readChangelogForBundle(bundleUrl) {
 }
 /** The ambient build-time version, or null outside a tsdown build. */
 function embeddedVersion() {
-	return "2.2.0";
+	return "2.2.1";
 }
 /**
 * Resolve the running Pantheon version for the what's-new window: the plugin
@@ -5240,7 +5268,7 @@ function persistUpdateCheckState(previous, latest) {
 	} catch {}
 }
 function resolveRunningVersion() {
-	return "2.2.0";
+	return "2.2.1";
 }
 const VALUE_WIDTH = 32;
 function SettingsWindow(props) {
@@ -5343,7 +5371,8 @@ function SettingsWindow(props) {
 			}
 		}));
 		insertNode(_el$9, _el$0);
-		setProp(_el$9, "onMouseDown", () => props.onClose?.());
+		setProp(_el$9, "onMouseDown", stopMouseEvent);
+		setProp(_el$9, "onMouseUp", (event) => handleMouseClick(event, props.onClose));
 		setProp(_el$9, "paddingLeft", 1);
 		setProp(_el$9, "flexShrink", 0);
 		insertNode(_el$0, createTextNode(`esc`));
@@ -5505,7 +5534,8 @@ function SettingsWindow(props) {
 								insertNode(_el$56, _el$57);
 								setProp(_el$56, "backgroundColor", "#262626");
 								setProp(_el$56, "flexShrink", 0);
-								setProp(_el$56, "onMouseDown", () => props.onClose?.());
+								setProp(_el$56, "onMouseDown", stopMouseEvent);
+								setProp(_el$56, "onMouseUp", (event) => handleMouseClick(event, props.onClose));
 								insertNode(_el$57, createTextNode(` Close `));
 								setProp(_el$57, "fg", "#ffffff");
 								insertNode(_el$59, createTextNode(`  `));
@@ -5622,19 +5652,22 @@ function SettingsWindow(props) {
 				setProp(_el$15, "attributes", 1);
 				insert(_el$15, () => isPt() ? "Deseja salvar as alterações?  " : "Keep your changes?  ");
 				insertNode(_el$16, _el$17);
-				setProp(_el$16, "onMouseDown", () => props.onSave?.());
+				setProp(_el$16, "onMouseDown", stopMouseEvent);
+				setProp(_el$16, "onMouseUp", (event) => handleMouseClick(event, props.onSave));
 				setProp(_el$17, "fg", "#000000");
 				insert(_el$17, () => isPt() ? " Salvar " : " Save ");
 				insertNode(_el$18, createTextNode(`  `));
 				insertNode(_el$20, _el$21);
 				setProp(_el$20, "backgroundColor", "#262626");
-				setProp(_el$20, "onMouseDown", () => props.onDiscard?.());
+				setProp(_el$20, "onMouseDown", stopMouseEvent);
+				setProp(_el$20, "onMouseUp", (event) => handleMouseClick(event, props.onDiscard));
 				setProp(_el$21, "fg", "#ffffff");
 				insert(_el$21, () => isPt() ? " Descartar " : " Discard ");
 				insertNode(_el$22, createTextNode(`  `));
 				insertNode(_el$24, _el$25);
 				setProp(_el$24, "backgroundColor", "#262626");
-				setProp(_el$24, "onMouseDown", () => props.onCancelExit?.());
+				setProp(_el$24, "onMouseDown", stopMouseEvent);
+				setProp(_el$24, "onMouseUp", (event) => handleMouseClick(event, props.onCancelExit));
 				setProp(_el$25, "fg", "#ffffff");
 				insert(_el$25, () => isPt() ? " Continuar editando " : " Keep editing ");
 				insert(_el$26, () => isPt() ? "ctrl+s salvar · d descartar alterações · esc continuar editando" : "ctrl+s save · d discard the changes · esc keep editing");
@@ -7206,7 +7239,8 @@ function WhatsNewContent(props) {
 		insert(_el$7, () => props.data.title);
 		insertNode(_el$8, _el$9);
 		setProp(_el$8, "flexShrink", 0);
-		setProp(_el$8, "onMouseDown", () => props.onClose?.());
+		setProp(_el$8, "onMouseDown", stopMouseEvent);
+		setProp(_el$8, "onMouseUp", (event) => handleMouseClick(event, props.onClose));
 		insertNode(_el$9, createTextNode(`[ Esc / Q ]`));
 		setProp(_el$9, "wrapMode", "none");
 		insertNode(_el$1, _el$10);
@@ -7260,7 +7294,8 @@ function WhatsNewContent(props) {
 						setProp(_el$18, "paddingLeft", 1);
 						setProp(_el$18, "paddingRight", 1);
 						setProp(_el$18, "marginRight", 1);
-						setProp(_el$18, "onMouseDown", () => props.onPrev?.());
+						setProp(_el$18, "onMouseDown", stopMouseEvent);
+						setProp(_el$18, "onMouseUp", (event) => handleMouseClick(event, props.onPrev));
 						setProp(_el$19, "fg", "#ffffff");
 						insert(_el$19, () => isPt() ? "‹ Anterior" : "‹ Prev");
 						return _el$18;
@@ -7279,7 +7314,8 @@ function WhatsNewContent(props) {
 						setProp(_el$21, "paddingLeft", 1);
 						setProp(_el$21, "paddingRight", 1);
 						setProp(_el$21, "marginRight", 1);
-						setProp(_el$21, "onMouseDown", () => props.onNext?.());
+						setProp(_el$21, "onMouseDown", stopMouseEvent);
+						setProp(_el$21, "onMouseUp", (event) => handleMouseClick(event, props.onNext));
 						setProp(_el$22, "fg", "#ffffff");
 						insert(_el$22, () => isPt() ? "Próxima ›" : "Next ›");
 						return _el$21;
@@ -7291,7 +7327,8 @@ function WhatsNewContent(props) {
 		insertNode(_el$24, _el$25);
 		setProp(_el$24, "paddingLeft", 2);
 		setProp(_el$24, "paddingRight", 2);
-		setProp(_el$24, "onMouseDown", () => props.onClose?.());
+		setProp(_el$24, "onMouseDown", stopMouseEvent);
+		setProp(_el$24, "onMouseUp", (event) => handleMouseClick(event, props.onClose));
 		setProp(_el$25, "fg", "#000000");
 		setProp(_el$25, "attributes", 1);
 		insert(_el$25, () => isPt() ? "OK, Entendido" : "OK, Got it");
@@ -8479,17 +8516,79 @@ const TODO_STATUS_ORDER = [
 function isTodoStatus(value) {
 	return value === "in_progress" || value === "pending" || value === "completed" || value === "cancelled";
 }
+function parseJsonValue(raw) {
+	if (typeof raw !== "string") return raw;
+	try {
+		return JSON.parse(raw);
+	} catch {
+		return null;
+	}
+}
+function extractTodoArray(payload) {
+	const parsed = parseJsonValue(payload);
+	if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+		const rec = parsed;
+		if (Array.isArray(rec.todos)) return rec.todos;
+		if (rec.output !== void 0) {
+			const nested = extractTodoArray(rec.output);
+			if (nested !== null) return nested;
+		}
+	}
+	return null;
+}
+function extractTodoArrayFromCode(code) {
+	if (typeof code !== "string" || code === "") return null;
+	const callRe = /\btools\.todowrite\s*\(/g;
+	let lastFound = null;
+	for (const match of code.matchAll(callRe)) {
+		const startIdx = (match.index ?? 0) + match[0].length;
+		const openBrace = code.indexOf("{", startIdx);
+		if (openBrace < 0) continue;
+		let depth = 0;
+		let quote = null;
+		let escaped = false;
+		let endBrace = -1;
+		for (let i = openBrace; i < code.length; i += 1) {
+			const ch = code[i];
+			if (escaped) {
+				escaped = false;
+				continue;
+			}
+			if (quote !== null) {
+				if (ch === "\\") escaped = true;
+				else if (ch === quote) quote = null;
+				continue;
+			}
+			if (ch === "\"" || ch === "'" || ch === "`") {
+				quote = ch;
+				continue;
+			}
+			if (ch === "{") depth += 1;
+			else if (ch === "}") {
+				depth -= 1;
+				if (depth === 0) {
+					endBrace = i;
+					break;
+				}
+			}
+		}
+		if (endBrace < 0) continue;
+		const snippet = code.slice(openBrace, endBrace + 1);
+		const direct = parseJsonValue(snippet);
+		if (direct && typeof direct === "object" && Array.isArray(direct.todos)) {
+			lastFound = direct.todos;
+			continue;
+		}
+		const normalized = parseJsonValue(snippet.replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:/g, "$1\"$2\":"));
+		if (normalized && typeof normalized === "object" && Array.isArray(normalized.todos)) lastFound = normalized.todos;
+	}
+	return lastFound;
+}
 /** Items from a `todowrite` `input` payload. A missing/malformed `input`,
 *  absent `todos`, an unknown `status` or an empty/missing `content` drops the
 *  entry instead of throwing; a list with nothing readable yields `[]`. Pure. */
 function parseTodoItems(input) {
-	let parsed = input;
-	if (typeof input === "string") try {
-		parsed = JSON.parse(input);
-	} catch {
-		return [];
-	}
-	const raw = parsed?.todos;
+	const raw = extractTodoArray(input);
 	if (!Array.isArray(raw)) return [];
 	const items = [];
 	for (const entry of raw) {
@@ -8519,13 +8618,17 @@ function latestTodoItems(messages) {
 			const part = parts[position];
 			if (part?.type !== "tool") continue;
 			if (part?.state?.status !== "completed") continue;
-			if (part?.name === "todowrite") {
+			const toolName = normalizeToolName(part).toLowerCase();
+			if (toolName === "todowrite") {
 				const items = parseTodoItems(part.state.input);
 				return items.length === 0 ? null : items;
 			}
-			if (part?.name === "execute" && resolveEffectiveToolNames(part).includes("todowrite")) {
-				const fromOutput = parseTodoItems(part.state.output);
-				if (fromOutput.length > 0) return fromOutput;
+			if (toolName === "execute" && resolveEffectiveToolNames(part).includes("todowrite")) {
+				const rawTodos = extractTodoArray(part.state.output) ?? extractTodoArrayFromCode(part.state.input?.code);
+				if (rawTodos !== null) {
+					const items = parseTodoItems({ todos: rawTodos });
+					return items.length === 0 ? null : items;
+				}
 			}
 		}
 	}
@@ -10219,7 +10322,7 @@ function updateCheckStateFile() {
 *  version via toast, and keeps the persistent Home/Sidebar badge updated. */
 async function checkForPantheonUpdate(context) {
 	const { statePath, readState } = updateCheckStateFile();
-	const currentVersion = "2.2.0";
+	const currentVersion = "2.2.1";
 	const initialState = readState();
 	setAvailableUpdateVersion(resolveCachedAvailableUpdate(currentVersion, initialState));
 	const nowMs = Date.now();
@@ -11076,7 +11179,7 @@ function Sidebar(props) {
 			setProp(_el$13, "paddingLeft", 1);
 			setProp(_el$13, "paddingRight", 1);
 			setProp(_el$14, "attributes", 1);
-			insert(_el$14, `Pantheon v2.2.0`);
+			insert(_el$14, `Pantheon v2.2.1`);
 			insert(_el$15, () => `Erro no painel: ${err?.message ?? "desconhecido"}`);
 			effect((_p$) => {
 				var _v$3 = text(), _v$4 = muted();
@@ -11130,9 +11233,9 @@ function SidebarInner(props) {
 	};
 	const failedSuffix = () => failedSuffixText(dispatchView()?.failures);
 	const header = () => tuiPrefs().sidebar.header;
-	const availableUpdate = useAvailableUpdate("2.2.0");
+	const availableUpdate = useAvailableUpdate("2.2.1");
 	const isPt = () => resolveLanguage(tuiPrefs().layout?.language) === "pt-BR";
-	const updateBadge = () => formatUpdateBadge("2.2.0", availableUpdate(), { isPt: isPt() });
+	const updateBadge = () => formatUpdateBadge("2.2.1", availableUpdate(), { isPt: isPt() });
 	const artifacts = useWorkspaceArtifacts(context);
 	const activePlan = () => artifacts().find((entry) => entry.kind === "plan");
 	return (() => {
@@ -11152,7 +11255,7 @@ function SidebarInner(props) {
 			get children() {
 				var _el$18 = createElement("text");
 				setProp(_el$18, "attributes", 1);
-				insert(_el$18, `Pantheon v2.2.0`);
+				insert(_el$18, `Pantheon v2.2.1`);
 				effect((_$p) => setProp(_el$18, "fg", text(), _$p));
 				return _el$18;
 			}
@@ -11187,9 +11290,10 @@ function SidebarInner(props) {
 			children: (badge) => (() => {
 				var _el$42 = createElement("box"), _el$43 = createElement("text");
 				insertNode(_el$42, _el$43);
-				setProp(_el$42, "onMouseDown", () => {
+				setProp(_el$42, "onMouseDown", stopMouseEvent);
+				setProp(_el$42, "onMouseUp", (event) => handleMouseClick(event, () => {
 					openPantheonSettings(context, { initialTab: "updates" });
-				});
+				}));
 				insert(_el$43, badge);
 				effect((_$p) => setProp(_el$43, "fg", accent(), _$p));
 				return _el$42;
@@ -11888,9 +11992,10 @@ function SidebarInner(props) {
 					children: (plan) => (() => {
 						var _el$107 = createElement("box"), _el$108 = createElement("text");
 						insertNode(_el$107, _el$108);
-						setProp(_el$107, "onMouseDown", () => {
+						setProp(_el$107, "onMouseDown", stopMouseEvent);
+						setProp(_el$107, "onMouseUp", (event) => handleMouseClick(event, () => {
 							openArtifactsDialog(context, resolveSidebarCwd(context), { initialArtifactId: plan().id });
-						});
+						}));
 						setProp(_el$107, "flexShrink", 0);
 						insert(_el$108, () => `▸ Plan: ${truncateLabel(plan().title, 22)}`);
 						effect((_$p) => setProp(_el$108, "fg", accent(), _$p));
@@ -11898,9 +12003,10 @@ function SidebarInner(props) {
 					})()
 				}), _el$39);
 				insertNode(_el$39, _el$40);
-				setProp(_el$39, "onMouseDown", () => {
+				setProp(_el$39, "onMouseDown", stopMouseEvent);
+				setProp(_el$39, "onMouseUp", (event) => handleMouseClick(event, () => {
 					openArtifactsDialog(context, resolveSidebarCwd(context));
-				});
+				}));
 				setProp(_el$39, "flexShrink", 0);
 				insert(_el$40, (() => {
 					var _c$ = memo(() => !!isPt());
@@ -12259,13 +12365,13 @@ function useWorkspaceArtifacts(context) {
 *  this keeps a compact Pantheon line visible on the home footer meanwhile. */
 function HomeStatus(props) {
 	const preset = useActivePreset(props.context).preset;
-	const availableUpdate = useAvailableUpdate("2.2.0");
+	const availableUpdate = useAvailableUpdate("2.2.1");
 	const artifacts = useWorkspaceArtifacts(props.context);
 	const activePlan = () => artifacts().find((entry) => entry.kind === "plan");
 	const isPt = () => resolveLanguage(tuiPrefs().layout?.language) === "pt-BR";
 	const accent = () => resolveAccentColor(tuiDraftPreview()?.theme?.accent ?? tuiPrefs().theme?.accent, props.context.theme);
 	const muted = () => props.context.theme?.text?.muted ?? props.context.theme?.text?.base;
-	const updateBadge = () => formatUpdateBadge("2.2.0", availableUpdate(), {
+	const updateBadge = () => formatUpdateBadge("2.2.1", availableUpdate(), {
 		isPt: isPt(),
 		compact: true
 	});
@@ -12278,7 +12384,7 @@ function HomeStatus(props) {
 			insertNode(_el$128, _el$129);
 			insertNode(_el$128, _el$132);
 			setProp(_el$128, "flexDirection", "row");
-			insert(_el$129, () => `Pantheon v2.2.0${preset().name ? ` ▸ ${preset().name}` : ""}`);
+			insert(_el$129, () => `Pantheon v2.2.1${preset().name ? ` ▸ ${preset().name}` : ""}`);
 			insert(_el$128, createComponent(Show, {
 				get when() {
 					return updateBadge();
@@ -12286,9 +12392,10 @@ function HomeStatus(props) {
 				children: (badge) => (() => {
 					var _el$135 = createElement("box"), _el$136 = createElement("text");
 					insertNode(_el$135, _el$136);
-					setProp(_el$135, "onMouseDown", () => {
+					setProp(_el$135, "onMouseDown", stopMouseEvent);
+					setProp(_el$135, "onMouseUp", (event) => handleMouseClick(event, () => {
 						openPantheonSettings(props.context, { initialTab: "updates" });
-					});
+					}));
 					insert(_el$136, () => ` · ${badge()}`);
 					effect((_$p) => setProp(_el$136, "fg", accent(), _$p));
 					return _el$135;
@@ -12301,9 +12408,10 @@ function HomeStatus(props) {
 				children: (plan) => (() => {
 					var _el$137 = createElement("box"), _el$138 = createElement("text");
 					insertNode(_el$137, _el$138);
-					setProp(_el$137, "onMouseDown", () => {
+					setProp(_el$137, "onMouseDown", stopMouseEvent);
+					setProp(_el$137, "onMouseUp", (event) => handleMouseClick(event, () => {
 						openArtifactsDialog(props.context, resolveSidebarCwd(props.context), { initialArtifactId: plan().id });
-					});
+					}));
 					insert(_el$138, () => ` · ▸ Plan: ${truncateLabel(plan().title, 20)}`);
 					effect((_$p) => setProp(_el$138, "fg", accent(), _$p));
 					return _el$137;
@@ -12316,9 +12424,10 @@ function HomeStatus(props) {
 				get children() {
 					var _el$130 = createElement("box"), _el$131 = createElement("text");
 					insertNode(_el$130, _el$131);
-					setProp(_el$130, "onMouseDown", () => {
+					setProp(_el$130, "onMouseDown", stopMouseEvent);
+					setProp(_el$130, "onMouseUp", (event) => handleMouseClick(event, () => {
 						openArtifactsDialog(props.context, resolveSidebarCwd(props.context));
-					});
+					}));
 					insert(_el$131, (() => {
 						var _c$2 = memo(() => !!isPt());
 						return () => _c$2() ? ` · Artefatos (${artifacts().length})` : ` · Artifacts (${artifacts().length})`;
@@ -12328,9 +12437,10 @@ function HomeStatus(props) {
 				}
 			}), _el$132);
 			insertNode(_el$132, _el$133);
-			setProp(_el$132, "onMouseDown", () => {
+			setProp(_el$132, "onMouseDown", stopMouseEvent);
+			setProp(_el$132, "onMouseUp", (event) => handleMouseClick(event, () => {
 				openPantheonCockpit(props.context, resolveSidebarCwd(props.context));
-			});
+			}));
 			insertNode(_el$133, createTextNode(` · ◈ Cockpit`));
 			effect((_p$) => {
 				var _v$17 = muted(), _v$18 = muted();
@@ -12425,7 +12535,7 @@ const plugin = Plugin.define({
 			append: "home.footer.status",
 			render: () => createComponent(HomeStatus, { context })
 		});
-		setAvailableUpdateVersion(resolveCachedAvailableUpdate("2.2.0", updateCheckStateFile().readState()));
+		setAvailableUpdateVersion(resolveCachedAvailableUpdate("2.2.1", updateCheckStateFile().readState()));
 		const updateNoticeTimer = setTimeout(() => {
 			checkForPantheonUpdate(context).catch(() => {});
 		}, 3e3);
