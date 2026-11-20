@@ -359,3 +359,5 @@ jobs:
         run: npm run docs:lint
       - name: Changelog structure
         run: npm run docs:check-changelog
+      - name: Cookbook parity
+        run: npm run docs:check-cookbook

@@ -157,7 +157,7 @@ Validate global installation AS A REAL USER in the sandbox \`~/pantheon-sandbox/
 - Stronger gates (auth, security, data-integrity, coverage) are canonical in the global \`Test Economy\` section
 - Async/await on all I/O
 - Type hints on all functions
-- PRs always update the README: document new features, behaviors, env vars, and commands before opening.
+- PRs update README + Cookbooks: document features, env vars, commands (\`npm run docs:check-cookbook\`).
 `
 
 const INSTRUCTIONS_PREAMBLE = `---
