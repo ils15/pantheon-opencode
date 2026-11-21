@@ -11,7 +11,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import { test } from 'node:test'
 
@@ -26,6 +26,8 @@ function baseEnv(cwd) {
     HOME: cwd,
     XDG_CONFIG_HOME: join(cwd, '.config'),
     OPENCODE_VERSION: 'v2',
+    npm_config_cache: process.env.npm_config_cache || join(homedir(), '.npm'),
+    npm_config_prefer_offline: 'true',
   }
 }
 

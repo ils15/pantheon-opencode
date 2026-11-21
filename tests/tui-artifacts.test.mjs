@@ -10,6 +10,7 @@ import {
   paginateArtifactLines,
   scanPantheonArtifacts,
 } from '../src/plugins/tui/src/artifacts-state.ts'
+import { handleMouseClick, stopMouseEvent } from '../src/plugins/tui/src/mouse-click.ts'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 
@@ -139,4 +140,42 @@ test('index.tsx wires /pantheon-artifacts command, Sidebar/Home artifact links, 
   assert.match(indexSrc, /initialArtifactId:\s*plan\(\)\.id/)
   assert.match(artifactsSrc, /initialArtifactId\?: string/)
   assert.match(settingsSrc, /\(viewMode === 'fullscreen' \|\| !sessionID\) && routerAvailable/)
+})
+
+test('TUI dialog shortcuts open on mouseUp with stopPropagation so mouse release does not dismiss the dialog', () => {
+  const indexSrc = readFileSync(join(root, 'src/plugins/tui/src/index.tsx'), 'utf8')
+  const artifactsSrc = readFileSync(join(root, 'src/plugins/tui/src/artifacts.tsx'), 'utf8')
+  const cockpitSrc = readFileSync(join(root, 'src/plugins/tui/src/cockpit.tsx'), 'utf8')
+  const whatsNewSrc = readFileSync(join(root, 'src/plugins/tui/src/whats-new.tsx'), 'utf8')
+
+  // None of the dialog-opening shortcuts in index.tsx may fire inside onMouseDown
+  for (const opener of ['openArtifactsDialog', 'openPantheonCockpit', 'openPantheonSettings']) {
+    assert.equal(
+      new RegExp(`onMouseDown=\\{[^}]*${opener}`).test(indexSrc),
+      false,
+      `${opener} must not open inside onMouseDown (mouseup hits newly mounted dialog backdrop)`,
+    )
+    assert.equal(
+      new RegExp(`onMouseUp=\\{[\\s\\S]{0,160}${opener}`).test(indexSrc),
+      true,
+      `${opener} shortcut must open inside onMouseUp`,
+    )
+  }
+
+  // Dialog buttons in artifacts/cockpit/whats-new must not close on bare onMouseDown
+  assert.equal(/onMouseDown=\{[^}]*props\.onClose/.test(artifactsSrc), false)
+  assert.equal(/onMouseDown=\{[^}]*props\.onClose/.test(cockpitSrc), false)
+  assert.equal(/onMouseDown=\{[^}]*props\.onClose/.test(whatsNewSrc), false)
+
+  // Runtime behavior: stopPropagation fires BEFORE action runs
+  const trace = []
+  const fakeEvent = {
+    stopPropagation() {
+      trace.push('stop')
+    },
+  }
+  stopMouseEvent(fakeEvent)
+  handleMouseClick(fakeEvent, () => trace.push('open'))
+  assert.deepEqual(trace, ['stop', 'stop', 'open'])
+  assert.doesNotThrow(() => handleMouseClick(null, () => {}))
 })

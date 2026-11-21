@@ -589,7 +589,7 @@ test('an unauthorized V2 preview prints each notice exactly once (not twice)', (
   try {
     const result = spawnSync(
       process.execPath,
-      [CLI, 'init', '--project', '--no-mcp', '--components', 'agents', '--opencode-version', 'v2'],
+      [CLI, 'init', '--project', '--no-mcp', '--components', 'agents'],
       {
         cwd: project,
         encoding: 'utf8',

@@ -55,11 +55,12 @@ function usage(message) {
 function parseArgs(argv) {
   const separator = argv.indexOf('--')
   const own = separator === -1 ? argv : argv.slice(0, separator)
-  const nodeFlags = separator === -1 ? [] : argv.slice(separator + 1)
+  const after = separator === -1 ? [] : argv.slice(separator + 1)
 
   let label = 'node tests'
   const globs = []
   const excludes = []
+  const nodeFlags = []
   for (let i = 0; i < own.length; i++) {
     if (own[i] === '--label') {
       const value = own[i + 1]
@@ -77,6 +78,13 @@ function parseArgs(argv) {
     }
     if (own[i].startsWith('-')) usage(`unknown option ${own[i]}`)
     globs.push(own[i])
+  }
+  // Support the documented `[-- <node flags...>] <glob>...` order as well as
+  // `<glob>... [-- <node flags...>]`: flag tokens after `--` go to nodeFlags
+  // and positional non-flag tokens go to globs.
+  for (const token of after) {
+    if (token.startsWith('-')) nodeFlags.push(token)
+    else globs.push(token)
   }
   if (globs.length === 0) usage('at least one glob is required')
   return { label, globs, excludes, nodeFlags }

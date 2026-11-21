@@ -404,6 +404,19 @@ export function buildReport(scan, memory, persistence, durations) {
 }
 
 function main(args = process.argv.slice(2)) {
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(
+      [
+        'Usage: node bench/mcp-usage-audit.mjs [options]',
+        '',
+        'Options:',
+        '  --db <path>   Explicit OpenCode transcript SQLite database path',
+        '  --stdout      Print report to stdout instead of writing bench/results/',
+        '  -h, --help    Show this help message',
+      ].join('\n'),
+    )
+    return
+  }
   const get = (flag) => {
     const i = args.indexOf(flag)
     return i >= 0 ? args[i + 1] : undefined

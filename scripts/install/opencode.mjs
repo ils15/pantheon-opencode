@@ -1583,7 +1583,13 @@ export async function installOpenCode(
   opts = {},
 ) {
   // Reset per-call so a stale run can never leak into a fresh failure report.
-  if (!dryRun) _lastRun = null
+  if (!dryRun) {
+    _lastRun = null
+    summary.opencode.created = 0
+    summary.opencode.skipped = 0
+    summary.opencode.errors = 0
+    summary.opencode.warnings = 0
+  }
   // The installer is a PROGRESS surface: the gauge replaces per-step logs
   // unless --verbose asks for them back. Doctor and the other CLIs never set
   // verbose, so their output is untouched; restore it on the way out.
@@ -1655,7 +1661,7 @@ async function installPass(
   const stats = summary.opencode
   // Per-call baseline. `stats` is the module-level cumulative summary, so the
   // consistency guard must compare against THIS call's delta, not the total.
-  const statsBefore = { created: stats.created, skipped: stats.skipped }
+  const statsBefore = { created: stats.created, skipped: stats.skipped, errors: stats.errors }
   // Number of planned changes, filled by a dry plan pass (used by the gate).
   let plannedChanges = 0
   let planFiles = []
@@ -1733,7 +1739,9 @@ async function installPass(
   // bounds it with the shorter DRY_RUN_PROBE_TIMEOUT_MS so a hanging host
   // cannot stall a preview.
   const version = resolveOpenCodeVersion({
-    env: opts.env,
+    env: opts.version
+      ? { ...process.env, ...opts.env, OPENCODE_VERSION: opts.version }
+      : (opts.env ?? process.env),
     binary: opts.binary,
     probe: opts.probe,
     probeTimeoutMs: dryRun ? DRY_RUN_PROBE_TIMEOUT_MS : undefined,
@@ -2549,24 +2557,10 @@ async function installPass(
     return config
   }
 
-  // Provenance prefix per install shape (D3-scoped: project installs write it;
-  // global installs NEVER do — the cwd-relative path vanishes agents there).
-  const agentPrefixForSource = isGlobalConfigDir(target) ? null : 'agents'
-  const agentSources = {}
-  if (agentPrefixForSource !== null) {
-    const agentsDir = join(ROOT, 'src', 'agents')
-    if (existsSync(agentsDir)) {
-      const files = readdirSync(agentsDir).filter(
-        (f) => (f.endsWith('.agent.md') || f.endsWith('.md')) && f.toLowerCase() !== 'readme.md',
-      )
-      for (const f of files) {
-        const name = f.replace(/\.(agent\.)?md$/, '')
-        agentSources[name] = `${agentPrefixForSource}/${name}.md`
-      }
-    }
-  }
-  const isGlobalTarget = isGlobalConfigDir(target)
-
+  // Never write cwd-relative `source` provenance into `config.agents.*`:
+  // OpenCode 2.x discovers `.md` agent files directly from the config
+  // directory (`agents/<name>.md`) and resolves `source` against the session
+  // cwd, which breaks agents when started from subdirectories or worktrees.
   const configuredMcpServersForPolicies = configuredMcpServerNames(config.mcp)
   const canonicalAgentConfig = readAgentConfigFromCanonical()
   if (config.agents === undefined) config.agents = {}
@@ -2581,15 +2575,9 @@ async function installPass(
         // Preserve user-customized fields (model, provider, mcp, etc.)
         const existing = config.agents[agentName]
         if (!existing || typeof existing !== 'object' || Array.isArray(existing)) continue
-        // HEAL + provenance (field beta.14→26): `source` is cwd-relative and
-        // host 2.2.5 resolves it against the SESSION cwd — so it is written
-        // ONLY for project installs (the session cwd IS the project) and
-        // NEVER for global installs, where the relative path pointed outside
-        // the config dir and made every agent vanish ("Agent not found:
-        // zeus"). Global entries also get a stale GLOBAL source healed away.
-        if (isGlobalTarget) delete existing.source
-        else if (agentSources[agentName] && !isGlobalTarget)
-          existing.source = agentSources[agentName]
+        // HEAL (field beta.14→26): always strip stale cwd-relative `source`
+        // provenance from managed agents in both global and project configs.
+        delete existing.source
 
         // The sibling opencode.jsonc merges with PRIORITY on this host and is
         // user-managed (the installer never rewrites it wholesale) — but OUR
@@ -2631,7 +2619,6 @@ async function installPass(
       } else {
         // ── New agent ──
         const newAgent = {}
-        if (!isGlobalTarget && agentSources[agentName]) newAgent.source = agentSources[agentName]
         if (agentCfg.description) newAgent.description = agentCfg.description
 
         // Copy all framework-managed fields from canonical config
@@ -3064,7 +3051,10 @@ async function installPass(
   if (v2Agents && typeof v2Agents === 'object' && !Array.isArray(v2Agents)) {
     for (const name of Object.keys(canonicalAgentConfig)) {
       const entry = v2Agents[name]
-      if (entry && typeof entry === 'object' && !Array.isArray(entry)) delete entry.steps
+      if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+        delete entry.steps
+        delete entry.source
+      }
     }
   }
 
@@ -3306,8 +3296,9 @@ async function installPass(
 
   // Fail closed only after the degraded state is persisted. The caller records
   // the partial application and reports its exact target/recovery backup.
-  if (stats.errors > 0) {
-    throw new Error(`installation completed with ${stats.errors} error(s); see output above`)
+  const callErrors = stats.errors - (statsBefore.errors ?? 0)
+  if (callErrors > 0) {
+    throw new Error(`installation completed with ${callErrors} error(s); see output above`)
   }
 
   // The apply gauge ends before the human summary; a dry run already closed it

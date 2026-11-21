@@ -32,7 +32,7 @@ function isHeadless(args, env, interactive) {
 }
 
 function passthroughArgs(args) {
-  const omitWithValue = new Set(['--save-plan', '--apply-plan', '--version', '--opencode-version'])
+  const omitWithValue = new Set(['--save-plan', '--apply-plan'])
   const result = []
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]
@@ -43,9 +43,7 @@ function passthroughArgs(args) {
     if (
       ['--yes', '-y', '--dry-run', '--json', '--headless', '--interactive'].includes(arg) ||
       arg.startsWith('--save-plan=') ||
-      arg.startsWith('--apply-plan=') ||
-      arg.startsWith('--version=') ||
-      arg.startsWith('--opencode-version=')
+      arg.startsWith('--apply-plan=')
     ) {
       continue
     }

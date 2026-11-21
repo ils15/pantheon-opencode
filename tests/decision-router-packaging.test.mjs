@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
@@ -43,13 +51,21 @@ test('committed ledger bundle matches a fresh build', async () => {
 
 test('CLI runs from an installed package layout inside node_modules', () => {
   const work = mkdtempSync(join(tmpdir(), 'pantheon-decision-install-'))
+  chmodSync(work, 0o700)
   const packageRoot = join(work, 'node_modules', 'pantheon-opencode')
   const home = join(work, 'home')
+  const configHome = join(home, 'config')
+  const stateHome = join(home, 'state')
+  mkdirSync(configHome, { recursive: true, mode: 0o700 })
+  mkdirSync(stateHome, { recursive: true, mode: 0o700 })
+  chmodSync(home, 0o700)
+  chmodSync(configHome, 0o700)
+  chmodSync(stateHome, 0o700)
   const env = {
     ...process.env,
     HOME: home,
-    XDG_CONFIG_HOME: join(home, 'config'),
-    XDG_STATE_HOME: join(home, 'state'),
+    XDG_CONFIG_HOME: configHome,
+    XDG_STATE_HOME: stateHome,
   }
   try {
     for (const rel of [

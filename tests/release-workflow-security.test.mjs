@@ -64,7 +64,9 @@ test('release host proof keeps the boundary V2 rows and the non-CI gates without
   // wait; the experiment lives in the git history). The contract pins the
   // five named gates plus the sandbox cache reuse.
   const gates = [...validate.matchAll(/- name: Gate \([a-f]\) ([a-z]+)/g)].map(([, gate]) => gate)
+  assert.equal(gates.sort().length, 5)
   assert.deepEqual(gates.sort(), ['changelog', 'host', 'install', 'metadata', 'package'])
+  assert.match(validate, /PANTHEON_RELEASE_CONTEXT:\s*'1'/)
   for (const gate of ['changelog', 'metadata']) {
     assert.match(validate, new RegExp(`args=\\(${gate}\\b`))
   }

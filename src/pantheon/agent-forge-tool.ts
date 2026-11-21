@@ -109,7 +109,7 @@ function buildAgentMarkdown(params: {
     `  ast_rewrite: ${permEdit}`,
     `  bash: ${permShell}`,
     `  shell: ${permShell}`,
-    `  execute: ${permShell}`,
+    '  execute: allow',
     '  todowrite: allow',
     '  todoread: allow',
     '  task:',

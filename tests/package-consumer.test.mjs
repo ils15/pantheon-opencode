@@ -40,6 +40,7 @@ test('the ./plugin export loads from a clean production-only consumer', () => {
         '--ignore-scripts',
         '--no-audit',
         '--no-fund',
+        '--prefer-offline',
         tarball,
       ],
       { cwd: ROOT, encoding: 'utf8' },
@@ -124,7 +125,7 @@ test('the ./plugin export loads from a clean production-only consumer', () => {
         '',
       ].join('\n'),
     )
-    execFileSync('npx', ['--yes', '--package=tsx@4.19.4', 'tsx', loader], {
+    execFileSync('npx', ['--yes', '--prefer-offline', '--package=tsx@4.19.4', 'tsx', loader], {
       cwd: consumer,
       encoding: 'utf8',
       env: { ...process.env, NODE_OPTIONS: '--conditions=import' },

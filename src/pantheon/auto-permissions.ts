@@ -279,9 +279,7 @@ export function evaluateAutoPermission(
 
   // 2. Read-only and role-restricted agents are strictly prohibited from mutating tools or shell
   if (READ_ONLY_AGENTS.has(agent)) {
-    if (
-      ['edit', 'write', 'hashline_edit', 'ast_rewrite', 'bash', 'shell', 'execute'].includes(action)
-    ) {
+    if (['edit', 'write', 'hashline_edit', 'ast_rewrite', 'bash', 'shell'].includes(action)) {
       event.effect = 'deny'
       event.message = `Pantheon auto-permissions denied: read-only agent '${agent}' cannot execute mutating action '${action}'`
       return { decision: 'deny', reason: 'read-only-role-violation' }
@@ -319,8 +317,14 @@ export function evaluateAutoPermission(
     return { decision: 'allow', reason: 'safe-read-action' }
   }
 
-  // 4. Shell and execution commands
-  if (action === 'bash' || action === 'shell' || action === 'execute') {
+  // 3b. OpenCode Code Mode (`execute`) runs JS against already-gated tools
+  if (action === 'execute') {
+    event.effect = 'allow'
+    return { decision: 'allow', reason: 'code-mode-execute' }
+  }
+
+  // 4. Shell commands
+  if (action === 'bash' || action === 'shell') {
     const rawCmd =
       Array.isArray(event.resources) && typeof event.resources[0] === 'string'
         ? event.resources[0]

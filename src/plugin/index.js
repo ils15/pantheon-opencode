@@ -161,7 +161,7 @@ function evaluateAutoPermission(event, options = {}) {
     return { decision: "allow", reason: "pantheon-native-tool" };
   }
   if (READ_ONLY_AGENTS.has(agent)) {
-    if (["edit", "write", "hashline_edit", "ast_rewrite", "bash", "shell", "execute"].includes(action)) {
+    if (["edit", "write", "hashline_edit", "ast_rewrite", "bash", "shell"].includes(action)) {
       event.effect = "deny";
       event.message = `Pantheon auto-permissions denied: read-only agent '${agent}' cannot execute mutating action '${action}'`;
       return { decision: "deny", reason: "read-only-role-violation" };
@@ -190,7 +190,11 @@ function evaluateAutoPermission(event, options = {}) {
     event.effect = "allow";
     return { decision: "allow", reason: "safe-read-action" };
   }
-  if (action === "bash" || action === "shell" || action === "execute") {
+  if (action === "execute") {
+    event.effect = "allow";
+    return { decision: "allow", reason: "code-mode-execute" };
+  }
+  if (action === "bash" || action === "shell") {
     const rawCmd = Array.isArray(event.resources) && typeof event.resources[0] === "string" ? event.resources[0] : "";
     if (rawCmd) {
       if (isDangerousCommand(rawCmd)) {
@@ -2977,7 +2981,14 @@ function v2ResourceTarget(resource) {
 }
 function evaluateV2Delegation(event, session, existingStatus, origin) {
   if (existingStatus === "deny") return "preserve-deny";
-  if (!Array.isArray(event.resources) || event.resources.length === 0) return "deny";
+  if (!Array.isArray(event.resources)) return "deny";
+  if (event.resources.length === 0) {
+    const action = typeof event.action === "string" ? event.action.trim() : "";
+    if (action !== "" && action !== "subagent" && action !== "task") {
+      return "passthrough";
+    }
+    return "deny";
+  }
   const rawTargets = event.resources.map(v2ResourceTarget);
   if (rawTargets.some((target) => target === void 0)) return "deny";
   const targets = rawTargets.filter((target) => target !== void 0);
@@ -13655,7 +13666,7 @@ function buildAgentMarkdown(params) {
     `  ast_rewrite: ${permEdit}`,
     `  bash: ${permShell}`,
     `  shell: ${permShell}`,
-    `  execute: ${permShell}`,
+    "  execute: allow",
     "  todowrite: allow",
     "  todoread: allow",
     "  task:",
@@ -19802,15 +19813,17 @@ var TODOWRITE_INPUT = {
   properties: {
     todos: {
       type: "array",
-      minItems: 1,
+      minItems: 0,
       maxItems: 50,
       items: {
         type: "object",
-        additionalProperties: false,
+        additionalProperties: true,
         required: ["content", "status"],
         properties: {
+          id: { type: "string", maxLength: 200 },
           content: { type: "string", minLength: 1, maxLength: 500 },
-          status: { type: "string", enum: ["pending", "in_progress", "completed", "cancelled"] }
+          status: { type: "string", enum: ["pending", "in_progress", "completed", "cancelled"] },
+          priority: { type: "string", enum: ["high", "medium", "low"] }
         }
       }
     }
@@ -21308,9 +21321,16 @@ async function registerV2PermissionHook(context, subagentOrigins) {
         writeProof();
         return;
       }
-      if (!Array.isArray(event.resources) || event.resources.length === 0) {
+      if (!Array.isArray(event.resources)) {
         deny("permission resources are missing or malformed");
         return;
+      }
+      if (event.resources.length === 0) {
+        const action = typeof event.action === "string" ? event.action.trim() : "";
+        if (action === "" || action === "subagent" || action === "task") {
+          deny("permission resources are missing or malformed");
+          return;
+        }
       }
       const targets = event.resources.map(v2ResourceTarget);
       if (targets.some((target) => target === void 0)) {

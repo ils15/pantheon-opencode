@@ -202,6 +202,7 @@ test('CI wires explicit coverage and V2 isolation gates', () => {
   assert.match(testJob[0], /fetch-depth: 0/)
   assert.match(testJob[0], /npm run test:node/)
   assert.match(testJob[0], /npm run test:ts/)
+  assert.match(testJob[0], /npm run test:install/)
   assert.match(testJob[0], /coverage run --branch --source=src\/mcp -m pytest/)
   const validateJob = workflow.match(/^ {2}validate:[\s\S]*?(?=^ {2}test-suite:)/m)
   assert.ok(validateJob, 'CI must keep packaging and sandbox validation separate')

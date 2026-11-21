@@ -178,6 +178,23 @@ test('evaluateAutoPermission: read-only agents are denied mutating actions', () 
   const result = evaluateAutoPermission(event, { cwd: '/workspace' })
   assert.equal(result.decision, 'deny')
   assert.equal(event.effect, 'deny')
+  // execute (Code Mode) is allowed for orchestrator and read-only agents
+  // so they can invoke todowrite, memory, deepwork, and skill tools via Code Mode
+  for (const roAgent of ['zeus', 'athena', 'apollo', 'gaia']) {
+    const roExecEvent = {
+      action: 'execute',
+      resources: ['await tools.todowrite({ todos: [] })'],
+      agent: roAgent,
+      effect: 'ask',
+    }
+    const roExecResult = evaluateAutoPermission(roExecEvent, { cwd: '/workspace' })
+    assert.equal(
+      roExecResult.decision,
+      'allow',
+      `Code Mode execute should be allowed for ${roAgent}`,
+    )
+    assert.equal(roExecEvent.effect, 'allow')
+  }
 })
 
 test('evaluateAutoPermission: kill-switch PANTHEON_AUTO_PERMISSIONS=off leaves ask untouched', () => {

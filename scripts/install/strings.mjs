@@ -116,7 +116,7 @@ const TABLE = {
     summaryNext: '  Next steps:',
     summaryNextAgents: '   • Configure your agents in opencode.json',
     summaryNextMcp: '   • Add MCP servers in opencode.json (mcp section)',
-    summaryNextDoctor: "   • Run 'opencode doctor' to verify the installation",
+    summaryNextDoctor: "   • Run 'pantheon-opencode doctor' to verify the installation",
   },
   pt: {
     installing: 'Instalando...',
@@ -216,7 +216,7 @@ const TABLE = {
     summaryNext: '  Próximos passos:',
     summaryNextAgents: '   • Configure seus agentes em opencode.json',
     summaryNextMcp: '   • Adicione MCP servers em opencode.json (seção mcp)',
-    summaryNextDoctor: "   • Rode 'opencode doctor' para verificar a instalação",
+    summaryNextDoctor: "   • Rode 'pantheon-opencode doctor' para verificar a instalação",
   },
 }
 

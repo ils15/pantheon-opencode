@@ -20,7 +20,7 @@ permission:
     "*": deny
   todowrite: allow
   todoread: allow
-  execute: deny
+  execute: allow
 mcp_tools:
   pantheon-resources: all
   pantheon-memory:

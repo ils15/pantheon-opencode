@@ -53,6 +53,7 @@ import {
   type LegacyAuditSummary,
   scanLegacyArtifacts,
 } from './legacy-audit.ts'
+import { handleMouseClick, stopMouseEvent } from './mouse-click'
 import {
   applyDraft,
   buildAboutTab,
@@ -566,7 +567,12 @@ export function SettingsWindow(props: {
             }}
           </For>
         </box>
-        <box onMouseDown={() => props.onClose?.()} paddingLeft={1} flexShrink={0}>
+        <box
+          onMouseDown={stopMouseEvent}
+          onMouseUp={(event: any) => handleMouseClick(event, props.onClose)}
+          paddingLeft={1}
+          flexShrink={0}
+        >
           <text fg={props.muted} wrapMode="none">
             {'esc'}
           </text>
@@ -698,7 +704,8 @@ export function SettingsWindow(props: {
                   <box
                     backgroundColor="#262626"
                     flexShrink={0}
-                    onMouseDown={() => props.onClose?.()}
+                    onMouseDown={stopMouseEvent}
+                    onMouseUp={(event: any) => handleMouseClick(event, props.onClose)}
                   >
                     <text fg="#ffffff">{' Close '}</text>
                   </box>
@@ -795,15 +802,27 @@ export function SettingsWindow(props: {
             <text fg={props.warn ?? '#f59e0b'} attributes={1}>
               {isPt() ? 'Deseja salvar as alterações?  ' : 'Keep your changes?  '}
             </text>
-            <box backgroundColor={props.warn ?? '#fba970'} onMouseDown={() => props.onSave?.()}>
+            <box
+              backgroundColor={props.warn ?? '#fba970'}
+              onMouseDown={stopMouseEvent}
+              onMouseUp={(event: any) => handleMouseClick(event, props.onSave)}
+            >
               <text fg="#000000">{isPt() ? ' Salvar ' : ' Save '}</text>
             </box>
             <text fg={props.muted}>{'  '}</text>
-            <box backgroundColor="#262626" onMouseDown={() => props.onDiscard?.()}>
+            <box
+              backgroundColor="#262626"
+              onMouseDown={stopMouseEvent}
+              onMouseUp={(event: any) => handleMouseClick(event, props.onDiscard)}
+            >
               <text fg="#ffffff">{isPt() ? ' Descartar ' : ' Discard '}</text>
             </box>
             <text fg={props.muted}>{'  '}</text>
-            <box backgroundColor="#262626" onMouseDown={() => props.onCancelExit?.()}>
+            <box
+              backgroundColor="#262626"
+              onMouseDown={stopMouseEvent}
+              onMouseUp={(event: any) => handleMouseClick(event, props.onCancelExit)}
+            >
               <text fg="#ffffff">{isPt() ? ' Continuar editando ' : ' Keep editing '}</text>
             </box>
           </box>

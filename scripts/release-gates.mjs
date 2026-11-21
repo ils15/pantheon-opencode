@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /**
- * release-gates.mjs — the six release gates, fail-closed.
+ * release-gates.mjs — the five release gates, fail-closed.
  *
  * ADR-0014 requires every applicable gate to end in an explicit `PASS` on the
- * frozen candidate. This script turns each gate into a binary result and one
- * named evidence file:
+ * frozen candidate. Unit/install suites (`pytest`, `test:node`, `test:ts`,
+ * `test:install`, `coverage:plugin`) run on every PR and `main` commit in
+ * `.github/workflows/ci.yml`; this script turns each release-only gate into a
+ * binary result and one named evidence file:
  *
- *   tests      Python/Node/TypeScript suites, the mandatory heavy install tier,
- *              and the required coverage thresholds.
  *   host       The measured OpenCode host evidence, installed and exercised in
  *              an isolated sandbox. Support is family-level: a measured row
  *              must PASS, an unmeasured supported family is reported as such,

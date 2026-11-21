@@ -258,8 +258,9 @@ test('installed package resolves hooks to its installed absolute path', () => {
     // The sandbox dir must CONTAIN an `opencode` entry: resolveConfigDir() only
     // falls through to the real ~/.opencode when the XDG path is absent.
     const sandboxConfig = join(work, 'sandbox-config')
-    mkdirSync(join(sandboxConfig, 'opencode'), { recursive: true })
-    execFileSync('npm', ['install', '--prefix', work, tarball], {
+    mkdirSync(sandboxConfig, { recursive: true, mode: 0o700 })
+    mkdirSync(join(sandboxConfig, 'opencode'), { recursive: true, mode: 0o700 })
+    execFileSync('npm', ['install', '--prefer-offline', '--prefix', work, tarball], {
       encoding: 'utf8',
       env: { ...process.env, XDG_CONFIG_HOME: sandboxConfig },
     })
@@ -402,8 +403,9 @@ test('installed package leaves an explicit permission.skill choice alone', () =>
   try {
     const tarball = pack(work)
     const sandboxConfig = join(work, 'sandbox-config')
-    mkdirSync(join(sandboxConfig, 'opencode'), { recursive: true })
-    execFileSync('npm', ['install', '--prefix', work, tarball], {
+    mkdirSync(sandboxConfig, { recursive: true, mode: 0o700 })
+    mkdirSync(join(sandboxConfig, 'opencode'), { recursive: true, mode: 0o700 })
+    execFileSync('npm', ['install', '--prefer-offline', '--prefix', work, tarball], {
       encoding: 'utf8',
       env: { ...process.env, XDG_CONFIG_HOME: sandboxConfig },
     })

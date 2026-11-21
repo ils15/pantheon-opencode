@@ -139,6 +139,28 @@ test('rejects an invocation with no glob at all', () => {
   assert.match(output, /at least one glob is required/)
 })
 
+test('supports documented [-- <node flags...>] <glob>... argument order (RUNNER-01)', () => {
+  const scratch = scratchFile(
+    'ordered.test.mjs',
+    "import { test } from 'node:test'\ntest('runs after -- flags', () => {})\n",
+  )
+  try {
+    const { status, output } = runGuard([
+      '--label',
+      'coverage',
+      '--',
+      '--experimental-test-coverage',
+      '--test-coverage-include=scripts/**/*.mjs',
+      scratch.glob,
+    ])
+
+    assert.equal(status, 0, `documented [-- <node flags...>] <glob>... order must pass: ${output}`)
+    assert.doesNotMatch(output, /at least one glob is required/)
+  } finally {
+    rmSync(scratch.absDir, { recursive: true, force: true })
+  }
+})
+
 test('reports the label so the failing npm script is identifiable in CI output', () => {
   const { output } = runGuard(['--label', 'test:node', 'tests/.no-such-dir-xyz/*.mjs'])
 
