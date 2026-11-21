@@ -19,12 +19,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- **ci/release** — `.github/workflows/ci.yml`, `release.yml`, `release-gates.mjs`: aligned release gates, enabled required test tiers, and fixed release context validation (GATE-01, GATE-02).
-- **install** — `scripts/install/opencode.mjs`, `setup.mjs`, `tests/install-*.test.mjs`: unified install target on native OpenCode 2.x, fixed 38 deterministic test failures, and removed obsolete V1 options (INSTALL-01, INSTALL-02).
-- **canary** — `tests/pantheon/plugin-hook-canary.test.mjs`, `tests/canary/plugin-tool-canary.test.mjs`: corrected OpenCode version string parsing for prefixed outputs and added PACKAGE_ROOT fallback (HOOKS-01, CANARY-01).
+- **ci/release** — aligned release gates, enabled required test tiers, and fixed release context validation (GATE-01, GATE-02).
+- **install** — unified install target on native OpenCode 2.x, resolved 38 deterministic test failures, and eliminated obsolete V1 parameters (INSTALL-01, INSTALL-02).
+- **canary** — fixed OpenCode version parsing for SemVer strings in hook canary and added PACKAGE_ROOT fallback in tool canary (HOOKS-01, CANARY-01).
 - **test-runner** — `scripts/run-node-tests.mjs`: fixed argument parser order requirement and repaired `npm run coverage` (RUNNER-01).
-- **tui** — `src/plugins/tui/src/mouse-click.ts`, `index.tsx`: persistent window retention upon mouse click release in artifact shortcuts and dashboard elements.
-- **todowrite** — `src/pantheon/tools.ts`, `src/pantheon/auto-permissions.ts`, `src/plugin.ts`: enabled flexible schema handling and auto-permissions for Code Mode `todowrite` calls.
+- **tui** — `src/plugins/tui/src/mouse-click.ts`: persistent window retention upon mouse click release in artifact shortcuts and dashboard elements.
+- **todowrite** — enabled flexible schema handling and auto-permissions for Code Mode `todowrite` calls.
 
 ## [v2.2.0] - 2026-11-19
 
